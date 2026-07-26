@@ -501,10 +501,11 @@ export function createMissionRunner(options: {
           createdAt: executionStartedAt,
         });
       }
+      const recoveredWaiting = recoverable && (await hasPendingHumanInteraction(handle));
       const running = await options.missions.updateExecution(mission.id, {
         id: handle.executionId,
         inputMessageId,
-        status: "running",
+        status: recoveredWaiting ? "waiting" : "running",
         startedAt: executionStartedAt,
       });
       trackExecution({
@@ -877,8 +878,7 @@ export function createMissionRunner(options: {
 
     const names = await getExecutorNames(mission);
     const current = active.get(mission.id);
-    const pendingInteractions =
-      current === undefined ? [] : await listPendingHumanInteractions(current.handle);
+    const pendingInteractions = await listMissionPendingHumanInteractions(mission);
 
     // Keep using the projection captured before history was read. The execution may settle across
     // the awaits above; looking it up again would omit both durable history (which was skipped for
@@ -1158,15 +1158,10 @@ export function createMissionRunner(options: {
       liveWorkOutputs.delete(id);
     },
     async listHumanInteractions(id) {
-      const execution = active.get(id);
-      if (execution === undefined) return [];
-      return await listPendingHumanInteractions(execution.handle);
+      return await listMissionPendingHumanInteractions(await options.missions.get(id));
     },
     async respondToHumanInteraction(input) {
-      const execution = active.get(input.missionId);
-      if (execution === undefined) {
-        throw new Error("This human interaction is not active in the current Desktop process.");
-      }
+      const execution = await ensureActiveExecution(input.missionId, input.interactionId);
       const request = await findHumanRequest(execution.handle, input.interactionId);
       await execution.handle.respondToHumanInteraction(
         input.interactionId,
@@ -1178,6 +1173,53 @@ export function createMissionRunner(options: {
       invalidateChat(input.missionId);
     },
   };
+
+  async function listMissionPendingHumanInteractions(
+    mission: Mission,
+  ): Promise<MissionHumanInteraction[]> {
+    const execution = active.get(mission.id);
+    if (execution !== undefined) return await listPendingHumanInteractions(execution.handle);
+    if (
+      mission.execution === undefined ||
+      !["queued", "running", "waiting"].includes(mission.execution.status)
+    ) {
+      return [];
+    }
+    return await listPendingHumanInteractions(
+      new StoredExecutionView(mission.execution.id, executionStore),
+    ).catch(() => []);
+  }
+
+  async function ensureActiveExecution(
+    id: string,
+    interactionId: string,
+  ): Promise<ActiveMissionExecution> {
+    const existing = active.get(id);
+    if (existing !== undefined) return existing;
+    const pending = pendingOperations.get(id);
+    if (pending?.kind === "run") {
+      await pending.promise;
+    } else if (pending !== undefined) {
+      throw new MissionOperationError();
+    } else {
+      const mission = await options.missions.get(id);
+      if (
+        mission.execution === undefined ||
+        !["queued", "running", "waiting"].includes(mission.execution.status)
+      ) {
+        throw new Error("This human interaction is no longer waiting for a response.");
+      }
+      const restoring = runMission(id);
+      trackOperation(id, { kind: "run", promise: restoring });
+      await restoring;
+    }
+    const restored = active.get(id);
+    if (restored === undefined) {
+      throw new Error("This human interaction could not be restored in the current Desktop process.");
+    }
+    await waitForRestoredHumanInteraction(restored.handle, interactionId);
+    return restored;
+  }
 }
 
 function createRuntimeAgentOrdinals(
@@ -2101,7 +2143,7 @@ function readAgentActivityPhase(
 async function listPendingHumanInteractions(
   execution: Pick<MutableExecution, "listEvents">,
 ): Promise<MissionHumanInteraction[]> {
-  const events = (await execution.listEvents({ scope: { kind: "all" }, limit: 1_000 })).items;
+  const events = await readAllExecutionEvents(execution);
   const responded = new Set(
     events
       .filter((event) => event.type === "human.responded")
@@ -2194,7 +2236,7 @@ function formatValue(value: unknown, maxLength: number): string {
 async function hasPendingHumanInteraction(execution: {
   readonly listEvents: MutableExecution["listEvents"];
 }): Promise<boolean> {
-  const events = (await execution.listEvents({ scope: { kind: "all" }, limit: 1_000 })).items;
+  const events = await readAllExecutionEvents(execution);
   const responded = new Set(
     events
       .filter((event) => event.type === "human.responded")
@@ -2211,7 +2253,7 @@ async function findHumanRequest(
   execution: MutableExecution,
   interactionId: string,
 ): Promise<ExpertAgentHumanRequest> {
-  const events = (await execution.listEvents({ scope: { kind: "all" }, limit: 1_000 })).items;
+  const events = await readAllExecutionEvents(execution);
   const event = events.find(
     (candidate) =>
       candidate.type === "human.requested" &&
@@ -2219,6 +2261,45 @@ async function findHumanRequest(
   );
   if (event === undefined) throw new Error(`Human interaction was not found: ${interactionId}`);
   return ExpertAgentHumanRequestSchema.parse((event.data as { request?: unknown }).request);
+}
+
+async function waitForRestoredHumanInteraction(
+  execution: MutableExecution,
+  interactionId: string,
+): Promise<void> {
+  const deadline = Date.now() + 5_000;
+  while (Date.now() < deadline) {
+    const [state, pending] = await Promise.all([
+      execution.getState().catch(() => undefined),
+      listPendingHumanInteractions(execution).catch(() => []),
+    ]);
+    if (
+      state?.status === "waiting" &&
+      pending.some((interaction) => interaction.interactionId === interactionId)
+    ) {
+      return;
+    }
+    await new Promise<void>((resolve) => setTimeout(resolve, 10));
+  }
+}
+
+async function readAllExecutionEvents(
+  execution: Pick<MutableExecution, "listEvents">,
+): Promise<Awaited<ReturnType<MutableExecution["listEvents"]>>["items"]> {
+  const events: Array<
+    Awaited<ReturnType<MutableExecution["listEvents"]>>["items"][number]
+  > = [];
+  let after: Awaited<ReturnType<MutableExecution["listEvents"]>>["nextCursor"] | undefined;
+  do {
+    const page = await execution.listEvents({
+      scope: { kind: "all" },
+      limit: 1_000,
+      ...(after === undefined ? {} : { after }),
+    });
+    events.push(...page.items);
+    after = page.nextCursor;
+  } while (after !== undefined);
+  return events;
 }
 
 function toDesktopHumanRequest(request: ExpertAgentHumanRequest): HumanInteractionRequest {
