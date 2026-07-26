@@ -1,0 +1,54 @@
+name: Feature request
+description: Propose a user-facing capability or architecture improvement
+title: "[Feature]: "
+labels:
+  - enhancement
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Explain the problem before prescribing an implementation. Significant protocol, package,
+        storage, Runtime Adapter, or licensing changes may require an ADR.
+  - type: checkboxes
+    id: preflight
+    attributes:
+      label: Preflight
+      options:
+        - label: I searched existing issues and ADRs for related proposals.
+          required: true
+  - type: textarea
+    id: problem
+    attributes:
+      label: Problem
+      description: Who has this problem, and what outcome are they unable to achieve?
+    validations:
+      required: true
+  - type: textarea
+    id: proposal
+    attributes:
+      label: Proposed outcome
+      description: Describe the desired behavior without assuming a specific internal implementation.
+    validations:
+      required: true
+  - type: textarea
+    id: use_cases
+    attributes:
+      label: Use cases
+      description: Give concrete examples and identify whether the user is a creator, consumer, operator, or enterprise team.
+    validations:
+      required: true
+  - type: textarea
+    id: alternatives
+    attributes:
+      label: Alternatives considered
+  - type: checkboxes
+    id: impact
+    attributes:
+      label: Potential impact
+      options:
+        - label: Public API, protocol, or DSL
+        - label: Persistent storage or migrations
+        - label: Runtime Adapter or plugin contract
+        - label: Security, permissions, credentials, or privacy
+        - label: Content distribution, authorship, or licensing
+        - label: New package or dependency direction

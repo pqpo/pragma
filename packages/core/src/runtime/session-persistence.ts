@@ -1,7 +1,7 @@
 import { mkdir, stat } from "node:fs/promises";
 import { watch } from "node:fs";
 
-import type { ExpertAgentLogger } from "../logging/logger.ts";
+import type { PragmaLogger } from "../logging/logger.ts";
 import type { ExpertAgentRunContext } from "./run-context.ts";
 import type {
   RuntimeAdapterDescriptor,
@@ -208,7 +208,7 @@ export async function checkpointRuntimeSession(options: {
   readonly runtimeSessionId: string;
   readonly workspace: string;
   readonly context?: ExpertAgentRunContext | undefined;
-  readonly logger?: ExpertAgentLogger | undefined;
+  readonly logger?: PragmaLogger | undefined;
 }): Promise<void> {
   if (!shouldCheckpoint(options.spec, options.trigger)) {
     return;
@@ -239,19 +239,23 @@ export async function checkpointRuntimeSession(options: {
       },
     });
   } catch (error) {
-    options.logger?.error("Runtime session checkpoint failed", {
-      agentId: options.agentId,
-      runtimeSessionId: options.runtimeSessionId,
-      trigger: options.trigger,
+    options.logger?.error(
+      "runtime.session_checkpoint_failed",
+      "Runtime session checkpoint failed",
       error,
-    });
+      {
+        agentId: options.agentId,
+        runtimeSessionId: options.runtimeSessionId,
+        trigger: options.trigger,
+      },
+    );
   }
 }
 
 export function watchRuntimeSessionCheckpoint(options: {
   readonly spec: RuntimeSessionPersistenceSpec;
   readonly checkpoint: (trigger: RuntimeCheckpointTrigger) => void | Promise<void>;
-  readonly logger?: ExpertAgentLogger | undefined;
+  readonly logger?: PragmaLogger | undefined;
 }): RuntimeSessionWatcher | undefined {
   if (options.spec.watch !== true || options.spec.sessionDir === undefined) {
     return undefined;
@@ -266,10 +270,12 @@ export function watchRuntimeSessionCheckpoint(options: {
   });
 
   watcher.on("error", (error) => {
-    options.logger?.error("Runtime session watcher failed", {
-      sessionDir: options.spec.sessionDir,
+    options.logger?.error(
+      "runtime.session_watcher_failed",
+      "Runtime session watcher failed",
       error,
-    });
+      { sessionDir: options.spec.sessionDir },
+    );
   });
 
   const flush = async (): Promise<void> => {

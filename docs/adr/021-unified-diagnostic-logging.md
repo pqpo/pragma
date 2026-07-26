@@ -2,7 +2,7 @@
 
 ## Status
 
-Proposed.
+Accepted.
 
 ## Context
 
@@ -163,10 +163,11 @@ exit codes, signals, schema versions, content hashes, and approved relative path
 names are replaced with `[REDACTED]`; values, arrays, strings, causes, and stacks are depth- and
 size-bounded. Local archives are private but are not treated as encrypted secret storage.
 
-### 8. Keep the library default side-effect free
+### 8. Provide a useful console default and allow host replacement
 
-`@pragma/core` keeps a no-op default provider for embedded library use and tests. Executable
-composition roots must explicitly select a provider:
+`@pragma/core` defaults to structured JSON console output at `info`. `PRAGMA_LOG_LEVEL=debug`
+enables debug records, while `silent` is available for explicit embedding and tests. Executable
+composition roots may replace the provider:
 
 - Desktop uses rotating local JSONL plus development console output.
 - Worker uses structured stdout until a deployment sink is configured.

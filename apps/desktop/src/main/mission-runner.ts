@@ -2,6 +2,7 @@ import { createHash, randomUUID } from "node:crypto";
 
 import {
   createPragma,
+  createPragmaLogger,
   createFileExecutionStore,
   createFileExpertSessionStore,
   ExecutionWorkHistoryReader,
@@ -155,6 +156,7 @@ export function createMissionRunner(options: {
   readonly contextStores?: ContextStoreStore | undefined;
   readonly plugins?: PluginStore | undefined;
   readonly runtimes: RuntimeResolver;
+  readonly loggerProvider?: import("@pragma/core").PragmaLoggerProvider | undefined;
   readonly runtimesForToolPermissionMode?:
     | ((mode: DesktopToolPermissionMode) => RuntimeResolver)
     | undefined;
@@ -171,6 +173,9 @@ export function createMissionRunner(options: {
       }) => Promise<CompiledResource<InvocableResource> | undefined>)
     | undefined;
 }): MissionRunner {
+  const logger = createPragmaLogger(options.loggerProvider, {
+    component: "desktop.mission-runner",
+  });
   const executionStore = createFileExecutionStore({ pragmaHome: options.pragmaHome });
   const expertSessionStore = createFileExpertSessionStore({
     executions: executionStore,
@@ -202,6 +207,7 @@ export function createMissionRunner(options: {
         runtimes,
         executionStore,
         expertSessionStore,
+        loggerProvider: options.loggerProvider?.withScope({ missionId: mission.id }),
         automaticHumanInteractionHandler: async (request) =>
           await automaticHumanInteractionHandlerForToolPermissionMode(toolPermissionMode)?.(
             request,
@@ -263,7 +269,12 @@ export function createMissionRunner(options: {
       try {
         listener(notification);
       } catch (error) {
-        console.error(`Failed to notify Mission chat listeners for ${id}.`, error);
+        logger.error(
+          "mission.chat_listener_failed",
+          `Failed to notify Mission chat listeners for ${id}.`,
+          error,
+          { missionId: id },
+        );
       }
     }
   };
@@ -282,7 +293,12 @@ export function createMissionRunner(options: {
       try {
         listener(update);
       } catch (error) {
-        console.error(`Failed to notify Mission work listeners for ${id}.`, error);
+        logger.error(
+          "mission.work_listener_failed",
+          `Failed to notify Mission work listeners for ${id}.`,
+          error,
+          { missionId: id },
+        );
       }
     }
   };
@@ -402,6 +418,7 @@ export function createMissionRunner(options: {
       input.inputMessageId,
       input.onFinished ?? (() => undefined),
       input.sessionId,
+      logger,
       async () =>
         await persistMissionExecutionProjection(
           options.missions,
@@ -414,7 +431,12 @@ export function createMissionRunner(options: {
     invalidateChat(input.missionId);
     invalidateWork(input.missionId);
     void settlement.catch((error: unknown) => {
-      console.error(`Failed to observe Mission execution ${input.handle.executionId}.`, error);
+      logger.error(
+        "mission.execution_observer_failed",
+        `Failed to observe Mission execution ${input.handle.executionId}.`,
+        error,
+        { missionId: input.missionId, executionId: input.handle.executionId },
+      );
     });
   };
 
@@ -812,7 +834,8 @@ export function createMissionRunner(options: {
       throw new Error("Wait for the current expert turn before compacting its context.");
     }
     const sessionId = mission.execution?.sessionId;
-    if (sessionId === undefined) throw new Error("The mission Runtime context has not started yet.");
+    if (sessionId === undefined)
+      throw new Error("The mission Runtime context has not started yet.");
     const rootContext = await readMissionRootContext(mission);
     if (rootContext?.snapshot === undefined) {
       throw new Error("The mission Runtime context has not started yet.");
@@ -833,7 +856,9 @@ export function createMissionRunner(options: {
     invalidateChat(id);
     const state = await getContextWindowState(mission, usage);
     if (state === undefined || !state.supportsCompaction) {
-      throw new Error(`Runtime ${rootContext.runtime.runtimeId} does not support context compaction.`);
+      throw new Error(
+        `Runtime ${rootContext.runtime.runtimeId} does not support context compaction.`,
+      );
     }
     return state;
   };
@@ -1321,6 +1346,7 @@ function observeExecution(
   inputMessageId: string,
   onFinished: () => void | Promise<void>,
   sessionId?: string,
+  logger?: import("@pragma/core").PragmaLogger,
   onTerminal?: (() => void | Promise<void>) | undefined,
 ): Promise<void> {
   let lastObservedStatus: string | undefined;
@@ -1386,12 +1412,22 @@ function observeExecution(
     try {
       await onFinished();
     } catch (error) {
-      console.error(`Failed to finish Mission execution ${execution.executionId}.`, error);
+      logger?.error(
+        "mission.finish_callback_failed",
+        `Failed to finish Mission execution ${execution.executionId}.`,
+        error,
+        { missionId, executionId: execution.executionId },
+      );
     }
     try {
       await onTerminal?.();
     } catch (error) {
-      console.error(`Failed to compact Mission execution ${execution.executionId}.`, error);
+      logger?.error(
+        "mission.terminal_callback_failed",
+        `Failed to compact Mission execution ${execution.executionId}.`,
+        error,
+        { missionId, executionId: execution.executionId },
+      );
     }
     await missions.updateExecution(
       missionId,

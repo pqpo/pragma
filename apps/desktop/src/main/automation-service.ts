@@ -1,6 +1,11 @@
 import { createHash } from "node:crypto";
 
-import { moveOwnedStorageToTrash, type PragmaPaths } from "@pragma/core";
+import {
+  createPragmaLogger,
+  moveOwnedStorageToTrash,
+  type PragmaLoggerProvider,
+  type PragmaPaths,
+} from "@pragma/core";
 import {
   PragmaAutomationResourceSchema,
   PragmaScheduleAutomationConfigSchema,
@@ -56,8 +61,12 @@ export function createAutomationService(options: {
   readonly missions: MissionStore;
   readonly creator: MissionCreator;
   readonly runner: MissionRunner;
+  readonly loggerProvider?: PragmaLoggerProvider | undefined;
   readonly now?: (() => Date) | undefined;
 }): AutomationService {
+  const logger = createPragmaLogger(options.loggerProvider, {
+    component: "desktop.automation",
+  });
   const now = options.now ?? (() => new Date());
   const timers = new Map<string, ReturnType<typeof setTimeout>>();
   const processing = new Set<string>();
@@ -109,7 +118,12 @@ export function createAutomationService(options: {
         return;
       }
       void fireSchedule(resource, binding, occurrence).catch((error: unknown) => {
-        console.error(`Automation schedule failed for ${ref}.`, error);
+        logger.error(
+          "automation.schedule_failed",
+          `Automation schedule failed for ${ref}.`,
+          error,
+          { automationRef: ref },
+        );
       });
     }, delay);
     timer.unref();

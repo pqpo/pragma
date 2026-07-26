@@ -37,6 +37,7 @@ import type {
 import { mergeUsage } from "../runtime/usage.ts";
 import { openRuntimeSession } from "../runtime/session-factory.ts";
 import type { RuntimeResolver } from "../runtime-resolver.ts";
+import type { PragmaLoggerProvider } from "../logging/logger.ts";
 import type {
   ExpertAgentAutomaticHumanInteractionHandler,
   ExpertAgentHumanRequest,
@@ -602,6 +603,7 @@ export interface RunExpertInvocationOptions {
   readonly controller: ExecutionController;
   readonly store: ExecutionStore;
   readonly runtimes: RuntimeResolver;
+  readonly loggerProvider?: PragmaLoggerProvider | undefined;
   readonly modelSelection?: RuntimeModelSelection | undefined;
   readonly output?: import("../runtime/runtime-adapter.ts").RuntimeOutputSchema | undefined;
   readonly outputRetryLimit?: number | undefined;
@@ -747,6 +749,12 @@ export async function runExpertInvocation(options: RunExpertInvocationOptions): 
   );
   const humanInteractionHandler = async (request: ExpertAgentHumanRequest) =>
     await options.controller.requestHumanInteraction(options.invocationId, request);
+  const invocationLoggerProvider = options.loggerProvider?.withScope({
+    executionId: options.executionId,
+    invocationId: options.invocationId,
+    contextId: options.context.contextId,
+    agentId: nativeExpert.id,
+  });
   const session = await options.controller.acquireRuntime(runtimeIdentity, async () => {
     const opened = await openRuntimeSession(runtime, {
       agent: executableExpert,
@@ -762,6 +770,7 @@ export async function runExpertInvocation(options: RunExpertInvocationOptions): 
       executionContext,
       humanInteractionHandler,
       modelSelection,
+      loggerProvider: invocationLoggerProvider,
       onSessionInfo: async (info) => {
         if (info.runtimeSession.id === "") return;
         await persistRuntimeSnapshot({

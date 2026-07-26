@@ -17,6 +17,7 @@ import {
   type StartFlowRequest,
 } from "./flow/flow-execution.ts";
 import type { RuntimeResolver } from "./runtime-resolver.ts";
+import { defaultPragmaLoggerProvider, type PragmaLoggerProvider } from "./logging/logger.ts";
 import type { ExpertAgentAutomaticHumanInteractionHandler } from "./tools/managed-tool.ts";
 
 export interface CreatePragmaOptions {
@@ -24,6 +25,7 @@ export interface CreatePragmaOptions {
   readonly runtimes: RuntimeResolver;
   readonly executionStore?: ExecutionStore | undefined;
   readonly expertSessionStore?: ExpertSessionStore | undefined;
+  readonly loggerProvider?: PragmaLoggerProvider | undefined;
   readonly automaticHumanInteractionHandler?:
     | ExpertAgentAutomaticHumanInteractionHandler
     | undefined;
@@ -54,6 +56,7 @@ export interface PragmaApp {
 }
 
 export function createPragma(options: CreatePragmaOptions): PragmaApp {
+  const loggerProvider = options.loggerProvider ?? defaultPragmaLoggerProvider;
   const executions =
     options.executionStore ??
     createFileExecutionStore(
@@ -71,6 +74,7 @@ export function createPragma(options: CreatePragmaOptions): PragmaApp {
     sessions,
     executions,
     runtimes,
+    loggerProvider,
     pragmaHome: options.pragmaHome,
     automaticHumanInteractionHandler: options.automaticHumanInteractionHandler,
   });
@@ -79,6 +83,7 @@ export function createPragma(options: CreatePragmaOptions): PragmaApp {
     runtimes,
     options.automaticHumanInteractionHandler,
     options.pragmaHome,
+    loggerProvider,
   );
   return {
     experts: {

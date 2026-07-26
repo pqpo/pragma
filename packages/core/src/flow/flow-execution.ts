@@ -14,6 +14,7 @@ import { z } from "zod";
 import { isExpertTeam, type ExpertDefinition, type ExpertTeam } from "../agent/expert-team.ts";
 import { describeExpertExecutionDefinition } from "../agent/expert-definition-descriptor.ts";
 import type { RuntimeResolver } from "../runtime-resolver.ts";
+import type { PragmaLoggerProvider } from "../logging/logger.ts";
 import type {
   ExpertAgentAutomaticHumanInteractionHandler,
   ExpertAgentHumanRequest,
@@ -81,6 +82,7 @@ export class FlowExecutionManager {
       | ExpertAgentAutomaticHumanInteractionHandler
       | undefined,
     private readonly pragmaHome?: string | undefined,
+    private readonly loggerProvider?: PragmaLoggerProvider | undefined,
   ) {}
 
   async start<TInput>(
@@ -263,6 +265,7 @@ export class FlowExecutionManager {
         runtimes: this.runtimes,
         runtime,
         handoffs,
+        loggerProvider: this.loggerProvider?.withScope({ executionId }),
       });
       const handoff = await handoffs.normalize(executionId, output);
       const usage = controller.getUsage();
@@ -373,6 +376,7 @@ async function runFlow(options: {
   readonly runtime?: string | undefined;
   readonly runtimeOverride?: string | undefined;
   readonly handoffs: HandoffService;
+  readonly loggerProvider?: PragmaLoggerProvider | undefined;
 }): Promise<unknown> {
   const deadline = await ensureFlowDeadline(options);
   const timeoutReason = `Flow ${options.flow.id} timed out.`;
@@ -584,6 +588,7 @@ async function runStep(
       store: options.store,
       runtimes: options.runtimes,
       handoffs: options.handoffs,
+      loggerProvider: options.loggerProvider,
     });
     return unwrapInvocationHandoff(InvocationHandoffSchema.parse(handoff));
   } catch (error) {

@@ -55,7 +55,7 @@ describe("Repo Manager plugin", () => {
       hostBindings: {},
       logger: createNoopLoggerProvider().createLogger({
         component: "plugin",
-        pluginId: "plugin.repo-manager",
+        scope: { pluginId: "plugin.repo-manager" },
       }),
     });
 

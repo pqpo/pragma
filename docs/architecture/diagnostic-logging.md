@@ -1,8 +1,7 @@
 # Diagnostic Logging Architecture
 
-> This document is the implementation design for ADR 021. It describes the target architecture;
-> the current repository has only the smaller `ExpertAgentLogger` abstraction and has not yet
-> implemented this design.
+> This document is the implementation design for ADR 021 and the contract for the unified logging
+> implementation.
 
 ## 1. Goals
 
@@ -362,7 +361,7 @@ provider/logger. Project Service binds project id and revision; compile binds re
 environment id.
 
 When Interpreter calls `defineExpert()` or `defineExpertTeam()`, it forwards the provider. This is
-required so a DSL-created Expert does not silently revert to Core's no-op default.
+required so a DSL-created Expert uses the host sink instead of Core's console default.
 
 Validation logs only summary metadata:
 
@@ -381,8 +380,8 @@ durationMs
 `FlowExecutionManager`, `ExpertOrchestrator`, `InvocationService`, Runtime resolver/driver, storage,
 managed tools, MCP gateway, and plugin hooks receive child loggers rather than constructing globals.
 
-The current closed `ExpertAgentLoggerComponent` union is replaced by namespaced components. The
-existing no-op, console, and sink providers are retained as implementations of the new interface,
+Namespaced components replace the former closed logger-component union. The
+no-op, console, and sink providers remain implementations of the new interface,
 not as a parallel logger API.
 
 Core centralizes:

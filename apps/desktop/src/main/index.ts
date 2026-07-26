@@ -1,9 +1,16 @@
 import { mkdir } from "node:fs/promises";
+import { randomUUID } from "node:crypto";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 
 import { BrowserWindow, app, ipcMain, safeStorage, shell } from "electron";
-import { PragmaPaths, runStorageMaintenance } from "@pragma/core";
+import {
+  PragmaPaths,
+  createCompositeLogHandler,
+  createConsoleLogHandler,
+  createLoggerProvider,
+  runStorageMaintenance,
+} from "@pragma/core";
 import {
   BUILT_IN_PRAGMA_REF,
   compileBuiltInDefaultAgent,
@@ -57,9 +64,29 @@ import { SetDefaultRuntimeSchema } from "../shared/desktop-api.ts";
 import { installAutomationHandlers } from "./automation-ipc.ts";
 import { createAutomationService } from "./automation-service.ts";
 import { createAutomationStore } from "./automation-store.ts";
+import { createDesktopLogHandler } from "./desktop-log-handler.ts";
+import { DesktopRendererLogSchema } from "../shared/desktop-api.ts";
 
 const currentDir = dirname(fileURLToPath(import.meta.url));
 const applicationId = "dev.pragma.desktop";
+const pragmaPaths = new PragmaPaths();
+const bootId = randomUUID();
+const desktopLogHandler = createDesktopLogHandler({ paths: pragmaPaths, bootId });
+const diagnosticLogHandler = app.isPackaged
+  ? desktopLogHandler
+  : createCompositeLogHandler([desktopLogHandler, createConsoleLogHandler()]);
+const loggerProvider = createLoggerProvider({
+  handler: diagnosticLogHandler,
+  minimumLevel: readDesktopLogLevel(),
+  host: {
+    kind: "desktop",
+    bootId,
+    pid: process.pid,
+    version: app.getVersion(),
+  },
+  baseScope: { processKind: "desktop-main" },
+});
+const mainLogger = loggerProvider.createLogger({ component: "desktop.main" });
 
 if (process.platform === "win32") {
   app.setAppUserModelId(applicationId);
@@ -107,15 +134,26 @@ async function createWindow(): Promise<void> {
   const window = mainWindow;
 
   window.webContents.on("preload-error", (_event, preloadPath, error) => {
-    console.error(`Desktop preload failed: ${preloadPath}`, error);
+    mainLogger.error("desktop.preload_failed", `Desktop preload failed: ${preloadPath}`, error);
+  });
+  window.webContents.on("render-process-gone", (_event, details) => {
+    mainLogger.error(
+      "desktop.renderer_process_gone",
+      `Desktop renderer process exited because ${details.reason}.`,
+      new Error(`Renderer exited with code ${details.exitCode}.`),
+      { reason: details.reason, exitCode: details.exitCode },
+    );
   });
 
   window.webContents.on(
     "did-fail-load",
     (_event, errorCode, errorDescription, validatedUrl, isMainFrame) => {
       if (!isMainFrame) return;
-      console.error(
+      mainLogger.error(
+        "desktop.renderer_load_failed",
         `Desktop renderer failed to load ${validatedUrl} (${errorCode}): ${errorDescription}.`,
+        new Error(errorDescription),
+        { errorCode, validatedUrl },
       );
     },
   );
@@ -145,9 +183,41 @@ async function createWindow(): Promise<void> {
 }
 
 ipcMain.handle("bridge:snapshot", () => createBridgeSnapshot());
+ipcMain.on("logs:renderer", (_event, input: unknown) => {
+  const record = DesktopRendererLogSchema.safeParse(input);
+  if (!record.success) {
+    mainLogger.warn("renderer.invalid_log_report", "Rejected an invalid Renderer log report.");
+    return;
+  }
+  const logger = loggerProvider.createLogger({
+    component: "desktop.renderer",
+    scope: { processKind: "desktop-renderer" },
+  });
+  if (record.data.level === "warn") {
+    logger.warn(record.data.event, record.data.message, {
+      errorMessage: record.data.errorMessage,
+      stack: record.data.stack,
+    });
+    return;
+  }
+  const error = new Error(record.data.errorMessage ?? record.data.message);
+  if (record.data.stack !== undefined) error.stack = record.data.stack;
+  logger.error(record.data.event, record.data.message, error);
+});
 installWorkspaceScopeHandlers(() => mainWindow);
 
-void app.whenReady().then(async () => {
+const LOG_CLOSE_TIMEOUT_MS = 2_000;
+let desktopLogsClosed = false;
+let desktopLogsClosePromise: Promise<void> | undefined;
+app.on("will-quit", (event) => {
+  if (desktopLogsClosed) return;
+  event.preventDefault();
+  void closeDesktopLogs()
+    .catch(reportLogShutdownFailure)
+    .finally(() => app.quit());
+});
+
+const desktopStartup = app.whenReady().then(async () => {
   if (process.platform === "darwin") {
     app.dock?.setIcon(applicationIconPath());
   }
@@ -157,17 +227,22 @@ void app.whenReady().then(async () => {
     encrypt: (plainText: string) => safeStorage.encryptString(plainText),
     decrypt: (encrypted: Buffer) => safeStorage.decryptString(encrypted),
   };
-  const pragmaPaths = new PragmaPaths();
   const storageBootstrap = await initializeDesktopStorage({
     paths: pragmaPaths,
     trashItem: async (path) => await shell.trashItem(path),
   });
+  await desktopLogHandler.activate();
+  mainLogger.info("desktop.storage_ready", "Desktop storage and persistent logging are ready.");
   if (storageBootstrap.legacyBackup !== undefined) {
-    console.warn(`Previous Pragma storage was backed up to ${storageBootstrap.legacyBackup}.`);
+    mainLogger.warn(
+      "desktop.storage_legacy_backup",
+      `Previous Pragma storage was backed up to ${storageBootstrap.legacyBackup}.`,
+    );
   }
   const maintenance = await runStorageMaintenance({ paths: pragmaPaths });
   if (maintenance.before.totalBytes >= maintenance.before.softLimitBytes) {
-    console.warn(
+    mainLogger.warn(
+      "desktop.storage_pressure_gc",
       `Pragma storage pressure GC reclaimed ${maintenance.before.totalBytes - maintenance.after.totalBytes} bytes.`,
     );
   }
@@ -184,11 +259,12 @@ void app.whenReady().then(async () => {
   const desktopSettings = createDesktopSettingsStore({
     settingsPath: join(pragmaPaths.stateRoot(), "desktop-settings.json"),
     builtInDefaultWorkspace,
-    warn: (message, error) => console.warn(message, error),
+    warn: (message, error) => mainLogger.warn("desktop.settings_warning", message, { error }),
   });
   const workspaceHistory = createWorkspaceHistoryStore({
     historyPath: join(pragmaPaths.stateRoot(), "workspace-history.json"),
-    warn: (message, error) => console.warn(message, error),
+    warn: (message, error) =>
+      mainLogger.warn("desktop.workspace_history_warning", message, { error }),
   });
   const getToolPermissionMode = async () =>
     (await desktopSettings.getSnapshot(app.getPreferredSystemLanguages())).toolPermissionMode;
@@ -196,7 +272,7 @@ void app.whenReady().then(async () => {
     createAutomaticToolPermissionHandler(getToolPermissionMode);
   const systemExperts = createDesktopSystemExpertRegistry({
     configPath: join(pragmaPaths.stateRoot(), "system-experts.json"),
-    warn: (message, error) => console.warn(message, error),
+    warn: (message, error) => mainLogger.warn("desktop.system_expert_warning", message, { error }),
   });
   await systemExperts.initialize();
   const pragmaProjectStore = createPragmaProjectStore({
@@ -204,6 +280,7 @@ void app.whenReady().then(async () => {
     objectsPath: pragmaPaths.contentObjectsRoot(),
     projectViewsPath: pragmaPaths.projectViewsCacheRoot(),
     storagePaths: pragmaPaths,
+    loggerProvider,
     reservedResourceRefs: new Set([BUILT_IN_PRAGMA_REF]),
   });
   installWorkflowLayoutHandlers(
@@ -354,6 +431,7 @@ void app.whenReady().then(async () => {
     contextStores,
     plugins: pluginStore,
     runtimes,
+    loggerProvider,
     automaticHumanInteractionHandler,
     runtimesForToolPermissionMode: (mode) => runtimes.forToolPermissionMode(mode),
     automaticHumanInteractionHandlerForToolPermissionMode: (mode) =>
@@ -380,6 +458,7 @@ void app.whenReady().then(async () => {
         workspace: mission.workspace.path,
         pragmaHome: pragmaPaths.root,
         runtimes: withRuntimeDefaults(scopedRuntimes, defaults),
+        loggerProvider,
         ...(defaults.modelSelection === undefined
           ? {}
           : { defaultModelSelection: defaults.modelSelection }),
@@ -427,6 +506,7 @@ void app.whenReady().then(async () => {
     missions: missionStore,
     creator: missionCreator,
     runner: missionRunner,
+    loggerProvider,
   });
   installAutomationHandlers(automationService);
   await automationService.start();
@@ -461,7 +541,11 @@ void app.whenReady().then(async () => {
       try {
         await workspaceHistory.record(path);
       } catch (error) {
-        console.warn("Workspace usage could not be recorded.", error);
+        mainLogger.warn(
+          "desktop.workspace_usage_failed",
+          "Workspace usage could not be recorded.",
+          { error },
+        );
       }
     },
     defaultExecutorRef: BUILT_IN_PRAGMA_REF,
@@ -487,9 +571,21 @@ void app.whenReady().then(async () => {
 
   app.on("activate", () => {
     if (BrowserWindow.getAllWindows().length === 0) {
-      void createWindow();
+      void createWindow().catch((error: unknown) => {
+        mainLogger.error(
+          "desktop.window_reopen_failed",
+          "Desktop window could not be reopened.",
+          error,
+        );
+      });
     }
   });
+});
+void desktopStartup.catch((error: unknown) => {
+  mainLogger.fatal("desktop.startup_failed", "Desktop startup failed.", error);
+  void closeDesktopLogs()
+    .catch(reportLogShutdownFailure)
+    .finally(() => app.exit(1));
 });
 
 app.on("window-all-closed", () => {
@@ -497,3 +593,60 @@ app.on("window-all-closed", () => {
     app.quit();
   }
 });
+
+function readDesktopLogLevel(): "debug" | "info" | "warn" | "error" | "fatal" | "silent" {
+  const configured = process.env["PRAGMA_LOG_LEVEL"];
+  return configured === "debug" ||
+    configured === "info" ||
+    configured === "warn" ||
+    configured === "error" ||
+    configured === "fatal" ||
+    configured === "silent"
+    ? configured
+    : "info";
+}
+
+function closeDesktopLogs(): Promise<void> {
+  desktopLogsClosePromise ??= withDeadline(
+    diagnosticLogHandler.close?.() ?? Promise.resolve(),
+    LOG_CLOSE_TIMEOUT_MS,
+  ).finally(() => {
+    desktopLogsClosed = true;
+  });
+  return desktopLogsClosePromise;
+}
+
+async function withDeadline(operation: Promise<void>, timeoutMs: number): Promise<void> {
+  let timeout: ReturnType<typeof setTimeout> | undefined;
+  try {
+    await Promise.race([
+      operation,
+      new Promise<never>((_resolve, reject) => {
+        timeout = setTimeout(
+          () => reject(new Error(`Diagnostic log shutdown exceeded ${timeoutMs} ms.`)),
+          timeoutMs,
+        );
+      }),
+    ]);
+  } finally {
+    if (timeout !== undefined) clearTimeout(timeout);
+  }
+}
+
+let logShutdownFailureReported = false;
+function reportLogShutdownFailure(error: unknown): void {
+  if (logShutdownFailureReported) return;
+  logShutdownFailureReported = true;
+  try {
+    console.error(
+      JSON.stringify({
+        level: "error",
+        component: "desktop.logging",
+        event: "log_shutdown_failed",
+        message: error instanceof Error ? error.message : String(error),
+      }),
+    );
+  } catch {
+    // This is the final non-recursive fallback during process shutdown.
+  }
+}

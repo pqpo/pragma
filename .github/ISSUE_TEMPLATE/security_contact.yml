@@ -1,0 +1,34 @@
+name: Security contact request
+description: Ask a maintainer to arrange a private reporting channel
+title: "[Security contact request]"
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Do not include vulnerability details, affected paths, exploit steps, secrets, user data, or
+        Code of Conduct incident details in this public request. A maintainer will arrange a private
+        channel.
+  - type: checkboxes
+    id: confirmation
+    attributes:
+      label: Confirmation
+      options:
+        - label: I have not included sensitive details in this public request.
+          required: true
+  - type: dropdown
+    id: report_type
+    attributes:
+      label: Report type
+      options:
+        - Security vulnerability
+        - Code of Conduct matter
+    validations:
+      required: true
+  - type: textarea
+    id: contact
+    attributes:
+      label: Contact coordination
+      description: State only how a maintainer can coordinate a private channel. Do not describe the incident.
+      placeholder: GitHub coordination is preferred; do not post secrets or private report content.
+    validations:
+      required: true

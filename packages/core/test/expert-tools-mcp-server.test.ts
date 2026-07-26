@@ -2,7 +2,7 @@ import { Client, StreamableHTTPClientTransport } from "@modelcontextprotocol/cli
 import { afterEach, describe, expect, it } from "vitest";
 
 import {
-  createExpertAgentLogger,
+  createPragmaLogger,
   defineExpert,
   registerExpertToolsMcpSession,
   type ExpertToolsMcpSessionRegistration,
@@ -209,9 +209,9 @@ async function registerTestSession(
   const registration = await registerExpertToolsMcpSession({
     agent: expert,
     getContext: () => undefined,
-    logger: createExpertAgentLogger(undefined, {
-      component: "runtime-adapter",
-      agentId: expert.id,
+    logger: createPragmaLogger(undefined, {
+      component: "runtime.adapter",
+      scope: { agentId: expert.id },
     }),
     state: {},
   });

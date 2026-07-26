@@ -20,8 +20,8 @@ import type {
   RuntimeSessionRef,
 } from "../runtime/runtime-adapter.ts";
 import type { RuntimeStreamEvent } from "../runtime/stream-events.ts";
-import type { ExpertAgentLogger, ExpertAgentLoggerProvider } from "../logging/logger.ts";
-import { createExpertAgentLogger, defaultExpertAgentLoggerProvider } from "../logging/logger.ts";
+import type { PragmaLogger, PragmaLoggerProvider } from "../logging/logger.ts";
+import { createPragmaLogger, defaultPragmaLoggerProvider } from "../logging/logger.ts";
 import type {
   ExpertAgentManagedTool,
   ExpertAgentToolApproval,
@@ -178,7 +178,7 @@ export interface ExpertAgentPluginSessionCreateContext {
   readonly systemSessionId: string;
   readonly runtimeSession?: RuntimeSessionRef | undefined;
   readonly processEnvironment: Readonly<NodeJS.ProcessEnv>;
-  readonly logger?: ExpertAgentLogger | undefined;
+  readonly logger?: PragmaLogger | undefined;
 }
 
 export interface ExpertAgentProcessEnvironmentPatch {
@@ -193,7 +193,7 @@ export interface ExpertAgentPluginSessionPreparation {
 export interface ExpertAgentPluginSessionContext {
   readonly agent: Expert;
   readonly session: RuntimeSessionInfo;
-  readonly logger?: ExpertAgentLogger | undefined;
+  readonly logger?: PragmaLogger | undefined;
 }
 
 export interface ExpertAgentPluginTaskSubmitContext<TOutput = unknown> {
@@ -202,7 +202,7 @@ export interface ExpertAgentPluginTaskSubmitContext<TOutput = unknown> {
   readonly runId: string;
   readonly submission: RuntimeTaskSubmission<TOutput>;
   readonly context?: ExpertAgentRunContext | undefined;
-  readonly logger?: ExpertAgentLogger | undefined;
+  readonly logger?: PragmaLogger | undefined;
 }
 
 export interface ExpertAgentPluginTaskSubmittedContext<
@@ -218,7 +218,7 @@ export interface ExpertAgentPluginToolCallContext {
   readonly toolCallId?: string | undefined;
   readonly args: unknown;
   readonly runId?: string | undefined;
-  readonly logger?: ExpertAgentLogger | undefined;
+  readonly logger?: PragmaLogger | undefined;
 }
 
 export interface ExpertAgentPluginToolCalledContext extends ExpertAgentPluginToolCallContext {
@@ -233,7 +233,7 @@ export interface ExpertAgentPluginStreamEventContext {
   readonly runId: string;
   readonly event: RuntimeStreamEvent;
   readonly context?: ExpertAgentRunContext | undefined;
-  readonly logger?: ExpertAgentLogger | undefined;
+  readonly logger?: PragmaLogger | undefined;
 }
 
 export interface ExpertAgentPluginSetupContext {
@@ -248,7 +248,7 @@ export interface ExpertAgentPluginSetupContext {
   readonly workspaceRoot: string;
   readonly userConfig: DeepReadonly<Record<string, unknown>>;
   readonly hostBindings: Readonly<Record<string, unknown>>;
-  readonly logger: ExpertAgentLogger;
+  readonly logger: PragmaLogger;
 }
 
 export interface ExpertAgentPluginHooks {
@@ -344,7 +344,7 @@ export interface ResolveExpertAgentPluginsOptions {
     | readonly (ExpertAgentPluginEntry | ExpertAgentPluginRegistration)[]
     | undefined;
   readonly workspaceRoot?: string | undefined;
-  readonly loggerProvider?: ExpertAgentLoggerProvider | undefined;
+  readonly loggerProvider?: PragmaLoggerProvider | undefined;
   readonly agentId?: string | undefined;
 }
 
@@ -385,7 +385,7 @@ export function resolveExpertAgentPlugins(
   const registrations = (options.pluginEntries ?? []).map(normalizePluginRegistration);
   assertUniquePluginIds(registrations.map((registration) => registration.entry));
   const host = options.host ?? {};
-  const loggerProvider = options.loggerProvider ?? defaultExpertAgentLoggerProvider;
+  const loggerProvider = options.loggerProvider ?? defaultPragmaLoggerProvider;
   const baseContext = {
     ...(options.agent === undefined ? {} : { agent: options.agent }),
     host,
@@ -403,10 +403,12 @@ export function resolveExpertAgentPlugins(
         ...baseContext,
         userConfig,
         hostBindings: registration.hostBindings ?? {},
-        logger: createExpertAgentLogger(loggerProvider, {
+        logger: createPragmaLogger(loggerProvider, {
           component: "plugin",
-          agentId: options.agentId,
-          pluginId: registration.entry.id,
+          scope: {
+            agentId: options.agentId,
+            pluginId: registration.entry.id,
+          },
         }),
       }),
     };

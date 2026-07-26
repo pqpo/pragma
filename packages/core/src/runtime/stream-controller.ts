@@ -1,7 +1,7 @@
 import type { AgentMessage, AgentMessageUsage } from "@pragma/shared";
 
 import type { Expert } from "../agent/expert-agent.ts";
-import type { ExpertAgentLogger } from "../logging/logger.ts";
+import type { PragmaLogger } from "../logging/logger.ts";
 import { dispatchExpertAgentHook } from "../plugins/expert-agent-plugin.ts";
 import type { RuntimeSessionInfo } from "./runtime-adapter.ts";
 import type { ExpertAgentRunContext } from "./run-context.ts";
@@ -88,7 +88,7 @@ export function createRuntimeStreamController<TNativeEvent>(options: {
   readonly source?: RuntimeStreamEvent["source"] | undefined;
   readonly session: () => RuntimeSessionInfo;
   readonly context?: ExpertAgentRunContext | undefined;
-  readonly logger: ExpertAgentLogger;
+  readonly logger: PragmaLogger;
   readonly mapEvent: (
     event: TNativeEvent,
     context: RuntimeEventMappingContext,

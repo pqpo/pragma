@@ -9,6 +9,7 @@ import {
 } from "./components/DesktopFatalError.tsx";
 import { setDesktopLocale } from "./i18n/index.ts";
 import { resolveDesktopStartup } from "./lib/desktop-startup.ts";
+import { serializeRendererError } from "./lib/renderer-log.ts";
 import type { PragmaDesktopAPI } from "../../shared/desktop-api.ts";
 import "./styles.css";
 
@@ -28,10 +29,12 @@ async function start(): Promise<void> {
     return;
   }
   if (startup.settingsError !== undefined) {
-    console.warn(
-      "Desktop settings could not be loaded; using the system locale.",
-      startup.settingsError,
-    );
+    bridge?.reportRendererLog({
+      level: "warn",
+      event: "renderer.settings_load_failed",
+      message: "Desktop settings could not be loaded; using the system locale.",
+      ...serializeRendererError(startup.settingsError),
+    });
   }
 
   root.render(
@@ -52,11 +55,22 @@ function renderFatalError(code: DesktopFatalErrorCode): void {
 }
 
 void start().catch(async (error: unknown) => {
-  console.error("Desktop renderer startup failed.", error);
+  const bridge = Reflect.get(window, "pragmaDesktop") as PragmaDesktopAPI | undefined;
+  bridge?.reportRendererLog({
+    level: "error",
+    event: "renderer.startup_failed",
+    message: "Desktop renderer startup failed.",
+    ...serializeRendererError(error),
+  });
   try {
     await setDesktopLocale("en");
   } catch (localeError) {
-    console.error("Desktop fallback locale could not be loaded.", localeError);
+    bridge?.reportRendererLog({
+      level: "error",
+      event: "renderer.fallback_locale_failed",
+      message: "Desktop fallback locale could not be loaded.",
+      ...serializeRendererError(localeError),
+    });
   }
   renderFatalError("RENDERER_STARTUP_FAILURE");
 });

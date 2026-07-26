@@ -5,7 +5,7 @@ import type { McpToolRegistry, RuntimeAdapter, RuntimeCanUseResult } from "@prag
 import {
   createMcpToolRegistry,
   defineRuntimeDriver,
-  type ExpertAgentLogger,
+  type PragmaLogger,
   type RuntimeSessionPersistenceSpec,
 } from "@pragma/core";
 import { CodexAppServerClient } from "./app-server-client.ts";
@@ -163,14 +163,14 @@ export function createCodexRuntime(options: CodexRuntimeAdapterOptions = {}): Ru
             spawn: options.spawn,
             humanInteractionHandler: ctx.request.humanInteractionHandler,
             onNotification: (notification) => {
-              ctx.logger.debug("Codex app-server notification", {
+              ctx.logger.debug("runtime.codex_notification", "Codex app-server notification", {
                 method: notification.method,
                 params: notification.params,
               });
               notificationBus.publish(notification);
             },
             onStderr: (chunk) => {
-              ctx.logger.debug("Codex app-server stderr", { chunk });
+              ctx.logger.debug("runtime.codex_stderr", "Codex app-server stderr", { chunk });
             },
           });
           const threadStartResult = await startOrResumeThread({
@@ -325,7 +325,7 @@ async function disposeCodexRuntimeResources(
   client: CodexAppServerClient | undefined,
   expertToolsMcpRegistration: CodexExpertToolsMcpSessionRegistration | undefined,
   mcpToolRegistry: McpToolRegistry | undefined,
-  logger: ExpertAgentLogger,
+  logger: PragmaLogger,
 ): Promise<void> {
   const results = await Promise.allSettled([
     Promise.resolve().then(() => client?.close()),
@@ -340,7 +340,11 @@ async function disposeCodexRuntimeResources(
     return;
   }
 
-  logger.error("Codex runtime cleanup failed", { errors });
+  logger.error(
+    "runtime.codex_cleanup_failed",
+    "Codex runtime cleanup failed",
+    new AggregateError(errors),
+  );
 
   if (errors.length === 1) {
     throw errors[0];

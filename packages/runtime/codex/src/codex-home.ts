@@ -17,7 +17,7 @@ import {
 import { dirname, join, relative, resolve, sep } from "node:path";
 import { homedir } from "node:os";
 
-import { type Expert, type ExpertAgentLogger, type PragmaPaths, withFileLock } from "@pragma/core";
+import { type Expert, type PragmaLogger, type PragmaPaths, withFileLock } from "@pragma/core";
 import { materializeCodexSkills } from "./skills.ts";
 
 export interface PrepareManagedCodexHomeOptions {
@@ -25,7 +25,7 @@ export interface PrepareManagedCodexHomeOptions {
   readonly sessionDir: string;
   readonly pragmaPaths: PragmaPaths;
   readonly env?: NodeJS.ProcessEnv | undefined;
-  readonly logger: Pick<ExpertAgentLogger, "warn">;
+  readonly logger: Pick<PragmaLogger, "warn">;
 }
 
 export interface ManagedCodexHome {
@@ -158,7 +158,7 @@ async function exposeManagedAuth(
   sourceHome: string,
   home: string,
   paths: PragmaPaths,
-  logger: Pick<ExpertAgentLogger, "warn">,
+  logger: Pick<PragmaLogger, "warn">,
 ): Promise<void> {
   const source = join(sourceHome, "auth.json");
   if ((await stat(source).catch(() => undefined))?.isFile() !== true) return;
@@ -174,7 +174,11 @@ async function exposeManagedAuth(
   try {
     await replaceSymlink(credential, join(home, "auth.json"), "file");
   } catch (error) {
-    logger.warn("Codex managed home could not link the Pragma credential projection", { error });
+    logger.warn(
+      "runtime.codex_credential_link_failed",
+      "Codex managed home could not link the Pragma credential projection",
+      { error },
+    );
     await copyFile(credential, join(home, "auth.json"));
   }
 }
@@ -182,14 +186,18 @@ async function exposeManagedAuth(
 async function copyPrivateConfigFiles(
   sourceHome: string,
   home: string,
-  logger: Pick<ExpertAgentLogger, "warn">,
+  logger: Pick<PragmaLogger, "warn">,
 ): Promise<void> {
   for (const file of CODEX_PRIVATE_CONFIG_FILES) {
     try {
       await copyFile(join(sourceHome, file), join(home, file));
     } catch (error) {
       if (!isNotFoundError(error)) {
-        logger.warn("Codex managed home could not snapshot a private config file", { file, error });
+        logger.warn(
+          "runtime.codex_config_snapshot_failed",
+          "Codex managed home could not snapshot a private config file",
+          { file, error },
+        );
       }
     }
   }
@@ -206,14 +214,18 @@ async function exposeSharedCacheDirectories(sharedBase: string, home: string): P
 
 async function sanitizeCopiedCodexConfig(
   configPath: string,
-  logger: Pick<ExpertAgentLogger, "warn">,
+  logger: Pick<PragmaLogger, "warn">,
 ): Promise<void> {
   let content: string;
   try {
     content = await readFile(configPath, "utf8");
   } catch (error) {
     if (!isNotFoundError(error))
-      logger.warn("Codex managed home could not read config.toml", { error });
+      logger.warn(
+        "runtime.codex_config_read_failed",
+        "Codex managed home could not read config.toml",
+        { error },
+      );
     return;
   }
   const sanitized = stripSkillsConfigEntries(content);
