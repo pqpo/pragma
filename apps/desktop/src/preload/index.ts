@@ -102,6 +102,7 @@ import {
   PreviewAutomationScheduleSchema,
   SaveAutomationSchema,
   type PragmaDesktopAPI,
+  DesktopRendererLogSchema,
 } from "../shared/desktop-api.ts";
 
 async function invokeMutation(channel: string, ...args: readonly unknown[]): Promise<unknown> {
@@ -111,6 +112,10 @@ async function invokeMutation(channel: string, ...args: readonly unknown[]): Pro
 }
 
 const api: PragmaDesktopAPI = {
+  reportRendererLog: (input) => {
+    const record = DesktopRendererLogSchema.safeParse(input);
+    if (record.success) ipcRenderer.send("logs:renderer", record.data);
+  },
   getBridgeSnapshot: async () =>
     DesktopBridgeSnapshotSchema.parse(await ipcRenderer.invoke("bridge:snapshot")),
   getDesktopSettings: async () =>

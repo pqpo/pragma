@@ -1,4 +1,3 @@
-import type { ExpertAgentLoggerProvider } from "@pragma/core";
 import type {
   RuntimeCanUseResult,
   RuntimeAdapterDescriptor,
@@ -22,7 +21,6 @@ export interface ClaudeCodeRuntimeAdapterOptions {
   readonly descriptor?: Partial<RuntimeAdapterDescriptor> | undefined;
   readonly executablePath?: string | undefined;
   readonly env?: NodeJS.ProcessEnv | undefined;
-  readonly loggerProvider?: ExpertAgentLoggerProvider | undefined;
   readonly defaultModelName?: string | undefined;
   readonly defaultThinkingLevel?: string | undefined;
   readonly listModels?: (() => Promise<readonly RuntimeModel[]>) | undefined;

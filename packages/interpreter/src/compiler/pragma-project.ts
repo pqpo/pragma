@@ -1019,6 +1019,7 @@ async function compileExpert(
     instructions: resource.spec.instructions,
     workspace: host.workspace,
     ...(host.pragmaHome === undefined ? {} : { pragmaHome: host.pragmaHome }),
+    ...(host.loggerProvider === undefined ? {} : { loggerProvider: host.loggerProvider }),
     tools: [...tools, ...capabilityTools],
     skills: mergeSkills(skillConfigs),
     mcp: mergeMcp(mcpConfigs),

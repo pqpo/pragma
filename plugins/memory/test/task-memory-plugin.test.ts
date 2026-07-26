@@ -27,7 +27,7 @@ describe("task-memory plugin", () => {
       },
       logger: createNoopLoggerProvider().createLogger({
         component: "plugin",
-        pluginId: "memory",
+        scope: { pluginId: "memory" },
       }),
     });
 
@@ -56,7 +56,7 @@ describe("task-memory plugin", () => {
       },
       logger: createNoopLoggerProvider().createLogger({
         component: "plugin",
-        pluginId: "memory",
+        scope: { pluginId: "memory" },
       }),
     });
 

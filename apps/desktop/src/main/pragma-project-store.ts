@@ -25,6 +25,7 @@ import {
   type PragmaProjectSourceRepository,
   type PragmaProjectChangeSetInput,
 } from "@pragma/interpreter";
+import type { PragmaLoggerProvider } from "@pragma/core";
 import {
   PragmaDiagnosticSchema,
   PragmaExpertIdSchema,
@@ -137,6 +138,7 @@ export function createPragmaProjectStore(options: {
   readonly storagePaths?: PragmaPaths | undefined;
   readonly projectId?: string;
   readonly reservedResourceRefs?: ReadonlySet<string> | undefined;
+  readonly loggerProvider?: PragmaLoggerProvider | undefined;
 }): PragmaProjectStore {
   const projectId = options.projectId ?? "studio";
   const repository = createDesktopProjectSourceRepository({
@@ -144,7 +146,10 @@ export function createPragmaProjectStore(options: {
     objectsPath: options.objectsPath ?? join(options.projectsPath, ".storage", "objects"),
     projectViewsPath: options.projectViewsPath ?? join(options.projectsPath, ".cache", "views"),
   });
-  const service = new PragmaProjectService({ repository });
+  const service = new PragmaProjectService({
+    repository,
+    loggerProvider: options.loggerProvider,
+  });
   const ensureMigrated = async (): Promise<void> =>
     await migrateDesktopProjectV3({
       projectsPath: options.projectsPath,

@@ -19,8 +19,8 @@ import type {
   ExpertAgentPluginRegistration,
 } from "./expert-agent-plugin.ts";
 import { readExpertAgentPluginManifest } from "./expert-agent-plugin.ts";
-import type { ExpertAgentLoggerProvider } from "../logging/logger.ts";
-import { createExpertAgentLogger, defaultExpertAgentLoggerProvider } from "../logging/logger.ts";
+import type { PragmaLoggerProvider } from "../logging/logger.ts";
+import { createPragmaLogger, defaultPragmaLoggerProvider } from "../logging/logger.ts";
 import { PragmaPaths } from "../storage/pragma-paths.ts";
 import { withFileLock } from "../storage/file-lock.ts";
 
@@ -54,7 +54,7 @@ export interface LoadExpertAgentPluginsOptions {
   readonly pragmaHome?: string | undefined;
   readonly sources: readonly ExpertAgentPluginSource[];
   readonly env?: NodeJS.ProcessEnv | undefined;
-  readonly loggerProvider?: ExpertAgentLoggerProvider | undefined;
+  readonly loggerProvider?: PragmaLoggerProvider | undefined;
   readonly pluginFailurePolicy?: "throw" | "collect" | undefined;
 }
 
@@ -101,10 +101,9 @@ export async function loadExpertAgentPlugins(
 ): Promise<LoadExpertAgentPluginsResult> {
   const pluginEntries: ExpertAgentPluginRegistration[] = [];
   const issues: ExpertAgentPluginLoadIssue[] = [];
-  const loggerProvider = options.loggerProvider ?? defaultExpertAgentLoggerProvider;
-  const logger = createExpertAgentLogger(loggerProvider, {
-    component: "plugin",
-    name: "plugin-loader",
+  const loggerProvider = options.loggerProvider ?? defaultPragmaLoggerProvider;
+  const logger = createPragmaLogger(loggerProvider, {
+    component: "plugin.loader",
   });
 
   for (const source of options.sources) {
@@ -123,7 +122,10 @@ export async function loadExpertAgentPlugins(
         message: error instanceof Error ? error.message : String(error),
       };
       issues.push(issue);
-      logger.warn("Failed to load Expert plugin", { ...issue, error });
+      logger.warn("plugin.load_failed", "Failed to load Expert plugin", {
+        ...issue,
+        error,
+      });
     }
   }
 

@@ -1,4 +1,3 @@
-import type { ExpertAgentLoggerProvider } from "@pragma/core";
 import type {
   RuntimeCanUseResult,
   RuntimeAdapterDescriptor,
@@ -31,7 +30,6 @@ export interface CodexRuntimeAdapterOptions {
    */
   readonly env?: NodeJS.ProcessEnv | undefined;
   readonly clientInfo?: CodexRuntimeClientInfo | undefined;
-  readonly loggerProvider?: ExpertAgentLoggerProvider | undefined;
   readonly defaultModelName?: string | undefined;
   readonly defaultThinkingLevel?: string | undefined;
   readonly listModels?: (() => Promise<readonly RuntimeModel[]>) | undefined;

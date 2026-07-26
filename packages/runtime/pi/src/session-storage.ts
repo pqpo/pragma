@@ -2,7 +2,7 @@ import { mkdir, stat } from "node:fs/promises";
 import { watch } from "node:fs";
 
 import type {
-  ExpertAgentLogger,
+  PragmaLogger,
   RuntimeSessionStorageContext,
   RuntimeSessionSyncCallback,
 } from "@pragma/core";
@@ -37,7 +37,7 @@ export function watchRuntimeSessionDir({
   readonly context: RuntimeSessionStorageContext;
   readonly callback: RuntimeSessionSyncCallback;
   readonly debounceMs?: number | undefined;
-  readonly logger?: ExpertAgentLogger | undefined;
+  readonly logger?: PragmaLogger | undefined;
 }): RuntimeSessionWatcher {
   let closed = false;
   let timer: ReturnType<typeof setTimeout> | undefined;
@@ -48,11 +48,10 @@ export function watchRuntimeSessionDir({
   });
 
   watcher.on("error", (error) => {
-    logger?.error("Runtime session watcher failed", {
+    logger?.error("runtime.pi_session_watcher_failed", "Runtime session watcher failed", error, {
       agentId: context.agentId,
       runtimeSessionId: context.runtimeSession.id,
       sessionDir: context.sessionDir,
-      error,
     });
   });
 
@@ -68,12 +67,16 @@ export function watchRuntimeSessionDir({
     try {
       await callback(context);
     } catch (error) {
-      logger?.error("Runtime session sync callback failed", {
-        agentId: context.agentId,
-        runtimeSessionId: context.runtimeSession.id,
-        sessionDir: context.sessionDir,
+      logger?.error(
+        "runtime.pi_session_sync_failed",
+        "Runtime session sync callback failed",
         error,
-      });
+        {
+          agentId: context.agentId,
+          runtimeSessionId: context.runtimeSession.id,
+          sessionDir: context.sessionDir,
+        },
+      );
     } finally {
       running = false;
       if (pending && !closed) {

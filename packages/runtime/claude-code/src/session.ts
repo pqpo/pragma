@@ -8,7 +8,7 @@ import { createInterface } from "node:readline";
 import type {
   Expert,
   ExpertAgentHumanInteractionHandler,
-  ExpertAgentLogger,
+  PragmaLogger,
   ExpertAgentStartupMessage,
   RuntimeEventMappingContext,
   RuntimeEventMappingResult,
@@ -78,7 +78,7 @@ export interface ClaudeCodeNativeSession {
   readonly defaultThinkingLevel?: string | undefined;
   readonly env?: NodeJS.ProcessEnv | undefined;
   readonly humanInteractionHandler?: ExpertAgentHumanInteractionHandler | undefined;
-  readonly logger: ExpertAgentLogger;
+  readonly logger: PragmaLogger;
   readonly managedConfig?: ManagedClaudeCodeConfig | undefined;
   readonly mcpServerUrl: string;
   readonly permissionMode: ClaudeCodeRuntimePermissionMode;
@@ -110,7 +110,7 @@ export function createClaudeCodeNativeSession(options: {
   readonly defaultThinkingLevel?: string | undefined;
   readonly env?: NodeJS.ProcessEnv | undefined;
   readonly humanInteractionHandler?: ExpertAgentHumanInteractionHandler | undefined;
-  readonly logger: ExpertAgentLogger;
+  readonly logger: PragmaLogger;
   readonly managedConfig?: ManagedClaudeCodeConfig | undefined;
   readonly mcpServerUrl: string;
   readonly permissionMode: ClaudeCodeRuntimePermissionMode;
@@ -412,15 +412,13 @@ async function runClaudeCodeProcess({
   readonly cwd: string;
   readonly env: NodeJS.ProcessEnv;
   readonly humanInteractionHandler?: ExpertAgentHumanInteractionHandler | undefined;
-  readonly logger: ExpertAgentLogger;
+  readonly logger: PragmaLogger;
   readonly promptParts: readonly string[];
   readonly runId: string;
   readonly source: RuntimeStreamEvent["source"];
   readonly emitRuntimeEvent: (event: RuntimeStreamEventInput) => void;
   readonly spawn?: ClaudeCodeRuntimeSpawn | undefined;
-  readonly onNativeEvent?:
-    | ((event: Readonly<Record<string, unknown>>) => void)
-    | undefined;
+  readonly onNativeEvent?: ((event: Readonly<Record<string, unknown>>) => void) | undefined;
   readonly onProcessStarted: (
     process: ChildProcessWithoutNullStreams,
     exitPromise: Promise<{
@@ -464,7 +462,7 @@ async function runClaudeCodeProcess({
   child.stderr.setEncoding("utf8");
   child.stderr.on("data", (chunk: string) => {
     stderrTail = `${stderrTail}${chunk}`.slice(-STDERR_TAIL_LIMIT);
-    logger.debug("Claude Code stderr", { chunk });
+    logger.debug("runtime.claude_stderr", "Claude Code stderr", { chunk });
   });
 
   child.stdin.write(`${JSON.stringify(createClaudeCodeUserInput(promptParts))}\n`);
@@ -482,12 +480,14 @@ async function runClaudeCodeProcess({
 
       const event = parseJsonRecord(line);
       if (event === undefined) {
-        logger.debug("Ignoring non-JSON Claude Code stream line", { line });
+        logger.debug("runtime.claude_non_json_line", "Ignoring non-JSON Claude Code stream line", {
+          line,
+        });
         continue;
       }
       onNativeEvent?.(event);
       if (event["type"] === "system" && event["subtype"] !== "thinking_tokens") {
-        logger.debug("Claude Code system event", {
+        logger.debug("runtime.claude_system_event", "Claude Code system event", {
           subtype: event["subtype"],
           status: event["status"],
           message: event["message"],
@@ -512,11 +512,8 @@ async function runClaudeCodeProcess({
       if (event["type"] === "result") {
         finalResultSeen = true;
         contextWindowUsage =
-          readClaudeCodeContextWindowUsage(
-            event,
-            latestAssistantUsage,
-            latestAssistantModel,
-          ) ?? contextWindowUsage;
+          readClaudeCodeContextWindowUsage(event, latestAssistantUsage, latestAssistantModel) ??
+          contextWindowUsage;
       }
       const hadOutputDelta = outputText !== "";
       const mapped: ClaudeStreamMappingResult =
@@ -677,7 +674,7 @@ async function terminateClaudeCodeProcess({
     readonly signal: NodeJS.Signals | null;
   }>;
   readonly hasExited: () => boolean;
-  readonly logger: ExpertAgentLogger;
+  readonly logger: PragmaLogger;
 }): Promise<void> {
   if (hasExited()) {
     return;
@@ -688,7 +685,10 @@ async function terminateClaudeCodeProcess({
     return;
   }
 
-  logger.warn("Claude Code did not exit after SIGTERM; sending SIGKILL.");
+  logger.warn(
+    "runtime.claude_force_kill",
+    "Claude Code did not exit after SIGTERM; sending SIGKILL.",
+  );
   process.kill("SIGKILL");
   await waitForClaudeCodeExit(exitPromise);
 }
@@ -1416,11 +1416,9 @@ export function readClaudeCodeContextWindowUsage(
   assistantUsage: AgentMessageUsage | undefined,
   assistantModel: string | undefined,
 ): RuntimeContextWindowUsage | undefined {
-  const modelUsage =
-    readRecord(result["modelUsage"]) ?? readRecord(result["model_usage"]);
+  const modelUsage = readRecord(result["modelUsage"]) ?? readRecord(result["model_usage"]);
   if (modelUsage === undefined) return undefined;
-  let selected =
-    assistantModel === undefined ? undefined : readRecord(modelUsage[assistantModel]);
+  let selected = assistantModel === undefined ? undefined : readRecord(modelUsage[assistantModel]);
   if (selected === undefined) {
     const candidates = Object.values(modelUsage)
       .map(readRecord)
@@ -1434,10 +1432,7 @@ export function readClaudeCodeContextWindowUsage(
     }
   }
   if (selected === undefined) return undefined;
-  const contextWindowTokens = readFirstTokenCount(selected, [
-    "contextWindow",
-    "context_window",
-  ]);
+  const contextWindowTokens = readFirstTokenCount(selected, ["contextWindow", "context_window"]);
   if (contextWindowTokens === undefined || contextWindowTokens <= 0) return undefined;
   return createRuntimeContextWindowUsage({
     usedTokens: assistantUsage?.totalTokens ?? null,

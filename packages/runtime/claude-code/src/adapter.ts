@@ -11,7 +11,7 @@ import {
   createMcpToolRegistry,
   defineRuntimeDriver,
   registerExpertToolsMcpSession,
-  type ExpertAgentLogger,
+  type PragmaLogger,
   type RuntimeSessionPersistenceSpec,
   type ExpertToolRuntimeState,
 } from "@pragma/core";
@@ -308,7 +308,7 @@ function createClaudeCodeRuntimeCanUse(
 async function disposeClaudeRuntimeResources(
   expertToolsMcpRegistration: ExpertToolsMcpSessionRegistration | undefined,
   mcpToolRegistry: McpToolRegistry | undefined,
-  logger: ExpertAgentLogger,
+  logger: PragmaLogger,
 ): Promise<void> {
   const results = await Promise.allSettled([
     expertToolsMcpRegistration?.dispose() ?? Promise.resolve(),
@@ -322,7 +322,11 @@ async function disposeClaudeRuntimeResources(
     return;
   }
 
-  logger.error("Claude Code runtime cleanup failed", { errors });
+  logger.error(
+    "runtime.claude_cleanup_failed",
+    "Claude Code runtime cleanup failed",
+    new AggregateError(errors),
+  );
 
   if (errors.length === 1) {
     throw errors[0];

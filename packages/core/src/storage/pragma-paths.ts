@@ -48,6 +48,38 @@ export class PragmaPaths {
     return join(this.root, "archives");
   }
 
+  diagnosticArchivesRoot(): string {
+    return join(this.archivesRoot(), "diagnostics");
+  }
+
+  diagnosticApplicationRoot(application: string): string {
+    if (!/^[a-z0-9]+(?:[.-][a-z0-9]+)*$/.test(application)) {
+      throw new Error(`Invalid diagnostic application name: ${application}`);
+    }
+    return join(this.diagnosticArchivesRoot(), application);
+  }
+
+  diagnosticBootRoot(application: string, date: string, bootId: string): string {
+    if (!/^\d{4}-\d{2}-\d{2}$/.test(date)) {
+      throw new Error(`Invalid diagnostic archive date: ${date}`);
+    }
+    return join(this.diagnosticApplicationRoot(application), date, encodePragmaPathSegment(bootId));
+  }
+
+  diagnosticOperationLog(application: string, date: string, bootId: string, index: number): string {
+    return join(
+      this.diagnosticBootRoot(application, date, bootId),
+      `operations-${formatDiagnosticLogIndex(index)}.jsonl`,
+    );
+  }
+
+  diagnosticFailureLog(application: string, date: string, bootId: string, index: number): string {
+    return join(
+      this.diagnosticBootRoot(application, date, bootId),
+      `errors-${formatDiagnosticLogIndex(index)}.jsonl`,
+    );
+  }
+
   temporaryRoot(): string {
     return join(this.root, "tmp");
   }
@@ -350,4 +382,11 @@ export class PragmaPaths {
   pluginMutationLock(pluginRef: string): string {
     return join(this.pluginState(pluginRef), ".mutation.lock");
   }
+}
+
+function formatDiagnosticLogIndex(index: number): string {
+  if (!Number.isSafeInteger(index) || index <= 0) {
+    throw new Error("Diagnostic log indexes must be positive safe integers.");
+  }
+  return String(index).padStart(4, "0");
 }

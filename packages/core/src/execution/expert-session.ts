@@ -21,6 +21,7 @@ import type { ExpertDefinition } from "../agent/expert-team.ts";
 import { isExpertTeam } from "../agent/expert-team.ts";
 import { fingerprintExpertExecutionDefinition } from "../agent/expert-definition-descriptor.ts";
 import type { RuntimeResolver } from "../runtime-resolver.ts";
+import type { PragmaLoggerProvider } from "../logging/logger.ts";
 import type {
   RuntimeContextWindowUsage,
   RuntimeModelSelection,
@@ -109,6 +110,7 @@ export interface ExpertSessionManagerDependencies {
   readonly sessions: ExpertSessionStore;
   readonly executions: ExecutionStore;
   readonly runtimes: RuntimeResolver;
+  readonly loggerProvider: PragmaLoggerProvider;
   readonly pragmaHome?: string | undefined;
   readonly automaticHumanInteractionHandler?:
     | ExpertAgentAutomaticHumanInteractionHandler
@@ -744,6 +746,10 @@ class ExpertSessionImpl implements ExpertSession {
       systemSessionId: context.snapshot.systemSessionId,
       runtimeSession: context.snapshot.runtimeSession,
       modelSelection: context.modelSelection,
+      loggerProvider: this.dependencies.loggerProvider.withScope({
+        expertSessionId: this.sessionId,
+        contextId: context.contextId,
+      }),
     });
     try {
       if (opened.contextWindow?.compact === undefined) {
@@ -966,6 +972,9 @@ class ExpertSessionImpl implements ExpertSession {
           controller,
           store: this.dependencies.executions,
           runtimes: this.dependencies.runtimes,
+          loggerProvider: this.dependencies.loggerProvider.withScope({
+            expertSessionId: this.sessionId,
+          }),
           handoffs,
           ...(this.recoveredExecutionId === prompt.executionId
             ? { runtimeRunId: `${prompt.executionId}:recovery:${randomUUID()}` }

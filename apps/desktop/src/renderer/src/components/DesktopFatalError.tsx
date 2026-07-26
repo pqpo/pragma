@@ -1,6 +1,8 @@
 import { Component, type ErrorInfo, type ReactNode } from "react";
 import { useTranslation } from "react-i18next";
 
+import { serializeRendererError } from "../lib/renderer-log.ts";
+
 export type DesktopFatalErrorCode = "DESKTOP_BRIDGE_UNAVAILABLE" | "RENDERER_STARTUP_FAILURE";
 
 export function DesktopFatalError(props: {
@@ -53,7 +55,12 @@ export class DesktopErrorBoundary extends Component<
   }
 
   override componentDidCatch(error: Error, info: ErrorInfo): void {
-    console.error("Desktop renderer crashed.", error, info.componentStack);
+    window.pragmaDesktop?.reportRendererLog({
+      level: "error",
+      event: "renderer.crashed",
+      message: "Desktop renderer crashed.",
+      ...serializeRendererError(error, info.componentStack ?? undefined),
+    });
   }
 
   override render(): ReactNode {

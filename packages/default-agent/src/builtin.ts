@@ -81,6 +81,7 @@ export async function compileBuiltInDefaultAgent(options: {
   readonly plugins?: PragmaCompileOptions["plugins"];
   readonly adapterHost?: PragmaCompileOptions["adapterHost"];
   readonly tools: readonly ExpertAgentManagedTool<string, ExpertAgentToolCallResult>[];
+  readonly loggerProvider?: PragmaCompileOptions["loggerProvider"];
 }): Promise<CompiledResource<Expert>> {
   const entry = await materializeBuiltInDefaultAgent(
     options.definitionStateRoot,
@@ -93,6 +94,7 @@ export async function compileBuiltInDefaultAgent(options: {
     pragmaHome: options.pragmaHome,
     environmentId: "desktop-system-expert",
     runtimes: options.runtimes,
+    loggerProvider: options.loggerProvider,
     ...(options.defaultModelSelection === undefined
       ? {}
       : { defaultModelSelection: options.defaultModelSelection }),

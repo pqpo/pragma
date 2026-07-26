@@ -26,8 +26,8 @@ import type {
   ExpertAgentPluginRegistration,
 } from "../plugins/expert-agent-plugin.ts";
 import { resolveExpertAgentPlugins } from "../plugins/expert-agent-plugin.ts";
-import type { ExpertAgentLogger, ExpertAgentLoggerProvider } from "../logging/logger.ts";
-import { createExpertAgentLogger, defaultExpertAgentLoggerProvider } from "../logging/logger.ts";
+import type { PragmaLogger, PragmaLoggerProvider } from "../logging/logger.ts";
+import { createPragmaLogger, defaultPragmaLoggerProvider } from "../logging/logger.ts";
 import type {
   ExpertAgentPluginLoadIssue,
   ExpertAgentPluginSource,
@@ -131,8 +131,8 @@ export interface IExpertAgent {
   readonly tools?: readonly ExpertAgentManagedTool<string, ExpertAgentToolCallResult>[] | undefined;
   readonly hooks?: ExpertAgentPluginHooks | undefined;
   readonly pluginLoadIssues?: readonly ExpertAgentPluginLoadIssue[] | undefined;
-  readonly loggerProvider?: ExpertAgentLoggerProvider | undefined;
-  readonly logger: ExpertAgentLogger;
+  readonly loggerProvider?: PragmaLoggerProvider | undefined;
+  readonly logger: PragmaLogger;
 }
 
 export type ExpertOptions = Omit<
@@ -178,8 +178,8 @@ export class Expert implements IExpertAgent {
   readonly tools: readonly ExpertAgentManagedTool<string, ExpertAgentToolCallResult>[] | undefined;
   readonly hooks: ExpertAgentPluginHooks | undefined;
   readonly pluginLoadIssues: readonly ExpertAgentPluginLoadIssue[] | undefined;
-  readonly loggerProvider: ExpertAgentLoggerProvider;
-  readonly logger: ExpertAgentLogger;
+  readonly loggerProvider: PragmaLoggerProvider;
+  readonly logger: PragmaLogger;
   private readonly contextManager: ContextManager;
 
   static async [defineExpertSymbol](options: DefineExpertOptions): Promise<Expert> {
@@ -198,13 +198,13 @@ export class Expert implements IExpertAgent {
         pluginSources.push(plugin);
       }
     }
-    const loggerProvider = options.loggerProvider ?? defaultExpertAgentLoggerProvider;
-    const logger = createExpertAgentLogger(loggerProvider, {
+    const loggerProvider = options.loggerProvider ?? defaultPragmaLoggerProvider;
+    const logger = createPragmaLogger(loggerProvider, {
       component: "expert-agent",
-      agentId: options.id,
+      scope: { agentId: options.id },
     });
 
-    logger.info("Loading Expert plugins", {
+    logger.info("expert.plugins_loading", "Loading Expert plugins", {
       pluginCount: options.plugins?.length ?? 0,
     });
 
@@ -235,7 +235,7 @@ export class Expert implements IExpertAgent {
           : undefined,
     });
 
-    agent.logger.info("Expert created", {
+    agent.logger.info("expert.created", "Expert created", {
       pluginCount: loaded.pluginEntries.length,
       pluginLoadIssueCount: loaded.issues.length,
     });
@@ -244,10 +244,10 @@ export class Expert implements IExpertAgent {
   }
 
   private constructor(options: ExpertRuntimeOptions) {
-    const loggerProvider = options.loggerProvider ?? defaultExpertAgentLoggerProvider;
-    const logger = createExpertAgentLogger(loggerProvider, {
+    const loggerProvider = options.loggerProvider ?? defaultPragmaLoggerProvider;
+    const logger = createPragmaLogger(loggerProvider, {
       component: "expert-agent",
-      agentId: options.id,
+      scope: { agentId: options.id },
     });
     const contextSystem = options.contextSystem ?? new ContextSystem();
     const resolved = resolveExpertAgentPlugins({
