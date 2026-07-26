@@ -1,4 +1,4 @@
-import { User } from "@phosphor-icons/react";
+import { ArrowLeft, User } from "@phosphor-icons/react";
 import { useState } from "react";
 import { useTranslation } from "react-i18next";
 import type { PragmaResource } from "@pragma/interpreter/ast";
@@ -198,6 +198,10 @@ export function ExpertEditorFragment(props: {
       labelledBy="create-expert-heading"
       header={
         <header className="studio-heading creator-heading">
+          <button className="back-link" type="button" onClick={props.onCancel}>
+            <ArrowLeft size={18} aria-hidden="true" />
+            {t(isEditing ? "backExpertDetail" : "backExperts", { ns: "studio" })}
+          </button>
           <div>
             <h1 id="create-expert-heading">
               {isBuiltIn

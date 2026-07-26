@@ -1,5 +1,11 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
+import {
+  canonicalPragmaResourceRef,
+  type PragmaExpertTeamResource,
+  type PragmaFlowResource,
+  type PragmaResource,
+} from "@pragma/interpreter/ast";
 
 import type {
   ContextStore,
@@ -25,9 +31,17 @@ import { ExpertDetailFragment, ExpertDirectoryFragment } from "./ExpertDirectory
 import { ExpertEditorFragment, type ExpertEditorMode } from "./ExpertEditorFragment.tsx";
 import { CapabilityDirectoryFragment } from "./CapabilityDirectoryFragment.tsx";
 import { CapabilityDetailFragment } from "./CapabilityDetailFragment.tsx";
-import { PragmaResourceDirectoryFragment } from "./PragmaResourceDirectoryFragment.tsx";
+import {
+  PragmaResourceDetailFragment,
+  PragmaResourceDirectoryFragment,
+  TeamEditor,
+  type ResourceEditorMode,
+  type ResourceKind,
+} from "./PragmaResourceDirectoryFragment.tsx";
 import { PluginDetailFragment, PluginDirectoryFragment } from "./PluginDirectoryFragment.tsx";
 import { AutomationDirectoryFragment } from "./AutomationDirectoryFragment.tsx";
+import { FlowEditor } from "./flow-editor/FlowEditor.tsx";
+import { createEmptyFlow } from "./flow-editor/flow-model.ts";
 import {
   desktopApi,
   emptyDraft,
@@ -53,6 +67,8 @@ export function StudioPage(props: {
     | "context-store-detail"
     | "capability-detail"
     | "plugin-detail"
+    | "resource-detail"
+    | "resource-edit"
     | "create"
   >("directory");
   const [experts, setExperts] = useState<readonly ExpertRecord[]>([]);
@@ -73,7 +89,14 @@ export function StudioPage(props: {
   const [expertError, setExpertError] = useState<string | null>(null);
   const [project, setProject] = useState<PragmaProjectSnapshot | null>(null);
   const [automations, setAutomations] = useState<readonly AutomationSummary[]>([]);
+  const [selectedResourceRef, setSelectedResourceRef] = useState<string | null>(null);
+  const [resourceEditor, setResourceEditor] = useState<{
+    readonly kind: ResourceKind;
+    readonly mode: ResourceEditorMode;
+    readonly newResourceId?: string | undefined;
+  } | null>(null);
   const openedInitialExpertRef = useRef<string | undefined>(undefined);
+  const resourceSaveCompletedRef = useRef(false);
 
   useEffect(() => {
     const api = desktopApi();
@@ -352,13 +375,130 @@ export function StudioPage(props: {
   const selectedCapability =
     capabilities.find((capability) => capability.manifest.id === selectedCapabilityId) ?? null;
   const selectedPlugin = plugins.find((plugin) => plugin.ref === selectedPluginRef) ?? null;
+  const selectedResource =
+    project?.resources.find((resource) => canonicalPragmaResourceRef(resource) === selectedResourceRef) ??
+    null;
 
   const updateCapability = (capability: Capability) => {
     setCapabilities((current) =>
       current.some((item) => item.manifest.id === capability.manifest.id)
         ? current.map((item) => (item.manifest.id === capability.manifest.id ? capability : item))
-        : [capability, ...current],
+      : [capability, ...current],
     );
+  };
+
+  const resourceKindView = (kind: ResourceKind): StudioView => (kind === "team" ? "teams" : "flows");
+
+  const openResourceDetail = (resource: PragmaExpertTeamResource | PragmaFlowResource) => {
+    setActiveView(resource.kind === "ExpertTeam" ? "teams" : "flows");
+    setSelectedResourceRef(canonicalPragmaResourceRef(resource));
+    setResourceEditor(null);
+    setScreen("resource-detail");
+  };
+
+  const openResourceCreate = (kind: ResourceKind, resourceId: string) => {
+    resourceSaveCompletedRef.current = false;
+    setActiveView(resourceKindView(kind));
+    setSelectedResourceRef(null);
+    setResourceEditor({ kind, mode: "create", newResourceId: resourceId });
+    setScreen("resource-edit");
+  };
+
+  const openResourceEdit = (resource: PragmaExpertTeamResource | PragmaFlowResource) => {
+    const kind = resource.kind === "ExpertTeam" ? "team" : "flow";
+    resourceSaveCompletedRef.current = false;
+    setActiveView(resourceKindView(kind));
+    setSelectedResourceRef(canonicalPragmaResourceRef(resource));
+    setResourceEditor({ kind, mode: "edit" });
+    setScreen("resource-edit");
+  };
+
+  const closeResourceEditor = () => {
+    if (resourceSaveCompletedRef.current) {
+      resourceSaveCompletedRef.current = false;
+      setScreen("resource-detail");
+      return;
+    }
+    if (resourceEditor?.mode === "create" && selectedResourceRef === null) {
+      setScreen("directory");
+      return;
+    }
+    setScreen("resource-detail");
+  };
+
+  const savePragmaResource = async (
+    resource: PragmaResource,
+    expectedRevision: number,
+    requiredUnchangedRefs: readonly string[],
+  ): Promise<boolean> => {
+    const api = desktopApi();
+    if (api === undefined) return false;
+    try {
+      const snapshot = await api.upsertPragmaResource({
+        baseRevision: expectedRevision,
+        resource,
+        requiredUnchangedRefs: [...requiredUnchangedRefs],
+      });
+      setProject(snapshot);
+      setSelectedResourceRef(canonicalPragmaResourceRef(resource));
+      setResourceEditor(null);
+      resourceSaveCompletedRef.current = true;
+      setExpertError(null);
+      setScreen("resource-detail");
+      return true;
+    } catch (saveError) {
+      setExpertError(errorMessage(saveError));
+      return false;
+    }
+  };
+
+  const saveFlowResource = async (
+    resource: PragmaFlowResource,
+    supportingResources: readonly PragmaResource[],
+    expectedRevision: number,
+    requiredUnchangedRefs: readonly string[],
+  ): Promise<boolean> => {
+    const api = desktopApi();
+    if (api === undefined) return false;
+    try {
+      const snapshot = await api.applyPragmaProjectChanges({
+        baseRevision: expectedRevision,
+        upserts: [...supportingResources, resource],
+        removals: [],
+        requiredUnchangedRefs: [...requiredUnchangedRefs],
+      });
+      setProject(snapshot);
+      setSelectedResourceRef(canonicalPragmaResourceRef(resource));
+      setResourceEditor(null);
+      resourceSaveCompletedRef.current = true;
+      setExpertError(null);
+      setScreen("resource-detail");
+      return true;
+    } catch (saveError) {
+      setExpertError(errorMessage(saveError));
+      return false;
+    }
+  };
+
+  const deleteSelectedResource = async () => {
+    if (project === null || selectedResource === null) return;
+    const api = desktopApi();
+    if (api === undefined) return;
+    const ref = canonicalPragmaResourceRef(selectedResource);
+    const snapshot = await api.deletePragmaResource({
+      baseRevision: project.revision,
+      ref,
+    });
+    setProject(snapshot);
+    if (selectedResource.kind === "Flow") {
+      await api.deleteWorkflowLayout({
+        projectId: project.projectId,
+        flowId: selectedResource.metadata.id,
+      });
+    }
+    setSelectedResourceRef(null);
+    setResourceEditor(null);
+    setScreen("directory");
   };
 
   return (
@@ -395,6 +535,8 @@ export function StudioPage(props: {
                 setActiveView(section.id);
                 setScreen("directory");
                 setContextDrawerOpen(false);
+                setResourceEditor(null);
+                resourceSaveCompletedRef.current = false;
               }}
             >
               <SectionIcon size={20} aria-hidden="true" />
@@ -427,7 +569,13 @@ export function StudioPage(props: {
             capabilities={capabilities}
             plugins={plugins}
             resources={project?.resources ?? []}
-            onCancel={openExpertDirectory}
+            onCancel={() => {
+              if (expertEditor.mode === "edit" && selectedExpert !== null) {
+                setScreen("expert-detail");
+                return;
+              }
+              openExpertDirectory();
+            }}
             onCreated={async (expert) => await saveExpert(expert, expertEditor.mode)}
           />
         ) : null}
@@ -545,6 +693,55 @@ export function StudioPage(props: {
             }}
           />
         ) : null}
+        {screen === "resource-detail" &&
+        project !== null &&
+        (selectedResource?.kind === "ExpertTeam" || selectedResource?.kind === "Flow") ? (
+          <PragmaResourceDetailFragment
+            resource={selectedResource}
+            project={project}
+            onBack={() => setScreen("directory")}
+            onEdit={() => openResourceEdit(selectedResource)}
+            onDelete={deleteSelectedResource}
+          />
+        ) : null}
+        {screen === "resource-edit" && project !== null && resourceEditor !== null ? (
+          resourceEditor.kind === "team" ? (
+            <TeamEditor
+              project={project}
+              baseRevision={project.revision}
+              mode={resourceEditor.mode}
+              newResourceId={resourceEditor.newResourceId}
+              initial={selectedResource?.kind === "ExpertTeam" ? selectedResource : undefined}
+              error={expertError}
+              onCancel={closeResourceEditor}
+              onSave={async (resource, expectedRevision, requiredUnchangedRefs) => {
+                await savePragmaResource(resource, expectedRevision, requiredUnchangedRefs);
+              }}
+            />
+          ) : (
+            <FlowEditor
+              project={project}
+              expertOptions={experts.flatMap((expert) =>
+                expert.ref === undefined ? [] : [{ ref: expert.ref, name: expert.name }],
+              )}
+              baseRevision={project.revision}
+              mode={resourceEditor.mode}
+              runtimes={runtimes}
+              initial={
+                resourceEditor.mode === "create"
+                  ? resourceEditor.newResourceId === undefined
+                    ? undefined
+                    : createEmptyFlow(resourceEditor.newResourceId)
+                  : selectedResource?.kind === "Flow"
+                    ? selectedResource
+                    : undefined
+              }
+              error={expertError}
+              onCancel={closeResourceEditor}
+              onSave={saveFlowResource}
+            />
+          )
+        ) : null}
         {expertError ? (
           <p className="form-error studio-page-error" role="alert">
             {expertError}
@@ -556,11 +753,8 @@ export function StudioPage(props: {
           <PragmaResourceDirectoryFragment
             kind={activeView === "teams" ? "team" : "flow"}
             project={project}
-            expertOptions={experts.flatMap((expert) =>
-              expert.ref === undefined ? [] : [{ ref: expert.ref, name: expert.name }],
-            )}
-            runtimes={runtimes}
-            onProjectChanged={setProject}
+            onOpen={openResourceDetail}
+            onCreate={openResourceCreate}
           />
         ) : null}
       </div>

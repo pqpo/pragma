@@ -143,5 +143,6 @@ describe("ExpertEditorFragment", () => {
 
     expect(html).not.toContain("<label>Version");
     expect(html).not.toContain("test_expert");
+    expect(html).toContain("Back to expert details");
   });
 });

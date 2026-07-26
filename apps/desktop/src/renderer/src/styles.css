@@ -9729,16 +9729,17 @@ textarea:focus-visible,
 .studio-asset-row {
   min-height: 92px;
   padding: 15px 16px;
-  border: 1px solid transparent;
+  border: 0;
   border-radius: 12px;
-  background: #fff;
-  box-shadow: 0 1px 2px rgb(20 31 25 / 3%);
+  background: transparent;
+  box-shadow: none;
 }
 
-.studio-asset-row:hover {
-  border-color: rgb(88 121 104 / 20%);
-  box-shadow: var(--shadow-hover);
-  transform: translateY(-1px);
+.studio-asset-row:hover,
+.studio-asset-row:focus-visible {
+  background: #fff;
+  box-shadow: none;
+  transform: none;
 }
 
 .studio-asset-icon,
@@ -9820,22 +9821,19 @@ textarea:focus-visible,
 .expert-list-row {
   padding-right: 14px;
   padding-left: 14px;
-  border: 1px solid transparent;
+  border: 0;
   border-radius: 12px;
-  background: #fff;
-  box-shadow: 0 1px 2px rgb(20 31 25 / 3%);
+  background: transparent;
+  box-shadow: none;
 }
 
 .capability-row:hover,
 .store-list-row:hover,
-.expert-list-row:hover {
-  border-color: rgb(88 121 104 / 18%);
+.expert-list-row:hover,
+.capability-row:focus-within,
+.store-list-row:focus-visible,
+.expert-list-row:focus-visible {
   background: #fff;
-  box-shadow: var(--shadow-hover);
-}
-
-.plugin-directory .capability-row:hover {
-  border-color: transparent;
   box-shadow: none;
 }
 

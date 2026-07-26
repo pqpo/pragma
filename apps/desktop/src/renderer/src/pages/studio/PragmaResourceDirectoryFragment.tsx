@@ -2,9 +2,11 @@ import { useEffect, useMemo, useState, type ReactNode } from "react";
 import { useTranslation } from "react-i18next";
 
 import {
+  ArrowLeft,
   CaretRight,
   GitBranch,
   MagnifyingGlass,
+  PencilSimple,
   Plus,
   Trash,
   UserCircle,
@@ -17,25 +19,23 @@ import {
   canonicalPragmaResourceRef,
   type PragmaExpertResource,
   type PragmaExpertTeamResource,
-  type PragmaResource,
+  type PragmaFlowResource,
 } from "@pragma/interpreter/ast";
-import type {
-  DesktopRuntimeAvailability,
-  PragmaProjectSnapshot,
-} from "../../../../shared/desktop-api.ts";
+import type { PragmaProjectSnapshot } from "../../../../shared/desktop-api.ts";
 
 import { errorMessage } from "../../lib/errors.ts";
-import { FlowEditor } from "./flow-editor/FlowEditor.tsx";
-import { createEmptyFlow } from "./flow-editor/flow-model.ts";
 import { StudioScreenFrame } from "./StudioScreenFrame.tsx";
 import { desktopApi } from "./studio-model.ts";
 import { DeleteConfirmationDialog } from "./DeleteConfirmationDialog.tsx";
 
-type ResourceKind = "team" | "flow";
+export type ResourceKind = "team" | "flow";
 type TeamExpertPickerKind = "coordinator" | "members";
-type ResourceEditorMode = "create" | "edit";
+export type ResourceEditorMode = "create" | "edit";
 
 const TEAM_EXPERT_RESULT_LIMIT = 8;
+type FlowHumanPrompt = NonNullable<
+  PragmaFlowResource["spec"]["graph"]["steps"][string]["human"]
+>["prompt"];
 
 function unicodeLength(value: string): number {
   return [...value].length;
@@ -83,133 +83,15 @@ export function matchingTeamExperts(
 export function PragmaResourceDirectoryFragment(props: {
   readonly kind: ResourceKind;
   readonly project: PragmaProjectSnapshot;
-  readonly expertOptions: readonly { readonly ref: string; readonly name: string }[];
-  readonly runtimes: readonly DesktopRuntimeAvailability[];
-  readonly onProjectChanged: (snapshot: PragmaProjectSnapshot) => void;
+  readonly onOpen: (resource: PragmaExpertTeamResource | PragmaFlowResource) => void;
+  readonly onCreate: (kind: ResourceKind, resourceId: string) => void;
 }) {
   const { t } = useTranslation("studio");
-  const [editing, setEditing] = useState<PragmaResource | "new" | null>(null);
-  const [newResourceId, setNewResourceId] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
-  const [pendingRemoval, setPendingRemoval] = useState<PragmaResource | null>(null);
-  const [deleting, setDeleting] = useState(false);
-  const resources = props.project.resources.filter((resource) =>
-    props.kind === "team" ? resource.kind === "ExpertTeam" : resource.kind === "Flow",
+  const resources = props.project.resources.filter(
+    (resource): resource is PragmaExpertTeamResource | PragmaFlowResource =>
+      props.kind === "team" ? resource.kind === "ExpertTeam" : resource.kind === "Flow",
   );
-
-  const save = async (
-    resource: PragmaResource,
-    expectedRevision: number,
-    requiredUnchangedRefs: readonly string[],
-  ): Promise<boolean> => {
-    const api = desktopApi();
-    if (api === undefined) return false;
-    try {
-      const snapshot = await api.upsertPragmaResource({
-        baseRevision: expectedRevision,
-        resource,
-        requiredUnchangedRefs: [...requiredUnchangedRefs],
-      });
-      props.onProjectChanged(snapshot);
-      setError(null);
-      return true;
-    } catch (saveError) {
-      setError(errorMessage(saveError));
-      return false;
-    }
-  };
-
-  const saveFlow = async (
-    resource: PragmaResource,
-    supportingResources: readonly PragmaResource[],
-    expectedRevision: number,
-    requiredUnchangedRefs: readonly string[],
-  ): Promise<boolean> => {
-    const api = desktopApi();
-    if (api === undefined) return false;
-    try {
-      const snapshot = await api.applyPragmaProjectChanges({
-        baseRevision: expectedRevision,
-        upserts: [...supportingResources, resource],
-        removals: [],
-        requiredUnchangedRefs: [...requiredUnchangedRefs],
-      });
-      props.onProjectChanged(snapshot);
-      setError(null);
-      return true;
-    } catch (saveError) {
-      setError(errorMessage(saveError));
-      return false;
-    }
-  };
-
-  const remove = async (resource: PragmaResource) => {
-    const api = desktopApi();
-    if (api === undefined) return;
-    setDeleting(true);
-    try {
-      const snapshot = await api.deletePragmaResource({
-        baseRevision: props.project.revision,
-        ref: canonicalPragmaResourceRef(resource),
-      });
-      props.onProjectChanged(snapshot);
-      if (resource.kind === "Flow") {
-        await api.deleteWorkflowLayout({
-          projectId: props.project.projectId,
-          flowId: resource.metadata.id,
-        });
-      }
-      setError(null);
-      setPendingRemoval(null);
-    } catch (removeError) {
-      setError(errorMessage(removeError));
-      setPendingRemoval(null);
-    } finally {
-      setDeleting(false);
-    }
-  };
-
-  if (editing !== null) {
-    const editorMode: ResourceEditorMode = editing === "new" ? "create" : "edit";
-    const closeEditor = () => {
-      setEditing(null);
-      setNewResourceId(null);
-    };
-    return props.kind === "team" ? (
-      <TeamEditor
-        project={props.project}
-        baseRevision={props.project.revision}
-        mode={editorMode}
-        newResourceId={newResourceId ?? undefined}
-        initial={editing === "new" || editing.kind !== "ExpertTeam" ? undefined : editing}
-        error={error}
-        onCancel={closeEditor}
-        onSave={async (resource, expectedRevision, requiredUnchangedRefs) => {
-          if (await save(resource, expectedRevision, requiredUnchangedRefs)) closeEditor();
-        }}
-      />
-    ) : (
-      <FlowEditor
-        project={props.project}
-        expertOptions={props.expertOptions}
-        baseRevision={props.project.revision}
-        mode={editorMode}
-        runtimes={props.runtimes}
-        initial={
-          editing === "new"
-            ? newResourceId === null
-              ? undefined
-              : createEmptyFlow(newResourceId)
-            : editing.kind === "Flow"
-              ? editing
-              : undefined
-        }
-        error={error}
-        onCancel={closeEditor}
-        onSave={saveFlow}
-      />
-    );
-  }
 
   const Icon = props.kind === "team" ? UsersThree : GitBranch;
   const headingId = props.kind === "team" ? "expert-teams-heading" : "flows-heading";
@@ -232,8 +114,8 @@ export function PragmaResourceDirectoryFragment(props: {
               void api
                 .allocatePragmaResourceId()
                 .then(({ id }) => {
-                  setNewResourceId(id);
-                  setEditing("new");
+                  setError(null);
+                  props.onCreate(props.kind, id);
                 })
                 .catch((cause: unknown) => setError(errorMessage(cause)));
             }}
@@ -246,33 +128,21 @@ export function PragmaResourceDirectoryFragment(props: {
     >
       <div className="studio-asset-rows">
         {resources.map((resource) => (
-          <div
+          <button
             className="studio-asset-row pragma-resource-row"
+            type="button"
             key={canonicalPragmaResourceRef(resource)}
+            onClick={() => props.onOpen(resource)}
           >
             <span className="studio-asset-icon" aria-hidden="true">
               <Icon size={24} />
             </span>
-            <button
-              type="button"
-              onClick={() => {
-                setNewResourceId(null);
-                setEditing(resource);
-              }}
-            >
+            <span className="studio-asset-copy">
               <strong>{resource.metadata.name}</strong>
               <span>{resource.metadata.description}</span>
-            </button>
-            <button
-              className="pragma-resource-action pragma-resource-delete-action"
-              type="button"
-              aria-label={t("deleteNamed", { name: resource.metadata.name })}
-              title={t("deleteResourceAction")}
-              onClick={() => setPendingRemoval(resource)}
-            >
-              <Trash size={17} />
-            </button>
-          </div>
+            </span>
+            <CaretRight size={17} aria-hidden="true" />
+          </button>
         ))}
         {resources.length === 0 ? (
           <p className="studio-empty-copy">
@@ -285,22 +155,271 @@ export function PragmaResourceDirectoryFragment(props: {
           {error}
         </p>
       ) : null}
-      {pendingRemoval !== null ? (
+    </StudioScreenFrame>
+  );
+}
+
+export function PragmaResourceDetailFragment(props: {
+  readonly resource: PragmaExpertTeamResource | PragmaFlowResource;
+  readonly project: PragmaProjectSnapshot;
+  readonly onBack: () => void;
+  readonly onEdit: () => void;
+  readonly onDelete: () => Promise<void>;
+}) {
+  const { t } = useTranslation("studio");
+  const [confirmOpen, setConfirmOpen] = useState(false);
+  const [deleting, setDeleting] = useState(false);
+  const [deleteError, setDeleteError] = useState<string | null>(null);
+  const isTeam = props.resource.kind === "ExpertTeam";
+  const headingId = isTeam ? "team-detail-name" : "flow-detail-name";
+  const Icon = isTeam ? UsersThree : GitBranch;
+  const remove = async () => {
+    setDeleting(true);
+    setDeleteError(null);
+    try {
+      await props.onDelete();
+    } catch (cause) {
+      setDeleteError(errorMessage(cause));
+      setConfirmOpen(false);
+    } finally {
+      setDeleting(false);
+    }
+  };
+
+  return (
+    <StudioScreenFrame
+      className="pragma-resource-detail"
+      labelledBy={headingId}
+      header={
+        <button className="back-link" type="button" onClick={props.onBack}>
+          <ArrowLeft size={18} aria-hidden="true" />
+          {isTeam ? t("backTeams") : t("backFlows")}
+        </button>
+      }
+    >
+      <header className="expert-detail-header pragma-resource-detail-header">
+        <span className="expert-avatar" aria-hidden="true">
+          <Icon size={42} />
+        </span>
+        <div className="expert-detail-title">
+          <div>
+            <h1 id={headingId}>{props.resource.metadata.name}</h1>
+          </div>
+          <p>{props.resource.metadata.description}</p>
+          <div className="expert-tag-list">
+            {props.resource.metadata.tags.map((tag) => (
+              <em key={tag}>{tag}</em>
+            ))}
+          </div>
+        </div>
+        <div className="detail-actions">
+          <button className="primary-button" type="button" onClick={props.onEdit}>
+            <PencilSimple size={17} aria-hidden="true" />
+            {isTeam ? t("editExpertTeam") : t("editFlow")}
+          </button>
+          <button
+            className="danger-button"
+            type="button"
+            onClick={() => {
+              setDeleteError(null);
+              setConfirmOpen(true);
+            }}
+          >
+            <Trash size={17} aria-hidden="true" />
+            {t("deleteResourceAction")}
+          </button>
+        </div>
+      </header>
+      {deleteError ? (
+        <p className="form-error" role="alert">
+          {deleteError}
+        </p>
+      ) : null}
+      {isTeam ? (
+        <TeamDetail resource={props.resource} project={props.project} />
+      ) : (
+        <FlowDetail resource={props.resource} project={props.project} />
+      )}
+      {confirmOpen ? (
         <DeleteConfirmationDialog
           title={t("deleteResource", {
-            kind: pendingRemoval.kind === "ExpertTeam" ? t("expertTeam") : t("flow"),
+            kind: isTeam ? t("expertTeam") : t("flow"),
           })}
-          description={t("deleteResourceDescription", { name: pendingRemoval.metadata.name })}
+          description={t("deleteResourceDescription", { name: props.resource.metadata.name })}
           cancelLabel={t("cancel")}
           confirmLabel={t("deleteResourceAction")}
           deletingLabel={t("deleting")}
           busy={deleting}
-          onCancel={() => setPendingRemoval(null)}
-          onConfirm={() => void remove(pendingRemoval)}
+          onCancel={() => setConfirmOpen(false)}
+          onConfirm={() => void remove()}
         />
       ) : null}
     </StudioScreenFrame>
   );
+}
+
+function TeamDetail(props: {
+  readonly resource: PragmaExpertTeamResource;
+  readonly project: PragmaProjectSnapshot;
+}) {
+  const { t } = useTranslation("studio");
+  const experts = props.project.resources.filter(
+    (resource): resource is PragmaExpertResource => resource.kind === "Expert",
+  );
+  const expertName = (ref: string): string =>
+    experts.find((expert) => expertRef(expert) === ref)?.metadata.name ?? ref;
+  const uniqueMembers = [
+    props.resource.spec.coordinator.ref,
+    ...props.resource.spec.members.map((member) => member.ref),
+  ].filter((ref, index, refs) => refs.indexOf(ref) === index);
+
+  return (
+    <>
+      <section className="expert-scope" aria-labelledby="team-overview-heading">
+        <h2 id="team-overview-heading">{t("overview")}</h2>
+        <dl className="pragma-resource-detail-list">
+          <div>
+            <dt>{t("resourceId")}</dt>
+            <dd>{canonicalPragmaResourceRef(props.resource)}</dd>
+          </div>
+          <div>
+            <dt>{t("coordinator")}</dt>
+            <dd>{expertName(props.resource.spec.coordinator.ref)}</dd>
+          </div>
+          <div>
+            <dt>{t("members")}</dt>
+            <dd>{t("membersCount", { count: uniqueMembers.length })}</dd>
+          </div>
+        </dl>
+      </section>
+      <section className="instructions-preview" aria-labelledby="team-instructions-heading">
+        <h2 id="team-instructions-heading">{t("teamInstructions")}</h2>
+        <p>{props.resource.spec.instructions?.trim() || t("noInstructions")}</p>
+      </section>
+      <section className="expert-capabilities" aria-label={t("teamDetails")}>
+        <div>
+          <h2>{t("maxConcurrency")}</h2>
+          <p>{props.resource.spec.delegation.maxConcurrency}</p>
+        </div>
+        <div>
+          <h2>{t("maxDelegationDepth")}</h2>
+          <p>{props.resource.spec.delegation.maxDepth}</p>
+        </div>
+      </section>
+      <section className="expert-context-section" aria-labelledby="team-members-heading">
+        <header>
+          <div>
+            <h2 id="team-members-heading">{t("members")}</h2>
+            <p>{t("teamMembersDescription")}</p>
+          </div>
+        </header>
+        <div className="expert-context-list">
+          {uniqueMembers.map((ref) => (
+            <article key={ref}>
+              <UserCircle size={20} aria-hidden="true" />
+              <div>
+                <strong>{expertName(ref)}</strong>
+                <span>{ref}</span>
+              </div>
+            </article>
+          ))}
+        </div>
+      </section>
+    </>
+  );
+}
+
+function FlowDetail(props: {
+  readonly resource: PragmaFlowResource;
+  readonly project: PragmaProjectSnapshot;
+}) {
+  const { t } = useTranslation("studio");
+  const steps = Object.entries(props.resource.spec.graph.steps);
+  const loops = Object.keys(props.resource.spec.graph.loops);
+  const transitionCount = Object.keys(props.resource.spec.graph.transitions).length;
+  const startStep = props.resource.spec.graph.start;
+
+  return (
+    <>
+      <section className="expert-scope" aria-labelledby="flow-overview-heading">
+        <h2 id="flow-overview-heading">{t("overview")}</h2>
+        <dl className="pragma-resource-detail-list">
+          <div>
+            <dt>{t("resourceId")}</dt>
+            <dd>{canonicalPragmaResourceRef(props.resource)}</dd>
+          </div>
+          <div>
+            <dt>{t("startStep")}</dt>
+            <dd>{startStep}</dd>
+          </div>
+          <div>
+            <dt>{t("limits")}</dt>
+            <dd>{t("maxNodeVisits", { count: props.resource.spec.limits.maxNodeVisits })}</dd>
+          </div>
+        </dl>
+      </section>
+      <section className="expert-capabilities" aria-label={t("flowDetails")}>
+        <div>
+          <h2>{t("steps")}</h2>
+          <p>{t("stepsCount", { count: steps.length })}</p>
+        </div>
+        <div>
+          <h2>{t("transitions")}</h2>
+          <p>
+            {t("transitionCount", { count: transitionCount })} <span>•</span>{" "}
+            {t("loopCount", { count: loops.length })}
+          </p>
+        </div>
+      </section>
+      <section className="expert-capabilities" aria-label={t("flowContracts")}>
+        <div>
+          <h2>{t("flowInputContract")}</h2>
+          <p>{props.resource.spec.input === undefined ? t("notConfigured") : t("configured")}</p>
+        </div>
+        <div>
+          <h2>{t("flowOutputContract")}</h2>
+          <p>{props.resource.spec.output === undefined ? t("notConfigured") : t("configured")}</p>
+        </div>
+      </section>
+      <section className="expert-context-section" aria-labelledby="flow-steps-heading">
+        <header>
+          <div>
+            <h2 id="flow-steps-heading">{t("steps")}</h2>
+            <p>{t("flowStepsDescription")}</p>
+          </div>
+        </header>
+        <div className="expert-context-list">
+          {steps.map(([stepId, step]) => (
+            <article key={stepId}>
+              <GitBranch size={20} aria-hidden="true" />
+              <div>
+                <strong>{stepId}</strong>
+                <span>{flowStepSummary(step)}</span>
+              </div>
+            </article>
+          ))}
+        </div>
+      </section>
+    </>
+  );
+}
+
+function flowStepSummary(
+  step: PragmaFlowResource["spec"]["graph"]["steps"][string],
+): string {
+  if (step.expert !== undefined) return step.expert.ref;
+  if (step.team !== undefined) return step.team.ref;
+  if (step.flow !== undefined) return step.flow.ref;
+  if (step.action !== undefined) return step.action.ref;
+  if (step.human !== undefined) return promptSummary(step.human.prompt);
+  return "step";
+}
+
+function promptSummary(prompt: FlowHumanPrompt): string {
+  return prompt.segments
+    .map((segment) => ("text" in segment ? segment.text : `{{${segment.variable.source}}}`))
+    .join("")
+    .trim();
 }
 
 export function TeamEditor(props: {
@@ -368,6 +487,7 @@ export function TeamEditor(props: {
   return (
     <ResourceEditor
       title={props.mode === "create" ? t("newExpertTeam") : t("editExpertTeam")}
+      backLabel={props.mode === "create" ? t("backTeams") : t("backTeamDetail")}
       error={validationError ?? props.error}
       onCancel={props.onCancel}
       onSave={submit}
@@ -705,6 +825,7 @@ function TeamExpertSelectors(props: {
 
 function ResourceEditor(props: {
   readonly title: string;
+  readonly backLabel: string;
   readonly error: string | null;
   readonly children: ReactNode;
   readonly onCancel: () => void;
@@ -718,6 +839,10 @@ function ResourceEditor(props: {
       labelledBy="resource-editor-heading"
       header={
         <header>
+          <button className="back-link" type="button" onClick={props.onCancel}>
+            <ArrowLeft size={18} aria-hidden="true" />
+            {props.backLabel}
+          </button>
           <div>
             <h2 id="resource-editor-heading">{props.title}</h2>
             <p>{t("canonicalYaml")}</p>
