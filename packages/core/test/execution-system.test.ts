@@ -15,6 +15,7 @@ import {
   createPragma,
   createFileExecutionStore,
   createFileExpertSessionStore,
+  createRuntimeSessionRecord,
   createStaticRuntimeResolver,
   ContextSystem,
   defineExpert,
@@ -24,6 +25,7 @@ import {
   defineRuntimeDriver,
   fingerprintExpertExecutionDefinition,
   PragmaPaths,
+  readRuntimeSessionRecord,
   StaticContextStore,
   type AgentMessageUsage,
   type ExecutionEvent,
@@ -945,6 +947,82 @@ describe("ExpertSession", () => {
     expect((await sessions.get("fingerprint-session"))?.definitionFingerprint).toBe(
       fingerprintExpertExecutionDefinition(original),
     );
+  });
+
+  it("migrates an explicitly aliased persisted Expert definition on resume", async () => {
+    const home = await mkdtemp(join(tmpdir(), "pragma-definition-migration-"));
+    const runtime = createFakeRuntime();
+    const executions = createFileExecutionStore({ pragmaHome: home });
+    const sessions = createFileExpertSessionStore({ executions, pragmaHome: home });
+    const app = createPragma({
+      pragmaHome: home,
+      executionStore: executions,
+      expertSessionStore: sessions,
+      runtimes: createStaticRuntimeResolver({ runtimes: [runtime], defaultRuntimeId: "fake" }),
+    });
+    const expert = await defineExpert({
+      id: "canonical-expert",
+      name: "Canonical Expert",
+      description: "Canonical Expert",
+      tags: [],
+      scope: "test",
+      workspace: home,
+    });
+    const sessionId = "definition-migration-session";
+    const contextId = "definition-migration-root";
+    const systemSessionId = "definition-migration-runtime";
+    const now = new Date().toISOString();
+    await createRuntimeSessionRecord({
+      paths: new PragmaPaths({ pragmaHome: home }),
+      owner: { type: "expert-session", ownerId: sessionId, contextId },
+      systemSessionId,
+      agentId: "legacy-expert",
+      runtime: { id: "fake", kind: "fake", displayName: "Fake" },
+      workspace: home,
+    });
+    const rootContext = {
+      ...sessionRootContext(sessionId, contextId, "legacy-expert", "fake", now),
+      snapshot: {
+        systemSessionId,
+        runtimeSession: { type: "fake", id: "native-definition-migration-runtime" },
+      },
+    };
+    await sessions.create({
+      schemaVersion: "pragma.expert-session/v5",
+      sessionId,
+      expertId: "legacy-expert",
+      definitionFingerprint: "b".repeat(64),
+      status: "open",
+      queuedRequestIds: [],
+      executionIds: [],
+      rootContextId: contextId,
+      contexts: { [contextId]: rootContext },
+      createdAt: now,
+      updatedAt: now,
+    });
+
+    const resumed = await app.experts.resumeSession(expert, {
+      sessionId,
+      definitionMigration: {
+        previousExpertId: "legacy-expert",
+        reason: "test canonical Expert id migration",
+      },
+    });
+
+    const migrated = await resumed.getState();
+    expect(migrated.expertId).toBe(expert.id);
+    expect(migrated.definitionFingerprint).toBe(fingerprintExpertExecutionDefinition(expert));
+    expect(migrated.contexts[migrated.rootContextId]?.expert.id).toBe(expert.id);
+    expect(
+      (
+        await readRuntimeSessionRecord(
+          new PragmaPaths({ pragmaHome: home }),
+          sessionId,
+          systemSessionId,
+        )
+      ).expertId,
+    ).toBe(expert.id);
+    await resumed.close();
   });
 
   it("reuses the Runtime Session after a failed prompt", async () => {

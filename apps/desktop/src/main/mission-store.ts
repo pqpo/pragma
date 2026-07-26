@@ -12,8 +12,12 @@ import {
 } from "node:fs/promises";
 import { dirname, join } from "node:path";
 
-import { derivePragmaResourceId, withFileLock } from "@pragma/core";
-import { formatPragmaYaml, parsePragmaYaml } from "@pragma/interpreter";
+import { withFileLock } from "@pragma/core";
+import {
+  formatPragmaYaml,
+  migrateLegacyPragmaResourceRef,
+  parsePragmaYaml,
+} from "@pragma/interpreter";
 import { z } from "zod";
 
 import {
@@ -204,7 +208,7 @@ export function createMissionStore(options: { readonly missionsPath: string }): 
         void _version;
         const migratedExecutor = {
           ...executor,
-          ref: migrateMissionExecutorRef(executor.ref, legacy.project.id),
+          ref: migrateLegacyPragmaResourceRef(executor.ref, legacy.project.id),
         };
         const migrated = MissionSchema.parse({
           ...legacy,
@@ -550,14 +554,6 @@ export function createMissionStore(options: { readonly missionsPath: string }): 
       });
     },
   };
-}
-
-function migrateMissionExecutorRef(ref: string, projectId: string): string {
-  const match = /^(expert|team|flow):([^@]+)@[^@]+$/.exec(ref);
-  if (match === null) return ref;
-  if (match[1] === "expert" && match[2] === "pragma") return "expert:0000000000pragma";
-  const kind = match[1] === "expert" ? "Expert" : match[1] === "team" ? "ExpertTeam" : "Flow";
-  return `${match[1]}:${derivePragmaResourceId(`${projectId}\0${kind}\0${match[2]}`)}`;
 }
 
 function toMissionSummary(mission: Mission): MissionSummary {

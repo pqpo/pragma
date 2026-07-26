@@ -21,6 +21,13 @@ export {
   type PragmaDslProjectMigrationResult,
   type PragmaResourceIdentityMigration,
 } from "./types.ts";
+export {
+  createPragmaResourceIdentityMigrationIndex,
+  migrateLegacyPragmaResourceRef,
+  type PragmaProjectResourceKind,
+  type PragmaProjectResourceNamespace,
+  type PragmaResourceIdentityMigrationIndex,
+} from "./resource-identity-index.ts";
 
 const migrationSteps = [pragmaDslV2ToV3Step] as const satisfies readonly PragmaDslMigrationStep[];
 const migrationStepsBySource = indexMigrationSteps(migrationSteps);

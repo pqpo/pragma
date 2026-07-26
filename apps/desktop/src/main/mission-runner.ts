@@ -33,6 +33,7 @@ import type {
   PragmaAdapterHost,
   PragmaBindingRecord,
 } from "@pragma/interpreter";
+import { createPragmaResourceIdentityMigrationIndex } from "@pragma/interpreter";
 import type {
   HumanInteractionRequest,
   HumanInteractionResponse,
@@ -40,7 +41,7 @@ import type {
   RuntimeContextRecord,
   RuntimeEnvironmentBinding,
 } from "@pragma/shared";
-import { ExpertAgentStreamEventSchema } from "@pragma/shared";
+import { ExpertAgentStreamEventSchema, isFinalExecutionStatus } from "@pragma/shared";
 
 import type {
   Mission,
@@ -69,6 +70,10 @@ import {
   parseDesktopContextBindingRef,
 } from "./desktop-binding-ref.ts";
 import { MissionOperationError } from "./mission-operation-error.ts";
+import {
+  createMissionResumeOptions,
+  shouldCreateSuccessorExpertSession,
+} from "./mission-session-upgrade.ts";
 import type { MissionStore, MissionTimelineTurn } from "./mission-store.ts";
 import type { PragmaProjectStore } from "./pragma-project-store.ts";
 import type { PluginStore } from "./plugin-store.ts";
@@ -375,6 +380,128 @@ export function createMissionRunner(options: {
     return record?.contexts[record.rootContextId];
   };
 
+  const createMissionExpertSession = async (
+    compiled: CompiledResource<InvocableResource>,
+    app: ReturnType<typeof createPragma>,
+    input: {
+      readonly modelSelection?: RuntimeModelSelection | undefined;
+    } = {},
+  ): Promise<ExpertSession> => {
+    if ("kind" in compiled.value && compiled.value.kind === "flow") {
+      throw new Error("Flow missions do not use ExpertSession.");
+    }
+    return await app.experts.createSession(compiled.value, {
+      runtime: compiled.rootRuntimeId,
+      ...(input.modelSelection === undefined ? {} : { modelSelection: input.modelSelection }),
+    });
+  };
+
+  const resumeMissionSession = async (
+    mission: Mission,
+    compiled: CompiledResource<InvocableResource>,
+    app: ReturnType<typeof createPragma>,
+    sessionId: string,
+  ): Promise<ExpertSession> => {
+    if ("kind" in compiled.value && compiled.value.kind === "flow") {
+      throw new Error("Flow missions do not use ExpertSession.");
+    }
+    const record = await expertSessionStore.get(sessionId);
+    const identityIndex = createPragmaResourceIdentityMigrationIndex({
+      projectId: mission.project.id,
+      migrations: await options.project.readIdentityMigrations(),
+    });
+    const request = createMissionResumeOptions({
+      mission,
+      compiled,
+      sessionId,
+      record,
+      identityIndex,
+    });
+    return await app.experts.resumeSession(compiled.value, request);
+  };
+
+  const interruptSupersededMissionSession = async (mission: Mission): Promise<void> => {
+    if (
+      mission.execution?.sessionId === undefined ||
+      !["queued", "running", "waiting"].includes(mission.execution.status)
+    ) {
+      return;
+    }
+    const now = new Date().toISOString();
+    const execution = await executionStore.get(mission.execution.id);
+    if (execution !== undefined && !isFinalExecutionStatus(execution.status)) {
+      const invocations = await executionStore.listInvocations(execution.executionId);
+      await executionStore.commit({
+        commitId: randomUUID(),
+        executionId: execution.executionId,
+        executionPatch: { status: "interrupted" },
+        invocationPatches: invocations
+          .filter((invocation) => !isFinalExecutionStatus(invocation.status))
+          .map((invocation) => ({
+            invocationId: invocation.invocationId,
+            patch: { status: "interrupted", updatedAt: now },
+          })),
+      });
+    }
+    await expertSessionStore.transact(mission.execution.sessionId, ({ session, prompts }) => ({
+      result: undefined,
+      session: {
+        ...session,
+        activeExecutionId:
+          session.activeExecutionId === mission.execution!.id
+            ? undefined
+            : session.activeExecutionId,
+        lastStatus: "interrupted",
+        queuedRequestIds: session.queuedRequestIds.filter(
+          (requestId) =>
+            !prompts.some(
+              (prompt) =>
+                prompt.requestId === requestId && prompt.executionId === mission.execution!.id,
+            ),
+        ),
+        updatedAt: now,
+      },
+      prompts: prompts.map((prompt) =>
+        prompt.executionId === mission.execution!.id &&
+        (prompt.status === "queued" || prompt.status === "running")
+          ? { ...prompt, status: "interrupted" as const, updatedAt: now }
+          : prompt,
+      ),
+    }));
+  };
+
+  const openMissionExpertSession = async (input: {
+    readonly mission: Mission;
+    readonly compiled: CompiledResource<InvocableResource>;
+    readonly app: ReturnType<typeof createPragma>;
+    readonly sessionId?: string | undefined;
+    readonly modelSelection?: RuntimeModelSelection | undefined;
+    readonly createSuccessorOnMismatch: boolean;
+  }): Promise<ExpertSession> => {
+    if (input.sessionId === undefined) {
+      return await createMissionExpertSession(input.compiled, input.app, {
+        modelSelection: input.modelSelection,
+      });
+    }
+    try {
+      return await resumeMissionSession(input.mission, input.compiled, input.app, input.sessionId);
+    } catch (error) {
+      if (!input.createSuccessorOnMismatch || !shouldCreateSuccessorExpertSession(error)) {
+        throw error;
+      }
+      const successor = await createMissionExpertSession(input.compiled, input.app, {
+        modelSelection: input.modelSelection,
+      });
+      await interruptSupersededMissionSession(input.mission);
+      logger.warn(
+        "mission.session_successor_created",
+        `Created a successor ExpertSession for Mission ${input.mission.id} after an incompatible definition upgrade.`,
+        { error, sessionId: successor.sessionId },
+      );
+      return successor;
+    }
+  };
+
   const trackExecution = (input: {
     readonly missionId: string;
     readonly handle: MutableExecution & { readonly result: Promise<unknown> };
@@ -523,14 +650,14 @@ export function createMissionRunner(options: {
       ["queued", "running", "waiting"].includes(mission.execution.status);
     const session =
       sessions.get(mission.id) ??
-      (recoverable
-        ? await app.experts.resumeSession(compiled.value, {
-            sessionId: mission.execution!.sessionId!,
-          })
-        : await app.experts.createSession(compiled.value, {
-            runtime: compiled.rootRuntimeId,
-            ...(modelSelection === undefined ? {} : { modelSelection }),
-          }));
+      (await openMissionExpertSession({
+        mission,
+        compiled,
+        app,
+        sessionId: recoverable ? mission.execution!.sessionId : undefined,
+        modelSelection,
+        createSuccessorOnMismatch: true,
+      }));
     sessions.set(mission.id, session);
     const recoveredPrompt = recoverable
       ? (await session.getPromptQueue()).find(
@@ -636,14 +763,14 @@ export function createMissionRunner(options: {
       : desiredModelSelection;
     const session =
       sessions.get(mission.id) ??
-      (mission.execution?.sessionId === undefined
-        ? await app.experts.createSession(compiled.value, {
-            runtime: compiled.rootRuntimeId,
-            ...(modelSelection === undefined ? {} : { modelSelection }),
-          })
-        : await app.experts.resumeSession(compiled.value, {
-            sessionId: mission.execution.sessionId,
-          }));
+      (await openMissionExpertSession({
+        mission,
+        compiled,
+        app,
+        sessionId: mission.execution?.sessionId,
+        modelSelection,
+        createSuccessorOnMismatch: true,
+      }));
     sessions.set(mission.id, session);
     await options.missions.appendUserMessage(mission.id, {
       id: input.requestId,
@@ -848,10 +975,7 @@ export function createMissionRunner(options: {
       throw new Error("Flow missions do not expose a chat context to compact.");
     }
     const session =
-      sessions.get(id) ??
-      (await app.experts.resumeSession(compiled.value, {
-        sessionId,
-      }));
+      sessions.get(id) ?? (await resumeMissionSession(mission, compiled, app, sessionId));
     sessions.set(id, session);
     const usage = await session.compactRootContext();
     invalidateChat(id);

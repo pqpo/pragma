@@ -5,8 +5,11 @@ import {
   ModelApiSchema as SharedModelApiSchema,
   ModelCompatibilityProfileIdSchema,
   ModelThinkingLevelSchema,
+  MissionExecutorRefSchema,
+  MissionExecutorSchema,
   ProviderModelDefinitionSchema,
   ToolPermissionModeSchema,
+  type MissionExecutor,
 } from "@pragma/shared";
 import {
   canonicalPragmaResourceRef,
@@ -18,7 +21,6 @@ import {
   PragmaScheduleTriggerSchema,
   PragmaExpertIdSchema,
   PragmaExpertRefSchema,
-  PragmaInvocableResourceRefSchema,
   PragmaLockSchema,
   PragmaResourceRefSchema,
   PragmaResourceSchema,
@@ -1077,18 +1079,9 @@ export const MissionWorkspaceSchema = z.object({
   basename: z.string().trim().min(1).max(255),
 });
 
-const MissionExecutorBaseSchema = z.object({
-  ref: PragmaInvocableResourceRefSchema,
+const MissionExecutorOptionBaseSchema = z.object({
+  ref: MissionExecutorRefSchema,
   name: z.string().trim().min(1).max(120),
-});
-
-export const MissionExecutorSchema = z.discriminatedUnion("kind", [
-  MissionExecutorBaseSchema.extend({ kind: z.literal("expert") }),
-  MissionExecutorBaseSchema.extend({ kind: z.literal("team") }),
-  MissionExecutorBaseSchema.extend({ kind: z.literal("flow") }),
-]);
-
-const MissionExecutorOptionBaseSchema = MissionExecutorBaseSchema.extend({
   description: z.string().trim().max(2_000),
   origin: z.enum(["project", "built-in"]),
   readOnly: z.boolean(),
@@ -1206,7 +1199,7 @@ export const AutomationAdapterOptionSchema = z
   .strict();
 
 export const MissionModelOptionsRequestSchema = z.object({
-  executorRef: PragmaInvocableResourceRefSchema,
+  executorRef: MissionExecutorRefSchema,
   missionId: MissionIdSchema.optional(),
 });
 
@@ -1383,7 +1376,7 @@ export const MissionSummarySchema = z.object({
 export const CreateMissionSchema = z.object({
   workspace: z.string().trim().min(1).max(2_000),
   executor: z.object({
-    ref: PragmaInvocableResourceRefSchema,
+    ref: MissionExecutorRefSchema,
   }),
   input: z.discriminatedUnion("kind", [
     z.object({ kind: z.literal("prompt"), value: z.string().trim().min(1).max(100_000) }).strict(),
@@ -1663,7 +1656,8 @@ export type GetWorkflowLayout = z.infer<typeof GetWorkflowLayoutSchema>;
 export type DeleteWorkflowLayout = z.infer<typeof DeleteWorkflowLayoutSchema>;
 export type Mission = z.infer<typeof MissionSchema>;
 export type MissionSummary = z.infer<typeof MissionSummarySchema>;
-export type MissionExecutor = z.infer<typeof MissionExecutorSchema>;
+export { MissionExecutorRefSchema, MissionExecutorSchema };
+export type { MissionExecutor };
 export type MissionExecutorOption = z.infer<typeof MissionExecutorOptionSchema>;
 export type MissionCreationDefaults = z.infer<typeof MissionCreationDefaultsSchema>;
 export type MissionModelOverride = z.infer<typeof MissionModelOverrideSchema>;

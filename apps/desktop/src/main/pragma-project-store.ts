@@ -26,6 +26,7 @@ import {
   type PragmaProjectRevisionLocation,
   type PragmaProjectSourceRepository,
   type PragmaProjectChangeSetInput,
+  type PragmaResourceIdentityMigration,
 } from "@pragma/interpreter";
 import type { PragmaLoggerProvider } from "@pragma/core";
 import {
@@ -73,6 +74,30 @@ const ProjectRevisionManifestSchema = z
   })
   .strict();
 
+const ProjectIdentityMigrationManifestSchema = z
+  .object({
+    schemaVersion: z.literal("pragma.desktop-project-identity-migrations/v1"),
+    projectId: z.string().min(1),
+    migrations: z.array(
+      z
+        .object({
+          kind: z.enum([
+            "Expert",
+            "ExpertTeam",
+            "Flow",
+            "Automation",
+            "Capability",
+            "ContextStore",
+            "RuntimeProfile",
+          ]),
+          sourceId: z.string().min(1),
+          targetId: z.string().min(1),
+        })
+        .strict(),
+    ),
+  })
+  .strict();
+
 export interface PragmaProjectStore {
   get(): Promise<PragmaProjectSnapshot>;
   ensurePublished(): Promise<PragmaProjectSnapshot>;
@@ -102,6 +127,7 @@ export interface PragmaProjectStore {
     input: Parameters<PragmaProjectService["compile"]>[0],
   ): Promise<CompiledResource<T>>;
   openRevision(revision: number): Promise<PragmaProject>;
+  readIdentityMigrations(): Promise<readonly PragmaResourceIdentityMigration[]>;
   readonly projectId: string;
 }
 
@@ -170,6 +196,27 @@ export function createPragmaProjectStore(options: {
   const get = async (): Promise<PragmaProjectSnapshot> => {
     await ensureMigrated();
     return PragmaProjectSnapshotSchema.parse(await service.get(projectId));
+  };
+
+  const readIdentityMigrations = async (): Promise<readonly PragmaResourceIdentityMigration[]> => {
+    await ensureMigrated();
+    try {
+      const manifest = ProjectIdentityMigrationManifestSchema.parse(
+        JSON.parse(
+          await readFile(join(options.projectsPath, projectId, "identity-migrations.json"), "utf8"),
+        ) as unknown,
+      );
+      if (manifest.projectId !== projectId) {
+        throw new PragmaProjectStoreError(
+          "project_invalid",
+          `Project identity migration index belongs to ${manifest.projectId}, expected ${projectId}.`,
+        );
+      }
+      return manifest.migrations;
+    } catch (error) {
+      if (errorCode(error) === "ENOENT") return [];
+      throw error;
+    }
   };
 
   const normalizeError = (error: unknown): never => {
@@ -388,6 +435,7 @@ export function createPragmaProjectStore(options: {
         requireLock: true,
       });
     },
+    readIdentityMigrations,
   };
 }
 
@@ -826,6 +874,11 @@ async function migrateDesktopProjectStorageV3ToV4(input: {
         const migrated = revisions[revision]!;
         await input.publish(revision, migrated.resources, migrated.artifacts);
       }
+      await writeLegacyProjectIdentityMigrationIndex(
+        projectPath,
+        input.projectId,
+        revisions.flatMap((revision) => revision.identityMigrations),
+      );
       await migrateLegacyFlowLayouts(
         legacyLayouts,
         projectPath,
@@ -839,6 +892,34 @@ async function migrateDesktopProjectStorageV3ToV4(input: {
       throw error;
     }
   });
+}
+
+async function writeLegacyProjectIdentityMigrationIndex(
+  projectPath: string,
+  projectId: string,
+  identities: readonly {
+    readonly kind: PragmaResource["kind"];
+    readonly sourceId: string;
+    readonly targetId: string;
+  }[],
+): Promise<void> {
+  const unique = new Map<string, (typeof identities)[number]>();
+  for (const identity of identities) {
+    unique.set(`${identity.kind}:${identity.sourceId}:${identity.targetId}`, identity);
+  }
+  if (unique.size === 0) return;
+  await writeAtomically(
+    join(projectPath, "identity-migrations.json"),
+    `${JSON.stringify(
+      {
+        schemaVersion: "pragma.desktop-project-identity-migrations/v1",
+        projectId,
+        migrations: [...unique.values()],
+      },
+      undefined,
+      2,
+    )}\n`,
+  );
 }
 
 async function readProjectMigrationJournal(
@@ -950,7 +1031,8 @@ async function createProjectViewLease(directory: string): Promise<string> {
       );
       return lease;
     } catch (error) {
-      if (errorCode(error) !== "ENOENT") throw error;
+      const code = errorCode(error);
+      if (code !== "ENOENT" && code !== "EINVAL") throw error;
     }
   }
 }

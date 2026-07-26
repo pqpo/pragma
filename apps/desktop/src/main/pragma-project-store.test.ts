@@ -108,6 +108,9 @@ describe("PragmaProjectStore", () => {
         }),
       ],
     });
+    await expect(project.readIdentityMigrations()).resolves.toEqual([
+      { kind: "Flow", sourceId: "release", targetId: expectedId },
+    ]);
     expect(await readFile(join(directory, "studio", "project.json"), "utf8")).toContain(
       "pragma.desktop-project/v4",
     );

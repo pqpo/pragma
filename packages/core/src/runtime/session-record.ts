@@ -88,6 +88,27 @@ export async function restoreRuntimeSessionRecord(options: {
   return updated;
 }
 
+export async function rebindRuntimeSessionExpertId(options: {
+  readonly paths: PragmaPaths;
+  readonly ownerId: string;
+  readonly systemSessionId: string;
+  readonly fromExpertId: string;
+  readonly toExpertId: string;
+}): Promise<void> {
+  if (options.fromExpertId === options.toExpertId) return;
+  const record = await readRuntimeSessionRecord(
+    options.paths,
+    options.ownerId,
+    options.systemSessionId,
+  );
+  assertEqual(record.expertId, options.fromExpertId, "Expert");
+  await writeRuntimeSessionRecord(options.paths, {
+    ...record,
+    expertId: options.toExpertId,
+    updatedAt: new Date().toISOString(),
+  });
+}
+
 export async function updateRuntimeSessionRecord(
   paths: PragmaPaths,
   record: RuntimeSessionRecord,
