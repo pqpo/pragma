@@ -194,6 +194,38 @@ describe("PragmaProjectStore", () => {
     expect(layout).not.toHaveProperty("flowVersion");
   });
 
+  it("ignores legacy Flow layouts whose v2 Flow no longer exists", async () => {
+    const directory = await mkdtemp(join(tmpdir(), "pragma-project-v3-orphan-layout-migration-"));
+    directories.push(directory);
+    await seedLegacyProject(directory, [legacyFlowSource("release", "1.0.0")]);
+    await mkdir(join(directory, "studio", "layouts", "legacy"), { recursive: true });
+    await writeFile(
+      join(directory, "studio", "layouts", "legacy", "untitled_flow_2.json"),
+      `${JSON.stringify({
+        schemaVersion: "pragma.desktop-flow-layout/v1",
+        flowId: "untitled_flow_2",
+        flowVersion: "1.0.0",
+        viewport: { x: 1, y: 2, zoom: 1 },
+      })}\n`,
+    );
+
+    const migrated = await createPragmaProjectStore({ projectsPath: directory }).get();
+
+    expect(migrated.revision).toBe(1);
+    await expect(
+      readFile(
+        join(
+          directory,
+          "studio",
+          "layouts",
+          "flows",
+          `${derivePragmaResourceId("studio\0Flow\0untitled_flow_2")}.json`,
+        ),
+        "utf8",
+      ),
+    ).rejects.toMatchObject({ code: "ENOENT" });
+  });
+
   it("fails a conflicting v3 migration before replacing the legacy project", async () => {
     const directory = await mkdtemp(join(tmpdir(), "pragma-project-v3-conflict-"));
     directories.push(directory);
