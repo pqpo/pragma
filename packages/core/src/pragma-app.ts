@@ -3,6 +3,7 @@ import {
   ExpertSessionManager,
   type CreateExpertSessionOptions,
   type ExpertSession,
+  type ResumeExpertSessionOptions,
 } from "./execution/expert-session.ts";
 import {
   createFileExpertSessionStore,
@@ -39,7 +40,7 @@ export interface PragmaApp {
     ): Promise<ExpertSession>;
     resumeSession(
       expert: ExpertDefinition,
-      request: { readonly sessionId: string },
+      request: ResumeExpertSessionOptions,
     ): Promise<ExpertSession>;
   };
   readonly flows: {

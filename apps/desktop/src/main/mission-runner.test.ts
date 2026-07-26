@@ -1,4 +1,4 @@
-import { mkdtemp, readFile, readdir, rm } from "node:fs/promises";
+import { mkdtemp, readFile, readdir, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
@@ -79,9 +79,7 @@ const removeTemporaryPath = async (path: string): Promise<void> => {
 
 afterEach(async () => {
   vi.restoreAllMocks();
-  await Promise.all(
-    temporaryPaths.splice(0).map(async (path) => await removeTemporaryPath(path)),
-  );
+  await Promise.all(temporaryPaths.splice(0).map(async (path) => await removeTemporaryPath(path)));
 });
 
 describe("MissionRunner", { timeout: 15_000 }, () => {
@@ -1538,6 +1536,397 @@ describe("MissionRunner", { timeout: 15_000 }, () => {
     ).items;
     expect(events.filter((event) => event.type === "human.requested")).toHaveLength(1);
     expect(events.filter((event) => event.type === "human.responded")).toHaveLength(1);
+  });
+
+  it("continues a Mission whose persisted ExpertSession uses a legacy Expert id", async () => {
+    const root = await mkdtemp(join(tmpdir(), "pragma-mission-legacy-expert-session-"));
+    temporaryPaths.push(root);
+    const pragmaHome = join(root, "state");
+    const project = createPragmaProjectStore({ projectsPath: join(root, "projects") });
+    const snapshot = await project.publish({
+      expectedRevision: 0,
+      resources: [runtimeFixture(), expertFixture()],
+    });
+    const expertResource = snapshot.resources.find((resource) => resource.kind === "Expert")!;
+    await writeFile(
+      join(root, "projects", snapshot.projectId, "identity-migrations.json"),
+      `${JSON.stringify(
+        {
+          schemaVersion: "pragma.desktop-project-identity-migrations/v1",
+          projectId: snapshot.projectId,
+          migrations: [
+            {
+              kind: "Expert",
+              sourceId: "issue_reporter",
+              targetId: expertResource.metadata.id,
+            },
+          ],
+        },
+        undefined,
+        2,
+      )}\n`,
+    );
+    const missions = createMissionStore({ missionsPath: join(root, "missions") });
+    const mission = await missions.create({
+      workspace: { path: root, basename: "workspace" },
+      goal: "Created before DSL identity migration",
+      project: { id: snapshot.projectId, revision: snapshot.revision },
+      executor: missionExecutorSnapshot(expertResource),
+    });
+    const runtime = defineRuntimeDriver<never, { id: string }>({
+      descriptor: { id: "fake", kind: "fake", displayName: "Fake" },
+      createSession: () => ({ id: "runtime" }),
+      restoreSession: () => ({ id: "runtime" }),
+      readSession: (session) => ({ runtimeSessionId: session.id }),
+      startTurn: (_session, turn) => ({
+        outputText: `writer:${turn.rawQuery}`,
+        runtimeSessionId: "runtime",
+      }),
+      mapEvent: () => ({ events: [] }),
+      closeSession: () => undefined,
+    });
+    const runtimes = createStaticRuntimeResolver({ runtimes: [runtime], defaultRuntimeId: "fake" });
+    const executions = createFileExecutionStore({ pragmaHome });
+    const expertSessions = createFileExpertSessionStore({ executions, pragmaHome });
+    const sessionId = "10000000-0000-4000-8000-000000000024";
+    const executionId = "20000000-0000-4000-8000-000000000024";
+    const contextId = "30000000-0000-4000-8000-000000000024";
+    const now = new Date().toISOString();
+    const runtimeBinding = (await runtimes.bind({ runtimeId: "fake" })).binding;
+    await expertSessions.create({
+      schemaVersion: "pragma.expert-session/v5",
+      sessionId,
+      expertId: "issue_reporter",
+      definitionFingerprint: "c".repeat(64),
+      status: "open",
+      queuedRequestIds: [],
+      executionIds: [],
+      rootContextId: contextId,
+      contexts: {
+        [contextId]: {
+          schemaVersion: "pragma.runtime-context/v5",
+          contextId,
+          owner: { type: "expert-session", ownerId: sessionId },
+          origin: { type: "expert-session", sessionId },
+          expert: { id: "issue_reporter" },
+          runtime: runtimeBinding,
+          lifecycle: "open",
+          createdAt: now,
+          updatedAt: now,
+        },
+      },
+      createdAt: now,
+      updatedAt: now,
+    });
+    await missions.updateExecution(mission.id, {
+      id: executionId,
+      inputMessageId: mission.initialMessageId,
+      sessionId,
+      status: "succeeded",
+      startedAt: now,
+      finishedAt: now,
+    });
+    const runner = createMissionRunner({
+      missions,
+      project,
+      capabilityStore: {} as CapabilityStore,
+      capabilityCredentials: {} as CapabilityCredentialStore,
+      capabilitiesPath: join(root, "capabilities"),
+      pragmaHome,
+      runtimes,
+    });
+
+    await runner.sendMessage({
+      id: mission.id,
+      content: "Continue after upgrade",
+      requestId: "00000000-0000-4000-8000-000000000024",
+    });
+    await vi.waitFor(
+      async () => expect((await missions.get(mission.id)).execution?.status).toBe("succeeded"),
+      { timeout: settlementTimeoutMs },
+    );
+
+    const migrated = await expertSessions.get(sessionId);
+    expect(migrated?.expertId).toBe(expertResource.metadata.id);
+    expect(migrated?.contexts[migrated.rootContextId]?.expert.id).toBe(expertResource.metadata.id);
+    const chat = await runner.getChat({ id: mission.id, limit: 50 });
+    expect(chat.entries).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ kind: "assistant", content: "writer:Continue after upgrade" }),
+      ]),
+    );
+  });
+
+  it("creates a successor ExpertSession when an existing Mission definition is incompatible", async () => {
+    const root = await mkdtemp(join(tmpdir(), "pragma-mission-successor-session-"));
+    temporaryPaths.push(root);
+    const pragmaHome = join(root, "state");
+    const project = createPragmaProjectStore({ projectsPath: join(root, "projects") });
+    const snapshot = await project.publish({
+      expectedRevision: 0,
+      resources: [runtimeFixture(), expertFixture()],
+    });
+    const expertResource = snapshot.resources.find((resource) => resource.kind === "Expert")!;
+    const missions = createMissionStore({ missionsPath: join(root, "missions") });
+    const mission = await missions.create({
+      workspace: { path: root, basename: "workspace" },
+      goal: "Keep working after incompatible upgrade",
+      project: { id: snapshot.projectId, revision: snapshot.revision },
+      executor: missionExecutorSnapshot(expertResource),
+    });
+    const runtime = defineRuntimeDriver<never, { id: string }>({
+      descriptor: { id: "fake", kind: "fake", displayName: "Fake" },
+      createSession: () => ({ id: "runtime" }),
+      restoreSession: () => ({ id: "runtime" }),
+      readSession: (session) => ({ runtimeSessionId: session.id }),
+      startTurn: (_session, turn) => ({
+        outputText: `successor:${turn.rawQuery}`,
+        runtimeSessionId: "runtime",
+      }),
+      mapEvent: () => ({ events: [] }),
+      closeSession: () => undefined,
+    });
+    const runtimes = createStaticRuntimeResolver({ runtimes: [runtime], defaultRuntimeId: "fake" });
+    const executions = createFileExecutionStore({ pragmaHome });
+    const expertSessions = createFileExpertSessionStore({ executions, pragmaHome });
+    const sessionId = "10000000-0000-4000-8000-000000000025";
+    const executionId = "20000000-0000-4000-8000-000000000025";
+    const contextId = "30000000-0000-4000-8000-000000000025";
+    const now = new Date().toISOString();
+    const runtimeBinding = (await runtimes.bind({ runtimeId: "fake" })).binding;
+    const definition = { id: expertResource.metadata.id, kind: "expert" as const };
+    await expertSessions.create({
+      schemaVersion: "pragma.expert-session/v5",
+      sessionId,
+      expertId: expertResource.metadata.id,
+      definitionFingerprint: "b".repeat(64),
+      status: "open",
+      activeExecutionId: executionId,
+      queuedRequestIds: [],
+      executionIds: [executionId],
+      rootContextId: contextId,
+      contexts: {
+        [contextId]: {
+          schemaVersion: "pragma.runtime-context/v5",
+          contextId,
+          owner: { type: "expert-session", ownerId: sessionId },
+          origin: { type: "expert-session", sessionId },
+          expert: { id: expertResource.metadata.id },
+          runtime: runtimeBinding,
+          lifecycle: "open",
+          createdAt: now,
+          updatedAt: now,
+        },
+      },
+      createdAt: now,
+      updatedAt: now,
+    });
+    await executions.create(
+      {
+        schemaVersion: "pragma.execution/v7",
+        executionId,
+        version: 0,
+        kind: "expert-turn",
+        definition,
+        rootInvocationId: executionId,
+        status: "running",
+        input: mission.goal,
+        state: {},
+        lastAppliedSequence: 0,
+        createdAt: now,
+        updatedAt: now,
+      },
+      {
+        invocationId: executionId,
+        rootInvocationId: executionId,
+        definition,
+        executorId: expertResource.metadata.id,
+        contextId,
+        status: "running",
+        input: mission.goal,
+        createdAt: now,
+        updatedAt: now,
+      },
+    );
+    await missions.updateExecution(mission.id, {
+      id: executionId,
+      inputMessageId: mission.initialMessageId,
+      sessionId,
+      status: "running",
+      startedAt: now,
+    });
+    const runner = createMissionRunner({
+      missions,
+      project,
+      capabilityStore: {} as CapabilityStore,
+      capabilityCredentials: {} as CapabilityCredentialStore,
+      capabilitiesPath: join(root, "capabilities"),
+      pragmaHome,
+      runtimes,
+    });
+
+    await runner.sendMessage({
+      id: mission.id,
+      content: "Continue on a successor",
+      requestId: "00000000-0000-4000-8000-000000000025",
+    });
+    await vi.waitFor(
+      async () => expect((await missions.get(mission.id)).execution?.status).toBe("succeeded"),
+      { timeout: settlementTimeoutMs },
+    );
+
+    const updatedMission = await missions.get(mission.id);
+    expect(updatedMission.execution?.sessionId).not.toBe(sessionId);
+    const oldSession = await expertSessions.get(sessionId);
+    expect(oldSession).toMatchObject({
+      sessionId,
+      definitionFingerprint: "b".repeat(64),
+      lastStatus: "interrupted",
+    });
+    expect(oldSession?.activeExecutionId).toBeUndefined();
+    await expect(executions.get(executionId)).resolves.toMatchObject({ status: "interrupted" });
+    await expect(executions.getInvocation(executionId, executionId)).resolves.toMatchObject({
+      status: "interrupted",
+    });
+    const successorId = updatedMission.execution!.sessionId!;
+    expect(await expertSessions.get(successorId)).toMatchObject({
+      sessionId: successorId,
+      expertId: expertResource.metadata.id,
+    });
+    await expect(runner.getChat({ id: mission.id, limit: 50 })).resolves.toMatchObject({
+      entries: expect.arrayContaining([
+        expect.objectContaining({
+          kind: "assistant",
+          content: "successor:Continue on a successor",
+        }),
+      ]),
+    });
+  });
+
+  it("keeps the old ExpertSession active when successor creation fails", async () => {
+    const root = await mkdtemp(join(tmpdir(), "pragma-mission-successor-create-fails-"));
+    temporaryPaths.push(root);
+    const pragmaHome = join(root, "state");
+    const project = createPragmaProjectStore({ projectsPath: join(root, "projects") });
+    const snapshot = await project.publish({
+      expectedRevision: 0,
+      resources: [runtimeFixture(), expertFixture()],
+    });
+    const expertResource = snapshot.resources.find((resource) => resource.kind === "Expert")!;
+    const missions = createMissionStore({ missionsPath: join(root, "missions") });
+    const mission = await missions.create({
+      workspace: { path: root, basename: "workspace" },
+      goal: "Do not damage the old session",
+      project: { id: snapshot.projectId, revision: snapshot.revision },
+      executor: missionExecutorSnapshot(expertResource),
+    });
+    const runtime = defineRuntimeDriver<never, { id: string }>({
+      descriptor: { id: "fake", kind: "fake", displayName: "Fake" },
+      createSession: () => ({ id: "runtime" }),
+      restoreSession: () => ({ id: "runtime" }),
+      readSession: (session) => ({ runtimeSessionId: session.id }),
+      startTurn: () => ({ outputText: "unreachable", runtimeSessionId: "runtime" }),
+      mapEvent: () => ({ events: [] }),
+      closeSession: () => undefined,
+    });
+    const availableRuntimes = createStaticRuntimeResolver({
+      runtimes: [runtime],
+      defaultRuntimeId: "fake",
+    });
+    const executions = createFileExecutionStore({ pragmaHome });
+    const expertSessions = createFileExpertSessionStore({ executions, pragmaHome });
+    const sessionId = "10000000-0000-4000-8000-000000000026";
+    const executionId = "20000000-0000-4000-8000-000000000026";
+    const contextId = "30000000-0000-4000-8000-000000000026";
+    const now = new Date().toISOString();
+    const runtimeBinding = (await availableRuntimes.bind({ runtimeId: "fake" })).binding;
+    await expertSessions.create({
+      schemaVersion: "pragma.expert-session/v5",
+      sessionId,
+      expertId: expertResource.metadata.id,
+      definitionFingerprint: "c".repeat(64),
+      status: "open",
+      activeExecutionId: executionId,
+      queuedRequestIds: [mission.initialMessageId],
+      executionIds: [executionId],
+      rootContextId: contextId,
+      contexts: {
+        [contextId]: {
+          schemaVersion: "pragma.runtime-context/v5",
+          contextId,
+          owner: { type: "expert-session", ownerId: sessionId },
+          origin: { type: "expert-session", sessionId },
+          expert: { id: expertResource.metadata.id },
+          runtime: runtimeBinding,
+          lifecycle: "open",
+          createdAt: now,
+          updatedAt: now,
+        },
+      },
+      createdAt: now,
+      updatedAt: now,
+    });
+    await expertSessions.transact(sessionId, ({ session }) => ({
+      result: undefined,
+      session,
+      prompts: [
+        {
+          requestId: mission.initialMessageId,
+          sessionId,
+          content: mission.goal,
+          mode: "enqueue" as const,
+          executionId,
+          status: "queued" as const,
+          createdAt: now,
+          updatedAt: now,
+        },
+      ],
+    }));
+    await missions.updateExecution(mission.id, {
+      id: executionId,
+      inputMessageId: mission.initialMessageId,
+      sessionId,
+      status: "running",
+      startedAt: now,
+    });
+    const failingSuccessorRuntimes: RuntimeResolver = {
+      getDefaultRuntimeId: async () => await availableRuntimes.getDefaultRuntimeId(),
+      bind: async () => {
+        throw new Error("Successor Runtime bind failed.");
+      },
+      resolve: async (request) => await availableRuntimes.resolve(request),
+    };
+    const runner = createMissionRunner({
+      missions,
+      project,
+      capabilityStore: {} as CapabilityStore,
+      capabilityCredentials: {} as CapabilityCredentialStore,
+      capabilitiesPath: join(root, "capabilities"),
+      pragmaHome,
+      runtimes: failingSuccessorRuntimes,
+    });
+
+    await expect(
+      runner.sendMessage({
+        id: mission.id,
+        content: "Try to continue",
+        requestId: "00000000-0000-4000-8000-000000000026",
+      }),
+    ).rejects.toThrow("Successor Runtime bind failed.");
+
+    await expect(expertSessions.get(sessionId)).resolves.toMatchObject({
+      sessionId,
+      activeExecutionId: executionId,
+      queuedRequestIds: [mission.initialMessageId],
+    });
+    expect((await expertSessions.get(sessionId))?.lastStatus).toBeUndefined();
+    await expect(missions.get(mission.id)).resolves.toMatchObject({
+      execution: {
+        id: executionId,
+        sessionId,
+        status: "running",
+      },
+    });
   });
 
   it("projects oversized replies as Handoff references without copying full text", async () => {

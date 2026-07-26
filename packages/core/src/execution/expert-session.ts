@@ -29,6 +29,7 @@ import type {
 import { openRuntimeSession } from "../runtime/session-factory.ts";
 import {
   readRuntimeSessionContextWindowUsage,
+  rebindRuntimeSessionExpertId,
   readRuntimeSessionRecord,
 } from "../runtime/session-record.ts";
 import { mergeUsages } from "../runtime/usage.ts";
@@ -60,6 +61,30 @@ export interface CreateExpertSessionOptions {
   readonly sessionId?: string | undefined;
   readonly runtime?: string | undefined;
   readonly modelSelection?: RuntimeModelSelection | undefined;
+}
+
+export interface ResumeExpertSessionOptions {
+  readonly sessionId: string;
+  readonly definitionMigration?:
+    | {
+        readonly previousExpertId: string;
+        readonly previousRootExpertId?: string | undefined;
+        readonly reason: string;
+      }
+    | undefined;
+}
+
+export class ExpertDefinitionMismatchError extends Error {
+  constructor(readonly sessionId: string) {
+    super(`Expert definition mismatch for Session ${sessionId}.`);
+    this.name = "ExpertDefinitionMismatchError";
+  }
+}
+
+export function isExpertDefinitionMismatchError(
+  error: unknown,
+): error is ExpertDefinitionMismatchError {
+  return error instanceof ExpertDefinitionMismatchError;
 }
 
 export interface PromptOptions {
@@ -125,8 +150,43 @@ type SteerClaim =
       readonly contextId: string;
     };
 
+interface ValidDefinitionMigration {
+  readonly previousExpertId: string;
+  readonly previousRootExpertId: string;
+  readonly reason: string;
+}
+
 const EXPERT_SESSION_LEASE_MS = 30_000;
 const EXPERT_SESSION_LEASE_RENEWAL_MS = 10_000;
+
+function validateDefinitionMigration(
+  record: ExpertSessionRecord,
+  expert: ExpertDefinition,
+  currentFingerprint: string,
+  request: ResumeExpertSessionOptions,
+): ValidDefinitionMigration | undefined {
+  const migration = request.definitionMigration;
+  if (migration === undefined) return undefined;
+  if (migration.reason.trim() === "") return undefined;
+  if (record.expertId !== migration.previousExpertId) return undefined;
+  const rootContext = record.contexts[record.rootContextId];
+  if (rootContext === undefined) return undefined;
+  const rootExpert = isExpertTeam(expert) ? expert.coordinator : expert;
+  const previousRootExpertId = migration.previousRootExpertId ?? migration.previousExpertId;
+  if (rootContext.expert.id !== previousRootExpertId) return undefined;
+  if (
+    record.expertId === expert.id &&
+    rootContext.expert.id === rootExpert.id &&
+    record.definitionFingerprint !== currentFingerprint
+  ) {
+    return undefined;
+  }
+  return {
+    previousExpertId: migration.previousExpertId,
+    previousRootExpertId,
+    reason: migration.reason,
+  };
+}
 
 export class ExpertSessionManager {
   private readonly active = new Map<string, ExpertSessionImpl>();
@@ -182,19 +242,23 @@ export class ExpertSessionManager {
 
   async resumeSession(
     expert: ExpertDefinition,
-    request: { readonly sessionId: string },
+    request: ResumeExpertSessionOptions,
   ): Promise<ExpertSession> {
     const existing = this.active.get(request.sessionId);
     if (existing !== undefined) return existing;
-    const record = await this.dependencies.sessions.get(request.sessionId);
+    let record = await this.dependencies.sessions.get(request.sessionId);
     if (record === undefined) throw new Error(`ExpertSession not found: ${request.sessionId}`);
     if (record.status === "closed")
       throw new Error(`ExpertSession is closed: ${request.sessionId}`);
-    if (
-      record.expertId !== expert.id ||
-      record.definitionFingerprint !== fingerprintExpertExecutionDefinition(expert)
-    ) {
-      throw new Error(`Expert definition mismatch for Session ${request.sessionId}.`);
+    const currentFingerprint = fingerprintExpertExecutionDefinition(expert);
+    const definitionMatches =
+      record.expertId === expert.id && record.definitionFingerprint === currentFingerprint;
+    const rootExpert = isExpertTeam(expert) ? expert.coordinator : expert;
+    const migration = definitionMatches
+      ? undefined
+      : validateDefinitionMigration(record, expert, currentFingerprint, request);
+    if (!definitionMatches && migration === undefined) {
+      throw new ExpertDefinitionMismatchError(request.sessionId);
     }
     const claimId = randomUUID();
     if (
@@ -207,6 +271,17 @@ export class ExpertSessionManager {
       throw new Error(`ExpertSession is active in another process: ${request.sessionId}`);
     }
     try {
+      if (migration !== undefined) {
+        record = await this.migrateSessionDefinition({
+          sessionId: request.sessionId,
+          expertId: expert.id,
+          rootExpertId: rootExpert.id,
+          definitionFingerprint: currentFingerprint,
+          previousExpertId: migration.previousExpertId,
+          previousRootExpertId: migration.previousRootExpertId,
+          reason: migration.reason,
+        });
+      }
       let recoveredExecutionId: string | undefined;
       let recoveredHumanInteractionIds: readonly string[] = [];
       if (record.activeExecutionId !== undefined) {
@@ -261,6 +336,7 @@ export class ExpertSessionManager {
             ),
           }));
         } else {
+          const activeExecutionId = record.activeExecutionId;
           if (execution !== undefined && !isFinal(execution.status)) {
             await this.dependencies.executions.update(execution.executionId, {
               status: "interrupted",
@@ -286,7 +362,7 @@ export class ExpertSessionManager {
               updatedAt: new Date().toISOString(),
             },
             prompts: prompts.map((prompt) =>
-              prompt.executionId === record.activeExecutionId && prompt.status === "running"
+              prompt.executionId === activeExecutionId && prompt.status === "running"
                 ? {
                     ...prompt,
                     status: "interrupted" as const,
@@ -311,6 +387,64 @@ export class ExpertSessionManager {
       await this.dependencies.sessions.releaseLease(request.sessionId, claimId);
       throw error;
     }
+  }
+
+  private async migrateSessionDefinition(options: {
+    readonly sessionId: string;
+    readonly expertId: string;
+    readonly rootExpertId: string;
+    readonly definitionFingerprint: string;
+    readonly previousExpertId: string;
+    readonly previousRootExpertId: string;
+    readonly reason: string;
+  }): Promise<ExpertSessionRecord> {
+    return await this.dependencies.sessions.transact(
+      options.sessionId,
+      async ({ session, prompts }) => {
+        const rootContext = session.contexts[session.rootContextId];
+        if (rootContext === undefined) throw new Error("ExpertSession root Context is missing.");
+        if (
+          session.expertId !== options.previousExpertId ||
+          rootContext.expert.id !== options.previousRootExpertId
+        ) {
+          throw new ExpertDefinitionMismatchError(options.sessionId);
+        }
+        const now = new Date().toISOString();
+        if (rootContext.snapshot !== undefined) {
+          const paths = new PragmaPaths(
+            this.dependencies.pragmaHome === undefined
+              ? {}
+              : { pragmaHome: this.dependencies.pragmaHome },
+          );
+          await rebindRuntimeSessionExpertId({
+            paths,
+            ownerId: options.sessionId,
+            systemSessionId: rootContext.snapshot.systemSessionId,
+            fromExpertId: options.previousRootExpertId,
+            toExpertId: options.rootExpertId,
+          });
+        }
+        const migrated: ExpertSessionRecord = {
+          ...session,
+          expertId: options.expertId,
+          definitionFingerprint: options.definitionFingerprint,
+          contexts: {
+            ...session.contexts,
+            [session.rootContextId]: {
+              ...rootContext,
+              expert: { id: options.rootExpertId },
+              updatedAt: now,
+            },
+          },
+          updatedAt: now,
+        };
+        return {
+          result: migrated,
+          session: migrated,
+          prompts,
+        };
+      },
+    );
   }
 
   private createActiveSession(

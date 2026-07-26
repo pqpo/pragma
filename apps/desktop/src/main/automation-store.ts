@@ -4,7 +4,6 @@ import { dirname, join, relative, sep } from "node:path";
 
 import {
   applyAtomicStateMigration,
-  derivePragmaResourceId,
   PragmaPaths,
   recoverAtomicStateMigration,
   withFileLock,
@@ -17,6 +16,7 @@ import {
   type AutomationBinding,
   type AutomationRunRecord,
 } from "../shared/desktop-api.ts";
+import { migrateLegacyPragmaResourceRef } from "@pragma/interpreter";
 
 const QueuedAutomationEventSchema = z
   .object({
@@ -229,9 +229,7 @@ async function migrateAutomationStorageV1(paths: PragmaPaths, projectId: string)
 }
 
 function migrateAutomationRef(ref: string, projectId: string): string {
-  const match = /^automation:([^@]+)@[^@]+$/.exec(ref);
-  if (match === null) return ref;
-  return `automation:${derivePragmaResourceId(`${projectId}\0Automation\0${match[1]}`)}`;
+  return migrateLegacyPragmaResourceRef(ref, projectId);
 }
 
 function validateAutomationMigrationDocuments(

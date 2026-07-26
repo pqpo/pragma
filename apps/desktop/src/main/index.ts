@@ -66,6 +66,7 @@ import { createAutomationService } from "./automation-service.ts";
 import { createAutomationStore } from "./automation-store.ts";
 import { createDesktopLogHandler } from "./desktop-log-handler.ts";
 import { DesktopRendererLogSchema } from "../shared/desktop-api.ts";
+import { runPersistentStateUpgradeCoordinator } from "./persistent-state-upgrade-coordinator.ts";
 
 const currentDir = dirname(fileURLToPath(import.meta.url));
 const applicationId = "dev.pragma.desktop";
@@ -294,6 +295,11 @@ const desktopStartup = app.whenReady().then(async () => {
   });
   const missionStore = createMissionStore({
     missionsPath,
+  });
+  await runPersistentStateUpgradeCoordinator({
+    project: pragmaProjectStore,
+    missions: missionStore,
+    logger: mainLogger,
   });
   const modelProviderStore = createModelProviderStore({
     configPath: modelProvidersPath,
