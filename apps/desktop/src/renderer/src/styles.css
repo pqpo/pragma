@@ -10013,17 +10013,23 @@ textarea:focus-visible,
 
 .mission-row-open {
   display: grid;
-  grid-template-columns: 8px minmax(0, 1fr);
+  grid-template-columns: minmax(0, 1fr);
   width: 100%;
   align-items: start;
-  gap: 8px;
-  padding: 8px 58px 8px 8px;
+  gap: 0;
+  padding: 8px;
   border: 0;
   border-radius: inherit;
   background: transparent;
   color: var(--text);
   cursor: pointer;
   text-align: left;
+  transition: padding-right 140ms ease;
+}
+
+.mission-row-open.has-status-dot {
+  grid-template-columns: 8px minmax(0, 1fr);
+  gap: 8px;
 }
 
 .mission-row-open > span:last-child {
@@ -10061,6 +10067,13 @@ textarea:focus-visible,
 .mission-row.is-active .mission-row-actions,
 .mission-row.is-pinned .mission-row-actions {
   opacity: 1;
+}
+
+.mission-row:hover .mission-row-open,
+.mission-row:focus-within .mission-row-open,
+.mission-row.is-active .mission-row-open,
+.mission-row.is-pinned .mission-row-open {
+  padding-right: 58px;
 }
 
 .mission-row-icon-action[aria-pressed="true"] {
@@ -12811,6 +12824,7 @@ textarea:focus-visible,
   textarea,
   .studio-asset-row,
   .mission-row,
+  .mission-row-open,
   .mission-search-slot,
   .flow-palette-item,
   .flow-step-node,

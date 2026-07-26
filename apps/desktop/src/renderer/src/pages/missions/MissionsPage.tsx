@@ -612,6 +612,7 @@ function MissionRailGroup(props: {
             ["queued", "running", "waiting"].includes(mission.execution.status);
           const isActiveMission = mission.lifecycleStatus === "active";
           const isPinned = isActiveMission && props.pinnedMissionIds.has(mission.id);
+          const showStatusDot = isActiveMission;
           return (
             <div
               className={[
@@ -624,18 +625,13 @@ function MissionRailGroup(props: {
               key={mission.id}
             >
               <button
-                className="mission-row-open"
+                className={showStatusDot ? "mission-row-open has-status-dot" : "mission-row-open"}
                 type="button"
                 onClick={() => props.onOpen(mission)}
               >
-                <span
-                  className={
-                    mission.lifecycleStatus === "active"
-                      ? "mission-status-dot is-active"
-                      : "mission-status-dot"
-                  }
-                  aria-hidden="true"
-                />
+                {showStatusDot ? (
+                  <span className="mission-status-dot is-active" aria-hidden="true" />
+                ) : null}
                 <span>
                   <strong>{mission.title}</strong>
                   <small>
