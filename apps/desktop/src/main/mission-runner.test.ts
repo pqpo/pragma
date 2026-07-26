@@ -11,6 +11,7 @@ import {
   fingerprintExpertExecutionDefinition,
   PragmaPaths,
   readRuntimeSessionRecord,
+  StoredExecutionView,
   type RuntimeDriverSessionContext,
   type RuntimeModelSelection,
   type RuntimeResolver,
@@ -1505,15 +1506,15 @@ describe("MissionRunner", { timeout: 15_000 }, () => {
       pragmaHome: join(root, "state"),
       runtimes: createStaticRuntimeResolver({ runtimes: [runtime], defaultRuntimeId: "fake" }),
     });
-    await restartingRunner.run(mission.id);
-    await expect(restartingRunner.getWork(mission.id)).resolves.toEqual(
-      expect.objectContaining({
-        records: expect.arrayContaining([
-          expect.objectContaining({ kind: "flow" }),
-          expect.objectContaining({ kind: "human-task", status: "waiting" }),
-        ]),
-      }),
-    );
+
+    const chat = await restartingRunner.getChat({ id: mission.id, limit: 50 });
+    expect(chat.execution).toMatchObject({
+      id: waitingMission.execution!.id,
+      status: "waiting",
+      interruptible: false,
+    });
+    expect(chat.pendingInteractions).toHaveLength(1);
+    expect(chat.pendingInteractions[0]?.request.kind).toBe("question");
     const interactions = await restartingRunner.listHumanInteractions(mission.id);
     expect(interactions).toHaveLength(1);
     expect(interactions[0]?.request.kind).toBe("question");
@@ -1529,6 +1530,14 @@ describe("MissionRunner", { timeout: 15_000 }, () => {
       async () => expect((await missions.get(mission.id)).execution?.status).toBe("succeeded"),
       { timeout: settlementTimeoutMs },
     );
+    const events = (
+      await new StoredExecutionView(waitingMission.execution!.id, executionStore).listEvents({
+        scope: { kind: "all" },
+        limit: 1_000,
+      })
+    ).items;
+    expect(events.filter((event) => event.type === "human.requested")).toHaveLength(1);
+    expect(events.filter((event) => event.type === "human.responded")).toHaveLength(1);
   });
 
   it("projects oversized replies as Handoff references without copying full text", async () => {

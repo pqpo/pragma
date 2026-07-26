@@ -739,7 +739,7 @@ export interface LocalMissionContextOperation {
 export type MissionClientOperationState =
   | { readonly kind: "idle" }
   | {
-      readonly kind: "sending" | "saving_options" | "compacting";
+      readonly kind: "sending" | "saving_options" | "compacting" | "restoring";
       readonly token: string;
     };
 
@@ -838,6 +838,7 @@ export function MissionDetailFragment(props: {
   const textareaRef = useRef<HTMLTextAreaElement | null>(null);
   const chatRef = useRef<MissionChatSnapshot | null>(null);
   const clientOperationRef = useRef<MissionClientOperationState>({ kind: "idle" });
+  const autoRestoreExecutionRef = useRef<string | null>(null);
   const followLatestRef = useRef(true);
   const prependScrollHeightRef = useRef<number | null>(null);
   const updateChat = useCallback((update: SetStateAction<MissionChatSnapshot | null>) => {
@@ -889,6 +890,7 @@ export function MissionDetailFragment(props: {
     setWorkRecords([]);
     setWorkConversation(null);
     setWorkError(null);
+    autoRestoreExecutionRef.current = null;
   }, [props.mission.id]);
 
   useEffect(() => {
@@ -1355,6 +1357,35 @@ export function MissionDetailFragment(props: {
     window.addEventListener("keydown", close);
     return () => window.removeEventListener("keydown", close);
   }, [selectedWorkRecord]);
+
+  useEffect(() => {
+    const executionId = props.mission.execution?.id;
+    if (
+      props.mission.lifecycleStatus !== "active" ||
+      executionId === undefined ||
+      !executionActive ||
+      interruptible ||
+      autoRestoreExecutionRef.current === executionId
+    ) {
+      return;
+    }
+    const operationToken = beginClientOperation("restoring");
+    if (operationToken === undefined) return;
+    autoRestoreExecutionRef.current = executionId;
+    void Promise.resolve(props.onRun?.())
+      .catch((restoreError: unknown) => {
+        console.error("Failed to auto-restore Mission execution.", restoreError);
+      })
+      .finally(() => finishClientOperation(operationToken));
+  }, [
+    beginClientOperation,
+    executionActive,
+    finishClientOperation,
+    interruptible,
+    props.mission.execution?.id,
+    props.mission.lifecycleStatus,
+    props.onRun,
+  ]);
 
   const loadEarlier = async (): Promise<void> => {
     const api = desktopApi();
