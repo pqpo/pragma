@@ -4,11 +4,18 @@ import { describe, expect, it } from "vitest";
 import {
   PragmaExpertResourceSchema,
   PragmaExpertTeamResourceSchema,
+  type PragmaFlowResource,
   type PragmaExpertResource,
 } from "@pragma/interpreter/ast";
 import type { PragmaProjectSnapshot } from "../../../../shared/desktop-api.ts";
 
-import { matchingTeamExperts, TeamEditor } from "./PragmaResourceDirectoryFragment.tsx";
+import {
+  matchingTeamExperts,
+  PragmaResourceDetailFragment,
+  PragmaResourceDirectoryFragment,
+  TeamEditor,
+} from "./PragmaResourceDirectoryFragment.tsx";
+import { createEmptyFlow } from "./flow-editor/flow-model.ts";
 
 function expert(index: number): PragmaExpertResource {
   const id = String(index).padStart(16, "0");
@@ -112,5 +119,140 @@ describe("expert team editor", () => {
     expect(html).toContain(instructions);
     expect(html).toContain("always-on TEAM.md");
     expect(html).not.toContain("Version");
+  });
+});
+
+describe("PragmaResourceDirectoryFragment", () => {
+  it("opens Team resources through a detail-first directory row", () => {
+    const initial = PragmaExpertTeamResourceSchema.parse({
+      apiVersion: "pragma/v3",
+      kind: "ExpertTeam",
+      metadata: {
+        id: "cccvf3nab91n2wja",
+        name: "Quality team",
+        description: "Coordinates quality work",
+        tags: [],
+      },
+      spec: {
+        coordinator: { ref: "expert:0000000000000001" },
+        members: [{ ref: "expert:0000000000000002" }],
+        delegation: {},
+      },
+    });
+    const project = {
+      schemaVersion: "pragma.project-snapshot/v3",
+      projectId: "test-project",
+      revision: 0,
+      resources: [initial],
+      diagnostics: [],
+    } satisfies PragmaProjectSnapshot;
+
+    const html = renderToStaticMarkup(
+      <PragmaResourceDirectoryFragment
+        kind="team"
+        project={project}
+        onOpen={() => undefined}
+        onCreate={() => undefined}
+      />,
+    );
+
+    expect(html).toContain("Quality team");
+    expect(html).toContain('class="studio-asset-row pragma-resource-row"');
+    expect(html).not.toContain("Edit expert team");
+    expect(html).not.toContain("Validate &amp; publish");
+  });
+});
+
+describe("PragmaResourceDetailFragment", () => {
+  it("shows Team details with edit and delete actions", () => {
+    const experts = [expert(1), expert(2)];
+    const team = PragmaExpertTeamResourceSchema.parse({
+      apiVersion: "pragma/v3",
+      kind: "ExpertTeam",
+      metadata: {
+        id: "cccvf3nab91n2wja",
+        name: "Quality team",
+        description: "Coordinates quality work",
+        tags: [],
+      },
+      spec: {
+        coordinator: { ref: "expert:0000000000000001" },
+        members: [{ ref: "expert:0000000000000002" }],
+        instructions: "Check evidence.",
+        delegation: { maxConcurrency: 2, maxDepth: 5 },
+      },
+    });
+    const project = {
+      schemaVersion: "pragma.project-snapshot/v3",
+      projectId: "test-project",
+      revision: 0,
+      resources: [...experts, team],
+      diagnostics: [],
+    } satisfies PragmaProjectSnapshot;
+
+    const html = renderToStaticMarkup(
+      <PragmaResourceDetailFragment
+        resource={team}
+        project={project}
+        onBack={() => undefined}
+        onEdit={() => undefined}
+        onDelete={async () => undefined}
+      />,
+    );
+
+    expect(html).toContain("Back to teams");
+    expect(html).toContain("Edit expert team");
+    expect(html).toContain("Quality team");
+    expect(html).toContain("Expert 001");
+    expect(html).toContain("2 members");
+    expect(html).toContain("Delete");
+  });
+
+  it("shows Flow details before opening the Flow editor", () => {
+    const flow: PragmaFlowResource = {
+      ...createEmptyFlow("ffdfk2cczgqjda7q"),
+      metadata: {
+        id: "ffdfk2cczgqjda7q",
+        name: "Approval flow",
+        description: "Coordinates approval.",
+        tags: [],
+      },
+      spec: {
+        limits: { maxNodeVisits: 20 },
+        graph: {
+          start: "approval",
+          steps: {
+            approval: { action: { ref: "action:approval@1.0.0" } },
+          },
+          loops: {},
+          transitions: { approval: { end: true } },
+        },
+      },
+    };
+    const project = {
+      schemaVersion: "pragma.project-snapshot/v3",
+      projectId: "test-project",
+      revision: 0,
+      resources: [flow],
+      diagnostics: [],
+    } satisfies PragmaProjectSnapshot;
+
+    const html = renderToStaticMarkup(
+      <PragmaResourceDetailFragment
+        resource={flow}
+        project={project}
+        onBack={() => undefined}
+        onEdit={() => undefined}
+        onDelete={async () => undefined}
+      />,
+    );
+
+    expect(html).toContain("Back to flows");
+    expect(html).toContain("Edit flow");
+    expect(html).toContain("Approval flow");
+    expect(html).toContain("approval");
+    expect(html).toContain("1 step");
+    expect(html).toContain("1 transition");
+    expect(html).not.toContain("Flow editor");
   });
 });
