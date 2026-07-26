@@ -4,7 +4,7 @@ import { RuntimeSessionRefSchema, type AgentMessage, type AgentMessageUsage } fr
 
 import type { Expert } from "../agent/expert-agent.ts";
 import type { ExpertAgentContext, ExpertAgentStartupMessage } from "../agent/context-manager.ts";
-import { createExpertAgentLogger, type ExpertAgentLogger } from "../logging/logger.ts";
+import { createPragmaLogger, type PragmaLogger } from "../logging/logger.ts";
 import { dispatchExpertAgentHook } from "../plugins/expert-agent-plugin.ts";
 import type { ExpertAgentProcessEnvironmentPatch } from "../plugins/expert-agent-plugin.ts";
 import { AsyncPushQueue } from "./async-push-queue.ts";
@@ -97,7 +97,7 @@ export interface RuntimePrepareContext {
   readonly runContext: ExpertAgentRunContext;
   readonly requestedRuntimeSession?: RuntimeSessionRef | undefined;
   readonly workspace: string;
-  readonly logger: ExpertAgentLogger;
+  readonly logger: PragmaLogger;
   readonly paths: RuntimePaths;
   readonly processEnvironment: Readonly<NodeJS.ProcessEnv>;
 }
@@ -164,7 +164,7 @@ export interface RuntimeCancelContext {
 
 export interface RuntimeCloseContext {
   readonly sessionInfo: RuntimeSessionInfo;
-  readonly logger: ExpertAgentLogger;
+  readonly logger: PragmaLogger;
 }
 
 export interface RuntimeDriver<TNativeEvent, TNativeSession, TPrepared = RuntimePreparedContext> {
@@ -216,18 +216,12 @@ export interface RuntimeDriver<TNativeEvent, TNativeSession, TPrepared = Runtime
   readonly readContextWindow?:
     | ((
         session: TNativeSession,
-      ) =>
-        | Promise<RuntimeContextWindowUsage | undefined>
-        | RuntimeContextWindowUsage
-        | undefined)
+      ) => Promise<RuntimeContextWindowUsage | undefined> | RuntimeContextWindowUsage | undefined)
     | undefined;
   readonly compactContext?:
     | ((
         session: TNativeSession,
-      ) =>
-        | Promise<RuntimeContextWindowUsage | undefined>
-        | RuntimeContextWindowUsage
-        | undefined)
+      ) => Promise<RuntimeContextWindowUsage | undefined> | RuntimeContextWindowUsage | undefined)
     | undefined;
   readonly cancelTurn?:
     | ((session: TNativeSession, context: RuntimeCancelContext) => Promise<void> | void)
@@ -309,10 +303,13 @@ async function createManagedRuntimeSession<TNativeEvent, TNativeSession, TPrepar
   const descriptor = driver.descriptor;
   const systemSessionId = request.systemSessionId ?? randomUUID();
   const runContext = createExpertAgentRunContext(request.context);
-  const logger = createExpertAgentLogger(request.loggerProvider ?? agent.loggerProvider, {
-    component: "runtime-adapter",
-    agentId: agent.id,
-    runtimeId: descriptor.id,
+  const logger = createPragmaLogger(request.loggerProvider ?? agent.loggerProvider, {
+    component: "runtime.adapter",
+    scope: {
+      agentId: agent.id,
+      runtimeId: descriptor.id,
+      systemSessionId,
+    },
   });
   if (request.owner.ownerId.trim() === "") {
     throw new Error("Runtime Session ownerId must not be empty.");
@@ -475,11 +472,15 @@ async function createManagedRuntimeSession<TNativeEvent, TNativeSession, TPrepar
             processState: "stopped",
           });
         } catch (error) {
-          logger.error("Failed to close Runtime session record", {
-            ownerId: request.owner.ownerId,
-            systemSessionId,
+          logger.error(
+            "runtime.session_record_close_failed",
+            "Failed to close Runtime session record",
             error,
-          });
+            {
+              ownerId: request.owner.ownerId,
+              systemSessionId,
+            },
+          );
           cleanupErrors.push(error);
         }
         await dispatchExpertAgentHook(agent.hooks, "afterSessionDestroy", {
@@ -577,13 +578,17 @@ async function createManagedRuntimeSession<TNativeEvent, TNativeSession, TPrepar
         processState: "failed",
       });
     } catch (recordError) {
-      logger.error("Failed to mark Runtime session record as failed", {
-        ownerId: request.owner.ownerId,
-        systemSessionId,
-        error: recordError,
-      });
+      logger.error(
+        "runtime.session_record_fail_failed",
+        "Failed to mark Runtime session record as failed",
+        recordError,
+        {
+          ownerId: request.owner.ownerId,
+          systemSessionId,
+        },
+      );
     }
-    logger.error("Runtime session creation failed", { error });
+    logger.error("runtime.session_creation_failed", "Runtime session creation failed", error);
     if (lifecycle !== undefined) {
       await lifecycle.close().catch(() => undefined);
     } else {
@@ -685,7 +690,7 @@ class ManagedRuntimeSession<TNativeEvent, TNativeSession, TPrepared> {
       readonly nativeSession: TNativeSession;
       readonly descriptor: RuntimeAdapterDescriptor;
       readonly lifecycle: AgentLifecycle<ExpertAgentRunContext | undefined>;
-      readonly logger: ExpertAgentLogger;
+      readonly logger: PragmaLogger;
       readonly runContext: ExpertAgentRunContext;
       readonly systemSessionId: string;
       readonly outputRetryLimit?: number | undefined;
@@ -917,7 +922,11 @@ class ManagedRuntimeSession<TNativeEvent, TNativeSession, TPrepared> {
       return usage;
     } catch (error) {
       if (throwOnError) throw error;
-      this.options.logger.warn("Failed to refresh Runtime context window usage.", { error });
+      this.options.logger.warn(
+        "runtime.context_window_refresh_failed",
+        "Failed to refresh Runtime context window usage.",
+        { error },
+      );
       return undefined;
     }
   }

@@ -2,7 +2,7 @@ import { copyFile, mkdir } from "node:fs/promises";
 import { homedir } from "node:os";
 import { join } from "node:path";
 
-import type { ExpertAgentLogger } from "@pragma/core";
+import type { PragmaLogger } from "@pragma/core";
 
 export interface ManagedClaudeCodeConfig {
   readonly configDir: string;
@@ -12,7 +12,7 @@ export interface ManagedClaudeCodeConfig {
 export interface PrepareManagedClaudeCodeConfigOptions {
   readonly sessionDir: string;
   readonly env?: NodeJS.ProcessEnv | undefined;
-  readonly logger: Pick<ExpertAgentLogger, "warn">;
+  readonly logger: Pick<PragmaLogger, "warn">;
 }
 
 const CLAUDE_COPIED_SETTINGS_FILES = [
@@ -62,7 +62,7 @@ async function createPrivateStateDirs(configDir: string): Promise<void> {
 async function copySharedSettingsFiles(
   sharedConfigDir: string,
   configDir: string,
-  logger: Pick<ExpertAgentLogger, "warn">,
+  logger: Pick<PragmaLogger, "warn">,
 ): Promise<string | undefined> {
   let primarySettingsPath: string | undefined;
 
@@ -77,10 +77,14 @@ async function copySharedSettingsFiles(
       }
     } catch (error) {
       if (!isNotFoundError(error)) {
-        logger.warn("Claude Code managed config could not copy shared settings file", {
-          file,
-          error,
-        });
+        logger.warn(
+          "runtime.claude_config_copy_failed",
+          "Claude Code managed config could not copy shared settings file",
+          {
+            file,
+            error,
+          },
+        );
       }
     }
   }

@@ -3,6 +3,7 @@ export * from "./bounded-lru-cache.ts";
 export * from "./control-flow-graph.ts";
 export * from "./context/context-metadata.schema.ts";
 export * from "./health.schema.ts";
+export * from "./logging/log.schema.ts";
 export * from "./model-provider.schema.ts";
 export * from "./result.ts";
 export {

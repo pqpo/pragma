@@ -21,18 +21,24 @@ export default definePluginEntry({
             workspaceRoot: sessionContext.agent.workspace,
           });
           cleanupGitSessionEnvironments.set(sessionContext.systemSessionId, prepared.cleanup);
-          sessionContext.logger?.info("Prepared Git session environment", {
-            systemSessionId: sessionContext.systemSessionId,
-            authStrategy: resolvedConfig.auth.strategy,
-          });
+          sessionContext.logger?.info(
+            "plugin.repo_environment_prepared",
+            "Prepared Git session environment",
+            {
+              systemSessionId: sessionContext.systemSessionId,
+              authStrategy: resolvedConfig.auth.strategy,
+            },
+          );
           return { processEnvironment: prepared.processEnvironment };
         },
         afterSessionDestroy: async (sessionContext) => {
           await cleanupGitSessionEnvironments.get(sessionContext.session.systemSessionId)?.();
           cleanupGitSessionEnvironments.delete(sessionContext.session.systemSessionId);
-          sessionContext.logger?.info("Cleaned up Git session environment", {
-            systemSessionId: sessionContext.session.systemSessionId,
-          });
+          sessionContext.logger?.info(
+            "plugin.repo_environment_cleaned",
+            "Cleaned up Git session environment",
+            { systemSessionId: sessionContext.session.systemSessionId },
+          );
         },
       },
     };

@@ -1713,7 +1713,19 @@ export type CapabilityTestResult = z.infer<typeof CapabilityTestResultSchema>;
 export type PreviewCodeServiceRequest = z.infer<typeof PreviewCodeServiceRequestSchema>;
 export type PreviewCodeServiceResult = z.infer<typeof PreviewCodeServiceResultSchema>;
 
+export const DesktopRendererLogSchema = z
+  .object({
+    level: z.enum(["warn", "error"]),
+    event: z.string().regex(/^[a-z0-9]+(?:[._-][a-z0-9]+)*$/),
+    message: z.string().min(1).max(8_192),
+    errorMessage: z.string().max(8_192).optional(),
+    stack: z.string().max(32_768).optional(),
+  })
+  .strict();
+export type DesktopRendererLog = z.infer<typeof DesktopRendererLogSchema>;
+
 export interface PragmaDesktopAPI {
+  reportRendererLog: (input: DesktopRendererLog) => void;
   getBridgeSnapshot: () => Promise<DesktopBridgeSnapshot>;
   getDesktopSettings: () => Promise<DesktopSettingsSnapshot>;
   updateDesktopSettings: (input: UpdateDesktopSettings) => Promise<DesktopSettingsSnapshot>;

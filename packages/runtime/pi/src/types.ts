@@ -1,6 +1,5 @@
 import type {
-  ExpertAgentLogger,
-  ExpertAgentLoggerProvider,
+  PragmaLogger,
   RuntimeAdapterDescriptor,
   RuntimeSessionRestoreHandler,
   RuntimeSessionSyncCallback,
@@ -42,7 +41,6 @@ export interface PiModelProviderConfig {
 
 export interface CloudPiRuntimeAdapterOptions {
   readonly descriptor?: Partial<RuntimeAdapterDescriptor> | undefined;
-  readonly loggerProvider?: ExpertAgentLoggerProvider | undefined;
   readonly modelProviders?: ModelProviderRegistry | undefined;
   readonly outputParser?: <TOutput>(text: string) => TOutput;
   readonly outputRetryLimit?: number | undefined;
@@ -55,7 +53,7 @@ export interface PiRuntimeStreamState {
   runId?: string | undefined;
   emitter?: RuntimeEventEmitter | undefined;
   source?: RuntimeStreamEvent["source"] | undefined;
-  logger?: ExpertAgentLogger | undefined;
+  logger?: PragmaLogger | undefined;
 }
 
 export const defaultOutputParser = <TOutput>(text: string): TOutput => text as TOutput;

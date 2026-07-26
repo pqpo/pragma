@@ -16,7 +16,7 @@ import type {
 
 import type { Expert } from "./agent/expert-agent.ts";
 import type { ExpertAgentDefaultTool } from "./context-system/context-tools.ts";
-import type { ExpertAgentLogger } from "./logging/logger.ts";
+import type { PragmaLogger } from "./logging/logger.ts";
 import type { McpManagedTool } from "./mcp-tools.ts";
 import { dispatchExpertAgentHook } from "./plugins/expert-agent-plugin.ts";
 import type { RuntimeEventEmitter } from "./runtime/runtime-event-emitter.ts";
@@ -49,7 +49,7 @@ export interface RegisterExpertToolsMcpSessionOptions {
   readonly agent: Expert;
   readonly getContext: () => ExpertAgentRunContext | undefined;
   readonly humanInteractionHandler?: ExpertAgentHumanInteractionHandler | undefined;
-  readonly logger: ExpertAgentLogger;
+  readonly logger: PragmaLogger;
   readonly mcpTools?: readonly McpManagedTool[] | undefined;
   readonly state: ExpertToolRuntimeState;
   readonly executionContext?: ExpertToolExecutionContext | undefined;
@@ -66,7 +66,7 @@ const MCP_LOCAL_TOOL_NAME_LIMIT = MCP_QUALIFIED_TOOL_NAME_LIMIT - MCP_QUALIFIED_
 interface ExpertToolsMcpGatewayEntry {
   readonly server: McpServer;
   readonly transport: WebStandardStreamableHTTPServerTransport;
-  readonly logger: ExpertAgentLogger;
+  readonly logger: PragmaLogger;
 }
 
 class ExpertToolsMcpGateway {
@@ -187,7 +187,7 @@ class ExpertToolsMcpGateway {
     try {
       await handleMcpHttpRequest(entry.transport, request, response);
     } catch (error) {
-      entry.logger.error("Execution MCP Session request failed", { error });
+      entry.logger.error("tool.mcp_request_failed", "Execution MCP Session request failed", error);
       if (!response.headersSent) {
         response.writeHead(500);
         response.end();
@@ -540,13 +540,13 @@ async function executeWithToolHooks(options: {
   readonly humanInteractionHandler: ExpertAgentHumanInteractionHandler | undefined;
   readonly runContext: ExpertAgentRunContext | undefined;
   readonly executionContext: ExpertToolExecutionContext | undefined;
-  readonly logger: ExpertAgentLogger;
+  readonly logger: PragmaLogger;
   readonly state: ExpertToolRuntimeState;
 }): Promise<ExpertAgentToolCallResult> {
   const startedAt = Date.now();
   const runId = options.state.runId;
 
-  options.logger.info("Tool call started", {
+  options.logger.info("tool.call_started", "Tool call started", {
     runId,
     toolName: options.tool.name,
     toolCallId: options.toolCallId,
@@ -604,7 +604,7 @@ async function executeWithToolHooks(options: {
       result,
       logger: options.logger,
     });
-    options.logger.info("Tool call completed", {
+    options.logger.info("tool.call_completed", "Tool call completed", {
       runId,
       toolName: options.tool.name,
       toolCallId: options.toolCallId,
@@ -625,12 +625,11 @@ async function executeWithToolHooks(options: {
       error,
       logger: options.logger,
     });
-    options.logger.error("Tool call failed", {
+    options.logger.error("tool.call_failed", "Tool call failed", error, {
       runId,
       toolName: options.tool.name,
       toolCallId: options.toolCallId,
       durationMs,
-      error,
     });
     throw error;
   }

@@ -3,7 +3,7 @@ import type { ContextAssemblerOptions } from "../agent/context-manager.ts";
 import type { AgentMessage, RuntimeSessionRef as SharedRuntimeSessionRef } from "@pragma/shared";
 export { RuntimeSessionRefSchema } from "@pragma/shared";
 import type { z } from "zod";
-import type { ExpertAgentLoggerProvider } from "../logging/logger.ts";
+import type { PragmaLoggerProvider } from "../logging/logger.ts";
 import type { RunState, SessionState } from "./agent-lifecycle.ts";
 import type { ExpertAgentRunContext } from "./run-context.ts";
 import type { RuntimeStreamEvent } from "./stream-events.ts";
@@ -138,7 +138,7 @@ export interface RuntimeDriverSessionRequest {
   /** Omit to create a fresh runtime session. When provided, the referenced session must resume. */
   readonly runtimeSession?: RuntimeSessionRef | undefined;
   readonly onSessionInfo?: ((info: RuntimeSessionInfo) => Promise<void> | void) | undefined;
-  readonly loggerProvider?: ExpertAgentLoggerProvider | undefined;
+  readonly loggerProvider?: PragmaLoggerProvider | undefined;
 }
 
 export interface RuntimeSubmitRequest<TOutput = string> {

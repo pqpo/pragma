@@ -18,6 +18,7 @@ import {
   type FlowTaskContext,
   type RuntimeResolver,
   type RuntimeModelSelection,
+  type PragmaLoggerProvider,
 } from "@pragma/core";
 
 import type { PragmaAdapterHost, PragmaResourceAdapterRegistry } from "./resource-adapters.ts";
@@ -186,6 +187,7 @@ export interface PragmaCompileHost {
   readonly plugins?: PragmaPluginResolver | undefined;
   readonly adapterHost?: PragmaAdapterHost | undefined;
   readonly pragmaHome?: string | undefined;
+  readonly loggerProvider?: PragmaLoggerProvider | undefined;
 }
 
 export interface DefinitionSerializer {

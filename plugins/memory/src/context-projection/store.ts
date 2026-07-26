@@ -396,12 +396,16 @@ export class FileSystemMemoryContextStore implements ExpertAgentContextStore {
     try {
       await regenerateSummary(roots, this.memorySystem, this.agentId);
     } catch (caught) {
-      this.context.logger.warn("Failed to regenerate memory summary.", {
-        agentId: this.agentId,
-        operation,
-        ...(contextId === undefined ? {} : { contextId }),
-        error: caught instanceof Error ? caught.message : String(caught),
-      });
+      this.context.logger.warn(
+        "plugin.memory_summary_failed",
+        "Failed to regenerate memory summary.",
+        {
+          agentId: this.agentId,
+          operation,
+          ...(contextId === undefined ? {} : { contextId }),
+          error: caught instanceof Error ? caught.message : String(caught),
+        },
+      );
     }
   }
 }

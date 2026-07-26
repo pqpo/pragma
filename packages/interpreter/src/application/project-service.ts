@@ -3,7 +3,12 @@ import { tmpdir } from "node:os";
 import { dirname, isAbsolute, join, relative, resolve } from "node:path";
 import { isDeepStrictEqual } from "node:util";
 
-import type { RuntimeResolver } from "@pragma/core";
+import {
+  createPragmaLogger,
+  type PragmaLogger,
+  type PragmaLoggerProvider,
+  type RuntimeResolver,
+} from "@pragma/core";
 
 import {
   PragmaDiagnosticSchema,
@@ -84,6 +89,7 @@ export interface PragmaProjectSnapshot {
 export interface PragmaProjectServiceOptions {
   readonly repository: PragmaProjectSourceRepository;
   readonly resourceAdapters?: PragmaResourceAdapterRegistry | undefined;
+  readonly loggerProvider?: PragmaLoggerProvider | undefined;
 }
 
 export interface PragmaProjectChangeSetCandidate {
@@ -96,9 +102,13 @@ const PROJECT_CHANGE_SET_COMMIT_ATTEMPTS = 8;
 
 export class PragmaProjectService {
   private readonly adapters: PragmaResourceAdapterRegistry;
+  private readonly logger: PragmaLogger;
 
   constructor(private readonly options: PragmaProjectServiceOptions) {
     this.adapters = options.resourceAdapters ?? createDefaultPragmaResourceAdapterRegistry();
+    this.logger = createPragmaLogger(options.loggerProvider, {
+      component: "interpreter.compiler",
+    });
   }
 
   async get(projectId: string, revision?: number): Promise<PragmaProjectSnapshot> {
@@ -273,25 +283,60 @@ export class PragmaProjectService {
     readonly rootExecutionOverride?: PragmaCompileOptions["rootExecutionOverride"];
     readonly plugins?: PragmaPluginResolver | undefined;
   }): Promise<CompiledResource<T>> {
+    this.logger.info("interpreter.compile_started", "Pragma project compilation started.", {
+      projectId: input.projectId,
+      revision: input.revision,
+      ref: input.ref,
+    });
     const location = await this.options.repository.getRevision(input.projectId, input.revision);
     if (location === undefined) {
       throw new Error(`Pragma project revision not found: ${input.projectId}@${input.revision}`);
     }
-    return await this.withCheckout(location, async (checkedOut) => {
-      const project = await this.openLocation(checkedOut, true);
-      return await project.compile<T>(input.ref, {
-        workspace: input.workspace,
-        pragmaHome: input.pragmaHome,
-        projectRoot: dirname(checkedOut.entryFile),
-        environmentId: input.environmentId,
-        adapterHost: input.adapterHost,
-        resourceAdapters: this.adapters,
-        runtimes: input.runtimes,
-        rootModelSelectionOverride: input.rootModelSelectionOverride,
-        rootExecutionOverride: input.rootExecutionOverride,
-        plugins: input.plugins,
+    try {
+      const compiled = await this.withCheckout(location, async (checkedOut) => {
+        const project = await this.openLocation(checkedOut, true);
+        return await project.compile<T>(input.ref, {
+          workspace: input.workspace,
+          pragmaHome: input.pragmaHome,
+          projectRoot: dirname(checkedOut.entryFile),
+          environmentId: input.environmentId,
+          adapterHost: input.adapterHost,
+          resourceAdapters: this.adapters,
+          runtimes: input.runtimes,
+          rootModelSelectionOverride: input.rootModelSelectionOverride,
+          rootExecutionOverride: input.rootExecutionOverride,
+          plugins: input.plugins,
+          loggerProvider: this.options.loggerProvider,
+        });
       });
-    });
+      this.logger.info("interpreter.compile_completed", "Pragma project compilation completed.", {
+        projectId: input.projectId,
+        revision: input.revision,
+        ref: input.ref,
+      });
+      return compiled;
+    } catch (error) {
+      const attributes = {
+        projectId: input.projectId,
+        revision: input.revision,
+        ref: input.ref,
+      };
+      if (error instanceof PragmaProjectValidationError) {
+        this.logger.warn(
+          "interpreter.compile_rejected",
+          "Pragma project compilation was rejected by validation.",
+          { ...attributes, diagnosticCount: error.diagnostics.length },
+        );
+      } else {
+        this.logger.error(
+          "interpreter.compile_failed",
+          "Pragma project compilation failed.",
+          error,
+          attributes,
+        );
+      }
+      throw error;
+    }
   }
 
   private async withCheckout<T>(

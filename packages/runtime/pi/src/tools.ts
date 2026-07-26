@@ -247,7 +247,7 @@ async function executeWithToolHooks<
   const startedAt = Date.now();
   const logger = streamState.logger ?? agent.logger;
 
-  logger.info("Tool call started", {
+  logger.info("tool.call_started", "Tool call started", {
     runId: streamState.runId,
     toolName,
     toolCallId,
@@ -286,7 +286,7 @@ async function executeWithToolHooks<
         result: resolvedArgs.result,
         logger,
       });
-      logger.warn("Tool call rejected by approval policy", {
+      logger.warn("tool.call_rejected", "Tool call rejected by approval policy", {
         runId: streamState.runId,
         toolName,
         toolCallId,
@@ -309,7 +309,7 @@ async function executeWithToolHooks<
       result,
       logger,
     });
-    logger.info("Tool call completed", {
+    logger.info("tool.call_completed", "Tool call completed", {
       runId: streamState.runId,
       toolName,
       toolCallId,
@@ -330,12 +330,11 @@ async function executeWithToolHooks<
       error,
       logger,
     });
-    logger.error("Tool call failed", {
+    logger.error("tool.call_failed", "Tool call failed", error, {
       runId: streamState.runId,
       toolName,
       toolCallId,
       durationMs,
-      error,
     });
     throw error;
   }

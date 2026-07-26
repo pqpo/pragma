@@ -1,4 +1,4 @@
-import { defineExpert, createConsoleLoggerProvider, createExpertAgentLogger } from "@pragma/core";
+import { defineExpert, createConsoleLoggerProvider, createPragmaLogger } from "@pragma/core";
 
 const loggerProvider = createConsoleLoggerProvider();
 
@@ -15,8 +15,7 @@ const workerAgent = await defineExpert({
 
 void workerAgent;
 
-createExpertAgentLogger(loggerProvider, {
-  component: "expert-agent",
-  agentId: workerAgent.id,
-  name: "worker",
-}).info("Pragma Worker Ready");
+createPragmaLogger(loggerProvider, {
+  component: "worker.main",
+  scope: { agentId: workerAgent.id, processKind: "worker" },
+}).info("worker.ready", "Pragma Worker Ready");
