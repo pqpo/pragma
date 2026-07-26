@@ -3,6 +3,7 @@ import { describe, expect, it } from "vitest";
 import type {
   Mission,
   MissionChatSnapshot,
+  MissionSummary,
   MissionWorkRecord,
 } from "../../../../shared/desktop-api.ts";
 import { i18n } from "../../i18n/index.ts";
@@ -18,6 +19,7 @@ import {
   MissionsPage,
   missionWorkInputSenderName,
   missionWorkRecordTitle,
+  resolveMissionRailGroups,
   resolveMissionSearchCollapsed,
   releaseMissionClientOperation,
   shouldClearMissionThinkingPlaceholder,
@@ -86,6 +88,103 @@ describe("MissionsPage", () => {
         transitionLocked: true,
       }),
     ).toBe(true);
+  });
+
+  it("puts Missions that need input in their own pinned top group", () => {
+    const groups = resolveMissionRailGroups({
+      missions: [
+        missionSummaryFixture({
+          id: "active-running",
+          title: "Running Mission",
+          status: "running",
+          updatedAt: "2026-07-11T00:00:03.000Z",
+        }),
+        missionSummaryFixture({
+          id: "waiting-newer",
+          title: "Waiting Mission",
+          status: "waiting",
+          updatedAt: "2026-07-11T00:00:04.000Z",
+        }),
+        missionSummaryFixture({
+          id: "waiting-pinned",
+          title: "Pinned Waiting Mission",
+          status: "waiting",
+          updatedAt: "2026-07-11T00:00:01.000Z",
+        }),
+        missionSummaryFixture({
+          id: "completed",
+          title: "Completed Mission",
+          lifecycleStatus: "completed",
+          status: "succeeded",
+          updatedAt: "2026-07-11T00:00:02.000Z",
+        }),
+      ],
+      pinnedMissionIds: ["waiting-pinned"],
+      visibleLimits: { waitingInput: 10, active: 10, completed: 5 },
+    });
+
+    expect(groups.waitingInput.visibleMissions.map((mission) => mission.id)).toEqual([
+      "waiting-pinned",
+      "waiting-newer",
+    ]);
+    expect(groups.active.visibleMissions.map((mission) => mission.id)).toEqual([
+      "active-running",
+    ]);
+    expect(groups.completed.visibleMissions.map((mission) => mission.id)).toEqual(["completed"]);
+  });
+
+  it("limits mission rail groups and exposes the remaining count for loading more", () => {
+    const waiting = Array.from({ length: 11 }, (_, index) =>
+      missionSummaryFixture({
+        id: `waiting-${index}`,
+        title: `Waiting ${index}`,
+        status: "waiting",
+        updatedAt: `2026-07-11T00:00:${String(index).padStart(2, "0")}.000Z`,
+      }),
+    );
+    const active = Array.from({ length: 12 }, (_, index) =>
+      missionSummaryFixture({
+        id: `active-${index}`,
+        title: `Active ${index}`,
+        status: "running",
+        updatedAt: `2026-07-11T00:01:${String(index).padStart(2, "0")}.000Z`,
+      }),
+    );
+    const completed = Array.from({ length: 16 }, (_, index) =>
+      missionSummaryFixture({
+        id: `completed-${index}`,
+        title: `Completed ${index}`,
+        lifecycleStatus: "completed",
+        status: "succeeded",
+        updatedAt: `2026-07-11T00:02:${String(index).padStart(2, "0")}.000Z`,
+      }),
+    );
+
+    const initial = resolveMissionRailGroups({
+      missions: [...waiting, ...active, ...completed],
+      pinnedMissionIds: [],
+      visibleLimits: { waitingInput: 10, active: 10, completed: 5 },
+    });
+
+    expect(initial.waitingInput.visibleMissions).toHaveLength(10);
+    expect(initial.waitingInput.hiddenCount).toBe(1);
+    expect(initial.active.visibleMissions).toHaveLength(10);
+    expect(initial.active.hiddenCount).toBe(2);
+    expect(initial.completed.visibleMissions).toHaveLength(5);
+    expect(initial.completed.hiddenCount).toBe(11);
+
+    const afterLoadMore = resolveMissionRailGroups({
+      missions: [...waiting, ...active, ...completed],
+      pinnedMissionIds: [],
+      visibleLimits: { waitingInput: 20, active: 20, completed: 15 },
+    });
+
+    expect(afterLoadMore.waitingInput.visibleMissions).toHaveLength(11);
+    expect(afterLoadMore.waitingInput.hiddenCount).toBe(0);
+    expect(afterLoadMore.active.visibleMissions).toHaveLength(12);
+    expect(afterLoadMore.active.hiddenCount).toBe(0);
+    expect(afterLoadMore.completed.visibleMissions).toHaveLength(15);
+    expect(afterLoadMore.completed.hiddenCount).toBe(1);
   });
 });
 
@@ -685,5 +784,23 @@ function missionFixture(kind: "expert" | "team"): Mission {
     lifecycleStatus: "active",
     createdAt: "2026-07-11T00:00:00.000Z",
     updatedAt: "2026-07-11T00:00:00.000Z",
+  };
+}
+
+function missionSummaryFixture(input: {
+  readonly id: string;
+  readonly title: string;
+  readonly lifecycleStatus?: MissionSummary["lifecycleStatus"] | undefined;
+  readonly status?: NonNullable<MissionSummary["execution"]>["status"] | undefined;
+  readonly updatedAt: string;
+}): MissionSummary {
+  return {
+    id: input.id,
+    title: input.title,
+    workspace: { basename: "expert-mesh" },
+    executor: { kind: "expert", name: "Product Designer" },
+    ...(input.status === undefined ? {} : { execution: { status: input.status } }),
+    lifecycleStatus: input.lifecycleStatus ?? "active",
+    updatedAt: input.updatedAt,
   };
 }
