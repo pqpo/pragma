@@ -1,6 +1,6 @@
 {
   "name": "pragma",
-  "description": "A runtime-neutral platform for composing models, agent harnesses, experts, and flows.",
+  "description": "Make AI-native ways of working reusable and help more people become AI super individuals.",
   "private": true,
   "license": "SEE LICENSE IN LICENSE",
   "homepage": "https://github.com/pqpo/pragma#readme",
