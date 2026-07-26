@@ -906,12 +906,7 @@ async function migrateLegacyFlowLayouts(
       continue;
     }
     const flowId = flowIds.get(value["flowId"]);
-    if (flowId === undefined) {
-      throw new PragmaProjectStoreError(
-        "unsupported_format",
-        `Cannot migrate Flow layout for unresolved Pragma v2 Flow ID: ${value["flowId"]}.`,
-      );
-    }
+    if (flowId === undefined) continue;
     delete value["flowVersion"];
     value["schemaVersion"] = "pragma.desktop-flow-layout/v2";
     value["flowId"] = flowId;
