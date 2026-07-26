@@ -104,7 +104,7 @@ export function createLoggerProvider(options: CreateLoggerProviderOptions): Prag
 export function createConsoleLogHandler(): PragmaLogHandler {
   return {
     write(record) {
-      const payload = JSON.stringify(record);
+      const payload = formatConsoleLogRecord(record);
       switch (record.level) {
         case "debug":
           console.debug(payload);
@@ -122,6 +122,39 @@ export function createConsoleLogHandler(): PragmaLogHandler {
       }
     },
   };
+}
+
+function formatConsoleLogRecord(record: PragmaLogRecord): string {
+  const lines = [
+    `[${record.occurredAt}] ${record.level.toUpperCase()} ${record.component}/${record.event} - ${record.message}`,
+    `  stream: ${record.stream}`,
+    `  sequence: ${record.sequence}`,
+    `  host: ${formatKeyValues(record.host)}`,
+  ];
+  if (Object.keys(record.scope).length > 0) {
+    lines.push(`  scope: ${formatKeyValues(record.scope)}`);
+  }
+  if (record.attributes !== undefined) {
+    lines.push(`  attributes:\n${indentBlock(JSON.stringify(record.attributes, null, 2))}`);
+  }
+  if (record.stream === "failure") {
+    lines.push(`  diagnosticId: ${record.diagnosticId}`);
+    lines.push(`  error:\n${indentBlock(JSON.stringify(record.error, null, 2))}`);
+  }
+  return lines.join("\n");
+}
+
+function formatKeyValues(values: Record<string, unknown>): string {
+  return Object.entries(values)
+    .map(([key, value]) => `${key}=${String(value)}`)
+    .join(" ");
+}
+
+function indentBlock(value: string): string {
+  return value
+    .split("\n")
+    .map((line) => `    ${line}`)
+    .join("\n");
 }
 
 export function createConsoleLoggerProvider(

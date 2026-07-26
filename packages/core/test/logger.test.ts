@@ -2,6 +2,7 @@ import { describe, expect, it, vi } from "vitest";
 
 import {
   createCompositeLogHandler,
+  createConsoleLogHandler,
   createLoggerProvider,
   type PragmaLogRecord,
 } from "../src/index.ts";
@@ -60,6 +61,36 @@ describe("Pragma logger", () => {
     logger.info("test.info", "Info");
 
     expect(records.map((record) => record.level)).toEqual(["info"]);
+  });
+
+  it("formats console log records for human reading", () => {
+    const info = vi.spyOn(console, "info").mockImplementation(() => undefined);
+    const error = vi.spyOn(console, "error").mockImplementation(() => undefined);
+    const logger = createLoggerProvider({
+      handler: createConsoleLogHandler(),
+      host: {
+        kind: "test",
+        bootId: "00000000-0000-4000-8000-000000000001",
+      },
+    }).createLogger({ component: "core.test", scope: { executionId: "execution-1" } });
+
+    logger.info("test.info", "Info", { count: 1 });
+    logger.error("test.failed", "Failed", new Error("boom"));
+
+    const infoPayload = info.mock.calls[0]?.[0];
+    const errorPayload = error.mock.calls[0]?.[0];
+    expect(typeof infoPayload).toBe("string");
+    expect(typeof errorPayload).toBe("string");
+    expect(() => JSON.parse(infoPayload as string)).toThrow();
+    expect(infoPayload).toContain("INFO core.test/test.info - Info");
+    expect(infoPayload).toContain("scope: executionId=execution-1");
+    expect(infoPayload).toContain('attributes:\n    {\n      "count": 1\n    }');
+    expect(errorPayload).toContain("ERROR core.test/test.failed - Failed");
+    expect(errorPayload).toContain("diagnosticId:");
+    expect(errorPayload).toContain('"message": "boom"');
+
+    info.mockRestore();
+    error.mockRestore();
   });
 
   it("bounds each serialized record", () => {
