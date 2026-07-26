@@ -83,6 +83,7 @@ export function matchingTeamExperts(
 export function PragmaResourceDirectoryFragment(props: {
   readonly kind: ResourceKind;
   readonly project: PragmaProjectSnapshot;
+  readonly expertOptions: readonly { readonly ref: string; readonly name: string }[];
   readonly runtimes: readonly DesktopRuntimeAvailability[];
   readonly onProjectChanged: (snapshot: PragmaProjectSnapshot) => void;
 }) {
@@ -190,6 +191,7 @@ export function PragmaResourceDirectoryFragment(props: {
     ) : (
       <FlowEditor
         project={props.project}
+        expertOptions={props.expertOptions}
         baseRevision={props.project.revision}
         mode={editorMode}
         runtimes={props.runtimes}

@@ -3,7 +3,8 @@ import { z } from "zod";
 
 import { PragmaObjectJsonSchemaSchema } from "./tool-capability.schema.ts";
 
-export const PragmaApiVersionSchema = z.literal("pragma/v3");
+export const CURRENT_PRAGMA_DSL_API_VERSION = "pragma/v3" as const;
+export const PragmaApiVersionSchema = z.literal(CURRENT_PRAGMA_DSL_API_VERSION);
 
 export const PragmaResourceKindSchema = z.enum([
   "expert",

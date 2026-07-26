@@ -560,6 +560,8 @@ Expert API 设计要求：
 - 定义 `Expert`、`ExpertTeam`、`Flow`、`Capability`、`ContextStore`、`RuntimeProfile` 的
   `pragma/v3` YAML DSL AST 与 Zod Schema。
 - 负责 YAML 解析、跨文件 import/include、引用链接、静态校验和 lock 校验。
+- 负责纯内存、相邻版本、前向迁移的 DSL migration chain；Host 负责文件或数据库事务、备份和持久化，
+  不重复实现 DSL 字段、身份或引用转换。
 - 将 DSL 编译为 `@pragma/core` 的 Expert、ExpertTeam、Flow 对象实例。
 - 提供 Tool Adapter、Flow Action、Context Policy、Serializer 等具名版本 registry。
 - 保存编译 provenance，并将实例通过 `dump()` 恢复成规范化 DSL。
@@ -574,6 +576,10 @@ Expert API 设计要求：
   `pragma.tool.call@v1` 与 `pragma.tool.delegate@v1`，新增语义通过 registry 扩展。
 - Flow 普通边必须保持 DAG；回边只能使用具名 `repeat` transition，并声明正整数
   `maxIterations`。
+- `apiVersion` 专指 DSL 语言版本；`schemaVersion` 专指 Host 或运行状态序列化格式；
+  `revision` 专指不可变项目内容序号。三者不得共用迁移开关。
+- Interpreter 普通 parser/compiler 只接受当前 DSL；旧版本必须先经过静态注册的相邻迁移链。
+- 删除仍在支持窗口内的旧 DSL 迁移步骤属于兼容性 cutover，必须另写 ADR，并提供导出、备份或离线升级路径。
 
 禁止引入具体 Runtime Adapter、Desktop UI、Server 应用层、数据库实现或 Client SDK。
 

@@ -12,6 +12,7 @@ import {
   buildCanvasEdges,
   canvasPositions,
   createRouteTransition,
+  defaultStep,
   END_NODE_ID,
   FAIL_NODE_ID,
   FLOW_ERROR_AUTO_DISMISS_MS,
@@ -27,6 +28,7 @@ import {
   PromptTemplateEditor,
   removeEdgeFromFlow,
   removeHumanOption,
+  resourceTargets,
   routeFieldOptions,
   RuntimeBindingEditor,
   START_NODE_ID,
@@ -61,6 +63,28 @@ describe("Flow editor canvas", () => {
     expect(html).toContain("Drag to canvas");
     expect(html).not.toContain("press Enter");
     expect(html).not.toContain("flow-palette-item is-action");
+  });
+
+  it("offers the built-in Expert as a Flow target outside project resources", () => {
+    expect(
+      resourceTargets([], "0000000000000001", [
+        { ref: "expert:0000000000pragma", name: "Pragma" },
+      ]),
+    ).toEqual([
+      { kind: "expert", ref: "expert:0000000000pragma", label: "Pragma" },
+    ]);
+  });
+
+  it("leaves a new semantic step unselected when no matching resource exists", () => {
+    expect(defaultStep("expert", [], { optionLabels: ["One", "Two"] })).toMatchObject({
+      expert: { ref: "" },
+    });
+    expect(defaultStep("team", [], { optionLabels: ["One", "Two"] })).toMatchObject({
+      team: { ref: "" },
+    });
+    expect(defaultStep("flow", [], { optionLabels: ["One", "Two"] })).toMatchObject({
+      flow: { ref: "" },
+    });
   });
 
   it("renders a new draft as draggable Start and End terminals without Fail", () => {

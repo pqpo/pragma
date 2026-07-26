@@ -164,6 +164,7 @@ type FlowPaletteKind = FlowStepKind | "logic";
 
 export function FlowEditor(props: {
   readonly project: PragmaProjectSnapshot;
+  readonly expertOptions?: readonly FlowExpertOption[] | undefined;
   readonly baseRevision?: number | undefined;
   readonly mode?: "create" | "edit" | undefined;
   readonly runtimes?: readonly DesktopRuntimeAvailability[] | undefined;
@@ -186,6 +187,7 @@ export function FlowEditor(props: {
 
 function FlowEditorCanvas(props: {
   readonly project: PragmaProjectSnapshot;
+  readonly expertOptions?: readonly FlowExpertOption[] | undefined;
   readonly baseRevision?: number | undefined;
   readonly mode?: "create" | "edit" | undefined;
   readonly runtimes: readonly DesktopRuntimeAvailability[];
@@ -259,8 +261,8 @@ function FlowEditorCanvas(props: {
     [localIssues],
   );
   const targets = useMemo(
-    () => resourceTargets(props.project.resources, flow.metadata.id),
-    [flow.metadata.id, props.project.resources],
+    () => resourceTargets(props.project.resources, flow.metadata.id, props.expertOptions ?? []),
+    [flow.metadata.id, props.expertOptions, props.project.resources],
   );
   const showError = useCallback((message: string) => {
     errorSequenceRef.current += 1;
@@ -3606,6 +3608,11 @@ interface ResourceTarget {
   readonly label: string;
 }
 
+export interface FlowExpertOption {
+  readonly ref: string;
+  readonly name: string;
+}
+
 function targetInputSchema(
   kind: FlowStepKind,
   ref: string,
@@ -3618,11 +3625,12 @@ function targetInputSchema(
   return resource?.kind === "Flow" ? resource.spec.input?.schema : undefined;
 }
 
-function resourceTargets(
+export function resourceTargets(
   resources: readonly PragmaResource[],
   currentFlowId: string,
+  expertOptions: readonly FlowExpertOption[] = [],
 ): readonly ResourceTarget[] {
-  return resources.flatMap((resource) => {
+  const projectTargets = resources.flatMap((resource) => {
     if (resource.kind !== "Expert" && resource.kind !== "ExpertTeam" && resource.kind !== "Flow") {
       return [];
     }
@@ -3641,9 +3649,18 @@ function resourceTargets(
       },
     ];
   });
+  const targets = [
+    ...expertOptions.map(
+      (expert): ResourceTarget => ({ kind: "expert", ref: expert.ref, label: expert.name }),
+    ),
+    ...projectTargets,
+  ];
+  return targets.filter(
+    (target, index) => targets.findIndex((candidate) => candidate.ref === target.ref) === index,
+  );
 }
 
-function defaultStep(
+export function defaultStep(
   kind: FlowStepKind,
   targets: readonly ResourceTarget[],
   humanCopy: { readonly optionLabels: readonly [string, string] },
@@ -3659,7 +3676,7 @@ function defaultStep(
         ],
       },
     };
-  const target = targets.find((item) => item.kind === kind)?.ref ?? `${kind}:0000000000000000`;
+  const target = targets.find((item) => item.kind === kind)?.ref ?? "";
   return {
     [kind]: { ref: target },
     ...(kind === "expert" || kind === "team" ? { prompt: { segments: [{ text: "" }] } } : {}),

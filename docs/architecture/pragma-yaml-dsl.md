@@ -5,8 +5,13 @@ Pragma DSL is the canonical, portable definition language for `Expert`, `ExpertT
 validation, environment resolution, compilation, locking, and normalized dumping. Core remains the
 execution object model and does not depend on the interpreter.
 
-`pragma/v3` removes semantic resource versions. Desktop performs the bounded one-time `pragma/v2`
-storage migration described by ADR 023; the interpreter itself accepts only current DSL.
+`pragma/v3` removes semantic resource versions. The Interpreter owns the pure, bounded
+`pragma/v2`-to-`pragma/v3` DSL migration described by ADR 024, while Desktop owns the file
+transaction described by ADR 023. The normal parser and compiler accept only current DSL.
+
+DSL `apiVersion`, Host/runtime-state `schemaVersion`, immutable project `revision`, and independently
+shipped adapter or plugin versions are separate compatibility axes. They do not share migration
+switches.
 
 ## Definition, installation, and execution
 
@@ -23,6 +28,10 @@ portable YAML project
 Applications provide persistence and environment adapters. They do not recreate Expert, Team, or
 Flow compilation. Desktop stores immutable project revisions and supplies local bindings; a Web
 deployment can store the same sources and resolve bindings on its server.
+
+Applications also own migration transactions, but not DSL transformation rules. A Host reads an old
+revision, calls the Interpreter's in-memory adjacent migration chain, republishes the canonical
+current resources, and uses the returned identity mapping for Host-specific dependent records.
 
 ## Project layout and identity
 

@@ -3,6 +3,7 @@ import type {
   PragmaDiagnostic,
   PragmaExpertResource,
   PragmaResource,
+  PragmaResourceRef,
   PragmaToolBinding,
 } from "../ast/pragma-dsl.schema.ts";
 
@@ -186,6 +187,9 @@ export interface PragmaCompileHost {
   readonly resourceAdapters?: PragmaResourceAdapterRegistry | undefined;
   readonly plugins?: PragmaPluginResolver | undefined;
   readonly adapterHost?: PragmaAdapterHost | undefined;
+  readonly resolveExternalInvocable?:
+    | ((ref: PragmaResourceRef) => Promise<InvocableResource | undefined>)
+    | undefined;
   readonly pragmaHome?: string | undefined;
   readonly loggerProvider?: PragmaLoggerProvider | undefined;
 }

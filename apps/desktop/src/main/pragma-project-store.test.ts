@@ -113,6 +113,87 @@ describe("PragmaProjectStore", () => {
     );
   });
 
+  it("migrates every historical revision while preserving revision numbers", async () => {
+    const directory = await mkdtemp(join(tmpdir(), "pragma-project-v3-revisions-migration-"));
+    directories.push(directory);
+    await seedLegacyProjectRevisions(directory, [
+      [legacyFlowSource("release", "1.0.0")],
+      [legacyFlowSource("release", "2.0.0")],
+    ]);
+    const project = createPragmaProjectStore({ projectsPath: directory });
+
+    const head = await project.get();
+    const first = await project.openRevision(1);
+    const expectedId = derivePragmaResourceId("studio\0Flow\0release");
+
+    expect(head).toMatchObject({ revision: 2 });
+    expect(first.listResources()).toEqual([
+      expect.objectContaining({
+        apiVersion: "pragma/v3",
+        metadata: expect.objectContaining({ id: expectedId }),
+      }),
+    ]);
+    await expect(
+      readFile(join(directory, "studio", "revisions", "1.json"), "utf8"),
+    ).resolves.toContain('"revision": 1');
+    await expect(
+      readFile(join(directory, "studio", "revisions", "2.json"), "utf8"),
+    ).resolves.toContain('"revision": 2');
+  });
+
+  it("migrates legacy Expert IDs used as delegation and Runtime map keys", async () => {
+    const directory = await mkdtemp(join(tmpdir(), "pragma-project-v3-team-migration-"));
+    directories.push(directory);
+    await seedLegacyProject(directory, [
+      legacyExpertSource("cn_coding_platform", "Coding"),
+      legacyExpertSource("reviewer", "Reviewer"),
+      legacyRuntimeSource(),
+      legacyTeamSource(),
+    ]);
+
+    const migrated = await createPragmaProjectStore({ projectsPath: directory }).get();
+    const codingId = derivePragmaResourceId("studio\0Expert\0cn_coding_platform");
+    const reviewerId = derivePragmaResourceId("studio\0Expert\0reviewer");
+    const runtimeId = derivePragmaResourceId("studio\0RuntimeProfile\0desktop_runtime");
+    const team = migrated.resources.find(
+      (resource): resource is PragmaExpertTeamResource => resource.kind === "ExpertTeam",
+    );
+
+    expect(team?.spec.delegation.allow).toEqual({ [codingId]: [reviewerId] });
+    expect(team?.spec.delegation.runtimes).toEqual({
+      [codingId]: `runtime-profile:${runtimeId}`,
+    });
+  });
+
+  it("migrates host Flow layouts with the Interpreter identity mapping", async () => {
+    const directory = await mkdtemp(join(tmpdir(), "pragma-project-v3-layout-migration-"));
+    directories.push(directory);
+    await seedLegacyProject(directory, [legacyFlowSource("release", "1.0.0")]);
+    await mkdir(join(directory, "studio", "layouts", "legacy"), { recursive: true });
+    await writeFile(
+      join(directory, "studio", "layouts", "legacy", "release.json"),
+      `${JSON.stringify({
+        schemaVersion: "pragma.desktop-flow-layout/v1",
+        flowId: "release",
+        flowVersion: "1.0.0",
+        viewport: { x: 1, y: 2, zoom: 1 },
+      })}\n`,
+    );
+
+    await createPragmaProjectStore({ projectsPath: directory }).get();
+
+    const flowId = derivePragmaResourceId("studio\0Flow\0release");
+    const layout = JSON.parse(
+      await readFile(join(directory, "studio", "layouts", "flows", `${flowId}.json`), "utf8"),
+    ) as Record<string, unknown>;
+    expect(layout).toMatchObject({
+      schemaVersion: "pragma.desktop-flow-layout/v2",
+      flowId,
+      viewport: { x: 1, y: 2, zoom: 1 },
+    });
+    expect(layout).not.toHaveProperty("flowVersion");
+  });
+
   it("fails a conflicting v3 migration before replacing the legacy project", async () => {
     const directory = await mkdtemp(join(tmpdir(), "pragma-project-v3-conflict-"));
     directories.push(directory);
@@ -997,30 +1078,39 @@ function expertUpdate(definition: ExpertDefinition, description: string): Update
 }
 
 async function seedLegacyProject(directory: string, sources: readonly string[]): Promise<void> {
+  await seedLegacyProjectRevisions(directory, [sources]);
+}
+
+async function seedLegacyProjectRevisions(
+  directory: string,
+  revisions: readonly (readonly string[])[],
+): Promise<void> {
   const objects = new ContentAddressedStore(join(directory, ".storage", "objects"));
-  const files = new Map<string, Uint8Array>(
-    sources.map((source, index) => [
-      `flows/release@${index + 1}.pragma.yaml`,
-      Buffer.from(source, "utf8"),
-    ]),
-  );
-  const snapshot = await objects.putSnapshot(files);
   await mkdir(join(directory, "studio", "revisions"), { recursive: true });
   await writeFile(
     join(directory, "studio", "project.json"),
     `${JSON.stringify({
       schemaVersion: "pragma.desktop-project/v3",
       projectId: "studio",
-      headRevision: 1,
+      headRevision: revisions.length,
     })}\n`,
   );
-  await writeFile(
-    join(directory, "studio", "revisions", "1.json"),
-    `${JSON.stringify({
-      schemaVersion: "pragma.project-revision/v3",
-      snapshotHash: snapshot.root.hash,
-    })}\n`,
-  );
+  for (const [revisionIndex, sources] of revisions.entries()) {
+    const files = new Map<string, Uint8Array>(
+      sources.map((source, sourceIndex) => [
+        `flows/release@${sourceIndex + 1}.pragma.yaml`,
+        Buffer.from(source, "utf8"),
+      ]),
+    );
+    const snapshot = await objects.putSnapshot(files);
+    await writeFile(
+      join(directory, "studio", "revisions", `${revisionIndex + 1}.json`),
+      `${JSON.stringify({
+        schemaVersion: "pragma.project-revision/v3",
+        snapshotHash: snapshot.root.hash,
+      })}\n`,
+    );
+  }
 }
 
 function legacyFlowSource(id: string, version: string): string {
@@ -1046,5 +1136,68 @@ spec:
     transitions:
       finish:
         end: true
+`;
+}
+
+function legacyExpertSource(id: string, name: string): string {
+  return `apiVersion: pragma/v2
+kind: Expert
+metadata:
+  id: ${id}
+  version: 1.0.0
+  name: ${name}
+  description: Legacy ${name} expert
+  tags: []
+spec:
+  scope: Work on ${name} tasks.
+  instructions: Complete the assigned work.
+  capabilities: []
+  toolApprovals: {}
+  contextStores: []
+  plugins: []
+  tools: []
+`;
+}
+
+function legacyTeamSource(): string {
+  return `apiVersion: pragma/v2
+kind: ExpertTeam
+metadata:
+  id: coding_team
+  version: 1.0.0
+  name: Coding Team
+  description: Legacy coding team
+  tags: []
+spec:
+  coordinator:
+    ref: expert:cn_coding_platform@1.0.0
+  members:
+    - ref: expert:reviewer@1.0.0
+  delegation:
+    allow:
+      cn_coding_platform: [reviewer]
+    maxConcurrency: 2
+    maxDepth: 2
+    context: context-policy:pragma.fresh@v1
+    runtimes:
+      cn_coding_platform: runtime-profile:desktop_runtime@1.0.0
+`;
+}
+
+function legacyRuntimeSource(): string {
+  return `apiVersion: pragma/v2
+kind: RuntimeProfile
+metadata:
+  id: desktop_runtime
+  version: 1.0.0
+  name: Desktop Runtime
+  description: Legacy Desktop Runtime profile
+  tags: []
+spec:
+  adapter: pragma.runtime.profile@v1
+  config:
+    runtimeId: codex
+    providerId: openai
+    model: gpt-test
 `;
 }

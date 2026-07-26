@@ -2,7 +2,7 @@ import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 
-import type { Expert } from "@pragma/core";
+import { defineExpert, type Expert, type Flow } from "@pragma/core";
 import { describe, expect, it } from "vitest";
 
 import {
@@ -15,6 +15,7 @@ import {
 import type {
   PragmaCapabilityResource,
   PragmaExpertResource,
+  PragmaFlowResource,
   PragmaRuntimeProfileResource,
 } from "../src/ast/index.ts";
 
@@ -107,6 +108,58 @@ describe("PragmaProjectService", () => {
         changeSet: { baseRevision: 1, upserts: [expert()] },
       }),
     ).rejects.toBeInstanceOf(PragmaProjectValidationError);
+  });
+
+  it("validates and compiles a Flow that targets an allowlisted external system Expert", async () => {
+    const repository = await createRepository();
+    const systemRef = "expert:0000000000pragma" as const;
+    const service = new PragmaProjectService({
+      repository,
+      externalResourceRefs: new Set([systemRef]),
+    });
+    const published = await service.publish({
+      projectId: "studio",
+      expectedRevision: 0,
+      resources: [flowWithExternalExpert(systemRef)],
+    });
+    const systemExpert = await defineExpert({
+      id: "0000000000pragma",
+      name: "Pragma",
+      description: "External system Expert.",
+      tags: [],
+      scope: "Complete the Flow step.",
+      instructions: "Complete the Flow step.",
+      workspace: repository.root,
+    });
+    const resolved: string[] = [];
+
+    const compiled = await service.compile<Flow>({
+      projectId: "studio",
+      revision: published.revision,
+      ref: "flow:0000000000000002",
+      workspace: repository.root,
+      environmentId: "test",
+      adapterHost: {
+        environmentId: "test",
+        projectRoot: repository.root,
+        async resolveBinding() {
+          return undefined;
+        },
+        async resolveArtifact(source) {
+          throw new Error(`Unexpected artifact: ${JSON.stringify(source)}`);
+        },
+        async resolveSecret() {
+          return undefined;
+        },
+      },
+      resolveExternalInvocable: async (ref) => {
+        resolved.push(ref);
+        return ref === systemRef ? systemExpert : undefined;
+      },
+    });
+
+    expect(compiled.value.kind).toBe("flow");
+    expect(resolved).toEqual([systemRef]);
   });
 
   it("rebases changes to different refs and reports changes to the same ref", async () => {
@@ -331,6 +384,33 @@ function skill(): PragmaCapabilityResource {
       config: {
         source: { type: "project", path: "assets/writing-skill" },
         entry: "SKILL.md",
+      },
+    },
+  };
+}
+
+function flowWithExternalExpert(expertRef: `expert:${string}`): PragmaFlowResource {
+  return {
+    apiVersion: "pragma/v3",
+    kind: "Flow",
+    metadata: {
+      id: "0000000000000002",
+      name: "System Expert Flow",
+      description: "Calls an external system Expert.",
+      tags: [],
+    },
+    spec: {
+      limits: { maxNodeVisits: 10 },
+      graph: {
+        start: "run",
+        steps: {
+          run: {
+            expert: { ref: expertRef },
+            prompt: { segments: [{ text: "Complete the task." }] },
+          },
+        },
+        transitions: { run: { end: true } },
+        loops: {},
       },
     },
   };
