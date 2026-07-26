@@ -20,6 +20,7 @@ import {
   PaperPlaneTilt,
   Plus,
   Play,
+  PushPin,
   StopCircle,
   SpinnerGap,
   TerminalWindow,
@@ -56,8 +57,11 @@ import { ToolPermissionSelect } from "../../components/ToolPermissionSelect.tsx"
 import { MissionModelOverrideControls } from "../../components/MissionModelOverrideControls.tsx";
 import { MarkdownContent } from "../../components/MarkdownContent.tsx";
 import {
+  readPinnedMissionIds,
   readLastOpenedMissionId,
   selectPreferredMissionId,
+  togglePinnedMissionId,
+  writePinnedMissionIds,
   writeLastOpenedMissionId,
 } from "../../lib/mission-preference.ts";
 
@@ -75,6 +79,9 @@ export function MissionsPage(props: {
   );
   const [selectedMissionId, setSelectedMissionId] = useState<string | null>(
     props.initialMission?.id ?? null,
+  );
+  const [pinnedMissionIds, setPinnedMissionIds] = useState<readonly string[]>(() =>
+    readPinnedMissionIds(typeof window === "undefined" ? undefined : window.localStorage),
   );
   const [search, setSearch] = useState("");
   const [error, setError] = useState<string | null>(null);
@@ -109,6 +116,14 @@ export function MissionsPage(props: {
         missionToSummary(updated),
       ].toSorted((left, right) => right.updatedAt.localeCompare(left.updatedAt)),
     );
+  }, []);
+
+  const updatePinnedMissionIds = useCallback((update: (current: readonly string[]) => string[]) => {
+    setPinnedMissionIds((current) => {
+      const next = update(current);
+      writePinnedMissionIds(typeof window === "undefined" ? undefined : window.localStorage, next);
+      return next;
+    });
   }, []);
 
   const openMission = useCallback((id: string) => {
@@ -223,10 +238,27 @@ export function MissionsPage(props: {
         missions={visibleMissions}
         search={search}
         now={now}
+        pinnedMissionIds={pinnedMissionIds}
         selectedMissionId={selectedMissionId}
         onSearch={setSearch}
         onCreate={props.onCreate}
         onOpen={(summary) => openMission(summary.id)}
+        onTogglePin={(summary) =>
+          updatePinnedMissionIds((current) => togglePinnedMissionId(current, summary.id))
+        }
+        onMarkComplete={async (summary) => {
+          const api = desktopApi();
+          if (api === undefined) return;
+          try {
+            replaceMission(await api.markMissionComplete(summary.id));
+            updatePinnedMissionIds((current) =>
+              current.filter((missionId) => missionId !== summary.id),
+            );
+            setError(null);
+          } catch (actionError) {
+            setError(errorMessage(actionError));
+          }
+        }}
         onDelete={setDeleteCandidate}
       />
 
@@ -310,6 +342,11 @@ export function MissionsPage(props: {
                     ? await api.markMissionComplete(selectedMission.id)
                     : await api.reopenMission(selectedMission.id);
                 replaceMission(updated);
+                if (selectedMission.lifecycleStatus === "active") {
+                  updatePinnedMissionIds((current) =>
+                    current.filter((missionId) => missionId !== selectedMission.id),
+                  );
+                }
                 setError(null);
               } catch (actionError) {
                 setError(errorMessage(actionError));
@@ -403,10 +440,13 @@ function MissionRail(props: {
   readonly missions: readonly MissionSummary[];
   readonly search: string;
   readonly now: number;
+  readonly pinnedMissionIds: readonly string[];
   readonly selectedMissionId: string | null;
   readonly onSearch: (value: string) => void;
   readonly onCreate: () => void;
   readonly onOpen: (mission: MissionSummary) => void;
+  readonly onTogglePin: (mission: MissionSummary) => void;
+  readonly onMarkComplete: (mission: MissionSummary) => void | Promise<void>;
   readonly onDelete: (mission: MissionSummary) => void;
 }) {
   const { t } = useTranslation("missions");
@@ -415,7 +455,13 @@ function MissionRail(props: {
   const searchRef = useRef<HTMLLabelElement>(null);
   const searchTransitionLockedRef = useRef(false);
   const searchTransitionTimeoutRef = useRef<ReturnType<typeof setTimeout>>(undefined);
-  const active = props.missions.filter((mission) => mission.lifecycleStatus === "active");
+  const pinnedMissionIdSet = useMemo(
+    () => new Set(props.pinnedMissionIds),
+    [props.pinnedMissionIds],
+  );
+  const active = props.missions
+    .filter((mission) => mission.lifecycleStatus === "active")
+    .toSorted((left, right) => comparePinnedMissions(left, right, props.pinnedMissionIds));
   const completed = props.missions.filter((mission) => mission.lifecycleStatus === "completed");
 
   useEffect(
@@ -501,8 +547,11 @@ function MissionRail(props: {
         emptyLabel={t("noActive")}
         missions={active}
         now={props.now}
+        pinnedMissionIds={pinnedMissionIdSet}
         selectedMissionId={props.selectedMissionId}
         onOpen={props.onOpen}
+        onTogglePin={props.onTogglePin}
+        onMarkComplete={props.onMarkComplete}
         onDelete={props.onDelete}
       />
       <MissionRailGroup
@@ -510,8 +559,11 @@ function MissionRail(props: {
         emptyLabel={t("noCompleted")}
         missions={completed}
         now={props.now}
+        pinnedMissionIds={pinnedMissionIdSet}
         selectedMissionId={props.selectedMissionId}
         onOpen={props.onOpen}
+        onTogglePin={props.onTogglePin}
+        onMarkComplete={props.onMarkComplete}
         onDelete={props.onDelete}
       />
     </aside>
@@ -541,8 +593,11 @@ function MissionRailGroup(props: {
   readonly emptyLabel: string;
   readonly missions: readonly MissionSummary[];
   readonly now: number;
+  readonly pinnedMissionIds: ReadonlySet<string>;
   readonly selectedMissionId: string | null;
   readonly onOpen: (mission: MissionSummary) => void;
+  readonly onTogglePin: (mission: MissionSummary) => void;
+  readonly onMarkComplete: (mission: MissionSummary) => void | Promise<void>;
   readonly onDelete: (mission: MissionSummary) => void;
 }) {
   return (
@@ -555,11 +610,17 @@ function MissionRailGroup(props: {
           const executionActive =
             mission.execution !== undefined &&
             ["queued", "running", "waiting"].includes(mission.execution.status);
+          const isActiveMission = mission.lifecycleStatus === "active";
+          const isPinned = isActiveMission && props.pinnedMissionIds.has(mission.id);
           return (
             <div
-              className={
-                mission.id === props.selectedMissionId ? "mission-row is-active" : "mission-row"
-              }
+              className={[
+                "mission-row",
+                mission.id === props.selectedMissionId ? "is-active" : "",
+                isPinned ? "is-pinned" : "",
+              ]
+                .filter(Boolean)
+                .join(" ")}
               key={mission.id}
             >
               <button
@@ -588,26 +649,81 @@ function MissionRailGroup(props: {
                   </small>
                 </span>
               </button>
-              <button
-                className="mission-row-delete"
-                type="button"
-                disabled={executionActive}
-                title={
-                  executionActive
-                    ? i18n.t("waitToDelete", { ns: "missions" })
-                    : i18n.t("deleteMission", { ns: "missions" })
-                }
-                aria-label={i18n.t("deleteNamed", { ns: "missions", title: mission.title })}
-                onClick={() => props.onDelete(mission)}
-              >
-                <Trash size={15} aria-hidden="true" />
-              </button>
+              <div className="mission-row-actions">
+                {isActiveMission ? (
+                  <>
+                    <button
+                      className="mission-row-icon-action"
+                      type="button"
+                      title={
+                        isPinned
+                          ? i18n.t("unpinMission", { ns: "missions" })
+                          : i18n.t("pinMission", { ns: "missions" })
+                      }
+                      aria-label={i18n.t(isPinned ? "unpinNamed" : "pinNamed", {
+                        ns: "missions",
+                        title: mission.title,
+                      })}
+                      aria-pressed={isPinned}
+                      onClick={() => props.onTogglePin(mission)}
+                    >
+                      <PushPin
+                        size={15}
+                        weight={isPinned ? "fill" : "regular"}
+                        aria-hidden="true"
+                      />
+                    </button>
+                    <button
+                      className="mission-row-icon-action"
+                      type="button"
+                      title={i18n.t("markComplete", { ns: "missions" })}
+                      aria-label={i18n.t("markCompleteNamed", {
+                        ns: "missions",
+                        title: mission.title,
+                      })}
+                      onClick={() => void props.onMarkComplete(mission)}
+                    >
+                      <CheckCircle size={15} aria-hidden="true" />
+                    </button>
+                  </>
+                ) : (
+                  <button
+                    className="mission-row-icon-action is-danger"
+                    type="button"
+                    disabled={executionActive}
+                    title={
+                      executionActive
+                        ? i18n.t("waitToDelete", { ns: "missions" })
+                        : i18n.t("deleteMission", { ns: "missions" })
+                    }
+                    aria-label={i18n.t("deleteNamed", { ns: "missions", title: mission.title })}
+                    onClick={() => props.onDelete(mission)}
+                  >
+                    <Trash size={15} aria-hidden="true" />
+                  </button>
+                )}
+              </div>
             </div>
           );
         })
       )}
     </section>
   );
+}
+
+function comparePinnedMissions(
+  left: MissionSummary,
+  right: MissionSummary,
+  pinnedMissionIds: readonly string[],
+): number {
+  const leftPinnedIndex = pinnedMissionIds.indexOf(left.id);
+  const rightPinnedIndex = pinnedMissionIds.indexOf(right.id);
+  const leftPinned = leftPinnedIndex >= 0;
+  const rightPinned = rightPinnedIndex >= 0;
+  if (leftPinned && rightPinned) return leftPinnedIndex - rightPinnedIndex;
+  if (leftPinned) return -1;
+  if (rightPinned) return 1;
+  return right.updatedAt.localeCompare(left.updatedAt);
 }
 
 interface LocalMissionUserMessage {

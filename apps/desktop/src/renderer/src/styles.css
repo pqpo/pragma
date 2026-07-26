@@ -9954,13 +9954,13 @@ textarea:focus-visible,
 }
 
 .mission-rail {
-  padding: 0 20px 34px;
+  padding: 0 14px 24px;
   border-right: 0;
   background: #f4f6f5;
 }
 
 .mission-rail-sticky {
-  padding-top: 42px;
+  padding-top: 28px;
   background: #f4f6f5;
 }
 
@@ -9970,20 +9970,26 @@ textarea:focus-visible,
 }
 
 .mission-new-button {
-  height: 40px;
+  height: 36px;
+  margin-top: 14px;
   border: 0;
 }
 
 .mission-search {
-  height: 40px;
+  height: 36px;
+}
+
+.mission-search-slot {
+  max-height: 52px;
+  padding-top: 14px;
 }
 
 .mission-rail-group {
-  margin-top: 28px;
+  margin-top: 18px;
 }
 
 .mission-rail-group h2 {
-  padding: 0 8px 8px;
+  padding: 0 6px 5px;
   border-bottom: 0;
   color: var(--muted);
   font-size: 11px;
@@ -9991,14 +9997,18 @@ textarea:focus-visible,
   text-transform: uppercase;
 }
 
+.mission-rail-empty {
+  padding: 8px 6px;
+}
+
 .mission-row {
   position: relative;
   display: block;
   grid-template-columns: 8px minmax(0, 1fr);
-  margin-top: 3px;
+  margin-top: 2px;
   padding: 0;
-  border: 1px solid transparent;
-  border-radius: 12px;
+  border: 0;
+  border-radius: 8px;
 }
 
 .mission-row-open {
@@ -10006,8 +10016,8 @@ textarea:focus-visible,
   grid-template-columns: 8px minmax(0, 1fr);
   width: 100%;
   align-items: start;
-  gap: 10px;
-  padding: 11px 34px 11px 10px;
+  gap: 8px;
+  padding: 8px 58px 8px 8px;
   border: 0;
   border-radius: inherit;
   background: transparent;
@@ -10022,58 +10032,72 @@ textarea:focus-visible,
   gap: 2px;
 }
 
-.mission-row-delete {
+.mission-row-actions {
   position: absolute;
   top: 50%;
-  right: 7px;
-  display: grid;
-  width: 28px;
-  height: 28px;
-  place-items: center;
-  padding: 0;
-  border: 0;
-  border-radius: 8px;
-  background: transparent;
-  color: var(--faint);
-  cursor: pointer;
+  right: 5px;
+  display: flex;
+  align-items: center;
+  gap: 2px;
   opacity: 0;
   transform: translateY(-50%);
 }
 
-.mission-row:hover .mission-row-delete,
-.mission-row:focus-within .mission-row-delete,
-.mission-row.is-active .mission-row-delete {
+.mission-row-icon-action {
+  display: grid;
+  width: 24px;
+  height: 24px;
+  place-items: center;
+  padding: 0;
+  border: 0;
+  border-radius: 6px;
+  background: transparent;
+  color: var(--faint);
+  cursor: pointer;
+}
+
+.mission-row:hover .mission-row-actions,
+.mission-row:focus-within .mission-row-actions,
+.mission-row.is-active .mission-row-actions,
+.mission-row.is-pinned .mission-row-actions {
   opacity: 1;
 }
 
-.mission-row-delete:hover:not(:disabled) {
+.mission-row-icon-action[aria-pressed="true"] {
+  color: var(--green-dark);
+}
+
+.mission-row-icon-action:hover:not(:disabled) {
+  background: rgb(88 121 104 / 10%);
+  color: var(--green-dark);
+}
+
+.mission-row-icon-action.is-danger:hover:not(:disabled) {
   background: #fff0ee;
   color: #a5453c;
 }
 
-.mission-row-delete:disabled {
+.mission-row-icon-action:disabled {
   cursor: not-allowed;
   opacity: 0.35;
 }
 
 .mission-row:hover {
-  border-color: rgb(88 121 104 / 12%);
   background: #fff;
-  box-shadow: 0 4px 14px rgb(20 31 25 / 5%);
+  box-shadow: 0 3px 10px rgb(20 31 25 / 5%);
   transform: translateY(-1px);
 }
 
 .mission-row.is-active {
-  border-color: rgb(88 121 104 / 28%);
   background: #fff;
-  box-shadow: 0 5px 16px rgb(20 31 25 / 6%);
+  box-shadow: 0 4px 12px rgb(20 31 25 / 6%);
 }
 
 .mission-row small {
   display: flex;
   align-items: center;
   justify-content: space-between;
-  gap: 8px;
+  gap: 6px;
   color: var(--muted);
 }
 

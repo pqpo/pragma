@@ -1,8 +1,11 @@
 import { describe, expect, it, vi } from "vitest";
 
 import {
+  readPinnedMissionIds,
   readLastOpenedMissionId,
   selectPreferredMissionId,
+  togglePinnedMissionId,
+  writePinnedMissionIds,
   writeLastOpenedMissionId,
 } from "./mission-preference.ts";
 
@@ -49,5 +52,34 @@ describe("mission preference", () => {
     expect(selectPreferredMissionId(missions, "older")).toBe("older");
     expect(selectPreferredMissionId(missions, "deleted")).toBe("newest");
     expect(selectPreferredMissionId([], "deleted")).toBeNull();
+  });
+
+  it("reads, writes, and toggles pinned Missions", () => {
+    expect(
+      readPinnedMissionIds({
+        getItem: () => '["mission-a","mission-b","mission-a"," "]',
+      }),
+    ).toEqual(["mission-a", "mission-b"]);
+    expect(readPinnedMissionIds({ getItem: () => "{not-json" })).toEqual([]);
+
+    const setItem = vi.fn();
+    writePinnedMissionIds({ setItem, removeItem: vi.fn() }, [
+      "mission-a",
+      "mission-b",
+      "mission-a",
+    ]);
+
+    expect(setItem).toHaveBeenCalledWith(
+      "pragma.desktop.missions.pinned-ids",
+      '["mission-a","mission-b"]',
+    );
+    expect(togglePinnedMissionId(["mission-a"], "mission-b")).toEqual(["mission-b", "mission-a"]);
+    expect(togglePinnedMissionId(["mission-b", "mission-a"], "mission-b")).toEqual(["mission-a"]);
+  });
+
+  it("clears empty pinned Mission preferences", () => {
+    const removeItem = vi.fn();
+    writePinnedMissionIds({ setItem: vi.fn(), removeItem }, []);
+    expect(removeItem).toHaveBeenCalledWith("pragma.desktop.missions.pinned-ids");
   });
 });
