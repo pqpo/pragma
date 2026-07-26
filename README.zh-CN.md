@@ -12,6 +12,10 @@
   <img alt="Tests" src="https://img.shields.io/badge/tests-Vitest-6E9F18?logo=vitest&logoColor=white" />
 </p>
 
+<p align="center">
+  <a href="./README.md">English</a> | 简体中文
+</p>
+
 > **愿景：Pragma 帮助沉淀和分享 AI-native 工作方式，让人人都能成为 AI 超级个体。**
 
 Pragma 帮助有经验的 AI 使用者，把可重复的工作方法沉淀成可运行资产。一套工作方式可以组合专家定义、工具、记忆、审批闸门、Runtime 选择、模型配置和交付验收标准；普通用户无需理解底层编排，也可以直接运行。
