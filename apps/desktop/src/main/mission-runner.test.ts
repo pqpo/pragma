@@ -1,4 +1,4 @@
-import { mkdtemp, readFile, rm } from "node:fs/promises";
+import { mkdtemp, readFile, readdir, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
@@ -37,10 +37,49 @@ import { createPragmaProjectStore } from "./pragma-project-store.ts";
 const temporaryPaths: string[] = [];
 const settlementTimeoutMs = 10_000;
 
+const isNodeErrorCode = (error: unknown, code: string): error is NodeJS.ErrnoException =>
+  typeof error === "object" &&
+  error !== null &&
+  "code" in error &&
+  (error as { readonly code: unknown }).code === code;
+
+const purgeDirectory = async (path: string): Promise<void> => {
+  const entries = await readdir(path, { withFileTypes: true }).catch(() => []);
+  await Promise.all(
+    entries.map((entry) => rm(join(path, entry.name), { recursive: true, force: true })),
+  );
+  await rm(path, { recursive: true, force: true }).catch(() => undefined);
+};
+
+const removeTemporaryPath = async (path: string): Promise<void> => {
+  for (let attempt = 0; attempt < 5; attempt += 1) {
+    try {
+      await rm(path, {
+        recursive: true,
+        force: true,
+        maxRetries: 3,
+        retryDelay: 50,
+      });
+      return;
+    } catch (error) {
+      if (
+        !isNodeErrorCode(error, "ENOTEMPTY") &&
+        !isNodeErrorCode(error, "EBUSY") &&
+        !isNodeErrorCode(error, "EPERM")
+      ) {
+        throw error;
+      }
+      await purgeDirectory(path);
+      if (attempt === 4) throw error;
+      await new Promise((resolve) => setTimeout(resolve, (attempt + 1) * 40));
+    }
+  }
+};
+
 afterEach(async () => {
   vi.restoreAllMocks();
   await Promise.all(
-    temporaryPaths.splice(0).map(async (path) => await rm(path, { recursive: true, force: true })),
+    temporaryPaths.splice(0).map(async (path) => await removeTemporaryPath(path)),
   );
 });
 
