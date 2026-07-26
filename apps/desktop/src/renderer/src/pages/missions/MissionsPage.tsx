@@ -451,6 +451,9 @@ function MissionRail(props: {
 }) {
   const { t } = useTranslation("missions");
   const [searchCollapsed, setSearchCollapsed] = useState(false);
+  const [visibleLimits, setVisibleLimits] = useState<MissionRailVisibleLimits>(
+    MISSION_RAIL_INITIAL_VISIBLE_LIMITS,
+  );
   const scrollAnchorRef = useRef(0);
   const searchRef = useRef<HTMLLabelElement>(null);
   const searchTransitionLockedRef = useRef(false);
@@ -459,10 +462,19 @@ function MissionRail(props: {
     () => new Set(props.pinnedMissionIds),
     [props.pinnedMissionIds],
   );
-  const active = props.missions
-    .filter((mission) => mission.lifecycleStatus === "active")
-    .toSorted((left, right) => comparePinnedMissions(left, right, props.pinnedMissionIds));
-  const completed = props.missions.filter((mission) => mission.lifecycleStatus === "completed");
+  const missionGroups = useMemo(
+    () =>
+      resolveMissionRailGroups({
+        missions: props.missions,
+        pinnedMissionIds: props.pinnedMissionIds,
+        visibleLimits,
+      }),
+    [props.missions, props.pinnedMissionIds, visibleLimits],
+  );
+
+  useEffect(() => {
+    setVisibleLimits(MISSION_RAIL_INITIAL_VISIBLE_LIMITS);
+  }, [props.search]);
 
   useEffect(
     () => () => {
@@ -543,9 +555,10 @@ function MissionRail(props: {
         </div>
       </div>
       <MissionRailGroup
-        label={t("active")}
-        emptyLabel={t("noActive")}
-        missions={active}
+        label={t("waitingInput")}
+        emptyLabel={t("noWaitingInput")}
+        missions={missionGroups.waitingInput.visibleMissions}
+        hiddenCount={missionGroups.waitingInput.hiddenCount}
         now={props.now}
         pinnedMissionIds={pinnedMissionIdSet}
         selectedMissionId={props.selectedMissionId}
@@ -553,11 +566,27 @@ function MissionRail(props: {
         onTogglePin={props.onTogglePin}
         onMarkComplete={props.onMarkComplete}
         onDelete={props.onDelete}
+        onLoadMore={() => setVisibleLimits(increaseMissionRailVisibleLimit("waitingInput"))}
+      />
+      <MissionRailGroup
+        label={t("active")}
+        emptyLabel={t("noActive")}
+        missions={missionGroups.active.visibleMissions}
+        hiddenCount={missionGroups.active.hiddenCount}
+        now={props.now}
+        pinnedMissionIds={pinnedMissionIdSet}
+        selectedMissionId={props.selectedMissionId}
+        onOpen={props.onOpen}
+        onTogglePin={props.onTogglePin}
+        onMarkComplete={props.onMarkComplete}
+        onDelete={props.onDelete}
+        onLoadMore={() => setVisibleLimits(increaseMissionRailVisibleLimit("active"))}
       />
       <MissionRailGroup
         label={t("completed")}
         emptyLabel={t("noCompleted")}
-        missions={completed}
+        missions={missionGroups.completed.visibleMissions}
+        hiddenCount={missionGroups.completed.hiddenCount}
         now={props.now}
         pinnedMissionIds={pinnedMissionIdSet}
         selectedMissionId={props.selectedMissionId}
@@ -565,14 +594,84 @@ function MissionRail(props: {
         onTogglePin={props.onTogglePin}
         onMarkComplete={props.onMarkComplete}
         onDelete={props.onDelete}
+        onLoadMore={() => setVisibleLimits(increaseMissionRailVisibleLimit("completed"))}
       />
     </aside>
   );
 }
 
+const MISSION_RAIL_PAGE_SIZE = 10;
+const MISSION_RAIL_INITIAL_VISIBLE_LIMITS = {
+  waitingInput: 10,
+  active: 10,
+  completed: 5,
+} satisfies MissionRailVisibleLimits;
 const MISSION_SEARCH_SCROLL_THRESHOLD = 6;
 const MISSION_SEARCH_TOP_REVEAL_OFFSET = 4;
 const MISSION_SEARCH_TRANSITION_LOCK_MS = 220;
+
+type MissionRailGroupKey = "waitingInput" | "active" | "completed";
+
+export interface MissionRailVisibleLimits {
+  readonly waitingInput: number;
+  readonly active: number;
+  readonly completed: number;
+}
+
+export interface MissionRailResolvedGroup {
+  readonly visibleMissions: readonly MissionSummary[];
+  readonly hiddenCount: number;
+}
+
+export interface MissionRailResolvedGroups {
+  readonly waitingInput: MissionRailResolvedGroup;
+  readonly active: MissionRailResolvedGroup;
+  readonly completed: MissionRailResolvedGroup;
+}
+
+export function resolveMissionRailGroups(input: {
+  readonly missions: readonly MissionSummary[];
+  readonly pinnedMissionIds: readonly string[];
+  readonly visibleLimits: MissionRailVisibleLimits;
+}): MissionRailResolvedGroups {
+  const waitingInput = input.missions
+    .filter(isWaitingInputMission)
+    .toSorted((left, right) => comparePinnedMissions(left, right, input.pinnedMissionIds));
+  const active = input.missions
+    .filter((mission) => mission.lifecycleStatus === "active" && !isWaitingInputMission(mission))
+    .toSorted((left, right) => comparePinnedMissions(left, right, input.pinnedMissionIds));
+  const completed = input.missions.filter((mission) => mission.lifecycleStatus === "completed");
+
+  return {
+    waitingInput: resolveMissionRailGroup(waitingInput, input.visibleLimits.waitingInput),
+    active: resolveMissionRailGroup(active, input.visibleLimits.active),
+    completed: resolveMissionRailGroup(completed, input.visibleLimits.completed),
+  };
+}
+
+function resolveMissionRailGroup(
+  missions: readonly MissionSummary[],
+  visibleLimit: number,
+): MissionRailResolvedGroup {
+  const boundedLimit = Math.max(0, visibleLimit);
+  return {
+    visibleMissions: missions.slice(0, boundedLimit),
+    hiddenCount: Math.max(0, missions.length - boundedLimit),
+  };
+}
+
+function increaseMissionRailVisibleLimit(
+  group: MissionRailGroupKey,
+): (current: MissionRailVisibleLimits) => MissionRailVisibleLimits {
+  return (current) => ({
+    ...current,
+    [group]: current[group] + MISSION_RAIL_PAGE_SIZE,
+  });
+}
+
+function isWaitingInputMission(mission: MissionSummary): boolean {
+  return mission.lifecycleStatus === "active" && mission.execution?.status === "waiting";
+}
 
 export function resolveMissionSearchCollapsed(input: {
   readonly collapsed: boolean;
@@ -592,6 +691,7 @@ function MissionRailGroup(props: {
   readonly label: string;
   readonly emptyLabel: string;
   readonly missions: readonly MissionSummary[];
+  readonly hiddenCount: number;
   readonly now: number;
   readonly pinnedMissionIds: ReadonlySet<string>;
   readonly selectedMissionId: string | null;
@@ -599,6 +699,7 @@ function MissionRailGroup(props: {
   readonly onTogglePin: (mission: MissionSummary) => void;
   readonly onMarkComplete: (mission: MissionSummary) => void | Promise<void>;
   readonly onDelete: (mission: MissionSummary) => void;
+  readonly onLoadMore: () => void;
 }) {
   return (
     <section className="mission-rail-group">
@@ -606,102 +707,112 @@ function MissionRailGroup(props: {
       {props.missions.length === 0 ? (
         <p className="mission-rail-empty">{props.emptyLabel}</p>
       ) : (
-        props.missions.map((mission) => {
-          const executionActive =
-            mission.execution !== undefined &&
-            ["queued", "running", "waiting"].includes(mission.execution.status);
-          const isActiveMission = mission.lifecycleStatus === "active";
-          const isPinned = isActiveMission && props.pinnedMissionIds.has(mission.id);
-          const showStatusDot = isActiveMission;
-          return (
-            <div
-              className={[
-                "mission-row",
-                mission.id === props.selectedMissionId ? "is-active" : "",
-                isPinned ? "is-pinned" : "",
-              ]
-                .filter(Boolean)
-                .join(" ")}
-              key={mission.id}
-            >
-              <button
-                className={showStatusDot ? "mission-row-open has-status-dot" : "mission-row-open"}
-                type="button"
-                onClick={() => props.onOpen(mission)}
+        <>
+          {props.missions.map((mission) => {
+            const executionActive =
+              mission.execution !== undefined &&
+              ["queued", "running", "waiting"].includes(mission.execution.status);
+            const isActiveMission = mission.lifecycleStatus === "active";
+            const isPinned = isActiveMission && props.pinnedMissionIds.has(mission.id);
+            const showStatusDot = isActiveMission;
+            return (
+              <div
+                className={[
+                  "mission-row",
+                  mission.id === props.selectedMissionId ? "is-active" : "",
+                  isPinned ? "is-pinned" : "",
+                ]
+                  .filter(Boolean)
+                  .join(" ")}
+                key={mission.id}
               >
-                {showStatusDot ? (
-                  <span className="mission-status-dot is-active" aria-hidden="true" />
-                ) : null}
-                <span>
-                  <strong>{mission.title}</strong>
-                  <small>
-                    <span>{missionStatusLabel(mission)}</span>
-                    <time
-                      dateTime={mission.updatedAt}
-                      title={formatMissionDateTime(mission.updatedAt)}
-                    >
-                      {formatMissionTime(mission.updatedAt, props.now)}
-                    </time>
-                  </small>
-                </span>
-              </button>
-              <div className="mission-row-actions">
-                {isActiveMission ? (
-                  <>
+                <button
+                  className={
+                    showStatusDot ? "mission-row-open has-status-dot" : "mission-row-open"
+                  }
+                  type="button"
+                  onClick={() => props.onOpen(mission)}
+                >
+                  {showStatusDot ? (
+                    <span className="mission-status-dot is-active" aria-hidden="true" />
+                  ) : null}
+                  <span>
+                    <strong>{mission.title}</strong>
+                    <small>
+                      <span>{missionStatusLabel(mission)}</span>
+                      <time
+                        dateTime={mission.updatedAt}
+                        title={formatMissionDateTime(mission.updatedAt)}
+                      >
+                        {formatMissionTime(mission.updatedAt, props.now)}
+                      </time>
+                    </small>
+                  </span>
+                </button>
+                <div className="mission-row-actions">
+                  {isActiveMission ? (
+                    <>
+                      <button
+                        className="mission-row-icon-action"
+                        type="button"
+                        title={
+                          isPinned
+                            ? i18n.t("unpinMission", { ns: "missions" })
+                            : i18n.t("pinMission", { ns: "missions" })
+                        }
+                        aria-label={i18n.t(isPinned ? "unpinNamed" : "pinNamed", {
+                          ns: "missions",
+                          title: mission.title,
+                        })}
+                        aria-pressed={isPinned}
+                        onClick={() => props.onTogglePin(mission)}
+                      >
+                        <PushPin
+                          size={15}
+                          weight={isPinned ? "fill" : "regular"}
+                          aria-hidden="true"
+                        />
+                      </button>
+                      <button
+                        className="mission-row-icon-action"
+                        type="button"
+                        title={i18n.t("markComplete", { ns: "missions" })}
+                        aria-label={i18n.t("markCompleteNamed", {
+                          ns: "missions",
+                          title: mission.title,
+                        })}
+                        onClick={() => void props.onMarkComplete(mission)}
+                      >
+                        <CheckCircle size={15} aria-hidden="true" />
+                      </button>
+                    </>
+                  ) : (
                     <button
-                      className="mission-row-icon-action"
+                      className="mission-row-icon-action is-danger"
                       type="button"
+                      disabled={executionActive}
                       title={
-                        isPinned
-                          ? i18n.t("unpinMission", { ns: "missions" })
-                          : i18n.t("pinMission", { ns: "missions" })
+                        executionActive
+                          ? i18n.t("waitToDelete", { ns: "missions" })
+                          : i18n.t("deleteMission", { ns: "missions" })
                       }
-                      aria-label={i18n.t(isPinned ? "unpinNamed" : "pinNamed", {
-                        ns: "missions",
-                        title: mission.title,
-                      })}
-                      aria-pressed={isPinned}
-                      onClick={() => props.onTogglePin(mission)}
+                      aria-label={i18n.t("deleteNamed", { ns: "missions", title: mission.title })}
+                      onClick={() => props.onDelete(mission)}
                     >
-                      <PushPin
-                        size={15}
-                        weight={isPinned ? "fill" : "regular"}
-                        aria-hidden="true"
-                      />
+                      <Trash size={15} aria-hidden="true" />
                     </button>
-                    <button
-                      className="mission-row-icon-action"
-                      type="button"
-                      title={i18n.t("markComplete", { ns: "missions" })}
-                      aria-label={i18n.t("markCompleteNamed", {
-                        ns: "missions",
-                        title: mission.title,
-                      })}
-                      onClick={() => void props.onMarkComplete(mission)}
-                    >
-                      <CheckCircle size={15} aria-hidden="true" />
-                    </button>
-                  </>
-                ) : (
-                  <button
-                    className="mission-row-icon-action is-danger"
-                    type="button"
-                    disabled={executionActive}
-                    title={
-                      executionActive
-                        ? i18n.t("waitToDelete", { ns: "missions" })
-                        : i18n.t("deleteMission", { ns: "missions" })
-                    }
-                    aria-label={i18n.t("deleteNamed", { ns: "missions", title: mission.title })}
-                    onClick={() => props.onDelete(mission)}
-                  >
-                    <Trash size={15} aria-hidden="true" />
-                  </button>
-                )}
+                  )}
+                </div>
               </div>
-            </div>
-          );
-        })
+            );
+          })}
+          {props.hiddenCount > 0 ? (
+            <button className="mission-rail-load-more" type="button" onClick={props.onLoadMore}>
+              <CaretDown size={14} aria-hidden="true" />
+              {i18n.t("loadMoreMissions", { ns: "missions" })}
+            </button>
+          ) : null}
+        </>
       )}
     </section>
   );

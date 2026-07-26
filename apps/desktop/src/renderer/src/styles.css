@@ -9999,6 +9999,30 @@ textarea:focus-visible,
   padding: 8px 6px;
 }
 
+.mission-rail-load-more {
+  display: flex;
+  width: 100%;
+  min-height: 30px;
+  align-items: center;
+  justify-content: center;
+  gap: 5px;
+  margin-top: 5px;
+  padding: 0 8px;
+  border: 0;
+  border-radius: 7px;
+  background: transparent;
+  color: var(--muted);
+  cursor: pointer;
+  font-size: 12px;
+  font-weight: 560;
+}
+
+.mission-rail-load-more:hover,
+.mission-rail-load-more:focus-visible {
+  background: rgb(88 121 104 / 9%);
+  color: var(--green-dark);
+}
+
 .mission-row {
   position: relative;
   display: block;
