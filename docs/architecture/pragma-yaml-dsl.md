@@ -183,10 +183,10 @@ Ordinary and repeat edges remain distinct multigraph edges, and `onLimit` must l
 Internal control state lives in a reserved namespace that DSL `save` paths cannot address; state
 reducers, deadlines, loop counters, and transition decisions use versioned CAS commits so
 concurrent nested Flows cannot overwrite one another.
-Flow `limits.timeoutMs` is compiled into Core and persisted as an absolute wall-clock deadline on
-first entry. Recovery reuses that deadline, so process downtime and HumanTask waits count toward
-the same timeout. Timeout is a `failed` terminal state; explicit user cancellation remains
-`cancelled`.
+Flow `limits.timeoutMs` is compiled into Core and persisted as an absolute runtime deadline on
+first entry. HumanTask waits pause that deadline, including across process restart recovery, so a
+Flow waiting for user input does not fail only because the app was closed or upgraded. Timeout is a
+`failed` terminal state; explicit user cancellation remains `cancelled`.
 
 Context reuse policies are versioned extension references such as
 `context-policy:pragma.fresh@v1`; runtime overrides are exact RuntimeProfile references. Runtime
