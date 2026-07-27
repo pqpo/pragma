@@ -446,15 +446,9 @@ function FlowEditorCanvas(props: {
 
   useEffect(() => {
     setNodes((current) => {
-      return buildCanvasNodes(
-        flow,
-        canvasPositions(current),
-        invalidStepIds,
-        selectedNodeId,
-        logicDraftIds,
-      );
+      return rebuildCanvasNodesPreservingSelection(flow, current, invalidStepIds, logicDraftIds);
     });
-  }, [flow, invalidStepIds, logicDraftIds, selectedNodeId, setNodes]);
+  }, [flow, invalidStepIds, logicDraftIds, setNodes]);
 
   useEffect(() => {
     const listener = (event: KeyboardEvent) => {
@@ -4332,6 +4326,22 @@ export function inspectorNodeId(
   return node?.type === "step" || node?.type === "logic" || node?.type === "terminal"
     ? node.id
     : null;
+}
+
+export function rebuildCanvasNodesPreservingSelection(
+  flow: PragmaFlowResource,
+  currentNodes: readonly WorkflowCanvasNode[],
+  invalidStepIds: ReadonlySet<string> = new Set(),
+  logicDraftIds: readonly string[] = [],
+): WorkflowCanvasNode[] {
+  const selectedNodeId = inspectorNodeId(currentNodes.find((node) => node.selected));
+  return buildCanvasNodes(
+    flow,
+    canvasPositions(currentNodes),
+    invalidStepIds,
+    selectedNodeId,
+    logicDraftIds,
+  );
 }
 
 export function buildCanvasEdges(flow: PragmaFlowResource): Edge[] {
