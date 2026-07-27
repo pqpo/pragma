@@ -10,7 +10,7 @@ import {
 import { setDesktopLocale } from "./i18n/index.ts";
 import { resolveDesktopStartup } from "./lib/desktop-startup.ts";
 import { serializeRendererError } from "./lib/renderer-log.ts";
-import type { PragmaDesktopAPI } from "../../shared/desktop-api.ts";
+import type { PragmaDesktopAPI } from "../../shared/contracts/index.ts";
 import "./styles.css";
 
 const rootElement = document.getElementById("root");

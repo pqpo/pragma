@@ -13,7 +13,7 @@ import type {
   CreateExpertDefinition,
   ExpertDefinition,
   UpdateExpertDefinition,
-} from "../../../../shared/desktop-api.ts";
+} from "../../../../shared/contracts/index.ts";
 
 export type ExpertModel = Extract<
   ExpertDefinition["executionProfile"],

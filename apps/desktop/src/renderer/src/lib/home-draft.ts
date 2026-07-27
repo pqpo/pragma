@@ -3,7 +3,7 @@ import { z } from "zod";
 import {
   DesktopToolPermissionModeSchema,
   MissionModelOverrideSchema,
-} from "../../../shared/desktop-api.ts";
+} from "../../../shared/contracts/index.ts";
 
 const homeDraftStorageKey = "pragma.desktop.home.draft.v1";
 

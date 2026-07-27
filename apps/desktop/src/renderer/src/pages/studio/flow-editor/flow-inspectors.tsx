@@ -23,7 +23,7 @@ import type { Edge } from "@xyflow/react";
 import { useTranslation } from "react-i18next";
 import { stringify } from "yaml";
 
-import type { DesktopRuntimeAvailability } from "../../../../../shared/desktop-api.ts";
+import type { DesktopRuntimeAvailability } from "../../../../../shared/contracts/index.ts";
 import { flowStepKind, flowStepTarget, type FlowStep } from "./flow-model.ts";
 import {
   createRouteTransition,

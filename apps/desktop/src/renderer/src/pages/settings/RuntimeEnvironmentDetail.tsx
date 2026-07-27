@@ -2,7 +2,7 @@ import { ArrowLeft, ArrowsClockwise, TerminalWindow } from "@phosphor-icons/reac
 import type { ReactNode } from "react";
 import { useTranslation } from "react-i18next";
 
-import type { DesktopRuntimeAvailability } from "../../../../shared/desktop-api.ts";
+import type { DesktopRuntimeAvailability } from "../../../../shared/contracts/index.ts";
 import { SettingsScreenFrame } from "./SettingsScreenFrame.tsx";
 
 export function RuntimeEnvironmentDetail(props: {

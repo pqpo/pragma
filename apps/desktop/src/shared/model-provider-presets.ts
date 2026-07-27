@@ -1,4 +1,4 @@
-import type { ModelProvider } from "./desktop-api.ts";
+import type { ModelProvider } from "./contracts/index.ts";
 
 export type ModelProviderPresetCategory = "official" | "gateway" | "local" | "custom";
 

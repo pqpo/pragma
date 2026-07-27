@@ -16,7 +16,7 @@ import type {
   Mission,
   MissionExecutorOption,
   MissionModelOverride,
-} from "../../../../shared/desktop-api.ts";
+} from "../../../../shared/contracts/index.ts";
 import { ToolPermissionSelect } from "../../components/ToolPermissionSelect.tsx";
 import { MissionModelOverrideControls } from "../../components/MissionModelOverrideControls.tsx";
 import { WorkspacePicker, type WorkspaceSelection } from "../../components/WorkspacePicker.tsx";

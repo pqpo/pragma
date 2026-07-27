@@ -1,7 +1,7 @@
 import { renderToStaticMarkup } from "react-dom/server";
 import { describe, expect, it } from "vitest";
 
-import type { ContextStore } from "../../../../shared/desktop-api.ts";
+import type { ContextStore } from "../../../../shared/contracts/index.ts";
 import {
   canMoveEntryTo,
   ContextStoreCreatorDrawer,

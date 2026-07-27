@@ -14,7 +14,7 @@ import {
 import { useState } from "react";
 import { useTranslation } from "react-i18next";
 
-import type { ContextStore } from "../../../../shared/desktop-api.ts";
+import type { ContextStore } from "../../../../shared/contracts/index.ts";
 import { StudioScreenFrame } from "./StudioScreenFrame.tsx";
 import { StudioConfirmationDialog } from "./StudioDialog.tsx";
 import { isBuiltInExpert, type ExpertRecord } from "./studio-model.ts";

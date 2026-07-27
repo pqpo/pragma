@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 
-import type { ExpertDefinition } from "../../../../shared/desktop-api.ts";
+import type { ExpertDefinition } from "../../../../shared/contracts/index.ts";
 import {
   isBuiltInExpert,
   toCreateExpertInput,

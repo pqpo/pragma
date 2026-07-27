@@ -16,7 +16,7 @@ import { useTranslation } from "react-i18next";
 import type {
   DesktopRuntimeAvailability,
   DesktopRuntimeModel,
-} from "../../../../../shared/desktop-api.ts";
+} from "../../../../../shared/contracts/index.ts";
 import {
   SchemaFieldsEditor,
   fieldsToObjectSchema,

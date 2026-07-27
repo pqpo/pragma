@@ -34,7 +34,7 @@ import { useTranslation } from "react-i18next";
 import type {
   DesktopRuntimeAvailability,
   PragmaProjectSnapshot,
-} from "../../../../../shared/desktop-api.ts";
+} from "../../../../../shared/contracts/index.ts";
 import { errorMessage } from "../../../lib/errors.ts";
 import { desktopApi } from "../studio-model.ts";
 import {

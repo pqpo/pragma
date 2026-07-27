@@ -7,7 +7,7 @@ import type {
   DesktopRuntimeAvailability,
   DesktopSettingsSnapshot,
   DesktopToolPermissionMode,
-} from "../../../../shared/desktop-api.ts";
+} from "../../../../shared/contracts/index.ts";
 import { localeDisplayNames, setDesktopLocale } from "../../i18n/index.ts";
 import { SettingsScreenFrame } from "./SettingsScreenFrame.tsx";
 

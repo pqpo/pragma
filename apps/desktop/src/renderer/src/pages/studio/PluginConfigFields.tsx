@@ -1,7 +1,7 @@
 import { useEffect, useState } from "react";
 import { useTranslation } from "react-i18next";
 
-import type { DesktopPluginManifest } from "../../../../shared/desktop-api.ts";
+import type { DesktopPluginManifest } from "../../../../shared/contracts/index.ts";
 
 export function PluginConfigFields(props: {
   readonly manifest: DesktopPluginManifest;

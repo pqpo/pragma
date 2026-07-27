@@ -9,7 +9,7 @@ import { canonicalPragmaResourceRef } from "@pragma/interpreter/ast";
 import dagre from "@dagrejs/dagre";
 import { MarkerType, type Connection, type Edge, type Viewport } from "@xyflow/react";
 
-import type { WorkflowLayout } from "../../../../../shared/desktop-api.ts";
+import type { WorkflowLayout } from "../../../../../shared/contracts/index.ts";
 import {
   destinationTarget,
   flowStepKind,

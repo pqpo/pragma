@@ -6,7 +6,7 @@ import { SettingsPage, type SettingsView } from "./pages/settings/SettingsPage.t
 import { MissionsPage } from "./pages/missions/MissionsPage.tsx";
 import { StudioPage } from "./pages/studio/StudioPage.tsx";
 import { HomePage } from "./pages/home/HomePage.tsx";
-import type { Mission } from "../../shared/desktop-api.ts";
+import type { Mission } from "../../shared/contracts/index.ts";
 
 export function App() {
   const [activeView, setActiveView] = useState<AppView>("home");

@@ -2,7 +2,7 @@ import { ArrowCounterClockwise, MagnifyingGlass, PuzzlePiece, X } from "@phospho
 import { useEffect, useMemo, useState } from "react";
 import { useTranslation } from "react-i18next";
 
-import type { DesktopPlugin, ExpertPluginReference } from "../../../../shared/desktop-api.ts";
+import type { DesktopPlugin, ExpertPluginReference } from "../../../../shared/contracts/index.ts";
 import { PluginConfigFields } from "./PluginConfigFields.tsx";
 
 const PLUGIN_RESULT_LIMIT = 8;

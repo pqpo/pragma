@@ -2,7 +2,7 @@ import { CaretDown, Check, ClockCounterClockwise, Folder, FolderOpen } from "@ph
 import { useEffect, useRef, useState, type RefObject } from "react";
 import { useTranslation } from "react-i18next";
 
-import type { MissionCreationDefaults } from "../../../shared/desktop-api.ts";
+import type { MissionCreationDefaults } from "../../../shared/contracts/index.ts";
 
 export type WorkspaceSelection = MissionCreationDefaults["workspace"];
 

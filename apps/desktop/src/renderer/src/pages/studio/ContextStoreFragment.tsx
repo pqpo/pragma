@@ -29,7 +29,7 @@ import type {
   ContextStoreImportInspection,
   CreateContextStore,
   ExpertContextStoreMount,
-} from "../../../../shared/desktop-api.ts";
+} from "../../../../shared/contracts/index.ts";
 import { MarkdownContent } from "../../components/MarkdownContent.tsx";
 import { errorMessage } from "../../lib/errors.ts";
 import {

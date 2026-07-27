@@ -7,7 +7,7 @@ import {
   type PragmaFlowResource,
   type PragmaExpertResource,
 } from "@pragma/interpreter/ast";
-import type { PragmaProjectSnapshot } from "../../../../shared/desktop-api.ts";
+import type { PragmaProjectSnapshot } from "../../../../shared/contracts/index.ts";
 
 import {
   matchingTeamExperts,

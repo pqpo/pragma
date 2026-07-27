@@ -3,7 +3,7 @@ import { useEffect, useMemo, useState } from "react";
 import type { PragmaResource } from "@pragma/interpreter/ast";
 import { useTranslation } from "react-i18next";
 
-import type { Capability, ContextStore } from "../../../../shared/desktop-api.ts";
+import type { Capability, ContextStore } from "../../../../shared/contracts/index.ts";
 import type { ExpertDraft } from "./studio-model.ts";
 
 type PickerKind = "resources" | "context-stores" | "skills" | "tools";

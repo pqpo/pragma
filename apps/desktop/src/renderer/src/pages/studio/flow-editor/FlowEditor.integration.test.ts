@@ -2,7 +2,7 @@ import { createElement } from "react";
 import { renderToStaticMarkup } from "react-dom/server";
 import { describe, expect, it } from "vitest";
 
-import type { PragmaProjectSnapshot } from "../../../../../shared/desktop-api.ts";
+import type { PragmaProjectSnapshot } from "../../../../../shared/contracts/index.ts";
 import { FlowEditor, FLOW_ERROR_AUTO_DISMISS_MS } from "./FlowEditor.tsx";
 import { flowFixture } from "./flow-editor-test-fixtures.ts";
 

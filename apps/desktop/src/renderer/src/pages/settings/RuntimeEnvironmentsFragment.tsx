@@ -2,7 +2,7 @@ import { CaretRight, TerminalWindow } from "@phosphor-icons/react";
 import { useEffect, useState } from "react";
 import { useTranslation } from "react-i18next";
 
-import type { DesktopRuntimeAvailability } from "../../../../shared/desktop-api.ts";
+import type { DesktopRuntimeAvailability } from "../../../../shared/contracts/index.ts";
 import { errorMessage } from "../../lib/errors.ts";
 import { RuntimeEnvironmentDetail } from "./RuntimeEnvironmentDetail.tsx";
 import { SettingsScreenFrame } from "./SettingsScreenFrame.tsx";

@@ -1,7 +1,7 @@
 import { ShieldCheck } from "@phosphor-icons/react";
 import { useTranslation } from "react-i18next";
 
-import type { DesktopToolPermissionMode } from "../../../shared/desktop-api.ts";
+import type { DesktopToolPermissionMode } from "../../../shared/contracts/index.ts";
 
 const MODES: readonly DesktopToolPermissionMode[] = [
   "request-approval",

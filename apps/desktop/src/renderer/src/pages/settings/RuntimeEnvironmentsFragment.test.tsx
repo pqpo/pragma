@@ -1,7 +1,7 @@
 import { renderToStaticMarkup } from "react-dom/server";
 import { describe, expect, it } from "vitest";
 
-import type { DesktopRuntimeAvailability } from "../../../../shared/desktop-api.ts";
+import type { DesktopRuntimeAvailability } from "../../../../shared/contracts/index.ts";
 import { RuntimeEnvironmentDetail } from "./RuntimeEnvironmentDetail.tsx";
 import { RuntimeCard } from "./RuntimeEnvironmentsFragment.tsx";
 
