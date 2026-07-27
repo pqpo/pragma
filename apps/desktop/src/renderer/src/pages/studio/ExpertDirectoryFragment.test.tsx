@@ -144,5 +144,25 @@ describe("ExpertEditorFragment", () => {
     expect(html).not.toContain("<label>Version");
     expect(html).not.toContain("test_expert");
     expect(html).toContain("Back to expert details");
+    expect(html).toMatch(/<button[^>]*aria-current="step"[^>]*>/);
+    expect(html).not.toMatch(/<button[^>]*disabled=""[^>]*aria-current="step"/);
+  });
+
+  it("keeps creation steps sequential", () => {
+    const html = renderToStaticMarkup(
+      <ExpertEditorFragment
+        mode="create"
+        initialValue={draft}
+        runtimes={[]}
+        contextStores={[]}
+        capabilities={[]}
+        plugins={[]}
+        resources={[]}
+        onCancel={() => undefined}
+        onCreated={async () => undefined}
+      />,
+    );
+
+    expect(html.match(/<button[^>]*disabled=""/g)).toHaveLength(4);
   });
 });

@@ -121,7 +121,9 @@ export function CapabilityDetailFragment(props: {
 
   return (
     <StudioScreenFrame
-      className="capability-detail"
+      className={
+        definition.kind === "skill" ? "capability-detail" : "capability-detail has-tool-workspace"
+      }
       labelledBy="capability-detail-name"
       header={
         <button className="back-link" type="button" onClick={props.onBack}>
@@ -130,52 +132,59 @@ export function CapabilityDetailFragment(props: {
         </button>
       }
     >
-      <header className="capability-detail-header">
-        <span className="expert-avatar" aria-hidden="true">
-          <Icon size={40} />
-        </span>
-        <div className="capability-detail-title">
-          <div>
-            <h1 id="capability-detail-name">{capability.manifest.name}</h1>
-            <span className="capability-type">{capabilityTypeLabel(capability)}</span>
-            <span className="version-label">Revision {capability.manifest.latestRevision}</span>
-          </div>
-          <p>{definition.description}</p>
-        </div>
-        {definition.kind === "mcp_server" ? (
-          <button
-            className="secondary-button"
-            type="button"
-            disabled={busy}
-            onClick={() => void refreshMcp()}
-          >
-            <ArrowsClockwise size={17} /> {busy ? t("refreshing") : t("refreshTools")}
-          </button>
-        ) : null}
-      </header>
-
-      <section className="capability-detail-meta" aria-label={t("capabilityIdentity")}>
-        <DetailFact label={t("status")}>
-          <span className="capability-status">
-            <i className={capability.health.status === "ready" ? "is-ready" : "is-warning"} />
-            {capability.health.status === "ready" ? t("ready") : t("needsAttention")}
+      <div className="capability-detail-overview">
+        <header className="capability-detail-header">
+          <span className="expert-avatar" aria-hidden="true">
+            <Icon size={40} />
           </span>
-        </DetailFact>
-        <DetailFact label={t("runtimeKey")}>
-          <code>{capability.manifest.runtimeKey}</code>
-        </DetailFact>
-        <DetailFact label={t("sourceConnection")}>{capabilitySource(capability)}</DetailFact>
-        <DetailFact label={t("lastChecked")}>
-          {new Date(capability.health.checkedAt).toLocaleString()}
-        </DetailFact>
-      </section>
+          <div className="capability-detail-title">
+            <div>
+              <h1 id="capability-detail-name">{capability.manifest.name}</h1>
+              <span className="capability-type">{capabilityTypeLabel(capability)}</span>
+              <span className="version-label">Revision {capability.manifest.latestRevision}</span>
+            </div>
+            <p>{definition.description}</p>
+          </div>
+          {definition.kind === "mcp_server" ? (
+            <button
+              className="secondary-button"
+              type="button"
+              disabled={busy}
+              onClick={() => void refreshMcp()}
+            >
+              <ArrowsClockwise size={17} /> {busy ? t("refreshing") : t("refreshTools")}
+            </button>
+          ) : null}
+        </header>
 
-      {capability.health.diagnostic ? (
-        <p className="capability-diagnostic" role="status">
-          <strong>{capability.health.diagnostic.code}</strong>
-          {capability.health.diagnostic.message}
-        </p>
-      ) : null}
+        <section className="capability-detail-meta" aria-label={t("capabilityIdentity")}>
+          <DetailFact label={t("status")}>
+            <span className="capability-status">
+              <i className={capability.health.status === "ready" ? "is-ready" : "is-warning"} />
+              {capability.health.status === "ready" ? t("ready") : t("needsAttention")}
+            </span>
+          </DetailFact>
+          <DetailFact label={t("runtimeKey")}>
+            <code>{capability.manifest.runtimeKey}</code>
+          </DetailFact>
+          <DetailFact label={t("sourceConnection")}>{capabilitySource(capability)}</DetailFact>
+          <DetailFact label={t("lastChecked")}>
+            {new Date(capability.health.checkedAt).toLocaleString()}
+          </DetailFact>
+        </section>
+
+        {capability.health.diagnostic ? (
+          <p className="capability-diagnostic" role="status">
+            <strong>{capability.health.diagnostic.code}</strong>
+            {capability.health.diagnostic.message}
+          </p>
+        ) : null}
+        {error ? (
+          <p className="form-error" role="alert">
+            {error}
+          </p>
+        ) : null}
+      </div>
 
       {definition.kind === "skill" ? (
         <section className="skill-document" aria-labelledby="skill-document-heading">
@@ -205,26 +214,6 @@ export function CapabilityDetailFragment(props: {
         </section>
       ) : (
         <section className="capability-tool-workspace" aria-label={t("capabilityToolsPanel")}>
-          <aside className="capability-tool-list">
-            <header>
-              <h2>{t("tools")}</h2>
-              <span>{tools.length}</span>
-            </header>
-            {tools.map((tool) => (
-              <button
-                key={tool.name}
-                className={tool.name === selectedToolName ? "is-active" : ""}
-                type="button"
-                aria-pressed={tool.name === selectedToolName}
-                onClick={() => selectTool(tool.name)}
-              >
-                <strong>{tool.name}</strong>
-                <small>{tool.summary}</small>
-              </button>
-            ))}
-            {tools.length === 0 ? <p>{t("noTools")}</p> : null}
-          </aside>
-
           <div className="capability-tool-detail">
             {selectedTool ? (
               <>
@@ -263,14 +252,29 @@ export function CapabilityDetailFragment(props: {
               <p className="capability-empty">{t("selectTool")}</p>
             )}
           </div>
+          <aside className="capability-tool-list">
+            <header>
+              <h2>{t("tools")}</h2>
+              <span>{tools.length}</span>
+            </header>
+            <div className="capability-tool-list-scroll">
+              {tools.map((tool) => (
+                <button
+                  key={tool.name}
+                  className={tool.name === selectedToolName ? "is-active" : ""}
+                  type="button"
+                  aria-pressed={tool.name === selectedToolName}
+                  onClick={() => selectTool(tool.name)}
+                >
+                  <strong>{tool.name}</strong>
+                  <small>{tool.summary}</small>
+                </button>
+              ))}
+              {tools.length === 0 ? <p>{t("noTools")}</p> : null}
+            </div>
+          </aside>
         </section>
       )}
-
-      {error ? (
-        <p className="form-error" role="alert">
-          {error}
-        </p>
-      ) : null}
     </StudioScreenFrame>
   );
 }

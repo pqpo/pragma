@@ -1400,6 +1400,17 @@ export const MissionSummarySchema = z.object({
   updatedAt: z.string().datetime(),
 });
 
+export const MissionUpdateSchema = z.discriminatedUnion("kind", [
+  z.object({
+    kind: z.literal("upsert"),
+    mission: MissionSchema,
+  }),
+  z.object({
+    kind: z.literal("remove"),
+    missionId: MissionIdSchema,
+  }),
+]);
+
 export const CreateMissionSchema = z.object({
   workspace: z.string().trim().min(1).max(2_000),
   executor: z.object({
@@ -1689,6 +1700,7 @@ export type GetWorkflowLayout = z.infer<typeof GetWorkflowLayoutSchema>;
 export type DeleteWorkflowLayout = z.infer<typeof DeleteWorkflowLayoutSchema>;
 export type Mission = z.infer<typeof MissionSchema>;
 export type MissionSummary = z.infer<typeof MissionSummarySchema>;
+export type MissionUpdate = z.infer<typeof MissionUpdateSchema>;
 export { MissionExecutorRefSchema, MissionExecutorSchema };
 export type { MissionExecutor };
 export type MissionExecutorOption = z.infer<typeof MissionExecutorOptionSchema>;
@@ -1831,6 +1843,7 @@ export interface PragmaDesktopAPI {
   subscribeRuntimeModelCatalog: (listener: (runtimeId: string) => void) => () => void;
   getMissionCreationDefaults: () => Promise<MissionCreationDefaults>;
   getMission: (id: string) => Promise<Mission>;
+  subscribeMissionUpdates: (listener: (update: MissionUpdate) => void) => () => void;
   createMission: (input: CreateMission) => Promise<Mission>;
   updateMissionOptions: (input: UpdateMissionOptions) => Promise<Mission>;
   runMission: (id: string) => Promise<Mission>;

@@ -2,7 +2,7 @@ import { renderToStaticMarkup } from "react-dom/server";
 import { describe, expect, it } from "vitest";
 
 import { MissionModelOverrideControls } from "../../components/MissionModelOverrideControls.tsx";
-import { filterMissionExecutors } from "./HomePage.tsx";
+import { filterMissionExecutors, missionModelOverrideAvailable } from "./HomePage.tsx";
 import { SchemaInputForm, createSchemaInputValue, isSchemaInputValid } from "./SchemaInputForm.tsx";
 
 describe("MissionModelOverrideControls", () => {
@@ -82,6 +82,45 @@ describe("mission executor search", () => {
     const matches = filterMissionExecutors(executors, "Expert 99");
     expect(matches).toHaveLength(1);
     expect(matches[0]?.name).toBe("Expert 99");
+  });
+});
+
+describe("persisted Mission model overrides", () => {
+  const models = [
+    {
+      id: "gpt",
+      displayName: "GPT",
+      provider: { kind: "registered" as const, id: "openai", displayName: "OpenAI" },
+      thinking: {
+        supportedLevels: [
+          { value: "medium", label: "Medium" },
+          { value: "high", label: "High" },
+        ],
+      },
+    },
+  ];
+
+  it("restores only selections still offered by the current model catalog", () => {
+    expect(
+      missionModelOverrideAvailable(models, {
+        providerId: "openai",
+        modelId: "gpt",
+        thinkingLevel: "high",
+      }),
+    ).toBe(true);
+    expect(
+      missionModelOverrideAvailable(models, {
+        providerId: "openai",
+        modelId: "gpt",
+        thinkingLevel: "xhigh",
+      }),
+    ).toBe(false);
+    expect(
+      missionModelOverrideAvailable(models, {
+        providerId: "other",
+        modelId: "gpt",
+      }),
+    ).toBe(false);
   });
 });
 

@@ -3,9 +3,12 @@ import { describe, expect, it } from "vitest";
 
 import type { ContextStore } from "../../../../shared/desktop-api.ts";
 import {
+  canMoveEntryTo,
   ContextStoreCreatorDrawer,
   ContextStoreDetailFragment,
   ContextStoreDirectoryFragment,
+  moveEntryTargetId,
+  rebaseEntryId,
 } from "./ContextStoreFragment.tsx";
 
 const store: ContextStore = {
@@ -92,5 +95,16 @@ describe("knowledge base UI", () => {
     expect(html).toContain("Knowledge base files");
     expect(html).toContain("Loading settings");
     expect(html).toContain("Select a Markdown file");
+  });
+
+  it("moves entries only to valid directories and preserves descendant paths", () => {
+    expect(moveEntryTargetId("guides/setup.md", "archive")).toBe("archive/setup.md");
+    expect(canMoveEntryTo({ id: "guides", kind: "directory" }, "guides/drafts")).toBe(false);
+    expect(canMoveEntryTo({ id: "guides/setup.md", kind: "file" }, "guides")).toBe(false);
+    expect(canMoveEntryTo({ id: "guides/setup.md", kind: "file" }, "archive")).toBe(true);
+    expect(rebaseEntryId("guides/setup.md", "guides", "archive/guides")).toBe(
+      "archive/guides/setup.md",
+    );
+    expect(rebaseEntryId("reference/api.md", "guides", "archive/guides")).toBeUndefined();
   });
 });

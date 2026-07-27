@@ -4,6 +4,7 @@ import {
   CaretRight,
   Check,
   Database,
+  Eye,
   File,
   FilePlus,
   FileText,
@@ -12,6 +13,8 @@ import {
   MagnifyingGlass,
   PencilSimple,
   Plus,
+  SpinnerGap,
+  TextAa,
   Trash,
   X,
 } from "@phosphor-icons/react";
@@ -33,12 +36,34 @@ import {
   flushContextStoreSaves,
   type ContextStoreSaveCoordinator,
 } from "./context-store-autosave.ts";
-import { DeleteConfirmationDialog } from "./DeleteConfirmationDialog.tsx";
+import { StudioConfirmationDialog, StudioTextInputDialog } from "./StudioDialog.tsx";
 import { StudioScreenFrame } from "./StudioScreenFrame.tsx";
 
 type CreateStep = "intro" | "configure" | "review";
 type CreateMode = CreateContextStore["mode"];
 type SaveStatus = "idle" | "saving" | "saved" | "error";
+type EntryTextOperation =
+  | {
+      readonly kind: "create-file" | "create-folder" | "save-copy";
+      readonly value: string;
+      readonly busy: boolean;
+      readonly error: string | null;
+    }
+  | {
+      readonly kind: "rename";
+      readonly entry: ContextStoreEntry;
+      readonly value: string;
+      readonly busy: boolean;
+      readonly error: string | null;
+    };
+type EntryConfirmation =
+  | { readonly kind: "delete"; readonly entry: ContextStoreEntry }
+  | {
+      readonly kind: "move";
+      readonly entry: ContextStoreEntry;
+      readonly destinationId: string;
+      readonly nextId: string;
+    };
 type EditorStateSnapshot = {
   readonly selectedEntry: ContextStoreEntry | null;
   readonly content: ContextStoreContent | null;
@@ -66,6 +91,34 @@ function parentId(path: string): string {
 
 function joinEntry(parent: string, name: string): string {
   return parent ? `${parent}/${name}` : name;
+}
+
+export function moveEntryTargetId(sourceId: string, destinationId: string): string {
+  return joinEntry(destinationId, fileName(sourceId));
+}
+
+export function canMoveEntryTo(
+  entry: Pick<ContextStoreEntry, "id" | "kind">,
+  destinationId: string,
+): boolean {
+  if (parentId(entry.id) === destinationId) return false;
+  if (
+    entry.kind === "directory" &&
+    (destinationId === entry.id || destinationId.startsWith(`${entry.id}/`))
+  ) {
+    return false;
+  }
+  return moveEntryTargetId(entry.id, destinationId) !== entry.id;
+}
+
+export function rebaseEntryId(
+  currentId: string,
+  sourceId: string,
+  nextId: string,
+): string | undefined {
+  if (currentId === sourceId) return nextId;
+  if (!currentId.startsWith(`${sourceId}/`)) return undefined;
+  return `${nextId}${currentId.slice(sourceId.length)}`;
 }
 
 function withMarkdownExtension(value: string): string {
@@ -240,6 +293,12 @@ export function ContextStoreDetailFragment(props: {
   const [loading, setLoading] = useState(true);
   const [confirmOpen, setConfirmOpen] = useState(false);
   const [deleting, setDeleting] = useState(false);
+  const [entryTextOperation, setEntryTextOperation] = useState<EntryTextOperation | null>(null);
+  const [entryConfirmation, setEntryConfirmation] = useState<EntryConfirmation | null>(null);
+  const [entryConfirmationBusy, setEntryConfirmationBusy] = useState(false);
+  const [refreshing, setRefreshing] = useState(false);
+  const [draggedEntry, setDraggedEntry] = useState<ContextStoreEntry | null>(null);
+  const [dropTargetDirectory, setDropTargetDirectory] = useState<string | null>(null);
   const [autosaveVersion, setAutosaveVersion] = useState(0);
   const editVersionRef = useRef(0);
   const documentVersionRef = useRef(0);
@@ -281,17 +340,32 @@ export function ContextStoreDetailFragment(props: {
     [],
   );
 
-  const loadEntries = useCallback(async () => {
-    try {
-      const next = await props.onListEntries(props.store.id);
-      setEntries(next);
-      setError(null);
-    } catch (cause) {
-      setError(errorMessage(cause));
-    } finally {
-      setLoading(false);
-    }
-  }, [props.onListEntries, props.store.id]);
+  const loadEntries = useCallback(
+    async (expectedSelection?: ContextStoreEntry | null) => {
+      try {
+        const next = await props.onListEntries(props.store.id);
+        setEntries(next);
+        const current =
+          expectedSelection === undefined ? currentRef.current.selectedEntry : expectedSelection;
+        if (
+          current !== null &&
+          !next.some((entry) => entry.id === current.id && entry.kind === current.kind)
+        ) {
+          setSelectedEntry(null);
+          setSelectedDirectory("");
+          setContent(null);
+          setDraft("");
+          setDirty(false);
+        }
+        setError(null);
+      } catch (cause) {
+        setError(errorMessage(cause));
+      } finally {
+        setLoading(false);
+      }
+    },
+    [props.onListEntries, props.store.id],
+  );
 
   const loadFile = useCallback(
     async (entry: ContextStoreEntry, discardChanges = false) => {
@@ -328,6 +402,7 @@ export function ContextStoreDetailFragment(props: {
         setDirty(false);
         setConflict(false);
         setSaveStatus("idle");
+        setPreview(true);
         setError(null);
       } catch (cause) {
         setError(errorMessage(cause));
@@ -437,71 +512,143 @@ export function ContextStoreDetailFragment(props: {
     if (await save()) await loadFile(entry);
   };
 
-  const createFile = async () => {
+  const openEntryTextOperation = async (operation: EntryTextOperation["kind"]): Promise<void> => {
     if (!(await save())) return;
-    const requested = window.prompt(t("newMarkdownFilePrompt"));
-    if (!requested?.trim()) return;
-    const id = joinEntry(selectedDirectory, withMarkdownExtension(requested));
-    try {
-      const created = await props.onCreateFile(props.store.id, id, "", {
-        ...DEFAULT_METADATA,
-        description: fileName(id).replace(/\.md$/i, ""),
+    if (operation === "rename") {
+      if (selectedEntry === null) return;
+      setEntryTextOperation({
+        kind: "rename",
+        entry: selectedEntry,
+        value: fileName(selectedEntry.id),
+        busy: false,
+        error: null,
       });
-      await loadEntries();
-      await loadFile({ id, kind: "file", revision: created.revision });
-    } catch (cause) {
-      setError(errorMessage(cause));
-    }
-  };
-
-  const createFolder = async () => {
-    const requested = window.prompt(t("newFolderPrompt"));
-    if (!requested?.trim()) return;
-    try {
-      await props.onCreateFolder(props.store.id, joinEntry(selectedDirectory, requested.trim()));
-      await loadEntries();
-    } catch (cause) {
-      setError(errorMessage(cause));
-    }
-  };
-
-  const renameSelected = async () => {
-    if (selectedEntry === null) return;
-    if (!(await save())) return;
-    const requested = window.prompt(t("renameEntryPrompt"), fileName(selectedEntry.id));
-    if (!requested?.trim()) return;
-    const nextName =
-      selectedEntry.kind === "file" ? withMarkdownExtension(requested) : requested.trim();
-    const nextId = joinEntry(parentId(selectedEntry.id), nextName);
-    try {
-      await props.onRenameEntry(props.store.id, selectedEntry.id, nextId, selectedEntry.kind);
-      setSelectedEntry({ ...selectedEntry, id: nextId });
-      setSelectedDirectory(selectedEntry.kind === "directory" ? nextId : parentId(nextId));
-      setContent(null);
-      setDirty(false);
-      await loadEntries();
-      if (selectedEntry.kind === "file") await loadFile({ ...selectedEntry, id: nextId });
-    } catch (cause) {
-      setError(errorMessage(cause));
-    }
-  };
-
-  const deleteSelected = async () => {
-    if (
-      selectedEntry === null ||
-      !window.confirm(t("deleteEntryConfirm", { name: selectedEntry.id }))
-    ) {
       return;
     }
+    setEntryTextOperation({
+      kind: operation,
+      value: operation === "save-copy" ? "copy.md" : "",
+      busy: false,
+      error: null,
+    });
+  };
+
+  const submitEntryTextOperation = async (): Promise<void> => {
+    const operation = entryTextOperation;
+    if (operation === null || operation.busy || operation.value.trim() === "") return;
+    setEntryTextOperation({ ...operation, busy: true, error: null });
     try {
-      await props.onDeleteEntry(props.store.id, selectedEntry.id, selectedEntry.kind);
-      setSelectedEntry(null);
-      setSelectedDirectory("");
-      setContent(null);
-      setDirty(false);
-      await loadEntries();
+      if (operation.kind === "create-folder") {
+        await props.onCreateFolder(
+          props.store.id,
+          joinEntry(selectedDirectory, operation.value.trim()),
+        );
+        await loadEntries();
+      } else if (operation.kind === "rename") {
+        const nextName =
+          operation.entry.kind === "file"
+            ? withMarkdownExtension(operation.value)
+            : operation.value.trim();
+        const nextId = joinEntry(parentId(operation.entry.id), nextName);
+        await props.onRenameEntry(props.store.id, operation.entry.id, nextId, operation.entry.kind);
+        const renamed = { ...operation.entry, id: nextId };
+        setSelectedEntry(renamed);
+        setSelectedDirectory(operation.entry.kind === "directory" ? nextId : parentId(nextId));
+        setContent(null);
+        setDirty(false);
+        await loadEntries(renamed);
+        if (operation.entry.kind === "file") await loadFile(renamed);
+      } else {
+        const id = joinEntry(selectedDirectory, withMarkdownExtension(operation.value));
+        const created = await props.onCreateFile(
+          props.store.id,
+          id,
+          operation.kind === "save-copy" ? draft : "",
+          operation.kind === "save-copy"
+            ? metadata
+            : {
+                ...DEFAULT_METADATA,
+                description: fileName(id).replace(/\.md$/i, ""),
+              },
+        );
+        await loadEntries();
+        await loadFile({ id, kind: "file", revision: created.revision });
+      }
+      setEntryTextOperation(null);
+      setError(null);
     } catch (cause) {
+      setEntryTextOperation({ ...operation, busy: false, error: errorMessage(cause) });
+    }
+  };
+
+  const refreshEntries = async (): Promise<void> => {
+    if (refreshing) return;
+    setRefreshing(true);
+    await loadEntries();
+    setRefreshing(false);
+  };
+
+  const proposeMove = (entry: ContextStoreEntry, destinationId: string): void => {
+    setDraggedEntry(null);
+    setDropTargetDirectory(null);
+    if (!canMoveEntryTo(entry, destinationId)) return;
+    setEntryConfirmation({
+      kind: "move",
+      entry,
+      destinationId,
+      nextId: moveEntryTargetId(entry.id, destinationId),
+    });
+  };
+
+  const confirmEntryOperation = async (): Promise<void> => {
+    const operation = entryConfirmation;
+    if (operation === null || entryConfirmationBusy) return;
+    setEntryConfirmationBusy(true);
+    try {
+      let expectedSelection: ContextStoreEntry | null | undefined;
+      if (operation.kind === "delete") {
+        await props.onDeleteEntry(props.store.id, operation.entry.id, operation.entry.kind);
+        const selectedId = currentRef.current.selectedEntry?.id;
+        if (
+          selectedId === operation.entry.id ||
+          selectedId?.startsWith(`${operation.entry.id}/`) === true
+        ) {
+          setSelectedEntry(null);
+          setSelectedDirectory("");
+          setContent(null);
+          setDraft("");
+          setDirty(false);
+          expectedSelection = null;
+        }
+      } else {
+        if (!(await save())) return;
+        await props.onRenameEntry(
+          props.store.id,
+          operation.entry.id,
+          operation.nextId,
+          operation.entry.kind,
+        );
+        const selected = currentRef.current.selectedEntry;
+        const rebasedId =
+          selected === null
+            ? undefined
+            : rebaseEntryId(selected.id, operation.entry.id, operation.nextId);
+        if (selected !== null && rebasedId !== undefined) {
+          const rebased = { ...selected, id: rebasedId };
+          expectedSelection = rebased;
+          setSelectedEntry(rebased);
+          setSelectedDirectory(selected.kind === "directory" ? rebasedId : parentId(rebasedId));
+          if (selected.kind === "file") await loadFile(rebased, true);
+        }
+      }
+      await loadEntries(expectedSelection);
+      setEntryConfirmation(null);
+      setError(null);
+    } catch (cause) {
+      setEntryConfirmation(null);
       setError(errorMessage(cause));
+    } finally {
+      setEntryConfirmationBusy(false);
     }
   };
 
@@ -550,14 +697,34 @@ export function ContextStoreDetailFragment(props: {
           <div className="knowledge-file-toolbar">
             <strong>{t("files")}</strong>
             <div>
-              <button type="button" title={t("newFile")} onClick={() => void createFile()}>
+              <button
+                type="button"
+                title={t("newFile")}
+                aria-label={t("newFile")}
+                onClick={() => void openEntryTextOperation("create-file")}
+              >
                 <FilePlus size={17} />
               </button>
-              <button type="button" title={t("newFolder")} onClick={() => void createFolder()}>
+              <button
+                type="button"
+                title={t("newFolder")}
+                aria-label={t("newFolder")}
+                onClick={() => void openEntryTextOperation("create-folder")}
+              >
                 <FolderPlus size={17} />
               </button>
-              <button type="button" title={t("refresh")} onClick={() => void loadEntries()}>
-                <ArrowClockwise size={17} />
+              <button
+                type="button"
+                title={t("refresh")}
+                aria-label={t("refresh")}
+                disabled={refreshing}
+                onClick={() => void refreshEntries()}
+              >
+                {refreshing ? (
+                  <SpinnerGap className="spin" size={17} />
+                ) : (
+                  <ArrowClockwise size={17} />
+                )}
               </button>
             </div>
           </div>
@@ -566,23 +733,82 @@ export function ContextStoreDetailFragment(props: {
             <div className="knowledge-tree-empty">
               <File size={23} />
               <p>{t("emptyKnowledgeBase")}</p>
-              <button type="button" onClick={() => void createFile()}>
+              <button type="button" onClick={() => void openEntryTextOperation("create-file")}>
                 {t("createFirstFile")}
               </button>
             </div>
           ) : null}
-          <div className="knowledge-file-tree" role="tree">
+          <div
+            className={
+              dropTargetDirectory === ""
+                ? "knowledge-file-tree is-root-drop-target"
+                : "knowledge-file-tree"
+            }
+            role="tree"
+            onDragOver={(event) => {
+              if (draggedEntry === null || !canMoveEntryTo(draggedEntry, "")) return;
+              event.preventDefault();
+              event.dataTransfer.dropEffect = "move";
+              setDropTargetDirectory("");
+            }}
+            onDragLeave={(event) => {
+              if (!event.currentTarget.contains(event.relatedTarget as Node | null)) {
+                setDropTargetDirectory(null);
+              }
+            }}
+            onDrop={(event) => {
+              event.preventDefault();
+              if (draggedEntry !== null) proposeMove(draggedEntry, "");
+            }}
+          >
             {entries.map((entry) => {
               const depth = entry.id.split("/").length - 1;
               const Icon = entry.kind === "directory" ? Folder : FileText;
               return (
                 <button
                   key={`${entry.kind}:${entry.id}`}
-                  className={selectedEntry?.id === entry.id ? "is-selected" : ""}
+                  className={[
+                    selectedEntry?.id === entry.id ? "is-selected" : "",
+                    dropTargetDirectory === entry.id ? "is-drop-target" : "",
+                  ]
+                    .filter(Boolean)
+                    .join(" ")}
                   style={{ paddingInlineStart: 12 + depth * 18 }}
                   type="button"
                   role="treeitem"
+                  draggable
                   onClick={() => void openEntry(entry)}
+                  onDragStart={(event) => {
+                    event.dataTransfer.effectAllowed = "move";
+                    event.dataTransfer.setData("text/plain", entry.id);
+                    setDraggedEntry(entry);
+                  }}
+                  onDragEnd={() => {
+                    setDraggedEntry(null);
+                    setDropTargetDirectory(null);
+                  }}
+                  onDragOver={(event) => {
+                    if (
+                      entry.kind !== "directory" ||
+                      draggedEntry === null ||
+                      !canMoveEntryTo(draggedEntry, entry.id)
+                    ) {
+                      return;
+                    }
+                    event.preventDefault();
+                    event.stopPropagation();
+                    event.dataTransfer.dropEffect = "move";
+                    setDropTargetDirectory(entry.id);
+                  }}
+                  onDragLeave={() => {
+                    if (dropTargetDirectory === entry.id) setDropTargetDirectory(null);
+                  }}
+                  onDrop={(event) => {
+                    if (entry.kind !== "directory" || draggedEntry === null) return;
+                    event.preventDefault();
+                    event.stopPropagation();
+                    proposeMove(draggedEntry, entry.id);
+                  }}
                 >
                   <Icon size={17} />
                   <span>{fileName(entry.id)}</span>
@@ -612,21 +838,38 @@ export function ContextStoreDetailFragment(props: {
                   <button
                     className={!preview ? "is-active" : ""}
                     type="button"
+                    title={t("edit")}
+                    aria-label={t("edit")}
                     onClick={() => setPreview(false)}
                   >
-                    {t("edit")}
+                    <PencilSimple size={17} />
                   </button>
                   <button
                     className={preview ? "is-active" : ""}
                     type="button"
+                    title={t("preview")}
+                    aria-label={t("preview")}
                     onClick={() => setPreview(true)}
                   >
-                    {t("preview")}
+                    <Eye size={17} />
                   </button>
-                  <button type="button" title={t("rename")} onClick={() => void renameSelected()}>
-                    <PencilSimple size={17} />
+                  <button
+                    type="button"
+                    title={t("rename")}
+                    aria-label={t("rename")}
+                    onClick={() => void openEntryTextOperation("rename")}
+                  >
+                    <TextAa size={17} />
                   </button>
-                  <button type="button" title={t("delete")} onClick={() => void deleteSelected()}>
+                  <button
+                    type="button"
+                    title={t("delete")}
+                    aria-label={t("delete")}
+                    onClick={() =>
+                      selectedEntry &&
+                      setEntryConfirmation({ kind: "delete", entry: selectedEntry })
+                    }
+                  >
                     <Trash size={17} />
                   </button>
                 </div>
@@ -640,22 +883,7 @@ export function ContextStoreDetailFragment(props: {
                   >
                     {t("reload")}
                   </button>
-                  <button
-                    type="button"
-                    onClick={() => {
-                      const requested = window.prompt(t("saveCopyPrompt"), "copy.md");
-                      if (!requested?.trim()) return;
-                      void props
-                        .onCreateFile(
-                          props.store.id,
-                          joinEntry(selectedDirectory, withMarkdownExtension(requested)),
-                          draft,
-                          metadata,
-                        )
-                        .then(loadEntries)
-                        .catch((cause: unknown) => setError(errorMessage(cause)));
-                    }}
-                  >
+                  <button type="button" onClick={() => void openEntryTextOperation("save-copy")}>
                     {t("saveCopy")}
                   </button>
                 </div>
@@ -750,13 +978,84 @@ export function ContextStoreDetailFragment(props: {
           {error}
         </p>
       ) : null}
+      {entryTextOperation !== null ? (
+        <StudioTextInputDialog
+          title={
+            entryTextOperation.kind === "create-file"
+              ? t("newFile")
+              : entryTextOperation.kind === "create-folder"
+                ? t("newFolder")
+                : entryTextOperation.kind === "rename"
+                  ? t("rename")
+                  : t("saveCopy")
+          }
+          description={
+            entryTextOperation.kind === "create-file"
+              ? t("newMarkdownFilePrompt")
+              : entryTextOperation.kind === "create-folder"
+                ? t("newFolderPrompt")
+                : entryTextOperation.kind === "rename"
+                  ? t("renameEntryPrompt")
+                  : t("saveCopyPrompt")
+          }
+          label={t("entryName")}
+          value={entryTextOperation.value}
+          cancelLabel={t("cancel")}
+          confirmLabel={
+            entryTextOperation.kind === "create-file"
+              ? t("newFile")
+              : entryTextOperation.kind === "create-folder"
+                ? t("newFolder")
+                : entryTextOperation.kind === "rename"
+                  ? t("rename")
+                  : t("saveCopy")
+          }
+          busyLabel={
+            entryTextOperation.kind === "rename" || entryTextOperation.kind === "save-copy"
+              ? t("saving")
+              : t("creating")
+          }
+          busy={entryTextOperation.busy}
+          error={entryTextOperation.error}
+          onChange={(value) =>
+            setEntryTextOperation((current) =>
+              current === null ? null : { ...current, value, error: null },
+            )
+          }
+          onCancel={() => setEntryTextOperation(null)}
+          onConfirm={() => void submitEntryTextOperation()}
+        />
+      ) : null}
+      {entryConfirmation !== null ? (
+        <StudioConfirmationDialog
+          title={entryConfirmation.kind === "delete" ? t("deleteEntryTitle") : t("moveEntryTitle")}
+          description={
+            entryConfirmation.kind === "delete"
+              ? t("deleteEntryConfirm", { name: entryConfirmation.entry.id })
+              : t("moveEntryDescription", {
+                  name: entryConfirmation.entry.id,
+                  destination:
+                    entryConfirmation.destinationId === ""
+                      ? t("knowledgeRoot")
+                      : entryConfirmation.destinationId,
+                })
+          }
+          cancelLabel={t("cancel")}
+          confirmLabel={entryConfirmation.kind === "delete" ? t("delete") : t("moveEntryAction")}
+          busyLabel={entryConfirmation.kind === "delete" ? t("deleting") : t("movingEntry")}
+          busy={entryConfirmationBusy}
+          action={entryConfirmation.kind === "move" ? "move" : "delete"}
+          onCancel={() => setEntryConfirmation(null)}
+          onConfirm={() => void confirmEntryOperation()}
+        />
+      ) : null}
       {confirmOpen ? (
-        <DeleteConfirmationDialog
+        <StudioConfirmationDialog
           title={t("deleteKnowledgeBase")}
           description={t("deleteKnowledgeBaseDescription", { name: props.store.name })}
           cancelLabel={t("cancel")}
           confirmLabel={t("deleteKnowledgeBaseAction")}
-          deletingLabel={t("deleting")}
+          busyLabel={t("deleting")}
           busy={deleting}
           onCancel={() => setConfirmOpen(false)}
           onConfirm={() => void removeStore()}

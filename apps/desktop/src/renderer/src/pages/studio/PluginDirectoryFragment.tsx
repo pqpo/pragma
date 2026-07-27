@@ -17,7 +17,7 @@ import { errorMessage } from "../../lib/errors.ts";
 import { PluginConfigFields } from "./PluginConfigFields.tsx";
 import { StudioScreenFrame } from "./StudioScreenFrame.tsx";
 import { desktopApi } from "./studio-model.ts";
-import { DeleteConfirmationDialog } from "./DeleteConfirmationDialog.tsx";
+import { StudioConfirmationDialog } from "./StudioDialog.tsx";
 
 type PluginFilter = "all" | "built_in" | "user";
 
@@ -344,12 +344,12 @@ export function PluginDetailFragment(props: {
         <p className="capability-diagnostic">{props.plugin.diagnostic}</p>
       ) : null}
       {confirmOpen ? (
-        <DeleteConfirmationDialog
+        <StudioConfirmationDialog
           title={t("deletePluginTitle")}
           description={t("deletePluginDescription", { name: props.plugin.manifest.name })}
           cancelLabel={t("cancel")}
           confirmLabel={t("deletePlugin")}
-          deletingLabel={t("deleting")}
+          busyLabel={t("deleting")}
           busy={busy}
           onCancel={() => setConfirmOpen(false)}
           onConfirm={() => void remove()}

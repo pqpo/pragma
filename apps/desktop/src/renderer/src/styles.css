@@ -2589,8 +2589,20 @@ p {
 }
 
 .pragma-resource-editor {
-  width: min(940px, 100%);
-  margin: 0 auto;
+  width: 100%;
+  margin: 0;
+}
+
+.pragma-resource-editor .studio-screen-body {
+  display: grid;
+  grid-template-rows: minmax(0, 1fr) auto auto;
+  overflow: hidden;
+}
+
+.pragma-resource-editor-header {
+  display: grid !important;
+  justify-items: start !important;
+  gap: 14px !important;
 }
 
 .pragma-resource-editor .studio-screen-header > header,
@@ -2614,7 +2626,11 @@ p {
 
 .pragma-resource-form {
   gap: 18px;
+  min-height: 0;
+  overflow-x: hidden;
+  overflow-y: auto;
   padding: 24px 0;
+  padding-right: 18px;
 }
 
 .pragma-resource-form input,
@@ -3106,6 +3122,34 @@ p {
   justify-content: flex-end;
   gap: 9px;
   margin-top: 24px;
+}
+
+.studio-text-input-dialog {
+  display: grid;
+  gap: 16px;
+}
+
+.studio-text-input-dialog p,
+.studio-text-input-dialog footer {
+  margin-top: 0;
+}
+
+.studio-text-input-dialog > label {
+  display: grid;
+  gap: 7px;
+  color: var(--text);
+  font-size: 12px;
+  font-weight: 650;
+}
+
+.studio-text-input-dialog > label input {
+  width: 100%;
+  min-height: 40px;
+  padding: 8px 10px;
+  border: 1px solid var(--border-strong);
+  border-radius: 8px;
+  background: var(--surface);
+  color: var(--text);
 }
 
 .capability-empty {
@@ -4284,8 +4328,18 @@ p {
 }
 
 .knowledge-base-editor {
+  width: 100%;
+  height: 100%;
+  min-height: 0;
   max-width: none;
   padding-inline: 28px;
+}
+
+.knowledge-base-editor .studio-screen-body {
+  display: grid;
+  grid-template-rows: minmax(0, 1fr) auto;
+  min-height: 0;
+  overflow: hidden;
 }
 
 .knowledge-base-editor-header {
@@ -4321,8 +4375,9 @@ p {
 
 .knowledge-base-workspace {
   display: grid;
-  min-height: 610px;
-  grid-template-columns: minmax(210px, 0.26fr) minmax(420px, 1fr) minmax(220px, 0.29fr);
+  height: auto;
+  min-height: 0;
+  grid-template-columns: minmax(180px, 0.26fr) minmax(0, 1fr) minmax(190px, 0.29fr);
   margin-top: 24px;
   overflow: hidden;
   border: 1px solid var(--border);
@@ -4333,15 +4388,21 @@ p {
 .knowledge-file-panel,
 .knowledge-metadata-panel {
   min-width: 0;
+  min-height: 0;
   background: var(--surface-soft);
 }
 
 .knowledge-file-panel {
+  display: grid;
+  grid-template-rows: auto auto minmax(0, 1fr);
+  overflow: hidden;
   border-right: 1px solid var(--border);
 }
 
 .knowledge-metadata-panel {
   padding: 18px;
+  overflow-y: auto;
+  overscroll-behavior: contain;
   border-left: 1px solid var(--border);
 }
 
@@ -4389,8 +4450,20 @@ p {
 
 .knowledge-file-tree {
   display: grid;
+  grid-row: 3;
   align-content: start;
+  min-height: 0;
+  overflow-y: auto;
+  overscroll-behavior: contain;
   padding: 8px;
+  transition:
+    background 120ms ease,
+    box-shadow 120ms ease;
+}
+
+.knowledge-file-tree.is-root-drop-target {
+  background: #eef5f0;
+  box-shadow: inset 0 0 0 2px var(--green);
 }
 
 .knowledge-file-tree > button {
@@ -4410,9 +4483,14 @@ p {
 }
 
 .knowledge-file-tree > button:hover,
-.knowledge-file-tree > button.is-selected {
+.knowledge-file-tree > button.is-selected,
+.knowledge-file-tree > button.is-drop-target {
   background: #e2e8e3;
   color: #1e2a22;
+}
+
+.knowledge-file-tree > button.is-drop-target {
+  box-shadow: inset 0 0 0 2px var(--green);
 }
 
 .knowledge-file-tree > button span {
@@ -4463,7 +4541,9 @@ p {
 .knowledge-editor-panel {
   display: grid;
   min-width: 0;
+  min-height: 0;
   grid-template-rows: auto auto minmax(0, 1fr);
+  overflow: hidden;
 }
 
 .knowledge-editor-empty {
@@ -4520,7 +4600,8 @@ p {
 
 .knowledge-markdown-editor {
   width: 100%;
-  min-height: 548px;
+  height: 100%;
+  min-height: 0;
   resize: none;
   padding: 24px 28px;
   border: 0;
@@ -4539,9 +4620,10 @@ p {
 }
 
 .knowledge-markdown-preview {
-  min-height: 548px;
+  min-height: 0;
   padding: 24px 28px;
-  overflow: auto;
+  overflow-y: auto;
+  overscroll-behavior: contain;
 }
 
 .knowledge-metadata-panel h2 {
@@ -4662,13 +4744,7 @@ p {
 
 @media (max-width: 1180px) {
   .knowledge-base-workspace {
-    grid-template-columns: 220px minmax(420px, 1fr);
-  }
-
-  .knowledge-metadata-panel {
-    grid-column: 1 / -1;
-    border-top: 1px solid var(--border);
-    border-left: 0;
+    grid-template-columns: minmax(170px, 0.28fr) minmax(0, 1fr) minmax(160px, 0.27fr);
   }
 }
 
@@ -5031,8 +5107,11 @@ p {
 .creator-layout {
   display: grid;
   grid-template-columns: 175px minmax(0, 1fr);
+  height: 100%;
+  min-height: 0;
   gap: 0;
   margin-top: 28px;
+  overflow: hidden;
 }
 
 .creator-steps {
@@ -5046,15 +5125,33 @@ p {
 }
 
 .creator-steps li {
+  min-width: 0;
+}
+
+.creator-steps li > button {
   display: flex;
+  width: 100%;
   min-height: 46px;
   align-items: center;
   gap: 11px;
   padding: 0 12px;
+  border: 0;
   border-radius: 8px;
+  background: transparent;
   color: #6b746e;
+  cursor: pointer;
   font-size: 14px;
   font-weight: 560;
+  text-align: left;
+}
+
+.creator-steps li > button:disabled {
+  cursor: default;
+}
+
+.creator-steps li > button:focus-visible {
+  outline: 2px solid var(--green);
+  outline-offset: 2px;
 }
 
 .creator-steps li span {
@@ -5067,7 +5164,7 @@ p {
   font-size: 12px;
 }
 
-.creator-steps li.is-active {
+.creator-steps li.is-active > button {
   background: #edf0ed;
   color: #273029;
   font-weight: 680;
@@ -5082,11 +5179,21 @@ p {
 
 .creator-form {
   display: grid;
-  grid-template-columns: minmax(0, 680px);
+  grid-template-columns: minmax(0, 1fr);
+  align-content: start;
   min-width: 0;
+  min-height: 0;
   gap: 17px;
   width: 100%;
+  height: 100%;
+  overflow-x: hidden;
+  overflow-y: auto;
   padding-left: 48px;
+  padding-right: 18px;
+}
+
+.expert-creator .studio-screen-body {
+  overflow: hidden;
 }
 
 .creator-preview {
@@ -5636,6 +5743,16 @@ p {
   min-width: 0;
 }
 
+.capability-detail.has-tool-workspace .studio-screen-body {
+  display: grid;
+  grid-template-rows: auto minmax(0, 1fr);
+  overflow: hidden;
+}
+
+.capability-detail-overview {
+  min-width: 0;
+}
+
 .capability-detail-header {
   display: flex;
   align-items: flex-start;
@@ -5851,9 +5968,12 @@ p {
 
 .capability-tool-workspace {
   display: grid;
-  grid-template-columns: minmax(210px, 260px) minmax(0, 1fr);
+  grid-template-columns: minmax(0, 1fr) minmax(210px, 260px);
+  height: auto;
+  min-height: 0;
   gap: 22px;
   margin-top: 26px;
+  overflow: hidden;
 }
 
 .capability-tool-list,
@@ -5865,7 +5985,9 @@ p {
 }
 
 .capability-tool-list {
-  align-self: start;
+  display: grid;
+  grid-template-rows: auto minmax(0, 1fr);
+  min-height: 0;
   overflow: hidden;
 }
 
@@ -5885,7 +6007,13 @@ p {
   font-size: 11px;
 }
 
-.capability-tool-list > button {
+.capability-tool-list-scroll {
+  min-height: 0;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+}
+
+.capability-tool-list-scroll > button {
   display: grid;
   width: 100%;
   gap: 4px;
@@ -5898,41 +6026,44 @@ p {
   text-align: left;
 }
 
-.capability-tool-list > button:hover,
-.capability-tool-list > button.is-active {
+.capability-tool-list-scroll > button:hover,
+.capability-tool-list-scroll > button.is-active {
   background: #eff4f0;
 }
 
-.capability-tool-list > button.is-active {
+.capability-tool-list-scroll > button.is-active {
   box-shadow: inset 3px 0 var(--green);
 }
 
-.capability-tool-list button strong {
+.capability-tool-list-scroll button strong {
   overflow: hidden;
   font-size: 12px;
   text-overflow: ellipsis;
 }
 
-.capability-tool-list button small,
-.capability-tool-list > p {
+.capability-tool-list-scroll button small,
+.capability-tool-list-scroll > p {
   color: var(--muted);
   font-size: 10px;
   line-height: 1.45;
 }
 
-.capability-tool-list button small {
+.capability-tool-list-scroll button small {
   display: -webkit-box;
   overflow: hidden;
   -webkit-box-orient: vertical;
   -webkit-line-clamp: 2;
 }
 
-.capability-tool-list > p {
+.capability-tool-list-scroll > p {
   padding: 18px 16px;
 }
 
 .capability-tool-detail {
-  overflow: hidden;
+  min-height: 0;
+  overflow-x: hidden;
+  overflow-y: auto;
+  overscroll-behavior: contain;
 }
 
 .tool-definition,
@@ -6061,7 +6192,7 @@ p {
   }
 
   .capability-tool-workspace {
-    grid-template-columns: 210px minmax(0, 1fr);
+    grid-template-columns: minmax(0, 1fr) 210px;
   }
 }
 

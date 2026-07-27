@@ -60,8 +60,81 @@ describe("CapabilityDetailFragment", () => {
     expect(html).toContain("JSON input");
     expect(html).toContain("Run test");
     expect(html).not.toContain("service-auth");
+    expect(html).toContain("capability-detail has-tool-workspace");
+    expect(html.indexOf("capability-tool-detail")).toBeLessThan(
+      html.indexOf("capability-tool-list"),
+    );
     expect(html).toMatch(
       /studio-screen-header.*Back to Capabilities.*studio-screen-body.*Customer API/s,
+    );
+  });
+
+  it.each([
+    {
+      name: "MCP",
+      definition: {
+        kind: "mcp_server" as const,
+        name: "Issue MCP",
+        description: "Issue tools.",
+        connection: {
+          transport: "stdio" as const,
+          command: "node",
+          args: [],
+          env: {},
+          secretEnv: {},
+        },
+        timeoutMs: 30_000,
+        tools: [
+          {
+            name: "find_issue",
+            description: "Find an issue.",
+            schemaHash: "sha256:test",
+            inputSchema: {},
+          },
+        ],
+      },
+    },
+    {
+      name: "code",
+      definition: {
+        kind: "code_service" as const,
+        name: "Formatter",
+        description: "Formatting tool.",
+        language: "javascript" as const,
+        timeoutMs: 2_000,
+        tool: {
+          name: "format",
+          description: "Format a value.",
+          inputSchema: {
+            type: "object" as const,
+            properties: {},
+            additionalProperties: false as const,
+          },
+          outputSchema: {
+            type: "object" as const,
+            properties: {},
+            additionalProperties: false as const,
+          },
+          source: "function main(input) { return input; }",
+        },
+      },
+    },
+  ])("uses the same detail-left, list-right workspace for $name services", ({ definition }) => {
+    const html = renderToStaticMarkup(
+      <CapabilityDetailFragment
+        capability={{
+          ...capability,
+          manifest: { ...capability.manifest, kind: definition.kind, name: definition.name },
+          definition,
+        }}
+        onBack={() => undefined}
+        onChanged={() => undefined}
+      />,
+    );
+
+    expect(html).toContain("capability-detail has-tool-workspace");
+    expect(html.indexOf("capability-tool-detail")).toBeLessThan(
+      html.indexOf("capability-tool-list"),
     );
   });
 
