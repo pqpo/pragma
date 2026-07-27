@@ -5,7 +5,6 @@ import {
   DesktopMutationError,
   DesktopMutationResultSchema,
   DesktopSettingsSnapshotSchema,
-  AddContextNoteEntrySchema,
   CapabilityActionSchema,
   CapabilityDeleteResultSchema,
   CapabilityIdSchema,
@@ -18,13 +17,21 @@ import {
   DeleteWorkflowLayoutSchema,
   ContextStoreSchema,
   ContextStoreContentSchema,
-  ContextStoreContentSummarySchema,
+  ContextStoreEntrySchema,
+  ContextStoreImportInspectionSchema,
+  CreateContextStoreFileSchema,
+  CreateContextStoreFolderSchema,
   CreateExpertDefinitionSchema,
   CreateContextStoreSchema,
+  DeleteContextStoreEntrySchema,
   DeleteContextStoreSchema,
   GetContextStoreContentSchema,
+  InspectContextStoreImportSchema,
   GetSkillDocumentSchema,
-  ListContextStoreContentsSchema,
+  ListContextStoreEntriesSchema,
+  RenameContextStoreEntrySchema,
+  SubscribeContextStoreChangesSchema,
+  UpdateContextStoreFileSchema,
   DeleteExpertDefinitionSchema,
   DesktopPluginRefSchema,
   DesktopPluginSchema,
@@ -171,23 +178,16 @@ const api: PragmaDesktopAPI = {
     ContextStoreSchema.parse(
       await ipcRenderer.invoke("context-stores:create", CreateContextStoreSchema.parse(input)),
     ),
+  inspectContextStoreImport: async (input) =>
+    ContextStoreImportInspectionSchema.parse(
+      await ipcRenderer.invoke(
+        "context-stores:inspect-import",
+        InspectContextStoreImportSchema.parse(input),
+      ),
+    ),
   deleteContextStore: async (input) => {
     await ipcRenderer.invoke("context-stores:delete", DeleteContextStoreSchema.parse(input));
   },
-  addContextNoteEntry: async (input) =>
-    ContextStoreSchema.parse(
-      await ipcRenderer.invoke(
-        "context-stores:add-note-entry",
-        AddContextNoteEntrySchema.parse(input),
-      ),
-    ),
-  listContextStoreContents: async (input) =>
-    ContextStoreContentSummarySchema.array().parse(
-      await ipcRenderer.invoke(
-        "context-stores:list-contents",
-        ListContextStoreContentsSchema.parse(input),
-      ),
-    ),
   getContextStoreContent: async (input) =>
     ContextStoreContentSchema.parse(
       await ipcRenderer.invoke(
@@ -195,6 +195,58 @@ const api: PragmaDesktopAPI = {
         GetContextStoreContentSchema.parse(input),
       ),
     ),
+  listContextStoreEntries: async (input) =>
+    ContextStoreEntrySchema.array().parse(
+      await ipcRenderer.invoke(
+        "context-stores:list-entries",
+        ListContextStoreEntriesSchema.parse(input),
+      ),
+    ),
+  createContextStoreFolder: async (input) => {
+    await ipcRenderer.invoke(
+      "context-stores:create-folder",
+      CreateContextStoreFolderSchema.parse(input),
+    );
+  },
+  createContextStoreFile: async (input) =>
+    ContextStoreContentSchema.parse(
+      await ipcRenderer.invoke(
+        "context-stores:create-file",
+        CreateContextStoreFileSchema.parse(input),
+      ),
+    ),
+  updateContextStoreFile: async (input) =>
+    ContextStoreContentSchema.parse(
+      await ipcRenderer.invoke(
+        "context-stores:update-file",
+        UpdateContextStoreFileSchema.parse(input),
+      ),
+    ),
+  renameContextStoreEntry: async (input) => {
+    await ipcRenderer.invoke(
+      "context-stores:rename-entry",
+      RenameContextStoreEntrySchema.parse(input),
+    );
+  },
+  deleteContextStoreEntry: async (input) => {
+    await ipcRenderer.invoke(
+      "context-stores:delete-entry",
+      DeleteContextStoreEntrySchema.parse(input),
+    );
+  },
+  subscribeContextStoreChanges: (storeId, listener) => {
+    const input = SubscribeContextStoreChangesSchema.parse({ storeId });
+    const handler = (_event: IpcRendererEvent, payload: unknown) => {
+      const changed = SubscribeContextStoreChangesSchema.parse(payload);
+      if (changed.storeId === storeId) listener();
+    };
+    ipcRenderer.on("context-stores:changed", handler);
+    ipcRenderer.send("context-stores:watch", input);
+    return () => {
+      ipcRenderer.removeListener("context-stores:changed", handler);
+      ipcRenderer.send("context-stores:unwatch", input);
+    };
+  },
   pickContextStoreFolder: async () =>
     PickWorkspaceResultSchema.parse(await ipcRenderer.invoke("context-stores:pick-folder")),
   listExperts: async () =>

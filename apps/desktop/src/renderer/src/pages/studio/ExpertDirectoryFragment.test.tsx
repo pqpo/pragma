@@ -86,7 +86,7 @@ describe("ExpertDetailFragment", () => {
     expect(html).toContain("Customize");
     expect(html).not.toContain("Use as template");
     expect(html).toContain("Reset to default");
-    expect(html).toContain("Configure context");
+    expect(html).toContain("Configure knowledge");
     expect(html).toContain("Try in session");
   });
 

@@ -10,10 +10,11 @@ import {
 import type {
   ContextStore,
   Capability,
-  ContextNoteEntry,
   CreateContextStore,
   ContextStoreContent,
-  ContextStoreContentSummary,
+  ContextStoreContentMetadata,
+  ContextStoreEntry,
+  ContextStoreImportInspection,
   ExpertContextStoreMount,
   DesktopRuntimeAvailability,
   DesktopPlugin,
@@ -283,11 +284,13 @@ export function StudioPage(props: {
     const store =
       api === undefined
         ? ContextStoreSchema.parse({
-            schemaVersion: "pragma.context-store/v1",
+            schemaVersion: "pragma.context-store/v2",
             id: crypto.randomUUID(),
-            ...input,
-            ...(input.type === "note" ? { entries: [] } : {}),
-            status: input.type === "file" ? "configured" : "ready",
+            name: input.name,
+            description: input.description,
+            type: "file",
+            status: "ready",
+            source: { origin: input.mode === "blank" ? "created" : "copied" },
             createdAt: timestamp,
             updatedAt: timestamp,
           })
@@ -304,66 +307,84 @@ export function StudioPage(props: {
     }
     return result.path;
   };
-  const addContextNoteEntry = async (
-    storeId: string,
-    entry: ContextNoteEntry,
-  ): Promise<ContextStore> => {
+  const inspectContextStoreImport = async (
+    sourcePath: string,
+  ): Promise<ContextStoreImportInspection> => {
     const api = desktopApi();
-    const current = contextStores.find((store) => store.id === storeId);
-    if (current?.type !== "note") throw new Error("Context note store not found.");
-    const updated =
-      api === undefined
-        ? ContextStoreSchema.parse({
-            ...current,
-            entries: [...current.entries, entry],
-            updatedAt: new Date().toISOString(),
-          })
-        : await api.addContextNoteEntry({ storeId, entry });
-    setContextStores((stores) => stores.map((store) => (store.id === storeId ? updated : store)));
-    return updated;
+    if (api === undefined) {
+      return { sourcePath, markdownFiles: 1, ignoredFiles: 0, totalBytes: 0 };
+    }
+    return api.inspectContextStoreImport({ sourcePath });
   };
-  const listContextStoreContents = useCallback(
-    async (storeId: string): Promise<readonly ContextStoreContentSummary[]> => {
+  const listContextStoreEntries = useCallback(
+    async (storeId: string): Promise<readonly ContextStoreEntry[]> => {
       const api = desktopApi();
-      if (api !== undefined) return api.listContextStoreContents({ storeId });
-      const current = contextStores.find((store) => store.id === storeId);
-      if (current?.type !== "note") return [];
-      return current.entries.map((entry) => ({
-        id: entry.id,
-        metadata: {
-          description: entry.description,
-          trigger: entry.trigger,
-          priority: "normal",
-        },
-        sizeBytes: new TextEncoder().encode(entry.content).byteLength,
-      }));
+      if (api !== undefined) return api.listContextStoreEntries({ storeId });
+      return [];
     },
-    [contextStores],
+    [],
   );
   const getContextStoreContent = useCallback(
     async (storeId: string, contentId: string): Promise<ContextStoreContent> => {
       const api = desktopApi();
       if (api !== undefined) return api.getContextStoreContent({ storeId, contentId });
-      const current = contextStores.find((store) => store.id === storeId);
-      const entry =
-        current?.type === "note"
-          ? current.entries.find((candidate) => candidate.id === contentId)
-          : undefined;
-      if (entry === undefined) throw new Error(`Context not found: ${contentId}`);
-      return {
-        id: entry.id,
-        content: entry.content,
-        metadata: {
-          description: entry.description,
-          trigger: entry.trigger,
-          priority: "normal",
-        },
-        sizeBytes: new TextEncoder().encode(entry.content).byteLength,
-        truncated: false,
-      };
+      throw new Error(`Context not found: ${contentId}`);
     },
-    [contextStores],
+    [],
   );
+  const createContextStoreFile = useCallback(
+    async (storeId: string, id: string, content: string, metadata: ContextStoreContentMetadata) => {
+      const api = desktopApi();
+      if (api === undefined) throw new Error("Desktop bridge is unavailable.");
+      return api.createContextStoreFile({ storeId, id, content, metadata });
+    },
+    [],
+  );
+  const createContextStoreFolder = useCallback(async (storeId: string, id: string) => {
+    const api = desktopApi();
+    if (api === undefined) throw new Error("Desktop bridge is unavailable.");
+    await api.createContextStoreFolder({ storeId, id });
+  }, []);
+  const updateContextStoreFile = useCallback(
+    async (
+      storeId: string,
+      id: string,
+      content: string,
+      metadata: ContextStoreContentMetadata,
+      expectedRevision: string,
+    ) => {
+      const api = desktopApi();
+      if (api === undefined) throw new Error("Desktop bridge is unavailable.");
+      return api.updateContextStoreFile({
+        storeId,
+        id,
+        content,
+        metadata,
+        expectedRevision,
+      });
+    },
+    [],
+  );
+  const renameContextStoreEntry = useCallback(
+    async (storeId: string, id: string, nextId: string, kind: "file" | "directory") => {
+      const api = desktopApi();
+      if (api === undefined) throw new Error("Desktop bridge is unavailable.");
+      await api.renameContextStoreEntry({ storeId, id, nextId, kind });
+    },
+    [],
+  );
+  const deleteContextStoreEntry = useCallback(
+    async (storeId: string, id: string, kind: "file" | "directory") => {
+      const api = desktopApi();
+      if (api === undefined) throw new Error("Desktop bridge is unavailable.");
+      await api.deleteContextStoreEntry({ storeId, id, kind });
+    },
+    [],
+  );
+  const subscribeContextStoreChanges = useCallback((storeId: string, listener: () => void) => {
+    const api = desktopApi();
+    return api?.subscribeContextStoreChanges(storeId, listener) ?? (() => undefined);
+  }, []);
   const saveContextMounts = async (mounts: readonly ExpertContextStoreMount[]) => {
     if (selectedExpert === null) return;
     const updated = { ...selectedExpert, contextStoreMounts: [...mounts] };
@@ -593,6 +614,7 @@ export function StudioPage(props: {
           <ContextStoreDirectoryFragment
             stores={contextStores}
             onCreate={createContextStore}
+            onInspectImport={inspectContextStoreImport}
             onPickFolder={pickContextStoreFolder}
             onOpen={(store) => {
               setSelectedContextStoreId(store.id);
@@ -604,9 +626,14 @@ export function StudioPage(props: {
           <ContextStoreDetailFragment
             store={selectedContextStore}
             onBack={() => setScreen("directory")}
-            onAddNoteEntry={addContextNoteEntry}
-            onListContents={listContextStoreContents}
+            onListEntries={listContextStoreEntries}
             onGetContent={getContextStoreContent}
+            onCreateFile={createContextStoreFile}
+            onCreateFolder={createContextStoreFolder}
+            onUpdateFile={updateContextStoreFile}
+            onRenameEntry={renameContextStoreEntry}
+            onDeleteEntry={deleteContextStoreEntry}
+            onSubscribe={subscribeContextStoreChanges}
             onDelete={async () => {
               const api = desktopApi();
               if (api !== undefined)
@@ -766,6 +793,7 @@ export function StudioPage(props: {
           onClose={() => setContextDrawerOpen(false)}
           onSave={saveContextMounts}
           onCreateStore={createContextStore}
+          onInspectImport={inspectContextStoreImport}
           onStoreCreated={(store) =>
             setContextStores((current) =>
               current.some((item) => item.id === store.id) ? current : [store, ...current],

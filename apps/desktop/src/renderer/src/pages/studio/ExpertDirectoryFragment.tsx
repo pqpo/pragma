@@ -1,7 +1,6 @@
 import {
   ArrowLeft,
   ArrowCounterClockwise,
-  BookOpenText,
   CaretDown,
   CaretRight,
   Info,
@@ -313,17 +312,8 @@ export function ExpertDetailFragment(props: {
             {props.expert.contextStoreMounts.map((mount) => {
               const store = props.contextStores.find((item) => item.id === mount.storeId);
               if (!store) return null;
-              const StoreIcon = store.type === "file" ? Folder : BookOpenText;
-              const loadingBehavior =
-                store.type === "file"
-                  ? "From file metadata"
-                  : store.entries.length === 1
-                    ? store.entries[0]!.trigger === "always_on"
-                      ? "Load immediately"
-                      : store.entries[0]!.trigger === "model_decision"
-                        ? "Model decides"
-                        : "On demand"
-                    : "Per note entry";
+              const StoreIcon = Folder;
+              const loadingBehavior = "From Markdown metadata";
               return (
                 <div key={mount.storeId}>
                   <span className="store-icon">
@@ -331,7 +321,7 @@ export function ExpertDetailFragment(props: {
                   </span>
                   <span>
                     <strong>{store.name}</strong>
-                    <small>{store.type === "file" ? t("fileStore") : t("contextNote")}</small>
+                    <small>{t("knowledgeBase")}</small>
                   </span>
                   <em>{loadingBehavior}</em>
                   <span className="store-status">

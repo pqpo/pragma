@@ -578,7 +578,7 @@ export function ExpertEditorFragment(props: {
                     {draft.model === null
                       ? t(isBuiltIn ? "systemDefault" : "notConfigured", { ns: "studio" })
                       : `${draft.model.runtimeId} / ${draft.model.modelId}`}{" "}
-                    · {draft.contextStoreMounts.length} context stores · {draft.skills} skills ·{" "}
+                    · {draft.contextStoreMounts.length} knowledge bases · {draft.skills} skills ·{" "}
                     {draft.tools} tools · {draft.mcpServers} MCP server · {draft.plugins.length}{" "}
                     plugins
                     {isBuiltIn

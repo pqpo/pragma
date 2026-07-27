@@ -553,12 +553,7 @@ function ContextStoreResults(props: {
 }) {
   const { t } = useTranslation("studio");
   const visible = props.stores.filter((store) =>
-    includesQuery(
-      props.query,
-      store.name,
-      store.description,
-      store.type === "file" ? "File store" : "Context note",
-    ),
+    includesQuery(props.query, store.name, store.description, "Markdown knowledge base"),
   );
   if (visible.length === 0)
     return <EmptyResults hasQuery={Boolean(props.query.trim())} label={t("contextStoresLower")} />;
@@ -583,9 +578,7 @@ function ContextStoreResults(props: {
             />
             <span>
               <strong>{store.name}</strong>
-              <small>
-                {store.description || (store.type === "file" ? t("fileStore") : t("contextNote"))}
-              </small>
+              <small>{store.description || t("knowledgeBase")}</small>
             </span>
           </label>
         );

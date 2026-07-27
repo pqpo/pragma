@@ -7,6 +7,8 @@ import {
   EXPERT_SCOPE_MAX_LENGTH,
   EXPERT_TAG_MAX_LENGTH,
   CreateExpertDefinitionSchema,
+  CreateContextStoreSchema,
+  CreateContextStoreFileSchema,
   ExpertDefinitionSchema,
   CodeServiceCapabilityDefinitionSchema,
   CapabilityTestResultSchema,
@@ -26,6 +28,7 @@ import {
   UpdateExpertDefinitionSchema,
   UpdateMissionOptionsSchema,
   UpdateBuiltInExpertDefinitionSchema,
+  UpdateContextStoreFileSchema,
 } from "./desktop-api.ts";
 
 describe("desktop settings contracts", () => {
@@ -226,6 +229,40 @@ describe("context store delete contracts", () => {
       DeleteContextStoreSchema.parse({ storeId: "00000000-0000-4000-8000-000000000000" }),
     ).toEqual({ storeId: "00000000-0000-4000-8000-000000000000" });
     expect(DeleteContextStoreSchema.safeParse({ storeId: "notes" }).success).toBe(false);
+  });
+
+  it("only accepts blank or copied-import knowledge base creation", () => {
+    expect(
+      CreateContextStoreSchema.parse({
+        mode: "blank",
+        name: "Docs",
+        description: "",
+      }),
+    ).toEqual({ mode: "blank", name: "Docs", description: "" });
+    expect(
+      CreateContextStoreSchema.parse({
+        mode: "import",
+        name: "Docs",
+        description: "",
+        sourcePath: "/tmp/docs",
+      }),
+    ).toMatchObject({ mode: "import", sourcePath: "/tmp/docs" });
+    expect(CreateContextStoreSchema.safeParse({ type: "note", name: "Notes" }).success).toBe(false);
+  });
+
+  it("requires Markdown paths and optimistic revisions for file edits", () => {
+    const storeId = "00000000-0000-4000-8000-000000000000";
+    expect(CreateContextStoreFileSchema.parse({ storeId, id: "guides/review.md" })).toMatchObject({
+      content: "",
+    });
+    expect(
+      UpdateContextStoreFileSchema.safeParse({
+        storeId,
+        id: "guides/review.md",
+        content: "Updated",
+        metadata: { trigger: "manual", priority: "normal" },
+      }).success,
+    ).toBe(false);
   });
 });
 
