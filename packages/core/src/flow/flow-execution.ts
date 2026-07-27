@@ -632,7 +632,6 @@ async function runHumanTask(
   outputSchema: z.ZodType | undefined,
   deadlineState: FlowDeadlineState,
 ): Promise<unknown> {
-  await putStatus(options.store, options.executionId, invocation, "waiting");
   const context: FlowTaskContext = {
     input,
     state,
@@ -656,6 +655,10 @@ async function runHumanTask(
       ? await definition.request(context)
       : definition.request;
   const resumeDeadline = await pauseFlowDeadlineForHumanWait(options, deadlineState);
+  if (context.signal.aborted) {
+    throw context.signal.reason ?? new FlowTimeoutError(`Flow ${options.flow.id} timed out.`);
+  }
+  await putStatus(options.store, options.executionId, invocation, "waiting");
   const response = await options.controller
     .requestHumanInteraction(
       invocation.invocationId,

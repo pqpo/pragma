@@ -1809,7 +1809,7 @@ describe("FlowExecution", () => {
 
   it("pauses Flow timeout while a HumanTask is waiting", async () => {
     const { app } = await fixture();
-    const flow = defineFlow({ id: "human-timeout-flow", timeoutMs: 40 });
+    const flow = defineFlow({ id: "human-timeout-flow", timeoutMs: 250 });
     const gate = flow.humanTask({
       id: "approval",
       request: {
@@ -1825,10 +1825,12 @@ describe("FlowExecution", () => {
     flow.compose(({ start, end }) => start(gate).next(end()));
 
     const execution = await app.flows.start(flow, { input: null });
+    const result = execution.result;
+    void result.catch(() => undefined);
     await waitUntil(
       async () => (await execution.getTree()).children[0]?.invocation.status === "waiting",
     );
-    await new Promise((resolve) => setTimeout(resolve, 80));
+    await new Promise((resolve) => setTimeout(resolve, 500));
     expect((await execution.getState()).status).toBe("running");
     const requested = (
       await execution.listEvents({ scope: { kind: "all" }, limit: 1_000 })
@@ -1838,7 +1840,7 @@ describe("FlowExecution", () => {
       { kind: "user_question", answered: true, answers: { "Wait forever?": "Approve" } },
       { requestId: "human-timeout-response" },
     );
-    await expect(execution.result).resolves.toMatchObject({
+    await expect(result).resolves.toMatchObject({
       approved: true,
       decision: "Approve",
     });
