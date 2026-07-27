@@ -44,7 +44,8 @@ import {
   type PragmaResourceHealth,
   type PragmaSemanticResourceRef,
 } from "../ast/pragma-dsl.schema.ts";
-import { analyzePragmaFlowGraph, analyzePragmaFlowNodeAvailability } from "../ast/flow-graph.ts";
+import { validatePragmaFlowDataContracts } from "../ast/flow-data-contracts.ts";
+import { analyzePragmaFlowGraph } from "../ast/flow-graph.ts";
 import {
   canonicalPragmaResourceRef,
   normalizePragmaResourceName,
@@ -405,7 +406,9 @@ class PragmaProjectImpl implements PragmaProject {
     for (const indexed of this.resources.values()) {
       diagnostics.push(...this.validateReferences(indexed));
       diagnostics.push(...validatePortableSemantics(indexed, this.resources));
-      if (indexed.resource.kind === "Flow") diagnostics.push(...validateFlowGraph(indexed));
+      if (indexed.resource.kind === "Flow") {
+        diagnostics.push(...validateFlowGraph(indexed, this.resources));
+      }
       if (isDeclarativeResource(indexed.resource)) {
         diagnostics.push(
           ...adapters.validate(indexed.resource).map((diagnostic) => ({
@@ -1750,7 +1753,10 @@ function validateExtensionEnvironment(
   return diagnostics;
 }
 
-function validateFlowGraph(indexed: IndexedResource): PragmaDiagnostic[] {
+function validateFlowGraph(
+  indexed: IndexedResource,
+  resources: ReadonlyMap<string, IndexedResource>,
+): PragmaDiagnostic[] {
   const resource = indexed.resource as PragmaFlowResource;
   return [
     ...analyzePragmaFlowGraph(resource).issues.map((issue) => ({
@@ -1768,78 +1774,16 @@ function validateFlowGraph(indexed: IndexedResource): PragmaDiagnostic[] {
       source: indexed.source,
       path,
     })),
-    ...invalidFlowPromptVariables(resource).map((issue) => ({
+    ...validatePragmaFlowDataContracts(resource, {
+      resolveResource: (ref) => resources.get(ref)?.resource,
+    }).map((issue) => ({
       severity: "error" as const,
       code: issue.code,
       message: issue.message,
       source: indexed.source,
-      path: issue.path,
+      path: [...issue.path],
     })),
   ];
-}
-
-function invalidFlowPromptVariables(resource: PragmaFlowResource): {
-  readonly code: string;
-  readonly message: string;
-  readonly path: (string | number)[];
-}[] {
-  const issues: {
-    code: string;
-    message: string;
-    path: (string | number)[];
-  }[] = [];
-  for (const [stepId, step] of Object.entries(resource.spec.graph.steps)) {
-    if (step.prompt === undefined) continue;
-    const availability = analyzePragmaFlowNodeAvailability(resource, stepId);
-    step.prompt.segments.forEach((segment, index) => {
-      if (!("variable" in segment) || segment.variable.source !== "node-output") return;
-      const variable = segment.variable;
-      const path = ["spec", "graph", "steps", stepId, "prompt", "segments", index, "variable"];
-      const source = resource.spec.graph.steps[variable.nodeId];
-      if (source === undefined) {
-        issues.push({
-          code: "flow.prompt.variable_unknown",
-          message: `Prompt variable references an unknown node: ${variable.nodeId}.`,
-          path,
-        });
-        return;
-      }
-      if (!availability.upstream.has(variable.nodeId)) {
-        issues.push({
-          code: "flow.prompt.variable_not_upstream",
-          message: `Prompt variable node cannot run before ${stepId}: ${variable.nodeId}.`,
-          path,
-        });
-      }
-      if (variable.path.length === 0) return;
-      if (source.output === undefined || !jsonSchemaHasPath(source.output.schema, variable.path)) {
-        issues.push({
-          code: "flow.prompt.variable_path_invalid",
-          message: `Node ${variable.nodeId} does not define structured output field ${variable.path.join(
-            ".",
-          )}.`,
-          path,
-        });
-      }
-    });
-  }
-  return issues;
-}
-
-function jsonSchemaHasPath(schema: unknown, path: readonly string[]): boolean {
-  let current: unknown = schema;
-  for (const segment of path) {
-    if (typeof current !== "object" || current === null || Array.isArray(current)) return false;
-    const record = current as Record<string, unknown>;
-    if (record["type"] !== "object") return false;
-    const properties = record["properties"];
-    if (typeof properties !== "object" || properties === null || Array.isArray(properties)) {
-      return false;
-    }
-    current = (properties as Record<string, unknown>)[segment];
-    if (current === undefined) return false;
-  }
-  return true;
 }
 
 function invalidFlowExpressions(

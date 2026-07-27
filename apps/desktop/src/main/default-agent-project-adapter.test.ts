@@ -3,7 +3,10 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 
 import { describe, expect, it } from "vitest";
-import { PRAGMA_AUTOMATION_PROMPT_MAX_LENGTH } from "@pragma/interpreter/ast";
+import {
+  PRAGMA_AUTOMATION_PROMPT_MAX_LENGTH,
+  PragmaFlowResourceSchema,
+} from "@pragma/interpreter/ast";
 
 import type { Capability } from "../shared/desktop-api.ts";
 import { createPragmaProjectStore } from "./pragma-project-store.ts";
@@ -224,6 +227,92 @@ describe("Desktop DefaultAgent DSL project adapter", () => {
           metadata: expect.objectContaining({
             id: prepared.changes[0]!.ref.slice("flow:".length),
           }),
+        }),
+      ]),
+    );
+  });
+
+  it("validates nested Flow input mappings against the draft base revision", async () => {
+    const root = await mkdtemp(join(tmpdir(), "pragma-default-agent-nested-flow-draft-"));
+    const project = createPragmaProjectStore({ projectsPath: join(root, "projects") });
+    const child = PragmaFlowResourceSchema.parse({
+      apiVersion: "pragma/v3",
+      kind: "Flow",
+      metadata: {
+        id: "7k2m9q4v8np6r3dt",
+        name: "Child",
+        description: "Accepts a typed goal.",
+        tags: [],
+      },
+      spec: {
+        input: {
+          schema: {
+            type: "object",
+            properties: { goal: { type: "string" } },
+            required: ["goal"],
+            additionalProperties: false,
+          },
+        },
+        graph: {
+          start: "finish",
+          steps: {
+            finish: {
+              human: {
+                selectionMode: "single",
+                prompt: { segments: [{ text: "Finish?" }] },
+                options: [
+                  { value: "yes", label: "Yes" },
+                  { value: "no", label: "No" },
+                ],
+              },
+            },
+          },
+          transitions: { finish: { end: true } },
+          loops: {},
+        },
+      },
+    });
+    await project.publish({ expectedRevision: 0, resources: [child] });
+    const adapter = createDesktopDefaultAgentProjectPort(
+      adapterOptions(project, join(root, "state")),
+    );
+    const created = await adapter.createFlowDraft({
+      expectedProjectRevision: 1,
+      metadata: {
+        name: "Parent",
+        description: "Passes its typed input to a child Flow.",
+        tags: [],
+      },
+      input: {
+        schema: {
+          type: "object",
+          properties: { goal: { type: "number" } },
+          required: ["goal"],
+          additionalProperties: false,
+        },
+      },
+    });
+
+    const updated = await adapter.updateFlowDraft({
+      draftId: created.draftId,
+      expectedDraftRevision: 0,
+      operations: [
+        {
+          type: "upsert_step",
+          stepId: "child",
+          step: { flow: { ref: "flow:7k2m9q4v8np6r3dt" } },
+        },
+        { type: "set_start", stepId: "child" },
+        { type: "set_transition", stepId: "child", transition: { end: true } },
+      ],
+    });
+
+    expect(updated.diagnostics).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          severity: "error",
+          code: "flow.contract.type_mismatch",
+          path: ["spec", "graph", "steps", "child", "input"],
         }),
       ]),
     );

@@ -260,8 +260,7 @@ function FlowEditorCanvas(props: {
   );
   const localIssues = useMemo(
     () => [
-      ...validateFlowDraft(flow),
-      ...validateLogicRoutes(flow),
+      ...validateFlowDraft(flow, editorResources),
       ...validateFlowRuntimeSelections(flow, editorResources),
       ...logicDraftIds.map(
         (): FlowValidationIssue => ({
@@ -447,18 +446,15 @@ function FlowEditorCanvas(props: {
 
   useEffect(() => {
     setNodes((current) => {
-      const selectedStep = current.find((node) => node.type === "step" && node.selected);
       return buildCanvasNodes(
         flow,
         canvasPositions(current),
         invalidStepIds,
-        selectedStep?.id ??
-          current.find((node) => node.type === "logic" && node.selected)?.id ??
-          null,
+        selectedNodeId,
         logicDraftIds,
       );
     });
-  }, [flow, invalidStepIds, logicDraftIds, setNodes]);
+  }, [flow, invalidStepIds, logicDraftIds, selectedNodeId, setNodes]);
 
   useEffect(() => {
     const listener = (event: KeyboardEvent) => {
@@ -2678,50 +2674,6 @@ export function validateFlowRuntimeSelections(
   return issues;
 }
 
-export function validateLogicRoutes(flow: PragmaFlowResource): readonly FlowValidationIssue[] {
-  const issues: FlowValidationIssue[] = [];
-  for (const [sourceId, transition] of Object.entries(flow.spec.graph.transitions)) {
-    if (!isRouteTransition(transition)) continue;
-    const field = routeFieldOptions(flow, sourceId).find(
-      (candidate) => candidate.name === transition.route,
-    );
-    const add = (message: string) =>
-      issues.push({
-        path: ["spec", "graph", "transitions", sourceId],
-        message,
-        stepId: sourceId,
-      });
-    if (isArrayRouteTransition(transition)) {
-      if (field?.type !== "string-array") {
-        add(`Logic ${sourceId}.result.${transition.route} must be a string array.`);
-      }
-      if (transition.branches.length === 0) {
-        add(`Logic ${sourceId}.result.${transition.route} requires at least one branch.`);
-      }
-      if (transition.fallback === undefined) {
-        add(`Logic ${sourceId}.result.${transition.route} requires an otherwise branch.`);
-      }
-      continue;
-    }
-    if (Object.keys(transition.cases).some((key) => key.trim() === "")) {
-      add("Logic branch values cannot be empty.");
-    }
-    if (field?.type === "boolean") {
-      if (transition.cases["true"] === undefined || transition.cases["false"] === undefined) {
-        add(`Boolean logic ${sourceId}.result.${field.name} requires true and false branches.`);
-      }
-      continue;
-    }
-    if (field !== undefined && Object.keys(transition.cases).length === 0) {
-      add(`Logic ${sourceId}.result.${field.name} requires at least one case.`);
-    }
-    if (field !== undefined && transition.fallback === undefined) {
-      add(`Logic ${sourceId}.result.${field.name} requires an otherwise branch.`);
-    }
-  }
-  return issues;
-}
-
 function runtimeModelKey(model: DesktopRuntimeModel): string {
   return `${model.provider.id}\u0000${model.id}`;
 }
@@ -4344,6 +4296,7 @@ export function buildCanvasNodes(
       position: suppliedPositions[START_NODE_ID] ?? defaultStartPosition,
       draggable: true,
       deletable: false,
+      selected: START_NODE_ID === selectedNodeId,
       data: { label: "Start", tone: "start" },
     },
     ...semantic,
@@ -4355,6 +4308,7 @@ export function buildCanvasNodes(
       position: suppliedPositions[END_NODE_ID] ?? defaultEndPosition,
       draggable: true,
       deletable: false,
+      selected: END_NODE_ID === selectedNodeId,
       data: { label: "End", tone: "end" },
     },
   ];
@@ -4365,6 +4319,7 @@ export function buildCanvasNodes(
       position: suppliedPositions[FAIL_NODE_ID] ?? defaultFailPosition,
       draggable: true,
       deletable: false,
+      selected: FAIL_NODE_ID === selectedNodeId,
       data: { label: "Fail", tone: "fail" },
     });
   }

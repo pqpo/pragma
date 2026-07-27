@@ -37,7 +37,6 @@ import {
   RuntimeBindingEditor,
   START_NODE_ID,
   validateFlowRuntimeSelections,
-  validateLogicRoutes,
 } from "./FlowEditor.tsx";
 
 describe("Flow editor canvas", () => {
@@ -176,6 +175,25 @@ describe("Flow editor canvas", () => {
     expect(inspectorNodeId(start)).toBe(START_NODE_ID);
     expect(inspectorNodeId(end)).toBe(END_NODE_ID);
     expect(inspectorNodeId(undefined)).toBeNull();
+  });
+
+  it("keeps End selected when result-source edits rebuild the canvas nodes", () => {
+    const flow = createEmptyFlow();
+    flow.spec.output = {
+      schema: {
+        type: "object",
+        properties: { result: { type: "string" } },
+        required: ["result"],
+        additionalProperties: false,
+      },
+    };
+
+    const terminalResultNodes = buildCanvasNodes(flow, {}, new Set(), END_NODE_ID);
+    flow.spec.output.value = { result: "$node.output.result" };
+    const mappedResultNodes = buildCanvasNodes(flow, {}, new Set(), END_NODE_ID);
+
+    expect(terminalResultNodes.find((node) => node.id === END_NODE_ID)?.selected).toBe(true);
+    expect(mappedResultNodes.find((node) => node.id === END_NODE_ID)?.selected).toBe(true);
   });
 
   it("allows every Human option to be removed while keeping new values unique", () => {
@@ -462,43 +480,6 @@ describe("Flow editor canvas", () => {
         .find((node) => node.type === "logic")
         ?.data.outputs.map((output) => output.id),
     ).toEqual(["branch:branch_1", "branch:branch_2", "fallback"]);
-  });
-
-  it("requires complete type-aware branches while preserving unresolved legacy route fields", () => {
-    const flow = flowFixture();
-    flow.spec.graph.steps.review!.output = {
-      schema: {
-        type: "object",
-        properties: { has_issue: { type: "boolean" }, outcome: { type: "string" } },
-        required: ["has_issue", "outcome"],
-        additionalProperties: false,
-      },
-    };
-    flow.spec.graph.transitions.review = {
-      route: "has_issue",
-      cases: { true: { end: true } },
-    };
-
-    expect(validateLogicRoutes(flow)).toEqual([
-      expect.objectContaining({
-        stepId: "review",
-        message: expect.stringContaining("true and false"),
-      }),
-    ]);
-
-    flow.spec.graph.transitions.review = {
-      route: "outcome",
-      cases: { success: { end: true } },
-    };
-    expect(validateLogicRoutes(flow)).toEqual([
-      expect.objectContaining({ message: expect.stringContaining("otherwise") }),
-    ]);
-
-    flow.spec.graph.transitions.review = {
-      route: "legacy_field",
-      cases: { success: { end: true } },
-    };
-    expect(validateLogicRoutes(flow)).toEqual([]);
   });
 
   it("turns a cycle-producing canvas connection into a bounded repeat edge", () => {

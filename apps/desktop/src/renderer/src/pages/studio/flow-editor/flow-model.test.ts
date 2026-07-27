@@ -25,7 +25,7 @@ describe("Flow editor model", () => {
       review_loop: { entry: "review", maxIterations: 3, onLimit: { fail: "Review timed out" } },
     };
     flow.spec.graph.transitions["review"] = {
-      route: "decision",
+      route: "selection",
       cases: {
         approved: { goto: "finish" },
         rejected: { fail: "Rejected" },
