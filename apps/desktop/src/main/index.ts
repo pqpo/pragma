@@ -405,6 +405,7 @@ const desktopStartup = app.whenReady().then(async () => {
   installCapabilityHandlers(capabilityStore, () => mainWindow);
   const contextStores = createContextStoreStore({
     storesPath: contextStoresPath,
+    trashItem: async (path) => await shell.trashItem(path),
     isReferenced: async (storeId) => {
       const definitions = await Promise.all(
         (await expertStore.list()).map((summary) => expertStore.get(summary.ref)),

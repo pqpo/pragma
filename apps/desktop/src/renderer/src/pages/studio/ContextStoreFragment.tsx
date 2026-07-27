@@ -1,76 +1,96 @@
 import {
   ArrowLeft,
-  BookOpenText,
+  ArrowClockwise,
   CaretRight,
   Check,
   Database,
   File,
+  FilePlus,
   FileText,
   Folder,
+  FolderPlus,
   MagnifyingGlass,
+  PencilSimple,
   Plus,
-  ArrowClockwise,
   Trash,
   X,
 } from "@phosphor-icons/react";
-import type { ContextTrigger } from "@pragma/shared";
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
 
 import type {
-  ContextNoteEntry,
   ContextStore,
   ContextStoreContent,
-  ContextStoreContentSummary,
+  ContextStoreContentMetadata,
+  ContextStoreEntry,
+  ContextStoreImportInspection,
   CreateContextStore,
   ExpertContextStoreMount,
 } from "../../../../shared/desktop-api.ts";
+import { MarkdownContent } from "../../components/MarkdownContent.tsx";
 import { errorMessage } from "../../lib/errors.ts";
-import { StudioScreenFrame } from "./StudioScreenFrame.tsx";
+import {
+  flushContextStoreSaves,
+  type ContextStoreSaveCoordinator,
+} from "./context-store-autosave.ts";
 import { DeleteConfirmationDialog } from "./DeleteConfirmationDialog.tsx";
+import { StudioScreenFrame } from "./StudioScreenFrame.tsx";
 
-type StoreFilter = "all" | ContextStore["type"];
-type CreateStep = "type" | "configure" | "review";
+type CreateStep = "intro" | "configure" | "review";
+type CreateMode = CreateContextStore["mode"];
+type SaveStatus = "idle" | "saving" | "saved" | "error";
+type EditorStateSnapshot = {
+  readonly selectedEntry: ContextStoreEntry | null;
+  readonly content: ContextStoreContent | null;
+  readonly draft: string;
+  readonly metadata: ContextStoreContentMetadata;
+  readonly dirty: boolean;
+  readonly editVersion: number;
+  readonly documentVersion: number;
+};
 
-function triggerLabel(trigger: ContextTrigger): string {
-  if (trigger === "always_on") return "Load immediately";
-  if (trigger === "model_decision") return "Model decides";
-  return "On demand";
+const DEFAULT_METADATA: ContextStoreContentMetadata = {
+  trigger: "manual",
+  priority: "normal",
+};
+
+function fileName(path: string): string {
+  return path.split(/[\\/]/).at(-1) ?? path;
 }
 
-function formatBytes(sizeBytes: number | undefined): string {
-  if (sizeBytes === undefined) return "—";
-  if (sizeBytes < 1_000) return `${sizeBytes} B`;
-  if (sizeBytes < 1_000_000) return `${(sizeBytes / 1_000).toFixed(1)} KB`;
-  return `${(sizeBytes / 1_000_000).toFixed(1)} MB`;
+function parentId(path: string): string {
+  const parts = path.split("/");
+  parts.pop();
+  return parts.join("/");
 }
 
-function metadataLabel(value: string | undefined): string {
-  if (value === undefined) return "Not set";
-  return value.replaceAll("_", " ").replace(/^./, (character) => character.toUpperCase());
+function joinEntry(parent: string, name: string): string {
+  return parent ? `${parent}/${name}` : name;
+}
+
+function withMarkdownExtension(value: string): string {
+  const trimmed = value.trim();
+  return trimmed.toLowerCase().endsWith(".md") ? trimmed : `${trimmed}.md`;
 }
 
 export function ContextStoreDirectoryFragment(props: {
   readonly stores: readonly ContextStore[];
   readonly onCreate: (input: CreateContextStore) => Promise<ContextStore>;
+  readonly onInspectImport: (sourcePath: string) => Promise<ContextStoreImportInspection>;
   readonly onPickFolder: () => Promise<string | undefined>;
   readonly onOpen: (store: ContextStore) => void;
 }) {
   const { t } = useTranslation("studio");
   const [query, setQuery] = useState("");
-  const [filter, setFilter] = useState<StoreFilter>("all");
   const [creating, setCreating] = useState(false);
   const stores = useMemo(
     () =>
-      props.stores.filter((store) => {
-        const matchesFilter = filter === "all" || store.type === filter;
-        const matchesQuery = `${store.name} ${store.description}`
-          .toLowerCase()
-          .includes(query.trim().toLowerCase());
-        return matchesFilter && matchesQuery;
-      }),
-    [filter, props.stores, query],
+      props.stores.filter((store) =>
+        `${store.name} ${store.description}`.toLowerCase().includes(query.trim().toLowerCase()),
+      ),
+    [props.stores, query],
   );
+
   return (
     <StudioScreenFrame
       className="context-store-directory"
@@ -78,93 +98,81 @@ export function ContextStoreDirectoryFragment(props: {
       header={
         <header className="studio-heading expert-directory-heading">
           <div>
-            <h1 id="context-stores-heading">{t("contextStores")}</h1>
-            <p>{t("contextStoresDescription")}</p>
+            <h1 id="context-stores-heading">{t("knowledgeBases")}</h1>
+            <p>{t("knowledgeBasesDescription")}</p>
           </div>
           <button className="primary-button" type="button" onClick={() => setCreating(true)}>
             <Plus size={17} aria-hidden="true" />
-            {t("createStore")}
+            {t("createKnowledgeBase")}
           </button>
         </header>
       }
     >
-      <div className="store-filter-tabs" aria-label={t("filterStores")}>
-        {(["all", "file", "note"] as const).map((value) => (
-          <button
-            className={filter === value ? "is-active" : ""}
-            key={value}
-            type="button"
-            onClick={() => setFilter(value)}
-          >
-            {value === "all" ? t("all") : value === "file" ? t("files") : t("contextNotes")}
-          </button>
-        ))}
-      </div>
-
       <label className="directory-search store-search">
         <MagnifyingGlass size={18} aria-hidden="true" />
-        <span className="sr-only">{t("searchStores")}</span>
+        <span className="sr-only">{t("searchKnowledgeBases")}</span>
         <input
           type="search"
           value={query}
           onChange={(event) => setQuery(event.target.value)}
-          placeholder={t("searchStores")}
+          placeholder={t("searchKnowledgeBases")}
         />
       </label>
 
       {stores.length === 0 ? (
         <div className="empty-state store-empty-state">
           <Database size={28} aria-hidden="true" />
-          <h3>{props.stores.length === 0 ? t("noStores") : t("noMatchingStores")}</h3>
-          <p>{props.stores.length === 0 ? t("createStoreDescription") : t("trySearchFilter")}</p>
+          <h3>{props.stores.length === 0 ? t("noKnowledgeBases") : t("noMatchingStores")}</h3>
+          <p>
+            {props.stores.length === 0 ? t("createKnowledgeBaseDescription") : t("trySearchFilter")}
+          </p>
           {props.stores.length === 0 ? (
             <button className="primary-button" type="button" onClick={() => setCreating(true)}>
-              {t("createStore")}
+              {t("createKnowledgeBase")}
             </button>
           ) : null}
         </div>
       ) : (
-        <div className="store-table" role="list" aria-label={t("contextStores")}>
+        <div className="store-table" role="list" aria-label={t("knowledgeBases")}>
           <div className="store-table-heading" aria-hidden="true">
-            <span className="store-column-name">{t("store")}</span>
-            <span className="store-column-type">{t("type")}</span>
+            <span className="store-column-name">{t("knowledgeBase")}</span>
+            <span className="store-column-type">{t("format")}</span>
             <span className="store-column-source">{t("source")}</span>
             <span className="store-column-status">{t("status")}</span>
             <span className="store-column-action" />
           </div>
-          {stores.map((store) => {
-            const StoreIcon = store.type === "file" ? Folder : BookOpenText;
-            return (
-              <button
-                className="store-list-row"
-                key={store.id}
-                type="button"
-                onClick={() => props.onOpen(store)}
-              >
-                <span className="store-list-name store-column-name">
-                  <span className="store-icon" aria-hidden="true">
-                    <StoreIcon size={22} />
-                  </span>
-                  <span>
-                    <strong>{store.name}</strong>
-                    <small>{store.description || t("noDescription")}</small>
-                  </span>
+          {stores.map((store) => (
+            <button
+              className="store-list-row"
+              key={store.id}
+              type="button"
+              onClick={() => props.onOpen(store)}
+            >
+              <span className="store-list-name store-column-name">
+                <span className="store-icon" aria-hidden="true">
+                  <Folder size={22} />
                 </span>
-                <span className="store-column-type">
-                  {store.type === "file" ? t("fileStore") : t("contextNote")}
+                <span>
+                  <strong>{store.name}</strong>
+                  <small>{store.description || t("noDescription")}</small>
                 </span>
-                <span className="store-source store-column-source">
-                  {store.type === "file" ? store.source.path : `${store.entries.length} entries`}
-                </span>
-                <span className="store-status store-column-status">
-                  <i className={store.status === "ready" ? "is-ready" : ""} />
-                  {store.status === "ready" ? "Ready" : "Configured"}
-                </span>
-                <CaretRight className="store-column-action" size={17} aria-hidden="true" />
-              </button>
-            );
-          })}
-          <p className="directory-count">{stores.length} stores</p>
+              </span>
+              <span className="store-column-type">Markdown</span>
+              <span className="store-source store-column-source">
+                {store.source.origin === "created"
+                  ? t("createdKnowledgeBase")
+                  : store.source.origin === "copied"
+                    ? t("copiedKnowledgeBase")
+                    : t("migratedKnowledgeBase")}
+              </span>
+              <span className="store-status store-column-status">
+                <i className={store.status === "ready" ? "is-ready" : ""} />
+                {store.status === "ready" ? t("ready") : t("needsAttention")}
+              </span>
+              <CaretRight className="store-column-action" size={17} aria-hidden="true" />
+            </button>
+          ))}
+          <p className="directory-count">{t("knowledgeBaseCount", { count: stores.length })}</p>
         </div>
       )}
 
@@ -172,8 +180,12 @@ export function ContextStoreDirectoryFragment(props: {
         <ContextStoreCreatorDrawer
           onClose={() => setCreating(false)}
           onCreate={props.onCreate}
-          onCreated={() => setCreating(false)}
+          onInspectImport={props.onInspectImport}
           onPickFolder={props.onPickFolder}
+          onCreated={(store) => {
+            setCreating(false);
+            props.onOpen(store);
+          }}
         />
       ) : null}
     </StudioScreenFrame>
@@ -183,56 +195,322 @@ export function ContextStoreDirectoryFragment(props: {
 export function ContextStoreDetailFragment(props: {
   readonly store: ContextStore;
   readonly onBack: () => void;
-  readonly onAddNoteEntry: (storeId: string, entry: ContextNoteEntry) => Promise<ContextStore>;
-  readonly onListContents: (storeId: string) => Promise<readonly ContextStoreContentSummary[]>;
-  readonly onGetContent: (storeId: string, contentId: string) => Promise<ContextStoreContent>;
   readonly onDelete: () => Promise<void>;
+  readonly onListEntries: (storeId: string) => Promise<readonly ContextStoreEntry[]>;
+  readonly onGetContent: (storeId: string, contentId: string) => Promise<ContextStoreContent>;
+  readonly onCreateFile: (
+    storeId: string,
+    id: string,
+    content: string,
+    metadata: ContextStoreContentMetadata,
+  ) => Promise<ContextStoreContent>;
+  readonly onCreateFolder: (storeId: string, id: string) => Promise<void>;
+  readonly onUpdateFile: (
+    storeId: string,
+    id: string,
+    content: string,
+    metadata: ContextStoreContentMetadata,
+    expectedRevision: string,
+  ) => Promise<ContextStoreContent>;
+  readonly onRenameEntry: (
+    storeId: string,
+    id: string,
+    nextId: string,
+    kind: "file" | "directory",
+  ) => Promise<void>;
+  readonly onDeleteEntry: (
+    storeId: string,
+    id: string,
+    kind: "file" | "directory",
+  ) => Promise<void>;
+  readonly onSubscribe: (storeId: string, listener: () => void) => () => void;
 }) {
   const { t } = useTranslation("studio");
-  const [addingEntity, setAddingEntity] = useState(false);
-  const [contents, setContents] = useState<readonly ContextStoreContentSummary[]>([]);
-  const [loadingContents, setLoadingContents] = useState(true);
-  const [contentsError, setContentsError] = useState<string | null>(null);
-  const [selectedContent, setSelectedContent] = useState<ContextStoreContent | null>(null);
-  const [loadingContentId, setLoadingContentId] = useState<string | null>(null);
+  const [entries, setEntries] = useState<readonly ContextStoreEntry[]>([]);
+  const [selectedEntry, setSelectedEntry] = useState<ContextStoreEntry | null>(null);
+  const [selectedDirectory, setSelectedDirectory] = useState("");
+  const [content, setContent] = useState<ContextStoreContent | null>(null);
+  const [draft, setDraft] = useState("");
+  const [metadata, setMetadata] = useState<ContextStoreContentMetadata>(DEFAULT_METADATA);
+  const [dirty, setDirty] = useState(false);
+  const [saveStatus, setSaveStatus] = useState<SaveStatus>("idle");
+  const [preview, setPreview] = useState(false);
+  const [conflict, setConflict] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const [loading, setLoading] = useState(true);
   const [confirmOpen, setConfirmOpen] = useState(false);
   const [deleting, setDeleting] = useState(false);
-  const StoreIcon = props.store.type === "file" ? Folder : BookOpenText;
-  const loadContents = useCallback(async () => {
-    setLoadingContents(true);
-    setContentsError(null);
+  const [autosaveVersion, setAutosaveVersion] = useState(0);
+  const editVersionRef = useRef(0);
+  const documentVersionRef = useRef(0);
+  const loadRequestRef = useRef(0);
+  const saveCoordinatorRef = useRef<ContextStoreSaveCoordinator>({ inFlight: null });
+  const currentRef = useRef<EditorStateSnapshot>({
+    selectedEntry: null,
+    content: null,
+    draft: "",
+    metadata: DEFAULT_METADATA,
+    dirty: false,
+    editVersion: 0,
+    documentVersion: 0,
+  });
+  currentRef.current = {
+    selectedEntry,
+    content,
+    draft,
+    metadata,
+    dirty,
+    editVersion: editVersionRef.current,
+    documentVersion: documentVersionRef.current,
+  };
+
+  const markEdited = useCallback(
+    (change: Pick<Partial<EditorStateSnapshot>, "draft" | "metadata">) => {
+      const editVersion = editVersionRef.current + 1;
+      editVersionRef.current = editVersion;
+      currentRef.current = {
+        ...currentRef.current,
+        ...change,
+        dirty: true,
+        editVersion,
+      };
+      setDirty(true);
+      setAutosaveVersion(editVersion);
+      setSaveStatus("idle");
+    },
+    [],
+  );
+
+  const loadEntries = useCallback(async () => {
     try {
-      setContents(await props.onListContents(props.store.id));
-    } catch (loadError) {
-      setContentsError(errorMessage(loadError));
+      const next = await props.onListEntries(props.store.id);
+      setEntries(next);
+      setError(null);
+    } catch (cause) {
+      setError(errorMessage(cause));
     } finally {
-      setLoadingContents(false);
+      setLoading(false);
     }
-  }, [props.onListContents, props.store.id]);
+  }, [props.onListEntries, props.store.id]);
+
+  const loadFile = useCallback(
+    async (entry: ContextStoreEntry, discardChanges = false) => {
+      const request = loadRequestRef.current + 1;
+      loadRequestRef.current = request;
+      const editVersionAtStart = editVersionRef.current;
+      try {
+        const loaded = await props.onGetContent(props.store.id, entry.id);
+        if (loadRequestRef.current !== request) return;
+        if (
+          !discardChanges &&
+          currentRef.current.dirty &&
+          editVersionRef.current !== editVersionAtStart
+        ) {
+          setConflict(true);
+          return;
+        }
+        documentVersionRef.current += 1;
+        const nextState: EditorStateSnapshot = {
+          selectedEntry: entry,
+          content: loaded,
+          draft: loaded.content,
+          metadata: loaded.metadata,
+          dirty: false,
+          editVersion: editVersionRef.current,
+          documentVersion: documentVersionRef.current,
+        };
+        currentRef.current = nextState;
+        setSelectedEntry(entry);
+        setSelectedDirectory(parentId(entry.id));
+        setContent(loaded);
+        setDraft(loaded.content);
+        setMetadata(loaded.metadata);
+        setDirty(false);
+        setConflict(false);
+        setSaveStatus("idle");
+        setError(null);
+      } catch (cause) {
+        setError(errorMessage(cause));
+      }
+    },
+    [props.onGetContent, props.store.id],
+  );
+
+  const save = useCallback(
+    async (): Promise<boolean> =>
+      await flushContextStoreSaves(saveCoordinatorRef.current, {
+        read: () => {
+          const snapshot = currentRef.current;
+          if (
+            !snapshot.dirty ||
+            snapshot.selectedEntry?.kind !== "file" ||
+            snapshot.content?.revision === undefined
+          ) {
+            return undefined;
+          }
+          return {
+            entryId: snapshot.selectedEntry.id,
+            revision: snapshot.content.revision,
+            draft: snapshot.draft,
+            metadata: snapshot.metadata,
+            editVersion: snapshot.editVersion,
+            documentVersion: snapshot.documentVersion,
+          };
+        },
+        persist: async (snapshot) => {
+          setSaveStatus("saving");
+          return await props.onUpdateFile(
+            props.store.id,
+            snapshot.entryId,
+            snapshot.draft,
+            snapshot.metadata,
+            snapshot.revision,
+          );
+        },
+        onSaved: (snapshot, saved) => {
+          const latest = currentRef.current;
+          if (
+            latest.documentVersion !== snapshot.documentVersion ||
+            latest.selectedEntry?.id !== snapshot.entryId
+          ) {
+            return;
+          }
+          const hasNewerChanges = latest.editVersion !== snapshot.editVersion;
+          currentRef.current = {
+            ...latest,
+            content: saved,
+            dirty: hasNewerChanges,
+          };
+          setContent(saved);
+          setDirty(hasNewerChanges);
+          setConflict(false);
+          setSaveStatus(hasNewerChanges ? "idle" : "saved");
+          setError(null);
+        },
+        onFailed: (snapshot, cause) => {
+          const latest = currentRef.current;
+          if (
+            latest.documentVersion === snapshot.documentVersion &&
+            latest.selectedEntry?.id === snapshot.entryId
+          ) {
+            const message = errorMessage(cause);
+            setSaveStatus("error");
+            setError(message);
+            if (/revision|conflict/i.test(message)) setConflict(true);
+          }
+        },
+      }),
+    [props.onUpdateFile, props.store.id],
+  );
 
   useEffect(() => {
-    setSelectedContent(null);
-    void loadContents();
-  }, [loadContents, props.store.updatedAt]);
+    setLoading(true);
+    void loadEntries();
+    return props.onSubscribe(props.store.id, () => {
+      void loadEntries();
+      const current = currentRef.current;
+      if (current.selectedEntry?.kind !== "file") return;
+      if (current.dirty || saveCoordinatorRef.current.inFlight !== null) {
+        setConflict(true);
+        return;
+      }
+      void loadFile(current.selectedEntry);
+    });
+  }, [loadEntries, loadFile, props.onSubscribe, props.store.id]);
 
-  const openContent = async (contentId: string) => {
-    setLoadingContentId(contentId);
-    setContentsError(null);
+  useEffect(() => {
+    if (!dirty) return;
+    const timeout = window.setTimeout(() => void save(), 500);
+    return () => window.clearTimeout(timeout);
+  }, [autosaveVersion, dirty, save]);
+
+  const openEntry = async (entry: ContextStoreEntry) => {
+    if (entry.kind === "directory") {
+      if (await save()) {
+        setSelectedEntry(entry);
+        setSelectedDirectory(entry.id);
+        setContent(null);
+      }
+      return;
+    }
+    if (selectedEntry?.id === entry.id) return;
+    if (await save()) await loadFile(entry);
+  };
+
+  const createFile = async () => {
+    if (!(await save())) return;
+    const requested = window.prompt(t("newMarkdownFilePrompt"));
+    if (!requested?.trim()) return;
+    const id = joinEntry(selectedDirectory, withMarkdownExtension(requested));
     try {
-      setSelectedContent(await props.onGetContent(props.store.id, contentId));
-    } catch (loadError) {
-      setContentsError(errorMessage(loadError));
-    } finally {
-      setLoadingContentId(null);
+      const created = await props.onCreateFile(props.store.id, id, "", {
+        ...DEFAULT_METADATA,
+        description: fileName(id).replace(/\.md$/i, ""),
+      });
+      await loadEntries();
+      await loadFile({ id, kind: "file", revision: created.revision });
+    } catch (cause) {
+      setError(errorMessage(cause));
     }
   };
-  const remove = async () => {
+
+  const createFolder = async () => {
+    const requested = window.prompt(t("newFolderPrompt"));
+    if (!requested?.trim()) return;
+    try {
+      await props.onCreateFolder(props.store.id, joinEntry(selectedDirectory, requested.trim()));
+      await loadEntries();
+    } catch (cause) {
+      setError(errorMessage(cause));
+    }
+  };
+
+  const renameSelected = async () => {
+    if (selectedEntry === null) return;
+    if (!(await save())) return;
+    const requested = window.prompt(t("renameEntryPrompt"), fileName(selectedEntry.id));
+    if (!requested?.trim()) return;
+    const nextName =
+      selectedEntry.kind === "file" ? withMarkdownExtension(requested) : requested.trim();
+    const nextId = joinEntry(parentId(selectedEntry.id), nextName);
+    try {
+      await props.onRenameEntry(props.store.id, selectedEntry.id, nextId, selectedEntry.kind);
+      setSelectedEntry({ ...selectedEntry, id: nextId });
+      setSelectedDirectory(selectedEntry.kind === "directory" ? nextId : parentId(nextId));
+      setContent(null);
+      setDirty(false);
+      await loadEntries();
+      if (selectedEntry.kind === "file") await loadFile({ ...selectedEntry, id: nextId });
+    } catch (cause) {
+      setError(errorMessage(cause));
+    }
+  };
+
+  const deleteSelected = async () => {
+    if (
+      selectedEntry === null ||
+      !window.confirm(t("deleteEntryConfirm", { name: selectedEntry.id }))
+    ) {
+      return;
+    }
+    try {
+      await props.onDeleteEntry(props.store.id, selectedEntry.id, selectedEntry.kind);
+      setSelectedEntry(null);
+      setSelectedDirectory("");
+      setContent(null);
+      setDirty(false);
+      await loadEntries();
+    } catch (cause) {
+      setError(errorMessage(cause));
+    }
+  };
+
+  const removeStore = async () => {
     setDeleting(true);
-    setContentsError(null);
     try {
       await props.onDelete();
     } catch (cause) {
-      setContentsError(errorMessage(cause));
+      setError(errorMessage(cause));
       setConfirmOpen(false);
     } finally {
       setDeleting(false);
@@ -241,287 +519,314 @@ export function ContextStoreDetailFragment(props: {
 
   return (
     <StudioScreenFrame
-      className="store-detail"
+      className="knowledge-base-editor"
       labelledBy="context-store-name"
       header={
-        <button className="back-link" type="button" onClick={props.onBack}>
-          <ArrowLeft size={18} aria-hidden="true" />
-          {t("backContextStores")}
-        </button>
+        <div className="knowledge-base-editor-header">
+          <button
+            className="back-link"
+            type="button"
+            onClick={() => void save().then((saved) => saved && props.onBack())}
+          >
+            <ArrowLeft size={18} aria-hidden="true" />
+            {t("backKnowledgeBases")}
+          </button>
+          <div className="knowledge-base-title">
+            <Folder size={24} aria-hidden="true" />
+            <div>
+              <h1 id="context-store-name">{props.store.name}</h1>
+              <p>{props.store.description || t("noDescription")}</p>
+            </div>
+          </div>
+          <button className="danger-button" type="button" onClick={() => setConfirmOpen(true)}>
+            <Trash size={17} aria-hidden="true" />
+            {t("deleteKnowledgeBaseAction")}
+          </button>
+        </div>
       }
     >
-      <div className="store-detail-title">
-        <span className="store-icon" aria-hidden="true">
-          <StoreIcon size={24} />
-        </span>
-        <div>
-          <h1 id="context-store-name">{props.store.name}</h1>
-          <p>{props.store.description || "No description"}</p>
-        </div>
-        <button
-          className="danger-button store-delete-button"
-          type="button"
-          onClick={() => setConfirmOpen(true)}
-        >
-          <Trash size={17} aria-hidden="true" /> {t("deleteContextStoreAction")}
-        </button>
-      </div>
-      <dl>
-        <div>
-          <dt>{t("type")}</dt>
-          <dd>{props.store.type === "file" ? "File store" : "Context note"}</dd>
-        </div>
-        <div>
-          <dt>{t("access")}</dt>
-          <dd>{t("readOnly")}</dd>
-        </div>
-        <div>
-          <dt>{props.store.type === "file" ? "Source" : "Entries"}</dt>
-          <dd>
-            {props.store.type === "file"
-              ? props.store.source.path
-              : `${props.store.entries.length} context entries`}
-          </dd>
-        </div>
-        <div>
-          <dt>{t("availability")}</dt>
-          <dd>{props.store.type === "file" ? "This device" : "Cloud and local runtimes"}</dd>
-        </div>
-        <div>
-          <dt>{t("loadingBehavior")}</dt>
-          <dd>
-            {props.store.type === "file"
-              ? "Read from file metadata; defaults to On demand"
-              : props.store.entries.length === 1
-                ? triggerLabel(props.store.entries[0]!.trigger)
-                : "Configured per note entry"}
-          </dd>
-        </div>
-      </dl>
-      <section className="store-content-overview" aria-labelledby="store-overview-heading">
-        <div className="context-entity-heading">
-          <div>
-            <h2 id="store-overview-heading">{t("overview")}</h2>
-            <p>{t("overviewDescription")}</p>
-          </div>
-          <div className="store-overview-actions">
-            <button
-              className="secondary-button compact-button"
-              type="button"
-              onClick={() => void loadContents()}
-              disabled={loadingContents}
-            >
-              <ArrowClockwise size={16} aria-hidden="true" />
-              Refresh
-            </button>
-            {props.store.type === "note" ? (
-              <button
-                className="secondary-button"
-                type="button"
-                onClick={() => setAddingEntity(true)}
-              >
-                <Plus size={16} /> Add entity
+      <div className="knowledge-base-workspace">
+        <aside className="knowledge-file-panel" aria-label={t("knowledgeBaseFiles")}>
+          <div className="knowledge-file-toolbar">
+            <strong>{t("files")}</strong>
+            <div>
+              <button type="button" title={t("newFile")} onClick={() => void createFile()}>
+                <FilePlus size={17} />
               </button>
-            ) : null}
-          </div>
-        </div>
-
-        {contentsError ? (
-          <p className="form-error" role="alert">
-            {contentsError}
-          </p>
-        ) : null}
-        {loadingContents ? <p className="store-content-state">{t("loadingContents")}</p> : null}
-        {!loadingContents && contents.length === 0 && contentsError === null ? (
-          <div className="store-content-empty">
-            <File size={24} aria-hidden="true" />
-            <strong>{t("noContent")}</strong>
-            <p>
-              {props.store.type === "file"
-                ? "Add Markdown files to the source folder, then refresh this overview."
-                : "Add an entity to make context available to experts."}
-            </p>
-          </div>
-        ) : null}
-        {contents.length > 0 ? (
-          <div className="store-content-table" role="list" aria-label={t("content")}>
-            <div className="store-content-table-heading" aria-hidden="true">
-              <span className="store-content-column-name">{t("content")}</span>
-              <span className="store-content-column-trigger">{t("loading")}</span>
-              <span className="store-content-column-priority">{t("priority")}</span>
-              <span className="store-content-column-size">{t("size")}</span>
-              <span className="store-content-column-action" />
+              <button type="button" title={t("newFolder")} onClick={() => void createFolder()}>
+                <FolderPlus size={17} />
+              </button>
+              <button type="button" title={t("refresh")} onClick={() => void loadEntries()}>
+                <ArrowClockwise size={17} />
+              </button>
             </div>
-            {contents.map((item) => (
-              <button
-                className="store-content-row"
-                key={item.id}
-                type="button"
-                onClick={() => void openContent(item.id)}
-                disabled={loadingContentId !== null}
-              >
-                <span className="store-content-name store-content-column-name">
-                  <FileText size={20} aria-hidden="true" />
-                  <span>
-                    <strong>{item.id}</strong>
-                    <small>{item.metadata.description ?? "No description metadata"}</small>
-                  </span>
-                </span>
-                <span className="store-content-column-trigger">
-                  {triggerLabel(item.metadata.trigger)}
-                </span>
-                <span className="store-content-column-priority">
-                  {metadataLabel(item.metadata.priority)}
-                </span>
-                <span className="store-content-column-size">{formatBytes(item.sizeBytes)}</span>
-                <CaretRight className="store-content-column-action" size={16} aria-hidden="true" />
-              </button>
-            ))}
           </div>
-        ) : null}
-      </section>
+          {loading ? <p className="knowledge-tree-state">{t("loadingContents")}</p> : null}
+          {!loading && entries.length === 0 ? (
+            <div className="knowledge-tree-empty">
+              <File size={23} />
+              <p>{t("emptyKnowledgeBase")}</p>
+              <button type="button" onClick={() => void createFile()}>
+                {t("createFirstFile")}
+              </button>
+            </div>
+          ) : null}
+          <div className="knowledge-file-tree" role="tree">
+            {entries.map((entry) => {
+              const depth = entry.id.split("/").length - 1;
+              const Icon = entry.kind === "directory" ? Folder : FileText;
+              return (
+                <button
+                  key={`${entry.kind}:${entry.id}`}
+                  className={selectedEntry?.id === entry.id ? "is-selected" : ""}
+                  style={{ paddingInlineStart: 12 + depth * 18 }}
+                  type="button"
+                  role="treeitem"
+                  onClick={() => void openEntry(entry)}
+                >
+                  <Icon size={17} />
+                  <span>{fileName(entry.id)}</span>
+                </button>
+              );
+            })}
+          </div>
+        </aside>
 
-      {props.store.type === "note" && addingEntity ? (
-        <ContextEntityCreatorDrawer
-          store={props.store}
-          onClose={() => setAddingEntity(false)}
-          onCreate={props.onAddNoteEntry}
-        />
-      ) : null}
-      {selectedContent !== null ? (
-        <ContextContentDetailDrawer
-          content={selectedContent}
-          storeName={props.store.name}
-          onClose={() => setSelectedContent(null)}
-        />
+        <section className="knowledge-editor-panel">
+          {selectedEntry?.kind === "file" && content !== null ? (
+            <>
+              <header className="knowledge-editor-toolbar">
+                <div>
+                  <strong>{selectedEntry.id}</strong>
+                  <span className={`knowledge-save-status is-${saveStatus}`}>
+                    {saveStatus === "saving"
+                      ? t("saving")
+                      : saveStatus === "saved"
+                        ? t("saved")
+                        : saveStatus === "error"
+                          ? t("saveFailed")
+                          : ""}
+                  </span>
+                </div>
+                <div>
+                  <button
+                    className={!preview ? "is-active" : ""}
+                    type="button"
+                    onClick={() => setPreview(false)}
+                  >
+                    {t("edit")}
+                  </button>
+                  <button
+                    className={preview ? "is-active" : ""}
+                    type="button"
+                    onClick={() => setPreview(true)}
+                  >
+                    {t("preview")}
+                  </button>
+                  <button type="button" title={t("rename")} onClick={() => void renameSelected()}>
+                    <PencilSimple size={17} />
+                  </button>
+                  <button type="button" title={t("delete")} onClick={() => void deleteSelected()}>
+                    <Trash size={17} />
+                  </button>
+                </div>
+              </header>
+              {conflict ? (
+                <div className="knowledge-conflict" role="alert">
+                  <p>{t("knowledgeConflict")}</p>
+                  <button
+                    type="button"
+                    onClick={() => selectedEntry && void loadFile(selectedEntry, true)}
+                  >
+                    {t("reload")}
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      const requested = window.prompt(t("saveCopyPrompt"), "copy.md");
+                      if (!requested?.trim()) return;
+                      void props
+                        .onCreateFile(
+                          props.store.id,
+                          joinEntry(selectedDirectory, withMarkdownExtension(requested)),
+                          draft,
+                          metadata,
+                        )
+                        .then(loadEntries)
+                        .catch((cause: unknown) => setError(errorMessage(cause)));
+                    }}
+                  >
+                    {t("saveCopy")}
+                  </button>
+                </div>
+              ) : null}
+              {preview ? (
+                <div className="knowledge-markdown-preview">
+                  <MarkdownContent source={draft} />
+                </div>
+              ) : (
+                <textarea
+                  className="knowledge-markdown-editor"
+                  value={draft}
+                  onChange={(event) => {
+                    const nextDraft = event.target.value;
+                    setDraft(nextDraft);
+                    markEdited({ draft: nextDraft });
+                  }}
+                  aria-label={t("markdownContent")}
+                />
+              )}
+            </>
+          ) : (
+            <div className="knowledge-editor-empty">
+              <FileText size={32} />
+              <h2>{t("selectKnowledgeFile")}</h2>
+              <p>{t("selectKnowledgeFileDescription")}</p>
+            </div>
+          )}
+        </section>
+
+        <aside className="knowledge-metadata-panel" aria-label={t("loadingSettings")}>
+          <h2>{t("loadingSettings")}</h2>
+          {selectedEntry?.kind === "file" && content !== null ? (
+            <div className="knowledge-metadata-form">
+              <label>
+                {t("description")}
+                <textarea
+                  value={metadata.description ?? ""}
+                  onChange={(event) => {
+                    const nextMetadata = { ...metadata, description: event.target.value };
+                    setMetadata(nextMetadata);
+                    markEdited({ metadata: nextMetadata });
+                  }}
+                />
+              </label>
+              <label>
+                {t("loadingBehavior")}
+                <select
+                  value={metadata.trigger}
+                  onChange={(event) => {
+                    const nextMetadata = {
+                      ...metadata,
+                      trigger: event.target.value as ContextStoreContentMetadata["trigger"],
+                    };
+                    setMetadata(nextMetadata);
+                    markEdited({ metadata: nextMetadata });
+                  }}
+                >
+                  <option value="manual">{t("onDemand")}</option>
+                  <option value="model_decision">{t("modelDecides")}</option>
+                  <option value="always_on">{t("loadImmediately")}</option>
+                </select>
+              </label>
+              <label>
+                {t("priority")}
+                <select
+                  value={metadata.priority}
+                  onChange={(event) => {
+                    const nextMetadata = {
+                      ...metadata,
+                      priority: event.target.value as ContextStoreContentMetadata["priority"],
+                    };
+                    setMetadata(nextMetadata);
+                    markEdited({ metadata: nextMetadata });
+                  }}
+                >
+                  <option value="low">{t("priorityLow")}</option>
+                  <option value="normal">{t("priorityNormal")}</option>
+                  <option value="high">{t("priorityHigh")}</option>
+                  <option value="critical">{t("priorityCritical")}</option>
+                </select>
+              </label>
+              <p>{t("frontmatterManaged")}</p>
+            </div>
+          ) : (
+            <p className="knowledge-metadata-empty">{t("selectFileForSettings")}</p>
+          )}
+        </aside>
+      </div>
+      {error ? (
+        <p className="form-error knowledge-base-error" role="alert">
+          {error}
+        </p>
       ) : null}
       {confirmOpen ? (
         <DeleteConfirmationDialog
-          title={t("deleteContextStore")}
-          description={t("deleteContextStoreDescription", { name: props.store.name })}
+          title={t("deleteKnowledgeBase")}
+          description={t("deleteKnowledgeBaseDescription", { name: props.store.name })}
           cancelLabel={t("cancel")}
-          confirmLabel={t("deleteContextStoreAction")}
+          confirmLabel={t("deleteKnowledgeBaseAction")}
           deletingLabel={t("deleting")}
           busy={deleting}
           onCancel={() => setConfirmOpen(false)}
-          onConfirm={() => void remove()}
+          onConfirm={() => void removeStore()}
         />
       ) : null}
     </StudioScreenFrame>
   );
 }
 
-function ContextContentDetailDrawer(props: {
-  readonly content: ContextStoreContent;
-  readonly storeName: string;
-  readonly onClose: () => void;
-}) {
-  const { t } = useTranslation("studio");
-  return (
-    <div className="drawer-layer" role="presentation">
-      <button
-        className="drawer-scrim"
-        type="button"
-        aria-label={t("closeContent")}
-        onClick={props.onClose}
-      />
-      <aside className="store-creator-drawer context-content-drawer" aria-labelledby="content-name">
-        <header className="drawer-heading">
-          <div>
-            <p>{props.storeName}</p>
-            <h2 id="content-name">{props.content.id}</h2>
-          </div>
-          <button type="button" aria-label={t("close")} onClick={props.onClose}>
-            <X size={22} />
-          </button>
-        </header>
-        <div className="drawer-body context-content-body">
-          <section aria-labelledby="content-metadata-heading">
-            <h3 id="content-metadata-heading">{t("metadata")}</h3>
-            <dl className="content-metadata-grid">
-              <div>
-                <dt>{t("description")}</dt>
-                <dd>{props.content.metadata.description ?? "Not set"}</dd>
-              </div>
-              <div>
-                <dt>{t("loadingBehavior")}</dt>
-                <dd>{triggerLabel(props.content.metadata.trigger)}</dd>
-              </div>
-              <div>
-                <dt>{t("priority")}</dt>
-                <dd>{metadataLabel(props.content.metadata.priority)}</dd>
-              </div>
-              <div>
-                <dt>{t("trustLevel")}</dt>
-                <dd>{metadataLabel(props.content.metadata.trustLevel)}</dd>
-              </div>
-              <div>
-                <dt>{t("sensitivity")}</dt>
-                <dd>{metadataLabel(props.content.metadata.sensitivity)}</dd>
-              </div>
-              <div>
-                <dt>{t("size")}</dt>
-                <dd>{formatBytes(props.content.sizeBytes)}</dd>
-              </div>
-              {props.content.revision === undefined ? null : (
-                <div>
-                  <dt>{t("revision")}</dt>
-                  <dd>{props.content.revision}</dd>
-                </div>
-              )}
-            </dl>
-          </section>
-          <section className="context-content-preview" aria-labelledby="content-preview-heading">
-            <h3 id="content-preview-heading">{t("content")}</h3>
-            <pre>{props.content.content}</pre>
-            {props.content.truncated ? <p>{t("previewTruncated")}</p> : null}
-          </section>
-        </div>
-      </aside>
-    </div>
-  );
-}
-
 export function ContextStoreCreatorDrawer(props: {
   readonly onClose: () => void;
   readonly onCreate: (input: CreateContextStore) => Promise<ContextStore>;
+  readonly onInspectImport: (sourcePath: string) => Promise<ContextStoreImportInspection>;
   readonly onCreated: (store: ContextStore) => void;
   readonly onPickFolder: () => Promise<string | undefined>;
   readonly mountExpertName?: string;
 }) {
   const { t } = useTranslation("studio");
-  const [step, setStep] = useState<CreateStep>("type");
-  const [type, setType] = useState<ContextStore["type"]>("file");
+  const [step, setStep] = useState<CreateStep>("intro");
+  const [mode, setMode] = useState<CreateMode>("blank");
   const [name, setName] = useState("");
   const [description, setDescription] = useState("");
-  const [path, setPath] = useState("");
-  const [updateBehavior, setUpdateBehavior] = useState<"watch" | "manual">("watch");
+  const [sourcePath, setSourcePath] = useState("");
+  const [inspection, setInspection] = useState<ContextStoreImportInspection | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [saving, setSaving] = useState(false);
+  const [inspecting, setInspecting] = useState(false);
+
+  const chooseSource = async () => {
+    try {
+      const folder = await props.onPickFolder();
+      if (!folder) return;
+      setInspecting(true);
+      setError(null);
+      const result = await props.onInspectImport(folder);
+      setSourcePath(folder);
+      setInspection(result);
+      if (!name.trim()) setName(fileName(folder));
+    } catch (cause) {
+      setInspection(null);
+      setError(errorMessage(cause));
+    } finally {
+      setInspecting(false);
+    }
+  };
 
   const continueFromConfigure = () => {
-    if (!name.trim() || (type === "file" && !path)) {
-      setError(
-        type === "file" ? "Name and source folder are required." : "Store name is required.",
-      );
+    if (!name.trim() || (mode === "import" && inspection === null)) {
+      setError(mode === "import" ? t("nameAndImportRequired") : t("knowledgeBaseNameRequired"));
+      return;
+    }
+    if (inspection?.markdownFiles === 0) {
+      setError(t("noMarkdownInSource"));
       return;
     }
     setError(null);
     setStep("review");
   };
+
   const submit = async () => {
     setSaving(true);
     setError(null);
     try {
       const common = { name: name.trim(), description: description.trim() };
       const input: CreateContextStore =
-        type === "file"
-          ? { type, ...common, source: { path, updateBehavior } }
-          : { type, ...common };
+        mode === "blank" ? { mode: "blank", ...common } : { mode: "import", ...common, sourcePath };
       props.onCreated(await props.onCreate(input));
-    } catch (submitError) {
+    } catch (cause) {
       setSaving(false);
-      setError(errorMessage(submitError));
+      setError(errorMessage(cause));
     }
   };
 
@@ -530,67 +835,42 @@ export function ContextStoreCreatorDrawer(props: {
       <button
         className="drawer-scrim"
         type="button"
-        aria-label={t("closeCreateStore")}
+        aria-label={t("closeCreateKnowledgeBase")}
         onClick={props.onClose}
       />
       <aside className="store-creator-drawer" aria-labelledby="create-store-heading">
         <header className="drawer-heading">
-          <h2 id="create-store-heading">{t("createStore")}</h2>
+          <h2 id="create-store-heading">{t("createKnowledgeBase")}</h2>
           <button type="button" aria-label={t("close")} onClick={props.onClose}>
             <X size={22} />
           </button>
         </header>
-        <ol className="drawer-steps" aria-label={t("createStoreSteps")}>
-          {(["type", "configure", "review"] as const).map((item, index) => (
+        <ol className="drawer-steps" aria-label={t("createKnowledgeBaseSteps")}>
+          {(["intro", "configure", "review"] as const).map((item, index) => (
             <li className={step === item ? "is-active" : ""} key={item}>
               <span>{index + 1}</span>
-              {item === "type" ? "Type" : item === "configure" ? "Configure" : "Review"}
+              {item === "intro" ? t("format") : item === "configure" ? t("configure") : t("review")}
             </li>
           ))}
         </ol>
 
         <div className="drawer-body">
-          {step === "type" ? (
+          {step === "intro" ? (
             <>
               <div className="drawer-copy">
-                <h3>{t("chooseStoreType")}</h3>
-                <p>{t("chooseStoreTypeDescription")}</p>
+                <h3>{t("markdownKnowledgeBase")}</h3>
+                <p>{t("markdownKnowledgeBaseDescription")}</p>
               </div>
               <div className="store-type-options">
-                <button
-                  className={type === "file" ? "is-selected" : ""}
-                  type="button"
-                  onClick={() => setType("file")}
-                >
+                <div className="is-selected">
                   <Folder size={26} />
                   <span>
-                    <strong>{t("fileStore")}</strong>
-                    <small>{t("indexFolder")}</small>
-                    <em>{t("deviceAvailable")}</em>
+                    <strong>Markdown</strong>
+                    <small>{t("managedKnowledgeBase")}</small>
+                    <em>{t("liveKnowledgeBase")}</em>
                   </span>
-                  {type === "file" ? <Check size={18} /> : null}
-                </button>
-                <button
-                  className={type === "note" ? "is-selected" : ""}
-                  type="button"
-                  onClick={() => setType("note")}
-                >
-                  <BookOpenText size={26} />
-                  <span>
-                    <strong>{t("contextNote")}</strong>
-                    <small>{t("writeRules")}</small>
-                    <em>{t("cloudAvailable")}</em>
-                  </span>
-                  {type === "note" ? <Check size={18} /> : null}
-                </button>
-                <button type="button" disabled>
-                  <Database size={26} />
-                  <span>
-                    <strong>{t("connectedStore")}</strong>
-                    <small>{t("syncService")}</small>
-                    <em>{t("comingLater")}</em>
-                  </span>
-                </button>
+                  <Check size={18} />
+                </div>
               </div>
             </>
           ) : null}
@@ -598,62 +878,72 @@ export function ContextStoreCreatorDrawer(props: {
           {step === "configure" ? (
             <>
               <div className="drawer-copy">
-                <h3>{type === "file" ? "Configure file store" : "Write context note"}</h3>
-                <p>
-                  {type === "file"
-                    ? "Choose a local folder this store can read."
-                    : "Add concise context that experts can apply or retrieve."}
-                </p>
+                <h3>{t("configureKnowledgeBase")}</h3>
+                <p>{t("configureKnowledgeBaseDescription")}</p>
+              </div>
+              <div className="knowledge-create-modes">
+                <button
+                  className={mode === "blank" ? "is-selected" : ""}
+                  type="button"
+                  onClick={() => setMode("blank")}
+                >
+                  <FilePlus size={23} />
+                  <span>
+                    <strong>{t("blankKnowledgeBase")}</strong>
+                    <small>{t("blankKnowledgeBaseDescription")}</small>
+                  </span>
+                </button>
+                <button
+                  className={mode === "import" ? "is-selected" : ""}
+                  type="button"
+                  onClick={() => setMode("import")}
+                >
+                  <FolderPlus size={23} />
+                  <span>
+                    <strong>{t("importKnowledgeBase")}</strong>
+                    <small>{t("importKnowledgeBaseDescription")}</small>
+                  </span>
+                </button>
               </div>
               <div className="store-config-form">
                 <label>
-                  Store name
+                  {t("name")}
                   <input value={name} onChange={(event) => setName(event.target.value)} autoFocus />
                 </label>
                 <label>
-                  Description
+                  {t("description")}
                   <textarea
                     value={description}
                     onChange={(event) => setDescription(event.target.value)}
                   />
                 </label>
-                {type === "file" ? (
-                  <>
-                    <label>
-                      Source folder
-                      <span className="folder-picker">
-                        <input value={path} readOnly placeholder={t("chooseFolder")} />
-                        <button
-                          className="secondary-button"
-                          type="button"
-                          onClick={() =>
-                            void props.onPickFolder().then((folder) => folder && setPath(folder))
-                          }
-                        >
-                          {t("chooseFolder")}
-                        </button>
-                      </span>
-                    </label>
-                    <label>
-                      {t("updateBehavior")}
-                      <select
-                        value={updateBehavior}
-                        onChange={(event) =>
-                          setUpdateBehavior(event.target.value as typeof updateBehavior)
-                        }
-                      >
-                        <option value="watch">{t("watchChanges")}</option>
-                        <option value="manual">{t("refreshManually")}</option>
-                      </select>
-                    </label>
-                    {path ? (
-                      <p className="store-availability-note">
-                        <Check size={17} /> {t("folderConfigured")}
-                      </p>
+                {mode === "import" ? (
+                  <div className="knowledge-import-source">
+                    <button
+                      className="secondary-button"
+                      type="button"
+                      disabled={inspecting}
+                      onClick={() => void chooseSource()}
+                    >
+                      {inspecting ? t("inspecting") : t("chooseSourceFolder")}
+                    </button>
+                    {inspection ? (
+                      <div className="knowledge-import-summary">
+                        <Check size={18} />
+                        <div>
+                          <strong>{fileName(inspection.sourcePath)}</strong>
+                          <p>
+                            {t("importScanSummary", {
+                              markdown: inspection.markdownFiles,
+                              ignored: inspection.ignoredFiles,
+                            })}
+                          </p>
+                        </div>
+                      </div>
                     ) : null}
-                  </>
+                  </div>
                 ) : (
-                  <p className="store-availability-note">{t("createStoreFirst")}</p>
+                  <p className="store-availability-note">{t("managedLocationNote")}</p>
                 )}
               </div>
             </>
@@ -662,16 +952,8 @@ export function ContextStoreCreatorDrawer(props: {
           {step === "review" ? (
             <>
               <div className="drawer-copy">
-                <h3>
-                  {t("reviewStore", {
-                    type: type === "file" ? t("fileStore") : t("contextNote"),
-                  })}
-                </h3>
-                <p>
-                  {t("confirmCreated", {
-                    mounted: props.mountExpertName ? t("mountedSuffix") : "",
-                  })}
-                </p>
+                <h3>{t("reviewKnowledgeBase")}</h3>
+                <p>{t("reviewKnowledgeBaseDescription")}</p>
               </div>
               <dl className="store-review-list">
                 <div>
@@ -679,17 +961,17 @@ export function ContextStoreCreatorDrawer(props: {
                   <dd>{name}</dd>
                 </div>
                 <div>
-                  <dt>{t("type")}</dt>
-                  <dd>{type === "file" ? t("fileStore") : t("contextNote")}</dd>
+                  <dt>{t("creationMethod")}</dt>
+                  <dd>{mode === "blank" ? t("blankKnowledgeBase") : t("copiedImport")}</dd>
                 </div>
                 <div>
-                  <dt>{t("access")}</dt>
-                  <dd>{t("readOnly")}</dd>
+                  <dt>{t("format")}</dt>
+                  <dd>Markdown (.md)</dd>
                 </div>
-                {type === "file" ? (
+                {inspection ? (
                   <div>
-                    <dt>{t("source")}</dt>
-                    <dd>{path}</dd>
+                    <dt>{t("files")}</dt>
+                    <dd>{t("markdownFileCount", { count: inspection.markdownFiles })}</dd>
                   </div>
                 ) : null}
               </dl>
@@ -719,18 +1001,18 @@ export function ContextStoreCreatorDrawer(props: {
             type="button"
             disabled={saving}
             onClick={() => {
-              if (step === "type") props.onClose();
-              else setStep(step === "review" ? "configure" : "type");
+              if (step === "intro") props.onClose();
+              else setStep(step === "review" ? "configure" : "intro");
             }}
           >
-            {step === "type" ? t("cancel") : t("back")}
+            {step === "intro" ? t("cancel") : t("back")}
           </button>
           <button
             className="primary-button"
             type="button"
             disabled={saving}
             onClick={() => {
-              if (step === "type") setStep("configure");
+              if (step === "intro") setStep("configure");
               else if (step === "configure") continueFromConfigure();
               else void submit();
             }}
@@ -740,141 +1022,8 @@ export function ContextStoreCreatorDrawer(props: {
               : step === "review"
                 ? props.mountExpertName
                   ? t("createAndMount")
-                  : t("createStore")
-                : step === "configure"
-                  ? t("continueReview")
-                  : t("continue")}
-          </button>
-        </footer>
-      </aside>
-    </div>
-  );
-}
-
-function ContextEntityCreatorDrawer(props: {
-  readonly store: Extract<ContextStore, { type: "note" }>;
-  readonly onClose: () => void;
-  readonly onCreate: (storeId: string, entry: ContextNoteEntry) => Promise<ContextStore>;
-}) {
-  const { t } = useTranslation("studio");
-  const [id, setId] = useState("");
-  const [description, setDescription] = useState("");
-  const [content, setContent] = useState("");
-  const [trigger, setTrigger] = useState<ContextTrigger>("manual");
-  const [saving, setSaving] = useState(false);
-  const [error, setError] = useState<string | null>(null);
-
-  const submit = async () => {
-    if (!id.trim() || !description.trim() || !content.trim()) {
-      setError(t("entityRequired"));
-      return;
-    }
-    setSaving(true);
-    setError(null);
-    try {
-      await props.onCreate(props.store.id, {
-        id: id.trim(),
-        description: description.trim(),
-        content: content.trim(),
-        trigger,
-      });
-      props.onClose();
-    } catch (createError) {
-      setSaving(false);
-      setError(errorMessage(createError));
-    }
-  };
-
-  return (
-    <div className="drawer-layer" role="presentation">
-      <button
-        className="drawer-scrim"
-        type="button"
-        aria-label={t("closeAddEntity")}
-        onClick={props.onClose}
-      />
-      <aside className="store-creator-drawer" aria-labelledby="add-context-entity-heading">
-        <header className="drawer-heading">
-          <div>
-            <h2 id="add-context-entity-heading">{t("addContextEntity")}</h2>
-            <p>{props.store.name}</p>
-          </div>
-          <button type="button" aria-label={t("close")} onClick={props.onClose}>
-            <X size={22} />
-          </button>
-        </header>
-        <div className="drawer-body store-config-form">
-          <label>
-            {t("entityId")}
-            <input
-              value={id}
-              onChange={(event) => setId(event.target.value)}
-              placeholder="review-rules"
-              autoFocus
-            />
-            <small>{t("entityIdHint")}</small>
-          </label>
-          <label>
-            {t("description")}
-            <input
-              value={description}
-              onChange={(event) => setDescription(event.target.value)}
-              placeholder={t("whenRelevant")}
-            />
-          </label>
-          <label>
-            {t("content")}
-            <textarea
-              className="note-content-input"
-              value={content}
-              onChange={(event) => setContent(event.target.value)}
-            />
-          </label>
-          <fieldset className="trigger-options">
-            <legend>{t("loadingBehavior")}</legend>
-            {(
-              [
-                ["always_on", t("loadImmediately"), t("injectEveryRun")],
-                ["model_decision", t("modelDecides"), t("modelLoad")],
-                ["manual", t("onDemand"), t("loadExplicitly")],
-              ] as const
-            ).map(([value, label, help]) => (
-              <label className={trigger === value ? "is-selected" : ""} key={value}>
-                <input
-                  type="radio"
-                  name="entity-trigger"
-                  checked={trigger === value}
-                  onChange={() => setTrigger(value)}
-                />
-                <span>
-                  <strong>{label}</strong>
-                  <small>{help}</small>
-                </span>
-              </label>
-            ))}
-          </fieldset>
-          {error ? (
-            <p className="form-error" role="alert">
-              {error}
-            </p>
-          ) : null}
-        </div>
-        <footer className="drawer-actions">
-          <button
-            className="secondary-button"
-            type="button"
-            onClick={props.onClose}
-            disabled={saving}
-          >
-            Cancel
-          </button>
-          <button
-            className="primary-button"
-            type="button"
-            onClick={() => void submit()}
-            disabled={saving}
-          >
-            {saving ? "Adding…" : "Add entity"}
+                  : t("createKnowledgeBase")
+                : t("continue")}
           </button>
         </footer>
       </aside>
@@ -889,6 +1038,7 @@ export function ExpertContextMountDrawer(props: {
   readonly onClose: () => void;
   readonly onSave: (mounts: readonly ExpertContextStoreMount[]) => Promise<void>;
   readonly onCreateStore: (input: CreateContextStore) => Promise<ContextStore>;
+  readonly onInspectImport: (sourcePath: string) => Promise<ContextStoreImportInspection>;
   readonly onStoreCreated: (store: ContextStore) => void;
   readonly onPickFolder: () => Promise<string | undefined>;
 }) {
@@ -919,6 +1069,7 @@ export function ExpertContextMountDrawer(props: {
         mountExpertName={props.expertName}
         onClose={() => setCreating(false)}
         onCreate={props.onCreateStore}
+        onInspectImport={props.onInspectImport}
         onPickFolder={props.onPickFolder}
         onCreated={(store) => {
           props.onStoreCreated(store);
@@ -943,8 +1094,8 @@ export function ExpertContextMountDrawer(props: {
       >
         <header className="drawer-heading">
           <div>
-            <h2 id="mount-context-heading">{t("addContext")}</h2>
-            <p>Choose what {props.expertName} can know at runtime.</p>
+            <h2 id="mount-context-heading">{t("addKnowledgeBase")}</h2>
+            <p>{t("chooseKnowledgeForExpert", { expert: props.expertName })}</p>
           </div>
           <button type="button" aria-label={t("close")} onClick={props.onClose}>
             <X size={22} />
@@ -953,18 +1104,17 @@ export function ExpertContextMountDrawer(props: {
         <div className="drawer-body">
           <label className="directory-search mount-search">
             <MagnifyingGlass size={18} />
-            <span className="sr-only">{t("searchStores")}</span>
+            <span className="sr-only">{t("searchKnowledgeBases")}</span>
             <input
               type="search"
               value={query}
               onChange={(event) => setQuery(event.target.value)}
-              placeholder={t("searchStores")}
+              placeholder={t("searchKnowledgeBases")}
             />
           </label>
           <div className="mount-store-list">
             {filteredStores.map((store) => {
               const mount = draft.find((item) => item.storeId === store.id);
-              const StoreIcon = store.type === "file" ? Folder : BookOpenText;
               return (
                 <div
                   className={mount ? "mount-store-row is-selected" : "mount-store-row"}
@@ -976,24 +1126,18 @@ export function ExpertContextMountDrawer(props: {
                     onClick={() => toggleMount(store.id)}
                   >
                     <span className="store-icon">
-                      <StoreIcon size={21} />
+                      <Folder size={21} />
                     </span>
                     <span>
                       <strong>{store.name}</strong>
-                      <small>{store.type === "file" ? "File store" : "Context note"}</small>
+                      <small>Markdown</small>
                     </span>
                     <span className="mount-checkbox" aria-label={mount ? "Mounted" : "Not mounted"}>
                       {mount ? <Check size={15} /> : null}
                     </span>
                   </button>
                   {mount ? (
-                    <p className="mount-trigger-summary">
-                      {store.type === "file"
-                        ? "Loading behavior comes from each file's metadata. Files without metadata are manual."
-                        : store.entries.length === 1
-                          ? triggerLabel(store.entries[0]!.trigger)
-                          : "Loading behavior is configured per note entry."}
-                    </p>
+                    <p className="mount-trigger-summary">{t("fileMetadataLoading")}</p>
                   ) : null}
                 </div>
               );
@@ -1005,8 +1149,8 @@ export function ExpertContextMountDrawer(props: {
           <button className="create-inline-store" type="button" onClick={() => setCreating(true)}>
             <Plus size={18} />
             <span>
-              <strong>{t("createNewStore")}</strong>
-              <small>{t("createNewStoreDescription")}</small>
+              <strong>{t("createKnowledgeBase")}</strong>
+              <small>{t("createKnowledgeBaseInlineDescription")}</small>
             </span>
             <CaretRight size={17} />
           </button>
@@ -1023,7 +1167,7 @@ export function ExpertContextMountDrawer(props: {
             onClick={props.onClose}
             disabled={saving}
           >
-            Cancel
+            {t("cancel")}
           </button>
           <button
             className="primary-button"
@@ -1031,15 +1175,13 @@ export function ExpertContextMountDrawer(props: {
             disabled={saving}
             onClick={() => {
               setSaving(true);
-              void props.onSave(draft).catch((saveError: unknown) => {
+              void props.onSave(draft).catch((cause: unknown) => {
                 setSaving(false);
-                setError(errorMessage(saveError));
+                setError(errorMessage(cause));
               });
             }}
           >
-            {saving
-              ? "Saving…"
-              : `Save ${draft.length} mounted store${draft.length === 1 ? "" : "s"}`}
+            {saving ? t("saving") : t("saveMountedKnowledge", { count: draft.length })}
           </button>
         </footer>
       </aside>
