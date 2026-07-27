@@ -21,7 +21,11 @@ import type {
   ExpertAgentHumanResponse,
   ExpertAgentUserQuestion,
 } from "../tools/managed-tool.ts";
-import { ExecutionController, runExpertInvocation } from "../execution/expert-runner.ts";
+import {
+  ExecutionController,
+  listPendingHumanInteractionIds,
+  runExpertInvocation,
+} from "../execution/expert-runner.ts";
 import { HandoffService, unwrapInvocationHandoff } from "../execution/handoff/handoff-service.ts";
 import {
   ContextResolutionService,
@@ -177,6 +181,10 @@ export class FlowExecutionManager {
     if (!(await this.executions.claimRecovery(request.executionId, claimId, 30_000))) {
       throw new Error(`FlowExecution recovery is already claimed: ${request.executionId}`);
     }
+    const pendingHumanInteractionIds = await listPendingHumanInteractionIds(
+      this.executions,
+      request.executionId,
+    );
     for (const invocation of await this.executions.listInvocations(request.executionId)) {
       if (!isFinal(invocation.status) && invocation.status !== "waiting") {
         await this.executions.putInvocation(request.executionId, {
@@ -207,7 +215,7 @@ export class FlowExecutionManager {
         },
       ],
     });
-    return this.activate(flow, request.executionId, runtimeId, claimId);
+    return this.activate(flow, request.executionId, runtimeId, claimId, pendingHumanInteractionIds);
   }
 
   private activate(
@@ -215,9 +223,11 @@ export class FlowExecutionManager {
     executionId: string,
     runtime: string | undefined,
     claimId: string,
+    recoverHumanInteractionIds: readonly string[] = [],
   ): FlowExecution {
     const controller = new ExecutionController(executionId, this.executions, undefined, {
       closeContextsOnCancel: true,
+      ...(recoverHumanInteractionIds.length === 0 ? {} : { recoverHumanInteractionIds }),
       automaticHumanInteractionHandler: this.automaticHumanInteractionHandler,
     });
     const handle = this.createHandle(executionId, controller);
@@ -378,23 +388,16 @@ async function runFlow(options: {
   readonly handoffs: HandoffService;
   readonly loggerProvider?: PragmaLoggerProvider | undefined;
 }): Promise<unknown> {
-  const deadline = await ensureFlowDeadline(options);
+  let deadline = await ensureFlowDeadline(options);
+  deadline = await extendExpiredDeadlineForPendingHumanInteraction(options, deadline);
+  const deadlineState: FlowDeadlineState = { deadline, timeout: undefined };
   const timeoutReason = `Flow ${options.flow.id} timed out.`;
   const timeoutError = new FlowTimeoutError(timeoutReason);
   if (deadline !== undefined && deadline <= Date.now()) {
     await options.controller.abortInvocationTree(options.flowInvocationId, timeoutError);
     throw timeoutError;
   }
-  const timeout =
-    deadline === undefined
-      ? undefined
-      : setTimeout(
-          () => {
-            void options.controller.abortInvocationTree(options.flowInvocationId, timeoutError);
-          },
-          Math.max(1, deadline - Date.now()),
-        );
-  timeout?.unref();
+  armFlowDeadline(options, deadlineState);
   let stepId: string | undefined = options.flow.startStepId;
   let terminal:
     | {
@@ -446,7 +449,7 @@ async function runFlow(options: {
       if (invocation.status === "succeeded") {
         output = readStepInvocationOutput(step, invocation);
       } else {
-        output = await runStep(options, step, invocation, input);
+        output = await runStep(options, step, invocation, input, deadlineState);
       }
       await applyReductionOnce(options, step, invocation.invocationId, output);
       const transition = options.flow.transitions.get(stepId);
@@ -471,7 +474,7 @@ async function runFlow(options: {
       terminal.output;
     return options.flow.output?.parse(output) ?? output;
   } finally {
-    if (timeout !== undefined) clearTimeout(timeout);
+    if (deadlineState.timeout !== undefined) clearTimeout(deadlineState.timeout);
   }
 }
 
@@ -499,6 +502,7 @@ async function runStep(
   step: CompiledFlowStep,
   invocation: Invocation,
   input: unknown,
+  deadlineState: FlowDeadlineState,
 ): Promise<unknown> {
   try {
     const record = (await options.store.get(options.executionId))!;
@@ -542,6 +546,7 @@ async function runStep(
         input,
         readUserFlowState(record.state),
         step.options.output,
+        deadlineState,
       );
     }
     if ("kind" in step.definition && step.definition.kind === "flow") {
@@ -625,8 +630,8 @@ async function runHumanTask(
   input: unknown,
   state: FlowState,
   outputSchema: z.ZodType | undefined,
+  deadlineState: FlowDeadlineState,
 ): Promise<unknown> {
-  await putStatus(options.store, options.executionId, invocation, "waiting");
   const context: FlowTaskContext = {
     input,
     state,
@@ -649,11 +654,18 @@ async function runHumanTask(
     typeof definition.request === "function"
       ? await definition.request(context)
       : definition.request;
-  const response = await options.controller.requestHumanInteraction(
-    invocation.invocationId,
-    toExpertHumanRequest(request),
-    `human:${invocation.invocationId}`,
-  );
+  const resumeDeadline = await pauseFlowDeadlineForHumanWait(options, deadlineState);
+  if (context.signal.aborted) {
+    throw context.signal.reason ?? new FlowTimeoutError(`Flow ${options.flow.id} timed out.`);
+  }
+  await putStatus(options.store, options.executionId, invocation, "waiting");
+  const response = await options.controller
+    .requestHumanInteraction(
+      invocation.invocationId,
+      toExpertHumanRequest(request),
+      `human:${invocation.invocationId}`,
+    )
+    .finally(async () => await resumeDeadline());
   const humanResponse = fromExpertHumanResponse(request, response);
   const output = outputSchema?.parse(humanResponse) ?? humanResponse;
   await putStatus(options.store, options.executionId, invocation, "succeeded", output);
@@ -1010,6 +1022,11 @@ class FlowTimeoutError extends Error {
   }
 }
 
+interface FlowDeadlineState {
+  deadline: number | undefined;
+  timeout: ReturnType<typeof setTimeout> | undefined;
+}
+
 async function ensureFlowDeadline(
   options: Parameters<typeof runFlow>[0],
 ): Promise<number | undefined> {
@@ -1028,6 +1045,93 @@ async function ensureFlowDeadline(
       state: { ...readUserFlowState(record.state), [FLOW_INTERNAL_STATE_KEY]: internal },
     };
   });
+}
+
+async function writeFlowDeadline(
+  options: Pick<Parameters<typeof runFlow>[0], "executionId" | "flowInvocationId" | "store">,
+  deadline: number,
+): Promise<void> {
+  await mutateFlowState(options, (record) => {
+    const internal = readFlowInternalState(record.state);
+    internal.deadlines[options.flowInvocationId] = deadline;
+    return {
+      changed: true,
+      value: undefined,
+      state: { ...readUserFlowState(record.state), [FLOW_INTERNAL_STATE_KEY]: internal },
+    };
+  });
+}
+
+async function extendExpiredDeadlineForPendingHumanInteraction(
+  options: Parameters<typeof runFlow>[0],
+  deadline: number | undefined,
+): Promise<number | undefined> {
+  if (deadline === undefined || deadline > Date.now()) return deadline;
+  if (!(await hasPendingHumanInteractionWait(options))) return deadline;
+  const extended = Date.now() + options.flow.timeoutMs!;
+  await writeFlowDeadline(options, extended);
+  return extended;
+}
+
+async function hasPendingHumanInteractionWait(
+  options: Pick<Parameters<typeof runFlow>[0], "executionId" | "flowInvocationId" | "store">,
+): Promise<boolean> {
+  if ((await listPendingHumanInteractionIds(options.store, options.executionId)).length > 0) {
+    return true;
+  }
+  const invocations = await options.store.listInvocations(options.executionId);
+  const descendants = new Set([options.flowInvocationId]);
+  let changed = true;
+  while (changed) {
+    changed = false;
+    for (const invocation of invocations) {
+      if (
+        invocation.parentInvocationId !== undefined &&
+        descendants.has(invocation.parentInvocationId) &&
+        !descendants.has(invocation.invocationId)
+      ) {
+        descendants.add(invocation.invocationId);
+        changed = true;
+      }
+    }
+  }
+  return invocations.some(
+    (invocation) =>
+      invocation.definition.kind === "human-task" &&
+      invocation.status === "waiting" &&
+      descendants.has(invocation.invocationId),
+  );
+}
+
+async function pauseFlowDeadlineForHumanWait(
+  options: Parameters<typeof runFlow>[0],
+  state: FlowDeadlineState,
+): Promise<() => Promise<void>> {
+  if (state.deadline === undefined) return async () => undefined;
+  if (state.timeout !== undefined) {
+    clearTimeout(state.timeout);
+    state.timeout = undefined;
+  }
+  const remainingMs = Math.max(1, state.deadline - Date.now());
+  return async () => {
+    state.deadline = Date.now() + remainingMs;
+    await writeFlowDeadline(options, state.deadline);
+    armFlowDeadline(options, state);
+  };
+}
+
+function armFlowDeadline(options: Parameters<typeof runFlow>[0], state: FlowDeadlineState): void {
+  if (state.deadline === undefined) return;
+  if (state.timeout !== undefined) clearTimeout(state.timeout);
+  const timeoutReason = `Flow ${options.flow.id} timed out.`;
+  const timeoutError = new FlowTimeoutError(timeoutReason);
+  state.timeout = setTimeout(
+    () => {
+      void options.controller.abortInvocationTree(options.flowInvocationId, timeoutError);
+    },
+    Math.max(1, state.deadline - Date.now()),
+  );
+  state.timeout.unref();
 }
 
 async function raceWithSignal<T>(promise: Promise<T>, signal: AbortSignal): Promise<T> {

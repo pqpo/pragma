@@ -1885,18 +1885,44 @@ describe("FlowExecution", () => {
     expect((await execution.getTree()).children[0]?.invocation.status).toBe("failed");
   });
 
-  it("times out a pending HumanTask as failed instead of cancelled", async () => {
+  it("pauses Flow timeout while a HumanTask is waiting", async () => {
     const { app } = await fixture();
-    const flow = defineFlow({ id: "human-timeout-flow", timeoutMs: 40 });
+    const flow = defineFlow({ id: "human-timeout-flow", timeoutMs: 250 });
     const gate = flow.humanTask({
       id: "approval",
-      request: { kind: "approval", prompt: "Wait forever?" },
+      request: {
+        kind: "approval",
+        prompt: "Wait forever?",
+        options: [
+          { label: "Reject", description: "Stop." },
+          { label: "Approve", description: "Continue." },
+        ],
+        approveOption: "Approve",
+      },
     });
     flow.compose(({ start, end }) => start(gate).next(end()));
 
     const execution = await app.flows.start(flow, { input: null });
-    await expect(execution.result).rejects.toThrow("timed out");
-    expect((await execution.getState()).status).toBe("failed");
+    const result = execution.result;
+    void result.catch(() => undefined);
+    await waitUntil(
+      async () => (await execution.getTree()).children[0]?.invocation.status === "waiting",
+    );
+    await new Promise((resolve) => setTimeout(resolve, 500));
+    expect((await execution.getState()).status).toBe("running");
+    const requested = (
+      await execution.listEvents({ scope: { kind: "all" }, limit: 1_000 })
+    ).items.find((event) => event.type === "human.requested")!;
+    await execution.respondToHumanInteraction(
+      (requested.data as { interactionId: string }).interactionId,
+      { kind: "user_question", answered: true, answers: { "Wait forever?": "Approve" } },
+      { requestId: "human-timeout-response" },
+    );
+    await expect(result).resolves.toMatchObject({
+      approved: true,
+      decision: "Approve",
+    });
+    expect((await execution.getState()).status).toBe("succeeded");
   });
 
   it("rejects Flow runtime routes hidden by ExpertTeam delegation", async () => {
@@ -2671,7 +2697,7 @@ describe("FlowExecution", () => {
   it("recovers a waiting HumanTask in a new app without rerunning completed steps", async () => {
     const { home, app } = await fixture();
     let prepareCalls = 0;
-    const flow = defineFlow({ id: "human-recovery-flow" });
+    const flow = defineFlow({ id: "human-recovery-flow", timeoutMs: 5_000 });
     const prepare = flow.task({
       id: "prepare",
       handler: () => {
@@ -2711,12 +2737,21 @@ describe("FlowExecution", () => {
         (await execution.getTree()).children.find((child) => child.invocation.nodeId === "approval")
           ?.invocation.status === "waiting",
     );
+    expect((await execution.getState()).status).toBe("running");
 
     const store = createFileExecutionStore({ pragmaHome: home });
     const stored = (await store.get(execution.executionId))!;
+    const internal = stored.state["__pragma"] as { readonly deadlines?: Record<string, unknown> };
     await store.update(execution.executionId, {
       state: {
         ...stored.state,
+        __pragma: {
+          ...internal,
+          deadlines: {
+            ...(internal.deadlines ?? {}),
+            [execution.executionId]: Date.now() - 1_000,
+          },
+        },
         __recoveryClaim: {
           claimId: "exited-process",
           processId: 2_147_483_647,
