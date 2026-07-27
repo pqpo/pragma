@@ -14,7 +14,7 @@ import { z } from "zod";
 import { isExpertTeam, type ExpertDefinition, type ExpertTeam } from "../agent/expert-team.ts";
 import { describeExpertExecutionDefinition } from "../agent/expert-definition-descriptor.ts";
 import type { RuntimeResolver } from "../runtime-resolver.ts";
-import type { PragmaLoggerProvider } from "../logging/logger.ts";
+import { createPragmaLogger, type PragmaLoggerProvider } from "../logging/logger.ts";
 import type {
   ExpertAgentAutomaticHumanInteractionHandler,
   ExpertAgentHumanRequest,
@@ -232,8 +232,31 @@ export class FlowExecutionManager {
     });
     const handle = this.createHandle(executionId, controller);
     this.active.set(executionId, { controller, handle });
+    const logger = createPragmaLogger(this.loggerProvider, {
+      component: "flow-execution",
+      scope: { executionId },
+    });
     const renewal = setInterval(() => {
-      void this.executions.claimRecovery(executionId, claimId, 30_000);
+      void this.executions.claimRecovery(executionId, claimId, 30_000).then(
+        (claimed) => {
+          if (claimed || this.active.get(executionId)?.controller !== controller) return;
+          logger.error(
+            "flow.recovery_claim_lost",
+            `FlowExecution ${executionId} lost its recovery claim.`,
+            new Error(`FlowExecution recovery claim lost: ${executionId}`),
+            { claimId },
+          );
+        },
+        (error: unknown) => {
+          if (this.active.get(executionId)?.controller !== controller) return;
+          logger.error(
+            "flow.recovery_claim_renewal_failed",
+            `Failed to renew the recovery claim for FlowExecution ${executionId}.`,
+            error,
+            { claimId },
+          );
+        },
+      );
     }, 10_000);
     renewal.unref();
     void this.execute(flow, executionId, controller, runtime).finally(() => {

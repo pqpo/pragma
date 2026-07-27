@@ -8587,6 +8587,53 @@ p {
   gap: 9px;
 }
 
+.flow-timeout-control {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  overflow: hidden;
+  border: 1px solid var(--border);
+  border-radius: 7px;
+  background: #fff;
+}
+
+.flow-timeout-control:focus-within {
+  border-color: var(--green);
+  box-shadow: 0 0 0 3px var(--focus-ring);
+}
+
+.flow-inspector-field .flow-timeout-control > input,
+.flow-inspector-field .flow-timeout-control > select {
+  min-width: 0;
+  border: 0;
+  border-radius: 0;
+  background: transparent;
+}
+
+.flow-inspector-field .flow-timeout-control > select {
+  width: auto;
+  padding-left: 6px;
+  background: var(--surface-soft);
+}
+
+.flow-timeout-never {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  width: fit-content;
+  color: var(--muted);
+  font-size: 10px;
+  cursor: pointer;
+}
+
+.flow-inspector-field .flow-timeout-never > input[type="checkbox"] {
+  width: 15px;
+  height: 15px;
+  min-height: 15px;
+  margin: 0;
+  padding: 0;
+  accent-color: var(--green);
+}
+
 .flow-inspector-divider {
   height: 1px;
   margin: 2px 0;
@@ -12815,6 +12862,13 @@ textarea:focus-visible,
     .model-search-shell
   )
   > :is(input, select, textarea):focus-visible {
+  border-color: transparent;
+  outline: 0;
+  box-shadow: none;
+}
+
+.flow-inspector-field .flow-timeout-control > :is(input, select):focus,
+.flow-inspector-field .flow-timeout-control > :is(input, select):focus-visible {
   border-color: transparent;
   outline: 0;
   box-shadow: none;
