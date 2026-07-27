@@ -30,6 +30,7 @@ import {
   normalizePromptSegments,
   promptSegmentsFromEditorNodes,
   PromptTemplateEditor,
+  rebuildCanvasNodesPreservingSelection,
   removeEdgeFromFlow,
   removeHumanOption,
   resourceTargets,
@@ -190,7 +191,7 @@ describe("Flow editor canvas", () => {
 
     const terminalResultNodes = buildCanvasNodes(flow, {}, new Set(), END_NODE_ID);
     flow.spec.output.value = { result: "$node.output.result" };
-    const mappedResultNodes = buildCanvasNodes(flow, {}, new Set(), END_NODE_ID);
+    const mappedResultNodes = rebuildCanvasNodesPreservingSelection(flow, terminalResultNodes);
 
     expect(terminalResultNodes.find((node) => node.id === END_NODE_ID)?.selected).toBe(true);
     expect(mappedResultNodes.find((node) => node.id === END_NODE_ID)?.selected).toBe(true);
