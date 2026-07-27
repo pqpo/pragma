@@ -62,6 +62,26 @@ spec:
       implement: review
       review: approve
       approve: { end: true }
+  runDry:
+    cases:
+      - id: approved
+        name: Approved review
+        input: { goal: Add release validation }
+        mocks:
+          implement:
+            expectInput: "Implement this goal: Add release validation"
+            output: { summary: Validation added and tested. }
+          review:
+            expectInput: "Review this implementation: Validation added and tested."
+            output: { result: Review passed. }
+          approve:
+            expectInput: { goal: Add release validation }
+            expectPrompt: "Approve the review result?"
+            output: { selection: approve }
+        expect:
+          status: succeeded
+          path: [implement, review, approve]
+          output: { selection: approve }
 ```
 
 - Every step declares exactly one of `action`, `expert`, `team`, `flow`, or `human`.
@@ -80,4 +100,7 @@ spec:
   `{ selection: string }` or `{ selection: string[] }`, using stable option values rather than labels.
 - Human prompts use the same typed variable segments as Expert and Team prompts.
 - Build Flow resources with the draft tools. Missing nodes or edges are allowed only while a draft
-  is incomplete; `prepare_flow_draft` requires a complete, valid graph.
+  is incomplete; `prepare_flow_draft` requires a complete, valid graph and a passing run dry suite
+  with complete transition coverage.
+- Read `references/run-dry.md` before writing cases. A Flow is not successfully created by Pragma
+  until `run_flow_draft_dry` passes every assertion and covers every declared transition outcome.

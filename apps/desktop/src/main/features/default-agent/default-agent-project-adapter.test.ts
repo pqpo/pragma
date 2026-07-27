@@ -181,7 +181,7 @@ describe("Desktop DefaultAgent DSL project adapter", () => {
       ],
     });
     expect(withStep.draftRevision).toBe(1);
-    const complete = await adapter.updateFlowDraft({
+    const graphComplete = await adapter.updateFlowDraft({
       draftId: created.draftId,
       expectedDraftRevision: 1,
       operations: [
@@ -189,7 +189,50 @@ describe("Desktop DefaultAgent DSL project adapter", () => {
         { type: "set_transition", stepId: "approve", transition: { end: true } },
       ],
     });
+    expect(graphComplete.diagnostics).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          severity: "incomplete",
+          code: "flow.run_dry.cases_missing",
+        }),
+      ]),
+    );
+    const complete = await adapter.updateFlowDraft({
+      draftId: created.draftId,
+      expectedDraftRevision: 2,
+      operations: [
+        {
+          type: "set_run_dry",
+          runDry: {
+            cases: [
+              {
+                id: "ship",
+                name: "Ship release",
+                input: {},
+                mocks: {
+                  approve: {
+                    expectInput: {},
+                    expectPrompt: "Release?",
+                    output: { selection: "ship" },
+                  },
+                },
+                expect: {
+                  status: "succeeded",
+                  path: ["approve"],
+                  output: { selection: "ship" },
+                },
+              },
+            ],
+          },
+        },
+      ],
+    });
     expect(complete.diagnostics).toEqual([]);
+    await expect(adapter.runFlowDraftDry(created.draftId)).resolves.toMatchObject({
+      passed: true,
+      summary: { total: 1, passed: 1, failed: 0 },
+      coverage: { missing: [] },
+    });
     await expect(adapter.validateFlowDraft(created.draftId)).resolves.toMatchObject({
       resource: { metadata: { description } },
       diagnostics: [],
@@ -197,7 +240,7 @@ describe("Desktop DefaultAgent DSL project adapter", () => {
     const prepared = requirePrepared(
       await adapter.prepareFlowDraft({
         draftId: created.draftId,
-        expectedDraftRevision: 2,
+        expectedDraftRevision: 3,
       }),
     );
     expect(prepared.changes).toEqual([

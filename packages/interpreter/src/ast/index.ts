@@ -1,5 +1,6 @@
 export * from "./flow-data-contracts.ts";
 export * from "./flow-graph.ts";
+export * from "./flow-run-dry.schema.ts";
 export * from "./pragma-dsl.schema.ts";
 export * from "./resource-identity.ts";
 export * from "./tool-capability.schema.ts";

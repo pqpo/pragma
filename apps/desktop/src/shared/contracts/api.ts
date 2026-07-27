@@ -50,6 +50,8 @@ import type {
   DeletePragmaResource,
   PragmaYamlValidationResult,
   ValidatePragmaResource,
+  RunPragmaFlowDrySuite,
+  PragmaFlowRunDrySuiteResult,
   WorkflowLayout,
   GetWorkflowLayout,
   DeleteWorkflowLayout,
@@ -151,6 +153,7 @@ export interface PragmaDesktopAPI {
   validatePragmaProjectChanges: (
     input: PragmaProjectChanges,
   ) => Promise<PragmaProjectChangesValidationResult>;
+  runPragmaFlowDrySuite: (input: RunPragmaFlowDrySuite) => Promise<PragmaFlowRunDrySuiteResult>;
   getWorkflowLayout: (input: GetWorkflowLayout) => Promise<WorkflowLayout | null>;
   saveWorkflowLayout: (layout: WorkflowLayout) => Promise<WorkflowLayout>;
   deleteWorkflowLayout: (input: DeleteWorkflowLayout) => Promise<void>;

@@ -2,6 +2,7 @@ import {
   PragmaDiagnosticSchema,
   PragmaFlowLoopSchema,
   PragmaFlowResourceSchema,
+  PragmaFlowRunDrySuiteSchema,
   PragmaFlowStepSchema,
   PragmaFlowTransitionSchema,
   PragmaMetadataSchema,
@@ -100,6 +101,7 @@ const DefaultAgentFlowDraftResourceSchema = z
         input: CanonicalFlowSpecSchema.shape.input,
         output: CanonicalFlowSpecSchema.shape.output,
         limits: CanonicalFlowSpecSchema.shape.limits,
+        runDry: CanonicalFlowSpecSchema.shape.runDry,
         graph: z
           .object({
             start: CanonicalFlowGraphSchema.shape.start.optional(),
@@ -154,6 +156,10 @@ export const DefaultAgentFlowDraftOperationSchema = z.discriminatedUnion("type",
       .union([DefaultAgentFlowDraftResourceSchema.shape.spec.shape.output, z.null()])
       .optional(),
     limits: DefaultAgentFlowDraftResourceSchema.shape.spec.shape.limits.optional(),
+  }),
+  z.object({
+    type: z.literal("set_run_dry"),
+    runDry: PragmaFlowRunDrySuiteSchema,
   }),
   z.object({ type: z.literal("rebase"), projectRevision: z.number().int().nonnegative() }),
 ]);

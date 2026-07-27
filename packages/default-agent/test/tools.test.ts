@@ -36,6 +36,25 @@ describe("DefaultAgent managed tools", () => {
     expect(operationId).toBe("runtime-call-7");
   });
 
+  it("validates run dry results before returning them through the managed-tool boundary", async () => {
+    const project = projectPort({
+      async runFlowDraftDry() {
+        return {} as never;
+      },
+    });
+    const tool = createDefaultAgentTools({ project, tasks: taskPort() }).find(
+      (candidate) => candidate.name === "run_flow_draft_dry",
+    )!;
+
+    await expect(
+      tool.call(
+        { draftId: "ed1bcbb5-b1e6-4aa5-9357-7853ce745f6b" },
+        undefined,
+        undefined,
+      ),
+    ).rejects.toThrow();
+  });
+
   it("exposes approved Automation maintenance tools when the host supplies the port", async () => {
     let operationId = "";
     const automations = automationPort({
@@ -91,6 +110,9 @@ function projectPort(
       throw new Error("unused");
     },
     validateFlowDraft: async () => {
+      throw new Error("unused");
+    },
+    runFlowDraftDry: async () => {
       throw new Error("unused");
     },
     prepareFlowDraft: async () => {

@@ -5478,6 +5478,236 @@ p {
   }
 }
 
+.flow-run-dry {
+  display: grid;
+  gap: 22px;
+}
+
+.flow-run-dry-heading {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 24px;
+}
+
+.flow-run-dry-heading p {
+  max-width: 720px;
+}
+
+.flow-run-dry-coverage {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 12px;
+}
+
+.flow-run-dry-coverage > div {
+  display: grid;
+  gap: 6px;
+  padding: 16px 18px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-card);
+  background: #fff;
+}
+
+.flow-run-dry-coverage span {
+  color: var(--muted);
+}
+
+.flow-run-dry-workspace {
+  display: grid;
+  grid-template-columns: minmax(210px, 0.32fr) minmax(0, 1fr);
+  min-height: 520px;
+  overflow: hidden;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-card);
+  background: #fff;
+}
+
+.flow-run-dry-cases {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  padding: 12px;
+  border-right: 1px solid var(--border);
+  background: var(--surface-soft);
+}
+
+.flow-run-dry-cases > button {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  width: 100%;
+  padding: 11px;
+  border: 0;
+  border-radius: 9px;
+  background: transparent;
+  color: var(--text);
+  text-align: left;
+}
+
+.flow-run-dry-cases > button:hover,
+.flow-run-dry-cases > button.is-active {
+  background: #fff;
+}
+
+.flow-run-dry-cases > button.is-active {
+  box-shadow: var(--shadow-soft);
+}
+
+.flow-run-dry-cases > button > span {
+  display: grid;
+  min-width: 0;
+}
+
+.flow-run-dry-cases small {
+  overflow: hidden;
+  color: var(--muted);
+  text-overflow: ellipsis;
+}
+
+.flow-run-dry-editor {
+  display: grid;
+  align-content: start;
+  gap: 18px;
+  padding: 24px;
+}
+
+.flow-run-dry-editor > header {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 18px;
+}
+
+.flow-run-dry-editor > header h2,
+.flow-run-dry-editor > header p {
+  margin: 0;
+}
+
+.flow-run-dry-editor > header p,
+.flow-run-dry-editor label > small {
+  color: var(--muted);
+}
+
+.flow-run-dry-editor label {
+  display: grid;
+  gap: 7px;
+  font-weight: 600;
+}
+
+.flow-run-dry-editor input,
+.flow-run-dry-editor select,
+.flow-run-dry-editor textarea {
+  width: 100%;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-control);
+  background: #fff;
+}
+
+.flow-run-dry-editor input,
+.flow-run-dry-editor select {
+  min-height: 42px;
+  padding: 0 12px;
+}
+
+.flow-run-dry-editor textarea {
+  padding: 12px;
+  resize: vertical;
+}
+
+.flow-run-dry-editor .code-input {
+  font-family: ui-monospace, "SFMono-Regular", Consolas, "Liberation Mono", monospace;
+  font-size: 13px;
+  line-height: 1.55;
+}
+
+.flow-run-dry-editor :is(input, select, textarea):focus-visible {
+  border-color: var(--green);
+  outline: 0;
+  box-shadow: 0 0 0 3px var(--focus-ring);
+}
+
+.flow-run-dry-empty {
+  display: grid;
+  place-content: center;
+  padding: 40px;
+  color: var(--muted);
+  text-align: center;
+}
+
+.flow-run-dry-result {
+  display: grid;
+  gap: 14px;
+  padding: 18px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-card);
+  background: #fff;
+}
+
+.flow-run-dry-result.is-success {
+  border-color: color-mix(in srgb, var(--green) 45%, var(--border));
+}
+
+.flow-run-dry-result.is-error {
+  border-color: color-mix(in srgb, #b42318 45%, var(--border));
+}
+
+.flow-run-dry-result > header {
+  display: flex;
+  gap: 10px;
+}
+
+.flow-run-dry-result h2,
+.flow-run-dry-result p {
+  margin: 0;
+}
+
+.flow-run-dry-result > div {
+  display: grid;
+  gap: 6px;
+}
+
+.flow-run-dry-result code {
+  overflow-wrap: anywhere;
+}
+
+.flow-run-dry-result-cases {
+  display: grid;
+  gap: 8px;
+}
+
+.flow-run-dry-result-cases article {
+  display: grid;
+  gap: 4px;
+  padding: 11px 12px;
+  border-radius: 9px;
+  background: var(--surface-soft);
+}
+
+.flow-run-dry-result-cases span {
+  color: var(--muted);
+  font-size: 13px;
+}
+
+@media (max-width: 920px) {
+  .flow-run-dry-heading {
+    display: grid;
+  }
+
+  .flow-run-dry-coverage {
+    grid-template-columns: 1fr;
+  }
+
+  .flow-run-dry-workspace {
+    grid-template-columns: 1fr;
+  }
+
+  .flow-run-dry-cases {
+    border-right: 0;
+    border-bottom: 1px solid var(--border);
+  }
+}
+
 /* Runtime Environment directory and detail */
 
 .runtime-summary-card {

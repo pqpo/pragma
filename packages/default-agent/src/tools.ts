@@ -11,7 +11,7 @@ import type {
   DefaultAgentTaskPort,
 } from "./ports.ts";
 import { DefaultAgentFlowDraftOperationSchema, DefaultAgentFlowDraftSchema } from "./contracts.ts";
-import { PragmaMetadataSchema } from "@pragma/interpreter/ast";
+import { PragmaFlowRunDrySuiteResultSchema, PragmaMetadataSchema } from "@pragma/interpreter/ast";
 
 const RefInput = z.object({ ref: z.string().min(1) });
 const PrepareInput = z.object({
@@ -219,8 +219,19 @@ export function createDefaultAgentTools(options: {
       async (args) => ok(await options.project.validateFlowDraft(DraftIdInput.parse(args).draftId)),
     ),
     tool(
+      "run_flow_draft_dry",
+      "Run every Flow draft unit case with mocked node outputs and report assertions plus transition coverage.",
+      z.toJSONSchema(DraftIdInput),
+      async (args) =>
+        ok(
+          PragmaFlowRunDrySuiteResultSchema.parse(
+            await options.project.runFlowDraftDry(DraftIdInput.parse(args).draftId),
+          ),
+        ),
+    ),
+    tool(
       "prepare_flow_draft",
-      "Materialize a complete Flow draft and atomically validate it with optional Expert or Team YAML sources.",
+      "Materialize a complete Flow draft only after all run dry cases pass with full transition coverage, then atomically validate it with optional Expert or Team YAML sources.",
       z.toJSONSchema(PrepareFlowDraftInput),
       async (args) => ok(await options.project.prepareFlowDraft(PrepareFlowDraftInput.parse(args))),
     ),

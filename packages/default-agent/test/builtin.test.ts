@@ -40,6 +40,7 @@ describe("built-in Pragma Agent DSL", () => {
         getFlowDraft: unavailable,
         updateFlowDraft: unavailable,
         validateFlowDraft: unavailable,
+        runFlowDraftDry: unavailable,
         prepareFlowDraft: unavailable,
         discardFlowDraft: unavailable,
         getChangeSet: unavailable,
@@ -78,7 +79,7 @@ describe("built-in Pragma Agent DSL", () => {
         },
       },
     });
-    expect(compiled.value.tools?.map((tool) => tool.name)).toHaveLength(18);
+    expect(compiled.value.tools?.map((tool) => tool.name)).toHaveLength(19);
     expect(compiled.value.tools?.map((tool) => tool.name)).toContain("list_expert_options");
     expect(compiled.value.tools?.map((tool) => tool.name)).toContain("update_flow_draft");
     expect(compiled.value.skills?.skills[0]?.path).toMatch(/author-pragma-dsl[\\/]SKILL\.md$/);

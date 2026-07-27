@@ -20,15 +20,23 @@ source of truth and use only the Pragma DSL tools to inspect, validate, and save
    use the returned Host-generated IDs and exact references. Preserve IDs when editing; never invent,
    copy, or change an ID.
 6. For every Flow creation or non-trivial Flow edit, call `create_flow_draft`. Build it in small
-   batches with `update_flow_draft`: contracts, steps, start, transitions, then loops. Read the
-   returned diagnostics after every batch and call `validate_flow_draft` before preparing.
-7. Call `prepare_flow_draft` only when the draft has no incomplete or error diagnostics. Include
+   batches with `update_flow_draft`: contracts, steps, start, transitions, loops, then run dry cases.
+   Read the returned diagnostics after every batch.
+7. Create run dry cases for every Flow without waiting for the user to ask. Mock every visited
+   Expert, Team, nested Flow, action, and Human Task with its exact expected input; Human Tasks also
+   assert the rendered prompt. Cover every declared transition outcome, including route cases,
+   array branches, fallbacks, loop repeats, exits, and loop limits. Read
+   [references/run-dry.md](references/run-dry.md), call `run_flow_draft_dry`, and fix every failed
+   assertion, configuration error, or missing coverage item.
+8. Call `validate_flow_draft`, then call `prepare_flow_draft` only when every run dry case passes,
+   transition coverage is complete, and the draft has no incomplete or error diagnostics. Include
    any new Expert or ExpertTeam YAML in `additionalSources` so the final change remains atomic.
    Use `prepare_dsl_changes` directly only for complete non-Flow resources.
-8. Fix every diagnostic. Never bypass validation or hand-edit project files. If the project
+9. Fix every diagnostic. Never bypass validation or hand-edit project files. If the project
    revision changed, reread affected resources and explicitly rebase the draft before retrying.
-9. Explain the normalized diff, then call `commit_dsl_changes` with the returned change-set ID.
-10. After the tool returns, always report success or failure, the committed project revision, and
+10. Explain the normalized diff and the run dry coverage, then call `commit_dsl_changes` with the
+    returned change-set ID.
+11. After the tool returns, always report success or failure, the committed project revision, and
     the changed canonical refs.
 
 For Automation work, use `list_automations` before editing. Use `save_automation` instead of the
@@ -43,6 +51,7 @@ Before preparing or saving, enforce the Automation metadata and prompt limits do
 - Expert resources: read [references/expert.md](references/expert.md).
 - ExpertTeam resources: read [references/expert-team.md](references/expert-team.md).
 - Flow resources: read [references/flow.md](references/flow.md).
+- Flow run dry cases: read [references/run-dry.md](references/run-dry.md).
 - Automation resources: read [references/automation.md](references/automation.md).
 - Tested Flow patterns: read [references/flow-patterns.md](references/flow-patterns.md).
 - Exact refs, shared resources, and versioning: read

@@ -12,6 +12,7 @@ import type {
   DefaultAgentTaskWorkItem,
   DefaultAgentAutomationSummary,
 } from "./contracts.ts";
+import type { PragmaFlowRunDrySuiteResult } from "@pragma/interpreter/ast";
 
 export interface DefaultAgentDslProjectPort {
   allocateResourceIds(
@@ -51,6 +52,7 @@ export interface DefaultAgentDslProjectPort {
     readonly operations: readonly DefaultAgentFlowDraftOperation[];
   }): Promise<DefaultAgentFlowDraft>;
   validateFlowDraft(draftId: string): Promise<DefaultAgentFlowDraft>;
+  runFlowDraftDry(draftId: string): Promise<PragmaFlowRunDrySuiteResult>;
   prepareFlowDraft(input: {
     readonly draftId: string;
     readonly expectedDraftRevision: number;
