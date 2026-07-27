@@ -21,3 +21,15 @@ runtime-profile:7h8j9k0m1n2p3q4r
 - Never embed credentials, local paths, provider secrets, or live database identifiers in portable
   resources. Reference a Capability, ContextStore, RuntimeProfile, or host binding instead.
 - Include every interdependent edit in one change-set and validate the complete candidate project.
+
+## Project resources and Host options
+
+- `list_dsl_resources` lists resources already in the current project. Read and reuse their exact
+  refs instead of creating another resource with the same name or purpose.
+- `list_expert_options` lists ready Host Runtime models and capabilities. For Runtime models, use
+  the `runtimeProfileRef` field, not a copied display name or a newly allocated RuntimeProfile.
+- Prefer an existing project RuntimeProfile only when its `spec.config.runtimeId`, `providerId`,
+  `model`, and optional `thinkingLevel` match the intended selection. Otherwise use the Host
+  option's `runtimeProfileRef`; `prepare_dsl_changes` adds that dependency automatically.
+- A Host Runtime or Capability ref may not be readable through `read_dsl_resource` before it is
+  materialized. This is expected. Project refs must be readable before use.
