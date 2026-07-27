@@ -11,6 +11,7 @@ import {
 import { formatPragmaYaml, parsePragmaYaml } from "@pragma/interpreter";
 import {
   analyzePragmaFlowGraph,
+  validatePragmaFlowDataContracts,
   PragmaCapabilityResourceSchema,
   PragmaFlowResourceSchema,
   PragmaResourceSchema,
@@ -219,30 +220,36 @@ export function createDesktopDefaultAgentProjectPort(options: {
       }
       const now = new Date().toISOString();
       const draftId = randomUUID();
-      const draft = withDraftDiagnostics({
-        draftId,
-        baseProjectRevision: snapshot.revision,
-        draftRevision: 0,
-        resource: {
-          apiVersion: "pragma/v3",
-          kind: "Flow",
-          metadata: { ...input.metadata, id: generatePragmaResourceId() },
-          spec: {
-            ...(input.input === undefined ? {} : { input: input.input }),
-            ...(input.output === undefined ? {} : { output: input.output }),
-            limits: input.limits ?? { maxNodeVisits: 1_000 },
-            graph: { steps: {}, transitions: {}, loops: {} },
+      const draft = withDraftDiagnostics(
+        {
+          draftId,
+          baseProjectRevision: snapshot.revision,
+          draftRevision: 0,
+          resource: {
+            apiVersion: "pragma/v3",
+            kind: "Flow",
+            metadata: { ...input.metadata, id: generatePragmaResourceId() },
+            spec: {
+              ...(input.input === undefined ? {} : { input: input.input }),
+              ...(input.output === undefined ? {} : { output: input.output }),
+              limits: input.limits ?? { maxNodeVisits: 1_000 },
+              graph: { steps: {}, transitions: {}, loops: {} },
+            },
           },
+          diagnostics: [],
+          createdAt: now,
+          updatedAt: now,
         },
-        diagnostics: [],
-        createdAt: now,
-        updatedAt: now,
-      });
+        snapshot.resources,
+      );
       await writeJson(draftPath(draftId), draft);
       return draft;
     },
     async getFlowDraft(draftId) {
-      return withDraftDiagnostics(await readFlowDraft(draftPath(draftId)));
+      return await withProjectDraftDiagnostics(
+        options.project,
+        await readFlowDraft(draftPath(draftId)),
+      );
     },
     async updateFlowDraft(input) {
       const path = draftPath(input.draftId);
@@ -266,7 +273,7 @@ export function createDesktopDefaultAgentProjectPort(options: {
             );
           }
         }
-        const updated = withDraftDiagnostics({
+        const updated = await withProjectDraftDiagnostics(options.project, {
           ...current,
           baseProjectRevision,
           draftRevision: current.draftRevision + 1,
@@ -278,10 +285,16 @@ export function createDesktopDefaultAgentProjectPort(options: {
       });
     },
     async validateFlowDraft(draftId) {
-      return withDraftDiagnostics(await readFlowDraft(draftPath(draftId)));
+      return await withProjectDraftDiagnostics(
+        options.project,
+        await readFlowDraft(draftPath(draftId)),
+      );
     },
     async prepareFlowDraft(input) {
-      const draft = withDraftDiagnostics(await readFlowDraft(draftPath(input.draftId)));
+      const draft = await withProjectDraftDiagnostics(
+        options.project,
+        await readFlowDraft(draftPath(input.draftId)),
+      );
       if (draft.draftRevision !== input.expectedDraftRevision) {
         return invalidPrepare(
           "flow.draft.revision_conflict",
@@ -616,7 +629,21 @@ function materializeDraft(draft: DefaultAgentFlowDraft): PragmaFlowResource {
   } as PragmaFlowResource;
 }
 
-function withDraftDiagnostics(draft: DefaultAgentFlowDraft): DefaultAgentFlowDraft {
+async function withProjectDraftDiagnostics(
+  project: PragmaProjectStore,
+  draft: DefaultAgentFlowDraft,
+): Promise<DefaultAgentFlowDraft> {
+  const resources =
+    draft.baseProjectRevision === 0
+      ? []
+      : (await project.openRevision(draft.baseProjectRevision)).listResources();
+  return withDraftDiagnostics(draft, resources);
+}
+
+function withDraftDiagnostics(
+  draft: DefaultAgentFlowDraft,
+  resources: readonly PragmaResource[] = [],
+): DefaultAgentFlowDraft {
   const parsed = DefaultAgentFlowDraftSchema.parse(draft);
   const resource = materializeDraft(parsed);
   const diagnostics: DefaultAgentFlowDraftDiagnostic[] = [];
@@ -670,6 +697,21 @@ function withDraftDiagnostics(draft: DefaultAgentFlowDraft): DefaultAgentFlowDra
         path: [...issue.path],
       });
     }
+  }
+  if (schema.success) {
+    const resourcesByRef = new Map(
+      resources.map((candidate) => [canonicalPragmaResourceRef(candidate), candidate]),
+    );
+    diagnostics.push(
+      ...validatePragmaFlowDataContracts(resource, {
+        resolveResource: (ref) => resourcesByRef.get(ref),
+      }).map((issue) => ({
+        severity: "error" as const,
+        code: issue.code,
+        message: issue.message,
+        path: [...issue.path],
+      })),
+    );
   }
   const unique = diagnostics.filter(
     (diagnostic, index) =>

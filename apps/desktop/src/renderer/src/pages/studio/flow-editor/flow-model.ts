@@ -1,9 +1,12 @@
 import {
   analyzePragmaFlowGraph,
+  canonicalPragmaResourceRef,
   PragmaFlowResourceSchema,
+  validatePragmaFlowDataContracts,
   type PragmaFlowDestination,
   type PragmaFlowResource,
   type PragmaFlowTransition,
+  type PragmaResource,
 } from "@pragma/interpreter/ast";
 
 export type FlowStep = PragmaFlowResource["spec"]["graph"]["steps"][string];
@@ -219,7 +222,10 @@ function removeMappedNode(value: unknown, nodeId: string): unknown {
   return value;
 }
 
-export function validateFlowDraft(flow: PragmaFlowResource): readonly FlowValidationIssue[] {
+export function validateFlowDraft(
+  flow: PragmaFlowResource,
+  resources: readonly PragmaResource[] = [],
+): readonly FlowValidationIssue[] {
   const stepIds = new Set(Object.keys(flow.spec.graph.steps));
   const emptyGraph = stepIds.size === 0;
   const parsed = PragmaFlowResourceSchema.safeParse(flow);
@@ -263,6 +269,18 @@ export function validateFlowDraft(flow: PragmaFlowResource): readonly FlowValida
       });
     }
   }
+  const resourcesByRef = new Map(
+    resources.map((resource) => [canonicalPragmaResourceRef(resource), resource]),
+  );
+  issues.push(
+    ...validatePragmaFlowDataContracts(flow, {
+      resolveResource: (ref) => resourcesByRef.get(ref),
+    }).map((issue) => ({
+      path: issue.path,
+      message: issue.message,
+      ...(issue.stepId === undefined ? {} : { stepId: issue.stepId }),
+    })),
+  );
   return issues;
 }
 

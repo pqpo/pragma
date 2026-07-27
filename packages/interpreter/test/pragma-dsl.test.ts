@@ -719,6 +719,7 @@ describe("Pragma YAML DSL", () => {
                   required: ["approved"],
                   additionalProperties: false,
                 },
+                value: { approved: true },
               },
               graph: {
                 start: "approve",
