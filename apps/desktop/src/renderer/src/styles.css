@@ -5110,16 +5110,25 @@ p {
   height: 100%;
   min-height: 0;
   gap: 0;
-  margin-top: 28px;
+  padding: 28px 0 24px;
+  box-sizing: border-box;
+  overflow: hidden;
+}
+
+.expert-creator .studio-screen-body {
+  display: grid;
+  min-height: 0;
   overflow: hidden;
 }
 
 .creator-steps {
   display: grid;
+  min-height: 0;
   align-content: start;
   gap: 13px;
   margin: 0;
   padding: 0 18px 0 0;
+  overflow-y: auto;
   border-right: 1px solid #e0e5e1;
   list-style: none;
 }
@@ -5178,22 +5187,27 @@ p {
 }
 
 .creator-form {
-  display: grid;
-  grid-template-columns: minmax(0, 1fr);
-  align-content: start;
-  min-width: 0;
-  min-height: 0;
-  gap: 17px;
+  display: flex;
   width: 100%;
   height: 100%;
-  overflow-x: hidden;
-  overflow-y: auto;
+  min-width: 0;
+  min-height: 0;
+  max-height: 100%;
+  flex-direction: column;
   padding-left: 48px;
   padding-right: 18px;
 }
 
-.expert-creator .studio-screen-body {
-  overflow: hidden;
+.creator-form-content {
+  display: grid;
+  min-height: 0;
+  flex: 0 1 auto;
+  gap: 17px;
+  overflow-x: hidden;
+  overflow-y: auto;
+  padding-right: 12px;
+  overscroll-behavior: contain;
+  scrollbar-gutter: stable;
 }
 
 .creator-preview {
@@ -5238,7 +5252,7 @@ p {
   -webkit-line-clamp: 2;
 }
 
-.creator-form > label,
+.creator-form-content > label,
 .creator-field-row label,
 .capability-editor > label {
   display: grid;
@@ -5310,11 +5324,7 @@ p {
 .review-summary {
   display: grid;
   gap: 13px;
-  min-height: 356px;
-  padding: 25px;
-  border: 1px solid #dbe1dc;
-  border-radius: 10px;
-  background: #fcfdfb;
+  min-height: 0;
 }
 
 .capability-toggles {
@@ -5367,11 +5377,27 @@ p {
 
 .creator-actions {
   display: flex;
+  flex: 0 0 auto;
   justify-content: space-between;
   gap: 16px;
   margin-top: 15px;
+  margin-right: 12px;
   padding-top: 22px;
   border-top: 1px solid var(--border);
+}
+
+.expert-creator .creator-form-content,
+.expert-creator .capability-editor,
+.expert-creator .review-summary {
+  border: 0;
+  border-radius: 0;
+  background: transparent;
+  box-shadow: none;
+}
+
+.expert-creator .capability-editor,
+.expert-creator .review-summary {
+  padding: 0;
 }
 
 @media (max-width: 1360px) {
