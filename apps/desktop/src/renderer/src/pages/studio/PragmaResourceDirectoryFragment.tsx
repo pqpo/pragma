@@ -21,7 +21,7 @@ import {
   type PragmaExpertTeamResource,
   type PragmaFlowResource,
 } from "@pragma/interpreter/ast";
-import type { PragmaProjectSnapshot } from "../../../../shared/desktop-api.ts";
+import type { PragmaProjectSnapshot } from "../../../../shared/contracts/index.ts";
 
 import { errorMessage } from "../../lib/errors.ts";
 import { StudioScreenFrame } from "./StudioScreenFrame.tsx";

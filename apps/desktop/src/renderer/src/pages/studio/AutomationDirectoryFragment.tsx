@@ -14,7 +14,7 @@ import type {
   MissionCreationDefaults,
   MissionExecutorOption,
   PragmaProjectSnapshot,
-} from "../../../../shared/desktop-api.ts";
+} from "../../../../shared/contracts/index.ts";
 import { WorkspacePicker, workspaceSelectionFromPath } from "../../components/WorkspacePicker.tsx";
 import { errorMessage } from "../../lib/errors.ts";
 import {

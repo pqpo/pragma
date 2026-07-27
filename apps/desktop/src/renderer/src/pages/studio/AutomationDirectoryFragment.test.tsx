@@ -1,7 +1,7 @@
 import { renderToStaticMarkup } from "react-dom/server";
 import { describe, expect, it } from "vitest";
 
-import type { AutomationSummary, PragmaProjectSnapshot } from "../../../../shared/desktop-api.ts";
+import type { AutomationSummary, PragmaProjectSnapshot } from "../../../../shared/contracts/index.ts";
 import { workspaceSelectionFromPath } from "../../components/WorkspacePicker.tsx";
 import {
   AutomationDirectoryFragment,

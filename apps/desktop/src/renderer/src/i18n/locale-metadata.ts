@@ -1,4 +1,4 @@
-import type { DesktopResolvedLocale } from "../../../shared/desktop-api.ts";
+import type { DesktopResolvedLocale } from "../../../shared/contracts/index.ts";
 
 export const localeDisplayNames: Record<DesktopResolvedLocale, string> = {
   en: "English",

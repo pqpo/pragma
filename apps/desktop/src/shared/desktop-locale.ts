@@ -1,4 +1,4 @@
-import type { DesktopResolvedLocale } from "./desktop-api.ts";
+import type { DesktopResolvedLocale } from "./contracts/index.ts";
 
 const TRADITIONAL_CHINESE_REGIONS = new Set(["HK", "MO", "TW"]);
 

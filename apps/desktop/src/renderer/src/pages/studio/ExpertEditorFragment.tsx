@@ -18,7 +18,7 @@ import {
   type DesktopRuntimeAvailability,
   type DesktopRuntimeModel,
   type DesktopPlugin,
-} from "../../../../shared/desktop-api.ts";
+} from "../../../../shared/contracts/index.ts";
 import {
   desktopApi,
   isBuiltInExpert,

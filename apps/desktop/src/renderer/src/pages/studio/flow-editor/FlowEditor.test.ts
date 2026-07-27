@@ -4,7 +4,7 @@ import { describe, expect, it } from "vitest";
 
 import type { PragmaFlowPrompt, PragmaFlowResource, PragmaResource } from "@pragma/interpreter/ast";
 
-import type { PragmaProjectSnapshot } from "../../../../../shared/desktop-api.ts";
+import type { PragmaProjectSnapshot } from "../../../../../shared/contracts/index.ts";
 import { newSchemaField, objectSchemaToFields } from "../JsonSchemaFieldsEditor.tsx";
 import { createEmptyFlow } from "./flow-model.ts";
 import {

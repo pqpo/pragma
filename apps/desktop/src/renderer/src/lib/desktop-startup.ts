@@ -1,4 +1,4 @@
-import type { DesktopResolvedLocale } from "../../../shared/desktop-api.ts";
+import type { DesktopResolvedLocale } from "../../../shared/contracts/index.ts";
 import { resolveDesktopLocale } from "../../../shared/desktop-locale.ts";
 
 export type DesktopStartupErrorCode = "DESKTOP_BRIDGE_UNAVAILABLE";

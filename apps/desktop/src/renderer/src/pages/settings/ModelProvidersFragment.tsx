@@ -19,7 +19,7 @@ import type {
   ModelConnectionTestResult,
   ModelProvider,
   ModelProviderModel,
-} from "../../../../shared/desktop-api.ts";
+} from "../../../../shared/contracts/index.ts";
 import {
   MODEL_PROVIDER_PRESETS,
   findModelProviderPreset,

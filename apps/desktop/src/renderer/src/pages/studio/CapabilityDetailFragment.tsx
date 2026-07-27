@@ -15,7 +15,7 @@ import type {
   Capability,
   CapabilityTestResult,
   SkillDocument,
-} from "../../../../shared/desktop-api.ts";
+} from "../../../../shared/contracts/index.ts";
 import { errorMessage } from "../../lib/errors.ts";
 import { MarkdownContent } from "../../components/MarkdownContent.tsx";
 import { StudioScreenFrame } from "./StudioScreenFrame.tsx";

@@ -49,7 +49,7 @@ import {
   type DesktopToolPermissionMode,
   type MissionModelOverride,
   type PragmaDesktopAPI,
-} from "../../../../shared/desktop-api.ts";
+} from "../../../../shared/contracts/index.ts";
 import { errorMessage } from "../../lib/errors.ts";
 import { i18n } from "../../i18n/index.ts";
 import { formatMissionDateTime, formatMissionTime } from "../../lib/mission-time.ts";

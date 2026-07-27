@@ -1,7 +1,7 @@
 import { Brain, Robot } from "@phosphor-icons/react";
 import { useTranslation } from "react-i18next";
 
-import type { DesktopRuntimeModel, MissionModelOverride } from "../../../shared/desktop-api.ts";
+import type { DesktopRuntimeModel, MissionModelOverride } from "../../../shared/contracts/index.ts";
 
 export function MissionModelOverrideControls(props: {
   readonly models: readonly DesktopRuntimeModel[];

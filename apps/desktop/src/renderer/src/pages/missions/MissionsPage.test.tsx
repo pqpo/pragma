@@ -5,7 +5,7 @@ import type {
   MissionChatSnapshot,
   MissionSummary,
   MissionWorkRecord,
-} from "../../../../shared/desktop-api.ts";
+} from "../../../../shared/contracts/index.ts";
 import { i18n } from "../../i18n/index.ts";
 import {
   applyMissionChatPatches,

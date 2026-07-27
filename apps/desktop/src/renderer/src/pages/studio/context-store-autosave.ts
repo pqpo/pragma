@@ -1,7 +1,7 @@
 import type {
   ContextStoreContent,
   ContextStoreContentMetadata,
-} from "../../../../shared/desktop-api.ts";
+} from "../../../../shared/contracts/index.ts";
 
 export interface ContextStoreSaveSnapshot {
   readonly entryId: string;

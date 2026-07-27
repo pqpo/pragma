@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 
-import type { ContextStoreContent } from "../../../../shared/desktop-api.ts";
+import type { ContextStoreContent } from "../../../../shared/contracts/index.ts";
 import {
   flushContextStoreSaves,
   type ContextStoreSaveCoordinator,

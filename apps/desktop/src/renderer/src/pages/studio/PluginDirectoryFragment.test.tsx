@@ -1,7 +1,7 @@
 import { renderToStaticMarkup } from "react-dom/server";
 import { describe, expect, it } from "vitest";
 
-import type { DesktopPlugin } from "../../../../shared/desktop-api.ts";
+import type { DesktopPlugin } from "../../../../shared/contracts/index.ts";
 import { PluginDetailFragment, PluginDirectoryFragment } from "./PluginDirectoryFragment.tsx";
 
 const plugin: DesktopPlugin = {

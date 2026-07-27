@@ -1,7 +1,7 @@
 import i18n from "i18next";
 import { initReactI18next } from "react-i18next";
 
-import type { DesktopResolvedLocale } from "../../../shared/desktop-api.ts";
+import type { DesktopResolvedLocale } from "../../../shared/contracts/index.ts";
 import { localeDisplayNames } from "./locale-metadata.ts";
 import { en, zhHans, zhHant } from "./resources.ts";
 

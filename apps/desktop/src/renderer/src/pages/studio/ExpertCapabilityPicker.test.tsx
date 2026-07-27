@@ -1,7 +1,7 @@
 import { renderToStaticMarkup } from "react-dom/server";
 import { describe, expect, it } from "vitest";
 
-import type { Capability } from "../../../../shared/desktop-api.ts";
+import type { Capability } from "../../../../shared/contracts/index.ts";
 import { ExpertCapabilityPicker, matchingToolNames } from "./ExpertCapabilityPicker.tsx";
 
 const toolCapability = {

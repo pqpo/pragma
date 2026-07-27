@@ -12,7 +12,7 @@ import {
 import { useState } from "react";
 import { useTranslation } from "react-i18next";
 
-import type { DesktopPlugin, PluginZipInspection } from "../../../../shared/desktop-api.ts";
+import type { DesktopPlugin, PluginZipInspection } from "../../../../shared/contracts/index.ts";
 import { errorMessage } from "../../lib/errors.ts";
 import { PluginConfigFields } from "./PluginConfigFields.tsx";
 import { StudioScreenFrame } from "./StudioScreenFrame.tsx";

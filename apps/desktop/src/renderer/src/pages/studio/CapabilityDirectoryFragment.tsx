@@ -21,7 +21,7 @@ import {
   type Capability,
   type CapabilityDefinition,
   type PreviewCodeServiceResult,
-} from "../../../../shared/desktop-api.ts";
+} from "../../../../shared/contracts/index.ts";
 import { errorMessage } from "../../lib/errors.ts";
 import { StudioScreenFrame } from "./StudioScreenFrame.tsx";
 import {

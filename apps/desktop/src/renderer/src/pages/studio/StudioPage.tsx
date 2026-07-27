@@ -20,8 +20,8 @@ import type {
   DesktopPlugin,
   AutomationSummary,
   PragmaProjectSnapshot,
-} from "../../../../shared/desktop-api.ts";
-import { ContextStoreSchema } from "../../../../shared/desktop-api.ts";
+} from "../../../../shared/contracts/index.ts";
+import { ContextStoreSchema } from "../../../../shared/contracts/index.ts";
 import { errorMessage } from "../../lib/errors.ts";
 import {
   ContextStoreDetailFragment,
