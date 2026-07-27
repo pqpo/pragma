@@ -26,7 +26,7 @@ import type { PragmaProjectSnapshot } from "../../../../shared/desktop-api.ts";
 import { errorMessage } from "../../lib/errors.ts";
 import { StudioScreenFrame } from "./StudioScreenFrame.tsx";
 import { desktopApi } from "./studio-model.ts";
-import { DeleteConfirmationDialog } from "./DeleteConfirmationDialog.tsx";
+import { StudioConfirmationDialog } from "./StudioDialog.tsx";
 
 export type ResourceKind = "team" | "flow";
 type TeamExpertPickerKind = "coordinator" | "members";
@@ -241,14 +241,14 @@ export function PragmaResourceDetailFragment(props: {
         <FlowDetail resource={props.resource} project={props.project} />
       )}
       {confirmOpen ? (
-        <DeleteConfirmationDialog
+        <StudioConfirmationDialog
           title={t("deleteResource", {
             kind: isTeam ? t("expertTeam") : t("flow"),
           })}
           description={t("deleteResourceDescription", { name: props.resource.metadata.name })}
           cancelLabel={t("cancel")}
           confirmLabel={t("deleteResourceAction")}
-          deletingLabel={t("deleting")}
+          busyLabel={t("deleting")}
           busy={deleting}
           onCancel={() => setConfirmOpen(false)}
           onConfirm={() => void remove()}
@@ -404,9 +404,7 @@ function FlowDetail(props: {
   );
 }
 
-function flowStepSummary(
-  step: PragmaFlowResource["spec"]["graph"]["steps"][string],
-): string {
+function flowStepSummary(step: PragmaFlowResource["spec"]["graph"]["steps"][string]): string {
   if (step.expert !== undefined) return step.expert.ref;
   if (step.team !== undefined) return step.team.ref;
   if (step.flow !== undefined) return step.flow.ref;
@@ -838,15 +836,12 @@ function ResourceEditor(props: {
       className="pragma-resource-editor"
       labelledBy="resource-editor-heading"
       header={
-        <header>
+        <header className="pragma-resource-editor-header">
           <button className="back-link" type="button" onClick={props.onCancel}>
             <ArrowLeft size={18} aria-hidden="true" />
             {props.backLabel}
           </button>
-          <div>
-            <h2 id="resource-editor-heading">{props.title}</h2>
-            <p>{t("canonicalYaml")}</p>
-          </div>
+          <h2 id="resource-editor-heading">{props.title}</h2>
         </header>
       }
     >

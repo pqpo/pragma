@@ -10,6 +10,7 @@ import { i18n } from "../../i18n/index.ts";
 import {
   applyMissionChatPatches,
   claimMissionClientOperation,
+  CONTEXT_POPOVER_CLOSE_DELAY_MS,
   ContextWindowControl,
   groupMissionConversationEntries,
   MissionContextOperationEntry,
@@ -25,6 +26,7 @@ import {
   shouldClearMissionThinkingPlaceholder,
   shouldShowMissionThinkingPlaceholder,
   unavailableMcpToolName,
+  upsertMissionSummary,
 } from "./MissionsPage.tsx";
 
 describe("MissionsPage", () => {
@@ -33,6 +35,8 @@ describe("MissionsPage", () => {
 
     expect(html).toContain("New mission");
     expect(html).not.toContain("mission-create-selectors");
+    expect(html).not.toContain("Needs input");
+    expect(html).not.toContain("No missions need input");
   });
 
   it("shows thinking immediately while the first Mission message starts", () => {
@@ -127,9 +131,7 @@ describe("MissionsPage", () => {
       "waiting-pinned",
       "waiting-newer",
     ]);
-    expect(groups.active.visibleMissions.map((mission) => mission.id)).toEqual([
-      "active-running",
-    ]);
+    expect(groups.active.visibleMissions.map((mission) => mission.id)).toEqual(["active-running"]);
     expect(groups.completed.visibleMissions.map((mission) => mission.id)).toEqual(["completed"]);
   });
 
@@ -185,6 +187,34 @@ describe("MissionsPage", () => {
     expect(afterLoadMore.active.hiddenCount).toBe(0);
     expect(afterLoadMore.completed.visibleMissions).toHaveLength(15);
     expect(afterLoadMore.completed.hiddenCount).toBe(1);
+  });
+
+  it("applies global Mission updates without allowing stale events to regress the rail", () => {
+    const current = missionSummaryFixture({
+      id: "mission",
+      title: "Current",
+      status: "succeeded",
+      updatedAt: "2026-07-11T00:00:02.000Z",
+    });
+    const stale = missionSummaryFixture({
+      id: "mission",
+      title: "Stale",
+      status: "running",
+      updatedAt: "2026-07-11T00:00:01.000Z",
+    });
+    const newer = missionSummaryFixture({
+      id: "mission",
+      title: "Newer",
+      status: "failed",
+      updatedAt: "2026-07-11T00:00:03.000Z",
+    });
+
+    expect(upsertMissionSummary([current], stale)).toEqual([current]);
+    expect(upsertMissionSummary([current], newer)).toEqual([newer]);
+  });
+
+  it("uses the required 500ms context popover grace period", () => {
+    expect(CONTEXT_POPOVER_CLOSE_DELAY_MS).toBe(500);
   });
 });
 

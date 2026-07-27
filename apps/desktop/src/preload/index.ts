@@ -72,6 +72,7 @@ import {
   MissionIdSchema,
   MissionSchema,
   MissionSummarySchema,
+  MissionUpdateSchema,
   MissionHumanInteractionSchema,
   MissionWorkConversationSnapshotSchema,
   MissionWorkSnapshotSchema,
@@ -417,6 +418,13 @@ const api: PragmaDesktopAPI = {
     MissionCreationDefaultsSchema.parse(await ipcRenderer.invoke("missions:create-defaults:get")),
   getMission: async (id) =>
     MissionSchema.parse(await ipcRenderer.invoke("missions:get", MissionIdSchema.parse(id))),
+  subscribeMissionUpdates: (listener) => {
+    const handler = (_event: IpcRendererEvent, value: unknown) => {
+      listener(MissionUpdateSchema.parse(value));
+    };
+    ipcRenderer.on("missions:updated", handler);
+    return () => ipcRenderer.removeListener("missions:updated", handler);
+  },
   createMission: async (input) =>
     MissionSchema.parse(
       await ipcRenderer.invoke("missions:create", CreateMissionSchema.parse(input)),

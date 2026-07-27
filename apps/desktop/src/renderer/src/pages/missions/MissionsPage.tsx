@@ -57,6 +57,11 @@ import { ToolPermissionSelect } from "../../components/ToolPermissionSelect.tsx"
 import { MissionModelOverrideControls } from "../../components/MissionModelOverrideControls.tsx";
 import { MarkdownContent } from "../../components/MarkdownContent.tsx";
 import {
+  pruneMissionDrafts,
+  readMissionDraft,
+  writeMissionDraft,
+} from "../../lib/mission-draft.ts";
+import {
   readPinnedMissionIds,
   readLastOpenedMissionId,
   selectPreferredMissionId,
@@ -101,6 +106,7 @@ export function MissionsPage(props: {
   );
   const selectedMissionIdRef = useRef<string | null>(props.initialMission?.id ?? null);
   const initialRunStartedRef = useRef(false);
+  const removedMissionIdsRef = useRef(new Set<string>());
 
   const replaceMission = useCallback((updated: Mission) => {
     if (
@@ -109,13 +115,17 @@ export function MissionsPage(props: {
     ) {
       setInitialRunRequest((current) => (current?.missionId === updated.id ? null : current));
     }
-    setSelectedMission((current) => (current?.id === updated.id ? updated : current));
-    setMissions((current) =>
-      [
-        ...current.filter((mission) => mission.id !== updated.id),
-        missionToSummary(updated),
-      ].toSorted((left, right) => right.updatedAt.localeCompare(left.updatedAt)),
+    if (updated.lifecycleStatus === "completed") {
+      writeMissionDraft(
+        typeof window === "undefined" ? undefined : window.localStorage,
+        updated.id,
+        "",
+      );
+    }
+    setSelectedMission((current) =>
+      current?.id === updated.id && updated.updatedAt >= current.updatedAt ? updated : current,
     );
+    setMissions((current) => upsertMissionSummary(current, missionToSummary(updated)));
   }, []);
 
   const updatePinnedMissionIds = useCallback((update: (current: readonly string[]) => string[]) => {
@@ -143,6 +153,30 @@ export function MissionsPage(props: {
         if (selectedMissionIdRef.current === id) setError(errorMessage(loadError));
       });
   }, []);
+
+  useEffect(() => {
+    const api = desktopApi();
+    if (api === undefined) return;
+    return api.subscribeMissionUpdates((update) => {
+      if (update.kind === "upsert") {
+        if (removedMissionIdsRef.current.has(update.mission.id)) return;
+        replaceMission(update.mission);
+        return;
+      }
+      writeMissionDraft(
+        typeof window === "undefined" ? undefined : window.localStorage,
+        update.missionId,
+        "",
+      );
+      removedMissionIdsRef.current.add(update.missionId);
+      setMissions((current) => current.filter((mission) => mission.id !== update.missionId));
+      if (selectedMissionIdRef.current === update.missionId) {
+        selectedMissionIdRef.current = null;
+        setSelectedMissionId(null);
+        setSelectedMission(null);
+      }
+    });
+  }, [replaceMission]);
 
   useEffect(() => {
     const timer = setInterval(() => setNow(Date.now()), 60_000);
@@ -183,7 +217,19 @@ export function MissionsPage(props: {
       .listMissions()
       .then((storedMissions) => {
         if (cancelled) return;
-        setMissions(storedMissions);
+        setMissions((current) =>
+          storedMissions
+            .filter((mission) => !removedMissionIdsRef.current.has(mission.id))
+            .reduce((merged, mission) => upsertMissionSummary(merged, mission), [...current]),
+        );
+        pruneMissionDrafts(
+          typeof window === "undefined" ? undefined : window.localStorage,
+          new Set(
+            storedMissions
+              .filter((mission) => mission.lifecycleStatus === "active")
+              .map((mission) => mission.id),
+          ),
+        );
         if (selectedMissionIdRef.current !== null) return;
         const lastOpenedId = readLastOpenedMissionId(
           typeof window === "undefined" ? undefined : window.localStorage,
@@ -214,24 +260,6 @@ export function MissionsPage(props: {
       ),
     );
   }, [missions, search]);
-  useEffect(() => {
-    const api = desktopApi();
-    if (
-      api === undefined ||
-      (selectedMission?.execution?.status !== "queued" &&
-        selectedMission?.execution?.status !== "running" &&
-        selectedMission?.execution?.status !== "waiting")
-    )
-      return;
-    const timer = setInterval(() => {
-      void api
-        .getMission(selectedMission.id)
-        .then(replaceMission)
-        .catch(() => undefined);
-    }, 1_000);
-    return () => clearInterval(timer);
-  }, [replaceMission, selectedMission?.id, selectedMission?.execution?.status]);
-
   return (
     <section className="missions-page">
       <MissionRail
@@ -251,6 +279,11 @@ export function MissionsPage(props: {
           if (api === undefined) return;
           try {
             replaceMission(await api.markMissionComplete(summary.id));
+            writeMissionDraft(
+              typeof window === "undefined" ? undefined : window.localStorage,
+              summary.id,
+              "",
+            );
             updatePinnedMissionIds((current) =>
               current.filter((missionId) => missionId !== summary.id),
             );
@@ -343,6 +376,11 @@ export function MissionsPage(props: {
                     : await api.reopenMission(selectedMission.id);
                 replaceMission(updated);
                 if (selectedMission.lifecycleStatus === "active") {
+                  writeMissionDraft(
+                    typeof window === "undefined" ? undefined : window.localStorage,
+                    selectedMission.id,
+                    "",
+                  );
                   updatePinnedMissionIds((current) =>
                     current.filter((missionId) => missionId !== selectedMission.id),
                   );
@@ -401,6 +439,7 @@ export function MissionsPage(props: {
                     .deleteMission(deleteCandidate.id)
                     .then(async () => {
                       const storedMissions = await api.listMissions();
+                      writeMissionDraft(window.localStorage, deleteCandidate.id, "");
                       setMissions(storedMissions);
                       if (selectedMissionId === deleteCandidate.id) {
                         selectedMissionIdRef.current = null;
@@ -554,20 +593,23 @@ function MissionRail(props: {
           </label>
         </div>
       </div>
-      <MissionRailGroup
-        label={t("waitingInput")}
-        emptyLabel={t("noWaitingInput")}
-        missions={missionGroups.waitingInput.visibleMissions}
-        hiddenCount={missionGroups.waitingInput.hiddenCount}
-        now={props.now}
-        pinnedMissionIds={pinnedMissionIdSet}
-        selectedMissionId={props.selectedMissionId}
-        onOpen={props.onOpen}
-        onTogglePin={props.onTogglePin}
-        onMarkComplete={props.onMarkComplete}
-        onDelete={props.onDelete}
-        onLoadMore={() => setVisibleLimits(increaseMissionRailVisibleLimit("waitingInput"))}
-      />
+      {missionGroups.waitingInput.visibleMissions.length > 0 ||
+      missionGroups.waitingInput.hiddenCount > 0 ? (
+        <MissionRailGroup
+          label={t("waitingInput")}
+          emptyLabel={t("noWaitingInput")}
+          missions={missionGroups.waitingInput.visibleMissions}
+          hiddenCount={missionGroups.waitingInput.hiddenCount}
+          now={props.now}
+          pinnedMissionIds={pinnedMissionIdSet}
+          selectedMissionId={props.selectedMissionId}
+          onOpen={props.onOpen}
+          onTogglePin={props.onTogglePin}
+          onMarkComplete={props.onMarkComplete}
+          onDelete={props.onDelete}
+          onLoadMore={() => setVisibleLimits(increaseMissionRailVisibleLimit("waitingInput"))}
+        />
+      ) : null}
       <MissionRailGroup
         label={t("active")}
         emptyLabel={t("noActive")}
@@ -727,9 +769,7 @@ function MissionRailGroup(props: {
                 key={mission.id}
               >
                 <button
-                  className={
-                    showStatusDot ? "mission-row-open has-status-dot" : "mission-row-open"
-                  }
+                  className={showStatusDot ? "mission-row-open has-status-dot" : "mission-row-open"}
                   type="button"
                   onClick={() => props.onOpen(mission)}
                 >
@@ -913,7 +953,14 @@ export function MissionDetailFragment(props: {
   const [selectedWorkKey, setSelectedWorkKey] = useState<string | null>(null);
   const [workError, setWorkError] = useState<string | null>(null);
   const [workRefreshRevision, setWorkRefreshRevision] = useState(0);
-  const [draft, setDraft] = useState("");
+  const [draft, setDraft] = useState(() =>
+    props.mission.lifecycleStatus === "active"
+      ? readMissionDraft(
+          typeof window === "undefined" ? undefined : window.localStorage,
+          props.mission.id,
+        )
+      : "",
+  );
   const [optimisticMessages, setOptimisticMessages] = useState<LocalMissionUserMessage[]>([]);
   const [contextOperations, setContextOperations] = useState<LocalMissionContextOperation[]>([]);
   const [awaitingRequestId, setAwaitingRequestId] = useState<string | null>(null);
@@ -947,6 +994,7 @@ export function MissionDetailFragment(props: {
   const isFlow = props.mission.executor.kind === "flow";
   const scrollRef = useRef<HTMLDivElement | null>(null);
   const textareaRef = useRef<HTMLTextAreaElement | null>(null);
+  const draftMissionIdRef = useRef<string | null>(props.mission.id);
   const chatRef = useRef<MissionChatSnapshot | null>(null);
   const clientOperationRef = useRef<MissionClientOperationState>({ kind: "idle" });
   const autoRestoreExecutionRef = useRef<string | null>(null);
@@ -990,7 +1038,15 @@ export function MissionDetailFragment(props: {
         : t("openStudioToEditExpert", { ns: "missions" });
 
   useEffect(() => {
-    setDraft("");
+    draftMissionIdRef.current = null;
+    setDraft(
+      props.mission.lifecycleStatus === "active"
+        ? readMissionDraft(
+            typeof window === "undefined" ? undefined : window.localStorage,
+            props.mission.id,
+          )
+        : "",
+    );
     setOptimisticMessages([]);
     setContextOperations([]);
     setAwaitingRequestId(null);
@@ -1003,6 +1059,29 @@ export function MissionDetailFragment(props: {
     setWorkError(null);
     autoRestoreExecutionRef.current = null;
   }, [props.mission.id]);
+
+  useEffect(() => {
+    if (draftMissionIdRef.current === null) {
+      draftMissionIdRef.current = props.mission.id;
+      return;
+    }
+    if (draftMissionIdRef.current !== props.mission.id) return;
+    writeMissionDraft(
+      typeof window === "undefined" ? undefined : window.localStorage,
+      props.mission.id,
+      draft,
+    );
+  }, [draft, props.mission.id]);
+
+  useEffect(() => {
+    if (props.mission.lifecycleStatus !== "completed") return;
+    setDraft("");
+    writeMissionDraft(
+      typeof window === "undefined" ? undefined : window.localStorage,
+      props.mission.id,
+      "",
+    );
+  }, [props.mission.id, props.mission.lifecycleStatus]);
 
   useEffect(() => {
     if (optionsSaving) return;
@@ -2044,6 +2123,7 @@ export function ContextWindowControl(props: {
 }) {
   const { t } = useTranslation("missions");
   const [open, setOpen] = useState(false);
+  const closeTimerRef = useRef<ReturnType<typeof setTimeout>>(undefined);
   const popoverId = useId();
   const popoverLabelId = useId();
   const usage = props.state.usage;
@@ -2067,20 +2147,46 @@ export function ContextWindowControl(props: {
   const accessibleUsageLabel = invalidUsage
     ? `${usageLabel} ${t("contextUsageInvalid")}`
     : usageLabel;
+  const cancelScheduledClose = () => {
+    if (closeTimerRef.current === undefined) return;
+    clearTimeout(closeTimerRef.current);
+    closeTimerRef.current = undefined;
+  };
+  const scheduleClose = () => {
+    cancelScheduledClose();
+    closeTimerRef.current = setTimeout(() => {
+      closeTimerRef.current = undefined;
+      setOpen(false);
+    }, CONTEXT_POPOVER_CLOSE_DELAY_MS);
+  };
+
+  useEffect(
+    () => () => {
+      if (closeTimerRef.current !== undefined) clearTimeout(closeTimerRef.current);
+    },
+    [],
+  );
 
   return (
     <div
       className={`mission-context-window ${tone}`}
-      onMouseEnter={() => setOpen(true)}
+      onMouseEnter={() => {
+        cancelScheduledClose();
+        setOpen(true);
+      }}
       onMouseLeave={(event) => {
-        if (!event.currentTarget.matches(":focus-within")) setOpen(false);
+        if (!event.currentTarget.matches(":focus-within")) scheduleClose();
       }}
       onBlur={(event) => {
-        if (!event.currentTarget.contains(event.relatedTarget)) setOpen(false);
+        if (!event.currentTarget.contains(event.relatedTarget)) {
+          cancelScheduledClose();
+          setOpen(false);
+        }
       }}
       onKeyDown={(event) => {
         if (event.key === "Escape") {
           event.stopPropagation();
+          cancelScheduledClose();
           setOpen(false);
         }
       }}
@@ -2163,6 +2269,8 @@ export function ContextWindowControl(props: {
     </div>
   );
 }
+
+export const CONTEXT_POPOVER_CLOSE_DELAY_MS = 500;
 
 function MissionErrorBanner(props: {
   readonly error: string;
@@ -3151,6 +3259,17 @@ function missionToSummary(mission: Mission): MissionSummary {
     lifecycleStatus: mission.lifecycleStatus,
     updatedAt: mission.updatedAt,
   };
+}
+
+export function upsertMissionSummary(
+  missions: readonly MissionSummary[],
+  updated: MissionSummary,
+): MissionSummary[] {
+  const current = missions.find((mission) => mission.id === updated.id);
+  if (current !== undefined && current.updatedAt > updated.updatedAt) return [...missions];
+  return [...missions.filter((mission) => mission.id !== updated.id), updated].toSorted(
+    (left, right) => right.updatedAt.localeCompare(left.updatedAt),
+  );
 }
 
 function setHumanAnswer(

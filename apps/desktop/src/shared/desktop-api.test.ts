@@ -21,6 +21,7 @@ import {
   MissionCreationDefaultsSchema,
   MissionModelOptionsSchema,
   MissionSchema,
+  MissionUpdateSchema,
   PragmaProjectChangesSchema,
   SetDefaultRuntimeSchema,
   DesktopSettingsSnapshotSchema,
@@ -220,6 +221,17 @@ describe("mission chat streaming contracts", () => {
         patches: [],
       }).success,
     ).toBe(false);
+  });
+});
+
+describe("mission update contracts", () => {
+  it("supports typed Mission upserts and removals", () => {
+    const missionId = "00000000-0000-4000-8000-000000000000";
+    expect(MissionUpdateSchema.parse({ kind: "remove", missionId })).toEqual({
+      kind: "remove",
+      missionId,
+    });
+    expect(MissionUpdateSchema.safeParse({ kind: "remove", missionId: "" }).success).toBe(false);
   });
 });
 

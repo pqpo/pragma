@@ -119,6 +119,8 @@ describe("expert team editor", () => {
     expect(html).toContain(instructions);
     expect(html).toContain("always-on TEAM.md");
     expect(html).not.toContain("Version");
+    expect(html).toContain("pragma-resource-editor-header");
+    expect(html).not.toContain("canonical Pragma YAML");
   });
 });
 

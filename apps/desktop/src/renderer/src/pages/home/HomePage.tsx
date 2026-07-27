@@ -21,6 +21,7 @@ import { ToolPermissionSelect } from "../../components/ToolPermissionSelect.tsx"
 import { MissionModelOverrideControls } from "../../components/MissionModelOverrideControls.tsx";
 import { WorkspacePicker, type WorkspaceSelection } from "../../components/WorkspacePicker.tsx";
 import { errorMessage } from "../../lib/errors.ts";
+import { readHomeDraft, writeHomeDraft } from "../../lib/home-draft.ts";
 import { localizeSystemExpertCopy } from "../../lib/system-expert-copy.ts";
 import { SchemaInputForm, createSchemaInputValue, isSchemaInputValid } from "./SchemaInputForm.tsx";
 
@@ -49,7 +50,10 @@ export function HomePage(props: {
   const [error, setError] = useState<string | null>(null);
   const [modelError, setModelError] = useState<string | null>(null);
   const [modelResetRequired, setModelResetRequired] = useState(false);
+  const [persistenceReady, setPersistenceReady] = useState(false);
   const modelRuntimeIdRef = useRef<string | undefined>(undefined);
+  const inputExecutorRef = useRef(props.initialExecutorRef ?? "");
+  const pendingModelOverrideRef = useRef<MissionModelOverride | undefined>(undefined);
 
   useEffect(() => {
     let cancelled = false;
@@ -59,18 +63,54 @@ export function HomePage(props: {
     ])
       .then(([availableExecutors, defaults]) => {
         if (cancelled) return;
+        const persisted = readHomeDraft(
+          typeof window === "undefined" ? undefined : window.localStorage,
+        );
+        const requested =
+          props.initialExecutorRef ?? persisted?.executorRef ?? defaults.executorRef;
+        const selected =
+          availableExecutors.find((executor) => executor.ref === requested) ??
+          availableExecutors.find((executor) => executor.ref === defaults.executorRef) ??
+          availableExecutors[0];
+        const restoresPersistedInput =
+          persisted !== undefined &&
+          persisted.executorRef === selected?.ref &&
+          (props.initialExecutorRef === undefined ||
+            props.initialExecutorRef === persisted.executorRef);
         setExecutors(availableExecutors);
         setDefaultWorkspace(defaults.workspace);
         setRecentWorkspaces(defaults.recentWorkspaces);
         setDefaultExecutorRef(defaults.executorRef);
-        setToolPermissionMode(defaults.toolPermissionMode);
-        const requested = props.initialExecutorRef ?? defaults.executorRef;
-        setExecutorRef(
-          availableExecutors.some((executor) => executor.ref === requested)
-            ? requested
-            : defaults.executorRef,
+        setToolPermissionMode(persisted?.toolPermissionMode ?? defaults.toolPermissionMode);
+        setWorkspaceOverride(persisted?.workspaceOverride);
+        setExecutorRef(selected?.ref ?? "");
+        inputExecutorRef.current = selected?.ref ?? "";
+        setGoal(restoresPersistedInput && selected?.kind !== "flow" ? persisted.goal : "");
+        setFlowInput(
+          selected?.kind === "flow" && selected.inputSchema !== undefined
+            ? restoresPersistedInput &&
+              isSchemaInputValid(selected.inputSchema, persisted.flowInput)
+              ? persisted.flowInput
+              : createSchemaInputValue(selected.inputSchema)
+            : {},
+        );
+        pendingModelOverrideRef.current = restoresPersistedInput
+          ? persisted.modelOverride
+          : undefined;
+        setPersistenceReady(
+          selected === undefined || (selected.kind !== "expert" && selected.kind !== "team"),
         );
         setLoaded(true);
+        if (persisted?.workspaceOverride !== undefined) {
+          void window.pragmaDesktop
+            .validateWorkspace(persisted.workspaceOverride.path)
+            .then((validation) => {
+              if (!cancelled && !validation.ok) setWorkspaceOverride(undefined);
+            })
+            .catch(() => {
+              if (!cancelled) setWorkspaceOverride(undefined);
+            });
+        }
       })
       .catch((loadError: unknown) => {
         if (!cancelled) setError(errorMessage(loadError));
@@ -96,6 +136,7 @@ export function HomePage(props: {
   }, [defaultExecutorRef, executorRef, executors, hasValidExecutor]);
 
   useEffect(() => {
+    setPersistenceReady(false);
     setModelOverride(undefined);
     setDefaultModelSelection(undefined);
     setModelError(null);
@@ -107,6 +148,8 @@ export function HomePage(props: {
     ) {
       setModels([]);
       setModelsLoading(false);
+      pendingModelOverrideRef.current = undefined;
+      setPersistenceReady(true);
       return;
     }
     let cancelled = false;
@@ -123,13 +166,24 @@ export function HomePage(props: {
           setModels(options.models);
           setDefaultModelSelection(options.defaultSelection);
           setModelResetRequired(options.status === "reset_required");
+          const pendingOverride = pendingModelOverrideRef.current;
+          pendingModelOverrideRef.current = undefined;
+          setModelOverride(
+            pendingOverride !== undefined &&
+              missionModelOverrideAvailable(options.models, pendingOverride)
+              ? pendingOverride
+              : undefined,
+          );
           setModelError(null);
         })
         .catch((loadError: unknown) => {
           if (!cancelled) setModelError(errorMessage(loadError));
         })
         .finally(() => {
-          if (!cancelled && showLoading) setModelsLoading(false);
+          if (!cancelled) {
+            if (showLoading) setModelsLoading(false);
+            setPersistenceReady(true);
+          }
         });
     };
     const unsubscribe = window.pragmaDesktop.subscribeRuntimeModelCatalog((runtimeId) => {
@@ -145,13 +199,38 @@ export function HomePage(props: {
   }, [selectedExecutor?.ref, selectedExecutor?.kind]);
 
   useEffect(() => {
+    if (!loaded || selectedExecutor?.ref === inputExecutorRef.current) return;
+    inputExecutorRef.current = selectedExecutor?.ref ?? "";
+    pendingModelOverrideRef.current = undefined;
     setGoal("");
     setFlowInput(
       selectedExecutor?.kind === "flow" && selectedExecutor.inputSchema !== undefined
         ? createSchemaInputValue(selectedExecutor.inputSchema)
         : {},
     );
-  }, [selectedExecutor?.ref]);
+  }, [loaded, selectedExecutor?.ref]);
+
+  useEffect(() => {
+    if (!loaded || !persistenceReady || executorRef === "") return;
+    const persistedModelOverride = modelOverride ?? pendingModelOverrideRef.current;
+    writeHomeDraft(typeof window === "undefined" ? undefined : window.localStorage, {
+      executorRef,
+      ...(workspaceOverride === undefined ? {} : { workspaceOverride }),
+      goal,
+      flowInput,
+      toolPermissionMode,
+      ...(persistedModelOverride === undefined ? {} : { modelOverride: persistedModelOverride }),
+    });
+  }, [
+    executorRef,
+    flowInput,
+    goal,
+    loaded,
+    modelOverride,
+    persistenceReady,
+    toolPermissionMode,
+    workspaceOverride,
+  ]);
 
   const pickWorkspace = async () => {
     try {
@@ -195,6 +274,21 @@ export function HomePage(props: {
         toolPermissionMode,
         ...(modelOverride === undefined ? {} : { modelOverride }),
       });
+      const clearedFlowInput =
+        selectedExecutor.kind === "flow" && selectedExecutor.inputSchema !== undefined
+          ? createSchemaInputValue(selectedExecutor.inputSchema)
+          : {};
+      const persistedModelOverride = modelOverride ?? pendingModelOverrideRef.current;
+      writeHomeDraft(typeof window === "undefined" ? undefined : window.localStorage, {
+        executorRef,
+        ...(workspaceOverride === undefined ? {} : { workspaceOverride }),
+        goal: "",
+        flowInput: clearedFlowInput,
+        toolPermissionMode,
+        ...(persistedModelOverride === undefined ? {} : { modelOverride: persistedModelOverride }),
+      });
+      setGoal("");
+      setFlowInput(clearedFlowInput);
       await props.onCreated(mission);
     } catch (submitError) {
       setError(errorMessage(submitError));
@@ -306,6 +400,20 @@ export function HomePage(props: {
         ) : null}
       </section>
     </section>
+  );
+}
+
+export function missionModelOverrideAvailable(
+  models: readonly DesktopRuntimeModel[],
+  override: MissionModelOverride,
+): boolean {
+  const model = models.find(
+    (candidate) =>
+      candidate.id === override.modelId && candidate.provider.id === override.providerId,
+  );
+  if (model === undefined || override.thinkingLevel === undefined) return model !== undefined;
+  return (
+    model.thinking?.supportedLevels.some((level) => level.value === override.thinkingLevel) ?? false
   );
 }
 

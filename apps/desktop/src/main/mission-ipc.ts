@@ -22,6 +22,7 @@ import type { PragmaProjectStore } from "./pragma-project-store.ts";
 import type { MissionExecutorCatalog } from "./mission-executor-catalog.ts";
 import type { MissionCreator } from "./mission-creator.ts";
 import { runDesktopMutation } from "./desktop-mutation-result.ts";
+import { publishMissionUpdate } from "./mission-update-publisher.ts";
 import { availableRecentWorkspaces } from "./workspace-history-store.ts";
 import { validateWorkspace } from "./workspace-scope.ts";
 
@@ -40,6 +41,18 @@ export function installMissionHandlers(options: {
   readonly recordWorkspaceUsage: (path: string) => void | Promise<void>;
   readonly defaultExecutorRef: string;
 }): void {
+  const publishMission = (mission: Awaited<ReturnType<MissionStore["get"]>>): void => {
+    publishMissionUpdate(() => options.getWindow()?.webContents ?? null, {
+      kind: "upsert",
+      mission,
+    });
+  };
+  const publishRemoval = (missionId: string): void => {
+    publishMissionUpdate(() => options.getWindow()?.webContents ?? null, {
+      kind: "remove",
+      missionId,
+    });
+  };
   ipcMain.handle("missions:list", () => options.missions.list());
   ipcMain.handle("missions:get", (_event, id: unknown) =>
     options.missions.get(MissionIdSchema.parse(id)),
@@ -87,16 +100,29 @@ export function installMissionHandlers(options: {
         : { toolPermissionMode: parsed.toolPermissionMode }),
     });
     await options.recordWorkspaceUsage(parsed.workspace);
+    publishMission(mission);
     return mission;
   });
   ipcMain.handle("missions:run", (_event, input: unknown) =>
-    runDesktopMutation(() => options.runner.run(MissionActionSchema.parse(input).id)),
+    runDesktopMutation(async () => {
+      const mission = await options.runner.run(MissionActionSchema.parse(input).id);
+      publishMission(mission);
+      return mission;
+    }),
   );
   ipcMain.handle("missions:options:update", (_event, input: unknown) =>
-    runDesktopMutation(() => options.runner.updateOptions(UpdateMissionOptionsSchema.parse(input))),
+    runDesktopMutation(async () => {
+      const mission = await options.runner.updateOptions(UpdateMissionOptionsSchema.parse(input));
+      publishMission(mission);
+      return mission;
+    }),
   );
   ipcMain.handle("missions:message:send", (_event, input: unknown) =>
-    runDesktopMutation(() => options.runner.sendMessage(SendMissionMessageSchema.parse(input))),
+    runDesktopMutation(async () => {
+      const mission = await options.runner.sendMessage(SendMissionMessageSchema.parse(input));
+      publishMission(mission);
+      return mission;
+    }),
   );
   ipcMain.handle("missions:chat:get", (_event, input: unknown) =>
     options.runner.getChat(GetMissionChatSchema.parse(input)),
@@ -105,7 +131,11 @@ export function installMissionHandlers(options: {
     runDesktopMutation(() => options.runner.compactContext(MissionActionSchema.parse(input).id)),
   );
   ipcMain.handle("missions:interrupt", (_event, input: unknown) =>
-    runDesktopMutation(() => options.runner.interrupt(MissionActionSchema.parse(input).id)),
+    runDesktopMutation(async () => {
+      const mission = await options.runner.interrupt(MissionActionSchema.parse(input).id);
+      publishMission(mission);
+      return mission;
+    }),
   );
   ipcMain.handle("missions:work:get", (_event, input: unknown) =>
     options.runner.getWork(MissionActionSchema.parse(input).id),
@@ -121,17 +151,31 @@ export function installMissionHandlers(options: {
       options.runner.respondToHumanInteraction(RespondMissionHumanInteractionSchema.parse(input)),
     );
   });
-  ipcMain.handle("missions:complete", (_event, input: unknown) =>
-    options.missions.markComplete(MissionActionSchema.parse(input).id),
-  );
-  ipcMain.handle("missions:reopen", (_event, input: unknown) =>
-    options.missions.reopen(MissionActionSchema.parse(input).id),
-  );
+  ipcMain.handle("missions:complete", async (_event, input: unknown) => {
+    const mission = await options.missions.markComplete(MissionActionSchema.parse(input).id);
+    publishMission(mission);
+    return mission;
+  });
+  ipcMain.handle("missions:reopen", async (_event, input: unknown) => {
+    const mission = await options.missions.reopen(MissionActionSchema.parse(input).id);
+    publishMission(mission);
+    return mission;
+  });
   ipcMain.handle("missions:delete", (_event, input: unknown) =>
-    runDesktopMutation(() => options.runner.delete(MissionActionSchema.parse(input).id)),
+    runDesktopMutation(async () => {
+      const missionId = MissionActionSchema.parse(input).id;
+      await options.runner.delete(missionId);
+      publishRemoval(missionId);
+    }),
   );
   options.runner.subscribeChat((update) => {
     options.getWindow()?.webContents.send("missions:chat:updated", update);
+    if (update.kind === "invalidate") {
+      void options.missions
+        .get(update.missionId)
+        .then(publishMission)
+        .catch(() => undefined);
+    }
   });
   options.runner.subscribeWork((update) => {
     options.getWindow()?.webContents.send("missions:work:updated", update);

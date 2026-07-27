@@ -228,8 +228,20 @@ export function ExpertEditorFragment(props: {
               className={item.id === step ? "is-active" : itemIndex < index ? "is-complete" : ""}
               key={item.id}
             >
-              <span>{itemIndex + 1}</span>
-              {item.label}
+              <button
+                type="button"
+                disabled={!isEditing}
+                aria-current={item.id === step ? "step" : undefined}
+                onClick={() => {
+                  if (isEditing) {
+                    setError(null);
+                    setStep(item.id);
+                  }
+                }}
+              >
+                <span>{itemIndex + 1}</span>
+                {item.label}
+              </button>
             </li>
           ))}
         </ol>

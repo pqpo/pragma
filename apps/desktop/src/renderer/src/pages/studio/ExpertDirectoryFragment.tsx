@@ -16,7 +16,7 @@ import { useTranslation } from "react-i18next";
 
 import type { ContextStore } from "../../../../shared/desktop-api.ts";
 import { StudioScreenFrame } from "./StudioScreenFrame.tsx";
-import { DeleteConfirmationDialog } from "./DeleteConfirmationDialog.tsx";
+import { StudioConfirmationDialog } from "./StudioDialog.tsx";
 import { isBuiltInExpert, type ExpertRecord } from "./studio-model.ts";
 import { errorMessage } from "../../lib/errors.ts";
 import { localizeSystemExpertCopy } from "../../lib/system-expert-copy.ts";
@@ -340,24 +340,24 @@ export function ExpertDetailFragment(props: {
         </p>
       ) : null}
       {confirmOpen ? (
-        <DeleteConfirmationDialog
+        <StudioConfirmationDialog
           title={t("deleteExpert")}
           description={t("deleteExpertDescription", { name: copy.name })}
           cancelLabel={t("cancel")}
           confirmLabel={t("deleteExpertAction")}
-          deletingLabel={t("deleting")}
+          busyLabel={t("deleting")}
           busy={deleting}
           onCancel={() => setConfirmOpen(false)}
           onConfirm={() => void remove()}
         />
       ) : null}
       {resetConfirmOpen ? (
-        <DeleteConfirmationDialog
+        <StudioConfirmationDialog
           title={t("resetBuiltInExpertConfirm")}
           description={t("resetBuiltInExpertDescription", { name: copy.name })}
           cancelLabel={t("cancel")}
           confirmLabel={t("resetBuiltInExpert")}
-          deletingLabel={t("resettingBuiltInExpert")}
+          busyLabel={t("resettingBuiltInExpert")}
           busy={resetting}
           action="reset"
           onCancel={() => setResetConfirmOpen(false)}
