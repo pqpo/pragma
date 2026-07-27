@@ -53,6 +53,7 @@ import {
 import { errorMessage } from "../../lib/errors.ts";
 import { i18n } from "../../i18n/index.ts";
 import { formatMissionDateTime, formatMissionTime } from "../../lib/mission-time.ts";
+import { formatTokens } from "../../lib/usage-format.ts";
 import { ToolPermissionSelect } from "../../components/ToolPermissionSelect.tsx";
 import { MissionModelOverrideControls } from "../../components/MissionModelOverrideControls.tsx";
 import { MarkdownContent } from "../../components/MarkdownContent.tsx";
@@ -1238,7 +1239,7 @@ export function MissionDetailFragment(props: {
       pending.push(update);
       scheduleFlush();
     });
-    void refresh();
+    void refresh().catch(() => undefined);
     return () => {
       cancelled = true;
       if (frame !== undefined) cancelAnimationFrame(frame);
@@ -2013,6 +2014,7 @@ export function MissionDetailFragment(props: {
                   </div>
                 </div>
               )}
+              <MissionUsageHint missionId={props.mission.id} />
             </div>
           </div>
         ) : workError !== null && workRecords.length === 0 ? (
@@ -2113,6 +2115,37 @@ export function MissionDetailFragment(props: {
         />
       )}
     </section>
+  );
+}
+
+function MissionUsageHint(props: { readonly missionId: string }) {
+  const { t } = useTranslation("usage");
+  const [totalTokens, setTotalTokens] = useState(0);
+
+  useEffect(() => {
+    let active = true;
+    let timeout: ReturnType<typeof setTimeout> | undefined;
+    const refresh = async (): Promise<void> => {
+      const result = await window.pragmaDesktop.getMissionUsage(props.missionId);
+      if (active) setTotalTokens(result.usage.totalTokens);
+    };
+    void refresh().catch(() => undefined);
+    const unsubscribe = window.pragmaDesktop.subscribeUsageUpdates((update) => {
+      if (update.missionId !== undefined && update.missionId !== props.missionId) return;
+      if (timeout !== undefined) clearTimeout(timeout);
+      timeout = setTimeout(() => void refresh().catch(() => undefined), 200);
+    });
+    return () => {
+      active = false;
+      if (timeout !== undefined) clearTimeout(timeout);
+      unsubscribe();
+    };
+  }, [props.missionId]);
+
+  return (
+    <small className="mission-usage-hint" aria-live="polite">
+      {t("missionHint", { tokens: formatTokens(totalTokens) })}
+    </small>
   );
 }
 

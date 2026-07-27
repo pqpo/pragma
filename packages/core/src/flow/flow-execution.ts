@@ -15,6 +15,7 @@ import { isExpertTeam, type ExpertDefinition, type ExpertTeam } from "../agent/e
 import { describeExpertExecutionDefinition } from "../agent/expert-definition-descriptor.ts";
 import type { RuntimeResolver } from "../runtime-resolver.ts";
 import { createPragmaLogger, type PragmaLoggerProvider } from "../logging/logger.ts";
+import type { UsageSink } from "../runtime/usage.ts";
 import type {
   ExpertAgentAutomaticHumanInteractionHandler,
   ExpertAgentHumanRequest,
@@ -87,6 +88,7 @@ export class FlowExecutionManager {
       | undefined,
     private readonly pragmaHome?: string | undefined,
     private readonly loggerProvider?: PragmaLoggerProvider | undefined,
+    private readonly usageSink?: UsageSink | undefined,
   ) {}
 
   async start<TInput>(
@@ -299,6 +301,7 @@ export class FlowExecutionManager {
         runtime,
         handoffs,
         loggerProvider: this.loggerProvider?.withScope({ executionId }),
+        usageSink: this.usageSink,
       });
       const handoff = await handoffs.normalize(executionId, output);
       const usage = controller.getUsage();
@@ -410,6 +413,7 @@ async function runFlow(options: {
   readonly runtimeOverride?: string | undefined;
   readonly handoffs: HandoffService;
   readonly loggerProvider?: PragmaLoggerProvider | undefined;
+  readonly usageSink?: UsageSink | undefined;
 }): Promise<unknown> {
   let deadline = await ensureFlowDeadline(options);
   deadline = await extendExpiredDeadlineForPendingHumanInteraction(options, deadline);
@@ -514,6 +518,8 @@ export async function runNestedFlowInvocation(options: {
   readonly runtimes: RuntimeResolver;
   readonly runtime?: string | undefined;
   readonly handoffs: HandoffService;
+  readonly loggerProvider?: PragmaLoggerProvider | undefined;
+  readonly usageSink?: UsageSink | undefined;
 }): Promise<unknown> {
   const runtimeId = (await options.runtimes.bind({ runtimeId: options.runtime })).binding.runtimeId;
   await validateFlowRuntimeConfiguration(options.flow, options.runtimes, runtimeId);
@@ -617,6 +623,7 @@ async function runStep(
       runtimes: options.runtimes,
       handoffs: options.handoffs,
       loggerProvider: options.loggerProvider,
+      usageSink: options.usageSink,
     });
     return unwrapInvocationHandoff(InvocationHandoffSchema.parse(handoff));
   } catch (error) {

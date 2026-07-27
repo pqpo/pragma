@@ -12,6 +12,7 @@ import { projectsApi } from "./api/projects.ts";
 import { runtimesApi } from "./api/runtimes.ts";
 import { settingsApi } from "./api/settings.ts";
 import { systemApi } from "./api/system.ts";
+import { usageApi } from "./api/usage.ts";
 import { workspacesApi } from "./api/workspaces.ts";
 
 const api = {
@@ -25,6 +26,7 @@ const api = {
   ...projectsApi,
   ...automationsApi,
   ...missionsApi,
+  ...usageApi,
   ...capabilitiesApi,
   ...runtimesApi,
 } satisfies PragmaDesktopAPI;

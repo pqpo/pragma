@@ -77,8 +77,10 @@ import {
 import type { MissionStore, MissionTimelineTurn } from "./mission-store.ts";
 import type { PragmaProjectStore } from "../projects/pragma-project-store.ts";
 import type { PluginStore } from "../plugins/plugin-store.ts";
+import type { DesktopUsageStore } from "../usage/usage-store.ts";
 
 export interface MissionRunner {
+  reconcileUsage(): Promise<void>;
   run(id: string): Promise<Mission>;
   updateOptions(input: UpdateMissionOptions): Promise<Mission>;
   sendMessage(input: {
@@ -161,6 +163,7 @@ export function createMissionRunner(options: {
   readonly contextStores?: ContextStoreStore | undefined;
   readonly plugins?: PluginStore | undefined;
   readonly runtimes: RuntimeResolver;
+  readonly usage?: DesktopUsageStore | undefined;
   readonly loggerProvider?: import("@pragma/core").PragmaLoggerProvider | undefined;
   readonly runtimesForToolPermissionMode?:
     | ((mode: DesktopToolPermissionMode) => RuntimeResolver)
@@ -217,6 +220,28 @@ export function createMissionRunner(options: {
           await automaticHumanInteractionHandlerForToolPermissionMode(toolPermissionMode)?.(
             request,
           ),
+        usageSink:
+          options.usage === undefined
+            ? undefined
+            : {
+                record: async (observation) => {
+                  const currentMission = await options.missions.get(mission.id);
+                  const project = await options.project.openRevision(
+                    currentMission.project.revision,
+                  );
+                  const names = new Map(
+                    project
+                      .listResources()
+                      .map((resource) => [resource.metadata.id, resource.metadata.name] as const),
+                  );
+                  names.set(currentMission.executor.ref, currentMission.executor.name);
+                  options.usage!.record(observation, {
+                    mission: { id: currentMission.id, title: currentMission.title },
+                    invocations: await executionStore.listInvocations(observation.executionId),
+                    names,
+                  });
+                },
+              },
       }),
       setToolPermissionMode: (mode: DesktopToolPermissionMode) => {
         toolPermissionMode = mode;
@@ -842,6 +867,15 @@ export function createMissionRunner(options: {
       throw new Error("Stop the active execution before deleting this mission.");
     }
     const mission = await options.missions.get(id);
+    try {
+      await reconcileMissionUsage(mission);
+    } catch (error) {
+      logger.warn(
+        "mission.delete_usage_reconciliation_failed",
+        `Usage reconciliation failed before deleting Mission ${mission.id}; deletion will continue.`,
+        { error, missionId: mission.id },
+      );
+    }
     const executionIds = await collectMissionExecutionIds(options.missions, id);
     const sessionId = mission.execution?.sessionId;
     const session = sessions.get(id);
@@ -886,6 +920,7 @@ export function createMissionRunner(options: {
     });
     if (options.missions.storagePath === undefined) await options.missions.remove(id);
     else options.missions.forget?.(id);
+    options.usage?.markMissionDeleted(id);
     executionContexts.delete(id);
   };
 
@@ -1200,7 +1235,62 @@ export function createMissionRunner(options: {
     };
   };
 
+  const reconcileMissionUsage = async (mission: Mission): Promise<void> => {
+    if (options.usage === undefined) return;
+    const project = await options.project.openRevision(mission.project.revision);
+    const names = new Map(
+      project
+        .listResources()
+        .map((resource) => [resource.metadata.id, resource.metadata.name] as const),
+    );
+    names.set(mission.executor.ref, mission.executor.name);
+    for (const executionId of await collectMissionExecutionIds(options.missions, mission.id)) {
+      const execution = await executionStore.get(executionId);
+      if (
+        execution === undefined ||
+        execution.createdAt < options.usage.trackingStartedAt ||
+        !isFinalExecutionStatus(execution.status)
+      ) {
+        continue;
+      }
+      const invocations = await executionStore.listInvocations(executionId);
+      for (const invocation of invocations) {
+        if (invocation.usage === undefined) continue;
+        const context = await executionStore.getContext(executionId, invocation.contextId);
+        if (context === undefined) continue;
+        const executorId = invocation.executorId ?? invocation.definition.id;
+        options.usage.recordRecovered(
+          {
+            occurredAt: invocation.updatedAt,
+            executionId,
+            invocationId: invocation.invocationId,
+            contextId: invocation.contextId,
+            runtimeId: context.runtime.runtimeId,
+            ...(context.modelSelection === undefined
+              ? {}
+              : { modelSelection: context.modelSelection }),
+            executor: { id: executorId, name: names.get(executorId) ?? executorId },
+            usage: invocation.usage,
+          },
+          {
+            mission: { id: mission.id, title: mission.title },
+            invocations,
+            names,
+          },
+        );
+      }
+    }
+  };
+
+  const reconcileUsage = async (): Promise<void> => {
+    if (options.usage === undefined) return;
+    for (const summary of await options.missions.list()) {
+      await reconcileMissionUsage(await options.missions.get(summary.id));
+    }
+  };
+
   return {
+    reconcileUsage,
     async run(id) {
       const pending = pendingOperations.get(id);
       if (pending?.kind === "run") return await pending.promise;

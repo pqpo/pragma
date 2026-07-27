@@ -1,6 +1,10 @@
 import type { Expert, IExpertAgentRunResult } from "../agent/expert-agent.ts";
 import type { ContextAssemblerOptions } from "../agent/context-manager.ts";
-import type { AgentMessage, RuntimeSessionRef as SharedRuntimeSessionRef } from "@pragma/shared";
+import type {
+  AgentMessage,
+  AgentMessageUsage,
+  RuntimeSessionRef as SharedRuntimeSessionRef,
+} from "@pragma/shared";
 export { RuntimeSessionRefSchema } from "@pragma/shared";
 import type { z } from "zod";
 import type { PragmaLoggerProvider } from "../logging/logger.ts";
@@ -167,6 +171,11 @@ export interface RuntimeSubmitHandle<TOutput = unknown> {
   readonly runId: string;
   readonly events: AsyncIterable<RuntimeStreamEvent>;
   readonly result: Promise<RuntimeRunResult<TOutput>>;
+  /**
+   * Settles with the token usage observed for this submission even when
+   * `result` rejects. Third-party Runtime implementations may omit it.
+   */
+  readonly usage?: Promise<AgentMessageUsage | undefined> | undefined;
   readonly cancel: () => Promise<void>;
 }
 

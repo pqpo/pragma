@@ -769,6 +769,17 @@ class ManagedRuntimeSession<TNativeEvent, TNativeSession, TPrepared> {
     });
     let enteredLifecycle = false;
     let finalized = false;
+    let settledUsage = false;
+    let observedUsage: AgentMessageUsage | undefined;
+    let resolveUsage!: (usage: AgentMessageUsage | undefined) => void;
+    const usage = new Promise<AgentMessageUsage | undefined>((resolve) => {
+      resolveUsage = resolve;
+    });
+    const settleUsage = (next: AgentMessageUsage | undefined): void => {
+      if (settledUsage) return;
+      settledUsage = true;
+      resolveUsage(next);
+    };
     const finalize = async (): Promise<void> => {
       if (finalized) return;
       finalized = true;
@@ -801,7 +812,17 @@ class ManagedRuntimeSession<TNativeEvent, TNativeSession, TPrepared> {
           },
         });
 
-        const runResult = await this.executeSubmission(runId, submission, signal, controller);
+        const runResult = await this.executeSubmission(
+          runId,
+          submission,
+          signal,
+          controller,
+          (next) => {
+            observedUsage = next;
+          },
+        );
+        observedUsage = runResult.result.usage;
+        settleUsage(observedUsage);
         await this.refreshContextWindow(false);
 
         controller.writer.write({
@@ -823,6 +844,8 @@ class ManagedRuntimeSession<TNativeEvent, TNativeSession, TPrepared> {
 
         return runResult;
       } catch (error) {
+        observedUsage ??= controller.getUsage();
+        settleUsage(observedUsage);
         await this.refreshContextWindow(false);
         const wasCancelled = signal.aborted || cancelled;
         const message = error instanceof Error ? error.message : "Runtime run failed.";
@@ -854,6 +877,7 @@ class ManagedRuntimeSession<TNativeEvent, TNativeSession, TPrepared> {
         await this.options.checkpoint("turn.failed");
         throw error;
       } finally {
+        settleUsage(observedUsage);
         await finalize();
       }
     });
@@ -865,6 +889,7 @@ class ManagedRuntimeSession<TNativeEvent, TNativeSession, TPrepared> {
       runId,
       events: queue,
       result,
+      usage,
       cancel: async () => {
         cancelled = true;
         const active = this.activeRunId === runId;
@@ -945,6 +970,7 @@ class ManagedRuntimeSession<TNativeEvent, TNativeSession, TPrepared> {
     submission: RuntimeSubmitRequest<TOutput>,
     signal: AgentRunExecutionContext["signal"],
     controller: ReturnType<typeof createRuntimeStreamController<TNativeEvent>>,
+    observeUsage: (usage: AgentMessageUsage | undefined) => void,
   ): Promise<RuntimeRunResult<TOutput>> {
     const startupMessages =
       this.options.driver.consumeStartupMessages?.(this.options.nativeSession, {
@@ -967,21 +993,30 @@ class ManagedRuntimeSession<TNativeEvent, TNativeSession, TPrepared> {
           ? createInitialRuntimePrompt(submission.query, submission.output)
           : createRuntimeOutputRetryPrompt(parseResult);
       controller.resetCapture();
-      const turnResult = await this.options.driver.startTurn(this.options.nativeSession, {
-        runId,
-        attempt,
-        isRetry: attempt > 1,
-        rawQuery: submission.query,
-        prompt,
-        startupMessages: attempt === 1 ? startupMessages : [],
-        modelSelection: submission.modelSelection,
-        output: submission.output,
-        signal,
-        source: controller.source,
-        stream: controller.writer,
-      });
+      const turnResult = await (async () => {
+        try {
+          return await this.options.driver.startTurn(this.options.nativeSession, {
+            runId,
+            attempt,
+            isRetry: attempt > 1,
+            rawQuery: submission.query,
+            prompt,
+            startupMessages: attempt === 1 ? startupMessages : [],
+            modelSelection: submission.modelSelection,
+            output: submission.output,
+            signal,
+            source: controller.source,
+            stream: controller.writer,
+          });
+        } catch (error) {
+          usage = mergeUsage(usage, controller.getUsage());
+          observeUsage(usage);
+          throw error;
+        }
+      })();
       outputText = turnResult.outputText ?? controller.getOutputText();
-      usage = mergeUsage(controller.getUsage(), turnResult.usage);
+      usage = mergeUsage(usage, mergeUsage(controller.getUsage(), turnResult.usage));
+      observeUsage(usage);
 
       const runtimeSessionId = turnResult.runtimeSessionId ?? controller.getRuntimeSessionId();
       if (runtimeSessionId !== undefined) {
@@ -1016,6 +1051,7 @@ class ManagedRuntimeSession<TNativeEvent, TNativeSession, TPrepared> {
           usage,
         })) ?? usage;
     }
+    observeUsage(usage);
 
     return createRuntimeRunResult(runId, parseResult.value, usage);
   }
