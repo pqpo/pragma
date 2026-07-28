@@ -97,6 +97,7 @@ export function createCodexRuntime(options: CodexRuntimeAdapterOptions = {}): Ru
         };
       },
       async createSession(ctx): Promise<CodexDriverSession> {
+        const sessionStartedAt = performance.now();
         assertRuntimeManagedProvider(
           ctx.request.modelSelection?.model.providerId,
           "openai",
@@ -116,37 +117,65 @@ export function createCodexRuntime(options: CodexRuntimeAdapterOptions = {}): Ru
             ctx.persistence.restoredRuntimeSessionId ?? ctx.request.runtimeSession?.id ?? "",
         };
         const sessionDir = ctx.persistence.spec?.sessionDir ?? ctx.paths.runtimeSessionDir("codex");
-        const codex = await prepareManagedCodexHome({
-          agent: ctx.agent,
-          sessionDir,
-          pragmaPaths: ctx.paths.pragma,
-          env: ctx.processEnvironment,
-          logger: ctx.logger,
-        });
-        if (state.threadId !== "") {
-          const exists = await nativeSessionFileExists(
-            join(codex.home, "sessions"),
-            state.threadId,
-          );
-          if (!exists) {
-            throw new Error(`Codex runtime session file was not found: ${state.threadId}.`);
-          }
-        }
+        const codexHomePromise = timedCodexPhase(
+          ctx.logger,
+          "managed_home",
+          sessionStartedAt,
+          async () =>
+            await prepareManagedCodexHome({
+              agent: ctx.agent,
+              sessionDir,
+              pragmaPaths: ctx.paths.pragma,
+              env: ctx.processEnvironment,
+              logger: ctx.logger,
+            }),
+        );
+        const registryPromise = timedCodexPhase(
+          ctx.logger,
+          "mcp_tool_registry",
+          sessionStartedAt,
+          async () => await createMcpToolRegistry(ctx.agent.mcp),
+        );
         let mcpToolRegistry: McpToolRegistry | undefined;
         let expertToolsMcpRegistration: CodexExpertToolsMcpSessionRegistration | undefined;
         let client: CodexAppServerClient | undefined;
 
         try {
-          mcpToolRegistry = await createMcpToolRegistry(ctx.agent.mcp);
-          expertToolsMcpRegistration = await registerCodexExpertToolsMcpSession({
-            agent: ctx.agent,
-            getContext: () => ctx.lifecycle.currentContext,
-            humanInteractionHandler: ctx.request.humanInteractionHandler,
-            logger: ctx.logger,
-            mcpTools: mcpToolRegistry.tools,
-            state: toolRuntimeState,
-            executionContext: ctx.request.executionContext,
-          });
+          const [codex, registry] = await Promise.all([codexHomePromise, registryPromise]);
+          mcpToolRegistry = registry;
+          const [restoreExists, registration] = await Promise.all([
+            state.threadId === ""
+              ? Promise.resolve(true)
+              : timedCodexPhase(
+                  ctx.logger,
+                  "restore_session_lookup",
+                  sessionStartedAt,
+                  async () =>
+                    await nativeSessionFileExists(join(codex.home, "sessions"), state.threadId),
+                ),
+            timedCodexPhase(ctx.logger, "mcp_tool_registration", sessionStartedAt, async () =>
+              registerCodexExpertToolsMcpSession({
+                agent: ctx.agent,
+                getContext: () => ctx.lifecycle.currentContext,
+                humanInteractionHandler: ctx.request.humanInteractionHandler,
+                logger: ctx.logger,
+                mcpTools: mcpToolRegistry!.tools,
+                state: toolRuntimeState,
+                executionContext: ctx.request.executionContext,
+              }),
+            ),
+          ]);
+          if (!restoreExists) {
+            await registration.dispose();
+            throw new Error(`Codex runtime session file was not found: ${state.threadId}.`);
+          }
+          expertToolsMcpRegistration = registration;
+          ctx.logger.info(
+            "runtime.codex_process_spawn_requested",
+            "Codex app-server native process spawn requested",
+            { elapsedMs: codexElapsedMs(sessionStartedAt), executablePath },
+          );
+          const processStartedAt = performance.now();
           client = await CodexAppServerClient.start({
             executablePath,
             args: appendCodexExecutionMcpConfig(
@@ -173,17 +202,32 @@ export function createCodexRuntime(options: CodexRuntimeAdapterOptions = {}): Ru
               ctx.logger.debug("runtime.codex_stderr", "Codex app-server stderr", { chunk });
             },
           });
-          const threadStartResult = await startOrResumeThread({
-            client,
-            runtimeSessionId: state.threadId,
-            cwd: ctx.workspace,
-            model: defaultModelName,
-            thinkingLevel: defaultThinkingLevel,
-            developerInstructions: ctx.agentContext.systemPrompt,
-            sandboxMode: options.sandboxMode,
-            approvalPolicy: options.approvalPolicy,
+          ctx.logger.info("runtime.codex_initialized", "Codex app-server initialized", {
+            durationMs: codexElapsedMs(processStartedAt),
+            elapsedMs: codexElapsedMs(sessionStartedAt),
           });
+          const threadStartResult = await timedCodexPhase(
+            ctx.logger,
+            state.threadId === "" ? "thread_start" : "thread_resume",
+            sessionStartedAt,
+            async () =>
+              await startOrResumeThread({
+                client: client!,
+                runtimeSessionId: state.threadId,
+                cwd: ctx.workspace,
+                model: defaultModelName,
+                thinkingLevel: defaultThinkingLevel,
+                developerInstructions: ctx.agentContext.systemPrompt,
+                sandboxMode: options.sandboxMode,
+                approvalPolicy: options.approvalPolicy,
+              }),
+          );
           state.threadId = threadStartResult.threadId;
+          ctx.logger.info("runtime.codex_session_ready", "Codex Session preparation completed", {
+            elapsedMs: codexElapsedMs(sessionStartedAt),
+            systemPromptCharacters: ctx.agentContext.systemPrompt.length,
+            toolCount: mcpToolRegistry.tools.length,
+          });
 
           return {
             ...createCodexNativeSession({
@@ -201,6 +245,10 @@ export function createCodexRuntime(options: CodexRuntimeAdapterOptions = {}): Ru
             expertToolsMcpRegistration,
           };
         } catch (error) {
+          if (mcpToolRegistry === undefined) {
+            const registry = await Promise.allSettled([registryPromise]);
+            if (registry[0]?.status === "fulfilled") mcpToolRegistry = registry[0].value;
+          }
           try {
             await disposeCodexRuntimeResources(
               client,
@@ -266,6 +314,26 @@ export function createCodexRuntime(options: CodexRuntimeAdapterOptions = {}): Ru
       createProcessEnvironment: () => ({ ...process.env, ...(options.env ?? {}) }),
     },
   );
+}
+
+async function timedCodexPhase<T>(
+  logger: Pick<PragmaLogger, "info">,
+  phase: string,
+  sessionStartedAt: number,
+  operation: () => Promise<T>,
+): Promise<T> {
+  const startedAt = performance.now();
+  const value = await operation();
+  logger.info("runtime.codex_prepare_phase", `Codex preparation phase completed: ${phase}`, {
+    phase,
+    durationMs: codexElapsedMs(startedAt),
+    elapsedMs: codexElapsedMs(sessionStartedAt),
+  });
+  return value;
+}
+
+function codexElapsedMs(startedAt: number): number {
+  return Math.round((performance.now() - startedAt) * 100) / 100;
 }
 
 function assertRuntimeManagedProvider(

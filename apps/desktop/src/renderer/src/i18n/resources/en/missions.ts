@@ -181,4 +181,5 @@ export const missions = {
   statusSucceeded: "Succeeded",
   statusCancelled: "Cancelled",
   statusReady: "Ready",
+  statusPreparing: "Preparing",
 } as const;

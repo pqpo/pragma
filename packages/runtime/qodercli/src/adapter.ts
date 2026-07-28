@@ -8,6 +8,7 @@ import {
   type ExpertToolsMcpSessionRegistration,
   type ExpertToolRuntimeState,
   type McpToolRegistry,
+  type PragmaLogger,
   type RuntimeAdapter,
   type RuntimeSessionPersistenceSpec,
 } from "@pragma/core";
@@ -50,9 +51,7 @@ interface QoderDriverSession extends QoderNativeSession {
   readonly expertToolsMcpRegistration: ExpertToolsMcpSessionRegistration;
 }
 
-export function createQoderCliRuntime(
-  options: QoderCliRuntimeAdapterOptions = {},
-): RuntimeAdapter {
+export function createQoderCliRuntime(options: QoderCliRuntimeAdapterOptions = {}): RuntimeAdapter {
   const descriptor = {
     ...QODER_DESCRIPTOR,
     ...options.descriptor,
@@ -85,42 +84,89 @@ export function createQoderCliRuntime(
         };
       },
       async createSession(ctx): Promise<QoderDriverSession> {
+        const sessionStartedAt = performance.now();
         assertProvider(ctx.request.modelSelection?.model.providerId);
         const sessionDir =
           ctx.persistence.spec?.sessionDir ?? ctx.paths.runtimeSessionDir("qodercli");
-        const configDir = await prepareManagedQoderConfig({
-          sessionDir,
-          env: ctx.processEnvironment,
-          logger: ctx.logger,
-        });
+        const configPromise = timedQoderPhase(
+          ctx.logger,
+          "prepare_managed_config",
+          sessionStartedAt,
+          async () =>
+            await prepareManagedQoderConfig({
+              sessionDir,
+              env: ctx.processEnvironment,
+              logger: ctx.logger,
+            }),
+        );
+        const pluginPromise = timedQoderPhase(
+          ctx.logger,
+          "skill_plugin_materialization",
+          sessionStartedAt,
+          async () => await materializeQoderSkillPlugin(ctx.agent, sessionDir),
+        );
+        const registryPromise = timedQoderPhase(
+          ctx.logger,
+          "mcp_tool_registry",
+          sessionStartedAt,
+          async () => await createMcpToolRegistry(ctx.agent.mcp),
+        );
+        let configDir: string;
+        let plugin: Awaited<ReturnType<typeof materializeQoderSkillPlugin>>;
+        let mcpToolRegistry: McpToolRegistry | undefined;
+        try {
+          [configDir, plugin, mcpToolRegistry] = await Promise.all([
+            configPromise,
+            pluginPromise,
+            registryPromise,
+          ]);
+        } catch (error) {
+          const registry = await Promise.allSettled([registryPromise]);
+          if (registry[0]?.status === "fulfilled") await registry[0].value.dispose();
+          throw error;
+        }
         const restoredRuntimeSessionId =
           ctx.persistence.restoredRuntimeSessionId ?? ctx.request.runtimeSession?.id ?? "";
-        if (
-          restoredRuntimeSessionId !== "" &&
-          !(await nativeSessionFileExists(
-            join(configDir, "projects"),
-            restoredRuntimeSessionId,
-          ))
-        ) {
-          throw new Error(
-            `Qoder CLI runtime session file was not found: ${restoredRuntimeSessionId}.`,
-          );
-        }
-        const plugin = await materializeQoderSkillPlugin(ctx.agent, sessionDir);
         const toolRuntimeState: ExpertToolRuntimeState = {};
-        let mcpToolRegistry: McpToolRegistry | undefined;
         let expertToolsMcpRegistration: ExpertToolsMcpSessionRegistration | undefined;
 
         try {
-          mcpToolRegistry = await createMcpToolRegistry(ctx.agent.mcp);
-          expertToolsMcpRegistration = await registerExpertToolsMcpSession({
-            agent: ctx.agent,
-            getContext: () => ctx.lifecycle.currentContext,
-            humanInteractionHandler: ctx.request.humanInteractionHandler,
-            logger: ctx.logger,
-            mcpTools: mcpToolRegistry.tools,
-            state: toolRuntimeState,
-            executionContext: ctx.request.executionContext,
+          if (
+            restoredRuntimeSessionId !== "" &&
+            !(await timedQoderPhase(
+              ctx.logger,
+              "restore_session_lookup",
+              sessionStartedAt,
+              async () =>
+                await nativeSessionFileExists(
+                  join(configDir, "projects"),
+                  restoredRuntimeSessionId,
+                ),
+            ))
+          ) {
+            throw new Error(
+              `Qoder CLI runtime session file was not found: ${restoredRuntimeSessionId}.`,
+            );
+          }
+          expertToolsMcpRegistration = await timedQoderPhase(
+            ctx.logger,
+            "mcp_tool_registration",
+            sessionStartedAt,
+            async () =>
+              await registerExpertToolsMcpSession({
+                agent: ctx.agent,
+                getContext: () => ctx.lifecycle.currentContext,
+                humanInteractionHandler: ctx.request.humanInteractionHandler,
+                logger: ctx.logger,
+                mcpTools: mcpToolRegistry.tools,
+                state: toolRuntimeState,
+                executionContext: ctx.request.executionContext,
+              }),
+          );
+          ctx.logger.info("runtime.qodercli_session_ready", "Qoder Session preparation completed", {
+            elapsedMs: qoderElapsedMs(sessionStartedAt),
+            systemPromptCharacters: ctx.agentContext.systemPrompt.length,
+            toolCount: mcpToolRegistry.tools.length,
           });
           return {
             agent: ctx.agent,
@@ -133,8 +179,7 @@ export function createQoderCliRuntime(
             logger: ctx.logger,
             humanInteractionHandler: ctx.request.humanInteractionHandler,
             permissionMode: options.permissionMode ?? "default",
-            defaultModelName:
-              ctx.request.modelSelection?.model.modelId ?? options.defaultModelName,
+            defaultModelName: ctx.request.modelSelection?.model.modelId ?? options.defaultModelName,
             defaultThinkingLevel:
               ctx.request.modelSelection?.thinkingLevel ?? options.defaultThinkingLevel,
             contextWindowOverride: options.contextWindowTokens,
@@ -169,10 +214,7 @@ export function createQoderCliRuntime(
       cancelTurn: cancelQoderTurn,
       async closeSession(session) {
         await closeQoderSession(session);
-        await disposeResources(
-          session.expertToolsMcpRegistration,
-          session.mcpToolRegistry,
-        );
+        await disposeResources(session.expertToolsMcpRegistration, session.mcpToolRegistry);
       },
     },
     {
@@ -186,10 +228,27 @@ export function createQoderCliRuntime(
   );
 }
 
-async function nativeSessionFileExists(
-  root: string,
-  runtimeSessionId: string,
-): Promise<boolean> {
+async function timedQoderPhase<T>(
+  logger: Pick<PragmaLogger, "info">,
+  phase: string,
+  sessionStartedAt: number,
+  operation: () => Promise<T>,
+): Promise<T> {
+  const startedAt = performance.now();
+  const value = await operation();
+  logger.info("runtime.qodercli_prepare_phase", `Qoder preparation phase completed: ${phase}`, {
+    phase,
+    durationMs: qoderElapsedMs(startedAt),
+    elapsedMs: qoderElapsedMs(sessionStartedAt),
+  });
+  return value;
+}
+
+function qoderElapsedMs(startedAt: number): number {
+  return Math.round((performance.now() - startedAt) * 100) / 100;
+}
+
+async function nativeSessionFileExists(root: string, runtimeSessionId: string): Promise<boolean> {
   const entries = await readdir(root, { withFileTypes: true }).catch(() => []);
   for (const entry of entries) {
     const path = join(root, entry.name);
@@ -212,10 +271,7 @@ async function disposeResources(
   registration: ExpertToolsMcpSessionRegistration | undefined,
   registry: McpToolRegistry | undefined,
 ): Promise<void> {
-  const results = await Promise.allSettled([
-    registration?.dispose(),
-    registry?.dispose(),
-  ]);
+  const results = await Promise.allSettled([registration?.dispose(), registry?.dispose()]);
   const errors = results.flatMap((result) =>
     result.status === "rejected" ? [result.reason as unknown] : [],
   );

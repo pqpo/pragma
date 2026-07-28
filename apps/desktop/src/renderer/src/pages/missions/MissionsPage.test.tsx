@@ -47,6 +47,7 @@ describe("MissionsPage", () => {
 
     expect(html).toContain("mission-thinking-placeholder");
     expect(html).toContain("Product Designer is thinking");
+    expect(html).toContain("Preparing");
   });
 
   it("collapses search with upward-moving content and restores it in the reverse direction", () => {

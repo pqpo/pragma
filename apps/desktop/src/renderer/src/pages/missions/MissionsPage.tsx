@@ -1669,7 +1669,11 @@ export function MissionDetailFragment(props: {
           <h1 title={props.mission.title}>{props.mission.title}</h1>
           <p>
             <span className="mission-ready-dot" aria-hidden="true" />
-            {missionStatusLabel(props.mission)}
+            {missionStatusLabel(
+              props.mission,
+              clientOperation.kind === "sending" ||
+                (props.mission.execution === undefined && thinkingRequestId !== null),
+            )}
             <span aria-hidden="true">·</span>
             <Folder size={16} aria-hidden="true" />
             {props.mission.workspace.basename}
@@ -3268,8 +3272,15 @@ function workStatusLabel(status: MissionWorkRecord["status"]): string {
   }
 }
 
-function missionStatusLabel(mission: Mission | MissionSummary): string {
+export function missionStatusLabel(mission: Mission | MissionSummary, preparing = false): string {
   if (mission.lifecycleStatus === "completed") return i18n.t("statusCompleted", { ns: "missions" });
+  if (
+    preparing &&
+    (mission.execution === undefined ||
+      !["queued", "running", "waiting"].includes(mission.execution.status))
+  ) {
+    return i18n.t("statusPreparing", { ns: "missions" });
+  }
   switch (mission.execution?.status) {
     case "queued":
       return i18n.t("statusQueued", { ns: "missions" });

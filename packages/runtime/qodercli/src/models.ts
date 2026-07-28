@@ -1,10 +1,7 @@
+import { createHash } from "node:crypto";
+
 import type { RuntimeModel, RuntimeThinkingLevel } from "@pragma/core";
-import {
-  ProcessTransport,
-  query,
-  type ModelInfo,
-  type Query,
-} from "@qoder-ai/qoder-agent-sdk";
+import { ProcessTransport, query, type ModelInfo, type Query } from "@qoder-ai/qoder-agent-sdk";
 
 import { resolveQoderCliExecutablePath } from "./executable.ts";
 import { resolveQoderAuth } from "./sdk-options.ts";
@@ -18,25 +15,47 @@ const THINKING_LABELS: Readonly<Record<string, string>> = {
   xhigh: "Extra high",
   max: "Max",
 };
+const MODEL_CATALOG_TTL_MS = 10 * 60_000;
+const MODEL_CATALOG_CACHE_LIMIT = 16;
+
+interface QoderModelCatalogCacheEntry {
+  cache?: { readonly expiresAt: number; readonly models: readonly RuntimeModel[] } | undefined;
+  refresh?: Promise<readonly RuntimeModel[]> | undefined;
+}
+
+const modelCatalogs = new Map<string, QoderModelCatalogCacheEntry>();
 
 export function createQoderCliModelDiscovery(
   options: QoderCliRuntimeAdapterOptions,
 ): () => Promise<readonly RuntimeModel[]> {
-  let cache:
-    | { readonly expiresAt: number; readonly models: readonly RuntimeModel[] }
-    | undefined;
-  let refresh: Promise<readonly RuntimeModel[]> | undefined;
+  const key = qoderModelCatalogCacheKey(options);
+  const existingState = modelCatalogs.get(key);
+  const state: QoderModelCatalogCacheEntry = existingState ?? {};
+  if (existingState === undefined) {
+    modelCatalogs.set(key, state);
+    while (modelCatalogs.size > MODEL_CATALOG_CACHE_LIMIT) {
+      const oldest = modelCatalogs.keys().next().value as string | undefined;
+      if (oldest === undefined || oldest === key) break;
+      modelCatalogs.delete(oldest);
+    }
+  } else {
+    modelCatalogs.delete(key);
+    modelCatalogs.set(key, state);
+  }
 
   return async () => {
-    if (cache === undefined) return await refreshCatalog();
-    if (cache.expiresAt <= Date.now() && refresh === undefined) {
-      refresh = refreshCatalog();
-      void refresh.then(
+    if (state.cache === undefined) {
+      state.refresh ??= refreshCatalog();
+      return await state.refresh;
+    }
+    if (state.cache.expiresAt <= Date.now() && state.refresh === undefined) {
+      state.refresh = refreshCatalog();
+      void state.refresh.then(
         () => notifyModelCatalogUpdated(options.onModelCatalogUpdated),
         () => undefined,
       );
     }
-    return cache.models;
+    return state.cache.models;
 
     async function refreshCatalog(): Promise<readonly RuntimeModel[]> {
       let q: Query | undefined;
@@ -58,14 +77,29 @@ export function createQoderCliModelDiscovery(
         if (models.length === 0) {
           throw new Error("Qoder CLI model discovery returned no enabled models.");
         }
-        cache = { expiresAt: Date.now() + 10 * 60_000, models };
+        state.cache = { expiresAt: Date.now() + MODEL_CATALOG_TTL_MS, models };
         return models;
       } finally {
-        refresh = undefined;
+        state.refresh = undefined;
         await q?.close().catch(() => undefined);
       }
     }
   };
+}
+
+function qoderModelCatalogCacheKey(options: QoderCliRuntimeAdapterOptions): string {
+  return createHash("sha256")
+    .update("pragma.qoder-model-catalog/v1\0")
+    .update(resolveQoderCliExecutablePath(options))
+    .update("\0")
+    .update(JSON.stringify(options.auth ?? { type: "qodercli" }))
+    .update("\0")
+    .update(
+      JSON.stringify(
+        Object.entries(options.env ?? {}).toSorted(([left], [right]) => left.localeCompare(right)),
+      ),
+    )
+    .digest("hex");
 }
 
 function notifyModelCatalogUpdated(listener: (() => void) | undefined): void {
@@ -81,7 +115,8 @@ export function mapQoderModel(model: ModelInfo): RuntimeModel {
   if (model.supportsDisabled === true) {
     levels.push({ value: "none", label: THINKING_LABELS["none"] ?? "Disabled" });
   }
-  for (const effort of model.efforts ?? Object.keys(model.thinking_config?.enabled?.efforts ?? {})) {
+  for (const effort of model.efforts ??
+    Object.keys(model.thinking_config?.enabled?.efforts ?? {})) {
     levels.push({
       value: effort,
       label: THINKING_LABELS[effort] ?? effort,

@@ -1,5 +1,5 @@
 import { createHash } from "node:crypto";
-import { mkdir, writeFile } from "node:fs/promises";
+import { access, mkdir, writeFile } from "node:fs/promises";
 import { dirname, join } from "node:path";
 
 import type {
@@ -9,6 +9,7 @@ import type {
   RuntimeResolver,
   RuntimeModelSelection,
 } from "@pragma/core";
+import { withFileLock } from "@pragma/core";
 import {
   loadPragmaProject,
   formatPragmaYaml,
@@ -17,6 +18,7 @@ import {
   type PragmaCompileOptions,
   type PragmaAdapterHost,
   type PragmaBindingRecord,
+  type PragmaProject,
 } from "@pragma/interpreter";
 import {
   PragmaBundleSchema,
@@ -28,6 +30,7 @@ import {
 import { BUILT_IN_PRAGMA_FILES } from "./builtin.generated.ts";
 
 export const BUILT_IN_PRAGMA_REF = "expert:0000000000pragma" as const;
+const builtInProjectCache = new Map<string, Promise<PragmaProject>>();
 
 export function builtInPragmaResource(): PragmaExpertResource {
   return PragmaExpertResourceSchema.parse(
@@ -56,16 +59,22 @@ export async function materializeBuiltInDefaultAgent(
   expertResource?: PragmaExpertResource,
   additionalResources: readonly PragmaResource[] = [],
 ): Promise<string> {
-  const targetRoot = join(root, builtInPragmaFingerprint(expertResource, additionalResources));
-  for (const [relativePath, source] of Object.entries(BUILT_IN_PRAGMA_FILES)) {
-    const target = join(targetRoot, relativePath);
-    await mkdir(dirname(target), { recursive: true, mode: 0o700 });
-    await writeFile(
-      target,
-      customizedBuiltInSource(relativePath, source, expertResource, additionalResources),
-      { mode: 0o600 },
-    );
-  }
+  const fingerprint = builtInPragmaFingerprint(expertResource, additionalResources);
+  const targetRoot = join(root, fingerprint);
+  const complete = join(targetRoot, ".complete");
+  await withFileLock(`${targetRoot}.lock`, async () => {
+    if (await exists(complete)) return;
+    for (const [relativePath, source] of Object.entries(BUILT_IN_PRAGMA_FILES)) {
+      const target = join(targetRoot, relativePath);
+      await mkdir(dirname(target), { recursive: true, mode: 0o700 });
+      await writeFile(
+        target,
+        customizedBuiltInSource(relativePath, source, expertResource, additionalResources),
+        { mode: 0o600 },
+      );
+    }
+    await writeFile(complete, `${fingerprint}\n`, { mode: 0o600 });
+  });
   return join(targetRoot, "pragma.yaml");
 }
 
@@ -88,7 +97,20 @@ export async function compileBuiltInDefaultAgent(options: {
     options.expertResource,
     options.additionalResources,
   );
-  const project = await loadPragmaProject(entry, { rootDir: dirname(entry) });
+  let projectPromise = builtInProjectCache.get(entry);
+  if (projectPromise === undefined) {
+    projectPromise = loadPragmaProject(entry, { rootDir: dirname(entry) });
+    builtInProjectCache.set(entry, projectPromise);
+    void projectPromise.catch(() => {
+      if (builtInProjectCache.get(entry) === projectPromise) builtInProjectCache.delete(entry);
+    });
+    while (builtInProjectCache.size > 16) {
+      const oldest = builtInProjectCache.keys().next().value as string | undefined;
+      if (oldest === undefined || oldest === entry) break;
+      builtInProjectCache.delete(oldest);
+    }
+  }
+  const project = await projectPromise;
   return await project.compile<Expert>(BUILT_IN_PRAGMA_REF, {
     workspace: options.workspace,
     pragmaHome: options.pragmaHome,
@@ -104,6 +126,15 @@ export async function compileBuiltInDefaultAgent(options: {
     ...(options.plugins === undefined ? {} : { plugins: options.plugins }),
     adapterHost: defaultAgentAdapterHost(dirname(entry), options.tools, options.adapterHost),
   });
+}
+
+async function exists(path: string): Promise<boolean> {
+  try {
+    await access(path);
+    return true;
+  } catch {
+    return false;
+  }
 }
 
 function defaultAgentAdapterHost(

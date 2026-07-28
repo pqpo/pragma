@@ -23,6 +23,7 @@ import {
   type ExpertAgentHumanResponse,
   type ExpertSession,
   type MutableExecution,
+  type PragmaLogger,
   type RuntimeResolver,
   type RuntimeContextWindowUsage,
   type RuntimeModelSelection,
@@ -533,11 +534,31 @@ export function createMissionRunner(options: {
     readonly startedAt: string;
     readonly inputMessageId: string;
     readonly sessionId?: string | undefined;
+    readonly acceptedAt?: number | undefined;
     readonly onFinished?: (() => void | Promise<void>) | undefined;
   }): void => {
+    let firstProjectionLogged = false;
     const live = observeMissionChat(
       input.handle,
-      (patches) => emitChatPatches(input.missionId, patches),
+      (patches) => {
+        emitChatPatches(input.missionId, patches);
+        if (
+          !firstProjectionLogged &&
+          input.acceptedAt !== undefined &&
+          patches.some(isVisibleTextProjectionPatch)
+        ) {
+          firstProjectionLogged = true;
+          logger.info(
+            "mission.first_ui_projection",
+            "Mission emitted its first UI-visible text projection",
+            {
+              missionId: input.missionId,
+              executionId: input.handle.executionId,
+              elapsedMs: elapsedMissionMs(input.acceptedAt),
+            },
+          );
+        }
+      },
       () => invalidateChat(input.missionId),
       (item) => {
         const sessionId = item.source.sessionId;
@@ -578,7 +599,17 @@ export function createMissionRunner(options: {
           input.missionId,
           input.handle.executionId,
         ),
-    ).finally(async () => await forgetActive(input.missionId, input.handle.executionId));
+    )
+      .then(() => {
+        if (input.acceptedAt !== undefined) {
+          logger.info("mission.final_result", "Mission execution reached a final result", {
+            missionId: input.missionId,
+            executionId: input.handle.executionId,
+            elapsedMs: elapsedMissionMs(input.acceptedAt),
+          });
+        }
+      })
+      .finally(async () => await forgetActive(input.missionId, input.handle.executionId));
     active.set(input.missionId, { handle: input.handle, settlement });
     invalidateChat(input.missionId);
     invalidateWork(input.missionId);
@@ -593,18 +624,35 @@ export function createMissionRunner(options: {
   };
 
   const runMission = async (id: string): Promise<Mission> => {
+    const acceptedAt = performance.now();
+    logger.info("mission.message_accepted", "Mission request accepted", {
+      missionId: id,
+      kind: "initial",
+    });
+    const capacityCheckStartedAt = performance.now();
     await assertStorageWriteAllowed(new PragmaPaths({ pragmaHome: options.pragmaHome }));
+    logMissionPhase(logger, id, "storage_capacity_check", capacityCheckStartedAt, acceptedAt);
     const mission = await options.missions.get(id);
     if (active.has(mission.id)) return mission;
     const { app, runtimes: baseRuntimes } = executionContext(mission);
     const runtimes = withMissionRuntimeBinding(baseRuntimes, await readMissionRootContext(mission));
+    let phaseStartedAt = performance.now();
     const compiled = await compileMissionExecutor(mission, runtimes);
+    logMissionPhase(logger, mission.id, "default_agent_compile", phaseStartedAt, acceptedAt);
     const modelSelection = toRuntimeModelSelection(mission.modelOverride);
     if (mission.modelOverride !== undefined) {
+      phaseStartedAt = performance.now();
       await runtimes.bind({
         runtimeId: requireRootRuntimeId(compiled),
         modelSelection,
       });
+      logMissionPhase(
+        logger,
+        mission.id,
+        "runtime_bind_model_validation",
+        phaseStartedAt,
+        acceptedAt,
+      );
     }
     const startedAt = new Date().toISOString();
 
@@ -665,6 +713,7 @@ export function createMissionRunner(options: {
         handle,
         startedAt: executionStartedAt,
         inputMessageId,
+        acceptedAt,
       });
       return running;
     }
@@ -673,6 +722,7 @@ export function createMissionRunner(options: {
       mission.execution !== undefined &&
       mission.execution.sessionId !== undefined &&
       ["queued", "running", "waiting"].includes(mission.execution.status);
+    phaseStartedAt = performance.now();
     const session =
       sessions.get(mission.id) ??
       (await openMissionExpertSession({
@@ -683,6 +733,9 @@ export function createMissionRunner(options: {
         modelSelection,
         createSuccessorOnMismatch: true,
       }));
+    logMissionPhase(logger, mission.id, "expert_session_open", phaseStartedAt, acceptedAt, {
+      cacheHit: sessions.has(mission.id),
+    });
     sessions.set(mission.id, session);
     const recoveredPrompt = recoverable
       ? (await session.getPromptQueue()).find(
@@ -704,6 +757,7 @@ export function createMissionRunner(options: {
     const inputMessageId = recoverable
       ? mission.execution!.inputMessageId
       : mission.initialMessageId;
+    phaseStartedAt = performance.now();
     const turn =
       recoveredTurn ??
       (await session.prompt(
@@ -719,6 +773,7 @@ export function createMissionRunner(options: {
           requestId: recoverable ? randomUUID() : inputMessageId,
         },
       ));
+    logMissionPhase(logger, mission.id, "expert_session_prompt", phaseStartedAt, acceptedAt);
     const executionStartedAt =
       recoveredTurn === undefined ? startedAt : mission.execution!.startedAt;
     await options.missions.appendExecutionReference({
@@ -740,6 +795,7 @@ export function createMissionRunner(options: {
       startedAt: executionStartedAt,
       inputMessageId,
       sessionId: session.sessionId,
+      acceptedAt,
       onFinished: async () => await waitForExpertTurnSettlement(session, turn.requestId),
     });
     return running;
@@ -750,7 +806,15 @@ export function createMissionRunner(options: {
     readonly content: string;
     readonly requestId: string;
   }): Promise<Mission> => {
+    const acceptedAt = performance.now();
+    logger.info("mission.message_accepted", "Mission request accepted", {
+      missionId: input.id,
+      requestId: input.requestId,
+      kind: "followup",
+    });
+    const capacityCheckStartedAt = performance.now();
     await assertStorageWriteAllowed(new PragmaPaths({ pragmaHome: options.pragmaHome }));
+    logMissionPhase(logger, input.id, "storage_capacity_check", capacityCheckStartedAt, acceptedAt);
     const mission = await options.missions.get(input.id);
     const { app, runtimes: baseRuntimes } = executionContext(mission);
     const rootContext = await readMissionRootContext(mission);
@@ -764,13 +828,23 @@ export function createMissionRunner(options: {
     if (active.has(mission.id)) {
       throw new Error("Wait for the current expert turn before sending another message.");
     }
+    let phaseStartedAt = performance.now();
     const compiled = await compileMissionExecutor(mission, runtimes);
+    logMissionPhase(logger, mission.id, "default_agent_compile", phaseStartedAt, acceptedAt);
     const modelSelection = toRuntimeModelSelection(mission.modelOverride);
     if (mission.modelOverride !== undefined) {
+      phaseStartedAt = performance.now();
       await runtimes.bind({
         runtimeId: requireRootRuntimeId(compiled),
         modelSelection,
       });
+      logMissionPhase(
+        logger,
+        mission.id,
+        "runtime_bind_model_validation",
+        phaseStartedAt,
+        acceptedAt,
+      );
     }
     if ("kind" in compiled.value && compiled.value.kind === "flow") {
       throw new Error("Flow missions cannot receive chat messages.");
@@ -786,6 +860,8 @@ export function createMissionRunner(options: {
     )
       ? undefined
       : desiredModelSelection;
+    const sessionCacheHit = sessions.has(mission.id);
+    phaseStartedAt = performance.now();
     const session =
       sessions.get(mission.id) ??
       (await openMissionExpertSession({
@@ -796,16 +872,21 @@ export function createMissionRunner(options: {
         modelSelection,
         createSuccessorOnMismatch: true,
       }));
+    logMissionPhase(logger, mission.id, "expert_session_open", phaseStartedAt, acceptedAt, {
+      cacheHit: sessionCacheHit,
+    });
     sessions.set(mission.id, session);
     await options.missions.appendUserMessage(mission.id, {
       id: input.requestId,
       content: input.content,
       createdAt: new Date().toISOString(),
     });
+    phaseStartedAt = performance.now();
     const turn = await session.prompt(input.content, {
       requestId: input.requestId,
       ...(promptModelSelection === undefined ? {} : { modelSelection: promptModelSelection }),
     });
+    logMissionPhase(logger, mission.id, "expert_session_prompt", phaseStartedAt, acceptedAt);
     const startedAt = new Date().toISOString();
     await options.missions.appendExecutionReference({
       missionId: mission.id,
@@ -826,6 +907,7 @@ export function createMissionRunner(options: {
       startedAt,
       inputMessageId: input.requestId,
       sessionId: session.sessionId,
+      acceptedAt,
       onFinished: async () => await waitForExpertTurnSettlement(session, turn.requestId),
     });
     return running;
@@ -2083,6 +2165,38 @@ function observeMissionChat(
     await Promise.allSettled([outputTask, eventTask]);
   };
   return chat;
+}
+
+function isVisibleTextProjectionPatch(patch: MissionChatPatch): boolean {
+  if (patch.type === "entry.append") {
+    return patch.field === "content" && patch.delta.length > 0;
+  }
+  return (
+    patch.type === "entry.upsert" &&
+    (patch.entry.kind === "assistant" || patch.entry.kind === "thinking") &&
+    patch.entry.content.length > 0
+  );
+}
+
+function logMissionPhase(
+  logger: Pick<PragmaLogger, "info">,
+  missionId: string,
+  phase: string,
+  phaseStartedAt: number,
+  acceptedAt: number,
+  attributes: Record<string, unknown> = {},
+): void {
+  logger.info("mission.prepare_phase", `Mission preparation phase completed: ${phase}`, {
+    missionId,
+    phase,
+    durationMs: elapsedMissionMs(phaseStartedAt),
+    elapsedMs: elapsedMissionMs(acceptedAt),
+    ...attributes,
+  });
+}
+
+function elapsedMissionMs(startedAt: number): number {
+  return Math.round((performance.now() - startedAt) * 100) / 100;
 }
 
 function consumeLiveChatOutput(

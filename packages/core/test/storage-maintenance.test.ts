@@ -78,6 +78,44 @@ describe("runStorageMaintenance", () => {
     await expect(stat(lease)).resolves.toBeDefined();
   });
 
+  it("keeps a leased Codex base, removes an unleased base, and ignores cache metadata", async () => {
+    const root = await mkdtemp(join(tmpdir(), "pragma-storage-codex-base-"));
+    roots.push(root);
+    const paths = new PragmaPaths({ pragmaHome: root });
+    const activeFingerprint = "d".repeat(64);
+    const staleFingerprint = "e".repeat(64);
+    const bases = join(paths.codexRuntimeCacheRoot(), "bases");
+    const activeBase = join(bases, activeFingerprint);
+    const staleBase = join(bases, staleFingerprint);
+    const sourceIndex = join(bases, "source-index");
+    const leaseDirectory = join(paths.codexRuntimeCacheRoot(), "base-leases", activeFingerprint);
+    await Promise.all([
+      mkdir(activeBase, { recursive: true }),
+      mkdir(staleBase, { recursive: true }),
+      mkdir(sourceIndex, { recursive: true }),
+      mkdir(leaseDirectory, { recursive: true }),
+    ]);
+    await Promise.all([
+      writeFile(join(activeBase, ".complete"), `${activeFingerprint}\n`),
+      writeFile(join(staleBase, ".complete"), `${staleFingerprint}\n`),
+      writeFile(join(sourceIndex, "source.json"), "{}\n"),
+      writeFile(join(leaseDirectory, "active.lease"), JSON.stringify({ pid: process.pid })),
+    ]);
+
+    await runStorageMaintenance({
+      paths,
+      policy: {
+        ...DEFAULT_STORAGE_POLICY,
+        cacheLimitBytes: 0,
+        cacheTtlMs: 0,
+      },
+    });
+
+    await expect(stat(activeBase)).resolves.toBeDefined();
+    await expect(stat(staleBase)).rejects.toMatchObject({ code: "ENOENT" });
+    await expect(stat(sourceIndex)).resolves.toBeDefined();
+  });
+
   it("purges completed fresh trash under hard-limit pressure", async () => {
     const root = await mkdtemp(join(tmpdir(), "pragma-storage-maintenance-pressure-"));
     roots.push(root);

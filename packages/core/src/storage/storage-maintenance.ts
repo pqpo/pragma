@@ -190,11 +190,41 @@ interface Candidate {
 async function collectCacheCandidates(paths: PragmaPaths): Promise<Candidate[]> {
   return [
     ...(await hashDirectoryCandidates(paths.pluginPackagesCacheRoot())),
-    ...(await directChildren(join(paths.codexRuntimeCacheRoot(), "bases"))),
+    ...(await unleasedCodexBaseCandidates(paths)),
     ...(await hashDirectoryCandidates(join(paths.codexRuntimeCacheRoot(), "skills"))),
     ...(await unleasedProjectViewCandidates(paths)),
     ...(await directChildren(paths.agentsCacheRoot())),
   ];
+}
+
+async function unleasedCodexBaseCandidates(paths: PragmaPaths): Promise<Candidate[]> {
+  const candidates = (await directChildren(join(paths.codexRuntimeCacheRoot(), "bases"))).filter(
+    (candidate) => /^[a-f0-9]{64}$/.test(basename(candidate.path)),
+  );
+  const leasesRoot = join(paths.codexRuntimeCacheRoot(), "base-leases");
+  const leasedFingerprints = new Set<string>();
+  for (const leaseDirectory of await directChildren(leasesRoot)) {
+    const fingerprint = basename(leaseDirectory.path);
+    if (!/^[a-f0-9]{64}$/.test(fingerprint)) continue;
+    if ((await stat(leaseDirectory.path).catch(() => undefined))?.isDirectory() !== true) continue;
+    let leased = false;
+    for (const lease of await directChildren(leaseDirectory.path)) {
+      let pid: unknown;
+      try {
+        pid = (JSON.parse(await readFile(lease.path, "utf8")) as { readonly pid?: unknown }).pid;
+      } catch {
+        pid = undefined;
+      }
+      if (typeof pid === "number" && isProcessAlive(pid)) {
+        leased = true;
+      } else {
+        await rm(lease.path, { force: true });
+      }
+    }
+    if (leased) leasedFingerprints.add(fingerprint);
+    else await removeEmptyDirectory(leaseDirectory.path);
+  }
+  return candidates.filter((candidate) => !leasedFingerprints.has(basename(candidate.path)));
 }
 
 async function unleasedProjectViewCandidates(paths: PragmaPaths): Promise<Candidate[]> {

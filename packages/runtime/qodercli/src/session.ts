@@ -1,8 +1,4 @@
-import type {
-  AgentMessage,
-  AgentMessageUsage,
-  AgentAssistantMessage,
-} from "@pragma/shared";
+import type { AgentMessage, AgentMessageUsage, AgentAssistantMessage } from "@pragma/shared";
 import {
   createRuntimeContextWindowUsage,
   createUsageFromTokenCounts,
@@ -76,11 +72,13 @@ export interface QoderNativeSession {
   activeQuery?: Query | undefined;
   contextWindowUsage?: RuntimeContextWindowUsage | undefined;
   compactSummary?: string | undefined;
-  pendingCompaction?: {
-    trigger?: "manual" | "auto" | undefined;
-    preTokens?: number | undefined;
-    summary?: string | undefined;
-  } | undefined;
+  pendingCompaction?:
+    | {
+        trigger?: "manual" | "auto" | undefined;
+        preTokens?: number | undefined;
+        summary?: string | undefined;
+      }
+    | undefined;
   contextWindowTokens?: number | undefined;
 }
 
@@ -257,6 +255,7 @@ async function runQoderQuery(
   prompt: string,
   turn: RuntimeTurnContext<QoderNativeEvent>,
 ): Promise<SDKResultMessage> {
+  const queryStartedAt = performance.now();
   session.pendingCompaction = undefined;
   const q = createQuery(session, prompt, {
     modelName: turn.modelSelection?.model.modelId,
@@ -279,8 +278,42 @@ async function runQoderQuery(
   try {
     let result: SDKResultMessage | undefined;
     let iterationError: unknown;
+    let firstSdkMessageLogged = false;
+    let firstTextDeltaLogged = false;
     try {
+      session.logger.info(
+        "runtime.qodercli_process_spawn_requested",
+        "Qoder SDK iteration requested the native CLI process",
+        { runId: turn.runId, elapsedMs: qoderTurnElapsedMs(queryStartedAt) },
+      );
       for await (const message of q) {
+        if (!firstSdkMessageLogged) {
+          firstSdkMessageLogged = true;
+          session.logger.info(
+            "runtime.qodercli_first_sdk_message",
+            "Qoder transport delivered its first SDK message",
+            {
+              runId: turn.runId,
+              elapsedMs: qoderTurnElapsedMs(queryStartedAt),
+            },
+          );
+        }
+        if (!firstTextDeltaLogged && hasQoderTextDelta(message)) {
+          firstTextDeltaLogged = true;
+          session.logger.info(
+            "runtime.qodercli_first_text_delta",
+            "Qoder emitted its first text delta",
+            { runId: turn.runId, elapsedMs: qoderTurnElapsedMs(queryStartedAt) },
+          );
+        }
+        if (message.type === "system" && message.subtype === "init") {
+          session.logger.info("runtime.qodercli_initialized", "Qoder CLI initialized", {
+            runId: turn.runId,
+            elapsedMs: qoderTurnElapsedMs(queryStartedAt),
+            version: message.qodercli_version,
+            model: message.model,
+          });
+        }
         updateSessionId(session, message);
         emitSdkMessage(session, message, turn);
         if (message.type === "result") {
@@ -292,11 +325,16 @@ async function runQoderQuery(
     } catch (error) {
       iterationError = error;
     }
-    return requireSuccessfulQoderResult(
+    const successful = requireSuccessfulQoderResult(
       result,
       iterationError,
       "Qoder CLI ended without a result message.",
     );
+    session.logger.info("runtime.qodercli_final_result", "Qoder CLI returned a final result", {
+      runId: turn.runId,
+      elapsedMs: qoderTurnElapsedMs(queryStartedAt),
+    });
+    return successful;
   } finally {
     turn.signal.removeEventListener("abort", onAbort);
     session.activeQuery = undefined;
@@ -304,6 +342,20 @@ async function runQoderQuery(
     session.toolRuntimeState.source = undefined;
     await q.close().catch(() => undefined);
   }
+}
+
+function hasQoderTextDelta(message: SDKMessage): boolean {
+  if (message.type !== "stream_event") return false;
+  const delta = asRecord(message.event.delta);
+  return (
+    delta?.["type"] === "text_delta" &&
+    typeof delta["text"] === "string" &&
+    delta["text"].length > 0
+  );
+}
+
+function qoderTurnElapsedMs(startedAt: number): number {
+  return Math.round((performance.now() - startedAt) * 100) / 100;
 }
 
 function createQuery(
@@ -363,16 +415,12 @@ function createQuery(
         ],
       },
       resolveModel(context) {
-        const isCompaction =
-          context.purpose === "compact" || context.purpose === "compression";
+        const isCompaction = context.purpose === "compact" || context.purpose === "compression";
         const resolvedModelName = isCompaction ? compactModelName : modelName;
         const selected =
           context.availableModels.find((model) => model.value === resolvedModelName) ??
           context.availableModels.find((model) => model.isDefault === true);
-        const contextWindow = resolveQoderContextWindow(
-          selected,
-          session.contextWindowOverride,
-        );
+        const contextWindow = resolveQoderContextWindow(selected, session.contextWindowOverride);
         if (!isCompaction) session.contextWindowTokens = contextWindow;
         return {
           model: resolvedModelName,
@@ -391,9 +439,7 @@ function createQuery(
   });
 }
 
-function createCanUseTool(
-  handler: ExpertAgentHumanInteractionHandler | undefined,
-): CanUseTool {
+function createCanUseTool(handler: ExpertAgentHumanInteractionHandler | undefined): CanUseTool {
   return async (toolName, input, options) => {
     if (toolName.startsWith("mcp__pragma__")) {
       return { behavior: "allow", updatedInput: input };
@@ -413,7 +459,7 @@ function createCanUseTool(
         behavior: "deny",
         message:
           response.kind === "tool_approval"
-            ? response.reason ?? "Tool call was denied."
+            ? (response.reason ?? "Tool call was denied.")
             : "Invalid approval response.",
       };
     }
@@ -447,10 +493,7 @@ function emitSdkMessage(
     const delta = asRecord(event.delta);
     if (delta?.["type"] === "text_delta" && typeof delta["text"] === "string") {
       turn.stream.writeNative({ kind: "message-delta", text: delta["text"] });
-    } else if (
-      delta?.["type"] === "thinking_delta" &&
-      typeof delta["thinking"] === "string"
-    ) {
+    } else if (delta?.["type"] === "thinking_delta" && typeof delta["thinking"] === "string") {
       turn.stream.writeNative({ kind: "thought-delta", text: delta["thinking"] });
     }
     const block = asRecord(event.content_block);
@@ -596,9 +639,7 @@ export function deriveQoderContextWindowUsage(
   });
 }
 
-function estimateContextUsage(
-  session: QoderNativeSession,
-): RuntimeContextWindowUsage | undefined {
+function estimateContextUsage(session: QoderNativeSession): RuntimeContextWindowUsage | undefined {
   if (session.contextWindowTokens === undefined) return undefined;
   const latestCompactionIndex = session.messages.findLastIndex(
     (message) => message.role === "compactionSummary",

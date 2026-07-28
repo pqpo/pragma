@@ -112,6 +112,8 @@ export function createRuntimeStreamController<TNativeEvent>(options: {
   let outputText = "";
   let usage: AgentMessageUsage | undefined;
   let runtimeSessionId: string | undefined;
+  const streamStartedAt = performance.now();
+  let firstNativeDeltaLogged = false;
 
   const emit = (event: RuntimeStreamEventInput): void => {
     const emitted = emitter.emit(event);
@@ -128,6 +130,17 @@ export function createRuntimeStreamController<TNativeEvent>(options: {
   };
 
   const applyMappingResult = (result: RuntimeEventMappingResult): void => {
+    if (!firstNativeDeltaLogged && containsNativeDelta(result)) {
+      firstNativeDeltaLogged = true;
+      options.logger.info(
+        "runtime.first_native_delta",
+        "Runtime emitted its first native text or thinking delta",
+        {
+          runId: options.runId,
+          elapsedMs: Math.round((performance.now() - streamStartedAt) * 100) / 100,
+        },
+      );
+    }
     for (const event of result.events ?? []) {
       emit(event);
     }
@@ -172,6 +185,17 @@ export function createRuntimeStreamController<TNativeEvent>(options: {
       emitter.complete();
     },
   };
+}
+
+function containsNativeDelta(result: RuntimeEventMappingResult): boolean {
+  if (result.outputDelta !== undefined && result.outputDelta.length > 0) return true;
+  return (result.events ?? []).some(
+    (event) =>
+      (event.type === "message.delta" || event.type === "thought.delta") &&
+      "delta" in event.payload &&
+      typeof event.payload.delta === "string" &&
+      event.payload.delta.length > 0,
+  );
 }
 
 export function createRuntimeStreamEventFactory(

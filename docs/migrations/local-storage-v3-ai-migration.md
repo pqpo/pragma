@@ -144,7 +144,8 @@ Manifest 的 `updatedAt`，其他 Revision 使用目录 `mtime`，并在迁移�
 - 不迁移 `home/plugins/`、`home/packages/`、`home/cache/`、`home/skills/`、`home/logs/`、`home/tmp/`、
   Session 级 `auth.json`、复制的 `.env`、`config.json`、`config.toml` 或 `instructions.md`。
 - 不创建共享 Codex base、skills cache、链接或 `layout.json`；下一次 Runtime 恢复时由当前代码从用户
-  `CODEX_HOME` 重新生成。
+  `CODEX_HOME` 生成最小私有 Home，仅链接可重建的 `plugins/cache`，并将当前 Agent Skills 单独复制
+  到该 Context。
 - 如果当前用户的 `~/.codex/auth.json` 存在，可将其快照到
   `data/credentials/codex/auth.json`；不得从多个 Session 盲目选择互相冲突的 auth 副本。
 - 对每个非空 Codex `runtimeSessionRef.id`，必须在迁移后的 `home/sessions/` 或

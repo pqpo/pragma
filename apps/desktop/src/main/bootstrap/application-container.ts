@@ -179,6 +179,8 @@ export async function createDesktopApplicationContainer(
   await runtimeEnvironments.initialize();
   const runtimes = createRuntimeEnvironmentService({
     store: runtimeEnvironments,
+    logger: mainLogger,
+    getToolPermissionMode,
     factories: createBuiltInRuntimeFactories(
       modelProviderStore,
       getToolPermissionMode,

@@ -176,4 +176,5 @@ export const missions = {
   statusSucceeded: "成功",
   statusCancelled: "已取消",
   statusReady: "就绪",
+  statusPreparing: "准备中",
 } as const;

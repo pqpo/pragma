@@ -1,4 +1,4 @@
-import { mkdtemp, readFile, readdir } from "node:fs/promises";
+import { mkdtemp, readFile, readdir, stat } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { dirname, join, relative } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -209,6 +209,22 @@ describe("built-in Pragma Agent DSL", () => {
       project.listResources().filter((candidate) => candidate.kind === "Capability"),
     ).toHaveLength(3);
     expect(await project.validate()).toEqual([]);
+  });
+
+  it("reuses a completed immutable materialization across concurrent callers", async () => {
+    const root = await mkdtemp(join(tmpdir(), "pragma-default-agent-cache-"));
+    const [first, second] = await Promise.all([
+      materializeBuiltInDefaultAgent(root),
+      materializeBuiltInDefaultAgent(root),
+    ]);
+    expect(first).toBe(second);
+    const before = await stat(first);
+    const third = await materializeBuiltInDefaultAgent(root);
+    expect(third).toBe(first);
+    expect((await stat(third)).mtimeMs).toBe(before.mtimeMs);
+    await expect(readFile(join(dirname(first), ".complete"), "utf8")).resolves.toMatch(
+      /^[a-f0-9]{64}\n$/,
+    );
   });
 
   it("keeps every YAML example in the Skill structurally valid", async () => {
