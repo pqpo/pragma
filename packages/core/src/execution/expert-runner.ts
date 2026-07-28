@@ -1,4 +1,4 @@
-import { randomUUID } from "node:crypto";
+import { createHash, randomUUID } from "node:crypto";
 
 import {
   AgentMessageSchema,
@@ -34,10 +34,10 @@ import type {
   RuntimeModelSelection,
   RuntimeSubmitHandle,
 } from "../runtime/runtime-adapter.ts";
-import { mergeUsage } from "../runtime/usage.ts";
+import { mergeUsage, type UsageSink } from "../runtime/usage.ts";
 import { openRuntimeSession } from "../runtime/session-factory.ts";
 import type { RuntimeResolver } from "../runtime-resolver.ts";
-import type { PragmaLoggerProvider } from "../logging/logger.ts";
+import { createPragmaLogger, type PragmaLoggerProvider } from "../logging/logger.ts";
 import type {
   ExpertAgentAutomaticHumanInteractionHandler,
   ExpertAgentHumanRequest,
@@ -604,6 +604,7 @@ export interface RunExpertInvocationOptions {
   readonly store: ExecutionStore;
   readonly runtimes: RuntimeResolver;
   readonly loggerProvider?: PragmaLoggerProvider | undefined;
+  readonly usageSink?: UsageSink | undefined;
   readonly modelSelection?: RuntimeModelSelection | undefined;
   readonly output?: import("../runtime/runtime-adapter.ts").RuntimeOutputSchema | undefined;
   readonly outputRetryLimit?: number | undefined;
@@ -811,7 +812,6 @@ export async function runExpertInvocation(options: RunExpertInvocationOptions): 
         outputRetryLimit: options.outputRetryLimit,
         runtimeSource: runtime.descriptor,
       });
-      options.controller.addUsage(turn.usage);
       invocationUsage = mergeUsage(invocationUsage, turn.usage);
       await persistSessionInfo(session, persistRuntimeSnapshot);
 
@@ -959,6 +959,8 @@ async function executeAgentJob(
     controller: parent.controller,
     store: parent.store,
     runtimes: parent.runtimes,
+    usageSink: parent.usageSink,
+    loggerProvider: parent.loggerProvider,
     team,
     depth: await readAgentDepth(parent.store, parent.executionId, job.agent),
     orchestrator,
@@ -1108,6 +1110,8 @@ async function invokeResourceFromExpert(
         runtimes: options.runtimes,
         runtime: parentRuntimeId,
         handoffs: handoffService,
+        usageSink: options.usageSink,
+        loggerProvider: options.loggerProvider,
       });
       const handoff = await handoffService.normalize(invocationId, output);
       await options.store.commit({
@@ -1216,6 +1220,8 @@ async function invokeResourceFromExpert(
           runtimes: options.runtimes,
           depth: depth + 1,
           handoffs: options.handoffs,
+          usageSink: options.usageSink,
+          loggerProvider: options.loggerProvider,
           ...(options.readContextScope === undefined
             ? {}
             : { readContextScope: options.readContextScope }),
@@ -1368,12 +1374,17 @@ async function submitRuntimeTurn(options: {
     const output = result.result.output;
     const finalMessage =
       completedRootAssistant ?? rootMessageAccumulator.complete(output, result.result.usage);
+    await settleRuntimeTurnUsage(options, result.result.usage);
     return {
       runId: options.runId,
       output,
       usage: result.result.usage,
       ...(finalMessage === undefined ? {} : { finalMessage }),
     };
+  } catch (error) {
+    const usage = await handle.usage?.catch(() => undefined);
+    await settleRuntimeTurnUsage(options, usage);
+    throw error;
   } finally {
     await drain.catch(() => undefined);
     options.options.controller.unregisterRuntimeSubmission(
@@ -1381,6 +1392,75 @@ async function submitRuntimeTurn(options: {
       handle.runId,
     );
   }
+}
+
+async function settleRuntimeTurnUsage(
+  options: Parameters<typeof submitRuntimeTurn>[0],
+  usage: AgentMessageUsage | undefined,
+): Promise<void> {
+  if (usage === undefined) return;
+  options.options.controller.addUsage(usage);
+  const current = await options.options.store.getInvocation(
+    options.options.executionId,
+    options.options.invocationId,
+  );
+  const invocationUsage = mergeUsage(current?.usage, usage);
+  if (current !== undefined && invocationUsage !== undefined) {
+    await options.options.store.commit({
+      commitId: `invocation-usage:${options.options.invocationId}:${options.runId}`,
+      executionId: options.options.executionId,
+      invocationPatches: [
+        {
+          invocationId: options.options.invocationId,
+          patch: { usage: invocationUsage },
+        },
+      ],
+    });
+  }
+  if (options.options.usageSink === undefined) return;
+  const observationId = createHash("sha256")
+    .update(
+      JSON.stringify([options.options.executionId, options.options.invocationId, options.runId]),
+    )
+    .digest("hex");
+  const executorId = options.invocation.executorId ?? options.invocation.definition.id;
+  try {
+    await options.options.usageSink.record({
+      observationId,
+      occurredAt: new Date().toISOString(),
+      executionId: options.options.executionId,
+      invocationId: options.options.invocationId,
+      contextId: options.options.context.contextId,
+      runId: options.runId,
+      runtimeId: options.options.context.runtime.runtimeId,
+      ...(options.modelSelection === undefined ? {} : { modelSelection: options.modelSelection }),
+      executor: {
+        id: executorId,
+        name: readExpertName(options.options.expert, executorId),
+      },
+      usage,
+    });
+  } catch (error) {
+    createPragmaLogger(options.options.loggerProvider, {
+      component: "usage-sink",
+      scope: {
+        executionId: options.options.executionId,
+        invocationId: options.options.invocationId,
+        contextId: options.options.context.contextId,
+      },
+    }).warn("usage.sink_write_failed", "Host usage sink rejected an observation.", {
+      observationId,
+      error,
+    });
+  }
+}
+
+function readExpertName(expert: ExpertDefinition, executorId: string): string {
+  if (!isExpertTeam(expert)) return expert.id === executorId ? expert.name : executorId;
+  const participant = [expert.coordinator, ...expert.members].find(
+    (candidate) => candidate.id === executorId,
+  );
+  return participant?.name ?? executorId;
 }
 
 function isLiveOnlyRuntimeEvent(event: ExpertAgentStreamEvent): boolean {

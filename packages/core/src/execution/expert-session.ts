@@ -32,7 +32,7 @@ import {
   rebindRuntimeSessionExpertId,
   readRuntimeSessionRecord,
 } from "../runtime/session-record.ts";
-import { mergeUsages } from "../runtime/usage.ts";
+import { mergeUsages, type UsageSink } from "../runtime/usage.ts";
 import { PragmaPaths } from "../storage/pragma-paths.ts";
 import type { ExpertAgentAutomaticHumanInteractionHandler } from "../tools/managed-tool.ts";
 import {
@@ -136,6 +136,7 @@ export interface ExpertSessionManagerDependencies {
   readonly executions: ExecutionStore;
   readonly runtimes: RuntimeResolver;
   readonly loggerProvider: PragmaLoggerProvider;
+  readonly usageSink?: UsageSink | undefined;
   readonly pragmaHome?: string | undefined;
   readonly automaticHumanInteractionHandler?:
     | ExpertAgentAutomaticHumanInteractionHandler
@@ -1109,6 +1110,7 @@ class ExpertSessionImpl implements ExpertSession {
           loggerProvider: this.dependencies.loggerProvider.withScope({
             expertSessionId: this.sessionId,
           }),
+          usageSink: this.dependencies.usageSink,
           handoffs,
           ...(this.recoveredExecutionId === prompt.executionId
             ? { runtimeRunId: `${prompt.executionId}:recovery:${randomUUID()}` }

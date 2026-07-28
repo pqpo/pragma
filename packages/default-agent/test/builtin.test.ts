@@ -124,6 +124,26 @@ describe("built-in Pragma Agent DSL", () => {
     expect(reference).toContain("has no input schema");
   });
 
+  it("teaches the default Agent complete Expert mounts and Runtime reference selection", () => {
+    const skill = BUILT_IN_PRAGMA_FILES["skills/author-pragma-dsl/SKILL.md"] ?? "";
+    const expertReference =
+      BUILT_IN_PRAGMA_FILES["skills/author-pragma-dsl/references/expert.md"] ?? "";
+    const resourceReference =
+      BUILT_IN_PRAGMA_FILES["skills/author-pragma-dsl/references/resources-and-references.md"] ??
+      "";
+
+    expect(skill).toContain("Its `sources` input is");
+    expect(skill).toContain("always an array with one complete YAML document per item");
+    expect(expertReference).toContain("namespace: project_docs");
+    expect(expertReference).toContain(
+      "It is not derived from the ContextStore ID, binding, or `config.key`.",
+    );
+    expect(resourceReference).toContain("Otherwise use the Host");
+    expect(resourceReference).toContain(
+      "option's `runtimeProfileRef`; `prepare_dsl_changes` adds that dependency automatically.",
+    );
+  });
+
   it("materializes an overridden built-in Expert while preserving its bundled dependencies", async () => {
     const root = await mkdtemp(join(tmpdir(), "pragma-default-agent-override-"));
     const resource = builtInPragmaResource();

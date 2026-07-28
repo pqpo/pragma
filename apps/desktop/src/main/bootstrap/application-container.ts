@@ -61,6 +61,8 @@ import { createAutomaticToolPermissionHandler } from "../features/runtimes/tool-
 import { installDesktopSettingsHandlers } from "../features/settings/desktop-settings-ipc.ts";
 import { createDesktopSettingsStore } from "../features/settings/desktop-settings-store.ts";
 import { createWorkspaceHistoryStore } from "../features/workspaces/workspace-history-store.ts";
+import { installUsageHandlers } from "../features/usage/usage-ipc.ts";
+import { createDesktopUsageStore } from "../features/usage/usage-store.ts";
 import { validateWorkspace } from "../features/workspaces/workspace-scope.ts";
 import type { CredentialEncryption } from "../platform/security/credential-encryption.ts";
 import { runPersistentStateUpgradeCoordinator } from "../platform/storage/persistent-state-upgrade-coordinator.ts";
@@ -158,6 +160,10 @@ export async function createDesktopApplicationContainer(
   const missionStore = createMissionStore({
     missionsPath,
   });
+  const usageStore = await createDesktopUsageStore({
+    databasePath: join(pragmaPaths.dataRoot(), "usage", "usage.sqlite"),
+  });
+  const unsubscribeUsageUpdates = installUsageHandlers(usageStore, options.getWindow);
   await runPersistentStateUpgradeCoordinator({
     project: pragmaProjectStore,
     missions: missionStore,
@@ -287,6 +293,7 @@ export async function createDesktopApplicationContainer(
     contextStores,
     plugins: pluginStore,
     runtimes,
+    usage: usageStore,
     loggerProvider,
     automaticHumanInteractionHandler,
     runtimesForToolPermissionMode: (mode) => runtimes.forToolPermissionMode(mode),
@@ -355,6 +362,13 @@ export async function createDesktopApplicationContainer(
       });
     },
   });
+  await missionRunner.reconcileUsage().catch((error: unknown) => {
+    mainLogger.warn(
+      "desktop.usage_reconciliation_failed",
+      "Desktop usage reconciliation could not be completed.",
+      { error },
+    );
+  });
   const automationService = createAutomationService({
     paths: pragmaPaths,
     project: pragmaProjectStore,
@@ -422,5 +436,11 @@ export async function createDesktopApplicationContainer(
           (resource.spec.config as Record<string, unknown>).providerId === providerId,
       ),
   });
-  return { dispose: () => automationService.stop() };
+  return {
+    dispose: () => {
+      unsubscribeUsageUpdates();
+      automationService.stop();
+      usageStore.close();
+    },
+  };
 }

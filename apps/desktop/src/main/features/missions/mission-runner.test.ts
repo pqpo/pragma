@@ -6,6 +6,7 @@ import {
   createFileExecutionStore,
   createFileExpertSessionStore,
   createStaticRuntimeResolver,
+  createNoopLoggerProvider,
   defineExpert,
   defineRuntimeDriver,
   fingerprintExpertExecutionDefinition,
@@ -34,6 +35,7 @@ import type { CapabilityStore } from "../capabilities/capability-store.ts";
 import { createMissionRunner } from "./mission-runner.ts";
 import { createMissionStore } from "./mission-store.ts";
 import { createPragmaProjectStore } from "../projects/pragma-project-store.ts";
+import type { DesktopUsageStore } from "../usage/usage-store.ts";
 
 const temporaryPaths: string[] = [];
 const settlementTimeoutMs = 10_000;
@@ -83,6 +85,69 @@ afterEach(async () => {
 });
 
 describe("MissionRunner", { timeout: 15_000 }, () => {
+  it("limits deletion reconciliation to the target Mission and does not let analytics block deletion", async () => {
+    const root = await mkdtemp(join(tmpdir(), "pragma-mission-usage-delete-"));
+    temporaryPaths.push(root);
+    const project = createPragmaProjectStore({ projectsPath: join(root, "projects") });
+    const snapshot = await project.publish({
+      expectedRevision: 0,
+      resources: [runtimeFixture(), expertFixture()],
+    });
+    const missions = createMissionStore({ missionsPath: join(root, "missions") });
+    const executor = missionExecutorSnapshot(
+      snapshot.resources.find((resource) => resource.kind === "Expert")!,
+    );
+    const target = await missions.create({
+      workspace: { path: root, basename: "workspace" },
+      goal: "Delete this Mission",
+      project: { id: snapshot.projectId, revision: snapshot.revision },
+      executor,
+    });
+    await missions.create({
+      workspace: { path: root, basename: "workspace" },
+      goal: "Keep this Mission",
+      project: { id: snapshot.projectId, revision: snapshot.revision },
+      executor,
+    });
+    const markMissionDeleted = vi.fn();
+    const usage = {
+      trackingStartedAt: "2026-01-01T00:00:00.000Z",
+      markMissionDeleted,
+    } as unknown as DesktopUsageStore;
+    const openRevision = vi
+      .spyOn(project, "openRevision")
+      .mockRejectedValueOnce(new Error("usage attribution unavailable"));
+    const runtime = defineRuntimeDriver<never, { id: string }>({
+      descriptor: { id: "fake", kind: "fake", displayName: "Fake" },
+      createSession: () => ({ id: "runtime" }),
+      restoreSession: () => ({ id: "runtime" }),
+      readSession: (session) => ({ runtimeSessionId: session.id }),
+      startTurn: () => ({ outputText: "unused", runtimeSessionId: "runtime" }),
+      mapEvent: () => ({ events: [] }),
+      closeSession: () => undefined,
+    });
+    const runner = createMissionRunner({
+      missions,
+      project,
+      capabilityStore: {} as CapabilityStore,
+      capabilityCredentials: {} as CapabilityCredentialStore,
+      capabilitiesPath: join(root, "capabilities"),
+      pragmaHome: join(root, "state"),
+      runtimes: createStaticRuntimeResolver({
+        runtimes: [runtime],
+        defaultRuntimeId: "fake",
+      }),
+      usage,
+      loggerProvider: createNoopLoggerProvider(),
+    });
+
+    await expect(runner.delete(target.id)).resolves.toBeUndefined();
+    await expect(missions.get(target.id)).rejects.toThrow();
+    expect(openRevision).toHaveBeenCalledTimes(1);
+    expect(markMissionDeleted).toHaveBeenCalledWith(target.id);
+    expect(await missions.list()).toHaveLength(1);
+  });
+
   it("projects and compacts the persisted root context window", async () => {
     const root = await mkdtemp(join(tmpdir(), "pragma-mission-context-window-"));
     temporaryPaths.push(root);

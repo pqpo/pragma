@@ -149,6 +149,14 @@ import {
   MissionExecutorOptionSchema,
   MissionModelOverrideSchema,
 } from "./mission-base.ts";
+import {
+  MissionUsageSchema,
+  UsageOverviewRequestSchema,
+  UsageOverviewSchema,
+  UsageSubjectListRequestSchema,
+  UsageSubjectListSchema,
+  UsageUpdateSchema,
+} from "./usage.ts";
 export type DesktopAppInfo = z.infer<typeof DesktopAppInfoSchema>;
 export type RuntimeGatewayConfig = z.infer<typeof RuntimeGatewayConfigSchema>;
 export type LocalRuntimeCapability = z.infer<typeof LocalRuntimeCapabilitySchema>;
@@ -167,6 +175,12 @@ export type UpdateDesktopSettings = z.infer<typeof UpdateDesktopSettingsSchema>;
 export type DesktopToolPermissionMode = z.infer<typeof DesktopToolPermissionModeSchema>;
 export type PickWorkspaceResult = z.infer<typeof PickWorkspaceResultSchema>;
 export type ValidateWorkspaceResult = z.infer<typeof ValidateWorkspaceResultSchema>;
+export type UsageOverviewRequest = z.infer<typeof UsageOverviewRequestSchema>;
+export type UsageOverview = z.infer<typeof UsageOverviewSchema>;
+export type UsageSubjectListRequest = z.infer<typeof UsageSubjectListRequestSchema>;
+export type UsageSubjectList = z.infer<typeof UsageSubjectListSchema>;
+export type MissionUsage = z.infer<typeof MissionUsageSchema>;
+export type UsageUpdate = z.infer<typeof UsageUpdateSchema>;
 export type ModelProviderModel = z.infer<typeof ModelProviderModelSchema>;
 export type ModelCompatibilityProfileDescriptor = z.infer<
   typeof ModelCompatibilityProfileDescriptorSchema

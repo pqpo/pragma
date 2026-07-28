@@ -91,6 +91,12 @@ import type {
   CapabilityTestResult,
   PreviewCodeServiceRequest,
   PreviewCodeServiceResult,
+  UsageOverviewRequest,
+  UsageOverview,
+  UsageSubjectListRequest,
+  UsageSubjectList,
+  MissionUsage,
+  UsageUpdate,
 } from "./types.ts";
 
 export interface PragmaDesktopAPI {
@@ -193,6 +199,10 @@ export interface PragmaDesktopAPI {
   respondToMissionHumanInteraction: (input: RespondMissionHumanInteraction) => Promise<void>;
   markMissionComplete: (id: string) => Promise<Mission>;
   reopenMission: (id: string) => Promise<Mission>;
+  getUsageOverview: (input: UsageOverviewRequest) => Promise<UsageOverview>;
+  listUsageSubjects: (input: UsageSubjectListRequest) => Promise<UsageSubjectList>;
+  getMissionUsage: (missionId: string) => Promise<MissionUsage>;
+  subscribeUsageUpdates: (listener: (update: UsageUpdate) => void) => () => void;
   listCapabilities: () => Promise<Capability[]>;
   getCapability: (id: string, revision?: number) => Promise<Capability>;
   getSkillDocument: (input: GetSkillDocument) => Promise<SkillDocument>;

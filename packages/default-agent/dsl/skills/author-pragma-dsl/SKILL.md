@@ -11,10 +11,15 @@ source of truth and use only the Pragma DSL tools to inspect, validate, and save
 ## Workflow
 
 1. Discuss missing intent before changing definitions.
-2. Call `list_dsl_resources`, then read every resource that will be changed or referenced.
+2. Call `list_dsl_resources`, then read every project resource that will be changed or referenced.
+   Before creating an ExpertTeam, read every existing coordinator or member and include any new
+   ones in the same change-set. A Host Runtime or Capability option that is not yet a project
+   resource cannot be read and is the only exception.
 3. Before creating or changing an Expert, call `list_expert_options`. Confirm a listed Runtime
    model, recommend only listed capabilities that match the user's intent, and ask whether to use
-   the recommendation, customize it, or enable no capabilities.
+   the recommendation, customize it, or enable no capabilities. Reuse an existing project
+   RuntimeProfile when its Runtime, provider, model, and thinking level match the selection;
+   otherwise use the option's `runtimeProfileRef`. Never author a duplicate RuntimeProfile.
 4. Read the relevant reference file below before drafting YAML.
 5. Before authoring any new resource, call `allocate_dsl_resource_ids` once for the complete set and
    use the returned Host-generated IDs and exact references. Preserve IDs when editing; never invent,
@@ -31,13 +36,19 @@ source of truth and use only the Pragma DSL tools to inspect, validate, and save
 8. Call `validate_flow_draft`, then call `prepare_flow_draft` only when every run dry case passes,
    transition coverage is complete, and the draft has no incomplete or error diagnostics. Include
    any new Expert or ExpertTeam YAML in `additionalSources` so the final change remains atomic.
-   Use `prepare_dsl_changes` directly only for complete non-Flow resources.
+   Use `prepare_dsl_changes` directly only for complete non-Flow resources. Its `sources` input is
+   always an array with one complete YAML document per item, even for one resource.
 9. Fix every diagnostic. Never bypass validation or hand-edit project files. If the project
    revision changed, reread affected resources and explicitly rebase the draft before retrying.
 10. Explain the normalized diff and the run dry coverage, then call `commit_dsl_changes` with the
     returned change-set ID.
 11. After the tool returns, always report success or failure, the committed project revision, and
     the changed canonical refs.
+
+Before preparing, verify that every new ID came from `allocate_dsl_resource_ids`, every project ref
+was read, every ContextStore mount declares `ref`, `namespace`, and `required`, and no existing
+RuntimeProfile, Capability, or ContextStore is repeated in `sources`. Follow diagnostic `source` and
+`path` values literally; never invent a field derivation rule to work around validation.
 
 For Automation work, use `list_automations` before editing. Use `save_automation` instead of the
 generic prepare/commit pair because the host workspace and permission binding must be saved with the
