@@ -36,6 +36,7 @@ describe("App", () => {
 
     expect(html).toContain("Home");
     expect(html).toContain("Missions");
+    expect(html).toContain("Usage");
     expect(html).toContain("Studio");
     expect(html).toContain("Settings");
   });
@@ -44,6 +45,7 @@ describe("App", () => {
     const html = renderToStaticMarkup(<App />);
 
     expect(html).toContain("Missions");
+    expect(html).toContain("Usage");
     expect(html).toContain("Studio");
     expect(html).not.toContain("Inbox");
     expect(html).not.toContain("Alex Chen");

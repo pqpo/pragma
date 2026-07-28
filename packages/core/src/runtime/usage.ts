@@ -1,4 +1,29 @@
 import type { AgentMessageUsage } from "@pragma/shared";
+import type { RuntimeModelSelection } from "./runtime-adapter.ts";
+
+export interface RuntimeUsageObservation {
+  readonly observationId: string;
+  readonly occurredAt: string;
+  readonly executionId: string;
+  readonly invocationId: string;
+  readonly contextId: string;
+  readonly runId: string;
+  readonly runtimeId: string;
+  readonly modelSelection?: RuntimeModelSelection | undefined;
+  readonly executor: {
+    readonly id: string;
+    readonly name: string;
+  };
+  readonly usage: AgentMessageUsage;
+}
+
+/**
+ * Host-owned accounting boundary. Core emits observations but never persists
+ * the cross-execution usage ledger.
+ */
+export interface UsageSink {
+  readonly record: (observation: RuntimeUsageObservation) => Promise<void> | void;
+}
 
 export interface RuntimeTokenUsageInput {
   readonly inputTokens: number;

@@ -5,6 +5,7 @@ import { home } from "./home.ts";
 import { settings } from "./settings.ts";
 import { missions } from "./missions.ts";
 import { studio } from "./studio.ts";
+import { usage } from "./usage.ts";
 
 export const zhHant = {
   common,
@@ -12,4 +13,5 @@ export const zhHant = {
   settings,
   missions,
   studio,
+  usage,
 } satisfies DesktopTranslationResource;

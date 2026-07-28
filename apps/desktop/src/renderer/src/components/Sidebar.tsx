@@ -2,6 +2,7 @@ import type { Icon } from "@phosphor-icons/react";
 import {
   CaretDoubleLeft,
   CaretDoubleRight,
+  ChartLineUp,
   GearSix,
   House,
   RocketLaunch,
@@ -9,7 +10,7 @@ import {
 } from "@phosphor-icons/react";
 import { useTranslation } from "react-i18next";
 
-export type AppView = "home" | "missions" | "studio" | "settings";
+export type AppView = "home" | "missions" | "usage" | "studio" | "settings";
 
 const navigationItems: readonly {
   readonly id: AppView;
@@ -18,6 +19,7 @@ const navigationItems: readonly {
 }[] = [
   { id: "home", labelKey: "navigation.home", icon: House },
   { id: "missions", labelKey: "navigation.missions", icon: RocketLaunch },
+  { id: "usage", labelKey: "navigation.usage", icon: ChartLineUp },
   { id: "studio", labelKey: "navigation.studio", icon: TerminalWindow },
   { id: "settings", labelKey: "navigation.settings", icon: GearSix },
 ];

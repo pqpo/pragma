@@ -6,6 +6,7 @@ import { SettingsPage, type SettingsView } from "./pages/settings/SettingsPage.t
 import { MissionsPage } from "./pages/missions/MissionsPage.tsx";
 import { StudioPage } from "./pages/studio/StudioPage.tsx";
 import { HomePage } from "./pages/home/HomePage.tsx";
+import { UsagePage } from "./pages/usage/UsagePage.tsx";
 import type { Mission } from "../../shared/contracts/index.ts";
 
 export function App() {
@@ -75,6 +76,8 @@ export function App() {
             setActiveView("home");
           }}
         />
+      ) : activeView === "usage" ? (
+        <UsagePage />
       ) : activeView === "studio" ? (
         <StudioPage
           initialExpertRef={studioExpertRef}

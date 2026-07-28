@@ -34,6 +34,8 @@ import {
   type FlowExecution,
   type RuntimeDriverSessionContext,
   type RuntimeModelSelection,
+  type RuntimeUsageObservation,
+  type UsageSink,
 } from "../src/index.ts";
 
 interface FakeSession {
@@ -81,7 +83,7 @@ interface FakeRuntimeOptions {
 
 function createFakeRuntime(options: FakeRuntimeOptions = {}) {
   const stats = options.stats;
-  return defineRuntimeDriver<never, FakeSession>({
+  return defineRuntimeDriver<AgentMessageUsage, FakeSession>({
     descriptor: {
       id: options.runtimeId ?? "fake",
       kind: "fake",
@@ -108,7 +110,10 @@ function createFakeRuntime(options: FakeRuntimeOptions = {}) {
       if (options.delayMs !== undefined) {
         await new Promise<void>((resolve) => setTimeout(resolve, options.delayMs));
       }
-      if (turn.rawQuery === options.failQuery) throw new Error("fake turn failed");
+      if (turn.rawQuery === options.failQuery) {
+        if (options.usage !== undefined) turn.stream.writeNative(options.usage);
+        throw new Error("fake turn failed");
+      }
       const spawn = session.context.agent.tools?.find((tool) => tool.name === "spawn_expert");
       const wait = session.context.agent.tools?.find((tool) => tool.name === "wait_experts");
       const delegationTarget =
@@ -163,7 +168,7 @@ function createFakeRuntime(options: FakeRuntimeOptions = {}) {
         ...(options.usage === undefined ? {} : { usage: options.usage }),
       };
     },
-    mapEvent: () => ({ events: [] }),
+    mapEvent: (usage) => ({ events: [], usage }),
     cancelTurn: () => {
       if (stats !== undefined) stats.cancelTurnCalls += 1;
     },
@@ -409,13 +414,17 @@ async function fixture(delayMs?: number) {
   return { home, app, expert };
 }
 
-async function trackedFixture(options: Omit<FakeRuntimeOptions, "stats"> = {}) {
+async function trackedFixture(
+  options: Omit<FakeRuntimeOptions, "stats"> = {},
+  usageSink?: UsageSink,
+) {
   const home = await mkdtemp(join(tmpdir(), "pragma-runtime-ownership-"));
   const stats = createFakeRuntimeStats();
   const runtime = createFakeRuntime({ ...options, stats });
   const app = createPragma({
     pragmaHome: home,
     runtimes: createStaticRuntimeResolver({ runtimes: [runtime], defaultRuntimeId: "fake" }),
+    usageSink,
   });
   const expert = await defineExpert({
     id: "tracked",
@@ -828,6 +837,73 @@ describe("ExpertSession", () => {
     await expect(historicalTurns[0]?.usage).resolves.toEqual(perTurnUsage);
     expect((await first.getState()).usage).toEqual(perTurnUsage);
     await session.close();
+  });
+
+  it("emits one Host usage observation per settled Runtime turn without coupling execution", async () => {
+    const perTurnUsage: AgentMessageUsage = {
+      input: 100,
+      output: 20,
+      cacheRead: 30,
+      cacheWrite: 5,
+      totalTokens: 155,
+      cost: { input: 1, output: 2, cacheRead: 3, cacheWrite: 4, total: 10 },
+    };
+    const observations: RuntimeUsageObservation[] = [];
+    const { app, expert } = await trackedFixture(
+      { usage: perTurnUsage },
+      {
+        record: (observation) => {
+          observations.push(observation);
+        },
+      },
+    );
+    const session = await app.experts.createSession(expert);
+    const turn = await session.prompt("observe", { requestId: "usage-observation" });
+    await turn.result;
+
+    expect(observations).toHaveLength(1);
+    expect(observations[0]).toMatchObject({
+      executionId: turn.executionId,
+      invocationId: turn.executionId,
+      runtimeId: "fake",
+      executor: { id: "tracked", name: "Tracked" },
+      usage: perTurnUsage,
+    });
+
+    const failing = await trackedFixture(
+      { usage: perTurnUsage },
+      {
+        record: () => {
+          throw new Error("host unavailable");
+        },
+      },
+    );
+    const failingSession = await failing.app.experts.createSession(failing.expert);
+    await expect(
+      (
+        await failingSession.prompt("still succeeds", {
+          requestId: "usage-sink-failure",
+        })
+      ).result,
+    ).resolves.toBeDefined();
+
+    const failedObservations: RuntimeUsageObservation[] = [];
+    const failedRuntime = await trackedFixture(
+      { failQuery: "fails after usage", usage: perTurnUsage },
+      {
+        record: (observation) => {
+          failedObservations.push(observation);
+        },
+      },
+    );
+    const failedSession = await failedRuntime.app.experts.createSession(failedRuntime.expert);
+    const failedTurn = await failedSession.prompt("fails after usage", {
+      requestId: "failed-turn-usage",
+    });
+    await expect(failedTurn.result).rejects.toThrow("fake turn failed");
+    expect(failedObservations).toHaveLength(1);
+    expect(failedObservations[0]?.usage).toEqual(perTurnUsage);
+    expect((await failedTurn.getState()).usage).toEqual(perTurnUsage);
   });
 
   it("releases the lease and leaves the session recoverable when Runtime cleanup fails", async () => {

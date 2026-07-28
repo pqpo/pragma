@@ -31,6 +31,7 @@ export const common = {
   navigation: {
     home: "首页",
     missions: "任务",
+    usage: "用量",
     studio: "工作室",
     settings: "设置",
     main: "主导航",

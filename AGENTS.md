@@ -241,6 +241,8 @@ Server 与 Agent 的关系：
 
 - Server/Worker 负责接收请求、创建运行、权限校验、调度 Playbook、记录 Trace、管理成本和治理流程。
 - Core 负责定义专家能力、输入输出协议、Invocation、Runtime Adapter 合约，以及默认云端沙箱执行抽象。
+- Core 通过可选 `UsageSink` 发出逐 Runtime turn 的 token observation，但不持久化跨 Execution
+  的统计账本；Desktop/Server 等 Host 负责统计持久化、保留和查询策略。
 - Server/Worker 可以调用 Core；Core 不应该反向调用 Server 应用层。
 - 本地 Claude Code、Codex、自研执行环境属于 Runtime Adapter 的实现目标，由 Desktop App 承载本地连接、授权和执行桥接，不改变 Server 调度 Agent 的依赖方向。
 
