@@ -417,15 +417,24 @@ function createCanUseTool(
             : "Invalid approval response.",
       };
     }
-    const updatedInput = response.updatedInput;
     return {
       behavior: "allow",
-      updatedInput:
-        updatedInput !== null && typeof updatedInput === "object" && !Array.isArray(updatedInput)
-          ? (updatedInput as Record<string, unknown>)
-          : input,
+      updatedInput: resolveQoderApprovedToolInput(input, response.updatedInput),
     };
   };
+}
+
+export function resolveQoderApprovedToolInput(
+  originalInput: Record<string, unknown>,
+  updatedInput: unknown,
+): Record<string, unknown> {
+  if (updatedInput === null || typeof updatedInput !== "object" || Array.isArray(updatedInput)) {
+    return originalInput;
+  }
+  const prototype = Object.getPrototypeOf(updatedInput);
+  return prototype === Object.prototype || prototype === null
+    ? (updatedInput as Record<string, unknown>)
+    : originalInput;
 }
 
 function emitSdkMessage(

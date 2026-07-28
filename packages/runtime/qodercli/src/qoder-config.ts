@@ -70,14 +70,10 @@ export async function prepareManagedQoderConfig({
   return configDir;
 }
 
-function resolveSharedQoderConfigDir(env: NodeJS.ProcessEnv | undefined): string {
+export function resolveSharedQoderConfigDir(env: NodeJS.ProcessEnv | undefined): string {
   const explicit = readNonEmpty(env?.["QODER_CONFIG_DIR"]);
   if (explicit !== undefined) return explicit;
-  const qoderHome =
-    readNonEmpty(env?.["QODER_CLI_HOME"]) ??
-    readNonEmpty(process.env["QODER_CLI_HOME"]) ??
-    homedir();
-  return join(qoderHome, ".qoder");
+  return join(homedir(), ".qoder");
 }
 
 function readNonEmpty(value: string | undefined): string | undefined {

@@ -1,10 +1,13 @@
 import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
-import { tmpdir } from "node:os";
+import { homedir, tmpdir } from "node:os";
 import { join } from "node:path";
 
 import { afterEach, describe, expect, it, vi } from "vitest";
 
-import { prepareManagedQoderConfig } from "../src/qoder-config.ts";
+import {
+  prepareManagedQoderConfig,
+  resolveSharedQoderConfigDir,
+} from "../src/qoder-config.ts";
 
 const temporaryRoots: string[] = [];
 
@@ -17,6 +20,15 @@ afterEach(async () => {
 });
 
 describe("prepareManagedQoderConfig", () => {
+  it("uses only the explicit Qoder config directory or the native default", () => {
+    expect(resolveSharedQoderConfigDir({ QODER_CONFIG_DIR: "/custom/qoder" })).toBe(
+      "/custom/qoder",
+    );
+    expect(resolveSharedQoderConfigDir({ QODER_CLI_HOME: "/ambiguous/home" })).toBe(
+      join(homedir(), ".qoder"),
+    );
+  });
+
   it("snapshots local login state while keeping session state private", async () => {
     const root = await temporaryRoot();
     const shared = join(root, "shared");
