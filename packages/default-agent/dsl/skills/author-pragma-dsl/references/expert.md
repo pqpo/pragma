@@ -20,7 +20,10 @@ spec:
       kind: tools
       tools: [read_file]
   toolApprovals: {}
-  contextStores: []
+  contextStores:
+    - ref: context-store:4h5j6k7m8n9p0q1r
+      namespace: project_docs
+      required: true
   plugins: []
   tools: []
 ```
@@ -28,8 +31,13 @@ spec:
 - Use only exact Capability, ContextStore, RuntimeProfile, plugin, Expert, Team, and Flow refs.
 - `name`, `id`, `description`, `scope`, `instructions`, and `runtime` are required. The host
   allocates `id`; never invent or change it.
-- Use only a RuntimeProfile returned by `list_expert_options`; it must select an explicit provider
-  and model.
+- Reuse an existing project RuntimeProfile when its Runtime, provider, model, and thinking level
+  match the selected `list_expert_options` model. Otherwise use that option's `runtimeProfileRef`;
+  `prepare_dsl_changes` materializes the Host dependency, so do not author a RuntimeProfile.
 - For `kind: tools`, list the exact allowed tool names. For `kind: skill`, omit `tools`.
+- A ContextStore mount always declares `ref`, `namespace`, and `required`. Choose a stable,
+  Expert-local namespace such as `project_docs`; it is the name used by context tools and must be
+  unique within the Expert. It is not derived from the ContextStore ID, binding, or `config.key`.
+  Preserve the namespace when editing an existing mount. Use `contextStores: []` when none apply.
 - Put behavioral rules in `scope` and `instructions`; never put credentials or machine paths in DSL.
 - Expose another resource as a tool only through a named, versioned tool adapter.

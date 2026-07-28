@@ -6,6 +6,7 @@ import { describe, expect, it } from "vitest";
 import {
   PRAGMA_AUTOMATION_PROMPT_MAX_LENGTH,
   PragmaFlowResourceSchema,
+  PragmaRuntimeProfileResourceSchema,
 } from "@pragma/interpreter/ast";
 
 import type { Capability } from "../../../shared/contracts/index.ts";
@@ -34,6 +35,7 @@ describe("Desktop DefaultAgent DSL project adapter", () => {
     expect(first.changes).toEqual(
       expect.arrayContaining([
         expect.objectContaining({ ref: "expert:1xddvess309a6gme", kind: "created" }),
+        expect.objectContaining({ ref: runtimeRef, kind: "created" }),
       ]),
     );
     await expect(
@@ -104,6 +106,49 @@ describe("Desktop DefaultAgent DSL project adapter", () => {
         toolNames: [],
       }),
     ]);
+  });
+
+  it("reuses an existing compatible project RuntimeProfile without creating a duplicate", async () => {
+    const root = await mkdtemp(join(tmpdir(), "pragma-default-agent-existing-runtime-"));
+    const project = createPragmaProjectStore({ projectsPath: join(root, "projects") });
+    const runtime = PragmaRuntimeProfileResourceSchema.parse({
+      apiVersion: "pragma/v3",
+      kind: "RuntimeProfile",
+      metadata: {
+        id: "2h3j4k5m6n7p8q9r",
+        name: "Existing Writer Runtime",
+        description: "A project RuntimeProfile that already selects the requested model.",
+        tags: [],
+      },
+      spec: {
+        adapter: "pragma.runtime.profile@v1",
+        config: {
+          runtimeId: "test",
+          providerId: "test",
+          model: "model",
+        },
+      },
+    });
+    await project.publish({ expectedRevision: 0, resources: [runtime] });
+    const adapter = createDesktopDefaultAgentProjectPort(
+      adapterOptions(project, join(root, "state")),
+    );
+    const runtimeRef = "runtime-profile:2h3j4k5m6n7p8q9r";
+
+    const prepared = requirePrepared(
+      await adapter.prepare({
+        expectedProjectRevision: 1,
+        sources: [expert("Uses the existing RuntimeProfile", runtimeRef)],
+      }),
+    );
+
+    expect(prepared.changes).toEqual([
+      expect.objectContaining({
+        ref: "expert:1xddvess309a6gme",
+        kind: "created",
+      }),
+    ]);
+    expect(prepared.changes.some((change) => change.ref === runtimeRef)).toBe(false);
   });
 
   it("creates a 16-character Expert that Desktop can list and open, and rejects 17", async () => {
