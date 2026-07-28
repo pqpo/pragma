@@ -2,6 +2,7 @@ import { createHash, randomBytes, randomUUID } from "node:crypto";
 import { createServer, type IncomingMessage, type ServerResponse } from "node:http";
 import type { AddressInfo } from "node:net";
 import { Readable } from "node:stream";
+import { isDeepStrictEqual } from "node:util";
 
 import {
   fromJsonSchema,
@@ -745,15 +746,81 @@ function toMcpInputSchema(schema: unknown): StandardSchemaWithJSON | undefined {
     return fromJsonSchema(defaultObjectJsonSchema());
   }
 
-  if (isStandardSchemaWithJson(schema)) {
+  // Zod decorates materialized z.toJSONSchema() results with Standard Schema metadata.
+  // Normalize those JSON documents instead of treating them as executable validators.
+  if (isStandardSchemaWithJson(schema) && !isJsonSchemaRecord(schema)) {
     return schema;
   }
 
   if (isRecord(schema)) {
-    return fromJsonSchema(schema as JsonSchemaType);
+    return fromJsonSchema(normalizeMcpJsonSchema(schema) as JsonSchemaType);
   }
 
   return fromJsonSchema(defaultObjectJsonSchema());
+}
+
+function isJsonSchemaRecord(schema: unknown): boolean {
+  if (!isRecord(schema)) return false;
+
+  return [
+    "$schema",
+    "$ref",
+    "$defs",
+    "definitions",
+    "type",
+    "properties",
+    "items",
+    "allOf",
+    "anyOf",
+    "oneOf",
+    "additionalProperties",
+  ].some((keyword) => Object.hasOwn(schema, keyword));
+}
+
+function normalizeMcpJsonSchema(schema: Record<string, unknown>): Record<string, unknown> {
+  const root = schema;
+
+  const visit = (value: unknown): unknown => {
+    if (Array.isArray(value)) {
+      return value.map(visit);
+    }
+    if (!isRecord(value)) {
+      return value;
+    }
+
+    const reference = value["$ref"];
+    if (typeof reference === "string") {
+      const target = resolveLocalJsonSchemaReference(root, reference);
+      const siblings = Object.fromEntries(Object.entries(value).filter(([key]) => key !== "$ref"));
+      if (
+        target !== undefined &&
+        Object.keys(siblings).length > 0 &&
+        isDeepStrictEqual(siblings, target)
+      ) {
+        return { $ref: reference };
+      }
+    }
+
+    return Object.fromEntries(Object.entries(value).map(([key, child]) => [key, visit(child)]));
+  };
+
+  return visit(schema) as Record<string, unknown>;
+}
+
+function resolveLocalJsonSchemaReference(
+  root: Record<string, unknown>,
+  reference: string,
+): unknown {
+  if (!reference.startsWith("#/")) return undefined;
+
+  let current: unknown = root;
+  for (const encodedSegment of reference.slice(2).split("/")) {
+    if (!isRecord(current)) return undefined;
+    const segment = decodeURIComponent(encodedSegment).replaceAll("~1", "/").replaceAll("~0", "~");
+    if (!Object.hasOwn(current, segment)) return undefined;
+    current = current[segment];
+  }
+  return current;
 }
 
 function defaultObjectJsonSchema(): JsonSchemaType {

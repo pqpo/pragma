@@ -365,6 +365,9 @@ importers:
         specifier: latest
         version: 4.4.3
     devDependencies:
+      '@modelcontextprotocol/client':
+        specifier: 2.0.0-alpha.2
+        version: 2.0.0-alpha.2(@cfworker/json-schema@4.1.1)
       '@pragma/tsconfig':
         specifier: workspace:*
         version: link:../tsconfig

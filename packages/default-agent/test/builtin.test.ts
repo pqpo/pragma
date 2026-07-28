@@ -3,7 +3,8 @@ import { tmpdir } from "node:os";
 import { dirname, join, relative } from "node:path";
 import { fileURLToPath } from "node:url";
 
-import type { Expert } from "@pragma/core";
+import { Client, StreamableHTTPClientTransport } from "@modelcontextprotocol/client";
+import { createPragmaLogger, registerExpertToolsMcpSession, type Expert } from "@pragma/core";
 import { loadPragmaProject, parsePragmaYaml } from "@pragma/interpreter";
 import { PragmaCapabilityResourceSchema, PragmaResourceSchema } from "@pragma/interpreter/ast";
 import { describe, expect, it } from "vitest";
@@ -92,6 +93,35 @@ describe("built-in Pragma Agent DSL", () => {
     expect(compiled.value.instructions).toContain("identify yourself as Pragma");
     expect(compiled.value.instructions).toContain("default general-purpose Agent");
     expect(compiled.value.instructions).toContain("not the limit of your role");
+
+    const registration = await registerExpertToolsMcpSession({
+      agent: compiled.value,
+      getContext: () => undefined,
+      logger: createPragmaLogger(undefined, {
+        component: "runtime.adapter",
+        scope: { agentId: compiled.value.id },
+      }),
+      state: {},
+    });
+    const client = new Client(
+      { name: "pragma-default-agent-schema-test", version: "1.0.0" },
+      { capabilities: {} },
+    );
+    try {
+      await client.connect(new StreamableHTTPClientTransport(new URL(registration.url)));
+      const catalog = await client.listTools();
+      expect(catalog.tools.map((tool) => tool.name)).toContain("create_flow_draft");
+      expect(catalog.tools.map((tool) => tool.name)).toContain("update_flow_draft");
+      expect(
+        catalog.tools.flatMap((tool) => [
+          ...findConflictingReferenceSiblings(tool.inputSchema),
+          ...findConflictingReferenceSiblings(tool.outputSchema),
+        ]),
+      ).toEqual([]);
+    } finally {
+      await client.close().catch(() => undefined);
+      await registration.dispose();
+    }
   });
 
   it("keeps generated assets byte-identical to the DSL source tree", async () => {
@@ -194,6 +224,34 @@ describe("built-in Pragma Agent DSL", () => {
     }
   });
 });
+
+function findConflictingReferenceSiblings(
+  schema: unknown,
+  path: readonly (string | number)[] = [],
+): readonly string[] {
+  if (Array.isArray(schema)) {
+    return schema.flatMap((value, index) =>
+      findConflictingReferenceSiblings(value, [...path, index]),
+    );
+  }
+  if (schema === null || typeof schema !== "object") return [];
+
+  const record = schema as Record<string, unknown>;
+  const conflicts =
+    typeof record["$ref"] === "string" &&
+    ["allOf", "anyOf", "oneOf", "type", "properties", "items"].some(
+      (keyword) => record[keyword] !== undefined,
+    )
+      ? [path.join(".")]
+      : [];
+
+  return [
+    ...conflicts,
+    ...Object.entries(record).flatMap(([key, value]) =>
+      findConflictingReferenceSiblings(value, [...path, key]),
+    ),
+  ];
+}
 
 async function filesAt(path: string): Promise<string[]> {
   const entries = await readdir(path, { withFileTypes: true });
