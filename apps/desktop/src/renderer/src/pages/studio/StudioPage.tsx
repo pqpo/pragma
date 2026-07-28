@@ -42,6 +42,7 @@ import {
 import { PluginDetailFragment, PluginDirectoryFragment } from "./PluginDirectoryFragment.tsx";
 import { AutomationDirectoryFragment } from "./AutomationDirectoryFragment.tsx";
 import { FlowEditor } from "./flow-editor/FlowEditor.tsx";
+import { FlowRunDryFragment } from "./FlowRunDryFragment.tsx";
 import { createEmptyFlow } from "./flow-editor/flow-model.ts";
 import {
   desktopApi,
@@ -69,6 +70,7 @@ export function StudioPage(props: {
     | "capability-detail"
     | "plugin-detail"
     | "resource-detail"
+    | "resource-run-dry"
     | "resource-edit"
     | "create"
   >("directory");
@@ -397,18 +399,20 @@ export function StudioPage(props: {
     capabilities.find((capability) => capability.manifest.id === selectedCapabilityId) ?? null;
   const selectedPlugin = plugins.find((plugin) => plugin.ref === selectedPluginRef) ?? null;
   const selectedResource =
-    project?.resources.find((resource) => canonicalPragmaResourceRef(resource) === selectedResourceRef) ??
-    null;
+    project?.resources.find(
+      (resource) => canonicalPragmaResourceRef(resource) === selectedResourceRef,
+    ) ?? null;
 
   const updateCapability = (capability: Capability) => {
     setCapabilities((current) =>
       current.some((item) => item.manifest.id === capability.manifest.id)
         ? current.map((item) => (item.manifest.id === capability.manifest.id ? capability : item))
-      : [capability, ...current],
+        : [capability, ...current],
     );
   };
 
-  const resourceKindView = (kind: ResourceKind): StudioView => (kind === "team" ? "teams" : "flows");
+  const resourceKindView = (kind: ResourceKind): StudioView =>
+    kind === "team" ? "teams" : "flows";
 
   const openResourceDetail = (resource: PragmaExpertTeamResource | PragmaFlowResource) => {
     setActiveView(resource.kind === "ExpertTeam" ? "teams" : "flows");
@@ -432,6 +436,24 @@ export function StudioPage(props: {
     setSelectedResourceRef(canonicalPragmaResourceRef(resource));
     setResourceEditor({ kind, mode: "edit" });
     setScreen("resource-edit");
+  };
+
+  const saveFlowRunDry = async (
+    resource: PragmaFlowResource,
+    runDry: NonNullable<PragmaFlowResource["spec"]["runDry"]>,
+  ) => {
+    if (project === null) return;
+    const api = desktopApi();
+    if (api === undefined) return;
+    const updated = { ...resource, spec: { ...resource.spec, runDry } };
+    const snapshot = await api.upsertPragmaResource({
+      baseRevision: project.revision,
+      resource: updated,
+      requiredUnchangedRefs: [canonicalPragmaResourceRef(resource)],
+    });
+    setProject(snapshot);
+    setSelectedResourceRef(canonicalPragmaResourceRef(updated));
+    setExpertError(null);
   };
 
   const closeResourceEditor = () => {
@@ -728,7 +750,21 @@ export function StudioPage(props: {
             project={project}
             onBack={() => setScreen("directory")}
             onEdit={() => openResourceEdit(selectedResource)}
+            onRunDry={() => setScreen("resource-run-dry")}
             onDelete={deleteSelectedResource}
+          />
+        ) : null}
+        {screen === "resource-run-dry" && project !== null && selectedResource?.kind === "Flow" ? (
+          <FlowRunDryFragment
+            key={`${canonicalPragmaResourceRef(selectedResource)}:${project.revision}`}
+            flow={selectedResource}
+            onBack={() => setScreen("resource-detail")}
+            onRun={async (flow) => {
+              const api = desktopApi();
+              if (api === undefined) throw new Error("Desktop bridge is unavailable.");
+              return await api.runPragmaFlowDrySuite({ flow });
+            }}
+            onSave={async (runDry) => await saveFlowRunDry(selectedResource, runDry)}
           />
         ) : null}
         {screen === "resource-edit" && project !== null && resourceEditor !== null ? (

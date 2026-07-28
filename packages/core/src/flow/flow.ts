@@ -186,6 +186,99 @@ export interface FlowLoopDefinition {
   readonly onLimit?: FlowStepReference | FlowTerminal | undefined;
 }
 
+export type FlowTransitionSelection =
+  | {
+      readonly kind: "next";
+      readonly destination: FlowDestination;
+    }
+  | {
+      readonly kind: "case";
+      readonly caseKey: string;
+      readonly destination: FlowDestination;
+    }
+  | {
+      readonly kind: "branch";
+      readonly branchId: string;
+      readonly destination: FlowDestination;
+    }
+  | {
+      readonly kind: "fallback";
+      readonly destination: FlowDestination;
+    };
+
+export type FlowRepeatResolution =
+  | {
+      readonly kind: "repeat";
+      readonly iteration: number;
+      readonly target: FlowStepReference;
+    }
+  | {
+      readonly kind: "limit";
+      readonly iteration: number;
+      readonly target: FlowStepReference | FlowTerminal;
+    };
+
+export function selectFlowTransition(
+  transition: FlowTransition,
+  output: unknown,
+): FlowTransitionSelection | undefined {
+  if (transition.type === "next") {
+    return { kind: "next", destination: transition.target };
+  }
+  if (transition.type === "repeat") {
+    return { kind: "next", destination: transition };
+  }
+  if (transition.type === "route") {
+    const caseKey = String(readFlowTransitionField(output, transition.field));
+    const destination = transition.cases.get(caseKey);
+    if (destination !== undefined) return { kind: "case", caseKey, destination };
+    return transition.fallback === undefined
+      ? undefined
+      : { kind: "fallback", destination: transition.fallback };
+  }
+  const value = readFlowTransitionField(output, transition.field);
+  const selected = Array.isArray(value)
+    ? new Set(value.filter((entry): entry is string => typeof entry === "string"))
+    : new Set<string>();
+  const branch = transition.branches.find((candidate) => {
+    if (candidate.operator === "contains_any") {
+      return candidate.values.some((value) => selected.has(value));
+    }
+    if (candidate.operator === "contains_all") {
+      return candidate.values.every((value) => selected.has(value));
+    }
+    return candidate.values.every((value) => !selected.has(value));
+  });
+  if (branch !== undefined) {
+    return { kind: "branch", branchId: branch.id, destination: branch.destination };
+  }
+  return transition.fallback === undefined
+    ? undefined
+    : { kind: "fallback", destination: transition.fallback };
+}
+
+export function resolveFlowRepeat(
+  destination: FlowRepeatTarget,
+  loop: FlowLoopDefinition,
+  currentIteration: number,
+): FlowRepeatResolution {
+  if (currentIteration >= loop.maxIterations) {
+    return {
+      kind: "limit",
+      iteration: currentIteration,
+      target: loop.onLimit ?? {
+        type: "fail",
+        reason: `Flow loop ${loop.id} exceeded maxIterations (${loop.maxIterations}).`,
+      },
+    };
+  }
+  return {
+    kind: "repeat",
+    iteration: currentIteration + 1,
+    target: destination.target,
+  };
+}
+
 export class FlowDefinitionError extends Error {
   constructor(readonly issues: readonly ControlFlowGraphIssue[]) {
     super(issues.map((issue) => issue.message).join("\n"));
@@ -427,6 +520,11 @@ function flowEdges(transitions: ReadonlyMap<string, FlowTransition>): readonly C
 
 function stepTargetId(target: FlowStepReference | FlowTerminal | undefined): string | undefined {
   return target !== undefined && "id" in target ? target.id : undefined;
+}
+
+function readFlowTransitionField(value: unknown, field: string): unknown {
+  if (typeof value !== "object" || value === null) return undefined;
+  return (value as Record<string, unknown>)[field];
 }
 
 class Chain implements FlowChain {

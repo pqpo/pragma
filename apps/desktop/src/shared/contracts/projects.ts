@@ -1,6 +1,8 @@
 import {
   PragmaDiagnosticSchema,
   PragmaExpertIdSchema,
+  PragmaFlowResourceSchema,
+  PragmaFlowRunDrySuiteResultSchema,
   PragmaLockSchema,
   PragmaProjectChangeSetSchema,
   PragmaResourceRefSchema,
@@ -62,3 +64,11 @@ export const PragmaYamlValidationResultSchema = z.object({
   resource: PragmaResourceSchema.optional(),
   diagnostics: z.array(PragmaDiagnosticSchema),
 });
+
+export const RunPragmaFlowDrySuiteSchema = z
+  .object({
+    flow: PragmaFlowResourceSchema,
+  })
+  .strict();
+
+export { PragmaFlowRunDrySuiteResultSchema };

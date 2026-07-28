@@ -49,17 +49,19 @@ import {
   type ExecutionView,
   type MutableExecution,
 } from "../execution/execution-view.ts";
-import type {
-  CompiledFlowStep,
-  Flow,
-  FlowSpec,
-  FlowState,
-  FlowTaskContext,
-  FlowDestination,
-  FlowRepeatTarget,
-  FlowTerminal,
-  FlowTransition,
-  HumanTaskDefinition,
+import {
+  resolveFlowRepeat,
+  selectFlowTransition,
+  type CompiledFlowStep,
+  type Flow,
+  type FlowSpec,
+  type FlowState,
+  type FlowTaskContext,
+  type FlowDestination,
+  type FlowRepeatTarget,
+  type FlowTerminal,
+  type FlowTransition,
+  type HumanTaskDefinition,
 } from "./flow.ts";
 
 export interface StartFlowRequest<TInput = unknown> {
@@ -1030,11 +1032,6 @@ async function putStatus(
   });
 }
 
-function readField(value: unknown, field: string): unknown {
-  if (typeof value !== "object" || value === null) return undefined;
-  return (value as Record<string, unknown>)[field];
-}
-
 const FLOW_INTERNAL_STATE_KEY = "__pragma";
 
 interface StoredFlowInternalState {
@@ -1258,32 +1255,9 @@ async function applyTransitionOnce(
       return { changed: false, value: restoreFlowTarget(existing.target) };
     }
 
-    let destination: FlowDestination | undefined;
     let target: { readonly id: string } | FlowTerminal | undefined;
     const events: { invocationId: string; type: string; data: unknown }[] = [];
-    if (transition.type === "next") {
-      destination = transition.target;
-    } else if (transition.type === "route") {
-      destination =
-        transition.cases.get(String(readField(output, transition.field))) ?? transition.fallback;
-    } else if (transition.type === "array-route") {
-      const value = readField(output, transition.field);
-      const selected = Array.isArray(value)
-        ? new Set(value.filter((entry): entry is string => typeof entry === "string"))
-        : new Set<string>();
-      destination =
-        transition.branches.find((branch) => {
-          if (branch.operator === "contains_any") {
-            return branch.values.some((candidate) => selected.has(candidate));
-          }
-          if (branch.operator === "contains_all") {
-            return branch.values.every((candidate) => selected.has(candidate));
-          }
-          return branch.values.every((candidate) => !selected.has(candidate));
-        })?.destination ?? transition.fallback;
-    } else {
-      destination = transition;
-    }
+    const destination = selectFlowTransition(transition, output)?.destination;
     if (destination !== undefined && isFlowRepeatTarget(destination)) {
       const loop = options.flow.loops.get(destination.loopId);
       if (loop === undefined)
@@ -1301,29 +1275,29 @@ async function applyTransitionOnce(
         iteration: 1,
         status: "active" as const,
       };
-      if (current.iteration >= loop.maxIterations) {
+      const resolution = resolveFlowRepeat(destination, loop, current.iteration);
+      if (resolution.kind === "limit") {
         control.loops[loopStateKey] = { ...current, status: "exhausted" };
-        target = loop.onLimit ?? {
-          type: "fail",
-          reason: `Flow loop ${loop.id} exceeded maxIterations (${loop.maxIterations}).`,
-        };
+        target = resolution.target;
         events.push({
           invocationId: invocation.invocationId,
           type: "flow.loop.exhausted",
-          data: { loopId: loop.id, iteration: current.iteration },
+          data: { loopId: loop.id, iteration: resolution.iteration },
         });
       } else {
-        const iteration = current.iteration + 1;
-        control.loops[loopStateKey] = { iteration, status: "active" };
-        target = destination.target;
+        control.loops[loopStateKey] = {
+          iteration: resolution.iteration,
+          status: "active",
+        };
+        target = resolution.target;
         events.push({
           invocationId: invocation.invocationId,
           type: "flow.loop.repeated",
           data: {
             loopId: loop.id,
-            iteration,
+            iteration: resolution.iteration,
             fromStepId: invocation.nodeId,
-            toStepId: destination.target.id,
+            toStepId: resolution.target.id,
           },
         });
       }

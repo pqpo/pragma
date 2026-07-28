@@ -36,3 +36,20 @@ Schema 决定。循环重新访问节点时覆盖该节点的最新结果，历�
 ```bash
 pnpm --filter @pragma/examples example:flow-tui
 ```
+
+## Run dry 单元用例
+
+`pragma/v3` Flow 可以在 `spec.runDry.cases` 中保存随项目修订版本化的快速用例。Run dry 不启动
+Runtime、不调用模型、不执行 Action、不等待 HumanTask，也不进入 nested Flow；每次节点访问都消费
+用例配置的 mock。每个 mock 必须声明 `expectInput`，HumanTask 还必须声明 `expectPrompt`，从而同时
+校验 prompt 渲染和节点输入映射。输入/输出 Schema、节点结果 state、route、array route、有界循环、
+终止结果和断言仍按 Flow 声明语义执行。
+
+每个用例断言终态和精确节点路径，并可选断言结构化输出或错误片段。重复访问同一节点时，mock 使用
+按访问顺序排列的数组。失败用例必须声明 `errorContains`，测试配置错误不能被“预期失败”掩盖。
+Suite 只有在所有用例通过，且每条 ordinary/repeat edge、route case、array branch、fallback 以及
+loop repeat/limit 结果都被覆盖时才通过。
+
+Desktop 的 Flow 详情页提供独立 Run dry 页面用于维护、运行和保存这些用例。内置 Pragma Agent
+创建或非平凡修改 Flow 时，必须自动写用例、调用 `run_flow_draft_dry`，并在完整覆盖通过后才能
+prepare 和 commit；开发者手工编辑时可先保存未完成用例，再在该页面迭代。

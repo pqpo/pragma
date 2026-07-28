@@ -33,7 +33,6 @@ import {
   type PragmaEnvironmentFingerprint,
   type PragmaExpertResource,
   type PragmaFlowDestination,
-  type PragmaFlowPrompt,
   type PragmaFlowResource,
   type PragmaFlowTarget,
   type PragmaFlowTransition,
@@ -73,9 +72,12 @@ import {
   type PragmaResourceInspection,
   type PragmaRuntimeProfileContribution,
 } from "../runtime/resource-adapters.ts";
+import {
+  evaluatePragmaFlowValue,
+  renderPragmaFlowPrompt,
+} from "../runtime/flow-values.ts";
 
 const COMPILER_VERSION = "pragma.dsl/v2";
-const UNSAFE_STATE_SEGMENTS = new Set(["__proto__", "prototype", "constructor"]);
 const provenance = new WeakMap<object, PragmaProvenance>();
 
 export interface LoadPragmaProjectOptions {
@@ -1106,7 +1108,7 @@ async function compileFlowResource(
             readonly input: unknown;
             readonly state: FlowState;
             readonly terminal: { readonly output: unknown };
-          }) => evaluateValue(resource.spec.output!.value, state, input, terminal.output),
+          }) => evaluatePragmaFlowValue(resource.spec.output!.value, state, input, terminal.output),
         }),
   });
   const references = new Map<string, FlowStepReference>();
@@ -1115,12 +1117,12 @@ async function compileFlowResource(
       step.input === undefined
         ? undefined
         : ({ state, flowInput }: { state: FlowState; flowInput: unknown }) =>
-            evaluateValue(step.input, state, flowInput);
+            evaluatePragmaFlowValue(step.input, state, flowInput);
     const promptInput =
       step.prompt === undefined
         ? undefined
         : ({ state, flowInput }: { state: FlowState; flowInput: unknown }) =>
-            renderFlowPrompt(step.prompt!, state, flowInput);
+            renderPragmaFlowPrompt(step.prompt!, state, flowInput);
     const descriptor = {
       ...(step.input === undefined ? {} : { input: step.input }),
       ...(step.prompt === undefined ? {} : { prompt: step.prompt }),
@@ -1289,7 +1291,7 @@ function compileHumanRequest(
   state: FlowState,
   input: unknown,
 ) {
-  const question = renderFlowPrompt(request.prompt, state, input);
+  const question = renderPragmaFlowPrompt(request.prompt, state, input);
   return {
     kind: "question" as const,
     prompt: question,
@@ -1309,81 +1311,6 @@ function compileHumanRequest(
       },
     ],
   };
-}
-
-function evaluateValue(
-  value: unknown,
-  state: FlowState,
-  flowInput: unknown,
-  nodeOutput?: unknown,
-): unknown {
-  if (typeof value === "string") {
-    if (value === "$flow.input") return flowInput;
-    if (value.startsWith("$flow.input.")) {
-      return readPath(flowInput, value.slice("$flow.input.".length));
-    }
-    if (value === "$node.output") return nodeOutput;
-    if (value.startsWith("$node.output.")) {
-      return readPath(nodeOutput, value.slice("$node.output.".length));
-    }
-    if (value.startsWith("$state.")) return readPath(state, value.slice("$state.".length));
-    return value.replace(/\{\{\s*([^}|]+?)\s*(\|\s*json)?\s*\}\}/g, (_match, expression, json) => {
-      const resolved = evaluateValue(
-        `$${String(expression).trim().replace(/^\$/, "")}`,
-        state,
-        flowInput,
-        nodeOutput,
-      );
-      return json === undefined ? String(resolved ?? "") : JSON.stringify(resolved, null, 2);
-    });
-  }
-  if (Array.isArray(value))
-    return value.map((entry) => evaluateValue(entry, state, flowInput, nodeOutput));
-  if (typeof value === "object" && value !== null) {
-    return Object.fromEntries(
-      Object.entries(value).map(([key, entry]) => [
-        key,
-        evaluateValue(entry, state, flowInput, nodeOutput),
-      ]),
-    );
-  }
-  return value;
-}
-
-function readPath(value: unknown, path: string): unknown {
-  return path.split(".").reduce<unknown>((current, segment) => {
-    if (UNSAFE_STATE_SEGMENTS.has(segment)) return undefined;
-    if (typeof current !== "object" || current === null) return undefined;
-    return Object.hasOwn(current, segment)
-      ? (current as Record<string, unknown>)[segment]
-      : undefined;
-  }, value);
-}
-
-function renderFlowPrompt(prompt: PragmaFlowPrompt, state: FlowState, flowInput: unknown): string {
-  return prompt.segments
-    .map((segment) => {
-      if ("text" in segment) return segment.text;
-      const variable = segment.variable;
-      const value =
-        variable.source === "flow-input"
-          ? readPathSegments(flowInput, variable.path)
-          : readPathSegments(state, ["nodes", variable.nodeId, "result", ...variable.path]);
-      if (value === undefined || value === null) return "null";
-      if (typeof value === "string") return value;
-      return typeof value === "object" ? JSON.stringify(value, null, 2) : String(value);
-    })
-    .join("");
-}
-
-function readPathSegments(value: unknown, path: readonly string[]): unknown {
-  return path.reduce<unknown>((current, segment) => {
-    if (UNSAFE_STATE_SEGMENTS.has(segment)) return undefined;
-    if (typeof current !== "object" || current === null) return undefined;
-    return Object.hasOwn(current, segment)
-      ? (current as Record<string, unknown>)[segment]
-      : undefined;
-  }, value);
 }
 
 function createJsonSchemaZod(schema: unknown): z.ZodTypeAny | undefined {

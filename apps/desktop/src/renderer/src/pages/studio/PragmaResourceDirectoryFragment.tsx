@@ -8,6 +8,7 @@ import {
   MagnifyingGlass,
   PencilSimple,
   Plus,
+  TestTube,
   Trash,
   UserCircle,
   UsersThree,
@@ -164,6 +165,7 @@ export function PragmaResourceDetailFragment(props: {
   readonly project: PragmaProjectSnapshot;
   readonly onBack: () => void;
   readonly onEdit: () => void;
+  readonly onRunDry: () => void;
   readonly onDelete: () => Promise<void>;
 }) {
   const { t } = useTranslation("studio");
@@ -213,6 +215,12 @@ export function PragmaResourceDetailFragment(props: {
           </div>
         </div>
         <div className="detail-actions">
+          {!isTeam ? (
+            <button className="secondary-button" type="button" onClick={props.onRunDry}>
+              <TestTube size={17} aria-hidden="true" />
+              {t("runDry")}
+            </button>
+          ) : null}
           <button className="primary-button" type="button" onClick={props.onEdit}>
             <PencilSimple size={17} aria-hidden="true" />
             {isTeam ? t("editExpertTeam") : t("editFlow")}

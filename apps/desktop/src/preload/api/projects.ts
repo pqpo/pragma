@@ -6,8 +6,10 @@ import {
   PragmaProjectChangesSchema,
   PragmaProjectChangesValidationResultSchema,
   PragmaProjectSnapshotSchema,
+  PragmaFlowRunDrySuiteResultSchema,
   PragmaYamlValidationResultSchema,
   PublishPragmaProjectSchema,
+  RunPragmaFlowDrySuiteSchema,
   UpsertPragmaResourceSchema,
   ValidatePragmaResourceSchema,
   ValidatePragmaYamlSchema,
@@ -63,6 +65,13 @@ export const projectsApi = {
         PragmaProjectChangesSchema.parse(input),
       ),
     ),
+  runPragmaFlowDrySuite: async (input) =>
+    PragmaFlowRunDrySuiteResultSchema.parse(
+      await ipcRenderer.invoke(
+        "pragma-project:flow:run-dry",
+        RunPragmaFlowDrySuiteSchema.parse(input),
+      ),
+    ),
   getWorkflowLayout: async (input) => {
     const result: unknown = await ipcRenderer.invoke(
       "workflow-layout:get",
@@ -88,6 +97,7 @@ export const projectsApi = {
   | "validatePragmaYaml"
   | "validatePragmaResource"
   | "validatePragmaProjectChanges"
+  | "runPragmaFlowDrySuite"
   | "getWorkflowLayout"
   | "saveWorkflowLayout"
   | "deleteWorkflowLayout"

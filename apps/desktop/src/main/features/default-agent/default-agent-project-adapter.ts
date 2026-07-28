@@ -8,7 +8,7 @@ import {
   generatePragmaResourceId,
   withFileLock,
 } from "@pragma/core";
-import { formatPragmaYaml, parsePragmaYaml } from "@pragma/interpreter";
+import { formatPragmaYaml, parsePragmaYaml, runPragmaFlowDrySuite } from "@pragma/interpreter";
 import {
   analyzePragmaFlowGraph,
   validatePragmaFlowDataContracts,
@@ -92,10 +92,13 @@ export function createDesktopDefaultAgentProjectPort(options: {
                 ],
           ),
     );
-    if (actionDiagnostics.length > 0) {
+    const runDryDiagnostics = authoredResources.flatMap((resource) =>
+      resource.kind === "Flow" ? flowRunDryDiagnostics(resource, false) : [],
+    );
+    if (actionDiagnostics.length > 0 || runDryDiagnostics.length > 0) {
       return DefaultAgentPrepareResultSchema.parse({
         status: "invalid",
-        diagnostics: actionDiagnostics,
+        diagnostics: [...actionDiagnostics, ...runDryDiagnostics],
       });
     }
     try {
@@ -289,6 +292,14 @@ export function createDesktopDefaultAgentProjectPort(options: {
         options.project,
         await readFlowDraft(draftPath(draftId)),
       );
+    },
+    async runFlowDraftDry(draftId) {
+      const draft = await withProjectDraftDiagnostics(
+        options.project,
+        await readFlowDraft(draftPath(draftId)),
+      );
+      const resource = PragmaFlowResourceSchema.parse(materializeDraft(draft));
+      return runPragmaFlowDrySuite(resource);
     },
     async prepareFlowDraft(input) {
       const draft = await withProjectDraftDiagnostics(
@@ -712,6 +723,7 @@ function withDraftDiagnostics(
         path: [...issue.path],
       })),
     );
+    diagnostics.push(...flowRunDryDraftDiagnostics(resource));
   }
   const unique = diagnostics.filter(
     (diagnostic, index) =>
@@ -761,10 +773,86 @@ function applyDraftOperation(
       else if (operation.output !== undefined) resource.spec.output = operation.output;
       if (operation.limits !== undefined) resource.spec.limits = operation.limits;
       break;
+    case "set_run_dry":
+      resource.spec.runDry = operation.runDry;
+      break;
     case "rebase":
       return operation.projectRevision;
   }
   return baseProjectRevision;
+}
+
+function flowRunDryDraftDiagnostics(
+  resource: PragmaFlowResource,
+): readonly DefaultAgentFlowDraftDiagnostic[] {
+  return flowRunDryDiagnostics(resource, true).map((diagnostic) => ({
+    severity: diagnostic.severity,
+    code: diagnostic.code,
+    message: diagnostic.message,
+    path: [...diagnostic.path],
+  }));
+}
+
+function flowRunDryDiagnostics(
+  resource: PragmaFlowResource,
+  incompleteWhenMissing: boolean,
+): readonly {
+  readonly severity: "incomplete" | "warning" | "error";
+  readonly code: string;
+  readonly message: string;
+  readonly path: readonly (string | number)[];
+}[] {
+  if ((resource.spec.runDry?.cases.length ?? 0) === 0) {
+    return [
+      {
+        severity: incompleteWhenMissing ? "incomplete" : "error",
+        code: "flow.run_dry.cases_missing",
+        message: "Add run dry cases before the Flow can be prepared.",
+        path: ["spec", "runDry", "cases"],
+      },
+    ];
+  }
+  if (analyzePragmaFlowGraph(resource).issues.length > 0) return [];
+  let result: ReturnType<typeof runPragmaFlowDrySuite>;
+  try {
+    result = runPragmaFlowDrySuite(resource);
+  } catch (error) {
+    return [
+      {
+        severity: "error",
+        code: "flow.run_dry.execution_invalid",
+        message: error instanceof Error ? error.message : String(error),
+        path: ["spec", "runDry"],
+      },
+    ];
+  }
+  return [
+    ...result.cases.flatMap((testCase, index) =>
+      testCase.passed
+        ? []
+        : [
+            {
+              severity: "error" as const,
+              code: "flow.run_dry.case_failed",
+              message: `Run dry case ${testCase.id} failed: ${testCase.assertions
+                .filter((assertion) => !assertion.passed)
+                .map((assertion) => assertion.message)
+                .join(" ")}`,
+              path: ["spec", "runDry", "cases", index],
+            },
+          ],
+    ),
+    ...(result.coverage.passed
+      ? []
+      : [
+          {
+            severity: "error" as const,
+            code: "flow.run_dry.coverage_incomplete",
+            message: `Run dry cases do not cover transitions: ${result.coverage.missing.join(", ")}.`,
+            path: ["spec", "runDry", "cases"] as const,
+          },
+        ]),
+  ];
 }
 
 async function readFlowDraft(path: string): Promise<DefaultAgentFlowDraft> {

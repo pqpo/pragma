@@ -1,10 +1,12 @@
 import { ipcMain } from "electron";
 import { generatePragmaResourceId } from "@pragma/core";
+import { runPragmaFlowDrySuite } from "@pragma/interpreter";
 
 import {
   DeletePragmaResourceSchema,
   PragmaProjectChangesSchema,
   PublishPragmaProjectSchema,
+  RunPragmaFlowDrySuiteSchema,
   UpsertPragmaResourceSchema,
   ValidatePragmaResourceSchema,
   ValidatePragmaYamlSchema,
@@ -49,4 +51,8 @@ export function installPragmaProjectHandlers(store: PragmaProjectStore): void {
       return { diagnostics: await store.validateChanges(parsed) };
     }),
   );
+  ipcMain.handle("pragma-project:flow:run-dry", (_event, input: unknown) => {
+    const parsed = RunPragmaFlowDrySuiteSchema.parse(input);
+    return runPragmaFlowDrySuite(parsed.flow);
+  });
 }
