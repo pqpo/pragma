@@ -25,6 +25,7 @@ import {
   type Query,
   type SDKMessage,
   type SDKResultMessage,
+  type SDKResultSuccess,
 } from "@qoder-ai/qoder-agent-sdk";
 
 import { resolveQoderContextWindow } from "./models.ts";
@@ -182,6 +183,7 @@ export async function compactQoderContextWindow(
 
   session.pendingCompaction = undefined;
   const q = createQuery(session, "/compact", {
+    modelName: session.compactModelName,
     onPostCompact(input) {
       session.compactSummary = input.compact_summary;
       session.pendingCompaction = {
@@ -194,34 +196,38 @@ export async function compactQoderContextWindow(
   session.activeQuery = q;
   try {
     let result: SDKResultMessage | undefined;
+    let iterationError: unknown;
     const init = await q.initializationResult();
     if (!init.commands.some((command) => command.name === "compact")) {
       throw new Error("The installed Qoder CLI does not support the /compact command.");
     }
-    for await (const message of q) {
-      updateSessionId(session, message);
-      if (
-        message.type === "system" &&
-        message.subtype === "compact_boundary" &&
-        message.compact_metadata.trigger === "manual"
-      ) {
-        session.pendingCompaction = {
-          ...(session.pendingCompaction ?? {}),
-          trigger: "manual",
-          preTokens: message.compact_metadata.pre_tokens,
-        };
+    try {
+      for await (const message of q) {
+        updateSessionId(session, message);
+        if (
+          message.type === "system" &&
+          message.subtype === "compact_boundary" &&
+          message.compact_metadata.trigger === "manual"
+        ) {
+          session.pendingCompaction = {
+            ...(session.pendingCompaction ?? {}),
+            trigger: "manual",
+            preTokens: message.compact_metadata.pre_tokens,
+          };
+        }
+        if (message.type === "result") {
+          result = message;
+          session.contextWindowUsage = await readContextUsage(q, session, message);
+        }
       }
-      if (message.type === "result") {
-        result = message;
-        session.contextWindowUsage = await readContextUsage(q, session);
-      }
+    } catch (error) {
+      iterationError = error;
     }
-    if (result === undefined) {
-      throw new Error("Qoder CLI ended /compact without a result message.");
-    }
-    if (result.subtype !== "success") {
-      throw new Error(result.errors.join("\n") || `Qoder CLI failed: ${result.subtype}.`);
-    }
+    requireSuccessfulQoderResult(
+      result,
+      iterationError,
+      "Qoder CLI ended /compact without a result message.",
+    );
     if (
       session.pendingCompaction?.trigger !== "manual" ||
       session.pendingCompaction.preTokens === undefined
@@ -272,20 +278,25 @@ async function runQoderQuery(
 
   try {
     let result: SDKResultMessage | undefined;
-    for await (const message of q) {
-      updateSessionId(session, message);
-      emitSdkMessage(session, message, turn);
-      if (message.type === "result") {
-        result = message;
-        session.contextWindowUsage = await readContextUsage(q, session);
-        turn.stream.writeNative({ kind: "usage", usage: mapQoderUsage(message) });
+    let iterationError: unknown;
+    try {
+      for await (const message of q) {
+        updateSessionId(session, message);
+        emitSdkMessage(session, message, turn);
+        if (message.type === "result") {
+          result = message;
+          session.contextWindowUsage = await readContextUsage(q, session, message);
+          turn.stream.writeNative({ kind: "usage", usage: mapQoderUsage(message) });
+        }
       }
+    } catch (error) {
+      iterationError = error;
     }
-    if (result === undefined) throw new Error("Qoder CLI ended without a result message.");
-    if (result.subtype !== "success") {
-      throw new Error(result.errors.join("\n") || `Qoder CLI failed: ${result.subtype}.`);
-    }
-    return result;
+    return requireSuccessfulQoderResult(
+      result,
+      iterationError,
+      "Qoder CLI ended without a result message.",
+    );
   } finally {
     turn.signal.removeEventListener("abort", onAbort);
     session.activeQuery = undefined;
@@ -305,6 +316,7 @@ function createQuery(
   },
 ): Query {
   const modelName = options.modelName ?? session.defaultModelName ?? "auto";
+  const compactModelName = session.compactModelName ?? modelName;
   return query({
     prompt,
     options: {
@@ -328,6 +340,7 @@ function createQuery(
       allowedMcpServerNames: ["pragma"],
       strictMcpConfig: true,
       disallowedTools: ["AskUserQuestion"],
+      settings: { model: compactModelName },
       plugins: [{ type: "local", path: session.plugin.path }],
       skills: [...session.plugin.skills],
       permissionMode: session.permissionMode,
@@ -350,19 +363,19 @@ function createQuery(
         ],
       },
       resolveModel(context) {
+        const isCompaction =
+          context.purpose === "compact" || context.purpose === "compression";
+        const resolvedModelName = isCompaction ? compactModelName : modelName;
         const selected =
-          context.availableModels.find((model) => model.value === modelName) ??
+          context.availableModels.find((model) => model.value === resolvedModelName) ??
           context.availableModels.find((model) => model.isDefault === true);
         const contextWindow = resolveQoderContextWindow(
           selected,
           session.contextWindowOverride,
         );
-        session.contextWindowTokens = contextWindow;
+        if (!isCompaction) session.contextWindowTokens = contextWindow;
         return {
-          model:
-            context.purpose === "compact" && session.compactModelName !== undefined
-              ? session.compactModelName
-              : modelName,
+          model: resolvedModelName,
           parameters: {
             contextWindow,
             ...(options.thinkingLevel === undefined
@@ -519,10 +532,29 @@ export function mapQoderUsage(result: SDKResultMessage): AgentMessageUsage {
   });
 }
 
+export function requireSuccessfulQoderResult(
+  result: SDKResultMessage | undefined,
+  iterationError: unknown,
+  missingResultMessage: string,
+): SDKResultSuccess {
+  if (result === undefined) {
+    if (iterationError !== undefined) throw iterationError;
+    throw new Error(missingResultMessage);
+  }
+  if (result.subtype !== "success") {
+    throw new Error(result.errors.join("\n") || `Qoder CLI failed: ${result.subtype}.`);
+  }
+  if (iterationError !== undefined) throw iterationError;
+  return result;
+}
+
 async function readContextUsage(
   q: Query,
   session: QoderNativeSession,
+  result?: SDKResultMessage,
 ): Promise<RuntimeContextWindowUsage | undefined> {
+  const derived = deriveQoderContextWindowUsage(result, session.contextWindowTokens);
+  if (derived !== undefined) return derived;
   const usage = await q.getContextUsage().catch(() => undefined);
   if (usage !== undefined && usage.maxTokens > 0) {
     return createRuntimeContextWindowUsage({
@@ -533,6 +565,26 @@ async function readContextUsage(
   }
   if (session.contextWindowTokens === undefined) return undefined;
   return estimateContextUsage(session);
+}
+
+export function deriveQoderContextWindowUsage(
+  result: SDKResultMessage | undefined,
+  contextWindowTokens: number | undefined,
+): RuntimeContextWindowUsage | undefined {
+  const ratio = result?.usage.context_usage_ratio;
+  if (
+    contextWindowTokens === undefined ||
+    ratio === undefined ||
+    !Number.isFinite(ratio) ||
+    ratio < 0
+  ) {
+    return undefined;
+  }
+  return createRuntimeContextWindowUsage({
+    usedTokens: ratio * contextWindowTokens,
+    contextWindowTokens,
+    measurement: "derived",
+  });
 }
 
 function estimateContextUsage(

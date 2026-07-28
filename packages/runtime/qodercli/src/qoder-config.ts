@@ -11,6 +11,18 @@ export interface PrepareManagedQoderConfigOptions {
 }
 
 const PRIVATE_STATE_DIRECTORIES = ["projects", "logs", "tmp"] as const;
+const SHARED_CONFIG_SNAPSHOTS = [
+  {
+    name: ".auth",
+    event: "runtime.qodercli_auth_snapshot_failed",
+    description: "local login state",
+  },
+  {
+    name: ".models",
+    event: "runtime.qodercli_model_catalog_snapshot_failed",
+    description: "local model catalog",
+  },
+] as const;
 
 export async function prepareManagedQoderConfig({
   sessionDir,
@@ -25,29 +37,35 @@ export async function prepareManagedQoderConfig({
     }),
   );
 
-  const targetAuth = join(configDir, ".auth");
-  try {
-    await access(targetAuth);
-  } catch (error) {
-    if (!isNotFoundError(error)) throw error;
-    const sourceAuth = join(resolveSharedQoderConfigDir(env), ".auth");
-    try {
-      await cp(sourceAuth, targetAuth, {
-        recursive: true,
-        dereference: true,
-        errorOnExist: true,
-        force: false,
-      });
-    } catch (copyError) {
-      if (!isNotFoundError(copyError)) {
-        logger.warn(
-          "runtime.qodercli_auth_snapshot_failed",
-          "Qoder CLI managed config could not snapshot the local login state",
-          { error: copyError },
-        );
+  const sharedConfigDir = resolveSharedQoderConfigDir(env);
+  await Promise.all(
+    SHARED_CONFIG_SNAPSHOTS.map(async (snapshot) => {
+      const target = join(configDir, snapshot.name);
+      try {
+        await access(target);
+        return;
+      } catch (error) {
+        if (!isNotFoundError(error)) throw error;
       }
-    }
-  }
+
+      try {
+        await cp(join(sharedConfigDir, snapshot.name), target, {
+          recursive: true,
+          dereference: true,
+          errorOnExist: true,
+          force: false,
+        });
+      } catch (copyError) {
+        if (!isNotFoundError(copyError)) {
+          logger.warn(
+            snapshot.event,
+            `Qoder CLI managed config could not snapshot the ${snapshot.description}`,
+            { error: copyError },
+          );
+        }
+      }
+    }),
+  );
 
   return configDir;
 }

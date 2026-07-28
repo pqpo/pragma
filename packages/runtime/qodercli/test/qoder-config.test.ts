@@ -22,7 +22,9 @@ describe("prepareManagedQoderConfig", () => {
     const shared = join(root, "shared");
     const session = join(root, "session");
     await mkdir(join(shared, ".auth"), { recursive: true });
+    await mkdir(join(shared, ".models", "user"), { recursive: true });
     await writeFile(join(shared, ".auth", "user"), "credential");
+    await writeFile(join(shared, ".models", "user", "catalog-v6"), "encrypted-catalog");
 
     const config = await prepareManagedQoderConfig({
       sessionDir: session,
@@ -33,6 +35,9 @@ describe("prepareManagedQoderConfig", () => {
     await expect(readFile(join(config, ".auth", "user"), "utf8")).resolves.toBe(
       "credential",
     );
+    await expect(
+      readFile(join(config, ".models", "user", "catalog-v6"), "utf8"),
+    ).resolves.toBe("encrypted-catalog");
     await expect(readFile(join(config, "projects", "missing"), "utf8")).rejects.toMatchObject({
       code: "ENOENT",
     });
@@ -43,9 +48,16 @@ describe("prepareManagedQoderConfig", () => {
     const shared = join(root, "shared");
     const session = join(root, "session");
     await mkdir(join(shared, ".auth"), { recursive: true });
+    await mkdir(join(shared, ".models", "user"), { recursive: true });
     await mkdir(join(session, "config", ".auth"), { recursive: true });
+    await mkdir(join(session, "config", ".models", "user"), { recursive: true });
     await writeFile(join(shared, ".auth", "user"), "new-global-login");
+    await writeFile(join(shared, ".models", "user", "catalog-v6"), "new-global-catalog");
     await writeFile(join(session, "config", ".auth", "user"), "session-login");
+    await writeFile(
+      join(session, "config", ".models", "user", "catalog-v6"),
+      "session-catalog",
+    );
 
     const config = await prepareManagedQoderConfig({
       sessionDir: session,
@@ -56,6 +68,9 @@ describe("prepareManagedQoderConfig", () => {
     await expect(readFile(join(config, ".auth", "user"), "utf8")).resolves.toBe(
       "session-login",
     );
+    await expect(
+      readFile(join(config, ".models", "user", "catalog-v6"), "utf8"),
+    ).resolves.toBe("session-catalog");
   });
 });
 
