@@ -6,6 +6,7 @@ describe("console usage summary", () => {
   it("formats a session usage total", () => {
     expect(
       formatConsoleUsage({
+        measurement: "reported",
         input: 1_500,
         output: 150,
         cacheRead: 300,

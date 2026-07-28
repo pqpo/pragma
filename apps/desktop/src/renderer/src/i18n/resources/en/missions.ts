@@ -13,6 +13,13 @@ export const missions = {
   contextPercentValue: "{{value}}%",
   contextCurrent: "Current context",
   contextTotal: "Total context",
+  usageMeasurement: "Measurement",
+  usageMeasurementValue: {
+    reported: "Reported by runtime",
+    derived: "Derived from runtime data",
+    estimated: "Estimated",
+    unknown: "Unknown",
+  },
   contextUnknown: "Unknown",
   contextUsageInvalid:
     "Runtime reported invalid context usage. Raw values are shown for diagnosis.",

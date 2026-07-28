@@ -1,7 +1,10 @@
 import { ExpertSessionEventSchema, InvocationSchema, PromptRequestSchema } from "@pragma/shared";
 import { z } from "zod";
 
-import { ExecutionRecordV7Schema } from "../../execution/schemas/v7.ts";
+import {
+  AgentMessageUsageV7Schema,
+  ExecutionRecordV7Schema,
+} from "../../execution/schemas/v7.ts";
 import { ExpertSessionRecordV5Schema } from "../../expert-session/schemas/v5.ts";
 
 export const ExpertSessionTransactionJournalV6Schema = z
@@ -11,7 +14,9 @@ export const ExpertSessionTransactionJournalV6Schema = z
     prompts: PromptRequestSchema.array(),
     events: ExpertSessionEventSchema.array(),
     execution: ExecutionRecordV7Schema.optional(),
-    rootInvocation: InvocationSchema.optional(),
+    rootInvocation: InvocationSchema.extend({
+      usage: AgentMessageUsageV7Schema.optional(),
+    }).optional(),
   })
   .refine(
     (journal) => (journal.execution === undefined) === (journal.rootInvocation === undefined),

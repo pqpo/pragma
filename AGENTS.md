@@ -94,6 +94,7 @@ tsconfig.base.json
 @pragma/runtime-pi
 @pragma/runtime-codex
 @pragma/runtime-claude-code
+@pragma/runtime-qodercli
 @pragma/desktop
 @pragma/examples
 @pragma/plugin-memory
@@ -180,6 +181,12 @@ runtime-codex -> runtime-pi
 runtime-codex -> runtime-claude-code
 runtime-claude-code -> runtime-pi
 runtime-claude-code -> runtime-codex
+runtime-qodercli -> runtime-pi
+runtime-qodercli -> runtime-codex
+runtime-qodercli -> runtime-claude-code
+runtime-pi -> runtime-qodercli
+runtime-codex -> runtime-qodercli
+runtime-claude-code -> runtime-qodercli
 server -> client
 server -> web
 core -> web
@@ -244,7 +251,7 @@ Server 与 Agent 的关系：
 - Core 通过可选 `UsageSink` 发出逐 Runtime turn 的 token observation，但不持久化跨 Execution
   的统计账本；Desktop/Server 等 Host 负责统计持久化、保留和查询策略。
 - Server/Worker 可以调用 Core；Core 不应该反向调用 Server 应用层。
-- 本地 Claude Code、Codex、自研执行环境属于 Runtime Adapter 的实现目标，由 Desktop App 承载本地连接、授权和执行桥接，不改变 Server 调度 Agent 的依赖方向。
+- 本地 Claude Code、Codex、Qoder CLI、自研执行环境属于 Runtime Adapter 的实现目标，由 Desktop App 承载本地连接、授权和执行桥接，不改变 Server 调度 Agent 的依赖方向。
 
 本地存储边界：
 
@@ -301,7 +308,7 @@ Cloud Server / Worker
 → Desktop App
 → Local Permission Guard
 → Local Agent Adapter
-→ Claude Code / Codex / 自研本地 Agent
+→ Claude Code / Codex / Qoder CLI / 自研本地 Agent
 ```
 
 云端职责：
@@ -318,7 +325,7 @@ Desktop App 职责：
 
 - 负责用户登录、设备绑定、本地工作区选择。
 - 主动连接云端，避免云端直接访问用户机器或要求本机暴露公网端口。
-- 注册本机可用 Runtime 能力，例如 Claude Code、Codex、自研本地 Agent。
+- 注册本机可用 Runtime 能力，例如 Claude Code、Codex、Qoder CLI、自研本地 Agent。
 - 承载本地权限闸门，包括文件读取、文件写入、shell、网络、secrets、git 操作。
 - 调用本地 Agent，并把过程事件流式回传云端。
 - 在需要时展示本地确认 UI，例如执行 shell、修改文件、读取敏感目录。
@@ -517,7 +524,7 @@ createDatabaseClient()
 - ExpertAgent 公共实现，包括上下文系统、AGENTS.md 加载、subAgent 声明和系统提示词组装。
 - RuntimeAdapter 与 RuntimeAgentSession 核心接口。
 - RuntimeResolver、不可变 Runtime Environment binding、运行事件、会话、取消、错误等公共运行协议。
-- 未来本地 Claude Code、Codex、自研执行环境通过独立 Runtime Adapter 包对接。
+- 未来本地 Claude Code、Codex、Qoder CLI、自研执行环境通过独立 Runtime Adapter 包对接。
 
 当前保留：
 
@@ -702,6 +709,10 @@ Server health: ok
 ```bash
 pnpm --filter @pragma/desktop dev
 ```
+
+使用内置 Qoder CLI Runtime 前，主机必须已安装可直接执行的 `qodercli`。可先运行
+`qodercli --version` 验证；认证可复用本机已完成的 Qoder CLI 登录状态，或通过
+`QODER_PERSONAL_ACCESS_TOKEN` 提供 PAT。非标准安装路径使用 `QODERCLI_PATH` 指向原生可执行文件。
 
 > **Electron 42 注意事项：** 从 Electron 42 开始，`postinstall` 不再自动下载 Electron 二进制文件，改为首次运行 Electron CLI 时才下载。Desktop 的 `predev` 会通过 `prepare:electron` 调用 `install-electron`，避免新成员首次 `dev` 时遇到缺失二进制的错误。
 

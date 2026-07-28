@@ -11,6 +11,8 @@ import {
   type CodexRuntimeSandboxMode,
 } from "@pragma/runtime-codex";
 import { createPiRuntime } from "@pragma/runtime-pi";
+import { createQoderCliRuntime } from "@pragma/runtime-qodercli";
+import type { QoderCliRuntimePermissionMode } from "@pragma/runtime-qodercli";
 
 import type {
   DesktopToolPermissionMode,
@@ -205,6 +207,21 @@ export function createBuiltInRuntimeFactories(
       },
     },
     {
+      id: "pragma.runtime.qodercli",
+      version: "v1",
+      create: async (environment, context) => {
+        assertEmptyRuntimeConfig(environment);
+        const permissionMode = context?.toolPermissionMode ?? (await getToolPermissionMode());
+        return createQoderCliRuntime({
+          descriptor: { id: environment.id, displayName: environment.displayName },
+          ...(onModelCatalogUpdated === undefined
+            ? {}
+            : { onModelCatalogUpdated: () => onModelCatalogUpdated(environment.id) }),
+          permissionMode: qoderRuntimePermissionForMode(permissionMode),
+        });
+      },
+    },
+    {
       id: "pragma.runtime.pi",
       version: "v1",
       create: (environment) => {
@@ -225,6 +242,16 @@ export function codexRuntimePermissionsForMode(mode: DesktopToolPermissionMode):
   return mode === "full-access"
     ? { sandboxMode: "danger-full-access", approvalPolicy: "never" }
     : { sandboxMode: "workspace-write", approvalPolicy: "on-request" };
+}
+
+export function qoderRuntimePermissionForMode(
+  mode: DesktopToolPermissionMode,
+): QoderCliRuntimePermissionMode {
+  return mode === "request-approval"
+    ? "default"
+    : mode === "auto-approve"
+      ? "auto"
+      : "bypassPermissions";
 }
 
 function factoryRef(id: string, version: string): string {

@@ -1,6 +1,6 @@
 import { z } from "zod";
 
-const AgentMessageUsageV7Schema = z.object({
+export const AgentMessageUsageV7Schema = z.object({
   input: z.number().nonnegative(),
   output: z.number().nonnegative(),
   cacheRead: z.number().nonnegative(),

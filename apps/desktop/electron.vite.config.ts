@@ -11,6 +11,7 @@ export default defineConfig({
           "@pragma/runtime-claude-code",
           "@pragma/runtime-codex",
           "@pragma/runtime-pi",
+          "@pragma/runtime-qodercli",
           "@pragma/core",
           "@pragma/interpreter",
           "@pragma/shared",

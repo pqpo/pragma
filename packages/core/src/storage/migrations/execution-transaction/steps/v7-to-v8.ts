@@ -1,5 +1,5 @@
 import type { StateMigrationStep } from "../../../state-migration.ts";
-import { executionRecordMigrationChain } from "../../execution/index.ts";
+import { executionV6ToV7Step } from "../../execution/steps/v6-to-v7.ts";
 import { ExecutionCommitJournalV7Schema } from "../schemas/v7.ts";
 import { ExecutionCommitJournalV8Schema } from "../schemas/v8.ts";
 
@@ -12,7 +12,7 @@ export const executionTransactionV7ToV8Step = {
     return ExecutionCommitJournalV8Schema.parse({
       ...journal,
       schemaVersion: "pragma.execution-transaction/v8",
-      execution: executionRecordMigrationChain.upgrade(journal.execution).value,
+      execution: executionV6ToV7Step.migrate(journal.execution),
       invocations: journal.invocations.map((invocation) => ({
         ...invocation,
         definition: {

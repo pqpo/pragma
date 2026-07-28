@@ -26,6 +26,7 @@ export interface UsageSink {
 }
 
 export interface RuntimeTokenUsageInput {
+  readonly measurement?: AgentMessageUsage["measurement"] | undefined;
   readonly inputTokens: number;
   readonly inputTokensIncludeCacheRead: boolean;
   readonly outputTokens: number;
@@ -36,6 +37,7 @@ export interface RuntimeTokenUsageInput {
 
 export function createEmptyUsage(): AgentMessageUsage {
   return {
+    measurement: "reported",
     input: 0,
     output: 0,
     cacheRead: 0,
@@ -62,6 +64,7 @@ export function createUsageFromTokenCounts(usage: RuntimeTokenUsageInput): Agent
   const cacheWrite1h = normalizeTokenCount(usage.cacheWrite1hTokens);
 
   return {
+    measurement: usage.measurement ?? "reported",
     input,
     output,
     cacheRead,
@@ -91,6 +94,7 @@ export function mergeUsage(
   }
 
   return {
+    measurement: mergeUsageMeasurement(current.measurement, next.measurement),
     input: current.input + next.input,
     output: current.output + next.output,
     cacheRead: current.cacheRead + next.cacheRead,
@@ -107,6 +111,20 @@ export function mergeUsage(
       total: current.cost.total + next.cost.total,
     },
   };
+}
+
+const USAGE_MEASUREMENT_RANK = {
+  reported: 0,
+  derived: 1,
+  estimated: 2,
+  unknown: 3,
+} as const;
+
+function mergeUsageMeasurement(
+  current: AgentMessageUsage["measurement"],
+  next: AgentMessageUsage["measurement"],
+): AgentMessageUsage["measurement"] {
+  return USAGE_MEASUREMENT_RANK[current] >= USAGE_MEASUREMENT_RANK[next] ? current : next;
 }
 
 export function mergeUsages(

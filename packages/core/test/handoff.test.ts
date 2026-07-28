@@ -213,7 +213,7 @@ async function createFixture() {
   const now = new Date().toISOString();
   await executions.create(
     {
-      schemaVersion: "pragma.execution/v7",
+      schemaVersion: "pragma.execution/v8",
       executionId: "execution",
       version: 0,
       kind: "expert-turn",

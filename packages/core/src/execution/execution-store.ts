@@ -30,6 +30,7 @@ import {
 import {
   executionRecordMigrationChain,
   migrateExecutionInvocationsV5ToV6,
+  migrateInvocationUsageV7ToV8,
 } from "../storage/migrations/execution/index.ts";
 import { PragmaPaths } from "../storage/pragma-paths.ts";
 import {
@@ -279,14 +280,14 @@ export function createFileExecutionStore(
         const nextExecution = ExecutionRecordSchema.parse({
           ...current,
           ...request.executionPatch,
-          schemaVersion: "pragma.execution/v7",
+          schemaVersion: "pragma.execution/v8",
           executionId: request.executionId,
           version: current.version + 1,
           lastAppliedSequence: lastSequence,
           updatedAt: now,
         });
         const journal = ExecutionCommitJournalSchema.parse({
-          schemaVersion: "pragma.execution-transaction/v8",
+          schemaVersion: "pragma.execution-transaction/v9",
           commitId: request.commitId,
           signature,
           execution: nextExecution,
@@ -727,10 +728,13 @@ async function migrateExecutionState(paths: PragmaPaths, executionId: string): P
   const upgraded = executionRecordMigrationChain.upgrade(value);
   if (!upgraded.migrated) return;
   const storedInvocations = (await readJsonIfExists(paths.executionInvocations(executionId))) ?? [];
+  const usageMigratedInvocations = Array.isArray(storedInvocations)
+    ? storedInvocations.map(migrateInvocationUsageV7ToV8)
+    : storedInvocations;
   const invocations =
     upgraded.fromVersion === 5
-      ? migrateExecutionInvocationsV5ToV6(storedInvocations)
-      : InvocationSchema.array().parse(storedInvocations);
+      ? migrateExecutionInvocationsV5ToV6(usageMigratedInvocations)
+      : InvocationSchema.array().parse(usageMigratedInvocations);
   await applyAtomicStateMigration({
     aggregateRoot: paths.executionRoot(executionId),
     journalFile: paths.executionMigration(executionId),

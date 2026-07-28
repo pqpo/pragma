@@ -147,6 +147,7 @@ export class RuntimeMessageAccumulator {
 }
 
 const EMPTY_USAGE: AgentMessageUsage = {
+  measurement: "reported",
   input: 0,
   output: 0,
   cacheRead: 0,

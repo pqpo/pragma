@@ -8,6 +8,7 @@ import { describe, expect, it } from "vitest";
 import {
   codexRuntimePermissionsForMode,
   createRuntimeEnvironmentService,
+  qoderRuntimePermissionForMode,
   type RuntimeEnvironmentAdapterFactory,
 } from "./runtime-environment-service.ts";
 import { createRuntimeEnvironmentStore } from "./runtime-environment-store.ts";
@@ -77,6 +78,16 @@ describe("Codex tool permission mapping", () => {
     ["full-access", "danger-full-access", "never"],
   ] as const)("maps %s to sandbox=%s and approval=%s", (mode, sandboxMode, approvalPolicy) => {
     expect(codexRuntimePermissionsForMode(mode)).toEqual({ sandboxMode, approvalPolicy });
+  });
+});
+
+describe("Qoder CLI tool permission mapping", () => {
+  it.each([
+    ["request-approval", "default"],
+    ["auto-approve", "auto"],
+    ["full-access", "bypassPermissions"],
+  ] as const)("maps %s to %s", (mode, permissionMode) => {
+    expect(qoderRuntimePermissionForMode(mode)).toBe(permissionMode);
   });
 });
 

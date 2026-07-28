@@ -294,6 +294,7 @@ describe("Execution canonical event log", () => {
         signature: "a".repeat(64),
         execution: {
           ...execution,
+          schemaVersion: "pragma.execution/v7",
           version: 1,
           status: "succeeded",
           output: { type: "inline", value: "recovered" },
@@ -418,6 +419,7 @@ describe("Execution canonical event log", () => {
       provider: "openai",
       model: "test",
       usage: {
+        measurement: "reported" as const,
         input: 0,
         output: 0,
         cacheRead: 0,
@@ -683,7 +685,7 @@ async function fixture() {
   const timestamp = new Date().toISOString();
   const definition = { id: "flow", kind: "flow" as const };
   const execution: ExecutionRecord = {
-    schemaVersion: "pragma.execution/v7",
+    schemaVersion: "pragma.execution/v8",
     executionId: "execution",
     version: 0,
     kind: "flow",

@@ -356,6 +356,7 @@ function createOrchestrationRuntime(
 }
 
 const orchestrationUsage: AgentMessageUsage = {
+  measurement: "reported",
   input: 10,
   output: 2,
   cacheRead: 1,
@@ -809,6 +810,7 @@ describe("ExpertSession", () => {
 
   it("persists turn usage and exposes a session total without consuming events", async () => {
     const perTurnUsage: AgentMessageUsage = {
+      measurement: "reported",
       input: 100,
       output: 20,
       cacheRead: 30,
@@ -826,6 +828,7 @@ describe("ExpertSession", () => {
     await expect(first.usage).resolves.toEqual(perTurnUsage);
     await expect(second.usage).resolves.toEqual(perTurnUsage);
     expect(await session.getUsage()).toEqual({
+      measurement: "reported",
       input: 200,
       output: 40,
       cacheRead: 60,
@@ -841,6 +844,7 @@ describe("ExpertSession", () => {
 
   it("emits one Host usage observation per settled Runtime turn without coupling execution", async () => {
     const perTurnUsage: AgentMessageUsage = {
+      measurement: "reported",
       input: 100,
       output: 20,
       cacheRead: 30,
@@ -1788,7 +1792,7 @@ describe("ExpertSession", () => {
     );
     expect((await session.getState()).executionIds).toContain(executionId);
     expect(await executions.get(executionId)).toMatchObject({
-      schemaVersion: "pragma.execution/v7",
+      schemaVersion: "pragma.execution/v8",
     });
     expect((await session.getPromptQueue())[0]?.requestId).toBe("journal-request");
     expect((await session.listEvents()).items.map((event) => event.type)).toContain(
@@ -2983,7 +2987,7 @@ describe("Execution observation", () => {
     const now = new Date().toISOString();
     await writer.create(
       {
-        schemaVersion: "pragma.execution/v7",
+        schemaVersion: "pragma.execution/v8",
         executionId: "cross-process",
         version: 0,
         kind: "flow",
@@ -3104,6 +3108,7 @@ describe("Expert lifecycle orchestration", () => {
   it("persists aggregate usage across the original turn and orchestration continuation", async () => {
     const result = await runScenario("usage");
     expect(result.tree.invocation.usage).toEqual({
+      measurement: "reported",
       input: 20,
       output: 4,
       cacheRead: 2,

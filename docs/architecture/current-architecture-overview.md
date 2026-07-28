@@ -44,7 +44,7 @@ Pragma 已经形成一个质量较好的**本地 Agent 执行内核**：Expert�
             ▼                           ▼
 ┌─────────────────────────┐   ┌─────────────────────────────┐
 │ @pragma/runtime-*       │   │ plugins/*                   │
-│ PI / Codex / Claude Code│   │ Memory / Repo Manager       │
+│ PI / Codex / Claude / Qoder│ │ Memory / Repo Manager       │
 └───────────┬─────────────┘   └─────────────────────────────┘
             │
             ▼
@@ -59,7 +59,7 @@ Pragma 已经形成一个质量较好的**本地 Agent 执行内核**：Expert�
 | 多专家协作         | 普通 Expert launcher 与 `defineExpertTeam()` 共用子 Invocation 委派机制              | 局部 subagent 与团队治理边界清晰                   |
 | Flow               | Task、HumanTask、Expert、Team、子 Flow 共用 Invocation Tree                          | 顶层对象收敛合理，恢复语义已有测试                 |
 | Execution          | Execution、Invocation、Canonical Event、Output 投影、ExpertSession 均有持久化 schema | 领域骨架完整；文件存储仍不适合直接上云             |
-| Runtime            | PI、Codex、Claude Code 分包实现统一 Runtime Driver                                   | 是目前最成熟、最值得保留的扩展边界                 |
+| Runtime            | PI、Codex、Claude Code、Qoder CLI 分包实现统一 Runtime Driver                        | 是目前最成熟、最值得保留的扩展边界                 |
 | Session 所有权     | ExpertSession / FlowExecution 显式拥有 Runtime Session，并有 claim、lease 和恢复校验 | 对避免 Session 串用和 TOCTOU 很重要，设计合理      |
 | Plugin             | 插件可贡献 MCP、Skill、Model、Tool、Approval 和生命周期 Hook                         | 扩展面丰富，但 SPI 与具体能力边界还可收敛          |
 | Context            | ContextSystem 支持多 Store、元数据、检索、写入与装配                                 | 能力完整，但实现体量已经过大                       |
@@ -84,7 +84,7 @@ Pragma 已经形成一个质量较好的**本地 Agent 执行内核**：Expert�
 
 ### 1. Core 不依赖具体 Runtime
 
-`@pragma/runtime-pi`、`@pragma/runtime-codex`、`@pragma/runtime-claude-code` 独立依赖 `@pragma/core`，Core 不反向依赖具体 Runtime。这使 Worker、Desktop 或未来云端执行器可以按部署环境装配 Runtime。
+`@pragma/runtime-pi`、`@pragma/runtime-codex`、`@pragma/runtime-claude-code`、`@pragma/runtime-qodercli` 独立依赖 `@pragma/core`，Core 不反向依赖具体 Runtime。这使 Worker、Desktop 或未来云端执行器可以按部署环境装配 Runtime。
 
 建议继续保持 Runtime 包彼此隔离，不引入跨 Runtime 的共享实现包；真正通用的契约或纯逻辑应回到 Core 或 Shared。
 
@@ -236,7 +236,7 @@ Desktop 将 Runtime environment 保存为独立的 Adapter binding：`runtimeId`
 获取显示名称、模型、Provider 和思考深度，不按已知 Runtime ID 分支。一个损坏或未知 Factory 的环境
 只会报告自身不可用，不影响其他环境和 Desktop 启动。
 
-PI Adapter 的模型目录来自 Desktop 注册的 Model Provider；Codex 和 Claude Code Adapter 使用各自的
+PI Adapter 的模型目录来自 Desktop 注册的 Model Provider；Codex、Claude Code 和 Qoder CLI Adapter 使用各自的
 原生模型发现能力。模型身份统一为 `providerId + modelId`，思考深度必须属于所选模型声明的集合。PI
 还会把声明集合与自身真实支持的思考深度取交集。RuntimeProfile 不再承载 Provider credential；凭据只
 由具体 Runtime Factory/Adapter 在运行时解析。

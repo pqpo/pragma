@@ -217,6 +217,7 @@ function aggregateAssistantUsage(messages: readonly unknown[]): AgentMessageUsag
 
   return usages.reduce<AgentMessageUsage>(
     (total, usage) => ({
+      measurement: "reported",
       input: total.input + usage.input,
       output: total.output + usage.output,
       cacheRead: total.cacheRead + usage.cacheRead,
@@ -242,12 +243,16 @@ function readAssistantUsage(message: unknown): AgentMessageUsage | undefined {
     return undefined;
   }
 
-  const result = AgentMessageUsageSchema.safeParse(message["usage"]);
+  const result = AgentMessageUsageSchema.safeParse({
+    measurement: "reported",
+    ...(isRecord(message["usage"]) ? message["usage"] : {}),
+  });
   return result.success ? result.data : undefined;
 }
 
 function createEmptyUsage(): AgentMessageUsage {
   return {
+    measurement: "reported",
     input: 0,
     output: 0,
     cacheRead: 0,

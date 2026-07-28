@@ -2287,6 +2287,12 @@ export function ContextWindowControl(props: {
                   : tokenFormatter.format(usage.contextWindowTokens)}
               </dd>
             </div>
+            {usage === undefined ? null : (
+              <div>
+                <dt>{t("usageMeasurement")}</dt>
+                <dd>{t(`usageMeasurementValue.${usage.measurement}`)}</dd>
+              </div>
+            )}
           </dl>
           <button
             className="mission-context-compact"

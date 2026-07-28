@@ -280,6 +280,7 @@ function observation(): RuntimeUsageObservation {
     },
     executor: { id: "expert-1", name: "expert-1" },
     usage: {
+      measurement: "reported",
       input: 100,
       output: 20,
       cacheRead: 30,

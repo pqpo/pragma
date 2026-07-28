@@ -988,6 +988,7 @@ describe("MissionRunner", { timeout: 15_000 }, () => {
         provider: "openai",
         model: "test",
         usage: {
+          measurement: "reported",
           input: 0,
           output: 0,
           cacheRead: 0,
@@ -1025,6 +1026,7 @@ describe("MissionRunner", { timeout: 15_000 }, () => {
         provider: "openai",
         model: "test",
         usage: {
+          measurement: "reported",
           input: 0,
           output: 0,
           cacheRead: 0,
@@ -1389,7 +1391,7 @@ describe("MissionRunner", { timeout: 15_000 }, () => {
     });
     await executions.create(
       {
-        schemaVersion: "pragma.execution/v7",
+        schemaVersion: "pragma.execution/v8",
         executionId,
         version: 0,
         kind: "expert-turn",
@@ -1788,7 +1790,7 @@ describe("MissionRunner", { timeout: 15_000 }, () => {
     });
     await executions.create(
       {
-        schemaVersion: "pragma.execution/v7",
+        schemaVersion: "pragma.execution/v8",
         executionId,
         version: 0,
         kind: "expert-turn",

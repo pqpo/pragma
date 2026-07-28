@@ -1,17 +1,22 @@
 import { defineStateMigrationChain } from "../../state-migration.ts";
 import { executionTransactionV6ToV7Step } from "./steps/v6-to-v7.ts";
 import { executionTransactionV7ToV8Step } from "./steps/v7-to-v8.ts";
-import { ExecutionCommitJournalV8Schema, type ExecutionCommitJournalV8 } from "./schemas/v8.ts";
+import { executionTransactionV8ToV9Step } from "./steps/v8-to-v9.ts";
+import { ExecutionCommitJournalV9Schema, type ExecutionCommitJournalV9 } from "./schemas/v9.ts";
 
 export {
-  ExecutionCommitJournalV8Schema as ExecutionCommitJournalSchema,
-  type ExecutionCommitJournalV8 as ExecutionCommitJournal,
-} from "./schemas/v8.ts";
+  ExecutionCommitJournalV9Schema as ExecutionCommitJournalSchema,
+  type ExecutionCommitJournalV9 as ExecutionCommitJournal,
+} from "./schemas/v9.ts";
 
 export const executionCommitJournalMigrationChain =
-  defineStateMigrationChain<ExecutionCommitJournalV8>({
+  defineStateMigrationChain<ExecutionCommitJournalV9>({
     family: "pragma.execution-transaction",
-    currentVersion: 8,
-    currentSchema: ExecutionCommitJournalV8Schema,
-    steps: [executionTransactionV6ToV7Step, executionTransactionV7ToV8Step],
+    currentVersion: 9,
+    currentSchema: ExecutionCommitJournalV9Schema,
+    steps: [
+      executionTransactionV6ToV7Step,
+      executionTransactionV7ToV8Step,
+      executionTransactionV8ToV9Step,
+    ],
   });

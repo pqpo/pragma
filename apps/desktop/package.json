@@ -34,6 +34,7 @@
     "@pragma/runtime-claude-code": "workspace:*",
     "@pragma/runtime-codex": "workspace:*",
     "@pragma/runtime-pi": "workspace:*",
+    "@pragma/runtime-qodercli": "workspace:*",
     "@pragma/shared": "workspace:*",
     "@pragma/default-agent": "workspace:*",
     "@xyflow/react": "^12.11.2",

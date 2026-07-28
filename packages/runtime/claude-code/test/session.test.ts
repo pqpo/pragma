@@ -28,6 +28,7 @@ describe("Claude Code context window", () => {
           },
         },
         {
+          measurement: "reported",
           input: 41_000,
           output: 1_000,
           cacheRead: 8_000,
