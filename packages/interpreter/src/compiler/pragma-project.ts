@@ -72,10 +72,7 @@ import {
   type PragmaResourceInspection,
   type PragmaRuntimeProfileContribution,
 } from "../runtime/resource-adapters.ts";
-import {
-  evaluatePragmaFlowValue,
-  renderPragmaFlowPrompt,
-} from "../runtime/flow-values.ts";
+import { evaluatePragmaFlowValue, renderPragmaFlowPrompt } from "../runtime/flow-values.ts";
 
 const COMPILER_VERSION = "pragma.dsl/v2";
 const provenance = new WeakMap<object, PragmaProvenance>();
@@ -1739,95 +1736,178 @@ function validateAndReadLoopMembers(
   return new Map(analysis.loopMembers);
 }
 
-function hasCycle(
+interface ResourceDependency {
+  readonly ref: string;
+  readonly path: readonly (string | number)[];
+}
+
+interface ResourceDependencyEdge extends ResourceDependency {
+  readonly target: string;
+}
+
+interface ResourceCycle {
+  readonly refs: readonly string[];
+  readonly sourceRef: string;
+  readonly path: readonly (string | number)[];
+}
+
+function findResourceCycles(
   nodes: ReadonlySet<string>,
-  edges: ReadonlyMap<string, ReadonlySet<string>>,
-): boolean {
+  edges: ReadonlyMap<string, readonly ResourceDependencyEdge[]>,
+): readonly ResourceCycle[] {
   const visiting = new Set<string>();
   const visited = new Set<string>();
-  const visit = (node: string): boolean => {
-    if (visiting.has(node)) return true;
-    if (visited.has(node)) return false;
+  const stack: string[] = [];
+  const cycles: ResourceCycle[] = [];
+
+  const visit = (node: string): void => {
     visiting.add(node);
-    for (const target of edges.get(node) ?? []) {
-      if (visit(target)) return true;
+    stack.push(node);
+    for (const edge of edges.get(node) ?? []) {
+      if (!nodes.has(edge.target)) continue;
+      if (!visiting.has(edge.target) && !visited.has(edge.target)) {
+        visit(edge.target);
+        continue;
+      }
+      if (!visiting.has(edge.target)) continue;
+      const cycleStart = stack.indexOf(edge.target);
+      cycles.push({
+        refs: [node, ...stack.slice(cycleStart)],
+        sourceRef: node,
+        path: edge.path,
+      });
     }
+    stack.pop();
     visiting.delete(node);
     visited.add(node);
-    return false;
   };
-  return [...nodes].some(visit);
+
+  for (const node of [...nodes].sort()) {
+    if (!visited.has(node)) visit(node);
+  }
+  return cycles;
 }
 
 function validateResourceCycles(
   resources: ReadonlyMap<string, IndexedResource>,
 ): PragmaDiagnostic[] {
-  const edges = new Map<string, Set<string>>();
+  const edges = new Map<string, readonly ResourceDependencyEdge[]>();
   for (const [key, indexed] of resources) {
+    const dependencies = new Map<string, ResourceDependencyEdge>();
+    for (const dependency of resourceDependencyEntries(indexed.resource)) {
+      const parsed = parsePragmaReference(dependency.ref);
+      const target = `${parsed.kind}:${parsed.id}`;
+      if (!resources.has(target) || dependencies.has(target)) continue;
+      dependencies.set(target, { ...dependency, target });
+    }
     edges.set(
       key,
-      new Set(
-        resourceDependencies(indexed.resource)
-          .map((ref) => parsePragmaReference(ref))
-          .filter((parsed) =>
-            new Set([
-              "expert",
-              "team",
-              "flow",
-              "automation",
-              "capability",
-              "context-store",
-              "runtime-profile",
-            ]).has(parsed.kind),
-          )
-          .map((parsed) => `${parsed.kind}:${parsed.id}`),
-      ),
+      [...dependencies.values()].sort((left, right) => left.target.localeCompare(right.target)),
     );
   }
-  if (!hasCycle(new Set(resources.keys()), edges)) return [];
-  return [
-    {
+  return findResourceCycles(new Set(resources.keys()), edges).map((cycle) => {
+    const source = resources.get(cycle.sourceRef);
+    return {
       severity: "error",
       code: "resource.cycle",
-      message: "Pragma resource definitions must form an acyclic dependency graph.",
-      path: [],
-    },
-  ];
+      message: `Pragma resource definitions must form an acyclic dependency graph: ${cycle.refs.join(" -> ")}.`,
+      source: source?.source,
+      path: [...cycle.path],
+    };
+  });
 }
 
 function resourceDependencies(resource: PragmaResource): string[] {
+  return resourceDependencyEntries(resource).map((dependency) => dependency.ref);
+}
+
+function resourceDependencyEntries(resource: PragmaResource): ResourceDependency[] {
   if (resource.kind === "Expert") {
     return [
-      ...(resource.spec.runtime === undefined ? [] : [resource.spec.runtime.ref]),
-      ...resource.spec.capabilities.map((binding) => binding.ref),
-      ...resource.spec.contextStores.map((binding) => binding.ref),
-      ...resource.spec.tools.flatMap((binding) => [
+      ...(resource.spec.runtime === undefined
+        ? []
+        : [{ ref: resource.spec.runtime.ref, path: ["spec", "runtime", "ref"] }]),
+      ...resource.spec.capabilities.map((binding, index) => ({
+        ref: binding.ref,
+        path: ["spec", "capabilities", index, "ref"],
+      })),
+      ...resource.spec.contextStores.map((binding, index) => ({
+        ref: binding.ref,
+        path: ["spec", "contextStores", index, "ref"],
+      })),
+      ...resource.spec.tools.flatMap((binding, index) => [
         ...(binding.target === undefined
-          ? binding.targets!.map((target) => target.ref)
-          : [binding.target.ref]),
-        ...Object.values(binding.policy?.runtimes ?? {}),
+          ? binding.targets!.map((target, targetIndex) => ({
+              ref: target.ref,
+              path: ["spec", "tools", index, "targets", targetIndex, "ref"],
+            }))
+          : [
+              {
+                ref: binding.target.ref,
+                path: ["spec", "tools", index, "target", "ref"],
+              },
+            ]),
+        ...Object.entries(binding.policy?.runtimes ?? {}).map(([expertId, ref]) => ({
+          ref,
+          path: ["spec", "tools", index, "policy", "runtimes", expertId],
+        })),
       ]),
     ];
   }
   if (resource.kind === "ExpertTeam") {
     return [
-      resource.spec.coordinator.ref,
-      ...resource.spec.members.map((member) => member.ref),
-      ...Object.values(resource.spec.delegation.runtimes),
+      { ref: resource.spec.coordinator.ref, path: ["spec", "coordinator", "ref"] },
+      ...resource.spec.members.map((member, index) => ({
+        ref: member.ref,
+        path: ["spec", "members", index, "ref"],
+      })),
+      ...Object.entries(resource.spec.delegation.runtimes).map(([expertId, ref]) => ({
+        ref,
+        path: ["spec", "delegation", "runtimes", expertId],
+      })),
     ];
   }
   if (resource.kind === "Flow") {
-    return Object.values(resource.spec.graph.steps).flatMap((step) => {
-      const ref = step.expert?.ref ?? step.team?.ref ?? step.flow?.ref;
+    return Object.entries(resource.spec.graph.steps).flatMap(([stepId, step]) => {
+      const target =
+        step.expert === undefined
+          ? step.team === undefined
+            ? step.flow === undefined
+              ? undefined
+              : { ref: step.flow.ref, field: "flow" }
+            : { ref: step.team.ref, field: "team" }
+          : { ref: step.expert.ref, field: "expert" };
       return [
-        ...(ref === undefined ? [] : [ref]),
-        ...(step.runtime === undefined ? [] : [step.runtime.ref]),
-        ...Object.values(step.runtimes ?? {}),
+        ...(target === undefined
+          ? []
+          : [
+              {
+                ref: target.ref,
+                path: ["spec", "graph", "steps", stepId, target.field, "ref"],
+              },
+            ]),
+        ...(step.runtime === undefined
+          ? []
+          : [
+              {
+                ref: step.runtime.ref,
+                path: ["spec", "graph", "steps", stepId, "runtime", "ref"],
+              },
+            ]),
+        ...Object.entries(step.runtimes ?? {}).map(([expertId, ref]) => ({
+          ref,
+          path: ["spec", "graph", "steps", stepId, "runtimes", expertId],
+        })),
       ];
     });
   }
   if (resource.kind === "Automation") {
-    return [resource.spec.route.executor.ref];
+    return [
+      {
+        ref: resource.spec.route.executor.ref,
+        path: ["spec", "route", "executor", "ref"],
+      },
+    ];
   }
   return [];
 }
