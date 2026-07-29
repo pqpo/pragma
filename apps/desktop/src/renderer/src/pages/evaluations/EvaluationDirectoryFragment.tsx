@@ -6,8 +6,8 @@ import { canonicalPragmaResourceRef, type PragmaFlowResource } from "@pragma/int
 
 import type { PragmaProjectSnapshot } from "../../../../shared/contracts/index.ts";
 import { errorMessage } from "../../lib/errors.ts";
-import { StudioScreenFrame } from "./StudioScreenFrame.tsx";
-import { desktopApi } from "./studio-model.ts";
+import { StudioScreenFrame } from "../studio/StudioScreenFrame.tsx";
+import { desktopApi } from "../studio/studio-model.ts";
 
 export function activateEvaluationDirectory(mounted: { current: boolean }): () => void {
   mounted.current = true;

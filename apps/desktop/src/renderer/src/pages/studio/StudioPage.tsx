@@ -1,6 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
-import type { PragmaEvaluationResource } from "@pragma/evaluation/ast";
 import {
   canonicalPragmaResourceRef,
   type PragmaExpertTeamResource,
@@ -43,8 +42,6 @@ import {
 import { PluginDetailFragment, PluginDirectoryFragment } from "./PluginDirectoryFragment.tsx";
 import { AutomationDirectoryFragment } from "./AutomationDirectoryFragment.tsx";
 import { FlowEditor } from "./flow-editor/FlowEditor.tsx";
-import { FlowRunDryFragment } from "./FlowRunDryFragment.tsx";
-import { EvaluationDirectoryFragment } from "./EvaluationDirectoryFragment.tsx";
 import { createEmptyFlow } from "./flow-editor/flow-model.ts";
 import {
   desktopApi,
@@ -72,7 +69,6 @@ export function StudioPage(props: {
     | "capability-detail"
     | "plugin-detail"
     | "resource-detail"
-    | "evaluation-edit"
     | "resource-edit"
     | "create"
   >("directory");
@@ -95,7 +91,6 @@ export function StudioPage(props: {
   const [project, setProject] = useState<PragmaProjectSnapshot | null>(null);
   const [automations, setAutomations] = useState<readonly AutomationSummary[]>([]);
   const [selectedResourceRef, setSelectedResourceRef] = useState<string | null>(null);
-  const [evaluationDraft, setEvaluationDraft] = useState<PragmaEvaluationResource | null>(null);
   const [resourceEditor, setResourceEditor] = useState<{
     readonly kind: ResourceKind;
     readonly mode: ResourceEditorMode;
@@ -441,57 +436,6 @@ export function StudioPage(props: {
     setScreen("resource-edit");
   };
 
-  const saveEvaluation = async (evaluation: PragmaEvaluationResource) => {
-    if (project === null) return;
-    const api = desktopApi();
-    if (api === undefined) return;
-    const ref = canonicalPragmaResourceRef(evaluation);
-    const exists = project.resources.some(
-      (resource) => canonicalPragmaResourceRef(resource) === ref,
-    );
-    const snapshot = await api.upsertPragmaResource({
-      baseRevision: project.revision,
-      resource: evaluation,
-      requiredUnchangedRefs: exists ? [ref] : [],
-    });
-    setProject(snapshot);
-    setEvaluationDraft(evaluation);
-    setSelectedResourceRef(ref);
-    setExpertError(null);
-  };
-
-  const createEvaluation = (resourceId: string, flow: PragmaFlowResource) => {
-    const evaluation: PragmaEvaluationResource = {
-      apiVersion: "pragma/v3",
-      kind: "Evaluation",
-      metadata: {
-        id: resourceId,
-        name: `${flow.metadata.name} Run Dry`,
-        description: `Run Dry evaluation for ${flow.metadata.name}.`,
-        tags: ["run-dry"],
-      },
-      spec: {
-        target: { ref: `flow:${flow.metadata.id}` },
-        method: {
-          type: "flow-run-dry",
-          cases: [
-            {
-              id: "case_1",
-              name: "Case 1",
-              input: {},
-              mocks: {},
-              expect: { status: "succeeded", path: [] },
-            },
-          ],
-        },
-      },
-    };
-    setActiveView("evaluations");
-    setSelectedResourceRef(null);
-    setEvaluationDraft(evaluation);
-    setScreen("evaluation-edit");
-  };
-
   const closeResourceEditor = () => {
     if (resourceSaveCompletedRef.current) {
       resourceSaveCompletedRef.current = false;
@@ -597,16 +541,13 @@ export function StudioPage(props: {
                   : section.id === "flows"
                     ? (project?.resources.filter((resource) => resource.kind === "Flow").length ??
                       0)
-                    : section.id === "evaluations"
-                      ? (project?.resources.filter((resource) => resource.kind === "Evaluation")
-                          .length ?? 0)
-                      : section.id === "integrations"
-                        ? automations.length
-                        : section.id === "capabilities"
-                          ? capabilities.length
-                          : section.id === "plugins"
-                            ? plugins.length
-                            : 0;
+                    : section.id === "integrations"
+                      ? automations.length
+                      : section.id === "capabilities"
+                        ? capabilities.length
+                        : section.id === "plugins"
+                          ? plugins.length
+                          : 0;
           return (
             <button
               key={section.id}
@@ -617,7 +558,6 @@ export function StudioPage(props: {
                 setActiveView(section.id);
                 setScreen("directory");
                 setContextDrawerOpen(false);
-                setEvaluationDraft(null);
                 setResourceEditor(null);
                 resourceSaveCompletedRef.current = false;
               }}
@@ -793,25 +733,6 @@ export function StudioPage(props: {
             onDelete={deleteSelectedResource}
           />
         ) : null}
-        {screen === "evaluation-edit" && project !== null && evaluationDraft !== null ? (
-          <FlowRunDryFragment
-            key={`${evaluationDraft.metadata.id}:${project.revision}`}
-            evaluation={evaluationDraft}
-            flows={project.resources.filter(
-              (resource): resource is PragmaFlowResource => resource.kind === "Flow",
-            )}
-            onBack={() => {
-              setEvaluationDraft(null);
-              setScreen("directory");
-            }}
-            onRun={async (evaluation) => {
-              const api = desktopApi();
-              if (api === undefined) throw new Error("Desktop bridge is unavailable.");
-              return await api.runPragmaEvaluation({ evaluation });
-            }}
-            onSave={saveEvaluation}
-          />
-        ) : null}
         {screen === "resource-edit" && project !== null && resourceEditor !== null ? (
           resourceEditor.kind === "team" ? (
             <TeamEditor
@@ -863,17 +784,6 @@ export function StudioPage(props: {
             project={project}
             onOpen={openResourceDetail}
             onCreate={openResourceCreate}
-          />
-        ) : null}
-        {screen === "directory" && activeView === "evaluations" && project !== null ? (
-          <EvaluationDirectoryFragment
-            project={project}
-            onCreate={createEvaluation}
-            onOpen={(evaluation) => {
-              setSelectedResourceRef(canonicalPragmaResourceRef(evaluation));
-              setEvaluationDraft(evaluation);
-              setScreen("evaluation-edit");
-            }}
           />
         ) : null}
       </div>

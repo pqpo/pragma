@@ -36,17 +36,28 @@ describe("App", () => {
 
     expect(html).toContain("Home");
     expect(html).toContain("Missions");
-    expect(html).toContain("Usage");
     expect(html).toContain("Studio");
+    expect(html).toContain("Evaluations");
+    expect(html).toContain("Usage");
     expect(html).toContain("Settings");
+  });
+
+  it("keeps application navigation in the required product order", () => {
+    const html = renderToStaticMarkup(<App />);
+    const labels = ["Home", "Missions", "Studio", "Evaluations", "Usage", "Settings"];
+    const positions = labels.map((label) => html.indexOf(`aria-label="${label}"`));
+
+    expect(positions.every((position) => position >= 0)).toBe(true);
+    expect(positions).toEqual([...positions].sort((left, right) => left - right));
   });
 
   it("keeps every application navigation destination enabled", () => {
     const html = renderToStaticMarkup(<App />);
 
     expect(html).toContain("Missions");
-    expect(html).toContain("Usage");
     expect(html).toContain("Studio");
+    expect(html).toContain("Evaluations");
+    expect(html).toContain("Usage");
     expect(html).not.toContain("Inbox");
     expect(html).not.toContain("Alex Chen");
     expect(html).not.toContain('class="navigation-item" type="button" disabled');

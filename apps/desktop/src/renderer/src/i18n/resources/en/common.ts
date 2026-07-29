@@ -31,8 +31,9 @@ export const common = {
   navigation: {
     home: "Home",
     missions: "Missions",
-    usage: "Usage",
     studio: "Studio",
+    evaluations: "Evaluations",
+    usage: "Usage",
     settings: "Settings",
     main: "Main navigation",
     expand: "Expand navigation",

@@ -6,7 +6,7 @@ import {
   activateEvaluationDirectory,
   EvaluationDirectoryFragment,
 } from "./EvaluationDirectoryFragment.tsx";
-import { createEmptyFlow } from "./flow-editor/flow-model.ts";
+import { createEmptyFlow } from "../studio/flow-editor/flow-model.ts";
 
 describe("EvaluationDirectoryFragment", () => {
   it("remains active after React StrictMode replays its effect", () => {

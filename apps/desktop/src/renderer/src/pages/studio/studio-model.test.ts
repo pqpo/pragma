@@ -3,6 +3,7 @@ import { describe, expect, it } from "vitest";
 import type { ExpertDefinition } from "../../../../shared/contracts/index.ts";
 import {
   isBuiltInExpert,
+  studioSections,
   toCreateExpertInput,
   toExpertRecord,
   toPersistedInput,
@@ -72,5 +73,19 @@ describe("isBuiltInExpert", () => {
   it("uses explicit origin metadata", () => {
     expect(isBuiltInExpert({ origin: "built-in", readOnly: true })).toBe(true);
     expect(isBuiltInExpert({ origin: "project", readOnly: false })).toBe(false);
+  });
+});
+
+describe("studioSections", () => {
+  it("does not duplicate the top-level Evaluations destination", () => {
+    expect(studioSections.map((section) => section.id)).toEqual([
+      "experts",
+      "teams",
+      "flows",
+      "integrations",
+      "capabilities",
+      "plugins",
+      "context-stores",
+    ]);
   });
 });

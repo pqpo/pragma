@@ -12,7 +12,7 @@ import {
 import type { PragmaFlowResource } from "@pragma/interpreter/ast";
 
 import { errorMessage } from "../../lib/errors.ts";
-import { StudioScreenFrame } from "./StudioScreenFrame.tsx";
+import { StudioScreenFrame } from "../studio/StudioScreenFrame.tsx";
 
 interface RunDryCaseDraft {
   readonly key: string;

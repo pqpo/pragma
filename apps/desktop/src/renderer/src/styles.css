@@ -5561,6 +5561,29 @@ p {
   gap: 24px;
 }
 
+.evaluations-page {
+  position: relative;
+  min-width: 0;
+  min-height: 0;
+  overflow: hidden;
+  padding: 50px clamp(38px, 6vw, 88px) 62px;
+  background: var(--background);
+}
+
+.evaluations-page > .studio-screen {
+  width: min(100%, 1180px);
+  margin-right: auto;
+  margin-left: auto;
+}
+
+.evaluations-page-error {
+  position: absolute;
+  right: clamp(38px, 6vw, 88px);
+  bottom: 24px;
+  left: clamp(38px, 6vw, 88px);
+  box-shadow: var(--shadow-hover);
+}
+
 .usage-page {
   min-width: 0;
   min-height: 0;

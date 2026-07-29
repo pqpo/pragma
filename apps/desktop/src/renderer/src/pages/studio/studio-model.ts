@@ -4,7 +4,6 @@ import {
   GitBranch,
   PlugsConnected,
   PuzzlePiece,
-  TestTube,
   User,
   UsersThree,
   Wrench,
@@ -24,7 +23,6 @@ export type StudioView =
   | "experts"
   | "teams"
   | "flows"
-  | "evaluations"
   | "integrations"
   | "capabilities"
   | "plugins"
@@ -194,7 +192,6 @@ export const studioSections = [
   { id: "experts", labelKey: "experts", icon: User },
   { id: "teams", labelKey: "teams", icon: UsersThree },
   { id: "flows", labelKey: "flows", icon: GitBranch },
-  { id: "evaluations", labelKey: "evaluations", icon: TestTube },
   { id: "integrations", labelKey: "integrations", icon: PlugsConnected },
   { id: "capabilities", labelKey: "capabilities", icon: Wrench },
   { id: "plugins", labelKey: "plugins", icon: PuzzlePiece },

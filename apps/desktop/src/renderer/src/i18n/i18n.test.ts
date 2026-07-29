@@ -23,6 +23,15 @@ describe("desktop translations", () => {
   });
 
   it.each([
+    ["en", "Evaluations"],
+    ["zh-Hans", "测评"],
+    ["zh-Hant", "評測"],
+  ] as const)("renders the Evaluations navigation in %s", async (locale, expected) => {
+    await i18n.changeLanguage(locale);
+    expect(i18n.t("navigation.evaluations", { ns: "common" })).toBe(expected);
+  });
+
+  it.each([
     ["en", "Your AI workspace"],
     ["zh-Hans", "你的 AI 工作空间"],
     ["zh-Hant", "你的 AI 工作空間"],
