@@ -12,7 +12,9 @@ import {
   fingerprintExpertExecutionDefinition,
   PragmaPaths,
   readRuntimeSessionRecord,
+  RuntimeContextCompactionNotNeededError,
   StoredExecutionView,
+  type ExpertSession,
   type RuntimeDriverSessionContext,
   type RuntimeModelSelection,
   type RuntimeResolver,
@@ -32,7 +34,7 @@ import {
 } from "../../../shared/contracts/index.ts";
 import type { CapabilityCredentialStore } from "../capabilities/capability-credential-store.ts";
 import type { CapabilityStore } from "../capabilities/capability-store.ts";
-import { createMissionRunner } from "./mission-runner.ts";
+import { compactExpertSessionContext, createMissionRunner } from "./mission-runner.ts";
 import { createMissionStore } from "./mission-store.ts";
 import { createPragmaProjectStore } from "../projects/pragma-project-store.ts";
 import type { DesktopUsageStore } from "../usage/usage-store.ts";
@@ -85,6 +87,20 @@ afterEach(async () => {
 });
 
 describe("MissionRunner", { timeout: 15_000 }, () => {
+  it("treats a restored Runtime with no compactable history as a normal no-op", async () => {
+    const session = {
+      canCompactRootContext: vi.fn(async () => undefined),
+      compactRootContext: vi.fn(async () => {
+        throw new RuntimeContextCompactionNotNeededError();
+      }),
+    } satisfies Pick<ExpertSession, "canCompactRootContext" | "compactRootContext">;
+
+    await expect(compactExpertSessionContext(session)).resolves.toEqual({
+      outcome: "not_needed",
+    });
+    expect(session.compactRootContext).toHaveBeenCalledOnce();
+  });
+
   it("skips compilation for a follow-up on the live Mission Session", async () => {
     const root = await mkdtemp(join(tmpdir(), "pragma-mission-followup-fast-path-"));
     temporaryPaths.push(root);

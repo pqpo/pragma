@@ -99,6 +99,19 @@ export interface ExpertTurn extends MutableExecution {
   readonly usage: Promise<AgentMessageUsage | undefined>;
 }
 
+export class RuntimeContextCompactionNotNeededError extends Error {
+  constructor() {
+    super("The Runtime context does not have enough history to compact yet.");
+    this.name = "RuntimeContextCompactionNotNeededError";
+  }
+}
+
+export function isRuntimeContextCompactionNotNeededError(
+  error: unknown,
+): error is RuntimeContextCompactionNotNeededError {
+  return error instanceof RuntimeContextCompactionNotNeededError;
+}
+
 export interface ExpertSession {
   readonly sessionId: string;
   readonly expert: ExpertDefinition;
@@ -874,7 +887,7 @@ class ExpertSessionImpl implements ExpertSession {
         );
       }
       if (!(await active.contextWindow.canCompact())) {
-        throw new Error("The Runtime context does not have enough history to compact yet.");
+        throw new RuntimeContextCompactionNotNeededError();
       }
       return await active.contextWindow.compact();
     }
@@ -910,7 +923,7 @@ class ExpertSessionImpl implements ExpertSession {
         );
       }
       if (!(await opened.contextWindow.canCompact())) {
-        throw new Error("The Runtime context does not have enough history to compact yet.");
+        throw new RuntimeContextCompactionNotNeededError();
       }
       return await opened.contextWindow.compact();
     } finally {

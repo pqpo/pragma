@@ -8,6 +8,7 @@ import {
   ExecutionWorkHistoryReader,
   ExpertAgentHumanRequestSchema,
   fingerprintExpertExecutionDefinition,
+  isRuntimeContextCompactionNotNeededError,
   isExpertTeam,
   StoredExecutionView,
   PragmaPaths,
@@ -143,6 +144,21 @@ type PendingMissionOperation =
 interface ActiveMissionExecution {
   readonly handle: MutableExecution & { readonly result: Promise<unknown> };
   readonly settlement: Promise<void>;
+}
+
+export async function compactExpertSessionContext(
+  session: Pick<ExpertSession, "canCompactRootContext" | "compactRootContext">,
+): Promise<
+  | { readonly outcome: "compacted"; readonly usage: RuntimeContextWindowUsage | undefined }
+  | { readonly outcome: "not_needed" }
+> {
+  if ((await session.canCompactRootContext()) === false) return { outcome: "not_needed" };
+  try {
+    return { outcome: "compacted", usage: await session.compactRootContext() };
+  } catch (error) {
+    if (!isRuntimeContextCompactionNotNeededError(error)) throw error;
+    return { outcome: "not_needed" };
+  }
 }
 
 interface LiveMissionChat {
@@ -1222,16 +1238,25 @@ export function createMissionRunner(options: {
       rememberSessionCompilation(id, await compilationIdentity(mission), compiled);
     }
     sessions.set(id, session);
-    if ((await session.canCompactRootContext()) === false) {
+    const notNeededResult = async (): Promise<MissionContextCompactionResult> => {
       const state = await getContextWindowState(mission);
       if (state === undefined || !state.supportsCompaction) {
         throw new Error(
           `Runtime ${rootContext.runtime.runtimeId} does not support context compaction.`,
         );
       }
-      return { outcome: "not_needed", contextWindow: state };
-    }
-    const usage = await session.compactRootContext();
+      return {
+        outcome: "not_needed",
+        contextWindow: {
+          ...state,
+          canCompact: false,
+          compactionBlockedReason: "not_ready",
+        },
+      };
+    };
+    const compaction = await compactExpertSessionContext(session);
+    if (compaction.outcome === "not_needed") return await notNeededResult();
+    const { usage } = compaction;
     invalidateChat(id);
     const state = await getContextWindowState(mission, usage);
     if (state === undefined || !state.supportsCompaction) {
