@@ -1938,6 +1938,10 @@ export function MissionDetailFragment(props: {
                 />
               ) : (
                 <div className="mission-chat-composer" aria-busy={clientOperationBusy}>
+                  <MissionUsageHint
+                    missionId={props.mission.id}
+                    executionActive={executionActive}
+                  />
                   <textarea
                     ref={textareaRef}
                     rows={1}
@@ -2047,7 +2051,6 @@ export function MissionDetailFragment(props: {
                   </div>
                 </div>
               )}
-              <MissionUsageHint missionId={props.mission.id} executionActive={executionActive} />
             </div>
           </div>
         ) : workError !== null && workRecords.length === 0 ? (

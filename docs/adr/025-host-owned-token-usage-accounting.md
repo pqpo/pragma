@@ -64,9 +64,14 @@ Desktop provides a top-level Usage page with:
 - one daily trend chart;
 - ranked Mission, Expert, ExpertTeam, and Flow views.
 
-Mission chat shows a small cumulative token total below the composer. Both that total and the
-separate Runtime/session context-window occupancy update while a turn is streaming. The settled
-Runtime values replace any provisional estimate at the end of the turn.
+Mission chat shows a compact cumulative token total in the composer's upper-right corner. The
+total is hidden until the first conversation round settles, remains stable while the next round is
+active, and refreshes only after that round settles.
+
+Runtime/session context-window occupancy remains live. Core only publishes a numeric fallback after
+the Runtime has supplied a non-empty baseline; before that calibration it reports the occupancy as
+unknown instead of presenting the prompt/output-only count as the full context. Runtime-reported or
+derived values replace provisional estimates whenever they arrive.
 
 ## Consequences
 

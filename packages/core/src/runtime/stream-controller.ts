@@ -80,7 +80,7 @@ export interface RuntimeStreamController<TNativeEvent> {
   readonly beginUsagePreview: (input: {
     readonly prompt: string;
     readonly startupMessages?: readonly string[] | undefined;
-    readonly sessionSeed?: string | undefined;
+    readonly contextBaselineCalibrated?: boolean | undefined;
     readonly accumulatedUsage?: AgentMessageUsage | undefined;
     readonly contextWindow?: RuntimeContextWindowUsage | undefined;
   }) => void;
@@ -123,6 +123,7 @@ export function createRuntimeStreamController<TNativeEvent>(options: {
   let accumulatedUsage: AgentMessageUsage | undefined;
   let estimatedInputTokens = 0;
   let estimatedContextInputTokens = 0;
+  let contextBaselineCalibrated = false;
   let contextWindowBase: RuntimeContextWindowUsage | undefined;
   let contextWindowUsage: RuntimeContextWindowUsage | undefined;
   let runtimeSessionId: string | undefined;
@@ -209,7 +210,7 @@ export function createRuntimeStreamController<TNativeEvent>(options: {
       const usedTokens =
         contextWindowUsage !== undefined
           ? contextWindowUsage.usedTokens
-          : contextSource.usedTokens === null
+          : !contextBaselineCalibrated || contextSource.usedTokens === null
             ? null
             : contextSource.usedTokens + estimatedContextInputTokens + estimatedOutputTokens;
       latestContextWindowPreview = {
@@ -331,11 +332,12 @@ export function createRuntimeStreamController<TNativeEvent>(options: {
       accumulatedUsage = input.accumulatedUsage;
       const turnInput = [...(input.startupMessages ?? []), input.prompt].join("\n\n");
       estimatedInputTokens = estimateTokenCount(turnInput);
-      estimatedContextInputTokens =
-        estimatedInputTokens +
-        (input.sessionSeed === undefined || input.contextWindow?.usedTokens !== 0
-          ? 0
-          : estimateTokenCount(input.sessionSeed));
+      estimatedContextInputTokens = estimatedInputTokens;
+      contextBaselineCalibrated =
+        input.contextBaselineCalibrated ??
+        (input.contextWindow?.usedTokens !== null &&
+          input.contextWindow?.usedTokens !== undefined &&
+          input.contextWindow.usedTokens > 0);
       contextWindowBase = input.contextWindow;
       contextWindowUsage = undefined;
       updateUsagePreview();

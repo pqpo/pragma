@@ -545,7 +545,6 @@ async function createManagedRuntimeSession<TNativeEvent, TNativeSession, TPrepar
 
     managedSession = new ManagedRuntimeSession({
       agent,
-      agentContext,
       driver,
       nativeSession,
       descriptor,
@@ -575,7 +574,6 @@ async function createManagedRuntimeSession<TNativeEvent, TNativeSession, TPrepar
         });
       },
       executionBindings,
-      restored: request.runtimeSession !== undefined,
     });
     managedSession.setWatcher(
       persistenceSpec === undefined
@@ -710,12 +708,11 @@ function createRuntimeUnavailableMessage(
 class ManagedRuntimeSession<TNativeEvent, TNativeSession, TPrepared> {
   private watcher: RuntimeSessionWatcher | undefined;
   private activeRunId: string | undefined;
-  private sessionSeedPending: boolean;
+  private contextWindowCalibrated = false;
 
   constructor(
     private readonly options: {
       readonly agent: Expert;
-      readonly agentContext: ExpertAgentContext;
       readonly driver: RuntimeDriver<TNativeEvent, TNativeSession, TPrepared>;
       readonly nativeSession: TNativeSession;
       readonly descriptor: RuntimeAdapterDescriptor;
@@ -735,11 +732,8 @@ class ManagedRuntimeSession<TNativeEvent, TNativeSession, TPrepared> {
         usage: RuntimeContextWindowUsage | null,
       ) => Promise<void>;
       readonly executionBindings: RuntimeExecutionBindings;
-      readonly restored: boolean;
     },
-  ) {
-    this.sessionSeedPending = !options.restored;
-  }
+  ) {}
 
   info(): RuntimeSessionInfo {
     return this.options.readSessionInfo();
@@ -976,6 +970,9 @@ class ManagedRuntimeSession<TNativeEvent, TNativeSession, TPrepared> {
     try {
       const usage = await read(this.options.nativeSession);
       if (usage !== undefined) {
+        if (usage.usedTokens !== null && usage.usedTokens > 0) {
+          this.contextWindowCalibrated = true;
+        }
         await this.options.persistContextWindowUsage(usage);
       }
       return usage;
@@ -1027,20 +1024,14 @@ class ManagedRuntimeSession<TNativeEvent, TNativeSession, TPrepared> {
           ? createInitialRuntimePrompt(submission.query, submission.output)
           : createRuntimeOutputRetryPrompt(parseResult);
       const attemptStartupMessages = attempt === 1 ? startupMessages : [];
-      const sessionSeed =
-        this.sessionSeedPending && attempt === 1
-          ? createRuntimeContextSessionSeed(this.options.agentContext, this.options.agent)
-          : undefined;
-      if (attempt === 1) this.sessionSeedPending = false;
+      const contextWindow = await this.refreshContextWindow(false);
       controller.resetCapture();
       controller.beginUsagePreview({
         prompt,
         startupMessages: attemptStartupMessages.map((message) => message.content),
-        ...(sessionSeed === undefined ? {} : { sessionSeed }),
+        contextBaselineCalibrated: this.contextWindowCalibrated,
         ...(usage === undefined ? {} : { accumulatedUsage: usage }),
-        ...(await this.refreshContextWindow(false).then((contextWindow) =>
-          contextWindow === undefined ? {} : { contextWindow },
-        )),
+        ...(contextWindow === undefined ? {} : { contextWindow }),
       });
       const turnResult = await (async () => {
         const requestStartedAt = performance.now();
@@ -1118,27 +1109,6 @@ class ManagedRuntimeSession<TNativeEvent, TNativeSession, TPrepared> {
     controller.updateUsage(usage);
 
     return createRuntimeRunResult(runId, parseResult.value, usage);
-  }
-}
-
-function createRuntimeContextSessionSeed(context: ExpertAgentContext, agent: Expert): string {
-  const tools = (agent.tools ?? []).map((tool) => ({
-    name: tool.name,
-    description: tool.description,
-    inputSchema: serializableToolSchema(tool.inputSchema),
-  }));
-  return [context.systemPrompt, ...(tools.length === 0 ? [] : [JSON.stringify({ tools })])].join(
-    "\n\n",
-  );
-}
-
-function serializableToolSchema(schema: unknown): unknown {
-  if (schema === undefined || schema === null) return {};
-  if (typeof schema !== "object") return {};
-  try {
-    return JSON.parse(JSON.stringify(schema)) as unknown;
-  } catch {
-    return {};
   }
 }
 

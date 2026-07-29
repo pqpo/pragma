@@ -15,7 +15,7 @@ describe("Runtime stream telemetry", () => {
     controller.beginUsagePreview({
       prompt: "1234",
       startupMessages: ["1234"],
-      sessionSeed: "12345678",
+      contextBaselineCalibrated: true,
       contextWindow: {
         usedTokens: 1_000,
         contextWindowTokens: 100_000,
@@ -48,12 +48,12 @@ describe("Runtime stream telemetry", () => {
     ).toBe(50_000);
   });
 
-  it("includes the session prompt seed only for an empty context", async () => {
+  it("does not publish a misleading numeric estimate before the Runtime baseline is calibrated", async () => {
     const { controller, queue } = createFixture();
     controller.beginUsagePreview({
       prompt: "1234",
       startupMessages: ["1234"],
-      sessionSeed: "12345678",
+      contextBaselineCalibrated: false,
       contextWindow: {
         usedTokens: 0,
         contextWindowTokens: 100_000,
@@ -76,7 +76,7 @@ describe("Runtime stream telemetry", () => {
 
     expect(
       events.findLast((event) => event.type === "context-window.updated")?.payload.usage,
-    ).toMatchObject({ usedTokens: 7, measurement: "estimated" });
+    ).toMatchObject({ usedTokens: null, percent: null, measurement: "estimated" });
   });
 });
 
