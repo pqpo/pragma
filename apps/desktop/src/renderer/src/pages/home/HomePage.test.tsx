@@ -4,9 +4,11 @@ import { describe, expect, it } from "vitest";
 import { MissionModelOverrideControls } from "../../components/MissionModelOverrideControls.tsx";
 import {
   filterMissionExecutors,
+  isHomeExecutorFavorite,
   missionModelOverrideAvailable,
   rankHomeMissionExecutors,
   selectHomeMissionExecutors,
+  uniqueWorkspaces,
 } from "./HomePage.tsx";
 import { SchemaInputForm, createSchemaInputValue, isSchemaInputValid } from "./SchemaInputForm.tsx";
 
@@ -120,7 +122,8 @@ describe("mission executor search", () => {
           preference: {
             favoriteScope: "workspace",
             hidden: false,
-            lastWorkspace: { path: "/work/project", basename: "project" },
+            favoriteWorkspace: { path: "/work/project", basename: "project" },
+            lastWorkspace: { path: "/work/other", basename: "other" },
           },
         },
         {
@@ -136,6 +139,38 @@ describe("mission executor search", () => {
       "Workspace favorite",
       "Recent",
       "Team member",
+    ]);
+  });
+
+  it("pins workspace favorites only in their assigned workspace", () => {
+    const workspaceFavorite = {
+      ...executors[0]!,
+      preference: {
+        favoriteScope: "workspace" as const,
+        hidden: false,
+        favoriteWorkspace: { path: "/work/favorite", basename: "favorite" },
+      },
+    };
+    const globalFavorite = {
+      ...executors[1]!,
+      preference: { favoriteScope: "global" as const, hidden: false },
+    };
+
+    expect(isHomeExecutorFavorite(workspaceFavorite, "/work/favorite")).toBe(true);
+    expect(isHomeExecutorFavorite(workspaceFavorite, "/work/other")).toBe(false);
+    expect(isHomeExecutorFavorite(globalFavorite, "/work/other")).toBe(true);
+  });
+
+  it("deduplicates current and recent workspace choices by path", () => {
+    expect(
+      uniqueWorkspaces([
+        { path: "/work/current", basename: "current" },
+        { path: "/work/current", basename: "duplicate" },
+        { path: "/work/recent", basename: "recent" },
+      ]),
+    ).toEqual([
+      { path: "/work/current", basename: "current" },
+      { path: "/work/recent", basename: "recent" },
     ]);
   });
 

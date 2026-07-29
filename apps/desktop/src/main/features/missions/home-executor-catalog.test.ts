@@ -56,6 +56,7 @@ describe("Home executor catalog", () => {
           ref: expertRef,
           favoriteScope: "workspace",
           hidden: false,
+          favoriteWorkspace: "/work/favorite",
           lastWorkspace: "/work/project",
           lastUsedAt: "2026-07-29T09:00:00.000Z",
         },
@@ -86,6 +87,7 @@ describe("Home executor catalog", () => {
       teamMemberships: [{ ref: teamRef, name: "Delivery team" }],
       preference: {
         favoriteScope: "workspace",
+        favoriteWorkspace: { path: "/work/favorite", basename: "favorite" },
         lastWorkspace: { path: "/work/project", basename: "project" },
       },
     });
@@ -93,6 +95,93 @@ describe("Home executor catalog", () => {
       alwaysVisible: true,
       preference: { favoriteScope: "global", hidden: false },
     });
+  });
+
+  it("strips workspace favorite input when enforcing the default executor preference", async () => {
+    const options = [option(teamRef, "Delivery team", "team")];
+    let receivedUpdate: Parameters<HomeExecutorPreferenceStore["update"]>[0] | undefined;
+    const preferences: HomeExecutorPreferenceStore = {
+      list: async () => [],
+      prune: async () => undefined,
+      recordUsage: async () => {
+        throw new Error("not used");
+      },
+      update: async (input) => {
+        receivedUpdate = input;
+        return {
+          ref: input.ref,
+          favoriteScope: input.favoriteScope ?? "none",
+          hidden: input.hidden ?? false,
+        };
+      },
+    };
+    const catalog = createHomeExecutorCatalog({
+      project: { get: async () => ({}) } as unknown as PragmaProjectStore,
+      executors: { list: async () => options } as unknown as MissionExecutorCatalog,
+      systemExperts: {
+        getResource: () => undefined,
+      } as unknown as DesktopSystemExpertRegistry,
+      preferences,
+      defaultExecutorRef: teamRef,
+      validateWorkspace: () => {
+        throw new Error("The ignored default-executor workspace must not be validated.");
+      },
+    });
+
+    await expect(
+      catalog.update({
+        ref: teamRef,
+        favoriteScope: "workspace",
+        favoriteWorkspace: "/work/favorite",
+        clearLastWorkspace: true,
+      }),
+    ).resolves.toMatchObject({
+      favoriteScope: "global",
+      hidden: false,
+    });
+    expect(receivedUpdate).toEqual({
+      ref: teamRef,
+      favoriteScope: "global",
+      hidden: false,
+      clearLastWorkspace: true,
+    });
+  });
+
+  it("validates workspace favorites for non-default executors", async () => {
+    const options = [option(expertRef, "Coder", "expert")];
+    let validatedWorkspace: string | undefined;
+    const preferences: HomeExecutorPreferenceStore = {
+      list: async () => [],
+      prune: async () => undefined,
+      recordUsage: async () => {
+        throw new Error("not used");
+      },
+      update: async () => {
+        throw new Error("An invalid workspace must not reach the store.");
+      },
+    };
+    const catalog = createHomeExecutorCatalog({
+      project: { get: async () => ({}) } as unknown as PragmaProjectStore,
+      executors: { list: async () => options } as unknown as MissionExecutorCatalog,
+      systemExperts: {
+        getResource: () => undefined,
+      } as unknown as DesktopSystemExpertRegistry,
+      preferences,
+      defaultExecutorRef: teamRef,
+      validateWorkspace: (path) => {
+        validatedWorkspace = path;
+        return { ok: false, reason: "not_directory" };
+      },
+    });
+
+    await expect(
+      catalog.update({
+        ref: expertRef,
+        favoriteScope: "workspace",
+        favoriteWorkspace: "/work/invalid",
+      }),
+    ).rejects.toThrow("accessible, writable directory");
+    expect(validatedWorkspace).toBe("/work/invalid");
   });
 });
 

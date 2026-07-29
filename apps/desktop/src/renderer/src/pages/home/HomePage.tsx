@@ -39,6 +39,8 @@ import { readHomeDraft, writeHomeDraft } from "../../lib/home-draft.ts";
 import { localizeSystemExpertCopy } from "../../lib/system-expert-copy.ts";
 import { SchemaInputForm, createSchemaInputValue, isSchemaInputValid } from "./SchemaInputForm.tsx";
 
+const CHOOSE_FAVORITE_WORKSPACE_VALUE = "__pragma_choose_directory__";
+
 export function HomePage(props: {
   readonly initialExecutorRef?: string | undefined;
   readonly onCreated: (mission: Mission) => void | Promise<void>;
@@ -294,18 +296,20 @@ export function HomePage(props: {
 
   const updateExecutorPreference = async (
     ref: string,
-    favoriteScope: HomeExecutorFavoriteScope,
-    hidden: boolean,
+    update: {
+      readonly favoriteScope?: HomeExecutorFavoriteScope;
+      readonly favoriteWorkspace?: WorkspaceSelection;
+      readonly hidden?: boolean;
+    },
   ) => {
-    const workspace = workspaceOverride ?? defaultWorkspace;
     try {
       const preference = await window.pragmaDesktop.updateHomeExecutorPreference({
         ref,
-        favoriteScope,
-        hidden,
-        ...(favoriteScope === "workspace" && workspace !== undefined
-          ? { workspace: workspace.path }
-          : {}),
+        ...(update.favoriteScope === undefined ? {} : { favoriteScope: update.favoriteScope }),
+        ...(update.favoriteWorkspace === undefined
+          ? {}
+          : { favoriteWorkspace: update.favoriteWorkspace.path }),
+        ...(update.hidden === undefined ? {} : { hidden: update.hidden }),
       });
       setExecutors((current) =>
         current.map((executor) => (executor.ref === ref ? { ...executor, preference } : executor)),
@@ -313,6 +317,23 @@ export function HomePage(props: {
       setError(null);
     } catch (preferenceError) {
       setError(errorMessage(preferenceError));
+    }
+  };
+
+  const chooseFavoriteWorkspace = async (ref: string) => {
+    try {
+      const result = await window.pragmaDesktop.pickWorkspace();
+      if (result.ok && result.path !== undefined && result.basename !== undefined) {
+        await updateExecutorPreference(ref, {
+          favoriteScope: "workspace",
+          favoriteWorkspace: { path: result.path, basename: result.basename },
+          hidden: false,
+        });
+      } else if (result.reason !== "cancelled") {
+        setError(result.error ?? t("workspaceUnavailable"));
+      }
+    } catch (pickError) {
+      setError(errorMessage(pickError));
     }
   };
 
@@ -415,10 +436,10 @@ export function HomePage(props: {
                 value={hasValidExecutor ? executorRef : ""}
                 defaultExecutorRef={defaultExecutorRef}
                 workspace={workspaceOverride ?? defaultWorkspace}
+                recentWorkspaces={recentWorkspaces}
                 onChange={selectExecutor}
-                onPreferenceChange={(ref, favoriteScope, hidden) =>
-                  void updateExecutorPreference(ref, favoriteScope, hidden)
-                }
+                onPreferenceChange={(ref, update) => void updateExecutorPreference(ref, update)}
+                onChooseFavoriteWorkspace={(ref) => void chooseFavoriteWorkspace(ref)}
               />
               {selectedExecutor?.kind === "expert" || selectedExecutor?.kind === "team" ? (
                 <MissionModelOverrideControls
@@ -496,12 +517,17 @@ function MissionExecutorPicker(props: {
   readonly value: string;
   readonly defaultExecutorRef: string;
   readonly workspace: WorkspaceSelection | undefined;
+  readonly recentWorkspaces: readonly WorkspaceSelection[];
   readonly onChange: (value: string) => void;
   readonly onPreferenceChange: (
     ref: string,
-    favoriteScope: HomeExecutorFavoriteScope,
-    hidden: boolean,
+    update: {
+      readonly favoriteScope?: HomeExecutorFavoriteScope;
+      readonly favoriteWorkspace?: WorkspaceSelection;
+      readonly hidden?: boolean;
+    },
   ) => void;
+  readonly onChooseFavoriteWorkspace: (ref: string) => void;
 }) {
   const { t } = useTranslation("missions");
   const { t: tCommon } = useTranslation("common");
@@ -557,6 +583,10 @@ function MissionExecutorPicker(props: {
     props.workspace?.path,
     displayCopy,
   );
+  const favoriteWorkspaceOptions = uniqueWorkspaces([
+    ...(props.workspace === undefined ? [] : [props.workspace]),
+    ...props.recentWorkspaces,
+  ]);
   const SelectedIcon = selected === undefined ? UsersThree : executorIcon(selected);
 
   useDismissableMenu(open, rootRef, () => {
@@ -717,6 +747,7 @@ function MissionExecutorPicker(props: {
                 const Icon = executorIcon(executor);
                 const copy = displayCopy(executor);
                 const isSelected = executor.ref === props.value;
+                const isPinned = isHomeExecutorFavorite(executor, props.workspace?.path);
                 return (
                   <div
                     className={
@@ -745,11 +776,21 @@ function MissionExecutorPicker(props: {
                         <strong>{copy.name}</strong>
                         <small>{copy.description}</small>
                       </span>
-                      <Check
-                        className={isSelected ? "is-visible" : undefined}
-                        size={17}
-                        aria-hidden="true"
-                      />
+                      <span className="mission-executor-option-status">
+                        {isPinned ? (
+                          <Star
+                            className="mission-executor-pinned-star"
+                            size={15}
+                            weight="fill"
+                            aria-label={t("favoritePinned")}
+                          />
+                        ) : null}
+                        <Check
+                          className={isSelected ? "is-visible" : undefined}
+                          size={17}
+                          aria-hidden="true"
+                        />
+                      </span>
                     </button>
                   </div>
                 );
@@ -866,6 +907,12 @@ function MissionExecutorPicker(props: {
                 const Icon = executorIcon(executor);
                 const copy = displayCopy(executor);
                 const isDefault = executor.ref === props.defaultExecutorRef;
+                const executorFavoriteWorkspaces = uniqueWorkspaces([
+                  ...(executor.preference.favoriteWorkspace === undefined
+                    ? []
+                    : [executor.preference.favoriteWorkspace]),
+                  ...favoriteWorkspaceOptions,
+                ]);
                 return (
                   <div className="mission-executor-option" key={executor.ref}>
                     <div className="mission-executor-option-main">
@@ -882,8 +929,12 @@ function MissionExecutorPicker(props: {
                               {t("managedByTeams", { count: executor.teamMemberships.length })}
                             </span>
                           ) : null}
-                          {executor.preference.lastWorkspace !== undefined ? (
-                            <span>{executor.preference.lastWorkspace.basename}</span>
+                          {executor.preference.favoriteWorkspace !== undefined ? (
+                            <span>
+                              {t("favoriteWorkspaceBadge", {
+                                workspace: executor.preference.favoriteWorkspace.basename,
+                              })}
+                            </span>
                           ) : null}
                         </span>
                       </span>
@@ -901,21 +952,70 @@ function MissionExecutorPicker(props: {
                           aria-label={t("favoriteNamed", { name: copy.name })}
                           disabled={executor.preference.hidden}
                           value={executor.preference.favoriteScope}
-                          onChange={(event) =>
-                            props.onPreferenceChange(
-                              executor.ref,
-                              event.target.value as HomeExecutorFavoriteScope,
-                              executor.preference.hidden,
-                            )
-                          }
+                          onChange={(event) => {
+                            const favoriteScope = event.target.value as HomeExecutorFavoriteScope;
+                            if (favoriteScope !== "workspace") {
+                              props.onPreferenceChange(executor.ref, { favoriteScope });
+                              return;
+                            }
+                            const favoriteWorkspace =
+                              executor.preference.favoriteWorkspace ??
+                              props.workspace ??
+                              favoriteWorkspaceOptions[0];
+                            if (favoriteWorkspace === undefined) {
+                              props.onChooseFavoriteWorkspace(executor.ref);
+                              return;
+                            }
+                            props.onPreferenceChange(executor.ref, {
+                              favoriteScope,
+                              favoriteWorkspace,
+                            });
+                          }}
                         >
                           <option value="none">{t("favoriteScope.none")}</option>
-                          <option value="workspace" disabled={props.workspace === undefined}>
-                            {t("favoriteScope.workspace")}
-                          </option>
+                          <option value="workspace">{t("favoriteScope.workspace")}</option>
                           <option value="global">{t("favoriteScope.global")}</option>
                         </select>
                       </label>
+                      {executor.preference.favoriteScope === "workspace" ? (
+                        <label
+                          className="mission-executor-favorite-workspace"
+                          title={t("favoriteWorkspaceNamed", { name: copy.name })}
+                        >
+                          <GitBranch size={15} aria-hidden="true" />
+                          <span className="sr-only">
+                            {t("favoriteWorkspaceNamed", { name: copy.name })}
+                          </span>
+                          <select
+                            aria-label={t("favoriteWorkspaceNamed", { name: copy.name })}
+                            value={executor.preference.favoriteWorkspace?.path ?? ""}
+                            onChange={(event) => {
+                              if (event.target.value === CHOOSE_FAVORITE_WORKSPACE_VALUE) {
+                                props.onChooseFavoriteWorkspace(executor.ref);
+                                return;
+                              }
+                              const favoriteWorkspace = executorFavoriteWorkspaces.find(
+                                (candidate) => candidate.path === event.target.value,
+                              );
+                              if (favoriteWorkspace !== undefined) {
+                                props.onPreferenceChange(executor.ref, {
+                                  favoriteScope: "workspace",
+                                  favoriteWorkspace,
+                                });
+                              }
+                            }}
+                          >
+                            {executorFavoriteWorkspaces.map((candidate) => (
+                              <option value={candidate.path} key={candidate.path}>
+                                {candidate.basename} — {candidate.path}
+                              </option>
+                            ))}
+                            <option value={CHOOSE_FAVORITE_WORKSPACE_VALUE}>
+                              {t("chooseFavoriteWorkspace")}
+                            </option>
+                          </select>
+                        </label>
+                      ) : null}
                       {!executor.alwaysVisible ? (
                         <button
                           type="button"
@@ -928,11 +1028,9 @@ function MissionExecutorPicker(props: {
                             executor.preference.hidden ? t("restoreExecutor") : t("hideExecutor")
                           }
                           onClick={() =>
-                            props.onPreferenceChange(
-                              executor.ref,
-                              executor.preference.favoriteScope,
-                              !executor.preference.hidden,
-                            )
+                            props.onPreferenceChange(executor.ref, {
+                              hidden: !executor.preference.hidden,
+                            })
                           }
                         >
                           {executor.preference.hidden ? (
@@ -984,12 +1082,8 @@ export function rankHomeMissionExecutors(
   ) => executor,
 ): readonly HomeMissionExecutorOption[] {
   const rank = (executor: HomeMissionExecutorOption): number => {
-    if (executor.alwaysVisible || executor.preference.favoriteScope === "global") return 0;
-    if (
-      executor.preference.favoriteScope === "workspace" &&
-      executor.preference.lastWorkspace?.path === workspacePath
-    )
-      return 1;
+    if (isHomeExecutorFavorite(executor, workspacePath)) return 0;
+    if (executor.alwaysVisible) return 1;
     if (executor.preference.lastWorkspace?.path === workspacePath) return 2;
     if (executor.preference.lastUsedAt !== undefined) return 3;
     if (executor.teamMemberships.length > 0) return 5;
@@ -1005,6 +1099,27 @@ export function rankHomeMissionExecutors(
       ? recentDifference
       : displayCopy(left).name.localeCompare(displayCopy(right).name);
   });
+}
+
+export function isHomeExecutorFavorite(
+  executor: HomeMissionExecutorOption,
+  workspacePath: string | undefined,
+): boolean {
+  return (
+    executor.preference.favoriteScope === "global" ||
+    (executor.preference.favoriteScope === "workspace" &&
+      executor.preference.favoriteWorkspace?.path === workspacePath)
+  );
+}
+
+export function uniqueWorkspaces(
+  workspaces: readonly WorkspaceSelection[],
+): readonly WorkspaceSelection[] {
+  const unique = new Map<string, WorkspaceSelection>();
+  for (const workspace of workspaces) {
+    if (!unique.has(workspace.path)) unique.set(workspace.path, workspace);
+  }
+  return [...unique.values()];
 }
 
 export function selectHomeMissionExecutors(
@@ -1034,7 +1149,7 @@ async function clearExecutorWorkspaceAssociation(
   try {
     const preference = await window.pragmaDesktop.updateHomeExecutorPreference({
       ref,
-      clearWorkspace: true,
+      clearLastWorkspace: true,
     });
     setExecutors((current) =>
       current.map((executor) => (executor.ref === ref ? { ...executor, preference } : executor)),

@@ -217,6 +217,7 @@ describe("Home executor preference contracts", () => {
             preference: {
               favoriteScope: "workspace",
               hidden: false,
+              favoriteWorkspace: { path: "/work/favorite", basename: "favorite" },
               lastWorkspace: { path: "/work/code", basename: "code" },
             },
             alwaysVisible: false,
@@ -236,9 +237,29 @@ describe("Home executor preference contracts", () => {
     expect(
       UpdateHomeExecutorPreferenceSchema.safeParse({
         ref: "expert:0000000000000001",
-        favoriteScope: "global",
+        favoriteScope: "workspace",
+        favoriteWorkspace: "/work/code",
       }).success,
     ).toBe(true);
+    expect(
+      UpdateHomeExecutorPreferenceSchema.safeParse({
+        ref: "expert:0000000000000001",
+        favoriteScope: "workspace",
+      }).success,
+    ).toBe(false);
+    expect(
+      UpdateHomeExecutorPreferenceSchema.safeParse({
+        ref: "expert:0000000000000001",
+        favoriteWorkspace: "/work/code",
+      }).success,
+    ).toBe(false);
+    expect(
+      UpdateHomeExecutorPreferenceSchema.safeParse({
+        ref: "expert:0000000000000001",
+        favoriteScope: "global",
+        hidden: true,
+      }).success,
+    ).toBe(false);
   });
 });
 

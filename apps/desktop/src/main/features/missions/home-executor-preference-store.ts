@@ -13,15 +13,45 @@ import {
 
 const HOME_EXECUTOR_PREFERENCE_LIMIT = 5_000;
 
-const HomeExecutorPreferenceEntrySchema = z
+const HomeExecutorPreferenceEntryInputSchema = z
   .object({
     ref: z.string().trim().min(1).max(500),
     favoriteScope: HomeExecutorFavoriteScopeSchema,
     hidden: z.boolean(),
+    favoriteWorkspace: z.string().trim().min(1).max(2_000).optional(),
     lastWorkspace: z.string().trim().min(1).max(2_000).optional(),
     lastUsedAt: z.string().datetime().optional(),
   })
   .strict();
+
+const HomeExecutorPreferenceEntrySchema = HomeExecutorPreferenceEntryInputSchema.superRefine(
+  (entry, context) => {
+    if (
+      entry.favoriteScope === "workspace" &&
+      entry.favoriteWorkspace === undefined &&
+      entry.lastWorkspace === undefined
+    ) {
+      context.addIssue({
+        code: "custom",
+        path: ["favoriteWorkspace"],
+        message: "A workspace favorite requires a favorite workspace.",
+      });
+    }
+    if (entry.favoriteWorkspace !== undefined && entry.favoriteScope !== "workspace") {
+      context.addIssue({
+        code: "custom",
+        path: ["favoriteWorkspace"],
+        message: "A favorite workspace requires a workspace-scoped favorite.",
+      });
+    }
+  },
+).transform((entry) =>
+  entry.favoriteScope === "workspace" &&
+  entry.favoriteWorkspace === undefined &&
+  entry.lastWorkspace !== undefined
+    ? { ...entry, favoriteWorkspace: entry.lastWorkspace }
+    : entry,
+);
 
 const HomeExecutorPreferenceFileSchema = z
   .object({
@@ -117,33 +147,50 @@ export function createHomeExecutorPreferenceStore(options: {
         ref: input.ref,
         favoriteScope: current?.favoriteScope ?? "none",
         hidden: current?.hidden ?? false,
+        ...(current?.favoriteWorkspace === undefined
+          ? {}
+          : { favoriteWorkspace: current.favoriteWorkspace }),
         lastWorkspace: normalizeWorkspace(input.workspace),
         lastUsedAt: input.usedAt ?? new Date().toISOString(),
       }));
     },
     async update(input) {
       return await mutate(input.ref, (current) => {
+        if (
+          input.hidden === true &&
+          input.favoriteScope !== undefined &&
+          input.favoriteScope !== "none"
+        ) {
+          throw new Error("A hidden Home executor cannot also be favorited.");
+        }
+        if (input.favoriteScope === "workspace" && input.favoriteWorkspace === undefined) {
+          throw new Error("A workspace favorite requires a favorite workspace.");
+        }
+        if (input.favoriteWorkspace !== undefined && input.favoriteScope !== "workspace") {
+          throw new Error("A favorite workspace can only be set for a workspace favorite.");
+        }
         const requestedFavoriteScope: HomeExecutorFavoriteScope =
           input.hidden === true
             ? "none"
             : (input.favoriteScope ?? current?.favoriteScope ?? "none");
-        const requestedWorkspace =
-          input.workspace === undefined ? undefined : normalizeWorkspace(input.workspace);
-        const lastWorkspace =
-          input.clearWorkspace === true
+        const requestedFavoriteWorkspace =
+          input.favoriteWorkspace === undefined
             ? undefined
-            : (requestedWorkspace ?? current?.lastWorkspace);
-        const favoriteScope =
-          input.clearWorkspace === true && requestedFavoriteScope === "workspace"
-            ? "none"
-            : requestedFavoriteScope;
-        if (favoriteScope === "workspace" && lastWorkspace === undefined) {
-          throw new Error("A workspace favorite requires an associated workspace.");
+            : normalizeWorkspace(input.favoriteWorkspace);
+        const lastWorkspace =
+          input.clearLastWorkspace === true ? undefined : current?.lastWorkspace;
+        const favoriteWorkspace =
+          requestedFavoriteScope === "workspace"
+            ? (requestedFavoriteWorkspace ?? current?.favoriteWorkspace)
+            : undefined;
+        if (requestedFavoriteScope === "workspace" && favoriteWorkspace === undefined) {
+          throw new Error("A workspace favorite requires a favorite workspace.");
         }
         return {
           ref: input.ref,
-          favoriteScope,
+          favoriteScope: requestedFavoriteScope,
           hidden: input.hidden ?? current?.hidden ?? false,
+          ...(favoriteWorkspace === undefined ? {} : { favoriteWorkspace }),
           ...(lastWorkspace === undefined ? {} : { lastWorkspace }),
           ...(current?.lastUsedAt === undefined ? {} : { lastUsedAt: current.lastUsedAt }),
         };

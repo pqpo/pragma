@@ -46,6 +46,14 @@ export function createHomeExecutorCatalog(options: {
     HomeExecutorPreferenceSchema.parse({
       favoriteScope: alwaysVisible ? "global" : (entry?.favoriteScope ?? "none"),
       hidden: alwaysVisible ? false : (entry?.hidden ?? false),
+      ...(entry?.favoriteWorkspace === undefined
+        ? {}
+        : {
+            favoriteWorkspace: {
+              path: entry.favoriteWorkspace,
+              basename: basename(entry.favoriteWorkspace),
+            },
+          }),
       ...(entry?.lastWorkspace === undefined
         ? {}
         : {
@@ -91,22 +99,27 @@ export function createHomeExecutorCatalog(options: {
         throw new Error(`Mission executor not found: ${input.ref}.`);
       }
       await options.preferences.prune(new Set(available.map((executor) => executor.ref)));
-      if (input.workspace !== undefined) {
-        const validation = await options.validateWorkspace(input.workspace);
+      const isDefaultExecutor = input.ref === options.defaultExecutorRef;
+      if (!isDefaultExecutor && input.favoriteWorkspace !== undefined) {
+        const validation = await options.validateWorkspace(input.favoriteWorkspace);
         if (!validation.ok) {
           throw new Error("The selected workspace must be an accessible, writable directory.");
         }
       }
-      if (input.ref === options.defaultExecutorRef && input.hidden === true) {
+      if (isDefaultExecutor && input.hidden === true) {
         throw new Error("The built-in Pragma executor must remain visible.");
       }
-      const updated = await options.preferences.update({
-        ...input,
-        ...(input.ref === options.defaultExecutorRef
-          ? { favoriteScope: "global" as const, hidden: false }
-          : {}),
-      });
-      return preferenceView(updated, input.ref === options.defaultExecutorRef);
+      const updated = await options.preferences.update(
+        isDefaultExecutor
+          ? {
+              ref: input.ref,
+              favoriteScope: "global",
+              hidden: false,
+              ...(input.clearLastWorkspace === true ? { clearLastWorkspace: true } : {}),
+            }
+          : input,
+      );
+      return preferenceView(updated, isDefaultExecutor);
     },
     async recordUsage(ref, workspace) {
       try {

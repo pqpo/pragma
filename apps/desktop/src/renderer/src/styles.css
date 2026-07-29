@@ -11589,7 +11589,7 @@ textarea:focus-visible,
 
 .mission-executor-option-main {
   display: grid;
-  grid-template-columns: 36px minmax(0, 1fr) 17px;
+  grid-template-columns: 36px minmax(0, 1fr) auto;
   min-width: 0;
   align-items: center;
   gap: 10px;
@@ -11666,13 +11666,28 @@ textarea:focus-visible,
   white-space: nowrap;
 }
 
-.mission-executor-option-main > svg {
+.mission-executor-option-status {
+  display: inline-flex;
+  min-width: 17px;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 5px;
+}
+
+.mission-executor-option-status > svg {
   color: var(--green-dark);
+}
+
+.mission-executor-option-status > svg:not(.mission-executor-pinned-star) {
   visibility: hidden;
 }
 
-.mission-executor-option-main > svg.is-visible {
+.mission-executor-option-status > svg.is-visible {
   visibility: visible;
+}
+
+.mission-executor-pinned-star {
+  color: #b67817;
 }
 
 .mission-executor-option-actions {
@@ -11682,8 +11697,12 @@ textarea:focus-visible,
 }
 
 .mission-executor-option-actions label {
-  width: 112px;
+  width: 140px;
   padding-left: 7px;
+}
+
+.mission-executor-option-actions label.mission-executor-favorite-workspace {
+  width: 210px;
 }
 
 .mission-executor-option-actions label:has(select:disabled) {

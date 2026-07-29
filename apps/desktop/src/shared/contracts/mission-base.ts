@@ -43,6 +43,7 @@ export const HomeExecutorFavoriteScopeSchema = z.enum(["none", "workspace", "glo
 export const HomeExecutorPreferenceSchema = z.object({
   favoriteScope: HomeExecutorFavoriteScopeSchema,
   hidden: z.boolean(),
+  favoriteWorkspace: MissionWorkspaceSchema.optional(),
   lastWorkspace: MissionWorkspaceSchema.optional(),
   lastUsedAt: z.string().datetime().optional(),
 });
@@ -81,18 +82,43 @@ export const UpdateHomeExecutorPreferenceSchema = z
     ref: MissionExecutorRefSchema,
     favoriteScope: HomeExecutorFavoriteScopeSchema.optional(),
     hidden: z.boolean().optional(),
-    workspace: z.string().trim().min(1).max(2_000).optional(),
-    clearWorkspace: z.boolean().optional(),
+    favoriteWorkspace: z.string().trim().min(1).max(2_000).optional(),
+    clearLastWorkspace: z.boolean().optional(),
   })
   .superRefine((input, context) => {
     if (
       input.favoriteScope === undefined &&
       input.hidden === undefined &&
-      input.clearWorkspace !== true
+      input.clearLastWorkspace !== true
     ) {
       context.addIssue({
         code: "custom",
         message: "At least one Home executor preference change is required.",
+      });
+    }
+    if (input.favoriteScope === "workspace" && input.favoriteWorkspace === undefined) {
+      context.addIssue({
+        code: "custom",
+        path: ["favoriteWorkspace"],
+        message: "A workspace favorite requires a favorite workspace.",
+      });
+    }
+    if (input.favoriteWorkspace !== undefined && input.favoriteScope !== "workspace") {
+      context.addIssue({
+        code: "custom",
+        path: ["favoriteWorkspace"],
+        message: "A favorite workspace can only be set for a workspace favorite.",
+      });
+    }
+    if (
+      input.hidden === true &&
+      input.favoriteScope !== undefined &&
+      input.favoriteScope !== "none"
+    ) {
+      context.addIssue({
+        code: "custom",
+        path: ["favoriteScope"],
+        message: "A hidden Home executor cannot also be favorited.",
       });
     }
   });
