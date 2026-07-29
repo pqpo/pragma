@@ -647,7 +647,7 @@ const MISSION_RAIL_PAGE_SIZE = 10;
 const MISSION_RAIL_INITIAL_VISIBLE_LIMITS = {
   waitingInput: 10,
   active: 10,
-  completed: 5,
+  completed: 10,
 } satisfies MissionRailVisibleLimits;
 const MISSION_SEARCH_SCROLL_THRESHOLD = 6;
 const MISSION_SEARCH_TOP_REVEAL_OFFSET = 4;

@@ -125,7 +125,7 @@ describe("MissionsPage", () => {
         }),
       ],
       pinnedMissionIds: ["waiting-pinned"],
-      visibleLimits: { waitingInput: 10, active: 10, completed: 5 },
+      visibleLimits: { waitingInput: 10, active: 10, completed: 10 },
     });
 
     expect(groups.waitingInput.visibleMissions.map((mission) => mission.id)).toEqual([
@@ -166,28 +166,28 @@ describe("MissionsPage", () => {
     const initial = resolveMissionRailGroups({
       missions: [...waiting, ...active, ...completed],
       pinnedMissionIds: [],
-      visibleLimits: { waitingInput: 10, active: 10, completed: 5 },
+      visibleLimits: { waitingInput: 10, active: 10, completed: 10 },
     });
 
     expect(initial.waitingInput.visibleMissions).toHaveLength(10);
     expect(initial.waitingInput.hiddenCount).toBe(1);
     expect(initial.active.visibleMissions).toHaveLength(10);
     expect(initial.active.hiddenCount).toBe(2);
-    expect(initial.completed.visibleMissions).toHaveLength(5);
-    expect(initial.completed.hiddenCount).toBe(11);
+    expect(initial.completed.visibleMissions).toHaveLength(10);
+    expect(initial.completed.hiddenCount).toBe(6);
 
     const afterLoadMore = resolveMissionRailGroups({
       missions: [...waiting, ...active, ...completed],
       pinnedMissionIds: [],
-      visibleLimits: { waitingInput: 20, active: 20, completed: 15 },
+      visibleLimits: { waitingInput: 20, active: 20, completed: 20 },
     });
 
     expect(afterLoadMore.waitingInput.visibleMissions).toHaveLength(11);
     expect(afterLoadMore.waitingInput.hiddenCount).toBe(0);
     expect(afterLoadMore.active.visibleMissions).toHaveLength(12);
     expect(afterLoadMore.active.hiddenCount).toBe(0);
-    expect(afterLoadMore.completed.visibleMissions).toHaveLength(15);
-    expect(afterLoadMore.completed.hiddenCount).toBe(1);
+    expect(afterLoadMore.completed.visibleMissions).toHaveLength(16);
+    expect(afterLoadMore.completed.hiddenCount).toBe(0);
   });
 
   it("applies global Mission updates without allowing stale events to regress the rail", () => {
