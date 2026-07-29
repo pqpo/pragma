@@ -26,7 +26,7 @@ describe("RuntimeEnvironmentStore", () => {
       definition: { ...original.definition, displayName: "PI Updated" },
     });
     expect(updated.revision).toBe(2);
-    expect((await store.getRevision("pi", 1))?.definition.displayName).toBe("PI Runtime");
+    expect((await store.getRevision("pi", 1))?.definition.displayName).toBe("Built-in Runtime");
     expect((await store.getRevision("pi"))?.definition.displayName).toBe("PI Updated");
 
     await store.setDefaultRuntimeId("codex");

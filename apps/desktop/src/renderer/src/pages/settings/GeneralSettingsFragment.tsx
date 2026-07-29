@@ -9,6 +9,7 @@ import type {
   DesktopToolPermissionMode,
 } from "../../../../shared/contracts/index.ts";
 import { localeDisplayNames, setDesktopLocale } from "../../i18n/index.ts";
+import { runtimeDisplayName } from "../../lib/runtime-display.ts";
 import { SettingsScreenFrame } from "./SettingsScreenFrame.tsx";
 
 const languageOptions: readonly {
@@ -183,7 +184,7 @@ export function GeneralSettingsFragment() {
                   value={runtime.id}
                   disabled={runtime.status !== "available"}
                 >
-                  {runtime.displayName}
+                  {runtimeDisplayName(t, runtime)}
                   {runtime.status === "available"
                     ? ""
                     : ` · ${t("status.unavailable", { ns: "common" })}`}

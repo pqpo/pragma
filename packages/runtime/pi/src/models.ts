@@ -134,7 +134,7 @@ export function resolvePiThinkingLevel(
     case "max":
       return thinkingLevel;
     default:
-      throw new Error(`Unsupported PI thinking level: ${thinkingLevel}`);
+      throw new Error(`Unsupported thinking level: ${thinkingLevel}`);
   }
 }
 
@@ -180,11 +180,11 @@ export function createPiModelProviderConverter(): RuntimeModelProviderConverter<
         .map(toPiProviderModel);
       if (models.length === 0) {
         throw new Error(
-          `PI does not support any configured models for provider "${provider.displayName}".`,
+          `No configured models are supported for provider "${provider.displayName}".`,
         );
       }
       if (!SUPPORTED_APIS.has(provider.api) && models.every((model) => model.api === undefined)) {
-        throw new Error(`PI does not support provider API protocol "${provider.api}".`);
+        throw new Error(`Provider API protocol "${provider.api}" is not supported.`);
       }
       return {
         id: provider.id,

@@ -81,9 +81,7 @@ describe("PI runtime model resolution", () => {
 
   it("validates thinking levels before passing them to PI", () => {
     expect(resolvePiThinkingLevel("xhigh")).toBe("xhigh");
-    expect(() => resolvePiThinkingLevel("extreme")).toThrow(
-      "Unsupported PI thinking level: extreme",
-    );
+    expect(() => resolvePiThinkingLevel("extreme")).toThrow("Unsupported thinking level: extreme");
   });
 
   it("converts neutral providers inside the PI adapter boundary", () => {
@@ -159,7 +157,7 @@ describe("PI runtime model resolution", () => {
         apiKey: "secret",
         credentialFingerprint: "fingerprint",
       }),
-    ).toThrow("does not support any configured models");
+    ).toThrow("No configured models are supported");
   });
 });
 

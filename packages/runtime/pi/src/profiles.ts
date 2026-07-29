@@ -183,10 +183,10 @@ export function resolvePiCompatibilityProfile(
   if (id === undefined) return undefined;
   const resolved = PROFILES_BY_ID.get(id);
   if (resolved === undefined) {
-    throw new Error(`Unknown PI compatibility profile: ${id}`);
+    throw new Error("The selected compatibility profile is unknown.");
   }
   if (resolved.api !== api) {
-    throw new Error(`PI compatibility profile "${id}" does not support API "${api}".`);
+    throw new Error(`The selected compatibility profile does not support API "${api}".`);
   }
   return resolved;
 }

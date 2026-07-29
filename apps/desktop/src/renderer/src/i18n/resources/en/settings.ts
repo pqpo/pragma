@@ -47,7 +47,7 @@ export const settings = {
     compatibilityProfile: "Compatibility profile",
     automaticCompatibility: "Automatic (recommended)",
     automaticCompatibilityDescription:
-      "Use the PI built-in model metadata when available, otherwise choose a conservative provider profile.",
+      "Use built-in model metadata when available, otherwise choose a conservative provider profile.",
     modelCompatibilityOverride: "Model compatibility",
     inheritCompatibility: "Inherit provider setting",
     baseUrl: "API base URL",

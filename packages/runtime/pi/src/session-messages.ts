@@ -48,7 +48,7 @@ function createUnknownRuntimeMessage(role: string, details: unknown): AgentMessa
   return {
     role: "custom",
     customType: `pi.${role}`,
-    content: `Unsupported PI runtime message role: ${role}`,
+    content: `Unsupported runtime message role: ${role}`,
     display: false,
     details,
     timestamp,

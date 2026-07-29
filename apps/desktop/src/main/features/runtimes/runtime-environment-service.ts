@@ -21,9 +21,10 @@ import type {
   RuntimeEnvironmentRevision,
 } from "../../../shared/contracts/index.ts";
 import type { ModelProviderStore } from "../model-providers/model-provider-store.ts";
-import type {
-  RuntimeEnvironmentHead,
-  RuntimeEnvironmentStore,
+import {
+  BUILT_IN_RUNTIME_DISPLAY_NAME,
+  type RuntimeEnvironmentHead,
+  type RuntimeEnvironmentStore,
 } from "./runtime-environment-store.ts";
 
 export interface RuntimeEnvironmentAdapterFactory {
@@ -324,7 +325,7 @@ export function createBuiltInRuntimeFactories(
       create: (environment) => {
         assertEmptyRuntimeConfig(environment);
         return createPiRuntime({
-          descriptor: { id: environment.id, displayName: environment.displayName },
+          descriptor: { id: environment.id, displayName: BUILT_IN_RUNTIME_DISPLAY_NAME },
           modelProviders,
         });
       },

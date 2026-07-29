@@ -148,9 +148,27 @@ function toPublicProvider(provider: StoredModelProvider): ModelProvider {
     models: provider.models.map((model) => ({ ...model })),
     hasApiKey: provider.encryptedApiKey.length > 0,
     requiresApiKey: provider.requiresApiKey,
-    verification: provider.verification,
+    verification: normalizeVerificationForDisplay(provider.verification),
     revision: provider.revision,
   };
+}
+
+function normalizeVerificationForDisplay(
+  verification: ModelProviderVerification,
+): ModelProviderVerification {
+  const message = verification.message;
+  if (message === undefined) return verification;
+  const normalized = message
+    .replaceAll("Connection successful through the PI runtime.", "Connection successful.")
+    .replaceAll("Cloud PI Agent", "built-in runtime")
+    .replaceAll("PI Runtime", "built-in runtime")
+    .replaceAll("PI runtime", "built-in runtime")
+    .replaceAll("PI model provider", "Model provider")
+    .replaceAll("PI thinking level", "thinking level")
+    .replaceAll("PI compatibility profile", "compatibility profile")
+    .replace(/^PI does not support/u, "The built-in runtime does not support")
+    .replace(/^PI could not/u, "The built-in runtime could not");
+  return normalized === message ? verification : { ...verification, message: normalized };
 }
 
 function parseConfig(raw: string): StoredModelProviderConfig {

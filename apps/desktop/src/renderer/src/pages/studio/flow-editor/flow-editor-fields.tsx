@@ -17,6 +17,7 @@ import type {
   DesktopRuntimeAvailability,
   DesktopRuntimeModel,
 } from "../../../../../shared/contracts/index.ts";
+import { canonicalRuntimeDisplayName, runtimeDisplayName } from "../../../lib/runtime-display.ts";
 import {
   SchemaFieldsEditor,
   fieldsToObjectSchema,
@@ -393,12 +394,16 @@ export function RuntimeBindingEditor(props: {
           {selectedRuntimeId !== "" &&
           !props.runtimes.some((runtime) => runtime.id === selectedRuntimeId) ? (
             <option value={selectedRuntimeId}>
-              {selectedRuntimeId} · {t("unavailable")}
+              {runtimeDisplayName(t, {
+                id: selectedRuntimeId,
+                displayName: selectedRuntimeId,
+              })}{" "}
+              · {t("unavailable")}
             </option>
           ) : null}
           {props.runtimes.map((runtime) => (
             <option key={runtime.id} value={runtime.id} disabled={runtime.status !== "available"}>
-              {runtime.displayName}
+              {runtimeDisplayName(t, runtime)}
               {runtime.status === "available" ? "" : ` · ${t("unavailable")}`}
             </option>
           ))}
@@ -510,13 +515,14 @@ function targetRuntimeProfileRef(
 }
 
 export function flowRuntimeProfile(runtime: DesktopRuntimeAvailability) {
+  const displayName = canonicalRuntimeDisplayName(runtime);
   return PragmaRuntimeProfileResourceSchema.parse({
     apiVersion: "pragma/v3",
     kind: "RuntimeProfile",
     metadata: {
       id: stableRuntimeKey(runtime.id),
-      name: `${runtime.displayName} Flow Runtime`,
-      description: `Desktop-managed Runtime profile for Flow node overrides using ${runtime.displayName}.`,
+      name: `${displayName} Flow Runtime`,
+      description: `Desktop-managed Runtime profile for Flow node overrides using ${displayName}.`,
       tags: ["desktop-managed", "flow-runtime-override"],
     },
     spec: {

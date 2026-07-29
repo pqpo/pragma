@@ -43,7 +43,7 @@ import { defaultOutputParser } from "./types.ts";
 const CLOUD_PI_RUNTIME_DESCRIPTOR = {
   id: "cloud-pi-agent",
   kind: "cloud-pi-agent" as const,
-  displayName: "Cloud PI Agent",
+  displayName: "Built-in Runtime",
   capabilities: {
     targets: ["agent"],
     executionLocations: ["cloud"],
@@ -149,7 +149,7 @@ export function createPiRuntime(options: CloudPiRuntimeAdapterOptions = {}): Run
             if (cleanupError !== undefined) {
               throw new AggregateError(
                 [error, cleanupError],
-                "PI model provider resolution and cleanup failed.",
+                "Model provider resolution and cleanup failed.",
                 { cause: error },
               );
             }
@@ -157,9 +157,7 @@ export function createPiRuntime(options: CloudPiRuntimeAdapterOptions = {}): Run
           throw error;
         }
         if (selectedProviderId !== undefined && registeredProvider === undefined) {
-          const providerError = new Error(
-            `PI model provider is not registered: ${selectedProviderId}`,
-          );
+          const providerError = new Error(`Model provider is not registered: ${selectedProviderId}`);
           const preparation = await Promise.allSettled([
             resourceReloadPromise,
             mcpRegistryPromise,
@@ -171,7 +169,7 @@ export function createPiRuntime(options: CloudPiRuntimeAdapterOptions = {}): Run
             if (cleanupError !== undefined) {
               throw new AggregateError(
                 [providerError, cleanupError],
-                "PI model provider validation and cleanup failed.",
+                "Model provider validation and cleanup failed.",
                 { cause: providerError },
               );
             }
@@ -322,7 +320,7 @@ export function createPiRuntime(options: CloudPiRuntimeAdapterOptions = {}): Run
         if (selectedModel !== undefined) {
           const provider = await options.modelProviders?.resolveProvider(selectedModel.providerId);
           if (provider === undefined) {
-            throw new Error(`PI model provider is not registered: ${selectedModel.providerId}`);
+            throw new Error(`Model provider is not registered: ${selectedModel.providerId}`);
           }
           registerPiModelProvider(
             session.models.modelRuntime,

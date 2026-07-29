@@ -15,9 +15,10 @@ import {
 } from "../../../shared/contracts/index.ts";
 
 export const DEFAULT_RUNTIME_ID = "pi";
+export const BUILT_IN_RUNTIME_DISPLAY_NAME = "Built-in Runtime";
 
 export const DEFAULT_RUNTIME_ENVIRONMENTS: readonly RuntimeEnvironmentDefinition[] = [
-  environment("pi", "PI Runtime", "pragma.runtime.pi"),
+  environment("pi", BUILT_IN_RUNTIME_DISPLAY_NAME, "pragma.runtime.pi"),
   environment("codex", "Codex", "pragma.runtime.codex"),
   environment("claude-code", "Claude Code", "pragma.runtime.claude-code"),
   environment("qodercli", "Qoder CLI", "pragma.runtime.qodercli"),

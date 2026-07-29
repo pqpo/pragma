@@ -25,7 +25,7 @@ describe("PI compatibility profiles", () => {
 
   it("rejects unknown profiles and protocol mismatches", () => {
     expect(() => resolvePiCompatibilityProfile("pi.missing@v1", "openai-completions")).toThrow(
-      "Unknown PI compatibility profile",
+      "The selected compatibility profile is unknown.",
     );
     expect(() => resolvePiCompatibilityProfile("pi.openai-modern@v1", "openai-responses")).toThrow(
       "does not support API",

@@ -45,7 +45,7 @@ export const settings = {
     compatibilityProfile: "相容設定檔",
     automaticCompatibility: "自動（建議）",
     automaticCompatibilityDescription:
-      "優先使用 PI 內建模型中繼資料；沒有精確資料時，自動選擇保守的供應商相容設定。",
+      "優先使用內建模型中繼資料；沒有精確資料時，自動選擇保守的供應商相容設定。",
     modelCompatibilityOverride: "模型相容設定",
     inheritCompatibility: "繼承供應商設定",
     baseUrl: "API 基礎 URL",
