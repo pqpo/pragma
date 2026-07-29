@@ -4,7 +4,12 @@ import type {
   ModelRegistry,
   ModelRuntime,
 } from "@earendil-works/pi-coding-agent";
-import { findCutPoint, sessionEntryToContextMessages } from "@earendil-works/pi-coding-agent";
+import {
+  estimateTokens,
+  findCutPoint,
+  getLastAssistantUsage,
+  sessionEntryToContextMessages,
+} from "@earendil-works/pi-coding-agent";
 import { randomUUID } from "node:crypto";
 import { AgentMessageUsageSchema, type AgentMessage, type AgentMessageUsage } from "@pragma/shared";
 import type {
@@ -46,6 +51,7 @@ export interface PiNativeSession {
     readonly modelRegistry: ModelRegistry;
     readonly modelRuntime: ModelRuntime;
   };
+  readonly compactionKeepRecentTokens: number;
   messageCountBeforeRun: number;
   pendingCompactionOperationId?: string | undefined;
   compactionTriggerOverride?: RuntimeContextCompactionTrigger | undefined;
@@ -66,6 +72,7 @@ export function createPiNativeSession(options: {
     readonly modelRegistry: ModelRegistry;
     readonly modelRuntime: ModelRuntime;
   };
+  readonly compactionKeepRecentTokens: number;
 }): PiNativeSession {
   return {
     ...options,
@@ -233,6 +240,7 @@ export async function compactPiContextBeforePrompt(session: PiNativeSession): Pr
 
   session.compactionTriggerOverride = "auto";
   try {
+    calibratePiCompactionBudget(session);
     await session.session.compact();
     return true;
   } catch (error) {
@@ -268,7 +276,7 @@ export function readPiContextWindow(
   return createRuntimeContextWindowUsage({
     usedTokens: usage.tokens,
     contextWindowTokens: usage.contextWindow,
-    measurement: "estimated",
+    measurement: hasReportedPiContextUsage(session) ? "derived" : "estimated",
   });
 }
 
@@ -276,22 +284,13 @@ export function canCompactPiContextWindow(session: PiNativeSession): boolean {
   const pathEntries = session.session.sessionManager.getBranch();
   if (pathEntries.at(-1)?.type === "compaction") return false;
 
-  let boundaryStart = 0;
-  for (let index = pathEntries.length - 1; index >= 0; index -= 1) {
-    const entry = pathEntries[index];
-    if (entry?.type !== "compaction") continue;
-    const firstKeptEntryIndex = pathEntries.findIndex(
-      (candidate) => candidate.id === entry.firstKeptEntryId,
-    );
-    boundaryStart = firstKeptEntryIndex >= 0 ? firstKeptEntryIndex : index + 1;
-    break;
-  }
+  const boundaryStart = findPiCompactionBoundaryStart(pathEntries);
 
   const cutPoint = findCutPoint(
     pathEntries,
     boundaryStart,
     pathEntries.length,
-    session.session.settingsManager.getCompactionKeepRecentTokens(),
+    calibratePiCompactionBudget(session, boundaryStart),
   );
   if (pathEntries[cutPoint.firstKeptEntryIndex]?.id === undefined) return false;
 
@@ -314,6 +313,7 @@ export async function compactPiContextWindow(
   session: PiNativeSession,
 ): Promise<RuntimeContextWindowUsage | undefined> {
   const before = session.session.getContextUsage();
+  calibratePiCompactionBudget(session);
   const result = await session.session.compact();
   const after = session.session.getContextUsage();
   const contextWindowTokens = after?.contextWindow ?? before?.contextWindow;
@@ -323,6 +323,99 @@ export async function compactPiContextWindow(
     contextWindowTokens,
     measurement: "estimated",
   });
+}
+
+type PiSessionEntry = ReturnType<PiNativeSession["session"]["sessionManager"]["getBranch"]>[number];
+type PiContextMessage = ReturnType<typeof sessionEntryToContextMessages>[number];
+
+const DENSE_SCRIPT_CHARACTER =
+  /[\p{Script=Han}\p{Script=Hiragana}\p{Script=Katakana}\p{Script=Hangul}]/u;
+
+function findPiCompactionBoundaryStart(pathEntries: readonly PiSessionEntry[]): number {
+  for (let index = pathEntries.length - 1; index >= 0; index -= 1) {
+    const entry = pathEntries[index];
+    if (entry?.type !== "compaction") continue;
+    const firstKeptEntryIndex = pathEntries.findIndex(
+      (candidate) => candidate.id === entry.firstKeptEntryId,
+    );
+    return firstKeptEntryIndex >= 0 ? firstKeptEntryIndex : index + 1;
+  }
+  return 0;
+}
+
+function calibratePiCompactionBudget(session: PiNativeSession, boundaryStart?: number): number {
+  const pathEntries = session.session.sessionManager.getBranch();
+  const start = boundaryStart ?? findPiCompactionBoundaryStart(pathEntries);
+  const configuredTokens = session.compactionKeepRecentTokens;
+  let retainedPiTokens = 0;
+  let calibratedTokens = 0;
+
+  // Pi's native compactor uses a chars/4 estimate. Find the same recent-message
+  // boundary with model output usage and dense-script-aware estimates, then express
+  // that boundary in Pi's units so its compactor preserves the configured budget.
+  for (let index = pathEntries.length - 1; index >= start; index -= 1) {
+    const entry = pathEntries[index];
+    if (entry === undefined) continue;
+    if (entry.type === "compaction") continue;
+    for (const message of sessionEntryToContextMessages(entry)) {
+      const piEstimate = estimateTokens(message);
+      retainedPiTokens += piEstimate;
+      calibratedTokens += estimatePiMessageTokens(message, piEstimate);
+    }
+    if (calibratedTokens >= configuredTokens) break;
+  }
+
+  const effectiveTokens =
+    calibratedTokens < configuredTokens ? configuredTokens : Math.max(1, retainedPiTokens);
+
+  session.session.settingsManager.applyOverrides({
+    compaction: {
+      keepRecentTokens: effectiveTokens,
+    },
+  });
+  return effectiveTokens;
+}
+
+function estimatePiMessageTokens(message: PiContextMessage, piEstimate: number): number {
+  const reportedOutputTokens = readReportedAssistantOutputTokens(message);
+  const denseScriptCharacters = countDenseScriptCharacters(message);
+  const denseScriptAdjusted = piEstimate + Math.ceil(denseScriptCharacters * 0.75);
+  return Math.max(piEstimate, denseScriptAdjusted, reportedOutputTokens ?? 0);
+}
+
+function readReportedAssistantOutputTokens(message: PiContextMessage): number | undefined {
+  if (!isRecord(message) || message["role"] !== "assistant") return undefined;
+  const usage = message["usage"];
+  if (!isRecord(usage)) return undefined;
+  const output = usage["output"];
+  return typeof output === "number" && Number.isFinite(output) && output > 0
+    ? Math.round(output)
+    : undefined;
+}
+
+function countDenseScriptCharacters(value: unknown, seen = new Set<object>()): number {
+  if (typeof value === "string") {
+    let count = 0;
+    for (const character of value) {
+      if (DENSE_SCRIPT_CHARACTER.test(character)) count += 1;
+    }
+    return count;
+  }
+  if (typeof value !== "object" || value === null || seen.has(value)) return 0;
+  seen.add(value);
+  if (Array.isArray(value)) {
+    return value.reduce((total, item) => total + countDenseScriptCharacters(item, seen), 0);
+  }
+  return Object.values(value).reduce(
+    (total, item) => total + countDenseScriptCharacters(item, seen),
+    0,
+  );
+}
+
+function hasReportedPiContextUsage(session: PiNativeSession): boolean {
+  const pathEntries = session.session.sessionManager.getBranch();
+  const latestCompactionIndex = pathEntries.findLastIndex((entry) => entry.type === "compaction");
+  return getLastAssistantUsage(pathEntries.slice(latestCompactionIndex + 1)) !== undefined;
 }
 
 async function applySubmissionModel(

@@ -112,6 +112,7 @@ export function createPiRuntime(options: CloudPiRuntimeAdapterOptions = {}): Run
               );
         const cwd = ctx.workspace;
         const settingsManager = SettingsManager.create(cwd);
+        const compactionKeepRecentTokens = settingsManager.getCompactionKeepRecentTokens();
         settingsManager.applyOverrides({
           compaction: {
             enabled: true,
@@ -298,6 +299,7 @@ export function createPiRuntime(options: CloudPiRuntimeAdapterOptions = {}): Run
                 modelRegistry,
                 modelRuntime,
               },
+              compactionKeepRecentTokens,
             }),
             mcpToolRegistry,
           };
