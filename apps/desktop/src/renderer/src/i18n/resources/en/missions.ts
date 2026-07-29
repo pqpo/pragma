@@ -100,7 +100,6 @@ export const missions = {
   allKinds: "All types",
   allTags: "All tags",
   managedByTeams: "Member of {{count}} teams",
-  favoriteExecutor: "Favorite executor",
   favoriteNamed: "Set favorite scope for {{name}}",
   favoriteScope: {
     none: "Not favorited",
@@ -109,7 +108,7 @@ export const missions = {
   },
   favoriteWorkspaceNamed: "Choose the favorite workspace for {{name}}",
   favoriteWorkspaceBadge: "Favorite: {{workspace}}",
-  chooseFavoriteWorkspace: "Choose a directory…",
+  selectFavoriteWorkspace: "Choose workspace",
   favoritePinned: "Pinned for this workspace",
   hideExecutor: "Hide from Home",
   restoreExecutor: "Restore to Home",

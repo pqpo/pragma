@@ -95,7 +95,6 @@ export const missions = {
   allKinds: "全部類型",
   allTags: "全部標籤",
   managedByTeams: "屬於 {{count}} 個專家團",
-  favoriteExecutor: "收藏執行者",
   favoriteNamed: "設定 {{name}} 的收藏範圍",
   favoriteScope: {
     none: "未收藏",
@@ -104,7 +103,7 @@ export const missions = {
   },
   favoriteWorkspaceNamed: "選擇 {{name}} 收藏到的工作區",
   favoriteWorkspaceBadge: "收藏：{{workspace}}",
-  chooseFavoriteWorkspace: "選擇目錄…",
+  selectFavoriteWorkspace: "選擇工作區",
   favoritePinned: "已在此工作區置頂",
   hideExecutor: "從首頁隱藏",
   restoreExecutor: "恢復首頁顯示",

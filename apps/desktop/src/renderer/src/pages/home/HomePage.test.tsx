@@ -9,6 +9,7 @@ import {
   rankHomeMissionExecutors,
   selectHomeMissionExecutors,
   uniqueWorkspaces,
+  workspacePathsEqual,
 } from "./HomePage.tsx";
 import { SchemaInputForm, createSchemaInputValue, isSchemaInputValid } from "./SchemaInputForm.tsx";
 
@@ -157,15 +158,23 @@ describe("mission executor search", () => {
     };
 
     expect(isHomeExecutorFavorite(workspaceFavorite, "/work/favorite")).toBe(true);
+    expect(isHomeExecutorFavorite(workspaceFavorite, "/work/favorite/")).toBe(true);
     expect(isHomeExecutorFavorite(workspaceFavorite, "/work/other")).toBe(false);
     expect(isHomeExecutorFavorite(globalFavorite, "/work/other")).toBe(true);
   });
 
-  it("deduplicates current and recent workspace choices by path", () => {
+  it("compares equivalent workspace paths across picker and persisted representations", () => {
+    expect(workspacePathsEqual("/work/project/", "/work/project")).toBe(true);
+    expect(workspacePathsEqual("C:\\work\\project\\", "c:/work/project")).toBe(true);
+    expect(workspacePathsEqual("/work/project", "/work/other")).toBe(false);
+    expect(workspacePathsEqual(undefined, "/work/project")).toBe(false);
+  });
+
+  it("deduplicates current and recent workspace choices by normalized path", () => {
     expect(
       uniqueWorkspaces([
         { path: "/work/current", basename: "current" },
-        { path: "/work/current", basename: "duplicate" },
+        { path: "/work/current/", basename: "duplicate" },
         { path: "/work/recent", basename: "recent" },
       ]),
     ).toEqual([

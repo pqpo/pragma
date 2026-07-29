@@ -1,6 +1,7 @@
 import {
   useCallback,
   useEffect,
+  useLayoutEffect,
   useRef,
   useState,
   type Dispatch,
@@ -10,9 +11,12 @@ import {
 import {
   ArrowUp,
   CaretDown,
+  CaretLeft,
+  CaretRight,
   Check,
   Eye,
   EyeSlash,
+  FolderOpen,
   GearSix,
   GitBranch,
   MagnifyingGlass,
@@ -38,8 +42,6 @@ import { errorMessage } from "../../lib/errors.ts";
 import { readHomeDraft, writeHomeDraft } from "../../lib/home-draft.ts";
 import { localizeSystemExpertCopy } from "../../lib/system-expert-copy.ts";
 import { SchemaInputForm, createSchemaInputValue, isSchemaInputValid } from "./SchemaInputForm.tsx";
-
-const CHOOSE_FAVORITE_WORKSPACE_VALUE = "__pragma_choose_directory__";
 
 export function HomePage(props: {
   readonly initialExecutorRef?: string | undefined;
@@ -301,7 +303,7 @@ export function HomePage(props: {
       readonly favoriteWorkspace?: WorkspaceSelection;
       readonly hidden?: boolean;
     },
-  ) => {
+  ): Promise<boolean> => {
     try {
       const preference = await window.pragmaDesktop.updateHomeExecutorPreference({
         ref,
@@ -315,25 +317,30 @@ export function HomePage(props: {
         current.map((executor) => (executor.ref === ref ? { ...executor, preference } : executor)),
       );
       setError(null);
+      return true;
     } catch (preferenceError) {
       setError(errorMessage(preferenceError));
+      return false;
     }
   };
 
-  const chooseFavoriteWorkspace = async (ref: string) => {
+  const chooseFavoriteWorkspace = async (ref: string): Promise<boolean> => {
     try {
       const result = await window.pragmaDesktop.pickWorkspace();
       if (result.ok && result.path !== undefined && result.basename !== undefined) {
-        await updateExecutorPreference(ref, {
+        return await updateExecutorPreference(ref, {
           favoriteScope: "workspace",
           favoriteWorkspace: { path: result.path, basename: result.basename },
           hidden: false,
         });
-      } else if (result.reason !== "cancelled") {
+      }
+      if (result.reason !== "cancelled") {
         setError(result.error ?? t("workspaceUnavailable"));
       }
+      return false;
     } catch (pickError) {
       setError(errorMessage(pickError));
+      return false;
     }
   };
 
@@ -438,8 +445,8 @@ export function HomePage(props: {
                 workspace={workspaceOverride ?? defaultWorkspace}
                 recentWorkspaces={recentWorkspaces}
                 onChange={selectExecutor}
-                onPreferenceChange={(ref, update) => void updateExecutorPreference(ref, update)}
-                onChooseFavoriteWorkspace={(ref) => void chooseFavoriteWorkspace(ref)}
+                onPreferenceChange={updateExecutorPreference}
+                onChooseFavoriteWorkspace={chooseFavoriteWorkspace}
               />
               {selectedExecutor?.kind === "expert" || selectedExecutor?.kind === "team" ? (
                 <MissionModelOverrideControls
@@ -526,8 +533,8 @@ function MissionExecutorPicker(props: {
       readonly favoriteWorkspace?: WorkspaceSelection;
       readonly hidden?: boolean;
     },
-  ) => void;
-  readonly onChooseFavoriteWorkspace: (ref: string) => void;
+  ) => Promise<boolean>;
+  readonly onChooseFavoriteWorkspace: (ref: string) => Promise<boolean>;
 }) {
   const { t } = useTranslation("missions");
   const { t: tCommon } = useTranslation("common");
@@ -941,81 +948,16 @@ function MissionExecutorPicker(props: {
                       <span aria-hidden="true" />
                     </div>
                     <span className="mission-executor-option-actions">
-                      <label title={t("favoriteExecutor")}>
-                        <Star
-                          size={15}
-                          weight={executor.preference.favoriteScope === "none" ? "regular" : "fill"}
-                          aria-hidden="true"
-                        />
-                        <span className="sr-only">{t("favoriteExecutor")}</span>
-                        <select
-                          aria-label={t("favoriteNamed", { name: copy.name })}
-                          disabled={executor.preference.hidden}
-                          value={executor.preference.favoriteScope}
-                          onChange={(event) => {
-                            const favoriteScope = event.target.value as HomeExecutorFavoriteScope;
-                            if (favoriteScope !== "workspace") {
-                              props.onPreferenceChange(executor.ref, { favoriteScope });
-                              return;
-                            }
-                            const favoriteWorkspace =
-                              executor.preference.favoriteWorkspace ??
-                              props.workspace ??
-                              favoriteWorkspaceOptions[0];
-                            if (favoriteWorkspace === undefined) {
-                              props.onChooseFavoriteWorkspace(executor.ref);
-                              return;
-                            }
-                            props.onPreferenceChange(executor.ref, {
-                              favoriteScope,
-                              favoriteWorkspace,
-                            });
-                          }}
-                        >
-                          <option value="none">{t("favoriteScope.none")}</option>
-                          <option value="workspace">{t("favoriteScope.workspace")}</option>
-                          <option value="global">{t("favoriteScope.global")}</option>
-                        </select>
-                      </label>
-                      {executor.preference.favoriteScope === "workspace" ? (
-                        <label
-                          className="mission-executor-favorite-workspace"
-                          title={t("favoriteWorkspaceNamed", { name: copy.name })}
-                        >
-                          <GitBranch size={15} aria-hidden="true" />
-                          <span className="sr-only">
-                            {t("favoriteWorkspaceNamed", { name: copy.name })}
-                          </span>
-                          <select
-                            aria-label={t("favoriteWorkspaceNamed", { name: copy.name })}
-                            value={executor.preference.favoriteWorkspace?.path ?? ""}
-                            onChange={(event) => {
-                              if (event.target.value === CHOOSE_FAVORITE_WORKSPACE_VALUE) {
-                                props.onChooseFavoriteWorkspace(executor.ref);
-                                return;
-                              }
-                              const favoriteWorkspace = executorFavoriteWorkspaces.find(
-                                (candidate) => candidate.path === event.target.value,
-                              );
-                              if (favoriteWorkspace !== undefined) {
-                                props.onPreferenceChange(executor.ref, {
-                                  favoriteScope: "workspace",
-                                  favoriteWorkspace,
-                                });
-                              }
-                            }}
-                          >
-                            {executorFavoriteWorkspaces.map((candidate) => (
-                              <option value={candidate.path} key={candidate.path}>
-                                {candidate.basename} — {candidate.path}
-                              </option>
-                            ))}
-                            <option value={CHOOSE_FAVORITE_WORKSPACE_VALUE}>
-                              {t("chooseFavoriteWorkspace")}
-                            </option>
-                          </select>
-                        </label>
-                      ) : null}
+                      <ExecutorFavoriteMenu
+                        executor={executor}
+                        name={copy.name}
+                        workspaces={executorFavoriteWorkspaces}
+                        disabled={executor.preference.hidden || executor.alwaysVisible}
+                        onPreferenceChange={(update) =>
+                          props.onPreferenceChange(executor.ref, update)
+                        }
+                        onChooseWorkspace={() => props.onChooseFavoriteWorkspace(executor.ref)}
+                      />
                       {!executor.alwaysVisible ? (
                         <button
                           type="button"
@@ -1028,7 +970,7 @@ function MissionExecutorPicker(props: {
                             executor.preference.hidden ? t("restoreExecutor") : t("hideExecutor")
                           }
                           onClick={() =>
-                            props.onPreferenceChange(executor.ref, {
+                            void props.onPreferenceChange(executor.ref, {
                               hidden: !executor.preference.hidden,
                             })
                           }
@@ -1049,6 +991,220 @@ function MissionExecutorPicker(props: {
         </div>
       ) : null}
     </>
+  );
+}
+
+function ExecutorFavoriteMenu(props: {
+  readonly executor: HomeMissionExecutorOption;
+  readonly name: string;
+  readonly workspaces: readonly WorkspaceSelection[];
+  readonly disabled: boolean;
+  readonly onPreferenceChange: (update: {
+    readonly favoriteScope: HomeExecutorFavoriteScope;
+    readonly favoriteWorkspace?: WorkspaceSelection;
+  }) => Promise<boolean>;
+  readonly onChooseWorkspace: () => Promise<boolean>;
+}) {
+  const { t } = useTranslation("missions");
+  const [open, setOpen] = useState(false);
+  const [view, setView] = useState<"scope" | "workspace">("scope");
+  const [saving, setSaving] = useState(false);
+  const [position, setPosition] = useState({ top: 0, left: 0 });
+  const rootRef = useRef<HTMLDivElement | null>(null);
+  const triggerRef = useRef<HTMLButtonElement | null>(null);
+  const menuRef = useRef<HTMLDivElement | null>(null);
+  const preference = props.executor.preference;
+  const selectedLabel =
+    preference.favoriteScope === "workspace"
+      ? (preference.favoriteWorkspace?.basename ?? t("favoriteScope.workspace"))
+      : t(`favoriteScope.${preference.favoriteScope}`);
+  const isFavorite = preference.favoriteScope !== "none";
+
+  const close = useCallback(() => {
+    setOpen(false);
+    setView("scope");
+  }, []);
+
+  const positionMenu = useCallback(() => {
+    const trigger = triggerRef.current;
+    if (trigger === null) return;
+    const triggerRect = trigger.getBoundingClientRect();
+    const menuWidth = 188;
+    const menuHeight = menuRef.current?.getBoundingClientRect().height ?? 150;
+    const left = Math.max(
+      12,
+      Math.min(triggerRect.right - menuWidth, window.innerWidth - menuWidth - 12),
+    );
+    const below = triggerRect.bottom + 6;
+    const top =
+      below + menuHeight <= window.innerHeight - 12
+        ? below
+        : Math.max(12, triggerRect.top - menuHeight - 6);
+    setPosition({ top, left });
+  }, []);
+
+  useDismissableMenu(open, rootRef, close);
+
+  useLayoutEffect(() => {
+    if (!open) return;
+    positionMenu();
+  }, [open, positionMenu, view]);
+
+  useEffect(() => {
+    if (!open) return;
+    const reposition = () => positionMenu();
+    window.addEventListener("resize", reposition);
+    document.addEventListener("scroll", reposition, true);
+    return () => {
+      window.removeEventListener("resize", reposition);
+      document.removeEventListener("scroll", reposition, true);
+    };
+  }, [open, positionMenu]);
+
+  const applyPreference = async (update: {
+    readonly favoriteScope: HomeExecutorFavoriteScope;
+    readonly favoriteWorkspace?: WorkspaceSelection;
+  }) => {
+    setSaving(true);
+    const updated = await props.onPreferenceChange(update);
+    setSaving(false);
+    if (updated) close();
+  };
+
+  const chooseWorkspace = async () => {
+    setSaving(true);
+    const updated = await props.onChooseWorkspace();
+    setSaving(false);
+    if (updated) close();
+  };
+
+  return (
+    <div className="mission-executor-favorite-control" ref={rootRef}>
+      <button
+        className={
+          isFavorite
+            ? "mission-executor-favorite-trigger is-favorite"
+            : "mission-executor-favorite-trigger"
+        }
+        type="button"
+        ref={triggerRef}
+        aria-expanded={open}
+        aria-haspopup="menu"
+        aria-label={t("favoriteNamed", { name: props.name })}
+        disabled={props.disabled || saving}
+        onClick={() => {
+          setView("scope");
+          setOpen((current) => !current);
+        }}
+      >
+        <Star size={15} weight={isFavorite ? "fill" : "regular"} aria-hidden="true" />
+        <span>{selectedLabel}</span>
+        <CaretDown size={12} aria-hidden="true" />
+      </button>
+      {open ? (
+        <div
+          className="mission-executor-favorite-menu"
+          ref={menuRef}
+          role="menu"
+          aria-label={
+            view === "scope"
+              ? t("favoriteNamed", { name: props.name })
+              : t("favoriteWorkspaceNamed", { name: props.name })
+          }
+          style={position}
+        >
+          {view === "scope" ? (
+            <>
+              {(["none", "global"] as const).map((scope) => (
+                <button
+                  type="button"
+                  role="menuitemradio"
+                  aria-checked={preference.favoriteScope === scope}
+                  disabled={saving}
+                  key={scope}
+                  onClick={() => void applyPreference({ favoriteScope: scope })}
+                >
+                  <Star
+                    size={15}
+                    weight={scope === "global" ? "fill" : "regular"}
+                    aria-hidden="true"
+                  />
+                  <span>{t(`favoriteScope.${scope}`)}</span>
+                  {preference.favoriteScope === scope ? (
+                    <Check size={14} aria-hidden="true" />
+                  ) : (
+                    <span aria-hidden="true" />
+                  )}
+                </button>
+              ))}
+              <button
+                type="button"
+                role="menuitem"
+                aria-haspopup="menu"
+                disabled={saving}
+                onClick={() => setView("workspace")}
+              >
+                <GitBranch size={15} aria-hidden="true" />
+                <span>{t("favoriteScope.workspace")}</span>
+                <CaretRight size={14} aria-hidden="true" />
+              </button>
+            </>
+          ) : (
+            <>
+              <button
+                className="mission-executor-favorite-menu-back"
+                type="button"
+                role="menuitem"
+                onClick={() => setView("scope")}
+              >
+                <CaretLeft size={14} aria-hidden="true" />
+                <span>{t("selectFavoriteWorkspace")}</span>
+                <span aria-hidden="true" />
+              </button>
+              {props.workspaces.map((workspace) => {
+                const selected =
+                  preference.favoriteScope === "workspace" &&
+                  workspacePathsEqual(preference.favoriteWorkspace?.path, workspace.path);
+                return (
+                  <button
+                    type="button"
+                    role="menuitemradio"
+                    aria-checked={selected}
+                    disabled={saving}
+                    key={workspace.path}
+                    onClick={() =>
+                      void applyPreference({
+                        favoriteScope: "workspace",
+                        favoriteWorkspace: workspace,
+                      })
+                    }
+                  >
+                    <GitBranch size={15} aria-hidden="true" />
+                    <span>{workspace.basename}</span>
+                    {selected ? (
+                      <Check size={14} aria-hidden="true" />
+                    ) : (
+                      <span aria-hidden="true" />
+                    )}
+                  </button>
+                );
+              })}
+              <button
+                className="mission-executor-favorite-menu-choose"
+                type="button"
+                role="menuitem"
+                disabled={saving}
+                onClick={() => void chooseWorkspace()}
+              >
+                <FolderOpen size={15} aria-hidden="true" />
+                <span>{t("chooseDifferentWorkspace")}</span>
+                <span aria-hidden="true" />
+              </button>
+            </>
+          )}
+        </div>
+      ) : null}
+    </div>
   );
 }
 
@@ -1108,7 +1264,23 @@ export function isHomeExecutorFavorite(
   return (
     executor.preference.favoriteScope === "global" ||
     (executor.preference.favoriteScope === "workspace" &&
-      executor.preference.favoriteWorkspace?.path === workspacePath)
+      workspacePathsEqual(executor.preference.favoriteWorkspace?.path, workspacePath))
+  );
+}
+
+export function workspacePathsEqual(left: string | undefined, right: string | undefined): boolean {
+  return (
+    left !== undefined && right !== undefined && workspacePathKey(left) === workspacePathKey(right)
+  );
+}
+
+function workspacePathKey(path: string): string {
+  const normalized = path.trim().replaceAll("\\", "/");
+  const withoutTrailingSeparators =
+    normalized.length > 1 ? normalized.replace(/\/+$/u, "") : normalized;
+  return withoutTrailingSeparators.replace(
+    /^([A-Z]):/u,
+    (_match, drive: string) => `${drive.toLocaleLowerCase()}:`,
   );
 }
 
@@ -1117,7 +1289,8 @@ export function uniqueWorkspaces(
 ): readonly WorkspaceSelection[] {
   const unique = new Map<string, WorkspaceSelection>();
   for (const workspace of workspaces) {
-    if (!unique.has(workspace.path)) unique.set(workspace.path, workspace);
+    const key = workspacePathKey(workspace.path);
+    if (!unique.has(key)) unique.set(key, workspace);
   }
   return [...unique.values()];
 }

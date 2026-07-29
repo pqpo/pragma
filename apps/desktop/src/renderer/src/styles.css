@@ -11506,8 +11506,7 @@ textarea:focus-visible,
   padding: 3px 12px 8px;
 }
 
-.mission-executor-filters label,
-.mission-executor-option-actions label {
+.mission-executor-filters label {
   display: inline-flex;
   min-width: 0;
   align-items: center;
@@ -11522,14 +11521,12 @@ textarea:focus-visible,
   flex: 1 1 0;
 }
 
-.mission-executor-filters label:focus-within,
-.mission-executor-option-actions label:focus-within {
+.mission-executor-filters label:focus-within {
   border-color: var(--green);
   box-shadow: 0 0 0 3px var(--focus-ring);
 }
 
-.mission-executor-filters select,
-.mission-executor-option-actions select {
+.mission-executor-filters select {
   width: 100%;
   min-width: 0;
   min-height: 30px;
@@ -11696,20 +11693,126 @@ textarea:focus-visible,
   gap: 4px;
 }
 
-.mission-executor-option-actions label {
-  width: 140px;
-  padding-left: 7px;
+.mission-executor-favorite-control {
+  position: relative;
+  min-width: 0;
 }
 
-.mission-executor-option-actions label.mission-executor-favorite-workspace {
-  width: 210px;
+.mission-executor-favorite-trigger {
+  display: grid;
+  width: 124px;
+  min-height: 30px;
+  grid-template-columns: 15px minmax(0, 1fr) 12px;
+  align-items: center;
+  gap: 6px;
+  padding: 0 8px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: #fff;
+  color: var(--muted);
+  font: inherit;
+  font-size: 10px;
+  cursor: pointer;
+  text-align: left;
 }
 
-.mission-executor-option-actions label:has(select:disabled) {
+.mission-executor-favorite-trigger > span {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.mission-executor-favorite-trigger.is-favorite {
+  border-color: rgb(182 120 23 / 24%);
+  color: #966114;
+  background: #fffcf6;
+}
+
+.mission-executor-favorite-trigger:hover,
+.mission-executor-favorite-trigger:focus-visible,
+.mission-executor-favorite-trigger[aria-expanded="true"] {
+  border-color: var(--green);
+  outline: 0;
+  background: var(--green-soft);
+  color: var(--green-dark);
+  box-shadow: 0 0 0 3px var(--focus-ring);
+}
+
+.mission-executor-favorite-trigger:disabled {
   opacity: 0.55;
+  cursor: default;
 }
 
-.mission-executor-option-actions button {
+.mission-executor-favorite-menu {
+  position: fixed;
+  z-index: 140;
+  display: grid;
+  width: 188px;
+  gap: 2px;
+  padding: 5px;
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  background: #fff;
+  box-shadow: 0 14px 38px rgb(26 37 31 / 16%);
+}
+
+.mission-executor-favorite-menu > button {
+  display: grid;
+  min-height: 34px;
+  grid-template-columns: 16px minmax(0, 1fr) 14px;
+  align-items: center;
+  gap: 8px;
+  padding: 0 8px;
+  border: 0;
+  border-radius: 7px;
+  background: transparent;
+  color: var(--text);
+  font: inherit;
+  font-size: 11px;
+  cursor: pointer;
+  text-align: left;
+}
+
+.mission-executor-favorite-menu > button > span:nth-child(2) {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.mission-executor-favorite-menu > button:hover,
+.mission-executor-favorite-menu > button:focus-visible {
+  outline: 0;
+  background: var(--surface-soft);
+  color: var(--green-dark);
+}
+
+.mission-executor-favorite-menu > button[aria-checked="true"] {
+  background: var(--green-soft);
+  color: var(--green-dark);
+  font-weight: 650;
+}
+
+.mission-executor-favorite-menu > button:disabled {
+  opacity: 0.55;
+  cursor: wait;
+}
+
+.mission-executor-favorite-menu > .mission-executor-favorite-menu-back {
+  margin-bottom: 3px;
+  border-bottom: 1px solid var(--border);
+  border-radius: 7px 7px 3px 3px;
+  color: var(--muted);
+  font-weight: 650;
+}
+
+.mission-executor-favorite-menu > .mission-executor-favorite-menu-choose {
+  margin-top: 3px;
+  border-top: 1px solid var(--border);
+  border-radius: 3px 3px 7px 7px;
+  color: var(--green-dark);
+}
+
+.mission-executor-option-actions > button {
   display: grid;
   width: 30px;
   height: 30px;
@@ -11721,8 +11824,8 @@ textarea:focus-visible,
   cursor: pointer;
 }
 
-.mission-executor-option-actions button:hover,
-.mission-executor-option-actions button:focus-visible {
+.mission-executor-option-actions > button:hover,
+.mission-executor-option-actions > button:focus-visible {
   border-color: var(--green);
   outline: 0;
   color: var(--green-dark);
