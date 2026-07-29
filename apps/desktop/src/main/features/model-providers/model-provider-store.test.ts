@@ -314,33 +314,6 @@ describe("model provider store", () => {
     ]);
   });
 
-  it("normalizes a legacy implementation-specific verification message for display", async () => {
-    const { configPath, store } = await createStore();
-    const provider = await store.create({
-      presetId: "ollama",
-      name: "Ollama",
-      protocol: "openai-completions",
-      baseUrl: "http://127.0.0.1:11434/v1",
-      apiKey: "",
-      requiresApiKey: false,
-      models: [model("qwen3", "qwen3", false, "openai-completions")],
-    });
-
-    await store.recordVerification(provider.id, provider.revision, {
-      ok: true,
-      code: "success",
-      message: "Connection successful through the PI runtime.",
-    });
-
-    await expect(store.list()).resolves.toEqual([
-      expect.objectContaining({
-        verification: expect.objectContaining({ message: "Connection successful." }),
-      }),
-    ]);
-    expect(await readFile(configPath, "utf8")).toContain(
-      "Connection successful through the PI runtime.",
-    );
-  });
 });
 
 function model(

@@ -25,10 +25,7 @@ export async function getRuntimeAvailability(
                   : (definition?.displayName ?? inspection.head.entry.runtimeId),
               kind: definition?.adapter.id ?? "unknown",
               status: "unavailable",
-              reason: normalizeRuntimeMessage(
-                inspection.head.entry.runtimeId,
-                inspection.error ?? "Runtime Environment revision is unavailable.",
-              ),
+              reason: inspection.error ?? "Runtime Environment revision is unavailable.",
               ...(revision === undefined ? {} : { revision: revision.revision }),
               ...(definition === undefined
                 ? {}
@@ -80,18 +77,9 @@ export async function getRuntimeAvailability(
             ...(version === undefined ? {} : { version }),
             ...(availability.usable || availability.reason === undefined
               ? {}
-              : {
-                  reason: normalizeRuntimeMessage(adapter.descriptor.id, availability.reason),
-                }),
+              : { reason: availability.reason }),
             ...(models === undefined ? {} : { models }),
-            ...(modelDiscoveryError === undefined
-              ? {}
-              : {
-                  modelDiscoveryError: normalizeRuntimeMessage(
-                    adapter.descriptor.id,
-                    modelDiscoveryError,
-                  ),
-                }),
+            ...(modelDiscoveryError === undefined ? {} : { modelDiscoveryError }),
           };
         })(),
       ];
@@ -109,14 +97,4 @@ function stringDetail(
 
 function errorMessage(error: unknown): string {
   return error instanceof Error ? error.message : "Runtime inspection failed.";
-}
-
-function normalizeRuntimeMessage(runtimeId: string, message: string): string {
-  if (runtimeId !== "pi") return message;
-  return message
-    .replaceAll("pragma.runtime.pi", "built-in runtime adapter")
-    .replaceAll("cloud-pi-agent", "built-in runtime")
-    .replaceAll("Cloud PI Agent", "built-in runtime")
-    .replaceAll("PI Runtime", "built-in runtime")
-    .replaceAll("PI runtime", "built-in runtime");
 }

@@ -204,7 +204,7 @@ export function createPiRuntime(options: CloudPiRuntimeAdapterOptions = {}): Run
             if (cleanupError !== undefined) {
               throw new AggregateError(
                 [error, cleanupError],
-                "PI preparation and cleanup failed.",
+                "Runtime preparation and cleanup failed.",
                 { cause: error },
               );
             }
@@ -273,7 +273,7 @@ export function createPiRuntime(options: CloudPiRuntimeAdapterOptions = {}): Run
           if (!piSessionManagerResult.resumedExistingSession) {
             appendStartupMessages(session, ctx.agentContext.startupMessages);
           }
-          ctx.logger.info("runtime.pi_session_ready", "PI Session preparation completed", {
+          ctx.logger.info("runtime.pi_session_ready", "Runtime session preparation completed", {
             elapsedMs: piElapsedMs(sessionStartedAt),
             toolCount: sessionOptions.customTools?.length ?? 0,
             systemPromptCharacters: ctx.agentContext.systemPrompt.length,
@@ -302,7 +302,7 @@ export function createPiRuntime(options: CloudPiRuntimeAdapterOptions = {}): Run
           if (cleanupErrors.length > 0) {
             throw new AggregateError(
               [error, ...cleanupErrors],
-              "PI runtime initialization and cleanup failed.",
+              "Runtime initialization and cleanup failed.",
               { cause: error },
             );
           }
@@ -372,7 +372,7 @@ function logPiPhase(
   sessionStartedAt: number,
   attributes: Record<string, unknown> = {},
 ): void {
-  logger.info("runtime.pi_prepare_phase", `PI preparation phase completed: ${phase}`, {
+  logger.info("runtime.pi_prepare_phase", `Runtime preparation phase completed: ${phase}`, {
     phase,
     durationMs: piElapsedMs(phaseStartedAt),
     elapsedMs: piElapsedMs(sessionStartedAt),

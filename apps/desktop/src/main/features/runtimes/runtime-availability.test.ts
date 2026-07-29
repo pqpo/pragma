@@ -69,7 +69,7 @@ describe("getRuntimeAvailability", () => {
     ]);
   });
 
-  it("normalizes legacy built-in Runtime identity and diagnostics", async () => {
+  it("projects the built-in Runtime identity without rewriting diagnostics", async () => {
     const pragmaHome = await mkdtemp(join(tmpdir(), "pragma-runtime-availability-"));
     const store = createRuntimeEnvironmentStore({
       pragmaHome,
@@ -91,7 +91,7 @@ describe("getRuntimeAvailability", () => {
               },
               canUse: () => ({
                 usable: false,
-                reason: "cloud-pi-agent could not load pragma.runtime.pi",
+                reason: "The built-in runtime is not configured.",
               }),
               createSession: () => ({}),
               startTurn: () => ({ outputText: "" }),
@@ -105,7 +105,7 @@ describe("getRuntimeAvailability", () => {
       expect.objectContaining({
         id: "pi",
         displayName: "Built-in Runtime",
-        reason: "built-in runtime could not load built-in runtime adapter",
+        reason: "The built-in runtime is not configured.",
       }),
     ]);
   });
