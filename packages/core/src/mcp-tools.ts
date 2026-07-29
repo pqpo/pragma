@@ -11,9 +11,21 @@ import type {
   IExpertAgentMcpServer,
 } from "@pragma/core";
 
+import { mcpToolRegistryCacheKey } from "./mcp-tool-registry-cache-key.ts";
+
 export interface McpToolRegistry {
   readonly tools: readonly McpManagedTool[];
   readonly dispose: () => Promise<void>;
+}
+
+export interface McpToolRegistryLease {
+  readonly registry: McpToolRegistry;
+  readonly release: () => Promise<void>;
+}
+
+export interface McpToolRegistryPool {
+  readonly acquire: (config: IExpertAgentMcpConfig | undefined) => Promise<McpToolRegistryLease>;
+  readonly close: () => Promise<void>;
 }
 
 export interface McpManagedTool extends ExpertAgentManagedTool<string, unknown> {
@@ -63,6 +75,97 @@ export async function createMcpToolRegistry(
   return {
     tools,
     dispose: () => disposeMcpClients(clients),
+  };
+}
+
+export function createMcpToolRegistryPool(
+  options: {
+    readonly idleTtlMs?: number | undefined;
+    readonly maxIdleEntries?: number | undefined;
+  } = {},
+): McpToolRegistryPool {
+  const idleTtlMs = options.idleTtlMs ?? 5 * 60_000;
+  const maxIdleEntries = options.maxIdleEntries ?? 32;
+  const entries = new Map<
+    string | IExpertAgentMcpConfig,
+    {
+      readonly opening: Promise<McpToolRegistry>;
+      references: number;
+      releasedAt?: number | undefined;
+      timer?: ReturnType<typeof setTimeout> | undefined;
+    }
+  >();
+  let closed = false;
+
+  const disposeEntry = async (key: string | IExpertAgentMcpConfig): Promise<void> => {
+    const entry = entries.get(key);
+    if (entry === undefined || entry.references > 0) return;
+    entries.delete(key);
+    if (entry.timer !== undefined) clearTimeout(entry.timer);
+    const registry = await entry.opening.catch(() => undefined);
+    await registry?.dispose();
+  };
+
+  const trimIdle = async (): Promise<void> => {
+    const idle = [...entries.entries()]
+      .filter(([, entry]) => entry.references === 0)
+      .toSorted(([, left], [, right]) => (left.releasedAt ?? 0) - (right.releasedAt ?? 0));
+    const excess = Math.max(0, idle.length - maxIdleEntries);
+    await Promise.all(idle.slice(0, excess).map(async ([key]) => await disposeEntry(key)));
+  };
+
+  return {
+    async acquire(config) {
+      if (closed) throw new Error("MCP Tool Registry pool is closed.");
+      const key = mcpToolRegistryCacheKey(config);
+      let entry = entries.get(key);
+      if (entry === undefined) {
+        const opening = createMcpToolRegistry(config);
+        entry = { opening, references: 0 };
+        entries.set(key, entry);
+        void opening.catch(() => {
+          if (entries.get(key)?.opening === opening) entries.delete(key);
+        });
+      }
+      if (entry.timer !== undefined) clearTimeout(entry.timer);
+      entry.timer = undefined;
+      entry.releasedAt = undefined;
+      entry.references += 1;
+      let released = false;
+      const registry = await entry.opening;
+      return {
+        registry,
+        async release() {
+          if (released) return;
+          released = true;
+          const current = entries.get(key);
+          if (current === undefined) return;
+          current.references = Math.max(0, current.references - 1);
+          if (current.references > 0) return;
+          current.releasedAt = Date.now();
+          current.timer = setTimeout(() => {
+            void disposeEntry(key).catch(() => undefined);
+          }, idleTtlMs);
+          current.timer.unref();
+          await trimIdle();
+        },
+      };
+    },
+    async close() {
+      if (closed) return;
+      closed = true;
+      const values = [...entries.values()];
+      entries.clear();
+      for (const entry of values) {
+        if (entry.timer !== undefined) clearTimeout(entry.timer);
+      }
+      await Promise.allSettled(
+        values.map(async (entry) => {
+          const registry = await entry.opening;
+          await registry.dispose();
+        }),
+      );
+    },
   };
 }
 

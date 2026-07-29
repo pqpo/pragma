@@ -61,6 +61,7 @@ describe("RuntimeMessageAccumulator", () => {
       provider: "runtime",
       model: "model",
       usage: {
+        measurement: "reported" as const,
         input: 0,
         output: 0,
         cacheRead: 0,
@@ -91,6 +92,7 @@ describe("RuntimeMessageAccumulator", () => {
       provider: "pi",
       model: "test",
       usage: {
+        measurement: "reported" as const,
         input: 0,
         output: 0,
         cacheRead: 0,

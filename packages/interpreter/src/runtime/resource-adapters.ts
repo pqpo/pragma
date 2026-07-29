@@ -50,6 +50,7 @@ export interface PragmaArtifactRecord {
   readonly contentHash: string;
   readonly path?: string | undefined;
   readonly text?: string | undefined;
+  readonly verified?: boolean | undefined;
 }
 
 export interface PragmaAdapterHost {
@@ -138,6 +139,10 @@ export class PragmaResourceAdapterRegistry {
     if (this.adapters.has(key)) throw new Error(`Duplicate Pragma resource adapter: ${key}`);
     this.adapters.set(key, adapter as unknown as PragmaResourceAdapter<PragmaDeclarativeResource>);
     return this;
+  }
+
+  fingerprint(): string {
+    return sha256([...this.adapters.keys()].toSorted().join("\n"));
   }
 
   validate(resource: PragmaDeclarativeResource): readonly PragmaDiagnostic[] {
@@ -728,10 +733,15 @@ async function verifiedArtifact(
       `Artifact integrity mismatch for ${source.type === "project" ? source.path : source.uri}.`,
     );
   }
-  if (artifact.text !== undefined && sha256(artifact.text) !== artifact.contentHash) {
+  if (
+    artifact.verified !== true &&
+    artifact.text !== undefined &&
+    sha256(artifact.text) !== artifact.contentHash
+  ) {
     throw new Error("Artifact text does not match its contentHash.");
   }
   if (
+    artifact.verified !== true &&
     artifact.path !== undefined &&
     (await hashArtifactPath(artifact.path)) !== artifact.contentHash
   ) {

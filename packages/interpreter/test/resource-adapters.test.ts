@@ -13,9 +13,38 @@ import {
   PragmaResourceAdapterRegistry,
   type PragmaAdapterHost,
 } from "../src/index.ts";
-import type { PragmaCapabilityResource, PragmaRuntimeProfileResource } from "../src/ast/index.ts";
+import type {
+  PragmaArtifactSource,
+  PragmaCapabilityResource,
+  PragmaRuntimeProfileResource,
+} from "../src/ast/index.ts";
 
 describe("Pragma resource adapters", () => {
+  it("rejects a mutable project artifact that changes after project loading", async () => {
+    const root = await mkdtemp(join(tmpdir(), "pragma-mutable-project-artifact-"));
+    const artifact = join(root, "tool.js");
+    await writeFile(artifact, "export default 'original';");
+    await writeFile(
+      join(root, "pragma.yaml"),
+      formatPragmaYaml(codeResource({ type: "project", path: "tool.js" })),
+    );
+    const project = await loadPragmaProject(join(root, "pragma.yaml"));
+    await writeFile(artifact, "export default 'changed';");
+
+    const inspection = await project.inspectEnvironment({ workspace: root });
+
+    expect(inspection.resources).toEqual([
+      expect.objectContaining({
+        status: "needs_attention",
+        issues: [
+          expect.objectContaining({
+            message: expect.stringContaining("does not match its contentHash"),
+          }),
+        ],
+      }),
+    ]);
+  });
+
   it("reports mismatched external artifact bytes as needs_attention", async () => {
     const expected = sha256("expected");
     const source = {
@@ -222,11 +251,7 @@ describe("Pragma resource adapters", () => {
   });
 });
 
-function codeResource(source: {
-  readonly type: "registry";
-  readonly uri: string;
-  readonly integrity: `sha256:${string}`;
-}): PragmaCapabilityResource {
+function codeResource(source: PragmaArtifactSource): PragmaCapabilityResource {
   return {
     apiVersion: "pragma/v3",
     kind: "Capability",

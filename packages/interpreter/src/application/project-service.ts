@@ -32,6 +32,7 @@ import {
   formatPragmaYaml,
   loadPragmaProject,
   type CompiledResource,
+  type PragmaBlueprintCacheStore,
   type PragmaCompileOptions,
   type PragmaEnvironmentInspection,
   type PragmaProject,
@@ -89,6 +90,7 @@ export interface PragmaProjectSnapshot {
 
 export interface PragmaProjectServiceOptions {
   readonly repository: PragmaProjectSourceRepository;
+  readonly blueprintCache?: PragmaBlueprintCacheStore | undefined;
   readonly resourceAdapters?: PragmaResourceAdapterRegistry | undefined;
   readonly externalResourceRefs?: ReadonlySet<PragmaResourceRef> | undefined;
   readonly loggerProvider?: PragmaLoggerProvider | undefined;
@@ -105,6 +107,7 @@ const PROJECT_CHANGE_SET_COMMIT_ATTEMPTS = 8;
 export class PragmaProjectService {
   private readonly adapters: PragmaResourceAdapterRegistry;
   private readonly logger: PragmaLogger;
+  private readonly openedProjects = new Map<string, Promise<PragmaProject>>();
 
   constructor(private readonly options: PragmaProjectServiceOptions) {
     this.adapters = options.resourceAdapters ?? createDefaultPragmaResourceAdapterRegistry();
@@ -291,6 +294,7 @@ export class PragmaProjectService {
     readonly resolveExternalInvocable?: PragmaCompileOptions["resolveExternalInvocable"];
     readonly plugins?: PragmaPluginResolver | undefined;
   }): Promise<CompiledResource<T>> {
+    const startedAt = performance.now();
     this.logger.info("interpreter.compile_started", "Pragma project compilation started.", {
       projectId: input.projectId,
       revision: input.revision,
@@ -322,6 +326,7 @@ export class PragmaProjectService {
         projectId: input.projectId,
         revision: input.revision,
         ref: input.ref,
+        durationMs: elapsedMilliseconds(startedAt),
       });
       return compiled;
     } catch (error) {
@@ -361,12 +366,64 @@ export class PragmaProjectService {
     location: PragmaProjectRevisionLocation,
     requireLock: boolean,
   ): Promise<PragmaProject> {
-    return await loadPragmaProject(location.entryFile, {
-      rootDir: location.rootDir,
-      requireLock,
-      resourceAdapters: this.adapters,
-      externalResourceRefs: this.options.externalResourceRefs,
-    });
+    const sourceIdentity = location.snapshotHash ?? location.projectFingerprint;
+    if (sourceIdentity === undefined) {
+      return await loadPragmaProject(location.entryFile, {
+        rootDir: location.rootDir,
+        requireLock,
+        resourceAdapters: this.adapters,
+        externalResourceRefs: this.options.externalResourceRefs,
+      });
+    }
+    const key = `${sourceIdentity}\0${requireLock ? "locked" : "unlocked"}`;
+    let project = this.openedProjects.get(key);
+    if (project === undefined) {
+      project = loadPragmaProject(location.entryFile, {
+        rootDir: location.rootDir,
+        requireLock,
+        sourceIdentity,
+        blueprintCache: this.options.blueprintCache,
+        onBlueprintCacheLookup: (observation) => {
+          this.logger.info(
+            "interpreter.blueprint_cache_lookup",
+            observation.hit
+              ? "Pragma project Blueprint cache hit."
+              : "Pragma project Blueprint cache miss.",
+            {
+              projectId: location.projectId,
+              revision: location.revision,
+              cacheTier: observation.tier,
+              cacheHit: observation.hit,
+              durationMs: observation.durationMs,
+            },
+          );
+        },
+        resourceAdapters: this.adapters,
+        externalResourceRefs: this.options.externalResourceRefs,
+      });
+      this.openedProjects.set(key, project);
+      void project.catch(() => {
+        if (this.openedProjects.get(key) === project) this.openedProjects.delete(key);
+      });
+      while (this.openedProjects.size > 128) {
+        const oldest = this.openedProjects.keys().next().value as string | undefined;
+        if (oldest === undefined || oldest === key) break;
+        this.openedProjects.delete(oldest);
+      }
+    } else {
+      this.logger.info(
+        "interpreter.project_cache_hit",
+        "Reused the open immutable Pragma project.",
+        {
+          projectId: location.projectId,
+          revision: location.revision,
+          cacheTier: "service",
+        },
+      );
+      this.openedProjects.delete(key);
+      this.openedProjects.set(key, project);
+    }
+    return await project;
   }
 
   async materializeChangeSet(
@@ -460,6 +517,10 @@ export class PragmaProjectService {
     ]);
     return new Map([...files].filter(([path]) => !managedPaths.has(path)));
   }
+}
+
+function elapsedMilliseconds(startedAt: number): number {
+  return Math.round((performance.now() - startedAt) * 100) / 100;
 }
 
 export interface PragmaInterpreter {

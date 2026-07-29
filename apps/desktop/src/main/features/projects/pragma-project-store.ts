@@ -25,6 +25,7 @@ import {
   type InvocableResource,
   type PragmaProjectRevisionLocation,
   type PragmaProjectSourceRepository,
+  type PragmaBlueprintCacheStore,
   type PragmaProjectChangeSetInput,
   type PragmaResourceIdentityMigration,
 } from "@pragma/interpreter";
@@ -165,6 +166,7 @@ export function createPragmaProjectStore(options: {
   readonly projectId?: string;
   readonly reservedResourceRefs?: ReadonlySet<string> | undefined;
   readonly loggerProvider?: PragmaLoggerProvider | undefined;
+  readonly blueprintCache?: PragmaBlueprintCacheStore | undefined;
 }): PragmaProjectStore {
   const projectId = options.projectId ?? "studio";
   const repository = createDesktopProjectSourceRepository({
@@ -174,6 +176,7 @@ export function createPragmaProjectStore(options: {
   });
   const service = new PragmaProjectService({
     repository,
+    blueprintCache: options.blueprintCache,
     externalResourceRefs: options.reservedResourceRefs,
     loggerProvider: options.loggerProvider,
   });
@@ -433,6 +436,8 @@ export function createPragmaProjectStore(options: {
       return await loadPragmaProject(location.entryFile, {
         rootDir: location.rootDir,
         requireLock: true,
+        sourceIdentity: location.snapshotHash ?? location.projectFingerprint,
+        blueprintCache: options.blueprintCache,
       });
     },
     readIdentityMigrations,

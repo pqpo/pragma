@@ -112,6 +112,10 @@ export function createRuntimeStreamController<TNativeEvent>(options: {
   let outputText = "";
   let usage: AgentMessageUsage | undefined;
   let runtimeSessionId: string | undefined;
+  const streamStartedAt = performance.now();
+  let firstNativeEventLogged = false;
+  let firstReasoningDeltaLogged = false;
+  let firstTextDeltaLogged = false;
 
   const emit = (event: RuntimeStreamEventInput): void => {
     const emitted = emitter.emit(event);
@@ -128,6 +132,24 @@ export function createRuntimeStreamController<TNativeEvent>(options: {
   };
 
   const applyMappingResult = (result: RuntimeEventMappingResult): void => {
+    if (!firstReasoningDeltaLogged && containsReasoningDelta(result)) {
+      firstReasoningDeltaLogged = true;
+      options.logger.info(
+        "runtime.first_reasoning_delta",
+        "Runtime emitted its first reasoning delta",
+        {
+          runId: options.runId,
+          elapsedMs: Math.round((performance.now() - streamStartedAt) * 100) / 100,
+        },
+      );
+    }
+    if (!firstTextDeltaLogged && containsTextDelta(result)) {
+      firstTextDeltaLogged = true;
+      options.logger.info("runtime.first_text_delta", "Runtime emitted its first text delta", {
+        runId: options.runId,
+        elapsedMs: Math.round((performance.now() - streamStartedAt) * 100) / 100,
+      });
+    }
     for (const event of result.events ?? []) {
       emit(event);
     }
@@ -147,6 +169,17 @@ export function createRuntimeStreamController<TNativeEvent>(options: {
     source,
     writer: {
       writeNative(event) {
+        if (!firstNativeEventLogged) {
+          firstNativeEventLogged = true;
+          options.logger.info(
+            "runtime.first_protocol_event",
+            "Runtime delivered its first native protocol event",
+            {
+              runId: options.runId,
+              elapsedMs: Math.round((performance.now() - streamStartedAt) * 100) / 100,
+            },
+          );
+        }
         applyMappingResult(
           options.mapEvent(event, {
             runId: options.runId,
@@ -172,6 +205,27 @@ export function createRuntimeStreamController<TNativeEvent>(options: {
       emitter.complete();
     },
   };
+}
+
+function containsTextDelta(result: RuntimeEventMappingResult): boolean {
+  if (result.outputDelta !== undefined && result.outputDelta.length > 0) return true;
+  return (result.events ?? []).some(
+    (event) =>
+      event.type === "message.delta" &&
+      "delta" in event.payload &&
+      typeof event.payload.delta === "string" &&
+      event.payload.delta.length > 0,
+  );
+}
+
+function containsReasoningDelta(result: RuntimeEventMappingResult): boolean {
+  return (result.events ?? []).some(
+    (event) =>
+      event.type === "thought.delta" &&
+      "delta" in event.payload &&
+      typeof event.payload.delta === "string" &&
+      event.payload.delta.length > 0,
+  );
 }
 
 export function createRuntimeStreamEventFactory(

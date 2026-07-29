@@ -28,6 +28,7 @@ export const AgentToolCallContentSchema = z.object({
 });
 
 export const AgentMessageUsageSchema = z.object({
+  measurement: z.enum(["reported", "derived", "estimated", "unknown"]),
   input: z.number().nonnegative(),
   output: z.number().nonnegative(),
   cacheRead: z.number().nonnegative(),
@@ -41,6 +42,10 @@ export const AgentMessageUsageSchema = z.object({
     cacheWrite: z.number().nonnegative(),
     total: z.number().nonnegative(),
   }),
+});
+
+export const AgentMessageUsageWireSchema = AgentMessageUsageSchema.extend({
+  measurement: AgentMessageUsageSchema.shape.measurement.default("unknown"),
 });
 
 export const AgentUserMessageSchema = z.object({
@@ -63,7 +68,7 @@ export const AgentAssistantMessageSchema = z.object({
   responseModel: z.string().optional(),
   responseId: z.string().optional(),
   diagnostics: z.array(z.unknown()).optional(),
-  usage: AgentMessageUsageSchema,
+  usage: AgentMessageUsageWireSchema,
   stopReason: z.enum(["stop", "length", "toolUse", "error", "aborted"]),
   errorMessage: z.string().optional(),
   timestamp: z.number(),

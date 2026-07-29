@@ -31,6 +31,13 @@ export interface StorageMaintenanceResult {
   readonly reclaimedContentBytes: number;
 }
 
+export interface StorageCapacityGuard {
+  assertWriteAllowed(): Promise<void>;
+  refresh(): Promise<StorageOverview>;
+  current(): StorageOverview | undefined;
+  close(): void;
+}
+
 export class StorageCapacityExceededError extends Error {
   constructor(readonly overview: StorageOverview) {
     super(
@@ -74,6 +81,82 @@ export async function assertStorageWriteAllowed(
   if (maintenance.after.totalBytes >= policy.globalHardLimitBytes) {
     throw new StorageCapacityExceededError(maintenance.after);
   }
+}
+
+export function createStorageCapacityGuard(input: {
+  readonly paths: PragmaPaths;
+  readonly policy?: StoragePolicy | undefined;
+  readonly initialOverview?: StorageOverview | undefined;
+  readonly refreshIntervalMs?: number | undefined;
+  readonly maxSnapshotAgeMs?: number | undefined;
+  readonly now?: (() => number) | undefined;
+}): StorageCapacityGuard {
+  const policy = input.policy ?? DEFAULT_STORAGE_POLICY;
+  const refreshIntervalMs = input.refreshIntervalMs ?? 30_000;
+  const maxSnapshotAgeMs =
+    input.maxSnapshotAgeMs ??
+    (refreshIntervalMs > 0 ? refreshIntervalMs * 2 : Number.POSITIVE_INFINITY);
+  const now = input.now ?? Date.now;
+  let overview = input.initialOverview;
+  let inspectedAt = overview === undefined ? 0 : now();
+  let refreshing: Promise<StorageOverview> | undefined;
+  let closed = false;
+
+  const refresh = async (): Promise<StorageOverview> => {
+    if (refreshing !== undefined) return await refreshing;
+    const operation = inspectStorage(input.paths, policy).then((next) => {
+      overview = next;
+      inspectedAt = now();
+      return next;
+    });
+    refreshing = operation;
+    try {
+      return await operation;
+    } finally {
+      if (refreshing === operation) refreshing = undefined;
+    }
+  };
+
+  const interval =
+    refreshIntervalMs <= 0
+      ? undefined
+      : setInterval(() => {
+          if (!closed) void refresh().catch(() => undefined);
+        }, refreshIntervalMs);
+  interval?.unref();
+
+  return {
+    async assertWriteAllowed() {
+      let current = overview;
+      const age = now() - inspectedAt;
+      if (
+        current === undefined ||
+        current.totalBytes >= policy.globalSoftLimitBytes ||
+        age >= maxSnapshotAgeMs
+      ) {
+        current = await refresh();
+      } else if (refreshIntervalMs > 0 && age >= refreshIntervalMs) {
+        void refresh().catch(() => undefined);
+      }
+      if (current.totalBytes < policy.globalHardLimitBytes) return;
+      const maintenance = await runStorageMaintenance({
+        paths: input.paths,
+        policy,
+        pressure: true,
+      });
+      overview = maintenance.after;
+      inspectedAt = now();
+      if (maintenance.after.totalBytes >= policy.globalHardLimitBytes) {
+        throw new StorageCapacityExceededError(maintenance.after);
+      }
+    },
+    refresh,
+    current: () => overview,
+    close() {
+      closed = true;
+      if (interval !== undefined) clearInterval(interval);
+    },
+  };
 }
 
 export async function runStorageMaintenance(input: {
@@ -189,12 +272,43 @@ interface Candidate {
 
 async function collectCacheCandidates(paths: PragmaPaths): Promise<Candidate[]> {
   return [
+    ...(await hashDirectoryCandidates(paths.compilerBlueprintsCacheRoot())),
     ...(await hashDirectoryCandidates(paths.pluginPackagesCacheRoot())),
-    ...(await directChildren(join(paths.codexRuntimeCacheRoot(), "bases"))),
+    ...(await unleasedCodexBaseCandidates(paths)),
     ...(await hashDirectoryCandidates(join(paths.codexRuntimeCacheRoot(), "skills"))),
     ...(await unleasedProjectViewCandidates(paths)),
     ...(await directChildren(paths.agentsCacheRoot())),
   ];
+}
+
+async function unleasedCodexBaseCandidates(paths: PragmaPaths): Promise<Candidate[]> {
+  const candidates = (await directChildren(join(paths.codexRuntimeCacheRoot(), "bases"))).filter(
+    (candidate) => /^[a-f0-9]{64}$/.test(basename(candidate.path)),
+  );
+  const leasesRoot = join(paths.codexRuntimeCacheRoot(), "base-leases");
+  const leasedFingerprints = new Set<string>();
+  for (const leaseDirectory of await directChildren(leasesRoot)) {
+    const fingerprint = basename(leaseDirectory.path);
+    if (!/^[a-f0-9]{64}$/.test(fingerprint)) continue;
+    if ((await stat(leaseDirectory.path).catch(() => undefined))?.isDirectory() !== true) continue;
+    let leased = false;
+    for (const lease of await directChildren(leaseDirectory.path)) {
+      let pid: unknown;
+      try {
+        pid = (JSON.parse(await readFile(lease.path, "utf8")) as { readonly pid?: unknown }).pid;
+      } catch {
+        pid = undefined;
+      }
+      if (typeof pid === "number" && isProcessAlive(pid)) {
+        leased = true;
+      } else {
+        await rm(lease.path, { force: true });
+      }
+    }
+    if (leased) leasedFingerprints.add(fingerprint);
+    else await removeEmptyDirectory(leaseDirectory.path);
+  }
+  return candidates.filter((candidate) => !leasedFingerprints.has(basename(candidate.path)));
 }
 
 async function unleasedProjectViewCandidates(paths: PragmaPaths): Promise<Candidate[]> {

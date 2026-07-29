@@ -15,7 +15,7 @@
 
 Pragma helps experienced AI users turn repeatable working methods into runnable assets. A method can combine expert definitions, tools, memory, approval gates, runtime choices, model configuration, and delivery checks. Other users can run the method without understanding the orchestration underneath.
 
-Pragma is not another chatbot, coding agent, expert marketplace, or low-code workflow builder. It is an open organization layer above models and specialized agent harnesses: Codex, Claude Code, PI, and future runtime adapters can all become execution options for different tasks.
+Pragma is not another chatbot, coding agent, expert marketplace, or low-code workflow builder. It is an open organization layer above models and specialized agent harnesses: Codex, Claude Code, Qoder CLI, PI, and future runtime adapters can all become execution options for different tasks.
 
 ## Why Pragma?
 
@@ -55,7 +55,7 @@ Pragma treats this method as the product object users discover, run, revise, and
 | Primary role        | Specialized coding harness              | Integrated AI workspace with expert ecosystem | Node-based automation or LLM workflow design | Organization layer across models and agent harnesses                         |
 | Core object         | Coding session, subagent, skills, hooks | Experts, expert teams, skills, projects       | Graphs, nodes, triggers, integrations        | Runtime, Expert, ExpertTeam, Flow, Mission                                   |
 | Main strength       | Deep software engineering execution     | Low-friction all-in-one user experience       | Visual composition and automation            | Harness-neutral execution and reusable AI-native methods                     |
-| Runtime model       | Claude Code is the harness              | Product-owned execution system                | Usually one orchestration engine             | Codex, Claude Code, PI, and future adapters are pluggable runtimes           |
+| Runtime model       | Claude Code is the harness              | Product-owned execution system                | Usually one orchestration engine             | Codex, Claude Code, Qoder CLI, PI, and future adapters are pluggable runtimes |
 | Sharing unit        | Repo config, skills, plugins            | Experts, teams, skills, workspace assets      | Templates and workflows                      | Methods with runtime requirements, permissions, validation, and deliverables |
 | Pragma relationship | Can be used as a runtime                | Adjacent product category                     | Adjacent implementation style                | Coordinates execution combinations across runtimes                           |
 
@@ -83,7 +83,7 @@ Pragma currently provides:
 - `ExpertTeam` and `Flow` foundations for coordinated execution.
 - Context systems backed by in-memory or filesystem stores.
 - Managed tools, MCP tool integration, plugin loading, and approval policies.
-- Runtime adapter contracts and PI / Codex / Claude Code runtime packages.
+- Runtime adapter contracts and PI / Codex / Claude Code / Qoder CLI runtime packages.
 - Runtime context, session ownership, invocation, event, usage, and handoff primitives.
 - Browser-safe shared schemas and DTOs built with Zod.
 - Web, server, worker, desktop, client SDK, and infrastructure package boundaries in a pnpm monorepo.
@@ -206,6 +206,7 @@ packages/
   runtime/pi/     PI runtime adapter
   runtime/codex/  Codex local runtime adapter
   runtime/claude-code/ Claude Code local runtime adapter
+  runtime/qodercli/ Qoder CLI local runtime adapter
   eslint-config/  Shared ESLint config
   tsconfig/       Shared TypeScript config
 

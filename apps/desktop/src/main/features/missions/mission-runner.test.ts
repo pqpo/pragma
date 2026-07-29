@@ -85,6 +85,159 @@ afterEach(async () => {
 });
 
 describe("MissionRunner", { timeout: 15_000 }, () => {
+  it("skips compilation for a follow-up on the live Mission Session", async () => {
+    const root = await mkdtemp(join(tmpdir(), "pragma-mission-followup-fast-path-"));
+    temporaryPaths.push(root);
+    const project = createPragmaProjectStore({ projectsPath: join(root, "projects") });
+    const snapshot = await project.publish({
+      expectedRevision: 0,
+      resources: [runtimeFixture(), expertFixture()],
+    });
+    const compile = vi.spyOn(project, "compile");
+    const missions = createMissionStore({ missionsPath: join(root, "missions") });
+    const mission = await missions.create({
+      workspace: { path: root, basename: "workspace" },
+      goal: "Start the Mission",
+      project: { id: snapshot.projectId, revision: snapshot.revision },
+      executor: missionExecutorSnapshot(
+        snapshot.resources.find((resource) => resource.kind === "Expert")!,
+      ),
+    });
+    const runtime = defineRuntimeDriver<never, { id: string }>({
+      descriptor: { id: "fake", kind: "fake", displayName: "Fake" },
+      createSession: () => ({ id: "runtime" }),
+      readSession: (session) => ({ runtimeSessionId: session.id }),
+      startTurn: () => ({ outputText: "done", runtimeSessionId: "runtime" }),
+      mapEvent: () => ({ events: [] }),
+    });
+    const runner = createMissionRunner({
+      missions,
+      project,
+      capabilityStore: {} as CapabilityStore,
+      capabilityCredentials: {} as CapabilityCredentialStore,
+      capabilitiesPath: join(root, "capabilities"),
+      pragmaHome: join(root, "state"),
+      runtimes: createStaticRuntimeResolver({
+        runtimes: [runtime],
+        defaultRuntimeId: "fake",
+      }),
+      assertStorageWriteAllowed: async () => undefined,
+    });
+
+    await runner.run(mission.id);
+    await vi.waitFor(
+      async () => expect((await missions.get(mission.id)).execution?.status).toBe("succeeded"),
+      { timeout: settlementTimeoutMs },
+    );
+    const followUpStartedAt = performance.now();
+    await runner.sendMessage({
+      id: mission.id,
+      content: "Continue without recompiling",
+      requestId: "00000000-0000-4000-8000-000000000099",
+    });
+    const followUpAdmissionMs = performance.now() - followUpStartedAt;
+    await vi.waitFor(
+      async () => expect((await missions.get(mission.id)).execution?.status).toBe("succeeded"),
+      { timeout: settlementTimeoutMs },
+    );
+
+    expect(compile).toHaveBeenCalledTimes(1);
+    expect(followUpAdmissionMs).toBeLessThan(250);
+  });
+
+  it("creates a successor Session when the live execution definition changes", async () => {
+    const root = await mkdtemp(join(tmpdir(), "pragma-mission-definition-successor-"));
+    temporaryPaths.push(root);
+    const project = createPragmaProjectStore({ projectsPath: join(root, "projects") });
+    const snapshot = await project.publish({
+      expectedRevision: 0,
+      resources: [runtimeFixture(), expertFixture()],
+    });
+    const missions = createMissionStore({ missionsPath: join(root, "missions") });
+    const mission = await missions.create({
+      workspace: { path: root, basename: "workspace" },
+      goal: "Start with the first definition",
+      project: { id: snapshot.projectId, revision: snapshot.revision },
+      executor: missionExecutorSnapshot(
+        snapshot.resources.find((resource) => resource.kind === "Expert")!,
+      ),
+    });
+    const runtime = defineRuntimeDriver<never, { id: string }>({
+      descriptor: { id: "fake", kind: "fake", displayName: "Fake" },
+      createSession: (context) => ({ id: `runtime-${context.systemSessionId}` }),
+      readSession: (session) => ({ runtimeSessionId: session.id }),
+      startTurn: () => ({ outputText: "done", runtimeSessionId: "runtime" }),
+      mapEvent: () => ({ events: [] }),
+      closeSession: () => undefined,
+    });
+    let definitionVersion = 1;
+    const compileSystemExecutor = vi.fn(async () => {
+      const expert = await defineExpert({
+        id: "1xddvess309a6gme",
+        name: "Writer",
+        description: "Writes concise answers",
+        tags: [],
+        scope: "Writing",
+        instructions: `Definition ${definitionVersion}`,
+        workspace: root,
+        pragmaHome: join(root, "state"),
+        defaultRuntimeId: "fake",
+      });
+      return {
+        ref: mission.executor.ref,
+        value: expert,
+        fingerprint: String(definitionVersion).repeat(64),
+        projectFingerprint: "a".repeat(64),
+        environmentFingerprint: {
+          environmentId: "desktop",
+          projectFingerprint: "a".repeat(64),
+          value: "b".repeat(64),
+          resources: [],
+          plugins: [],
+        },
+        rootRuntimeId: "fake",
+        dependencies: [],
+      };
+    });
+    const runner = createMissionRunner({
+      missions,
+      project,
+      capabilityStore: {} as CapabilityStore,
+      capabilityCredentials: {} as CapabilityCredentialStore,
+      capabilitiesPath: join(root, "capabilities"),
+      pragmaHome: join(root, "state"),
+      runtimes: createStaticRuntimeResolver({
+        runtimes: [runtime],
+        defaultRuntimeId: "fake",
+      }),
+      compileSystemExecutor,
+      getSystemExecutorFingerprint: () => `definition-${definitionVersion}`,
+      assertStorageWriteAllowed: async () => undefined,
+    });
+
+    await runner.run(mission.id);
+    await vi.waitFor(
+      async () => expect((await missions.get(mission.id)).execution?.status).toBe("succeeded"),
+      { timeout: settlementTimeoutMs },
+    );
+    const originalSessionId = (await missions.get(mission.id)).execution?.sessionId;
+    expect(originalSessionId).toMatch(/^[0-9a-f-]{36}$/);
+    definitionVersion = 2;
+
+    await runner.sendMessage({
+      id: mission.id,
+      content: "Continue with the changed definition",
+      requestId: "00000000-0000-4000-8000-000000000098",
+    });
+    await vi.waitFor(
+      async () => expect((await missions.get(mission.id)).execution?.status).toBe("succeeded"),
+      { timeout: settlementTimeoutMs },
+    );
+
+    expect((await missions.get(mission.id)).execution?.sessionId).not.toBe(originalSessionId);
+    expect(compileSystemExecutor).toHaveBeenCalledTimes(2);
+  });
+
   it("limits deletion reconciliation to the target Mission and does not let analytics block deletion", async () => {
     const root = await mkdtemp(join(tmpdir(), "pragma-mission-usage-delete-"));
     temporaryPaths.push(root);
@@ -988,6 +1141,7 @@ describe("MissionRunner", { timeout: 15_000 }, () => {
         provider: "openai",
         model: "test",
         usage: {
+          measurement: "reported",
           input: 0,
           output: 0,
           cacheRead: 0,
@@ -1025,6 +1179,7 @@ describe("MissionRunner", { timeout: 15_000 }, () => {
         provider: "openai",
         model: "test",
         usage: {
+          measurement: "reported",
           input: 0,
           output: 0,
           cacheRead: 0,
@@ -1389,7 +1544,7 @@ describe("MissionRunner", { timeout: 15_000 }, () => {
     });
     await executions.create(
       {
-        schemaVersion: "pragma.execution/v7",
+        schemaVersion: "pragma.execution/v8",
         executionId,
         version: 0,
         kind: "expert-turn",
@@ -1788,7 +1943,7 @@ describe("MissionRunner", { timeout: 15_000 }, () => {
     });
     await executions.create(
       {
-        schemaVersion: "pragma.execution/v7",
+        schemaVersion: "pragma.execution/v8",
         executionId,
         version: 0,
         kind: "expert-turn",

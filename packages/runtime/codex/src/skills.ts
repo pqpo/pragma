@@ -1,23 +1,11 @@
 import type { Expert } from "@pragma/core";
-import { createHash, randomUUID } from "node:crypto";
 import { constants } from "node:fs";
-import {
-  access,
-  cp,
-  mkdir,
-  readFile,
-  rename,
-  rm,
-  stat,
-  symlink,
-  writeFile,
-} from "node:fs/promises";
+import { access, cp, mkdir, readFile, rm, stat, writeFile } from "node:fs/promises";
 import { basename, dirname, isAbsolute, join, resolve } from "node:path";
 
 export interface MaterializeCodexSkillsOptions {
   readonly agent: Expert;
   readonly codexHome: string;
-  readonly sharedSkillsRoot?: string | undefined;
 }
 
 const FRONTMATTER_DELIMITER = "---";
@@ -26,7 +14,6 @@ const NON_ALPHANUMERIC = /[^a-z0-9]+/g;
 export async function materializeCodexSkills({
   agent,
   codexHome,
-  sharedSkillsRoot,
 }: MaterializeCodexSkillsOptions): Promise<void> {
   const skillsDir = join(codexHome, "skills");
 
@@ -46,25 +33,7 @@ export async function materializeCodexSkills({
     });
     const slug = await allocateSkillSlug(skillsDir, usedSlugs, sanitizeSkillName(skill.name));
     const targetDir = join(skillsDir, slug);
-    if (sharedSkillsRoot === undefined) {
-      await copySkill(source, targetDir, slug, skill.description);
-      continue;
-    }
-    const fingerprint = await fingerprintSkill(source, slug, skill.description);
-    const sharedTarget = join(sharedSkillsRoot, fingerprint.slice(0, 2), fingerprint);
-    if ((await stat(sharedTarget).catch(() => undefined))?.isDirectory() !== true) {
-      const staging = `${sharedTarget}.${randomUUID()}.tmp`;
-      await mkdir(dirname(sharedTarget), { recursive: true, mode: 0o700 });
-      await copySkill(source, staging, slug, skill.description);
-      try {
-        await rename(staging, sharedTarget);
-      } catch (error) {
-        if ((error as NodeJS.ErrnoException).code !== "EEXIST") throw error;
-      } finally {
-        await rm(staging, { recursive: true, force: true });
-      }
-    }
-    await symlink(sharedTarget, targetDir, process.platform === "win32" ? "junction" : "dir");
+    await copySkill(source, targetDir, slug, skill.description);
   }
 }
 
@@ -83,32 +52,6 @@ async function copySkill(
     join(targetDir, "SKILL.md"),
     ensureSkillFrontmatter(await readFile(source.skillFile, "utf8"), { name: slug, description }),
   );
-}
-
-async function fingerprintSkill(
-  source: { readonly dir: string; readonly skillFile: string },
-  slug: string,
-  description: string,
-): Promise<string> {
-  const hash = createHash("sha256").update(`pragma.codex-skill/v1\0${slug}\0${description}\0`);
-  const visit = async (directory: string): Promise<void> => {
-    for (const entry of (
-      await import("node:fs/promises").then(({ readdir }) =>
-        readdir(directory, { withFileTypes: true }),
-      )
-    ).toSorted((left, right) => left.name.localeCompare(right.name))) {
-      if (entry.name === "node_modules") continue;
-      const path = join(directory, entry.name);
-      if (entry.isDirectory()) await visit(path);
-      else if (entry.isFile()) {
-        const relativePath = path.slice(source.dir.length + 1);
-        const bytes = await readFile(path);
-        hash.update(`${relativePath.length}:${relativePath}:${bytes.byteLength}:`).update(bytes);
-      }
-    }
-  };
-  await visit(source.dir);
-  return hash.digest("hex");
 }
 
 async function resolveSkillSource({

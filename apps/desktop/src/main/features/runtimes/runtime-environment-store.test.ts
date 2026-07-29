@@ -17,6 +17,7 @@ describe("RuntimeEnvironmentStore", () => {
       "pi",
       "codex",
       "claude-code",
+      "qodercli",
     ]);
 
     const original = (await store.getRevision("pi"))!;
@@ -35,4 +36,43 @@ describe("RuntimeEnvironmentStore", () => {
       "Set another default",
     );
   });
+
+  it("reconciles newly added built-ins without replacing an existing catalog", async () => {
+    const pragmaHome = await mkdtemp(join(tmpdir(), "pragma-runtime-reconcile-"));
+    const original = createRuntimeEnvironmentStore({
+      pragmaHome,
+      builtIns: [
+        definition("pi", "PI Runtime", "pragma.runtime.pi"),
+        definition("codex", "Codex", "pragma.runtime.codex"),
+      ],
+      defaultRuntimeId: "pi",
+    });
+    await original.initialize();
+    await original.setDefaultRuntimeId("codex");
+
+    const reconciled = createRuntimeEnvironmentStore({ pragmaHome });
+    await reconciled.initialize();
+
+    expect(await reconciled.getDefaultRuntimeId()).toBe("codex");
+    expect((await reconciled.listHeads()).map((head) => head.entry.runtimeId)).toEqual([
+      "pi",
+      "codex",
+      "claude-code",
+      "qodercli",
+    ]);
+    expect((await reconciled.getRevision("qodercli"))?.definition.adapter.id).toBe(
+      "pragma.runtime.qodercli",
+    );
+  });
 });
+
+function definition(id: string, displayName: string, adapterId: string) {
+  return {
+    schemaVersion: "pragma.runtime-environment/v1" as const,
+    id,
+    adapter: { id: adapterId, version: "v1" },
+    displayName,
+    origin: "built-in" as const,
+    config: {},
+  };
+}

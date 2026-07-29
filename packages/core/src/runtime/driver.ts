@@ -311,6 +311,10 @@ async function createManagedRuntimeSession<TNativeEvent, TNativeSession, TPrepar
       systemSessionId,
     },
   });
+  const sessionStartedAt = performance.now();
+  logger.info("runtime.session_prepare_started", "Runtime Session preparation started", {
+    restoring: request.runtimeSession !== undefined,
+  });
   if (request.owner.ownerId.trim() === "") {
     throw new Error("Runtime Session ownerId must not be empty.");
   }
@@ -337,9 +341,12 @@ async function createManagedRuntimeSession<TNativeEvent, TNativeSession, TPrepar
   };
   const persistenceSpec = driver.resolvePersistence?.(prepareContext);
 
+  let phaseStartedAt = performance.now();
   await assertRuntimeCanUse(driver, descriptor);
+  logRuntimePhase(logger, "runtime.can_use", phaseStartedAt, sessionStartedAt);
   assertRequestedRuntimeSessionMatches(request.runtimeSession, descriptor);
 
+  phaseStartedAt = performance.now();
   let sessionRecord: RuntimeSessionRecord;
   if (request.runtimeSession === undefined) {
     sessionRecord = await createRuntimeSessionRecord({
@@ -361,6 +368,7 @@ async function createManagedRuntimeSession<TNativeEvent, TNativeSession, TPrepar
       workspace: agent.workspace,
     });
   }
+  logRuntimePhase(logger, "runtime.session_record", phaseStartedAt, sessionStartedAt);
 
   let restoredRuntimeSessionId: string | undefined;
   let lifecycle: AgentLifecycle<ExpertAgentRunContext | undefined> | undefined;
@@ -372,6 +380,7 @@ async function createManagedRuntimeSession<TNativeEvent, TNativeSession, TPrepar
       await ensureRuntimeSessionDir(persistenceSpec.sessionDir);
     }
 
+    phaseStartedAt = performance.now();
     const preparation = await dispatchExpertAgentHook(agent.hooks, "beforeSessionCreate", {
       agent,
       context: runContext,
@@ -387,7 +396,9 @@ async function createManagedRuntimeSession<TNativeEvent, TNativeSession, TPrepar
         preparation?.processEnvironment,
       ),
     };
+    logRuntimePhase(logger, "runtime.before_session_hook", phaseStartedAt, sessionStartedAt);
 
+    phaseStartedAt = performance.now();
     const restored = await persistenceProvider.restore({
       agentId: agent.id,
       owner: request.owner,
@@ -400,9 +411,18 @@ async function createManagedRuntimeSession<TNativeEvent, TNativeSession, TPrepar
       metadata: persistenceSpec?.metadata,
     });
     restoredRuntimeSessionId = restored.restoredRuntimeSessionId;
+    logRuntimePhase(logger, "runtime.persistence_restore", phaseStartedAt, sessionStartedAt);
 
-    const prepared = (await driver.prepare?.(prepareContext)) ?? ({} as TPrepared);
-    const agentContext = await agent.buildContext(runContext, request.contextAssembly);
+    phaseStartedAt = performance.now();
+    const [prepared, agentContext] = await Promise.all([
+      Promise.resolve(driver.prepare?.(prepareContext)).then((value) => value ?? ({} as TPrepared)),
+      agent.buildContext(runContext, request.contextAssembly),
+    ]);
+    logRuntimePhase(logger, "runtime.prepare_and_context", phaseStartedAt, sessionStartedAt, {
+      systemPromptCharacters: agentContext.systemPrompt.length,
+      startupMessageCount: agentContext.startupMessages.length,
+      toolCount: agent.tools?.length ?? 0,
+    });
     let currentRuntimeSessionId = restoredRuntimeSessionId ?? request.runtimeSession?.id ?? "";
 
     const readSessionInfo = (): RuntimeSessionInfo => ({
@@ -507,10 +527,12 @@ async function createManagedRuntimeSession<TNativeEvent, TNativeSession, TPrepar
       prepared,
       sessionInfo: readSessionInfo(),
     };
+    phaseStartedAt = performance.now();
     nativeSession =
       request.runtimeSession === undefined
         ? await driver.createSession(sessionContext)
         : await (driver.restoreSession ?? driver.createSession)(sessionContext);
+    logRuntimePhase(logger, "runtime.native_session_create", phaseStartedAt, sessionStartedAt);
     const snapshot = driver.readSession?.(nativeSession, { agent, runContext });
     currentRuntimeSessionId = snapshot?.runtimeSessionId ?? currentRuntimeSessionId;
     sessionRecord = await updateRuntimeSessionRecord(pragmaPaths, sessionRecord, {
@@ -570,6 +592,10 @@ async function createManagedRuntimeSession<TNativeEvent, TNativeSession, TPrepar
       logger,
     });
     await request.onSessionInfo?.(readSessionInfo());
+    logger.info("runtime.session_ready", "Runtime Session preparation completed", {
+      elapsedMs: elapsedRuntimeMs(sessionStartedAt),
+      restored: request.runtimeSession !== undefined,
+    });
 
     return managedSession;
   } catch (error) {
@@ -994,8 +1020,14 @@ class ManagedRuntimeSession<TNativeEvent, TNativeSession, TPrepared> {
           : createRuntimeOutputRetryPrompt(parseResult);
       controller.resetCapture();
       const turnResult = await (async () => {
+        const requestStartedAt = performance.now();
+        this.options.logger.info(
+          "runtime.model_request_dispatched",
+          "Runtime adapter dispatched the native model request",
+          { runId, attempt, isRetry: attempt > 1 },
+        );
         try {
-          return await this.options.driver.startTurn(this.options.nativeSession, {
+          const result = await this.options.driver.startTurn(this.options.nativeSession, {
             runId,
             attempt,
             isRetry: attempt > 1,
@@ -1008,6 +1040,12 @@ class ManagedRuntimeSession<TNativeEvent, TNativeSession, TPrepared> {
             source: controller.source,
             stream: controller.writer,
           });
+          this.options.logger.info(
+            "runtime.model_request_finished",
+            "Runtime adapter finished the native model request",
+            { runId, attempt, durationMs: elapsedRuntimeMs(requestStartedAt) },
+          );
+          return result;
         } catch (error) {
           usage = mergeUsage(usage, controller.getUsage());
           observeUsage(usage);
@@ -1055,6 +1093,25 @@ class ManagedRuntimeSession<TNativeEvent, TNativeSession, TPrepared> {
 
     return createRuntimeRunResult(runId, parseResult.value, usage);
   }
+}
+
+function logRuntimePhase(
+  logger: PragmaLogger,
+  phase: string,
+  phaseStartedAt: number,
+  sessionStartedAt: number,
+  attributes: Record<string, unknown> = {},
+): void {
+  logger.info("runtime.session_phase", `Runtime Session phase completed: ${phase}`, {
+    phase,
+    durationMs: elapsedRuntimeMs(phaseStartedAt),
+    elapsedMs: elapsedRuntimeMs(sessionStartedAt),
+    ...attributes,
+  });
+}
+
+function elapsedRuntimeMs(startedAt: number): number {
+  return Math.round((performance.now() - startedAt) * 100) / 100;
 }
 
 interface RuntimeExecutionBinding {

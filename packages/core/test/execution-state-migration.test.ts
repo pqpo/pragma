@@ -58,7 +58,7 @@ describe("Execution state migration", () => {
       },
     ]);
     await expect(readJson(paths.executionState("team-run"))).resolves.toMatchObject({
-      schemaVersion: "pragma.execution/v7",
+      schemaVersion: "pragma.execution/v8",
       output: { type: "inline", value: { summary: "cancelled team" } },
     });
     await expect(readJson(paths.executionInvocations("team-run"))).resolves.toMatchObject([
@@ -77,7 +77,7 @@ describe("Execution state migration", () => {
     const store = createFileExecutionStore({ pragmaHome: home });
     await store.create(
       {
-        schemaVersion: "pragma.execution/v7",
+        schemaVersion: "pragma.execution/v8",
         executionId: "current",
         version: 0,
         kind: "expert-turn",
@@ -105,7 +105,7 @@ describe("Execution state migration", () => {
     const before = await readFile(paths.executionState("current"), "utf8");
 
     await expect(store.get("current")).resolves.toMatchObject({
-      schemaVersion: "pragma.execution/v7",
+      schemaVersion: "pragma.execution/v8",
     });
 
     expect(await readFile(paths.executionState("current"), "utf8")).toBe(before);
@@ -133,7 +133,7 @@ describe("Execution state migration", () => {
     const store = createFileExecutionStore({ pragmaHome: home });
 
     await expect(store.get("v6-run")).resolves.toMatchObject({
-      schemaVersion: "pragma.execution/v7",
+      schemaVersion: "pragma.execution/v8",
       definition: { id: "team", kind: "expert-team" },
       output: { type: "inline", value: { summary: "v6 result" } },
     });
@@ -150,11 +150,93 @@ describe("Execution state migration", () => {
     ]);
   });
 
+  it("marks migrated v7 usage precision as unknown", async () => {
+    const home = await temporaryRoot("pragma-execution-v7-usage-");
+    const paths = new PragmaPaths({ pragmaHome: home });
+    await writeLegacyExecution(paths, "v7-usage");
+    await writeJson(paths.executionState("v7-usage"), {
+      ...legacyExecution("v7-usage"),
+      schemaVersion: "pragma.execution/v7",
+      definition: { id: "team", kind: "expert-team" },
+      output: { type: "inline", value: "legacy output" },
+      usage: {
+        input: 100,
+        output: 20,
+        cacheRead: 10,
+        cacheWrite: 5,
+        totalTokens: 135,
+        cost: {
+          input: 0,
+          output: 0,
+          cacheRead: 0,
+          cacheWrite: 0,
+          total: 0,
+        },
+      },
+    });
+    const invocations = legacyInvocations();
+    await writeJson(paths.executionInvocations("v7-usage"), [
+      {
+        ...invocations[0],
+        definition: { id: "team", kind: "expert-team" },
+        output: { type: "inline", value: "legacy output" },
+        usage: {
+          input: 10,
+          output: 2,
+          cacheRead: 1,
+          cacheWrite: 0,
+          totalTokens: 13,
+          cost: {
+            input: 0,
+            output: 0,
+            cacheRead: 0,
+            cacheWrite: 0,
+            total: 0,
+          },
+        },
+      },
+      ...invocations.slice(1).map((invocation) => ({
+        ...invocation,
+        definition: {
+          id: (invocation.definition as { readonly id: string }).id,
+          kind: (invocation.definition as { readonly kind: string }).kind,
+        },
+        ...((invocation.definition as { readonly kind: string }).kind === "task"
+          ? {}
+          : { output: { type: "inline", value: invocation.output } }),
+      })),
+    ]);
+
+    await expect(createFileExecutionStore({ pragmaHome: home }).get("v7-usage")).resolves
+      .toMatchObject({
+        schemaVersion: "pragma.execution/v8",
+        usage: {
+          measurement: "unknown",
+          input: 100,
+          output: 20,
+          cacheRead: 10,
+          cacheWrite: 5,
+          totalTokens: 135,
+        },
+      });
+    const migratedInvocations = await createFileExecutionStore({
+      pragmaHome: home,
+    }).listInvocations("v7-usage");
+    expect(migratedInvocations[0]).toMatchObject({
+      usage: {
+        measurement: "unknown",
+        input: 10,
+        output: 2,
+        totalTokens: 13,
+      },
+    });
+  });
+
   it("rejects a future Execution schema without mutating it", async () => {
     const home = await temporaryRoot("pragma-execution-future-");
     const paths = new PragmaPaths({ pragmaHome: home });
     const file = paths.executionState("future");
-    const future = { schemaVersion: "pragma.execution/v8", executionId: "future" };
+    const future = { schemaVersion: "pragma.execution/v9", executionId: "future" };
     await writeJson(file, future);
     const before = await readFile(file, "utf8");
 
@@ -184,6 +266,20 @@ describe("Execution state migration", () => {
           ...legacyInvocations()[0],
           status: "succeeded",
           output: "journal invocation result",
+          usage: {
+            input: 8,
+            output: 2,
+            cacheRead: 0,
+            cacheWrite: 0,
+            totalTokens: 10,
+            cost: {
+              input: 0,
+              output: 0,
+              cacheRead: 0,
+              cacheWrite: 0,
+              total: 0,
+            },
+          },
         },
       ],
       agents: [],
@@ -194,13 +290,16 @@ describe("Execution state migration", () => {
 
     const store = createFileExecutionStore({ pragmaHome: home });
     await expect(store.get("journal-run")).resolves.toMatchObject({
-      schemaVersion: "pragma.execution/v7",
+      schemaVersion: "pragma.execution/v8",
       version: 1,
       status: "succeeded",
       output: { type: "inline", value: "journal result" },
     });
     await expect(store.listInvocations("journal-run")).resolves.toMatchObject([
-      { output: { type: "inline", value: "journal invocation result" } },
+      {
+        output: { type: "inline", value: "journal invocation result" },
+        usage: { measurement: "unknown", totalTokens: 10 },
+      },
     ]);
     await expect(readFile(transactionFile, "utf8")).rejects.toMatchObject({ code: "ENOENT" });
   });

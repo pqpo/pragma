@@ -3,6 +3,7 @@ import type {
   RuntimeAdapter,
   RuntimeModelSelection,
   RuntimeResolver,
+  PragmaLogger,
 } from "@pragma/core";
 import { createClaudeCodeRuntime } from "@pragma/runtime-claude-code";
 import {
@@ -11,6 +12,8 @@ import {
   type CodexRuntimeSandboxMode,
 } from "@pragma/runtime-codex";
 import { createPiRuntime } from "@pragma/runtime-pi";
+import { createQoderCliRuntime } from "@pragma/runtime-qodercli";
+import type { QoderCliRuntimePermissionMode } from "@pragma/runtime-qodercli";
 
 import type {
   DesktopToolPermissionMode,
@@ -46,8 +49,14 @@ export interface RuntimeEnvironmentService extends RuntimeResolver {
 export function createRuntimeEnvironmentService(options: {
   readonly store: RuntimeEnvironmentStore;
   readonly factories: readonly RuntimeEnvironmentAdapterFactory[];
+  readonly logger?: Pick<PragmaLogger, "info" | "warn"> | undefined;
+  readonly getToolPermissionMode?:
+    | (() => DesktopToolPermissionMode | Promise<DesktopToolPermissionMode>)
+    | undefined;
 }): RuntimeEnvironmentService {
+  const MATERIALIZED_ADAPTER_CACHE_LIMIT = 64;
   const factories = new Map<string, RuntimeEnvironmentAdapterFactory>();
+  const materializedAdapters = new Map<string, Promise<RuntimeAdapter>>();
   for (const factory of options.factories) {
     const ref = factoryRef(factory.id, factory.version);
     if (factories.has(ref)) throw new Error(`Duplicate Runtime adapter factory: ${ref}.`);
@@ -58,15 +67,89 @@ export function createRuntimeEnvironmentService(options: {
     revision: RuntimeEnvironmentRevision,
     toolPermissionMode?: DesktopToolPermissionMode,
   ): Promise<ResolvedRuntime> => {
+    const effectiveToolPermissionMode =
+      toolPermissionMode ?? (await options.getToolPermissionMode?.());
     const definition = revision.definition;
     const ref = factoryRef(definition.adapter.id, definition.adapter.version);
     const factory = factories.get(ref);
     if (factory === undefined)
       throw new Error(`Runtime adapter factory is not registered: ${ref}.`);
-    const adapter = await factory.create(
-      definition,
-      toolPermissionMode === undefined ? undefined : { toolPermissionMode },
-    );
+    const cacheKey = [
+      revision.runtimeId,
+      revision.revision,
+      revision.fingerprint,
+      ref,
+      effectiveToolPermissionMode ?? "default",
+    ].join("\0");
+    let adapterPromise = materializedAdapters.get(cacheKey);
+    const cacheHit = adapterPromise !== undefined;
+    if (adapterPromise === undefined) {
+      const materializeStartedAt = performance.now();
+      adapterPromise = Promise.resolve(
+        factory.create(
+          definition,
+          effectiveToolPermissionMode === undefined
+            ? undefined
+            : { toolPermissionMode: effectiveToolPermissionMode },
+        ),
+      );
+      void adapterPromise
+        .then(
+          () => {
+            options.logger?.info(
+              "runtime.environment_adapter_materialized",
+              "Runtime Environment adapter materialized",
+              {
+                runtimeId: revision.runtimeId,
+                revision: revision.revision,
+                fingerprint: revision.fingerprint,
+                toolPermissionMode: effectiveToolPermissionMode ?? "default",
+                durationMs: environmentElapsedMs(materializeStartedAt),
+              },
+            );
+          },
+          (error: unknown) => {
+            if (materializedAdapters.get(cacheKey) === adapterPromise) {
+              materializedAdapters.delete(cacheKey);
+            }
+            options.logger?.warn(
+              "runtime.environment_adapter_materialization_failed",
+              "Runtime Environment adapter materialization failed",
+              {
+                runtimeId: revision.runtimeId,
+                revision: revision.revision,
+                fingerprint: revision.fingerprint,
+                toolPermissionMode: effectiveToolPermissionMode ?? "default",
+                durationMs: environmentElapsedMs(materializeStartedAt),
+                error,
+              },
+            );
+          },
+        )
+        .catch(() => undefined);
+      materializedAdapters.set(cacheKey, adapterPromise);
+      while (materializedAdapters.size > MATERIALIZED_ADAPTER_CACHE_LIMIT) {
+        const oldest = materializedAdapters.keys().next().value as string | undefined;
+        if (oldest === undefined || oldest === cacheKey) break;
+        materializedAdapters.delete(oldest);
+      }
+    } else {
+      materializedAdapters.delete(cacheKey);
+      materializedAdapters.set(cacheKey, adapterPromise);
+    }
+    const adapter = await adapterPromise;
+    if (cacheHit) {
+      options.logger?.info(
+        "runtime.environment_adapter_cache_hit",
+        "Reused a Runtime Environment adapter",
+        {
+          runtimeId: revision.runtimeId,
+          revision: revision.revision,
+          fingerprint: revision.fingerprint,
+          toolPermissionMode: effectiveToolPermissionMode ?? "default",
+        },
+      );
+    }
     if (adapter.descriptor.id !== definition.id) {
       throw new Error(
         `Runtime adapter identity mismatch: expected ${definition.id}, received ${adapter.descriptor.id}.`,
@@ -90,7 +173,19 @@ export function createRuntimeEnvironmentService(options: {
     if (resolved.adapter.listModels === undefined) {
       throw new Error(`Runtime does not expose a model catalog: ${resolved.binding.runtimeId}.`);
     }
+    const discoveryStartedAt = performance.now();
     const models = await resolved.adapter.listModels();
+    options.logger?.info(
+      "runtime.model_catalog_validation",
+      "Runtime model selection catalog validation completed",
+      {
+        runtimeId: resolved.binding.runtimeId,
+        revision: resolved.binding.revision,
+        fingerprint: resolved.binding.fingerprint,
+        durationMs: environmentElapsedMs(discoveryStartedAt),
+        modelCount: models.length,
+      },
+    );
     const model = models.find(
       (candidate) =>
         candidate.id === selection.model.modelId &&
@@ -160,6 +255,10 @@ export function createRuntimeEnvironmentService(options: {
   };
 }
 
+function environmentElapsedMs(startedAt: number): number {
+  return Math.round((performance.now() - startedAt) * 100) / 100;
+}
+
 export function createBuiltInRuntimeFactories(
   modelProviders: ModelProviderStore,
   getToolPermissionMode: () =>
@@ -205,6 +304,21 @@ export function createBuiltInRuntimeFactories(
       },
     },
     {
+      id: "pragma.runtime.qodercli",
+      version: "v1",
+      create: async (environment, context) => {
+        assertEmptyRuntimeConfig(environment);
+        const permissionMode = context?.toolPermissionMode ?? (await getToolPermissionMode());
+        return createQoderCliRuntime({
+          descriptor: { id: environment.id, displayName: environment.displayName },
+          ...(onModelCatalogUpdated === undefined
+            ? {}
+            : { onModelCatalogUpdated: () => onModelCatalogUpdated(environment.id) }),
+          permissionMode: qoderRuntimePermissionForMode(permissionMode),
+        });
+      },
+    },
+    {
       id: "pragma.runtime.pi",
       version: "v1",
       create: (environment) => {
@@ -225,6 +339,16 @@ export function codexRuntimePermissionsForMode(mode: DesktopToolPermissionMode):
   return mode === "full-access"
     ? { sandboxMode: "danger-full-access", approvalPolicy: "never" }
     : { sandboxMode: "workspace-write", approvalPolicy: "on-request" };
+}
+
+export function qoderRuntimePermissionForMode(
+  mode: DesktopToolPermissionMode,
+): QoderCliRuntimePermissionMode {
+  return mode === "request-approval"
+    ? "default"
+    : mode === "auto-approve"
+      ? "auto"
+      : "bypassPermissions";
 }
 
 function factoryRef(id: string, version: string): string {

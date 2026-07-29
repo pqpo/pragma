@@ -50,7 +50,7 @@ examples    -> runtime-* / plugin-* / core -> shared
 
 Cross-package imports must use `@pragma/*` names, not relative paths.
 
-Expert Agents are cloud-first execution units scheduled by Server/Worker. Future local Claude Code, Codex, or self-hosted runtimes should be reached through the Desktop App local bridge. The Desktop App actively connects to the cloud Runtime Gateway, registers local capabilities, enforces local permissions, and invokes local Agent adapters. Do not add `apps/local-runner`; the product entry for local Agent bridging is `apps/desktop`.
+Expert Agents are cloud-first execution units scheduled by Server/Worker. Local Claude Code, Codex, Qoder CLI, or self-hosted runtimes should be reached through the Desktop App local bridge. The Desktop App actively connects to the cloud Runtime Gateway, registers local capabilities, enforces local permissions, and invokes local Agent adapters. Do not add `apps/local-runner`; the product entry for local Agent bridging is `apps/desktop`.
 
 Current runtime implementations:
 
@@ -87,7 +87,7 @@ client SDKs, Web UI, or database packages. `@pragma/interpreter` depends on Core
 to compile portable YAML declarations, while `@pragma/interpreter/ast` stays browser-safe. Concrete
 runtime packages depend on `@pragma/core` and are assembled by application entry points such as
 Worker. The default runtime selection is an application-layer decision; Worker currently registers
-PI and Codex runtimes and uses PI by default.
+PI, Codex, Claude Code, and Qoder CLI runtimes and uses PI by default.
 
 `@pragma/default-agent` owns the portable built-in general-purpose Pragma Agent definition and application-neutral host ports.
 It does not depend on Desktop, Electron, Web, Server, database code, or a concrete Runtime Adapter.

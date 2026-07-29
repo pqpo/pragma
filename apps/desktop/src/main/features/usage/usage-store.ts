@@ -266,6 +266,7 @@ export async function createDesktopUsageStore(input: {
             .digest("hex"),
           runId: `recovery:${observation.invocationId}`,
           usage: {
+            measurement: observation.usage.measurement,
             ...recovered,
             totalTokens,
             cost: {
@@ -478,6 +479,7 @@ function observationSignature(observation: RuntimeUsageObservation): string {
         runtimeId: observation.runtimeId,
         modelSelection: observation.modelSelection,
         usage: {
+          measurement: observation.usage.measurement,
           input: observation.usage.input,
           output: observation.usage.output,
           cacheRead: observation.usage.cacheRead,

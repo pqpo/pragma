@@ -6,7 +6,7 @@
 
 本地 Agent 的入口是 Desktop App，不是 `apps/local-runner`。
 
-Desktop App 负责连接云端、注册本地能力、承载本地权限闸门，并调用本机 Claude Code、Codex 或自研 Agent。云端 Server/Worker 负责调度、治理、审计和 Trace。
+Desktop App 负责连接云端、注册本地能力、承载本地权限闸门，并调用本机 Claude Code、Codex、Qoder CLI 或自研 Agent。云端 Server/Worker 负责调度、治理、审计和 Trace。
 
 ## 架构链路
 
@@ -25,6 +25,7 @@ Desktop App
 ├── Workspace Scope
 ├── Claude Code Adapter
 ├── Codex Adapter
+├── Qoder CLI Adapter
 └── Self-hosted Agent Adapter
 ```
 
@@ -47,7 +48,7 @@ Desktop App
 - 本地工作区选择。
 - 主动连接云端 Runtime Gateway。
 - 注册本机 Runtime 能力。
-- 调用本机 Claude Code、Codex 或自研 Agent。
+- 调用本机 Claude Code、Codex、Qoder CLI 或自研 Agent。
 - 拦截文件、shell、git、网络和 secrets 访问。
 - 在敏感操作前展示本地确认 UI。
 - 回传日志、增量输出、tool call、diff、artifact 和最终结果。
@@ -61,6 +62,7 @@ Desktop App
 ```text
 Claude Code
 Codex
+Qoder CLI
 Self-hosted Agent
 企业内部 Agent
 ```

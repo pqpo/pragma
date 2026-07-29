@@ -2,7 +2,7 @@
 
 ## Status
 
-Accepted.
+Accepted; the Codex cache-base decision is superseded by ADR 026.
 
 ## Context
 
@@ -27,12 +27,12 @@ across every revision and project. All revision manifests are GC roots until the
 explicitly deleted. Checkout directories are rebuildable hard-link views and never constitute
 authoritative project data.
 
-Codex uses one Pragma-managed immutable base per cache fingerprint and a private overlay per Runtime
-Context. The base owns rebuildable plugin, package, and catalog caches. The overlay owns generated
-configuration, skills links, native sessions, logs, temporary files, and a separate
-`CODEX_SQLITE_HOME`. Authentication has one Pragma credential projection. A writable Codex home is
-never shared between contexts. Mission-owned native sessions are retained until Mission deletion;
-stopping a process is not a storage deletion operation.
+Codex Runtime Context storage originally used one Pragma-managed immutable cache base per
+fingerprint and a private overlay. ADR 026 replaces that cache-base portion with a minimal
+per-Context Home projection. Generated configuration, copied Agent Skills, native sessions, logs,
+temporary files, and `CODEX_SQLITE_HOME` remain private. Authentication continues to use one Pragma
+credential projection. Mission-owned native sessions are retained until Mission deletion; stopping
+a process is not a storage deletion operation.
 
 Terminal Executions first materialize a Mission conversation projection, then move their canonical
 JSONL events into a gzip archive. The archive is readable through `ExecutionStore` while retained,
@@ -59,8 +59,8 @@ a process or machine failure without orphaning the legacy backup.
 
 - One small project change adds one blob, its ancestor trees, and a revision manifest instead of a
   complete project directory.
-- Identical Codex and plugin cache bytes have one physical owner, while mutable session data remains
-  isolated.
+- Mutable Codex session data remains isolated; ADR 026 defines how rebuildable native caches are
+  projected without a Pragma-owned full cache snapshot.
 - Keeping all Missions and all revisions can still consume the configured persistent capacity; the
   hard limit makes this bounded and requires an explicit owner deletion decision.
 - Mission chat remains readable after Execution diagnostic archives expire.

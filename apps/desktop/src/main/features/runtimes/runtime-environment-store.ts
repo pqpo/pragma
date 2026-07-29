@@ -20,6 +20,7 @@ export const DEFAULT_RUNTIME_ENVIRONMENTS: readonly RuntimeEnvironmentDefinition
   environment("pi", "PI Runtime", "pragma.runtime.pi"),
   environment("codex", "Codex", "pragma.runtime.codex"),
   environment("claude-code", "Claude Code", "pragma.runtime.claude-code"),
+  environment("qodercli", "Qoder CLI", "pragma.runtime.qodercli"),
 ];
 
 export interface RuntimeEnvironmentHead {
@@ -79,9 +80,28 @@ export function createRuntimeEnvironmentStore(options: {
 
   const initialize = async (): Promise<void> => {
     await withFileLock(lockPath, async () => {
-      if ((await readOptionalJson(catalogPath)) !== undefined) return;
       if (!builtIns.some((definition) => definition.id === configuredDefault)) {
         throw new Error(`Default Runtime Environment is not built in: ${configuredDefault}.`);
+      }
+      const storedCatalog = await readOptionalJson(catalogPath);
+      if (storedCatalog !== undefined) {
+        const catalog = RuntimeEnvironmentCatalogSchema.parse(storedCatalog);
+        const entries = catalog.entries.map((value) =>
+          RuntimeEnvironmentCatalogEntrySchema.parse(value),
+        );
+        const knownIds = new Set(entries.map((entry) => entry.runtimeId));
+        const missing = builtIns.filter((definition) => !knownIds.has(definition.id));
+        if (missing.length === 0) return;
+
+        const now = new Date().toISOString();
+        const additions: RuntimeEnvironmentCatalogEntry[] = [];
+        for (const definition of missing) {
+          const revision = createRevision(definition, 1, "active", now);
+          await persistRevision(revision);
+          additions.push({ runtimeId: definition.id, latestRevision: 1 });
+        }
+        await writeCatalog(catalogPath, catalog.defaultRuntimeId, [...entries, ...additions]);
+        return;
       }
       const now = new Date().toISOString();
       const entries: RuntimeEnvironmentCatalogEntry[] = [];

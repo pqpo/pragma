@@ -1163,8 +1163,11 @@ export function MissionDetailFragment(props: {
     let refreshing = false;
     let refreshQueued = false;
     let frame: number | undefined;
+    let paintFrame: number | undefined;
+    let paintConfirmationFrame: number | undefined;
     let hiddenTimer: ReturnType<typeof setTimeout> | undefined;
     let pending: MissionChatUpdate[] = [];
+    const paintedExecutions = new Set<string>();
 
     const drainPending = (
       base: MissionChatSnapshot,
@@ -1238,11 +1241,36 @@ export function MissionDetailFragment(props: {
     const unsubscribe = api.subscribeMissionChat(props.mission.id, (update) => {
       pending.push(update);
       scheduleFlush();
+      const executionId = firstVisiblePatchExecutionId(update, chatRef.current);
+      if (executionId === undefined || paintedExecutions.has(executionId)) return;
+      paintedExecutions.add(executionId);
+      const receivedAt = performance.now();
+      api.reportRendererLog({
+        level: "info",
+        event: "mission.first_ui_token_received",
+        message: "Renderer received the first UI-visible Mission token",
+        missionId: props.mission.id,
+        executionId,
+      });
+      paintFrame = requestAnimationFrame(() => {
+        paintConfirmationFrame = requestAnimationFrame(() => {
+          api.reportRendererLog({
+            level: "info",
+            event: "mission.first_ui_token_painted",
+            message: "Renderer painted the first UI-visible Mission token",
+            missionId: props.mission.id,
+            executionId,
+            elapsedMs: Math.round((performance.now() - receivedAt) * 100) / 100,
+          });
+        });
+      });
     });
     void refresh().catch(() => undefined);
     return () => {
       cancelled = true;
       if (frame !== undefined) cancelAnimationFrame(frame);
+      if (paintFrame !== undefined) cancelAnimationFrame(paintFrame);
+      if (paintConfirmationFrame !== undefined) cancelAnimationFrame(paintConfirmationFrame);
       if (hiddenTimer !== undefined) clearTimeout(hiddenTimer);
       unsubscribe();
     };
@@ -1669,7 +1697,11 @@ export function MissionDetailFragment(props: {
           <h1 title={props.mission.title}>{props.mission.title}</h1>
           <p>
             <span className="mission-ready-dot" aria-hidden="true" />
-            {missionStatusLabel(props.mission)}
+            {missionStatusLabel(
+              props.mission,
+              clientOperation.kind === "sending" ||
+                (props.mission.execution === undefined && thinkingRequestId !== null),
+            )}
             <span aria-hidden="true">·</span>
             <Folder size={16} aria-hidden="true" />
             {props.mission.workspace.basename}
@@ -2287,6 +2319,12 @@ export function ContextWindowControl(props: {
                   : tokenFormatter.format(usage.contextWindowTokens)}
               </dd>
             </div>
+            {usage === undefined ? null : (
+              <div>
+                <dt>{t("usageMeasurement")}</dt>
+                <dd>{t(`usageMeasurementValue.${usage.measurement}`)}</dd>
+              </div>
+            )}
           </dl>
           <button
             className="mission-context-compact"
@@ -3084,6 +3122,32 @@ export function applyMissionChatPatches(
   return { ...snapshot, revision, entries };
 }
 
+function firstVisiblePatchExecutionId(
+  update: MissionChatUpdate,
+  snapshot: MissionChatSnapshot | null,
+): string | undefined {
+  if (update.kind !== "patch") return undefined;
+  for (const patch of update.patches) {
+    if (patch.type === "entry.upsert") {
+      if (
+        (patch.entry.kind === "assistant" || patch.entry.kind === "thinking") &&
+        patch.entry.content.length > 0
+      ) {
+        return patch.entry.executionId ?? snapshot?.execution?.id;
+      }
+      continue;
+    }
+    if (patch.type !== "entry.append" || patch.field !== "content" || patch.delta.length === 0) {
+      continue;
+    }
+    return (
+      snapshot?.entries.find((entry) => entry.id === patch.entryId)?.executionId ??
+      snapshot?.execution?.id
+    );
+  }
+  return undefined;
+}
+
 export function shouldClearMissionThinkingPlaceholder(
   chat: MissionChatSnapshot,
   requestId: string,
@@ -3262,8 +3326,15 @@ function workStatusLabel(status: MissionWorkRecord["status"]): string {
   }
 }
 
-function missionStatusLabel(mission: Mission | MissionSummary): string {
+export function missionStatusLabel(mission: Mission | MissionSummary, preparing = false): string {
   if (mission.lifecycleStatus === "completed") return i18n.t("statusCompleted", { ns: "missions" });
+  if (
+    preparing &&
+    (mission.execution === undefined ||
+      !["queued", "running", "waiting"].includes(mission.execution.status))
+  ) {
+    return i18n.t("statusPreparing", { ns: "missions" });
+  }
   switch (mission.execution?.status) {
     case "queued":
       return i18n.t("statusQueued", { ns: "missions" });

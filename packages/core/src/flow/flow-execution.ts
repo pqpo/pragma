@@ -104,7 +104,7 @@ export class FlowExecutionManager {
     await validateFlowRuntimeConfiguration(flow, this.runtimes, runtimeId);
     const now = new Date().toISOString();
     const record: ExecutionRecord = {
-      schemaVersion: "pragma.execution/v7",
+      schemaVersion: "pragma.execution/v8",
       executionId,
       version: 0,
       kind: "flow",

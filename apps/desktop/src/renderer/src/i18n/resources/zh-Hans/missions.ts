@@ -13,6 +13,13 @@ export const missions = {
   contextPercentValue: "{{value}}%",
   contextCurrent: "当前上下文",
   contextTotal: "总上下文",
+  usageMeasurement: "统计口径",
+  usageMeasurementValue: {
+    reported: "运行时上报",
+    derived: "基于运行时数据推导",
+    estimated: "估算",
+    unknown: "未知",
+  },
   contextUnknown: "未知",
   contextUsageInvalid: "运行时上报的上下文用量异常，已保留原始数值用于诊断。",
   contextCompact: "压缩上下文",
@@ -169,4 +176,5 @@ export const missions = {
   statusSucceeded: "成功",
   statusCancelled: "已取消",
   statusReady: "就绪",
+  statusPreparing: "准备中",
 } as const;

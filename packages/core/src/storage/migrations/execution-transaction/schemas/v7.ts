@@ -2,6 +2,7 @@ import { ExecutionEventSchema, InvocationSchema } from "@pragma/shared";
 import { z } from "zod";
 
 import { ExecutionRecordV6Schema } from "../../execution/schemas/v6.ts";
+import { AgentMessageUsageV7Schema } from "../../execution/schemas/v7.ts";
 import { RuntimeContextRecordV4Schema } from "../../expert-session/schemas/v4.ts";
 
 const DefinitionReferenceV6Schema = z.object({
@@ -12,6 +13,7 @@ const DefinitionReferenceV6Schema = z.object({
 
 const InvocationV6Schema = InvocationSchema.extend({
   definition: DefinitionReferenceV6Schema,
+  usage: AgentMessageUsageV7Schema.optional(),
 });
 
 const AgentInstanceV1DefinitionSchema = z.object({

@@ -1,0 +1,39 @@
+{
+  "name": "@pragma/runtime-qodercli",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "exports": {
+    ".": {
+      "types": "./src/index.ts",
+      "default": "./src/index.ts"
+    },
+    "./availability": {
+      "types": "./src/availability.ts",
+      "default": "./src/availability.ts"
+    },
+    "./models": {
+      "types": "./src/models.ts",
+      "default": "./src/models.ts"
+    }
+  },
+  "scripts": {
+    "build": "tsc -p tsconfig.build.json",
+    "lint": "eslint src test",
+    "typecheck": "tsc --noEmit",
+    "test": "vitest run --passWithNoTests",
+    "clean": "rm -rf dist"
+  },
+  "dependencies": {
+    "@pragma/core": "workspace:*",
+    "@pragma/shared": "workspace:*",
+    "@qoder-ai/qoder-agent-sdk": "1.0.15",
+    "zod": "latest"
+  },
+  "devDependencies": {
+    "@pragma/tsconfig": "workspace:*",
+    "@types/node": "latest",
+    "typescript": "latest",
+    "vitest": "latest"
+  }
+}

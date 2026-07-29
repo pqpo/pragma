@@ -150,6 +150,76 @@ describe.sequential("Expert tools MCP Gateway", () => {
     const restoredClient = await connectClient(restored.url, "bounded-restored-client");
     expect((await restoredClient.listTools()).tools.map((tool) => tool.name)).toContain(firstName);
   });
+
+  it("removes only redundant constraints beside local JSON Schema references", async () => {
+    const expert = await defineExpert({
+      id: "runtime-schema-normalization",
+      name: "Runtime schema normalization",
+      description: "MCP Gateway schema normalization test",
+      tags: [],
+      scope: "test",
+      workspace: process.cwd(),
+      tools: [
+        {
+          name: "recursive_schema",
+          description: "Accept a recursive schema.",
+          inputSchema: {
+            type: "object",
+            properties: {
+              redundant: {
+                oneOf: [{ type: "string" }, { type: "number" }],
+                $ref: "#/$defs/value",
+              },
+              meaningful: {
+                $ref: "#/$defs/value",
+                description: "Keep this independent annotation.",
+              },
+            },
+            $defs: {
+              value: {
+                oneOf: [{ type: "string" }, { type: "number" }],
+              },
+            },
+          },
+          async call() {
+            return { text: "ok" };
+          },
+        },
+      ],
+    });
+    const registration = await registerExpertToolsMcpSession({
+      agent: expert,
+      getContext: () => undefined,
+      logger: createPragmaLogger(undefined, {
+        component: "runtime.adapter",
+        scope: { agentId: expert.id },
+      }),
+      state: {},
+    });
+    registrations.add(registration);
+    const client = await connectClient(registration.url, "schema-normalization-client");
+    const schema = (await client.listTools()).tools.find(
+      (tool) => tool.name === "recursive_schema",
+    )?.inputSchema;
+
+    expect(schema).toMatchObject({
+      properties: {
+        redundant: { $ref: "#/$defs/value" },
+        meaningful: {
+          $ref: "#/$defs/value",
+          description: "Keep this independent annotation.",
+        },
+      },
+      $defs: {
+        value: {
+          oneOf: [{ type: "string" }, { type: "number" }],
+        },
+      },
+    });
+    expect(
+      (schema as { properties?: { redundant?: unknown } }).properties?.redundant,
+    ).not.toHaveProperty("oneOf");
+  });
 });
 
 async function registerTestSession(

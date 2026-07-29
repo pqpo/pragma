@@ -527,7 +527,7 @@ class ExpertSessionImpl implements ExpertSession {
     const modelSelection = options.modelSelection;
     const definitionKind = isExpertTeam(this.expert) ? "expert-team" : "expert";
     const execution: ExecutionRecord = {
-      schemaVersion: "pragma.execution/v7",
+      schemaVersion: "pragma.execution/v8",
       executionId: id,
       version: 0,
       kind: "expert-turn",

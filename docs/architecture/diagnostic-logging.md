@@ -333,12 +333,12 @@ Desktop creates the provider before storage bootstrap so bootstrap failures are 
   Expert compilation;
 - flushes on `before-quit` with a bounded deadline.
 
-The renderer cannot import Node-only Core. `@pragma/shared` defines a narrow report request and
-Desktop's preload exposes:
+The renderer cannot import Node-only Core. Desktop's browser-safe shared contracts define a narrow
+report request and Desktop's preload exposes:
 
 ```ts
 pragmaDesktop.diagnostics.report({
-  level: "warn" | "error" | "fatal",
+  level: "info" | "warn" | "error",
   component: "desktop.renderer",
   event,
   message,
@@ -348,8 +348,9 @@ pragmaDesktop.diagnostics.report({
 ```
 
 Main supplies trusted timestamp, boot/process identity, sequence, and final redaction. Renderer
-cannot choose file paths or bypass redaction. Routine renderer info/debug logs are disabled by
-default to avoid noisy IPC.
+cannot choose file paths or bypass redaction. Renderer info reports are reserved for bounded
+lifecycle measurements such as the first visible Mission token received and painted. Token chunks
+and routine UI activity are not reported.
 
 User-visible fatal pages show a short diagnostic id and actions to copy it or open the diagnostic
 folder. They do not show a raw stack by default.

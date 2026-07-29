@@ -91,17 +91,30 @@ export class CodexAppServerClient {
       cwd: options.cwd,
       env: options.env,
     });
-    const client = new CodexAppServerClient(process, options);
-
-    await client.request("initialize", {
-      clientInfo: options.clientInfo,
-      capabilities: {
-        experimentalApi: true,
-      },
-    });
-    client.notify("initialized", {});
-
-    return client;
+    let client: CodexAppServerClient | undefined;
+    try {
+      client = new CodexAppServerClient(process, options);
+      await client.request("initialize", {
+        clientInfo: options.clientInfo,
+        capabilities: {
+          experimentalApi: true,
+        },
+      });
+      client.notify("initialized", {});
+      return client;
+    } catch (error) {
+      try {
+        if (client === undefined) {
+          process.stdin.end();
+          process.kill("SIGTERM");
+        } else {
+          client.close();
+        }
+      } catch {
+        process.kill("SIGKILL");
+      }
+      throw error;
+    }
   }
 
   async startThread(options: CodexThreadStartOptions): Promise<string> {
