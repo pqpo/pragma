@@ -6,6 +6,7 @@ import {
   filterMissionExecutors,
   missionModelOverrideAvailable,
   rankHomeMissionExecutors,
+  selectHomeMissionExecutors,
 } from "./HomePage.tsx";
 import { SchemaInputForm, createSchemaInputValue, isSchemaInputValid } from "./SchemaInputForm.tsx";
 
@@ -136,6 +137,32 @@ describe("mission executor search", () => {
       "Recent",
       "Team member",
     ]);
+  });
+
+  it("keeps search and type/tag filters in selection while excluding hidden executors", () => {
+    const visibleFlow = {
+      ...executors[0]!,
+      ref: "flow:0000000000000001" as const,
+      name: "Release flow",
+      kind: "flow" as const,
+    };
+    const hiddenFlow = {
+      ...executors[2]!,
+      ref: "flow:0000000000000002" as const,
+      name: "Hidden release flow",
+      kind: "flow" as const,
+      preference: { favoriteScope: "none" as const, hidden: true },
+    };
+
+    expect(
+      selectHomeMissionExecutors(
+        [executors[1]!, visibleFlow, hiddenFlow],
+        "release",
+        "flow",
+        "release",
+        undefined,
+      ).map((executor) => executor.name),
+    ).toEqual(["Release flow"]);
   });
 });
 
