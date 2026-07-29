@@ -1,8 +1,6 @@
 import { z } from "zod";
-import {
-  AgentMessageSchema,
-  AgentMessageUsageWireSchema,
-} from "./agent-message.schema.ts";
+import { AgentMessageSchema, AgentMessageUsageWireSchema } from "./agent-message.schema.ts";
+import { RuntimeContextWindowUsageSchema } from "./runtime-context-window.schema.ts";
 
 export const ExpertAgentStreamSchemaVersionSchema = z.literal("pragma.stream/v1");
 
@@ -103,6 +101,22 @@ export const ExpertAgentProgressEventSchema = ExpertAgentStreamEventBaseSchema.e
   }),
 });
 
+export const ExpertAgentUsageUpdatedEventSchema = ExpertAgentStreamEventBaseSchema.extend({
+  type: z.literal("usage.updated"),
+  payload: z.object({
+    usage: AgentMessageUsageWireSchema,
+    provisional: z.boolean(),
+  }),
+});
+
+export const ExpertAgentContextWindowUpdatedEventSchema = ExpertAgentStreamEventBaseSchema.extend({
+  type: z.literal("context-window.updated"),
+  payload: z.object({
+    usage: RuntimeContextWindowUsageSchema,
+    provisional: z.boolean(),
+  }),
+});
+
 export const ExpertAgentToolStartedEventSchema = ExpertAgentStreamEventBaseSchema.extend({
   type: z.literal("tool.started"),
   payload: z.object({
@@ -190,6 +204,8 @@ export const ExpertAgentStreamEventSchema = z.discriminatedUnion("type", [
   ExpertAgentMessageCompletedEventSchema,
   ExpertAgentThoughtDeltaEventSchema,
   ExpertAgentProgressEventSchema,
+  ExpertAgentUsageUpdatedEventSchema,
+  ExpertAgentContextWindowUpdatedEventSchema,
   ExpertAgentToolStartedEventSchema,
   ExpertAgentToolDeltaEventSchema,
   ExpertAgentToolApprovalRequestedEventSchema,

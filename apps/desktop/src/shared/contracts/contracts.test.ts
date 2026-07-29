@@ -274,10 +274,31 @@ describe("mission chat streaming contracts", () => {
         patches: [{ type: "entry.append", entryId: "answer", field: "content", delta: "hello" }],
       }),
     ).toMatchObject({ kind: "patch", revision: 1 });
-    expect(MissionChatUpdateSchema.parse({ kind: "invalidate", missionId, revision: 2 })).toEqual({
+    expect(
+      MissionChatUpdateSchema.parse({
+        kind: "patch",
+        missionId,
+        revision: 2,
+        patches: [
+          {
+            type: "context-window.update",
+            usage: {
+              usedTokens: 64_000,
+              contextWindowTokens: 128_000,
+              percent: 50,
+              measurement: "estimated",
+              observedAt: "2026-07-29T00:00:00.000Z",
+            },
+          },
+        ],
+      }),
+    ).toMatchObject({
+      patches: [{ type: "context-window.update", usage: { usedTokens: 64_000 } }],
+    });
+    expect(MissionChatUpdateSchema.parse({ kind: "invalidate", missionId, revision: 3 })).toEqual({
       kind: "invalidate",
       missionId,
-      revision: 2,
+      revision: 3,
     });
     expect(
       MissionChatUpdateSchema.safeParse({

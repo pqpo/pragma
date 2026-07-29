@@ -5985,7 +5985,8 @@ p {
 
 .mission-usage-hint {
   display: block;
-  margin: 7px 4px 0;
+  justify-self: end;
+  margin: 9px 14px 0;
   color: var(--faint);
   font-size: 11px;
   line-height: 1.35;

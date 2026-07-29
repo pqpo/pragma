@@ -93,6 +93,52 @@ describe("Runtime Session process environment", () => {
 });
 
 describe("Runtime Session context window", () => {
+  it("calibrates the live estimate from the refreshed Runtime baseline before a turn starts", async () => {
+    const root = await temporaryRoot();
+    const inspect = vi.fn(() =>
+      createRuntimeContextWindowUsage({
+        usedTokens: 40_000,
+        contextWindowTokens: 200_000,
+        measurement: "reported",
+      }),
+    );
+    const runtime = defineRuntimeDriver<never, Record<string, never>>({
+      descriptor: { id: "context-test", kind: "context-test", displayName: "Context Test" },
+      createSession: () => ({}),
+      startTurn: async (_session, turn) => {
+        turn.stream.write({
+          runId: turn.runId,
+          source: turn.source,
+          type: "message.delta",
+          payload: { contentType: "text", delta: "done" },
+        });
+        return { outputText: "done" };
+      },
+      mapEvent: () => ({ events: [] }),
+      readContextWindow: inspect,
+    });
+    const agent = await expert(root, "context-live-expert", "token");
+    const session = await open(agent, runtime, "context-live-session");
+    const submission = session.submit({ query: "12345678", execution: {} });
+    const eventsPromise = (async () => {
+      const events = [];
+      for await (const event of submission.events) events.push(event);
+      return events;
+    })();
+
+    await submission.result;
+    const events = await eventsPromise;
+    const contextUpdates = events.filter((event) => event.type === "context-window.updated");
+    const liveUpdate = contextUpdates.find((event) => event.payload.provisional);
+
+    expect(liveUpdate?.payload.usage).toMatchObject({
+      usedTokens: 40_002,
+      measurement: "estimated",
+    });
+    expect(inspect).toHaveBeenCalledTimes(2);
+    await session.close();
+  });
+
   it("persists inspection and compaction snapshots independently of billing usage", async () => {
     const root = await temporaryRoot();
     const inspect = vi.fn(() =>

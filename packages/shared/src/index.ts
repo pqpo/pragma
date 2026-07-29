@@ -7,6 +7,7 @@ export * from "./logging/log.schema.ts";
 export * from "./model-provider.schema.ts";
 export * from "./mission/mission-executor.schema.ts";
 export * from "./result.ts";
+export * from "./runtime-context-window.schema.ts";
 export {
   RunStatus as ExecutionRunStatus,
   type RunStatus as ExecutionRunStatusValue,

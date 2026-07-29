@@ -198,7 +198,7 @@ export const ExecutionOutputItemSchema = z.object({
   runId: z.string().min(1),
   parentRunId: z.string().min(1).optional(),
   source: ExpertAgentStreamSourceSchema,
-  channel: z.enum(["message", "thought", "tool", "progress", "result", "agent"]),
+  channel: z.enum(["message", "thought", "tool", "progress", "result", "agent", "telemetry"]),
   delta: z.string().optional(),
   value: z.unknown().optional(),
   occurredAt: z.string().datetime(),
