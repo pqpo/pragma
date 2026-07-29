@@ -49,7 +49,7 @@ export function assertAssistantTurnCompleted(messages: readonly unknown[]): void
     (message) => isRecord(message) && message["role"] === "assistant",
   );
   if (!isRecord(assistant)) {
-    throw new Error("PI Runtime completed without an assistant response.");
+    throw new Error("The runtime completed without an assistant response.");
   }
 
   const stopReason = assistant["stopReason"];
@@ -58,12 +58,12 @@ export function assertAssistantTurnCompleted(messages: readonly unknown[]): void
     throw new Error(
       typeof errorMessage === "string" && errorMessage.trim() !== ""
         ? errorMessage
-        : `PI Runtime assistant stopped with reason: ${stopReason}.`,
+        : `The runtime assistant stopped with reason: ${stopReason}.`,
     );
   }
 
   if (readMessageText(assistant) === undefined) {
-    throw new Error("PI Runtime completed with an empty assistant response.");
+    throw new Error("The runtime completed with an empty assistant response.");
   }
 }
 

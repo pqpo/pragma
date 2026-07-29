@@ -53,6 +53,7 @@ import {
 import { errorMessage } from "../../lib/errors.ts";
 import { i18n } from "../../i18n/index.ts";
 import { formatMissionDateTime, formatMissionTime } from "../../lib/mission-time.ts";
+import { runtimeDisplayName, type RuntimeDisplayIdentity } from "../../lib/runtime-display.ts";
 import { formatTokens } from "../../lib/usage-format.ts";
 import { ToolPermissionSelect } from "../../components/ToolPermissionSelect.tsx";
 import { MissionModelOverrideControls } from "../../components/MissionModelOverrideControls.tsx";
@@ -969,7 +970,7 @@ export function MissionDetailFragment(props: {
     kind: "idle",
   });
   const [models, setModels] = useState<readonly DesktopRuntimeModel[]>([]);
-  const [runtimeName, setRuntimeName] = useState<string>();
+  const [runtimeIdentity, setRuntimeIdentity] = useState<RuntimeDisplayIdentity>();
   const [modelsLoading, setModelsLoading] = useState(false);
   const [defaultModelSelection, setDefaultModelSelection] = useState<MissionModelOverride>();
   const [modelResetRequired, setModelResetRequired] = useState(false);
@@ -1093,7 +1094,7 @@ export function MissionDetailFragment(props: {
   useEffect(() => {
     const api = desktopApi();
     setModels([]);
-    setRuntimeName(undefined);
+    setRuntimeIdentity(undefined);
     setDefaultModelSelection(undefined);
     setOptionsError(null);
     setModelResetRequired(false);
@@ -1107,7 +1108,7 @@ export function MissionDetailFragment(props: {
         .then((result) => {
           if (cancelled) return;
           modelRuntimeIdRef.current = result.runtime.id;
-          setRuntimeName(result.runtime.displayName);
+          setRuntimeIdentity(result.runtime);
           setModels(result.models);
           setDefaultModelSelection(result.defaultSelection);
           setModelResetRequired(result.status === "reset_required");
@@ -1717,11 +1718,11 @@ export function MissionDetailFragment(props: {
               <User size={17} aria-hidden="true" />
             )}
             {props.mission.executor.name}
-            {runtimeName === undefined ? null : (
+            {runtimeIdentity === undefined ? null : (
               <>
                 <span aria-hidden="true">·</span>
                 <TerminalWindow size={17} aria-hidden="true" />
-                {runtimeName}
+                {runtimeDisplayName(t, runtimeIdentity)}
               </>
             )}
           </p>

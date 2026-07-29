@@ -30,7 +30,7 @@ export async function createPiSessionManager(
     };
   }
 
-  throw new Error(`PI runtime session was not found: ${runtimeSessionId}.`);
+  throw new Error(`Runtime session was not found: ${runtimeSessionId}.`);
 }
 
 async function findLocalSessionByExactId(

@@ -4,6 +4,7 @@ import { useTranslation } from "react-i18next";
 
 import type { DesktopRuntimeAvailability } from "../../../../shared/contracts/index.ts";
 import { errorMessage } from "../../lib/errors.ts";
+import { isBuiltInRuntime, runtimeDisplayName } from "../../lib/runtime-display.ts";
 import { RuntimeEnvironmentDetail } from "./RuntimeEnvironmentDetail.tsx";
 import { SettingsScreenFrame } from "./SettingsScreenFrame.tsx";
 
@@ -14,6 +15,10 @@ export function RuntimeCard(props: {
   const { t } = useTranslation(["settings", "common"]);
   const available = props.runtime.status === "available";
   const modelCount = props.runtime.models?.length;
+  const displayName = runtimeDisplayName(t, props.runtime);
+  const runtimeType = isBuiltInRuntime(props.runtime)
+    ? t("runtimes.builtIn", { ns: "settings" })
+    : props.runtime.kind;
 
   return (
     <article className="runtime-card runtime-summary-card">
@@ -22,7 +27,7 @@ export function RuntimeCard(props: {
         type="button"
         aria-label={t("runtimes.viewDetails", {
           ns: "settings",
-          name: props.runtime.displayName,
+          name: displayName,
         })}
         onClick={props.onOpen}
       />
@@ -31,7 +36,7 @@ export function RuntimeCard(props: {
           <TerminalWindow size={24} />
         </span>
         <div className="card-title-group">
-          <h3>{props.runtime.displayName}</h3>
+          <h3>{displayName}</h3>
           <p className={available ? "status-copy is-active" : "status-copy"}>
             <span className="status-dot" aria-hidden="true" />
             {available
@@ -48,7 +53,7 @@ export function RuntimeCard(props: {
 
       <div className="runtime-summary-footer">
         <div>
-          <p>{props.runtime.kind}</p>
+          <p>{runtimeType}</p>
           <span>
             {modelCount === undefined
               ? t("runtimes.catalogUnavailable", { ns: "settings" })

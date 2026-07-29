@@ -70,6 +70,9 @@ export const common = {
     model_one: "{{count}} 個模型",
     model_other: "{{count}} 個模型",
   },
+  runtimeNames: {
+    builtIn: "內建執行階段",
+  },
   builtInExperts: {
     pragma: {
       name: "Pragma",

@@ -15,7 +15,7 @@ describe("testProviderModel", () => {
     vi.mocked(probePiModelProvider).mockResolvedValue({
       ok: true,
       code: "success",
-      message: "Connection successful through the PI runtime.",
+      message: "Connection successful.",
     });
     const model = testModel("gpt-test");
     const provider: ResolvedModelProvider = {

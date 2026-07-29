@@ -12,7 +12,7 @@ describe("MissionModelOverrideControls", () => {
         models={[
           {
             id: "deepseek",
-            displayName: "PI Runtime",
+            displayName: "DeepSeek Model",
             provider: {
               kind: "registered",
               id: "provider",
@@ -32,7 +32,7 @@ describe("MissionModelOverrideControls", () => {
       />,
     );
 
-    expect(html).toContain("DeepSeek · PI Runtime");
+    expect(html).toContain("DeepSeek · DeepSeek Model");
     expect(html).toContain('<option value="high" selected="">High</option>');
     expect(html).toContain("Default model");
     expect(html).toContain("Default thinking depth");

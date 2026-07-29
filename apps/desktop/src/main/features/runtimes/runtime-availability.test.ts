@@ -68,6 +68,47 @@ describe("getRuntimeAvailability", () => {
       }),
     ]);
   });
+
+  it("projects the built-in Runtime identity without rewriting diagnostics", async () => {
+    const pragmaHome = await mkdtemp(join(tmpdir(), "pragma-runtime-availability-"));
+    const store = createRuntimeEnvironmentStore({
+      pragmaHome,
+      builtIns: [definition("pi", "PI Runtime")],
+      defaultRuntimeId: "pi",
+    });
+    const runtimes = createRuntimeEnvironmentService({
+      store,
+      factories: [
+        {
+          id: "test.runtime",
+          version: "v1",
+          create: (environment) =>
+            defineRuntimeDriver({
+              descriptor: {
+                id: environment.id,
+                kind: "cloud-pi-agent",
+                displayName: environment.displayName,
+              },
+              canUse: () => ({
+                usable: false,
+                reason: "The built-in runtime is not configured.",
+              }),
+              createSession: () => ({}),
+              startTurn: () => ({ outputText: "" }),
+              mapEvent: () => ({ events: [] }),
+            }),
+        },
+      ],
+    });
+
+    await expect(getRuntimeAvailability(runtimes)).resolves.toEqual([
+      expect.objectContaining({
+        id: "pi",
+        displayName: "Built-in Runtime",
+        reason: "The built-in runtime is not configured.",
+      }),
+    ]);
+  });
 });
 
 function definition(id: string, displayName: string) {

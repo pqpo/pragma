@@ -41,7 +41,7 @@ export async function resolveSystemExpertRuntimeDefaults(
   const model = (await resolved.adapter.listModels?.())?.[0];
   if (model === undefined) {
     throw new Error(
-      "The default PI Runtime has no configured model. Configure a Model Provider or choose an explicit model for this mission.",
+      "The built-in runtime has no configured model. Configure a Model Provider or choose an explicit model for this mission.",
     );
   }
   return {

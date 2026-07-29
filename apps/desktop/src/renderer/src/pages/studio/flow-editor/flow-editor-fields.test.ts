@@ -115,4 +115,31 @@ describe("flow-editor-fields", () => {
     };
     expect(validateFlowRuntimeSelections(flow, [...resources, generated])).toEqual([]);
   });
+
+  it("normalizes the built-in Runtime name in selections and generated profiles", () => {
+    const runtime = {
+      id: "pi",
+      isDefault: true,
+      kind: "cloud-pi-agent",
+      displayName: "PI Runtime",
+      status: "available" as const,
+      models: [],
+    };
+    const html = renderToStaticMarkup(
+      createElement(RuntimeBindingEditor, {
+        value: undefined,
+        allowModel: true,
+        targetKind: "expert",
+        targetRef: "expert:1xddvess309a6gme",
+        resources: runtimeResources(),
+        runtimes: [runtime],
+        onSupportingResource: () => undefined,
+        onChange: () => undefined,
+      }),
+    );
+
+    expect(html).toContain("Built-in Runtime");
+    expect(html).not.toContain("PI Runtime");
+    expect(flowRuntimeProfile(runtime).metadata.name).toBe("Built-in Runtime Flow Runtime");
+  });
 });

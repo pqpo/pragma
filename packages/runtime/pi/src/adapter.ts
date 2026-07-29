@@ -43,7 +43,7 @@ import { defaultOutputParser } from "./types.ts";
 const CLOUD_PI_RUNTIME_DESCRIPTOR = {
   id: "cloud-pi-agent",
   kind: "cloud-pi-agent" as const,
-  displayName: "Cloud PI Agent",
+  displayName: "Built-in Runtime",
   capabilities: {
     targets: ["agent"],
     executionLocations: ["cloud"],
@@ -149,7 +149,7 @@ export function createPiRuntime(options: CloudPiRuntimeAdapterOptions = {}): Run
             if (cleanupError !== undefined) {
               throw new AggregateError(
                 [error, cleanupError],
-                "PI model provider resolution and cleanup failed.",
+                "Model provider resolution and cleanup failed.",
                 { cause: error },
               );
             }
@@ -157,9 +157,7 @@ export function createPiRuntime(options: CloudPiRuntimeAdapterOptions = {}): Run
           throw error;
         }
         if (selectedProviderId !== undefined && registeredProvider === undefined) {
-          const providerError = new Error(
-            `PI model provider is not registered: ${selectedProviderId}`,
-          );
+          const providerError = new Error(`Model provider is not registered: ${selectedProviderId}`);
           const preparation = await Promise.allSettled([
             resourceReloadPromise,
             mcpRegistryPromise,
@@ -171,7 +169,7 @@ export function createPiRuntime(options: CloudPiRuntimeAdapterOptions = {}): Run
             if (cleanupError !== undefined) {
               throw new AggregateError(
                 [providerError, cleanupError],
-                "PI model provider validation and cleanup failed.",
+                "Model provider validation and cleanup failed.",
                 { cause: providerError },
               );
             }
@@ -206,7 +204,7 @@ export function createPiRuntime(options: CloudPiRuntimeAdapterOptions = {}): Run
             if (cleanupError !== undefined) {
               throw new AggregateError(
                 [error, cleanupError],
-                "PI preparation and cleanup failed.",
+                "Runtime preparation and cleanup failed.",
                 { cause: error },
               );
             }
@@ -275,7 +273,7 @@ export function createPiRuntime(options: CloudPiRuntimeAdapterOptions = {}): Run
           if (!piSessionManagerResult.resumedExistingSession) {
             appendStartupMessages(session, ctx.agentContext.startupMessages);
           }
-          ctx.logger.info("runtime.pi_session_ready", "PI Session preparation completed", {
+          ctx.logger.info("runtime.pi_session_ready", "Runtime session preparation completed", {
             elapsedMs: piElapsedMs(sessionStartedAt),
             toolCount: sessionOptions.customTools?.length ?? 0,
             systemPromptCharacters: ctx.agentContext.systemPrompt.length,
@@ -304,7 +302,7 @@ export function createPiRuntime(options: CloudPiRuntimeAdapterOptions = {}): Run
           if (cleanupErrors.length > 0) {
             throw new AggregateError(
               [error, ...cleanupErrors],
-              "PI runtime initialization and cleanup failed.",
+              "Runtime initialization and cleanup failed.",
               { cause: error },
             );
           }
@@ -322,7 +320,7 @@ export function createPiRuntime(options: CloudPiRuntimeAdapterOptions = {}): Run
         if (selectedModel !== undefined) {
           const provider = await options.modelProviders?.resolveProvider(selectedModel.providerId);
           if (provider === undefined) {
-            throw new Error(`PI model provider is not registered: ${selectedModel.providerId}`);
+            throw new Error(`Model provider is not registered: ${selectedModel.providerId}`);
           }
           registerPiModelProvider(
             session.models.modelRuntime,
@@ -374,7 +372,7 @@ function logPiPhase(
   sessionStartedAt: number,
   attributes: Record<string, unknown> = {},
 ): void {
-  logger.info("runtime.pi_prepare_phase", `PI preparation phase completed: ${phase}`, {
+  logger.info("runtime.pi_prepare_phase", `Runtime preparation phase completed: ${phase}`, {
     phase,
     durationMs: piElapsedMs(phaseStartedAt),
     elapsedMs: piElapsedMs(sessionStartedAt),

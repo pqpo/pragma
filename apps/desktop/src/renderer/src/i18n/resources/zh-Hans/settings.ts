@@ -45,7 +45,7 @@ export const settings = {
     compatibilityProfile: "兼容配置",
     automaticCompatibility: "自动（推荐）",
     automaticCompatibilityDescription:
-      "优先使用 PI 内置模型元数据；没有精确元数据时，自动选择保守的供应商兼容配置。",
+      "优先使用内置模型元数据；没有精确元数据时，自动选择保守的供应商兼容配置。",
     modelCompatibilityOverride: "模型兼容配置",
     inheritCompatibility: "继承供应商设置",
     baseUrl: "API 基础 URL",

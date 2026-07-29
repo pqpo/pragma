@@ -40,7 +40,7 @@ export async function probePiModelProvider(options: {
     return {
       ok: false,
       code: "model_unavailable",
-      message: "PI could not register the configured model.",
+      message: "The configured model could not be registered.",
     };
   }
 
@@ -77,7 +77,7 @@ export async function probePiModelProvider(options: {
     return {
       ok: true,
       code: "success",
-      message: "Connection successful through the PI runtime.",
+      message: "Connection successful.",
       latencyMs: Date.now() - startedAt,
       ...(responseStatus === undefined ? {} : { status: responseStatus }),
     };

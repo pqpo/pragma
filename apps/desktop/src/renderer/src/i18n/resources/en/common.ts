@@ -71,6 +71,9 @@ export const common = {
     model_one: "{{count}} model",
     model_other: "{{count}} models",
   },
+  runtimeNames: {
+    builtIn: "Built-in Runtime",
+  },
   builtInExperts: {
     pragma: {
       name: "Pragma",

@@ -1,5 +1,6 @@
 import type { DesktopRuntimeAvailability } from "../../../shared/contracts/index.ts";
 import type { RuntimeEnvironmentService } from "./runtime-environment-service.ts";
+import { BUILT_IN_RUNTIME_DISPLAY_NAME } from "./runtime-environment-store.ts";
 
 export async function getRuntimeAvailability(
   runtimes: RuntimeEnvironmentService,
@@ -18,7 +19,10 @@ export async function getRuntimeAvailability(
             return {
               id: inspection.head.entry.runtimeId,
               isDefault: inspection.head.entry.runtimeId === defaultRuntimeId,
-              displayName: definition?.displayName ?? inspection.head.entry.runtimeId,
+              displayName:
+                inspection.head.entry.runtimeId === "pi"
+                  ? BUILT_IN_RUNTIME_DISPLAY_NAME
+                  : (definition?.displayName ?? inspection.head.entry.runtimeId),
               kind: definition?.adapter.id ?? "unknown",
               status: "unavailable",
               reason: inspection.error ?? "Runtime Environment revision is unavailable.",
@@ -64,7 +68,10 @@ export async function getRuntimeAvailability(
             adapter: definition!.adapter,
             isDefault: adapter.descriptor.id === defaultRuntimeId,
             kind: adapter.descriptor.kind,
-            displayName: adapter.descriptor.displayName,
+            displayName:
+              adapter.descriptor.id === "pi"
+                ? BUILT_IN_RUNTIME_DISPLAY_NAME
+                : adapter.descriptor.displayName,
             status: availability.usable ? "available" : "unavailable",
             ...(executablePath === undefined ? {} : { executablePath }),
             ...(version === undefined ? {} : { version }),

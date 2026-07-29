@@ -3,6 +3,7 @@ import type { ReactNode } from "react";
 import { useTranslation } from "react-i18next";
 
 import type { DesktopRuntimeAvailability } from "../../../../shared/contracts/index.ts";
+import { isBuiltInRuntime, runtimeDisplayName } from "../../lib/runtime-display.ts";
 import { SettingsScreenFrame } from "./SettingsScreenFrame.tsx";
 
 export function RuntimeEnvironmentDetail(props: {
@@ -16,6 +17,9 @@ export function RuntimeEnvironmentDetail(props: {
   const { runtime } = props;
   const available = runtime.status === "available";
   const models = runtime.models ?? [];
+  const builtIn = isBuiltInRuntime(runtime);
+  const displayName = runtimeDisplayName(t, runtime);
+  const runtimeType = builtIn ? t("runtimes.builtIn", { ns: "settings" }) : runtime.kind;
 
   return (
     <SettingsScreenFrame
@@ -35,14 +39,14 @@ export function RuntimeEnvironmentDetail(props: {
             </span>
             <div>
               <div className="runtime-detail-title-line">
-                <h2 id="runtime-detail-name">{runtime.displayName}</h2>
+                <h2 id="runtime-detail-name">{displayName}</h2>
                 {runtime.isDefault ? (
                   <span className="status-badge is-ready">
                     {t("status.default", { ns: "common" })}
                   </span>
                 ) : null}
               </div>
-              <p>{runtime.kind}</p>
+              <p>{runtimeType}</p>
             </div>
             <button
               className="secondary-button"
@@ -71,9 +75,11 @@ export function RuntimeEnvironmentDetail(props: {
               : t("status.unavailable", { ns: "common" })}
           </span>
         </RuntimeFact>
-        <RuntimeFact label={t("runtimes.runtimeId", { ns: "settings" })}>
-          <code>{runtime.id}</code>
-        </RuntimeFact>
+        {builtIn ? null : (
+          <RuntimeFact label={t("runtimes.runtimeId", { ns: "settings" })}>
+            <code>{runtime.id}</code>
+          </RuntimeFact>
+        )}
         <RuntimeFact label={t("runtimes.origin", { ns: "settings" })}>
           {runtime.origin
             ? runtime.origin === "built-in"
@@ -94,15 +100,17 @@ export function RuntimeEnvironmentDetail(props: {
         <RuntimeFact label={t("runtimes.runtimeVersion", { ns: "settings" })}>
           {runtime.version ?? "—"}
         </RuntimeFact>
-        <RuntimeFact label={t("runtimes.adapter", { ns: "settings" })}>
-          {runtime.adapter ? (
-            <code>
-              {runtime.adapter.id}@{runtime.adapter.version}
-            </code>
-          ) : (
-            "—"
-          )}
-        </RuntimeFact>
+        {builtIn ? null : (
+          <RuntimeFact label={t("runtimes.adapter", { ns: "settings" })}>
+            {runtime.adapter ? (
+              <code>
+                {runtime.adapter.id}@{runtime.adapter.version}
+              </code>
+            ) : (
+              "—"
+            )}
+          </RuntimeFact>
+        )}
       </section>
 
       {runtime.reason ? (

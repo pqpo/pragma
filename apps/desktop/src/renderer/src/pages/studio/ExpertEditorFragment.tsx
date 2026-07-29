@@ -4,6 +4,7 @@ import { useTranslation } from "react-i18next";
 import type { PragmaResource } from "@pragma/interpreter/ast";
 
 import { errorMessage } from "../../lib/errors.ts";
+import { runtimeDisplayName } from "../../lib/runtime-display.ts";
 import {
   EXPERT_DESCRIPTION_MAX_LENGTH,
   EXPERT_INSTRUCTIONS_MAX_LENGTH,
@@ -450,7 +451,7 @@ export function ExpertEditorFragment(props: {
                         value={runtime.id}
                         disabled={runtime.status !== "available"}
                       >
-                        {runtime.displayName}
+                        {runtimeDisplayName(t, runtime)}
                         {runtime.status === "available"
                           ? ""
                           : ` (${t("unavailable", { ns: "studio" })})`}

@@ -61,4 +61,32 @@ describe("Runtime Environment settings", () => {
     expect(html).toContain("gpt-5.6-codex");
     expect(html).toContain("Medium, High");
   });
+
+  it("does not expose implementation identity for the built-in Runtime", () => {
+    const builtInRuntime: DesktopRuntimeAvailability = {
+      ...runtime,
+      id: "pi",
+      adapter: { id: "pragma.runtime.pi", version: "v1" },
+      kind: "cloud-pi-agent",
+      displayName: "PI Runtime",
+    };
+    const html = [
+      renderToStaticMarkup(<RuntimeCard runtime={builtInRuntime} onOpen={() => undefined} />),
+      renderToStaticMarkup(
+        <RuntimeEnvironmentDetail
+          runtime={builtInRuntime}
+          refreshing={false}
+          error={null}
+          onBack={() => undefined}
+          onRefresh={() => undefined}
+        />,
+      ),
+    ].join("");
+
+    expect(html).toContain("Built-in Runtime");
+    expect(html).not.toContain("PI Runtime");
+    expect(html).not.toContain("cloud-pi-agent");
+    expect(html).not.toContain("pragma.runtime.pi");
+    expect(html).not.toMatch(/>pi</u);
+  });
 });
