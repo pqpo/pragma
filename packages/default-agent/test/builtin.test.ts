@@ -186,13 +186,21 @@ describe("built-in Pragma Agent DSL", () => {
     const reference = BUILT_IN_PRAGMA_FILES["skills/author-pragma-dsl/references/run-dry.md"] ?? "";
 
     expect(skill).toContain("generate and upsert exactly one case");
-    expect(skill).toContain("at most 10 cases per call");
-    expect(skill).toContain("Never emit or pass a complete Evaluation YAML document");
+    expect(skill).toContain("ask whether the user wants to create a test set and run it");
+    expect(skill).toContain("user may skip");
+    expect(skill).toContain("prepare_evaluation_draft");
+    expect(skill).toContain("commit changes only the");
+    expect(skill).toContain("Evaluation; it is never part of `prepare_flow_draft`");
+    expect(skill).not.toContain("without waiting for the user");
+    expect(skill).toContain("Never emit or pass a complete Evaluation");
     expect(reference).toContain("run_evaluation_draft");
     expect(reference).toContain("2–10 `upsert_case` operations");
+    expect(reference).toContain("This is the submit-and-save operation");
+    expect(reference).toContain("commits only the canonical `evaluation:<id>` resource");
+    expect(reference).toContain("never creates an Evaluation implicitly");
     expect(reference).toContain("Never build, resend, or request the complete Evaluation YAML");
-    expect(reference).toContain("`discard_evaluation_draft` before");
-    expect(reference).toContain("`discard_flow_draft`");
+    expect(reference).not.toContain("targetFlowDraftId");
+    expect(reference).not.toContain("created atomically");
     expect(reference).not.toContain("run_evaluation`");
   });
 

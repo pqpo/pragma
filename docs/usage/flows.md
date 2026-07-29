@@ -50,6 +50,8 @@ Suite 只有在所有用例通过，且每条 ordinary/repeat edge、route case�
 loop repeat/limit 结果都被覆盖时才通过。
 
 Desktop 的“测评”大 Tab 用于独立维护、运行和保存 Evaluation，并为专家/专家团队的“测评集 +
-LLM-as-Judge”预留入口。内置 Pragma Agent 创建 Flow 时同时分配 Flow 与 Evaluation ID，调用
-Evaluation Draft 工具逐个生成并测试 Run Dry case；用户明确要求批量时每批最多 10 个。最终
-`prepare_flow_draft` 会重新运行完整套件，并将通过的 Flow 与 Evaluation 原子提交。
+LLM-as-Judge”预留入口。Flow 先通过 `prepare_flow_draft` 和 `commit_dsl_changes` 独立保存；提交
+成功后，内置 Pragma Agent 再询问用户是否创建并运行测试集，用户可以跳过。确认后，Agent 只针对
+已提交 Flow 创建 Evaluation Draft，逐个生成并测试 Run Dry case；用户明确要求批量时每批最多
+10 个。测试集最终通过 `prepare_evaluation_draft` 重新运行完整套件，并用其返回的 change-set
+单独调用 `commit_dsl_changes` 保存。

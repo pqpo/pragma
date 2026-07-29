@@ -188,7 +188,7 @@ describe("Desktop DefaultAgent DSL project adapter", () => {
     expect((await project.get()).revision).toBe(1);
   });
 
-  it("builds and atomically prepares a Flow through durable draft revisions", async () => {
+  it("prepares a Flow and its later test set in independent commits", async () => {
     const root = await mkdtemp(join(tmpdir(), "pragma-default-agent-flow-draft-"));
     const project = createPragmaProjectStore({ projectsPath: join(root, "projects") });
     const adapter = createDesktopDefaultAgentProjectPort(
@@ -237,9 +237,59 @@ describe("Desktop DefaultAgent DSL project adapter", () => {
       ],
     });
     expect(graphComplete.diagnostics).toEqual([]);
+    await expect(adapter.validateFlowDraft(created.draftId)).resolves.toMatchObject({
+      resource: { metadata: { description } },
+      diagnostics: [],
+    });
+    await expect(
+      adapter.prepareFlowDraft({
+        draftId: created.draftId,
+        expectedDraftRevision: 2,
+        additionalSources: [evaluationSource(created.resource.metadata.id)],
+      }),
+    ).resolves.toMatchObject({
+      status: "invalid",
+      diagnostics: [expect.objectContaining({ code: "evaluation.independent_prepare_required" })],
+    });
+    const prepared = requirePrepared(
+      await adapter.prepareFlowDraft({
+        draftId: created.draftId,
+        expectedDraftRevision: 2,
+      }),
+    );
+    expect(prepared.changes).toEqual([
+      expect.objectContaining({
+        ref: expect.stringMatching(/^flow:[0-9a-hjkmnp-tv-z]{16}$/),
+        kind: "created",
+        source: expect.stringContaining(description),
+      }),
+    ]);
+    const directlyPrepared = requirePrepared(
+      await adapter.prepare({
+        expectedProjectRevision: 0,
+        sources: [prepared.changes[0]!.source],
+      }),
+    );
+    expect(directlyPrepared.changes).toEqual([
+      expect.objectContaining({
+        ref: prepared.changes[0]!.ref,
+        source: expect.stringContaining(description),
+      }),
+    ]);
+    await adapter.commit({ changeSetId: prepared.changeSetId, operationId: "commit-flow-draft" });
+    expect(await project.get()).toMatchObject({
+      revision: 1,
+      resources: [
+        expect.objectContaining({
+          kind: "Flow",
+          metadata: expect.objectContaining({ id: created.resource.metadata.id }),
+        }),
+      ],
+    });
+
     const evaluation = await adapter.createEvaluationDraft({
       mode: "create",
-      expectedProjectRevision: 0,
+      expectedProjectRevision: 1,
       metadata: {
         id: "7h8j9k0m1n2p3q4r",
         name: "Release approval run dry",
@@ -247,7 +297,6 @@ describe("Desktop DefaultAgent DSL project adapter", () => {
         tags: ["run-dry"],
       },
       targetRef: `flow:${created.resource.metadata.id}`,
-      targetFlowDraftId: created.draftId,
     });
     expect(evaluation.diagnostics).toEqual(
       expect.arrayContaining([expect.objectContaining({ code: "evaluation.draft.cases_empty" })]),
@@ -288,50 +337,31 @@ describe("Desktop DefaultAgent DSL project adapter", () => {
       suite: { passed: true, total: 1, passedCount: 1, failedCount: 0 },
       coverage: { missing: [] },
     });
-    await expect(adapter.validateFlowDraft(created.draftId)).resolves.toMatchObject({
-      resource: { metadata: { description } },
-      diagnostics: [],
-    });
-    const prepared = requirePrepared(
-      await adapter.prepareFlowDraft({
-        draftId: created.draftId,
-        expectedDraftRevision: 2,
-        evaluationDraft: {
-          draftId: evaluation.draftId,
-          expectedDraftRevision: evaluationWithCase.draftRevision,
-        },
+    const evaluationPrepared = requirePrepared(
+      await adapter.prepareEvaluationDraft({
+        draftId: evaluation.draftId,
+        expectedDraftRevision: evaluationWithCase.draftRevision,
       }),
     );
-    expect(prepared.changes).toEqual([
-      expect.objectContaining({
-        ref: expect.stringMatching(/^flow:[0-9a-hjkmnp-tv-z]{16}$/),
-        kind: "created",
-        source: expect.stringContaining(description),
-      }),
+    expect(evaluationPrepared.changes).toEqual([
       expect.objectContaining({
         ref: "evaluation:7h8j9k0m1n2p3q4r",
         kind: "created",
       }),
     ]);
-    const directlyPrepared = requirePrepared(
-      await adapter.prepare({
-        expectedProjectRevision: 0,
-        sources: [prepared.changes[0]!.source],
-      }),
-    );
-    expect(directlyPrepared.changes).toEqual([
-      expect.objectContaining({
-        ref: prepared.changes[0]!.ref,
-        source: expect.stringContaining(description),
-      }),
-    ]);
-    await adapter.commit({ changeSetId: prepared.changeSetId, operationId: "commit-flow-draft" });
-    expect((await project.get()).resources).toEqual(
+    await adapter.commit({
+      changeSetId: evaluationPrepared.changeSetId,
+      operationId: "commit-release-evaluation",
+    });
+    const snapshot = await project.get();
+    expect(snapshot.revision).toBe(2);
+    expect(snapshot.resources).toEqual(
       expect.arrayContaining([
+        expect.objectContaining({ kind: "Flow" }),
         expect.objectContaining({
-          kind: "Flow",
-          metadata: expect.objectContaining({
-            id: prepared.changes[0]!.ref.slice("flow:".length),
+          kind: "Evaluation",
+          spec: expect.objectContaining({
+            target: { ref: `flow:${created.resource.metadata.id}` },
           }),
         }),
       ]),
@@ -531,6 +561,64 @@ describe("Desktop DefaultAgent DSL project adapter", () => {
     });
   });
 
+  it("requires an Evaluation draft to target a committed Flow", async () => {
+    const root = await mkdtemp(join(tmpdir(), "pragma-default-agent-evaluation-target-"));
+    const project = createPragmaProjectStore({ projectsPath: join(root, "projects") });
+    const adapter = createDesktopDefaultAgentProjectPort(
+      adapterOptions(project, join(root, "state")),
+    );
+    const evaluation = await adapter.createEvaluationDraft({
+      mode: "create",
+      expectedProjectRevision: 0,
+      metadata: {
+        id: "7h8j9k0m1n2p3q4r",
+        name: "Uncommitted target",
+        description: "Must not attach to an uncommitted Flow draft.",
+        tags: [],
+      },
+      targetRef: "flow:8h9j0k1m2n3p4q5r",
+    });
+
+    expect(evaluation.diagnostics).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          severity: "error",
+          code: "evaluation.draft.target_missing",
+          message: expect.stringContaining("committed Flow"),
+        }),
+      ]),
+    );
+    await expect(
+      adapter.prepareEvaluationDraft({
+        draftId: evaluation.draftId,
+        expectedDraftRevision: evaluation.draftRevision,
+      }),
+    ).resolves.toMatchObject({
+      status: "invalid",
+      diagnostics: expect.arrayContaining([
+        expect.objectContaining({ code: "evaluation.draft.target_missing" }),
+      ]),
+    });
+  });
+
+  it("rejects Evaluation YAML through the generic prepare path", async () => {
+    const root = await mkdtemp(join(tmpdir(), "pragma-default-agent-evaluation-generic-"));
+    const project = createPragmaProjectStore({ projectsPath: join(root, "projects") });
+    const adapter = createDesktopDefaultAgentProjectPort(
+      adapterOptions(project, join(root, "state")),
+    );
+
+    await expect(
+      adapter.prepare({
+        expectedProjectRevision: 0,
+        sources: [evaluationSource("8h9j0k1m2n3p4q5r")],
+      }),
+    ).resolves.toMatchObject({
+      status: "invalid",
+      diagnostics: [expect.objectContaining({ code: "evaluation.independent_prepare_required" })],
+    });
+  });
+
   it("returns structured prepare diagnostics for malformed YAML", async () => {
     const root = await mkdtemp(join(tmpdir(), "pragma-default-agent-invalid-yaml-"));
     const project = createPragmaProjectStore({ projectsPath: join(root, "projects") });
@@ -599,6 +687,35 @@ function expert(description: string, runtimeRef: string, id = "1xddvess309a6gme"
     "  plugins: []",
     "  tools: []",
     "",
+  ].join("\n");
+}
+
+function evaluationSource(flowId: string): string {
+  return [
+    "apiVersion: pragma/v3",
+    "kind: Evaluation",
+    "metadata:",
+    "  id: 7h8j9k0m1n2p3q4r",
+    "  name: Run Dry test set",
+    "  description: Must be prepared separately.",
+    "  tags: []",
+    "spec:",
+    `  target: { ref: "flow:${flowId}" }`,
+    "  method:",
+    "    type: flow-run-dry",
+    "    cases:",
+    "      - id: ship",
+    "        name: Ship",
+    "        input: {}",
+    "        mocks:",
+    "          approve:",
+    "            expectInput: {}",
+    '            expectPrompt: "Release?"',
+    "            output: { selection: ship }",
+    "        expect:",
+    "          status: succeeded",
+    "          path: [approve]",
+    "          output: { selection: ship }",
   ].join("\n");
 }
 

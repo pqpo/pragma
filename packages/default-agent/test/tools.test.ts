@@ -69,6 +69,26 @@ describe("DefaultAgent managed tools", () => {
     ).rejects.toThrow();
   });
 
+  it("exposes independent Flow and Evaluation prepare-and-save paths", () => {
+    const tools = createDefaultAgentTools({ project: projectPort(), tasks: taskPort() });
+    const createEvaluation = tools.find(
+      (candidate) => candidate.name === "create_evaluation_draft",
+    )!;
+    const prepareFlow = tools.find((candidate) => candidate.name === "prepare_flow_draft")!;
+    const prepareEvaluation = tools.find(
+      (candidate) => candidate.name === "prepare_evaluation_draft",
+    )!;
+
+    expect(JSON.stringify(createEvaluation.inputSchema)).not.toContain("targetFlowDraftId");
+    expect(createEvaluation.description).toContain("committed Flow");
+    expect(createEvaluation.description).not.toContain("uncommitted Flow");
+    expect(JSON.stringify(prepareFlow.inputSchema)).not.toContain("evaluationDraft");
+    expect(prepareFlow.description).toContain("Evaluations are prepared and saved separately");
+    expect(prepareEvaluation.description).toContain("committed Flow");
+    expect(prepareEvaluation.description).toContain("commit_dsl_changes");
+    expect(prepareEvaluation.description).toContain("save only the Evaluation");
+  });
+
   it("returns compact draft summaries and caps update batches at 10 operations", async () => {
     const project = projectPort({
       async getEvaluationDraft() {

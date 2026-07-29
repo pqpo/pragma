@@ -199,7 +199,6 @@ export const DefaultAgentEvaluationDraftSchema = z.object({
   draftRevision: z.number().int().nonnegative(),
   resource: DefaultAgentEvaluationDraftResourceSchema,
   sourceEvaluationRef: PragmaEvaluationRefSchema.optional(),
-  targetFlowDraftId: z.string().uuid().optional(),
   diagnostics: z.array(DefaultAgentEvaluationDraftDiagnosticSchema),
   createdAt: z.string().datetime(),
   updatedAt: z.string().datetime(),
@@ -221,7 +220,6 @@ export const DefaultAgentEvaluationDraftSummarySchema = z.object({
   metadata: PragmaEvaluationMetadataSchema,
   targetRef: PragmaEvaluationFlowRefSchema,
   sourceEvaluationRef: PragmaEvaluationRefSchema.optional(),
-  targetFlowDraftId: z.string().uuid().optional(),
   cases: z.array(
     z.object({
       id: PragmaFlowRunDryCaseSchema.shape.id,

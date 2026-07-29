@@ -54,30 +54,28 @@ only the requested cases. Use its cumulative `coverage.missing` as the exact bac
 
 ## Incremental sequence
 
-1. Allocate IDs for both the Flow and its Evaluation in one `allocate_dsl_resource_ids` call.
-2. Create the Flow draft with the allocated Flow ID in `metadata.id`.
-3. Finish and validate the Flow graph.
-4. Call `create_evaluation_draft` in `create` mode with the allocated Evaluation metadata, exact
-   Flow ref, and `targetFlowDraftId`.
-5. Choose one uncovered path. Call `update_evaluation_draft` with one `upsert_case`, then call
+This workflow starts only after the target Flow has been committed. Creating or changing a Flow
+never creates an Evaluation implicitly.
+
+1. Read the existing committed Flow. For a new test set, allocate one Evaluation ID, then call
+   `create_evaluation_draft` in `create` mode with that metadata and the exact committed Flow ref.
+   To change an existing test set, call it in `edit` mode with the exact Evaluation ref.
+2. Choose one uncovered path. Call `update_evaluation_draft` with one `upsert_case`, then call
    `run_evaluation_draft` with only that case ID.
-6. If the case fails, read only that case, replace it, and rerun it. Do not author the next case
+3. If the case fails, read only that case, replace it, and rerun it. Do not author the next case
    until it passes.
-7. Repeat from cumulative `coverage.missing` until it is empty. If the user explicitly requests
+4. Repeat from cumulative `coverage.missing` until it is empty. If the user explicitly requests
    batch authoring, use 2–10 `upsert_case` operations and run those same 2–10 IDs; resolve all
    failures in that batch before continuing.
-8. Call `prepare_flow_draft` with the Flow and Evaluation draft IDs and exact draft revisions. The
-   Host reruns every case and rejects any assertion or coverage failure.
-9. Commit the returned change-set so Flow and Evaluation are created atomically.
+5. Call `prepare_evaluation_draft` with the Evaluation draft ID and exact draft revision. The Host
+   reruns every case and rejects assertion or coverage gaps.
+6. Pass the returned `changeSetId` to `commit_dsl_changes`. This is the submit-and-save operation
+   for the test set and commits only the canonical `evaluation:<id>` resource.
 
-For an existing Evaluation, call `create_evaluation_draft` in `edit` mode with its exact ref. Link
-the corresponding Flow draft when testing uncommitted Flow changes. Use
-`prepare_evaluation_draft` only when changing an Evaluation against an already committed Flow.
-Never report success until the committed revision includes the canonical `evaluation:<id>` ref.
+Never put Evaluation YAML in `prepare_flow_draft.additionalSources`. Never create a test set against
+an uncommitted Flow draft. Never report test-set success until `commit_dsl_changes` returns a
+committed revision containing the canonical Evaluation ref.
 
 Never build, resend, or request the complete Evaluation YAML during conversational authoring.
 `get_evaluation_draft` returns summaries by default; request at most 10 exact case IDs only when
 their full definitions are needed.
-
-When abandoning a linked Flow and Evaluation draft pair, call `discard_evaluation_draft` before
-`discard_flow_draft`. Do not leave an Evaluation draft pointing to a discarded Flow draft.

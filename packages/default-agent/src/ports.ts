@@ -62,13 +62,11 @@ export interface DefaultAgentDslProjectPort {
           readonly expectedProjectRevision: number;
           readonly metadata: DefaultAgentEvaluationDraft["resource"]["metadata"];
           readonly targetRef: DefaultAgentEvaluationDraft["resource"]["spec"]["target"]["ref"];
-          readonly targetFlowDraftId?: string | undefined;
         }
       | {
           readonly mode: "edit";
           readonly expectedProjectRevision: number;
           readonly evaluationRef: string;
-          readonly targetFlowDraftId?: string | undefined;
         },
   ): Promise<DefaultAgentEvaluationDraft>;
   getEvaluationDraft(draftId: string): Promise<DefaultAgentEvaluationDraft>;
@@ -89,10 +87,6 @@ export interface DefaultAgentDslProjectPort {
   prepareFlowDraft(input: {
     readonly draftId: string;
     readonly expectedDraftRevision: number;
-    readonly evaluationDraft: {
-      readonly draftId: string;
-      readonly expectedDraftRevision: number;
-    };
     readonly additionalSources?: readonly string[] | undefined;
   }): Promise<DefaultAgentPrepareResult>;
   discardFlowDraft(draftId: string): Promise<void>;

@@ -73,7 +73,6 @@ const EvaluationDraftRevisionInput = z.object({
 const PrepareFlowDraftInput = z.object({
   draftId: z.string().uuid(),
   expectedDraftRevision: z.number().int().nonnegative(),
-  evaluationDraft: EvaluationDraftRevisionInput,
   additionalSources: z.array(z.string().min(1).max(2_000_000)).max(49).optional(),
 });
 const CreateEvaluationDraftInput = z.discriminatedUnion("mode", [
@@ -82,13 +81,11 @@ const CreateEvaluationDraftInput = z.discriminatedUnion("mode", [
     expectedProjectRevision: z.number().int().nonnegative(),
     metadata: PragmaEvaluationMetadataSchema,
     targetRef: PragmaEvaluationFlowRefSchema,
-    targetFlowDraftId: z.string().uuid().optional(),
   }),
   z.object({
     mode: z.literal("edit"),
     expectedProjectRevision: z.number().int().nonnegative(),
     evaluationRef: PragmaEvaluationRefSchema,
-    targetFlowDraftId: z.string().uuid().optional(),
   }),
 ]);
 const EvaluationCaseIdsSchema = z
@@ -273,7 +270,7 @@ export function createDefaultAgentTools(options: {
     ),
     tool(
       "create_evaluation_draft",
-      "Create an empty incremental Evaluation draft or start editing one existing Evaluation. Link a Flow draft when testing uncommitted Flow changes.",
+      "Create an empty incremental Evaluation draft for a committed Flow, or start editing one existing Evaluation.",
       z.toJSONSchema(CreateEvaluationDraftInput),
       async (args) => {
         return ok(
@@ -321,7 +318,7 @@ export function createDefaultAgentTools(options: {
     ),
     tool(
       "prepare_evaluation_draft",
-      "Rerun and prepare a passing Evaluation draft for an existing Flow without emitting complete Evaluation YAML.",
+      "Rerun and independently prepare a passing Evaluation draft that targets a committed Flow. Pass the returned changeSetId to commit_dsl_changes to save only the Evaluation.",
       z.toJSONSchema(EvaluationDraftRevisionInput),
       async (args) =>
         ok(await options.project.prepareEvaluationDraft(EvaluationDraftRevisionInput.parse(args))),
@@ -337,7 +334,7 @@ export function createDefaultAgentTools(options: {
     ),
     tool(
       "prepare_flow_draft",
-      "Rerun a linked Evaluation draft and atomically prepare a structurally complete Flow, passing Evaluation, and optional Expert or Team YAML sources.",
+      "Prepare a structurally complete Flow and optional non-Evaluation dependency YAML sources. Evaluations are prepared and saved separately with prepare_evaluation_draft and commit_dsl_changes.",
       z.toJSONSchema(PrepareFlowDraftInput),
       async (args) => ok(await options.project.prepareFlowDraft(PrepareFlowDraftInput.parse(args))),
     ),
@@ -465,9 +462,6 @@ function summarizeEvaluationDraft(
     ...(draft.sourceEvaluationRef === undefined
       ? {}
       : { sourceEvaluationRef: draft.sourceEvaluationRef }),
-    ...(draft.targetFlowDraftId === undefined
-      ? {}
-      : { targetFlowDraftId: draft.targetFlowDraftId }),
     cases: draft.resource.spec.method.cases.map(({ id, name }) => ({ id, name })),
     diagnostics: draft.diagnostics,
     createdAt: draft.createdAt,

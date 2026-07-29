@@ -23,14 +23,18 @@ Human steps compared the original Flow input.
 - Define `expectPrompt` as the rendered prompt for Expert, Team, and Human steps.
 - Author Run Dry cases through a durable, independent Evaluation draft. Default to adding and
   testing one case at a time; explicit batch operations are bounded to 10 cases.
-- Create a new Flow and its Evaluation atomically by passing the Evaluation draft to
-  `prepare_flow_draft`. The Host reruns the complete suite and rejects assertion or coverage gaps.
+- Prepare and commit a Flow independently. After the commit, the authoring Agent asks whether to
+  create and run a test set; the user may skip.
+- Evaluation drafts target committed Flows only. Save one independently through
+  `prepare_evaluation_draft` followed by `commit_dsl_changes`; the Host reruns the complete suite
+  and rejects assertion or coverage gaps.
 - Expose Evaluation as a top-level Desktop Studio section. Reserve Dataset + LLM-as-Judge there
   without implementing it in this change.
 
 ## Consequences
 
-Flow drafts validate only Flow structure and data contracts. Evaluation edits no longer rewrite the
-Flow. Target references participate in project dependency checks, so a Flow cannot be deleted while
-an Evaluation targets it. Existing `spec.runDry` documents are intentionally rejected; this is a
-breaking `pragma/v3` cleanup with no compatibility branch.
+Flow drafts validate only Flow structure and data contracts and have no Evaluation prerequisite.
+Evaluation edits no longer rewrite the Flow. Target references participate in project dependency
+checks, so a Flow cannot be deleted while an Evaluation targets it. Existing `spec.runDry`
+documents are intentionally rejected; this is a breaking `pragma/v3` cleanup with no compatibility
+branch.
