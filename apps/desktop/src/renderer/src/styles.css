@@ -5483,6 +5483,77 @@ p {
   gap: 22px;
 }
 
+.evaluation-methods {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 12px;
+  margin-bottom: 20px;
+}
+
+.evaluation-methods article {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  min-height: 82px;
+  padding: 16px;
+  border: 1px solid var(--border);
+  border-radius: 14px;
+  background: var(--surface);
+}
+
+.evaluation-methods article > div {
+  display: grid;
+  gap: 4px;
+  min-width: 0;
+}
+
+.evaluation-methods article span {
+  color: var(--text-secondary);
+  font-size: 0.84rem;
+}
+
+.evaluation-methods article em {
+  margin-left: auto;
+  color: var(--text-secondary);
+  font-size: 0.75rem;
+  font-style: normal;
+}
+
+.evaluation-methods article.is-disabled {
+  opacity: 0.64;
+}
+
+.evaluation-create-controls {
+  display: flex;
+  flex: 0 0 auto;
+  align-items: flex-end;
+  gap: 10px;
+}
+
+.evaluation-create-controls label {
+  display: grid;
+  gap: 6px;
+  color: var(--text-secondary);
+  font-size: 0.75rem;
+  font-weight: 600;
+}
+
+.evaluation-create-controls select {
+  min-width: 180px;
+  min-height: 42px;
+  padding: 0 36px 0 12px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-control);
+  background: var(--surface);
+  color: var(--text);
+}
+
+.evaluation-create-controls select:focus-visible {
+  border-color: var(--green);
+  outline: 0;
+  box-shadow: 0 0 0 3px var(--focus-ring);
+}
+
 .flow-run-dry-heading {
   display: flex;
   align-items: flex-start;
@@ -7283,8 +7354,14 @@ p {
     gap: 16px;
   }
 
-  .pragma-resource-directory .studio-heading .primary-button {
+  .pragma-resource-directory .studio-heading .primary-button,
+  .pragma-resource-directory .evaluation-create-controls {
     align-self: flex-start;
+  }
+
+  .pragma-resource-directory .evaluation-create-controls {
+    align-items: stretch;
+    flex-direction: column;
   }
 
   .pragma-resource-directory .pragma-resource-row {

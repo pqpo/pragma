@@ -32,7 +32,7 @@ spec:
         - get_flow_draft
         - update_flow_draft
         - validate_flow_draft
-        - run_flow_draft_dry
+        - run_evaluation
         - prepare_flow_draft
         - discard_flow_draft
         - commit_dsl_changes

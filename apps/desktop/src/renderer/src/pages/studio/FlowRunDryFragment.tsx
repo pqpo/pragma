@@ -2,12 +2,14 @@ import { useState } from "react";
 import { useTranslation } from "react-i18next";
 import { ArrowLeft, CheckCircle, Play, Plus, Trash, XCircle } from "@phosphor-icons/react";
 import {
+  PragmaEvaluationResourceSchema,
   PragmaFlowRunDrySuiteSchema,
-  type PragmaFlowResource,
+  type PragmaEvaluationResource,
   type PragmaFlowRunDryCase,
   type PragmaFlowRunDrySuite,
   type PragmaFlowRunDrySuiteResult,
-} from "@pragma/interpreter/ast";
+} from "@pragma/evaluation/ast";
+import type { PragmaFlowResource } from "@pragma/interpreter/ast";
 
 import { errorMessage } from "../../lib/errors.ts";
 import { StudioScreenFrame } from "./StudioScreenFrame.tsx";
@@ -24,16 +26,31 @@ interface RunDryCaseDraft {
   readonly errorContains: string;
 }
 
+export function createRunDryTargetChangeState(targetRef: string) {
+  const draft = emptyCaseDraft(1);
+  return {
+    targetRef,
+    drafts: [draft] as readonly RunDryCaseDraft[],
+    selectedKey: draft.key,
+    result: null,
+    formError: null,
+  };
+}
+
 export function FlowRunDryFragment(props: {
-  readonly flow: PragmaFlowResource;
+  readonly evaluation: PragmaEvaluationResource;
+  readonly flows: readonly PragmaFlowResource[];
   readonly onBack: () => void;
-  readonly onSave: (runDry: PragmaFlowRunDrySuite) => Promise<void>;
-  readonly onRun: (flow: PragmaFlowResource) => Promise<PragmaFlowRunDrySuiteResult>;
+  readonly onSave: (evaluation: PragmaEvaluationResource) => Promise<void>;
+  readonly onRun: (evaluation: PragmaEvaluationResource) => Promise<PragmaFlowRunDrySuiteResult>;
 }) {
   const { t } = useTranslation("studio");
   const [drafts, setDrafts] = useState<readonly RunDryCaseDraft[]>(
-    (props.flow.spec.runDry?.cases ?? []).map(caseToDraft),
+    props.evaluation.spec.method.cases.map(caseToDraft),
   );
+  const [name, setName] = useState(props.evaluation.metadata.name);
+  const [description, setDescription] = useState(props.evaluation.metadata.description);
+  const [targetRef, setTargetRef] = useState(props.evaluation.spec.target.ref);
   const [selectedKey, setSelectedKey] = useState<string | null>(drafts[0]?.key ?? null);
   const [result, setResult] = useState<PragmaFlowRunDrySuiteResult | null>(null);
   const [busy, setBusy] = useState<"save" | "run" | null>(null);
@@ -62,21 +79,38 @@ export function FlowRunDryFragment(props: {
     setSelectedKey(next[Math.min(index, next.length - 1)]?.key ?? null);
     setResult(null);
   };
+  const changeTarget = (nextTargetRef: string) => {
+    if (nextTargetRef === targetRef) return;
+    if (!window.confirm(t("changeEvaluationTargetConfirm"))) return;
+    const next = createRunDryTargetChangeState(nextTargetRef);
+    setTargetRef(next.targetRef);
+    setDrafts(next.drafts);
+    setSelectedKey(next.selectedKey);
+    setResult(next.result);
+    setFormError(next.formError);
+  };
   const materialize = (): PragmaFlowRunDrySuite => {
     const cases = drafts.map(draftToCase);
     return PragmaFlowRunDrySuiteSchema.parse({ cases });
   };
+  const materializeEvaluation = (): PragmaEvaluationResource =>
+    PragmaEvaluationResourceSchema.parse({
+      ...props.evaluation,
+      metadata: {
+        ...props.evaluation.metadata,
+        name: name.trim(),
+        description: description.trim(),
+      },
+      spec: {
+        target: { ref: targetRef },
+        method: { type: "flow-run-dry", cases: materialize().cases },
+      },
+    });
   const run = async () => {
     setBusy("run");
     setFormError(null);
     try {
-      const runDry = materialize();
-      setResult(
-        await props.onRun({
-          ...props.flow,
-          spec: { ...props.flow.spec, runDry },
-        }),
-      );
+      setResult(await props.onRun(materializeEvaluation()));
     } catch (cause) {
       setResult(null);
       setFormError(errorMessage(cause));
@@ -88,7 +122,7 @@ export function FlowRunDryFragment(props: {
     setBusy("save");
     setFormError(null);
     try {
-      await props.onSave(materialize());
+      await props.onSave(materializeEvaluation());
     } catch (cause) {
       setFormError(errorMessage(cause));
     } finally {
@@ -103,14 +137,14 @@ export function FlowRunDryFragment(props: {
       header={
         <button className="back-link" type="button" onClick={props.onBack}>
           <ArrowLeft size={18} aria-hidden="true" />
-          {t("backFlowDetail")}
+          {t("backEvaluations")}
         </button>
       }
     >
       <header className="studio-heading flow-run-dry-heading">
         <div>
           <h1 id="flow-run-dry-heading">{t("runDryTitle")}</h1>
-          <p>{t("runDryDescription", { name: props.flow.metadata.name })}</p>
+          <p>{t("runDryDescription", { name })}</p>
         </div>
         <div className="detail-actions">
           <button className="secondary-button" type="button" onClick={addCase}>
@@ -136,6 +170,33 @@ export function FlowRunDryFragment(props: {
           </button>
         </div>
       </header>
+
+      <section className="flow-run-dry-editor" aria-label={t("evaluationIdentity")}>
+        <div className="form-grid two-columns">
+          <label>
+            <span>{t("evaluationName")}</span>
+            <input value={name} onChange={(event) => setName(event.target.value)} />
+          </label>
+          <label>
+            <span>{t("evaluationTarget")}</span>
+            <select value={targetRef} onChange={(event) => changeTarget(event.target.value)}>
+              {props.flows.map((flow) => (
+                <option key={flow.metadata.id} value={`flow:${flow.metadata.id}`}>
+                  {flow.metadata.name}
+                </option>
+              ))}
+            </select>
+          </label>
+        </div>
+        <label>
+          <span>{t("description")}</span>
+          <textarea
+            rows={3}
+            value={description}
+            onChange={(event) => setDescription(event.target.value)}
+          />
+        </label>
+      </section>
 
       <section className="flow-run-dry-coverage" aria-label={t("runDryCoverage")}>
         <div>

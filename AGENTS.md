@@ -90,6 +90,7 @@ tsconfig.base.json
 @pragma/server
 @pragma/core
 @pragma/interpreter
+@pragma/evaluation
 @pragma/default-agent
 @pragma/runtime-pi
 @pragma/runtime-codex
@@ -124,7 +125,8 @@ lib
 - `shared` 是最底层协议、领域模型和纯工具，不依赖任何运行环境层。
 - `client` 是浏览器/客户端 SDK，只依赖 `shared`，不直接碰 Server 内部实现或 Agent。
 - `core` 是专家 Agent 的执行抽象和 Runtime Adapter 边界，只依赖 `shared` 和 core 内部模块，不依赖具体 runtime、`client` 或 `server`。
-- `interpreter` 是 Pragma DSL 的语言实现，拥有 AST、解析、链接、校验、编译、扩展 registry 和 dump；可以依赖 `core` 的对象模型与执行抽象，但 `core` 不得反向依赖 `interpreter`。
+- `evaluation` 是独立测评领域包，拥有 Evaluation 协议、Run Dry 执行器与结果模型；只依赖 `core`，不依赖 `interpreter` 或应用层。
+- `interpreter` 是 Pragma DSL 的语言实现，拥有 AST、解析、链接、校验、编译、扩展 registry 和 dump；可以依赖 `evaluation` 和 `core`，但 `core` 与 `evaluation` 不得反向依赖 `interpreter`。
 - `default-agent` 是内置通用 Agent `Pragma` 的可复用产品能力包，拥有 DSL、Skill、descriptor/compiler、宿主端口和 managed tools；应用负责系统专家注册、Mission 存储、任务和 Runtime 适配。
 - `runtime-*` 是具体 Runtime Adapter 实现，依赖 `core`、`shared` 和该 runtime 自己的 SDK；不同 runtime 包相互独立。
 - `server` 是服务端控制面与基础设施层，可以依赖 `shared` 和 `core` 抽象。
@@ -136,7 +138,7 @@ apps/web    -> client -> shared
 apps/server -> server -> core -> shared
 apps/worker -> server -> runtime-* -> core -> shared
 apps/desktop    -> default-agent -> interpreter -> core -> shared
-apps/desktop    -> interpreter -> core -> shared
+apps/desktop    -> interpreter -> evaluation -> core -> shared
 apps/desktop    -> runtime-* -> core -> shared
 plugins/*   -> core -> shared
 examples    -> runtime-* / plugin-* / core -> shared
@@ -144,21 +146,22 @@ examples    -> runtime-* / plugin-* / core -> shared
 
 更具体地说：
 
-| 来源                     | 允许依赖                                                                                                   |
-| ------------------------ | ---------------------------------------------------------------------------------------------------------- |
-| `apps/web`               | `@pragma/shared`、`@pragma/client`                                                                         |
-| `apps/server`            | `@pragma/shared`、`@pragma/server`、`@pragma/core`                                                         |
-| `apps/worker`            | `@pragma/shared`、`@pragma/server`、`@pragma/core`、具体 `@pragma/runtime-*`                               |
-| `apps/desktop`           | `@pragma/shared`、`@pragma/core`、`@pragma/interpreter`、`@pragma/default-agent`、具体 `@pragma/runtime-*` |
-| `plugins/*`              | `@pragma/shared`、`@pragma/core`；不依赖 app、server、client 或具体 runtime                                |
-| `examples`               | `@pragma/core`、具体 `@pragma/runtime-*`、具体 `@pragma/plugin-*`                                          |
-| `packages/shared`        | 无内部 package 依赖；只允许运行时中立依赖                                                                  |
-| `packages/client`        | `@pragma/shared`                                                                                           |
-| `packages/server`        | `@pragma/shared`；需要编排时可依赖 `@pragma/core`                                                          |
-| `packages/core`          | `@pragma/shared`                                                                                           |
-| `packages/interpreter`   | `@pragma/shared`、`@pragma/core`；AST 子入口只使用运行时中立依赖                                           |
-| `packages/default-agent` | `@pragma/shared`、`@pragma/core`、`@pragma/interpreter`；`/contracts` 保持浏览器安全                       |
-| `packages/runtime/*`     | `@pragma/shared`、`@pragma/core`、该 runtime 自己的 SDK                                                    |
+| 来源                     | 允许依赖                                                                                                                         |
+| ------------------------ | -------------------------------------------------------------------------------------------------------------------------------- |
+| `apps/web`               | `@pragma/shared`、`@pragma/client`                                                                                               |
+| `apps/server`            | `@pragma/shared`、`@pragma/server`、`@pragma/core`                                                                               |
+| `apps/worker`            | `@pragma/shared`、`@pragma/server`、`@pragma/core`、具体 `@pragma/runtime-*`                                                     |
+| `apps/desktop`           | `@pragma/shared`、`@pragma/core`、`@pragma/evaluation`、`@pragma/interpreter`、`@pragma/default-agent`、具体 `@pragma/runtime-*` |
+| `plugins/*`              | `@pragma/shared`、`@pragma/core`；不依赖 app、server、client 或具体 runtime                                                      |
+| `examples`               | `@pragma/core`、具体 `@pragma/runtime-*`、具体 `@pragma/plugin-*`                                                                |
+| `packages/shared`        | 无内部 package 依赖；只允许运行时中立依赖                                                                                        |
+| `packages/client`        | `@pragma/shared`                                                                                                                 |
+| `packages/server`        | `@pragma/shared`；需要编排时可依赖 `@pragma/core`                                                                                |
+| `packages/core`          | `@pragma/shared`                                                                                                                 |
+| `packages/interpreter`   | `@pragma/shared`、`@pragma/core`；AST 子入口只使用运行时中立依赖                                                                 |
+| `packages/evaluation`    | `@pragma/core`；`/ast` 保持浏览器安全且不依赖 Interpreter                                                                        |
+| `packages/default-agent` | `@pragma/shared`、`@pragma/core`、`@pragma/interpreter`；`/contracts` 保持浏览器安全                                             |
+| `packages/runtime/*`     | `@pragma/shared`、`@pragma/core`、该 runtime 自己的 SDK                                                                          |
 
 明确禁止：
 
@@ -174,6 +177,7 @@ shared -> interpreter
 core -> client
 core -> server
 core -> interpreter
+evaluation -> interpreter
 core -> runtime-*
 runtime-pi -> runtime-codex
 runtime-pi -> runtime-claude-code
@@ -593,6 +597,24 @@ Expert API 设计要求：
 - 删除仍在支持窗口内的旧 DSL 迁移步骤属于兼容性 cutover，必须另写 ADR，并提供导出、备份或离线升级路径。
 
 禁止引入具体 Runtime Adapter、Desktop UI、Server 应用层、数据库实现或 Client SDK。
+
+### `packages/evaluation`
+
+职责：
+
+- 定义独立 `Evaluation` 资源、Run Dry case、mock、assertion 和结果协议。
+- 执行 Flow Run Dry 测评，并输出用例断言与转换覆盖率。
+- 为未来测评方式提供独立扩展边界，不把测评生命周期重新嵌入 Flow。
+
+边界要求：
+
+- 主入口 `@pragma/evaluation` 是 Node-only，可以依赖 `@pragma/core`。
+- `@pragma/evaluation/ast` 必须保持浏览器安全，只导出 Schema 和推导类型。
+- `Evaluation.spec.target.ref` 关联被测资源；Flow 不得包含 `spec.runDry`。
+- `expectInput` 对所有节点统一表示 case 原始 Flow input；渲染后的 Expert、Team、Human prompt
+  使用独立 `expectPrompt`。
+
+禁止依赖 `@pragma/interpreter`、具体 Runtime Adapter、Desktop UI、Server 应用层、数据库实现或 Client SDK。
 
 ### `packages/default-agent`
 

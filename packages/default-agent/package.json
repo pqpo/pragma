@@ -22,6 +22,7 @@
   },
   "dependencies": {
     "@pragma/core": "workspace:*",
+    "@pragma/evaluation": "workspace:*",
     "@pragma/interpreter": "workspace:*",
     "@pragma/shared": "workspace:*",
     "zod": "latest"

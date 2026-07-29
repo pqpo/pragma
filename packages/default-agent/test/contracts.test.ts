@@ -42,21 +42,8 @@ describe("Flow draft contracts", () => {
       DefaultAgentFlowDraftOperationSchema.safeParse({ type: "remove_loop", loopId: "   " })
         .success,
     ).toBe(false);
-    expect(
-      DefaultAgentFlowDraftOperationSchema.safeParse({
-        type: "set_run_dry",
-        runDry: {
-          cases: [
-            {
-              id: "happy",
-              name: "Happy path",
-              input: {},
-              mocks: { finish: { expectInput: {}, output: { ok: true } } },
-              expect: { status: "succeeded", path: ["finish"] },
-            },
-          ],
-        },
-      }).success,
-    ).toBe(true);
+    expect(DefaultAgentFlowDraftOperationSchema.safeParse({ type: "set_run_dry" }).success).toBe(
+      false,
+    );
   });
 });

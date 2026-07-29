@@ -1,13 +1,12 @@
 import {
   PragmaDiagnosticSchema,
   PragmaExpertIdSchema,
-  PragmaFlowResourceSchema,
-  PragmaFlowRunDrySuiteResultSchema,
   PragmaLockSchema,
   PragmaProjectChangeSetSchema,
   PragmaResourceRefSchema,
   PragmaResourceSchema,
 } from "@pragma/interpreter/ast";
+import { PragmaEvaluationResourceSchema } from "@pragma/evaluation/ast";
 import { z } from "zod";
 
 export const PragmaProjectSnapshotSchema = z.object({
@@ -65,10 +64,8 @@ export const PragmaYamlValidationResultSchema = z.object({
   diagnostics: z.array(PragmaDiagnosticSchema),
 });
 
-export const RunPragmaFlowDrySuiteSchema = z
+export const RunPragmaEvaluationSchema = z
   .object({
-    flow: PragmaFlowResourceSchema,
+    evaluation: PragmaEvaluationResourceSchema,
   })
   .strict();
-
-export { PragmaFlowRunDrySuiteResultSchema };

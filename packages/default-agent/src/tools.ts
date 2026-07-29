@@ -11,7 +11,8 @@ import type {
   DefaultAgentTaskPort,
 } from "./ports.ts";
 import { DefaultAgentFlowDraftOperationSchema, DefaultAgentFlowDraftSchema } from "./contracts.ts";
-import { PragmaFlowRunDrySuiteResultSchema, PragmaMetadataSchema } from "@pragma/interpreter/ast";
+import { PragmaFlowRunDrySuiteResultSchema } from "@pragma/evaluation";
+import { PragmaMetadataSchema } from "@pragma/interpreter/ast";
 
 const RefInput = z.object({ ref: z.string().min(1) });
 const PrepareInput = z.object({
@@ -33,6 +34,7 @@ const AllocateResourceIdsInput = z.object({
           "capability",
           "context-store",
           "runtime-profile",
+          "evaluation",
         ]),
       }),
     )
@@ -41,7 +43,7 @@ const AllocateResourceIdsInput = z.object({
 });
 const CreateFlowDraftInput = z.object({
   expectedProjectRevision: z.number().int().nonnegative(),
-  metadata: PragmaMetadataSchema.omit({ id: true }),
+  metadata: PragmaMetadataSchema,
   input: DefaultAgentFlowDraftSchema.shape.resource.shape.spec.shape.input.optional(),
   output: DefaultAgentFlowDraftSchema.shape.resource.shape.spec.shape.output.optional(),
   limits: DefaultAgentFlowDraftSchema.shape.resource.shape.spec.shape.limits.optional(),
@@ -55,6 +57,10 @@ const PrepareFlowDraftInput = z.object({
   draftId: z.string().uuid(),
   expectedDraftRevision: z.number().int().nonnegative(),
   additionalSources: z.array(z.string().min(1).max(2_000_000)).max(49).optional(),
+});
+const RunEvaluationInput = z.object({
+  source: z.string().min(1).max(2_000_000),
+  flowDraftId: z.string().uuid().optional(),
 });
 const TaskIdInput = z.object({ id: z.string().min(1) });
 const SubmitTaskInput = z.object({
@@ -219,19 +225,19 @@ export function createDefaultAgentTools(options: {
       async (args) => ok(await options.project.validateFlowDraft(DraftIdInput.parse(args).draftId)),
     ),
     tool(
-      "run_flow_draft_dry",
-      "Run every Flow draft unit case with mocked node outputs and report assertions plus transition coverage.",
-      z.toJSONSchema(DraftIdInput),
-      async (args) =>
-        ok(
-          PragmaFlowRunDrySuiteResultSchema.parse(
-            await options.project.runFlowDraftDry(DraftIdInput.parse(args).draftId),
-          ),
-        ),
+      "run_evaluation",
+      "Run one complete Evaluation YAML resource against its target Flow or an optional uncommitted Flow draft.",
+      z.toJSONSchema(RunEvaluationInput),
+      async (args) => {
+        const input = RunEvaluationInput.parse(args);
+        return ok(
+          PragmaFlowRunDrySuiteResultSchema.parse(await options.project.runEvaluation(input)),
+        );
+      },
     ),
     tool(
       "prepare_flow_draft",
-      "Materialize a complete Flow draft only after all run dry cases pass with full transition coverage, then atomically validate it with optional Expert or Team YAML sources.",
+      "Materialize a structurally complete Flow draft, then atomically validate it with optional Expert, Team, or Evaluation YAML sources.",
       z.toJSONSchema(PrepareFlowDraftInput),
       async (args) => ok(await options.project.prepareFlowDraft(PrepareFlowDraftInput.parse(args))),
     ),

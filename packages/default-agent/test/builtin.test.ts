@@ -41,7 +41,7 @@ describe("built-in Pragma Agent DSL", () => {
         getFlowDraft: unavailable,
         updateFlowDraft: unavailable,
         validateFlowDraft: unavailable,
-        runFlowDraftDry: unavailable,
+        runEvaluation: unavailable,
         prepareFlowDraft: unavailable,
         discardFlowDraft: unavailable,
         getChangeSet: unavailable,

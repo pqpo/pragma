@@ -8,8 +8,8 @@ In the diagrams below, `A -> B` means `A` may depend on `B`.
 apps/web    -> client -> shared
 apps/server -> server -> core -> shared
 apps/worker -> server -> runtime-* -> core -> shared
-apps/desktop    -> default-agent -> interpreter -> core -> shared
-apps/desktop    -> interpreter -> core -> shared
+apps/desktop    -> default-agent -> interpreter -> evaluation -> core -> shared
+apps/desktop    -> interpreter -> evaluation -> core -> shared
 apps/desktop    -> runtime-* -> core -> shared
 plugins/*   -> core -> shared
 examples    -> runtime-* / plugin-* / core -> shared
@@ -23,6 +23,7 @@ examples    -> runtime-* / plugin-* / core -> shared
 | `client`        | Browser/client SDKs and client-safe API access                                        |
 | `server`        | Node-only control plane and infrastructure boundaries                                 |
 | `core`          | Expert Agent execution abstractions and Runtime Adapter contracts                     |
+| `evaluation`    | Independent Evaluation contracts, Run Dry execution, assertions, and coverage         |
 | `interpreter`   | Pragma DSL AST, parser, validator, compiler, registries, and semantic dump            |
 | `default-agent` | Reusable built-in Pragma Agent DSL, Skill, descriptor/compiler, host ports, and tools |
 | `runtime-*`     | Concrete Runtime Adapter implementations                                              |
@@ -32,21 +33,22 @@ examples    -> runtime-* / plugin-* / core -> shared
 
 ## Dependency Matrix
 
-| Source                   | Allowed dependencies                                                                                                    |
-| ------------------------ | ----------------------------------------------------------------------------------------------------------------------- |
-| `apps/web`               | `shared/*`, `client/*`                                                                                                  |
-| `apps/server`            | `@pragma/shared`, `@pragma/server`, `@pragma/core`                                                                      |
-| `apps/worker`            | `@pragma/shared`, `@pragma/server`, `@pragma/core`, concrete `@pragma/runtime-*` packages                               |
-| `apps/desktop`           | `@pragma/shared`, `@pragma/core`, `@pragma/interpreter`, `@pragma/default-agent`, concrete `@pragma/runtime-*` packages |
-| `plugins/*`              | `@pragma/shared`, `@pragma/core`; no app, server, client, or concrete runtime dependencies                              |
-| `examples`               | `@pragma/core`, concrete `@pragma/runtime-*`, and concrete `@pragma/plugin-*` packages                                  |
-| `packages/shared`        | Runtime-neutral dependencies only                                                                                       |
-| `packages/client`        | `@pragma/shared`                                                                                                        |
-| `packages/server`        | `@pragma/shared`; orchestration code may depend on `@pragma/core`                                                       |
-| `packages/core`          | `@pragma/shared`                                                                                                        |
-| `packages/interpreter`   | `@pragma/shared`, `@pragma/core`; its `/ast` export remains browser-safe                                                |
-| `packages/default-agent` | `@pragma/shared`, `@pragma/core`, `@pragma/interpreter`; its `/contracts` export remains browser-safe                   |
-| `packages/runtime/*`     | `@pragma/shared`, `@pragma/core`, and that runtime's own SDKs                                                           |
+| Source                   | Allowed dependencies                                                                                                                          |
+| ------------------------ | --------------------------------------------------------------------------------------------------------------------------------------------- |
+| `apps/web`               | `shared/*`, `client/*`                                                                                                                        |
+| `apps/server`            | `@pragma/shared`, `@pragma/server`, `@pragma/core`                                                                                            |
+| `apps/worker`            | `@pragma/shared`, `@pragma/server`, `@pragma/core`, concrete `@pragma/runtime-*` packages                                                     |
+| `apps/desktop`           | `@pragma/shared`, `@pragma/core`, `@pragma/evaluation`, `@pragma/interpreter`, `@pragma/default-agent`, concrete `@pragma/runtime-*` packages |
+| `plugins/*`              | `@pragma/shared`, `@pragma/core`; no app, server, client, or concrete runtime dependencies                                                    |
+| `examples`               | `@pragma/core`, concrete `@pragma/runtime-*`, and concrete `@pragma/plugin-*` packages                                                        |
+| `packages/shared`        | Runtime-neutral dependencies only                                                                                                             |
+| `packages/client`        | `@pragma/shared`                                                                                                                              |
+| `packages/server`        | `@pragma/shared`; orchestration code may depend on `@pragma/core`                                                                             |
+| `packages/core`          | `@pragma/shared`                                                                                                                              |
+| `packages/evaluation`    | `@pragma/core`; its `/ast` export remains browser-safe and never depends on Interpreter                                                       |
+| `packages/interpreter`   | `@pragma/shared`, `@pragma/core`, `@pragma/evaluation`; its `/ast` export remains browser-safe                                                |
+| `packages/default-agent` | `@pragma/shared`, `@pragma/core`, `@pragma/interpreter`; its `/contracts` export remains browser-safe                                         |
+| `packages/runtime/*`     | `@pragma/shared`, `@pragma/core`, and that runtime's own SDKs                                                                                 |
 
 Cross-package imports must use `@pragma/*` names, not relative paths.
 

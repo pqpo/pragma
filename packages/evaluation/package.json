@@ -1,5 +1,5 @@
 {
-  "name": "@pragma/interpreter",
+  "name": "@pragma/evaluation",
   "version": "0.0.0",
   "private": true,
   "type": "module",
@@ -9,8 +9,8 @@
       "default": "./src/index.ts"
     },
     "./ast": {
-      "types": "./src/ast/index.ts",
-      "default": "./src/ast/index.ts"
+      "types": "./src/ast.ts",
+      "default": "./src/ast.ts"
     }
   },
   "scripts": {
@@ -21,11 +21,7 @@
     "clean": "rm -rf dist"
   },
   "dependencies": {
-    "@cfworker/json-schema": "^4.1.1",
     "@pragma/core": "workspace:*",
-    "@pragma/evaluation": "workspace:*",
-    "@pragma/shared": "workspace:*",
-    "yaml": "^2.9.0",
     "zod": "latest"
   },
   "devDependencies": {

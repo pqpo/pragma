@@ -1,29 +1,39 @@
-# Flow run dry cases
+# Flow Run Dry evaluations
 
-Every Flow created or changed by Pragma must include unit-style run dry cases. Run dry executes the
-real declarative graph semantics—input and output schemas, node result state, routing, bounded loops,
-terminal output, and assertions—without calling a model, waiting for a person, invoking an action, or
-starting a nested Flow.
+Store every Run Dry suite as an independent `Evaluation` resource. Never add `spec.runDry` to a
+Flow. An Evaluation targets one Flow by exact ref and can be changed, versioned, or reused without
+rewriting the Flow.
 
-## Case shape
+## Resource shape
 
-```yaml-fragment
+```yaml
+apiVersion: pragma/v3
+kind: Evaluation
+metadata:
+  id: 7h8j9k0m1n2p3q4r
+  name: Release approval Run Dry
+  description: Covers the approval and rejection paths.
+  tags: [run-dry, release]
 spec:
-  runDry:
+  target:
+    ref: flow:8h9j0k1m2n3p4q5r
+  method:
+    type: flow-run-dry
     cases:
       - id: approved
         name: Approved path
         input: { goal: Prepare a release }
         mocks:
           draft:
-            expectInput: "Draft a release for Prepare a release"
+            expectInput: { goal: Prepare a release }
+            expectPrompt: "Draft a release for Prepare a release"
             output: { status: ready, text: Release notes }
           decision:
             expectInput: { goal: Prepare a release }
             expectPrompt: "Approve Release notes?"
             output: { selection: approve }
           publish:
-            expectInput: { release: Release notes }
+            expectInput: { goal: Prepare a release }
             output: { published: true }
         expect:
           status: succeeded
@@ -31,58 +41,38 @@ spec:
           output: { published: true }
 ```
 
-- `id` is stable and uses the same identifier rules as Flow nodes.
-- `input` must satisfy `spec.input.schema`.
-- `mocks` is keyed by Flow node ID. Every visited node needs a mock with the exact `expectInput`
-  that production would pass to that node. This asserts prompt rendering and input mapping instead
-  of testing only the route chosen by a fabricated output.
-- Use `{ expectInput: ..., output: ... }` for a successful model, Team, nested Flow, action, or
-  Human Task result. Use `{ expectInput: ..., error: "..." }` to test an expected node failure.
-- A node visited more than once needs an ordered mock list. The first item is visit 1:
+## Mock semantics
 
-```yaml-fragment
-mocks:
-  evaluate:
-    - { expectInput: "Evaluate v1", output: { status: revise } }
-    - { expectInput: "Evaluate v2", output: { status: accepted } }
-```
+- `expectInput` always equals the case's original `input`, for every step kind. Do not put a
+  rendered prompt or mapped node input in `expectInput`.
+- `expectPrompt` equals the fully rendered prompt. It is required for Expert, ExpertTeam, and Human
+  steps and forbidden for steps with no prompt.
+- A successful outcome declares `output`; an expected node failure declares `error`.
+- A repeated node uses an ordered mock array. Every array item repeats the same case-level
+  `expectInput` and declares the prompt rendered for that visit.
+- Human output uses stable option values: `{ selection: approve }` or
+  `{ selection: [security, docs] }`.
+- Structured Expert or Team output must satisfy the step's `output.schema`.
+- Failed cases require `expect.errorContains`. Input validation may expect an empty path.
+- Treat a configuration assertion as a broken Evaluation, even when the case expects failure.
+  Mismatch diagnostics include both expected and actual values; use them directly.
 
-- Human Task mocks additionally require the rendered `expectPrompt`. They return the same stable
-  values as production: `{ output: { selection: approve } }` for single selection or
-  `{ output: { selection: [security, docs] } }` for multiple selection.
-- Structured Expert or Team mock output must satisfy that step's `output.schema`.
-- `expect.status` is `succeeded` or `failed`.
-- `expect.path` is the exact ordered node path, including repeated visits.
-- Add `expect.output` when the final value matters. It is compared structurally.
-- For an expected failure, `errorContains` is required so a different failure cannot satisfy the
-  case accidentally. An input-validation case may use an empty `expect.path`.
-- Missing mocks, wrong `expectInput`, and missing or wrong Human Task `expectPrompt` are test
-  configuration errors. They always fail the case, even if its expected status is `failed`.
+## Coverage
 
-## Coverage rule
+Cover every ordinary transition, route case, array branch, fallback, repeat, loop exit, and loop
+limit. Use `coverage.missing` from `run_evaluation` as the exact backlog.
 
-The whole suite must cover every declared transition outcome:
+## New Flow sequence
 
-- every ordinary or repeat transition;
-- every `route.cases` entry;
-- every array-route branch;
-- every declared fallback;
-- loop repeat and exit paths through the cases that select them;
-- the loop limit outcome, including its `onLimit` target or default failure.
+1. Allocate IDs for both the Flow and its Evaluation in one `allocate_dsl_resource_ids` call.
+2. Create the Flow draft with the allocated Flow ID in `metadata.id`.
+3. Finish and validate the Flow graph.
+4. Author the Evaluation YAML with the allocated Evaluation ID and the draft Flow ref.
+5. Call `run_evaluation` with `source` and `flowDraftId`.
+6. Fix every assertion and coverage gap.
+7. Call `prepare_flow_draft` with the Evaluation YAML in `additionalSources`.
+8. Commit the returned change-set so Flow and Evaluation are created atomically.
 
-One case rarely covers a branching Flow. Add the smallest independent case for each outcome, run
-`run_flow_draft_dry`, and use `coverage.missing` as the exact backlog. Do not add unreachable or
-meaningless mocks merely to silence coverage: repair the graph or write a realistic input/output
-scenario.
-
-## Required authoring sequence
-
-1. Finish the graph and contracts.
-2. Add `set_run_dry` with all current cases.
-3. Call `run_flow_draft_dry`.
-4. Fix failed status, path, output, schema, mock, and coverage results.
-5. Call `validate_flow_draft`.
-6. Call `prepare_flow_draft` only after the suite-level `passed` value is `true`.
-
-Never report a Flow as created successfully before its prepared change-set has passed run dry and
-been committed.
+For an existing Flow, call `run_evaluation` with only the complete Evaluation `source`, then use
+`prepare_dsl_changes` and `commit_dsl_changes`. Never report success until the Evaluation passes and
+the committed revision includes its canonical `evaluation:<id>` ref.

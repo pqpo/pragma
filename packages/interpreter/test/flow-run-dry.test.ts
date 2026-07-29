@@ -1,19 +1,21 @@
 import { describe, expect, it } from "vitest";
 
-import { PragmaFlowResourceSchema, type PragmaFlowResource } from "../src/ast/index.ts";
-import { runPragmaFlowDrySuite } from "../src/index.ts";
+import {
+  PragmaEvaluationResourceSchema,
+  type PragmaEvaluationResource,
+} from "@pragma/evaluation/ast";
 
-describe("Pragma Flow run dry", () => {
-  it("mocks expert and Human Task outputs while covering every route", () => {
-    const result = runPragmaFlowDrySuite(reviewFlow());
+import { PragmaFlowResourceSchema, type PragmaFlowResource } from "../src/ast/index.ts";
+import { runPragmaEvaluation } from "../src/index.ts";
+
+describe("Pragma Flow Evaluation integration", () => {
+  it("runs an independent Evaluation resource and covers every route", () => {
+    const { flow, evaluation } = reviewFixture();
+    const result = runPragmaEvaluation(flow, evaluation);
 
     expect(result.passed).toBe(true);
-    expect(result.summary).toEqual({ total: 3, passed: 3, failed: 0 });
+    expect(result.summary).toEqual({ total: 2, passed: 2, failed: 0 });
     expect(result.coverage.missing).toEqual([]);
-    expect(result.coverage.required).toContain("approve:case:approve");
-    expect(result.coverage.required).toContain("approve:case:revise");
-    expect(result.coverage.required).toContain("loop:refinement:repeat");
-    expect(result.coverage.required).toContain("loop:refinement:limit");
     expect(result.cases[0]).toMatchObject({
       passed: true,
       status: "succeeded",
@@ -22,133 +24,103 @@ describe("Pragma Flow run dry", () => {
     });
   });
 
-  it("fails a case when a repeated node has no mock for the next visit", () => {
-    const flow = reviewFlow();
-    flow.spec.runDry = {
-      cases: [
-        {
-          id: "missing-repeat",
-          name: "Missing repeat mock",
-          input: { goal: "Ship" },
-          mocks: {
-            draft: { expectInput: "Draft", output: { text: "v1" } },
-            approve: {
-              expectInput: { goal: "Ship" },
-              expectPrompt: "Approve?",
-              output: { selection: "revise" },
-            },
-            revise: { expectInput: "Revise", output: { text: "v2" } },
-          },
-          expect: {
-            status: "succeeded",
-            path: ["draft", "approve", "revise", "draft"],
-          },
-        },
-      ],
-    };
+  it("keeps Flow resources free of embedded evaluation cases", () => {
+    const { flow } = reviewFixture();
+    const parsed = PragmaFlowResourceSchema.safeParse({
+      ...flow,
+      spec: { ...flow.spec, runDry: { cases: [] } },
+    });
 
-    const result = runPragmaFlowDrySuite(flow);
+    expect(parsed.success).toBe(false);
+  });
 
-    expect(result.passed).toBe(false);
+  it("requires an Evaluation to target the supplied Flow", () => {
+    const { flow, evaluation } = reviewFixture();
+    const wrongTarget = {
+      ...evaluation,
+      spec: { ...evaluation.spec, target: { ref: "flow:9h0j1k2m3n4p5q6r" } },
+    } as PragmaEvaluationResource;
+
+    expect(() => runPragmaEvaluation(flow, wrongTarget)).toThrow(
+      "targets flow:9h0j1k2m3n4p5q6r",
+    );
+  });
+
+  it("uses the original Flow input for expectInput and a separate rendered expectPrompt", () => {
+    const { flow, evaluation } = reviewFixture();
+    const result = runPragmaEvaluation(flow, evaluation);
+
+    expect(result.cases[0]?.passed).toBe(true);
+    expect(result.cases[0]?.error).toBeUndefined();
+  });
+
+  it("reports expected and actual input values on mismatch", () => {
+    const { flow, evaluation } = reviewFixture();
+    const broken = withFirstMock(evaluation, {
+      expectInput: "rendered prompt",
+      expectPrompt: "Draft Ship",
+      output: { text: "Ready" },
+    });
+    const result = runPragmaEvaluation(flow, broken);
+
     expect(result.cases[0]).toMatchObject({
       passed: false,
       status: "failed",
-      path: ["draft", "approve", "revise", "draft"],
-      error: "Run dry mock is missing for step draft visit 2.",
-      assertions: expect.arrayContaining([
-        expect.objectContaining({ kind: "configuration", passed: false }),
-      ]),
+      error:
+        'Run dry mock expectInput does not match step draft visit 1: expected "rendered prompt", actual {"goal":"Ship"}.',
     });
   });
 
-  it("reports uncovered transitions even when every configured assertion passes", () => {
-    const flow = reviewFlow();
-    flow.spec.runDry = { cases: [flow.spec.runDry!.cases[0]!] };
-
-    const result = runPragmaFlowDrySuite(flow);
-
-    expect(result.cases[0]?.passed).toBe(true);
-    expect(result.passed).toBe(false);
-    expect(result.coverage.missing).toContain("approve:case:revise");
-  });
-
-  it("uses Core transition selection for every array-route operator and fallback", () => {
-    const result = runPragmaFlowDrySuite(arrayRouteFlow());
-
-    expect(result.passed).toBe(true);
-    expect(result.coverage.required).toEqual([
-      "decide:branch:all",
-      "decide:branch:any",
-      "decide:branch:none",
-      "decide:fallback",
-      "finish_all:next",
-      "finish_any:next",
-      "finish_fallback:next",
-      "finish_none:next",
-    ]);
-    expect(result.coverage.covered).toEqual(result.coverage.required);
-  });
-
-  it("supports an empty path for an expected Flow input validation failure", () => {
-    const flow = reviewFlow();
-    flow.spec.runDry = {
-      cases: [
-        {
-          id: "invalid-input",
-          name: "Reject invalid input",
-          input: {},
-          mocks: {},
-          expect: {
-            status: "failed",
-            path: [],
-            errorContains: "Flow input is invalid",
-          },
-        },
-        ...flow.spec.runDry!.cases,
-      ],
-    };
-
-    const result = runPragmaFlowDrySuite(flow);
-
-    expect(result.cases[0]).toMatchObject({
-      passed: true,
-      status: "failed",
-      path: [],
+  it("reports expected and actual prompts on mismatch", () => {
+    const { flow, evaluation } = reviewFixture();
+    const broken = withFirstMock(evaluation, {
+      expectInput: { goal: "Ship" },
+      expectPrompt: "Draft something else",
+      output: { text: "Ready" },
     });
+    const result = runPragmaEvaluation(flow, broken);
+
+    expect(result.cases[0]?.error).toBe(
+      'Run dry mock expectPrompt does not match step draft visit 1: expected "Draft something else", actual "Draft Ship".',
+    );
   });
 
-  it("rejects mocks without expected inputs and failed cases without an error assertion", () => {
-    const flow = reviewFlow();
-    const testCase = flow.spec.runDry!.cases[0]!;
+  it("rejects a prompt-bearing mock that omits expectPrompt", () => {
+    const { flow, evaluation } = reviewFixture();
+    const broken = withFirstMock(evaluation, {
+      expectInput: { goal: "Ship" },
+      output: { text: "Ready" },
+    });
+    const result = runPragmaEvaluation(flow, broken);
 
+    expect(result.cases[0]?.error).toBe(
+      "Prompt-bearing step draft mock must declare expectPrompt for visit 1.",
+    );
+  });
+
+  it("validates failed cases and required mock input at the Evaluation boundary", () => {
+    const { evaluation } = reviewFixture();
+    const first = evaluation.spec.method.cases[0]!;
     expect(
-      PragmaFlowResourceSchema.safeParse({
-        ...flow,
+      PragmaEvaluationResourceSchema.safeParse({
+        ...evaluation,
         spec: {
-          ...flow.spec,
-          runDry: {
-            cases: [
-              {
-                ...testCase,
-                mocks: { draft: { output: { text: "Ready" } } },
-              },
-            ],
+          ...evaluation.spec,
+          method: {
+            ...evaluation.spec.method,
+            cases: [{ ...first, mocks: { draft: { output: { text: "Ready" } } } }],
           },
         },
       }).success,
     ).toBe(false);
     expect(
-      PragmaFlowResourceSchema.safeParse({
-        ...flow,
+      PragmaEvaluationResourceSchema.safeParse({
+        ...evaluation,
         spec: {
-          ...flow.spec,
-          runDry: {
-            cases: [
-              {
-                ...testCase,
-                expect: { status: "failed", path: ["draft"] },
-              },
-            ],
+          ...evaluation.spec,
+          method: {
+            ...evaluation.spec.method,
+            cases: [{ ...first, expect: { status: "failed", path: ["draft"] } }],
           },
         },
       }).success,
@@ -156,8 +128,11 @@ describe("Pragma Flow run dry", () => {
   });
 });
 
-function reviewFlow(): PragmaFlowResource {
-  return PragmaFlowResourceSchema.parse({
+function reviewFixture(): {
+  readonly flow: PragmaFlowResource;
+  readonly evaluation: PragmaEvaluationResource;
+} {
+  const flow = PragmaFlowResourceSchema.parse({
     apiVersion: "pragma/v3",
     kind: "Flow",
     metadata: {
@@ -188,7 +163,12 @@ function reviewFlow(): PragmaFlowResource {
         steps: {
           draft: {
             expert: { ref: "expert:6h7j8k9m0n1p2q3r" },
-            prompt: { segments: [{ text: "Draft" }] },
+            prompt: {
+              segments: [
+                { text: "Draft " },
+                { variable: { source: "flow-input", path: ["goal"] } },
+              ],
+            },
             output: {
               schema: {
                 type: "object",
@@ -201,16 +181,18 @@ function reviewFlow(): PragmaFlowResource {
           approve: {
             human: {
               selectionMode: "single",
-              prompt: { segments: [{ text: "Approve?" }] },
+              prompt: {
+                segments: [
+                  { text: "Approve " },
+                  { variable: { source: "node-output", nodeId: "draft", path: ["text"] } },
+                  { text: "?" },
+                ],
+              },
               options: [
                 { value: "approve", label: "Approve" },
-                { value: "revise", label: "Revise" },
+                { value: "reject", label: "Reject" },
               ],
             },
-          },
-          revise: {
-            expert: { ref: "expert:6h7j8k9m0n1p2q3r" },
-            prompt: { segments: [{ text: "Revise" }] },
           },
           publish: {
             expert: { ref: "expert:6h7j8k9m0n1p2q3r" },
@@ -225,40 +207,53 @@ function reviewFlow(): PragmaFlowResource {
             },
           },
         },
-        loops: {
-          refinement: {
-            entry: "draft",
-            maxIterations: 2,
-            onLimit: { fail: "Review limit reached" },
-          },
-        },
+        loops: {},
         transitions: {
           draft: "approve",
           approve: {
             route: "selection",
-            cases: {
-              approve: "publish",
-              revise: "revise",
-            },
+            cases: { approve: "publish", reject: { fail: "Rejected" } },
           },
-          revise: { repeat: { loop: "refinement", goto: "draft" } },
           publish: { end: true },
         },
       },
-      runDry: {
+    },
+  });
+  const input = { goal: "Ship" };
+  const evaluation = PragmaEvaluationResourceSchema.parse({
+    apiVersion: "pragma/v3",
+    kind: "Evaluation",
+    metadata: {
+      id: "7h8j9k0m1n2p3q4r",
+      name: "Review Run Dry",
+      description: "Covers approval and rejection.",
+      tags: ["run-dry"],
+    },
+    spec: {
+      target: { ref: "flow:8h9j0k1m2n3p4q5r" },
+      method: {
+        type: "flow-run-dry",
         cases: [
           {
             id: "approve",
             name: "Approval path",
-            input: { goal: "Ship" },
+            input,
             mocks: {
-              draft: { expectInput: "Draft", output: { text: "Ready" } },
+              draft: {
+                expectInput: input,
+                expectPrompt: "Draft Ship",
+                output: { text: "Ready" },
+              },
               approve: {
-                expectInput: { goal: "Ship" },
-                expectPrompt: "Approve?",
+                expectInput: input,
+                expectPrompt: "Approve Ready?",
                 output: { selection: "approve" },
               },
-              publish: { expectInput: "Publish", output: { published: true } },
+              publish: {
+                expectInput: input,
+                expectPrompt: "Publish",
+                output: { published: true },
+              },
             },
             expect: {
               status: "succeeded",
@@ -267,148 +262,49 @@ function reviewFlow(): PragmaFlowResource {
             },
           },
           {
-            id: "revise",
-            name: "Revision path",
-            input: { goal: "Ship" },
+            id: "reject",
+            name: "Rejection path",
+            input,
             mocks: {
-              draft: [
-                { expectInput: "Draft", output: { text: "v1" } },
-                { expectInput: "Draft", output: { text: "v2" } },
-              ],
-              approve: [
-                {
-                  expectInput: { goal: "Ship" },
-                  expectPrompt: "Approve?",
-                  output: { selection: "revise" },
-                },
-                {
-                  expectInput: { goal: "Ship" },
-                  expectPrompt: "Approve?",
-                  output: { selection: "approve" },
-                },
-              ],
-              revise: { expectInput: "Revise", output: { text: "v2" } },
-              publish: { expectInput: "Publish", output: { published: true } },
-            },
-            expect: {
-              status: "succeeded",
-              path: ["draft", "approve", "revise", "draft", "approve", "publish"],
-              output: { published: true },
-            },
-          },
-          {
-            id: "limit",
-            name: "Revision limit",
-            input: { goal: "Ship" },
-            mocks: {
-              draft: [
-                { expectInput: "Draft", output: { text: "v1" } },
-                { expectInput: "Draft", output: { text: "v2" } },
-              ],
-              approve: [
-                {
-                  expectInput: { goal: "Ship" },
-                  expectPrompt: "Approve?",
-                  output: { selection: "revise" },
-                },
-                {
-                  expectInput: { goal: "Ship" },
-                  expectPrompt: "Approve?",
-                  output: { selection: "revise" },
-                },
-              ],
-              revise: [
-                { expectInput: "Revise", output: { text: "v2" } },
-                { expectInput: "Revise", output: { text: "v3" } },
-              ],
+              draft: {
+                expectInput: input,
+                expectPrompt: "Draft Ship",
+                output: { text: "Ready" },
+              },
+              approve: {
+                expectInput: input,
+                expectPrompt: "Approve Ready?",
+                output: { selection: "reject" },
+              },
             },
             expect: {
               status: "failed",
-              path: ["draft", "approve", "revise", "draft", "approve", "revise"],
-              errorContains: "Review limit reached",
+              path: ["draft", "approve"],
+              errorContains: "Rejected",
             },
           },
         ],
       },
     },
   });
+  return { flow, evaluation };
 }
 
-function arrayRouteFlow(): PragmaFlowResource {
-  const choices = [
-    { id: "all", values: ["a", "b"], destination: "finish_all" },
-    { id: "any", values: ["c"], destination: "finish_any" },
-    { id: "none", values: ["d"], destination: "finish_none" },
-  ] as const;
-  const cases = [
-    { id: "all", values: ["a", "b"], finish: "finish_all" },
-    { id: "any", values: ["c"], finish: "finish_any" },
-    { id: "none", values: ["x"], finish: "finish_none" },
-    { id: "fallback", values: ["d"], finish: "finish_fallback" },
-  ] as const;
-  return PragmaFlowResourceSchema.parse({
-    apiVersion: "pragma/v3",
-    kind: "Flow",
-    metadata: {
-      id: "9h0j1k2m3n4p5q6r",
-      name: "Array route",
-      description: "Exercises array route operators.",
-      tags: [],
-    },
+function withFirstMock(
+  evaluation: PragmaEvaluationResource,
+  mock: Record<string, unknown>,
+): PragmaEvaluationResource {
+  const first = evaluation.spec.method.cases[0]!;
+  return PragmaEvaluationResourceSchema.parse({
+    ...evaluation,
     spec: {
-      graph: {
-        start: "decide",
-        steps: Object.fromEntries(
-          ["decide", "finish_all", "finish_any", "finish_none", "finish_fallback"].map((id) => [
-            id,
-            {
-              expert: { ref: "expert:6h7j8k9m0n1p2q3r" },
-              prompt: { segments: [{ text: id }] },
-            },
-          ]),
-        ),
-        loops: {},
-        transitions: {
-          decide: {
-            route: "values",
-            branches: choices.map((choice) => ({
-              ...choice,
-              operator:
-                choice.id === "all"
-                  ? "contains_all"
-                  : choice.id === "any"
-                    ? "contains_any"
-                    : "contains_none",
-            })),
-            fallback: "finish_fallback",
-          },
-          finish_all: { end: true },
-          finish_any: { end: true },
-          finish_none: { end: true },
-          finish_fallback: { end: true },
-        },
-      },
-      runDry: {
-        cases: cases.map((testCase) => ({
-          id: testCase.id,
-          name: testCase.id,
-          input: {},
-          mocks: {
-            decide: {
-              expectInput: "decide",
-              output: { values: testCase.values },
-            },
-            [testCase.finish]: {
-              expectInput: testCase.finish,
-              output: { result: testCase.id },
-            },
-          },
-          expect: {
-            status: "succeeded",
-            path: ["decide", testCase.finish],
-            output: { result: testCase.id },
-          },
-        })),
+      ...evaluation.spec,
+      method: {
+        ...evaluation.spec.method,
+        cases: [
+          { ...first, mocks: { ...first.mocks, draft: mock } },
+          ...evaluation.spec.method.cases.slice(1),
+        ],
       },
     },
   });

@@ -12,7 +12,7 @@ import type {
   DefaultAgentTaskWorkItem,
   DefaultAgentAutomationSummary,
 } from "./contracts.ts";
-import type { PragmaFlowRunDrySuiteResult } from "@pragma/interpreter/ast";
+import type { PragmaFlowRunDrySuiteResult } from "@pragma/evaluation/ast";
 
 export interface DefaultAgentDslProjectPort {
   allocateResourceIds(
@@ -25,7 +25,8 @@ export interface DefaultAgentDslProjectPort {
         | "automation"
         | "capability"
         | "context-store"
-        | "runtime-profile";
+        | "runtime-profile"
+        | "evaluation";
     }[],
   ): Promise<readonly { readonly key: string; readonly id: string; readonly ref: string }[]>;
   list(): Promise<{
@@ -40,7 +41,7 @@ export interface DefaultAgentDslProjectPort {
   }): Promise<DefaultAgentPrepareResult>;
   createFlowDraft(input: {
     readonly expectedProjectRevision: number;
-    readonly metadata: Omit<DefaultAgentFlowDraft["resource"]["metadata"], "id">;
+    readonly metadata: DefaultAgentFlowDraft["resource"]["metadata"];
     readonly input?: DefaultAgentFlowDraft["resource"]["spec"]["input"] | undefined;
     readonly output?: DefaultAgentFlowDraft["resource"]["spec"]["output"] | undefined;
     readonly limits?: DefaultAgentFlowDraft["resource"]["spec"]["limits"] | undefined;
@@ -52,7 +53,10 @@ export interface DefaultAgentDslProjectPort {
     readonly operations: readonly DefaultAgentFlowDraftOperation[];
   }): Promise<DefaultAgentFlowDraft>;
   validateFlowDraft(draftId: string): Promise<DefaultAgentFlowDraft>;
-  runFlowDraftDry(draftId: string): Promise<PragmaFlowRunDrySuiteResult>;
+  runEvaluation(input: {
+    readonly source: string;
+    readonly flowDraftId?: string | undefined;
+  }): Promise<PragmaFlowRunDrySuiteResult>;
   prepareFlowDraft(input: {
     readonly draftId: string;
     readonly expectedDraftRevision: number;

@@ -197,6 +197,7 @@ describe("Desktop DefaultAgent DSL project adapter", () => {
     const created = await adapter.createFlowDraft({
       expectedProjectRevision: 0,
       metadata: {
+        id: "8h9j0k1m2n3p4q5r",
         name: "Release Gate",
         description,
         tags: [],
@@ -234,46 +235,36 @@ describe("Desktop DefaultAgent DSL project adapter", () => {
         { type: "set_transition", stepId: "approve", transition: { end: true } },
       ],
     });
-    expect(graphComplete.diagnostics).toEqual(
-      expect.arrayContaining([
-        expect.objectContaining({
-          severity: "incomplete",
-          code: "flow.run_dry.cases_missing",
-        }),
-      ]),
-    );
-    const complete = await adapter.updateFlowDraft({
-      draftId: created.draftId,
-      expectedDraftRevision: 2,
-      operations: [
-        {
-          type: "set_run_dry",
-          runDry: {
-            cases: [
-              {
-                id: "ship",
-                name: "Ship release",
-                input: {},
-                mocks: {
-                  approve: {
-                    expectInput: {},
-                    expectPrompt: "Release?",
-                    output: { selection: "ship" },
-                  },
-                },
-                expect: {
-                  status: "succeeded",
-                  path: ["approve"],
-                  output: { selection: "ship" },
-                },
-              },
-            ],
-          },
-        },
-      ],
-    });
-    expect(complete.diagnostics).toEqual([]);
-    await expect(adapter.runFlowDraftDry(created.draftId)).resolves.toMatchObject({
+    expect(graphComplete.diagnostics).toEqual([]);
+    const evaluationSource = `apiVersion: pragma/v3
+kind: Evaluation
+metadata:
+  id: 7h8j9k0m1n2p3q4r
+  name: Release approval run dry
+  description: Verifies the release approval path.
+  tags: [run-dry]
+spec:
+  target:
+    ref: flow:${created.resource.metadata.id}
+  method:
+    type: flow-run-dry
+    cases:
+      - id: ship
+        name: Ship release
+        input: {}
+        mocks:
+          approve:
+            expectInput: {}
+            expectPrompt: Release?
+            output: { selection: ship }
+        expect:
+          status: succeeded
+          path: [approve]
+          output: { selection: ship }
+`;
+    await expect(
+      adapter.runEvaluation({ source: evaluationSource, flowDraftId: created.draftId }),
+    ).resolves.toMatchObject({
       passed: true,
       summary: { total: 1, passed: 1, failed: 0 },
       coverage: { missing: [] },
@@ -285,7 +276,8 @@ describe("Desktop DefaultAgent DSL project adapter", () => {
     const prepared = requirePrepared(
       await adapter.prepareFlowDraft({
         draftId: created.draftId,
-        expectedDraftRevision: 3,
+        expectedDraftRevision: 2,
+        additionalSources: [evaluationSource],
       }),
     );
     expect(prepared.changes).toEqual([
@@ -293,6 +285,10 @@ describe("Desktop DefaultAgent DSL project adapter", () => {
         ref: expect.stringMatching(/^flow:[0-9a-hjkmnp-tv-z]{16}$/),
         kind: "created",
         source: expect.stringContaining(description),
+      }),
+      expect.objectContaining({
+        ref: "evaluation:7h8j9k0m1n2p3q4r",
+        kind: "created",
       }),
     ]);
     const directlyPrepared = requirePrepared(
@@ -367,6 +363,7 @@ describe("Desktop DefaultAgent DSL project adapter", () => {
     const created = await adapter.createFlowDraft({
       expectedProjectRevision: 1,
       metadata: {
+        id: "9h0j1k2m3n4p5q6r",
         name: "Parent",
         description: "Passes its typed input to a child Flow.",
         tags: [],

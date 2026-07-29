@@ -37,6 +37,7 @@
     "@pragma/runtime-qodercli": "workspace:*",
     "@pragma/shared": "workspace:*",
     "@pragma/default-agent": "workspace:*",
+    "@pragma/evaluation": "workspace:*",
     "@xyflow/react": "^12.11.2",
     "croner": "^10.0.1",
     "fflate": "^0.8.2",

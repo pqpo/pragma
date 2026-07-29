@@ -38,17 +38,20 @@ describe("DefaultAgent managed tools", () => {
 
   it("validates run dry results before returning them through the managed-tool boundary", async () => {
     const project = projectPort({
-      async runFlowDraftDry() {
+      async runEvaluation() {
         return {} as never;
       },
     });
     const tool = createDefaultAgentTools({ project, tasks: taskPort() }).find(
-      (candidate) => candidate.name === "run_flow_draft_dry",
+      (candidate) => candidate.name === "run_evaluation",
     )!;
 
     await expect(
       tool.call(
-        { draftId: "ed1bcbb5-b1e6-4aa5-9357-7853ce745f6b" },
+        {
+          source:
+            "apiVersion: pragma/v3\nkind: Evaluation\nmetadata:\n  id: 7h8j9k0m1n2p3q4r\n  name: Test\n  description: Test evaluation.\nspec:\n  target: { ref: flow:8h9j0k1m2n3p4q5r }\n  method:\n    type: flow-run-dry\n    cases: []\n",
+        },
         undefined,
         undefined,
       ),
@@ -112,7 +115,7 @@ function projectPort(
     validateFlowDraft: async () => {
       throw new Error("unused");
     },
-    runFlowDraftDry: async () => {
+    runEvaluation: async () => {
       throw new Error("unused");
     },
     prepareFlowDraft: async () => {

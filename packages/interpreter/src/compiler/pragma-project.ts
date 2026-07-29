@@ -2208,6 +2208,14 @@ function resourceDependencyEntries(resource: PragmaResource): ResourceDependency
       },
     ];
   }
+  if (resource.kind === "Evaluation") {
+    return [
+      {
+        ref: resource.spec.target.ref,
+        path: ["spec", "target", "ref"],
+      },
+    ];
+  }
   return [];
 }
 

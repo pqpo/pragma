@@ -198,7 +198,6 @@ describe("PragmaResourceDetailFragment", () => {
         project={project}
         onBack={() => undefined}
         onEdit={() => undefined}
-        onRunDry={() => undefined}
         onDelete={async () => undefined}
       />,
     );
@@ -246,7 +245,6 @@ describe("PragmaResourceDetailFragment", () => {
         project={project}
         onBack={() => undefined}
         onEdit={() => undefined}
-        onRunDry={() => undefined}
         onDelete={async () => undefined}
       />,
     );

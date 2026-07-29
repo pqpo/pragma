@@ -6,6 +6,7 @@ Canonical semantic refs have the form `<kind>:<id>`:
 expert:1h2j3k4m5n6p7q8r
 team:2h3j4k5m6n7p8q9r
 flow:3h4j5k6m7n8p9q0r
+evaluation:8h9j0k1m2n3p4q5r
 automation:4h5j6k7m8n9p0q1r
 capability:5h6j7k8m9n0p1q2r
 context-store:6h7j8k9m0n1p2q3r

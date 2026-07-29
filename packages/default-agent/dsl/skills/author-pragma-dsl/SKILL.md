@@ -1,6 +1,6 @@
 ---
 name: author-pragma-dsl
-description: Create and update validated pragma/v3 Expert, ExpertTeam, Flow, and Automation resources. Use when a user asks Pragma to create, change, configure, or repair an Expert, team, Flow, schedule, trigger, or Automation in the current Pragma project.
+description: Create and update validated pragma/v3 Expert, ExpertTeam, Flow, Evaluation, and Automation resources. Use when a user asks Pragma to create, change, configure, test, evaluate, or repair an Expert, team, Flow, Run Dry suite, schedule, trigger, or Automation in the current Pragma project.
 ---
 
 # Author Pragma DSL
@@ -24,18 +24,17 @@ source of truth and use only the Pragma DSL tools to inspect, validate, and save
 5. Before authoring any new resource, call `allocate_dsl_resource_ids` once for the complete set and
    use the returned Host-generated IDs and exact references. Preserve IDs when editing; never invent,
    copy, or change an ID.
-6. For every Flow creation or non-trivial Flow edit, call `create_flow_draft`. Build it in small
-   batches with `update_flow_draft`: contracts, steps, start, transitions, loops, then run dry cases.
-   Read the returned diagnostics after every batch.
-7. Create run dry cases for every Flow without waiting for the user to ask. Mock every visited
-   Expert, Team, nested Flow, action, and Human Task with its exact expected input; Human Tasks also
-   assert the rendered prompt. Cover every declared transition outcome, including route cases,
-   array branches, fallbacks, loop repeats, exits, and loop limits. Read
-   [references/run-dry.md](references/run-dry.md), call `run_flow_draft_dry`, and fix every failed
-   assertion, configuration error, or missing coverage item.
-8. Call `validate_flow_draft`, then call `prepare_flow_draft` only when every run dry case passes,
-   transition coverage is complete, and the draft has no incomplete or error diagnostics. Include
-   any new Expert or ExpertTeam YAML in `additionalSources` so the final change remains atomic.
+6. For every Flow creation or non-trivial Flow edit, allocate both Flow and Evaluation IDs, then
+   call `create_flow_draft` with the allocated Flow ID. Build the Flow in small batches with
+   `update_flow_draft`: contracts, steps, start, transitions, and loops. Read diagnostics after every
+   batch. Flow drafts never contain Run Dry cases.
+7. Create an independent `Evaluation` for every Flow without waiting for the user to ask. Read
+   [references/run-dry.md](references/run-dry.md). Keep `expectInput` equal to the case's original
+   Flow input for every step; use `expectPrompt` for rendered Expert, Team, and Human prompts. Call
+   `run_evaluation` and fix every assertion, configuration error, or coverage gap.
+8. Call `validate_flow_draft`, then call `prepare_flow_draft` only when the draft is structurally
+   complete and the separate Evaluation passes. Include the Evaluation plus any new Expert or
+   ExpertTeam YAML in `additionalSources` so the final change remains atomic.
    Use `prepare_dsl_changes` directly only for complete non-Flow resources. Its `sources` input is
    always an array with one complete YAML document per item, even for one resource.
 9. Fix every diagnostic. Never bypass validation or hand-edit project files. If the project
@@ -45,7 +44,8 @@ source of truth and use only the Pragma DSL tools to inspect, validate, and save
 11. After the tool returns, always report success or failure, the committed project revision, and
     the changed canonical refs.
 
-Before preparing, verify that every new ID came from `allocate_dsl_resource_ids`, every project ref
+Before preparing, verify that every new ID came from `allocate_dsl_resource_ids`, every Evaluation
+targets an exact Flow ref, every project ref
 was read, every ContextStore mount declares `ref`, `namespace`, and `required`, and no existing
 RuntimeProfile, Capability, or ContextStore is repeated in `sources`. Follow diagnostic `source` and
 `path` values literally; never invent a field derivation rule to work around validation.
