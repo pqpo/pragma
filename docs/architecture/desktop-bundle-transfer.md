@@ -1,7 +1,7 @@
 # Desktop Bundle Transfer
 
 Pragma Desktop can export one custom Expert, Expert Team, or Flow from Studio as a
-`.pragma.bundle`. The file is an ordinary ZIP archive intended for transfer between computers.
+`.pragma`. The file is an ordinary ZIP archive intended for transfer between computers.
 
 ## Export
 
@@ -22,7 +22,7 @@ local paths are excluded.
 
 ## Import
 
-Use **Import** in Studio and choose a `.pragma.bundle`. Desktop validates the ZIP, file hashes,
+Use **Import** in Studio and choose a `.pragma` file. Desktop validates the ZIP, file hashes,
 Pragma YAML, and lock before writing local state.
 
 If resources conflict, choose explicitly:

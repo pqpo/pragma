@@ -32,7 +32,6 @@ type BundleExportRoot = Extract<
   { kind: "Expert" | "ExpertTeam" | "Flow" }
 >;
 
-const BUNDLE_EXPORT_ROOT_LIMIT = 5;
 const bundleExportRootCollator = new Intl.Collator(undefined, {
   numeric: true,
   sensitivity: "base",
@@ -65,12 +64,9 @@ export function filterBundleExportRoots(
   roots: readonly BundleExportRoot[],
   query: string,
   kindLabel: (kind: BundleExportRoot["kind"]) => string = (kind) => kind,
-): {
-  readonly items: readonly BundleExportRoot[];
-  readonly matchCount: number;
-} {
+): readonly BundleExportRoot[] {
   const normalizedQuery = query.trim().toLocaleLowerCase();
-  const matches = roots.filter((resource) => {
+  return roots.filter((resource) => {
     if (normalizedQuery === "") return true;
     return [
       resource.metadata.name,
@@ -81,10 +77,6 @@ export function filterBundleExportRoots(
       kindLabel(resource.kind),
     ].some((value) => value.toLocaleLowerCase().includes(normalizedQuery));
   });
-  return {
-    items: matches.slice(0, BUNDLE_EXPORT_ROOT_LIMIT),
-    matchCount: matches.length,
-  };
 }
 
 export function PragmaBundleDialog(props: {
@@ -303,7 +295,7 @@ export function PragmaBundleDialog(props: {
             <p>{mode === "export" ? t("bundleExportDescription") : t("bundleImportDescription")}</p>
           </div>
           <button
-            className="icon-button"
+            className="pragma-bundle-close"
             type="button"
             aria-label={t("close")}
             disabled={busy}
@@ -504,7 +496,6 @@ function BundleExportRootPicker(props: {
         ? t("bundleRootExpertTeam")
         : t("bundleRootFlow");
   const filtered = filterBundleExportRoots(props.roots, search, kindLabel);
-  const hiddenCount = filtered.matchCount - filtered.items.length;
   const SelectedIcon = selected === undefined ? Archive : bundleRootIcon(selected.kind);
 
   useEffect(() => {
@@ -582,13 +573,13 @@ function BundleExportRootPicker(props: {
               />
             </label>
             <div className="pragma-bundle-root-options" aria-label={t("bundleExportObjects")}>
-              {filtered.items.length === 0 ? (
+              {filtered.length === 0 ? (
                 <p className="pragma-bundle-root-empty">
                   <strong>{t("bundleNoExportObjectMatches")}</strong>
                   <span>{t("bundleTryAnotherSearch")}</span>
                 </p>
               ) : null}
-              {filtered.items.map((resource) => {
+              {filtered.map((resource) => {
                 const ref = canonicalPragmaResourceRef(resource);
                 const RootIcon = bundleRootIcon(resource.kind);
                 const isSelected = ref === props.value;
@@ -628,11 +619,6 @@ function BundleExportRootPicker(props: {
                 );
               })}
             </div>
-            {hiddenCount > 0 ? (
-              <p className="pragma-bundle-root-more">
-                {t("bundleMoreObjectsHidden", { count: hiddenCount })}
-              </p>
-            ) : null}
           </div>
         ) : null}
       </div>

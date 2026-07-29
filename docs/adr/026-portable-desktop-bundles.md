@@ -16,7 +16,7 @@ conflict handling, schema validation, and recovery unsafe.
 
 ## Decision
 
-Desktop exports a standard ZIP archive with the `.pragma.bundle` extension. Version 1 contains:
+Desktop exports a standard ZIP archive with the `.pragma` extension. Version 1 contains:
 
 ```text
 bundle.json

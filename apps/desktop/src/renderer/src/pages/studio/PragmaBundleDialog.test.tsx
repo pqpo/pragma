@@ -28,14 +28,13 @@ describe("Bundle export root search", () => {
   const kindLabel = (kind: ExportRoot["kind"]): string =>
     kind === "Expert" ? "专家" : kind === "ExpertTeam" ? "专家团" : "Flow";
 
-  it("limits the default list while searching the full resource catalog", () => {
+  it("keeps the full result set available to the scrollable list", () => {
     const initial = filterBundleExportRoots(roots, "", kindLabel);
-    expect(initial.items).toHaveLength(5);
-    expect(initial.matchCount).toBe(50);
+    expect(initial).toHaveLength(50);
 
     const exact = filterBundleExportRoots(roots, "Resource 49", kindLabel);
-    expect(exact.matchCount).toBe(1);
-    expect(exact.items[0]?.metadata.name).toBe("Resource 49");
+    expect(exact).toHaveLength(1);
+    expect(exact[0]?.metadata.name).toBe("Resource 49");
   });
 
   it("orders an unstable project resource list predictably", () => {
@@ -50,11 +49,10 @@ describe("Bundle export root search", () => {
 
   it("searches localized kinds, resource refs, descriptions, and tags", () => {
     const teams = filterBundleExportRoots(roots, "专家团", kindLabel);
-    expect(teams.items).toHaveLength(5);
-    expect(teams.matchCount).toBe(17);
+    expect(teams).toHaveLength(17);
 
-    expect(filterBundleExportRoots(roots, "portable workflow resource 31").matchCount).toBe(1);
-    expect(filterBundleExportRoots(roots, "release-42").matchCount).toBe(1);
-    expect(filterBundleExportRoots(roots, "expert:0000000000000009").matchCount).toBe(1);
+    expect(filterBundleExportRoots(roots, "portable workflow resource 31")).toHaveLength(1);
+    expect(filterBundleExportRoots(roots, "release-42")).toHaveLength(1);
+    expect(filterBundleExportRoots(roots, "expert:0000000000000009")).toHaveLength(1);
   });
 });

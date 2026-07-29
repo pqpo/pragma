@@ -142,8 +142,8 @@ export async function readPragmaBundle(
   sourcePath: string,
   externalResourceRefs?: ReadonlySet<string>,
 ): Promise<BundleArchive> {
-  if (!sourcePath.toLowerCase().endsWith(".pragma.bundle")) {
-    throw new Error("Select a .pragma.bundle file.");
+  if (!sourcePath.toLowerCase().endsWith(".pragma")) {
+    throw new Error("Select a .pragma file.");
   }
   const details = await stat(sourcePath);
   if (!details.isFile() || details.size <= 0 || details.size > MAX_BUNDLE_ARCHIVE_BYTES) {

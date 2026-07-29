@@ -22,7 +22,7 @@ export function installPragmaBundleHandlers(
     runDesktopMutation(async () => {
       const parsed = ExportPragmaBundleSchema.parse(input);
       const prepared = await service.prepareExport(parsed);
-      const result = await showSaveBundleDialog(getWindow(), `${prepared.root.name}.pragma.bundle`);
+      const result = await showSaveBundleDialog(getWindow(), `${prepared.root.name}.pragma`);
       if (result.canceled || result.filePath === undefined) return { cancelled: true };
       const path = withBundleExtension(result.filePath);
       return {
@@ -37,11 +37,11 @@ export function installPragmaBundleHandlers(
       window === null
         ? await dialog.showOpenDialog({
             properties: ["openFile"],
-            filters: [{ name: "Pragma Bundle", extensions: ["bundle"] }],
+            filters: [{ name: "Pragma", extensions: ["pragma"] }],
           })
         : await dialog.showOpenDialog(window, {
             properties: ["openFile"],
-            filters: [{ name: "Pragma Bundle", extensions: ["bundle"] }],
+            filters: [{ name: "Pragma", extensions: ["pragma"] }],
           });
     return result.canceled || result.filePaths[0] === undefined
       ? { cancelled: true }
@@ -71,7 +71,7 @@ export function installPragmaBundleHandlers(
 async function showSaveBundleDialog(window: BrowserWindow | null, defaultPath: string) {
   const options = {
     defaultPath: sanitizeFilename(defaultPath),
-    filters: [{ name: "Pragma Bundle", extensions: ["bundle"] }],
+    filters: [{ name: "Pragma", extensions: ["pragma"] }],
   };
   return window === null
     ? await dialog.showSaveDialog(options)
@@ -79,7 +79,7 @@ async function showSaveBundleDialog(window: BrowserWindow | null, defaultPath: s
 }
 
 function withBundleExtension(path: string): string {
-  return path.toLowerCase().endsWith(".pragma.bundle") ? path : `${path}.pragma.bundle`;
+  return path.toLowerCase().endsWith(".pragma") ? path : `${path}.pragma`;
 }
 
 function sanitizeFilename(value: string): string {
@@ -89,5 +89,5 @@ function sanitizeFilename(value: string): string {
     )
     .join("")
     .trim();
-  return sanitized === "" ? "workflow.pragma.bundle" : sanitized;
+  return sanitized === "" ? "workflow.pragma" : sanitized;
 }

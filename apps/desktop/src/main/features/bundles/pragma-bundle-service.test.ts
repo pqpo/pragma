@@ -36,8 +36,8 @@ afterEach(async () => {
 describe("PragmaBundleService", () => {
   it("exports a verifiable ZIP with a stable semantic fingerprint", async () => {
     const fixture = await createFixture("source");
-    const firstPath = join(fixture.root, "first.pragma.bundle");
-    const secondPath = join(fixture.root, "second.pragma.bundle");
+    const firstPath = join(fixture.root, "first.pragma");
+    const secondPath = join(fixture.root, "second.pragma");
 
     const first = await fixture.service.exportTo(exportInput(fixture.projectRevision), firstPath);
     const second = await fixture.service.exportTo(exportInput(fixture.projectRevision), secondPath);
@@ -56,7 +56,7 @@ describe("PragmaBundleService", () => {
 
   it("rejects a bundle whose indexed project file was modified", async () => {
     const fixture = await createFixture("tamper");
-    const path = join(fixture.root, "workflow.pragma.bundle");
+    const path = join(fixture.root, "workflow.pragma");
     await fixture.service.exportTo(exportInput(fixture.projectRevision), path);
     const archive = unzipSync(new Uint8Array(await readFile(path)));
     archive["pragma.yaml"] = strToU8(`${strFromU8(archive["pragma.yaml"]!)}\n# tampered\n`);
@@ -67,9 +67,17 @@ describe("PragmaBundleService", () => {
     );
   });
 
+  it("accepts only the .pragma transfer format", async () => {
+    const fixture = await createFixture("extension");
+
+    await expect(
+      fixture.service.inspect(join(fixture.root, "workflow.pragma.bundle")),
+    ).rejects.toThrow("Select a .pragma file.");
+  });
+
   it("imports conflicts as a copy and rewrites internal Runtime references", async () => {
     const source = await createFixture("copy-source");
-    const path = join(source.root, "workflow.pragma.bundle");
+    const path = join(source.root, "workflow.pragma");
     const exported = await source.service.exportTo(exportInput(source.projectRevision), path);
     const target = await createFixture("copy-target", {
       instructions: "A conflicting local instruction.",
@@ -115,7 +123,7 @@ describe("PragmaBundleService", () => {
 
   it("prompts for identical resource conflicts and permits repeated copy imports", async () => {
     const source = await createFixture("repeat-copy-source");
-    const path = join(source.root, "workflow.pragma.bundle");
+    const path = join(source.root, "workflow.pragma");
     const exported = await source.service.exportTo(exportInput(source.projectRevision), path);
     const target = await createFixture("repeat-copy-target");
 
@@ -168,7 +176,7 @@ describe("PragmaBundleService", () => {
 
   it("updates normalized name conflicts by retaining local identities", async () => {
     const source = await createFixture("update-source");
-    const path = join(source.root, "workflow.pragma.bundle");
+    const path = join(source.root, "workflow.pragma");
     const exported = await source.service.exportTo(exportInput(source.projectRevision), path);
     const target = await createFixture("update-target", {
       expertId: "3sfd30h5017wd17d",
@@ -271,7 +279,7 @@ describe("PragmaBundleService", () => {
         team,
       ],
     });
-    const path = join(fixture.root, "team.pragma.bundle");
+    const path = join(fixture.root, "team.pragma");
 
     await fixture.service.exportTo(
       {
@@ -292,7 +300,7 @@ describe("PragmaBundleService", () => {
 
   it("rejects foreign and unavailable bindings and gates transitive Flow execution", async () => {
     const source = await createFixture("pending-source");
-    const path = join(source.root, "workflow.pragma.bundle");
+    const path = join(source.root, "workflow.pragma");
     const exported = await source.service.exportTo(exportInput(source.projectRevision), path);
     const target = await createFixture("pending-target", {
       instructions: "Existing local expert.",
@@ -355,7 +363,7 @@ describe("PragmaBundleService", () => {
 
   it("rejects case-insensitive duplicate archive paths before installing anything", async () => {
     const fixture = await createFixture("duplicate-path");
-    const path = join(fixture.root, "workflow.pragma.bundle");
+    const path = join(fixture.root, "workflow.pragma");
     await fixture.service.exportTo(exportInput(fixture.projectRevision), path);
     const archive = unzipSync(new Uint8Array(await readFile(path)));
     archive["PRAGMA.YAML"] = archive["pragma.yaml"]!;
@@ -368,7 +376,7 @@ describe("PragmaBundleService", () => {
 
   it("finishes recovered local setup and removes the retained source archive", async () => {
     const source = await createFixture("resolve-source");
-    const path = join(source.root, "workflow.pragma.bundle");
+    const path = join(source.root, "workflow.pragma");
     const exported = await source.service.exportTo(exportInput(source.projectRevision), path);
     const runtimes: DesktopRuntimeAvailability[] = [];
     const target = await createFixture("resolve-target", {
