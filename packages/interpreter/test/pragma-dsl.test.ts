@@ -814,6 +814,259 @@ describe("Pragma YAML DSL", () => {
     });
   });
 
+  it("reports the ExpertTeam reference that closes an Expert and Team cycle", async () => {
+    const root = await mkdtemp(join(tmpdir(), "pragma-resource-team-cycle-"));
+    const entry = join(root, "pragma.yaml");
+    const lead = expertResource("1xddvess309a6gme", "Leads delivery");
+    await writeFile(
+      entry,
+      formatPragmaYaml({
+        apiVersion: "pragma/v3",
+        kind: "Bundle",
+        imports: [],
+        resources: [
+          runtimeProfile(),
+          {
+            ...lead,
+            spec: {
+              ...lead.spec,
+              tools: [
+                {
+                  adapter: "pragma.tool.call@v1",
+                  target: { ref: "team:vyv9pwwzaksth2dd" },
+                  tool: {
+                    name: "call_delivery_team",
+                    description: "Call the delivery team",
+                    approval: "none",
+                  },
+                },
+              ],
+            },
+          },
+          expertResource("3sfd30h5017wd17d", "Reviews delivery"),
+          {
+            apiVersion: "pragma/v3",
+            kind: "ExpertTeam",
+            metadata: {
+              id: "vyv9pwwzaksth2dd",
+              name: "Delivery",
+              description: "Coordinates delivery",
+              tags: [],
+            },
+            spec: {
+              coordinator: { ref: "expert:1xddvess309a6gme" },
+              members: [{ ref: "expert:3sfd30h5017wd17d" }],
+              delegation: {},
+            },
+          },
+        ],
+      }),
+    );
+
+    const project = await loadPragmaProject(entry);
+    const expectedMessage =
+      "Pragma resource definitions must form an acyclic dependency graph: " +
+      "team:vyv9pwwzaksth2dd -> expert:1xddvess309a6gme -> team:vyv9pwwzaksth2dd.";
+    expect(await project.validate()).toEqual([
+      expect.objectContaining({
+        severity: "error",
+        code: "resource.cycle",
+        message: expectedMessage,
+        source: project.entryFile,
+        path: ["spec", "coordinator", "ref"],
+      }),
+    ]);
+    await expect(project.compile("expert:1xddvess309a6gme", { workspace: root })).rejects.toThrow(
+      expectedMessage,
+    );
+  });
+
+  it("reports the Flow step that closes a Flow and Expert cycle", async () => {
+    const root = await mkdtemp(join(tmpdir(), "pragma-resource-flow-cycle-"));
+    const entry = join(root, "pragma.yaml");
+    const expert = expertResource("1xddvess309a6gme", "Runs approval");
+    await writeFile(
+      entry,
+      formatPragmaYaml({
+        apiVersion: "pragma/v3",
+        kind: "Bundle",
+        imports: [],
+        resources: [
+          runtimeProfile(),
+          {
+            ...expert,
+            spec: {
+              ...expert.spec,
+              tools: [
+                {
+                  adapter: "pragma.tool.call@v1",
+                  target: { ref: "flow:ffdfk2cczgqjda7q" },
+                  tool: {
+                    name: "call_approval",
+                    description: "Call the approval flow",
+                    approval: "none",
+                  },
+                },
+              ],
+            },
+          },
+          {
+            apiVersion: "pragma/v3",
+            kind: "Flow",
+            metadata: {
+              id: "ffdfk2cczgqjda7q",
+              name: "Approval",
+              description: "Runs approval through an Expert",
+              tags: [],
+            },
+            spec: {
+              graph: {
+                start: "approve",
+                steps: {
+                  approve: {
+                    expert: { ref: "expert:1xddvess309a6gme" },
+                    prompt: { segments: [{ text: "Approve the work." }] },
+                  },
+                },
+                transitions: { approve: { end: true } },
+              },
+            },
+          },
+        ],
+      }),
+    );
+
+    const project = await loadPragmaProject(entry);
+    const expectedMessage =
+      "Pragma resource definitions must form an acyclic dependency graph: " +
+      "flow:ffdfk2cczgqjda7q -> expert:1xddvess309a6gme -> flow:ffdfk2cczgqjda7q.";
+    expect(await project.validate()).toEqual([
+      expect.objectContaining({
+        severity: "error",
+        code: "resource.cycle",
+        message: expectedMessage,
+        source: project.entryFile,
+        path: ["spec", "graph", "steps", "approve", "expert", "ref"],
+      }),
+    ]);
+    await expect(project.compile("flow:ffdfk2cczgqjda7q", { workspace: root })).rejects.toThrow(
+      expectedMessage,
+    );
+  });
+
+  it("reports a self-referencing Expert tool at its target path", async () => {
+    const root = await mkdtemp(join(tmpdir(), "pragma-resource-self-cycle-"));
+    const entry = join(root, "pragma.yaml");
+    const expert = expertResource("1xddvess309a6gme", "Calls itself");
+    await writeFile(
+      entry,
+      formatPragmaYaml({
+        apiVersion: "pragma/v3",
+        kind: "Bundle",
+        imports: [],
+        resources: [
+          runtimeProfile(),
+          {
+            ...expert,
+            spec: {
+              ...expert.spec,
+              tools: [
+                {
+                  adapter: "pragma.tool.call@v1",
+                  target: { ref: "expert:1xddvess309a6gme" },
+                  tool: {
+                    name: "call_self",
+                    description: "Call the same Expert",
+                    approval: "none",
+                  },
+                },
+              ],
+            },
+          },
+        ],
+      }),
+    );
+
+    const project = await loadPragmaProject(entry);
+    expect(await project.validate()).toEqual([
+      expect.objectContaining({
+        severity: "error",
+        code: "resource.cycle",
+        message:
+          "Pragma resource definitions must form an acyclic dependency graph: " +
+          "expert:1xddvess309a6gme -> expert:1xddvess309a6gme.",
+        source: project.entryFile,
+        path: ["spec", "tools", 0, "target", "ref"],
+      }),
+    ]);
+  });
+
+  it("allows multiple resources to share an acyclic dependency", async () => {
+    const root = await mkdtemp(join(tmpdir(), "pragma-resource-shared-dependency-"));
+    const entry = join(root, "pragma.yaml");
+    const lead = expertResource("1xddvess309a6gme", "Leads review");
+    await writeFile(
+      entry,
+      formatPragmaYaml({
+        apiVersion: "pragma/v3",
+        kind: "Bundle",
+        imports: [],
+        resources: [
+          runtimeProfile(),
+          {
+            ...lead,
+            spec: {
+              ...lead.spec,
+              tools: [
+                {
+                  adapter: "pragma.tool.call@v1",
+                  target: { ref: "expert:3sfd30h5017wd17d" },
+                  tool: {
+                    name: "call_reviewer",
+                    description: "Call the shared reviewer",
+                    approval: "none",
+                  },
+                },
+              ],
+            },
+          },
+          expertResource("3sfd30h5017wd17d", "Reviews work"),
+          {
+            apiVersion: "pragma/v3",
+            kind: "Flow",
+            metadata: {
+              id: "ffdfk2cczgqjda7q",
+              name: "Review",
+              description: "Uses the shared reviewer",
+              tags: [],
+            },
+            spec: {
+              graph: {
+                start: "review",
+                steps: {
+                  review: {
+                    expert: { ref: "expert:3sfd30h5017wd17d" },
+                    prompt: { segments: [{ text: "Review the work." }] },
+                  },
+                },
+                transitions: { review: { end: true } },
+              },
+            },
+          },
+        ],
+      }),
+    );
+
+    const project = await loadPragmaProject(entry);
+    expect(await project.validate()).toEqual([]);
+    await expect(
+      project.compile<Expert>("expert:1xddvess309a6gme", { workspace: root }),
+    ).resolves.toMatchObject({ ref: "expert:1xddvess309a6gme" });
+    await expect(
+      project.compile<Flow>("flow:ffdfk2cczgqjda7q", { workspace: root }),
+    ).resolves.toMatchObject({ ref: "flow:ffdfk2cczgqjda7q" });
+  });
+
   it("rejects an unmarked control-flow cycle", async () => {
     const root = await mkdtemp(join(tmpdir(), "pragma-dsl-cycle-"));
     await writeFile(
