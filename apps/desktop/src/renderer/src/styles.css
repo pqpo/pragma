@@ -6030,40 +6030,20 @@ p {
   outline: 0;
 }
 
-.runtime-summary-footer {
+.runtime-summary-models {
   display: flex;
-  align-items: end;
-  justify-content: space-between;
-  gap: 24px;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: center;
+  gap: 8px 20px;
   margin-top: 20px;
   padding-top: 17px;
   border-top: 1px solid var(--border);
-}
-
-.runtime-summary-footer > div {
-  display: grid;
-  gap: 4px;
-}
-
-.runtime-summary-footer p {
-  color: var(--text);
+  color: var(--muted);
   font-size: 13px;
   font-weight: 610;
-}
-
-.runtime-summary-footer > div > span {
-  color: var(--muted);
-  font-size: 12px;
-}
-
-.runtime-open-detail {
-  display: inline-flex;
-  align-items: center;
-  gap: 5px;
-  color: var(--green-dark);
-  font-size: 12px;
-  font-weight: 650;
-  white-space: nowrap;
+  line-height: 1.5;
+  text-align: center;
 }
 
 .runtime-detail-back {
