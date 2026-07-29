@@ -50,6 +50,7 @@ export interface DesktopUsageStore {
     readonly offset: number;
     readonly limit: number;
   }) => UsageSubjectList;
+  /** Returns persisted totals only; `provisional` indicates whether live previews exist. */
   readonly getMissionUsage: (missionId: string) => MissionUsage;
   readonly markMissionDeleted: (missionId: string) => void;
   readonly subscribe: (listener: (update: UsageUpdate) => void) => () => void;
@@ -455,7 +456,7 @@ export async function createDesktopUsageStore(input: {
       return {
         revision: currentRevision,
         trackingStartedAt,
-        usage: missionTotals(missionId),
+        usage: persistedMissionTotals(missionId),
         provisional: [...previews.values()].some(
           (preview) => preview.context.mission.id === missionId,
         ),

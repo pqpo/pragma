@@ -72,7 +72,7 @@ describe("Desktop usage store", () => {
 
     expect(store.getMissionUsage("mission-1")).toMatchObject({
       provisional: true,
-      usage: { totalTokens: 80 },
+      usage: { totalTokens: 0 },
     });
     expect(store.getOverview("all").totals.totalTokens).toBe(0);
 

@@ -2047,7 +2047,7 @@ export function MissionDetailFragment(props: {
                   </div>
                 </div>
               )}
-              <MissionUsageHint missionId={props.mission.id} />
+              <MissionUsageHint missionId={props.mission.id} executionActive={executionActive} />
             </div>
           </div>
         ) : workError !== null && workRecords.length === 0 ? (
@@ -2151,12 +2151,21 @@ export function MissionDetailFragment(props: {
   );
 }
 
-function MissionUsageHint(props: { readonly missionId: string }) {
+function MissionUsageHint(props: {
+  readonly missionId: string;
+  readonly executionActive: boolean;
+}) {
   const { t } = useTranslation("usage");
   const [usageState, setUsageState] = useState<MissionUsageHintState>({
     revision: -1,
     totalTokens: 0,
   });
+  const executionActiveRef = useRef(props.executionActive);
+  const previousExecutionRef = useRef({
+    missionId: props.missionId,
+    active: props.executionActive,
+  });
+  executionActiveRef.current = props.executionActive;
 
   useEffect(() => {
     let active = true;
@@ -2175,6 +2184,7 @@ function MissionUsageHint(props: { readonly missionId: string }) {
     void refresh().catch(() => undefined);
     const unsubscribe = window.pragmaDesktop.subscribeUsageUpdates((update) => {
       if (update.missionId !== props.missionId) return;
+      if (executionActiveRef.current || update.provisional === true) return;
       if (update.missionUsage !== undefined) {
         setUsageState((current) =>
           applyMissionUsageHintRevision(current, {
@@ -2191,6 +2201,30 @@ function MissionUsageHint(props: { readonly missionId: string }) {
       unsubscribe();
     };
   }, [props.missionId]);
+
+  useEffect(() => {
+    const previous = previousExecutionRef.current;
+    previousExecutionRef.current = {
+      missionId: props.missionId,
+      active: props.executionActive,
+    };
+    if (previous.missionId !== props.missionId || !previous.active || props.executionActive) {
+      return;
+    }
+    void window.pragmaDesktop
+      .getMissionUsage(props.missionId)
+      .then((result) => {
+        setUsageState((current) =>
+          applyMissionUsageHintRevision(current, {
+            revision: result.revision,
+            totalTokens: result.usage.totalTokens,
+          }),
+        );
+      })
+      .catch(() => undefined);
+  }, [props.executionActive, props.missionId]);
+
+  if (usageState.totalTokens === 0) return null;
 
   return (
     <small className="mission-usage-hint" aria-live="polite">

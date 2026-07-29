@@ -79,6 +79,8 @@ export interface RuntimeStreamController<TNativeEvent> {
   readonly resetCapture: () => void;
   readonly beginUsagePreview: (input: {
     readonly prompt: string;
+    readonly startupMessages?: readonly string[] | undefined;
+    readonly sessionSeed?: string | undefined;
     readonly accumulatedUsage?: AgentMessageUsage | undefined;
     readonly contextWindow?: RuntimeContextWindowUsage | undefined;
   }) => void;
@@ -120,6 +122,7 @@ export function createRuntimeStreamController<TNativeEvent>(options: {
   let usage: AgentMessageUsage | undefined;
   let accumulatedUsage: AgentMessageUsage | undefined;
   let estimatedInputTokens = 0;
+  let estimatedContextInputTokens = 0;
   let contextWindowBase: RuntimeContextWindowUsage | undefined;
   let contextWindowUsage: RuntimeContextWindowUsage | undefined;
   let runtimeSessionId: string | undefined;
@@ -208,7 +211,7 @@ export function createRuntimeStreamController<TNativeEvent>(options: {
           ? contextWindowUsage.usedTokens
           : contextSource.usedTokens === null
             ? null
-            : contextSource.usedTokens + attemptUsage.totalTokens;
+            : contextSource.usedTokens + estimatedContextInputTokens + estimatedOutputTokens;
       latestContextWindowPreview = {
         usedTokens,
         contextWindowTokens: contextSource.contextWindowTokens,
@@ -326,7 +329,13 @@ export function createRuntimeStreamController<TNativeEvent>(options: {
     },
     beginUsagePreview(input) {
       accumulatedUsage = input.accumulatedUsage;
-      estimatedInputTokens = estimateTokenCount(input.prompt);
+      const turnInput = [...(input.startupMessages ?? []), input.prompt].join("\n\n");
+      estimatedInputTokens = estimateTokenCount(turnInput);
+      estimatedContextInputTokens =
+        estimatedInputTokens +
+        (input.sessionSeed === undefined || input.contextWindow?.usedTokens !== 0
+          ? 0
+          : estimateTokenCount(input.sessionSeed));
       contextWindowBase = input.contextWindow;
       contextWindowUsage = undefined;
       updateUsagePreview();
