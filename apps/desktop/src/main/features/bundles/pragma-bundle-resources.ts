@@ -1,5 +1,3 @@
-import { isDeepStrictEqual } from "node:util";
-
 import { generatePragmaResourceId } from "@pragma/core";
 import {
   PragmaResourceSchema,
@@ -87,7 +85,7 @@ export function makePortableBundleResources(
         ...resource,
         spec: {
           adapter: resource.spec.adapter,
-          config: {},
+          config: structuredClone(resource.spec.config),
         },
       });
     }
@@ -103,7 +101,7 @@ export function findBundleConflicts(
   for (const resource of imported) {
     const ref = canonicalPragmaResourceRef(resource);
     const sameIdentity = local.find((candidate) => canonicalPragmaResourceRef(candidate) === ref);
-    if (sameIdentity !== undefined && !isDeepStrictEqual(sameIdentity, resource)) {
+    if (sameIdentity !== undefined) {
       conflicts.push({
         ref,
         kind: "identity",

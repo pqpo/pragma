@@ -5,7 +5,9 @@ import { join } from "node:path";
 import { PragmaPaths } from "@pragma/core";
 import {
   canonicalPragmaResourceRef,
+  type PragmaCapabilityResource,
   type PragmaExpertResource,
+  type PragmaExpertTeamResource,
   type PragmaFlowResource,
   type PragmaRuntimeProfileResource,
 } from "@pragma/interpreter/ast";
@@ -111,6 +113,59 @@ describe("PragmaBundleService", () => {
     expect((await target.project.get()).resources).toHaveLength(2);
   });
 
+  it("prompts for identical resource conflicts and permits repeated copy imports", async () => {
+    const source = await createFixture("repeat-copy-source");
+    const path = join(source.root, "workflow.pragma.bundle");
+    const exported = await source.service.exportTo(exportInput(source.projectRevision), path);
+    const target = await createFixture("repeat-copy-target");
+
+    const initialInspection = await target.service.inspect(path);
+    expect(initialInspection.conflicts).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ ref: "expert:1xddvess309a6gme", kind: "identity" }),
+        expect.objectContaining({
+          ref: "runtime-profile:zdkgs0fde4xt00vr",
+          kind: "identity",
+        }),
+      ]),
+    );
+    await expect(
+      target.service.startImport({
+        sourcePath: path,
+        expectedFingerprint: exported.bundleFingerprint,
+      }),
+    ).rejects.toThrow("Choose whether conflicting resources");
+
+    const first = await target.service.startImport({
+      sourcePath: path,
+      expectedFingerprint: exported.bundleFingerprint,
+      conflictMode: "copy",
+    });
+    const repeatedInspection = await target.service.inspect(path);
+
+    expect(first.status).toBe("ready");
+    expect(repeatedInspection.alreadyInstalledId).toBeUndefined();
+    expect(repeatedInspection.conflicts).not.toHaveLength(0);
+
+    const second = await target.service.startImport({
+      sourcePath: path,
+      expectedFingerprint: exported.bundleFingerprint,
+      conflictMode: "copy",
+    });
+    const snapshot = await target.project.get();
+
+    expect(second.status).toBe("ready");
+    expect(second.id).not.toBe(first.id);
+    expect(second.rootRef).not.toBe(first.rootRef);
+    expect(snapshot.resources).toHaveLength(6);
+    expect(
+      snapshot.resources
+        .filter((resource) => resource.kind === "Expert")
+        .map((resource) => resource.metadata.name)
+        .toSorted(),
+    ).toEqual(["Writer", "Writer (copy 2)", "Writer (copy)"]);
+  });
+
   it("updates normalized name conflicts by retaining local identities", async () => {
     const source = await createFixture("update-source");
     const path = join(source.root, "workflow.pragma.bundle");
@@ -182,6 +237,57 @@ describe("PragmaBundleService", () => {
       providerId: "openai",
       model: "gpt-test",
     });
+  });
+
+  it("keeps portable adapter config while removing a machine-local binding", () => {
+    const [portable] = makePortableBundleResources([portableCapability()]);
+
+    if (portable?.kind !== "Capability") throw new Error("Expected a Capability.");
+    expect(portable.spec.binding).toBeUndefined();
+    expect(portable.spec.config).toEqual({ key: "portable" });
+  });
+
+  it("exports an ExpertTeam whose member uses a bound host capability", async () => {
+    const fixture = await createFixture("bound-team");
+    const snapshot = await fixture.project.get();
+    const sourceExpert = snapshot.resources.find(
+      (resource): resource is PragmaExpertResource => resource.kind === "Expert",
+    );
+    if (sourceExpert === undefined) throw new Error("Expected an Expert.");
+    const capability = portableCapability();
+    const team = expertTeam();
+    const published = await fixture.project.publish({
+      expectedRevision: snapshot.revision,
+      resources: [
+        {
+          ...sourceExpert,
+          spec: {
+            ...sourceExpert.spec,
+            capabilities: [{ ref: canonicalPragmaResourceRef(capability), kind: "tools" as const }],
+          },
+        },
+        ...snapshot.resources.filter((resource) => resource.kind !== "Expert"),
+        capability,
+        team,
+      ],
+    });
+    const path = join(fixture.root, "team.pragma.bundle");
+
+    await fixture.service.exportTo(
+      {
+        ...exportInput(published.revision),
+        rootRef: canonicalPragmaResourceRef(team),
+      },
+      path,
+    );
+    const archive = unzipSync(new Uint8Array(await readFile(path)));
+    const projectFiles = Object.entries(archive)
+      .filter(([name]) => name.endsWith(".yaml"))
+      .map(([, contents]) => strFromU8(contents))
+      .join("\n");
+
+    expect(projectFiles).toContain("key: portable");
+    expect(projectFiles).not.toContain("binding:");
   });
 
   it("rejects foreign and unavailable bindings and gates transitive Flow execution", async () => {
@@ -431,6 +537,47 @@ function runtime(runtimeId: string, resourceId = "zdkgs0fde4xt00vr"): PragmaRunt
     spec: {
       adapter: "pragma.runtime.profile@v1",
       config: { runtimeId, providerId: "openai", model: "gpt-test" },
+    },
+  };
+}
+
+function portableCapability(): PragmaCapabilityResource {
+  return {
+    apiVersion: "pragma/v3",
+    kind: "Capability",
+    metadata: {
+      id: "nv27faxmxpqnxwqr",
+      name: "Portable Capability",
+      description: "Portable host capability.",
+      tags: [],
+    },
+    spec: {
+      adapter: "pragma.capability.host@v1",
+      binding: "binding:portable",
+      config: { key: "portable" },
+    },
+  };
+}
+
+function expertTeam(): PragmaExpertTeamResource {
+  return {
+    apiVersion: "pragma/v3",
+    kind: "ExpertTeam",
+    metadata: {
+      id: "p8cbn3cg2avyksn4",
+      name: "Reviewers",
+      description: "Coordinates review work.",
+      tags: [],
+    },
+    spec: {
+      coordinator: { ref: "expert:1xddvess309a6gme" },
+      members: [{ ref: "expert:1xddvess309a6gme" }],
+      delegation: {
+        maxConcurrency: 2,
+        maxDepth: 2,
+        context: "context-policy:pragma.fresh@v1",
+        runtimes: {},
+      },
     },
   };
 }

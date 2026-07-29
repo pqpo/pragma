@@ -14,6 +14,7 @@ import { dirname, join, relative, resolve, sep } from "node:path";
 import { tmpdir } from "node:os";
 
 import { PragmaPaths, withFileLock } from "@pragma/core";
+import { PragmaProjectValidationError } from "@pragma/interpreter";
 import {
   PragmaInvocableResourceRefSchema,
   PragmaResourceSchema,
@@ -95,6 +96,37 @@ const InstallationCatalogSchema = z
     installations: z.array(PragmaBundleInstallationSchema),
   })
   .strict();
+
+function findIncompleteInstallation(
+  installations: readonly PragmaBundleInstallation[],
+  bundleFingerprint: string,
+): PragmaBundleInstallation | undefined {
+  return installations
+    .filter(
+      (installation) =>
+        installation.bundleFingerprint === bundleFingerprint && installation.status !== "ready",
+    )
+    .toSorted((left, right) => right.updatedAt.localeCompare(left.updatedAt))[0];
+}
+
+function throwBundleExportValidationError(error: unknown): never {
+  if (!(error instanceof PragmaProjectValidationError)) throw error;
+  const visibleDiagnostics = error.diagnostics.slice(0, 5);
+  const details = visibleDiagnostics
+    .map((diagnostic) => {
+      const location =
+        diagnostic.source ?? (diagnostic.path.length === 0 ? undefined : diagnostic.path.join("."));
+      return `${location === undefined ? "" : `${location}: `}${diagnostic.message}`;
+    })
+    .join("; ");
+  const omitted = error.diagnostics.length - visibleDiagnostics.length;
+  throw new Error(
+    `Bundle export validation failed.${details.length === 0 ? "" : ` ${details}`}${
+      omitted > 0 ? ` (${omitted} more validation issues)` : ""
+    }`,
+    { cause: error },
+  );
+}
 
 export interface PragmaBundleService {
   initialize(): Promise<void>;
@@ -359,10 +391,15 @@ export function createPragmaBundleService(options: {
           ),
         ),
       );
-      const rendered = await options.project.renderProjectFiles({
-        resources: portableResources,
-        artifacts,
-      });
+      let rendered: ReadonlyMap<string, string>;
+      try {
+        rendered = await options.project.renderProjectFiles({
+          resources: portableResources,
+          artifacts,
+        });
+      } catch (error) {
+        throwBundleExportValidationError(error);
+      }
       const files = new Map<string, Uint8Array>(
         [...rendered].map(([path, contents]) => [path, strToU8(contents)]),
       );
@@ -539,8 +576,9 @@ export function createPragmaBundleService(options: {
         archive.resources,
         (await options.project.get()).resources,
       );
-      const alreadyInstalled = (await readCatalog()).installations.find(
-        (item) => item.bundleFingerprint === archive.manifest.bundleFingerprint,
+      const incompleteInstallation = findIncompleteInstallation(
+        (await readCatalog()).installations,
+        archive.manifest.bundleFingerprint,
       );
       return PragmaBundleImportInspectionSchema.parse({
         sourcePath,
@@ -581,7 +619,9 @@ export function createPragmaBundleService(options: {
           })),
         ],
         conflicts,
-        ...(alreadyInstalled === undefined ? {} : { alreadyInstalledId: alreadyInstalled.id }),
+        ...(incompleteInstallation === undefined
+          ? {}
+          : { alreadyInstalledId: incompleteInstallation.id }),
       });
     },
 
@@ -594,10 +634,11 @@ export function createPragmaBundleService(options: {
         options.paths.bundleImportLock(archive.manifest.bundleFingerprint),
         async () => {
           const catalog = await readCatalog();
-          const existing = catalog.installations.find(
-            (item) => item.bundleFingerprint === archive.manifest.bundleFingerprint,
+          const existing = findIncompleteInstallation(
+            catalog.installations,
+            archive.manifest.bundleFingerprint,
           );
-          if (existing?.status === "ready" || existing?.status === "needs_setup") return existing;
+          if (existing?.status === "needs_setup") return existing;
           if (existing !== undefined) {
             if (existing.createdResourceRefs.length === existing.resourceRefs.length) {
               await discardCreatedInstallation(existing);
