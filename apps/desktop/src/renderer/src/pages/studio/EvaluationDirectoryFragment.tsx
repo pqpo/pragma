@@ -9,6 +9,14 @@ import { errorMessage } from "../../lib/errors.ts";
 import { StudioScreenFrame } from "./StudioScreenFrame.tsx";
 import { desktopApi } from "./studio-model.ts";
 
+export function activateEvaluationDirectory(mounted: { current: boolean }): () => void {
+  mounted.current = true;
+
+  return () => {
+    mounted.current = false;
+  };
+}
+
 export function EvaluationDirectoryFragment(props: {
   readonly project: PragmaProjectSnapshot;
   readonly onOpen: (evaluation: PragmaEvaluationResource) => void;
@@ -17,13 +25,8 @@ export function EvaluationDirectoryFragment(props: {
   const { t } = useTranslation("studio");
   const [error, setError] = useState<string | null>(null);
   const [allocating, setAllocating] = useState(false);
-  const mountedRef = useRef(true);
-  useEffect(
-    () => () => {
-      mountedRef.current = false;
-    },
-    [],
-  );
+  const mountedRef = useRef(false);
+  useEffect(() => activateEvaluationDirectory(mountedRef), []);
   const evaluations = props.project.resources.filter(
     (resource): resource is PragmaEvaluationResource => resource.kind === "Evaluation",
   );

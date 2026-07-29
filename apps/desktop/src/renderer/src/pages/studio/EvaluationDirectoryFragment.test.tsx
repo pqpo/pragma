@@ -2,10 +2,27 @@ import { renderToStaticMarkup } from "react-dom/server";
 import { describe, expect, it } from "vitest";
 import type { PragmaProjectSnapshot } from "../../../../shared/contracts/index.ts";
 
-import { EvaluationDirectoryFragment } from "./EvaluationDirectoryFragment.tsx";
+import {
+  activateEvaluationDirectory,
+  EvaluationDirectoryFragment,
+} from "./EvaluationDirectoryFragment.tsx";
 import { createEmptyFlow } from "./flow-editor/flow-model.ts";
 
 describe("EvaluationDirectoryFragment", () => {
+  it("remains active after React StrictMode replays its effect", () => {
+    const mounted = { current: false };
+
+    const firstCleanup = activateEvaluationDirectory(mounted);
+    expect(mounted.current).toBe(true);
+    firstCleanup();
+    expect(mounted.current).toBe(false);
+
+    const secondCleanup = activateEvaluationDirectory(mounted);
+    expect(mounted.current).toBe(true);
+    secondCleanup();
+    expect(mounted.current).toBe(false);
+  });
+
   it("shows Run Dry as available and reserves LLM-as-Judge for Experts and Teams", () => {
     const flow = {
       ...createEmptyFlow("8h9j0k1m2n3p4q5r"),
