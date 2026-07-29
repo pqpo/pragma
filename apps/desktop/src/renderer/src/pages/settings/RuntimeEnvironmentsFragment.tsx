@@ -1,10 +1,10 @@
-import { CaretRight, TerminalWindow } from "@phosphor-icons/react";
+import { TerminalWindow } from "@phosphor-icons/react";
 import { useEffect, useState } from "react";
 import { useTranslation } from "react-i18next";
 
 import type { DesktopRuntimeAvailability } from "../../../../shared/contracts/index.ts";
 import { errorMessage } from "../../lib/errors.ts";
-import { isBuiltInRuntime, runtimeDisplayName } from "../../lib/runtime-display.ts";
+import { runtimeDisplayName } from "../../lib/runtime-display.ts";
 import { RuntimeEnvironmentDetail } from "./RuntimeEnvironmentDetail.tsx";
 import { SettingsScreenFrame } from "./SettingsScreenFrame.tsx";
 
@@ -14,11 +14,8 @@ export function RuntimeCard(props: {
 }) {
   const { t } = useTranslation(["settings", "common"]);
   const available = props.runtime.status === "available";
-  const modelCount = props.runtime.models?.length;
   const displayName = runtimeDisplayName(t, props.runtime);
-  const runtimeType = isBuiltInRuntime(props.runtime)
-    ? t("runtimes.builtIn", { ns: "settings" })
-    : props.runtime.kind;
+  const models = props.runtime.models;
 
   return (
     <article className="runtime-card runtime-summary-card">
@@ -51,22 +48,21 @@ export function RuntimeCard(props: {
         </span>
       </header>
 
-      <div className="runtime-summary-footer">
-        <div>
-          <p>{runtimeType}</p>
-          <span>
-            {modelCount === undefined
-              ? t("runtimes.catalogUnavailable", { ns: "settings" })
-              : t("counts.model", { ns: "common", count: modelCount })}
-          </span>
-        </div>
-        <span className="runtime-open-detail" aria-hidden="true">
-          {t("actions.viewDetails", { ns: "common" })}
-          <CaretRight size={17} />
-        </span>
+      <div className="runtime-summary-models" aria-label={t("runtimes.models", { ns: "settings" })}>
+        {models === undefined ? (
+          <span>{t("runtimes.catalogUnavailable", { ns: "settings" })}</span>
+        ) : models.length === 0 ? (
+          <span>{t("runtimes.noModels", { ns: "settings" })}</span>
+        ) : (
+          models.map((model) => <span key={runtimeModelKey(model)}>{model.displayName}</span>)
+        )}
       </div>
     </article>
   );
+}
+
+function runtimeModelKey(model: NonNullable<DesktopRuntimeAvailability["models"]>[number]): string {
+  return JSON.stringify([model.provider.kind, model.provider.id, model.id]);
 }
 
 export function RuntimeEnvironmentsFragment() {

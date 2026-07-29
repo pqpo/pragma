@@ -11,7 +11,7 @@ const runtime: DesktopRuntimeAvailability = {
   origin: "built-in",
   adapter: { id: "pragma.runtime.codex", version: "1.0.0" },
   isDefault: true,
-  kind: "Codex CLI",
+  kind: "codex-local",
   displayName: "Codex",
   status: "available",
   executablePath: "/usr/local/bin/codex",
@@ -30,16 +30,23 @@ const runtime: DesktopRuntimeAvailability = {
         defaultLevel: "medium",
       },
     },
+    {
+      id: "gpt-5.5-codex-mini",
+      displayName: "GPT-5.5 Codex Mini",
+      provider: { kind: "runtime-managed", id: "openai", displayName: "OpenAI" },
+    },
   ],
 };
 
 describe("Runtime Environment settings", () => {
-  it("keeps model names out of the Runtime directory card", () => {
+  it("centers model names in the Runtime directory card without internal identity", () => {
     const html = renderToStaticMarkup(<RuntimeCard runtime={runtime} onOpen={() => undefined} />);
 
-    expect(html).toContain("1 model");
-    expect(html).toContain("View details");
-    expect(html).not.toContain("GPT-5.6 Codex");
+    expect(html).toContain('class="runtime-summary-models"');
+    expect(html).toContain("GPT-5.6 Codex");
+    expect(html).toContain("GPT-5.5 Codex Mini");
+    expect(html).not.toContain("codex-local");
+    expect(html).not.toContain("built-in");
     expect(html).not.toContain("gpt-5.6-codex");
   });
 
