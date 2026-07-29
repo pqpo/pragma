@@ -41,7 +41,12 @@ describe("built-in Pragma Agent DSL", () => {
         getFlowDraft: unavailable,
         updateFlowDraft: unavailable,
         validateFlowDraft: unavailable,
-        runEvaluation: unavailable,
+        createEvaluationDraft: unavailable,
+        getEvaluationDraft: unavailable,
+        updateEvaluationDraft: unavailable,
+        runEvaluationDraft: unavailable,
+        prepareEvaluationDraft: unavailable,
+        discardEvaluationDraft: unavailable,
         prepareFlowDraft: unavailable,
         discardFlowDraft: unavailable,
         getChangeSet: unavailable,
@@ -80,9 +85,11 @@ describe("built-in Pragma Agent DSL", () => {
         },
       },
     });
-    expect(compiled.value.tools?.map((tool) => tool.name)).toHaveLength(19);
+    expect(compiled.value.tools?.map((tool) => tool.name)).toHaveLength(24);
     expect(compiled.value.tools?.map((tool) => tool.name)).toContain("list_expert_options");
     expect(compiled.value.tools?.map((tool) => tool.name)).toContain("update_flow_draft");
+    expect(compiled.value.tools?.map((tool) => tool.name)).toContain("run_evaluation_draft");
+    expect(compiled.value.tools?.map((tool) => tool.name)).not.toContain("run_evaluation");
     expect(compiled.value.skills?.skills[0]?.path).toMatch(/author-pragma-dsl[\\/]SKILL\.md$/);
     expect(compiled.value).toMatchObject({
       id: "0000000000pragma",
@@ -172,6 +179,21 @@ describe("built-in Pragma Agent DSL", () => {
     expect(resourceReference).toContain(
       "option's `runtimeProfileRef`; `prepare_dsl_changes` adds that dependency automatically.",
     );
+  });
+
+  it("teaches incremental Run Dry authoring with bounded explicit batches", () => {
+    const skill = BUILT_IN_PRAGMA_FILES["skills/author-pragma-dsl/SKILL.md"] ?? "";
+    const reference = BUILT_IN_PRAGMA_FILES["skills/author-pragma-dsl/references/run-dry.md"] ?? "";
+
+    expect(skill).toContain("generate and upsert exactly one case");
+    expect(skill).toContain("at most 10 cases per call");
+    expect(skill).toContain("Never emit or pass a complete Evaluation YAML document");
+    expect(reference).toContain("run_evaluation_draft");
+    expect(reference).toContain("2–10 `upsert_case` operations");
+    expect(reference).toContain("Never build, resend, or request the complete Evaluation YAML");
+    expect(reference).toContain("`discard_evaluation_draft` before");
+    expect(reference).toContain("`discard_flow_draft`");
+    expect(reference).not.toContain("run_evaluation`");
   });
 
   it("materializes an overridden built-in Expert while preserving its bundled dependencies", async () => {

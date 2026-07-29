@@ -3,6 +3,11 @@ import { mkdir, readFile, rename, rm, writeFile } from "node:fs/promises";
 import { dirname, join } from "node:path";
 
 import {
+  PragmaEvaluationResourceSchema,
+  type PragmaEvaluationResource,
+  type PragmaFlowRunDrySuiteResult,
+} from "@pragma/evaluation/ast";
+import {
   encodePragmaPathSegment,
   derivePragmaResourceId,
   generatePragmaResourceId,
@@ -23,11 +28,17 @@ import {
 } from "@pragma/interpreter/ast";
 import {
   DefaultAgentChangeSetSchema,
+  DefaultAgentEvaluationDraftRunResultSchema,
+  DefaultAgentEvaluationDraftSchema,
+  DefaultAgentEvaluationDraftSummarySchema,
   DefaultAgentExpertOptionCatalogSchema,
   DefaultAgentFlowDraftSchema,
   DefaultAgentPrepareResultSchema,
   DefaultAgentProjectCommitSchema,
   type DefaultAgentDslProjectPort,
+  type DefaultAgentEvaluationDraft,
+  type DefaultAgentEvaluationDraftDiagnostic,
+  type DefaultAgentEvaluationDraftOperation,
   type DefaultAgentExpertOptionCatalog,
   type DefaultAgentFlowDraft,
   type DefaultAgentFlowDraftDiagnostic,
@@ -63,6 +74,8 @@ export function createDesktopDefaultAgentProjectPort(options: {
     join(options.stateRoot, "operations", `${encodePragmaPathSegment(id)}.json`);
   const draftPath = (id: string) =>
     join(options.stateRoot, "dsl-drafts", `${encodePragmaPathSegment(id)}.json`);
+  const evaluationDraftPath = (id: string) =>
+    join(options.stateRoot, "evaluation-drafts", `${encodePragmaPathSegment(id)}.json`);
 
   const prepareResources = async (input: {
     readonly expectedProjectRevision: number;
@@ -164,6 +177,96 @@ export function createDesktopDefaultAgentProjectPort(options: {
       expectedProjectRevision: input.expectedProjectRevision,
       authoredResources: parsed.resources,
     });
+  };
+
+  const withCurrentEvaluationDraftDiagnostics = async (
+    draft: DefaultAgentEvaluationDraft,
+  ): Promise<DefaultAgentEvaluationDraft> => {
+    const snapshot = await options.project.get();
+    const diagnostics: DefaultAgentEvaluationDraftDiagnostic[] = [];
+    if (draft.resource.spec.method.cases.length === 0) {
+      diagnostics.push({
+        severity: "incomplete",
+        code: "evaluation.draft.cases_empty",
+        message: "Add at least one Run Dry case before preparing the Evaluation.",
+        path: ["resource", "spec", "method", "cases"],
+      });
+    }
+    if (snapshot.revision !== draft.baseProjectRevision) {
+      diagnostics.push({
+        severity: "error",
+        code: "evaluation.draft.project_revision_conflict",
+        message: `Project revision changed from ${draft.baseProjectRevision} to ${snapshot.revision}.`,
+        path: ["baseProjectRevision"],
+      });
+    }
+    if (draft.targetFlowDraftId === undefined) {
+      const target = snapshot.resources.find(
+        (resource) =>
+          resource.kind === "Flow" &&
+          canonicalPragmaResourceRef(resource) === draft.resource.spec.target.ref,
+      );
+      if (target === undefined) {
+        diagnostics.push({
+          severity: "error",
+          code: "evaluation.draft.target_missing",
+          message: `Evaluation target Flow not found: ${draft.resource.spec.target.ref}.`,
+          path: ["resource", "spec", "target", "ref"],
+        });
+      }
+    } else {
+      try {
+        const targetDraft = await readFlowDraft(draftPath(draft.targetFlowDraftId));
+        const targetRef = `flow:${targetDraft.resource.metadata.id}`;
+        if (targetRef !== draft.resource.spec.target.ref) {
+          diagnostics.push({
+            severity: "error",
+            code: "evaluation.draft.target_mismatch",
+            message: `Evaluation targets ${draft.resource.spec.target.ref}, but the linked Flow draft is ${targetRef}.`,
+            path: ["resource", "spec", "target", "ref"],
+          });
+        }
+      } catch (error) {
+        diagnostics.push({
+          severity: "error",
+          code: "evaluation.draft.flow_draft_missing",
+          message: error instanceof Error ? error.message : String(error),
+          path: ["targetFlowDraftId"],
+        });
+      }
+    }
+    return DefaultAgentEvaluationDraftSchema.parse({ ...draft, diagnostics });
+  };
+
+  const resolveEvaluationFlow = async (
+    draft: DefaultAgentEvaluationDraft,
+  ): Promise<PragmaFlowResource> => {
+    if (draft.targetFlowDraftId !== undefined) {
+      const flow = PragmaFlowResourceSchema.parse(
+        materializeDraft(await readFlowDraft(draftPath(draft.targetFlowDraftId))),
+      );
+      const targetRef = canonicalPragmaResourceRef(flow);
+      if (targetRef !== draft.resource.spec.target.ref) {
+        throw new Error(
+          `Evaluation targets ${draft.resource.spec.target.ref}, but the linked Flow draft is ${targetRef}.`,
+        );
+      }
+      return flow;
+    }
+    const flow = (await options.project.get()).resources.find(
+      (resource): resource is PragmaFlowResource =>
+        resource.kind === "Flow" &&
+        canonicalPragmaResourceRef(resource) === draft.resource.spec.target.ref,
+    );
+    if (flow === undefined) {
+      throw new Error(`Evaluation target Flow not found: ${draft.resource.spec.target.ref}.`);
+    }
+    return flow;
+  };
+
+  const runEvaluationDraftSuite = async (draft: DefaultAgentEvaluationDraft) => {
+    const evaluation = materializeEvaluationDraft(draft);
+    return runPragmaEvaluation(await resolveEvaluationFlow(draft), evaluation);
   };
 
   return {
@@ -290,25 +393,157 @@ export function createDesktopDefaultAgentProjectPort(options: {
         await readFlowDraft(draftPath(draftId)),
       );
     },
-    async runEvaluation(input) {
-      const resource = PragmaResourceSchema.parse(parsePragmaYaml(input.source));
-      if (resource.kind !== "Evaluation") {
-        throw new Error("run_evaluation requires one complete Evaluation YAML resource.");
+    async createEvaluationDraft(input) {
+      const snapshot = await options.project.get();
+      if (snapshot.revision !== input.expectedProjectRevision) {
+        throw new Error(
+          `Project revision changed from ${input.expectedProjectRevision} to ${snapshot.revision}.`,
+        );
       }
-      const flow =
-        input.flowDraftId === undefined
-          ? (await options.project.get()).resources.find(
-              (candidate): candidate is PragmaFlowResource =>
-                candidate.kind === "Flow" &&
-                canonicalPragmaResourceRef(candidate) === resource.spec.target.ref,
-            )
-          : PragmaFlowResourceSchema.parse(
-              materializeDraft(await readFlowDraft(draftPath(input.flowDraftId))),
+      const now = new Date().toISOString();
+      const draftId = randomUUID();
+      let resource: DefaultAgentEvaluationDraft["resource"];
+      let sourceEvaluationRef: string | undefined;
+      if (input.mode === "create") {
+        resource = {
+          apiVersion: "pragma/v3",
+          kind: "Evaluation",
+          metadata: input.metadata,
+          spec: {
+            target: { ref: input.targetRef },
+            method: { type: "flow-run-dry", cases: [] },
+          },
+        };
+      } else {
+        const source = snapshot.resources.find(
+          (candidate) => canonicalPragmaResourceRef(candidate) === input.evaluationRef,
+        );
+        if (source?.kind !== "Evaluation") {
+          throw new Error(`Evaluation not found: ${input.evaluationRef}`);
+        }
+        resource = structuredClone(PragmaEvaluationResourceSchema.parse(source));
+        sourceEvaluationRef = input.evaluationRef;
+      }
+      const draft = await withCurrentEvaluationDraftDiagnostics({
+        draftId,
+        baseProjectRevision: snapshot.revision,
+        draftRevision: 0,
+        resource,
+        ...(sourceEvaluationRef === undefined ? {} : { sourceEvaluationRef }),
+        ...(input.targetFlowDraftId === undefined
+          ? {}
+          : { targetFlowDraftId: input.targetFlowDraftId }),
+        diagnostics: [],
+        createdAt: now,
+        updatedAt: now,
+      });
+      await writeJson(evaluationDraftPath(draftId), draft);
+      return draft;
+    },
+    async getEvaluationDraft(draftId) {
+      return await withCurrentEvaluationDraftDiagnostics(
+        await readEvaluationDraft(evaluationDraftPath(draftId)),
+      );
+    },
+    async updateEvaluationDraft(input) {
+      if (input.operations.length === 0 || input.operations.length > 10) {
+        throw new Error("Evaluation draft updates require 1 to 10 operations.");
+      }
+      const path = evaluationDraftPath(input.draftId);
+      return await withFileLock(`${path}.lock`, async () => {
+        const current = await readEvaluationDraft(path);
+        if (current.draftRevision !== input.expectedDraftRevision) {
+          throw new Error(
+            `Evaluation draft revision changed from ${input.expectedDraftRevision} to ${current.draftRevision}.`,
+          );
+        }
+        const resource = structuredClone(current.resource);
+        let baseProjectRevision = current.baseProjectRevision;
+        for (const operation of input.operations) {
+          baseProjectRevision = applyEvaluationDraftOperation(
+            resource,
+            operation,
+            baseProjectRevision,
+          );
+        }
+        if (baseProjectRevision !== current.baseProjectRevision) {
+          const snapshot = await options.project.get();
+          if (snapshot.revision !== baseProjectRevision) {
+            throw new Error(
+              `Cannot rebase Evaluation draft to unavailable revision ${baseProjectRevision}.`,
             );
-      if (flow === undefined) {
-        throw new Error(`Evaluation target Flow not found: ${resource.spec.target.ref}.`);
+          }
+        }
+        const updated = await withCurrentEvaluationDraftDiagnostics({
+          ...current,
+          baseProjectRevision,
+          draftRevision: current.draftRevision + 1,
+          resource,
+          updatedAt: new Date().toISOString(),
+        });
+        await writeJson(path, updated);
+        return updated;
+      });
+    },
+    async runEvaluationDraft(input) {
+      if (
+        input.caseIds.length === 0 ||
+        input.caseIds.length > 10 ||
+        new Set(input.caseIds).size !== input.caseIds.length
+      ) {
+        throw new Error("Evaluation draft runs require 1 to 10 unique case IDs.");
       }
-      return runPragmaEvaluation(flow, resource);
+      const draft = await withCurrentEvaluationDraftDiagnostics(
+        await readEvaluationDraft(evaluationDraftPath(input.draftId)),
+      );
+      const blocking = draft.diagnostics.find((diagnostic) => diagnostic.severity !== "warning");
+      if (blocking !== undefined) throw new Error(blocking.message);
+      const requested = new Set(input.caseIds);
+      const missing = input.caseIds.filter(
+        (caseId) => !draft.resource.spec.method.cases.some((testCase) => testCase.id === caseId),
+      );
+      if (missing.length > 0) {
+        throw new Error(`Evaluation draft cases not found: ${missing.join(", ")}`);
+      }
+      const suite = await runEvaluationDraftSuite(draft);
+      const requestedCases = suite.cases.filter((testCase) => requested.has(testCase.id));
+      return DefaultAgentEvaluationDraftRunResultSchema.parse({
+        draft: summarizeEvaluationDraft(draft),
+        requestedCases,
+        suite: {
+          passed: suite.passed,
+          total: suite.summary.total,
+          passedCount: suite.summary.passed,
+          failedCount: suite.summary.failed,
+          failedCaseIds: suite.cases
+            .filter((testCase) => !testCase.passed)
+            .map((testCase) => testCase.id),
+        },
+        coverage: suite.coverage,
+      });
+    },
+    async prepareEvaluationDraft(input) {
+      const draft = await withCurrentEvaluationDraftDiagnostics(
+        await readEvaluationDraft(evaluationDraftPath(input.draftId)),
+      );
+      if (draft.draftRevision !== input.expectedDraftRevision) {
+        return invalidPrepare(
+          "evaluation.draft.revision_conflict",
+          `Evaluation draft revision changed from ${input.expectedDraftRevision} to ${draft.draftRevision}.`,
+        );
+      }
+      const diagnostics = evaluationDraftDiagnostics(draft);
+      if (diagnostics !== undefined) return diagnostics;
+      const suite = await runEvaluationDraftSuite(draft);
+      if (!suite.passed) return invalidEvaluationRun(suite);
+      return await prepareResources({
+        expectedProjectRevision: draft.baseProjectRevision,
+        authoredResources: [materializeEvaluationDraft(draft)],
+      });
+    },
+    async discardEvaluationDraft(draftId) {
+      const path = evaluationDraftPath(draftId);
+      await withFileLock(`${path}.lock`, async () => await rm(path, { force: true }));
     },
     async prepareFlowDraft(input) {
       const draft = await withProjectDraftDiagnostics(
@@ -332,6 +567,23 @@ export function createDesktopDefaultAgentProjectPort(options: {
           })),
         });
       }
+      const evaluationDraft = await withCurrentEvaluationDraftDiagnostics(
+        await readEvaluationDraft(evaluationDraftPath(input.evaluationDraft.draftId)),
+      );
+      if (evaluationDraft.draftRevision !== input.evaluationDraft.expectedDraftRevision) {
+        return invalidPrepare(
+          "evaluation.draft.revision_conflict",
+          `Evaluation draft revision changed from ${input.evaluationDraft.expectedDraftRevision} to ${evaluationDraft.draftRevision}.`,
+        );
+      }
+      if (evaluationDraft.targetFlowDraftId !== draft.draftId) {
+        return invalidPrepare(
+          "evaluation.draft.flow_draft_mismatch",
+          "The Evaluation draft is not linked to this Flow draft.",
+        );
+      }
+      const evaluationDiagnostics = evaluationDraftDiagnostics(evaluationDraft);
+      if (evaluationDiagnostics !== undefined) return evaluationDiagnostics;
       const additional = parseDefaultAgentSources(input.additionalSources ?? [], 1);
       if (additional.diagnostics.length > 0) {
         return DefaultAgentPrepareResultSchema.parse({
@@ -339,12 +591,25 @@ export function createDesktopDefaultAgentProjectPort(options: {
           diagnostics: additional.diagnostics,
         });
       }
+      if (additional.resources.some((resource) => resource.kind === "Evaluation")) {
+        return invalidPrepare(
+          "evaluation.draft.required",
+          "Pass Evaluation content through evaluationDraft, not additionalSources.",
+        );
+      }
+      const flowResource = PragmaFlowResourceSchema.parse(materializeDraft(draft));
+      const evaluationResource = materializeEvaluationDraft(evaluationDraft);
+      if (evaluationResource.spec.target.ref !== canonicalPragmaResourceRef(flowResource)) {
+        return invalidPrepare(
+          "evaluation.draft.target_mismatch",
+          "The Evaluation draft does not target this Flow draft.",
+        );
+      }
+      const suite = runPragmaEvaluation(flowResource, evaluationResource);
+      if (!suite.passed) return invalidEvaluationRun(suite);
       return await prepareResources({
         expectedProjectRevision: draft.baseProjectRevision,
-        authoredResources: [
-          PragmaFlowResourceSchema.parse(materializeDraft(draft)),
-          ...additional.resources,
-        ],
+        authoredResources: [flowResource, evaluationResource, ...additional.resources],
       });
     },
     async discardFlowDraft(draftId) {
@@ -650,6 +915,73 @@ function materializeDraft(draft: DefaultAgentFlowDraft) {
   };
 }
 
+function materializeEvaluationDraft(draft: DefaultAgentEvaluationDraft): PragmaEvaluationResource {
+  return PragmaEvaluationResourceSchema.parse(draft.resource);
+}
+
+function summarizeEvaluationDraft(draft: DefaultAgentEvaluationDraft) {
+  return DefaultAgentEvaluationDraftSummarySchema.parse({
+    draftId: draft.draftId,
+    baseProjectRevision: draft.baseProjectRevision,
+    draftRevision: draft.draftRevision,
+    metadata: draft.resource.metadata,
+    targetRef: draft.resource.spec.target.ref,
+    ...(draft.sourceEvaluationRef === undefined
+      ? {}
+      : { sourceEvaluationRef: draft.sourceEvaluationRef }),
+    ...(draft.targetFlowDraftId === undefined
+      ? {}
+      : { targetFlowDraftId: draft.targetFlowDraftId }),
+    cases: draft.resource.spec.method.cases.map(({ id, name }) => ({ id, name })),
+    diagnostics: draft.diagnostics,
+    createdAt: draft.createdAt,
+    updatedAt: draft.updatedAt,
+  });
+}
+
+function evaluationDraftDiagnostics(
+  draft: DefaultAgentEvaluationDraft,
+): DefaultAgentPrepareResult | undefined {
+  if (draft.diagnostics.every((diagnostic) => diagnostic.severity === "warning")) return undefined;
+  return DefaultAgentPrepareResultSchema.parse({
+    status: "invalid",
+    diagnostics: draft.diagnostics.map((diagnostic) => ({
+      severity: diagnostic.severity === "warning" ? "warning" : "error",
+      code: diagnostic.code,
+      message: diagnostic.message,
+      path: diagnostic.path,
+    })),
+  });
+}
+
+function invalidEvaluationRun(suite: PragmaFlowRunDrySuiteResult): DefaultAgentPrepareResult {
+  const diagnostics = [
+    ...suite.cases
+      .filter((testCase) => !testCase.passed)
+      .flatMap((testCase) =>
+        testCase.assertions
+          .filter((assertion) => !assertion.passed)
+          .map((assertion) => ({
+            severity: "error" as const,
+            code: `evaluation.case.${assertion.kind}`,
+            message: `${testCase.id}: ${assertion.message}`,
+            path: ["spec", "method", "cases", testCase.id],
+          })),
+      ),
+    ...(suite.coverage.missing.length === 0
+      ? []
+      : [
+          {
+            severity: "error" as const,
+            code: "evaluation.coverage.missing",
+            message: `Missing Run Dry coverage: ${suite.coverage.missing.join(", ")}`,
+            path: ["spec", "method", "cases"],
+          },
+        ]),
+  ];
+  return DefaultAgentPrepareResultSchema.parse({ status: "invalid", diagnostics });
+}
+
 async function withProjectDraftDiagnostics(
   project: PragmaProjectStore,
   draft: DefaultAgentFlowDraft,
@@ -788,10 +1120,41 @@ function applyDraftOperation(
   return baseProjectRevision;
 }
 
+function applyEvaluationDraftOperation(
+  resource: DefaultAgentEvaluationDraft["resource"],
+  operation: DefaultAgentEvaluationDraftOperation,
+  baseProjectRevision: number,
+): number {
+  switch (operation.type) {
+    case "upsert_case": {
+      const index = resource.spec.method.cases.findIndex(
+        (testCase) => testCase.id === operation.case.id,
+      );
+      if (index === -1) resource.spec.method.cases.push(operation.case);
+      else resource.spec.method.cases[index] = operation.case;
+      break;
+    }
+    case "remove_case":
+      resource.spec.method.cases = resource.spec.method.cases.filter(
+        (testCase) => testCase.id !== operation.caseId,
+      );
+      break;
+    case "rebase":
+      return operation.projectRevision;
+  }
+  return baseProjectRevision;
+}
+
 async function readFlowDraft(path: string): Promise<DefaultAgentFlowDraft> {
   const value = await readJson(path);
   if (value === undefined) throw new Error("Flow draft not found.");
   return DefaultAgentFlowDraftSchema.parse(value);
+}
+
+async function readEvaluationDraft(path: string): Promise<DefaultAgentEvaluationDraft> {
+  const value = await readJson(path);
+  if (value === undefined) throw new Error("Evaluation draft not found.");
+  return DefaultAgentEvaluationDraftSchema.parse(value);
 }
 
 async function readCandidate(path: string): Promise<z.infer<typeof CandidateRecordSchema>> {

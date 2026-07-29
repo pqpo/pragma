@@ -24,17 +24,20 @@ source of truth and use only the Pragma DSL tools to inspect, validate, and save
 5. Before authoring any new resource, call `allocate_dsl_resource_ids` once for the complete set and
    use the returned Host-generated IDs and exact references. Preserve IDs when editing; never invent,
    copy, or change an ID.
-6. For every Flow creation or non-trivial Flow edit, allocate both Flow and Evaluation IDs, then
-   call `create_flow_draft` with the allocated Flow ID. Build the Flow in small batches with
-   `update_flow_draft`: contracts, steps, start, transitions, and loops. Read diagnostics after every
-   batch. Flow drafts never contain Run Dry cases.
-7. Create an independent `Evaluation` for every Flow without waiting for the user to ask. Read
-   [references/run-dry.md](references/run-dry.md). Keep `expectInput` equal to the case's original
-   Flow input for every step; use `expectPrompt` for rendered Expert, Team, and Human prompts. Call
-   `run_evaluation` and fix every assertion, configuration error, or coverage gap.
-8. Call `validate_flow_draft`, then call `prepare_flow_draft` only when the draft is structurally
-   complete and the separate Evaluation passes. Include the Evaluation plus any new Expert or
-   ExpertTeam YAML in `additionalSources` so the final change remains atomic.
+6. For a new Flow, allocate both Flow and Evaluation IDs, then call `create_flow_draft` with the
+   Flow ID. For a non-trivial Flow edit, create a Flow draft and read its existing Evaluation. Build
+   the Flow in small batches with `update_flow_draft`: contracts, steps, start, transitions, and
+   loops. Read diagnostics after every batch. Flow drafts never contain Run Dry cases.
+7. Create an independent Evaluation draft for every Flow without waiting for the user to ask. Read
+   [references/run-dry.md](references/run-dry.md). By default, generate and upsert exactly one case,
+   immediately run that case, and fix it until it passes before creating another. Use cumulative
+   `coverage.missing` as the next-case backlog. Only use batches when the user explicitly requests
+   them; update, read, or run at most 10 cases per call, and fix every failure in the current batch
+   before adding more. Never emit or pass a complete Evaluation YAML document.
+8. Call `validate_flow_draft`, then call `prepare_flow_draft` with the Evaluation draft only when
+   the Flow is structurally complete and every current case passes. The Host reruns the complete
+   suite and requires full transition coverage before atomically preparing the Flow, Evaluation,
+   and any new Expert or ExpertTeam YAML in `additionalSources`.
    Use `prepare_dsl_changes` directly only for complete non-Flow resources. Its `sources` input is
    always an array with one complete YAML document per item, even for one resource.
 9. Fix every diagnostic. Never bypass validation or hand-edit project files. If the project

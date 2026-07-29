@@ -32,7 +32,12 @@ spec:
         - get_flow_draft
         - update_flow_draft
         - validate_flow_draft
-        - run_evaluation
+        - create_evaluation_draft
+        - get_evaluation_draft
+        - update_evaluation_draft
+        - run_evaluation_draft
+        - prepare_evaluation_draft
+        - discard_evaluation_draft
         - prepare_flow_draft
         - discard_flow_draft
         - commit_dsl_changes

@@ -2,6 +2,7 @@ import { mkdtemp } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
+import { PragmaFlowRunDryCaseSchema } from "@pragma/evaluation/ast";
 import { describe, expect, it } from "vitest";
 import {
   PRAGMA_AUTOMATION_PROMPT_MAX_LENGTH,
@@ -236,37 +237,55 @@ describe("Desktop DefaultAgent DSL project adapter", () => {
       ],
     });
     expect(graphComplete.diagnostics).toEqual([]);
-    const evaluationSource = `apiVersion: pragma/v3
-kind: Evaluation
-metadata:
-  id: 7h8j9k0m1n2p3q4r
-  name: Release approval run dry
-  description: Verifies the release approval path.
-  tags: [run-dry]
-spec:
-  target:
-    ref: flow:${created.resource.metadata.id}
-  method:
-    type: flow-run-dry
-    cases:
-      - id: ship
-        name: Ship release
-        input: {}
-        mocks:
-          approve:
-            expectInput: {}
-            expectPrompt: Release?
-            output: { selection: ship }
-        expect:
-          status: succeeded
-          path: [approve]
-          output: { selection: ship }
-`;
+    const evaluation = await adapter.createEvaluationDraft({
+      mode: "create",
+      expectedProjectRevision: 0,
+      metadata: {
+        id: "7h8j9k0m1n2p3q4r",
+        name: "Release approval run dry",
+        description: "Verifies the release approval path.",
+        tags: ["run-dry"],
+      },
+      targetRef: `flow:${created.resource.metadata.id}`,
+      targetFlowDraftId: created.draftId,
+    });
+    expect(evaluation.diagnostics).toEqual(
+      expect.arrayContaining([expect.objectContaining({ code: "evaluation.draft.cases_empty" })]),
+    );
+    const evaluationWithCase = await adapter.updateEvaluationDraft({
+      draftId: evaluation.draftId,
+      expectedDraftRevision: 0,
+      operations: [
+        {
+          type: "upsert_case",
+          case: {
+            id: "ship",
+            name: "Ship release",
+            input: {},
+            mocks: {
+              approve: {
+                expectInput: {},
+                expectPrompt: "Release?",
+                output: { selection: "ship" },
+              },
+            },
+            expect: {
+              status: "succeeded",
+              path: ["approve"],
+              output: { selection: "ship" },
+            },
+          },
+        },
+      ],
+    });
     await expect(
-      adapter.runEvaluation({ source: evaluationSource, flowDraftId: created.draftId }),
+      adapter.runEvaluationDraft({
+        draftId: evaluation.draftId,
+        caseIds: ["ship"],
+      }),
     ).resolves.toMatchObject({
-      passed: true,
-      summary: { total: 1, passed: 1, failed: 0 },
+      requestedCases: [expect.objectContaining({ id: "ship", passed: true })],
+      suite: { passed: true, total: 1, passedCount: 1, failedCount: 0 },
       coverage: { missing: [] },
     });
     await expect(adapter.validateFlowDraft(created.draftId)).resolves.toMatchObject({
@@ -277,7 +296,10 @@ spec:
       await adapter.prepareFlowDraft({
         draftId: created.draftId,
         expectedDraftRevision: 2,
-        additionalSources: [evaluationSource],
+        evaluationDraft: {
+          draftId: evaluation.draftId,
+          expectedDraftRevision: evaluationWithCase.draftRevision,
+        },
       }),
     );
     expect(prepared.changes).toEqual([
@@ -403,6 +425,112 @@ spec:
     );
   });
 
+  it("runs selected cases with cumulative coverage and blocks a failing full suite", async () => {
+    const root = await mkdtemp(join(tmpdir(), "pragma-default-agent-evaluation-draft-"));
+    const project = createPragmaProjectStore({ projectsPath: join(root, "projects") });
+    const flow = approvalRouteFlow();
+    expect(await project.validateChanges({ baseRevision: 0, upserts: [flow] })).toEqual([]);
+    await project.publish({ expectedRevision: 0, resources: [flow] });
+    const adapter = createDesktopDefaultAgentProjectPort(
+      adapterOptions(project, join(root, "state")),
+    );
+    const evaluation = await adapter.createEvaluationDraft({
+      mode: "create",
+      expectedProjectRevision: 1,
+      metadata: {
+        id: "7h8j9k0m1n2p3q4r",
+        name: "Approval route Run Dry",
+        description: "Covers both approval routes.",
+        tags: ["run-dry"],
+      },
+      targetRef: "flow:8h9j0k1m2n3p4q5r",
+    });
+    const cases = approvalRouteCases();
+    const updated = await adapter.updateEvaluationDraft({
+      draftId: evaluation.draftId,
+      expectedDraftRevision: 0,
+      operations: cases.map((testCase) => ({ type: "upsert_case" as const, case: testCase })),
+    });
+    await expect(
+      adapter.updateEvaluationDraft({
+        draftId: evaluation.draftId,
+        expectedDraftRevision: updated.draftRevision,
+        operations: Array.from({ length: 11 }, (_, index) => ({
+          type: "remove_case" as const,
+          caseId: `case-${index}`,
+        })),
+      }),
+    ).rejects.toThrow("1 to 10 operations");
+    await expect(
+      adapter.runEvaluationDraft({
+        draftId: evaluation.draftId,
+        caseIds: Array.from({ length: 11 }, (_, index) => `case-${index}`),
+      }),
+    ).rejects.toThrow("1 to 10 unique case IDs");
+
+    await expect(
+      adapter.runEvaluationDraft({
+        draftId: evaluation.draftId,
+        caseIds: ["approve"],
+      }),
+    ).resolves.toMatchObject({
+      requestedCases: [expect.objectContaining({ id: "approve", passed: true })],
+      suite: {
+        passed: true,
+        total: 2,
+        passedCount: 2,
+        failedCount: 0,
+        failedCaseIds: [],
+      },
+      coverage: { passed: true, missing: [] },
+    });
+    const prepared = requirePrepared(
+      await adapter.prepareEvaluationDraft({
+        draftId: evaluation.draftId,
+        expectedDraftRevision: updated.draftRevision,
+      }),
+    );
+    await adapter.commit({
+      changeSetId: prepared.changeSetId,
+      operationId: "commit-evaluation-draft",
+    });
+
+    const edit = await adapter.createEvaluationDraft({
+      mode: "edit",
+      expectedProjectRevision: 2,
+      evaluationRef: "evaluation:7h8j9k0m1n2p3q4r",
+    });
+    const brokenReject = PragmaFlowRunDryCaseSchema.parse({
+      ...cases[1],
+      expect: { ...cases[1]!.expect, path: ["decision"] },
+    });
+    const broken = await adapter.updateEvaluationDraft({
+      draftId: edit.draftId,
+      expectedDraftRevision: 0,
+      operations: [{ type: "upsert_case", case: brokenReject }],
+    });
+    await expect(
+      adapter.runEvaluationDraft({ draftId: edit.draftId, caseIds: ["approve"] }),
+    ).resolves.toMatchObject({
+      requestedCases: [expect.objectContaining({ id: "approve", passed: true })],
+      suite: { passed: false, failedCaseIds: ["reject"] },
+    });
+    await expect(
+      adapter.prepareEvaluationDraft({
+        draftId: edit.draftId,
+        expectedDraftRevision: broken.draftRevision,
+      }),
+    ).resolves.toMatchObject({
+      status: "invalid",
+      diagnostics: [
+        expect.objectContaining({
+          code: "evaluation.case.path",
+          message: expect.stringContaining("reject"),
+        }),
+      ],
+    });
+  });
+
   it("returns structured prepare diagnostics for malformed YAML", async () => {
     const root = await mkdtemp(join(tmpdir(), "pragma-default-agent-invalid-yaml-"));
     const project = createPragmaProjectStore({ projectsPath: join(root, "projects") });
@@ -505,6 +633,115 @@ function automationWithPrompt(prompt: string): string {
     "    adapter: pragma.automation.delivery.local@v1",
     "",
   ].join("\n");
+}
+
+function approvalRouteFlow() {
+  return PragmaFlowResourceSchema.parse({
+    apiVersion: "pragma/v3",
+    kind: "Flow",
+    metadata: {
+      id: "8h9j0k1m2n3p4q5r",
+      name: "Approval route",
+      description: "Routes an approval decision.",
+      tags: [],
+    },
+    spec: {
+      graph: {
+        start: "decision",
+        steps: {
+          decision: {
+            human: {
+              selectionMode: "single",
+              prompt: { segments: [{ text: "Approve?" }] },
+              options: [
+                { value: "approve", label: "Approve" },
+                { value: "reject", label: "Reject" },
+              ],
+            },
+          },
+          approved: {
+            human: {
+              selectionMode: "single",
+              prompt: { segments: [{ text: "Published" }] },
+              options: [
+                { value: "done", label: "Done" },
+                { value: "back", label: "Back" },
+              ],
+            },
+          },
+          rejected: {
+            human: {
+              selectionMode: "single",
+              prompt: { segments: [{ text: "Cancelled" }] },
+              options: [
+                { value: "done", label: "Done" },
+                { value: "back", label: "Back" },
+              ],
+            },
+          },
+        },
+        transitions: {
+          decision: {
+            route: "selection",
+            cases: { approve: "approved" },
+            fallback: "rejected",
+          },
+          approved: { end: true },
+          rejected: { end: true },
+        },
+        loops: {},
+      },
+    },
+  });
+}
+
+function approvalRouteCases() {
+  return [
+    PragmaFlowRunDryCaseSchema.parse({
+      id: "approve",
+      name: "Approve",
+      input: {},
+      mocks: {
+        decision: {
+          expectInput: {},
+          expectPrompt: "Approve?",
+          output: { selection: "approve" },
+        },
+        approved: {
+          expectInput: {},
+          expectPrompt: "Published",
+          output: { selection: "done" },
+        },
+      },
+      expect: {
+        status: "succeeded",
+        path: ["decision", "approved"],
+        output: { selection: "done" },
+      },
+    }),
+    PragmaFlowRunDryCaseSchema.parse({
+      id: "reject",
+      name: "Reject",
+      input: {},
+      mocks: {
+        decision: {
+          expectInput: {},
+          expectPrompt: "Approve?",
+          output: { selection: "reject" },
+        },
+        rejected: {
+          expectInput: {},
+          expectPrompt: "Cancelled",
+          output: { selection: "done" },
+        },
+      },
+      expect: {
+        status: "succeeded",
+        path: ["decision", "rejected"],
+        output: { selection: "done" },
+      },
+    }),
+  ];
 }
 
 function adapterOptions(

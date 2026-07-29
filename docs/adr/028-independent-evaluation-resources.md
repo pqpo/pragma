@@ -21,8 +21,10 @@ Human steps compared the original Flow input.
   Evaluation runner. Evaluation must not depend on Interpreter.
 - Define `expectInput` as the case's original Flow input for every step kind.
 - Define `expectPrompt` as the rendered prompt for Expert, Team, and Human steps.
-- Create a new Flow and its Evaluation atomically by passing the Evaluation source to
-  `prepare_flow_draft.additionalSources`.
+- Author Run Dry cases through a durable, independent Evaluation draft. Default to adding and
+  testing one case at a time; explicit batch operations are bounded to 10 cases.
+- Create a new Flow and its Evaluation atomically by passing the Evaluation draft to
+  `prepare_flow_draft`. The Host reruns the complete suite and rejects assertion or coverage gaps.
 - Expose Evaluation as a top-level Desktop Studio section. Reserve Dataset + LLM-as-Judge there
   without implementing it in this change.
 
