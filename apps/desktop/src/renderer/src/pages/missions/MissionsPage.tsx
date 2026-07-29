@@ -2153,33 +2153,62 @@ export function MissionDetailFragment(props: {
 
 function MissionUsageHint(props: { readonly missionId: string }) {
   const { t } = useTranslation("usage");
-  const [totalTokens, setTotalTokens] = useState(0);
+  const [usageState, setUsageState] = useState<MissionUsageHintState>({
+    revision: -1,
+    totalTokens: 0,
+  });
 
   useEffect(() => {
     let active = true;
-    let timeout: ReturnType<typeof setTimeout> | undefined;
+    setUsageState({ revision: -1, totalTokens: 0 });
     const refresh = async (): Promise<void> => {
       const result = await window.pragmaDesktop.getMissionUsage(props.missionId);
-      if (active) setTotalTokens(result.usage.totalTokens);
+      if (active) {
+        setUsageState((current) =>
+          applyMissionUsageHintRevision(current, {
+            revision: result.revision,
+            totalTokens: result.usage.totalTokens,
+          }),
+        );
+      }
     };
     void refresh().catch(() => undefined);
     const unsubscribe = window.pragmaDesktop.subscribeUsageUpdates((update) => {
-      if (update.missionId !== undefined && update.missionId !== props.missionId) return;
-      if (timeout !== undefined) clearTimeout(timeout);
-      timeout = setTimeout(() => void refresh().catch(() => undefined), 200);
+      if (update.missionId !== props.missionId) return;
+      if (update.missionUsage !== undefined) {
+        setUsageState((current) =>
+          applyMissionUsageHintRevision(current, {
+            revision: update.revision,
+            totalTokens: update.missionUsage!.totalTokens,
+          }),
+        );
+        return;
+      }
+      void refresh().catch(() => undefined);
     });
     return () => {
       active = false;
-      if (timeout !== undefined) clearTimeout(timeout);
       unsubscribe();
     };
   }, [props.missionId]);
 
   return (
     <small className="mission-usage-hint" aria-live="polite">
-      {t("missionHint", { tokens: formatTokens(totalTokens) })}
+      {t("missionHint", { tokens: formatTokens(usageState.totalTokens) })}
     </small>
   );
+}
+
+interface MissionUsageHintState {
+  readonly revision: number;
+  readonly totalTokens: number;
+}
+
+export function applyMissionUsageHintRevision(
+  current: MissionUsageHintState,
+  next: MissionUsageHintState,
+): MissionUsageHintState {
+  return next.revision < current.revision ? current : next;
 }
 
 export function ContextWindowControl(props: {
@@ -3080,8 +3109,14 @@ export function applyMissionChatPatches(
 ): MissionChatSnapshot | null {
   const entries = [...snapshot.entries];
   for (const patch of patches) {
-    const index =
-      patch.type === "entry.upsert" ? -1 : entries.findIndex((entry) => entry.id === patch.entryId);
+    if (patch.type === "context-window.update") {
+      if (snapshot.contextWindow === undefined) return null;
+      snapshot = {
+        ...snapshot,
+        contextWindow: { ...snapshot.contextWindow, usage: patch.usage },
+      };
+      continue;
+    }
     if (patch.type === "entry.upsert") {
       const existingIndex = entries.findIndex((entry) => entry.id === patch.entry.id);
       if (existingIndex === -1) entries.push({ ...patch.entry });
@@ -3099,6 +3134,7 @@ export function applyMissionChatPatches(
       }
       continue;
     }
+    const index = entries.findIndex((entry) => entry.id === patch.entryId);
     if (index === -1) return null;
     const entry = entries[index]!;
     if (patch.type === "entry.streaming") {
@@ -3129,6 +3165,7 @@ function firstVisiblePatchExecutionId(
 ): string | undefined {
   if (update.kind !== "patch") return undefined;
   for (const patch of update.patches) {
+    if (patch.type === "context-window.update") continue;
     if (patch.type === "entry.upsert") {
       if (
         (patch.entry.kind === "assistant" || patch.entry.kind === "thinking") &&

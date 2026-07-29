@@ -21,6 +21,13 @@ Runtime/model selection, executing Expert, timestamp, and `AgentMessageUsage`. C
 persist Invocation and Execution usage snapshots for recovery, but does not persist or query an
 analytics ledger. Sink failures are logged and never change the execution outcome.
 
+While a Runtime turn is active, Core may also send replaceable previews through the sink. A
+Runtime-reported usage snapshot takes precedence; otherwise Core estimates prompt and streamed
+output tokens through one Runtime-neutral fallback. Desktop keeps previews in memory, replaces the
+previous preview for the same observation, and reconciles it with the final idempotent observation
+without persisting or double-counting the estimate. Preview failures follow the same best-effort
+rule as final sink writes.
+
 Pragma Desktop owns the analytics ledger at:
 
 ```text
@@ -57,8 +64,9 @@ Desktop provides a top-level Usage page with:
 - one daily trend chart;
 - ranked Mission, Expert, ExpertTeam, and Flow views.
 
-Mission chat shows a small cumulative token total below the composer. Context-window occupancy
-remains a separate Runtime/session concept.
+Mission chat shows a small cumulative token total below the composer. Both that total and the
+separate Runtime/session context-window occupancy update while a turn is streaming. The settled
+Runtime values replace any provisional estimate at the end of the turn.
 
 ## Consequences
 

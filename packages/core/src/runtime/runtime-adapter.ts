@@ -3,6 +3,8 @@ import type { ContextAssemblerOptions } from "../agent/context-manager.ts";
 import type {
   AgentMessage,
   AgentMessageUsage,
+  RuntimeContextWindowMeasurement,
+  RuntimeContextWindowUsage,
   RuntimeSessionRef as SharedRuntimeSessionRef,
 } from "@pragma/shared";
 export { RuntimeSessionRefSchema } from "@pragma/shared";
@@ -185,15 +187,7 @@ export interface RuntimeSteerRequest {
   readonly targetRunId: string;
 }
 
-export type RuntimeContextWindowMeasurement = "reported" | "derived" | "estimated";
-
-export interface RuntimeContextWindowUsage {
-  readonly usedTokens: number | null;
-  readonly contextWindowTokens: number;
-  readonly percent: number | null;
-  readonly measurement: RuntimeContextWindowMeasurement;
-  readonly observedAt: string;
-}
+export type { RuntimeContextWindowMeasurement, RuntimeContextWindowUsage };
 
 export interface RuntimeSessionContextWindowController {
   readonly inspect: () => Promise<RuntimeContextWindowUsage | undefined>;

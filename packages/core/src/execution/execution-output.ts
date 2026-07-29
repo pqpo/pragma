@@ -59,6 +59,13 @@ export function projectRuntimeOutput(options: {
         channel: "progress",
         value: event.payload,
       });
+    case "usage.updated":
+    case "context-window.updated":
+      return ExecutionOutputItemSchema.parse({
+        ...base,
+        channel: "telemetry",
+        value: { type: event.type, ...event.payload },
+      });
     case "agent.command":
       return ExecutionOutputItemSchema.parse({
         ...base,

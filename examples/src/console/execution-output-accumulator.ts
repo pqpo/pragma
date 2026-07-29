@@ -57,6 +57,8 @@ export class ExecutionOutputAccumulator {
         const text = formatConsoleValue(item.value);
         return text === undefined ? [] : [{ kind: "answer", text, append: false }];
       }
+      case "telemetry":
+        return [];
     }
   }
 

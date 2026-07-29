@@ -791,7 +791,6 @@ class ManagedRuntimeSession<TNativeEvent, TNativeSession, TPrepared> {
       context: this.options.runContext,
       logger: this.options.logger,
       mapEvent: this.options.driver.mapEvent,
-      mergeUsage,
     });
     let enteredLifecycle = false;
     let finalized = false;
@@ -849,7 +848,8 @@ class ManagedRuntimeSession<TNativeEvent, TNativeSession, TPrepared> {
         );
         observedUsage = runResult.result.usage;
         settleUsage(observedUsage);
-        await this.refreshContextWindow(false);
+        controller.updateContextWindowUsage(await this.refreshContextWindow(false));
+        controller.flushTelemetry(false);
 
         controller.writer.write({
           runId,
@@ -872,7 +872,8 @@ class ManagedRuntimeSession<TNativeEvent, TNativeSession, TPrepared> {
       } catch (error) {
         observedUsage ??= controller.getUsage();
         settleUsage(observedUsage);
-        await this.refreshContextWindow(false);
+        controller.updateContextWindowUsage(await this.refreshContextWindow(false));
+        controller.flushTelemetry(false);
         const wasCancelled = signal.aborted || cancelled;
         const message = error instanceof Error ? error.message : "Runtime run failed.";
         const errorMetadata = readRuntimeErrorMetadata(error);
@@ -1019,6 +1020,13 @@ class ManagedRuntimeSession<TNativeEvent, TNativeSession, TPrepared> {
           ? createInitialRuntimePrompt(submission.query, submission.output)
           : createRuntimeOutputRetryPrompt(parseResult);
       controller.resetCapture();
+      controller.beginUsagePreview({
+        prompt,
+        ...(usage === undefined ? {} : { accumulatedUsage: usage }),
+        ...(await this.refreshContextWindow(false).then((contextWindow) =>
+          contextWindow === undefined ? {} : { contextWindow },
+        )),
+      });
       const turnResult = await (async () => {
         const requestStartedAt = performance.now();
         this.options.logger.info(
@@ -1048,12 +1056,14 @@ class ManagedRuntimeSession<TNativeEvent, TNativeSession, TPrepared> {
           return result;
         } catch (error) {
           usage = mergeUsage(usage, controller.getUsage());
+          controller.updateUsage(usage);
           observeUsage(usage);
           throw error;
         }
       })();
       outputText = turnResult.outputText ?? controller.getOutputText();
       usage = mergeUsage(usage, mergeUsage(controller.getUsage(), turnResult.usage));
+      controller.updateUsage(usage);
       observeUsage(usage);
 
       const runtimeSessionId = turnResult.runtimeSessionId ?? controller.getRuntimeSessionId();
@@ -1090,6 +1100,7 @@ class ManagedRuntimeSession<TNativeEvent, TNativeSession, TPrepared> {
         })) ?? usage;
     }
     observeUsage(usage);
+    controller.updateUsage(usage);
 
     return createRuntimeRunResult(runId, parseResult.value, usage);
   }

@@ -33,7 +33,12 @@ export interface UsageObservationContext {
 
 export interface DesktopUsageStore {
   readonly trackingStartedAt: string;
+  readonly preview: (
+    observation: RuntimeUsageObservation,
+    context: UsageObservationContext,
+  ) => void;
   readonly record: (observation: RuntimeUsageObservation, context: UsageObservationContext) => void;
+  readonly clearPreview: (observationId: string) => void;
   readonly recordRecovered: (
     observation: Omit<RuntimeUsageObservation, "observationId" | "runId">,
     context: UsageObservationContext,
@@ -143,29 +148,88 @@ export async function createDesktopUsageStore(input: {
     throw new Error(`Unsupported Desktop usage schema: ${schemaVersion}.`);
   }
   const listeners = new Set<(update: UsageUpdate) => void>();
-  const revision = (): number => Number(metadata("revision"));
-  const publish = (missionId?: string): void => {
-    const next = revision() + 1;
-    database
-      .prepare("UPDATE usage_metadata SET value = ? WHERE key = 'revision'")
-      .run(String(next));
+  const previews = new Map<
+    string,
+    {
+      readonly observation: RuntimeUsageObservation;
+      readonly context: UsageObservationContext;
+    }
+  >();
+  let currentRevision = Number(metadata("revision"));
+  const persistedMissionTotals = (missionId: string): UsageTokenTotals =>
+    readTotals(
+      database
+        .prepare(
+          `SELECT
+            COALESCE(SUM(input_tokens), 0) AS input,
+            COALESCE(SUM(output_tokens), 0) AS output,
+            COALESCE(SUM(cache_read_tokens), 0) AS cacheRead,
+            COALESCE(SUM(cache_write_tokens), 0) AS cacheWrite,
+            COALESCE(SUM(total_tokens), 0) AS totalTokens
+           FROM usage_observations WHERE mission_id = ?`,
+        )
+        .get(missionId),
+    );
+  const missionPreviewTotals = (missionId: string): UsageTokenTotals =>
+    [...previews.values()]
+      .filter((preview) => preview.context.mission.id === missionId)
+      .reduce((total, preview) => addTotals(total, preview.observation.usage), { ...EMPTY_USAGE });
+  const missionTotals = (missionId: string): UsageTokenTotals =>
+    addTotals(persistedMissionTotals(missionId), missionPreviewTotals(missionId));
+  const publish = (missionId?: string, provisional = false, persist = true): void => {
+    currentRevision += 1;
+    if (persist) {
+      database
+        .prepare("UPDATE usage_metadata SET value = ? WHERE key = 'revision'")
+        .run(String(currentRevision));
+    }
     const update: UsageUpdate = {
-      revision: next,
-      ...(missionId === undefined ? {} : { missionId }),
+      revision: currentRevision,
+      ...(missionId === undefined
+        ? {}
+        : {
+            missionId,
+            missionUsage: missionTotals(missionId),
+            provisional,
+          }),
     };
     for (const listener of listeners) listener(update);
   };
 
   const store: DesktopUsageStore = {
     trackingStartedAt,
-    record(observation, context) {
+    preview(observation, context) {
       if (observation.occurredAt < trackingStartedAt) return;
+      const persisted = database
+        .prepare("SELECT signature FROM usage_observations WHERE observation_id = ?")
+        .get(observation.observationId);
+      if (persisted !== undefined) return;
+      const existing = previews.get(observation.observationId);
+      if (
+        existing !== undefined &&
+        observationSignature(existing.observation) === observationSignature(observation)
+      ) {
+        return;
+      }
+      previews.set(observation.observationId, { observation, context });
+      publish(context.mission.id, true, false);
+    },
+    record(observation, context) {
+      if (observation.occurredAt < trackingStartedAt) {
+        store.clearPreview(observation.observationId);
+        return;
+      }
       const signature = observationSignature(observation);
       const existing = database
         .prepare("SELECT signature FROM usage_observations WHERE observation_id = ?")
         .get(observation.observationId) as { signature?: unknown } | undefined;
       if (existing !== undefined) {
-        if (existing.signature === signature) return;
+        if (existing.signature === signature) {
+          const preview = previews.get(observation.observationId);
+          previews.delete(observation.observationId);
+          if (preview !== undefined) publish(preview.context.mission.id);
+          return;
+        }
         throw new Error(`Conflicting usage observation: ${observation.observationId}.`);
       }
       const subjects = resolveSubjects(observation, context);
@@ -222,7 +286,20 @@ export async function createDesktopUsageStore(input: {
         database.exec("ROLLBACK;");
         throw error;
       }
+      previews.delete(observation.observationId);
       publish(context.mission.id);
+    },
+    clearPreview(observationId) {
+      const preview = previews.get(observationId);
+      if (preview === undefined) return;
+      previews.delete(observationId);
+      publish(
+        preview.context.mission.id,
+        [...previews.values()].some(
+          (candidate) => candidate.context.mission.id === preview.context.mission.id,
+        ),
+        false,
+      );
     },
     recordRecovered(observation, context) {
       const recorded = readTotals(
@@ -312,7 +389,7 @@ export async function createDesktopUsageStore(input: {
         UsageTokenTotals & { date: string }
       >;
       return {
-        revision: revision(),
+        revision: currentRevision,
         trackingStartedAt,
         timezone: storedTimezone,
         totals,
@@ -362,7 +439,7 @@ export async function createDesktopUsageStore(input: {
         UsageTokenTotals & { id: string; name: string; deleted: number }
       >;
       return {
-        revision: revision(),
+        revision: currentRevision,
         total: Number(totalRow.total),
         items: rows.map((row) => ({
           kind,
@@ -376,20 +453,11 @@ export async function createDesktopUsageStore(input: {
     },
     getMissionUsage(missionId) {
       return {
-        revision: revision(),
+        revision: currentRevision,
         trackingStartedAt,
-        usage: readTotals(
-          database
-            .prepare(
-              `SELECT
-                COALESCE(SUM(input_tokens), 0) AS input,
-                COALESCE(SUM(output_tokens), 0) AS output,
-                COALESCE(SUM(cache_read_tokens), 0) AS cacheRead,
-                COALESCE(SUM(cache_write_tokens), 0) AS cacheWrite,
-                COALESCE(SUM(total_tokens), 0) AS totalTokens
-               FROM usage_observations WHERE mission_id = ?`,
-            )
-            .get(missionId),
+        usage: missionTotals(missionId),
+        provisional: [...previews.values()].some(
+          (preview) => preview.context.mission.id === missionId,
         ),
       };
     },
@@ -408,6 +476,7 @@ export async function createDesktopUsageStore(input: {
     },
     close() {
       listeners.clear();
+      previews.clear();
       database.close();
     },
   };
@@ -499,6 +568,19 @@ function readTotals(value: unknown): UsageTokenTotals {
     cacheRead: Number(row.cacheRead ?? 0),
     cacheWrite: Number(row.cacheWrite ?? 0),
     totalTokens: Number(row.totalTokens ?? 0),
+  };
+}
+
+function addTotals(
+  current: UsageTokenTotals,
+  next: Pick<UsageTokenTotals, "input" | "output" | "cacheRead" | "cacheWrite" | "totalTokens">,
+): UsageTokenTotals {
+  return {
+    input: current.input + next.input,
+    output: current.output + next.output,
+    cacheRead: current.cacheRead + next.cacheRead,
+    cacheWrite: current.cacheWrite + next.cacheWrite,
+    totalTokens: current.totalTokens + next.totalTokens,
   };
 }
 
