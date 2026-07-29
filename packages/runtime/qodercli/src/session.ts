@@ -2,6 +2,7 @@ import type { AgentMessage, AgentMessageUsage, AgentAssistantMessage } from "@pr
 import {
   createRuntimeContextWindowUsage,
   createUsageFromTokenCounts,
+  defaultRuntimeTokenCounter,
   type Expert,
   type ExpertAgentHumanInteractionHandler,
   type ExpertToolRuntimeState,
@@ -11,6 +12,7 @@ import {
   type RuntimeEventMappingResult,
   type RuntimeTurnContext,
   type RuntimeTurnResult,
+  type RuntimeTokenCounter,
   RUNTIME_CONTEXT_COMPACTION_STAGES,
 } from "@pragma/core";
 import { randomUUID } from "node:crypto";
@@ -29,7 +31,6 @@ import {
 } from "@qoder-ai/qoder-agent-sdk";
 
 import { resolveQoderContextWindow } from "./models.ts";
-import { defaultTokenEstimator } from "./token-estimator.ts";
 import type { QoderCliRuntimePermissionMode } from "./types.ts";
 
 export type QoderNativeEvent =
@@ -70,6 +71,7 @@ export interface QoderNativeSession {
   readonly compactModelName?: string | undefined;
   readonly systemPrompt: string;
   readonly toolRuntimeState: ExpertToolRuntimeState;
+  readonly tokenCounter: RuntimeTokenCounter;
   readonly messages: AgentMessage[];
   readonly toolNames: Map<string, string>;
   sessionId: string;
@@ -380,18 +382,28 @@ async function runQoderQuery(
       if (result !== undefined) {
         turn.stream.writeNative({
           kind: "usage",
-          usage: resolveQoderUsage(result, {
-            inputText: estimateQoderTurnInput(session, prompt),
-            outputText: readQoderResultOutput(result),
-          }),
+          usage: resolveQoderUsage(
+            result,
+            {
+              inputText: estimateQoderTurnInput(session, prompt),
+              outputText: readQoderResultOutput(result),
+            },
+            session.tokenCounter,
+            session.defaultModelName,
+          ),
         });
       }
       throw error;
     }
-    const usage = resolveQoderUsage(successful, {
-      inputText: estimateQoderTurnInput(session, prompt),
-      outputText: successful.result,
-    });
+    const usage = resolveQoderUsage(
+      successful,
+      {
+        inputText: estimateQoderTurnInput(session, prompt),
+        outputText: successful.result,
+      },
+      session.tokenCounter,
+      session.defaultModelName,
+    );
     session.logger.info("runtime.qodercli_final_result", "Qoder CLI returned a final result", {
       runId: turn.runId,
       elapsedMs: qoderTurnElapsedMs(queryStartedAt),
@@ -688,14 +700,17 @@ export function resolveQoderUsage(
     readonly inputText: string;
     readonly outputText: string;
   },
+  tokenCounter: RuntimeTokenCounter = defaultRuntimeTokenCounter,
+  modelName?: string | undefined,
 ): AgentMessageUsage {
   const reported = mapQoderUsage(result);
   if (reported.totalTokens > 0) return reported;
+  const model = qoderTokenModelIdentity(modelName);
   return createUsageFromTokenCounts({
     measurement: "estimated",
-    inputTokens: defaultTokenEstimator.count(fallback.inputText),
+    inputTokens: tokenCounter.countText(fallback.inputText, model).tokens,
     inputTokensIncludeCacheRead: false,
-    outputTokens: defaultTokenEstimator.count(fallback.outputText),
+    outputTokens: tokenCounter.countText(fallback.outputText, model).tokens,
     cacheReadTokens: 0,
     cacheWriteTokens: 0,
   });
@@ -764,7 +779,7 @@ function estimateContextUsage(session: QoderNativeSession): RuntimeContextWindow
   const activeMessages =
     latestCompactionIndex < 0 ? session.messages : session.messages.slice(latestCompactionIndex);
   return createRuntimeContextWindowUsage({
-    usedTokens: defaultTokenEstimator.count(
+    usedTokens: session.tokenCounter.countText(
       JSON.stringify({
         systemPrompt: session.systemPrompt,
         messages: activeMessages,
@@ -772,10 +787,20 @@ function estimateContextUsage(session: QoderNativeSession): RuntimeContextWindow
           ? { compactSummary: session.compactSummary }
           : {}),
       }),
-    ),
+      qoderTokenModelIdentity(session.defaultModelName),
+    ).tokens,
     contextWindowTokens: session.contextWindowTokens,
     measurement: "estimated",
   });
+}
+
+function qoderTokenModelIdentity(modelId: string | undefined) {
+  return {
+    runtimeKind: "qoder-agent-sdk",
+    providerCatalogId: "qoder",
+    providerId: "qoder",
+    ...(modelId === undefined ? {} : { modelId }),
+  };
 }
 
 function estimateQoderTurnInput(session: QoderNativeSession, prompt: string): string {

@@ -8,7 +8,9 @@ import {
   createCodexNotificationBus,
   mapCodexNotificationToRuntimeEvent,
   parseCodexContextWindowUsage,
+  readCodexContextWindow,
   startCodexTurn,
+  type CodexNativeSession,
 } from "../src/session.ts";
 
 describe("Codex context window", () => {
@@ -61,6 +63,36 @@ describe("Codex context window", () => {
       contextWindowTokens: 128_000,
       percent: 50,
     });
+  });
+
+  it("uses the shared counter only when the reported context count is unavailable", () => {
+    const countText = vi.fn(() => ({ tokens: 37, source: "tokenizer" as const }));
+    const session = {
+      contextWindowUsage: {
+        usedTokens: null,
+        contextWindowTokens: 200_000,
+        percent: null,
+        measurement: "reported",
+        observedAt: "2026-07-29T00:00:00.000Z",
+      },
+      messages: [{ role: "user", content: "hello", timestamp: 0 }],
+      tokenCounter: { countText },
+      tokenModelIdentity: { providerCatalogId: "openai", modelId: "gpt-test" },
+    } as unknown as CodexNativeSession;
+
+    expect(readCodexContextWindow(session)).toMatchObject({
+      usedTokens: 37,
+      measurement: "estimated",
+    });
+    expect(countText).toHaveBeenCalledOnce();
+
+    session.contextWindowUsage = {
+      ...session.contextWindowUsage!,
+      usedTokens: 50,
+      percent: 0.025,
+    };
+    expect(readCodexContextWindow(session)?.usedTokens).toBe(50);
+    expect(countText).toHaveBeenCalledOnce();
   });
 
   it("waits for compact completion and returns refreshed thread usage", async () => {

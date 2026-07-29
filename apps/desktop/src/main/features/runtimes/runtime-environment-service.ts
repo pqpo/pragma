@@ -4,6 +4,7 @@ import type {
   RuntimeModelSelection,
   RuntimeResolver,
   PragmaLogger,
+  RuntimeTokenCounter,
 } from "@pragma/core";
 import { createClaudeCodeRuntime } from "@pragma/runtime-claude-code";
 import {
@@ -266,6 +267,7 @@ export function createBuiltInRuntimeFactories(
     | DesktopToolPermissionMode
     | Promise<DesktopToolPermissionMode> = () => "request-approval",
   onModelCatalogUpdated?: ((runtimeId: string) => void) | undefined,
+  tokenCounter?: RuntimeTokenCounter | undefined,
 ): readonly RuntimeEnvironmentAdapterFactory[] {
   return [
     {
@@ -281,6 +283,7 @@ export function createBuiltInRuntimeFactories(
             ? {}
             : { onModelCatalogUpdated: () => onModelCatalogUpdated(environment.id) }),
           ...permissions,
+          tokenCounter,
         });
       },
     },
@@ -301,6 +304,7 @@ export function createBuiltInRuntimeFactories(
               : permissionMode === "auto-approve"
                 ? "auto"
                 : "bypassPermissions",
+          tokenCounter,
         });
       },
     },
@@ -316,6 +320,7 @@ export function createBuiltInRuntimeFactories(
             ? {}
             : { onModelCatalogUpdated: () => onModelCatalogUpdated(environment.id) }),
           permissionMode: qoderRuntimePermissionForMode(permissionMode),
+          tokenCounter,
         });
       },
     },
@@ -327,6 +332,7 @@ export function createBuiltInRuntimeFactories(
         return createPiRuntime({
           descriptor: { id: environment.id, displayName: BUILT_IN_RUNTIME_DISPLAY_NAME },
           modelProviders,
+          tokenCounter,
         });
       },
     },

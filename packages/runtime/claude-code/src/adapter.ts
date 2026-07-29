@@ -188,6 +188,7 @@ export function createClaudeCodeRuntime(
               startupMessages: state.sessionId === "" ? ctx.agentContext.startupMessages : [],
               state,
               systemPrompt: ctx.agentContext.systemPrompt,
+              tokenCounter: options.tokenCounter,
             }),
             mcpToolRegistry,
             expertToolsMcpRegistration,

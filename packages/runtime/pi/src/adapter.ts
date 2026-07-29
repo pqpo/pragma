@@ -9,7 +9,14 @@ import type {
   CreateAgentSessionOptions,
   ToolDefinition,
 } from "@earendil-works/pi-coding-agent";
-import type { McpToolRegistry, PragmaLogger, RuntimeAdapter } from "@pragma/core";
+import type {
+  McpToolRegistry,
+  PragmaLogger,
+  ResolvedModelProvider,
+  RuntimeAdapter,
+  RuntimeModelRef,
+  RuntimeTokenModelIdentity,
+} from "@pragma/core";
 import {
   createMcpToolRegistry,
   defineRuntimeDriver,
@@ -34,6 +41,7 @@ import {
   listPiMessages,
   mapPiAgentEvent,
   readPiContextWindow,
+  setPiTokenModelIdentity,
   startPiTurn,
   type PiNativeSession,
 } from "./session.ts";
@@ -300,6 +308,8 @@ export function createPiRuntime(options: CloudPiRuntimeAdapterOptions = {}): Run
                 modelRuntime,
               },
               compactionKeepRecentTokens,
+              tokenCounter: options.tokenCounter,
+              tokenModelIdentity: piTokenModelIdentity(registeredProvider, selectedModel),
             }),
             mcpToolRegistry,
           };
@@ -333,6 +343,7 @@ export function createPiRuntime(options: CloudPiRuntimeAdapterOptions = {}): Run
           if (provider === undefined) {
             throw new Error(`Model provider is not registered: ${selectedModel.providerId}`);
           }
+          setPiTokenModelIdentity(session, piTokenModelIdentity(provider, selectedModel));
           registerPiModelProvider(
             session.models.modelRuntime,
             modelProviderConverter.convertProvider(provider),
@@ -363,6 +374,21 @@ export function createPiRuntime(options: CloudPiRuntimeAdapterOptions = {}): Run
       sessionSyncCallback: options.sessionSyncCallback,
     },
   );
+}
+
+function piTokenModelIdentity(
+  provider: ResolvedModelProvider | undefined,
+  model: RuntimeModelRef | undefined,
+): RuntimeTokenModelIdentity {
+  const providerModel = provider?.models.find((candidate) => candidate.id === model?.modelId);
+  return {
+    runtimeKind: "cloud-pi-agent",
+    ...(provider === undefined ? {} : { providerCatalogId: provider.catalogId }),
+    ...(model === undefined ? {} : { providerId: model.providerId, modelId: model.modelId }),
+    ...(providerModel?.api === undefined && provider?.api === undefined
+      ? {}
+      : { api: providerModel?.api ?? provider?.api }),
+  };
 }
 
 async function timedPiPhase<T>(

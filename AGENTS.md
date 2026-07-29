@@ -250,6 +250,14 @@ Server 与 Agent 的关系：
 - Core 负责定义专家能力、输入输出协议、Invocation、Runtime Adapter 合约，以及默认云端沙箱执行抽象。
 - Core 通过可选 `UsageSink` 发出逐 Runtime turn 的 token observation，但不持久化跨 Execution
   的统计账本；Desktop/Server 等 Host 负责统计持久化、保留和查询策略。
+- 所有 Token 数量预估必须调用 `@pragma/core` 导出的统一 `RuntimeTokenCounter`。具体 Runtime、
+  Desktop、Server、Worker 或插件不得自行实现 chars/token、bytes/token、CJK 修正或其他 Token
+  估算算法。Runtime 提供精确上报时必须优先采用上报值；只有缺少上报时才能调用统一计数器。
+- 结构化消息的供应商协议序列化留在具体 Runtime，序列化后的文本统一交给
+  `RuntimeTokenCounter`。统一 fallback 在 Core 中懒加载应用内安装的 tokenizer；不得把词表复制到
+  Runtime package，不得从 CDN 下载并执行远程代码，也不得要求终端用户配置 tokenizer 环境变量。
+- 新 Runtime 必须测试 Runtime 上报优先级和统一 Token 估算 fallback。代码评审发现新的 Runtime
+  本地 Token 估算器时，按架构边界违规处理。
 - Server/Worker 可以调用 Core；Core 不应该反向调用 Server 应用层。
 - 本地 Claude Code、Codex、Qoder CLI、自研执行环境属于 Runtime Adapter 的实现目标，由 Desktop App 承载本地连接、授权和执行桥接，不改变 Server 调度 Agent 的依赖方向。
 

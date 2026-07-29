@@ -89,6 +89,7 @@ import type { DesktopUsageStore } from "../usage/usage-store.ts";
 
 export interface MissionRunner {
   reconcileUsage(): Promise<void>;
+  invalidateEstimatedContextWindows(): Promise<void>;
   run(id: string): Promise<Mission>;
   updateOptions(input: UpdateMissionOptions): Promise<Mission>;
   sendMessage(input: {
@@ -1535,6 +1536,9 @@ export function createMissionRunner(options: {
 
   return {
     reconcileUsage,
+    async invalidateEstimatedContextWindows() {
+      for (const mission of await options.missions.list()) invalidateChat(mission.id);
+    },
     async run(id) {
       const pending = pendingOperations.get(id);
       if (pending?.kind === "run") return await pending.promise;

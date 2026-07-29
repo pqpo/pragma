@@ -21,9 +21,12 @@ import type {
   RuntimeTurnContext,
   RuntimeTurnResult,
   RuntimeContextCompactionTrigger,
+  RuntimeTokenCounter,
+  RuntimeTokenModelIdentity,
 } from "@pragma/core";
 import {
   createRuntimeContextWindowUsage,
+  defaultRuntimeTokenCounter,
   RUNTIME_CONTEXT_COMPACTION_STAGES,
   type RuntimeStreamEventInput,
 } from "@pragma/core";
@@ -52,6 +55,8 @@ export interface PiNativeSession {
     readonly modelRuntime: ModelRuntime;
   };
   readonly compactionKeepRecentTokens: number;
+  readonly tokenCounter: RuntimeTokenCounter;
+  tokenModelIdentity: RuntimeTokenModelIdentity;
   messageCountBeforeRun: number;
   pendingCompactionOperationId?: string | undefined;
   compactionTriggerOverride?: RuntimeContextCompactionTrigger | undefined;
@@ -73,11 +78,22 @@ export function createPiNativeSession(options: {
     readonly modelRuntime: ModelRuntime;
   };
   readonly compactionKeepRecentTokens: number;
+  readonly tokenCounter?: RuntimeTokenCounter | undefined;
+  readonly tokenModelIdentity?: RuntimeTokenModelIdentity | undefined;
 }): PiNativeSession {
   return {
     ...options,
+    tokenCounter: options.tokenCounter ?? defaultRuntimeTokenCounter,
+    tokenModelIdentity: options.tokenModelIdentity ?? { runtimeKind: "cloud-pi-agent" },
     messageCountBeforeRun: options.session.messages.length,
   };
+}
+
+export function setPiTokenModelIdentity(
+  session: PiNativeSession,
+  identity: RuntimeTokenModelIdentity,
+): void {
+  session.tokenModelIdentity = identity;
 }
 
 export function listPiMessages(session: PiNativeSession): readonly AgentMessage[] {
@@ -273,10 +289,19 @@ export function readPiContextWindow(
 ): RuntimeContextWindowUsage | undefined {
   const usage = session.session.getContextUsage();
   if (usage === undefined) return undefined;
+  const hasReportedUsage = hasReportedPiContextUsage(session);
+  const estimatedTokens =
+    hasReportedUsage && usage.tokens !== null
+      ? usage.tokens
+      : estimatePiActiveContextTokens(session);
   return createRuntimeContextWindowUsage({
-    usedTokens: usage.tokens,
+    usedTokens: hasReportedUsage
+      ? (usage.tokens ?? estimatedTokens)
+      : estimatedTokens > 0
+        ? estimatedTokens
+        : usage.tokens,
     contextWindowTokens: usage.contextWindow,
-    measurement: hasReportedPiContextUsage(session) ? "derived" : "estimated",
+    measurement: hasReportedUsage ? "derived" : "estimated",
   });
 }
 
@@ -318,8 +343,9 @@ export async function compactPiContextWindow(
   const after = session.session.getContextUsage();
   const contextWindowTokens = after?.contextWindow ?? before?.contextWindow;
   if (contextWindowTokens === undefined) return undefined;
+  const inspected = readPiContextWindow(session);
   return createRuntimeContextWindowUsage({
-    usedTokens: result.estimatedTokensAfter ?? after?.tokens ?? null,
+    usedTokens: result.estimatedTokensAfter ?? inspected?.usedTokens ?? after?.tokens ?? null,
     contextWindowTokens,
     measurement: "estimated",
   });
@@ -327,9 +353,6 @@ export async function compactPiContextWindow(
 
 type PiSessionEntry = ReturnType<PiNativeSession["session"]["sessionManager"]["getBranch"]>[number];
 type PiContextMessage = ReturnType<typeof sessionEntryToContextMessages>[number];
-
-const DENSE_SCRIPT_CHARACTER =
-  /[\p{Script=Han}\p{Script=Hiragana}\p{Script=Katakana}\p{Script=Hangul}]/u;
 
 function findPiCompactionBoundaryStart(pathEntries: readonly PiSessionEntry[]): number {
   for (let index = pathEntries.length - 1; index >= 0; index -= 1) {
@@ -350,9 +373,8 @@ function calibratePiCompactionBudget(session: PiNativeSession, boundaryStart?: n
   let retainedPiTokens = 0;
   let calibratedTokens = 0;
 
-  // Pi's native compactor uses a chars/4 estimate. Find the same recent-message
-  // boundary with model output usage and dense-script-aware estimates, then express
-  // that boundary in Pi's units so its compactor preserves the configured budget.
+  // Pi's native compactor uses its own units. Select the retained boundary with the
+  // shared model-aware counter, then express that boundary in Pi's units.
   for (let index = pathEntries.length - 1; index >= start; index -= 1) {
     const entry = pathEntries[index];
     if (entry === undefined) continue;
@@ -360,7 +382,7 @@ function calibratePiCompactionBudget(session: PiNativeSession, boundaryStart?: n
     for (const message of sessionEntryToContextMessages(entry)) {
       const piEstimate = estimateTokens(message);
       retainedPiTokens += piEstimate;
-      calibratedTokens += estimatePiMessageTokens(message, piEstimate);
+      calibratedTokens += estimatePiMessageTokens(session, message);
     }
     if (calibratedTokens >= configuredTokens) break;
   }
@@ -376,11 +398,13 @@ function calibratePiCompactionBudget(session: PiNativeSession, boundaryStart?: n
   return effectiveTokens;
 }
 
-function estimatePiMessageTokens(message: PiContextMessage, piEstimate: number): number {
+function estimatePiMessageTokens(session: PiNativeSession, message: PiContextMessage): number {
   const reportedOutputTokens = readReportedAssistantOutputTokens(message);
-  const denseScriptCharacters = countDenseScriptCharacters(message);
-  const denseScriptAdjusted = piEstimate + Math.ceil(denseScriptCharacters * 0.75);
-  return Math.max(piEstimate, denseScriptAdjusted, reportedOutputTokens ?? 0);
+  const sharedEstimate = (session.tokenCounter ?? defaultRuntimeTokenCounter).countText(
+    JSON.stringify(message),
+    session.tokenModelIdentity ?? { runtimeKind: "cloud-pi-agent" },
+  ).tokens;
+  return reportedOutputTokens ?? sharedEstimate;
 }
 
 function readReportedAssistantOutputTokens(message: PiContextMessage): number | undefined {
@@ -393,23 +417,17 @@ function readReportedAssistantOutputTokens(message: PiContextMessage): number | 
     : undefined;
 }
 
-function countDenseScriptCharacters(value: unknown, seen = new Set<object>()): number {
-  if (typeof value === "string") {
-    let count = 0;
-    for (const character of value) {
-      if (DENSE_SCRIPT_CHARACTER.test(character)) count += 1;
+function estimatePiActiveContextTokens(session: PiNativeSession): number {
+  const pathEntries = session.session.sessionManager.getBranch();
+  const start = findPiCompactionBoundaryStart(pathEntries);
+  let total = 0;
+  for (const entry of pathEntries.slice(start)) {
+    if (entry.type === "compaction") continue;
+    for (const message of sessionEntryToContextMessages(entry)) {
+      total += estimatePiMessageTokens(session, message);
     }
-    return count;
   }
-  if (typeof value !== "object" || value === null || seen.has(value)) return 0;
-  seen.add(value);
-  if (Array.isArray(value)) {
-    return value.reduce((total, item) => total + countDenseScriptCharacters(item, seen), 0);
-  }
-  return Object.values(value).reduce(
-    (total, item) => total + countDenseScriptCharacters(item, seen),
-    0,
-  );
+  return total;
 }
 
 function hasReportedPiContextUsage(session: PiNativeSession): boolean {

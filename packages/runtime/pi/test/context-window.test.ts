@@ -61,15 +61,31 @@ describe("PI context window", () => {
       entry("recent", "middle", "新".repeat(10_000)),
     ];
     const state = piContextState(entries);
+    const countText = vi.fn((value: string) => ({
+      tokens: [...value].filter(
+        (character) => character === "旧" || character === "中" || character === "新",
+      ).length,
+      source: "tokenizer" as const,
+    }));
     const session = {
       session: state,
       compactionKeepRecentTokens: 20_000,
+      tokenCounter: { countText },
+      tokenModelIdentity: {
+        runtimeKind: "cloud-pi-agent",
+        providerCatalogId: "qwen",
+        modelId: "qwen-test",
+      },
     } as unknown as PiNativeSession;
 
     expect(canCompactPiContextWindow(session)).toBe(true);
     expect(state.settingsManager.applyOverrides).toHaveBeenCalledWith({
       compaction: { keepRecentTokens: 5_000 },
     });
+    expect(countText).toHaveBeenCalledWith(
+      expect.any(String),
+      expect.objectContaining({ providerCatalogId: "qwen", modelId: "qwen-test" }),
+    );
   });
 
   it("preserves the configured recent budget when only older history uses dense text", () => {
@@ -117,6 +133,7 @@ describe("PI context window", () => {
   });
 
   it("marks context usage backed by a completed model response as derived", () => {
+    const countText = vi.fn(() => ({ tokens: 99_000, source: "tokenizer" as const }));
     const assistantEntry = {
       type: "message" as const,
       id: "assistant",
@@ -145,12 +162,14 @@ describe("PI context window", () => {
           percent: 9.375,
         }),
       },
+      tokenCounter: { countText },
     } as unknown as PiNativeSession;
 
     expect(readPiContextWindow(session)).toMatchObject({
       usedTokens: 12_000,
       measurement: "derived",
     });
+    expect(countText).not.toHaveBeenCalled();
   });
 
   it("reports the post-compaction estimate returned by PI", async () => {

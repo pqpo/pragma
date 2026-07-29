@@ -251,6 +251,7 @@ export function createCodexRuntime(options: CodexRuntimeAdapterOptions = {}): Ru
               defaultModelName,
               defaultThinkingLevel,
               codexHome: codex.home,
+              tokenCounter: options.tokenCounter,
               startupMessages: threadStartResult.startedFreshThread
                 ? ctx.agentContext.startupMessages
                 : [],

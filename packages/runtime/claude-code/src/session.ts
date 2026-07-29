@@ -17,10 +17,13 @@ import type {
   RuntimeStreamEventInput,
   RuntimeTurnContext,
   RuntimeTurnResult,
+  RuntimeTokenCounter,
+  RuntimeTokenModelIdentity,
 } from "@pragma/core";
 import {
   createRuntimeContextWindowUsage,
   createUsageFromTokenCounts,
+  defaultRuntimeTokenCounter,
   hasNonZeroUsage,
   readFirstTokenCount,
 } from "@pragma/core";
@@ -90,6 +93,8 @@ export interface ClaudeCodeNativeSession {
   readonly state: ClaudeCodeRuntimeSessionState;
   readonly systemPrompt: string;
   readonly messages: ClaudeCodeRuntimeMessage[];
+  readonly tokenCounter: RuntimeTokenCounter;
+  tokenModelIdentity: RuntimeTokenModelIdentity;
   pendingStartupMessages: readonly ExpertAgentStartupMessage[];
   activeProcess?: ChildProcessWithoutNullStreams | undefined;
   activeExitPromise?:
@@ -123,9 +128,12 @@ export function createClaudeCodeNativeSession(options: {
   readonly startupMessages?: readonly ExpertAgentStartupMessage[] | undefined;
   readonly state: ClaudeCodeRuntimeSessionState;
   readonly systemPrompt: string;
+  readonly tokenCounter?: RuntimeTokenCounter | undefined;
 }): ClaudeCodeNativeSession {
   return {
     ...options,
+    tokenCounter: options.tokenCounter ?? defaultRuntimeTokenCounter,
+    tokenModelIdentity: claudeTokenModelIdentity(options.defaultModelName),
     messages: [],
     pendingStartupMessages: options.startupMessages ?? [],
     activeCancelled: false,
@@ -160,6 +168,9 @@ export async function startClaudeCodeTurn(
   session: ClaudeCodeNativeSession,
   turn: RuntimeTurnContext<Record<string, unknown>>,
 ): Promise<RuntimeTurnResult> {
+  session.tokenModelIdentity = claudeTokenModelIdentity(
+    turn.modelSelection?.model.modelId ?? session.defaultModelName,
+  );
   session.messages.push({
     role: "user",
     content: turn.rawQuery,
@@ -304,17 +315,62 @@ export async function collectClaudeCodeUsage(
     return currentUsage;
   }
 
-  return await scanClaudeTranscriptUsage({
+  const scanned = await scanClaudeTranscriptUsage({
     configDir: resolveClaudeCodeConfigDir(session),
     sessionId: session.state.sessionId,
     startTime: startedAt,
   });
+  return scanned ?? estimateClaudeCodeUsage(session);
 }
 
 export function readClaudeCodeContextWindow(
   session: ClaudeCodeNativeSession,
 ): RuntimeContextWindowUsage | undefined {
-  return session.contextWindowUsage;
+  const usage = session.contextWindowUsage;
+  if (usage === undefined || usage.usedTokens !== null) return usage;
+  return createRuntimeContextWindowUsage({
+    usedTokens: session.tokenCounter.countText(
+      JSON.stringify({
+        systemPrompt: session.systemPrompt,
+        messages: session.messages,
+      }),
+      session.tokenModelIdentity,
+    ).tokens,
+    contextWindowTokens: usage.contextWindowTokens,
+    measurement: "estimated",
+  });
+}
+
+function estimateClaudeCodeUsage(session: ClaudeCodeNativeSession): AgentMessageUsage | undefined {
+  const assistantIndex = session.messages.findLastIndex((message) => message.role === "assistant");
+  if (assistantIndex < 0) return undefined;
+  return createUsageFromTokenCounts({
+    measurement: "estimated",
+    inputTokens: session.tokenCounter.countText(
+      JSON.stringify({
+        systemPrompt: session.systemPrompt,
+        messages: session.messages.slice(0, assistantIndex),
+      }),
+      session.tokenModelIdentity,
+    ).tokens,
+    inputTokensIncludeCacheRead: false,
+    outputTokens: session.tokenCounter.countText(
+      session.messages[assistantIndex]?.content ?? "",
+      session.tokenModelIdentity,
+    ).tokens,
+    cacheReadTokens: 0,
+    cacheWriteTokens: 0,
+  });
+}
+
+function claudeTokenModelIdentity(modelId: string | undefined): RuntimeTokenModelIdentity {
+  return {
+    runtimeKind: "claude-code",
+    providerCatalogId: "anthropic",
+    providerId: "anthropic",
+    api: "anthropic-messages",
+    ...(modelId === undefined ? {} : { modelId }),
+  };
 }
 
 export async function compactClaudeCodeContextWindow(

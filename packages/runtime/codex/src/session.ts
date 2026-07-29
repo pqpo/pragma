@@ -14,10 +14,13 @@ import type {
   RuntimeTurnResult,
   RuntimeContextCompactionStage,
   RuntimeContextCompactionTrigger,
+  RuntimeTokenCounter,
+  RuntimeTokenModelIdentity,
 } from "@pragma/core";
 import {
   createRuntimeContextWindowUsage,
   createUsageFromTokenCounts,
+  defaultRuntimeTokenCounter,
   hasNonZeroUsage,
   readFirstTokenCount,
   RUNTIME_CONTEXT_COMPACTION_STAGES,
@@ -45,6 +48,8 @@ export interface CodexNativeSession {
   readonly defaultThinkingLevel?: string | undefined;
   readonly codexHome?: string | undefined;
   readonly subagentThreads: Map<string, CodexSubagentThread>;
+  readonly tokenCounter: RuntimeTokenCounter;
+  tokenModelIdentity: RuntimeTokenModelIdentity;
   pendingStartupMessages: readonly ExpertAgentStartupMessage[];
   contextWindowUsage?: RuntimeContextWindowUsage | undefined;
   contextWindowRevision: number;
@@ -112,6 +117,7 @@ export function createCodexNativeSession(options: {
   readonly defaultThinkingLevel?: string | undefined;
   readonly codexHome?: string | undefined;
   readonly startupMessages?: readonly ExpertAgentStartupMessage[] | undefined;
+  readonly tokenCounter?: RuntimeTokenCounter | undefined;
 }): CodexNativeSession {
   return {
     client: options.client,
@@ -122,6 +128,8 @@ export function createCodexNativeSession(options: {
     defaultThinkingLevel: options.defaultThinkingLevel,
     codexHome: options.codexHome,
     subagentThreads: new Map(),
+    tokenCounter: options.tokenCounter ?? defaultRuntimeTokenCounter,
+    tokenModelIdentity: codexTokenModelIdentity(options.defaultModelName),
     pendingStartupMessages: options.startupMessages ?? [],
     contextWindowRevision: 0,
   };
@@ -156,6 +164,9 @@ export async function startCodexTurn(
   turn: RuntimeTurnContext<CodexRuntimeNotification>,
   onAcknowledged?: (() => void) | undefined,
 ): Promise<RuntimeTurnResult> {
+  session.tokenModelIdentity = codexTokenModelIdentity(
+    turn.modelSelection?.model.modelId ?? session.defaultModelName,
+  );
   let outputText = "";
   let assistantUsage: AgentMessageUsage | undefined;
   const observer = createTurnObserver({
@@ -554,16 +565,55 @@ export async function collectCodexUsage(
     return currentUsage;
   }
 
-  return await scanCodexSessionUsage({
+  const scanned = await scanCodexSessionUsage({
     codexHome: session.codexHome,
     startTime: startedAt,
   });
+  return scanned ?? estimateCodexUsage(session);
 }
 
 export function readCodexContextWindow(
   session: CodexNativeSession,
 ): RuntimeContextWindowUsage | undefined {
-  return session.contextWindowUsage;
+  const usage = session.contextWindowUsage;
+  if (usage === undefined || usage.usedTokens !== null) return usage;
+  return createRuntimeContextWindowUsage({
+    usedTokens: session.tokenCounter.countText(
+      JSON.stringify(session.messages),
+      session.tokenModelIdentity,
+    ).tokens,
+    contextWindowTokens: usage.contextWindowTokens,
+    measurement: "estimated",
+  });
+}
+
+function estimateCodexUsage(session: CodexNativeSession): AgentMessageUsage | undefined {
+  const assistantIndex = session.messages.findLastIndex((message) => message.role === "assistant");
+  if (assistantIndex < 0) return undefined;
+  return createUsageFromTokenCounts({
+    measurement: "estimated",
+    inputTokens: session.tokenCounter.countText(
+      JSON.stringify(session.messages.slice(0, assistantIndex)),
+      session.tokenModelIdentity,
+    ).tokens,
+    inputTokensIncludeCacheRead: false,
+    outputTokens: session.tokenCounter.countText(
+      session.messages[assistantIndex]?.content ?? "",
+      session.tokenModelIdentity,
+    ).tokens,
+    cacheReadTokens: 0,
+    cacheWriteTokens: 0,
+  });
+}
+
+function codexTokenModelIdentity(modelId: string | undefined): RuntimeTokenModelIdentity {
+  return {
+    runtimeKind: "codex-app-server",
+    providerCatalogId: "openai",
+    providerId: "openai",
+    api: "openai-responses",
+    ...(modelId === undefined ? {} : { modelId }),
+  };
 }
 
 export async function compactCodexContextWindow(

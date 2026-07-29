@@ -6,6 +6,7 @@ import type {
   RuntimeEventEmitter,
   RuntimeStreamEvent,
   ModelProviderRegistry,
+  RuntimeTokenCounter,
 } from "@pragma/core";
 import type { Api, Model } from "@earendil-works/pi-ai";
 import type { ModelThinkingCapability } from "@pragma/shared";
@@ -47,6 +48,7 @@ export interface CloudPiRuntimeAdapterOptions {
   readonly sessionRestoreHandler?: RuntimeSessionRestoreHandler | undefined;
   readonly sessionSyncCallback?: RuntimeSessionSyncCallback | undefined;
   readonly sessionSyncDebounceMs?: number | undefined;
+  readonly tokenCounter?: RuntimeTokenCounter | undefined;
 }
 
 export interface PiRuntimeStreamState {
