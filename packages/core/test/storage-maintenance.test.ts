@@ -8,6 +8,7 @@ import { PragmaPaths } from "../src/storage/pragma-paths.ts";
 import { moveOwnedStorageToTrash } from "../src/storage/deletion-transaction.ts";
 import {
   assertStorageWriteAllowed,
+  createStorageCapacityGuard,
   runStorageMaintenance,
 } from "../src/storage/storage-maintenance.ts";
 import { DEFAULT_STORAGE_POLICY } from "../src/storage/storage-policy.ts";
@@ -21,6 +22,68 @@ afterEach(async () => {
 });
 
 describe("runStorageMaintenance", () => {
+  it("reuses a fresh startup overview for storage admission", async () => {
+    const root = await mkdtemp(join(tmpdir(), "pragma-storage-capacity-guard-"));
+    roots.push(root);
+    const paths = new PragmaPaths({ pragmaHome: root });
+    const overview = {
+      totalBytes: 0,
+      dataBytes: 0,
+      stateBytes: 0,
+      archiveBytes: 0,
+      cacheBytes: 0,
+      temporaryBytes: 0,
+      trashBytes: 0,
+      softLimitBytes: DEFAULT_STORAGE_POLICY.globalSoftLimitBytes,
+      hardLimitBytes: DEFAULT_STORAGE_POLICY.globalHardLimitBytes,
+    };
+    const guard = createStorageCapacityGuard({
+      paths,
+      initialOverview: overview,
+      refreshIntervalMs: 0,
+    });
+
+    const startedAt = performance.now();
+    await guard.assertWriteAllowed();
+    const admissionMs = performance.now() - startedAt;
+
+    expect(guard.current()).toBe(overview);
+    expect(admissionMs).toBeLessThan(50);
+    guard.close();
+  });
+
+  it("refreshes a stale storage admission snapshot", async () => {
+    const root = await mkdtemp(join(tmpdir(), "pragma-storage-capacity-stale-"));
+    roots.push(root);
+    const paths = new PragmaPaths({ pragmaHome: root });
+    let now = 0;
+    const guard = createStorageCapacityGuard({
+      paths,
+      initialOverview: {
+        totalBytes: 0,
+        dataBytes: 0,
+        stateBytes: 0,
+        archiveBytes: 0,
+        cacheBytes: 0,
+        temporaryBytes: 0,
+        trashBytes: 0,
+        softLimitBytes: DEFAULT_STORAGE_POLICY.globalSoftLimitBytes,
+        hardLimitBytes: DEFAULT_STORAGE_POLICY.globalHardLimitBytes,
+      },
+      refreshIntervalMs: 0,
+      maxSnapshotAgeMs: 10,
+      now: () => now,
+    });
+    await mkdir(paths.dataRoot(), { recursive: true });
+    await writeFile(join(paths.dataRoot(), "data.bin"), "updated");
+    now = 20;
+
+    await guard.assertWriteAllowed();
+
+    expect(guard.current()?.dataBytes).toBeGreaterThan(0);
+    guard.close();
+  });
+
   it("removes empty and stale project view lease directories", async () => {
     const root = await mkdtemp(join(tmpdir(), "pragma-storage-maintenance-"));
     roots.push(root);

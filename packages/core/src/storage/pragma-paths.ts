@@ -305,6 +305,17 @@ export class PragmaPaths {
     return join(this.cacheRoot(), "agents");
   }
 
+  compilerBlueprintsCacheRoot(): string {
+    return join(this.cacheRoot(), "compiler-blueprints", "sha256");
+  }
+
+  compilerBlueprintCache(key: string): string {
+    if (!/^[a-f0-9]{64}$/.test(key)) {
+      throw new Error(`Invalid compiler Blueprint cache key: ${key}.`);
+    }
+    return join(this.compilerBlueprintsCacheRoot(), key.slice(0, 2), `${key}.json`);
+  }
+
   pluginPackagesCacheRoot(): string {
     return join(this.cacheRoot(), "plugins", "sha256");
   }

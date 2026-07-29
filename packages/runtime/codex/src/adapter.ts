@@ -1,9 +1,14 @@
 import { readdir } from "node:fs/promises";
 import { join } from "node:path";
 
-import type { McpToolRegistry, RuntimeAdapter, RuntimeCanUseResult } from "@pragma/core";
+import type {
+  McpToolRegistry,
+  McpToolRegistryLease,
+  RuntimeAdapter,
+  RuntimeCanUseResult,
+} from "@pragma/core";
 import {
-  createMcpToolRegistry,
+  createMcpToolRegistryPool,
   defineRuntimeDriver,
   type PragmaLogger,
   type RuntimeSessionPersistenceSpec,
@@ -56,11 +61,14 @@ const DEFAULT_CODEX_CLIENT_INFO = {
 };
 
 interface CodexDriverSession extends CodexNativeSession {
+  readonly logger: PragmaLogger;
   readonly mcpToolRegistry: McpToolRegistry;
+  readonly mcpToolRegistryLease: McpToolRegistryLease;
   readonly expertToolsMcpRegistration: CodexExpertToolsMcpSessionRegistration;
 }
 
 export function createCodexRuntime(options: CodexRuntimeAdapterOptions = {}): RuntimeAdapter {
+  const mcpToolRegistries = createMcpToolRegistryPool();
   const executablePath =
     options.executablePath ??
     (options.spawn === undefined ? resolveCodexExecutablePath(options) : "codex");
@@ -130,19 +138,24 @@ export function createCodexRuntime(options: CodexRuntimeAdapterOptions = {}): Ru
               logger: ctx.logger,
             }),
         );
-        const registryPromise = timedCodexPhase(
+        const registryLeasePromise = timedCodexPhase(
           ctx.logger,
           "mcp_tool_registry",
           sessionStartedAt,
-          async () => await createMcpToolRegistry(ctx.agent.mcp),
+          async () => await mcpToolRegistries.acquire(ctx.agent.mcp),
         );
         let mcpToolRegistry: McpToolRegistry | undefined;
+        let mcpToolRegistryLease: McpToolRegistryLease | undefined;
         let expertToolsMcpRegistration: CodexExpertToolsMcpSessionRegistration | undefined;
         let client: CodexAppServerClient | undefined;
 
         try {
-          const [codex, registry] = await Promise.all([codexHomePromise, registryPromise]);
-          mcpToolRegistry = registry;
+          const [codex, registryLease] = await Promise.all([
+            codexHomePromise,
+            registryLeasePromise,
+          ]);
+          mcpToolRegistryLease = registryLease;
+          mcpToolRegistry = registryLease.registry;
           const [restoreExists, registration] = await Promise.all([
             state.threadId === ""
               ? Promise.resolve(true)
@@ -241,19 +254,24 @@ export function createCodexRuntime(options: CodexRuntimeAdapterOptions = {}): Ru
                 ? ctx.agentContext.startupMessages
                 : [],
             }),
+            logger: ctx.logger,
             mcpToolRegistry,
+            mcpToolRegistryLease,
             expertToolsMcpRegistration,
           };
         } catch (error) {
-          if (mcpToolRegistry === undefined) {
-            const registry = await Promise.allSettled([registryPromise]);
-            if (registry[0]?.status === "fulfilled") mcpToolRegistry = registry[0].value;
+          if (mcpToolRegistryLease === undefined) {
+            const registry = await Promise.allSettled([registryLeasePromise]);
+            if (registry[0]?.status === "fulfilled") {
+              mcpToolRegistryLease = registry[0].value;
+              mcpToolRegistry = registry[0].value.registry;
+            }
           }
           try {
             await disposeCodexRuntimeResources(
               client,
               expertToolsMcpRegistration,
-              mcpToolRegistry,
+              mcpToolRegistryLease,
               ctx.logger,
             );
           } catch (cleanupError) {
@@ -274,19 +292,33 @@ export function createCodexRuntime(options: CodexRuntimeAdapterOptions = {}): Ru
       listMessages: listCodexMessages,
       consumeStartupMessages: consumeCodexStartupMessages,
       async startTurn(session, turn) {
+        const requestStartedAt = performance.now();
         assertRuntimeManagedProvider(turn.modelSelection?.model.providerId, "openai", "Codex");
         const modelName = turn.modelSelection?.model.modelId ?? session.defaultModelName;
         const thinkingLevel = turn.modelSelection?.thinkingLevel ?? session.defaultThinkingLevel;
         if (modelName !== undefined || thinkingLevel !== undefined) {
           assertCodexModelSelection(await listModels(), modelName, thinkingLevel);
         }
-        return await startCodexTurn(session, {
-          ...turn,
-          modelSelection:
-            modelName === undefined
-              ? undefined
-              : { model: { providerId: "openai", modelId: modelName }, thinkingLevel },
-        });
+        return await startCodexTurn(
+          session,
+          {
+            ...turn,
+            modelSelection:
+              modelName === undefined
+                ? undefined
+                : { model: { providerId: "openai", modelId: modelName }, thinkingLevel },
+          },
+          () => {
+            session.logger.info(
+              "runtime.codex_request_acknowledged",
+              "Codex acknowledged the native turn request",
+              {
+                runId: turn.runId,
+                elapsedMs: codexElapsedMs(requestStartedAt),
+              },
+            );
+          },
+        );
       },
       mapEvent: mapCodexNotificationToRuntimeEvent,
       async collectUsage(session, ctx) {
@@ -303,7 +335,7 @@ export function createCodexRuntime(options: CodexRuntimeAdapterOptions = {}): Ru
         await disposeCodexRuntimeResources(
           session.client,
           session.expertToolsMcpRegistration,
-          session.mcpToolRegistry,
+          session.mcpToolRegistryLease,
           ctx.logger,
         );
       },
@@ -392,13 +424,13 @@ function createCodexRuntimeCanUse(
 async function disposeCodexRuntimeResources(
   client: CodexAppServerClient | undefined,
   expertToolsMcpRegistration: CodexExpertToolsMcpSessionRegistration | undefined,
-  mcpToolRegistry: McpToolRegistry | undefined,
+  mcpToolRegistryLease: McpToolRegistryLease | undefined,
   logger: PragmaLogger,
 ): Promise<void> {
   const results = await Promise.allSettled([
     Promise.resolve().then(() => client?.close()),
     expertToolsMcpRegistration?.dispose() ?? Promise.resolve(),
-    mcpToolRegistry?.dispose() ?? Promise.resolve(),
+    mcpToolRegistryLease?.release() ?? Promise.resolve(),
   ]);
   const errors = results.flatMap((result) =>
     result.status === "rejected" ? [result.reason as unknown] : [],

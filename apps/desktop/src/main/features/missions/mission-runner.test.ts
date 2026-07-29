@@ -85,6 +85,66 @@ afterEach(async () => {
 });
 
 describe("MissionRunner", { timeout: 15_000 }, () => {
+  it("skips compilation for a follow-up on the live Mission Session", async () => {
+    const root = await mkdtemp(join(tmpdir(), "pragma-mission-followup-fast-path-"));
+    temporaryPaths.push(root);
+    const project = createPragmaProjectStore({ projectsPath: join(root, "projects") });
+    const snapshot = await project.publish({
+      expectedRevision: 0,
+      resources: [runtimeFixture(), expertFixture()],
+    });
+    const compile = vi.spyOn(project, "compile");
+    const missions = createMissionStore({ missionsPath: join(root, "missions") });
+    const mission = await missions.create({
+      workspace: { path: root, basename: "workspace" },
+      goal: "Start the Mission",
+      project: { id: snapshot.projectId, revision: snapshot.revision },
+      executor: missionExecutorSnapshot(
+        snapshot.resources.find((resource) => resource.kind === "Expert")!,
+      ),
+    });
+    const runtime = defineRuntimeDriver<never, { id: string }>({
+      descriptor: { id: "fake", kind: "fake", displayName: "Fake" },
+      createSession: () => ({ id: "runtime" }),
+      readSession: (session) => ({ runtimeSessionId: session.id }),
+      startTurn: () => ({ outputText: "done", runtimeSessionId: "runtime" }),
+      mapEvent: () => ({ events: [] }),
+    });
+    const runner = createMissionRunner({
+      missions,
+      project,
+      capabilityStore: {} as CapabilityStore,
+      capabilityCredentials: {} as CapabilityCredentialStore,
+      capabilitiesPath: join(root, "capabilities"),
+      pragmaHome: join(root, "state"),
+      runtimes: createStaticRuntimeResolver({
+        runtimes: [runtime],
+        defaultRuntimeId: "fake",
+      }),
+      assertStorageWriteAllowed: async () => undefined,
+    });
+
+    await runner.run(mission.id);
+    await vi.waitFor(
+      async () => expect((await missions.get(mission.id)).execution?.status).toBe("succeeded"),
+      { timeout: settlementTimeoutMs },
+    );
+    const followUpStartedAt = performance.now();
+    await runner.sendMessage({
+      id: mission.id,
+      content: "Continue without recompiling",
+      requestId: "00000000-0000-4000-8000-000000000099",
+    });
+    const followUpAdmissionMs = performance.now() - followUpStartedAt;
+    await vi.waitFor(
+      async () => expect((await missions.get(mission.id)).execution?.status).toBe("succeeded"),
+      { timeout: settlementTimeoutMs },
+    );
+
+    expect(compile).toHaveBeenCalledTimes(1);
+    expect(followUpAdmissionMs).toBeLessThan(250);
+  });
+
   it("limits deletion reconciliation to the target Mission and does not let analytics block deletion", async () => {
     const root = await mkdtemp(join(tmpdir(), "pragma-mission-usage-delete-"));
     temporaryPaths.push(root);

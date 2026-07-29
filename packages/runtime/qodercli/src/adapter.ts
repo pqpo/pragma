@@ -2,12 +2,13 @@ import { readdir } from "node:fs/promises";
 import { join } from "node:path";
 
 import {
-  createMcpToolRegistry,
+  createMcpToolRegistryPool,
   defineRuntimeDriver,
   registerExpertToolsMcpSession,
   type ExpertToolsMcpSessionRegistration,
   type ExpertToolRuntimeState,
   type McpToolRegistry,
+  type McpToolRegistryLease,
   type PragmaLogger,
   type RuntimeAdapter,
   type RuntimeSessionPersistenceSpec,
@@ -48,10 +49,12 @@ const QODER_DESCRIPTOR = {
 
 interface QoderDriverSession extends QoderNativeSession {
   readonly mcpToolRegistry: McpToolRegistry;
+  readonly mcpToolRegistryLease: McpToolRegistryLease;
   readonly expertToolsMcpRegistration: ExpertToolsMcpSessionRegistration;
 }
 
 export function createQoderCliRuntime(options: QoderCliRuntimeAdapterOptions = {}): RuntimeAdapter {
+  const mcpToolRegistries = createMcpToolRegistryPool();
   const descriptor = {
     ...QODER_DESCRIPTOR,
     ...options.descriptor,
@@ -105,24 +108,23 @@ export function createQoderCliRuntime(options: QoderCliRuntimeAdapterOptions = {
           sessionStartedAt,
           async () => await materializeQoderSkillPlugin(ctx.agent, sessionDir),
         );
-        const registryPromise = timedQoderPhase(
+        const registryLeasePromise = timedQoderPhase(
           ctx.logger,
           "mcp_tool_registry",
           sessionStartedAt,
-          async () => await createMcpToolRegistry(ctx.agent.mcp),
+          async () => await mcpToolRegistries.acquire(ctx.agent.mcp),
         );
         let configDir: string;
         let plugin: Awaited<ReturnType<typeof materializeQoderSkillPlugin>>;
         let mcpToolRegistry: McpToolRegistry | undefined;
+        let mcpToolRegistryLease: McpToolRegistryLease | undefined;
         try {
-          [configDir, plugin, mcpToolRegistry] = await Promise.all([
-            configPromise,
-            pluginPromise,
-            registryPromise,
-          ]);
+          const prepared = await Promise.all([configPromise, pluginPromise, registryLeasePromise]);
+          [configDir, plugin, mcpToolRegistryLease] = prepared;
+          mcpToolRegistry = mcpToolRegistryLease.registry;
         } catch (error) {
-          const registry = await Promise.allSettled([registryPromise]);
-          if (registry[0]?.status === "fulfilled") await registry[0].value.dispose();
+          const registry = await Promise.allSettled([registryLeasePromise]);
+          if (registry[0]?.status === "fulfilled") await registry[0].value.release();
           throw error;
         }
         const restoredRuntimeSessionId =
@@ -190,10 +192,11 @@ export function createQoderCliRuntime(options: QoderCliRuntimeAdapterOptions = {
             toolNames: new Map(),
             sessionId: restoredRuntimeSessionId,
             mcpToolRegistry,
+            mcpToolRegistryLease,
             expertToolsMcpRegistration,
           };
         } catch (error) {
-          await disposeResources(expertToolsMcpRegistration, mcpToolRegistry);
+          await disposeResources(expertToolsMcpRegistration, mcpToolRegistryLease);
           throw error;
         }
       },
@@ -214,7 +217,7 @@ export function createQoderCliRuntime(options: QoderCliRuntimeAdapterOptions = {
       cancelTurn: cancelQoderTurn,
       async closeSession(session) {
         await closeQoderSession(session);
-        await disposeResources(session.expertToolsMcpRegistration, session.mcpToolRegistry);
+        await disposeResources(session.expertToolsMcpRegistration, session.mcpToolRegistryLease);
       },
     },
     {
@@ -269,9 +272,9 @@ function assertProvider(providerId: string | undefined): void {
 
 async function disposeResources(
   registration: ExpertToolsMcpSessionRegistration | undefined,
-  registry: McpToolRegistry | undefined,
+  registryLease: McpToolRegistryLease | undefined,
 ): Promise<void> {
-  const results = await Promise.allSettled([registration?.dispose(), registry?.dispose()]);
+  const results = await Promise.allSettled([registration?.dispose(), registryLease?.release()]);
   const errors = results.flatMap((result) =>
     result.status === "rejected" ? [result.reason as unknown] : [],
   );

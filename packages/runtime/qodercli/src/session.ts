@@ -292,8 +292,8 @@ async function runQoderQuery(
         if (!firstSdkMessageLogged) {
           firstSdkMessageLogged = true;
           session.logger.info(
-            "runtime.qodercli_first_sdk_message",
-            "Qoder transport delivered its first SDK message",
+            "runtime.qodercli_request_acknowledged",
+            "Qoder acknowledged the native turn request with its first SDK message",
             {
               runId: turn.runId,
               elapsedMs: qoderTurnElapsedMs(queryStartedAt),

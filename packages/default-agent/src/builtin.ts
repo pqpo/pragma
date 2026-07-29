@@ -18,6 +18,7 @@ import {
   type PragmaCompileOptions,
   type PragmaAdapterHost,
   type PragmaBindingRecord,
+  type PragmaBlueprintCacheStore,
   type PragmaProject,
 } from "@pragma/interpreter";
 import {
@@ -91,6 +92,7 @@ export async function compileBuiltInDefaultAgent(options: {
   readonly adapterHost?: PragmaCompileOptions["adapterHost"];
   readonly tools: readonly ExpertAgentManagedTool<string, ExpertAgentToolCallResult>[];
   readonly loggerProvider?: PragmaCompileOptions["loggerProvider"];
+  readonly blueprintCache?: PragmaBlueprintCacheStore | undefined;
 }): Promise<CompiledResource<Expert>> {
   const entry = await materializeBuiltInDefaultAgent(
     options.definitionStateRoot,
@@ -99,7 +101,11 @@ export async function compileBuiltInDefaultAgent(options: {
   );
   let projectPromise = builtInProjectCache.get(entry);
   if (projectPromise === undefined) {
-    projectPromise = loadPragmaProject(entry, { rootDir: dirname(entry) });
+    projectPromise = loadPragmaProject(entry, {
+      rootDir: dirname(entry),
+      sourceIdentity: builtInPragmaFingerprint(options.expertResource, options.additionalResources),
+      blueprintCache: options.blueprintCache,
+    });
     builtInProjectCache.set(entry, projectPromise);
     void projectPromise.catch(() => {
       if (builtInProjectCache.get(entry) === projectPromise) builtInProjectCache.delete(entry);

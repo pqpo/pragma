@@ -3,6 +3,7 @@ import { join } from "node:path";
 
 import type { BrowserWindow } from "electron";
 import {
+  createStorageCapacityGuard,
   PragmaPaths,
   runStorageMaintenance,
   type PragmaLogger,
@@ -47,6 +48,7 @@ import { createPluginCredentialStore } from "../features/plugins/plugin-credenti
 import { installPluginHandlers } from "../features/plugins/plugin-ipc.ts";
 import { createPluginStore } from "../features/plugins/plugin-store.ts";
 import { installPragmaProjectHandlers } from "../features/projects/pragma-project-ipc.ts";
+import { createDesktopPragmaBlueprintCacheStore } from "../features/projects/pragma-blueprint-cache-store.ts";
 import { createPragmaProjectStore } from "../features/projects/pragma-project-store.ts";
 import { installWorkflowLayoutHandlers } from "../features/projects/workflow-layout-ipc.ts";
 import { createWorkflowLayoutStore } from "../features/projects/workflow-layout-store.ts";
@@ -105,6 +107,10 @@ export async function createDesktopApplicationContainer(
     );
   }
   const maintenance = await runStorageMaintenance({ paths: pragmaPaths });
+  const storageCapacityGuard = createStorageCapacityGuard({
+    paths: pragmaPaths,
+    initialOverview: maintenance.after,
+  });
   if (maintenance.before.totalBytes >= maintenance.before.softLimitBytes) {
     mainLogger.warn(
       "desktop.storage_pressure_gc",
@@ -140,12 +146,14 @@ export async function createDesktopApplicationContainer(
     warn: (message, error) => mainLogger.warn("desktop.system_expert_warning", message, { error }),
   });
   await systemExperts.initialize();
+  const blueprintCache = createDesktopPragmaBlueprintCacheStore(pragmaPaths);
   const pragmaProjectStore = createPragmaProjectStore({
     projectsPath,
     objectsPath: pragmaPaths.contentObjectsRoot(),
     projectViewsPath: pragmaPaths.projectViewsCacheRoot(),
     storagePaths: pragmaPaths,
     loggerProvider,
+    blueprintCache,
     reservedResourceRefs: new Set([BUILT_IN_PRAGMA_REF]),
   });
   installWorkflowLayoutHandlers(
@@ -301,6 +309,8 @@ export async function createDesktopApplicationContainer(
     runtimesForToolPermissionMode: (mode) => runtimes.forToolPermissionMode(mode),
     automaticHumanInteractionHandlerForToolPermissionMode: (mode) =>
       createAutomaticToolPermissionHandler(() => mode),
+    assertStorageWriteAllowed: async () => await storageCapacityGuard.assertWriteAllowed(),
+    getSystemExecutorFingerprint: (mission) => systemExperts.fingerprint(mission.executor.ref),
     compileSystemExecutor: async ({ mission, runtimes: scopedRuntimes }) => {
       if (mission.executor.ref !== BUILT_IN_PRAGMA_REF) return undefined;
       if (defaultAgentToolsRef.current === undefined) {
@@ -334,6 +344,7 @@ export async function createDesktopApplicationContainer(
             : { modelSelection: defaults.modelSelection }),
         },
         tools: defaultAgentToolsRef.current,
+        blueprintCache,
         ...(definition.customized
           ? { expertResource: systemExperts.getResource(BUILT_IN_PRAGMA_REF) }
           : {}),
@@ -442,6 +453,7 @@ export async function createDesktopApplicationContainer(
     dispose: () => {
       unsubscribeUsageUpdates();
       automationService.stop();
+      storageCapacityGuard.close();
       usageStore.close();
     },
   };

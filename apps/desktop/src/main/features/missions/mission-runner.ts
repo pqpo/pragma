@@ -7,6 +7,7 @@ import {
   createFileExpertSessionStore,
   ExecutionWorkHistoryReader,
   ExpertAgentHumanRequestSchema,
+  fingerprintExpertExecutionDefinition,
   isExpertTeam,
   StoredExecutionView,
   PragmaPaths,
@@ -21,6 +22,7 @@ import {
   type ExpertAgentAutomaticHumanInteractionHandler,
   type ExpertAgentHumanRequest,
   type ExpertAgentHumanResponse,
+  type ExpertDefinition,
   type ExpertSession,
   type MutableExecution,
   type PragmaLogger,
@@ -181,6 +183,10 @@ export function createMissionRunner(options: {
         readonly runtimes: RuntimeResolver;
       }) => Promise<CompiledResource<InvocableResource> | undefined>)
     | undefined;
+  readonly getSystemExecutorFingerprint?:
+    | ((mission: Mission) => string | undefined | Promise<string | undefined>)
+    | undefined;
+  readonly assertStorageWriteAllowed?: (() => Promise<void>) | undefined;
 }): MissionRunner {
   const logger = createPragmaLogger(options.loggerProvider, {
     component: "desktop.mission-runner",
@@ -253,6 +259,8 @@ export function createMissionRunner(options: {
   };
   const active = new Map<string, ActiveMissionExecution>();
   const sessions = new Map<string, ExpertSession>();
+  const sessionCompilationIdentities = new Map<string, string>();
+  const sessionDefinitionFingerprints = new Map<string, string>();
   const pendingOperations = new Map<string, PendingMissionOperation>();
   const chatListeners = new Set<(update: MissionChatUpdate) => void>();
   const chatRevisions = new Map<string, number>();
@@ -395,6 +403,33 @@ export function createMissionRunner(options: {
             },
           }),
     });
+  };
+
+  const compilationIdentity = async (mission: Mission): Promise<string> =>
+    createHash("sha256")
+      .update(
+        JSON.stringify({
+          project: mission.project,
+          executor: mission.executor,
+          systemExecutorFingerprint:
+            (await options.getSystemExecutorFingerprint?.(mission)) ?? null,
+          toolPermissionMode: mission.toolPermissionMode,
+          modelOverride: mission.modelOverride ?? null,
+        }),
+      )
+      .digest("hex");
+
+  const rememberSessionCompilation = (
+    missionId: string,
+    identity: string,
+    compiled: CompiledResource<InvocableResource>,
+  ): void => {
+    if ("kind" in compiled.value && compiled.value.kind === "flow") return;
+    sessionCompilationIdentities.set(missionId, identity);
+    sessionDefinitionFingerprints.set(
+      missionId,
+      fingerprintExpertExecutionDefinition(compiled.value),
+    );
   };
 
   const readMissionRootContext = async (
@@ -630,7 +665,8 @@ export function createMissionRunner(options: {
       kind: "initial",
     });
     const capacityCheckStartedAt = performance.now();
-    await assertStorageWriteAllowed(new PragmaPaths({ pragmaHome: options.pragmaHome }));
+    await (options.assertStorageWriteAllowed?.() ??
+      assertStorageWriteAllowed(new PragmaPaths({ pragmaHome: options.pragmaHome })));
     logMissionPhase(logger, id, "storage_capacity_check", capacityCheckStartedAt, acceptedAt);
     const mission = await options.missions.get(id);
     if (active.has(mission.id)) return mission;
@@ -638,9 +674,10 @@ export function createMissionRunner(options: {
     const runtimes = withMissionRuntimeBinding(baseRuntimes, await readMissionRootContext(mission));
     let phaseStartedAt = performance.now();
     const compiled = await compileMissionExecutor(mission, runtimes);
+    const compiledIdentity = await compilationIdentity(mission);
     logMissionPhase(logger, mission.id, "default_agent_compile", phaseStartedAt, acceptedAt);
     const modelSelection = toRuntimeModelSelection(mission.modelOverride);
-    if (mission.modelOverride !== undefined) {
+    if (mission.modelOverride !== undefined && compiled !== undefined) {
       phaseStartedAt = performance.now();
       await runtimes.bind({
         runtimeId: requireRootRuntimeId(compiled),
@@ -737,6 +774,7 @@ export function createMissionRunner(options: {
       cacheHit: sessions.has(mission.id),
     });
     sessions.set(mission.id, session);
+    rememberSessionCompilation(mission.id, compiledIdentity, compiled);
     const recoveredPrompt = recoverable
       ? (await session.getPromptQueue()).find(
           (prompt) =>
@@ -813,7 +851,8 @@ export function createMissionRunner(options: {
       kind: "followup",
     });
     const capacityCheckStartedAt = performance.now();
-    await assertStorageWriteAllowed(new PragmaPaths({ pragmaHome: options.pragmaHome }));
+    await (options.assertStorageWriteAllowed?.() ??
+      assertStorageWriteAllowed(new PragmaPaths({ pragmaHome: options.pragmaHome })));
     logMissionPhase(logger, input.id, "storage_capacity_check", capacityCheckStartedAt, acceptedAt);
     const mission = await options.missions.get(input.id);
     const { app, runtimes: baseRuntimes } = executionContext(mission);
@@ -828,11 +867,21 @@ export function createMissionRunner(options: {
     if (active.has(mission.id)) {
       throw new Error("Wait for the current expert turn before sending another message.");
     }
+    const desiredCompilationIdentity = await compilationIdentity(mission);
+    let session = sessions.get(mission.id);
+    let compiled: CompiledResource<InvocableResource> | undefined;
     let phaseStartedAt = performance.now();
-    const compiled = await compileMissionExecutor(mission, runtimes);
-    logMissionPhase(logger, mission.id, "default_agent_compile", phaseStartedAt, acceptedAt);
+    const compilationCacheHit =
+      session !== undefined &&
+      sessionCompilationIdentities.get(mission.id) === desiredCompilationIdentity;
+    if (!compilationCacheHit) {
+      compiled = await compileMissionExecutor(mission, runtimes);
+    }
+    logMissionPhase(logger, mission.id, "default_agent_compile", phaseStartedAt, acceptedAt, {
+      cacheHit: compilationCacheHit,
+    });
     const modelSelection = toRuntimeModelSelection(mission.modelOverride);
-    if (mission.modelOverride !== undefined) {
+    if (mission.modelOverride !== undefined && compiled !== undefined) {
       phaseStartedAt = performance.now();
       await runtimes.bind({
         runtimeId: requireRootRuntimeId(compiled),
@@ -846,13 +895,22 @@ export function createMissionRunner(options: {
         acceptedAt,
       );
     }
-    if ("kind" in compiled.value && compiled.value.kind === "flow") {
-      throw new Error("Flow missions cannot receive chat messages.");
+    let compiledExpert: ExpertDefinition | undefined;
+    if (compiled !== undefined) {
+      if ("kind" in compiled.value && compiled.value.kind === "flow") {
+        throw new Error("Flow missions cannot receive chat messages.");
+      }
+      compiledExpert = compiled.value;
     }
-    const rootExpert = isExpertTeam(compiled.value) ? compiled.value.coordinator : compiled.value;
+    const rootExpert =
+      compiledExpert === undefined
+        ? undefined
+        : isExpertTeam(compiledExpert)
+          ? compiledExpert.coordinator
+          : compiledExpert;
     const desiredModelSelection =
       mission.execution?.sessionId === undefined
-        ? (modelSelection ?? rootExpert.models?.default)
+        ? (modelSelection ?? rootExpert?.models?.default)
         : modelSelection;
     const promptModelSelection = matchesBoundModel(
       desiredModelSelection,
@@ -860,22 +918,42 @@ export function createMissionRunner(options: {
     )
       ? undefined
       : desiredModelSelection;
-    const sessionCacheHit = sessions.has(mission.id);
+    if (compiledExpert !== undefined && session !== undefined) {
+      const nextDefinitionFingerprint = fingerprintExpertExecutionDefinition(compiledExpert);
+      const previousDefinitionFingerprint = sessionDefinitionFingerprints.get(mission.id);
+      if (
+        previousDefinitionFingerprint !== undefined &&
+        previousDefinitionFingerprint !== nextDefinitionFingerprint
+      ) {
+        await session.close("Mission executor definition changed.");
+        sessions.delete(mission.id);
+        sessionCompilationIdentities.delete(mission.id);
+        sessionDefinitionFingerprints.delete(mission.id);
+        session = undefined;
+      }
+    }
+    const sessionCacheHit = session !== undefined;
     phaseStartedAt = performance.now();
-    const session =
-      sessions.get(mission.id) ??
-      (await openMissionExpertSession({
+    if (session === undefined) {
+      if (compiled === undefined) {
+        throw new Error("Mission Session cache was unavailable without a compiled executor.");
+      }
+      session = await openMissionExpertSession({
         mission,
         compiled,
         app,
         sessionId: mission.execution?.sessionId,
         modelSelection,
         createSuccessorOnMismatch: true,
-      }));
+      });
+    }
     logMissionPhase(logger, mission.id, "expert_session_open", phaseStartedAt, acceptedAt, {
       cacheHit: sessionCacheHit,
     });
     sessions.set(mission.id, session);
+    if (compiled !== undefined) {
+      rememberSessionCompilation(mission.id, desiredCompilationIdentity, compiled);
+    }
     await options.missions.appendUserMessage(mission.id, {
       id: input.requestId,
       content: input.content,
@@ -930,7 +1008,7 @@ export function createMissionRunner(options: {
     else prospective.modelOverride = input.modelOverride;
     const baseRuntimes = runtimeResolverForToolPermissionMode(input.toolPermissionMode);
     const runtimes = withMissionRuntimeBinding(baseRuntimes, await readMissionRootContext(mission));
-    await compileMissionExecutor(prospective, runtimes);
+    const compiled = await compileMissionExecutor(prospective, runtimes);
     if (input.toolPermissionMode !== mission.toolPermissionMode) {
       await sessions.get(mission.id)?.refreshRuntimeSessions();
     }
@@ -941,6 +1019,9 @@ export function createMissionRunner(options: {
         : { modelOverride: prospective.modelOverride }),
     });
     executionContexts.get(mission.id)?.setToolPermissionMode(input.toolPermissionMode);
+    if (sessions.has(mission.id)) {
+      rememberSessionCompilation(mission.id, await compilationIdentity(updated), compiled);
+    }
     return updated;
   };
 
@@ -964,6 +1045,8 @@ export function createMissionRunner(options: {
     if (session !== undefined) {
       await session.close("Mission deleted.");
       sessions.delete(id);
+      sessionCompilationIdentities.delete(id);
+      sessionDefinitionFingerprints.delete(id);
     }
     const paths = new PragmaPaths({ pragmaHome: options.pragmaHome });
     const sources = [
@@ -1063,7 +1146,8 @@ export function createMissionRunner(options: {
   };
 
   const compactMissionContext = async (id: string): Promise<MissionContextWindowState> => {
-    await assertStorageWriteAllowed(new PragmaPaths({ pragmaHome: options.pragmaHome }));
+    await (options.assertStorageWriteAllowed?.() ??
+      assertStorageWriteAllowed(new PragmaPaths({ pragmaHome: options.pragmaHome })));
     const mission = await options.missions.get(id);
     if (mission.executor.kind === "flow") {
       throw new Error("Flow missions do not expose a chat context to compact.");
@@ -1087,12 +1171,15 @@ export function createMissionRunner(options: {
     }
     const { app, runtimes: baseRuntimes } = executionContext(mission);
     const runtimes = withMissionRuntimeBinding(baseRuntimes, rootContext);
-    const compiled = await compileMissionExecutor(mission, runtimes);
-    if ("kind" in compiled.value && compiled.value.kind === "flow") {
-      throw new Error("Flow missions do not expose a chat context to compact.");
+    let session = sessions.get(id);
+    if (session === undefined) {
+      const compiled = await compileMissionExecutor(mission, runtimes);
+      if ("kind" in compiled.value && compiled.value.kind === "flow") {
+        throw new Error("Flow missions do not expose a chat context to compact.");
+      }
+      session = await resumeMissionSession(mission, compiled, app, sessionId);
+      rememberSessionCompilation(id, await compilationIdentity(mission), compiled);
     }
-    const session =
-      sessions.get(id) ?? (await resumeMissionSession(mission, compiled, app, sessionId));
     sessions.set(id, session);
     const usage = await session.compactRootContext();
     invalidateChat(id);

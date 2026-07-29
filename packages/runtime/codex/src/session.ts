@@ -137,6 +137,7 @@ export function consumeCodexStartupMessages(
 export async function startCodexTurn(
   session: CodexNativeSession,
   turn: RuntimeTurnContext<CodexRuntimeNotification>,
+  onAcknowledged?: (() => void) | undefined,
 ): Promise<RuntimeTurnResult> {
   let outputText = "";
   let assistantUsage: AgentMessageUsage | undefined;
@@ -179,6 +180,7 @@ export async function startCodexTurn(
         turn.prompt,
       ),
     });
+    onAcknowledged?.();
     await observer.completed;
   } finally {
     unsubscribe();

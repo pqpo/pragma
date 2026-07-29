@@ -84,6 +84,24 @@ export interface LoadPragmaProjectOptions {
   readonly serializers?: DefinitionSerializerRegistry | undefined;
   readonly resourceAdapters?: PragmaResourceAdapterRegistry | undefined;
   readonly externalResourceRefs?: ReadonlySet<PragmaResourceRef> | undefined;
+  readonly sourceIdentity?: string | undefined;
+  readonly blueprintCache?: PragmaBlueprintCacheStore | undefined;
+  readonly onBlueprintCacheLookup?:
+    | ((observation: PragmaBlueprintCacheObservation) => void)
+    | undefined;
+}
+
+export interface PragmaBlueprintCacheStore {
+  readonly read: (key: string) => Promise<Uint8Array | undefined>;
+  readonly write: (key: string, value: Uint8Array) => Promise<void>;
+  readonly remove?: ((key: string) => Promise<void>) | undefined;
+}
+
+export interface PragmaBlueprintCacheObservation {
+  readonly key: string;
+  readonly tier: "memory" | "host" | "miss";
+  readonly hit: boolean;
+  readonly durationMs: number;
 }
 
 export type PragmaCompileOptions = PragmaCompileHost;
@@ -154,6 +172,39 @@ interface PragmaProvenance {
   readonly root: IndexedResource;
 }
 
+const PragmaProjectBlueprintSchema = z
+  .object({
+    schemaVersion: z.literal("pragma.project-blueprint/v1"),
+    compilerVersion: z.literal(COMPILER_VERSION),
+    sourceIdentity: z.string().min(1),
+    entry: z.string().min(1),
+    resources: z.array(
+      z
+        .object({
+          resource: PragmaResourceSchema,
+          source: z.string().min(1),
+          normalized: z.string(),
+          contentHash: z.string().regex(/^[a-f0-9]{64}$/),
+        })
+        .strict(),
+    ),
+    artifacts: z.array(
+      z
+        .object({
+          source: z.string().min(1),
+          contentHash: z.string().regex(/^[a-f0-9]{64}$/),
+        })
+        .strict(),
+    ),
+    diagnostics: z.array(PragmaDiagnosticSchema),
+  })
+  .strict();
+
+type PragmaProjectBlueprint = z.infer<typeof PragmaProjectBlueprintSchema>;
+const projectBlueprintMemoryCache = new Map<string, PragmaProjectBlueprint>();
+const projectBlueprintLoads = new Map<string, Promise<PragmaProjectBlueprint | undefined>>();
+const PROJECT_BLUEPRINT_MEMORY_LIMIT = 128;
+
 export async function loadPragmaProject(
   entryFile: string,
   options: LoadPragmaProjectOptions = {},
@@ -163,14 +214,194 @@ export async function loadPragmaProject(
   const rootDir = await realpath(configuredRoot);
   const canonicalEntry = await realpath(absoluteEntry);
   const adapters = options.resourceAdapters ?? createDefaultPragmaResourceAdapterRegistry();
+  const blueprintKey =
+    options.sourceIdentity === undefined
+      ? undefined
+      : sha256(
+          stableStringify({
+            compilerVersion: COMPILER_VERSION,
+            sourceIdentity: options.sourceIdentity,
+            entry: relative(rootDir, canonicalEntry),
+            resourceAdapters: adapters.fingerprint(),
+          }),
+        );
+  if (blueprintKey !== undefined) {
+    const cacheStartedAt = performance.now();
+    const cached = await loadProjectBlueprint(blueprintKey, options.blueprintCache);
+    notifyBlueprintCacheLookup(options, {
+      key: blueprintKey,
+      tier: cached.tier,
+      hit: cached.blueprint !== undefined,
+      durationMs: elapsedMilliseconds(cacheStartedAt),
+    });
+    if (
+      cached.blueprint !== undefined &&
+      cached.blueprint.sourceIdentity === options.sourceIdentity &&
+      cached.blueprint.entry === relative(rootDir, canonicalEntry)
+    ) {
+      return projectFromBlueprint(cached.blueprint, rootDir, canonicalEntry, options);
+    }
+  }
   const loader = new SourceLoader(rootDir, adapters);
   await loader.loadEntry(canonicalEntry);
   await loader.collectArtifacts();
-  return new PragmaProjectImpl(
+  const project = new PragmaProjectImpl(
     canonicalEntry,
     loader.resources,
     loader.artifacts,
     loader.diagnostics,
+    options,
+  );
+  if (blueprintKey !== undefined && options.sourceIdentity !== undefined) {
+    const blueprint = createProjectBlueprint(
+      options.sourceIdentity,
+      rootDir,
+      canonicalEntry,
+      loader,
+    );
+    rememberProjectBlueprint(blueprintKey, blueprint);
+    if (options.blueprintCache !== undefined) {
+      void options.blueprintCache
+        .write(blueprintKey, new TextEncoder().encode(JSON.stringify(blueprint)))
+        .catch(() => undefined);
+    }
+  }
+  return project;
+}
+
+async function loadProjectBlueprint(
+  key: string,
+  store: PragmaBlueprintCacheStore | undefined,
+): Promise<{
+  readonly blueprint: PragmaProjectBlueprint | undefined;
+  readonly tier: PragmaBlueprintCacheObservation["tier"];
+}> {
+  const memory = projectBlueprintMemoryCache.get(key);
+  if (memory !== undefined) {
+    projectBlueprintMemoryCache.delete(key);
+    projectBlueprintMemoryCache.set(key, memory);
+    return { blueprint: memory, tier: "memory" };
+  }
+  if (store === undefined) return { blueprint: undefined, tier: "miss" };
+  const pending = projectBlueprintLoads.get(key);
+  if (pending !== undefined) {
+    return { blueprint: await pending, tier: "host" };
+  }
+  const loading = (async () => {
+    try {
+      const encoded = await store.read(key);
+      if (encoded === undefined) return undefined;
+      const parsed = PragmaProjectBlueprintSchema.safeParse(
+        JSON.parse(new TextDecoder().decode(encoded)) as unknown,
+      );
+      if (!parsed.success) {
+        await store.remove?.(key).catch(() => undefined);
+        return undefined;
+      }
+      rememberProjectBlueprint(key, parsed.data);
+      return parsed.data;
+    } catch {
+      return undefined;
+    }
+  })();
+  projectBlueprintLoads.set(key, loading);
+  try {
+    const blueprint = await loading;
+    return { blueprint, tier: blueprint === undefined ? "miss" : "host" };
+  } finally {
+    if (projectBlueprintLoads.get(key) === loading) projectBlueprintLoads.delete(key);
+  }
+}
+
+function notifyBlueprintCacheLookup(
+  options: LoadPragmaProjectOptions,
+  observation: PragmaBlueprintCacheObservation,
+): void {
+  try {
+    options.onBlueprintCacheLookup?.(observation);
+  } catch {
+    // Cache telemetry must never affect project loading.
+  }
+}
+
+function elapsedMilliseconds(startedAt: number): number {
+  return Math.round((performance.now() - startedAt) * 100) / 100;
+}
+
+function rememberProjectBlueprint(key: string, blueprint: PragmaProjectBlueprint): void {
+  projectBlueprintMemoryCache.delete(key);
+  projectBlueprintMemoryCache.set(key, blueprint);
+  while (projectBlueprintMemoryCache.size > PROJECT_BLUEPRINT_MEMORY_LIMIT) {
+    const oldest = projectBlueprintMemoryCache.keys().next().value as string | undefined;
+    if (oldest === undefined || oldest === key) break;
+    projectBlueprintMemoryCache.delete(oldest);
+  }
+}
+
+function createProjectBlueprint(
+  sourceIdentity: string,
+  rootDir: string,
+  entryFile: string,
+  loader: SourceLoader,
+): PragmaProjectBlueprint {
+  const relativeSource = (source: string): string => {
+    const value = relative(rootDir, source);
+    if (value === "" || value.startsWith("..") || isAbsolute(value)) {
+      throw new Error(`Blueprint source escapes the project root: ${source}`);
+    }
+    return value;
+  };
+  return PragmaProjectBlueprintSchema.parse({
+    schemaVersion: "pragma.project-blueprint/v1",
+    compilerVersion: COMPILER_VERSION,
+    sourceIdentity,
+    entry: relativeSource(entryFile),
+    resources: [...loader.resources.values()].map((indexed) => ({
+      resource: indexed.resource,
+      source: relativeSource(indexed.source),
+      normalized: indexed.normalized,
+      contentHash: indexed.contentHash,
+    })),
+    artifacts: [...loader.artifacts].map(([source, contentHash]) => ({ source, contentHash })),
+    diagnostics: loader.diagnostics.map((diagnostic) => ({
+      ...diagnostic,
+      ...(diagnostic.source === undefined ? {} : { source: relativeSource(diagnostic.source) }),
+    })),
+  });
+}
+
+function projectFromBlueprint(
+  blueprint: PragmaProjectBlueprint,
+  rootDir: string,
+  entryFile: string,
+  options: LoadPragmaProjectOptions,
+): PragmaProject {
+  const resolveSource = (source: string): string => {
+    const value = resolve(rootDir, source);
+    const child = relative(rootDir, value);
+    if (child.startsWith("..") || isAbsolute(child)) {
+      throw new Error(`Blueprint source escapes the project root: ${source}`);
+    }
+    return value;
+  };
+  return new PragmaProjectImpl(
+    entryFile,
+    new Map(
+      blueprint.resources.map((indexed) => [
+        canonicalRef(indexed.resource),
+        {
+          resource: indexed.resource,
+          source: resolveSource(indexed.source),
+          normalized: indexed.normalized,
+          contentHash: indexed.contentHash,
+        },
+      ]),
+    ),
+    new Map(blueprint.artifacts.map((artifact) => [artifact.source, artifact.contentHash])),
+    blueprint.diagnostics.map((diagnostic) => ({
+      ...diagnostic,
+      ...(diagnostic.source === undefined ? {} : { source: resolveSource(diagnostic.source) }),
+    })),
     options,
   );
 }
@@ -386,6 +617,8 @@ class SourceLoader {
 }
 
 class PragmaProjectImpl implements PragmaProject {
+  private validation: Promise<readonly PragmaDiagnostic[]> | undefined;
+
   constructor(
     readonly entryFile: string,
     private readonly resources: ReadonlyMap<string, IndexedResource>,
@@ -401,6 +634,11 @@ class PragmaProjectImpl implements PragmaProject {
   }
 
   async validate(): Promise<readonly PragmaDiagnostic[]> {
+    this.validation ??= this.validateOnce();
+    return await this.validation;
+  }
+
+  private async validateOnce(): Promise<readonly PragmaDiagnostic[]> {
     const diagnostics = [...this.sourceDiagnostics];
     const adapters = this.options.resourceAdapters ?? createDefaultPragmaResourceAdapterRegistry();
     for (const indexed of this.resources.values()) {
@@ -436,7 +674,7 @@ class PragmaProjectImpl implements PragmaProject {
       host.resourceAdapters ??
       this.options.resourceAdapters ??
       createDefaultPragmaResourceAdapterRegistry();
-    const adapterHost = createAdapterHost(host);
+    const adapterHost = createAdapterHost(host, this.artifacts);
     diagnostics.push(...validateExtensionEnvironment(this.resources, host));
     if (host.plugins !== undefined) {
       for (const indexed of this.resources.values()) {
@@ -526,16 +764,24 @@ class PragmaProjectImpl implements PragmaProject {
       host.resourceAdapters ??
       this.options.resourceAdapters ??
       createDefaultPragmaResourceAdapterRegistry();
-    const adapterHost = createAdapterHost(host);
+    const adapterHost = createAdapterHost(host, this.artifacts);
     const resolvedResources = new Map<
       string,
       { readonly contribution: PragmaResourceContribution; readonly health: PragmaResourceHealth }
+    >();
+    const resolvingResources = new Map<
+      string,
+      Promise<{
+        readonly contribution: PragmaResourceContribution;
+        readonly health: PragmaResourceHealth;
+      }>
     >();
     const resolvedPlugins: {
       readonly expertRef: string;
       readonly ref: string;
       readonly resolution: PragmaPluginResolution;
     }[] = [];
+    const resolvingPlugins = new Map<string, Promise<PragmaPluginResolution>>();
 
     const resolveDeclarative = async <TContribution extends PragmaResourceContribution>(
       resourceRef: string,
@@ -553,27 +799,45 @@ class PragmaProjectImpl implements PragmaProject {
           readonly health: PragmaResourceHealth;
         };
       }
-      const baseResolved = await resourceAdapters.resolve<TContribution>(
-        indexed.resource,
-        adapterHost,
-      );
-      const resolved =
-        indexed.resource.kind === "RuntimeProfile" && host.runtimes !== undefined
-          ? await verifyRuntimeEnvironment(
-              baseResolved as PragmaResourceInspection<PragmaRuntimeProfileContribution>,
-              host.runtimes,
-              false,
-            )
-          : baseResolved;
-      if (resolved.health.status !== "ready" || resolved.contribution === undefined) {
-        throw new PragmaResourceNeedsAttentionError(resolved.health);
+      const pending = resolvingResources.get(key);
+      if (pending !== undefined) {
+        return (await pending) as {
+          readonly contribution: TContribution;
+          readonly health: PragmaResourceHealth;
+        };
       }
-      const value = {
-        contribution: resolved.contribution as TContribution,
-        health: resolved.health,
-      };
-      resolvedResources.set(key, value);
-      return value;
+      const resolving = (async () => {
+        const baseResolved = await resourceAdapters.resolve<TContribution>(
+          indexed.resource as PragmaDeclarativeResource,
+          adapterHost,
+        );
+        const resolved =
+          indexed.resource.kind === "RuntimeProfile" && host.runtimes !== undefined
+            ? await verifyRuntimeEnvironment(
+                baseResolved as PragmaResourceInspection<PragmaRuntimeProfileContribution>,
+                host.runtimes,
+                false,
+              )
+            : baseResolved;
+        if (resolved.health.status !== "ready" || resolved.contribution === undefined) {
+          throw new PragmaResourceNeedsAttentionError(resolved.health);
+        }
+        const value = {
+          contribution: resolved.contribution,
+          health: resolved.health,
+        };
+        resolvedResources.set(key, value);
+        return value;
+      })();
+      resolvingResources.set(key, resolving);
+      try {
+        return (await resolving) as {
+          readonly contribution: TContribution;
+          readonly health: PragmaResourceHealth;
+        };
+      } finally {
+        if (resolvingResources.get(key) === resolving) resolvingResources.delete(key);
+      }
     };
 
     const resolveRuntime = async (runtimeRef: string): Promise<PragmaRuntimeProfileContribution> =>
@@ -660,17 +924,21 @@ class PragmaProjectImpl implements PragmaProject {
                 );
               }
               const expertRef = canonicalRef(indexed.resource) as `expert:${string}`;
-              const resolution = await host.plugins.resolve({
-                expertRef,
-                binding,
-              });
-              assertPluginResolution(binding.ref, resolution);
-              resolvedPlugins.push({
-                expertRef,
-                ref: binding.ref,
-                resolution,
-              });
-              return resolution;
+              const resolutionKey = stableStringify({ expertRef, binding });
+              let resolving = resolvingPlugins.get(resolutionKey);
+              if (resolving === undefined) {
+                resolving = host.plugins.resolve({ expertRef, binding }).then((resolution) => {
+                  assertPluginResolution(binding.ref, resolution);
+                  resolvedPlugins.push({
+                    expertRef,
+                    ref: binding.ref,
+                    resolution,
+                  });
+                  return resolution;
+                });
+                resolvingPlugins.set(resolutionKey, resolving);
+              }
+              return await resolving;
             },
           },
         );
@@ -759,11 +1027,6 @@ class PragmaProjectImpl implements PragmaProject {
         models,
         ...(rootModelSelection === undefined ? {} : { modelSelection: rootModelSelection }),
       };
-      for (const resolved of resolvedResources.values()) {
-        if ("runtimeId" in resolved.contribution) {
-          await host.runtimes.bind({ runtimeId: resolved.contribution.runtimeId });
-        }
-      }
     }
     const projectFingerprint = this.createLock().projectFingerprint;
     const fingerprintResources = [...resolvedResources.entries()]
@@ -981,24 +1244,25 @@ async function compileExpert(
     ) => Promise<PragmaPluginResolution>;
   },
 ): Promise<Expert> {
-  const plugins = await Promise.all(resource.spec.plugins.map(resolvers.resolvePlugin));
-  const runtime =
+  const [plugins, runtime, capabilities, contextStores] = await Promise.all([
+    Promise.all(resource.spec.plugins.map(resolvers.resolvePlugin)),
     executionOverride !== undefined || resource.spec.runtime === undefined
-      ? undefined
-      : await resolvers.resolveRuntime(resource.spec.runtime.ref);
-  const capabilities = await Promise.all(
-    resource.spec.capabilities.map(async (binding) => ({
-      binding,
-      contribution: await resolvers.resolveCapability(binding.ref),
-    })),
-  );
-  const contextStores = await Promise.all(
-    resource.spec.contextStores.map(async (binding) => ({
-      namespace: binding.namespace,
-      required: binding.required,
-      contribution: await resolvers.resolveContextStore(binding.ref),
-    })),
-  );
+      ? Promise.resolve(undefined)
+      : resolvers.resolveRuntime(resource.spec.runtime.ref),
+    Promise.all(
+      resource.spec.capabilities.map(async (binding) => ({
+        binding,
+        contribution: await resolvers.resolveCapability(binding.ref),
+      })),
+    ),
+    Promise.all(
+      resource.spec.contextStores.map(async (binding) => ({
+        namespace: binding.namespace,
+        required: binding.required,
+        contribution: await resolvers.resolveContextStore(binding.ref),
+      })),
+    ),
+  ]);
   const capabilityTools: ExpertAgentManagedTool<string, ExpertAgentToolCallResult>[] = [];
   const skillConfigs: IExpertAgentSkillsConfig[] = [];
   const mcpConfigs: IExpertAgentMcpConfig[] = [];
@@ -1978,7 +2242,7 @@ function mergeMcp(configs: readonly IExpertAgentMcpConfig[]): IExpertAgentMcpCon
   return Object.keys(servers).length === 0 ? undefined : { mcpServers: servers };
 }
 
-function createAdapterHost(host: PragmaCompileHost) {
+function createAdapterHost(host: PragmaCompileHost, artifacts: ReadonlyMap<string, string>) {
   const external = host.adapterHost;
   const root = resolve(host.projectRoot ?? external?.projectRoot ?? host.workspace);
   return {
@@ -2005,10 +2269,15 @@ function createAdapterHost(host: PragmaCompileHost) {
         throw new Error(`Artifact source escapes the project root: ${source.path}`);
       }
       const info = await lstat(path);
+      const contentHash = artifacts.get(source.path);
+      if (contentHash === undefined) {
+        throw new Error(`Project artifact was not indexed: ${source.path}`);
+      }
       return {
         source,
         path,
-        contentHash: await hashArtifactPath(path),
+        contentHash,
+        verified: true,
         ...(info.isFile() ? { text: await readFile(path, "utf8") } : {}),
       };
     },

@@ -37,11 +37,19 @@ export function startDesktopApplication(): void {
       component: "desktop.renderer",
       scope: { processKind: "desktop-renderer" },
     });
+    const attributes = {
+      errorMessage: record.data.errorMessage,
+      stack: record.data.stack,
+      missionId: record.data.missionId,
+      executionId: record.data.executionId,
+      elapsedMs: record.data.elapsedMs,
+    };
+    if (record.data.level === "info") {
+      logger.info(record.data.event, record.data.message, attributes);
+      return;
+    }
     if (record.data.level === "warn") {
-      logger.warn(record.data.event, record.data.message, {
-        errorMessage: record.data.errorMessage,
-        stack: record.data.stack,
-      });
+      logger.warn(record.data.event, record.data.message, attributes);
       return;
     }
     const error = new Error(record.data.errorMessage ?? record.data.message);

@@ -1022,8 +1022,8 @@ class ManagedRuntimeSession<TNativeEvent, TNativeSession, TPrepared> {
       const turnResult = await (async () => {
         const requestStartedAt = performance.now();
         this.options.logger.info(
-          "runtime.model_request_started",
-          "Runtime adapter started the native model request",
+          "runtime.model_request_dispatched",
+          "Runtime adapter dispatched the native model request",
           { runId, attempt, isRetry: attempt > 1 },
         );
         try {
