@@ -1,6 +1,17 @@
-import { Archive, DownloadSimple, UploadSimple, X } from "@phosphor-icons/react";
+import {
+  Archive,
+  CaretDown,
+  Check,
+  DownloadSimple,
+  GitBranch,
+  MagnifyingGlass,
+  UploadSimple,
+  User,
+  UsersThree,
+  X,
+} from "@phosphor-icons/react";
 import { canonicalPragmaResourceRef } from "@pragma/interpreter/ast";
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
 
 import type {
@@ -16,6 +27,65 @@ import { errorMessage } from "../../lib/errors.ts";
 import { desktopApi } from "./studio-model.ts";
 
 type BundleMode = "export" | "import";
+type BundleExportRoot = Extract<
+  PragmaProjectSnapshot["resources"][number],
+  { kind: "Expert" | "ExpertTeam" | "Flow" }
+>;
+
+const BUNDLE_EXPORT_ROOT_LIMIT = 5;
+const bundleExportRootCollator = new Intl.Collator(undefined, {
+  numeric: true,
+  sensitivity: "base",
+});
+
+function isBundleExportRoot(
+  resource: PragmaProjectSnapshot["resources"][number],
+): resource is BundleExportRoot {
+  return resource.kind === "Expert" || resource.kind === "ExpertTeam" || resource.kind === "Flow";
+}
+
+function compareBundleExportRoots(left: BundleExportRoot, right: BundleExportRoot): number {
+  return (
+    bundleExportRootCollator.compare(left.metadata.name, right.metadata.name) ||
+    bundleExportRootCollator.compare(left.kind, right.kind) ||
+    bundleExportRootCollator.compare(
+      canonicalPragmaResourceRef(left),
+      canonicalPragmaResourceRef(right),
+    )
+  );
+}
+
+export function orderBundleExportRoots(
+  roots: readonly BundleExportRoot[],
+): readonly BundleExportRoot[] {
+  return [...roots].sort(compareBundleExportRoots);
+}
+
+export function filterBundleExportRoots(
+  roots: readonly BundleExportRoot[],
+  query: string,
+  kindLabel: (kind: BundleExportRoot["kind"]) => string = (kind) => kind,
+): {
+  readonly items: readonly BundleExportRoot[];
+  readonly matchCount: number;
+} {
+  const normalizedQuery = query.trim().toLocaleLowerCase();
+  const matches = roots.filter((resource) => {
+    if (normalizedQuery === "") return true;
+    return [
+      resource.metadata.name,
+      resource.metadata.description,
+      resource.metadata.tags.join(" "),
+      canonicalPragmaResourceRef(resource),
+      resource.kind,
+      kindLabel(resource.kind),
+    ].some((value) => value.toLocaleLowerCase().includes(normalizedQuery));
+  });
+  return {
+    items: matches.slice(0, BUNDLE_EXPORT_ROOT_LIMIT),
+    matchCount: matches.length,
+  };
+}
 
 export function PragmaBundleDialog(props: {
   readonly initialMode: BundleMode;
@@ -47,11 +117,7 @@ export function PragmaBundleDialog(props: {
   const [error, setError] = useState<string | null>(null);
 
   const roots = useMemo(
-    () =>
-      props.project.resources.filter(
-        (resource) =>
-          resource.kind === "Expert" || resource.kind === "ExpertTeam" || resource.kind === "Flow",
-      ),
+    () => orderBundleExportRoots(props.project.resources.filter(isBundleExportRoot)),
     [props.project.resources],
   );
 
@@ -269,19 +335,7 @@ export function PragmaBundleDialog(props: {
         <div className="pragma-bundle-body">
           {mode === "export" ? (
             <>
-              <label className="pragma-bundle-field">
-                <span>{t("bundleExportObject")}</span>
-                <select value={rootRef} onChange={(event) => setRootRef(event.target.value)}>
-                  {roots.map((resource) => (
-                    <option
-                      key={canonicalPragmaResourceRef(resource)}
-                      value={canonicalPragmaResourceRef(resource)}
-                    >
-                      {resource.metadata.name} · {resource.kind}
-                    </option>
-                  ))}
-                </select>
-              </label>
+              <BundleExportRootPicker roots={roots} value={rootRef} onChange={setRootRef} />
               <fieldset className="pragma-bundle-modules">
                 <legend>{t("bundleModules")}</legend>
                 <BundleToggle
@@ -428,6 +482,166 @@ export function PragmaBundleDialog(props: {
       </section>
     </div>
   );
+}
+
+function BundleExportRootPicker(props: {
+  readonly roots: readonly BundleExportRoot[];
+  readonly value: string;
+  readonly onChange: (value: string) => void;
+}) {
+  const { t } = useTranslation("studio");
+  const [open, setOpen] = useState(false);
+  const [search, setSearch] = useState("");
+  const pickerRef = useRef<HTMLDivElement | null>(null);
+  const triggerRef = useRef<HTMLButtonElement | null>(null);
+  const selected = props.roots.find(
+    (resource) => canonicalPragmaResourceRef(resource) === props.value,
+  );
+  const kindLabel = (kind: BundleExportRoot["kind"]): string =>
+    kind === "Expert"
+      ? t("bundleRootExpert")
+      : kind === "ExpertTeam"
+        ? t("bundleRootExpertTeam")
+        : t("bundleRootFlow");
+  const filtered = filterBundleExportRoots(props.roots, search, kindLabel);
+  const hiddenCount = filtered.matchCount - filtered.items.length;
+  const SelectedIcon = selected === undefined ? Archive : bundleRootIcon(selected.kind);
+
+  useEffect(() => {
+    if (!open) return;
+    const closeOutside = (event: MouseEvent) => {
+      if (event.target instanceof Node && !pickerRef.current?.contains(event.target)) {
+        setOpen(false);
+        setSearch("");
+      }
+    };
+    document.addEventListener("mousedown", closeOutside);
+    return () => document.removeEventListener("mousedown", closeOutside);
+  }, [open]);
+
+  return (
+    <div className="pragma-bundle-field">
+      <span>{t("bundleExportObject")}</span>
+      <div
+        className={open ? "pragma-bundle-root-picker is-open" : "pragma-bundle-root-picker"}
+        ref={pickerRef}
+        onKeyDown={(event) => {
+          if (event.key !== "Escape" || !open) return;
+          event.stopPropagation();
+          setOpen(false);
+          setSearch("");
+          triggerRef.current?.focus();
+        }}
+      >
+        <button
+          className="pragma-bundle-root-trigger"
+          type="button"
+          ref={triggerRef}
+          aria-expanded={open}
+          aria-haspopup="dialog"
+          disabled={props.roots.length === 0}
+          onClick={() => {
+            setOpen((current) => !current);
+            setSearch("");
+          }}
+        >
+          <span className="pragma-bundle-root-icon">
+            <SelectedIcon size={18} aria-hidden="true" />
+          </span>
+          <span>
+            <strong>{selected?.metadata.name ?? t("bundleNoExportObjects")}</strong>
+            <small>
+              {selected === undefined
+                ? t("bundleNoExportObjectsHint")
+                : `${kindLabel(selected.kind)} · ${canonicalPragmaResourceRef(selected)}`}
+            </small>
+          </span>
+          <CaretDown size={15} aria-hidden="true" />
+        </button>
+
+        {open ? (
+          <div
+            className="pragma-bundle-root-menu"
+            role="dialog"
+            aria-modal="false"
+            aria-label={t("bundleChooseExportObject")}
+          >
+            <header>
+              <small>{t("bundleChooseExportObject")}</small>
+              <span>{t("bundleAvailableObjects", { count: props.roots.length })}</span>
+            </header>
+            <label className="pragma-bundle-root-search">
+              <MagnifyingGlass size={17} aria-hidden="true" />
+              <span className="sr-only">{t("bundleSearchExportObjects")}</span>
+              <input
+                autoFocus
+                type="search"
+                value={search}
+                onChange={(event) => setSearch(event.target.value)}
+                placeholder={t("bundleSearchExportObjects")}
+              />
+            </label>
+            <div className="pragma-bundle-root-options" aria-label={t("bundleExportObjects")}>
+              {filtered.items.length === 0 ? (
+                <p className="pragma-bundle-root-empty">
+                  <strong>{t("bundleNoExportObjectMatches")}</strong>
+                  <span>{t("bundleTryAnotherSearch")}</span>
+                </p>
+              ) : null}
+              {filtered.items.map((resource) => {
+                const ref = canonicalPragmaResourceRef(resource);
+                const RootIcon = bundleRootIcon(resource.kind);
+                const isSelected = ref === props.value;
+                return (
+                  <button
+                    className={
+                      isSelected
+                        ? "pragma-bundle-root-option is-selected"
+                        : "pragma-bundle-root-option"
+                    }
+                    type="button"
+                    aria-pressed={isSelected}
+                    key={ref}
+                    onClick={() => {
+                      props.onChange(ref);
+                      setOpen(false);
+                      setSearch("");
+                      triggerRef.current?.focus();
+                    }}
+                  >
+                    <span className="pragma-bundle-root-icon">
+                      <RootIcon size={18} aria-hidden="true" />
+                    </span>
+                    <span>
+                      <strong>{resource.metadata.name}</strong>
+                      <small>{resource.metadata.description}</small>
+                    </span>
+                    <span className="pragma-bundle-root-meta">
+                      <Check
+                        className={isSelected ? "is-visible" : undefined}
+                        size={16}
+                        aria-hidden="true"
+                      />
+                      <span>{kindLabel(resource.kind)}</span>
+                    </span>
+                  </button>
+                );
+              })}
+            </div>
+            {hiddenCount > 0 ? (
+              <p className="pragma-bundle-root-more">
+                {t("bundleMoreObjectsHidden", { count: hiddenCount })}
+              </p>
+            ) : null}
+          </div>
+        ) : null}
+      </div>
+    </div>
+  );
+}
+
+function bundleRootIcon(kind: BundleExportRoot["kind"]) {
+  return kind === "Expert" ? User : kind === "ExpertTeam" ? UsersThree : GitBranch;
 }
 
 function BundleToggle(props: {
