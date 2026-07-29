@@ -2,7 +2,15 @@ import { renderToStaticMarkup } from "react-dom/server";
 import { describe, expect, it } from "vitest";
 
 import { MissionModelOverrideControls } from "../../components/MissionModelOverrideControls.tsx";
-import { filterMissionExecutors, missionModelOverrideAvailable } from "./HomePage.tsx";
+import {
+  filterMissionExecutors,
+  isHomeExecutorFavorite,
+  missionModelOverrideAvailable,
+  rankHomeMissionExecutors,
+  selectHomeMissionExecutors,
+  uniqueWorkspaces,
+  workspacePathsEqual,
+} from "./HomePage.tsx";
 import { SchemaInputForm, createSchemaInputValue, isSchemaInputValid } from "./SchemaInputForm.tsx";
 
 describe("MissionModelOverrideControls", () => {
@@ -74,14 +82,131 @@ describe("mission executor search", () => {
       origin: "project" as const,
       readOnly: false,
       customized: false,
+      tags: index % 2 === 0 ? ["release"] : [],
+      teamMemberships: [],
+      preference: {
+        favoriteScope: "none" as const,
+        hidden: false,
+      },
+      alwaysVisible: false,
     };
   });
 
-  it("shows at most five executors and searches the full catalog", () => {
-    expect(filterMissionExecutors(executors, "")).toHaveLength(5);
+  it("keeps the full catalog available and searches names, descriptions, and tags", () => {
+    expect(filterMissionExecutors(executors, "")).toHaveLength(100);
     const matches = filterMissionExecutors(executors, "Expert 99");
     expect(matches).toHaveLength(1);
     expect(matches[0]?.name).toBe("Expert 99");
+    expect(filterMissionExecutors(executors, "release")).toHaveLength(50);
+  });
+
+  it("ranks global and workspace favorites before recent and team-managed experts", () => {
+    const ranked = rankHomeMissionExecutors(
+      [
+        {
+          ...executors[0]!,
+          name: "Team member",
+          teamMemberships: [{ ref: "team:0000000000000001", name: "Team" }],
+        },
+        {
+          ...executors[1]!,
+          name: "Recent",
+          preference: {
+            favoriteScope: "none",
+            hidden: false,
+            lastUsedAt: "2026-07-29T09:00:00.000Z",
+          },
+        },
+        {
+          ...executors[2]!,
+          name: "Workspace favorite",
+          preference: {
+            favoriteScope: "workspace",
+            hidden: false,
+            favoriteWorkspace: { path: "/work/project", basename: "project" },
+            lastWorkspace: { path: "/work/other", basename: "other" },
+          },
+        },
+        {
+          ...executors[3]!,
+          name: "Global favorite",
+          preference: { favoriteScope: "global", hidden: false },
+        },
+      ],
+      "/work/project",
+    );
+    expect(ranked.map((executor) => executor.name)).toEqual([
+      "Global favorite",
+      "Workspace favorite",
+      "Recent",
+      "Team member",
+    ]);
+  });
+
+  it("pins workspace favorites only in their assigned workspace", () => {
+    const workspaceFavorite = {
+      ...executors[0]!,
+      preference: {
+        favoriteScope: "workspace" as const,
+        hidden: false,
+        favoriteWorkspace: { path: "/work/favorite", basename: "favorite" },
+      },
+    };
+    const globalFavorite = {
+      ...executors[1]!,
+      preference: { favoriteScope: "global" as const, hidden: false },
+    };
+
+    expect(isHomeExecutorFavorite(workspaceFavorite, "/work/favorite")).toBe(true);
+    expect(isHomeExecutorFavorite(workspaceFavorite, "/work/favorite/")).toBe(true);
+    expect(isHomeExecutorFavorite(workspaceFavorite, "/work/other")).toBe(false);
+    expect(isHomeExecutorFavorite(globalFavorite, "/work/other")).toBe(true);
+  });
+
+  it("compares equivalent workspace paths across picker and persisted representations", () => {
+    expect(workspacePathsEqual("/work/project/", "/work/project")).toBe(true);
+    expect(workspacePathsEqual("C:\\work\\project\\", "c:/work/project")).toBe(true);
+    expect(workspacePathsEqual("/work/project", "/work/other")).toBe(false);
+    expect(workspacePathsEqual(undefined, "/work/project")).toBe(false);
+  });
+
+  it("deduplicates current and recent workspace choices by normalized path", () => {
+    expect(
+      uniqueWorkspaces([
+        { path: "/work/current", basename: "current" },
+        { path: "/work/current/", basename: "duplicate" },
+        { path: "/work/recent", basename: "recent" },
+      ]),
+    ).toEqual([
+      { path: "/work/current", basename: "current" },
+      { path: "/work/recent", basename: "recent" },
+    ]);
+  });
+
+  it("keeps search and type/tag filters in selection while excluding hidden executors", () => {
+    const visibleFlow = {
+      ...executors[0]!,
+      ref: "flow:0000000000000001" as const,
+      name: "Release flow",
+      kind: "flow" as const,
+    };
+    const hiddenFlow = {
+      ...executors[2]!,
+      ref: "flow:0000000000000002" as const,
+      name: "Hidden release flow",
+      kind: "flow" as const,
+      preference: { favoriteScope: "none" as const, hidden: true },
+    };
+
+    expect(
+      selectHomeMissionExecutors(
+        [executors[1]!, visibleFlow, hiddenFlow],
+        "release",
+        "flow",
+        "release",
+        undefined,
+      ).map((executor) => executor.name),
+    ).toEqual(["Release flow"]);
   });
 });
 

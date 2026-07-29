@@ -145,9 +145,14 @@ import {
   UpdatePluginDefaultsSchema,
 } from "./plugins.ts";
 import {
+  HomeExecutorFavoriteScopeSchema,
+  HomeExecutorPreferenceSchema,
+  HomeMissionExecutorCatalogSchema,
+  HomeMissionExecutorOptionSchema,
   MissionCreationDefaultsSchema,
   MissionExecutorOptionSchema,
   MissionModelOverrideSchema,
+  UpdateHomeExecutorPreferenceSchema,
 } from "./mission-base.ts";
 import {
   MissionUsageSchema,
@@ -247,6 +252,11 @@ export type MissionSummary = z.infer<typeof MissionSummarySchema>;
 export type MissionUpdate = z.infer<typeof MissionUpdateSchema>;
 export type MissionExecutorOption = z.infer<typeof MissionExecutorOptionSchema>;
 export type MissionCreationDefaults = z.infer<typeof MissionCreationDefaultsSchema>;
+export type HomeExecutorFavoriteScope = z.infer<typeof HomeExecutorFavoriteScopeSchema>;
+export type HomeExecutorPreference = z.infer<typeof HomeExecutorPreferenceSchema>;
+export type HomeMissionExecutorOption = z.infer<typeof HomeMissionExecutorOptionSchema>;
+export type HomeMissionExecutorCatalog = z.infer<typeof HomeMissionExecutorCatalogSchema>;
+export type UpdateHomeExecutorPreference = z.infer<typeof UpdateHomeExecutorPreferenceSchema>;
 export type MissionModelOverride = z.infer<typeof MissionModelOverrideSchema>;
 export type AutomationBinding = z.infer<typeof AutomationBindingSchema>;
 export type AutomationRunRecord = z.infer<typeof AutomationRunRecordSchema>;
