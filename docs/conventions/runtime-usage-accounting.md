@@ -61,8 +61,13 @@ Codex reports cached input as a subset of `input_tokens`. The adapter must subtr
 
 Verified against `@qoder-ai/qoder-agent-sdk 1.0.15`. The final `SDKResultMessage.usage` is the
 current query snapshot and reports uncached input, cache reads, cache creation, and output as
-separate categories. The adapter maps it as `reported` and must not add `modelUsage` or account
-quota data to the same turn.
+separate categories. The adapter maps a non-zero snapshot as `reported` and must not add
+`modelUsage` or account quota data to the same turn.
+
+Some Qoder CLI model providers return an all-zero final usage snapshot even though the model
+completed the request. In that case only, the adapter estimates the managed turn input and output
+with its deterministic token estimator and marks the snapshot as `estimated`. This fallback does
+not use context-window occupancy as cumulative Mission usage.
 
 `Query.getUsageInfo()` is an account credit/quota snapshot. It is diagnostic account state, not
 per-turn token usage or dollar cost.

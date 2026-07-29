@@ -97,8 +97,7 @@ export async function startQoderTurn(
   const prompt = [...turn.startupMessages.map((message) => message.content), turn.prompt].join(
     "\n\n",
   );
-  const result = await runQoderQuery(session, prompt, turn);
-  const usage = mapQoderUsage(result);
+  const { result, usage } = await runQoderQuery(session, prompt, turn);
   const assistant = createAssistantMessage(result, usage);
   appendPendingCompactionSummary(session);
   session.messages.push(assistant);
@@ -254,7 +253,10 @@ async function runQoderQuery(
   session: QoderNativeSession,
   prompt: string,
   turn: RuntimeTurnContext<QoderNativeEvent>,
-): Promise<SDKResultMessage> {
+): Promise<{
+  readonly result: SDKResultSuccess;
+  readonly usage: AgentMessageUsage;
+}> {
   const queryStartedAt = performance.now();
   session.pendingCompaction = undefined;
   const q = createQuery(session, prompt, {
@@ -319,22 +321,39 @@ async function runQoderQuery(
         if (message.type === "result") {
           result = message;
           session.contextWindowUsage = await readContextUsage(q, session, message);
-          turn.stream.writeNative({ kind: "usage", usage: mapQoderUsage(message) });
         }
       }
     } catch (error) {
       iterationError = error;
     }
-    const successful = requireSuccessfulQoderResult(
-      result,
-      iterationError,
-      "Qoder CLI ended without a result message.",
-    );
+    let successful: SDKResultSuccess;
+    try {
+      successful = requireSuccessfulQoderResult(
+        result,
+        iterationError,
+        "Qoder CLI ended without a result message.",
+      );
+    } catch (error) {
+      if (result !== undefined) {
+        turn.stream.writeNative({
+          kind: "usage",
+          usage: resolveQoderUsage(result, {
+            inputText: estimateQoderTurnInput(session, prompt),
+            outputText: readQoderResultOutput(result),
+          }),
+        });
+      }
+      throw error;
+    }
+    const usage = resolveQoderUsage(successful, {
+      inputText: estimateQoderTurnInput(session, prompt),
+      outputText: successful.result,
+    });
     session.logger.info("runtime.qodercli_final_result", "Qoder CLI returned a final result", {
       runId: turn.runId,
       elapsedMs: qoderTurnElapsedMs(queryStartedAt),
     });
-    return successful;
+    return { result: successful, usage };
   } finally {
     turn.signal.removeEventListener("abort", onAbort);
     session.activeQuery = undefined;
@@ -584,6 +603,25 @@ export function mapQoderUsage(result: SDKResultMessage): AgentMessageUsage {
   });
 }
 
+export function resolveQoderUsage(
+  result: SDKResultMessage,
+  fallback: {
+    readonly inputText: string;
+    readonly outputText: string;
+  },
+): AgentMessageUsage {
+  const reported = mapQoderUsage(result);
+  if (reported.totalTokens > 0) return reported;
+  return createUsageFromTokenCounts({
+    measurement: "estimated",
+    inputTokens: defaultTokenEstimator.count(fallback.inputText),
+    inputTokensIncludeCacheRead: false,
+    outputTokens: defaultTokenEstimator.count(fallback.outputText),
+    cacheReadTokens: 0,
+    cacheWriteTokens: 0,
+  });
+}
+
 export function requireSuccessfulQoderResult(
   result: SDKResultMessage | undefined,
   iterationError: unknown,
@@ -659,6 +697,28 @@ function estimateContextUsage(session: QoderNativeSession): RuntimeContextWindow
     contextWindowTokens: session.contextWindowTokens,
     measurement: "estimated",
   });
+}
+
+function estimateQoderTurnInput(session: QoderNativeSession, prompt: string): string {
+  const latestCompactionIndex = session.messages.findLastIndex(
+    (message) => message.role === "compactionSummary",
+  );
+  const activeMessages =
+    latestCompactionIndex < 0 ? session.messages : session.messages.slice(latestCompactionIndex);
+  const previousMessages =
+    activeMessages.at(-1)?.role === "user" ? activeMessages.slice(0, -1) : activeMessages;
+  return JSON.stringify({
+    systemPrompt: session.systemPrompt,
+    messages: previousMessages,
+    prompt,
+    ...(latestCompactionIndex < 0 && session.compactSummary !== undefined
+      ? { compactSummary: session.compactSummary }
+      : {}),
+  });
+}
+
+function readQoderResultOutput(result: SDKResultMessage): string {
+  return result.subtype === "success" ? result.result : result.errors.join("\n");
 }
 
 function createAssistantMessage(
