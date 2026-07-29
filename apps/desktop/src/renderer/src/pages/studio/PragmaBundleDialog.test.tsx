@@ -1,7 +1,15 @@
-import type { PragmaProjectSnapshot } from "../../../../shared/contracts/index.ts";
+import { renderToStaticMarkup } from "react-dom/server";
 import { describe, expect, it } from "vitest";
 
-import { filterBundleExportRoots, orderBundleExportRoots } from "./PragmaBundleDialog.tsx";
+import type {
+  PragmaBundleImportInspection,
+  PragmaProjectSnapshot,
+} from "../../../../shared/contracts/index.ts";
+import {
+  BundleInspection,
+  filterBundleExportRoots,
+  orderBundleExportRoots,
+} from "./PragmaBundleDialog.tsx";
 
 type ExportRoot = Extract<
   PragmaProjectSnapshot["resources"][number],
@@ -54,5 +62,74 @@ describe("Bundle export root search", () => {
     expect(filterBundleExportRoots(roots, "portable workflow resource 31")).toHaveLength(1);
     expect(filterBundleExportRoots(roots, "release-42")).toHaveLength(1);
     expect(filterBundleExportRoots(roots, "expert:0000000000000009")).toHaveLength(1);
+  });
+});
+
+describe("Bundle import inspection", () => {
+  it("renders every dependency and conflict instead of showing only the conflict count", () => {
+    const inspection: PragmaBundleImportInspection = {
+      sourcePath: "/tmp/portable-workflow.pragma",
+      bundleFingerprint: "a".repeat(64),
+      root: {
+        ref: "expert:1xddvess309a6gme",
+        kind: "Expert",
+        name: "菜鸟 APP 查件业务专家",
+      },
+      createdAt: "2026-07-29T08:00:00.000Z",
+      archiveBytes: 1_024,
+      unpackedBytes: 2_048,
+      fileCount: 4,
+      resources: 3,
+      dependencies: [
+        {
+          kind: "runtime",
+          ref: "runtime-profile:codex",
+          name: "Codex / GPT-5.6-Sol",
+          included: false,
+        },
+        {
+          kind: "capability",
+          ref: "capability:aone-km",
+          name: "aone-km",
+          included: true,
+        },
+      ],
+      conflicts: [
+        {
+          ref: "expert:1xddvess309a6gme",
+          kind: "identity",
+          localName: "本地查件专家",
+          importedName: "菜鸟 APP 查件业务专家",
+        },
+        {
+          ref: "runtime-profile:codex",
+          kind: "identity",
+          localName: "本地 Codex",
+          importedName: "Codex / GPT-5.6-Sol",
+        },
+        {
+          ref: "capability:aone-km",
+          kind: "name",
+          localName: "本地 aone-km",
+          importedName: "aone-km",
+        },
+      ],
+    };
+
+    const html = renderToStaticMarkup(
+      <BundleInspection
+        inspection={inspection}
+        conflictMode="update"
+        onConflictMode={() => undefined}
+        onChooseAnother={() => undefined}
+      />,
+    );
+
+    expect(html.match(/class="pragma-bundle-conflict-item"/g)).toHaveLength(3);
+    expect(html).toContain("菜鸟 APP 查件业务专家");
+    expect(html).toContain("Codex / GPT-5.6-Sol");
+    expect(html).toContain("capability:aone-km");
+    expect(html).toContain("needs-binding");
+    expect(html).toContain("is-included");
   });
 });

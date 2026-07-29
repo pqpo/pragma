@@ -651,7 +651,7 @@ function BundleToggle(props: {
   );
 }
 
-function BundleInspection(props: {
+export function BundleInspection(props: {
   readonly inspection: PragmaBundleImportInspection;
   readonly conflictMode: "update" | "copy" | "";
   readonly onConflictMode: (mode: "update" | "copy") => void;
@@ -670,17 +670,34 @@ function BundleInspection(props: {
           {t("bundleChooseAnother")}
         </button>
       </div>
-      <ul>
+      <ul className="pragma-bundle-dependencies">
         {props.inspection.dependencies.map((dependency) => (
           <li key={`${dependency.kind}:${dependency.ref}`}>
             <span>{dependency.name}</span>
-            <em>{dependency.included ? t("bundleIncluded") : t("bundleNeedsBinding")}</em>
+            <em className={dependency.included ? "is-included" : "needs-binding"}>
+              {dependency.included ? t("bundleIncluded") : t("bundleNeedsBinding")}
+            </em>
           </li>
         ))}
       </ul>
       {props.inspection.conflicts.length > 0 ? (
         <fieldset className="pragma-bundle-conflicts">
           <legend>{t("bundleConflicts", { count: props.inspection.conflicts.length })}</legend>
+          <ul className="pragma-bundle-conflict-list">
+            {props.inspection.conflicts.map((conflict) => (
+              <li className="pragma-bundle-conflict-item" key={`${conflict.ref}:${conflict.kind}`}>
+                <span>
+                  <strong>{conflict.importedName}</strong>
+                  <small>
+                    {conflict.kind === "identity"
+                      ? t("bundleConflictIdentity", { name: conflict.localName })
+                      : t("bundleConflictName", { name: conflict.localName })}
+                  </small>
+                </span>
+                <code>{conflict.ref}</code>
+              </li>
+            ))}
+          </ul>
           <label>
             <input
               type="radio"
