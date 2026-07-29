@@ -198,6 +198,7 @@ export interface RuntimeContextWindowUsage {
 
 export interface RuntimeSessionContextWindowController {
   readonly inspect: () => Promise<RuntimeContextWindowUsage | undefined>;
+  readonly canCompact: () => Promise<boolean>;
   readonly compact: (() => Promise<RuntimeContextWindowUsage | undefined>) | undefined;
 }
 

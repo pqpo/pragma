@@ -1,6 +1,7 @@
 import { describe, expect, it, vi } from "vitest";
 
 import {
+  canCompactPiContextWindow,
   compactPiContextBeforePrompt,
   compactPiContextWindow,
   readPiContextWindow,
@@ -8,6 +9,36 @@ import {
 } from "../src/session.ts";
 
 describe("PI context window", () => {
+  it("reports when PI has older context that can actually be compacted", () => {
+    const entry = (id: string, parentId: string | null, content: string) => ({
+      type: "message" as const,
+      id,
+      parentId,
+      timestamp: "2026-07-29T00:00:00.000Z",
+      message: { role: "user" as const, content, timestamp: 0 },
+    });
+    const shortSession = {
+      session: {
+        sessionManager: { getBranch: () => [entry("recent", null, "short")] },
+        settingsManager: { getCompactionKeepRecentTokens: () => 20_000 },
+      },
+    } as unknown as PiNativeSession;
+    const longSession = {
+      session: {
+        sessionManager: {
+          getBranch: () => [
+            entry("older", null, "older context"),
+            entry("recent", "older", "recent context"),
+          ],
+        },
+        settingsManager: { getCompactionKeepRecentTokens: () => 1 },
+      },
+    } as unknown as PiNativeSession;
+
+    expect(canCompactPiContextWindow(shortSession)).toBe(false);
+    expect(canCompactPiContextWindow(longSession)).toBe(true);
+  });
+
   it("uses PI's bounded context estimate instead of cumulative billing usage", () => {
     const session = {
       session: {

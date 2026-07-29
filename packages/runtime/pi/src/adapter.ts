@@ -27,6 +27,7 @@ import {
 import { createResourceLoader } from "./resources.ts";
 import { createPiSessionManager } from "./session-manager.ts";
 import {
+  canCompactPiContextWindow,
   compactPiContextWindow,
   collectPiUsage,
   createPiNativeSession,
@@ -163,7 +164,9 @@ export function createPiRuntime(options: CloudPiRuntimeAdapterOptions = {}): Run
           throw error;
         }
         if (selectedProviderId !== undefined && registeredProvider === undefined) {
-          const providerError = new Error(`Model provider is not registered: ${selectedProviderId}`);
+          const providerError = new Error(
+            `Model provider is not registered: ${selectedProviderId}`,
+          );
           const preparation = await Promise.allSettled([
             resourceReloadPromise,
             mcpRegistryPromise,
@@ -340,6 +343,7 @@ export function createPiRuntime(options: CloudPiRuntimeAdapterOptions = {}): Run
         return collectPiUsage(session);
       },
       readContextWindow: readPiContextWindow,
+      canCompactContext: canCompactPiContextWindow,
       compactContext: compactPiContextWindow,
       async cancelTurn(session) {
         await session.session.abort();

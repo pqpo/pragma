@@ -27,7 +27,9 @@ export const missions = {
   contextCompacting: "Compacting…",
   contextCompactionStarted: "Compacting context…",
   contextCompactionCompleted: "Context compaction completed",
+  contextCompactionNotNeeded: "No context compaction needed",
   contextCompactionFailed: "Context compaction failed",
+  contextCompactionNotReady: "There is not enough older context to compact yet.",
   contextCompactionInputDisabled:
     "Context is being compacted. You can send another message when it finishes.",
   now: "Now",

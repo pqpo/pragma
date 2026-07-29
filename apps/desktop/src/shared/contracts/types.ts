@@ -76,6 +76,7 @@ import {
   MissionChatPatchSchema,
   MissionChatSnapshotSchema,
   MissionChatUpdateSchema,
+  MissionContextCompactionResultSchema,
   MissionContextWindowStateSchema,
   MissionHumanInteractionSchema,
   MissionLifecycleStatusSchema,
@@ -274,6 +275,7 @@ export type SendMissionMessage = z.infer<typeof SendMissionMessageSchema>;
 export type MissionHumanInteraction = z.infer<typeof MissionHumanInteractionSchema>;
 export type MissionChatEntry = z.infer<typeof MissionChatEntrySchema>;
 export type MissionChatSnapshot = z.infer<typeof MissionChatSnapshotSchema>;
+export type MissionContextCompactionResult = z.infer<typeof MissionContextCompactionResultSchema>;
 export type MissionContextWindowState = z.infer<typeof MissionContextWindowStateSchema>;
 export type MissionChatPatch = z.infer<typeof MissionChatPatchSchema>;
 export type MissionChatUpdate = z.infer<typeof MissionChatUpdateSchema>;

@@ -368,7 +368,13 @@ export const MissionContextWindowStateSchema = z.object({
   supportsInspection: z.boolean(),
   supportsCompaction: z.boolean(),
   canCompact: z.boolean(),
+  compactionBlockedReason: z.enum(["not_ready", "busy", "inactive", "not_started"]).optional(),
   usage: MissionContextWindowUsageSchema.optional(),
+});
+
+export const MissionContextCompactionResultSchema = z.object({
+  outcome: z.enum(["compacted", "not_needed"]),
+  contextWindow: MissionContextWindowStateSchema,
 });
 
 export const MissionChatSnapshotSchema = z.object({

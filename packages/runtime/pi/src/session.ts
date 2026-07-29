@@ -4,6 +4,7 @@ import type {
   ModelRegistry,
   ModelRuntime,
 } from "@earendil-works/pi-coding-agent";
+import { findCutPoint, sessionEntryToContextMessages } from "@earendil-works/pi-coding-agent";
 import { randomUUID } from "node:crypto";
 import { AgentMessageUsageSchema, type AgentMessage, type AgentMessageUsage } from "@pragma/shared";
 import type {
@@ -269,6 +270,44 @@ export function readPiContextWindow(
     contextWindowTokens: usage.contextWindow,
     measurement: "estimated",
   });
+}
+
+export function canCompactPiContextWindow(session: PiNativeSession): boolean {
+  const pathEntries = session.session.sessionManager.getBranch();
+  if (pathEntries.at(-1)?.type === "compaction") return false;
+
+  let boundaryStart = 0;
+  for (let index = pathEntries.length - 1; index >= 0; index -= 1) {
+    const entry = pathEntries[index];
+    if (entry?.type !== "compaction") continue;
+    const firstKeptEntryIndex = pathEntries.findIndex(
+      (candidate) => candidate.id === entry.firstKeptEntryId,
+    );
+    boundaryStart = firstKeptEntryIndex >= 0 ? firstKeptEntryIndex : index + 1;
+    break;
+  }
+
+  const cutPoint = findCutPoint(
+    pathEntries,
+    boundaryStart,
+    pathEntries.length,
+    session.session.settingsManager.getCompactionKeepRecentTokens(),
+  );
+  if (pathEntries[cutPoint.firstKeptEntryIndex]?.id === undefined) return false;
+
+  const historyEnd = cutPoint.isSplitTurn ? cutPoint.turnStartIndex : cutPoint.firstKeptEntryIndex;
+  const hasContextMessage = (start: number, end: number): boolean =>
+    pathEntries
+      .slice(start, end)
+      .some(
+        (entry) => entry.type !== "compaction" && sessionEntryToContextMessages(entry).length > 0,
+      );
+
+  return (
+    hasContextMessage(boundaryStart, historyEnd) ||
+    (cutPoint.isSplitTurn &&
+      hasContextMessage(cutPoint.turnStartIndex, cutPoint.firstKeptEntryIndex))
+  );
 }
 
 export async function compactPiContextWindow(

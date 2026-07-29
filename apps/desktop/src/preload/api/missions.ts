@@ -12,7 +12,7 @@ import {
   MissionActionSchema,
   MissionChatSnapshotSchema,
   MissionChatUpdateSchema,
-  MissionContextWindowStateSchema,
+  MissionContextCompactionResultSchema,
   MissionHumanInteractionSchema,
   MissionModelOptionsRequestSchema,
   MissionModelOptionsSchema,
@@ -73,7 +73,7 @@ export const missionsApi = {
       await ipcRenderer.invoke("missions:chat:get", GetMissionChatSchema.parse(input)),
     ),
   compactMissionContext: async (id) =>
-    MissionContextWindowStateSchema.parse(
+    MissionContextCompactionResultSchema.parse(
       await invokeMutation("missions:context:compact", MissionActionSchema.parse({ id })),
     ),
   subscribeMissionChat: (id, listener) => {

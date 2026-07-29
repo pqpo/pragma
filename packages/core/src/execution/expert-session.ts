@@ -112,6 +112,7 @@ export interface ExpertSession {
   listEvents(options?: ListSessionEventsOptions): Promise<SessionEventPage>;
   getUsage(): Promise<AgentMessageUsage | undefined>;
   getRootContextWindowUsage(): Promise<RuntimeContextWindowUsage | undefined>;
+  canCompactRootContext(): Promise<boolean | undefined>;
   compactRootContext(): Promise<RuntimeContextWindowUsage | undefined>;
   getPromptQueue(): Promise<readonly PromptRequest[]>;
 }
@@ -831,6 +832,19 @@ class ExpertSessionImpl implements ExpertSession {
     return readRuntimeSessionContextWindowUsage(record);
   }
 
+  async canCompactRootContext(): Promise<boolean | undefined> {
+    const context = await this.getRootContext();
+    const identity = {
+      contextId: context.contextId,
+      expertId: context.expert.id,
+      runtime: context.runtime,
+    };
+    const active = this.runtimeSessions.get(identity);
+    return active?.contextWindow === undefined
+      ? undefined
+      : await active.contextWindow.canCompact();
+  }
+
   async compactRootContext(): Promise<RuntimeContextWindowUsage | undefined> {
     if (this.leaseError !== undefined) throw this.leaseError;
     if (this.closePromise !== undefined) {
@@ -858,6 +872,9 @@ class ExpertSessionImpl implements ExpertSession {
         throw new Error(
           `Runtime ${context.runtime.runtimeId} does not support context compaction.`,
         );
+      }
+      if (!(await active.contextWindow.canCompact())) {
+        throw new Error("The Runtime context does not have enough history to compact yet.");
       }
       return await active.contextWindow.compact();
     }
@@ -891,6 +908,9 @@ class ExpertSessionImpl implements ExpertSession {
         throw new Error(
           `Runtime ${context.runtime.runtimeId} does not support context compaction.`,
         );
+      }
+      if (!(await opened.contextWindow.canCompact())) {
+        throw new Error("The Runtime context does not have enough history to compact yet.");
       }
       return await opened.contextWindow.compact();
     } finally {

@@ -318,13 +318,19 @@ describe("MissionRunner", { timeout: 15_000 }, () => {
         snapshot.resources.find((resource) => resource.kind === "Expert")!,
       ),
     });
-    const compactContext = vi.fn(() => ({
-      usedTokens: 10_000,
-      contextWindowTokens: 200_000,
-      percent: 5,
-      measurement: "reported" as const,
-      observedAt: new Date().toISOString(),
-    }));
+    let compactable = true;
+    let contextUsageTokens = 50_000;
+    const compactContext = vi.fn(() => {
+      compactable = false;
+      contextUsageTokens = 10_000;
+      return {
+        usedTokens: contextUsageTokens,
+        contextWindowTokens: 200_000,
+        percent: 5,
+        measurement: "reported" as const,
+        observedAt: new Date().toISOString(),
+      };
+    });
     const runtime = defineRuntimeDriver<never, { id: string }>({
       descriptor: { id: "fake", kind: "fake", displayName: "Fake" },
       createSession: () => ({ id: "runtime" }),
@@ -333,12 +339,13 @@ describe("MissionRunner", { timeout: 15_000 }, () => {
       startTurn: () => ({ outputText: "done", runtimeSessionId: "runtime" }),
       mapEvent: () => ({ events: [] }),
       readContextWindow: () => ({
-        usedTokens: 50_000,
+        usedTokens: contextUsageTokens,
         contextWindowTokens: 200_000,
-        percent: 25,
+        percent: (contextUsageTokens / 200_000) * 100,
         measurement: "reported",
         observedAt: new Date().toISOString(),
       }),
+      canCompactContext: () => compactable,
       compactContext,
     });
     const runtimes = createStaticRuntimeResolver({ runtimes: [runtime], defaultRuntimeId: "fake" });
@@ -368,8 +375,20 @@ describe("MissionRunner", { timeout: 15_000 }, () => {
       },
     });
     await expect(runner.compactContext(mission.id)).resolves.toMatchObject({
-      canCompact: true,
-      usage: { usedTokens: 10_000, percent: 5 },
+      outcome: "compacted",
+      contextWindow: {
+        canCompact: false,
+        compactionBlockedReason: "not_ready",
+        usage: { usedTokens: 10_000, percent: 5 },
+      },
+    });
+    expect(compactContext).toHaveBeenCalledOnce();
+    await expect(runner.compactContext(mission.id)).resolves.toMatchObject({
+      outcome: "not_needed",
+      contextWindow: {
+        canCompact: false,
+        compactionBlockedReason: "not_ready",
+      },
     });
     expect(compactContext).toHaveBeenCalledOnce();
 

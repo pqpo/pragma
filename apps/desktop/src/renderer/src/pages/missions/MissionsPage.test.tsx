@@ -14,6 +14,7 @@ import {
   ContextWindowControl,
   groupMissionConversationEntries,
   MissionContextOperationEntry,
+  startMissionContextOperation,
   MissionDetailFragment,
   MissionThinkingEntry,
   MissionWorkDrawer,
@@ -220,6 +221,32 @@ describe("MissionsPage", () => {
 });
 
 describe("MissionDetailFragment", () => {
+  it("reuses the failed context operation when retrying", () => {
+    const failed = [
+      {
+        id: "compact-1",
+        createdAt: "2026-07-29T00:00:00.000Z",
+        status: "failed" as const,
+        error: "provider unavailable",
+      },
+    ];
+
+    expect(
+      startMissionContextOperation(failed, {
+        id: "compact-1",
+        createdAt: "2026-07-29T00:01:00.000Z",
+        retry: true,
+      }),
+    ).toEqual([
+      {
+        id: "compact-1",
+        createdAt: "2026-07-29T00:00:00.000Z",
+        status: "running",
+        error: undefined,
+      },
+    ]);
+  });
+
   it("holds a synchronous client-operation lock throughout context compaction", () => {
     const compacting = claimMissionClientOperation({ kind: "idle" }, "compacting", "compact-token");
 
@@ -250,6 +277,16 @@ describe("MissionDetailFragment", () => {
         onRetry={() => undefined}
       />,
     );
+    const skipped = renderToStaticMarkup(
+      <MissionContextOperationEntry
+        operation={{
+          id: "compact-1",
+          createdAt: "2026-07-24T00:00:00.000Z",
+          status: "skipped",
+        }}
+        onRetry={() => undefined}
+      />,
+    );
     const failed = renderToStaticMarkup(
       <MissionContextOperationEntry
         operation={{
@@ -264,6 +301,7 @@ describe("MissionDetailFragment", () => {
 
     expect(started).toContain("Compacting context");
     expect(completed).toContain("Context compaction completed");
+    expect(skipped).toContain("No context compaction needed");
     expect(failed).toContain("Context compaction failed");
     expect(failed).toContain("The Runtime could not compact this context.");
     expect(failed).toContain(">Retry<");
@@ -311,6 +349,30 @@ describe("MissionDetailFragment", () => {
     expect(html).toContain('stroke-dashoffset="75"');
     expect(html).toContain('aria-label="Context window usage: 25%"');
     expect(html).toContain('aria-haspopup="dialog"');
+  });
+
+  it("explains when the Runtime does not have compactable history yet", () => {
+    const html = renderToStaticMarkup(
+      <ContextWindowControl
+        state={{
+          supportsInspection: true,
+          supportsCompaction: true,
+          canCompact: false,
+          compactionBlockedReason: "not_ready",
+          usage: {
+            usedTokens: 3_975,
+            contextWindowTokens: 128_000,
+            percent: 3.1,
+            measurement: "reported",
+            observedAt: "2026-07-29T00:00:00.000Z",
+          },
+        }}
+        compacting={false}
+        onCompact={() => undefined}
+      />,
+    );
+
+    expect(html).toContain("There is not enough older context to compact yet.");
   });
 
   it("bounds impossible context usage and exposes a diagnostic warning", () => {

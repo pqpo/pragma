@@ -56,6 +56,7 @@ import type {
   MissionChatSnapshot,
   MissionChatUpdate,
   MissionChatQuery,
+  MissionContextCompactionResult,
   MissionContextWindowState,
   MissionHumanInteraction,
   MissionModelOverride,
@@ -95,7 +96,7 @@ export interface MissionRunner {
     readonly requestId: string;
   }): Promise<Mission>;
   getChat(input: MissionChatQuery): Promise<MissionChatSnapshot>;
-  compactContext(id: string): Promise<MissionContextWindowState>;
+  compactContext(id: string): Promise<MissionContextCompactionResult>;
   getRuntimeBinding(id: string): Promise<RuntimeEnvironmentBinding | undefined>;
   subscribeChat(listener: (update: MissionChatUpdate) => void): () => void;
   subscribeWork(listener: (update: MissionWorkUpdate) => void): () => void;
@@ -135,7 +136,7 @@ type PendingMissionOperation =
   | { readonly kind: "run"; readonly promise: Promise<Mission> }
   | { readonly kind: "options"; readonly promise: Promise<Mission> }
   | { readonly kind: "message"; readonly promise: Promise<Mission> }
-  | { readonly kind: "compact"; readonly promise: Promise<MissionContextWindowState> }
+  | { readonly kind: "compact"; readonly promise: Promise<MissionContextCompactionResult> }
   | { readonly kind: "interrupt"; readonly promise: Promise<Mission> }
   | { readonly kind: "delete"; readonly promise: Promise<void> };
 
@@ -1148,19 +1149,44 @@ export function createMissionRunner(options: {
           .catch(() => undefined);
       }
     }
+    const runtimeCanCompact =
+      supportsCompaction &&
+      rootContext.snapshot !== undefined &&
+      mission.lifecycleStatus === "active" &&
+      !executionBusy
+        ? await sessions
+            .get(mission.id)
+            ?.canCompactRootContext()
+            .catch(() => undefined)
+        : undefined;
+    const canCompact =
+      supportsCompaction &&
+      rootContext.snapshot !== undefined &&
+      mission.lifecycleStatus === "active" &&
+      !executionBusy &&
+      runtimeCanCompact !== false;
+    const compactionBlockedReason =
+      !supportsCompaction || canCompact
+        ? undefined
+        : rootContext.snapshot === undefined
+          ? ("not_started" as const)
+          : mission.lifecycleStatus !== "active"
+            ? ("inactive" as const)
+            : executionBusy
+              ? ("busy" as const)
+              : runtimeCanCompact === false
+                ? ("not_ready" as const)
+                : undefined;
     return {
       supportsInspection,
       supportsCompaction,
-      canCompact:
-        supportsCompaction &&
-        rootContext.snapshot !== undefined &&
-        mission.lifecycleStatus === "active" &&
-        !executionBusy,
+      canCompact,
+      ...(compactionBlockedReason === undefined ? {} : { compactionBlockedReason }),
       ...(usage === undefined ? {} : { usage }),
     };
   };
 
-  const compactMissionContext = async (id: string): Promise<MissionContextWindowState> => {
+  const compactMissionContext = async (id: string): Promise<MissionContextCompactionResult> => {
     await (options.assertStorageWriteAllowed?.() ??
       assertStorageWriteAllowed(new PragmaPaths({ pragmaHome: options.pragmaHome })));
     const mission = await options.missions.get(id);
@@ -1196,6 +1222,15 @@ export function createMissionRunner(options: {
       rememberSessionCompilation(id, await compilationIdentity(mission), compiled);
     }
     sessions.set(id, session);
+    if ((await session.canCompactRootContext()) === false) {
+      const state = await getContextWindowState(mission);
+      if (state === undefined || !state.supportsCompaction) {
+        throw new Error(
+          `Runtime ${rootContext.runtime.runtimeId} does not support context compaction.`,
+        );
+      }
+      return { outcome: "not_needed", contextWindow: state };
+    }
     const usage = await session.compactRootContext();
     invalidateChat(id);
     const state = await getContextWindowState(mission, usage);
@@ -1204,7 +1239,7 @@ export function createMissionRunner(options: {
         `Runtime ${rootContext.runtime.runtimeId} does not support context compaction.`,
       );
     }
-    return state;
+    return { outcome: "compacted", contextWindow: state };
   };
 
   const getChatSnapshot = async (input: MissionChatQuery): Promise<MissionChatSnapshot> => {
