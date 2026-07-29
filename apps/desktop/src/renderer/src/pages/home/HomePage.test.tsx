@@ -2,7 +2,11 @@ import { renderToStaticMarkup } from "react-dom/server";
 import { describe, expect, it } from "vitest";
 
 import { MissionModelOverrideControls } from "../../components/MissionModelOverrideControls.tsx";
-import { filterMissionExecutors, missionModelOverrideAvailable } from "./HomePage.tsx";
+import {
+  filterMissionExecutors,
+  missionModelOverrideAvailable,
+  rankHomeMissionExecutors,
+} from "./HomePage.tsx";
 import { SchemaInputForm, createSchemaInputValue, isSchemaInputValid } from "./SchemaInputForm.tsx";
 
 describe("MissionModelOverrideControls", () => {
@@ -74,14 +78,64 @@ describe("mission executor search", () => {
       origin: "project" as const,
       readOnly: false,
       customized: false,
+      tags: index % 2 === 0 ? ["release"] : [],
+      teamMemberships: [],
+      preference: {
+        favoriteScope: "none" as const,
+        hidden: false,
+      },
+      alwaysVisible: false,
     };
   });
 
-  it("shows at most five executors and searches the full catalog", () => {
-    expect(filterMissionExecutors(executors, "")).toHaveLength(5);
+  it("keeps the full catalog available and searches names, descriptions, and tags", () => {
+    expect(filterMissionExecutors(executors, "")).toHaveLength(100);
     const matches = filterMissionExecutors(executors, "Expert 99");
     expect(matches).toHaveLength(1);
     expect(matches[0]?.name).toBe("Expert 99");
+    expect(filterMissionExecutors(executors, "release")).toHaveLength(50);
+  });
+
+  it("ranks global and workspace favorites before recent and team-managed experts", () => {
+    const ranked = rankHomeMissionExecutors(
+      [
+        {
+          ...executors[0]!,
+          name: "Team member",
+          teamMemberships: [{ ref: "team:0000000000000001", name: "Team" }],
+        },
+        {
+          ...executors[1]!,
+          name: "Recent",
+          preference: {
+            favoriteScope: "none",
+            hidden: false,
+            lastUsedAt: "2026-07-29T09:00:00.000Z",
+          },
+        },
+        {
+          ...executors[2]!,
+          name: "Workspace favorite",
+          preference: {
+            favoriteScope: "workspace",
+            hidden: false,
+            lastWorkspace: { path: "/work/project", basename: "project" },
+          },
+        },
+        {
+          ...executors[3]!,
+          name: "Global favorite",
+          preference: { favoriteScope: "global", hidden: false },
+        },
+      ],
+      "/work/project",
+    );
+    expect(ranked.map((executor) => executor.name)).toEqual([
+      "Global favorite",
+      "Workspace favorite",
+      "Recent",
+      "Team member",
+    ]);
   });
 });
 

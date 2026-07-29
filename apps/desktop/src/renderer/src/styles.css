@@ -11383,7 +11383,7 @@ textarea:focus-visible,
   z-index: 30;
   top: calc(100% + 13px);
   right: -14px;
-  width: min(460px, calc(100vw - 80px));
+  width: min(600px, calc(100vw - 80px));
   overflow: hidden;
   border: 1px solid var(--border);
   border-radius: 14px;
@@ -11452,11 +11452,86 @@ textarea:focus-visible,
   font-size: 12px;
 }
 
+.mission-executor-controls {
+  display: grid;
+  gap: 8px;
+  padding: 8px 12px 4px;
+}
+
+.mission-executor-views {
+  display: flex;
+  gap: 4px;
+  overflow-x: auto;
+}
+
+.mission-executor-views button {
+  min-height: 28px;
+  padding: 0 9px;
+  border: 1px solid transparent;
+  border-radius: 8px;
+  background: transparent;
+  color: var(--muted);
+  font: inherit;
+  font-size: 10px;
+  cursor: pointer;
+  white-space: nowrap;
+}
+
+.mission-executor-views button:hover,
+.mission-executor-views button:focus-visible,
+.mission-executor-views button.is-active {
+  border-color: rgb(88 121 104 / 18%);
+  outline: 0;
+  background: var(--green-soft);
+  color: var(--green-dark);
+}
+
+.mission-executor-filters {
+  display: flex;
+  gap: 6px;
+}
+
+.mission-executor-filters label,
+.mission-executor-option-actions label {
+  display: inline-flex;
+  min-width: 0;
+  align-items: center;
+  gap: 5px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: #fff;
+  color: var(--muted);
+}
+
+.mission-executor-filters label {
+  flex: 1 1 0;
+}
+
+.mission-executor-filters label:focus-within,
+.mission-executor-option-actions label:focus-within {
+  border-color: var(--green);
+  box-shadow: 0 0 0 3px var(--focus-ring);
+}
+
+.mission-executor-filters select,
+.mission-executor-option-actions select {
+  width: 100%;
+  min-width: 0;
+  min-height: 30px;
+  padding: 0 24px 0 8px;
+  border: 0;
+  outline: 0;
+  background: transparent;
+  color: inherit;
+  font: inherit;
+  font-size: 10px;
+  cursor: pointer;
+}
+
 .mission-executor-options {
   display: grid;
-  grid-auto-rows: minmax(68px, auto);
   gap: 4px;
-  max-height: 370px;
+  max-height: 410px;
   overflow-y: auto;
   padding: 7px;
   overscroll-behavior: contain;
@@ -11464,23 +11539,21 @@ textarea:focus-visible,
 
 .mission-executor-option {
   display: grid;
-  grid-template-columns: 36px minmax(0, 1fr) auto;
+  grid-template-columns: minmax(0, 1fr) auto;
   width: 100%;
   min-width: 0;
   align-items: center;
-  gap: 10px;
+  gap: 6px;
   min-height: 68px;
-  padding: 10px;
+  padding: 5px;
   border: 1px solid transparent;
   border-radius: 10px;
   background: transparent;
   color: var(--text);
-  cursor: pointer;
-  text-align: left;
 }
 
 .mission-executor-option:hover,
-.mission-executor-option:focus-visible {
+.mission-executor-option:focus-within {
   border-color: rgb(88 121 104 / 18%);
   outline: 0;
   background: var(--surface-soft);
@@ -11489,6 +11562,26 @@ textarea:focus-visible,
 .mission-executor-option.is-selected {
   border-color: rgb(88 121 104 / 22%);
   background: var(--green-soft);
+}
+
+.mission-executor-option-main {
+  display: grid;
+  grid-template-columns: 36px minmax(0, 1fr) 17px;
+  min-width: 0;
+  align-items: center;
+  gap: 10px;
+  padding: 5px;
+  border: 0;
+  outline: 0;
+  background: transparent;
+  color: inherit;
+  cursor: pointer;
+  text-align: left;
+}
+
+.mission-executor-option-main:focus-visible {
+  border-radius: 7px;
+  box-shadow: 0 0 0 3px var(--focus-ring);
 }
 
 .mission-executor-option-icon {
@@ -11508,19 +11601,21 @@ textarea:focus-visible,
   height: 20px;
 }
 
-.mission-executor-option > span:nth-child(2) {
+.mission-executor-option-copy {
   display: grid;
   min-width: 0;
   gap: 3px;
 }
 
-.mission-executor-option > span:nth-child(2) strong {
+.mission-executor-option-copy strong {
+  overflow: hidden;
   font-size: 12px;
   font-weight: 680;
+  text-overflow: ellipsis;
   white-space: nowrap;
 }
 
-.mission-executor-option > span:nth-child(2) small {
+.mission-executor-option-copy > small {
   overflow: hidden;
   color: var(--muted);
   font-size: 10px;
@@ -11531,34 +11626,84 @@ textarea:focus-visible,
   white-space: nowrap;
 }
 
-.mission-executor-option-kind {
-  justify-self: end;
-  padding: 4px 7px;
+.mission-executor-option-badges {
+  display: flex;
+  min-width: 0;
+  flex-wrap: wrap;
+  gap: 4px;
+}
+
+.mission-executor-option-badges > span {
+  padding: 2px 5px;
   border: 1px solid var(--border);
   border-radius: 999px;
   color: var(--muted);
-  font-size: 9px;
+  font-size: 8px;
   font-weight: 650;
-  letter-spacing: 0.04em;
-  text-transform: uppercase;
   white-space: nowrap;
 }
 
-.mission-executor-option-meta {
-  display: grid;
-  grid-template-columns: 17px auto;
-  align-items: center;
-  justify-self: end;
-  gap: 7px;
-}
-
-.mission-executor-option-meta > svg {
+.mission-executor-option-main > svg {
   color: var(--green-dark);
   visibility: hidden;
 }
 
-.mission-executor-option-meta > svg.is-visible {
+.mission-executor-option-main > svg.is-visible {
   visibility: visible;
+}
+
+.mission-executor-option-actions {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+}
+
+.mission-executor-option-actions label {
+  width: 112px;
+  padding-left: 7px;
+}
+
+.mission-executor-option-actions label:has(select:disabled) {
+  opacity: 0.55;
+}
+
+.mission-executor-option-actions button {
+  display: grid;
+  width: 30px;
+  height: 30px;
+  place-items: center;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: #fff;
+  color: var(--muted);
+  cursor: pointer;
+}
+
+.mission-executor-option-actions button:hover,
+.mission-executor-option-actions button:focus-visible {
+  border-color: var(--green);
+  outline: 0;
+  color: var(--green-dark);
+  box-shadow: 0 0 0 3px var(--focus-ring);
+}
+
+.mission-executor-managed-toggle {
+  min-height: 36px;
+  border: 1px dashed var(--border);
+  border-radius: 9px;
+  background: transparent;
+  color: var(--muted);
+  font: inherit;
+  font-size: 10px;
+  cursor: pointer;
+}
+
+.mission-executor-managed-toggle:hover,
+.mission-executor-managed-toggle:focus-visible {
+  border-color: var(--green);
+  outline: 0;
+  background: var(--green-soft);
+  color: var(--green-dark);
 }
 
 .mission-executor-empty {
@@ -13933,6 +14078,8 @@ textarea:focus-visible,
     .expert-picker-search,
     .mission-search,
     .mission-executor-search,
+    .mission-executor-filters label,
+    .mission-executor-option-actions label,
     .mission-goal-composer,
     .mission-chat-composer,
     .model-search-shell

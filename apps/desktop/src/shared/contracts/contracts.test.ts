@@ -16,6 +16,7 @@ import {
   CreateMissionSchema,
   DeleteContextStoreSchema,
   GetMissionChatSchema,
+  HomeMissionExecutorCatalogSchema,
   MissionChatSnapshotSchema,
   MissionChatUpdateSchema,
   MissionCreationDefaultsSchema,
@@ -28,6 +29,7 @@ import {
   UpdateDesktopSettingsSchema,
   UpdateExpertDefinitionSchema,
   UpdateMissionOptionsSchema,
+  UpdateHomeExecutorPreferenceSchema,
   UpdateBuiltInExpertDefinitionSchema,
   UpdateContextStoreFileSchema,
 } from "./index.ts";
@@ -194,6 +196,49 @@ describe("mission creation defaults contracts", () => {
         toolPermissionMode: "request-approval",
       }).success,
     ).toBe(false);
+  });
+});
+
+describe("Home executor preference contracts", () => {
+  it("validates a workspace-aware catalog and requires a concrete preference mutation", () => {
+    expect(
+      HomeMissionExecutorCatalogSchema.parse({
+        executors: [
+          {
+            ref: "expert:0000000000000001",
+            name: "Coder",
+            description: "Codes",
+            kind: "expert",
+            origin: "project",
+            readOnly: false,
+            customized: false,
+            tags: ["code"],
+            teamMemberships: [],
+            preference: {
+              favoriteScope: "workspace",
+              hidden: false,
+              lastWorkspace: { path: "/work/code", basename: "code" },
+            },
+            alwaysVisible: false,
+          },
+        ],
+        defaults: {
+          workspace: { path: "/work/default", basename: "default" },
+          recentWorkspaces: [],
+          executorRef: "expert:0000000000000001",
+          toolPermissionMode: "request-approval",
+        },
+      }).executors[0]?.tags,
+    ).toEqual(["code"]);
+    expect(
+      UpdateHomeExecutorPreferenceSchema.safeParse({ ref: "expert:0000000000000001" }).success,
+    ).toBe(false);
+    expect(
+      UpdateHomeExecutorPreferenceSchema.safeParse({
+        ref: "expert:0000000000000001",
+        favoriteScope: "global",
+      }).success,
+    ).toBe(true);
   });
 });
 

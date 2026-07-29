@@ -35,6 +35,8 @@ import {
   withRuntimeDefaults,
 } from "../features/experts/system-expert-runtime.ts";
 import { createMissionCreator } from "../features/missions/mission-creator.ts";
+import { createHomeExecutorCatalog } from "../features/missions/home-executor-catalog.ts";
+import { createHomeExecutorPreferenceStore } from "../features/missions/home-executor-preference-store.ts";
 import { createMissionExecutorCatalog } from "../features/missions/mission-executor-catalog.ts";
 import { installMissionHandlers } from "../features/missions/mission-ipc.ts";
 import {
@@ -137,6 +139,11 @@ export async function createDesktopApplicationContainer(
     warn: (message, error) =>
       mainLogger.warn("desktop.workspace_history_warning", message, { error }),
   });
+  const homeExecutorPreferences = createHomeExecutorPreferenceStore({
+    preferencesPath: join(pragmaPaths.stateRoot(), "home-executor-preferences.json"),
+    warn: (message, error) =>
+      mainLogger.warn("desktop.home_executor_preference_warning", message, { error }),
+  });
   const getToolPermissionMode = async () =>
     (await desktopSettings.getSnapshot(options.getPreferredSystemLanguages())).toolPermissionMode;
   const automaticHumanInteractionHandler =
@@ -201,6 +208,16 @@ export async function createDesktopApplicationContainer(
     project: pragmaProjectStore,
     systemExperts,
     runtimes,
+  });
+  const homeExecutors = createHomeExecutorCatalog({
+    project: pragmaProjectStore,
+    executors: missionExecutors,
+    systemExperts,
+    preferences: homeExecutorPreferences,
+    defaultExecutorRef: BUILT_IN_PRAGMA_REF,
+    validateWorkspace,
+    warn: (message, error) =>
+      mainLogger.warn("desktop.home_executor_usage_failed", message, { error }),
   });
   const missionCreator = createMissionCreator({
     missions: missionStore,
@@ -412,6 +429,7 @@ export async function createDesktopApplicationContainer(
     missions: missionStore,
     creator: missionCreator,
     executors: missionExecutors,
+    homeExecutors,
     project: pragmaProjectStore,
     getWindow: options.getWindow,
     runner: missionRunner,
