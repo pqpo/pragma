@@ -32,6 +32,7 @@ import type {
   ClaudeCodeRuntimeSessionState,
   ClaudeCodeRuntimeSpawn,
 } from "./types.ts";
+import type { ClaudeCompactionHookRelay, ClaudeCompactionNativeEvent } from "./compaction-hooks.ts";
 
 const MCP_SERVER_NAME = "pragma";
 const PERMISSION_TOOL_NAME = "mcp__pragma__request_tool_approval";
@@ -83,6 +84,7 @@ export interface ClaudeCodeNativeSession {
   readonly mcpServerUrl: string;
   readonly permissionMode: ClaudeCodeRuntimePermissionMode;
   readonly pluginDir: string;
+  readonly compactionHookRelay: ClaudeCompactionHookRelay;
   readonly sessionDir: string;
   readonly spawn?: ClaudeCodeRuntimeSpawn | undefined;
   readonly state: ClaudeCodeRuntimeSessionState;
@@ -115,6 +117,7 @@ export function createClaudeCodeNativeSession(options: {
   readonly mcpServerUrl: string;
   readonly permissionMode: ClaudeCodeRuntimePermissionMode;
   readonly pluginDir: string;
+  readonly compactionHookRelay: ClaudeCompactionHookRelay;
   readonly sessionDir: string;
   readonly spawn?: ClaudeCodeRuntimeSpawn | undefined;
   readonly startupMessages?: readonly ExpertAgentStartupMessage[] | undefined;
@@ -163,57 +166,68 @@ export async function startClaudeCodeTurn(
     timestamp: Date.now(),
   });
 
-  const run = await runClaudeCodeProcess({
-    executablePath: session.executablePath,
-    args: [
-      ...session.launcherArgs,
-      ...(await createClaudeCodeArgs({
-        additionalArgs: session.additionalArgs,
-        defaultModelName: session.defaultModelName,
-        defaultThinkingLevel: session.defaultThinkingLevel,
-        managedConfig: session.managedConfig,
-        mcpServerUrl: session.mcpServerUrl,
-        modelName: turn.modelSelection?.model.modelId,
-        thinkingLevel: turn.modelSelection?.thinkingLevel,
-        permissionMode: session.permissionMode,
-        pluginDir: session.pluginDir,
-        sessionDir: session.sessionDir,
-        state: session.state,
-        systemPrompt: session.systemPrompt,
-      })),
-    ],
-    cwd: session.agent.workspace,
-    env: await createClaudeCodeEnv({
-      env: session.env,
-      managedConfig: session.managedConfig,
-      sessionDir: session.sessionDir,
-    }),
-    humanInteractionHandler: session.humanInteractionHandler,
-    logger: session.logger,
-    promptParts: [...turn.startupMessages.map((message) => message.content), turn.prompt],
-    runId: turn.runId,
-    source: {
-      kind: "agent",
-      runId: turn.runId,
-      agentId: session.agent.id,
-      path: [],
-    },
-    emitRuntimeEvent: turn.stream.write,
-    spawn: session.spawn,
-    onProcessStarted(process, exitPromise, hasExited) {
-      session.activeCancelled = false;
-      session.activeProcess = process;
-      session.activeExitPromise = exitPromise;
-      session.activeHasExited = hasExited;
-    },
-    onProcessClosed(process) {
-      if (session.activeProcess === process) {
-        session.activeProcess = undefined;
-        session.activeExitPromise = undefined;
-        session.activeHasExited = undefined;
-      }
-    },
+  const unsubscribeCompaction = session.compactionHookRelay.subscribe((event) => {
+    turn.stream.writeNative(event);
   });
+  let run: ClaudeProcessRunResult;
+  try {
+    run = await runClaudeCodeProcess({
+      executablePath: session.executablePath,
+      args: [
+        ...session.launcherArgs,
+        ...(await createClaudeCodeArgs({
+          additionalArgs: session.additionalArgs,
+          defaultModelName: session.defaultModelName,
+          defaultThinkingLevel: session.defaultThinkingLevel,
+          managedConfig: session.managedConfig,
+          mcpServerUrl: session.mcpServerUrl,
+          modelName: turn.modelSelection?.model.modelId,
+          thinkingLevel: turn.modelSelection?.thinkingLevel,
+          permissionMode: session.permissionMode,
+          pluginDir: session.pluginDir,
+          sessionDir: session.sessionDir,
+          state: session.state,
+          systemPrompt: session.systemPrompt,
+        })),
+      ],
+      cwd: session.agent.workspace,
+      env: await createClaudeCodeEnv({
+        env: session.env,
+        managedConfig: session.managedConfig,
+        sessionDir: session.sessionDir,
+      }),
+      humanInteractionHandler: session.humanInteractionHandler,
+      logger: session.logger,
+      promptParts: [...turn.startupMessages.map((message) => message.content), turn.prompt],
+      runId: turn.runId,
+      source: {
+        kind: "agent",
+        runId: turn.runId,
+        agentId: session.agent.id,
+        path: [],
+      },
+      emitRuntimeEvent: turn.stream.write,
+      spawn: session.spawn,
+      onProcessStarted(process, exitPromise, hasExited) {
+        session.activeCancelled = false;
+        session.activeProcess = process;
+        session.activeExitPromise = exitPromise;
+        session.activeHasExited = hasExited;
+      },
+      onProcessClosed(process) {
+        if (session.activeProcess === process) {
+          session.activeProcess = undefined;
+          session.activeExitPromise = undefined;
+          session.activeHasExited = undefined;
+        }
+      },
+    });
+  } finally {
+    session.compactionHookRelay.failPending(
+      "Claude Code ended before context compaction completed.",
+    );
+    unsubscribeCompaction();
+  }
 
   if (run.sessionId !== undefined && run.sessionId !== session.state.sessionId) {
     session.state.sessionId = run.sessionId;
@@ -238,7 +252,30 @@ export function mapClaudeCodeNativeEvent(
   event: Record<string, unknown>,
   context: RuntimeEventMappingContext,
 ): RuntimeEventMappingResult {
+  if (isClaudeCompactionNativeEvent(event)) {
+    return {
+      events: [
+        context.events.progress(event.stage, {
+          operationId: event.operationId,
+          trigger: event.trigger,
+          runtimeId: "claude-code-local",
+          ...(event.errorMessage === undefined ? {} : { errorMessage: event.errorMessage }),
+        }),
+      ],
+    };
+  }
   return mapClaudeStreamEvent(event, context.runId, context.source);
+}
+
+function isClaudeCompactionNativeEvent(
+  event: Record<string, unknown>,
+): event is ClaudeCompactionNativeEvent {
+  return (
+    event["type"] === "pragma_context_compaction" &&
+    typeof event["operationId"] === "string" &&
+    typeof event["stage"] === "string" &&
+    typeof event["trigger"] === "string"
+  );
 }
 
 export function cancelClaudeCodeTurn(session: ClaudeCodeNativeSession): void {

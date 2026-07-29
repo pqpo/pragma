@@ -267,6 +267,24 @@ describe("MissionDetailFragment", () => {
     expect(failed).toContain("Context compaction failed");
     expect(failed).toContain("The Runtime could not compact this context.");
     expect(failed).toContain(">Retry<");
+
+    const automatic = renderToStaticMarkup(
+      <MissionContextOperationEntry
+        operation={{
+          id: "context:execution-1:compact-2",
+          executionId: "execution-1",
+          kind: "context_operation",
+          operationId: "compact-2",
+          operation: "compaction",
+          trigger: "auto",
+          runtimeId: "cloud-pi-agent",
+          status: "running",
+          createdAt: "2026-07-24T00:00:01.000Z",
+        }}
+      />,
+    );
+    expect(automatic).toContain("Compacting context");
+    expect(automatic).not.toContain(">Retry<");
   });
 
   it("renders the context ring with an accessible percentage label", () => {

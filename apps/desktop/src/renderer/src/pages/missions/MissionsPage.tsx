@@ -1011,11 +1011,15 @@ export function MissionDetailFragment(props: {
   const executionActive =
     executionStatus !== undefined && ["queued", "running", "waiting"].includes(executionStatus);
   const optionsSaving = clientOperation.kind === "saving_options";
-  const compactingContext = clientOperation.kind === "compacting";
+  const runtimeCompactingContext =
+    chat?.entries.some(
+      (entry) => entry.kind === "context_operation" && entry.status === "running",
+    ) ?? false;
+  const compactingContext = clientOperation.kind === "compacting" || runtimeCompactingContext;
   const clientOperationBusy = clientOperation.kind !== "idle";
   const interactions = chat?.pendingInteractions ?? [];
   const interruptible = chat?.execution?.interruptible ?? false;
-  const controlsDisabled = executionActive || clientOperationBusy;
+  const controlsDisabled = executionActive || clientOperationBusy || compactingContext;
   const visibleError = props.error ?? optionsError;
   const unavailableTool =
     visibleError === null || visibleError === undefined
@@ -1945,6 +1949,7 @@ export function MissionDetailFragment(props: {
                     disabled={
                       isFlow ||
                       clientOperationBusy ||
+                      compactingContext ||
                       executionActive ||
                       props.mission.lifecycleStatus === "completed"
                     }
@@ -2397,9 +2402,11 @@ function LocalMissionUserMessageView(props: { readonly message: LocalMissionUser
 }
 
 export function MissionContextOperationEntry(props: {
-  readonly operation: LocalMissionContextOperation;
+  readonly operation:
+    | LocalMissionContextOperation
+    | Extract<MissionChatEntry, { kind: "context_operation" }>;
   readonly retryDisabled?: boolean | undefined;
-  readonly onRetry: () => void;
+  readonly onRetry?: (() => void) | undefined;
 }) {
   const { t } = useTranslation(["missions", "common"]);
   const failed = props.operation.status === "failed";
@@ -2426,7 +2433,7 @@ export function MissionContextOperationEntry(props: {
         </strong>
         {props.operation.error === undefined ? null : <small>{props.operation.error}</small>}
       </span>
-      {failed ? (
+      {failed && props.onRetry !== undefined ? (
         <button type="button" disabled={props.retryDisabled} onClick={props.onRetry}>
           {t("actions.retry", { ns: "common" })}
         </button>
@@ -2471,6 +2478,9 @@ function MissionChatEntryView(props: {
   }
   if (props.entry.kind === "agent_activity") {
     return <MissionAgentActivityEntry entry={props.entry} />;
+  }
+  if (props.entry.kind === "context_operation") {
+    return <MissionContextOperationEntry operation={props.entry} retryDisabled={false} />;
   }
   return (
     <div className="mission-assistant-message">
@@ -3044,6 +3054,7 @@ function entryContentLength(entry: MissionChatEntry): number {
     return (entry.inputPreview?.length ?? 0) + (entry.outputPreview?.length ?? 0);
   }
   if (entry.kind === "agent_activity") return entry.label?.length ?? 0;
+  if (entry.kind === "context_operation") return entry.error?.length ?? 0;
   return entry.content.length;
 }
 

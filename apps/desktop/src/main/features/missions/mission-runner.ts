@@ -16,6 +16,9 @@ import {
   moveOwnedStorageToTrash,
   runtimeSessionDeletionSources,
   assertStorageWriteAllowed,
+  isRuntimeContextCompactionStage,
+  readRuntimeContextCompactionProgressData,
+  RUNTIME_CONTEXT_COMPACTION_STAGES,
   type AgentMessageRecord,
   type ExecutionWorkRecord,
   type ExecutionOutputItem,
@@ -1961,7 +1964,7 @@ async function readMissionChatHistory(
     let activityEntries;
     try {
       histories = await view.getMessageHistory({ scope: { kind: "all" } });
-      activityEntries = await readHistoricalAgentActivityEntries(view, turn.sequence);
+      activityEntries = await readHistoricalRuntimeActivityEntries(view, turn.sequence);
     } catch {
       const projection = await missions.readExecutionProjection(missionId, turn.executionId);
       if (projection !== undefined) {
@@ -2008,11 +2011,14 @@ async function readMissionChatHistory(
   return entries;
 }
 
-async function readHistoricalAgentActivityEntries(
+async function readHistoricalRuntimeActivityEntries(
   view: StoredExecutionView,
   timelineSequence: number,
 ): Promise<MissionChatEntry[]> {
-  const events: ExpertAgentStreamEvent[] = [];
+  const events: Array<{
+    readonly event: ExpertAgentStreamEvent;
+    readonly invocationId: string;
+  }> = [];
   let after: { executionId: string; sequence: number } | undefined;
   do {
     const page = await view.listEvents({ scope: { kind: "all" }, limit: 1_000, after });
@@ -2021,15 +2027,45 @@ async function readHistoricalAgentActivityEntries(
       const parsed = ExpertAgentStreamEventSchema.safeParse(event.data);
       if (
         parsed.success &&
-        (parsed.data.type === "agent.command" || parsed.data.type.startsWith("run."))
+        (parsed.data.type === "agent.command" ||
+          parsed.data.type.startsWith("run.") ||
+          (parsed.data.type === "progress" &&
+            isRuntimeContextCompactionStage(parsed.data.payload.stage)))
       ) {
-        events.push(parsed.data);
+        events.push({ event: parsed.data, invocationId: event.invocationId });
       }
     }
     after = page.nextCursor;
   } while (after !== undefined);
   const byId = new Map<string, MissionChatEntry>();
-  for (const event of events) {
+  for (const record of events) {
+    const { event } = record;
+    if (event.type === "progress") {
+      const data = readRuntimeContextCompactionProgressData(event.payload.data);
+      if (data === undefined || !isRuntimeContextCompactionStage(event.payload.stage)) continue;
+      const id = `context:${view.executionId}:${data.operationId}`;
+      const existing = byId.get(id);
+      byId.set(id, {
+        id,
+        timelineSequence,
+        executionId: view.executionId,
+        invocationId: record.invocationId,
+        kind: "context_operation",
+        operationId: data.operationId,
+        operation: "compaction",
+        trigger: data.trigger,
+        runtimeId: data.runtimeId,
+        status:
+          event.payload.stage === RUNTIME_CONTEXT_COMPACTION_STAGES.started
+            ? "running"
+            : event.payload.stage === RUNTIME_CONTEXT_COMPACTION_STAGES.completed
+              ? "succeeded"
+              : "failed",
+        ...(data.errorMessage === undefined ? {} : { error: data.errorMessage }),
+        createdAt: existing?.createdAt ?? event.emittedAt,
+      });
+      continue;
+    }
     const isCommand = event.type === "agent.command";
     if (!isCommand && event.source.parentSessionId === undefined) continue;
     const action = isCommand ? event.payload.action : "run";
@@ -2097,7 +2133,13 @@ function finalizeHistoricalChatEntries(entries: readonly MissionChatEntry[]): Mi
           status: "failed",
           error: entry.error ?? "Execution ended before this tool completed.",
         }
-      : entry,
+      : entry.kind === "context_operation" && entry.status === "running"
+        ? {
+            ...entry,
+            status: "failed",
+            error: entry.error ?? "Execution ended before context compaction completed.",
+          }
+        : entry,
   );
 }
 
@@ -2228,6 +2270,7 @@ function observeMissionChat(
           onItem(item);
           const patches = consumeLiveChatOutput(chat, item);
           if (patches.length > 0) onOutput(patches);
+          if (isTerminalContextCompactionOutput(item)) onInvalidate();
         }
       } finally {
         await subscription.close();
@@ -2298,6 +2341,15 @@ function elapsedMissionMs(startedAt: number): number {
   return Math.round((performance.now() - startedAt) * 100) / 100;
 }
 
+function isTerminalContextCompactionOutput(item: ExecutionOutputItem): boolean {
+  if (item.channel !== "progress") return false;
+  const stage = asRecord(item.value)["stage"];
+  return (
+    stage === RUNTIME_CONTEXT_COMPACTION_STAGES.completed ||
+    stage === RUNTIME_CONTEXT_COMPACTION_STAGES.failed
+  );
+}
+
 function consumeLiveChatOutput(
   chat: LiveMissionChat,
   item: ExecutionOutputItem,
@@ -2359,6 +2411,38 @@ function consumeLiveChatOutput(
         : {
             error: truncate(readString(payload, "error"), MISSION_CHAT_ERROR_MAX_LENGTH),
           }),
+    };
+    const index = chat.entries.findIndex((candidate) => candidate.id === id);
+    if (index === -1) chat.entries.push(entry);
+    else chat.entries[index] = entry;
+    return [{ type: "entry.upsert", entry }];
+  }
+  if (item.channel === "progress") {
+    const payload = asRecord(item.value);
+    const stage = payload["stage"];
+    if (!isRuntimeContextCompactionStage(stage)) return [];
+    const data = readRuntimeContextCompactionProgressData(payload["data"]);
+    if (data === undefined) return [];
+    const id = `context:${item.executionId}:${data.operationId}`;
+    const existing = chat.entries.find((entry) => entry.id === id);
+    const entry: MissionChatEntry = {
+      ...base,
+      id,
+      kind: "context_operation",
+      operationId: data.operationId,
+      operation: "compaction",
+      trigger: data.trigger,
+      runtimeId: data.runtimeId,
+      status:
+        stage === RUNTIME_CONTEXT_COMPACTION_STAGES.started
+          ? "running"
+          : stage === RUNTIME_CONTEXT_COMPACTION_STAGES.completed
+            ? "succeeded"
+            : "failed",
+      ...(data.errorMessage === undefined
+        ? {}
+        : { error: truncate(data.errorMessage, MISSION_CHAT_ERROR_MAX_LENGTH) }),
+      createdAt: existing?.createdAt ?? item.occurredAt,
     };
     const index = chat.entries.findIndex((candidate) => candidate.id === id);
     if (index === -1) chat.entries.push(entry);

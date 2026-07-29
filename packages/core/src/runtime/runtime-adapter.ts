@@ -32,6 +32,7 @@ export interface RuntimeAdapterCapabilities {
   readonly supportsClose?: boolean | undefined;
   readonly supportsContextWindowInspection?: boolean | undefined;
   readonly supportsManualCompaction?: boolean | undefined;
+  readonly supportsContextCompactionEvents?: boolean | undefined;
 }
 
 export type RuntimeTarget = "expert" | "code" | "flow" | "operator" | (string & {});

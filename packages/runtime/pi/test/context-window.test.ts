@@ -1,6 +1,7 @@
 import { describe, expect, it, vi } from "vitest";
 
 import {
+  compactPiContextBeforePrompt,
   compactPiContextWindow,
   readPiContextWindow,
   type PiNativeSession,
@@ -50,5 +51,63 @@ describe("PI context window", () => {
       percent: 14.0625,
     });
     expect(compact).toHaveBeenCalledOnce();
+  });
+
+  it("compacts before a prompt at 75 percent context usage", async () => {
+    const compact = vi.fn(async () => ({
+      summary: "summary",
+      firstKeptEntryId: "entry-1",
+      tokensBefore: 96_000,
+      estimatedTokensAfter: 20_000,
+    }));
+    const session = {
+      session: {
+        getContextUsage: () => ({
+          tokens: 96_000,
+          contextWindow: 128_000,
+          percent: 75,
+        }),
+        compact,
+      },
+    } as unknown as PiNativeSession;
+
+    await expect(compactPiContextBeforePrompt(session)).resolves.toBe(true);
+    expect(compact).toHaveBeenCalledOnce();
+    expect(session.compactionTriggerOverride).toBeUndefined();
+  });
+
+  it("does not compact before a prompt below 75 percent usage", async () => {
+    const compact = vi.fn();
+    const session = {
+      session: {
+        getContextUsage: () => ({
+          tokens: 95_999,
+          contextWindow: 128_000,
+          percent: 74.999,
+        }),
+        compact,
+      },
+    } as unknown as PiNativeSession;
+
+    await expect(compactPiContextBeforePrompt(session)).resolves.toBe(false);
+    expect(compact).not.toHaveBeenCalled();
+  });
+
+  it("fails the prompt preflight when automatic compaction fails", async () => {
+    const session = {
+      session: {
+        getContextUsage: () => ({
+          tokens: 100_000,
+          contextWindow: 128_000,
+          percent: 78.125,
+        }),
+        compact: vi.fn().mockRejectedValue(new Error("provider unavailable")),
+      },
+    } as unknown as PiNativeSession;
+
+    await expect(compactPiContextBeforePrompt(session)).rejects.toThrow(
+      "automatic context compaction failed before the prompt: provider unavailable",
+    );
+    expect(session.compactionTriggerOverride).toBeUndefined();
   });
 });

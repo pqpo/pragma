@@ -44,6 +44,7 @@ const QODER_DESCRIPTOR = {
     supportsModelDiscovery: true,
     supportsStreaming: true,
     supportsThinkingLevel: true,
+    supportsContextCompactionEvents: true,
   },
 };
 

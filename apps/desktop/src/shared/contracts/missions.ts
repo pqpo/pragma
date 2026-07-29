@@ -325,6 +325,15 @@ export const MissionChatEntrySchema = z.discriminatedUnion("kind", [
     label: z.string().max(500).optional(),
     error: z.string().max(10_000).optional(),
   }),
+  MissionChatEntryBaseSchema.extend({
+    kind: z.literal("context_operation"),
+    operationId: z.string().min(1),
+    operation: z.literal("compaction"),
+    trigger: z.enum(["auto", "manual", "overflow", "unknown"]),
+    runtimeId: DesktopRuntimeIdSchema,
+    status: z.enum(["running", "succeeded", "failed"]),
+    error: z.string().max(10_000).optional(),
+  }),
 ]);
 
 export const MissionWorkConversationSnapshotSchema = z.object({

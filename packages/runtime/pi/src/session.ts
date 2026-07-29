@@ -4,6 +4,7 @@ import type {
   ModelRegistry,
   ModelRuntime,
 } from "@earendil-works/pi-coding-agent";
+import { randomUUID } from "node:crypto";
 import { AgentMessageUsageSchema, type AgentMessage, type AgentMessageUsage } from "@pragma/shared";
 import type {
   Expert,
@@ -13,8 +14,13 @@ import type {
   RuntimeModelRef,
   RuntimeTurnContext,
   RuntimeTurnResult,
+  RuntimeContextCompactionTrigger,
 } from "@pragma/core";
-import { createRuntimeContextWindowUsage, type RuntimeStreamEventInput } from "@pragma/core";
+import {
+  createRuntimeContextWindowUsage,
+  RUNTIME_CONTEXT_COMPACTION_STAGES,
+  type RuntimeStreamEventInput,
+} from "@pragma/core";
 
 import {
   assertAssistantTurnCompleted,
@@ -40,6 +46,14 @@ export interface PiNativeSession {
     readonly modelRuntime: ModelRuntime;
   };
   messageCountBeforeRun: number;
+  pendingCompactionOperationId?: string | undefined;
+  compactionTriggerOverride?: RuntimeContextCompactionTrigger | undefined;
+}
+
+export interface PiNativeEvent {
+  readonly event: AgentSessionEvent;
+  readonly operationId?: string | undefined;
+  readonly trigger?: RuntimeContextCompactionTrigger | undefined;
 }
 
 export function createPiNativeSession(options: {
@@ -64,7 +78,7 @@ export function listPiMessages(session: PiNativeSession): readonly AgentMessage[
 
 export async function startPiTurn(
   nativeSession: PiNativeSession,
-  turn: RuntimeTurnContext<AgentSessionEvent>,
+  turn: RuntimeTurnContext<PiNativeEvent>,
 ): Promise<RuntimeTurnResult> {
   nativeSession.streamState.runId = turn.runId;
   nativeSession.streamState.source = turn.source;
@@ -81,7 +95,26 @@ export async function startPiTurn(
   }
 
   const unsubscribe = nativeSession.session.subscribe((event) => {
-    turn.stream.writeNative(event);
+    if (event.type === "compaction_start") {
+      nativeSession.pendingCompactionOperationId = randomUUID();
+    }
+    const operationId =
+      event.type === "compaction_start" || event.type === "compaction_end"
+        ? (nativeSession.pendingCompactionOperationId ?? randomUUID())
+        : undefined;
+    turn.stream.writeNative({
+      event,
+      ...(operationId === undefined ? {} : { operationId }),
+      ...(event.type !== "compaction_start" && event.type !== "compaction_end"
+        ? {}
+        : {
+            trigger:
+              nativeSession.compactionTriggerOverride ?? mapPiCompactionTrigger(event.reason),
+          }),
+    });
+    if (event.type === "compaction_end") {
+      nativeSession.pendingCompactionOperationId = undefined;
+    }
   });
 
   try {
@@ -95,6 +128,7 @@ export async function startPiTurn(
     if (thinkingLevel !== undefined) {
       nativeSession.session.setThinkingLevel(thinkingLevel);
     }
+    await compactPiContextBeforePrompt(nativeSession);
     await nativeSession.session.prompt(turn.prompt);
     assertAssistantTurnCompleted(
       nativeSession.session.messages.slice(nativeSession.messageCountBeforeRun),
@@ -112,9 +146,10 @@ export async function startPiTurn(
 }
 
 export function mapPiAgentEvent(
-  event: AgentSessionEvent,
+  input: PiNativeEvent,
   context: RuntimeEventMappingContext,
 ): RuntimeEventMappingResult {
+  const { event } = input;
   const events: RuntimeStreamEventInput[] = [];
   const delta = readAssistantTextDelta(event);
   const thinkingDelta = readAssistantThinkingDelta(event);
@@ -141,6 +176,32 @@ export function mapPiAgentEvent(
     );
   }
 
+  if (
+    (event.type === "compaction_start" || event.type === "compaction_end") &&
+    input.operationId !== undefined
+  ) {
+    const failed =
+      event.type === "compaction_end" &&
+      (event.aborted || (event.errorMessage !== undefined && event.errorMessage !== ""));
+    events.push(
+      context.events.progress(
+        event.type === "compaction_start"
+          ? RUNTIME_CONTEXT_COMPACTION_STAGES.started
+          : failed
+            ? RUNTIME_CONTEXT_COMPACTION_STAGES.failed
+            : RUNTIME_CONTEXT_COMPACTION_STAGES.completed,
+        {
+          operationId: input.operationId,
+          trigger: input.trigger ?? "unknown",
+          runtimeId: "cloud-pi-agent",
+          ...(event.type === "compaction_end" && event.errorMessage !== undefined
+            ? { errorMessage: event.errorMessage }
+            : {}),
+        },
+      ),
+    );
+  }
+
   if (toolEvent !== undefined) {
     events.push(
       ...createToolStreamEvents({
@@ -156,6 +217,42 @@ export function mapPiAgentEvent(
     ...(delta === undefined ? {} : { outputDelta: delta }),
     ...(completedMessageText === undefined ? {} : { completedText: completedMessageText }),
   };
+}
+
+export async function compactPiContextBeforePrompt(session: PiNativeSession): Promise<boolean> {
+  const usage = session.session.getContextUsage();
+  if (
+    usage === undefined ||
+    usage.tokens === null ||
+    usage.contextWindow <= 0 ||
+    usage.tokens / usage.contextWindow < 0.75
+  ) {
+    return false;
+  }
+
+  session.compactionTriggerOverride = "auto";
+  try {
+    await session.session.compact();
+    return true;
+  } catch (error) {
+    throw new Error(
+      `PI Runtime automatic context compaction failed before the prompt: ${readErrorMessage(error)}`,
+      { cause: error },
+    );
+  } finally {
+    session.compactionTriggerOverride = undefined;
+  }
+}
+
+function mapPiCompactionTrigger(reason: unknown): RuntimeContextCompactionTrigger {
+  if (reason === "manual") return "manual";
+  if (reason === "overflow") return "overflow";
+  if (reason === "threshold") return "auto";
+  return "unknown";
+}
+
+function readErrorMessage(error: unknown): string {
+  return error instanceof Error ? error.message : String(error);
 }
 
 export function collectPiUsage(session: PiNativeSession): AgentMessageUsage | undefined {

@@ -51,6 +51,7 @@ const CODEX_LOCAL_RUNTIME_DESCRIPTOR = {
     supportsModelDiscovery: true,
     supportsStreaming: true,
     supportsThinkingLevel: true,
+    supportsContextCompactionEvents: true,
   },
 };
 

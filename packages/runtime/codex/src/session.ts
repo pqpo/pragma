@@ -12,12 +12,15 @@ import type {
   RuntimeStreamEventInput,
   RuntimeTurnContext,
   RuntimeTurnResult,
+  RuntimeContextCompactionStage,
+  RuntimeContextCompactionTrigger,
 } from "@pragma/core";
 import {
   createRuntimeContextWindowUsage,
   createUsageFromTokenCounts,
   hasNonZeroUsage,
   readFirstTokenCount,
+  RUNTIME_CONTEXT_COMPACTION_STAGES,
 } from "@pragma/core";
 import type { CodexRuntimeMessage } from "./types.ts";
 import type { CodexUserInput } from "./types.ts";
@@ -45,6 +48,12 @@ export interface CodexNativeSession {
   pendingStartupMessages: readonly ExpertAgentStartupMessage[];
   contextWindowUsage?: RuntimeContextWindowUsage | undefined;
   contextWindowRevision: number;
+  pendingCompaction?:
+    | {
+        readonly operationId: string;
+        readonly trigger: RuntimeContextCompactionTrigger;
+      }
+    | undefined;
 }
 
 export interface CodexSubagentThread {
@@ -58,6 +67,14 @@ export interface CodexRuntimeNotification {
   readonly rootThreadId: string;
   readonly notification: CodexAppServerNotification;
   readonly thread?: CodexSubagentThread | undefined;
+  readonly compaction?:
+    | {
+        readonly operationId: string;
+        readonly stage: RuntimeContextCompactionStage;
+        readonly trigger: RuntimeContextCompactionTrigger;
+        readonly errorMessage?: string | undefined;
+      }
+    | undefined;
 }
 
 const CODEX_TOOL_ITEM_NAMES = {
@@ -152,9 +169,11 @@ export async function startCodexTurn(
       rememberSubagentThread(session, notification);
       rememberCodexContextWindowUsage(session, notification);
       const threadId = readNotificationThreadId(notification);
+      const compaction = annotateCodexCompaction(session, notification, threadId);
       turn.stream.writeNative({
         rootThreadId: session.state.threadId,
         notification,
+        ...(compaction === undefined ? {} : { compaction }),
         ...(threadId === undefined || session.subagentThreads.get(threadId) === undefined
           ? {}
           : { thread: session.subagentThreads.get(threadId)! }),
@@ -226,6 +245,21 @@ export function mapCodexNotificationToRuntimeEvent(
     source,
   });
   const delta = readAssistantDelta(notification);
+
+  if (input.compaction !== undefined) {
+    events.push(
+      frame(
+        context.events.progress(input.compaction.stage, {
+          operationId: input.compaction.operationId,
+          trigger: input.compaction.trigger,
+          runtimeId: "codex-local",
+          ...(input.compaction.errorMessage === undefined
+            ? {}
+            : { errorMessage: input.compaction.errorMessage }),
+        }),
+      ),
+    );
+  }
 
   if (delta !== undefined) {
     if (!nested) outputDelta = delta;
@@ -328,6 +362,72 @@ export function mapCodexNotificationToRuntimeEvent(
     ...(completedText === undefined ? {} : { completedText }),
     ...(usage === undefined ? {} : { usage }),
   };
+}
+
+function annotateCodexCompaction(
+  session: CodexNativeSession,
+  notification: CodexAppServerNotification,
+  threadId: string | undefined,
+): CodexRuntimeNotification["compaction"] {
+  if (threadId !== undefined && threadId !== session.state.threadId) return undefined;
+  const item = readRecord(notification.params["item"]);
+  const isCompactionItem = item?.["type"] === "contextCompaction";
+  if (notification.method === "item/started" && isCompactionItem) {
+    const operationId = readString(item["id"]) ?? randomUUID();
+    const trigger = readCodexCompactionTrigger(item);
+    session.pendingCompaction = { operationId, trigger };
+    return {
+      operationId,
+      stage: RUNTIME_CONTEXT_COMPACTION_STAGES.started,
+      trigger,
+    };
+  }
+  if (notification.method === "item/completed" && isCompactionItem) {
+    const pending = session.pendingCompaction;
+    const operationId = readString(item["id"]) ?? pending?.operationId ?? randomUUID();
+    const trigger = readCodexCompactionTrigger(item, pending?.trigger);
+    session.pendingCompaction = undefined;
+    const failed = item["status"] === "failed" || item["success"] === false;
+    return {
+      operationId,
+      stage: failed
+        ? RUNTIME_CONTEXT_COMPACTION_STAGES.failed
+        : RUNTIME_CONTEXT_COMPACTION_STAGES.completed,
+      trigger,
+      ...(failed ? { errorMessage: readFailureMessage(item) } : {}),
+    };
+  }
+  if (notification.method === "thread/compacted" && session.pendingCompaction !== undefined) {
+    const pending = session.pendingCompaction;
+    session.pendingCompaction = undefined;
+    return {
+      operationId: pending.operationId,
+      stage: RUNTIME_CONTEXT_COMPACTION_STAGES.completed,
+      trigger: pending.trigger,
+    };
+  }
+  if (notification.method === "turn/failed" && session.pendingCompaction !== undefined) {
+    const pending = session.pendingCompaction;
+    session.pendingCompaction = undefined;
+    return {
+      operationId: pending.operationId,
+      stage: RUNTIME_CONTEXT_COMPACTION_STAGES.failed,
+      trigger: pending.trigger,
+      errorMessage: readFailureMessage(notification.params),
+    };
+  }
+  return undefined;
+}
+
+function readCodexCompactionTrigger(
+  value: Record<string, unknown>,
+  fallback: RuntimeContextCompactionTrigger = "auto",
+): RuntimeContextCompactionTrigger {
+  const trigger = readString(value["trigger"]) ?? readString(value["reason"]);
+  if (trigger === "manual") return "manual";
+  if (trigger === "overflow") return "overflow";
+  if (trigger === "auto" || trigger === "automatic" || trigger === "threshold") return "auto";
+  return fallback;
 }
 
 function createCodexEventSource(

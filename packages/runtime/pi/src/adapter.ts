@@ -50,6 +50,7 @@ const CLOUD_PI_RUNTIME_DESCRIPTOR = {
     supportsAbort: true,
     supportsMcp: true,
     supportsStreaming: true,
+    supportsContextCompactionEvents: true,
   },
 };
 
@@ -110,6 +111,11 @@ export function createPiRuntime(options: CloudPiRuntimeAdapterOptions = {}): Run
               );
         const cwd = ctx.workspace;
         const settingsManager = SettingsManager.create(cwd);
+        settingsManager.applyOverrides({
+          compaction: {
+            enabled: true,
+          },
+        });
         const loader = createResourceLoader(ctx.agent, cwd, ctx.agentContext.systemPrompt);
         const resourceReloadPromise = timedPiPhase(
           ctx.logger,

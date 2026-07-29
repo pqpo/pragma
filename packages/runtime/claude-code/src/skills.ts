@@ -6,6 +6,10 @@ import { basename, dirname, isAbsolute, join, resolve } from "node:path";
 export interface MaterializeClaudeCodePluginOptions {
   readonly agent: Expert;
   readonly sessionDir: string;
+  readonly compactionHook?: {
+    readonly url: string;
+    readonly authorization: string;
+  };
 }
 
 const FRONTMATTER_DELIMITER = "---";
@@ -14,6 +18,7 @@ const NON_ALPHANUMERIC = /[^a-z0-9]+/g;
 export async function materializeClaudeCodePlugin({
   agent,
   sessionDir,
+  compactionHook,
 }: MaterializeClaudeCodePluginOptions): Promise<string> {
   const pluginDir = join(sessionDir, "plugin");
   const skillsDir = join(pluginDir, "skills");
@@ -21,6 +26,9 @@ export async function materializeClaudeCodePlugin({
   await rm(pluginDir, { recursive: true, force: true });
   await mkdir(skillsDir, { recursive: true });
   await writePluginManifest(pluginDir, agent);
+  if (compactionHook !== undefined) {
+    await writeCompactionHooks(pluginDir, compactionHook);
+  }
 
   const usedSlugs = new Set<string>();
   for (const skill of agent.skills?.skills ?? []) {
@@ -51,6 +59,34 @@ export async function materializeClaudeCodePlugin({
   }
 
   return pluginDir;
+}
+
+async function writeCompactionHooks(
+  pluginDir: string,
+  hook: { readonly url: string; readonly authorization: string },
+): Promise<void> {
+  const hooksDir = join(pluginDir, "hooks");
+  await mkdir(hooksDir, { recursive: true });
+  const handler = {
+    type: "http",
+    url: hook.url,
+    headers: { Authorization: hook.authorization },
+    timeout: 10,
+  };
+  await writeFile(
+    join(hooksDir, "hooks.json"),
+    `${JSON.stringify(
+      {
+        hooks: {
+          PreCompact: [{ matcher: "auto|manual", hooks: [handler] }],
+          PostCompact: [{ matcher: "auto|manual", hooks: [handler] }],
+        },
+      },
+      null,
+      2,
+    )}\n`,
+    { mode: 0o600 },
+  );
 }
 
 async function writePluginManifest(pluginDir: string, agent: Expert): Promise<void> {

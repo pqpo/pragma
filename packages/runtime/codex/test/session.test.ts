@@ -123,6 +123,146 @@ describe("Codex context window", () => {
 });
 
 describe("Codex turn completion", () => {
+  it("annotates automatic context compaction notifications", async () => {
+    const notificationBus = createCodexNotificationBus();
+    const writeNative = vi.fn();
+    const client = {
+      async startTurn() {
+        notificationBus.publish({
+          method: "item/started",
+          params: {
+            threadId: "thread-1",
+            item: { type: "contextCompaction", id: "compact-1" },
+          },
+        });
+        notificationBus.publish({
+          method: "item/completed",
+          params: {
+            threadId: "thread-1",
+            item: { type: "contextCompaction", id: "compact-1", status: "completed" },
+          },
+        });
+        notificationBus.publish({
+          method: "item/completed",
+          params: {
+            threadId: "thread-1",
+            item: { type: "agentMessage", id: "answer", text: "done" },
+          },
+        });
+        notificationBus.publish({
+          method: "turn/completed",
+          params: { threadId: "thread-1", turn: { status: "completed", error: null } },
+        });
+      },
+    } as unknown as CodexAppServerClient;
+    const session = createCodexNativeSession({
+      client,
+      notificationBus,
+      state: { threadId: "thread-1" },
+    });
+
+    await startCodexTurn(session, {
+      runId: "run-1",
+      attempt: 1,
+      isRetry: false,
+      rawQuery: "hello",
+      prompt: "hello",
+      startupMessages: [],
+      signal: new AbortController().signal,
+      source: {
+        kind: "runtime",
+        runId: "run-1",
+        path: [{ runId: "run-1" }],
+      },
+      stream: { write: () => undefined, writeNative },
+    });
+
+    expect(writeNative).toHaveBeenCalledWith(
+      expect.objectContaining({
+        compaction: {
+          operationId: "compact-1",
+          stage: "context.compaction.started",
+          trigger: "auto",
+        },
+      }),
+    );
+    expect(writeNative).toHaveBeenCalledWith(
+      expect.objectContaining({
+        compaction: {
+          operationId: "compact-1",
+          stage: "context.compaction.completed",
+          trigger: "auto",
+        },
+      }),
+    );
+  });
+
+  it("preserves the compaction trigger when thread completion is the only terminal event", async () => {
+    const notificationBus = createCodexNotificationBus();
+    const writeNative = vi.fn();
+    const client = {
+      async startTurn() {
+        notificationBus.publish({
+          method: "item/started",
+          params: {
+            threadId: "thread-1",
+            item: {
+              type: "contextCompaction",
+              id: "compact-manual",
+              trigger: "manual",
+            },
+          },
+        });
+        notificationBus.publish({
+          method: "thread/compacted",
+          params: { threadId: "thread-1" },
+        });
+        notificationBus.publish({
+          method: "item/completed",
+          params: {
+            threadId: "thread-1",
+            item: { type: "agentMessage", id: "answer", text: "done" },
+          },
+        });
+        notificationBus.publish({
+          method: "turn/completed",
+          params: { threadId: "thread-1", turn: { status: "completed", error: null } },
+        });
+      },
+    } as unknown as CodexAppServerClient;
+    const session = createCodexNativeSession({
+      client,
+      notificationBus,
+      state: { threadId: "thread-1" },
+    });
+
+    await startCodexTurn(session, {
+      runId: "run-1",
+      attempt: 1,
+      isRetry: false,
+      rawQuery: "hello",
+      prompt: "hello",
+      startupMessages: [],
+      signal: new AbortController().signal,
+      source: {
+        kind: "runtime",
+        runId: "run-1",
+        path: [{ runId: "run-1" }],
+      },
+      stream: { write: () => undefined, writeNative },
+    });
+
+    expect(writeNative).toHaveBeenCalledWith(
+      expect.objectContaining({
+        compaction: {
+          operationId: "compact-manual",
+          stage: "context.compaction.completed",
+          trigger: "manual",
+        },
+      }),
+    );
+  });
+
   it("rejects a completed turn that contains no assistant output", async () => {
     const notificationBus = createCodexNotificationBus();
     const client = {
@@ -226,6 +366,44 @@ describe("Codex turn completion", () => {
 });
 
 describe("Codex tool event mapping", () => {
+  it("maps context compaction items to the shared lifecycle contract", () => {
+    const progress = vi.fn((stage: string, data: unknown) => ({
+      type: "progress" as const,
+      payload: { stage, data },
+    }));
+    const context = {
+      runId: "run-1",
+      source: { kind: "runtime", runId: "run-1", path: [] },
+      events: { progress },
+    } as unknown as RuntimeEventMappingContext;
+
+    const result = mapCodexNotificationToRuntimeEvent(
+      {
+        rootThreadId: "thread-1",
+        notification: {
+          method: "item/started",
+          params: {
+            threadId: "thread-1",
+            item: { type: "contextCompaction", id: "compact-1" },
+          },
+        },
+        compaction: {
+          operationId: "compact-1",
+          stage: "context.compaction.started",
+          trigger: "auto",
+        },
+      },
+      context,
+    );
+
+    expect(progress).toHaveBeenCalledWith("context.compaction.started", {
+      operationId: "compact-1",
+      trigger: "auto",
+      runtimeId: "codex-local",
+    });
+    expect(result.events).toHaveLength(1);
+  });
+
   it("maps a failed dynamic MCP call to a visible tool failure", () => {
     const failedEvent = { type: "tool.failed" } as RuntimeStreamEventInput;
     const toolFailed = vi.fn(() => failedEvent);

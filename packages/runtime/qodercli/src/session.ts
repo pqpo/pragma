@@ -11,13 +11,17 @@ import {
   type RuntimeEventMappingResult,
   type RuntimeTurnContext,
   type RuntimeTurnResult,
+  RUNTIME_CONTEXT_COMPACTION_STAGES,
 } from "@pragma/core";
+import { randomUUID } from "node:crypto";
 import {
   ProcessTransport,
   query,
   type AuthOptions,
   type CanUseTool,
+  type HookInput,
   type PostCompactHookInput,
+  type PreCompactHookInput,
   type Query,
   type SDKMessage,
   type SDKResultMessage,
@@ -75,6 +79,8 @@ export interface QoderNativeSession {
   pendingCompaction?:
     | {
         trigger?: "manual" | "auto" | undefined;
+        operationId?: string | undefined;
+        status?: "running" | "completed" | undefined;
         preTokens?: number | undefined;
         summary?: string | undefined;
       }
@@ -181,12 +187,20 @@ export async function compactQoderContextWindow(
   session.pendingCompaction = undefined;
   const q = createQuery(session, "/compact", {
     modelName: session.compactModelName,
+    onPreCompact(input) {
+      session.pendingCompaction = {
+        operationId: randomUUID(),
+        trigger: input.trigger,
+        status: "running",
+      };
+    },
     onPostCompact(input) {
       session.compactSummary = input.compact_summary;
       session.pendingCompaction = {
         ...(session.pendingCompaction ?? {}),
         trigger: input.trigger,
         summary: input.compact_summary,
+        status: "completed",
       };
     },
   });
@@ -262,13 +276,42 @@ async function runQoderQuery(
   const q = createQuery(session, prompt, {
     modelName: turn.modelSelection?.model.modelId,
     thinkingLevel: turn.modelSelection?.thinkingLevel,
+    onPreCompact(input) {
+      const operationId = randomUUID();
+      session.pendingCompaction = {
+        operationId,
+        trigger: input.trigger,
+        status: "running",
+      };
+      turn.stream.writeNative({
+        kind: "progress",
+        stage: RUNTIME_CONTEXT_COMPACTION_STAGES.started,
+        data: {
+          operationId,
+          trigger: input.trigger,
+          runtimeId: "qodercli-local",
+        },
+      });
+    },
     onPostCompact(input) {
+      const operationId = session.pendingCompaction?.operationId ?? randomUUID();
       session.compactSummary = input.compact_summary;
       session.pendingCompaction = {
         ...(session.pendingCompaction ?? {}),
+        operationId,
         trigger: input.trigger,
         summary: input.compact_summary,
+        status: "completed",
       };
+      turn.stream.writeNative({
+        kind: "progress",
+        stage: RUNTIME_CONTEXT_COMPACTION_STAGES.completed,
+        data: {
+          operationId,
+          trigger: input.trigger,
+          runtimeId: "qodercli-local",
+        },
+      });
     },
   });
   session.activeQuery = q;
@@ -355,12 +398,32 @@ async function runQoderQuery(
     });
     return { result: successful, usage };
   } finally {
+    const pendingCompaction = readPendingQoderCompaction(session);
+    if (pendingCompaction?.operationId !== undefined && pendingCompaction.status === "running") {
+      turn.stream.writeNative({
+        kind: "progress",
+        stage: RUNTIME_CONTEXT_COMPACTION_STAGES.failed,
+        data: {
+          operationId: pendingCompaction.operationId,
+          trigger: pendingCompaction.trigger ?? "unknown",
+          runtimeId: "qodercli-local",
+          errorMessage: "Qoder CLI ended before context compaction completed.",
+        },
+      });
+      session.pendingCompaction = undefined;
+    }
     turn.signal.removeEventListener("abort", onAbort);
     session.activeQuery = undefined;
     session.toolRuntimeState.runId = undefined;
     session.toolRuntimeState.source = undefined;
     await q.close().catch(() => undefined);
   }
+}
+
+function readPendingQoderCompaction(
+  session: QoderNativeSession,
+): QoderNativeSession["pendingCompaction"] {
+  return session.pendingCompaction;
 }
 
 function hasQoderTextDelta(message: SDKMessage): boolean {
@@ -383,6 +446,7 @@ function createQuery(
   options: {
     readonly modelName?: string | undefined;
     readonly thinkingLevel?: string | undefined;
+    readonly onPreCompact?: ((input: PreCompactHookInput) => void) | undefined;
     readonly onPostCompact?: ((input: PostCompactHookInput) => void) | undefined;
   },
 ): Query {
@@ -419,20 +483,7 @@ function createQuery(
       ...(session.permissionMode === "bypassPermissions"
         ? {}
         : { canUseTool: createCanUseTool(session.humanInteractionHandler) }),
-      hooks: {
-        PostCompact: [
-          {
-            hooks: [
-              async (input) => {
-                if (input.hook_event_name === "PostCompact") {
-                  options.onPostCompact?.(input);
-                }
-                return {};
-              },
-            ],
-          },
-        ],
-      },
+      hooks: createQoderCompactionHooks(options),
       resolveModel(context) {
         const isCompaction = context.purpose === "compact" || context.purpose === "compression";
         const resolvedModelName = isCompaction ? compactModelName : modelName;
@@ -456,6 +507,34 @@ function createQuery(
       },
     },
   });
+}
+
+export function createQoderCompactionHooks(options: {
+  readonly onPreCompact?: ((input: PreCompactHookInput) => void) | undefined;
+  readonly onPostCompact?: ((input: PostCompactHookInput) => void) | undefined;
+}) {
+  return {
+    PreCompact: [
+      {
+        hooks: [
+          async (input: HookInput) => {
+            if (input.hook_event_name === "PreCompact") options.onPreCompact?.(input);
+            return {};
+          },
+        ],
+      },
+    ],
+    PostCompact: [
+      {
+        hooks: [
+          async (input: HookInput) => {
+            if (input.hook_event_name === "PostCompact") options.onPostCompact?.(input);
+            return {};
+          },
+        ],
+      },
+    ],
+  };
 }
 
 function createCanUseTool(handler: ExpertAgentHumanInteractionHandler | undefined): CanUseTool {

@@ -19,6 +19,7 @@ import { prepareManagedClaudeCodeConfig } from "./claude-config.ts";
 import { canUseClaudeCodeRuntime } from "./availability.ts";
 import { resolveClaudeCodeCommand } from "./executable.ts";
 import { materializeClaudeCodePlugin } from "./skills.ts";
+import { createClaudeCompactionHookRelay } from "./compaction-hooks.ts";
 import {
   cancelClaudeCodeTurn,
   collectClaudeCodeUsage,
@@ -47,6 +48,7 @@ const CLAUDE_CODE_LOCAL_RUNTIME_DESCRIPTOR = {
     supportsModelDiscovery: true,
     supportsStreaming: true,
     supportsThinkingLevel: true,
+    supportsContextCompactionEvents: true,
   },
 };
 const DEFAULT_CLAUDE_CODE_PERMISSION_MODE = "bypassPermissions" as const;
@@ -125,14 +127,19 @@ export function createClaudeCodeRuntime(
             ctx.persistence.restoredRuntimeSessionId ?? ctx.request.runtimeSession?.id ?? "",
         };
         const toolRuntimeState: ExpertToolRuntimeState = {};
-        const pluginDir = await materializeClaudeCodePlugin({
-          agent: ctx.agent,
-          sessionDir,
-        });
+        const compactionHookRelay = await createClaudeCompactionHookRelay();
         let mcpToolRegistry: McpToolRegistry | undefined;
         let expertToolsMcpRegistration: ExpertToolsMcpSessionRegistration | undefined;
 
         try {
+          const pluginDir = await materializeClaudeCodePlugin({
+            agent: ctx.agent,
+            sessionDir,
+            compactionHook: {
+              url: compactionHookRelay.url,
+              authorization: compactionHookRelay.authorization,
+            },
+          });
           mcpToolRegistry = await createMcpToolRegistry(ctx.agent.mcp);
           expertToolsMcpRegistration = await registerExpertToolsMcpSession({
             agent: ctx.agent,
@@ -175,6 +182,7 @@ export function createClaudeCodeRuntime(
               mcpServerUrl: expertToolsMcpRegistration.url,
               permissionMode: options.permissionMode ?? DEFAULT_CLAUDE_CODE_PERMISSION_MODE,
               pluginDir,
+              compactionHookRelay,
               sessionDir,
               spawn: options.spawn,
               startupMessages: state.sessionId === "" ? ctx.agentContext.startupMessages : [],
@@ -185,17 +193,18 @@ export function createClaudeCodeRuntime(
             expertToolsMcpRegistration,
           };
         } catch (error) {
-          try {
-            await disposeClaudeRuntimeResources(
-              expertToolsMcpRegistration,
-              mcpToolRegistry,
-              ctx.logger,
-            );
-          } catch (cleanupError) {
+          const cleanup = await Promise.allSettled([
+            disposeClaudeRuntimeResources(expertToolsMcpRegistration, mcpToolRegistry, ctx.logger),
+            compactionHookRelay.close(),
+          ]);
+          const cleanupErrors = cleanup.flatMap((result) =>
+            result.status === "rejected" ? [result.reason as unknown] : [],
+          );
+          if (cleanupErrors.length > 0) {
             throw new AggregateError(
-              [error, cleanupError],
+              [error, ...cleanupErrors],
               "Claude Code runtime initialization and cleanup failed.",
-              { cause: cleanupError },
+              { cause: error },
             );
           }
           throw error;
@@ -238,11 +247,20 @@ export function createClaudeCodeRuntime(
       },
       async closeSession(session, ctx) {
         cancelClaudeCodeTurn(session);
-        await disposeClaudeRuntimeResources(
-          session.expertToolsMcpRegistration,
-          session.mcpToolRegistry,
-          ctx.logger,
+        const cleanup = await Promise.allSettled([
+          disposeClaudeRuntimeResources(
+            session.expertToolsMcpRegistration,
+            session.mcpToolRegistry,
+            ctx.logger,
+          ),
+          session.compactionHookRelay.close(),
+        ]);
+        const errors = cleanup.flatMap((result) =>
+          result.status === "rejected" ? [result.reason as unknown] : [],
         );
+        if (errors.length > 0) {
+          throw new AggregateError(errors, "Claude Code Runtime cleanup failed.");
+        }
       },
     },
     {

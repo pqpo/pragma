@@ -445,6 +445,19 @@ describe("MissionRunner", { timeout: 15_000 }, () => {
       readSession: (session) => ({ runtimeSessionId: session.id }),
       async startTurn(_session, turn) {
         await new Promise<void>((resolve) => setTimeout(resolve, 50));
+        turn.stream.write({
+          runId: turn.runId,
+          source: turn.source,
+          type: "progress",
+          payload: {
+            stage: "context.compaction.started",
+            data: {
+              operationId: "compact-live",
+              trigger: "auto",
+              runtimeId: "fake",
+            },
+          },
+        });
         for (const delta of "Checking constraints.") {
           turn.stream.write({
             runId: turn.runId,
@@ -502,6 +515,11 @@ describe("MissionRunner", { timeout: 15_000 }, () => {
           expect.arrayContaining([
             expect.objectContaining({ kind: "thinking", content: "Checking constraints." }),
             expect.objectContaining({ kind: "tool", toolName: "read_file", status: "running" }),
+            expect.objectContaining({
+              kind: "context_operation",
+              operationId: "compact-live",
+              status: "running",
+            }),
           ]),
         );
       },
@@ -517,6 +535,11 @@ describe("MissionRunner", { timeout: 15_000 }, () => {
       expect.arrayContaining([
         expect.objectContaining({ kind: "thinking", content: "Checking constraints." }),
         expect.objectContaining({ kind: "tool", toolName: "read_file", status: "failed" }),
+        expect.objectContaining({
+          kind: "context_operation",
+          operationId: "compact-live",
+          status: "failed",
+        }),
       ]),
     );
     expect(updates).toHaveBeenCalled();
@@ -533,6 +556,13 @@ describe("MissionRunner", { timeout: 15_000 }, () => {
         expect.objectContaining({
           type: "entry.upsert",
           entry: expect.objectContaining({ kind: "tool" }),
+        }),
+        expect.objectContaining({
+          type: "entry.upsert",
+          entry: expect.objectContaining({
+            kind: "context_operation",
+            operationId: "compact-live",
+          }),
         }),
       ]),
     );
@@ -1260,6 +1290,46 @@ describe("MissionRunner", { timeout: 15_000 }, () => {
       title: "Architect",
     });
     expect(enrichedWork.records.filter((record) => record.title === "Architect")).toHaveLength(2);
+    const compactionSource = {
+      kind: "agent" as const,
+      runId: "root-run",
+      sessionId: "root-thread",
+      path: [],
+    };
+    await store.appendEvent(executionId, executionId, "runtime.event", {
+      schemaVersion: "pragma.stream/v1",
+      eventId: "compaction-started",
+      sequence: 105,
+      runId: "root-run",
+      emittedAt,
+      source: compactionSource,
+      type: "progress",
+      payload: {
+        stage: "context.compaction.started",
+        data: {
+          operationId: "compact-1",
+          trigger: "auto",
+          runtimeId: "codex-local",
+        },
+      },
+    });
+    await store.appendEvent(executionId, executionId, "runtime.event", {
+      schemaVersion: "pragma.stream/v1",
+      eventId: "compaction-completed",
+      sequence: 106,
+      runId: "root-run",
+      emittedAt: new Date(childConversationStartedAt + 5).toISOString(),
+      source: compactionSource,
+      type: "progress",
+      payload: {
+        stage: "context.compaction.completed",
+        data: {
+          operationId: "compact-1",
+          trigger: "auto",
+          runtimeId: "codex-local",
+        },
+      },
+    });
     await expect(
       runner.getWorkConversation({ id: mission.id, recordId: subagent!.recordId, limit: 100 }),
     ).resolves.toMatchObject({
@@ -1276,6 +1346,11 @@ describe("MissionRunner", { timeout: 15_000 }, () => {
     await expect(runner.getChat({ id: mission.id, limit: 50 })).resolves.toMatchObject({
       entries: expect.arrayContaining([
         expect.objectContaining({ kind: "agent_activity", action: "spawn" }),
+        expect.objectContaining({
+          kind: "context_operation",
+          operationId: "compact-1",
+          status: "succeeded",
+        }),
       ]),
     });
   });

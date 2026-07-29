@@ -11,6 +11,7 @@ describe("PI Runtime contract", () => {
       supportsSteer: true,
       supportsContextWindowInspection: true,
       supportsManualCompaction: true,
+      supportsContextCompactionEvents: true,
     });
   });
 
