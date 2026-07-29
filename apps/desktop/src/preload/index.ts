@@ -2,6 +2,7 @@ import { contextBridge } from "electron";
 
 import type { PragmaDesktopAPI } from "../shared/contracts/api.ts";
 import { automationsApi } from "./api/automations.ts";
+import { bundlesApi } from "./api/bundles.ts";
 import { capabilitiesApi } from "./api/capabilities.ts";
 import { contextStoresApi } from "./api/context-stores.ts";
 import { expertsApi } from "./api/experts.ts";
@@ -25,6 +26,7 @@ const api = {
   ...pluginsApi,
   ...projectsApi,
   ...automationsApi,
+  ...bundlesApi,
   ...missionsApi,
   ...usageApi,
   ...capabilitiesApi,

@@ -24,6 +24,20 @@ import {
   SaveAutomationSchema,
 } from "./automations.ts";
 import {
+  ExportPragmaBundleSchema,
+  InspectPragmaBundleSchema,
+  PragmaBundleExportPreviewSchema,
+  PragmaBundleExportResultSchema,
+  PragmaBundleImportInspectionSchema,
+  PragmaBundlePickResultSchema,
+  PragmaBundleInstallationActionSchema,
+  PragmaBundleInstallationSchema,
+  PragmaBundleModuleOptionsSchema,
+  PreparePragmaBundleExportSchema,
+  ResolvePragmaBundleInstallationSchema,
+  StartPragmaBundleImportSchema,
+} from "./bundles.ts";
+import {
   CapabilityDefinitionSchema,
   CapabilityDeleteResultSchema,
   CapabilityHealthSchema,
@@ -163,6 +177,18 @@ import {
   UsageUpdateSchema,
 } from "./usage.ts";
 export type DesktopAppInfo = z.infer<typeof DesktopAppInfoSchema>;
+export type PragmaBundleModuleOptions = z.infer<typeof PragmaBundleModuleOptionsSchema>;
+export type PreparePragmaBundleExport = z.infer<typeof PreparePragmaBundleExportSchema>;
+export type PragmaBundleExportPreview = z.infer<typeof PragmaBundleExportPreviewSchema>;
+export type ExportPragmaBundle = z.infer<typeof ExportPragmaBundleSchema>;
+export type PragmaBundleExportResult = z.infer<typeof PragmaBundleExportResultSchema>;
+export type InspectPragmaBundle = z.infer<typeof InspectPragmaBundleSchema>;
+export type PragmaBundleImportInspection = z.infer<typeof PragmaBundleImportInspectionSchema>;
+export type PragmaBundlePickResult = z.infer<typeof PragmaBundlePickResultSchema>;
+export type StartPragmaBundleImport = z.infer<typeof StartPragmaBundleImportSchema>;
+export type PragmaBundleInstallation = z.infer<typeof PragmaBundleInstallationSchema>;
+export type ResolvePragmaBundleInstallation = z.infer<typeof ResolvePragmaBundleInstallationSchema>;
+export type PragmaBundleInstallationAction = z.infer<typeof PragmaBundleInstallationActionSchema>;
 export type RuntimeGatewayConfig = z.infer<typeof RuntimeGatewayConfigSchema>;
 export type LocalRuntimeCapability = z.infer<typeof LocalRuntimeCapabilitySchema>;
 export type DesktopRuntimeAvailability = z.infer<typeof DesktopRuntimeAvailabilitySchema>;

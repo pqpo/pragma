@@ -116,6 +116,38 @@ export class PragmaPaths {
     return join(this.dataRoot(), "projects");
   }
 
+  bundleInstallationsStateRoot(): string {
+    return join(this.stateRoot(), "bundle-installations");
+  }
+
+  bundleInstallationStateRoot(installationId: string): string {
+    return join(
+      this.bundleInstallationsStateRoot(),
+      "installations",
+      encodePragmaPathSegment(installationId),
+    );
+  }
+
+  bundleInstallationArchive(installationId: string): string {
+    return join(this.bundleInstallationStateRoot(installationId), "source.pragma.bundle");
+  }
+
+  bundleInstallationsCatalog(): string {
+    return join(this.bundleInstallationsStateRoot(), "installations.json");
+  }
+
+  bundleInstallationsLock(): string {
+    return join(this.bundleInstallationsStateRoot(), ".lock");
+  }
+
+  bundleImportLock(bundleFingerprint: string): string {
+    return join(
+      this.bundleInstallationsStateRoot(),
+      "locks",
+      `${encodePragmaPathSegment(bundleFingerprint)}.lock`,
+    );
+  }
+
   missionsRoot(): string {
     return join(this.dataRoot(), "missions");
   }
