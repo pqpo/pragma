@@ -17,6 +17,36 @@ afterEach(async () => {
 });
 
 describe("Pragma project Blueprint cache", () => {
+  it("coalesces concurrent source builds after a cache miss", async () => {
+    const root = await mkdtemp(join(tmpdir(), "pragma-blueprint-single-flight-"));
+    roots.push(root);
+    const entry = join(root, "pragma.yaml");
+    await writeFile(
+      entry,
+      ["apiVersion: pragma/v3", "kind: Bundle", "imports: []", "resources: []", ""].join("\n"),
+    );
+    const write = vi.fn(async () => undefined);
+    const store: PragmaBlueprintCacheStore = {
+      read: async () => undefined,
+      write,
+    };
+    const compiler = await import("../src/compiler/pragma-project.ts");
+
+    await Promise.all([
+      compiler.loadPragmaProject(entry, {
+        rootDir: root,
+        sourceIdentity: "immutable-single-flight-revision",
+        blueprintCache: store,
+      }),
+      compiler.loadPragmaProject(entry, {
+        rootDir: root,
+        sourceIdentity: "immutable-single-flight-revision",
+        blueprintCache: store,
+      }),
+    ]);
+    await vi.waitFor(() => expect(write).toHaveBeenCalledOnce());
+  });
+
   it("rehydrates a serialized Blueprint from the Host cache within the warm-load gate", async () => {
     const root = await mkdtemp(join(tmpdir(), "pragma-blueprint-cache-"));
     roots.push(root);

@@ -918,6 +918,7 @@ export function createMissionRunner(options: {
     )
       ? undefined
       : desiredModelSelection;
+    let definitionChanged = false;
     if (compiledExpert !== undefined && session !== undefined) {
       const nextDefinitionFingerprint = fingerprintExpertExecutionDefinition(compiledExpert);
       const previousDefinitionFingerprint = sessionDefinitionFingerprints.get(mission.id);
@@ -930,6 +931,7 @@ export function createMissionRunner(options: {
         sessionCompilationIdentities.delete(mission.id);
         sessionDefinitionFingerprints.delete(mission.id);
         session = undefined;
+        definitionChanged = true;
       }
     }
     const sessionCacheHit = session !== undefined;
@@ -938,14 +940,24 @@ export function createMissionRunner(options: {
       if (compiled === undefined) {
         throw new Error("Mission Session cache was unavailable without a compiled executor.");
       }
-      session = await openMissionExpertSession({
-        mission,
-        compiled,
-        app,
-        sessionId: mission.execution?.sessionId,
-        modelSelection,
-        createSuccessorOnMismatch: true,
-      });
+      if (definitionChanged) {
+        session = await createMissionExpertSession(compiled, app, { modelSelection });
+        await interruptSupersededMissionSession(mission);
+        logger.warn(
+          "mission.session_successor_created",
+          `Created a successor ExpertSession for Mission ${mission.id} after its execution definition changed.`,
+          { sessionId: session.sessionId },
+        );
+      } else {
+        session = await openMissionExpertSession({
+          mission,
+          compiled,
+          app,
+          sessionId: mission.execution?.sessionId,
+          modelSelection,
+          createSuccessorOnMismatch: true,
+        });
+      }
     }
     logMissionPhase(logger, mission.id, "expert_session_open", phaseStartedAt, acceptedAt, {
       cacheHit: sessionCacheHit,

@@ -203,6 +203,7 @@ const PragmaProjectBlueprintSchema = z
 type PragmaProjectBlueprint = z.infer<typeof PragmaProjectBlueprintSchema>;
 const projectBlueprintMemoryCache = new Map<string, PragmaProjectBlueprint>();
 const projectBlueprintLoads = new Map<string, Promise<PragmaProjectBlueprint | undefined>>();
+const projectBlueprintBuilds = new Map<string, Promise<PragmaProjectBlueprint>>();
 const PROJECT_BLUEPRINT_MEMORY_LIMIT = 128;
 
 export async function loadPragmaProject(
@@ -214,18 +215,19 @@ export async function loadPragmaProject(
   const rootDir = await realpath(configuredRoot);
   const canonicalEntry = await realpath(absoluteEntry);
   const adapters = options.resourceAdapters ?? createDefaultPragmaResourceAdapterRegistry();
+  const sourceIdentity = options.sourceIdentity;
   const blueprintKey =
-    options.sourceIdentity === undefined
+    sourceIdentity === undefined
       ? undefined
       : sha256(
           stableStringify({
             compilerVersion: COMPILER_VERSION,
-            sourceIdentity: options.sourceIdentity,
+            sourceIdentity,
             entry: relative(rootDir, canonicalEntry),
             resourceAdapters: adapters.fingerprint(),
           }),
         );
-  if (blueprintKey !== undefined) {
+  if (blueprintKey !== undefined && sourceIdentity !== undefined) {
     const cacheStartedAt = performance.now();
     const cached = await loadProjectBlueprint(blueprintKey, options.blueprintCache);
     notifyBlueprintCacheLookup(options, {
@@ -236,37 +238,62 @@ export async function loadPragmaProject(
     });
     if (
       cached.blueprint !== undefined &&
-      cached.blueprint.sourceIdentity === options.sourceIdentity &&
+      cached.blueprint.sourceIdentity === sourceIdentity &&
       cached.blueprint.entry === relative(rootDir, canonicalEntry)
     ) {
       return projectFromBlueprint(cached.blueprint, rootDir, canonicalEntry, options);
     }
+    const blueprint = await buildProjectBlueprint(
+      blueprintKey,
+      sourceIdentity,
+      rootDir,
+      canonicalEntry,
+      adapters,
+      options.blueprintCache,
+    );
+    return projectFromBlueprint(blueprint, rootDir, canonicalEntry, options);
   }
   const loader = new SourceLoader(rootDir, adapters);
   await loader.loadEntry(canonicalEntry);
   await loader.collectArtifacts();
-  const project = new PragmaProjectImpl(
+  return new PragmaProjectImpl(
     canonicalEntry,
     loader.resources,
     loader.artifacts,
     loader.diagnostics,
     options,
   );
-  if (blueprintKey !== undefined && options.sourceIdentity !== undefined) {
-    const blueprint = createProjectBlueprint(
-      options.sourceIdentity,
-      rootDir,
-      canonicalEntry,
-      loader,
-    );
-    rememberProjectBlueprint(blueprintKey, blueprint);
-    if (options.blueprintCache !== undefined) {
-      void options.blueprintCache
-        .write(blueprintKey, new TextEncoder().encode(JSON.stringify(blueprint)))
+}
+
+async function buildProjectBlueprint(
+  key: string,
+  sourceIdentity: string,
+  rootDir: string,
+  entryFile: string,
+  adapters: PragmaResourceAdapterRegistry,
+  store: PragmaBlueprintCacheStore | undefined,
+): Promise<PragmaProjectBlueprint> {
+  const pending = projectBlueprintBuilds.get(key);
+  if (pending !== undefined) return await pending;
+  const building = (async () => {
+    const loader = new SourceLoader(rootDir, adapters);
+    await loader.loadEntry(entryFile);
+    await loader.collectArtifacts();
+    const blueprint = createProjectBlueprint(sourceIdentity, rootDir, entryFile, loader);
+    rememberProjectBlueprint(key, blueprint);
+    if (store !== undefined) {
+      void store
+        .write(key, new TextEncoder().encode(JSON.stringify(blueprint)))
         .catch(() => undefined);
     }
+    return blueprint;
+  })();
+  projectBlueprintBuilds.set(key, building);
+  try {
+    return await building;
+  } finally {
+    if (projectBlueprintBuilds.get(key) === building) projectBlueprintBuilds.delete(key);
   }
-  return project;
 }
 
 async function loadProjectBlueprint(
@@ -674,7 +701,11 @@ class PragmaProjectImpl implements PragmaProject {
       host.resourceAdapters ??
       this.options.resourceAdapters ??
       createDefaultPragmaResourceAdapterRegistry();
-    const adapterHost = createAdapterHost(host, this.artifacts);
+    const adapterHost = createAdapterHost(
+      host,
+      this.artifacts,
+      this.options.sourceIdentity !== undefined,
+    );
     diagnostics.push(...validateExtensionEnvironment(this.resources, host));
     if (host.plugins !== undefined) {
       for (const indexed of this.resources.values()) {
@@ -764,7 +795,11 @@ class PragmaProjectImpl implements PragmaProject {
       host.resourceAdapters ??
       this.options.resourceAdapters ??
       createDefaultPragmaResourceAdapterRegistry();
-    const adapterHost = createAdapterHost(host, this.artifacts);
+    const adapterHost = createAdapterHost(
+      host,
+      this.artifacts,
+      this.options.sourceIdentity !== undefined,
+    );
     const resolvedResources = new Map<
       string,
       { readonly contribution: PragmaResourceContribution; readonly health: PragmaResourceHealth }
@@ -2242,7 +2277,11 @@ function mergeMcp(configs: readonly IExpertAgentMcpConfig[]): IExpertAgentMcpCon
   return Object.keys(servers).length === 0 ? undefined : { mcpServers: servers };
 }
 
-function createAdapterHost(host: PragmaCompileHost, artifacts: ReadonlyMap<string, string>) {
+function createAdapterHost(
+  host: PragmaCompileHost,
+  artifacts: ReadonlyMap<string, string>,
+  artifactsAreImmutable: boolean,
+) {
   const external = host.adapterHost;
   const root = resolve(host.projectRoot ?? external?.projectRoot ?? host.workspace);
   return {
@@ -2277,7 +2316,7 @@ function createAdapterHost(host: PragmaCompileHost, artifacts: ReadonlyMap<strin
         source,
         path,
         contentHash,
-        verified: true,
+        ...(artifactsAreImmutable ? { verified: true } : {}),
         ...(info.isFile() ? { text: await readFile(path, "utf8") } : {}),
       };
     },

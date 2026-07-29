@@ -1,5 +1,3 @@
-import { createHash } from "node:crypto";
-
 import {
   Client,
   SSEClientTransport,
@@ -12,6 +10,8 @@ import type {
   IExpertAgentMcpConfig,
   IExpertAgentMcpServer,
 } from "@pragma/core";
+
+import { mcpToolRegistryCacheKey } from "./mcp-tool-registry-cache-key.ts";
 
 export interface McpToolRegistry {
   readonly tools: readonly McpManagedTool[];
@@ -166,44 +166,6 @@ export function createMcpToolRegistryPool(
         }),
       );
     },
-  };
-}
-
-function mcpToolRegistryCacheKey(
-  config: IExpertAgentMcpConfig | undefined,
-): string | IExpertAgentMcpConfig {
-  if (config === undefined) return "empty";
-  if (Object.values(config.mcpServers).some((server) => server.transport === "in-process")) {
-    return config;
-  }
-  const normalized = Object.entries(config.mcpServers)
-    .toSorted(([left], [right]) => left.localeCompare(right))
-    .map(([id, server]) => [id, normalizeExternalMcpServer(server)]);
-  return createHash("sha256").update(JSON.stringify(normalized)).digest("hex");
-}
-
-function normalizeExternalMcpServer(server: IExpertAgentMcpServer): unknown {
-  if (server.transport === "in-process") {
-    throw new Error("In-process MCP Servers use object-identity cache keys.");
-  }
-  return {
-    ...server,
-    ...(server.transport === "stdio"
-      ? {
-          env: Object.entries(server.env ?? {}).toSorted(([left], [right]) =>
-            left.localeCompare(right),
-          ),
-        }
-      : server.token === undefined
-        ? {}
-        : {
-            token: createHash("sha256").update(server.token).digest("hex"),
-          }),
-    allowTools: [...(server.allowTools ?? [])].toSorted(),
-    disallowTools: [...(server.disallowTools ?? [])].toSorted(),
-    toolApprovals: Object.entries(server.toolApprovals ?? {}).toSorted(([left], [right]) =>
-      left.localeCompare(right),
-    ),
   };
 }
 
