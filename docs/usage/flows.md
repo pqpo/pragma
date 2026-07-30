@@ -39,17 +39,19 @@ pnpm --filter @pragma/examples example:flow-tui
 
 ## Run dry 单元用例
 
-`pragma/v3` Flow 可以在 `spec.runDry.cases` 中保存随项目修订版本化的快速用例。Run dry 不启动
-Runtime、不调用模型、不执行 Action、不等待 HumanTask，也不进入 nested Flow；每次节点访问都消费
-用例配置的 mock。每个 mock 必须声明 `expectInput`，HumanTask 还必须声明 `expectPrompt`，从而同时
-校验 prompt 渲染和节点输入映射。输入/输出 Schema、节点结果 state、route、array route、有界循环、
-终止结果和断言仍按 Flow 声明语义执行。
+Run Dry 用例保存在独立的 `Evaluation` 资源中，通过 `spec.target.ref` 关联 Flow；Flow 本身不再包含
+`spec.runDry`。Run Dry 不启动 Runtime、不调用模型、不执行 Action、不等待 HumanTask，也不进入
+nested Flow。所有节点的 `expectInput` 都表示用例原始 Flow input；Expert、Team 和 Human 节点使用
+独立的 `expectPrompt` 校验渲染后提示词。
 
 每个用例断言终态和精确节点路径，并可选断言结构化输出或错误片段。重复访问同一节点时，mock 使用
 按访问顺序排列的数组。失败用例必须声明 `errorContains`，测试配置错误不能被“预期失败”掩盖。
 Suite 只有在所有用例通过，且每条 ordinary/repeat edge、route case、array branch、fallback 以及
 loop repeat/limit 结果都被覆盖时才通过。
 
-Desktop 的 Flow 详情页提供独立 Run dry 页面用于维护、运行和保存这些用例。内置 Pragma Agent
-创建或非平凡修改 Flow 时，必须自动写用例、调用 `run_flow_draft_dry`，并在完整覆盖通过后才能
-prepare 和 commit；开发者手工编辑时可先保存未完成用例，再在该页面迭代。
+Desktop 的“测评”大 Tab 用于独立维护、运行和保存 Evaluation，并为专家/专家团队的“测评集 +
+LLM-as-Judge”预留入口。Flow 先通过 `prepare_flow_draft` 和 `commit_dsl_changes` 独立保存；提交
+成功后，内置 Pragma Agent 再询问用户是否创建并运行测试集，用户可以跳过。确认后，Agent 只针对
+已提交 Flow 创建 Evaluation Draft，逐个生成并测试 Run Dry case；用户明确要求批量时每批最多
+10 个。测试集最终通过 `prepare_evaluation_draft` 重新运行完整套件，并用其返回的 change-set
+单独调用 `commit_dsl_changes` 保存。

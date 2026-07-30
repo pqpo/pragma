@@ -1,12 +1,12 @@
 import { ipcMain } from "electron";
 import { generatePragmaResourceId } from "@pragma/core";
-import { runPragmaFlowDrySuite } from "@pragma/interpreter";
+import { runPragmaEvaluation } from "@pragma/interpreter";
 
 import {
   DeletePragmaResourceSchema,
   PragmaProjectChangesSchema,
   PublishPragmaProjectSchema,
-  RunPragmaFlowDrySuiteSchema,
+  RunPragmaEvaluationSchema,
   UpsertPragmaResourceSchema,
   ValidatePragmaResourceSchema,
   ValidatePragmaYamlSchema,
@@ -51,8 +51,17 @@ export function installPragmaProjectHandlers(store: PragmaProjectStore): void {
       return { diagnostics: await store.validateChanges(parsed) };
     }),
   );
-  ipcMain.handle("pragma-project:flow:run-dry", (_event, input: unknown) => {
-    const parsed = RunPragmaFlowDrySuiteSchema.parse(input);
-    return runPragmaFlowDrySuite(parsed.flow);
+  ipcMain.handle("pragma-project:evaluation:run", async (_event, input: unknown) => {
+    const parsed = RunPragmaEvaluationSchema.parse(input);
+    const snapshot = await store.get();
+    const flow = snapshot.resources.find(
+      (resource) =>
+        resource.kind === "Flow" &&
+        `flow:${resource.metadata.id}` === parsed.evaluation.spec.target.ref,
+    );
+    if (flow === undefined || flow.kind !== "Flow") {
+      throw new Error(`Evaluation target Flow not found: ${parsed.evaluation.spec.target.ref}.`);
+    }
+    return runPragmaEvaluation(flow, parsed.evaluation);
   });
 }

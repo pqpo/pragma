@@ -31,8 +31,9 @@ export const common = {
   navigation: {
     home: "首頁",
     missions: "任務",
-    usage: "用量",
     studio: "工作室",
+    evaluations: "評測",
+    usage: "用量",
     settings: "設定",
     main: "主導覽",
     expand: "展開導覽",

@@ -1,6 +1,6 @@
 ---
 name: author-pragma-dsl
-description: Create and update validated pragma/v3 Expert, ExpertTeam, Flow, and Automation resources. Use when a user asks Pragma to create, change, configure, or repair an Expert, team, Flow, schedule, trigger, or Automation in the current Pragma project.
+description: Create and update validated pragma/v3 Expert, ExpertTeam, Flow, Evaluation, and Automation resources. Use when a user asks Pragma to create, change, configure, test, evaluate, or repair an Expert, team, Flow, Run Dry suite, schedule, trigger, or Automation in the current Pragma project.
 ---
 
 # Author Pragma DSL
@@ -21,31 +21,40 @@ source of truth and use only the Pragma DSL tools to inspect, validate, and save
    RuntimeProfile when its Runtime, provider, model, and thinking level match the selection;
    otherwise use the option's `runtimeProfileRef`. Never author a duplicate RuntimeProfile.
 4. Read the relevant reference file below before drafting YAML.
-5. Before authoring any new resource, call `allocate_dsl_resource_ids` once for the complete set and
-   use the returned Host-generated IDs and exact references. Preserve IDs when editing; never invent,
-   copy, or change an ID.
-6. For every Flow creation or non-trivial Flow edit, call `create_flow_draft`. Build it in small
-   batches with `update_flow_draft`: contracts, steps, start, transitions, loops, then run dry cases.
-   Read the returned diagnostics after every batch.
-7. Create run dry cases for every Flow without waiting for the user to ask. Mock every visited
-   Expert, Team, nested Flow, action, and Human Task with its exact expected input; Human Tasks also
-   assert the rendered prompt. Cover every declared transition outcome, including route cases,
-   array branches, fallbacks, loop repeats, exits, and loop limits. Read
-   [references/run-dry.md](references/run-dry.md), call `run_flow_draft_dry`, and fix every failed
-   assertion, configuration error, or missing coverage item.
-8. Call `validate_flow_draft`, then call `prepare_flow_draft` only when every run dry case passes,
-   transition coverage is complete, and the draft has no incomplete or error diagnostics. Include
-   any new Expert or ExpertTeam YAML in `additionalSources` so the final change remains atomic.
-   Use `prepare_dsl_changes` directly only for complete non-Flow resources. Its `sources` input is
-   always an array with one complete YAML document per item, even for one resource.
-9. Fix every diagnostic. Never bypass validation or hand-edit project files. If the project
-   revision changed, reread affected resources and explicitly rebase the draft before retrying.
-10. Explain the normalized diff and the run dry coverage, then call `commit_dsl_changes` with the
-    returned change-set ID.
-11. After the tool returns, always report success or failure, the committed project revision, and
+5. Before authoring a new resource, allocate only the IDs needed for the user's current confirmed
+   request. Use the returned Host-generated IDs and exact references. Preserve IDs when editing;
+   never invent, copy, or change an ID.
+6. For a new or non-trivial Flow change, create a Flow draft and build it in small batches with
+   `update_flow_draft`: contracts, steps, start, transitions, and loops. Read diagnostics after every
+   batch. Flow drafts never contain Run Dry cases and never require an Evaluation draft.
+7. Call `validate_flow_draft`, then `prepare_flow_draft` when the Flow is structurally complete.
+   `prepare_flow_draft` prepares the Flow and optional non-Evaluation dependencies only. Fix every
+   diagnostic, explain the normalized diff, and call `commit_dsl_changes` with the returned
+   change-set ID. Do not create, prepare, or commit an Evaluation in this Flow transaction.
+8. After the Flow commit succeeds, ask whether the user wants to create a test set and run it. The
+   user may skip. If they skip, report the committed Flow and stop. Do not allocate an Evaluation
+   ID or create an Evaluation draft before the user confirms, unless their original request already
+   explicitly asked for the test set.
+9. When the user confirms, or when they ask to test an existing committed Flow, read
+   [references/run-dry.md](references/run-dry.md). Target the exact committed Flow ref. By default,
+   generate and upsert exactly one case, immediately run that case, and fix it until it passes
+   before creating another. Use cumulative `coverage.missing` as the next-case backlog. Only use
+   batches when the user explicitly requests them; update, read, or run 2–10 cases per call, and fix
+   every failure in the current batch before adding more. Never emit or pass a complete Evaluation
+   YAML document.
+10. Save the test set independently: call `prepare_evaluation_draft` with its exact draft revision,
+    then pass the returned `changeSetId` to `commit_dsl_changes`. This commit changes only the
+    Evaluation; it is never part of `prepare_flow_draft` or `additionalSources`.
+    Use `prepare_dsl_changes` directly only for complete non-Flow resources. Its `sources` input is
+    always an array with one complete YAML document per item, even for one resource.
+11. Fix every diagnostic. Never bypass validation or hand-edit project files. If the project
+    revision changed, reread affected resources and explicitly rebase the draft before retrying.
+12. After each commit tool returns, always report success or failure, the committed project
+    revision, and
     the changed canonical refs.
 
-Before preparing, verify that every new ID came from `allocate_dsl_resource_ids`, every project ref
+Before preparing, verify that every new ID came from `allocate_dsl_resource_ids`, every Evaluation
+targets an exact Flow ref, every project ref
 was read, every ContextStore mount declares `ref`, `namespace`, and `required`, and no existing
 RuntimeProfile, Capability, or ContextStore is repeated in `sources`. Follow diagnostic `source` and
 `path` values literally; never invent a field derivation rule to work around validation.

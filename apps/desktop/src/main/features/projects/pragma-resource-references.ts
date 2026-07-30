@@ -52,6 +52,10 @@ export function referencedPragmaResourceRefs(
     }
     if (resource.kind === "Automation") {
       refs.add(resource.spec.route.executor.ref);
+      continue;
+    }
+    if (resource.kind === "Evaluation") {
+      refs.add(resource.spec.target.ref);
     }
   }
 

@@ -2,12 +2,19 @@ import {
   PragmaDiagnosticSchema,
   PragmaFlowLoopSchema,
   PragmaFlowResourceSchema,
-  PragmaFlowRunDrySuiteSchema,
   PragmaFlowStepSchema,
   PragmaFlowTransitionSchema,
   PragmaMetadataSchema,
   PragmaSemanticResourceRefSchema,
 } from "@pragma/interpreter/ast";
+import {
+  PragmaEvaluationFlowRefSchema,
+  PragmaEvaluationMetadataSchema,
+  PragmaEvaluationRefSchema,
+  PragmaFlowRunDryCaseResultSchema,
+  PragmaFlowRunDryCaseSchema,
+  PragmaFlowRunDrySuiteResultSchema,
+} from "@pragma/evaluation/ast";
 import { z } from "zod";
 
 export const DefaultAgentResourceSummarySchema = z.object({
@@ -20,6 +27,7 @@ export const DefaultAgentResourceSummarySchema = z.object({
     "Capability",
     "ContextStore",
     "RuntimeProfile",
+    "Evaluation",
   ]),
   name: z.string().min(1),
   description: z.string(),
@@ -101,7 +109,6 @@ const DefaultAgentFlowDraftResourceSchema = z
         input: CanonicalFlowSpecSchema.shape.input,
         output: CanonicalFlowSpecSchema.shape.output,
         limits: CanonicalFlowSpecSchema.shape.limits,
-        runDry: CanonicalFlowSpecSchema.shape.runDry,
         graph: z
           .object({
             start: CanonicalFlowGraphSchema.shape.start.optional(),
@@ -157,12 +164,90 @@ export const DefaultAgentFlowDraftOperationSchema = z.discriminatedUnion("type",
       .optional(),
     limits: DefaultAgentFlowDraftResourceSchema.shape.spec.shape.limits.optional(),
   }),
+  z.object({ type: z.literal("rebase"), projectRevision: z.number().int().nonnegative() }),
+]);
+
+export const DefaultAgentEvaluationDraftDiagnosticSchema = z.object({
+  severity: z.enum(["incomplete", "warning", "error"]),
+  code: z.string().min(1),
+  message: z.string().min(1),
+  path: z.array(z.union([z.string(), z.number()])).default([]),
+});
+
+const DefaultAgentEvaluationDraftResourceSchema = z
+  .object({
+    apiVersion: z.literal("pragma/v3"),
+    kind: z.literal("Evaluation"),
+    metadata: PragmaEvaluationMetadataSchema,
+    spec: z
+      .object({
+        target: z.object({ ref: PragmaEvaluationFlowRefSchema }).strict(),
+        method: z
+          .object({
+            type: z.literal("flow-run-dry"),
+            cases: z.array(PragmaFlowRunDryCaseSchema).max(500),
+          })
+          .strict(),
+      })
+      .strict(),
+  })
+  .strict();
+
+export const DefaultAgentEvaluationDraftSchema = z.object({
+  draftId: z.string().uuid(),
+  baseProjectRevision: z.number().int().nonnegative(),
+  draftRevision: z.number().int().nonnegative(),
+  resource: DefaultAgentEvaluationDraftResourceSchema,
+  sourceEvaluationRef: PragmaEvaluationRefSchema.optional(),
+  diagnostics: z.array(DefaultAgentEvaluationDraftDiagnosticSchema),
+  createdAt: z.string().datetime(),
+  updatedAt: z.string().datetime(),
+});
+
+export const DefaultAgentEvaluationDraftOperationSchema = z.discriminatedUnion("type", [
+  z.object({ type: z.literal("upsert_case"), case: PragmaFlowRunDryCaseSchema }),
   z.object({
-    type: z.literal("set_run_dry"),
-    runDry: PragmaFlowRunDrySuiteSchema,
+    type: z.literal("remove_case"),
+    caseId: PragmaFlowRunDryCaseSchema.shape.id,
   }),
   z.object({ type: z.literal("rebase"), projectRevision: z.number().int().nonnegative() }),
 ]);
+
+export const DefaultAgentEvaluationDraftSummarySchema = z.object({
+  draftId: z.string().uuid(),
+  baseProjectRevision: z.number().int().nonnegative(),
+  draftRevision: z.number().int().nonnegative(),
+  metadata: PragmaEvaluationMetadataSchema,
+  targetRef: PragmaEvaluationFlowRefSchema,
+  sourceEvaluationRef: PragmaEvaluationRefSchema.optional(),
+  cases: z.array(
+    z.object({
+      id: PragmaFlowRunDryCaseSchema.shape.id,
+      name: PragmaFlowRunDryCaseSchema.shape.name,
+    }),
+  ),
+  diagnostics: z.array(DefaultAgentEvaluationDraftDiagnosticSchema),
+  createdAt: z.string().datetime(),
+  updatedAt: z.string().datetime(),
+});
+
+export const DefaultAgentEvaluationDraftViewSchema =
+  DefaultAgentEvaluationDraftSummarySchema.extend({
+    selectedCases: z.array(PragmaFlowRunDryCaseSchema).max(10),
+  });
+
+export const DefaultAgentEvaluationDraftRunResultSchema = z.object({
+  draft: DefaultAgentEvaluationDraftSummarySchema,
+  requestedCases: z.array(PragmaFlowRunDryCaseResultSchema).min(1).max(10),
+  suite: z.object({
+    passed: z.boolean(),
+    total: z.number().int().nonnegative(),
+    passedCount: z.number().int().nonnegative(),
+    failedCount: z.number().int().nonnegative(),
+    failedCaseIds: z.array(PragmaFlowRunDryCaseSchema.shape.id),
+  }),
+  coverage: PragmaFlowRunDrySuiteResultSchema.shape.coverage,
+});
 
 export const DefaultAgentProjectCommitSchema = z.object({
   projectId: z.string().min(1),
@@ -218,6 +303,20 @@ export type DefaultAgentPrepareResult = z.infer<typeof DefaultAgentPrepareResult
 export type DefaultAgentFlowDraft = z.infer<typeof DefaultAgentFlowDraftSchema>;
 export type DefaultAgentFlowDraftDiagnostic = z.infer<typeof DefaultAgentFlowDraftDiagnosticSchema>;
 export type DefaultAgentFlowDraftOperation = z.infer<typeof DefaultAgentFlowDraftOperationSchema>;
+export type DefaultAgentEvaluationDraft = z.infer<typeof DefaultAgentEvaluationDraftSchema>;
+export type DefaultAgentEvaluationDraftDiagnostic = z.infer<
+  typeof DefaultAgentEvaluationDraftDiagnosticSchema
+>;
+export type DefaultAgentEvaluationDraftOperation = z.infer<
+  typeof DefaultAgentEvaluationDraftOperationSchema
+>;
+export type DefaultAgentEvaluationDraftSummary = z.infer<
+  typeof DefaultAgentEvaluationDraftSummarySchema
+>;
+export type DefaultAgentEvaluationDraftView = z.infer<typeof DefaultAgentEvaluationDraftViewSchema>;
+export type DefaultAgentEvaluationDraftRunResult = z.infer<
+  typeof DefaultAgentEvaluationDraftRunResultSchema
+>;
 export type DefaultAgentProjectCommit = z.infer<typeof DefaultAgentProjectCommitSchema>;
 export type DefaultAgentTaskSummary = z.infer<typeof DefaultAgentTaskSummarySchema>;
 export type DefaultAgentTask = z.infer<typeof DefaultAgentTaskSchema>;

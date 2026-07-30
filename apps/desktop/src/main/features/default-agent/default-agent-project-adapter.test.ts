@@ -2,6 +2,7 @@ import { mkdtemp } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
+import { PragmaFlowRunDryCaseSchema } from "@pragma/evaluation/ast";
 import { describe, expect, it } from "vitest";
 import {
   PRAGMA_AUTOMATION_PROMPT_MAX_LENGTH,
@@ -187,7 +188,7 @@ describe("Desktop DefaultAgent DSL project adapter", () => {
     expect((await project.get()).revision).toBe(1);
   });
 
-  it("builds and atomically prepares a Flow through durable draft revisions", async () => {
+  it("prepares a Flow and its later test set in independent commits", async () => {
     const root = await mkdtemp(join(tmpdir(), "pragma-default-agent-flow-draft-"));
     const project = createPragmaProjectStore({ projectsPath: join(root, "projects") });
     const adapter = createDesktopDefaultAgentProjectPort(
@@ -197,6 +198,7 @@ describe("Desktop DefaultAgent DSL project adapter", () => {
     const created = await adapter.createFlowDraft({
       expectedProjectRevision: 0,
       metadata: {
+        id: "8h9j0k1m2n3p4q5r",
         name: "Release Gate",
         description,
         tags: [],
@@ -234,58 +236,25 @@ describe("Desktop DefaultAgent DSL project adapter", () => {
         { type: "set_transition", stepId: "approve", transition: { end: true } },
       ],
     });
-    expect(graphComplete.diagnostics).toEqual(
-      expect.arrayContaining([
-        expect.objectContaining({
-          severity: "incomplete",
-          code: "flow.run_dry.cases_missing",
-        }),
-      ]),
-    );
-    const complete = await adapter.updateFlowDraft({
-      draftId: created.draftId,
-      expectedDraftRevision: 2,
-      operations: [
-        {
-          type: "set_run_dry",
-          runDry: {
-            cases: [
-              {
-                id: "ship",
-                name: "Ship release",
-                input: {},
-                mocks: {
-                  approve: {
-                    expectInput: {},
-                    expectPrompt: "Release?",
-                    output: { selection: "ship" },
-                  },
-                },
-                expect: {
-                  status: "succeeded",
-                  path: ["approve"],
-                  output: { selection: "ship" },
-                },
-              },
-            ],
-          },
-        },
-      ],
-    });
-    expect(complete.diagnostics).toEqual([]);
-    await expect(adapter.runFlowDraftDry(created.draftId)).resolves.toMatchObject({
-      passed: true,
-      summary: { total: 1, passed: 1, failed: 0 },
-      coverage: { missing: [] },
-    });
+    expect(graphComplete.diagnostics).toEqual([]);
     await expect(adapter.validateFlowDraft(created.draftId)).resolves.toMatchObject({
       resource: { metadata: { description } },
       diagnostics: [],
     });
+    await expect(
+      adapter.prepareFlowDraft({
+        draftId: created.draftId,
+        expectedDraftRevision: 2,
+        additionalSources: [evaluationSource(created.resource.metadata.id)],
+      }),
+    ).resolves.toMatchObject({
+      status: "invalid",
+      diagnostics: [expect.objectContaining({ code: "evaluation.independent_prepare_required" })],
+    });
     const prepared = requirePrepared(
       await adapter.prepareFlowDraft({
         draftId: created.draftId,
-        expectedDraftRevision: 3,
+        expectedDraftRevision: 2,
       }),
     );
     expect(prepared.changes).toEqual([
@@ -308,12 +277,91 @@ describe("Desktop DefaultAgent DSL project adapter", () => {
       }),
     ]);
     await adapter.commit({ changeSetId: prepared.changeSetId, operationId: "commit-flow-draft" });
-    expect((await project.get()).resources).toEqual(
-      expect.arrayContaining([
+    expect(await project.get()).toMatchObject({
+      revision: 1,
+      resources: [
         expect.objectContaining({
           kind: "Flow",
-          metadata: expect.objectContaining({
-            id: prepared.changes[0]!.ref.slice("flow:".length),
+          metadata: expect.objectContaining({ id: created.resource.metadata.id }),
+        }),
+      ],
+    });
+
+    const evaluation = await adapter.createEvaluationDraft({
+      mode: "create",
+      expectedProjectRevision: 1,
+      metadata: {
+        id: "7h8j9k0m1n2p3q4r",
+        name: "Release approval run dry",
+        description: "Verifies the release approval path.",
+        tags: ["run-dry"],
+      },
+      targetRef: `flow:${created.resource.metadata.id}`,
+    });
+    expect(evaluation.diagnostics).toEqual(
+      expect.arrayContaining([expect.objectContaining({ code: "evaluation.draft.cases_empty" })]),
+    );
+    const evaluationWithCase = await adapter.updateEvaluationDraft({
+      draftId: evaluation.draftId,
+      expectedDraftRevision: 0,
+      operations: [
+        {
+          type: "upsert_case",
+          case: {
+            id: "ship",
+            name: "Ship release",
+            input: {},
+            mocks: {
+              approve: {
+                expectInput: {},
+                expectPrompt: "Release?",
+                output: { selection: "ship" },
+              },
+            },
+            expect: {
+              status: "succeeded",
+              path: ["approve"],
+              output: { selection: "ship" },
+            },
+          },
+        },
+      ],
+    });
+    await expect(
+      adapter.runEvaluationDraft({
+        draftId: evaluation.draftId,
+        caseIds: ["ship"],
+      }),
+    ).resolves.toMatchObject({
+      requestedCases: [expect.objectContaining({ id: "ship", passed: true })],
+      suite: { passed: true, total: 1, passedCount: 1, failedCount: 0 },
+      coverage: { missing: [] },
+    });
+    const evaluationPrepared = requirePrepared(
+      await adapter.prepareEvaluationDraft({
+        draftId: evaluation.draftId,
+        expectedDraftRevision: evaluationWithCase.draftRevision,
+      }),
+    );
+    expect(evaluationPrepared.changes).toEqual([
+      expect.objectContaining({
+        ref: "evaluation:7h8j9k0m1n2p3q4r",
+        kind: "created",
+      }),
+    ]);
+    await adapter.commit({
+      changeSetId: evaluationPrepared.changeSetId,
+      operationId: "commit-release-evaluation",
+    });
+    const snapshot = await project.get();
+    expect(snapshot.revision).toBe(2);
+    expect(snapshot.resources).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ kind: "Flow" }),
+        expect.objectContaining({
+          kind: "Evaluation",
+          spec: expect.objectContaining({
+            target: { ref: `flow:${created.resource.metadata.id}` },
           }),
         }),
       ]),
@@ -367,6 +415,7 @@ describe("Desktop DefaultAgent DSL project adapter", () => {
     const created = await adapter.createFlowDraft({
       expectedProjectRevision: 1,
       metadata: {
+        id: "9h0j1k2m3n4p5q6r",
         name: "Parent",
         description: "Passes its typed input to a child Flow.",
         tags: [],
@@ -404,6 +453,170 @@ describe("Desktop DefaultAgent DSL project adapter", () => {
         }),
       ]),
     );
+  });
+
+  it("runs selected cases with cumulative coverage and blocks a failing full suite", async () => {
+    const root = await mkdtemp(join(tmpdir(), "pragma-default-agent-evaluation-draft-"));
+    const project = createPragmaProjectStore({ projectsPath: join(root, "projects") });
+    const flow = approvalRouteFlow();
+    expect(await project.validateChanges({ baseRevision: 0, upserts: [flow] })).toEqual([]);
+    await project.publish({ expectedRevision: 0, resources: [flow] });
+    const adapter = createDesktopDefaultAgentProjectPort(
+      adapterOptions(project, join(root, "state")),
+    );
+    const evaluation = await adapter.createEvaluationDraft({
+      mode: "create",
+      expectedProjectRevision: 1,
+      metadata: {
+        id: "7h8j9k0m1n2p3q4r",
+        name: "Approval route Run Dry",
+        description: "Covers both approval routes.",
+        tags: ["run-dry"],
+      },
+      targetRef: "flow:8h9j0k1m2n3p4q5r",
+    });
+    const cases = approvalRouteCases();
+    const updated = await adapter.updateEvaluationDraft({
+      draftId: evaluation.draftId,
+      expectedDraftRevision: 0,
+      operations: cases.map((testCase) => ({ type: "upsert_case" as const, case: testCase })),
+    });
+    await expect(
+      adapter.updateEvaluationDraft({
+        draftId: evaluation.draftId,
+        expectedDraftRevision: updated.draftRevision,
+        operations: Array.from({ length: 11 }, (_, index) => ({
+          type: "remove_case" as const,
+          caseId: `case-${index}`,
+        })),
+      }),
+    ).rejects.toThrow("1 to 10 operations");
+    await expect(
+      adapter.runEvaluationDraft({
+        draftId: evaluation.draftId,
+        caseIds: Array.from({ length: 11 }, (_, index) => `case-${index}`),
+      }),
+    ).rejects.toThrow("1 to 10 unique case IDs");
+
+    await expect(
+      adapter.runEvaluationDraft({
+        draftId: evaluation.draftId,
+        caseIds: ["approve"],
+      }),
+    ).resolves.toMatchObject({
+      requestedCases: [expect.objectContaining({ id: "approve", passed: true })],
+      suite: {
+        passed: true,
+        total: 2,
+        passedCount: 2,
+        failedCount: 0,
+        failedCaseIds: [],
+      },
+      coverage: { passed: true, missing: [] },
+    });
+    const prepared = requirePrepared(
+      await adapter.prepareEvaluationDraft({
+        draftId: evaluation.draftId,
+        expectedDraftRevision: updated.draftRevision,
+      }),
+    );
+    await adapter.commit({
+      changeSetId: prepared.changeSetId,
+      operationId: "commit-evaluation-draft",
+    });
+
+    const edit = await adapter.createEvaluationDraft({
+      mode: "edit",
+      expectedProjectRevision: 2,
+      evaluationRef: "evaluation:7h8j9k0m1n2p3q4r",
+    });
+    const brokenReject = PragmaFlowRunDryCaseSchema.parse({
+      ...cases[1],
+      expect: { ...cases[1]!.expect, path: ["decision"] },
+    });
+    const broken = await adapter.updateEvaluationDraft({
+      draftId: edit.draftId,
+      expectedDraftRevision: 0,
+      operations: [{ type: "upsert_case", case: brokenReject }],
+    });
+    await expect(
+      adapter.runEvaluationDraft({ draftId: edit.draftId, caseIds: ["approve"] }),
+    ).resolves.toMatchObject({
+      requestedCases: [expect.objectContaining({ id: "approve", passed: true })],
+      suite: { passed: false, failedCaseIds: ["reject"] },
+    });
+    await expect(
+      adapter.prepareEvaluationDraft({
+        draftId: edit.draftId,
+        expectedDraftRevision: broken.draftRevision,
+      }),
+    ).resolves.toMatchObject({
+      status: "invalid",
+      diagnostics: [
+        expect.objectContaining({
+          code: "evaluation.case.path",
+          message: expect.stringContaining("reject"),
+        }),
+      ],
+    });
+  });
+
+  it("requires an Evaluation draft to target a committed Flow", async () => {
+    const root = await mkdtemp(join(tmpdir(), "pragma-default-agent-evaluation-target-"));
+    const project = createPragmaProjectStore({ projectsPath: join(root, "projects") });
+    const adapter = createDesktopDefaultAgentProjectPort(
+      adapterOptions(project, join(root, "state")),
+    );
+    const evaluation = await adapter.createEvaluationDraft({
+      mode: "create",
+      expectedProjectRevision: 0,
+      metadata: {
+        id: "7h8j9k0m1n2p3q4r",
+        name: "Uncommitted target",
+        description: "Must not attach to an uncommitted Flow draft.",
+        tags: [],
+      },
+      targetRef: "flow:8h9j0k1m2n3p4q5r",
+    });
+
+    expect(evaluation.diagnostics).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          severity: "error",
+          code: "evaluation.draft.target_missing",
+          message: expect.stringContaining("committed Flow"),
+        }),
+      ]),
+    );
+    await expect(
+      adapter.prepareEvaluationDraft({
+        draftId: evaluation.draftId,
+        expectedDraftRevision: evaluation.draftRevision,
+      }),
+    ).resolves.toMatchObject({
+      status: "invalid",
+      diagnostics: expect.arrayContaining([
+        expect.objectContaining({ code: "evaluation.draft.target_missing" }),
+      ]),
+    });
+  });
+
+  it("rejects Evaluation YAML through the generic prepare path", async () => {
+    const root = await mkdtemp(join(tmpdir(), "pragma-default-agent-evaluation-generic-"));
+    const project = createPragmaProjectStore({ projectsPath: join(root, "projects") });
+    const adapter = createDesktopDefaultAgentProjectPort(
+      adapterOptions(project, join(root, "state")),
+    );
+
+    await expect(
+      adapter.prepare({
+        expectedProjectRevision: 0,
+        sources: [evaluationSource("8h9j0k1m2n3p4q5r")],
+      }),
+    ).resolves.toMatchObject({
+      status: "invalid",
+      diagnostics: [expect.objectContaining({ code: "evaluation.independent_prepare_required" })],
+    });
   });
 
   it("returns structured prepare diagnostics for malformed YAML", async () => {
@@ -477,6 +690,35 @@ function expert(description: string, runtimeRef: string, id = "1xddvess309a6gme"
   ].join("\n");
 }
 
+function evaluationSource(flowId: string): string {
+  return [
+    "apiVersion: pragma/v3",
+    "kind: Evaluation",
+    "metadata:",
+    "  id: 7h8j9k0m1n2p3q4r",
+    "  name: Run Dry test set",
+    "  description: Must be prepared separately.",
+    "  tags: []",
+    "spec:",
+    `  target: { ref: "flow:${flowId}" }`,
+    "  method:",
+    "    type: flow-run-dry",
+    "    cases:",
+    "      - id: ship",
+    "        name: Ship",
+    "        input: {}",
+    "        mocks:",
+    "          approve:",
+    "            expectInput: {}",
+    '            expectPrompt: "Release?"',
+    "            output: { selection: ship }",
+    "        expect:",
+    "          status: succeeded",
+    "          path: [approve]",
+    "          output: { selection: ship }",
+  ].join("\n");
+}
+
 function automationWithPrompt(prompt: string): string {
   return [
     "apiVersion: pragma/v3",
@@ -508,6 +750,115 @@ function automationWithPrompt(prompt: string): string {
     "    adapter: pragma.automation.delivery.local@v1",
     "",
   ].join("\n");
+}
+
+function approvalRouteFlow() {
+  return PragmaFlowResourceSchema.parse({
+    apiVersion: "pragma/v3",
+    kind: "Flow",
+    metadata: {
+      id: "8h9j0k1m2n3p4q5r",
+      name: "Approval route",
+      description: "Routes an approval decision.",
+      tags: [],
+    },
+    spec: {
+      graph: {
+        start: "decision",
+        steps: {
+          decision: {
+            human: {
+              selectionMode: "single",
+              prompt: { segments: [{ text: "Approve?" }] },
+              options: [
+                { value: "approve", label: "Approve" },
+                { value: "reject", label: "Reject" },
+              ],
+            },
+          },
+          approved: {
+            human: {
+              selectionMode: "single",
+              prompt: { segments: [{ text: "Published" }] },
+              options: [
+                { value: "done", label: "Done" },
+                { value: "back", label: "Back" },
+              ],
+            },
+          },
+          rejected: {
+            human: {
+              selectionMode: "single",
+              prompt: { segments: [{ text: "Cancelled" }] },
+              options: [
+                { value: "done", label: "Done" },
+                { value: "back", label: "Back" },
+              ],
+            },
+          },
+        },
+        transitions: {
+          decision: {
+            route: "selection",
+            cases: { approve: "approved" },
+            fallback: "rejected",
+          },
+          approved: { end: true },
+          rejected: { end: true },
+        },
+        loops: {},
+      },
+    },
+  });
+}
+
+function approvalRouteCases() {
+  return [
+    PragmaFlowRunDryCaseSchema.parse({
+      id: "approve",
+      name: "Approve",
+      input: {},
+      mocks: {
+        decision: {
+          expectInput: {},
+          expectPrompt: "Approve?",
+          output: { selection: "approve" },
+        },
+        approved: {
+          expectInput: {},
+          expectPrompt: "Published",
+          output: { selection: "done" },
+        },
+      },
+      expect: {
+        status: "succeeded",
+        path: ["decision", "approved"],
+        output: { selection: "done" },
+      },
+    }),
+    PragmaFlowRunDryCaseSchema.parse({
+      id: "reject",
+      name: "Reject",
+      input: {},
+      mocks: {
+        decision: {
+          expectInput: {},
+          expectPrompt: "Approve?",
+          output: { selection: "reject" },
+        },
+        rejected: {
+          expectInput: {},
+          expectPrompt: "Cancelled",
+          output: { selection: "done" },
+        },
+      },
+      expect: {
+        status: "succeeded",
+        path: ["decision", "rejected"],
+        output: { selection: "done" },
+      },
+    }),
+  ];
 }
 
 function adapterOptions(

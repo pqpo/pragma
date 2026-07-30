@@ -11,6 +11,7 @@ import type {
   PragmaRuntimeProfileResource,
   PragmaAutomationResource,
 } from "@pragma/interpreter/ast";
+import type { PragmaEvaluationResource } from "@pragma/evaluation/ast";
 import { afterEach, describe, expect, it } from "vitest";
 import { BUILT_IN_PRAGMA_REF, builtInPragmaResource } from "@pragma/default-agent";
 import { ContentAddressedStore, derivePragmaResourceId } from "@pragma/core";
@@ -600,6 +601,50 @@ describe("PragmaProjectStore", () => {
       project.remove({ baseRevision: 1, ref: "expert:1xddvess309a6gme" }),
     ).rejects.toMatchObject({ code: "resource_referenced" });
     expect((await project.get()).revision).toBe(1);
+  });
+
+  it("creates an independent Evaluation and protects its target Flow", async () => {
+    const { project } = await stores();
+    const flow = exampleFlow();
+    const evaluation: PragmaEvaluationResource = {
+      apiVersion: "pragma/v3",
+      kind: "Evaluation",
+      metadata: {
+        id: "7h8j9k0m1n2p3q4r",
+        name: "Release Run Dry",
+        description: "Tests the release flow.",
+        tags: ["run-dry"],
+      },
+      spec: {
+        target: { ref: `flow:${flow.metadata.id}` },
+        method: {
+          type: "flow-run-dry",
+          cases: [
+            {
+              id: "finish",
+              name: "Finish",
+              input: {},
+              mocks: { finish: { expectInput: {}, output: { ok: true } } },
+              expect: { status: "succeeded", path: ["finish"], output: { ok: true } },
+            },
+          ],
+        },
+      },
+    };
+
+    const published = await project.publish({
+      expectedRevision: 0,
+      resources: [flow, evaluation],
+    });
+
+    expect(published.resources.map((resource) => resource.kind)).toContain("Evaluation");
+    await expect(
+      project.remove({ baseRevision: published.revision, ref: `flow:${flow.metadata.id}` }),
+    ).rejects.toMatchObject({
+      code: "resource_referenced",
+      message:
+        "This resource is used by another Expert, Expert Team, Flow, or Evaluation. Remove those dependencies before deleting it.",
+    });
   });
 
   it("ignores an unpublished legacy revision directory", async () => {

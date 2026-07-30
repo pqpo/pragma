@@ -5,6 +5,7 @@ import { readSidebarCollapsed, writeSidebarCollapsed } from "./lib/sidebar-prefe
 import { SettingsPage, type SettingsView } from "./pages/settings/SettingsPage.tsx";
 import { MissionsPage } from "./pages/missions/MissionsPage.tsx";
 import { StudioPage } from "./pages/studio/StudioPage.tsx";
+import { EvaluationsPage } from "./pages/evaluations/EvaluationsPage.tsx";
 import { HomePage } from "./pages/home/HomePage.tsx";
 import { UsagePage } from "./pages/usage/UsagePage.tsx";
 import type { Mission } from "../../shared/contracts/index.ts";
@@ -76,8 +77,6 @@ export function App() {
             setActiveView("home");
           }}
         />
-      ) : activeView === "usage" ? (
-        <UsagePage />
       ) : activeView === "studio" ? (
         <StudioPage
           initialExpertRef={studioExpertRef}
@@ -87,6 +86,10 @@ export function App() {
             setActiveView("home");
           }}
         />
+      ) : activeView === "evaluations" ? (
+        <EvaluationsPage />
+      ) : activeView === "usage" ? (
+        <UsagePage />
       ) : (
         <SettingsPage initialView={settingsView} />
       )}

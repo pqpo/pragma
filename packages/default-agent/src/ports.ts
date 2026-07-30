@@ -1,5 +1,8 @@
 import type {
   DefaultAgentChangeSet,
+  DefaultAgentEvaluationDraft,
+  DefaultAgentEvaluationDraftOperation,
+  DefaultAgentEvaluationDraftRunResult,
   DefaultAgentFlowDraft,
   DefaultAgentFlowDraftOperation,
   DefaultAgentDslDocument,
@@ -12,7 +15,6 @@ import type {
   DefaultAgentTaskWorkItem,
   DefaultAgentAutomationSummary,
 } from "./contracts.ts";
-import type { PragmaFlowRunDrySuiteResult } from "@pragma/interpreter/ast";
 
 export interface DefaultAgentDslProjectPort {
   allocateResourceIds(
@@ -25,7 +27,8 @@ export interface DefaultAgentDslProjectPort {
         | "automation"
         | "capability"
         | "context-store"
-        | "runtime-profile";
+        | "runtime-profile"
+        | "evaluation";
     }[],
   ): Promise<readonly { readonly key: string; readonly id: string; readonly ref: string }[]>;
   list(): Promise<{
@@ -40,7 +43,7 @@ export interface DefaultAgentDslProjectPort {
   }): Promise<DefaultAgentPrepareResult>;
   createFlowDraft(input: {
     readonly expectedProjectRevision: number;
-    readonly metadata: Omit<DefaultAgentFlowDraft["resource"]["metadata"], "id">;
+    readonly metadata: DefaultAgentFlowDraft["resource"]["metadata"];
     readonly input?: DefaultAgentFlowDraft["resource"]["spec"]["input"] | undefined;
     readonly output?: DefaultAgentFlowDraft["resource"]["spec"]["output"] | undefined;
     readonly limits?: DefaultAgentFlowDraft["resource"]["spec"]["limits"] | undefined;
@@ -52,7 +55,35 @@ export interface DefaultAgentDslProjectPort {
     readonly operations: readonly DefaultAgentFlowDraftOperation[];
   }): Promise<DefaultAgentFlowDraft>;
   validateFlowDraft(draftId: string): Promise<DefaultAgentFlowDraft>;
-  runFlowDraftDry(draftId: string): Promise<PragmaFlowRunDrySuiteResult>;
+  createEvaluationDraft(
+    input:
+      | {
+          readonly mode: "create";
+          readonly expectedProjectRevision: number;
+          readonly metadata: DefaultAgentEvaluationDraft["resource"]["metadata"];
+          readonly targetRef: DefaultAgentEvaluationDraft["resource"]["spec"]["target"]["ref"];
+        }
+      | {
+          readonly mode: "edit";
+          readonly expectedProjectRevision: number;
+          readonly evaluationRef: string;
+        },
+  ): Promise<DefaultAgentEvaluationDraft>;
+  getEvaluationDraft(draftId: string): Promise<DefaultAgentEvaluationDraft>;
+  updateEvaluationDraft(input: {
+    readonly draftId: string;
+    readonly expectedDraftRevision: number;
+    readonly operations: readonly DefaultAgentEvaluationDraftOperation[];
+  }): Promise<DefaultAgentEvaluationDraft>;
+  runEvaluationDraft(input: {
+    readonly draftId: string;
+    readonly caseIds: readonly string[];
+  }): Promise<DefaultAgentEvaluationDraftRunResult>;
+  prepareEvaluationDraft(input: {
+    readonly draftId: string;
+    readonly expectedDraftRevision: number;
+  }): Promise<DefaultAgentPrepareResult>;
+  discardEvaluationDraft(draftId: string): Promise<void>;
   prepareFlowDraft(input: {
     readonly draftId: string;
     readonly expectedDraftRevision: number;

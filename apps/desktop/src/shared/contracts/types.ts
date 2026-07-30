@@ -1,4 +1,5 @@
 import { z } from "zod";
+import { PragmaFlowRunDrySuiteResultSchema } from "@pragma/evaluation/ast";
 
 import {
   AllocatePragmaResourceIdResultSchema,
@@ -6,10 +7,9 @@ import {
   PragmaProjectChangesSchema,
   PragmaProjectChangesValidationResultSchema,
   PragmaProjectSnapshotSchema,
-  PragmaFlowRunDrySuiteResultSchema,
   PragmaYamlValidationResultSchema,
   PublishPragmaProjectSchema,
-  RunPragmaFlowDrySuiteSchema,
+  RunPragmaEvaluationSchema,
   UpsertPragmaResourceSchema,
   ValidatePragmaResourceSchema,
 } from "./projects.ts";
@@ -269,7 +269,7 @@ export type PragmaProjectChangesValidationResult = z.infer<
 export type DeletePragmaResource = z.infer<typeof DeletePragmaResourceSchema>;
 export type PragmaYamlValidationResult = z.infer<typeof PragmaYamlValidationResultSchema>;
 export type ValidatePragmaResource = z.infer<typeof ValidatePragmaResourceSchema>;
-export type RunPragmaFlowDrySuite = z.infer<typeof RunPragmaFlowDrySuiteSchema>;
+export type RunPragmaEvaluation = z.infer<typeof RunPragmaEvaluationSchema>;
 export type PragmaFlowRunDrySuiteResult = z.infer<typeof PragmaFlowRunDrySuiteResultSchema>;
 export type WorkflowLayout = z.infer<typeof WorkflowLayoutSchema>;
 export type GetWorkflowLayout = z.infer<typeof GetWorkflowLayoutSchema>;

@@ -10,8 +10,22 @@ import type {
   DefaultAgentDslProjectPort,
   DefaultAgentTaskPort,
 } from "./ports.ts";
-import { DefaultAgentFlowDraftOperationSchema, DefaultAgentFlowDraftSchema } from "./contracts.ts";
-import { PragmaFlowRunDrySuiteResultSchema, PragmaMetadataSchema } from "@pragma/interpreter/ast";
+import {
+  DefaultAgentEvaluationDraftOperationSchema,
+  DefaultAgentEvaluationDraftRunResultSchema,
+  DefaultAgentEvaluationDraftSummarySchema,
+  DefaultAgentEvaluationDraftViewSchema,
+  DefaultAgentFlowDraftOperationSchema,
+  DefaultAgentFlowDraftSchema,
+  type DefaultAgentEvaluationDraft,
+} from "./contracts.ts";
+import {
+  PragmaEvaluationFlowRefSchema,
+  PragmaEvaluationMetadataSchema,
+  PragmaEvaluationRefSchema,
+  PragmaFlowRunDryCaseSchema,
+} from "@pragma/evaluation/ast";
+import { PragmaMetadataSchema } from "@pragma/interpreter/ast";
 
 const RefInput = z.object({ ref: z.string().min(1) });
 const PrepareInput = z.object({
@@ -33,6 +47,7 @@ const AllocateResourceIdsInput = z.object({
           "capability",
           "context-store",
           "runtime-profile",
+          "evaluation",
         ]),
       }),
     )
@@ -41,7 +56,7 @@ const AllocateResourceIdsInput = z.object({
 });
 const CreateFlowDraftInput = z.object({
   expectedProjectRevision: z.number().int().nonnegative(),
-  metadata: PragmaMetadataSchema.omit({ id: true }),
+  metadata: PragmaMetadataSchema,
   input: DefaultAgentFlowDraftSchema.shape.resource.shape.spec.shape.input.optional(),
   output: DefaultAgentFlowDraftSchema.shape.resource.shape.spec.shape.output.optional(),
   limits: DefaultAgentFlowDraftSchema.shape.resource.shape.spec.shape.limits.optional(),
@@ -51,10 +66,65 @@ const UpdateFlowDraftInput = z.object({
   expectedDraftRevision: z.number().int().nonnegative(),
   operations: z.array(DefaultAgentFlowDraftOperationSchema).min(1).max(50),
 });
+const EvaluationDraftRevisionInput = z.object({
+  draftId: z.string().uuid(),
+  expectedDraftRevision: z.number().int().nonnegative(),
+});
 const PrepareFlowDraftInput = z.object({
   draftId: z.string().uuid(),
   expectedDraftRevision: z.number().int().nonnegative(),
   additionalSources: z.array(z.string().min(1).max(2_000_000)).max(49).optional(),
+});
+const CreateEvaluationDraftCreateInput = z.object({
+  mode: z.literal("create"),
+  expectedProjectRevision: z.number().int().nonnegative(),
+  metadata: PragmaEvaluationMetadataSchema,
+  targetRef: PragmaEvaluationFlowRefSchema,
+});
+const CreateEvaluationDraftEditInput = z.object({
+  mode: z.literal("edit"),
+  expectedProjectRevision: z.number().int().nonnegative(),
+  evaluationRef: PragmaEvaluationRefSchema,
+});
+const CreateEvaluationDraftInput = z.discriminatedUnion("mode", [
+  CreateEvaluationDraftCreateInput,
+  CreateEvaluationDraftEditInput,
+]);
+// MCP tool inputs must expose a top-level object. A root discriminated union materializes as
+// `oneOf` and is reduced to an empty object by the MCP catalog, so keep the strict execution
+// validator above and publish the union fields through this model-facing object schema.
+const CreateEvaluationDraftToolInput = z.object({
+  mode: z
+    .enum(["create", "edit"])
+    .describe("Use create for a new test set or edit for an existing Evaluation."),
+  expectedProjectRevision: CreateEvaluationDraftCreateInput.shape.expectedProjectRevision,
+  metadata: CreateEvaluationDraftCreateInput.shape.metadata
+    .optional()
+    .describe("Required when mode is create."),
+  targetRef: CreateEvaluationDraftCreateInput.shape.targetRef
+    .optional()
+    .describe("Exact committed Flow ref; required when mode is create."),
+  evaluationRef: CreateEvaluationDraftEditInput.shape.evaluationRef
+    .optional()
+    .describe("Exact existing Evaluation ref; required when mode is edit."),
+});
+const EvaluationCaseIdsSchema = z
+  .array(PragmaFlowRunDryCaseSchema.shape.id)
+  .min(1)
+  .max(10)
+  .refine((caseIds) => new Set(caseIds).size === caseIds.length, "Case IDs must be unique.");
+const GetEvaluationDraftInput = z.object({
+  draftId: z.string().uuid(),
+  caseIds: EvaluationCaseIdsSchema.optional(),
+});
+const UpdateEvaluationDraftInput = z.object({
+  draftId: z.string().uuid(),
+  expectedDraftRevision: z.number().int().nonnegative(),
+  operations: z.array(DefaultAgentEvaluationDraftOperationSchema).min(1).max(10),
+});
+const RunEvaluationDraftInput = z.object({
+  draftId: z.string().uuid(),
+  caseIds: EvaluationCaseIdsSchema,
 });
 const TaskIdInput = z.object({ id: z.string().min(1) });
 const SubmitTaskInput = z.object({
@@ -219,19 +289,72 @@ export function createDefaultAgentTools(options: {
       async (args) => ok(await options.project.validateFlowDraft(DraftIdInput.parse(args).draftId)),
     ),
     tool(
-      "run_flow_draft_dry",
-      "Run every Flow draft unit case with mocked node outputs and report assertions plus transition coverage.",
-      z.toJSONSchema(DraftIdInput),
+      "create_evaluation_draft",
+      "Create an empty incremental Evaluation draft for a committed Flow, or start editing one existing Evaluation.",
+      z.toJSONSchema(CreateEvaluationDraftToolInput),
+      async (args) => {
+        return ok(
+          summarizeEvaluationDraft(
+            await options.project.createEvaluationDraft(CreateEvaluationDraftInput.parse(args)),
+          ),
+        );
+      },
+    ),
+    tool(
+      "get_evaluation_draft",
+      "Read compact Evaluation draft metadata and case summaries. Request at most 10 case IDs to include their full definitions.",
+      z.toJSONSchema(GetEvaluationDraftInput),
+      async (args) => {
+        const input = GetEvaluationDraftInput.parse(args);
+        return ok(
+          viewEvaluationDraft(
+            await options.project.getEvaluationDraft(input.draftId),
+            input.caseIds ?? [],
+          ),
+        );
+      },
+    ),
+    tool(
+      "update_evaluation_draft",
+      "Apply at most 10 typed case or rebase operations to an Evaluation draft. Default to one case per call.",
+      z.toJSONSchema(UpdateEvaluationDraftInput),
       async (args) =>
         ok(
-          PragmaFlowRunDrySuiteResultSchema.parse(
-            await options.project.runFlowDraftDry(DraftIdInput.parse(args).draftId),
+          summarizeEvaluationDraft(
+            await options.project.updateEvaluationDraft(UpdateEvaluationDraftInput.parse(args)),
           ),
         ),
     ),
     tool(
+      "run_evaluation_draft",
+      "Run the complete Evaluation draft internally, returning detailed results for only 1 to 10 requested cases plus compact suite and cumulative coverage status.",
+      z.toJSONSchema(RunEvaluationDraftInput),
+      async (args) =>
+        ok(
+          DefaultAgentEvaluationDraftRunResultSchema.parse(
+            await options.project.runEvaluationDraft(RunEvaluationDraftInput.parse(args)),
+          ),
+        ),
+    ),
+    tool(
+      "prepare_evaluation_draft",
+      "Rerun and independently prepare a passing Evaluation draft that targets a committed Flow. Pass the returned changeSetId to commit_dsl_changes to save only the Evaluation.",
+      z.toJSONSchema(EvaluationDraftRevisionInput),
+      async (args) =>
+        ok(await options.project.prepareEvaluationDraft(EvaluationDraftRevisionInput.parse(args))),
+    ),
+    tool(
+      "discard_evaluation_draft",
+      "Discard an uncommitted Evaluation draft.",
+      z.toJSONSchema(DraftIdInput),
+      async (args) => {
+        await options.project.discardEvaluationDraft(DraftIdInput.parse(args).draftId);
+        return ok({ discarded: true });
+      },
+    ),
+    tool(
       "prepare_flow_draft",
-      "Materialize a complete Flow draft only after all run dry cases pass with full transition coverage, then atomically validate it with optional Expert or Team YAML sources.",
+      "Prepare a structurally complete Flow and optional non-Evaluation dependency YAML sources. Evaluations are prepared and saved separately with prepare_evaluation_draft and commit_dsl_changes.",
       z.toJSONSchema(PrepareFlowDraftInput),
       async (args) => ok(await options.project.prepareFlowDraft(PrepareFlowDraftInput.parse(args))),
     ),
@@ -345,6 +468,43 @@ function tool(
 
 function ok(details: unknown): ExpertAgentToolCallResult {
   return { text: JSON.stringify(details, null, 2), details };
+}
+
+function summarizeEvaluationDraft(
+  draft: DefaultAgentEvaluationDraft,
+): z.infer<typeof DefaultAgentEvaluationDraftSummarySchema> {
+  return DefaultAgentEvaluationDraftSummarySchema.parse({
+    draftId: draft.draftId,
+    baseProjectRevision: draft.baseProjectRevision,
+    draftRevision: draft.draftRevision,
+    metadata: draft.resource.metadata,
+    targetRef: draft.resource.spec.target.ref,
+    ...(draft.sourceEvaluationRef === undefined
+      ? {}
+      : { sourceEvaluationRef: draft.sourceEvaluationRef }),
+    cases: draft.resource.spec.method.cases.map(({ id, name }) => ({ id, name })),
+    diagnostics: draft.diagnostics,
+    createdAt: draft.createdAt,
+    updatedAt: draft.updatedAt,
+  });
+}
+
+function viewEvaluationDraft(
+  draft: DefaultAgentEvaluationDraft,
+  caseIds: readonly string[],
+): z.infer<typeof DefaultAgentEvaluationDraftViewSchema> {
+  const cases = new Map(
+    draft.resource.spec.method.cases.map((testCase) => [testCase.id, testCase] as const),
+  );
+  const selectedCases = caseIds.map((caseId) => {
+    const testCase = cases.get(caseId);
+    if (testCase === undefined) throw new Error(`Evaluation draft case not found: ${caseId}`);
+    return testCase;
+  });
+  return DefaultAgentEvaluationDraftViewSchema.parse({
+    ...summarizeEvaluationDraft(draft),
+    selectedCases,
+  });
 }
 
 function objectSchema(

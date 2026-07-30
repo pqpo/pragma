@@ -1,4 +1,4 @@
 interface:
   display_name: "Author Pragma DSL"
-  short_description: "Create and update validated pragma/v3 resources"
-  default_prompt: "Create or update Pragma DSL resources from the user intent, validate the complete project, and save the approved change."
+  short_description: "Author and evaluate validated pragma/v3 resources"
+  default_prompt: "Create or update Pragma DSL resources from the user intent, keep Flow evaluations independent, validate the complete project, and save the approved change."

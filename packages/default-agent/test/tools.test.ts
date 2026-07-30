@@ -5,6 +5,7 @@ import type {
   DefaultAgentDslProjectPort,
   DefaultAgentTaskPort,
 } from "../src/ports.ts";
+import { DefaultAgentEvaluationDraftSchema } from "../src/contracts.ts";
 import { createDefaultAgentTools } from "../src/tools.ts";
 
 describe("DefaultAgent managed tools", () => {
@@ -36,19 +37,208 @@ describe("DefaultAgent managed tools", () => {
     expect(operationId).toBe("runtime-call-7");
   });
 
-  it("validates run dry results before returning them through the managed-tool boundary", async () => {
+  it("replaces complete Evaluation YAML with bounded draft tools", async () => {
     const project = projectPort({
-      async runFlowDraftDry() {
+      async runEvaluationDraft() {
         return {} as never;
       },
     });
+    const tools = createDefaultAgentTools({ project, tasks: taskPort() });
+    expect(tools.some((candidate) => candidate.name === "run_evaluation")).toBe(false);
+    const tool = tools.find((candidate) => candidate.name === "run_evaluation_draft")!;
+
+    await expect(
+      tool.call(
+        {
+          draftId: "ed1bcbb5-b1e6-4aa5-9357-7853ce745f6b",
+          caseIds: ["case-1"],
+        },
+        undefined,
+        undefined,
+      ),
+    ).rejects.toThrow();
+    await expect(
+      tool.call(
+        {
+          draftId: "ed1bcbb5-b1e6-4aa5-9357-7853ce745f6b",
+          caseIds: Array.from({ length: 11 }, (_, index) => `case-${index}`),
+        },
+        undefined,
+        undefined,
+      ),
+    ).rejects.toThrow();
+  });
+
+  it("exposes independent Flow and Evaluation prepare-and-save paths", () => {
+    const tools = createDefaultAgentTools({ project: projectPort(), tasks: taskPort() });
+    const createEvaluation = tools.find(
+      (candidate) => candidate.name === "create_evaluation_draft",
+    )!;
+    const prepareFlow = tools.find((candidate) => candidate.name === "prepare_flow_draft")!;
+    const prepareEvaluation = tools.find(
+      (candidate) => candidate.name === "prepare_evaluation_draft",
+    )!;
+
+    expect(JSON.stringify(createEvaluation.inputSchema)).not.toContain("targetFlowDraftId");
+    expect(createEvaluation.inputSchema).toMatchObject({
+      type: "object",
+      properties: {
+        mode: { type: "string", enum: ["create", "edit"] },
+        expectedProjectRevision: { type: "integer", minimum: 0 },
+        metadata: { type: "object" },
+        targetRef: { type: "string" },
+        evaluationRef: { type: "string" },
+      },
+      required: ["mode", "expectedProjectRevision"],
+      additionalProperties: false,
+    });
+    expect(createEvaluation.description).toContain("committed Flow");
+    expect(createEvaluation.description).not.toContain("uncommitted Flow");
+    expect(JSON.stringify(prepareFlow.inputSchema)).not.toContain("evaluationDraft");
+    expect(prepareFlow.description).toContain("Evaluations are prepared and saved separately");
+    expect(prepareEvaluation.description).toContain("committed Flow");
+    expect(prepareEvaluation.description).toContain("commit_dsl_changes");
+    expect(prepareEvaluation.description).toContain("save only the Evaluation");
+  });
+
+  it("validates both create_evaluation_draft modes before calling the project port", async () => {
+    const inputs: Parameters<DefaultAgentDslProjectPort["createEvaluationDraft"]>[0][] = [];
+    const project = projectPort({
+      async createEvaluationDraft(input) {
+        inputs.push(input);
+        return evaluationDraft();
+      },
+    });
     const tool = createDefaultAgentTools({ project, tasks: taskPort() }).find(
-      (candidate) => candidate.name === "run_flow_draft_dry",
+      (candidate) => candidate.name === "create_evaluation_draft",
     )!;
 
     await expect(
       tool.call(
-        { draftId: "ed1bcbb5-b1e6-4aa5-9357-7853ce745f6b" },
+        {
+          mode: "create",
+          expectedProjectRevision: 3,
+        },
+        undefined,
+        undefined,
+      ),
+    ).rejects.toThrow();
+    expect(inputs).toHaveLength(0);
+
+    await expect(
+      tool.call(
+        {
+          mode: "create",
+          expectedProjectRevision: 3,
+          metadata: {
+            id: "7h8j9k0m1n2p3q4r",
+            name: "Test Run Dry",
+            description: "Tests a committed Flow.",
+            tags: [],
+          },
+          targetRef: "flow:8h9j0k1m2n3p4q5r",
+        },
+        undefined,
+        undefined,
+      ),
+    ).resolves.toMatchObject({ details: { targetRef: "flow:8h9j0k1m2n3p4q5r" } });
+    await expect(
+      tool.call(
+        {
+          mode: "edit",
+          expectedProjectRevision: 4,
+          evaluationRef: "evaluation:7h8j9k0m1n2p3q4r",
+        },
+        undefined,
+        undefined,
+      ),
+    ).resolves.toMatchObject({ details: { targetRef: "flow:8h9j0k1m2n3p4q5r" } });
+    expect(inputs).toEqual([
+      {
+        mode: "create",
+        expectedProjectRevision: 3,
+        metadata: {
+          id: "7h8j9k0m1n2p3q4r",
+          name: "Test Run Dry",
+          description: "Tests a committed Flow.",
+          tags: [],
+        },
+        targetRef: "flow:8h9j0k1m2n3p4q5r",
+      },
+      {
+        mode: "edit",
+        expectedProjectRevision: 4,
+        evaluationRef: "evaluation:7h8j9k0m1n2p3q4r",
+      },
+    ]);
+  });
+
+  it("returns compact draft summaries and caps update batches at 10 operations", async () => {
+    const project = projectPort({
+      async getEvaluationDraft() {
+        return evaluationDraft();
+      },
+      async updateEvaluationDraft() {
+        return evaluationDraft();
+      },
+    });
+    const tools = createDefaultAgentTools({ project, tasks: taskPort() });
+    const get = tools.find((candidate) => candidate.name === "get_evaluation_draft")!;
+    const summary = await get.call(
+      { draftId: "ed1bcbb5-b1e6-4aa5-9357-7853ce745f6b" },
+      undefined,
+      undefined,
+    );
+    expect(summary.details).toMatchObject({
+      cases: [{ id: "case-1", name: "Case one" }],
+      selectedCases: [],
+    });
+    expect(summary.text).not.toContain("expectInput");
+    const selected = await get.call(
+      {
+        draftId: "ed1bcbb5-b1e6-4aa5-9357-7853ce745f6b",
+        caseIds: ["case-1"],
+      },
+      undefined,
+      undefined,
+    );
+    expect(selected.text).toContain("expectInput");
+    await expect(
+      get.call(
+        {
+          draftId: "ed1bcbb5-b1e6-4aa5-9357-7853ce745f6b",
+          caseIds: Array.from({ length: 11 }, (_, index) => `case-${index}`),
+        },
+        undefined,
+        undefined,
+      ),
+    ).rejects.toThrow();
+
+    const update = tools.find((candidate) => candidate.name === "update_evaluation_draft")!;
+    await expect(
+      update.call(
+        {
+          draftId: "ed1bcbb5-b1e6-4aa5-9357-7853ce745f6b",
+          expectedDraftRevision: 0,
+          operations: Array.from({ length: 10 }, (_, index) => ({
+            type: "remove_case",
+            caseId: `case-${index}`,
+          })),
+        },
+        undefined,
+        undefined,
+      ),
+    ).resolves.toMatchObject({ details: { cases: [{ id: "case-1" }] } });
+    await expect(
+      update.call(
+        {
+          draftId: "ed1bcbb5-b1e6-4aa5-9357-7853ce745f6b",
+          expectedDraftRevision: 0,
+          operations: Array.from({ length: 11 }, (_, index) => ({
+            type: "remove_case",
+            caseId: `case-${index}`,
+          })),
+        },
         undefined,
         undefined,
       ),
@@ -112,9 +302,22 @@ function projectPort(
     validateFlowDraft: async () => {
       throw new Error("unused");
     },
-    runFlowDraftDry: async () => {
+    createEvaluationDraft: async () => {
       throw new Error("unused");
     },
+    getEvaluationDraft: async () => {
+      throw new Error("unused");
+    },
+    updateEvaluationDraft: async () => {
+      throw new Error("unused");
+    },
+    runEvaluationDraft: async () => {
+      throw new Error("unused");
+    },
+    prepareEvaluationDraft: async () => {
+      throw new Error("unused");
+    },
+    discardEvaluationDraft: async () => undefined,
     prepareFlowDraft: async () => {
       throw new Error("unused");
     },
@@ -170,4 +373,42 @@ function automationSummary() {
     nextRunAt: "2026-07-24T01:00:00.000Z",
     queueDepth: 0,
   };
+}
+
+function evaluationDraft() {
+  return DefaultAgentEvaluationDraftSchema.parse({
+    draftId: "ed1bcbb5-b1e6-4aa5-9357-7853ce745f6b",
+    baseProjectRevision: 0,
+    draftRevision: 1,
+    resource: {
+      apiVersion: "pragma/v3",
+      kind: "Evaluation",
+      metadata: {
+        id: "7h8j9k0m1n2p3q4r",
+        name: "Test Run Dry",
+        description: "Tests a Flow.",
+        tags: [],
+      },
+      spec: {
+        target: { ref: "flow:8h9j0k1m2n3p4q5r" },
+        method: {
+          type: "flow-run-dry",
+          cases: [
+            {
+              id: "case-1",
+              name: "Case one",
+              input: {},
+              mocks: {
+                step: { expectInput: {}, output: {} },
+              },
+              expect: { status: "succeeded", path: ["step"], output: {} },
+            },
+          ],
+        },
+      },
+    },
+    diagnostics: [],
+    createdAt: "2026-07-29T00:00:00.000Z",
+    updatedAt: "2026-07-29T00:00:01.000Z",
+  });
 }

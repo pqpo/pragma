@@ -7,7 +7,8 @@ export type PragmaResourceNamespace =
   | "automation"
   | "capability"
   | "context-store"
-  | "runtime-profile";
+  | "runtime-profile"
+  | "evaluation";
 
 const namespaceByKind = {
   Expert: "expert",
@@ -17,6 +18,7 @@ const namespaceByKind = {
   Capability: "capability",
   ContextStore: "context-store",
   RuntimeProfile: "runtime-profile",
+  Evaluation: "evaluation",
 } as const satisfies Readonly<Record<PragmaResource["kind"], PragmaResourceNamespace>>;
 
 const directoryByKind = {
@@ -27,6 +29,7 @@ const directoryByKind = {
   Capability: "capabilities",
   ContextStore: "context-stores",
   RuntimeProfile: "runtime-profiles",
+  Evaluation: "evaluations",
 } as const satisfies Readonly<Record<PragmaResource["kind"], string>>;
 
 export function pragmaResourceNamespace(resource: PragmaResource): PragmaResourceNamespace {

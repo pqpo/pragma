@@ -11,7 +11,8 @@ export type PragmaProjectResourceNamespace =
   | "automation"
   | "capability"
   | "context-store"
-  | "runtime-profile";
+  | "runtime-profile"
+  | "evaluation";
 
 const namespaceByKind = {
   Expert: "expert",
@@ -21,6 +22,7 @@ const namespaceByKind = {
   Capability: "capability",
   ContextStore: "context-store",
   RuntimeProfile: "runtime-profile",
+  Evaluation: "evaluation",
 } as const satisfies Readonly<Record<PragmaProjectResourceKind, PragmaProjectResourceNamespace>>;
 
 export interface PragmaResourceIdentityMigrationIndex {
@@ -64,7 +66,7 @@ export function createPragmaResourceIdentityMigrationIndex(input: {
 
 export function migrateLegacyPragmaResourceRef(ref: string, projectId: string): string {
   const match =
-    /^(expert|team|flow|automation|capability|context-store|runtime-profile):([^@]+)@[^@]+$/.exec(
+    /^(expert|team|flow|automation|capability|context-store|runtime-profile|evaluation):([^@]+)@[^@]+$/.exec(
       ref,
     );
   if (match === null) return ref;
@@ -97,6 +99,8 @@ function kindByNamespace(namespace: PragmaProjectResourceNamespace): PragmaProje
       return "ContextStore";
     case "runtime-profile":
       return "RuntimeProfile";
+    case "evaluation":
+      return "Evaluation";
   }
 }
 

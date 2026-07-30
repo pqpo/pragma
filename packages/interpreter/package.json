@@ -23,6 +23,7 @@
   "dependencies": {
     "@cfworker/json-schema": "^4.1.1",
     "@pragma/core": "workspace:*",
+    "@pragma/evaluation": "workspace:*",
     "@pragma/shared": "workspace:*",
     "yaml": "^2.9.0",
     "zod": "latest"

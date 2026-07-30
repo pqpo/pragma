@@ -377,7 +377,7 @@ export function createPragmaProjectStore(options: {
       if (referencingPragmaResources(snapshot.resources, input.ref).length > 0) {
         throw new PragmaProjectStoreError(
           "resource_referenced",
-          "This resource is used by another Expert, Expert Team, or Flow. Remove those dependencies before deleting it.",
+          "This resource is used by another Expert, Expert Team, Flow, or Evaluation. Remove those dependencies before deleting it.",
         );
       }
       return await apply({
@@ -786,6 +786,7 @@ function resourceDirectory(resource: PragmaResource): string {
   if (resource.kind === "Capability") return "capabilities";
   if (resource.kind === "ContextStore") return "context-stores";
   if (resource.kind === "Automation") return "automations";
+  if (resource.kind === "Evaluation") return "evaluations";
   return "runtime-profiles";
 }
 

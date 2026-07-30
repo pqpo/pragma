@@ -13,6 +13,7 @@ export default defineConfig({
           "@pragma/runtime-pi",
           "@pragma/runtime-qodercli",
           "@pragma/core",
+          "@pragma/evaluation",
           "@pragma/interpreter",
           "@pragma/shared",
           "@pragma/default-agent",

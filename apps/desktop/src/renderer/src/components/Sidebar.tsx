@@ -6,13 +6,14 @@ import {
   GearSix,
   House,
   RocketLaunch,
+  TestTube,
   TerminalWindow,
 } from "@phosphor-icons/react";
 import { useTranslation } from "react-i18next";
 
 import pragmaIcon from "../assets/pragma-icon.png";
 
-export type AppView = "home" | "missions" | "usage" | "studio" | "settings";
+export type AppView = "home" | "missions" | "studio" | "evaluations" | "usage" | "settings";
 
 const navigationItems: readonly {
   readonly id: AppView;
@@ -21,8 +22,9 @@ const navigationItems: readonly {
 }[] = [
   { id: "home", labelKey: "navigation.home", icon: House },
   { id: "missions", labelKey: "navigation.missions", icon: RocketLaunch },
-  { id: "usage", labelKey: "navigation.usage", icon: ChartLineUp },
   { id: "studio", labelKey: "navigation.studio", icon: TerminalWindow },
+  { id: "evaluations", labelKey: "navigation.evaluations", icon: TestTube },
+  { id: "usage", labelKey: "navigation.usage", icon: ChartLineUp },
   { id: "settings", labelKey: "navigation.settings", icon: GearSix },
 ];
 

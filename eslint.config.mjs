@@ -13,9 +13,9 @@ const commonRestrictedPatterns = [
 ];
 
 const desktopBrowserSafePragmaRestriction = {
-  regex: "^@pragma/(?!shared$|interpreter/ast$).+",
+  regex: "^@pragma/(?!shared$|interpreter/ast$|evaluation/ast$).+",
   message:
-    "Desktop preload, renderer, and shared code may only import @pragma/shared or @pragma/interpreter/ast.",
+    "Desktop preload, renderer, and shared code may only import @pragma/shared, @pragma/interpreter/ast, or @pragma/evaluation/ast.",
 };
 
 const config = tseslint.config(
@@ -58,7 +58,7 @@ const config = tseslint.config(
       "no-restricted-imports": [
         "error",
         {
-          paths: ["@pragma/server", "@pragma/core", "@prisma/client"],
+          paths: ["@pragma/server", "@pragma/core", "@pragma/evaluation", "@prisma/client"],
           patterns: [
             ...commonRestrictedPatterns,
             { group: ["@pragma/server-*", "node:*"], message: "Web must stay browser-safe." },
@@ -167,6 +167,7 @@ const config = tseslint.config(
       "apps/worker/**/*.{ts,tsx}",
       "packages/server/**/*.{ts,tsx}",
       "packages/core/**/*.{ts,tsx}",
+      "packages/evaluation/**/*.{ts,tsx}",
       "packages/interpreter/**/*.{ts,tsx}",
       "packages/runtime/**/*.{ts,tsx}",
       "plugins/**/*.{ts,tsx}",
@@ -193,6 +194,8 @@ const config = tseslint.config(
                 "@pragma/core",
                 "@pragma/interpreter",
                 "@pragma/interpreter/*",
+                "@pragma/evaluation",
+                "@pragma/evaluation/*",
                 "node:*",
                 "next",
                 "next/*",
@@ -220,7 +223,14 @@ const config = tseslint.config(
           patterns: [
             ...commonRestrictedPatterns,
             {
-              group: ["@pragma/core", "@pragma/server", "@pragma/server-*", "node:*"],
+              group: [
+                "@pragma/core",
+                "@pragma/evaluation",
+                "@pragma/evaluation/*",
+                "@pragma/server",
+                "@pragma/server-*",
+                "node:*",
+              ],
               message: "Client packages must stay browser-safe.",
             },
           ],
@@ -252,7 +262,13 @@ const config = tseslint.config(
       "no-restricted-imports": [
         "error",
         {
-          paths: ["@pragma/client", "@pragma/interpreter", "@pragma/server", "react"],
+          paths: [
+            "@pragma/client",
+            "@pragma/evaluation",
+            "@pragma/interpreter",
+            "@pragma/server",
+            "react",
+          ],
           patterns: [
             ...commonRestrictedPatterns,
             {
@@ -267,6 +283,25 @@ const config = tseslint.config(
               ],
               message:
                 "Core agent packages must not depend on concrete runtimes, server internals, or client UI.",
+            },
+          ],
+        },
+      ],
+    },
+  },
+  {
+    files: ["packages/evaluation/**/*.{ts,tsx}"],
+    rules: {
+      "no-restricted-imports": [
+        "error",
+        {
+          paths: ["@pragma/client", "@pragma/interpreter", "@pragma/server", "react"],
+          patterns: [
+            ...commonRestrictedPatterns,
+            {
+              group: ["@pragma/runtime-*", "@pragma/server-*", "@pragma/ui-*", "next", "next/*"],
+              message:
+                "Evaluation may depend on Core abstractions, not Interpreter, concrete runtimes, or app layers.",
             },
           ],
         },

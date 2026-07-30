@@ -1,4 +1,5 @@
 import { ipcRenderer } from "electron";
+import { PragmaFlowRunDrySuiteResultSchema } from "@pragma/evaluation/ast";
 
 import {
   AllocatePragmaResourceIdResultSchema,
@@ -6,10 +7,9 @@ import {
   PragmaProjectChangesSchema,
   PragmaProjectChangesValidationResultSchema,
   PragmaProjectSnapshotSchema,
-  PragmaFlowRunDrySuiteResultSchema,
   PragmaYamlValidationResultSchema,
   PublishPragmaProjectSchema,
-  RunPragmaFlowDrySuiteSchema,
+  RunPragmaEvaluationSchema,
   UpsertPragmaResourceSchema,
   ValidatePragmaResourceSchema,
   ValidatePragmaYamlSchema,
@@ -65,11 +65,11 @@ export const projectsApi = {
         PragmaProjectChangesSchema.parse(input),
       ),
     ),
-  runPragmaFlowDrySuite: async (input) =>
+  runPragmaEvaluation: async (input) =>
     PragmaFlowRunDrySuiteResultSchema.parse(
       await ipcRenderer.invoke(
-        "pragma-project:flow:run-dry",
-        RunPragmaFlowDrySuiteSchema.parse(input),
+        "pragma-project:evaluation:run",
+        RunPragmaEvaluationSchema.parse(input),
       ),
     ),
   getWorkflowLayout: async (input) => {
@@ -97,7 +97,7 @@ export const projectsApi = {
   | "validatePragmaYaml"
   | "validatePragmaResource"
   | "validatePragmaProjectChanges"
-  | "runPragmaFlowDrySuite"
+  | "runPragmaEvaluation"
   | "getWorkflowLayout"
   | "saveWorkflowLayout"
   | "deleteWorkflowLayout"

@@ -6262,11 +6262,130 @@ p {
   gap: 22px;
 }
 
+.flow-run-dry .studio-screen-body {
+  display: grid;
+  grid-auto-rows: max-content;
+  align-content: start;
+  gap: 18px;
+  padding-bottom: 32px;
+}
+
+.evaluation-methods {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 12px;
+  margin-bottom: 20px;
+}
+
+.evaluation-methods article {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  min-height: 82px;
+  padding: 16px;
+  border: 1px solid var(--border);
+  border-radius: 14px;
+  background: var(--surface);
+}
+
+.evaluation-methods article > div {
+  display: grid;
+  gap: 4px;
+  min-width: 0;
+}
+
+.evaluation-methods article span {
+  color: var(--text-secondary);
+  font-size: 0.84rem;
+}
+
+.evaluation-methods article em {
+  margin-left: auto;
+  color: var(--text-secondary);
+  font-size: 0.75rem;
+  font-style: normal;
+}
+
+.evaluation-methods article.is-disabled {
+  opacity: 0.64;
+}
+
+.evaluation-create-controls {
+  display: flex;
+  flex: 0 0 auto;
+  align-items: flex-end;
+  gap: 10px;
+}
+
+.evaluation-create-controls label {
+  display: grid;
+  gap: 6px;
+  color: var(--text-secondary);
+  font-size: 0.75rem;
+  font-weight: 600;
+}
+
+.evaluation-create-controls select {
+  min-width: 180px;
+  min-height: 42px;
+  padding: 0 36px 0 12px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-control);
+  background: var(--surface);
+  color: var(--text);
+}
+
+.evaluation-create-controls select:focus-visible {
+  border-color: var(--green);
+  outline: 0;
+  box-shadow: 0 0 0 3px var(--focus-ring);
+}
+
 .flow-run-dry-heading {
   display: flex;
   align-items: flex-start;
   justify-content: space-between;
   gap: 24px;
+}
+
+.flow-run-dry-heading > div:first-child {
+  min-width: 0;
+}
+
+.flow-run-dry-heading .detail-actions {
+  display: flex;
+  min-width: 0;
+  align-items: center;
+  justify-content: flex-end;
+  flex-wrap: wrap;
+  gap: 10px;
+}
+
+.flow-run-dry-heading .detail-actions > button {
+  min-height: 42px;
+}
+
+.evaluations-page {
+  position: relative;
+  min-width: 0;
+  min-height: 0;
+  overflow: hidden;
+  padding: 50px clamp(38px, 6vw, 88px) 62px;
+  background: var(--background);
+}
+
+.evaluations-page > .studio-screen {
+  width: min(100%, 1180px);
+  margin-right: auto;
+  margin-left: auto;
+}
+
+.evaluations-page-error {
+  position: absolute;
+  right: clamp(38px, 6vw, 88px);
+  bottom: 24px;
+  left: clamp(38px, 6vw, 88px);
+  box-shadow: var(--shadow-hover);
 }
 
 .usage-page {
@@ -6297,13 +6416,15 @@ p {
 .flow-run-dry-coverage {
   display: grid;
   grid-template-columns: repeat(3, minmax(0, 1fr));
-  gap: 12px;
+  gap: 16px;
 }
 
 .flow-run-dry-coverage > div {
   display: grid;
+  min-height: 88px;
+  align-content: space-between;
   gap: 6px;
-  padding: 16px 18px;
+  padding: 17px 18px;
   border: 1px solid var(--border);
   border-radius: var(--radius-card);
   background: #fff;
@@ -6315,20 +6436,20 @@ p {
 
 .flow-run-dry-workspace {
   display: grid;
-  grid-template-columns: minmax(210px, 0.32fr) minmax(0, 1fr);
+  grid-template-columns: minmax(220px, 280px) minmax(0, 1fr);
+  align-items: stretch;
+  gap: 16px;
   min-height: 520px;
-  overflow: hidden;
-  border: 1px solid var(--border);
-  border-radius: var(--radius-card);
-  background: #fff;
 }
 
 .flow-run-dry-cases {
   display: flex;
   flex-direction: column;
-  gap: 6px;
+  gap: 8px;
+  min-width: 0;
   padding: 12px;
-  border-right: 1px solid var(--border);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-card);
   background: var(--surface-soft);
 }
 
@@ -6337,9 +6458,10 @@ p {
   align-items: center;
   gap: 10px;
   width: 100%;
-  padding: 11px;
-  border: 0;
-  border-radius: 9px;
+  min-height: 62px;
+  padding: 11px 12px;
+  border: 1px solid transparent;
+  border-radius: 10px;
   background: transparent;
   color: var(--text);
   text-align: left;
@@ -6347,6 +6469,7 @@ p {
 
 .flow-run-dry-cases > button:hover,
 .flow-run-dry-cases > button.is-active {
+  border-color: var(--border);
   background: #fff;
 }
 
@@ -6372,6 +6495,26 @@ p {
   padding: 24px;
 }
 
+.flow-run-dry-identity,
+.flow-run-dry-case-editor,
+.flow-run-dry-empty {
+  border: 1px solid var(--border);
+  border-radius: var(--radius-card);
+  background: #fff;
+}
+
+.flow-run-dry-case-editor,
+.flow-run-dry-empty {
+  min-width: 0;
+  min-height: 520px;
+}
+
+.flow-run-dry-form-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 16px;
+}
+
 .flow-run-dry-editor > header {
   display: flex;
   align-items: flex-start;
@@ -6391,6 +6534,7 @@ p {
 
 .flow-run-dry-editor label {
   display: grid;
+  min-width: 0;
   gap: 7px;
   font-weight: 600;
 }
@@ -6411,6 +6555,7 @@ p {
 }
 
 .flow-run-dry-editor textarea {
+  min-height: 92px;
   padding: 12px;
   resize: vertical;
 }
@@ -6743,8 +6888,8 @@ p {
     display: grid;
   }
 
-  .flow-run-dry-coverage {
-    grid-template-columns: 1fr;
+  .flow-run-dry-heading .detail-actions {
+    justify-content: flex-start;
   }
 
   .flow-run-dry-workspace {
@@ -6752,8 +6897,34 @@ p {
   }
 
   .flow-run-dry-cases {
-    border-right: 0;
-    border-bottom: 1px solid var(--border);
+    display: grid;
+    grid-auto-columns: minmax(210px, 1fr);
+    grid-auto-flow: column;
+    overflow-x: auto;
+  }
+}
+
+@media (max-width: 720px) {
+  .flow-run-dry .studio-screen-body {
+    gap: 14px;
+  }
+
+  .flow-run-dry-coverage,
+  .flow-run-dry-form-grid {
+    grid-template-columns: 1fr;
+  }
+
+  .flow-run-dry-heading .detail-actions {
+    display: grid;
+    grid-template-columns: 1fr;
+  }
+
+  .flow-run-dry-heading .detail-actions > button {
+    width: 100%;
+  }
+
+  .flow-run-dry-editor {
+    padding: 18px;
   }
 }
 
@@ -8043,8 +8214,14 @@ p {
     gap: 16px;
   }
 
-  .pragma-resource-directory .studio-heading .primary-button {
+  .pragma-resource-directory .studio-heading .primary-button,
+  .pragma-resource-directory .evaluation-create-controls {
     align-self: flex-start;
+  }
+
+  .pragma-resource-directory .evaluation-create-controls {
+    align-items: stretch;
+    flex-direction: column;
   }
 
   .pragma-resource-directory .pragma-resource-row {

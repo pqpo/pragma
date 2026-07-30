@@ -188,16 +188,14 @@ first entry. HumanTask waits pause that deadline, including across process resta
 Flow waiting for user input does not fail only because the app was closed or upgraded. Timeout is a
 `failed` terminal state; explicit user cancellation remains `cancelled`.
 
-Flow run dry cases are portable test specifications stored under `spec.runDry.cases`. The Node-only
-Interpreter runner evaluates declarative data contracts, node-result state, terminal value mapping,
-and JSON Schema checks without resolving Runtime or host bindings. Route, array-route, and loop
-decisions reuse Core's pure Flow control semantics instead of maintaining a second execution rule
-set. Every visited effectful node consumes an explicit mock outcome and verifies its effective
-input; HumanTask mocks also verify the rendered prompt. Desktop invokes the runner through its
-validated preload/IPC bridge so execution does not live in the renderer or AST contract entry.
-Suite success requires passing case assertions and complete coverage of every declared transition,
-loop-repeat, and loop-limit outcome. The built-in Pragma authoring port additionally uses it as a
-prepare/commit gate for every Flow it creates or materially edits.
+Run Dry suites are portable `Evaluation` resources that target a Flow by exact ref; Flow specs do
+not embed test cases. The Node-only `@pragma/evaluation` runner evaluates declarative data
+contracts, node-result state, terminal value mapping, and JSON Schema checks without resolving
+Runtime or host bindings. Route, array-route, and loop decisions reuse Core's pure Flow control
+semantics. `expectInput` always verifies the case's original Flow input, while `expectPrompt`
+independently verifies rendered Expert, Team, and Human prompts. Desktop invokes the runner through
+its validated preload/IPC bridge. Suite success requires passing assertions and complete coverage
+of every declared transition, loop-repeat, and loop-limit outcome.
 
 Context reuse policies are versioned extension references such as
 `context-policy:pragma.fresh@v1`; runtime overrides are exact RuntimeProfile references. Runtime

@@ -3,12 +3,17 @@ import { mkdir, readFile, rename, rm, writeFile } from "node:fs/promises";
 import { dirname, join } from "node:path";
 
 import {
+  PragmaEvaluationResourceSchema,
+  type PragmaEvaluationResource,
+  type PragmaFlowRunDrySuiteResult,
+} from "@pragma/evaluation/ast";
+import {
   encodePragmaPathSegment,
   derivePragmaResourceId,
   generatePragmaResourceId,
   withFileLock,
 } from "@pragma/core";
-import { formatPragmaYaml, parsePragmaYaml, runPragmaFlowDrySuite } from "@pragma/interpreter";
+import { formatPragmaYaml, parsePragmaYaml, runPragmaEvaluation } from "@pragma/interpreter";
 import {
   analyzePragmaFlowGraph,
   validatePragmaFlowDataContracts,
@@ -23,11 +28,17 @@ import {
 } from "@pragma/interpreter/ast";
 import {
   DefaultAgentChangeSetSchema,
+  DefaultAgentEvaluationDraftRunResultSchema,
+  DefaultAgentEvaluationDraftSchema,
+  DefaultAgentEvaluationDraftSummarySchema,
   DefaultAgentExpertOptionCatalogSchema,
   DefaultAgentFlowDraftSchema,
   DefaultAgentPrepareResultSchema,
   DefaultAgentProjectCommitSchema,
   type DefaultAgentDslProjectPort,
+  type DefaultAgentEvaluationDraft,
+  type DefaultAgentEvaluationDraftDiagnostic,
+  type DefaultAgentEvaluationDraftOperation,
   type DefaultAgentExpertOptionCatalog,
   type DefaultAgentFlowDraft,
   type DefaultAgentFlowDraftDiagnostic,
@@ -63,6 +74,8 @@ export function createDesktopDefaultAgentProjectPort(options: {
     join(options.stateRoot, "operations", `${encodePragmaPathSegment(id)}.json`);
   const draftPath = (id: string) =>
     join(options.stateRoot, "dsl-drafts", `${encodePragmaPathSegment(id)}.json`);
+  const evaluationDraftPath = (id: string) =>
+    join(options.stateRoot, "evaluation-drafts", `${encodePragmaPathSegment(id)}.json`);
 
   const prepareResources = async (input: {
     readonly expectedProjectRevision: number;
@@ -92,13 +105,10 @@ export function createDesktopDefaultAgentProjectPort(options: {
                 ],
           ),
     );
-    const runDryDiagnostics = authoredResources.flatMap((resource) =>
-      resource.kind === "Flow" ? flowRunDryDiagnostics(resource, false) : [],
-    );
-    if (actionDiagnostics.length > 0 || runDryDiagnostics.length > 0) {
+    if (actionDiagnostics.length > 0) {
       return DefaultAgentPrepareResultSchema.parse({
         status: "invalid",
-        diagnostics: [...actionDiagnostics, ...runDryDiagnostics],
+        diagnostics: actionDiagnostics,
       });
     }
     try {
@@ -163,10 +173,74 @@ export function createDesktopDefaultAgentProjectPort(options: {
         diagnostics: parsed.diagnostics,
       });
     }
+    if (parsed.resources.some((resource) => resource.kind === "Evaluation")) {
+      return invalidPrepare(
+        "evaluation.independent_prepare_required",
+        "Evaluation resources must be authored with Evaluation draft tools and prepared through prepare_evaluation_draft.",
+      );
+    }
     return await prepareResources({
       expectedProjectRevision: input.expectedProjectRevision,
       authoredResources: parsed.resources,
     });
+  };
+
+  const withCurrentEvaluationDraftDiagnostics = async (
+    draft: DefaultAgentEvaluationDraft,
+  ): Promise<DefaultAgentEvaluationDraft> => {
+    const snapshot = await options.project.get();
+    const diagnostics: DefaultAgentEvaluationDraftDiagnostic[] = [];
+    if (draft.resource.spec.method.cases.length === 0) {
+      diagnostics.push({
+        severity: "incomplete",
+        code: "evaluation.draft.cases_empty",
+        message: "Add at least one Run Dry case before preparing the Evaluation.",
+        path: ["resource", "spec", "method", "cases"],
+      });
+    }
+    if (snapshot.revision !== draft.baseProjectRevision) {
+      diagnostics.push({
+        severity: "error",
+        code: "evaluation.draft.project_revision_conflict",
+        message: `Project revision changed from ${draft.baseProjectRevision} to ${snapshot.revision}.`,
+        path: ["baseProjectRevision"],
+      });
+    }
+    const target = snapshot.resources.find(
+      (resource) =>
+        resource.kind === "Flow" &&
+        canonicalPragmaResourceRef(resource) === draft.resource.spec.target.ref,
+    );
+    if (target === undefined) {
+      diagnostics.push({
+        severity: "error",
+        code: "evaluation.draft.target_missing",
+        message: `Evaluation target committed Flow not found: ${draft.resource.spec.target.ref}.`,
+        path: ["resource", "spec", "target", "ref"],
+      });
+    }
+    return DefaultAgentEvaluationDraftSchema.parse({ ...draft, diagnostics });
+  };
+
+  const resolveEvaluationFlow = async (
+    draft: DefaultAgentEvaluationDraft,
+  ): Promise<PragmaFlowResource> => {
+    const flow = (await options.project.get()).resources.find(
+      (resource): resource is PragmaFlowResource =>
+        resource.kind === "Flow" &&
+        canonicalPragmaResourceRef(resource) === draft.resource.spec.target.ref,
+    );
+    if (flow === undefined) {
+      throw new Error(
+        `Evaluation target committed Flow not found: ${draft.resource.spec.target.ref}.`,
+      );
+    }
+    return flow;
+  };
+
+  const runEvaluationDraftSuite = async (draft: DefaultAgentEvaluationDraft) => {
+    const evaluation = materializeEvaluationDraft(draft);
+    return runPragmaEvaluation(await resolveEvaluationFlow(draft), evaluation);
   };
 
   return {
@@ -231,7 +305,7 @@ export function createDesktopDefaultAgentProjectPort(options: {
           resource: {
             apiVersion: "pragma/v3",
             kind: "Flow",
-            metadata: { ...input.metadata, id: generatePragmaResourceId() },
+            metadata: input.metadata,
             spec: {
               ...(input.input === undefined ? {} : { input: input.input }),
               ...(input.output === undefined ? {} : { output: input.output }),
@@ -293,13 +367,154 @@ export function createDesktopDefaultAgentProjectPort(options: {
         await readFlowDraft(draftPath(draftId)),
       );
     },
-    async runFlowDraftDry(draftId) {
-      const draft = await withProjectDraftDiagnostics(
-        options.project,
-        await readFlowDraft(draftPath(draftId)),
+    async createEvaluationDraft(input) {
+      const snapshot = await options.project.get();
+      if (snapshot.revision !== input.expectedProjectRevision) {
+        throw new Error(
+          `Project revision changed from ${input.expectedProjectRevision} to ${snapshot.revision}.`,
+        );
+      }
+      const now = new Date().toISOString();
+      const draftId = randomUUID();
+      let resource: DefaultAgentEvaluationDraft["resource"];
+      let sourceEvaluationRef: string | undefined;
+      if (input.mode === "create") {
+        resource = {
+          apiVersion: "pragma/v3",
+          kind: "Evaluation",
+          metadata: input.metadata,
+          spec: {
+            target: { ref: input.targetRef },
+            method: { type: "flow-run-dry", cases: [] },
+          },
+        };
+      } else {
+        const source = snapshot.resources.find(
+          (candidate) => canonicalPragmaResourceRef(candidate) === input.evaluationRef,
+        );
+        if (source?.kind !== "Evaluation") {
+          throw new Error(`Evaluation not found: ${input.evaluationRef}`);
+        }
+        resource = structuredClone(PragmaEvaluationResourceSchema.parse(source));
+        sourceEvaluationRef = input.evaluationRef;
+      }
+      const draft = await withCurrentEvaluationDraftDiagnostics({
+        draftId,
+        baseProjectRevision: snapshot.revision,
+        draftRevision: 0,
+        resource,
+        ...(sourceEvaluationRef === undefined ? {} : { sourceEvaluationRef }),
+        diagnostics: [],
+        createdAt: now,
+        updatedAt: now,
+      });
+      await writeJson(evaluationDraftPath(draftId), draft);
+      return draft;
+    },
+    async getEvaluationDraft(draftId) {
+      return await withCurrentEvaluationDraftDiagnostics(
+        await readEvaluationDraft(evaluationDraftPath(draftId)),
       );
-      const resource = PragmaFlowResourceSchema.parse(materializeDraft(draft));
-      return runPragmaFlowDrySuite(resource);
+    },
+    async updateEvaluationDraft(input) {
+      if (input.operations.length === 0 || input.operations.length > 10) {
+        throw new Error("Evaluation draft updates require 1 to 10 operations.");
+      }
+      const path = evaluationDraftPath(input.draftId);
+      return await withFileLock(`${path}.lock`, async () => {
+        const current = await readEvaluationDraft(path);
+        if (current.draftRevision !== input.expectedDraftRevision) {
+          throw new Error(
+            `Evaluation draft revision changed from ${input.expectedDraftRevision} to ${current.draftRevision}.`,
+          );
+        }
+        const resource = structuredClone(current.resource);
+        let baseProjectRevision = current.baseProjectRevision;
+        for (const operation of input.operations) {
+          baseProjectRevision = applyEvaluationDraftOperation(
+            resource,
+            operation,
+            baseProjectRevision,
+          );
+        }
+        if (baseProjectRevision !== current.baseProjectRevision) {
+          const snapshot = await options.project.get();
+          if (snapshot.revision !== baseProjectRevision) {
+            throw new Error(
+              `Cannot rebase Evaluation draft to unavailable revision ${baseProjectRevision}.`,
+            );
+          }
+        }
+        const updated = await withCurrentEvaluationDraftDiagnostics({
+          ...current,
+          baseProjectRevision,
+          draftRevision: current.draftRevision + 1,
+          resource,
+          updatedAt: new Date().toISOString(),
+        });
+        await writeJson(path, updated);
+        return updated;
+      });
+    },
+    async runEvaluationDraft(input) {
+      if (
+        input.caseIds.length === 0 ||
+        input.caseIds.length > 10 ||
+        new Set(input.caseIds).size !== input.caseIds.length
+      ) {
+        throw new Error("Evaluation draft runs require 1 to 10 unique case IDs.");
+      }
+      const draft = await withCurrentEvaluationDraftDiagnostics(
+        await readEvaluationDraft(evaluationDraftPath(input.draftId)),
+      );
+      const blocking = draft.diagnostics.find((diagnostic) => diagnostic.severity !== "warning");
+      if (blocking !== undefined) throw new Error(blocking.message);
+      const requested = new Set(input.caseIds);
+      const missing = input.caseIds.filter(
+        (caseId) => !draft.resource.spec.method.cases.some((testCase) => testCase.id === caseId),
+      );
+      if (missing.length > 0) {
+        throw new Error(`Evaluation draft cases not found: ${missing.join(", ")}`);
+      }
+      const suite = await runEvaluationDraftSuite(draft);
+      const requestedCases = suite.cases.filter((testCase) => requested.has(testCase.id));
+      return DefaultAgentEvaluationDraftRunResultSchema.parse({
+        draft: summarizeEvaluationDraft(draft),
+        requestedCases,
+        suite: {
+          passed: suite.passed,
+          total: suite.summary.total,
+          passedCount: suite.summary.passed,
+          failedCount: suite.summary.failed,
+          failedCaseIds: suite.cases
+            .filter((testCase) => !testCase.passed)
+            .map((testCase) => testCase.id),
+        },
+        coverage: suite.coverage,
+      });
+    },
+    async prepareEvaluationDraft(input) {
+      const draft = await withCurrentEvaluationDraftDiagnostics(
+        await readEvaluationDraft(evaluationDraftPath(input.draftId)),
+      );
+      if (draft.draftRevision !== input.expectedDraftRevision) {
+        return invalidPrepare(
+          "evaluation.draft.revision_conflict",
+          `Evaluation draft revision changed from ${input.expectedDraftRevision} to ${draft.draftRevision}.`,
+        );
+      }
+      const diagnostics = evaluationDraftDiagnostics(draft);
+      if (diagnostics !== undefined) return diagnostics;
+      const suite = await runEvaluationDraftSuite(draft);
+      if (!suite.passed) return invalidEvaluationRun(suite);
+      return await prepareResources({
+        expectedProjectRevision: draft.baseProjectRevision,
+        authoredResources: [materializeEvaluationDraft(draft)],
+      });
+    },
+    async discardEvaluationDraft(draftId) {
+      const path = evaluationDraftPath(draftId);
+      await withFileLock(`${path}.lock`, async () => await rm(path, { force: true }));
     },
     async prepareFlowDraft(input) {
       const draft = await withProjectDraftDiagnostics(
@@ -330,12 +545,16 @@ export function createDesktopDefaultAgentProjectPort(options: {
           diagnostics: additional.diagnostics,
         });
       }
+      if (additional.resources.some((resource) => resource.kind === "Evaluation")) {
+        return invalidPrepare(
+          "evaluation.independent_prepare_required",
+          "Evaluation resources cannot be prepared with a Flow. Use prepare_evaluation_draft, then commit_dsl_changes separately.",
+        );
+      }
+      const flowResource = PragmaFlowResourceSchema.parse(materializeDraft(draft));
       return await prepareResources({
         expectedProjectRevision: draft.baseProjectRevision,
-        authoredResources: [
-          PragmaFlowResourceSchema.parse(materializeDraft(draft)),
-          ...additional.resources,
-        ],
+        authoredResources: [flowResource, ...additional.resources],
       });
     },
     async discardFlowDraft(draftId) {
@@ -571,10 +790,11 @@ function parseDefaultAgentResource(source: string): PragmaResource {
     resource.kind !== "Expert" &&
     resource.kind !== "ExpertTeam" &&
     resource.kind !== "Flow" &&
-    resource.kind !== "Automation"
+    resource.kind !== "Automation" &&
+    resource.kind !== "Evaluation"
   ) {
     throw new Error(
-      "default Agent can only create or update Expert, ExpertTeam, Flow, and Automation resources.",
+      "default Agent can only create or update Expert, ExpertTeam, Flow, Evaluation, and Automation resources.",
     );
   }
   return resource;
@@ -627,7 +847,7 @@ function diagnosticsFromError(error: unknown, source?: string) {
   ];
 }
 
-function materializeDraft(draft: DefaultAgentFlowDraft): PragmaFlowResource {
+function materializeDraft(draft: DefaultAgentFlowDraft) {
   return {
     ...draft.resource,
     spec: {
@@ -637,7 +857,71 @@ function materializeDraft(draft: DefaultAgentFlowDraft): PragmaFlowResource {
         start: draft.resource.spec.graph.start ?? "",
       },
     },
-  } as PragmaFlowResource;
+  };
+}
+
+function materializeEvaluationDraft(draft: DefaultAgentEvaluationDraft): PragmaEvaluationResource {
+  return PragmaEvaluationResourceSchema.parse(draft.resource);
+}
+
+function summarizeEvaluationDraft(draft: DefaultAgentEvaluationDraft) {
+  return DefaultAgentEvaluationDraftSummarySchema.parse({
+    draftId: draft.draftId,
+    baseProjectRevision: draft.baseProjectRevision,
+    draftRevision: draft.draftRevision,
+    metadata: draft.resource.metadata,
+    targetRef: draft.resource.spec.target.ref,
+    ...(draft.sourceEvaluationRef === undefined
+      ? {}
+      : { sourceEvaluationRef: draft.sourceEvaluationRef }),
+    cases: draft.resource.spec.method.cases.map(({ id, name }) => ({ id, name })),
+    diagnostics: draft.diagnostics,
+    createdAt: draft.createdAt,
+    updatedAt: draft.updatedAt,
+  });
+}
+
+function evaluationDraftDiagnostics(
+  draft: DefaultAgentEvaluationDraft,
+): DefaultAgentPrepareResult | undefined {
+  if (draft.diagnostics.every((diagnostic) => diagnostic.severity === "warning")) return undefined;
+  return DefaultAgentPrepareResultSchema.parse({
+    status: "invalid",
+    diagnostics: draft.diagnostics.map((diagnostic) => ({
+      severity: diagnostic.severity === "warning" ? "warning" : "error",
+      code: diagnostic.code,
+      message: diagnostic.message,
+      path: diagnostic.path,
+    })),
+  });
+}
+
+function invalidEvaluationRun(suite: PragmaFlowRunDrySuiteResult): DefaultAgentPrepareResult {
+  const diagnostics = [
+    ...suite.cases
+      .filter((testCase) => !testCase.passed)
+      .flatMap((testCase) =>
+        testCase.assertions
+          .filter((assertion) => !assertion.passed)
+          .map((assertion) => ({
+            severity: "error" as const,
+            code: `evaluation.case.${assertion.kind}`,
+            message: `${testCase.id}: ${assertion.message}`,
+            path: ["spec", "method", "cases", testCase.id],
+          })),
+      ),
+    ...(suite.coverage.missing.length === 0
+      ? []
+      : [
+          {
+            severity: "error" as const,
+            code: "evaluation.coverage.missing",
+            message: `Missing Run Dry coverage: ${suite.coverage.missing.join(", ")}`,
+            path: ["spec", "method", "cases"],
+          },
+        ]),
+  ];
+  return DefaultAgentPrepareResultSchema.parse({ status: "invalid", diagnostics });
 }
 
 async function withProjectDraftDiagnostics(
@@ -723,7 +1007,6 @@ function withDraftDiagnostics(
         path: [...issue.path],
       })),
     );
-    diagnostics.push(...flowRunDryDraftDiagnostics(resource));
   }
   const unique = diagnostics.filter(
     (diagnostic, index) =>
@@ -773,8 +1056,30 @@ function applyDraftOperation(
       else if (operation.output !== undefined) resource.spec.output = operation.output;
       if (operation.limits !== undefined) resource.spec.limits = operation.limits;
       break;
-    case "set_run_dry":
-      resource.spec.runDry = operation.runDry;
+    case "rebase":
+      return operation.projectRevision;
+  }
+  return baseProjectRevision;
+}
+
+function applyEvaluationDraftOperation(
+  resource: DefaultAgentEvaluationDraft["resource"],
+  operation: DefaultAgentEvaluationDraftOperation,
+  baseProjectRevision: number,
+): number {
+  switch (operation.type) {
+    case "upsert_case": {
+      const index = resource.spec.method.cases.findIndex(
+        (testCase) => testCase.id === operation.case.id,
+      );
+      if (index === -1) resource.spec.method.cases.push(operation.case);
+      else resource.spec.method.cases[index] = operation.case;
+      break;
+    }
+    case "remove_case":
+      resource.spec.method.cases = resource.spec.method.cases.filter(
+        (testCase) => testCase.id !== operation.caseId,
+      );
       break;
     case "rebase":
       return operation.projectRevision;
@@ -782,83 +1087,16 @@ function applyDraftOperation(
   return baseProjectRevision;
 }
 
-function flowRunDryDraftDiagnostics(
-  resource: PragmaFlowResource,
-): readonly DefaultAgentFlowDraftDiagnostic[] {
-  return flowRunDryDiagnostics(resource, true).map((diagnostic) => ({
-    severity: diagnostic.severity,
-    code: diagnostic.code,
-    message: diagnostic.message,
-    path: [...diagnostic.path],
-  }));
-}
-
-function flowRunDryDiagnostics(
-  resource: PragmaFlowResource,
-  incompleteWhenMissing: boolean,
-): readonly {
-  readonly severity: "incomplete" | "warning" | "error";
-  readonly code: string;
-  readonly message: string;
-  readonly path: readonly (string | number)[];
-}[] {
-  if ((resource.spec.runDry?.cases.length ?? 0) === 0) {
-    return [
-      {
-        severity: incompleteWhenMissing ? "incomplete" : "error",
-        code: "flow.run_dry.cases_missing",
-        message: "Add run dry cases before the Flow can be prepared.",
-        path: ["spec", "runDry", "cases"],
-      },
-    ];
-  }
-  if (analyzePragmaFlowGraph(resource).issues.length > 0) return [];
-  let result: ReturnType<typeof runPragmaFlowDrySuite>;
-  try {
-    result = runPragmaFlowDrySuite(resource);
-  } catch (error) {
-    return [
-      {
-        severity: "error",
-        code: "flow.run_dry.execution_invalid",
-        message: error instanceof Error ? error.message : String(error),
-        path: ["spec", "runDry"],
-      },
-    ];
-  }
-  return [
-    ...result.cases.flatMap((testCase, index) =>
-      testCase.passed
-        ? []
-        : [
-            {
-              severity: "error" as const,
-              code: "flow.run_dry.case_failed",
-              message: `Run dry case ${testCase.id} failed: ${testCase.assertions
-                .filter((assertion) => !assertion.passed)
-                .map((assertion) => assertion.message)
-                .join(" ")}`,
-              path: ["spec", "runDry", "cases", index],
-            },
-          ],
-    ),
-    ...(result.coverage.passed
-      ? []
-      : [
-          {
-            severity: "error" as const,
-            code: "flow.run_dry.coverage_incomplete",
-            message: `Run dry cases do not cover transitions: ${result.coverage.missing.join(", ")}.`,
-            path: ["spec", "runDry", "cases"] as const,
-          },
-        ]),
-  ];
-}
-
 async function readFlowDraft(path: string): Promise<DefaultAgentFlowDraft> {
   const value = await readJson(path);
   if (value === undefined) throw new Error("Flow draft not found.");
   return DefaultAgentFlowDraftSchema.parse(value);
+}
+
+async function readEvaluationDraft(path: string): Promise<DefaultAgentEvaluationDraft> {
+  const value = await readJson(path);
+  if (value === undefined) throw new Error("Evaluation draft not found.");
+  return DefaultAgentEvaluationDraftSchema.parse(value);
 }
 
 async function readCandidate(path: string): Promise<z.infer<typeof CandidateRecordSchema>> {
