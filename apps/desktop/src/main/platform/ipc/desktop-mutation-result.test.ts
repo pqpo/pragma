@@ -3,7 +3,10 @@ import { describe, expect, it } from "vitest";
 import { DesktopMutationError } from "../../../shared/contracts/index.ts";
 import { runDesktopMutation } from "./desktop-mutation-result.ts";
 import { MissionOperationError } from "../../features/missions/mission-operation-error.ts";
-import { PragmaProjectStoreError } from "../../features/projects/pragma-project-store.ts";
+import {
+  PragmaProjectRevisionUnavailableError,
+  PragmaProjectStoreError,
+} from "../../features/projects/pragma-project-store.ts";
 
 describe("runDesktopMutation", () => {
   it("returns successful values in a transport-safe envelope", async () => {
@@ -63,6 +66,53 @@ describe("runDesktopMutation", () => {
         code: "mission_operation_in_progress",
         message: "Wait for the current mission operation to finish.",
         diagnostics: [],
+      },
+    });
+  });
+
+  it("preserves scoped Project Revision failures and diagnostics", async () => {
+    const result = await runDesktopMutation(async () => {
+      throw new PragmaProjectRevisionUnavailableError(
+        "studio",
+        41,
+        "compiler-migration",
+        "Project revision studio@41 cannot be upgraded.",
+        "pragma.dsl/v2",
+        "pragma.dsl/v3",
+        [
+          {
+            severity: "error",
+            code: "flow.contract.source_unavailable",
+            message: "A Flow result is unavailable.",
+            path: [],
+          },
+        ],
+        false,
+      );
+    });
+
+    expect(result).toEqual({
+      ok: false,
+      error: {
+        code: "project_revision_unavailable",
+        message: "Project revision studio@41 cannot be upgraded.",
+        diagnostics: [expect.objectContaining({ code: "flow.contract.source_unavailable" })],
+        revisionFailure: {
+          projectId: "studio",
+          revision: 41,
+          stage: "compiler-migration",
+          sourceCompilerVersion: "pragma.dsl/v2",
+          targetCompilerVersion: "pragma.dsl/v3",
+          retryable: false,
+        },
+      },
+    });
+    if (result.ok) throw new Error("Expected a revision failure.");
+    expect(new DesktopMutationError(result.error)).toMatchObject({
+      code: "project_revision_unavailable",
+      revisionFailure: {
+        projectId: "studio",
+        revision: 41,
       },
     });
   });

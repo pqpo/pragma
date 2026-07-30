@@ -15,15 +15,17 @@ import type { PragmaProjectStore } from "./pragma-project-store.ts";
 import { runDesktopMutation } from "../../platform/ipc/desktop-mutation-result.ts";
 
 export function installPragmaProjectHandlers(store: PragmaProjectStore): void {
-  ipcMain.handle("pragma-project:get", () => store.get());
-  ipcMain.handle("pragma-project:allocate-id", async () => {
-    const used = new Set((await store.get()).resources.map((resource) => resource.metadata.id));
-    for (let attempt = 0; attempt < 64; attempt += 1) {
-      const id = generatePragmaResourceId();
-      if (!used.has(id)) return { id };
-    }
-    throw new Error("Could not allocate a unique Pragma resource ID.");
-  });
+  ipcMain.handle("pragma-project:get", () => runDesktopMutation(async () => await store.get()));
+  ipcMain.handle("pragma-project:allocate-id", () =>
+    runDesktopMutation(async () => {
+      const used = new Set((await store.get()).resources.map((resource) => resource.metadata.id));
+      for (let attempt = 0; attempt < 64; attempt += 1) {
+        const id = generatePragmaResourceId();
+        if (!used.has(id)) return { id };
+      }
+      throw new Error("Could not allocate a unique Pragma resource ID.");
+    }),
+  );
   ipcMain.handle("pragma-project:publish", (_event, input: unknown) =>
     runDesktopMutation(async () => await store.publish(PublishPragmaProjectSchema.parse(input))),
   );
@@ -51,17 +53,19 @@ export function installPragmaProjectHandlers(store: PragmaProjectStore): void {
       return { diagnostics: await store.validateChanges(parsed) };
     }),
   );
-  ipcMain.handle("pragma-project:evaluation:run", async (_event, input: unknown) => {
-    const parsed = RunPragmaEvaluationSchema.parse(input);
-    const snapshot = await store.get();
-    const flow = snapshot.resources.find(
-      (resource) =>
-        resource.kind === "Flow" &&
-        `flow:${resource.metadata.id}` === parsed.evaluation.spec.target.ref,
-    );
-    if (flow === undefined || flow.kind !== "Flow") {
-      throw new Error(`Evaluation target Flow not found: ${parsed.evaluation.spec.target.ref}.`);
-    }
-    return runPragmaEvaluation(flow, parsed.evaluation);
-  });
+  ipcMain.handle("pragma-project:evaluation:run", (_event, input: unknown) =>
+    runDesktopMutation(async () => {
+      const parsed = RunPragmaEvaluationSchema.parse(input);
+      const snapshot = await store.get();
+      const flow = snapshot.resources.find(
+        (resource) =>
+          resource.kind === "Flow" &&
+          `flow:${resource.metadata.id}` === parsed.evaluation.spec.target.ref,
+      );
+      if (flow === undefined || flow.kind !== "Flow") {
+        throw new Error(`Evaluation target Flow not found: ${parsed.evaluation.spec.target.ref}.`);
+      }
+      return runPragmaEvaluation(flow, parsed.evaluation);
+    }),
+  );
 }

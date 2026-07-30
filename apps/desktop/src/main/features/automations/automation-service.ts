@@ -438,7 +438,12 @@ export function createAutomationService(options: {
     async start() {
       if (running) return;
       running = true;
-      await reconcile();
+      try {
+        await reconcile();
+      } catch (error) {
+        running = false;
+        throw error;
+      }
     },
     stop() {
       running = false;

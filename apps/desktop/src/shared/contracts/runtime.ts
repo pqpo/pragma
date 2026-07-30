@@ -109,8 +109,19 @@ export const SetDefaultRuntimeSchema = z.object({
   runtimeId: DesktopRuntimeIdSchema,
 });
 
+export const DesktopBridgeStartupSchema = z.discriminatedUnion("status", [
+  z.object({ status: z.literal("ready") }).strict(),
+  z
+    .object({
+      status: z.literal("failed"),
+      code: z.literal("DESKTOP_MAIN_INITIALIZATION_FAILED"),
+    })
+    .strict(),
+]);
+
 export const DesktopBridgeSnapshotSchema = z.object({
   app: DesktopAppInfoSchema,
+  startup: DesktopBridgeStartupSchema,
   interpreter: z
     .object({
       writeVersion: z.string().min(1),

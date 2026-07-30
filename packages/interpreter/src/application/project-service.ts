@@ -37,6 +37,7 @@ import {
   type PragmaEnvironmentInspection,
   type PragmaProject,
 } from "../compiler/pragma-project.ts";
+import type { PragmaCompilerProjectMigrationResult } from "../compiler-migrations/types.ts";
 import type { InvocableResource } from "../runtime/registries.ts";
 import type { PragmaPluginResolver } from "../runtime/registries.ts";
 import {
@@ -257,6 +258,36 @@ export class PragmaProjectService {
           assertArtifactPath(path);
           if (files.has(path))
             throw new Error(`Artifact collides with a Pragma source file: ${path}`);
+          files.set(path, contents);
+        }
+        return files;
+      },
+    );
+  }
+
+  /**
+   * Serializes the historically schema- and lock-validated output of the compiler migration chain.
+   * Unlike publication, this does not apply current authoring diagnostics to a historical
+   * revision. Hosts use the result only as a rebuildable derived view; it must never be committed
+   * as a new revision.
+   */
+  async renderCompilerMigration(
+    migration: PragmaCompilerProjectMigrationResult,
+  ): Promise<ReadonlyMap<string, string>> {
+    const resources = migration.resources.map((resource) => PragmaResourceSchema.parse(resource));
+    assertUniqueCanonicalRefs(resources);
+    return await withStagedProject(
+      resources,
+      migration.artifacts,
+      this.adapters,
+      this.options.externalResourceRefs,
+      async (project) => {
+        const files = new Map(canonicalProjectFiles(project));
+        for (const [path, contents] of migration.artifacts) {
+          assertArtifactPath(path);
+          if (files.has(path)) {
+            throw new Error(`Artifact collides with a Pragma source file: ${path}`);
+          }
           files.set(path, contents);
         }
         return files;

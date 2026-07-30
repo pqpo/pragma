@@ -23,11 +23,9 @@ import type { PragmaDesktopAPI } from "../../shared/contracts/api.ts";
 import { invokeMutation } from "../invoke-mutation.ts";
 export const projectsApi = {
   getPragmaProject: async () =>
-    PragmaProjectSnapshotSchema.parse(await ipcRenderer.invoke("pragma-project:get")),
+    PragmaProjectSnapshotSchema.parse(await invokeMutation("pragma-project:get")),
   allocatePragmaResourceId: async () =>
-    AllocatePragmaResourceIdResultSchema.parse(
-      await ipcRenderer.invoke("pragma-project:allocate-id"),
-    ),
+    AllocatePragmaResourceIdResultSchema.parse(await invokeMutation("pragma-project:allocate-id")),
   publishPragmaProject: async (input) =>
     PragmaProjectSnapshotSchema.parse(
       await invokeMutation("pragma-project:publish", PublishPragmaProjectSchema.parse(input)),
@@ -67,10 +65,7 @@ export const projectsApi = {
     ),
   runPragmaEvaluation: async (input) =>
     PragmaFlowRunDrySuiteResultSchema.parse(
-      await ipcRenderer.invoke(
-        "pragma-project:evaluation:run",
-        RunPragmaEvaluationSchema.parse(input),
-      ),
+      await invokeMutation("pragma-project:evaluation:run", RunPragmaEvaluationSchema.parse(input)),
     ),
   getWorkflowLayout: async (input) => {
     const result: unknown = await ipcRenderer.invoke(

@@ -9,7 +9,8 @@ import { resolveDesktopLocale } from "../../../shared/desktop-locale.ts";
 
 export type DesktopStartupErrorCode =
   | "DESKTOP_BRIDGE_UNAVAILABLE"
-  | "DESKTOP_COMPONENT_VERSION_MISMATCH";
+  | "DESKTOP_COMPONENT_VERSION_MISMATCH"
+  | "DESKTOP_MAIN_INITIALIZATION_FAILED";
 
 export type DesktopStartupResult =
   | {
@@ -25,6 +26,12 @@ export async function resolveDesktopStartup(
   bridge:
     | {
         getBridgeSnapshot?(): Promise<{
+          readonly startup:
+            | { readonly status: "ready" }
+            | {
+                readonly status: "failed";
+                readonly code: "DESKTOP_MAIN_INITIALIZATION_FAILED";
+              };
           readonly interpreter?:
             | {
                 readonly writeVersion: string;
@@ -54,6 +61,12 @@ export async function resolveDesktopStartup(
 
   try {
     const snapshot = await bridge.getBridgeSnapshot();
+    if (snapshot.startup.status === "failed") {
+      return {
+        locale: fallbackLocale,
+        errorCode: snapshot.startup.code,
+      };
+    }
     const interpreter = snapshot.interpreter;
     if (
       interpreter === undefined ||

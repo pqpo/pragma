@@ -26,6 +26,8 @@ export {
   type PragmaCompilerVersion,
 } from "./types.ts";
 
+export const PRAGMA_COMPILER_MIGRATION_CHAIN_VERSION = "pragma.compiler-migrations/v1";
+
 export function migratePragmaCompilerProjectToCurrent(input: {
   readonly files: ReadonlyMap<string, string>;
   readonly revisionCompilerVersion: string;

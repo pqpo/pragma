@@ -39,6 +39,16 @@ describe("DesktopFatalError", () => {
     expect(html).toContain("Pragma components are out of sync");
     expect(html).toContain("Diagnostic code: DESKTOP_COMPONENT_VERSION_MISMATCH");
   });
+
+  it("renders a main-process initialization failure without exposing internal errors", () => {
+    const html = renderToStaticMarkup(
+      <DesktopFatalError code="DESKTOP_MAIN_INITIALIZATION_FAILED" onReload={() => undefined} />,
+    );
+
+    expect(html).toContain("Pragma services could not start");
+    expect(html).toContain("Your existing data was not deleted or replaced");
+    expect(html).toContain("Diagnostic code: DESKTOP_MAIN_INITIALIZATION_FAILED");
+  });
 });
 
 describe("DesktopErrorBoundary", () => {

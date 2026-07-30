@@ -6,6 +6,7 @@ import { serializeRendererError } from "../lib/renderer-log.ts";
 export type DesktopFatalErrorCode =
   | "DESKTOP_BRIDGE_UNAVAILABLE"
   | "DESKTOP_COMPONENT_VERSION_MISMATCH"
+  | "DESKTOP_MAIN_INITIALIZATION_FAILED"
   | "RENDERER_STARTUP_FAILURE";
 
 export function DesktopFatalError(props: {
@@ -16,6 +17,7 @@ export function DesktopFatalError(props: {
   const copyKey = {
     DESKTOP_BRIDGE_UNAVAILABLE: "startupFailure.bridge",
     DESKTOP_COMPONENT_VERSION_MISMATCH: "startupFailure.version",
+    DESKTOP_MAIN_INITIALIZATION_FAILED: "startupFailure.main",
     RENDERER_STARTUP_FAILURE: "startupFailure.renderer",
   }[props.code];
   const reload = props.onReload ?? (() => window.location.reload());

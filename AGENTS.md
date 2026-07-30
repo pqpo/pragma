@@ -240,9 +240,13 @@ Interpreter `compilerVersion`、manifest、lock、IPC、Bridge 和 Runtime capab
   未来版本和缺失迁移的安全兜底，不是升级策略。
 - 业务 parser 只处理当前 Schema；历史 Schema 和字段转换放在迁移模块。废弃或错误字段可以由迁移显式
   删除，但必须记录决策、保留升级前备份并验证结果，不得静默丢弃，也不得为此保留长期业务兼容分支。
-- Host 必须在正常启动和业务读取前，在最小 owner 边界内执行升级。持久化升级使用锁、稳定 journal、
-  备份、原子替换和可重放恢复；失败时保留原数据并提供可操作诊断。除非共享全局状态无法安全初始化，
-  单个 owner 升级失败不得阻断无关项目、对象或能力启动。
+- Host 必须在首次访问最小 owner 时、进入该 owner 的业务读取前执行必要升级；禁止为了发现潜在旧数据
+  在应用启动阶段扫描或升级全部 owner、Project 或 Revision。持久化升级使用锁、稳定 journal、备份、
+  原子替换和可重放恢复；失败时保留原数据并提供可操作诊断。除非共享全局状态无法安全初始化，单个
+  owner 或 Revision 升级失败不得阻断无关项目、对象、能力或应用启动。
+- Desktop 必须先完成必要存储根初始化和 IPC 装配并创建窗口，再启动 Automation、Usage reconciliation、
+  Runtime/Bundle warm-up 等后台工作。启动路径不得执行全量 storage maintenance；容量检查在写入闸门
+  中按需执行。不要为此引入通用 readiness registry 或全局升级 coordinator。
 - 升级测试必须使用由真实历史代码写出的 fixture，不得用当前对象只改版本号伪造。Pull Request 至少
   覆盖历史 fixture、当前版本 no-op、相邻和链式升级、崩溃恢复、未来版本拒绝以及升级后的启动/执行；
   缺少任一适用场景时不得合入。
@@ -299,6 +303,9 @@ Server 与 Agent 的关系：
   workspace 文件交接只保存受控相对路径引用，不复制文件。
 - Project Revision 只保存不可变 manifest 和 Merkle `snapshotHash`；文件实体全局去重到
   `~/.pragma/data/objects/sha256/`，所有 Revision 在 Project 删除前都是强引用根。
+- Project Revision 的 compiler 升级不得改写权威 Revision、重发全部历史或改变 revision number；
+  Host 在目标 Revision 首次访问时调用 Interpreter 的纯迁移链，并将结果保存为按源快照、源/目标
+  compiler version 和迁移链版本寻址的可重建缓存。单个 Revision 升级失败只使该 Revision 不可用。
 - Agent 插件按 package fingerprint 全局缓存到 `~/.pragma/cache/plugins/sha256/`；
   `cache/agents/<agentId>/` 只保存绑定元数据，不复制插件包。
 - Codex 使用最小化 Runtime Context 私有 Home：sessions、SQLite、日志、配置和 Agent Skills

@@ -1,4 +1,4 @@
-import { randomUUID } from "node:crypto";
+import { createHash, randomUUID } from "node:crypto";
 import {
   mkdir,
   mkdtemp,
@@ -10,11 +10,11 @@ import {
   stat,
   writeFile,
 } from "node:fs/promises";
-import { dirname, isAbsolute, join, relative, resolve, sep } from "node:path";
+import { basename, dirname, isAbsolute, join, relative, resolve, sep } from "node:path";
 
 import {
   PragmaDslMigrationError,
-  PragmaCompilerMigrationError,
+  PRAGMA_COMPILER_MIGRATION_CHAIN_VERSION,
   PragmaProjectRevisionConflictError,
   PragmaProjectService,
   PragmaProjectValidationError,
@@ -29,14 +29,18 @@ import {
   type PragmaProjectSourceRepository,
   type PragmaBlueprintCacheStore,
   type PragmaProjectChangeSetInput,
+  type PragmaCompilerProjectMigrationResult,
   type PragmaResourceIdentityMigration,
 } from "@pragma/interpreter";
 import type { PragmaLoggerProvider } from "@pragma/core";
 import {
   PragmaDiagnosticSchema,
   PragmaExpertIdSchema,
+  PRAGMA_COMPILER_WRITE_VERSION,
   PragmaResourceSchema,
   canonicalPragmaResourceRef,
+  isPragmaCompilerVersionDirectlyReadable,
+  isPragmaCompilerVersionUpgradeable,
   type PragmaDiagnostic,
   type PragmaResource,
 } from "@pragma/interpreter/ast";
@@ -165,6 +169,31 @@ export class PragmaProjectStoreError extends Error {
   }
 }
 
+export type PragmaProjectRevisionUnavailableStage =
+  | "manifest"
+  | "compiler-migration"
+  | "validation"
+  | "io";
+
+export class PragmaProjectRevisionUnavailableError extends Error {
+  readonly code = "project_revision_unavailable";
+
+  constructor(
+    readonly projectId: string,
+    readonly revision: number,
+    readonly stage: PragmaProjectRevisionUnavailableStage,
+    message: string,
+    readonly sourceCompilerVersion: string | undefined,
+    readonly targetCompilerVersion: string | undefined,
+    readonly diagnostics: readonly PragmaDiagnostic[] = [],
+    readonly retryable = false,
+    options?: ErrorOptions,
+  ) {
+    super(message, options);
+    this.name = "PragmaProjectRevisionUnavailableError";
+  }
+}
+
 export function createPragmaProjectStore(options: {
   readonly projectsPath: string;
   readonly objectsPath?: string | undefined;
@@ -179,10 +208,21 @@ export function createPragmaProjectStore(options: {
   const objectsPath = options.objectsPath ?? join(options.projectsPath, ".storage", "objects");
   const projectViewsPath =
     options.projectViewsPath ?? join(options.projectsPath, ".cache", "views");
-  const repository = createDesktopProjectSourceRepository({
+  const sourceRepository = createDesktopProjectSourceRepository({
     projectsPath: options.projectsPath,
     objectsPath,
     projectViewsPath,
+  });
+  const migrationRenderer = new PragmaProjectService({
+    repository: sourceRepository,
+    externalResourceRefs: options.reservedResourceRefs,
+    loggerProvider: options.loggerProvider,
+  });
+  const repository = createCompilerMigratingProjectSourceRepository({
+    source: sourceRepository,
+    projectViewsPath,
+    renderMigration: async (migration) =>
+      await migrationRenderer.renderCompilerMigration(migration),
   });
   const service = new PragmaProjectService({
     repository,
@@ -194,14 +234,19 @@ export function createPragmaProjectStore(options: {
     projectsPath: options.projectsPath,
     objectsPath,
     projectViewsPath,
-    storageVersion: 4,
+    writeStorageVersion: 4,
   });
   const legacyV4Service = new PragmaProjectService({
     repository: legacyV4Repository,
     externalResourceRefs: options.reservedResourceRefs,
     loggerProvider: options.loggerProvider,
   });
-  const ensureMigrated = async (): Promise<void> => {
+  let migrationReady: Promise<void> | undefined;
+  const runRequiredStorageRecovery = async (): Promise<void> => {
+    await recoverInterruptedDesktopProjectStorageV4ToV5({
+      projectsPath: options.projectsPath,
+      projectId,
+    });
     await migrateDesktopProjectStorageV3ToV4({
       projectsPath: options.projectsPath,
       objectsPath,
@@ -216,20 +261,13 @@ export function createPragmaProjectStore(options: {
         });
       },
     });
-    await migrateDesktopProjectStorageV4ToV5({
-      projectsPath: options.projectsPath,
-      objectsPath,
-      projectId,
-      publish: async (expectedRevision, resources, artifacts) => {
-        await service.publish({
-          projectId,
-          expectedRevision,
-          resources,
-          artifacts,
-          forceRevision: true,
-        });
-      },
+  };
+  const ensureMigrated = async (): Promise<void> => {
+    migrationReady ??= runRequiredStorageRecovery().catch((error: unknown) => {
+      migrationReady = undefined;
+      throw error;
     });
+    await migrationReady;
   };
 
   const get = async (): Promise<PragmaProjectSnapshot> => {
@@ -288,6 +326,7 @@ export function createPragmaProjectStore(options: {
     input: PragmaProjectChangeSetInput,
   ): Promise<readonly PragmaDiagnostic[]> => {
     try {
+      await ensureMigrated();
       const candidate = await service.materializeChangeSet(projectId, input);
       return [
         ...desktopExpertAuthoringDiagnostics(candidate.resources),
@@ -303,6 +342,7 @@ export function createPragmaProjectStore(options: {
 
   const apply = async (input: PragmaProjectChangeSetInput): Promise<PragmaProjectSnapshot> => {
     try {
+      await ensureMigrated();
       if (options.storagePaths !== undefined) await assertStorageWriteAllowed(options.storagePaths);
       const upserts = (input.upserts ?? []).map((resource) => PragmaResourceSchema.parse(resource));
       assertNotReserved(upserts);
@@ -459,9 +499,11 @@ export function createPragmaProjectStore(options: {
     async compile<T extends InvocableResource>(
       input: Parameters<PragmaProjectService["compile"]>[0],
     ) {
+      await ensureMigrated();
       return await service.compile<T>(input);
     },
     async openRevision(revision) {
+      await ensureMigrated();
       const location = await repository.getRevision(projectId, revision);
       if (location === undefined) {
         throw new PragmaProjectStoreError(
@@ -469,17 +511,20 @@ export function createPragmaProjectStore(options: {
           `Pragma project revision not found: ${projectId}@${revision}`,
         );
       }
-      return await loadPragmaProject(location.entryFile, {
-        rootDir: location.rootDir,
-        requireLock: true,
-        ...(location.compilerVersion === undefined
-          ? {}
-          : { revisionCompilerVersion: location.compilerVersion }),
-        sourceIdentity: location.snapshotHash ?? location.projectFingerprint,
-        blueprintCache: options.blueprintCache,
+      return await withRepositoryCheckout(repository, location, async (checkedOut) => {
+        return await loadPragmaProject(checkedOut.entryFile, {
+          rootDir: checkedOut.rootDir,
+          requireLock: true,
+          ...(checkedOut.compilerVersion === undefined
+            ? {}
+            : { revisionCompilerVersion: checkedOut.compilerVersion }),
+          sourceIdentity: checkedOut.snapshotHash ?? checkedOut.projectFingerprint,
+          blueprintCache: options.blueprintCache,
+        });
       });
     },
     async readArtifacts(revision) {
+      await ensureMigrated();
       const snapshot = await service.get(projectId, revision);
       if (snapshot.revision !== revision) {
         throw new PragmaProjectStoreError(
@@ -558,9 +603,9 @@ function createDesktopProjectSourceRepository(options: {
   readonly projectsPath: string;
   readonly objectsPath: string;
   readonly projectViewsPath: string;
-  readonly storageVersion?: 4 | 5;
+  readonly writeStorageVersion?: 4 | 5;
 }): PragmaProjectSourceRepository {
-  const storageVersion = options.storageVersion ?? 5;
+  const writeStorageVersion = options.writeStorageVersion ?? 5;
   const projectPath = (projectId: string) => join(options.projectsPath, projectId);
   const manifestPath = (projectId: string) => join(projectPath(projectId), "project.json");
   const revisionManifestPath = (projectId: string, revision: number) =>
@@ -574,17 +619,16 @@ function createDesktopProjectSourceRepository(options: {
   const readManifest = async (projectId: string) => {
     try {
       const raw = JSON.parse(await readFile(manifestPath(projectId), "utf8")) as unknown;
-      const parsed =
-        storageVersion === 4
-          ? LegacyProjectV4ManifestSchema.safeParse(raw)
-          : ProjectManifestSchema.safeParse(raw);
-      if (!parsed.success) {
+      const current = ProjectManifestSchema.safeParse(raw);
+      if (current.success) return current.data;
+      const legacy = LegacyProjectV4ManifestSchema.safeParse(raw);
+      if (!legacy.success) {
         throw new PragmaProjectStoreError(
           "unsupported_format",
           "This Desktop project uses an unsupported pre-v2 format. Remove it manually or export it before upgrading.",
         );
       }
-      return parsed.data;
+      return legacy.data;
     } catch (error) {
       if ((error as NodeJS.ErrnoException).code === "ENOENT") return undefined;
       throw error;
@@ -596,17 +640,16 @@ function createDesktopProjectSourceRepository(options: {
       const raw = JSON.parse(
         await readFile(revisionManifestPath(projectId, revision), "utf8"),
       ) as unknown;
-      const parsed =
-        storageVersion === 4
-          ? LegacyProjectRevisionV4ManifestSchema.safeParse(raw)
-          : ProjectRevisionManifestSchema.safeParse(raw);
-      if (!parsed.success) {
+      const current = ProjectRevisionManifestSchema.safeParse(raw);
+      if (current.success) return current.data;
+      const legacy = LegacyProjectRevisionV4ManifestSchema.safeParse(raw);
+      if (!legacy.success) {
         throw new PragmaProjectStoreError(
           "unsupported_format",
           `Project revision manifest is invalid: ${projectId}@${revision}.`,
         );
       }
-      return parsed.data;
+      return legacy.data;
     } catch (error) {
       if ((error as NodeJS.ErrnoException).code === "ENOENT") return undefined;
       throw error;
@@ -687,7 +730,7 @@ function createDesktopProjectSourceRepository(options: {
     async withCheckout(project, operation) {
       const snapshotHash = project.snapshotHash;
       if (snapshotHash === undefined) return await operation(project);
-      const leaseDirectory = join(projectViewLeasesPath, snapshotHash);
+      const leaseDirectory = join(projectViewLeasesPath, basename(project.rootDir));
       const lease = await createProjectViewLease(leaseDirectory);
       try {
         return await operation(project);
@@ -753,7 +796,7 @@ function createDesktopProjectSourceRepository(options: {
             createdAt,
           });
           const storedRevisionManifest =
-            storageVersion === 4
+            writeStorageVersion === 4
               ? LegacyProjectRevisionV4ManifestSchema.parse({
                   ...revisionManifest,
                   schemaVersion: "pragma.project-revision/v4",
@@ -766,7 +809,7 @@ function createDesktopProjectSourceRepository(options: {
           await writeAtomically(
             manifestPath(input.projectId),
             `${JSON.stringify(
-              storageVersion === 4
+              writeStorageVersion === 4
                 ? LegacyProjectV4ManifestSchema.parse({
                     schemaVersion: "pragma.desktop-project/v4",
                     projectId: input.projectId,
@@ -791,6 +834,234 @@ function createDesktopProjectSourceRepository(options: {
   };
 }
 
+function createCompilerMigratingProjectSourceRepository(options: {
+  readonly source: PragmaProjectSourceRepository;
+  readonly projectViewsPath: string;
+  readonly renderMigration: (
+    migration: PragmaCompilerProjectMigrationResult,
+  ) => Promise<ReadonlyMap<string, string>>;
+}): PragmaProjectSourceRepository {
+  const markerName = ".pragma-compiler-view";
+  const locksPath = join(dirname(options.projectViewsPath), "project-compiler-view-locks");
+
+  const resolveLocation = async (
+    location: PragmaProjectRevisionLocation | undefined,
+  ): Promise<PragmaProjectRevisionLocation | undefined> => {
+    if (location === undefined) return undefined;
+    const compilerVersion = location.compilerVersion;
+    if (compilerVersion !== undefined && isPragmaCompilerVersionDirectlyReadable(compilerVersion)) {
+      return location;
+    }
+    if (compilerVersion === undefined || !isPragmaCompilerVersionUpgradeable(compilerVersion)) {
+      throw new PragmaProjectRevisionUnavailableError(
+        location.projectId,
+        location.revision,
+        "compiler-migration",
+        compilerVersion === undefined
+          ? `Project revision ${location.projectId}@${location.revision} does not declare a compiler version.`
+          : `Project revision ${location.projectId}@${location.revision} uses unsupported compiler ${compilerVersion}.`,
+        compilerVersion,
+        undefined,
+      );
+    }
+
+    const sourceIdentity = location.snapshotHash ?? location.projectFingerprint;
+    if (sourceIdentity === undefined) {
+      throw new PragmaProjectRevisionUnavailableError(
+        location.projectId,
+        location.revision,
+        "manifest",
+        `Project revision ${location.projectId}@${location.revision} has no immutable source identity.`,
+        compilerVersion,
+        PRAGMA_COMPILER_WRITE_VERSION,
+      );
+    }
+    const cacheKey = createHash("sha256")
+      .update(
+        JSON.stringify({
+          sourceIdentity,
+          sourceCompilerVersion: compilerVersion,
+          targetCompilerVersion: PRAGMA_COMPILER_WRITE_VERSION,
+          migrationChainVersion: PRAGMA_COMPILER_MIGRATION_CHAIN_VERSION,
+        }),
+      )
+      .digest("hex");
+    const target = join(options.projectViewsPath, `compiler-${cacheKey}`);
+    const marker = join(target, markerName);
+    const migratedLocation = (): PragmaProjectRevisionLocation => ({
+      ...location,
+      rootDir: target,
+      entryFile: join(target, "pragma.yaml"),
+      snapshotHash: cacheKey,
+      compilerVersion: PRAGMA_COMPILER_WRITE_VERSION,
+    });
+
+    try {
+      if ((await readOptionalText(marker))?.trim() === cacheKey) {
+        return migratedLocation();
+      }
+      await withFileLock(
+        join(locksPath, cacheKey),
+        async () => {
+          if ((await readOptionalText(marker))?.trim() === cacheKey) return;
+          let migration: PragmaCompilerProjectMigrationResult;
+          try {
+            migration = migratePragmaCompilerProjectToCurrent({
+              files: await options.source.readFiles(location),
+              revisionCompilerVersion: compilerVersion,
+            });
+          } catch (error) {
+            throw revisionUnavailable(location, "compiler-migration", error, compilerVersion);
+          }
+          let files: ReadonlyMap<string, string>;
+          try {
+            files = await options.renderMigration(migration);
+          } catch (error) {
+            throw revisionUnavailable(
+              location,
+              "validation",
+              error,
+              compilerVersion,
+              migration.targetCompilerVersion,
+            );
+          }
+          if (files.has(markerName)) {
+            throw new PragmaProjectRevisionUnavailableError(
+              location.projectId,
+              location.revision,
+              "validation",
+              `Project revision ${location.projectId}@${location.revision} uses the reserved compiler view metadata path: ${markerName}.`,
+              compilerVersion,
+              migration.targetCompilerVersion,
+            );
+          }
+          const temporary = join(
+            options.projectViewsPath,
+            `.compiler-${cacheKey}.${randomUUID()}.tmp`,
+          );
+          await rm(temporary, { recursive: true, force: true });
+          await mkdir(temporary, { recursive: true, mode: 0o700 });
+          try {
+            for (const [relativePath, contents] of files) {
+              assertProjectRelativePath(relativePath);
+              const path = join(temporary, relativePath);
+              await mkdir(dirname(path), { recursive: true, mode: 0o700 });
+              await writeFile(path, contents, { mode: 0o600 });
+            }
+            await writeFile(join(temporary, markerName), `${cacheKey}\n`, { mode: 0o600 });
+            await mkdir(options.projectViewsPath, { recursive: true, mode: 0o700 });
+            await rm(target, { recursive: true, force: true });
+            await rename(temporary, target);
+          } finally {
+            await rm(temporary, { recursive: true, force: true });
+          }
+        },
+        { timeoutMs: 30_000, staleMs: 300_000 },
+      );
+    } catch (error) {
+      throw revisionUnavailable(
+        location,
+        "io",
+        error,
+        compilerVersion,
+        PRAGMA_COMPILER_WRITE_VERSION,
+      );
+    }
+
+    return migratedLocation();
+  };
+
+  return {
+    async getHead(projectId) {
+      try {
+        return await resolveLocation(await options.source.getHead(projectId));
+      } catch (error) {
+        throw revisionUnavailable(
+          {
+            projectId,
+            revision: 0,
+            rootDir: "",
+            entryFile: "",
+          },
+          "manifest",
+          error,
+          undefined,
+        );
+      }
+    },
+    async getRevision(projectId, revision) {
+      try {
+        return await resolveLocation(await options.source.getRevision(projectId, revision));
+      } catch (error) {
+        throw revisionUnavailable(
+          {
+            projectId,
+            revision,
+            rootDir: "",
+            entryFile: "",
+          },
+          "manifest",
+          error,
+          undefined,
+        );
+      }
+    },
+    async readFiles(location) {
+      const files = await options.source.readFiles(location);
+      return basename(location.rootDir).startsWith("compiler-")
+        ? new Map([...files].filter(([path]) => path !== markerName))
+        : files;
+    },
+    async withCheckout(location, operation) {
+      return options.source.withCheckout === undefined
+        ? await operation(location)
+        : await options.source.withCheckout(location, operation);
+    },
+    async commit(input) {
+      return await resolveRequiredLocation(await options.source.commit(input));
+    },
+  };
+
+  async function resolveRequiredLocation(
+    location: PragmaProjectRevisionLocation,
+  ): Promise<PragmaProjectRevisionLocation> {
+    return (await resolveLocation(location))!;
+  }
+}
+
+function revisionUnavailable(
+  location: PragmaProjectRevisionLocation,
+  stage: PragmaProjectRevisionUnavailableStage,
+  error: unknown,
+  sourceCompilerVersion: string | undefined,
+  targetCompilerVersion?: string,
+): PragmaProjectRevisionUnavailableError {
+  if (error instanceof PragmaProjectRevisionUnavailableError) return error;
+  const diagnostics = error instanceof PragmaProjectValidationError ? error.diagnostics : [];
+  return new PragmaProjectRevisionUnavailableError(
+    location.projectId,
+    location.revision,
+    error instanceof PragmaProjectValidationError ? "validation" : stage,
+    `Project revision ${location.projectId}@${location.revision} is unavailable: ${
+      error instanceof Error ? error.message : String(error)
+    }`,
+    sourceCompilerVersion,
+    targetCompilerVersion,
+    diagnostics,
+    errorCode(error) === "EBUSY" || errorCode(error) === "ETIMEDOUT",
+    { cause: error },
+  );
+}
+
+async function readOptionalText(path: string): Promise<string | undefined> {
+  try {
+    return await readFile(path, "utf8");
+  } catch (error) {
+    if (errorCode(error) === "ENOENT") return undefined;
+    throw error;
+  }
+}
+
 async function hasSnapshotMarker(marker: string, snapshotHash: string): Promise<boolean> {
   try {
     return (await readFile(marker, "utf8")).trim() === snapshotHash;
@@ -810,10 +1081,10 @@ function assertProjectRelativePath(path: string): void {
       `Project file path escapes its root: ${path}`,
     );
   }
-  if (path === ".pragma-snapshot") {
+  if (path === ".pragma-snapshot" || path === ".pragma-compiler-view") {
     throw new PragmaProjectStoreError(
       "project_invalid",
-      "Project file path is reserved for checkout metadata: .pragma-snapshot",
+      `Project file path is reserved for checkout metadata: ${path}`,
     );
   }
 }
@@ -838,9 +1109,21 @@ async function readRevisionArtifacts(
       (resource) => `${resourceDirectory(resource)}/${resource.metadata.id}.pragma.yaml`,
     ),
   ]);
-  return new Map(
-    [...(await repository.readFiles(location))].filter(([path]) => !managed.has(path)),
-  );
+  return await withRepositoryCheckout(repository, location, async (checkedOut) => {
+    return new Map(
+      [...(await repository.readFiles(checkedOut))].filter(([path]) => !managed.has(path)),
+    );
+  });
+}
+
+async function withRepositoryCheckout<T>(
+  repository: PragmaProjectSourceRepository,
+  location: PragmaProjectRevisionLocation,
+  operation: (location: PragmaProjectRevisionLocation) => Promise<T>,
+): Promise<T> {
+  return repository.withCheckout === undefined
+    ? await operation(location)
+    : await repository.withCheckout(location, operation);
 }
 
 function resourceDirectory(resource: PragmaResource): string {
@@ -892,8 +1175,6 @@ const LegacyProjectRevisionV4ManifestSchema = z
   .strict();
 
 type LegacyProjectRevision = ReturnType<typeof migratePragmaDslProjectToCurrent>;
-type CompilerMigratedProjectRevision = ReturnType<typeof migratePragmaCompilerProjectToCurrent>;
-
 async function migrateDesktopProjectStorageV3ToV4(input: {
   readonly projectsPath: string;
   readonly objectsPath: string;
@@ -1009,138 +1290,28 @@ async function migrateDesktopProjectStorageV3ToV4(input: {
   });
 }
 
-async function migrateDesktopProjectStorageV4ToV5(input: {
+async function recoverInterruptedDesktopProjectStorageV4ToV5(input: {
   readonly projectsPath: string;
-  readonly objectsPath: string;
   readonly projectId: string;
-  readonly publish: (
-    expectedRevision: number,
-    resources: readonly PragmaResource[],
-    artifacts: ReadonlyMap<string, string>,
-  ) => Promise<void>;
 }): Promise<void> {
   const projectPath = join(input.projectsPath, input.projectId);
-  const manifestPath = join(projectPath, "project.json");
   const journalPath = join(input.projectsPath, `.${input.projectId}.v4-to-v5.json`);
   await withFileLock(`${projectPath}.v4-to-v5.lock`, async () => {
     const pending = await readV4ProjectMigrationJournal(journalPath, input.projectId);
-    if (pending !== undefined) {
-      if (!(await pathExists(pending.backupPath))) {
-        throw new PragmaProjectStoreError(
-          "unsupported_format",
-          `Cannot recover project compiler migration because its backup is missing: ${pending.backupPath}`,
-        );
-      }
-      await rm(projectPath, { recursive: true, force: true });
-      await rename(pending.backupPath, projectPath);
-      await rm(journalPath, { force: true });
-    }
-
-    let rawManifest: unknown;
-    try {
-      rawManifest = JSON.parse(await readFile(manifestPath, "utf8")) as unknown;
-    } catch (error) {
-      if (errorCode(error) === "ENOENT") return;
-      throw error;
-    }
-    if (
-      typeof rawManifest === "object" &&
-      rawManifest !== null &&
-      "schemaVersion" in rawManifest &&
-      rawManifest.schemaVersion === "pragma.desktop-project/v5"
-    ) {
-      await rm(journalPath, { force: true });
-      return;
-    }
-
-    const legacyManifest = LegacyProjectV4ManifestSchema.parse(rawManifest);
-    const objects = new ContentAddressedStore(input.objectsPath);
-    const revisions: CompilerMigratedProjectRevision[] = [];
-    for (let revision = 1; revision <= legacyManifest.headRevision; revision += 1) {
-      const parsedRevisionManifest = LegacyProjectRevisionV4ManifestSchema.safeParse(
-        JSON.parse(
-          await readFile(join(projectPath, "revisions", `${revision}.json`), "utf8"),
-        ) as unknown,
+    if (pending === undefined) return;
+    if (!(await pathExists(pending.backupPath))) {
+      throw new PragmaProjectRevisionUnavailableError(
+        input.projectId,
+        0,
+        "io",
+        `Cannot recover the interrupted project compiler migration because its backup is missing: ${pending.backupPath}`,
+        "pragma.dsl/v2",
+        "pragma.dsl/v3",
       );
-      if (!parsedRevisionManifest.success) {
-        throw new PragmaProjectStoreError(
-          "unsupported_format",
-          `Project revision manifest is invalid: ${input.projectId}@${revision}.`,
-        );
-      }
-      const revisionManifest = parsedRevisionManifest.data;
-      if (
-        revisionManifest.projectId !== input.projectId ||
-        revisionManifest.revision !== revision
-      ) {
-        throw new PragmaProjectStoreError(
-          "unsupported_format",
-          `Project revision metadata is inconsistent: ${input.projectId}@${revision}.`,
-        );
-      }
-      const temporary = await mkdtemp(join(input.projectsPath, ".project-v4-view-"));
-      try {
-        await objects.materializeTree(revisionManifest.snapshotHash, temporary);
-        try {
-          revisions.push(
-            migratePragmaCompilerProjectToCurrent({
-              files: await readTextFiles(temporary),
-              revisionCompilerVersion: revisionManifest.compilerVersion,
-            }),
-          );
-        } catch (error) {
-          if (error instanceof PragmaCompilerMigrationError) {
-            throw new PragmaProjectStoreError(
-              "unsupported_format",
-              `Cannot upgrade ${input.projectId}@${revision}: ${error.message}`,
-            );
-          }
-          throw error;
-        }
-      } finally {
-        await rm(temporary, { recursive: true, force: true });
-      }
     }
-    // Identity migration metadata and Flow layouts have independent schema versions.
-    // Carry them byte-for-byte; their owning stores validate and migrate them on access.
-    const auxiliaryFiles = new Map(
-      [...(await readTextFiles(projectPath))].filter(
-        ([path]) =>
-          path !== "project.json" && !path.startsWith("revisions/") && path !== ".commit.lock",
-      ),
-    );
-
-    const backupPath = `${projectPath}.v4-backup-${new Date().toISOString().replace(/[:.]/g, "-")}`;
-    await writeAtomically(
-      journalPath,
-      `${JSON.stringify(
-        {
-          schemaVersion: "pragma.desktop-project-migration/v1",
-          projectId: input.projectId,
-          sourceSchema: "pragma.desktop-project/v4",
-          targetSchema: "pragma.desktop-project/v5",
-          backupPath,
-        },
-        undefined,
-        2,
-      )}\n`,
-    );
-    await rename(projectPath, backupPath);
-    try {
-      for (let revision = 0; revision < revisions.length; revision += 1) {
-        const migrated = revisions[revision]!;
-        await input.publish(revision, migrated.resources, migrated.artifacts);
-      }
-      for (const [path, contents] of auxiliaryFiles) {
-        await writeAtomically(join(projectPath, path), contents);
-      }
-      await rm(journalPath, { force: true });
-    } catch (error) {
-      await rm(projectPath, { recursive: true, force: true });
-      await rename(backupPath, projectPath);
-      await rm(journalPath, { force: true });
-      throw error;
-    }
+    await rm(projectPath, { recursive: true, force: true });
+    await rename(pending.backupPath, projectPath);
+    await rm(journalPath, { force: true });
   });
 }
 

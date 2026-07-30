@@ -29,7 +29,9 @@ Persisted recoverable state uses a forward-only migration boundary:
    (`vN -> vN+1`). Domain code only receives the current schema; it never branches on historical
    fields.
 3. A store checks and upgrades state lazily on first access while holding that aggregate's existing
-   file lock. Current records take the validation-only fast path and are not rewritten.
+   file lock. Constructing a store, creating the Desktop window, or enumerating owner metadata is
+   not aggregate access and must not trigger migration. Current records take the validation-only
+   fast path and are not rewritten.
 4. Multi-document changes first persist a stable `pragma.state-migration/v1` journal containing the
    complete validated target documents. Each target is replaced atomically, and the journal is
    removed last. A later access replays an incomplete journal, making interruption at any write
@@ -70,6 +72,8 @@ do not own historical schemas or transformation logic.
   historical shapes do not leak into runtime services or UI.
 - Opening an old Mission can make a bounded one-time disk write. A failed migration remains
   recoverable from its journal and is retried on the next access.
+- Desktop startup does not enumerate recoverable owners to discover old versions. A failure remains
+  scoped to the aggregate that a user or background capability actually accessed.
 - Forward-only means installing an older application after migration may make that data unreadable.
   Product update flows must not describe application downgrade as supported.
 - Work history now reports a recoverable read error with retry instead of presenting an empty or

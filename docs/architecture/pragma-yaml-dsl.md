@@ -32,13 +32,22 @@ deployment can store the same sources and resolve bindings on its server.
 Applications also own migration transactions, but not DSL transformation rules. A Host reads an old
 revision, calls the Interpreter's in-memory adjacent migration chain, republishes the canonical
 current resources, and uses the returned identity mapping for Host-specific dependent records.
+That publication path applies to DSL `apiVersion` migrations that rewrite identities; it is not the
+compiler compatibility path.
 
 Compiler compatibility is declared on a separate axis from DSL `apiVersion`. The current
 Interpreter writes and directly reads `pragma.dsl/v3`, while `pragma.dsl/v2` is only an upgrade
-source. Desktop upgrades v2 revisions transactionally before normal parsing; the compiler migration
-validates the historical lock and removes the abandoned `Flow.spec.runDry` field without creating
-an Evaluation. A version may be advertised as directly readable only when the current parser accepts
-real revisions written by that version.
+source. Desktop supports mixed v4/v5 storage and upgrades only the requested v2 revision into a
+read-only, rebuildable v3 view. It does not rewrite the authoritative snapshot, revision manifest,
+project head, or unrelated history. The compiler migration validates the historical lock and
+removes the abandoned `Flow.spec.runDry` field without creating an Evaluation. A version may be
+advertised as directly readable only when the current parser accepts real revisions written by that
+version.
+
+Application startup does not enumerate or migrate project history. Startup-critical shared state
+may fail closed, but project revision compatibility is checked at the revision access boundary.
+Migration failure returns a structured revision-level error, leaving unrelated revisions and
+application capabilities available.
 
 ## Project layout and identity
 
