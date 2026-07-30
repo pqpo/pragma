@@ -1,6 +1,7 @@
 import { app } from "electron";
 import {
-  PRAGMA_COMPILER_READ_VERSIONS,
+  PRAGMA_COMPILER_DIRECT_READ_VERSIONS,
+  PRAGMA_COMPILER_UPGRADE_FROM_VERSIONS,
   PRAGMA_COMPILER_WRITE_VERSION,
 } from "@pragma/interpreter/ast";
 
@@ -22,7 +23,8 @@ export function createBridgeSnapshot(): DesktopBridgeSnapshot {
     },
     interpreter: {
       writeVersion: PRAGMA_COMPILER_WRITE_VERSION,
-      readVersions: [...PRAGMA_COMPILER_READ_VERSIONS],
+      directReadVersions: [...PRAGMA_COMPILER_DIRECT_READ_VERSIONS],
+      upgradeFromVersions: [...PRAGMA_COMPILER_UPGRADE_FROM_VERSIONS],
     },
     gateway: {
       schemaVersion: 1,

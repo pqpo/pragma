@@ -19,8 +19,14 @@ validator finding in one unrelated Flow could consequently disable every project
 - The Interpreter exports one browser-safe compiler capability declaration. Project publication,
   lock generation, revision loading, Blueprint caching, Desktop IPC, and Mission compilation use
   that declaration.
-- New revisions write `pragma.dsl/v3`. The current Interpreter reads both `pragma.dsl/v2` and
-  `pragma.dsl/v3`; immutable v2 revisions are not rewritten.
+- New revisions write and directly read `pragma.dsl/v3`. `pragma.dsl/v2` is an upgrade source, not
+  a directly readable version.
+- The Interpreter owns the pure v2-to-v3 compiler migration. It validates the historical v2 lock
+  and the exact historical `Flow.spec.runDry` shape, removes that abandoned field, and emits
+  current resources. It does not create an `Evaluation` or retain a runtime compatibility branch.
+- Desktop owns the transaction that upgrades project storage v4 to v5 before normal reads. It
+  preserves project and revision identities, republishes every revision with a v3 lock, and uses a
+  file lock, stable journal, backup, atomic replacement, and replayable recovery.
 - Revision metadata and the persisted lock must agree. Unsupported versions and metadata
   disagreement are compiler diagnostics evaluated before resource parsing. They are not lock
   mismatches.
@@ -42,5 +48,6 @@ an Interpreter that cannot read a newer revision remains safe because the compil
 execution before resources are trusted.
 
 Changes to the closed DSL resource union, strict resource schemas, or portable validators that can
-reject a previously published revision require an explicit compiler compatibility decision,
-cross-version fixtures, and an update to the compiler capability declaration.
+reject a previously published revision require a compiler version bump, a same-change adjacent
+migration, real historical fixtures, Host transaction coverage, and an update to the compiler
+capability declaration. Declaring an upgrade source as directly readable is invalid.

@@ -1,5 +1,6 @@
 import {
-  PRAGMA_COMPILER_READ_VERSIONS,
+  PRAGMA_COMPILER_DIRECT_READ_VERSIONS,
+  PRAGMA_COMPILER_UPGRADE_FROM_VERSIONS,
   PRAGMA_COMPILER_WRITE_VERSION,
 } from "@pragma/interpreter/ast";
 
@@ -27,7 +28,8 @@ export async function resolveDesktopStartup(
           readonly interpreter?:
             | {
                 readonly writeVersion: string;
-                readonly readVersions: readonly string[];
+                readonly directReadVersions: readonly string[];
+                readonly upgradeFromVersions: readonly string[];
               }
             | undefined;
         }>;
@@ -56,9 +58,13 @@ export async function resolveDesktopStartup(
     if (
       interpreter === undefined ||
       interpreter.writeVersion !== PRAGMA_COMPILER_WRITE_VERSION ||
-      interpreter.readVersions.length !== PRAGMA_COMPILER_READ_VERSIONS.length ||
-      interpreter.readVersions.some(
-        (version, index) => version !== PRAGMA_COMPILER_READ_VERSIONS[index],
+      interpreter.directReadVersions.length !== PRAGMA_COMPILER_DIRECT_READ_VERSIONS.length ||
+      interpreter.directReadVersions.some(
+        (version, index) => version !== PRAGMA_COMPILER_DIRECT_READ_VERSIONS[index],
+      ) ||
+      interpreter.upgradeFromVersions.length !== PRAGMA_COMPILER_UPGRADE_FROM_VERSIONS.length ||
+      interpreter.upgradeFromVersions.some(
+        (version, index) => version !== PRAGMA_COMPILER_UPGRADE_FROM_VERSIONS[index],
       )
     ) {
       return {

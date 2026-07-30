@@ -5,7 +5,8 @@ import { resolveDesktopStartup } from "./desktop-startup.ts";
 const currentBridgeSnapshot = {
   interpreter: {
     writeVersion: "pragma.dsl/v3",
-    readVersions: ["pragma.dsl/v2", "pragma.dsl/v3"],
+    directReadVersions: ["pragma.dsl/v3"],
+    upgradeFromVersions: ["pragma.dsl/v2"],
   },
 } as const;
 
@@ -69,7 +70,8 @@ describe("resolveDesktopStartup", () => {
           getBridgeSnapshot: async () => ({
             interpreter: {
               writeVersion: "pragma.dsl/v2",
-              readVersions: ["pragma.dsl/v2"],
+              directReadVersions: ["pragma.dsl/v2"],
+              upgradeFromVersions: [],
             },
           }),
           getDesktopSettings: async () => ({ resolvedLocale: "en" }),
@@ -89,7 +91,8 @@ describe("resolveDesktopStartup", () => {
           getBridgeSnapshot: async () => ({
             interpreter: {
               writeVersion: "pragma.dsl/v3",
-              readVersions: ["pragma.dsl/v2\u0000pragma.dsl/v3"],
+              directReadVersions: ["pragma.dsl/v3\u0000pragma.dsl/v4"],
+              upgradeFromVersions: ["pragma.dsl/v2"],
             },
           }),
           getDesktopSettings: async () => ({ resolvedLocale: "en" }),

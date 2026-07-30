@@ -1,4 +1,3 @@
-import { createHash } from "node:crypto";
 import { lstat, readFile, readdir, realpath } from "node:fs/promises";
 import { dirname, isAbsolute, relative, resolve } from "node:path";
 
@@ -74,10 +73,13 @@ import {
   type PragmaRuntimeProfileContribution,
 } from "../runtime/resource-adapters.ts";
 import { evaluatePragmaFlowValue, renderPragmaFlowPrompt } from "../runtime/flow-values.ts";
+import { sha256, stableStringify } from "./compiler-hash.ts";
 import {
-  PRAGMA_COMPILER_READ_VERSIONS,
+  PRAGMA_COMPILER_DIRECT_READ_VERSIONS,
+  PRAGMA_COMPILER_UPGRADE_FROM_VERSIONS,
   PRAGMA_COMPILER_WRITE_VERSION,
-  isPragmaCompilerVersionReadable,
+  isPragmaCompilerVersionDirectlyReadable,
+  isPragmaCompilerVersionUpgradeable,
 } from "../ast/compiler-compatibility.ts";
 
 const provenance = new WeakMap<object, PragmaProvenance>();
@@ -217,36 +219,36 @@ async function readCompilerCompatibilityDiagnostic(
   options: LoadPragmaProjectOptions,
 ): Promise<PragmaDiagnostic | undefined> {
   if (options.requireLock !== true) return undefined;
-  if (
-    options.revisionCompilerVersion !== undefined &&
-    !isPragmaCompilerVersionReadable(options.revisionCompilerVersion)
-  ) {
+  const versionDiagnostic = (
+    version: string,
+    source: "revision metadata" | "pragma.lock.yaml",
+    path?: string,
+  ): PragmaDiagnostic | undefined => {
+    if (isPragmaCompilerVersionDirectlyReadable(version)) return undefined;
+    const upgradeable = isPragmaCompilerVersionUpgradeable(version);
     return PragmaDiagnosticSchema.parse({
       severity: "error",
-      code: "compiler.version_unsupported",
+      code: upgradeable ? "compiler.version_upgrade_required" : "compiler.version_unsupported",
       message:
-        `Project revision metadata requires compiler ${options.revisionCompilerVersion}; ` +
-        `this Interpreter reads ${PRAGMA_COMPILER_READ_VERSIONS.join(", ")}.`,
+        `Project ${source} requires compiler ${version}; ` +
+        (upgradeable
+          ? `upgrade it to ${PRAGMA_COMPILER_WRITE_VERSION} before loading.`
+          : `this Interpreter directly reads ${PRAGMA_COMPILER_DIRECT_READ_VERSIONS.join(", ")}` +
+            ((PRAGMA_COMPILER_UPGRADE_FROM_VERSIONS as readonly string[]).length === 0
+              ? "."
+              : ` and upgrades ${PRAGMA_COMPILER_UPGRADE_FROM_VERSIONS.join(", ")}.`)),
+      ...(path === undefined ? {} : { source: path }),
       path: ["compilerVersion"],
     });
-  }
+  };
   const lockPath = resolve(dirname(entryFile), "pragma.lock.yaml");
   let lock: PragmaLock;
   try {
     lock = PragmaLockSchema.parse(parsePragmaYaml(await readFile(lockPath, "utf8")));
   } catch {
-    return undefined;
-  }
-  if (!isPragmaCompilerVersionReadable(lock.compilerVersion)) {
-    return PragmaDiagnosticSchema.parse({
-      severity: "error",
-      code: "compiler.version_unsupported",
-      message:
-        `Project revision requires compiler ${lock.compilerVersion}; this Interpreter reads ` +
-        `${PRAGMA_COMPILER_READ_VERSIONS.join(", ")}.`,
-      source: lockPath,
-      path: ["compilerVersion"],
-    });
+    return options.revisionCompilerVersion === undefined
+      ? undefined
+      : versionDiagnostic(options.revisionCompilerVersion, "revision metadata");
   }
   if (
     options.revisionCompilerVersion !== undefined &&
@@ -262,7 +264,7 @@ async function readCompilerCompatibilityDiagnostic(
       path: ["compilerVersion"],
     });
   }
-  return undefined;
+  return versionDiagnostic(lock.compilerVersion, "pragma.lock.yaml", lockPath);
 }
 
 export async function loadPragmaProject(
@@ -2664,19 +2666,4 @@ function requireStepReference(
 
 function canonicalRef(resource: PragmaResource): PragmaSemanticResourceRef {
   return canonicalPragmaResourceRef(resource);
-}
-
-function sha256(value: string | Uint8Array): string {
-  return createHash("sha256").update(value).digest("hex");
-}
-
-function stableStringify(value: unknown): string {
-  if (Array.isArray(value)) return `[${value.map(stableStringify).join(",")}]`;
-  if (typeof value === "object" && value !== null) {
-    return `{${Object.entries(value)
-      .sort(([left], [right]) => left.localeCompare(right))
-      .map(([key, entry]) => `${JSON.stringify(key)}:${stableStringify(entry)}`)
-      .join(",")}}`;
-  }
-  return JSON.stringify(value);
 }

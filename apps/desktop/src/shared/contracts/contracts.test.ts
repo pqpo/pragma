@@ -82,7 +82,8 @@ describe("runtime settings contracts", () => {
       },
       interpreter: {
         writeVersion: "pragma.dsl/v4",
-        readVersions: ["pragma.dsl/v2", "pragma.dsl/v3", "pragma.dsl/v4"],
+        directReadVersions: ["pragma.dsl/v4"],
+        upgradeFromVersions: ["pragma.dsl/v2", "pragma.dsl/v3"],
       },
       gateway: {
         schemaVersion: 1,
@@ -101,6 +102,16 @@ describe("runtime settings contracts", () => {
     } as const;
 
     expect(DesktopBridgeSnapshotSchema.parse(snapshot).interpreter).toEqual(snapshot.interpreter);
+    expect(
+      DesktopBridgeSnapshotSchema.safeParse({
+        ...snapshot,
+        interpreter: {
+          writeVersion: "pragma.dsl/v4",
+          directReadVersions: ["pragma.dsl/v4"],
+          upgradeFromVersions: [],
+        },
+      }).success,
+    ).toBe(true);
     expect(
       DesktopBridgeSnapshotSchema.parse({ ...snapshot, interpreter: undefined }),
     ).toMatchObject({

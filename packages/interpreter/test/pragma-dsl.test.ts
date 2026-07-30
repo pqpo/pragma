@@ -26,6 +26,7 @@ import {
   PragmaSemanticResourceIdSchema,
   formatPragmaYaml,
   loadPragmaProject,
+  migratePragmaCompilerProjectToCurrent,
   type PragmaExpertResource,
 } from "../src/index.ts";
 
@@ -739,7 +740,7 @@ describe("Pragma YAML DSL", () => {
     });
   });
 
-  it("continues to read compatible pragma.dsl/v2 locks", async () => {
+  it("requires pragma.dsl/v2 revisions to be upgraded before normal loading", async () => {
     const root = await mkdtemp(join(tmpdir(), "pragma-dsl-compiler-v2-"));
     const entry = join(root, "pragma.yaml");
     await writeFile(
@@ -764,10 +765,72 @@ describe("Pragma YAML DSL", () => {
       requireLock: true,
       revisionCompilerVersion: "pragma.dsl/v2",
     });
-    expect(await project.validate()).toEqual([]);
+    expect(await project.validate()).toEqual([
+      expect.objectContaining({ code: "compiler.version_upgrade_required" }),
+    ]);
     await expect(
       project.compile("expert:1xddvess309a6gme", { workspace: root }),
-    ).resolves.toMatchObject({ ref: "expert:1xddvess309a6gme" });
+    ).rejects.toMatchObject({
+      diagnostics: [expect.objectContaining({ code: "compiler.version_upgrade_required" })],
+    });
+  });
+
+  it("upgrades a real compiler v2 runDry fixture without preserving the rejected branch", async () => {
+    const fixture = join(import.meta.dirname, "fixtures", "compiler-v2-run-dry");
+    const files = new Map([
+      ["pragma.yaml", await readFile(join(fixture, "pragma.yaml"), "utf8")],
+      ["pragma.lock.yaml", await readFile(join(fixture, "pragma.lock.yaml"), "utf8")],
+      [
+        "flows/8h9j0k1m2n3p4q5r.pragma.yaml",
+        await readFile(join(fixture, "flows", "8h9j0k1m2n3p4q5r.pragma.yaml"), "utf8"),
+      ],
+    ]);
+
+    const migrated = migratePragmaCompilerProjectToCurrent({
+      files,
+      revisionCompilerVersion: "pragma.dsl/v2",
+    });
+
+    expect(migrated).toMatchObject({
+      sourceCompilerVersion: "pragma.dsl/v2",
+      targetCompilerVersion: "pragma.dsl/v3",
+      migrated: true,
+    });
+    expect(migrated.resources).toEqual([
+      expect.objectContaining({
+        kind: "Flow",
+        spec: expect.not.objectContaining({ runDry: expect.anything() }),
+      }),
+    ]);
+  });
+
+  it("rejects compiler migration when a historical v2 source no longer matches its lock", async () => {
+    const fixture = join(import.meta.dirname, "fixtures", "compiler-v2-run-dry");
+    const flowPath = join(fixture, "flows", "8h9j0k1m2n3p4q5r.pragma.yaml");
+    const files = new Map([
+      ["pragma.yaml", await readFile(join(fixture, "pragma.yaml"), "utf8")],
+      ["pragma.lock.yaml", await readFile(join(fixture, "pragma.lock.yaml"), "utf8")],
+      [
+        "flows/8h9j0k1m2n3p4q5r.pragma.yaml",
+        (await readFile(flowPath, "utf8")).replace("Historical Run Dry", "Tampered"),
+      ],
+    ]);
+
+    expect(() =>
+      migratePragmaCompilerProjectToCurrent({
+        files,
+        revisionCompilerVersion: "pragma.dsl/v2",
+      }),
+    ).toThrow(expect.objectContaining({ code: "lock_mismatch" }));
+  });
+
+  it("rejects future compiler revisions instead of guessing an upgrade path", () => {
+    expect(() =>
+      migratePragmaCompilerProjectToCurrent({
+        files: new Map(),
+        revisionCompilerVersion: "pragma.dsl/v99",
+      }),
+    ).toThrow(expect.objectContaining({ code: "future_compiler_version" }));
   });
 
   it("compiles only the target dependency closure while preserving full project diagnostics", async () => {

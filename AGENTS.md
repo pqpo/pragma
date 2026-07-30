@@ -227,6 +227,27 @@ import { HealthResponseSchema } from "../../../shared/contracts/src/index.ts";
 
 禁止对内部依赖使用 `"*"`、固定 semver 或 npm registry 版本。
 
+## 协议与版本升级治理
+
+以下规则适用于所有持久化和跨进程协议，包括 DSL `apiVersion`、状态 `schemaVersion`、
+Interpreter `compilerVersion`、manifest、lock、IPC、Bridge 和 Runtime capability：
+
+- 任何会让新代码拒绝或改变既有合法数据语义的改动，必须在同一个 Pull Request 中提交明确的版本升级、
+  可执行升级机制和完整测试；禁止先升级 Schema 或版本号、再留待后续补迁移。缺少升级机制时不得合入。
+- Capability 必须区分“当前代码可直接读取的版本”和“可通过迁移升级的来源版本”。只有当前 parser
+  能完整接受真实历史 fixture 时才能声明直接可读；禁止只放行旧版本号后把旧数据交给当前严格 Schema。
+- 支持窗口内的旧版本必须提供静态注册的相邻迁移、协议协商或等价升级链。`fail closed` 只是损坏数据、
+  未来版本和缺失迁移的安全兜底，不是升级策略。
+- 业务 parser 只处理当前 Schema；历史 Schema 和字段转换放在迁移模块。废弃或错误字段可以由迁移显式
+  删除，但必须记录决策、保留升级前备份并验证结果，不得静默丢弃，也不得为此保留长期业务兼容分支。
+- Host 必须在正常启动和业务读取前，在最小 owner 边界内执行升级。持久化升级使用锁、稳定 journal、
+  备份、原子替换和可重放恢复；失败时保留原数据并提供可操作诊断。除非共享全局状态无法安全初始化，
+  单个 owner 升级失败不得阻断无关项目、对象或能力启动。
+- 升级测试必须使用由真实历史代码写出的 fixture，不得用当前对象只改版本号伪造。Pull Request 至少
+  覆盖历史 fixture、当前版本 no-op、相邻和链式升级、崩溃恢复、未来版本拒绝以及升级后的启动/执行；
+  缺少任一适用场景时不得合入。
+- 删除仍在支持窗口内的升级链属于兼容性 cutover，必须另写 ADR，并提供导出、备份或离线升级方案。
+
 ## 运行环境边界
 
 `shared` package 必须同时支持浏览器和 Node，不允许引入运行环境专属依赖。
@@ -604,9 +625,11 @@ Expert API 设计要求：
 - Interpreter 普通 parser/compiler 只接受当前 DSL；旧版本必须先经过静态注册的相邻迁移链。
 - 删除仍在支持窗口内的旧 DSL 迁移步骤属于兼容性 cutover，必须另写 ADR，并提供导出、备份或离线升级路径。
 - Project Revision 的 Interpreter 兼容能力统一由 `@pragma/interpreter/ast` 导出的 compiler capability
-  声明；写入、读取、Lock、Blueprint cache、Desktop IPC 和 Mission 编译不得各自维护版本常量。
+  声明，并分别列出 write version、direct-read versions 和 upgrade-from versions；Lock、Blueprint
+  cache、Desktop IPC 和 Mission 编译不得各自维护版本常量。
 - 修改闭合资源联合、严格资源 Schema，或新增会拒绝既有 Revision 的 portable validator 时，必须
-  明确升级 compiler write version 或提供旧版本读取路径，并提交新旧版本 fixture 和 fail-closed 测试。
+  升级 compiler write version，并在同一改动中提供历史 Schema、相邻升级步骤、Host 事务迁移和真实
+  新旧版本 fixture；不得把“可迁移”版本声明成“可直接读取”。
 - `PragmaProject.validate()` 是全项目健康检查；执行入口使用目标资源及其传递依赖闭包校验。无关资源
   诊断不得阻断独立执行器，compiler、lock、source topology 和资源身份歧义仍然全局 fail closed。
 

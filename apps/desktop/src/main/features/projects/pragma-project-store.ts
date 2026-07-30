@@ -14,10 +14,12 @@ import { dirname, isAbsolute, join, relative, resolve, sep } from "node:path";
 
 import {
   PragmaDslMigrationError,
+  PragmaCompilerMigrationError,
   PragmaProjectRevisionConflictError,
   PragmaProjectService,
   PragmaProjectValidationError,
   loadPragmaProject,
+  migratePragmaCompilerProjectToCurrent,
   migratePragmaDslProjectToCurrent,
   parsePragmaYaml,
   type PragmaProject,
@@ -55,7 +57,7 @@ import { referencingPragmaResources } from "./pragma-resource-references.ts";
 
 const ProjectManifestSchema = z
   .object({
-    schemaVersion: z.literal("pragma.desktop-project/v4"),
+    schemaVersion: z.literal("pragma.desktop-project/v5"),
     projectId: z.string().min(1),
     headRevision: z.number().int().positive(),
     updatedAt: z.string().datetime(),
@@ -64,7 +66,7 @@ const ProjectManifestSchema = z
 
 const ProjectRevisionManifestSchema = z
   .object({
-    schemaVersion: z.literal("pragma.project-revision/v4"),
+    schemaVersion: z.literal("pragma.project-revision/v5"),
     projectId: z.string().min(1),
     revision: z.number().int().positive(),
     parentRevision: z.number().int().positive().optional(),
@@ -174,10 +176,13 @@ export function createPragmaProjectStore(options: {
   readonly blueprintCache?: PragmaBlueprintCacheStore | undefined;
 }): PragmaProjectStore {
   const projectId = options.projectId ?? "studio";
+  const objectsPath = options.objectsPath ?? join(options.projectsPath, ".storage", "objects");
+  const projectViewsPath =
+    options.projectViewsPath ?? join(options.projectsPath, ".cache", "views");
   const repository = createDesktopProjectSourceRepository({
     projectsPath: options.projectsPath,
-    objectsPath: options.objectsPath ?? join(options.projectsPath, ".storage", "objects"),
-    projectViewsPath: options.projectViewsPath ?? join(options.projectsPath, ".cache", "views"),
+    objectsPath,
+    projectViewsPath,
   });
   const service = new PragmaProjectService({
     repository,
@@ -185,10 +190,35 @@ export function createPragmaProjectStore(options: {
     externalResourceRefs: options.reservedResourceRefs,
     loggerProvider: options.loggerProvider,
   });
-  const ensureMigrated = async (): Promise<void> =>
+  const legacyV4Repository = createDesktopProjectSourceRepository({
+    projectsPath: options.projectsPath,
+    objectsPath,
+    projectViewsPath,
+    storageVersion: 4,
+  });
+  const legacyV4Service = new PragmaProjectService({
+    repository: legacyV4Repository,
+    externalResourceRefs: options.reservedResourceRefs,
+    loggerProvider: options.loggerProvider,
+  });
+  const ensureMigrated = async (): Promise<void> => {
     await migrateDesktopProjectStorageV3ToV4({
       projectsPath: options.projectsPath,
-      objectsPath: options.objectsPath ?? join(options.projectsPath, ".storage", "objects"),
+      objectsPath,
+      projectId,
+      publish: async (expectedRevision, resources, artifacts) => {
+        await legacyV4Service.publish({
+          projectId,
+          expectedRevision,
+          resources,
+          artifacts,
+          forceRevision: true,
+        });
+      },
+    });
+    await migrateDesktopProjectStorageV4ToV5({
+      projectsPath: options.projectsPath,
+      objectsPath,
       projectId,
       publish: async (expectedRevision, resources, artifacts) => {
         await service.publish({
@@ -200,6 +230,7 @@ export function createPragmaProjectStore(options: {
         });
       },
     });
+  };
 
   const get = async (): Promise<PragmaProjectSnapshot> => {
     await ensureMigrated();
@@ -527,7 +558,9 @@ function createDesktopProjectSourceRepository(options: {
   readonly projectsPath: string;
   readonly objectsPath: string;
   readonly projectViewsPath: string;
+  readonly storageVersion?: 4 | 5;
 }): PragmaProjectSourceRepository {
+  const storageVersion = options.storageVersion ?? 5;
   const projectPath = (projectId: string) => join(options.projectsPath, projectId);
   const manifestPath = (projectId: string) => join(projectPath(projectId), "project.json");
   const revisionManifestPath = (projectId: string, revision: number) =>
@@ -541,7 +574,10 @@ function createDesktopProjectSourceRepository(options: {
   const readManifest = async (projectId: string) => {
     try {
       const raw = JSON.parse(await readFile(manifestPath(projectId), "utf8")) as unknown;
-      const parsed = ProjectManifestSchema.safeParse(raw);
+      const parsed =
+        storageVersion === 4
+          ? LegacyProjectV4ManifestSchema.safeParse(raw)
+          : ProjectManifestSchema.safeParse(raw);
       if (!parsed.success) {
         throw new PragmaProjectStoreError(
           "unsupported_format",
@@ -557,9 +593,20 @@ function createDesktopProjectSourceRepository(options: {
 
   const readRevisionManifest = async (projectId: string, revision: number) => {
     try {
-      return ProjectRevisionManifestSchema.parse(
-        JSON.parse(await readFile(revisionManifestPath(projectId, revision), "utf8")) as unknown,
-      );
+      const raw = JSON.parse(
+        await readFile(revisionManifestPath(projectId, revision), "utf8"),
+      ) as unknown;
+      const parsed =
+        storageVersion === 4
+          ? LegacyProjectRevisionV4ManifestSchema.safeParse(raw)
+          : ProjectRevisionManifestSchema.safeParse(raw);
+      if (!parsed.success) {
+        throw new PragmaProjectStoreError(
+          "unsupported_format",
+          `Project revision manifest is invalid: ${projectId}@${revision}.`,
+        );
+      }
+      return parsed.data;
     } catch (error) {
       if ((error as NodeJS.ErrnoException).code === "ENOENT") return undefined;
       throw error;
@@ -696,7 +743,7 @@ function createDesktopProjectSourceRepository(options: {
           const revision = actualRevision + 1;
           const createdAt = new Date().toISOString();
           const revisionManifest = ProjectRevisionManifestSchema.parse({
-            schemaVersion: "pragma.project-revision/v4",
+            schemaVersion: "pragma.project-revision/v5",
             projectId: input.projectId,
             revision,
             ...(actualRevision === 0 ? {} : { parentRevision: actualRevision }),
@@ -705,19 +752,33 @@ function createDesktopProjectSourceRepository(options: {
             compilerVersion: lock.compilerVersion,
             createdAt,
           });
+          const storedRevisionManifest =
+            storageVersion === 4
+              ? LegacyProjectRevisionV4ManifestSchema.parse({
+                  ...revisionManifest,
+                  schemaVersion: "pragma.project-revision/v4",
+                })
+              : revisionManifest;
           await writeAtomically(
             revisionManifestPath(input.projectId, revision),
-            `${JSON.stringify(revisionManifest, undefined, 2)}\n`,
+            `${JSON.stringify(storedRevisionManifest, undefined, 2)}\n`,
           );
           await writeAtomically(
             manifestPath(input.projectId),
             `${JSON.stringify(
-              ProjectManifestSchema.parse({
-                schemaVersion: "pragma.desktop-project/v4",
-                projectId: input.projectId,
-                headRevision: revision,
-                updatedAt: createdAt,
-              }),
+              storageVersion === 4
+                ? LegacyProjectV4ManifestSchema.parse({
+                    schemaVersion: "pragma.desktop-project/v4",
+                    projectId: input.projectId,
+                    headRevision: revision,
+                    updatedAt: createdAt,
+                  })
+                : ProjectManifestSchema.parse({
+                    schemaVersion: "pragma.desktop-project/v5",
+                    projectId: input.projectId,
+                    headRevision: revision,
+                    updatedAt: createdAt,
+                  }),
               undefined,
               2,
             )}\n`,
@@ -808,7 +869,30 @@ const LegacyProjectRevisionManifestSchema = z
   })
   .passthrough();
 
+const LegacyProjectV4ManifestSchema = z
+  .object({
+    schemaVersion: z.literal("pragma.desktop-project/v4"),
+    projectId: z.string().min(1),
+    headRevision: z.number().int().positive(),
+    updatedAt: z.string().datetime(),
+  })
+  .strict();
+
+const LegacyProjectRevisionV4ManifestSchema = z
+  .object({
+    schemaVersion: z.literal("pragma.project-revision/v4"),
+    projectId: z.string().min(1),
+    revision: z.number().int().positive(),
+    parentRevision: z.number().int().positive().optional(),
+    snapshotHash: z.string().regex(/^[a-f0-9]{64}$/),
+    projectFingerprint: z.string().regex(/^[a-f0-9]{64}$/),
+    compilerVersion: z.string().min(1),
+    createdAt: z.string().datetime(),
+  })
+  .strict();
+
 type LegacyProjectRevision = ReturnType<typeof migratePragmaDslProjectToCurrent>;
+type CompilerMigratedProjectRevision = ReturnType<typeof migratePragmaCompilerProjectToCurrent>;
 
 async function migrateDesktopProjectStorageV3ToV4(input: {
   readonly projectsPath: string;
@@ -824,7 +908,7 @@ async function migrateDesktopProjectStorageV3ToV4(input: {
   const manifestPath = join(projectPath, "project.json");
   const journalPath = join(input.projectsPath, `.${input.projectId}.v3-to-v4.json`);
   await withFileLock(`${projectPath}.v3-to-v4.lock`, async () => {
-    const pending = await readProjectMigrationJournal(journalPath, input.projectId);
+    const pending = await readV3ProjectMigrationJournal(journalPath, input.projectId);
     if (pending !== undefined) {
       if (!(await pathExists(pending.backupPath))) {
         throw new PragmaProjectStoreError(
@@ -847,7 +931,8 @@ async function migrateDesktopProjectStorageV3ToV4(input: {
       typeof rawManifest === "object" &&
       rawManifest !== null &&
       "schemaVersion" in rawManifest &&
-      rawManifest.schemaVersion === "pragma.desktop-project/v4"
+      (rawManifest.schemaVersion === "pragma.desktop-project/v4" ||
+        rawManifest.schemaVersion === "pragma.desktop-project/v5")
     ) {
       await rm(journalPath, { force: true });
       return;
@@ -924,6 +1009,141 @@ async function migrateDesktopProjectStorageV3ToV4(input: {
   });
 }
 
+async function migrateDesktopProjectStorageV4ToV5(input: {
+  readonly projectsPath: string;
+  readonly objectsPath: string;
+  readonly projectId: string;
+  readonly publish: (
+    expectedRevision: number,
+    resources: readonly PragmaResource[],
+    artifacts: ReadonlyMap<string, string>,
+  ) => Promise<void>;
+}): Promise<void> {
+  const projectPath = join(input.projectsPath, input.projectId);
+  const manifestPath = join(projectPath, "project.json");
+  const journalPath = join(input.projectsPath, `.${input.projectId}.v4-to-v5.json`);
+  await withFileLock(`${projectPath}.v4-to-v5.lock`, async () => {
+    const pending = await readV4ProjectMigrationJournal(journalPath, input.projectId);
+    if (pending !== undefined) {
+      if (!(await pathExists(pending.backupPath))) {
+        throw new PragmaProjectStoreError(
+          "unsupported_format",
+          `Cannot recover project compiler migration because its backup is missing: ${pending.backupPath}`,
+        );
+      }
+      await rm(projectPath, { recursive: true, force: true });
+      await rename(pending.backupPath, projectPath);
+      await rm(journalPath, { force: true });
+    }
+
+    let rawManifest: unknown;
+    try {
+      rawManifest = JSON.parse(await readFile(manifestPath, "utf8")) as unknown;
+    } catch (error) {
+      if (errorCode(error) === "ENOENT") return;
+      throw error;
+    }
+    if (
+      typeof rawManifest === "object" &&
+      rawManifest !== null &&
+      "schemaVersion" in rawManifest &&
+      rawManifest.schemaVersion === "pragma.desktop-project/v5"
+    ) {
+      await rm(journalPath, { force: true });
+      return;
+    }
+
+    const legacyManifest = LegacyProjectV4ManifestSchema.parse(rawManifest);
+    const objects = new ContentAddressedStore(input.objectsPath);
+    const revisions: CompilerMigratedProjectRevision[] = [];
+    for (let revision = 1; revision <= legacyManifest.headRevision; revision += 1) {
+      const parsedRevisionManifest = LegacyProjectRevisionV4ManifestSchema.safeParse(
+        JSON.parse(
+          await readFile(join(projectPath, "revisions", `${revision}.json`), "utf8"),
+        ) as unknown,
+      );
+      if (!parsedRevisionManifest.success) {
+        throw new PragmaProjectStoreError(
+          "unsupported_format",
+          `Project revision manifest is invalid: ${input.projectId}@${revision}.`,
+        );
+      }
+      const revisionManifest = parsedRevisionManifest.data;
+      if (
+        revisionManifest.projectId !== input.projectId ||
+        revisionManifest.revision !== revision
+      ) {
+        throw new PragmaProjectStoreError(
+          "unsupported_format",
+          `Project revision metadata is inconsistent: ${input.projectId}@${revision}.`,
+        );
+      }
+      const temporary = await mkdtemp(join(input.projectsPath, ".project-v4-view-"));
+      try {
+        await objects.materializeTree(revisionManifest.snapshotHash, temporary);
+        try {
+          revisions.push(
+            migratePragmaCompilerProjectToCurrent({
+              files: await readTextFiles(temporary),
+              revisionCompilerVersion: revisionManifest.compilerVersion,
+            }),
+          );
+        } catch (error) {
+          if (error instanceof PragmaCompilerMigrationError) {
+            throw new PragmaProjectStoreError(
+              "unsupported_format",
+              `Cannot upgrade ${input.projectId}@${revision}: ${error.message}`,
+            );
+          }
+          throw error;
+        }
+      } finally {
+        await rm(temporary, { recursive: true, force: true });
+      }
+    }
+    // Identity migration metadata and Flow layouts have independent schema versions.
+    // Carry them byte-for-byte; their owning stores validate and migrate them on access.
+    const auxiliaryFiles = new Map(
+      [...(await readTextFiles(projectPath))].filter(
+        ([path]) =>
+          path !== "project.json" && !path.startsWith("revisions/") && path !== ".commit.lock",
+      ),
+    );
+
+    const backupPath = `${projectPath}.v4-backup-${new Date().toISOString().replace(/[:.]/g, "-")}`;
+    await writeAtomically(
+      journalPath,
+      `${JSON.stringify(
+        {
+          schemaVersion: "pragma.desktop-project-migration/v1",
+          projectId: input.projectId,
+          sourceSchema: "pragma.desktop-project/v4",
+          targetSchema: "pragma.desktop-project/v5",
+          backupPath,
+        },
+        undefined,
+        2,
+      )}\n`,
+    );
+    await rename(projectPath, backupPath);
+    try {
+      for (let revision = 0; revision < revisions.length; revision += 1) {
+        const migrated = revisions[revision]!;
+        await input.publish(revision, migrated.resources, migrated.artifacts);
+      }
+      for (const [path, contents] of auxiliaryFiles) {
+        await writeAtomically(join(projectPath, path), contents);
+      }
+      await rm(journalPath, { force: true });
+    } catch (error) {
+      await rm(projectPath, { recursive: true, force: true });
+      await rename(backupPath, projectPath);
+      await rm(journalPath, { force: true });
+      throw error;
+    }
+  });
+}
+
 async function writeLegacyProjectIdentityMigrationIndex(
   projectPath: string,
   projectId: string,
@@ -952,7 +1172,7 @@ async function writeLegacyProjectIdentityMigrationIndex(
   );
 }
 
-async function readProjectMigrationJournal(
+async function readV3ProjectMigrationJournal(
   journalPath: string,
   projectId: string,
 ): Promise<{ readonly backupPath: string } | undefined> {
@@ -969,6 +1189,29 @@ async function readProjectMigrationJournal(
       projectId: z.literal(projectId),
       sourceSchema: z.literal("pragma.desktop-project/v3"),
       targetSchema: z.literal("pragma.desktop-project/v4"),
+      backupPath: z.string().min(1),
+    })
+    .parse(value);
+  return { backupPath: parsed.backupPath };
+}
+
+async function readV4ProjectMigrationJournal(
+  journalPath: string,
+  projectId: string,
+): Promise<{ readonly backupPath: string } | undefined> {
+  let value: unknown;
+  try {
+    value = JSON.parse(await readFile(journalPath, "utf8")) as unknown;
+  } catch (error) {
+    if (errorCode(error) === "ENOENT") return undefined;
+    throw error;
+  }
+  const parsed = z
+    .object({
+      schemaVersion: z.literal("pragma.desktop-project-migration/v1"),
+      projectId: z.literal(projectId),
+      sourceSchema: z.literal("pragma.desktop-project/v4"),
+      targetSchema: z.literal("pragma.desktop-project/v5"),
       backupPath: z.string().min(1),
     })
     .parse(value);

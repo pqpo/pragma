@@ -114,7 +114,8 @@ export const DesktopBridgeSnapshotSchema = z.object({
   interpreter: z
     .object({
       writeVersion: z.string().min(1),
-      readVersions: z.array(z.string().min(1)).min(1),
+      directReadVersions: z.array(z.string().min(1)).min(1),
+      upgradeFromVersions: z.array(z.string().min(1)),
     })
     .strict()
     .optional(),

@@ -33,6 +33,13 @@ Applications also own migration transactions, but not DSL transformation rules. 
 revision, calls the Interpreter's in-memory adjacent migration chain, republishes the canonical
 current resources, and uses the returned identity mapping for Host-specific dependent records.
 
+Compiler compatibility is declared on a separate axis from DSL `apiVersion`. The current
+Interpreter writes and directly reads `pragma.dsl/v3`, while `pragma.dsl/v2` is only an upgrade
+source. Desktop upgrades v2 revisions transactionally before normal parsing; the compiler migration
+validates the historical lock and removes the abandoned `Flow.spec.runDry` field without creating
+an Evaluation. A version may be advertised as directly readable only when the current parser accepts
+real revisions written by that version.
+
 ## Project layout and identity
 
 Every semantic reference contains one Host-generated opaque ID. Project revisions, rather than
