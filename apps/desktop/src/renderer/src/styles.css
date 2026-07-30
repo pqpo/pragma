@@ -12416,6 +12416,17 @@ textarea:focus-visible,
   text-transform: uppercase;
 }
 
+.mission-rail-group.is-completed {
+  margin-top: 22px;
+  padding-top: 14px;
+  border-top: 1px solid rgb(88 121 104 / 12%);
+}
+
+.mission-rail-group.is-completed h2 {
+  color: var(--faint);
+  font-weight: 560;
+}
+
 .mission-rail-empty {
   padding: 8px 6px;
 }
@@ -12564,6 +12575,41 @@ textarea:focus-visible,
 .mission-row time {
   color: var(--faint);
   font-variant-numeric: tabular-nums;
+}
+
+.mission-rail-group.is-completed .mission-row {
+  margin-top: 0;
+  border-radius: 6px;
+}
+
+.mission-rail-group.is-completed .mission-row-open {
+  align-items: center;
+  padding: 5px 8px;
+}
+
+.mission-row-open > span.mission-row-completed-content {
+  display: flex;
+  min-width: 0;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+}
+
+.mission-row-completed-content strong {
+  min-width: 0;
+  color: var(--muted);
+  font-weight: 430;
+}
+
+.mission-row-completed-content time {
+  flex: none;
+  font-size: 11px;
+}
+
+.mission-rail-group.is-completed .mission-row:hover .mission-row-open,
+.mission-rail-group.is-completed .mission-row:focus-within .mission-row-open,
+.mission-rail-group.is-completed .mission-row.is-active .mission-row-open {
+  padding-right: 34px;
 }
 
 .mission-status-dot.is-active,

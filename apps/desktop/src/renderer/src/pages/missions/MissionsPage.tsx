@@ -632,6 +632,7 @@ function MissionRail(props: {
       <MissionRailGroup
         label={t("completed")}
         emptyLabel={t("noCompleted")}
+        variant="completed"
         missions={missionGroups.completed.visibleMissions}
         hiddenCount={missionGroups.completed.hiddenCount}
         now={props.now}
@@ -737,6 +738,7 @@ export function resolveMissionSearchCollapsed(input: {
 function MissionRailGroup(props: {
   readonly label: string;
   readonly emptyLabel: string;
+  readonly variant?: "default" | "completed";
   readonly missions: readonly MissionSummary[];
   readonly hiddenCount: number;
   readonly now: number;
@@ -748,8 +750,10 @@ function MissionRailGroup(props: {
   readonly onDelete: (mission: MissionSummary) => void;
   readonly onLoadMore: () => void;
 }) {
+  const completed = props.variant === "completed";
+
   return (
-    <section className="mission-rail-group">
+    <section className={completed ? "mission-rail-group is-completed" : "mission-rail-group"}>
       <h2>{props.label}</h2>
       {props.missions.length === 0 ? (
         <p className="mission-rail-empty">{props.emptyLabel}</p>
@@ -781,17 +785,26 @@ function MissionRailGroup(props: {
                   {showStatusDot ? (
                     <span className="mission-status-dot is-active" aria-hidden="true" />
                   ) : null}
-                  <span>
+                  <span className={completed ? "mission-row-completed-content" : undefined}>
                     <strong>{mission.title}</strong>
-                    <small>
-                      <span>{missionStatusLabel(mission)}</span>
+                    {completed ? (
                       <time
                         dateTime={mission.updatedAt}
                         title={formatMissionDateTime(mission.updatedAt)}
                       >
                         {formatMissionTime(mission.updatedAt, props.now)}
                       </time>
-                    </small>
+                    ) : (
+                      <small>
+                        <span>{missionStatusLabel(mission)}</span>
+                        <time
+                          dateTime={mission.updatedAt}
+                          title={formatMissionDateTime(mission.updatedAt)}
+                        >
+                          {formatMissionTime(mission.updatedAt, props.now)}
+                        </time>
+                      </small>
+                    )}
                   </span>
                 </button>
                 <div className="mission-row-actions">
