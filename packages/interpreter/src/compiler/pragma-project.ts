@@ -1,4 +1,3 @@
-import { createHash } from "node:crypto";
 import { lstat, readFile, readdir, realpath } from "node:fs/promises";
 import { dirname, isAbsolute, relative, resolve } from "node:path";
 
@@ -74,8 +73,15 @@ import {
   type PragmaRuntimeProfileContribution,
 } from "../runtime/resource-adapters.ts";
 import { evaluatePragmaFlowValue, renderPragmaFlowPrompt } from "../runtime/flow-values.ts";
+import { sha256, stableStringify } from "./compiler-hash.ts";
+import {
+  PRAGMA_COMPILER_DIRECT_READ_VERSIONS,
+  PRAGMA_COMPILER_UPGRADE_FROM_VERSIONS,
+  PRAGMA_COMPILER_WRITE_VERSION,
+  isPragmaCompilerVersionDirectlyReadable,
+  isPragmaCompilerVersionUpgradeable,
+} from "../ast/compiler-compatibility.ts";
 
-const COMPILER_VERSION = "pragma.dsl/v2";
 const provenance = new WeakMap<object, PragmaProvenance>();
 
 export interface LoadPragmaProjectOptions {
@@ -84,6 +90,7 @@ export interface LoadPragmaProjectOptions {
   readonly serializers?: DefinitionSerializerRegistry | undefined;
   readonly resourceAdapters?: PragmaResourceAdapterRegistry | undefined;
   readonly externalResourceRefs?: ReadonlySet<PragmaResourceRef> | undefined;
+  readonly revisionCompilerVersion?: string | undefined;
   readonly sourceIdentity?: string | undefined;
   readonly blueprintCache?: PragmaBlueprintCacheStore | undefined;
   readonly onBlueprintCacheLookup?:
@@ -134,6 +141,7 @@ export interface PragmaProject {
   readonly entryFile: string;
   listResources(): readonly PragmaResource[];
   validate(): Promise<readonly PragmaDiagnostic[]>;
+  validateFor(ref: PragmaResourceRef): Promise<readonly PragmaDiagnostic[]>;
   validateEnvironment(host: PragmaCompileOptions): Promise<readonly PragmaDiagnostic[]>;
   inspectEnvironment(host: PragmaCompileOptions): Promise<PragmaEnvironmentInspection>;
   compile<T extends InvocableResource>(
@@ -175,7 +183,7 @@ interface PragmaProvenance {
 const PragmaProjectBlueprintSchema = z
   .object({
     schemaVersion: z.literal("pragma.project-blueprint/v1"),
-    compilerVersion: z.literal(COMPILER_VERSION),
+    compilerVersion: z.literal(PRAGMA_COMPILER_WRITE_VERSION),
     sourceIdentity: z.string().min(1),
     entry: z.string().min(1),
     resources: z.array(
@@ -206,6 +214,59 @@ const projectBlueprintLoads = new Map<string, Promise<PragmaProjectBlueprint | u
 const projectBlueprintBuilds = new Map<string, Promise<PragmaProjectBlueprint>>();
 const PROJECT_BLUEPRINT_MEMORY_LIMIT = 128;
 
+async function readCompilerCompatibilityDiagnostic(
+  entryFile: string,
+  options: LoadPragmaProjectOptions,
+): Promise<PragmaDiagnostic | undefined> {
+  if (options.requireLock !== true) return undefined;
+  const versionDiagnostic = (
+    version: string,
+    source: "revision metadata" | "pragma.lock.yaml",
+    path?: string,
+  ): PragmaDiagnostic | undefined => {
+    if (isPragmaCompilerVersionDirectlyReadable(version)) return undefined;
+    const upgradeable = isPragmaCompilerVersionUpgradeable(version);
+    return PragmaDiagnosticSchema.parse({
+      severity: "error",
+      code: upgradeable ? "compiler.version_upgrade_required" : "compiler.version_unsupported",
+      message:
+        `Project ${source} requires compiler ${version}; ` +
+        (upgradeable
+          ? `upgrade it to ${PRAGMA_COMPILER_WRITE_VERSION} before loading.`
+          : `this Interpreter directly reads ${PRAGMA_COMPILER_DIRECT_READ_VERSIONS.join(", ")}` +
+            ((PRAGMA_COMPILER_UPGRADE_FROM_VERSIONS as readonly string[]).length === 0
+              ? "."
+              : ` and upgrades ${PRAGMA_COMPILER_UPGRADE_FROM_VERSIONS.join(", ")}.`)),
+      ...(path === undefined ? {} : { source: path }),
+      path: ["compilerVersion"],
+    });
+  };
+  const lockPath = resolve(dirname(entryFile), "pragma.lock.yaml");
+  let lock: PragmaLock;
+  try {
+    lock = PragmaLockSchema.parse(parsePragmaYaml(await readFile(lockPath, "utf8")));
+  } catch {
+    return options.revisionCompilerVersion === undefined
+      ? undefined
+      : versionDiagnostic(options.revisionCompilerVersion, "revision metadata");
+  }
+  if (
+    options.revisionCompilerVersion !== undefined &&
+    options.revisionCompilerVersion !== lock.compilerVersion
+  ) {
+    return PragmaDiagnosticSchema.parse({
+      severity: "error",
+      code: "compiler.version_metadata_mismatch",
+      message:
+        `Project revision metadata declares compiler ${options.revisionCompilerVersion}, ` +
+        `but pragma.lock.yaml declares ${lock.compilerVersion}.`,
+      source: lockPath,
+      path: ["compilerVersion"],
+    });
+  }
+  return versionDiagnostic(lock.compilerVersion, "pragma.lock.yaml", lockPath);
+}
+
 export async function loadPragmaProject(
   entryFile: string,
   options: LoadPragmaProjectOptions = {},
@@ -214,6 +275,16 @@ export async function loadPragmaProject(
   const configuredRoot = resolve(options.rootDir ?? dirname(absoluteEntry));
   const rootDir = await realpath(configuredRoot);
   const canonicalEntry = await realpath(absoluteEntry);
+  const compatibilityDiagnostic = await readCompilerCompatibilityDiagnostic(
+    canonicalEntry,
+    options,
+  );
+  if (compatibilityDiagnostic !== undefined) {
+    return new PragmaProjectImpl(canonicalEntry, new Map(), new Map(), [compatibilityDiagnostic], {
+      ...options,
+      requireLock: false,
+    });
+  }
   const adapters = options.resourceAdapters ?? createDefaultPragmaResourceAdapterRegistry();
   const sourceIdentity = options.sourceIdentity;
   const blueprintKey =
@@ -221,7 +292,7 @@ export async function loadPragmaProject(
       ? undefined
       : sha256(
           stableStringify({
-            compilerVersion: COMPILER_VERSION,
+            compilerVersion: PRAGMA_COMPILER_WRITE_VERSION,
             sourceIdentity,
             entry: relative(rootDir, canonicalEntry),
             resourceAdapters: adapters.fingerprint(),
@@ -380,7 +451,7 @@ function createProjectBlueprint(
   };
   return PragmaProjectBlueprintSchema.parse({
     schemaVersion: "pragma.project-blueprint/v1",
-    compilerVersion: COMPILER_VERSION,
+    compilerVersion: PRAGMA_COMPILER_WRITE_VERSION,
     sourceIdentity,
     entry: relativeSource(entryFile),
     resources: [...loader.resources.values()].map((indexed) => ({
@@ -645,6 +716,11 @@ class SourceLoader {
 
 class PragmaProjectImpl implements PragmaProject {
   private validation: Promise<readonly PragmaDiagnostic[]> | undefined;
+  private lockValidation: Promise<PragmaDiagnostic[]> | undefined;
+  private readonly targetedValidations = new Map<
+    PragmaSemanticResourceRef,
+    Promise<readonly PragmaDiagnostic[]>
+  >();
 
   constructor(
     readonly entryFile: string,
@@ -661,31 +737,72 @@ class PragmaProjectImpl implements PragmaProject {
   }
 
   async validate(): Promise<readonly PragmaDiagnostic[]> {
-    this.validation ??= this.validateOnce();
+    this.validation ??= this.validateResources(this.resources);
     return await this.validation;
   }
 
-  private async validateOnce(): Promise<readonly PragmaDiagnostic[]> {
+  async validateFor(ref: PragmaResourceRef): Promise<readonly PragmaDiagnostic[]> {
+    const root = this.resolveResource(ref);
+    const rootRef = canonicalRef(root.resource);
+    let validation = this.targetedValidations.get(rootRef);
+    if (validation === undefined) {
+      validation = this.validateResources(this.collectDependencyClosure(root));
+      this.targetedValidations.set(rootRef, validation);
+    }
+    return await validation;
+  }
+
+  private async validateResources(
+    resources: ReadonlyMap<string, IndexedResource>,
+  ): Promise<readonly PragmaDiagnostic[]> {
     const diagnostics = [...this.sourceDiagnostics];
     const adapters = this.options.resourceAdapters ?? createDefaultPragmaResourceAdapterRegistry();
-    for (const indexed of this.resources.values()) {
+    for (const indexed of resources.values()) {
+      const resourceRef = canonicalRef(indexed.resource);
       diagnostics.push(...this.validateReferences(indexed));
-      diagnostics.push(...validatePortableSemantics(indexed, this.resources));
+      diagnostics.push(
+        ...validatePortableSemantics(indexed, this.resources).map((diagnostic) => ({
+          ...diagnostic,
+          resourceRef,
+        })),
+      );
       if (indexed.resource.kind === "Flow") {
-        diagnostics.push(...validateFlowGraph(indexed, this.resources));
+        diagnostics.push(
+          ...validateFlowGraph(indexed, this.resources).map((diagnostic) => ({
+            ...diagnostic,
+            resourceRef,
+          })),
+        );
       }
       if (isDeclarativeResource(indexed.resource)) {
         diagnostics.push(
           ...adapters.validate(indexed.resource).map((diagnostic) => ({
             ...diagnostic,
+            resourceRef,
             source: indexed.source,
           })),
         );
       }
     }
-    diagnostics.push(...validateResourceCycles(this.resources));
+    diagnostics.push(...validateResourceCycles(resources));
     if (this.options.requireLock === true) diagnostics.push(...(await this.validateLock()));
     return diagnostics;
+  }
+
+  private collectDependencyClosure(root: IndexedResource): ReadonlyMap<string, IndexedResource> {
+    const closure = new Map<string, IndexedResource>();
+    const visit = (indexed: IndexedResource): void => {
+      const ref = canonicalRef(indexed.resource);
+      if (closure.has(ref)) return;
+      closure.set(ref, indexed);
+      for (const dependencyRef of resourceDependencies(indexed.resource)) {
+        const parsed = parsePragmaReference(dependencyRef);
+        const dependency = this.resources.get(`${parsed.kind}:${parsed.id}`);
+        if (dependency !== undefined) visit(dependency);
+      }
+    };
+    visit(root);
+    return closure;
   }
 
   async validateEnvironment(host: PragmaCompileOptions): Promise<readonly PragmaDiagnostic[]> {
@@ -778,7 +895,22 @@ class PragmaProjectImpl implements PragmaProject {
     ref: PragmaResourceRef,
     host: PragmaCompileOptions,
   ): Promise<CompiledResource<T>> {
-    const diagnostics = await this.validate();
+    const compilerErrors = this.sourceDiagnostics.filter(
+      (diagnostic) => diagnostic.severity === "error" && diagnostic.code.startsWith("compiler."),
+    );
+    if (compilerErrors.length > 0) {
+      throw new PragmaDslError(
+        `Pragma project compiler compatibility check failed: ${compilerErrors
+          .map((diagnostic) => `${diagnostic.code}: ${diagnostic.message}`)
+          .join("; ")}`,
+        compilerErrors,
+      );
+    }
+    const indexed = this.resolveResource(ref);
+    if (!isInvocableResource(indexed.resource)) {
+      throw new PragmaDslError(`Resource is not invocable: ${ref}`);
+    }
+    const diagnostics = await this.validateFor(ref);
     const errors = diagnostics.filter((diagnostic) => diagnostic.severity === "error");
     if (errors.length > 0) {
       throw new PragmaDslError(
@@ -879,10 +1011,6 @@ class PragmaProjectImpl implements PragmaProject {
       (await resolveDeclarative<PragmaRuntimeProfileContribution>(runtimeRef, "RuntimeProfile"))
         .contribution;
 
-    const indexed = this.resolveResource(ref);
-    if (!isInvocableResource(indexed.resource)) {
-      throw new PragmaDslError(`Resource is not invocable: ${ref}`);
-    }
     const rootExpertRefs = new Set<string>();
     if (indexed.resource.kind === "Expert") {
       rootExpertRefs.add(canonicalRef(indexed.resource));
@@ -1165,7 +1293,7 @@ class PragmaProjectImpl implements PragmaProject {
     return {
       apiVersion: "pragma/v3",
       kind: "Lock",
-      compilerVersion: COMPILER_VERSION,
+      compilerVersion: PRAGMA_COMPILER_WRITE_VERSION,
       projectFingerprint: sha256(
         stableStringify({
           resources: resources.map(({ ref, contentHash }) => ({ ref, contentHash })),
@@ -1184,6 +1312,11 @@ class PragmaProjectImpl implements PragmaProject {
   }
 
   private async validateLock(): Promise<PragmaDiagnostic[]> {
+    this.lockValidation ??= this.validateLockOnce();
+    return await this.lockValidation;
+  }
+
+  private async validateLockOnce(): Promise<PragmaDiagnostic[]> {
     const lockPath = resolve(dirname(this.entryFile), "pragma.lock.yaml");
     let lock: PragmaLock;
     try {
@@ -1214,9 +1347,6 @@ class PragmaProjectImpl implements PragmaProject {
         return left === undefined || right === undefined || left.contentHash !== right.contentHash;
       },
     );
-    if (lock.compilerVersion !== expected.compilerVersion) {
-      mismatches.push(`compiler:${lock.compilerVersion}`);
-    }
     if (lock.projectFingerprint !== expected.projectFingerprint) {
       mismatches.push(`project:${lock.projectFingerprint}`);
     }
@@ -1242,6 +1372,7 @@ class PragmaProjectImpl implements PragmaProject {
 
   private validateReferences(indexed: IndexedResource): PragmaDiagnostic[] {
     const diagnostics: PragmaDiagnostic[] = [];
+    const resourceRef = canonicalRef(indexed.resource);
     for (const ref of resourceDependencies(indexed.resource)) {
       if (this.options.externalResourceRefs?.has(ref)) continue;
       try {
@@ -1251,6 +1382,7 @@ class PragmaProjectImpl implements PragmaProject {
           severity: "error",
           code: "reference.invalid",
           message: error instanceof Error ? error.message : String(error),
+          resourceRef,
           source: indexed.source,
           path: [],
         });
@@ -2111,6 +2243,7 @@ function validateResourceCycles(
       severity: "error",
       code: "resource.cycle",
       message: `Pragma resource definitions must form an acyclic dependency graph: ${cycle.refs.join(" -> ")}.`,
+      resourceRef: cycle.sourceRef as PragmaSemanticResourceRef,
       source: source?.source,
       path: [...cycle.path],
     };
@@ -2533,19 +2666,4 @@ function requireStepReference(
 
 function canonicalRef(resource: PragmaResource): PragmaSemanticResourceRef {
   return canonicalPragmaResourceRef(resource);
-}
-
-function sha256(value: string | Uint8Array): string {
-  return createHash("sha256").update(value).digest("hex");
-}
-
-function stableStringify(value: unknown): string {
-  if (Array.isArray(value)) return `[${value.map(stableStringify).join(",")}]`;
-  if (typeof value === "object" && value !== null) {
-    return `{${Object.entries(value)
-      .sort(([left], [right]) => left.localeCompare(right))
-      .map(([key, entry]) => `${JSON.stringify(key)}:${stableStringify(entry)}`)
-      .join(",")}}`;
-  }
-  return JSON.stringify(value);
 }

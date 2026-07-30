@@ -59,6 +59,11 @@ export const common = {
       title: "无法加载 Desktop 桥接服务",
       description: "Pragma 无法连接界面与本地 Desktop 服务。你的数据没有被更改。",
     },
+    version: {
+      title: "Pragma 组件版本不一致",
+      description:
+        "Desktop 界面与本地编译器正在使用不同的协议版本。请先重新加载 Pragma，再编辑项目或启动任务。",
+    },
     renderer: {
       title: "Pragma 未能完成启动",
       description: "Desktop 界面在启动过程中遇到了意外问题。",

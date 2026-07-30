@@ -1,0 +1,22 @@
+apiVersion: pragma/v3
+kind: Flow
+metadata:
+  id: 8h9j0k1m2n3p4q5r
+  name: Historical Run Dry
+  description: Compiler v2 fixture with the removed runDry branch.
+  tags: []
+spec:
+  limits:
+    maxNodeVisits: 1000
+  graph:
+    start: finish
+    steps:
+      finish:
+        action:
+          ref: action:finish@v1
+    loops: {}
+    transitions:
+      finish:
+        end: true
+  runDry:
+    cases: []

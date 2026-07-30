@@ -60,6 +60,11 @@ export const common = {
       description:
         "Pragma could not connect the interface to its local Desktop services. Your data has not been changed.",
     },
+    version: {
+      title: "Pragma components are out of sync",
+      description:
+        "The Desktop interface and local compiler use different protocol versions. Reload Pragma before editing a project or starting a Mission.",
+    },
     renderer: {
       title: "Pragma could not finish starting",
       description: "The Desktop interface encountered an unexpected problem while it was starting.",

@@ -905,6 +905,7 @@ export const PragmaDiagnosticSchema = z
     severity: z.enum(["error", "warning"]),
     code: z.string().min(1),
     message: z.string().min(1),
+    resourceRef: PragmaSemanticResourceRefSchema.optional(),
     source: z.string().optional(),
     path: z.array(z.union([z.string(), z.number()])).default([]),
   })

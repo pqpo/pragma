@@ -111,6 +111,14 @@ export const SetDefaultRuntimeSchema = z.object({
 
 export const DesktopBridgeSnapshotSchema = z.object({
   app: DesktopAppInfoSchema,
+  interpreter: z
+    .object({
+      writeVersion: z.string().min(1),
+      directReadVersions: z.array(z.string().min(1)).min(1),
+      upgradeFromVersions: z.array(z.string().min(1)),
+    })
+    .strict()
+    .optional(),
   gateway: RuntimeGatewayConfigSchema,
   device: z.object({
     status: z.literal("offline"),

@@ -26,6 +26,7 @@ import {
   PragmaSemanticResourceIdSchema,
   formatPragmaYaml,
   loadPragmaProject,
+  migratePragmaCompilerProjectToCurrent,
   type PragmaExpertResource,
 } from "../src/index.ts";
 
@@ -490,7 +491,7 @@ describe("Pragma YAML DSL", () => {
     });
     const dumped = await project.dump(compiled.value, { split: "by-resource" });
     expect(dumped.files.get("flows/t9ne4d8njvvxv2ea.pragma.yaml")).toContain("kind: Flow");
-    expect(dumped.files.get("pragma.lock.yaml")).toContain("compilerVersion: pragma.dsl/v2");
+    expect(dumped.files.get("pragma.lock.yaml")).toContain("compilerVersion: pragma.dsl/v3");
     const single = await project.dump(compiled.value, { split: "single" });
     await writeFile(join(root, "single.yaml"), single.files.get("pragma.yaml")!);
     expect((await loadPragmaProject(join(root, "single.yaml"))).listResources()).toHaveLength(1);
@@ -639,6 +640,286 @@ describe("Pragma YAML DSL", () => {
     expect(await (await loadPragmaProject(entry, { requireLock: true })).validate()).toEqual(
       expect.arrayContaining([expect.objectContaining({ code: "lock.mismatch" })]),
     );
+  });
+
+  it("rejects an unsupported compiler before reporting schema or lock mismatches", async () => {
+    const root = await mkdtemp(join(tmpdir(), "pragma-dsl-compiler-version-"));
+    const entry = join(root, "pragma.yaml");
+    await writeFile(
+      entry,
+      formatPragmaYaml({
+        apiVersion: "pragma/v3",
+        kind: "Bundle",
+        imports: [],
+        resources: [runtimeProfile(), expertResource("1xddvess309a6gme", "Writes")],
+      }),
+    );
+    const unlocked = await loadPragmaProject(entry);
+    await writeFile(
+      join(root, "pragma.lock.yaml"),
+      formatPragmaYaml({
+        ...unlocked.createLock(),
+        compilerVersion: "pragma.dsl/v99",
+      }),
+    );
+
+    const project = await loadPragmaProject(entry, { requireLock: true });
+    expect(await project.validate()).toEqual([
+      expect.objectContaining({
+        code: "compiler.version_unsupported",
+        path: ["compilerVersion"],
+      }),
+    ]);
+    await expect(
+      project.compile("expert:1xddvess309a6gme", { workspace: root }),
+    ).rejects.toMatchObject({
+      diagnostics: [
+        expect.objectContaining({
+          code: "compiler.version_unsupported",
+        }),
+      ],
+    });
+  });
+
+  it("reports revision metadata and lock compiler disagreement explicitly", async () => {
+    const root = await mkdtemp(join(tmpdir(), "pragma-dsl-compiler-metadata-"));
+    const entry = join(root, "pragma.yaml");
+    await writeFile(
+      entry,
+      formatPragmaYaml({
+        apiVersion: "pragma/v3",
+        kind: "Bundle",
+        imports: [],
+        resources: [runtimeProfile(), expertResource("1xddvess309a6gme", "Writes")],
+      }),
+    );
+    const unlocked = await loadPragmaProject(entry);
+    await writeFile(join(root, "pragma.lock.yaml"), formatPragmaYaml(unlocked.createLock()));
+
+    const project = await loadPragmaProject(entry, {
+      requireLock: true,
+      revisionCompilerVersion: "pragma.dsl/v2",
+    });
+    expect(await project.validate()).toEqual([
+      expect.objectContaining({ code: "compiler.version_metadata_mismatch" }),
+    ]);
+  });
+
+  it("rejects unsupported revision compiler metadata even when the lock is missing", async () => {
+    const root = await mkdtemp(join(tmpdir(), "pragma-dsl-compiler-metadata-without-lock-"));
+    const entry = join(root, "pragma.yaml");
+    await writeFile(
+      entry,
+      formatPragmaYaml({
+        apiVersion: "pragma/v3",
+        kind: "Bundle",
+        imports: [],
+        resources: [runtimeProfile(), expertResource("1xddvess309a6gme", "Writes")],
+      }),
+    );
+
+    const project = await loadPragmaProject(entry, {
+      requireLock: true,
+      revisionCompilerVersion: "pragma.dsl/v99",
+    });
+    expect(await project.validate()).toEqual([
+      expect.objectContaining({
+        code: "compiler.version_unsupported",
+        message: expect.stringContaining("revision metadata"),
+        path: ["compilerVersion"],
+      }),
+    ]);
+    await expect(
+      project.compile("expert:1xddvess309a6gme", { workspace: root }),
+    ).rejects.toMatchObject({
+      diagnostics: [
+        expect.objectContaining({
+          code: "compiler.version_unsupported",
+        }),
+      ],
+    });
+  });
+
+  it("requires pragma.dsl/v2 revisions to be upgraded before normal loading", async () => {
+    const root = await mkdtemp(join(tmpdir(), "pragma-dsl-compiler-v2-"));
+    const entry = join(root, "pragma.yaml");
+    await writeFile(
+      entry,
+      formatPragmaYaml({
+        apiVersion: "pragma/v3",
+        kind: "Bundle",
+        imports: [],
+        resources: [runtimeProfile(), expertResource("1xddvess309a6gme", "Writes")],
+      }),
+    );
+    const unlocked = await loadPragmaProject(entry);
+    await writeFile(
+      join(root, "pragma.lock.yaml"),
+      formatPragmaYaml({
+        ...unlocked.createLock(),
+        compilerVersion: "pragma.dsl/v2",
+      }),
+    );
+
+    const project = await loadPragmaProject(entry, {
+      requireLock: true,
+      revisionCompilerVersion: "pragma.dsl/v2",
+    });
+    expect(await project.validate()).toEqual([
+      expect.objectContaining({ code: "compiler.version_upgrade_required" }),
+    ]);
+    await expect(
+      project.compile("expert:1xddvess309a6gme", { workspace: root }),
+    ).rejects.toMatchObject({
+      diagnostics: [expect.objectContaining({ code: "compiler.version_upgrade_required" })],
+    });
+  });
+
+  it("upgrades a real compiler v2 runDry fixture without preserving the rejected branch", async () => {
+    const fixture = join(import.meta.dirname, "fixtures", "compiler-v2-run-dry");
+    const files = new Map([
+      ["pragma.yaml", await readFile(join(fixture, "pragma.yaml"), "utf8")],
+      ["pragma.lock.yaml", await readFile(join(fixture, "pragma.lock.yaml"), "utf8")],
+      [
+        "flows/8h9j0k1m2n3p4q5r.pragma.yaml",
+        await readFile(join(fixture, "flows", "8h9j0k1m2n3p4q5r.pragma.yaml"), "utf8"),
+      ],
+    ]);
+
+    const migrated = migratePragmaCompilerProjectToCurrent({
+      files,
+      revisionCompilerVersion: "pragma.dsl/v2",
+    });
+
+    expect(migrated).toMatchObject({
+      sourceCompilerVersion: "pragma.dsl/v2",
+      targetCompilerVersion: "pragma.dsl/v3",
+      migrated: true,
+    });
+    expect(migrated.resources).toEqual([
+      expect.objectContaining({
+        kind: "Flow",
+        spec: expect.not.objectContaining({ runDry: expect.anything() }),
+      }),
+    ]);
+  });
+
+  it("rejects compiler migration when a historical v2 source no longer matches its lock", async () => {
+    const fixture = join(import.meta.dirname, "fixtures", "compiler-v2-run-dry");
+    const flowPath = join(fixture, "flows", "8h9j0k1m2n3p4q5r.pragma.yaml");
+    const files = new Map([
+      ["pragma.yaml", await readFile(join(fixture, "pragma.yaml"), "utf8")],
+      ["pragma.lock.yaml", await readFile(join(fixture, "pragma.lock.yaml"), "utf8")],
+      [
+        "flows/8h9j0k1m2n3p4q5r.pragma.yaml",
+        (await readFile(flowPath, "utf8")).replace("Historical Run Dry", "Tampered"),
+      ],
+    ]);
+
+    expect(() =>
+      migratePragmaCompilerProjectToCurrent({
+        files,
+        revisionCompilerVersion: "pragma.dsl/v2",
+      }),
+    ).toThrow(expect.objectContaining({ code: "lock_mismatch" }));
+  });
+
+  it("rejects future compiler revisions instead of guessing an upgrade path", () => {
+    expect(() =>
+      migratePragmaCompilerProjectToCurrent({
+        files: new Map(),
+        revisionCompilerVersion: "pragma.dsl/v99",
+      }),
+    ).toThrow(expect.objectContaining({ code: "future_compiler_version" }));
+  });
+
+  it("compiles only the target dependency closure while preserving full project diagnostics", async () => {
+    const root = await mkdtemp(join(tmpdir(), "pragma-dsl-scoped-validation-"));
+    const entry = join(root, "pragma.yaml");
+    const brokenFlow = {
+      apiVersion: "pragma/v3" as const,
+      kind: "Flow" as const,
+      metadata: {
+        id: "t4kw6k4qpw8a7tjw",
+        name: "Broken Flow",
+        description: "Contains an unrelated ordinary cycle",
+        tags: [],
+      },
+      spec: {
+        graph: {
+          start: "one",
+          steps: {
+            one: { action: { ref: "action:one@1.0.0" } },
+            two: { action: { ref: "action:two@1.0.0" } },
+          },
+          transitions: {
+            one: "two",
+            two: "one",
+          },
+        },
+      },
+    };
+    const unrelatedEvaluation = {
+      apiVersion: "pragma/v3" as const,
+      kind: "Evaluation" as const,
+      metadata: {
+        id: "7k2m9q4v8np6r3dt",
+        name: "Missing Flow Evaluation",
+        description: "Targets an unrelated missing Flow",
+        tags: [],
+      },
+      spec: {
+        target: { ref: "flow:9h0j1k2m3n4p5q6r" },
+        method: {
+          type: "flow-run-dry" as const,
+          cases: [
+            {
+              id: "missing_flow",
+              name: "Missing Flow",
+              input: {},
+              mocks: {},
+              expect: { status: "succeeded" as const, path: [] },
+            },
+          ],
+        },
+      },
+    };
+    const sources = [
+      ["runtime.pragma.yaml", runtimeProfile()],
+      ["expert.pragma.yaml", expertResource("1xddvess309a6gme", "Independent")],
+      ["flow.pragma.yaml", brokenFlow],
+      ["evaluation.pragma.yaml", unrelatedEvaluation],
+    ] as const;
+    for (const [fileName, resource] of sources) {
+      await writeFile(join(root, fileName), formatPragmaYaml(resource));
+    }
+    await writeFile(
+      entry,
+      formatPragmaYaml({
+        apiVersion: "pragma/v3",
+        kind: "Bundle",
+        imports: sources.map(([fileName]) => `./${fileName}`),
+        resources: [],
+      }),
+    );
+
+    const project = await loadPragmaProject(entry);
+    expect(await project.validate()).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          code: "flow.graph.cycle.ordinary",
+          resourceRef: "flow:t4kw6k4qpw8a7tjw",
+        }),
+        expect.objectContaining({
+          code: "reference.invalid",
+          resourceRef: "evaluation:7k2m9q4v8np6r3dt",
+        }),
+      ]),
+    );
+    expect(await project.validateFor("expert:1xddvess309a6gme")).toEqual([]);
+    await expect(
+      project.compile("expert:1xddvess309a6gme", { workspace: root }),
+    ).resolves.toMatchObject({ ref: "expert:1xddvess309a6gme" });
   });
 
   it("turns an Expert, Team, or Flow reference into a tool through a versioned adapter", async () => {

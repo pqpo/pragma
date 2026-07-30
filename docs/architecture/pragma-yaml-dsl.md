@@ -33,6 +33,13 @@ Applications also own migration transactions, but not DSL transformation rules. 
 revision, calls the Interpreter's in-memory adjacent migration chain, republishes the canonical
 current resources, and uses the returned identity mapping for Host-specific dependent records.
 
+Compiler compatibility is declared on a separate axis from DSL `apiVersion`. The current
+Interpreter writes and directly reads `pragma.dsl/v3`, while `pragma.dsl/v2` is only an upgrade
+source. Desktop upgrades v2 revisions transactionally before normal parsing; the compiler migration
+validates the historical lock and removes the abandoned `Flow.spec.runDry` field without creating
+an Evaluation. A version may be advertised as directly readable only when the current parser accepts
+real revisions written by that version.
+
 ## Project layout and identity
 
 Every semantic reference contains one Host-generated opaque ID. Project revisions, rather than
@@ -210,6 +217,17 @@ new `RuntimeContextRecord`.
 Published revisions must contain their actual lock. A missing, malformed, stale, or compiler-
 incompatible lock removes trust in the project fingerprint and blocks apply, compile, and recover;
 the service never synthesizes a replacement lock while reading a snapshot.
+
+The browser-safe Interpreter compiler capability declares one write version and the bounded set of
+readable versions. Revision metadata and `pragma.lock.yaml` must agree before resource parsing.
+Unsupported versions use `compiler.version_unsupported`; metadata disagreement uses
+`compiler.version_metadata_mismatch`. Neither condition is reported as a stale lock.
+
+Complete-project validation remains the authoring and publication health gate. Runtime compilation
+validates only the selected Expert, Team, or Flow and its transitive project-resource dependencies.
+Compiler, lock, unreadable source topology, and resource identity ambiguity are project-wide
+blockers; unrelated resource-reference or Flow-contract diagnostics remain visible in project
+health without disabling independent executors.
 
 Compilation separately returns an environment fingerprint containing:
 

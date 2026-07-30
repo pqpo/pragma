@@ -113,7 +113,7 @@ describe("PragmaProjectStore", () => {
       { kind: "Flow", sourceId: "release", targetId: expectedId },
     ]);
     expect(await readFile(join(directory, "studio", "project.json"), "utf8")).toContain(
-      "pragma.desktop-project/v4",
+      "pragma.desktop-project/v5",
     );
   });
 
@@ -294,8 +294,145 @@ describe("PragmaProjectStore", () => {
 
     expect(migrated.revision).toBe(1);
     expect(await readFile(join(directory, "studio", "project.json"), "utf8")).toContain(
+      "pragma.desktop-project/v5",
+    );
+  });
+
+  it("upgrades compiler v2 project revisions to storage v5 and removes historical runDry", async () => {
+    const directory = await mkdtemp(join(tmpdir(), "pragma-project-v4-compiler-migration-"));
+    directories.push(directory);
+    await seedCompilerV2ProjectRevisions(directory, 2);
+
+    const project = createPragmaProjectStore({ projectsPath: directory });
+    const head = await project.get();
+    const first = await project.openRevision(1);
+
+    expect(head.revision).toBe(2);
+    expect(first.listResources()).toEqual([
+      expect.objectContaining({
+        kind: "Flow",
+        spec: expect.not.objectContaining({ runDry: expect.anything() }),
+      }),
+    ]);
+    expect(await readFile(join(directory, "studio", "project.json"), "utf8")).toContain(
+      "pragma.desktop-project/v5",
+    );
+    expect(await readFile(join(directory, "studio", "revisions", "1.json"), "utf8")).toContain(
+      '"revision": 1',
+    );
+    expect(await projectRevisionFile(directory, 1, "pragma.lock.yaml")).toContain(
+      "compilerVersion: pragma.dsl/v3",
+    );
+    expect((await readdir(directory)).some((name) => name.startsWith("studio.v4-backup-"))).toBe(
+      true,
+    );
+  });
+
+  it("upgrades an already-current compiler v3 storage manifest without changing its revision", async () => {
+    const directory = await mkdtemp(join(tmpdir(), "pragma-project-v4-current-compiler-"));
+    directories.push(directory);
+    const original = createPragmaProjectStore({ projectsPath: directory });
+    await original.publish({
+      expectedRevision: 0,
+      resources: [exampleRuntime(), exampleExpert()],
+    });
+    const projectManifestPath = join(directory, "studio", "project.json");
+    const revisionManifestPath = join(directory, "studio", "revisions", "1.json");
+    const projectManifest = JSON.parse(await readFile(projectManifestPath, "utf8")) as Record<
+      string,
+      unknown
+    >;
+    const revisionManifest = JSON.parse(await readFile(revisionManifestPath, "utf8")) as Record<
+      string,
+      unknown
+    >;
+    await writeFile(
+      projectManifestPath,
+      `${JSON.stringify({ ...projectManifest, schemaVersion: "pragma.desktop-project/v4" })}\n`,
+    );
+    await writeFile(
+      revisionManifestPath,
+      `${JSON.stringify({ ...revisionManifest, schemaVersion: "pragma.project-revision/v4" })}\n`,
+    );
+
+    const migrated = await createPragmaProjectStore({ projectsPath: directory }).get();
+
+    expect(migrated).toMatchObject({ revision: 1 });
+    expect(await readFile(projectManifestPath, "utf8")).toContain("pragma.desktop-project/v5");
+    expect(await projectRevisionFile(directory, 1, "pragma.lock.yaml")).toContain(
+      "compilerVersion: pragma.dsl/v3",
+    );
+  });
+
+  it("reports an invalid current revision manifest as an unsupported storage format", async () => {
+    const { directory, project } = await stores();
+    await project.publish({
+      expectedRevision: 0,
+      resources: [exampleRuntime(), exampleExpert()],
+    });
+    await writeFile(
+      join(directory, "studio", "revisions", "1.json"),
+      `${JSON.stringify({
+        schemaVersion: "pragma.project-revision/v5",
+        projectId: "studio",
+        revision: 1,
+      })}\n`,
+    );
+
+    await expect(project.openRevision(1)).rejects.toMatchObject({
+      code: "unsupported_format",
+      message: "Project revision manifest is invalid: studio@1.",
+    });
+  });
+
+  it("restores an interrupted compiler v2 migration and retries it idempotently", async () => {
+    const directory = await mkdtemp(join(tmpdir(), "pragma-project-v4-recovery-"));
+    directories.push(directory);
+    await seedCompilerV2ProjectRevisions(directory, 1);
+    const projectPath = join(directory, "studio");
+    const backupPath = `${projectPath}.v4-backup-interrupted`;
+    await rename(projectPath, backupPath);
+    await writeFile(
+      join(directory, ".studio.v4-to-v5.json"),
+      `${JSON.stringify({
+        schemaVersion: "pragma.desktop-project-migration/v1",
+        projectId: "studio",
+        sourceSchema: "pragma.desktop-project/v4",
+        targetSchema: "pragma.desktop-project/v5",
+        backupPath,
+      })}\n`,
+    );
+
+    const migrated = await createPragmaProjectStore({ projectsPath: directory }).get();
+
+    expect(migrated.revision).toBe(1);
+    await expect(readFile(join(directory, ".studio.v4-to-v5.json"), "utf8")).rejects.toMatchObject({
+      code: "ENOENT",
+    });
+    expect(await readFile(join(directory, "studio", "project.json"), "utf8")).toContain(
+      "pragma.desktop-project/v5",
+    );
+  });
+
+  it("keeps the compiler v2 project untouched when its historical lock is invalid", async () => {
+    const directory = await mkdtemp(join(tmpdir(), "pragma-project-v4-invalid-lock-"));
+    directories.push(directory);
+    await seedCompilerV2ProjectRevisions(directory, 1, {
+      flowSource: COMPILER_V2_FLOW_SOURCE.replace("Historical Run Dry", "Tampered"),
+    });
+
+    await expect(createPragmaProjectStore({ projectsPath: directory }).get()).rejects.toMatchObject(
+      {
+        code: "unsupported_format",
+        message: expect.stringContaining("does not match its lock"),
+      },
+    );
+    expect(await readFile(join(directory, "studio", "project.json"), "utf8")).toContain(
       "pragma.desktop-project/v4",
     );
+    await expect(readFile(join(directory, ".studio.v4-to-v5.json"), "utf8")).rejects.toMatchObject({
+      code: "ENOENT",
+    });
   });
 
   it("materializes one cold snapshot view across concurrent project stores", async () => {
@@ -1159,6 +1296,92 @@ function expertUpdate(definition: ExpertDefinition, description: string): Update
 
 async function seedLegacyProject(directory: string, sources: readonly string[]): Promise<void> {
   await seedLegacyProjectRevisions(directory, [sources]);
+}
+
+const COMPILER_V2_FLOW_SOURCE = `apiVersion: pragma/v3
+kind: Flow
+metadata:
+  id: 8h9j0k1m2n3p4q5r
+  name: Historical Run Dry
+  description: Compiler v2 fixture with the removed runDry branch.
+  tags: []
+spec:
+  limits:
+    maxNodeVisits: 1000
+  graph:
+    start: finish
+    steps:
+      finish:
+        action:
+          ref: action:finish@v1
+    loops: {}
+    transitions:
+      finish:
+        end: true
+  runDry:
+    cases: []
+`;
+
+const COMPILER_V2_ENTRY_SOURCE = `apiVersion: pragma/v3
+kind: Bundle
+imports:
+  - ./flows/8h9j0k1m2n3p4q5r.pragma.yaml
+resources: []
+`;
+
+const COMPILER_V2_LOCK_SOURCE = `apiVersion: pragma/v3
+kind: Lock
+compilerVersion: pragma.dsl/v2
+projectFingerprint: 33e69dc432c7d321b1a0280144bdab0105b82a8f9270bf7067871dfc7f966ff8
+resources:
+  - ref: flow:8h9j0k1m2n3p4q5r
+    contentHash: eec635492a253e33328ae04586548877b5e4631d56b8723d950aa4db0b7aaa4c
+    source: flows/8h9j0k1m2n3p4q5r.pragma.yaml
+artifacts: []
+`;
+
+async function seedCompilerV2ProjectRevisions(
+  directory: string,
+  revisionCount: number,
+  overrides: { readonly flowSource?: string } = {},
+): Promise<void> {
+  const objects = new ContentAddressedStore(join(directory, ".storage", "objects"));
+  const createdAt = "2026-07-29T00:00:00.000Z";
+  await mkdir(join(directory, "studio", "revisions"), { recursive: true });
+  await writeFile(
+    join(directory, "studio", "project.json"),
+    `${JSON.stringify({
+      schemaVersion: "pragma.desktop-project/v4",
+      projectId: "studio",
+      headRevision: revisionCount,
+      updatedAt: createdAt,
+    })}\n`,
+  );
+  for (let revision = 1; revision <= revisionCount; revision += 1) {
+    const snapshot = await objects.putSnapshot(
+      new Map([
+        ["pragma.yaml", Buffer.from(COMPILER_V2_ENTRY_SOURCE, "utf8")],
+        ["pragma.lock.yaml", Buffer.from(COMPILER_V2_LOCK_SOURCE, "utf8")],
+        [
+          "flows/8h9j0k1m2n3p4q5r.pragma.yaml",
+          Buffer.from(overrides.flowSource ?? COMPILER_V2_FLOW_SOURCE, "utf8"),
+        ],
+      ]),
+    );
+    await writeFile(
+      join(directory, "studio", "revisions", `${revision}.json`),
+      `${JSON.stringify({
+        schemaVersion: "pragma.project-revision/v4",
+        projectId: "studio",
+        revision,
+        ...(revision === 1 ? {} : { parentRevision: revision - 1 }),
+        snapshotHash: snapshot.root.hash,
+        projectFingerprint: "33e69dc432c7d321b1a0280144bdab0105b82a8f9270bf7067871dfc7f966ff8",
+        compilerVersion: "pragma.dsl/v2",
+        createdAt,
+      })}\n`,
+    );
+  }
 }
 
 async function seedLegacyProjectRevisions(

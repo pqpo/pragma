@@ -25,6 +25,7 @@ import {
   MissionUpdateSchema,
   PragmaProjectChangesSchema,
   SetDefaultRuntimeSchema,
+  DesktopBridgeSnapshotSchema,
   DesktopSettingsSnapshotSchema,
   UpdateDesktopSettingsSchema,
   UpdateExpertDefinitionSchema,
@@ -70,6 +71,52 @@ describe("runtime settings contracts", () => {
       runtimeId: "codex",
     });
     expect(SetDefaultRuntimeSchema.safeParse({ runtimeId: "" }).success).toBe(false);
+  });
+
+  it("preserves arbitrary Interpreter capability lists for renderer compatibility checks", () => {
+    const snapshot = {
+      app: {
+        name: "Pragma Desktop",
+        version: "1.0.0",
+        os: "macos",
+      },
+      interpreter: {
+        writeVersion: "pragma.dsl/v4",
+        directReadVersions: ["pragma.dsl/v4"],
+        upgradeFromVersions: ["pragma.dsl/v2", "pragma.dsl/v3"],
+      },
+      gateway: {
+        schemaVersion: 1,
+        endpoint: "ws://localhost:3001/runtime-gateway",
+        transport: "websocket",
+      },
+      device: {
+        status: "offline",
+        label: "Local Desktop",
+      },
+      workspace: {
+        path: null,
+        status: "unset",
+      },
+      capabilities: [],
+    } as const;
+
+    expect(DesktopBridgeSnapshotSchema.parse(snapshot).interpreter).toEqual(snapshot.interpreter);
+    expect(
+      DesktopBridgeSnapshotSchema.safeParse({
+        ...snapshot,
+        interpreter: {
+          writeVersion: "pragma.dsl/v4",
+          directReadVersions: ["pragma.dsl/v4"],
+          upgradeFromVersions: [],
+        },
+      }).success,
+    ).toBe(true);
+    expect(
+      DesktopBridgeSnapshotSchema.parse({ ...snapshot, interpreter: undefined }),
+    ).toMatchObject({
+      app: snapshot.app,
+    });
   });
 });
 
