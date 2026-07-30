@@ -91,7 +91,7 @@ Pragma 当前提供：
 
 当前仓库重点建设执行内核和长期工程底座。更完整的分享体验、Runtime 市场、云端控制面，以及面向分享者和使用者的产品界面仍在持续建设中。
 
-## 使用 Pragma Desktop
+## 使用 Pragma 桌面应用
 
 ### 环境要求
 
@@ -114,9 +114,9 @@ pnpm --filter @pragma/desktop run prepare:electron
 pnpm --filter @pragma/desktop dev
 ```
 
-Electron 42 会在首次调用 Electron CLI 时下载二进制文件。`prepare:electron` 会显式触发下载，减少本地开发和 CI 因缺少二进制文件而失败的情况。
+Electron 42 及更高版本会在首次调用 Electron CLI 时下载二进制文件。`prepare:electron` 会显式触发下载，减少本地开发和 CI 因缺少二进制文件而失败的情况。
 
-![Pragma Desktop 运行截图](./docs/assets/desktop-home.png)
+![Pragma 桌面应用运行截图](./docs/assets/desktop-home.png)
 
 Desktop 是启动 Mission、选择工作区、选择执行者，并把任务路由到本地或云端 Runtime 的产品入口；更完整的 Host 集成仍在持续演进。
 

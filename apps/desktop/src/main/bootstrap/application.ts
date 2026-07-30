@@ -11,7 +11,7 @@ import {
   type DesktopApplicationContainer,
 } from "./application-container.ts";
 
-const applicationId = "dev.pragma.desktop";
+const applicationId = "com.pqpo.pragma";
 
 export function startDesktopApplication(): void {
   const paths = new PragmaPaths();

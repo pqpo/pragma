@@ -1,7 +1,7 @@
 import { z } from "zod";
 
 export const DesktopAppInfoSchema = z.object({
-  name: z.literal("Pragma Desktop"),
+  name: z.literal("Pragma"),
   version: z.string(),
   os: z.enum(["macos", "windows", "linux", "unknown"]),
 });

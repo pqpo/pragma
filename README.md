@@ -90,7 +90,7 @@ Pragma currently provides:
 
 The current repository focuses on the execution kernel and engineering foundation. The broader sharing experience, runtime marketplace, cloud control plane, and creator/user product surfaces are still under active development.
 
-## Use Pragma Desktop
+## Use the Pragma desktop app
 
 ### Requirements
 
@@ -113,9 +113,9 @@ pnpm --filter @pragma/desktop run prepare:electron
 pnpm --filter @pragma/desktop dev
 ```
 
-Electron 42 downloads its binary on first CLI usage. `prepare:electron` triggers that download explicitly so local development and CI fail less often on a missing binary.
+Electron 42 and later download their binary on first CLI usage. `prepare:electron` triggers that download explicitly so local development and CI fail less often on a missing binary.
 
-![Pragma Desktop running](./docs/assets/desktop-home.png)
+![Pragma desktop app running](./docs/assets/desktop-home.png)
 
 Desktop is the product entry for starting missions, selecting a workspace, choosing an executor, and routing work to local or cloud runtimes as the host integration matures.
 

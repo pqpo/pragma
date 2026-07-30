@@ -524,7 +524,7 @@ export const studio = {
     "這將覆寫「{{name}}」的所有自訂參數與密鑰，專家將改用該外掛程式的 Desktop 預設值。",
   importPlugin: "匯入 {{name}}？",
   trustPluginWarning:
-    "此外掛程式會在 Pragma Desktop 內執行受信任程式碼。宣告的權限僅供檢查與稽核，並非沙箱或強制存取邊界。",
+    "此外掛程式會在 Pragma 內執行受信任程式碼。宣告的權限僅供檢查與稽核，並非沙箱或強制存取邊界。",
   trustAndImport: "信任程式碼並匯入",
   backPlugins: "返回外掛程式列表",
   saveDefaults: "儲存預設值",

@@ -523,7 +523,7 @@ export const studio = {
     "这将覆盖“{{name}}”的所有自定义参数和密钥，专家将改用该插件的 Desktop 默认值。",
   importPlugin: "导入 {{name}}？",
   trustPluginWarning:
-    "此插件会在 Pragma Desktop 内运行受信任代码。声明的权限仅供检查和审计，并非沙箱或强制访问边界。",
+    "此插件会在 Pragma 内运行受信任代码。声明的权限仅供检查和审计，并非沙箱或强制访问边界。",
   trustAndImport: "信任代码并导入",
   backPlugins: "返回插件列表",
   saveDefaults: "保存默认值",

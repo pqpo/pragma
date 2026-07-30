@@ -1,6 +1,6 @@
 export const usage = {
   title: "用量",
-  description: "Pragma Desktop 记录的 token 消耗量。",
+  description: "Pragma 记录的 token 消耗量。",
   trackingSince: "自 {{date}} 起统计",
   periods: {
     sevenDays: "7 天",
