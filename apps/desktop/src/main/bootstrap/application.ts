@@ -9,20 +9,16 @@ import { installWorkspaceScopeHandlers } from "../features/workspaces/workspace-
 import { createBridgeSnapshot } from "../platform/ipc/bridge-snapshot.ts";
 import { createDesktopLogging } from "../platform/logging/desktop-logging.ts";
 import { createDesktopWindowManager } from "../platform/window/desktop-window.ts";
+import { configureDesktopApplicationIdentity } from "./application-identity.ts";
 import { createDesktopApplicationContainer } from "./application-container.ts";
 import { startDesktopWindowWithServices } from "./startup-sequence.ts";
 
-const applicationId = "com.pqpo.pragma";
-
 export function startDesktopApplication(): void {
+  configureDesktopApplicationIdentity(app);
   const paths = new PragmaPaths();
   const logging = createDesktopLogging(paths);
   const windows = createDesktopWindowManager(logging.mainLogger);
   let startupStatus: DesktopBridgeSnapshot["startup"] = { status: "ready" };
-
-  if (process.platform === "win32") {
-    app.setAppUserModelId(applicationId);
-  }
 
   ipcMain.handle("bridge:snapshot", () => createBridgeSnapshot(startupStatus));
   ipcMain.on("logs:renderer", (_event, input: unknown) => {
