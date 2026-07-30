@@ -171,8 +171,11 @@ export function FlowRunDryFragment(props: {
         </div>
       </header>
 
-      <section className="flow-run-dry-editor" aria-label={t("evaluationIdentity")}>
-        <div className="form-grid two-columns">
+      <section
+        className="flow-run-dry-editor flow-run-dry-identity"
+        aria-label={t("evaluationIdentity")}
+      >
+        <div className="flow-run-dry-form-grid">
           <label>
             <span>{t("evaluationName")}</span>
             <input value={name} onChange={(event) => setName(event.target.value)} />
@@ -253,7 +256,10 @@ export function FlowRunDryFragment(props: {
             <p>{t("addCaseToStart")}</p>
           </section>
         ) : (
-          <section className="flow-run-dry-editor" aria-label={t("editRunDryCase")}>
+          <section
+            className="flow-run-dry-editor flow-run-dry-case-editor"
+            aria-label={t("editRunDryCase")}
+          >
             <header>
               <div>
                 <h2>{selected.name.trim() || t("untitledCase")}</h2>
@@ -264,7 +270,7 @@ export function FlowRunDryFragment(props: {
                 {t("deleteCase")}
               </button>
             </header>
-            <div className="form-grid two-columns">
+            <div className="flow-run-dry-form-grid">
               <label>
                 <span>{t("caseId")}</span>
                 <input
@@ -301,7 +307,7 @@ export function FlowRunDryFragment(props: {
               />
               <small>{t("caseMocksHint")}</small>
             </label>
-            <div className="form-grid two-columns">
+            <div className="flow-run-dry-form-grid">
               <label>
                 <span>{t("expectedStatus")}</span>
                 <select

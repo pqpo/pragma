@@ -238,6 +238,62 @@ No actionable P0, P1, or P2 findings remain.
 ## Console and quality checks
 
 - Browser console: no app errors or warnings observed during the Flow interactions.
+
+---
+
+# Flow Run Dry 用例布局 Design QA
+
+- Source visual truth:
+  `/tmp/codex-remote-attachments/019face7-ac60-7d22-ba5e-3f19f6f2daf6/b58cd531-4223-485d-a092-844c0d465175/1-Photo-1.jpg`
+- Electron-rendered implementation: `/tmp/pragma-rundry-ui-after.png`
+- Side-by-side comparison evidence: `/tmp/pragma-rundry-ui-comparison.png`
+- Viewport and state: 1440 × 1100 BrowserWindow at DPR 2, Simplified Chinese, Flow Run Dry
+  detail with one selected case
+
+## Findings
+
+No actionable P0, P1, or P2 findings remain in the requested layout scope.
+
+- The evaluation identity, coverage summary, case list, and case editor now have independent,
+  aligned card boundaries.
+- The page sections use an 18 px vertical rhythm; coverage cards and the case list/editor columns
+  use 16 px gaps.
+- The case editor and case list begin on the same row and no longer share a clipped outer border.
+- The first render pass revealed a zero-height heading grid track that allowed the identity card to
+  overlap the page title. Setting the scrolling body to max-content auto rows keeps the title at
+  its natural 94 px height and preserves scrolling for the complete editor.
+
+## Fidelity and interaction evidence
+
+- Existing typography, color tokens, radii, input styles, button hierarchy, and Phosphor icons are
+  preserved.
+- Name and target fields form a balanced two-column row; case ID/name and expected status/path use
+  the same reusable grid.
+- The selected case retains its active treatment and remains visually contained within the case
+  list surface.
+- At the primary viewport, the measured top positions progress without overlap: heading 103 px,
+  identity 215 px, coverage 490 px, and workspace 596 px.
+- The existing single scroll container remains responsible for the long case editor; no nested
+  horizontal scroll was introduced at the supported desktop viewport.
+
+## Comparison history
+
+1. The source showed collapsed spacing, inconsistent module boundaries, and a case list/editor seam
+   that did not align.
+2. Split the identity and workspace regions into explicit cards, added consistent inter-module
+   spacing, and restored two-column form grids that were previously referencing nonexistent CSS
+   classes.
+3. Captured the real Electron renderer, fixed the resulting heading-track compression, and
+   re-captured the same evaluation state.
+4. Opened the source and final implementation together in one comparison input and confirmed the
+   requested alignment and spacing defects no longer remain.
+
+## Follow-up polish
+
+None required for this scoped UI correction.
+
+final result: passed
+
 - Desktop lint, TypeScript checks, tests, and production build passed.
 - Source and implementation were compared from captured visual evidence, not from code alone.
 

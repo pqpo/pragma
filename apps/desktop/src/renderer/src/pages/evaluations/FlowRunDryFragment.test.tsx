@@ -92,6 +92,9 @@ describe("FlowRunDryFragment", () => {
     expect(html).toContain("Required transitions");
     expect(html).toContain("Node mocks (JSON)");
     expect(html).toContain("Run all");
+    expect(html).toContain("flow-run-dry-identity");
+    expect(html).toContain("flow-run-dry-form-grid");
+    expect(html).toContain("flow-run-dry-case-editor");
   });
 
   it("clears cases, selection, results, and errors when the target Flow changes", () => {
