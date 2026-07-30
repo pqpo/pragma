@@ -1,8 +1,8 @@
-import { TerminalWindow } from "@phosphor-icons/react";
 import { useEffect, useState } from "react";
 import { useTranslation } from "react-i18next";
 
 import type { DesktopRuntimeAvailability } from "../../../../shared/contracts/index.ts";
+import { RuntimeLogo } from "../../components/RuntimeLogo.tsx";
 import { errorMessage } from "../../lib/errors.ts";
 import { runtimeDisplayName } from "../../lib/runtime-display.ts";
 import { RuntimeEnvironmentDetail } from "./RuntimeEnvironmentDetail.tsx";
@@ -30,7 +30,7 @@ export function RuntimeCard(props: {
       />
       <header className="card-header runtime-card-header">
         <span className="card-icon runtime-icon" aria-hidden="true">
-          <TerminalWindow size={24} />
+          <RuntimeLogo runtime={props.runtime} />
         </span>
         <div className="card-title-group">
           <h3>{displayName}</h3>
@@ -51,18 +51,12 @@ export function RuntimeCard(props: {
       <div className="runtime-summary-models" aria-label={t("runtimes.models", { ns: "settings" })}>
         {models === undefined ? (
           <span>{t("runtimes.catalogUnavailable", { ns: "settings" })}</span>
-        ) : models.length === 0 ? (
-          <span>{t("runtimes.noModels", { ns: "settings" })}</span>
         ) : (
-          models.map((model) => <span key={runtimeModelKey(model)}>{model.displayName}</span>)
+          <span>{t("counts.model", { ns: "common", count: models.length })}</span>
         )}
       </div>
     </article>
   );
-}
-
-function runtimeModelKey(model: NonNullable<DesktopRuntimeAvailability["models"]>[number]): string {
-  return JSON.stringify([model.provider.kind, model.provider.id, model.id]);
 }
 
 export function RuntimeEnvironmentsFragment() {

@@ -39,12 +39,13 @@ const runtime: DesktopRuntimeAvailability = {
 };
 
 describe("Runtime Environment settings", () => {
-  it("centers model names in the Runtime directory card without internal identity", () => {
+  it("summarizes the model count in the Runtime directory card without listing models", () => {
     const html = renderToStaticMarkup(<RuntimeCard runtime={runtime} onOpen={() => undefined} />);
 
     expect(html).toContain('class="runtime-summary-models"');
-    expect(html).toContain("GPT-5.6 Codex");
-    expect(html).toContain("GPT-5.5 Codex Mini");
+    expect(html).toContain("2 models");
+    expect(html).not.toContain("GPT-5.6 Codex");
+    expect(html).not.toContain("GPT-5.5 Codex Mini");
     expect(html).not.toContain("codex-local");
     expect(html).not.toContain("built-in");
     expect(html).not.toContain("gpt-5.6-codex");

@@ -1,8 +1,9 @@
-import { ArrowLeft, ArrowsClockwise, TerminalWindow } from "@phosphor-icons/react";
+import { ArrowLeft, ArrowsClockwise } from "@phosphor-icons/react";
 import type { ReactNode } from "react";
 import { useTranslation } from "react-i18next";
 
 import type { DesktopRuntimeAvailability } from "../../../../shared/contracts/index.ts";
+import { RuntimeLogo } from "../../components/RuntimeLogo.tsx";
 import { isBuiltInRuntime, runtimeDisplayName } from "../../lib/runtime-display.ts";
 import { SettingsScreenFrame } from "./SettingsScreenFrame.tsx";
 
@@ -35,7 +36,7 @@ export function RuntimeEnvironmentDetail(props: {
 
           <header className="runtime-detail-header">
             <span className="runtime-detail-icon" aria-hidden="true">
-              <TerminalWindow size={32} />
+              <RuntimeLogo runtime={runtime} className="runtime-detail-logo" />
             </span>
             <div>
               <div className="runtime-detail-title-line">
