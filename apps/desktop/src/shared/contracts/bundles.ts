@@ -83,6 +83,7 @@ export const PragmaBundleConflictSchema = z
       "Capability",
       "ContextStore",
       "RuntimeProfile",
+      "Evaluation",
     ]),
     importedName: z.string().trim().min(1).max(200),
     matches: z.array(PragmaBundleConflictMatchSchema).min(1).max(2),

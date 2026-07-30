@@ -211,6 +211,17 @@ Published revisions must contain their actual lock. A missing, malformed, stale,
 incompatible lock removes trust in the project fingerprint and blocks apply, compile, and recover;
 the service never synthesizes a replacement lock while reading a snapshot.
 
+The browser-safe Interpreter compiler capability declares one write version and the bounded set of
+readable versions. Revision metadata and `pragma.lock.yaml` must agree before resource parsing.
+Unsupported versions use `compiler.version_unsupported`; metadata disagreement uses
+`compiler.version_metadata_mismatch`. Neither condition is reported as a stale lock.
+
+Complete-project validation remains the authoring and publication health gate. Runtime compilation
+validates only the selected Expert, Team, or Flow and its transitive project-resource dependencies.
+Compiler, lock, unreadable source topology, and resource identity ambiguity are project-wide
+blockers; unrelated resource-reference or Flow-contract diagnostics remain visible in project
+health without disabling independent executors.
+
 Compilation separately returns an environment fingerprint containing:
 
 - the environment ID;

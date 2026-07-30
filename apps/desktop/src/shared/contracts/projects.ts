@@ -13,6 +13,7 @@ export const PragmaProjectSnapshotSchema = z.object({
   schemaVersion: z.literal("pragma.project-snapshot/v3"),
   projectId: z.string().trim().min(1).max(120),
   revision: z.number().int().nonnegative(),
+  compilerVersion: z.string().trim().min(1).optional(),
   resources: z.array(PragmaResourceSchema),
   diagnostics: z.array(PragmaDiagnosticSchema),
   lock: PragmaLockSchema.optional(),

@@ -3,17 +3,21 @@ import { useTranslation } from "react-i18next";
 
 import { serializeRendererError } from "../lib/renderer-log.ts";
 
-export type DesktopFatalErrorCode = "DESKTOP_BRIDGE_UNAVAILABLE" | "RENDERER_STARTUP_FAILURE";
+export type DesktopFatalErrorCode =
+  | "DESKTOP_BRIDGE_UNAVAILABLE"
+  | "DESKTOP_COMPONENT_VERSION_MISMATCH"
+  | "RENDERER_STARTUP_FAILURE";
 
 export function DesktopFatalError(props: {
   readonly code: DesktopFatalErrorCode;
   readonly onReload?: (() => void) | undefined;
 }) {
   const { t } = useTranslation();
-  const copyKey =
-    props.code === "DESKTOP_BRIDGE_UNAVAILABLE"
-      ? "startupFailure.bridge"
-      : "startupFailure.renderer";
+  const copyKey = {
+    DESKTOP_BRIDGE_UNAVAILABLE: "startupFailure.bridge",
+    DESKTOP_COMPONENT_VERSION_MISMATCH: "startupFailure.version",
+    RENDERER_STARTUP_FAILURE: "startupFailure.renderer",
+  }[props.code];
   const reload = props.onReload ?? (() => window.location.reload());
 
   return (

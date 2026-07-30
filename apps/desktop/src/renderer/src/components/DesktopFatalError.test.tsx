@@ -30,6 +30,15 @@ describe("DesktopFatalError", () => {
     expect(html).toContain("Pragma 未能完成启动");
     expect(html).toContain("诊断代码：RENDERER_STARTUP_FAILURE");
   });
+
+  it("explains that mismatched Desktop components must be reloaded", () => {
+    const html = renderToStaticMarkup(
+      <DesktopFatalError code="DESKTOP_COMPONENT_VERSION_MISMATCH" onReload={() => undefined} />,
+    );
+
+    expect(html).toContain("Pragma components are out of sync");
+    expect(html).toContain("Diagnostic code: DESKTOP_COMPONENT_VERSION_MISMATCH");
+  });
 });
 
 describe("DesktopErrorBoundary", () => {

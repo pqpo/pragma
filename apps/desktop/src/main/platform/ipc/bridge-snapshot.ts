@@ -1,4 +1,8 @@
 import { app } from "electron";
+import {
+  PRAGMA_COMPILER_READ_VERSIONS,
+  PRAGMA_COMPILER_WRITE_VERSION,
+} from "@pragma/interpreter/ast";
 
 import type { DesktopBridgeSnapshot } from "../../../shared/contracts/index.ts";
 
@@ -15,6 +19,10 @@ export function createBridgeSnapshot(): DesktopBridgeSnapshot {
       name: "Pragma Desktop",
       version: app.getVersion(),
       os: normalizeOs(),
+    },
+    interpreter: {
+      writeVersion: PRAGMA_COMPILER_WRITE_VERSION,
+      readVersions: [...PRAGMA_COMPILER_READ_VERSIONS],
     },
     gateway: {
       schemaVersion: 1,

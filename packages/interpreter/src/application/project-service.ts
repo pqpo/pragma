@@ -81,6 +81,7 @@ export interface PragmaProjectSnapshot {
   readonly schemaVersion: "pragma.project-snapshot/v3";
   readonly projectId: string;
   readonly revision: number;
+  readonly compilerVersion?: string | undefined;
   readonly resources: readonly PragmaResource[];
   readonly diagnostics: readonly PragmaDiagnostic[];
   readonly lock?: PragmaLock | undefined;
@@ -139,11 +140,16 @@ export class PragmaProjectService {
       } catch {
         lock = undefined;
       }
-      const lockValid = !diagnostics.some((diagnostic) => diagnostic.code.startsWith("lock."));
+      const lockValid = !diagnostics.some(
+        (diagnostic) =>
+          diagnostic.code.startsWith("lock.") || diagnostic.code.startsWith("compiler."),
+      );
+      const compilerVersion = lock?.compilerVersion ?? checkedOut.compilerVersion;
       return {
         schemaVersion: "pragma.project-snapshot/v3",
         projectId,
         revision: checkedOut.revision,
+        ...(compilerVersion === undefined ? {} : { compilerVersion }),
         resources: project.listResources(),
         diagnostics,
         ...(lock === undefined ? {} : { lock }),
@@ -385,16 +391,24 @@ export class PragmaProjectService {
       return await loadPragmaProject(location.entryFile, {
         rootDir: location.rootDir,
         requireLock,
+        ...(location.compilerVersion === undefined
+          ? {}
+          : { revisionCompilerVersion: location.compilerVersion }),
         resourceAdapters: this.adapters,
         externalResourceRefs: this.options.externalResourceRefs,
       });
     }
-    const key = `${sourceIdentity}\0${requireLock ? "locked" : "unlocked"}`;
+    const key =
+      `${sourceIdentity}\0${location.compilerVersion ?? "unknown"}\0` +
+      `${requireLock ? "locked" : "unlocked"}`;
     let project = this.openedProjects.get(key);
     if (project === undefined) {
       project = loadPragmaProject(location.entryFile, {
         rootDir: location.rootDir,
         requireLock,
+        ...(location.compilerVersion === undefined
+          ? {}
+          : { revisionCompilerVersion: location.compilerVersion }),
         sourceIdentity,
         blueprintCache: this.options.blueprintCache,
         onBlueprintCacheLookup: (observation) => {
@@ -450,7 +464,9 @@ export class PragmaProjectService {
       throw new PragmaProjectRevisionConflictError(input.baseRevision, current.revision, [], false);
     }
     const currentErrors = current.diagnostics.filter(
-      (diagnostic) => diagnostic.severity === "error" && diagnostic.code.startsWith("lock."),
+      (diagnostic) =>
+        diagnostic.severity === "error" &&
+        (diagnostic.code.startsWith("lock.") || diagnostic.code.startsWith("compiler.")),
     );
     if (currentErrors.length > 0) throw new PragmaProjectValidationError(currentErrors);
 

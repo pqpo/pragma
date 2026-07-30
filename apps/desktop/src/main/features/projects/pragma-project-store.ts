@@ -441,6 +441,9 @@ export function createPragmaProjectStore(options: {
       return await loadPragmaProject(location.entryFile, {
         rootDir: location.rootDir,
         requireLock: true,
+        ...(location.compilerVersion === undefined
+          ? {}
+          : { revisionCompilerVersion: location.compilerVersion }),
         sourceIdentity: location.snapshotHash ?? location.projectFingerprint,
         blueprintCache: options.blueprintCache,
       });

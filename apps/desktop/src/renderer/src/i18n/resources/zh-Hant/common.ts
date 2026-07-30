@@ -59,6 +59,11 @@ export const common = {
       title: "無法載入 Desktop 橋接服務",
       description: "Pragma 無法連接介面與本機 Desktop 服務。你的資料沒有被變更。",
     },
+    version: {
+      title: "Pragma 元件版本不一致",
+      description:
+        "Desktop 介面與本機編譯器正在使用不同的協定版本。請先重新載入 Pragma，再編輯專案或啟動任務。",
+    },
     renderer: {
       title: "Pragma 未能完成啟動",
       description: "Desktop 介面在啟動過程中遇到了非預期問題。",

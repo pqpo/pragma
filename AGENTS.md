@@ -603,6 +603,12 @@ Expert API 设计要求：
   `revision` 专指不可变项目内容序号。三者不得共用迁移开关。
 - Interpreter 普通 parser/compiler 只接受当前 DSL；旧版本必须先经过静态注册的相邻迁移链。
 - 删除仍在支持窗口内的旧 DSL 迁移步骤属于兼容性 cutover，必须另写 ADR，并提供导出、备份或离线升级路径。
+- Project Revision 的 Interpreter 兼容能力统一由 `@pragma/interpreter/ast` 导出的 compiler capability
+  声明；写入、读取、Lock、Blueprint cache、Desktop IPC 和 Mission 编译不得各自维护版本常量。
+- 修改闭合资源联合、严格资源 Schema，或新增会拒绝既有 Revision 的 portable validator 时，必须
+  明确升级 compiler write version 或提供旧版本读取路径，并提交新旧版本 fixture 和 fail-closed 测试。
+- `PragmaProject.validate()` 是全项目健康检查；执行入口使用目标资源及其传递依赖闭包校验。无关资源
+  诊断不得阻断独立执行器，compiler、lock、source topology 和资源身份歧义仍然全局 fail closed。
 
 禁止引入具体 Runtime Adapter、Desktop UI、Server 应用层、数据库实现或 Client SDK。
 

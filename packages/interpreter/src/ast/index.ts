@@ -1,3 +1,4 @@
+export * from "./compiler-compatibility.ts";
 export * from "./flow-data-contracts.ts";
 export * from "./flow-graph.ts";
 export * from "./flow-run-dry.schema.ts";
