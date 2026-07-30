@@ -73,6 +73,7 @@ export * from "./runtime-resolver.ts";
 export * from "./resource-id.ts";
 export * from "./sdk-mcp-server.ts";
 export * from "./tools/managed-tool.ts";
+export * from "./tools/execution-tools.ts";
 export * from "./tools/tool-resolver.ts";
 export * from "./storage/pragma-paths.ts";
 export * from "./storage/file-lock.ts";

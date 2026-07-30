@@ -5,12 +5,10 @@ import type {
   RuntimeSessionRestoreHandler,
   RuntimeSessionSyncCallback,
   RuntimeTokenCounter,
+  McpToolRegistryPool,
 } from "@pragma/core";
 
-export type QoderCliRuntimePermissionMode =
-  | "default"
-  | "auto"
-  | "bypassPermissions";
+export type QoderCliRuntimePermissionMode = "default" | "auto" | "bypassPermissions";
 
 export type QoderCliRuntimeAuth =
   | { readonly type: "qodercli" }
@@ -34,4 +32,5 @@ export interface QoderCliRuntimeAdapterOptions {
   readonly sessionRestoreHandler?: RuntimeSessionRestoreHandler | undefined;
   readonly sessionSyncCallback?: RuntimeSessionSyncCallback | undefined;
   readonly tokenCounter?: RuntimeTokenCounter | undefined;
+  readonly mcpToolRegistryPool?: McpToolRegistryPool | undefined;
 }

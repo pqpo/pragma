@@ -63,13 +63,12 @@ const DEFAULT_CODEX_CLIENT_INFO = {
 
 interface CodexDriverSession extends CodexNativeSession {
   readonly logger: PragmaLogger;
-  readonly mcpToolRegistry: McpToolRegistry;
   readonly mcpToolRegistryLease: McpToolRegistryLease;
   readonly expertToolsMcpRegistration: CodexExpertToolsMcpSessionRegistration;
 }
 
 export function createCodexRuntime(options: CodexRuntimeAdapterOptions = {}): RuntimeAdapter {
-  const mcpToolRegistries = createMcpToolRegistryPool();
+  const mcpToolRegistries = options.mcpToolRegistryPool ?? createMcpToolRegistryPool();
   const executablePath =
     options.executablePath ??
     (options.spawn === undefined ? resolveCodexExecutablePath(options) : "codex");
@@ -241,6 +240,9 @@ export function createCodexRuntime(options: CodexRuntimeAdapterOptions = {}): Ru
             elapsedMs: codexElapsedMs(sessionStartedAt),
             systemPromptCharacters: ctx.agentContext.systemPrompt.length,
             toolCount: mcpToolRegistry.tools.length,
+            mcpOpenedConnections: mcpToolRegistryLease.stats.openedConnections,
+            mcpReusedConnections: mcpToolRegistryLease.stats.reusedConnections,
+            mcpCoalescedConnections: mcpToolRegistryLease.stats.coalescedConnections,
           });
 
           return {
@@ -257,7 +259,6 @@ export function createCodexRuntime(options: CodexRuntimeAdapterOptions = {}): Ru
                 : [],
             }),
             logger: ctx.logger,
-            mcpToolRegistry,
             mcpToolRegistryLease,
             expertToolsMcpRegistration,
           };

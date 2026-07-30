@@ -60,16 +60,19 @@ and preserves the hard-limit cleanup behavior.
 
 ### Runtime reuse
 
-Codex and QoderCLI use a reference-counted MCP Tool Registry pool. External MCP configurations use
-a stable, redacted fingerprint; in-process configurations use object identity because functions
-must not be merged by serialization. Idle registries are bounded and expire.
+Superseded in detail by ADR 028. Desktop owns one reference-counted MCP connection pool shared by
+compiler live checks, Capability workflows, and all four Runtime adapters. Pooling is per server
+connection so consumer-specific server IDs, tool projections, and approval policies do not prevent
+reuse. External connections use a stable, redacted fingerprint; in-process connections use object
+identity because functions must not be merged by serialization. Idle connections are bounded and
+expire.
 
 Sharing one Codex app-server process across Missions is not adopted. ADR 026 and the storage rules
 require each Runtime Context to have a private `CODEX_HOME`, `CODEX_SQLITE_HOME`, session tree,
 configuration, and logs. A single process has process-wide environment and configuration and would
 therefore weaken isolation, complicate ownership and cancellation, and risk cross-Context state.
 Each Mission continues to own an independent Codex thread and private process. Only explicitly
-rebuildable caches and the MCP Registry pool are shared. A future multiplexed Runtime protocol may
+rebuildable caches and upstream MCP connections are shared. A future multiplexed Runtime protocol may
 revisit this if it can bind home, credentials, tools, cancellation, and accounting per thread.
 
 ### Latency observations

@@ -3,6 +3,7 @@ import { join } from "node:path";
 
 import type { BrowserWindow } from "electron";
 import {
+  createMcpToolRegistryPool,
   createRuntimeTokenCounter,
   createStorageCapacityGuard,
   PragmaPaths,
@@ -113,6 +114,7 @@ export async function createDesktopApplicationContainer(
   }
   const maintenance = await runStorageMaintenance({ paths: pragmaPaths });
   const tokenCounter = createRuntimeTokenCounter({ logger: mainLogger });
+  const mcpToolRegistryPool = createMcpToolRegistryPool();
   const storageCapacityGuard = createStorageCapacityGuard({
     paths: pragmaPaths,
     initialOverview: maintenance.after,
@@ -204,6 +206,7 @@ export async function createDesktopApplicationContainer(
         options.sendRuntimeModelCatalogUpdate(runtimeId);
       },
       tokenCounter,
+      mcpToolRegistryPool,
     ),
   });
   const missionExecutors = createMissionExecutorCatalog({
@@ -270,7 +273,8 @@ export async function createDesktopApplicationContainer(
   const capabilityStore = createCapabilityStore({
     capabilitiesPath,
     credentials: capabilityCredentials,
-    verify: createCapabilityVerifier(capabilityCredentials),
+    mcpToolRegistryPool,
+    verify: createCapabilityVerifier(capabilityCredentials, mcpToolRegistryPool),
     isReferenced: async (capabilityId) => {
       const definitions = await Promise.all(
         (await expertStore.list()).map((summary) => expertStore.get(summary.ref)),
@@ -337,6 +341,7 @@ export async function createDesktopApplicationContainer(
     capabilityStore,
     capabilityCredentials,
     capabilitiesPath,
+    mcpToolRegistryPool,
     pragmaHome: pragmaPaths.root,
     contextStores,
     plugins: pluginStore,
@@ -399,6 +404,7 @@ export async function createDesktopApplicationContainer(
             capabilityStore,
             capabilityCredentials,
             capabilitiesPath,
+            mcpToolRegistryPool,
             contextStores,
           },
           mission.workspace.path,
@@ -512,6 +518,13 @@ export async function createDesktopApplicationContainer(
       automationService.stop();
       storageCapacityGuard.close();
       tokenCounter.dispose();
+      void mcpToolRegistryPool.close().catch((error: unknown) => {
+        mainLogger.warn(
+          "desktop.mcp_pool_close_failed",
+          "Desktop MCP connections could not be closed cleanly.",
+          { error },
+        );
+      });
       usageStore.close();
     },
   };

@@ -6,6 +6,7 @@ import type {
   RuntimeSessionRestoreHandler,
   RuntimeSessionSyncCallback,
   RuntimeTokenCounter,
+  McpToolRegistryPool,
 } from "@pragma/core";
 
 export type ClaudeCodeRuntimePermissionMode =
@@ -34,6 +35,7 @@ export interface ClaudeCodeRuntimeAdapterOptions {
   readonly sessionRestoreHandler?: RuntimeSessionRestoreHandler | undefined;
   readonly sessionSyncCallback?: RuntimeSessionSyncCallback | undefined;
   readonly tokenCounter?: RuntimeTokenCounter | undefined;
+  readonly mcpToolRegistryPool?: McpToolRegistryPool | undefined;
 }
 
 export interface ClaudeCodeRuntimeMessage {

@@ -8,6 +8,7 @@ import {
   defineExpertTeam,
   defineFlow,
   mergeExpertAgentToolApprovals,
+  sanitizeExecutionToolName,
   type Expert,
   type ExpertAgentManagedTool,
   type ExpertAgentToolCallResult,
@@ -2258,7 +2259,9 @@ function filterMcpContribution(
               toolName,
               mergeExpertAgentToolApprovals(server.toolApprovals?.[toolName], {
                 mode:
-                  resource.spec.toolApprovals[`mcp_${key}_${sanitizeToolName(toolName)}`] ??
+                  resource.spec.toolApprovals[
+                    `mcp_${key}_${sanitizeExecutionToolName(toolName)}`
+                  ] ??
                   resource.spec.toolApprovals[toolName] ??
                   "ask",
               })!,
@@ -2268,10 +2271,6 @@ function filterMcpContribution(
       ]),
     ),
   };
-}
-
-function sanitizeToolName(value: string): string {
-  return value.replace(/[^a-zA-Z0-9_]/g, "_").replace(/_+/g, "_") || "tool";
 }
 
 function mergeSkills(

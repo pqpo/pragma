@@ -3,12 +3,13 @@ import { join } from "node:path";
 
 import type {
   McpToolRegistry,
+  McpToolRegistryLease,
   RuntimeAdapter,
   RuntimeCanUseResult,
   ExpertToolsMcpSessionRegistration,
 } from "@pragma/core";
 import {
-  createMcpToolRegistry,
+  createMcpToolRegistryPool,
   defineRuntimeDriver,
   registerExpertToolsMcpSession,
   type PragmaLogger,
@@ -54,13 +55,14 @@ const CLAUDE_CODE_LOCAL_RUNTIME_DESCRIPTOR = {
 const DEFAULT_CLAUDE_CODE_PERMISSION_MODE = "bypassPermissions" as const;
 
 interface ClaudeCodeDriverSession extends ClaudeCodeNativeSession {
-  readonly mcpToolRegistry: McpToolRegistry;
+  readonly mcpToolRegistryLease: McpToolRegistryLease;
   readonly expertToolsMcpRegistration: ExpertToolsMcpSessionRegistration;
 }
 
 export function createClaudeCodeRuntime(
   options: ClaudeCodeRuntimeAdapterOptions = {},
 ): RuntimeAdapter {
+  const mcpToolRegistries = options.mcpToolRegistryPool ?? createMcpToolRegistryPool();
   const command =
     options.spawn === undefined
       ? resolveClaudeCodeCommand(options)
@@ -129,6 +131,7 @@ export function createClaudeCodeRuntime(
         const toolRuntimeState: ExpertToolRuntimeState = {};
         const compactionHookRelay = await createClaudeCompactionHookRelay();
         let mcpToolRegistry: McpToolRegistry | undefined;
+        let mcpToolRegistryLease: McpToolRegistryLease | undefined;
         let expertToolsMcpRegistration: ExpertToolsMcpSessionRegistration | undefined;
 
         try {
@@ -140,7 +143,8 @@ export function createClaudeCodeRuntime(
               authorization: compactionHookRelay.authorization,
             },
           });
-          mcpToolRegistry = await createMcpToolRegistry(ctx.agent.mcp);
+          mcpToolRegistryLease = await mcpToolRegistries.acquire(ctx.agent.mcp);
+          mcpToolRegistry = mcpToolRegistryLease.registry;
           expertToolsMcpRegistration = await registerExpertToolsMcpSession({
             agent: ctx.agent,
             getContext: () => ctx.lifecycle.currentContext,
@@ -166,6 +170,17 @@ export function createClaudeCodeRuntime(
               );
             }
           }
+          ctx.logger.info(
+            "runtime.claude_code_session_ready",
+            "Claude Code Session preparation completed",
+            {
+              systemPromptCharacters: ctx.agentContext.systemPrompt.length,
+              toolCount: mcpToolRegistry.tools.length,
+              mcpOpenedConnections: mcpToolRegistryLease.stats.openedConnections,
+              mcpReusedConnections: mcpToolRegistryLease.stats.reusedConnections,
+              mcpCoalescedConnections: mcpToolRegistryLease.stats.coalescedConnections,
+            },
+          );
 
           return {
             ...createClaudeCodeNativeSession({
@@ -190,12 +205,16 @@ export function createClaudeCodeRuntime(
               systemPrompt: ctx.agentContext.systemPrompt,
               tokenCounter: options.tokenCounter,
             }),
-            mcpToolRegistry,
+            mcpToolRegistryLease,
             expertToolsMcpRegistration,
           };
         } catch (error) {
           const cleanup = await Promise.allSettled([
-            disposeClaudeRuntimeResources(expertToolsMcpRegistration, mcpToolRegistry, ctx.logger),
+            disposeClaudeRuntimeResources(
+              expertToolsMcpRegistration,
+              mcpToolRegistryLease,
+              ctx.logger,
+            ),
             compactionHookRelay.close(),
           ]);
           const cleanupErrors = cleanup.flatMap((result) =>
@@ -251,7 +270,7 @@ export function createClaudeCodeRuntime(
         const cleanup = await Promise.allSettled([
           disposeClaudeRuntimeResources(
             session.expertToolsMcpRegistration,
-            session.mcpToolRegistry,
+            session.mcpToolRegistryLease,
             ctx.logger,
           ),
           session.compactionHookRelay.close(),
@@ -326,12 +345,12 @@ function createClaudeCodeRuntimeCanUse(
 
 async function disposeClaudeRuntimeResources(
   expertToolsMcpRegistration: ExpertToolsMcpSessionRegistration | undefined,
-  mcpToolRegistry: McpToolRegistry | undefined,
+  mcpToolRegistryLease: McpToolRegistryLease | undefined,
   logger: PragmaLogger,
 ): Promise<void> {
   const results = await Promise.allSettled([
     expertToolsMcpRegistration?.dispose() ?? Promise.resolve(),
-    mcpToolRegistry?.dispose() ?? Promise.resolve(),
+    mcpToolRegistryLease?.release() ?? Promise.resolve(),
   ]);
   const errors = results.flatMap((result) =>
     result.status === "rejected" ? [result.reason as unknown] : [],

@@ -6,6 +6,7 @@ import type {
   RuntimeSessionRestoreHandler,
   RuntimeSessionSyncCallback,
   RuntimeTokenCounter,
+  McpToolRegistryPool,
 } from "@pragma/core";
 
 export type CodexRuntimeSandboxMode = "read-only" | "workspace-write" | "danger-full-access";
@@ -43,6 +44,7 @@ export interface CodexRuntimeAdapterOptions {
   readonly sessionRestoreHandler?: RuntimeSessionRestoreHandler | undefined;
   readonly sessionSyncCallback?: RuntimeSessionSyncCallback | undefined;
   readonly tokenCounter?: RuntimeTokenCounter | undefined;
+  readonly mcpToolRegistryPool?: McpToolRegistryPool | undefined;
 }
 
 export interface CodexRuntimeMessage {

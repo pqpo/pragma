@@ -1,9 +1,10 @@
 import { createHash } from "node:crypto";
 
 import {
-  createMcpToolRegistry,
+  createMcpToolRegistryPool,
   verifyCodeServiceDefinition,
   type IExpertAgentMcpServer,
+  type McpToolRegistryPool,
 } from "@pragma/core";
 
 import {
@@ -16,6 +17,7 @@ import type { CapabilityVerifier } from "./capability-verification.ts";
 
 export function createCapabilityVerifier(
   credentials: CapabilityCredentialStore,
+  mcpToolRegistryPool?: McpToolRegistryPool,
 ): CapabilityVerifier {
   return async (definition, capabilityId) => {
     const checkedAt = new Date().toISOString();
@@ -42,22 +44,33 @@ export function createCapabilityVerifier(
 
     try {
       const server = await toCoreMcpServer(definition, capabilityId, credentials);
-      const registry = await createMcpToolRegistry({ mcpServers: { capability: server } });
+      const ownsPool = mcpToolRegistryPool === undefined;
+      const pool =
+        mcpToolRegistryPool ??
+        createMcpToolRegistryPool({
+          idleTtlMs: 0,
+          maxIdleEntries: 0,
+        });
       try {
-        const tools = registry.tools.map((tool) =>
-          CapabilityToolSnapshotSchema.parse({
-            name: tool.name,
-            description: tool.description,
-            inputSchema: tool.inputSchema,
-            schemaHash: hashSchema(tool.inputSchema),
-          }),
-        );
-        return {
-          definition: CapabilityDefinitionSchema.parse({ ...definition, tools }),
-          health: { status: "ready", checkedAt },
-        };
+        const lease = await pool.acquire({ mcpServers: { capability: server } });
+        try {
+          const tools = lease.registry.tools.map((tool) =>
+            CapabilityToolSnapshotSchema.parse({
+              name: tool.name,
+              description: tool.description,
+              inputSchema: tool.inputSchema,
+              schemaHash: hashSchema(tool.inputSchema),
+            }),
+          );
+          return {
+            definition: CapabilityDefinitionSchema.parse({ ...definition, tools }),
+            health: { status: "ready", checkedAt },
+          };
+        } finally {
+          await lease.release();
+        }
       } finally {
-        await registry.dispose();
+        if (ownsPool) await pool.close();
       }
     } catch (error) {
       return {
