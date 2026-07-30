@@ -216,12 +216,18 @@ p {
   width: 39px;
   height: 39px;
   place-items: center;
-  border-radius: 4px;
-  background: var(--green);
-  color: #fff;
-  font-size: 29px;
-  font-weight: 500;
-  line-height: 1;
+  overflow: hidden;
+  border: 1px solid #fff;
+  border-radius: 50%;
+  background: #fff;
+  box-shadow: 0 5px 14px rgb(69 100 84 / 18%);
+}
+
+.brand-mark img {
+  display: block;
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
 }
 
 .brand-name {
@@ -10515,10 +10521,9 @@ textarea:focus-visible,
 .brand-mark {
   width: 36px;
   height: 36px;
-  border-radius: 10px;
-  background: var(--green);
+  border-radius: 50%;
+  background: #fff;
   box-shadow: 0 5px 14px rgb(69 100 84 / 18%);
-  font-size: 24px;
 }
 
 .brand-name {
