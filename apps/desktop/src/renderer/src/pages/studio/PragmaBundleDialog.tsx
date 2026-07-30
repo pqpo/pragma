@@ -1,5 +1,6 @@
 import {
   Archive,
+  ArrowsClockwise,
   CaretDown,
   Check,
   DownloadSimple,
@@ -8,10 +9,12 @@ import {
   UploadSimple,
   User,
   UsersThree,
+  WarningCircle,
   X,
 } from "@phosphor-icons/react";
 import { canonicalPragmaResourceRef } from "@pragma/interpreter/ast";
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import type { ReactNode, RefObject } from "react";
 import { useTranslation } from "react-i18next";
 
 import type {
@@ -31,6 +34,22 @@ type BundleExportRoot = Extract<
   PragmaProjectSnapshot["resources"][number],
   { kind: "Expert" | "ExpertTeam" | "Flow" }
 >;
+type ImportStep = "select" | "conflicts" | "bindings" | "review" | "result";
+type BindingRequirement = PragmaBundleImportInspection["requirements"][number];
+type RuntimeBindingDraft = {
+  readonly runtimeId: string;
+  readonly providerId: string;
+  readonly modelId: string;
+  readonly thinkingLevel?: string | undefined;
+};
+
+const bindingKindOrder: Readonly<Record<BindingRequirement["kind"], number>> = {
+  runtime: 0,
+  capability: 1,
+  "context-store": 2,
+  plugin: 3,
+  secret: 4,
+};
 
 const bundleExportRootCollator = new Intl.Collator(undefined, {
   numeric: true,
@@ -80,16 +99,27 @@ export function filterBundleExportRoots(
 }
 
 export function PragmaBundleDialog(props: {
-  readonly initialMode: BundleMode;
+  readonly mode: BundleMode;
   readonly project: PragmaProjectSnapshot;
   readonly capabilities: readonly Capability[];
   readonly contextStores: readonly ContextStore[];
   readonly runtimes: readonly DesktopRuntimeAvailability[];
+  readonly onRefreshRuntimes: () => Promise<readonly DesktopRuntimeAvailability[]>;
   readonly onClose: () => void;
   readonly onChanged: () => void | Promise<void>;
 }) {
+  return props.mode === "export" ? (
+    <BundleExportDialog {...props} />
+  ) : (
+    <BundleImportDialog {...props} />
+  );
+}
+
+function BundleExportDialog(props: {
+  readonly project: PragmaProjectSnapshot;
+  readonly onClose: () => void;
+}) {
   const { t } = useTranslation("studio");
-  const [mode, setMode] = useState<BundleMode>(props.initialMode);
   const [rootRef, setRootRef] = useState("");
   const [modules, setModules] = useState<PragmaBundleModuleOptions>({
     capabilities: true,
@@ -97,17 +127,9 @@ export function PragmaBundleDialog(props: {
     knowledgeBases: false,
     flowLayouts: true,
   });
-  const [inspection, setInspection] = useState<PragmaBundleImportInspection | null>(null);
-  const [installation, setInstallation] = useState<PragmaBundleInstallation | null>(null);
-  const [conflictMode, setConflictMode] = useState<"update" | "copy" | "">("");
-  const [runtimeBindings, setRuntimeBindings] = useState<Record<string, string>>({});
-  const [capabilityBindings, setCapabilityBindings] = useState<Record<string, string>>({});
-  const [contextBindings, setContextBindings] = useState<Record<string, string>>({});
-  const [secrets, setSecrets] = useState<Record<string, string>>({});
   const [resultPath, setResultPath] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
-
   const roots = useMemo(
     () => orderBundleExportRoots(props.project.resources.filter(isBundleExportRoot)),
     [props.project.resources],
@@ -118,77 +140,6 @@ export function PragmaBundleDialog(props: {
       setRootRef(canonicalPragmaResourceRef(roots[0]));
     }
   }, [rootRef, roots]);
-
-  useEffect(() => {
-    if (mode !== "import" || inspection !== null || installation !== null) return;
-    const api = desktopApi();
-    if (api === undefined) return;
-    let active = true;
-    void api
-      .listPragmaBundleInstallations()
-      .then((installations) => {
-        const recoverable = installations.find(
-          (candidate) => candidate.status === "needs_setup" || candidate.status === "failed",
-        );
-        if (active && recoverable !== undefined) setInstallation(recoverable);
-      })
-      .catch(() => undefined);
-    return () => {
-      active = false;
-    };
-  }, [inspection, installation, mode]);
-
-  const resetBindings = () => {
-    setRuntimeBindings({});
-    setCapabilityBindings({});
-    setContextBindings({});
-    setSecrets({});
-  };
-
-  const selectBundle = async () => {
-    const api = desktopApi();
-    if (api === undefined) return;
-    setBusy(true);
-    setError(null);
-    try {
-      const picked = await api.pickPragmaBundle();
-      if (picked.cancelled || picked.path === undefined) return;
-      const nextInspection = await api.inspectPragmaBundle({ sourcePath: picked.path });
-      setInspection(nextInspection);
-      const installations =
-        nextInspection.alreadyInstalledId === undefined
-          ? []
-          : await api.listPragmaBundleInstallations();
-      setInstallation(
-        installations.find((candidate) => candidate.id === nextInspection.alreadyInstalledId) ??
-          null,
-      );
-      resetBindings();
-      setConflictMode("");
-    } catch (cause) {
-      setError(errorMessage(cause));
-    } finally {
-      setBusy(false);
-    }
-  };
-
-  const discardInstallation = async () => {
-    const api = desktopApi();
-    if (api === undefined || installation === null) return;
-    setBusy(true);
-    setError(null);
-    try {
-      await api.discardPragmaBundleInstallation({ installationId: installation.id });
-      setInstallation(null);
-      setInspection(null);
-      resetBindings();
-      await props.onChanged();
-    } catch (cause) {
-      setError(errorMessage(cause));
-    } finally {
-      setBusy(false);
-    }
-  };
 
   const exportBundle = async () => {
     const api = desktopApi();
@@ -210,18 +161,356 @@ export function PragmaBundleDialog(props: {
     }
   };
 
+  return (
+    <BundleDialogShell
+      title={t("bundleExportTitle")}
+      description={t("bundleExportDescription")}
+      busy={busy}
+      onClose={props.onClose}
+      footer={
+        <>
+          <button
+            className="secondary-button"
+            type="button"
+            disabled={busy}
+            onClick={props.onClose}
+          >
+            {t("cancel")}
+          </button>
+          <button
+            className="primary-button"
+            type="button"
+            disabled={busy || rootRef === ""}
+            onClick={() => void exportBundle()}
+          >
+            <UploadSimple size={17} />
+            {busy ? t("bundleExporting") : t("exportBundle")}
+          </button>
+        </>
+      }
+    >
+      <BundleExportRootPicker roots={roots} value={rootRef} onChange={setRootRef} />
+      <fieldset className="pragma-bundle-modules">
+        <legend>{t("bundleModules")}</legend>
+        <BundleToggle
+          label={t("bundleCapabilities")}
+          description={t("bundleCapabilitiesHint")}
+          checked={modules.capabilities}
+          onChange={(capabilities) => setModules({ ...modules, capabilities })}
+        />
+        <BundleToggle
+          label={t("bundlePlugins")}
+          description={t("bundlePluginsHint")}
+          checked={modules.plugins}
+          onChange={(plugins) => setModules({ ...modules, plugins })}
+        />
+        <BundleToggle
+          label={t("bundleKnowledgeBases")}
+          description={t("bundleKnowledgeBasesHint")}
+          checked={modules.knowledgeBases}
+          onChange={(knowledgeBases) => setModules({ ...modules, knowledgeBases })}
+        />
+        <BundleToggle
+          label={t("bundleFlowLayouts")}
+          description={t("bundleFlowLayoutsHint")}
+          checked={modules.flowLayouts}
+          onChange={(flowLayouts) => setModules({ ...modules, flowLayouts })}
+        />
+      </fieldset>
+      <p className="pragma-bundle-safety">{t("bundleSafetyHint")}</p>
+      {resultPath ? (
+        <p className="pragma-bundle-success" role="status">
+          {t("bundleExported", { path: resultPath })}
+        </p>
+      ) : null}
+      {error ? (
+        <p className="form-error" role="alert">
+          {error}
+        </p>
+      ) : null}
+    </BundleDialogShell>
+  );
+}
+
+function BundleImportDialog(props: {
+  readonly capabilities: readonly Capability[];
+  readonly contextStores: readonly ContextStore[];
+  readonly runtimes: readonly DesktopRuntimeAvailability[];
+  readonly onRefreshRuntimes: () => Promise<readonly DesktopRuntimeAvailability[]>;
+  readonly onClose: () => void;
+  readonly onChanged: () => void | Promise<void>;
+}) {
+  const { t } = useTranslation("studio");
+  const [step, setStep] = useState<ImportStep>("select");
+  const [inspection, setInspection] = useState<PragmaBundleImportInspection | null>(null);
+  const [conflicts, setConflicts] = useState<Record<string, "copy" | "update">>({});
+  const [bindingIndex, setBindingIndex] = useState(0);
+  const [runtimeBindings, setRuntimeBindings] = useState<Record<string, RuntimeBindingDraft>>({});
+  const [capabilityBindings, setCapabilityBindings] = useState<Record<string, string>>({});
+  const [contextBindings, setContextBindings] = useState<Record<string, string>>({});
+  const [secrets, setSecrets] = useState<Record<string, string>>({});
+  const [recovery, setRecovery] = useState<PragmaBundleInstallation | null>(null);
+  const [installation, setInstallation] = useState<PragmaBundleInstallation | null>(null);
+  const [busy, setBusy] = useState(false);
+  const [refreshingRuntimes, setRefreshingRuntimes] = useState(false);
+  const [dragging, setDragging] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const [confirmClose, setConfirmClose] = useState(false);
+  const dialogRef = useRef<HTMLElement | null>(null);
+
+  const requirements = useMemo(() => {
+    const values =
+      recovery === null
+        ? (inspection?.requirements ?? [])
+        : recovery.pending.map((pending): BindingRequirement => {
+            const sourceRef =
+              recovery.resourceMappings.find((mapping) => mapping.targetRef === pending.resourceRef)
+                ?.sourceRef ?? pending.resourceRef;
+            const inspected = inspection?.requirements.find(
+              (requirement) =>
+                requirement.kind === pending.kind && requirement.resourceRef === sourceRef,
+            );
+            return {
+              id: pending.id,
+              kind: pending.kind,
+              resourceRef: pending.resourceRef,
+              name: pending.name,
+              message: pending.message,
+              required: pending.kind !== "plugin",
+              ...(pending.capabilityKind === undefined
+                ? {}
+                : { capabilityKind: pending.capabilityKind }),
+              ...(inspected?.runtimeRequest === undefined
+                ? {}
+                : { runtimeRequest: inspected.runtimeRequest }),
+            };
+          });
+    return [...values].sort(
+      (left, right) =>
+        bindingKindOrder[left.kind] - bindingKindOrder[right.kind] ||
+        left.name.localeCompare(right.name),
+    );
+  }, [inspection, recovery]);
+  const currentRequirement = requirements[bindingIndex];
+  const dirty =
+    inspection !== null &&
+    (step !== "select" ||
+      Object.keys(runtimeBindings).length > 0 ||
+      Object.keys(capabilityBindings).length > 0 ||
+      Object.keys(contextBindings).length > 0 ||
+      Object.keys(secrets).length > 0);
+
+  const close = () => {
+    if (busy) return;
+    if (dirty && step !== "result") {
+      setConfirmClose(true);
+      return;
+    }
+    props.onClose();
+  };
+
+  const resetForInspection = async (next: PragmaBundleImportInspection) => {
+    const api = desktopApi();
+    const recoverable =
+      api === undefined || next.alreadyInstalledId === undefined
+        ? null
+        : ((await api.listPragmaBundleInstallations()).find(
+            (candidate) =>
+              candidate.id === next.alreadyInstalledId && candidate.status === "needs_setup",
+          ) ?? null);
+    setInspection(next);
+    setRecovery(recoverable);
+    setConflicts(
+      Object.fromEntries(next.conflicts.map((conflict) => [conflict.ref, "copy" as const])),
+    );
+    setBindingIndex(0);
+    setRuntimeBindings({});
+    setCapabilityBindings({});
+    setContextBindings({});
+    setSecrets({});
+    setInstallation(null);
+    setStep("select");
+  };
+
+  const inspectPickedBundle = async () => {
+    const api = desktopApi();
+    if (api === undefined) return;
+    setBusy(true);
+    setError(null);
+    try {
+      const picked = await api.pickPragmaBundle();
+      if (picked.cancelled || picked.path === undefined) return;
+      await resetForInspection(await api.inspectPragmaBundle({ sourcePath: picked.path }));
+    } catch (cause) {
+      setError(errorMessage(cause));
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const inspectDroppedBundle = async (file: File) => {
+    const api = desktopApi();
+    if (api === undefined) return;
+    if (!file.name.toLocaleLowerCase().endsWith(".pragma")) {
+      setError(t("bundleDropInvalid"));
+      return;
+    }
+    setBusy(true);
+    setError(null);
+    try {
+      await resetForInspection(await api.inspectDroppedPragmaBundle(file));
+    } catch (cause) {
+      setError(errorMessage(cause));
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const refreshRuntimes = useCallback(async () => {
+    setRefreshingRuntimes(true);
+    try {
+      await props.onRefreshRuntimes();
+      setError(null);
+    } catch (cause) {
+      setError(errorMessage(cause));
+    } finally {
+      setRefreshingRuntimes(false);
+    }
+  }, [props.onRefreshRuntimes]);
+
+  useEffect(() => {
+    if (step !== "bindings" || currentRequirement?.kind !== "runtime") return;
+    void refreshRuntimes();
+  }, [currentRequirement?.id, currentRequirement?.kind, refreshRuntimes, step]);
+
+  useEffect(() => {
+    const api = desktopApi();
+    if (api === undefined || step !== "bindings") return;
+    return api.subscribeRuntimeModelCatalog(() => {
+      void refreshRuntimes();
+    });
+  }, [refreshRuntimes, step]);
+
+  useEffect(() => {
+    if (currentRequirement?.kind !== "runtime") return;
+    const request = currentRequirement.runtimeRequest;
+    if (
+      request?.runtimeId === undefined ||
+      request.providerId === undefined ||
+      request.modelId === undefined ||
+      runtimeBindings[currentRequirement.resourceRef] !== undefined
+    ) {
+      return;
+    }
+    const runtime = props.runtimes.find(
+      (candidate) => candidate.id === request.runtimeId && candidate.status === "available",
+    );
+    const model = runtime?.models?.find(
+      (candidate) =>
+        candidate.provider.id === request.providerId && candidate.id === request.modelId,
+    );
+    if (runtime === undefined || model === undefined) return;
+    setRuntimeBindings((current) => ({
+      ...current,
+      [currentRequirement.resourceRef]: {
+        runtimeId: runtime.id,
+        providerId: model.provider.id,
+        modelId: model.id,
+        ...(request.thinkingLevel === undefined ? {} : { thinkingLevel: request.thinkingLevel }),
+      },
+    }));
+  }, [currentRequirement, props.runtimes, runtimeBindings]);
+
+  const nextFromSelect = () => {
+    if (inspection === null) return;
+    if (recovery === null && inspection.conflicts.length > 0) setStep("conflicts");
+    else if (requirements.length > 0) setStep("bindings");
+    else setStep("review");
+  };
+
+  const nextFromConflicts = () => {
+    if (requirements.length > 0) setStep("bindings");
+    else setStep("review");
+  };
+
+  const previousFromBindings = () => {
+    if (bindingIndex > 0) {
+      setBindingIndex((current) => current - 1);
+      return;
+    }
+    setStep(recovery === null && inspection?.conflicts.length ? "conflicts" : "select");
+  };
+
+  const nextFromBindings = () => {
+    if (bindingIndex < requirements.length - 1) {
+      setBindingIndex((current) => current + 1);
+      return;
+    }
+    setStep("review");
+  };
+
+  const bindingIsComplete = (requirement: BindingRequirement | undefined): boolean => {
+    if (requirement === undefined || !requirement.required) return true;
+    if (requirement.kind === "runtime") {
+      const value = runtimeBindings[requirement.resourceRef];
+      return value !== undefined && value.runtimeId !== "" && value.modelId !== "";
+    }
+    if (requirement.kind === "capability") {
+      return (capabilityBindings[requirement.resourceRef] ?? "") !== "";
+    }
+    if (requirement.kind === "context-store") {
+      return (contextBindings[requirement.resourceRef] ?? "") !== "";
+    }
+    return requirement.kind !== "secret" || (secrets[requirement.id] ?? "").trim() !== "";
+  };
+
   const importBundle = async () => {
     const api = desktopApi();
     if (api === undefined || inspection === null) return;
     setBusy(true);
     setError(null);
     try {
-      const next = await api.importPragmaBundle({
-        sourcePath: inspection.sourcePath,
-        expectedFingerprint: inspection.bundleFingerprint,
-        ...(inspection.conflicts.length === 0 || conflictMode === "" ? {} : { conflictMode }),
+      const runtimes = Object.entries(runtimeBindings).map(([resourceRef, value]) => ({
+        resourceRef,
+        ...value,
+      }));
+      const capabilities = Object.entries(capabilityBindings).flatMap(([resourceRef, value]) => {
+        const [capabilityId, revision] = value.split("@");
+        return capabilityId === undefined || revision === undefined
+          ? []
+          : [{ resourceRef, capabilityId, revision: Number(revision) }];
       });
+      const contextStores = Object.entries(contextBindings).flatMap(([resourceRef, storeId]) =>
+        storeId === "" ? [] : [{ resourceRef, storeId }],
+      );
+      const resolvedSecrets = Object.fromEntries(
+        Object.entries(secrets).map(([id, value]) => [id.replace(/^secret:/, ""), value]),
+      );
+      const next =
+        recovery === null
+          ? await api.importPragmaBundle({
+              sourcePath: inspection.sourcePath,
+              expectedFingerprint: inspection.bundleFingerprint,
+              expectedProjectRevision: inspection.projectRevision,
+              conflicts: inspection.conflicts.map((conflict) => ({
+                resourceRef: conflict.ref,
+                action: conflicts[conflict.ref] ?? "copy",
+              })),
+              runtimes,
+              capabilities,
+              contextStores,
+              secrets: resolvedSecrets,
+            })
+          : await api.resolvePragmaBundleInstallation({
+              installationId: recovery.id,
+              baseRevision: inspection.projectRevision,
+              runtimes,
+              capabilities,
+              contextStores,
+              secrets: resolvedSecrets,
+            });
       setInstallation(next);
+      setStep("result");
       await props.onChanged();
     } catch (cause) {
       setError(errorMessage(cause));
@@ -230,58 +519,272 @@ export function PragmaBundleDialog(props: {
     }
   };
 
-  const saveBindings = async () => {
-    const api = desktopApi();
-    if (api === undefined || installation === null) return;
-    setBusy(true);
-    setError(null);
-    try {
-      const next = await api.resolvePragmaBundleInstallation({
-        installationId: installation.id,
-        baseRevision: installation.projectRevision,
-        runtimes: Object.entries(runtimeBindings).flatMap(([resourceRef, value]) => {
-          if (value === "") return [];
-          const parsed = JSON.parse(value) as {
-            runtimeId: string;
-            providerId: string;
-            modelId: string;
-          };
-          return [{ resourceRef, ...parsed }];
-        }),
-        capabilities: Object.entries(capabilityBindings).flatMap(([resourceRef, value]) => {
-          if (value === "") return [];
-          const [capabilityId, revision] = value.split("@");
-          return capabilityId === undefined || revision === undefined
-            ? []
-            : [{ resourceRef, capabilityId, revision: Number(revision) }];
-        }),
-        contextStores: Object.entries(contextBindings).flatMap(([resourceRef, storeId]) =>
-          storeId === "" ? [] : [{ resourceRef, storeId }],
-        ),
-        secrets: Object.fromEntries(
-          Object.entries(secrets)
-            .filter(([, value]) => value.trim() !== "")
-            .map(([id, value]) => [id.replace(/^secret:/, ""), value]),
-        ),
-      });
-      setInstallation(next);
-      await props.onChanged();
-    } catch (cause) {
-      setError(errorMessage(cause));
-    } finally {
-      setBusy(false);
+  const footer = (() => {
+    if (step === "result") {
+      return (
+        <button className="primary-button" type="button" onClick={props.onClose}>
+          {t("done")}
+        </button>
+      );
     }
-  };
+    if (step === "select") {
+      return (
+        <>
+          <button className="secondary-button" type="button" disabled={busy} onClick={close}>
+            {t("cancel")}
+          </button>
+          <button
+            className="primary-button"
+            type="button"
+            disabled={busy || inspection === null}
+            onClick={nextFromSelect}
+          >
+            {t("bundleContinue")}
+          </button>
+        </>
+      );
+    }
+    if (step === "conflicts") {
+      return (
+        <>
+          <button className="secondary-button" type="button" onClick={() => setStep("select")}>
+            {t("bundleBack")}
+          </button>
+          <button className="primary-button" type="button" onClick={nextFromConflicts}>
+            {t("bundleContinue")}
+          </button>
+        </>
+      );
+    }
+    if (step === "bindings") {
+      return (
+        <>
+          <button className="secondary-button" type="button" onClick={previousFromBindings}>
+            {t("bundleBack")}
+          </button>
+          <button
+            className="primary-button"
+            type="button"
+            disabled={!bindingIsComplete(currentRequirement)}
+            onClick={nextFromBindings}
+          >
+            {bindingIndex === requirements.length - 1 ? t("bundleReview") : t("bundleContinue")}
+          </button>
+        </>
+      );
+    }
+    return (
+      <>
+        <button
+          className="secondary-button"
+          type="button"
+          disabled={busy}
+          onClick={() => {
+            if (requirements.length > 0) {
+              setBindingIndex(Math.max(0, requirements.length - 1));
+              setStep("bindings");
+            } else {
+              setStep(recovery === null && inspection?.conflicts.length ? "conflicts" : "select");
+            }
+          }}
+        >
+          {t("bundleBack")}
+        </button>
+        <button
+          className="primary-button"
+          type="button"
+          disabled={busy}
+          onClick={() => void importBundle()}
+        >
+          <DownloadSimple size={17} />
+          {busy ? t("bundleImporting") : t("bundleImportAction")}
+        </button>
+      </>
+    );
+  })();
 
+  return (
+    <>
+      <BundleDialogShell
+        title={t("bundleImportTitle")}
+        description={t("bundleImportDescription")}
+        busy={busy}
+        onClose={close}
+        dialogRef={dialogRef}
+        footer={footer}
+      >
+        <BundleImportSteps
+          step={step}
+          inspection={inspection}
+          conflictCount={recovery === null ? (inspection?.conflicts.length ?? 0) : 0}
+          requirementCount={requirements.length}
+        />
+        {step === "select" ? (
+          <BundleFileStep
+            inspection={inspection}
+            busy={busy}
+            dragging={dragging}
+            onDragging={setDragging}
+            onPick={() => void inspectPickedBundle()}
+            onDrop={(file) => void inspectDroppedBundle(file)}
+          />
+        ) : null}
+        {step === "conflicts" && inspection !== null ? (
+          <BundleConflictStep
+            inspection={inspection}
+            selections={conflicts}
+            onChange={(ref, action) => setConflicts((current) => ({ ...current, [ref]: action }))}
+            onSetAll={(action) =>
+              setConflicts(
+                Object.fromEntries(
+                  inspection.conflicts.map((conflict) => [
+                    conflict.ref,
+                    action === "update" && !conflict.updateAllowed ? "copy" : action,
+                  ]),
+                ),
+              )
+            }
+          />
+        ) : null}
+        {step === "bindings" && currentRequirement !== undefined ? (
+          <BundleBindingStep
+            requirement={currentRequirement}
+            index={bindingIndex}
+            total={requirements.length}
+            runtimes={props.runtimes}
+            capabilities={props.capabilities}
+            contextStores={props.contextStores}
+            runtimeBinding={runtimeBindings[currentRequirement.resourceRef]}
+            capabilityBinding={capabilityBindings[currentRequirement.resourceRef] ?? ""}
+            contextBinding={contextBindings[currentRequirement.resourceRef] ?? ""}
+            secret={secrets[currentRequirement.id] ?? ""}
+            refreshingRuntimes={refreshingRuntimes}
+            onRefreshRuntimes={() => void refreshRuntimes()}
+            onRuntime={(value) =>
+              setRuntimeBindings((current) => ({
+                ...current,
+                [currentRequirement.resourceRef]: value,
+              }))
+            }
+            onCapability={(value) =>
+              setCapabilityBindings((current) => ({
+                ...current,
+                [currentRequirement.resourceRef]: value,
+              }))
+            }
+            onContext={(value) =>
+              setContextBindings((current) => ({
+                ...current,
+                [currentRequirement.resourceRef]: value,
+              }))
+            }
+            onSecret={(value) =>
+              setSecrets((current) => ({ ...current, [currentRequirement.id]: value }))
+            }
+          />
+        ) : null}
+        {step === "review" && inspection !== null ? (
+          <BundleReview
+            inspection={inspection}
+            conflicts={recovery === null ? conflicts : {}}
+            requirements={requirements}
+          />
+        ) : null}
+        {step === "result" && installation !== null ? (
+          <div className="pragma-bundle-result">
+            {installation.status === "ready" ? (
+              <p className="pragma-bundle-success" role="status">
+                {t("bundleReady", { name: installation.rootName })}
+              </p>
+            ) : installation.status === "failed" ? (
+              <p className="form-error" role="alert">
+                {installation.error ?? t("bundleImportFailed")}
+              </p>
+            ) : (
+              <div className="pragma-bundle-warning" role="status">
+                <WarningCircle size={20} aria-hidden="true" />
+                <div>
+                  <strong>{t("bundleSetupTitle")}</strong>
+                  <p>{t("bundleSetupDescription")}</p>
+                  <ul>
+                    {installation.pending.map((item) => (
+                      <li key={item.id}>{item.name}</li>
+                    ))}
+                  </ul>
+                </div>
+              </div>
+            )}
+          </div>
+        ) : null}
+        {error ? (
+          <p className="form-error" role="alert">
+            {error}
+          </p>
+        ) : null}
+      </BundleDialogShell>
+      {confirmClose ? (
+        <div className="capability-confirm-backdrop pragma-bundle-confirm-backdrop">
+          <section className="capability-confirm-dialog" role="alertdialog" aria-modal="true">
+            <h2>{t("bundleDiscardDraftTitle")}</h2>
+            <p>{t("bundleDiscardDraftDescription")}</p>
+            <footer>
+              <button
+                className="secondary-button"
+                type="button"
+                autoFocus
+                onClick={() => setConfirmClose(false)}
+              >
+                {t("bundleKeepEditing")}
+              </button>
+              <button className="danger-button" type="button" onClick={props.onClose}>
+                {t("bundleDiscardDraft")}
+              </button>
+            </footer>
+          </section>
+        </div>
+      ) : null}
+    </>
+  );
+}
+
+function BundleDialogShell(props: {
+  readonly title: string;
+  readonly description: string;
+  readonly busy: boolean;
+  readonly onClose: () => void;
+  readonly footer: ReactNode;
+  readonly children: ReactNode;
+  readonly dialogRef?: RefObject<HTMLElement | null> | undefined;
+}) {
+  const { t } = useTranslation("studio");
   return (
     <div className="capability-confirm-backdrop pragma-bundle-backdrop">
       <section
         className="pragma-bundle-dialog"
+        ref={props.dialogRef}
         role="dialog"
         aria-modal="true"
         aria-labelledby="pragma-bundle-title"
+        aria-describedby="pragma-bundle-description"
+        tabIndex={-1}
         onKeyDown={(event) => {
-          if (event.key === "Escape" && !busy) props.onClose();
+          if (event.key === "Escape" && !props.busy) props.onClose();
+          if (event.key !== "Tab") return;
+          const focusable = [
+            ...event.currentTarget.querySelectorAll<HTMLElement>(
+              'button:not([disabled]), input:not([disabled]), select:not([disabled]), [tabindex]:not([tabindex="-1"])',
+            ),
+          ];
+          const first = focusable[0];
+          const last = focusable.at(-1);
+          if (first === undefined || last === undefined) return;
+          if (event.shiftKey && document.activeElement === first) {
+            event.preventDefault();
+            last.focus();
+          } else if (!event.shiftKey && document.activeElement === last) {
+            event.preventDefault();
+            first.focus();
+          }
         }}
       >
         <header>
@@ -289,190 +792,475 @@ export function PragmaBundleDialog(props: {
             <span className="pragma-bundle-eyebrow">
               <Archive size={17} aria-hidden="true" /> {t("bundlePortable")}
             </span>
-            <h2 id="pragma-bundle-title">
-              {mode === "export" ? t("bundleExportTitle") : t("bundleImportTitle")}
-            </h2>
-            <p>{mode === "export" ? t("bundleExportDescription") : t("bundleImportDescription")}</p>
+            <h2 id="pragma-bundle-title">{props.title}</h2>
+            <p id="pragma-bundle-description">{props.description}</p>
           </div>
           <button
             className="pragma-bundle-close"
             type="button"
             aria-label={t("close")}
-            disabled={busy}
+            disabled={props.busy}
             onClick={props.onClose}
           >
             <X size={20} />
           </button>
         </header>
-
-        <div className="pragma-bundle-tabs" role="tablist">
-          <button
-            type="button"
-            role="tab"
-            aria-selected={mode === "export"}
-            onClick={() => setMode("export")}
-          >
-            <UploadSimple size={17} /> {t("exportBundle")}
-          </button>
-          <button
-            type="button"
-            role="tab"
-            aria-selected={mode === "import"}
-            onClick={() => setMode("import")}
-          >
-            <DownloadSimple size={17} /> {t("importBundle")}
-          </button>
-        </div>
-
-        <div className="pragma-bundle-body">
-          {mode === "export" ? (
-            <>
-              <BundleExportRootPicker roots={roots} value={rootRef} onChange={setRootRef} />
-              <fieldset className="pragma-bundle-modules">
-                <legend>{t("bundleModules")}</legend>
-                <BundleToggle
-                  label={t("bundleCapabilities")}
-                  description={t("bundleCapabilitiesHint")}
-                  checked={modules.capabilities}
-                  onChange={(capabilities) => setModules({ ...modules, capabilities })}
-                />
-                <BundleToggle
-                  label={t("bundlePlugins")}
-                  description={t("bundlePluginsHint")}
-                  checked={modules.plugins}
-                  onChange={(plugins) => setModules({ ...modules, plugins })}
-                />
-                <BundleToggle
-                  label={t("bundleKnowledgeBases")}
-                  description={t("bundleKnowledgeBasesHint")}
-                  checked={modules.knowledgeBases}
-                  onChange={(knowledgeBases) => setModules({ ...modules, knowledgeBases })}
-                />
-                <BundleToggle
-                  label={t("bundleFlowLayouts")}
-                  description={t("bundleFlowLayoutsHint")}
-                  checked={modules.flowLayouts}
-                  onChange={(flowLayouts) => setModules({ ...modules, flowLayouts })}
-                />
-              </fieldset>
-              <p className="pragma-bundle-safety">{t("bundleSafetyHint")}</p>
-              {resultPath ? (
-                <p className="pragma-bundle-success" role="status">
-                  {t("bundleExported", { path: resultPath })}
-                </p>
-              ) : null}
-            </>
-          ) : (
-            <>
-              {inspection === null ? (
-                <button
-                  className="pragma-bundle-dropzone"
-                  type="button"
-                  disabled={busy}
-                  onClick={() => void selectBundle()}
-                >
-                  <Archive size={30} />
-                  <strong>{t("bundleChooseFile")}</strong>
-                  <span>{t("bundleChooseFileHint")}</span>
-                </button>
-              ) : (
-                <BundleInspection
-                  inspection={inspection}
-                  conflictMode={conflictMode}
-                  onConflictMode={setConflictMode}
-                  onChooseAnother={() => void selectBundle()}
-                />
-              )}
-              {installation !== null ? (
-                <BundleSetup
-                  installation={installation}
-                  capabilities={props.capabilities}
-                  contextStores={props.contextStores}
-                  runtimes={props.runtimes}
-                  runtimeBindings={runtimeBindings}
-                  capabilityBindings={capabilityBindings}
-                  contextBindings={contextBindings}
-                  secrets={secrets}
-                  onRuntime={(ref, value) =>
-                    setRuntimeBindings((current) => ({ ...current, [ref]: value }))
-                  }
-                  onCapability={(ref, value) =>
-                    setCapabilityBindings((current) => ({ ...current, [ref]: value }))
-                  }
-                  onContext={(ref, value) =>
-                    setContextBindings((current) => ({ ...current, [ref]: value }))
-                  }
-                  onSecret={(id, value) => setSecrets((current) => ({ ...current, [id]: value }))}
-                />
-              ) : null}
-            </>
-          )}
-          {error ? (
-            <p className="form-error" role="alert">
-              {error}
-            </p>
-          ) : null}
-        </div>
-
-        <footer>
-          {mode === "import" &&
-          installation !== null &&
-          installation.status !== "ready" &&
-          installation.createdResourceRefs.length === installation.resourceRefs.length ? (
-            <button
-              className="secondary-button danger-button"
-              type="button"
-              disabled={busy}
-              onClick={() => void discardInstallation()}
-            >
-              {t("bundleDiscardImport")}
-            </button>
-          ) : null}
-          <button
-            className="secondary-button"
-            type="button"
-            disabled={busy}
-            onClick={props.onClose}
-          >
-            {installation?.status === "ready" ? t("done") : t("cancel")}
-          </button>
-          {mode === "export" ? (
-            <button
-              className="primary-button"
-              type="button"
-              disabled={busy || rootRef === ""}
-              onClick={() => void exportBundle()}
-            >
-              <UploadSimple size={17} />
-              {busy ? t("bundleExporting") : t("exportBundle")}
-            </button>
-          ) : installation === null ? (
-            <button
-              className="primary-button"
-              type="button"
-              disabled={
-                busy ||
-                inspection === null ||
-                (inspection.conflicts.length > 0 && conflictMode === "")
-              }
-              onClick={() => void importBundle()}
-            >
-              <DownloadSimple size={17} />
-              {busy ? t("bundleImporting") : t("bundleImportAction")}
-            </button>
-          ) : installation.status === "needs_setup" ? (
-            <button
-              className="primary-button"
-              type="button"
-              disabled={busy}
-              onClick={() => void saveBindings()}
-            >
-              {busy ? t("bundleSavingBindings") : t("bundleSaveBindings")}
-            </button>
-          ) : null}
-        </footer>
+        <div className="pragma-bundle-body">{props.children}</div>
+        <footer>{props.footer}</footer>
       </section>
     </div>
+  );
+}
+
+function BundleImportSteps(props: {
+  readonly step: ImportStep;
+  readonly inspection: PragmaBundleImportInspection | null;
+  readonly conflictCount: number;
+  readonly requirementCount: number;
+}) {
+  const { t } = useTranslation("studio");
+  const activeIndex =
+    props.step === "select"
+      ? 0
+      : props.step === "conflicts"
+        ? 1
+        : props.step === "bindings"
+          ? 2
+          : 3;
+  const steps = [
+    t("bundleStepSelect"),
+    t("bundleStepConflicts"),
+    t("bundleStepBindings"),
+    t("bundleStepReview"),
+  ];
+  return (
+    <ol className="pragma-bundle-stepper" aria-label={t("bundleImportProgress")}>
+      {steps.map((label, index) => (
+        <li
+          key={label}
+          className={index < activeIndex ? "is-complete" : index === activeIndex ? "is-active" : ""}
+          aria-current={index === activeIndex ? "step" : undefined}
+        >
+          <span>{index < activeIndex ? <Check size={13} /> : index + 1}</span>
+          <strong>{label}</strong>
+          {index === 1 && props.inspection !== null && props.conflictCount === 0 ? (
+            <small>{t("bundleStepSkipped")}</small>
+          ) : null}
+          {index === 2 && props.inspection !== null && props.requirementCount === 0 ? (
+            <small>{t("bundleStepSkipped")}</small>
+          ) : null}
+        </li>
+      ))}
+    </ol>
+  );
+}
+
+function BundleFileStep(props: {
+  readonly inspection: PragmaBundleImportInspection | null;
+  readonly busy: boolean;
+  readonly dragging: boolean;
+  readonly onDragging: (value: boolean) => void;
+  readonly onPick: () => void;
+  readonly onDrop: (file: File) => void;
+}) {
+  const { t } = useTranslation("studio");
+  return (
+    <div className="pragma-bundle-file-step">
+      <button
+        className={`pragma-bundle-dropzone${props.dragging ? " is-dragging" : ""}`}
+        type="button"
+        disabled={props.busy}
+        onClick={props.onPick}
+        onDragEnter={(event) => {
+          event.preventDefault();
+          props.onDragging(true);
+        }}
+        onDragOver={(event) => {
+          event.preventDefault();
+          event.dataTransfer.dropEffect = "copy";
+          props.onDragging(true);
+        }}
+        onDragLeave={(event) => {
+          if (event.currentTarget.contains(event.relatedTarget as Node | null)) return;
+          props.onDragging(false);
+        }}
+        onDrop={(event) => {
+          event.preventDefault();
+          props.onDragging(false);
+          if (event.dataTransfer.files.length !== 1) return;
+          const file = event.dataTransfer.files[0];
+          if (file !== undefined) props.onDrop(file);
+        }}
+      >
+        <Archive size={30} />
+        <strong>{props.dragging ? t("bundleDropNow") : t("bundleChooseFile")}</strong>
+        <span>{t("bundleChooseFileHint")}</span>
+      </button>
+      {props.inspection !== null ? (
+        <div className="pragma-bundle-file-summary">
+          <span className="pragma-bundle-verified">
+            <Check size={15} /> {t("bundleVerified")}
+          </span>
+          <strong>{props.inspection.sourceName}</strong>
+          <p>{props.inspection.root.name}</p>
+          <small>
+            {props.inspection.root.kind} ·{" "}
+            {t("bundleResourceCount", { count: props.inspection.resources })}
+          </small>
+          <button type="button" onClick={props.onPick}>
+            {t("bundleChooseAnother")}
+          </button>
+        </div>
+      ) : null}
+    </div>
+  );
+}
+
+export function BundleInspection(props: {
+  readonly inspection: PragmaBundleImportInspection;
+  readonly selections: Readonly<Record<string, "copy" | "update">>;
+  readonly onChange: (ref: string, action: "copy" | "update") => void;
+}) {
+  return (
+    <BundleConflictStep
+      inspection={props.inspection}
+      selections={props.selections}
+      onChange={props.onChange}
+      onSetAll={() => undefined}
+    />
+  );
+}
+
+function BundleConflictStep(props: {
+  readonly inspection: PragmaBundleImportInspection;
+  readonly selections: Readonly<Record<string, "copy" | "update">>;
+  readonly onChange: (ref: string, action: "copy" | "update") => void;
+  readonly onSetAll: (action: "copy" | "update") => void;
+}) {
+  const { t } = useTranslation("studio");
+  return (
+    <section className="pragma-bundle-conflict-step">
+      <header>
+        <div>
+          <h3>{t("bundleConflicts", { count: props.inspection.conflicts.length })}</h3>
+          <p>{t("bundleConflictPerResourceHint")}</p>
+        </div>
+        <div className="pragma-bundle-batch-actions">
+          <button type="button" onClick={() => props.onSetAll("copy")}>
+            {t("bundleAllCopies")}
+          </button>
+          <button type="button" onClick={() => props.onSetAll("update")}>
+            {t("bundleAllUpdates")}
+          </button>
+        </div>
+      </header>
+      <div className="pragma-bundle-conflict-cards">
+        {props.inspection.conflicts.map((conflict) => (
+          <article key={conflict.ref}>
+            <header>
+              <div>
+                <strong>{conflict.importedName}</strong>
+                <small>
+                  {conflict.resourceKind} · {conflict.ref}
+                </small>
+              </div>
+            </header>
+            <ul>
+              {conflict.matches.map((match) => (
+                <li key={`${match.kind}:${match.localRef}`}>
+                  {match.kind === "identity"
+                    ? t("bundleConflictIdentity", { name: match.localName })
+                    : t("bundleConflictName", { name: match.localName })}
+                </li>
+              ))}
+            </ul>
+            <div className="pragma-bundle-conflict-choice" role="group">
+              <button
+                type="button"
+                aria-pressed={props.selections[conflict.ref] !== "update"}
+                className={props.selections[conflict.ref] !== "update" ? "is-selected" : ""}
+                onClick={() => props.onChange(conflict.ref, "copy")}
+              >
+                <strong>{t("bundleImportCopy")}</strong>
+                <small>{t("bundleImportCopyShortHint")}</small>
+              </button>
+              <button
+                type="button"
+                disabled={!conflict.updateAllowed}
+                aria-pressed={props.selections[conflict.ref] === "update"}
+                className={props.selections[conflict.ref] === "update" ? "is-selected" : ""}
+                onClick={() => props.onChange(conflict.ref, "update")}
+              >
+                <strong>{t("bundleUpdateExisting")}</strong>
+                <small>
+                  {conflict.updateAllowed
+                    ? t("bundleUpdateExistingShortHint")
+                    : t("bundleUpdateBlocked")}
+                </small>
+              </button>
+            </div>
+          </article>
+        ))}
+      </div>
+    </section>
+  );
+}
+
+function BundleBindingStep(props: {
+  readonly requirement: BindingRequirement;
+  readonly index: number;
+  readonly total: number;
+  readonly runtimes: readonly DesktopRuntimeAvailability[];
+  readonly capabilities: readonly Capability[];
+  readonly contextStores: readonly ContextStore[];
+  readonly runtimeBinding: RuntimeBindingDraft | undefined;
+  readonly capabilityBinding: string;
+  readonly contextBinding: string;
+  readonly secret: string;
+  readonly refreshingRuntimes: boolean;
+  readonly onRefreshRuntimes: () => void;
+  readonly onRuntime: (value: RuntimeBindingDraft) => void;
+  readonly onCapability: (value: string) => void;
+  readonly onContext: (value: string) => void;
+  readonly onSecret: (value: string) => void;
+}) {
+  const { t } = useTranslation("studio");
+  const requirement = props.requirement;
+  const runtime = props.runtimes.find(
+    (candidate) => candidate.id === props.runtimeBinding?.runtimeId,
+  );
+  const models = runtime?.status === "available" ? (runtime.models ?? []) : [];
+  const selectedModel = models.find(
+    (model) =>
+      model.provider.id === props.runtimeBinding?.providerId &&
+      model.id === props.runtimeBinding.modelId,
+  );
+
+  return (
+    <section className="pragma-bundle-binding-step">
+      <header>
+        <span>{t("bundleBindingProgress", { current: props.index + 1, total: props.total })}</span>
+        <h3>{requirement.name}</h3>
+        <p>{requirement.message}</p>
+      </header>
+      {requirement.kind === "runtime" ? (
+        <>
+          <div className="pragma-bundle-runtime-toolbar">
+            <span>{t("bundleRuntimeAvailability")}</span>
+            <button
+              className="secondary-button"
+              type="button"
+              disabled={props.refreshingRuntimes}
+              onClick={props.onRefreshRuntimes}
+            >
+              <ArrowsClockwise size={16} />
+              {props.refreshingRuntimes ? t("bundleRefreshing") : t("bundleRefresh")}
+            </button>
+          </div>
+          <label className="pragma-bundle-field">
+            <span>{t("bundleChooseRuntime")}</span>
+            <select
+              value={props.runtimeBinding?.runtimeId ?? ""}
+              onChange={(event) =>
+                props.onRuntime({
+                  runtimeId: event.target.value,
+                  providerId: "",
+                  modelId: "",
+                })
+              }
+            >
+              <option value="">{t("bundleChooseRuntimePlaceholder")}</option>
+              {props.runtimes.map((candidate) => (
+                <option
+                  key={candidate.id}
+                  value={candidate.id}
+                  disabled={candidate.status !== "available"}
+                >
+                  {candidate.displayName}
+                  {candidate.status === "available" ? "" : ` · ${t("bundleRuntimeUnavailable")}`}
+                </option>
+              ))}
+            </select>
+          </label>
+          {requirement.runtimeRequest?.runtimeId !== undefined &&
+          props.runtimes.find((candidate) => candidate.id === requirement.runtimeRequest?.runtimeId)
+            ?.status !== "available" ? (
+            <p className="pragma-bundle-runtime-diagnostic">
+              {t("bundleRequestedRuntimeUnavailable", {
+                runtime: requirement.runtimeRequest.runtimeId,
+              })}
+            </p>
+          ) : null}
+          <label className="pragma-bundle-field">
+            <span>{t("bundleChooseModel")}</span>
+            <select
+              disabled={runtime === undefined || runtime.status !== "available"}
+              value={
+                props.runtimeBinding?.providerId && props.runtimeBinding.modelId
+                  ? JSON.stringify([props.runtimeBinding.providerId, props.runtimeBinding.modelId])
+                  : ""
+              }
+              onChange={(event) => {
+                if (event.target.value === "") {
+                  props.onRuntime({
+                    runtimeId: runtime?.id ?? "",
+                    providerId: "",
+                    modelId: "",
+                  });
+                  return;
+                }
+                const [providerId, modelId] = JSON.parse(event.target.value) as [string, string];
+                props.onRuntime({
+                  runtimeId: runtime?.id ?? "",
+                  providerId,
+                  modelId,
+                });
+              }}
+            >
+              <option value="">{t("bundleChooseModelPlaceholder")}</option>
+              {models.map((model) => (
+                <option
+                  key={`${model.provider.id}:${model.id}`}
+                  value={JSON.stringify([model.provider.id, model.id])}
+                >
+                  {model.displayName} · {model.provider.displayName}
+                </option>
+              ))}
+            </select>
+          </label>
+          {selectedModel?.thinking !== undefined ? (
+            <label className="pragma-bundle-field">
+              <span>{t("bundleChooseThinking")}</span>
+              <select
+                value={props.runtimeBinding?.thinkingLevel ?? ""}
+                onChange={(event) =>
+                  props.onRuntime({
+                    ...props.runtimeBinding!,
+                    ...(event.target.value === ""
+                      ? { thinkingLevel: undefined }
+                      : { thinkingLevel: event.target.value }),
+                  })
+                }
+              >
+                <option value="">{t("bundleRuntimeDefault")}</option>
+                {selectedModel.thinking.supportedLevels.map((level) => (
+                  <option key={level.value} value={level.value}>
+                    {level.label}
+                  </option>
+                ))}
+              </select>
+            </label>
+          ) : null}
+        </>
+      ) : requirement.kind === "capability" ? (
+        <label className="pragma-bundle-field">
+          <span>{t("bundleChooseCapability")}</span>
+          <select
+            value={props.capabilityBinding}
+            onChange={(event) => props.onCapability(event.target.value)}
+          >
+            <option value="">{t("bundleChooseCapability")}</option>
+            {props.capabilities
+              .filter(
+                (capability) =>
+                  requirement.capabilityKind === undefined ||
+                  capability.definition.kind === requirement.capabilityKind,
+              )
+              .map((capability) => (
+                <option
+                  key={capability.manifest.id}
+                  value={`${capability.manifest.id}@${capability.manifest.latestRevision}`}
+                >
+                  {capability.manifest.name}
+                </option>
+              ))}
+          </select>
+        </label>
+      ) : requirement.kind === "context-store" ? (
+        <label className="pragma-bundle-field">
+          <span>{t("bundleChooseKnowledgeBase")}</span>
+          <select
+            value={props.contextBinding}
+            onChange={(event) => props.onContext(event.target.value)}
+          >
+            <option value="">{t("bundleChooseKnowledgeBase")}</option>
+            {props.contextStores.map((store) => (
+              <option key={store.id} value={store.id}>
+                {store.name}
+              </option>
+            ))}
+          </select>
+        </label>
+      ) : requirement.kind === "secret" ? (
+        <label className="pragma-bundle-field">
+          <span>{t("bundleEnterSecret")}</span>
+          <input
+            type="password"
+            autoComplete="off"
+            value={props.secret}
+            placeholder={t("bundleEnterSecret")}
+            onChange={(event) => props.onSecret(event.target.value)}
+          />
+        </label>
+      ) : (
+        <div className="pragma-bundle-deferred">
+          <WarningCircle size={22} />
+          <div>
+            <strong>{t("bundlePluginDeferredTitle")}</strong>
+            <p>{t("bundlePluginDeferredDescription")}</p>
+          </div>
+        </div>
+      )}
+    </section>
+  );
+}
+
+function BundleReview(props: {
+  readonly inspection: PragmaBundleImportInspection;
+  readonly conflicts: Readonly<Record<string, "copy" | "update">>;
+  readonly requirements: readonly BindingRequirement[];
+}) {
+  const { t } = useTranslation("studio");
+  const copies = Object.values(props.conflicts).filter((value) => value === "copy").length;
+  const updates = Object.values(props.conflicts).filter((value) => value === "update").length;
+  const deferred = props.requirements.filter((requirement) => !requirement.required).length;
+  return (
+    <section className="pragma-bundle-review">
+      <header>
+        <Check size={22} />
+        <div>
+          <h3>{t("bundleReviewTitle")}</h3>
+          <p>{t("bundleReviewDescription")}</p>
+        </div>
+      </header>
+      <dl>
+        <div>
+          <dt>{t("bundleReviewRoot")}</dt>
+          <dd>{props.inspection.root.name}</dd>
+        </div>
+        <div>
+          <dt>{t("bundleReviewResources")}</dt>
+          <dd>{props.inspection.resources}</dd>
+        </div>
+        <div>
+          <dt>{t("bundleReviewCopies")}</dt>
+          <dd>{copies}</dd>
+        </div>
+        <div>
+          <dt>{t("bundleReviewUpdates")}</dt>
+          <dd>{updates}</dd>
+        </div>
+        <div>
+          <dt>{t("bundleReviewBindings")}</dt>
+          <dd>{props.requirements.length - deferred}</dd>
+        </div>
+      </dl>
+      {deferred > 0 ? (
+        <p className="pragma-bundle-review-warning">
+          {t("bundleReviewDeferred", { count: deferred })}
+        </p>
+      ) : null}
+    </section>
   );
 }
 
@@ -549,7 +1337,6 @@ function BundleExportRootPicker(props: {
           </span>
           <CaretDown size={15} aria-hidden="true" />
         </button>
-
         {open ? (
           <div
             className="pragma-bundle-root-menu"
@@ -648,190 +1435,5 @@ function BundleToggle(props: {
         onChange={(event) => props.onChange(event.target.checked)}
       />
     </label>
-  );
-}
-
-export function BundleInspection(props: {
-  readonly inspection: PragmaBundleImportInspection;
-  readonly conflictMode: "update" | "copy" | "";
-  readonly onConflictMode: (mode: "update" | "copy") => void;
-  readonly onChooseAnother: () => void;
-}) {
-  const { t } = useTranslation("studio");
-  return (
-    <div className="pragma-bundle-inspection">
-      <div>
-        <strong>{props.inspection.root.name}</strong>
-        <span>
-          {props.inspection.root.kind} ·{" "}
-          {t("bundleResourceCount", { count: props.inspection.resources })}
-        </span>
-        <button type="button" onClick={props.onChooseAnother}>
-          {t("bundleChooseAnother")}
-        </button>
-      </div>
-      <ul className="pragma-bundle-dependencies">
-        {props.inspection.dependencies.map((dependency) => (
-          <li key={`${dependency.kind}:${dependency.ref}`}>
-            <span>{dependency.name}</span>
-            <em className={dependency.included ? "is-included" : "needs-binding"}>
-              {dependency.included ? t("bundleIncluded") : t("bundleNeedsBinding")}
-            </em>
-          </li>
-        ))}
-      </ul>
-      {props.inspection.conflicts.length > 0 ? (
-        <fieldset className="pragma-bundle-conflicts">
-          <legend>{t("bundleConflicts", { count: props.inspection.conflicts.length })}</legend>
-          <ul className="pragma-bundle-conflict-list">
-            {props.inspection.conflicts.map((conflict) => (
-              <li className="pragma-bundle-conflict-item" key={`${conflict.ref}:${conflict.kind}`}>
-                <span>
-                  <strong>{conflict.importedName}</strong>
-                  <small>
-                    {conflict.kind === "identity"
-                      ? t("bundleConflictIdentity", { name: conflict.localName })
-                      : t("bundleConflictName", { name: conflict.localName })}
-                  </small>
-                </span>
-                <code>{conflict.ref}</code>
-              </li>
-            ))}
-          </ul>
-          <label>
-            <input
-              type="radio"
-              name="bundle-conflict"
-              checked={props.conflictMode === "copy"}
-              onChange={() => props.onConflictMode("copy")}
-            />
-            <span>
-              <strong>{t("bundleImportCopy")}</strong>
-              <small>{t("bundleImportCopyHint")}</small>
-            </span>
-          </label>
-          <label>
-            <input
-              type="radio"
-              name="bundle-conflict"
-              checked={props.conflictMode === "update"}
-              onChange={() => props.onConflictMode("update")}
-            />
-            <span>
-              <strong>{t("bundleUpdateExisting")}</strong>
-              <small>{t("bundleUpdateExistingHint")}</small>
-            </span>
-          </label>
-        </fieldset>
-      ) : null}
-    </div>
-  );
-}
-
-function BundleSetup(props: {
-  readonly installation: PragmaBundleInstallation;
-  readonly capabilities: readonly Capability[];
-  readonly contextStores: readonly ContextStore[];
-  readonly runtimes: readonly DesktopRuntimeAvailability[];
-  readonly runtimeBindings: Readonly<Record<string, string>>;
-  readonly capabilityBindings: Readonly<Record<string, string>>;
-  readonly contextBindings: Readonly<Record<string, string>>;
-  readonly secrets: Readonly<Record<string, string>>;
-  readonly onRuntime: (ref: string, value: string) => void;
-  readonly onCapability: (ref: string, value: string) => void;
-  readonly onContext: (ref: string, value: string) => void;
-  readonly onSecret: (id: string, value: string) => void;
-}) {
-  const { t } = useTranslation("studio");
-  if (props.installation.status === "ready") {
-    return (
-      <p className="pragma-bundle-success">
-        {t("bundleReady", { name: props.installation.rootName })}
-      </p>
-    );
-  }
-  if (props.installation.status === "failed") {
-    return <p className="form-error">{props.installation.error ?? t("bundleImportFailed")}</p>;
-  }
-  return (
-    <section className="pragma-bundle-setup">
-      <h3>{t("bundleSetupTitle")}</h3>
-      <p>{t("bundleSetupDescription")}</p>
-      {props.installation.pending.map((dependency) => (
-        <label key={dependency.id} className="pragma-bundle-field">
-          <span>
-            <strong>{dependency.name}</strong>
-            <small>{dependency.message}</small>
-          </span>
-          {dependency.kind === "runtime" ? (
-            <select
-              value={props.runtimeBindings[dependency.resourceRef] ?? ""}
-              onChange={(event) => props.onRuntime(dependency.resourceRef, event.target.value)}
-            >
-              <option value="">{t("bundleChooseRuntime")}</option>
-              {props.runtimes.flatMap((runtime) =>
-                runtime.status !== "available"
-                  ? []
-                  : (runtime.models ?? []).map((model) => (
-                      <option
-                        key={`${runtime.id}:${model.provider.id}:${model.id}`}
-                        value={JSON.stringify({
-                          runtimeId: runtime.id,
-                          providerId: model.provider.id,
-                          modelId: model.id,
-                        })}
-                      >
-                        {runtime.displayName} · {model.displayName}
-                      </option>
-                    )),
-              )}
-            </select>
-          ) : dependency.kind === "capability" ? (
-            <select
-              value={props.capabilityBindings[dependency.resourceRef] ?? ""}
-              onChange={(event) => props.onCapability(dependency.resourceRef, event.target.value)}
-            >
-              <option value="">{t("bundleChooseCapability")}</option>
-              {props.capabilities
-                .filter(
-                  (capability) =>
-                    dependency.capabilityKind === undefined ||
-                    capability.definition.kind === dependency.capabilityKind,
-                )
-                .map((capability) => (
-                  <option
-                    key={capability.manifest.id}
-                    value={`${capability.manifest.id}@${capability.manifest.latestRevision}`}
-                  >
-                    {capability.manifest.name}
-                  </option>
-                ))}
-            </select>
-          ) : dependency.kind === "context-store" ? (
-            <select
-              value={props.contextBindings[dependency.resourceRef] ?? ""}
-              onChange={(event) => props.onContext(dependency.resourceRef, event.target.value)}
-            >
-              <option value="">{t("bundleChooseKnowledgeBase")}</option>
-              {props.contextStores.map((store) => (
-                <option key={store.id} value={store.id}>
-                  {store.name}
-                </option>
-              ))}
-            </select>
-          ) : dependency.kind === "secret" ? (
-            <input
-              type="password"
-              autoComplete="off"
-              value={props.secrets[dependency.id] ?? ""}
-              placeholder={t("bundleEnterSecret")}
-              onChange={(event) => props.onSecret(dependency.id, event.target.value)}
-            />
-          ) : (
-            <span className="pragma-bundle-manual">{t("bundleInstallPluginManually")}</span>
-          )}
-        </label>
-      ))}
-    </section>
   );
 }

@@ -101,14 +101,6 @@ export function findBundleConflicts(
   for (const resource of imported) {
     const ref = canonicalPragmaResourceRef(resource);
     const sameIdentity = local.find((candidate) => canonicalPragmaResourceRef(candidate) === ref);
-    if (sameIdentity !== undefined) {
-      conflicts.push({
-        ref,
-        kind: "identity",
-        localName: sameIdentity.metadata.name,
-        importedName: resource.metadata.name,
-      });
-    }
     const sameName = local.find(
       (candidate) =>
         candidate.kind === resource.kind &&
@@ -116,28 +108,89 @@ export function findBundleConflicts(
           normalizePragmaResourceName(resource.metadata.name) &&
         canonicalPragmaResourceRef(candidate) !== ref,
     );
-    if (sameName !== undefined) {
-      conflicts.push({
-        ref,
-        kind: "name",
-        localName: sameName.metadata.name,
-        importedName: resource.metadata.name,
-      });
-    }
+    const matches = [
+      ...(sameIdentity === undefined
+        ? []
+        : [
+            {
+              kind: "identity" as const,
+              localRef: canonicalPragmaResourceRef(sameIdentity),
+              localName: sameIdentity.metadata.name,
+            },
+          ]),
+      ...(sameName === undefined
+        ? []
+        : [
+            {
+              kind: "name" as const,
+              localRef: canonicalPragmaResourceRef(sameName),
+              localName: sameName.metadata.name,
+            },
+          ]),
+    ];
+    if (matches.length === 0) continue;
+    const updateAllowed = new Set(matches.map((match) => match.localRef)).size === 1;
+    conflicts.push({
+      ref,
+      resourceKind: resource.kind,
+      importedName: resource.metadata.name,
+      matches,
+      updateAllowed,
+      ...(updateAllowed
+        ? {}
+        : {
+            updateBlockedReason:
+              "The imported identity and name match different local resources. Import this resource as a copy.",
+          }),
+    });
   }
   return conflicts;
 }
 
-export function rewriteBundleAsCopy(
+export function rewriteBundleWithResolutions(
   resources: readonly PragmaResource[],
   local: readonly PragmaResource[],
+  resolutions: readonly {
+    readonly resourceRef: string;
+    readonly action: "update" | "copy";
+  }[],
 ): {
   readonly resources: PragmaResource[];
   readonly refMap: ReadonlyMap<string, string>;
 } {
-  const usedIds = new Set(local.map((resource) => resource.metadata.id));
+  const conflicts = findBundleConflicts(resources, local);
+  const conflictByRef = new Map(conflicts.map((conflict) => [conflict.ref, conflict]));
+  const resolutionByRef = new Map(
+    resolutions.map((resolution) => [resolution.resourceRef, resolution.action]),
+  );
+  if (
+    resolutionByRef.size !== resolutions.length ||
+    conflicts.some((conflict) => !resolutionByRef.has(conflict.ref)) ||
+    resolutions.some((resolution) => !conflictByRef.has(resolution.resourceRef))
+  ) {
+    throw new Error("Choose one import action for every conflicting resource.");
+  }
+
+  const usedIds = new Set([...local, ...resources].map((resource) => resource.metadata.id));
   const idMap = new Map<string, string>();
   for (const resource of resources) {
+    const ref = canonicalPragmaResourceRef(resource);
+    const conflict = conflictByRef.get(ref);
+    if (conflict === undefined) continue;
+    const action = resolutionByRef.get(ref);
+    if (action === "update") {
+      if (!conflict.updateAllowed) {
+        throw new Error(conflict.updateBlockedReason ?? `Cannot update ${ref}.`);
+      }
+      const targetRef = conflict.matches[0]?.localRef;
+      if (targetRef === undefined) {
+        throw new Error(`Update target ref is missing for ${ref}.`);
+      }
+      const target = local.find((candidate) => canonicalPragmaResourceRef(candidate) === targetRef);
+      if (target === undefined) throw new Error(`Update target is unavailable: ${targetRef}.`);
+      idMap.set(resource.metadata.id, target.metadata.id);
+      continue;
+    }
     let id = generatePragmaResourceId();
     while (usedIds.has(id)) id = generatePragmaResourceId();
     usedIds.add(id);
@@ -145,18 +198,24 @@ export function rewriteBundleAsCopy(
   }
   const refMap = createRefMap(resources, idMap);
   const usedNames = new Set(
-    local.map(
-      (resource) => `${resource.kind}\0${normalizePragmaResourceName(resource.metadata.name)}`,
-    ),
+    [
+      ...local,
+      ...resources.filter(
+        (resource) => resolutionByRef.get(canonicalPragmaResourceRef(resource)) !== "copy",
+      ),
+    ].map((resource) => `${resource.kind}\0${normalizePragmaResourceName(resource.metadata.name)}`),
   );
   const rewrittenResources = resources.map((resource) => {
     const rewritten = rewriteResourceIdentities(resource, idMap, refMap);
     let name = resource.metadata.name;
-    let ordinal = 1;
-    while (usedNames.has(`${resource.kind}\0${normalizePragmaResourceName(name)}`)) {
-      const suffix = ordinal === 1 ? " (copy)" : ` (copy ${ordinal})`;
-      name = `${resource.metadata.name.slice(0, Math.max(1, 200 - suffix.length))}${suffix}`;
-      ordinal += 1;
+    const action = resolutionByRef.get(canonicalPragmaResourceRef(resource));
+    if (action === "copy") {
+      let ordinal = 1;
+      while (usedNames.has(`${resource.kind}\0${normalizePragmaResourceName(name)}`)) {
+        const suffix = ordinal === 1 ? " (copy)" : ` (copy ${ordinal})`;
+        name = `${resource.metadata.name.slice(0, Math.max(1, 200 - suffix.length))}${suffix}`;
+        ordinal += 1;
+      }
     }
     usedNames.add(`${resource.kind}\0${normalizePragmaResourceName(name)}`);
     return PragmaResourceSchema.parse({
@@ -165,47 +224,6 @@ export function rewriteBundleAsCopy(
     });
   });
   return { resources: rewrittenResources, refMap };
-}
-
-export function rewriteBundleForUpdate(
-  resources: readonly PragmaResource[],
-  local: readonly PragmaResource[],
-): {
-  readonly resources: PragmaResource[];
-  readonly refMap: ReadonlyMap<string, string>;
-} {
-  const idMap = new Map<string, string>();
-  const refMap = new Map(
-    resources.map((resource) => {
-      const sourceRef = canonicalPragmaResourceRef(resource);
-      const sameIdentity = local.find(
-        (candidate) => canonicalPragmaResourceRef(candidate) === sourceRef,
-      );
-      const sameName = local.find(
-        (candidate) =>
-          candidate.kind === resource.kind &&
-          normalizePragmaResourceName(candidate.metadata.name) ===
-            normalizePragmaResourceName(resource.metadata.name),
-      );
-      if (
-        sameIdentity !== undefined &&
-        sameName !== undefined &&
-        canonicalPragmaResourceRef(sameName) !== sourceRef
-      ) {
-        throw new Error(
-          `Cannot update ${sourceRef}: its identity and name match different local resources. Import it as a copy instead.`,
-        );
-      }
-      if (sameIdentity !== undefined) return [sourceRef, sourceRef] as const;
-      if (sameName === undefined) return [sourceRef, sourceRef] as const;
-      idMap.set(resource.metadata.id, sameName.metadata.id);
-      return [sourceRef, canonicalPragmaResourceRef(sameName)] as const;
-    }),
-  );
-  return {
-    resources: resources.map((resource) => rewriteResourceIdentities(resource, idMap, refMap)),
-    refMap,
-  };
 }
 
 export function rewriteProjectArtifactPaths(
@@ -250,7 +268,7 @@ function createRefMap(
   return new Map(
     resources.map((resource) => [
       canonicalPragmaResourceRef(resource),
-      `${resourceKindPrefix(resource)}:${idMap.get(resource.metadata.id)!}`,
+      `${resourceKindPrefix(resource)}:${idMap.get(resource.metadata.id) ?? resource.metadata.id}`,
     ]),
   );
 }

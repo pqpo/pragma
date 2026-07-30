@@ -10,10 +10,16 @@ import {
   stat,
   writeFile,
 } from "node:fs/promises";
-import { dirname, join, relative, resolve, sep } from "node:path";
+import { basename, dirname, join, relative, resolve, sep } from "node:path";
 import { tmpdir } from "node:os";
 
-import { PragmaPaths, withFileLock } from "@pragma/core";
+import {
+  PragmaPaths,
+  applyAtomicStateMigration,
+  bundleInstallationsMigrationChain,
+  recoverAtomicStateMigration,
+  withFileLock,
+} from "@pragma/core";
 import { PragmaProjectValidationError } from "@pragma/interpreter";
 import {
   PragmaInvocableResourceRefSchema,
@@ -85,14 +91,13 @@ import {
   findBundleConflicts,
   isBundleOwnedArtifact,
   makePortableBundleResources,
-  rewriteBundleAsCopy,
-  rewriteBundleForUpdate,
+  rewriteBundleWithResolutions,
   rewriteProjectArtifactPaths,
 } from "./pragma-bundle-resources.ts";
 
 const InstallationCatalogSchema = z
   .object({
-    schemaVersion: z.literal("pragma.bundle-installations/v1"),
+    schemaVersion: z.literal("pragma.bundle-installations/v2"),
     installations: z.array(PragmaBundleInstallationSchema),
   })
   .strict();
@@ -107,6 +112,29 @@ function findIncompleteInstallation(
         installation.bundleFingerprint === bundleFingerprint && installation.status !== "ready",
     )
     .toSorted((left, right) => right.updatedAt.localeCompare(left.updatedAt))[0];
+}
+
+function assertResolutionTargets(
+  resolutions: readonly { readonly resourceRef: string }[],
+  allowedRefs: ReadonlySet<string>,
+  label: string,
+): void {
+  for (const resolution of resolutions) {
+    if (!allowedRefs.has(resolution.resourceRef)) {
+      throw new Error(`${label} is not requested by this Bundle: ${resolution.resourceRef}.`);
+    }
+  }
+}
+
+function sameConflictResolutions(
+  left: readonly { readonly resourceRef: string; readonly action: "update" | "copy" }[],
+  right: readonly { readonly resourceRef: string; readonly action: "update" | "copy" }[],
+): boolean {
+  if (left.length !== right.length) return false;
+  const rightByRef = new Map(
+    right.map((resolution) => [resolution.resourceRef, resolution.action]),
+  );
+  return left.every((resolution) => rightByRef.get(resolution.resourceRef) === resolution.action);
 }
 
 function throwBundleExportValidationError(error: unknown): never {
@@ -166,7 +194,7 @@ export function createPragmaBundleService(options: {
       );
     } catch (error) {
       if ((error as NodeJS.ErrnoException).code === "ENOENT") {
-        return { schemaVersion: "pragma.bundle-installations/v1", installations: [] };
+        return { schemaVersion: "pragma.bundle-installations/v2", installations: [] };
       }
       throw error;
     }
@@ -340,6 +368,44 @@ export function createPragmaBundleService(options: {
 
   return {
     async initialize() {
+      const aggregateRoot = options.paths.bundleInstallationsStateRoot();
+      const catalogFile = "installations.json";
+      const journalFile = join(aggregateRoot, "state-migration.json");
+      await mkdir(aggregateRoot, { recursive: true, mode: 0o700 });
+      await withFileLock(options.paths.bundleInstallationsLock(), async () => {
+        const migrationResource = {
+          family: "pragma.bundle-installations",
+          id: "desktop",
+        } as const;
+        const validateDocuments = (documents: Readonly<Record<string, unknown>>) => {
+          InstallationCatalogSchema.parse(documents[catalogFile]);
+        };
+        await recoverAtomicStateMigration({
+          aggregateRoot,
+          journalFile,
+          resource: migrationResource,
+          validateDocuments,
+        });
+        try {
+          const source = JSON.parse(
+            await readFile(options.paths.bundleInstallationsCatalog(), "utf8"),
+          ) as unknown;
+          const upgraded = bundleInstallationsMigrationChain.upgrade(source);
+          if (upgraded.migrated) {
+            await applyAtomicStateMigration({
+              aggregateRoot,
+              journalFile,
+              resource: migrationResource,
+              fromVersion: upgraded.fromVersion,
+              toVersion: upgraded.toVersion,
+              documents: { [catalogFile]: upgraded.value },
+              validateDocuments,
+            });
+          }
+        } catch (error) {
+          if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error;
+        }
+      });
       const interrupted = (await readCatalog()).installations.filter(
         (installation) => installation.status === "installing",
       );
@@ -572,17 +638,132 @@ export function createPragmaBundleService(options: {
 
     async inspect(sourcePath) {
       const archive = await readPragmaBundle(sourcePath, options.externalResourceRefs);
-      const conflicts = findBundleConflicts(
-        archive.resources,
-        (await options.project.get()).resources,
+      const current = await options.project.get();
+      const conflicts = findBundleConflicts(archive.resources, current.resources);
+      const [capabilities, contextStores, plugins, runtimes] = await Promise.all([
+        options.capabilities.list(),
+        options.contextStores.list(),
+        options.plugins.list(),
+        options.getRuntimes(),
+      ]);
+      const contextFingerprints = new Map(
+        await Promise.all(
+          contextStores.map(
+            async (store) => [store.id, await options.contextStores.fingerprint(store.id)] as const,
+          ),
+        ),
       );
+      const requirements: PragmaBundleImportInspection["requirements"] = [];
+      for (const dependency of archive.manifest.dependencies.capabilities) {
+        const exact =
+          dependency.definitionFingerprint === undefined
+            ? undefined
+            : capabilities.find(
+                (candidate) =>
+                  sha256(stableStringify(candidate.definition)) ===
+                  dependency.definitionFingerprint,
+              );
+        if (exact === undefined && !dependency.included) {
+          requirements.push({
+            id: `capability:${dependency.resourceRef}`,
+            kind: "capability",
+            resourceRef: dependency.resourceRef,
+            name: dependency.name,
+            message: "Choose an existing compatible capability.",
+            required: true,
+            ...(dependency.kind === undefined ? {} : { capabilityKind: dependency.kind }),
+          });
+        }
+      }
+      for (const dependency of archive.manifest.dependencies.contextStores) {
+        const exact =
+          dependency.fingerprint === undefined
+            ? undefined
+            : contextStores.find(
+                (store) => contextFingerprints.get(store.id) === dependency.fingerprint,
+              );
+        if (exact === undefined && !dependency.included) {
+          requirements.push({
+            id: `context-store:${dependency.resourceRef}`,
+            kind: "context-store",
+            resourceRef: dependency.resourceRef,
+            name: dependency.name,
+            message: "Choose an existing knowledge base.",
+            required: true,
+          });
+        }
+      }
+      for (const dependency of archive.manifest.dependencies.plugins) {
+        const exact = plugins.find(
+          (plugin) =>
+            plugin.ref === dependency.ref &&
+            (dependency.contentHash === undefined || plugin.contentHash === dependency.contentHash),
+        );
+        if (exact === undefined && !dependency.included) {
+          requirements.push({
+            id: `plugin:${dependency.ref}`,
+            kind: "plugin",
+            resourceRef: dependency.ref,
+            name: dependency.name,
+            message: "Install the exact plugin package after importing this Bundle.",
+            required: false,
+          });
+        }
+      }
+      for (const dependency of archive.manifest.dependencies.runtimes) {
+        if (runtimes.some((runtime) => runtimeDependencyAvailable(runtime, dependency))) continue;
+        requirements.push({
+          id: `runtime:${dependency.resourceRef}`,
+          kind: "runtime",
+          resourceRef: dependency.resourceRef,
+          name: dependency.name,
+          message: "Choose a compatible local Runtime and model.",
+          required: true,
+          runtimeRequest: {
+            ...(dependency.runtimeId === undefined ? {} : { runtimeId: dependency.runtimeId }),
+            ...(dependency.providerId === undefined ? {} : { providerId: dependency.providerId }),
+            ...(dependency.modelId === undefined ? {} : { modelId: dependency.modelId }),
+            ...(dependency.thinkingLevel === undefined
+              ? {}
+              : { thinkingLevel: dependency.thinkingLevel }),
+          },
+        });
+      }
+      const secretBindings = unique(
+        archive.resources.flatMap((resource) =>
+          resource.kind === "Expert"
+            ? resource.spec.plugins.flatMap((plugin) => Object.values(plugin.secretBindings ?? {}))
+            : [],
+        ),
+      );
+      for (const binding of secretBindings) {
+        if (await options.plugins.hasSecret(binding)) continue;
+        const owner = archive.resources.find(
+          (resource) =>
+            resource.kind === "Expert" &&
+            resource.spec.plugins.some((plugin) =>
+              Object.values(plugin.secretBindings ?? {}).includes(binding),
+            ),
+        );
+        requirements.push({
+          id: `secret:${binding}`,
+          kind: "secret",
+          resourceRef:
+            owner === undefined ? archive.manifest.root.ref : canonicalPragmaResourceRef(owner),
+          name: binding,
+          message: `Enter the secret for ${binding}.`,
+          required: true,
+        });
+      }
       const incompleteInstallation = findIncompleteInstallation(
         (await readCatalog()).installations,
         archive.manifest.bundleFingerprint,
       );
       return PragmaBundleImportInspectionSchema.parse({
         sourcePath,
+        sourceName: basename(sourcePath),
         bundleFingerprint: archive.manifest.bundleFingerprint,
+        projectRevision: current.revision,
         root: archive.manifest.root,
         createdAt: archive.manifest.createdAt,
         archiveBytes: archive.archiveBytes,
@@ -619,6 +800,7 @@ export function createPragmaBundleService(options: {
           })),
         ],
         conflicts,
+        requirements,
         ...(incompleteInstallation === undefined
           ? {}
           : { alreadyInstalledId: incompleteInstallation.id }),
@@ -643,21 +825,57 @@ export function createPragmaBundleService(options: {
             if (existing.createdResourceRefs.length === existing.resourceRefs.length) {
               await discardCreatedInstallation(existing);
             } else {
-              if (input.conflictMode !== "update") {
+              const canRetryLegacyUpdate =
+                existing.conflictResolutions.length === 0 &&
+                input.conflicts.some((resolution) => resolution.action === "update");
+              if (
+                !canRetryLegacyUpdate &&
+                !sameConflictResolutions(existing.conflictResolutions, input.conflicts)
+              ) {
                 throw new Error(
-                  "The previous update import changed existing resources. Retry this bundle in update mode so those identities are reapplied safely.",
+                  "The previous import changed existing resources. Retry it with the same update decisions.",
                 );
               }
               await removeInstallationRecord(existing.id);
             }
           }
           const current = await options.project.get();
-          const conflicts = findBundleConflicts(archive.resources, current.resources);
-          if (conflicts.length > 0 && input.conflictMode === undefined) {
-            throw new Error(
-              "Choose whether conflicting resources should be updated or imported as a copy.",
-            );
+          if (current.revision !== input.expectedProjectRevision) {
+            throw new Error("The project changed. Inspect the Bundle again before importing.");
           }
+          assertUniqueResolutionRefs(input.runtimes, "Runtime");
+          assertUniqueResolutionRefs(input.capabilities, "capability");
+          assertUniqueResolutionRefs(input.contextStores, "knowledge-base");
+          assertResolutionTargets(
+            input.runtimes,
+            new Set(
+              archive.manifest.dependencies.runtimes.map((dependency) => dependency.resourceRef),
+            ),
+            "Runtime binding",
+          );
+          assertResolutionTargets(
+            input.capabilities,
+            new Set(
+              archive.manifest.dependencies.capabilities.map(
+                (dependency) => dependency.resourceRef,
+              ),
+            ),
+            "Capability binding",
+          );
+          assertResolutionTargets(
+            input.contextStores,
+            new Set(
+              archive.manifest.dependencies.contextStores.map(
+                (dependency) => dependency.resourceRef,
+              ),
+            ),
+            "Knowledge-base binding",
+          );
+          const rewritten = rewriteBundleWithResolutions(
+            archive.resources,
+            current.resources,
+            input.conflicts,
+          );
           const installationId = randomUUID();
           const archivePath = options.paths.bundleInstallationArchive(installationId);
           await mkdir(dirname(archivePath), { recursive: true, mode: 0o700 });
@@ -667,7 +885,7 @@ export function createPragmaBundleService(options: {
           );
           const timestamp = new Date().toISOString();
           const initial = PragmaBundleInstallationSchema.parse({
-            schemaVersion: "pragma.bundle-installation/v1",
+            schemaVersion: "pragma.bundle-installation/v2",
             id: installationId,
             bundleFingerprint: archive.manifest.bundleFingerprint,
             projectId: options.project.projectId,
@@ -681,6 +899,8 @@ export function createPragmaBundleService(options: {
             createdCapabilityIds: [],
             createdContextStoreIds: [],
             createdPluginRefs: [],
+            conflictResolutions: input.conflicts,
+            resourceMappings: [],
             status: "installing",
             pending: [],
             createdAt: timestamp,
@@ -688,22 +908,8 @@ export function createPragmaBundleService(options: {
           });
           await addInstallation(initial);
           try {
-            let resources = archive.resources.map((resource) => structuredClone(resource));
-            let sourceToTarget: ReadonlyMap<string, string> = new Map(
-              archive.resources.map((resource) => {
-                const ref = canonicalPragmaResourceRef(resource);
-                return [ref, ref] as const;
-              }),
-            );
-            if (input.conflictMode === "copy") {
-              const rewritten = rewriteBundleAsCopy(resources, current.resources);
-              resources = rewritten.resources;
-              sourceToTarget = rewritten.refMap;
-            } else if (input.conflictMode === "update") {
-              const rewritten = rewriteBundleForUpdate(resources, current.resources);
-              resources = rewritten.resources;
-              sourceToTarget = rewritten.refMap;
-            }
+            let resources = rewritten.resources;
+            const sourceToTarget = rewritten.refMap;
             const importedRefs = new Set(resources.map(canonicalPragmaResourceRef));
             const currentRefs = new Set(current.resources.map(canonicalPragmaResourceRef));
             const createdResourceRefs = [...importedRefs].filter((ref) => !currentRefs.has(ref));
@@ -714,6 +920,11 @@ export function createPragmaBundleService(options: {
               rootRef,
               resourceRefs: [...importedRefs],
               createdResourceRefs,
+              conflictResolutions: input.conflicts,
+              resourceMappings: [...sourceToTarget].map(([sourceRef, targetRef]) => ({
+                sourceRef,
+                targetRef,
+              })),
               updatedAt: new Date().toISOString(),
             }));
             const pending: PragmaBundleInstallation["pending"] = [];
@@ -770,6 +981,25 @@ export function createPragmaBundleService(options: {
                     ]),
                     updatedAt: new Date().toISOString(),
                   }));
+                }
+              }
+              if (capability === undefined) {
+                const resolution = input.capabilities.find(
+                  (candidate) => candidate.resourceRef === dependency.resourceRef,
+                );
+                if (resolution !== undefined) {
+                  capability = await options.capabilities.get(
+                    resolution.capabilityId,
+                    resolution.revision,
+                  );
+                  if (
+                    dependency.kind !== undefined &&
+                    capability.definition.kind !== dependency.kind
+                  ) {
+                    throw new Error(
+                      `Choose a ${dependency.kind} capability for ${dependency.name}.`,
+                    );
+                  }
                 }
               }
               if (capability === undefined) {
@@ -851,6 +1081,18 @@ export function createPragmaBundleService(options: {
                 }
               }
               if (store === undefined) {
+                const resolution = input.contextStores.find(
+                  (candidate) => candidate.resourceRef === dependency.resourceRef,
+                );
+                if (resolution !== undefined) {
+                  await options.contextStores.resolve(resolution.storeId);
+                  store = stores.find((candidate) => candidate.id === resolution.storeId);
+                  if (store === undefined) {
+                    throw new Error(`Knowledge base is unavailable: ${resolution.storeId}.`);
+                  }
+                }
+              }
+              if (store === undefined) {
                 resource.spec.binding = pendingBinding(installationId, targetRef);
                 pending.push({
                   id: `context-store:${targetRef}`,
@@ -922,16 +1164,59 @@ export function createPragmaBundleService(options: {
                 runtimeDependencyAvailable(runtime, dependency),
               );
               if (exact === undefined) {
-                pending.push({
-                  id: `runtime:${targetRef}`,
-                  kind: "runtime",
-                  resourceRef: targetRef,
-                  name: dependency.name,
-                  message: "Choose a compatible local Runtime and model.",
-                });
+                const resolution = input.runtimes.find(
+                  (candidate) => candidate.resourceRef === dependency.resourceRef,
+                );
+                if (
+                  resolution === undefined ||
+                  !runtimes.some((runtime) =>
+                    runtimeDependencyAvailable(runtime, {
+                      resourceRef: resolution.resourceRef,
+                      name: dependency.name,
+                      runtimeId: resolution.runtimeId,
+                      providerId: resolution.providerId,
+                      modelId: resolution.modelId,
+                      thinkingLevel: resolution.thinkingLevel,
+                    }),
+                  )
+                ) {
+                  pending.push({
+                    id: `runtime:${targetRef}`,
+                    kind: "runtime",
+                    resourceRef: targetRef,
+                    name: dependency.name,
+                    message: "Choose a compatible local Runtime and model.",
+                  });
+                } else {
+                  resource.spec.config = {
+                    runtimeId: resolution.runtimeId,
+                    providerId: resolution.providerId,
+                    model: resolution.modelId,
+                    ...(resolution.thinkingLevel === undefined
+                      ? {}
+                      : { thinkingLevel: resolution.thinkingLevel }),
+                  };
+                }
               }
             }
 
+            const requestedSecretBindings = new Set(
+              archive.resources.flatMap((resource) =>
+                resource.kind === "Expert"
+                  ? resource.spec.plugins.flatMap((plugin) =>
+                      Object.values(plugin.secretBindings ?? {}),
+                    )
+                  : [],
+              ),
+            );
+            for (const binding of Object.keys(input.secrets)) {
+              if (!requestedSecretBindings.has(binding)) {
+                throw new Error(`Secret is not requested by this Bundle: ${binding}.`);
+              }
+            }
+            if (Object.keys(input.secrets).length > 0) {
+              await options.plugins.setSecrets(input.secrets);
+            }
             for (const resource of resources) {
               if (resource.kind !== "Expert") continue;
               for (const plugin of resource.spec.plugins) {

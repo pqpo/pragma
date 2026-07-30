@@ -22,17 +22,23 @@ local paths are excluded.
 
 ## Import
 
-Use **Import** in Studio and choose a `.pragma` file. Desktop validates the ZIP, file hashes,
-Pragma YAML, and lock before writing local state.
+Use **Import** in Studio and choose or drag in one `.pragma` file. Import and export use separate
+dialogs. Desktop validates the ZIP, file hashes, Pragma YAML, and lock before writing local state.
 
-If resources conflict, choose explicitly:
+Import is prepared as a wizard before one final confirmation:
 
-- **Import as a copy** creates new resource identities and rewrites internal references.
-- **Update matching resources** keeps the local identities and replaces their definitions.
+1. Select and validate the Bundle.
+2. Resolve every resource conflict independently. **Import as a copy** creates a new identity for
+   that resource; **Update matching resource** retains its local identity. Mixed decisions rewrite
+   all typed references across the imported graph.
+3. Bind one unresolved dependency at a time.
+4. Review the complete import and commit it.
 
 Desktop automatically reuses exact Runtime/model, capability, knowledge-base, and plugin matches.
 Included portable payloads are installed automatically. Everything else appears in **Finish local
-setup**.
+setup**. Runtime and model are selected separately. Entering a Runtime binding refreshes local
+availability automatically; the same screen also has a manual refresh action and listens for
+background model-catalog updates.
 
 The imported object remains visible and persisted while setup is incomplete, but it cannot create
 or run a Mission. This gate also applies when another Flow reaches the pending object indirectly.
