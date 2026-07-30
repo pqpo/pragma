@@ -21,7 +21,10 @@ import type { PluginStore } from "../plugins/plugin-store.ts";
 import { createPragmaProjectStore } from "../projects/pragma-project-store.ts";
 import { createWorkflowLayoutStore } from "../projects/workflow-layout-store.ts";
 import { createPragmaBundleService } from "./pragma-bundle-service.ts";
-import { makePortableBundleResources, rewriteBundleAsCopy } from "./pragma-bundle-resources.ts";
+import {
+  makePortableBundleResources,
+  rewriteBundleWithResolutions,
+} from "./pragma-bundle-resources.ts";
 
 const directories: string[] = [];
 
@@ -85,9 +88,11 @@ describe("PragmaBundleService", () => {
     });
 
     const installation = await target.service.startImport({
-      sourcePath: path,
-      expectedFingerprint: exported.bundleFingerprint,
-      conflictMode: "copy",
+      ...importInput(path, exported.bundleFingerprint, target.projectRevision),
+      conflicts: [
+        { resourceRef: "expert:1xddvess309a6gme", action: "copy" },
+        { resourceRef: "runtime-profile:zdkgs0fde4xt00vr", action: "copy" },
+      ],
     });
     const snapshot = await target.project.get();
     const copiedExpert = snapshot.resources.find(
@@ -121,6 +126,59 @@ describe("PragmaBundleService", () => {
     expect((await target.project.get()).resources).toHaveLength(2);
   });
 
+  it("applies a selected Runtime and model during the final import commit", async () => {
+    const source = await createFixture("runtime-binding-source");
+    const path = join(source.root, "workflow.pragma");
+    const exported = await source.service.exportTo(exportInput(source.projectRevision), path);
+    const target = await createFixture("runtime-binding-target", {
+      instructions: "Existing local expert.",
+      runtimes: [
+        {
+          id: "pi",
+          isDefault: true,
+          kind: "local",
+          displayName: "Pragma Runtime",
+          status: "available",
+          models: [
+            {
+              id: "gpt-test",
+              displayName: "GPT Test",
+              provider: { kind: "registered", id: "openai", displayName: "OpenAI" },
+            },
+          ],
+        },
+      ],
+    });
+
+    const installation = await target.service.startImport({
+      ...importInput(path, exported.bundleFingerprint, target.projectRevision),
+      conflicts: [
+        { resourceRef: "expert:1xddvess309a6gme", action: "copy" },
+        { resourceRef: "runtime-profile:zdkgs0fde4xt00vr", action: "copy" },
+      ],
+      runtimes: [
+        {
+          resourceRef: "runtime-profile:zdkgs0fde4xt00vr",
+          runtimeId: "pi",
+          providerId: "openai",
+          modelId: "gpt-test",
+        },
+      ],
+    });
+    const importedRuntime = (await target.project.get()).resources.find(
+      (resource): resource is PragmaRuntimeProfileResource =>
+        resource.kind === "RuntimeProfile" &&
+        installation.createdResourceRefs.includes(canonicalPragmaResourceRef(resource)),
+    );
+
+    expect(installation.status).toBe("ready");
+    expect(importedRuntime?.spec.config).toEqual({
+      runtimeId: "pi",
+      providerId: "openai",
+      model: "gpt-test",
+    });
+  });
+
   it("prompts for identical resource conflicts and permits repeated copy imports", async () => {
     const source = await createFixture("repeat-copy-source");
     const path = join(source.root, "workflow.pragma");
@@ -130,24 +188,28 @@ describe("PragmaBundleService", () => {
     const initialInspection = await target.service.inspect(path);
     expect(initialInspection.conflicts).toEqual(
       expect.arrayContaining([
-        expect.objectContaining({ ref: "expert:1xddvess309a6gme", kind: "identity" }),
+        expect.objectContaining({
+          ref: "expert:1xddvess309a6gme",
+          matches: expect.arrayContaining([expect.objectContaining({ kind: "identity" })]),
+        }),
         expect.objectContaining({
           ref: "runtime-profile:zdkgs0fde4xt00vr",
-          kind: "identity",
+          matches: expect.arrayContaining([expect.objectContaining({ kind: "identity" })]),
         }),
       ]),
     );
     await expect(
-      target.service.startImport({
-        sourcePath: path,
-        expectedFingerprint: exported.bundleFingerprint,
-      }),
-    ).rejects.toThrow("Choose whether conflicting resources");
+      target.service.startImport(
+        importInput(path, exported.bundleFingerprint, target.projectRevision),
+      ),
+    ).rejects.toThrow("Choose one import action");
 
     const first = await target.service.startImport({
-      sourcePath: path,
-      expectedFingerprint: exported.bundleFingerprint,
-      conflictMode: "copy",
+      ...importInput(path, exported.bundleFingerprint, target.projectRevision),
+      conflicts: [
+        { resourceRef: "expert:1xddvess309a6gme", action: "copy" },
+        { resourceRef: "runtime-profile:zdkgs0fde4xt00vr", action: "copy" },
+      ],
     });
     const repeatedInspection = await target.service.inspect(path);
 
@@ -156,9 +218,11 @@ describe("PragmaBundleService", () => {
     expect(repeatedInspection.conflicts).not.toHaveLength(0);
 
     const second = await target.service.startImport({
-      sourcePath: path,
-      expectedFingerprint: exported.bundleFingerprint,
-      conflictMode: "copy",
+      ...importInput(path, exported.bundleFingerprint, first.projectRevision),
+      conflicts: repeatedInspection.conflicts.map((conflict) => ({
+        resourceRef: conflict.ref,
+        action: "copy" as const,
+      })),
     });
     const snapshot = await target.project.get();
 
@@ -184,9 +248,11 @@ describe("PragmaBundleService", () => {
     });
 
     const installation = await target.service.startImport({
-      sourcePath: path,
-      expectedFingerprint: exported.bundleFingerprint,
-      conflictMode: "update",
+      ...importInput(path, exported.bundleFingerprint, target.projectRevision),
+      conflicts: [
+        { resourceRef: "expert:1xddvess309a6gme", action: "update" },
+        { resourceRef: "runtime-profile:zdkgs0fde4xt00vr", action: "update" },
+      ],
     });
     const snapshot = await target.project.get();
     const updated = snapshot.resources.find(
@@ -215,9 +281,13 @@ describe("PragmaBundleService", () => {
       },
     ];
 
-    const rewritten = rewriteBundleAsCopy(
+    const rewritten = rewriteBundleWithResolutions(
       [sourceExpert, runtime("codex")],
       [expert("Existing"), runtime("codex")],
+      [
+        { resourceRef: "expert:1xddvess309a6gme", action: "copy" },
+        { resourceRef: "runtime-profile:zdkgs0fde4xt00vr", action: "copy" },
+      ],
     ).resources;
     const copied = rewritten.find(
       (resource): resource is PragmaExpertResource => resource.kind === "Expert",
@@ -225,6 +295,49 @@ describe("PragmaBundleService", () => {
 
     expect(copied?.spec.runtime?.ref).not.toBe(sourceExpert.spec.runtime?.ref);
     expect(copied?.spec.plugins[0]?.config).toEqual(sourceExpert.spec.plugins[0]?.config);
+  });
+
+  it("supports mixed copy and update decisions across one resource graph", () => {
+    const sourceExpert = expert("Use the imported Runtime.");
+    const localExpert = expert("Keep the local Expert.");
+    const localRuntime = runtime("codex", "v3b460tasfhyf22d");
+
+    const rewritten = rewriteBundleWithResolutions(
+      [sourceExpert, runtime("codex")],
+      [localExpert, localRuntime],
+      [
+        { resourceRef: "expert:1xddvess309a6gme", action: "copy" },
+        { resourceRef: "runtime-profile:zdkgs0fde4xt00vr", action: "update" },
+      ],
+    );
+    const copied = rewritten.resources.find(
+      (resource): resource is PragmaExpertResource => resource.kind === "Expert",
+    );
+
+    expect(rewritten.refMap.get("expert:1xddvess309a6gme")).not.toBe("expert:1xddvess309a6gme");
+    expect(rewritten.refMap.get("runtime-profile:zdkgs0fde4xt00vr")).toBe(
+      "runtime-profile:v3b460tasfhyf22d",
+    );
+    expect(copied?.spec.runtime?.ref).toBe("runtime-profile:v3b460tasfhyf22d");
+  });
+
+  it("reserves unchanged imported names when naming conflict copies", () => {
+    const conflicting = runtime("codex");
+    const unchanged = runtime("pi", "v3b460tasfhyf22d");
+    unchanged.metadata.name = "Writer Runtime (copy)";
+
+    const rewritten = rewriteBundleWithResolutions(
+      [conflicting, unchanged],
+      [runtime("codex")],
+      [{ resourceRef: "runtime-profile:zdkgs0fde4xt00vr", action: "copy" }],
+    );
+
+    expect(
+      rewritten.resources
+        .filter((resource) => resource.kind === "RuntimeProfile")
+        .map((resource) => resource.metadata.name)
+        .toSorted(),
+    ).toEqual(["Writer Runtime (copy 2)", "Writer Runtime (copy)"]);
   });
 
   it("removes machine-local Runtime configuration from the portable DSL", () => {
@@ -307,9 +420,11 @@ describe("PragmaBundleService", () => {
       runtimes: [],
     });
     const installation = await target.service.startImport({
-      sourcePath: path,
-      expectedFingerprint: exported.bundleFingerprint,
-      conflictMode: "copy",
+      ...importInput(path, exported.bundleFingerprint, target.projectRevision),
+      conflicts: [
+        { resourceRef: "expert:1xddvess309a6gme", action: "copy" },
+        { resourceRef: "runtime-profile:zdkgs0fde4xt00vr", action: "copy" },
+      ],
     });
     const importedRuntimeRef = installation.resourceRefs.find((ref) =>
       ref.startsWith("runtime-profile:"),
@@ -384,9 +499,11 @@ describe("PragmaBundleService", () => {
       runtimes,
     });
     const installation = await target.service.startImport({
-      sourcePath: path,
-      expectedFingerprint: exported.bundleFingerprint,
-      conflictMode: "copy",
+      ...importInput(path, exported.bundleFingerprint, target.projectRevision),
+      conflicts: [
+        { resourceRef: "expert:1xddvess309a6gme", action: "copy" },
+        { resourceRef: "runtime-profile:zdkgs0fde4xt00vr", action: "copy" },
+      ],
     });
     const runtimeRef = installation.resourceRefs.find((ref) => ref.startsWith("runtime-profile:"));
     expect(runtimeRef).toBeDefined();
@@ -502,6 +619,23 @@ function exportInput(projectRevision: number) {
       knowledgeBases: false,
       flowLayouts: true,
     },
+  };
+}
+
+function importInput(
+  sourcePath: string,
+  expectedFingerprint: string,
+  expectedProjectRevision: number,
+) {
+  return {
+    sourcePath,
+    expectedFingerprint,
+    expectedProjectRevision,
+    conflicts: [],
+    runtimes: [],
+    capabilities: [],
+    contextStores: [],
+    secrets: {},
   };
 }
 

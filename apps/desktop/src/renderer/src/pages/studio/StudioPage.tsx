@@ -550,20 +550,31 @@ export function StudioPage(props: {
   const refreshBundleData = async () => {
     const api = desktopApi();
     if (api === undefined) return;
-    const [nextProject, summaries, nextCapabilities, nextStores, nextPlugins] = await Promise.all([
-      api.getPragmaProject(),
-      api.listExperts(),
-      api.listCapabilities(),
-      api.listContextStores(),
-      api.listPlugins(),
-    ]);
+    const [nextProject, summaries, nextCapabilities, nextStores, nextPlugins, nextRuntimes] =
+      await Promise.all([
+        api.getPragmaProject(),
+        api.listExperts(),
+        api.listCapabilities(),
+        api.listContextStores(),
+        api.listPlugins(),
+        api.getRuntimeAvailability(),
+      ]);
     const definitions = await Promise.all(summaries.map((summary) => api.getExpert(summary.ref)));
     setProject(nextProject);
     setExperts(definitions.map(toExpertRecord));
     setCapabilities(nextCapabilities);
     setContextStores(nextStores);
     setPlugins(nextPlugins);
+    setRuntimes(nextRuntimes);
   };
+
+  const refreshRuntimeAvailability = useCallback(async () => {
+    const api = desktopApi();
+    if (api === undefined) return [];
+    const next = await api.getRuntimeAvailability();
+    setRuntimes(next);
+    return next;
+  }, []);
 
   return (
     <section className="studio-page">
@@ -871,11 +882,12 @@ export function StudioPage(props: {
       ) : null}
       {bundleMode !== null && project !== null ? (
         <PragmaBundleDialog
-          initialMode={bundleMode}
+          mode={bundleMode}
           project={project}
           capabilities={capabilities}
           contextStores={contextStores}
           runtimes={runtimes}
+          onRefreshRuntimes={refreshRuntimeAvailability}
           onClose={() => setBundleMode(null)}
           onChanged={refreshBundleData}
         />

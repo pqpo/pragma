@@ -64,12 +64,30 @@ export const PragmaBundlePickResultSchema = z
   })
   .strict();
 
+export const PragmaBundleConflictMatchSchema = z
+  .object({
+    kind: z.enum(["identity", "name"]),
+    localRef: PragmaResourceRefSchema,
+    localName: z.string().trim().min(1).max(200),
+  })
+  .strict();
+
 export const PragmaBundleConflictSchema = z
   .object({
     ref: PragmaResourceRefSchema,
-    kind: z.enum(["identity", "name"]),
-    localName: z.string().trim().min(1).max(200),
+    resourceKind: z.enum([
+      "Expert",
+      "ExpertTeam",
+      "Flow",
+      "Automation",
+      "Capability",
+      "ContextStore",
+      "RuntimeProfile",
+    ]),
     importedName: z.string().trim().min(1).max(200),
+    matches: z.array(PragmaBundleConflictMatchSchema).min(1).max(2),
+    updateAllowed: z.boolean(),
+    updateBlockedReason: z.string().trim().min(1).max(2_000).optional(),
   })
   .strict();
 
@@ -85,7 +103,9 @@ export const PragmaBundleDependencySummarySchema = z
 export const PragmaBundleImportInspectionSchema = z
   .object({
     sourcePath: z.string().trim().min(1).max(2_000),
+    sourceName: z.string().trim().min(1).max(500),
     bundleFingerprint: z.string().regex(/^[a-f0-9]{64}$/),
+    projectRevision: z.number().int().nonnegative(),
     root: z
       .object({
         ref: PragmaInvocableResourceRefSchema,
@@ -100,50 +120,38 @@ export const PragmaBundleImportInspectionSchema = z
     resources: z.number().int().positive(),
     dependencies: z.array(PragmaBundleDependencySummarySchema),
     conflicts: z.array(PragmaBundleConflictSchema),
+    requirements: z.array(
+      z
+        .object({
+          id: z.string().trim().min(1).max(500),
+          kind: z.enum(["runtime", "capability", "context-store", "plugin", "secret"]),
+          resourceRef: z.string().trim().min(1).max(500),
+          name: z.string().trim().min(1).max(200),
+          message: z.string().trim().min(1).max(4_000),
+          required: z.boolean(),
+          capabilityKind: z
+            .enum(["skill", "mcp_server", "http_service", "code_service"])
+            .optional(),
+          runtimeRequest: z
+            .object({
+              runtimeId: z.string().trim().min(1).max(200).optional(),
+              providerId: z.string().trim().min(1).max(200).optional(),
+              modelId: z.string().trim().min(1).max(200).optional(),
+              thinkingLevel: z.string().trim().min(1).max(100).optional(),
+            })
+            .strict()
+            .optional(),
+        })
+        .strict(),
+    ),
     alreadyInstalledId: z.string().uuid().optional(),
   })
   .strict();
 
-export const StartPragmaBundleImportSchema = z
+export const PragmaBundleConflictResolutionSchema = z
   .object({
-    sourcePath: z.string().trim().min(1).max(2_000),
-    expectedFingerprint: z.string().regex(/^[a-f0-9]{64}$/),
-    conflictMode: z.enum(["update", "copy"]).optional(),
-  })
-  .strict();
-
-export const PragmaBundlePendingDependencySchema = z
-  .object({
-    id: z.string().trim().min(1).max(500),
-    kind: z.enum(["runtime", "capability", "context-store", "plugin", "secret"]),
-    resourceRef: z.string().trim().min(1).max(500),
-    name: z.string().trim().min(1).max(200),
-    message: z.string().trim().min(1).max(4_000),
-    capabilityKind: z.enum(["skill", "mcp_server", "http_service", "code_service"]).optional(),
-  })
-  .strict();
-
-export const PragmaBundleInstallationSchema = z
-  .object({
-    schemaVersion: z.literal("pragma.bundle-installation/v1"),
-    id: z.string().uuid(),
-    bundleFingerprint: z.string().regex(/^[a-f0-9]{64}$/),
-    projectId: z.string().trim().min(1).max(120),
-    projectRevision: z.number().int().nonnegative(),
-    sourceRootRef: PragmaInvocableResourceRefSchema,
-    rootRef: PragmaInvocableResourceRefSchema,
-    rootName: z.string().trim().min(1).max(200),
-    rootKind: z.enum(["Expert", "ExpertTeam", "Flow"]),
-    resourceRefs: z.array(PragmaResourceRefSchema),
-    createdResourceRefs: z.array(PragmaResourceRefSchema),
-    createdCapabilityIds: z.array(z.string().uuid()).default([]),
-    createdContextStoreIds: z.array(z.string().uuid()).default([]),
-    createdPluginRefs: z.array(z.string().trim().min(1).max(500)).default([]),
-    status: z.enum(["installing", "needs_setup", "ready", "failed"]),
-    pending: z.array(PragmaBundlePendingDependencySchema),
-    error: z.string().max(10_000).optional(),
-    createdAt: z.string().datetime(),
-    updatedAt: z.string().datetime(),
+    resourceRef: PragmaResourceRefSchema,
+    action: z.enum(["update", "copy"]),
   })
   .strict();
 
@@ -169,6 +177,65 @@ export const BundleContextStoreResolutionSchema = z
   .object({
     resourceRef: PragmaResourceRefSchema,
     storeId: z.string().uuid(),
+  })
+  .strict();
+
+export const StartPragmaBundleImportSchema = z
+  .object({
+    sourcePath: z.string().trim().min(1).max(2_000),
+    expectedFingerprint: z.string().regex(/^[a-f0-9]{64}$/),
+    expectedProjectRevision: z.number().int().nonnegative(),
+    conflicts: z.array(PragmaBundleConflictResolutionSchema).default([]),
+    runtimes: z.array(BundleRuntimeResolutionSchema).default([]),
+    capabilities: z.array(BundleCapabilityResolutionSchema).default([]),
+    contextStores: z.array(BundleContextStoreResolutionSchema).default([]),
+    secrets: z.record(z.string(), z.string().min(1).max(10_000)).default({}),
+  })
+  .strict();
+
+export const PragmaBundlePendingDependencySchema = z
+  .object({
+    id: z.string().trim().min(1).max(500),
+    kind: z.enum(["runtime", "capability", "context-store", "plugin", "secret"]),
+    resourceRef: z.string().trim().min(1).max(500),
+    name: z.string().trim().min(1).max(200),
+    message: z.string().trim().min(1).max(4_000),
+    capabilityKind: z.enum(["skill", "mcp_server", "http_service", "code_service"]).optional(),
+  })
+  .strict();
+
+export const PragmaBundleInstallationSchema = z
+  .object({
+    schemaVersion: z.literal("pragma.bundle-installation/v2"),
+    id: z.string().uuid(),
+    bundleFingerprint: z.string().regex(/^[a-f0-9]{64}$/),
+    projectId: z.string().trim().min(1).max(120),
+    projectRevision: z.number().int().nonnegative(),
+    sourceRootRef: PragmaInvocableResourceRefSchema,
+    rootRef: PragmaInvocableResourceRefSchema,
+    rootName: z.string().trim().min(1).max(200),
+    rootKind: z.enum(["Expert", "ExpertTeam", "Flow"]),
+    resourceRefs: z.array(PragmaResourceRefSchema),
+    createdResourceRefs: z.array(PragmaResourceRefSchema),
+    createdCapabilityIds: z.array(z.string().uuid()).default([]),
+    createdContextStoreIds: z.array(z.string().uuid()).default([]),
+    createdPluginRefs: z.array(z.string().trim().min(1).max(500)).default([]),
+    conflictResolutions: z.array(PragmaBundleConflictResolutionSchema).default([]),
+    resourceMappings: z
+      .array(
+        z
+          .object({
+            sourceRef: PragmaResourceRefSchema,
+            targetRef: PragmaResourceRefSchema,
+          })
+          .strict(),
+      )
+      .default([]),
+    status: z.enum(["installing", "needs_setup", "ready", "failed"]),
+    pending: z.array(PragmaBundlePendingDependencySchema),
+    error: z.string().max(10_000).optional(),
+    createdAt: z.string().datetime(),
+    updatedAt: z.string().datetime(),
   })
   .strict();
 

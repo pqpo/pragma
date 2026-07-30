@@ -183,6 +183,7 @@ export interface PragmaDesktopAPI {
   exportPragmaBundle: (input: ExportPragmaBundle) => Promise<PragmaBundleExportResult>;
   pickPragmaBundle: () => Promise<PragmaBundlePickResult>;
   inspectPragmaBundle: (input: InspectPragmaBundle) => Promise<PragmaBundleImportInspection>;
+  inspectDroppedPragmaBundle: (file: File) => Promise<PragmaBundleImportInspection>;
   importPragmaBundle: (input: StartPragmaBundleImport) => Promise<PragmaBundleInstallation>;
   listPragmaBundleInstallations: () => Promise<PragmaBundleInstallation[]>;
   resolvePragmaBundleInstallation: (

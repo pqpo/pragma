@@ -1,4 +1,4 @@
-import { ipcRenderer } from "electron";
+import { ipcRenderer, webUtils } from "electron";
 
 import type { PragmaDesktopAPI } from "../../shared/contracts/api.ts";
 import {
@@ -34,6 +34,16 @@ export const bundlesApi = {
     PragmaBundleImportInspectionSchema.parse(
       await ipcRenderer.invoke("pragma-bundles:inspect", InspectPragmaBundleSchema.parse(input)),
     ),
+  inspectDroppedPragmaBundle: async (file) => {
+    const sourcePath = webUtils.getPathForFile(file);
+    if (sourcePath === "") throw new Error("The dropped file is not backed by a local file.");
+    return PragmaBundleImportInspectionSchema.parse(
+      await ipcRenderer.invoke(
+        "pragma-bundles:inspect",
+        InspectPragmaBundleSchema.parse({ sourcePath }),
+      ),
+    );
+  },
   importPragmaBundle: async (input) =>
     PragmaBundleInstallationSchema.parse(
       await invokeMutation("pragma-bundles:import", StartPragmaBundleImportSchema.parse(input)),
@@ -61,6 +71,7 @@ export const bundlesApi = {
   | "exportPragmaBundle"
   | "pickPragmaBundle"
   | "inspectPragmaBundle"
+  | "inspectDroppedPragmaBundle"
   | "importPragmaBundle"
   | "listPragmaBundleInstallations"
   | "resolvePragmaBundleInstallation"
