@@ -1,6 +1,6 @@
 # Desktop Bundle Transfer
 
-Pragma Desktop can export one custom Expert, Expert Team, or Flow from Studio as a
+The Pragma desktop app can export one custom Expert, Expert Team, or Flow from Studio as a
 `.pragma`. The file is an ordinary ZIP archive intended for transfer between computers.
 
 ## Export

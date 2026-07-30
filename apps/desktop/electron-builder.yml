@@ -1,5 +1,5 @@
-appId: dev.pragma.desktop
-productName: Pragma Desktop
+appId: com.pqpo.pragma
+productName: Pragma
 asar: true
 
 directories:
@@ -21,19 +21,14 @@ extraResources:
 mac:
   category: public.app-category.developer-tools
   icon: build/icon-mac.png
-  hardenedRuntime: true
+  identity: null
+  hardenedRuntime: false
   files:
     - "!**/node_modules/@mariozechner/clipboard-win32-*/**/*"
   target:
-    - target: dmg
-      arch:
-        - x64
-        - arm64
-    - target: zip
-      arch:
-        - x64
-        - arm64
-  artifactName: ${productName}-${version}-mac-${arch}.${ext}
+    - dmg
+    - zip
+  artifactName: Pragma-${version}-mac-${arch}.${ext}
 
 win:
   icon: build/icon-windows.png
@@ -41,14 +36,12 @@ win:
     - "!**/node_modules/@mariozechner/clipboard-darwin-*/**/*"
     - "!**/node_modules/@mariozechner/clipboard-win32-arm64-msvc/**/*"
   target:
-    - target: nsis
-      arch:
-        - x64
-  artifactName: ${productName}-${version}-win-${arch}.${ext}
+    - nsis
+  artifactName: Pragma-${version}-win-${arch}.${ext}
 
 nsis:
   oneClick: false
   allowToChangeInstallationDirectory: true
   createDesktopShortcut: true
   createStartMenuShortcut: true
-  shortcutName: Pragma Desktop
+  shortcutName: Pragma

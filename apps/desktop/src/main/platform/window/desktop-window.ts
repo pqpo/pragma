@@ -31,7 +31,7 @@ export function createDesktopWindowManager(logger: PragmaLogger): DesktopWindowM
       height: 900,
       minWidth: 1080,
       minHeight: 700,
-      title: "Pragma Desktop",
+      title: "Pragma",
       icon: applicationIconPath(),
       autoHideMenuBar: true,
       show: false,

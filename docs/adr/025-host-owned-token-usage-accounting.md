@@ -28,7 +28,7 @@ previous preview for the same observation, and reconciles it with the final idem
 without persisting or double-counting the estimate. Preview failures follow the same best-effort
 rule as final sink writes.
 
-Pragma Desktop owns the analytics ledger at:
+The Pragma desktop app owns the analytics ledger at:
 
 ```text
 ~/.pragma/data/usage/usage.sqlite

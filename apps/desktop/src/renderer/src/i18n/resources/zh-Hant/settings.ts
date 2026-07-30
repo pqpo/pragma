@@ -2,9 +2,9 @@ export const settings = {
   navigationLabel: "設定分類",
   general: {
     title: "一般",
-    description: "自訂 Pragma Desktop 在此裝置上的行為。",
+    description: "自訂 Pragma 在此裝置上的行為。",
     language: "語言",
-    languageDescription: "選擇 Pragma Desktop 全域使用的語言。",
+    languageDescription: "選擇 Pragma 全域使用的語言。",
     followSystem: "跟隨系統",
     resolvedAs: "目前使用{{language}}",
     runtime: "預設 Runtime",

@@ -1,0 +1,226 @@
+name: Desktop Release
+
+on:
+  workflow_dispatch:
+  push:
+    tags:
+      - "v*"
+
+concurrency:
+  group: desktop-release-${{ github.ref }}
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+
+jobs:
+  verify:
+    name: Verify release source
+    runs-on: ubuntu-24.04
+    outputs:
+      version: ${{ steps.app-version.outputs.version }}
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Setup pnpm
+        uses: pnpm/action-setup@v4
+        with:
+          version: 10.12.1
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22.19.0
+          cache: pnpm
+
+      - name: Read application version
+        id: app-version
+        shell: bash
+        run: |
+          version="$(node -p "require('./apps/desktop/package.json').version")"
+          echo "version=${version}" >> "${GITHUB_OUTPUT}"
+
+      - name: Validate release tag
+        if: github.ref_type == 'tag'
+        shell: bash
+        run: |
+          version="${{ steps.app-version.outputs.version }}"
+          if [[ ! "${GITHUB_REF_NAME}" =~ ^v[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+            echo "::error::Release tag must match vX.Y.Z."
+            exit 1
+          fi
+          if [[ "${GITHUB_REF_NAME}" != "v${version}" ]]; then
+            echo "::error::Tag ${GITHUB_REF_NAME} does not match desktop version ${version}."
+            exit 1
+          fi
+          if ! git merge-base --is-ancestor "${GITHUB_SHA}" origin/main; then
+            echo "::error::Release tag must point to a commit contained in origin/main."
+            exit 1
+          fi
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Lint
+        run: pnpm lint
+
+      - name: Typecheck
+        run: pnpm typecheck
+
+      - name: Test
+        run: pnpm test
+
+      - name: Build
+        run: pnpm build
+
+  package:
+    name: Package ${{ matrix.artifact }}
+    needs: verify
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - artifact: mac-arm64
+            os: macos-15
+            script: dist:mac:arm64
+          - artifact: mac-x64
+            os: macos-15-intel
+            script: dist:mac:x64
+          - artifact: win-x64
+            os: windows-2025
+            script: dist:win:x64
+    runs-on: ${{ matrix.os }}
+    env:
+      CSC_IDENTITY_AUTO_DISCOVERY: "false"
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup pnpm
+        uses: pnpm/action-setup@v4
+        with:
+          version: 10.12.1
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22.19.0
+          cache: pnpm
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Build installer
+        run: pnpm --filter @pragma/desktop run ${{ matrix.script }}
+
+      - name: Upload installers
+        uses: actions/upload-artifact@v4
+        with:
+          name: pragma-${{ needs.verify.outputs.version }}-${{ matrix.artifact }}
+          path: |
+            apps/desktop/dist/*.dmg
+            apps/desktop/dist/*.zip
+            apps/desktop/dist/*.exe
+          if-no-files-found: error
+          retention-days: 7
+
+  release:
+    name: Publish GitHub Pre-release
+    if: github.ref_type == 'tag'
+    needs:
+      - verify
+      - package
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: write
+
+    steps:
+      - name: Download installers
+        uses: actions/download-artifact@v4
+        with:
+          pattern: pragma-${{ needs.verify.outputs.version }}-*
+          path: release-assets
+          merge-multiple: true
+
+      - name: Validate installers and generate checksums
+        shell: bash
+        run: |
+          version="${{ needs.verify.outputs.version }}"
+          expected=(
+            "Pragma-${version}-mac-arm64.dmg"
+            "Pragma-${version}-mac-arm64.zip"
+            "Pragma-${version}-mac-x64.dmg"
+            "Pragma-${version}-mac-x64.zip"
+            "Pragma-${version}-win-x64.exe"
+          )
+
+          for file in "${expected[@]}"; do
+            if [[ ! -s "release-assets/${file}" ]]; then
+              echo "::error::Missing or empty release asset: ${file}"
+              exit 1
+            fi
+          done
+
+          asset_count="$(
+            find release-assets -maxdepth 1 -type f \
+              \( -name '*.dmg' -o -name '*.zip' -o -name '*.exe' \) |
+              wc -l |
+              tr -d ' '
+          )"
+          if [[ "${asset_count}" != "5" ]]; then
+            echo "::error::Expected 5 installers, found ${asset_count}."
+            exit 1
+          fi
+
+          (
+            cd release-assets
+            sha256sum "${expected[@]}" > SHA256SUMS.txt
+          )
+
+      - name: Prepare release notes
+        shell: bash
+        run: |
+          printf '%s\n' \
+            '> [!WARNING]' \
+            '> This is an unsigned preview release. macOS Gatekeeper and Windows SmartScreen may show security warnings during installation.' \
+            '' \
+            'Included packages:' \
+            '- macOS Apple Silicon: DMG and ZIP' \
+            '- macOS Intel: DMG and ZIP' \
+            '- Windows x64: NSIS installer' \
+            '' \
+            'Automatic updates are not included in this release.' \
+            > release-notes.md
+
+      - name: Create or resume draft release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+        shell: bash
+        run: |
+          tag="${GITHUB_REF_NAME}"
+          release_json="$(gh api "repos/${GH_REPO}/releases/tags/${tag}" 2>/dev/null || true)"
+
+          if [[ -n "${release_json}" ]]; then
+            is_draft="$(jq -r '.draft' <<< "${release_json}")"
+            if [[ "${is_draft}" != "true" ]]; then
+              echo "::error::Release ${tag} is already published and will not be overwritten."
+              exit 1
+            fi
+          else
+            gh release create "${tag}" \
+              --verify-tag \
+              --title "Pragma ${tag}" \
+              --notes-file release-notes.md \
+              --generate-notes \
+              --draft \
+              --prerelease
+          fi
+
+          gh release upload "${tag}" release-assets/* --clobber
+          gh release edit "${tag}" --draft=false --prerelease --latest=false

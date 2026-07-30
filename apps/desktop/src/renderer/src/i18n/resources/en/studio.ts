@@ -543,7 +543,7 @@ export const studio = {
     "This will overwrite every custom parameter and secret for “{{name}}”. The expert will use the plugin’s Desktop defaults instead.",
   importPlugin: "Import {{name}}?",
   trustPluginWarning:
-    "This plugin runs trusted code inside Pragma Desktop. Declared permissions are for review and audit only; they are not a sandbox or an enforced access boundary.",
+    "This plugin runs trusted code inside Pragma. Declared permissions are for review and audit only; they are not a sandbox or an enforced access boundary.",
   trustAndImport: "Trust code and import",
   backPlugins: "Back to Plugins",
   saveDefaults: "Save defaults",

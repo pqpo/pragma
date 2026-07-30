@@ -79,6 +79,7 @@ export const PragmaBundleConflictSchema = z
       "Expert",
       "ExpertTeam",
       "Flow",
+      "Evaluation",
       "Automation",
       "Capability",
       "ContextStore",

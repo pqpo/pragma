@@ -18,7 +18,7 @@ Pragma 本地存储 v3 是 breaking change。Desktop 首次启动时只会把原
 
 ## 迁移原则
 
-1. 迁移前完全退出 Pragma Desktop，并确认没有 Pragma Worker、Codex、Claude Code 或迁移程序正在
+1. 迁移前完全退出 Pragma 桌面应用，并确认没有 Pragma Worker、Codex、Claude Code 或迁移程序正在
    写入源目录。
 2. 旧目录是只读证据。迁移程序不得修改、删除、移动或在其中创建文件。
 3. 先在目标目录同级创建 staging，完成结构、引用和逐字节校验后，才允许通过 `rename` 原子切换。
@@ -198,7 +198,7 @@ YAML、JSONL 和用户文件执行全局字符串替换。
 - apps/desktop/src/main/mission-store.ts
 
 安全约束：
-1. 先确认 Pragma Desktop、Worker 以及由 Pragma 启动的 Codex/Claude Code 进程均已停止；不能可靠确认时
+1. 先确认 Pragma 桌面应用、Worker 以及由 Pragma 启动的 Codex/Claude Code 进程均已停止；不能可靠确认时
    停止并让我处理。不要 kill 不属于 Pragma 的进程。
 2. resolve 两个路径并验证它们不同。拒绝空路径、根目录、HOME、本仓库根目录及任何父子路径重叠。
 3. LEGACY_PRAGMA_HOME 全程只读：不得 rename、delete、chmod、写 marker 或创建临时文件。

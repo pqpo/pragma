@@ -2,9 +2,9 @@ export const settings = {
   navigationLabel: "Settings sections",
   general: {
     title: "General",
-    description: "Customize how Pragma Desktop behaves on this device.",
+    description: "Customize how Pragma behaves on this device.",
     language: "Language",
-    languageDescription: "Choose the language used throughout Pragma Desktop.",
+    languageDescription: "Choose the language used throughout Pragma.",
     followSystem: "Follow system",
     resolvedAs: "Currently using {{language}}",
     runtime: "Default Runtime",

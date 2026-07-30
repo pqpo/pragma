@@ -1,6 +1,6 @@
 export const usage = {
   title: "Usage",
-  description: "Token usage recorded by Pragma Desktop.",
+  description: "Token usage recorded by Pragma.",
   trackingSince: "Tracking since {{date}}",
   periods: {
     sevenDays: "7 days",

@@ -1,87 +1,164 @@
-# Desktop 图标与发行包
+# Pragma 桌面安装包
 
-Pragma Desktop 使用 `electron-vite` 编译应用代码，使用 `electron-builder` 生成可分发的应用和安装包。两者职责不同：根命令 `pnpm build` 仍只做可验证的代码构建，发行包通过 Desktop package 的 `dist:*` 命令显式生成。
+Pragma 使用 `electron-vite` 编译应用代码，使用 `electron-builder` 生成安装包。根命令
+`pnpm build` 只做可验证的代码构建；发行包通过 `@pragma/desktop` package 的 `dist:*` 命令显式生成。
+
+当前阶段发布未签名的 GitHub Pre-release，不包含自动更新。背景、完整 Plan 和 Release Process 见
+[Pragma 桌面发行方案](../architecture/desktop-release-and-online-update.md)。
 
 ## 图标资源
 
-图标母版位于 `apps/desktop/build/`：
+图标位于 `apps/desktop/build/`：
 
 ```text
-icon-mac.svg          macOS 1024×1024 矢量母版
-icon-mac.png          macOS 开发态 Dock 与运行时图标
-icon-windows.svg      Windows 1024×1024 矢量母版
-icon-windows.png      Windows 开发态窗口与运行时图标
+icon-mac.png          macOS 图标，1024×1024
+icon-windows.png      Windows 图标，1024×1024
 ```
 
-macOS 和 Windows 使用独立母版，不能用同一个已栅格化的小图机械放大：
+macOS 和 Windows 使用独立 PNG。electron-builder 会据此生成目标平台图标格式。修改图标后，需要检查
+16、24、32、48、256 和 1024 像素下的显示效果。
 
-- macOS 版采用更大的外部留白、圆角矩形轮廓和更柔和的层次，1024×1024 母版由打包器生成完整 ICNS 尺寸集。
-- Windows 版采用透明画布、更高的图形占用率和更明确的边缘；打包器生成包含 Win32 常用尺寸的 ICO。Windows 最低覆盖要求是 16、24、32、48 和 256 像素。
-- “P” 的主轮廓在 16 像素下仍需可辨。修改母版后必须重新检查 16、24、32、48 和 256 像素预览。
+## 环境
 
-官方规范：
-
-- [Apple App icons](https://developer.apple.com/design/human-interface-guidelines/app-icons)
-- [Microsoft: Construct your Windows app's icon](https://learn.microsoft.com/en-us/windows/apps/design/iconography/app-icon-construction)
-- [Electron nativeImage](https://www.electronjs.org/docs/latest/api/native-image)
-
-## 构建命令与产物
-
-先安装依赖并准备 Electron：
+安装锁定依赖：
 
 ```bash
 pnpm install --frozen-lockfile
-pnpm --filter @pragma/desktop run prepare:electron
 ```
 
-`pnpm-workspace.yaml` 的 `supportedArchitectures` 会同时安装 macOS x64/arm64 与 Windows x64 打包所需的可选原生依赖。不要删除这项配置后再从单一平台交叉打包，否则目标平台的原生模块可能不会进入发行包。
+仓库使用 pnpm `10.12.1`。Release workflow 使用 Node.js `22.19.0`，避免低版本 Node 不满足当前依赖的
+engine 要求。
 
-构建当前系统的未封装目录，用于快速检查应用内容、图标和元数据：
+`pnpm-workspace.yaml` 的 `supportedArchitectures` 会准备 macOS x64/arm64 和 Windows x64 的可选原生
+依赖。不要移除这项配置后再尝试跨架构打包。
+
+## 本地打包
+
+### 未封装目录
+
+构建当前系统的 unpacked 应用：
 
 ```bash
 pnpm --filter @pragma/desktop run package:dir
 ```
 
-生成 macOS Intel 与 Apple Silicon 原生发行包：
+### macOS Apple Silicon
+
+必须在 macOS 环境执行：
+
+```bash
+pnpm --filter @pragma/desktop run dist:mac:arm64
+```
+
+输出：
+
+```text
+apps/desktop/dist/Pragma-0.1.0-mac-arm64.dmg
+apps/desktop/dist/Pragma-0.1.0-mac-arm64.zip
+```
+
+### macOS Intel
+
+必须在 macOS 环境执行：
+
+```bash
+pnpm --filter @pragma/desktop run dist:mac:x64
+```
+
+输出：
+
+```text
+apps/desktop/dist/Pragma-0.1.0-mac-x64.dmg
+apps/desktop/dist/Pragma-0.1.0-mac-x64.zip
+```
+
+一次构建两种 macOS 架构仍可使用：
 
 ```bash
 pnpm --filter @pragma/desktop run dist:mac
 ```
 
-产物位于 `apps/desktop/dist/`，每种架构都会生成 DMG 和 ZIP：
+### Windows x64
 
-```text
-Pragma Desktop-<version>-mac-x64.dmg
-Pragma Desktop-<version>-mac-x64.zip
-Pragma Desktop-<version>-mac-arm64.dmg
-Pragma Desktop-<version>-mac-arm64.zip
+必须在 Windows 环境执行：
+
+```bash
+pnpm --filter @pragma/desktop run dist:win:x64
 ```
 
-生成 Windows x64 NSIS 安装包：
+输出：
+
+```text
+apps/desktop/dist/Pragma-0.1.0-win-x64.exe
+```
+
+原有别名仍可使用：
 
 ```bash
 pnpm --filter @pragma/desktop run dist:win
 ```
 
-产物：
+## GitHub Pre-release
 
-```text
-Pragma Desktop-<version>-win-x64.exe
+`.github/workflows/desktop-release.yml` 有两种入口。
+
+### 手动验证
+
+在 GitHub Actions 中运行 `Desktop Release` 的 `workflow_dispatch`。它会：
+
+1. 执行 lint、typecheck、test 和 build。
+2. 在原生 macOS arm64、macOS Intel、Windows x64 runner 上打包。
+3. 上传保留七天的 Actions artifacts。
+4. 不创建 GitHub Release。
+
+### Tag 发布
+
+应用 version 和 Tag 必须一致：
+
+```bash
+git tag -a v0.1.0 -m "Pragma v0.1.0"
+git push origin v0.1.0
 ```
 
-`dist` 按当前操作系统与 `electron-builder.yml` 的目标生成发行包。正式流水线应在 macOS runner 构建 macOS，在 Windows runner 构建 Windows；这样更容易验证平台原生行为、签名和安装流程。macOS 的 DMG/ZIP 必须在 macOS 上生成。
+成功后 workflow 创建 `Pragma v0.1.0` Pre-release，包含：
 
-## 签名与正式发布
+```text
+Pragma-0.1.0-mac-arm64.dmg
+Pragma-0.1.0-mac-arm64.zip
+Pragma-0.1.0-mac-x64.dmg
+Pragma-0.1.0-mac-x64.zip
+Pragma-0.1.0-win-x64.exe
+SHA256SUMS.txt
+```
 
-当前配置允许无证书的本地测试构建，但无签名包不应直接公开发布。
+如果任一平台失败，Release 不会公开。同一 Tag 已经存在公开 Release 时，workflow 拒绝覆盖。
 
-- macOS 正式包需要 Developer ID Application 证书、Hardened Runtime、Apple notarization 和 stapling。仓库已启用 Hardened Runtime；签名身份和公证凭据必须由 CI secret 注入，不能提交到仓库。
-- Windows 正式 EXE 需要受信任的 Authenticode 代码签名证书或 Microsoft Trusted Signing。自签名证书只适合受控测试环境。
-- `appId` 固定为 `dev.pragma.desktop`，同时用作 macOS bundle identifier 与 Windows Application User Model ID。发布后不要随意改变，否则会影响系统身份、快捷方式、通知和后续升级。
+## 未签名安装提示
 
-相关文档：
+当前产物没有系统代码签名：
 
-- [Electron code signing](https://www.electronjs.org/docs/latest/tutorial/code-signing)
-- [Apple notarization](https://developer.apple.com/documentation/security/notarizing-macos-software-before-distribution)
-- [Microsoft code-signing options](https://learn.microsoft.com/en-us/windows/apps/package-and-deploy/code-signing-options)
-- [electron-builder architecture guide](https://www.electron.build/docs/architecture/)
+- macOS Gatekeeper 会阻止常规双击启动。用户需要在系统设置的“隐私与安全性”中选择仍要打开。
+- Windows 可能显示“未知发布者”或 Microsoft Defender SmartScreen 提示。
+- SHA-256 校验只能验证下载完整性，不能替代代码签名。
+
+当前 ZIP 只是人工分发产物，不用于自动更新。接入 macOS 签名、公证和 Windows 签名后，才会开始实现
+`electron-updater` 和稳定 Release。
+
+## 验证清单
+
+发布后在对应真实系统检查：
+
+- 文件 SHA-256 与 `SHA256SUMS.txt` 一致。
+- 应用名称、窗口标题和快捷方式均为 `Pragma`。
+- 安装包架构与文件名一致。
+- 主窗口正常打开。
+- preload Bridge 正常注入。
+- renderer 没有白屏。
+- 内置插件可以加载。
+- Windows 可以正常卸载。
+
+相关资料：
+
+- [electron-builder architecture](https://www.electron.build/docs/architecture/)
+- [electron-builder macOS](https://www.electron.build/docs/mac/)
+- [electron-builder NSIS](https://www.electron.build/nsis.html)

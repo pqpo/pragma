@@ -5,7 +5,7 @@
 
 ## Context
 
-Pragma Desktop users need to move a designed Expert, ExpertTeam, or Flow between computers without
+Pragma desktop app users need to move a designed Expert, ExpertTeam, or Flow between computers without
 copying the whole `~/.pragma` directory. A useful transfer must preserve the selected object,
 recursively referenced DSL resources, and safe optional assets while respecting machine-local
 bindings and credentials.

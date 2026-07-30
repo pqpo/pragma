@@ -12,7 +12,7 @@ function normalizeOs(): DesktopBridgeSnapshot["app"]["os"] {
 export function createBridgeSnapshot(): DesktopBridgeSnapshot {
   return {
     app: {
-      name: "Pragma Desktop",
+      name: "Pragma",
       version: app.getVersion(),
       os: normalizeOs(),
     },
