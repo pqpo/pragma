@@ -96,6 +96,7 @@ export interface ContextStoreStore {
   deleteEntry(storeId: string, id: string, kind: "file" | "directory"): Promise<void>;
   getContent(storeId: string, contentId: string): Promise<ContextStoreContent>;
   filesPath(storeId: string): Promise<string>;
+  fingerprint(storeId: string): Promise<string>;
   resolve(storeId: string): Promise<{
     readonly revision: string;
     readonly store: ExpertAgentContextStore;
@@ -578,6 +579,32 @@ export function createContextStoreStore(options: {
     async filesPath(storeId) {
       await readStore(storeId);
       return contentRoot(storeId);
+    },
+
+    async fingerprint(storeId) {
+      const store = await readStore(storeId);
+      const hash = createHash("sha256");
+      hash.update(
+        JSON.stringify({
+          schemaVersion: store.schemaVersion,
+          name: store.name,
+          description: store.description,
+        }),
+      );
+      const visit = async (directory: string): Promise<void> => {
+        for (const entry of (await readdir(directory, { withFileTypes: true })).toSorted((a, b) =>
+          a.name.localeCompare(b.name),
+        )) {
+          if (entry.isSymbolicLink()) continue;
+          const path = join(directory, entry.name);
+          const id = relative(contentRoot(storeId), path).split(sep).join("/");
+          hash.update(entry.isDirectory() ? `d:${id}\0` : `f:${id}\0`);
+          if (entry.isDirectory()) await visit(path);
+          else if (entry.isFile()) hash.update(await readFile(path));
+        }
+      };
+      await visit(contentRoot(storeId));
+      return hash.digest("hex");
     },
 
     async resolve(storeId) {

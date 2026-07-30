@@ -853,11 +853,19 @@ describe("ExpertSession", () => {
       cost: { input: 1, output: 2, cacheRead: 3, cacheWrite: 4, total: 10 },
     };
     const observations: RuntimeUsageObservation[] = [];
+    const previews: RuntimeUsageObservation[] = [];
+    const clearedPreviews: string[] = [];
     const { app, expert } = await trackedFixture(
       { usage: perTurnUsage },
       {
+        preview: (observation) => {
+          previews.push(observation);
+        },
         record: (observation) => {
           observations.push(observation);
+        },
+        clearPreview: (observationId) => {
+          clearedPreviews.push(observationId);
         },
       },
     );
@@ -866,6 +874,10 @@ describe("ExpertSession", () => {
     await turn.result;
 
     expect(observations).toHaveLength(1);
+    expect(previews.length).toBeGreaterThanOrEqual(2);
+    expect(previews[0]?.usage.measurement).toBe("estimated");
+    expect(previews.at(-1)?.usage).toEqual(perTurnUsage);
+    expect(clearedPreviews).toEqual([observations[0]!.observationId]);
     expect(observations[0]).toMatchObject({
       executionId: turn.executionId,
       invocationId: turn.executionId,
@@ -877,6 +889,9 @@ describe("ExpertSession", () => {
     const failing = await trackedFixture(
       { usage: perTurnUsage },
       {
+        preview: () => {
+          throw new Error("host preview unavailable");
+        },
         record: () => {
           throw new Error("host unavailable");
         },
@@ -887,6 +902,44 @@ describe("ExpertSession", () => {
       (
         await failingSession.prompt("still succeeds", {
           requestId: "usage-sink-failure",
+        })
+      ).result,
+    ).resolves.toBeDefined();
+
+    const failingClear = await trackedFixture(
+      {},
+      {
+        record: () => undefined,
+        clearPreview: () => {
+          throw new Error("host clear unavailable");
+        },
+      },
+    );
+    const failingClearSession = await failingClear.app.experts.createSession(failingClear.expert);
+    await expect(
+      (
+        await failingClearSession.prompt("still succeeds without final usage", {
+          requestId: "usage-sink-clear-failure",
+        })
+      ).result,
+    ).resolves.toBeDefined();
+
+    const failingFinalClear = await trackedFixture(
+      { usage: perTurnUsage },
+      {
+        record: () => undefined,
+        clearPreview: () => {
+          throw new Error("host final clear unavailable");
+        },
+      },
+    );
+    const failingFinalClearSession = await failingFinalClear.app.experts.createSession(
+      failingFinalClear.expert,
+    );
+    await expect(
+      (
+        await failingFinalClearSession.prompt("still succeeds with final usage", {
+          requestId: "usage-sink-final-clear-failure",
         })
       ).result,
     ).resolves.toBeDefined();
@@ -1140,16 +1193,27 @@ describe("ExpertSession", () => {
   });
 
   it("cancels only the active submission and reuses its Runtime Session", async () => {
-    const { app, expert, stats } = await trackedFixture({ delayMs: 100 });
+    const clearedPreviews: string[] = [];
+    const { app, expert, stats } = await trackedFixture(
+      { delayMs: 100 },
+      {
+        record: () => undefined,
+        clearPreview: (observationId) => {
+          clearedPreviews.push(observationId);
+        },
+      },
+    );
     const session = await app.experts.createSession(expert);
     const active = await session.prompt("slow", { requestId: "slow" });
     await waitUntil(async () => stats.executionIds.length === 1);
     const cancelled = expect(active.result).rejects.toThrow();
     await active.cancel("stop current turn");
     await cancelled;
+    await waitUntil(async () => clearedPreviews.length === 1);
 
     const next = await session.prompt("next", { requestId: "next" });
     await expect(next.result).resolves.toBe("tracked:next");
+    await waitUntil(async () => clearedPreviews.length === 2);
     expect(stats.createSessionCalls).toBe(1);
     expect(stats.cancelTurnCalls).toBe(1);
     expect(stats.executionIds).toEqual([active.executionId, next.executionId]);

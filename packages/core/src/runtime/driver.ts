@@ -218,6 +218,9 @@ export interface RuntimeDriver<TNativeEvent, TNativeSession, TPrepared = Runtime
         session: TNativeSession,
       ) => Promise<RuntimeContextWindowUsage | undefined> | RuntimeContextWindowUsage | undefined)
     | undefined;
+  readonly canCompactContext?:
+    | ((session: TNativeSession) => Promise<boolean> | boolean)
+    | undefined;
   readonly compactContext?:
     | ((
         session: TNativeSession,
@@ -708,6 +711,7 @@ function createRuntimeUnavailableMessage(
 class ManagedRuntimeSession<TNativeEvent, TNativeSession, TPrepared> {
   private watcher: RuntimeSessionWatcher | undefined;
   private activeRunId: string | undefined;
+  private contextWindowCalibrated = false;
 
   constructor(
     private readonly options: {
@@ -750,6 +754,7 @@ class ManagedRuntimeSession<TNativeEvent, TNativeSession, TPrepared> {
   get contextWindow():
     | {
         readonly inspect: () => Promise<RuntimeContextWindowUsage | undefined>;
+        readonly canCompact: () => Promise<boolean>;
         readonly compact: (() => Promise<RuntimeContextWindowUsage | undefined>) | undefined;
       }
     | undefined {
@@ -758,6 +763,11 @@ class ManagedRuntimeSession<TNativeEvent, TNativeSession, TPrepared> {
       inspect: async () => {
         this.assertIdle("inspect the context window");
         return await this.refreshContextWindow(true);
+      },
+      canCompact: async () => {
+        this.assertIdle("check whether the context window can be compacted");
+        if (this.options.driver.compactContext === undefined) return false;
+        return (await this.options.driver.canCompactContext?.(this.options.nativeSession)) ?? true;
       },
       compact:
         this.options.driver.compactContext === undefined
@@ -791,7 +801,6 @@ class ManagedRuntimeSession<TNativeEvent, TNativeSession, TPrepared> {
       context: this.options.runContext,
       logger: this.options.logger,
       mapEvent: this.options.driver.mapEvent,
-      mergeUsage,
     });
     let enteredLifecycle = false;
     let finalized = false;
@@ -849,7 +858,8 @@ class ManagedRuntimeSession<TNativeEvent, TNativeSession, TPrepared> {
         );
         observedUsage = runResult.result.usage;
         settleUsage(observedUsage);
-        await this.refreshContextWindow(false);
+        controller.updateContextWindowUsage(await this.refreshContextWindow(false));
+        controller.flushTelemetry(false);
 
         controller.writer.write({
           runId,
@@ -872,7 +882,8 @@ class ManagedRuntimeSession<TNativeEvent, TNativeSession, TPrepared> {
       } catch (error) {
         observedUsage ??= controller.getUsage();
         settleUsage(observedUsage);
-        await this.refreshContextWindow(false);
+        controller.updateContextWindowUsage(await this.refreshContextWindow(false));
+        controller.flushTelemetry(false);
         const wasCancelled = signal.aborted || cancelled;
         const message = error instanceof Error ? error.message : "Runtime run failed.";
         const errorMetadata = readRuntimeErrorMetadata(error);
@@ -968,6 +979,9 @@ class ManagedRuntimeSession<TNativeEvent, TNativeSession, TPrepared> {
     try {
       const usage = await read(this.options.nativeSession);
       if (usage !== undefined) {
+        if (usage.usedTokens !== null && usage.usedTokens > 0) {
+          this.contextWindowCalibrated = true;
+        }
         await this.options.persistContextWindowUsage(usage);
       }
       return usage;
@@ -1018,7 +1032,16 @@ class ManagedRuntimeSession<TNativeEvent, TNativeSession, TPrepared> {
         attempt === 1
           ? createInitialRuntimePrompt(submission.query, submission.output)
           : createRuntimeOutputRetryPrompt(parseResult);
+      const attemptStartupMessages = attempt === 1 ? startupMessages : [];
+      const contextWindow = await this.refreshContextWindow(false);
       controller.resetCapture();
+      controller.beginUsagePreview({
+        prompt,
+        startupMessages: attemptStartupMessages.map((message) => message.content),
+        contextBaselineCalibrated: this.contextWindowCalibrated,
+        ...(usage === undefined ? {} : { accumulatedUsage: usage }),
+        ...(contextWindow === undefined ? {} : { contextWindow }),
+      });
       const turnResult = await (async () => {
         const requestStartedAt = performance.now();
         this.options.logger.info(
@@ -1033,7 +1056,7 @@ class ManagedRuntimeSession<TNativeEvent, TNativeSession, TPrepared> {
             isRetry: attempt > 1,
             rawQuery: submission.query,
             prompt,
-            startupMessages: attempt === 1 ? startupMessages : [],
+            startupMessages: attemptStartupMessages,
             modelSelection: submission.modelSelection,
             output: submission.output,
             signal,
@@ -1048,12 +1071,14 @@ class ManagedRuntimeSession<TNativeEvent, TNativeSession, TPrepared> {
           return result;
         } catch (error) {
           usage = mergeUsage(usage, controller.getUsage());
+          controller.updateUsage(usage);
           observeUsage(usage);
           throw error;
         }
       })();
       outputText = turnResult.outputText ?? controller.getOutputText();
       usage = mergeUsage(usage, mergeUsage(controller.getUsage(), turnResult.usage));
+      controller.updateUsage(usage);
       observeUsage(usage);
 
       const runtimeSessionId = turnResult.runtimeSessionId ?? controller.getRuntimeSessionId();
@@ -1090,6 +1115,7 @@ class ManagedRuntimeSession<TNativeEvent, TNativeSession, TPrepared> {
         })) ?? usage;
     }
     observeUsage(usage);
+    controller.updateUsage(usage);
 
     return createRuntimeRunResult(runId, parseResult.value, usage);
   }

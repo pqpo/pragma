@@ -1,0 +1,68 @@
+import { ipcRenderer } from "electron";
+
+import type { PragmaDesktopAPI } from "../../shared/contracts/api.ts";
+import {
+  ExportPragmaBundleSchema,
+  InspectPragmaBundleSchema,
+  PreparePragmaBundleExportSchema,
+  PragmaBundleExportPreviewSchema,
+  PragmaBundleExportResultSchema,
+  PragmaBundleImportInspectionSchema,
+  PragmaBundlePickResultSchema,
+  PragmaBundleInstallationActionSchema,
+  PragmaBundleInstallationSchema,
+  ResolvePragmaBundleInstallationSchema,
+  StartPragmaBundleImportSchema,
+} from "../../shared/contracts/index.ts";
+import { invokeMutation } from "../invoke-mutation.ts";
+
+export const bundlesApi = {
+  preparePragmaBundleExport: async (input) =>
+    PragmaBundleExportPreviewSchema.parse(
+      await ipcRenderer.invoke(
+        "pragma-bundles:export:prepare",
+        PreparePragmaBundleExportSchema.parse(input),
+      ),
+    ),
+  exportPragmaBundle: async (input) =>
+    PragmaBundleExportResultSchema.parse(
+      await invokeMutation("pragma-bundles:export", ExportPragmaBundleSchema.parse(input)),
+    ),
+  pickPragmaBundle: async () =>
+    PragmaBundlePickResultSchema.parse(await ipcRenderer.invoke("pragma-bundles:pick")),
+  inspectPragmaBundle: async (input) =>
+    PragmaBundleImportInspectionSchema.parse(
+      await ipcRenderer.invoke("pragma-bundles:inspect", InspectPragmaBundleSchema.parse(input)),
+    ),
+  importPragmaBundle: async (input) =>
+    PragmaBundleInstallationSchema.parse(
+      await invokeMutation("pragma-bundles:import", StartPragmaBundleImportSchema.parse(input)),
+    ),
+  listPragmaBundleInstallations: async () =>
+    PragmaBundleInstallationSchema.array().parse(
+      await ipcRenderer.invoke("pragma-bundles:installations:list"),
+    ),
+  resolvePragmaBundleInstallation: async (input) =>
+    PragmaBundleInstallationSchema.parse(
+      await invokeMutation(
+        "pragma-bundles:installation:resolve",
+        ResolvePragmaBundleInstallationSchema.parse(input),
+      ),
+    ),
+  discardPragmaBundleInstallation: async (input) => {
+    await invokeMutation(
+      "pragma-bundles:installation:discard",
+      PragmaBundleInstallationActionSchema.parse(input),
+    );
+  },
+} satisfies Pick<
+  PragmaDesktopAPI,
+  | "preparePragmaBundleExport"
+  | "exportPragmaBundle"
+  | "pickPragmaBundle"
+  | "inspectPragmaBundle"
+  | "importPragmaBundle"
+  | "listPragmaBundleInstallations"
+  | "resolvePragmaBundleInstallation"
+  | "discardPragmaBundleInstallation"
+>;

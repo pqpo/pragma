@@ -2,16 +2,18 @@ import { mkdtemp, readFile, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import type { RuntimeEventMappingContext } from "@pragma/core";
 
 import {
   mapClaudeCodeNativeEvent,
   normalizeClaudeToolRuntimeEvents,
   readAssistantMessageEvent,
+  readClaudeCodeContextWindow,
   readClaudeCodeContextWindowUsage,
   writeClaudeCodeMcpConfig,
   type ClaudeToolStreamState,
+  type ClaudeCodeNativeSession,
 } from "../src/session.ts";
 
 describe("Claude Code context window", () => {
@@ -44,6 +46,37 @@ describe("Claude Code context window", () => {
       percent: 25,
       measurement: "derived",
     });
+  });
+
+  it("uses the shared counter only when the reported context count is unavailable", () => {
+    const countText = vi.fn(() => ({ tokens: 41, source: "heuristic" as const }));
+    const session = {
+      contextWindowUsage: {
+        usedTokens: null,
+        contextWindowTokens: 200_000,
+        percent: null,
+        measurement: "derived",
+        observedAt: "2026-07-29T00:00:00.000Z",
+      },
+      systemPrompt: "system",
+      messages: [{ role: "user", content: "hello", timestamp: 0 }],
+      tokenCounter: { countText },
+      tokenModelIdentity: { providerCatalogId: "anthropic", modelId: "claude-test" },
+    } as unknown as ClaudeCodeNativeSession;
+
+    expect(readClaudeCodeContextWindow(session)).toMatchObject({
+      usedTokens: 41,
+      measurement: "estimated",
+    });
+    expect(countText).toHaveBeenCalledOnce();
+
+    session.contextWindowUsage = {
+      ...session.contextWindowUsage!,
+      usedTokens: 60,
+      percent: 0.03,
+    };
+    expect(readClaudeCodeContextWindow(session)?.usedTokens).toBe(60);
+    expect(countText).toHaveBeenCalledOnce();
   });
 });
 

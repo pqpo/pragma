@@ -216,7 +216,28 @@ export class PragmaProjectService {
     }
     const resources = input.resources.map((resource) => PragmaResourceSchema.parse(resource));
     assertUniqueCanonicalRefs(resources);
-    const files = await withStagedProject(
+    const files = await this.renderProjectFiles({ resources, artifacts: input.artifacts });
+    await this.options.repository.commit({
+      projectId: input.projectId,
+      expectedRevision: input.expectedRevision,
+      files,
+      forceRevision: input.forceRevision,
+    });
+    return await this.get(input.projectId);
+  }
+
+  /**
+   * Renders a validated, canonical Pragma project without committing it. Hosts use this when a
+   * portable subset must be packaged while keeping DSL serialization and lock generation inside
+   * the Interpreter boundary.
+   */
+  async renderProjectFiles(input: {
+    readonly resources: readonly PragmaResource[];
+    readonly artifacts?: ReadonlyMap<string, string> | undefined;
+  }): Promise<ReadonlyMap<string, string>> {
+    const resources = input.resources.map((resource) => PragmaResourceSchema.parse(resource));
+    assertUniqueCanonicalRefs(resources);
+    return await withStagedProject(
       resources,
       input.artifacts,
       this.adapters,
@@ -235,13 +256,6 @@ export class PragmaProjectService {
         return files;
       },
     );
-    await this.options.repository.commit({
-      projectId: input.projectId,
-      expectedRevision: input.expectedRevision,
-      files,
-      forceRevision: input.forceRevision,
-    });
-    return await this.get(input.projectId);
   }
 
   async applyChangeSet(input: {

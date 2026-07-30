@@ -8,6 +8,7 @@ import {
   ExecutionWorkHistoryReader,
   ExpertAgentHumanRequestSchema,
   fingerprintExpertExecutionDefinition,
+  isRuntimeContextCompactionNotNeededError,
   isExpertTeam,
   StoredExecutionView,
   PragmaPaths,
@@ -16,6 +17,9 @@ import {
   moveOwnedStorageToTrash,
   runtimeSessionDeletionSources,
   assertStorageWriteAllowed,
+  isRuntimeContextCompactionStage,
+  readRuntimeContextCompactionProgressData,
+  RUNTIME_CONTEXT_COMPACTION_STAGES,
   type AgentMessageRecord,
   type ExecutionWorkRecord,
   type ExecutionOutputItem,
@@ -44,7 +48,11 @@ import type {
   RuntimeContextRecord,
   RuntimeEnvironmentBinding,
 } from "@pragma/shared";
-import { ExpertAgentStreamEventSchema, isFinalExecutionStatus } from "@pragma/shared";
+import {
+  ExpertAgentStreamEventSchema,
+  isFinalExecutionStatus,
+  RuntimeContextWindowUsageSchema,
+} from "@pragma/shared";
 
 import type {
   Mission,
@@ -53,6 +61,7 @@ import type {
   MissionChatSnapshot,
   MissionChatUpdate,
   MissionChatQuery,
+  MissionContextCompactionResult,
   MissionContextWindowState,
   MissionHumanInteraction,
   MissionModelOverride,
@@ -84,6 +93,7 @@ import type { DesktopUsageStore } from "../usage/usage-store.ts";
 
 export interface MissionRunner {
   reconcileUsage(): Promise<void>;
+  invalidateEstimatedContextWindows(): Promise<void>;
   run(id: string): Promise<Mission>;
   updateOptions(input: UpdateMissionOptions): Promise<Mission>;
   sendMessage(input: {
@@ -92,7 +102,7 @@ export interface MissionRunner {
     readonly requestId: string;
   }): Promise<Mission>;
   getChat(input: MissionChatQuery): Promise<MissionChatSnapshot>;
-  compactContext(id: string): Promise<MissionContextWindowState>;
+  compactContext(id: string): Promise<MissionContextCompactionResult>;
   getRuntimeBinding(id: string): Promise<RuntimeEnvironmentBinding | undefined>;
   subscribeChat(listener: (update: MissionChatUpdate) => void): () => void;
   subscribeWork(listener: (update: MissionWorkUpdate) => void): () => void;
@@ -132,13 +142,28 @@ type PendingMissionOperation =
   | { readonly kind: "run"; readonly promise: Promise<Mission> }
   | { readonly kind: "options"; readonly promise: Promise<Mission> }
   | { readonly kind: "message"; readonly promise: Promise<Mission> }
-  | { readonly kind: "compact"; readonly promise: Promise<MissionContextWindowState> }
+  | { readonly kind: "compact"; readonly promise: Promise<MissionContextCompactionResult> }
   | { readonly kind: "interrupt"; readonly promise: Promise<Mission> }
   | { readonly kind: "delete"; readonly promise: Promise<void> };
 
 interface ActiveMissionExecution {
   readonly handle: MutableExecution & { readonly result: Promise<unknown> };
   readonly settlement: Promise<void>;
+}
+
+export async function compactExpertSessionContext(
+  session: Pick<ExpertSession, "canCompactRootContext" | "compactRootContext">,
+): Promise<
+  | { readonly outcome: "compacted"; readonly usage: RuntimeContextWindowUsage | undefined }
+  | { readonly outcome: "not_needed" }
+> {
+  if ((await session.canCompactRootContext()) === false) return { outcome: "not_needed" };
+  try {
+    return { outcome: "compacted", usage: await session.compactRootContext() };
+  } catch (error) {
+    if (!isRuntimeContextCompactionNotNeededError(error)) throw error;
+    return { outcome: "not_needed" };
+  }
 }
 
 interface LiveMissionChat {
@@ -187,6 +212,7 @@ export function createMissionRunner(options: {
     | ((mission: Mission) => string | undefined | Promise<string | undefined>)
     | undefined;
   readonly assertStorageWriteAllowed?: (() => Promise<void>) | undefined;
+  readonly assertExecutorReady?: ((ref: string) => void | Promise<void>) | undefined;
 }): MissionRunner {
   const logger = createPragmaLogger(options.loggerProvider, {
     component: "desktop.mission-runner",
@@ -231,6 +257,23 @@ export function createMissionRunner(options: {
           options.usage === undefined
             ? undefined
             : {
+                preview: async (observation) => {
+                  const currentMission = await options.missions.get(mission.id);
+                  const project = await options.project.openRevision(
+                    currentMission.project.revision,
+                  );
+                  const names = new Map(
+                    project
+                      .listResources()
+                      .map((resource) => [resource.metadata.id, resource.metadata.name] as const),
+                  );
+                  names.set(currentMission.executor.ref, currentMission.executor.name);
+                  options.usage!.preview(observation, {
+                    mission: { id: currentMission.id, title: currentMission.title },
+                    invocations: await executionStore.listInvocations(observation.executionId),
+                    names,
+                  });
+                },
                 record: async (observation) => {
                   const currentMission = await options.missions.get(mission.id);
                   const project = await options.project.openRevision(
@@ -248,6 +291,7 @@ export function createMissionRunner(options: {
                     names,
                   });
                 },
+                clearPreview: (observationId) => options.usage!.clearPreview(observationId),
               },
       }),
       setToolPermissionMode: (mode: DesktopToolPermissionMode) => {
@@ -265,6 +309,7 @@ export function createMissionRunner(options: {
   const chatListeners = new Set<(update: MissionChatUpdate) => void>();
   const chatRevisions = new Map<string, number>();
   const liveChats = new Map<string, LiveMissionChat>();
+  const liveContextWindows = new Map<string, RuntimeContextWindowUsage>();
   const workListeners = new Set<(update: MissionWorkUpdate) => void>();
   const workRevisions = new Map<string, number>();
   const liveWorkOutputs = new Map<string, Map<string, LiveMissionChat>>();
@@ -350,6 +395,7 @@ export function createMissionRunner(options: {
       liveChats.delete(id);
     }
     liveWorkOutputs.delete(id);
+    liveContextWindows.delete(id);
     invalidateChat(id);
     invalidateWork(id);
   };
@@ -596,6 +642,18 @@ export function createMissionRunner(options: {
       },
       () => invalidateChat(input.missionId),
       (item) => {
+        if (item.channel === "telemetry" && item.parentInvocationId === undefined) {
+          const payload = asRecord(item.value);
+          if (readString(payload, "type") === "context-window.updated") {
+            const usage = RuntimeContextWindowUsageSchema.safeParse(payload["usage"]);
+            if (usage.success) {
+              liveContextWindows.set(input.missionId, usage.data);
+              emitChatPatches(input.missionId, [
+                { type: "context-window.update", usage: usage.data },
+              ]);
+            }
+          }
+        }
         const sessionId = item.source.sessionId;
         if (item.source.parentSessionId !== undefined && sessionId !== undefined) {
           const recordId = `runtime-agent:${sessionId}`;
@@ -669,6 +727,7 @@ export function createMissionRunner(options: {
       assertStorageWriteAllowed(new PragmaPaths({ pragmaHome: options.pragmaHome })));
     logMissionPhase(logger, id, "storage_capacity_check", capacityCheckStartedAt, acceptedAt);
     const mission = await options.missions.get(id);
+    await options.assertExecutorReady?.(mission.executor.ref);
     if (active.has(mission.id)) return mission;
     const { app, runtimes: baseRuntimes } = executionContext(mission);
     const runtimes = withMissionRuntimeBinding(baseRuntimes, await readMissionRootContext(mission));
@@ -855,6 +914,7 @@ export function createMissionRunner(options: {
       assertStorageWriteAllowed(new PragmaPaths({ pragmaHome: options.pragmaHome })));
     logMissionPhase(logger, input.id, "storage_capacity_check", capacityCheckStartedAt, acceptedAt);
     const mission = await options.missions.get(input.id);
+    await options.assertExecutorReady?.(mission.executor.ref);
     const { app, runtimes: baseRuntimes } = executionContext(mission);
     const rootContext = await readMissionRootContext(mission);
     const runtimes = withMissionRuntimeBinding(baseRuntimes, rootContext);
@@ -1125,7 +1185,7 @@ export function createMissionRunner(options: {
       active.has(mission.id) ||
       (mission.execution !== undefined &&
         ["queued", "running", "waiting"].includes(mission.execution.status));
-    let usage = usageOverride;
+    let usage = usageOverride ?? liveContextWindows.get(mission.id);
     if (usage === undefined && rootContext.snapshot !== undefined) {
       if (!executionBusy) {
         usage = await sessions
@@ -1145,19 +1205,44 @@ export function createMissionRunner(options: {
           .catch(() => undefined);
       }
     }
+    const runtimeCanCompact =
+      supportsCompaction &&
+      rootContext.snapshot !== undefined &&
+      mission.lifecycleStatus === "active" &&
+      !executionBusy
+        ? await sessions
+            .get(mission.id)
+            ?.canCompactRootContext()
+            .catch(() => undefined)
+        : undefined;
+    const canCompact =
+      supportsCompaction &&
+      rootContext.snapshot !== undefined &&
+      mission.lifecycleStatus === "active" &&
+      !executionBusy &&
+      runtimeCanCompact !== false;
+    const compactionBlockedReason =
+      !supportsCompaction || canCompact
+        ? undefined
+        : rootContext.snapshot === undefined
+          ? ("not_started" as const)
+          : mission.lifecycleStatus !== "active"
+            ? ("inactive" as const)
+            : executionBusy
+              ? ("busy" as const)
+              : runtimeCanCompact === false
+                ? ("not_ready" as const)
+                : undefined;
     return {
       supportsInspection,
       supportsCompaction,
-      canCompact:
-        supportsCompaction &&
-        rootContext.snapshot !== undefined &&
-        mission.lifecycleStatus === "active" &&
-        !executionBusy,
+      canCompact,
+      ...(compactionBlockedReason === undefined ? {} : { compactionBlockedReason }),
       ...(usage === undefined ? {} : { usage }),
     };
   };
 
-  const compactMissionContext = async (id: string): Promise<MissionContextWindowState> => {
+  const compactMissionContext = async (id: string): Promise<MissionContextCompactionResult> => {
     await (options.assertStorageWriteAllowed?.() ??
       assertStorageWriteAllowed(new PragmaPaths({ pragmaHome: options.pragmaHome })));
     const mission = await options.missions.get(id);
@@ -1193,7 +1278,25 @@ export function createMissionRunner(options: {
       rememberSessionCompilation(id, await compilationIdentity(mission), compiled);
     }
     sessions.set(id, session);
-    const usage = await session.compactRootContext();
+    const notNeededResult = async (): Promise<MissionContextCompactionResult> => {
+      const state = await getContextWindowState(mission);
+      if (state === undefined || !state.supportsCompaction) {
+        throw new Error(
+          `Runtime ${rootContext.runtime.runtimeId} does not support context compaction.`,
+        );
+      }
+      return {
+        outcome: "not_needed",
+        contextWindow: {
+          ...state,
+          canCompact: false,
+          compactionBlockedReason: "not_ready",
+        },
+      };
+    };
+    const compaction = await compactExpertSessionContext(session);
+    if (compaction.outcome === "not_needed") return await notNeededResult();
+    const { usage } = compaction;
     invalidateChat(id);
     const state = await getContextWindowState(mission, usage);
     if (state === undefined || !state.supportsCompaction) {
@@ -1201,7 +1304,7 @@ export function createMissionRunner(options: {
         `Runtime ${rootContext.runtime.runtimeId} does not support context compaction.`,
       );
     }
-    return state;
+    return { outcome: "compacted", contextWindow: state };
   };
 
   const getChatSnapshot = async (input: MissionChatQuery): Promise<MissionChatSnapshot> => {
@@ -1472,6 +1575,9 @@ export function createMissionRunner(options: {
 
   return {
     reconcileUsage,
+    async invalidateEstimatedContextWindows() {
+      for (const mission of await options.missions.list()) invalidateChat(mission.id);
+    },
     async run(id) {
       const pending = pendingOperations.get(id);
       if (pending?.kind === "run") return await pending.promise;
@@ -1551,6 +1657,7 @@ export function createMissionRunner(options: {
       chatRevisions.delete(id);
       workRevisions.delete(id);
       liveWorkOutputs.delete(id);
+      liveContextWindows.delete(id);
     },
     async listHumanInteractions(id) {
       return await listMissionPendingHumanInteractions(await options.missions.get(id));
@@ -1961,7 +2068,7 @@ async function readMissionChatHistory(
     let activityEntries;
     try {
       histories = await view.getMessageHistory({ scope: { kind: "all" } });
-      activityEntries = await readHistoricalAgentActivityEntries(view, turn.sequence);
+      activityEntries = await readHistoricalRuntimeActivityEntries(view, turn.sequence);
     } catch {
       const projection = await missions.readExecutionProjection(missionId, turn.executionId);
       if (projection !== undefined) {
@@ -2008,11 +2115,14 @@ async function readMissionChatHistory(
   return entries;
 }
 
-async function readHistoricalAgentActivityEntries(
+async function readHistoricalRuntimeActivityEntries(
   view: StoredExecutionView,
   timelineSequence: number,
 ): Promise<MissionChatEntry[]> {
-  const events: ExpertAgentStreamEvent[] = [];
+  const events: Array<{
+    readonly event: ExpertAgentStreamEvent;
+    readonly invocationId: string;
+  }> = [];
   let after: { executionId: string; sequence: number } | undefined;
   do {
     const page = await view.listEvents({ scope: { kind: "all" }, limit: 1_000, after });
@@ -2021,15 +2131,45 @@ async function readHistoricalAgentActivityEntries(
       const parsed = ExpertAgentStreamEventSchema.safeParse(event.data);
       if (
         parsed.success &&
-        (parsed.data.type === "agent.command" || parsed.data.type.startsWith("run."))
+        (parsed.data.type === "agent.command" ||
+          parsed.data.type.startsWith("run.") ||
+          (parsed.data.type === "progress" &&
+            isRuntimeContextCompactionStage(parsed.data.payload.stage)))
       ) {
-        events.push(parsed.data);
+        events.push({ event: parsed.data, invocationId: event.invocationId });
       }
     }
     after = page.nextCursor;
   } while (after !== undefined);
   const byId = new Map<string, MissionChatEntry>();
-  for (const event of events) {
+  for (const record of events) {
+    const { event } = record;
+    if (event.type === "progress") {
+      const data = readRuntimeContextCompactionProgressData(event.payload.data);
+      if (data === undefined || !isRuntimeContextCompactionStage(event.payload.stage)) continue;
+      const id = `context:${view.executionId}:${data.operationId}`;
+      const existing = byId.get(id);
+      byId.set(id, {
+        id,
+        timelineSequence,
+        executionId: view.executionId,
+        invocationId: record.invocationId,
+        kind: "context_operation",
+        operationId: data.operationId,
+        operation: "compaction",
+        trigger: data.trigger,
+        runtimeId: data.runtimeId,
+        status:
+          event.payload.stage === RUNTIME_CONTEXT_COMPACTION_STAGES.started
+            ? "running"
+            : event.payload.stage === RUNTIME_CONTEXT_COMPACTION_STAGES.completed
+              ? "succeeded"
+              : "failed",
+        ...(data.errorMessage === undefined ? {} : { error: data.errorMessage }),
+        createdAt: existing?.createdAt ?? event.emittedAt,
+      });
+      continue;
+    }
     const isCommand = event.type === "agent.command";
     if (!isCommand && event.source.parentSessionId === undefined) continue;
     const action = isCommand ? event.payload.action : "run";
@@ -2097,7 +2237,13 @@ function finalizeHistoricalChatEntries(entries: readonly MissionChatEntry[]): Mi
           status: "failed",
           error: entry.error ?? "Execution ended before this tool completed.",
         }
-      : entry,
+      : entry.kind === "context_operation" && entry.status === "running"
+        ? {
+            ...entry,
+            status: "failed",
+            error: entry.error ?? "Execution ended before context compaction completed.",
+          }
+        : entry,
   );
 }
 
@@ -2228,6 +2374,7 @@ function observeMissionChat(
           onItem(item);
           const patches = consumeLiveChatOutput(chat, item);
           if (patches.length > 0) onOutput(patches);
+          if (isTerminalContextCompactionOutput(item)) onInvalidate();
         }
       } finally {
         await subscription.close();
@@ -2298,6 +2445,15 @@ function elapsedMissionMs(startedAt: number): number {
   return Math.round((performance.now() - startedAt) * 100) / 100;
 }
 
+function isTerminalContextCompactionOutput(item: ExecutionOutputItem): boolean {
+  if (item.channel !== "progress") return false;
+  const stage = asRecord(item.value)["stage"];
+  return (
+    stage === RUNTIME_CONTEXT_COMPACTION_STAGES.completed ||
+    stage === RUNTIME_CONTEXT_COMPACTION_STAGES.failed
+  );
+}
+
 function consumeLiveChatOutput(
   chat: LiveMissionChat,
   item: ExecutionOutputItem,
@@ -2359,6 +2515,38 @@ function consumeLiveChatOutput(
         : {
             error: truncate(readString(payload, "error"), MISSION_CHAT_ERROR_MAX_LENGTH),
           }),
+    };
+    const index = chat.entries.findIndex((candidate) => candidate.id === id);
+    if (index === -1) chat.entries.push(entry);
+    else chat.entries[index] = entry;
+    return [{ type: "entry.upsert", entry }];
+  }
+  if (item.channel === "progress") {
+    const payload = asRecord(item.value);
+    const stage = payload["stage"];
+    if (!isRuntimeContextCompactionStage(stage)) return [];
+    const data = readRuntimeContextCompactionProgressData(payload["data"]);
+    if (data === undefined) return [];
+    const id = `context:${item.executionId}:${data.operationId}`;
+    const existing = chat.entries.find((entry) => entry.id === id);
+    const entry: MissionChatEntry = {
+      ...base,
+      id,
+      kind: "context_operation",
+      operationId: data.operationId,
+      operation: "compaction",
+      trigger: data.trigger,
+      runtimeId: data.runtimeId,
+      status:
+        stage === RUNTIME_CONTEXT_COMPACTION_STAGES.started
+          ? "running"
+          : stage === RUNTIME_CONTEXT_COMPACTION_STAGES.completed
+            ? "succeeded"
+            : "failed",
+      ...(data.errorMessage === undefined
+        ? {}
+        : { error: truncate(data.errorMessage, MISSION_CHAT_ERROR_MAX_LENGTH) }),
+      createdAt: existing?.createdAt ?? item.occurredAt,
     };
     const index = chat.entries.findIndex((candidate) => candidate.id === id);
     if (index === -1) chat.entries.push(entry);

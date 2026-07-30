@@ -24,6 +24,20 @@ import {
   SaveAutomationSchema,
 } from "./automations.ts";
 import {
+  ExportPragmaBundleSchema,
+  InspectPragmaBundleSchema,
+  PragmaBundleExportPreviewSchema,
+  PragmaBundleExportResultSchema,
+  PragmaBundleImportInspectionSchema,
+  PragmaBundlePickResultSchema,
+  PragmaBundleInstallationActionSchema,
+  PragmaBundleInstallationSchema,
+  PragmaBundleModuleOptionsSchema,
+  PreparePragmaBundleExportSchema,
+  ResolvePragmaBundleInstallationSchema,
+  StartPragmaBundleImportSchema,
+} from "./bundles.ts";
+import {
   CapabilityDefinitionSchema,
   CapabilityDeleteResultSchema,
   CapabilityHealthSchema,
@@ -76,6 +90,7 @@ import {
   MissionChatPatchSchema,
   MissionChatSnapshotSchema,
   MissionChatUpdateSchema,
+  MissionContextCompactionResultSchema,
   MissionContextWindowStateSchema,
   MissionHumanInteractionSchema,
   MissionLifecycleStatusSchema,
@@ -145,9 +160,14 @@ import {
   UpdatePluginDefaultsSchema,
 } from "./plugins.ts";
 import {
+  HomeExecutorFavoriteScopeSchema,
+  HomeExecutorPreferenceSchema,
+  HomeMissionExecutorCatalogSchema,
+  HomeMissionExecutorOptionSchema,
   MissionCreationDefaultsSchema,
   MissionExecutorOptionSchema,
   MissionModelOverrideSchema,
+  UpdateHomeExecutorPreferenceSchema,
 } from "./mission-base.ts";
 import {
   MissionUsageSchema,
@@ -158,6 +178,18 @@ import {
   UsageUpdateSchema,
 } from "./usage.ts";
 export type DesktopAppInfo = z.infer<typeof DesktopAppInfoSchema>;
+export type PragmaBundleModuleOptions = z.infer<typeof PragmaBundleModuleOptionsSchema>;
+export type PreparePragmaBundleExport = z.infer<typeof PreparePragmaBundleExportSchema>;
+export type PragmaBundleExportPreview = z.infer<typeof PragmaBundleExportPreviewSchema>;
+export type ExportPragmaBundle = z.infer<typeof ExportPragmaBundleSchema>;
+export type PragmaBundleExportResult = z.infer<typeof PragmaBundleExportResultSchema>;
+export type InspectPragmaBundle = z.infer<typeof InspectPragmaBundleSchema>;
+export type PragmaBundleImportInspection = z.infer<typeof PragmaBundleImportInspectionSchema>;
+export type PragmaBundlePickResult = z.infer<typeof PragmaBundlePickResultSchema>;
+export type StartPragmaBundleImport = z.infer<typeof StartPragmaBundleImportSchema>;
+export type PragmaBundleInstallation = z.infer<typeof PragmaBundleInstallationSchema>;
+export type ResolvePragmaBundleInstallation = z.infer<typeof ResolvePragmaBundleInstallationSchema>;
+export type PragmaBundleInstallationAction = z.infer<typeof PragmaBundleInstallationActionSchema>;
 export type RuntimeGatewayConfig = z.infer<typeof RuntimeGatewayConfigSchema>;
 export type LocalRuntimeCapability = z.infer<typeof LocalRuntimeCapabilitySchema>;
 export type DesktopRuntimeAvailability = z.infer<typeof DesktopRuntimeAvailabilitySchema>;
@@ -247,6 +279,11 @@ export type MissionSummary = z.infer<typeof MissionSummarySchema>;
 export type MissionUpdate = z.infer<typeof MissionUpdateSchema>;
 export type MissionExecutorOption = z.infer<typeof MissionExecutorOptionSchema>;
 export type MissionCreationDefaults = z.infer<typeof MissionCreationDefaultsSchema>;
+export type HomeExecutorFavoriteScope = z.infer<typeof HomeExecutorFavoriteScopeSchema>;
+export type HomeExecutorPreference = z.infer<typeof HomeExecutorPreferenceSchema>;
+export type HomeMissionExecutorOption = z.infer<typeof HomeMissionExecutorOptionSchema>;
+export type HomeMissionExecutorCatalog = z.infer<typeof HomeMissionExecutorCatalogSchema>;
+export type UpdateHomeExecutorPreference = z.infer<typeof UpdateHomeExecutorPreferenceSchema>;
 export type MissionModelOverride = z.infer<typeof MissionModelOverrideSchema>;
 export type AutomationBinding = z.infer<typeof AutomationBindingSchema>;
 export type AutomationRunRecord = z.infer<typeof AutomationRunRecordSchema>;
@@ -274,6 +311,7 @@ export type SendMissionMessage = z.infer<typeof SendMissionMessageSchema>;
 export type MissionHumanInteraction = z.infer<typeof MissionHumanInteractionSchema>;
 export type MissionChatEntry = z.infer<typeof MissionChatEntrySchema>;
 export type MissionChatSnapshot = z.infer<typeof MissionChatSnapshotSchema>;
+export type MissionContextCompactionResult = z.infer<typeof MissionContextCompactionResultSchema>;
 export type MissionContextWindowState = z.infer<typeof MissionContextWindowStateSchema>;
 export type MissionChatPatch = z.infer<typeof MissionChatPatchSchema>;
 export type MissionChatUpdate = z.infer<typeof MissionChatUpdateSchema>;

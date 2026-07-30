@@ -1,5 +1,6 @@
 export * from "./api.ts";
 export * from "./automations.ts";
+export * from "./bundles.ts";
 export * from "./capabilities.ts";
 export * from "./context-stores.ts";
 export * from "./experts.ts";

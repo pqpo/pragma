@@ -44,6 +44,7 @@ export interface CapabilityStore {
   list(): Promise<Capability[]>;
   get(id: string, revision?: number): Promise<Capability>;
   getSkillDocument(input: GetSkillDocument): Promise<SkillDocument>;
+  skillFilesPath(id: string, revision: number): Promise<string>;
   importSkill(input: ImportSkillCapability): Promise<Capability>;
   create(input: CreateCapability): Promise<Capability>;
   update(input: UpdateCapability): Promise<Capability>;
@@ -203,6 +204,17 @@ export function createCapabilityStore(options: {
           `Skill ${capability.manifest.name} has an unreadable SKILL.md document.`,
         );
       }
+    },
+
+    async skillFilesPath(id, revision) {
+      const capability = await readCapability(id, revision);
+      if (capability.definition.kind !== "skill") {
+        throw new CapabilityStoreError(
+          "config_invalid",
+          "Only Skill capabilities have a portable file payload.",
+        );
+      }
+      return join(revisionPath(id, revision), "payload");
     },
     async importSkill(rawInput) {
       const input = ImportSkillCapabilitySchema.parse(rawInput);

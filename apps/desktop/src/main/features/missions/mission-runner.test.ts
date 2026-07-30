@@ -12,8 +12,11 @@ import {
   fingerprintExpertExecutionDefinition,
   PragmaPaths,
   readRuntimeSessionRecord,
+  RuntimeContextCompactionNotNeededError,
   StoredExecutionView,
+  type ExpertSession,
   type RuntimeDriverSessionContext,
+  type RuntimeContextWindowUsage,
   type RuntimeModelSelection,
   type RuntimeResolver,
 } from "@pragma/core";
@@ -29,10 +32,11 @@ import {
   MissionChatUpdateSchema,
   missionExecutorSnapshot,
   type DesktopToolPermissionMode,
+  type MissionChatUpdate,
 } from "../../../shared/contracts/index.ts";
 import type { CapabilityCredentialStore } from "../capabilities/capability-credential-store.ts";
 import type { CapabilityStore } from "../capabilities/capability-store.ts";
-import { createMissionRunner } from "./mission-runner.ts";
+import { compactExpertSessionContext, createMissionRunner } from "./mission-runner.ts";
 import { createMissionStore } from "./mission-store.ts";
 import { createPragmaProjectStore } from "../projects/pragma-project-store.ts";
 import type { DesktopUsageStore } from "../usage/usage-store.ts";
@@ -85,6 +89,20 @@ afterEach(async () => {
 });
 
 describe("MissionRunner", { timeout: 15_000 }, () => {
+  it("treats a restored Runtime with no compactable history as a normal no-op", async () => {
+    const session = {
+      canCompactRootContext: vi.fn(async () => undefined),
+      compactRootContext: vi.fn(async () => {
+        throw new RuntimeContextCompactionNotNeededError();
+      }),
+    } satisfies Pick<ExpertSession, "canCompactRootContext" | "compactRootContext">;
+
+    await expect(compactExpertSessionContext(session)).resolves.toEqual({
+      outcome: "not_needed",
+    });
+    expect(session.compactRootContext).toHaveBeenCalledOnce();
+  });
+
   it("skips compilation for a follow-up on the live Mission Session", async () => {
     const root = await mkdtemp(join(tmpdir(), "pragma-mission-followup-fast-path-"));
     temporaryPaths.push(root);
@@ -318,27 +336,48 @@ describe("MissionRunner", { timeout: 15_000 }, () => {
         snapshot.resources.find((resource) => resource.kind === "Expert")!,
       ),
     });
-    const compactContext = vi.fn(() => ({
-      usedTokens: 10_000,
-      contextWindowTokens: 200_000,
-      percent: 5,
-      measurement: "reported" as const,
-      observedAt: new Date().toISOString(),
-    }));
-    const runtime = defineRuntimeDriver<never, { id: string }>({
+    let compactable = true;
+    let contextUsageTokens = 50_000;
+    const compactContext = vi.fn(() => {
+      compactable = false;
+      contextUsageTokens = 10_000;
+      return {
+        usedTokens: contextUsageTokens,
+        contextWindowTokens: 200_000,
+        percent: 5,
+        measurement: "reported" as const,
+        observedAt: new Date().toISOString(),
+      };
+    });
+    let finishTurn = (): void => undefined;
+    const turnCanFinish = new Promise<void>((resolve) => {
+      finishTurn = resolve;
+    });
+    const runtime = defineRuntimeDriver<RuntimeContextWindowUsage, { id: string }>({
       descriptor: { id: "fake", kind: "fake", displayName: "Fake" },
       createSession: () => ({ id: "runtime" }),
       restoreSession: () => ({ id: "runtime" }),
       readSession: (session) => ({ runtimeSessionId: session.id }),
-      startTurn: () => ({ outputText: "done", runtimeSessionId: "runtime" }),
-      mapEvent: () => ({ events: [] }),
+      async startTurn(_session, turn) {
+        turn.stream.writeNative({
+          usedTokens: 40_000,
+          contextWindowTokens: 200_000,
+          percent: 20,
+          measurement: "reported",
+          observedAt: new Date().toISOString(),
+        });
+        await turnCanFinish;
+        return { outputText: "done", runtimeSessionId: "runtime" };
+      },
+      mapEvent: (usage) => ({ events: [], contextWindowUsage: usage }),
       readContextWindow: () => ({
-        usedTokens: 50_000,
+        usedTokens: contextUsageTokens,
         contextWindowTokens: 200_000,
-        percent: 25,
+        percent: (contextUsageTokens / 200_000) * 100,
         measurement: "reported",
         observedAt: new Date().toISOString(),
       }),
+      canCompactContext: () => compactable,
       compactContext,
     });
     const runtimes = createStaticRuntimeResolver({ runtimes: [runtime], defaultRuntimeId: "fake" });
@@ -353,12 +392,29 @@ describe("MissionRunner", { timeout: 15_000 }, () => {
         runtimes,
       });
     const runner = createRunner();
+    const chatUpdates: MissionChatUpdate[] = [];
+    const unsubscribe = runner.subscribeChat((update) => chatUpdates.push(update));
 
     await runner.run(mission.id);
+    await vi.waitFor(() => {
+      expect(
+        chatUpdates.some(
+          (update) =>
+            update.kind === "patch" &&
+            update.patches.some(
+              (patch) =>
+                patch.type === "context-window.update" && patch.usage.usedTokens === 40_000,
+            ),
+        ),
+      ).toBe(true);
+    });
+    expect((await missions.get(mission.id)).execution?.status).toBe("running");
+    finishTurn();
     await vi.waitFor(
       async () => expect((await missions.get(mission.id)).execution?.status).toBe("succeeded"),
       { timeout: settlementTimeoutMs },
     );
+    unsubscribe();
     await expect(runner.getChat({ id: mission.id, limit: 50 })).resolves.toMatchObject({
       contextWindow: {
         supportsInspection: true,
@@ -368,8 +424,20 @@ describe("MissionRunner", { timeout: 15_000 }, () => {
       },
     });
     await expect(runner.compactContext(mission.id)).resolves.toMatchObject({
-      canCompact: true,
-      usage: { usedTokens: 10_000, percent: 5 },
+      outcome: "compacted",
+      contextWindow: {
+        canCompact: false,
+        compactionBlockedReason: "not_ready",
+        usage: { usedTokens: 10_000, percent: 5 },
+      },
+    });
+    expect(compactContext).toHaveBeenCalledOnce();
+    await expect(runner.compactContext(mission.id)).resolves.toMatchObject({
+      outcome: "not_needed",
+      contextWindow: {
+        canCompact: false,
+        compactionBlockedReason: "not_ready",
+      },
     });
     expect(compactContext).toHaveBeenCalledOnce();
 
@@ -445,6 +513,19 @@ describe("MissionRunner", { timeout: 15_000 }, () => {
       readSession: (session) => ({ runtimeSessionId: session.id }),
       async startTurn(_session, turn) {
         await new Promise<void>((resolve) => setTimeout(resolve, 50));
+        turn.stream.write({
+          runId: turn.runId,
+          source: turn.source,
+          type: "progress",
+          payload: {
+            stage: "context.compaction.started",
+            data: {
+              operationId: "compact-live",
+              trigger: "auto",
+              runtimeId: "fake",
+            },
+          },
+        });
         for (const delta of "Checking constraints.") {
           turn.stream.write({
             runId: turn.runId,
@@ -502,6 +583,11 @@ describe("MissionRunner", { timeout: 15_000 }, () => {
           expect.arrayContaining([
             expect.objectContaining({ kind: "thinking", content: "Checking constraints." }),
             expect.objectContaining({ kind: "tool", toolName: "read_file", status: "running" }),
+            expect.objectContaining({
+              kind: "context_operation",
+              operationId: "compact-live",
+              status: "running",
+            }),
           ]),
         );
       },
@@ -517,6 +603,11 @@ describe("MissionRunner", { timeout: 15_000 }, () => {
       expect.arrayContaining([
         expect.objectContaining({ kind: "thinking", content: "Checking constraints." }),
         expect.objectContaining({ kind: "tool", toolName: "read_file", status: "failed" }),
+        expect.objectContaining({
+          kind: "context_operation",
+          operationId: "compact-live",
+          status: "failed",
+        }),
       ]),
     );
     expect(updates).toHaveBeenCalled();
@@ -533,6 +624,13 @@ describe("MissionRunner", { timeout: 15_000 }, () => {
         expect.objectContaining({
           type: "entry.upsert",
           entry: expect.objectContaining({ kind: "tool" }),
+        }),
+        expect.objectContaining({
+          type: "entry.upsert",
+          entry: expect.objectContaining({
+            kind: "context_operation",
+            operationId: "compact-live",
+          }),
         }),
       ]),
     );
@@ -1260,6 +1358,46 @@ describe("MissionRunner", { timeout: 15_000 }, () => {
       title: "Architect",
     });
     expect(enrichedWork.records.filter((record) => record.title === "Architect")).toHaveLength(2);
+    const compactionSource = {
+      kind: "agent" as const,
+      runId: "root-run",
+      sessionId: "root-thread",
+      path: [],
+    };
+    await store.appendEvent(executionId, executionId, "runtime.event", {
+      schemaVersion: "pragma.stream/v1",
+      eventId: "compaction-started",
+      sequence: 105,
+      runId: "root-run",
+      emittedAt,
+      source: compactionSource,
+      type: "progress",
+      payload: {
+        stage: "context.compaction.started",
+        data: {
+          operationId: "compact-1",
+          trigger: "auto",
+          runtimeId: "codex-local",
+        },
+      },
+    });
+    await store.appendEvent(executionId, executionId, "runtime.event", {
+      schemaVersion: "pragma.stream/v1",
+      eventId: "compaction-completed",
+      sequence: 106,
+      runId: "root-run",
+      emittedAt: new Date(childConversationStartedAt + 5).toISOString(),
+      source: compactionSource,
+      type: "progress",
+      payload: {
+        stage: "context.compaction.completed",
+        data: {
+          operationId: "compact-1",
+          trigger: "auto",
+          runtimeId: "codex-local",
+        },
+      },
+    });
     await expect(
       runner.getWorkConversation({ id: mission.id, recordId: subagent!.recordId, limit: 100 }),
     ).resolves.toMatchObject({
@@ -1276,6 +1414,11 @@ describe("MissionRunner", { timeout: 15_000 }, () => {
     await expect(runner.getChat({ id: mission.id, limit: 50 })).resolves.toMatchObject({
       entries: expect.arrayContaining([
         expect.objectContaining({ kind: "agent_activity", action: "spawn" }),
+        expect.objectContaining({
+          kind: "context_operation",
+          operationId: "compact-1",
+          status: "succeeded",
+        }),
       ]),
     });
   });

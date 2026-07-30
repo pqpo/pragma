@@ -1,10 +1,11 @@
-import type { AgentMessage, AgentMessageUsage } from "@pragma/shared";
+import type { AgentMessage, AgentMessageUsage, RuntimeContextWindowUsage } from "@pragma/shared";
 
 import type { Expert } from "../agent/expert-agent.ts";
 import type { PragmaLogger } from "../logging/logger.ts";
 import { dispatchExpertAgentHook } from "../plugins/expert-agent-plugin.ts";
 import type { RuntimeSessionInfo } from "./runtime-adapter.ts";
 import type { ExpertAgentRunContext } from "./run-context.ts";
+import { mergeUsage } from "./usage.ts";
 import {
   createRuntimeEventEmitter,
   type RuntimeEventEmitter,
@@ -28,6 +29,7 @@ export interface RuntimeEventMappingResult {
   readonly outputDelta?: string | undefined;
   readonly completedText?: string | undefined;
   readonly usage?: AgentMessageUsage | undefined;
+  readonly contextWindowUsage?: RuntimeContextWindowUsage | undefined;
   readonly runtimeSessionId?: string | undefined;
 }
 
@@ -75,6 +77,16 @@ export interface RuntimeStreamController<TNativeEvent> {
   readonly getUsage: () => AgentMessageUsage | undefined;
   readonly getRuntimeSessionId: () => string | undefined;
   readonly resetCapture: () => void;
+  readonly beginUsagePreview: (input: {
+    readonly prompt: string;
+    readonly startupMessages?: readonly string[] | undefined;
+    readonly contextBaselineCalibrated?: boolean | undefined;
+    readonly accumulatedUsage?: AgentMessageUsage | undefined;
+    readonly contextWindow?: RuntimeContextWindowUsage | undefined;
+  }) => void;
+  readonly updateContextWindowUsage: (usage: RuntimeContextWindowUsage | undefined) => void;
+  readonly updateUsage: (usage: AgentMessageUsage | undefined) => void;
+  readonly flushTelemetry: (provisional: boolean) => void;
   readonly complete: () => Promise<void>;
 }
 
@@ -93,10 +105,6 @@ export function createRuntimeStreamController<TNativeEvent>(options: {
     event: TNativeEvent,
     context: RuntimeEventMappingContext,
   ) => RuntimeEventMappingResult;
-  readonly mergeUsage: (
-    current: AgentMessageUsage | undefined,
-    next: AgentMessageUsage | undefined,
-  ) => AgentMessageUsage | undefined;
 }): RuntimeStreamController<TNativeEvent> {
   const emitter = createRuntimeEventEmitter(options.queue);
   const source =
@@ -110,8 +118,22 @@ export function createRuntimeStreamController<TNativeEvent>(options: {
   const eventFactory = createRuntimeStreamEventFactory(options.runId, source);
   const pendingHookCalls: Promise<void>[] = [];
   let outputText = "";
+  let thoughtText = "";
   let usage: AgentMessageUsage | undefined;
+  let accumulatedUsage: AgentMessageUsage | undefined;
+  let estimatedInputTokens = 0;
+  let estimatedContextInputTokens = 0;
+  let contextBaselineCalibrated = false;
+  let contextWindowBase: RuntimeContextWindowUsage | undefined;
+  let contextWindowUsage: RuntimeContextWindowUsage | undefined;
   let runtimeSessionId: string | undefined;
+  let latestUsagePreview: AgentMessageUsage | undefined;
+  let latestContextWindowPreview: RuntimeContextWindowUsage | undefined;
+  let lastUsageSignature = "";
+  let lastContextWindowSignature = "";
+  let telemetryTimer: ReturnType<typeof setTimeout> | undefined;
+  let lastTelemetryAt = 0;
+  let telemetryFinalized = false;
   const streamStartedAt = performance.now();
   let firstNativeEventLogged = false;
   let firstReasoningDeltaLogged = false;
@@ -129,6 +151,79 @@ export function createRuntimeStreamController<TNativeEvent>(options: {
         logger: options.logger,
       }),
     );
+  };
+
+  const emitTelemetry = (provisional: boolean): void => {
+    if (telemetryTimer !== undefined) {
+      clearTimeout(telemetryTimer);
+      telemetryTimer = undefined;
+    }
+    lastTelemetryAt = performance.now();
+    if (!provisional) telemetryFinalized = true;
+    if (latestUsagePreview !== undefined) {
+      const signature = JSON.stringify(latestUsagePreview);
+      if (signature !== lastUsageSignature || !provisional) {
+        lastUsageSignature = signature;
+        emit({
+          runId: options.runId,
+          source,
+          type: "usage.updated",
+          payload: { usage: latestUsagePreview, provisional },
+        });
+      }
+    }
+    if (latestContextWindowPreview !== undefined) {
+      const signature = JSON.stringify(latestContextWindowPreview);
+      if (signature !== lastContextWindowSignature || !provisional) {
+        lastContextWindowSignature = signature;
+        emit({
+          runId: options.runId,
+          source,
+          type: "context-window.updated",
+          payload: { usage: latestContextWindowPreview, provisional },
+        });
+      }
+    }
+  };
+
+  const scheduleTelemetry = (): void => {
+    const elapsed = performance.now() - lastTelemetryAt;
+    if (lastTelemetryAt === 0 || elapsed >= 100) {
+      emitTelemetry(true);
+      return;
+    }
+    if (telemetryTimer !== undefined) return;
+    telemetryTimer = setTimeout(() => emitTelemetry(true), Math.max(0, 100 - elapsed));
+  };
+
+  const updateUsagePreview = (): void => {
+    const estimatedOutputTokens = estimateTokenCount(`${thoughtText}${outputText}`);
+    const attemptUsage =
+      usage ??
+      createEstimatedUsage({
+        input: estimatedInputTokens,
+        output: estimatedOutputTokens,
+      });
+    latestUsagePreview = mergeUsage(accumulatedUsage, attemptUsage);
+    const contextSource = contextWindowUsage ?? contextWindowBase;
+    if (contextSource !== undefined) {
+      const usedTokens =
+        contextWindowUsage !== undefined
+          ? contextWindowUsage.usedTokens
+          : !contextBaselineCalibrated || contextSource.usedTokens === null
+            ? null
+            : contextSource.usedTokens + estimatedContextInputTokens + estimatedOutputTokens;
+      latestContextWindowPreview = {
+        usedTokens,
+        contextWindowTokens: contextSource.contextWindowTokens,
+        percent:
+          usedTokens === null ? null : (usedTokens / contextSource.contextWindowTokens) * 100,
+        measurement:
+          contextWindowUsage === undefined ? "estimated" : contextWindowUsage.measurement,
+        observedAt: new Date().toISOString(),
+      };
+    }
+    scheduleTelemetry();
   };
 
   const applyMappingResult = (result: RuntimeEventMappingResult): void => {
@@ -159,8 +254,19 @@ export function createRuntimeStreamController<TNativeEvent>(options: {
     if (result.completedText !== undefined) {
       outputText = result.completedText;
     }
-    usage = options.mergeUsage(usage, result.usage);
+    usage = result.usage ?? usage;
+    contextWindowUsage = result.contextWindowUsage ?? contextWindowUsage;
     runtimeSessionId = result.runtimeSessionId ?? runtimeSessionId;
+    for (const event of result.events ?? []) {
+      if (
+        event.type === "thought.delta" &&
+        "delta" in event.payload &&
+        typeof event.payload.delta === "string"
+      ) {
+        thoughtText += event.payload.delta;
+      }
+    }
+    updateUsagePreview();
   };
 
   return {
@@ -190,6 +296,26 @@ export function createRuntimeStreamController<TNativeEvent>(options: {
       },
       write(event) {
         emit(event);
+        if (event.type === "message.delta" && "delta" in event.payload) {
+          outputText += event.payload.delta;
+          updateUsagePreview();
+        } else if (event.type === "thought.delta" && "delta" in event.payload) {
+          thoughtText += event.payload.delta;
+          updateUsagePreview();
+        } else if (event.type === "message.completed") {
+          if ("text" in event.payload && typeof event.payload.text === "string") {
+            outputText = event.payload.text;
+          }
+          if (
+            "message" in event.payload &&
+            typeof event.payload.message === "object" &&
+            event.payload.message !== null &&
+            event.payload.message.role === "assistant"
+          ) {
+            usage = event.payload.message.usage;
+          }
+          updateUsagePreview();
+        }
       },
     },
     getOutputText: () => outputText,
@@ -197,12 +323,74 @@ export function createRuntimeStreamController<TNativeEvent>(options: {
     getRuntimeSessionId: () => runtimeSessionId,
     resetCapture() {
       outputText = "";
+      thoughtText = "";
       usage = undefined;
+      contextWindowUsage = undefined;
       runtimeSessionId = undefined;
     },
+    beginUsagePreview(input) {
+      accumulatedUsage = input.accumulatedUsage;
+      const turnInput = [...(input.startupMessages ?? []), input.prompt].join("\n\n");
+      estimatedInputTokens = estimateTokenCount(turnInput);
+      estimatedContextInputTokens = estimatedInputTokens;
+      contextBaselineCalibrated =
+        input.contextBaselineCalibrated ??
+        (input.contextWindow?.usedTokens !== null &&
+          input.contextWindow?.usedTokens !== undefined &&
+          input.contextWindow.usedTokens > 0);
+      contextWindowBase = input.contextWindow;
+      contextWindowUsage = undefined;
+      updateUsagePreview();
+    },
+    updateContextWindowUsage(next) {
+      if (next === undefined) return;
+      contextWindowUsage = next;
+      updateUsagePreview();
+    },
+    updateUsage(next) {
+      if (next === undefined) return;
+      latestUsagePreview = next;
+      scheduleTelemetry();
+    },
+    flushTelemetry(provisional) {
+      emitTelemetry(provisional);
+    },
     async complete() {
+      if (!telemetryFinalized) emitTelemetry(false);
+      else if (telemetryTimer !== undefined) {
+        clearTimeout(telemetryTimer);
+        telemetryTimer = undefined;
+      }
       await Promise.allSettled(pendingHookCalls);
       emitter.complete();
+    },
+  };
+}
+
+function estimateTokenCount(value: string): number {
+  let ascii = 0;
+  let nonAscii = 0;
+  for (const character of value) {
+    if (character.codePointAt(0)! <= 0x7f) ascii += 1;
+    else nonAscii += 1;
+  }
+  return Math.ceil(ascii / 4) + nonAscii;
+}
+
+function createEstimatedUsage(input: { readonly input: number; readonly output: number }) {
+  return {
+    measurement: "estimated" as const,
+    input: input.input,
+    output: input.output,
+    cacheRead: 0,
+    cacheWrite: 0,
+    totalTokens: input.input + input.output,
+    cost: {
+      input: 0,
+      output: 0,
+      cacheRead: 0,
+      cacheWrite: 0,
+      total: 0,
     },
   };
 }

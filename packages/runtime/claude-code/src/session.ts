@@ -17,10 +17,13 @@ import type {
   RuntimeStreamEventInput,
   RuntimeTurnContext,
   RuntimeTurnResult,
+  RuntimeTokenCounter,
+  RuntimeTokenModelIdentity,
 } from "@pragma/core";
 import {
   createRuntimeContextWindowUsage,
   createUsageFromTokenCounts,
+  defaultRuntimeTokenCounter,
   hasNonZeroUsage,
   readFirstTokenCount,
 } from "@pragma/core";
@@ -32,6 +35,7 @@ import type {
   ClaudeCodeRuntimeSessionState,
   ClaudeCodeRuntimeSpawn,
 } from "./types.ts";
+import type { ClaudeCompactionHookRelay, ClaudeCompactionNativeEvent } from "./compaction-hooks.ts";
 
 const MCP_SERVER_NAME = "pragma";
 const PERMISSION_TOOL_NAME = "mcp__pragma__request_tool_approval";
@@ -83,11 +87,14 @@ export interface ClaudeCodeNativeSession {
   readonly mcpServerUrl: string;
   readonly permissionMode: ClaudeCodeRuntimePermissionMode;
   readonly pluginDir: string;
+  readonly compactionHookRelay: ClaudeCompactionHookRelay;
   readonly sessionDir: string;
   readonly spawn?: ClaudeCodeRuntimeSpawn | undefined;
   readonly state: ClaudeCodeRuntimeSessionState;
   readonly systemPrompt: string;
   readonly messages: ClaudeCodeRuntimeMessage[];
+  readonly tokenCounter: RuntimeTokenCounter;
+  tokenModelIdentity: RuntimeTokenModelIdentity;
   pendingStartupMessages: readonly ExpertAgentStartupMessage[];
   activeProcess?: ChildProcessWithoutNullStreams | undefined;
   activeExitPromise?:
@@ -115,14 +122,18 @@ export function createClaudeCodeNativeSession(options: {
   readonly mcpServerUrl: string;
   readonly permissionMode: ClaudeCodeRuntimePermissionMode;
   readonly pluginDir: string;
+  readonly compactionHookRelay: ClaudeCompactionHookRelay;
   readonly sessionDir: string;
   readonly spawn?: ClaudeCodeRuntimeSpawn | undefined;
   readonly startupMessages?: readonly ExpertAgentStartupMessage[] | undefined;
   readonly state: ClaudeCodeRuntimeSessionState;
   readonly systemPrompt: string;
+  readonly tokenCounter?: RuntimeTokenCounter | undefined;
 }): ClaudeCodeNativeSession {
   return {
     ...options,
+    tokenCounter: options.tokenCounter ?? defaultRuntimeTokenCounter,
+    tokenModelIdentity: claudeTokenModelIdentity(options.defaultModelName),
     messages: [],
     pendingStartupMessages: options.startupMessages ?? [],
     activeCancelled: false,
@@ -157,63 +168,77 @@ export async function startClaudeCodeTurn(
   session: ClaudeCodeNativeSession,
   turn: RuntimeTurnContext<Record<string, unknown>>,
 ): Promise<RuntimeTurnResult> {
+  session.tokenModelIdentity = claudeTokenModelIdentity(
+    turn.modelSelection?.model.modelId ?? session.defaultModelName,
+  );
   session.messages.push({
     role: "user",
     content: turn.rawQuery,
     timestamp: Date.now(),
   });
 
-  const run = await runClaudeCodeProcess({
-    executablePath: session.executablePath,
-    args: [
-      ...session.launcherArgs,
-      ...(await createClaudeCodeArgs({
-        additionalArgs: session.additionalArgs,
-        defaultModelName: session.defaultModelName,
-        defaultThinkingLevel: session.defaultThinkingLevel,
-        managedConfig: session.managedConfig,
-        mcpServerUrl: session.mcpServerUrl,
-        modelName: turn.modelSelection?.model.modelId,
-        thinkingLevel: turn.modelSelection?.thinkingLevel,
-        permissionMode: session.permissionMode,
-        pluginDir: session.pluginDir,
-        sessionDir: session.sessionDir,
-        state: session.state,
-        systemPrompt: session.systemPrompt,
-      })),
-    ],
-    cwd: session.agent.workspace,
-    env: await createClaudeCodeEnv({
-      env: session.env,
-      managedConfig: session.managedConfig,
-      sessionDir: session.sessionDir,
-    }),
-    humanInteractionHandler: session.humanInteractionHandler,
-    logger: session.logger,
-    promptParts: [...turn.startupMessages.map((message) => message.content), turn.prompt],
-    runId: turn.runId,
-    source: {
-      kind: "agent",
-      runId: turn.runId,
-      agentId: session.agent.id,
-      path: [],
-    },
-    emitRuntimeEvent: turn.stream.write,
-    spawn: session.spawn,
-    onProcessStarted(process, exitPromise, hasExited) {
-      session.activeCancelled = false;
-      session.activeProcess = process;
-      session.activeExitPromise = exitPromise;
-      session.activeHasExited = hasExited;
-    },
-    onProcessClosed(process) {
-      if (session.activeProcess === process) {
-        session.activeProcess = undefined;
-        session.activeExitPromise = undefined;
-        session.activeHasExited = undefined;
-      }
-    },
+  const unsubscribeCompaction = session.compactionHookRelay.subscribe((event) => {
+    turn.stream.writeNative(event);
   });
+  let run: ClaudeProcessRunResult;
+  try {
+    run = await runClaudeCodeProcess({
+      executablePath: session.executablePath,
+      args: [
+        ...session.launcherArgs,
+        ...(await createClaudeCodeArgs({
+          additionalArgs: session.additionalArgs,
+          defaultModelName: session.defaultModelName,
+          defaultThinkingLevel: session.defaultThinkingLevel,
+          managedConfig: session.managedConfig,
+          mcpServerUrl: session.mcpServerUrl,
+          modelName: turn.modelSelection?.model.modelId,
+          thinkingLevel: turn.modelSelection?.thinkingLevel,
+          permissionMode: session.permissionMode,
+          pluginDir: session.pluginDir,
+          sessionDir: session.sessionDir,
+          state: session.state,
+          systemPrompt: session.systemPrompt,
+        })),
+      ],
+      cwd: session.agent.workspace,
+      env: await createClaudeCodeEnv({
+        env: session.env,
+        managedConfig: session.managedConfig,
+        sessionDir: session.sessionDir,
+      }),
+      humanInteractionHandler: session.humanInteractionHandler,
+      logger: session.logger,
+      promptParts: [...turn.startupMessages.map((message) => message.content), turn.prompt],
+      runId: turn.runId,
+      source: {
+        kind: "agent",
+        runId: turn.runId,
+        agentId: session.agent.id,
+        path: [],
+      },
+      emitRuntimeEvent: turn.stream.write,
+      spawn: session.spawn,
+      onProcessStarted(process, exitPromise, hasExited) {
+        session.activeCancelled = false;
+        session.activeProcess = process;
+        session.activeExitPromise = exitPromise;
+        session.activeHasExited = hasExited;
+      },
+      onProcessClosed(process) {
+        if (session.activeProcess === process) {
+          session.activeProcess = undefined;
+          session.activeExitPromise = undefined;
+          session.activeHasExited = undefined;
+        }
+      },
+    });
+  } finally {
+    session.compactionHookRelay.failPending(
+      "Claude Code ended before context compaction completed.",
+    );
+    unsubscribeCompaction();
+  }
 
   if (run.sessionId !== undefined && run.sessionId !== session.state.sessionId) {
     session.state.sessionId = run.sessionId;
@@ -238,7 +263,30 @@ export function mapClaudeCodeNativeEvent(
   event: Record<string, unknown>,
   context: RuntimeEventMappingContext,
 ): RuntimeEventMappingResult {
+  if (isClaudeCompactionNativeEvent(event)) {
+    return {
+      events: [
+        context.events.progress(event.stage, {
+          operationId: event.operationId,
+          trigger: event.trigger,
+          runtimeId: "claude-code-local",
+          ...(event.errorMessage === undefined ? {} : { errorMessage: event.errorMessage }),
+        }),
+      ],
+    };
+  }
   return mapClaudeStreamEvent(event, context.runId, context.source);
+}
+
+function isClaudeCompactionNativeEvent(
+  event: Record<string, unknown>,
+): event is ClaudeCompactionNativeEvent {
+  return (
+    event["type"] === "pragma_context_compaction" &&
+    typeof event["operationId"] === "string" &&
+    typeof event["stage"] === "string" &&
+    typeof event["trigger"] === "string"
+  );
 }
 
 export function cancelClaudeCodeTurn(session: ClaudeCodeNativeSession): void {
@@ -267,17 +315,62 @@ export async function collectClaudeCodeUsage(
     return currentUsage;
   }
 
-  return await scanClaudeTranscriptUsage({
+  const scanned = await scanClaudeTranscriptUsage({
     configDir: resolveClaudeCodeConfigDir(session),
     sessionId: session.state.sessionId,
     startTime: startedAt,
   });
+  return scanned ?? estimateClaudeCodeUsage(session);
 }
 
 export function readClaudeCodeContextWindow(
   session: ClaudeCodeNativeSession,
 ): RuntimeContextWindowUsage | undefined {
-  return session.contextWindowUsage;
+  const usage = session.contextWindowUsage;
+  if (usage === undefined || usage.usedTokens !== null) return usage;
+  return createRuntimeContextWindowUsage({
+    usedTokens: session.tokenCounter.countText(
+      JSON.stringify({
+        systemPrompt: session.systemPrompt,
+        messages: session.messages,
+      }),
+      session.tokenModelIdentity,
+    ).tokens,
+    contextWindowTokens: usage.contextWindowTokens,
+    measurement: "estimated",
+  });
+}
+
+function estimateClaudeCodeUsage(session: ClaudeCodeNativeSession): AgentMessageUsage | undefined {
+  const assistantIndex = session.messages.findLastIndex((message) => message.role === "assistant");
+  if (assistantIndex < 0) return undefined;
+  return createUsageFromTokenCounts({
+    measurement: "estimated",
+    inputTokens: session.tokenCounter.countText(
+      JSON.stringify({
+        systemPrompt: session.systemPrompt,
+        messages: session.messages.slice(0, assistantIndex),
+      }),
+      session.tokenModelIdentity,
+    ).tokens,
+    inputTokensIncludeCacheRead: false,
+    outputTokens: session.tokenCounter.countText(
+      session.messages[assistantIndex]?.content ?? "",
+      session.tokenModelIdentity,
+    ).tokens,
+    cacheReadTokens: 0,
+    cacheWriteTokens: 0,
+  });
+}
+
+function claudeTokenModelIdentity(modelId: string | undefined): RuntimeTokenModelIdentity {
+  return {
+    runtimeKind: "claude-code",
+    providerCatalogId: "anthropic",
+    providerId: "anthropic",
+    api: "anthropic-messages",
+    ...(modelId === undefined ? {} : { modelId }),
+  };
 }
 
 export async function compactClaudeCodeContextWindow(

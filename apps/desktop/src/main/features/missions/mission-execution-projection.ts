@@ -225,10 +225,19 @@ function boundEntry(executionId: string, entry: MissionChatEntry): ProjectionEnt
         fields,
       );
     }
-  } else {
+  } else if (bounded.kind === "agent_activity") {
     if (bounded.label !== undefined) {
       bounded.label = truncateField(bounded.label, 500, "label", fields);
     }
+    if (bounded.error !== undefined) {
+      bounded.error = truncateField(
+        bounded.error,
+        MISSION_EXECUTION_PROJECTION_MAX_ERROR_LENGTH,
+        "error",
+        fields,
+      );
+    }
+  } else if (bounded.kind === "context_operation") {
     if (bounded.error !== undefined) {
       bounded.error = truncateField(
         bounded.error,

@@ -57,11 +57,14 @@ export const MissionUsageSchema = z.object({
   revision: z.number().int().nonnegative(),
   trackingStartedAt: z.string().datetime(),
   usage: UsageTokenTotalsSchema,
+  provisional: z.boolean().default(false),
 });
 
 export const UsageUpdateSchema = z.object({
   revision: z.number().int().nonnegative(),
   missionId: z.string().min(1).optional(),
+  missionUsage: UsageTokenTotalsSchema.optional(),
+  provisional: z.boolean().optional(),
 });
 
 export type UsagePeriod = z.infer<typeof UsagePeriodSchema>;

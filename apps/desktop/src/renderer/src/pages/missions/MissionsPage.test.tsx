@@ -8,12 +8,14 @@ import type {
 } from "../../../../shared/contracts/index.ts";
 import { i18n } from "../../i18n/index.ts";
 import {
+  applyMissionUsageHintRevision,
   applyMissionChatPatches,
   claimMissionClientOperation,
   CONTEXT_POPOVER_CLOSE_DELAY_MS,
   ContextWindowControl,
   groupMissionConversationEntries,
   MissionContextOperationEntry,
+  startMissionContextOperation,
   MissionDetailFragment,
   MissionThinkingEntry,
   MissionWorkDrawer,
@@ -30,6 +32,22 @@ import {
 } from "./MissionsPage.tsx";
 
 describe("MissionsPage", () => {
+  it("does not let a stale initial usage query overwrite a newer streaming update", () => {
+    const live = applyMissionUsageHintRevision(
+      { revision: -1, totalTokens: 0 },
+      { revision: 8, totalTokens: 120 },
+    );
+
+    expect(applyMissionUsageHintRevision(live, { revision: 7, totalTokens: 80 })).toEqual({
+      revision: 8,
+      totalTokens: 120,
+    });
+    expect(applyMissionUsageHintRevision(live, { revision: 9, totalTokens: 155 })).toEqual({
+      revision: 9,
+      totalTokens: 155,
+    });
+  });
+
   it("keeps creation outside the missions surface", () => {
     const html = renderToStaticMarkup(<MissionsPage onCreate={() => undefined} />);
 
@@ -220,6 +238,32 @@ describe("MissionsPage", () => {
 });
 
 describe("MissionDetailFragment", () => {
+  it("reuses the failed context operation when retrying", () => {
+    const failed = [
+      {
+        id: "compact-1",
+        createdAt: "2026-07-29T00:00:00.000Z",
+        status: "failed" as const,
+        error: "provider unavailable",
+      },
+    ];
+
+    expect(
+      startMissionContextOperation(failed, {
+        id: "compact-1",
+        createdAt: "2026-07-29T00:01:00.000Z",
+        retry: true,
+      }),
+    ).toEqual([
+      {
+        id: "compact-1",
+        createdAt: "2026-07-29T00:00:00.000Z",
+        status: "running",
+        error: undefined,
+      },
+    ]);
+  });
+
   it("holds a synchronous client-operation lock throughout context compaction", () => {
     const compacting = claimMissionClientOperation({ kind: "idle" }, "compacting", "compact-token");
 
@@ -250,6 +294,16 @@ describe("MissionDetailFragment", () => {
         onRetry={() => undefined}
       />,
     );
+    const skipped = renderToStaticMarkup(
+      <MissionContextOperationEntry
+        operation={{
+          id: "compact-1",
+          createdAt: "2026-07-24T00:00:00.000Z",
+          status: "skipped",
+        }}
+        onRetry={() => undefined}
+      />,
+    );
     const failed = renderToStaticMarkup(
       <MissionContextOperationEntry
         operation={{
@@ -264,9 +318,28 @@ describe("MissionDetailFragment", () => {
 
     expect(started).toContain("Compacting context");
     expect(completed).toContain("Context compaction completed");
+    expect(skipped).toContain("No context compaction needed");
     expect(failed).toContain("Context compaction failed");
     expect(failed).toContain("The Runtime could not compact this context.");
     expect(failed).toContain(">Retry<");
+
+    const automatic = renderToStaticMarkup(
+      <MissionContextOperationEntry
+        operation={{
+          id: "context:execution-1:compact-2",
+          executionId: "execution-1",
+          kind: "context_operation",
+          operationId: "compact-2",
+          operation: "compaction",
+          trigger: "auto",
+          runtimeId: "cloud-pi-agent",
+          status: "running",
+          createdAt: "2026-07-24T00:00:01.000Z",
+        }}
+      />,
+    );
+    expect(automatic).toContain("Compacting context");
+    expect(automatic).not.toContain(">Retry<");
   });
 
   it("renders the context ring with an accessible percentage label", () => {
@@ -293,6 +366,30 @@ describe("MissionDetailFragment", () => {
     expect(html).toContain('stroke-dashoffset="75"');
     expect(html).toContain('aria-label="Context window usage: 25%"');
     expect(html).toContain('aria-haspopup="dialog"');
+  });
+
+  it("explains when the Runtime does not have compactable history yet", () => {
+    const html = renderToStaticMarkup(
+      <ContextWindowControl
+        state={{
+          supportsInspection: true,
+          supportsCompaction: true,
+          canCompact: false,
+          compactionBlockedReason: "not_ready",
+          usage: {
+            usedTokens: 3_975,
+            contextWindowTokens: 128_000,
+            percent: 3.1,
+            measurement: "reported",
+            observedAt: "2026-07-29T00:00:00.000Z",
+          },
+        }}
+        compacting={false}
+        onCompact={() => undefined}
+      />,
+    );
+
+    expect(html).toContain("There is not enough older context to compact yet.");
   });
 
   it("bounds impossible context usage and exposes a diagnostic warning", () => {
@@ -330,7 +427,7 @@ describe("MissionDetailFragment", () => {
     expect(html).toContain("mission-chat-footer");
     expect(html).toContain("mission-chat-composer");
     expect(html).toContain("mission-chat-composer-toolbar");
-    expect(html).toContain("This Mission has used 0 tokens");
+    expect(html).not.toContain("Used 0 tokens");
     expect(html).toContain('aria-label="Model"');
     expect(html).toContain('aria-label="Tool permissions"');
     expect(html).not.toContain("mission-execution-notice");
@@ -574,6 +671,46 @@ describe("Mission chat patches", () => {
         2,
       ),
     ).toBeNull();
+  });
+
+  it("applies a live context-window patch without replacing chat entries", () => {
+    const snapshot: MissionChatSnapshot = {
+      missionId: "00000000-0000-4000-8000-000000000000",
+      revision: 1,
+      entries: [],
+      page: {},
+      pendingInteractions: [],
+      contextWindow: {
+        supportsInspection: true,
+        supportsCompaction: true,
+        canCompact: false,
+      },
+    };
+
+    expect(
+      applyMissionChatPatches(
+        snapshot,
+        [
+          {
+            type: "context-window.update",
+            usage: {
+              usedTokens: 80_000,
+              contextWindowTokens: 200_000,
+              percent: 40,
+              measurement: "estimated",
+              observedAt: "2026-07-29T00:00:00.000Z",
+            },
+          },
+        ],
+        2,
+      ),
+    ).toMatchObject({
+      revision: 2,
+      contextWindow: {
+        canCompact: false,
+        usage: { usedTokens: 80_000, percent: 40 },
+      },
+    });
   });
 });
 

@@ -11,6 +11,8 @@ import {
 } from "@phosphor-icons/react";
 import { useTranslation } from "react-i18next";
 
+import pragmaIcon from "../assets/pragma-icon.png";
+
 export type AppView = "home" | "missions" | "studio" | "evaluations" | "usage" | "settings";
 
 const navigationItems: readonly {
@@ -39,7 +41,7 @@ export function Sidebar(props: {
       <div className="sidebar-brand-row">
         <div className="brand" aria-label="Pragma">
           <span className="brand-mark" aria-hidden="true">
-            P
+            <img src={pragmaIcon} alt="" draggable={false} />
           </span>
           <span className="brand-name">Pragma</span>
         </div>

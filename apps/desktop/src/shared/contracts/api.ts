@@ -59,6 +59,9 @@ import type {
   MissionSummary,
   MissionUpdate,
   MissionExecutorOption,
+  HomeMissionExecutorCatalog,
+  HomeExecutorPreference,
+  UpdateHomeExecutorPreference,
   MissionCreationDefaults,
   AutomationSummary,
   SaveAutomation,
@@ -77,7 +80,7 @@ import type {
   SendMissionMessage,
   MissionHumanInteraction,
   MissionChatSnapshot,
-  MissionContextWindowState,
+  MissionContextCompactionResult,
   MissionChatUpdate,
   RespondMissionHumanInteraction,
   Capability,
@@ -97,6 +100,17 @@ import type {
   UsageSubjectList,
   MissionUsage,
   UsageUpdate,
+  PreparePragmaBundleExport,
+  PragmaBundleExportPreview,
+  ExportPragmaBundle,
+  PragmaBundleExportResult,
+  InspectPragmaBundle,
+  PragmaBundleImportInspection,
+  PragmaBundlePickResult,
+  StartPragmaBundleImport,
+  PragmaBundleInstallation,
+  ResolvePragmaBundleInstallation,
+  PragmaBundleInstallationAction,
 } from "./types.ts";
 
 export interface PragmaDesktopAPI {
@@ -163,6 +177,18 @@ export interface PragmaDesktopAPI {
   getWorkflowLayout: (input: GetWorkflowLayout) => Promise<WorkflowLayout | null>;
   saveWorkflowLayout: (layout: WorkflowLayout) => Promise<WorkflowLayout>;
   deleteWorkflowLayout: (input: DeleteWorkflowLayout) => Promise<void>;
+  preparePragmaBundleExport: (
+    input: PreparePragmaBundleExport,
+  ) => Promise<PragmaBundleExportPreview>;
+  exportPragmaBundle: (input: ExportPragmaBundle) => Promise<PragmaBundleExportResult>;
+  pickPragmaBundle: () => Promise<PragmaBundlePickResult>;
+  inspectPragmaBundle: (input: InspectPragmaBundle) => Promise<PragmaBundleImportInspection>;
+  importPragmaBundle: (input: StartPragmaBundleImport) => Promise<PragmaBundleInstallation>;
+  listPragmaBundleInstallations: () => Promise<PragmaBundleInstallation[]>;
+  resolvePragmaBundleInstallation: (
+    input: ResolvePragmaBundleInstallation,
+  ) => Promise<PragmaBundleInstallation>;
+  discardPragmaBundleInstallation: (input: PragmaBundleInstallationAction) => Promise<void>;
   listAutomationAdapters: () => Promise<AutomationAdapterOption[]>;
   listAutomations: () => Promise<AutomationSummary[]>;
   saveAutomation: (input: SaveAutomation) => Promise<AutomationSummary>;
@@ -173,6 +199,10 @@ export interface PragmaDesktopAPI {
   ) => Promise<AutomationSchedulePreview>;
   listMissions: () => Promise<MissionSummary[]>;
   listMissionExecutors: () => Promise<MissionExecutorOption[]>;
+  getHomeMissionExecutorCatalog: () => Promise<HomeMissionExecutorCatalog>;
+  updateHomeExecutorPreference: (
+    input: UpdateHomeExecutorPreference,
+  ) => Promise<HomeExecutorPreference>;
   getMissionModelOptions: (
     executorRef: string,
     missionId?: string | undefined,
@@ -186,7 +216,7 @@ export interface PragmaDesktopAPI {
   runMission: (id: string) => Promise<Mission>;
   sendMissionMessage: (input: SendMissionMessage) => Promise<Mission>;
   getMissionChat: (input: GetMissionChat) => Promise<MissionChatSnapshot>;
-  compactMissionContext: (id: string) => Promise<MissionContextWindowState>;
+  compactMissionContext: (id: string) => Promise<MissionContextCompactionResult>;
   subscribeMissionChat: (id: string, listener: (update: MissionChatUpdate) => void) => () => void;
   interruptMission: (id: string) => Promise<Mission>;
   getMissionWork: (id: string) => Promise<MissionWorkSnapshot>;

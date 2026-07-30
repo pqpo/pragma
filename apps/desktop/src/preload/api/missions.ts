@@ -1,9 +1,12 @@
 import { ipcRenderer, type IpcRendererEvent } from "electron";
 
 import {
+  HomeExecutorPreferenceSchema,
+  HomeMissionExecutorCatalogSchema,
   MissionCreationDefaultsSchema,
   MissionExecutorOptionSchema,
   MissionIdSchema,
+  UpdateHomeExecutorPreferenceSchema,
 } from "../../shared/contracts/mission-base.ts";
 import {
   CreateMissionSchema,
@@ -12,7 +15,7 @@ import {
   MissionActionSchema,
   MissionChatSnapshotSchema,
   MissionChatUpdateSchema,
-  MissionContextWindowStateSchema,
+  MissionContextCompactionResultSchema,
   MissionHumanInteractionSchema,
   MissionModelOptionsRequestSchema,
   MissionModelOptionsSchema,
@@ -33,6 +36,15 @@ export const missionsApi = {
     MissionSummarySchema.array().parse(await ipcRenderer.invoke("missions:list")),
   listMissionExecutors: async () =>
     MissionExecutorOptionSchema.array().parse(await ipcRenderer.invoke("missions:executors:list")),
+  getHomeMissionExecutorCatalog: async () =>
+    HomeMissionExecutorCatalogSchema.parse(await ipcRenderer.invoke("missions:home-executors:get")),
+  updateHomeExecutorPreference: async (input) =>
+    HomeExecutorPreferenceSchema.parse(
+      await invokeMutation(
+        "missions:home-executor-preference:update",
+        UpdateHomeExecutorPreferenceSchema.parse(input),
+      ),
+    ),
   getMissionModelOptions: async (executorRef, missionId) =>
     MissionModelOptionsSchema.parse(
       await ipcRenderer.invoke(
@@ -73,7 +85,7 @@ export const missionsApi = {
       await ipcRenderer.invoke("missions:chat:get", GetMissionChatSchema.parse(input)),
     ),
   compactMissionContext: async (id) =>
-    MissionContextWindowStateSchema.parse(
+    MissionContextCompactionResultSchema.parse(
       await invokeMutation("missions:context:compact", MissionActionSchema.parse({ id })),
     ),
   subscribeMissionChat: (id, listener) => {
@@ -134,6 +146,8 @@ export const missionsApi = {
   PragmaDesktopAPI,
   | "listMissions"
   | "listMissionExecutors"
+  | "getHomeMissionExecutorCatalog"
+  | "updateHomeExecutorPreference"
   | "getMissionModelOptions"
   | "getMissionCreationDefaults"
   | "getMission"

@@ -31,6 +31,60 @@ async function fixture() {
 }
 
 describe("Desktop usage store", () => {
+  it("replaces live previews and reconciles them with the final observation", async () => {
+    const { store } = await fixture();
+    const context = {
+      mission: { id: "mission-1", title: "Mission" },
+      invocations: invocationTree(),
+      names: new Map<string, string>(),
+    };
+    const updates: Array<{
+      readonly total: number;
+      readonly provisional: boolean | undefined;
+    }> = [];
+    store.subscribe((update) => {
+      if (update.missionUsage !== undefined) {
+        updates.push({
+          total: update.missionUsage.totalTokens,
+          provisional: update.provisional,
+        });
+      }
+    });
+    const firstPreview = {
+      ...observation(),
+      usage: {
+        ...observation().usage,
+        input: 40,
+        output: 10,
+        cacheRead: 0,
+        cacheWrite: 0,
+        totalTokens: 50,
+      },
+    };
+    store.preview(firstPreview, context);
+    store.preview(
+      {
+        ...firstPreview,
+        usage: { ...firstPreview.usage, output: 40, totalTokens: 80 },
+      },
+      context,
+    );
+
+    expect(store.getMissionUsage("mission-1")).toMatchObject({
+      provisional: true,
+      usage: { totalTokens: 0 },
+    });
+    expect(store.getOverview("all").totals.totalTokens).toBe(0);
+
+    store.record(observation(), context);
+
+    expect(store.getMissionUsage("mission-1")).toMatchObject({
+      provisional: false,
+      usage: { totalTokens: 155 },
+    });
+    expect(updates.map((update) => update.total)).toEqual([50, 80, 155]);
+  });
+
   it("records token-only observations and attributes ancestors inclusively", async () => {
     const { store } = await fixture();
     store.record(observation(), {

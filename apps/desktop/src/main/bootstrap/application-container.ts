@@ -3,6 +3,7 @@ import { join } from "node:path";
 
 import type { BrowserWindow } from "electron";
 import {
+  createRuntimeTokenCounter,
   createStorageCapacityGuard,
   PragmaPaths,
   runStorageMaintenance,
@@ -18,6 +19,8 @@ import {
 import { installAutomationHandlers } from "../features/automations/automation-ipc.ts";
 import { createAutomationService } from "../features/automations/automation-service.ts";
 import { createAutomationStore } from "../features/automations/automation-store.ts";
+import { installPragmaBundleHandlers } from "../features/bundles/pragma-bundle-ipc.ts";
+import { createPragmaBundleService } from "../features/bundles/pragma-bundle-service.ts";
 import { createCapabilityCredentialStore } from "../features/capabilities/capability-credential-store.ts";
 import { installCapabilityHandlers } from "../features/capabilities/capability-ipc.ts";
 import { createCapabilityStore } from "../features/capabilities/capability-store.ts";
@@ -35,6 +38,8 @@ import {
   withRuntimeDefaults,
 } from "../features/experts/system-expert-runtime.ts";
 import { createMissionCreator } from "../features/missions/mission-creator.ts";
+import { createHomeExecutorCatalog } from "../features/missions/home-executor-catalog.ts";
+import { createHomeExecutorPreferenceStore } from "../features/missions/home-executor-preference-store.ts";
 import { createMissionExecutorCatalog } from "../features/missions/mission-executor-catalog.ts";
 import { installMissionHandlers } from "../features/missions/mission-ipc.ts";
 import {
@@ -107,6 +112,7 @@ export async function createDesktopApplicationContainer(
     );
   }
   const maintenance = await runStorageMaintenance({ paths: pragmaPaths });
+  const tokenCounter = createRuntimeTokenCounter({ logger: mainLogger });
   const storageCapacityGuard = createStorageCapacityGuard({
     paths: pragmaPaths,
     initialOverview: maintenance.after,
@@ -137,6 +143,11 @@ export async function createDesktopApplicationContainer(
     warn: (message, error) =>
       mainLogger.warn("desktop.workspace_history_warning", message, { error }),
   });
+  const homeExecutorPreferences = createHomeExecutorPreferenceStore({
+    preferencesPath: join(pragmaPaths.stateRoot(), "home-executor-preferences.json"),
+    warn: (message, error) =>
+      mainLogger.warn("desktop.home_executor_preference_warning", message, { error }),
+  });
   const getToolPermissionMode = async () =>
     (await desktopSettings.getSnapshot(options.getPreferredSystemLanguages())).toolPermissionMode;
   const automaticHumanInteractionHandler =
@@ -156,11 +167,8 @@ export async function createDesktopApplicationContainer(
     blueprintCache,
     reservedResourceRefs: new Set([BUILT_IN_PRAGMA_REF]),
   });
-  installWorkflowLayoutHandlers(
-    createWorkflowLayoutStore({
-      projectsPath,
-    }),
-  );
+  const workflowLayouts = createWorkflowLayoutStore({ projectsPath });
+  installWorkflowLayoutHandlers(workflowLayouts);
   const pluginCredentials = createPluginCredentialStore({
     configPath: join(pragmaPaths.credentialsRoot(), "plugin-credentials.json"),
     encryption,
@@ -195,6 +203,7 @@ export async function createDesktopApplicationContainer(
       (runtimeId) => {
         options.sendRuntimeModelCatalogUpdate(runtimeId);
       },
+      tokenCounter,
     ),
   });
   const missionExecutors = createMissionExecutorCatalog({
@@ -202,11 +211,15 @@ export async function createDesktopApplicationContainer(
     systemExperts,
     runtimes,
   });
-  const missionCreator = createMissionCreator({
-    missions: missionStore,
+  const homeExecutors = createHomeExecutorCatalog({
     project: pragmaProjectStore,
     executors: missionExecutors,
-    getDefaultToolPermissionMode: getToolPermissionMode,
+    systemExperts,
+    preferences: homeExecutorPreferences,
+    defaultExecutorRef: BUILT_IN_PRAGMA_REF,
+    validateWorkspace,
+    warn: (message, error) =>
+      mainLogger.warn("desktop.home_executor_usage_failed", message, { error }),
   });
   installRuntimeHandlers(runtimeEnvironments, runtimes);
   const expertStore = createExpertDefinitionStore({
@@ -281,6 +294,31 @@ export async function createDesktopApplicationContainer(
     },
   });
   installContextStoreHandlers(contextStores, options.getWindow);
+  const bundleService = createPragmaBundleService({
+    paths: pragmaPaths,
+    project: pragmaProjectStore,
+    capabilities: capabilityStore,
+    contextStores,
+    plugins: pluginStore,
+    layouts: workflowLayouts,
+    getRuntimes: async () => await getRuntimeAvailability(runtimes),
+    externalResourceRefs: new Set([BUILT_IN_PRAGMA_REF]),
+  });
+  await bundleService.initialize();
+  installPragmaBundleHandlers(bundleService, options.getWindow);
+  const missionCreator = createMissionCreator({
+    missions: missionStore,
+    project: pragmaProjectStore,
+    executors: missionExecutors,
+    getDefaultToolPermissionMode: getToolPermissionMode,
+    assertExecutorReady: async (ref) => {
+      if (await bundleService.isRefPending(ref)) {
+        throw new Error(
+          "This imported Expert, Team, or Flow still has unresolved local dependencies. Complete bundle setup before creating a Mission.",
+        );
+      }
+    },
+  });
   installExpertDefinitionHandlers(expertStore);
   installPragmaProjectHandlers(pragmaProjectStore);
   const initialSettings = await desktopSettings.getSnapshot(options.getPreferredSystemLanguages());
@@ -311,6 +349,13 @@ export async function createDesktopApplicationContainer(
       createAutomaticToolPermissionHandler(() => mode),
     assertStorageWriteAllowed: async () => await storageCapacityGuard.assertWriteAllowed(),
     getSystemExecutorFingerprint: (mission) => systemExperts.fingerprint(mission.executor.ref),
+    assertExecutorReady: async (ref) => {
+      if (await bundleService.isRefPending(ref)) {
+        throw new Error(
+          "This imported Expert, Team, or Flow still has unresolved local dependencies. Complete bundle setup before running it.",
+        );
+      }
+    },
     compileSystemExecutor: async ({ mission, runtimes: scopedRuntimes }) => {
       if (mission.executor.ref !== BUILT_IN_PRAGMA_REF) return undefined;
       if (defaultAgentToolsRef.current === undefined) {
@@ -375,6 +420,15 @@ export async function createDesktopApplicationContainer(
       });
     },
   });
+  const unsubscribeTokenCounter = tokenCounter.subscribe(() => {
+    void missionRunner.invalidateEstimatedContextWindows().catch((error: unknown) => {
+      mainLogger.warn(
+        "desktop.tokenizer_context_refresh_failed",
+        "Mission context windows could not be refreshed after a tokenizer update.",
+        { error },
+      );
+    });
+  });
   await missionRunner.reconcileUsage().catch((error: unknown) => {
     mainLogger.warn(
       "desktop.usage_reconciliation_failed",
@@ -412,6 +466,7 @@ export async function createDesktopApplicationContainer(
     missions: missionStore,
     creator: missionCreator,
     executors: missionExecutors,
+    homeExecutors,
     project: pragmaProjectStore,
     getWindow: options.getWindow,
     runner: missionRunner,
@@ -449,11 +504,14 @@ export async function createDesktopApplicationContainer(
           (resource.spec.config as Record<string, unknown>).providerId === providerId,
       ),
   });
+  void tokenCounter.load();
   return {
     dispose: () => {
       unsubscribeUsageUpdates();
+      unsubscribeTokenCounter();
       automationService.stop();
       storageCapacityGuard.close();
+      tokenCounter.dispose();
       usageStore.close();
     },
   };

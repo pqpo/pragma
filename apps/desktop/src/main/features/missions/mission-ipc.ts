@@ -6,6 +6,8 @@ import {
   CreateMissionSchema,
   GetMissionChatSchema,
   GetMissionWorkConversationSchema,
+  HomeExecutorPreferenceSchema,
+  HomeMissionExecutorCatalogSchema,
   MissionActionSchema,
   MissionCreationDefaultsSchema,
   MissionExecutorOptionSchema,
@@ -14,6 +16,7 @@ import {
   RespondMissionHumanInteractionSchema,
   SendMissionMessageSchema,
   UpdateMissionOptionsSchema,
+  UpdateHomeExecutorPreferenceSchema,
   type DesktopToolPermissionMode,
 } from "../../../shared/contracts/index.ts";
 import type { MissionRunner } from "./mission-runner.ts";
@@ -25,11 +28,13 @@ import { runDesktopMutation } from "../../platform/ipc/desktop-mutation-result.t
 import { publishMissionUpdate } from "./mission-update-publisher.ts";
 import { availableRecentWorkspaces } from "../workspaces/workspace-history-store.ts";
 import { validateWorkspace } from "../workspaces/workspace-scope.ts";
+import type { HomeExecutorCatalog } from "./home-executor-catalog.ts";
 
 export function installMissionHandlers(options: {
   readonly missions: MissionStore;
   readonly creator: MissionCreator;
   readonly executors: MissionExecutorCatalog;
+  readonly homeExecutors: HomeExecutorCatalog;
   readonly project: PragmaProjectStore;
   readonly runner: MissionRunner;
   readonly getWindow: () => BrowserWindow | null;
@@ -41,6 +46,20 @@ export function installMissionHandlers(options: {
   readonly recordWorkspaceUsage: (path: string) => void | Promise<void>;
   readonly defaultExecutorRef: string;
 }): void {
+  const getCreationDefaults = async () => {
+    const workspace = await options.getDefaultWorkspace();
+    const recentWorkspaces = await availableRecentWorkspaces(
+      await options.getRecentWorkspaces(),
+      workspace,
+      async (path) => (await validateWorkspace(path)).ok,
+    );
+    return MissionCreationDefaultsSchema.parse({
+      workspace: { path: workspace, basename: basename(workspace) },
+      recentWorkspaces: recentWorkspaces.map((path) => ({ path, basename: basename(path) })),
+      executorRef: options.defaultExecutorRef,
+      toolPermissionMode: await options.getDefaultToolPermissionMode(),
+    });
+  };
   const publishMission = (mission: Awaited<ReturnType<MissionStore["get"]>>): void => {
     publishMissionUpdate(() => options.getWindow()?.webContents ?? null, {
       kind: "upsert",
@@ -60,6 +79,19 @@ export function installMissionHandlers(options: {
   ipcMain.handle("missions:executors:list", async () =>
     MissionExecutorOptionSchema.array().parse(await options.executors.list()),
   );
+  ipcMain.handle("missions:home-executors:get", async () =>
+    HomeMissionExecutorCatalogSchema.parse({
+      executors: await options.homeExecutors.list(),
+      defaults: await getCreationDefaults(),
+    }),
+  );
+  ipcMain.handle("missions:home-executor-preference:update", (_event, input: unknown) =>
+    runDesktopMutation(async () =>
+      HomeExecutorPreferenceSchema.parse(
+        await options.homeExecutors.update(UpdateHomeExecutorPreferenceSchema.parse(input)),
+      ),
+    ),
+  );
   ipcMain.handle("missions:model-options:get", async (_event, input: unknown) => {
     const { executorRef, missionId } = MissionModelOptionsRequestSchema.parse(input);
     if (missionId === undefined) return await options.executors.getModelOptions(executorRef);
@@ -74,20 +106,7 @@ export function installMissionHandlers(options: {
       project.listResources(),
     );
   });
-  ipcMain.handle("missions:create-defaults:get", async () => {
-    const workspace = await options.getDefaultWorkspace();
-    const recentWorkspaces = await availableRecentWorkspaces(
-      await options.getRecentWorkspaces(),
-      workspace,
-      async (path) => (await validateWorkspace(path)).ok,
-    );
-    return MissionCreationDefaultsSchema.parse({
-      workspace: { path: workspace, basename: basename(workspace) },
-      recentWorkspaces: recentWorkspaces.map((path) => ({ path, basename: basename(path) })),
-      executorRef: options.defaultExecutorRef,
-      toolPermissionMode: await options.getDefaultToolPermissionMode(),
-    });
-  });
+  ipcMain.handle("missions:create-defaults:get", getCreationDefaults);
   ipcMain.handle("missions:create", async (_event, input: unknown) => {
     const parsed = CreateMissionSchema.parse(input);
     const mission = await options.creator.create({
@@ -99,7 +118,10 @@ export function installMissionHandlers(options: {
         ? {}
         : { toolPermissionMode: parsed.toolPermissionMode }),
     });
-    await options.recordWorkspaceUsage(parsed.workspace);
+    await Promise.all([
+      options.recordWorkspaceUsage(parsed.workspace),
+      options.homeExecutors.recordUsage(parsed.executor.ref, parsed.workspace),
+    ]);
     publishMission(mission);
     return mission;
   });

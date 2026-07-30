@@ -73,6 +73,13 @@ export interface ResolvedDesktopPlugin {
 export interface PluginStore {
   list(): Promise<DesktopPlugin[]>;
   get(ref: string): Promise<DesktopPlugin>;
+  exportPackage(ref: string): Promise<{
+    readonly root: string;
+    readonly contentHash: string;
+    readonly origin: "built_in" | "user";
+  }>;
+  assertPortableConfig(ref: string, config: Readonly<Record<string, unknown>>): Promise<void>;
+  hasSecret(binding: string): Promise<boolean>;
   inspectZip(sourcePath: string): Promise<PluginZipInspection>;
   importZip(input: ImportPluginZip): Promise<DesktopPlugin>;
   updateDefaults(input: UpdatePluginDefaults): Promise<DesktopPlugin>;
@@ -198,6 +205,20 @@ export function createPluginStore(options: {
     },
     async get(ref) {
       return await project(await locate(ref));
+    },
+    async exportPackage(ref) {
+      const plugin = await locate(ref);
+      return {
+        root: plugin.root,
+        contentHash: plugin.contentHash,
+        origin: plugin.origin,
+      };
+    },
+    async assertPortableConfig(ref, config) {
+      assertConfigHasNoPlaintextSecrets((await locate(ref)).manifest, config);
+    },
+    async hasSecret(binding) {
+      return await options.credentials.has(binding);
     },
     inspectZip: inspectPluginZip,
     async importZip(input) {

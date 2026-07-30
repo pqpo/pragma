@@ -4,6 +4,13 @@ import type {
   ModelRegistry,
   ModelRuntime,
 } from "@earendil-works/pi-coding-agent";
+import {
+  estimateTokens,
+  findCutPoint,
+  getLastAssistantUsage,
+  sessionEntryToContextMessages,
+} from "@earendil-works/pi-coding-agent";
+import { randomUUID } from "node:crypto";
 import { AgentMessageUsageSchema, type AgentMessage, type AgentMessageUsage } from "@pragma/shared";
 import type {
   Expert,
@@ -13,8 +20,16 @@ import type {
   RuntimeModelRef,
   RuntimeTurnContext,
   RuntimeTurnResult,
+  RuntimeContextCompactionTrigger,
+  RuntimeTokenCounter,
+  RuntimeTokenModelIdentity,
 } from "@pragma/core";
-import { createRuntimeContextWindowUsage, type RuntimeStreamEventInput } from "@pragma/core";
+import {
+  createRuntimeContextWindowUsage,
+  defaultRuntimeTokenCounter,
+  RUNTIME_CONTEXT_COMPACTION_STAGES,
+  type RuntimeStreamEventInput,
+} from "@pragma/core";
 
 import {
   assertAssistantTurnCompleted,
@@ -39,7 +54,18 @@ export interface PiNativeSession {
     readonly modelRegistry: ModelRegistry;
     readonly modelRuntime: ModelRuntime;
   };
+  readonly compactionKeepRecentTokens: number;
+  readonly tokenCounter: RuntimeTokenCounter;
+  tokenModelIdentity: RuntimeTokenModelIdentity;
   messageCountBeforeRun: number;
+  pendingCompactionOperationId?: string | undefined;
+  compactionTriggerOverride?: RuntimeContextCompactionTrigger | undefined;
+}
+
+export interface PiNativeEvent {
+  readonly event: AgentSessionEvent;
+  readonly operationId?: string | undefined;
+  readonly trigger?: RuntimeContextCompactionTrigger | undefined;
 }
 
 export function createPiNativeSession(options: {
@@ -51,11 +77,23 @@ export function createPiNativeSession(options: {
     readonly modelRegistry: ModelRegistry;
     readonly modelRuntime: ModelRuntime;
   };
+  readonly compactionKeepRecentTokens: number;
+  readonly tokenCounter?: RuntimeTokenCounter | undefined;
+  readonly tokenModelIdentity?: RuntimeTokenModelIdentity | undefined;
 }): PiNativeSession {
   return {
     ...options,
+    tokenCounter: options.tokenCounter ?? defaultRuntimeTokenCounter,
+    tokenModelIdentity: options.tokenModelIdentity ?? { runtimeKind: "cloud-pi-agent" },
     messageCountBeforeRun: options.session.messages.length,
   };
+}
+
+export function setPiTokenModelIdentity(
+  session: PiNativeSession,
+  identity: RuntimeTokenModelIdentity,
+): void {
+  session.tokenModelIdentity = identity;
 }
 
 export function listPiMessages(session: PiNativeSession): readonly AgentMessage[] {
@@ -64,7 +102,7 @@ export function listPiMessages(session: PiNativeSession): readonly AgentMessage[
 
 export async function startPiTurn(
   nativeSession: PiNativeSession,
-  turn: RuntimeTurnContext<AgentSessionEvent>,
+  turn: RuntimeTurnContext<PiNativeEvent>,
 ): Promise<RuntimeTurnResult> {
   nativeSession.streamState.runId = turn.runId;
   nativeSession.streamState.source = turn.source;
@@ -81,7 +119,26 @@ export async function startPiTurn(
   }
 
   const unsubscribe = nativeSession.session.subscribe((event) => {
-    turn.stream.writeNative(event);
+    if (event.type === "compaction_start") {
+      nativeSession.pendingCompactionOperationId = randomUUID();
+    }
+    const operationId =
+      event.type === "compaction_start" || event.type === "compaction_end"
+        ? (nativeSession.pendingCompactionOperationId ?? randomUUID())
+        : undefined;
+    turn.stream.writeNative({
+      event,
+      ...(operationId === undefined ? {} : { operationId }),
+      ...(event.type !== "compaction_start" && event.type !== "compaction_end"
+        ? {}
+        : {
+            trigger:
+              nativeSession.compactionTriggerOverride ?? mapPiCompactionTrigger(event.reason),
+          }),
+    });
+    if (event.type === "compaction_end") {
+      nativeSession.pendingCompactionOperationId = undefined;
+    }
   });
 
   try {
@@ -95,6 +152,7 @@ export async function startPiTurn(
     if (thinkingLevel !== undefined) {
       nativeSession.session.setThinkingLevel(thinkingLevel);
     }
+    await compactPiContextBeforePrompt(nativeSession);
     await nativeSession.session.prompt(turn.prompt);
     assertAssistantTurnCompleted(
       nativeSession.session.messages.slice(nativeSession.messageCountBeforeRun),
@@ -112,9 +170,10 @@ export async function startPiTurn(
 }
 
 export function mapPiAgentEvent(
-  event: AgentSessionEvent,
+  input: PiNativeEvent,
   context: RuntimeEventMappingContext,
 ): RuntimeEventMappingResult {
+  const { event } = input;
   const events: RuntimeStreamEventInput[] = [];
   const delta = readAssistantTextDelta(event);
   const thinkingDelta = readAssistantThinkingDelta(event);
@@ -141,6 +200,32 @@ export function mapPiAgentEvent(
     );
   }
 
+  if (
+    (event.type === "compaction_start" || event.type === "compaction_end") &&
+    input.operationId !== undefined
+  ) {
+    const failed =
+      event.type === "compaction_end" &&
+      (event.aborted || (event.errorMessage !== undefined && event.errorMessage !== ""));
+    events.push(
+      context.events.progress(
+        event.type === "compaction_start"
+          ? RUNTIME_CONTEXT_COMPACTION_STAGES.started
+          : failed
+            ? RUNTIME_CONTEXT_COMPACTION_STAGES.failed
+            : RUNTIME_CONTEXT_COMPACTION_STAGES.completed,
+        {
+          operationId: input.operationId,
+          trigger: input.trigger ?? "unknown",
+          runtimeId: "cloud-pi-agent",
+          ...(event.type === "compaction_end" && event.errorMessage !== undefined
+            ? { errorMessage: event.errorMessage }
+            : {}),
+        },
+      ),
+    );
+  }
+
   if (toolEvent !== undefined) {
     events.push(
       ...createToolStreamEvents({
@@ -158,6 +243,43 @@ export function mapPiAgentEvent(
   };
 }
 
+export async function compactPiContextBeforePrompt(session: PiNativeSession): Promise<boolean> {
+  const usage = session.session.getContextUsage();
+  if (
+    usage === undefined ||
+    usage.tokens === null ||
+    usage.contextWindow <= 0 ||
+    usage.tokens / usage.contextWindow < 0.75
+  ) {
+    return false;
+  }
+
+  session.compactionTriggerOverride = "auto";
+  try {
+    calibratePiCompactionBudget(session);
+    await session.session.compact();
+    return true;
+  } catch (error) {
+    throw new Error(
+      `PI Runtime automatic context compaction failed before the prompt: ${readErrorMessage(error)}`,
+      { cause: error },
+    );
+  } finally {
+    session.compactionTriggerOverride = undefined;
+  }
+}
+
+function mapPiCompactionTrigger(reason: unknown): RuntimeContextCompactionTrigger {
+  if (reason === "manual") return "manual";
+  if (reason === "overflow") return "overflow";
+  if (reason === "threshold") return "auto";
+  return "unknown";
+}
+
+function readErrorMessage(error: unknown): string {
+  return error instanceof Error ? error.message : String(error);
+}
+
 export function collectPiUsage(session: PiNativeSession): AgentMessageUsage | undefined {
   return aggregateAssistantUsage(session.session.messages.slice(session.messageCountBeforeRun));
 }
@@ -167,26 +289,151 @@ export function readPiContextWindow(
 ): RuntimeContextWindowUsage | undefined {
   const usage = session.session.getContextUsage();
   if (usage === undefined) return undefined;
+  const hasReportedUsage = hasReportedPiContextUsage(session);
+  const estimatedTokens =
+    hasReportedUsage && usage.tokens !== null
+      ? usage.tokens
+      : estimatePiActiveContextTokens(session);
   return createRuntimeContextWindowUsage({
-    usedTokens: usage.tokens,
+    usedTokens: hasReportedUsage
+      ? (usage.tokens ?? estimatedTokens)
+      : estimatedTokens > 0
+        ? estimatedTokens
+        : usage.tokens,
     contextWindowTokens: usage.contextWindow,
-    measurement: "estimated",
+    measurement: hasReportedUsage ? "derived" : "estimated",
   });
+}
+
+export function canCompactPiContextWindow(session: PiNativeSession): boolean {
+  const pathEntries = session.session.sessionManager.getBranch();
+  if (pathEntries.at(-1)?.type === "compaction") return false;
+
+  const boundaryStart = findPiCompactionBoundaryStart(pathEntries);
+
+  const cutPoint = findCutPoint(
+    pathEntries,
+    boundaryStart,
+    pathEntries.length,
+    calibratePiCompactionBudget(session, boundaryStart),
+  );
+  if (pathEntries[cutPoint.firstKeptEntryIndex]?.id === undefined) return false;
+
+  const historyEnd = cutPoint.isSplitTurn ? cutPoint.turnStartIndex : cutPoint.firstKeptEntryIndex;
+  const hasContextMessage = (start: number, end: number): boolean =>
+    pathEntries
+      .slice(start, end)
+      .some(
+        (entry) => entry.type !== "compaction" && sessionEntryToContextMessages(entry).length > 0,
+      );
+
+  return (
+    hasContextMessage(boundaryStart, historyEnd) ||
+    (cutPoint.isSplitTurn &&
+      hasContextMessage(cutPoint.turnStartIndex, cutPoint.firstKeptEntryIndex))
+  );
 }
 
 export async function compactPiContextWindow(
   session: PiNativeSession,
 ): Promise<RuntimeContextWindowUsage | undefined> {
   const before = session.session.getContextUsage();
+  calibratePiCompactionBudget(session);
   const result = await session.session.compact();
   const after = session.session.getContextUsage();
   const contextWindowTokens = after?.contextWindow ?? before?.contextWindow;
   if (contextWindowTokens === undefined) return undefined;
+  const inspected = readPiContextWindow(session);
   return createRuntimeContextWindowUsage({
-    usedTokens: result.estimatedTokensAfter ?? after?.tokens ?? null,
+    usedTokens: result.estimatedTokensAfter ?? inspected?.usedTokens ?? after?.tokens ?? null,
     contextWindowTokens,
     measurement: "estimated",
   });
+}
+
+type PiSessionEntry = ReturnType<PiNativeSession["session"]["sessionManager"]["getBranch"]>[number];
+type PiContextMessage = ReturnType<typeof sessionEntryToContextMessages>[number];
+
+function findPiCompactionBoundaryStart(pathEntries: readonly PiSessionEntry[]): number {
+  for (let index = pathEntries.length - 1; index >= 0; index -= 1) {
+    const entry = pathEntries[index];
+    if (entry?.type !== "compaction") continue;
+    const firstKeptEntryIndex = pathEntries.findIndex(
+      (candidate) => candidate.id === entry.firstKeptEntryId,
+    );
+    return firstKeptEntryIndex >= 0 ? firstKeptEntryIndex : index + 1;
+  }
+  return 0;
+}
+
+function calibratePiCompactionBudget(session: PiNativeSession, boundaryStart?: number): number {
+  const pathEntries = session.session.sessionManager.getBranch();
+  const start = boundaryStart ?? findPiCompactionBoundaryStart(pathEntries);
+  const configuredTokens = session.compactionKeepRecentTokens;
+  let retainedPiTokens = 0;
+  let calibratedTokens = 0;
+
+  // Pi's native compactor uses its own units. Select the retained boundary with the
+  // shared model-aware counter, then express that boundary in Pi's units.
+  for (let index = pathEntries.length - 1; index >= start; index -= 1) {
+    const entry = pathEntries[index];
+    if (entry === undefined) continue;
+    if (entry.type === "compaction") continue;
+    for (const message of sessionEntryToContextMessages(entry)) {
+      const piEstimate = estimateTokens(message);
+      retainedPiTokens += piEstimate;
+      calibratedTokens += estimatePiMessageTokens(session, message);
+    }
+    if (calibratedTokens >= configuredTokens) break;
+  }
+
+  const effectiveTokens =
+    calibratedTokens < configuredTokens ? configuredTokens : Math.max(1, retainedPiTokens);
+
+  session.session.settingsManager.applyOverrides({
+    compaction: {
+      keepRecentTokens: effectiveTokens,
+    },
+  });
+  return effectiveTokens;
+}
+
+function estimatePiMessageTokens(session: PiNativeSession, message: PiContextMessage): number {
+  const reportedOutputTokens = readReportedAssistantOutputTokens(message);
+  const sharedEstimate = (session.tokenCounter ?? defaultRuntimeTokenCounter).countText(
+    JSON.stringify(message),
+    session.tokenModelIdentity ?? { runtimeKind: "cloud-pi-agent" },
+  ).tokens;
+  return reportedOutputTokens ?? sharedEstimate;
+}
+
+function readReportedAssistantOutputTokens(message: PiContextMessage): number | undefined {
+  if (!isRecord(message) || message["role"] !== "assistant") return undefined;
+  const usage = message["usage"];
+  if (!isRecord(usage)) return undefined;
+  const output = usage["output"];
+  return typeof output === "number" && Number.isFinite(output) && output > 0
+    ? Math.round(output)
+    : undefined;
+}
+
+function estimatePiActiveContextTokens(session: PiNativeSession): number {
+  const pathEntries = session.session.sessionManager.getBranch();
+  const start = findPiCompactionBoundaryStart(pathEntries);
+  let total = 0;
+  for (const entry of pathEntries.slice(start)) {
+    if (entry.type === "compaction") continue;
+    for (const message of sessionEntryToContextMessages(entry)) {
+      total += estimatePiMessageTokens(session, message);
+    }
+  }
+  return total;
+}
+
+function hasReportedPiContextUsage(session: PiNativeSession): boolean {
+  const pathEntries = session.session.sessionManager.getBranch();
+  const latestCompactionIndex = pathEntries.findLastIndex((entry) => entry.type === "compaction");
+  return getLastAssistantUsage(pathEntries.slice(latestCompactionIndex + 1)) !== undefined;
 }
 
 async function applySubmissionModel(

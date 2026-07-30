@@ -53,6 +53,11 @@ export function assertAssistantTurnCompleted(messages: readonly unknown[]): void
   }
 
   const stopReason = assistant["stopReason"];
+  if (stopReason === "length") {
+    throw new Error(
+      "PI Runtime response was truncated because the context or output token limit was reached. Context compaction could not provide enough room; retry the request.",
+    );
+  }
   if (stopReason === "error" || stopReason === "aborted") {
     const errorMessage = assistant["errorMessage"];
     throw new Error(
@@ -87,27 +92,6 @@ export function readProgressEvent(
       data: {
         steering: event.steering,
         followUp: event.followUp,
-      },
-    };
-  }
-
-  if (event.type === "compaction_start") {
-    return {
-      stage: "compaction.start",
-      message: "Compaction started",
-      data: { reason: event.reason },
-    };
-  }
-
-  if (event.type === "compaction_end") {
-    return {
-      stage: "compaction.end",
-      message: "Compaction completed",
-      data: {
-        reason: event.reason,
-        aborted: event.aborted,
-        willRetry: event.willRetry,
-        errorMessage: event.errorMessage,
       },
     };
   }

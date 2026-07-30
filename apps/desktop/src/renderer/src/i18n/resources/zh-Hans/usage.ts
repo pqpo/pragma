@@ -26,5 +26,5 @@ export const usage = {
   loadMore: "加载更多",
   loading: "正在加载用量…",
   loadError: "无法加载用量。",
-  missionHint: "本 Mission 已使用 {{tokens}} tokens",
+  missionHint: "已使用 {{tokens}} tokens",
 } as const;

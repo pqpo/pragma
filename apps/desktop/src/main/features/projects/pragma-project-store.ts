@@ -128,6 +128,11 @@ export interface PragmaProjectStore {
     input: Parameters<PragmaProjectService["compile"]>[0],
   ): Promise<CompiledResource<T>>;
   openRevision(revision: number): Promise<PragmaProject>;
+  readArtifacts(revision: number): Promise<ReadonlyMap<string, string>>;
+  renderProjectFiles(input: {
+    readonly resources: readonly PragmaResource[];
+    readonly artifacts?: ReadonlyMap<string, string> | undefined;
+  }): Promise<ReadonlyMap<string, string>>;
   readIdentityMigrations(): Promise<readonly PragmaResourceIdentityMigration[]>;
   readonly projectId: string;
 }
@@ -440,6 +445,19 @@ export function createPragmaProjectStore(options: {
         blueprintCache: options.blueprintCache,
       });
     },
+    async readArtifacts(revision) {
+      const snapshot = await service.get(projectId, revision);
+      if (snapshot.revision !== revision) {
+        throw new PragmaProjectStoreError(
+          "resource_not_found",
+          `Pragma project revision not found: ${projectId}@${revision}`,
+        );
+      }
+      return await readRevisionArtifacts(repository, projectId, revision, snapshot);
+    },
+    async renderProjectFiles(input) {
+      return await service.renderProjectFiles(input);
+    },
     readIdentityMigrations,
   };
 }
@@ -740,7 +758,10 @@ async function readRevisionArtifacts(
   repository: PragmaProjectSourceRepository,
   projectId: string,
   revision: number,
-  snapshot: PragmaProjectSnapshot,
+  snapshot: {
+    readonly lock?: PragmaProjectSnapshot["lock"] | undefined;
+    readonly resources: readonly PragmaResource[];
+  },
 ): Promise<ReadonlyMap<string, string>> {
   const location = await repository.getRevision(projectId, revision);
   if (location === undefined) return new Map();

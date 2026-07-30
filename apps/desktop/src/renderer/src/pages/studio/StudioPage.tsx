@@ -42,6 +42,8 @@ import {
 import { PluginDetailFragment, PluginDirectoryFragment } from "./PluginDirectoryFragment.tsx";
 import { AutomationDirectoryFragment } from "./AutomationDirectoryFragment.tsx";
 import { FlowEditor } from "./flow-editor/FlowEditor.tsx";
+import { PragmaBundleDialog } from "./PragmaBundleDialog.tsx";
+import { DownloadSimple, UploadSimple } from "@phosphor-icons/react";
 import { createEmptyFlow } from "./flow-editor/flow-model.ts";
 import {
   desktopApi,
@@ -96,6 +98,7 @@ export function StudioPage(props: {
     readonly mode: ResourceEditorMode;
     readonly newResourceId?: string | undefined;
   } | null>(null);
+  const [bundleMode, setBundleMode] = useState<"export" | "import" | null>(null);
   const openedInitialExpertRef = useRef<string | undefined>(undefined);
   const resourceSaveCompletedRef = useRef(false);
 
@@ -524,6 +527,24 @@ export function StudioPage(props: {
     setScreen("directory");
   };
 
+  const refreshBundleData = async () => {
+    const api = desktopApi();
+    if (api === undefined) return;
+    const [nextProject, summaries, nextCapabilities, nextStores, nextPlugins] = await Promise.all([
+      api.getPragmaProject(),
+      api.listExperts(),
+      api.listCapabilities(),
+      api.listContextStores(),
+      api.listPlugins(),
+    ]);
+    const definitions = await Promise.all(summaries.map((summary) => api.getExpert(summary.ref)));
+    setProject(nextProject);
+    setExperts(definitions.map(toExpertRecord));
+    setCapabilities(nextCapabilities);
+    setContextStores(nextStores);
+    setPlugins(nextPlugins);
+  };
+
   return (
     <section className="studio-page">
       <nav className="studio-navigation" aria-label={t("sections")}>
@@ -568,6 +589,16 @@ export function StudioPage(props: {
             </button>
           );
         })}
+        <div className="studio-bundle-actions">
+          <button type="button" onClick={() => setBundleMode("import")}>
+            <DownloadSimple size={18} aria-hidden="true" />
+            <span>{t("importBundle")}</span>
+          </button>
+          <button type="button" disabled={project === null} onClick={() => setBundleMode("export")}>
+            <UploadSimple size={18} aria-hidden="true" />
+            <span>{t("exportBundle")}</span>
+          </button>
+        </div>
       </nav>
 
       <div className="studio-content">
@@ -802,6 +833,17 @@ export function StudioPage(props: {
             )
           }
           onPickFolder={pickContextStoreFolder}
+        />
+      ) : null}
+      {bundleMode !== null && project !== null ? (
+        <PragmaBundleDialog
+          initialMode={bundleMode}
+          project={project}
+          capabilities={capabilities}
+          contextStores={contextStores}
+          runtimes={runtimes}
+          onClose={() => setBundleMode(null)}
+          onChanged={refreshBundleData}
         />
       ) : null}
     </section>
