@@ -19,6 +19,8 @@ import {
 import { installAutomationHandlers } from "../features/automations/automation-ipc.ts";
 import { createAutomationService } from "../features/automations/automation-service.ts";
 import { createAutomationStore } from "../features/automations/automation-store.ts";
+import { installPragmaBundleHandlers } from "../features/bundles/pragma-bundle-ipc.ts";
+import { createPragmaBundleService } from "../features/bundles/pragma-bundle-service.ts";
 import { createCapabilityCredentialStore } from "../features/capabilities/capability-credential-store.ts";
 import { installCapabilityHandlers } from "../features/capabilities/capability-ipc.ts";
 import { createCapabilityStore } from "../features/capabilities/capability-store.ts";
@@ -165,11 +167,8 @@ export async function createDesktopApplicationContainer(
     blueprintCache,
     reservedResourceRefs: new Set([BUILT_IN_PRAGMA_REF]),
   });
-  installWorkflowLayoutHandlers(
-    createWorkflowLayoutStore({
-      projectsPath,
-    }),
-  );
+  const workflowLayouts = createWorkflowLayoutStore({ projectsPath });
+  installWorkflowLayoutHandlers(workflowLayouts);
   const pluginCredentials = createPluginCredentialStore({
     configPath: join(pragmaPaths.credentialsRoot(), "plugin-credentials.json"),
     encryption,
@@ -221,12 +220,6 @@ export async function createDesktopApplicationContainer(
     validateWorkspace,
     warn: (message, error) =>
       mainLogger.warn("desktop.home_executor_usage_failed", message, { error }),
-  });
-  const missionCreator = createMissionCreator({
-    missions: missionStore,
-    project: pragmaProjectStore,
-    executors: missionExecutors,
-    getDefaultToolPermissionMode: getToolPermissionMode,
   });
   installRuntimeHandlers(runtimeEnvironments, runtimes);
   const expertStore = createExpertDefinitionStore({
@@ -301,6 +294,31 @@ export async function createDesktopApplicationContainer(
     },
   });
   installContextStoreHandlers(contextStores, options.getWindow);
+  const bundleService = createPragmaBundleService({
+    paths: pragmaPaths,
+    project: pragmaProjectStore,
+    capabilities: capabilityStore,
+    contextStores,
+    plugins: pluginStore,
+    layouts: workflowLayouts,
+    getRuntimes: async () => await getRuntimeAvailability(runtimes),
+    externalResourceRefs: new Set([BUILT_IN_PRAGMA_REF]),
+  });
+  await bundleService.initialize();
+  installPragmaBundleHandlers(bundleService, options.getWindow);
+  const missionCreator = createMissionCreator({
+    missions: missionStore,
+    project: pragmaProjectStore,
+    executors: missionExecutors,
+    getDefaultToolPermissionMode: getToolPermissionMode,
+    assertExecutorReady: async (ref) => {
+      if (await bundleService.isRefPending(ref)) {
+        throw new Error(
+          "This imported Expert, Team, or Flow still has unresolved local dependencies. Complete bundle setup before creating a Mission.",
+        );
+      }
+    },
+  });
   installExpertDefinitionHandlers(expertStore);
   installPragmaProjectHandlers(pragmaProjectStore);
   const initialSettings = await desktopSettings.getSnapshot(options.getPreferredSystemLanguages());
@@ -331,6 +349,13 @@ export async function createDesktopApplicationContainer(
       createAutomaticToolPermissionHandler(() => mode),
     assertStorageWriteAllowed: async () => await storageCapacityGuard.assertWriteAllowed(),
     getSystemExecutorFingerprint: (mission) => systemExperts.fingerprint(mission.executor.ref),
+    assertExecutorReady: async (ref) => {
+      if (await bundleService.isRefPending(ref)) {
+        throw new Error(
+          "This imported Expert, Team, or Flow still has unresolved local dependencies. Complete bundle setup before running it.",
+        );
+      }
+    },
     compileSystemExecutor: async ({ mission, runtimes: scopedRuntimes }) => {
       if (mission.executor.ref !== BUILT_IN_PRAGMA_REF) return undefined;
       if (defaultAgentToolsRef.current === undefined) {

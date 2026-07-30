@@ -212,6 +212,7 @@ export function createMissionRunner(options: {
     | ((mission: Mission) => string | undefined | Promise<string | undefined>)
     | undefined;
   readonly assertStorageWriteAllowed?: (() => Promise<void>) | undefined;
+  readonly assertExecutorReady?: ((ref: string) => void | Promise<void>) | undefined;
 }): MissionRunner {
   const logger = createPragmaLogger(options.loggerProvider, {
     component: "desktop.mission-runner",
@@ -726,6 +727,7 @@ export function createMissionRunner(options: {
       assertStorageWriteAllowed(new PragmaPaths({ pragmaHome: options.pragmaHome })));
     logMissionPhase(logger, id, "storage_capacity_check", capacityCheckStartedAt, acceptedAt);
     const mission = await options.missions.get(id);
+    await options.assertExecutorReady?.(mission.executor.ref);
     if (active.has(mission.id)) return mission;
     const { app, runtimes: baseRuntimes } = executionContext(mission);
     const runtimes = withMissionRuntimeBinding(baseRuntimes, await readMissionRootContext(mission));
@@ -912,6 +914,7 @@ export function createMissionRunner(options: {
       assertStorageWriteAllowed(new PragmaPaths({ pragmaHome: options.pragmaHome })));
     logMissionPhase(logger, input.id, "storage_capacity_check", capacityCheckStartedAt, acceptedAt);
     const mission = await options.missions.get(input.id);
+    await options.assertExecutorReady?.(mission.executor.ref);
     const { app, runtimes: baseRuntimes } = executionContext(mission);
     const rootContext = await readMissionRootContext(mission);
     const runtimes = withMissionRuntimeBinding(baseRuntimes, rootContext);

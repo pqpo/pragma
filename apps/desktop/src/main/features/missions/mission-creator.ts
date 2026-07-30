@@ -34,6 +34,7 @@ export function createMissionCreator(options: {
   readonly getDefaultToolPermissionMode: () =>
     | DesktopToolPermissionMode
     | Promise<DesktopToolPermissionMode>;
+  readonly assertExecutorReady?: ((ref: string) => void | Promise<void>) | undefined;
 }): MissionCreator {
   return {
     async create(input) {
@@ -43,6 +44,7 @@ export function createMissionCreator(options: {
       }
 
       const project = await options.project.ensurePublished();
+      await options.assertExecutorReady?.(input.executorRef);
       const executor = await options.executors.resolve(input.executorRef, project);
       if (executor === undefined) {
         throw new Error(`Mission executor not found: ${input.executorRef}`);

@@ -100,6 +100,17 @@ import type {
   UsageSubjectList,
   MissionUsage,
   UsageUpdate,
+  PreparePragmaBundleExport,
+  PragmaBundleExportPreview,
+  ExportPragmaBundle,
+  PragmaBundleExportResult,
+  InspectPragmaBundle,
+  PragmaBundleImportInspection,
+  PragmaBundlePickResult,
+  StartPragmaBundleImport,
+  PragmaBundleInstallation,
+  ResolvePragmaBundleInstallation,
+  PragmaBundleInstallationAction,
 } from "./types.ts";
 
 export interface PragmaDesktopAPI {
@@ -166,6 +177,18 @@ export interface PragmaDesktopAPI {
   getWorkflowLayout: (input: GetWorkflowLayout) => Promise<WorkflowLayout | null>;
   saveWorkflowLayout: (layout: WorkflowLayout) => Promise<WorkflowLayout>;
   deleteWorkflowLayout: (input: DeleteWorkflowLayout) => Promise<void>;
+  preparePragmaBundleExport: (
+    input: PreparePragmaBundleExport,
+  ) => Promise<PragmaBundleExportPreview>;
+  exportPragmaBundle: (input: ExportPragmaBundle) => Promise<PragmaBundleExportResult>;
+  pickPragmaBundle: () => Promise<PragmaBundlePickResult>;
+  inspectPragmaBundle: (input: InspectPragmaBundle) => Promise<PragmaBundleImportInspection>;
+  importPragmaBundle: (input: StartPragmaBundleImport) => Promise<PragmaBundleInstallation>;
+  listPragmaBundleInstallations: () => Promise<PragmaBundleInstallation[]>;
+  resolvePragmaBundleInstallation: (
+    input: ResolvePragmaBundleInstallation,
+  ) => Promise<PragmaBundleInstallation>;
+  discardPragmaBundleInstallation: (input: PragmaBundleInstallationAction) => Promise<void>;
   listAutomationAdapters: () => Promise<AutomationAdapterOption[]>;
   listAutomations: () => Promise<AutomationSummary[]>;
   saveAutomation: (input: SaveAutomation) => Promise<AutomationSummary>;
