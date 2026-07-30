@@ -50,13 +50,12 @@ const QODER_DESCRIPTOR = {
 };
 
 interface QoderDriverSession extends QoderNativeSession {
-  readonly mcpToolRegistry: McpToolRegistry;
   readonly mcpToolRegistryLease: McpToolRegistryLease;
   readonly expertToolsMcpRegistration: ExpertToolsMcpSessionRegistration;
 }
 
 export function createQoderCliRuntime(options: QoderCliRuntimeAdapterOptions = {}): RuntimeAdapter {
-  const mcpToolRegistries = createMcpToolRegistryPool();
+  const mcpToolRegistries = options.mcpToolRegistryPool ?? createMcpToolRegistryPool();
   const descriptor = {
     ...QODER_DESCRIPTOR,
     ...options.descriptor,
@@ -171,6 +170,9 @@ export function createQoderCliRuntime(options: QoderCliRuntimeAdapterOptions = {
             elapsedMs: qoderElapsedMs(sessionStartedAt),
             systemPromptCharacters: ctx.agentContext.systemPrompt.length,
             toolCount: mcpToolRegistry.tools.length,
+            mcpOpenedConnections: mcpToolRegistryLease.stats.openedConnections,
+            mcpReusedConnections: mcpToolRegistryLease.stats.reusedConnections,
+            mcpCoalescedConnections: mcpToolRegistryLease.stats.coalescedConnections,
           });
           return {
             agent: ctx.agent,
@@ -194,7 +196,6 @@ export function createQoderCliRuntime(options: QoderCliRuntimeAdapterOptions = {
             messages: [],
             toolNames: new Map(),
             sessionId: restoredRuntimeSessionId,
-            mcpToolRegistry,
             mcpToolRegistryLease,
             expertToolsMcpRegistration,
           };

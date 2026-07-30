@@ -6,8 +6,9 @@ import { unzipSync } from "fflate";
 import {
   createCodeServiceMcpServer,
   createHttpServiceMcpServer,
-  createMcpToolRegistry,
+  createMcpToolRegistryPool,
   type HttpServiceAuth,
+  type McpToolRegistryPool,
 } from "@pragma/core";
 
 import {
@@ -70,7 +71,7 @@ export class CapabilityStoreError extends Error {
 export function createCapabilityStore(options: {
   readonly capabilitiesPath: string;
   readonly credentials: CapabilityCredentialStore;
-  readonly createMcpRegistry?: typeof createMcpToolRegistry;
+  readonly mcpToolRegistryPool?: McpToolRegistryPool | undefined;
   readonly verify: CapabilityVerifier;
   readonly isReferenced: (capabilityId: string) => Promise<boolean>;
 }): CapabilityStore {
@@ -345,41 +346,52 @@ export function createCapabilityStore(options: {
             options.credentials,
             [input.toolName],
           );
-          const registry = await (options.createMcpRegistry ?? createMcpToolRegistry)({
-            mcpServers: { capability: server },
-          });
-          try {
-            const tool = registry.tools.find((candidate) => candidate.name === input.toolName);
-            if (tool === undefined) {
-              throw new Error(`MCP tool ${input.toolName} is not currently available.`);
-            }
-            const result = await tool.call(input.input ?? {}, undefined);
-            const failure = readToolFailure(result, "The MCP tool test failed.");
-            const health = CapabilityHealthSchema.parse({
-              revision: current.manifest.latestRevision,
-              status: failure === undefined ? "ready" : "needs_attention",
-              checkedAt: new Date().toISOString(),
-              ...(failure === undefined
-                ? {}
-                : {
-                    diagnostic: {
-                      code: failure.code,
-                      message: failure.message,
-                      retryable: true,
-                    },
-                  }),
+          const ownsPool = options.mcpToolRegistryPool === undefined;
+          const pool =
+            options.mcpToolRegistryPool ??
+            createMcpToolRegistryPool({
+              idleTtlMs: 0,
+              maxIdleEntries: 0,
             });
-            await writeJson(healthPath(input.id), health);
-            const output = readToolOutput(result);
-            return {
-              ok: failure === undefined,
-              code: failure?.code ?? "success",
-              message: failure?.message ?? "The MCP tool test succeeded.",
-              capability: await readCapability(input.id),
-              ...(output === undefined ? {} : { output }),
-            };
+          try {
+            const lease = await pool.acquire({ mcpServers: { capability: server } });
+            try {
+              const tool = lease.registry.tools.find(
+                (candidate) => candidate.name === input.toolName,
+              );
+              if (tool === undefined) {
+                throw new Error(`MCP tool ${input.toolName} is not currently available.`);
+              }
+              const result = await tool.call(input.input ?? {}, undefined);
+              const failure = readToolFailure(result, "The MCP tool test failed.");
+              const health = CapabilityHealthSchema.parse({
+                revision: current.manifest.latestRevision,
+                status: failure === undefined ? "ready" : "needs_attention",
+                checkedAt: new Date().toISOString(),
+                ...(failure === undefined
+                  ? {}
+                  : {
+                      diagnostic: {
+                        code: failure.code,
+                        message: failure.message,
+                        retryable: true,
+                      },
+                    }),
+              });
+              await writeJson(healthPath(input.id), health);
+              const output = readToolOutput(result);
+              return {
+                ok: failure === undefined,
+                code: failure?.code ?? "success",
+                message: failure?.message ?? "The MCP tool test succeeded.",
+                capability: await readCapability(input.id),
+                ...(output === undefined ? {} : { output }),
+              };
+            } finally {
+              await lease.release();
+            }
           } finally {
-            await registry.dispose();
+            if (ownsPool) await pool.close();
           }
         } catch (error) {
           const diagnostic = classifyMcpError(error);

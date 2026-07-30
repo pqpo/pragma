@@ -1,7 +1,9 @@
 import {
+  memo,
   useCallback,
   useEffect,
   useId,
+  useLayoutEffect,
   useMemo,
   useRef,
   useState,
@@ -9,6 +11,7 @@ import {
   type Dispatch,
   type SetStateAction,
 } from "react";
+import { flushSync } from "react-dom";
 
 import {
   ArrowCounterClockwise,
@@ -1010,6 +1013,10 @@ export function MissionDetailFragment(props: {
   const textareaRef = useRef<HTMLTextAreaElement | null>(null);
   const draftMissionIdRef = useRef<string | null>(props.mission.id);
   const chatRef = useRef<MissionChatSnapshot | null>(null);
+  const receivedFirstTokensRef = useRef(new Set<string>());
+  const paintedFirstTokensRef = useRef(new Set<string>());
+  const pendingFirstTokenPaintsRef = useRef(new Map<string, { readonly receivedAt: number }>());
+  const firstTokenPaintFramesRef = useRef(new Map<string, number[]>());
   const clientOperationRef = useRef<MissionClientOperationState>({ kind: "idle" });
   const autoRestoreExecutionRef = useRef<string | null>(null);
   const followLatestRef = useRef(true);
@@ -1180,11 +1187,15 @@ export function MissionDetailFragment(props: {
     let refreshing = false;
     let refreshQueued = false;
     let frame: number | undefined;
-    let paintFrame: number | undefined;
-    let paintConfirmationFrame: number | undefined;
     let hiddenTimer: ReturnType<typeof setTimeout> | undefined;
     let pending: MissionChatUpdate[] = [];
-    const paintedExecutions = new Set<string>();
+    receivedFirstTokensRef.current.clear();
+    paintedFirstTokensRef.current.clear();
+    pendingFirstTokenPaintsRef.current.clear();
+    for (const frames of firstTokenPaintFramesRef.current.values()) {
+      for (const paintFrame of frames) cancelAnimationFrame(paintFrame);
+    }
+    firstTokenPaintFramesRef.current.clear();
 
     const drainPending = (
       base: MissionChatSnapshot,
@@ -1230,6 +1241,18 @@ export function MissionDetailFragment(props: {
       }
     };
 
+    const flushVisibleFirstPatch = (): void => {
+      if (frame !== undefined) {
+        cancelAnimationFrame(frame);
+        frame = undefined;
+      }
+      if (hiddenTimer !== undefined) {
+        clearTimeout(hiddenTimer);
+        hiddenTimer = undefined;
+      }
+      flushSync(flush);
+    };
+
     const refresh = async (): Promise<void> => {
       if (refreshing) {
         refreshQueued = true;
@@ -1257,41 +1280,86 @@ export function MissionDetailFragment(props: {
     };
     const unsubscribe = api.subscribeMissionChat(props.mission.id, (update) => {
       pending.push(update);
-      scheduleFlush();
       const executionId = firstVisiblePatchExecutionId(update, chatRef.current);
-      if (executionId === undefined || paintedExecutions.has(executionId)) return;
-      paintedExecutions.add(executionId);
-      const receivedAt = performance.now();
-      api.reportRendererLog({
-        level: "info",
-        event: "mission.first_ui_token_received",
-        message: "Renderer received the first UI-visible Mission token",
-        missionId: props.mission.id,
-        executionId,
-      });
-      paintFrame = requestAnimationFrame(() => {
-        paintConfirmationFrame = requestAnimationFrame(() => {
+      if (executionId !== undefined && !receivedFirstTokensRef.current.has(executionId)) {
+        receivedFirstTokensRef.current.add(executionId);
+        const receivedAt = performance.now();
+        pendingFirstTokenPaintsRef.current.set(executionId, { receivedAt });
+        api.reportRendererLog({
+          level: "info",
+          event: "mission.first_ui_token_received",
+          message: "Renderer received the first UI-visible Mission token",
+          missionId: props.mission.id,
+          executionId,
+        });
+        if (document.visibilityState !== "hidden" && chatRef.current !== null) {
+          flushVisibleFirstPatch();
+          return;
+        }
+      }
+      scheduleFlush();
+    });
+    void refresh().catch(() => undefined);
+    return () => {
+      cancelled = true;
+      if (frame !== undefined) cancelAnimationFrame(frame);
+      if (hiddenTimer !== undefined) clearTimeout(hiddenTimer);
+      pendingFirstTokenPaintsRef.current.clear();
+      for (const frames of firstTokenPaintFramesRef.current.values()) {
+        for (const paintFrame of frames) cancelAnimationFrame(paintFrame);
+      }
+      firstTokenPaintFramesRef.current.clear();
+      unsubscribe();
+    };
+  }, [props.mission.id, updateChat]);
+
+  useLayoutEffect(() => {
+    const api = desktopApi();
+    const container = scrollRef.current;
+    if (api === undefined || container === null || document.visibilityState === "hidden") return;
+    const renderedExecutions = new Set(
+      [...container.querySelectorAll<HTMLElement>("[data-mission-execution-id]")]
+        .map((element) => element.dataset.missionExecutionId)
+        .filter((executionId): executionId is string => executionId !== undefined),
+    );
+    for (const [executionId, pendingPaint] of pendingFirstTokenPaintsRef.current) {
+      if (
+        paintedFirstTokensRef.current.has(executionId) ||
+        firstTokenPaintFramesRef.current.has(executionId) ||
+        !renderedExecutions.has(executionId)
+      ) {
+        continue;
+      }
+      const frames: number[] = [];
+      const paintFrame = requestAnimationFrame(() => {
+        const confirmationFrame = requestAnimationFrame(() => {
+          if (
+            document.visibilityState === "hidden" ||
+            ![...container.querySelectorAll<HTMLElement>("[data-mission-execution-id]")].some(
+              (element) => element.dataset.missionExecutionId === executionId,
+            )
+          ) {
+            firstTokenPaintFramesRef.current.delete(executionId);
+            return;
+          }
+          paintedFirstTokensRef.current.add(executionId);
+          pendingFirstTokenPaintsRef.current.delete(executionId);
+          firstTokenPaintFramesRef.current.delete(executionId);
           api.reportRendererLog({
             level: "info",
             event: "mission.first_ui_token_painted",
             message: "Renderer painted the first UI-visible Mission token",
             missionId: props.mission.id,
             executionId,
-            elapsedMs: Math.round((performance.now() - receivedAt) * 100) / 100,
+            elapsedMs: Math.round((performance.now() - pendingPaint.receivedAt) * 100) / 100,
           });
         });
+        frames.push(confirmationFrame);
       });
-    });
-    void refresh().catch(() => undefined);
-    return () => {
-      cancelled = true;
-      if (frame !== undefined) cancelAnimationFrame(frame);
-      if (paintFrame !== undefined) cancelAnimationFrame(paintFrame);
-      if (paintConfirmationFrame !== undefined) cancelAnimationFrame(paintConfirmationFrame);
-      if (hiddenTimer !== undefined) clearTimeout(hiddenTimer);
-      unsubscribe();
-    };
-  }, [props.mission.id, updateChat]);
+      frames.push(paintFrame);
+      firstTokenPaintFramesRef.current.set(executionId, frames);
+    }
+  }, [chat?.revision, props.mission.id]);
 
   useEffect(() => {
     const api = desktopApi();
@@ -1880,7 +1948,11 @@ export function MissionDetailFragment(props: {
                       onRetry={() => void compactContext(block.item.entry.id)}
                     />
                   ) : (
-                    <MissionChatEntryView entry={block.item.entry} key={block.item.entry.id} />
+                    <MissionChatEntryView
+                      entry={block.item.entry}
+                      key={block.item.entry.id}
+                      paintExecutionId={block.item.entry.executionId ?? chat?.execution?.id}
+                    />
                   );
                 })}
                 {showThinkingPlaceholder ? (
@@ -2545,9 +2617,10 @@ function MissionThinkingPlaceholder(props: { readonly executorName: string }) {
   );
 }
 
-function MissionChatEntryView(props: {
+const MissionChatEntryView = memo(function MissionChatEntryView(props: {
   readonly entry: MissionChatEntry;
   readonly userLabel?: string | undefined;
+  readonly paintExecutionId?: string | undefined;
 }) {
   if (props.entry.kind === "user") {
     return (
@@ -2562,7 +2635,7 @@ function MissionChatEntryView(props: {
     );
   }
   if (props.entry.kind === "thinking") {
-    return <MissionThinkingEntry entry={props.entry} />;
+    return <MissionThinkingEntry entry={props.entry} paintExecutionId={props.paintExecutionId} />;
   }
   if (props.entry.kind === "tool") {
     return <MissionToolCallEntry entry={props.entry} />;
@@ -2574,11 +2647,11 @@ function MissionChatEntryView(props: {
     return <MissionContextOperationEntry operation={props.entry} retryDisabled={false} />;
   }
   return (
-    <div className="mission-assistant-message">
+    <div className="mission-assistant-message" data-mission-execution-id={props.paintExecutionId}>
       <MissionMessageContent source={props.entry.content} />
     </div>
   );
-}
+});
 
 function MissionAgentActivityEntry(props: {
   readonly entry: Extract<MissionChatEntry, { kind: "agent_activity" }>;
@@ -2606,6 +2679,7 @@ function MissionAgentActivityEntry(props: {
 
 export function MissionThinkingEntry(props: {
   readonly entry: Extract<MissionChatEntry, { kind: "thinking" }>;
+  readonly paintExecutionId?: string | undefined;
 }) {
   const { t } = useTranslation("missions");
   const [expanded, setExpanded] = useState(false);
@@ -2618,6 +2692,7 @@ export function MissionThinkingEntry(props: {
       className={`mission-thinking-entry${showsFullContent ? " is-expanded" : ""}${
         streaming ? " is-streaming" : ""
       }`}
+      data-mission-execution-id={props.paintExecutionId ?? props.entry.executionId}
       aria-live={streaming ? "polite" : undefined}
     >
       <p id={contentId}>{props.entry.content}</p>
@@ -2896,13 +2971,15 @@ export function MissionWorkDrawer(props: {
   );
 }
 
-function MissionMessageContent(props: { readonly source: string }) {
+const MissionMessageContent = memo(function MissionMessageContent(props: {
+  readonly source: string;
+}) {
   return (
     <div className="mission-markdown">
       <MarkdownContent source={props.source} codeBlockControls />
     </div>
   );
-}
+});
 
 type MissionHumanQuestion = NonNullable<MissionHumanInteraction["request"]["questions"]>[number];
 

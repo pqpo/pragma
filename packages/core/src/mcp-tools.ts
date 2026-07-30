@@ -5,26 +5,34 @@ import {
   StreamableHTTPClientTransport,
 } from "@modelcontextprotocol/client";
 import type { AuthProvider, Transport } from "@modelcontextprotocol/client";
-import type {
-  ExpertAgentManagedTool,
-  IExpertAgentMcpConfig,
-  IExpertAgentMcpServer,
-} from "@pragma/core";
+import type { IExpertAgentMcpConfig, IExpertAgentMcpServer } from "./agent/expert-agent.ts";
+import type { ExpertAgentManagedTool } from "./tools/managed-tool.ts";
 
-import { mcpToolRegistryCacheKey } from "./mcp-tool-registry-cache-key.ts";
+import { mcpServerConnectionCacheKey } from "./mcp-tool-registry-cache-key.ts";
 
 export interface McpToolRegistry {
   readonly tools: readonly McpManagedTool[];
-  readonly dispose: () => Promise<void>;
+}
+
+export interface McpToolRegistryLeaseStats {
+  readonly openedConnections: number;
+  readonly reusedConnections: number;
+  readonly coalescedConnections: number;
 }
 
 export interface McpToolRegistryLease {
   readonly registry: McpToolRegistry;
+  readonly stats: McpToolRegistryLeaseStats;
   readonly release: () => Promise<void>;
 }
 
 export interface McpToolRegistryPool {
   readonly acquire: (config: IExpertAgentMcpConfig | undefined) => Promise<McpToolRegistryLease>;
+  /**
+   * Hard-stops every pooled connection, including connections referenced by active leases.
+   * Hosts must call this only during final shutdown, after stopping normal execution dispatch.
+   * Releasing a lease after close is safe and has no effect.
+   */
   readonly close: () => Promise<void>;
 }
 
@@ -46,36 +54,9 @@ interface McpClient {
   readonly dispose: () => Promise<void>;
 }
 
-export async function createMcpToolRegistry(
-  config: IExpertAgentMcpConfig | undefined,
-): Promise<McpToolRegistry> {
-  if (config === undefined) {
-    return emptyMcpToolRegistry();
-  }
-
-  const clients: McpClient[] = [];
-  const tools: McpManagedTool[] = [];
-
-  try {
-    for (const [serverId, server] of Object.entries(config.mcpServers)) {
-      const client = await createOfficialMcpClient(server);
-      clients.push(client);
-
-      const mcpTools = filterMcpTools(await client.listTools(), server);
-
-      for (const mcpTool of mcpTools) {
-        tools.push(createManagedMcpTool(serverId, server, client, mcpTool));
-      }
-    }
-  } catch (error) {
-    await disposeMcpClients(clients);
-    throw error;
-  }
-
-  return {
-    tools,
-    dispose: () => disposeMcpClients(clients),
-  };
+interface McpConnection {
+  readonly client: McpClient;
+  readonly tools: readonly McpToolInfo[];
 }
 
 export function createMcpToolRegistryPool(
@@ -87,23 +68,24 @@ export function createMcpToolRegistryPool(
   const idleTtlMs = options.idleTtlMs ?? 5 * 60_000;
   const maxIdleEntries = options.maxIdleEntries ?? 32;
   const entries = new Map<
-    string | IExpertAgentMcpConfig,
+    string | object,
     {
-      readonly opening: Promise<McpToolRegistry>;
+      readonly opening: Promise<McpConnection>;
       references: number;
+      ready: boolean;
       releasedAt?: number | undefined;
       timer?: ReturnType<typeof setTimeout> | undefined;
     }
   >();
   let closed = false;
 
-  const disposeEntry = async (key: string | IExpertAgentMcpConfig): Promise<void> => {
+  const disposeEntry = async (key: string | object): Promise<void> => {
     const entry = entries.get(key);
     if (entry === undefined || entry.references > 0) return;
     entries.delete(key);
     if (entry.timer !== undefined) clearTimeout(entry.timer);
-    const registry = await entry.opening.catch(() => undefined);
-    await registry?.dispose();
+    const connection = await entry.opening.catch(() => undefined);
+    await connection?.client.dispose();
   };
 
   const trimIdle = async (): Promise<void> => {
@@ -114,40 +96,128 @@ export function createMcpToolRegistryPool(
     await Promise.all(idle.slice(0, excess).map(async ([key]) => await disposeEntry(key)));
   };
 
-  return {
-    async acquire(config) {
-      if (closed) throw new Error("MCP Tool Registry pool is closed.");
-      const key = mcpToolRegistryCacheKey(config);
-      let entry = entries.get(key);
-      if (entry === undefined) {
-        const opening = createMcpToolRegistry(config);
-        entry = { opening, references: 0 };
-        entries.set(key, entry);
-        void opening.catch(() => {
+  const releaseConnection = async (key: string | object): Promise<void> => {
+    const current = entries.get(key);
+    if (current === undefined) return;
+    current.references = Math.max(0, current.references - 1);
+    if (current.references > 0) return;
+    current.releasedAt = Date.now();
+    if (idleTtlMs === 0) {
+      await disposeEntry(key);
+      return;
+    }
+    current.timer = setTimeout(() => {
+      void disposeEntry(key).catch(() => undefined);
+    }, idleTtlMs);
+    current.timer.unref();
+    await trimIdle();
+  };
+
+  const acquireConnection = async (
+    server: IExpertAgentMcpServer,
+  ): Promise<{
+    readonly connection: McpConnection;
+    readonly disposition: "opened" | "reused" | "coalesced";
+    readonly release: () => Promise<void>;
+  }> => {
+    const key = mcpServerConnectionCacheKey(server);
+    let entry = entries.get(key);
+    let disposition: "opened" | "reused" | "coalesced";
+    if (entry === undefined) {
+      const opening = openMcpConnection(server);
+      entry = { opening, references: 0, ready: false };
+      entries.set(key, entry);
+      disposition = "opened";
+      void opening.then(
+        () => {
+          const current = entries.get(key);
+          if (current?.opening === opening) current.ready = true;
+        },
+        () => {
           if (entries.get(key)?.opening === opening) entries.delete(key);
-        });
-      }
-      if (entry.timer !== undefined) clearTimeout(entry.timer);
-      entry.timer = undefined;
-      entry.releasedAt = undefined;
-      entry.references += 1;
-      let released = false;
-      const registry = await entry.opening;
+        },
+      );
+    } else {
+      disposition = entry.ready ? "reused" : "coalesced";
+    }
+    if (entry.timer !== undefined) clearTimeout(entry.timer);
+    entry.timer = undefined;
+    entry.releasedAt = undefined;
+    entry.references += 1;
+    let released = false;
+    try {
+      const connection = await entry.opening;
       return {
-        registry,
+        connection,
+        disposition,
         async release() {
           if (released) return;
           released = true;
-          const current = entries.get(key);
-          if (current === undefined) return;
-          current.references = Math.max(0, current.references - 1);
-          if (current.references > 0) return;
-          current.releasedAt = Date.now();
-          current.timer = setTimeout(() => {
-            void disposeEntry(key).catch(() => undefined);
-          }, idleTtlMs);
-          current.timer.unref();
-          await trimIdle();
+          await releaseConnection(key);
+        },
+      };
+    } catch (error) {
+      released = true;
+      await releaseConnection(key);
+      throw error;
+    }
+  };
+
+  return {
+    async acquire(config) {
+      if (closed) throw new Error("MCP Tool Registry pool is closed.");
+      if (config === undefined || Object.keys(config.mcpServers).length === 0) {
+        return emptyMcpToolRegistryLease();
+      }
+      const servers = Object.entries(config.mcpServers);
+      const acquisitions = await Promise.allSettled(
+        servers.map(async ([serverId, server]) => ({
+          serverId,
+          server,
+          acquired: await acquireConnection(server),
+        })),
+      );
+      const acquired = acquisitions.flatMap((result) =>
+        result.status === "fulfilled" ? [result.value] : [],
+      );
+      const errors = acquisitions.flatMap((result) =>
+        result.status === "rejected" ? [result.reason as unknown] : [],
+      );
+      if (errors.length > 0) {
+        await Promise.allSettled(acquired.map(async (item) => await item.acquired.release()));
+        if (errors.length === 1) throw errors[0];
+        throw new AggregateError(errors, "Multiple MCP Server connections failed.");
+      }
+
+      const tools = acquired.flatMap(({ serverId, server, acquired: current }) =>
+        filterMcpTools(current.connection.tools, server).map((tool) =>
+          createManagedMcpTool(serverId, server, current.connection.client, tool),
+        ),
+      );
+      let released = false;
+      return {
+        registry: { tools },
+        stats: {
+          openedConnections: acquired.filter((item) => item.acquired.disposition === "opened")
+            .length,
+          reusedConnections: acquired.filter((item) => item.acquired.disposition === "reused")
+            .length,
+          coalescedConnections: acquired.filter((item) => item.acquired.disposition === "coalesced")
+            .length,
+        },
+        async release() {
+          if (released) return;
+          released = true;
+          const results = await Promise.allSettled(
+            acquired.map(async (item) => await item.acquired.release()),
+          );
+          const releaseErrors = results.flatMap((result) =>
+            result.status === "rejected" ? [result.reason as unknown] : [],
+          );
+          if (releaseErrors.length === 1) throw releaseErrors[0];
+          if (releaseErrors.length > 1) {
+            throw new AggregateError(releaseErrors, "MCP Tool Registry lease release failed.");
+          }
         },
       };
     },
@@ -159,23 +229,45 @@ export function createMcpToolRegistryPool(
       for (const entry of values) {
         if (entry.timer !== undefined) clearTimeout(entry.timer);
       }
-      await Promise.allSettled(
+      const results = await Promise.allSettled(
         values.map(async (entry) => {
-          const registry = await entry.opening;
-          await registry.dispose();
+          const connection = await entry.opening;
+          await connection.client.dispose();
         }),
       );
+      const errors = results.flatMap((result) =>
+        result.status === "rejected" ? [result.reason as unknown] : [],
+      );
+      if (errors.length === 1) throw errors[0];
+      if (errors.length > 1) {
+        throw new AggregateError(errors, "MCP Tool Registry pool close failed.");
+      }
     },
   };
 }
 
-function emptyMcpToolRegistry(): McpToolRegistry {
+function emptyMcpToolRegistryLease(): McpToolRegistryLease {
   return {
-    tools: [],
-    async dispose() {
+    registry: { tools: [] },
+    stats: {
+      openedConnections: 0,
+      reusedConnections: 0,
+      coalescedConnections: 0,
+    },
+    async release() {
       return undefined;
     },
   };
+}
+
+async function openMcpConnection(server: IExpertAgentMcpServer): Promise<McpConnection> {
+  const client = await createOfficialMcpClient(server);
+  try {
+    return { client, tools: await client.listTools() };
+  } catch (error) {
+    await client.dispose().catch(() => undefined);
+    throw error;
+  }
 }
 
 function createManagedMcpTool(
@@ -354,10 +446,6 @@ function normalizeMcpToolInfo(tool: McpToolInfo): McpToolInfo {
     ...(tool.inputSchema === undefined ? {} : { inputSchema: tool.inputSchema }),
     ...(tool.outputSchema === undefined ? {} : { outputSchema: tool.outputSchema }),
   };
-}
-
-async function disposeMcpClients(clients: readonly McpClient[]): Promise<void> {
-  await Promise.allSettled(clients.map((client) => client.dispose()));
 }
 
 async function withTimeout<TResult>(

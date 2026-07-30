@@ -1,4 +1,4 @@
-import { createHash, randomBytes, randomUUID } from "node:crypto";
+import { createHash, randomBytes } from "node:crypto";
 import { createServer, type IncomingMessage, type ServerResponse } from "node:http";
 import type { AddressInfo } from "node:net";
 import { Readable } from "node:stream";
@@ -16,28 +16,25 @@ import type {
 } from "@modelcontextprotocol/server";
 
 import type { Expert } from "./agent/expert-agent.ts";
-import type { ExpertAgentDefaultTool } from "./context-system/context-tools.ts";
 import type { PragmaLogger } from "./logging/logger.ts";
 import type { McpManagedTool } from "./mcp-tools.ts";
-import { dispatchExpertAgentHook } from "./plugins/expert-agent-plugin.ts";
-import type { RuntimeEventEmitter } from "./runtime/runtime-event-emitter.ts";
-import type { RuntimeStreamEvent } from "./runtime/stream-events.ts";
 import type { ExpertAgentRunContext } from "./runtime/run-context.ts";
-import { resolveToolPolicy, type ResolvedTool } from "./tools/tool-resolver.ts";
 import type {
   ExpertAgentHumanInteractionHandler,
-  ExpertAgentManagedTool,
-  ExpertAgentToolApproval,
   ExpertAgentToolCallResult,
   ExpertToolExecutionContext,
 } from "./tools/managed-tool.ts";
-import { resolveExpertAgentToolApprovalRequirement } from "./tools/managed-tool.ts";
+import {
+  emitExecutionToolApprovalRequested,
+  executeExecutionTool,
+  resolveExecutionTools,
+  sanitizeExecutionToolName,
+  type ExecutionTool,
+  type ExecutionToolRuntimeState,
+  type ResolvedExecutionTool,
+} from "./tools/execution-tools.ts";
 
-export interface ExpertToolRuntimeState {
-  runId?: string | undefined;
-  source?: RuntimeStreamEvent["source"] | undefined;
-  emitter?: RuntimeEventEmitter | undefined;
-}
+export type ExpertToolRuntimeState = ExecutionToolRuntimeState;
 
 export interface ExpertToolsMcpSessionRegistration {
   readonly id: string;
@@ -56,7 +53,7 @@ export interface RegisterExpertToolsMcpSessionOptions {
   readonly executionContext?: ExpertToolExecutionContext | undefined;
 }
 
-type LocalTool = ExpertAgentManagedTool<string, ExpertAgentToolCallResult>;
+type LocalTool = ExecutionTool;
 const RUNTIME_PERMISSION_APPROVAL_REASON = "Runtime requested tool approval.";
 const SESSION_MCP_PATH_PATTERN = /^\/sessions\/([A-Za-z0-9_-]{43})\/mcp$/;
 const MCP_CONFIG_ID = "pragma";
@@ -256,26 +253,21 @@ function createSessionMcpServer(
 
 function createExecutionLocalTools(
   options: RegisterExpertToolsMcpSessionOptions,
-): readonly ResolvedTool<LocalTool>[] {
-  const defaultTools = options.agent.createDefaultTools({
+): readonly ResolvedExecutionTool[] {
+  const resolved = resolveExecutionTools({
+    agent: options.agent,
     getContext: options.getContext,
-  });
-  const resolved = resolveToolPolicy<LocalTool>({
-    context: options.getContext(),
-    tools: [
-      ...defaultTools.map((tool) => createResolvedLocalTool("default", fromDefaultTool(tool))),
-      ...(options.agent.tools ?? []).map((tool) => createResolvedLocalTool("managed", tool)),
-      ...createExecutionMcpTools(options.mcpTools ?? []).map((tool) =>
-        createResolvedLocalTool("mcp", tool),
-      ),
-    ],
+    mcpTools: options.mcpTools,
   });
   const permissionTool = createPermissionPromptTool(
     options,
     new Set(resolved.tools.flatMap((tool) => [tool.name, createRuntimeToolName(tool.name)])),
   );
 
-  return [createResolvedLocalTool("default", permissionTool), ...resolved.tools];
+  return [
+    { name: permissionTool.name, source: "default", tool: permissionTool },
+    ...resolved.tools,
+  ];
 }
 
 function createPermissionPromptTool(
@@ -284,6 +276,7 @@ function createPermissionPromptTool(
 ): LocalTool {
   return {
     name: "request_tool_approval",
+    label: "Request tool approval",
     description:
       "Ask the Pragma host whether a runtime tool call should be allowed. Use only for runtime permission prompts.",
     inputSchema: {
@@ -317,7 +310,7 @@ function createPermissionPromptTool(
         };
       }
 
-      emitApprovalRequested({
+      emitExecutionToolApprovalRequested({
         approval: {
           mode: "required",
           reason: RUNTIME_PERMISSION_APPROVAL_REASON,
@@ -425,68 +418,6 @@ function normalizePermissionPromptInput(args: unknown): {
   return { toolName, toolCallId, input };
 }
 
-function createExecutionMcpTools(
-  mcpTools: readonly McpManagedTool[],
-): readonly ExpertAgentManagedTool<string, ExpertAgentToolCallResult>[] {
-  return mcpTools.map((mcpTool) => {
-    const toolName = `mcp_${sanitizeToolName(mcpTool.serverId)}_${sanitizeToolName(mcpTool.name)}`;
-
-    return {
-      name: toolName,
-      description: [
-        mcpTool.description ?? `Call MCP tool ${mcpTool.name}.`,
-        `Original MCP server: ${mcpTool.serverName}. Original tool: ${mcpTool.name}.`,
-      ].join("\n"),
-      inputSchema: mcpTool.inputSchema,
-      ...(mcpTool.outputSchema === undefined ? {} : { outputSchema: mcpTool.outputSchema }),
-      async call(args, signal, context) {
-        const result = await mcpTool.call(args, signal, {
-          toolCallId: context?.toolCallId,
-        });
-
-        return {
-          text: formatMcpToolResult(result),
-          ...(isRecord(result) && result["isError"] === true ? { isError: true } : {}),
-          details:
-            isRecord(result) && isJsonObject(result["structuredContent"])
-              ? result["structuredContent"]
-              : {
-                  server: mcpTool.serverName,
-                  tool: mcpTool.name,
-                  result,
-                },
-        };
-      },
-    };
-  });
-}
-
-function createResolvedLocalTool(
-  source: ResolvedTool<LocalTool>["source"],
-  tool: LocalTool,
-): ResolvedTool<LocalTool> {
-  return {
-    name: tool.name,
-    source,
-    tool,
-  };
-}
-
-function fromDefaultTool(tool: ExpertAgentDefaultTool): LocalTool {
-  return {
-    name: tool.name,
-    description: tool.description,
-    inputSchema: tool.inputSchema,
-    approval: tool.approval,
-    async call(args, signal, context) {
-      return await tool.call(args, signal, {
-        toolCallId: context?.toolCallId,
-        humanInteraction: context?.humanInteraction,
-      });
-    },
-  };
-}
-
 function registerLocalTool(
   server: McpServer,
   runtimeName: string,
@@ -506,13 +437,12 @@ function registerLocalTool(
       const toolCallId = String(context.mcpReq.id);
 
       try {
-        const result = await executeWithToolHooks({
+        const result = await executeExecutionTool({
           agent: options.agent,
           tool,
           toolCallId,
           args: input,
           signal: context.mcpReq.signal,
-          approval: tool.approval,
           humanInteractionHandler: options.humanInteractionHandler,
           runContext: options.getContext(),
           executionContext: options.executionContext,
@@ -529,216 +459,6 @@ function registerLocalTool(
       }
     },
   );
-}
-
-async function executeWithToolHooks(options: {
-  readonly agent: Expert;
-  readonly tool: LocalTool;
-  readonly toolCallId: string | undefined;
-  readonly args: unknown;
-  readonly signal: AbortSignal | undefined;
-  readonly approval: ExpertAgentToolApproval | undefined;
-  readonly humanInteractionHandler: ExpertAgentHumanInteractionHandler | undefined;
-  readonly runContext: ExpertAgentRunContext | undefined;
-  readonly executionContext: ExpertToolExecutionContext | undefined;
-  readonly logger: PragmaLogger;
-  readonly state: ExpertToolRuntimeState;
-}): Promise<ExpertAgentToolCallResult> {
-  const startedAt = Date.now();
-  const runId = options.state.runId;
-
-  options.logger.info("tool.call_started", "Tool call started", {
-    runId,
-    toolName: options.tool.name,
-    toolCallId: options.toolCallId,
-  });
-  await dispatchExpertAgentHook(options.agent.hooks, "beforeToolCall", {
-    agent: options.agent,
-    toolName: options.tool.name,
-    toolCallId: options.toolCallId,
-    args: options.args,
-    runId,
-    logger: options.logger,
-  });
-
-  try {
-    const resolvedArgs = await maybeRequestToolApproval({
-      approval: options.approval,
-      humanInteractionHandler: options.humanInteractionHandler,
-      toolName: options.tool.name,
-      toolCallId: options.toolCallId,
-      args: options.args,
-      state: options.state,
-    });
-
-    if (!resolvedArgs.approved) {
-      const durationMs = Date.now() - startedAt;
-      await dispatchExpertAgentHook(options.agent.hooks, "afterToolCall", {
-        agent: options.agent,
-        toolName: options.tool.name,
-        toolCallId: options.toolCallId,
-        args: options.args,
-        runId,
-        durationMs,
-        result: resolvedArgs.result,
-        logger: options.logger,
-      });
-      return resolvedArgs.result;
-    }
-
-    const executeArgs = resolvedArgs.updatedInput ?? options.args;
-    const result = await options.tool.call(executeArgs, options.signal, {
-      toolCallId: options.toolCallId,
-      humanInteraction: options.humanInteractionHandler,
-      runContext: options.runContext,
-      execution: options.executionContext,
-    });
-    const durationMs = Date.now() - startedAt;
-
-    await dispatchExpertAgentHook(options.agent.hooks, "afterToolCall", {
-      agent: options.agent,
-      toolName: options.tool.name,
-      toolCallId: options.toolCallId,
-      args: executeArgs,
-      runId,
-      durationMs,
-      result,
-      logger: options.logger,
-    });
-    options.logger.info("tool.call_completed", "Tool call completed", {
-      runId,
-      toolName: options.tool.name,
-      toolCallId: options.toolCallId,
-      durationMs,
-      isError: result.isError ?? false,
-    });
-
-    return result;
-  } catch (error) {
-    const durationMs = Date.now() - startedAt;
-    await dispatchExpertAgentHook(options.agent.hooks, "afterToolCall", {
-      agent: options.agent,
-      toolName: options.tool.name,
-      toolCallId: options.toolCallId,
-      args: options.args,
-      runId,
-      durationMs,
-      error,
-      logger: options.logger,
-    });
-    options.logger.error("tool.call_failed", "Tool call failed", error, {
-      runId,
-      toolName: options.tool.name,
-      toolCallId: options.toolCallId,
-      durationMs,
-    });
-    throw error;
-  }
-}
-
-async function maybeRequestToolApproval(options: {
-  readonly approval: ExpertAgentToolApproval | undefined;
-  readonly humanInteractionHandler: ExpertAgentHumanInteractionHandler | undefined;
-  readonly toolName: string;
-  readonly toolCallId: string | undefined;
-  readonly args: unknown;
-  readonly state: ExpertToolRuntimeState;
-}): Promise<
-  | { readonly approved: true; readonly updatedInput: unknown | undefined }
-  | { readonly approved: false; readonly result: ExpertAgentToolCallResult }
-> {
-  const approval = options.approval;
-
-  if (approval === undefined) {
-    return { approved: true, updatedInput: undefined };
-  }
-
-  const approvalRequest = {
-    kind: "tool_approval" as const,
-    toolName: options.toolName,
-    toolCallId: options.toolCallId,
-    reason: approval.reason,
-    input: options.args,
-  };
-  const requirement = await resolveExpertAgentToolApprovalRequirement(approval, approvalRequest);
-
-  if (requirement === "none") {
-    return { approved: true, updatedInput: undefined };
-  }
-
-  if (requirement === "ask" && options.humanInteractionHandler === undefined) {
-    return { approved: true, updatedInput: undefined };
-  }
-
-  emitApprovalRequested({
-    approval,
-    toolName: options.toolName,
-    toolCallId: options.toolCallId,
-    args: options.args,
-    state: options.state,
-  });
-
-  if (options.humanInteractionHandler === undefined) {
-    return {
-      approved: false,
-      result: {
-        text: approval.reason ?? `Tool approval required for ${options.toolName}.`,
-        isError: true,
-      },
-    };
-  }
-
-  const response = await options.humanInteractionHandler(approvalRequest);
-
-  if (response.kind !== "tool_approval" || !response.approved) {
-    return {
-      approved: false,
-      result: {
-        text:
-          response.kind === "tool_approval" && response.reason !== undefined
-            ? response.reason
-            : `User declined ${options.toolName}.`,
-        isError: true,
-      },
-    };
-  }
-
-  return { approved: true, updatedInput: response.updatedInput };
-}
-
-function emitApprovalRequested(options: {
-  readonly approval: ExpertAgentToolApproval;
-  readonly toolName: string;
-  readonly toolCallId: string | undefined;
-  readonly args: unknown;
-  readonly state: ExpertToolRuntimeState;
-}): void {
-  const approvalId = `approval-${randomUUID()}`;
-  const runId = options.state.runId ?? approvalId;
-  const toolCallId = options.toolCallId ?? approvalId;
-
-  options.state.emitter?.emit({
-    runId,
-    source: {
-      ...(options.state.source ?? {
-        kind: "tool",
-        runId,
-        path: [],
-      }),
-      kind: "tool",
-      runId,
-      toolCallId,
-    },
-    type: "tool.approval_requested",
-    payload: {
-      approvalId,
-      toolCallId,
-      toolName: options.toolName,
-      kind: "tool",
-      ...(options.approval.reason === undefined ? {} : { reason: options.approval.reason }),
-      inputPreview: options.args,
-    },
-  });
 }
 
 function toMcpInputSchema(schema: unknown): StandardSchemaWithJSON | undefined {
@@ -939,31 +659,12 @@ function listenOnLoopback(server: ReturnType<typeof createServer>): Promise<void
   });
 }
 
-function sanitizeToolName(value: string): string {
-  const sanitized = value.replace(/[^a-zA-Z0-9_]/g, "_").replace(/_+/g, "_");
-  return sanitized.length === 0 ? "tool" : sanitized;
-}
-
 function createRuntimeToolName(value: string): string {
-  const sanitized = sanitizeToolName(value);
+  const sanitized = sanitizeExecutionToolName(value);
   if (sanitized === value && sanitized.length <= MCP_LOCAL_TOOL_NAME_LIMIT) return sanitized;
   const digest = createHash("sha256").update(value).digest("hex").slice(0, 10);
   const prefixLength = MCP_LOCAL_TOOL_NAME_LIMIT - digest.length - 1;
   return `${sanitized.slice(0, prefixLength)}_${digest}`;
-}
-
-function formatMcpToolResult(result: unknown): string {
-  if (isRecord(result) && Array.isArray(result.content)) {
-    const textParts = result.content
-      .map((entry) => (isRecord(entry) && typeof entry.text === "string" ? entry.text : undefined))
-      .filter((entry): entry is string => entry !== undefined);
-
-    if (textParts.length > 0) {
-      return textParts.join("\n");
-    }
-  }
-
-  return typeof result === "string" ? result : JSON.stringify(result, null, 2);
 }
 
 function isAddressInfo(

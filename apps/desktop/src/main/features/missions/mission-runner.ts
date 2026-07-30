@@ -29,6 +29,7 @@ import {
   type ExpertDefinition,
   type ExpertSession,
   type MutableExecution,
+  type McpToolRegistryPool,
   type PragmaLogger,
   type RuntimeResolver,
   type RuntimeContextWindowUsage,
@@ -187,6 +188,7 @@ export function createMissionRunner(options: {
   readonly capabilityStore: CapabilityStore;
   readonly capabilityCredentials: CapabilityCredentialStore;
   readonly capabilitiesPath: string;
+  readonly mcpToolRegistryPool?: McpToolRegistryPool | undefined;
   readonly pragmaHome: string;
   readonly contextStores?: ContextStoreStore | undefined;
   readonly plugins?: PluginStore | undefined;
@@ -1747,6 +1749,7 @@ export function createDesktopAdapterHost(
     readonly capabilityStore: CapabilityStore;
     readonly capabilityCredentials: CapabilityCredentialStore;
     readonly capabilitiesPath: string;
+    readonly mcpToolRegistryPool?: McpToolRegistryPool | undefined;
     readonly contextStores?: ContextStoreStore | undefined;
   },
   projectRoot: string,
@@ -1778,6 +1781,9 @@ export function createDesktopAdapterHost(
           store: options.capabilityStore,
           credentials: options.capabilityCredentials,
           capabilitiesPath: options.capabilitiesPath,
+          ...(options.mcpToolRegistryPool === undefined
+            ? {}
+            : { mcpToolRegistryPool: options.mcpToolRegistryPool }),
         });
         const fingerprint = createHash("sha256")
           .update(

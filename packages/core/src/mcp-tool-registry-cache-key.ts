@@ -1,42 +1,36 @@
 import { createHash } from "node:crypto";
 
-import type { IExpertAgentMcpConfig, IExpertAgentMcpServer } from "./agent/expert-agent.ts";
+import type { IExpertAgentMcpServer } from "./agent/expert-agent.ts";
 
-export function mcpToolRegistryCacheKey(
-  config: IExpertAgentMcpConfig | undefined,
-): string | IExpertAgentMcpConfig {
-  if (config === undefined) return "empty";
-  if (Object.values(config.mcpServers).some((server) => server.transport === "in-process")) {
-    return config;
-  }
-  const normalized = Object.entries(config.mcpServers)
-    .toSorted(([left], [right]) => left.localeCompare(right))
-    .map(([id, server]) => [id, normalizeExternalMcpServer(server)]);
-  return createHash("sha256").update(stableStringify(normalized)).digest("hex");
+export function mcpServerConnectionCacheKey(server: IExpertAgentMcpServer): string | object {
+  if (server.transport === "in-process") return server.inProcess;
+  return createHash("sha256")
+    .update(stableStringify(normalizeExternalMcpServer(server)))
+    .digest("hex");
 }
 
 function normalizeExternalMcpServer(server: IExpertAgentMcpServer): unknown {
   if (server.transport === "in-process") {
     throw new Error("In-process MCP Servers use object-identity cache keys.");
   }
+  const connection = Object.fromEntries(
+    Object.entries(server).filter(
+      ([key]) => key !== "allowTools" && key !== "disallowTools" && key !== "toolApprovals",
+    ),
+  );
   return {
-    ...server,
+    ...connection,
     ...(server.transport === "stdio"
       ? {
-          env: Object.entries(server.env ?? {}).toSorted(([left], [right]) =>
-            left.localeCompare(right),
-          ),
+          env: Object.entries(server.env ?? {})
+            .toSorted(([left], [right]) => left.localeCompare(right))
+            .map(([key, value]) => [key, createHash("sha256").update(value).digest("hex")]),
         }
       : server.token === undefined
         ? {}
         : {
             token: createHash("sha256").update(server.token).digest("hex"),
           }),
-    allowTools: [...(server.allowTools ?? [])].toSorted(),
-    disallowTools: [...(server.disallowTools ?? [])].toSorted(),
-    toolApprovals: Object.entries(server.toolApprovals ?? {}).toSorted(([left], [right]) =>
-      left.localeCompare(right),
-    ),
   };
 }
 

@@ -5,6 +5,7 @@ import type {
   RuntimeSessionSyncCallback,
   RuntimeEventEmitter,
   RuntimeStreamEvent,
+  McpToolRegistryPool,
   ModelProviderRegistry,
   RuntimeTokenCounter,
 } from "@pragma/core";
@@ -49,6 +50,7 @@ export interface CloudPiRuntimeAdapterOptions {
   readonly sessionSyncCallback?: RuntimeSessionSyncCallback | undefined;
   readonly sessionSyncDebounceMs?: number | undefined;
   readonly tokenCounter?: RuntimeTokenCounter | undefined;
+  readonly mcpToolRegistryPool?: McpToolRegistryPool | undefined;
 }
 
 export interface PiRuntimeStreamState {

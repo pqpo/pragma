@@ -5,11 +5,13 @@ import {
   Expert,
   createCodeServiceMcpServer,
   createHttpServiceMcpServer,
-  createMcpToolRegistry,
+  createMcpToolRegistryPool,
+  sanitizeExecutionToolName,
   type DefineExpertOptions,
   type IExpertAgentMcpConfig,
   type IExpertAgentMcpServer,
   type IExpertAgentSkillsConfig,
+  type McpToolRegistryPool,
 } from "@pragma/core";
 
 import type { CapabilityDefinition, ExpertDefinition } from "../../../shared/contracts/index.ts";
@@ -45,6 +47,7 @@ interface McpAvailabilityRetryOptions {
   readonly maxDelayMs?: number | undefined;
   readonly random?: (() => number) | undefined;
   readonly sleep?: ((delayMs: number) => Promise<void>) | undefined;
+  readonly mcpToolRegistryPool?: McpToolRegistryPool | undefined;
 }
 
 class McpAvailabilityCheckError extends Error {
@@ -67,6 +70,7 @@ export async function resolveExpertCapabilities(options: {
   readonly store: CapabilityStore;
   readonly credentials: CapabilityCredentialStore;
   readonly capabilitiesPath: string;
+  readonly mcpToolRegistryPool?: McpToolRegistryPool | undefined;
 }): Promise<ResolvedExpertCapabilities> {
   const skills: NonNullable<IExpertAgentSkillsConfig["skills"]>[number][] = [];
   const mcpServers: Record<string, IExpertAgentMcpServer> = {};
@@ -127,7 +131,11 @@ export async function resolveExpertCapabilities(options: {
         );
       });
       try {
-        await assertSelectedMcpToolsAvailable(server, reference.toolNames);
+        await assertSelectedMcpToolsAvailable(server, reference.toolNames, {
+          ...(options.mcpToolRegistryPool === undefined
+            ? {}
+            : { mcpToolRegistryPool: options.mcpToolRegistryPool }),
+        });
       } catch (error) {
         if (error instanceof ExpertCapabilityResolutionError) throw error;
         if (!(error instanceof McpAvailabilityCheckError)) throw error;
@@ -216,6 +224,7 @@ export async function createDesktopExpertAgent(options: {
   readonly store: CapabilityStore;
   readonly credentials: CapabilityCredentialStore;
   readonly capabilitiesPath: string;
+  readonly mcpToolRegistryPool?: McpToolRegistryPool | undefined;
   readonly plugins?: PluginStore | undefined;
   readonly overrides?: Pick<
     DefineExpertOptions,
@@ -227,6 +236,9 @@ export async function createDesktopExpertAgent(options: {
     store: options.store,
     credentials: options.credentials,
     capabilitiesPath: options.capabilitiesPath,
+    ...(options.mcpToolRegistryPool === undefined
+      ? {}
+      : { mcpToolRegistryPool: options.mcpToolRegistryPool }),
   });
   if (options.definition.plugins.length > 0 && options.plugins === undefined) {
     throw new Error("Desktop plugin resolution is required for this expert.");
@@ -295,33 +307,44 @@ export async function assertSelectedMcpToolsAvailable(
   const maxDelayMs = retry.maxDelayMs ?? 1_000;
   const random = retry.random ?? Math.random;
   const sleep = retry.sleep ?? wait;
+  const ownsPool = retry.mcpToolRegistryPool === undefined;
+  const pool =
+    retry.mcpToolRegistryPool ??
+    createMcpToolRegistryPool({
+      idleTtlMs: 0,
+      maxIdleEntries: 0,
+    });
 
-  for (let attempt = 1; attempt <= maxAttempts; attempt += 1) {
-    try {
-      const registry = await createMcpToolRegistry({ mcpServers: { verify: server } });
+  try {
+    for (let attempt = 1; attempt <= maxAttempts; attempt += 1) {
       try {
-        for (const name of selected) {
-          const current = registry.tools.find((tool) => tool.name === name);
-          if (current === undefined) {
-            throw new ExpertCapabilityResolutionError(
-              "tool_unavailable",
-              `MCP tool ${name} is not currently available.`,
-            );
+        const lease = await pool.acquire({ mcpServers: { verify: server } });
+        try {
+          for (const name of selected) {
+            const current = lease.registry.tools.find((tool) => tool.name === name);
+            if (current === undefined) {
+              throw new ExpertCapabilityResolutionError(
+                "tool_unavailable",
+                `MCP tool ${name} is not currently available.`,
+              );
+            }
           }
+        } finally {
+          await lease.release();
         }
-      } finally {
-        await registry.dispose();
+        return;
+      } catch (error) {
+        if (error instanceof ExpertCapabilityResolutionError) throw error;
+        const diagnostic = classifyMcpError(error);
+        const transient = isTransientMcpAvailabilityError(error, diagnostic);
+        if (!transient || attempt === maxAttempts) {
+          throw new McpAvailabilityCheckError(diagnostic, attempt, transient, { cause: error });
+        }
+        await sleep(retryDelayMs(attempt, baseDelayMs, maxDelayMs, random));
       }
-      return;
-    } catch (error) {
-      if (error instanceof ExpertCapabilityResolutionError) throw error;
-      const diagnostic = classifyMcpError(error);
-      const transient = isTransientMcpAvailabilityError(error, diagnostic);
-      if (!transient || attempt === maxAttempts) {
-        throw new McpAvailabilityCheckError(diagnostic, attempt, transient, { cause: error });
-      }
-      await sleep(retryDelayMs(attempt, baseDelayMs, maxDelayMs, random));
     }
+  } finally {
+    if (ownsPool) await pool.close();
   }
 }
 
@@ -382,7 +405,8 @@ function createApprovals(
 ) {
   return Object.fromEntries(
     tools.map((tool) => {
-      const mode = expert.toolApprovals[`mcp_${runtimeKey}_${sanitizeToolName(tool)}`] ?? "ask";
+      const mode =
+        expert.toolApprovals[`mcp_${runtimeKey}_${sanitizeExecutionToolName(tool)}`] ?? "ask";
       return [tool, { mode }];
     }),
   );
@@ -395,15 +419,12 @@ function createHttpApprovals(
 ) {
   return Object.fromEntries(
     tools.map((tool) => {
-      const configured = expert.toolApprovals[`mcp_${runtimeKey}_${sanitizeToolName(tool.name)}`];
+      const configured =
+        expert.toolApprovals[`mcp_${runtimeKey}_${sanitizeExecutionToolName(tool.name)}`];
       const mode = configured ?? (tool.method === "POST" ? "required" : "ask");
       return [tool.name, { mode }];
     }),
   );
-}
-
-function sanitizeToolName(value: string): string {
-  return value.replace(/[^a-zA-Z0-9_]/g, "_").replace(/_+/g, "_") || "tool";
 }
 
 function revisionDirectory(revision: number): string {

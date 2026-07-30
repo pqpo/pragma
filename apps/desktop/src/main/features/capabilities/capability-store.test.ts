@@ -20,7 +20,9 @@ async function createStore(
   options: {
     readonly referenced?: boolean;
     readonly realVerifier?: boolean;
-    readonly createMcpRegistry?: Parameters<typeof createCapabilityStore>[0]["createMcpRegistry"];
+    readonly mcpToolRegistryPool?: Parameters<
+      typeof createCapabilityStore
+    >[0]["mcpToolRegistryPool"];
   } = {},
 ) {
   const directory = await mkdtemp(join(tmpdir(), "pragma-capabilities-"));
@@ -45,9 +47,9 @@ async function createStore(
     store: createCapabilityStore({
       capabilitiesPath: join(directory, "capabilities"),
       credentials,
-      ...(options.createMcpRegistry === undefined
+      ...(options.mcpToolRegistryPool === undefined
         ? {}
-        : { createMcpRegistry: options.createMcpRegistry }),
+        : { mcpToolRegistryPool: options.mcpToolRegistryPool }),
       verify:
         options.realVerifier === true
           ? createCapabilityVerifier(credentials)
@@ -270,19 +272,29 @@ describe("capability store", () => {
     const call = vi.fn(async (input: unknown) => ({ structuredContent: { echoed: input } }));
     const dispose = vi.fn(async () => undefined);
     const { store } = await createStore({
-      createMcpRegistry: async () => ({
-        tools: [
-          {
-            serverId: "capability",
-            serverName: "Echo server",
-            name: "echo",
-            description: "Echo input.",
-            inputSchema: { type: "object" },
-            call,
+      mcpToolRegistryPool: {
+        acquire: async () => ({
+          registry: {
+            tools: [
+              {
+                serverId: "capability",
+                serverName: "Echo server",
+                name: "echo",
+                description: "Echo input.",
+                inputSchema: { type: "object" },
+                call,
+              },
+            ],
           },
-        ],
-        dispose,
-      }),
+          stats: {
+            openedConnections: 1,
+            reusedConnections: 0,
+            coalescedConnections: 0,
+          },
+          release: dispose,
+        }),
+        close: async () => undefined,
+      },
     });
     const capability = await store.create({
       definition: {

@@ -28,6 +28,10 @@ stable, short MCP configuration key `pragma`; a restored Session receives a new 
 may receive a new listener port. Exposed tool names are deterministically bounded so the fully
 qualified `mcp__pragma__<tool>` name stays within the Runtime limit. PI does not use the Gateway.
 
+ADR 028 defines the shared semantic layer above these transports. Core resolves and invokes one
+execution tool set; PI projects it to native tools, while this Gateway projects it to MCP. The
+Gateway does not independently implement Agent tool policy, approval, hooks, or result semantics.
+
 ## Consequences
 
 - Concurrent Codex, Claude Code, and Qoder CLI Sessions share one HTTP listener without sharing tools or state.

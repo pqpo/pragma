@@ -147,20 +147,20 @@ describe("MissionRunner", { timeout: 15_000 }, () => {
       async () => expect((await missions.get(mission.id)).execution?.status).toBe("succeeded"),
       { timeout: settlementTimeoutMs },
     );
-    const followUpStartedAt = performance.now();
+    compile.mockImplementation(async () => {
+      throw new Error("A follow-up on a live Mission Session must not recompile.");
+    });
     await runner.sendMessage({
       id: mission.id,
       content: "Continue without recompiling",
       requestId: "00000000-0000-4000-8000-000000000099",
     });
-    const followUpAdmissionMs = performance.now() - followUpStartedAt;
     await vi.waitFor(
       async () => expect((await missions.get(mission.id)).execution?.status).toBe("succeeded"),
       { timeout: settlementTimeoutMs },
     );
 
     expect(compile).toHaveBeenCalledTimes(1);
-    expect(followUpAdmissionMs).toBeLessThan(250);
   });
 
   it("creates a successor Session when the live execution definition changes", async () => {

@@ -915,11 +915,15 @@ describe("Mission thinking entry", () => {
 
   it("shows streaming thinking in full without a collapse control", () => {
     const html = renderToStaticMarkup(
-      <MissionThinkingEntry entry={{ ...entry, streaming: true }} />,
+      <MissionThinkingEntry
+        entry={{ ...entry, streaming: true }}
+        paintExecutionId="execution-visible"
+      />,
     );
 
     expect(html).toContain("mission-thinking-entry is-expanded is-streaming");
     expect(html).toContain('aria-live="polite"');
+    expect(html).toContain('data-mission-execution-id="execution-visible"');
     expect(html).not.toContain("<button");
   });
 

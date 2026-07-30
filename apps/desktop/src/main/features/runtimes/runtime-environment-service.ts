@@ -5,6 +5,7 @@ import type {
   RuntimeResolver,
   PragmaLogger,
   RuntimeTokenCounter,
+  McpToolRegistryPool,
 } from "@pragma/core";
 import { createClaudeCodeRuntime } from "@pragma/runtime-claude-code";
 import {
@@ -268,6 +269,7 @@ export function createBuiltInRuntimeFactories(
     | Promise<DesktopToolPermissionMode> = () => "request-approval",
   onModelCatalogUpdated?: ((runtimeId: string) => void) | undefined,
   tokenCounter?: RuntimeTokenCounter | undefined,
+  mcpToolRegistryPool?: McpToolRegistryPool | undefined,
 ): readonly RuntimeEnvironmentAdapterFactory[] {
   return [
     {
@@ -284,6 +286,7 @@ export function createBuiltInRuntimeFactories(
             : { onModelCatalogUpdated: () => onModelCatalogUpdated(environment.id) }),
           ...permissions,
           tokenCounter,
+          ...(mcpToolRegistryPool === undefined ? {} : { mcpToolRegistryPool }),
         });
       },
     },
@@ -305,6 +308,7 @@ export function createBuiltInRuntimeFactories(
                 ? "auto"
                 : "bypassPermissions",
           tokenCounter,
+          ...(mcpToolRegistryPool === undefined ? {} : { mcpToolRegistryPool }),
         });
       },
     },
@@ -321,6 +325,7 @@ export function createBuiltInRuntimeFactories(
             : { onModelCatalogUpdated: () => onModelCatalogUpdated(environment.id) }),
           permissionMode: qoderRuntimePermissionForMode(permissionMode),
           tokenCounter,
+          ...(mcpToolRegistryPool === undefined ? {} : { mcpToolRegistryPool }),
         });
       },
     },
@@ -333,6 +338,7 @@ export function createBuiltInRuntimeFactories(
           descriptor: { id: environment.id, displayName: BUILT_IN_RUNTIME_DISPLAY_NAME },
           modelProviders,
           tokenCounter,
+          ...(mcpToolRegistryPool === undefined ? {} : { mcpToolRegistryPool }),
         });
       },
     },
