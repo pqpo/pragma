@@ -51,6 +51,7 @@ const CODEX_LOCAL_RUNTIME_DESCRIPTOR = {
     supportsModelDiscovery: true,
     supportsStreaming: true,
     supportsThinkingLevel: true,
+    supportsContextCompactionEvents: true,
   },
 };
 
@@ -250,6 +251,7 @@ export function createCodexRuntime(options: CodexRuntimeAdapterOptions = {}): Ru
               defaultModelName,
               defaultThinkingLevel,
               codexHome: codex.home,
+              tokenCounter: options.tokenCounter,
               startupMessages: threadStartResult.startedFreshThread
                 ? ctx.agentContext.startupMessages
                 : [],

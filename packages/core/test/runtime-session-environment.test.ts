@@ -155,12 +155,14 @@ describe("Runtime Session context window", () => {
         measurement: "reported",
       }),
     );
+    const canCompact = vi.fn(() => true);
     const runtime = defineRuntimeDriver<never, Record<string, never>>({
       descriptor: { id: "context-test", kind: "context-test", displayName: "Context Test" },
       createSession: () => ({}),
       startTurn: async () => ({ outputText: "done" }),
       mapEvent: () => ({ events: [] }),
       readContextWindow: inspect,
+      canCompactContext: canCompact,
       compactContext: compact,
     });
     const agent = await expert(root, "context-expert", "token");
@@ -170,6 +172,7 @@ describe("Runtime Session context window", () => {
       usedTokens: 40_000,
       percent: 20,
     });
+    await expect(session.contextWindow?.canCompact()).resolves.toBe(true);
     await expect(session.contextWindow?.compact?.()).resolves.toMatchObject({
       usedTokens: 12_000,
       percent: 6,
@@ -181,6 +184,7 @@ describe("Runtime Session context window", () => {
     );
     expect(record.contextWindowUsage).toMatchObject({ usedTokens: 12_000, percent: 6 });
     expect(inspect).toHaveBeenCalledOnce();
+    expect(canCompact).toHaveBeenCalledOnce();
     expect(compact).toHaveBeenCalledOnce();
     await session.close();
   });

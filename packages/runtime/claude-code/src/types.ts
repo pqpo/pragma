@@ -5,6 +5,7 @@ import type {
   RuntimeModel,
   RuntimeSessionRestoreHandler,
   RuntimeSessionSyncCallback,
+  RuntimeTokenCounter,
 } from "@pragma/core";
 
 export type ClaudeCodeRuntimePermissionMode =
@@ -32,6 +33,7 @@ export interface ClaudeCodeRuntimeAdapterOptions {
   readonly outputRetryLimit?: number | undefined;
   readonly sessionRestoreHandler?: RuntimeSessionRestoreHandler | undefined;
   readonly sessionSyncCallback?: RuntimeSessionSyncCallback | undefined;
+  readonly tokenCounter?: RuntimeTokenCounter | undefined;
 }
 
 export interface ClaudeCodeRuntimeMessage {

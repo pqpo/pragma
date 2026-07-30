@@ -12726,6 +12726,13 @@ textarea:focus-visible,
   outline-offset: 2px;
 }
 
+.mission-context-compact-hint {
+  margin: 7px 0 0;
+  color: var(--muted);
+  font-size: 11px;
+  line-height: 1.4;
+}
+
 .mission-chat-shell {
   display: grid;
   grid-template-rows: minmax(0, 1fr) auto;

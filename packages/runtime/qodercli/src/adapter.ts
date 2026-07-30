@@ -3,6 +3,7 @@ import { join } from "node:path";
 
 import {
   createMcpToolRegistryPool,
+  defaultRuntimeTokenCounter,
   defineRuntimeDriver,
   registerExpertToolsMcpSession,
   type ExpertToolsMcpSessionRegistration,
@@ -44,6 +45,7 @@ const QODER_DESCRIPTOR = {
     supportsModelDiscovery: true,
     supportsStreaming: true,
     supportsThinkingLevel: true,
+    supportsContextCompactionEvents: true,
   },
 };
 
@@ -188,6 +190,7 @@ export function createQoderCliRuntime(options: QoderCliRuntimeAdapterOptions = {
             compactModelName: options.compactModelName,
             systemPrompt: ctx.agentContext.systemPrompt,
             toolRuntimeState,
+            tokenCounter: options.tokenCounter ?? defaultRuntimeTokenCounter,
             messages: [],
             toolNames: new Map(),
             sessionId: restoredRuntimeSessionId,

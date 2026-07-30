@@ -3,6 +3,7 @@ import { join } from "node:path";
 
 import type { BrowserWindow } from "electron";
 import {
+  createRuntimeTokenCounter,
   createStorageCapacityGuard,
   PragmaPaths,
   runStorageMaintenance,
@@ -109,6 +110,7 @@ export async function createDesktopApplicationContainer(
     );
   }
   const maintenance = await runStorageMaintenance({ paths: pragmaPaths });
+  const tokenCounter = createRuntimeTokenCounter({ logger: mainLogger });
   const storageCapacityGuard = createStorageCapacityGuard({
     paths: pragmaPaths,
     initialOverview: maintenance.after,
@@ -202,6 +204,7 @@ export async function createDesktopApplicationContainer(
       (runtimeId) => {
         options.sendRuntimeModelCatalogUpdate(runtimeId);
       },
+      tokenCounter,
     ),
   });
   const missionExecutors = createMissionExecutorCatalog({
@@ -392,6 +395,15 @@ export async function createDesktopApplicationContainer(
       });
     },
   });
+  const unsubscribeTokenCounter = tokenCounter.subscribe(() => {
+    void missionRunner.invalidateEstimatedContextWindows().catch((error: unknown) => {
+      mainLogger.warn(
+        "desktop.tokenizer_context_refresh_failed",
+        "Mission context windows could not be refreshed after a tokenizer update.",
+        { error },
+      );
+    });
+  });
   await missionRunner.reconcileUsage().catch((error: unknown) => {
     mainLogger.warn(
       "desktop.usage_reconciliation_failed",
@@ -467,11 +479,14 @@ export async function createDesktopApplicationContainer(
           (resource.spec.config as Record<string, unknown>).providerId === providerId,
       ),
   });
+  void tokenCounter.load();
   return {
     dispose: () => {
       unsubscribeUsageUpdates();
+      unsubscribeTokenCounter();
       automationService.stop();
       storageCapacityGuard.close();
+      tokenCounter.dispose();
       usageStore.close();
     },
   };

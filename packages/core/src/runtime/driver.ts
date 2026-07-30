@@ -218,6 +218,9 @@ export interface RuntimeDriver<TNativeEvent, TNativeSession, TPrepared = Runtime
         session: TNativeSession,
       ) => Promise<RuntimeContextWindowUsage | undefined> | RuntimeContextWindowUsage | undefined)
     | undefined;
+  readonly canCompactContext?:
+    | ((session: TNativeSession) => Promise<boolean> | boolean)
+    | undefined;
   readonly compactContext?:
     | ((
         session: TNativeSession,
@@ -751,6 +754,7 @@ class ManagedRuntimeSession<TNativeEvent, TNativeSession, TPrepared> {
   get contextWindow():
     | {
         readonly inspect: () => Promise<RuntimeContextWindowUsage | undefined>;
+        readonly canCompact: () => Promise<boolean>;
         readonly compact: (() => Promise<RuntimeContextWindowUsage | undefined>) | undefined;
       }
     | undefined {
@@ -759,6 +763,11 @@ class ManagedRuntimeSession<TNativeEvent, TNativeSession, TPrepared> {
       inspect: async () => {
         this.assertIdle("inspect the context window");
         return await this.refreshContextWindow(true);
+      },
+      canCompact: async () => {
+        this.assertIdle("check whether the context window can be compacted");
+        if (this.options.driver.compactContext === undefined) return false;
+        return (await this.options.driver.canCompactContext?.(this.options.nativeSession)) ?? true;
       },
       compact:
         this.options.driver.compactContext === undefined

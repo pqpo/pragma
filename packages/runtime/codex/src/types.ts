@@ -5,6 +5,7 @@ import type {
   RuntimeModel,
   RuntimeSessionRestoreHandler,
   RuntimeSessionSyncCallback,
+  RuntimeTokenCounter,
 } from "@pragma/core";
 
 export type CodexRuntimeSandboxMode = "read-only" | "workspace-write" | "danger-full-access";
@@ -41,6 +42,7 @@ export interface CodexRuntimeAdapterOptions {
   readonly outputRetryLimit?: number | undefined;
   readonly sessionRestoreHandler?: RuntimeSessionRestoreHandler | undefined;
   readonly sessionSyncCallback?: RuntimeSessionSyncCallback | undefined;
+  readonly tokenCounter?: RuntimeTokenCounter | undefined;
 }
 
 export interface CodexRuntimeMessage {

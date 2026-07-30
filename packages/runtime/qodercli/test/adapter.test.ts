@@ -20,6 +20,7 @@ describe("Qoder CLI Runtime adapter", () => {
         supportsMcp: true,
         supportsContextWindowInspection: true,
         supportsManualCompaction: true,
+        supportsContextCompactionEvents: true,
         supportsResume: true,
         supportsCancel: true,
         supportsClose: true,

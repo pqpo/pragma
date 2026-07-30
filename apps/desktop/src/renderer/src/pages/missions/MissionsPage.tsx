@@ -885,8 +885,20 @@ interface LocalMissionUserMessage {
 export interface LocalMissionContextOperation {
   readonly id: string;
   readonly createdAt: string;
-  readonly status: "running" | "succeeded" | "failed";
+  readonly status: "running" | "succeeded" | "skipped" | "failed";
   readonly error?: string | undefined;
+}
+
+export function startMissionContextOperation(
+  current: readonly LocalMissionContextOperation[],
+  input: { readonly id: string; readonly createdAt: string; readonly retry: boolean },
+): LocalMissionContextOperation[] {
+  if (!input.retry) {
+    return [...current, { id: input.id, createdAt: input.createdAt, status: "running" }];
+  }
+  return current.map((operation) =>
+    operation.id === input.id ? { ...operation, status: "running", error: undefined } : operation,
+  );
 }
 
 export type MissionClientOperationState =
@@ -1011,11 +1023,15 @@ export function MissionDetailFragment(props: {
   const executionActive =
     executionStatus !== undefined && ["queued", "running", "waiting"].includes(executionStatus);
   const optionsSaving = clientOperation.kind === "saving_options";
-  const compactingContext = clientOperation.kind === "compacting";
+  const runtimeCompactingContext =
+    chat?.entries.some(
+      (entry) => entry.kind === "context_operation" && entry.status === "running",
+    ) ?? false;
+  const compactingContext = clientOperation.kind === "compacting" || runtimeCompactingContext;
   const clientOperationBusy = clientOperation.kind !== "idle";
   const interactions = chat?.pendingInteractions ?? [];
   const interruptible = chat?.execution?.interruptible ?? false;
-  const controlsDisabled = executionActive || clientOperationBusy;
+  const controlsDisabled = executionActive || clientOperationBusy || compactingContext;
   const visibleError = props.error ?? optionsError;
   const unavailableTool =
     visibleError === null || visibleError === undefined
@@ -1429,27 +1445,33 @@ export function MissionDetailFragment(props: {
     }
   };
 
-  const compactContext = async () => {
+  const compactContext = async (retryOperationId?: string) => {
     const api = desktopApi();
     if (api === undefined || chat?.contextWindow?.canCompact !== true) return;
     const operationToken = beginClientOperation("compacting");
     if (operationToken === undefined) return;
-    const operationId = crypto.randomUUID();
-    setContextOperations((current) => [
-      ...current,
-      {
+    const operationId = retryOperationId ?? crypto.randomUUID();
+    setContextOperations((current) =>
+      startMissionContextOperation(current, {
         id: operationId,
         createdAt: new Date().toISOString(),
-        status: "running",
-      },
-    ]);
+        retry: retryOperationId !== undefined,
+      }),
+    );
     followLatestRef.current = true;
     try {
-      const contextWindow = await api.compactMissionContext(props.mission.id);
-      updateChat((current) => (current === null ? current : { ...current, contextWindow }));
+      const result = await api.compactMissionContext(props.mission.id);
+      updateChat((current) =>
+        current === null ? current : { ...current, contextWindow: result.contextWindow },
+      );
       setContextOperations((current) =>
         current.map((operation) =>
-          operation.id === operationId ? { ...operation, status: "succeeded" } : operation,
+          operation.id === operationId
+            ? {
+                ...operation,
+                status: result.outcome === "compacted" ? "succeeded" : "skipped",
+              }
+            : operation,
         ),
       );
     } catch (compactError) {
@@ -1852,8 +1874,10 @@ export function MissionDetailFragment(props: {
                     <MissionContextOperationEntry
                       operation={block.item.entry}
                       key={block.item.entry.id}
-                      retryDisabled={clientOperationBusy}
-                      onRetry={() => void compactContext()}
+                      retryDisabled={
+                        clientOperationBusy || chat?.contextWindow?.canCompact !== true
+                      }
+                      onRetry={() => void compactContext(block.item.entry.id)}
                     />
                   ) : (
                     <MissionChatEntryView entry={block.item.entry} key={block.item.entry.id} />
@@ -1949,6 +1973,7 @@ export function MissionDetailFragment(props: {
                     disabled={
                       isFlow ||
                       clientOperationBusy ||
+                      compactingContext ||
                       executionActive ||
                       props.mission.lifecycleStatus === "completed"
                     }
@@ -2276,9 +2301,15 @@ export function ContextWindowControl(props: {
   const tokenFormatter = new Intl.NumberFormat(i18n.language);
   const tone = boundedPercent >= 90 ? "is-critical" : boundedPercent >= 70 ? "is-warning" : "";
   const usageLabel = t("contextWindowUsage", { value: percentText });
-  const accessibleUsageLabel = invalidUsage
-    ? `${usageLabel} ${t("contextUsageInvalid")}`
-    : usageLabel;
+  const accessibleUsageLabel = [
+    usageLabel,
+    invalidUsage ? t("contextUsageInvalid") : undefined,
+    props.state.compactionBlockedReason === "not_ready"
+      ? t("contextCompactionNotReady")
+      : undefined,
+  ]
+    .filter((value): value is string => value !== undefined)
+    .join(" ");
   const cancelScheduledClose = () => {
     if (closeTimerRef.current === undefined) return;
     clearTimeout(closeTimerRef.current);
@@ -2386,12 +2417,6 @@ export function ContextWindowControl(props: {
                   : tokenFormatter.format(usage.contextWindowTokens)}
               </dd>
             </div>
-            {usage === undefined ? null : (
-              <div>
-                <dt>{t("usageMeasurement")}</dt>
-                <dd>{t(`usageMeasurementValue.${usage.measurement}`)}</dd>
-              </div>
-            )}
           </dl>
           <button
             className="mission-context-compact"
@@ -2402,6 +2427,9 @@ export function ContextWindowControl(props: {
             {props.compacting ? <SpinnerGap className="spin" size={15} aria-hidden="true" /> : null}
             {props.compacting ? t("contextCompacting") : t("contextCompact")}
           </button>
+          {props.state.compactionBlockedReason === "not_ready" ? (
+            <p className="mission-context-compact-hint">{t("contextCompactionNotReady")}</p>
+          ) : null}
         </div>
       ) : null}
     </div>
@@ -2463,9 +2491,11 @@ function LocalMissionUserMessageView(props: { readonly message: LocalMissionUser
 }
 
 export function MissionContextOperationEntry(props: {
-  readonly operation: LocalMissionContextOperation;
+  readonly operation:
+    | LocalMissionContextOperation
+    | Extract<MissionChatEntry, { kind: "context_operation" }>;
   readonly retryDisabled?: boolean | undefined;
-  readonly onRetry: () => void;
+  readonly onRetry?: (() => void) | undefined;
 }) {
   const { t } = useTranslation(["missions", "common"]);
   const failed = props.operation.status === "failed";
@@ -2488,11 +2518,13 @@ export function MissionContextOperationEntry(props: {
             ? t("contextCompactionStarted", { ns: "missions" })
             : failed
               ? t("contextCompactionFailed", { ns: "missions" })
-              : t("contextCompactionCompleted", { ns: "missions" })}
+              : props.operation.status === "skipped"
+                ? t("contextCompactionNotNeeded", { ns: "missions" })
+                : t("contextCompactionCompleted", { ns: "missions" })}
         </strong>
         {props.operation.error === undefined ? null : <small>{props.operation.error}</small>}
       </span>
-      {failed ? (
+      {failed && props.onRetry !== undefined ? (
         <button type="button" disabled={props.retryDisabled} onClick={props.onRetry}>
           {t("actions.retry", { ns: "common" })}
         </button>
@@ -2537,6 +2569,9 @@ function MissionChatEntryView(props: {
   }
   if (props.entry.kind === "agent_activity") {
     return <MissionAgentActivityEntry entry={props.entry} />;
+  }
+  if (props.entry.kind === "context_operation") {
+    return <MissionContextOperationEntry operation={props.entry} retryDisabled={false} />;
   }
   return (
     <div className="mission-assistant-message">
@@ -3110,6 +3145,7 @@ function entryContentLength(entry: MissionChatEntry): number {
     return (entry.inputPreview?.length ?? 0) + (entry.outputPreview?.length ?? 0);
   }
   if (entry.kind === "agent_activity") return entry.label?.length ?? 0;
+  if (entry.kind === "context_operation") return entry.error?.length ?? 0;
   return entry.content.length;
 }
 

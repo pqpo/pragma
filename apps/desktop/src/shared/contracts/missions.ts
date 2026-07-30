@@ -326,6 +326,15 @@ export const MissionChatEntrySchema = z.discriminatedUnion("kind", [
     label: z.string().max(500).optional(),
     error: z.string().max(10_000).optional(),
   }),
+  MissionChatEntryBaseSchema.extend({
+    kind: z.literal("context_operation"),
+    operationId: z.string().min(1),
+    operation: z.literal("compaction"),
+    trigger: z.enum(["auto", "manual", "overflow", "unknown"]),
+    runtimeId: DesktopRuntimeIdSchema,
+    status: z.enum(["running", "succeeded", "failed"]),
+    error: z.string().max(10_000).optional(),
+  }),
 ]);
 
 export const MissionWorkConversationSnapshotSchema = z.object({
@@ -354,7 +363,13 @@ export const MissionContextWindowStateSchema = z.object({
   supportsInspection: z.boolean(),
   supportsCompaction: z.boolean(),
   canCompact: z.boolean(),
+  compactionBlockedReason: z.enum(["not_ready", "busy", "inactive", "not_started"]).optional(),
   usage: MissionContextWindowUsageSchema.optional(),
+});
+
+export const MissionContextCompactionResultSchema = z.object({
+  outcome: z.enum(["compacted", "not_needed"]),
+  contextWindow: MissionContextWindowStateSchema,
 });
 
 export const MissionChatSnapshotSchema = z.object({

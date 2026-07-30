@@ -1,4 +1,4 @@
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import type { SDKResultError, SDKResultSuccess } from "@qoder-ai/qoder-agent-sdk";
 
 import {
@@ -100,6 +100,65 @@ describe("Qoder usage mapping", () => {
       totalTokens: 3,
       cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0 },
     });
+  });
+
+  it("uses the shared counter for the estimation fallback", () => {
+    const result = {
+      type: "result",
+      subtype: "success",
+      duration_ms: 10,
+      duration_api_ms: 8,
+      is_error: false,
+      num_turns: 1,
+      result: "done",
+      stop_reason: "end_turn",
+      total_cost_usd: 0,
+      usage: {
+        cache_creation: {
+          ephemeral_1h_input_tokens: 0,
+          ephemeral_5m_input_tokens: 0,
+        },
+        cache_creation_input_tokens: 0,
+        cache_read_input_tokens: 0,
+        inference_geo: "",
+        input_tokens: 0,
+        iterations: [],
+        output_tokens: 0,
+        server_tool_use: { web_fetch_requests: 0, web_search_requests: 0 },
+        service_tier: "",
+        speed: "",
+      },
+      modelUsage: {},
+      permission_denials: [],
+      uuid: "result",
+      session_id: "session",
+    } satisfies SDKResultSuccess;
+    const countText = vi
+      .fn()
+      .mockReturnValueOnce({ tokens: 11, source: "tokenizer" })
+      .mockReturnValueOnce({ tokens: 3, source: "tokenizer" });
+
+    expect(
+      resolveQoderUsage(
+        result,
+        { inputText: "input", outputText: "output" },
+        { countText },
+        "qoder-model",
+      ),
+    ).toMatchObject({
+      measurement: "estimated",
+      input: 11,
+      output: 3,
+      totalTokens: 14,
+    });
+    expect(countText).toHaveBeenCalledWith(
+      "input",
+      expect.objectContaining({
+        runtimeKind: "qoder-agent-sdk",
+        providerId: "qoder",
+        modelId: "qoder-model",
+      }),
+    );
   });
 
   it("prefers Qoder's reported usage over the estimation fallback", () => {

@@ -34,6 +34,7 @@ export interface RuntimeAdapterCapabilities {
   readonly supportsClose?: boolean | undefined;
   readonly supportsContextWindowInspection?: boolean | undefined;
   readonly supportsManualCompaction?: boolean | undefined;
+  readonly supportsContextCompactionEvents?: boolean | undefined;
 }
 
 export type RuntimeTarget = "expert" | "code" | "flow" | "operator" | (string & {});
@@ -191,6 +192,7 @@ export type { RuntimeContextWindowMeasurement, RuntimeContextWindowUsage };
 
 export interface RuntimeSessionContextWindowController {
   readonly inspect: () => Promise<RuntimeContextWindowUsage | undefined>;
+  readonly canCompact: () => Promise<boolean>;
   readonly compact: (() => Promise<RuntimeContextWindowUsage | undefined>) | undefined;
 }
 
