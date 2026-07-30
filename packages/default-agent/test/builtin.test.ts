@@ -121,6 +121,20 @@ describe("built-in Pragma Agent DSL", () => {
       expect(catalog.tools.map((tool) => tool.name)).toContain("create_flow_draft");
       expect(catalog.tools.map((tool) => tool.name)).toContain("update_flow_draft");
       expect(
+        catalog.tools.find((tool) => tool.name === "create_evaluation_draft")?.inputSchema,
+      ).toMatchObject({
+        type: "object",
+        properties: {
+          mode: { type: "string", enum: ["create", "edit"] },
+          expectedProjectRevision: { type: "integer", minimum: 0 },
+          metadata: { type: "object" },
+          targetRef: { type: "string" },
+          evaluationRef: { type: "string" },
+        },
+        required: ["mode", "expectedProjectRevision"],
+        additionalProperties: false,
+      });
+      expect(
         catalog.tools.flatMap((tool) => [
           ...findConflictingReferenceSiblings(tool.inputSchema),
           ...findConflictingReferenceSiblings(tool.outputSchema),

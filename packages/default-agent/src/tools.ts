@@ -75,19 +75,39 @@ const PrepareFlowDraftInput = z.object({
   expectedDraftRevision: z.number().int().nonnegative(),
   additionalSources: z.array(z.string().min(1).max(2_000_000)).max(49).optional(),
 });
+const CreateEvaluationDraftCreateInput = z.object({
+  mode: z.literal("create"),
+  expectedProjectRevision: z.number().int().nonnegative(),
+  metadata: PragmaEvaluationMetadataSchema,
+  targetRef: PragmaEvaluationFlowRefSchema,
+});
+const CreateEvaluationDraftEditInput = z.object({
+  mode: z.literal("edit"),
+  expectedProjectRevision: z.number().int().nonnegative(),
+  evaluationRef: PragmaEvaluationRefSchema,
+});
 const CreateEvaluationDraftInput = z.discriminatedUnion("mode", [
-  z.object({
-    mode: z.literal("create"),
-    expectedProjectRevision: z.number().int().nonnegative(),
-    metadata: PragmaEvaluationMetadataSchema,
-    targetRef: PragmaEvaluationFlowRefSchema,
-  }),
-  z.object({
-    mode: z.literal("edit"),
-    expectedProjectRevision: z.number().int().nonnegative(),
-    evaluationRef: PragmaEvaluationRefSchema,
-  }),
+  CreateEvaluationDraftCreateInput,
+  CreateEvaluationDraftEditInput,
 ]);
+// MCP tool inputs must expose a top-level object. A root discriminated union materializes as
+// `oneOf` and is reduced to an empty object by the MCP catalog, so keep the strict execution
+// validator above and publish the union fields through this model-facing object schema.
+const CreateEvaluationDraftToolInput = z.object({
+  mode: z
+    .enum(["create", "edit"])
+    .describe("Use create for a new test set or edit for an existing Evaluation."),
+  expectedProjectRevision: CreateEvaluationDraftCreateInput.shape.expectedProjectRevision,
+  metadata: CreateEvaluationDraftCreateInput.shape.metadata
+    .optional()
+    .describe("Required when mode is create."),
+  targetRef: CreateEvaluationDraftCreateInput.shape.targetRef
+    .optional()
+    .describe("Exact committed Flow ref; required when mode is create."),
+  evaluationRef: CreateEvaluationDraftEditInput.shape.evaluationRef
+    .optional()
+    .describe("Exact existing Evaluation ref; required when mode is edit."),
+});
 const EvaluationCaseIdsSchema = z
   .array(PragmaFlowRunDryCaseSchema.shape.id)
   .min(1)
@@ -271,7 +291,7 @@ export function createDefaultAgentTools(options: {
     tool(
       "create_evaluation_draft",
       "Create an empty incremental Evaluation draft for a committed Flow, or start editing one existing Evaluation.",
-      z.toJSONSchema(CreateEvaluationDraftInput),
+      z.toJSONSchema(CreateEvaluationDraftToolInput),
       async (args) => {
         return ok(
           summarizeEvaluationDraft(

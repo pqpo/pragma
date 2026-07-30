@@ -80,6 +80,18 @@ describe("DefaultAgent managed tools", () => {
     )!;
 
     expect(JSON.stringify(createEvaluation.inputSchema)).not.toContain("targetFlowDraftId");
+    expect(createEvaluation.inputSchema).toMatchObject({
+      type: "object",
+      properties: {
+        mode: { type: "string", enum: ["create", "edit"] },
+        expectedProjectRevision: { type: "integer", minimum: 0 },
+        metadata: { type: "object" },
+        targetRef: { type: "string" },
+        evaluationRef: { type: "string" },
+      },
+      required: ["mode", "expectedProjectRevision"],
+      additionalProperties: false,
+    });
     expect(createEvaluation.description).toContain("committed Flow");
     expect(createEvaluation.description).not.toContain("uncommitted Flow");
     expect(JSON.stringify(prepareFlow.inputSchema)).not.toContain("evaluationDraft");
@@ -87,6 +99,78 @@ describe("DefaultAgent managed tools", () => {
     expect(prepareEvaluation.description).toContain("committed Flow");
     expect(prepareEvaluation.description).toContain("commit_dsl_changes");
     expect(prepareEvaluation.description).toContain("save only the Evaluation");
+  });
+
+  it("validates both create_evaluation_draft modes before calling the project port", async () => {
+    const inputs: Parameters<DefaultAgentDslProjectPort["createEvaluationDraft"]>[0][] = [];
+    const project = projectPort({
+      async createEvaluationDraft(input) {
+        inputs.push(input);
+        return evaluationDraft();
+      },
+    });
+    const tool = createDefaultAgentTools({ project, tasks: taskPort() }).find(
+      (candidate) => candidate.name === "create_evaluation_draft",
+    )!;
+
+    await expect(
+      tool.call(
+        {
+          mode: "create",
+          expectedProjectRevision: 3,
+        },
+        undefined,
+        undefined,
+      ),
+    ).rejects.toThrow();
+    expect(inputs).toHaveLength(0);
+
+    await expect(
+      tool.call(
+        {
+          mode: "create",
+          expectedProjectRevision: 3,
+          metadata: {
+            id: "7h8j9k0m1n2p3q4r",
+            name: "Test Run Dry",
+            description: "Tests a committed Flow.",
+            tags: [],
+          },
+          targetRef: "flow:8h9j0k1m2n3p4q5r",
+        },
+        undefined,
+        undefined,
+      ),
+    ).resolves.toMatchObject({ details: { targetRef: "flow:8h9j0k1m2n3p4q5r" } });
+    await expect(
+      tool.call(
+        {
+          mode: "edit",
+          expectedProjectRevision: 4,
+          evaluationRef: "evaluation:7h8j9k0m1n2p3q4r",
+        },
+        undefined,
+        undefined,
+      ),
+    ).resolves.toMatchObject({ details: { targetRef: "flow:8h9j0k1m2n3p4q5r" } });
+    expect(inputs).toEqual([
+      {
+        mode: "create",
+        expectedProjectRevision: 3,
+        metadata: {
+          id: "7h8j9k0m1n2p3q4r",
+          name: "Test Run Dry",
+          description: "Tests a committed Flow.",
+          tags: [],
+        },
+        targetRef: "flow:8h9j0k1m2n3p4q5r",
+      },
+      {
+        mode: "edit",
+        expectedProjectRevision: 4,
+        evaluationRef: "evaluation:7h8j9k0m1n2p3q4r",
+      },
+    ]);
   });
 
   it("returns compact draft summaries and caps update batches at 10 operations", async () => {
