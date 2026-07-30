@@ -16,6 +16,7 @@ import {
   StoredExecutionView,
   type ExpertSession,
   type RuntimeDriverSessionContext,
+  type RuntimeContextWindowUsage,
   type RuntimeModelSelection,
   type RuntimeResolver,
 } from "@pragma/core";
@@ -31,6 +32,7 @@ import {
   MissionChatUpdateSchema,
   missionExecutorSnapshot,
   type DesktopToolPermissionMode,
+  type MissionChatUpdate,
 } from "../../../shared/contracts/index.ts";
 import type { CapabilityCredentialStore } from "../capabilities/capability-credential-store.ts";
 import type { CapabilityStore } from "../capabilities/capability-store.ts";
@@ -347,13 +349,27 @@ describe("MissionRunner", { timeout: 15_000 }, () => {
         observedAt: new Date().toISOString(),
       };
     });
-    const runtime = defineRuntimeDriver<never, { id: string }>({
+    let finishTurn = (): void => undefined;
+    const turnCanFinish = new Promise<void>((resolve) => {
+      finishTurn = resolve;
+    });
+    const runtime = defineRuntimeDriver<RuntimeContextWindowUsage, { id: string }>({
       descriptor: { id: "fake", kind: "fake", displayName: "Fake" },
       createSession: () => ({ id: "runtime" }),
       restoreSession: () => ({ id: "runtime" }),
       readSession: (session) => ({ runtimeSessionId: session.id }),
-      startTurn: () => ({ outputText: "done", runtimeSessionId: "runtime" }),
-      mapEvent: () => ({ events: [] }),
+      async startTurn(_session, turn) {
+        turn.stream.writeNative({
+          usedTokens: 40_000,
+          contextWindowTokens: 200_000,
+          percent: 20,
+          measurement: "reported",
+          observedAt: new Date().toISOString(),
+        });
+        await turnCanFinish;
+        return { outputText: "done", runtimeSessionId: "runtime" };
+      },
+      mapEvent: (usage) => ({ events: [], contextWindowUsage: usage }),
       readContextWindow: () => ({
         usedTokens: contextUsageTokens,
         contextWindowTokens: 200_000,
@@ -376,12 +392,29 @@ describe("MissionRunner", { timeout: 15_000 }, () => {
         runtimes,
       });
     const runner = createRunner();
+    const chatUpdates: MissionChatUpdate[] = [];
+    const unsubscribe = runner.subscribeChat((update) => chatUpdates.push(update));
 
     await runner.run(mission.id);
+    await vi.waitFor(() => {
+      expect(
+        chatUpdates.some(
+          (update) =>
+            update.kind === "patch" &&
+            update.patches.some(
+              (patch) =>
+                patch.type === "context-window.update" && patch.usage.usedTokens === 40_000,
+            ),
+        ),
+      ).toBe(true);
+    });
+    expect((await missions.get(mission.id)).execution?.status).toBe("running");
+    finishTurn();
     await vi.waitFor(
       async () => expect((await missions.get(mission.id)).execution?.status).toBe("succeeded"),
       { timeout: settlementTimeoutMs },
     );
+    unsubscribe();
     await expect(runner.getChat({ id: mission.id, limit: 50 })).resolves.toMatchObject({
       contextWindow: {
         supportsInspection: true,

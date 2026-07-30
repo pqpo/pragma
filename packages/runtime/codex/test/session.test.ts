@@ -95,6 +95,47 @@ describe("Codex context window", () => {
     expect(countText).toHaveBeenCalledOnce();
   });
 
+  it("maps root token notifications to live usage and context-window snapshots", () => {
+    const result = mapCodexNotificationToRuntimeEvent(
+      {
+        rootThreadId: "thread-1",
+        notification: {
+          method: "thread/tokenUsage/updated",
+          params: {
+            threadId: "thread-1",
+            tokenUsage: {
+              last: {
+                inputTokens: 40_000,
+                cachedInputTokens: 10_000,
+                outputTokens: 2_000,
+                totalTokens: 42_000,
+                reasoningOutputTokens: 2_000,
+              },
+              modelContextWindow: 200_000,
+            },
+          },
+        },
+      },
+      {
+        runId: "run-1",
+        source: { kind: "runtime", runId: "run-1", path: [] },
+        events: {},
+      } as unknown as RuntimeEventMappingContext,
+    );
+
+    expect(result.usage).toMatchObject({
+      input: 30_000,
+      output: 2_000,
+      cacheRead: 10_000,
+      totalTokens: 42_000,
+    });
+    expect(result.contextWindowUsage).toMatchObject({
+      usedTokens: 40_000,
+      contextWindowTokens: 200_000,
+      percent: 20,
+    });
+  });
+
   it("waits for compact completion and returns refreshed thread usage", async () => {
     const notificationBus = createCodexNotificationBus();
     const client = {

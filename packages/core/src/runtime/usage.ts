@@ -22,7 +22,9 @@ export interface RuntimeUsageObservation {
  * the cross-execution usage ledger.
  */
 export interface UsageSink {
+  readonly preview?: ((observation: RuntimeUsageObservation) => Promise<void> | void) | undefined;
   readonly record: (observation: RuntimeUsageObservation) => Promise<void> | void;
+  readonly clearPreview?: ((observationId: string) => Promise<void> | void) | undefined;
 }
 
 export interface RuntimeTokenUsageInput {

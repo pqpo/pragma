@@ -59,6 +59,9 @@ import type {
   MissionSummary,
   MissionUpdate,
   MissionExecutorOption,
+  HomeMissionExecutorCatalog,
+  HomeExecutorPreference,
+  UpdateHomeExecutorPreference,
   MissionCreationDefaults,
   AutomationSummary,
   SaveAutomation,
@@ -173,6 +176,10 @@ export interface PragmaDesktopAPI {
   ) => Promise<AutomationSchedulePreview>;
   listMissions: () => Promise<MissionSummary[]>;
   listMissionExecutors: () => Promise<MissionExecutorOption[]>;
+  getHomeMissionExecutorCatalog: () => Promise<HomeMissionExecutorCatalog>;
+  updateHomeExecutorPreference: (
+    input: UpdateHomeExecutorPreference,
+  ) => Promise<HomeExecutorPreference>;
   getMissionModelOptions: (
     executorRef: string,
     missionId?: string | undefined,

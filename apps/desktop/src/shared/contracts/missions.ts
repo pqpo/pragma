@@ -3,6 +3,7 @@ import {
   HumanInteractionResponseSchema,
   MissionExecutorRefSchema,
   MissionExecutorSchema,
+  RuntimeContextWindowUsageSchema,
   type MissionExecutor,
 } from "@pragma/shared";
 import {
@@ -356,13 +357,7 @@ export const MissionChatExecutionSchema = z.object({
   error: z.string().max(10_000).optional(),
 });
 
-export const MissionContextWindowUsageSchema = z.object({
-  usedTokens: z.number().int().nonnegative().nullable(),
-  contextWindowTokens: z.number().int().positive(),
-  percent: z.number().nonnegative().nullable(),
-  measurement: z.enum(["reported", "derived", "estimated"]),
-  observedAt: z.string().datetime(),
-});
+export const MissionContextWindowUsageSchema = RuntimeContextWindowUsageSchema;
 
 export const MissionContextWindowStateSchema = z.object({
   supportsInspection: z.boolean(),
@@ -406,6 +401,10 @@ export const MissionChatPatchSchema = z.discriminatedUnion("type", [
     type: z.literal("entry.streaming"),
     entryId: z.string().min(1),
     streaming: z.boolean(),
+  }),
+  z.object({
+    type: z.literal("context-window.update"),
+    usage: MissionContextWindowUsageSchema,
   }),
 ]);
 

@@ -8,6 +8,7 @@ import type {
 } from "../../../../shared/contracts/index.ts";
 import { i18n } from "../../i18n/index.ts";
 import {
+  applyMissionUsageHintRevision,
   applyMissionChatPatches,
   claimMissionClientOperation,
   CONTEXT_POPOVER_CLOSE_DELAY_MS,
@@ -31,6 +32,22 @@ import {
 } from "./MissionsPage.tsx";
 
 describe("MissionsPage", () => {
+  it("does not let a stale initial usage query overwrite a newer streaming update", () => {
+    const live = applyMissionUsageHintRevision(
+      { revision: -1, totalTokens: 0 },
+      { revision: 8, totalTokens: 120 },
+    );
+
+    expect(applyMissionUsageHintRevision(live, { revision: 7, totalTokens: 80 })).toEqual({
+      revision: 8,
+      totalTokens: 120,
+    });
+    expect(applyMissionUsageHintRevision(live, { revision: 9, totalTokens: 155 })).toEqual({
+      revision: 9,
+      totalTokens: 155,
+    });
+  });
+
   it("keeps creation outside the missions surface", () => {
     const html = renderToStaticMarkup(<MissionsPage onCreate={() => undefined} />);
 
@@ -410,7 +427,7 @@ describe("MissionDetailFragment", () => {
     expect(html).toContain("mission-chat-footer");
     expect(html).toContain("mission-chat-composer");
     expect(html).toContain("mission-chat-composer-toolbar");
-    expect(html).toContain("This Mission has used 0 tokens");
+    expect(html).not.toContain("Used 0 tokens");
     expect(html).toContain('aria-label="Model"');
     expect(html).toContain('aria-label="Tool permissions"');
     expect(html).not.toContain("mission-execution-notice");
@@ -654,6 +671,46 @@ describe("Mission chat patches", () => {
         2,
       ),
     ).toBeNull();
+  });
+
+  it("applies a live context-window patch without replacing chat entries", () => {
+    const snapshot: MissionChatSnapshot = {
+      missionId: "00000000-0000-4000-8000-000000000000",
+      revision: 1,
+      entries: [],
+      page: {},
+      pendingInteractions: [],
+      contextWindow: {
+        supportsInspection: true,
+        supportsCompaction: true,
+        canCompact: false,
+      },
+    };
+
+    expect(
+      applyMissionChatPatches(
+        snapshot,
+        [
+          {
+            type: "context-window.update",
+            usage: {
+              usedTokens: 80_000,
+              contextWindowTokens: 200_000,
+              percent: 40,
+              measurement: "estimated",
+              observedAt: "2026-07-29T00:00:00.000Z",
+            },
+          },
+        ],
+        2,
+      ),
+    ).toMatchObject({
+      revision: 2,
+      contextWindow: {
+        canCompact: false,
+        usage: { usedTokens: 80_000, percent: 40 },
+      },
+    });
   });
 });
 

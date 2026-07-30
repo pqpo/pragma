@@ -1327,6 +1327,7 @@ async function submitRuntimeTurn(options: {
   const rootMessageAccumulator = accumulatorFor(options.runId);
   let completedRootAssistant: AgentMessage | undefined;
   const liveBus = getExecutionLiveBus(options.options.store);
+  let usagePreview = Promise.resolve();
   const drain = (async () => {
     for await (const event of handle.events) {
       const output = projectRuntimeOutput({
@@ -1335,6 +1336,22 @@ async function submitRuntimeTurn(options: {
         event,
       });
       if (output !== undefined) liveBus.publish(options.options.executionId, output);
+      if (event.type === "usage.updated" && options.options.usageSink?.preview !== undefined) {
+        const observation = createRuntimeUsageObservation(
+          options,
+          event.payload.usage,
+          event.runId,
+        );
+        usagePreview = usagePreview
+          .then(async () => await options.options.usageSink!.preview!(observation))
+          .catch((error: unknown) => {
+            createUsageSinkLogger(options).warn(
+              "usage.sink_preview_failed",
+              "Host usage sink rejected a live preview.",
+              { observationId: observation.observationId, error },
+            );
+          });
+      }
       for (const message of accumulatorFor(event.runId).consume(event)) {
         if (
           event.runId === options.runId &&
@@ -1371,6 +1388,7 @@ async function submitRuntimeTurn(options: {
   try {
     const result = await handle.result;
     await drain;
+    await usagePreview;
     const output = result.result.output;
     const finalMessage =
       completedRootAssistant ?? rootMessageAccumulator.complete(output, result.result.usage);
@@ -1383,6 +1401,7 @@ async function submitRuntimeTurn(options: {
     };
   } catch (error) {
     const usage = await handle.usage?.catch(() => undefined);
+    await usagePreview;
     await settleRuntimeTurnUsage(options, usage);
     throw error;
   } finally {
@@ -1398,7 +1417,15 @@ async function settleRuntimeTurnUsage(
   options: Parameters<typeof submitRuntimeTurn>[0],
   usage: AgentMessageUsage | undefined,
 ): Promise<void> {
-  if (usage === undefined) return;
+  const observationId = runtimeUsageObservationId(
+    options.options.executionId,
+    options.options.invocationId,
+    options.runId,
+  );
+  if (usage === undefined) {
+    await clearRuntimeUsagePreview(options, observationId);
+    return;
+  }
   options.options.controller.addUsage(usage);
   const current = await options.options.store.getInvocation(
     options.options.executionId,
@@ -1418,41 +1445,85 @@ async function settleRuntimeTurnUsage(
     });
   }
   if (options.options.usageSink === undefined) return;
-  const observationId = createHash("sha256")
-    .update(
-      JSON.stringify([options.options.executionId, options.options.invocationId, options.runId]),
-    )
-    .digest("hex");
-  const executorId = options.invocation.executorId ?? options.invocation.definition.id;
   try {
-    await options.options.usageSink.record({
-      observationId,
-      occurredAt: new Date().toISOString(),
+    await options.options.usageSink.record(
+      createRuntimeUsageObservation(options, usage, options.runId),
+    );
+  } catch (error) {
+    createUsageSinkLogger(options).warn(
+      "usage.sink_write_failed",
+      "Host usage sink rejected an observation.",
+      {
+        observationId,
+        error,
+      },
+    );
+  } finally {
+    await clearRuntimeUsagePreview(options, observationId);
+  }
+}
+
+async function clearRuntimeUsagePreview(
+  options: Parameters<typeof submitRuntimeTurn>[0],
+  observationId: string,
+): Promise<void> {
+  try {
+    await options.options.usageSink?.clearPreview?.(observationId);
+  } catch (error) {
+    createUsageSinkLogger(options).warn(
+      "usage.sink_preview_clear_failed",
+      "Host usage sink failed to clear a live preview.",
+      { observationId, error },
+    );
+  }
+}
+
+function createRuntimeUsageObservation(
+  options: Parameters<typeof submitRuntimeTurn>[0],
+  usage: AgentMessageUsage,
+  runId: string,
+) {
+  const executorId = options.invocation.executorId ?? options.invocation.definition.id;
+  return {
+    observationId: runtimeUsageObservationId(
+      options.options.executionId,
+      options.options.invocationId,
+      runId,
+    ),
+    occurredAt: new Date().toISOString(),
+    executionId: options.options.executionId,
+    invocationId: options.options.invocationId,
+    contextId: options.options.context.contextId,
+    runId,
+    runtimeId: options.options.context.runtime.runtimeId,
+    ...(options.modelSelection === undefined ? {} : { modelSelection: options.modelSelection }),
+    executor: {
+      id: executorId,
+      name: readExpertName(options.options.expert, executorId),
+    },
+    usage,
+  };
+}
+
+function runtimeUsageObservationId(
+  executionId: string,
+  invocationId: string,
+  runId: string,
+): string {
+  return createHash("sha256")
+    .update(JSON.stringify([executionId, invocationId, runId]))
+    .digest("hex");
+}
+
+function createUsageSinkLogger(options: Parameters<typeof submitRuntimeTurn>[0]) {
+  return createPragmaLogger(options.options.loggerProvider, {
+    component: "usage-sink",
+    scope: {
       executionId: options.options.executionId,
       invocationId: options.options.invocationId,
       contextId: options.options.context.contextId,
-      runId: options.runId,
-      runtimeId: options.options.context.runtime.runtimeId,
-      ...(options.modelSelection === undefined ? {} : { modelSelection: options.modelSelection }),
-      executor: {
-        id: executorId,
-        name: readExpertName(options.options.expert, executorId),
-      },
-      usage,
-    });
-  } catch (error) {
-    createPragmaLogger(options.options.loggerProvider, {
-      component: "usage-sink",
-      scope: {
-        executionId: options.options.executionId,
-        invocationId: options.options.invocationId,
-        contextId: options.options.context.contextId,
-      },
-    }).warn("usage.sink_write_failed", "Host usage sink rejected an observation.", {
-      observationId,
-      error,
-    });
-  }
+    },
+  });
 }
 
 function readExpertName(expert: ExpertDefinition, executorId: string): string {
@@ -1465,7 +1536,11 @@ function readExpertName(expert: ExpertDefinition, executorId: string): string {
 
 function isLiveOnlyRuntimeEvent(event: ExpertAgentStreamEvent): boolean {
   return (
-    event.type === "message.delta" || event.type === "thought.delta" || event.type === "tool.delta"
+    event.type === "message.delta" ||
+    event.type === "thought.delta" ||
+    event.type === "tool.delta" ||
+    event.type === "usage.updated" ||
+    event.type === "context-window.updated"
   );
 }
 

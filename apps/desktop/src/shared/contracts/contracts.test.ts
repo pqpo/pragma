@@ -16,6 +16,7 @@ import {
   CreateMissionSchema,
   DeleteContextStoreSchema,
   GetMissionChatSchema,
+  HomeMissionExecutorCatalogSchema,
   MissionChatSnapshotSchema,
   MissionChatUpdateSchema,
   MissionCreationDefaultsSchema,
@@ -28,6 +29,7 @@ import {
   UpdateDesktopSettingsSchema,
   UpdateExpertDefinitionSchema,
   UpdateMissionOptionsSchema,
+  UpdateHomeExecutorPreferenceSchema,
   UpdateBuiltInExpertDefinitionSchema,
   UpdateContextStoreFileSchema,
 } from "./index.ts";
@@ -197,6 +199,70 @@ describe("mission creation defaults contracts", () => {
   });
 });
 
+describe("Home executor preference contracts", () => {
+  it("validates a workspace-aware catalog and requires a concrete preference mutation", () => {
+    expect(
+      HomeMissionExecutorCatalogSchema.parse({
+        executors: [
+          {
+            ref: "expert:0000000000000001",
+            name: "Coder",
+            description: "Codes",
+            kind: "expert",
+            origin: "project",
+            readOnly: false,
+            customized: false,
+            tags: ["code"],
+            teamMemberships: [],
+            preference: {
+              favoriteScope: "workspace",
+              hidden: false,
+              favoriteWorkspace: { path: "/work/favorite", basename: "favorite" },
+              lastWorkspace: { path: "/work/code", basename: "code" },
+            },
+            alwaysVisible: false,
+          },
+        ],
+        defaults: {
+          workspace: { path: "/work/default", basename: "default" },
+          recentWorkspaces: [],
+          executorRef: "expert:0000000000000001",
+          toolPermissionMode: "request-approval",
+        },
+      }).executors[0]?.tags,
+    ).toEqual(["code"]);
+    expect(
+      UpdateHomeExecutorPreferenceSchema.safeParse({ ref: "expert:0000000000000001" }).success,
+    ).toBe(false);
+    expect(
+      UpdateHomeExecutorPreferenceSchema.safeParse({
+        ref: "expert:0000000000000001",
+        favoriteScope: "workspace",
+        favoriteWorkspace: "/work/code",
+      }).success,
+    ).toBe(true);
+    expect(
+      UpdateHomeExecutorPreferenceSchema.safeParse({
+        ref: "expert:0000000000000001",
+        favoriteScope: "workspace",
+      }).success,
+    ).toBe(false);
+    expect(
+      UpdateHomeExecutorPreferenceSchema.safeParse({
+        ref: "expert:0000000000000001",
+        favoriteWorkspace: "/work/code",
+      }).success,
+    ).toBe(false);
+    expect(
+      UpdateHomeExecutorPreferenceSchema.safeParse({
+        ref: "expert:0000000000000001",
+        favoriteScope: "global",
+        hidden: true,
+      }).success,
+    ).toBe(false);
+  });
+});
+
 describe("mission chat streaming contracts", () => {
   it("accepts incremental patches and invalidations with positive revisions", () => {
     const missionId = "00000000-0000-4000-8000-000000000000";
@@ -208,10 +274,31 @@ describe("mission chat streaming contracts", () => {
         patches: [{ type: "entry.append", entryId: "answer", field: "content", delta: "hello" }],
       }),
     ).toMatchObject({ kind: "patch", revision: 1 });
-    expect(MissionChatUpdateSchema.parse({ kind: "invalidate", missionId, revision: 2 })).toEqual({
+    expect(
+      MissionChatUpdateSchema.parse({
+        kind: "patch",
+        missionId,
+        revision: 2,
+        patches: [
+          {
+            type: "context-window.update",
+            usage: {
+              usedTokens: 64_000,
+              contextWindowTokens: 128_000,
+              percent: 50,
+              measurement: "estimated",
+              observedAt: "2026-07-29T00:00:00.000Z",
+            },
+          },
+        ],
+      }),
+    ).toMatchObject({
+      patches: [{ type: "context-window.update", usage: { usedTokens: 64_000 } }],
+    });
+    expect(MissionChatUpdateSchema.parse({ kind: "invalidate", missionId, revision: 3 })).toEqual({
       kind: "invalidate",
       missionId,
-      revision: 2,
+      revision: 3,
     });
     expect(
       MissionChatUpdateSchema.safeParse({

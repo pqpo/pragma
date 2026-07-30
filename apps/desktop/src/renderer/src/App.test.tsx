@@ -67,4 +67,12 @@ describe("App", () => {
 
     expect(html).toContain('class="window-drag-region"');
   });
+
+  it("uses the Pragma image for the sidebar avatar", () => {
+    const html = renderToStaticMarkup(<App />);
+
+    expect(html).toContain('class="brand-mark"');
+    expect(html).toContain('src="/src/renderer/src/assets/pragma-icon.png"');
+    expect(html).not.toContain(">P</span>");
+  });
 });

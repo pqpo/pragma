@@ -48,7 +48,11 @@ import type {
   RuntimeContextRecord,
   RuntimeEnvironmentBinding,
 } from "@pragma/shared";
-import { ExpertAgentStreamEventSchema, isFinalExecutionStatus } from "@pragma/shared";
+import {
+  ExpertAgentStreamEventSchema,
+  isFinalExecutionStatus,
+  RuntimeContextWindowUsageSchema,
+} from "@pragma/shared";
 
 import type {
   Mission,
@@ -252,6 +256,23 @@ export function createMissionRunner(options: {
           options.usage === undefined
             ? undefined
             : {
+                preview: async (observation) => {
+                  const currentMission = await options.missions.get(mission.id);
+                  const project = await options.project.openRevision(
+                    currentMission.project.revision,
+                  );
+                  const names = new Map(
+                    project
+                      .listResources()
+                      .map((resource) => [resource.metadata.id, resource.metadata.name] as const),
+                  );
+                  names.set(currentMission.executor.ref, currentMission.executor.name);
+                  options.usage!.preview(observation, {
+                    mission: { id: currentMission.id, title: currentMission.title },
+                    invocations: await executionStore.listInvocations(observation.executionId),
+                    names,
+                  });
+                },
                 record: async (observation) => {
                   const currentMission = await options.missions.get(mission.id);
                   const project = await options.project.openRevision(
@@ -269,6 +290,7 @@ export function createMissionRunner(options: {
                     names,
                   });
                 },
+                clearPreview: (observationId) => options.usage!.clearPreview(observationId),
               },
       }),
       setToolPermissionMode: (mode: DesktopToolPermissionMode) => {
@@ -286,6 +308,7 @@ export function createMissionRunner(options: {
   const chatListeners = new Set<(update: MissionChatUpdate) => void>();
   const chatRevisions = new Map<string, number>();
   const liveChats = new Map<string, LiveMissionChat>();
+  const liveContextWindows = new Map<string, RuntimeContextWindowUsage>();
   const workListeners = new Set<(update: MissionWorkUpdate) => void>();
   const workRevisions = new Map<string, number>();
   const liveWorkOutputs = new Map<string, Map<string, LiveMissionChat>>();
@@ -371,6 +394,7 @@ export function createMissionRunner(options: {
       liveChats.delete(id);
     }
     liveWorkOutputs.delete(id);
+    liveContextWindows.delete(id);
     invalidateChat(id);
     invalidateWork(id);
   };
@@ -617,6 +641,18 @@ export function createMissionRunner(options: {
       },
       () => invalidateChat(input.missionId),
       (item) => {
+        if (item.channel === "telemetry" && item.parentInvocationId === undefined) {
+          const payload = asRecord(item.value);
+          if (readString(payload, "type") === "context-window.updated") {
+            const usage = RuntimeContextWindowUsageSchema.safeParse(payload["usage"]);
+            if (usage.success) {
+              liveContextWindows.set(input.missionId, usage.data);
+              emitChatPatches(input.missionId, [
+                { type: "context-window.update", usage: usage.data },
+              ]);
+            }
+          }
+        }
         const sessionId = item.source.sessionId;
         if (item.source.parentSessionId !== undefined && sessionId !== undefined) {
           const recordId = `runtime-agent:${sessionId}`;
@@ -1146,7 +1182,7 @@ export function createMissionRunner(options: {
       active.has(mission.id) ||
       (mission.execution !== undefined &&
         ["queued", "running", "waiting"].includes(mission.execution.status));
-    let usage = usageOverride;
+    let usage = usageOverride ?? liveContextWindows.get(mission.id);
     if (usage === undefined && rootContext.snapshot !== undefined) {
       if (!executionBusy) {
         usage = await sessions
@@ -1618,6 +1654,7 @@ export function createMissionRunner(options: {
       chatRevisions.delete(id);
       workRevisions.delete(id);
       liveWorkOutputs.delete(id);
+      liveContextWindows.delete(id);
     },
     async listHumanInteractions(id) {
       return await listMissionPendingHumanInteractions(await options.missions.get(id));

@@ -216,12 +216,18 @@ p {
   width: 39px;
   height: 39px;
   place-items: center;
-  border-radius: 4px;
-  background: var(--green);
-  color: #fff;
-  font-size: 29px;
-  font-weight: 500;
-  line-height: 1;
+  overflow: hidden;
+  border: 1px solid #fff;
+  border-radius: 50%;
+  background: #fff;
+  box-shadow: 0 5px 14px rgb(69 100 84 / 18%);
+}
+
+.brand-mark img {
+  display: block;
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
 }
 
 .brand-name {
@@ -5985,7 +5991,8 @@ p {
 
 .mission-usage-hint {
   display: block;
-  margin: 7px 4px 0;
+  justify-self: end;
+  margin: 9px 14px 0;
   color: var(--faint);
   font-size: 11px;
   line-height: 1.35;
@@ -6029,40 +6036,20 @@ p {
   outline: 0;
 }
 
-.runtime-summary-footer {
+.runtime-summary-models {
   display: flex;
-  align-items: end;
-  justify-content: space-between;
-  gap: 24px;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: center;
+  gap: 8px 20px;
   margin-top: 20px;
   padding-top: 17px;
   border-top: 1px solid var(--border);
-}
-
-.runtime-summary-footer > div {
-  display: grid;
-  gap: 4px;
-}
-
-.runtime-summary-footer p {
-  color: var(--text);
+  color: var(--muted);
   font-size: 13px;
   font-weight: 610;
-}
-
-.runtime-summary-footer > div > span {
-  color: var(--muted);
-  font-size: 12px;
-}
-
-.runtime-open-detail {
-  display: inline-flex;
-  align-items: center;
-  gap: 5px;
-  color: var(--green-dark);
-  font-size: 12px;
-  font-weight: 650;
-  white-space: nowrap;
+  line-height: 1.5;
+  text-align: center;
 }
 
 .runtime-detail-back {
@@ -10534,10 +10521,9 @@ textarea:focus-visible,
 .brand-mark {
   width: 36px;
   height: 36px;
-  border-radius: 10px;
-  background: var(--green);
+  border-radius: 50%;
+  background: #fff;
   box-shadow: 0 5px 14px rgb(69 100 84 / 18%);
-  font-size: 24px;
 }
 
 .brand-name {
@@ -11383,7 +11369,7 @@ textarea:focus-visible,
   z-index: 30;
   top: calc(100% + 13px);
   right: -14px;
-  width: min(460px, calc(100vw - 80px));
+  width: min(480px, calc(100vw - 80px));
   overflow: hidden;
   border: 1px solid var(--border);
   border-radius: 14px;
@@ -11401,23 +11387,34 @@ textarea:focus-visible,
   border-bottom: 1px solid var(--border);
 }
 
-.mission-executor-menu > header small {
-  min-width: 0;
-  color: var(--muted);
-  font-size: 10px;
-  font-weight: 450;
-  letter-spacing: 0;
-  text-transform: none;
+.mission-executor-menu > header strong {
+  color: var(--text);
+  font-size: 13px;
+  font-weight: 680;
 }
 
-.mission-executor-menu > header > span {
-  flex: 0 0 auto;
-  padding: 4px 7px;
-  border-radius: 999px;
-  background: var(--green-soft);
+.mission-executor-manage-button {
+  display: inline-flex;
+  min-height: 30px;
+  align-items: center;
+  gap: 5px;
+  padding: 0 9px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: #fff;
   color: var(--green-dark);
-  font-size: 10px;
+  font: inherit;
+  font-size: 11px;
   font-weight: 650;
+  cursor: pointer;
+}
+
+.mission-executor-manage-button:hover,
+.mission-executor-manage-button:focus-visible {
+  border-color: var(--green);
+  outline: 0;
+  background: var(--green-soft);
+  box-shadow: 0 0 0 3px var(--focus-ring);
 }
 
 .mission-executor-search {
@@ -11452,11 +11449,87 @@ textarea:focus-visible,
   font-size: 12px;
 }
 
+.mission-executor-controls {
+  display: grid;
+  gap: 8px;
+  padding: 8px 12px 4px;
+}
+
+.mission-executor-views {
+  display: flex;
+  gap: 4px;
+  overflow-x: auto;
+}
+
+.mission-executor-views button {
+  min-height: 28px;
+  padding: 0 9px;
+  border: 1px solid transparent;
+  border-radius: 8px;
+  background: transparent;
+  color: var(--muted);
+  font: inherit;
+  font-size: 10px;
+  cursor: pointer;
+  white-space: nowrap;
+}
+
+.mission-executor-views button:hover,
+.mission-executor-views button:focus-visible,
+.mission-executor-views button.is-active {
+  border-color: rgb(88 121 104 / 18%);
+  outline: 0;
+  background: var(--green-soft);
+  color: var(--green-dark);
+}
+
+.mission-executor-filters {
+  display: flex;
+  gap: 6px;
+}
+
+.mission-executor-selection-filters {
+  padding: 3px 12px 8px;
+}
+
+.mission-executor-filters label {
+  display: inline-flex;
+  min-width: 0;
+  align-items: center;
+  gap: 5px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: #fff;
+  color: var(--muted);
+}
+
+.mission-executor-filters label {
+  flex: 1 1 0;
+}
+
+.mission-executor-filters label:focus-within {
+  border-color: var(--green);
+  box-shadow: 0 0 0 3px var(--focus-ring);
+}
+
+.mission-executor-filters select {
+  width: 100%;
+  min-width: 0;
+  min-height: 30px;
+  padding: 0 24px 0 8px;
+  border: 0;
+  outline: 0;
+  background: transparent;
+  color: inherit;
+  font: inherit;
+  font-size: 10px;
+  cursor: pointer;
+}
+
 .mission-executor-options {
   display: grid;
-  grid-auto-rows: minmax(68px, auto);
   gap: 4px;
-  max-height: 370px;
+  max-height: 410px;
   overflow-y: auto;
   padding: 7px;
   overscroll-behavior: contain;
@@ -11464,23 +11537,29 @@ textarea:focus-visible,
 
 .mission-executor-option {
   display: grid;
-  grid-template-columns: 36px minmax(0, 1fr) auto;
+  grid-template-columns: minmax(0, 1fr) auto;
   width: 100%;
   min-width: 0;
   align-items: center;
-  gap: 10px;
+  gap: 6px;
   min-height: 68px;
-  padding: 10px;
+  padding: 5px;
   border: 1px solid transparent;
   border-radius: 10px;
   background: transparent;
   color: var(--text);
-  cursor: pointer;
-  text-align: left;
+}
+
+.mission-executor-option.is-selection {
+  grid-template-columns: minmax(0, 1fr);
+}
+
+.mission-executor-option.is-selection .mission-executor-option-main {
+  width: 100%;
 }
 
 .mission-executor-option:hover,
-.mission-executor-option:focus-visible {
+.mission-executor-option:focus-within {
   border-color: rgb(88 121 104 / 18%);
   outline: 0;
   background: var(--surface-soft);
@@ -11489,6 +11568,26 @@ textarea:focus-visible,
 .mission-executor-option.is-selected {
   border-color: rgb(88 121 104 / 22%);
   background: var(--green-soft);
+}
+
+.mission-executor-option-main {
+  display: grid;
+  grid-template-columns: 36px minmax(0, 1fr) auto;
+  min-width: 0;
+  align-items: center;
+  gap: 10px;
+  padding: 5px;
+  border: 0;
+  outline: 0;
+  background: transparent;
+  color: inherit;
+  cursor: pointer;
+  text-align: left;
+}
+
+.mission-executor-option-main:focus-visible {
+  border-radius: 7px;
+  box-shadow: 0 0 0 3px var(--focus-ring);
 }
 
 .mission-executor-option-icon {
@@ -11508,19 +11607,21 @@ textarea:focus-visible,
   height: 20px;
 }
 
-.mission-executor-option > span:nth-child(2) {
+.mission-executor-option-copy {
   display: grid;
   min-width: 0;
   gap: 3px;
 }
 
-.mission-executor-option > span:nth-child(2) strong {
+.mission-executor-option-copy strong {
+  overflow: hidden;
   font-size: 12px;
   font-weight: 680;
+  text-overflow: ellipsis;
   white-space: nowrap;
 }
 
-.mission-executor-option > span:nth-child(2) small {
+.mission-executor-option-copy > small {
   overflow: hidden;
   color: var(--muted);
   font-size: 10px;
@@ -11531,34 +11632,190 @@ textarea:focus-visible,
   white-space: nowrap;
 }
 
-.mission-executor-option-kind {
-  justify-self: end;
-  padding: 4px 7px;
+.mission-executor-option-badges {
+  display: flex;
+  min-width: 0;
+  flex-wrap: wrap;
+  gap: 4px;
+}
+
+.mission-executor-option-badges > span {
+  padding: 2px 5px;
   border: 1px solid var(--border);
   border-radius: 999px;
   color: var(--muted);
-  font-size: 9px;
+  font-size: 8px;
   font-weight: 650;
-  letter-spacing: 0.04em;
-  text-transform: uppercase;
   white-space: nowrap;
 }
 
-.mission-executor-option-meta {
-  display: grid;
-  grid-template-columns: 17px auto;
+.mission-executor-option-status {
+  display: inline-flex;
+  min-width: 17px;
   align-items: center;
-  justify-self: end;
-  gap: 7px;
+  justify-content: flex-end;
+  gap: 5px;
 }
 
-.mission-executor-option-meta > svg {
+.mission-executor-option-status > svg {
   color: var(--green-dark);
+}
+
+.mission-executor-option-status > svg:not(.mission-executor-pinned-star) {
   visibility: hidden;
 }
 
-.mission-executor-option-meta > svg.is-visible {
+.mission-executor-option-status > svg.is-visible {
   visibility: visible;
+}
+
+.mission-executor-pinned-star {
+  color: #b67817;
+}
+
+.mission-executor-option-actions {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+}
+
+.mission-executor-favorite-control {
+  position: relative;
+  min-width: 0;
+}
+
+.mission-executor-favorite-trigger {
+  display: grid;
+  width: 124px;
+  min-height: 30px;
+  grid-template-columns: 15px minmax(0, 1fr) 12px;
+  align-items: center;
+  gap: 6px;
+  padding: 0 8px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: #fff;
+  color: var(--muted);
+  font: inherit;
+  font-size: 10px;
+  cursor: pointer;
+  text-align: left;
+}
+
+.mission-executor-favorite-trigger > span {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.mission-executor-favorite-trigger.is-favorite {
+  border-color: rgb(182 120 23 / 24%);
+  color: #966114;
+  background: #fffcf6;
+}
+
+.mission-executor-favorite-trigger:hover,
+.mission-executor-favorite-trigger:focus-visible,
+.mission-executor-favorite-trigger[aria-expanded="true"] {
+  border-color: var(--green);
+  outline: 0;
+  background: var(--green-soft);
+  color: var(--green-dark);
+  box-shadow: 0 0 0 3px var(--focus-ring);
+}
+
+.mission-executor-favorite-trigger:disabled {
+  opacity: 0.55;
+  cursor: default;
+}
+
+.mission-executor-favorite-menu {
+  position: fixed;
+  z-index: 140;
+  display: grid;
+  width: 188px;
+  gap: 2px;
+  padding: 5px;
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  background: #fff;
+  box-shadow: 0 14px 38px rgb(26 37 31 / 16%);
+}
+
+.mission-executor-favorite-menu > button {
+  display: grid;
+  min-height: 34px;
+  grid-template-columns: 16px minmax(0, 1fr) 14px;
+  align-items: center;
+  gap: 8px;
+  padding: 0 8px;
+  border: 0;
+  border-radius: 7px;
+  background: transparent;
+  color: var(--text);
+  font: inherit;
+  font-size: 11px;
+  cursor: pointer;
+  text-align: left;
+}
+
+.mission-executor-favorite-menu > button > span:nth-child(2) {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.mission-executor-favorite-menu > button:hover,
+.mission-executor-favorite-menu > button:focus-visible {
+  outline: 0;
+  background: var(--surface-soft);
+  color: var(--green-dark);
+}
+
+.mission-executor-favorite-menu > button[aria-checked="true"] {
+  background: var(--green-soft);
+  color: var(--green-dark);
+  font-weight: 650;
+}
+
+.mission-executor-favorite-menu > button:disabled {
+  opacity: 0.55;
+  cursor: wait;
+}
+
+.mission-executor-favorite-menu > .mission-executor-favorite-menu-back {
+  margin-bottom: 3px;
+  border-bottom: 1px solid var(--border);
+  border-radius: 7px 7px 3px 3px;
+  color: var(--muted);
+  font-weight: 650;
+}
+
+.mission-executor-favorite-menu > .mission-executor-favorite-menu-choose {
+  margin-top: 3px;
+  border-top: 1px solid var(--border);
+  border-radius: 3px 3px 7px 7px;
+  color: var(--green-dark);
+}
+
+.mission-executor-option-actions > button {
+  display: grid;
+  width: 30px;
+  height: 30px;
+  place-items: center;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: #fff;
+  color: var(--muted);
+  cursor: pointer;
+}
+
+.mission-executor-option-actions > button:hover,
+.mission-executor-option-actions > button:focus-visible {
+  border-color: var(--green);
+  outline: 0;
+  color: var(--green-dark);
+  box-shadow: 0 0 0 3px var(--focus-ring);
 }
 
 .mission-executor-empty {
@@ -11574,6 +11831,118 @@ textarea:focus-visible,
   margin-top: 4px;
   color: var(--muted);
   font-size: 10px;
+}
+
+.mission-executor-manager-backdrop {
+  position: fixed;
+  z-index: 120;
+  inset: 0;
+  display: grid;
+  place-items: center;
+  padding: 32px;
+  background: rgb(29 33 31 / 38%);
+  backdrop-filter: blur(2px);
+}
+
+.mission-executor-manager-dialog {
+  display: flex;
+  width: min(720px, 100%);
+  max-height: min(720px, calc(100vh - 64px));
+  flex-direction: column;
+  overflow: hidden;
+  border: 1px solid var(--border);
+  border-radius: 16px;
+  background: #fff;
+  box-shadow: var(--shadow-panel);
+}
+
+.mission-executor-manager-dialog > header {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 24px;
+  padding: 19px 20px 16px;
+  border-bottom: 1px solid var(--border);
+}
+
+.mission-executor-manager-dialog > header h2 {
+  margin: 0;
+  color: var(--text);
+  font-size: 18px;
+}
+
+.mission-executor-manager-dialog > header p {
+  max-width: 560px;
+  margin: 5px 0 0;
+  color: var(--muted);
+  font-size: 11px;
+  line-height: 1.5;
+}
+
+.mission-executor-manager-dialog > header > button {
+  display: grid;
+  width: 32px;
+  min-width: 32px;
+  height: 32px;
+  place-items: center;
+  border: 1px solid transparent;
+  border-radius: 9px;
+  background: transparent;
+  color: var(--muted);
+  cursor: pointer;
+}
+
+.mission-executor-manager-dialog > header > button:hover,
+.mission-executor-manager-dialog > header > button:focus-visible {
+  border-color: var(--border);
+  outline: 0;
+  background: var(--surface-soft);
+  color: var(--text);
+  box-shadow: 0 0 0 3px var(--focus-ring);
+}
+
+.mission-executor-manager-tools {
+  padding: 12px 16px 10px;
+  border-bottom: 1px solid var(--border);
+}
+
+.mission-executor-manager-tools .mission-executor-search {
+  margin: 0;
+}
+
+.mission-executor-manager-tools .mission-executor-controls {
+  grid-template-columns: auto minmax(260px, 1fr);
+  align-items: center;
+  padding: 9px 0 0;
+}
+
+.mission-executor-manager-options {
+  min-height: 0;
+  max-height: none;
+  flex: 1 1 auto;
+  padding: 9px 12px 13px;
+}
+
+@media (max-width: 720px) {
+  .mission-executor-manager-backdrop {
+    padding: 16px;
+  }
+
+  .mission-executor-manager-dialog {
+    max-height: calc(100vh - 32px);
+  }
+
+  .mission-executor-manager-tools .mission-executor-controls {
+    grid-template-columns: 1fr;
+  }
+
+  .mission-executor-manager-dialog .mission-executor-option {
+    grid-template-columns: 1fr;
+  }
+
+  .mission-executor-manager-dialog .mission-executor-option-actions {
+    justify-content: flex-end;
+  }
 }
 
 .mission-goal-composer {
@@ -13940,6 +14309,8 @@ textarea:focus-visible,
     .expert-picker-search,
     .mission-search,
     .mission-executor-search,
+    .mission-executor-filters label,
+    .mission-executor-option-actions label,
     .mission-goal-composer,
     .mission-chat-composer,
     .model-search-shell

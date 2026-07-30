@@ -244,6 +244,7 @@ export function mapCodexNotificationToRuntimeEvent(
   let outputDelta: string | undefined;
   let completedText: string | undefined;
   let usage: AgentMessageUsage | undefined;
+  let contextWindowUsage: RuntimeContextWindowUsage | undefined;
   const threadId = readNotificationThreadId(notification) ?? rootThreadId;
   const turnId = readNotificationTurnId(notification);
   const nested = threadId !== rootThreadId;
@@ -364,7 +365,10 @@ export function mapCodexNotificationToRuntimeEvent(
     notification.method === "thread/tokenUsage/updated" ||
     notification.method === "turn/completed"
   ) {
-    if (!nested) usage = readUsage(notification.params);
+    if (!nested) {
+      usage = readUsage(notification.params);
+      contextWindowUsage = parseCodexContextWindowUsage(notification.params);
+    }
   }
 
   return {
@@ -372,6 +376,7 @@ export function mapCodexNotificationToRuntimeEvent(
     ...(outputDelta === undefined ? {} : { outputDelta }),
     ...(completedText === undefined ? {} : { completedText }),
     ...(usage === undefined ? {} : { usage }),
+    ...(contextWindowUsage === undefined ? {} : { contextWindowUsage }),
   };
 }
 
