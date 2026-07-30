@@ -2033,120 +2033,122 @@ export function MissionDetailFragment(props: {
                   onInterrupt={() => void interrupt()}
                 />
               ) : (
-                <div className="mission-chat-composer" aria-busy={clientOperationBusy}>
+                <>
                   <MissionUsageHint
                     missionId={props.mission.id}
                     executionActive={executionActive}
                   />
-                  <textarea
-                    ref={textareaRef}
-                    rows={1}
-                    value={draft}
-                    disabled={
-                      isFlow ||
-                      clientOperationBusy ||
-                      compactingContext ||
-                      executionActive ||
-                      props.mission.lifecycleStatus === "completed"
-                    }
-                    placeholder={
-                      compactingContext
-                        ? t("contextCompactionInputDisabled", { ns: "missions" })
-                        : executionActive
-                          ? interruptible
-                            ? t("executorWorking", {
-                                ns: "missions",
-                                name: props.mission.executor.name,
-                              })
-                            : t("resumeToManage", { ns: "missions" })
-                          : props.mission.lifecycleStatus === "completed"
-                            ? t("reopenToContinue", { ns: "missions" })
-                            : isFlow
-                              ? t("flowContinues", { ns: "missions" })
-                              : t("messageExecutor", {
+                  <div className="mission-chat-composer" aria-busy={clientOperationBusy}>
+                    <textarea
+                      ref={textareaRef}
+                      rows={1}
+                      value={draft}
+                      disabled={
+                        isFlow ||
+                        clientOperationBusy ||
+                        compactingContext ||
+                        executionActive ||
+                        props.mission.lifecycleStatus === "completed"
+                      }
+                      placeholder={
+                        compactingContext
+                          ? t("contextCompactionInputDisabled", { ns: "missions" })
+                          : executionActive
+                            ? interruptible
+                              ? t("executorWorking", {
                                   ns: "missions",
                                   name: props.mission.executor.name,
                                 })
-                    }
-                    aria-label={t("messageExecutor", {
-                      ns: "missions",
-                      name: props.mission.executor.name,
-                    })}
-                    aria-describedby={
-                      compactingContext ? "mission-context-compaction-status" : undefined
-                    }
-                    onChange={(event) => setDraft(event.target.value)}
-                    onKeyDown={(event) => {
-                      if (event.key === "Enter" && !event.shiftKey) {
-                        event.preventDefault();
-                        void send();
+                              : t("resumeToManage", { ns: "missions" })
+                            : props.mission.lifecycleStatus === "completed"
+                              ? t("reopenToContinue", { ns: "missions" })
+                              : isFlow
+                                ? t("flowContinues", { ns: "missions" })
+                                : t("messageExecutor", {
+                                    ns: "missions",
+                                    name: props.mission.executor.name,
+                                  })
                       }
-                    }}
-                  />
-                  <div className="mission-chat-composer-toolbar">
-                    <div className="mission-chat-options" aria-label={t("missionOptions")}>
-                      {!isFlow ? (
-                        <MissionModelOverrideControls
-                          models={models}
-                          loading={modelsLoading}
-                          disabled={controlsDisabled}
-                          value={modelOverride}
-                          defaultValue={defaultModelSelection}
-                          onChange={(value) => void saveOptions(toolPermissionMode, value)}
-                        />
-                      ) : null}
-                      <ToolPermissionSelect
-                        value={toolPermissionMode}
-                        disabled={controlsDisabled}
-                        title={
-                          executionActive
-                            ? t("optionsAvailableNextTurn", { ns: "missions" })
-                            : t("permissionOverride", { ns: "missions" })
+                      aria-label={t("messageExecutor", {
+                        ns: "missions",
+                        name: props.mission.executor.name,
+                      })}
+                      aria-describedby={
+                        compactingContext ? "mission-context-compaction-status" : undefined
+                      }
+                      onChange={(event) => setDraft(event.target.value)}
+                      onKeyDown={(event) => {
+                        if (event.key === "Enter" && !event.shiftKey) {
+                          event.preventDefault();
+                          void send();
                         }
-                        onChange={(value) => void saveOptions(value, modelOverride)}
-                      />
-                    </div>
-                    <div className="mission-chat-actions">
-                      {chat?.contextWindow === undefined ? null : (
-                        <ContextWindowControl
-                          state={chat.contextWindow}
-                          compacting={compactingContext}
-                          onCompact={() => void compactContext()}
-                        />
-                      )}
-                      {executionActive ? (
-                        <button
-                          className="is-interrupt"
-                          type="button"
-                          aria-label={t("interrupt", { ns: "missions" })}
+                      }}
+                    />
+                    <div className="mission-chat-composer-toolbar">
+                      <div className="mission-chat-options" aria-label={t("missionOptions")}>
+                        {!isFlow ? (
+                          <MissionModelOverrideControls
+                            models={models}
+                            loading={modelsLoading}
+                            disabled={controlsDisabled}
+                            value={modelOverride}
+                            defaultValue={defaultModelSelection}
+                            onChange={(value) => void saveOptions(toolPermissionMode, value)}
+                          />
+                        ) : null}
+                        <ToolPermissionSelect
+                          value={toolPermissionMode}
+                          disabled={controlsDisabled}
                           title={
-                            interruptible
-                              ? t("interrupt", { ns: "missions" })
-                              : t("resumeBeforeInterrupt", { ns: "missions" })
+                            executionActive
+                              ? t("optionsAvailableNextTurn", { ns: "missions" })
+                              : t("permissionOverride", { ns: "missions" })
                           }
-                          disabled={!interruptible || interrupting}
-                          onClick={() => void interrupt()}
-                        >
-                          <StopCircle size={19} weight="fill" aria-hidden="true" />
-                        </button>
-                      ) : (
-                        <button
-                          type="button"
-                          aria-label={t("send", { ns: "missions" })}
-                          disabled={
-                            isFlow ||
-                            draft.trim() === "" ||
-                            clientOperationBusy ||
-                            props.mission.lifecycleStatus === "completed"
-                          }
-                          onClick={() => void send()}
-                        >
-                          <PaperPlaneTilt size={18} aria-hidden="true" />
-                        </button>
-                      )}
+                          onChange={(value) => void saveOptions(value, modelOverride)}
+                        />
+                      </div>
+                      <div className="mission-chat-actions">
+                        {chat?.contextWindow === undefined ? null : (
+                          <ContextWindowControl
+                            state={chat.contextWindow}
+                            compacting={compactingContext}
+                            onCompact={() => void compactContext()}
+                          />
+                        )}
+                        {executionActive ? (
+                          <button
+                            className="is-interrupt"
+                            type="button"
+                            aria-label={t("interrupt", { ns: "missions" })}
+                            title={
+                              interruptible
+                                ? t("interrupt", { ns: "missions" })
+                                : t("resumeBeforeInterrupt", { ns: "missions" })
+                            }
+                            disabled={!interruptible || interrupting}
+                            onClick={() => void interrupt()}
+                          >
+                            <StopCircle size={19} weight="fill" aria-hidden="true" />
+                          </button>
+                        ) : (
+                          <button
+                            type="button"
+                            aria-label={t("send", { ns: "missions" })}
+                            disabled={
+                              isFlow ||
+                              draft.trim() === "" ||
+                              clientOperationBusy ||
+                              props.mission.lifecycleStatus === "completed"
+                            }
+                            onClick={() => void send()}
+                          >
+                            <PaperPlaneTilt size={18} aria-hidden="true" />
+                          </button>
+                        )}
+                      </div>
                     </div>
                   </div>
-                </div>
+                </>
               )}
             </div>
           </div>
