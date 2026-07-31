@@ -20,6 +20,7 @@ import type { ExpertDefinition, UpdateExpertDefinition } from "../../../shared/c
 import { createExpertDefinitionStore } from "../experts/expert-definition-store.ts";
 import { createPragmaProjectStore, PragmaProjectStoreError } from "./pragma-project-store.ts";
 import { createDesktopSystemExpertRegistry } from "../experts/system-expert-registry.ts";
+import { desktopCapabilityBindingRef } from "../../platform/bindings/desktop-binding-ref.ts";
 
 const directories: string[] = [];
 
@@ -1202,6 +1203,142 @@ describe("PragmaProjectStore", () => {
     } satisfies Partial<PragmaProjectStoreError>);
   });
 
+  it("reuses migrated desktop Capability identities when an Expert adds a skill", async () => {
+    const { project, experts } = await stores();
+    const existingCapabilityId = "009405fc-3ade-4df2-8e4b-eccab29e78c4";
+    const removedCapabilityId = "15ce47d6-217c-44b1-a830-61b086e8c61a";
+    const addedCapabilityId = "40bb8846-dba0-4662-9fd0-9e5d865741c8";
+    const migratedResourceId = derivePragmaResourceId(
+      `studio\0Capability\0capability_${existingCapabilityId.replaceAll("-", "")}`,
+    );
+    const removedResourceId = derivePragmaResourceId(
+      `studio\0Capability\0capability_${removedCapabilityId.replaceAll("-", "")}`,
+    );
+    const writer = exampleExpert();
+    const reviewer = exampleExpert("reviewer");
+    writer.spec.capabilities = [
+      { ref: `capability:${migratedResourceId}`, kind: "skill" },
+      { ref: `capability:${removedResourceId}`, kind: "tools", tools: ["run"] },
+    ];
+    reviewer.spec.capabilities = [{ ref: `capability:${migratedResourceId}`, kind: "skill" }];
+    await project.publish({
+      expectedRevision: 0,
+      resources: [
+        exampleRuntime(),
+        writer,
+        exampleRuntime("reviewer"),
+        reviewer,
+        desktopManagedCapability(existingCapabilityId, migratedResourceId),
+        desktopManagedCapability(removedCapabilityId, removedResourceId),
+      ],
+    });
+    const opened = await experts.get("expert:1xddvess309a6gme");
+
+    const saved = await experts.update(opened.ref, {
+      ...expertUpdate(opened, "Adds a newly installed skill"),
+      capabilities: [
+        ...opened.capabilities.filter(
+          (capability) => capability.capabilityId !== removedCapabilityId,
+        ),
+        { kind: "skill", capabilityId: addedCapabilityId, revision: 1 },
+      ],
+    });
+
+    expect(saved.capabilities).toEqual([
+      { kind: "skill", capabilityId: existingCapabilityId, revision: 1 },
+      { kind: "skill", capabilityId: addedCapabilityId, revision: 1 },
+    ]);
+    await expect(experts.get("expert:3sfd30h5017wd17d")).resolves.toMatchObject({
+      capabilities: [{ kind: "skill", capabilityId: existingCapabilityId, revision: 1 }],
+    });
+    const resources = (await project.get()).resources;
+    expect(
+      resources.filter(
+        (resource) =>
+          resource.kind === "Capability" &&
+          resource.metadata.name === `Capability ${existingCapabilityId}`,
+      ),
+    ).toEqual([
+      expect.objectContaining({ metadata: expect.objectContaining({ id: migratedResourceId }) }),
+    ]);
+    expect(resources).toContainEqual(
+      expect.objectContaining({
+        kind: "Capability",
+        metadata: expect.objectContaining({
+          id: derivePragmaResourceId(`desktop-managed:capability:${addedCapabilityId}`),
+          name: `Capability ${addedCapabilityId}`,
+        }),
+      }),
+    );
+    expect(resources.some((resource) => resource.metadata.id === removedResourceId)).toBe(false);
+  });
+
+  it("reuses migrated desktop Capability identities when creating an Expert", async () => {
+    const { project, experts } = await stores();
+    const existingCapabilityId = "009405fc-3ade-4df2-8e4b-eccab29e78c4";
+    const addedCapabilityId = "40bb8846-dba0-4662-9fd0-9e5d865741c8";
+    const migratedResourceId = derivePragmaResourceId(
+      `studio\0Capability\0capability_${existingCapabilityId.replaceAll("-", "")}`,
+    );
+    const writer = exampleExpert();
+    writer.spec.capabilities = [{ ref: `capability:${migratedResourceId}`, kind: "skill" }];
+    await project.publish({
+      expectedRevision: 0,
+      resources: [
+        exampleRuntime(),
+        writer,
+        desktopManagedCapability(existingCapabilityId, migratedResourceId),
+      ],
+    });
+
+    const created = await experts.create({
+      baseRevision: 1,
+      requiredUnchangedRefs: [],
+      name: "Reviewer",
+      description: "Reviews changes with shared guidance.",
+      tags: ["review"],
+      scope: "Review code changes.",
+      instructions: "Review the requested changes.",
+      model: { runtimeId: "codex", providerId: "openai", modelId: "gpt-test" },
+      capabilities: [
+        { kind: "skill", capabilityId: existingCapabilityId, revision: 1 },
+        { kind: "skill", capabilityId: addedCapabilityId, revision: 1 },
+      ],
+      contextStoreMounts: [],
+      plugins: [],
+      toolApprovals: {},
+    });
+
+    expect(created.capabilities).toHaveLength(2);
+    const resources = (await project.get()).resources;
+    expect(
+      resources.filter(
+        (resource) =>
+          resource.kind === "Capability" &&
+          resource.metadata.name === `Capability ${existingCapabilityId}`,
+      ),
+    ).toEqual([
+      expect.objectContaining({ metadata: expect.objectContaining({ id: migratedResourceId }) }),
+    ]);
+    expect(
+      resources.find(
+        (resource) => resource.kind === "Expert" && resource.metadata.id === created.id,
+      ),
+    ).toMatchObject({
+      spec: {
+        capabilities: [
+          { ref: `capability:${migratedResourceId}`, kind: "skill" },
+          {
+            ref: `capability:${derivePragmaResourceId(
+              `desktop-managed:capability:${addedCapabilityId}`,
+            )}`,
+            kind: "skill",
+          },
+        ],
+      },
+    });
+  });
+
   it("does not create a revision for an identical snapshot", async () => {
     const { directory, project } = await stores();
     const resources = [exampleRuntime(), exampleExpert()];
@@ -1375,6 +1512,27 @@ function portableCapability(): PragmaCapabilityResource {
       adapter: "pragma.capability.host@v1",
       binding: "binding:portable",
       config: { key: "portable" },
+    },
+  };
+}
+
+function desktopManagedCapability(
+  capabilityId: string,
+  resourceId: string,
+): PragmaCapabilityResource {
+  return {
+    apiVersion: "pragma/v3",
+    kind: "Capability",
+    metadata: {
+      id: resourceId,
+      name: `Capability ${capabilityId}`,
+      description: "Desktop-managed capability binding.",
+      tags: ["desktop-managed"],
+    },
+    spec: {
+      adapter: "pragma.capability.host@v1",
+      binding: desktopCapabilityBindingRef(capabilityId, 1),
+      config: { key: capabilityId },
     },
   };
 }

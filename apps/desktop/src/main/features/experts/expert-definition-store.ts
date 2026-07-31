@@ -134,7 +134,7 @@ export function createExpertDefinitionStore(options: {
       const id = allocateExpertId(snapshot.resources, options.systemExperts);
       const requestedRef = `expert:${id}`;
       const { baseRevision, requiredUnchangedRefs, ...definition } = parsed;
-      const definitions = definitionToResources(definition, id);
+      const definitions = definitionToResources(definition, id, snapshot.resources);
       const updated = await options.project.apply({
         baseRevision,
         upserts: definitions,
@@ -169,7 +169,12 @@ export function createExpertDefinitionStore(options: {
       if (current === undefined) {
         throw new ExpertDefinitionStoreError("expert_not_found", "The expert no longer exists.");
       }
-      const definitions = definitionToResources(definition, current.metadata.id, current);
+      const definitions = definitionToResources(
+        definition,
+        current.metadata.id,
+        snapshot.resources,
+        current,
+      );
       const nextExpert = definitions.find(
         (resource): resource is PragmaExpertResource => resource.kind === "Expert",
       )!;
@@ -257,6 +262,7 @@ export function createExpertDefinitionStore(options: {
 function definitionToResources(
   definition: ExpertDefinitionWrite,
   expertId: string,
+  existingResources: readonly PragmaResource[],
   current?: PragmaExpertResource,
 ): PragmaResource[] {
   const runtimeId = derivePragmaResourceId(`desktop-managed:runtime:${expertId}`);
@@ -283,12 +289,19 @@ function definitionToResources(
       },
     },
   });
-  const capabilityResources = (definition.capabilities ?? []).map((capability) =>
-    PragmaCapabilityResourceSchema.parse({
+  const capabilityResourceIds = new Map(
+    (definition.capabilities ?? []).map((capability) => [
+      capability.capabilityId,
+      resolveDesktopCapabilityResourceId(capability.capabilityId, existingResources),
+    ]),
+  );
+  const capabilityResources = (definition.capabilities ?? []).map((capability) => {
+    const resourceId = capabilityResourceIds.get(capability.capabilityId)!;
+    return PragmaCapabilityResourceSchema.parse({
       apiVersion: "pragma/v3",
       kind: "Capability",
       metadata: {
-        id: desktopCapabilityResourceId(capability.capabilityId),
+        id: resourceId,
         name: `Capability ${capability.capabilityId}`,
         description: "Desktop-managed capability binding.",
         tags: ["desktop-managed"],
@@ -298,8 +311,8 @@ function definitionToResources(
         binding: desktopCapabilityBindingRef(capability.capabilityId, capability.revision),
         config: { key: capability.capabilityId },
       },
-    }),
-  );
+    });
+  });
   const contextResources = (definition.contextStoreMounts ?? []).map((mount) =>
     PragmaContextStoreResourceSchema.parse({
       apiVersion: "pragma/v3",
@@ -332,7 +345,7 @@ function definitionToResources(
       runtime: { ref: runtimeRef },
       capabilities: [
         ...(definition.capabilities ?? []).map((capability) => ({
-          ref: `capability:${desktopCapabilityResourceId(capability.capabilityId)}`,
+          ref: `capability:${capabilityResourceIds.get(capability.capabilityId)!}`,
           kind: capability.kind,
           ...(capability.kind === "tools" ? { tools: capability.toolNames } : {}),
         })),
@@ -504,6 +517,22 @@ export function pragmaExpertResourceToDesktopDefinition(
 
 function desktopCapabilityResourceId(id: string): string {
   return derivePragmaResourceId(`desktop-managed:capability:${id}`);
+}
+
+function resolveDesktopCapabilityResourceId(
+  id: string,
+  resources: readonly PragmaResource[],
+): string {
+  // DSL migrations preserve a resource's semantic identity, so its post-migration ID can differ
+  // from the ID generated for a newly created binding. The binding is the stable host identity.
+  const existing = resources.find(
+    (resource) =>
+      resource.kind === "Capability" &&
+      resource.spec.adapter === "pragma.capability.host@v1" &&
+      resource.metadata.tags.includes("desktop-managed") &&
+      parseDesktopCapabilityBindingRef(resource.spec.binding ?? "")?.id === id,
+  );
+  return existing?.metadata.id ?? desktopCapabilityResourceId(id);
 }
 
 function desktopContextResourceId(id: string): string {
