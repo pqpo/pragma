@@ -1,3 +1,82 @@
+# Evaluations Directory Design QA
+
+- Source visual truth:
+  `/tmp/codex-remote-attachments/019fb80c-e9ea-7f52-9064-565ffaf6a77b/4e6cfd54-2239-43c8-bba8-07d20b070eac/1-Photo-1.jpg`
+- Implementation screenshot: `design-qa/evaluations-directory.png`
+- Combined comparison: `design-qa/evaluations-directory-comparison.png`
+- Viewport: 1280 × 800 CSS pixels at DPR 1, light theme, collapsed application rail
+- Density normalization:
+  - Source: 1280 × 801 pixels.
+  - Implementation: 1280 × 800 pixels.
+  - No scaling was applied; the combined comparison retains one blank bottom row under the
+    implementation.
+- State: Evaluations directory with three Experts, two Expert Teams, three Flows, the evaluated
+  Flow selected, and three saved Run Dry suites.
+
+**Findings**
+
+- No actionable P0, P1, or P2 visual differences remain.
+- Fonts and typography use the existing Desktop system stack and reproduce the source hierarchy:
+  30px page heading, compact target-group labels, 20px selected-target heading, and dense table
+  metadata.
+- Spacing and layout rhythm align the source's 88px application rail, 1100px bounded directory
+  surface, 300px target column, 32px workspace inset, action row, and compact table rows. The
+  directory surface reaches the viewport bottom without hiding persistent controls.
+- Colors and visual tokens reuse the current Pragma background, surface, border, sage selection,
+  graphite text, status, focus-ring, radius, and shadow tokens.
+- Image and asset fidelity: the screen needs no raster content beyond the existing Pragma product
+  icon. All interface icons use the installed Phosphor library; no handwritten SVG, CSS drawing,
+  placeholder image, or generated asset was introduced.
+- Copy and content are available in English, Simplified Chinese, and Traditional Chinese. The
+  implementation deliberately shows `尚未运行` and `—` until a real run finishes because the
+  current Evaluation protocol does not persist historical run metadata; it does not fabricate the
+  passing and failing history shown in the visual reference.
+
+**Full-view comparison evidence**
+
+- The source and implementation were opened together in
+  `design-qa/evaluations-directory-comparison.png` at matching width and state.
+- Both show the same three-layer hierarchy: collapsed application rail, searchable grouped target
+  directory, and selected-object Run Dry workspace.
+- The target title, description, primary actions, table heading, three suite rows, active target,
+  and outer surface boundaries align at the same visual scale.
+
+**Focused region comparison evidence**
+
+- A separate crop was not required because the 1280px comparison keeps the complete navigation,
+  group labels, controls, table copy, icons, and row dividers readable.
+- The unsupported Expert state was inspected separately in the browser DOM and showed a disabled
+  global create action plus the explicit `当前仅 Flow 支持 Run Dry 测评` explanation.
+
+**Interactions and diagnostics**
+
+- Verified target search filtering, clearing the filter with the keyboard, switching from a Flow to
+  an Expert, the unsupported-method state, and returning to the evaluated Flow without losing its
+  suites.
+- Create, open-suite, and batch-run controls are wired to the existing Desktop bridge. Batch-run
+  results update coverage, pass/fail status, and run time only after the real result returns.
+- Browser console contained no warnings or errors in the verified state.
+- Desktop renderer typecheck, all 89 Desktop test files (534 tests), and Desktop lint passed.
+
+**Comparison history**
+
+1. Pass 1 found P2 composition drift: the page started about 10px too high, the directory surface
+   was centered too narrowly, and target actions sat beside the title, pulling the table about 70px
+   above the source.
+2. Moved the page to the source vertical origin, fixed the directory at the reference 1100px width
+   with a left-aligned 300px target rail, and placed actions below the target description.
+3. Pass 2 aligned the title, surface, content rail, action row, and table rhythm. No actionable
+   P0/P1/P2 differences remained.
+
+**Follow-up Polish**
+
+- P3: once run history becomes a persisted product domain, replace the session-only last-result and
+  last-run values with durable records without changing this page structure.
+
+final result: passed
+
+---
+
 # Home Expert Constellation Design QA
 
 - Source visual truth: `design-qa/home-constellation-reference.png`
