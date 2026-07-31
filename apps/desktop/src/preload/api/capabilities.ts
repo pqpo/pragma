@@ -8,12 +8,17 @@ import {
   CapabilityTestRequestSchema,
   CapabilityTestResultSchema,
   CreateCapabilitySchema,
+  GetSkillFileSchema,
   GetSkillDocumentSchema,
   ImportSkillCapabilitySchema,
+  ListSkillFilesSchema,
   PreviewCodeServiceRequestSchema,
   PreviewCodeServiceResultSchema,
   SkillDocumentSchema,
+  SkillFileContentSchema,
+  SkillFileEntrySchema,
   UpdateCapabilitySchema,
+  UpdateSkillCapabilitySchema,
 } from "../../shared/contracts/capabilities.ts";
 import { PickWorkspaceResultSchema } from "../../shared/contracts/settings.ts";
 import type { PragmaDesktopAPI } from "../../shared/contracts/api.ts";
@@ -31,11 +36,26 @@ export const capabilitiesApi = {
         GetSkillDocumentSchema.parse(input),
       ),
     ),
+  listSkillFiles: async (input) =>
+    SkillFileEntrySchema.array().parse(
+      await ipcRenderer.invoke("capabilities:list-skill-files", ListSkillFilesSchema.parse(input)),
+    ),
+  getSkillFile: async (input) =>
+    SkillFileContentSchema.parse(
+      await ipcRenderer.invoke("capabilities:get-skill-file", GetSkillFileSchema.parse(input)),
+    ),
   importSkillCapability: async (input) =>
     CapabilitySchema.parse(
       await ipcRenderer.invoke(
         "capabilities:import-skill",
         ImportSkillCapabilitySchema.parse(input),
+      ),
+    ),
+  updateSkillCapability: async (input) =>
+    CapabilitySchema.parse(
+      await ipcRenderer.invoke(
+        "capabilities:update-skill",
+        UpdateSkillCapabilitySchema.parse(input),
       ),
     ),
   createCapability: async (input) =>
@@ -72,7 +92,10 @@ export const capabilitiesApi = {
   | "listCapabilities"
   | "getCapability"
   | "getSkillDocument"
+  | "listSkillFiles"
+  | "getSkillFile"
   | "importSkillCapability"
+  | "updateSkillCapability"
   | "createCapability"
   | "updateCapability"
   | "retryCapability"

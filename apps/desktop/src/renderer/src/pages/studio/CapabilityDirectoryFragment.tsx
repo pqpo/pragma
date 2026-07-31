@@ -36,12 +36,18 @@ import { desktopApi } from "./studio-model.ts";
 
 type Filter = "all" | "skills" | "tools";
 type CapabilityMode = "skill" | "mcp" | "http" | "code";
-type EditableCapability = Capability & {
-  readonly definition: Exclude<CapabilityDefinition, { readonly kind: "skill" }>;
-};
 
-export function isEditableCapability(capability: Capability): capability is EditableCapability {
-  return capability.definition.kind !== "skill";
+export function capabilityEditMode(kind: CapabilityDefinition["kind"]): CapabilityMode {
+  switch (kind) {
+    case "skill":
+      return "skill";
+    case "mcp_server":
+      return "mcp";
+    case "http_service":
+      return "http";
+    case "code_service":
+      return "code";
+  }
 }
 
 const emptyMcp = {
@@ -120,7 +126,7 @@ export function CapabilityDirectoryFragment(props: {
   const [filter, setFilter] = useState<Filter>("all");
   const [menuOpen, setMenuOpen] = useState(false);
   const [mode, setMode] = useState<CapabilityMode | null>(null);
-  const [editingCapability, setEditingCapability] = useState<EditableCapability | null>(null);
+  const [editingCapability, setEditingCapability] = useState<Capability | null>(null);
   const [mcp, setMcp] = useState(emptyMcp);
   const [http, setHttp] = useState(emptyHttp);
   const [code, setCode] = useState(emptyCode);
@@ -159,20 +165,18 @@ export function CapabilityDirectoryFragment(props: {
     setMenuOpen(false);
   };
 
-  const openEditDrawer = (capability: EditableCapability) => {
+  const openEditDrawer = (capability: Capability) => {
     setEditingCapability(capability);
     setError(null);
     setCodePreview(null);
     if (capability.definition.kind === "mcp_server") {
       setMcp(mcpDraftFromDefinition(capability.definition));
-      setMode("mcp");
     } else if (capability.definition.kind === "http_service") {
       setHttp(httpDraftFromDefinition(capability.definition));
-      setMode("http");
-    } else {
+    } else if (capability.definition.kind === "code_service") {
       setCode(codeDraftFromDefinition(capability.definition));
-      setMode("code");
     }
+    setMode(capabilityEditMode(capability.definition.kind));
   };
 
   const persistCapability = async (
@@ -198,7 +202,13 @@ export function CapabilityDirectoryFragment(props: {
           throw new Error(selected.error ?? "Skill source unavailable.");
         return;
       }
-      const capability = await api.importSkillCapability({ sourcePath: selected.path as string });
+      const capability =
+        editingCapability?.definition.kind === "skill"
+          ? await api.updateSkillCapability({
+              id: editingCapability.manifest.id,
+              sourcePath: selected.path as string,
+            })
+          : await api.importSkillCapability({ sourcePath: selected.path as string });
       props.onChanged(capability);
       closeDrawer();
     } catch (cause) {
@@ -491,7 +501,7 @@ export function CapabilityDirectoryFragment(props: {
             key={capability.manifest.id}
             capability={capability}
             onOpen={() => props.onOpen(capability)}
-            onEdit={isEditableCapability(capability) ? () => openEditDrawer(capability) : undefined}
+            onEdit={() => openEditDrawer(capability)}
             onChanged={props.onChanged}
           />
         ))}
@@ -509,24 +519,28 @@ export function CapabilityDirectoryFragment(props: {
             <header>
               <div>
                 <h2 id="capability-form-heading">
-                  {editingCapability !== null
-                    ? t("editCapability")
-                    : mode === "skill"
-                      ? t("uploadSkill")
-                      : mode === "mcp"
-                        ? t("connectMcp")
-                        : mode === "http"
-                          ? t("addHttp")
-                          : t("addCode")}
+                  {editingCapability?.definition.kind === "skill"
+                    ? t("updateSkill")
+                    : editingCapability !== null
+                      ? t("editCapability")
+                      : mode === "skill"
+                        ? t("uploadSkill")
+                        : mode === "mcp"
+                          ? t("connectMcp")
+                          : mode === "http"
+                            ? t("addHttp")
+                            : t("addCode")}
                 </h2>
                 <p>
-                  {editingCapability !== null
-                    ? t("editCapabilityDescription")
-                    : mode === "skill"
-                      ? t("copySkillLibrary")
-                      : mode === "code"
-                        ? t("defineCodeTool")
-                        : t("configureExternalTool")}
+                  {editingCapability?.definition.kind === "skill"
+                    ? t("updateSkillDescription")
+                    : editingCapability !== null
+                      ? t("editCapabilityDescription")
+                      : mode === "skill"
+                        ? t("copySkillLibrary")
+                        : mode === "code"
+                          ? t("defineCodeTool")
+                          : t("configureExternalTool")}
                 </p>
               </div>
               <button type="button" onClick={closeDrawer} aria-label={t("close")}>
@@ -543,7 +557,11 @@ export function CapabilityDirectoryFragment(props: {
                   disabled={saving}
                   onClick={() => void importSkill()}
                 >
-                  {saving ? t("importing") : t("choosePackage")}
+                  {saving
+                    ? t("importing")
+                    : editingCapability?.definition.kind === "skill"
+                      ? t("chooseReplacementPackage")
+                      : t("choosePackage")}
                 </button>
               </div>
             ) : null}
@@ -727,7 +745,8 @@ function CapabilityRow(props: {
                     props.onEdit?.();
                   }}
                 >
-                  <PencilSimple size={16} /> {t("editCapability")}
+                  <PencilSimple size={16} />
+                  {capability.definition.kind === "skill" ? t("updateSkill") : t("editCapability")}
                 </button>
               ) : null}
               <button

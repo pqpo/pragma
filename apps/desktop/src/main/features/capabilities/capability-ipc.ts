@@ -6,10 +6,13 @@ import {
   CapabilityIdSchema,
   CapabilityTestRequestSchema,
   CreateCapabilitySchema,
+  GetSkillFileSchema,
   GetSkillDocumentSchema,
   ImportSkillCapabilitySchema,
+  ListSkillFilesSchema,
   PreviewCodeServiceRequestSchema,
   UpdateCapabilitySchema,
+  UpdateSkillCapabilitySchema,
   type PickWorkspaceResult,
 } from "../../../shared/contracts/index.ts";
 import { CapabilityStoreError, type CapabilityStore } from "./capability-store.ts";
@@ -25,8 +28,17 @@ export function installCapabilityHandlers(
   ipcMain.handle("capabilities:get-skill-document", (_event, input: unknown) =>
     store.getSkillDocument(GetSkillDocumentSchema.parse(input)),
   );
+  ipcMain.handle("capabilities:list-skill-files", (_event, input: unknown) =>
+    store.listSkillFiles(ListSkillFilesSchema.parse(input)),
+  );
+  ipcMain.handle("capabilities:get-skill-file", (_event, input: unknown) =>
+    store.getSkillFile(GetSkillFileSchema.parse(input)),
+  );
   ipcMain.handle("capabilities:import-skill", (_event, input: unknown) =>
     store.importSkill(ImportSkillCapabilitySchema.parse(input)),
+  );
+  ipcMain.handle("capabilities:update-skill", (_event, input: unknown) =>
+    store.updateSkill(UpdateSkillCapabilitySchema.parse(input)),
   );
   ipcMain.handle("capabilities:create", (_event, input: unknown) =>
     store.create(CreateCapabilitySchema.parse(input)),

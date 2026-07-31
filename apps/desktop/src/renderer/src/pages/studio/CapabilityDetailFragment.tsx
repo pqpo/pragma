@@ -7,7 +7,7 @@ import {
   Play,
   Plug,
 } from "@phosphor-icons/react";
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import type { ReactNode } from "react";
 import { useTranslation } from "react-i18next";
 
@@ -15,6 +15,8 @@ import type {
   Capability,
   CapabilityTestResult,
   SkillDocument,
+  SkillFileContent,
+  SkillFileEntry,
 } from "../../../../shared/contracts/index.ts";
 import { errorMessage } from "../../lib/errors.ts";
 import { MarkdownContent } from "../../components/MarkdownContent.tsx";
@@ -30,6 +32,11 @@ export function CapabilityDetailFragment(props: {
   const { capability } = props;
   const definition = capability.definition;
   const [skillDocument, setSkillDocument] = useState<SkillDocument | null>(null);
+  const [skillFiles, setSkillFiles] = useState<readonly SkillFileEntry[]>([]);
+  const [skillTab, setSkillTab] = useState<"document" | "files">("document");
+  const [selectedSkillFile, setSelectedSkillFile] = useState<string | null>(null);
+  const [skillFileContent, setSkillFileContent] = useState<SkillFileContent | null>(null);
+  const skillFileRequest = useRef(0);
   const [documentSourceVisible, setDocumentSourceVisible] = useState(false);
   const [selectedToolName, setSelectedToolName] = useState(() => firstToolName(capability));
   const [testInput, setTestInput] = useState("{}");
@@ -47,13 +54,21 @@ export function CapabilityDetailFragment(props: {
     if (api === undefined) return;
     let cancelled = false;
     setError(null);
-    void api
-      .getSkillDocument({
-        id: capability.manifest.id,
-        revision: capability.manifest.latestRevision,
-      })
-      .then((document) => {
-        if (!cancelled) setSkillDocument(document);
+    setSkillDocument(null);
+    setSkillFiles([]);
+    setSelectedSkillFile(null);
+    setSkillFileContent(null);
+    skillFileRequest.current += 1;
+    const input = {
+      id: capability.manifest.id,
+      revision: capability.manifest.latestRevision,
+    };
+    void Promise.all([api.getSkillDocument(input), api.listSkillFiles(input)])
+      .then(([document, files]) => {
+        if (!cancelled) {
+          setSkillDocument(document);
+          setSkillFiles(files);
+        }
       })
       .catch((cause: unknown) => {
         if (!cancelled) setError(errorMessage(cause));
@@ -116,6 +131,52 @@ export function CapabilityDetailFragment(props: {
     }
   };
 
+  const updateSkill = async () => {
+    const api = desktopApi();
+    if (api === undefined || definition.kind !== "skill") return;
+    setBusy(true);
+    setError(null);
+    try {
+      const selected = await api.pickSkillSource();
+      if (!selected.ok) {
+        if (selected.reason !== "cancelled") {
+          throw new Error(selected.error ?? "Skill source unavailable.");
+        }
+        return;
+      }
+      props.onChanged(
+        await api.updateSkillCapability({
+          id: capability.manifest.id,
+          sourcePath: selected.path as string,
+        }),
+      );
+    } catch (cause) {
+      setError(errorMessage(cause));
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const selectSkillFile = async (path: string) => {
+    const api = desktopApi();
+    if (api === undefined) return;
+    setSelectedSkillFile(path);
+    setSkillFileContent(null);
+    setError(null);
+    const request = skillFileRequest.current + 1;
+    skillFileRequest.current = request;
+    try {
+      const content = await api.getSkillFile({
+        id: capability.manifest.id,
+        revision: capability.manifest.latestRevision,
+        path,
+      });
+      if (skillFileRequest.current === request) setSkillFileContent(content);
+    } catch (cause) {
+      if (skillFileRequest.current === request) setError(errorMessage(cause));
+    }
+  };
+
   const selectedTool = tools.find((tool) => tool.name === selectedToolName);
   const Icon = capabilityIcon(capability);
 
@@ -145,7 +206,16 @@ export function CapabilityDetailFragment(props: {
             </div>
             <p>{definition.description}</p>
           </div>
-          {definition.kind === "mcp_server" ? (
+          {definition.kind === "skill" ? (
+            <button
+              className="secondary-button"
+              type="button"
+              disabled={busy}
+              onClick={() => void updateSkill()}
+            >
+              <ArrowsClockwise size={17} /> {busy ? t("updatingSkill") : t("updateSkill")}
+            </button>
+          ) : definition.kind === "mcp_server" ? (
             <button
               className="secondary-button"
               type="button"
@@ -187,29 +257,94 @@ export function CapabilityDetailFragment(props: {
       </div>
 
       {definition.kind === "skill" ? (
-        <section className="skill-document" aria-labelledby="skill-document-heading">
-          <header>
-            <div>
-              <h2 id="skill-document-heading">SKILL.md</h2>
-              <p>{t("skillDocumentation")}</p>
-            </div>
+        <section className="skill-document" aria-label={t("skillContent")}>
+          <nav className="skill-content-tabs" aria-label={t("skillContent")}>
             <button
-              className="secondary-button"
+              className={skillTab === "document" ? "is-active" : ""}
               type="button"
-              aria-pressed={documentSourceVisible}
-              onClick={() => setDocumentSourceVisible((visible) => !visible)}
+              aria-pressed={skillTab === "document"}
+              onClick={() => setSkillTab("document")}
             >
-              {documentSourceVisible ? t("viewRendered") : t("viewSource")}
+              SKILL.md
             </button>
-          </header>
-          {skillDocument === null ? (
-            <p className="capability-empty">{t("loadingSkill")}</p>
-          ) : documentSourceVisible ? (
-            <pre className="skill-document-source">{skillDocument.content}</pre>
+            <button
+              className={skillTab === "files" ? "is-active" : ""}
+              type="button"
+              aria-pressed={skillTab === "files"}
+              onClick={() => {
+                setSkillTab("files");
+                const firstPath = selectedSkillFile ?? skillFiles[0]?.path;
+                if (firstPath !== undefined && skillFileContent?.path !== firstPath) {
+                  void selectSkillFile(firstPath);
+                }
+              }}
+            >
+              {t("files")} <span>{skillFiles.length}</span>
+            </button>
+          </nav>
+          {skillTab === "document" ? (
+            <>
+              <header>
+                <div>
+                  <h2>SKILL.md</h2>
+                  <p>{t("skillDocumentation")}</p>
+                </div>
+                <button
+                  className="secondary-button"
+                  type="button"
+                  aria-pressed={documentSourceVisible}
+                  onClick={() => setDocumentSourceVisible((visible) => !visible)}
+                >
+                  {documentSourceVisible ? t("viewRendered") : t("viewSource")}
+                </button>
+              </header>
+              {skillDocument === null ? (
+                <p className="capability-empty">{t("loadingSkill")}</p>
+              ) : documentSourceVisible ? (
+                <pre className="skill-document-source">{skillDocument.content}</pre>
+              ) : (
+                <article className="skill-markdown">
+                  <MarkdownContent source={skillMarkdownBody(skillDocument.content)} />
+                </article>
+              )}
+            </>
           ) : (
-            <article className="skill-markdown">
-              <MarkdownContent source={skillMarkdownBody(skillDocument.content)} />
-            </article>
+            <div className="skill-file-browser">
+              <aside aria-label={t("skillFiles")}>
+                {skillFiles.map((file) => (
+                  <button
+                    key={file.path}
+                    className={selectedSkillFile === file.path ? "is-active" : ""}
+                    type="button"
+                    aria-pressed={selectedSkillFile === file.path}
+                    onClick={() => void selectSkillFile(file.path)}
+                  >
+                    <span>{file.path}</span>
+                    <small>{formatFileSize(file.size)}</small>
+                  </button>
+                ))}
+                {skillFiles.length === 0 ? <p>{t("noSkillFiles")}</p> : null}
+              </aside>
+              <section aria-live="polite">
+                {selectedSkillFile === null || skillFileContent === null ? (
+                  <p className="capability-empty">
+                    {selectedSkillFile === null ? t("selectSkillFile") : t("loadingSkillFile")}
+                  </p>
+                ) : (
+                  <>
+                    <header>
+                      <h2>{skillFileContent.path}</h2>
+                      <span>{formatFileSize(skillFileContent.size)}</span>
+                    </header>
+                    {skillFileContent.content === null ? (
+                      <p className="capability-empty">{t("binaryFilePreviewUnavailable")}</p>
+                    ) : (
+                      <pre className="skill-file-content">{skillFileContent.content}</pre>
+                    )}
+                  </>
+                )}
+              </section>
+            </div>
           )}
         </section>
       ) : (
@@ -277,6 +412,12 @@ export function CapabilityDetailFragment(props: {
       )}
     </StudioScreenFrame>
   );
+}
+
+export function formatFileSize(size: number): string {
+  if (size < 1024) return `${size} B`;
+  if (size < 1024 * 1024) return `${(size / 1024).toFixed(1)} KiB`;
+  return `${(size / (1024 * 1024)).toFixed(1)} MiB`;
 }
 
 function DetailFact(props: { readonly label: string; readonly children: ReactNode }) {

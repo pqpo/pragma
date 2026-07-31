@@ -226,6 +226,11 @@ export const ImportSkillCapabilitySchema = z.object({
   description: z.string().trim().min(1).max(2_000).optional(),
 });
 
+export const UpdateSkillCapabilitySchema = z.object({
+  id: CapabilityIdSchema,
+  sourcePath: z.string().trim().min(1).max(2_000),
+});
+
 export const CreateCapabilitySchema = z
   .object({
     definition: z.union([
@@ -282,6 +287,30 @@ export const SkillDocumentSchema = z.object({
   revision: z.number().int().positive(),
   entryPath: z.literal("SKILL.md"),
   content: z.string(),
+});
+const SkillFilePathSchema = z
+  .string()
+  .min(1)
+  .max(2_000)
+  .refine(
+    (path) =>
+      !path.startsWith("/") &&
+      !path.includes("\\") &&
+      path.split("/").every((segment) => segment.length > 0 && segment !== "." && segment !== ".."),
+    "Skill file paths must be safe relative paths.",
+  );
+export const ListSkillFilesSchema = GetSkillDocumentSchema;
+export const SkillFileEntrySchema = z.object({
+  path: SkillFilePathSchema,
+  size: z.number().int().nonnegative(),
+});
+export const GetSkillFileSchema = GetSkillDocumentSchema.extend({
+  path: SkillFilePathSchema,
+});
+export const SkillFileContentSchema = SkillFileEntrySchema.extend({
+  capabilityId: CapabilityIdSchema,
+  revision: z.number().int().positive(),
+  content: z.string().nullable(),
 });
 export const CapabilityTestRequestSchema = z.object({
   id: CapabilityIdSchema,
