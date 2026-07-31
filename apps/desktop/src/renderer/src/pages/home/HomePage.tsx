@@ -41,6 +41,7 @@ import { WorkspacePicker, type WorkspaceSelection } from "../../components/Works
 import { errorMessage } from "../../lib/errors.ts";
 import { readHomeDraft, writeHomeDraft } from "../../lib/home-draft.ts";
 import { localizeSystemExpertCopy } from "../../lib/system-expert-copy.ts";
+import { ExpertConstellation } from "./ExpertConstellation.tsx";
 import { SchemaInputForm, createSchemaInputValue, isSchemaInputValid } from "./SchemaInputForm.tsx";
 
 export function HomePage(props: {
@@ -64,6 +65,7 @@ export function HomePage(props: {
   const [modelOverride, setModelOverride] = useState<MissionModelOverride>();
   const [defaultModelSelection, setDefaultModelSelection] = useState<MissionModelOverride>();
   const [saving, setSaving] = useState(false);
+  const [composerFocused, setComposerFocused] = useState(false);
   const [loaded, setLoaded] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [modelError, setModelError] = useState<string | null>(null);
@@ -401,7 +403,13 @@ export function HomePage(props: {
           <h1 id="new-mission-title">{t("start")}</h1>
           <p>{t("createDescription")}</p>
         </header>
-        <div className="mission-goal-composer">
+        <div
+          className="mission-goal-composer"
+          onFocusCapture={() => setComposerFocused(true)}
+          onBlurCapture={(event) => {
+            if (!event.currentTarget.contains(event.relatedTarget)) setComposerFocused(false);
+          }}
+        >
           <WorkspacePicker
             defaultWorkspace={defaultWorkspace}
             recentWorkspaces={recentWorkspaces}
@@ -501,6 +509,7 @@ export function HomePage(props: {
           </p>
         ) : null}
       </section>
+      <ExpertConstellation focused={composerFocused} submitting={saving} />
     </section>
   );
 }
