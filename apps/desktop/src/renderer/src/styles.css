@@ -6712,34 +6712,34 @@ p {
   box-shadow: 0 0 0 3px var(--focus-ring);
 }
 
-.flow-run-dry-heading {
-  display: block;
-}
-
-.flow-run-dry-heading > div:first-child {
-  min-width: 0;
-}
-
-.flow-run-dry-toolbar {
+.studio-heading.flow-run-dry-heading {
+  position: sticky;
+  z-index: 4;
+  top: 0;
   display: flex;
   align-items: center;
   justify-content: space-between;
-  gap: 10px;
-  padding: 10px 12px;
-  border: 1px solid var(--border);
-  border-radius: var(--radius-card);
-  background: var(--surface-soft);
+  gap: 24px;
+  padding: 4px 0 14px;
+  border-bottom: 1px solid var(--border);
+  background: var(--background);
 }
 
-.flow-run-dry-toolbar > div {
+.flow-run-dry-heading > h1 {
+  min-width: 0;
+}
+
+.flow-run-dry-heading .detail-actions {
   display: flex;
+  min-width: 0;
   align-items: center;
+  justify-content: flex-end;
+  flex-wrap: wrap;
   gap: 10px;
 }
 
-.flow-run-dry-toolbar button {
+.flow-run-dry-heading .detail-actions > button {
   min-height: 42px;
-  white-space: nowrap;
 }
 
 .evaluations-page {
@@ -7328,8 +7328,11 @@ p {
   gap: 24px;
 }
 
-.flow-run-dry-heading p {
+.flow-run-dry-description {
   max-width: 720px;
+  margin-top: -10px;
+  color: var(--muted);
+  font-size: 14px;
 }
 
 .flow-run-dry-coverage {
@@ -7372,39 +7375,103 @@ p {
   background: var(--surface-soft);
 }
 
-.flow-run-dry-cases > button {
+.flow-run-dry-case-item {
+  position: relative;
+  width: 100%;
+  min-width: 0;
+  min-height: 62px;
+  border: 1px solid transparent;
+  border-radius: 10px;
+  background: transparent;
+}
+
+.flow-run-dry-case-select {
   display: flex;
   align-items: center;
   gap: 10px;
   width: 100%;
   min-height: 62px;
-  padding: 11px 12px;
-  border: 1px solid transparent;
-  border-radius: 10px;
+  padding: 11px 44px 11px 12px;
+  border: 0;
+  border-radius: inherit;
   background: transparent;
   color: var(--text);
   text-align: left;
 }
 
-.flow-run-dry-cases > button:hover,
-.flow-run-dry-cases > button.is-active {
+.flow-run-dry-case-item:hover,
+.flow-run-dry-case-item.is-active {
   border-color: var(--border);
   background: #fff;
 }
 
-.flow-run-dry-cases > button.is-active {
+.flow-run-dry-case-item.is-active {
   box-shadow: var(--shadow-soft);
 }
 
-.flow-run-dry-cases > button > span {
+.flow-run-dry-case-select > span {
   display: grid;
   min-width: 0;
+}
+
+.flow-run-dry-case-select strong {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .flow-run-dry-cases small {
   overflow: hidden;
   color: var(--muted);
   text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.flow-run-dry-case-select:focus-visible {
+  outline: 2px solid var(--green);
+  outline-offset: -2px;
+}
+
+.flow-run-dry-case-delete {
+  position: absolute;
+  top: 50%;
+  right: 8px;
+  display: grid;
+  width: 32px;
+  height: 32px;
+  padding: 0;
+  place-items: center;
+  border: 0;
+  border-radius: 8px;
+  outline: 0;
+  background: transparent;
+  color: #9d3f34;
+  opacity: 0;
+  pointer-events: none;
+  transform: translateY(-50%);
+  transition:
+    opacity 120ms ease,
+    background-color 120ms ease;
+}
+
+.flow-run-dry-case-item:hover .flow-run-dry-case-delete,
+.flow-run-dry-case-item:focus-within .flow-run-dry-case-delete {
+  opacity: 1;
+  pointer-events: auto;
+}
+
+.flow-run-dry-case-delete:hover {
+  background: #fff0ed;
+}
+
+.flow-run-dry-case-delete:focus-visible {
+  box-shadow: 0 0 0 3px var(--focus-ring);
+}
+
+.flow-run-dry-add-case {
+  width: 100%;
+  flex: 0 0 auto;
+  margin-top: 2px;
 }
 
 .flow-run-dry-editor {
@@ -7830,8 +7897,12 @@ p {
 }
 
 @media (max-width: 920px) {
-  .flow-run-dry-heading {
+  .studio-heading.flow-run-dry-heading {
     display: grid;
+  }
+
+  .flow-run-dry-heading .detail-actions {
+    justify-content: flex-start;
   }
 
   .flow-run-dry-workspace {
@@ -7846,6 +7917,13 @@ p {
   }
 }
 
+@media (hover: none) {
+  .flow-run-dry-case-delete {
+    opacity: 1;
+    pointer-events: auto;
+  }
+}
+
 @media (max-width: 720px) {
   .flow-run-dry .studio-screen-body {
     gap: 14px;
@@ -7856,16 +7934,12 @@ p {
     grid-template-columns: 1fr;
   }
 
-  .flow-run-dry-toolbar {
+  .flow-run-dry-heading .detail-actions {
     display: grid;
+    grid-template-columns: 1fr;
   }
 
-  .flow-run-dry-toolbar > div {
-    display: grid;
-    grid-template-columns: repeat(2, minmax(0, 1fr));
-  }
-
-  .flow-run-dry-toolbar button {
+  .flow-run-dry-heading .detail-actions > button {
     width: 100%;
   }
 

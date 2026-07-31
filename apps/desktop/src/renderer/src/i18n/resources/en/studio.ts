@@ -160,10 +160,9 @@ export const studio = {
   evaluationIdentity: "Evaluation identity",
   evaluationName: "Evaluation name",
   evaluationTarget: "Target Flow",
-  evaluationActions: "Evaluation actions",
   runDryTitle: "Flow run dry cases",
   runDryDescription:
-    "Maintain fast unit cases for “{{name}}” with mocked model, action, nested Flow, and Human Task results.",
+    "Use mocks instead of real model, Action, nested Flow, and Human Task results.",
   addRunDryCase: "Add case",
   runningRunDry: "Running…",
   runAllCases: "Run all",
@@ -184,6 +183,10 @@ export const studio = {
   runDryCaseHint:
     "expectInput always matches the case's original Flow input; expectPrompt verifies the rendered prompt.",
   deleteCase: "Delete case",
+  deleteCaseNamed: "Delete case “{{name}}”",
+  deleteRunDryCaseTitle: "Delete this case?",
+  deleteRunDryCaseDescription:
+    "“{{name}}” will be removed from this evaluation. Save the cases to persist this change.",
   caseId: "Case ID",
   caseName: "Name",
   caseInputJson: "Flow input (JSON)",

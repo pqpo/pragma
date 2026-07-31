@@ -88,16 +88,25 @@ describe("FlowRunDryFragment", () => {
     );
 
     expect(html).toContain("Flow run dry cases");
+    expect(html).toContain(
+      "Use mocks instead of real model, Action, nested Flow, and Human Task results.",
+    );
     expect(html).toContain("Finish successfully");
     expect(html).toContain("Required transitions");
     expect(html).toContain("Node mocks (JSON)");
     expect(html).toContain("Run all");
+    expect(html).toContain("Save cases");
     expect(html).toContain("flow-run-dry-identity");
     expect(html).toContain("flow-run-dry-form-grid");
     expect(html).toContain("flow-run-dry-case-editor");
-    expect(html).toContain("flow-run-dry-toolbar");
     expect(html).toContain("flow-run-dry-static-value");
     expect(html).toContain('Target Flow</span><div class="flow-run-dry-static-value"');
     expect(html).not.toContain("Target Flow</span><select");
+    expect(html).toContain("flow-run-dry-case-delete");
+    expect(html).toContain('aria-label="Delete case “Finish successfully”"');
+    expect(html).toContain("flow-run-dry-add-case");
+    expect(html.indexOf("flow-run-dry-case-item")).toBeLessThan(
+      html.indexOf("flow-run-dry-add-case"),
+    );
   });
 });

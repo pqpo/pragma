@@ -20,6 +20,7 @@ import {
 import type { PragmaFlowResource } from "@pragma/interpreter/ast";
 
 import { errorMessage } from "../../lib/errors.ts";
+import { StudioConfirmationDialog } from "../studio/StudioDialog.tsx";
 import { StudioScreenFrame } from "../studio/StudioScreenFrame.tsx";
 
 interface RunDryCaseDraft {
@@ -51,10 +52,12 @@ export function FlowRunDryFragment(props: {
   const [result, setResult] = useState<PragmaFlowRunDrySuiteResult | null>(null);
   const [busy, setBusy] = useState<"save" | "run" | null>(null);
   const [formError, setFormError] = useState<string | null>(null);
+  const [deleteKey, setDeleteKey] = useState<string | null>(null);
   const selected = drafts.find((draft) => draft.key === selectedKey) ?? null;
   const targetFlow = props.flows.find(
     (flow) => `flow:${flow.metadata.id}` === props.evaluation.spec.target.ref,
   );
+  const pendingDelete = drafts.find((draft) => draft.key === deleteKey) ?? null;
 
   const updateSelected = (patch: Partial<RunDryCaseDraft>) => {
     if (selected === null) return;
@@ -70,13 +73,16 @@ export function FlowRunDryFragment(props: {
     setResult(null);
     setFormError(null);
   };
-  const removeSelected = () => {
-    if (selected === null) return;
-    const index = drafts.findIndex((draft) => draft.key === selected.key);
-    const next = drafts.filter((draft) => draft.key !== selected.key);
+  const removeCase = (key: string) => {
+    const index = drafts.findIndex((draft) => draft.key === key);
+    if (index === -1) return;
+    const next = drafts.filter((draft) => draft.key !== key);
     setDrafts(next);
-    setSelectedKey(next[Math.min(index, next.length - 1)]?.key ?? null);
+    if (selectedKey === key) {
+      setSelectedKey(next[Math.min(index, next.length - 1)]?.key ?? null);
+    }
     setResult(null);
+    setDeleteKey(null);
   };
   const materialize = (): PragmaFlowRunDrySuite => {
     const cases = drafts.map(draftToCase);
@@ -131,23 +137,8 @@ export function FlowRunDryFragment(props: {
       }
     >
       <header className="studio-heading flow-run-dry-heading">
-        <div>
-          <h1 id="flow-run-dry-heading">{t("runDryTitle")}</h1>
-          <p>{t("runDryDescription", { name })}</p>
-        </div>
-      </header>
-
-      <div className="flow-run-dry-toolbar" role="toolbar" aria-label={t("evaluationActions")}>
-        <button
-          className="secondary-button"
-          type="button"
-          disabled={busy !== null}
-          onClick={addCase}
-        >
-          <Plus size={17} aria-hidden="true" />
-          {t("addRunDryCase")}
-        </button>
-        <div>
+        <h1 id="flow-run-dry-heading">{t("runDryTitle")}</h1>
+        <div className="detail-actions">
           <button
             className="secondary-button"
             type="button"
@@ -166,7 +157,8 @@ export function FlowRunDryFragment(props: {
             {busy === "save" ? t("saving") : t("saveCases")}
           </button>
         </div>
-      </div>
+      </header>
+      <p className="flow-run-dry-description">{t("runDryDescription")}</p>
 
       <section
         className="flow-run-dry-editor flow-run-dry-identity"
@@ -220,28 +212,50 @@ export function FlowRunDryFragment(props: {
         <aside className="flow-run-dry-cases" aria-label={t("runDryCases")}>
           {drafts.map((draft) => {
             const caseResult = result?.cases.find((candidate) => candidate.id === draft.id);
+            const caseName = draft.name.trim() || t("untitledCase");
             return (
-              <button
-                className={draft.key === selectedKey ? "is-active" : undefined}
-                type="button"
+              <div
+                className={`flow-run-dry-case-item${draft.key === selectedKey ? " is-active" : ""}`}
                 key={draft.key}
-                onClick={() => setSelectedKey(draft.key)}
               >
-                {caseResult?.passed === true ? (
-                  <CheckCircle size={18} weight="fill" aria-hidden="true" />
-                ) : caseResult === undefined ? (
-                  <Play size={18} aria-hidden="true" />
-                ) : (
-                  <XCircle size={18} weight="fill" aria-hidden="true" />
-                )}
-                <span>
-                  <strong>{draft.name.trim() || t("untitledCase")}</strong>
-                  <small>{draft.id.trim() || t("missingCaseId")}</small>
-                </span>
-              </button>
+                <button
+                  className="flow-run-dry-case-select"
+                  type="button"
+                  onClick={() => setSelectedKey(draft.key)}
+                >
+                  {caseResult?.passed === true ? (
+                    <CheckCircle size={18} weight="fill" aria-hidden="true" />
+                  ) : caseResult === undefined ? (
+                    <Play size={18} aria-hidden="true" />
+                  ) : (
+                    <XCircle size={18} weight="fill" aria-hidden="true" />
+                  )}
+                  <span>
+                    <strong>{caseName}</strong>
+                    <small>{draft.id.trim() || t("missingCaseId")}</small>
+                  </span>
+                </button>
+                <button
+                  className="flow-run-dry-case-delete"
+                  type="button"
+                  aria-label={t("deleteCaseNamed", { name: caseName })}
+                  title={t("deleteCaseNamed", { name: caseName })}
+                  onClick={() => setDeleteKey(draft.key)}
+                >
+                  <Trash size={16} aria-hidden="true" />
+                </button>
+              </div>
             );
           })}
           {drafts.length === 0 ? <p>{t("noRunDryCases")}</p> : null}
+          <button
+            className="secondary-button flow-run-dry-add-case"
+            type="button"
+            onClick={addCase}
+          >
+            <Plus size={17} aria-hidden="true" />
+            {t("addRunDryCase")}
+          </button>
         </aside>
 
         {selected === null ? (
@@ -259,10 +273,6 @@ export function FlowRunDryFragment(props: {
                 <h2>{selected.name.trim() || t("untitledCase")}</h2>
                 <p>{t("runDryCaseHint")}</p>
               </div>
-              <button className="danger-button" type="button" onClick={removeSelected}>
-                <Trash size={16} aria-hidden="true" />
-                {t("deleteCase")}
-              </button>
             </header>
             <div className="flow-run-dry-form-grid">
               <label>
@@ -357,6 +367,20 @@ export function FlowRunDryFragment(props: {
         </p>
       ) : null}
       {result !== null ? <RunDryResult result={result} /> : null}
+      {pendingDelete !== null ? (
+        <StudioConfirmationDialog
+          title={t("deleteRunDryCaseTitle")}
+          description={t("deleteRunDryCaseDescription", {
+            name: pendingDelete.name.trim() || t("untitledCase"),
+          })}
+          cancelLabel={t("cancel")}
+          confirmLabel={t("deleteCase")}
+          busyLabel={t("deleting")}
+          busy={false}
+          onCancel={() => setDeleteKey(null)}
+          onConfirm={() => removeCase(pendingDelete.key)}
+        />
+      ) : null}
     </StudioScreenFrame>
   );
 }
