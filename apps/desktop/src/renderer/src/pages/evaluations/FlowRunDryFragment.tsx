@@ -1,6 +1,14 @@
 import { useState } from "react";
 import { useTranslation } from "react-i18next";
-import { ArrowLeft, CheckCircle, Play, Plus, Trash, XCircle } from "@phosphor-icons/react";
+import {
+  ArrowLeft,
+  CheckCircle,
+  GitBranch,
+  Play,
+  Plus,
+  Trash,
+  XCircle,
+} from "@phosphor-icons/react";
 import {
   PragmaEvaluationResourceSchema,
   PragmaFlowRunDrySuiteSchema,
@@ -26,17 +34,6 @@ interface RunDryCaseDraft {
   readonly errorContains: string;
 }
 
-export function createRunDryTargetChangeState(targetRef: string) {
-  const draft = emptyCaseDraft(1);
-  return {
-    targetRef,
-    drafts: [draft] as readonly RunDryCaseDraft[],
-    selectedKey: draft.key,
-    result: null,
-    formError: null,
-  };
-}
-
 export function FlowRunDryFragment(props: {
   readonly evaluation: PragmaEvaluationResource;
   readonly flows: readonly PragmaFlowResource[];
@@ -50,12 +47,14 @@ export function FlowRunDryFragment(props: {
   );
   const [name, setName] = useState(props.evaluation.metadata.name);
   const [description, setDescription] = useState(props.evaluation.metadata.description);
-  const [targetRef, setTargetRef] = useState(props.evaluation.spec.target.ref);
   const [selectedKey, setSelectedKey] = useState<string | null>(drafts[0]?.key ?? null);
   const [result, setResult] = useState<PragmaFlowRunDrySuiteResult | null>(null);
   const [busy, setBusy] = useState<"save" | "run" | null>(null);
   const [formError, setFormError] = useState<string | null>(null);
   const selected = drafts.find((draft) => draft.key === selectedKey) ?? null;
+  const targetFlow = props.flows.find(
+    (flow) => `flow:${flow.metadata.id}` === props.evaluation.spec.target.ref,
+  );
 
   const updateSelected = (patch: Partial<RunDryCaseDraft>) => {
     if (selected === null) return;
@@ -79,16 +78,6 @@ export function FlowRunDryFragment(props: {
     setSelectedKey(next[Math.min(index, next.length - 1)]?.key ?? null);
     setResult(null);
   };
-  const changeTarget = (nextTargetRef: string) => {
-    if (nextTargetRef === targetRef) return;
-    if (!window.confirm(t("changeEvaluationTargetConfirm"))) return;
-    const next = createRunDryTargetChangeState(nextTargetRef);
-    setTargetRef(next.targetRef);
-    setDrafts(next.drafts);
-    setSelectedKey(next.selectedKey);
-    setResult(next.result);
-    setFormError(next.formError);
-  };
   const materialize = (): PragmaFlowRunDrySuite => {
     const cases = drafts.map(draftToCase);
     return PragmaFlowRunDrySuiteSchema.parse({ cases });
@@ -102,7 +91,7 @@ export function FlowRunDryFragment(props: {
         description: description.trim(),
       },
       spec: {
-        target: { ref: targetRef },
+        target: props.evaluation.spec.target,
         method: { type: "flow-run-dry", cases: materialize().cases },
       },
     });
@@ -146,11 +135,19 @@ export function FlowRunDryFragment(props: {
           <h1 id="flow-run-dry-heading">{t("runDryTitle")}</h1>
           <p>{t("runDryDescription", { name })}</p>
         </div>
-        <div className="detail-actions">
-          <button className="secondary-button" type="button" onClick={addCase}>
-            <Plus size={17} aria-hidden="true" />
-            {t("addRunDryCase")}
-          </button>
+      </header>
+
+      <div className="flow-run-dry-toolbar" role="toolbar" aria-label={t("evaluationActions")}>
+        <button
+          className="secondary-button"
+          type="button"
+          disabled={busy !== null}
+          onClick={addCase}
+        >
+          <Plus size={17} aria-hidden="true" />
+          {t("addRunDryCase")}
+        </button>
+        <div>
           <button
             className="secondary-button"
             type="button"
@@ -169,7 +166,7 @@ export function FlowRunDryFragment(props: {
             {busy === "save" ? t("saving") : t("saveCases")}
           </button>
         </div>
-      </header>
+      </div>
 
       <section
         className="flow-run-dry-editor flow-run-dry-identity"
@@ -180,16 +177,13 @@ export function FlowRunDryFragment(props: {
             <span>{t("evaluationName")}</span>
             <input value={name} onChange={(event) => setName(event.target.value)} />
           </label>
-          <label>
+          <div className="flow-run-dry-static-field">
             <span>{t("evaluationTarget")}</span>
-            <select value={targetRef} onChange={(event) => changeTarget(event.target.value)}>
-              {props.flows.map((flow) => (
-                <option key={flow.metadata.id} value={`flow:${flow.metadata.id}`}>
-                  {flow.metadata.name}
-                </option>
-              ))}
-            </select>
-          </label>
+            <div className="flow-run-dry-static-value">
+              <GitBranch size={17} aria-hidden="true" />
+              <strong>{targetFlow?.metadata.name ?? props.evaluation.spec.target.ref}</strong>
+            </div>
+          </div>
         </div>
         <label>
           <span>{t("description")}</span>

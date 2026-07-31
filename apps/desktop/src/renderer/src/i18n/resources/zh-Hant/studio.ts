@@ -40,6 +40,9 @@ export const studio = {
   llmJudgeDescription: "使用可重用評測集評估專家與專家團隊。",
   evaluationNeedsFlow: "請先建立 Flow，再新增 Run Dry 評測。",
   noEvaluationsYet: "尚無評測。",
+  deleteEvaluation: "刪除此 Run Dry 案例集？",
+  deleteEvaluationAction: "刪除案例集",
+  deleteEvaluationDescription: "「{{name}}」及其中的全部案例將被永久刪除，目標 Flow 不會受到影響。",
   integrations: "整合",
   integrationsDescription:
     "將專家、團隊和流程接入排程策略，並為後續 Webhook 與各類聊天管道預留可重複使用的連線。",
@@ -150,7 +153,7 @@ export const studio = {
   evaluationIdentity: "評測資訊",
   evaluationName: "評測名稱",
   evaluationTarget: "目標 Flow",
-  changeEvaluationTargetConfirm: "更換目標 Flow 會清空現有全部案例與執行結果。是否繼續？",
+  evaluationActions: "評測操作",
   runDryTitle: "Flow Run Dry 案例",
   runDryDescription:
     "為「{{name}}」維護快速單元案例，以 Mock 取代模型、Action、巢狀 Flow 與 Human Task 的真實結果。",
