@@ -22,8 +22,10 @@ Persistent upgrade responsibilities are split by layer.
   the static adjacent DSL migration chain, emits resource `identityMigrations` as facts, and exposes
   a pure identity migration index for Hosts. It does not mutate Host storage.
 - Host applications own cross-aggregate orchestration. Desktop currently coordinates Project,
-  Mission, Automation, ExpertSession, and RuntimeSession recovery. Server must use the same
-  boundary when it gains durable Missions.
+  Mission, Automation, ExpertSession, and RuntimeSession recovery only when one requested operation
+  actually crosses those owners. Server must use the same boundary when it gains durable Missions.
+  Host coordination is not a startup coordinator and does not enumerate every owner to discover
+  upgrade work.
 
 When an old Mission points at the same logical executor but persisted session state uses a previous
 resource identity, the Host may pass an explicit `definitionMigration` to Core. If Core reports a
@@ -36,5 +38,8 @@ binds the next Mission execution to it. The old session remains historical state
 - DSL `apiVersion`, Host `schemaVersion`, and Project `revision` stay separate.
 - Project resource identity migration resolution is centralized in `@pragma/interpreter` and shared
   by Host Mission and Automation migrations.
-- Startup performs Host upgrade checks through store boundaries and records diagnostics instead of
-  letting one stale aggregate make the application unusable.
+- Each store upgrades its minimum safe owner on first actual access. Desktop creates its window
+  before starting optional warm-up, reconciliation, Automation, or maintenance work.
+- A background capability records and contains its own upgrade failure. It cannot turn one stale
+  Project, Mission, Revision, Bundle catalog, or usage database into a process-level startup
+  failure.

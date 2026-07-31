@@ -1,4 +1,4 @@
-import { mkdtemp, readFile, rm, stat, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, readFile, rm, stat, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
@@ -37,6 +37,55 @@ afterEach(async () => {
 });
 
 describe("PragmaBundleService", () => {
+  it("upgrades its catalog lazily on first Bundle use", async () => {
+    const fixture = await createFixture("lazy-catalog-upgrade");
+    await mkdir(fixture.paths.bundleInstallationsStateRoot(), {
+      recursive: true,
+      mode: 0o700,
+    });
+    await writeFile(
+      fixture.paths.bundleInstallationsCatalog(),
+      `${JSON.stringify({
+        schemaVersion: "pragma.bundle-installations/v1",
+        installations: [],
+      })}\n`,
+    );
+
+    expect(await readFile(fixture.paths.bundleInstallationsCatalog(), "utf8")).toContain(
+      "pragma.bundle-installations/v1",
+    );
+    await expect(fixture.service.listInstallations()).resolves.toEqual([]);
+    expect(await readFile(fixture.paths.bundleInstallationsCatalog(), "utf8")).toContain(
+      "pragma.bundle-installations/v2",
+    );
+  });
+
+  it("keeps a failed lazy initialization retryable without replacing future data", async () => {
+    const fixture = await createFixture("lazy-catalog-retry");
+    await mkdir(fixture.paths.bundleInstallationsStateRoot(), {
+      recursive: true,
+      mode: 0o700,
+    });
+    const catalogPath = fixture.paths.bundleInstallationsCatalog();
+    const futureCatalog = {
+      schemaVersion: "pragma.bundle-installations/v3",
+      installations: [],
+    };
+    await writeFile(catalogPath, `${JSON.stringify(futureCatalog)}\n`);
+
+    await expect(fixture.service.listInstallations()).rejects.toThrow();
+    await expect(readFile(catalogPath, "utf8")).resolves.toBe(`${JSON.stringify(futureCatalog)}\n`);
+
+    await writeFile(
+      catalogPath,
+      `${JSON.stringify({
+        schemaVersion: "pragma.bundle-installations/v2",
+        installations: [],
+      })}\n`,
+    );
+    await expect(fixture.service.listInstallations()).resolves.toEqual([]);
+  });
+
   it("exports a verifiable ZIP with a stable semantic fingerprint", async () => {
     const fixture = await createFixture("source");
     const firstPath = join(fixture.root, "first.pragma");

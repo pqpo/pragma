@@ -7,7 +7,11 @@ import type { RuntimeUsageObservation } from "@pragma/core";
 import type { Invocation } from "@pragma/shared";
 import { afterEach, describe, expect, it } from "vitest";
 
-import { createDesktopUsageStore, type DesktopUsageStore } from "./usage-store.ts";
+import {
+  createDesktopUsageStore,
+  createUnavailableDesktopUsageStore,
+  type DesktopUsageStore,
+} from "./usage-store.ts";
 
 const directories: string[] = [];
 const stores: DesktopUsageStore[] = [];
@@ -31,6 +35,29 @@ async function fixture() {
 }
 
 describe("Desktop usage store", () => {
+  it("keeps the application usable when the usage database is unavailable", () => {
+    const failure = new Error("unsupported usage schema");
+    const store = createUnavailableDesktopUsageStore({
+      cause: failure,
+      now: new Date("2026-01-01T00:00:00.000Z"),
+    });
+
+    expect(() =>
+      store.record(observation(), {
+        mission: { id: "mission-1", title: "Mission" },
+        invocations: invocationTree(),
+        names: new Map(),
+      }),
+    ).not.toThrow();
+    expect(() => store.getOverview("all")).toThrow("The original usage database was not modified");
+    expect(() => store.getMissionUsage("mission-1")).toThrow(
+      expect.objectContaining({
+        code: "desktop_usage_unavailable",
+        cause: failure,
+      }),
+    );
+  });
+
   it("replaces live previews and reconciles them with the final observation", async () => {
     const { store } = await fixture();
     const context = {

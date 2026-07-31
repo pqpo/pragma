@@ -65,6 +65,11 @@ export const common = {
       description:
         "The Desktop interface and local compiler use different protocol versions. Reload Pragma before editing a project or starting a Mission.",
     },
+    main: {
+      title: "Pragma services could not start",
+      description:
+        "The Desktop window is available, but local services could not be initialized. Your existing data was not deleted or replaced.",
+    },
     renderer: {
       title: "Pragma could not finish starting",
       description: "The Desktop interface encountered an unexpected problem while it was starting.",

@@ -7,7 +7,6 @@ import {
   createRuntimeTokenCounter,
   createStorageCapacityGuard,
   PragmaPaths,
-  runStorageMaintenance,
   type PragmaLogger,
   type PragmaLoggerProvider,
 } from "@pragma/core";
@@ -70,13 +69,16 @@ import { installDesktopSettingsHandlers } from "../features/settings/desktop-set
 import { createDesktopSettingsStore } from "../features/settings/desktop-settings-store.ts";
 import { createWorkspaceHistoryStore } from "../features/workspaces/workspace-history-store.ts";
 import { installUsageHandlers } from "../features/usage/usage-ipc.ts";
-import { createDesktopUsageStore } from "../features/usage/usage-store.ts";
+import {
+  createDesktopUsageStore,
+  createUnavailableDesktopUsageStore,
+} from "../features/usage/usage-store.ts";
 import { validateWorkspace } from "../features/workspaces/workspace-scope.ts";
 import type { CredentialEncryption } from "../platform/security/credential-encryption.ts";
-import { runPersistentStateUpgradeCoordinator } from "../platform/storage/persistent-state-upgrade-coordinator.ts";
 import { initializeDesktopStorage } from "../platform/storage/storage-bootstrap.ts";
 
 export interface DesktopApplicationContainer {
+  readonly startBackgroundTasks: () => void;
   readonly dispose: () => void;
 }
 
@@ -112,19 +114,13 @@ export async function createDesktopApplicationContainer(
       `Previous Pragma storage was backed up to ${storageBootstrap.legacyBackup}.`,
     );
   }
-  const maintenance = await runStorageMaintenance({ paths: pragmaPaths });
   const tokenCounter = createRuntimeTokenCounter({ logger: mainLogger });
   const mcpToolRegistryPool = createMcpToolRegistryPool();
   const storageCapacityGuard = createStorageCapacityGuard({
     paths: pragmaPaths,
-    initialOverview: maintenance.after,
+    refreshIntervalMs: 0,
+    maxSnapshotAgeMs: 30_000,
   });
-  if (maintenance.before.totalBytes >= maintenance.before.softLimitBytes) {
-    mainLogger.warn(
-      "desktop.storage_pressure_gc",
-      `Pragma storage pressure GC reclaimed ${maintenance.before.totalBytes - maintenance.after.totalBytes} bytes.`,
-    );
-  }
   const builtInDefaultWorkspace = pragmaPaths.workspaceRoot();
   const projectsPath = pragmaPaths.projectsRoot();
   const missionsPath = pragmaPaths.missionsRoot();
@@ -180,13 +176,15 @@ export async function createDesktopApplicationContainer(
   });
   const usageStore = await createDesktopUsageStore({
     databasePath: join(pragmaPaths.dataRoot(), "usage", "usage.sqlite"),
+  }).catch((error: unknown) => {
+    mainLogger.warn(
+      "desktop.usage_store_unavailable",
+      "Desktop usage accounting is unavailable; the existing usage database was preserved.",
+      { error },
+    );
+    return createUnavailableDesktopUsageStore({ cause: error });
   });
   const unsubscribeUsageUpdates = installUsageHandlers(usageStore, options.getWindow);
-  await runPersistentStateUpgradeCoordinator({
-    project: pragmaProjectStore,
-    missions: missionStore,
-    logger: mainLogger,
-  });
   const modelProviderStore = createModelProviderStore({
     configPath: modelProvidersPath,
     encryption,
@@ -194,7 +192,6 @@ export async function createDesktopApplicationContainer(
   const runtimeEnvironments = createRuntimeEnvironmentStore({
     pragmaHome: pragmaPaths.root,
   });
-  await runtimeEnvironments.initialize();
   const runtimes = createRuntimeEnvironmentService({
     store: runtimeEnvironments,
     logger: mainLogger,
@@ -308,7 +305,6 @@ export async function createDesktopApplicationContainer(
     getRuntimes: async () => await getRuntimeAvailability(runtimes),
     externalResourceRefs: new Set([BUILT_IN_PRAGMA_REF]),
   });
-  await bundleService.initialize();
   installPragmaBundleHandlers(bundleService, options.getWindow);
   const missionCreator = createMissionCreator({
     missions: missionStore,
@@ -326,7 +322,15 @@ export async function createDesktopApplicationContainer(
   installExpertDefinitionHandlers(expertStore);
   installPragmaProjectHandlers(pragmaProjectStore);
   const initialSettings = await desktopSettings.getSnapshot(options.getPreferredSystemLanguages());
-  await mkdir(initialSettings.defaultWorkspace, { recursive: true, mode: 0o700 });
+  await mkdir(initialSettings.defaultWorkspace, { recursive: true, mode: 0o700 }).catch(
+    (error: unknown) => {
+      mainLogger.warn(
+        "desktop.default_workspace_unavailable",
+        `The default workspace could not be prepared: ${initialSettings.defaultWorkspace}.`,
+        { error },
+      );
+    },
+  );
   const defaultAgentStateRoot = join(pragmaPaths.stateRoot(), "pragma");
   const defaultAgentProject = createDesktopDefaultAgentProjectPort({
     project: pragmaProjectStore,
@@ -435,13 +439,6 @@ export async function createDesktopApplicationContainer(
       );
     });
   });
-  await missionRunner.reconcileUsage().catch((error: unknown) => {
-    mainLogger.warn(
-      "desktop.usage_reconciliation_failed",
-      "Desktop usage reconciliation could not be completed.",
-      { error },
-    );
-  });
   const automationService = createAutomationService({
     paths: pragmaPaths,
     project: pragmaProjectStore,
@@ -452,7 +449,6 @@ export async function createDesktopApplicationContainer(
     loggerProvider,
   });
   installAutomationHandlers(automationService);
-  await automationService.start();
   const defaultAgentTasks = createDesktopDefaultAgentTaskPort({
     missions: missionStore,
     runner: missionRunner,
@@ -510,8 +506,47 @@ export async function createDesktopApplicationContainer(
           (resource.spec.config as Record<string, unknown>).providerId === providerId,
       ),
   });
-  void tokenCounter.load();
+  let backgroundTasksStarted = false;
   return {
+    startBackgroundTasks() {
+      if (backgroundTasksStarted) return;
+      backgroundTasksStarted = true;
+      void runtimeEnvironments.initialize().catch((error: unknown) => {
+        mainLogger.warn(
+          "desktop.runtime_environment_warmup_failed",
+          "Runtime environments could not be warmed up.",
+          { error },
+        );
+      });
+      void bundleService.initialize().catch((error: unknown) => {
+        mainLogger.warn(
+          "desktop.bundle_warmup_failed",
+          "Desktop Bundle state could not be warmed up.",
+          { error },
+        );
+      });
+      void missionRunner.reconcileUsage().catch((error: unknown) => {
+        mainLogger.warn(
+          "desktop.usage_reconciliation_failed",
+          "Desktop usage reconciliation could not be completed.",
+          { error },
+        );
+      });
+      void automationService.start().catch((error: unknown) => {
+        mainLogger.warn(
+          "desktop.automation_start_failed",
+          "Desktop automations could not be initialized.",
+          { error },
+        );
+      });
+      void tokenCounter.load().catch((error: unknown) => {
+        mainLogger.warn(
+          "desktop.tokenizer_warmup_failed",
+          "The Runtime token counter could not be warmed up.",
+          { error },
+        );
+      });
+    },
     dispose: () => {
       unsubscribeUsageUpdates();
       unsubscribeTokenCounter();

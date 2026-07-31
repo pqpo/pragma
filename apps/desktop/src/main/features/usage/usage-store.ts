@@ -57,6 +57,41 @@ export interface DesktopUsageStore {
   readonly close: () => void;
 }
 
+export class DesktopUsageUnavailableError extends Error {
+  readonly code = "desktop_usage_unavailable";
+
+  constructor(options?: ErrorOptions) {
+    super(
+      "Desktop usage data is unavailable. The original usage database was not modified.",
+      options,
+    );
+    this.name = "DesktopUsageUnavailableError";
+  }
+}
+
+export function createUnavailableDesktopUsageStore(input: {
+  readonly cause: unknown;
+  readonly now?: Date | undefined;
+}): DesktopUsageStore {
+  const unavailable = (): never => {
+    throw new DesktopUsageUnavailableError({ cause: input.cause });
+  };
+
+  return {
+    trackingStartedAt: (input.now ?? new Date()).toISOString(),
+    preview: () => undefined,
+    record: () => undefined,
+    clearPreview: () => undefined,
+    recordRecovered: () => undefined,
+    getOverview: unavailable,
+    listSubjects: unavailable,
+    getMissionUsage: unavailable,
+    markMissionDeleted: () => undefined,
+    subscribe: () => () => undefined,
+    close: () => undefined,
+  };
+}
+
 export async function createDesktopUsageStore(input: {
   readonly databasePath: string;
   readonly now?: Date | undefined;

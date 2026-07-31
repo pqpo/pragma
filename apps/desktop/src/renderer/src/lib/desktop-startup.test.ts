@@ -1,8 +1,9 @@
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 
 import { resolveDesktopStartup } from "./desktop-startup.ts";
 
 const currentBridgeSnapshot = {
+  startup: { status: "ready" },
   interpreter: {
     writeVersion: "pragma.dsl/v3",
     directReadVersions: ["pragma.dsl/v3"],
@@ -68,6 +69,7 @@ describe("resolveDesktopStartup", () => {
       resolveDesktopStartup(
         {
           getBridgeSnapshot: async () => ({
+            startup: { status: "ready" },
             interpreter: {
               writeVersion: "pragma.dsl/v2",
               directReadVersions: ["pragma.dsl/v2"],
@@ -89,6 +91,7 @@ describe("resolveDesktopStartup", () => {
       resolveDesktopStartup(
         {
           getBridgeSnapshot: async () => ({
+            startup: { status: "ready" },
             interpreter: {
               writeVersion: "pragma.dsl/v3",
               directReadVersions: ["pragma.dsl/v3\u0000pragma.dsl/v4"],
@@ -120,5 +123,29 @@ describe("resolveDesktopStartup", () => {
       locale: "zh-Hant",
       errorCode: "DESKTOP_BRIDGE_UNAVAILABLE",
     });
+  });
+
+  it("reports main-process initialization failure before loading settings", async () => {
+    const getDesktopSettings = vi.fn(async () => ({ resolvedLocale: "en" as const }));
+
+    await expect(
+      resolveDesktopStartup(
+        {
+          getBridgeSnapshot: async () => ({
+            startup: {
+              status: "failed",
+              code: "DESKTOP_MAIN_INITIALIZATION_FAILED",
+            },
+            interpreter: currentBridgeSnapshot.interpreter,
+          }),
+          getDesktopSettings,
+        },
+        ["zh-CN"],
+      ),
+    ).resolves.toEqual({
+      locale: "zh-Hans",
+      errorCode: "DESKTOP_MAIN_INITIALIZATION_FAILED",
+    });
+    expect(getDesktopSettings).not.toHaveBeenCalled();
   });
 });

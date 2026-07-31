@@ -64,6 +64,10 @@ export const common = {
       description:
         "Desktop 界面与本地编译器正在使用不同的协议版本。请先重新加载 Pragma，再编辑项目或启动任务。",
     },
+    main: {
+      title: "Pragma 服务未能启动",
+      description: "Desktop 窗口仍可打开，但本地服务初始化失败。现有数据没有被删除或替换。",
+    },
     renderer: {
       title: "Pragma 未能完成启动",
       description: "Desktop 界面在启动过程中遇到了意外问题。",

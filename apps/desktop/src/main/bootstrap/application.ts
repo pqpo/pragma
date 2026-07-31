@@ -1,29 +1,26 @@
 import { BrowserWindow, app, ipcMain, safeStorage, shell } from "electron";
 import { PragmaPaths } from "@pragma/core";
 
-import { DesktopRendererLogSchema } from "../../shared/contracts/index.ts";
+import {
+  DesktopRendererLogSchema,
+  type DesktopBridgeSnapshot,
+} from "../../shared/contracts/index.ts";
 import { installWorkspaceScopeHandlers } from "../features/workspaces/workspace-scope.ts";
 import { createBridgeSnapshot } from "../platform/ipc/bridge-snapshot.ts";
 import { createDesktopLogging } from "../platform/logging/desktop-logging.ts";
 import { createDesktopWindowManager } from "../platform/window/desktop-window.ts";
-import {
-  createDesktopApplicationContainer,
-  type DesktopApplicationContainer,
-} from "./application-container.ts";
-
-const applicationId = "com.pqpo.pragma";
+import { configureDesktopApplicationIdentity } from "./application-identity.ts";
+import { createDesktopApplicationContainer } from "./application-container.ts";
+import { startDesktopWindowWithServices } from "./startup-sequence.ts";
 
 export function startDesktopApplication(): void {
+  configureDesktopApplicationIdentity(app);
   const paths = new PragmaPaths();
   const logging = createDesktopLogging(paths);
   const windows = createDesktopWindowManager(logging.mainLogger);
-  let container: DesktopApplicationContainer | undefined;
+  let startupStatus: DesktopBridgeSnapshot["startup"] = { status: "ready" };
 
-  if (process.platform === "win32") {
-    app.setAppUserModelId(applicationId);
-  }
-
-  ipcMain.handle("bridge:snapshot", () => createBridgeSnapshot());
+  ipcMain.handle("bridge:snapshot", () => createBridgeSnapshot(startupStatus));
   ipcMain.on("logs:renderer", (_event, input: unknown) => {
     const record = DesktopRendererLogSchema.safeParse(input);
     if (!record.success) {
@@ -71,24 +68,40 @@ export function startDesktopApplication(): void {
     if (process.platform === "darwin") {
       app.dock?.setIcon(windows.applicationIconPath());
     }
-    container = await createDesktopApplicationContainer({
-      paths,
-      loggerProvider: logging.loggerProvider,
-      logger: logging.mainLogger,
-      encryption: {
-        isAvailable: () => safeStorage.isEncryptionAvailable(),
-        encrypt: (plainText) => safeStorage.encryptString(plainText),
-        decrypt: (encrypted) => safeStorage.decryptString(encrypted),
+    await startDesktopWindowWithServices({
+      createContainer: async () =>
+        await createDesktopApplicationContainer({
+          paths,
+          loggerProvider: logging.loggerProvider,
+          logger: logging.mainLogger,
+          encryption: {
+            isAvailable: () => safeStorage.isEncryptionAvailable(),
+            encrypt: (plainText) => safeStorage.encryptString(plainText),
+            decrypt: (encrypted) => safeStorage.decryptString(encrypted),
+          },
+          builtInPluginsPath: windows.builtInPluginsPath(),
+          getPreferredSystemLanguages: () => app.getPreferredSystemLanguages(),
+          getWindow: windows.getWindow,
+          sendRuntimeModelCatalogUpdate: windows.sendRuntimeModelCatalogUpdate,
+          trashItem: async (path) => await shell.trashItem(path),
+          activateLogging: logging.activate,
+        }),
+      createWindow: windows.createWindow,
+      onContainerReady: (created) => {
+        app.once("before-quit", () => created.dispose());
       },
-      builtInPluginsPath: windows.builtInPluginsPath(),
-      getPreferredSystemLanguages: () => app.getPreferredSystemLanguages(),
-      getWindow: windows.getWindow,
-      sendRuntimeModelCatalogUpdate: windows.sendRuntimeModelCatalogUpdate,
-      trashItem: async (path) => await shell.trashItem(path),
-      activateLogging: logging.activate,
+      onContainerError: (error) => {
+        startupStatus = {
+          status: "failed",
+          code: "DESKTOP_MAIN_INITIALIZATION_FAILED",
+        };
+        logging.mainLogger.error(
+          "desktop.initialization_failed",
+          "Desktop services could not be initialized. Opening the diagnostic window.",
+          error,
+        );
+      },
     });
-    app.once("before-quit", () => container?.dispose());
-    await windows.createWindow();
 
     app.on("activate", () => {
       if (BrowserWindow.getAllWindows().length === 0) {

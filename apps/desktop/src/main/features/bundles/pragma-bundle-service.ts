@@ -187,7 +187,7 @@ export function createPragmaBundleService(options: {
   readonly getRuntimes: () => Promise<readonly DesktopRuntimeAvailability[]>;
   readonly externalResourceRefs?: ReadonlySet<string> | undefined;
 }): PragmaBundleService {
-  const readCatalog = async (): Promise<z.infer<typeof InstallationCatalogSchema>> => {
+  const readCatalogFile = async (): Promise<z.infer<typeof InstallationCatalogSchema>> => {
     try {
       return InstallationCatalogSchema.parse(
         JSON.parse(await readFile(options.paths.bundleInstallationsCatalog(), "utf8")) as unknown,
@@ -199,6 +199,7 @@ export function createPragmaBundleService(options: {
       throw error;
     }
   };
+  let initialization: Promise<void> | undefined;
 
   const writeCatalog = async (
     catalog: z.infer<typeof InstallationCatalogSchema>,
@@ -210,12 +211,12 @@ export function createPragmaBundleService(options: {
     await rename(temporary, path);
   };
 
-  const updateInstallation = async (
+  const updateInstallationFile = async (
     id: string,
     update: (current: PragmaBundleInstallation) => PragmaBundleInstallation,
   ): Promise<PragmaBundleInstallation> =>
     await withFileLock(options.paths.bundleInstallationsLock(), async () => {
-      const catalog = await readCatalog();
+      const catalog = await readCatalogFile();
       const current = catalog.installations.find((item) => item.id === id);
       if (current === undefined) throw new Error(`Bundle installation not found: ${id}`);
       const next = PragmaBundleInstallationSchema.parse(update(current));
@@ -226,11 +227,11 @@ export function createPragmaBundleService(options: {
       return next;
     });
 
-  const addInstallation = async (
+  const addInstallationFile = async (
     installation: PragmaBundleInstallation,
   ): Promise<PragmaBundleInstallation> =>
     await withFileLock(options.paths.bundleInstallationsLock(), async () => {
-      const catalog = await readCatalog();
+      const catalog = await readCatalogFile();
       await writeCatalog({
         ...catalog,
         installations: [...catalog.installations, installation],
@@ -238,15 +239,107 @@ export function createPragmaBundleService(options: {
       return installation;
     });
 
-  const removeInstallationRecord = async (id: string): Promise<void> => {
+  const removeInstallationRecordFile = async (id: string): Promise<void> => {
     await withFileLock(options.paths.bundleInstallationsLock(), async () => {
-      const catalog = await readCatalog();
+      const catalog = await readCatalogFile();
       await writeCatalog({
         ...catalog,
         installations: catalog.installations.filter((item) => item.id !== id),
       });
     });
     await rm(options.paths.bundleInstallationStateRoot(id), { recursive: true, force: true });
+  };
+
+  const initializeImpl = async (): Promise<void> => {
+    const aggregateRoot = options.paths.bundleInstallationsStateRoot();
+    const catalogFile = "installations.json";
+    const journalFile = join(aggregateRoot, "state-migration.json");
+    await mkdir(aggregateRoot, { recursive: true, mode: 0o700 });
+    await withFileLock(options.paths.bundleInstallationsLock(), async () => {
+      const migrationResource = {
+        family: "pragma.bundle-installations",
+        id: "desktop",
+      } as const;
+      const validateDocuments = (documents: Readonly<Record<string, unknown>>) => {
+        InstallationCatalogSchema.parse(documents[catalogFile]);
+      };
+      await recoverAtomicStateMigration({
+        aggregateRoot,
+        journalFile,
+        resource: migrationResource,
+        validateDocuments,
+      });
+      try {
+        const source = JSON.parse(
+          await readFile(options.paths.bundleInstallationsCatalog(), "utf8"),
+        ) as unknown;
+        const upgraded = bundleInstallationsMigrationChain.upgrade(source);
+        if (upgraded.migrated) {
+          await applyAtomicStateMigration({
+            aggregateRoot,
+            journalFile,
+            resource: migrationResource,
+            fromVersion: upgraded.fromVersion,
+            toVersion: upgraded.toVersion,
+            documents: { [catalogFile]: upgraded.value },
+            validateDocuments,
+          });
+        }
+      } catch (error) {
+        if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error;
+      }
+    });
+    const interrupted = (await readCatalogFile()).installations.filter(
+      (installation) => installation.status === "installing",
+    );
+    await Promise.all(
+      interrupted.map(async (installation) => {
+        await updateInstallationFile(installation.id, (current) => ({
+          ...current,
+          status: "failed",
+          error:
+            "The previous import was interrupted. Import the bundle again to retry safely, or discard this installation.",
+          updatedAt: new Date().toISOString(),
+        }));
+      }),
+    );
+  };
+
+  const ensureInitialized = async (): Promise<void> => {
+    if (initialization !== undefined) return await initialization;
+    const operation = initializeImpl();
+    initialization = operation;
+    try {
+      await operation;
+    } catch (error) {
+      if (initialization === operation) initialization = undefined;
+      throw error;
+    }
+  };
+
+  const readCatalog = async (): Promise<z.infer<typeof InstallationCatalogSchema>> => {
+    await ensureInitialized();
+    return await readCatalogFile();
+  };
+
+  const updateInstallation = async (
+    id: string,
+    update: (current: PragmaBundleInstallation) => PragmaBundleInstallation,
+  ): Promise<PragmaBundleInstallation> => {
+    await ensureInitialized();
+    return await updateInstallationFile(id, update);
+  };
+
+  const addInstallation = async (
+    installation: PragmaBundleInstallation,
+  ): Promise<PragmaBundleInstallation> => {
+    await ensureInitialized();
+    return await addInstallationFile(installation);
+  };
+
+  const removeInstallationRecord = async (id: string): Promise<void> => {
+    await ensureInitialized();
+    await removeInstallationRecordFile(id);
   };
 
   const cleanupInstallationArchive = async (id: string): Promise<void> => {
@@ -368,58 +461,7 @@ export function createPragmaBundleService(options: {
 
   return {
     async initialize() {
-      const aggregateRoot = options.paths.bundleInstallationsStateRoot();
-      const catalogFile = "installations.json";
-      const journalFile = join(aggregateRoot, "state-migration.json");
-      await mkdir(aggregateRoot, { recursive: true, mode: 0o700 });
-      await withFileLock(options.paths.bundleInstallationsLock(), async () => {
-        const migrationResource = {
-          family: "pragma.bundle-installations",
-          id: "desktop",
-        } as const;
-        const validateDocuments = (documents: Readonly<Record<string, unknown>>) => {
-          InstallationCatalogSchema.parse(documents[catalogFile]);
-        };
-        await recoverAtomicStateMigration({
-          aggregateRoot,
-          journalFile,
-          resource: migrationResource,
-          validateDocuments,
-        });
-        try {
-          const source = JSON.parse(
-            await readFile(options.paths.bundleInstallationsCatalog(), "utf8"),
-          ) as unknown;
-          const upgraded = bundleInstallationsMigrationChain.upgrade(source);
-          if (upgraded.migrated) {
-            await applyAtomicStateMigration({
-              aggregateRoot,
-              journalFile,
-              resource: migrationResource,
-              fromVersion: upgraded.fromVersion,
-              toVersion: upgraded.toVersion,
-              documents: { [catalogFile]: upgraded.value },
-              validateDocuments,
-            });
-          }
-        } catch (error) {
-          if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error;
-        }
-      });
-      const interrupted = (await readCatalog()).installations.filter(
-        (installation) => installation.status === "installing",
-      );
-      await Promise.all(
-        interrupted.map(async (installation) => {
-          await updateInstallation(installation.id, (current) => ({
-            ...current,
-            status: "failed",
-            error:
-              "The previous import was interrupted. Import the bundle again to retry safely, or discard this installation.",
-            updatedAt: new Date().toISOString(),
-          }));
-        }),
-      );
+      await ensureInitialized();
     },
 
     async prepareExport(input) {

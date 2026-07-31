@@ -7,7 +7,10 @@ import {
 } from "../../../shared/contracts/index.ts";
 import { ExpertDefinitionStoreError } from "../../features/experts/expert-definition-store.ts";
 import { MissionOperationError } from "../../features/missions/mission-operation-error.ts";
-import { PragmaProjectStoreError } from "../../features/projects/pragma-project-store.ts";
+import {
+  PragmaProjectRevisionUnavailableError,
+  PragmaProjectStoreError,
+} from "../../features/projects/pragma-project-store.ts";
 
 export async function runDesktopMutation<T>(
   operation: () => Promise<T>,
@@ -23,6 +26,25 @@ export async function runDesktopMutation<T>(
 }
 
 function serializeDesktopMutationError(error: unknown): DesktopMutationErrorData {
+  if (error instanceof PragmaProjectRevisionUnavailableError) {
+    return DesktopMutationErrorSchema.parse({
+      code: error.code,
+      message: error.message,
+      diagnostics: error.diagnostics,
+      revisionFailure: {
+        projectId: error.projectId,
+        revision: error.revision,
+        stage: error.stage,
+        ...(error.sourceCompilerVersion === undefined
+          ? {}
+          : { sourceCompilerVersion: error.sourceCompilerVersion }),
+        ...(error.targetCompilerVersion === undefined
+          ? {}
+          : { targetCompilerVersion: error.targetCompilerVersion }),
+        retryable: error.retryable,
+      },
+    });
+  }
   if (error instanceof PragmaProjectStoreError) {
     return DesktopMutationErrorSchema.parse({
       code: error.code,

@@ -14,13 +14,16 @@ function normalizeOs(): DesktopBridgeSnapshot["app"]["os"] {
   return "unknown";
 }
 
-export function createBridgeSnapshot(): DesktopBridgeSnapshot {
+export function createBridgeSnapshot(
+  startup: DesktopBridgeSnapshot["startup"] = { status: "ready" },
+): DesktopBridgeSnapshot {
   return {
     app: {
       name: "Pragma",
       version: app.getVersion(),
       os: normalizeOs(),
     },
+    startup,
     interpreter: {
       writeVersion: PRAGMA_COMPILER_WRITE_VERSION,
       directReadVersions: [...PRAGMA_COMPILER_DIRECT_READ_VERSIONS],

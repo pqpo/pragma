@@ -1571,7 +1571,15 @@ export function createMissionRunner(options: {
   const reconcileUsage = async (): Promise<void> => {
     if (options.usage === undefined) return;
     for (const summary of await options.missions.list()) {
-      await reconcileMissionUsage(await options.missions.get(summary.id));
+      try {
+        await reconcileMissionUsage(await options.missions.get(summary.id));
+      } catch (error) {
+        logger.warn(
+          "mission.usage_reconciliation_skipped",
+          `Usage reconciliation was skipped for Mission ${summary.id}.`,
+          { missionId: summary.id, error },
+        );
+      }
     }
   };
 

@@ -16,6 +16,33 @@ afterEach(() => {
 });
 
 describe("AutomationService", () => {
+  it("can retry startup reconciliation after a project revision is temporarily unavailable", async () => {
+    const get = vi
+      .fn<PragmaProjectStore["get"]>()
+      .mockRejectedValueOnce(new Error("revision unavailable"))
+      .mockResolvedValue({
+        schemaVersion: "pragma.project-snapshot/v3",
+        projectId: "studio",
+        revision: 1,
+        resources: [],
+        diagnostics: [],
+      });
+    const service = createAutomationService({
+      paths: new PragmaPaths({ pragmaHome: "/tmp/pragma-automation-start-retry-test" }),
+      project: { get } as unknown as PragmaProjectStore,
+      store: {} as AutomationStore,
+      missions: {} as MissionStore,
+      creator: {} as MissionCreator,
+      runner: {} as MissionRunner,
+    });
+
+    await expect(service.start()).rejects.toThrow("revision unavailable");
+    await expect(service.start()).resolves.toBeUndefined();
+
+    expect(get).toHaveBeenCalledTimes(2);
+    service.stop();
+  });
+
   it("maps schema-less Flow prompts through the normal Mission goal input", () => {
     const resource = PragmaAutomationResourceSchema.parse({
       apiVersion: "pragma/v3",

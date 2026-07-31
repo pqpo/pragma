@@ -41,6 +41,12 @@ Missions, Automation bindings, workflow layouts, revision manifests, and fingerp
 The migration fails before replacement when multiple legacy versions of one kind and ID coexist or
 normalized names conflict. The original project metadata is retained as a migration backup.
 
+This identity-changing cutover establishes the current immutable Revision baseline. It is not a
+normal edit and cannot be modeled as an independent per-Revision compiler view because Mission and
+Automation references must move through one consistent Project identity map. Once a Project is on
+the current DSL identity model, its authoritative Revision manifests and snapshots are never
+rewritten by compiler compatibility upgrades.
+
 ## Consequences
 
 - Users edit names and behavior, not database identity or an ineffective version field.

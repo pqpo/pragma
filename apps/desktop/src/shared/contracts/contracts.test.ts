@@ -76,9 +76,12 @@ describe("runtime settings contracts", () => {
   it("preserves arbitrary Interpreter capability lists for renderer compatibility checks", () => {
     const snapshot = {
       app: {
-        name: "Pragma Desktop",
+        name: "Pragma",
         version: "1.0.0",
         os: "macos",
+      },
+      startup: {
+        status: "ready",
       },
       interpreter: {
         writeVersion: "pragma.dsl/v4",
@@ -102,6 +105,28 @@ describe("runtime settings contracts", () => {
     } as const;
 
     expect(DesktopBridgeSnapshotSchema.parse(snapshot).interpreter).toEqual(snapshot.interpreter);
+    expect(
+      DesktopBridgeSnapshotSchema.parse({
+        ...snapshot,
+        startup: {
+          status: "failed",
+          code: "DESKTOP_MAIN_INITIALIZATION_FAILED",
+        },
+      }).startup,
+    ).toEqual({
+      status: "failed",
+      code: "DESKTOP_MAIN_INITIALIZATION_FAILED",
+    });
+    expect(
+      DesktopBridgeSnapshotSchema.safeParse({
+        ...snapshot,
+        startup: {
+          status: "failed",
+          code: "DESKTOP_MAIN_INITIALIZATION_FAILED",
+          error: "private stack",
+        },
+      }).success,
+    ).toBe(false);
     expect(
       DesktopBridgeSnapshotSchema.safeParse({
         ...snapshot,
