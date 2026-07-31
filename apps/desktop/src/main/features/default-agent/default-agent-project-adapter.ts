@@ -7,20 +7,13 @@ import {
   type PragmaEvaluationResource,
   type PragmaFlowRunDrySuiteResult,
 } from "@pragma/evaluation/ast";
-import {
-  encodePragmaPathSegment,
-  derivePragmaResourceId,
-  generatePragmaResourceId,
-  withFileLock,
-} from "@pragma/core";
+import { encodePragmaPathSegment, generatePragmaResourceId, withFileLock } from "@pragma/core";
 import { formatPragmaYaml, parsePragmaYaml, runPragmaEvaluation } from "@pragma/interpreter";
 import {
   analyzePragmaFlowGraph,
   validatePragmaFlowDataContracts,
-  PragmaCapabilityResourceSchema,
   PragmaFlowResourceSchema,
   PragmaResourceSchema,
-  PragmaRuntimeProfileResourceSchema,
   canonicalPragmaResourceRef,
   type PragmaExpertResource,
   type PragmaFlowResource,
@@ -48,10 +41,11 @@ import {
 import { z } from "zod";
 
 import type { Capability } from "../../../shared/contracts/index.ts";
+import { parseDesktopCapabilityBindingRef } from "../../platform/bindings/desktop-binding-ref.ts";
 import {
-  desktopCapabilityBindingRef,
-  parseDesktopCapabilityBindingRef,
-} from "../../platform/bindings/desktop-binding-ref.ts";
+  createDesktopCapabilityResource,
+  createDesktopRuntimeOptionResource,
+} from "../../platform/bindings/desktop-bound-resource-policy.ts";
 import type { CapabilityStore } from "../capabilities/capability-store.ts";
 import type { PragmaProjectStore } from "../projects/pragma-project-store.ts";
 import { getRuntimeAvailability } from "../runtimes/runtime-availability.ts";
@@ -617,25 +611,12 @@ async function buildExpertCatalog(options: {
     .filter((runtime) => runtime.status === "available")
     .flatMap((runtime) =>
       (runtime.models ?? []).map((model) => {
-        const identity = runtimeModelIdentity(runtime.id, model.provider.id, model.id);
-        const id = derivePragmaResourceId(`default-agent:runtime:${identity}`);
-        const resource = PragmaRuntimeProfileResourceSchema.parse({
-          apiVersion: "pragma/v3",
-          kind: "RuntimeProfile",
-          metadata: {
-            id,
-            name: `${runtime.displayName} / ${model.displayName}`,
-            description: `Host-provided Runtime model ${model.provider.displayName} / ${model.displayName}.`,
-            tags: ["desktop-managed", "default-agent-option"],
-          },
-          spec: {
-            adapter: "pragma.runtime.profile@v1",
-            config: {
-              runtimeId: runtime.id,
-              providerId: model.provider.id,
-              model: model.id,
-            },
-          },
+        const resource = createDesktopRuntimeOptionResource({
+          runtimeId: runtime.id,
+          providerId: model.provider.id,
+          modelId: model.id,
+          name: `${runtime.displayName} / ${model.displayName}`,
+          description: `Host-provided Runtime model ${model.provider.displayName} / ${model.displayName}.`,
         });
         const ref = canonicalPragmaResourceRef(resource);
         resources.set(ref, resource);
@@ -686,23 +667,12 @@ async function buildExpertCatalog(options: {
 }
 
 function capabilityResource(capability: Capability): PragmaResource {
-  return PragmaCapabilityResourceSchema.parse({
-    apiVersion: "pragma/v3",
-    kind: "Capability",
-    metadata: {
-      id: derivePragmaResourceId(`default-agent:capability:${capability.manifest.id}`),
-      name: capability.definition.name,
-      description: capabilityDescription(capability),
-      tags: ["desktop-managed", "default-agent-option"],
-    },
-    spec: {
-      adapter: "pragma.capability.host@v1",
-      binding: desktopCapabilityBindingRef(
-        capability.manifest.id,
-        capability.manifest.latestRevision,
-      ),
-      config: { key: capability.manifest.id },
-    },
+  return createDesktopCapabilityResource({
+    owner: "default-agent-option",
+    capabilityId: capability.manifest.id,
+    revision: capability.manifest.latestRevision,
+    name: capability.definition.name,
+    description: capabilityDescription(capability),
   });
 }
 

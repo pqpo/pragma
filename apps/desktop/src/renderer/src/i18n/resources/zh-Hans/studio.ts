@@ -623,7 +623,6 @@ export const studio = {
   httpService: "HTTP 服务",
   codeService: "代码服务",
   selectedOfTotal: "已选择 {{selected}} / {{total}} 个",
-  upgradeRevision: "升级到 r{{revision}}",
   selectAll: "全选",
   externalTool: "外部工具",
   flowEditor: "流程编辑器",

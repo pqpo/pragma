@@ -48,9 +48,9 @@ import {
   type DesktopRuntimeAvailability,
 } from "../../../shared/contracts/index.ts";
 import {
-  desktopCapabilityBindingRef,
-  desktopContextBindingRef,
-} from "../../platform/bindings/desktop-binding-ref.ts";
+  bindExistingDesktopCapabilityResource,
+  bindExistingDesktopContextResource,
+} from "../../platform/bindings/desktop-bound-resource-policy.ts";
 import type { CapabilityStore } from "../capabilities/capability-store.ts";
 import type { ContextStoreStore } from "../context-stores/context-store-store.ts";
 import type { PluginStore } from "../plugins/plugin-store.ts";
@@ -1055,12 +1055,13 @@ export function createPragmaBundleService(options: {
                   ...(dependency.kind === undefined ? {} : { capabilityKind: dependency.kind }),
                 });
               } else {
-                resource.spec.binding = desktopCapabilityBindingRef(
-                  capability.manifest.id,
-                  capability.manifest.latestRevision,
+                Object.assign(
+                  resource,
+                  bindExistingDesktopCapabilityResource(resource, {
+                    id: capability.manifest.id,
+                    revision: capability.manifest.latestRevision,
+                  }),
                 );
-                resource.spec.config = { key: capability.manifest.id };
-                resource.metadata.tags = unique([...resource.metadata.tags, "desktop-managed"]);
                 if (capability.health.status !== "ready") {
                   pending.push({
                     id: `capability:${targetRef}`,
@@ -1144,9 +1145,7 @@ export function createPragmaBundleService(options: {
                   message: "Choose an existing knowledge base or import its Markdown files.",
                 });
               } else {
-                resource.spec.binding = desktopContextBindingRef(store.id);
-                resource.spec.config = { key: store.id };
-                resource.metadata.tags = unique([...resource.metadata.tags, "desktop-managed"]);
+                Object.assign(resource, bindExistingDesktopContextResource(resource, store.id));
               }
             }
 
@@ -1481,17 +1480,9 @@ export function createPragmaBundleService(options: {
         }
         replacements.set(
           resolution.resourceRef,
-          PragmaResourceSchema.parse({
-            ...resource,
-            metadata: {
-              ...resource.metadata,
-              tags: unique([...resource.metadata.tags, "desktop-managed"]),
-            },
-            spec: {
-              ...resource.spec,
-              binding: desktopCapabilityBindingRef(resolution.capabilityId, resolution.revision),
-              config: { key: resolution.capabilityId },
-            },
+          bindExistingDesktopCapabilityResource(resource, {
+            id: resolution.capabilityId,
+            revision: resolution.revision,
           }),
         );
       }
@@ -1503,18 +1494,7 @@ export function createPragmaBundleService(options: {
         await options.contextStores.resolve(resolution.storeId);
         replacements.set(
           resolution.resourceRef,
-          PragmaResourceSchema.parse({
-            ...resource,
-            metadata: {
-              ...resource.metadata,
-              tags: unique([...resource.metadata.tags, "desktop-managed"]),
-            },
-            spec: {
-              ...resource.spec,
-              binding: desktopContextBindingRef(resolution.storeId),
-              config: { key: resolution.storeId },
-            },
-          }),
+          bindExistingDesktopContextResource(resource, resolution.storeId),
         );
       }
       if (Object.keys(input.secrets).length > 0) {

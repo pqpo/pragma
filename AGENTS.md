@@ -499,6 +499,13 @@ Pragma Worker Ready
   Electron 和 Node 内置模块，不得直接加载仓库 `.ts` 文件。
 - Desktop build 必须验证 preload 产物和 `pragmaDesktop` Bridge 注入；Bridge 或 renderer 启动失败时必须记录
   主进程日志并显示可操作的错误页，不得静默白屏。
+- Desktop 本地 Capability、ContextStore 与 RuntimeProfile 的 Host 绑定资源统一通过
+  `apps/desktop/src/main/platform/bindings/desktop-bound-resource-policy.ts` 分类、创建和重绑定；Feature
+  模块不得各自派生 ID、重建 metadata 或按资源数组顺序选择身份。该策略属于 Desktop Host，不下沉到
+  Core、Shared 或 Interpreter。
+- ready Capability 新修订必须通过 Desktop Capability revision coordinator 激活：先验证当前 Expert 的
+  工具白名单，再以稳定 journal 更新当前 Project 的全部绑定和 System Expert customization。历史 Project
+  Revision、Mission、Execution 与旧 Capability revision 保持固定；`needs_attention` 修订不得自动激活。
 
 ### `packages/shared`
 

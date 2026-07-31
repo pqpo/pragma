@@ -648,7 +648,6 @@ export const studio = {
   httpService: "HTTP service",
   codeService: "Code service",
   selectedOfTotal: "{{selected}} of {{total}} selected",
-  upgradeRevision: "Upgrade to r{{revision}}",
   selectAll: "Select all",
   externalTool: "External tool",
   flowEditor: "Flow editor",

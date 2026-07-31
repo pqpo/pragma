@@ -64,6 +64,22 @@ export interface CapabilityStore {
   test(input: CapabilityTestRequest): Promise<CapabilityTestResult>;
   previewCode(input: PreviewCodeServiceRequest): Promise<PreviewCodeServiceResult>;
   remove(id: string): Promise<void>;
+  setRevisionPublisher(publisher: CapabilityRevisionPublisher): void;
+  discardUnpublishedRevision(
+    id: string,
+    revision: number,
+    previousHealth: CapabilityHealth,
+  ): Promise<boolean>;
+}
+
+export interface CapabilityRevisionPublishInput {
+  readonly current: Capability;
+  readonly candidate: Capability;
+  readonly commit: () => Promise<Capability>;
+}
+
+export interface CapabilityRevisionPublisher {
+  publish(input: CapabilityRevisionPublishInput): Promise<Capability>;
 }
 
 export class CapabilityStoreError extends Error {
@@ -72,7 +88,8 @@ export class CapabilityStoreError extends Error {
       | "capability_not_found"
       | "config_invalid"
       | "import_invalid"
-      | "capability_referenced",
+      | "capability_referenced"
+      | "capability_incompatible",
     message: string,
   ) {
     super(message);
@@ -87,6 +104,7 @@ export function createCapabilityStore(options: {
   readonly verify: CapabilityVerifier;
   readonly isReferenced: (capabilityId: string) => Promise<boolean>;
 }): CapabilityStore {
+  let revisionPublisher: CapabilityRevisionPublisher | undefined;
   const capabilityPath = (id: string) => join(options.capabilitiesPath, id);
   const manifestPath = (id: string) => join(capabilityPath(id), "capability.json");
   const healthPath = (id: string) => join(capabilityPath(id), "health.json");
@@ -163,14 +181,17 @@ export function createCapabilityStore(options: {
       await writeJson(join(temporaryPath, "definition.json"), definition);
       await mkdir(revisionsPath, { recursive: true, mode: 0o700 });
       await rename(temporaryPath, revisionPath(manifest.id, revision));
-      await writeJson(manifestPath(manifest.id), manifest);
       await writeJson(healthPath(manifest.id), { ...health, revision });
+      await writeJson(manifestPath(manifest.id), manifest);
     } catch (error) {
       await rm(temporaryPath, { recursive: true, force: true });
       throw error;
     }
     return await readCapability(manifest.id);
   };
+
+  const publishRevision = async (input: CapabilityRevisionPublishInput): Promise<Capability> =>
+    revisionPublisher === undefined ? await input.commit() : await revisionPublisher.publish(input);
 
   return {
     async list() {
@@ -363,20 +384,29 @@ export function createCapabilityStore(options: {
           ...current.definition,
           contentHash: await hashDirectory(payloadPath),
         });
-        await writeJson(join(temporaryPath, "definition.json"), definition);
-        await rename(temporaryPath, revisionPath(input.id, revision));
         const timestamp = new Date().toISOString();
-        await writeJson(manifestPath(input.id), {
+        const manifest = CapabilityManifestSchema.parse({
           ...current.manifest,
           latestRevision: revision,
           updatedAt: timestamp,
         });
-        await writeJson(healthPath(input.id), {
+        const health = CapabilityHealthSchema.parse({
           revision,
           status: "ready",
           checkedAt: timestamp,
         });
-        return await readCapability(input.id);
+        const candidate = CapabilitySchema.parse({ manifest, definition, health });
+        await writeJson(join(temporaryPath, "definition.json"), definition);
+        return await publishRevision({
+          current,
+          candidate,
+          commit: async () => {
+            await rename(temporaryPath, revisionPath(input.id, revision));
+            await writeJson(healthPath(input.id), health);
+            await writeJson(manifestPath(input.id), manifest);
+            return await readCapability(input.id);
+          },
+        });
       } catch (error) {
         await rm(temporaryPath, { recursive: true, force: true });
         throw error;
@@ -412,16 +442,23 @@ export function createCapabilityStore(options: {
       const verified = await options.verify(validateDefinition(input.definition), input.id);
       assertCodeServiceReady(input.definition, verified.health);
       const timestamp = new Date().toISOString();
-      return await writeNewRevision(
-        CapabilityManifestSchema.parse({
-          ...current,
-          name: input.definition.name,
-          latestRevision: current.latestRevision + 1,
-          updatedAt: timestamp,
-        }),
-        verified.definition,
-        verified.health,
-      );
+      const manifest = CapabilityManifestSchema.parse({
+        ...current,
+        name: input.definition.name,
+        latestRevision: current.latestRevision + 1,
+        updatedAt: timestamp,
+      });
+      const existing = await readCapability(input.id);
+      const candidate = CapabilitySchema.parse({
+        manifest,
+        definition: verified.definition,
+        health: { ...verified.health, revision: manifest.latestRevision },
+      });
+      return await publishRevision({
+        current: existing,
+        candidate,
+        commit: async () => await writeNewRevision(manifest, verified.definition, verified.health),
+      });
     },
     async retry(id) {
       const current = await readCapability(id);
@@ -435,13 +472,32 @@ export function createCapabilityStore(options: {
           latestRevision: current.manifest.latestRevision + 1,
           updatedAt: new Date().toISOString(),
         });
-        return await writeNewRevision(manifest, verified.definition, verified.health);
+        const candidate = CapabilitySchema.parse({
+          manifest,
+          definition: verified.definition,
+          health: { ...verified.health, revision: manifest.latestRevision },
+        });
+        return await publishRevision({
+          current,
+          candidate,
+          commit: async () =>
+            await writeNewRevision(manifest, verified.definition, verified.health),
+        });
       }
-      await writeJson(healthPath(id), {
+      const health = CapabilityHealthSchema.parse({
         ...verified.health,
         revision: current.manifest.latestRevision,
       });
-      return await readCapability(id);
+      const commit = async (): Promise<Capability> => {
+        await writeJson(healthPath(id), health);
+        return await readCapability(id);
+      };
+      if (health.status !== "ready" || current.health.status === "ready") return await commit();
+      return await publishRevision({
+        current,
+        candidate: CapabilitySchema.parse({ ...current, definition: verified.definition, health }),
+        commit,
+      });
     },
     async test(input) {
       const current = await readCapability(input.id);
@@ -665,6 +721,22 @@ export function createCapabilityStore(options: {
       }
       await rm(capabilityPath(id), { recursive: true, force: true });
       await options.credentials.removeCapability(id);
+    },
+    setRevisionPublisher(publisher) {
+      revisionPublisher = publisher;
+    },
+    async discardUnpublishedRevision(id, revision, previousHealth) {
+      const manifest = await readManifest(id);
+      if (manifest.latestRevision >= revision) return false;
+      await rm(revisionPath(id, revision), { recursive: true, force: true });
+      await writeJson(
+        healthPath(id),
+        CapabilityHealthSchema.parse({
+          ...previousHealth,
+          revision: manifest.latestRevision,
+        }),
+      );
+      return true;
     },
   };
 }

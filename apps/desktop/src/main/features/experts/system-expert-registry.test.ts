@@ -104,6 +104,17 @@ describe("DesktopSystemExpertRegistry", () => {
     expect(registry.getAdditionalResources(BUILT_IN_PRAGMA_REF)).toHaveLength(2);
     expect(registry.fingerprint(BUILT_IN_PRAGMA_REF)).not.toBe(originalFingerprint);
 
+    await expect(registry.upgradeCapabilityRevision(capabilityId, 4)).resolves.toBe(true);
+    expect(registry.get(BUILT_IN_PRAGMA_REF)).toMatchObject({
+      revision: 3,
+      capabilities: [{ capabilityId, revision: 4 }],
+    });
+    expect(
+      registry
+        .getAdditionalResources(BUILT_IN_PRAGMA_REF)
+        .find((resource) => resource.kind === "Capability"),
+    ).toMatchObject({ spec: { binding: expect.stringMatching(/\.4$/) } });
+
     const reloaded = createDesktopSystemExpertRegistry({ configPath });
     await reloaded.initialize();
     expect(reloaded.get(BUILT_IN_PRAGMA_REF)).toMatchObject({

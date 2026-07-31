@@ -23,6 +23,7 @@ import { installPragmaBundleHandlers } from "../features/bundles/pragma-bundle-i
 import { createPragmaBundleService } from "../features/bundles/pragma-bundle-service.ts";
 import { createCapabilityCredentialStore } from "../features/capabilities/capability-credential-store.ts";
 import { installCapabilityHandlers } from "../features/capabilities/capability-ipc.ts";
+import { createCapabilityRevisionCoordinator } from "../features/capabilities/capability-revision-coordinator.ts";
 import { createCapabilityStore } from "../features/capabilities/capability-store.ts";
 import { createCapabilityVerifier } from "../features/capabilities/capability-verifier.ts";
 import { installContextStoreHandlers } from "../features/context-stores/context-store-ipc.ts";
@@ -281,6 +282,15 @@ export async function createDesktopApplicationContainer(
       );
     },
   });
+  const capabilityRevisionCoordinator = createCapabilityRevisionCoordinator({
+    journalRoot: join(pragmaPaths.stateRoot(), "capability-revision-propagation"),
+    capabilities: capabilityStore,
+    project: pragmaProjectStore,
+    systemExperts,
+    warn: (message, error) =>
+      mainLogger.warn("desktop.capability_revision_recovery_failed", message, { error }),
+  });
+  capabilityStore.setRevisionPublisher(capabilityRevisionCoordinator);
   installCapabilityHandlers(capabilityStore, options.getWindow);
   const contextStores = createContextStoreStore({
     storesPath: contextStoresPath,
@@ -515,6 +525,13 @@ export async function createDesktopApplicationContainer(
         mainLogger.warn(
           "desktop.runtime_environment_warmup_failed",
           "Runtime environments could not be warmed up.",
+          { error },
+        );
+      });
+      void capabilityRevisionCoordinator.recover().catch((error: unknown) => {
+        mainLogger.warn(
+          "desktop.capability_revision_recovery_failed",
+          "Capability revision propagation could not be recovered.",
           { error },
         );
       });

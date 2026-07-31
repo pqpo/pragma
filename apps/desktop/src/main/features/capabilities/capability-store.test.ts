@@ -7,7 +7,7 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 
 import type { CapabilityCredentialStore } from "./capability-credential-store.ts";
 import { createCapabilityVerifier } from "./capability-verifier.ts";
-import { createCapabilityStore } from "./capability-store.ts";
+import { createCapabilityStore, type CapabilityRevisionPublishInput } from "./capability-store.ts";
 
 const directories: string[] = [];
 
@@ -295,6 +295,8 @@ describe("capability store", () => {
       definition: httpDefinition,
       credentials: { "service-auth": "top-secret" },
     });
+    const publish = vi.fn(async (input: CapabilityRevisionPublishInput) => await input.commit());
+    store.setRevisionPublisher({ publish });
     const updated = await store.update({
       id: created.manifest.id,
       definition: { ...httpDefinition, description: "Updated customer records." },
@@ -302,6 +304,11 @@ describe("capability store", () => {
     });
 
     expect(updated.manifest.latestRevision).toBe(2);
+    expect(publish).toHaveBeenCalledOnce();
+    expect(publish.mock.calls[0]![0]).toMatchObject({
+      current: { manifest: { latestRevision: 1 } },
+      candidate: { manifest: { latestRevision: 2 } },
+    });
     await expect(store.get(created.manifest.id, 1)).resolves.toMatchObject({
       definition: { description: "Customer records." },
     });
@@ -325,6 +332,34 @@ describe("capability store", () => {
 
     await expect(store.remove(capability.manifest.id)).rejects.toMatchObject({
       code: "capability_referenced",
+    });
+  });
+
+  it("publishes the same revision when retry makes it ready", async () => {
+    const { directory, store } = await createStore();
+    const created = await store.create({ definition: httpDefinition, credentials: {} });
+    await writeFile(
+      join(directory, "capabilities", created.manifest.id, "health.json"),
+      `${JSON.stringify({
+        revision: 1,
+        status: "needs_attention",
+        checkedAt: "2026-07-11T00:00:00.000Z",
+        diagnostic: { code: "offline", message: "Offline", retryable: true },
+      })}\n`,
+    );
+    const publish = vi.fn(async (input: CapabilityRevisionPublishInput) => await input.commit());
+    store.setRevisionPublisher({ publish });
+
+    const retried = await store.retry(created.manifest.id);
+
+    expect(retried).toMatchObject({
+      manifest: { latestRevision: 1 },
+      health: { revision: 1, status: "ready" },
+    });
+    expect(publish).toHaveBeenCalledOnce();
+    expect(publish.mock.calls[0]![0]).toMatchObject({
+      current: { health: { status: "needs_attention" } },
+      candidate: { health: { status: "ready" } },
     });
   });
 

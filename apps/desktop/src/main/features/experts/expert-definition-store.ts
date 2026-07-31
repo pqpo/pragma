@@ -1,14 +1,11 @@
 import {
   PragmaExpertResourceSchema,
-  PragmaCapabilityResourceSchema,
-  PragmaContextStoreResourceSchema,
-  PragmaRuntimeProfileResourceSchema,
   canonicalPragmaResourceRef,
   type PragmaExpertResource,
   type PragmaResource,
   type PragmaRuntimeProfileResource,
 } from "@pragma/interpreter/ast";
-import { derivePragmaResourceId, generatePragmaResourceId } from "@pragma/core";
+import { generatePragmaResourceId } from "@pragma/core";
 
 import {
   CreateExpertDefinitionSchema,
@@ -24,13 +21,14 @@ import {
 } from "../../../shared/contracts/index.ts";
 import type { PragmaProjectStore } from "../projects/pragma-project-store.ts";
 import type { DesktopSystemExpertRegistry } from "./system-expert-registry.ts";
+import { parseDesktopModelProviderBindingRef } from "../../platform/bindings/desktop-binding-ref.ts";
 import {
-  desktopCapabilityBindingRef,
-  desktopContextBindingRef,
-  parseDesktopCapabilityBindingRef,
-  parseDesktopContextBindingRef,
-  parseDesktopModelProviderBindingRef,
-} from "../../platform/bindings/desktop-binding-ref.ts";
+  classifyDesktopCapabilityResource,
+  classifyDesktopContextResource,
+  resolveDesktopCapabilityResource,
+  resolveDesktopContextResource,
+  resolveDesktopRuntimeResource,
+} from "../../platform/bindings/desktop-bound-resource-policy.ts";
 import {
   referencedPragmaResourceRefs,
   referencingPragmaResources,
@@ -265,71 +263,46 @@ function definitionToResources(
   existingResources: readonly PragmaResource[],
   current?: PragmaExpertResource,
 ): PragmaResource[] {
-  const runtimeId = derivePragmaResourceId(`desktop-managed:runtime:${expertId}`);
-  const runtimeRef = `runtime-profile:${runtimeId}`;
   const selectedModel = definition.model;
-  const runtime = PragmaRuntimeProfileResourceSchema.parse({
-    apiVersion: "pragma/v3",
-    kind: "RuntimeProfile",
-    metadata: {
-      id: runtimeId,
-      name: `${definition.name} Runtime`,
-      description: `Runtime profile for ${definition.name}.`,
-      tags: ["desktop-managed"],
-    },
-    spec: {
-      adapter: "pragma.runtime.profile@v1",
-      config: {
-        runtimeId: selectedModel.runtimeId,
-        providerId: selectedModel.providerId,
-        model: selectedModel.modelId,
-        ...(selectedModel.thinkingLevel === undefined
-          ? {}
-          : { thinkingLevel: selectedModel.thinkingLevel }),
-      },
-    },
+  const runtime = resolveDesktopRuntimeResource({
+    ownerId: expertId,
+    ownerName: definition.name,
+    model: selectedModel,
+    resources: existingResources,
+    currentRef: current?.spec.runtime?.ref,
   });
-  const capabilityResourceIds = new Map(
-    (definition.capabilities ?? []).map((capability) => [
-      capability.capabilityId,
-      resolveDesktopCapabilityResourceId(capability.capabilityId, existingResources),
-    ]),
-  );
-  const capabilityResources = (definition.capabilities ?? []).map((capability) => {
-    const resourceId = capabilityResourceIds.get(capability.capabilityId)!;
-    return PragmaCapabilityResourceSchema.parse({
-      apiVersion: "pragma/v3",
-      kind: "Capability",
-      metadata: {
-        id: resourceId,
-        name: `Capability ${capability.capabilityId}`,
-        description: "Desktop-managed capability binding.",
-        tags: ["desktop-managed"],
-      },
-      spec: {
-        adapter: "pragma.capability.host@v1",
-        binding: desktopCapabilityBindingRef(capability.capabilityId, capability.revision),
-        config: { key: capability.capabilityId },
-      },
-    });
-  });
-  const contextResources = (definition.contextStoreMounts ?? []).map((mount) =>
-    PragmaContextStoreResourceSchema.parse({
-      apiVersion: "pragma/v3",
-      kind: "ContextStore",
-      metadata: {
-        id: desktopContextResourceId(mount.storeId),
-        name: `Context ${mount.storeId}`,
-        description: "Desktop-managed context store binding.",
-        tags: ["desktop-managed"],
-      },
-      spec: {
-        adapter: "pragma.context.host@v1",
-        binding: desktopContextBindingRef(mount.storeId),
-        config: { key: mount.storeId },
-      },
+  const runtimeRef = canonicalPragmaResourceRef(runtime);
+  const capabilitySelections = (definition.capabilities ?? []).map((capability) => ({
+    capability,
+    resource: resolveDesktopCapabilityResource({
+      capabilityId: capability.capabilityId,
+      revision: capability.revision,
+      resources: existingResources,
+      currentRef: current?.spec.capabilities.find((reference) => {
+        if (reference.kind !== capability.kind) return false;
+        const resource = existingResources.find(
+          (candidate) => canonicalPragmaResourceRef(candidate) === reference.ref,
+        );
+        const binding = classifyDesktopCapabilityResource(resource);
+        return binding?.id === capability.capabilityId;
+      })?.ref,
     }),
-  );
+  }));
+  const capabilityResources = capabilitySelections.map(({ resource }) => resource);
+  const contextSelections = (definition.contextStoreMounts ?? []).map((mount) => ({
+    mount,
+    resource: resolveDesktopContextResource({
+      storeId: mount.storeId,
+      resources: existingResources,
+      currentRef: current?.spec.contextStores.find((reference) => {
+        const resource = existingResources.find(
+          (candidate) => canonicalPragmaResourceRef(candidate) === reference.ref,
+        );
+        return classifyDesktopContextResource(resource) === mount.storeId;
+      })?.ref,
+    }),
+  }));
+  const contextResources = contextSelections.map(({ resource }) => resource);
   const expert = PragmaExpertResourceSchema.parse({
     apiVersion: "pragma/v3",
     kind: "Expert",
@@ -344,8 +317,8 @@ function definitionToResources(
       instructions: definition.instructions,
       runtime: { ref: runtimeRef },
       capabilities: [
-        ...(definition.capabilities ?? []).map((capability) => ({
-          ref: `capability:${capabilityResourceIds.get(capability.capabilityId)!}`,
+        ...capabilitySelections.map(({ capability, resource }) => ({
+          ref: canonicalPragmaResourceRef(resource),
           kind: capability.kind,
           ...(capability.kind === "tools" ? { tools: capability.toolNames } : {}),
         })),
@@ -358,9 +331,9 @@ function definitionToResources(
         ...(plugin.secretBindings === undefined ? {} : { secretBindings: plugin.secretBindings }),
       })),
       contextStores: [
-        ...(definition.contextStoreMounts ?? []).map((mount) => ({
-          ref: `context-store:${desktopContextResourceId(mount.storeId)}`,
-          namespace: desktopContextResourceId(mount.storeId),
+        ...contextSelections.map(({ mount, resource }) => ({
+          ref: canonicalPragmaResourceRef(resource),
+          namespace: resource.metadata.id,
           required: mount.enabled,
         })),
         ...(definition.opaqueContextStores ?? []),
@@ -368,24 +341,7 @@ function definitionToResources(
       tools: definition.resourceTools ?? current?.spec.tools ?? [],
     },
   });
-  return [
-    runtime,
-    ...capabilityResources.filter(
-      (resource, index, all) =>
-        all.findIndex(
-          (candidate) =>
-            canonicalPragmaResourceRef(candidate) === canonicalPragmaResourceRef(resource),
-        ) === index,
-    ),
-    ...contextResources.filter(
-      (resource, index, all) =>
-        all.findIndex(
-          (candidate) =>
-            canonicalPragmaResourceRef(candidate) === canonicalPragmaResourceRef(resource),
-        ) === index,
-    ),
-    expert,
-  ].filter(
+  return [runtime, ...capabilityResources, ...contextResources, expert].filter(
     (resource, index, all) =>
       all.findIndex(
         (candidate) =>
@@ -446,7 +402,7 @@ export function pragmaExpertResourceToDesktopDefinition(
       declared?.kind === "Capability" &&
       declared.spec.adapter === "pragma.capability.host@v1" &&
       declared.metadata.tags.includes("desktop-managed")
-        ? parseDesktopCapabilityBindingRef(declared.spec.binding ?? "")
+        ? classifyDesktopCapabilityResource(declared)
         : undefined;
     if (desktopBinding === undefined) {
       opaqueCapabilities.push(capability);
@@ -475,7 +431,7 @@ export function pragmaExpertResourceToDesktopDefinition(
       declared?.kind === "ContextStore" &&
       declared.spec.adapter === "pragma.context.host@v1" &&
       declared.metadata.tags.includes("desktop-managed")
-        ? parseDesktopContextBindingRef(declared.spec.binding ?? "")
+        ? classifyDesktopContextResource(declared)
         : undefined;
     if (storeId === undefined) {
       opaqueContextStores.push(mount);
@@ -513,30 +469,6 @@ export function pragmaExpertResourceToDesktopDefinition(
     createdAt: timestamp,
     updatedAt: timestamp,
   });
-}
-
-function desktopCapabilityResourceId(id: string): string {
-  return derivePragmaResourceId(`desktop-managed:capability:${id}`);
-}
-
-function resolveDesktopCapabilityResourceId(
-  id: string,
-  resources: readonly PragmaResource[],
-): string {
-  // DSL migrations preserve a resource's semantic identity, so its post-migration ID can differ
-  // from the ID generated for a newly created binding. The binding is the stable host identity.
-  const existing = resources.find(
-    (resource) =>
-      resource.kind === "Capability" &&
-      resource.spec.adapter === "pragma.capability.host@v1" &&
-      resource.metadata.tags.includes("desktop-managed") &&
-      parseDesktopCapabilityBindingRef(resource.spec.binding ?? "")?.id === id,
-  );
-  return existing?.metadata.id ?? desktopCapabilityResourceId(id);
-}
-
-function desktopContextResourceId(id: string): string {
-  return derivePragmaResourceId(`desktop-managed:context:${id}`);
 }
 
 function allocateExpertId(

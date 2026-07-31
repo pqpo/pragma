@@ -2,10 +2,8 @@ import { randomUUID } from "node:crypto";
 import { chmod, mkdir, readFile, rename, writeFile } from "node:fs/promises";
 import { dirname } from "node:path";
 
-import { derivePragmaResourceId, withFileLock } from "@pragma/core";
+import { withFileLock } from "@pragma/core";
 import {
-  PragmaCapabilityResourceSchema,
-  PragmaContextStoreResourceSchema,
   canonicalPragmaResourceRef,
   type PragmaExpertResource,
   type PragmaResource,
@@ -30,9 +28,11 @@ import {
   type UpdateBuiltInExpertDefinition,
 } from "../../../shared/contracts/index.ts";
 import {
-  desktopCapabilityBindingRef,
-  desktopContextBindingRef,
-} from "../../platform/bindings/desktop-binding-ref.ts";
+  createDesktopCapabilityResource,
+  createDesktopContextResource,
+  desktopCapabilityResourceId,
+  desktopContextResourceId,
+} from "../../platform/bindings/desktop-bound-resource-policy.ts";
 
 const BUILT_IN_TIMESTAMP = "1970-01-01T00:00:00.000Z";
 const CONFIG_SCHEMA_VERSION = 4;
@@ -76,6 +76,7 @@ export interface DesktopSystemExpertRegistry {
   isReservedRef(ref: string): boolean;
   isReservedId(id: string): boolean;
   update(ref: string, input: UpdateBuiltInExpertDefinition): Promise<ExpertDefinition>;
+  upgradeCapabilityRevision(capabilityId: string, revision: number): Promise<boolean>;
   reset(ref: string): Promise<ExpertDefinition>;
 }
 
@@ -110,7 +111,7 @@ export function createDesktopSystemExpertRegistry(options?: {
         capabilities: [
           ...defaultResource.spec.capabilities,
           ...customization.capabilities.map((capability) => ({
-            ref: `capability:${desktopCapabilityResourceId(capability.capabilityId)}`,
+            ref: `capability:${desktopCapabilityResourceId("system-expert-customization", capability.capabilityId)}`,
             kind: capability.kind,
             ...(capability.kind === "tools" ? { tools: capability.toolNames } : {}),
           })),
@@ -125,8 +126,8 @@ export function createDesktopSystemExpertRegistry(options?: {
           ...(plugin.secretBindings === undefined ? {} : { secretBindings: plugin.secretBindings }),
         })),
         contextStores: customization.contextStoreMounts.map((mount) => ({
-          ref: `context-store:${desktopContextResourceId(mount.storeId)}`,
-          namespace: desktopContextResourceId(mount.storeId),
+          ref: `context-store:${desktopContextResourceId("system-expert-customization", mount.storeId)}`,
+          namespace: desktopContextResourceId("system-expert-customization", mount.storeId),
           required: mount.enabled,
         })),
       },
@@ -281,6 +282,37 @@ export function createDesktopSystemExpertRegistry(options?: {
       });
       return definition();
     },
+    async upgradeCapabilityRevision(capabilityId, revision) {
+      let changed = false;
+      await mutate(async () => {
+        const latest = await readConfig();
+        for (const [ref, customization] of latest) {
+          if (
+            !customization.capabilities.some(
+              (capability) =>
+                capability.capabilityId === capabilityId && capability.revision !== revision,
+            )
+          ) {
+            continue;
+          }
+          latest.set(
+            ref,
+            SystemExpertCustomizationSchema.parse({
+              ...customization,
+              capabilities: customization.capabilities.map((capability) =>
+                capability.capabilityId === capabilityId ? { ...capability, revision } : capability,
+              ),
+              revision: customization.revision + 1,
+              updatedAt: new Date().toISOString(),
+            }),
+          );
+          changed = true;
+        }
+        if (changed) await writeConfig(latest);
+        customizations = latest;
+      });
+      return changed;
+    },
     async reset(ref) {
       requireBuiltInRef(ref);
       await mutate(async () => {
@@ -308,37 +340,16 @@ function customizationResources(
 ): PragmaResource[] {
   if (customization === undefined) return [];
   const capabilities = customization.capabilities.map((capability) =>
-    PragmaCapabilityResourceSchema.parse({
-      apiVersion: "pragma/v3",
-      kind: "Capability",
-      metadata: {
-        id: desktopCapabilityResourceId(capability.capabilityId),
-        name: `Capability ${capability.capabilityId}`,
-        description: "Desktop-managed optional capability binding.",
-        tags: ["desktop-managed", "system-expert-customization"],
-      },
-      spec: {
-        adapter: "pragma.capability.host@v1",
-        binding: desktopCapabilityBindingRef(capability.capabilityId, capability.revision),
-        config: { key: capability.capabilityId },
-      },
+    createDesktopCapabilityResource({
+      owner: "system-expert-customization",
+      capabilityId: capability.capabilityId,
+      revision: capability.revision,
     }),
   );
   const contexts = customization.contextStoreMounts.map((mount) =>
-    PragmaContextStoreResourceSchema.parse({
-      apiVersion: "pragma/v3",
-      kind: "ContextStore",
-      metadata: {
-        id: desktopContextResourceId(mount.storeId),
-        name: `Context ${mount.storeId}`,
-        description: "Desktop-managed optional context store binding.",
-        tags: ["desktop-managed", "system-expert-customization"],
-      },
-      spec: {
-        adapter: "pragma.context.host@v1",
-        binding: desktopContextBindingRef(mount.storeId),
-        config: { key: mount.storeId },
-      },
+    createDesktopContextResource({
+      owner: "system-expert-customization",
+      storeId: mount.storeId,
     }),
   );
   return [...capabilities, ...contexts].filter(
@@ -348,12 +359,4 @@ function customizationResources(
           canonicalPragmaResourceRef(candidate) === canonicalPragmaResourceRef(resource),
       ) === index,
   );
-}
-
-function desktopCapabilityResourceId(id: string): string {
-  return derivePragmaResourceId(`system-expert:capability:${id}`);
-}
-
-function desktopContextResourceId(id: string): string {
-  return derivePragmaResourceId(`system-expert:context:${id}`);
 }

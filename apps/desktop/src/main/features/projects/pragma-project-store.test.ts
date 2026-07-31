@@ -20,7 +20,10 @@ import type { ExpertDefinition, UpdateExpertDefinition } from "../../../shared/c
 import { createExpertDefinitionStore } from "../experts/expert-definition-store.ts";
 import { createPragmaProjectStore, PragmaProjectStoreError } from "./pragma-project-store.ts";
 import { createDesktopSystemExpertRegistry } from "../experts/system-expert-registry.ts";
-import { desktopCapabilityBindingRef } from "../../platform/bindings/desktop-binding-ref.ts";
+import {
+  desktopCapabilityBindingRef,
+  desktopContextBindingRef,
+} from "../../platform/bindings/desktop-binding-ref.ts";
 
 const directories: string[] = [];
 
@@ -1211,6 +1214,9 @@ describe("PragmaProjectStore", () => {
     const migratedResourceId = derivePragmaResourceId(
       `studio\0Capability\0capability_${existingCapabilityId.replaceAll("-", "")}`,
     );
+    const optionResourceId = derivePragmaResourceId(
+      `default-agent:capability:${existingCapabilityId}`,
+    );
     const removedResourceId = derivePragmaResourceId(
       `studio\0Capability\0capability_${removedCapabilityId.replaceAll("-", "")}`,
     );
@@ -1228,6 +1234,11 @@ describe("PragmaProjectStore", () => {
         writer,
         exampleRuntime("reviewer"),
         reviewer,
+        desktopManagedCapability(existingCapabilityId, optionResourceId, {
+          name: "aone-km",
+          tags: ["desktop-managed", "default-agent-option"],
+          revision: 2,
+        }),
         desktopManagedCapability(existingCapabilityId, migratedResourceId),
         desktopManagedCapability(removedCapabilityId, removedResourceId),
       ],
@@ -1264,6 +1275,12 @@ describe("PragmaProjectStore", () => {
     expect(resources).toContainEqual(
       expect.objectContaining({
         kind: "Capability",
+        metadata: expect.objectContaining({ id: optionResourceId, name: "aone-km" }),
+      }),
+    );
+    expect(resources).toContainEqual(
+      expect.objectContaining({
+        kind: "Capability",
         metadata: expect.objectContaining({
           id: derivePragmaResourceId(`desktop-managed:capability:${addedCapabilityId}`),
           name: `Capability ${addedCapabilityId}`,
@@ -1273,12 +1290,15 @@ describe("PragmaProjectStore", () => {
     expect(resources.some((resource) => resource.metadata.id === removedResourceId)).toBe(false);
   });
 
-  it("reuses migrated desktop Capability identities when creating an Expert", async () => {
+  it("uses the exact Default Agent Capability option when creating an Expert", async () => {
     const { project, experts } = await stores();
     const existingCapabilityId = "009405fc-3ade-4df2-8e4b-eccab29e78c4";
     const addedCapabilityId = "40bb8846-dba0-4662-9fd0-9e5d865741c8";
     const migratedResourceId = derivePragmaResourceId(
       `studio\0Capability\0capability_${existingCapabilityId.replaceAll("-", "")}`,
+    );
+    const optionResourceId = derivePragmaResourceId(
+      `default-agent:capability:${existingCapabilityId}`,
     );
     const writer = exampleExpert();
     writer.spec.capabilities = [{ ref: `capability:${migratedResourceId}`, kind: "skill" }];
@@ -1288,6 +1308,11 @@ describe("PragmaProjectStore", () => {
         exampleRuntime(),
         writer,
         desktopManagedCapability(existingCapabilityId, migratedResourceId),
+        desktopManagedCapability(existingCapabilityId, optionResourceId, {
+          name: "aone-km",
+          tags: ["desktop-managed", "default-agent-option"],
+          revision: 2,
+        }),
       ],
     });
 
@@ -1301,7 +1326,7 @@ describe("PragmaProjectStore", () => {
       instructions: "Review the requested changes.",
       model: { runtimeId: "codex", providerId: "openai", modelId: "gpt-test" },
       capabilities: [
-        { kind: "skill", capabilityId: existingCapabilityId, revision: 1 },
+        { kind: "skill", capabilityId: existingCapabilityId, revision: 2 },
         { kind: "skill", capabilityId: addedCapabilityId, revision: 1 },
       ],
       contextStoreMounts: [],
@@ -1327,12 +1352,81 @@ describe("PragmaProjectStore", () => {
     ).toMatchObject({
       spec: {
         capabilities: [
-          { ref: `capability:${migratedResourceId}`, kind: "skill" },
+          { ref: `capability:${optionResourceId}`, kind: "skill" },
           {
             ref: `capability:${derivePragmaResourceId(
               `desktop-managed:capability:${addedCapabilityId}`,
             )}`,
             kind: "skill",
+          },
+        ],
+      },
+    });
+  });
+
+  it("reuses the ContextStore resource referenced by the current Expert", async () => {
+    const { project, experts } = await stores();
+    const storeId = "3ffca805-d1f0-446c-a113-4dd33f226d35";
+    const migratedResourceId = derivePragmaResourceId(
+      `studio\0ContextStore\0context_${storeId.replaceAll("-", "")}`,
+    );
+    const writer = exampleExpert();
+    const reviewer = exampleExpert("reviewer");
+    writer.spec.contextStores = [
+      {
+        ref: `context-store:${migratedResourceId}`,
+        namespace: migratedResourceId,
+        required: true,
+      },
+    ];
+    reviewer.spec.contextStores = [
+      {
+        ref: `context-store:${migratedResourceId}`,
+        namespace: migratedResourceId,
+        required: true,
+      },
+    ];
+    await project.publish({
+      expectedRevision: 0,
+      resources: [
+        exampleRuntime(),
+        writer,
+        exampleRuntime("reviewer"),
+        reviewer,
+        desktopManagedContextStore(storeId, migratedResourceId),
+      ],
+    });
+    const opened = await experts.get("expert:1xddvess309a6gme");
+
+    const saved = await experts.update(
+      opened.ref,
+      expertUpdate(opened, "Keeps the migrated ContextStore identity"),
+    );
+
+    expect(saved.contextStoreMounts).toEqual([{ storeId, enabled: true, priority: 0 }]);
+    await expect(experts.get("expert:3sfd30h5017wd17d")).resolves.toMatchObject({
+      contextStoreMounts: [{ storeId, enabled: true, priority: 0 }],
+    });
+    const resources = (await project.get()).resources;
+    expect(
+      resources.filter(
+        (resource) =>
+          resource.kind === "ContextStore" && resource.metadata.name === `Context ${storeId}`,
+      ),
+    ).toEqual([
+      expect.objectContaining({ metadata: expect.objectContaining({ id: migratedResourceId }) }),
+    ]);
+    expect(
+      resources.find(
+        (resource) => resource.kind === "Expert" && resource.metadata.id === writer.metadata.id,
+      ),
+    ).toMatchObject({
+      spec: {
+        contextStores: [
+          {
+            ref: `context-store:${migratedResourceId}`,
+            namespace: migratedResourceId,
+            required: true,
           },
         ],
       },
@@ -1405,7 +1499,7 @@ describe("PragmaProjectStore", () => {
       (resource) => resource.kind === "Expert" && resource.metadata.id === "1xddvess309a6gme",
     );
     expect(stored?.kind === "Expert" ? stored.spec.runtime : undefined).toEqual({
-      ref: "runtime-profile:zdkgs0fde4xt00vr",
+      ref: "runtime-profile:20k21q9j9wexjv50",
     });
     expect(stored?.kind === "Expert" ? stored.spec.capabilities : undefined).toEqual(
       expert.spec.capabilities,
@@ -1519,20 +1613,46 @@ function portableCapability(): PragmaCapabilityResource {
 function desktopManagedCapability(
   capabilityId: string,
   resourceId: string,
+  metadata: {
+    readonly name?: string;
+    readonly tags?: string[];
+    readonly revision?: number;
+  } = {},
 ): PragmaCapabilityResource {
   return {
     apiVersion: "pragma/v3",
     kind: "Capability",
     metadata: {
       id: resourceId,
-      name: `Capability ${capabilityId}`,
+      name: metadata.name ?? `Capability ${capabilityId}`,
       description: "Desktop-managed capability binding.",
-      tags: ["desktop-managed"],
+      tags: metadata.tags ?? ["desktop-managed"],
     },
     spec: {
       adapter: "pragma.capability.host@v1",
-      binding: desktopCapabilityBindingRef(capabilityId, 1),
+      binding: desktopCapabilityBindingRef(capabilityId, metadata.revision ?? 1),
       config: { key: capabilityId },
+    },
+  };
+}
+
+function desktopManagedContextStore(
+  storeId: string,
+  resourceId: string,
+): PragmaContextStoreResource {
+  return {
+    apiVersion: "pragma/v3",
+    kind: "ContextStore",
+    metadata: {
+      id: resourceId,
+      name: `Context ${storeId}`,
+      description: "Desktop-managed context store binding.",
+      tags: ["desktop-managed"],
+    },
+    spec: {
+      adapter: "pragma.context.host@v1",
+      binding: desktopContextBindingRef(storeId),
+      config: { key: storeId },
     },
   };
 }

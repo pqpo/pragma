@@ -446,15 +446,6 @@ export function ExpertCapabilityPicker(props: {
                     else next[key] = mode;
                     props.onToolApprovalsChange(next);
                   }}
-                  onUpgrade={(selected, capability) =>
-                    props.onCapabilityReferencesChange(
-                      props.capabilityReferences.map((reference) =>
-                        reference === selected
-                          ? { ...reference, revision: capability.manifest.latestRevision }
-                          : reference,
-                      ),
-                    )
-                  }
                 />
               ) : null}
             </div>
@@ -660,10 +651,6 @@ function ToolResults(props: {
     key: string,
     mode: ExpertDraft["toolApprovals"][string] | undefined,
   ) => void;
-  readonly onUpgrade: (
-    selected: Extract<ExpertDraft["capabilities"][number], { readonly kind: "tools" }>,
-    capability: Capability,
-  ) => void;
 }) {
   const { t } = useTranslation("studio");
   const visible = props.capabilities.flatMap((capability) => {
@@ -705,11 +692,6 @@ function ToolResults(props: {
                 </small>
               </div>
               <div>
-                {selected && selected.revision < capability.manifest.latestRevision ? (
-                  <button type="button" onClick={() => props.onUpgrade(selected, capability)}>
-                    {t("upgradeRevision", { revision: capability.manifest.latestRevision })}
-                  </button>
-                ) : null}
                 <label>
                   <input
                     type="checkbox"

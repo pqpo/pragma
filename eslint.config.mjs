@@ -92,6 +92,30 @@ const config = tseslint.config(
     },
   },
   {
+    files: ["apps/desktop/src/main/features/**/*.{ts,tsx}"],
+    ignores: ["apps/desktop/src/main/features/**/*.test.{ts,tsx}"],
+    rules: {
+      "no-restricted-imports": [
+        "error",
+        {
+          paths: [
+            {
+              name: "@pragma/interpreter/ast",
+              importNames: [
+                "PragmaCapabilityResourceSchema",
+                "PragmaContextStoreResourceSchema",
+                "PragmaRuntimeProfileResourceSchema",
+              ],
+              message:
+                "Desktop bound resources must be classified, created, or rebound through desktop-bound-resource-policy.ts.",
+            },
+          ],
+          patterns: commonRestrictedPatterns,
+        },
+      ],
+    },
+  },
+  {
     files: ["apps/desktop/src/preload/**/*.{ts,tsx,d.ts}"],
     languageOptions: {
       globals: {
