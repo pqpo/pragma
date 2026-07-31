@@ -40,6 +40,9 @@ export const studio = {
   llmJudgeDescription: "使用可复用测评集评估专家与专家团队。",
   evaluationNeedsFlow: "请先创建 Flow，再添加 Run Dry 测评。",
   noEvaluationsYet: "还没有测评。",
+  deleteEvaluation: "删除此 Run Dry 用例集？",
+  deleteEvaluationAction: "删除用例集",
+  deleteEvaluationDescription: "“{{name}}”及其中的全部用例将被永久删除，目标 Flow 不会受到影响。",
   integrations: "集成",
   integrationsDescription:
     "将专家、团队和流程接入定时策略，并为后续 Webhook 与各类聊天渠道预留可复用连接。",
@@ -150,7 +153,7 @@ export const studio = {
   evaluationIdentity: "测评信息",
   evaluationName: "测评名称",
   evaluationTarget: "目标 Flow",
-  changeEvaluationTargetConfirm: "更换目标 Flow 会清空现有全部用例和运行结果。是否继续？",
+  evaluationActions: "测评操作",
   runDryTitle: "Flow Run Dry 用例",
   runDryDescription:
     "为“{{name}}”维护快速单元用例，以 Mock 替代模型、Action、嵌套 Flow 与 Human Task 的真实结果。",

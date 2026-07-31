@@ -3,7 +3,7 @@ import { describe, expect, it } from "vitest";
 import { PragmaEvaluationResourceSchema } from "@pragma/evaluation/ast";
 import { PragmaFlowResourceSchema } from "@pragma/interpreter/ast";
 
-import { createRunDryTargetChangeState, FlowRunDryFragment } from "./FlowRunDryFragment.tsx";
+import { FlowRunDryFragment } from "./FlowRunDryFragment.tsx";
 
 describe("FlowRunDryFragment", () => {
   it("renders persisted cases and transition coverage in a dedicated developer screen", () => {
@@ -95,25 +95,9 @@ describe("FlowRunDryFragment", () => {
     expect(html).toContain("flow-run-dry-identity");
     expect(html).toContain("flow-run-dry-form-grid");
     expect(html).toContain("flow-run-dry-case-editor");
-  });
-
-  it("clears cases, selection, results, and errors when the target Flow changes", () => {
-    const next = createRunDryTargetChangeState("flow:6h7j8k9m0n1p2q3r");
-
-    expect(next).toMatchObject({
-      targetRef: "flow:6h7j8k9m0n1p2q3r",
-      drafts: [
-        {
-          id: "case_1",
-          name: "Case 1",
-          input: "{}",
-          mocks: "{}",
-          path: "",
-        },
-      ],
-      result: null,
-      formError: null,
-    });
-    expect(next.selectedKey).toBe(next.drafts[0]?.key);
+    expect(html).toContain("flow-run-dry-toolbar");
+    expect(html).toContain("flow-run-dry-static-value");
+    expect(html).toContain('Target Flow</span><div class="flow-run-dry-static-value"');
+    expect(html).not.toContain("Target Flow</span><select");
   });
 });

@@ -41,6 +41,10 @@ export const studio = {
   llmJudgeDescription: "Evaluate Experts and Expert Teams against reusable datasets.",
   evaluationNeedsFlow: "Create a Flow before adding a Run Dry evaluation.",
   noEvaluationsYet: "No evaluations yet.",
+  deleteEvaluation: "Delete this Run Dry suite?",
+  deleteEvaluationAction: "Delete suite",
+  deleteEvaluationDescription:
+    "“{{name}}” and all of its cases will be permanently removed. The target Flow will not be changed.",
   integrations: "Integrations",
   integrationsDescription:
     "Connect Experts, Teams, and Flows to schedules today, with reusable connections for webhooks and chat channels next.",
@@ -156,8 +160,7 @@ export const studio = {
   evaluationIdentity: "Evaluation identity",
   evaluationName: "Evaluation name",
   evaluationTarget: "Target Flow",
-  changeEvaluationTargetConfirm:
-    "Changing the target Flow clears every existing case and result. Continue?",
+  evaluationActions: "Evaluation actions",
   runDryTitle: "Flow run dry cases",
   runDryDescription:
     "Maintain fast unit cases for “{{name}}” with mocked model, action, nested Flow, and Human Task results.",

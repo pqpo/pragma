@@ -87,6 +87,7 @@ describe("EvaluationDirectoryFragment", () => {
       <EvaluationDirectoryFragment
         project={project}
         onCreate={() => undefined}
+        onDelete={async () => undefined}
         onOpen={() => undefined}
         onRun={async () => ({
           passed: true,
@@ -104,6 +105,8 @@ describe("EvaluationDirectoryFragment", () => {
     expect(html).toContain("Release flow");
     expect(html).toContain("Rollback flow");
     expect(html).toContain("1 case");
+    expect(html).toContain('aria-haspopup="menu"');
+    expect(html).toContain('aria-expanded="false"');
     expect(html).not.toContain("Dataset + LLM-as-Judge");
   });
 });

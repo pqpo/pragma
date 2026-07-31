@@ -8,6 +8,7 @@ import {
   MagnifyingGlass,
   Play,
   Plus,
+  Trash,
   User,
   UsersThree,
   WarningCircle,
@@ -22,6 +23,7 @@ import {
 import type { PragmaProjectSnapshot } from "../../../../shared/contracts/index.ts";
 import { errorMessage } from "../../lib/errors.ts";
 import { StudioScreenFrame } from "../studio/StudioScreenFrame.tsx";
+import { StudioConfirmationDialog } from "../studio/StudioDialog.tsx";
 import { desktopApi } from "../studio/studio-model.ts";
 
 type EvaluationTarget = PragmaExpertResource | PragmaExpertTeamResource | PragmaFlowResource;
@@ -55,11 +57,15 @@ export function EvaluationDirectoryFragment(props: {
   readonly onOpen: (evaluation: PragmaEvaluationResource) => void;
   readonly onCreate: (resourceId: string, flow: PragmaFlowResource) => void;
   readonly onRun: (evaluation: PragmaEvaluationResource) => Promise<PragmaFlowRunDrySuiteResult>;
+  readonly onDelete: (evaluation: PragmaEvaluationResource) => Promise<void>;
 }) {
   const { t, i18n } = useTranslation("studio");
   const [error, setError] = useState<string | null>(null);
   const [allocating, setAllocating] = useState(false);
   const [running, setRunning] = useState(false);
+  const [deleting, setDeleting] = useState(false);
+  const [openMenuId, setOpenMenuId] = useState<string | null>(null);
+  const [pendingDelete, setPendingDelete] = useState<PragmaEvaluationResource | null>(null);
   const [search, setSearch] = useState("");
   const [expandedKinds, setExpandedKinds] = useState<ReadonlySet<EvaluationTargetKind>>(new Set());
   const [runStates, setRunStates] = useState<
@@ -164,6 +170,29 @@ export function EvaluationDirectoryFragment(props: {
       if (mountedRef.current) setError(errorMessage(cause));
     } finally {
       if (mountedRef.current) setRunning(false);
+    }
+  };
+
+  const deleteEvaluation = async () => {
+    if (pendingDelete === null || deleting) return;
+    const evaluation = pendingDelete;
+    setDeleting(true);
+    setError(null);
+    try {
+      await props.onDelete(evaluation);
+      if (!mountedRef.current) return;
+      setRunStates((current) => {
+        const next = { ...current };
+        delete next[evaluation.metadata.id];
+        return next;
+      });
+      setPendingDelete(null);
+    } catch (cause) {
+      if (!mountedRef.current) return;
+      setPendingDelete(null);
+      setError(errorMessage(cause));
+    } finally {
+      if (mountedRef.current) setDeleting(false);
     }
   };
 
@@ -330,54 +359,100 @@ export function EvaluationDirectoryFragment(props: {
                         const runState = runStates[evaluation.metadata.id];
                         const failedCases = runState?.result.summary.failed ?? 0;
                         return (
-                          <button
-                            className="evaluation-suite-row"
-                            type="button"
-                            key={evaluation.metadata.id}
-                            onClick={() => props.onOpen(evaluation)}
-                          >
-                            <span className="evaluation-suite-name">
-                              <span className="evaluation-suite-file" aria-hidden="true">
-                                <GitBranch size={16} />
-                              </span>
-                              <strong>{evaluation.metadata.name}</strong>
-                            </span>
-                            <span>
-                              {t("evaluationCaseCount", {
-                                count: evaluation.spec.method.cases.length,
-                              })}
-                            </span>
-                            <span>{coverageLabel(runState?.result, t)}</span>
-                            <span
-                              className={
-                                runState === undefined
-                                  ? "evaluation-run-status"
-                                  : runState.result.passed
-                                    ? "evaluation-run-status is-success"
-                                    : "evaluation-run-status is-error"
-                              }
+                          <div className="evaluation-suite-row" key={evaluation.metadata.id}>
+                            <button
+                              className="evaluation-suite-open"
+                              type="button"
+                              onClick={() => props.onOpen(evaluation)}
                             >
-                              {runState === undefined ? null : runState.result.passed ? (
-                                <CheckCircle size={17} weight="fill" aria-hidden="true" />
-                              ) : (
-                                <WarningCircle size={17} weight="fill" aria-hidden="true" />
-                              )}
-                              {runState === undefined
-                                ? t("notRun")
-                                : runState.result.passed
-                                  ? t("passed")
-                                  : t("failedCases", { count: failedCases })}
+                              <span className="evaluation-suite-name">
+                                <span className="evaluation-suite-file" aria-hidden="true">
+                                  <GitBranch size={16} />
+                                </span>
+                                <strong>{evaluation.metadata.name}</strong>
+                              </span>
+                              <span>
+                                {t("evaluationCaseCount", {
+                                  count: evaluation.spec.method.cases.length,
+                                })}
+                              </span>
+                              <span>{coverageLabel(runState?.result, t)}</span>
+                              <span
+                                className={
+                                  runState === undefined
+                                    ? "evaluation-run-status"
+                                    : runState.result.passed
+                                      ? "evaluation-run-status is-success"
+                                      : "evaluation-run-status is-error"
+                                }
+                              >
+                                {runState === undefined ? null : runState.result.passed ? (
+                                  <CheckCircle size={17} weight="fill" aria-hidden="true" />
+                                ) : (
+                                  <WarningCircle size={17} weight="fill" aria-hidden="true" />
+                                )}
+                                {runState === undefined
+                                  ? t("notRun")
+                                  : runState.result.passed
+                                    ? t("passed")
+                                    : t("failedCases", { count: failedCases })}
+                              </span>
+                              <span>
+                                {runState === undefined
+                                  ? "—"
+                                  : new Intl.DateTimeFormat(i18n.language, {
+                                      hour: "2-digit",
+                                      minute: "2-digit",
+                                    }).format(runState.finishedAt)}
+                              </span>
+                            </button>
+                            <span
+                              className="evaluation-suite-actions"
+                              onBlur={(event) => {
+                                if (!event.currentTarget.contains(event.relatedTarget)) {
+                                  setOpenMenuId(null);
+                                }
+                              }}
+                            >
+                              <button
+                                type="button"
+                                aria-label={t("moreActions", { name: evaluation.metadata.name })}
+                                aria-haspopup="menu"
+                                aria-expanded={openMenuId === evaluation.metadata.id}
+                                onClick={() =>
+                                  setOpenMenuId((current) =>
+                                    current === evaluation.metadata.id
+                                      ? null
+                                      : evaluation.metadata.id,
+                                  )
+                                }
+                              >
+                                <DotsThree size={20} weight="bold" aria-hidden="true" />
+                              </button>
+                              {openMenuId === evaluation.metadata.id ? (
+                                <div
+                                  className="evaluation-suite-menu"
+                                  role="menu"
+                                  aria-label={t("moreActions", {
+                                    name: evaluation.metadata.name,
+                                  })}
+                                >
+                                  <button
+                                    type="button"
+                                    role="menuitem"
+                                    onClick={() => {
+                                      setOpenMenuId(null);
+                                      setPendingDelete(evaluation);
+                                      setError(null);
+                                    }}
+                                  >
+                                    <Trash size={16} aria-hidden="true" />
+                                    {t("deleteEvaluationAction")}
+                                  </button>
+                                </div>
+                              ) : null}
                             </span>
-                            <span>
-                              {runState === undefined
-                                ? "—"
-                                : new Intl.DateTimeFormat(i18n.language, {
-                                    hour: "2-digit",
-                                    minute: "2-digit",
-                                  }).format(runState.finishedAt)}
-                            </span>
-                            <DotsThree size={20} weight="bold" aria-hidden="true" />
-                          </button>
+                          </div>
                         );
                       })}
                     </div>
@@ -406,6 +481,20 @@ export function EvaluationDirectoryFragment(props: {
         <p className="form-error evaluation-directory-error" role="alert">
           {error}
         </p>
+      ) : null}
+      {pendingDelete ? (
+        <StudioConfirmationDialog
+          title={t("deleteEvaluation")}
+          description={t("deleteEvaluationDescription", {
+            name: pendingDelete.metadata.name,
+          })}
+          cancelLabel={t("cancel")}
+          confirmLabel={t("deleteEvaluationAction")}
+          busyLabel={t("deleting")}
+          busy={deleting}
+          onCancel={() => setPendingDelete(null)}
+          onConfirm={() => void deleteEvaluation()}
+        />
       ) : null}
     </StudioScreenFrame>
   );
