@@ -89,12 +89,6 @@ describe("EvaluationDirectoryFragment", () => {
         onCreate={() => undefined}
         onDelete={async () => undefined}
         onOpen={() => undefined}
-        onRun={async () => ({
-          passed: true,
-          summary: { total: 0, passed: 0, failed: 0 },
-          coverage: { required: [], covered: [], missing: [], passed: true },
-          cases: [],
-        })}
       />,
     );
 
@@ -107,6 +101,20 @@ describe("EvaluationDirectoryFragment", () => {
     expect(html).toContain("1 case");
     expect(html).toContain('aria-haspopup="menu"');
     expect(html).toContain('aria-expanded="false"');
+    expect(html).not.toContain("New Run Dry case");
+    expect(html).not.toContain("Run all");
     expect(html).not.toContain("Dataset + LLM-as-Judge");
+
+    const emptyHtml = renderToStaticMarkup(
+      <EvaluationDirectoryFragment
+        project={{ ...project, resources: [flow] }}
+        onCreate={() => undefined}
+        onDelete={async () => undefined}
+        onOpen={() => undefined}
+      />,
+    );
+
+    expect(emptyHtml).toContain("New Run Dry case");
+    expect(emptyHtml).not.toContain("Run all");
   });
 });

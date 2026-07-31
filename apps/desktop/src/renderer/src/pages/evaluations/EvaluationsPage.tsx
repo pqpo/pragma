@@ -103,11 +103,6 @@ export function EvaluationsPage() {
             });
             setProject(snapshot);
           }}
-          onRun={async (evaluation) => {
-            const api = typeof window === "undefined" ? undefined : window.pragmaDesktop;
-            if (api === undefined) throw new Error("Desktop bridge is unavailable.");
-            return await api.runPragmaEvaluation({ evaluation });
-          }}
         />
       ) : null}
       {project !== null && draft !== null ? (

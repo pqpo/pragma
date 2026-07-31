@@ -2,18 +2,15 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
 import type { TFunction } from "i18next";
 import {
-  CheckCircle,
   DotsThree,
   GitBranch,
   MagnifyingGlass,
-  Play,
   Plus,
   Trash,
   User,
   UsersThree,
-  WarningCircle,
 } from "@phosphor-icons/react";
-import type { PragmaEvaluationResource, PragmaFlowRunDrySuiteResult } from "@pragma/evaluation/ast";
+import type { PragmaEvaluationResource } from "@pragma/evaluation/ast";
 import {
   type PragmaExpertResource,
   type PragmaExpertTeamResource,
@@ -28,10 +25,6 @@ import { desktopApi } from "../studio/studio-model.ts";
 
 type EvaluationTarget = PragmaExpertResource | PragmaExpertTeamResource | PragmaFlowResource;
 type EvaluationTargetKind = EvaluationTarget["kind"];
-type EvaluationRunState = {
-  readonly result: PragmaFlowRunDrySuiteResult;
-  readonly finishedAt: Date;
-};
 
 const visibleTargetLimit = 4;
 
@@ -56,21 +49,16 @@ export function EvaluationDirectoryFragment(props: {
   readonly project: PragmaProjectSnapshot;
   readonly onOpen: (evaluation: PragmaEvaluationResource) => void;
   readonly onCreate: (resourceId: string, flow: PragmaFlowResource) => void;
-  readonly onRun: (evaluation: PragmaEvaluationResource) => Promise<PragmaFlowRunDrySuiteResult>;
   readonly onDelete: (evaluation: PragmaEvaluationResource) => Promise<void>;
 }) {
   const { t, i18n } = useTranslation("studio");
   const [error, setError] = useState<string | null>(null);
   const [allocating, setAllocating] = useState(false);
-  const [running, setRunning] = useState(false);
   const [deleting, setDeleting] = useState(false);
   const [openMenuId, setOpenMenuId] = useState<string | null>(null);
   const [pendingDelete, setPendingDelete] = useState<PragmaEvaluationResource | null>(null);
   const [search, setSearch] = useState("");
   const [expandedKinds, setExpandedKinds] = useState<ReadonlySet<EvaluationTargetKind>>(new Set());
-  const [runStates, setRunStates] = useState<
-    Readonly<Record<string, EvaluationRunState | undefined>>
-  >({});
   const mountedRef = useRef(false);
   useEffect(() => activateEvaluationDirectory(mountedRef), []);
 
@@ -153,26 +141,6 @@ export function EvaluationDirectoryFragment(props: {
       });
   };
 
-  const runAll = async () => {
-    if (running || targetEvaluations.length === 0) return;
-    setRunning(true);
-    setError(null);
-    try {
-      for (const evaluation of targetEvaluations) {
-        const result = await props.onRun(evaluation);
-        if (!mountedRef.current) return;
-        setRunStates((current) => ({
-          ...current,
-          [evaluation.metadata.id]: { result, finishedAt: new Date() },
-        }));
-      }
-    } catch (cause) {
-      if (mountedRef.current) setError(errorMessage(cause));
-    } finally {
-      if (mountedRef.current) setRunning(false);
-    }
-  };
-
   const deleteEvaluation = async () => {
     if (pendingDelete === null || deleting) return;
     const evaluation = pendingDelete;
@@ -181,11 +149,6 @@ export function EvaluationDirectoryFragment(props: {
     try {
       await props.onDelete(evaluation);
       if (!mountedRef.current) return;
-      setRunStates((current) => {
-        const next = { ...current };
-        delete next[evaluation.metadata.id];
-        return next;
-      });
       setPendingDelete(null);
     } catch (cause) {
       if (!mountedRef.current) return;
@@ -318,28 +281,6 @@ export function EvaluationDirectoryFragment(props: {
                       : t("unsupportedEvaluationTargetDescription")}
                   </p>
                 </div>
-                {selectedTarget.kind === "Flow" ? (
-                  <div className="evaluation-target-actions">
-                    <button
-                      className="primary-button"
-                      type="button"
-                      disabled={allocating}
-                      onClick={createEvaluation}
-                    >
-                      <Plus size={17} aria-hidden="true" />
-                      {allocating ? t("creatingEvaluation") : t("newRunDryCase")}
-                    </button>
-                    <button
-                      className="secondary-button"
-                      type="button"
-                      disabled={running || targetEvaluations.length === 0}
-                      onClick={() => void runAll()}
-                    >
-                      <Play size={17} aria-hidden="true" />
-                      {running ? t("runningRunDry") : t("runAllCases")}
-                    </button>
-                  </div>
-                ) : null}
               </header>
 
               {selectedTarget.kind === "Flow" ? (
@@ -350,111 +291,75 @@ export function EvaluationDirectoryFragment(props: {
                       <div className="evaluation-suite-table-heading" aria-hidden="true">
                         <span>{t("evaluationName")}</span>
                         <span>{t("caseCount")}</span>
-                        <span>{t("coverageStatus")}</span>
-                        <span>{t("lastResult")}</span>
-                        <span>{t("lastRun")}</span>
                         <span />
                       </div>
-                      {targetEvaluations.map((evaluation) => {
-                        const runState = runStates[evaluation.metadata.id];
-                        const failedCases = runState?.result.summary.failed ?? 0;
-                        return (
-                          <div className="evaluation-suite-row" key={evaluation.metadata.id}>
-                            <button
-                              className="evaluation-suite-open"
-                              type="button"
-                              onClick={() => props.onOpen(evaluation)}
-                            >
-                              <span className="evaluation-suite-name">
-                                <span className="evaluation-suite-file" aria-hidden="true">
-                                  <GitBranch size={16} />
-                                </span>
-                                <strong>{evaluation.metadata.name}</strong>
+                      {targetEvaluations.map((evaluation) => (
+                        <div className="evaluation-suite-row" key={evaluation.metadata.id}>
+                          <button
+                            className="evaluation-suite-open"
+                            type="button"
+                            onClick={() => props.onOpen(evaluation)}
+                          >
+                            <span className="evaluation-suite-name">
+                              <span className="evaluation-suite-file" aria-hidden="true">
+                                <GitBranch size={16} />
                               </span>
-                              <span>
-                                {t("evaluationCaseCount", {
-                                  count: evaluation.spec.method.cases.length,
-                                })}
-                              </span>
-                              <span>{coverageLabel(runState?.result, t)}</span>
-                              <span
-                                className={
-                                  runState === undefined
-                                    ? "evaluation-run-status"
-                                    : runState.result.passed
-                                      ? "evaluation-run-status is-success"
-                                      : "evaluation-run-status is-error"
-                                }
-                              >
-                                {runState === undefined ? null : runState.result.passed ? (
-                                  <CheckCircle size={17} weight="fill" aria-hidden="true" />
-                                ) : (
-                                  <WarningCircle size={17} weight="fill" aria-hidden="true" />
-                                )}
-                                {runState === undefined
-                                  ? t("notRun")
-                                  : runState.result.passed
-                                    ? t("passed")
-                                    : t("failedCases", { count: failedCases })}
-                              </span>
-                              <span>
-                                {runState === undefined
-                                  ? "—"
-                                  : new Intl.DateTimeFormat(i18n.language, {
-                                      hour: "2-digit",
-                                      minute: "2-digit",
-                                    }).format(runState.finishedAt)}
-                              </span>
-                            </button>
-                            <span
-                              className="evaluation-suite-actions"
-                              onBlur={(event) => {
-                                if (!event.currentTarget.contains(event.relatedTarget)) {
-                                  setOpenMenuId(null);
-                                }
-                              }}
-                            >
-                              <button
-                                type="button"
-                                aria-label={t("moreActions", { name: evaluation.metadata.name })}
-                                aria-haspopup="menu"
-                                aria-expanded={openMenuId === evaluation.metadata.id}
-                                onClick={() =>
-                                  setOpenMenuId((current) =>
-                                    current === evaluation.metadata.id
-                                      ? null
-                                      : evaluation.metadata.id,
-                                  )
-                                }
-                              >
-                                <DotsThree size={20} weight="bold" aria-hidden="true" />
-                              </button>
-                              {openMenuId === evaluation.metadata.id ? (
-                                <div
-                                  className="evaluation-suite-menu"
-                                  role="menu"
-                                  aria-label={t("moreActions", {
-                                    name: evaluation.metadata.name,
-                                  })}
-                                >
-                                  <button
-                                    type="button"
-                                    role="menuitem"
-                                    onClick={() => {
-                                      setOpenMenuId(null);
-                                      setPendingDelete(evaluation);
-                                      setError(null);
-                                    }}
-                                  >
-                                    <Trash size={16} aria-hidden="true" />
-                                    {t("deleteEvaluationAction")}
-                                  </button>
-                                </div>
-                              ) : null}
+                              <strong>{evaluation.metadata.name}</strong>
                             </span>
-                          </div>
-                        );
-                      })}
+                            <span>
+                              {t("evaluationCaseCount", {
+                                count: evaluation.spec.method.cases.length,
+                              })}
+                            </span>
+                          </button>
+                          <span
+                            className="evaluation-suite-actions"
+                            onBlur={(event) => {
+                              if (!event.currentTarget.contains(event.relatedTarget)) {
+                                setOpenMenuId(null);
+                              }
+                            }}
+                          >
+                            <button
+                              type="button"
+                              aria-label={t("moreActions", { name: evaluation.metadata.name })}
+                              aria-haspopup="menu"
+                              aria-expanded={openMenuId === evaluation.metadata.id}
+                              onClick={() =>
+                                setOpenMenuId((current) =>
+                                  current === evaluation.metadata.id
+                                    ? null
+                                    : evaluation.metadata.id,
+                                )
+                              }
+                            >
+                              <DotsThree size={20} weight="bold" aria-hidden="true" />
+                            </button>
+                            {openMenuId === evaluation.metadata.id ? (
+                              <div
+                                className="evaluation-suite-menu"
+                                role="menu"
+                                aria-label={t("moreActions", {
+                                  name: evaluation.metadata.name,
+                                })}
+                              >
+                                <button
+                                  type="button"
+                                  role="menuitem"
+                                  onClick={() => {
+                                    setOpenMenuId(null);
+                                    setPendingDelete(evaluation);
+                                    setError(null);
+                                  }}
+                                >
+                                  <Trash size={16} aria-hidden="true" />
+                                  {t("deleteEvaluationAction")}
+                                </button>
+                              </div>
+                            ) : null}
+                          </span>
+                        </div>
+                      ))}
                     </div>
                   ) : (
                     <div className="evaluation-target-empty is-inline">
@@ -504,15 +409,4 @@ function targetKindLabel(kind: EvaluationTargetKind, t: TFunction<"studio">): st
   if (kind === "Flow") return t("flowSingular");
   if (kind === "ExpertTeam") return t("teamSingular");
   return t("expertSingular");
-}
-
-function coverageLabel(
-  result: PragmaFlowRunDrySuiteResult | undefined,
-  t: TFunction<"studio">,
-): string {
-  if (result === undefined) return "—";
-  return t("coverageRatio", {
-    covered: result.coverage.covered.length,
-    required: result.coverage.required.length,
-  });
 }

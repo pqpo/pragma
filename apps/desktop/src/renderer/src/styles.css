@@ -7025,16 +7025,6 @@ p {
   line-height: 1.6;
 }
 
-.evaluation-target-actions {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 9px;
-}
-
-.evaluation-target-actions > button {
-  min-height: 38px;
-}
-
 .evaluation-suite-list {
   margin-top: 35px;
 }
@@ -7046,12 +7036,12 @@ p {
 }
 
 .evaluation-suite-table {
-  min-width: 720px;
+  min-width: 420px;
 }
 
 .evaluation-suite-table-heading {
   display: grid;
-  grid-template-columns: minmax(190px, 1.4fr) 92px 118px 100px 92px 32px;
+  grid-template-columns: minmax(190px, 1fr) 92px 32px;
   align-items: center;
   gap: 12px;
 }
@@ -7079,7 +7069,7 @@ p {
 
 .evaluation-suite-open {
   display: grid;
-  grid-template-columns: minmax(190px, 1.4fr) 92px 118px 100px 92px;
+  grid-template-columns: minmax(190px, 1fr) 92px;
   align-items: center;
   gap: 12px;
   width: 100%;
@@ -7187,20 +7177,6 @@ p {
   border-radius: 6px;
   background: #fff;
   color: var(--muted);
-}
-
-.evaluation-run-status {
-  display: inline-flex;
-  align-items: center;
-  gap: 5px;
-}
-
-.evaluation-run-status.is-success {
-  color: var(--green-dark);
-}
-
-.evaluation-run-status.is-error {
-  color: #b44c43;
 }
 
 .evaluation-target-empty {
