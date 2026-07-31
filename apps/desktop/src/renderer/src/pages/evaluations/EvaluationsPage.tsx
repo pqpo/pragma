@@ -94,6 +94,11 @@ export function EvaluationsPage() {
           project={project}
           onCreate={(resourceId, flow) => setDraft(createFlowRunDryEvaluation(resourceId, flow))}
           onOpen={setDraft}
+          onRun={async (evaluation) => {
+            const api = typeof window === "undefined" ? undefined : window.pragmaDesktop;
+            if (api === undefined) throw new Error("Desktop bridge is unavailable.");
+            return await api.runPragmaEvaluation({ evaluation });
+          }}
         />
       ) : null}
       {project !== null && draft !== null ? (

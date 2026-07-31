@@ -5,6 +5,7 @@ import type { PragmaProjectSnapshot } from "../../../../shared/contracts/index.t
 import {
   activateEvaluationDirectory,
   EvaluationDirectoryFragment,
+  evaluationsForTarget,
 } from "./EvaluationDirectoryFragment.tsx";
 import { createEmptyFlow } from "../studio/flow-editor/flow-model.ts";
 
@@ -23,7 +24,7 @@ describe("EvaluationDirectoryFragment", () => {
     expect(mounted.current).toBe(false);
   });
 
-  it("shows Run Dry as available and reserves LLM-as-Judge for Experts and Teams", () => {
+  it("groups targets beside the selected Flow's Run Dry suites", () => {
     const flow = {
       ...createEmptyFlow("8h9j0k1m2n3p4q5r"),
       metadata: {
@@ -77,23 +78,32 @@ describe("EvaluationDirectoryFragment", () => {
         },
       ],
     } satisfies PragmaProjectSnapshot;
+    const evaluations = project.resources.filter((resource) => resource.kind === "Evaluation");
+
+    expect(evaluationsForTarget(evaluations, flow)).toHaveLength(1);
+    expect(evaluationsForTarget(evaluations, secondFlow)).toHaveLength(0);
 
     const html = renderToStaticMarkup(
       <EvaluationDirectoryFragment
         project={project}
         onCreate={() => undefined}
         onOpen={() => undefined}
+        onRun={async () => ({
+          passed: true,
+          summary: { total: 0, passed: 0, failed: 0 },
+          coverage: { required: [], covered: [], missing: [], passed: true },
+          cases: [],
+        })}
       />,
     );
 
     expect(html).toContain("Evaluations");
     expect(html).toContain("Release Run Dry");
-    expect(html).toContain("Dataset + LLM-as-Judge");
-    expect(html).toContain("Coming soon");
-    expect(html).toContain("Target Flow");
-    expect(html).toContain("Select a Flow");
+    expect(html).toContain("Evaluation targets");
+    expect(html).toContain("Run Dry cases");
     expect(html).toContain("Release flow");
     expect(html).toContain("Rollback flow");
     expect(html).toContain("1 case");
+    expect(html).not.toContain("Dataset + LLM-as-Judge");
   });
 });
