@@ -4,12 +4,12 @@ import { describe, expect, it } from "vitest";
 import type { Capability } from "../../../../shared/contracts/index.ts";
 import {
   CapabilityDirectoryFragment,
+  capabilityEditMode,
   capabilityDeleteErrorMessage,
   codeDraftFromDefinition,
   fieldsToObjectSchema,
   formatCommandArguments,
   httpDraftFromDefinition,
-  isEditableCapability,
   parseCommandArguments,
   toHttpToolDefinition,
 } from "./CapabilityDirectoryFragment.tsx";
@@ -206,71 +206,11 @@ describe("capability row actions", () => {
     expect(html).not.toContain('aria-label="Delete Test Skill"');
   });
 
-  it("excludes Skills from editing while allowing all three tool capability kinds", () => {
-    expect(isEditableCapability(capability)).toBe(false);
-    for (const definition of [
-      {
-        kind: "mcp_server" as const,
-        name: "MCP",
-        description: "MCP server.",
-        connection: {
-          transport: "stdio" as const,
-          command: "node",
-          args: [],
-          env: {},
-          secretEnv: {},
-        },
-        timeoutMs: 30_000,
-        tools: [],
-      },
-      {
-        kind: "http_service" as const,
-        name: "HTTP",
-        description: "HTTP service.",
-        baseUrl: "https://example.test",
-        auth: { type: "none" as const },
-        timeoutMs: 30_000,
-        tools: [
-          {
-            name: "get_status",
-            description: "Get status.",
-            method: "GET" as const,
-            path: "/status",
-            parameters: [],
-          },
-        ],
-      },
-      {
-        kind: "code_service" as const,
-        name: "Code",
-        description: "Code service.",
-        language: "javascript" as const,
-        timeoutMs: 2_000,
-        tool: {
-          name: "run",
-          description: "Run code.",
-          inputSchema: {
-            type: "object" as const,
-            properties: {},
-            additionalProperties: false as const,
-          },
-          outputSchema: {
-            type: "object" as const,
-            properties: {},
-            additionalProperties: false as const,
-          },
-          source: "function main() { return {}; }",
-        },
-      },
-    ]) {
-      expect(
-        isEditableCapability({
-          ...capability,
-          definition,
-          manifest: { ...capability.manifest, kind: definition.kind },
-        }),
-      ).toBe(true);
-    }
+  it("opens every capability kind in its matching update mode", () => {
+    expect(capabilityEditMode("skill")).toBe("skill");
+    expect(capabilityEditMode("mcp_server")).toBe("mcp");
+    expect(capabilityEditMode("http_service")).toBe("http");
+    expect(capabilityEditMode("code_service")).toBe("code");
   });
 
   it("maps referenced and unknown delete failures to friendly copy", () => {

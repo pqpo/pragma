@@ -150,6 +150,114 @@ describe("capability store", () => {
     });
   });
 
+  it("imports a ZIP whose Skill is wrapped in one top-level directory", async () => {
+    const { directory, store } = await createStore();
+    const archive = join(directory, "repo-review.zip");
+    await writeFile(
+      archive,
+      zipSync({
+        "repo-review/SKILL.md": strToU8(
+          "---\nname: repo-review\ndescription: Review a repository.\n---\n",
+        ),
+        "repo-review/references/checklist.md": strToU8("Check tests.\n"),
+        "__MACOSX/repo-review/._SKILL.md": strToU8("metadata"),
+      }),
+    );
+
+    const capability = await store.importSkill({ sourcePath: archive });
+
+    expect(capability.manifest.name).toBe("repo-review");
+    await expect(store.listSkillFiles({ id: capability.manifest.id })).resolves.toEqual([
+      { path: "references/checklist.md", size: 13 },
+      { path: "SKILL.md", size: 60 },
+    ]);
+    await expect(
+      store.getSkillFile({
+        id: capability.manifest.id,
+        path: "references/checklist.md",
+      }),
+    ).resolves.toMatchObject({
+      capabilityId: capability.manifest.id,
+      revision: 1,
+      path: "references/checklist.md",
+      content: "Check tests.\n",
+    });
+  });
+
+  it("updates Skill files in a new revision while preserving identity and configuration", async () => {
+    const { directory, store } = await createStore();
+    const originalSource = join(directory, "original-skill");
+    const updatedSource = join(directory, "updated-skill");
+    await mkdir(originalSource);
+    await mkdir(join(updatedSource, "assets"), { recursive: true });
+    await writeFile(
+      join(originalSource, "SKILL.md"),
+      "---\nname: stable-name\ndescription: Stable description.\n---\n\nOriginal.\n",
+    );
+    await writeFile(
+      join(updatedSource, "SKILL.md"),
+      "---\nname: changed-name\ndescription: Changed description.\n---\n\nUpdated.\n",
+    );
+    await writeFile(join(updatedSource, "assets", "raw.bin"), new Uint8Array([0xff, 0xfe]));
+
+    const original = await store.importSkill({ sourcePath: originalSource });
+    if (original.definition.kind !== "skill") throw new Error("Expected a Skill capability.");
+    const updated = await store.updateSkill({
+      id: original.manifest.id,
+      sourcePath: updatedSource,
+    });
+
+    expect(updated.manifest).toMatchObject({
+      id: original.manifest.id,
+      runtimeKey: original.manifest.runtimeKey,
+      name: "stable-name",
+      latestRevision: 2,
+      createdAt: original.manifest.createdAt,
+    });
+    expect(updated.definition).toMatchObject({
+      kind: "skill",
+      name: "stable-name",
+      description: "Stable description.",
+    });
+    expect(updated.definition).not.toMatchObject({ contentHash: original.definition.contentHash });
+    await expect(
+      store.getSkillDocument({ id: original.manifest.id, revision: 1 }),
+    ).resolves.toMatchObject({ content: expect.stringContaining("Original.") });
+    await expect(
+      store.getSkillDocument({ id: original.manifest.id, revision: 2 }),
+    ).resolves.toMatchObject({ content: expect.stringContaining("Updated.") });
+    await expect(
+      store.getSkillFile({ id: original.manifest.id, revision: 2, path: "assets/raw.bin" }),
+    ).resolves.toMatchObject({ content: null, size: 2 });
+  });
+
+  it("reports corrupted or missing Skill package files with capability errors", async () => {
+    const { directory, store } = await createStore();
+    const source = join(directory, "source-skill");
+    await mkdir(source);
+    await writeFile(
+      join(source, "SKILL.md"),
+      "---\nname: readable\ndescription: Readable Skill.\n---\n",
+    );
+    const capability = await store.importSkill({ sourcePath: source });
+
+    await expect(
+      store.getSkillFile({ id: capability.manifest.id, path: "missing.md" }),
+    ).rejects.toMatchObject({
+      code: "config_invalid",
+      message: "The Skill file no longer exists.",
+    });
+
+    await rm(
+      join(directory, "capabilities", capability.manifest.id, "revisions", "000001", "payload"),
+      { recursive: true },
+    );
+    await expect(store.listSkillFiles({ id: capability.manifest.id })).rejects.toMatchObject({
+      code: "config_invalid",
+      message: "Skill readable has unreadable package files.",
+    });
+  });
+
   it("rejects ZIP path traversal", async () => {
     const { directory, store } = await createStore();
     const archive = join(directory, "unsafe.zip");

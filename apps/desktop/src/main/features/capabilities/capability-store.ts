@@ -19,7 +19,10 @@ import {
   SkillDocumentSchema,
   CreateCapabilitySchema,
   ImportSkillCapabilitySchema,
+  SkillFileContentSchema,
+  SkillFileEntrySchema,
   UpdateCapabilitySchema,
+  UpdateSkillCapabilitySchema,
   type Capability,
   type CapabilityDefinition,
   type CapabilityHealth,
@@ -28,11 +31,16 @@ import {
   type CapabilityTestResult,
   type CreateCapability,
   type ImportSkillCapability,
+  type GetSkillFile,
   type GetSkillDocument,
+  type ListSkillFiles,
   type SkillDocument,
+  type SkillFileContent,
+  type SkillFileEntry,
   type PreviewCodeServiceRequest,
   type PreviewCodeServiceResult,
   type UpdateCapability,
+  type UpdateSkillCapability,
 } from "../../../shared/contracts/index.ts";
 import type { CapabilityCredentialStore } from "./capability-credential-store.ts";
 import { classifyMcpError, toCoreMcpServer } from "./capability-verifier.ts";
@@ -45,8 +53,11 @@ export interface CapabilityStore {
   list(): Promise<Capability[]>;
   get(id: string, revision?: number): Promise<Capability>;
   getSkillDocument(input: GetSkillDocument): Promise<SkillDocument>;
+  listSkillFiles(input: ListSkillFiles): Promise<SkillFileEntry[]>;
+  getSkillFile(input: GetSkillFile): Promise<SkillFileContent>;
   skillFilesPath(id: string, revision: number): Promise<string>;
   importSkill(input: ImportSkillCapability): Promise<Capability>;
+  updateSkill(input: UpdateSkillCapability): Promise<Capability>;
   create(input: CreateCapability): Promise<Capability>;
   update(input: UpdateCapability): Promise<Capability>;
   retry(id: string): Promise<Capability>;
@@ -207,6 +218,65 @@ export function createCapabilityStore(options: {
       }
     },
 
+    async listSkillFiles(input) {
+      const capability = await readCapability(input.id, input.revision);
+      if (capability.definition.kind !== "skill") {
+        throw new CapabilityStoreError(
+          "config_invalid",
+          "Only Skill capabilities expose package files.",
+        );
+      }
+      try {
+        const revision = capability.manifest.latestRevision;
+        const payloadPath = join(revisionPath(capability.manifest.id, revision), "payload");
+        return SkillFileEntrySchema.array().parse(await listSkillFileEntries(payloadPath));
+      } catch (error) {
+        if (error instanceof CapabilityStoreError) throw error;
+        throw new CapabilityStoreError(
+          "config_invalid",
+          `Skill ${capability.manifest.name} has unreadable package files.`,
+        );
+      }
+    },
+
+    async getSkillFile(input) {
+      const capability = await readCapability(input.id, input.revision);
+      if (capability.definition.kind !== "skill") {
+        throw new CapabilityStoreError(
+          "config_invalid",
+          "Only Skill capabilities expose package files.",
+        );
+      }
+      const revision = capability.manifest.latestRevision;
+      const payloadPath = join(revisionPath(capability.manifest.id, revision), "payload");
+      const filePath = resolve(payloadPath, ...input.path.split("/"));
+      if (!isPathInside(payloadPath, filePath)) {
+        throw new CapabilityStoreError("config_invalid", "The Skill file path is invalid.");
+      }
+      try {
+        const info = await lstat(filePath);
+        if (!info.isFile()) {
+          throw new CapabilityStoreError("config_invalid", "The Skill file is not readable.");
+        }
+        const bytes = await readFile(filePath);
+        return SkillFileContentSchema.parse({
+          capabilityId: capability.manifest.id,
+          revision,
+          path: input.path,
+          size: info.size,
+          content: decodeTextFile(bytes),
+        });
+      } catch (error) {
+        if (error instanceof CapabilityStoreError) throw error;
+        throw new CapabilityStoreError(
+          "config_invalid",
+          (error as NodeJS.ErrnoException).code === "ENOENT"
+            ? "The Skill file no longer exists."
+            : "The Skill file is not readable.",
+        );
+      }
+    },
+
     async skillFilesPath(id, revision) {
       const capability = await readCapability(id, revision);
       if (capability.definition.kind !== "skill") {
@@ -264,6 +334,49 @@ export function createCapabilityStore(options: {
         await mkdir(options.capabilitiesPath, { recursive: true, mode: 0o700 });
         await rename(temporaryPath, targetPath);
         return await readCapability(id);
+      } catch (error) {
+        await rm(temporaryPath, { recursive: true, force: true });
+        throw error;
+      }
+    },
+    async updateSkill(rawInput) {
+      const input = UpdateSkillCapabilitySchema.parse(rawInput);
+      const current = await readCapability(input.id);
+      if (current.definition.kind !== "skill") {
+        throw new CapabilityStoreError(
+          "config_invalid",
+          "Only Skill capabilities can be updated here.",
+        );
+      }
+      const revision = current.manifest.latestRevision + 1;
+      const revisionsPath = join(capabilityPath(input.id), "revisions");
+      const temporaryPath = join(
+        revisionsPath,
+        `.${revisionDirectory(revision)}.${randomUUID()}.tmp`,
+      );
+      const payloadPath = join(temporaryPath, "payload");
+      await mkdir(payloadPath, { recursive: true, mode: 0o700 });
+      try {
+        await importSkillPayload(input.sourcePath, payloadPath);
+        await readFile(join(payloadPath, "SKILL.md"), "utf8");
+        const definition = CapabilityDefinitionSchema.parse({
+          ...current.definition,
+          contentHash: await hashDirectory(payloadPath),
+        });
+        await writeJson(join(temporaryPath, "definition.json"), definition);
+        await rename(temporaryPath, revisionPath(input.id, revision));
+        const timestamp = new Date().toISOString();
+        await writeJson(manifestPath(input.id), {
+          ...current.manifest,
+          latestRevision: revision,
+          updatedAt: timestamp,
+        });
+        await writeJson(healthPath(input.id), {
+          revision,
+          status: "ready",
+          checkedAt: timestamp,
+        });
+        return await readCapability(input.id);
       } catch (error) {
         await rm(temporaryPath, { recursive: true, force: true });
         throw error;
@@ -610,14 +723,29 @@ function validateDefinition(definition: CapabilityDefinition): CapabilityDefinit
 async function importSkillPayload(sourcePath: string, targetPath: string): Promise<void> {
   if (extname(sourcePath).toLowerCase() === ".zip") {
     const archive = unzipSync(new Uint8Array(await readFile(sourcePath)));
-    const files = Object.entries(archive).filter(([name]) => !name.endsWith("/"));
+    const files = Object.entries(archive)
+      .filter(([name]) => !name.endsWith("/"))
+      .map(([name, content]) => ({ path: validateArchivePath(name), content }));
     if (files.length > MAX_SKILL_FILES) throw importLimitError();
     let bytes = 0;
-    for (const [name, content] of files) {
-      validateArchivePath(name);
+    for (const { content } of files) {
       bytes += content.byteLength;
       if (bytes > MAX_SKILL_BYTES) throw importLimitError();
-      const target = join(targetPath, name);
+    }
+
+    const packageFiles = files.filter(({ path }) => !isMacOsArchiveMetadata(path));
+    const packageRoot = skillArchiveRoot(packageFiles.map(({ path }) => path));
+    const writtenPaths = new Set<string>();
+    for (const { path, content } of packageFiles) {
+      const relativePath = packageRoot.length === 0 ? path : path.slice(packageRoot.length + 1);
+      if (writtenPaths.has(relativePath)) {
+        throw new CapabilityStoreError(
+          "import_invalid",
+          "The Skill ZIP contains duplicate file paths.",
+        );
+      }
+      writtenPaths.add(relativePath);
+      const target = join(targetPath, ...relativePath.split("/"));
       await mkdir(resolve(target, ".."), { recursive: true, mode: 0o700 });
       await writeFile(target, content, { mode: 0o600 });
     }
@@ -659,11 +787,41 @@ async function copySkillDirectory(
   }
 }
 
-function validateArchivePath(name: string): void {
+function validateArchivePath(name: string): string {
   const normalized = name.replaceAll("\\", "/");
-  if (normalized.startsWith("/") || normalized.split("/").includes("..")) {
+  const segments = normalized.split("/");
+  if (
+    normalized.startsWith("/") ||
+    /^[a-zA-Z]:\//.test(normalized) ||
+    normalized.includes("\0") ||
+    segments.some((segment) => segment.length === 0 || segment === "." || segment === "..")
+  ) {
     throw new CapabilityStoreError("import_invalid", "The Skill ZIP contains an unsafe path.");
   }
+  return normalized;
+}
+
+function isMacOsArchiveMetadata(path: string): boolean {
+  return path === ".DS_Store" || path.startsWith("__MACOSX/") || path.endsWith("/.DS_Store");
+}
+
+function skillArchiveRoot(paths: readonly string[]): string {
+  if (paths.includes("SKILL.md")) return "";
+  const candidates = paths
+    .filter((path) => path.endsWith("/SKILL.md"))
+    .map((path) => path.slice(0, -"/SKILL.md".length));
+  const packageRoots = candidates.filter((root) =>
+    paths.every((path) => path.startsWith(`${root}/`)),
+  );
+  if (packageRoots.length !== 1) {
+    throw new CapabilityStoreError(
+      "import_invalid",
+      candidates.length === 0
+        ? "The Skill ZIP must contain a SKILL.md file."
+        : "The Skill ZIP must contain one Skill directory with a root SKILL.md file.",
+    );
+  }
+  return packageRoots[0]!;
 }
 
 function importLimitError(): CapabilityStoreError {
@@ -727,6 +885,33 @@ async function listFiles(path: string): Promise<string[]> {
     else if (entry.isFile()) output.push(target);
   }
   return output;
+}
+
+async function listSkillFileEntries(path: string): Promise<SkillFileEntry[]> {
+  const output: SkillFileEntry[] = [];
+  for (const file of await listFiles(path)) {
+    const info = await lstat(file);
+    output.push({
+      path: relative(path, file).split(sep).join("/"),
+      size: info.size,
+    });
+  }
+  return output.toSorted((left, right) => left.path.localeCompare(right.path));
+}
+
+function decodeTextFile(bytes: Uint8Array): string | null {
+  try {
+    return new TextDecoder("utf-8", { fatal: true }).decode(bytes);
+  } catch {
+    return null;
+  }
+}
+
+function isPathInside(parent: string, candidate: string): boolean {
+  const pathFromParent = relative(resolve(parent), candidate);
+  return (
+    pathFromParent.length > 0 && !pathFromParent.startsWith(`..${sep}`) && pathFromParent !== ".."
+  );
 }
 
 function createRuntimeKey(name: string, id: string): string {

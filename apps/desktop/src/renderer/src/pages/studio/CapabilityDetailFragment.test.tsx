@@ -4,6 +4,7 @@ import { describe, expect, it } from "vitest";
 import type { Capability } from "../../../../shared/contracts/index.ts";
 import {
   CapabilityDetailFragment,
+  formatFileSize,
   parseTestInput,
   skillMarkdownBody,
 } from "./CapabilityDetailFragment.tsx";
@@ -142,6 +143,12 @@ describe("CapabilityDetailFragment", () => {
     const source = "---\nname: review\ndescription: Review code.\n---\n\n# Review\n\nRun tests.";
 
     expect(skillMarkdownBody(source)).toBe("# Review\n\nRun tests.");
+  });
+
+  it("formats Skill file sizes for the file browser", () => {
+    expect(formatFileSize(12)).toBe("12 B");
+    expect(formatFileSize(1536)).toBe("1.5 KiB");
+    expect(formatFileSize(2 * 1024 * 1024)).toBe("2.0 MiB");
   });
 
   it("requires test input to be a JSON object", () => {

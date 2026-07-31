@@ -7706,6 +7706,41 @@ p {
   box-shadow: var(--shadow-soft);
 }
 
+.skill-content-tabs {
+  display: flex;
+  gap: 4px;
+  padding: 8px 12px 0;
+  border-bottom: 1px solid var(--border);
+  background: var(--surface-muted);
+}
+
+.skill-content-tabs button {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  padding: 9px 12px;
+  border: 0;
+  border-bottom: 2px solid transparent;
+  background: transparent;
+  color: var(--muted);
+  font-size: 12px;
+  font-weight: 650;
+}
+
+.skill-content-tabs button.is-active {
+  border-bottom-color: var(--green);
+  color: var(--text);
+}
+
+.skill-content-tabs button span {
+  min-width: 18px;
+  padding: 1px 5px;
+  border-radius: 999px;
+  background: #e4e9e5;
+  font-size: 10px;
+  text-align: center;
+}
+
 .skill-document > header {
   display: flex;
   align-items: center;
@@ -7732,6 +7767,91 @@ p {
 .skill-markdown,
 .skill-document-source {
   padding: 28px 32px;
+}
+
+.skill-file-browser {
+  display: grid;
+  min-height: 400px;
+  grid-template-columns: minmax(190px, 0.32fr) minmax(0, 1fr);
+}
+
+.skill-file-browser > aside {
+  overflow: auto;
+  border-right: 1px solid var(--border);
+  background: var(--surface-muted);
+}
+
+.skill-file-browser > aside button {
+  display: grid;
+  width: 100%;
+  gap: 3px;
+  padding: 11px 14px;
+  border: 0;
+  border-bottom: 1px solid var(--border);
+  background: transparent;
+  color: var(--text);
+  text-align: left;
+}
+
+.skill-file-browser > aside button:hover,
+.skill-file-browser > aside button.is-active {
+  background: #fff;
+}
+
+.skill-file-browser > aside button.is-active {
+  box-shadow: inset 3px 0 0 var(--green);
+}
+
+.skill-file-browser > aside button span {
+  overflow-wrap: anywhere;
+  font-family: "SFMono-Regular", Consolas, monospace;
+  font-size: 11px;
+}
+
+.skill-file-browser > aside button small,
+.skill-file-browser > section > header span {
+  color: var(--muted);
+  font-size: 10px;
+}
+
+.skill-file-browser > aside > p {
+  padding: 18px 14px;
+  color: var(--muted);
+  font-size: 12px;
+}
+
+.skill-file-browser > section {
+  min-width: 0;
+}
+
+.skill-file-browser > section > header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+  padding: 15px 18px;
+  border-bottom: 1px solid var(--border);
+}
+
+.skill-file-browser > section > header h2 {
+  overflow: hidden;
+  font-family: "SFMono-Regular", Consolas, monospace;
+  font-size: 12px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.skill-file-content {
+  overflow: auto;
+  min-height: 340px;
+  max-height: 65vh;
+  margin: 0;
+  padding: 20px;
+  background: #f3f5f4;
+  font-family: "SFMono-Regular", Consolas, monospace;
+  font-size: 11px;
+  line-height: 1.6;
+  white-space: pre;
 }
 
 .skill-markdown {
