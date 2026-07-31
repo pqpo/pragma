@@ -1,5 +1,6 @@
-import { mkdir, rm, stat } from "node:fs/promises";
-import { dirname } from "node:path";
+import { randomUUID } from "node:crypto";
+import { mkdir, open, readFile, rm, stat } from "node:fs/promises";
+import { dirname, join } from "node:path";
 
 interface LocalLockWaiter {
   cancelled: boolean;
@@ -7,6 +8,31 @@ interface LocalLockWaiter {
   readonly grant: () => void;
 }
 
+interface FileLockOwner {
+  readonly version: 1;
+  readonly ownerToken: string;
+  readonly processId: number;
+  readonly processStartedAt: number;
+  readonly acquiredAt: number;
+}
+
+type LockContention =
+  | { readonly kind: "active"; readonly owner: FileLockOwner }
+  | {
+      readonly kind: "possibly-orphaned";
+      readonly reason:
+        | "missing-owner-metadata"
+        | "owner-process-exited"
+        | "owner-status-unavailable";
+    };
+
+type LockGeneration =
+  | { readonly ownerToken: string }
+  | { readonly ownerToken?: undefined; readonly device: number; readonly inode: number };
+
+const OWNER_FILE_NAME = "owner.json";
+const RECLAIM_DIRECTORY_NAME = ".reclaim";
+const CURRENT_PROCESS_STARTED_AT = Date.now() - Math.floor(process.uptime() * 1_000);
 const localLockWaiters = new Map<string, LocalLockWaiter[]>();
 
 export async function withFileLock<TValue>(
@@ -39,36 +65,75 @@ async function withCrossProcessFileLock<TValue>(
     `creating the Pragma lock parent: ${lockDir}`,
   );
 
+  let latestContention: LockContention = {
+    kind: "possibly-orphaned",
+    reason: "missing-owner-metadata",
+  };
   while (true) {
     try {
       await mkdir(lockDir);
       break;
     } catch (error) {
       if (!isRetryableLockContention(error)) throw error;
-      if (isAlreadyExists(error) && (await isStaleLock(lockDir, staleMs))) {
-        try {
-          await rm(lockDir, { recursive: true, force: true });
+      if (isAlreadyExists(error)) {
+        const assessment = await assessLock(lockDir, staleMs);
+        latestContention = assessment.contention;
+        if (
+          assessment.reclaimGeneration !== undefined &&
+          (await reclaimLock(lockDir, assessment.reclaimGeneration))
+        ) {
           continue;
-        } catch (removeError) {
-          if (!isRetryableLockContention(removeError)) throw removeError;
         }
       }
       if (Date.now() - startedAt >= timeoutMs) {
-        throw new Error(`Timed out waiting for Pragma file lock: ${lockDir}`, { cause: error });
+        throw lockTimeout(lockDir, latestContention, error);
       }
       await delay(10);
     }
   }
 
+  const owner: FileLockOwner = {
+    version: 1,
+    ownerToken: randomUUID(),
+    processId: process.pid,
+    processStartedAt: CURRENT_PROCESS_STARTED_AT,
+    acquiredAt: Date.now(),
+  };
+  const ownerPath = join(lockDir, OWNER_FILE_NAME);
+  let ownerFile: Awaited<ReturnType<typeof open>> | undefined;
+  try {
+    ownerFile = await open(ownerPath, "wx", 0o600);
+    await ownerFile.writeFile(`${JSON.stringify(owner)}\n`, "utf8");
+  } catch (error) {
+    await ownerFile?.close().catch(() => undefined);
+    await rm(lockDir, { recursive: true, force: true });
+    throw error;
+  }
+  if (ownerFile === undefined) throw new Error(`Failed to initialize Pragma file lock: ${lockDir}`);
+
+  const refreshIntervalMs = Math.max(10, Math.min(1_000, Math.floor(staleMs / 3)));
+  const leaseTimer = setInterval(() => {
+    const now = new Date();
+    void ownerFile.utimes(now, now).catch(() => undefined);
+  }, refreshIntervalMs);
+  leaseTimer.unref();
+
   try {
     return await operation();
   } finally {
-    await retryTransientFsOperation(
-      () => rm(lockDir, { recursive: true, force: true }),
-      Date.now(),
-      timeoutMs,
-      `releasing the Pragma file lock: ${lockDir}`,
-    );
+    clearInterval(leaseTimer);
+    try {
+      await ownerFile.close();
+    } finally {
+      if ((await readLockOwner(ownerPath))?.ownerToken === owner.ownerToken) {
+        await retryTransientFsOperation(
+          () => rm(lockDir, { recursive: true, force: true }),
+          Date.now(),
+          timeoutMs,
+          `releasing the Pragma file lock: ${lockDir}`,
+        );
+      }
+    }
   }
 }
 
@@ -123,14 +188,167 @@ function localLockTimeout(lockDir: string): Error {
   return new Error(`Timed out waiting for Pragma in-process file lock: ${lockDir}`);
 }
 
-async function isStaleLock(lockDir: string, staleMs: number): Promise<boolean> {
+async function assessLock(
+  lockDir: string,
+  staleMs: number,
+): Promise<{
+  readonly reclaimGeneration?: LockGeneration | undefined;
+  readonly contention: LockContention;
+}> {
+  const ownerPath = join(lockDir, OWNER_FILE_NAME);
+  const owner = await readLockOwner(ownerPath);
+  if (owner !== undefined) {
+    const status = processStatus(owner);
+    if (status === "dead") {
+      return {
+        reclaimGeneration: { ownerToken: owner.ownerToken },
+        contention: { kind: "possibly-orphaned", reason: "owner-process-exited" },
+      };
+    }
+    if (status === "alive") {
+      return { contention: { kind: "active", owner } };
+    }
+    return {
+      reclaimGeneration: (await isStalePath(ownerPath, staleMs))
+        ? { ownerToken: owner.ownerToken }
+        : undefined,
+      contention: { kind: "possibly-orphaned", reason: "owner-status-unavailable" },
+    };
+  }
+  const generation = await readDirectoryGeneration(lockDir);
+  const ownerLease = await pathStaleness(ownerPath, staleMs);
+  const reclaim =
+    ownerLease === "stale" ||
+    (ownerLease === "missing" && (await pathStaleness(lockDir, staleMs)) === "stale");
+  return {
+    reclaimGeneration: generation !== undefined && reclaim ? generation : undefined,
+    contention: { kind: "possibly-orphaned", reason: "missing-owner-metadata" },
+  };
+}
+
+async function reclaimLock(lockDir: string, expected: LockGeneration): Promise<boolean> {
+  const reclaimDir = join(lockDir, RECLAIM_DIRECTORY_NAME);
   try {
-    return Date.now() - (await stat(lockDir)).mtimeMs > staleMs;
+    await mkdir(reclaimDir);
   } catch (error) {
-    if (isNotFound(error)) return false;
-    if (isRetryableLockContention(error)) return false;
+    if (isAlreadyExists(error) || isNotFound(error) || isRetryableLockContention(error)) {
+      return false;
+    }
     throw error;
   }
+
+  if (!(await lockGenerationMatches(lockDir, expected))) {
+    await rm(reclaimDir, { recursive: true, force: true });
+    return false;
+  }
+  try {
+    await rm(lockDir, { recursive: true, force: true });
+    return true;
+  } catch (error) {
+    await rm(reclaimDir, { recursive: true, force: true }).catch(() => undefined);
+    if (isNotFound(error) || isRetryableLockContention(error)) return false;
+    throw error;
+  }
+}
+
+async function lockGenerationMatches(lockDir: string, expected: LockGeneration): Promise<boolean> {
+  const owner = await readLockOwner(join(lockDir, OWNER_FILE_NAME));
+  if (expected.ownerToken !== undefined) return owner?.ownerToken === expected.ownerToken;
+  if (owner !== undefined) return false;
+  const current = await readDirectoryGeneration(lockDir);
+  return current?.device === expected.device && current.inode === expected.inode;
+}
+
+async function readDirectoryGeneration(
+  lockDir: string,
+): Promise<{ readonly device: number; readonly inode: number } | undefined> {
+  try {
+    const metadata = await stat(lockDir);
+    return { device: metadata.dev, inode: metadata.ino };
+  } catch (error) {
+    if (isNotFound(error) || isRetryableLockContention(error)) return undefined;
+    throw error;
+  }
+}
+
+async function readLockOwner(ownerPath: string): Promise<FileLockOwner | undefined> {
+  try {
+    const value: unknown = JSON.parse(await readFile(ownerPath, "utf8"));
+    if (typeof value !== "object" || value === null) return undefined;
+    const candidate = value as Partial<FileLockOwner>;
+    if (
+      candidate.version !== 1 ||
+      typeof candidate.ownerToken !== "string" ||
+      candidate.ownerToken.length === 0 ||
+      !Number.isSafeInteger(candidate.processId) ||
+      (candidate.processId ?? 0) <= 0 ||
+      typeof candidate.processStartedAt !== "number" ||
+      !Number.isFinite(candidate.processStartedAt) ||
+      typeof candidate.acquiredAt !== "number" ||
+      !Number.isFinite(candidate.acquiredAt)
+    ) {
+      return undefined;
+    }
+    return candidate as FileLockOwner;
+  } catch (error) {
+    if (error instanceof SyntaxError || isNotFound(error) || isRetryableLockContention(error)) {
+      return undefined;
+    }
+    throw error;
+  }
+}
+
+function processStatus(owner: FileLockOwner): "alive" | "dead" | "unknown" {
+  if (owner.processId === process.pid) {
+    return owner.processStartedAt === CURRENT_PROCESS_STARTED_AT ? "alive" : "dead";
+  }
+  try {
+    process.kill(owner.processId, 0);
+    return "alive";
+  } catch (error) {
+    const code = readErrorCode(error);
+    if (code === "ESRCH") return "dead";
+    if (code === "EPERM") return "alive";
+    return "unknown";
+  }
+}
+
+async function isStalePath(path: string, staleMs: number): Promise<boolean> {
+  return (await pathStaleness(path, staleMs)) === "stale";
+}
+
+async function pathStaleness(
+  path: string,
+  staleMs: number,
+): Promise<"fresh" | "stale" | "missing" | "unknown"> {
+  try {
+    return Date.now() - (await stat(path)).mtimeMs > staleMs ? "stale" : "fresh";
+  } catch (error) {
+    if (isNotFound(error)) return "missing";
+    if (isRetryableLockContention(error)) return "unknown";
+    throw error;
+  }
+}
+
+function lockTimeout(lockDir: string, contention: LockContention, cause: unknown): Error {
+  if (contention.kind === "active") {
+    return new Error(
+      `Timed out waiting for active Pragma file lock: ${lockDir} (owner PID ${contention.owner.processId})`,
+      { cause },
+    );
+  }
+  const reason =
+    contention.reason === "missing-owner-metadata"
+      ? "owner metadata is missing or invalid"
+      : contention.reason === "owner-process-exited"
+        ? "owner process no longer exists"
+        : "owner process status could not be confirmed";
+  return new Error(
+    `Timed out waiting for possibly orphaned Pragma file lock: ${lockDir} (${reason})`,
+    {
+      cause,
+    },
+  );
 }
 
 async function retryTransientFsOperation(
