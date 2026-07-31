@@ -15688,6 +15688,11 @@ textarea:focus-visible,
   padding: 0;
 }
 
+.home-mission-create
+  > .mission-create:has(.mission-executor-picker.is-open, .mission-executor-manager-backdrop) {
+  z-index: 4;
+}
+
 .expert-constellation {
   position: absolute;
   z-index: 3;
