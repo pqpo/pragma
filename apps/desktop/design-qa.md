@@ -1,3 +1,86 @@
+# Home Expert Constellation Design QA
+
+- Source visual truth: `design-qa/home-constellation-reference.png`
+  - Original generated result:
+    `/Users/linminqiu/.codex/generated_images/019fb3af-94fb-7af0-b04c-4976588bc971/call_dCs8pTzGeOZOqqrZshMEG6Jj.png`
+- Implementation screenshot: `design-qa/home-constellation-resting.png`
+- Combined comparison: `design-qa/home-constellation-comparison.png`
+- Focused-state evidence: `design-qa/home-constellation-focused.png` and
+  `design-qa/home-constellation-tooltip.png`
+- Viewport: 1440 × 900 CSS pixels at DPR 2
+- Density normalization:
+  - Source: 1586 × 992 pixels, normalized to 1440 × 900.
+  - Implementation: 2880 × 1800 pixels, normalized to 1440 × 900 for comparison.
+- State: Home with the navigation rail collapsed, an empty Mission composer, the default workspace,
+  and the resting expert constellation.
+
+**Findings**
+
+- No actionable P0, P1, or P2 visual differences remain.
+- Fonts and typography preserve the existing Inter/SF Pro stack, weight hierarchy, line height, and
+  antialiasing. The constellation status and expert-node labels remain subordinate to the Home
+  heading and composer.
+- Spacing and layout rhythm keep the existing 900px-wide, 380px-tall Mission composer unchanged.
+  The constellation occupies the unused upper field, leaves the centered title unobstructed, and
+  does not introduce another panel or card.
+- Colors and visual tokens reuse the existing graphite, sage, lime, border, focus, and shadow
+  tokens. The lines and nodes are intentionally low-opacity in the resting state and fade further
+  when the composer receives focus.
+- Image and asset fidelity: the constellation is an interactive canvas layer, while the three
+  discoverable expert nodes use the existing Phosphor icon library. The implementation preserves
+  the current Pragma application icon instead of replacing it with the generated reference's older
+  letter mark.
+- Copy and content use localized strings for English, Simplified Chinese, and Traditional Chinese.
+  Existing product-real Home copy, workspace data, and executor/model controls remain unchanged.
+
+**Full-view comparison evidence**
+
+- The normalized source and implementation were opened together in
+  `design-qa/home-constellation-comparison.png`.
+- Both retain the collapsed application rail, centered Home heading, single dominant composer,
+  sparse two-sided node graph, central ready status, and generous lower whitespace.
+- The implementation intentionally preserves the current product shell, brand asset, placeholder,
+  and resolved model controls instead of copying stale generated content.
+
+**Focused region comparison evidence**
+
+- `design-qa/home-constellation-tooltip.png` verifies that clicking a special node reveals one
+  compact expert label without shifting layout or covering the Mission composer.
+- `design-qa/home-constellation-focused.png` verifies that composer focus dims the complete ambient
+  layer while keeping the focus boundary and form controls dominant.
+
+**Interactions and diagnostics**
+
+- Verified cursor-proximity response, slow resting drift, occasional node pulse, special-node click
+  disclosure, composer-focus fade, and localized ready copy in the running Electron app.
+- Verified `prefers-reduced-motion: reduce`: node drift and pointer displacement stop, and the
+  status-dot CSS animation resolves to `none`.
+- Submit sequencing is driven only by the existing `saving` state; static component coverage
+  verifies the `is-submitting` state and localized orchestrating copy without creating a persisted
+  Mission during QA.
+- Browser viewport remained 1440 × 900 with a 2704 × 1800 canvas backing store for the 1352 × 900
+  Home content region at DPR 2.
+- Renderer console and runtime exception collection reported no errors or warnings.
+- Desktop lint and node/web typechecks passed. The focused Home test file passed 13/13 tests.
+
+**Comparison history**
+
+- Pass 1: found a P2 vertical-composition mismatch: the ready status sat about 22px above the source,
+  and the constellation was too shallow and slightly too strong.
+- Fix: moved the ready status to 14.5% of the Home viewport, extended the node distribution
+  vertically, and reduced resting line/node opacity.
+- Pass 2: the revised resting capture aligned the status and graph field with the selected concept;
+  no actionable P0, P1, or P2 differences remained.
+
+**Follow-up Polish**
+
+- P3: tune the exact drift amplitude after observing the animation during longer real-world use if
+  it feels too quiet or too active. The current values stay within a 1.4–3px range.
+
+final result: passed
+
+---
+
 # Home Mission Composer Design QA
 
 - Source visual truth: `/tmp/codex-remote-attachments/019f7d75-4f4a-7cb1-98eb-f65af5988432/67a59236-a701-44f9-82f8-036d2bd3b341/1-Photo-1.jpg`

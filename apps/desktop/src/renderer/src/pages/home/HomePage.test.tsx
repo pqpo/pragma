@@ -11,7 +11,29 @@ import {
   uniqueWorkspaces,
   workspacePathsEqual,
 } from "./HomePage.tsx";
+import { ExpertConstellation } from "./ExpertConstellation.tsx";
 import { SchemaInputForm, createSchemaInputValue, isSchemaInputValid } from "./SchemaInputForm.tsx";
+
+describe("ExpertConstellation", () => {
+  it("renders the quiet ready state with discoverable expert nodes", () => {
+    const html = renderToStaticMarkup(<ExpertConstellation focused={false} submitting={false} />);
+
+    expect(html).toContain("Experts ready");
+    expect(html).toContain('aria-label="Repository analysis expert"');
+    expect(html).toContain('aria-label="Execution expert"');
+    expect(html).toContain('aria-label="Synthesis expert"');
+    expect(html).not.toContain("is-focused");
+    expect(html).not.toContain("is-submitting");
+  });
+
+  it("fades for composition and announces the submitting visual state", () => {
+    const html = renderToStaticMarkup(<ExpertConstellation focused={true} submitting={true} />);
+
+    expect(html).toContain("is-focused");
+    expect(html).toContain("is-submitting");
+    expect(html).toContain("Orchestrating experts…");
+  });
+});
 
 describe("MissionModelOverrideControls", () => {
   it("shows generic defaults before discovery without exposing the Runtime", () => {
