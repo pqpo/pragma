@@ -27,6 +27,7 @@ import {
 } from "@pragma/shared";
 import type { PragmaProjectSnapshot } from "../../../../shared/contracts/index.ts";
 
+import { CharacterCount } from "../../components/CharacterCount.tsx";
 import { errorMessage } from "../../lib/errors.ts";
 import { StudioScreenFrame } from "./StudioScreenFrame.tsx";
 import { desktopApi } from "./studio-model.ts";
@@ -939,6 +940,7 @@ function MetadataFields(props: {
             )
           }
         />
+        <CharacterCount value={props.name} max={PRAGMA_TEXT_LIMITS.expertTeam.name} />
       </label>
       <label>
         {t("description")}
@@ -955,6 +957,7 @@ function MetadataFields(props: {
             )
           }
         />
+        <CharacterCount value={props.description} max={PRAGMA_TEXT_LIMITS.expertTeam.description} />
       </label>
     </>
   );

@@ -5,7 +5,11 @@ import type {
   PragmaFlowResource,
 } from "@pragma/interpreter/ast";
 import { analyzePragmaFlowNodeAvailability } from "@pragma/interpreter/ast";
-import { PRAGMA_TEXT_LIMITS, truncatePragmaTrimmedUnicode } from "@pragma/shared";
+import {
+  PRAGMA_TEXT_LIMITS,
+  pragmaUnicodeLength,
+  truncatePragmaTrimmedUnicode,
+} from "@pragma/shared";
 import {
   useId,
   useLayoutEffect,
@@ -17,6 +21,7 @@ import {
 import { useTranslation } from "react-i18next";
 
 import { stepOutputSchema } from "./flow-canvas-model.ts";
+import { CharacterCount } from "../../../components/CharacterCount.tsx";
 
 interface FlowVariableOption {
   readonly key: string;
@@ -47,6 +52,14 @@ export function PromptTemplateEditor(props: {
   );
   const promptIsEmpty = prompt.segments.every(
     (segment) => "text" in segment && segment.text.length === 0,
+  );
+  const longestTextSegment = prompt.segments.reduce(
+    (longest, segment) =>
+      "text" in segment &&
+      pragmaUnicodeLength(segment.text.trim()) > pragmaUnicodeLength(longest.trim())
+        ? segment.text
+        : longest,
+    "",
   );
 
   useLayoutEffect(() => {
@@ -249,7 +262,13 @@ export function PromptTemplateEditor(props: {
             <Code size={14} />
             {t("insertVariable")}
           </button>
-          <small>{t("flowPromptVariableHint")}</small>
+          <span className="flow-prompt-meta">
+            <small>{t("flowPromptVariableHint")}</small>
+            <CharacterCount
+              value={longestTextSegment}
+              max={PRAGMA_TEXT_LIMITS.flow.promptTextSegment}
+            />
+          </span>
         </div>
         {variableMenuOpen ? (
           <div className="flow-variable-menu" role="listbox" aria-label={t("insertVariable")}>

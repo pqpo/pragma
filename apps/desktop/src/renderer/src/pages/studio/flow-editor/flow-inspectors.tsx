@@ -25,6 +25,7 @@ import { useTranslation } from "react-i18next";
 import { stringify } from "yaml";
 
 import type { DesktopRuntimeAvailability } from "../../../../../shared/contracts/index.ts";
+import { CharacterCount } from "../../../components/CharacterCount.tsx";
 import { SelectMenu } from "../../../components/SelectMenu.tsx";
 import { flowStepKind, flowStepTarget, type FlowStep } from "./flow-model.ts";
 import {
@@ -93,6 +94,7 @@ export function FlowSettings(props: {
             })
           }
         />
+        <CharacterCount value={props.flow.metadata.name} max={PRAGMA_TEXT_LIMITS.flow.name} />
       </InspectorField>
       <InspectorField label="Description">
         <textarea
@@ -107,6 +109,10 @@ export function FlowSettings(props: {
               );
             })
           }
+        />
+        <CharacterCount
+          value={props.flow.metadata.description}
+          max={PRAGMA_TEXT_LIMITS.flow.description}
         />
       </InspectorField>
       <div className="flow-inspector-grid">

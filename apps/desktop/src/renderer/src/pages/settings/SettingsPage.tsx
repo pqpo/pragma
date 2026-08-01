@@ -1,6 +1,11 @@
-import { useState } from "react";
+import { useState, type CSSProperties } from "react";
 import { useTranslation } from "react-i18next";
 
+import { SidebarResizeHandle } from "../../components/SidebarResizeHandle.tsx";
+import {
+  SIDEBAR_WIDTH_PREFERENCES,
+  usePersistentSidebarWidth,
+} from "../../lib/sidebar-width-preference.ts";
 import { GeneralSettingsFragment } from "./GeneralSettingsFragment.tsx";
 import { ModelProvidersFragment } from "./ModelProvidersFragment.tsx";
 import { RuntimeEnvironmentsFragment } from "./RuntimeEnvironmentsFragment.tsx";
@@ -10,9 +15,15 @@ export type SettingsView = "general" | "models" | "runtimes";
 export function SettingsPage(props: { readonly initialView?: SettingsView } = {}) {
   const { t } = useTranslation("settings");
   const [activeView, setActiveView] = useState<SettingsView>(props.initialView ?? "general");
+  const [navigationWidth, setNavigationWidth] = usePersistentSidebarWidth(
+    SIDEBAR_WIDTH_PREFERENCES.settings,
+  );
 
   return (
-    <section className="settings-page">
+    <section
+      className="settings-page"
+      style={{ "--sidebar-width": `${navigationWidth}px` } as CSSProperties}
+    >
       <nav className="settings-navigation" aria-label={t("navigationLabel")}>
         <button
           className={activeView === "general" ? "settings-nav-item is-active" : "settings-nav-item"}
@@ -44,6 +55,12 @@ export function SettingsPage(props: { readonly initialView?: SettingsView } = {}
           {t("runtimes.navigation")}
         </button>
       </nav>
+      <SidebarResizeHandle
+        label={t("navigation.resize", { ns: "common" })}
+        width={navigationWidth}
+        preference={SIDEBAR_WIDTH_PREFERENCES.settings}
+        onResize={setNavigationWidth}
+      />
 
       <div className="settings-content">
         {activeView === "general" ? (

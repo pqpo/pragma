@@ -13,6 +13,7 @@ describe("SettingsPage", () => {
     const html = renderToStaticMarkup(<SettingsPage />);
 
     expect(html).toContain('class="settings-navigation"');
+    expect(html).toContain('aria-label="Resize navigation"');
     expect(html).toContain('class="settings-content"');
     expect(html).toContain('class="settings-screen-header"');
     expect(html).toContain('class="settings-screen-body"');

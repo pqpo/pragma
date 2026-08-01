@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState, type CSSProperties } from "react";
 import { useTranslation } from "react-i18next";
 import type { TFunction } from "i18next";
 import {
@@ -19,6 +19,11 @@ import {
 
 import type { PragmaProjectSnapshot } from "../../../../shared/contracts/index.ts";
 import { errorMessage } from "../../lib/errors.ts";
+import { SidebarResizeHandle } from "../../components/SidebarResizeHandle.tsx";
+import {
+  SIDEBAR_WIDTH_PREFERENCES,
+  usePersistentSidebarWidth,
+} from "../../lib/sidebar-width-preference.ts";
 import { StudioConfirmationDialog } from "../studio/StudioDialog.tsx";
 import { desktopApi } from "../studio/studio-model.ts";
 
@@ -51,6 +56,9 @@ export function EvaluationDirectoryFragment(props: {
   readonly onDelete: (evaluation: PragmaEvaluationResource) => Promise<void>;
 }) {
   const { t, i18n } = useTranslation("studio");
+  const [navigationWidth, setNavigationWidth] = usePersistentSidebarWidth(
+    SIDEBAR_WIDTH_PREFERENCES.evaluations,
+  );
   const [error, setError] = useState<string | null>(null);
   const [allocating, setAllocating] = useState(false);
   const [deleting, setDeleting] = useState(false);
@@ -159,7 +167,11 @@ export function EvaluationDirectoryFragment(props: {
   };
 
   return (
-    <section className="evaluation-directory" aria-labelledby="evaluations-heading">
+    <section
+      className="evaluation-directory"
+      aria-labelledby="evaluations-heading"
+      style={{ "--sidebar-width": `${navigationWidth}px` } as CSSProperties}
+    >
       <aside className="evaluation-target-directory" aria-label={t("evaluationTargets")}>
         <label className="evaluation-target-search">
           <MagnifyingGlass size={17} aria-hidden="true" />
@@ -230,6 +242,12 @@ export function EvaluationDirectoryFragment(props: {
           })}
         </div>
       </aside>
+      <SidebarResizeHandle
+        label={t("navigation.resize", { ns: "common" })}
+        width={navigationWidth}
+        preference={SIDEBAR_WIDTH_PREFERENCES.evaluations}
+        onResize={setNavigationWidth}
+      />
 
       <div className="evaluation-directory-main">
         <section className="evaluation-target-workspace" aria-live="polite">

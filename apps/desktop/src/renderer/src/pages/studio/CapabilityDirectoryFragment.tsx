@@ -23,6 +23,7 @@ import {
   type CapabilityDefinition,
   type PreviewCodeServiceResult,
 } from "../../../../shared/contracts/index.ts";
+import { CharacterCount } from "../../components/CharacterCount.tsx";
 import { SelectMenu } from "../../components/SelectMenu.tsx";
 import { errorMessage } from "../../lib/errors.ts";
 import { StudioScreenFrame } from "./StudioScreenFrame.tsx";
@@ -1025,6 +1026,7 @@ function McpForm(props: {
           }
           placeholder="Web Search"
         />
+        <CharacterCount value={value.name} max={PRAGMA_TEXT_LIMITS.capability.name} />
       </label>
       <label>
         {t("description")}
@@ -1041,6 +1043,7 @@ function McpForm(props: {
             })
           }
         />
+        <CharacterCount value={value.description} max={PRAGMA_TEXT_LIMITS.capability.description} />
       </label>
       <div className="capability-form-field">
         <span>{t("transport")}</span>
@@ -1161,6 +1164,7 @@ function HttpForm(props: {
           }
           placeholder="Customer API"
         />
+        <CharacterCount value={value.name} max={PRAGMA_TEXT_LIMITS.capability.name} />
       </label>
       <label>
         {t("description")}
@@ -1176,6 +1180,7 @@ function HttpForm(props: {
             })
           }
         />
+        <CharacterCount value={value.description} max={PRAGMA_TEXT_LIMITS.capability.description} />
       </label>
       <label>
         {t("baseUrl")}
@@ -1396,6 +1401,7 @@ function CodeForm(props: {
           }
           placeholder="Data formatter"
         />
+        <CharacterCount value={value.name} max={PRAGMA_TEXT_LIMITS.capability.name} />
       </label>
       <label>
         {t("description")}
@@ -1411,6 +1417,7 @@ function CodeForm(props: {
             })
           }
         />
+        <CharacterCount value={value.description} max={PRAGMA_TEXT_LIMITS.capability.description} />
       </label>
       <div className="capability-form-grid">
         <label>

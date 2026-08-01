@@ -31,6 +31,7 @@ import type {
   CreateContextStore,
   ExpertContextStoreMount,
 } from "../../../../shared/contracts/index.ts";
+import { CharacterCount } from "../../components/CharacterCount.tsx";
 import { MarkdownContent } from "../../components/MarkdownContent.tsx";
 import { SelectMenu } from "../../components/SelectMenu.tsx";
 import { errorMessage } from "../../lib/errors.ts";
@@ -1230,6 +1231,7 @@ export function ContextStoreCreatorDrawer(props: {
                     }
                     autoFocus
                   />
+                  <CharacterCount value={name} max={PRAGMA_TEXT_LIMITS.contextStore.name} />
                 </label>
                 <label>
                   {t("description")}
@@ -1244,6 +1246,10 @@ export function ContextStoreCreatorDrawer(props: {
                         ),
                       )
                     }
+                  />
+                  <CharacterCount
+                    value={description}
+                    max={PRAGMA_TEXT_LIMITS.contextStore.description}
                   />
                 </label>
                 {mode === "import" ? (

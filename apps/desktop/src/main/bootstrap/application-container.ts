@@ -185,7 +185,23 @@ export async function createDesktopApplicationContainer(
     );
     return createUnavailableDesktopUsageStore({ cause: error });
   });
-  const unsubscribeUsageUpdates = installUsageHandlers(usageStore, options.getWindow);
+  const unsubscribeUsageUpdates = installUsageHandlers(
+    usageStore,
+    options.getWindow,
+    async (kind) => {
+      const resourceKind = kind === "expert" ? "Expert" : kind === "team" ? "ExpertTeam" : "Flow";
+      const snapshot = await pragmaProjectStore.get();
+      const activeIds = new Set(
+        snapshot.resources
+          .filter((resource) => resource.kind === resourceKind)
+          .map((resource) => resource.metadata.id),
+      );
+      if (kind === "expert") {
+        systemExperts.list().forEach((expert) => activeIds.add(expert.id));
+      }
+      return activeIds;
+    },
+  );
   const modelProviderStore = createModelProviderStore({
     configPath: modelProvidersPath,
     encryption,
@@ -329,8 +345,8 @@ export async function createDesktopApplicationContainer(
       }
     },
   });
-  installExpertDefinitionHandlers(expertStore);
-  installPragmaProjectHandlers(pragmaProjectStore);
+  installExpertDefinitionHandlers(expertStore, usageStore);
+  installPragmaProjectHandlers(pragmaProjectStore, usageStore);
   const initialSettings = await desktopSettings.getSnapshot(options.getPreferredSystemLanguages());
   await mkdir(initialSettings.defaultWorkspace, { recursive: true, mode: 0o700 }).catch(
     (error: unknown) => {

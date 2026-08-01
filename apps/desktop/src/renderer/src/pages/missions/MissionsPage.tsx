@@ -63,6 +63,11 @@ import { formatTokens } from "../../lib/usage-format.ts";
 import { ToolPermissionSelect } from "../../components/ToolPermissionSelect.tsx";
 import { MissionModelOverrideControls } from "../../components/MissionModelOverrideControls.tsx";
 import { MarkdownContent } from "../../components/MarkdownContent.tsx";
+import { SidebarResizeHandle } from "../../components/SidebarResizeHandle.tsx";
+import {
+  SIDEBAR_WIDTH_PREFERENCES,
+  usePersistentSidebarWidth,
+} from "../../lib/sidebar-width-preference.ts";
 import {
   pruneMissionDrafts,
   readMissionDraft,
@@ -85,6 +90,7 @@ export function MissionsPage(props: {
   readonly onEditExpert?: ((expertRef?: string | undefined) => void) | undefined;
 }) {
   const { t } = useTranslation(["missions", "common"]);
+  const [railWidth, setRailWidth] = usePersistentSidebarWidth(SIDEBAR_WIDTH_PREFERENCES.missions);
   const [missions, setMissions] = useState<readonly MissionSummary[]>([]);
   const [selectedMission, setSelectedMission] = useState<Mission | null>(
     props.initialMission ?? null,
@@ -268,7 +274,10 @@ export function MissionsPage(props: {
     );
   }, [missions, search]);
   return (
-    <section className="missions-page">
+    <section
+      className="missions-page"
+      style={{ "--sidebar-width": `${railWidth}px` } as CSSProperties}
+    >
       <MissionRail
         missions={visibleMissions}
         search={search}
@@ -300,6 +309,12 @@ export function MissionsPage(props: {
           }
         }}
         onDelete={setDeleteCandidate}
+      />
+      <SidebarResizeHandle
+        label={t("navigation.resize", { ns: "common" })}
+        width={railWidth}
+        preference={SIDEBAR_WIDTH_PREFERENCES.missions}
+        onResize={setRailWidth}
       />
 
       <div className="mission-main">

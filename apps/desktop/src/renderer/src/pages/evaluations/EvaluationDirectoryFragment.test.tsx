@@ -97,6 +97,7 @@ describe("EvaluationDirectoryFragment", () => {
     expect(html).not.toContain("Create repeatable quality checks for every executable object.");
     expect(html).toContain("Release Run Dry");
     expect(html).toContain("Evaluation targets");
+    expect(html).toContain('aria-label="Resize navigation"');
     expect(html).toContain("Run Dry cases");
     expect(html).toContain("Release flow");
     expect(html).toContain("Rollback flow");

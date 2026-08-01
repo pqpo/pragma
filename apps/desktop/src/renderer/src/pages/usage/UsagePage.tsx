@@ -68,13 +68,6 @@ export function UsagePage() {
     };
   }, [load]);
 
-  const startedAt =
-    overview === null
-      ? ""
-      : new Intl.DateTimeFormat(i18n.language, { dateStyle: "medium" }).format(
-          new Date(overview.trackingStartedAt),
-        );
-
   return (
     <section className="usage-page">
       <header className="usage-page-header">
@@ -118,7 +111,6 @@ export function UsagePage() {
         </div>
       ) : (
         <>
-          <p className="usage-tracking-since">{t("trackingSince", { date: startedAt })}</p>
           <section className="usage-summary-card">
             <div className="usage-total">
               <span>{t("total")}</span>
@@ -161,9 +153,9 @@ export function UsagePage() {
                     </button>
                   ))}
                 </div>
-                {kind === "team" || kind === "flow" ? (
-                  <p className="usage-inclusive-note">{t("inclusiveNote")}</p>
-                ) : null}
+                <p className="usage-inclusive-note">
+                  {kind === "mission" ? t("missionListNote") : t("inclusiveNote")}
+                </p>
                 <ol className="usage-subject-list">
                   {subjects.map((subject) => (
                     <li key={`${subject.kind}:${subject.id}`}>
@@ -215,24 +207,100 @@ export function usageTrendPoints(values: readonly number[]) {
   });
 }
 
-function UsageTrendChart(props: { readonly overview: UsageOverview; readonly label: string }) {
+function usageChartDate(date: string, language: string, dateStyle: "axis" | "tooltip"): string {
+  const [year, month, day] = date.split("-").map(Number);
+  return new Intl.DateTimeFormat(language, {
+    timeZone: "UTC",
+    ...(dateStyle === "axis"
+      ? { month: "short", day: "numeric" }
+      : { year: "numeric", month: "short", day: "numeric" }),
+  }).format(new Date(Date.UTC(year ?? 0, (month ?? 1) - 1, day ?? 1)));
+}
+
+export function usageTrendLabelIndexes(length: number): readonly number[] {
+  if (length <= 0) return [];
+  return [...new Set([0, Math.floor((length - 1) / 2), length - 1])];
+}
+
+export function UsageTrendChart(props: {
+  readonly overview: UsageOverview;
+  readonly label: string;
+}) {
+  const { t } = useTranslation("usage");
   const points = useMemo(
     () => usageTrendPoints(props.overview.daily.map((point) => point.totalTokens)),
     [props.overview.daily],
   );
   const line = points.map((point) => `${point.x},${point.y}`).join(" ");
-  const area = points.length === 0 ? "" : `1,96 ${line} 99,96`;
+  const area = points.length === 0 ? "" : `1,92 ${line} 99,92`;
+  const maxTokens = Math.max(...props.overview.daily.map((point) => point.totalTokens), 1);
+  const yTicks = [maxTokens, Math.round(maxTokens / 2), 0];
+  const labelIndexes = usageTrendLabelIndexes(props.overview.daily.length);
+
   return (
-    <svg
-      className="usage-trend-chart"
-      viewBox="0 0 100 100"
-      preserveAspectRatio="none"
-      role="img"
-      aria-label={props.label}
-    >
-      <line x1="0" y1="96" x2="100" y2="96" className="usage-chart-axis" />
-      <polygon points={area} className="usage-chart-area" />
-      <polyline points={line} className="usage-chart-line" />
-    </svg>
+    <div className="usage-chart-figure" role="group" aria-label={props.label}>
+      <div className="usage-chart-y-axis" aria-hidden="true">
+        {yTicks.map((value, index) => (
+          <span key={`${value}:${index}`} style={{ top: `${[14, 53, 92][index]}%` }}>
+            {formatTokens(value)}
+          </span>
+        ))}
+      </div>
+      <div className="usage-chart-content">
+        <div className="usage-chart-plot">
+          <svg
+            className="usage-trend-chart"
+            viewBox="0 0 100 100"
+            preserveAspectRatio="none"
+            aria-hidden="true"
+          >
+            {[14, 53, 92].map((y) => (
+              <line key={y} x1="1" y1={y} x2="99" y2={y} className="usage-chart-grid-line" />
+            ))}
+            <line x1="1" y1="14" x2="1" y2="92" className="usage-chart-axis" />
+            <line x1="1" y1="92" x2="99" y2="92" className="usage-chart-axis" />
+            <polygon points={area} className="usage-chart-area" />
+            <polyline points={line} className="usage-chart-line" />
+          </svg>
+          {props.overview.daily.map((daily, index) => {
+            const point = points[index];
+            if (point === undefined) return null;
+            const tokenValue = new Intl.NumberFormat(i18n.language).format(daily.totalTokens);
+            const date = usageChartDate(daily.date, i18n.language, "tooltip");
+            return (
+              <button
+                key={daily.date}
+                className={
+                  index === 0
+                    ? "usage-chart-node is-first"
+                    : index === points.length - 1
+                      ? "usage-chart-node is-last"
+                      : "usage-chart-node"
+                }
+                type="button"
+                style={{ left: `${point.x}%`, top: `${point.y}%` }}
+                aria-label={t("chartPointLabel", { date, tokens: tokenValue })}
+              >
+                <span className="usage-chart-node-dot" aria-hidden="true" />
+                <span className="usage-chart-tooltip" role="tooltip">
+                  <time dateTime={daily.date}>{date}</time>
+                  <strong>{t("chartTokenValue", { tokens: tokenValue })}</strong>
+                </span>
+              </button>
+            );
+          })}
+        </div>
+        <div className="usage-chart-x-axis" aria-hidden="true">
+          {labelIndexes.map((index) => {
+            const daily = props.overview.daily[index];
+            return daily === undefined ? null : (
+              <time key={daily.date} dateTime={daily.date}>
+                {usageChartDate(daily.date, i18n.language, "axis")}
+              </time>
+            );
+          })}
+        </div>
+      </div>
+    </div>
   );
 }

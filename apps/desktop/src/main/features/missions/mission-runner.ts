@@ -1159,7 +1159,7 @@ export function createMissionRunner(options: {
     });
     if (options.missions.storagePath === undefined) await options.missions.remove(id);
     else options.missions.forget?.(id);
-    options.usage?.markMissionDeleted(id);
+    options.usage?.markSubjectDeleted("mission", id);
     executionContexts.delete(id);
   };
 

@@ -1,7 +1,6 @@
 export const usage = {
   title: "Usage",
   description: "Token usage recorded by Pragma.",
-  trackingSince: "Tracking since {{date}}",
   periods: {
     sevenDays: "7 days",
     thirtyDays: "30 days",
@@ -13,6 +12,8 @@ export const usage = {
   cacheRead: "Cache read",
   cacheWrite: "Cache write",
   trend: "Daily token usage",
+  chartPointLabel: "{{date}}: {{tokens}} tokens",
+  chartTokenValue: "{{tokens}} tokens",
   noUsage: "No usage recorded in this period",
   noUsageDescription: "New Runtime turns will appear here after they settle.",
   subjects: {
@@ -21,7 +22,9 @@ export const usage = {
     team: "Teams",
     flow: "Flows",
   },
-  inclusiveNote: "Team and Flow totals include usage from their child invocation trees.",
+  missionListNote: "Deleted Missions are not shown in this list.",
+  inclusiveNote:
+    "Usage includes child invocation trees, totals may overlap across dimensions, and deleted objects are not shown in this list.",
   share: "{{percent}}% of total",
   loadMore: "Load more",
   loading: "Loading usage…",
