@@ -7044,10 +7044,8 @@ p {
 
 .evaluation-directory .studio-screen-body {
   overflow: hidden;
-  border: 1px solid var(--border);
-  border-radius: var(--radius-card);
-  background: #fff;
-  box-shadow: var(--shadow-soft);
+  border-top: 1px solid var(--border);
+  background: var(--surface);
 }
 
 .evaluation-directory-shell {
@@ -7062,9 +7060,9 @@ p {
   min-width: 0;
   min-height: 0;
   overflow-y: auto;
-  padding: 18px 14px 24px;
+  padding: 20px 18px 24px 10px;
   border-right: 1px solid var(--border);
-  background: color-mix(in srgb, var(--surface-soft) 45%, #fff);
+  background: transparent;
   scrollbar-gutter: stable;
 }
 
@@ -7170,21 +7168,10 @@ p {
 }
 
 .evaluation-target-group > div > button.is-active {
-  border-color: rgb(88 121 104 / 8%);
+  border-color: transparent;
   background: var(--green-soft);
   color: var(--green-dark);
   font-weight: 650;
-}
-
-.evaluation-target-group > div > button.is-active::before {
-  position: absolute;
-  top: 8px;
-  bottom: 8px;
-  left: -9px;
-  width: 3px;
-  border-radius: 3px;
-  background: var(--green);
-  content: "";
 }
 
 .evaluation-target-group > div > button:focus-visible,
@@ -7222,7 +7209,7 @@ p {
   min-width: 0;
   min-height: 0;
   overflow-y: auto;
-  padding: 28px 32px 40px;
+  padding: 30px 36px 40px;
   scrollbar-gutter: stable;
 }
 
@@ -7437,9 +7424,8 @@ p {
 .evaluation-target-empty.is-inline {
   min-height: 260px;
   margin-top: 20px;
-  border: 1px dashed var(--border-strong);
-  border-radius: var(--radius-card);
-  background: var(--surface-soft);
+  border-top: 1px solid var(--border);
+  background: transparent;
 }
 
 .evaluation-target-empty h2,
@@ -7746,6 +7732,13 @@ p {
   font-weight: 600;
 }
 
+.flow-run-dry-select-field {
+  display: grid;
+  min-width: 0;
+  gap: 7px;
+  font-weight: 600;
+}
+
 .flow-run-dry-static-field {
   display: grid;
   min-width: 0;
@@ -7774,7 +7767,6 @@ p {
 }
 
 .flow-run-dry-editor input,
-.flow-run-dry-editor select,
 .flow-run-dry-editor textarea {
   width: 100%;
   border: 1px solid var(--border);
@@ -7782,8 +7774,7 @@ p {
   background: #fff;
 }
 
-.flow-run-dry-editor input,
-.flow-run-dry-editor select {
+.flow-run-dry-editor input {
   min-height: 42px;
   padding: 0 12px;
 }
@@ -7800,7 +7791,7 @@ p {
   line-height: 1.55;
 }
 
-.flow-run-dry-editor :is(input, select, textarea):focus-visible {
+.flow-run-dry-editor :is(input, textarea):focus-visible {
   border-color: var(--green);
   outline: 0;
   box-shadow: 0 0 0 3px var(--focus-ring);
@@ -7834,9 +7825,9 @@ p {
 .usage-period-control {
   display: inline-flex;
   padding: 3px;
-  border: 1px solid var(--border);
-  border-radius: 10px;
-  background: var(--surface-soft);
+  border: 0;
+  border-radius: 8px;
+  background: var(--surface-muted);
 }
 
 .usage-period-control button,
@@ -7859,7 +7850,7 @@ p {
 .usage-period-control button.is-active {
   background: var(--surface);
   color: var(--text);
-  box-shadow: 0 1px 3px rgb(20 31 25 / 10%);
+  box-shadow: 0 1px 2px rgb(20 31 25 / 8%);
 }
 
 .usage-tracking-since {
@@ -7870,10 +7861,10 @@ p {
 .usage-summary-card,
 .usage-chart-card,
 .usage-subject-card {
-  border: 1px solid var(--border);
-  border-radius: var(--radius-large);
+  border: 0;
+  border-radius: 0;
   background: var(--surface);
-  box-shadow: var(--shadow-soft);
+  box-shadow: none;
 }
 
 .usage-summary-card {
@@ -7881,7 +7872,9 @@ p {
   grid-template-columns: minmax(220px, 1.2fr) minmax(400px, 2fr);
   gap: 36px;
   margin-top: 12px;
-  padding: 28px 30px;
+  padding: 28px 0 30px;
+  border-top: 1px solid var(--border);
+  border-bottom: 1px solid var(--border);
 }
 
 .usage-total {
@@ -7915,7 +7908,7 @@ p {
   align-content: center;
   gap: 2px;
   padding-left: 16px;
-  border-left: 2px solid var(--green-soft);
+  border-left: 1px solid var(--border);
 }
 
 .usage-breakdown dd {
@@ -7926,7 +7919,8 @@ p {
 
 .usage-chart-card {
   margin-top: 18px;
-  padding: 22px 24px 18px;
+  padding: 22px 0 24px;
+  border-bottom: 1px solid var(--border);
 }
 
 .usage-chart-card h2 {
@@ -7959,34 +7953,27 @@ p {
 }
 
 .usage-subject-card {
-  margin-top: 18px;
-  padding: 8px 24px 22px;
+  margin-top: 0;
+  padding: 8px 0 22px;
 }
 
 .usage-subject-tabs {
   display: flex;
-  gap: 24px;
-  border-bottom: 1px solid var(--border);
+  gap: 6px;
+  padding: 8px 0;
+  border-bottom: 0;
 }
 
 .usage-subject-tabs button {
-  position: relative;
-  padding: 15px 0 13px;
+  min-height: 32px;
+  padding: 0 11px;
+  border-radius: 7px;
   font-size: 13px;
 }
 
 .usage-subject-tabs button.is-active {
+  background: var(--green-soft);
   color: var(--green-dark);
-}
-
-.usage-subject-tabs button.is-active::after {
-  position: absolute;
-  right: 0;
-  bottom: -1px;
-  left: 0;
-  height: 2px;
-  background: var(--green);
-  content: "";
 }
 
 .usage-inclusive-note {
@@ -8057,8 +8044,8 @@ p {
   gap: 8px;
   margin-top: 18px;
   padding: 32px;
-  border: 1px dashed var(--border-strong);
-  border-radius: var(--radius-large);
+  border-top: 1px solid var(--border);
+  border-radius: 0;
   color: var(--muted);
   text-align: center;
 }
