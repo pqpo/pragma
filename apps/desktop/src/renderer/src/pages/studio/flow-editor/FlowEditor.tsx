@@ -874,11 +874,19 @@ function FlowEditorCanvas(props: {
                 }}
               />
             ) : selectedNodeId === null ? (
-              <FlowSettings flow={flow} onPatch={patchFlow} />
+              <FlowSettings
+                flow={flow}
+                onPatch={patchFlow}
+                showMemoryPolicy={props.mode === "edit" && props.initial !== undefined}
+              />
             ) : selectedNodeId === END_NODE_ID ? (
               <EndInspector flow={flow} onPatch={patchFlow} />
             ) : selectedNodeId === START_NODE_ID || selectedNodeId === FAIL_NODE_ID ? (
-              <FlowSettings flow={flow} onPatch={patchFlow} />
+              <FlowSettings
+                flow={flow}
+                onPatch={patchFlow}
+                showMemoryPolicy={props.mode === "edit" && props.initial !== undefined}
+              />
             ) : flow.spec.graph.steps[selectedNodeId] !== undefined ? (
               <StepInspector
                 flow={flow}

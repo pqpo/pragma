@@ -34,6 +34,50 @@ export const settings = {
     restoreDefaultWorkspace: "Restore built-in default workspace",
     saveError: "The general setting could not be saved.",
   },
+  memory: {
+    navigation: "Memory",
+    title: "Memory",
+    description:
+      "Control the built-in memory plane. Valuable dynamic memories can later mature into shared knowledge or skills.",
+    capture: "Capture",
+    captureDescription: "Allow canonical execution events to enter the memory pipeline.",
+    recall: "Recall",
+    recallDescription: "Allow agents to read eligible memories through ContextStore.",
+    learning: "Learning",
+    learningDescription:
+      "Create local knowledge and skill candidates for evaluation; candidates are never published automatically.",
+    enabled: "Enabled",
+    disabled: "Disabled",
+    localCandidates: "Local candidates",
+    loading: "Loading…",
+    health: "Memory plane health",
+    healthDescription: "The memory plane starts with Pragma and consumes the canonical event feed.",
+    healthSummary:
+      "{{state}} · {{events}} events · {{modules}} modules · {{pending}} pending · {{quarantined}} quarantined",
+    assetTitle: "Memory policy",
+    assetDescription:
+      "This team asset may only narrow the global policy. Runtime restrictions are intersected with this setting.",
+    effectiveSummary: "Effective: capture {{capture}}, recall {{recall}}, learning {{learning}}",
+    loadError: "Memory settings could not be loaded.",
+    saveError: "Memory settings could not be saved. Reload to get the latest revision.",
+    states: {
+      running: "Running",
+      degraded: "Degraded",
+      stopped: "Stopped",
+      enabled: "enabled",
+      disabled: "disabled",
+    },
+    learningStates: {
+      "local-candidates": "local candidates",
+      disabled: "disabled",
+    },
+    overrideStates: {
+      inherit: "Inherit global",
+      enabled: "Enabled",
+      disabled: "Disabled",
+      "local-candidates": "Local candidates",
+    },
+  },
   models: {
     navigation: "Models & Providers",
     title: "Models & Providers",

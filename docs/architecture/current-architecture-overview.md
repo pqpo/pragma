@@ -202,20 +202,26 @@ Desktop 的 `RuntimeEnvironmentService` 每次解析都读取版本化 Store，�
 之后创建的 Context；已有 Context 和 Runtime Session 保持原 binding。默认 Runtime 是安装级显式配置，
 Expert 未指定 Runtime 时由 Resolver 读取，而不是在 Expert 或 DSL 中推断 Codex。
 
-### P2：Memory 的架构决策与实现所有权冲突
+### P2：Memory Plane 第一阶段已落地，业务 Memory Module 仍待迁移
 
-**状态：已确认。**
+**状态：ADR 031 已接受；Canonical Feed、Module SPI、策略与 Desktop 入口已实现。**
 
-ADR 002 把 Memory System 定义为 Core 抽象，但当前 `MemorySystem`、Memory record、Evidence Store 和 Distillation SPI 都在 `@pragma/plugin-memory`。ADR 003 又处于 Proposed 状态，而实现已经同时包含 direct-write memory 与 evidence distillation。
+ADR 002 曾把 Memory System 定义为 Core 抽象，但当前 `MemorySystem`、Memory record、Evidence Store 和 Distillation SPI 都在 `@pragma/plugin-memory`。ADR 003 又只完成了部分实现，代码已经同时包含 direct-write memory 与 evidence distillation。两份旧 ADR 现已被 ADR 031 替代。
 
 结果是第三方 Memory backend 要么依赖具体 `plugin-memory`，要么重新定义 SPI；Agent 面向的默认工具面也没有稳定结论。
 
-**建议：** 尽快决定并更新 ADR：
+ADR 031 已替代 ADR 002/003，并由 `docs/architecture/memory-plane-implementation-plan.md` 固化分阶段
+实施顺序。目标边界为：
 
-- Core 只拥有最小 Memory port、Evidence envelope 和 retrieval result；
-- `plugin-memory` 拥有默认文件实现、distiller、projection 和 Agent tools；
-- 默认只允许 Agent 显式写 Task Memory，Experience / Fact / Skill 由 evidence distillation 产生；
-- 人工纠错通过治理 API，而不是重新开放任意 direct-write tool。
+- Core 只拥有 Memory-neutral Canonical Event Feed、durable handoff 和 canonical identity；
+- `@pragma/memory` 拥有 Evidence adapter、Memory Module SPI、策略、联邦 Context 和后续检索；
+- Memory 是 Host 内置能力，不再由每个 Expert 选择安装；
+- Experience 与 Fact 是默认动态投影；Knowledge 与 CodeGraph 是相对稳定的 Memory revision，仍是
+  Memory type，不新增独立 KnowledgeBase/MemoryAsset 对象；Skill Candidate 评测后升级为现有 Capability；
+- `plugin-memory` 在完成历史数据导入和调用方迁移后删除。
+
+当前还没有生产级 Episodic/Semantic Module、主动召回、管理中心或分享导出，因此旧插件仍只作为后续
+owner-scoped 导入的数据来源保留，不能把第一阶段基础设施描述成完整长期记忆能力。
 
 ### P2：Desktop Main Process 正在变成第二个业务内核
 
@@ -263,7 +269,7 @@ PI Adapter 的模型目录来自 Desktop 注册的 Model Provider；Codex、Clau
 | Scheduler          | Execution 与恢复语义                                           | queue、lease、retry、timeout、dead-letter、placement、fairness                     |
 | Capability         | revision、tool snapshot、credential separation                 | 签名与来源、发布/撤销、组织级目录、兼容性与供应链策略                              |
 | Plugin             | contribution + hooks                                           | typed config schema、hook failure policy、隔离、版本兼容和权限声明                 |
-| Memory             | 四类记忆、evidence、distillation                               | Core SPI、异步任务、retention、冲突治理、重新蒸馏和组织级隔离                      |
+| Memory             | 插件内四类记忆、evidence、distillation 原型                    | ADR 031 的持久 Feed、Module SPI、联邦 Context、资产治理和组织级隔离                |
 | Observability      | 统一 Execution event envelope、Output 投影、logger、usage      | trace/span 关联、cost ledger、审计导出和 SLO                                       |
 
 ## 推荐演进顺序
@@ -329,7 +335,7 @@ PI Adapter 的模型目录来自 Desktop 注册的 Model Provider；Codex、Clau
 - Server 当前入口：`apps/server/src/app.ts`
 - Worker 当前入口：`apps/worker/src/index.ts`
 - Memory 实现：`plugins/memory/src/memory-system/`
-- 相关决策：`docs/adr/002-memory-system.md`、`003-memory-system-evidence-distillation.md`、`004-desktop-capability-library.md`、`005-execution-owned-runtime-storage.md`、`006-runtime-session-ownership-and-leases.md`
+- 相关决策：`docs/adr/031-extensible-memory-plane.md`、`docs/architecture/memory-plane-implementation-plan.md`、`004-desktop-capability-library.md`、`005-execution-owned-runtime-storage.md`、`006-runtime-session-ownership-and-leases.md`
 
 ## 总体评价
 

@@ -23,6 +23,7 @@ import {
   type AgentMessageRecord,
   type ExecutionWorkRecord,
   type ExecutionOutputItem,
+  type FileExecutionStore,
   type ExpertAgentAutomaticHumanInteractionHandler,
   type ExpertAgentHumanRequest,
   type ExpertAgentHumanResponse,
@@ -190,6 +191,7 @@ export function createMissionRunner(options: {
   readonly capabilitiesPath: string;
   readonly mcpToolRegistryPool?: McpToolRegistryPool | undefined;
   readonly pragmaHome: string;
+  readonly executionStore?: FileExecutionStore | undefined;
   readonly contextStores?: ContextStoreStore | undefined;
   readonly plugins?: PluginStore | undefined;
   readonly runtimes: RuntimeResolver;
@@ -219,7 +221,8 @@ export function createMissionRunner(options: {
   const logger = createPragmaLogger(options.loggerProvider, {
     component: "desktop.mission-runner",
   });
-  const executionStore = createFileExecutionStore({ pragmaHome: options.pragmaHome });
+  const executionStore =
+    options.executionStore ?? createFileExecutionStore({ pragmaHome: options.pragmaHome });
   const expertSessionStore = createFileExpertSessionStore({
     executions: executionStore,
     pragmaHome: options.pragmaHome,

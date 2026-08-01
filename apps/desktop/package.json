@@ -34,6 +34,7 @@
     "@phosphor-icons/react": "latest",
     "@pragma/core": "workspace:*",
     "@pragma/interpreter": "workspace:*",
+    "@pragma/memory": "workspace:*",
     "@pragma/runtime-claude-code": "workspace:*",
     "@pragma/runtime-codex": "workspace:*",
     "@pragma/runtime-pi": "workspace:*",

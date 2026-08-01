@@ -43,6 +43,7 @@ export * from "./execution/execution-live-bus.ts";
 export * from "./execution/execution-output.ts";
 export * from "./execution/execution-work-history.ts";
 export * from "./execution/execution-view.ts";
+export * from "./events/canonical-event-feed.ts";
 export * from "./execution/expert-session-store.ts";
 export * from "./execution/expert-session.ts";
 export * from "./flow/flow.ts";

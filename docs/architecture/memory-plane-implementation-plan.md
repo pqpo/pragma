@@ -1,0 +1,296 @@
+# Memory Plane 落地计划
+
+- Status: Active plan
+- Last updated: 2026-08-01
+- Decisions: [ADR 031](../adr/031-extensible-memory-plane.md)、[ADR 032](../adr/032-durable-canonical-event-feed.md)
+
+## 最终链路
+
+```text
+Canonical Event Feed
+        ↓
+versioned Evidence
+        ↓
+Episodic / Semantic(Fact) / CodeGraph / future Memory Modules
+        ↓
+Knowledge Memory / Skill Memory Candidate
+        ↓
+Federated ContextStore + Retrieval + Governance
+        ↓
+Skill Candidate 经 Evaluation 升级为现有 Skill Capability
+```
+
+WorkingState、TODO List 和多人白板不在主链上；它们可以发布 Evidence，但 Agent 不使用白板也必须产生
+Memory。Knowledge、CodeGraph 仍是 Memory type，不新增 KnowledgeBase/KnowledgeAsset/MemoryAsset 对象。
+
+## 执行原则
+
+- 阶段按依赖推进；接口、mock 或空 Store 不算完成。
+- Memory Plane 是 Host 内置能力，不使用环境变量开关，不由 Expert plugin 安装。
+- 新 Memory type 通过静态 Module 独立消费 Feed，不能修改 Core 的闭合 union。
+- 新持久协议使用 Zod、schemaVersion、静态相邻迁移和真实历史 fixture。
+- Desktop 先初始化最小存储根、IPC 和窗口，再启动 Memory 后台循环；不得启动时扫描所有 owner。
+- 权限只能在蒸馏时保持或收紧，扩大分享必须显式批准。
+- 不建立长期 dual-write、旧字段兼容分支、第二套知识库对象或第二套 Skill authority。
+
+## 阶段总览
+
+| 阶段 | 状态      | 交付目标                                                    |
+| ---- | --------- | ----------------------------------------------------------- |
+| 1    | Completed | 内置 Plane、Canonical Event Bus、Module SPI、策略与设置入口 |
+| 2    | Planned   | Episodic Memory：历史做了什么、结果、失败与恢复             |
+| 3    | Planned   | Semantic / Fact Memory：真值、冲突、时效和置信度            |
+| 4    | Planned   | 授权召回、Context binding、Memory 管理中心与 Mission 可见性 |
+| 5    | Planned   | Knowledge Memory：多层提炼、稳定 revision 与团队分享        |
+| 6    | Planned   | Skill Memory Candidate、Evaluation 与 Capability 升级       |
+| 7    | Planned   | CodeGraph 独立 Module 扩展验收                              |
+| 8    | Planned   | 旧 plugin owner-scoped 导入、compiler cutover 与删除        |
+
+状态只使用 `Planned`、`In progress`、`Blocked`、`Completed`。
+
+## 阶段 1：内置 Plane、消息总线与策略
+
+### 目标
+
+建立后续所有 Memory 类型共享、可靠、可扩展的底座。阶段 1 不产出业务 Episodic/Semantic Memory，
+但必须证明 canonical event 可持久交付、Module 可独立消费、崩溃可恢复、策略可按历史时刻解析，并由
+Desktop 提供设置入口。
+
+### 已完成范围
+
+#### 1. Canonical Event Feed
+
+- `@pragma/shared` 定义 `pragma.canonical-event/v1`、cursor、source 与 `relatedRefs`；
+- `@pragma/core` 提供 append-only SQLite Feed、全局 sequence、event id 幂等；
+- Execution 使用 `pragma.canonical-event-handoff/v1` 包装 transaction v9；
+- 先持久 handoff，再应用 aggregate、追加 Feed、删除 handoff；
+- 失败 handoff 有界重放，不启动扫描全部 Execution；
+- 同一 Execution 严格按 source version 恢复，首次投递失败即停止后续事件；
+- 不可解析、owner 不匹配或未来版本 handoff 原样隔离，并对所属 Execution fail closed；有效但应用失败的
+  handoff 不得跳过，因为它已经是 durable commit point；
+- `relatedRefs` 记录 `pragma.execution-root` 与 `pragma.event-producer`。
+
+#### 2. Evidence adapter
+
+- `@pragma/memory` 将 Execution canonical event 映射为 `pragma.memory-evidence/v1`；
+- 覆盖 message、terminal outcome、tool semantic event、artifact created 与 handoff reference；
+- Evidence 自动绑定 root Expert/ExpertTeam/Flow 与实际 producer Expert；
+- Envelope 固化 sensitivity、visibility、provenance 与 `policySnapshot`；
+- 未知/损坏 schema 进入 consumer dead letter，不阻断无关消费者。
+
+#### 3. Memory Module SPI
+
+- 静态 `MemoryModuleRegistry` 校验唯一 module id、version、Context prefix；
+- 每个 Module 独立 checkpoint、retry、dead letter、health；
+- mutation 以 message id 幂等；derived event 先写 durable outbox；
+- `dynamic-projection` 与 `immutable-revision` 是存储模型，不是 Core Memory type union；
+- Probe Module 证明新类型无需修改 Core 即可消费、派生和暴露 Context。
+
+#### 4. Federated ContextStore 最小实现
+
+- 稳定 `memory` namespace；
+- `catalog.md` 暴露 Module 与健康；
+- `list/read/search` 按 prefix 路由；
+- `add/edit/delete` 返回 `permission_denied`；
+- 不把各 Module 数据复制进统一物理 Store。
+
+#### 5. 版本化策略
+
+- Global：capture、recall、learning；
+- Expert、ExpertTeam、Flow：inherit 或收紧；
+- Mission 与实际 producer 可继续收紧；
+- 生效规则是 `global ∩ root asset ∩ producers ∩ mission`；
+- 默认 capture/recall enabled，learning local candidates；
+- revision 使用 CAS 更新并保留 `effectiveFrom` 历史；
+- 重放事件按 `occurredAt` 解析，不使用当前策略覆盖历史；
+- 损坏/未来策略 schema fail closed。
+
+策略属于 Host binding metadata，不写 portable DSL，不产生 Project Revision。
+
+#### 6. Desktop 产品入口
+
+- Memory Plane 总是装配，窗口与 IPC 就绪后启动后台循环；
+- 设置页提供 Global capture/recall/learning 与 Plane health；
+- Expert、ExpertTeam、Flow 编辑页提供继承/收紧策略；
+- 不需要环境变量，不再对 legacy Memory plugin 做运行时二选一冲突判断；
+- 旧 plugin 仅作为阶段 8 的历史数据迁移源，不能继续定义新架构。
+
+### 持久路径
+
+- Feed：`~/.pragma/data/event-bus/feed.sqlite`；
+- policy：`~/.pragma/data/memory/policies/`；
+- handoff：`~/.pragma/state/event-bus/handoffs/`；
+- handoff quarantine：`~/.pragma/state/event-bus/handoff-quarantine/`；
+- checkpoint/dead-letter/outbox：`~/.pragma/state/memory/`；
+- 后续 Module 权威数据：`~/.pragma/data/memory/<module>/`；
+- 可重建索引：`~/.pragma/cache/memory/<module>/`。
+
+路径由 `PragmaPaths` 生成，Memory 不写 workspace。
+
+### 阶段 1 验收证据
+
+- 重放同一 envelope 不重复产生有效 mutation；
+- outbox 前后、publication、checkpoint 故障点均可恢复；
+- 一个 Module 持续失败不阻断另一个 Module；
+- 策略默认值、CAS 冲突、历史解析、严格交集与未来 schema 拒绝有测试；
+- canonical event 的 root/producer 自动归因进入 Evidence binding；
+- capture disabled 时 cursor 推进但不发布 Evidence；
+- Desktop renderer/node 严格类型检查通过，设置页有多语言文案。
+
+### Implementation record
+
+- Status: Completed
+- Protocols: `pragma.canonical-event/v1`、`pragma.canonical-event-handoff/v1`、
+  `pragma.memory-evidence/v1`、`pragma.memory-policy/v1`、
+  `pragma.memory-consumer-state/v1`、`pragma.memory-derived-event-outbox/v1`、
+  `pragma.memory-dead-letter/v1`
+- Migration: 新 Store 从 v1 开始；Execution transaction 保持 v9；未改写既有状态
+- Verification: `pnpm lint`、`pnpm typecheck`、Core/Memory/Desktop tests、`pnpm build`
+- Known limitations: 尚无生产 Episodic/Semantic Module、主动 recall planner、Memory 管理中心、分享导出、
+  Feed retention/replication 与 legacy importer；这些不能算作阶段 1 已提供的产品能力
+
+## 阶段 2：Episodic Memory
+
+### 目标
+
+回答“过去发生过什么”：目标、尝试、结果、失败和恢复。直接消费 Evidence，不依赖 WorkingState。
+
+### 交付
+
+- Module-owned `EpisodicMemoryRecord` Schema、Store、相邻迁移、provenance；
+- execution episode candidate、redaction、价值过滤、合并/压缩/失效；
+- Host 注入 Runtime-neutral extractor，输出先经 Zod 验证；
+- `memory/episodic/**` 的 list/read/search；
+- 中英文、成功/失败、短任务、敏感内容、重放幂等评测集。
+
+### 退出门槛
+
+- 未使用白板的 Mission 仍可形成 Episode；
+- 相同 Evidence 重放不会重复；
+- 每条结论可追溯 Evidence；
+- 低价值和未授权内容不会进入 projection。
+
+## 阶段 3：Semantic / Fact Memory
+
+### 目标
+
+回答“当前相信什么是真的”，支持 User、Project、Repository、Expert 等 subject，同时允许经治理绑定为
+团队资产。
+
+### 交付
+
+- statement、subjectRefs、confidence、observed/verified/review/expires 时间；
+- evidenceRefs、conflictsWith、supersedes、invalidatedAt；
+- extract、normalize、entity resolution、conflict grouping、temporal invalidation；
+- 不按 Personal/Project/Expert 建物理孤岛；subject 与 binding 分离；
+- `memory/semantic/**` Context projection 与更正/失效 API。
+
+### 退出门槛
+
+- 新证据不静默覆盖冲突事实；
+- 过期/失效事实不参与默认召回；
+- user-private 事实不会因绑定自动变为 team-shareable；
+- Expert/Team/Flow 的有效策略能阻止对应 capture 或 recall。
+
+## 阶段 4：召回、治理 UI 与可见性
+
+### 目标
+
+把 ContextStore 从可发现路由升级为授权后的模型读取与产品治理入口。
+
+### 交付
+
+- `MemoryRetrievalPlanner`：先 policy/visibility/binding 鉴权，再排序与 token budget；
+- list/read/search 同样强制 recall policy，不只约束主动注入；
+- Memory 管理中心：来源、provenance、冲突、修正、失效、删除、Module health；
+- Mission 显示 capture/distillation/recall 摘要；
+- revision binding 包含 recall/export、permissionRevision 和审计记录。
+
+### 退出门槛
+
+- 未授权 Memory 无法从 Context、planner 或 managed tool 旁路读取；
+- 每次 recall 可解释候选、选择和拒绝原因；
+- 单 Module 不可用时其他类型继续服务。
+
+## 阶段 5：Knowledge Memory
+
+### 目标
+
+把多条动态 Memory 逐层提炼为相对稳定、可版本化、可绑定、可分享的 Knowledge Memory；不新增独立
+KnowledgeBase 或 KnowledgeAsset。
+
+### 处理链
+
+```text
+Episodic + Semantic + imports
+        ↓
+Knowledge Memory Candidate
+        ↓ verify / deduplicate / consolidate / review
+        ↓
+published Knowledge Memory revision
+        ↓
+Context binding to Expert / ExpertTeam / Flow / Project
+```
+
+### 退出门槛
+
+- published revision 不原地修改；
+- 候选不能被默认 recall 当作已发布知识；
+- 分享包只含显式选择且 export binding 允许的 revision；
+- 导入分享包仍生成 Memory revision，不生成第二种知识库对象。
+
+## 阶段 6：Skill Memory Candidate → Skill Capability
+
+### 目标
+
+从重复成功/失败模式提炼可执行范式，通过 Evaluation 与批准升级为现有 Skill Capability。
+
+### 交付
+
+- candidate 包含适用条件、步骤、失败模式、恢复方式、Evidence provenance；
+- 去重和通用性评估，不把一次偶然成功直接升 Skill；
+- `@pragma/evaluation` replay/run-dry/evaluator 端口；
+- draft、evaluating、approved、rejected、promoted 状态与审计；
+- promoted 后引用 Capability id/revision，不保留平行永久 Skill 内容 authority。
+
+## 阶段 7：CodeGraph Module
+
+### 目标
+
+证明架构对未来类型完全开放。
+
+### 交付与门槛
+
+- 独立消费 repository snapshot/file-change Evidence；
+- 独立 durable build job、Store、迁移、checkpoint 与 revision；
+- Context 提供 catalog/symbol/impact 摘要，managed tool 提供图遍历；
+- 可绑定 Expert/ExpertTeam/Flow；
+- 实现不修改 Core Memory union、Episodic/Semantic Store 或联邦路由代码。
+
+## 阶段 8：旧插件导入与切换
+
+### 映射
+
+| Legacy      | New plane                        |
+| ----------- | -------------------------------- |
+| Task Memory | WorkingState 或 archive Evidence |
+| Experience  | Episodic import candidate        |
+| Fact        | Semantic import candidate        |
+| Skill card  | Skill Memory Candidate           |
+
+### 要求
+
+- owner 首次显式导入，先检查、备份，再 journaled import；
+- 稳定 message id/provenance/owner mapping，可安全重试；
+- 不启动扫描 `~/.pragma/memories/` 全树；
+- `plugin:memory` 退出合法 DSL 时同步 compiler version、真实 fixture、相邻 migration 与 Host transaction；
+- 完成支持窗口后删除 `@pragma/plugin-memory`、旧 direct-write tools、重复 Context 和并行 Skill Store。
+
+## 跨阶段质量门
+
+- capture、distillation、recall、Context read、managed tool、export 分别鉴权；
+- Secret、credential、隐藏 reasoning、未授权文件不进入 Evidence；
+- 只记录 identity、计数、耗时和错误码，不记录敏感 payload；
+- checkpoint/outbox/journal 可恢复，多文件更新原子；
+- 每条注入保留 Context revision、Memory revision 与 provenance；
+- 每个阶段更新本文件的状态、协议、迁移、验证命令和已知限制。

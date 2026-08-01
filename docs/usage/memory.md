@@ -1,298 +1,88 @@
-# Memory System 使用指南
+# Memory 使用指南
 
-本文专门说明 Pragma 当前的 Memory System：四类记忆的定义、显式加载方式、配置方式、工具入口，以及它们之间的演化关系。
+Pragma 的新 Memory Plane 是 Desktop 内置能力，随应用启动，不需要环境变量，也不需要给 Expert 安装
+插件。架构决策见 [ADR 031](../adr/031-extensible-memory-plane.md)，分阶段范围见
+[Memory Plane 落地计划](../architecture/memory-plane-implementation-plan.md)。
 
-当前记忆系统由 `@pragma/plugin-memory` 提供具体实现。`Expert` / `defineExpert()` 不会默认加载记忆系统；需要记忆能力时，宿主必须显式注入 memory plugin。
+## 当前已经可用的能力
 
-## 四类记忆
+第一阶段完成的是基础设施和策略，不是完整长期记忆产品：
 
-当前 Memory System 有四种一等类型：
+- Execution 语义事件通过持久 Canonical Event Feed 交给 Memory Plane；
+- Memory Evidence 自动记录 root Expert/ExpertTeam/Flow 与实际 producer Expert；
+- 每个 Memory Module 可以独立消费、重试、保存 checkpoint 和发布派生事件；
+- 联邦 `memory` ContextStore 可以按 Module prefix 路由只读内容；
+- Desktop 设置页可以控制全局 capture、recall、learning 并查看 Plane health；
+- Expert、ExpertTeam、Flow 编辑页可以继承或收紧全局策略。
 
-1. `Task Memory`
-2. `Experience Memory`
-3. `Fact Memory`
-4. `Skill Memory`
+当前尚未实现生产级 Episodic、Semantic/Fact、Knowledge、Skill Candidate 或 CodeGraph Module，因此 Plane
+运行并不等于已经形成这些长期记忆。主动召回、Memory 管理中心、候选评审和分享也在后续阶段。
 
-默认演化链路：
+## 设置维度
 
-```text
-Task Memory -> Experience Memory -> Fact Memory / Skill Memory
-```
+### Global
 
-它们回答的问题不同：
+设置 → Memory：
 
-- `Task Memory`：当前这轮任务里还要记住什么、谁在做什么、还有哪些待办。
-- `Experience Memory`：过去发生过什么、做过什么、结果如何。
-- `Fact Memory`：当前确认什么是真的。
-- `Skill Memory`：下次遇到类似问题，推荐怎么做。
+- Capture：是否允许 canonical execution event 进入 Memory pipeline；
+- Recall：是否允许从 Memory Context 读取；
+- Learning：是否生成本地 Knowledge/Skill 候选；候选不会自动发布；
+- Health：Plane 状态、Feed event 数量和 Module 数量。
 
-## 显式加载
+默认 capture、recall 开启，learning 为 local candidates。
 
-`defineExpert()` 和 `defineExpert()` 只加载宿主传入的插件。要启用四类记忆，显式传入 `@pragma/plugin-memory`：
+### Expert、ExpertTeam、Flow
 
-最小示例：
-
-```ts
-import { defineExpert } from "@pragma/core";
-import memoryPlugin from "@pragma/plugin-memory";
-
-const agent = await defineExpert({
-  id: "memory-enabled-agent",
-  name: "Memory Enabled Agent",
-  description: "Uses the memory plugin.",
-  tags: ["memory"],
-  version: "0.0.0",
-  scope: "workspace",
-  workspace: "/path/to/workspace",
-  plugins: [{ entry: memoryPlugin }],
-});
-```
-
-加载后：
-
-- `task-memory` 会注入最小写工具。
-- `memory` 会注册统一的上下文 namespace，承载 summary、task 投影、experience 投影、fact 投影和 skill card。
-- task / runtime / session 证据会触发默认的异步 distillation 规则。
-- 四类记忆默认都会持久化到用户目录下的 `~/.pragma/memories/`，不会直接写入 agent workspace。
-- `task-memory` 虽然语义上仍然是 task / run / session 内的短期工作记忆，但默认也会落盘，以支持 session 恢复和跨进程恢复。
-
-默认目录结构：
+编辑对应团队资产时，可以为 capture、recall、learning 选择继承或收紧。资产级设置不能突破 Global
+关闭项。真正生效的策略还会与实际 producer Expert 和 Mission restriction 取交集：
 
 ```text
-~/.pragma/memories/
-  <agentId>/                         # Agent 级记忆根目录
-    summary.md
-    task-memory/
-      executions/
-        <executionId>/
-          records.json
-          <taskMemoryId>.md
-    experience-memory/
-      records.json
-      <experienceMemoryId>.md
-    fact-memory/
-      records.json
-      <factMemoryId>.md
-    skill-memory/
-      skills/
-        <skillId>.md
-    tasks/
-      executions/
-        <executionId>/
-          <runId>.md
-          execution.md
-    evidence/runs/<runId>.json
-    evidence/executions/<executionId>.json
-    evidence/distill/<evidenceId>.json
+global ∩ root asset ∩ producer experts ∩ mission restriction
 ```
 
-## 不启用记忆
+这些设置属于本机 Host binding metadata，不写入 Pragma DSL，不生成 Project Revision。
 
-如果不传 `@pragma/plugin-memory`，Agent 就不会拥有 memory 工具，也不会注册 `memory` 上下文 namespace。
+## 类型边界
 
-## 按类别关闭
+旧四类记忆不再作为目标架构的闭合枚举：
 
-如果只想关闭其中一个或多个类别：
+- 原 TaskMemory：改为可选 WorkingState/TODO/白板，不是 Memory 前置依赖；
+- Experience：进入 Episodic Memory，记录过去做过什么；
+- Fact：进入 Semantic/Fact Memory，记录当前相信什么是真的；
+- Skill：先成为 Skill Memory Candidate，评测通过后升级为现有 Skill Capability。
 
-```ts
-import { defineExpert } from "@pragma/core";
-import memoryPlugin from "@pragma/plugin-memory";
+Knowledge 与 CodeGraph 仍是 Memory type，不是独立 KnowledgeBase 或 MemoryAsset。它们由独立 Module 管理
+自己的 Schema、Store 和 revision，最终通过同一个 `memory` ContextStore 被授权模型读取。
 
-const agent = await defineExpert({
-  id: "selective-memory-agent",
-  name: "Selective Memory Agent",
-  description: "Disables selected memory categories.",
-  tags: ["memory"],
-  version: "0.0.0",
-  scope: "workspace",
-  workspace: "/path/to/workspace",
-  plugins: [
-    {
-      entry: memoryPlugin,
-      config: {
-        experience: { enabled: false },
-        fact: { enabled: false },
-      },
-    },
-  ],
-});
+## 团队资产与分享
+
+事实描述的 subject 和它绑定给谁是两个维度。一个事实可以描述 User、Project 或 Repository，同时在权限
+允许、经过提炼后绑定给 Expert、ExpertTeam 或 Flow，成为团队资产的一部分。
+
+未来分享 Expert/ExpertTeam/Flow 时，可选择一并导出绑定且允许 export 的 published/team-shareable
+Memory revision。分享不会新建一个知识库对象，也不会自动导出私有原始 Evidence。
+
+## Legacy plugin
+
+仓库中的 `@pragma/plugin-memory` 暂时只承担旧数据来源和兼容迁移窗口。新架构不再通过它启用 Plane，
+也不继续扩展旧 Task/Experience/Fact/Skill 文件 Store。阶段 8 会提供 owner-scoped、带备份和 journal 的
+导入，然后升级受影响的 DSL compiler 并删除旧插件。
+
+## 当前持久路径
+
+```text
+~/.pragma/data/event-bus/feed.sqlite       # Canonical Event Feed
+~/.pragma/data/memory/policies/            # Global/asset policy history
+~/.pragma/state/event-bus/handoffs/        # Execution durable handoff
+~/.pragma/state/event-bus/handoff-quarantine/ # 原样保留的损坏/未来版本 handoff；所属 Execution fail closed
+~/.pragma/state/memory/                     # checkpoint/dead-letter/outbox
 ```
 
-当前支持的字段：
+Memory 数据不写 Agent workspace。正常启动不会扫描全部 Mission、Execution 或 legacy memory 目录。
 
-- `task`
-- `experience`
-- `fact`
-- `skill`
+## 相关文档
 
-每项都可以写成：
-
-```ts
-plugins: [
-  {
-    entry: memoryPlugin,
-    config: {
-      fact: { enabled: false },
-    },
-  },
-];
-```
-
-## 四类记忆的边界
-
-### Task Memory
-
-用于当前 task / run / session 内的短期工作记忆。
-
-典型内容：
-
-- handoff
-- decision
-- note
-- todo
-- progress
-- question
-
-### Experience Memory
-
-用于记录“过去发生过什么”，强调经历和证据，而不是稳定真相。
-
-典型内容：
-
-- 历史任务
-- 对话总结
-- 工具使用过程
-- 失败路径
-- 恢复路径
-- 某次代码搜索过程
-
-### Fact Memory
-
-用于记录“被确认的稳定信息”，强调真值、证据、时效和治理。
-
-典型内容：
-
-- 用户偏好
-- 业务规则
-- 系统架构归属
-- 代码模块归属
-- 某对象当前是什么
-
-事实记忆必须带：
-
-- `statement`
-- `confidence`
-- `observedAt`
-- `provenance.evidence`
-
-并支持：
-
-- `verifiedAt`
-- `reviewAt`
-- `expiresAt`
-- `invalidatedAt`
-- `supersededBy`
-- `conflictsWith`
-
-### Skill Memory
-
-用于沉淀从经历中提炼出的可复用方法。
-
-典型内容：
-
-- 推荐路径
-- good practices
-- anti-patterns
-- failure modes
-- recovery playbook
-
-## “代码在哪个路径下”属于哪种记忆
-
-这是 Memory System 里最容易混淆的一类边界。
-
-- “我刚才搜索了 `packages/core/src/directive`”是 `Experience Memory`
-- “搜索过程中试过这些路径，但其中两个是错的”是 `Experience Memory`
-- “`@pragma/core` 的 directive 代码当前位于 `packages/core/src/directive`”是 `Fact Memory`
-- “下次找 directive runtime，先看 `packages/core/src/directive`，再看 `docs/usage/directives.md`”是 `Skill Memory`
-
-判断标准不是“内容里有没有路径”，而是它在回答哪个问题：
-
-- 记录过程：`Experience`
-- 确认真相：`Fact`
-- 总结方法：`Skill`
-
-## 默认工具与读取方式
-
-默认启用时，当前工具层大致包括：
-
-### Task Memory Tools
-
-- `append_task_memory`
-- `patch_task_memory`
-
-### Context Tools
-
-- `list_expert_context`
-- `read_expert_context`
-- `search_expert_context`
-
-其中：
-
-- `Task Memory` 默认仍保留显式写工具，因为它是运行期协作工作区。
-- `Experience Memory`、`Fact Memory`、`Skill Memory` 默认不再向 Agent 直出写工具。
-- `Experience` / `Fact` / `Skill` 主要通过统一 evidence 底座自动沉淀，再投影到 `memory` namespace 供 Agent 检索和读取。
-
-## Always-On Summary
-
-`summary.md` 现在由统一 `MemorySystem` 组装成一份给模型看的 memory guide，而不是把四类 memory 的 record 摘要平铺进上下文。它的默认物理位置是 `~/.pragma/memories/<agentId>/summary.md`。
-
-当前 always-on 文档重点包括：
-
-1. `Current Task State`
-2. `Active Constraints And Preferences`
-3. `Skill Entry Points`
-4. `Memory Search Guide`
-5. `Searchable Domains`
-
-其中：
-
-- `Task Memory` 直接以内联状态快照方式暴露
-- `Fact Memory` 只内联当前最重要、当前生效的事实与偏好
-- `Skill Memory` 主要暴露 skill domain catalog 和少量高价值入口
-- `Experience Memory` 主要暴露检索指南和极少量 recent entry points
-
-`summary` 现在是 memory system 的内部派生字段，不再由外部 tool 调用方传入。系统会根据各类型的结构化字段和 evidence-distillation 结果 deterministic 生成它，并用于：
-
-- runtime 检索
-- distillation pipeline
-- `memory` namespace 下的 `summary.md`
-
-## 存储格式版本
-
-Task、Experience、Evidence、Run Evidence 和 Execution Evidence 当前使用 v2 schema，并用完整的
-`RuntimeSessionRef { type, id }` 记录 runtime session 身份。v1 中只保存
-`runtimeSessionId`，无法区分不同 runtime，因此不会被 v2 读取，也不保留运行期兼容分支。
-
-升级前如需保留历史数据，应先自行备份或离线转换 `~/.pragma/memories/<agentId>/`；不需要保留时，删除对应 Agent 的旧 memory 目录后重新生成。
-
-## 自动沉淀
-
-当前默认有一条 deterministic distillation pipeline：
-
-1. 已归档或已解决的 `Task Memory` 会写入 evidence
-2. session / run 证据会汇总进入统一 evidence layer
-3. `Experience Memory`、`Fact Memory`、`Skill Memory` 会从 evidence 中异步沉淀出来
-
-当前规则重点是：
-
-- 没有 evidence 的经历不会自动升 fact
-- 明显时效性强的信息不会自动升 fact
-- 带稳定结构结论的经历可以升 fact
-- 带“推荐做法 / next time / recommended”信号的经历可以提炼成 skill
-
-## 相关文件
-
-- [Agent 使用指南](./agents.md)
-- [Plugins 使用指南](./plugins.md)
-- [Memory System ADR](../adr/002-memory-system.md)
-- [Agent Core 架构说明](../architecture/agent-core-architecture.md)
+- [ADR 031: Extensible Memory Plane](../adr/031-extensible-memory-plane.md)
+- [ADR 032: Durable Canonical Event Feed](../adr/032-durable-canonical-event-feed.md)
+- [Memory Plane 落地计划](../architecture/memory-plane-implementation-plan.md)
+- [旧 Memory System ADR（已被替代）](../adr/002-memory-system.md)

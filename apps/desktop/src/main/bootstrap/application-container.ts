@@ -48,6 +48,8 @@ import {
   createMissionRunner,
 } from "../features/missions/mission-runner.ts";
 import { createMissionStore } from "../features/missions/mission-store.ts";
+import { createDesktopMemoryPlane } from "../features/memory/desktop-memory-plane.ts";
+import { installMemoryPolicyHandlers } from "../features/memory/memory-policy-ipc.ts";
 import { installModelProviderHandlers } from "../features/model-providers/model-provider-ipc.ts";
 import { createModelProviderStore } from "../features/model-providers/model-provider-store.ts";
 import { createPluginCredentialStore } from "../features/plugins/plugin-credential-store.ts";
@@ -342,6 +344,10 @@ export async function createDesktopApplicationContainer(
     },
   );
   const defaultAgentStateRoot = join(pragmaPaths.stateRoot(), "pragma");
+  const memoryPlane = await createDesktopMemoryPlane({
+    pragmaHome: pragmaPaths.root,
+    logger: mainLogger,
+  });
   const defaultAgentProject = createDesktopDefaultAgentProjectPort({
     project: pragmaProjectStore,
     stateRoot: defaultAgentStateRoot,
@@ -357,6 +363,7 @@ export async function createDesktopApplicationContainer(
     capabilitiesPath,
     mcpToolRegistryPool,
     pragmaHome: pragmaPaths.root,
+    executionStore: memoryPlane.executionStore,
     contextStores,
     plugins: pluginStore,
     runtimes,
@@ -508,6 +515,7 @@ export async function createDesktopApplicationContainer(
       }
     },
   });
+  installMemoryPolicyHandlers(memoryPlane);
   installModelProviderHandlers(modelProviderStore, {
     isProviderReferenced: async (providerId) =>
       (await pragmaProjectStore.get()).resources.some(
@@ -563,11 +571,19 @@ export async function createDesktopApplicationContainer(
           { error },
         );
       });
+      memoryPlane.start();
     },
     dispose: () => {
       unsubscribeUsageUpdates();
       unsubscribeTokenCounter();
       automationService.stop();
+      void memoryPlane.stop().catch((error: unknown) => {
+        mainLogger.warn(
+          "desktop.memory_shutdown_failed",
+          "The Memory pipeline could not be stopped cleanly.",
+          { error },
+        );
+      });
       storageCapacityGuard.close();
       tokenCounter.dispose();
       void mcpToolRegistryPool.close().catch((error: unknown) => {

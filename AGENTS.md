@@ -40,6 +40,7 @@ packages/
   client/         浏览器或客户端使用的 HTTP SDK
   server/         Node 服务端基础设施边界，例如数据库边界
   core/           ExpertAgent、Context、工具、插件、Runtime Adapter 与默认 Runtime
+  memory/         Host 内置 Memory Plane、Evidence adapter、Module registry 与联邦 Context
   interpreter/    Pragma YAML DSL 的 AST、解析、校验、编译、扩展 registry 与 dump
   eslint-config/ 共享 ESLint 配置出口
   tsconfig/      共享 TypeScript 配置
@@ -89,6 +90,7 @@ tsconfig.base.json
 @pragma/client
 @pragma/server
 @pragma/core
+@pragma/memory
 @pragma/interpreter
 @pragma/evaluation
 @pragma/default-agent
@@ -128,6 +130,7 @@ lib
 - `evaluation` 是独立测评领域包，拥有 Evaluation 协议、Run Dry 执行器与结果模型；只依赖 `core`，不依赖 `interpreter` 或应用层。
 - `interpreter` 是 Pragma DSL 的语言实现，拥有 AST、解析、链接、校验、编译、扩展 registry 和 dump；可以依赖 `evaluation` 和 `core`，但 `core` 与 `evaluation` 不得反向依赖 `interpreter`。
 - `default-agent` 是内置通用 Agent `Pragma` 的可复用产品能力包，拥有 DSL、Skill、descriptor/compiler、宿主端口和 managed tools；应用负责系统专家注册、Mission 存储、任务和 Runtime 适配。
+- `memory` 是 Host 内置 Memory Plane，拥有 Evidence adapter、Module SPI、独立消费状态和联邦只读 Context；只依赖 `core` 与 `shared`，不得反向进入 Core。
 - `runtime-*` 是具体 Runtime Adapter 实现，依赖 `core`、`shared` 和该 runtime 自己的 SDK；不同 runtime 包相互独立。
 - `server` 是服务端控制面与基础设施层，可以依赖 `shared` 和 `core` 抽象。
 - `apps/server` 和 `apps/worker` 是云端运行入口，未来由它们调度专家 Agent；不是 Agent 反过来依赖 Server。
@@ -140,28 +143,30 @@ apps/worker -> server -> runtime-* -> core -> shared
 apps/desktop    -> default-agent -> interpreter -> core -> shared
 apps/desktop    -> interpreter -> evaluation -> core -> shared
 apps/desktop    -> runtime-* -> core -> shared
+apps/desktop    -> memory -> core -> shared
 plugins/*   -> core -> shared
 examples    -> runtime-* / plugin-* / core -> shared
 ```
 
 更具体地说：
 
-| 来源                     | 允许依赖                                                                                                                         |
-| ------------------------ | -------------------------------------------------------------------------------------------------------------------------------- |
-| `apps/web`               | `@pragma/shared`、`@pragma/client`                                                                                               |
-| `apps/server`            | `@pragma/shared`、`@pragma/server`、`@pragma/core`                                                                               |
-| `apps/worker`            | `@pragma/shared`、`@pragma/server`、`@pragma/core`、具体 `@pragma/runtime-*`                                                     |
-| `apps/desktop`           | `@pragma/shared`、`@pragma/core`、`@pragma/evaluation`、`@pragma/interpreter`、`@pragma/default-agent`、具体 `@pragma/runtime-*` |
-| `plugins/*`              | `@pragma/shared`、`@pragma/core`；不依赖 app、server、client 或具体 runtime                                                      |
-| `examples`               | `@pragma/core`、具体 `@pragma/runtime-*`、具体 `@pragma/plugin-*`                                                                |
-| `packages/shared`        | 无内部 package 依赖；只允许运行时中立依赖                                                                                        |
-| `packages/client`        | `@pragma/shared`                                                                                                                 |
-| `packages/server`        | `@pragma/shared`；需要编排时可依赖 `@pragma/core`                                                                                |
-| `packages/core`          | `@pragma/shared`                                                                                                                 |
-| `packages/interpreter`   | `@pragma/shared`、`@pragma/core`；AST 子入口只使用运行时中立依赖                                                                 |
-| `packages/evaluation`    | `@pragma/core`；`/ast` 保持浏览器安全且不依赖 Interpreter                                                                        |
-| `packages/default-agent` | `@pragma/shared`、`@pragma/core`、`@pragma/interpreter`；`/contracts` 保持浏览器安全                                             |
-| `packages/runtime/*`     | `@pragma/shared`、`@pragma/core`、该 runtime 自己的 SDK                                                                          |
+| 来源                     | 允许依赖                                                                                                                                           |
+| ------------------------ | -------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `apps/web`               | `@pragma/shared`、`@pragma/client`                                                                                                                 |
+| `apps/server`            | `@pragma/shared`、`@pragma/server`、`@pragma/core`                                                                                                 |
+| `apps/worker`            | `@pragma/shared`、`@pragma/server`、`@pragma/core`、具体 `@pragma/runtime-*`                                                                       |
+| `apps/desktop`           | `@pragma/shared`、`@pragma/core`、`@pragma/memory`、`@pragma/evaluation`、`@pragma/interpreter`、`@pragma/default-agent`、具体 `@pragma/runtime-*` |
+| `plugins/*`              | `@pragma/shared`、`@pragma/core`；不依赖 app、server、client 或具体 runtime                                                                        |
+| `examples`               | `@pragma/core`、具体 `@pragma/runtime-*`、具体 `@pragma/plugin-*`                                                                                  |
+| `packages/shared`        | 无内部 package 依赖；只允许运行时中立依赖                                                                                                          |
+| `packages/client`        | `@pragma/shared`                                                                                                                                   |
+| `packages/server`        | `@pragma/shared`；需要编排时可依赖 `@pragma/core`                                                                                                  |
+| `packages/core`          | `@pragma/shared`                                                                                                                                   |
+| `packages/memory`        | `@pragma/shared`、`@pragma/core`；不得依赖 app、server、client、interpreter 或具体 runtime                                                         |
+| `packages/interpreter`   | `@pragma/shared`、`@pragma/core`；AST 子入口只使用运行时中立依赖                                                                                   |
+| `packages/evaluation`    | `@pragma/core`；`/ast` 保持浏览器安全且不依赖 Interpreter                                                                                          |
+| `packages/default-agent` | `@pragma/shared`、`@pragma/core`、`@pragma/interpreter`；`/contracts` 保持浏览器安全                                                               |
+| `packages/runtime/*`     | `@pragma/shared`、`@pragma/core`、该 runtime 自己的 SDK                                                                                            |
 
 明确禁止：
 
@@ -179,6 +184,7 @@ core -> server
 core -> interpreter
 evaluation -> interpreter
 core -> runtime-*
+core -> memory
 runtime-pi -> runtime-codex
 runtime-pi -> runtime-claude-code
 runtime-codex -> runtime-pi
@@ -197,6 +203,7 @@ core -> web
 plugin-* -> server
 plugin-* -> client
 plugin-* -> runtime-*
+memory -> plugin-*
 default-agent -> app
 default-agent -> server
 default-agent -> client
@@ -610,6 +617,24 @@ Expert API 设计要求：
 不要引入 `@pragma/interpreter`、具体 Claude SDK、Codex SDK、PI SDK、具体 runtime 包、Playbook、HTTP Controller、数据库实现或 Server 应用层实现。
 
 禁止引入 Server 应用层、Client SDK、React / Next Web UI、数据库实现或 Desktop 本地权限 UI。
+
+### `packages/memory`
+
+职责：
+
+- 将 Core 的持久 Canonical Event Feed 适配为版本化 Memory Evidence。
+- 定义静态 Memory Module registry、独立 checkpoint/retry/dead-letter 调度和 Module 健康诊断。
+- 提供只读的联邦 `memory` Context Store；具体动态投影和版本化资产由独立 Module 拥有。
+
+边界要求：
+
+- 主入口是 Node-only，可以依赖 `@pragma/shared` 和 `@pragma/core`。
+- `@pragma/core` 不得反向依赖 `@pragma/memory`；Core 的 Canonical Event Bus 必须保持 Memory 无关。
+- Module 静态注册，不扫描目录；Module id、版本和 Context prefix 必须唯一。
+- Module 不直接写另一个 Module Store，只通过版本化 Evidence/derived event 协作。
+- WorkingState、TODO、Task Board 与专家团白板不是 Memory Plane 的必需输入。
+
+禁止依赖 Interpreter、具体 Runtime、Expert plugin、Desktop UI、Server 应用层或 Client SDK。
 
 ### `packages/interpreter`
 

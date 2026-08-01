@@ -24,6 +24,7 @@ import { useTranslation } from "react-i18next";
 import { stringify } from "yaml";
 
 import type { DesktopRuntimeAvailability } from "../../../../../shared/contracts/index.ts";
+import { AssetMemoryPolicySection } from "../../settings/AssetMemoryPolicySection.tsx";
 import { flowStepKind, flowStepTarget, type FlowStep } from "./flow-model.ts";
 import {
   createRouteTransition,
@@ -65,6 +66,7 @@ import { FlowTimeoutField } from "./flow-timeout.tsx";
 export function FlowSettings(props: {
   readonly flow: PragmaFlowResource;
   readonly onPatch: (mutator: (copy: PragmaFlowResource) => void) => void;
+  readonly showMemoryPolicy?: boolean | undefined;
 }) {
   const { t } = useTranslation("studio");
   return (
@@ -154,6 +156,12 @@ export function FlowSettings(props: {
           })
         }
       />
+      {props.showMemoryPolicy ? (
+        <AssetMemoryPolicySection
+          compact
+          targetRef={{ type: "pragma.flow", id: props.flow.metadata.id }}
+        />
+      ) : null}
     </div>
   );
 }

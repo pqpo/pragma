@@ -48,4 +48,15 @@ describe("SettingsPage", () => {
     expect(html).toContain("Runtime Environments");
     expect(html).toContain("Checking runtime availability");
   });
+
+  it("exposes the built-in memory plane as a first-class settings section", () => {
+    const html = renderToStaticMarkup(<SettingsPage initialView="memory" />);
+
+    expect(html).toContain('id="memory-panel"');
+    expect(html).toContain("Control the built-in memory plane");
+    expect(html).toContain("Capture");
+    expect(html).toContain("Recall");
+    expect(html).toContain("Learning");
+    expect(html).toContain("Memory plane health");
+  });
 });
