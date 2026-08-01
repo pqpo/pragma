@@ -203,7 +203,8 @@ Desktop 提供设置入口。
 - Memory Settings 保存 `pragma.memory-extractor-profile/v1`，支持继承默认或固定 Runtime/provider/model，
   revision CAS 更新，不读取环境变量；
 - 普通 Expert、ExpertTeam 与 Flow 内 Expert 由 Desktop Host 自动挂载只读 `memory` namespace；
-- Plane health 展示 Episode、提炼中、needs-attention 和低价值拒绝计数。
+- Plane health 展示 Episode、提炼中、needs-attention 和拒绝总数；Module 内部按 low-value、sensitive、
+  insufficient-evidence 与 policy 保存拒绝原因计数；
 
 ### 退出门槛
 

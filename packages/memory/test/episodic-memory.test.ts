@@ -231,9 +231,40 @@ describe("Episodic Memory", () => {
       await module.runBackgroundOnce?.();
       expect(extractor.extract).not.toHaveBeenCalled();
       expect(await module.store.list()).toEqual([]);
-      expect((await module.store.inspect()).rejectedLowValue).toBe(1);
+      const diagnostic = await module.store.inspect();
+      expect(diagnostic.rejected).toBe(1);
+      expect(
+        diagnostic.rejectedByReason[sensitivity === "restricted" ? "sensitive" : "low-value"],
+      ).toBe(1);
       module.close();
     }
+  });
+
+  it("rejects incompatible restricted visibility before invoking the model", async () => {
+    const root = await temporaryRoot();
+    const extractor = fakeExtractor();
+    const module = await createEpisodicMemoryModule({ pragmaHome: root, extractor });
+    const evidence = executionEvidence("visibility-conflict").map((item, index) =>
+      MemoryEvidenceEnvelopeSchema.parse({
+        ...item,
+        visibility: {
+          mode: "restricted",
+          principals: [ref("pragma.expert", index === 1 ? "expert-b" : "expert-a")],
+        },
+      }),
+    );
+
+    await module.consume(evidence);
+    await module.runBackgroundOnce?.();
+
+    expect(extractor.extract).not.toHaveBeenCalled();
+    expect(await module.store.list()).toEqual([]);
+    expect(await module.store.inspect()).toMatchObject({
+      rejected: 1,
+      rejectedByReason: { policy: 1 },
+      needsAttention: 0,
+    });
+    module.close();
   });
 
   it("moves repeated invalid Evidence references to needs_attention without dropping the job", async () => {
@@ -271,6 +302,28 @@ describe("Episodic Memory", () => {
     expect((await legacy.store.list())[0]).toMatchObject({
       rootRefs: [{ type: "pragma.expert", id: "expert-a" }],
       bindings: [{ type: "pragma.expert", id: "expert-a" }],
+    });
+
+    const legacyTeam = executionEvidence(
+      "legacy-team-attribution",
+      ref("pragma.expert-team", "team-a"),
+      [ref("pragma.expert", "expert-a")],
+    ).map((item) =>
+      MemoryEvidenceEnvelopeSchema.parse({
+        ...item,
+        attribution: undefined,
+        bindings: [...item.bindings].reverse(),
+      }),
+    );
+    await legacy.consume(legacyTeam);
+    await legacy.runBackgroundOnce?.();
+    expect(
+      (await legacy.store.list()).find(
+        (episode) => episode.executionId === "legacy-team-attribution",
+      ),
+    ).toMatchObject({
+      rootRefs: [{ type: "pragma.expert-team", id: "team-a" }],
+      producerRefs: [{ type: "pragma.expert", id: "expert-a" }],
     });
     legacy.close();
 

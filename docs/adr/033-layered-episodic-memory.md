@@ -43,6 +43,8 @@ Execution asset 和当前实际 Expert 组成逻辑读取视图：独立 Expert 
 Expert 读取“当前 Team/Flow Store + 自己的个人 Store”。其他专家、Team 或 Flow 的 Episode 不可见。
 授权过滤必须在 Store 查询阶段完成，并一致覆盖 list、search、详情和 Evidence 精确读取；缺少稳定作用域
 时不返回目录，并拒绝 read/search。不能靠猜测详情或 Evidence ID 绕过该边界。
+同一 Episode 的 restricted Evidence 若没有共同 authorized principal，则在调用 extractor 前以 policy
+reason 完成拒绝，不能降级成 `host-private`、扩大可见性，也不进入无意义的重试或 needs-attention。
 
 Desktop 通过隐藏系统 Expert `expert:0000000000memory` 运行 extractor。每个任务使用新的内部 Mission，
 Mission v6 以 `origin: system-memory` 标记并从普通列表排除，但仍沿用标准 Runtime、Execution、Usage

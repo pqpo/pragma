@@ -19,8 +19,15 @@ export interface EpisodicMemoryStoreDiagnostic {
   readonly pending: number;
   readonly running: number;
   readonly needsAttention: number;
-  readonly rejectedLowValue: number;
+  readonly rejected: number;
+  readonly rejectedByReason: Readonly<Record<EpisodicRejectionReason, number>>;
 }
+
+export type EpisodicRejectionReason =
+  | "low-value"
+  | "insufficient-evidence"
+  | "sensitive"
+  | "policy";
 
 export interface EpisodicMemoryStore {
   ingest(envelopes: readonly MemoryEvidenceEnvelope[]): Promise<void>;
@@ -45,7 +52,7 @@ export interface EpisodicMemoryStore {
     readonly record: EpisodicMemoryRecord;
     readonly evidence: readonly MemoryEvidenceEnvelope[];
   }): Promise<void>;
-  completeRejected(job: EpisodicExtractionJob): Promise<void>;
+  completeRejected(job: EpisodicExtractionJob, reason: EpisodicRejectionReason): Promise<void>;
   fail(input: {
     readonly job: EpisodicExtractionJob;
     readonly errorCode: string;
@@ -306,19 +313,29 @@ export async function createEpisodicMemoryStore(
         rollback(data);
         throw error;
       }
-      finishJob(state, input.job, "retained");
-      state.prepare("DELETE FROM evidence WHERE execution_id = ?").run(input.job.executionId);
+      state.exec("BEGIN IMMEDIATE;");
+      try {
+        finishJob(state, input.job, "retained");
+        state.prepare("DELETE FROM evidence WHERE execution_id = ?").run(input.job.executionId);
+        state.exec("COMMIT;");
+      } catch (error) {
+        rollback(state);
+        throw error;
+      }
     },
 
-    async completeRejected(job) {
-      finishJob(state, job, "rejected");
-      state.prepare("DELETE FROM evidence WHERE execution_id = ?").run(job.executionId);
-      state
-        .prepare(
-          `INSERT INTO counters(name, value) VALUES ('rejected_low_value', 1)
-           ON CONFLICT(name) DO UPDATE SET value = value + 1`,
-        )
-        .run();
+    async completeRejected(job, reason) {
+      state.exec("BEGIN IMMEDIATE;");
+      try {
+        finishJob(state, job, "rejected");
+        state.prepare("DELETE FROM evidence WHERE execution_id = ?").run(job.executionId);
+        incrementCounter(state, "rejected_total");
+        incrementCounter(state, `rejected_${reason.replaceAll("-", "_")}`);
+        state.exec("COMMIT;");
+      } catch (error) {
+        rollback(state);
+        throw error;
+      }
     },
 
     async fail(input) {
@@ -362,9 +379,10 @@ export async function createEpisodicMemoryStore(
         .prepare("SELECT status, COUNT(*) AS count FROM jobs GROUP BY status")
         .all() as unknown as readonly { readonly status: string; readonly count: number }[];
       const byStatus = new Map(counts.map((row) => [row.status, row.count]));
-      const rejected = state
-        .prepare("SELECT value FROM counters WHERE name = 'rejected_low_value'")
-        .get() as unknown as { readonly value: number } | undefined;
+      const counterRows = state
+        .prepare("SELECT name, value FROM counters WHERE name LIKE 'rejected_%'")
+        .all() as unknown as readonly { readonly name: string; readonly value: number }[];
+      const counters = new Map(counterRows.map((row) => [row.name, row.value]));
       const episodes = data.prepare("SELECT COUNT(*) AS count FROM episodes").get() as unknown as {
         readonly count: number;
       };
@@ -373,7 +391,13 @@ export async function createEpisodicMemoryStore(
         pending: byStatus.get("pending") ?? 0,
         running: byStatus.get("running") ?? 0,
         needsAttention: byStatus.get("needs_attention") ?? 0,
-        rejectedLowValue: rejected?.value ?? 0,
+        rejected: counters.get("rejected_total") ?? 0,
+        rejectedByReason: {
+          "low-value": counters.get("rejected_low_value") ?? 0,
+          "insufficient-evidence": counters.get("rejected_insufficient_evidence") ?? 0,
+          sensitive: counters.get("rejected_sensitive") ?? 0,
+          policy: counters.get("rejected_policy") ?? 0,
+        },
       };
     },
 
@@ -481,6 +505,15 @@ function finishJob(
       "UPDATE jobs SET status = ?, retry_at = NULL, lease_until = NULL, job_json = ? WHERE id = ?",
     )
     .run(completed.status, JSON.stringify(completed), completed.id);
+}
+
+function incrementCounter(database: DatabaseSync, name: string): void {
+  database
+    .prepare(
+      `INSERT INTO counters(name, value) VALUES (?, 1)
+       ON CONFLICT(name) DO UPDATE SET value = value + 1`,
+    )
+    .run(name);
 }
 
 function readEpisodeBy(

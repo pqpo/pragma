@@ -170,7 +170,7 @@ export async function createDesktopMemoryPlane(options: {
             pending: work.pending,
             running: work.running,
             needsAttention: work.needsAttention,
-            rejected: work.rejectedLowValue,
+            rejected: work.rejected,
           },
         });
       }

@@ -82,11 +82,16 @@ export async function createEpisodicMemoryModule(
       const evidence = sanitizeEvidence(await store.readEvidence(job.executionId));
       try {
         if (evidence.some((item) => item.sensitivity === "restricted")) {
-          await store.completeRejected(job);
+          await store.completeRejected(job, "sensitive");
           return;
         }
         if (isLowValue(evidence)) {
-          await store.completeRejected(job);
+          await store.completeRejected(job, "low-value");
+          return;
+        }
+        const visibility = strictestVisibility(evidence);
+        if (visibility === undefined) {
+          await store.completeRejected(job, "policy");
           return;
         }
         const previousEpisode = await store.getByExecution(job.executionId);
@@ -104,7 +109,7 @@ export async function createEpisodicMemoryModule(
         const extracted = await extractor.extract(input);
         const output = EpisodicExtractionOutputSchema.parse(extracted.output);
         if (!output.retain) {
-          await store.completeRejected(job);
+          await store.completeRejected(job, output.reason);
           return;
         }
         assertEvidenceRefs(output, new Set(evidence.map((item) => item.messageId)));
@@ -126,7 +131,7 @@ export async function createEpisodicMemoryModule(
           outcome: output.outcome,
           artifactRefs: artifactRefs(evidence),
           evidenceRefs: collectEvidenceRefs(output),
-          visibility: strictestVisibility(evidence),
+          visibility,
           sensitivity: strictestSensitivity(evidence),
           bindings: [attribution.rootRef],
           valueScore: output.valueScore,
@@ -240,11 +245,7 @@ function resolveAttribution(evidence: readonly MemoryEvidenceEnvelope[]): {
 } {
   const resolvedRoots = evidence.map((item) => {
     if (item.attribution !== undefined) return item.attribution.rootRef;
-    return item.bindings.find(
-      (binding) =>
-        binding.access === "allow" &&
-        ["pragma.expert", "pragma.expert-team", "pragma.flow"].includes(binding.consumerRef.type),
-    )?.consumerRef;
+    return legacyRootRef(item);
   });
   if (resolvedRoots.some((root) => root === undefined)) {
     throw new Error("episodic_root_attribution_invalid");
@@ -262,6 +263,20 @@ function resolveAttribution(evidence: readonly MemoryEvidenceEnvelope[]): {
     ),
   );
   return { rootRef, producerRefs };
+}
+
+function legacyRootRef(evidence: MemoryEvidenceEnvelope): MemorySubjectRef | undefined {
+  const candidates = uniqueRefs(
+    evidence.bindings
+      .filter((binding) => binding.access === "allow" && isExecutionRootRef(binding.consumerRef))
+      .map((binding) => binding.consumerRef),
+  );
+  const assetCandidates = candidates.filter((ref) => ref.type !== "pragma.expert");
+  if (assetCandidates.length === 1) return assetCandidates[0];
+  if (assetCandidates.length > 1) return undefined;
+  // Pre-attribution Evidence emitted root Expert before producer Experts. That ordering is the
+  // only role signal available when every candidate is an Expert.
+  return candidates[0];
 }
 
 function artifactRefs(evidence: readonly MemoryEvidenceEnvelope[]): MemorySubjectRef[] {
@@ -296,7 +311,7 @@ function strictestVisibility(evidence: readonly MemoryEvidenceEnvelope[]) {
       .reduce((left, right) => new Map([...left].filter(([key]) => right.has(key))));
     if (principals.size > 0)
       return { mode: "restricted" as const, principals: [...principals.values()] };
-    throw new Error("episodic_visibility_intersection_empty");
+    return undefined;
   }
   return evidence.every((item) => item.visibility.mode === "public")
     ? { mode: "public" as const }
