@@ -241,8 +241,9 @@ box-shadow: 0 16px 40px rgb(20 31 25 / 12%);
 ### 5.3 Missions / Studio / Evaluations 目录页
 
 - 使用“目录栏 + 工作区”平面分栏。外层可以有一条边界，但内部列表不再逐项卡片化。
-- Missions、Studio、Settings 等固定二级导航统一使用 `--ui-rail`，相邻内容区使用 `--ui-canvas`；
+- Missions、Studio、Evaluations、Settings 等固定二级导航统一使用 `--ui-rail`，相邻内容区使用 `--ui-canvas`；
   背景色差已经表达分栏时，不再增加结构分割线或阴影。
+- 目录页的二级导航和内容工作区直接落在对应背景层上，不再套白色容器、面板边框或圆角卡片。
 - 选中行使用 `--ui-selection` 与必要的前景色变化；hover 只用 `--ui-surface-subtle`，默认不添加位置标记。
 - 行内只显示决策所需的名称、状态和一组次级信息。更多操作在 hover/focus 后出现或进入菜单。
 - 详情页通过标题、section 间距和背景区分结构；仅交互对象使用 surface。

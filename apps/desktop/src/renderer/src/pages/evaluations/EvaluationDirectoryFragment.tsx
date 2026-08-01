@@ -19,7 +19,6 @@ import {
 
 import type { PragmaProjectSnapshot } from "../../../../shared/contracts/index.ts";
 import { errorMessage } from "../../lib/errors.ts";
-import { StudioScreenFrame } from "../studio/StudioScreenFrame.tsx";
 import { StudioConfirmationDialog } from "../studio/StudioDialog.tsx";
 import { desktopApi } from "../studio/studio-model.ts";
 
@@ -160,10 +159,79 @@ export function EvaluationDirectoryFragment(props: {
   };
 
   return (
-    <StudioScreenFrame
-      className="evaluation-directory"
-      labelledBy="evaluations-heading"
-      header={
+    <section className="evaluation-directory" aria-labelledby="evaluations-heading">
+      <aside className="evaluation-target-directory" aria-label={t("evaluationTargets")}>
+        <label className="evaluation-target-search">
+          <MagnifyingGlass size={17} aria-hidden="true" />
+          <span className="sr-only">{t("searchEvaluationTargets")}</span>
+          <input
+            type="search"
+            value={search}
+            placeholder={t("searchEvaluationTargets")}
+            onChange={(event) => setSearch(event.target.value)}
+          />
+        </label>
+
+        <div className="evaluation-target-groups">
+          {groups.map((group) => {
+            const GroupIcon = group.icon;
+            const filtered = group.resources.filter((resource) => {
+              if (normalizedSearch === "") return true;
+              return `${resource.metadata.name} ${resource.metadata.description ?? ""} ${resource.metadata.id}`
+                .toLocaleLowerCase(i18n.language)
+                .includes(normalizedSearch);
+            });
+            const expanded = expandedKinds.has(group.kind) || normalizedSearch !== "";
+            const visible = expanded ? filtered : filtered.slice(0, visibleTargetLimit);
+
+            return (
+              <section className="evaluation-target-group" key={group.kind}>
+                <header>
+                  <GroupIcon size={19} aria-hidden="true" />
+                  <strong>{group.label}</strong>
+                  <span>{group.resources.length}</span>
+                </header>
+                <div>
+                  {visible.map((resource) => (
+                    <button
+                      className={
+                        resource.metadata.id === selectedTarget?.metadata.id ? "is-active" : ""
+                      }
+                      type="button"
+                      key={`${resource.kind}:${resource.metadata.id}`}
+                      onClick={() => setSelectedTargetId(resource.metadata.id)}
+                    >
+                      <GroupIcon size={17} aria-hidden="true" />
+                      <span>{resource.metadata.name}</span>
+                    </button>
+                  ))}
+                  {filtered.length === 0 && normalizedSearch !== "" ? (
+                    <p>{t("noMatchingTargets")}</p>
+                  ) : null}
+                </div>
+                {normalizedSearch === "" && filtered.length > visibleTargetLimit ? (
+                  <button
+                    className="evaluation-target-more"
+                    type="button"
+                    onClick={() =>
+                      setExpandedKinds((current) => {
+                        const next = new Set(current);
+                        if (next.has(group.kind)) next.delete(group.kind);
+                        else next.add(group.kind);
+                        return next;
+                      })
+                    }
+                  >
+                    {expanded ? t("showLess") : t("showMore")}
+                  </button>
+                ) : null}
+              </section>
+            );
+          })}
+        </div>
+      </aside>
+
+      <div className="evaluation-directory-main">
         <header className="studio-heading evaluation-directory-heading">
           <div>
             <h1 id="evaluations-heading">{t("evaluations")}</h1>
@@ -180,80 +248,6 @@ export function EvaluationDirectoryFragment(props: {
             {allocating ? t("creatingEvaluation") : t("newEvaluation")}
           </button>
         </header>
-      }
-    >
-      <div className="evaluation-directory-shell">
-        <aside className="evaluation-target-directory" aria-label={t("evaluationTargets")}>
-          <label className="evaluation-target-search">
-            <MagnifyingGlass size={17} aria-hidden="true" />
-            <span className="sr-only">{t("searchEvaluationTargets")}</span>
-            <input
-              type="search"
-              value={search}
-              placeholder={t("searchEvaluationTargets")}
-              onChange={(event) => setSearch(event.target.value)}
-            />
-          </label>
-
-          <div className="evaluation-target-groups">
-            {groups.map((group) => {
-              const GroupIcon = group.icon;
-              const filtered = group.resources.filter((resource) => {
-                if (normalizedSearch === "") return true;
-                return `${resource.metadata.name} ${resource.metadata.description ?? ""} ${resource.metadata.id}`
-                  .toLocaleLowerCase(i18n.language)
-                  .includes(normalizedSearch);
-              });
-              const expanded = expandedKinds.has(group.kind) || normalizedSearch !== "";
-              const visible = expanded ? filtered : filtered.slice(0, visibleTargetLimit);
-
-              return (
-                <section className="evaluation-target-group" key={group.kind}>
-                  <header>
-                    <GroupIcon size={19} aria-hidden="true" />
-                    <strong>{group.label}</strong>
-                    <span>{group.resources.length}</span>
-                  </header>
-                  <div>
-                    {visible.map((resource) => (
-                      <button
-                        className={
-                          resource.metadata.id === selectedTarget?.metadata.id ? "is-active" : ""
-                        }
-                        type="button"
-                        key={`${resource.kind}:${resource.metadata.id}`}
-                        onClick={() => setSelectedTargetId(resource.metadata.id)}
-                      >
-                        <GroupIcon size={17} aria-hidden="true" />
-                        <span>{resource.metadata.name}</span>
-                      </button>
-                    ))}
-                    {filtered.length === 0 && normalizedSearch !== "" ? (
-                      <p>{t("noMatchingTargets")}</p>
-                    ) : null}
-                  </div>
-                  {normalizedSearch === "" && filtered.length > visibleTargetLimit ? (
-                    <button
-                      className="evaluation-target-more"
-                      type="button"
-                      onClick={() =>
-                        setExpandedKinds((current) => {
-                          const next = new Set(current);
-                          if (next.has(group.kind)) next.delete(group.kind);
-                          else next.add(group.kind);
-                          return next;
-                        })
-                      }
-                    >
-                      {expanded ? t("showLess") : t("showMore")}
-                    </button>
-                  ) : null}
-                </section>
-              );
-            })}
-          </div>
-        </aside>
-
         <section className="evaluation-target-workspace" aria-live="polite">
           {selectedTarget === null ? (
             <div className="evaluation-target-empty">
@@ -401,7 +395,7 @@ export function EvaluationDirectoryFragment(props: {
           onConfirm={() => void deleteEvaluation()}
         />
       ) : null}
-    </StudioScreenFrame>
+    </section>
   );
 }
 

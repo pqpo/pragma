@@ -99,6 +99,9 @@ describe("EvaluationDirectoryFragment", () => {
     expect(html).toContain("Release flow");
     expect(html).toContain("Rollback flow");
     expect(html).toContain("1 case");
+    expect(html).toContain('class="evaluation-target-directory"');
+    expect(html).toContain('class="evaluation-directory-main"');
+    expect(html).not.toContain('class="studio-screen evaluation-directory"');
     expect(html).toContain('aria-haspopup="menu"');
     expect(html).toContain('aria-expanded="false"');
     expect(html).not.toContain("New Run Dry case");
