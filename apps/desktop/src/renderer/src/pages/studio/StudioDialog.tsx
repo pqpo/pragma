@@ -1,5 +1,4 @@
-import { ArrowCounterClockwise, ArrowRight, Trash } from "@phosphor-icons/react";
-import { useId } from "react";
+import { ConfirmationDialog, Dialog } from "../../components/Dialog.tsx";
 
 export function StudioConfirmationDialog(props: {
   readonly title: string;
@@ -12,45 +11,18 @@ export function StudioConfirmationDialog(props: {
   readonly onConfirm: () => void;
   readonly action?: "delete" | "reset" | "move" | undefined;
 }) {
-  const titleId = useId();
-  const descriptionId = useId();
-  const ConfirmIcon =
-    props.action === "reset" ? ArrowCounterClockwise : props.action === "move" ? ArrowRight : Trash;
   return (
-    <div className="capability-confirm-backdrop">
-      <section
-        className="capability-confirm-dialog"
-        role="alertdialog"
-        aria-modal="true"
-        aria-labelledby={titleId}
-        aria-describedby={descriptionId}
-        onKeyDown={(event) => {
-          if (event.key === "Escape" && !props.busy) props.onCancel();
-        }}
-      >
-        <h2 id={titleId}>{props.title}</h2>
-        <p id={descriptionId}>{props.description}</p>
-        <footer>
-          <button
-            className="secondary-button"
-            type="button"
-            disabled={props.busy}
-            autoFocus
-            onClick={props.onCancel}
-          >
-            {props.cancelLabel}
-          </button>
-          <button
-            className={props.action === "move" ? "primary-button" : "danger-button"}
-            type="button"
-            disabled={props.busy}
-            onClick={props.onConfirm}
-          >
-            <ConfirmIcon size={17} /> {props.busy ? props.busyLabel : props.confirmLabel}
-          </button>
-        </footer>
-      </section>
-    </div>
+    <ConfirmationDialog
+      title={props.title}
+      description={props.description}
+      cancelLabel={props.cancelLabel}
+      confirmLabel={props.confirmLabel}
+      busyLabel={props.busyLabel}
+      busy={props.busy}
+      tone={props.action === "move" ? "primary" : "danger"}
+      onCancel={props.onCancel}
+      onConfirm={props.onConfirm}
+    />
   );
 }
 
@@ -68,41 +40,15 @@ export function StudioTextInputDialog(props: {
   readonly onCancel: () => void;
   readonly onConfirm: () => void;
 }) {
-  const titleId = useId();
-  const descriptionId = useId();
   return (
-    <div className="capability-confirm-backdrop">
-      <form
-        className="capability-confirm-dialog studio-text-input-dialog"
-        role="dialog"
-        aria-modal="true"
-        aria-labelledby={titleId}
-        aria-describedby={descriptionId}
-        onSubmit={(event) => {
-          event.preventDefault();
-          if (!props.busy && props.value.trim() !== "") props.onConfirm();
-        }}
-        onKeyDown={(event) => {
-          if (event.key === "Escape" && !props.busy) props.onCancel();
-        }}
-      >
-        <h2 id={titleId}>{props.title}</h2>
-        <p id={descriptionId}>{props.description}</p>
-        <label>
-          {props.label}
-          <input
-            autoFocus
-            value={props.value}
-            disabled={props.busy}
-            onChange={(event) => props.onChange(event.target.value)}
-          />
-        </label>
-        {props.error ? (
-          <p className="form-error" role="alert">
-            {props.error}
-          </p>
-        ) : null}
-        <footer>
+    <Dialog
+      title={props.title}
+      description={props.description}
+      busy={props.busy}
+      onCancel={props.onCancel}
+      className="studio-text-input-dialog"
+      footer={
+        <>
           <button
             className="secondary-button"
             type="button"
@@ -114,12 +60,36 @@ export function StudioTextInputDialog(props: {
           <button
             className="primary-button"
             type="submit"
+            form="studio-text-input-dialog-form"
             disabled={props.busy || props.value.trim() === ""}
           >
             {props.busy ? props.busyLabel : props.confirmLabel}
           </button>
-        </footer>
+        </>
+      }
+    >
+      <form
+        id="studio-text-input-dialog-form"
+        onSubmit={(event) => {
+          event.preventDefault();
+          if (!props.busy && props.value.trim() !== "") props.onConfirm();
+        }}
+      >
+        <label>
+          <span>{props.label}</span>
+          <input
+            data-dialog-initial-focus
+            value={props.value}
+            disabled={props.busy}
+            onChange={(event) => props.onChange(event.target.value)}
+          />
+        </label>
+        {props.error ? (
+          <p className="form-error" role="alert">
+            {props.error}
+          </p>
+        ) : null}
       </form>
-    </div>
+    </Dialog>
   );
 }

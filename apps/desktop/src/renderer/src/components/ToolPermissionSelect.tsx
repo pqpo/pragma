@@ -24,6 +24,7 @@ export function ToolPermissionSelect(props: {
   return (
     <SelectMenu
       ariaLabel={t("general.toolPermissions")}
+      align="end"
       className="tool-permission-select"
       disabled={props.disabled}
       icon={<ShieldCheck size={16} aria-hidden="true" />}

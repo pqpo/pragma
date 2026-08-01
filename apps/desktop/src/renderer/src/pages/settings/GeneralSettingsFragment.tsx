@@ -1,4 +1,4 @@
-import { CaretDown, FolderOpen, X } from "@phosphor-icons/react";
+import { FolderOpen, X } from "@phosphor-icons/react";
 import { useEffect, useState } from "react";
 import { useTranslation } from "react-i18next";
 
@@ -9,6 +9,7 @@ import type {
   DesktopToolPermissionMode,
 } from "../../../../shared/contracts/index.ts";
 import { localeDisplayNames, setDesktopLocale } from "../../i18n/index.ts";
+import { SelectMenu, type SelectMenuOption } from "../../components/SelectMenu.tsx";
 import { runtimeDisplayName } from "../../lib/runtime-display.ts";
 import { SettingsScreenFrame } from "./SettingsScreenFrame.tsx";
 
@@ -136,7 +137,7 @@ export function GeneralSettingsFragment() {
       }
     >
       <div className="general-settings-list">
-        <label className="setting-row general-language-setting">
+        <div className="setting-row general-language-setting">
           <span className="setting-copy">
             <strong>{t("general.language", { ns: "settings" })}</strong>
             <span>{t("general.languageDescription", { ns: "settings" })}</span>
@@ -149,51 +150,44 @@ export function GeneralSettingsFragment() {
               </small>
             ) : null}
           </span>
-          <span className="protocol-select-shell language-select-shell">
-            <select
-              value={settings?.localePreference ?? "system"}
-              disabled={settings === undefined || saving}
-              onChange={(event) =>
-                void updateLanguage(event.target.value as DesktopLocalePreference)
-              }
-            >
-              <option value="system">{t("general.followSystem", { ns: "settings" })}</option>
-              {languageOptions.map((option) => (
-                <option key={option.value} value={option.value}>
-                  {option.label}
-                </option>
-              ))}
-            </select>
-            <CaretDown size={17} weight="bold" aria-hidden="true" />
-          </span>
-        </label>
-        <label className="setting-row general-language-setting">
+          <SelectMenu<DesktopLocalePreference>
+            ariaLabel={t("general.language", { ns: "settings" })}
+            className="settings-select"
+            value={settings?.localePreference ?? "system"}
+            disabled={settings === undefined || saving}
+            placement="bottom"
+            options={
+              [
+                { value: "system", label: t("general.followSystem", { ns: "settings" }) },
+                ...languageOptions,
+              ] satisfies readonly SelectMenuOption<DesktopLocalePreference>[]
+            }
+            onChange={(value) => void updateLanguage(value)}
+          />
+        </div>
+        <div className="setting-row general-language-setting">
           <span className="setting-copy">
             <strong>{t("general.runtime", { ns: "settings" })}</strong>
             <span>{t("general.runtimeDescription", { ns: "settings" })}</span>
           </span>
-          <span className="protocol-select-shell language-select-shell">
-            <select
-              value={defaultRuntimeId}
-              disabled={runtimes.length === 0 || saving}
-              onChange={(event) => void updateRuntime(event.target.value)}
-            >
-              {runtimes.map((runtime) => (
-                <option
-                  key={runtime.id}
-                  value={runtime.id}
-                  disabled={runtime.status !== "available"}
-                >
-                  {runtimeDisplayName(t, runtime)}
-                  {runtime.status === "available"
-                    ? ""
-                    : ` · ${t("status.unavailable", { ns: "common" })}`}
-                </option>
-              ))}
-            </select>
-            <CaretDown size={17} weight="bold" aria-hidden="true" />
-          </span>
-        </label>
+          <SelectMenu
+            ariaLabel={t("general.runtime", { ns: "settings" })}
+            className="settings-select"
+            value={defaultRuntimeId}
+            disabled={runtimes.length === 0 || saving}
+            placement="bottom"
+            options={runtimes.map((runtime) => ({
+              value: runtime.id,
+              label: runtimeDisplayName(t, runtime),
+              description:
+                runtime.status === "available"
+                  ? undefined
+                  : t("status.unavailable", { ns: "common" }),
+              disabled: runtime.status !== "available",
+            }))}
+            onChange={(value) => void updateRuntime(value)}
+          />
+        </div>
         <div className="setting-row tool-permission-setting">
           <span className="setting-copy">
             <strong>{t("general.toolPermissions", { ns: "settings" })}</strong>
