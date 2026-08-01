@@ -52,6 +52,7 @@ describe("MissionsPage", () => {
     const html = renderToStaticMarkup(<MissionsPage onCreate={() => undefined} />);
 
     expect(html).toContain("New mission");
+    expect(html).toContain('aria-label="Resize navigation"');
     expect(html).not.toContain("mission-create-selectors");
     expect(html).not.toContain("Needs input");
     expect(html).not.toContain("No missions need input");

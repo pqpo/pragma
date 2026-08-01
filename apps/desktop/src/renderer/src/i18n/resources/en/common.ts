@@ -38,6 +38,7 @@ export const common = {
     main: "Main navigation",
     expand: "Expand navigation",
     collapse: "Collapse navigation",
+    resize: "Resize navigation",
   },
   status: {
     active: "Active",

@@ -13,6 +13,7 @@ describe("SettingsPage", () => {
     const html = renderToStaticMarkup(<SettingsPage />);
 
     expect(html).toContain('class="settings-navigation"');
+    expect(html).toContain('aria-label="Resize navigation"');
     expect(html).toContain('class="settings-content"');
     expect(html).toContain('class="settings-screen-header"');
     expect(html).toContain('class="settings-screen-body"');
@@ -23,6 +24,7 @@ describe("SettingsPage", () => {
     expect(html).toContain("Request approval");
     expect(html).toContain("Approve for me");
     expect(html).toContain("Full access");
+    expect(html).not.toContain("Default Runtime");
     expect(html).not.toContain("Task workspace");
     expect(html).not.toContain("<h1>Settings</h1>");
   });
@@ -39,6 +41,7 @@ describe("SettingsPage", () => {
     expect(html).toContain("替我审批");
     expect(html).toContain("跟随系统");
     expect(html).toContain("繁體中文");
+    expect(html).not.toContain("默认 Runtime");
   });
 
   it("opens a requested settings section from an application deep link", () => {

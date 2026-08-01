@@ -6,7 +6,7 @@ import { ExpertCapabilityPicker, matchingToolNames } from "./ExpertCapabilityPic
 
 const toolCapability = {
   manifest: {
-    schemaVersion: "pragma.capability/v1",
+    schemaVersion: "pragma.capability/v2",
     id: "codewiki",
     runtimeKey: "codewiki",
     name: "CodeWiki",

@@ -20,10 +20,13 @@ import type {
   PragmaResource,
 } from "@pragma/interpreter/ast";
 import type { Edge } from "@xyflow/react";
+import { PRAGMA_TEXT_LIMITS, truncatePragmaTrimmedUnicode } from "@pragma/shared";
 import { useTranslation } from "react-i18next";
 import { stringify } from "yaml";
 
 import type { DesktopRuntimeAvailability } from "../../../../../shared/contracts/index.ts";
+import { CharacterCount } from "../../../components/CharacterCount.tsx";
+import { SelectMenu } from "../../../components/SelectMenu.tsx";
 import { flowStepKind, flowStepTarget, type FlowStep } from "./flow-model.ts";
 import {
   createRouteTransition,
@@ -81,22 +84,35 @@ export function FlowSettings(props: {
       <InspectorField label="Name">
         <input
           value={props.flow.metadata.name}
+          maxLength={PRAGMA_TEXT_LIMITS.flow.name * 2}
           onChange={(event) =>
             props.onPatch((copy) => {
-              copy.metadata.name = event.target.value;
+              copy.metadata.name = truncatePragmaTrimmedUnicode(
+                event.target.value,
+                PRAGMA_TEXT_LIMITS.flow.name,
+              );
             })
           }
         />
+        <CharacterCount value={props.flow.metadata.name} max={PRAGMA_TEXT_LIMITS.flow.name} />
       </InspectorField>
       <InspectorField label="Description">
         <textarea
           rows={3}
           value={props.flow.metadata.description}
+          maxLength={PRAGMA_TEXT_LIMITS.flow.description * 2}
           onChange={(event) =>
             props.onPatch((copy) => {
-              copy.metadata.description = event.target.value;
+              copy.metadata.description = truncatePragmaTrimmedUnicode(
+                event.target.value,
+                PRAGMA_TEXT_LIMITS.flow.description,
+              );
             })
           }
+        />
+        <CharacterCount
+          value={props.flow.metadata.description}
+          max={PRAGMA_TEXT_LIMITS.flow.description}
         />
       </InspectorField>
       <div className="flow-inspector-grid">
@@ -179,19 +195,22 @@ export function EndInspector(props: {
       ) : (
         <>
           <InspectorField label={t("flowResultSource")}>
-            <select
+            <SelectMenu<"terminal" | "mapping">
+              ariaLabel={t("flowResultSource")}
+              className="form-select"
               value={props.flow.spec.output.value === undefined ? "terminal" : "mapping"}
-              onChange={(event) =>
+              options={[
+                { value: "terminal", label: t("terminalNodeResult") },
+                { value: "mapping", label: t("customResultMapping") },
+              ]}
+              onChange={(source) =>
                 props.onPatch((copy) => {
                   if (copy.spec.output === undefined) return;
-                  if (event.target.value === "terminal") delete copy.spec.output.value;
+                  if (source === "terminal") delete copy.spec.output.value;
                   else copy.spec.output.value = emptyResultMapping(copy.spec.output.schema);
                 })
               }
-            >
-              <option value="terminal">{t("terminalNodeResult")}</option>
-              <option value="mapping">{t("customResultMapping")}</option>
-            </select>
+            />
           </InspectorField>
           {props.flow.spec.output.value === undefined ? (
             <small className="flow-field-hint">{t("terminalNodeResultHint")}</small>
@@ -282,20 +301,21 @@ export function StepInspector(props: {
             </div>
           </section>
           <InspectorField label={t("humanSelectionMode")}>
-            <select
-              value={step.human?.selectionMode}
-              onChange={(event) =>
+            <SelectMenu<"single" | "multiple">
+              ariaLabel={t("humanSelectionMode")}
+              className="form-select"
+              value={step.human?.selectionMode ?? "single"}
+              options={[
+                { value: "single", label: t("humanSingleSelection") },
+                { value: "multiple", label: t("humanMultipleSelection") },
+              ]}
+              onChange={(selectionMode) =>
                 patchStep((current) => {
                   if (!current.human) return;
-                  current.human.selectionMode = event.target.value as NonNullable<
-                    FlowStep["human"]
-                  >["selectionMode"];
+                  current.human.selectionMode = selectionMode;
                 })
               }
-            >
-              <option value="single">{t("humanSingleSelection")}</option>
-              <option value="multiple">{t("humanMultipleSelection")}</option>
-            </select>
+            />
           </InspectorField>
           <small className="flow-field-hint">{t("humanSelectionModeHint")}</small>
           <PromptTemplateEditor
@@ -340,25 +360,25 @@ export function StepInspector(props: {
         </InspectorField>
       ) : (
         <InspectorField label="Resource">
-          <select
+          <SelectMenu
+            ariaLabel="Resource"
+            className="form-select"
             value={target}
-            onChange={(event) =>
-              patchStep((current) => setStepReference(current, kind, event.target.value))
+            searchable
+            options={[
+              { value: "", label: t("selectResource") },
+              ...(target !== "" &&
+              !props.targets.some((item) => item.kind === kind && item.ref === target)
+                ? [{ value: target, label: `${target} · unavailable` }]
+                : []),
+              ...props.targets
+                .filter((item) => item.kind === kind)
+                .map((item) => ({ value: item.ref, label: item.label })),
+            ]}
+            onChange={(resourceRef) =>
+              patchStep((current) => setStepReference(current, kind, resourceRef))
             }
-          >
-            <option value="">{t("selectResource")}</option>
-            {target !== "" &&
-            !props.targets.some((item) => item.kind === kind && item.ref === target) ? (
-              <option value={target}>{target} · unavailable</option>
-            ) : null}
-            {props.targets
-              .filter((item) => item.kind === kind)
-              .map((item) => (
-                <option key={item.ref} value={item.ref}>
-                  {item.label}
-                </option>
-              ))}
-          </select>
+          />
         </InspectorField>
       )}
       {kind === "expert" || kind === "team" ? (
@@ -501,10 +521,26 @@ export function LogicInspector(props: {
         </div>
       </header>
       <InspectorField label={t("decisionField")}>
-        <select
+        <SelectMenu
+          ariaLabel={t("decisionField")}
+          className="form-select"
           value={transition.route}
-          onChange={(event) => {
-            const field = fields.find((candidate) => candidate.name === event.target.value);
+          options={[
+            ...(currentField === undefined
+              ? [
+                  {
+                    value: transition.route,
+                    label: t("customDecisionField", { field: fieldLabel }),
+                  },
+                ]
+              : []),
+            ...fields.map((field) => ({
+              value: field.name,
+              label: `${sourceId}.result.${field.name} · ${field.type}`,
+            })),
+          ]}
+          onChange={(fieldName) => {
+            const field = fields.find((candidate) => candidate.name === fieldName);
             props.onPatch((copy) => {
               const route = copy.spec.graph.transitions[sourceId];
               if (!isRouteTransition(route)) return;
@@ -515,18 +551,7 @@ export function LogicInspector(props: {
               }
             });
           }}
-        >
-          {currentField === undefined ? (
-            <option value={transition.route}>
-              {t("customDecisionField", { field: fieldLabel })}
-            </option>
-          ) : null}
-          {fields.map((field) => (
-            <option key={field.name} value={field.name}>
-              {sourceId}.result.{field.name} · {field.type}
-            </option>
-          ))}
-        </select>
+        />
       </InspectorField>
       {fields.length === 0 || currentField === undefined ? (
         <p className="flow-logic-warning">{t("decisionFieldNotInSchema")}</p>
@@ -624,23 +649,25 @@ export function LogicInspector(props: {
                   </span>
                 </div>
                 <InspectorField label={t("arrayMatchOperator")}>
-                  <select
+                  <SelectMenu<ArrayRouteTransition["branches"][number]["operator"]>
+                    ariaLabel={t("arrayMatchOperator")}
+                    className="form-select"
                     value={branch.operator}
-                    onChange={(event) =>
+                    options={[
+                      { value: "contains_any", label: t("containsAny") },
+                      { value: "contains_all", label: t("containsAll") },
+                      { value: "contains_none", label: t("containsNone") },
+                    ]}
+                    onChange={(operator) =>
                       patchRoute((route) => {
                         if (!isArrayRouteTransition(route)) return;
                         route.branches[index] = {
                           ...route.branches[index]!,
-                          operator: event.target
-                            .value as ArrayRouteTransition["branches"][number]["operator"],
+                          operator,
                         };
                       })
                     }
-                  >
-                    <option value="contains_any">{t("containsAny")}</option>
-                    <option value="contains_all">{t("containsAll")}</option>
-                    <option value="contains_none">{t("containsNone")}</option>
-                  </select>
+                  />
                 </InspectorField>
                 {currentField?.values === undefined ? (
                   <InspectorField label={t("arrayMatchValues")}>
@@ -896,26 +923,24 @@ export function EdgeInspector(props: {
             />
           </InspectorField>
           <InspectorField label={t("onLimit")}>
-            <select
+            <SelectMenu
+              ariaLabel={t("onLimit")}
+              className="form-select"
               value={flowTargetSelectValue(loop?.onLimit)}
-              onChange={(event) =>
+              options={[
+                { value: "end", label: t("endFlow") },
+                { value: "fail", label: t("failFlow") },
+                ...Object.keys(props.flow.spec.graph.steps)
+                  .filter((id) => id !== destination.repeat.goto)
+                  .map((id) => ({ value: `goto:${id}`, label: id })),
+              ]}
+              onChange={(target) =>
                 props.onPatch((copy) => {
                   const current = copy.spec.graph.loops[destination.repeat.loop];
-                  if (current !== undefined)
-                    current.onLimit = flowTargetFromSelect(event.target.value);
+                  if (current !== undefined) current.onLimit = flowTargetFromSelect(target);
                 })
               }
-            >
-              <option value="end">{t("endFlow")}</option>
-              <option value="fail">{t("failFlow")}</option>
-              {Object.keys(props.flow.spec.graph.steps)
-                .filter((id) => id !== destination.repeat.goto)
-                .map((id) => (
-                  <option key={id} value={`goto:${id}`}>
-                    {id}
-                  </option>
-                ))}
-            </select>
+            />
           </InspectorField>
         </>
       ) : null}

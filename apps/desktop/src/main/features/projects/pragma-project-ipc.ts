@@ -1,6 +1,7 @@
 import { ipcMain } from "electron";
 import { generatePragmaResourceId } from "@pragma/core";
 import { runPragmaEvaluation } from "@pragma/interpreter";
+import { parsePragmaReference } from "@pragma/interpreter/ast";
 
 import {
   DeletePragmaResourceSchema,
@@ -12,9 +13,13 @@ import {
   ValidatePragmaYamlSchema,
 } from "../../../shared/contracts/index.ts";
 import type { PragmaProjectStore } from "./pragma-project-store.ts";
+import type { DesktopUsageStore } from "../usage/usage-store.ts";
 import { runDesktopMutation } from "../../platform/ipc/desktop-mutation-result.ts";
 
-export function installPragmaProjectHandlers(store: PragmaProjectStore): void {
+export function installPragmaProjectHandlers(
+  store: PragmaProjectStore,
+  usage: DesktopUsageStore,
+): void {
   ipcMain.handle("pragma-project:get", () => runDesktopMutation(async () => await store.get()));
   ipcMain.handle("pragma-project:allocate-id", () =>
     runDesktopMutation(async () => {
@@ -33,10 +38,20 @@ export function installPragmaProjectHandlers(store: PragmaProjectStore): void {
     runDesktopMutation(async () => await store.upsert(UpsertPragmaResourceSchema.parse(input))),
   );
   ipcMain.handle("pragma-project:apply-changes", (_event, input: unknown) =>
-    runDesktopMutation(async () => await store.apply(PragmaProjectChangesSchema.parse(input))),
+    runDesktopMutation(async () => {
+      const changes = PragmaProjectChangesSchema.parse(input);
+      const snapshot = await store.apply(changes);
+      changes.removals.forEach((ref) => markDeletedUsageSubject(usage, ref));
+      return snapshot;
+    }),
   );
   ipcMain.handle("pragma-project:delete", (_event, input: unknown) =>
-    runDesktopMutation(async () => await store.remove(DeletePragmaResourceSchema.parse(input))),
+    runDesktopMutation(async () => {
+      const request = DeletePragmaResourceSchema.parse(input);
+      const snapshot = await store.remove(request);
+      markDeletedUsageSubject(usage, request.ref);
+      return snapshot;
+    }),
   );
   ipcMain.handle("pragma-project:validate-yaml", (_event, input: unknown) =>
     store.validateYaml(ValidatePragmaYamlSchema.parse(input).source),
@@ -68,4 +83,11 @@ export function installPragmaProjectHandlers(store: PragmaProjectStore): void {
       return runPragmaEvaluation(flow, parsed.evaluation);
     }),
   );
+}
+
+function markDeletedUsageSubject(usage: DesktopUsageStore, ref: string): void {
+  const { kind, id } = parsePragmaReference(ref);
+  if (kind === "expert" || kind === "team" || kind === "flow") {
+    usage.markSubjectDeleted(kind, id);
+  }
 }

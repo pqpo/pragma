@@ -26,6 +26,7 @@ import type {
   PragmaBundleModuleOptions,
   PragmaProjectSnapshot,
 } from "../../../../shared/contracts/index.ts";
+import { SelectMenu } from "../../components/SelectMenu.tsx";
 import { errorMessage } from "../../lib/errors.ts";
 import { desktopApi } from "./studio-model.ts";
 
@@ -134,12 +135,6 @@ function BundleExportDialog(props: {
     () => orderBundleExportRoots(props.project.resources.filter(isBundleExportRoot)),
     [props.project.resources],
   );
-
-  useEffect(() => {
-    if (rootRef === "" && roots[0] !== undefined) {
-      setRootRef(canonicalPragmaResourceRef(roots[0]));
-    }
-  }, [rootRef, roots]);
 
   const exportBundle = async () => {
     const api = desktopApi();
@@ -1057,31 +1052,31 @@ function BundleBindingStep(props: {
               {props.refreshingRuntimes ? t("bundleRefreshing") : t("bundleRefresh")}
             </button>
           </div>
-          <label className="pragma-bundle-field">
+          <div className="pragma-bundle-field">
             <span>{t("bundleChooseRuntime")}</span>
-            <select
+            <SelectMenu
+              ariaLabel={t("bundleChooseRuntime")}
+              className="form-select"
               value={props.runtimeBinding?.runtimeId ?? ""}
-              onChange={(event) =>
+              options={[
+                { value: "", label: t("bundleChooseRuntimePlaceholder") },
+                ...props.runtimes.map((candidate) => ({
+                  value: candidate.id,
+                  label: `${candidate.displayName}${
+                    candidate.status === "available" ? "" : ` · ${t("bundleRuntimeUnavailable")}`
+                  }`,
+                  disabled: candidate.status !== "available",
+                })),
+              ]}
+              onChange={(runtimeId) =>
                 props.onRuntime({
-                  runtimeId: event.target.value,
+                  runtimeId,
                   providerId: "",
                   modelId: "",
                 })
               }
-            >
-              <option value="">{t("bundleChooseRuntimePlaceholder")}</option>
-              {props.runtimes.map((candidate) => (
-                <option
-                  key={candidate.id}
-                  value={candidate.id}
-                  disabled={candidate.status !== "available"}
-                >
-                  {candidate.displayName}
-                  {candidate.status === "available" ? "" : ` · ${t("bundleRuntimeUnavailable")}`}
-                </option>
-              ))}
-            </select>
-          </label>
+            />
+          </div>
           {requirement.runtimeRequest?.runtimeId !== undefined &&
           props.runtimes.find((candidate) => candidate.id === requirement.runtimeRequest?.runtimeId)
             ?.status !== "available" ? (
@@ -1091,17 +1086,27 @@ function BundleBindingStep(props: {
               })}
             </p>
           ) : null}
-          <label className="pragma-bundle-field">
+          <div className="pragma-bundle-field">
             <span>{t("bundleChooseModel")}</span>
-            <select
+            <SelectMenu
+              ariaLabel={t("bundleChooseModel")}
+              className="form-select"
               disabled={runtime === undefined || runtime.status !== "available"}
               value={
                 props.runtimeBinding?.providerId && props.runtimeBinding.modelId
                   ? JSON.stringify([props.runtimeBinding.providerId, props.runtimeBinding.modelId])
                   : ""
               }
-              onChange={(event) => {
-                if (event.target.value === "") {
+              searchable={models.length > 8}
+              options={[
+                { value: "", label: t("bundleChooseModelPlaceholder") },
+                ...models.map((model) => ({
+                  value: JSON.stringify([model.provider.id, model.id]),
+                  label: `${model.displayName} · ${model.provider.displayName}`,
+                })),
+              ]}
+              onChange={(modelKey) => {
+                if (modelKey === "") {
                   props.onRuntime({
                     runtimeId: runtime?.id ?? "",
                     providerId: "",
@@ -1109,88 +1114,78 @@ function BundleBindingStep(props: {
                   });
                   return;
                 }
-                const [providerId, modelId] = JSON.parse(event.target.value) as [string, string];
+                const [providerId, modelId] = JSON.parse(modelKey) as [string, string];
                 props.onRuntime({
                   runtimeId: runtime?.id ?? "",
                   providerId,
                   modelId,
                 });
               }}
-            >
-              <option value="">{t("bundleChooseModelPlaceholder")}</option>
-              {models.map((model) => (
-                <option
-                  key={`${model.provider.id}:${model.id}`}
-                  value={JSON.stringify([model.provider.id, model.id])}
-                >
-                  {model.displayName} · {model.provider.displayName}
-                </option>
-              ))}
-            </select>
-          </label>
+            />
+          </div>
           {selectedModel?.thinking !== undefined ? (
-            <label className="pragma-bundle-field">
+            <div className="pragma-bundle-field">
               <span>{t("bundleChooseThinking")}</span>
-              <select
+              <SelectMenu
+                ariaLabel={t("bundleChooseThinking")}
+                className="form-select"
                 value={props.runtimeBinding?.thinkingLevel ?? ""}
-                onChange={(event) =>
+                options={[
+                  { value: "", label: t("bundleRuntimeDefault") },
+                  ...selectedModel.thinking.supportedLevels.map((level) => ({
+                    value: level.value,
+                    label: level.label,
+                  })),
+                ]}
+                onChange={(thinkingLevel) =>
                   props.onRuntime({
                     ...props.runtimeBinding!,
-                    ...(event.target.value === ""
-                      ? { thinkingLevel: undefined }
-                      : { thinkingLevel: event.target.value }),
+                    ...(thinkingLevel === "" ? { thinkingLevel: undefined } : { thinkingLevel }),
                   })
                 }
-              >
-                <option value="">{t("bundleRuntimeDefault")}</option>
-                {selectedModel.thinking.supportedLevels.map((level) => (
-                  <option key={level.value} value={level.value}>
-                    {level.label}
-                  </option>
-                ))}
-              </select>
-            </label>
+              />
+            </div>
           ) : null}
         </>
       ) : requirement.kind === "capability" ? (
-        <label className="pragma-bundle-field">
+        <div className="pragma-bundle-field">
           <span>{t("bundleChooseCapability")}</span>
-          <select
+          <SelectMenu
+            ariaLabel={t("bundleChooseCapability")}
+            className="form-select"
             value={props.capabilityBinding}
-            onChange={(event) => props.onCapability(event.target.value)}
-          >
-            <option value="">{t("bundleChooseCapability")}</option>
-            {props.capabilities
-              .filter(
-                (capability) =>
-                  requirement.capabilityKind === undefined ||
-                  capability.definition.kind === requirement.capabilityKind,
-              )
-              .map((capability) => (
-                <option
-                  key={capability.manifest.id}
-                  value={`${capability.manifest.id}@${capability.manifest.latestRevision}`}
-                >
-                  {capability.manifest.name}
-                </option>
-              ))}
-          </select>
-        </label>
+            searchable={props.capabilities.length > 8}
+            options={[
+              { value: "", label: t("bundleChooseCapability") },
+              ...props.capabilities
+                .filter(
+                  (capability) =>
+                    requirement.capabilityKind === undefined ||
+                    capability.definition.kind === requirement.capabilityKind,
+                )
+                .map((capability) => ({
+                  value: `${capability.manifest.id}@${capability.manifest.latestRevision}`,
+                  label: capability.manifest.name,
+                })),
+            ]}
+            onChange={props.onCapability}
+          />
+        </div>
       ) : requirement.kind === "context-store" ? (
-        <label className="pragma-bundle-field">
+        <div className="pragma-bundle-field">
           <span>{t("bundleChooseKnowledgeBase")}</span>
-          <select
+          <SelectMenu
+            ariaLabel={t("bundleChooseKnowledgeBase")}
+            className="form-select"
             value={props.contextBinding}
-            onChange={(event) => props.onContext(event.target.value)}
-          >
-            <option value="">{t("bundleChooseKnowledgeBase")}</option>
-            {props.contextStores.map((store) => (
-              <option key={store.id} value={store.id}>
-                {store.name}
-              </option>
-            ))}
-          </select>
-        </label>
+            searchable={props.contextStores.length > 8}
+            options={[
+              { value: "", label: t("bundleChooseKnowledgeBase") },
+              ...props.contextStores.map((store) => ({ value: store.id, label: store.name })),
+            ]}
+            onChange={props.onContext}
+          />
+        </div>
       ) : requirement.kind === "secret" ? (
         <label className="pragma-bundle-field">
           <span>{t("bundleEnterSecret")}</span>
@@ -1285,6 +1280,7 @@ function BundleExportRootPicker(props: {
         : t("bundleRootFlow");
   const filtered = filterBundleExportRoots(props.roots, search, kindLabel);
   const SelectedIcon = selected === undefined ? Archive : bundleRootIcon(selected.kind);
+  const hasExportableRoots = props.roots.length > 0;
 
   useEffect(() => {
     if (!open) return;
@@ -1328,10 +1324,17 @@ function BundleExportRootPicker(props: {
             <SelectedIcon size={18} aria-hidden="true" />
           </span>
           <span>
-            <strong>{selected?.metadata.name ?? t("bundleNoExportObjects")}</strong>
+            <strong>
+              {selected?.metadata.name ??
+                t(hasExportableRoots ? "bundleSelectExportObject" : "bundleNoExportObjects")}
+            </strong>
             <small>
               {selected === undefined
-                ? t("bundleNoExportObjectsHint")
+                ? t(
+                    hasExportableRoots
+                      ? "bundleSelectExportObjectHint"
+                      : "bundleNoExportObjectsHint",
+                  )
                 : `${kindLabel(selected.kind)} · ${canonicalPragmaResourceRef(selected)}`}
             </small>
           </span>

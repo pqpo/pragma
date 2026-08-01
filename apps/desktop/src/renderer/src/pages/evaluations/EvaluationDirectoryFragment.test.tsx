@@ -92,13 +92,19 @@ describe("EvaluationDirectoryFragment", () => {
       />,
     );
 
-    expect(html).toContain("Evaluations");
+    expect(html).toContain('<h1 id="evaluations-heading">Release flow</h1>');
+    expect(html).not.toContain('<h1 id="evaluations-heading">Evaluations</h1>');
+    expect(html).not.toContain("Create repeatable quality checks for every executable object.");
     expect(html).toContain("Release Run Dry");
     expect(html).toContain("Evaluation targets");
+    expect(html).toContain('aria-label="Resize navigation"');
     expect(html).toContain("Run Dry cases");
     expect(html).toContain("Release flow");
     expect(html).toContain("Rollback flow");
     expect(html).toContain("1 case");
+    expect(html).toContain('class="evaluation-target-directory"');
+    expect(html).toContain('class="evaluation-directory-main"');
+    expect(html).not.toContain('class="studio-screen evaluation-directory"');
     expect(html).toContain('aria-haspopup="menu"');
     expect(html).toContain('aria-expanded="false"');
     expect(html).not.toContain("New Run Dry case");
@@ -116,5 +122,22 @@ describe("EvaluationDirectoryFragment", () => {
 
     expect(emptyHtml).toContain("New Run Dry case");
     expect(emptyHtml).not.toContain("Run all");
+
+    const detailHtml = renderToStaticMarkup(
+      <EvaluationDirectoryFragment
+        project={project}
+        detail={<h1 id="evaluation-detail-heading">Evaluation detail</h1>}
+        detailLabelledBy="evaluation-detail-heading"
+        onCreate={() => undefined}
+        onDelete={async () => undefined}
+        onOpen={() => undefined}
+      />,
+    );
+
+    expect(detailHtml).toContain('aria-labelledby="evaluation-detail-heading"');
+    expect(detailHtml).toContain('class="evaluation-target-directory"');
+    expect(detailHtml).toContain("Evaluation targets");
+    expect(detailHtml).toContain("Evaluation detail");
+    expect(detailHtml).not.toContain('id="evaluations-heading"');
   });
 });

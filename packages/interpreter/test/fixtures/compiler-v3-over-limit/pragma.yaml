@@ -1,0 +1,17 @@
+apiVersion: pragma/v3
+kind: Expert
+metadata:
+  id: 3sfd30h5017wd17d
+  name: xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx
+  description: Historical over-limit compiler v3 fixture.
+  tags: [review]
+spec:
+  scope: Review changes.
+  instructions: Report concrete findings.
+  runtime:
+    ref: runtime-profile:4sfd30h5017wd17d
+  capabilities: []
+  toolApprovals: {}
+  contextStores: []
+  plugins: []
+  tools: []

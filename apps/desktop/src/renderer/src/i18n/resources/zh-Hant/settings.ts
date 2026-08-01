@@ -7,8 +7,6 @@ export const settings = {
     languageDescription: "選擇 Pragma 全域使用的語言。",
     followSystem: "跟隨系統",
     resolvedAs: "目前使用{{language}}",
-    runtime: "預設 Runtime",
-    runtimeDescription: "用於採用系統預設配置的執行者；首頁只能覆蓋模型，不能切換 Runtime。",
     toolPermissions: "工具權限",
     toolPermissionsDescription:
       "作為新任務的預設值；讀取操作永遠無需核准，也可在首頁為單次任務覆蓋。",

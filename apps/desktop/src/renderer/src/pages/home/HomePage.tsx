@@ -1,6 +1,7 @@
 import {
   useCallback,
   useEffect,
+  useId,
   useLayoutEffect,
   useRef,
   useState,
@@ -37,7 +38,9 @@ import type {
 } from "../../../../shared/contracts/index.ts";
 import { ToolPermissionSelect } from "../../components/ToolPermissionSelect.tsx";
 import { MissionModelOverrideControls } from "../../components/MissionModelOverrideControls.tsx";
+import { SelectMenu } from "../../components/SelectMenu.tsx";
 import { WorkspacePicker, type WorkspaceSelection } from "../../components/WorkspacePicker.tsx";
+import { shouldSubmitComposerOnEnter } from "../../lib/composer-keyboard.ts";
 import { errorMessage } from "../../lib/errors.ts";
 import { readHomeDraft, writeHomeDraft } from "../../lib/home-draft.ts";
 import { localizeSystemExpertCopy } from "../../lib/system-expert-copy.ts";
@@ -427,7 +430,7 @@ export function HomePage(props: {
                 value={goal}
                 onChange={(event) => setGoal(event.target.value)}
                 onKeyDown={(event) => {
-                  if (event.key === "Enter" && !event.shiftKey) {
+                  if (shouldSubmitComposerOnEnter(event.nativeEvent)) {
                     event.preventDefault();
                     void submit();
                   }
@@ -564,6 +567,7 @@ function MissionExecutorPicker(props: {
   const [managerView, setManagerView] = useState<"favorites" | "all" | "hidden">("all");
   const [managerKind, setManagerKind] = useState<"all" | HomeMissionExecutorOption["kind"]>("all");
   const [managerTag, setManagerTag] = useState("all");
+  const overlayOwnerId = useId();
   const rootRef = useRef<HTMLDivElement | null>(null);
   const triggerRef = useRef<HTMLButtonElement | null>(null);
   const managerDialogRef = useRef<HTMLElement | null>(null);
@@ -605,12 +609,17 @@ function MissionExecutorPicker(props: {
   ]);
   const SelectedIcon = selected === undefined ? UsersThree : executorIcon(selected);
 
-  useDismissableMenu(open, rootRef, () => {
-    setOpen(false);
-    setSearch("");
-    setSelectionKind("all");
-    setSelectionTag("all");
-  });
+  useDismissableMenu(
+    open,
+    rootRef,
+    () => {
+      setOpen(false);
+      setSearch("");
+      setSelectionKind("all");
+      setSelectionTag("all");
+    },
+    overlayOwnerId,
+  );
 
   const closeManager = useCallback(() => {
     setManagerOpen(false);
@@ -661,6 +670,7 @@ function MissionExecutorPicker(props: {
     <>
       <div
         className={open ? "mission-executor-picker is-open" : "mission-executor-picker"}
+        data-ui-overlay-id={overlayOwnerId}
         ref={rootRef}
       >
         <button
@@ -715,37 +725,37 @@ function MissionExecutorPicker(props: {
               />
             </label>
             <div className="mission-executor-filters mission-executor-selection-filters">
-              <label>
+              <div>
                 <span className="sr-only">{t("filterExecutorKind")}</span>
-                <select
+                <SelectMenu<"all" | HomeMissionExecutorOption["kind"]>
+                  ariaLabel={t("filterExecutorKind")}
+                  className="form-select"
+                  overlayOwnerId={overlayOwnerId}
                   value={selectionKind}
-                  onChange={(event) =>
-                    setSelectionKind(
-                      event.target.value as "all" | HomeMissionExecutorOption["kind"],
-                    )
-                  }
-                >
-                  <option value="all">{t("allKinds")}</option>
-                  <option value="expert">{t("expert")}</option>
-                  <option value="team">{t("expertTeam")}</option>
-                  <option value="flow">{t("flow")}</option>
-                </select>
-              </label>
+                  options={[
+                    { value: "all", label: t("allKinds") },
+                    { value: "expert", label: t("expert") },
+                    { value: "team", label: t("expertTeam") },
+                    { value: "flow", label: t("flow") },
+                  ]}
+                  onChange={setSelectionKind}
+                />
+              </div>
               {tags.length > 0 ? (
-                <label>
+                <div>
                   <span className="sr-only">{t("filterExecutorTag")}</span>
-                  <select
+                  <SelectMenu
+                    ariaLabel={t("filterExecutorTag")}
+                    className="form-select"
+                    overlayOwnerId={overlayOwnerId}
                     value={selectionTag}
-                    onChange={(event) => setSelectionTag(event.target.value)}
-                  >
-                    <option value="all">{t("allTags")}</option>
-                    {tags.map((candidate) => (
-                      <option value={candidate} key={candidate}>
-                        {candidate}
-                      </option>
-                    ))}
-                  </select>
-                </label>
+                    options={[
+                      { value: "all", label: t("allTags") },
+                      ...tags.map((candidate) => ({ value: candidate, label: candidate })),
+                    ]}
+                    onChange={setSelectionTag}
+                  />
+                </div>
               ) : null}
             </div>
             <div
@@ -873,37 +883,35 @@ function MissionExecutorPicker(props: {
                   ))}
                 </div>
                 <div className="mission-executor-filters">
-                  <label>
+                  <div>
                     <span className="sr-only">{t("filterExecutorKind")}</span>
-                    <select
+                    <SelectMenu<"all" | HomeMissionExecutorOption["kind"]>
+                      ariaLabel={t("filterExecutorKind")}
+                      className="form-select"
                       value={managerKind}
-                      onChange={(event) =>
-                        setManagerKind(
-                          event.target.value as "all" | HomeMissionExecutorOption["kind"],
-                        )
-                      }
-                    >
-                      <option value="all">{t("allKinds")}</option>
-                      <option value="expert">{t("expert")}</option>
-                      <option value="team">{t("expertTeam")}</option>
-                      <option value="flow">{t("flow")}</option>
-                    </select>
-                  </label>
+                      options={[
+                        { value: "all", label: t("allKinds") },
+                        { value: "expert", label: t("expert") },
+                        { value: "team", label: t("expertTeam") },
+                        { value: "flow", label: t("flow") },
+                      ]}
+                      onChange={setManagerKind}
+                    />
+                  </div>
                   {tags.length > 0 ? (
-                    <label>
+                    <div>
                       <span className="sr-only">{t("filterExecutorTag")}</span>
-                      <select
+                      <SelectMenu
+                        ariaLabel={t("filterExecutorTag")}
+                        className="form-select"
                         value={managerTag}
-                        onChange={(event) => setManagerTag(event.target.value)}
-                      >
-                        <option value="all">{t("allTags")}</option>
-                        {tags.map((candidate) => (
-                          <option value={candidate} key={candidate}>
-                            {candidate}
-                          </option>
-                        ))}
-                      </select>
-                    </label>
+                        options={[
+                          { value: "all", label: t("allTags") },
+                          ...tags.map((candidate) => ({ value: candidate, label: candidate })),
+                        ]}
+                        onChange={setManagerTag}
+                      />
+                    </div>
                   ) : null}
                 </div>
               </div>
@@ -1345,11 +1353,16 @@ function useDismissableMenu(
   open: boolean,
   rootRef: RefObject<HTMLElement | null>,
   close: () => void,
+  overlayOwnerId?: string,
 ): void {
   useEffect(() => {
     if (!open) return;
     const closeOutside = (event: MouseEvent) => {
-      if (event.target instanceof Node && !rootRef.current?.contains(event.target)) close();
+      if (!(event.target instanceof Node) || rootRef.current?.contains(event.target)) return;
+      const overlay =
+        event.target instanceof Element ? event.target.closest("[data-ui-overlay-owner]") : null;
+      if (overlay !== null && belongsToUiOverlayOwner(overlay, overlayOwnerId)) return;
+      close();
     };
     const closeOnEscape = (event: KeyboardEvent) => {
       if (event.key === "Escape") close();
@@ -1360,7 +1373,11 @@ function useDismissableMenu(
       document.removeEventListener("mousedown", closeOutside);
       window.removeEventListener("keydown", closeOnEscape);
     };
-  }, [close, open, rootRef]);
+  }, [close, open, overlayOwnerId, rootRef]);
+}
+
+export function belongsToUiOverlayOwner(element: Element, overlayOwnerId?: string): boolean {
+  return element.getAttribute("data-ui-overlay-owner") === overlayOwnerId;
 }
 
 function executorIcon(executor: Pick<HomeMissionExecutorOption, "kind">) {

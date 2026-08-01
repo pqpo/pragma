@@ -19,6 +19,7 @@ import {
 } from "@pragma/evaluation/ast";
 import type { PragmaFlowResource } from "@pragma/interpreter/ast";
 
+import { SelectMenu } from "../../components/SelectMenu.tsx";
 import { errorMessage } from "../../lib/errors.ts";
 import { StudioConfirmationDialog } from "../studio/StudioDialog.tsx";
 import { StudioScreenFrame } from "../studio/StudioScreenFrame.tsx";
@@ -312,21 +313,24 @@ export function FlowRunDryFragment(props: {
               <small>{t("caseMocksHint")}</small>
             </label>
             <div className="flow-run-dry-form-grid">
-              <label>
+              <div className="flow-run-dry-select-field">
                 <span>{t("expectedStatus")}</span>
-                <select
+                <SelectMenu<RunDryCaseDraft["status"]>
+                  ariaLabel={t("expectedStatus")}
+                  className="form-select"
                   value={selected.status}
-                  onChange={(event) =>
+                  options={[
+                    { value: "succeeded", label: t("statusSucceeded") },
+                    { value: "failed", label: t("statusFailed") },
+                  ]}
+                  onChange={(status) =>
                     updateSelected({
-                      status: event.target.value === "failed" ? "failed" : "succeeded",
-                      ...(event.target.value === "failed" ? { output: "" } : { errorContains: "" }),
+                      status,
+                      ...(status === "failed" ? { output: "" } : { errorContains: "" }),
                     })
                   }
-                >
-                  <option value="succeeded">{t("statusSucceeded")}</option>
-                  <option value="failed">{t("statusFailed")}</option>
-                </select>
-              </label>
+                />
+              </div>
               <label>
                 <span>{t("expectedPath")}</span>
                 <input

@@ -1,13 +1,56 @@
-import { ContextTriggerSchema } from "@pragma/shared";
+import {
+  ContextTriggerSchema,
+  PRAGMA_TEXT_LIMITS,
+  pragmaKnowledgeBaseEntryNameIssue,
+  pragmaUnicodeLength,
+} from "@pragma/shared";
 import { z } from "zod";
 
 export const ContextStoreIdSchema = z.string().uuid();
 
+const KnowledgeBaseNameSchema = z
+  .string()
+  .trim()
+  .min(1)
+  .refine((value) => pragmaUnicodeLength(value) <= PRAGMA_TEXT_LIMITS.contextStore.name, {
+    message: `Must contain at most ${PRAGMA_TEXT_LIMITS.contextStore.name} characters.`,
+  });
+const KnowledgeBaseDescriptionSchema = z
+  .string()
+  .trim()
+  .refine((value) => pragmaUnicodeLength(value) <= PRAGMA_TEXT_LIMITS.contextStore.description, {
+    message: `Must contain at most ${PRAGMA_TEXT_LIMITS.contextStore.description} characters.`,
+  });
+
+const ContextStoreEntryIdSchema = z
+  .string()
+  .min(1)
+  .max(2_000)
+  .refine((value) => value.trim().length > 0, { message: "Entry path is required." });
+
+function entryNameFromId(id: string, kind: "file" | "directory"): string {
+  const segment = id.replaceAll("\\", "/").replace(/\/+$/u, "").split("/").at(-1) ?? "";
+  return kind === "file" ? segment.replace(/\.md$/iu, "") : segment;
+}
+
+function hasValidEntryName(id: string, kind: "file" | "directory"): boolean {
+  return pragmaKnowledgeBaseEntryNameIssue(entryNameFromId(id, kind)) === undefined;
+}
+
+const ManagedFolderIdSchema = ContextStoreEntryIdSchema.refine(
+  (id) => hasValidEntryName(id, "directory"),
+  { message: "The folder name is not portable or exceeds 100 characters." },
+);
+const ManagedFileIdSchema = ContextStoreEntryIdSchema.refine(
+  (id) => hasValidEntryName(id, "file"),
+  { message: "The file name is not portable or exceeds 100 characters." },
+);
+
 const ContextStoreBaseSchema = z.object({
-  schemaVersion: z.literal("pragma.context-store/v2"),
+  schemaVersion: z.literal("pragma.context-store/v3"),
   id: ContextStoreIdSchema,
-  name: z.string().trim().min(1).max(120),
-  description: z.string().trim().max(2_000),
+  name: KnowledgeBaseNameSchema,
+  description: KnowledgeBaseDescriptionSchema,
   createdAt: z.string().datetime(),
   updatedAt: z.string().datetime(),
 });
@@ -23,8 +66,8 @@ export const FileContextStoreSchema = ContextStoreBaseSchema.extend({
 export const ContextStoreSchema = FileContextStoreSchema;
 
 const CreateContextStoreBaseShape = {
-  name: z.string().trim().min(1).max(120),
-  description: z.string().trim().max(2_000),
+  name: KnowledgeBaseNameSchema,
+  description: KnowledgeBaseDescriptionSchema,
 };
 
 export const CreateContextStoreSchema = z.discriminatedUnion("mode", [
@@ -93,12 +136,12 @@ export const ListContextStoreEntriesSchema = z.object({
 
 export const CreateContextStoreFolderSchema = z.object({
   storeId: ContextStoreIdSchema,
-  id: z.string().trim().min(1).max(2_000),
+  id: ManagedFolderIdSchema,
 });
 
 export const CreateContextStoreFileSchema = z.object({
   storeId: ContextStoreIdSchema,
-  id: z.string().trim().min(1).max(2_000),
+  id: ManagedFileIdSchema,
   content: z.string().max(1_000_000).default(""),
   metadata: ContextStoreContentMetadataSchema.optional(),
 });
@@ -111,12 +154,23 @@ export const UpdateContextStoreFileSchema = z.object({
   expectedRevision: z.string().trim().min(1).max(500),
 });
 
-export const RenameContextStoreEntrySchema = z.object({
-  storeId: ContextStoreIdSchema,
-  id: z.string().trim().min(1).max(2_000),
-  nextId: z.string().trim().min(1).max(2_000),
-  kind: z.enum(["file", "directory"]),
-});
+export const RenameContextStoreEntrySchema = z
+  .object({
+    storeId: ContextStoreIdSchema,
+    id: ContextStoreEntryIdSchema,
+    nextId: ContextStoreEntryIdSchema,
+    kind: z.enum(["file", "directory"]),
+  })
+  .superRefine((value, context) => {
+    const currentName = value.id.replaceAll("\\", "/").split("/").at(-1) ?? "";
+    const nextName = value.nextId.replaceAll("\\", "/").split("/").at(-1) ?? "";
+    if (currentName === nextName || hasValidEntryName(value.nextId, value.kind)) return;
+    context.addIssue({
+      code: "custom",
+      path: ["nextId"],
+      message: "The new entry name is not portable or exceeds 100 characters.",
+    });
+  });
 
 export const DeleteContextStoreEntrySchema = z.object({
   storeId: ContextStoreIdSchema,

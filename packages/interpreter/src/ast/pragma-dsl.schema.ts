@@ -1,4 +1,8 @@
-import { RuntimeModelSelectionSchema } from "@pragma/shared";
+import {
+  PRAGMA_TEXT_LIMITS,
+  RuntimeModelSelectionSchema,
+  pragmaUnicodeLength,
+} from "@pragma/shared";
 import {
   PragmaEvaluationResourceSchema,
   type PragmaEvaluationResource,
@@ -24,10 +28,6 @@ export const PragmaResourceKindSchema = z.enum([
 const SEMANTIC_RESOURCE_ID = "[0-9a-hjkmnp-tv-z]{16}";
 const EXTENSION_RESOURCE_ID = "[A-Za-z0-9][A-Za-z0-9._-]*";
 const VERSION = "[A-Za-z0-9][A-Za-z0-9.+_-]*";
-
-export const PRAGMA_RESOURCE_NAME_MAX_LENGTH = 200;
-export const PRAGMA_RESOURCE_DESCRIPTION_MAX_LENGTH = 4_000;
-export const PRAGMA_AUTOMATION_PROMPT_MAX_LENGTH = 100_000;
 
 export const PragmaSemanticResourceIdSchema = z
   .string()
@@ -140,38 +140,56 @@ export const PragmaExtensionRefSchema = z
 export const PragmaMetadataSchema = z
   .object({
     id: PragmaSemanticResourceIdSchema,
-    name: z.string().trim().min(1).max(PRAGMA_RESOURCE_NAME_MAX_LENGTH),
-    description: z.string().trim().min(1).max(PRAGMA_RESOURCE_DESCRIPTION_MAX_LENGTH),
-    tags: z.array(z.string().trim().min(1).max(100)).max(100).default([]),
+    name: z.string().trim().min(1).max(PRAGMA_TEXT_LIMITS.defaultMetadata.name),
+    description: z.string().trim().min(1).max(PRAGMA_TEXT_LIMITS.defaultMetadata.description),
+    tags: z
+      .array(z.string().trim().min(1).max(PRAGMA_TEXT_LIMITS.defaultMetadata.tag))
+      .max(PRAGMA_TEXT_LIMITS.defaultMetadata.tags)
+      .default([]),
   })
   .strict();
 
-export const PragmaExpertMetadataSchema = PragmaMetadataSchema.extend({
-  id: PragmaExpertIdSchema,
-});
-
-export const PRAGMA_EXPERT_SCOPE_MAX_LENGTH = 500;
-export const PRAGMA_EXPERT_INSTRUCTIONS_MAX_LENGTH = 2_000;
-
-function unicodeLength(value: string): number {
-  return [...value].length;
+function requiredUnicodeText(maxLength: number) {
+  return z
+    .string()
+    .trim()
+    .min(1)
+    .refine((value) => pragmaUnicodeLength(value) <= maxLength, {
+      message: `Must contain at most ${maxLength} characters.`,
+    });
 }
 
-export const PragmaExpertScopeSchema = z
-  .string()
-  .trim()
-  .min(1)
-  .refine((value) => unicodeLength(value) <= PRAGMA_EXPERT_SCOPE_MAX_LENGTH, {
-    message: `Must contain at most ${PRAGMA_EXPERT_SCOPE_MAX_LENGTH} characters.`,
+function metadataSchema(
+  limits: { readonly name: number; readonly description: number },
+  tags = PragmaMetadataSchema.shape.tags,
+) {
+  return PragmaMetadataSchema.extend({
+    name: requiredUnicodeText(limits.name),
+    description: requiredUnicodeText(limits.description),
+    tags,
   });
+}
 
-export const PragmaExpertInstructionsSchema = z
-  .string()
-  .trim()
-  .min(1)
-  .refine((value) => unicodeLength(value) <= PRAGMA_EXPERT_INSTRUCTIONS_MAX_LENGTH, {
-    message: `Must contain at most ${PRAGMA_EXPERT_INSTRUCTIONS_MAX_LENGTH} characters.`,
-  });
+export const PragmaExpertMetadataSchema = metadataSchema(
+  PRAGMA_TEXT_LIMITS.expert,
+  z
+    .array(requiredUnicodeText(PRAGMA_TEXT_LIMITS.expert.tag))
+    .max(PRAGMA_TEXT_LIMITS.expert.tags)
+    .default([]),
+).extend({ id: PragmaExpertIdSchema });
+export const PragmaExpertTeamMetadataSchema = metadataSchema(PRAGMA_TEXT_LIMITS.expertTeam);
+export const PragmaFlowMetadataSchema = metadataSchema(PRAGMA_TEXT_LIMITS.flow);
+export const PragmaAutomationMetadataSchema = metadataSchema(PRAGMA_TEXT_LIMITS.automation);
+export const PragmaCapabilityMetadataSchema = metadataSchema(PRAGMA_TEXT_LIMITS.capability);
+export const PragmaContextStoreMetadataSchema = metadataSchema(PRAGMA_TEXT_LIMITS.contextStore);
+
+export const PragmaExpertScopeSchema = requiredUnicodeText(PRAGMA_TEXT_LIMITS.expert.scope);
+export const PragmaExpertInstructionsSchema = requiredUnicodeText(
+  PRAGMA_TEXT_LIMITS.expert.instructions,
+);
+export const PragmaExpertTeamInstructionsSchema = requiredUnicodeText(
+  PRAGMA_TEXT_LIMITS.expertTeam.instructions,
+);
 
 export const PragmaArtifactSourceSchema = z.discriminatedUnion("type", [
   z
@@ -337,12 +355,12 @@ export const PragmaExpertTeamResourceSchema = z
   .object({
     apiVersion: PragmaApiVersionSchema,
     kind: z.literal("ExpertTeam"),
-    metadata: PragmaMetadataSchema,
+    metadata: PragmaExpertTeamMetadataSchema,
     spec: z
       .object({
         coordinator: z.object({ ref: PragmaExpertRefSchema }).strict(),
         members: z.array(z.object({ ref: PragmaExpertRefSchema }).strict()).min(1),
-        instructions: PragmaExpertInstructionsSchema.optional(),
+        instructions: PragmaExpertTeamInstructionsSchema.optional(),
         delegation: z
           .object({
             allow: z.record(PragmaExpertIdSchema, z.array(PragmaExpertIdSchema)).optional(),
@@ -411,7 +429,19 @@ export const PragmaFlowPromptSchema = z
     segments: z
       .array(
         z.union([
-          z.object({ text: z.string().max(20_000) }).strict(),
+          z
+            .object({
+              text: z
+                .string()
+                .refine(
+                  (value) =>
+                    pragmaUnicodeLength(value.trim()) <= PRAGMA_TEXT_LIMITS.flow.promptTextSegment,
+                  {
+                    message: `Must contain at most ${PRAGMA_TEXT_LIMITS.flow.promptTextSegment} characters.`,
+                  },
+                ),
+            })
+            .strict(),
           z.object({ variable: PragmaFlowVariableSchema }).strict(),
         ]),
       )
@@ -603,7 +633,7 @@ export const PragmaFlowResourceSchema = z
   .object({
     apiVersion: PragmaApiVersionSchema,
     kind: z.literal("Flow"),
-    metadata: PragmaMetadataSchema,
+    metadata: PragmaFlowMetadataSchema,
     spec: z
       .object({
         input: z.object({ schema: PragmaObjectJsonSchemaSchema }).strict().optional(),
@@ -735,13 +765,15 @@ export const PragmaAutomationPromptSchema = z
   .string()
   .trim()
   .min(1)
-  .max(PRAGMA_AUTOMATION_PROMPT_MAX_LENGTH);
+  .refine((value) => pragmaUnicodeLength(value) <= PRAGMA_TEXT_LIMITS.automation.prompt, {
+    message: `Must contain at most ${PRAGMA_TEXT_LIMITS.automation.prompt} characters.`,
+  });
 
 export const PragmaAutomationResourceSchema = z
   .object({
     apiVersion: PragmaApiVersionSchema,
     kind: z.literal("Automation"),
-    metadata: PragmaMetadataSchema,
+    metadata: PragmaAutomationMetadataSchema,
     spec: z
       .object({
         adapter: PragmaExtensionRefSchema,
@@ -816,7 +848,7 @@ export const PragmaCapabilityResourceSchema = z
   .object({
     apiVersion: PragmaApiVersionSchema,
     kind: z.literal("Capability"),
-    metadata: PragmaMetadataSchema,
+    metadata: PragmaCapabilityMetadataSchema,
     spec: PragmaAdapterResourceSpecSchema,
   })
   .strict();
@@ -825,7 +857,7 @@ export const PragmaContextStoreResourceSchema = z
   .object({
     apiVersion: PragmaApiVersionSchema,
     kind: z.literal("ContextStore"),
-    metadata: PragmaMetadataSchema,
+    metadata: PragmaContextStoreMetadataSchema,
     spec: PragmaAdapterResourceSpecSchema,
   })
   .strict();

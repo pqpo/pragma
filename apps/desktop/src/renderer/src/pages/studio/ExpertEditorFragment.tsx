@@ -2,15 +2,16 @@ import { ArrowLeft, User } from "@phosphor-icons/react";
 import { useState } from "react";
 import { useTranslation } from "react-i18next";
 import type { PragmaResource } from "@pragma/interpreter/ast";
+import {
+  PRAGMA_TEXT_LIMITS,
+  pragmaUnicodeLength,
+  truncatePragmaTrimmedUnicode,
+} from "@pragma/shared";
 
+import { SelectMenu } from "../../components/SelectMenu.tsx";
 import { errorMessage } from "../../lib/errors.ts";
 import { runtimeDisplayName } from "../../lib/runtime-display.ts";
 import {
-  EXPERT_DESCRIPTION_MAX_LENGTH,
-  EXPERT_INSTRUCTIONS_MAX_LENGTH,
-  EXPERT_NAME_MAX_LENGTH,
-  EXPERT_SCOPE_MAX_LENGTH,
-  EXPERT_TAG_MAX_LENGTH,
   ExpertAdditionalInstructionsSchema,
   ExpertInstructionsSchema,
   ExpertScopeSchema,
@@ -71,9 +72,10 @@ export function ExpertEditorFragment(props: {
     if (step === "identity") {
       const scopeResult = ExpertScopeSchema.safeParse(draft.scope);
       const hasInvalidLength =
-        draft.name.trim().length > EXPERT_NAME_MAX_LENGTH ||
-        draft.description.trim().length > EXPERT_DESCRIPTION_MAX_LENGTH ||
-        draft.tags.some((tag) => tag.trim().length > EXPERT_TAG_MAX_LENGTH);
+        pragmaUnicodeLength(draft.name.trim()) > PRAGMA_TEXT_LIMITS.expert.name ||
+        pragmaUnicodeLength(draft.description.trim()) > PRAGMA_TEXT_LIMITS.expert.description ||
+        draft.tags.length > PRAGMA_TEXT_LIMITS.expert.tags ||
+        draft.tags.some((tag) => pragmaUnicodeLength(tag.trim()) > PRAGMA_TEXT_LIMITS.expert.tag);
       if (
         !draft.name.trim() ||
         !draft.description.trim() ||
@@ -116,7 +118,12 @@ export function ExpertEditorFragment(props: {
   const retreat = () => (index === 0 ? props.onCancel() : setStep(steps[index - 1]!.id));
   const addTag = () => {
     const tag = draft.tagInput.trim();
-    if (!tag || draft.tags.some((item) => item.toLowerCase() === tag.toLowerCase())) return;
+    if (
+      !tag ||
+      draft.tags.length >= PRAGMA_TEXT_LIMITS.expert.tags ||
+      draft.tags.some((item) => item.toLowerCase() === tag.toLowerCase())
+    )
+      return;
     setDraft({ ...draft, tags: [...draft.tags, tag], tagInput: "" });
   };
   const setCapabilityReferences = (capabilities: ExpertDraft["capabilities"]) => {
@@ -211,13 +218,13 @@ export function ExpertEditorFragment(props: {
                   ? t("editExpert", { ns: "studio" })
                   : t("createExpert", { ns: "studio" })}
             </h1>
-            <p>
-              {isBuiltIn
-                ? t("updateBuiltInExpertDescription", { ns: "studio" })
-                : isEditing
-                  ? t("updateExpertDescription", { ns: "studio" })
+            {isBuiltIn || !isEditing ? (
+              <p>
+                {isBuiltIn
+                  ? t("updateBuiltInExpertDescription", { ns: "studio" })
                   : t("createExpertDescription", { ns: "studio" })}
-            </p>
+              </p>
+            ) : null}
           </div>
         </header>
       }
@@ -276,17 +283,20 @@ export function ExpertEditorFragment(props: {
                     onChange={(event) =>
                       setDraft({
                         ...draft,
-                        name: event.target.value.slice(0, EXPERT_NAME_MAX_LENGTH),
+                        name: truncatePragmaTrimmedUnicode(
+                          event.target.value,
+                          PRAGMA_TEXT_LIMITS.expert.name,
+                        ),
                       })
                     }
                     placeholder={t("expertName", { ns: "studio" })}
-                    maxLength={EXPERT_NAME_MAX_LENGTH}
+                    maxLength={PRAGMA_TEXT_LIMITS.expert.name * 2}
                     autoFocus
                   />
                   <small className="field-hint">
                     <span>{t("chooseName", { ns: "studio" })}</span>
                     <span>
-                      {draft.name.length}/{EXPERT_NAME_MAX_LENGTH}
+                      {pragmaUnicodeLength(draft.name.trim())}/{PRAGMA_TEXT_LIMITS.expert.name}
                     </span>
                   </small>
                 </label>
@@ -297,16 +307,20 @@ export function ExpertEditorFragment(props: {
                     onChange={(event) =>
                       setDraft({
                         ...draft,
-                        description: event.target.value.slice(0, EXPERT_DESCRIPTION_MAX_LENGTH),
+                        description: truncatePragmaTrimmedUnicode(
+                          event.target.value,
+                          PRAGMA_TEXT_LIMITS.expert.description,
+                        ),
                       })
                     }
                     placeholder={t("expertPurpose", { ns: "studio" })}
-                    maxLength={EXPERT_DESCRIPTION_MAX_LENGTH}
+                    maxLength={PRAGMA_TEXT_LIMITS.expert.description * 2}
                   />
                   <small className="field-hint">
                     <span>{t("descriptionHint", { ns: "studio" })}</span>
                     <span>
-                      {draft.description.length}/{EXPERT_DESCRIPTION_MAX_LENGTH}
+                      {pragmaUnicodeLength(draft.description.trim())}/
+                      {PRAGMA_TEXT_LIMITS.expert.description}
                     </span>
                   </small>
                 </label>
@@ -317,10 +331,13 @@ export function ExpertEditorFragment(props: {
                     onChange={(event) =>
                       setDraft({
                         ...draft,
-                        tagInput: event.target.value.slice(0, EXPERT_TAG_MAX_LENGTH),
+                        tagInput: truncatePragmaTrimmedUnicode(
+                          event.target.value,
+                          PRAGMA_TEXT_LIMITS.expert.tag,
+                        ),
                       })
                     }
-                    maxLength={EXPERT_TAG_MAX_LENGTH}
+                    maxLength={PRAGMA_TEXT_LIMITS.expert.tag * 2}
                     onKeyDown={(event) => {
                       if (event.key === "Enter") {
                         event.preventDefault();
@@ -330,9 +347,11 @@ export function ExpertEditorFragment(props: {
                     placeholder={t("addTag", { ns: "studio" })}
                   />
                   <small className="field-hint">
-                    <span>{t("tagLimit", { ns: "studio", count: EXPERT_TAG_MAX_LENGTH })}</span>
                     <span>
-                      {draft.tagInput.length}/{EXPERT_TAG_MAX_LENGTH}
+                      {t("tagLimit", { ns: "studio", count: PRAGMA_TEXT_LIMITS.expert.tag })}
+                    </span>
+                    <span>
+                      {pragmaUnicodeLength(draft.tagInput.trim())}/{PRAGMA_TEXT_LIMITS.expert.tag}
                     </span>
                   </small>
                   <span className="draft-tags">
@@ -356,11 +375,14 @@ export function ExpertEditorFragment(props: {
                     onChange={(event) =>
                       setDraft({
                         ...draft,
-                        scope: truncateUnicode(event.target.value, EXPERT_SCOPE_MAX_LENGTH),
+                        scope: truncatePragmaTrimmedUnicode(
+                          event.target.value,
+                          PRAGMA_TEXT_LIMITS.expert.scope,
+                        ),
                       })
                     }
                     placeholder={t("scopePrompt", { ns: "studio" })}
-                    maxLength={EXPERT_SCOPE_MAX_LENGTH * 2}
+                    maxLength={PRAGMA_TEXT_LIMITS.expert.scope * 2}
                     readOnly={isBuiltIn}
                   />
                   <small className="field-hint">
@@ -368,7 +390,7 @@ export function ExpertEditorFragment(props: {
                       {t(isBuiltIn ? "builtInScopeLocked" : "scopeHint", { ns: "studio" })}
                     </span>
                     <span>
-                      {unicodeLength(draft.scope)}/{EXPERT_SCOPE_MAX_LENGTH}
+                      {pragmaUnicodeLength(draft.scope.trim())}/{PRAGMA_TEXT_LIMITS.expert.scope}
                     </span>
                   </small>
                 </label>
@@ -395,15 +417,15 @@ export function ExpertEditorFragment(props: {
                         ...draft,
                         ...(isBuiltIn
                           ? {
-                              additionalInstructions: truncateUnicode(
+                              additionalInstructions: truncatePragmaTrimmedUnicode(
                                 event.target.value,
-                                EXPERT_INSTRUCTIONS_MAX_LENGTH,
+                                PRAGMA_TEXT_LIMITS.expert.instructions,
                               ),
                             }
                           : {
-                              instructions: truncateUnicode(
+                              instructions: truncatePragmaTrimmedUnicode(
                                 event.target.value,
-                                EXPERT_INSTRUCTIONS_MAX_LENGTH,
+                                PRAGMA_TEXT_LIMITS.expert.instructions,
                               ),
                             }),
                       })
@@ -412,7 +434,7 @@ export function ExpertEditorFragment(props: {
                       isBuiltIn ? "additionalInstructionsPrompt" : "instructionsPrompt",
                       { ns: "studio" },
                     )}
-                    maxLength={EXPERT_INSTRUCTIONS_MAX_LENGTH * 2}
+                    maxLength={PRAGMA_TEXT_LIMITS.expert.instructions * 2}
                     autoFocus
                   />
                   <small className="field-hint">
@@ -422,8 +444,10 @@ export function ExpertEditorFragment(props: {
                       })}
                     </span>
                     <span>
-                      {unicodeLength(isBuiltIn ? draft.additionalInstructions : draft.instructions)}
-                      /{EXPERT_INSTRUCTIONS_MAX_LENGTH}
+                      {pragmaUnicodeLength(
+                        (isBuiltIn ? draft.additionalInstructions : draft.instructions).trim(),
+                      )}
+                      /{PRAGMA_TEXT_LIMITS.expert.instructions}
                     </span>
                   </small>
                 </label>
@@ -433,40 +457,63 @@ export function ExpertEditorFragment(props: {
               <div className="capability-editor">
                 <h2>{t("addCapabilities", { ns: "studio" })}</h2>
                 <p>{t("modelSelectionHint", { ns: "studio" })}</p>
-                <label>
-                  {t("runtime", { ns: "studio" })}
-                  <select
+                <div className="capability-editor-field">
+                  <span>{t("runtime", { ns: "studio" })}</span>
+                  <SelectMenu
+                    ariaLabel={t("runtime", { ns: "studio" })}
+                    className="form-select"
                     value={selectedRuntime}
-                    onChange={(event) => {
-                      setSelectedRuntime(event.target.value);
+                    options={[
+                      {
+                        value: "",
+                        label: t(isBuiltIn ? "systemDefault" : "notConfigured", { ns: "studio" }),
+                      },
+                      ...props.runtimes.map((runtime) => ({
+                        value: runtime.id,
+                        label: `${runtimeDisplayName(t, runtime)}${
+                          runtime.status === "available"
+                            ? ""
+                            : ` (${t("unavailable", { ns: "studio" })})`
+                        }`,
+                        disabled: runtime.status !== "available",
+                      })),
+                    ]}
+                    onChange={(runtimeId) => {
+                      setSelectedRuntime(runtimeId);
                       setDraft({ ...draft, model: null });
                     }}
-                  >
-                    <option value="">
-                      {t(isBuiltIn ? "systemDefault" : "notConfigured", { ns: "studio" })}
-                    </option>
-                    {props.runtimes.map((runtime) => (
-                      <option
-                        key={runtime.id}
-                        value={runtime.id}
-                        disabled={runtime.status !== "available"}
-                      >
-                        {runtimeDisplayName(t, runtime)}
-                        {runtime.status === "available"
-                          ? ""
-                          : ` (${t("unavailable", { ns: "studio" })})`}
-                      </option>
-                    ))}
-                  </select>
-                </label>
+                  />
+                </div>
                 {selectedRuntime ? (
-                  <label>
-                    {t("model", { ns: "studio" })}
-                    <select
+                  <div className="capability-editor-field">
+                    <span>{t("model", { ns: "studio" })}</span>
+                    <SelectMenu
+                      ariaLabel={t("model", { ns: "studio" })}
+                      className="form-select"
                       value={selectedModel === undefined ? "" : runtimeModelKey(selectedModel)}
-                      onChange={(event) => {
+                      searchable={modelOptions.length > 8}
+                      options={[
+                        {
+                          value: "",
+                          label:
+                            draft.model === null
+                              ? t("selectModel", { ns: "studio" })
+                              : t("unavailableModel", {
+                                  ns: "studio",
+                                  model: draft.model.modelId,
+                                }),
+                        },
+                        ...modelOptions.map((model) => ({
+                          value: runtimeModelKey(model),
+                          label:
+                            model.provider.kind === "registered"
+                              ? `${model.provider.displayName} / ${model.displayName}`
+                              : model.displayName,
+                        })),
+                      ]}
+                      onChange={(modelKey) => {
                         const model = modelOptions.find(
-                          (candidate) => runtimeModelKey(candidate) === event.target.value,
+                          (candidate) => runtimeModelKey(candidate) === modelKey,
                         );
                         setDraft({
                           ...draft,
@@ -480,40 +527,37 @@ export function ExpertEditorFragment(props: {
                                 },
                         });
                       }}
-                    >
-                      <option value="">
-                        {draft.model === null
-                          ? t("selectModel", { ns: "studio" })
-                          : t("unavailableModel", {
-                              ns: "studio",
-                              model: draft.model.modelId,
-                            })}
-                      </option>
-                      {modelOptions.map((model) => {
-                        return (
-                          <option key={runtimeModelKey(model)} value={runtimeModelKey(model)}>
-                            {model.provider.kind === "registered"
-                              ? `${model.provider.displayName} / ${model.displayName}`
-                              : model.displayName}
-                          </option>
-                        );
-                      })}
-                    </select>
+                    />
                     {selectedRuntimeInfo?.modelDiscoveryError ? (
                       <small className="form-error">
                         {selectedRuntimeInfo.modelDiscoveryError}
                       </small>
                     ) : null}
-                  </label>
+                  </div>
                 ) : null}
                 {selectedModel?.thinking !== undefined ? (
-                  <label>
-                    {t("thinkingLevel", { ns: "studio" })}
-                    <select
+                  <div className="capability-editor-field">
+                    <span>{t("thinkingLevel", { ns: "studio" })}</span>
+                    <SelectMenu
+                      ariaLabel={t("thinkingLevel", { ns: "studio" })}
+                      className="form-select"
                       value={draft.model?.thinkingLevel ?? ""}
-                      onChange={(event) => {
+                      options={[
+                        {
+                          value: "",
+                          label: `${t("runtimeDefault", { ns: "studio" })}${
+                            selectedModel.thinking.defaultLevel === undefined
+                              ? ""
+                              : ` (${selectedModel.thinking.defaultLevel})`
+                          }`,
+                        },
+                        ...selectedModel.thinking.supportedLevels.map((level) => ({
+                          value: level.value,
+                          label: level.label,
+                        })),
+                      ]}
+                      onChange={(thinkingLevel) => {
                         if (draft.model === null) return;
-                        const thinkingLevel = event.target.value;
                         const model = { ...draft.model };
                         delete model.thinkingLevel;
                         setDraft({
@@ -524,20 +568,8 @@ export function ExpertEditorFragment(props: {
                           },
                         });
                       }}
-                    >
-                      <option value="">
-                        {t("runtimeDefault", { ns: "studio" })}
-                        {selectedModel.thinking.defaultLevel === undefined
-                          ? ""
-                          : ` (${selectedModel.thinking.defaultLevel})`}
-                      </option>
-                      {selectedModel.thinking.supportedLevels.map((level) => (
-                        <option key={level.value} value={level.value}>
-                          {level.label}
-                        </option>
-                      ))}
-                    </select>
-                  </label>
+                    />
+                  </div>
                 ) : null}
                 <ExpertCapabilityPicker
                   currentExpertId={draft.id}
@@ -639,12 +671,4 @@ export function ExpertEditorFragment(props: {
 
 function runtimeModelKey(model: DesktopRuntimeModel): string {
   return JSON.stringify([model.provider.kind, model.provider.id, model.id]);
-}
-
-function unicodeLength(value: string): number {
-  return [...value].length;
-}
-
-function truncateUnicode(value: string, length: number): string {
-  return [...value].slice(0, length).join("");
 }

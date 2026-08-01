@@ -15,6 +15,7 @@ import {
 } from "@phosphor-icons/react";
 import { useState } from "react";
 import { useTranslation } from "react-i18next";
+import { PRAGMA_TEXT_LIMITS, truncatePragmaTrimmedUnicode } from "@pragma/shared";
 
 import {
   CodeServiceObjectJsonSchemaSchema,
@@ -22,6 +23,8 @@ import {
   type CapabilityDefinition,
   type PreviewCodeServiceResult,
 } from "../../../../shared/contracts/index.ts";
+import { CharacterCount } from "../../components/CharacterCount.tsx";
+import { SelectMenu } from "../../components/SelectMenu.tsx";
 import { errorMessage } from "../../lib/errors.ts";
 import { StudioScreenFrame } from "./StudioScreenFrame.tsx";
 import {
@@ -1011,30 +1014,51 @@ function McpForm(props: {
         {t("name")}
         <input
           value={value.name}
-          onChange={(e) => props.onChange({ ...value, name: e.target.value })}
+          maxLength={PRAGMA_TEXT_LIMITS.capability.name * 2}
+          onChange={(e) =>
+            props.onChange({
+              ...value,
+              name: truncatePragmaTrimmedUnicode(
+                e.target.value,
+                PRAGMA_TEXT_LIMITS.capability.name,
+              ),
+            })
+          }
           placeholder="Web Search"
         />
+        <CharacterCount value={value.name} max={PRAGMA_TEXT_LIMITS.capability.name} />
       </label>
       <label>
         {t("description")}
         <textarea
           value={value.description}
-          onChange={(e) => props.onChange({ ...value, description: e.target.value })}
-        />
-      </label>
-      <label>
-        {t("transport")}
-        <select
-          value={value.transport}
+          maxLength={PRAGMA_TEXT_LIMITS.capability.description * 2}
           onChange={(e) =>
-            props.onChange({ ...value, transport: e.target.value as typeof value.transport })
+            props.onChange({
+              ...value,
+              description: truncatePragmaTrimmedUnicode(
+                e.target.value,
+                PRAGMA_TEXT_LIMITS.capability.description,
+              ),
+            })
           }
-        >
-          <option value="stdio">stdio</option>
-          <option value="streamable-http">Streamable HTTP</option>
-          <option value="sse">SSE</option>
-        </select>
+        />
+        <CharacterCount value={value.description} max={PRAGMA_TEXT_LIMITS.capability.description} />
       </label>
+      <div className="capability-form-field">
+        <span>{t("transport")}</span>
+        <SelectMenu<typeof value.transport>
+          ariaLabel={t("transport")}
+          className="form-select"
+          value={value.transport}
+          options={[
+            { value: "stdio", label: "stdio" },
+            { value: "streamable-http", label: "Streamable HTTP" },
+            { value: "sse", label: "SSE" },
+          ]}
+          onChange={(transport) => props.onChange({ ...value, transport })}
+        />
+      </div>
       {value.transport === "stdio" ? (
         <>
           <label>
@@ -1129,16 +1153,34 @@ function HttpForm(props: {
         {t("serviceName")}
         <input
           value={value.name}
-          onChange={(e) => set({ name: e.target.value })}
+          maxLength={PRAGMA_TEXT_LIMITS.capability.name * 2}
+          onChange={(e) =>
+            set({
+              name: truncatePragmaTrimmedUnicode(
+                e.target.value,
+                PRAGMA_TEXT_LIMITS.capability.name,
+              ),
+            })
+          }
           placeholder="Customer API"
         />
+        <CharacterCount value={value.name} max={PRAGMA_TEXT_LIMITS.capability.name} />
       </label>
       <label>
         {t("description")}
         <textarea
           value={value.description}
-          onChange={(e) => set({ description: e.target.value })}
+          maxLength={PRAGMA_TEXT_LIMITS.capability.description * 2}
+          onChange={(e) =>
+            set({
+              description: truncatePragmaTrimmedUnicode(
+                e.target.value,
+                PRAGMA_TEXT_LIMITS.capability.description,
+              ),
+            })
+          }
         />
+        <CharacterCount value={value.description} max={PRAGMA_TEXT_LIMITS.capability.description} />
       </label>
       <label>
         {t("baseUrl")}
@@ -1149,17 +1191,20 @@ function HttpForm(props: {
         />
       </label>
       <div className="capability-form-grid">
-        <label>
-          {t("authentication")}
-          <select
+        <div className="capability-form-field">
+          <span>{t("authentication")}</span>
+          <SelectMenu<typeof value.authType>
+            ariaLabel={t("authentication")}
+            className="form-select"
             value={value.authType}
-            onChange={(e) => set({ authType: e.target.value as typeof value.authType })}
-          >
-            <option value="none">{t("none")}</option>
-            <option value="bearer">{t("bearerToken")}</option>
-            <option value="api_key_header">{t("apiKeyHeader")}</option>
-          </select>
-        </label>
+            options={[
+              { value: "none", label: t("none") },
+              { value: "bearer", label: t("bearerToken") },
+              { value: "api_key_header", label: t("apiKeyHeader") },
+            ]}
+            onChange={(authType) => set({ authType })}
+          />
+        </div>
         {value.authType === "api_key_header" ? (
           <label>
             {t("headerName")}
@@ -1221,16 +1266,19 @@ function HttpForm(props: {
             placeholder="get_customer"
           />
         </label>
-        <label>
-          {t("method")}
-          <select
+        <div className="capability-form-field">
+          <span>{t("method")}</span>
+          <SelectMenu<typeof value.method>
+            ariaLabel={t("method")}
+            className="form-select"
             value={value.method}
-            onChange={(e) => set({ method: e.target.value as typeof value.method })}
-          >
-            <option>GET</option>
-            <option>POST</option>
-          </select>
-        </label>
+            options={[
+              { value: "GET", label: "GET" },
+              { value: "POST", label: "POST" },
+            ]}
+            onChange={(method) => set({ method })}
+          />
+        </div>
       </div>
       <label>
         {t("toolDescription")}
@@ -1342,16 +1390,34 @@ function CodeForm(props: {
         {t("serviceName")}
         <input
           value={value.name}
-          onChange={(event) => set({ name: event.target.value })}
+          maxLength={PRAGMA_TEXT_LIMITS.capability.name * 2}
+          onChange={(event) =>
+            set({
+              name: truncatePragmaTrimmedUnicode(
+                event.target.value,
+                PRAGMA_TEXT_LIMITS.capability.name,
+              ),
+            })
+          }
           placeholder="Data formatter"
         />
+        <CharacterCount value={value.name} max={PRAGMA_TEXT_LIMITS.capability.name} />
       </label>
       <label>
         {t("description")}
         <textarea
           value={value.description}
-          onChange={(event) => set({ description: event.target.value })}
+          maxLength={PRAGMA_TEXT_LIMITS.capability.description * 2}
+          onChange={(event) =>
+            set({
+              description: truncatePragmaTrimmedUnicode(
+                event.target.value,
+                PRAGMA_TEXT_LIMITS.capability.description,
+              ),
+            })
+          }
         />
+        <CharacterCount value={value.description} max={PRAGMA_TEXT_LIMITS.capability.description} />
       </label>
       <div className="capability-form-grid">
         <label>

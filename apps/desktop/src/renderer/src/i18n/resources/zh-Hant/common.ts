@@ -38,6 +38,7 @@ export const common = {
     main: "主導覽",
     expand: "展開導覽",
     collapse: "收合導覽",
+    resize: "調整導覽寬度",
   },
   status: {
     active: "啟用",

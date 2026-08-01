@@ -37,6 +37,7 @@ import {
 import { useTranslation } from "react-i18next";
 import type { HumanInteractionResponse } from "@pragma/shared";
 
+import { ConfirmationDialog } from "../../components/Dialog.tsx";
 import {
   type Mission,
   type MissionChatEntry,
@@ -55,12 +56,18 @@ import {
 } from "../../../../shared/contracts/index.ts";
 import { errorMessage } from "../../lib/errors.ts";
 import { i18n } from "../../i18n/index.ts";
+import { shouldSubmitComposerOnEnter } from "../../lib/composer-keyboard.ts";
 import { formatMissionDateTime, formatMissionTime } from "../../lib/mission-time.ts";
 import { runtimeDisplayName, type RuntimeDisplayIdentity } from "../../lib/runtime-display.ts";
 import { formatTokens } from "../../lib/usage-format.ts";
 import { ToolPermissionSelect } from "../../components/ToolPermissionSelect.tsx";
 import { MissionModelOverrideControls } from "../../components/MissionModelOverrideControls.tsx";
 import { MarkdownContent } from "../../components/MarkdownContent.tsx";
+import { SidebarResizeHandle } from "../../components/SidebarResizeHandle.tsx";
+import {
+  SIDEBAR_WIDTH_PREFERENCES,
+  usePersistentSidebarWidth,
+} from "../../lib/sidebar-width-preference.ts";
 import {
   pruneMissionDrafts,
   readMissionDraft,
@@ -83,6 +90,7 @@ export function MissionsPage(props: {
   readonly onEditExpert?: ((expertRef?: string | undefined) => void) | undefined;
 }) {
   const { t } = useTranslation(["missions", "common"]);
+  const [railWidth, setRailWidth] = usePersistentSidebarWidth(SIDEBAR_WIDTH_PREFERENCES.missions);
   const [missions, setMissions] = useState<readonly MissionSummary[]>([]);
   const [selectedMission, setSelectedMission] = useState<Mission | null>(
     props.initialMission ?? null,
@@ -266,7 +274,10 @@ export function MissionsPage(props: {
     );
   }, [missions, search]);
   return (
-    <section className="missions-page">
+    <section
+      className="missions-page"
+      style={{ "--sidebar-width": `${railWidth}px` } as CSSProperties}
+    >
       <MissionRail
         missions={visibleMissions}
         search={search}
@@ -298,6 +309,12 @@ export function MissionsPage(props: {
           }
         }}
         onDelete={setDeleteCandidate}
+      />
+      <SidebarResizeHandle
+        label={t("navigation.resize", { ns: "common" })}
+        width={railWidth}
+        preference={SIDEBAR_WIDTH_PREFERENCES.missions}
+        onResize={setRailWidth}
       />
 
       <div className="mission-main">
@@ -407,74 +424,49 @@ export function MissionsPage(props: {
         ) : null}
       </div>
       {deleteCandidate !== null ? (
-        <div className="mission-dialog-backdrop">
-          <section
-            className="mission-confirm-dialog"
-            role="alertdialog"
-            aria-modal="true"
-            aria-labelledby="delete-mission-title"
-            aria-describedby="delete-mission-description"
-            onKeyDown={(event) => {
-              if (event.key === "Escape" && !deleting) setDeleteCandidate(null);
-            }}
-          >
-            <h2 id="delete-mission-title">{t("deleteTitle", { ns: "missions" })}</h2>
-            <p id="delete-mission-description">
-              {t("deleteDescription", { ns: "missions", title: deleteCandidate.title })}
-            </p>
-            <footer>
-              <button
-                className="secondary-button"
-                type="button"
-                disabled={deleting}
-                autoFocus
-                onClick={() => setDeleteCandidate(null)}
-              >
-                {t("actions.cancel", { ns: "common" })}
-              </button>
-              <button
-                className="danger-button"
-                type="button"
-                disabled={deleting}
-                onClick={() => {
-                  const api = desktopApi();
-                  if (api === undefined) return;
-                  setDeleting(true);
-                  void api
-                    .deleteMission(deleteCandidate.id)
-                    .then(async () => {
-                      const storedMissions = await api.listMissions();
-                      writeMissionDraft(window.localStorage, deleteCandidate.id, "");
-                      setMissions(storedMissions);
-                      if (selectedMissionId === deleteCandidate.id) {
-                        selectedMissionIdRef.current = null;
-                        setSelectedMissionId(null);
-                        setSelectedMission(null);
-                        const fallback = storedMissions[0];
-                        if (fallback === undefined) {
-                          writeLastOpenedMissionId(window.localStorage, null);
-                        } else {
-                          openMission(fallback.id);
-                        }
-                      }
-                      setDeleteCandidate(null);
-                      setError(null);
-                    })
-                    .catch((deleteError: unknown) => {
-                      setError(errorMessage(deleteError));
-                      setDeleteCandidate(null);
-                    })
-                    .finally(() => setDeleting(false));
-                }}
-              >
-                <Trash size={17} aria-hidden="true" />
-                {deleting
-                  ? t("deleting", { ns: "missions" })
-                  : t("deleteMission", { ns: "missions" })}
-              </button>
-            </footer>
-          </section>
-        </div>
+        <ConfirmationDialog
+          title={t("deleteTitle", { ns: "missions" })}
+          description={t("deleteDescription", {
+            ns: "missions",
+            title: deleteCandidate.title,
+          })}
+          cancelLabel={t("actions.cancel", { ns: "common" })}
+          confirmLabel={t("deleteMission", { ns: "missions" })}
+          busyLabel={t("deleting", { ns: "missions" })}
+          busy={deleting}
+          tone="danger"
+          onCancel={() => setDeleteCandidate(null)}
+          onConfirm={() => {
+            const api = desktopApi();
+            if (api === undefined) return;
+            setDeleting(true);
+            void api
+              .deleteMission(deleteCandidate.id)
+              .then(async () => {
+                const storedMissions = await api.listMissions();
+                writeMissionDraft(window.localStorage, deleteCandidate.id, "");
+                setMissions(storedMissions);
+                if (selectedMissionId === deleteCandidate.id) {
+                  selectedMissionIdRef.current = null;
+                  setSelectedMissionId(null);
+                  setSelectedMission(null);
+                  const fallback = storedMissions[0];
+                  if (fallback === undefined) {
+                    writeLastOpenedMissionId(window.localStorage, null);
+                  } else {
+                    openMission(fallback.id);
+                  }
+                }
+                setDeleteCandidate(null);
+                setError(null);
+              })
+              .catch((deleteError: unknown) => {
+                setError(errorMessage(deleteError));
+                setDeleteCandidate(null);
+              })
+              .finally(() => setDeleting(false));
+          }}
+        />
       ) : null}
     </section>
   );
@@ -2091,7 +2083,7 @@ export function MissionDetailFragment(props: {
                       }
                       onChange={(event) => setDraft(event.target.value)}
                       onKeyDown={(event) => {
-                        if (event.key === "Enter" && !event.shiftKey) {
+                        if (shouldSubmitComposerOnEnter(event.nativeEvent)) {
                           event.preventDefault();
                           void send();
                         }

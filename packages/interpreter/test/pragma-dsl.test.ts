@@ -10,18 +10,21 @@ import {
   type ExpertTeam,
   type Flow,
 } from "@pragma/core";
+import { PRAGMA_TEXT_LIMITS } from "@pragma/shared";
 
 import {
   FlowActionRegistry,
-  PRAGMA_AUTOMATION_PROMPT_MAX_LENGTH,
-  PRAGMA_EXPERT_INSTRUCTIONS_MAX_LENGTH,
-  PRAGMA_EXPERT_SCOPE_MAX_LENGTH,
-  PRAGMA_RESOURCE_DESCRIPTION_MAX_LENGTH,
-  PRAGMA_RESOURCE_NAME_MAX_LENGTH,
   PragmaExpertIdSchema,
+  PragmaExpertMetadataSchema,
   PragmaExpertRefSchema,
   PragmaExpertResourceSchema,
+  PragmaExpertTeamInstructionsSchema,
+  PragmaExpertTeamMetadataSchema,
   PragmaAutomationResourceSchema,
+  PragmaCapabilityMetadataSchema,
+  PragmaContextStoreMetadataSchema,
+  PragmaFlowMetadataSchema,
+  PragmaFlowPromptSchema,
   PragmaFlowResourceSchema,
   PragmaSemanticResourceIdSchema,
   formatPragmaYaml,
@@ -112,8 +115,8 @@ describe("Pragma YAML DSL", () => {
       kind: "Automation",
       metadata: {
         id: "61207gbst92e9xc4",
-        name: "n".repeat(PRAGMA_RESOURCE_NAME_MAX_LENGTH),
-        description: "d".repeat(PRAGMA_RESOURCE_DESCRIPTION_MAX_LENGTH),
+        name: "n".repeat(PRAGMA_TEXT_LIMITS.automation.name),
+        description: "d".repeat(PRAGMA_TEXT_LIMITS.automation.description),
         tags: [],
       },
       spec: {
@@ -132,7 +135,7 @@ describe("Pragma YAML DSL", () => {
           executor: { ref: "expert:3sfd30h5017wd17d" },
           input: {
             kind: "prompt",
-            value: "p".repeat(PRAGMA_AUTOMATION_PROMPT_MAX_LENGTH),
+            value: "p".repeat(PRAGMA_TEXT_LIMITS.automation.prompt),
           },
         },
         interaction: { mode: "reuse-session" },
@@ -153,14 +156,14 @@ describe("Pragma YAML DSL", () => {
         ...resource,
         metadata: {
           ...resource.metadata,
-          name: "n".repeat(PRAGMA_RESOURCE_NAME_MAX_LENGTH + 1),
+          name: "n".repeat(PRAGMA_TEXT_LIMITS.automation.name + 1),
         },
       },
       {
         ...resource,
         metadata: {
           ...resource.metadata,
-          description: "d".repeat(PRAGMA_RESOURCE_DESCRIPTION_MAX_LENGTH + 1),
+          description: "d".repeat(PRAGMA_TEXT_LIMITS.automation.description + 1),
         },
       },
       {
@@ -171,7 +174,7 @@ describe("Pragma YAML DSL", () => {
             ...resource.spec.route,
             input: {
               kind: "prompt" as const,
-              value: "p".repeat(PRAGMA_AUTOMATION_PROMPT_MAX_LENGTH + 1),
+              value: "p".repeat(PRAGMA_TEXT_LIMITS.automation.prompt + 1),
             },
           },
         },
@@ -370,8 +373,8 @@ describe("Pragma YAML DSL", () => {
         ...expert,
         spec: {
           ...expert.spec,
-          scope: "界".repeat(PRAGMA_EXPERT_SCOPE_MAX_LENGTH),
-          instructions: "令".repeat(PRAGMA_EXPERT_INSTRUCTIONS_MAX_LENGTH),
+          scope: "界".repeat(PRAGMA_TEXT_LIMITS.expert.scope),
+          instructions: "令".repeat(PRAGMA_TEXT_LIMITS.expert.instructions),
         },
       }).success,
     ).toBe(true);
@@ -380,7 +383,7 @@ describe("Pragma YAML DSL", () => {
         ...expert,
         spec: {
           ...expert.spec,
-          scope: "界".repeat(PRAGMA_EXPERT_SCOPE_MAX_LENGTH + 1),
+          scope: "界".repeat(PRAGMA_TEXT_LIMITS.expert.scope + 1),
         },
       }).success,
     ).toBe(false);
@@ -389,7 +392,7 @@ describe("Pragma YAML DSL", () => {
         ...expert,
         spec: {
           ...expert.spec,
-          instructions: "令".repeat(PRAGMA_EXPERT_INSTRUCTIONS_MAX_LENGTH + 1),
+          instructions: "令".repeat(PRAGMA_TEXT_LIMITS.expert.instructions + 1),
         },
       }).success,
     ).toBe(false);
@@ -397,6 +400,79 @@ describe("Pragma YAML DSL", () => {
       PragmaExpertResourceSchema.safeParse({
         ...expert,
         spec: { ...expert.spec, instructions: undefined },
+      }).success,
+    ).toBe(false);
+  });
+
+  it("applies the shared metadata and prompt limits to every bounded DSL resource", () => {
+    const id = "3sfd30h5017wd17d";
+    const metadata = (name: string, description: string, tags: readonly string[] = []) => ({
+      id,
+      name,
+      description,
+      tags,
+    });
+    expect(
+      PragmaExpertMetadataSchema.safeParse(
+        metadata(
+          "😀".repeat(PRAGMA_TEXT_LIMITS.expert.name),
+          "说".repeat(PRAGMA_TEXT_LIMITS.expert.description),
+          Array.from({ length: PRAGMA_TEXT_LIMITS.expert.tags }, () =>
+            "标".repeat(PRAGMA_TEXT_LIMITS.expert.tag),
+          ),
+        ),
+      ).success,
+    ).toBe(true);
+    expect(
+      PragmaExpertMetadataSchema.safeParse(
+        metadata("Expert", "Description", ["标".repeat(PRAGMA_TEXT_LIMITS.expert.tag + 1)]),
+      ).success,
+    ).toBe(false);
+    expect(
+      PragmaExpertMetadataSchema.safeParse(
+        metadata(
+          "Expert",
+          "Description",
+          Array.from({ length: PRAGMA_TEXT_LIMITS.expert.tags + 1 }, (_, index) => `tag${index}`),
+        ),
+      ).success,
+    ).toBe(false);
+
+    for (const [schema, limits] of [
+      [PragmaExpertTeamMetadataSchema, PRAGMA_TEXT_LIMITS.expertTeam],
+      [PragmaFlowMetadataSchema, PRAGMA_TEXT_LIMITS.flow],
+      [PragmaCapabilityMetadataSchema, PRAGMA_TEXT_LIMITS.capability],
+      [PragmaContextStoreMetadataSchema, PRAGMA_TEXT_LIMITS.contextStore],
+    ] as const) {
+      expect(
+        schema.safeParse(metadata("名".repeat(limits.name), "述".repeat(limits.description)))
+          .success,
+      ).toBe(true);
+      expect(schema.safeParse(metadata("名".repeat(limits.name + 1), "Description")).success).toBe(
+        false,
+      );
+      expect(schema.safeParse(metadata("Name", "述".repeat(limits.description + 1))).success).toBe(
+        false,
+      );
+    }
+
+    expect(
+      PragmaExpertTeamInstructionsSchema.safeParse(
+        "令".repeat(PRAGMA_TEXT_LIMITS.expertTeam.instructions),
+      ).success,
+    ).toBe(true);
+    expect(
+      PragmaFlowPromptSchema.safeParse({
+        segments: [
+          { text: "甲".repeat(PRAGMA_TEXT_LIMITS.flow.promptTextSegment) },
+          { variable: { source: "flow-input", path: ["goal"] } },
+          { text: "乙".repeat(PRAGMA_TEXT_LIMITS.flow.promptTextSegment) },
+        ],
+      }).success,
+    ).toBe(true);
+    expect(
+      PragmaFlowPromptSchema.safeParse({
+        segments: [{ text: "甲".repeat(PRAGMA_TEXT_LIMITS.flow.promptTextSegment + 1) }],
       }).success,
     ).toBe(false);
   });
@@ -491,7 +567,7 @@ describe("Pragma YAML DSL", () => {
     });
     const dumped = await project.dump(compiled.value, { split: "by-resource" });
     expect(dumped.files.get("flows/t9ne4d8njvvxv2ea.pragma.yaml")).toContain("kind: Flow");
-    expect(dumped.files.get("pragma.lock.yaml")).toContain("compilerVersion: pragma.dsl/v3");
+    expect(dumped.files.get("pragma.lock.yaml")).toContain("compilerVersion: pragma.dsl/v4");
     const single = await project.dump(compiled.value, { split: "single" });
     await writeFile(join(root, "single.yaml"), single.files.get("pragma.yaml")!);
     expect((await loadPragmaProject(join(root, "single.yaml"))).listResources()).toHaveLength(1);
@@ -793,7 +869,7 @@ describe("Pragma YAML DSL", () => {
 
     expect(migrated).toMatchObject({
       sourceCompilerVersion: "pragma.dsl/v2",
-      targetCompilerVersion: "pragma.dsl/v3",
+      targetCompilerVersion: "pragma.dsl/v4",
       migrated: true,
     });
     expect(migrated.resources).toEqual([
@@ -802,6 +878,38 @@ describe("Pragma YAML DSL", () => {
         spec: expect.not.objectContaining({ runDry: expect.anything() }),
       }),
     ]);
+  });
+
+  it("upgrades a project fixture written by compiler v3 to the shared text-limit compiler", async () => {
+    const fixture = join(import.meta.dirname, "fixtures", "compiler-v3-text-limits");
+    const migrated = migratePragmaCompilerProjectToCurrent({
+      files: new Map([
+        ["pragma.yaml", await readFile(join(fixture, "pragma.yaml"), "utf8")],
+        ["pragma.lock.yaml", await readFile(join(fixture, "pragma.lock.yaml"), "utf8")],
+      ]),
+      revisionCompilerVersion: "pragma.dsl/v3",
+    });
+
+    expect(migrated).toMatchObject({
+      sourceCompilerVersion: "pragma.dsl/v3",
+      targetCompilerVersion: "pragma.dsl/v4",
+      migrated: true,
+      resources: [expect.objectContaining({ kind: "Expert" })],
+    });
+  });
+
+  it("rejects an over-limit compiler v3 fixture with the exact field diagnostic", async () => {
+    const fixture = join(import.meta.dirname, "fixtures", "compiler-v3-over-limit");
+    const files = new Map([
+      ["pragma.yaml", await readFile(join(fixture, "pragma.yaml"), "utf8")],
+      ["pragma.lock.yaml", await readFile(join(fixture, "pragma.lock.yaml"), "utf8")],
+    ]);
+    expect(() =>
+      migratePragmaCompilerProjectToCurrent({
+        files,
+        revisionCompilerVersion: "pragma.dsl/v3",
+      }),
+    ).toThrow(/metadata\.name/u);
   });
 
   it("rejects compiler migration when a historical v2 source no longer matches its lock", async () => {

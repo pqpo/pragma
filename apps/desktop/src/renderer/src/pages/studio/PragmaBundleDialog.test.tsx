@@ -9,6 +9,7 @@ import {
   BundleInspection,
   filterBundleExportRoots,
   orderBundleExportRoots,
+  PragmaBundleDialog,
 } from "./PragmaBundleDialog.tsx";
 
 type ExportRoot = Extract<
@@ -66,6 +67,32 @@ describe("Bundle export root search", () => {
 
   it("returns an explicit empty result for unmatched searches", () => {
     expect(filterBundleExportRoots(roots, "definitely-not-a-resource", kindLabel)).toEqual([]);
+  });
+
+  it("requires an explicit export root selection", () => {
+    const project: PragmaProjectSnapshot = {
+      schemaVersion: "pragma.project-snapshot/v3",
+      projectId: "studio",
+      revision: 1,
+      resources: [exportRoot(0)],
+      diagnostics: [],
+    };
+    const html = renderToStaticMarkup(
+      <PragmaBundleDialog
+        mode="export"
+        project={project}
+        capabilities={[]}
+        contextStores={[]}
+        runtimes={[]}
+        onRefreshRuntimes={async () => []}
+        onClose={() => undefined}
+        onChanged={() => undefined}
+      />,
+    );
+
+    expect(html).toContain("Select an export object");
+    expect(html).toContain('class="primary-button" type="button" disabled=""');
+    expect(html).not.toContain("<strong>Resource 0</strong>");
   });
 });
 

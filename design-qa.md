@@ -714,3 +714,66 @@ None.
 None required.
 
 final result: passed
+
+---
+
+# Design QA: Studio secondary navigation spacing
+
+## Evidence
+
+- Source visual truth: `/tmp/codex-remote-attachments/019fb8d1-11b6-7150-aab0-e5f6dc1c38e3/341026c7-7955-4ad6-84a1-56273429548d/1-Photo-1.jpg`
+- Implementation screenshot: `/tmp/pragma-studio-menu-fixed.png`
+- Minimum-window screenshot: `/tmp/pragma-studio-menu-fixed-1080.png`
+- Focused before/after comparison: `/tmp/pragma-studio-menu-comparison.png`
+- State: Simplified Chinese, Studio open, Experts selected, live Desktop bridge data loaded.
+- Main viewport: `1440 × 900` CSS px at device pixel ratio `2`; implementation image is `2880 × 1800` px.
+- Minimum viewport: `1080 × 700` CSS px at device pixel ratio `1`; implementation image is `1080 × 700` px.
+- Source image: `960 × 1280` px phone photograph. It records the broken state rather than a target mock, so the intended difference is the removal of stretched grid tracks. The focused comparison fits both navigation regions into equal `800 × 1200` slots; no pixel-level typography comparison is inferred from the photographed perspective.
+
+## Findings
+
+- No actionable P0, P1, or P2 findings remain.
+- The seven Studio navigation rows are now `44px` high with a consistent `6px` gap and begin at the existing `56px` top inset. The remaining rail height stays empty instead of being distributed between rows.
+- At `1080 × 700`, the last resource row ends at `400px`, the rail remains within its `700px` viewport, and the page has no horizontal overflow.
+- Typography: font family, size, weight, line height, wrapping, and truncation are unchanged by this fix.
+- Spacing and layout rhythm: the broken full-height track stretching is removed; existing rail padding, compact row height, and action separation remain intact.
+- Colors and tokens: the rail, hover, selection, text, and content canvas colors are unchanged.
+- Image quality and assets: existing logo and Phosphor icons are unchanged; no assets were replaced or approximated.
+- Copy and content: labels and actions are unchanged. Live counts differ from the photographed report because the implementation uses the current local data.
+
+## Full-view comparison evidence
+
+The full Desktop capture preserves the three-column composition, selected primary navigation, Studio rail color distinction, content header, search, and expert list. The visible regression is absent: navigation items occupy a compact block at the top of the Studio rail.
+
+## Focused region comparison evidence
+
+`/tmp/pragma-studio-menu-comparison.png` places the photographed broken rail and the fixed live rail in one comparison image. The original distributes resource rows across nearly the entire window height; the implementation keeps all rows contiguous and leaves intentional empty space below the menu.
+
+## Comparison history
+
+1. P1 — Studio resource navigation rows were stretched across the full-height rail, producing very large and viewport-dependent gaps.
+2. Fix — Set the Studio grid container to `align-content: start`, preserving the full-height rail background while preventing implicit rows from stretching.
+3. Post-fix evidence — Live computed layout reports `align-content: start`, seven `44px` rows, six `6px` gaps, and no overflow at both tested viewport sizes.
+
+## Verification
+
+- Primary interaction tested: Home → Studio navigation; Studio and Experts selected states updated correctly.
+- Visible error state: none.
+- Console exceptions and log errors after reload: `0`.
+- Focused component test: passed.
+- Desktop renderer typecheck: passed.
+- Formatting and diff checks: passed.
+
+## Implementation checklist
+
+- [x] Keep the Studio rail full height and visually distinct from the content canvas.
+- [x] Anchor resource navigation rows to the top.
+- [x] Preserve compact row height and consistent gap.
+- [x] Confirm the minimum supported window does not stretch or overflow.
+- [x] Add the invariant to the Desktop UI convention.
+
+## Follow-up polish
+
+- None for this regression.
+
+final result: passed
