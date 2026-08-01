@@ -1,6 +1,6 @@
 :root {
-  color: #1d211f;
-  background: #f8f9fb;
+  color: var(--ui-text);
+  background: var(--ui-canvas);
   font-family:
     Inter,
     "SF Pro Text",
@@ -8,31 +8,54 @@
     -apple-system,
     BlinkMacSystemFont,
     "Segoe UI",
+    "PingFang SC",
+    "Microsoft YaHei",
     sans-serif;
   font-synthesis: none;
   text-rendering: optimizeLegibility;
   color-scheme: light;
-  --background: #f8f9fb;
-  --sidebar: #f1f3f2;
-  --surface: #ffffff;
-  --surface-muted: #edf1ee;
-  --surface-soft: #f5f7f6;
-  --border: #e4e8e5;
-  --border-strong: #d8ded9;
-  --text: #1d211f;
-  --muted: #67706a;
-  --faint: #919994;
-  --green: #587968;
-  --green-dark: #456454;
+  --ui-canvas: #f8f9fb;
+  --ui-rail: #f1f3f2;
+  --ui-surface: #ffffff;
+  --ui-surface-subtle: #f5f7f6;
+  --ui-selection: #e9f0ec;
+  --ui-text: #1d211f;
+  --ui-text-secondary: #67706a;
+  --ui-text-disabled: #919994;
+  --ui-line: #e4e8e5;
+  --ui-line-strong: #d8ded9;
+  --ui-accent: #587968;
+  --ui-accent-strong: #456454;
+  --ui-danger: #9d3f34;
+  --ui-danger-subtle: #fff8f7;
+  --ui-focus: rgb(88 121 104 / 20%);
+  --ui-radius-sm: 4px;
+  --ui-radius-md: 6px;
+  --ui-radius-lg: 10px;
+  --ui-radius-round: 999px;
+  --ui-shadow-composer: 0 8px 24px rgb(20 31 25 / 5%);
+  --ui-shadow-overlay: 0 16px 40px rgb(20 31 25 / 12%);
+  --background: var(--ui-canvas);
+  --sidebar: var(--ui-rail);
+  --surface: var(--ui-surface);
+  --surface-muted: var(--ui-selection);
+  --surface-soft: var(--ui-surface-subtle);
+  --border: var(--ui-line);
+  --border-strong: var(--ui-line-strong);
+  --text: var(--ui-text);
+  --muted: var(--ui-text-secondary);
+  --faint: var(--ui-text-disabled);
+  --green: var(--ui-accent);
+  --green-dark: var(--ui-accent-strong);
   --lime: #97bd57;
-  --green-soft: #e9f0ec;
-  --focus-ring: rgb(88 121 104 / 20%);
+  --green-soft: var(--ui-selection);
+  --focus-ring: var(--ui-focus);
   --shadow-soft: 0 1px 2px rgb(20 31 25 / 4%), 0 8px 24px rgb(20 31 25 / 5%);
   --shadow-hover: 0 2px 5px rgb(20 31 25 / 6%), 0 12px 30px rgb(20 31 25 / 8%);
   --shadow-panel: 0 18px 50px rgb(20 31 25 / 12%);
-  --radius-control: 10px;
-  --radius-card: 14px;
-  --radius-large: 16px;
+  --radius-control: var(--ui-radius-md);
+  --radius-card: var(--ui-radius-lg);
+  --radius-large: var(--ui-radius-lg);
   --screen-title-content-gap: 24px;
 }
 
@@ -12548,7 +12571,7 @@ p {
   }
 }
 
-/* Enterprise AI-native polish layer */
+/* Desktop visual-system migration layer. Keep touched selectors authoritative here. */
 
 ::selection {
   background: rgb(88 121 104 / 18%);
@@ -12562,8 +12585,7 @@ textarea {
     color 150ms ease,
     background-color 150ms ease,
     border-color 150ms ease,
-    box-shadow 150ms ease,
-    transform 150ms ease;
+    box-shadow 150ms ease;
 }
 
 button:focus-visible,
@@ -12571,8 +12593,8 @@ input:focus-visible,
 select:focus-visible,
 textarea:focus-visible,
 [tabindex]:focus-visible {
-  outline: 2px solid var(--green);
-  outline-offset: 2px;
+  outline: 0;
+  box-shadow: 0 0 0 3px var(--ui-focus);
 }
 
 .desktop-shell {
@@ -12580,76 +12602,81 @@ textarea:focus-visible,
 }
 
 .sidebar {
-  padding: 58px 18px 12px;
-  border-right: 0;
-  background: var(--sidebar);
+  padding: 56px 16px 16px;
+  border-right: 1px solid var(--ui-line);
+  background: var(--ui-rail);
 }
 
 .brand {
   gap: 12px;
-  padding: 0 10px;
+  padding: 0 8px;
 }
 
 .brand-mark {
   width: 36px;
   height: 36px;
-  border-radius: 50%;
-  background: #fff;
-  box-shadow: 0 5px 14px rgb(69 100 84 / 18%);
+  border: 0;
+  border-radius: var(--ui-radius-round);
+  background: var(--ui-surface);
+  box-shadow: none;
 }
 
 .brand-name {
-  font-size: 25px;
-  font-weight: 720;
-  letter-spacing: -0.04em;
+  font-size: 24px;
+  font-weight: 700;
+  letter-spacing: -0.03em;
 }
 
 .sidebar-collapse-toggle {
-  border-radius: var(--radius-control);
+  border-radius: var(--ui-radius-md);
 }
 
 .sidebar-collapse-toggle:hover {
-  background: rgb(255 255 255 / 72%);
-  color: var(--green-dark);
+  background: var(--ui-surface-subtle);
+  color: var(--ui-text);
 }
 
 .navigation {
-  gap: 6px;
+  gap: 4px;
   margin-top: 24px;
 }
 
 .sidebar-footer {
-  padding-top: 7px;
-  border-color: var(--border-strong);
+  padding-top: 8px;
+  border-color: var(--ui-line);
 }
 
 .navigation-item {
   height: 44px;
-  gap: 14px;
-  padding: 0 15px;
-  border: 1px solid transparent;
-  border-radius: 11px;
+  gap: 12px;
+  padding: 0 16px;
+  border: 0;
+  border-radius: var(--ui-radius-md);
   cursor: pointer;
-  font-weight: 560;
+  font-weight: 500;
 }
 
 .navigation-item:hover:not(:disabled) {
-  background: rgb(255 255 255 / 60%);
-  color: var(--text);
+  background: var(--ui-surface-subtle);
+  color: var(--ui-text);
 }
 
 .navigation-item.is-active {
-  border-color: rgb(88 121 104 / 8%);
-  background: #fff;
-  color: var(--green-dark);
-  box-shadow: 0 1px 3px rgb(20 31 25 / 5%);
+  background: var(--ui-selection);
+  color: var(--ui-text);
+  box-shadow: none;
 }
 
 .navigation-item.is-active::before {
-  top: 11px;
-  bottom: 11px;
-  width: 3px;
-  background: var(--green);
+  top: 12px;
+  bottom: 12px;
+  width: 2px;
+  background: var(--ui-accent);
+}
+
+.navigation-item span {
+  font-size: 13px;
+  font-weight: 500;
 }
 
 .navigation-item:disabled {
@@ -12662,34 +12689,33 @@ textarea:focus-visible,
 .text-button,
 .studio-primary-action,
 .mission-new-button {
-  border-radius: var(--radius-control);
+  border-radius: var(--ui-radius-md);
 }
 
 .primary-button,
 .studio-primary-action,
 .mission-new-button {
   border-color: transparent;
-  background: var(--green);
-  box-shadow: 0 1px 2px rgb(36 65 50 / 12%);
+  background: var(--ui-accent);
+  box-shadow: none;
 }
 
 .primary-button:hover:not(:disabled),
 .studio-primary-action:hover:not(:disabled),
 .mission-new-button:hover:not(:disabled) {
-  background: var(--green-dark);
-  box-shadow: 0 4px 12px rgb(36 65 50 / 16%);
-  transform: translateY(-1px);
+  background: var(--ui-accent-strong);
+  box-shadow: none;
 }
 
 .secondary-button {
-  border-color: var(--border);
-  background: #fff;
-  box-shadow: 0 1px 2px rgb(20 31 25 / 3%);
+  border-color: var(--ui-line-strong);
+  background: var(--ui-surface);
+  box-shadow: none;
 }
 
 .secondary-button:hover:not(:disabled) {
-  border-color: var(--border-strong);
-  background: var(--surface-soft);
+  border-color: var(--ui-line-strong);
+  background: var(--ui-surface-subtle);
 }
 
 .primary-button:focus-visible,
@@ -12697,7 +12723,7 @@ textarea:focus-visible,
 .danger-button:focus-visible,
 .text-button:focus-visible {
   outline: 0;
-  box-shadow: 0 0 0 3px var(--focus-ring);
+  box-shadow: 0 0 0 3px var(--ui-focus);
 }
 
 .settings-page {
@@ -15837,6 +15863,7 @@ textarea:focus-visible,
   grid-template-rows: minmax(0, 1fr);
   place-items: center;
   padding: 48px;
+  background: var(--ui-canvas);
 }
 
 .home-mission-create > .mission-create {
@@ -15864,7 +15891,7 @@ textarea:focus-visible,
 }
 
 .expert-constellation.is-focused {
-  opacity: 0.44;
+  opacity: 0.34;
 }
 
 .expert-constellation.is-submitting {
@@ -15884,11 +15911,11 @@ textarea:focus-visible,
   display: inline-flex;
   align-items: center;
   gap: 7px;
-  color: var(--green-dark);
+  color: var(--ui-text-secondary);
   font-size: 11px;
-  font-weight: 620;
-  letter-spacing: 0.015em;
-  opacity: 0.78;
+  font-weight: 500;
+  letter-spacing: 0;
+  opacity: 0.68;
   transform: translateX(-50%);
   transition:
     color 180ms ease,
@@ -15900,8 +15927,8 @@ textarea:focus-visible,
   width: 6px;
   height: 6px;
   border-radius: 50%;
-  background: var(--lime);
-  box-shadow: 0 0 0 3px rgb(151 189 87 / 10%);
+  background: var(--ui-accent);
+  box-shadow: none;
   animation: constellation-status-pulse 2.8s ease-in-out infinite;
 }
 
@@ -15921,15 +15948,15 @@ textarea:focus-visible,
   height: 25px;
   place-items: center;
   padding: 0;
-  border: 1px solid rgb(88 121 104 / 16%);
-  border-radius: 50%;
+  border: 1px solid var(--ui-line);
+  border-radius: var(--ui-radius-round);
   outline: 0;
-  background: rgb(255 255 255 / 66%);
-  color: rgb(69 100 84 / 62%);
+  background: rgb(255 255 255 / 56%);
+  color: var(--ui-text-disabled);
   cursor: pointer;
   opacity: 0.7;
   pointer-events: auto;
-  box-shadow: 0 2px 10px rgb(20 31 25 / 4%);
+  box-shadow: none;
   transition:
     border-color 160ms ease,
     background 160ms ease,
@@ -15956,17 +15983,14 @@ textarea:focus-visible,
 .expert-constellation-special-node:hover,
 .expert-constellation-special-node:focus-visible,
 .expert-constellation-special-node.is-active {
-  border-color: rgb(88 121 104 / 32%);
-  background: rgb(255 255 255 / 92%);
-  color: var(--green-dark);
+  border-color: var(--ui-line-strong);
+  background: var(--ui-surface);
+  color: var(--ui-accent-strong);
   opacity: 1;
-  transform: scale(1.08);
 }
 
 .expert-constellation-special-node:focus-visible {
-  box-shadow:
-    0 0 0 3px var(--focus-ring),
-    0 2px 10px rgb(20 31 25 / 6%);
+  box-shadow: 0 0 0 3px var(--ui-focus);
 }
 
 .expert-constellation-special-node > span {
@@ -15976,15 +16000,15 @@ textarea:focus-visible,
   width: max-content;
   max-width: 180px;
   padding: 5px 8px;
-  border: 1px solid var(--border);
-  border-radius: 7px;
-  background: rgb(255 255 255 / 96%);
-  color: var(--muted);
-  font-size: 10px;
-  font-weight: 560;
+  border: 1px solid var(--ui-line-strong);
+  border-radius: var(--ui-radius-md);
+  background: var(--ui-surface);
+  color: var(--ui-text-secondary);
+  font-size: 11px;
+  font-weight: 500;
   opacity: 0;
   pointer-events: none;
-  box-shadow: var(--shadow-soft);
+  box-shadow: var(--ui-shadow-overlay);
   transform: translate(-50%, -2px);
   transition:
     opacity 140ms ease,
@@ -16073,41 +16097,54 @@ textarea:focus-visible,
   box-shadow: none;
 }
 
-/* Home mission composer mirrors the single-surface creation flow. */
+/* Home keeps one visible task surface: the mission composer. */
 .home-mission-create .mission-create > header {
   text-align: center;
 }
 
+.home-mission-create .mission-create > header h1 {
+  color: var(--ui-text);
+  font-size: 28px;
+  font-weight: 600;
+  line-height: 1.2;
+  letter-spacing: -0.02em;
+}
+
 .home-mission-create .mission-create > header p {
-  margin-top: 10px;
+  margin-top: 8px;
+  color: var(--ui-text-secondary);
+  font-size: 14px;
+  font-weight: 400;
+  line-height: 1.5;
 }
 
 .home-mission-create .mission-goal-composer {
   grid-template-rows: auto minmax(0, 1fr) auto;
-  min-height: 380px;
+  min-height: 360px;
   margin-top: 32px;
   overflow: visible;
-  border-color: var(--border);
-  border-radius: 16px;
-  box-shadow: 0 12px 32px rgb(20 31 25 / 6%);
+  border-color: var(--ui-line-strong);
+  border-radius: var(--ui-radius-lg);
+  background: var(--ui-surface);
+  box-shadow: var(--ui-shadow-composer);
 }
 
 .home-mission-create .mission-goal-composer:focus-within {
-  border-color: var(--green);
+  border-color: var(--ui-line-strong);
   box-shadow:
-    0 0 0 3px var(--focus-ring),
-    0 12px 32px rgb(20 31 25 / 8%);
+    0 0 0 3px var(--ui-focus),
+    var(--ui-shadow-composer);
 }
 
 .home-mission-create .mission-goal-composer:has(.mission-schema-form):focus-within {
-  border-color: var(--border);
-  box-shadow: 0 12px 32px rgb(20 31 25 / 6%);
+  border-color: var(--ui-line-strong);
+  box-shadow: var(--ui-shadow-composer);
 }
 
 .mission-workspace-picker {
   position: relative;
   z-index: 8;
-  border-bottom: 1px solid var(--border);
+  border-bottom: 1px solid var(--ui-line);
 }
 
 .mission-workspace-picker.is-open {
@@ -16117,16 +16154,16 @@ textarea:focus-visible,
 .mission-workspace-trigger {
   display: grid;
   width: 100%;
-  min-height: 50px;
+  min-height: 48px;
   grid-template-columns: auto minmax(0, 1fr) auto;
   align-items: center;
-  gap: 11px;
-  padding: 8px 20px;
+  gap: 8px;
+  padding: 8px 16px;
   border: 0;
-  border-radius: 16px 16px 0 0;
+  border-radius: var(--ui-radius-lg) var(--ui-radius-lg) 0 0;
   outline: 0;
   background: transparent;
-  color: var(--muted);
+  color: var(--ui-text-secondary);
   cursor: pointer;
   text-align: left;
 }
@@ -16134,28 +16171,29 @@ textarea:focus-visible,
 .mission-workspace-trigger:hover,
 .mission-workspace-trigger:focus-visible,
 .mission-workspace-picker.is-open .mission-workspace-trigger {
-  background: var(--surface-soft);
-  color: var(--text);
+  background: var(--ui-surface-subtle);
+  color: var(--ui-text);
 }
 
 .mission-workspace-trigger > span {
   display: flex;
   min-width: 0;
   align-items: baseline;
-  gap: 9px;
+  gap: 8px;
 }
 
 .mission-workspace-trigger strong {
   flex: 0 0 auto;
   color: inherit;
   font-size: 13px;
-  font-weight: 620;
+  font-weight: 500;
 }
 
 .mission-workspace-trigger small {
   overflow: hidden;
-  color: var(--faint);
-  font-size: 11px;
+  color: var(--ui-text-secondary);
+  font-size: 12px;
+  font-weight: 400;
   text-overflow: ellipsis;
   white-space: nowrap;
 }
@@ -16168,15 +16206,15 @@ textarea:focus-visible,
   position: absolute;
   z-index: 50;
   top: calc(100% + 8px);
-  left: 14px;
+  left: 0;
   display: grid;
   width: min(430px, calc(100vw - 96px));
-  gap: 4px;
-  padding: 7px;
-  border: 1px solid var(--border);
-  border-radius: 13px;
-  background: #fff;
-  box-shadow: var(--shadow-panel);
+  gap: 0;
+  padding: 4px;
+  border: 1px solid var(--ui-line-strong);
+  border-radius: var(--ui-radius-lg);
+  background: var(--ui-surface);
+  box-shadow: var(--ui-shadow-overlay);
 }
 
 .mission-workspace-menu > button {
@@ -16184,10 +16222,10 @@ textarea:focus-visible,
   min-width: 0;
   grid-template-columns: auto minmax(0, 1fr) 18px;
   align-items: center;
-  gap: 10px;
-  padding: 8px 10px;
-  border: 1px solid transparent;
-  border-radius: 10px;
+  gap: 8px;
+  padding: 8px 12px;
+  border: 0;
+  border-radius: var(--ui-radius-md);
   outline: 0;
   background: transparent;
   color: var(--text);
@@ -16196,18 +16234,18 @@ textarea:focus-visible,
 }
 
 .mission-workspace-menu-heading {
-  padding: 5px 10px 1px;
-  color: var(--faint);
-  font-size: 10px;
-  font-weight: 650;
+  padding: 8px 12px 4px;
+  color: var(--ui-text-disabled);
+  font-size: 11px;
+  font-weight: 500;
   letter-spacing: 0.04em;
   text-transform: uppercase;
 }
 
 .mission-workspace-menu > button:hover,
 .mission-workspace-menu > button:focus-visible {
-  border-color: rgb(88 121 104 / 18%);
-  background: var(--surface-soft);
+  background: var(--ui-surface-subtle);
+  box-shadow: none;
 }
 
 .mission-workspace-menu > button > span {
@@ -16217,14 +16255,15 @@ textarea:focus-visible,
 }
 
 .mission-workspace-menu strong {
-  font-size: 12px;
-  font-weight: 650;
+  font-size: 13px;
+  font-weight: 500;
 }
 
 .mission-workspace-menu small {
   overflow: hidden;
-  color: var(--muted);
-  font-size: 10px;
+  color: var(--ui-text-secondary);
+  font-size: 12px;
+  font-weight: 400;
   text-overflow: ellipsis;
   white-space: nowrap;
 }
@@ -16236,16 +16275,17 @@ textarea:focus-visible,
 }
 
 .home-mission-create .mission-goal-field textarea {
-  min-height: 210px;
+  min-height: 200px;
   resize: none;
-  padding: 14px 24px 22px;
+  padding: 16px 20px 24px;
   border: 0;
   outline: 0;
   background: transparent;
   color: var(--text);
   font: inherit;
   font-size: 16px;
-  line-height: 1.65;
+  font-weight: 400;
+  line-height: 1.5;
 }
 
 .home-mission-create .mission-goal-field textarea:focus-visible {
@@ -16408,8 +16448,9 @@ textarea:focus-visible,
 }
 
 .home-mission-create .mission-goal-composer footer {
-  min-height: 58px;
-  padding: 10px 13px 10px 16px;
+  min-height: 56px;
+  padding: 8px 12px 8px 16px;
+  border-top-color: var(--ui-line);
 }
 
 .home-mission-create .mission-prompt-tools {
@@ -16440,9 +16481,9 @@ textarea:focus-visible,
   gap: 6px;
   padding: 0 8px;
   border: 0;
-  border-radius: 9px;
+  border-radius: var(--ui-radius-md);
   background: transparent;
-  color: var(--muted);
+  color: var(--ui-text-secondary);
   cursor: pointer;
   font-size: 12px;
 }
@@ -16450,13 +16491,13 @@ textarea:focus-visible,
 .home-mission-create .mission-executor-trigger:hover,
 .home-mission-create .mission-executor-trigger:focus-visible,
 .home-mission-create .mission-executor-picker.is-open .mission-executor-trigger {
-  background: var(--surface-soft);
-  color: var(--text);
+  background: var(--ui-surface-subtle);
+  color: var(--ui-text);
 }
 
 .home-mission-create .mission-executor-trigger:focus-visible {
   outline: 0;
-  box-shadow: 0 0 0 3px var(--focus-ring);
+  box-shadow: 0 0 0 3px var(--ui-focus);
 }
 
 .home-mission-create .mission-executor-trigger > span {
@@ -16469,8 +16510,67 @@ textarea:focus-visible,
 .home-mission-create .mission-executor-menu {
   top: auto;
   right: auto;
-  bottom: calc(100% + 11px);
+  bottom: calc(100% + 8px);
   left: 0;
+  border-color: var(--ui-line-strong);
+  border-radius: var(--ui-radius-lg);
+  box-shadow: var(--ui-shadow-overlay);
+}
+
+.home-mission-create .mission-executor-menu > header {
+  min-height: 48px;
+  padding: 8px 12px;
+  border-bottom-color: var(--ui-line);
+}
+
+.home-mission-create .mission-executor-menu > header strong {
+  font-size: 13px;
+  font-weight: 600;
+}
+
+.home-mission-create .mission-executor-manage-button,
+.home-mission-create .mission-executor-filters label,
+.home-mission-create .mission-executor-search {
+  border-color: var(--ui-line-strong);
+  border-radius: var(--ui-radius-md);
+  box-shadow: none;
+}
+
+.home-mission-create .mission-executor-manage-button {
+  min-height: 32px;
+  font-size: 12px;
+  font-weight: 500;
+}
+
+.home-mission-create .mission-executor-option {
+  min-height: 64px;
+  border: 0;
+  border-radius: var(--ui-radius-md);
+}
+
+.home-mission-create .mission-executor-option:hover,
+.home-mission-create .mission-executor-option:focus-within {
+  background: var(--ui-surface-subtle);
+}
+
+.home-mission-create .mission-executor-option.is-selected {
+  background: var(--ui-selection);
+}
+
+.home-mission-create .mission-executor-option-icon {
+  border-radius: var(--ui-radius-md);
+  background: var(--ui-surface-subtle);
+  box-shadow: none;
+}
+
+.home-mission-create .mission-executor-option-copy strong {
+  font-size: 13px;
+  font-weight: 500;
+}
+
+.home-mission-create .mission-executor-option-copy > small {
+  font-size: 12px;
+  font-weight: 400;
 }
 
 .mission-compact-select {
@@ -16480,14 +16580,14 @@ textarea:focus-visible,
   align-items: center;
   gap: 3px;
   padding-left: 8px;
-  border-radius: 9px;
-  color: var(--muted);
+  border-radius: var(--ui-radius-md);
+  color: var(--ui-text-secondary);
 }
 
 .mission-compact-select:hover,
 .mission-compact-select:focus-within {
-  background: var(--surface-soft);
-  color: var(--text);
+  background: var(--ui-surface-subtle);
+  color: var(--ui-text);
 }
 
 .mission-compact-select select {
@@ -16519,43 +16619,45 @@ textarea:focus-visible,
 
 .home-mission-create .tool-permission-select {
   min-height: 34px;
+  border-radius: var(--ui-radius-md);
   background: transparent;
 }
 
 .home-mission-create .tool-permission-select:hover,
 .home-mission-create .tool-permission-select:focus-within {
-  background: var(--surface-soft);
+  background: var(--ui-surface-subtle);
 }
 
 .mission-submit-button {
   display: grid;
-  width: 38px;
-  height: 38px;
-  flex: 0 0 38px;
+  width: 36px;
+  height: 36px;
+  flex: 0 0 36px;
   place-items: center;
   padding: 0;
   border: 0;
-  border-radius: 11px;
-  background: #172137;
-  color: #fff;
+  border-radius: var(--ui-radius-md);
+  background: var(--ui-accent);
+  color: var(--ui-surface);
   cursor: pointer;
-  box-shadow: 0 4px 12px rgb(23 33 55 / 16%);
+  box-shadow: none;
 }
 
 .mission-submit-button:hover:not(:disabled),
 .mission-submit-button:focus-visible:not(:disabled) {
-  background: #0f1729;
-  transform: translateY(-1px);
+  background: var(--ui-accent-strong);
 }
 
 .mission-submit-button:focus-visible {
   outline: 0;
-  box-shadow: 0 0 0 3px rgb(23 33 55 / 18%);
+  box-shadow: 0 0 0 3px var(--ui-focus);
 }
 
 .mission-submit-button:disabled {
   cursor: not-allowed;
-  opacity: 0.35;
+  background: var(--ui-surface-subtle);
+  color: var(--ui-text-disabled);
+  opacity: 1;
   box-shadow: none;
 }
 
