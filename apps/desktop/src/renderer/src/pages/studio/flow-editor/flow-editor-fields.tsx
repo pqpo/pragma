@@ -17,6 +17,7 @@ import type {
   DesktopRuntimeAvailability,
   DesktopRuntimeModel,
 } from "../../../../../shared/contracts/index.ts";
+import { SelectMenu } from "../../../components/SelectMenu.tsx";
 import { canonicalRuntimeDisplayName, runtimeDisplayName } from "../../../lib/runtime-display.ts";
 import {
   SchemaFieldsEditor,
@@ -79,26 +80,20 @@ export function ResultMappingEditor(props: {
               : "__constant";
           return (
             <div className="flow-result-mapping-row" key={field.path.join(".")}>
-              <label>
+              <div className="flow-select-field">
                 <span>{field.path.join(".")}</span>
-                <select
+                <SelectMenu
+                  ariaLabel={field.path.join(".")}
+                  className="form-select"
                   value={selected}
-                  onChange={(event) => {
+                  options={[...options, { value: "__constant", label: t("constantValue") }]}
+                  onChange={(source) => {
                     const value =
-                      event.target.value === "__constant"
-                        ? defaultMappingConstant(field.schema)
-                        : event.target.value;
+                      source === "__constant" ? defaultMappingConstant(field.schema) : source;
                     props.onChange(setMappingValue(props.value, field.path, value));
                   }}
-                >
-                  {options.map((option) => (
-                    <option key={option.value} value={option.value}>
-                      {option.label}
-                    </option>
-                  ))}
-                  <option value="__constant">{t("constantValue")}</option>
-                </select>
-              </label>
+                />
+              </div>
               {selected === "__constant" ? (
                 <MappingConstantInput
                   schema={field.schema}
@@ -124,14 +119,16 @@ function MappingConstantInput(props: {
   const { t } = useTranslation("studio");
   if (props.schema.type === "boolean") {
     return (
-      <select
-        aria-label={t("constantValue")}
+      <SelectMenu<"true" | "false">
+        ariaLabel={t("constantValue")}
+        className="form-select"
         value={props.value === true ? "true" : "false"}
-        onChange={(event) => props.onChange(event.target.value === "true")}
-      >
-        <option value="false">false</option>
-        <option value="true">true</option>
-      </select>
+        options={[
+          { value: "false", label: "false" },
+          { value: "true", label: "true" },
+        ]}
+        onChange={(value) => props.onChange(value === "true")}
+      />
     );
   }
   if (props.schema.type === "number" || props.schema.type === "integer") {
@@ -288,10 +285,16 @@ export function StructuredOutputEditor(props: {
   return (
     <section className="flow-output-editor">
       <InspectorField label={props.label ?? t("flowOutput")}>
-        <select
+        <SelectMenu<"native" | "structured">
+          ariaLabel={props.label ?? t("flowOutput")}
+          className="form-select"
           value={props.value === undefined ? "native" : "structured"}
-          onChange={(event) => {
-            if (event.target.value === "native") {
+          options={[
+            { value: "native", label: props.nativeLabel ?? t("nativeResult") },
+            { value: "structured", label: props.structuredLabel ?? t("structuredResult") },
+          ]}
+          onChange={(mode) => {
+            if (mode === "native") {
               setFields([]);
               props.onChange(undefined);
             } else {
@@ -305,10 +308,7 @@ export function StructuredOutputEditor(props: {
               props.onChange(schema);
             }
           }}
-        >
-          <option value="native">{props.nativeLabel ?? t("nativeResult")}</option>
-          <option value="structured">{props.structuredLabel ?? t("structuredResult")}</option>
-        </select>
+        />
       </InspectorField>
       {props.value === undefined ? (
         <small className="flow-field-hint">{props.nativeHint ?? t("nativeResultHint")}</small>
@@ -368,10 +368,33 @@ export function RuntimeBindingEditor(props: {
   return (
     <section className="flow-runtime-editor">
       <InspectorField label={t("runtime")}>
-        <select
+        <SelectMenu
+          ariaLabel={t("runtime")}
+          className="form-select"
           value={selectedRuntimeId}
-          onChange={(event) => {
-            const runtimeId = event.target.value;
+          options={[
+            { value: "", label: t("inheritExpertRuntime") },
+            ...(selectedRuntimeId !== "" &&
+            !props.runtimes.some((runtime) => runtime.id === selectedRuntimeId)
+              ? [
+                  {
+                    value: selectedRuntimeId,
+                    label: `${runtimeDisplayName(t, {
+                      id: selectedRuntimeId,
+                      displayName: selectedRuntimeId,
+                    })} · ${t("unavailable")}`,
+                  },
+                ]
+              : []),
+            ...props.runtimes.map((runtime) => ({
+              value: runtime.id,
+              label: `${runtimeDisplayName(t, runtime)}${
+                runtime.status === "available" ? "" : ` · ${t("unavailable")}`
+              }`,
+              disabled: runtime.status !== "available",
+            })),
+          ]}
+          onChange={(runtimeId) => {
             if (runtimeId === "") {
               props.onChange(
                 props.value?.modelSelection === undefined || inheritedProfileRef === undefined
@@ -389,34 +412,30 @@ export function RuntimeBindingEditor(props: {
             props.onSupportingResource(profile);
             props.onChange({ ref: pragmaResourceRef(profile) });
           }}
-        >
-          <option value="">{t("inheritExpertRuntime")}</option>
-          {selectedRuntimeId !== "" &&
-          !props.runtimes.some((runtime) => runtime.id === selectedRuntimeId) ? (
-            <option value={selectedRuntimeId}>
-              {runtimeDisplayName(t, {
-                id: selectedRuntimeId,
-                displayName: selectedRuntimeId,
-              })}{" "}
-              · {t("unavailable")}
-            </option>
-          ) : null}
-          {props.runtimes.map((runtime) => (
-            <option key={runtime.id} value={runtime.id} disabled={runtime.status !== "available"}>
-              {runtimeDisplayName(t, runtime)}
-              {runtime.status === "available" ? "" : ` · ${t("unavailable")}`}
-            </option>
-          ))}
-        </select>
+        />
       </InspectorField>
       {props.allowModel ? (
         <InspectorField label={t("model")}>
-          <select
+          <SelectMenu
+            ariaLabel={t("model")}
+            className="form-select"
             value={selectedModel === undefined ? "" : runtimeModelKey(selectedModel)}
-            onChange={(event) => {
-              const model = models.find(
-                (candidate) => runtimeModelKey(candidate) === event.target.value,
-              );
+            searchable={models.length > 8}
+            options={[
+              {
+                value: "",
+                label: selectedRuntimeId === "" ? t("inheritExpertModel") : t("selectModel"),
+              },
+              ...models.map((model) => ({
+                value: runtimeModelKey(model),
+                label:
+                  model.provider.kind === "registered"
+                    ? `${model.provider.displayName} / ${model.displayName}`
+                    : model.displayName,
+              })),
+            ]}
+            onChange={(modelKey) => {
+              const model = models.find((candidate) => runtimeModelKey(candidate) === modelKey);
               const bindingRef =
                 selectedRuntimeId === "" ? inheritedProfileRef : selectedProfile?.ref;
               if (bindingRef === undefined) return;
@@ -432,29 +451,26 @@ export function RuntimeBindingEditor(props: {
               });
             }}
             disabled={effectiveRuntimeId === undefined || availability?.status !== "available"}
-          >
-            <option value="">
-              {selectedRuntimeId === "" ? t("inheritExpertModel") : t("selectModel")}
-            </option>
-            {models.map((model) => (
-              <option key={runtimeModelKey(model)} value={runtimeModelKey(model)}>
-                {model.provider.kind === "registered"
-                  ? `${model.provider.displayName} / ${model.displayName}`
-                  : model.displayName}
-              </option>
-            ))}
-          </select>
+          />
         </InspectorField>
       ) : null}
       {props.allowModel &&
       selectedModel?.thinking !== undefined &&
       props.value?.modelSelection !== undefined ? (
         <InspectorField label={t("thinkingLevel")}>
-          <select
+          <SelectMenu
+            ariaLabel={t("thinkingLevel")}
+            className="form-select"
             value={props.value.modelSelection?.thinkingLevel ?? ""}
-            onChange={(event) => {
+            options={[
+              { value: "", label: t("runtimeDefault") },
+              ...selectedModel.thinking.supportedLevels.map((level) => ({
+                value: level.value,
+                label: level.label,
+              })),
+            ]}
+            onChange={(thinkingLevel) => {
               if (props.value?.modelSelection === undefined) return;
-              const thinkingLevel = event.target.value;
               props.onChange({
                 ...props.value,
                 modelSelection: {
@@ -463,14 +479,7 @@ export function RuntimeBindingEditor(props: {
                 },
               });
             }}
-          >
-            <option value="">{t("runtimeDefault")}</option>
-            {selectedModel.thinking.supportedLevels.map((level) => (
-              <option key={level.value} value={level.value}>
-                {level.label}
-              </option>
-            ))}
-          </select>
+          />
         </InspectorField>
       ) : null}
       {availability?.modelDiscoveryError ? (
@@ -710,39 +719,39 @@ export function InputBindingEditor(props: {
   return (
     <section className="flow-input-binding">
       <InspectorField label={t("inputBindingMode")}>
-        <select
+        <SelectMenu<"flow" | "variable" | "fields" | "constant">
+          ariaLabel={t("inputBindingMode")}
+          className="form-select"
           value={mode}
-          onChange={(event) => {
-            if (event.target.value === "flow") props.onChange(undefined);
-            else if (event.target.value === "variable") {
+          options={[
+            { value: "flow", label: t("useFlowInput") },
+            { value: "variable", label: t("bindWholeInput") },
+            { value: "fields", label: t("bindInputFields") },
+            { value: "constant", label: t("constantInput") },
+          ]}
+          onChange={(nextMode) => {
+            if (nextMode === "flow") props.onChange(undefined);
+            else if (nextMode === "variable") {
               props.onChange(variables[0]?.value ?? "$flow.input");
-            } else if (event.target.value === "fields") {
+            } else if (nextMode === "fields") {
               props.onChange(props.schema === undefined ? {} : defaultInputMapping(props.schema));
             } else {
               props.onChange({});
             }
           }}
-        >
-          <option value="flow">{t("useFlowInput")}</option>
-          <option value="variable">{t("bindWholeInput")}</option>
-          <option value="fields">{t("bindInputFields")}</option>
-          <option value="constant">{t("constantInput")}</option>
-        </select>
+        />
       </InspectorField>
       {mode === "flow" ? (
         <small className="flow-field-hint">{t("useFlowInputHint")}</small>
       ) : mode === "variable" ? (
         <InspectorField label={t("variableSource")}>
-          <select
+          <SelectMenu
+            ariaLabel={t("variableSource")}
+            className="form-select"
             value={String(props.value)}
-            onChange={(event) => props.onChange(event.target.value)}
-          >
-            {variables.map((option) => (
-              <option key={option.value} value={option.value}>
-                {option.label}
-              </option>
-            ))}
-          </select>
+            options={variables}
+            onChange={props.onChange}
+          />
         </InspectorField>
       ) : mode === "fields" ? (
         props.schema === undefined ? (
@@ -761,30 +770,24 @@ export function InputBindingEditor(props: {
                   : "__constant";
               return (
                 <div className="flow-result-mapping-row" key={field.path.join(".")}>
-                  <label>
+                  <div className="flow-select-field">
                     <span>{field.path.join(".")}</span>
-                    <select
+                    <SelectMenu
+                      ariaLabel={field.path.join(".")}
+                      className="form-select"
                       value={selected}
-                      onChange={(event) =>
+                      options={[...variables, { value: "__constant", label: t("constantValue") }]}
+                      onChange={(source) =>
                         props.onChange(
                           setMappingValue(
                             props.value,
                             field.path,
-                            event.target.value === "__constant"
-                              ? defaultMappingConstant(field.schema)
-                              : event.target.value,
+                            source === "__constant" ? defaultMappingConstant(field.schema) : source,
                           ),
                         )
                       }
-                    >
-                      {variables.map((option) => (
-                        <option key={option.value} value={option.value}>
-                          {option.label}
-                        </option>
-                      ))}
-                      <option value="__constant">{t("constantValue")}</option>
-                    </select>
-                  </label>
+                    />
+                  </div>
                   {selected === "__constant" ? (
                     <MappingConstantInput
                       schema={field.schema}
@@ -847,22 +850,16 @@ function CustomInputBindingFields(props: {
                 onChange={(event) => replace(name, event.target.value, current)}
               />
             </label>
-            <label>
+            <div className="flow-select-field">
               <span>{t("variableSource")}</span>
-              <select
+              <SelectMenu
+                ariaLabel={t("variableSource")}
+                className="form-select"
                 value={selected}
-                onChange={(event) =>
-                  replace(name, name, event.target.value === "__constant" ? "" : event.target.value)
-                }
-              >
-                {props.variables.map((option) => (
-                  <option key={option.value} value={option.value}>
-                    {option.label}
-                  </option>
-                ))}
-                <option value="__constant">{t("constantValue")}</option>
-              </select>
-            </label>
+                options={[...props.variables, { value: "__constant", label: t("constantValue") }]}
+                onChange={(source) => replace(name, name, source === "__constant" ? "" : source)}
+              />
+            </div>
             {selected === "__constant" ? (
               <input
                 aria-label={t("constantValue")}

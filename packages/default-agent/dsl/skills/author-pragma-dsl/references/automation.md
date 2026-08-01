@@ -6,8 +6,8 @@ built-in trigger adapter; webhook and conversation adapters can use the same res
 Automation text limits are enforced by both prepare and save:
 
 - `metadata.id`: host-allocated 16-character lowercase Crockford Base32.
-- `metadata.name`: 1–200 characters.
-- `metadata.description`: 1–4,000 characters.
+- `metadata.name`: 1–50 Unicode characters.
+- `metadata.description`: 1–500 Unicode characters.
 - Prompt input: 1–100,000 characters.
 
 ```yaml

@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState, type CSSProperties, type ReactNode } from "react";
 import { useTranslation } from "react-i18next";
 import type { TFunction } from "i18next";
 import {
@@ -19,7 +19,11 @@ import {
 
 import type { PragmaProjectSnapshot } from "../../../../shared/contracts/index.ts";
 import { errorMessage } from "../../lib/errors.ts";
-import { StudioScreenFrame } from "../studio/StudioScreenFrame.tsx";
+import { SidebarResizeHandle } from "../../components/SidebarResizeHandle.tsx";
+import {
+  SIDEBAR_WIDTH_PREFERENCES,
+  usePersistentSidebarWidth,
+} from "../../lib/sidebar-width-preference.ts";
 import { StudioConfirmationDialog } from "../studio/StudioDialog.tsx";
 import { desktopApi } from "../studio/studio-model.ts";
 
@@ -50,8 +54,14 @@ export function EvaluationDirectoryFragment(props: {
   readonly onOpen: (evaluation: PragmaEvaluationResource) => void;
   readonly onCreate: (resourceId: string, flow: PragmaFlowResource) => void;
   readonly onDelete: (evaluation: PragmaEvaluationResource) => Promise<void>;
+  readonly onSelectTarget?: ((target: EvaluationTarget) => void) | undefined;
+  readonly detail?: ReactNode | undefined;
+  readonly detailLabelledBy?: string | undefined;
 }) {
   const { t, i18n } = useTranslation("studio");
+  const [navigationWidth, setNavigationWidth] = usePersistentSidebarWidth(
+    SIDEBAR_WIDTH_PREFERENCES.evaluations,
+  );
   const [error, setError] = useState<string | null>(null);
   const [allocating, setAllocating] = useState(false);
   const [deleting, setDeleting] = useState(false);
@@ -160,227 +170,235 @@ export function EvaluationDirectoryFragment(props: {
   };
 
   return (
-    <StudioScreenFrame
+    <section
       className="evaluation-directory"
-      labelledBy="evaluations-heading"
-      header={
-        <header className="studio-heading evaluation-directory-heading">
-          <div>
-            <h1 id="evaluations-heading">{t("evaluations")}</h1>
-            <p>{t("evaluationsDescription")}</p>
-          </div>
-          <button
-            className="primary-button"
-            type="button"
-            disabled={selectedTarget?.kind !== "Flow" || allocating}
-            title={selectedTarget?.kind === "Flow" ? undefined : t("flowRunDryOnly")}
-            onClick={createEvaluation}
-          >
-            <Plus size={17} aria-hidden="true" />
-            {allocating ? t("creatingEvaluation") : t("newEvaluation")}
-          </button>
-        </header>
-      }
+      aria-labelledby={props.detail === undefined ? "evaluations-heading" : props.detailLabelledBy}
+      style={{ "--sidebar-width": `${navigationWidth}px` } as CSSProperties}
     >
-      <div className="evaluation-directory-shell">
-        <aside className="evaluation-target-directory" aria-label={t("evaluationTargets")}>
-          <label className="evaluation-target-search">
-            <MagnifyingGlass size={17} aria-hidden="true" />
-            <span className="sr-only">{t("searchEvaluationTargets")}</span>
-            <input
-              type="search"
-              value={search}
-              placeholder={t("searchEvaluationTargets")}
-              onChange={(event) => setSearch(event.target.value)}
-            />
-          </label>
+      <aside className="evaluation-target-directory" aria-label={t("evaluationTargets")}>
+        <label className="evaluation-target-search">
+          <MagnifyingGlass size={17} aria-hidden="true" />
+          <span className="sr-only">{t("searchEvaluationTargets")}</span>
+          <input
+            type="search"
+            value={search}
+            placeholder={t("searchEvaluationTargets")}
+            onChange={(event) => setSearch(event.target.value)}
+          />
+        </label>
 
-          <div className="evaluation-target-groups">
-            {groups.map((group) => {
-              const GroupIcon = group.icon;
-              const filtered = group.resources.filter((resource) => {
-                if (normalizedSearch === "") return true;
-                return `${resource.metadata.name} ${resource.metadata.description ?? ""} ${resource.metadata.id}`
-                  .toLocaleLowerCase(i18n.language)
-                  .includes(normalizedSearch);
-              });
-              const expanded = expandedKinds.has(group.kind) || normalizedSearch !== "";
-              const visible = expanded ? filtered : filtered.slice(0, visibleTargetLimit);
+        <div className="evaluation-target-groups">
+          {groups.map((group) => {
+            const GroupIcon = group.icon;
+            const filtered = group.resources.filter((resource) => {
+              if (normalizedSearch === "") return true;
+              return `${resource.metadata.name} ${resource.metadata.description ?? ""} ${resource.metadata.id}`
+                .toLocaleLowerCase(i18n.language)
+                .includes(normalizedSearch);
+            });
+            const expanded = expandedKinds.has(group.kind) || normalizedSearch !== "";
+            const visible = expanded ? filtered : filtered.slice(0, visibleTargetLimit);
 
-              return (
-                <section className="evaluation-target-group" key={group.kind}>
-                  <header>
-                    <GroupIcon size={19} aria-hidden="true" />
-                    <strong>{group.label}</strong>
-                    <span>{group.resources.length}</span>
-                  </header>
-                  <div>
-                    {visible.map((resource) => (
-                      <button
-                        className={
-                          resource.metadata.id === selectedTarget?.metadata.id ? "is-active" : ""
-                        }
-                        type="button"
-                        key={`${resource.kind}:${resource.metadata.id}`}
-                        onClick={() => setSelectedTargetId(resource.metadata.id)}
-                      >
-                        <GroupIcon size={17} aria-hidden="true" />
-                        <span>{resource.metadata.name}</span>
-                      </button>
-                    ))}
-                    {filtered.length === 0 && normalizedSearch !== "" ? (
-                      <p>{t("noMatchingTargets")}</p>
-                    ) : null}
-                  </div>
-                  {normalizedSearch === "" && filtered.length > visibleTargetLimit ? (
-                    <button
-                      className="evaluation-target-more"
-                      type="button"
-                      onClick={() =>
-                        setExpandedKinds((current) => {
-                          const next = new Set(current);
-                          if (next.has(group.kind)) next.delete(group.kind);
-                          else next.add(group.kind);
-                          return next;
-                        })
-                      }
-                    >
-                      {expanded ? t("showLess") : t("showMore")}
-                    </button>
-                  ) : null}
-                </section>
-              );
-            })}
-          </div>
-        </aside>
-
-        <section className="evaluation-target-workspace" aria-live="polite">
-          {selectedTarget === null ? (
-            <div className="evaluation-target-empty">
-              <h2>{t("noEvaluationTarget")}</h2>
-              <p>{t("noEvaluationTargetDescription")}</p>
-            </div>
-          ) : (
-            <>
-              <header className="evaluation-target-heading">
+            return (
+              <section className="evaluation-target-group" key={group.kind}>
+                <header>
+                  <GroupIcon size={19} aria-hidden="true" />
+                  <strong>{group.label}</strong>
+                  <span>{group.resources.length}</span>
+                </header>
                 <div>
-                  <div className="evaluation-target-title">
-                    {selectedTarget.kind === "Flow" ? (
-                      <GitBranch size={24} aria-hidden="true" />
-                    ) : selectedTarget.kind === "ExpertTeam" ? (
-                      <UsersThree size={24} aria-hidden="true" />
-                    ) : (
-                      <User size={24} aria-hidden="true" />
-                    )}
-                    <h2>{selectedTarget.metadata.name}</h2>
-                    <span>{targetKindLabel(selectedTarget.kind, t)}</span>
-                  </div>
-                  <p>
-                    {selectedTarget.kind === "Flow"
-                      ? t("flowRunDryDescription")
-                      : t("unsupportedEvaluationTargetDescription")}
-                  </p>
+                  {visible.map((resource) => (
+                    <button
+                      className={
+                        resource.metadata.id === selectedTarget?.metadata.id ? "is-active" : ""
+                      }
+                      type="button"
+                      key={`${resource.kind}:${resource.metadata.id}`}
+                      onClick={() => {
+                        setSelectedTargetId(resource.metadata.id);
+                        props.onSelectTarget?.(resource);
+                      }}
+                    >
+                      <GroupIcon size={17} aria-hidden="true" />
+                      <span>{resource.metadata.name}</span>
+                    </button>
+                  ))}
+                  {filtered.length === 0 && normalizedSearch !== "" ? (
+                    <p>{t("noMatchingTargets")}</p>
+                  ) : null}
                 </div>
-              </header>
+                {normalizedSearch === "" && filtered.length > visibleTargetLimit ? (
+                  <button
+                    className="evaluation-target-more"
+                    type="button"
+                    onClick={() =>
+                      setExpandedKinds((current) => {
+                        const next = new Set(current);
+                        if (next.has(group.kind)) next.delete(group.kind);
+                        else next.add(group.kind);
+                        return next;
+                      })
+                    }
+                  >
+                    {expanded ? t("showLess") : t("showMore")}
+                  </button>
+                ) : null}
+              </section>
+            );
+          })}
+        </div>
+      </aside>
+      <SidebarResizeHandle
+        label={t("navigation.resize", { ns: "common" })}
+        width={navigationWidth}
+        preference={SIDEBAR_WIDTH_PREFERENCES.evaluations}
+        onResize={setNavigationWidth}
+      />
 
-              {selectedTarget.kind === "Flow" ? (
-                <section className="evaluation-suite-list" aria-label={t("runDryEvaluations")}>
-                  <h3>{t("runDryEvaluations")}</h3>
-                  {targetEvaluations.length > 0 ? (
-                    <div className="evaluation-suite-table">
-                      <div className="evaluation-suite-table-heading" aria-hidden="true">
-                        <span>{t("evaluationName")}</span>
-                        <span>{t("caseCount")}</span>
-                        <span />
-                      </div>
-                      {targetEvaluations.map((evaluation) => (
-                        <div className="evaluation-suite-row" key={evaluation.metadata.id}>
-                          <button
-                            className="evaluation-suite-open"
-                            type="button"
-                            onClick={() => props.onOpen(evaluation)}
-                          >
-                            <span className="evaluation-suite-name">
-                              <span className="evaluation-suite-file" aria-hidden="true">
-                                <GitBranch size={16} />
-                              </span>
-                              <strong>{evaluation.metadata.name}</strong>
-                            </span>
-                            <span>
-                              {t("evaluationCaseCount", {
-                                count: evaluation.spec.method.cases.length,
-                              })}
-                            </span>
-                          </button>
-                          <span
-                            className="evaluation-suite-actions"
-                            onBlur={(event) => {
-                              if (!event.currentTarget.contains(event.relatedTarget)) {
-                                setOpenMenuId(null);
-                              }
-                            }}
-                          >
-                            <button
-                              type="button"
-                              aria-label={t("moreActions", { name: evaluation.metadata.name })}
-                              aria-haspopup="menu"
-                              aria-expanded={openMenuId === evaluation.metadata.id}
-                              onClick={() =>
-                                setOpenMenuId((current) =>
-                                  current === evaluation.metadata.id
-                                    ? null
-                                    : evaluation.metadata.id,
-                                )
-                              }
-                            >
-                              <DotsThree size={20} weight="bold" aria-hidden="true" />
-                            </button>
-                            {openMenuId === evaluation.metadata.id ? (
-                              <div
-                                className="evaluation-suite-menu"
-                                role="menu"
-                                aria-label={t("moreActions", {
-                                  name: evaluation.metadata.name,
-                                })}
-                              >
-                                <button
-                                  type="button"
-                                  role="menuitem"
-                                  onClick={() => {
-                                    setOpenMenuId(null);
-                                    setPendingDelete(evaluation);
-                                    setError(null);
-                                  }}
-                                >
-                                  <Trash size={16} aria-hidden="true" />
-                                  {t("deleteEvaluationAction")}
-                                </button>
-                              </div>
-                            ) : null}
-                          </span>
+      <div className="evaluation-directory-main">
+        {props.detail ?? (
+          <section className="evaluation-target-workspace" aria-live="polite">
+            {selectedTarget === null ? (
+              <div className="evaluation-target-empty">
+                <h1 id="evaluations-heading">{t("noEvaluationTarget")}</h1>
+                <p>{t("noEvaluationTargetDescription")}</p>
+              </div>
+            ) : (
+              <>
+                <header className="evaluation-target-heading">
+                  <div>
+                    <div className="evaluation-target-title">
+                      {selectedTarget.kind === "Flow" ? (
+                        <GitBranch size={24} aria-hidden="true" />
+                      ) : selectedTarget.kind === "ExpertTeam" ? (
+                        <UsersThree size={24} aria-hidden="true" />
+                      ) : (
+                        <User size={24} aria-hidden="true" />
+                      )}
+                      <h1 id="evaluations-heading">{selectedTarget.metadata.name}</h1>
+                      <span>{targetKindLabel(selectedTarget.kind, t)}</span>
+                    </div>
+                    <p>
+                      {selectedTarget.kind === "Flow"
+                        ? t("flowRunDryDescription")
+                        : t("unsupportedEvaluationTargetDescription")}
+                    </p>
+                  </div>
+                  <button
+                    className="primary-button"
+                    type="button"
+                    disabled={selectedTarget.kind !== "Flow" || allocating}
+                    title={selectedTarget.kind === "Flow" ? undefined : t("flowRunDryOnly")}
+                    onClick={createEvaluation}
+                  >
+                    <Plus size={17} aria-hidden="true" />
+                    {allocating ? t("creatingEvaluation") : t("newEvaluation")}
+                  </button>
+                </header>
+
+                {selectedTarget.kind === "Flow" ? (
+                  <section className="evaluation-suite-list" aria-label={t("runDryEvaluations")}>
+                    <h3>{t("runDryEvaluations")}</h3>
+                    {targetEvaluations.length > 0 ? (
+                      <div className="evaluation-suite-table">
+                        <div className="evaluation-suite-table-heading" aria-hidden="true">
+                          <span>{t("evaluationName")}</span>
+                          <span>{t("caseCount")}</span>
+                          <span />
                         </div>
-                      ))}
-                    </div>
-                  ) : (
-                    <div className="evaluation-target-empty is-inline">
-                      <h2>{t("noEvaluationsYet")}</h2>
-                      <p>{t("noEvaluationsForFlow")}</p>
-                      <button className="secondary-button" type="button" onClick={createEvaluation}>
-                        <Plus size={17} aria-hidden="true" />
-                        {t("newRunDryCase")}
-                      </button>
-                    </div>
-                  )}
-                </section>
-              ) : (
-                <div className="evaluation-target-empty is-inline">
-                  <h2>{t("evaluationMethodUnavailable")}</h2>
-                  <p>{t("flowRunDryOnly")}</p>
-                </div>
-              )}
-            </>
-          )}
-        </section>
+                        {targetEvaluations.map((evaluation) => (
+                          <div className="evaluation-suite-row" key={evaluation.metadata.id}>
+                            <button
+                              className="evaluation-suite-open"
+                              type="button"
+                              onClick={() => props.onOpen(evaluation)}
+                            >
+                              <span className="evaluation-suite-name">
+                                <span className="evaluation-suite-file" aria-hidden="true">
+                                  <GitBranch size={16} />
+                                </span>
+                                <strong>{evaluation.metadata.name}</strong>
+                              </span>
+                              <span>
+                                {t("evaluationCaseCount", {
+                                  count: evaluation.spec.method.cases.length,
+                                })}
+                              </span>
+                            </button>
+                            <span
+                              className="evaluation-suite-actions"
+                              onBlur={(event) => {
+                                if (!event.currentTarget.contains(event.relatedTarget)) {
+                                  setOpenMenuId(null);
+                                }
+                              }}
+                            >
+                              <button
+                                type="button"
+                                aria-label={t("moreActions", { name: evaluation.metadata.name })}
+                                aria-haspopup="menu"
+                                aria-expanded={openMenuId === evaluation.metadata.id}
+                                onClick={() =>
+                                  setOpenMenuId((current) =>
+                                    current === evaluation.metadata.id
+                                      ? null
+                                      : evaluation.metadata.id,
+                                  )
+                                }
+                              >
+                                <DotsThree size={20} weight="bold" aria-hidden="true" />
+                              </button>
+                              {openMenuId === evaluation.metadata.id ? (
+                                <div
+                                  className="evaluation-suite-menu"
+                                  role="menu"
+                                  aria-label={t("moreActions", {
+                                    name: evaluation.metadata.name,
+                                  })}
+                                >
+                                  <button
+                                    type="button"
+                                    role="menuitem"
+                                    onClick={() => {
+                                      setOpenMenuId(null);
+                                      setPendingDelete(evaluation);
+                                      setError(null);
+                                    }}
+                                  >
+                                    <Trash size={16} aria-hidden="true" />
+                                    {t("deleteEvaluationAction")}
+                                  </button>
+                                </div>
+                              ) : null}
+                            </span>
+                          </div>
+                        ))}
+                      </div>
+                    ) : (
+                      <div className="evaluation-target-empty is-inline">
+                        <h2>{t("noEvaluationsYet")}</h2>
+                        <p>{t("noEvaluationsForFlow")}</p>
+                        <button
+                          className="secondary-button"
+                          type="button"
+                          onClick={createEvaluation}
+                        >
+                          <Plus size={17} aria-hidden="true" />
+                          {t("newRunDryCase")}
+                        </button>
+                      </div>
+                    )}
+                  </section>
+                ) : (
+                  <div className="evaluation-target-empty is-inline">
+                    <h2>{t("evaluationMethodUnavailable")}</h2>
+                    <p>{t("flowRunDryOnly")}</p>
+                  </div>
+                )}
+              </>
+            )}
+          </section>
+        )}
       </div>
       {error ? (
         <p className="form-error evaluation-directory-error" role="alert">
@@ -401,7 +419,7 @@ export function EvaluationDirectoryFragment(props: {
           onConfirm={() => void deleteEvaluation()}
         />
       ) : null}
-    </StudioScreenFrame>
+    </section>
   );
 }
 

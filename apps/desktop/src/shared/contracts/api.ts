@@ -1,7 +1,6 @@
 import type { DesktopRendererLog } from "./logging.ts";
 import type {
   DesktopRuntimeAvailability,
-  SetDefaultRuntime,
   DesktopBridgeSnapshot,
   DesktopSettingsSnapshot,
   UpdateDesktopSettings,
@@ -271,5 +270,4 @@ export interface PragmaDesktopAPI {
   deleteCapability: (id: string) => Promise<CapabilityDeleteResult>;
   pickSkillSource: () => Promise<PickWorkspaceResult>;
   getRuntimeAvailability: () => Promise<DesktopRuntimeAvailability[]>;
-  setDefaultRuntime: (input: SetDefaultRuntime) => Promise<DesktopRuntimeAvailability[]>;
 }

@@ -24,6 +24,12 @@ const EMPTY_USAGE: UsageTokenTotals = {
   totalTokens: 0,
 };
 const USAGE_SCHEMA_VERSION = "pragma.desktop-usage/v1";
+const DELETED_USAGE_SUBJECT_NAMES = {
+  mission: "Deleted Mission",
+  expert: "Deleted Expert",
+  team: "Deleted Expert Team",
+  flow: "Deleted Flow",
+} as const satisfies Record<UsageSubjectKind, string>;
 
 export interface UsageObservationContext {
   readonly mission: { readonly id: string; readonly title: string };
@@ -52,7 +58,11 @@ export interface DesktopUsageStore {
   }) => UsageSubjectList;
   /** Returns persisted totals only; `provisional` indicates whether live previews exist. */
   readonly getMissionUsage: (missionId: string) => MissionUsage;
-  readonly markMissionDeleted: (missionId: string) => void;
+  readonly markSubjectDeleted: (kind: UsageSubjectKind, subjectId: string) => void;
+  readonly reconcileActiveSubjects: (
+    kind: Exclude<UsageSubjectKind, "mission">,
+    activeSubjectIds: ReadonlySet<string>,
+  ) => void;
   readonly subscribe: (listener: (update: UsageUpdate) => void) => () => void;
   readonly close: () => void;
 }
@@ -86,7 +96,8 @@ export function createUnavailableDesktopUsageStore(input: {
     getOverview: unavailable,
     listSubjects: unavailable,
     getMissionUsage: unavailable,
-    markMissionDeleted: () => undefined,
+    markSubjectDeleted: () => undefined,
+    reconcileActiveSubjects: () => undefined,
     subscribe: () => () => undefined,
     close: () => undefined,
   };
@@ -442,7 +453,8 @@ export async function createDesktopUsageStore(input: {
             SELECT a.subject_id
             FROM usage_attributions a
             JOIN usage_observations o ON o.observation_id = a.observation_id
-            WHERE a.kind = ? ${cutoffClause}
+            JOIN usage_subjects s ON s.kind = a.kind AND s.subject_id = a.subject_id
+            WHERE a.kind = ? AND s.deleted = 0 ${cutoffClause}
             GROUP BY a.subject_id
           )`,
         )
@@ -466,7 +478,7 @@ export async function createDesktopUsageStore(input: {
            FROM usage_attributions a
            JOIN usage_observations o ON o.observation_id = a.observation_id
            JOIN usage_subjects s ON s.kind = a.kind AND s.subject_id = a.subject_id
-           WHERE a.kind = ? ${cutoffClause}
+           WHERE a.kind = ? AND s.deleted = 0 ${cutoffClause}
            GROUP BY a.subject_id, s.name, s.deleted
            ORDER BY totalTokens DESC, s.name COLLATE NOCASE, a.subject_id
            LIMIT ? OFFSET ?`,
@@ -497,14 +509,38 @@ export async function createDesktopUsageStore(input: {
         ),
       };
     },
-    markMissionDeleted(missionId) {
+    markSubjectDeleted(kind, subjectId) {
       const result = database
         .prepare(
-          `UPDATE usage_subjects SET name = 'Deleted Mission', deleted = 1
-           WHERE kind = 'mission' AND subject_id = ?`,
+          `UPDATE usage_subjects SET name = ?, deleted = 1
+           WHERE kind = ? AND subject_id = ?`,
         )
-        .run(missionId);
-      if (Number(result.changes) > 0) publish(missionId);
+        .run(DELETED_USAGE_SUBJECT_NAMES[kind], kind, subjectId);
+      if (Number(result.changes) > 0) publish(kind === "mission" ? subjectId : undefined);
+    },
+    reconcileActiveSubjects(kind, activeSubjectIds) {
+      const rows = database
+        .prepare(`SELECT subject_id AS id FROM usage_subjects WHERE kind = ? AND deleted = 0`)
+        .all(kind) as unknown as Array<{ readonly id: string }>;
+      const deletedIds = rows
+        .map((row) => row.id)
+        .filter((subjectId) => !activeSubjectIds.has(subjectId));
+      if (deletedIds.length === 0) return;
+      const markDeleted = database.prepare(
+        `UPDATE usage_subjects SET name = ?, deleted = 1
+         WHERE kind = ? AND subject_id = ?`,
+      );
+      database.exec("BEGIN IMMEDIATE;");
+      try {
+        deletedIds.forEach((subjectId) =>
+          markDeleted.run(DELETED_USAGE_SUBJECT_NAMES[kind], kind, subjectId),
+        );
+        database.exec("COMMIT;");
+      } catch (error) {
+        database.exec("ROLLBACK;");
+        throw error;
+      }
+      publish();
     },
     subscribe(listener) {
       listeners.add(listener);

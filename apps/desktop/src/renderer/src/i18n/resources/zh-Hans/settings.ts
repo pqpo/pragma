@@ -7,8 +7,6 @@ export const settings = {
     languageDescription: "选择 Pragma 全局使用的语言。",
     followSystem: "跟随系统",
     resolvedAs: "当前使用{{language}}",
-    runtime: "默认 Runtime",
-    runtimeDescription: "用于采用系统默认配置的执行者；首页只能覆盖模型，不能切换 Runtime。",
     toolPermissions: "工具权限",
     toolPermissionsDescription:
       "作为新任务的默认值；读取操作永远无需审批，也可在首页为单次任务覆盖。",

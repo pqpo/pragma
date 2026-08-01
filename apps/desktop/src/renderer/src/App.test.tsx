@@ -67,6 +67,8 @@ describe("App", () => {
     const html = renderToStaticMarkup(<App />);
 
     expect(html).toContain('aria-label="Collapse navigation"');
+    expect(html).toContain('aria-label="Resize navigation"');
+    expect(html).toContain('role="separator"');
     expect(html).toContain('class="sidebar-footer"');
     expect(html.indexOf('class="sidebar-footer"')).toBeGreaterThan(
       html.indexOf('aria-label="Main navigation"'),

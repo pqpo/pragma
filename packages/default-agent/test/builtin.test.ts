@@ -168,8 +168,8 @@ describe("built-in Pragma Agent DSL", () => {
       "`metadata.id`: host-allocated 16-character lowercase Crockford Base32.",
     );
     expect(reference).not.toContain("`metadata.version`");
-    expect(reference).toContain("`metadata.name`: 1–200 characters");
-    expect(reference).toContain("`metadata.description`: 1–4,000 characters");
+    expect(reference).toContain("`metadata.name`: 1–50 Unicode characters");
+    expect(reference).toContain("`metadata.description`: 1–500 Unicode characters");
     expect(reference).toContain("Prompt input: 1–100,000 characters");
     expect(reference).toContain("declares `spec.input.schema`");
     expect(reference).toContain("has no input schema");

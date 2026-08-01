@@ -1,7 +1,6 @@
 export const usage = {
   title: "用量",
   description: "Pragma 记录的 token 消耗量。",
-  trackingSince: "自 {{date}} 起统计",
   periods: {
     sevenDays: "7 天",
     thirtyDays: "30 天",
@@ -13,6 +12,8 @@ export const usage = {
   cacheRead: "缓存读取",
   cacheWrite: "缓存写入",
   trend: "每日 token 用量",
+  chartPointLabel: "{{date}}：{{tokens}} Token",
+  chartTokenValue: "{{tokens}} Token",
   noUsage: "此时间段暂无用量",
   noUsageDescription: "新的 Runtime turn 结算后会显示在这里。",
   subjects: {
@@ -21,7 +22,8 @@ export const usage = {
     team: "专家团",
     flow: "Flow",
   },
-  inclusiveNote: "专家团和 Flow 的用量包含其子调用树，因此不同维度的数字可能重叠。",
+  missionListNote: "删除的 Mission 不在列表中。",
+  inclusiveNote: "用量包含子调用树，不同维度数字可能重叠，删除的对象数据不在列表中。",
   share: "占总量 {{percent}}%",
   loadMore: "加载更多",
   loading: "正在加载用量…",

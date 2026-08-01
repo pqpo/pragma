@@ -1,11 +1,7 @@
 import { describe, expect, it } from "vitest";
+import { PRAGMA_TEXT_LIMITS } from "@pragma/shared";
 
 import {
-  EXPERT_DESCRIPTION_MAX_LENGTH,
-  EXPERT_INSTRUCTIONS_MAX_LENGTH,
-  EXPERT_NAME_MAX_LENGTH,
-  EXPERT_SCOPE_MAX_LENGTH,
-  EXPERT_TAG_MAX_LENGTH,
   CreateExpertDefinitionSchema,
   CreateContextStoreSchema,
   CreateContextStoreFileSchema,
@@ -24,7 +20,7 @@ import {
   MissionSchema,
   MissionUpdateSchema,
   PragmaProjectChangesSchema,
-  SetDefaultRuntimeSchema,
+  RuntimeEnvironmentCatalogSchema,
   DesktopBridgeSnapshotSchema,
   DesktopSettingsSnapshotSchema,
   UpdateDesktopSettingsSchema,
@@ -119,11 +115,20 @@ describe("desktop memory contracts", () => {
 });
 
 describe("runtime settings contracts", () => {
-  it("requires a concrete Runtime ID", () => {
-    expect(SetDefaultRuntimeSchema.parse({ runtimeId: "codex" })).toEqual({
-      runtimeId: "codex",
-    });
-    expect(SetDefaultRuntimeSchema.safeParse({ runtimeId: "" }).success).toBe(false);
+  it("uses the fixed-default Runtime catalog without a mutable default field", () => {
+    expect(
+      RuntimeEnvironmentCatalogSchema.parse({
+        schemaVersion: "pragma.runtime-environment-catalog/v2",
+        entries: [],
+      }),
+    ).toEqual({ schemaVersion: "pragma.runtime-environment-catalog/v2", entries: [] });
+    expect(
+      RuntimeEnvironmentCatalogSchema.safeParse({
+        schemaVersion: "pragma.runtime-environment-catalog/v1",
+        defaultRuntimeId: "codex",
+        entries: [],
+      }).success,
+    ).toBe(false);
   });
 
   it("preserves arbitrary Interpreter capability lists for renderer compatibility checks", () => {
@@ -532,16 +537,16 @@ describe("expert input limits", () => {
     ).toBe(false);
   });
 
-  it("reads every metadata value accepted by the Expert DSL", () => {
+  it("reads Expert metadata at the shared limits", () => {
     const id = "a".repeat(16);
     expect(
       ExpertDefinitionSchema.safeParse({
         schemaVersion: "pragma.desktop-expert-view/v1",
         ref: `expert:${id}`,
         id,
-        name: "n".repeat(200),
-        description: "d".repeat(4_000),
-        tags: Array.from({ length: 100 }, (_, index) => `tag_${index}`),
+        name: "n".repeat(PRAGMA_TEXT_LIMITS.expert.name),
+        description: "d".repeat(PRAGMA_TEXT_LIMITS.expert.description),
+        tags: Array.from({ length: PRAGMA_TEXT_LIMITS.expert.tags }, (_, index) => `tag_${index}`),
         scope: "Scope",
         instructions: "Instructions",
         additionalInstructions: "",
@@ -567,13 +572,25 @@ describe("expert input limits", () => {
   it.each([
     ["id", { id: "invalid-id" }],
     ["id length", { id: "a".repeat(16 + 1) }],
-    ["name length", { name: "a".repeat(EXPERT_NAME_MAX_LENGTH + 1) }],
-    ["description length", { description: "a".repeat(EXPERT_DESCRIPTION_MAX_LENGTH + 1) }],
-    ["scope length", { scope: "a".repeat(EXPERT_SCOPE_MAX_LENGTH + 1) }],
-    ["instructions length", { instructions: "a".repeat(EXPERT_INSTRUCTIONS_MAX_LENGTH + 1) }],
+    ["name length", { name: "a".repeat(PRAGMA_TEXT_LIMITS.expert.name + 1) }],
+    ["description length", { description: "a".repeat(PRAGMA_TEXT_LIMITS.expert.description + 1) }],
+    ["scope length", { scope: "a".repeat(PRAGMA_TEXT_LIMITS.expert.scope + 1) }],
+    [
+      "instructions length",
+      { instructions: "a".repeat(PRAGMA_TEXT_LIMITS.expert.instructions + 1) },
+    ],
     ["missing instructions", { instructions: "" }],
     ["missing model", { model: null }],
-    ["tag length", { tags: ["a".repeat(EXPERT_TAG_MAX_LENGTH + 1)] }],
+    ["tag length", { tags: ["a".repeat(PRAGMA_TEXT_LIMITS.expert.tag + 1)] }],
+    [
+      "tag count",
+      {
+        tags: Array.from(
+          { length: PRAGMA_TEXT_LIMITS.expert.tags + 1 },
+          (_, index) => `tag${index}`,
+        ),
+      },
+    ],
   ])("rejects invalid %s", (_label, override) => {
     expect(CreateExpertDefinitionSchema.safeParse({ ...validInput, ...override }).success).toBe(
       false,
@@ -671,7 +688,7 @@ describe("capability test contracts", () => {
       message: "Succeeded.",
       capability: {
         manifest: {
-          schemaVersion: "pragma.capability/v1",
+          schemaVersion: "pragma.capability/v2",
           id: "00000000-0000-4000-8000-000000000000",
           runtimeKey: "test_capability",
           name: "Test capability",

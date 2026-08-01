@@ -924,6 +924,10 @@ printf 'import "@pragma/server";\n' \
 
 ### UI 输入控件约束
 
+Desktop renderer 的新增与修改必须遵循
+[Desktop UI 开发规范](./docs/conventions/desktop-ui.md)。该规范定义了颜色、字体、字号、字重、间距、
+圆角、边框、阴影、页面骨架和视觉验收要求；不得用页面局部样式重新发明这些值。
+
 - 组合输入框只能有一层可见边界。外层容器已经提供 `border`、`box-shadow` 或
   `:focus-within` 焦点环时，内部的 `input`、`textarea`、`select` 必须去掉自身的
   `border`、`outline` 和焦点阴影，禁止出现“外部容器边框套内部输入框边框”的双框效果。

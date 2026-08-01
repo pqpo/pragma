@@ -1,8 +1,13 @@
 import { createHash, randomUUID } from "node:crypto";
 import { mkdir, readFile, rename, writeFile } from "node:fs/promises";
-import { dirname } from "node:path";
+import { dirname, join } from "node:path";
 
-import { PragmaPaths, withFileLock } from "@pragma/core";
+import {
+  applyAtomicStateMigration,
+  PragmaPaths,
+  recoverAtomicStateMigration,
+  withFileLock,
+} from "@pragma/core";
 
 import {
   RuntimeEnvironmentCatalogEntrySchema,
@@ -13,6 +18,10 @@ import {
   type RuntimeEnvironmentDefinition,
   type RuntimeEnvironmentRevision,
 } from "../../../shared/contracts/index.ts";
+import {
+  RuntimeEnvironmentCatalogV1Schema,
+  runtimeEnvironmentCatalogMigrationChain,
+} from "./migrations/index.ts";
 
 export const DEFAULT_RUNTIME_ID = "pi";
 export const BUILT_IN_RUNTIME_DISPLAY_NAME = "Built-in Runtime";
@@ -33,7 +42,6 @@ export interface RuntimeEnvironmentHead {
 export interface RuntimeEnvironmentStore {
   initialize(): Promise<void>;
   getDefaultRuntimeId(): Promise<string>;
-  setDefaultRuntimeId(runtimeId: string): Promise<void>;
   listHeads(): Promise<readonly RuntimeEnvironmentHead[]>;
   getRevision(
     runtimeId: string,
@@ -53,13 +61,11 @@ export interface RuntimeEnvironmentStore {
 export function createRuntimeEnvironmentStore(options: {
   readonly pragmaHome?: string | undefined;
   readonly builtIns?: readonly RuntimeEnvironmentDefinition[] | undefined;
-  readonly defaultRuntimeId?: string | undefined;
 }): RuntimeEnvironmentStore {
   const paths = new PragmaPaths(options);
   const catalogPath = paths.runtimeEnvironmentCatalog();
   const lockPath = `${catalogPath}.lock`;
   const builtIns = options.builtIns ?? DEFAULT_RUNTIME_ENVIRONMENTS;
-  const configuredDefault = options.defaultRuntimeId ?? DEFAULT_RUNTIME_ID;
   const persistRevision = async (revision: RuntimeEnvironmentRevision): Promise<void> => {
     const path = paths.runtimeEnvironmentRevision(revision.runtimeId, revision.revision);
     const existingValue = await readOptionalJson(path);
@@ -81,18 +87,42 @@ export function createRuntimeEnvironmentStore(options: {
 
   const initialize = async (): Promise<void> => {
     await withFileLock(lockPath, async () => {
-      if (!builtIns.some((definition) => definition.id === configuredDefault)) {
-        throw new Error(`Default Runtime Environment is not built in: ${configuredDefault}.`);
+      const defaultDefinition = builtIns.find((definition) => definition.id === DEFAULT_RUNTIME_ID);
+      if (defaultDefinition === undefined) {
+        throw new Error(`Default Runtime Environment is not built in: ${DEFAULT_RUNTIME_ID}.`);
       }
+      await migrateRuntimeEnvironmentCatalog(catalogPath);
       const storedCatalog = await readOptionalJson(catalogPath);
       if (storedCatalog !== undefined) {
         const catalog = RuntimeEnvironmentCatalogSchema.parse(storedCatalog);
-        const entries = catalog.entries.map((value) =>
+        let entries = catalog.entries.map((value) =>
           RuntimeEnvironmentCatalogEntrySchema.parse(value),
         );
+        let changed = false;
+        const defaultEntry = entries.find((entry) => entry.runtimeId === DEFAULT_RUNTIME_ID);
+        if (defaultEntry !== undefined) {
+          const current = await readStoredRevision(
+            defaultEntry.runtimeId,
+            defaultEntry.latestRevision,
+          );
+          if (current?.status !== "active") {
+            const restored = createRevision(
+              defaultDefinition,
+              defaultEntry.latestRevision + 1,
+              "active",
+            );
+            await persistRevision(restored);
+            entries = entries.map((entry) =>
+              entry.runtimeId === DEFAULT_RUNTIME_ID
+                ? { ...entry, latestRevision: restored.revision }
+                : entry,
+            );
+            changed = true;
+          }
+        }
         const knownIds = new Set(entries.map((entry) => entry.runtimeId));
         const missing = builtIns.filter((definition) => !knownIds.has(definition.id));
-        if (missing.length === 0) return;
+        if (missing.length === 0 && !changed) return;
 
         const now = new Date().toISOString();
         const additions: RuntimeEnvironmentCatalogEntry[] = [];
@@ -101,7 +131,7 @@ export function createRuntimeEnvironmentStore(options: {
           await persistRevision(revision);
           additions.push({ runtimeId: definition.id, latestRevision: 1 });
         }
-        await writeCatalog(catalogPath, catalog.defaultRuntimeId, [...entries, ...additions]);
+        await writeCatalog(catalogPath, [...entries, ...additions]);
         return;
       }
       const now = new Date().toISOString();
@@ -111,7 +141,7 @@ export function createRuntimeEnvironmentStore(options: {
         await persistRevision(revision);
         entries.push({ runtimeId: definition.id, latestRevision: 1 });
       }
-      await writeCatalog(catalogPath, configuredDefault, entries);
+      await writeCatalog(catalogPath, entries);
     });
   };
 
@@ -148,12 +178,8 @@ export function createRuntimeEnvironmentStore(options: {
   };
 
   const mutate = async <T>(
-    action: (state: {
-      readonly defaultRuntimeId: string;
-      readonly entries: readonly RuntimeEnvironmentCatalogEntry[];
-    }) => Promise<{
+    action: (state: { readonly entries: readonly RuntimeEnvironmentCatalogEntry[] }) => Promise<{
       readonly result: T;
-      readonly defaultRuntimeId?: string | undefined;
       readonly entries: readonly RuntimeEnvironmentCatalogEntry[];
     }>,
   ): Promise<T> => {
@@ -163,12 +189,8 @@ export function createRuntimeEnvironmentStore(options: {
       const entries = catalog.entries.map((value) =>
         RuntimeEnvironmentCatalogEntrySchema.parse(value),
       );
-      const next = await action({ defaultRuntimeId: catalog.defaultRuntimeId, entries });
-      await writeCatalog(
-        catalogPath,
-        next.defaultRuntimeId ?? catalog.defaultRuntimeId,
-        next.entries,
-      );
+      const next = await action({ entries });
+      await writeCatalog(catalogPath, next.entries);
       return next.result;
     });
   };
@@ -176,18 +198,8 @@ export function createRuntimeEnvironmentStore(options: {
   return {
     initialize,
     async getDefaultRuntimeId() {
-      return (await readCatalog()).defaultRuntimeId;
-    },
-    async setDefaultRuntimeId(runtimeId) {
-      await mutate(async ({ entries }) => {
-        const entry = entries.find((candidate) => candidate.runtimeId === runtimeId);
-        if (entry === undefined) throw new Error(`Runtime Environment not found: ${runtimeId}.`);
-        const revision = await readStoredRevision(runtimeId, entry.latestRevision);
-        if (revision?.status !== "active") {
-          throw new Error(`Default Runtime Environment must be active: ${runtimeId}.`);
-        }
-        return { result: undefined, defaultRuntimeId: runtimeId, entries };
-      });
+      await initialize();
+      return DEFAULT_RUNTIME_ID;
     },
     async listHeads() {
       const entries = await readEntries();
@@ -242,9 +254,9 @@ export function createRuntimeEnvironmentStore(options: {
       });
     },
     async delete({ runtimeId, expectedRevision }) {
-      return await mutate(async ({ defaultRuntimeId, entries }) => {
-        if (runtimeId === defaultRuntimeId) {
-          throw new Error("Set another default Runtime Environment before deleting this one.");
+      return await mutate(async ({ entries }) => {
+        if (runtimeId === DEFAULT_RUNTIME_ID) {
+          throw new Error("The default Runtime Environment cannot be deleted.");
         }
         const entry = entries.find((candidate) => candidate.runtimeId === runtimeId);
         if (entry === undefined) throw new Error(`Runtime Environment not found: ${runtimeId}.`);
@@ -290,15 +302,74 @@ function createRevision(
 
 async function writeCatalog(
   path: string,
-  defaultRuntimeId: string,
   entries: readonly RuntimeEnvironmentCatalogEntry[],
 ): Promise<void> {
   await writeJson(path, {
-    schemaVersion: "pragma.runtime-environment-catalog/v1",
-    defaultRuntimeId,
+    schemaVersion: "pragma.runtime-environment-catalog/v2",
     entries,
   });
 }
+
+const RUNTIME_CATALOG_MIGRATION_FAMILY = "pragma.runtime-environment-catalog";
+const RUNTIME_CATALOG_MIGRATION_ID = "desktop";
+const RUNTIME_CATALOG_BACKUP_FILE = "catalog.v1-backup.json";
+const RUNTIME_CATALOG_FILE = "catalog.json";
+const RUNTIME_CATALOG_JOURNAL_FILE = ".catalog.v1-to-v2.journal.json";
+
+async function migrateRuntimeEnvironmentCatalog(catalogPath: string): Promise<void> {
+  const aggregateRoot = dirname(catalogPath);
+  const journalFile = join(aggregateRoot, RUNTIME_CATALOG_JOURNAL_FILE);
+  const resource = {
+    family: RUNTIME_CATALOG_MIGRATION_FAMILY,
+    id: RUNTIME_CATALOG_MIGRATION_ID,
+  } as const;
+  await recoverAtomicStateMigration({
+    aggregateRoot,
+    journalFile,
+    resource,
+    validateDocuments: validateRuntimeCatalogMigrationDocuments,
+  });
+  const source = await readOptionalJson(catalogPath);
+  if (source === undefined) return;
+  const upgraded = runtimeEnvironmentCatalogMigrationChain.upgrade(source);
+  if (!upgraded.migrated) return;
+  await applyAtomicStateMigration({
+    aggregateRoot,
+    journalFile,
+    resource,
+    fromVersion: upgraded.fromVersion,
+    toVersion: upgraded.toVersion,
+    documents: {
+      [RUNTIME_CATALOG_BACKUP_FILE]: source,
+      [RUNTIME_CATALOG_FILE]: upgraded.value,
+    },
+    validateDocuments: validateRuntimeCatalogMigrationDocuments,
+  });
+}
+
+function validateRuntimeCatalogMigrationDocuments(
+  documents: Readonly<Record<string, unknown>>,
+): void {
+  const keys = Object.keys(documents).toSorted();
+  if (
+    keys.length !== 2 ||
+    keys[0] !== RUNTIME_CATALOG_JOURNAL_BACKUP_FIRST ||
+    keys[1] !== RUNTIME_CATALOG_JOURNAL_TARGET_SECOND
+  ) {
+    throw new Error("Runtime Environment catalog migration documents are invalid.");
+  }
+  RuntimeEnvironmentCatalogV1Schema.parse(documents[RUNTIME_CATALOG_BACKUP_FILE]);
+  RuntimeEnvironmentCatalogSchema.parse(documents[RUNTIME_CATALOG_FILE]);
+}
+
+const RUNTIME_CATALOG_JOURNAL_BACKUP_FIRST = [
+  RUNTIME_CATALOG_BACKUP_FILE,
+  RUNTIME_CATALOG_FILE,
+].toSorted()[0]!;
+const RUNTIME_CATALOG_JOURNAL_TARGET_SECOND = [
+  RUNTIME_CATALOG_BACKUP_FILE,
+  RUNTIME_CATALOG_FILE,
+].toSorted()[1]!;
 
 async function writeJson(path: string, value: unknown): Promise<void> {
   await mkdir(dirname(path), { recursive: true, mode: 0o700 });

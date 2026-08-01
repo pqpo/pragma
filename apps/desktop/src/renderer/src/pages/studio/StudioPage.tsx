@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useRef, useState, type CSSProperties } from "react";
 import { useTranslation } from "react-i18next";
 import {
   canonicalPragmaResourceRef,
@@ -23,6 +23,11 @@ import type {
 } from "../../../../shared/contracts/index.ts";
 import { ContextStoreSchema } from "../../../../shared/contracts/index.ts";
 import { errorMessage } from "../../lib/errors.ts";
+import { SidebarResizeHandle } from "../../components/SidebarResizeHandle.tsx";
+import {
+  SIDEBAR_WIDTH_PREFERENCES,
+  usePersistentSidebarWidth,
+} from "../../lib/sidebar-width-preference.ts";
 import {
   ContextStoreDetailFragment,
   ContextStoreDirectoryFragment,
@@ -63,6 +68,9 @@ export function StudioPage(props: {
   readonly onTryExpert: (expert: ExpertRecord) => void;
 }) {
   const { t } = useTranslation("studio");
+  const [navigationWidth, setNavigationWidth] = usePersistentSidebarWidth(
+    SIDEBAR_WIDTH_PREFERENCES.studio,
+  );
   const [activeView, setActiveView] = useState<StudioView>("experts");
   const [screen, setScreen] = useState<
     | "directory"
@@ -287,7 +295,7 @@ export function StudioPage(props: {
     const store =
       api === undefined
         ? ContextStoreSchema.parse({
-            schemaVersion: "pragma.context-store/v2",
+            schemaVersion: "pragma.context-store/v3",
             id: crypto.randomUUID(),
             name: input.name,
             description: input.description,
@@ -557,7 +565,10 @@ export function StudioPage(props: {
   }, []);
 
   return (
-    <section className="studio-page">
+    <section
+      className="studio-page"
+      style={{ "--sidebar-width": `${navigationWidth}px` } as CSSProperties}
+    >
       <nav className="studio-navigation" aria-label={t("sections")}>
         {studioSections.map((section) => {
           const SectionIcon = section.icon;
@@ -611,6 +622,12 @@ export function StudioPage(props: {
           </button>
         </div>
       </nav>
+      <SidebarResizeHandle
+        label={t("navigation.resize", { ns: "common" })}
+        width={navigationWidth}
+        preference={SIDEBAR_WIDTH_PREFERENCES.studio}
+        onResize={setNavigationWidth}
+      />
 
       <div className="studio-content">
         {screen === "expert-detail" && selectedExpert !== null ? (

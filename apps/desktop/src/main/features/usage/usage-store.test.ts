@@ -169,23 +169,34 @@ describe("Desktop usage store", () => {
     expect(store.getOverview("all").totals.totalTokens).toBe(155);
   });
 
-  it("retains usage but anonymizes the Mission after deletion and reopen", async () => {
+  it("retains totals but excludes deleted subjects from every ranked list after reopen", async () => {
     const { databasePath, store } = await fixture();
     store.record(observation(), {
       mission: { id: "mission-1", title: "Private title" },
       invocations: invocationTree(),
-      names: new Map(),
+      names: new Map([
+        ["expert-1", "Private expert"],
+        ["team-1", "Private team"],
+        ["flow-1", "Private flow"],
+      ]),
     });
-    store.markMissionDeleted("mission-1");
+    store.markSubjectDeleted("mission", "mission-1");
+    store.reconcileActiveSubjects("expert", new Set());
+    store.reconcileActiveSubjects("team", new Set());
+    store.reconcileActiveSubjects("flow", new Set());
     store.close();
     stores.splice(stores.indexOf(store), 1);
 
     const reopened = await createDesktopUsageStore({ databasePath });
     stores.push(reopened);
     expect(reopened.getMissionUsage("mission-1").usage.totalTokens).toBe(155);
-    expect(
-      reopened.listSubjects({ period: "all", kind: "mission", offset: 0, limit: 20 }).items[0],
-    ).toMatchObject({ id: "mission-1", name: "Deleted Mission", deleted: true });
+    expect(reopened.getOverview("all").totals.totalTokens).toBe(155);
+    for (const kind of ["mission", "expert", "team", "flow"] as const) {
+      expect(reopened.listSubjects({ period: "all", kind, offset: 0, limit: 20 })).toMatchObject({
+        total: 0,
+        items: [],
+      });
+    }
   });
 
   it("recovers only the positive snapshot delta after a Host write gap", async () => {
@@ -316,7 +327,7 @@ describe("Desktop usage store", () => {
       cacheWrite: 0,
       totalTokens: 0,
     });
-    store.markMissionDeleted("missing");
+    store.markSubjectDeleted("mission", "missing");
     expect(store.getOverview("all").revision).toBe(before);
   });
 

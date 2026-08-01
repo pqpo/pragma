@@ -13,6 +13,7 @@ import {
 import { parsePragmaYaml } from "../compiler/pragma-project.ts";
 import { sha256, stableStringify } from "../compiler/compiler-hash.ts";
 import { migratePragmaCompilerV2Project } from "./steps/v2-to-v3.ts";
+import { migratePragmaCompilerV3Project } from "./steps/v3-to-v4.ts";
 import {
   PragmaCompilerMigrationError,
   type PragmaCompilerProjectMigrationResult,
@@ -26,7 +27,7 @@ export {
   type PragmaCompilerVersion,
 } from "./types.ts";
 
-export const PRAGMA_COMPILER_MIGRATION_CHAIN_VERSION = "pragma.compiler-migrations/v1";
+export const PRAGMA_COMPILER_MIGRATION_CHAIN_VERSION = "pragma.compiler-migrations/v2";
 
 export function migratePragmaCompilerProjectToCurrent(input: {
   readonly files: ReadonlyMap<string, string>;
@@ -34,7 +35,10 @@ export function migratePragmaCompilerProjectToCurrent(input: {
 }): PragmaCompilerProjectMigrationResult {
   const sourceCompilerVersion = parseCompilerVersion(input.revisionCompilerVersion);
   if (isPragmaCompilerVersionUpgradeable(sourceCompilerVersion)) {
-    const migrated = migratePragmaCompilerV2Project(input);
+    const migrated =
+      sourceCompilerVersion === "pragma.dsl/v2"
+        ? migratePragmaCompilerV2Project(input)
+        : migratePragmaCompilerV3Project(input);
     return {
       sourceCompilerVersion,
       targetCompilerVersion: PRAGMA_COMPILER_WRITE_VERSION,

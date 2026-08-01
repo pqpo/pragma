@@ -12,7 +12,7 @@ import {
 } from "./ContextStoreFragment.tsx";
 
 const store: ContextStore = {
-  schemaVersion: "pragma.context-store/v2",
+  schemaVersion: "pragma.context-store/v3",
   id: "00000000-0000-4000-8000-000000000001",
   name: "Product docs",
   description: "Managed product knowledge.",
@@ -93,8 +93,13 @@ describe("knowledge base UI", () => {
     );
 
     expect(html).toContain("Knowledge base files");
+    expect(html).not.toContain("<strong>Files</strong>");
     expect(html).toContain("Loading settings");
     expect(html).toContain("Select a Markdown file");
+    expect(html).toContain('aria-label="Resize file list"');
+    expect(html).toContain('aria-valuemin="180"');
+    expect(html).toContain('aria-valuemax="360"');
+    expect(html).toContain("--sidebar-width:240px");
   });
 
   it("moves entries only to valid directories and preserves descendant paths", () => {

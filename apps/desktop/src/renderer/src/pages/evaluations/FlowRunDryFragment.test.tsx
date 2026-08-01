@@ -102,6 +102,7 @@ describe("FlowRunDryFragment", () => {
     expect(html).toContain("flow-run-dry-static-value");
     expect(html).toContain('Target Flow</span><div class="flow-run-dry-static-value"');
     expect(html).not.toContain("Target Flow</span><select");
+    expect(html).not.toContain("<select");
     expect(html).toContain("flow-run-dry-case-delete");
     expect(html).toContain('aria-label="Delete case “Finish successfully”"');
     expect(html).toContain("flow-run-dry-add-case");

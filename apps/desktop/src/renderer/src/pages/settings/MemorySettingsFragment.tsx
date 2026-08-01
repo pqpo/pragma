@@ -1,4 +1,3 @@
-import { CaretDown } from "@phosphor-icons/react";
 import { useEffect, useState } from "react";
 import { useTranslation } from "react-i18next";
 
@@ -6,6 +5,7 @@ import type {
   DesktopGlobalMemoryPolicySnapshot,
   DesktopMemoryPlaneStatus,
 } from "../../../../shared/contracts/index.ts";
+import { SelectMenu } from "../../components/SelectMenu.tsx";
 import { SettingsScreenFrame } from "./SettingsScreenFrame.tsx";
 
 export function MemorySettingsFragment() {
@@ -148,20 +148,15 @@ function MemorySelectRow<T extends string>(props: {
         <strong>{props.label}</strong>
         <span>{props.description}</span>
       </span>
-      <span className="protocol-select-shell language-select-shell">
-        <select
-          value={props.value}
-          disabled={props.disabled}
-          onChange={(event) => props.onChange(event.target.value as T)}
-        >
-          {props.options.map(([value, label]) => (
-            <option key={value} value={value}>
-              {label}
-            </option>
-          ))}
-        </select>
-        <CaretDown size={17} weight="bold" aria-hidden="true" />
-      </span>
+      <SelectMenu<T>
+        ariaLabel={props.label}
+        className="settings-select language-settings-select"
+        value={props.value}
+        disabled={props.disabled}
+        placement="bottom"
+        options={props.options.map(([value, label]) => ({ value, label }))}
+        onChange={props.onChange}
+      />
     </label>
   );
 }

@@ -108,6 +108,77 @@ const codeDefinition = {
 };
 
 describe("capability store", () => {
+  it("upgrades a valid v1 manifest and keeps a recovery backup", async () => {
+    const { directory, store } = await createStore();
+    const created = await store.create({ definition: httpDefinition, credentials: {} });
+    const root = join(directory, "capabilities", created.manifest.id);
+    await writeFile(
+      join(root, "capability.json"),
+      `${JSON.stringify({ ...created.manifest, schemaVersion: "pragma.capability/v1" })}\n`,
+    );
+
+    await expect(store.get(created.manifest.id)).resolves.toMatchObject({
+      manifest: { schemaVersion: "pragma.capability/v2" },
+    });
+    await expect(
+      readFile(join(root, "migration-backups", "capability.v1.json"), "utf8"),
+    ).resolves.toContain("pragma.capability/v1");
+  });
+
+  it("leaves an over-limit v1 capability unchanged with an actionable diagnostic", async () => {
+    const { directory, store } = await createStore();
+    const created = await store.create({ definition: httpDefinition, credentials: {} });
+    const root = join(directory, "capabilities", created.manifest.id);
+    const legacyManifest = { ...created.manifest, schemaVersion: "pragma.capability/v1" };
+    await writeFile(join(root, "capability.json"), `${JSON.stringify(legacyManifest)}\n`);
+    await writeFile(
+      join(root, "revisions", "000001", "definition.json"),
+      `${JSON.stringify({ ...httpDefinition, name: "x".repeat(51) })}\n`,
+    );
+
+    await expect(store.get(created.manifest.id)).rejects.toMatchObject({
+      code: "config_invalid",
+      message: expect.stringContaining("name"),
+    });
+    await expect(store.list()).resolves.toEqual([]);
+    await expect(readFile(join(root, "capability.json"), "utf8")).resolves.toContain(
+      "pragma.capability/v1",
+    );
+  });
+
+  it("replays an interrupted v1 manifest migration and rejects future schemas", async () => {
+    const { directory, store } = await createStore();
+    const created = await store.create({ definition: httpDefinition, credentials: {} });
+    const root = join(directory, "capabilities", created.manifest.id);
+    const legacyManifest = { ...created.manifest, schemaVersion: "pragma.capability/v1" };
+    await writeFile(join(root, "capability.json"), `${JSON.stringify(legacyManifest)}\n`);
+    await writeFile(
+      join(root, "v1-to-v2.json"),
+      `${JSON.stringify({
+        schemaVersion: "pragma.capability-manifest-migration/v1",
+        sourceSchema: "pragma.capability/v1",
+        targetSchema: "pragma.capability/v2",
+        targetManifest: created.manifest,
+      })}\n`,
+    );
+
+    await expect(store.get(created.manifest.id)).resolves.toMatchObject({
+      manifest: { schemaVersion: "pragma.capability/v2" },
+    });
+    await expect(readFile(join(root, "v1-to-v2.json"), "utf8")).rejects.toMatchObject({
+      code: "ENOENT",
+    });
+
+    await writeFile(
+      join(root, "capability.json"),
+      `${JSON.stringify({ ...created.manifest, schemaVersion: "pragma.capability/v99" })}\n`,
+    );
+    await expect(store.get(created.manifest.id)).rejects.toMatchObject({ code: "config_invalid" });
+    await expect(readFile(join(root, "capability.json"), "utf8")).resolves.toContain(
+      "pragma.capability/v99",
+    );
+  });
+
   it("copies a Skill package into an immutable revision", async () => {
     const { directory, store } = await createStore();
     const source = join(directory, "source-skill");

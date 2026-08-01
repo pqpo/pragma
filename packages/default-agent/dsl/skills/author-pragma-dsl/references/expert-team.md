@@ -29,6 +29,8 @@ spec:
 ```
 
 - The coordinator and every member must already exist or be included in the same change-set.
+- Text limits use Unicode characters after trimming: name 50, description 500, and optional team
+  instructions 5,000.
 - `instructions` is optional. When present, it is loaded into the coordinator and every delegated
   member as an always-on `TEAM.md` Context System document. Use it for shared collaboration
   principles, quality requirements, and working agreements rather than role-specific behavior.

@@ -48,8 +48,7 @@ export const RuntimeEnvironmentCatalogEntrySchema = z.object({
 });
 
 export const RuntimeEnvironmentCatalogSchema = z.object({
-  schemaVersion: z.literal("pragma.runtime-environment-catalog/v1"),
-  defaultRuntimeId: DesktopRuntimeIdSchema,
+  schemaVersion: z.literal("pragma.runtime-environment-catalog/v2"),
   entries: z.array(z.unknown()),
 });
 
@@ -103,10 +102,6 @@ export const DesktopRuntimeAvailabilitySchema = z.object({
   reason: z.string().optional(),
   models: z.array(DesktopRuntimeModelSchema).optional(),
   modelDiscoveryError: z.string().optional(),
-});
-
-export const SetDefaultRuntimeSchema = z.object({
-  runtimeId: DesktopRuntimeIdSchema,
 });
 
 export const DesktopBridgeStartupSchema = z.discriminatedUnion("status", [

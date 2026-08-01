@@ -3,7 +3,7 @@ import { renderToStaticMarkup } from "react-dom/server";
 import { afterEach, describe, expect, it } from "vitest";
 
 import { i18n } from "../../i18n/index.ts";
-import { ExpertDetailFragment } from "./ExpertDirectoryFragment.tsx";
+import { ExpertDetailFragment, ExpertDirectoryFragment } from "./ExpertDirectoryFragment.tsx";
 import { ExpertEditorFragment } from "./ExpertEditorFragment.tsx";
 import type { ExpertRecord } from "./studio-model.ts";
 
@@ -123,6 +123,23 @@ describe("ExpertDetailFragment", () => {
   });
 });
 
+describe("ExpertDirectoryFragment", () => {
+  it("uses a single search control without the inactive expert dropdown", () => {
+    const html = renderToStaticMarkup(
+      <ExpertDirectoryFragment
+        experts={[expert]}
+        onCreate={() => undefined}
+        onOpen={() => undefined}
+      />,
+    );
+
+    expect(html).toContain('type="search"');
+    expect(html).toContain('placeholder="Search experts"');
+    expect(html).not.toContain("All experts");
+    expect(html).not.toContain("directory-filter");
+  });
+});
+
 describe("ExpertEditorFragment", () => {
   const draft = { ...expert, tagInput: "", pluginSecretMutations: {} };
 
@@ -144,6 +161,7 @@ describe("ExpertEditorFragment", () => {
     expect(html).not.toContain("<label>Version");
     expect(html).not.toContain("test_expert");
     expect(html).toContain("Back to expert details");
+    expect(html).not.toContain("Update this reusable expert declaration.");
     expect(html).toMatch(/<button[^>]*aria-current="step"[^>]*>/);
     expect(html).not.toMatch(/<button[^>]*disabled=""[^>]*aria-current="step"/);
   });
@@ -164,5 +182,6 @@ describe("ExpertEditorFragment", () => {
     );
 
     expect(html.match(/<button[^>]*disabled=""/g)).toHaveLength(4);
+    expect(html).toContain("Build a reusable expert to power missions.");
   });
 });

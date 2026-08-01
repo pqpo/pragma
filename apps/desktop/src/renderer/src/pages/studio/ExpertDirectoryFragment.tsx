@@ -1,7 +1,6 @@
 import {
   ArrowLeft,
   ArrowCounterClockwise,
-  CaretDown,
   CaretRight,
   Info,
   Folder,
@@ -80,10 +79,6 @@ export function ExpertDirectoryFragment(props: {
             placeholder={t("searchExperts")}
           />
         </label>
-        <button className="directory-filter" type="button">
-          {t("allExperts")}
-          <CaretDown size={16} aria-hidden="true" />
-        </button>
       </div>
 
       <div className="expert-table" role="list" aria-label={t("availableExperts")}>
@@ -121,6 +116,11 @@ export function ExpertDirectoryFragment(props: {
             </button>
           );
         })}
+        {matchingExperts.length === 0 ? (
+          <p className="studio-empty-copy">
+            {query.trim() ? t("noMatchesFound") : t("noExpertsAvailable")}
+          </p>
+        ) : null}
       </div>
       <p className="directory-count">{t("expertCount", { count: matchingExperts.length })}</p>
     </StudioScreenFrame>

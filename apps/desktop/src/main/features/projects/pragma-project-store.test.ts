@@ -338,7 +338,7 @@ describe("PragmaProjectStore", () => {
     expect(compilerViews).toHaveLength(1);
     await expect(
       readFile(join(directory, ".cache", "views", compilerViews[0]!, "pragma.lock.yaml"), "utf8"),
-    ).resolves.toContain("compilerVersion: pragma.dsl/v3");
+    ).resolves.toContain("compilerVersion: pragma.dsl/v4");
     expect((await readdir(directory)).some((name) => name.startsWith("studio.v4-backup-"))).toBe(
       false,
     );
@@ -388,7 +388,7 @@ describe("PragmaProjectStore", () => {
     });
   });
 
-  it("reads an already-current compiler v3 revision from a v4 storage manifest without rewriting it", async () => {
+  it("reads an already-current compiler v4 revision from a v4 storage manifest without rewriting it", async () => {
     const directory = await mkdtemp(join(tmpdir(), "pragma-project-v4-current-compiler-"));
     directories.push(directory);
     const original = createPragmaProjectStore({ projectsPath: directory });
@@ -420,7 +420,7 @@ describe("PragmaProjectStore", () => {
     expect(migrated).toMatchObject({ revision: 1 });
     expect(await readFile(projectManifestPath, "utf8")).toContain("pragma.desktop-project/v4");
     expect(await projectRevisionFile(directory, 1, "pragma.lock.yaml")).toContain(
-      "compilerVersion: pragma.dsl/v3",
+      "compilerVersion: pragma.dsl/v4",
     );
   });
 

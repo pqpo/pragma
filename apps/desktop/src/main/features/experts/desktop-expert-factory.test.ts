@@ -14,7 +14,7 @@ const codeId = "887fb535-438b-427a-9e91-bc2f9f86292e";
 
 const skill: Capability = {
   manifest: {
-    schemaVersion: "pragma.capability/v1",
+    schemaVersion: "pragma.capability/v2",
     id: skillId,
     runtimeKey: "repo_review_7abfdc9a",
     name: "Repo Review",
@@ -35,7 +35,7 @@ const skill: Capability = {
 
 const service: Capability = {
   manifest: {
-    schemaVersion: "pragma.capability/v1",
+    schemaVersion: "pragma.capability/v2",
     id: serviceId,
     runtimeKey: "customer_api_77af9336",
     name: "Customer API",
@@ -66,7 +66,7 @@ const service: Capability = {
 
 const codeService: Capability = {
   manifest: {
-    schemaVersion: "pragma.capability/v1",
+    schemaVersion: "pragma.capability/v2",
     id: codeId,
     runtimeKey: "calculator_887fb535",
     name: "Calculator",
