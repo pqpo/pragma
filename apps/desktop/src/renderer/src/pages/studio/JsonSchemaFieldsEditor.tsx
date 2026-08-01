@@ -2,6 +2,8 @@ import { Plus, X } from "@phosphor-icons/react";
 import type { PragmaJsonSchema } from "@pragma/interpreter/ast";
 import { useTranslation } from "react-i18next";
 
+import { SelectMenu } from "../../components/SelectMenu.tsx";
+
 export type SchemaFieldType = "string" | "number" | "integer" | "boolean" | "object" | "array";
 
 export interface SchemaValueDraft {
@@ -45,29 +47,25 @@ export function SchemaFieldsEditor(props: {
                 placeholder="field_name"
               />
             </label>
-            <label className="code-schema-control is-type">
+            <div className="code-schema-control is-type">
               <span>{t("fieldType")}</span>
-              <select
-                aria-label={t("fieldType")}
+              <SelectMenu<SchemaFieldType>
+                ariaLabel={t("fieldType")}
+                className="form-select"
                 value={field.value.type}
-                onChange={(event) =>
+                options={SCHEMA_FIELD_TYPES.map((type) => ({
+                  value: type,
+                  label: type,
+                  disabled: depth >= 5 && (type === "object" || type === "array"),
+                }))}
+                onChange={(type) =>
                   replace(index, {
                     ...field,
-                    value: emptySchemaValue(event.target.value as SchemaFieldType),
+                    value: emptySchemaValue(type),
                   })
                 }
-              >
-                {SCHEMA_FIELD_TYPES.map((type) => (
-                  <option
-                    key={type}
-                    value={type}
-                    disabled={depth >= 5 && (type === "object" || type === "array")}
-                  >
-                    {type}
-                  </option>
-                ))}
-              </select>
-            </label>
+              />
+            </div>
             <label className="code-required-field">
               <input
                 type="checkbox"
@@ -125,25 +123,20 @@ function SchemaValueEditor(props: {
   return (
     <div className="code-value-editor">
       {props.hideType ? null : (
-        <label>
-          Item type
-          <select
+        <div className="code-schema-control">
+          <span>Item type</span>
+          <SelectMenu<SchemaFieldType>
+            ariaLabel="Item type"
+            className="form-select"
             value={value.type}
-            onChange={(event) =>
-              props.onChange(emptySchemaValue(event.target.value as SchemaFieldType))
-            }
-          >
-            {SCHEMA_FIELD_TYPES.map((type) => (
-              <option
-                key={type}
-                value={type}
-                disabled={props.depth >= 5 && (type === "object" || type === "array")}
-              >
-                {type}
-              </option>
-            ))}
-          </select>
-        </label>
+            options={SCHEMA_FIELD_TYPES.map((type) => ({
+              value: type,
+              label: type,
+              disabled: props.depth >= 5 && (type === "object" || type === "array"),
+            }))}
+            onChange={(type) => props.onChange(emptySchemaValue(type))}
+          />
+        </div>
       )}
       {value.type === "object" ? (
         <SchemaFieldsEditor

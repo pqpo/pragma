@@ -37,6 +37,7 @@ import {
 import { useTranslation } from "react-i18next";
 import type { HumanInteractionResponse } from "@pragma/shared";
 
+import { ConfirmationDialog } from "../../components/Dialog.tsx";
 import {
   type Mission,
   type MissionChatEntry,
@@ -408,74 +409,49 @@ export function MissionsPage(props: {
         ) : null}
       </div>
       {deleteCandidate !== null ? (
-        <div className="mission-dialog-backdrop">
-          <section
-            className="mission-confirm-dialog"
-            role="alertdialog"
-            aria-modal="true"
-            aria-labelledby="delete-mission-title"
-            aria-describedby="delete-mission-description"
-            onKeyDown={(event) => {
-              if (event.key === "Escape" && !deleting) setDeleteCandidate(null);
-            }}
-          >
-            <h2 id="delete-mission-title">{t("deleteTitle", { ns: "missions" })}</h2>
-            <p id="delete-mission-description">
-              {t("deleteDescription", { ns: "missions", title: deleteCandidate.title })}
-            </p>
-            <footer>
-              <button
-                className="secondary-button"
-                type="button"
-                disabled={deleting}
-                autoFocus
-                onClick={() => setDeleteCandidate(null)}
-              >
-                {t("actions.cancel", { ns: "common" })}
-              </button>
-              <button
-                className="danger-button"
-                type="button"
-                disabled={deleting}
-                onClick={() => {
-                  const api = desktopApi();
-                  if (api === undefined) return;
-                  setDeleting(true);
-                  void api
-                    .deleteMission(deleteCandidate.id)
-                    .then(async () => {
-                      const storedMissions = await api.listMissions();
-                      writeMissionDraft(window.localStorage, deleteCandidate.id, "");
-                      setMissions(storedMissions);
-                      if (selectedMissionId === deleteCandidate.id) {
-                        selectedMissionIdRef.current = null;
-                        setSelectedMissionId(null);
-                        setSelectedMission(null);
-                        const fallback = storedMissions[0];
-                        if (fallback === undefined) {
-                          writeLastOpenedMissionId(window.localStorage, null);
-                        } else {
-                          openMission(fallback.id);
-                        }
-                      }
-                      setDeleteCandidate(null);
-                      setError(null);
-                    })
-                    .catch((deleteError: unknown) => {
-                      setError(errorMessage(deleteError));
-                      setDeleteCandidate(null);
-                    })
-                    .finally(() => setDeleting(false));
-                }}
-              >
-                <Trash size={17} aria-hidden="true" />
-                {deleting
-                  ? t("deleting", { ns: "missions" })
-                  : t("deleteMission", { ns: "missions" })}
-              </button>
-            </footer>
-          </section>
-        </div>
+        <ConfirmationDialog
+          title={t("deleteTitle", { ns: "missions" })}
+          description={t("deleteDescription", {
+            ns: "missions",
+            title: deleteCandidate.title,
+          })}
+          cancelLabel={t("actions.cancel", { ns: "common" })}
+          confirmLabel={t("deleteMission", { ns: "missions" })}
+          busyLabel={t("deleting", { ns: "missions" })}
+          busy={deleting}
+          tone="danger"
+          onCancel={() => setDeleteCandidate(null)}
+          onConfirm={() => {
+            const api = desktopApi();
+            if (api === undefined) return;
+            setDeleting(true);
+            void api
+              .deleteMission(deleteCandidate.id)
+              .then(async () => {
+                const storedMissions = await api.listMissions();
+                writeMissionDraft(window.localStorage, deleteCandidate.id, "");
+                setMissions(storedMissions);
+                if (selectedMissionId === deleteCandidate.id) {
+                  selectedMissionIdRef.current = null;
+                  setSelectedMissionId(null);
+                  setSelectedMission(null);
+                  const fallback = storedMissions[0];
+                  if (fallback === undefined) {
+                    writeLastOpenedMissionId(window.localStorage, null);
+                  } else {
+                    openMission(fallback.id);
+                  }
+                }
+                setDeleteCandidate(null);
+                setError(null);
+              })
+              .catch((deleteError: unknown) => {
+                setError(errorMessage(deleteError));
+                setDeleteCandidate(null);
+              })
+              .finally(() => setDeleting(false));
+          }}
+        />
       ) : null}
     </section>
   );

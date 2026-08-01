@@ -31,6 +31,7 @@ import type {
   ExpertContextStoreMount,
 } from "../../../../shared/contracts/index.ts";
 import { MarkdownContent } from "../../components/MarkdownContent.tsx";
+import { SelectMenu } from "../../components/SelectMenu.tsx";
 import { errorMessage } from "../../lib/errors.ts";
 import {
   flushContextStoreSaves,
@@ -929,43 +930,49 @@ export function ContextStoreDetailFragment(props: {
                   }}
                 />
               </label>
-              <label>
-                {t("loadingBehavior")}
-                <select
+              <div className="knowledge-metadata-field">
+                <span>{t("loadingBehavior")}</span>
+                <SelectMenu<ContextStoreContentMetadata["trigger"]>
+                  ariaLabel={t("loadingBehavior")}
+                  className="form-select"
                   value={metadata.trigger}
-                  onChange={(event) => {
+                  options={[
+                    { value: "manual", label: t("onDemand") },
+                    { value: "model_decision", label: t("modelDecides") },
+                    { value: "always_on", label: t("loadImmediately") },
+                  ]}
+                  onChange={(trigger) => {
                     const nextMetadata = {
                       ...metadata,
-                      trigger: event.target.value as ContextStoreContentMetadata["trigger"],
+                      trigger,
                     };
                     setMetadata(nextMetadata);
                     markEdited({ metadata: nextMetadata });
                   }}
-                >
-                  <option value="manual">{t("onDemand")}</option>
-                  <option value="model_decision">{t("modelDecides")}</option>
-                  <option value="always_on">{t("loadImmediately")}</option>
-                </select>
-              </label>
-              <label>
-                {t("priority")}
-                <select
+                />
+              </div>
+              <div className="knowledge-metadata-field">
+                <span>{t("priority")}</span>
+                <SelectMenu<ContextStoreContentMetadata["priority"]>
+                  ariaLabel={t("priority")}
+                  className="form-select"
                   value={metadata.priority}
-                  onChange={(event) => {
+                  options={[
+                    { value: "low", label: t("priorityLow") },
+                    { value: "normal", label: t("priorityNormal") },
+                    { value: "high", label: t("priorityHigh") },
+                    { value: "critical", label: t("priorityCritical") },
+                  ]}
+                  onChange={(priority) => {
                     const nextMetadata = {
                       ...metadata,
-                      priority: event.target.value as ContextStoreContentMetadata["priority"],
+                      priority,
                     };
                     setMetadata(nextMetadata);
                     markEdited({ metadata: nextMetadata });
                   }}
-                >
-                  <option value="low">{t("priorityLow")}</option>
-                  <option value="normal">{t("priorityNormal")}</option>
-                  <option value="high">{t("priorityHigh")}</option>
-                  <option value="critical">{t("priorityCritical")}</option>
-                </select>
-              </label>
+                />
+              </div>
               <p>{t("frontmatterManaged")}</p>
             </div>
           ) : (

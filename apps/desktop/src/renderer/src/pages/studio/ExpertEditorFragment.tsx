@@ -3,6 +3,7 @@ import { useState } from "react";
 import { useTranslation } from "react-i18next";
 import type { PragmaResource } from "@pragma/interpreter/ast";
 
+import { SelectMenu } from "../../components/SelectMenu.tsx";
 import { errorMessage } from "../../lib/errors.ts";
 import { runtimeDisplayName } from "../../lib/runtime-display.ts";
 import {
@@ -433,40 +434,63 @@ export function ExpertEditorFragment(props: {
               <div className="capability-editor">
                 <h2>{t("addCapabilities", { ns: "studio" })}</h2>
                 <p>{t("modelSelectionHint", { ns: "studio" })}</p>
-                <label>
-                  {t("runtime", { ns: "studio" })}
-                  <select
+                <div className="capability-editor-field">
+                  <span>{t("runtime", { ns: "studio" })}</span>
+                  <SelectMenu
+                    ariaLabel={t("runtime", { ns: "studio" })}
+                    className="form-select"
                     value={selectedRuntime}
-                    onChange={(event) => {
-                      setSelectedRuntime(event.target.value);
+                    options={[
+                      {
+                        value: "",
+                        label: t(isBuiltIn ? "systemDefault" : "notConfigured", { ns: "studio" }),
+                      },
+                      ...props.runtimes.map((runtime) => ({
+                        value: runtime.id,
+                        label: `${runtimeDisplayName(t, runtime)}${
+                          runtime.status === "available"
+                            ? ""
+                            : ` (${t("unavailable", { ns: "studio" })})`
+                        }`,
+                        disabled: runtime.status !== "available",
+                      })),
+                    ]}
+                    onChange={(runtimeId) => {
+                      setSelectedRuntime(runtimeId);
                       setDraft({ ...draft, model: null });
                     }}
-                  >
-                    <option value="">
-                      {t(isBuiltIn ? "systemDefault" : "notConfigured", { ns: "studio" })}
-                    </option>
-                    {props.runtimes.map((runtime) => (
-                      <option
-                        key={runtime.id}
-                        value={runtime.id}
-                        disabled={runtime.status !== "available"}
-                      >
-                        {runtimeDisplayName(t, runtime)}
-                        {runtime.status === "available"
-                          ? ""
-                          : ` (${t("unavailable", { ns: "studio" })})`}
-                      </option>
-                    ))}
-                  </select>
-                </label>
+                  />
+                </div>
                 {selectedRuntime ? (
-                  <label>
-                    {t("model", { ns: "studio" })}
-                    <select
+                  <div className="capability-editor-field">
+                    <span>{t("model", { ns: "studio" })}</span>
+                    <SelectMenu
+                      ariaLabel={t("model", { ns: "studio" })}
+                      className="form-select"
                       value={selectedModel === undefined ? "" : runtimeModelKey(selectedModel)}
-                      onChange={(event) => {
+                      searchable={modelOptions.length > 8}
+                      options={[
+                        {
+                          value: "",
+                          label:
+                            draft.model === null
+                              ? t("selectModel", { ns: "studio" })
+                              : t("unavailableModel", {
+                                  ns: "studio",
+                                  model: draft.model.modelId,
+                                }),
+                        },
+                        ...modelOptions.map((model) => ({
+                          value: runtimeModelKey(model),
+                          label:
+                            model.provider.kind === "registered"
+                              ? `${model.provider.displayName} / ${model.displayName}`
+                              : model.displayName,
+                        })),
+                      ]}
+                      onChange={(modelKey) => {
                         const model = modelOptions.find(
-                          (candidate) => runtimeModelKey(candidate) === event.target.value,
+                          (candidate) => runtimeModelKey(candidate) === modelKey,
                         );
                         setDraft({
                           ...draft,
@@ -480,40 +504,37 @@ export function ExpertEditorFragment(props: {
                                 },
                         });
                       }}
-                    >
-                      <option value="">
-                        {draft.model === null
-                          ? t("selectModel", { ns: "studio" })
-                          : t("unavailableModel", {
-                              ns: "studio",
-                              model: draft.model.modelId,
-                            })}
-                      </option>
-                      {modelOptions.map((model) => {
-                        return (
-                          <option key={runtimeModelKey(model)} value={runtimeModelKey(model)}>
-                            {model.provider.kind === "registered"
-                              ? `${model.provider.displayName} / ${model.displayName}`
-                              : model.displayName}
-                          </option>
-                        );
-                      })}
-                    </select>
+                    />
                     {selectedRuntimeInfo?.modelDiscoveryError ? (
                       <small className="form-error">
                         {selectedRuntimeInfo.modelDiscoveryError}
                       </small>
                     ) : null}
-                  </label>
+                  </div>
                 ) : null}
                 {selectedModel?.thinking !== undefined ? (
-                  <label>
-                    {t("thinkingLevel", { ns: "studio" })}
-                    <select
+                  <div className="capability-editor-field">
+                    <span>{t("thinkingLevel", { ns: "studio" })}</span>
+                    <SelectMenu
+                      ariaLabel={t("thinkingLevel", { ns: "studio" })}
+                      className="form-select"
                       value={draft.model?.thinkingLevel ?? ""}
-                      onChange={(event) => {
+                      options={[
+                        {
+                          value: "",
+                          label: `${t("runtimeDefault", { ns: "studio" })}${
+                            selectedModel.thinking.defaultLevel === undefined
+                              ? ""
+                              : ` (${selectedModel.thinking.defaultLevel})`
+                          }`,
+                        },
+                        ...selectedModel.thinking.supportedLevels.map((level) => ({
+                          value: level.value,
+                          label: level.label,
+                        })),
+                      ]}
+                      onChange={(thinkingLevel) => {
                         if (draft.model === null) return;
-                        const thinkingLevel = event.target.value;
                         const model = { ...draft.model };
                         delete model.thinkingLevel;
                         setDraft({
@@ -524,20 +545,8 @@ export function ExpertEditorFragment(props: {
                           },
                         });
                       }}
-                    >
-                      <option value="">
-                        {t("runtimeDefault", { ns: "studio" })}
-                        {selectedModel.thinking.defaultLevel === undefined
-                          ? ""
-                          : ` (${selectedModel.thinking.defaultLevel})`}
-                      </option>
-                      {selectedModel.thinking.supportedLevels.map((level) => (
-                        <option key={level.value} value={level.value}>
-                          {level.label}
-                        </option>
-                      ))}
-                    </select>
-                  </label>
+                    />
+                  </div>
                 ) : null}
                 <ExpertCapabilityPicker
                   currentExpertId={draft.id}

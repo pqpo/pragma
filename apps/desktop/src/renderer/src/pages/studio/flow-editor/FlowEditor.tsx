@@ -35,6 +35,7 @@ import type {
   DesktopRuntimeAvailability,
   PragmaProjectSnapshot,
 } from "../../../../../shared/contracts/index.ts";
+import { ConfirmationDialog } from "../../../components/Dialog.tsx";
 import { errorMessage } from "../../../lib/errors.ts";
 import { desktopApi } from "../studio-model.ts";
 import {
@@ -170,6 +171,8 @@ function FlowEditorCanvas(props: {
   const [inspectorOpen, setInspectorOpen] = useState(false);
   const [validationOpen, setValidationOpen] = useState(false);
   const [nodeContextMenu, setNodeContextMenu] = useState<NodeContextMenuState | null>(null);
+  const [pendingLogicSourceId, setPendingLogicSourceId] = useState<string | null>(null);
+  const [discardOpen, setDiscardOpen] = useState(false);
   const [candidateIssues, setCandidateIssues] = useState<readonly string[]>([]);
   const errorSequenceRef = useRef(0);
   const [visibleError, setVisibleError] = useState<VisibleFlowError | null>(
@@ -505,7 +508,16 @@ function FlowEditorCanvas(props: {
     }
     const sourceId = logicSourceId(nodeId);
     if (sourceId === null || !isRouteTransition(flow.spec.graph.transitions[sourceId])) return;
-    if (!window.confirm(t("deleteLogicNodeConfirm"))) return;
+    setPendingLogicSourceId(sourceId);
+    setNodeContextMenu(null);
+  };
+
+  const confirmRemoveLogicNode = () => {
+    const sourceId = pendingLogicSourceId;
+    if (sourceId === null || !isRouteTransition(flow.spec.graph.transitions[sourceId])) {
+      setPendingLogicSourceId(null);
+      return;
+    }
     const copy = structuredClone(flow);
     const route = copy.spec.graph.transitions[sourceId];
     delete copy.spec.graph.transitions[sourceId];
@@ -517,6 +529,7 @@ function FlowEditorCanvas(props: {
     setSelectedNodeId(null);
     setSelectedEdgeId(null);
     setNodeContextMenu(null);
+    setPendingLogicSourceId(null);
   };
 
   const setConnection = (connection: Connection) => {
@@ -642,8 +655,10 @@ function FlowEditorCanvas(props: {
   };
 
   const handleBack = () => {
-    if ((semanticDirty || layoutStatus === "unsaved") && !window.confirm(t("discardFlowChanges")))
+    if (semanticDirty || layoutStatus === "unsaved") {
+      setDiscardOpen(true);
       return;
+    }
     props.onCancel();
   };
 
@@ -953,6 +968,32 @@ function FlowEditorCanvas(props: {
         <p className="flow-editor-error" role="alert">
           {visibleError.message}
         </p>
+      ) : null}
+      {pendingLogicSourceId !== null ? (
+        <ConfirmationDialog
+          title={t("deleteNode")}
+          description={t("deleteLogicNodeConfirm")}
+          confirmLabel={t("deleteNode")}
+          cancelLabel={t("cancel")}
+          busyLabel={t("deleteNode")}
+          busy={false}
+          tone="danger"
+          onCancel={() => setPendingLogicSourceId(null)}
+          onConfirm={confirmRemoveLogicNode}
+        />
+      ) : null}
+      {discardOpen ? (
+        <ConfirmationDialog
+          title={t("backFlows")}
+          description={t("discardFlowChanges")}
+          confirmLabel={t("backFlows")}
+          cancelLabel={t("cancel")}
+          busyLabel={t("backFlows")}
+          busy={false}
+          tone="danger"
+          onCancel={() => setDiscardOpen(false)}
+          onConfirm={props.onCancel}
+        />
       ) : null}
     </section>
   );

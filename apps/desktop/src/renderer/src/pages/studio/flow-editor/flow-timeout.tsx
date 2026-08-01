@@ -1,6 +1,8 @@
 import { useState } from "react";
 import { useTranslation } from "react-i18next";
 
+import { SelectMenu } from "../../../components/SelectMenu.tsx";
+
 export const FLOW_TIMEOUT_UNITS = ["seconds", "minutes", "hours", "days"] as const;
 export type FlowTimeoutUnit = (typeof FLOW_TIMEOUT_UNITS)[number];
 
@@ -43,11 +45,15 @@ export function FlowTimeoutField(props: {
               if (timeoutMs !== undefined) props.onChange(timeoutMs);
             }}
           />
-          <select
-            aria-label={t("flowTimeoutUnit")}
+          <SelectMenu<FlowTimeoutUnit>
+            ariaLabel={t("flowTimeoutUnit")}
+            className="form-select"
             value={unit}
-            onChange={(event) => {
-              const nextUnit = event.target.value as FlowTimeoutUnit;
+            options={FLOW_TIMEOUT_UNITS.map((option) => ({
+              value: option,
+              label: t(FLOW_TIMEOUT_UNIT_LABELS[option]),
+            }))}
+            onChange={(nextUnit) => {
               const nextTimeoutMs = flowTimeoutMilliseconds(
                 flowTimeoutValue(timeoutMs, unit),
                 nextUnit,
@@ -55,13 +61,7 @@ export function FlowTimeoutField(props: {
               setUnit(nextUnit);
               if (nextTimeoutMs !== undefined) props.onChange(nextTimeoutMs);
             }}
-          >
-            {FLOW_TIMEOUT_UNITS.map((option) => (
-              <option key={option} value={option}>
-                {t(FLOW_TIMEOUT_UNIT_LABELS[option])}
-              </option>
-            ))}
-          </select>
+          />
         </div>
       )}
       <label className="flow-timeout-never">

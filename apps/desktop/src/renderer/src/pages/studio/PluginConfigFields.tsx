@@ -2,6 +2,7 @@ import { useEffect, useState } from "react";
 import { useTranslation } from "react-i18next";
 
 import type { DesktopPluginManifest } from "../../../../shared/contracts/index.ts";
+import { SelectMenu } from "../../components/SelectMenu.tsx";
 
 export function PluginConfigFields(props: {
   readonly manifest: DesktopPluginManifest;
@@ -49,38 +50,37 @@ export function PluginConfigFields(props: {
                 ) : null}
               </div>
             ) : property.enum !== undefined ? (
-              <select
-                id={`plugin-config-${property.name}`}
+              <SelectMenu
+                ariaLabel={property.name}
+                className="form-select"
                 value={String(value ?? "")}
-                onChange={(event) =>
+                options={property.enum.map((candidate) => ({
+                  value: String(candidate),
+                  label: String(candidate),
+                }))}
+                onChange={(nextValue) =>
                   props.onValuesChange(
                     setPath(
                       props.values,
                       property.name,
-                      property.enum!.find((candidate) => String(candidate) === event.target.value),
+                      property.enum!.find((candidate) => String(candidate) === nextValue),
                     ),
                   )
                 }
-              >
-                {property.enum.map((candidate) => (
-                  <option key={String(candidate)} value={String(candidate)}>
-                    {String(candidate)}
-                  </option>
-                ))}
-              </select>
+              />
             ) : property.type === "boolean" ? (
-              <select
-                id={`plugin-config-${property.name}`}
-                value={String(value ?? false)}
-                onChange={(event) =>
-                  props.onValuesChange(
-                    setPath(props.values, property.name, event.target.value === "true"),
-                  )
+              <SelectMenu<"true" | "false">
+                ariaLabel={property.name}
+                className="form-select"
+                value={value === true ? "true" : "false"}
+                options={[
+                  { value: "true", label: t("true") },
+                  { value: "false", label: t("false") },
+                ]}
+                onChange={(nextValue) =>
+                  props.onValuesChange(setPath(props.values, property.name, nextValue === "true"))
                 }
-              >
-                <option value="true">{t("true")}</option>
-                <option value="false">{t("false")}</option>
-              </select>
+              />
             ) : property.type === "object" || property.type === "array" ? (
               <JsonConfigInput
                 id={`plugin-config-${property.name}`}

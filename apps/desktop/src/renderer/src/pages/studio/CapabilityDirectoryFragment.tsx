@@ -22,6 +22,7 @@ import {
   type CapabilityDefinition,
   type PreviewCodeServiceResult,
 } from "../../../../shared/contracts/index.ts";
+import { SelectMenu } from "../../components/SelectMenu.tsx";
 import { errorMessage } from "../../lib/errors.ts";
 import { StudioScreenFrame } from "./StudioScreenFrame.tsx";
 import {
@@ -1022,19 +1023,20 @@ function McpForm(props: {
           onChange={(e) => props.onChange({ ...value, description: e.target.value })}
         />
       </label>
-      <label>
-        {t("transport")}
-        <select
+      <div className="capability-form-field">
+        <span>{t("transport")}</span>
+        <SelectMenu<typeof value.transport>
+          ariaLabel={t("transport")}
+          className="form-select"
           value={value.transport}
-          onChange={(e) =>
-            props.onChange({ ...value, transport: e.target.value as typeof value.transport })
-          }
-        >
-          <option value="stdio">stdio</option>
-          <option value="streamable-http">Streamable HTTP</option>
-          <option value="sse">SSE</option>
-        </select>
-      </label>
+          options={[
+            { value: "stdio", label: "stdio" },
+            { value: "streamable-http", label: "Streamable HTTP" },
+            { value: "sse", label: "SSE" },
+          ]}
+          onChange={(transport) => props.onChange({ ...value, transport })}
+        />
+      </div>
       {value.transport === "stdio" ? (
         <>
           <label>
@@ -1149,17 +1151,20 @@ function HttpForm(props: {
         />
       </label>
       <div className="capability-form-grid">
-        <label>
-          {t("authentication")}
-          <select
+        <div className="capability-form-field">
+          <span>{t("authentication")}</span>
+          <SelectMenu<typeof value.authType>
+            ariaLabel={t("authentication")}
+            className="form-select"
             value={value.authType}
-            onChange={(e) => set({ authType: e.target.value as typeof value.authType })}
-          >
-            <option value="none">{t("none")}</option>
-            <option value="bearer">{t("bearerToken")}</option>
-            <option value="api_key_header">{t("apiKeyHeader")}</option>
-          </select>
-        </label>
+            options={[
+              { value: "none", label: t("none") },
+              { value: "bearer", label: t("bearerToken") },
+              { value: "api_key_header", label: t("apiKeyHeader") },
+            ]}
+            onChange={(authType) => set({ authType })}
+          />
+        </div>
         {value.authType === "api_key_header" ? (
           <label>
             {t("headerName")}
@@ -1221,16 +1226,19 @@ function HttpForm(props: {
             placeholder="get_customer"
           />
         </label>
-        <label>
-          {t("method")}
-          <select
+        <div className="capability-form-field">
+          <span>{t("method")}</span>
+          <SelectMenu<typeof value.method>
+            ariaLabel={t("method")}
+            className="form-select"
             value={value.method}
-            onChange={(e) => set({ method: e.target.value as typeof value.method })}
-          >
-            <option>GET</option>
-            <option>POST</option>
-          </select>
-        </label>
+            options={[
+              { value: "GET", label: "GET" },
+              { value: "POST", label: "POST" },
+            ]}
+            onChange={(method) => set({ method })}
+          />
+        </div>
       </div>
       <label>
         {t("toolDescription")}

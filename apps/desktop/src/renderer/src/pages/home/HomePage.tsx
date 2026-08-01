@@ -37,6 +37,7 @@ import type {
 } from "../../../../shared/contracts/index.ts";
 import { ToolPermissionSelect } from "../../components/ToolPermissionSelect.tsx";
 import { MissionModelOverrideControls } from "../../components/MissionModelOverrideControls.tsx";
+import { SelectMenu } from "../../components/SelectMenu.tsx";
 import { WorkspacePicker, type WorkspaceSelection } from "../../components/WorkspacePicker.tsx";
 import { shouldSubmitComposerOnEnter } from "../../lib/composer-keyboard.ts";
 import { errorMessage } from "../../lib/errors.ts";
@@ -716,37 +717,35 @@ function MissionExecutorPicker(props: {
               />
             </label>
             <div className="mission-executor-filters mission-executor-selection-filters">
-              <label>
+              <div>
                 <span className="sr-only">{t("filterExecutorKind")}</span>
-                <select
+                <SelectMenu<"all" | HomeMissionExecutorOption["kind"]>
+                  ariaLabel={t("filterExecutorKind")}
+                  className="form-select"
                   value={selectionKind}
-                  onChange={(event) =>
-                    setSelectionKind(
-                      event.target.value as "all" | HomeMissionExecutorOption["kind"],
-                    )
-                  }
-                >
-                  <option value="all">{t("allKinds")}</option>
-                  <option value="expert">{t("expert")}</option>
-                  <option value="team">{t("expertTeam")}</option>
-                  <option value="flow">{t("flow")}</option>
-                </select>
-              </label>
+                  options={[
+                    { value: "all", label: t("allKinds") },
+                    { value: "expert", label: t("expert") },
+                    { value: "team", label: t("expertTeam") },
+                    { value: "flow", label: t("flow") },
+                  ]}
+                  onChange={setSelectionKind}
+                />
+              </div>
               {tags.length > 0 ? (
-                <label>
+                <div>
                   <span className="sr-only">{t("filterExecutorTag")}</span>
-                  <select
+                  <SelectMenu
+                    ariaLabel={t("filterExecutorTag")}
+                    className="form-select"
                     value={selectionTag}
-                    onChange={(event) => setSelectionTag(event.target.value)}
-                  >
-                    <option value="all">{t("allTags")}</option>
-                    {tags.map((candidate) => (
-                      <option value={candidate} key={candidate}>
-                        {candidate}
-                      </option>
-                    ))}
-                  </select>
-                </label>
+                    options={[
+                      { value: "all", label: t("allTags") },
+                      ...tags.map((candidate) => ({ value: candidate, label: candidate })),
+                    ]}
+                    onChange={setSelectionTag}
+                  />
+                </div>
               ) : null}
             </div>
             <div
@@ -874,37 +873,35 @@ function MissionExecutorPicker(props: {
                   ))}
                 </div>
                 <div className="mission-executor-filters">
-                  <label>
+                  <div>
                     <span className="sr-only">{t("filterExecutorKind")}</span>
-                    <select
+                    <SelectMenu<"all" | HomeMissionExecutorOption["kind"]>
+                      ariaLabel={t("filterExecutorKind")}
+                      className="form-select"
                       value={managerKind}
-                      onChange={(event) =>
-                        setManagerKind(
-                          event.target.value as "all" | HomeMissionExecutorOption["kind"],
-                        )
-                      }
-                    >
-                      <option value="all">{t("allKinds")}</option>
-                      <option value="expert">{t("expert")}</option>
-                      <option value="team">{t("expertTeam")}</option>
-                      <option value="flow">{t("flow")}</option>
-                    </select>
-                  </label>
+                      options={[
+                        { value: "all", label: t("allKinds") },
+                        { value: "expert", label: t("expert") },
+                        { value: "team", label: t("expertTeam") },
+                        { value: "flow", label: t("flow") },
+                      ]}
+                      onChange={setManagerKind}
+                    />
+                  </div>
                   {tags.length > 0 ? (
-                    <label>
+                    <div>
                       <span className="sr-only">{t("filterExecutorTag")}</span>
-                      <select
+                      <SelectMenu
+                        ariaLabel={t("filterExecutorTag")}
+                        className="form-select"
                         value={managerTag}
-                        onChange={(event) => setManagerTag(event.target.value)}
-                      >
-                        <option value="all">{t("allTags")}</option>
-                        {tags.map((candidate) => (
-                          <option value={candidate} key={candidate}>
-                            {candidate}
-                          </option>
-                        ))}
-                      </select>
-                    </label>
+                        options={[
+                          { value: "all", label: t("allTags") },
+                          ...tags.map((candidate) => ({ value: candidate, label: candidate })),
+                        ]}
+                        onChange={setManagerTag}
+                      />
+                    </div>
                   ) : null}
                 </div>
               </div>

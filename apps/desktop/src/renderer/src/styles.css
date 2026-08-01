@@ -2436,16 +2436,16 @@ p {
   display: flex;
   gap: 6px;
   margin-bottom: 18px;
-  padding: 4px;
-  border-radius: 12px;
-  background: var(--surface-soft);
+  padding: 3px;
+  border-radius: var(--ui-radius-md);
+  background: var(--surface-muted);
 }
 
 .integration-tabs button {
   min-height: 36px;
   padding: 0 16px;
   border: 0;
-  border-radius: 9px;
+  border-radius: var(--ui-radius-md);
   background: transparent;
   color: var(--muted);
   cursor: pointer;
@@ -2453,9 +2453,9 @@ p {
 }
 
 .integration-tabs button.is-active {
-  background: #fff;
+  background: var(--ui-surface);
   color: var(--green-dark);
-  box-shadow: 0 1px 3px rgb(20 31 25 / 7%);
+  box-shadow: 0 1px 2px rgb(20 31 25 / 7%);
 }
 
 .automation-directory .studio-screen-body {
@@ -2489,9 +2489,9 @@ p {
   place-items: center;
   align-content: center;
   gap: 8px;
-  border: 1px dashed var(--border);
-  border-radius: 15px;
-  background: #fff;
+  border-top: 1px solid var(--border);
+  border-radius: 0;
+  background: transparent;
   color: var(--muted);
   text-align: center;
 }
@@ -2571,10 +2571,11 @@ p {
 .automation-form-section {
   display: grid;
   gap: 14px;
-  padding: 20px;
-  border: 1px solid var(--border);
-  border-radius: 14px;
-  background: #fff;
+  padding: 22px 0 24px;
+  border: 0;
+  border-bottom: 1px solid var(--border);
+  border-radius: 0;
+  background: transparent;
 }
 
 .automation-field-grid {
@@ -2583,7 +2584,8 @@ p {
   gap: 14px;
 }
 
-.automation-form label {
+.automation-form label,
+.automation-select-field {
   display: grid;
   gap: 7px;
   min-width: 0;
@@ -3495,7 +3497,8 @@ p {
   padding: 25px 0;
 }
 
-.capability-form label {
+.capability-form label,
+.capability-form-field {
   display: grid;
   gap: 7px;
   color: #343d37;
@@ -3503,7 +3506,8 @@ p {
   font-weight: 650;
 }
 
-.capability-form label small {
+.capability-form label small,
+.capability-form-field small {
   color: var(--muted);
   font-weight: 450;
 }
@@ -4907,7 +4911,8 @@ p {
   gap: 16px;
 }
 
-.knowledge-metadata-form label {
+.knowledge-metadata-form label,
+.knowledge-metadata-field {
   display: grid;
   gap: 7px;
   color: #414c44;
@@ -4915,8 +4920,7 @@ p {
   font-weight: 650;
 }
 
-.knowledge-metadata-form textarea,
-.knowledge-metadata-form select {
+.knowledge-metadata-form textarea {
   width: 100%;
   border: 1px solid var(--border-strong);
   border-radius: 7px;
@@ -4930,11 +4934,6 @@ p {
   min-height: 88px;
   resize: vertical;
   padding: 10px;
-}
-
-.knowledge-metadata-form select {
-  min-height: 38px;
-  padding: 0 9px;
 }
 
 .knowledge-metadata-form > p {
@@ -5525,7 +5524,8 @@ p {
 
 .creator-form-content > label,
 .creator-field-row label,
-.capability-editor > label {
+.capability-editor > label,
+.capability-editor-field {
   display: grid;
   gap: 7px;
   color: #2c342e;
@@ -10349,10 +10349,19 @@ p {
   align-self: center;
 }
 
-.creator-form .tool-approval-select select {
+.creator-form .tool-approval-select .ui-select-trigger {
   min-height: 32px;
-  padding: 5px 28px 5px 9px;
+  padding: 5px 9px;
   font-size: 11px;
+}
+
+.flow-select-field {
+  display: grid;
+  min-width: 0;
+  gap: 6px;
+  color: var(--text);
+  font-size: 12px;
+  font-weight: 500;
 }
 
 .instructions-editor {
@@ -13085,18 +13094,20 @@ textarea:focus-visible,
 .studio-nav-item {
   min-height: 44px;
   border: 1px solid transparent;
-  border-radius: 11px;
+  border-radius: var(--ui-radius-md);
+  font-weight: 500;
 }
 
 .studio-nav-item:hover {
-  background: rgb(255 255 255 / 62%);
+  background: var(--ui-surface-subtle);
 }
 
 .studio-nav-item.is-active {
-  border-color: rgb(88 121 104 / 8%);
-  background: #fff;
+  border-color: transparent;
+  background: var(--ui-selection);
   color: var(--green-dark);
-  box-shadow: 0 1px 3px rgb(20 31 25 / 5%);
+  font-weight: 500;
+  box-shadow: none;
 }
 
 .studio-content {
@@ -13111,6 +13122,11 @@ textarea:focus-visible,
 
 .studio-heading h1 {
   font-size: 32px;
+}
+
+.studio-heading > .primary-button {
+  flex: 0 0 auto;
+  white-space: nowrap;
 }
 
 .studio-create-menu {
@@ -15859,43 +15875,6 @@ textarea:focus-visible,
   }
 }
 
-.mission-dialog-backdrop {
-  position: absolute;
-  z-index: 20;
-  inset: 0;
-  display: grid;
-  place-items: center;
-  padding: 24px;
-  background: rgb(29 33 31 / 36%);
-  backdrop-filter: blur(2px);
-}
-
-.mission-confirm-dialog {
-  width: min(440px, 100%);
-  padding: 25px;
-  border: 1px solid var(--border);
-  border-radius: 16px;
-  background: #fff;
-  box-shadow: var(--shadow-panel);
-}
-
-.mission-confirm-dialog h2 {
-  font-size: 20px;
-}
-
-.mission-confirm-dialog p {
-  margin-top: 9px;
-  color: var(--muted);
-  line-height: 1.6;
-}
-
-.mission-confirm-dialog footer {
-  display: flex;
-  justify-content: flex-end;
-  gap: 9px;
-  margin-top: 24px;
-}
-
 .mission-team-inspector {
   border-left: 0;
   background: #f4f6f5;
@@ -15910,16 +15889,14 @@ textarea:focus-visible,
 .flow-editor-toolbar {
   border-bottom: 0;
   background: #fff;
-  box-shadow:
-    0 1px 0 var(--border),
-    0 4px 16px rgb(20 31 25 / 4%);
+  box-shadow: 0 1px 0 var(--border);
 }
 
 .flow-editor-title > button,
 .flow-editor-toolbar-actions > button,
 .flow-panel-toggle,
 .flow-validation-panel header button {
-  border-radius: 9px;
+  border-radius: var(--ui-radius-md);
 }
 
 .flow-node-palette,
@@ -15930,15 +15907,16 @@ textarea:focus-visible,
 
 .flow-palette-item {
   border-color: transparent;
-  border-radius: 11px;
-  background: #fff;
-  box-shadow: 0 1px 2px rgb(20 31 25 / 3%);
+  border-radius: var(--ui-radius-md);
+  background: transparent;
+  box-shadow: none;
 }
 
 .flow-palette-item:hover {
-  border-color: rgb(88 121 104 / 20%);
-  box-shadow: 0 6px 18px rgb(20 31 25 / 7%);
-  transform: translateY(-1px);
+  border-color: transparent;
+  background: var(--ui-surface);
+  box-shadow: none;
+  transform: none;
 }
 
 .flow-canvas {
@@ -15948,10 +15926,10 @@ textarea:focus-visible,
 .flow-step-node,
 .flow-logic-node,
 .flow-terminal-node {
-  border-color: transparent;
-  border-radius: 14px;
+  border-color: var(--ui-line);
+  border-radius: var(--ui-radius-lg);
   background: #fff;
-  box-shadow: var(--shadow-soft);
+  box-shadow: none;
 }
 
 .flow-step-node:hover,
@@ -15959,10 +15937,8 @@ textarea:focus-visible,
 .flow-logic-node:hover,
 .flow-logic-node.is-selected {
   border-color: var(--green);
-  box-shadow:
-    0 0 0 3px var(--focus-ring),
-    var(--shadow-hover);
-  transform: translateY(-1px);
+  box-shadow: 0 0 0 3px var(--focus-ring);
+  transform: none;
 }
 
 .flow-step-node.is-invalid,
@@ -15974,30 +15950,27 @@ textarea:focus-visible,
 .flow-logic-node:hover,
 .flow-logic-node.is-selected {
   border-color: #7b67ae;
-  box-shadow:
-    0 0 0 3px rgb(123 103 174 / 13%),
-    var(--shadow-hover);
+  box-shadow: 0 0 0 3px rgb(123 103 174 / 13%);
 }
 
 .flow-step-icon,
 .flow-inspector-icon,
 .flow-palette-item > span,
 .flow-terminal-node > span {
-  border-radius: 9px;
+  border-radius: var(--ui-radius-md);
   background: var(--green-soft);
   color: var(--green-dark);
 }
 
 .flow-inspector-field input,
-.flow-inspector-field select,
-.flow-inspector-field textarea {
+.flow-inspector-field textarea,
+.flow-inspector-field > .form-select {
   border-color: var(--border);
-  border-radius: 9px;
+  border-radius: var(--ui-radius-md);
   background: #fff;
 }
 
 .flow-inspector-field input:focus,
-.flow-inspector-field select:focus,
 .flow-inspector-field textarea:focus {
   border-color: var(--green);
   outline: 0;
