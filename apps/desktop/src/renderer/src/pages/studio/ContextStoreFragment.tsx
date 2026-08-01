@@ -696,7 +696,6 @@ export function ContextStoreDetailFragment(props: {
       <div className="knowledge-base-workspace">
         <aside className="knowledge-file-panel" aria-label={t("knowledgeBaseFiles")}>
           <div className="knowledge-file-toolbar">
-            <strong>{t("files")}</strong>
             <div>
               <button
                 type="button"

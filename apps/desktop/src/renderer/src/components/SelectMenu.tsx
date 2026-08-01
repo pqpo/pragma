@@ -31,6 +31,7 @@ export function SelectMenu<Value extends string>(props: {
   readonly overlayOwnerId?: string | undefined;
   readonly options: readonly SelectMenuOption<Value>[];
   readonly placement?: "auto" | MenuPlacement | undefined;
+  readonly portal?: boolean | undefined;
   readonly align?: "start" | "end" | undefined;
   readonly searchable?: boolean | undefined;
   readonly searchPlaceholder?: string | undefined;
@@ -285,7 +286,9 @@ export function SelectMenu<Value extends string>(props: {
         <span className="ui-select-value">{selected?.label ?? props.ariaLabel}</span>
         <CaretDown className="ui-select-caret" size={13} aria-hidden="true" />
       </button>
-      {!open || typeof document === "undefined" ? menu : createPortal(menu, document.body)}
+      {!open || typeof document === "undefined" || props.portal === false
+        ? menu
+        : createPortal(menu, document.body)}
     </div>
   );
 }

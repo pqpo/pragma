@@ -92,7 +92,9 @@ describe("EvaluationDirectoryFragment", () => {
       />,
     );
 
-    expect(html).toContain("Evaluations");
+    expect(html).toContain('<h1 id="evaluations-heading">Release flow</h1>');
+    expect(html).not.toContain('<h1 id="evaluations-heading">Evaluations</h1>');
+    expect(html).not.toContain("Create repeatable quality checks for every executable object.");
     expect(html).toContain("Release Run Dry");
     expect(html).toContain("Evaluation targets");
     expect(html).toContain("Run Dry cases");

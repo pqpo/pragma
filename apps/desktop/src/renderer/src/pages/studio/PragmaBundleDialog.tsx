@@ -136,12 +136,6 @@ function BundleExportDialog(props: {
     [props.project.resources],
   );
 
-  useEffect(() => {
-    if (rootRef === "" && roots[0] !== undefined) {
-      setRootRef(canonicalPragmaResourceRef(roots[0]));
-    }
-  }, [rootRef, roots]);
-
   const exportBundle = async () => {
     const api = desktopApi();
     if (api === undefined || rootRef === "") return;
@@ -1286,6 +1280,7 @@ function BundleExportRootPicker(props: {
         : t("bundleRootFlow");
   const filtered = filterBundleExportRoots(props.roots, search, kindLabel);
   const SelectedIcon = selected === undefined ? Archive : bundleRootIcon(selected.kind);
+  const hasExportableRoots = props.roots.length > 0;
 
   useEffect(() => {
     if (!open) return;
@@ -1329,10 +1324,17 @@ function BundleExportRootPicker(props: {
             <SelectedIcon size={18} aria-hidden="true" />
           </span>
           <span>
-            <strong>{selected?.metadata.name ?? t("bundleNoExportObjects")}</strong>
+            <strong>
+              {selected?.metadata.name ??
+                t(hasExportableRoots ? "bundleSelectExportObject" : "bundleNoExportObjects")}
+            </strong>
             <small>
               {selected === undefined
-                ? t("bundleNoExportObjectsHint")
+                ? t(
+                    hasExportableRoots
+                      ? "bundleSelectExportObjectHint"
+                      : "bundleNoExportObjectsHint",
+                  )
                 : `${kindLabel(selected.kind)} · ${canonicalPragmaResourceRef(selected)}`}
             </small>
           </span>

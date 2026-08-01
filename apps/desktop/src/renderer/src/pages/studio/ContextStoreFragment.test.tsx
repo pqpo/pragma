@@ -93,6 +93,7 @@ describe("knowledge base UI", () => {
     );
 
     expect(html).toContain("Knowledge base files");
+    expect(html).not.toContain("<strong>Files</strong>");
     expect(html).toContain("Loading settings");
     expect(html).toContain("Select a Markdown file");
   });

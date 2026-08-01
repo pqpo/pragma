@@ -232,26 +232,10 @@ export function EvaluationDirectoryFragment(props: {
       </aside>
 
       <div className="evaluation-directory-main">
-        <header className="studio-heading evaluation-directory-heading">
-          <div>
-            <h1 id="evaluations-heading">{t("evaluations")}</h1>
-            <p>{t("evaluationsDescription")}</p>
-          </div>
-          <button
-            className="primary-button"
-            type="button"
-            disabled={selectedTarget?.kind !== "Flow" || allocating}
-            title={selectedTarget?.kind === "Flow" ? undefined : t("flowRunDryOnly")}
-            onClick={createEvaluation}
-          >
-            <Plus size={17} aria-hidden="true" />
-            {allocating ? t("creatingEvaluation") : t("newEvaluation")}
-          </button>
-        </header>
         <section className="evaluation-target-workspace" aria-live="polite">
           {selectedTarget === null ? (
             <div className="evaluation-target-empty">
-              <h2>{t("noEvaluationTarget")}</h2>
+              <h1 id="evaluations-heading">{t("noEvaluationTarget")}</h1>
               <p>{t("noEvaluationTargetDescription")}</p>
             </div>
           ) : (
@@ -266,7 +250,7 @@ export function EvaluationDirectoryFragment(props: {
                     ) : (
                       <User size={24} aria-hidden="true" />
                     )}
-                    <h2>{selectedTarget.metadata.name}</h2>
+                    <h1 id="evaluations-heading">{selectedTarget.metadata.name}</h1>
                     <span>{targetKindLabel(selectedTarget.kind, t)}</span>
                   </div>
                   <p>
@@ -275,6 +259,16 @@ export function EvaluationDirectoryFragment(props: {
                       : t("unsupportedEvaluationTargetDescription")}
                   </p>
                 </div>
+                <button
+                  className="primary-button"
+                  type="button"
+                  disabled={selectedTarget.kind !== "Flow" || allocating}
+                  title={selectedTarget.kind === "Flow" ? undefined : t("flowRunDryOnly")}
+                  onClick={createEvaluation}
+                >
+                  <Plus size={17} aria-hidden="true" />
+                  {allocating ? t("creatingEvaluation") : t("newEvaluation")}
+                </button>
               </header>
 
               {selectedTarget.kind === "Flow" ? (

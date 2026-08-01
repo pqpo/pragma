@@ -1,10 +1,14 @@
 import { renderToStaticMarkup } from "react-dom/server";
 import { describe, expect, it } from "vitest";
 
-import type { AutomationSummary, PragmaProjectSnapshot } from "../../../../shared/contracts/index.ts";
+import type {
+  AutomationSummary,
+  PragmaProjectSnapshot,
+} from "../../../../shared/contracts/index.ts";
 import { workspaceSelectionFromPath } from "../../components/WorkspacePicker.tsx";
 import {
   AutomationDirectoryFragment,
+  createNewAutomationEditor,
   scheduleTrigger,
   validateAutomationEditor,
 } from "./AutomationDirectoryFragment.tsx";
@@ -46,6 +50,33 @@ const automation: AutomationSummary = {
 };
 
 describe("AutomationDirectoryFragment", () => {
+  it("starts a new Automation without preselecting an executor", () => {
+    const editor = createNewAutomationEditor(
+      "daily_review",
+      {
+        workspace: { path: "/work/review", basename: "review" },
+        recentWorkspaces: [],
+        executorRef: "expert:3sfd30h5017wd17d",
+        toolPermissionMode: "request-approval",
+      },
+      Date.parse("2026-07-24T08:00:00.000Z"),
+    );
+
+    expect(editor).toMatchObject({
+      id: "daily_review",
+      executorRef: "",
+      prompt: "",
+      flowInput: {},
+      workspace: "/work/review",
+      toolPermissionMode: "request-approval",
+    });
+    expect(validateAutomationEditor(editor, undefined)).toMatchObject({
+      valid: false,
+      executor: "required",
+      prompt: undefined,
+    });
+  });
+
   it("presents Automations and Connections as one extensible Integrations surface", () => {
     const html = renderToStaticMarkup(
       <AutomationDirectoryFragment
@@ -158,6 +189,49 @@ describe("AutomationDirectoryFragment", () => {
     expect(validateAutomationEditor({ ...editor, time: "" }, executor)).toMatchObject({
       valid: false,
       trigger: "invalid",
+    });
+  });
+
+  it("validates structured Flow input without requiring a prompt", () => {
+    const editor = {
+      ...createNewAutomationEditor("flow_review", {
+        workspace: { path: "/work/review", basename: "review" },
+        recentWorkspaces: [],
+        executorRef: "expert:3sfd30h5017wd17d",
+        toolPermissionMode: "request-approval" as const,
+      }),
+      name: "Flow review",
+      description: "Runs the review Flow",
+      executorRef: "flow:3sfd30h5017wd17d",
+      flowInput: { issue_id: "123" },
+    };
+    const executor = {
+      kind: "flow" as const,
+      ref: "flow:3sfd30h5017wd17d",
+      name: "Issue review",
+      description: "Reviews an issue",
+      origin: "project" as const,
+      readOnly: false,
+      customized: false,
+      inputSchema: {
+        type: "object" as const,
+        properties: { issue_id: { type: "string" as const } },
+        required: ["issue_id"],
+        additionalProperties: false as const,
+      },
+    };
+
+    expect(validateAutomationEditor(editor, executor)).toMatchObject({
+      valid: true,
+      prompt: undefined,
+      flowInput: undefined,
+    });
+    expect(
+      validateAutomationEditor({ ...editor, flowInput: { issue_id: "" } }, executor),
+    ).toMatchObject({ valid: true });
+    expect(validateAutomationEditor({ ...editor, flowInput: {} }, executor)).toMatchObject({
+      valid: false,
+      flowInput: "invalid",
     });
   });
 });
