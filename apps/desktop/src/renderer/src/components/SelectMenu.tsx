@@ -28,6 +28,7 @@ export function SelectMenu<Value extends string>(props: {
   readonly emptyLabel?: string | undefined;
   readonly icon?: ReactNode | undefined;
   readonly onChange: (value: Value) => void;
+  readonly overlayOwnerId?: string | undefined;
   readonly options: readonly SelectMenuOption<Value>[];
   readonly placement?: "auto" | MenuPlacement | undefined;
   readonly align?: "start" | "end" | undefined;
@@ -204,6 +205,7 @@ export function SelectMenu<Value extends string>(props: {
       id={listboxId}
       role="listbox"
       aria-label={props.ariaLabel}
+      data-ui-overlay-owner={props.overlayOwnerId}
       ref={menuRef}
       style={menuStyle}
       hidden={!open}

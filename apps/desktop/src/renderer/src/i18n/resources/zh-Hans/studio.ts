@@ -831,7 +831,6 @@ export const studio = {
   noDescription: "无描述",
   identity: "身份",
   review: "检查",
-  updateExpertDescription: "更新此可复用专家声明。",
   updateBuiltInExpertDescription:
     "根据你的需要调整专家的工作方式；其用途、基础指令和必需系统能力仍由 Pragma 维护。",
   behaviorPreferences: "行为偏好",

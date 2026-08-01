@@ -212,13 +212,13 @@ export function ExpertEditorFragment(props: {
                   ? t("editExpert", { ns: "studio" })
                   : t("createExpert", { ns: "studio" })}
             </h1>
-            <p>
-              {isBuiltIn
-                ? t("updateBuiltInExpertDescription", { ns: "studio" })
-                : isEditing
-                  ? t("updateExpertDescription", { ns: "studio" })
+            {isBuiltIn || !isEditing ? (
+              <p>
+                {isBuiltIn
+                  ? t("updateBuiltInExpertDescription", { ns: "studio" })
                   : t("createExpertDescription", { ns: "studio" })}
-            </p>
+              </p>
+            ) : null}
           </div>
         </header>
       }

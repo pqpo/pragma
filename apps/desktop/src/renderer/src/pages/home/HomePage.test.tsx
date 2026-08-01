@@ -5,6 +5,7 @@ import { MissionModelOverrideControls } from "../../components/MissionModelOverr
 import { ToolPermissionSelect } from "../../components/ToolPermissionSelect.tsx";
 import {
   filterMissionExecutors,
+  belongsToUiOverlayOwner,
   isHomeExecutorFavorite,
   missionModelOverrideAvailable,
   rankHomeMissionExecutors,
@@ -244,6 +245,15 @@ describe("mission executor search", () => {
         undefined,
       ).map((executor) => executor.name),
     ).toEqual(["Release flow"]);
+  });
+
+  it("keeps a portaled selector inside its owning executor popup", () => {
+    const ownedOverlay = {
+      getAttribute: (name: string) => (name === "data-ui-overlay-owner" ? "executor-picker" : null),
+    } as unknown as Element;
+
+    expect(belongsToUiOverlayOwner(ownedOverlay, "executor-picker")).toBe(true);
+    expect(belongsToUiOverlayOwner(ownedOverlay, "another-popup")).toBe(false);
   });
 });
 

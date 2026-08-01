@@ -161,6 +161,7 @@ describe("ExpertEditorFragment", () => {
     expect(html).not.toContain("<label>Version");
     expect(html).not.toContain("test_expert");
     expect(html).toContain("Back to expert details");
+    expect(html).not.toContain("Update this reusable expert declaration.");
     expect(html).toMatch(/<button[^>]*aria-current="step"[^>]*>/);
     expect(html).not.toMatch(/<button[^>]*disabled=""[^>]*aria-current="step"/);
   });
@@ -181,5 +182,6 @@ describe("ExpertEditorFragment", () => {
     );
 
     expect(html.match(/<button[^>]*disabled=""/g)).toHaveLength(4);
+    expect(html).toContain("Build a reusable expert to power missions.");
   });
 });

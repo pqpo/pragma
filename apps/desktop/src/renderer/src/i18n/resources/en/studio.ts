@@ -863,7 +863,6 @@ export const studio = {
   noDescription: "No description",
   identity: "Identity",
   review: "Review",
-  updateExpertDescription: "Update this reusable expert declaration.",
   updateBuiltInExpertDescription:
     "Tune how this expert works for you while Pragma keeps its purpose, foundation, and required system capabilities intact.",
   behaviorPreferences: "Behavior",

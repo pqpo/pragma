@@ -41,4 +41,18 @@ describe("SelectMenu", () => {
     expect(html).toContain('type="search"');
     expect(html).toContain('placeholder="Search models"');
   });
+
+  it("marks a portaled listbox with its owning overlay", () => {
+    const html = renderToStaticMarkup(
+      <SelectMenu
+        ariaLabel="Type"
+        overlayOwnerId="executor-picker"
+        value="all"
+        options={[{ value: "all", label: "All types" }]}
+        onChange={() => undefined}
+      />,
+    );
+
+    expect(html).toContain('data-ui-overlay-owner="executor-picker"');
+  });
 });

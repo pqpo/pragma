@@ -1,6 +1,7 @@
 import {
   useCallback,
   useEffect,
+  useId,
   useLayoutEffect,
   useRef,
   useState,
@@ -566,6 +567,7 @@ function MissionExecutorPicker(props: {
   const [managerView, setManagerView] = useState<"favorites" | "all" | "hidden">("all");
   const [managerKind, setManagerKind] = useState<"all" | HomeMissionExecutorOption["kind"]>("all");
   const [managerTag, setManagerTag] = useState("all");
+  const overlayOwnerId = useId();
   const rootRef = useRef<HTMLDivElement | null>(null);
   const triggerRef = useRef<HTMLButtonElement | null>(null);
   const managerDialogRef = useRef<HTMLElement | null>(null);
@@ -607,12 +609,17 @@ function MissionExecutorPicker(props: {
   ]);
   const SelectedIcon = selected === undefined ? UsersThree : executorIcon(selected);
 
-  useDismissableMenu(open, rootRef, () => {
-    setOpen(false);
-    setSearch("");
-    setSelectionKind("all");
-    setSelectionTag("all");
-  });
+  useDismissableMenu(
+    open,
+    rootRef,
+    () => {
+      setOpen(false);
+      setSearch("");
+      setSelectionKind("all");
+      setSelectionTag("all");
+    },
+    overlayOwnerId,
+  );
 
   const closeManager = useCallback(() => {
     setManagerOpen(false);
@@ -663,6 +670,7 @@ function MissionExecutorPicker(props: {
     <>
       <div
         className={open ? "mission-executor-picker is-open" : "mission-executor-picker"}
+        data-ui-overlay-id={overlayOwnerId}
         ref={rootRef}
       >
         <button
@@ -722,6 +730,7 @@ function MissionExecutorPicker(props: {
                 <SelectMenu<"all" | HomeMissionExecutorOption["kind"]>
                   ariaLabel={t("filterExecutorKind")}
                   className="form-select"
+                  overlayOwnerId={overlayOwnerId}
                   value={selectionKind}
                   options={[
                     { value: "all", label: t("allKinds") },
@@ -738,6 +747,7 @@ function MissionExecutorPicker(props: {
                   <SelectMenu
                     ariaLabel={t("filterExecutorTag")}
                     className="form-select"
+                    overlayOwnerId={overlayOwnerId}
                     value={selectionTag}
                     options={[
                       { value: "all", label: t("allTags") },
@@ -1343,11 +1353,16 @@ function useDismissableMenu(
   open: boolean,
   rootRef: RefObject<HTMLElement | null>,
   close: () => void,
+  overlayOwnerId?: string,
 ): void {
   useEffect(() => {
     if (!open) return;
     const closeOutside = (event: MouseEvent) => {
-      if (event.target instanceof Node && !rootRef.current?.contains(event.target)) close();
+      if (!(event.target instanceof Node) || rootRef.current?.contains(event.target)) return;
+      const overlay =
+        event.target instanceof Element ? event.target.closest("[data-ui-overlay-owner]") : null;
+      if (overlay !== null && belongsToUiOverlayOwner(overlay, overlayOwnerId)) return;
+      close();
     };
     const closeOnEscape = (event: KeyboardEvent) => {
       if (event.key === "Escape") close();
@@ -1358,7 +1373,11 @@ function useDismissableMenu(
       document.removeEventListener("mousedown", closeOutside);
       window.removeEventListener("keydown", closeOnEscape);
     };
-  }, [close, open, rootRef]);
+  }, [close, open, overlayOwnerId, rootRef]);
+}
+
+export function belongsToUiOverlayOwner(element: Element, overlayOwnerId?: string): boolean {
+  return element.getAttribute("data-ui-overlay-owner") === overlayOwnerId;
 }
 
 function executorIcon(executor: Pick<HomeMissionExecutorOption, "kind">) {

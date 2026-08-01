@@ -241,6 +241,8 @@ box-shadow: 0 16px 40px rgb(20 31 25 / 12%);
 ### 5.3 Missions / Studio / Evaluations 目录页
 
 - 使用“目录栏 + 工作区”平面分栏。外层可以有一条边界，但内部列表不再逐项卡片化。
+- Missions、Studio、Settings 等固定二级导航统一使用 `--ui-rail`，相邻内容区使用 `--ui-canvas`；
+  背景色差已经表达分栏时，不再增加结构分割线或阴影。
 - 选中行使用 `--ui-selection` 与必要的前景色变化；hover 只用 `--ui-surface-subtle`，默认不添加位置标记。
 - 行内只显示决策所需的名称、状态和一组次级信息。更多操作在 hover/focus 后出现或进入菜单。
 - 详情页通过标题、section 间距和背景区分结构；仅交互对象使用 surface。
@@ -292,6 +294,8 @@ box-shadow: 0 16px 40px rgb(20 31 25 / 12%);
   统一交互组件替代。
 - 单选下拉统一使用共享 Select/Menu 组件；触发器、菜单、选中态、disabled、loading、键盘导航和焦点恢复
   不得由页面各自实现。组件内部可以使用语义化原生元素，但不能暴露平台默认外观。
+- 通过 Portal 渲染的 Select/Menu 必须声明所属 Overlay。父级浮层的 outside-dismiss 必须把所属子菜单视为
+  内部交互；选择筛选值不能意外关闭父级弹窗，只有明确选择最终对象、Escape 或真正的外部点击才能关闭。
 - 弹窗、确认框和 drawer 统一使用共享 Dialog/Overlay 组件；必须处理焦点圈定、Escape、返回焦点、遮罩、
   标题关联和危险操作语义。禁止用系统弹窗绕过产品视觉与可访问性规范。
 - 新功能立即遵守；修改仍使用上述原生 UI 的旧页面时，必须在本次触及范围内完成迁移，不得新增例外。

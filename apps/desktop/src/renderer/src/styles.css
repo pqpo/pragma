@@ -624,7 +624,7 @@ p {
   min-width: 0;
   min-height: 0;
   overflow: hidden;
-  padding: 40px 58px 62px 0;
+  padding: 0 58px 0 0;
 }
 
 .settings-select,
@@ -650,11 +650,12 @@ p {
   display: flex;
   flex-direction: column;
   gap: 5px;
-  align-self: start;
+  align-self: stretch;
   min-height: 0;
   overflow: hidden;
-  margin-top: 16px;
-  padding: 0 18px 0 20px;
+  margin: 0;
+  padding: 56px 18px 64px 20px;
+  background: var(--ui-rail);
 }
 
 .settings-content {
@@ -662,7 +663,7 @@ p {
   min-width: 0;
   min-height: 0;
   overflow: hidden;
-  padding: 10px 0 0 48px;
+  padding: 48px 0 64px 48px;
 }
 
 .settings-nav-item {
@@ -746,9 +747,9 @@ p {
   color: var(--muted);
 }
 
-.language-select-shell {
-  width: 220px;
-  flex: 0 0 220px;
+.language-settings-select {
+  width: 176px;
+  flex: 0 0 176px;
 }
 
 .tool-permission-setting {
@@ -2149,18 +2150,19 @@ p {
   min-width: 0;
   min-height: 0;
   overflow: hidden;
-  padding: 40px 58px 62px 0;
+  padding: 0 58px 0 0;
 }
 
 .studio-navigation {
-  align-self: start;
+  align-self: stretch;
   display: grid;
   gap: 7px;
   min-height: 0;
   overflow: hidden;
-  margin-top: 16px;
-  padding: 0 18px 0 20px;
-  border-right: 1px solid #e0e5e1;
+  margin: 0;
+  padding: 56px 18px 64px 20px;
+  border-right: 0;
+  background: var(--ui-rail);
 }
 
 .studio-nav-item {
@@ -2212,7 +2214,7 @@ p {
   min-width: 0;
   min-height: 0;
   overflow: hidden;
-  padding: 7px 0 0 48px;
+  padding: 48px 0 64px 48px;
 }
 
 .studio-screen {
@@ -2489,7 +2491,6 @@ p {
   place-items: center;
   align-content: center;
   gap: 8px;
-  border-top: 1px solid var(--border);
   border-radius: 0;
   background: transparent;
   color: var(--muted);
@@ -4596,7 +4597,6 @@ p {
   height: 100%;
   min-height: 0;
   max-width: none;
-  padding-inline: 28px;
 }
 
 .knowledge-base-editor .studio-screen-body {
@@ -5380,7 +5380,7 @@ p {
   height: 100%;
   min-height: 0;
   gap: 0;
-  padding: 28px 0 24px;
+  padding: 16px 0 24px;
   box-sizing: border-box;
   overflow: hidden;
 }
@@ -5464,7 +5464,7 @@ p {
   min-height: 0;
   max-height: 100%;
   flex-direction: column;
-  padding-left: 48px;
+  padding-left: 32px;
   padding-right: 18px;
 }
 
@@ -5715,7 +5715,7 @@ p {
 @media (max-width: 1180px) {
   .settings-page {
     grid-template-columns: 205px minmax(0, 1fr);
-    padding-right: 38px;
+    padding-right: 32px;
   }
 
   .settings-content {
@@ -5724,7 +5724,7 @@ p {
 
   .studio-page {
     grid-template-columns: 205px minmax(0, 1fr);
-    padding-right: 38px;
+    padding-right: 32px;
   }
 
   .studio-content {
@@ -13110,10 +13110,6 @@ textarea:focus-visible,
   box-shadow: none;
 }
 
-.studio-content {
-  padding-top: 10px;
-}
-
 .studio-heading {
   min-height: 102px;
   padding-bottom: 30px;
@@ -13122,6 +13118,22 @@ textarea:focus-visible,
 
 .studio-heading h1 {
   font-size: 32px;
+}
+
+.creator-heading {
+  display: grid;
+  justify-content: start;
+  gap: 12px;
+}
+
+.creator-heading .back-link {
+  margin: 0;
+}
+
+.creator-heading h1 {
+  font-size: 24px;
+  font-weight: 600;
+  letter-spacing: -0.02em;
 }
 
 .studio-heading > .primary-button {
@@ -13373,12 +13385,12 @@ textarea:focus-visible,
 .mission-rail {
   padding: 0 14px 24px;
   border-right: 0;
-  background: #f4f6f5;
+  background: var(--ui-rail);
 }
 
 .mission-rail-sticky {
   padding-top: 28px;
-  background: #f4f6f5;
+  background: var(--ui-rail);
 }
 
 .mission-rail-sticky > h1 {
@@ -13848,38 +13860,16 @@ textarea:focus-visible,
   padding: 3px 12px 8px;
 }
 
-.mission-executor-filters label {
-  display: inline-flex;
+.mission-executor-filters > div {
+  display: flex;
+  flex: 1 1 0;
   min-width: 0;
   align-items: center;
-  gap: 5px;
-  border: 1px solid var(--border);
-  border-radius: 8px;
-  background: #fff;
-  color: var(--muted);
 }
 
-.mission-executor-filters label {
-  flex: 1 1 0;
-}
-
-.mission-executor-filters label:focus-within {
-  border-color: var(--green);
-  box-shadow: 0 0 0 3px var(--focus-ring);
-}
-
-.mission-executor-filters select {
+.mission-executor-filters .form-select {
   width: 100%;
   min-width: 0;
-  min-height: 30px;
-  padding: 0 24px 0 8px;
-  border: 0;
-  outline: 0;
-  background: transparent;
-  color: inherit;
-  font: inherit;
-  font-size: 10px;
-  cursor: pointer;
 }
 
 .mission-executor-options {
@@ -16011,7 +16001,7 @@ textarea:focus-visible,
 
 @media (max-width: 1180px) {
   .settings-page {
-    padding-right: 38px;
+    padding-right: 32px;
   }
 }
 
@@ -16698,7 +16688,7 @@ textarea:focus-visible,
 }
 
 .home-mission-create .mission-executor-manage-button,
-.home-mission-create .mission-executor-filters label,
+.home-mission-create .mission-executor-filters .form-select,
 .home-mission-create .mission-executor-search {
   border-color: var(--ui-line-strong);
   border-radius: var(--ui-radius-md);
@@ -16846,7 +16836,6 @@ textarea:focus-visible,
     .expert-picker-search,
     .mission-search,
     .mission-executor-search,
-    .mission-executor-filters label,
     .mission-executor-option-actions label,
     .mission-goal-composer,
     .mission-chat-composer,
