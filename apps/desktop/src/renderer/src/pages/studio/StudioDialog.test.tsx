@@ -35,6 +35,9 @@ describe("Studio dialogs", () => {
         confirmLabel="Create"
         busyLabel="Creating…"
         busy={false}
+        hint="No spaces or path separators."
+        countValue="notes"
+        maxLength={100}
         onChange={() => undefined}
         onCancel={() => undefined}
         onConfirm={() => undefined}
@@ -44,5 +47,7 @@ describe("Studio dialogs", () => {
     expect(html).toContain('role="dialog"');
     expect(html).toContain('value="notes.md"');
     expect(html).toContain('type="submit"');
+    expect(html).toContain("No spaces or path separators.");
+    expect(html).toContain("5/100");
   });
 });

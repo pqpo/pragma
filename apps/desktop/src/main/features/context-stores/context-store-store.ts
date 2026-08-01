@@ -17,6 +17,7 @@ import { dirname, extname, isAbsolute, join, relative, resolve, sep } from "node
 import { z } from "zod";
 
 import { FileSystemContextStore, withFileLock, type ExpertAgentContextStore } from "@pragma/core";
+import { pragmaKnowledgeBaseEntryNameIssue } from "@pragma/shared";
 
 import {
   ContextStoreContentMetadataSchema,
@@ -538,6 +539,7 @@ export function createContextStoreStore(options: {
     },
 
     async createFolder(storeId, id) {
+      assertManagedEntryName(id, "directory");
       const target = await resolveEntry(storeId, id, "directory", false);
       try {
         await access(target);
@@ -559,6 +561,7 @@ export function createContextStoreStore(options: {
     },
 
     async createFile(storeId, id, content, metadata) {
+      assertManagedEntryName(id, "file");
       await resolveEntry(storeId, id, "file", false);
       const result = await fileStore(storeId).addContext({
         id,
@@ -606,6 +609,9 @@ export function createContextStoreStore(options: {
     },
 
     async renameEntry(storeId, id, nextId, kind) {
+      const currentName = entryNameFromId(id, kind);
+      const nextName = entryNameFromId(nextId, kind);
+      if (currentName !== nextName) assertManagedEntryName(nextId, kind);
       const source = await resolveEntry(storeId, id, kind, true);
       const target = await resolveEntry(storeId, nextId, kind, false);
       if (kind === "directory" && (target === source || target.startsWith(`${source}${sep}`))) {
@@ -731,6 +737,20 @@ function normalizeEntryId(id: string, kind: "file" | "directory"): string {
     );
   }
   return normalized;
+}
+
+function entryNameFromId(id: string, kind: "file" | "directory"): string {
+  const segment = id.replaceAll("\\", "/").replace(/\/+$/u, "").split("/").at(-1) ?? "";
+  return kind === "file" ? segment.replace(/\.md$/iu, "") : segment;
+}
+
+function assertManagedEntryName(id: string, kind: "file" | "directory"): void {
+  const issue = pragmaKnowledgeBaseEntryNameIssue(entryNameFromId(id, kind));
+  if (issue === undefined) return;
+  throw new ContextStoreStoreError(
+    "invalid_entry",
+    `Knowledge base ${kind === "file" ? "file" : "folder"} name is invalid (${issue}).`,
+  );
 }
 
 function assertInsideRoot(root: string, target: string): void {

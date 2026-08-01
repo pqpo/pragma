@@ -499,7 +499,7 @@ export function AutomationDirectoryFragment(props: {
                     <span>{t("prompt")}</span>
                     <textarea
                       rows={5}
-                      maxLength={PRAGMA_TEXT_LIMITS.automation.prompt * 2}
+                      maxLength={PRAGMA_TEXT_LIMITS.automation.promptAuthoring * 2}
                       value={editor.prompt}
                       data-automation-field="prompt"
                       aria-invalid={showError("prompt") && validation.prompt !== undefined}
@@ -510,7 +510,7 @@ export function AutomationDirectoryFragment(props: {
                           ...editor,
                           prompt: truncatePragmaTrimmedUnicode(
                             event.target.value,
-                            PRAGMA_TEXT_LIMITS.automation.prompt,
+                            PRAGMA_TEXT_LIMITS.automation.promptAuthoring,
                           ),
                         })
                       }
@@ -518,7 +518,7 @@ export function AutomationDirectoryFragment(props: {
                     <FieldFeedback
                       id="automation-prompt-feedback"
                       value={editor.prompt}
-                      max={PRAGMA_TEXT_LIMITS.automation.prompt}
+                      max={PRAGMA_TEXT_LIMITS.automation.promptAuthoring}
                       error={showError("prompt") ? validation.prompt : undefined}
                     />
                   </label>
@@ -1102,7 +1102,7 @@ export function validateAutomationEditor(
   const prompt =
     executor === undefined || inputSchema !== undefined
       ? undefined
-      : validateText(editor.prompt, PRAGMA_TEXT_LIMITS.automation.prompt);
+      : validateText(editor.prompt, PRAGMA_TEXT_LIMITS.automation.promptAuthoring);
   const flowInput =
     inputSchema !== undefined && !isSchemaInputValid(inputSchema, editor.flowInput)
       ? ("invalid" as const)

@@ -96,6 +96,10 @@ describe("knowledge base UI", () => {
     expect(html).not.toContain("<strong>Files</strong>");
     expect(html).toContain("Loading settings");
     expect(html).toContain("Select a Markdown file");
+    expect(html).toContain('aria-label="Resize file list"');
+    expect(html).toContain('aria-valuemin="180"');
+    expect(html).toContain('aria-valuemax="360"');
+    expect(html).toContain("--sidebar-width:240px");
   });
 
   it("moves entries only to valid directories and preserves descendant paths", () => {

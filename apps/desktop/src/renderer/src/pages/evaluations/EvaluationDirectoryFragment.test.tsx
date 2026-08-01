@@ -122,5 +122,22 @@ describe("EvaluationDirectoryFragment", () => {
 
     expect(emptyHtml).toContain("New Run Dry case");
     expect(emptyHtml).not.toContain("Run all");
+
+    const detailHtml = renderToStaticMarkup(
+      <EvaluationDirectoryFragment
+        project={project}
+        detail={<h1 id="evaluation-detail-heading">Evaluation detail</h1>}
+        detailLabelledBy="evaluation-detail-heading"
+        onCreate={() => undefined}
+        onDelete={async () => undefined}
+        onOpen={() => undefined}
+      />,
+    );
+
+    expect(detailHtml).toContain('aria-labelledby="evaluation-detail-heading"');
+    expect(detailHtml).toContain('class="evaluation-target-directory"');
+    expect(detailHtml).toContain("Evaluation targets");
+    expect(detailHtml).toContain("Evaluation detail");
+    expect(detailHtml).not.toContain('id="evaluations-heading"');
   });
 });

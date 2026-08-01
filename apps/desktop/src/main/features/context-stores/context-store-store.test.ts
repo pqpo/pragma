@@ -438,6 +438,15 @@ describe("managed context store", () => {
     await expect(store.createFile(created.id, "notes.txt", "", undefined)).rejects.toMatchObject({
       code: "invalid_entry",
     });
+    await expect(store.createFolder(created.id, "two words")).rejects.toMatchObject({
+      code: "invalid_entry",
+    });
+    await expect(
+      store.createFile(created.id, `${"a".repeat(101)}.md`, "", undefined),
+    ).rejects.toMatchObject({ code: "invalid_entry" });
+    await expect(store.createFile(created.id, "CON.md", "", undefined)).rejects.toMatchObject({
+      code: "invalid_entry",
+    });
     await expect(
       store.createFile(created.id, "C:\\outside.md", "", undefined),
     ).rejects.toMatchObject({

@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState, type CSSProperties } from "react";
+import { useEffect, useMemo, useRef, useState, type CSSProperties, type ReactNode } from "react";
 import { useTranslation } from "react-i18next";
 import type { TFunction } from "i18next";
 import {
@@ -54,6 +54,9 @@ export function EvaluationDirectoryFragment(props: {
   readonly onOpen: (evaluation: PragmaEvaluationResource) => void;
   readonly onCreate: (resourceId: string, flow: PragmaFlowResource) => void;
   readonly onDelete: (evaluation: PragmaEvaluationResource) => Promise<void>;
+  readonly onSelectTarget?: ((target: EvaluationTarget) => void) | undefined;
+  readonly detail?: ReactNode | undefined;
+  readonly detailLabelledBy?: string | undefined;
 }) {
   const { t, i18n } = useTranslation("studio");
   const [navigationWidth, setNavigationWidth] = usePersistentSidebarWidth(
@@ -169,7 +172,7 @@ export function EvaluationDirectoryFragment(props: {
   return (
     <section
       className="evaluation-directory"
-      aria-labelledby="evaluations-heading"
+      aria-labelledby={props.detail === undefined ? "evaluations-heading" : props.detailLabelledBy}
       style={{ "--sidebar-width": `${navigationWidth}px` } as CSSProperties}
     >
       <aside className="evaluation-target-directory" aria-label={t("evaluationTargets")}>
@@ -211,7 +214,10 @@ export function EvaluationDirectoryFragment(props: {
                       }
                       type="button"
                       key={`${resource.kind}:${resource.metadata.id}`}
-                      onClick={() => setSelectedTargetId(resource.metadata.id)}
+                      onClick={() => {
+                        setSelectedTargetId(resource.metadata.id);
+                        props.onSelectTarget?.(resource);
+                      }}
                     >
                       <GroupIcon size={17} aria-hidden="true" />
                       <span>{resource.metadata.name}</span>
@@ -250,143 +256,149 @@ export function EvaluationDirectoryFragment(props: {
       />
 
       <div className="evaluation-directory-main">
-        <section className="evaluation-target-workspace" aria-live="polite">
-          {selectedTarget === null ? (
-            <div className="evaluation-target-empty">
-              <h1 id="evaluations-heading">{t("noEvaluationTarget")}</h1>
-              <p>{t("noEvaluationTargetDescription")}</p>
-            </div>
-          ) : (
-            <>
-              <header className="evaluation-target-heading">
-                <div>
-                  <div className="evaluation-target-title">
-                    {selectedTarget.kind === "Flow" ? (
-                      <GitBranch size={24} aria-hidden="true" />
-                    ) : selectedTarget.kind === "ExpertTeam" ? (
-                      <UsersThree size={24} aria-hidden="true" />
-                    ) : (
-                      <User size={24} aria-hidden="true" />
-                    )}
-                    <h1 id="evaluations-heading">{selectedTarget.metadata.name}</h1>
-                    <span>{targetKindLabel(selectedTarget.kind, t)}</span>
+        {props.detail ?? (
+          <section className="evaluation-target-workspace" aria-live="polite">
+            {selectedTarget === null ? (
+              <div className="evaluation-target-empty">
+                <h1 id="evaluations-heading">{t("noEvaluationTarget")}</h1>
+                <p>{t("noEvaluationTargetDescription")}</p>
+              </div>
+            ) : (
+              <>
+                <header className="evaluation-target-heading">
+                  <div>
+                    <div className="evaluation-target-title">
+                      {selectedTarget.kind === "Flow" ? (
+                        <GitBranch size={24} aria-hidden="true" />
+                      ) : selectedTarget.kind === "ExpertTeam" ? (
+                        <UsersThree size={24} aria-hidden="true" />
+                      ) : (
+                        <User size={24} aria-hidden="true" />
+                      )}
+                      <h1 id="evaluations-heading">{selectedTarget.metadata.name}</h1>
+                      <span>{targetKindLabel(selectedTarget.kind, t)}</span>
+                    </div>
+                    <p>
+                      {selectedTarget.kind === "Flow"
+                        ? t("flowRunDryDescription")
+                        : t("unsupportedEvaluationTargetDescription")}
+                    </p>
                   </div>
-                  <p>
-                    {selectedTarget.kind === "Flow"
-                      ? t("flowRunDryDescription")
-                      : t("unsupportedEvaluationTargetDescription")}
-                  </p>
-                </div>
-                <button
-                  className="primary-button"
-                  type="button"
-                  disabled={selectedTarget.kind !== "Flow" || allocating}
-                  title={selectedTarget.kind === "Flow" ? undefined : t("flowRunDryOnly")}
-                  onClick={createEvaluation}
-                >
-                  <Plus size={17} aria-hidden="true" />
-                  {allocating ? t("creatingEvaluation") : t("newEvaluation")}
-                </button>
-              </header>
+                  <button
+                    className="primary-button"
+                    type="button"
+                    disabled={selectedTarget.kind !== "Flow" || allocating}
+                    title={selectedTarget.kind === "Flow" ? undefined : t("flowRunDryOnly")}
+                    onClick={createEvaluation}
+                  >
+                    <Plus size={17} aria-hidden="true" />
+                    {allocating ? t("creatingEvaluation") : t("newEvaluation")}
+                  </button>
+                </header>
 
-              {selectedTarget.kind === "Flow" ? (
-                <section className="evaluation-suite-list" aria-label={t("runDryEvaluations")}>
-                  <h3>{t("runDryEvaluations")}</h3>
-                  {targetEvaluations.length > 0 ? (
-                    <div className="evaluation-suite-table">
-                      <div className="evaluation-suite-table-heading" aria-hidden="true">
-                        <span>{t("evaluationName")}</span>
-                        <span>{t("caseCount")}</span>
-                        <span />
-                      </div>
-                      {targetEvaluations.map((evaluation) => (
-                        <div className="evaluation-suite-row" key={evaluation.metadata.id}>
-                          <button
-                            className="evaluation-suite-open"
-                            type="button"
-                            onClick={() => props.onOpen(evaluation)}
-                          >
-                            <span className="evaluation-suite-name">
-                              <span className="evaluation-suite-file" aria-hidden="true">
-                                <GitBranch size={16} />
-                              </span>
-                              <strong>{evaluation.metadata.name}</strong>
-                            </span>
-                            <span>
-                              {t("evaluationCaseCount", {
-                                count: evaluation.spec.method.cases.length,
-                              })}
-                            </span>
-                          </button>
-                          <span
-                            className="evaluation-suite-actions"
-                            onBlur={(event) => {
-                              if (!event.currentTarget.contains(event.relatedTarget)) {
-                                setOpenMenuId(null);
-                              }
-                            }}
-                          >
-                            <button
-                              type="button"
-                              aria-label={t("moreActions", { name: evaluation.metadata.name })}
-                              aria-haspopup="menu"
-                              aria-expanded={openMenuId === evaluation.metadata.id}
-                              onClick={() =>
-                                setOpenMenuId((current) =>
-                                  current === evaluation.metadata.id
-                                    ? null
-                                    : evaluation.metadata.id,
-                                )
-                              }
-                            >
-                              <DotsThree size={20} weight="bold" aria-hidden="true" />
-                            </button>
-                            {openMenuId === evaluation.metadata.id ? (
-                              <div
-                                className="evaluation-suite-menu"
-                                role="menu"
-                                aria-label={t("moreActions", {
-                                  name: evaluation.metadata.name,
-                                })}
-                              >
-                                <button
-                                  type="button"
-                                  role="menuitem"
-                                  onClick={() => {
-                                    setOpenMenuId(null);
-                                    setPendingDelete(evaluation);
-                                    setError(null);
-                                  }}
-                                >
-                                  <Trash size={16} aria-hidden="true" />
-                                  {t("deleteEvaluationAction")}
-                                </button>
-                              </div>
-                            ) : null}
-                          </span>
+                {selectedTarget.kind === "Flow" ? (
+                  <section className="evaluation-suite-list" aria-label={t("runDryEvaluations")}>
+                    <h3>{t("runDryEvaluations")}</h3>
+                    {targetEvaluations.length > 0 ? (
+                      <div className="evaluation-suite-table">
+                        <div className="evaluation-suite-table-heading" aria-hidden="true">
+                          <span>{t("evaluationName")}</span>
+                          <span>{t("caseCount")}</span>
+                          <span />
                         </div>
-                      ))}
-                    </div>
-                  ) : (
-                    <div className="evaluation-target-empty is-inline">
-                      <h2>{t("noEvaluationsYet")}</h2>
-                      <p>{t("noEvaluationsForFlow")}</p>
-                      <button className="secondary-button" type="button" onClick={createEvaluation}>
-                        <Plus size={17} aria-hidden="true" />
-                        {t("newRunDryCase")}
-                      </button>
-                    </div>
-                  )}
-                </section>
-              ) : (
-                <div className="evaluation-target-empty is-inline">
-                  <h2>{t("evaluationMethodUnavailable")}</h2>
-                  <p>{t("flowRunDryOnly")}</p>
-                </div>
-              )}
-            </>
-          )}
-        </section>
+                        {targetEvaluations.map((evaluation) => (
+                          <div className="evaluation-suite-row" key={evaluation.metadata.id}>
+                            <button
+                              className="evaluation-suite-open"
+                              type="button"
+                              onClick={() => props.onOpen(evaluation)}
+                            >
+                              <span className="evaluation-suite-name">
+                                <span className="evaluation-suite-file" aria-hidden="true">
+                                  <GitBranch size={16} />
+                                </span>
+                                <strong>{evaluation.metadata.name}</strong>
+                              </span>
+                              <span>
+                                {t("evaluationCaseCount", {
+                                  count: evaluation.spec.method.cases.length,
+                                })}
+                              </span>
+                            </button>
+                            <span
+                              className="evaluation-suite-actions"
+                              onBlur={(event) => {
+                                if (!event.currentTarget.contains(event.relatedTarget)) {
+                                  setOpenMenuId(null);
+                                }
+                              }}
+                            >
+                              <button
+                                type="button"
+                                aria-label={t("moreActions", { name: evaluation.metadata.name })}
+                                aria-haspopup="menu"
+                                aria-expanded={openMenuId === evaluation.metadata.id}
+                                onClick={() =>
+                                  setOpenMenuId((current) =>
+                                    current === evaluation.metadata.id
+                                      ? null
+                                      : evaluation.metadata.id,
+                                  )
+                                }
+                              >
+                                <DotsThree size={20} weight="bold" aria-hidden="true" />
+                              </button>
+                              {openMenuId === evaluation.metadata.id ? (
+                                <div
+                                  className="evaluation-suite-menu"
+                                  role="menu"
+                                  aria-label={t("moreActions", {
+                                    name: evaluation.metadata.name,
+                                  })}
+                                >
+                                  <button
+                                    type="button"
+                                    role="menuitem"
+                                    onClick={() => {
+                                      setOpenMenuId(null);
+                                      setPendingDelete(evaluation);
+                                      setError(null);
+                                    }}
+                                  >
+                                    <Trash size={16} aria-hidden="true" />
+                                    {t("deleteEvaluationAction")}
+                                  </button>
+                                </div>
+                              ) : null}
+                            </span>
+                          </div>
+                        ))}
+                      </div>
+                    ) : (
+                      <div className="evaluation-target-empty is-inline">
+                        <h2>{t("noEvaluationsYet")}</h2>
+                        <p>{t("noEvaluationsForFlow")}</p>
+                        <button
+                          className="secondary-button"
+                          type="button"
+                          onClick={createEvaluation}
+                        >
+                          <Plus size={17} aria-hidden="true" />
+                          {t("newRunDryCase")}
+                        </button>
+                      </div>
+                    )}
+                  </section>
+                ) : (
+                  <div className="evaluation-target-empty is-inline">
+                    <h2>{t("evaluationMethodUnavailable")}</h2>
+                    <p>{t("flowRunDryOnly")}</p>
+                  </div>
+                )}
+              </>
+            )}
+          </section>
+        )}
       </div>
       {error ? (
         <p className="form-error evaluation-directory-error" role="alert">

@@ -1,5 +1,6 @@
 import { renderToStaticMarkup } from "react-dom/server";
 import { describe, expect, it } from "vitest";
+import { PRAGMA_TEXT_LIMITS } from "@pragma/shared";
 
 import type {
   AutomationSummary,
@@ -190,6 +191,12 @@ describe("AutomationDirectoryFragment", () => {
       valid: false,
       trigger: "invalid",
     });
+    expect(
+      validateAutomationEditor(
+        { ...editor, prompt: "p".repeat(PRAGMA_TEXT_LIMITS.automation.promptAuthoring + 1) },
+        executor,
+      ),
+    ).toMatchObject({ valid: false, prompt: "tooLong" });
   });
 
   it("validates structured Flow input without requiring a prompt", () => {

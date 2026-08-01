@@ -1,4 +1,5 @@
 import { ConfirmationDialog, Dialog } from "../../components/Dialog.tsx";
+import { CharacterCount } from "../../components/CharacterCount.tsx";
 
 export function StudioConfirmationDialog(props: {
   readonly title: string;
@@ -36,6 +37,10 @@ export function StudioTextInputDialog(props: {
   readonly busyLabel: string;
   readonly busy: boolean;
   readonly error?: string | null | undefined;
+  readonly hint?: string | undefined;
+  readonly countValue?: string | undefined;
+  readonly maxLength?: number | undefined;
+  readonly invalid?: boolean | undefined;
   readonly onChange: (value: string) => void;
   readonly onCancel: () => void;
   readonly onConfirm: () => void;
@@ -61,7 +66,7 @@ export function StudioTextInputDialog(props: {
             className="primary-button"
             type="submit"
             form="studio-text-input-dialog-form"
-            disabled={props.busy || props.value.trim() === ""}
+            disabled={props.busy || props.invalid || props.value.trim() === ""}
           >
             {props.busy ? props.busyLabel : props.confirmLabel}
           </button>
@@ -72,7 +77,7 @@ export function StudioTextInputDialog(props: {
         id="studio-text-input-dialog-form"
         onSubmit={(event) => {
           event.preventDefault();
-          if (!props.busy && props.value.trim() !== "") props.onConfirm();
+          if (!props.busy && !props.invalid && props.value.trim() !== "") props.onConfirm();
         }}
       >
         <label>
@@ -81,9 +86,22 @@ export function StudioTextInputDialog(props: {
             data-dialog-initial-focus
             value={props.value}
             disabled={props.busy}
+            aria-invalid={props.invalid || undefined}
             onChange={(event) => props.onChange(event.target.value)}
           />
         </label>
+        {props.hint !== undefined || props.maxLength !== undefined ? (
+          <div className="studio-text-input-dialog-meta">
+            {props.hint === undefined ? <span /> : <small>{props.hint}</small>}
+            {props.maxLength === undefined ? null : (
+              <CharacterCount
+                value={props.countValue ?? props.value}
+                max={props.maxLength}
+                trim={false}
+              />
+            )}
+          </div>
+        ) : null}
         {props.error ? (
           <p className="form-error" role="alert">
             {props.error}

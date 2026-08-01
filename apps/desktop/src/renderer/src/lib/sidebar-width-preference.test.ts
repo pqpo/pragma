@@ -41,4 +41,19 @@ describe("sidebar width preference", () => {
 
     expect(setItem).toHaveBeenCalledWith("pragma.desktop.sidebar.width.studio", "420");
   });
+
+  it("keeps the knowledge-base file list within its compact editor bounds", () => {
+    const fileList = SIDEBAR_WIDTH_PREFERENCES.knowledgeBaseFiles;
+    const setItem = vi.fn();
+
+    expect(clampSidebarWidth(120, fileList)).toBe(180);
+    expect(clampSidebarWidth(280, fileList)).toBe(280);
+    expect(clampSidebarWidth(500, fileList)).toBe(360);
+    expect(readSidebarWidth({ getItem: () => "312" }, fileList)).toBe(312);
+    writeSidebarWidth({ setItem }, 312, fileList);
+    expect(setItem).toHaveBeenCalledWith(
+      "pragma.desktop.sidebar.width.knowledge-base-files",
+      "312",
+    );
+  });
 });
