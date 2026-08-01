@@ -22,6 +22,8 @@ runtime-profile:7h8j9k0m1n2p3q4r
 - Never embed credentials, local paths, provider secrets, or live database identifiers in portable
   resources. Reference a Capability, ContextStore, RuntimeProfile, or host binding instead.
 - Include every interdependent edit in one change-set and validate the complete candidate project.
+- Capability and ContextStore resource names are limited to 50 Unicode characters and descriptions
+  to 500 after trimming. These are the same limits used by Desktop forms and the compiler.
 
 ## Project resources and Host options
 

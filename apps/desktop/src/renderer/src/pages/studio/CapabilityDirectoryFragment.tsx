@@ -15,6 +15,7 @@ import {
 } from "@phosphor-icons/react";
 import { useState } from "react";
 import { useTranslation } from "react-i18next";
+import { PRAGMA_TEXT_LIMITS, truncatePragmaTrimmedUnicode } from "@pragma/shared";
 
 import {
   CodeServiceObjectJsonSchemaSchema,
@@ -1012,7 +1013,16 @@ function McpForm(props: {
         {t("name")}
         <input
           value={value.name}
-          onChange={(e) => props.onChange({ ...value, name: e.target.value })}
+          maxLength={PRAGMA_TEXT_LIMITS.capability.name * 2}
+          onChange={(e) =>
+            props.onChange({
+              ...value,
+              name: truncatePragmaTrimmedUnicode(
+                e.target.value,
+                PRAGMA_TEXT_LIMITS.capability.name,
+              ),
+            })
+          }
           placeholder="Web Search"
         />
       </label>
@@ -1020,7 +1030,16 @@ function McpForm(props: {
         {t("description")}
         <textarea
           value={value.description}
-          onChange={(e) => props.onChange({ ...value, description: e.target.value })}
+          maxLength={PRAGMA_TEXT_LIMITS.capability.description * 2}
+          onChange={(e) =>
+            props.onChange({
+              ...value,
+              description: truncatePragmaTrimmedUnicode(
+                e.target.value,
+                PRAGMA_TEXT_LIMITS.capability.description,
+              ),
+            })
+          }
         />
       </label>
       <div className="capability-form-field">
@@ -1131,7 +1150,15 @@ function HttpForm(props: {
         {t("serviceName")}
         <input
           value={value.name}
-          onChange={(e) => set({ name: e.target.value })}
+          maxLength={PRAGMA_TEXT_LIMITS.capability.name * 2}
+          onChange={(e) =>
+            set({
+              name: truncatePragmaTrimmedUnicode(
+                e.target.value,
+                PRAGMA_TEXT_LIMITS.capability.name,
+              ),
+            })
+          }
           placeholder="Customer API"
         />
       </label>
@@ -1139,7 +1166,15 @@ function HttpForm(props: {
         {t("description")}
         <textarea
           value={value.description}
-          onChange={(e) => set({ description: e.target.value })}
+          maxLength={PRAGMA_TEXT_LIMITS.capability.description * 2}
+          onChange={(e) =>
+            set({
+              description: truncatePragmaTrimmedUnicode(
+                e.target.value,
+                PRAGMA_TEXT_LIMITS.capability.description,
+              ),
+            })
+          }
         />
       </label>
       <label>
@@ -1350,7 +1385,15 @@ function CodeForm(props: {
         {t("serviceName")}
         <input
           value={value.name}
-          onChange={(event) => set({ name: event.target.value })}
+          maxLength={PRAGMA_TEXT_LIMITS.capability.name * 2}
+          onChange={(event) =>
+            set({
+              name: truncatePragmaTrimmedUnicode(
+                event.target.value,
+                PRAGMA_TEXT_LIMITS.capability.name,
+              ),
+            })
+          }
           placeholder="Data formatter"
         />
       </label>
@@ -1358,7 +1401,15 @@ function CodeForm(props: {
         {t("description")}
         <textarea
           value={value.description}
-          onChange={(event) => set({ description: event.target.value })}
+          maxLength={PRAGMA_TEXT_LIMITS.capability.description * 2}
+          onChange={(event) =>
+            set({
+              description: truncatePragmaTrimmedUnicode(
+                event.target.value,
+                PRAGMA_TEXT_LIMITS.capability.description,
+              ),
+            })
+          }
         />
       </label>
       <div className="capability-form-grid">

@@ -3,9 +3,9 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 
 import { PragmaFlowRunDryCaseSchema } from "@pragma/evaluation/ast";
+import { PRAGMA_TEXT_LIMITS } from "@pragma/shared";
 import { describe, expect, it } from "vitest";
 import {
-  PRAGMA_AUTOMATION_PROMPT_MAX_LENGTH,
   PragmaFlowResourceSchema,
   PragmaRuntimeProfileResourceSchema,
 } from "@pragma/interpreter/ast";
@@ -643,7 +643,7 @@ describe("Desktop DefaultAgent DSL project adapter", () => {
     await expect(
       adapter.prepare({
         expectedProjectRevision: 0,
-        sources: [automationWithPrompt("p".repeat(PRAGMA_AUTOMATION_PROMPT_MAX_LENGTH + 1))],
+        sources: [automationWithPrompt("p".repeat(PRAGMA_TEXT_LIMITS.automation.prompt + 1))],
       }),
     ).resolves.toMatchObject({
       status: "invalid",
@@ -906,7 +906,7 @@ function adapterOptions(
 function capability(id: string, status: "ready" | "needs_attention"): Capability {
   return {
     manifest: {
-      schemaVersion: "pragma.capability/v1",
+      schemaVersion: "pragma.capability/v2",
       id,
       runtimeKey: `repository_${id.at(-1)}`,
       name: "Repository access",
@@ -936,7 +936,7 @@ function capability(id: string, status: "ready" | "needs_attention"): Capability
 function emptyDescriptionMcpCapability(): Capability {
   return {
     manifest: {
-      schemaVersion: "pragma.capability/v1",
+      schemaVersion: "pragma.capability/v2",
       id: "00000000-0000-4000-8000-000000000003",
       runtimeKey: "empty_description_mcp",
       name: "Empty description MCP",

@@ -1,13 +1,27 @@
-import { ContextTriggerSchema } from "@pragma/shared";
+import { ContextTriggerSchema, PRAGMA_TEXT_LIMITS, pragmaUnicodeLength } from "@pragma/shared";
 import { z } from "zod";
 
 export const ContextStoreIdSchema = z.string().uuid();
 
+const KnowledgeBaseNameSchema = z
+  .string()
+  .trim()
+  .min(1)
+  .refine((value) => pragmaUnicodeLength(value) <= PRAGMA_TEXT_LIMITS.contextStore.name, {
+    message: `Must contain at most ${PRAGMA_TEXT_LIMITS.contextStore.name} characters.`,
+  });
+const KnowledgeBaseDescriptionSchema = z
+  .string()
+  .trim()
+  .refine((value) => pragmaUnicodeLength(value) <= PRAGMA_TEXT_LIMITS.contextStore.description, {
+    message: `Must contain at most ${PRAGMA_TEXT_LIMITS.contextStore.description} characters.`,
+  });
+
 const ContextStoreBaseSchema = z.object({
-  schemaVersion: z.literal("pragma.context-store/v2"),
+  schemaVersion: z.literal("pragma.context-store/v3"),
   id: ContextStoreIdSchema,
-  name: z.string().trim().min(1).max(120),
-  description: z.string().trim().max(2_000),
+  name: KnowledgeBaseNameSchema,
+  description: KnowledgeBaseDescriptionSchema,
   createdAt: z.string().datetime(),
   updatedAt: z.string().datetime(),
 });
@@ -23,8 +37,8 @@ export const FileContextStoreSchema = ContextStoreBaseSchema.extend({
 export const ContextStoreSchema = FileContextStoreSchema;
 
 const CreateContextStoreBaseShape = {
-  name: z.string().trim().min(1).max(120),
-  description: z.string().trim().max(2_000),
+  name: KnowledgeBaseNameSchema,
+  description: KnowledgeBaseDescriptionSchema,
 };
 
 export const CreateContextStoreSchema = z.discriminatedUnion("mode", [

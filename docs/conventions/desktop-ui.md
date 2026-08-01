@@ -297,6 +297,10 @@ box-shadow: 0 16px 40px rgb(20 31 25 / 12%);
 - Enter 触发提交或发送的输入框必须忽略输入法组合期间的按键，包括 `isComposing` 和 Chromium
   `keyCode === 229` 的兼容情况。中文、日文、韩文输入法第一次 Enter 只确认候选文字，组合结束后的下一次
   Enter 才能提交。
+- 资源名称、描述、标签、指令和提示词的长度不得在页面内写数字常量。统一使用
+  `@pragma/shared` 的 `PRAGMA_TEXT_LIMITS`、Unicode 计数和截断函数；Desktop 合约、Interpreter Schema、
+  编译器迁移和 DSL 创作说明必须引用同一来源。长度按 trim 后的 Unicode code point 计算，不能用
+  JavaScript `string.length` 直接计数，也不能静默截断已持久化的旧数据。
 
 ### 6.3 统一交互组件
 

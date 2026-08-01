@@ -49,6 +49,18 @@ const LegacyContextStoreV1Schema = z.object({
   updatedAt: z.string().datetime(),
 });
 
+const LegacyContextStoreV2Schema = z.object({
+  schemaVersion: z.literal("pragma.context-store/v2"),
+  id: z.string().uuid(),
+  name: z.string().trim().min(1).max(120),
+  description: z.string().trim().max(2_000),
+  type: z.literal("file"),
+  status: z.enum(["ready", "needs_attention"]),
+  source: z.object({ origin: z.enum(["created", "copied", "migrated"]) }),
+  createdAt: z.string().datetime(),
+  updatedAt: z.string().datetime(),
+});
+
 const ContextStoreMigrationJournalSchema = z.object({
   schemaVersion: z.literal("pragma.context-store-migration/v1"),
   storeId: z.string().uuid(),
@@ -56,12 +68,20 @@ const ContextStoreMigrationJournalSchema = z.object({
   targetSchema: z.literal("pragma.context-store/v2"),
   sourcePath: z.string().min(1),
   temporaryFiles: z.string().min(1),
-  targetManifest: ContextStoreSchema,
+  targetManifest: LegacyContextStoreV2Schema,
 });
 
 const ContextStoreMigrationReadySchema = z.object({
   schemaVersion: z.literal("pragma.context-store-migration-ready/v1"),
   storeId: z.string().uuid(),
+});
+
+const ContextStoreMetadataMigrationJournalSchema = z.object({
+  schemaVersion: z.literal("pragma.context-store-metadata-migration/v1"),
+  storeId: z.string().uuid(),
+  sourceSchema: z.literal("pragma.context-store/v2"),
+  targetSchema: z.literal("pragma.context-store/v3"),
+  targetManifest: ContextStoreSchema,
 });
 
 type ContextStoreMigrationJournal = z.infer<typeof ContextStoreMigrationJournalSchema>;
@@ -147,7 +167,7 @@ export function createContextStoreStore(options: {
   const migrateFileStore = async (
     id: string,
     legacy: z.infer<typeof LegacyContextStoreV1Schema>,
-  ): Promise<ContextStore> => {
+  ): Promise<z.infer<typeof LegacyContextStoreV2Schema>> => {
     if (legacy.type === "note") {
       throw new ContextStoreStoreError(
         "legacy_note_unsupported",
@@ -163,12 +183,12 @@ export function createContextStoreStore(options: {
     }
     return await withFileLock(join(storePath(id), ".v2-migration.lock"), async () => {
       const latestRaw = parseJson(await readFile(manifestPath(id), "utf8"), `${id}/store.json`);
-      const current = ContextStoreSchema.safeParse(latestRaw);
+      const current = LegacyContextStoreV2Schema.safeParse(latestRaw);
       if (current.success) return current.data;
 
       const journal = join(storePath(id), "v1-to-v2.json");
       const migrated = () =>
-        ContextStoreSchema.parse({
+        LegacyContextStoreV2Schema.parse({
           schemaVersion: "pragma.context-store/v2",
           id: legacy.id,
           name: legacy.name,
@@ -180,13 +200,17 @@ export function createContextStoreStore(options: {
           updatedAt: new Date().toISOString(),
         });
 
-      const finalize = async (pending: ContextStoreMigrationJournal): Promise<ContextStore> => {
+      const finalize = async (
+        pending: ContextStoreMigrationJournal,
+      ): Promise<z.infer<typeof LegacyContextStoreV2Schema>> => {
         await writeJsonAtomic(manifestPath(id), pending.targetManifest);
         await rm(join(contentRoot(id), MIGRATION_READY_FILE), { force: true });
         await rm(journal, { force: true });
         return pending.targetManifest;
       };
-      const install = async (pending: ContextStoreMigrationJournal): Promise<ContextStore> => {
+      const install = async (
+        pending: ContextStoreMigrationJournal,
+      ): Promise<z.infer<typeof LegacyContextStoreV2Schema>> => {
         assertMigrationTemporaryPath(storePath(id), pending.temporaryFiles);
         if (await hasMigrationReadyMarker(contentRoot(id), id)) {
           return await finalize(pending);
@@ -236,13 +260,77 @@ export function createContextStoreStore(options: {
     });
   };
 
+  const migrateV2Store = async (
+    id: string,
+    legacy: z.infer<typeof LegacyContextStoreV2Schema>,
+  ): Promise<ContextStore> =>
+    await withFileLock(join(storePath(id), ".v3-migration.lock"), async () => {
+      const latestRaw = parseJson(await readFile(manifestPath(id), "utf8"), `${id}/store.json`);
+      const current = ContextStoreSchema.safeParse(latestRaw);
+      if (current.success) return current.data;
+      const latestLegacy = LegacyContextStoreV2Schema.safeParse(latestRaw);
+      if (!latestLegacy.success || latestLegacy.data.id !== legacy.id) {
+        throw new ContextStoreStoreError(
+          "config_invalid",
+          `Knowledge base ${id} has invalid schema v2 data.`,
+        );
+      }
+      const journalPath = join(storePath(id), "v2-to-v3.json");
+      const pending = await readContextStoreMetadataMigrationJournal(journalPath);
+      if (pending !== undefined) {
+        if (pending.storeId !== id) {
+          throw new ContextStoreStoreError(
+            "config_invalid",
+            `Knowledge base ${id} has a migration journal for another knowledge base.`,
+          );
+        }
+        await writeJsonAtomic(manifestPath(id), pending.targetManifest);
+        await rm(journalPath, { force: true });
+        return pending.targetManifest;
+      }
+      const target = ContextStoreSchema.safeParse({
+        ...latestLegacy.data,
+        schemaVersion: "pragma.context-store/v3",
+      });
+      if (!target.success) {
+        const issue = target.error.issues[0];
+        throw new ContextStoreStoreError(
+          "config_invalid",
+          `Knowledge base ${id} exceeds the current text limits at ${issue?.path.join(".") || "metadata"}. The original data was not changed.`,
+        );
+      }
+      const backupPath = join(storePath(id), "migration-backups", "store.v2.json");
+      await writeJsonAtomic(backupPath, latestLegacy.data);
+      await writeJsonAtomic(
+        journalPath,
+        ContextStoreMetadataMigrationJournalSchema.parse({
+          schemaVersion: "pragma.context-store-metadata-migration/v1",
+          storeId: id,
+          sourceSchema: "pragma.context-store/v2",
+          targetSchema: "pragma.context-store/v3",
+          targetManifest: target.data,
+        }),
+      );
+      await writeJsonAtomic(manifestPath(id), target.data);
+      await rm(journalPath, { force: true });
+      return target.data;
+    });
+
   const readStore = async (id: string): Promise<ContextStore> => {
     try {
       const raw = parseJson(await readFile(manifestPath(id), "utf8"), `${id}/store.json`);
       const current = ContextStoreSchema.safeParse(raw);
-      if (current.success) return current.data;
+      if (current.success) {
+        await rm(join(storePath(id), "v2-to-v3.json"), { force: true });
+        return current.data;
+      }
+      const legacyV2 = LegacyContextStoreV2Schema.safeParse(raw);
+      if (legacyV2.success) return await migrateV2Store(id, legacyV2.data);
       const legacy = LegacyContextStoreV1Schema.safeParse(raw);
-      if (legacy.success) return await migrateFileStore(id, legacy.data);
+      if (legacy.success) {
+        const migrated = await migrateFileStore(id, legacy.data);
+        return await migrateV2Store(id, migrated);
+      }
       throw new ContextStoreStoreError(
         "config_invalid",
         `Context store ${id} uses an unsupported schema.`,
@@ -276,7 +364,7 @@ export function createContextStoreStore(options: {
       const legacy = LegacyContextStoreV1Schema.safeParse(raw);
       if (!legacy.success || legacy.data.type === "note") return undefined;
       return ContextStoreSchema.parse({
-        schemaVersion: "pragma.context-store/v2",
+        schemaVersion: "pragma.context-store/v3",
         id: legacy.data.id,
         name: legacy.data.name,
         description: legacy.data.description,
@@ -363,6 +451,7 @@ export function createContextStoreStore(options: {
               if (error.code === "legacy_note_unsupported") return undefined;
               const legacy = await readLegacyCatalogEntry(entry.name);
               if (legacy !== undefined) return legacy;
+              if (error.code === "config_invalid") return undefined;
             }
             throw error;
           }
@@ -388,7 +477,7 @@ export function createContextStoreStore(options: {
       const timestamp = new Date().toISOString();
       const id = randomUUID();
       const store = ContextStoreSchema.parse({
-        schemaVersion: "pragma.context-store/v2",
+        schemaVersion: "pragma.context-store/v3",
         id,
         name: parsed.name,
         description: parsed.description,
@@ -425,6 +514,7 @@ export function createContextStoreStore(options: {
       const raw = parseJson(await readFile(manifestPath(storeId), "utf8"), `${storeId}/store.json`);
       if (
         !ContextStoreSchema.safeParse(raw).success &&
+        !LegacyContextStoreV2Schema.safeParse(raw).success &&
         !LegacyContextStoreV1Schema.safeParse(raw).success
       ) {
         throw new ContextStoreStoreError(
@@ -826,6 +916,26 @@ async function readMigrationJournal(
     throw new ContextStoreStoreError(
       "config_invalid",
       `Knowledge base ${storeId} has an invalid migration journal.`,
+    );
+  }
+  return parsed.data;
+}
+
+async function readContextStoreMetadataMigrationJournal(
+  path: string,
+): Promise<z.infer<typeof ContextStoreMetadataMigrationJournalSchema> | undefined> {
+  let raw: unknown;
+  try {
+    raw = parseJson(await readFile(path, "utf8"), "knowledge base migration journal");
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code === "ENOENT") return undefined;
+    throw error;
+  }
+  const parsed = ContextStoreMetadataMigrationJournalSchema.safeParse(raw);
+  if (!parsed.success) {
+    throw new ContextStoreStoreError(
+      "config_invalid",
+      "Knowledge base metadata migration journal is invalid.",
     );
   }
   return parsed.data;

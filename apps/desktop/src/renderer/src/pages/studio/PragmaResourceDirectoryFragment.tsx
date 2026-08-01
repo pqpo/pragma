@@ -14,13 +14,17 @@ import {
   X,
 } from "@phosphor-icons/react";
 import {
-  PRAGMA_EXPERT_INSTRUCTIONS_MAX_LENGTH,
   PragmaExpertTeamResourceSchema,
   canonicalPragmaResourceRef,
   type PragmaExpertResource,
   type PragmaExpertTeamResource,
   type PragmaFlowResource,
 } from "@pragma/interpreter/ast";
+import {
+  PRAGMA_TEXT_LIMITS,
+  pragmaUnicodeLength,
+  truncatePragmaTrimmedUnicode,
+} from "@pragma/shared";
 import type { PragmaProjectSnapshot } from "../../../../shared/contracts/index.ts";
 
 import { errorMessage } from "../../lib/errors.ts";
@@ -36,10 +40,6 @@ const TEAM_EXPERT_RESULT_LIMIT = 8;
 type FlowHumanPrompt = NonNullable<
   PragmaFlowResource["spec"]["graph"]["steps"][string]["human"]
 >["prompt"];
-
-function unicodeLength(value: string): number {
-  return [...value].length;
-}
 
 function expertRef(expert: PragmaExpertResource): string {
   return `expert:${expert.metadata.id}`;
@@ -556,14 +556,21 @@ export function TeamEditor(props: {
           className="team-instructions-input"
           rows={8}
           value={instructions}
-          onChange={(event) => setInstructions(event.target.value)}
-          maxLength={PRAGMA_EXPERT_INSTRUCTIONS_MAX_LENGTH * 2}
+          onChange={(event) =>
+            setInstructions(
+              truncatePragmaTrimmedUnicode(
+                event.target.value,
+                PRAGMA_TEXT_LIMITS.expertTeam.instructions,
+              ),
+            )
+          }
+          maxLength={PRAGMA_TEXT_LIMITS.expertTeam.instructions * 2}
           placeholder={t("teamInstructionsPlaceholder")}
         />
         <span className="team-instructions-hint">
           <span>{t("teamInstructionsHint")}</span>
           <span>
-            {unicodeLength(instructions)}/{PRAGMA_EXPERT_INSTRUCTIONS_MAX_LENGTH}
+            {pragmaUnicodeLength(instructions.trim())}/{PRAGMA_TEXT_LIMITS.expertTeam.instructions}
           </span>
         </span>
       </label>
@@ -923,14 +930,30 @@ function MetadataFields(props: {
     <>
       <label>
         {t("name")}
-        <input value={props.name} onChange={(event) => props.onName(event.target.value)} />
+        <input
+          value={props.name}
+          maxLength={PRAGMA_TEXT_LIMITS.expertTeam.name * 2}
+          onChange={(event) =>
+            props.onName(
+              truncatePragmaTrimmedUnicode(event.target.value, PRAGMA_TEXT_LIMITS.expertTeam.name),
+            )
+          }
+        />
       </label>
       <label>
         {t("description")}
         <textarea
           rows={3}
           value={props.description}
-          onChange={(event) => props.onDescription(event.target.value)}
+          maxLength={PRAGMA_TEXT_LIMITS.expertTeam.description * 2}
+          onChange={(event) =>
+            props.onDescription(
+              truncatePragmaTrimmedUnicode(
+                event.target.value,
+                PRAGMA_TEXT_LIMITS.expertTeam.description,
+              ),
+            )
+          }
         />
       </label>
     </>

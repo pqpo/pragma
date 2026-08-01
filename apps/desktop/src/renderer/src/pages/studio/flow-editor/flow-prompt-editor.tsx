@@ -5,6 +5,7 @@ import type {
   PragmaFlowResource,
 } from "@pragma/interpreter/ast";
 import { analyzePragmaFlowNodeAvailability } from "@pragma/interpreter/ast";
+import { PRAGMA_TEXT_LIMITS, truncatePragmaTrimmedUnicode } from "@pragma/shared";
 import {
   useId,
   useLayoutEffect,
@@ -313,9 +314,23 @@ export function normalizePromptSegments(
   for (const segment of segments) {
     const previous = normalized.at(-1);
     if ("text" in segment && previous !== undefined && "text" in previous) {
-      normalized[normalized.length - 1] = { text: previous.text + segment.text };
+      normalized[normalized.length - 1] = {
+        text: truncatePragmaTrimmedUnicode(
+          previous.text + segment.text,
+          PRAGMA_TEXT_LIMITS.flow.promptTextSegment,
+        ),
+      };
     } else {
-      normalized.push(segment);
+      normalized.push(
+        "text" in segment
+          ? {
+              text: truncatePragmaTrimmedUnicode(
+                segment.text,
+                PRAGMA_TEXT_LIMITS.flow.promptTextSegment,
+              ),
+            }
+          : segment,
+      );
     }
   }
   return normalized.length === 0 ? [{ text: "" }] : normalized;

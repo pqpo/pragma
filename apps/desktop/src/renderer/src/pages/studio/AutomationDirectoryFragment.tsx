@@ -1,10 +1,10 @@
 import { ArrowLeft, CaretDown, Check, Clock, Plus, Robot, Trash } from "@phosphor-icons/react";
+import { PragmaScheduleTriggerSchema } from "@pragma/interpreter/ast";
 import {
-  PRAGMA_AUTOMATION_PROMPT_MAX_LENGTH,
-  PRAGMA_RESOURCE_DESCRIPTION_MAX_LENGTH,
-  PRAGMA_RESOURCE_NAME_MAX_LENGTH,
-  PragmaScheduleTriggerSchema,
-} from "@pragma/interpreter/ast";
+  PRAGMA_TEXT_LIMITS,
+  pragmaUnicodeLength,
+  truncatePragmaTrimmedUnicode,
+} from "@pragma/shared";
 import { useEffect, useMemo, useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
 
@@ -369,25 +369,33 @@ export function AutomationDirectoryFragment(props: {
                   <label>
                     <span>{t("name")}</span>
                     <input
-                      maxLength={PRAGMA_RESOURCE_NAME_MAX_LENGTH}
+                      maxLength={PRAGMA_TEXT_LIMITS.automation.name * 2}
                       value={editor.name}
                       data-automation-field="name"
                       aria-invalid={showError("name") && validation.name !== undefined}
                       aria-describedby="automation-name-feedback"
                       onBlur={() => markTouched("name")}
-                      onChange={(event) => setEditor({ ...editor, name: event.target.value })}
+                      onChange={(event) =>
+                        setEditor({
+                          ...editor,
+                          name: truncatePragmaTrimmedUnicode(
+                            event.target.value,
+                            PRAGMA_TEXT_LIMITS.automation.name,
+                          ),
+                        })
+                      }
                     />
                     <FieldFeedback
                       id="automation-name-feedback"
                       value={editor.name}
-                      max={PRAGMA_RESOURCE_NAME_MAX_LENGTH}
+                      max={PRAGMA_TEXT_LIMITS.automation.name}
                       error={showError("name") ? validation.name : undefined}
                     />
                   </label>
                   <label>
                     <span>{t("description")}</span>
                     <input
-                      maxLength={PRAGMA_RESOURCE_DESCRIPTION_MAX_LENGTH}
+                      maxLength={PRAGMA_TEXT_LIMITS.automation.description * 2}
                       value={editor.description}
                       data-automation-field="description"
                       aria-invalid={
@@ -396,13 +404,19 @@ export function AutomationDirectoryFragment(props: {
                       aria-describedby="automation-description-feedback"
                       onBlur={() => markTouched("description")}
                       onChange={(event) =>
-                        setEditor({ ...editor, description: event.target.value })
+                        setEditor({
+                          ...editor,
+                          description: truncatePragmaTrimmedUnicode(
+                            event.target.value,
+                            PRAGMA_TEXT_LIMITS.automation.description,
+                          ),
+                        })
                       }
                     />
                     <FieldFeedback
                       id="automation-description-feedback"
                       value={editor.description}
-                      max={PRAGMA_RESOURCE_DESCRIPTION_MAX_LENGTH}
+                      max={PRAGMA_TEXT_LIMITS.automation.description}
                       error={showError("description") ? validation.description : undefined}
                     />
                   </label>
@@ -485,18 +499,26 @@ export function AutomationDirectoryFragment(props: {
                     <span>{t("prompt")}</span>
                     <textarea
                       rows={5}
-                      maxLength={PRAGMA_AUTOMATION_PROMPT_MAX_LENGTH}
+                      maxLength={PRAGMA_TEXT_LIMITS.automation.prompt * 2}
                       value={editor.prompt}
                       data-automation-field="prompt"
                       aria-invalid={showError("prompt") && validation.prompt !== undefined}
                       aria-describedby="automation-prompt-feedback"
                       onBlur={() => markTouched("prompt")}
-                      onChange={(event) => setEditor({ ...editor, prompt: event.target.value })}
+                      onChange={(event) =>
+                        setEditor({
+                          ...editor,
+                          prompt: truncatePragmaTrimmedUnicode(
+                            event.target.value,
+                            PRAGMA_TEXT_LIMITS.automation.prompt,
+                          ),
+                        })
+                      }
                     />
                     <FieldFeedback
                       id="automation-prompt-feedback"
                       value={editor.prompt}
-                      max={PRAGMA_AUTOMATION_PROMPT_MAX_LENGTH}
+                      max={PRAGMA_TEXT_LIMITS.automation.prompt}
                       error={showError("prompt") ? validation.prompt : undefined}
                     />
                   </label>
@@ -910,7 +932,7 @@ function FieldFeedback(props: {
     >
       <span>{error}</span>
       <span>
-        {props.value.length}/{props.max}
+        {pragmaUnicodeLength(props.value.trim())}/{props.max}
       </span>
     </small>
   );
@@ -1073,14 +1095,14 @@ export function validateAutomationEditor(
   editor: EditorState,
   executor: MissionExecutorOption | undefined,
 ): AutomationValidation {
-  const name = validateText(editor.name, PRAGMA_RESOURCE_NAME_MAX_LENGTH);
-  const description = validateText(editor.description, PRAGMA_RESOURCE_DESCRIPTION_MAX_LENGTH);
+  const name = validateText(editor.name, PRAGMA_TEXT_LIMITS.automation.name);
+  const description = validateText(editor.description, PRAGMA_TEXT_LIMITS.automation.description);
   const executorError = executor === undefined ? ("required" as const) : undefined;
   const inputSchema = executor?.kind === "flow" ? executor.inputSchema : undefined;
   const prompt =
     executor === undefined || inputSchema !== undefined
       ? undefined
-      : validateText(editor.prompt, PRAGMA_AUTOMATION_PROMPT_MAX_LENGTH);
+      : validateText(editor.prompt, PRAGMA_TEXT_LIMITS.automation.prompt);
   const flowInput =
     inputSchema !== undefined && !isSchemaInputValid(inputSchema, editor.flowInput)
       ? ("invalid" as const)
@@ -1133,7 +1155,7 @@ function focusFirstAutomationError(validation: AutomationValidation): void {
 
 function validateText(value: string, max: number): FieldValidationError | undefined {
   if (value.trim() === "") return "required";
-  if (value.length > max) return "tooLong";
+  if (pragmaUnicodeLength(value.trim()) > max) return "tooLong";
   return undefined;
 }
 

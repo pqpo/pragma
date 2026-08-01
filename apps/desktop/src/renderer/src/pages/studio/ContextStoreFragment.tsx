@@ -20,6 +20,7 @@ import {
 } from "@phosphor-icons/react";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
+import { PRAGMA_TEXT_LIMITS, truncatePragmaTrimmedUnicode } from "@pragma/shared";
 
 import type {
   ContextStore,
@@ -1099,7 +1100,10 @@ export function ContextStoreCreatorDrawer(props: {
       const result = await props.onInspectImport(folder);
       setSourcePath(folder);
       setInspection(result);
-      if (!name.trim()) setName(fileName(folder));
+      if (!name.trim())
+        setName(
+          truncatePragmaTrimmedUnicode(fileName(folder), PRAGMA_TEXT_LIMITS.contextStore.name),
+        );
     } catch (cause) {
       setInspection(null);
       setError(errorMessage(cause));
@@ -1213,13 +1217,33 @@ export function ContextStoreCreatorDrawer(props: {
               <div className="store-config-form">
                 <label>
                   {t("name")}
-                  <input value={name} onChange={(event) => setName(event.target.value)} autoFocus />
+                  <input
+                    value={name}
+                    maxLength={PRAGMA_TEXT_LIMITS.contextStore.name * 2}
+                    onChange={(event) =>
+                      setName(
+                        truncatePragmaTrimmedUnicode(
+                          event.target.value,
+                          PRAGMA_TEXT_LIMITS.contextStore.name,
+                        ),
+                      )
+                    }
+                    autoFocus
+                  />
                 </label>
                 <label>
                   {t("description")}
                   <textarea
                     value={description}
-                    onChange={(event) => setDescription(event.target.value)}
+                    maxLength={PRAGMA_TEXT_LIMITS.contextStore.description * 2}
+                    onChange={(event) =>
+                      setDescription(
+                        truncatePragmaTrimmedUnicode(
+                          event.target.value,
+                          PRAGMA_TEXT_LIMITS.contextStore.description,
+                        ),
+                      )
+                    }
                   />
                 </label>
                 {mode === "import" ? (

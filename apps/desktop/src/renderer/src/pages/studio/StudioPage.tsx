@@ -287,7 +287,7 @@ export function StudioPage(props: {
     const store =
       api === undefined
         ? ContextStoreSchema.parse({
-            schemaVersion: "pragma.context-store/v2",
+            schemaVersion: "pragma.context-store/v3",
             id: crypto.randomUUID(),
             name: input.name,
             description: input.description,

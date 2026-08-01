@@ -12,7 +12,7 @@ import {
 } from "./ContextStoreFragment.tsx";
 
 const store: ContextStore = {
-  schemaVersion: "pragma.context-store/v2",
+  schemaVersion: "pragma.context-store/v3",
   id: "00000000-0000-4000-8000-000000000001",
   name: "Product docs",
   description: "Managed product knowledge.",

@@ -8,9 +8,6 @@ import {
 import { z } from "zod";
 
 import {
-  EXPERT_DESCRIPTION_MAX_LENGTH,
-  EXPERT_NAME_MAX_LENGTH,
-  EXPERT_TAG_MAX_LENGTH,
   ExpertAdditionalInstructionsSchema,
   ExpertCapabilityReferenceSchema,
   ExpertInstructionsSchema,
@@ -85,9 +82,6 @@ export const CreateExpertDefinitionSchema = ExpertDefinitionSchema.omit({
   .extend({
     baseRevision: z.number().int().nonnegative(),
     requiredUnchangedRefs: z.array(PragmaResourceRefSchema).default([]),
-    name: z.string().trim().min(1).max(EXPERT_NAME_MAX_LENGTH),
-    description: z.string().trim().min(1).max(EXPERT_DESCRIPTION_MAX_LENGTH),
-    tags: z.array(z.string().trim().min(1).max(EXPERT_TAG_MAX_LENGTH)).max(30),
     instructions: ExpertInstructionsSchema,
     model: ExpertModelConfigSchema,
     capabilities: z.array(ExpertCapabilityReferenceSchema).max(500).optional(),

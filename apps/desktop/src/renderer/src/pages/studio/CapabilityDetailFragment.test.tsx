@@ -11,7 +11,7 @@ import {
 
 const capability: Capability = {
   manifest: {
-    schemaVersion: "pragma.capability/v1",
+    schemaVersion: "pragma.capability/v2",
     id: "00000000-0000-4000-8000-000000000000",
     runtimeKey: "customer_api_00000000",
     name: "Customer API",

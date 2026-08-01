@@ -1306,7 +1306,7 @@ async function recoverInterruptedDesktopProjectStorageV4ToV5(input: {
         "io",
         `Cannot recover the interrupted project compiler migration because its backup is missing: ${pending.backupPath}`,
         "pragma.dsl/v2",
-        "pragma.dsl/v3",
+        PRAGMA_COMPILER_WRITE_VERSION,
       );
     }
     await rm(projectPath, { recursive: true, force: true });

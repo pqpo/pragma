@@ -20,6 +20,7 @@ import type {
   PragmaResource,
 } from "@pragma/interpreter/ast";
 import type { Edge } from "@xyflow/react";
+import { PRAGMA_TEXT_LIMITS, truncatePragmaTrimmedUnicode } from "@pragma/shared";
 import { useTranslation } from "react-i18next";
 import { stringify } from "yaml";
 
@@ -82,9 +83,13 @@ export function FlowSettings(props: {
       <InspectorField label="Name">
         <input
           value={props.flow.metadata.name}
+          maxLength={PRAGMA_TEXT_LIMITS.flow.name * 2}
           onChange={(event) =>
             props.onPatch((copy) => {
-              copy.metadata.name = event.target.value;
+              copy.metadata.name = truncatePragmaTrimmedUnicode(
+                event.target.value,
+                PRAGMA_TEXT_LIMITS.flow.name,
+              );
             })
           }
         />
@@ -93,9 +98,13 @@ export function FlowSettings(props: {
         <textarea
           rows={3}
           value={props.flow.metadata.description}
+          maxLength={PRAGMA_TEXT_LIMITS.flow.description * 2}
           onChange={(event) =>
             props.onPatch((copy) => {
-              copy.metadata.description = event.target.value;
+              copy.metadata.description = truncatePragmaTrimmedUnicode(
+                event.target.value,
+                PRAGMA_TEXT_LIMITS.flow.description,
+              );
             })
           }
         />
