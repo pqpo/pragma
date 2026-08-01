@@ -206,18 +206,22 @@ function UsageMetric(props: { readonly label: string; readonly value: number }) 
   );
 }
 
+export function usageTrendPoints(values: readonly number[]) {
+  const max = Math.max(...values, 1);
+  return values.map((value, index) => {
+    const x = values.length <= 1 ? 50 : 1 + (index / (values.length - 1)) * 98;
+    const y = 92 - (value / max) * 78;
+    return { x, y };
+  });
+}
+
 function UsageTrendChart(props: { readonly overview: UsageOverview; readonly label: string }) {
-  const points = useMemo(() => {
-    const values = props.overview.daily.map((point) => point.totalTokens);
-    const max = Math.max(...values, 1);
-    return values.map((value, index) => {
-      const x = values.length <= 1 ? 50 : (index / (values.length - 1)) * 100;
-      const y = 92 - (value / max) * 78;
-      return { x, y };
-    });
-  }, [props.overview.daily]);
+  const points = useMemo(
+    () => usageTrendPoints(props.overview.daily.map((point) => point.totalTokens)),
+    [props.overview.daily],
+  );
   const line = points.map((point) => `${point.x},${point.y}`).join(" ");
-  const area = points.length === 0 ? "" : `0,96 ${line} 100,96`;
+  const area = points.length === 0 ? "" : `1,96 ${line} 99,96`;
   return (
     <svg
       className="usage-trend-chart"
