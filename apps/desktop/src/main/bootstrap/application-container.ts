@@ -222,7 +222,7 @@ export async function createDesktopApplicationContainer(
     warn: (message, error) =>
       mainLogger.warn("desktop.home_executor_usage_failed", message, { error }),
   });
-  installRuntimeHandlers(runtimeEnvironments, runtimes);
+  installRuntimeHandlers(runtimes);
   const expertStore = createExpertDefinitionStore({
     project: pragmaProjectStore,
     systemExperts,

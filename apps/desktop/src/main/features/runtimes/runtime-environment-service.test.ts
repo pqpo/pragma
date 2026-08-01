@@ -19,13 +19,12 @@ describe("RuntimeEnvironmentService", () => {
     const pragmaHome = await mkdtemp(join(tmpdir(), "pragma-runtime-service-"));
     const store = createRuntimeEnvironmentStore({
       pragmaHome,
-      builtIns: [definition("runtime", "Runtime v1")],
-      defaultRuntimeId: "runtime",
+      builtIns: [definition("pi", "Runtime v1")],
     });
     const service = createRuntimeEnvironmentService({ store, factories: [factory()] });
 
     const first = await service.bind();
-    const original = (await store.getRevision("runtime"))!;
+    const original = (await store.getRevision("pi"))!;
     await store.update({
       expectedRevision: original.revision,
       definition: { ...original.definition, displayName: "Runtime v2" },
@@ -45,14 +44,11 @@ describe("RuntimeEnvironmentService", () => {
     const pragmaHome = await mkdtemp(join(tmpdir(), "pragma-runtime-isolation-"));
     const store = createRuntimeEnvironmentStore({
       pragmaHome,
-      builtIns: [definition("healthy", "Healthy"), definition("bad", "Bad", "bad.runtime")],
-      defaultRuntimeId: "healthy",
+      builtIns: [definition("pi", "Healthy"), definition("bad", "Bad", "bad.runtime")],
     });
     const service = createRuntimeEnvironmentService({ store, factories: [factory()] });
     const inspections = await service.list();
-    expect(
-      inspections.find((item) => item.head.entry.runtimeId === "healthy")?.adapter,
-    ).toBeDefined();
+    expect(inspections.find((item) => item.head.entry.runtimeId === "pi")?.adapter).toBeDefined();
     expect(inspections.find((item) => item.head.entry.runtimeId === "bad")?.error).toContain(
       "not registered",
     );
@@ -75,8 +71,7 @@ describe("RuntimeEnvironmentService", () => {
     const pragmaHome = await mkdtemp(join(tmpdir(), "pragma-runtime-cache-"));
     const store = createRuntimeEnvironmentStore({
       pragmaHome,
-      builtIns: [definition("runtime", "Runtime")],
-      defaultRuntimeId: "runtime",
+      builtIns: [definition("pi", "Runtime")],
     });
     let createCount = 0;
     let modelCatalogCallCount = 0;
@@ -156,7 +151,7 @@ describe("RuntimeEnvironmentService", () => {
     await service.bind();
     expect(createCount).toBe(3);
 
-    const original = (await store.getRevision("runtime"))!;
+    const original = (await store.getRevision("pi"))!;
     await store.update({
       expectedRevision: original.revision,
       definition: { ...original.definition, displayName: "Runtime v2" },
@@ -169,8 +164,7 @@ describe("RuntimeEnvironmentService", () => {
     const pragmaHome = await mkdtemp(join(tmpdir(), "pragma-runtime-cache-retry-"));
     const store = createRuntimeEnvironmentStore({
       pragmaHome,
-      builtIns: [definition("runtime", "Runtime")],
-      defaultRuntimeId: "runtime",
+      builtIns: [definition("pi", "Runtime")],
     });
     let createCount = 0;
     const retryingFactory: RuntimeEnvironmentAdapterFactory = {
@@ -199,12 +193,12 @@ describe("RuntimeEnvironmentService", () => {
     });
 
     await expect(service.bind()).rejects.toThrow("transient adapter failure");
-    await expect(service.bind()).resolves.toMatchObject({ binding: { runtimeId: "runtime" } });
+    await expect(service.bind()).resolves.toMatchObject({ binding: { runtimeId: "pi" } });
     expect(createCount).toBe(2);
     expect(warn).toHaveBeenCalledWith(
       "runtime.environment_adapter_materialization_failed",
       expect.any(String),
-      expect.objectContaining({ runtimeId: "runtime", error: expect.any(Error) }),
+      expect.objectContaining({ runtimeId: "pi", error: expect.any(Error) }),
     );
   });
 });

@@ -3,7 +3,6 @@ import { ipcRenderer, type IpcRendererEvent } from "electron";
 import {
   DesktopRuntimeAvailabilitySchema,
   DesktopRuntimeIdSchema,
-  SetDefaultRuntimeSchema,
 } from "../../shared/contracts/runtime.ts";
 import type { PragmaDesktopAPI } from "../../shared/contracts/api.ts";
 export const runtimesApi = {
@@ -18,11 +17,4 @@ export const runtimesApi = {
     DesktopRuntimeAvailabilitySchema.array().parse(
       await ipcRenderer.invoke("runtimes:availability"),
     ),
-  setDefaultRuntime: async (input) =>
-    DesktopRuntimeAvailabilitySchema.array().parse(
-      await ipcRenderer.invoke("runtimes:set-default", SetDefaultRuntimeSchema.parse(input)),
-    ),
-} satisfies Pick<
-  PragmaDesktopAPI,
-  "subscribeRuntimeModelCatalog" | "getRuntimeAvailability" | "setDefaultRuntime"
->;
+} satisfies Pick<PragmaDesktopAPI, "subscribeRuntimeModelCatalog" | "getRuntimeAvailability">;

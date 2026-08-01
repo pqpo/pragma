@@ -1,0 +1,14 @@
+{
+  "schemaVersion": "pragma.runtime-environment-catalog/v1",
+  "defaultRuntimeId": "codex",
+  "entries": [
+    {
+      "runtimeId": "pi",
+      "latestRevision": 1
+    },
+    {
+      "runtimeId": "codex",
+      "latestRevision": 1
+    }
+  ]
+}

@@ -4,13 +4,11 @@ import { useTranslation } from "react-i18next";
 
 import type {
   DesktopLocalePreference,
-  DesktopRuntimeAvailability,
   DesktopSettingsSnapshot,
   DesktopToolPermissionMode,
 } from "../../../../shared/contracts/index.ts";
 import { localeDisplayNames, setDesktopLocale } from "../../i18n/index.ts";
 import { SelectMenu, type SelectMenuOption } from "../../components/SelectMenu.tsx";
-import { runtimeDisplayName } from "../../lib/runtime-display.ts";
 import { SettingsScreenFrame } from "./SettingsScreenFrame.tsx";
 
 const languageOptions: readonly {
@@ -25,20 +23,16 @@ const languageOptions: readonly {
 export function GeneralSettingsFragment() {
   const { t } = useTranslation(["settings", "common"]);
   const [settings, setSettings] = useState<DesktopSettingsSnapshot>();
-  const [runtimes, setRuntimes] = useState<readonly DesktopRuntimeAvailability[]>([]);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string>();
 
   useEffect(() => {
     let cancelled = false;
-    void Promise.all([
-      window.pragmaDesktop.getDesktopSettings(),
-      window.pragmaDesktop.getRuntimeAvailability(),
-    ])
-      .then(([snapshot, availability]) => {
+    void window.pragmaDesktop
+      .getDesktopSettings()
+      .then((snapshot) => {
         if (cancelled) return;
         setSettings(snapshot);
-        setRuntimes(availability);
       })
       .catch(() => {
         if (!cancelled) setError(t("general.saveError", { ns: "settings" }));
@@ -56,20 +50,6 @@ export function GeneralSettingsFragment() {
       const snapshot = await window.pragmaDesktop.updateDesktopSettings({ localePreference });
       await setDesktopLocale(snapshot.resolvedLocale);
       setSettings(snapshot);
-    } catch {
-      setError(t("general.saveError", { ns: "settings" }));
-    } finally {
-      setSaving(false);
-    }
-  };
-
-  const updateRuntime = async (runtimeId: string) => {
-    if (runtimeId === runtimes.find((runtime) => runtime.isDefault)?.id) return;
-    setSaving(true);
-    setError(undefined);
-    try {
-      const availability = await window.pragmaDesktop.setDefaultRuntime({ runtimeId });
-      setRuntimes(availability);
     } catch {
       setError(t("general.saveError", { ns: "settings" }));
     } finally {
@@ -121,7 +101,6 @@ export function GeneralSettingsFragment() {
     }
   };
 
-  const defaultRuntimeId = runtimes.find((runtime) => runtime.isDefault)?.id ?? "";
   const workspace = settings?.defaultWorkspace ?? "";
   const workspaceName = workspace.split(/[\\/]/).at(-1);
 
@@ -152,7 +131,7 @@ export function GeneralSettingsFragment() {
           </span>
           <SelectMenu<DesktopLocalePreference>
             ariaLabel={t("general.language", { ns: "settings" })}
-            className="settings-select"
+            className="settings-select language-settings-select"
             value={settings?.localePreference ?? "system"}
             disabled={settings === undefined || saving}
             placement="bottom"
@@ -163,29 +142,6 @@ export function GeneralSettingsFragment() {
               ] satisfies readonly SelectMenuOption<DesktopLocalePreference>[]
             }
             onChange={(value) => void updateLanguage(value)}
-          />
-        </div>
-        <div className="setting-row general-language-setting">
-          <span className="setting-copy">
-            <strong>{t("general.runtime", { ns: "settings" })}</strong>
-            <span>{t("general.runtimeDescription", { ns: "settings" })}</span>
-          </span>
-          <SelectMenu
-            ariaLabel={t("general.runtime", { ns: "settings" })}
-            className="settings-select"
-            value={defaultRuntimeId}
-            disabled={runtimes.length === 0 || saving}
-            placement="bottom"
-            options={runtimes.map((runtime) => ({
-              value: runtime.id,
-              label: runtimeDisplayName(t, runtime),
-              description:
-                runtime.status === "available"
-                  ? undefined
-                  : t("status.unavailable", { ns: "common" }),
-              disabled: runtime.status !== "available",
-            }))}
-            onChange={(value) => void updateRuntime(value)}
           />
         </div>
         <div className="setting-row tool-permission-setting">

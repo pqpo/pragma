@@ -24,7 +24,7 @@ import {
   MissionSchema,
   MissionUpdateSchema,
   PragmaProjectChangesSchema,
-  SetDefaultRuntimeSchema,
+  RuntimeEnvironmentCatalogSchema,
   DesktopBridgeSnapshotSchema,
   DesktopSettingsSnapshotSchema,
   UpdateDesktopSettingsSchema,
@@ -66,11 +66,20 @@ describe("desktop settings contracts", () => {
 });
 
 describe("runtime settings contracts", () => {
-  it("requires a concrete Runtime ID", () => {
-    expect(SetDefaultRuntimeSchema.parse({ runtimeId: "codex" })).toEqual({
-      runtimeId: "codex",
-    });
-    expect(SetDefaultRuntimeSchema.safeParse({ runtimeId: "" }).success).toBe(false);
+  it("uses the fixed-default Runtime catalog without a mutable default field", () => {
+    expect(
+      RuntimeEnvironmentCatalogSchema.parse({
+        schemaVersion: "pragma.runtime-environment-catalog/v2",
+        entries: [],
+      }),
+    ).toEqual({ schemaVersion: "pragma.runtime-environment-catalog/v2", entries: [] });
+    expect(
+      RuntimeEnvironmentCatalogSchema.safeParse({
+        schemaVersion: "pragma.runtime-environment-catalog/v1",
+        defaultRuntimeId: "codex",
+        entries: [],
+      }).success,
+    ).toBe(false);
   });
 
   it("preserves arbitrary Interpreter capability lists for renderer compatibility checks", () => {
