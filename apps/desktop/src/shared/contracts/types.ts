@@ -140,11 +140,11 @@ import {
   DesktopRuntimeAvailabilitySchema,
   DesktopRuntimeModelSchema,
   LocalRuntimeCapabilitySchema,
+  RuntimeEnvironmentCatalogSchema,
   RuntimeEnvironmentCatalogEntrySchema,
   RuntimeEnvironmentDefinitionSchema,
   RuntimeEnvironmentRevisionSchema,
   RuntimeGatewayConfigSchema,
-  SetDefaultRuntimeSchema,
 } from "./runtime.ts";
 import {
   DesktopLocalePreferenceSchema,
@@ -209,11 +209,11 @@ export type PragmaBundleInstallationAction = z.infer<typeof PragmaBundleInstalla
 export type RuntimeGatewayConfig = z.infer<typeof RuntimeGatewayConfigSchema>;
 export type LocalRuntimeCapability = z.infer<typeof LocalRuntimeCapabilitySchema>;
 export type DesktopRuntimeAvailability = z.infer<typeof DesktopRuntimeAvailabilitySchema>;
-export type SetDefaultRuntime = z.infer<typeof SetDefaultRuntimeSchema>;
 export type DesktopRuntimeModel = z.infer<typeof DesktopRuntimeModelSchema>;
 export type RuntimeEnvironmentDefinition = z.infer<typeof RuntimeEnvironmentDefinitionSchema>;
 export type RuntimeEnvironmentRevision = z.infer<typeof RuntimeEnvironmentRevisionSchema>;
 export type RuntimeEnvironmentCatalogEntry = z.infer<typeof RuntimeEnvironmentCatalogEntrySchema>;
+export type RuntimeEnvironmentCatalog = z.infer<typeof RuntimeEnvironmentCatalogSchema>;
 export type DesktopBridgeSnapshot = z.infer<typeof DesktopBridgeSnapshotSchema>;
 export type DesktopLocalePreference = z.infer<typeof DesktopLocalePreferenceSchema>;
 export type DesktopResolvedLocale = z.infer<typeof DesktopResolvedLocaleSchema>;

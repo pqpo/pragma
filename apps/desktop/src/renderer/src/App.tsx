@@ -1,7 +1,13 @@
-import { useState } from "react";
+import { useState, type CSSProperties } from "react";
+import { useTranslation } from "react-i18next";
 
 import { Sidebar, type AppView } from "./components/Sidebar.tsx";
+import { SidebarResizeHandle } from "./components/SidebarResizeHandle.tsx";
 import { readSidebarCollapsed, writeSidebarCollapsed } from "./lib/sidebar-preference.ts";
+import {
+  SIDEBAR_WIDTH_PREFERENCES,
+  usePersistentSidebarWidth,
+} from "./lib/sidebar-width-preference.ts";
 import { SettingsPage, type SettingsView } from "./pages/settings/SettingsPage.tsx";
 import { MissionsPage } from "./pages/missions/MissionsPage.tsx";
 import { StudioPage } from "./pages/studio/StudioPage.tsx";
@@ -11,10 +17,12 @@ import { UsagePage } from "./pages/usage/UsagePage.tsx";
 import type { Mission } from "../../shared/contracts/index.ts";
 
 export function App() {
+  const { t } = useTranslation("common");
   const [activeView, setActiveView] = useState<AppView>("home");
   const [sidebarCollapsed, setSidebarCollapsed] = useState(() =>
     readSidebarCollapsed(typeof window === "undefined" ? undefined : window.localStorage),
   );
+  const [sidebarWidth, setSidebarWidth] = usePersistentSidebarWidth(SIDEBAR_WIDTH_PREFERENCES.main);
   const [missionExecutorRef, setMissionExecutorRef] = useState<string>();
   const [missionToOpen, setMissionToOpen] = useState<Mission>();
   const [studioExpertRef, setStudioExpertRef] = useState<string>();
@@ -43,7 +51,10 @@ export function App() {
   };
 
   return (
-    <main className={sidebarCollapsed ? "desktop-shell is-sidebar-collapsed" : "desktop-shell"}>
+    <main
+      className={sidebarCollapsed ? "desktop-shell is-sidebar-collapsed" : "desktop-shell"}
+      style={{ "--sidebar-width": `${sidebarWidth}px` } as CSSProperties}
+    >
       <div className="window-drag-region" aria-hidden="true" />
       <Sidebar
         activeView={activeView}
@@ -51,6 +62,14 @@ export function App() {
         onNavigate={navigate}
         onToggle={toggleSidebar}
       />
+      {!sidebarCollapsed ? (
+        <SidebarResizeHandle
+          label={t("navigation.resize")}
+          width={sidebarWidth}
+          preference={SIDEBAR_WIDTH_PREFERENCES.main}
+          onResize={setSidebarWidth}
+        />
+      ) : null}
 
       {activeView === "home" ? (
         <HomePage

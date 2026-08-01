@@ -89,11 +89,12 @@ export function EvaluationsPage() {
       {project === null && error === null ? (
         <p className="studio-empty-copy">{t("actions.loading")}</p>
       ) : null}
-      {project !== null && draft === null ? (
+      {project !== null ? (
         <EvaluationDirectoryFragment
           project={project}
           onCreate={(resourceId, flow) => setDraft(createFlowRunDryEvaluation(resourceId, flow))}
           onOpen={setDraft}
+          onSelectTarget={() => setDraft(null)}
           onDelete={async (evaluation) => {
             const api = typeof window === "undefined" ? undefined : window.pragmaDesktop;
             if (api === undefined) throw new Error("Desktop bridge is unavailable.");
@@ -103,22 +104,25 @@ export function EvaluationsPage() {
             });
             setProject(snapshot);
           }}
-        />
-      ) : null}
-      {project !== null && draft !== null ? (
-        <FlowRunDryFragment
-          key={`${draft.metadata.id}:${project.revision}`}
-          evaluation={draft}
-          flows={project.resources.filter(
-            (resource): resource is PragmaFlowResource => resource.kind === "Flow",
-          )}
-          onBack={() => setDraft(null)}
-          onRun={async (evaluation) => {
-            const api = typeof window === "undefined" ? undefined : window.pragmaDesktop;
-            if (api === undefined) throw new Error("Desktop bridge is unavailable.");
-            return await api.runPragmaEvaluation({ evaluation });
-          }}
-          onSave={save}
+          detail={
+            draft === null ? undefined : (
+              <FlowRunDryFragment
+                key={`${draft.metadata.id}:${project.revision}`}
+                evaluation={draft}
+                flows={project.resources.filter(
+                  (resource): resource is PragmaFlowResource => resource.kind === "Flow",
+                )}
+                onBack={() => setDraft(null)}
+                onRun={async (evaluation) => {
+                  const api = typeof window === "undefined" ? undefined : window.pragmaDesktop;
+                  if (api === undefined) throw new Error("Desktop bridge is unavailable.");
+                  return await api.runPragmaEvaluation({ evaluation });
+                }}
+                onSave={save}
+              />
+            )
+          }
+          detailLabelledBy={draft === null ? undefined : "flow-run-dry-heading"}
         />
       ) : null}
       {error !== null ? (

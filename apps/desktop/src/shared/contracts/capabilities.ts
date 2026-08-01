@@ -1,6 +1,4 @@
 import {
-  PRAGMA_EXPERT_INSTRUCTIONS_MAX_LENGTH,
-  PRAGMA_EXPERT_SCOPE_MAX_LENGTH,
   PragmaExpertInstructionsSchema,
   PragmaExpertScopeSchema,
   PragmaHttpParameterSchema,
@@ -9,16 +7,11 @@ import {
   PragmaObjectJsonSchemaSchema,
   type PragmaJsonSchema,
 } from "@pragma/interpreter/ast";
+import { PRAGMA_TEXT_LIMITS, pragmaUnicodeLength } from "@pragma/shared";
 import { z } from "zod";
 
 import { ModelIdSchema } from "./model-provider.ts";
 import { DesktopRuntimeIdSchema } from "./runtime.ts";
-
-export const EXPERT_NAME_MAX_LENGTH = 20;
-export const EXPERT_DESCRIPTION_MAX_LENGTH = 200;
-export const EXPERT_TAG_MAX_LENGTH = 20;
-export const EXPERT_SCOPE_MAX_LENGTH = PRAGMA_EXPERT_SCOPE_MAX_LENGTH;
-export const EXPERT_INSTRUCTIONS_MAX_LENGTH = PRAGMA_EXPERT_INSTRUCTIONS_MAX_LENGTH;
 
 export { PragmaExpertIdSchema } from "@pragma/interpreter/ast";
 
@@ -26,8 +19,29 @@ export const ExpertScopeSchema = PragmaExpertScopeSchema;
 export const ExpertInstructionsSchema = PragmaExpertInstructionsSchema;
 export const ExpertAdditionalInstructionsSchema = z
   .string()
-  .max(EXPERT_INSTRUCTIONS_MAX_LENGTH)
+  .refine(
+    (value) => pragmaUnicodeLength(value) <= PRAGMA_TEXT_LIMITS.expert.instructions,
+    `Must contain at most ${PRAGMA_TEXT_LIMITS.expert.instructions} characters.`,
+  )
   .default("");
+
+function capabilityNameSchema() {
+  return z
+    .string()
+    .trim()
+    .min(1)
+    .refine((value) => pragmaUnicodeLength(value) <= PRAGMA_TEXT_LIMITS.capability.name, {
+      message: `Must contain at most ${PRAGMA_TEXT_LIMITS.capability.name} characters.`,
+    });
+}
+
+function capabilityDescriptionSchema(required = false) {
+  const schema = z.string().trim();
+  return (required ? schema.min(1) : schema).refine(
+    (value) => pragmaUnicodeLength(value) <= PRAGMA_TEXT_LIMITS.capability.description,
+    { message: `Must contain at most ${PRAGMA_TEXT_LIMITS.capability.description} characters.` },
+  );
+}
 
 export const ExpertModelConfigSchema = z.object({
   runtimeId: DesktopRuntimeIdSchema,
@@ -73,8 +87,8 @@ export const CapabilityToolSnapshotSchema = z.object({
 
 export const SkillCapabilityDefinitionSchema = z.object({
   kind: z.literal("skill"),
-  name: z.string().trim().min(1).max(120),
-  description: z.string().trim().min(1).max(2_000),
+  name: capabilityNameSchema(),
+  description: capabilityDescriptionSchema(true),
   entryPath: z.literal("SKILL.md"),
   contentHash: z.string().regex(/^[a-f0-9]{64}$/),
 });
@@ -97,8 +111,8 @@ export const McpConnectionSchema = z.discriminatedUnion("transport", [
 export const McpServerCapabilityDefinitionSchema = z
   .object({
     kind: z.literal("mcp_server"),
-    name: z.string().trim().min(1).max(120),
-    description: z.string().trim().max(2_000),
+    name: capabilityNameSchema(),
+    description: capabilityDescriptionSchema(),
     connection: McpConnectionSchema,
     timeoutMs: z.number().int().min(1_000).max(120_000).default(30_000),
     tools: z.array(CapabilityToolSnapshotSchema).max(500),
@@ -121,8 +135,8 @@ export const HttpServiceAuthSchema = z.discriminatedUnion("type", [
 export const HttpServiceCapabilityDefinitionSchema = z
   .object({
     kind: z.literal("http_service"),
-    name: z.string().trim().min(1).max(120),
-    description: z.string().trim().max(2_000),
+    name: capabilityNameSchema(),
+    description: capabilityDescriptionSchema(),
     baseUrl: z.string().trim().url(),
     auth: HttpServiceAuthSchema,
     timeoutMs: z.number().int().min(1_000).max(120_000).default(30_000),
@@ -136,8 +150,8 @@ export const CodeServiceObjectJsonSchemaSchema = PragmaObjectJsonSchemaSchema;
 
 export const CodeServiceCapabilityDefinitionSchema = z.object({
   kind: z.literal("code_service"),
-  name: z.string().trim().min(1).max(120),
-  description: z.string().trim().max(2_000),
+  name: capabilityNameSchema(),
+  description: capabilityDescriptionSchema(),
   language: z.literal("javascript"),
   timeoutMs: z.number().int().min(100).max(10_000).default(2_000),
   tool: z.object({
@@ -177,10 +191,10 @@ export const CapabilityDefinitionSchema = z.discriminatedUnion("kind", [
 ]);
 
 export const CapabilityManifestSchema = z.object({
-  schemaVersion: z.literal("pragma.capability/v1"),
+  schemaVersion: z.literal("pragma.capability/v2"),
   id: CapabilityIdSchema,
   runtimeKey: CapabilityRuntimeKeySchema,
-  name: z.string().trim().min(1).max(120),
+  name: capabilityNameSchema(),
   kind: z.enum(["skill", "mcp_server", "http_service", "code_service"]),
   latestRevision: z.number().int().positive(),
   createdAt: z.string().datetime(),
@@ -222,8 +236,8 @@ export const ExpertCapabilityReferenceSchema = z.discriminatedUnion("kind", [
 
 export const ImportSkillCapabilitySchema = z.object({
   sourcePath: z.string().trim().min(1).max(2_000),
-  name: z.string().trim().min(1).max(120).optional(),
-  description: z.string().trim().min(1).max(2_000).optional(),
+  name: capabilityNameSchema().optional(),
+  description: capabilityDescriptionSchema(true).optional(),
 });
 
 export const UpdateSkillCapabilitySchema = z.object({

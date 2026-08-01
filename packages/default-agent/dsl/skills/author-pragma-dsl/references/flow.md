@@ -65,6 +65,9 @@ spec:
 ```
 
 - Every step declares exactly one of `action`, `expert`, `team`, `flow`, or `human`.
+- Flow names are limited to 50 Unicode characters and descriptions to 500 after trimming. Every
+  individual text segment in Expert, Team, and Human prompt templates is limited to 5,000 Unicode
+  characters; variable segments are separate and do not count toward a text segment.
 - Every step must be reachable from `start`, and every path must terminate.
 - Ordinary edges form a DAG. A back edge requires a named `repeat` transition and a loop with a
   positive `maxIterations` plus an exit path.

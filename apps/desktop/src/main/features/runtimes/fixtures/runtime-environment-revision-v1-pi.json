@@ -1,0 +1,19 @@
+{
+  "schemaVersion": "pragma.runtime-environment-revision/v1",
+  "runtimeId": "pi",
+  "revision": 1,
+  "fingerprint": "0000000000000000000000000000000000000000000000000000000000000000",
+  "definition": {
+    "schemaVersion": "pragma.runtime-environment/v1",
+    "id": "pi",
+    "adapter": {
+      "id": "pragma.runtime.pi",
+      "version": "v1"
+    },
+    "displayName": "Built-in Runtime",
+    "origin": "built-in",
+    "config": {}
+  },
+  "status": "active",
+  "createdAt": "2026-07-01T00:00:00.000Z"
+}

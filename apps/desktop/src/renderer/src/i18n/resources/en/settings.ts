@@ -7,9 +7,6 @@ export const settings = {
     languageDescription: "Choose the language used throughout Pragma.",
     followSystem: "Follow system",
     resolvedAs: "Currently using {{language}}",
-    runtime: "Default Runtime",
-    runtimeDescription:
-      "Used by system-default executors. Home can override the model, but never the Runtime.",
     toolPermissions: "Tool permissions",
     toolPermissionsDescription:
       "Default for new missions. Reading never needs approval; the Home form can override it per mission.",

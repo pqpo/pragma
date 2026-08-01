@@ -1,15 +1,14 @@
-import { CaretDown, FolderOpen, X } from "@phosphor-icons/react";
+import { FolderOpen, X } from "@phosphor-icons/react";
 import { useEffect, useState } from "react";
 import { useTranslation } from "react-i18next";
 
 import type {
   DesktopLocalePreference,
-  DesktopRuntimeAvailability,
   DesktopSettingsSnapshot,
   DesktopToolPermissionMode,
 } from "../../../../shared/contracts/index.ts";
 import { localeDisplayNames, setDesktopLocale } from "../../i18n/index.ts";
-import { runtimeDisplayName } from "../../lib/runtime-display.ts";
+import { SelectMenu, type SelectMenuOption } from "../../components/SelectMenu.tsx";
 import { SettingsScreenFrame } from "./SettingsScreenFrame.tsx";
 
 const languageOptions: readonly {
@@ -24,20 +23,16 @@ const languageOptions: readonly {
 export function GeneralSettingsFragment() {
   const { t } = useTranslation(["settings", "common"]);
   const [settings, setSettings] = useState<DesktopSettingsSnapshot>();
-  const [runtimes, setRuntimes] = useState<readonly DesktopRuntimeAvailability[]>([]);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string>();
 
   useEffect(() => {
     let cancelled = false;
-    void Promise.all([
-      window.pragmaDesktop.getDesktopSettings(),
-      window.pragmaDesktop.getRuntimeAvailability(),
-    ])
-      .then(([snapshot, availability]) => {
+    void window.pragmaDesktop
+      .getDesktopSettings()
+      .then((snapshot) => {
         if (cancelled) return;
         setSettings(snapshot);
-        setRuntimes(availability);
       })
       .catch(() => {
         if (!cancelled) setError(t("general.saveError", { ns: "settings" }));
@@ -55,20 +50,6 @@ export function GeneralSettingsFragment() {
       const snapshot = await window.pragmaDesktop.updateDesktopSettings({ localePreference });
       await setDesktopLocale(snapshot.resolvedLocale);
       setSettings(snapshot);
-    } catch {
-      setError(t("general.saveError", { ns: "settings" }));
-    } finally {
-      setSaving(false);
-    }
-  };
-
-  const updateRuntime = async (runtimeId: string) => {
-    if (runtimeId === runtimes.find((runtime) => runtime.isDefault)?.id) return;
-    setSaving(true);
-    setError(undefined);
-    try {
-      const availability = await window.pragmaDesktop.setDefaultRuntime({ runtimeId });
-      setRuntimes(availability);
     } catch {
       setError(t("general.saveError", { ns: "settings" }));
     } finally {
@@ -120,7 +101,6 @@ export function GeneralSettingsFragment() {
     }
   };
 
-  const defaultRuntimeId = runtimes.find((runtime) => runtime.isDefault)?.id ?? "";
   const workspace = settings?.defaultWorkspace ?? "";
   const workspaceName = workspace.split(/[\\/]/).at(-1);
 
@@ -136,7 +116,7 @@ export function GeneralSettingsFragment() {
       }
     >
       <div className="general-settings-list">
-        <label className="setting-row general-language-setting">
+        <div className="setting-row general-language-setting">
           <span className="setting-copy">
             <strong>{t("general.language", { ns: "settings" })}</strong>
             <span>{t("general.languageDescription", { ns: "settings" })}</span>
@@ -149,51 +129,21 @@ export function GeneralSettingsFragment() {
               </small>
             ) : null}
           </span>
-          <span className="protocol-select-shell language-select-shell">
-            <select
-              value={settings?.localePreference ?? "system"}
-              disabled={settings === undefined || saving}
-              onChange={(event) =>
-                void updateLanguage(event.target.value as DesktopLocalePreference)
-              }
-            >
-              <option value="system">{t("general.followSystem", { ns: "settings" })}</option>
-              {languageOptions.map((option) => (
-                <option key={option.value} value={option.value}>
-                  {option.label}
-                </option>
-              ))}
-            </select>
-            <CaretDown size={17} weight="bold" aria-hidden="true" />
-          </span>
-        </label>
-        <label className="setting-row general-language-setting">
-          <span className="setting-copy">
-            <strong>{t("general.runtime", { ns: "settings" })}</strong>
-            <span>{t("general.runtimeDescription", { ns: "settings" })}</span>
-          </span>
-          <span className="protocol-select-shell language-select-shell">
-            <select
-              value={defaultRuntimeId}
-              disabled={runtimes.length === 0 || saving}
-              onChange={(event) => void updateRuntime(event.target.value)}
-            >
-              {runtimes.map((runtime) => (
-                <option
-                  key={runtime.id}
-                  value={runtime.id}
-                  disabled={runtime.status !== "available"}
-                >
-                  {runtimeDisplayName(t, runtime)}
-                  {runtime.status === "available"
-                    ? ""
-                    : ` · ${t("status.unavailable", { ns: "common" })}`}
-                </option>
-              ))}
-            </select>
-            <CaretDown size={17} weight="bold" aria-hidden="true" />
-          </span>
-        </label>
+          <SelectMenu<DesktopLocalePreference>
+            ariaLabel={t("general.language", { ns: "settings" })}
+            className="settings-select language-settings-select"
+            value={settings?.localePreference ?? "system"}
+            disabled={settings === undefined || saving}
+            placement="bottom"
+            options={
+              [
+                { value: "system", label: t("general.followSystem", { ns: "settings" }) },
+                ...languageOptions,
+              ] satisfies readonly SelectMenuOption<DesktopLocalePreference>[]
+            }
+            onChange={(value) => void updateLanguage(value)}
+          />
+        </div>
         <div className="setting-row tool-permission-setting">
           <span className="setting-copy">
             <strong>{t("general.toolPermissions", { ns: "settings" })}</strong>

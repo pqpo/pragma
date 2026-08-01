@@ -34,7 +34,7 @@ describe("managed context store", () => {
     });
 
     expect(created).toMatchObject({
-      schemaVersion: "pragma.context-store/v2",
+      schemaVersion: "pragma.context-store/v3",
       type: "file",
       status: "ready",
       source: { origin: "created" },
@@ -72,6 +72,77 @@ describe("managed context store", () => {
     await expect(
       readFile(join(storesPath, created.id, "files", "ignored.txt"), "utf8"),
     ).rejects.toMatchObject({ code: "ENOENT" });
+  });
+
+  it("upgrades valid v2 metadata and leaves over-limit v2 data untouched", async () => {
+    const { storesPath, store } = await createStore();
+    const validId = "00000000-0000-4000-8000-000000000011";
+    const invalidId = "00000000-0000-4000-8000-000000000012";
+    const legacy = (id: string, name: string) => ({
+      schemaVersion: "pragma.context-store/v2",
+      id,
+      name,
+      description: "Legacy description",
+      type: "file",
+      status: "ready",
+      source: { origin: "created" },
+      createdAt: "2026-01-01T00:00:00.000Z",
+      updatedAt: "2026-01-01T00:00:00.000Z",
+    });
+    for (const [id, name] of [
+      [validId, "Legacy knowledge"],
+      [invalidId, "x".repeat(51)],
+    ] as const) {
+      await mkdir(join(storesPath, id, "files"), { recursive: true });
+      await writeFile(join(storesPath, id, "store.json"), JSON.stringify(legacy(id, name)));
+    }
+
+    await expect(store.listEntries(validId)).resolves.toEqual([]);
+    await expect(readFile(join(storesPath, validId, "store.json"), "utf8")).resolves.toContain(
+      "pragma.context-store/v3",
+    );
+    await expect(store.listEntries(invalidId)).rejects.toMatchObject({
+      code: "config_invalid",
+      message: expect.stringContaining("name"),
+    });
+    await expect(store.list()).resolves.toEqual([
+      expect.objectContaining({ id: validId, schemaVersion: "pragma.context-store/v3" }),
+    ]);
+    await expect(readFile(join(storesPath, invalidId, "store.json"), "utf8")).resolves.toContain(
+      "pragma.context-store/v2",
+    );
+  });
+
+  it("replays an interrupted v2 metadata migration and rejects future schemas", async () => {
+    const { storesPath, store } = await createStore();
+    const created = await store.create({ mode: "blank", name: "Recovery", description: "Test" });
+    const root = join(storesPath, created.id);
+    const legacy = { ...created, schemaVersion: "pragma.context-store/v2" };
+    await writeFile(join(root, "store.json"), JSON.stringify(legacy));
+    await writeFile(
+      join(root, "v2-to-v3.json"),
+      JSON.stringify({
+        schemaVersion: "pragma.context-store-metadata-migration/v1",
+        storeId: created.id,
+        sourceSchema: "pragma.context-store/v2",
+        targetSchema: "pragma.context-store/v3",
+        targetManifest: created,
+      }),
+    );
+
+    await expect(store.listEntries(created.id)).resolves.toEqual([]);
+    await expect(readFile(join(root, "v2-to-v3.json"), "utf8")).rejects.toMatchObject({
+      code: "ENOENT",
+    });
+
+    await writeFile(
+      join(root, "store.json"),
+      JSON.stringify({ ...created, schemaVersion: "pragma.context-store/v99" }),
+    );
+    await expect(store.listEntries(created.id)).rejects.toMatchObject({ code: "config_invalid" });
+    await expect(readFile(join(root, "store.json"), "utf8")).resolves.toContain(
+      "pragma.context-store/v99",
+    );
   });
 
   it("creates, edits, renames, lists, and deletes managed entries", async () => {
@@ -152,7 +223,7 @@ describe("managed context store", () => {
 
     const [migrated] = await store.list();
     expect(migrated).toMatchObject({
-      schemaVersion: "pragma.context-store/v2",
+      schemaVersion: "pragma.context-store/v3",
       source: { origin: "migrated" },
     });
     await expect(readFile(join(storesPath, id, "files", "legacy.md"), "utf8")).resolves.toBe(
@@ -212,7 +283,7 @@ describe("managed context store", () => {
     );
 
     await expect(store.list()).resolves.toEqual([
-      expect.objectContaining({ schemaVersion: "pragma.context-store/v2" }),
+      expect.objectContaining({ schemaVersion: "pragma.context-store/v3" }),
     ]);
     await expect(store.getContent(id, "recovered.md")).resolves.toMatchObject({
       content: "Recovered",
@@ -274,7 +345,7 @@ describe("managed context store", () => {
     );
 
     await expect(store.list()).resolves.toEqual([
-      expect.objectContaining({ id, schemaVersion: "pragma.context-store/v2" }),
+      expect.objectContaining({ id, schemaVersion: "pragma.context-store/v3" }),
     ]);
     await expect(store.getContent(id, "staged.md")).resolves.toMatchObject({
       content: "Staged content",
@@ -365,6 +436,15 @@ describe("managed context store", () => {
       },
     );
     await expect(store.createFile(created.id, "notes.txt", "", undefined)).rejects.toMatchObject({
+      code: "invalid_entry",
+    });
+    await expect(store.createFolder(created.id, "two words")).rejects.toMatchObject({
+      code: "invalid_entry",
+    });
+    await expect(
+      store.createFile(created.id, `${"a".repeat(101)}.md`, "", undefined),
+    ).rejects.toMatchObject({ code: "invalid_entry" });
+    await expect(store.createFile(created.id, "CON.md", "", undefined)).rejects.toMatchObject({
       code: "invalid_entry",
     });
     await expect(

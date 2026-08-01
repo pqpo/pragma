@@ -280,10 +280,10 @@ describe("MissionRunner", { timeout: 15_000 }, () => {
       project: { id: snapshot.projectId, revision: snapshot.revision },
       executor,
     });
-    const markMissionDeleted = vi.fn();
+    const markSubjectDeleted = vi.fn();
     const usage = {
       trackingStartedAt: "2026-01-01T00:00:00.000Z",
-      markMissionDeleted,
+      markSubjectDeleted,
     } as unknown as DesktopUsageStore;
     const openRevision = vi
       .spyOn(project, "openRevision")
@@ -315,7 +315,7 @@ describe("MissionRunner", { timeout: 15_000 }, () => {
     await expect(runner.delete(target.id)).resolves.toBeUndefined();
     await expect(missions.get(target.id)).rejects.toThrow();
     expect(openRevision).toHaveBeenCalledTimes(1);
-    expect(markMissionDeleted).toHaveBeenCalledWith(target.id);
+    expect(markSubjectDeleted).toHaveBeenCalledWith("mission", target.id);
     expect(await missions.list()).toHaveLength(1);
   });
 

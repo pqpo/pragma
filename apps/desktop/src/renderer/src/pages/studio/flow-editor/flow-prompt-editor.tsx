@@ -6,6 +6,11 @@ import type {
 } from "@pragma/interpreter/ast";
 import { analyzePragmaFlowNodeAvailability } from "@pragma/interpreter/ast";
 import {
+  PRAGMA_TEXT_LIMITS,
+  pragmaUnicodeLength,
+  truncatePragmaTrimmedUnicode,
+} from "@pragma/shared";
+import {
   useId,
   useLayoutEffect,
   useMemo,
@@ -16,6 +21,7 @@ import {
 import { useTranslation } from "react-i18next";
 
 import { stepOutputSchema } from "./flow-canvas-model.ts";
+import { CharacterCount } from "../../../components/CharacterCount.tsx";
 
 interface FlowVariableOption {
   readonly key: string;
@@ -46,6 +52,14 @@ export function PromptTemplateEditor(props: {
   );
   const promptIsEmpty = prompt.segments.every(
     (segment) => "text" in segment && segment.text.length === 0,
+  );
+  const longestTextSegment = prompt.segments.reduce(
+    (longest, segment) =>
+      "text" in segment &&
+      pragmaUnicodeLength(segment.text.trim()) > pragmaUnicodeLength(longest.trim())
+        ? segment.text
+        : longest,
+    "",
   );
 
   useLayoutEffect(() => {
@@ -248,7 +262,13 @@ export function PromptTemplateEditor(props: {
             <Code size={14} />
             {t("insertVariable")}
           </button>
-          <small>{t("flowPromptVariableHint")}</small>
+          <span className="flow-prompt-meta">
+            <small>{t("flowPromptVariableHint")}</small>
+            <CharacterCount
+              value={longestTextSegment}
+              max={PRAGMA_TEXT_LIMITS.flow.promptTextSegment}
+            />
+          </span>
         </div>
         {variableMenuOpen ? (
           <div className="flow-variable-menu" role="listbox" aria-label={t("insertVariable")}>
@@ -313,9 +333,23 @@ export function normalizePromptSegments(
   for (const segment of segments) {
     const previous = normalized.at(-1);
     if ("text" in segment && previous !== undefined && "text" in previous) {
-      normalized[normalized.length - 1] = { text: previous.text + segment.text };
+      normalized[normalized.length - 1] = {
+        text: truncatePragmaTrimmedUnicode(
+          previous.text + segment.text,
+          PRAGMA_TEXT_LIMITS.flow.promptTextSegment,
+        ),
+      };
     } else {
-      normalized.push(segment);
+      normalized.push(
+        "text" in segment
+          ? {
+              text: truncatePragmaTrimmedUnicode(
+                segment.text,
+                PRAGMA_TEXT_LIMITS.flow.promptTextSegment,
+              ),
+            }
+          : segment,
+      );
     }
   }
   return normalized.length === 0 ? [{ text: "" }] : normalized;

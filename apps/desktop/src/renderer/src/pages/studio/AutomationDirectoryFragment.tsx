@@ -1,10 +1,10 @@
 import { ArrowLeft, CaretDown, Check, Clock, Plus, Robot, Trash } from "@phosphor-icons/react";
+import { PragmaScheduleTriggerSchema } from "@pragma/interpreter/ast";
 import {
-  PRAGMA_AUTOMATION_PROMPT_MAX_LENGTH,
-  PRAGMA_RESOURCE_DESCRIPTION_MAX_LENGTH,
-  PRAGMA_RESOURCE_NAME_MAX_LENGTH,
-  PragmaScheduleTriggerSchema,
-} from "@pragma/interpreter/ast";
+  PRAGMA_TEXT_LIMITS,
+  pragmaUnicodeLength,
+  truncatePragmaTrimmedUnicode,
+} from "@pragma/shared";
 import { useEffect, useMemo, useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
 
@@ -15,6 +15,11 @@ import type {
   MissionExecutorOption,
   PragmaProjectSnapshot,
 } from "../../../../shared/contracts/index.ts";
+import { DateTimePicker } from "../../components/DateTimePicker.tsx";
+import { MissionExecutorPicker } from "../../components/MissionExecutorPicker.tsx";
+import { SelectMenu } from "../../components/SelectMenu.tsx";
+import { Switch } from "../../components/Switch.tsx";
+import { ToolPermissionSelect } from "../../components/ToolPermissionSelect.tsx";
 import { WorkspacePicker, workspaceSelectionFromPath } from "../../components/WorkspacePicker.tsx";
 import { errorMessage } from "../../lib/errors.ts";
 import {
@@ -23,6 +28,7 @@ import {
   isSchemaInputValid,
 } from "../home/SchemaInputForm.tsx";
 import { StudioScreenFrame } from "./StudioScreenFrame.tsx";
+import { StudioConfirmationDialog } from "./StudioDialog.tsx";
 import { desktopApi } from "./studio-model.ts";
 
 const WEEKDAYS = ["mon", "tue", "wed", "thu", "fri", "sat", "sun"] as const;
@@ -55,6 +61,47 @@ type EditorState = {
   readonly endsAt: string;
 };
 
+type AutomationField =
+  | "name"
+  | "description"
+  | "executor"
+  | "prompt"
+  | "flowInput"
+  | "trigger"
+  | "workspace";
+
+export function createNewAutomationEditor(
+  id: string,
+  defaults: MissionCreationDefaults | undefined,
+  now = Date.now(),
+): EditorState {
+  const timestamp = localDateTime(new Date(now + 60 * 60_000));
+  return {
+    id,
+    name: "",
+    description: "",
+    enabled: true,
+    executorRef: "",
+    prompt: "",
+    flowInput: {},
+    interaction: "reuse-session",
+    workspace: defaults?.workspace.path ?? "",
+    toolPermissionMode: defaults?.toolPermissionMode ?? "request-approval",
+    triggerKind: "calendar",
+    onceAt: timestamp,
+    intervalEvery: 1,
+    intervalUnit: "hours",
+    anchorAt: timestamp,
+    frequency: "daily",
+    time: "09:00",
+    weekdays: ["mon", "tue", "wed", "thu", "fri"],
+    dayOfMonth: 1,
+    cron: "0 9 * * *",
+    startsAt: "",
+    endsAt: "",
+  };
+}
+
 export function AutomationDirectoryFragment(props: {
   readonly automations: readonly AutomationSummary[];
   readonly project: PragmaProjectSnapshot;
@@ -69,6 +116,10 @@ export function AutomationDirectoryFragment(props: {
   const [saving, setSaving] = useState(false);
   const [preview, setPreview] = useState<readonly string[]>([]);
   const [error, setError] = useState<string | null>(null);
+  const [deleteOpen, setDeleteOpen] = useState(false);
+  const [deleting, setDeleting] = useState(false);
+  const [touchedFields, setTouchedFields] = useState<ReadonlySet<AutomationField>>(new Set());
+  const [submitAttempted, setSubmitAttempted] = useState(false);
 
   useEffect(() => {
     const api = desktopApi();
@@ -102,37 +153,11 @@ export function AutomationDirectoryFragment(props: {
     const defaults = await api?.getMissionCreationDefaults();
     const allocated = await api?.allocatePragmaResourceId();
     if (defaults !== undefined) setMissionDefaults(defaults);
-    const executor = executors[0];
-    const timestamp = localDateTime(new Date(Date.now() + 60 * 60_000));
-    setEditor({
-      id: allocated?.id ?? "",
-      name: "",
-      description: "",
-      enabled: true,
-      executorRef: executor?.ref ?? "",
-      prompt: "",
-      flowInput:
-        executor?.kind === "flow" && executor.inputSchema !== undefined
-          ? createSchemaInputValue(executor.inputSchema)
-          : {},
-      interaction: executor?.kind === "flow" ? "new-mission" : "reuse-session",
-      workspace: defaults?.workspace.path ?? "",
-      toolPermissionMode: defaults?.toolPermissionMode ?? "request-approval",
-      triggerKind: "calendar",
-      onceAt: timestamp,
-      intervalEvery: 1,
-      intervalUnit: "hours",
-      anchorAt: timestamp,
-      frequency: "daily",
-      time: "09:00",
-      weekdays: ["mon", "tue", "wed", "thu", "fri"],
-      dayOfMonth: 1,
-      cron: "0 9 * * *",
-      startsAt: "",
-      endsAt: "",
-    });
+    setEditor(createNewAutomationEditor(allocated?.id ?? "", defaults));
     setPreview([]);
     setError(null);
+    setTouchedFields(new Set());
+    setSubmitAttempted(false);
   };
 
   const openExisting = (automation: AutomationSummary) => {
@@ -189,13 +214,17 @@ export function AutomationDirectoryFragment(props: {
     });
     setPreview([]);
     setError(null);
+    setTouchedFields(new Set());
+    setSubmitAttempted(false);
   };
 
   const save = async () => {
     if (editor === null) return;
+    setError(null);
     const validation = validateAutomationEditor(editor, selectedExecutor);
+    setSubmitAttempted(true);
     if (!validation.valid) {
-      setError(t("automationFormInvalid"));
+      requestAnimationFrame(() => focusFirstAutomationError(validation));
       return;
     }
     const api = desktopApi();
@@ -242,6 +271,10 @@ export function AutomationDirectoryFragment(props: {
     }
   };
 
+  const markTouched = (field: AutomationField) => {
+    setTouchedFields((current) => new Set([...current, field]));
+  };
+
   const showPreview = async () => {
     if (editor === null) return;
     try {
@@ -264,12 +297,32 @@ export function AutomationDirectoryFragment(props: {
       if (result.ok && result.path !== undefined && result.basename !== undefined) {
         const selectedPath = result.path;
         setEditor((current) => (current === null ? null : { ...current, workspace: selectedPath }));
+        markTouched("workspace");
         setError(null);
       } else if (result.reason !== "cancelled") {
         setError(result.error ?? tMissions("workspaceUnavailable"));
       }
     } catch (pickError) {
       setError(errorMessage(pickError));
+    }
+  };
+
+  const deleteAutomation = async () => {
+    if (editor?.originalRef === undefined || deleting) return;
+    setDeleting(true);
+    try {
+      await desktopApi()?.deleteAutomation({
+        expectedProjectRevision: props.project.revision,
+        ref: editor.originalRef,
+      });
+      setDeleteOpen(false);
+      setEditor(null);
+      await props.onChanged();
+    } catch (deleteError) {
+      setDeleteOpen(false);
+      setError(errorMessage(deleteError));
+    } finally {
+      setDeleting(false);
     }
   };
 
@@ -280,397 +333,466 @@ export function AutomationDirectoryFragment(props: {
         : [missionDefaults.workspace, ...missionDefaults.recentWorkspaces];
     const selectedWorkspace = workspaceSelectionFromPath(editor.workspace, knownWorkspaces);
     const validation = validateAutomationEditor(editor, selectedExecutor);
+    const showError = (field: AutomationField) => submitAttempted || touchedFields.has(field);
     return (
-      <StudioScreenFrame
-        className="automation-editor"
-        labelledBy="automation-editor-heading"
-        header={
-          <header className="automation-editor-heading">
-            <button className="back-link" type="button" onClick={() => setEditor(null)}>
-              <ArrowLeft size={17} aria-hidden="true" />
-              {t("backIntegrations")}
-            </button>
-            <div>
-              <h1 id="automation-editor-heading">
-                {editor.originalRef === undefined ? t("newAutomation") : t("editAutomation")}
-              </h1>
-              <p>{t("automationEditorDescription")}</p>
-            </div>
-          </header>
-        }
-      >
-        <form
-          className="automation-form"
-          onSubmit={(event) => {
-            event.preventDefault();
-            void save();
-          }}
+      <>
+        <StudioScreenFrame
+          className="automation-editor"
+          labelledBy="automation-editor-heading"
+          header={
+            <header className="automation-editor-heading">
+              <button className="back-link" type="button" onClick={() => setEditor(null)}>
+                <ArrowLeft size={17} aria-hidden="true" />
+                {t("backIntegrations")}
+              </button>
+              <div>
+                <h1 id="automation-editor-heading">
+                  {editor.originalRef === undefined ? t("newAutomation") : t("editAutomation")}
+                </h1>
+                <p>{t("automationEditorDescription")}</p>
+              </div>
+            </header>
+          }
         >
-          <section className="automation-form-section">
-            <h2>{t("automationIdentity")}</h2>
-            <div className="automation-field-grid">
-              <label>
-                <span>{t("name")}</span>
-                <input
-                  required
-                  maxLength={PRAGMA_RESOURCE_NAME_MAX_LENGTH}
-                  value={editor.name}
-                  aria-invalid={validation.name !== undefined}
-                  onChange={(event) => setEditor({ ...editor, name: event.target.value })}
-                />
-                <FieldFeedback
-                  value={editor.name}
-                  max={PRAGMA_RESOURCE_NAME_MAX_LENGTH}
-                  error={validation.name}
-                />
-              </label>
-              <label>
-                <span>{t("description")}</span>
-                <input
-                  required
-                  maxLength={PRAGMA_RESOURCE_DESCRIPTION_MAX_LENGTH}
-                  value={editor.description}
-                  aria-invalid={validation.description !== undefined}
-                  onChange={(event) => setEditor({ ...editor, description: event.target.value })}
-                />
-                <FieldFeedback
-                  value={editor.description}
-                  max={PRAGMA_RESOURCE_DESCRIPTION_MAX_LENGTH}
-                  error={validation.description}
-                />
-              </label>
-            </div>
-          </section>
+          <form
+            className="automation-form"
+            noValidate
+            onSubmit={(event) => {
+              event.preventDefault();
+              void save();
+            }}
+          >
+            <div className="automation-form-content">
+              <section className="automation-form-section">
+                <h2>{t("automationIdentity")}</h2>
+                <div className="automation-field-grid is-identity">
+                  <label>
+                    <span>{t("name")}</span>
+                    <input
+                      maxLength={PRAGMA_TEXT_LIMITS.automation.name * 2}
+                      value={editor.name}
+                      data-automation-field="name"
+                      aria-invalid={showError("name") && validation.name !== undefined}
+                      aria-describedby="automation-name-feedback"
+                      onBlur={() => markTouched("name")}
+                      onChange={(event) =>
+                        setEditor({
+                          ...editor,
+                          name: truncatePragmaTrimmedUnicode(
+                            event.target.value,
+                            PRAGMA_TEXT_LIMITS.automation.name,
+                          ),
+                        })
+                      }
+                    />
+                    <FieldFeedback
+                      id="automation-name-feedback"
+                      value={editor.name}
+                      max={PRAGMA_TEXT_LIMITS.automation.name}
+                      error={showError("name") ? validation.name : undefined}
+                    />
+                  </label>
+                  <label>
+                    <span>{t("description")}</span>
+                    <input
+                      maxLength={PRAGMA_TEXT_LIMITS.automation.description * 2}
+                      value={editor.description}
+                      data-automation-field="description"
+                      aria-invalid={
+                        showError("description") && validation.description !== undefined
+                      }
+                      aria-describedby="automation-description-feedback"
+                      onBlur={() => markTouched("description")}
+                      onChange={(event) =>
+                        setEditor({
+                          ...editor,
+                          description: truncatePragmaTrimmedUnicode(
+                            event.target.value,
+                            PRAGMA_TEXT_LIMITS.automation.description,
+                          ),
+                        })
+                      }
+                    />
+                    <FieldFeedback
+                      id="automation-description-feedback"
+                      value={editor.description}
+                      max={PRAGMA_TEXT_LIMITS.automation.description}
+                      error={showError("description") ? validation.description : undefined}
+                    />
+                  </label>
+                </div>
+              </section>
 
-          <section className="automation-form-section">
-            <h2>{t("automationTarget")}</h2>
-            <div className="automation-field-grid">
-              <label>
-                <span>{t("executor")}</span>
-                <select
-                  required
-                  value={editor.executorRef}
-                  onChange={(event) => {
-                    const next = executors.find((executor) => executor.ref === event.target.value);
-                    setEditor({
-                      ...editor,
-                      executorRef: event.target.value,
-                      interaction: next?.kind === "flow" ? "new-mission" : editor.interaction,
-                      prompt: "",
-                      flowInput:
-                        next?.kind === "flow" && next.inputSchema !== undefined
-                          ? createSchemaInputValue(next.inputSchema)
-                          : {},
-                    });
-                  }}
-                >
-                  <option value="">{t("selectExecutor")}</option>
-                  {executors.map((executor) => (
-                    <option key={executor.ref} value={executor.ref}>
-                      {executor.name} · {executor.kind}
-                    </option>
-                  ))}
-                </select>
-              </label>
-              {!flow ? (
-                <label>
-                  <span>{t("sessionPolicy")}</span>
-                  <select
-                    value={editor.interaction}
-                    onChange={(event) =>
-                      setEditor({
-                        ...editor,
-                        interaction: event.target.value as EditorState["interaction"],
-                      })
-                    }
-                  >
-                    <option value="reuse-session">{t("reuseMission")}</option>
-                    <option value="new-mission">{t("newMissionEveryRun")}</option>
-                  </select>
-                </label>
-              ) : null}
-            </div>
-            {flowInputSchema !== undefined ? (
-              <SchemaInputForm
-                className="automation-flow-input-form"
-                schema={flowInputSchema}
-                value={editor.flowInput}
-                disabled={saving}
-                onChange={(flowInput) => setEditor({ ...editor, flowInput })}
-              />
-            ) : (
-              <label>
-                <span>{t("prompt")}</span>
-                <textarea
-                  required
-                  rows={5}
-                  maxLength={PRAGMA_AUTOMATION_PROMPT_MAX_LENGTH}
-                  value={editor.prompt}
-                  aria-invalid={validation.prompt !== undefined}
-                  onChange={(event) => setEditor({ ...editor, prompt: event.target.value })}
-                />
-                <FieldFeedback
-                  value={editor.prompt}
-                  max={PRAGMA_AUTOMATION_PROMPT_MAX_LENGTH}
-                  error={validation.prompt}
-                />
-              </label>
-            )}
-            {validation.flowInput !== undefined ? (
-              <p className="automation-field-error" role="alert">
-                {t("flowInputInvalid")}
-              </p>
-            ) : null}
-          </section>
-
-          <section className="automation-form-section">
-            <h2>{t("schedulePolicy")}</h2>
-            <div className="automation-field-grid">
-              <label>
-                <span>{t("triggerType")}</span>
-                <select
-                  value={editor.triggerKind}
-                  onChange={(event) =>
-                    setEditor({
-                      ...editor,
-                      triggerKind: event.target.value as EditorState["triggerKind"],
-                    })
+              <section className="automation-form-section">
+                <h2>{t("automationTarget")}</h2>
+                <div
+                  className={
+                    flow
+                      ? "automation-field-grid is-target has-flow"
+                      : "automation-field-grid is-target"
                   }
                 >
-                  <option value="once">{t("scheduleOnce")}</option>
-                  <option value="interval">{t("scheduleInterval")}</option>
-                  <option value="calendar">{t("scheduleCalendar")}</option>
-                  <option value="cron">Cron</option>
-                </select>
-              </label>
-              {editor.triggerKind === "once" ? (
-                <DateTimeField
-                  label={t("runAt")}
-                  value={editor.onceAt}
-                  onChange={(onceAt) => setEditor({ ...editor, onceAt })}
-                />
-              ) : null}
-              {editor.triggerKind === "interval" ? (
-                <>
-                  <label>
-                    <span>{t("every")}</span>
-                    <input
-                      type="number"
-                      min={1}
-                      value={editor.intervalEvery}
-                      onChange={(event) =>
-                        setEditor({ ...editor, intervalEvery: Number(event.target.value) })
-                      }
+                  <div className="automation-select-field automation-executor-field">
+                    <span>{t("executor")}</span>
+                    <MissionExecutorPicker
+                      executors={executors}
+                      value={editor.executorRef}
+                      invalid={showError("executor") && validation.executor !== undefined}
+                      describedBy="automation-executor-feedback"
+                      onTouched={() => markTouched("executor")}
+                      onChange={(executorRef) => {
+                        const next = executors.find((executor) => executor.ref === executorRef);
+                        setEditor({
+                          ...editor,
+                          executorRef,
+                          prompt: "",
+                          flowInput:
+                            next?.kind === "flow" && next.inputSchema !== undefined
+                              ? createSchemaInputValue(next.inputSchema)
+                              : {},
+                        });
+                      }}
                     />
-                  </label>
+                    {showError("executor") && validation.executor !== undefined ? (
+                      <p
+                        className="automation-field-error"
+                        id="automation-executor-feedback"
+                        role="alert"
+                      >
+                        {t("fieldRequired")}
+                      </p>
+                    ) : null}
+                  </div>
+                  {selectedExecutor !== undefined && !flow ? (
+                    <div className="automation-select-field">
+                      <span>{t("sessionPolicy")}</span>
+                      <SelectMenu<EditorState["interaction"]>
+                        ariaLabel={t("sessionPolicy")}
+                        className="form-select"
+                        value={editor.interaction}
+                        options={[
+                          { value: "reuse-session", label: t("reuseMission") },
+                          { value: "new-mission", label: t("newMissionEveryRun") },
+                        ]}
+                        onChange={(interaction) => setEditor({ ...editor, interaction })}
+                      />
+                    </div>
+                  ) : null}
+                </div>
+                {selectedExecutor === undefined ? (
+                  <p className="automation-target-empty">{t("selectExecutorFirst")}</p>
+                ) : flowInputSchema !== undefined ? (
+                  <div data-automation-field="flowInput">
+                    <SchemaInputForm
+                      className="automation-flow-input-form"
+                      schema={flowInputSchema}
+                      value={editor.flowInput}
+                      disabled={saving}
+                      onChange={(flowInput) => {
+                        markTouched("flowInput");
+                        setEditor({ ...editor, flowInput });
+                      }}
+                    />
+                  </div>
+                ) : (
                   <label>
-                    <span>{t("unit")}</span>
-                    <select
-                      value={editor.intervalUnit}
+                    <span>{t("prompt")}</span>
+                    <textarea
+                      rows={5}
+                      maxLength={PRAGMA_TEXT_LIMITS.automation.promptAuthoring * 2}
+                      value={editor.prompt}
+                      data-automation-field="prompt"
+                      aria-invalid={showError("prompt") && validation.prompt !== undefined}
+                      aria-describedby="automation-prompt-feedback"
+                      onBlur={() => markTouched("prompt")}
                       onChange={(event) =>
                         setEditor({
                           ...editor,
-                          intervalUnit: event.target.value as EditorState["intervalUnit"],
+                          prompt: truncatePragmaTrimmedUnicode(
+                            event.target.value,
+                            PRAGMA_TEXT_LIMITS.automation.promptAuthoring,
+                          ),
                         })
                       }
-                    >
-                      {(["minutes", "hours", "days", "weeks"] as const).map((unit) => (
-                        <option key={unit} value={unit}>
-                          {t(`scheduleUnit.${unit}`)}
-                        </option>
-                      ))}
-                    </select>
-                  </label>
-                  <DateTimeField
-                    label={t("anchorAt")}
-                    value={editor.anchorAt}
-                    onChange={(anchorAt) => setEditor({ ...editor, anchorAt })}
-                  />
-                </>
-              ) : null}
-              {editor.triggerKind === "calendar" ? (
-                <>
-                  <label>
-                    <span>{t("frequency")}</span>
-                    <select
-                      value={editor.frequency}
-                      onChange={(event) =>
-                        setEditor({
-                          ...editor,
-                          frequency: event.target.value as EditorState["frequency"],
-                        })
-                      }
-                    >
-                      {(["daily", "weekdays", "weekly", "monthly"] as const).map((frequency) => (
-                        <option key={frequency} value={frequency}>
-                          {t(`scheduleFrequency.${frequency}`)}
-                        </option>
-                      ))}
-                    </select>
-                  </label>
-                  <label>
-                    <span>{t("time")}</span>
-                    <input
-                      type="time"
-                      value={editor.time}
-                      onClick={(event) => openNativePicker(event.currentTarget)}
-                      onChange={(event) => setEditor({ ...editor, time: event.target.value })}
+                    />
+                    <FieldFeedback
+                      id="automation-prompt-feedback"
+                      value={editor.prompt}
+                      max={PRAGMA_TEXT_LIMITS.automation.promptAuthoring}
+                      error={showError("prompt") ? validation.prompt : undefined}
                     />
                   </label>
-                  {editor.frequency === "weekly" ? (
-                    <WeekdayMultiSelect
-                      value={editor.weekdays}
-                      onChange={(weekdays) => setEditor({ ...editor, weekdays })}
+                )}
+                {showError("flowInput") && validation.flowInput !== undefined ? (
+                  <p
+                    className="automation-field-error"
+                    id="automation-flow-input-feedback"
+                    role="alert"
+                  >
+                    {t("flowInputInvalid")}
+                  </p>
+                ) : null}
+              </section>
+
+              <section className="automation-form-section" data-automation-field="trigger">
+                <h2>{t("schedulePolicy")}</h2>
+                <div className="automation-field-grid is-schedule">
+                  <div className="automation-select-field">
+                    <span>{t("triggerType")}</span>
+                    <SelectMenu<EditorState["triggerKind"]>
+                      ariaLabel={t("triggerType")}
+                      className="form-select"
+                      value={editor.triggerKind}
+                      options={[
+                        { value: "once", label: t("scheduleOnce") },
+                        { value: "interval", label: t("scheduleInterval") },
+                        { value: "calendar", label: t("scheduleCalendar") },
+                        { value: "cron", label: "Cron" },
+                      ]}
+                      onChange={(triggerKind) => {
+                        markTouched("trigger");
+                        setEditor({ ...editor, triggerKind });
+                      }}
+                    />
+                  </div>
+                  {editor.triggerKind === "once" ? (
+                    <DateTimeField
+                      label={t("runAt")}
+                      value={editor.onceAt}
+                      onTouched={() => markTouched("trigger")}
+                      onChange={(onceAt) => setEditor({ ...editor, onceAt })}
                     />
                   ) : null}
-                  {editor.frequency === "monthly" ? (
+                  {editor.triggerKind === "interval" ? (
+                    <>
+                      <label>
+                        <span>{t("every")}</span>
+                        <input
+                          type="number"
+                          min={1}
+                          value={editor.intervalEvery}
+                          onBlur={() => markTouched("trigger")}
+                          onChange={(event) =>
+                            setEditor({ ...editor, intervalEvery: Number(event.target.value) })
+                          }
+                        />
+                      </label>
+                      <div className="automation-select-field">
+                        <span>{t("unit")}</span>
+                        <SelectMenu<EditorState["intervalUnit"]>
+                          ariaLabel={t("unit")}
+                          className="form-select"
+                          value={editor.intervalUnit}
+                          options={(["minutes", "hours", "days", "weeks"] as const).map((unit) => ({
+                            value: unit,
+                            label: t(`scheduleUnit.${unit}`),
+                          }))}
+                          onChange={(intervalUnit) => {
+                            markTouched("trigger");
+                            setEditor({ ...editor, intervalUnit });
+                          }}
+                        />
+                      </div>
+                      <DateTimeField
+                        label={t("anchorAt")}
+                        value={editor.anchorAt}
+                        onTouched={() => markTouched("trigger")}
+                        onChange={(anchorAt) => setEditor({ ...editor, anchorAt })}
+                      />
+                    </>
+                  ) : null}
+                  {editor.triggerKind === "calendar" ? (
+                    <>
+                      <div className="automation-select-field">
+                        <span>{t("frequency")}</span>
+                        <SelectMenu<EditorState["frequency"]>
+                          ariaLabel={t("frequency")}
+                          className="form-select"
+                          value={editor.frequency}
+                          options={(["daily", "weekdays", "weekly", "monthly"] as const).map(
+                            (frequency) => ({
+                              value: frequency,
+                              label: t(`scheduleFrequency.${frequency}`),
+                            }),
+                          )}
+                          onChange={(frequency) => {
+                            markTouched("trigger");
+                            setEditor({ ...editor, frequency });
+                          }}
+                        />
+                      </div>
+                      <div className="automation-select-field">
+                        <span>{t("time")}</span>
+                        <DateTimePicker
+                          mode="time"
+                          label={t("time")}
+                          value={editor.time}
+                          onTouched={() => markTouched("trigger")}
+                          onChange={(time) => setEditor({ ...editor, time })}
+                        />
+                      </div>
+                      {editor.frequency === "weekly" ? (
+                        <WeekdayMultiSelect
+                          value={editor.weekdays}
+                          onChange={(weekdays) => setEditor({ ...editor, weekdays })}
+                        />
+                      ) : null}
+                      {editor.frequency === "monthly" ? (
+                        <label>
+                          <span>{t("dayOfMonth")}</span>
+                          <input
+                            type="number"
+                            min={1}
+                            max={31}
+                            value={editor.dayOfMonth}
+                            onBlur={() => markTouched("trigger")}
+                            onChange={(event) =>
+                              setEditor({ ...editor, dayOfMonth: Number(event.target.value) })
+                            }
+                          />
+                        </label>
+                      ) : null}
+                    </>
+                  ) : null}
+                  {editor.triggerKind === "cron" ? (
                     <label>
-                      <span>{t("dayOfMonth")}</span>
+                      <span>Cron</span>
                       <input
-                        type="number"
-                        min={1}
-                        max={31}
-                        value={editor.dayOfMonth}
-                        onChange={(event) =>
-                          setEditor({ ...editor, dayOfMonth: Number(event.target.value) })
-                        }
+                        value={editor.cron}
+                        onBlur={() => markTouched("trigger")}
+                        onChange={(event) => setEditor({ ...editor, cron: event.target.value })}
+                        placeholder="0 9 * * *"
                       />
                     </label>
                   ) : null}
-                </>
-              ) : null}
-              {editor.triggerKind === "cron" ? (
-                <label>
-                  <span>Cron</span>
-                  <input
-                    value={editor.cron}
-                    onChange={(event) => setEditor({ ...editor, cron: event.target.value })}
-                    placeholder="0 9 * * *"
-                  />
-                </label>
-              ) : null}
-              {editor.triggerKind !== "once" ? (
-                <>
-                  <DateTimeField
-                    optional
-                    label={t("activeFrom")}
-                    value={editor.startsAt}
-                    onChange={(startsAt) => setEditor({ ...editor, startsAt })}
-                  />
-                  <DateTimeField
-                    optional
-                    label={t("activeUntil")}
-                    value={editor.endsAt}
-                    onChange={(endsAt) => setEditor({ ...editor, endsAt })}
-                  />
-                </>
-              ) : null}
-            </div>
-            {validation.trigger !== undefined ? (
-              <p className="automation-field-error" role="alert">
-                {t("scheduleInvalid")}
-              </p>
-            ) : null}
-            <button className="secondary-button" type="button" onClick={() => void showPreview()}>
-              {t("previewNextRuns")}
-            </button>
-            {preview.length > 0 ? (
-              <ol className="automation-preview">
-                {preview.map((occurrence) => (
-                  <li key={occurrence}>{new Date(occurrence).toLocaleString()}</li>
-                ))}
-              </ol>
-            ) : null}
-          </section>
-
-          <section className="automation-form-section">
-            <h2>{t("executionEnvironment")}</h2>
-            <div className="automation-field-grid">
-              <div className="automation-workspace-field">
-                <span className="automation-field-label">{t("workspace")}</span>
-                <WorkspacePicker
-                  className="automation-workspace-picker"
-                  defaultWorkspace={missionDefaults?.workspace}
-                  recentWorkspaces={missionDefaults?.recentWorkspaces ?? []}
-                  selection={selectedWorkspace}
-                  defaultSelected={
-                    missionDefaults !== undefined &&
-                    editor.workspace === missionDefaults.workspace.path
-                  }
-                  onChoose={() => void pickWorkspace()}
-                  onSelect={(workspace) => setEditor({ ...editor, workspace: workspace.path })}
-                  onUseDefault={() => {
-                    if (missionDefaults !== undefined) {
-                      setEditor({ ...editor, workspace: missionDefaults.workspace.path });
-                    }
-                  }}
-                />
-              </div>
-              <label>
-                <span>{t("toolPermissions")}</span>
-                <select
-                  value={editor.toolPermissionMode}
-                  onChange={(event) =>
-                    setEditor({
-                      ...editor,
-                      toolPermissionMode: event.target.value as DesktopToolPermissionMode,
-                    })
-                  }
+                  {editor.triggerKind !== "once" ? (
+                    <>
+                      <DateTimeField
+                        optional
+                        label={t("activeFrom")}
+                        value={editor.startsAt}
+                        onTouched={() => markTouched("trigger")}
+                        onChange={(startsAt) => setEditor({ ...editor, startsAt })}
+                      />
+                      <DateTimeField
+                        optional
+                        label={t("activeUntil")}
+                        value={editor.endsAt}
+                        onTouched={() => markTouched("trigger")}
+                        onChange={(endsAt) => setEditor({ ...editor, endsAt })}
+                      />
+                    </>
+                  ) : null}
+                </div>
+                {showError("trigger") && validation.trigger !== undefined ? (
+                  <p className="automation-field-error" role="alert">
+                    {t("scheduleInvalid")}
+                  </p>
+                ) : null}
+                <button
+                  className="secondary-button"
+                  type="button"
+                  onClick={() => void showPreview()}
                 >
-                  <option value="request-approval">{t("requestApproval")}</option>
-                  <option value="auto-approve">{t("autoApprove")}</option>
-                  <option value="full-access">{t("fullAccess")}</option>
-                </select>
-              </label>
+                  {t("previewNextRuns")}
+                </button>
+                {preview.length > 0 ? (
+                  <ol className="automation-preview">
+                    {preview.map((occurrence) => (
+                      <li key={occurrence}>{new Date(occurrence).toLocaleString()}</li>
+                    ))}
+                  </ol>
+                ) : null}
+              </section>
+
+              <section className="automation-form-section is-environment">
+                <h2>{t("executionEnvironment")}</h2>
+                <div className="automation-field-grid is-environment">
+                  <div className="automation-workspace-field" data-automation-field="workspace">
+                    <span className="automation-field-label">{t("workspace")}</span>
+                    <WorkspacePicker
+                      className="automation-workspace-picker"
+                      defaultWorkspace={missionDefaults?.workspace}
+                      recentWorkspaces={missionDefaults?.recentWorkspaces ?? []}
+                      selection={selectedWorkspace}
+                      defaultSelected={
+                        missionDefaults !== undefined &&
+                        editor.workspace === missionDefaults.workspace.path
+                      }
+                      onChoose={() => void pickWorkspace()}
+                      onSelect={(workspace) => {
+                        markTouched("workspace");
+                        setEditor({ ...editor, workspace: workspace.path });
+                      }}
+                      onUseDefault={() => {
+                        if (missionDefaults !== undefined) {
+                          markTouched("workspace");
+                          setEditor({ ...editor, workspace: missionDefaults.workspace.path });
+                        }
+                      }}
+                    />
+                    {showError("workspace") && validation.workspace !== undefined ? (
+                      <p className="automation-field-error" role="alert">
+                        {t("workspaceRequired")}
+                      </p>
+                    ) : null}
+                  </div>
+                  <div className="automation-select-field">
+                    <span>{t("toolPermissions")}</span>
+                    <ToolPermissionSelect
+                      className="form-select automation-permission-select"
+                      value={editor.toolPermissionMode}
+                      onChange={(toolPermissionMode) =>
+                        setEditor({ ...editor, toolPermissionMode })
+                      }
+                    />
+                  </div>
+                </div>
+                <div className="automation-switch">
+                  <Switch
+                    checked={editor.enabled}
+                    ariaLabel={t("enableAutomation")}
+                    onChange={(enabled) => setEditor({ ...editor, enabled })}
+                  />
+                  <span>{t("enableAutomation")}</span>
+                </div>
+              </section>
+              {error ? (
+                <p className="form-error" role="alert">
+                  {error}
+                </p>
+              ) : null}
             </div>
-            <label className="automation-switch">
-              <input
-                type="checkbox"
-                checked={editor.enabled}
-                onChange={(event) => setEditor({ ...editor, enabled: event.target.checked })}
-              />
-              <span>{t("enableAutomation")}</span>
-            </label>
-          </section>
-          {error ? (
-            <p className="form-error" role="alert">
-              {error}
-            </p>
-          ) : null}
-          <footer className="automation-form-actions">
-            {editor.originalRef !== undefined ? (
-              <button
-                className="danger-button"
-                type="button"
-                onClick={() => {
-                  void (async () => {
-                    if (!window.confirm(t("deleteAutomationConfirm"))) return;
-                    try {
-                      await desktopApi()?.deleteAutomation({
-                        expectedProjectRevision: props.project.revision,
-                        ref: editor.originalRef!,
-                      });
-                      setEditor(null);
-                      await props.onChanged();
-                    } catch (deleteError) {
-                      setError(errorMessage(deleteError));
-                    }
-                  })();
-                }}
-              >
-                <Trash size={16} aria-hidden="true" />
-                {t("deleteResourceAction")}
+            <footer className="automation-form-actions">
+              {editor.originalRef !== undefined ? (
+                <button className="danger-button" type="button" onClick={() => setDeleteOpen(true)}>
+                  <Trash size={16} aria-hidden="true" />
+                  {t("deleteResourceAction")}
+                </button>
+              ) : null}
+              <button className="secondary-button" type="button" onClick={() => setEditor(null)}>
+                {t("cancel")}
               </button>
-            ) : null}
-            <button className="secondary-button" type="button" onClick={() => setEditor(null)}>
-              {t("cancel")}
-            </button>
-            <button className="primary-button" type="submit" disabled={saving || !validation.valid}>
-              {saving ? t("saving") : t("saveAutomation")}
-            </button>
-          </footer>
-        </form>
-      </StudioScreenFrame>
+              <button className="primary-button" type="submit" disabled={saving}>
+                {saving ? t("saving") : t("saveAutomation")}
+              </button>
+            </footer>
+          </form>
+        </StudioScreenFrame>
+        {deleteOpen ? (
+          <StudioConfirmationDialog
+            title={t("deleteResourceAction")}
+            description={t("deleteAutomationConfirm")}
+            confirmLabel={t("deleteResourceAction")}
+            cancelLabel={t("cancel")}
+            busyLabel={t("saving")}
+            busy={deleting}
+            action="delete"
+            onCancel={() => setDeleteOpen(false)}
+            onConfirm={() => void deleteAutomation()}
+          />
+        ) : null}
+      </>
     );
   }
 
@@ -779,7 +901,19 @@ export function AutomationDirectoryFragment(props: {
 
 type FieldValidationError = "required" | "tooLong";
 
+type AutomationValidation = {
+  readonly valid: boolean;
+  readonly name?: FieldValidationError | undefined;
+  readonly description?: FieldValidationError | undefined;
+  readonly executor?: "required" | undefined;
+  readonly prompt?: FieldValidationError | undefined;
+  readonly flowInput?: "invalid" | undefined;
+  readonly trigger?: "invalid" | undefined;
+  readonly workspace?: "required" | undefined;
+};
+
 function FieldFeedback(props: {
+  readonly id: string;
   readonly value: string;
   readonly max: number;
   readonly error?: FieldValidationError | undefined;
@@ -792,10 +926,13 @@ function FieldFeedback(props: {
         ? t("fieldRequired")
         : t("fieldTooLong", { max: props.max });
   return (
-    <small className={error === undefined ? "automation-field-meta" : "automation-field-error"}>
+    <small
+      className={error === undefined ? "automation-field-meta" : "automation-field-error"}
+      id={props.id}
+    >
       <span>{error}</span>
       <span>
-        {props.value.length}/{props.max}
+        {pragmaUnicodeLength(props.value.trim())}/{props.max}
       </span>
     </small>
   );
@@ -884,19 +1021,20 @@ function DateTimeField(props: {
   readonly label: string;
   readonly value: string;
   readonly optional?: boolean | undefined;
+  readonly onTouched?: (() => void) | undefined;
   readonly onChange: (value: string) => void;
 }) {
   return (
-    <label>
+    <div className="automation-select-field">
       <span>{props.label}</span>
-      <input
-        type="datetime-local"
-        required={!props.optional}
+      <DateTimePicker
+        label={props.label}
         value={props.value}
-        onClick={(event) => openNativePicker(event.currentTarget)}
-        onChange={(event) => props.onChange(event.target.value)}
+        optional={props.optional}
+        onTouched={props.onTouched}
+        onChange={props.onChange}
       />
-    </label>
+    </div>
   );
 }
 
@@ -956,21 +1094,15 @@ export function scheduleTrigger(editor: EditorState, timezone = systemTimezone()
 export function validateAutomationEditor(
   editor: EditorState,
   executor: MissionExecutorOption | undefined,
-): {
-  readonly valid: boolean;
-  readonly name?: FieldValidationError | undefined;
-  readonly description?: FieldValidationError | undefined;
-  readonly prompt?: FieldValidationError | undefined;
-  readonly flowInput?: "invalid" | undefined;
-  readonly trigger?: "invalid" | undefined;
-} {
-  const name = validateText(editor.name, PRAGMA_RESOURCE_NAME_MAX_LENGTH);
-  const description = validateText(editor.description, PRAGMA_RESOURCE_DESCRIPTION_MAX_LENGTH);
+): AutomationValidation {
+  const name = validateText(editor.name, PRAGMA_TEXT_LIMITS.automation.name);
+  const description = validateText(editor.description, PRAGMA_TEXT_LIMITS.automation.description);
+  const executorError = executor === undefined ? ("required" as const) : undefined;
   const inputSchema = executor?.kind === "flow" ? executor.inputSchema : undefined;
   const prompt =
-    inputSchema !== undefined
+    executor === undefined || inputSchema !== undefined
       ? undefined
-      : validateText(editor.prompt, PRAGMA_AUTOMATION_PROMPT_MAX_LENGTH);
+      : validateText(editor.prompt, PRAGMA_TEXT_LIMITS.automation.promptAuthoring);
   const flowInput =
     inputSchema !== undefined && !isSchemaInputValid(inputSchema, editor.flowInput)
       ? ("invalid" as const)
@@ -981,29 +1113,50 @@ export function validateAutomationEditor(
   } catch {
     trigger = "invalid";
   }
+  const workspace = editor.workspace === "" ? ("required" as const) : undefined;
   const valid =
     name === undefined &&
     description === undefined &&
+    executorError === undefined &&
     prompt === undefined &&
     flowInput === undefined &&
     trigger === undefined &&
-    executor !== undefined &&
-    editor.workspace !== "";
-  return { valid, name, description, prompt, flowInput, trigger };
+    workspace === undefined;
+  return {
+    valid,
+    name,
+    description,
+    executor: executorError,
+    prompt,
+    flowInput,
+    trigger,
+    workspace,
+  };
+}
+
+function focusFirstAutomationError(validation: AutomationValidation): void {
+  const fields: readonly (keyof AutomationValidation)[] = [
+    "name",
+    "description",
+    "executor",
+    "prompt",
+    "flowInput",
+    "trigger",
+    "workspace",
+  ];
+  const field = fields.find((candidate) => validation[candidate] !== undefined);
+  if (field === undefined) return;
+  const root = document.querySelector<HTMLElement>(`[data-automation-field="${field}"]`);
+  const target = root?.matches("button, input, textarea, [tabindex]")
+    ? root
+    : root?.querySelector<HTMLElement>("button, input, textarea, [tabindex]");
+  target?.focus();
 }
 
 function validateText(value: string, max: number): FieldValidationError | undefined {
   if (value.trim() === "") return "required";
-  if (value.length > max) return "tooLong";
+  if (pragmaUnicodeLength(value.trim()) > max) return "tooLong";
   return undefined;
-}
-
-function openNativePicker(input: HTMLInputElement): void {
-  try {
-    input.showPicker?.();
-  } catch {
-    // The browser still provides its default input interaction when showPicker is unavailable.
-  }
 }
 
 function systemTimezone(): string {

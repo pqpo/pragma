@@ -18,8 +18,14 @@ import {
   Trash,
   X,
 } from "@phosphor-icons/react";
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState, type CSSProperties } from "react";
 import { useTranslation } from "react-i18next";
+import {
+  PRAGMA_TEXT_LIMITS,
+  pragmaKnowledgeBaseEntryNameIssue,
+  truncatePragmaTrimmedUnicode,
+  type PragmaKnowledgeBaseEntryNameIssue,
+} from "@pragma/shared";
 
 import type {
   ContextStore,
@@ -30,8 +36,15 @@ import type {
   CreateContextStore,
   ExpertContextStoreMount,
 } from "../../../../shared/contracts/index.ts";
+import { CharacterCount } from "../../components/CharacterCount.tsx";
 import { MarkdownContent } from "../../components/MarkdownContent.tsx";
+import { SelectMenu } from "../../components/SelectMenu.tsx";
+import { SidebarResizeHandle } from "../../components/SidebarResizeHandle.tsx";
 import { errorMessage } from "../../lib/errors.ts";
+import {
+  SIDEBAR_WIDTH_PREFERENCES,
+  usePersistentSidebarWidth,
+} from "../../lib/sidebar-width-preference.ts";
 import {
   flushContextStoreSaves,
   type ContextStoreSaveCoordinator,
@@ -124,6 +137,14 @@ export function rebaseEntryId(
 function withMarkdownExtension(value: string): string {
   const trimmed = value.trim();
   return trimmed.toLowerCase().endsWith(".md") ? trimmed : `${trimmed}.md`;
+}
+
+function entryOperationName(operation: EntryTextOperation, value = operation.value): string {
+  const isFile =
+    operation.kind === "create-file" ||
+    operation.kind === "save-copy" ||
+    (operation.kind === "rename" && operation.entry.kind === "file");
+  return isFile ? value.replace(/\.md$/iu, "") : value;
 }
 
 export function ContextStoreDirectoryFragment(props: {
@@ -299,6 +320,9 @@ export function ContextStoreDetailFragment(props: {
   const [refreshing, setRefreshing] = useState(false);
   const [draggedEntry, setDraggedEntry] = useState<ContextStoreEntry | null>(null);
   const [dropTargetDirectory, setDropTargetDirectory] = useState<string | null>(null);
+  const [filePanelWidth, setFilePanelWidth] = usePersistentSidebarWidth(
+    SIDEBAR_WIDTH_PREFERENCES.knowledgeBaseFiles,
+  );
   const [autosaveVersion, setAutosaveVersion] = useState(0);
   const editVersionRef = useRef(0);
   const documentVersionRef = useRef(0);
@@ -512,14 +536,19 @@ export function ContextStoreDetailFragment(props: {
     if (await save()) await loadFile(entry);
   };
 
-  const openEntryTextOperation = async (operation: EntryTextOperation["kind"]): Promise<void> => {
+  const openEntryTextOperation = async (
+    operation: EntryTextOperation["kind"],
+    targetEntry?: ContextStoreEntry,
+  ): Promise<void> => {
     if (!(await save())) return;
     if (operation === "rename") {
-      if (selectedEntry === null) return;
+      const entry = targetEntry ?? selectedEntry;
+      if (entry === null) return;
       setEntryTextOperation({
         kind: "rename",
-        entry: selectedEntry,
-        value: fileName(selectedEntry.id),
+        entry,
+        value:
+          entry.kind === "file" ? fileName(entry.id).replace(/\.md$/iu, "") : fileName(entry.id),
         busy: false,
         error: null,
       });
@@ -536,6 +565,14 @@ export function ContextStoreDetailFragment(props: {
   const submitEntryTextOperation = async (): Promise<void> => {
     const operation = entryTextOperation;
     if (operation === null || operation.busy || operation.value.trim() === "") return;
+    const validationIssue = pragmaKnowledgeBaseEntryNameIssue(entryOperationName(operation));
+    if (validationIssue !== undefined) {
+      setEntryTextOperation({
+        ...operation,
+        error: entryNameIssueMessage(validationIssue),
+      });
+      return;
+    }
     setEntryTextOperation({ ...operation, busy: true, error: null });
     try {
       if (operation.kind === "create-folder") {
@@ -550,14 +587,31 @@ export function ContextStoreDetailFragment(props: {
             ? withMarkdownExtension(operation.value)
             : operation.value.trim();
         const nextId = joinEntry(parentId(operation.entry.id), nextName);
+        const currentSelection = currentRef.current.selectedEntry;
         await props.onRenameEntry(props.store.id, operation.entry.id, nextId, operation.entry.kind);
-        const renamed = { ...operation.entry, id: nextId };
-        setSelectedEntry(renamed);
-        setSelectedDirectory(operation.entry.kind === "directory" ? nextId : parentId(nextId));
-        setContent(null);
-        setDirty(false);
-        await loadEntries(renamed);
-        if (operation.entry.kind === "file") await loadFile(renamed);
+        const rebasedId =
+          currentSelection === null
+            ? undefined
+            : rebaseEntryId(currentSelection.id, operation.entry.id, nextId);
+        const nextSelection =
+          currentSelection !== null && rebasedId !== undefined
+            ? { ...currentSelection, id: rebasedId }
+            : currentSelection;
+        if (nextSelection !== null && rebasedId !== undefined) {
+          setSelectedEntry(nextSelection);
+          setSelectedDirectory(
+            nextSelection.kind === "directory" ? nextSelection.id : parentId(nextSelection.id),
+          );
+          if (nextSelection.kind === "directory") {
+            setContent(null);
+            setDraft("");
+            setDirty(false);
+          }
+        }
+        await loadEntries(nextSelection);
+        if (nextSelection?.kind === "file" && rebasedId !== undefined) {
+          await loadFile(nextSelection, true);
+        }
       } else {
         const id = joinEntry(selectedDirectory, withMarkdownExtension(operation.value));
         const created = await props.onCreateFile(
@@ -664,6 +718,28 @@ export function ContextStoreDetailFragment(props: {
     }
   };
 
+  const entryNameIssueMessage = (issue: PragmaKnowledgeBaseEntryNameIssue): string => {
+    switch (issue) {
+      case "empty":
+        return t("entryNameRequired");
+      case "too_long":
+        return t("entryNameTooLong", { max: PRAGMA_TEXT_LIMITS.contextStore.entryName });
+      case "whitespace":
+        return t("entryNameWhitespaceError");
+      case "invalid_character":
+        return t("entryNameInvalidCharacterError");
+      case "dot_name":
+        return t("entryNameDotError");
+      case "reserved_name":
+        return t("entryNameReservedError");
+    }
+  };
+
+  const entryNameIssue =
+    entryTextOperation === null
+      ? undefined
+      : pragmaKnowledgeBaseEntryNameIssue(entryOperationName(entryTextOperation));
+
   return (
     <StudioScreenFrame
       className="knowledge-base-editor"
@@ -692,10 +768,12 @@ export function ContextStoreDetailFragment(props: {
         </div>
       }
     >
-      <div className="knowledge-base-workspace">
+      <div
+        className="knowledge-base-workspace"
+        style={{ "--sidebar-width": `${filePanelWidth}px` } as CSSProperties}
+      >
         <aside className="knowledge-file-panel" aria-label={t("knowledgeBaseFiles")}>
           <div className="knowledge-file-toolbar">
-            <strong>{t("files")}</strong>
             <div>
               <button
                 type="button"
@@ -765,28 +843,17 @@ export function ContextStoreDetailFragment(props: {
               const depth = entry.id.split("/").length - 1;
               const Icon = entry.kind === "directory" ? Folder : FileText;
               return (
-                <button
+                <div
                   key={`${entry.kind}:${entry.id}`}
+                  role="none"
                   className={[
+                    "knowledge-file-row",
                     selectedEntry?.id === entry.id ? "is-selected" : "",
                     dropTargetDirectory === entry.id ? "is-drop-target" : "",
                   ]
                     .filter(Boolean)
                     .join(" ")}
                   style={{ paddingInlineStart: 12 + depth * 18 }}
-                  type="button"
-                  role="treeitem"
-                  draggable
-                  onClick={() => void openEntry(entry)}
-                  onDragStart={(event) => {
-                    event.dataTransfer.effectAllowed = "move";
-                    event.dataTransfer.setData("text/plain", entry.id);
-                    setDraggedEntry(entry);
-                  }}
-                  onDragEnd={() => {
-                    setDraggedEntry(null);
-                    setDropTargetDirectory(null);
-                  }}
                   onDragOver={(event) => {
                     if (
                       entry.kind !== "directory" ||
@@ -810,13 +877,47 @@ export function ContextStoreDetailFragment(props: {
                     proposeMove(draggedEntry, entry.id);
                   }}
                 >
-                  <Icon size={17} />
-                  <span>{fileName(entry.id)}</span>
-                </button>
+                  <button
+                    className="knowledge-file-open"
+                    type="button"
+                    role="treeitem"
+                    aria-selected={selectedEntry?.id === entry.id}
+                    draggable
+                    onClick={() => void openEntry(entry)}
+                    onDragStart={(event) => {
+                      event.dataTransfer.effectAllowed = "move";
+                      event.dataTransfer.setData("text/plain", entry.id);
+                      setDraggedEntry(entry);
+                    }}
+                    onDragEnd={() => {
+                      setDraggedEntry(null);
+                      setDropTargetDirectory(null);
+                    }}
+                  >
+                    <Icon size={17} aria-hidden="true" />
+                    <span>{fileName(entry.id)}</span>
+                  </button>
+                  <button
+                    className="knowledge-file-rename"
+                    type="button"
+                    title={t("rename")}
+                    aria-label={t("renameEntryNamed", { name: fileName(entry.id) })}
+                    draggable={false}
+                    onClick={() => void openEntryTextOperation("rename", entry)}
+                  >
+                    <PencilSimple size={15} aria-hidden="true" />
+                  </button>
+                </div>
               );
             })}
           </div>
         </aside>
+        <SidebarResizeHandle
+          label={t("resizeKnowledgeFileList")}
+          width={filePanelWidth}
+          preference={SIDEBAR_WIDTH_PREFERENCES.knowledgeBaseFiles}
+          onResize={setFilePanelWidth}
+        />
 
         <section className="knowledge-editor-panel">
           {selectedEntry?.kind === "file" && content !== null ? (
@@ -929,43 +1030,49 @@ export function ContextStoreDetailFragment(props: {
                   }}
                 />
               </label>
-              <label>
-                {t("loadingBehavior")}
-                <select
+              <div className="knowledge-metadata-field">
+                <span>{t("loadingBehavior")}</span>
+                <SelectMenu<ContextStoreContentMetadata["trigger"]>
+                  ariaLabel={t("loadingBehavior")}
+                  className="form-select"
                   value={metadata.trigger}
-                  onChange={(event) => {
+                  options={[
+                    { value: "manual", label: t("onDemand") },
+                    { value: "model_decision", label: t("modelDecides") },
+                    { value: "always_on", label: t("loadImmediately") },
+                  ]}
+                  onChange={(trigger) => {
                     const nextMetadata = {
                       ...metadata,
-                      trigger: event.target.value as ContextStoreContentMetadata["trigger"],
+                      trigger,
                     };
                     setMetadata(nextMetadata);
                     markEdited({ metadata: nextMetadata });
                   }}
-                >
-                  <option value="manual">{t("onDemand")}</option>
-                  <option value="model_decision">{t("modelDecides")}</option>
-                  <option value="always_on">{t("loadImmediately")}</option>
-                </select>
-              </label>
-              <label>
-                {t("priority")}
-                <select
+                />
+              </div>
+              <div className="knowledge-metadata-field">
+                <span>{t("priority")}</span>
+                <SelectMenu<ContextStoreContentMetadata["priority"]>
+                  ariaLabel={t("priority")}
+                  className="form-select"
                   value={metadata.priority}
-                  onChange={(event) => {
+                  options={[
+                    { value: "low", label: t("priorityLow") },
+                    { value: "normal", label: t("priorityNormal") },
+                    { value: "high", label: t("priorityHigh") },
+                    { value: "critical", label: t("priorityCritical") },
+                  ]}
+                  onChange={(priority) => {
                     const nextMetadata = {
                       ...metadata,
-                      priority: event.target.value as ContextStoreContentMetadata["priority"],
+                      priority,
                     };
                     setMetadata(nextMetadata);
                     markEdited({ metadata: nextMetadata });
                   }}
-                >
-                  <option value="low">{t("priorityLow")}</option>
-                  <option value="normal">{t("priorityNormal")}</option>
-                  <option value="high">{t("priorityHigh")}</option>
-                  <option value="critical">{t("priorityCritical")}</option>
-                </select>
-              </label>
+                />
+              </div>
               <p>{t("frontmatterManaged")}</p>
             </div>
           ) : (
@@ -1000,6 +1107,10 @@ export function ContextStoreDetailFragment(props: {
           }
           label={t("entryName")}
           value={entryTextOperation.value}
+          hint={t("entryNameRules")}
+          countValue={entryOperationName(entryTextOperation)}
+          maxLength={PRAGMA_TEXT_LIMITS.contextStore.entryName}
+          invalid={entryNameIssue !== undefined}
           cancelLabel={t("cancel")}
           confirmLabel={
             entryTextOperation.kind === "create-file"
@@ -1018,9 +1129,16 @@ export function ContextStoreDetailFragment(props: {
           busy={entryTextOperation.busy}
           error={entryTextOperation.error}
           onChange={(value) =>
-            setEntryTextOperation((current) =>
-              current === null ? null : { ...current, value, error: null },
-            )
+            setEntryTextOperation((current) => {
+              if (current === null) return null;
+              const issue = pragmaKnowledgeBaseEntryNameIssue(entryOperationName(current, value));
+              return {
+                ...current,
+                value,
+                error:
+                  issue === undefined || issue === "empty" ? null : entryNameIssueMessage(issue),
+              };
+            })
           }
           onCancel={() => setEntryTextOperation(null)}
           onConfirm={() => void submitEntryTextOperation()}
@@ -1093,7 +1211,10 @@ export function ContextStoreCreatorDrawer(props: {
       const result = await props.onInspectImport(folder);
       setSourcePath(folder);
       setInspection(result);
-      if (!name.trim()) setName(fileName(folder));
+      if (!name.trim())
+        setName(
+          truncatePragmaTrimmedUnicode(fileName(folder), PRAGMA_TEXT_LIMITS.contextStore.name),
+        );
     } catch (cause) {
       setInspection(null);
       setError(errorMessage(cause));
@@ -1207,13 +1328,38 @@ export function ContextStoreCreatorDrawer(props: {
               <div className="store-config-form">
                 <label>
                   {t("name")}
-                  <input value={name} onChange={(event) => setName(event.target.value)} autoFocus />
+                  <input
+                    value={name}
+                    maxLength={PRAGMA_TEXT_LIMITS.contextStore.name * 2}
+                    onChange={(event) =>
+                      setName(
+                        truncatePragmaTrimmedUnicode(
+                          event.target.value,
+                          PRAGMA_TEXT_LIMITS.contextStore.name,
+                        ),
+                      )
+                    }
+                    autoFocus
+                  />
+                  <CharacterCount value={name} max={PRAGMA_TEXT_LIMITS.contextStore.name} />
                 </label>
                 <label>
                   {t("description")}
                   <textarea
                     value={description}
-                    onChange={(event) => setDescription(event.target.value)}
+                    maxLength={PRAGMA_TEXT_LIMITS.contextStore.description * 2}
+                    onChange={(event) =>
+                      setDescription(
+                        truncatePragmaTrimmedUnicode(
+                          event.target.value,
+                          PRAGMA_TEXT_LIMITS.contextStore.description,
+                        ),
+                      )
+                    }
+                  />
+                  <CharacterCount
+                    value={description}
+                    max={PRAGMA_TEXT_LIMITS.contextStore.description}
                   />
                 </label>
                 {mode === "import" ? (

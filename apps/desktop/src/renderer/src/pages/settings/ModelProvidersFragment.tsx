@@ -25,6 +25,8 @@ import {
   findModelProviderPreset,
 } from "../../../../shared/model-provider-presets.ts";
 import { ModelProviderLogo } from "../../components/ModelProviderLogo.tsx";
+import { ConfirmationDialog } from "../../components/Dialog.tsx";
+import { SelectMenu } from "../../components/SelectMenu.tsx";
 import { errorMessage } from "../../lib/errors.ts";
 import { SettingsScreenFrame } from "./SettingsScreenFrame.tsx";
 
@@ -308,14 +310,21 @@ export function ProviderEditor(props: {
               </span>
             </label>
             {draft.presetId === "custom-openai" ? (
-              <label className="static-field">
+              <div className="static-field">
                 <span>{t("models.protocol", { ns: "settings" })}</span>
-                <select
+                <SelectMenu<ModelProvider["protocol"]>
+                  ariaLabel={t("models.protocol", { ns: "settings" })}
+                  className="form-select"
                   value={draft.protocol}
-                  onChange={(event) =>
+                  placement="bottom"
+                  options={[
+                    { value: "openai-completions", label: "OpenAI Chat Completions" },
+                    { value: "openai-responses", label: "OpenAI Responses" },
+                  ]}
+                  onChange={(value) =>
                     setDraft({
                       ...draft,
-                      protocol: event.target.value as ModelProvider["protocol"],
+                      protocol: value,
                       compatibilityProfileId: "",
                       models: draft.models.map((model) => ({
                         ...model,
@@ -323,34 +332,33 @@ export function ProviderEditor(props: {
                       })),
                     })
                   }
-                >
-                  <option value="openai-completions">OpenAI Chat Completions</option>
-                  <option value="openai-responses">OpenAI Responses</option>
-                </select>
-              </label>
+                />
+              </div>
             ) : null}
             {compatibleProfiles.length > 0 ? (
-              <label className="static-field provider-compatibility-field">
+              <div className="static-field provider-compatibility-field">
                 <span>{t("models.compatibilityProfile", { ns: "settings" })}</span>
-                <select
+                <SelectMenu
+                  ariaLabel={t("models.compatibilityProfile", { ns: "settings" })}
+                  className="form-select"
                   value={draft.compatibilityProfileId}
-                  onChange={(event) =>
-                    setDraft({ ...draft, compatibilityProfileId: event.target.value })
-                  }
-                >
-                  <option value="">{t("models.automaticCompatibility", { ns: "settings" })}</option>
-                  {compatibleProfiles.map((profile) => (
-                    <option key={profile.id} value={profile.id}>
-                      {profile.displayName}
-                    </option>
-                  ))}
-                </select>
+                  placement="bottom"
+                  options={[
+                    { value: "", label: t("models.automaticCompatibility", { ns: "settings" }) },
+                    ...compatibleProfiles.map((profile) => ({
+                      value: profile.id,
+                      label: profile.displayName,
+                      description: profile.description,
+                    })),
+                  ]}
+                  onChange={(value) => setDraft({ ...draft, compatibilityProfileId: value })}
+                />
                 <small>
                   {compatibleProfiles.find((profile) => profile.id === draft.compatibilityProfileId)
                     ?.description ??
                     t("models.automaticCompatibilityDescription", { ns: "settings" })}
                 </small>
-              </label>
+              </div>
             ) : null}
           </div>
         </section>
@@ -596,56 +604,57 @@ function ModelCapabilityEditor(props: {
                     </label>
                   ))}
                 </div>
-                <label className="thinking-default-field">
+                <div className="thinking-default-field">
                   <span>{t("models.defaultThinkingLevel")}</span>
-                  <select
+                  <SelectMenu
+                    ariaLabel={t("models.defaultThinkingLevel")}
+                    className="form-select"
                     value={props.model.thinking.defaultLevel ?? ""}
-                    onChange={(event) =>
+                    placement="bottom"
+                    options={[
+                      { value: "", label: t("models.runtimeDefault") },
+                      ...supported.map((level) => ({ value: level, label: level })),
+                    ]}
+                    onChange={(value) =>
                       props.onChange({
                         ...props.model,
                         thinking: {
                           ...props.model.thinking!,
                           defaultLevel:
-                            event.target.value === ""
-                              ? undefined
-                              : (event.target.value as (typeof THINKING_LEVELS)[number]),
+                            value === "" ? undefined : (value as (typeof THINKING_LEVELS)[number]),
                         },
                       })
                     }
-                  >
-                    <option value="">{t("models.runtimeDefault")}</option>
-                    {supported.map((level) => (
-                      <option key={level} value={level}>
-                        {level}
-                      </option>
-                    ))}
-                  </select>
-                </label>
+                  />
+                </div>
               </div>
             )}
           </>
         ) : null}
         {props.compatibilityProfiles.length > 0 ? (
-          <label className="model-profile-field">
+          <div className="model-profile-field">
             <span>{t("models.modelCompatibilityOverride")}</span>
-            <select
+            <SelectMenu
+              ariaLabel={t("models.modelCompatibilityOverride")}
+              className="form-select"
               value={props.model.compatibilityProfileId ?? ""}
-              onChange={(event) =>
+              placement="bottom"
+              options={[
+                { value: "", label: t("models.inheritCompatibility") },
+                ...props.compatibilityProfiles.map((profile) => ({
+                  value: profile.id,
+                  label: profile.displayName,
+                  description: profile.description,
+                })),
+              ]}
+              onChange={(value) =>
                 props.onChange({
                   ...props.model,
-                  compatibilityProfileId:
-                    event.target.value === "" ? undefined : event.target.value,
+                  compatibilityProfileId: value === "" ? undefined : value,
                 })
               }
-            >
-              <option value="">{t("models.inheritCompatibility")}</option>
-              {props.compatibilityProfiles.map((profile) => (
-                <option key={profile.id} value={profile.id}>
-                  {profile.displayName}
-                </option>
-              ))}
-            </select>
-          </label>
+            />
+          </div>
         ) : null}
       </div>
       <button
@@ -669,6 +678,7 @@ function ProviderCard(props: {
   const { t } = useTranslation("settings");
   const [testing, setTesting] = useState(false);
   const [deleting, setDeleting] = useState(false);
+  const [confirmOpen, setConfirmOpen] = useState(false);
   const [result, setResult] = useState<ModelConnectionTestResult | null>(null);
   const [error, setError] = useState<string | null>(null);
   const verification =
@@ -697,7 +707,6 @@ function ProviderCard(props: {
     }
   };
   const remove = async () => {
-    if (!window.confirm(t("models.deleteConfirm", { name: props.provider.name }))) return;
     setDeleting(true);
     try {
       await window.pragmaDesktop.deleteModelProvider({ id: props.provider.id });
@@ -705,6 +714,7 @@ function ProviderCard(props: {
     } catch (deleteError) {
       setError(errorMessage(deleteError));
       setDeleting(false);
+      setConfirmOpen(false);
     }
   };
   return (
@@ -768,13 +778,25 @@ function ProviderCard(props: {
         <button
           className="danger-button"
           type="button"
-          onClick={() => void remove()}
+          onClick={() => setConfirmOpen(true)}
           disabled={deleting}
         >
           <Trash size={16} />
           {deleting ? t("models.deleting") : t("models.deleteProvider")}
         </button>
       </div>
+      {confirmOpen ? (
+        <ConfirmationDialog
+          title={t("models.deleteProvider")}
+          description={t("models.deleteConfirm", { name: props.provider.name })}
+          cancelLabel={t("models.cancel")}
+          confirmLabel={t("models.deleteProvider")}
+          busyLabel={t("models.deleting")}
+          busy={deleting}
+          onCancel={() => setConfirmOpen(false)}
+          onConfirm={() => void remove()}
+        />
+      ) : null}
     </article>
   );
 }

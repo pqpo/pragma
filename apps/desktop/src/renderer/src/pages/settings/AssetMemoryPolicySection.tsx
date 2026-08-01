@@ -1,4 +1,3 @@
-import { CaretDown } from "@phosphor-icons/react";
 import { useEffect, useState } from "react";
 import { useTranslation } from "react-i18next";
 
@@ -6,6 +5,7 @@ import type {
   DesktopAssetMemoryPolicySnapshot,
   DesktopMemoryPolicyTarget,
 } from "../../../../shared/contracts/index.ts";
+import { SelectMenu } from "../../components/SelectMenu.tsx";
 
 export function AssetMemoryPolicySection(props: {
   readonly targetRef: DesktopMemoryPolicyTarget;
@@ -110,20 +110,18 @@ function OverrideSelect<T extends "inherit" | "enabled" | "disabled" | "local-ca
   return (
     <label>
       <span>{props.label}</span>
-      <span className="protocol-select-shell">
-        <select
-          value={props.value}
-          disabled={props.disabled}
-          onChange={(event) => props.onChange(event.target.value as T)}
-        >
-          {props.options.map((value) => (
-            <option key={value} value={value}>
-              {t(`memory.overrideStates.${value}`)}
-            </option>
-          ))}
-        </select>
-        <CaretDown size={15} weight="bold" aria-hidden="true" />
-      </span>
+      <SelectMenu<T>
+        ariaLabel={props.label}
+        className="form-select"
+        value={props.value}
+        disabled={props.disabled}
+        placement="bottom"
+        options={props.options.map((value) => ({
+          value,
+          label: t(`memory.overrideStates.${value}`),
+        }))}
+        onChange={props.onChange}
+      />
     </label>
   );
 }

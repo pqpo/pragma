@@ -4,6 +4,7 @@ import type { PragmaResource } from "@pragma/interpreter/ast";
 import { useTranslation } from "react-i18next";
 
 import type { Capability, ContextStore } from "../../../../shared/contracts/index.ts";
+import { SelectMenu } from "../../components/SelectMenu.tsx";
 import type { ExpertDraft } from "./studio-model.ts";
 
 type PickerKind = "resources" | "context-stores" | "skills" | "tools";
@@ -730,25 +731,28 @@ function ToolResults(props: {
                       <small>{tool.description ?? t("externalTool")}</small>
                     </span>
                     {checked ? (
-                      <label className="tool-approval-select">
+                      <div className="tool-approval-select">
                         <span className="sr-only">{t("toolApprovalFor", { name: tool.name })}</span>
-                        <select
+                        <SelectMenu<"" | "none" | "ask" | "required">
+                          ariaLabel={t("toolApprovalFor", { name: tool.name })}
+                          className="form-select"
                           value={props.toolApprovals[approvalKey] ?? ""}
-                          onChange={(event) =>
+                          options={[
+                            { value: "", label: t("approvalDefault") },
+                            { value: "none", label: t("approvalNone") },
+                            { value: "ask", label: t("approvalAsk") },
+                            { value: "required", label: t("approvalRequired") },
+                          ]}
+                          onChange={(approval) =>
                             props.onApprovalChange(
                               approvalKey,
-                              event.target.value === ""
+                              approval === ""
                                 ? undefined
-                                : (event.target.value as ExpertDraft["toolApprovals"][string]),
+                                : (approval as ExpertDraft["toolApprovals"][string]),
                             )
                           }
-                        >
-                          <option value="">{t("approvalDefault")}</option>
-                          <option value="none">{t("approvalNone")}</option>
-                          <option value="ask">{t("approvalAsk")}</option>
-                          <option value="required">{t("approvalRequired")}</option>
-                        </select>
-                      </label>
+                        />
+                      </div>
                     ) : null}
                   </div>
                 );

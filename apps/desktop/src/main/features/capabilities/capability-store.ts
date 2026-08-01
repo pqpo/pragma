@@ -3,10 +3,12 @@ import { lstat, mkdir, readFile, readdir, rename, rm, writeFile } from "node:fs/
 import { extname, join, relative, resolve, sep } from "node:path";
 
 import { unzipSync } from "fflate";
+import { z } from "zod";
 import {
   createCodeServiceMcpServer,
   createHttpServiceMcpServer,
   createMcpToolRegistryPool,
+  withFileLock,
   type HttpServiceAuth,
   type McpToolRegistryPool,
 } from "@pragma/core";
@@ -48,6 +50,24 @@ import type { CapabilityVerifier } from "./capability-verification.ts";
 
 const MAX_SKILL_BYTES = 25 * 1024 * 1024;
 const MAX_SKILL_FILES = 1000;
+
+const LegacyCapabilityManifestV1Schema = z.object({
+  schemaVersion: z.literal("pragma.capability/v1"),
+  id: z.string().uuid(),
+  runtimeKey: z.string().trim().min(1).max(80),
+  name: z.string().trim().min(1).max(120),
+  kind: z.enum(["skill", "mcp_server", "http_service", "code_service"]),
+  latestRevision: z.number().int().positive(),
+  createdAt: z.string().datetime(),
+  updatedAt: z.string().datetime(),
+});
+
+const CapabilityManifestMigrationJournalSchema = z.object({
+  schemaVersion: z.literal("pragma.capability-manifest-migration/v1"),
+  sourceSchema: z.literal("pragma.capability/v1"),
+  targetSchema: z.literal("pragma.capability/v2"),
+  targetManifest: CapabilityManifestSchema,
+});
 
 export interface CapabilityStore {
   list(): Promise<Capability[]>;
@@ -108,14 +128,79 @@ export function createCapabilityStore(options: {
   const capabilityPath = (id: string) => join(options.capabilitiesPath, id);
   const manifestPath = (id: string) => join(capabilityPath(id), "capability.json");
   const healthPath = (id: string) => join(capabilityPath(id), "health.json");
+  const migrationJournalPath = (id: string) => join(capabilityPath(id), "v1-to-v2.json");
   const revisionPath = (id: string, revision: number) =>
     join(capabilityPath(id), "revisions", revisionDirectory(revision));
 
+  const migrateManifest = async (id: string): Promise<CapabilityManifest> =>
+    await withFileLock(join(capabilityPath(id), ".v2-migration.lock"), async () => {
+      const raw = JSON.parse(await readFile(manifestPath(id), "utf8")) as unknown;
+      const current = CapabilityManifestSchema.safeParse(raw);
+      if (current.success) return current.data;
+      const legacy = LegacyCapabilityManifestV1Schema.safeParse(raw);
+      if (!legacy.success || legacy.data.id !== id) {
+        throw new CapabilityStoreError(
+          "config_invalid",
+          `Capability ${id} has an invalid manifest.`,
+        );
+      }
+
+      const pending = await readCapabilityMigrationJournal(migrationJournalPath(id));
+      if (pending !== undefined) {
+        if (pending.targetManifest.id !== id) {
+          throw new CapabilityStoreError(
+            "config_invalid",
+            `Capability ${id} has a migration journal for another capability.`,
+          );
+        }
+        await writeJson(manifestPath(id), pending.targetManifest);
+        await rm(migrationJournalPath(id), { force: true });
+        return pending.targetManifest;
+      }
+
+      for (let revision = 1; revision <= legacy.data.latestRevision; revision += 1) {
+        try {
+          CapabilityDefinitionSchema.parse(
+            JSON.parse(
+              await readFile(join(revisionPath(id, revision), "definition.json"), "utf8"),
+            ) as unknown,
+          );
+        } catch (error) {
+          throw new CapabilityStoreError(
+            "config_invalid",
+            `Capability ${id} revision ${revision} exceeds the current text limits at ${firstZodIssue(error)}. The original data was not changed.`,
+          );
+        }
+      }
+
+      const targetManifest = CapabilityManifestSchema.parse({
+        ...legacy.data,
+        schemaVersion: "pragma.capability/v2",
+      });
+      const backupPath = join(capabilityPath(id), "migration-backups", "capability.v1.json");
+      const journal = CapabilityManifestMigrationJournalSchema.parse({
+        schemaVersion: "pragma.capability-manifest-migration/v1",
+        sourceSchema: "pragma.capability/v1",
+        targetSchema: "pragma.capability/v2",
+        targetManifest,
+      });
+      await writeJson(backupPath, legacy.data);
+      await writeJson(migrationJournalPath(id), journal);
+      await writeJson(manifestPath(id), targetManifest);
+      await rm(migrationJournalPath(id), { force: true });
+      return targetManifest;
+    });
+
   const readManifest = async (id: string): Promise<CapabilityManifest> => {
     try {
-      return CapabilityManifestSchema.parse(
-        JSON.parse(await readFile(manifestPath(id), "utf8")) as unknown,
-      );
+      const raw = JSON.parse(await readFile(manifestPath(id), "utf8")) as unknown;
+      const current = CapabilityManifestSchema.safeParse(raw);
+      if (current.success) {
+        await rm(migrationJournalPath(id), { force: true });
+        return current.data;
+      }
+      if (LegacyCapabilityManifestV1Schema.safeParse(raw).success) return await migrateManifest(id);
+      throw new CapabilityStoreError("config_invalid", `Capability ${id} has an invalid manifest.`);
     } catch (error) {
       if ((error as NodeJS.ErrnoException).code === "ENOENT") {
         throw new CapabilityStoreError("capability_not_found", "The capability no longer exists.");
@@ -200,11 +285,22 @@ export function createCapabilityStore(options: {
         const capabilities = await Promise.all(
           entries
             .filter((entry) => entry.isDirectory() && !entry.name.startsWith("."))
-            .map((entry) => readCapability(entry.name)),
+            .map(async (entry) => {
+              try {
+                return await readCapability(entry.name);
+              } catch (error) {
+                if (error instanceof CapabilityStoreError && error.code === "config_invalid") {
+                  return undefined;
+                }
+                throw error;
+              }
+            }),
         );
-        return capabilities.toSorted((left, right) =>
-          right.manifest.updatedAt.localeCompare(left.manifest.updatedAt),
-        );
+        return capabilities
+          .filter((capability): capability is Capability => capability !== undefined)
+          .toSorted((left, right) =>
+            right.manifest.updatedAt.localeCompare(left.manifest.updatedAt),
+          );
       } catch (error) {
         if ((error as NodeJS.ErrnoException).code === "ENOENT") return [];
         throw error;
@@ -336,7 +432,7 @@ export function createCapabilityStore(options: {
           contentHash: await hashDirectory(payloadPath),
         });
         const manifest = CapabilityManifestSchema.parse({
-          schemaVersion: "pragma.capability/v1",
+          schemaVersion: "pragma.capability/v2",
           id,
           runtimeKey: createRuntimeKey(name, id),
           name,
@@ -420,7 +516,7 @@ export function createCapabilityStore(options: {
       const verified = await options.verify(validateDefinition(input.definition), id);
       assertCodeServiceReady(input.definition, verified.health);
       const manifest = CapabilityManifestSchema.parse({
-        schemaVersion: "pragma.capability/v1",
+        schemaVersion: "pragma.capability/v2",
         id,
         runtimeKey: createRuntimeKey(input.definition.name, id),
         name: input.definition.name,
@@ -764,6 +860,28 @@ function toCoreCodeService(
 
 function revisionDirectory(revision: number): string {
   return revision.toString().padStart(6, "0");
+}
+
+function firstZodIssue(error: unknown): string {
+  if (!(error instanceof z.ZodError)) return "definition";
+  const issue = error.issues[0];
+  return issue === undefined ? "definition" : issue.path.join(".") || "definition";
+}
+
+async function readCapabilityMigrationJournal(
+  path: string,
+): Promise<z.infer<typeof CapabilityManifestMigrationJournalSchema> | undefined> {
+  try {
+    return CapabilityManifestMigrationJournalSchema.parse(
+      JSON.parse(await readFile(path, "utf8")) as unknown,
+    );
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code === "ENOENT") return undefined;
+    if (error instanceof z.ZodError) {
+      throw new CapabilityStoreError("config_invalid", "Capability migration journal is invalid.");
+    }
+    throw error;
+  }
 }
 
 async function writeJson(path: string, value: unknown): Promise<void> {

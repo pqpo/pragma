@@ -41,6 +41,9 @@ describe("flow-timeout", () => {
       }),
     );
     expect(finiteHtml).toContain('value="2"');
-    expect(finiteHtml).toContain('<option value="hours" selected="">Hours</option>');
+    expect(finiteHtml).toContain('aria-label="Timeout unit"');
+    expect(finiteHtml).toContain('aria-selected="true"');
+    expect(finiteHtml).toContain("Hours");
+    expect(finiteHtml).not.toContain("<select");
   });
 });

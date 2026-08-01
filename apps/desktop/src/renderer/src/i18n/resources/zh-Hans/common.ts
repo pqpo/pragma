@@ -38,6 +38,7 @@ export const common = {
     main: "主导航",
     expand: "展开导航",
     collapse: "收起导航",
+    resize: "调整导航宽度",
   },
   status: {
     active: "启用",

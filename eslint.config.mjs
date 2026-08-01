@@ -166,6 +166,31 @@ const config = tseslint.config(
     },
   },
   {
+    files: ["apps/desktop/src/renderer/src/pages/**/*.{ts,tsx}"],
+    rules: {
+      "no-restricted-syntax": [
+        "error",
+        {
+          selector: "JSXOpeningElement[name.name='select']",
+          message:
+            "Desktop pages must use the shared SelectMenu instead of a native select control.",
+        },
+        {
+          selector: "CallExpression[callee.object.name='window'][callee.property.name='alert']",
+          message: "Desktop pages must use the shared Dialog instead of window.alert().",
+        },
+        {
+          selector: "CallExpression[callee.object.name='window'][callee.property.name='confirm']",
+          message: "Desktop pages must use the shared Dialog instead of window.confirm().",
+        },
+        {
+          selector: "CallExpression[callee.object.name='window'][callee.property.name='prompt']",
+          message: "Desktop pages must use the shared Dialog instead of window.prompt().",
+        },
+      ],
+    },
+  },
+  {
     files: ["apps/desktop/src/shared/**/*.{ts,tsx,d.ts}"],
     rules: {
       "no-restricted-imports": [

@@ -12,11 +12,10 @@ import { createRuntimeEnvironmentStore } from "./runtime-environment-store.ts";
 describe("getRuntimeAvailability", () => {
   it("isolates adapter health and reports model catalogs", async () => {
     const pragmaHome = await mkdtemp(join(tmpdir(), "pragma-runtime-availability-"));
-    const definitions = [definition("healthy", "Healthy"), definition("broken", "Broken")];
+    const definitions = [definition("pi", "Healthy"), definition("broken", "Broken")];
     const store = createRuntimeEnvironmentStore({
       pragmaHome,
       builtIns: definitions,
-      defaultRuntimeId: "healthy",
     });
     const runtimes = createRuntimeEnvironmentService({
       store,
@@ -32,7 +31,7 @@ describe("getRuntimeAvailability", () => {
                 displayName: environment.displayName,
               },
               canUse: () =>
-                environment.id === "healthy"
+                environment.id === "pi"
                   ? { usable: true, details: { version: "1.2.3" } }
                   : { usable: false, reason: "not configured" },
               listModels: async () => [
@@ -53,7 +52,7 @@ describe("getRuntimeAvailability", () => {
     const availability = await getRuntimeAvailability(runtimes);
     expect(availability).toEqual([
       expect.objectContaining({
-        id: "healthy",
+        id: "pi",
         revision: 1,
         isDefault: true,
         status: "available",
@@ -74,7 +73,6 @@ describe("getRuntimeAvailability", () => {
     const store = createRuntimeEnvironmentStore({
       pragmaHome,
       builtIns: [definition("pi", "PI Runtime")],
-      defaultRuntimeId: "pi",
     });
     const runtimes = createRuntimeEnvironmentService({
       store,
