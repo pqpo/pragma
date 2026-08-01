@@ -281,6 +281,9 @@ box-shadow: 0 16px 40px rgb(20 31 25 / 12%);
 - focus 只显示一层 3px 外环；组件内部原生控件必须清除自己的 border、outline 和 shadow。
 - label 使用 `12–13px / 500`；帮助文本和错误文本使用 `12px / 400`。
 - 同一行不要同时出现永久 label、全大写 eyebrow、placeholder 和帮助文本来描述同一件事。
+- Enter 触发提交或发送的输入框必须忽略输入法组合期间的按键，包括 `isComposing` 和 Chromium
+  `keyCode === 229` 的兼容情况。中文、日文、韩文输入法第一次 Enter 只确认候选文字，组合结束后的下一次
+  Enter 才能提交。
 
 ### 6.3 统一交互组件
 
@@ -373,6 +376,7 @@ box-shadow: 0 16px 40px rgb(20 31 25 / 12%);
 - [ ] 没有新增 raw color、任意字号、任意字重、任意圆角或 `!important`。
 - [ ] hover 不改变布局；focus-visible 清楚且只有一层。
 - [ ] 普通态、hover、键盘焦点、disabled、loading、empty、error 均已检查。
+- [ ] Enter 提交类输入框已用中文输入法验证候选确认不会误触发提交。
 - [ ] `1440 × 900`、`1080 × 700`、125%/150% 缩放和三种语言已检查。
 - [ ] 新增文案、图标、badge 和分割线都承担明确的信息职责。
 

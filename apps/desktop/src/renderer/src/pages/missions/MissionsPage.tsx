@@ -55,6 +55,7 @@ import {
 } from "../../../../shared/contracts/index.ts";
 import { errorMessage } from "../../lib/errors.ts";
 import { i18n } from "../../i18n/index.ts";
+import { shouldSubmitComposerOnEnter } from "../../lib/composer-keyboard.ts";
 import { formatMissionDateTime, formatMissionTime } from "../../lib/mission-time.ts";
 import { runtimeDisplayName, type RuntimeDisplayIdentity } from "../../lib/runtime-display.ts";
 import { formatTokens } from "../../lib/usage-format.ts";
@@ -2091,7 +2092,7 @@ export function MissionDetailFragment(props: {
                       }
                       onChange={(event) => setDraft(event.target.value)}
                       onKeyDown={(event) => {
-                        if (event.key === "Enter" && !event.shiftKey) {
+                        if (shouldSubmitComposerOnEnter(event.nativeEvent)) {
                           event.preventDefault();
                           void send();
                         }

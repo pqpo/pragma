@@ -38,6 +38,7 @@ import type {
 import { ToolPermissionSelect } from "../../components/ToolPermissionSelect.tsx";
 import { MissionModelOverrideControls } from "../../components/MissionModelOverrideControls.tsx";
 import { WorkspacePicker, type WorkspaceSelection } from "../../components/WorkspacePicker.tsx";
+import { shouldSubmitComposerOnEnter } from "../../lib/composer-keyboard.ts";
 import { errorMessage } from "../../lib/errors.ts";
 import { readHomeDraft, writeHomeDraft } from "../../lib/home-draft.ts";
 import { localizeSystemExpertCopy } from "../../lib/system-expert-copy.ts";
@@ -427,7 +428,7 @@ export function HomePage(props: {
                 value={goal}
                 onChange={(event) => setGoal(event.target.value)}
                 onKeyDown={(event) => {
-                  if (event.key === "Enter" && !event.shiftKey) {
+                  if (shouldSubmitComposerOnEnter(event.nativeEvent)) {
                     event.preventDefault();
                     void submit();
                   }
