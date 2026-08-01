@@ -32,6 +32,18 @@ Episodic Module 是该协议的首个生产实现。feed consumer 只聚合封�
 Episode 同时记录触发提炼的 terminal message；若进程在 Episode 提交后、Job 完成前崩溃，恢复只补齐
 Job 状态，不重复调用模型或增加 revision。
 
+每条 Evidence 显式记录稳定的 `rootRef` 和 `producerRefs`。Episode 的逻辑 owner 只取根 Execution asset：
+独立 Expert Execution 归该 Expert，ExpertTeam Execution 归该 Team，Flow Execution 归该 Flow。producer
+Expert 只保留为 provenance，不因参与 Team/Flow Execution 自动获得个人 Episode，也不把 Team/Flow
+履历错误写成某个成员自己的履历。同一 Execution 的全部 Evidence 必须解析为同一个 root；缺失或冲突
+时提炼 fail closed，并保留为可诊断后台任务。
+
+Memory Module 的物理 Store 仍按类型共享，但 Context provider 必须绑定 `MemoryRecallScope`。运行时用根
+Execution asset 和当前实际 Expert 组成逻辑读取视图：独立 Expert 只读取自己的 Store；Team/Flow 中的
+Expert 读取“当前 Team/Flow Store + 自己的个人 Store”。其他专家、Team 或 Flow 的 Episode 不可见。
+授权过滤必须在 Store 查询阶段完成，并一致覆盖 list、search、详情和 Evidence 精确读取；缺少稳定作用域
+时不返回目录，并拒绝 read/search。不能靠猜测详情或 Evidence ID 绕过该边界。
+
 Desktop 通过隐藏系统 Expert `expert:0000000000memory` 运行 extractor。每个任务使用新的内部 Mission，
 Mission v6 以 `origin: system-memory` 标记并从普通列表排除，但仍沿用标准 Runtime、Execution、Usage
 和 ownership 链路。Evidence adapter 无条件排除 Memory Curator 作为 root Expert 的事件，避免递归记忆。
@@ -44,5 +56,6 @@ profile，不读取环境变量。配置变化唤醒 `needs_attention` 任务。
 - 新 Memory type 必须提供摘要、索引、详情和证据层，不能把完整 Store 直接映射到启动 Context。
 - Evidence、详情和索引可采用不同物理结构，但必须保留稳定 ID 和 revision。
 - Episodic projection 在 capture 开启时生成；`learning` 只控制 Knowledge/Skill 候选。
+- per-asset Store 是共享物理 Store 上的授权逻辑视图，不为每个资产创建数据库或目录孤岛。
 - Memory Curator 无工具、无 Memory recall，且不出现在普通 Mission 或执行器目录。
 - 主动召回排序、管理中心、分享和跨设备同步仍由后续阶段实现。

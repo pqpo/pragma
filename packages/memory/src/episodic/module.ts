@@ -36,7 +36,7 @@ export async function createEpisodicMemoryModule(
       purpose: "projection",
       contextLayers: {
         usagePrompt:
-          "Use Episodic Memory for historical precedent: what was attempted, what failed, how recovery worked, and what outcome followed. It is not current truth.",
+          "Use Episodic Memory for historical precedent in the current asset plus the current Expert's personal history. Keep those ownership scopes distinct: Team or Flow experience is not the producer Expert's personal history. It is not current truth.",
         summaryPath: "summary.md",
         indexPath: "index.md",
         itemsPrefix: "items/",
@@ -68,7 +68,9 @@ export async function createEpisodicMemoryModule(
         schemaRefs: ["pragma.memory.handoff-artifact/v1"],
       },
     ],
-    contextProvider: createEpisodicMemoryContextProvider(store),
+    createContextProvider(scope) {
+      return createEpisodicMemoryContextProvider(store, scope);
+    },
     async consume(envelopes) {
       await store.ingest(envelopes);
       return {};
@@ -107,22 +109,15 @@ export async function createEpisodicMemoryModule(
         }
         assertEvidenceRefs(output, new Set(evidence.map((item) => item.messageId)));
         const timestamp = now().toISOString();
-        const bindings = intersectBindings(evidence);
-        const rootAndProducerRefs = uniqueRefs(
-          evidence.flatMap((item) =>
-            item.subjectRefs.filter(
-              (ref) => ref.type !== "pragma.execution" && ref.type !== "pragma.invocation",
-            ),
-          ),
-        );
+        const attribution = resolveAttribution(evidence);
         const record = EpisodicMemoryRecordSchema.parse({
           schemaVersion: "pragma.memory-episodic/v1",
           id: episodicMemoryId(job.executionId),
           revision: (previousEpisode?.revision ?? 0) + 1,
           executionId: job.executionId,
           terminalMessageId: job.terminalMessageId,
-          rootRefs: rootAndProducerRefs.slice(0, 1),
-          producerRefs: rootAndProducerRefs,
+          rootRefs: [attribution.rootRef],
+          producerRefs: attribution.producerRefs,
           language: output.language,
           goal: output.goal,
           summary: output.summary,
@@ -133,7 +128,7 @@ export async function createEpisodicMemoryModule(
           evidenceRefs: collectEvidenceRefs(output),
           visibility: strictestVisibility(evidence),
           sensitivity: strictestSensitivity(evidence),
-          bindings,
+          bindings: [attribution.rootRef],
           valueScore: output.valueScore,
           status: "active",
           extractor: extracted.provenance,
@@ -239,19 +234,34 @@ function collectEvidenceRefs(value: unknown): string[] {
   return [...refs];
 }
 
-function intersectBindings(evidence: readonly MemoryEvidenceEnvelope[]): MemorySubjectRef[] {
-  const sets = evidence.map(
-    (item) =>
-      new Map(
-        item.bindings
-          .filter((binding) => binding.access === "allow")
-          .map((binding) => [refKey(binding.consumerRef), binding.consumerRef]),
-      ),
+function resolveAttribution(evidence: readonly MemoryEvidenceEnvelope[]): {
+  readonly rootRef: MemorySubjectRef;
+  readonly producerRefs: readonly MemorySubjectRef[];
+} {
+  const resolvedRoots = evidence.map((item) => {
+    if (item.attribution !== undefined) return item.attribution.rootRef;
+    return item.bindings.find(
+      (binding) =>
+        binding.access === "allow" &&
+        ["pragma.expert", "pragma.expert-team", "pragma.flow"].includes(binding.consumerRef.type),
+    )?.consumerRef;
+  });
+  if (resolvedRoots.some((root) => root === undefined)) {
+    throw new Error("episodic_root_attribution_invalid");
+  }
+  const roots = uniqueRefs(resolvedRoots as readonly MemorySubjectRef[]);
+  if (roots.length !== 1 || !isExecutionRootRef(roots[0]!)) {
+    throw new Error("episodic_root_attribution_invalid");
+  }
+  const rootRef = roots[0]!;
+  const producerRefs = uniqueRefs(
+    evidence.flatMap(
+      (item) =>
+        item.attribution?.producerRefs ??
+        item.subjectRefs.filter((ref) => ref.type === "pragma.expert"),
+    ),
   );
-  if (sets.length === 0) return [];
-  return [...(sets[0]?.entries() ?? [])]
-    .filter(([key]) => sets.every((set) => set.has(key)))
-    .map(([, ref]) => ref);
+  return { rootRef, producerRefs };
 }
 
 function artifactRefs(evidence: readonly MemoryEvidenceEnvelope[]): MemorySubjectRef[] {
@@ -286,11 +296,15 @@ function strictestVisibility(evidence: readonly MemoryEvidenceEnvelope[]) {
       .reduce((left, right) => new Map([...left].filter(([key]) => right.has(key))));
     if (principals.size > 0)
       return { mode: "restricted" as const, principals: [...principals.values()] };
-    return { mode: "host-private" as const };
+    throw new Error("episodic_visibility_intersection_empty");
   }
   return evidence.every((item) => item.visibility.mode === "public")
     ? { mode: "public" as const }
     : { mode: "host-private" as const };
+}
+
+function isExecutionRootRef(ref: MemorySubjectRef): boolean {
+  return ["pragma.expert", "pragma.expert-team", "pragma.flow"].includes(ref.type);
 }
 
 function uniqueRefs(refs: readonly MemorySubjectRef[]): MemorySubjectRef[] {

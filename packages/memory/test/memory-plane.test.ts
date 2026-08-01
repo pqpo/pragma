@@ -101,6 +101,10 @@ describe("Memory Plane phase one", () => {
         { consumerRef: { type: "pragma.flow", id: "flow" }, access: "allow" },
         { consumerRef: { type: "pragma.expert", id: "producer-expert" }, access: "allow" },
       ]),
+      attribution: {
+        rootRef: { type: "pragma.flow", id: "flow" },
+        producerRefs: [{ type: "pragma.expert", id: "producer-expert" }],
+      },
       policySnapshot: {
         capture: true,
         recall: true,
@@ -138,7 +142,12 @@ describe("Memory Plane phase one", () => {
     }
     await expect(state.list("pragma.memory.failing-probe")).resolves.toHaveLength(1);
 
-    const context = createFederatedMemoryContextStore(registry);
+    const context = createFederatedMemoryContextStore(registry, {
+      resolveRecallScope: () => ({
+        rootRef: { type: "pragma.flow", id: "flow" },
+        expertRef: { type: "pragma.expert", id: "producer-expert" },
+      }),
+    });
     const probe = await context.readContext({ id: "probe/items/entries.md" });
     expect(probe).toMatchObject({
       ok: true,
@@ -314,7 +323,12 @@ describe("Memory Plane phase one", () => {
       cursor: { sequence: 3 },
       lag: 0,
     });
-    const context = createFederatedMemoryContextStore(registry);
+    const context = createFederatedMemoryContextStore(registry, {
+      resolveRecallScope: () => ({
+        rootRef: { type: "pragma.expert", id: "producer-expert" },
+        expertRef: { type: "pragma.expert", id: "producer-expert" },
+      }),
+    });
     const record = await context.readContext({ id: "probe/items/entries.md" });
     expect(record.ok && record.value.content.match(/^- /gm)).toHaveLength(1);
     canonical.close();

@@ -1,5 +1,10 @@
 import type { ExpertAgentContextStore } from "@pragma/core";
-import type { MemoryEvidenceEnvelope, MemoryModuleDiagnostic } from "@pragma/shared";
+import {
+  MemorySubjectRefSchema,
+  type MemoryEvidenceEnvelope,
+  type MemoryModuleDiagnostic,
+} from "@pragma/shared";
+import { z } from "zod";
 
 import {
   createBuiltInMemorySchemaRegistry,
@@ -36,10 +41,19 @@ export interface MemoryModuleConsumeResult {
   readonly derivedEvents?: readonly MemoryEvidenceEnvelope[] | undefined;
 }
 
+export const MemoryRecallScopeSchema = z.object({
+  rootRef: MemorySubjectRefSchema.extend({
+    type: z.enum(["pragma.expert", "pragma.expert-team", "pragma.flow"]),
+  }),
+  expertRef: MemorySubjectRefSchema.extend({ type: z.literal("pragma.expert") }),
+});
+
+export type MemoryRecallScope = z.infer<typeof MemoryRecallScopeSchema>;
+
 export interface MemoryModule {
   readonly descriptor: MemoryModuleDescriptor;
   readonly subscriptions: readonly MemoryModuleSubscription[];
-  readonly contextProvider: ExpertAgentContextStore;
+  createContextProvider(scope: MemoryRecallScope): ExpertAgentContextStore;
   consume(envelopes: readonly MemoryEvidenceEnvelope[]): Promise<MemoryModuleConsumeResult>;
   /** Durable module-owned work which must not hold the feed checkpoint open. */
   runBackgroundOnce?(): Promise<void>;

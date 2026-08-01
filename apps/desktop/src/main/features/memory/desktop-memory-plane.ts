@@ -1,7 +1,9 @@
 import {
+  EXECUTION_CURRENT_EXPERT_ID_ATTR,
   createFileCanonicalEventFeed,
   createFileExecutionStore,
   type FileExecutionStore,
+  type ExpertAgentRunContext,
   type PragmaLogger,
 } from "@pragma/core";
 import {
@@ -15,7 +17,9 @@ import {
   createMemoryEvidenceFeed,
   createMemoryEvidencePublisher,
   createMemoryPipelineScheduler,
+  MemoryRecallScopeSchema,
   type MemoryPolicyStore,
+  type MemoryRecallScope,
   type EpisodicMemoryExtractor,
   type MemoryExtractorProfileStore,
 } from "@pragma/memory";
@@ -65,19 +69,7 @@ export async function createDesktopMemoryPlane(options: {
   const episodic = await createEpisodicMemoryModule({ pragmaHome: options.pragmaHome });
   registry.register(episodic);
   const contextStore = createFederatedMemoryContextStore(registry, {
-    canRecall: async (context) => {
-      const source = context?.source;
-      const rootRef =
-        source?.id === undefined || !source.type.includes(".")
-          ? undefined
-          : { type: source.type, id: source.id };
-      return (
-        await policies.resolveAt({
-          ...(rootRef === undefined ? {} : { rootRef }),
-          occurredAt: new Date().toISOString(),
-        })
-      ).recall;
-    },
+    resolveRecallScope: async (context) => await resolveDesktopMemoryRecallScope(policies, context),
   });
   const adapter = createExecutionEvidenceAdapter({
     source: canonical,
@@ -212,4 +204,24 @@ export async function createDesktopMemoryPlane(options: {
       canonical.close();
     },
   };
+}
+
+export async function resolveDesktopMemoryRecallScope(
+  policies: Pick<MemoryPolicyStore, "resolveAt">,
+  context: ExpertAgentRunContext | undefined,
+  now: Date = new Date(),
+): Promise<MemoryRecallScope | undefined> {
+  const source = context?.source;
+  const currentExpertId = context?.attributes?.[EXECUTION_CURRENT_EXPERT_ID_ATTR];
+  const scope = MemoryRecallScopeSchema.safeParse({
+    rootRef: { type: source?.type, id: source?.id },
+    expertRef: { type: "pragma.expert", id: currentExpertId },
+  });
+  if (!scope.success) return undefined;
+  const policy = await policies.resolveAt({
+    rootRef: scope.data.rootRef,
+    producerRefs: [scope.data.expertRef],
+    occurredAt: now.toISOString(),
+  });
+  return policy.recall ? scope.data : undefined;
 }

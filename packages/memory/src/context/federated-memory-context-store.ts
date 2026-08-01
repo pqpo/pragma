@@ -18,7 +18,11 @@ import {
   type ExpertAgentStoredContextRegisterInput,
 } from "@pragma/core";
 
-import { MemoryModuleRegistry } from "../pipeline/memory-module.ts";
+import {
+  MemoryModuleRegistry,
+  MemoryRecallScopeSchema,
+  type MemoryRecallScope,
+} from "../pipeline/memory-module.ts";
 
 export const MEMORY_CONTEXT_NAMESPACE = "memory";
 export const MEMORY_GUIDE_CONTEXT_ID = "guide.md";
@@ -31,14 +35,21 @@ const OVERVIEW_MAX_BYTES = 6_000;
 export function createFederatedMemoryContextStore(
   registry: MemoryModuleRegistry,
   options: {
-    readonly canRecall?:
-      | ((context: ExpertAgentRunContext | undefined) => boolean | Promise<boolean>)
-      | undefined;
-  } = {},
+    readonly resolveRecallScope: (
+      context: ExpertAgentRunContext | undefined,
+    ) => MemoryRecallScope | undefined | Promise<MemoryRecallScope | undefined>;
+  },
 ): ExpertAgentContextStore {
-  const canRecall = async (context: ExpertAgentRunContext | undefined): Promise<boolean> =>
-    (await options.canRecall?.(context)) ?? true;
-  const rootStore = async (context?: ExpertAgentContextItemListInput["context"]) =>
+  const resolveRecallScope = async (
+    context: ExpertAgentRunContext | undefined,
+  ): Promise<MemoryRecallScope | undefined> => {
+    const value = await options.resolveRecallScope(context);
+    return value === undefined ? undefined : MemoryRecallScopeSchema.parse(value);
+  };
+  const rootStore = async (
+    scope: MemoryRecallScope,
+    context?: ExpertAgentContextItemListInput["context"],
+  ) =>
     new StaticContextStore([
       {
         id: MEMORY_GUIDE_CONTEXT_ID,
@@ -53,7 +64,7 @@ export function createFederatedMemoryContextStore(
       },
       {
         id: MEMORY_OVERVIEW_CONTEXT_ID,
-        content: await renderOverview(registry, context),
+        content: await renderOverview(registry, scope, context),
         metadata: {
           description: "Bounded summaries and hot indexes for every available Memory type.",
           trigger: "always_on",
@@ -77,12 +88,13 @@ export function createFederatedMemoryContextStore(
 
   return {
     async listContext(input: ExpertAgentContextItemListInput = {}) {
-      if (!(await canRecall(input.context))) return ok([]);
-      const catalog = await (await rootStore(input.context)).listContext(input);
+      const scope = await resolveRecallScope(input.context);
+      if (scope === undefined) return ok([]);
+      const catalog = await (await rootStore(scope, input.context)).listContext(input);
       if (!catalog.ok) return catalog;
       const items: ExpertAgentContextItemSummary[] = [...catalog.value];
       for (const module of registry.list()) {
-        const result = await module.contextProvider.listContext(input);
+        const result = await module.createContextProvider(scope).listContext(input);
         if (!result.ok) continue;
         const layers = module.descriptor.contextLayers;
         items.push(
@@ -98,18 +110,19 @@ export function createFederatedMemoryContextStore(
     },
 
     async readContext(input: ExpertAgentStoredContextItemReadInput) {
-      if (!(await canRecall(input.context))) return recallDenied(input.id);
+      const scope = await resolveRecallScope(input.context);
+      if (scope === undefined) return recallDenied(input.id);
       if (
         input.id === MEMORY_GUIDE_CONTEXT_ID ||
         input.id === MEMORY_OVERVIEW_CONTEXT_ID ||
         input.id === MEMORY_CATALOG_CONTEXT_ID
       ) {
-        return await (await rootStore(input.context)).readContext(input);
+        return await (await rootStore(scope, input.context)).readContext(input);
       }
       const route = resolveRoute(registry, input.id);
       if (route === undefined)
         return error("context_not_found", `Memory context not found: ${input.id}`);
-      const result = await route.module.contextProvider.readContext({
+      const result = await route.module.createContextProvider(scope).readContext({
         ...input,
         id: route.localId,
       });
@@ -117,12 +130,13 @@ export function createFederatedMemoryContextStore(
     },
 
     async searchContext(input: ExpertAgentStoredContextItemSearchInput) {
-      if (!(await canRecall(input.context))) return recallDenied("search");
+      const scope = await resolveRecallScope(input.context);
+      if (scope === undefined) return recallDenied("search");
       const matches: ExpertAgentContextItemSearchMatch[] = [];
-      const catalog = await (await rootStore(input.context)).searchContext(input);
+      const catalog = await (await rootStore(scope, input.context)).searchContext(input);
       if (catalog.ok) matches.push(...catalog.value);
       for (const module of registry.list()) {
-        const result = await module.contextProvider.searchContext(input);
+        const result = await module.createContextProvider(scope).searchContext(input);
         if (!result.ok) continue;
         matches.push(
           ...result.value
@@ -157,6 +171,8 @@ function renderGuide(registry: MemoryModuleRegistry): string {
     "# Memory Guide",
     "",
     "Memory is reference context, not a replacement for the current user instruction.",
+    "The current Memory view combines the root execution asset with the current Expert's personal Store. Keep those ownership scopes distinct.",
+    "A Team or Flow Episode belongs to that Team or Flow; producer Experts are provenance and do not inherit it as personal history.",
     "Start with the bounded overview. Search when the relevant memory id is unknown, then read the item detail.",
     "Read supporting Evidence only when a conclusion is important, conflicting, stale, or low-confidence.",
     "Episodic memory is historical precedent, not current truth. Candidate knowledge or skills are not published capabilities.",
@@ -175,6 +191,7 @@ function renderGuide(registry: MemoryModuleRegistry): string {
 
 async function renderOverview(
   registry: MemoryModuleRegistry,
+  scope: MemoryRecallScope,
   context: ExpertAgentContextItemListInput["context"],
 ): Promise<string> {
   const modules = registry.list();
@@ -184,15 +201,16 @@ async function renderOverview(
   const sections: string[] = [];
   for (const module of modules) {
     const layers = module.descriptor.contextLayers;
+    const provider = module.createContextProvider(scope);
     const summaryBudget = Math.min(layers.summaryMaxBytes, Math.floor(perModuleBudget * 0.45));
     const indexBudget = Math.min(layers.indexMaxBytes, perModuleBudget - summaryBudget);
     const [summary, index] = await Promise.all([
-      module.contextProvider.readContext({
+      provider.readContext({
         id: layers.summaryPath,
         offset: summaryBudget,
         context,
       }),
-      module.contextProvider.readContext({ id: layers.indexPath, offset: indexBudget, context }),
+      provider.readContext({ id: layers.indexPath, offset: indexBudget, context }),
     ]);
     sections.push(
       [

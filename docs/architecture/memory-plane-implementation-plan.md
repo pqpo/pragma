@@ -40,7 +40,7 @@ Memory。Knowledge、CodeGraph 仍是 Memory type，不新增 KnowledgeBase/Know
 | 1    | Completed | 内置 Plane、Canonical Event Bus、Module SPI、策略与设置入口 |
 | 2    | Completed | 分层召回协议与 Episodic Memory：历史、结果、失败与恢复      |
 | 3    | Planned   | Semantic / Fact Memory：真值、冲突、时效和置信度            |
-| 4    | Planned   | 授权召回、Context binding、Memory 管理中心与 Mission 可见性 |
+| 4    | Planned   | 主动召回排序、完整 binding 治理、管理中心与 Mission 可见性  |
 | 5    | Planned   | Knowledge Memory：多层提炼、稳定 revision 与团队分享        |
 | 6    | Planned   | Skill Memory Candidate、Evaluation 与 Capability 升级       |
 | 7    | Planned   | CodeGraph 独立 Module 扩展验收                              |
@@ -74,7 +74,7 @@ Desktop 提供设置入口。
 
 - `@pragma/memory` 将 Execution canonical event 映射为 `pragma.memory-evidence/v1`；
 - 覆盖 message、terminal outcome、tool semantic event、artifact created 与 handoff reference；
-- Evidence 自动绑定 root Expert/ExpertTeam/Flow 与实际 producer Expert；
+- Evidence 自动记录 root Expert/ExpertTeam/Flow、实际 producer Expert 及二者的策略 binding；
 - Envelope 固化 sensitivity、visibility、provenance 与 `policySnapshot`；
 - 未知/损坏 schema 进入 consumer dead letter，不阻断无关消费者。
 
@@ -178,10 +178,24 @@ Desktop 提供设置入口。
   Episode 记录触发它的 terminal message，写 Episode 后、完成 Job 前崩溃也只补齐 Job；后续新终态增加
   原 Episode revision；
 - pre-model 价值过滤与模型 retain 决策都不会保存被拒绝正文，只保存计数、原因和幂等身份；
-- Evidence 引用必须属于当前 job allowlist；sensitivity 取最严格值，binding 取权限交集；
+- Evidence 引用必须属于当前 job allowlist；sensitivity 取最严格值；Episode binding 只保留经一致归因的
+  root asset，producer refs 单独保存为 provenance；
 - `pending/running/needs_attention/completed` 持久任务支持 lease、退避、配置变更唤醒和崩溃重放。
 
-#### 2C. Desktop Curator 与设置
+#### 2C. 资产级逻辑 Store 隔离
+
+- Execution Runtime Context 始终携带稳定 root asset，并单独记录当前实际 Expert；子 Agent 不把 root
+  改写为自己；
+- `MemoryRecallScope` 是每个 Module Context provider 的必填输入，缺少或无效身份时 list 返回空，
+  read/search fail closed；
+- 独立 Expert 只读自己的 Episodic Store；Team/Flow 内 Expert 读取“根 Team/Flow + 当前 Expert 个人”
+  两个逻辑 Store；
+- Team/Flow Episode 只绑定根 Team/Flow，producer Expert 只作 provenance，不自动继承为个人履历；
+- Store 在 SQL 查询阶段过滤 root scope，list/search/detail/Evidence 使用同一授权条件；猜测稳定 ID 不能
+  越权读取；
+- 各资产不建立独立物理数据库；隔离是 Module 共享 Store 上的授权逻辑视图。
+
+#### 2D. Desktop Curator 与设置
 
 - 隐藏系统 Expert `expert:0000000000memory` 通过正常 Mission/ExpertSession/Runtime/Usage 链路执行；
 - Mission 升级为 v6，显式记录 `origin: user | system-memory`；v5 首次读取相邻升级为 user；
@@ -196,7 +210,10 @@ Desktop 提供设置入口。
 - 未使用白板的 Mission 仍可形成 Episode；
 - 相同 Evidence 重放不会重复；
 - 每条结论可追溯 Evidence；
-- 低价值和未授权内容不会进入 projection。
+- 低价值和未授权内容不会进入 projection；
+- Expert A 无法看到 Expert B 的个人 Episode；
+- Team/Flow 内 Expert 只看到根资产 Episode 与自己的个人 Episode；
+- Team/Flow Episode 不会混入 producer Expert 的个人履历，详情搜索和 Evidence ID 读取不能旁路授权。
 
 ### Implementation record
 
@@ -207,8 +224,8 @@ Desktop 提供设置入口。
 - Storage: `data/memory/modules/<episodic>/episodes.sqlite` 与
   `state/memory/modules/<episodic>/jobs.sqlite`
 - Migration: 新 Episodic Store 从 v1 开始并拒绝未来版本；Mission v5→v6 相邻升级补充 user origin
-- Verification: `pnpm check`（21 个 workspace lint/typecheck/test 全通过）、`pnpm build`；Desktop 92 个
-  test files / 558 tests，Memory 4 个 test files / 15 tests
+- Verification: `pnpm check`、`pnpm build`，并覆盖 Expert/Team/Flow Runtime root identity、Desktop
+  recall scope 解析、Memory Module 作用域契约和 Episodic list/search/detail/Evidence 越权测试
 - Known limitations: 当前仅有 Episodic 生产模块；Semantic、Knowledge、Skill Candidate、管理中心、分享、
   跨设备同步和 query-aware retrieval ranking 仍属于后续阶段
 
@@ -234,16 +251,17 @@ Desktop 提供设置入口。
 - user-private 事实不会因绑定自动变为 team-shareable；
 - Expert/Team/Flow 的有效策略能阻止对应 capture 或 recall。
 
-## 阶段 4：召回、治理 UI 与可见性
+## 阶段 4：主动召回、完整治理 UI 与可见性
 
 ### 目标
 
-把 ContextStore 从可发现路由升级为授权后的模型读取与产品治理入口。
+在阶段 2 已完成的 root/current-Expert 基础隔离上，增加 query-aware 主动召回、完整 binding/visibility
+治理、产品管理和可解释审计。阶段 4 不负责修补基本的跨专家越权边界。
 
 ### 交付
 
 - `MemoryRetrievalPlanner`：先 policy/visibility/binding 鉴权，再排序与 token budget；
-- list/read/search 同样强制 recall policy，不只约束主动注入；
+- planner、managed tool 与未来治理 API 复用 Module 的 scope-bound 查询，不另开旁路；
 - Memory 管理中心：来源、provenance、冲突、修正、失效、删除、Module health；
 - Mission 显示 capture/distillation/recall 摘要；
 - revision binding 包含 recall/export、permissionRevision 和审计记录。

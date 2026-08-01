@@ -12,6 +12,7 @@ import {
   type EpisodicExtractionJob,
   type EpisodicMemoryRecord,
 } from "./schema.ts";
+import type { MemoryRecallScope } from "../pipeline/memory-module.ts";
 
 export interface EpisodicMemoryStoreDiagnostic {
   readonly episodes: number;
@@ -25,11 +26,20 @@ export interface EpisodicMemoryStore {
   ingest(envelopes: readonly MemoryEvidenceEnvelope[]): Promise<void>;
   claimDueJob(now: Date): Promise<EpisodicExtractionJob | undefined>;
   readEvidence(executionId: string): Promise<readonly MemoryEvidenceEnvelope[]>;
-  getEvidence(messageId: string): Promise<MemoryEvidenceEnvelope | undefined>;
   getByExecution(executionId: string): Promise<EpisodicMemoryRecord | undefined>;
   get(id: string): Promise<EpisodicMemoryRecord | undefined>;
   list(): Promise<readonly EpisodicMemoryRecord[]>;
-  search(query: string, limit: number): Promise<readonly EpisodicMemoryRecord[]>;
+  listForRecall(scope: MemoryRecallScope): Promise<readonly EpisodicMemoryRecord[]>;
+  searchForRecall(
+    scope: MemoryRecallScope,
+    query: string,
+    limit: number,
+  ): Promise<readonly EpisodicMemoryRecord[]>;
+  getForRecall(scope: MemoryRecallScope, id: string): Promise<EpisodicMemoryRecord | undefined>;
+  getEvidenceForRecall(
+    scope: MemoryRecallScope,
+    messageId: string,
+  ): Promise<MemoryEvidenceEnvelope | undefined>;
   completeRetained(input: {
     readonly job: EpisodicExtractionJob;
     readonly record: EpisodicMemoryRecord;
@@ -190,21 +200,6 @@ export async function createEpisodicMemoryStore(
       return [...unique.values()].slice(-2_000);
     },
 
-    async getEvidence(messageId) {
-      const current = state
-        .prepare("SELECT envelope_json AS envelopeJson FROM evidence WHERE message_id = ?")
-        .get(messageId) as { readonly envelopeJson: string } | undefined;
-      const retained = data
-        .prepare(
-          "SELECT envelope_json AS envelopeJson FROM episode_evidence WHERE evidence_id = ? LIMIT 1",
-        )
-        .get(messageId) as { readonly envelopeJson: string } | undefined;
-      const row = current ?? retained;
-      return row === undefined
-        ? undefined
-        : MemoryEvidenceEnvelopeSchema.parse(JSON.parse(row.envelopeJson));
-    },
-
     async getByExecution(executionId) {
       return readEpisodeBy(data, "execution_id", executionId);
     },
@@ -221,20 +216,63 @@ export async function createEpisodicMemoryStore(
       );
     },
 
-    async search(query, limit) {
+    async listForRecall(scope) {
+      const access = recallPredicate("episodes", scope);
+      return readEpisodeRows(
+        data
+          .prepare(
+            `SELECT record_json AS recordJson FROM episodes
+             WHERE status = 'active' AND ${access.sql}
+             ORDER BY updated_at DESC, id`,
+          )
+          .all(...access.parameters),
+      );
+    },
+
+    async searchForRecall(scope, query, limit) {
       const normalizedLimit = Math.max(1, Math.min(100, Math.trunc(limit)));
       const escapedQuery = query
         .replaceAll("\\", "\\\\")
         .replaceAll("%", "\\%")
         .replaceAll("_", "\\_");
+      const access = recallPredicate("episodes", scope);
       const rows = data
         .prepare(
           `SELECT record_json AS recordJson FROM episodes
            WHERE status = 'active' AND lower(record_json) LIKE lower(?) ESCAPE '\\'
+             AND ${access.sql}
            ORDER BY updated_at DESC, id LIMIT ?`,
         )
-        .all(`%${escapedQuery}%`, normalizedLimit);
+        .all(`%${escapedQuery}%`, ...access.parameters, normalizedLimit);
       return readEpisodeRows(rows);
+    },
+
+    async getForRecall(scope, id) {
+      const access = recallPredicate("episodes", scope);
+      const row = data
+        .prepare(
+          `SELECT record_json AS recordJson FROM episodes
+           WHERE id = ? AND status = 'active' AND ${access.sql}`,
+        )
+        .get(id, ...access.parameters) as { readonly recordJson: string } | undefined;
+      return row === undefined
+        ? undefined
+        : EpisodicMemoryRecordSchema.parse(JSON.parse(row.recordJson));
+    },
+
+    async getEvidenceForRecall(scope, messageId) {
+      const access = recallPredicate("p", scope);
+      const row = data
+        .prepare(
+          `SELECT e.envelope_json AS envelopeJson FROM episode_evidence e
+           JOIN episodes p ON p.id = e.episode_id
+           WHERE e.evidence_id = ? AND p.status = 'active' AND ${access.sql}
+           LIMIT 1`,
+        )
+        .get(messageId, ...access.parameters) as { readonly envelopeJson: string } | undefined;
+      return row === undefined
+        ? undefined
+        : MemoryEvidenceEnvelopeSchema.parse(JSON.parse(row.envelopeJson));
     },
 
     async completeRetained(input) {
@@ -462,6 +500,30 @@ function readEpisodeRows(rows: readonly unknown[]): EpisodicMemoryRecord[] {
   return (rows as readonly { readonly recordJson: string }[]).map((row) =>
     EpisodicMemoryRecordSchema.parse(JSON.parse(row.recordJson)),
   );
+}
+
+function recallPredicate(
+  tableAlias: "episodes" | "p",
+  scope: MemoryRecallScope,
+): { readonly sql: string; readonly parameters: readonly string[] } {
+  const refs = [scope.rootRef, scope.expertRef].filter(
+    (ref, index, all) =>
+      all.findIndex((candidate) => candidate.type === ref.type && candidate.id === ref.id) ===
+      index,
+  );
+  const clauses = refs.map(
+    () =>
+      `EXISTS (
+        SELECT 1 FROM json_each(${tableAlias}.record_json, '$.rootRefs') AS root
+        WHERE json_extract(root.value, '$.type') = ?
+          AND json_extract(root.value, '$.id') = ?
+      )`,
+  );
+  return {
+    sql: `(json_extract(${tableAlias}.record_json, '$.visibility.mode') != 'restricted')
+      AND (${clauses.join(" OR ")})`,
+    parameters: refs.flatMap((ref) => [ref.type, ref.id]),
+  };
 }
 
 function rollback(database: DatabaseSync): void {

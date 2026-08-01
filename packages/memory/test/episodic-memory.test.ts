@@ -4,7 +4,11 @@ import { join } from "node:path";
 import { DatabaseSync } from "node:sqlite";
 
 import { PragmaPaths } from "@pragma/core";
-import { MemoryEvidenceEnvelopeSchema, type MemoryEvidenceEnvelope } from "@pragma/shared";
+import {
+  MemoryEvidenceEnvelopeSchema,
+  type MemoryEvidenceEnvelope,
+  type MemorySubjectRef,
+} from "@pragma/shared";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
 import {
@@ -13,6 +17,7 @@ import {
   MemoryModuleRegistry,
   type EpisodicExtractionInput,
   type EpisodicMemoryExtractor,
+  type MemoryRecallScope,
 } from "../src/index.ts";
 
 const roots: string[] = [];
@@ -43,11 +48,13 @@ describe("Episodic Memory", () => {
     });
     expect(extractor.extract).toHaveBeenCalledOnce();
     const readEvidence = vi.spyOn(module.store, "readEvidence");
-    const getEvidence = vi.spyOn(module.store, "getEvidence");
+    const getEvidence = vi.spyOn(module.store, "getEvidenceForRecall");
 
     const registry = new MemoryModuleRegistry();
     registry.register(module);
-    const context = createFederatedMemoryContextStore(registry);
+    const context = createFederatedMemoryContextStore(registry, {
+      resolveRecallScope: () => expertScope("expert-a"),
+    });
     const listed = await context.listContext({});
     expect(listed.ok && listed.value.map((item) => item.id)).toEqual([
       "catalog.md",
@@ -77,7 +84,10 @@ describe("Episodic Memory", () => {
     const module = await createEpisodicMemoryModule({ pragmaHome: await temporaryRoot() });
     registry.register(module);
     const context = createFederatedMemoryContextStore(registry, {
-      canRecall: (runContext) => runContext?.source?.id !== "blocked-expert",
+      resolveRecallScope: (runContext) =>
+        runContext?.source?.id === undefined || runContext.source.id === "blocked-expert"
+          ? undefined
+          : expertScope("expert-a"),
     });
     const runContext = { source: { type: "pragma.expert", id: "blocked-expert" } };
 
@@ -88,6 +98,93 @@ describe("Episodic Memory", () => {
     await expect(
       context.readContext({ id: "overview.md", context: runContext }),
     ).resolves.toMatchObject({ ok: false, error: { code: "permission_denied" } });
+    await expect(context.listContext({})).resolves.toEqual({ ok: true, value: [] });
+    await expect(context.searchContext({ query: "anything" })).resolves.toMatchObject({
+      ok: false,
+      error: { code: "permission_denied" },
+    });
+    module.close();
+  });
+
+  it("isolates personal stores while combining the current Team or Flow store with the current Expert", async () => {
+    const root = await temporaryRoot();
+    const module = await createEpisodicMemoryModule({
+      pragmaHome: root,
+      extractor: fakeExtractor(),
+    });
+    const cases = [
+      {
+        executionId: "personal-a",
+        rootRef: ref("pragma.expert", "expert-a"),
+        producerRefs: [ref("pragma.expert", "expert-a")],
+      },
+      {
+        executionId: "personal-b",
+        rootRef: ref("pragma.expert", "expert-b"),
+        producerRefs: [ref("pragma.expert", "expert-b")],
+      },
+      {
+        executionId: "team-a",
+        rootRef: ref("pragma.expert-team", "team-t"),
+        producerRefs: [ref("pragma.expert", "expert-a")],
+      },
+      {
+        executionId: "flow-a",
+        rootRef: ref("pragma.flow", "flow-f"),
+        producerRefs: [ref("pragma.expert", "expert-a")],
+      },
+    ];
+    for (const item of cases) {
+      await module.consume(executionEvidence(item.executionId, item.rootRef, item.producerRefs));
+      await module.runBackgroundOnce?.();
+    }
+    const records = await module.store.list();
+    const byExecution = new Map(records.map((record) => [record.executionId, record]));
+    expect(byExecution.get("team-a")).toMatchObject({
+      rootRefs: [{ type: "pragma.expert-team", id: "team-t" }],
+      producerRefs: [{ type: "pragma.expert", id: "expert-a" }],
+      bindings: [{ type: "pragma.expert-team", id: "team-t" }],
+    });
+
+    const registry = new MemoryModuleRegistry();
+    registry.register(module);
+    const personalA = scopedContext(registry, expertScope("expert-a"));
+    const personalIndex = await personalA.readContext({ id: "episodic/index.md" });
+    expect(personalIndex.ok && personalIndex.value.content).toContain("personal-a");
+    expect(personalIndex.ok && personalIndex.value.content).not.toMatch(/personal-b|team-a|flow-a/);
+
+    const teamA = scopedContext(registry, {
+      rootRef: ref("pragma.expert-team", "team-t"),
+      expertRef: ref("pragma.expert", "expert-a"),
+    });
+    const teamIndex = await teamA.readContext({ id: "episodic/index.md" });
+    expect(teamIndex.ok && teamIndex.value.content).toMatch(/team-a[\s\S]*personal-a/);
+    expect(teamIndex.ok && teamIndex.value.content).not.toMatch(/personal-b|flow-a/);
+    expect(teamIndex.ok && teamIndex.value.content).toContain("[current-asset]");
+    expect(teamIndex.ok && teamIndex.value.content).toContain("[personal]");
+
+    const foreign = byExecution.get("personal-b")!;
+    await expect(
+      teamA.readContext({ id: `episodic/items/${foreign.id}.md` }),
+    ).resolves.toMatchObject({ ok: false, error: { code: "context_not_found" } });
+    const foreignEvidence = executionEvidence("personal-b", ref("pragma.expert", "expert-b"), [
+      ref("pragma.expert", "expert-b"),
+    ])[0]!;
+    await expect(
+      teamA.readContext({ id: `episodic/evidence/${foreignEvidence.messageId}.md` }),
+    ).resolves.toMatchObject({ ok: false, error: { code: "context_not_found" } });
+    await expect(teamA.searchContext({ query: "personal-b" })).resolves.toMatchObject({
+      ok: true,
+      value: [],
+    });
+
+    const flowA = scopedContext(registry, {
+      rootRef: ref("pragma.flow", "flow-f"),
+      expertRef: ref("pragma.expert", "expert-a"),
+    });
+    const flowIndex = await flowA.readContext({ id: "episodic/index.md" });
+    expect(flowIndex.ok && flowIndex.value.content).toMatch(/flow-a[\s\S]*personal-a/);
+    expect(flowIndex.ok && flowIndex.value.content).not.toMatch(/personal-b|team-a/);
     module.close();
   });
 
@@ -159,6 +256,49 @@ describe("Episodic Memory", () => {
     expect(await module.store.list()).toEqual([]);
     module.close();
   });
+
+  it("reads legacy Evidence attribution conservatively and rejects conflicting roots", async () => {
+    const legacyRoot = await temporaryRoot();
+    const legacy = await createEpisodicMemoryModule({
+      pragmaHome: legacyRoot,
+      extractor: fakeExtractor(),
+    });
+    const withoutAttribution = executionEvidence("legacy-attribution").map((item) =>
+      MemoryEvidenceEnvelopeSchema.parse({ ...item, attribution: undefined }),
+    );
+    await legacy.consume(withoutAttribution);
+    await legacy.runBackgroundOnce?.();
+    expect((await legacy.store.list())[0]).toMatchObject({
+      rootRefs: [{ type: "pragma.expert", id: "expert-a" }],
+      bindings: [{ type: "pragma.expert", id: "expert-a" }],
+    });
+    legacy.close();
+
+    const conflictRoot = await temporaryRoot();
+    let clock = new Date("2026-08-01T00:00:00.000Z");
+    const conflict = await createEpisodicMemoryModule({
+      pragmaHome: conflictRoot,
+      extractor: fakeExtractor(),
+      now: () => clock,
+    });
+    const mismatched = executionEvidence("conflicting-attribution");
+    mismatched[mismatched.length - 1] = terminalEvidence(
+      "conflicting-attribution",
+      "conflicting-attribution-terminal",
+      "2026-08-01T00:00:02.000Z",
+      "confidential",
+      ref("pragma.flow", "foreign-flow"),
+      [ref("pragma.expert", "expert-a")],
+    );
+    await conflict.consume(mismatched);
+    for (const advance of [0, 61_000, 5 * 60_000 + 1_000]) {
+      clock = new Date(clock.getTime() + advance);
+      await conflict.runBackgroundOnce?.();
+    }
+    expect(await conflict.store.list()).toEqual([]);
+    expect((await conflict.store.inspect()).needsAttention).toBe(1);
+    conflict.close();
+  });
 });
 
 function fakeExtractor(
@@ -171,7 +311,7 @@ function fakeExtractor(
         retain: true as const,
         language: "zh-Hans",
         goal: { text: "完成记忆架构实现", evidenceRefs: [ref] },
-        summary: { text: "实现并验证了分层记忆。", evidenceRefs: [ref] },
+        summary: { text: `实现并验证了分层记忆 ${input.executionId}。`, evidenceRefs: [ref] },
         attempts: [{ description: "实现 Episodic 模块", result: "成功", evidenceRefs: [ref] }],
         failuresAndRecoveries: [],
         outcome: { status: "succeeded" as const, summary: "实现完成", evidenceRefs: [ref] },
@@ -191,21 +331,38 @@ function fakeExtractor(
   return { extract };
 }
 
-function executionEvidence(executionId: string): MemoryEvidenceEnvelope[] {
+function executionEvidence(
+  executionId: string,
+  rootRef: MemorySubjectRef = ref("pragma.expert", "expert-a"),
+  producerRefs: readonly MemorySubjectRef[] = [ref("pragma.expert", "expert-a")],
+): MemoryEvidenceEnvelope[] {
   return [
     messageEvidence(
       executionId,
       `${executionId}-user`,
       "user",
       "请实现分层 Episodic Memory，并完成消息总线、持久任务与测试。",
+      "confidential",
+      rootRef,
+      producerRefs,
     ),
     messageEvidence(
       executionId,
       `${executionId}-assistant`,
       "assistant",
       "已经完成分层协议、Episodic Store、后台任务和 Context 投影。",
+      "confidential",
+      rootRef,
+      producerRefs,
     ),
-    terminalEvidence(executionId, `${executionId}-terminal`, "2026-08-01T00:00:02.000Z"),
+    terminalEvidence(
+      executionId,
+      `${executionId}-terminal`,
+      "2026-08-01T00:00:02.000Z",
+      "confidential",
+      rootRef,
+      producerRefs,
+    ),
   ];
 }
 
@@ -215,6 +372,8 @@ function messageEvidence(
   role: "user" | "assistant",
   text: string,
   sensitivity: "confidential" | "restricted" = "confidential",
+  rootRef: MemorySubjectRef = ref("pragma.expert", "expert-a"),
+  producerRefs: readonly MemorySubjectRef[] = [ref("pragma.expert", "expert-a")],
 ): MemoryEvidenceEnvelope {
   return envelope({
     executionId,
@@ -225,6 +384,8 @@ function messageEvidence(
     payload: {
       message: role === "user" ? { role, text } : { role, text, stopReason: "stop" },
     },
+    rootRef,
+    producerRefs,
   });
 }
 
@@ -233,6 +394,8 @@ function terminalEvidence(
   messageId: string,
   occurredAt: string,
   sensitivity: "confidential" | "restricted" = "confidential",
+  rootRef: MemorySubjectRef = ref("pragma.expert", "expert-a"),
+  producerRefs: readonly MemorySubjectRef[] = [ref("pragma.expert", "expert-a")],
 ): MemoryEvidenceEnvelope {
   return envelope({
     executionId,
@@ -242,6 +405,8 @@ function terminalEvidence(
     sensitivity,
     payload: { outcome: "succeeded" },
     occurredAt,
+    rootRef,
+    producerRefs,
   });
 }
 
@@ -253,7 +418,10 @@ function envelope(input: {
   readonly sensitivity: "confidential" | "restricted";
   readonly payload: unknown;
   readonly occurredAt?: string;
+  readonly rootRef: MemorySubjectRef;
+  readonly producerRefs: readonly MemorySubjectRef[];
 }): MemoryEvidenceEnvelope {
+  const consumers = uniqueRefs([input.rootRef, ...input.producerRefs]);
   return MemoryEvidenceEnvelopeSchema.parse({
     schemaVersion: "pragma.memory-evidence/v1",
     messageId: input.messageId,
@@ -266,13 +434,15 @@ function envelope(input: {
     },
     subjectRefs: [
       { type: "pragma.execution", id: input.executionId },
-      { type: "pragma.expert", id: "expert-a" },
+      input.rootRef,
+      ...input.producerRefs,
     ],
     correlationId: input.executionId,
     occurredAt: input.occurredAt ?? "2026-08-01T00:00:00.000Z",
     visibility: { mode: "host-private" },
     sensitivity: input.sensitivity,
-    bindings: [{ consumerRef: { type: "pragma.expert", id: "expert-a" }, access: "allow" }],
+    bindings: consumers.map((consumerRef) => ({ consumerRef, access: "allow" })),
+    attribution: { rootRef: input.rootRef, producerRefs: input.producerRefs },
     policySnapshot: {
       capture: true,
       recall: true,
@@ -287,6 +457,28 @@ async function temporaryRoot(): Promise<string> {
   const root = await mkdtemp(join(tmpdir(), "pragma-episodic-"));
   roots.push(root);
   return root;
+}
+
+function expertScope(id: string) {
+  return {
+    rootRef: { type: "pragma.expert" as const, id },
+    expertRef: { type: "pragma.expert" as const, id },
+  };
+}
+
+function scopedContext(registry: MemoryModuleRegistry, scope: MemoryRecallScope) {
+  return createFederatedMemoryContextStore(registry, { resolveRecallScope: () => scope });
+}
+
+function ref<TType extends string>(
+  type: TType,
+  id: string,
+): { readonly type: TType; readonly id: string } {
+  return { type, id };
+}
+
+function uniqueRefs(refs: readonly MemorySubjectRef[]): MemorySubjectRef[] {
+  return [...new Map(refs.map((item) => [`${item.type}\0${item.id}`, item])).values()];
 }
 
 function simulateJobCompletionCrash(pragmaHome: string): void {

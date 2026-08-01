@@ -70,6 +70,11 @@ export const MemoryEvidenceBindingSchema = z.object({
   access: z.enum(["allow", "deny"]),
 });
 
+export const MemoryEvidenceAttributionSchema = z.object({
+  rootRef: MemorySubjectRefSchema,
+  producerRefs: z.array(MemorySubjectRefSchema).default([]),
+});
+
 export const MemoryRevisionBindingSchema = z.object({
   consumerRef: MemorySubjectRefSchema,
   recall: z.enum(["allow", "deny"]),
@@ -138,6 +143,7 @@ export const MemoryEvidenceEnvelopeSchema = z.object({
   visibility: MemoryVisibilityPolicySchema,
   sensitivity: MemorySensitivitySchema,
   bindings: z.array(MemoryEvidenceBindingSchema).default([]),
+  attribution: MemoryEvidenceAttributionSchema.optional(),
   policySnapshot: EffectiveMemoryPolicySchema,
   payload: z.unknown(),
 });
@@ -220,6 +226,7 @@ export type MemoryEvidenceSourceRef = z.infer<typeof MemoryEvidenceSourceRefSche
 export type MemoryVisibilityPolicy = z.infer<typeof MemoryVisibilityPolicySchema>;
 export type MemorySensitivity = z.infer<typeof MemorySensitivitySchema>;
 export type MemoryEvidenceBinding = z.infer<typeof MemoryEvidenceBindingSchema>;
+export type MemoryEvidenceAttribution = z.infer<typeof MemoryEvidenceAttributionSchema>;
 export type MemoryRevisionBinding = z.infer<typeof MemoryRevisionBindingSchema>;
 export type MemoryEvidenceEnvelope = z.infer<typeof MemoryEvidenceEnvelopeSchema>;
 export type MemorySafeExecutionMessage = z.infer<typeof MemorySafeExecutionMessageSchema>;

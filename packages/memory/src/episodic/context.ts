@@ -7,16 +7,18 @@ import type { MemoryEvidenceEnvelope } from "@pragma/shared";
 
 import type { EpisodicMemoryRecord } from "./schema.ts";
 import type { EpisodicMemoryStore } from "./store.ts";
+import type { MemoryRecallScope } from "../pipeline/memory-module.ts";
 
 export function createEpisodicMemoryContextProvider(
   store: EpisodicMemoryStore,
+  scope: MemoryRecallScope,
 ): ExpertAgentContextStore {
   const rootStore = async (): Promise<StaticContextStore> => {
-    const [episodes, diagnostic] = await Promise.all([store.list(), store.inspect()]);
+    const episodes = await store.listForRecall(scope);
     const seeds: ExpertAgentContextItemSeed[] = [
       {
         id: "summary.md",
-        content: renderSummary(episodes, diagnostic),
+        content: renderSummary(episodes, scope),
         metadata: metadata(
           "Current Episodic Memory coverage and recent outcomes.",
           "model_decision",
@@ -25,7 +27,7 @@ export function createEpisodicMemoryContextProvider(
       },
       {
         id: "index.md",
-        content: renderIndex(episodes),
+        content: renderIndex(episodes, scope),
         metadata: metadata(
           "Searchable Episodic Memory index. Read an item for the full historical precedent.",
           "model_decision",
@@ -44,14 +46,14 @@ export function createEpisodicMemoryContextProvider(
       }
       const episodeId = readPathId(input.id, "items/");
       if (episodeId !== undefined) {
-        const episode = await store.get(episodeId);
+        const episode = await store.getForRecall(scope, episodeId);
         return await new StaticContextStore(
-          episode === undefined ? [] : [episodeSeed(episode)],
+          episode === undefined ? [] : [episodeSeed(episode, scope)],
         ).readContext(input);
       }
       const evidenceId = readPathId(input.id, "evidence/");
       if (evidenceId !== undefined) {
-        const evidence = await store.getEvidence(evidenceId);
+        const evidence = await store.getEvidenceForRecall(scope, evidenceId);
         return await new StaticContextStore(
           evidence === undefined ? [] : [evidenceSeed(evidence)],
         ).readContext(input);
@@ -64,13 +66,25 @@ export function createEpisodicMemoryContextProvider(
       if (!rootResult.ok) return rootResult;
       const remaining = Math.max(0, (input.maxResults ?? 20) - rootResult.value.length);
       if (remaining === 0) return rootResult;
-      const episodes = await store.search(input.query, remaining);
-      const detailResult = await new StaticContextStore(episodes.map(episodeSeed)).searchContext({
-        ...input,
-        maxResults: remaining,
-      });
+      const episodes = await store.searchForRecall(scope, input.query, remaining);
+      const detailResult = await new StaticContextStore(
+        episodes.map((episode) => episodeSeed(episode, scope)),
+      ).searchContext({ ...input, maxResults: remaining });
       return detailResult.ok
-        ? { ...detailResult, value: [...rootResult.value, ...detailResult.value] }
+        ? {
+            ...detailResult,
+            value: [
+              ...rootResult.value,
+              ...detailResult.value.map((match) => {
+                const episode = episodes.find(
+                  (candidate) => match.id === `items/${candidate.id}.md`,
+                );
+                return episode === undefined
+                  ? match
+                  : { ...match, line: `[${viewLabel(episode, scope)}] ${match.line}` };
+              }),
+            ],
+          }
         : detailResult;
     },
     addContext: async (input) => await new StaticContextStore().addContext(input),
@@ -79,10 +93,13 @@ export function createEpisodicMemoryContextProvider(
   };
 }
 
-function episodeSeed(episode: EpisodicMemoryRecord): ExpertAgentContextItemSeed {
+function episodeSeed(
+  episode: EpisodicMemoryRecord,
+  scope: MemoryRecallScope,
+): ExpertAgentContextItemSeed {
   return {
     id: `items/${episode.id}.md`,
-    content: renderEpisode(episode),
+    content: renderEpisode(episode, scope),
     revision: String(episode.revision),
     metadata: metadata(
       `Historical episode: ${oneLine(episode.summary.text, 180)}`,
@@ -114,11 +131,12 @@ function readPathId(path: string, prefix: "items/" | "evidence/"): string | unde
 
 function renderSummary(
   episodes: readonly EpisodicMemoryRecord[],
-  diagnostic: Awaited<ReturnType<EpisodicMemoryStore["inspect"]>>,
+  scope: MemoryRecallScope,
 ): string {
   const active = episodes.filter((episode) => episode.status === "active");
   const succeeded = active.filter((episode) => episode.outcome.status === "succeeded").length;
   const failed = active.filter((episode) => episode.outcome.status === "failed").length;
+  const groups = groupEpisodes(active, scope);
   return [
     "# Episodic Memory Summary",
     "",
@@ -127,45 +145,39 @@ function renderSummary(
     `- Active episodes: ${active.length}`,
     `- Successful outcomes: ${succeeded}`,
     `- Failed outcomes: ${failed}`,
-    `- Pending extraction jobs: ${diagnostic.pending + diagnostic.running}`,
-    `- Jobs needing attention: ${diagnostic.needsAttention}`,
-    `- Low-value tasks rejected: ${diagnostic.rejectedLowValue}`,
     "",
-    "## Recent high-value precedents",
-    ...active
-      .toSorted(compareEpisode)
-      .slice(0, 5)
-      .map(
-        (episode) =>
-          `- ${episode.id} — ${episode.outcome.status} — ${oneLine(episode.summary.text, 180)}`,
-      ),
+    ...renderSummaryGroup("Current asset experience", groups.currentAsset),
+    ...(sameRef(scope.rootRef, scope.expertRef)
+      ? []
+      : renderSummaryGroup("Current expert personal experience", groups.personal)),
     "",
   ].join("\n");
 }
 
-function renderIndex(episodes: readonly EpisodicMemoryRecord[]): string {
+function renderIndex(episodes: readonly EpisodicMemoryRecord[], scope: MemoryRecallScope): string {
+  const groups = groupEpisodes(episodes, scope);
   return [
     "# Episodic Memory Index",
     "",
     "Search this index when looking for prior attempts, failures, recoveries, or outcomes.",
     "",
-    ...episodes
-      .filter((episode) => episode.status === "active")
-      .toSorted(compareEpisode)
-      .map(
-        (episode) =>
-          `- ${episode.id} | ${episode.updatedAt} | ${episode.language} | ${episode.outcome.status} | value ${episode.valueScore.toFixed(2)} | ${oneLine(episode.summary.text, 220)}`,
-      ),
+    ...renderIndexGroup("Current asset experience", groups.currentAsset, "current-asset"),
+    ...(sameRef(scope.rootRef, scope.expertRef)
+      ? []
+      : renderIndexGroup("Current expert personal experience", groups.personal, "personal")),
     "",
   ].join("\n");
 }
 
-function renderEpisode(episode: EpisodicMemoryRecord): string {
+function renderEpisode(episode: EpisodicMemoryRecord, scope: MemoryRecallScope): string {
   return [
     `# Episode ${episode.id}`,
     "",
     `- Execution: ${episode.executionId}`,
     `- Terminal Evidence: ${episode.terminalMessageId}`,
+    `- Memory scope: ${viewLabel(episode, scope)}`,
+    `- Owned by: ${episode.rootRefs.map(refLabel).join(", ")}`,
+    `- Producers: ${episode.producerRefs.map(refLabel).join(", ") || "unknown"}`,
     `- Outcome: ${episode.outcome.status}`,
     `- Language: ${episode.language}`,
     `- Value: ${episode.valueScore.toFixed(2)}`,
@@ -205,6 +217,75 @@ function renderEpisode(episode: EpisodicMemoryRecord): string {
     "Evidence is a separate verification layer. Read it only when the conclusion needs checking.",
     "",
   ].join("\n");
+}
+
+function groupEpisodes(episodes: readonly EpisodicMemoryRecord[], scope: MemoryRecallScope) {
+  return {
+    currentAsset: episodes.filter((episode) => hasRef(episode.rootRefs, scope.rootRef)),
+    personal: sameRef(scope.rootRef, scope.expertRef)
+      ? []
+      : episodes.filter((episode) => hasRef(episode.rootRefs, scope.expertRef)),
+  };
+}
+
+function renderSummaryGroup(
+  title: string,
+  episodes: readonly EpisodicMemoryRecord[],
+): readonly string[] {
+  return [
+    `## ${title}`,
+    ...(episodes.length === 0
+      ? ["- No episodes are available in this scope."]
+      : episodes
+          .toSorted(compareEpisode)
+          .slice(0, 5)
+          .map(
+            (episode) =>
+              `- ${episode.id} — ${episode.outcome.status} — ${oneLine(episode.summary.text, 180)}`,
+          )),
+    "",
+  ];
+}
+
+function renderIndexGroup(
+  title: string,
+  episodes: readonly EpisodicMemoryRecord[],
+  label: "current-asset" | "personal",
+): readonly string[] {
+  return [
+    `## ${title}`,
+    ...(episodes.length === 0
+      ? ["- No episodes are available in this scope."]
+      : episodes
+          .toSorted(compareEpisode)
+          .map(
+            (episode) =>
+              `- [${label}] ${episode.id} | ${episode.updatedAt} | ${episode.language} | ${episode.outcome.status} | value ${episode.valueScore.toFixed(2)} | ${oneLine(episode.summary.text, 220)}`,
+          )),
+    "",
+  ];
+}
+
+function viewLabel(episode: EpisodicMemoryRecord, scope: MemoryRecallScope): string {
+  return hasRef(episode.rootRefs, scope.rootRef) ? "current-asset" : "personal";
+}
+
+function hasRef(
+  refs: readonly { readonly type: string; readonly id: string }[],
+  expected: { readonly type: string; readonly id: string },
+): boolean {
+  return refs.some((ref) => sameRef(ref, expected));
+}
+
+function sameRef(
+  left: { readonly type: string; readonly id: string },
+  right: { readonly type: string; readonly id: string },
+): boolean {
+  return left.type === right.type && left.id === right.id;
+}
+
+function refLabel(ref: { readonly type: string; readonly id: string }): string {
+  return `${ref.type}:${ref.id}`;
 }
 
 function renderEvidence(evidence: MemoryEvidenceEnvelope): string {

@@ -16,6 +16,8 @@ Pragma 的新 Memory Plane 是 Desktop 内置能力，随应用启动，不需�
 - Expert、ExpertTeam、Flow 编辑页可以继承或收紧全局策略。
 - Execution 终态会创建持久提炼任务，由隐藏 Memory Curator 生成目标、尝试、失败、恢复和结果；
 - 普通 Expert、ExpertTeam 和 Flow 内 Expert 会加载有界 Memory guide、类型摘要与热点索引；
+- 独立 Expert 只能看到自己的 Episode；Team/Flow 内 Expert 看到当前 Team/Flow Episode 与自己的个人
+  Episode，不会混入其他专家或其他团队资产；
 - 模型通过 `memory/episodic/items/**` 按需读取详情，需要核验时再读取精确 Evidence 引用。
 
 当前尚未实现生产级 Semantic/Fact、Knowledge、Skill Candidate 或 CodeGraph Module。查询相关的主动
@@ -36,6 +38,10 @@ memory/<type>/evidence/<evidenceId>.md  # 按需核验证据
 
 guide 最多 2KB，overview 最多 6KB。普通搜索不会返回 Evidence；模型必须先找到详情中的稳定引用，再精确
 读取证据。Episodic 是历史先例，不代表当前事实。
+
+因此可以询问独立 Expert“你以前做过什么”：回答只依据该 Expert 作为根资产执行过的个人 Episode。
+在 Team/Flow 中询问时，模型还可以使用当前 Team/Flow 的共同履历，但提示词和详情会明确区分
+`current-asset` 与 `personal`；成员在团队执行中只是 producer，不会把团队 Episode 自动算成个人履历。
 
 ## 设置维度
 
@@ -64,6 +70,10 @@ global ∩ root asset ∩ producer experts ∩ mission restriction
 ```
 
 这些设置属于本机 Host binding metadata，不写入 Pragma DSL，不生成 Project Revision。
+
+这里的“每个资产一个 Memory Store”是逻辑授权视图，不是每个 Expert/Team/Flow 创建一套 SQLite 或目录。
+Episodic Module 仍使用共享物理 Store，并在查询阶段按稳定 root asset 与当前 Expert 过滤 list、search、
+detail 和 Evidence。
 
 ## 类型边界
 

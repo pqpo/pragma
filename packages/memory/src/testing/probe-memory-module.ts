@@ -59,7 +59,9 @@ export function createProbeMemoryModule(
         schemaRefs: ["pragma.memory.execution-message/v1", "pragma.memory.execution-message/v2"],
       },
     ],
-    contextProvider,
+    createContextProvider() {
+      return contextProvider;
+    },
     async consume(envelopes) {
       if (options.fail === true) throw new Error("Probe Module configured failure.");
       await withFileLock(lockPath, async () => {

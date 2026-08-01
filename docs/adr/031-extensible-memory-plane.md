@@ -110,6 +110,11 @@ Canonical Event 通过 `relatedRefs` 记录 root asset 与实际 producer。Evid
 subject/binding，并保存事件发生时的策略快照。不能仅按根 Flow 归因，也不能把团队成员产生的所有内容
 错误归给 coordinator。
 
+Evidence binding 表示捕获时参与策略计算的主体，不等于派生 Memory 的 owner。派生 Module 必须显式定义
+归属规则。Episodic Memory 以根 Execution asset 作为唯一 owner；producer Expert 只作 provenance，
+Team/Flow Episode 不自动成为成员 Expert 的个人履历。召回时，当前 Expert 在 Team/Flow Execution 中可读
+“根 Team/Flow + 自己的个人 Store”，但不能读取其他成员的个人 Store。该规则不要求按资产拆分物理数据库。
+
 一个已发布或标记为 team/shareable 的 Memory revision，只要存在允许 export 的绑定，就可作为该绑定
 Expert、ExpertTeam 或 Flow 的分享项。分享操作不会创建新的 KnowledgeBase 对象；它导出选中的 Memory
 revision、provenance 摘要、binding 与权限版本。私有 Evidence 不会因自动蒸馏而扩大可见性。

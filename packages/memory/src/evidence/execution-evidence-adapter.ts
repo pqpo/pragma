@@ -105,7 +105,7 @@ export function createExecutionEvidenceAdapter(options: {
           if (item.event.schemaRef !== "pragma.execution-event/v5") {
             throw new Error(`Unsupported Execution event schema: ${item.event.schemaRef}`);
           }
-          const mapped = mapExecutionEvent(item.event, policy, attribution.bindingRefs);
+          const mapped = mapExecutionEvent(item.event, policy, attribution);
           if (mapped === undefined) skipped += 1;
           else evidence.push(mapped);
         } catch {
@@ -136,8 +136,9 @@ export function createExecutionEvidenceAdapter(options: {
 function mapExecutionEvent(
   canonical: CanonicalEventEnvelope,
   policy: EffectiveMemoryPolicy,
-  bindingRefs: readonly MemorySubjectRef[],
+  attribution: ReturnType<typeof eventAttribution>,
 ): MemoryEvidenceEnvelope | undefined {
+  const bindingRefs = attribution.bindingRefs;
   const event = ExecutionEventSchema.parse(canonical.payload);
   if (event.type === "invocation.message.appended") {
     const message = InvocationMessageAppendedEventSchema.parse(event).data.message;
@@ -151,6 +152,7 @@ function mapExecutionEvent(
       MemorySafeExecutionMessagePayloadSchema.parse({ message: safe }),
       policy,
       bindingRefs,
+      attribution,
     );
   }
   if (/^(invocation|execution)\.(succeeded|failed|cancelled|interrupted)$/.test(event.type)) {
@@ -163,6 +165,7 @@ function mapExecutionEvent(
       MemorySafeTerminalPayloadSchema.parse({ outcome: event.type.split(".")[1] }),
       policy,
       bindingRefs,
+      attribution,
       "internal",
     );
   }
@@ -175,6 +178,7 @@ function mapExecutionEvent(
       event.data,
       policy,
       bindingRefs,
+      attribution,
     );
   }
   if (event.type !== "runtime.event") return undefined;
@@ -192,6 +196,7 @@ function mapExecutionEvent(
       }),
       policy,
       bindingRefs,
+      attribution,
     );
   }
   if (runtime.type === "tool.completed" || runtime.type === "tool.failed") {
@@ -207,6 +212,7 @@ function mapExecutionEvent(
       }),
       policy,
       bindingRefs,
+      attribution,
     );
   }
   if (runtime.type === "artifact.created") {
@@ -218,6 +224,7 @@ function mapExecutionEvent(
       runtime.payload,
       policy,
       bindingRefs,
+      attribution,
     );
   }
   return undefined;
@@ -231,6 +238,7 @@ function evidence(
   payload: unknown,
   policy: EffectiveMemoryPolicy,
   bindingRefs: readonly MemorySubjectRef[],
+  attribution: ReturnType<typeof eventAttribution>,
   sensitivity: "internal" | "confidential" = "confidential",
 ): MemoryEvidenceEnvelope {
   const messageId = createHash("sha256")
@@ -258,6 +266,14 @@ function evidence(
     visibility: { mode: "host-private" },
     sensitivity,
     bindings: bindingRefs.map((consumerRef) => ({ consumerRef, access: "allow" as const })),
+    ...(attribution.rootRef === undefined
+      ? {}
+      : {
+          attribution: {
+            rootRef: attribution.rootRef,
+            producerRefs: attribution.producerRefs,
+          },
+        }),
     policySnapshot: policy,
     payload,
   });
