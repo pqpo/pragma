@@ -280,27 +280,38 @@ box-shadow: 0 16px 40px rgb(20 31 25 / 12%);
 - label 使用 `12–13px / 500`；帮助文本和错误文本使用 `12px / 400`。
 - 同一行不要同时出现永久 label、全大写 eyebrow、placeholder 和帮助文本来描述同一件事。
 
-### 6.3 List / Table
+### 6.3 统一交互组件
+
+- 业务页面不得直接展示由浏览器或操作系统绘制的原生 UI。`select`、原生 `<dialog>`、
+  `window.alert()`、`window.confirm()`、`window.prompt()` 和带平台默认外观的文件选择入口，必须由 Desktop
+  统一交互组件替代。
+- 单选下拉统一使用共享 Select/Menu 组件；触发器、菜单、选中态、disabled、loading、键盘导航和焦点恢复
+  不得由页面各自实现。组件内部可以使用语义化原生元素，但不能暴露平台默认外观。
+- 弹窗、确认框和 drawer 统一使用共享 Dialog/Overlay 组件；必须处理焦点圈定、Escape、返回焦点、遮罩、
+  标题关联和危险操作语义。禁止用系统弹窗绕过产品视觉与可访问性规范。
+- 新功能立即遵守；修改仍使用上述原生 UI 的旧页面时，必须在本次触及范围内完成迁移，不得新增例外。
+
+### 6.4 List / Table
 
 - 同类数据默认使用行，不使用 card grid。
 - 表头 `11–12px / 500`，正文 `13–14px / 400`，对象名最多 `500`。
 - 行之间可用一条 `--ui-line`；表格外框、行外框和 cell 外框不能同时存在。
 - hover/focus 不改变布局、行高或字重，避免文字抖动。
 
-### 6.4 Badge / Status
+### 6.5 Badge / Status
 
 - Badge 只表示短状态、类型或不可编辑的属性，不用于普通分类标题。
 - 状态文案使用事实：`运行中`、`需要配置`、`失败`；避免 `SMART`、`AI POWERED` 等营销词。
 - 同一状态只使用一个 badge，不再同时配彩色 card、彩色 icon background 和粗体标题。
 
-### 6.5 Icon
+### 6.6 Icon
 
 - 使用现有 `@phosphor-icons/react` 或已有品牌资产，不手写 SVG、emoji 或 CSS 图标。
 - 常规 icon 为 `16 / 18 / 20px`，主导航最多 `22px`。同一工具栏只用一个尺寸。
 - icon 默认继承文字颜色。只有状态或品牌 logo 使用独立颜色底。
 - 有文字的按钮不需要为每个动作都配 icon；icon 不能替代不明确的 label。
 
-### 6.6 Empty / Loading / Error
+### 6.7 Empty / Loading / Error
 
 - 空态由一个短标题、一句解释和至多一个操作组成，默认不放入大圆角虚线卡片。
 - loading 保留当前布局，优先使用行内状态或 skeleton，避免整个页面变成居中卡片。
@@ -355,6 +366,7 @@ box-shadow: 0 16px 40px rgb(20 31 25 / 12%);
 - [ ] 一个可见任务区只有一个主按钮。
 - [ ] 没有为普通 section、说明文字或空态新增卡片。
 - [ ] 没有 card 套 card、双输入框边界或三重选中态。
+- [ ] 没有直接使用原生 `select`、系统弹窗或其他会暴露平台默认外观的业务控件。
 - [ ] 没有新增 raw color、任意字号、任意字重、任意圆角或 `!important`。
 - [ ] hover 不改变布局；focus-visible 清楚且只有一层。
 - [ ] 普通态、hover、键盘焦点、disabled、loading、empty、error 均已检查。

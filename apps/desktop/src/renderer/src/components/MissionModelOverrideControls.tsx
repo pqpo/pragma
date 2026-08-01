@@ -2,6 +2,7 @@ import { Brain, Robot } from "@phosphor-icons/react";
 import { useTranslation } from "react-i18next";
 
 import type { DesktopRuntimeModel, MissionModelOverride } from "../../../shared/contracts/index.ts";
+import { SelectMenu, type SelectMenuOption } from "./SelectMenu.tsx";
 
 export function MissionModelOverrideControls(props: {
   readonly models: readonly DesktopRuntimeModel[];
@@ -41,61 +42,54 @@ export function MissionModelOverrideControls(props: {
     defaultThinkingLabel === undefined
       ? t("defaultThinkingDepth")
       : t("defaultValue", { value: defaultThinkingLabel });
+  const modelOptions: readonly SelectMenuOption[] = [
+    { value: "", label: defaultModelLabel },
+    ...props.models.map((model) => ({
+      value: modelOptionKey(model.provider.id, model.id),
+      label: `${model.provider.displayName} · ${model.displayName}`,
+    })),
+  ];
+  const thinkingOptions: readonly SelectMenuOption[] = [
+    { value: "", label: defaultThinkingOptionLabel },
+    ...thinkingLevels.map((level) => ({ value: level.value, label: level.label })),
+  ];
 
   return (
     <>
-      <label className="mission-compact-select mission-model-select">
-        <Robot size={16} aria-hidden="true" />
-        <select
-          aria-label={t("modelOverride")}
-          value={valueKey}
-          disabled={props.loading || props.disabled}
-          onChange={(event) => {
-            const option = props.models.find(
-              (model) => modelOptionKey(model.provider.id, model.id) === event.target.value,
-            );
-            props.onChange(
-              option === undefined
-                ? undefined
-                : { providerId: option.provider.id, modelId: option.id },
-            );
-          }}
-        >
-          <option value="">{defaultModelLabel}</option>
-          {props.models.map((model) => (
-            <option
-              key={modelOptionKey(model.provider.id, model.id)}
-              value={modelOptionKey(model.provider.id, model.id)}
-            >
-              {model.provider.displayName} · {model.displayName}
-            </option>
-          ))}
-        </select>
-      </label>
-      <label className="mission-compact-select mission-thinking-select">
-        <Brain size={16} aria-hidden="true" />
-        <select
-          aria-label={t("thinkingDepth")}
-          value={props.value?.thinkingLevel ?? ""}
-          disabled={props.disabled || props.value === undefined || thinkingLevels.length === 0}
-          onChange={(event) => {
-            if (props.value === undefined) return;
-            const thinkingLevel = event.target.value;
-            props.onChange({
-              providerId: props.value.providerId,
-              modelId: props.value.modelId,
-              ...(thinkingLevel === "" ? {} : { thinkingLevel }),
-            });
-          }}
-        >
-          <option value="">{defaultThinkingOptionLabel}</option>
-          {thinkingLevels.map((level) => (
-            <option key={level.value} value={level.value}>
-              {level.label}
-            </option>
-          ))}
-        </select>
-      </label>
+      <SelectMenu
+        ariaLabel={t("modelOverride")}
+        className="mission-compact-select mission-model-select"
+        disabled={props.loading || props.disabled}
+        icon={<Robot size={16} aria-hidden="true" />}
+        options={modelOptions}
+        value={valueKey}
+        onChange={(nextValue) => {
+          const option = props.models.find(
+            (model) => modelOptionKey(model.provider.id, model.id) === nextValue,
+          );
+          props.onChange(
+            option === undefined
+              ? undefined
+              : { providerId: option.provider.id, modelId: option.id },
+          );
+        }}
+      />
+      <SelectMenu
+        ariaLabel={t("thinkingDepth")}
+        className="mission-compact-select mission-thinking-select"
+        disabled={props.disabled || props.value === undefined || thinkingLevels.length === 0}
+        icon={<Brain size={16} aria-hidden="true" />}
+        options={thinkingOptions}
+        value={props.value?.thinkingLevel ?? ""}
+        onChange={(thinkingLevel) => {
+          if (props.value === undefined) return;
+          props.onChange({
+            providerId: props.value.providerId,
+            modelId: props.value.modelId,
+            ...(thinkingLevel === "" ? {} : { thinkingLevel }),
+          });
+        }}
+      />
     </>
   );
 }

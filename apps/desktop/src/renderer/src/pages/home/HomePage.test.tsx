@@ -2,6 +2,7 @@ import { renderToStaticMarkup } from "react-dom/server";
 import { describe, expect, it } from "vitest";
 
 import { MissionModelOverrideControls } from "../../components/MissionModelOverrideControls.tsx";
+import { ToolPermissionSelect } from "../../components/ToolPermissionSelect.tsx";
 import {
   filterMissionExecutors,
   isHomeExecutorFavorite,
@@ -63,10 +64,11 @@ describe("MissionModelOverrideControls", () => {
     );
 
     expect(html).toContain("DeepSeek · DeepSeek Model");
-    expect(html).toContain('<option value="high" selected="">High</option>');
+    expect(html).toContain(">High</span>");
     expect(html).toContain("Default model");
     expect(html).toContain("Default thinking depth");
     expect(html).not.toContain("runtimeId");
+    expect(html).not.toContain("<select");
   });
 
   it("replaces generic defaults with the asynchronously resolved values", () => {
@@ -88,8 +90,21 @@ describe("MissionModelOverrideControls", () => {
       />,
     );
 
-    expect(html).toContain('<option value="" selected="">Default (OpenAI · GPT)</option>');
-    expect(html).toContain('<option value="" selected="">Default (Medium)</option>');
+    expect(html).toContain("Default (OpenAI · GPT)");
+    expect(html).toContain("Default (Medium)");
+    expect(html).toContain('role="combobox"');
+    expect(html).not.toContain("<select");
+  });
+
+  it("uses the shared custom selector for tool permissions", () => {
+    const html = renderToStaticMarkup(
+      <ToolPermissionSelect value="request-approval" onChange={() => undefined} />,
+    );
+
+    expect(html).toContain('role="combobox"');
+    expect(html).toContain('role="listbox"');
+    expect(html).toContain("Request approval");
+    expect(html).not.toContain("<select");
   });
 });
 
