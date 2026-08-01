@@ -768,6 +768,12 @@ export async function runExpertInvocation(options: RunExpertInvocationOptions): 
             },
       systemSessionId: options.context.snapshot?.systemSessionId,
       runtimeSession: options.context.snapshot?.runtimeSession,
+      context: {
+        source:
+          team === undefined
+            ? { type: "pragma.expert", id: nativeExpert.id, label: nativeExpert.name }
+            : { type: "pragma.expert-team", id: team.id, label: team.name },
+      },
       executionContext,
       humanInteractionHandler,
       modelSelection,

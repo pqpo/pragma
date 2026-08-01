@@ -6,6 +6,10 @@ import {
   ExpertAgentStreamEventSchema,
   InvocationMessageAppendedEventSchema,
   MemoryEvidenceEnvelopeSchema,
+  MemorySafeExecutionMessagePayloadSchema,
+  MemorySafeTerminalPayloadSchema,
+  MemorySafeToolEventPayloadSchema,
+  type AgentMessage,
   type CanonicalEventEnvelope,
   type EffectiveMemoryPolicy,
   type ExecutionEvent,
@@ -19,6 +23,7 @@ import type {
   MemoryDeadLetterStore,
 } from "../pipeline/pipeline-state-store.ts";
 import type { MemoryPolicyStore } from "../policy/memory-policy-store.ts";
+import { MEMORY_CURATOR_ID } from "../curator.ts";
 
 export const EXECUTION_EVIDENCE_ADAPTER_ID = "pragma.memory.execution-evidence-adapter";
 
@@ -66,6 +71,13 @@ export function createExecutionEvidenceAdapter(options: {
           continue;
         }
         const attribution = eventAttribution(item.event);
+        if (
+          attribution.rootRef?.type === "pragma.expert" &&
+          attribution.rootRef.id === MEMORY_CURATOR_ID
+        ) {
+          skipped += 1;
+          continue;
+        }
         let policy: EffectiveMemoryPolicy;
         try {
           policy = await options.policies.resolveAt({
@@ -129,14 +141,14 @@ function mapExecutionEvent(
   const event = ExecutionEventSchema.parse(canonical.payload);
   if (event.type === "invocation.message.appended") {
     const message = InvocationMessageAppendedEventSchema.parse(event).data.message;
+    const safe = toSafeExecutionMessage(message);
+    if (safe === undefined) return undefined;
     return evidence(
       canonical,
       event,
       "execution.message.appended",
-      "pragma.memory.execution-message/v1",
-      {
-        message,
-      },
+      "pragma.memory.execution-message/v2",
+      MemorySafeExecutionMessagePayloadSchema.parse({ message: safe }),
       policy,
       bindingRefs,
     );
@@ -147,8 +159,8 @@ function mapExecutionEvent(
       canonical,
       event,
       `execution.${scope}.terminal`,
-      `pragma.memory.${scope}-terminal/v1`,
-      { outcome: event.type.split(".")[1], data: event.data },
+      `pragma.memory.${scope}-terminal/v2`,
+      MemorySafeTerminalPayloadSchema.parse({ outcome: event.type.split(".")[1] }),
       policy,
       bindingRefs,
       "internal",
@@ -172,11 +184,12 @@ function mapExecutionEvent(
       canonical,
       event,
       "execution.tool.started",
-      "pragma.memory.tool-event/v1",
-      {
-        ...runtime.payload,
-        contentCompleteness: "preview",
-      },
+      "pragma.memory.tool-event/v2",
+      MemorySafeToolEventPayloadSchema.parse({
+        toolCallId: runtime.payload.toolCallId,
+        toolName: runtime.payload.toolName,
+        phase: "started",
+      }),
       policy,
       bindingRefs,
     );
@@ -186,11 +199,12 @@ function mapExecutionEvent(
       canonical,
       event,
       `execution.${runtime.type}`,
-      "pragma.memory.tool-event/v1",
-      {
-        ...runtime.payload,
-        contentCompleteness: runtime.type === "tool.completed" ? "preview" : "full",
-      },
+      "pragma.memory.tool-event/v2",
+      MemorySafeToolEventPayloadSchema.parse({
+        toolCallId: runtime.payload.toolCallId,
+        toolName: runtime.payload.toolName,
+        phase: runtime.type === "tool.completed" ? "completed" : "failed",
+      }),
       policy,
       bindingRefs,
     );
@@ -220,7 +234,7 @@ function evidence(
   sensitivity: "internal" | "confidential" = "confidential",
 ): MemoryEvidenceEnvelope {
   const messageId = createHash("sha256")
-    .update(JSON.stringify(["pragma.execution-evidence-adapter/v1", canonical.eventId, topic]))
+    .update(JSON.stringify(["pragma.execution-evidence-adapter/v2", canonical.eventId, topic]))
     .digest("hex");
   return MemoryEvidenceEnvelopeSchema.parse({
     schemaVersion: "pragma.memory-evidence/v1",
@@ -247,6 +261,42 @@ function evidence(
     policySnapshot: policy,
     payload,
   });
+}
+
+function toSafeExecutionMessage(message: AgentMessage) {
+  if (message.role === "user") {
+    const text =
+      typeof message.content === "string"
+        ? message.content
+        : message.content
+            .filter((item) => item.type === "text")
+            .map((item) => item.text)
+            .join("\n");
+    return text.trim() === "" ? undefined : { role: "user" as const, text };
+  }
+  if (message.role === "assistant") {
+    const text = message.content
+      .filter((item) => item.type === "text")
+      .map((item) => item.text)
+      .join("\n");
+    if (text.trim() === "") return undefined;
+    return { role: "assistant" as const, text, stopReason: message.stopReason };
+  }
+  if (message.role === "toolResult") {
+    return {
+      role: "tool" as const,
+      toolCallId: message.toolCallId,
+      toolName: message.toolName,
+      status: message.isError ? ("failed" as const) : ("succeeded" as const),
+    };
+  }
+  if (message.role === "branchSummary") {
+    return { role: "summary" as const, kind: "branch" as const, text: message.summary };
+  }
+  if (message.role === "compactionSummary") {
+    return { role: "summary" as const, kind: "compaction" as const, text: message.summary };
+  }
+  return undefined;
 }
 
 function eventAttribution(canonical: CanonicalEventEnvelope): {

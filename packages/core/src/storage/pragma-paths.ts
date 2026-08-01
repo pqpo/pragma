@@ -159,6 +159,10 @@ export class PragmaPaths {
     return join(this.memoryPoliciesRoot(), "global.json");
   }
 
+  memoryExtractorProfile(): string {
+    return join(this.memoryDataRoot(), "extractor-profile.json");
+  }
+
   memoryAssetPolicy(type: string, id: string): string {
     return join(
       this.memoryPoliciesRoot(),

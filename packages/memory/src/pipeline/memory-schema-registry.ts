@@ -1,4 +1,10 @@
-import { AgentMessageSchema, type MemoryEvidenceEnvelope } from "@pragma/shared";
+import {
+  AgentMessageSchema,
+  MemorySafeExecutionMessagePayloadSchema,
+  MemorySafeTerminalPayloadSchema,
+  MemorySafeToolEventPayloadSchema,
+  type MemoryEvidenceEnvelope,
+} from "@pragma/shared";
 import { z } from "zod";
 
 export class MemorySchemaRegistry {
@@ -33,11 +39,21 @@ export function createBuiltInMemorySchemaRegistry(): MemorySchemaRegistry {
     schemaRef: "pragma.memory.execution-message/v1",
     schema: z.object({ message: AgentMessageSchema }),
   });
+  registry.register({
+    topic: "execution.message.appended",
+    schemaRef: "pragma.memory.execution-message/v2",
+    schema: MemorySafeExecutionMessagePayloadSchema,
+  });
   for (const scope of ["invocation", "execution"] as const) {
     registry.register({
       topic: `execution.${scope}.terminal`,
       schemaRef: `pragma.memory.${scope}-terminal/v1`,
       schema: z.object({ outcome: z.string().min(1), data: z.unknown() }),
+    });
+    registry.register({
+      topic: `execution.${scope}.terminal`,
+      schemaRef: `pragma.memory.${scope}-terminal/v2`,
+      schema: MemorySafeTerminalPayloadSchema,
     });
   }
   for (const phase of ["started", "completed", "failed"] as const) {
@@ -51,6 +67,11 @@ export function createBuiltInMemorySchemaRegistry(): MemorySchemaRegistry {
           contentCompleteness: z.enum(["full", "preview", "reference-only"]),
         })
         .passthrough(),
+    });
+    registry.register({
+      topic: `execution.tool.${phase}`,
+      schemaRef: "pragma.memory.tool-event/v2",
+      schema: MemorySafeToolEventPayloadSchema,
     });
   }
   registry.register({

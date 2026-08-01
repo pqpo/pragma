@@ -11,6 +11,20 @@ export interface MemoryModuleDescriptor {
   readonly version: string;
   readonly pathPrefix: string;
   readonly storageModel: "dynamic-projection" | "immutable-revision";
+  /** Projection modules build queryable memory; learning modules build candidates. */
+  readonly purpose: "projection" | "learning";
+  readonly contextLayers: MemoryModuleContextLayers;
+}
+
+export interface MemoryModuleContextLayers {
+  /** Short instructions merged into the global always-on Memory guide. */
+  readonly usagePrompt: string;
+  readonly summaryPath: "summary.md";
+  readonly indexPath: "index.md";
+  readonly itemsPrefix: "items/";
+  readonly evidencePrefix: "evidence/";
+  readonly summaryMaxBytes: number;
+  readonly indexMaxBytes: number;
 }
 
 export interface MemoryModuleSubscription {
@@ -27,6 +41,8 @@ export interface MemoryModule {
   readonly subscriptions: readonly MemoryModuleSubscription[];
   readonly contextProvider: ExpertAgentContextStore;
   consume(envelopes: readonly MemoryEvidenceEnvelope[]): Promise<MemoryModuleConsumeResult>;
+  /** Durable module-owned work which must not hold the feed checkpoint open. */
+  runBackgroundOnce?(): Promise<void>;
 }
 
 export class MemoryModuleRegistry {
@@ -104,4 +120,19 @@ function validateDescriptor(descriptor: MemoryModuleDescriptor): void {
     throw new TypeError(`Invalid Memory Module path prefix: ${descriptor.pathPrefix}`);
   }
   if (descriptor.version.trim() === "") throw new TypeError("Memory Module version is required.");
+  const layers = descriptor.contextLayers;
+  if (layers.usagePrompt.trim() === "") {
+    throw new TypeError(`Memory Module usage prompt is required: ${descriptor.id}`);
+  }
+  if (layers.usagePrompt.length > 2_000) {
+    throw new TypeError(`Memory Module usage prompt is too large: ${descriptor.id}`);
+  }
+  for (const [name, value] of [
+    ["summaryMaxBytes", layers.summaryMaxBytes],
+    ["indexMaxBytes", layers.indexMaxBytes],
+  ] as const) {
+    if (!Number.isSafeInteger(value) || value <= 0 || value > 64_000) {
+      throw new TypeError(`Invalid Memory Module ${name}: ${descriptor.id}`);
+    }
+  }
 }

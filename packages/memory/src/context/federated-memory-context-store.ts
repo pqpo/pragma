@@ -7,6 +7,7 @@ import {
   type ExpertAgentContextResult,
   type ExpertAgentContextStore,
   type ExpertAgentContextItemSummary,
+  type ExpertAgentRunContext,
   type ExpertAgentStoredContextItem,
   type ExpertAgentStoredContextItemDeleteInput,
   type ExpertAgentStoredContextItemEditInput,
@@ -20,14 +21,49 @@ import {
 import { MemoryModuleRegistry } from "../pipeline/memory-module.ts";
 
 export const MEMORY_CONTEXT_NAMESPACE = "memory";
+export const MEMORY_GUIDE_CONTEXT_ID = "guide.md";
+export const MEMORY_OVERVIEW_CONTEXT_ID = "overview.md";
+export const MEMORY_CATALOG_CONTEXT_ID = "catalog.md";
+
+const GUIDE_MAX_BYTES = 2_000;
+const OVERVIEW_MAX_BYTES = 6_000;
 
 export function createFederatedMemoryContextStore(
   registry: MemoryModuleRegistry,
+  options: {
+    readonly canRecall?:
+      | ((context: ExpertAgentRunContext | undefined) => boolean | Promise<boolean>)
+      | undefined;
+  } = {},
 ): ExpertAgentContextStore {
-  const catalogStore = (): StaticContextStore =>
+  const canRecall = async (context: ExpertAgentRunContext | undefined): Promise<boolean> =>
+    (await options.canRecall?.(context)) ?? true;
+  const rootStore = async (context?: ExpertAgentContextItemListInput["context"]) =>
     new StaticContextStore([
       {
-        id: "catalog.md",
+        id: MEMORY_GUIDE_CONTEXT_ID,
+        content: trimUtf8(renderGuide(registry), GUIDE_MAX_BYTES),
+        metadata: {
+          description: "Always-on rules for selecting, searching, reading, and verifying Memory.",
+          trigger: "always_on",
+          priority: "critical",
+          trustLevel: "system",
+          sensitivity: "internal",
+        },
+      },
+      {
+        id: MEMORY_OVERVIEW_CONTEXT_ID,
+        content: await renderOverview(registry, context),
+        metadata: {
+          description: "Bounded summaries and hot indexes for every available Memory type.",
+          trigger: "always_on",
+          priority: "high",
+          trustLevel: "system",
+          sensitivity: "internal",
+        },
+      },
+      {
+        id: MEMORY_CATALOG_CONTEXT_ID,
         content: renderCatalog(registry),
         metadata: {
           description: "Registered Memory Modules and current health.",
@@ -41,24 +77,35 @@ export function createFederatedMemoryContextStore(
 
   return {
     async listContext(input: ExpertAgentContextItemListInput = {}) {
-      const catalog = await catalogStore().listContext(input);
+      if (!(await canRecall(input.context))) return ok([]);
+      const catalog = await (await rootStore(input.context)).listContext(input);
       if (!catalog.ok) return catalog;
       const items: ExpertAgentContextItemSummary[] = [...catalog.value];
       for (const module of registry.list()) {
         const result = await module.contextProvider.listContext(input);
         if (!result.ok) continue;
+        const layers = module.descriptor.contextLayers;
         items.push(
-          ...result.value.map((item) => ({
-            ...item,
-            id: `${module.descriptor.pathPrefix}/${item.id}`,
-          })),
+          ...result.value
+            .filter((item) => item.id === layers.summaryPath || item.id === layers.indexPath)
+            .map((item) => ({
+              ...item,
+              id: `${module.descriptor.pathPrefix}/${item.id}`,
+            })),
         );
       }
       return ok(items.toSorted((left, right) => left.id.localeCompare(right.id)));
     },
 
     async readContext(input: ExpertAgentStoredContextItemReadInput) {
-      if (input.id === "catalog.md") return await catalogStore().readContext(input);
+      if (!(await canRecall(input.context))) return recallDenied(input.id);
+      if (
+        input.id === MEMORY_GUIDE_CONTEXT_ID ||
+        input.id === MEMORY_OVERVIEW_CONTEXT_ID ||
+        input.id === MEMORY_CATALOG_CONTEXT_ID
+      ) {
+        return await (await rootStore(input.context)).readContext(input);
+      }
       const route = resolveRoute(registry, input.id);
       if (route === undefined)
         return error("context_not_found", `Memory context not found: ${input.id}`);
@@ -70,17 +117,20 @@ export function createFederatedMemoryContextStore(
     },
 
     async searchContext(input: ExpertAgentStoredContextItemSearchInput) {
+      if (!(await canRecall(input.context))) return recallDenied("search");
       const matches: ExpertAgentContextItemSearchMatch[] = [];
-      const catalog = await catalogStore().searchContext(input);
+      const catalog = await (await rootStore(input.context)).searchContext(input);
       if (catalog.ok) matches.push(...catalog.value);
       for (const module of registry.list()) {
         const result = await module.contextProvider.searchContext(input);
         if (!result.ok) continue;
         matches.push(
-          ...result.value.map((match) => ({
-            ...match,
-            id: `${module.descriptor.pathPrefix}/${match.id}`,
-          })),
+          ...result.value
+            .filter((match) => !match.id.startsWith(module.descriptor.contextLayers.evidencePrefix))
+            .map((match) => ({
+              ...match,
+              id: `${module.descriptor.pathPrefix}/${match.id}`,
+            })),
         );
       }
       return ok(matches.slice(0, input.maxResults ?? matches.length));
@@ -96,6 +146,67 @@ export function createFederatedMemoryContextStore(
       return denied<{ readonly id: string }>("delete", input.id);
     },
   };
+}
+
+function recallDenied<T>(id: string): ExpertAgentContextResult<T> {
+  return error("permission_denied", `Memory recall is disabled for this context: ${id}`, { id });
+}
+
+function renderGuide(registry: MemoryModuleRegistry): string {
+  return [
+    "# Memory Guide",
+    "",
+    "Memory is reference context, not a replacement for the current user instruction.",
+    "Start with the bounded overview. Search when the relevant memory id is unknown, then read the item detail.",
+    "Read supporting Evidence only when a conclusion is important, conflicting, stale, or low-confidence.",
+    "Episodic memory is historical precedent, not current truth. Candidate knowledge or skills are not published capabilities.",
+    "Never guess content from an unread Evidence id and never bypass ContextStore authorization.",
+    "",
+    "## Type-specific guidance",
+    ...registry
+      .list()
+      .map(
+        (module) =>
+          `- ${module.descriptor.pathPrefix}: ${module.descriptor.contextLayers.usagePrompt}`,
+      ),
+    "",
+  ].join("\n");
+}
+
+async function renderOverview(
+  registry: MemoryModuleRegistry,
+  context: ExpertAgentContextItemListInput["context"],
+): Promise<string> {
+  const modules = registry.list();
+  if (modules.length === 0) return "# Memory Overview\n\nNo Memory Modules are available.\n";
+  const header = "# Memory Overview\n\n";
+  const perModuleBudget = Math.max(512, Math.floor((OVERVIEW_MAX_BYTES - 256) / modules.length));
+  const sections: string[] = [];
+  for (const module of modules) {
+    const layers = module.descriptor.contextLayers;
+    const summaryBudget = Math.min(layers.summaryMaxBytes, Math.floor(perModuleBudget * 0.45));
+    const indexBudget = Math.min(layers.indexMaxBytes, perModuleBudget - summaryBudget);
+    const [summary, index] = await Promise.all([
+      module.contextProvider.readContext({
+        id: layers.summaryPath,
+        offset: summaryBudget,
+        context,
+      }),
+      module.contextProvider.readContext({ id: layers.indexPath, offset: indexBudget, context }),
+    ]);
+    sections.push(
+      [
+        `## ${module.descriptor.pathPrefix}`,
+        layers.usagePrompt,
+        "",
+        summary.ok ? summary.value.content : "Summary is currently unavailable.",
+        "",
+        index.ok ? index.value.content : "Hot index is currently unavailable.",
+        "",
+      ].join("\n"),
+    );
+  }
+  return trimUtf8(`${header}${sections.join("\n")}`, OVERVIEW_MAX_BYTES);
 }
 
 function resolveRoute(registry: MemoryModuleRegistry, id: string) {
@@ -136,4 +247,12 @@ function renderCatalog(registry: MemoryModuleRegistry): string {
         })),
     "",
   ].join("\n");
+}
+
+function trimUtf8(value: string, maxBytes: number): string {
+  const buffer = Buffer.from(value, "utf8");
+  if (buffer.length <= maxBytes) return value;
+  let end = maxBytes;
+  while (end > 0 && (buffer[end] ?? 0) >= 0x80 && (buffer[end] ?? 0) < 0xc0) end -= 1;
+  return `${buffer.subarray(0, end).toString("utf8").trimEnd()}\n`;
 }

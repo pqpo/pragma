@@ -4,9 +4,11 @@ import {
   DesktopAssetMemoryPolicySnapshotSchema,
   DesktopGlobalMemoryPolicySnapshotSchema,
   DesktopMemoryPlaneStatusSchema,
+  DesktopMemoryExtractorProfileSchema,
   GetDesktopAssetMemoryPolicySchema,
   UpdateDesktopAssetMemoryPolicySchema,
   UpdateDesktopGlobalMemoryPolicySchema,
+  UpdateDesktopMemoryExtractorProfileSchema,
 } from "../../../shared/contracts/index.ts";
 import type { DesktopMemoryPlane } from "./desktop-memory-plane.ts";
 
@@ -52,4 +54,13 @@ export function installMemoryPolicyHandlers(plane: DesktopMemoryPlane): void {
   ipcMain.handle("memory-plane:status", async () =>
     DesktopMemoryPlaneStatusSchema.parse(await plane.getStatus()),
   );
+  ipcMain.handle("memory-extractor-profile:get", async () =>
+    DesktopMemoryExtractorProfileSchema.parse(await plane.extractorProfiles.get()),
+  );
+  ipcMain.handle("memory-extractor-profile:update", async (_event, input: unknown) => {
+    const parsed = UpdateDesktopMemoryExtractorProfileSchema.parse(input);
+    const profile = await plane.extractorProfiles.update(parsed);
+    await plane.wakeEpisodicJobs();
+    return DesktopMemoryExtractorProfileSchema.parse(profile);
+  });
 }

@@ -28,6 +28,8 @@ import {
   type ExpertAgentHumanRequest,
   type ExpertAgentHumanResponse,
   type ExpertDefinition,
+  type Expert,
+  type ExpertAgentContextStore,
   type ExpertSession,
   type MutableExecution,
   type McpToolRegistryPool,
@@ -43,6 +45,7 @@ import type {
   PragmaBindingRecord,
 } from "@pragma/interpreter";
 import { createPragmaResourceIdentityMigrationIndex } from "@pragma/interpreter";
+import { MEMORY_CURATOR_ID } from "@pragma/memory";
 import type {
   HumanInteractionRequest,
   HumanInteractionResponse,
@@ -193,6 +196,12 @@ export function createMissionRunner(options: {
   readonly pragmaHome: string;
   readonly executionStore?: FileExecutionStore | undefined;
   readonly contextStores?: ContextStoreStore | undefined;
+  readonly hostContextStores?:
+    | readonly {
+        readonly namespace: string;
+        readonly store: ExpertAgentContextStore;
+      }[]
+    | undefined;
   readonly plugins?: PluginStore | undefined;
   readonly runtimes: RuntimeResolver;
   readonly usage?: DesktopUsageStore | undefined;
@@ -410,8 +419,11 @@ export function createMissionRunner(options: {
     runtimes: RuntimeResolver,
   ): Promise<CompiledResource<InvocableResource>> => {
     const system = await options.compileSystemExecutor?.({ mission, runtimes });
-    if (system !== undefined) return system;
-    return await options.project.compile<InvocableResource>({
+    if (system !== undefined) {
+      attachHostContextStores(system.value, options.hostContextStores);
+      return system;
+    }
+    const compiled = await options.project.compile<InvocableResource>({
       projectId: mission.project.id,
       revision: mission.project.revision,
       ref: mission.executor.ref,
@@ -454,6 +466,8 @@ export function createMissionRunner(options: {
             },
           }),
     });
+    attachHostContextStores(compiled.value, options.hostContextStores);
+    return compiled;
   };
 
   const compilationIdentity = async (mission: Mission): Promise<string> =>
@@ -1849,6 +1863,42 @@ function toRuntimeModelSelection(
         model: { providerId: override.providerId, modelId: override.modelId },
         ...(override.thinkingLevel === undefined ? {} : { thinkingLevel: override.thinkingLevel }),
       };
+}
+
+function attachHostContextStores(
+  resource: InvocableResource,
+  stores:
+    | readonly { readonly namespace: string; readonly store: ExpertAgentContextStore }[]
+    | undefined,
+): void {
+  if (stores === undefined || stores.length === 0) return;
+  const attachExpert = (expert: Expert): void => {
+    if (expert.id === MEMORY_CURATOR_ID) return;
+    for (const binding of stores) {
+      const result = expert.contextSystem.register({
+        namespace: binding.namespace,
+        store: binding.store,
+        required: false,
+      });
+      if (!result.ok && result.error.code !== "context_already_exists") {
+        throw new Error(result.error.message);
+      }
+    }
+  };
+  const visit = (value: InvocableResource | import("@pragma/core").FlowNodeDefinition): void => {
+    if ("kind" in value && value.kind === "flow") {
+      for (const step of value.steps.values()) visit(step.definition);
+      return;
+    }
+    if ("kind" in value && (value.kind === "task" || value.kind === "human-task")) return;
+    if (isExpertTeam(value)) {
+      attachExpert(value.coordinator);
+      value.members.forEach(attachExpert);
+      return;
+    }
+    attachExpert(value);
+  };
+  visit(resource);
 }
 
 function requireRootRuntimeId(compiled: CompiledResource<InvocableResource>): string {
