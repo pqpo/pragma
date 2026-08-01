@@ -3,7 +3,7 @@ import { renderToStaticMarkup } from "react-dom/server";
 import { afterEach, describe, expect, it } from "vitest";
 
 import { i18n } from "../../i18n/index.ts";
-import { ExpertDetailFragment } from "./ExpertDirectoryFragment.tsx";
+import { ExpertDetailFragment, ExpertDirectoryFragment } from "./ExpertDirectoryFragment.tsx";
 import { ExpertEditorFragment } from "./ExpertEditorFragment.tsx";
 import type { ExpertRecord } from "./studio-model.ts";
 
@@ -120,6 +120,23 @@ describe("ExpertDetailFragment", () => {
     expect(html).toContain("使用当前 Runtime、授权工作区和可用能力完成你的工作。");
     expect(html).not.toContain("Canonical description");
     expect(html).not.toContain("Canonical scope");
+  });
+});
+
+describe("ExpertDirectoryFragment", () => {
+  it("uses a single search control without the inactive expert dropdown", () => {
+    const html = renderToStaticMarkup(
+      <ExpertDirectoryFragment
+        experts={[expert]}
+        onCreate={() => undefined}
+        onOpen={() => undefined}
+      />,
+    );
+
+    expect(html).toContain('type="search"');
+    expect(html).toContain('placeholder="Search experts"');
+    expect(html).not.toContain("All experts");
+    expect(html).not.toContain("directory-filter");
   });
 });
 

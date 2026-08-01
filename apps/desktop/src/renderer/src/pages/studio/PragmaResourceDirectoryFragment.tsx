@@ -80,6 +80,23 @@ export function matchingTeamExperts(
     .slice(0, limit);
 }
 
+export function matchesResourceDirectoryQuery(
+  resource: PragmaExpertTeamResource | PragmaFlowResource,
+  query: string,
+): boolean {
+  const term = normalized(query);
+  return (
+    term.length === 0 ||
+    [
+      resource.metadata.name,
+      resource.metadata.id,
+      resource.metadata.description,
+      ...resource.metadata.tags,
+      canonicalPragmaResourceRef(resource),
+    ].some((value) => normalized(value).includes(term))
+  );
+}
+
 export function PragmaResourceDirectoryFragment(props: {
   readonly kind: ResourceKind;
   readonly project: PragmaProjectSnapshot;
@@ -88,13 +105,18 @@ export function PragmaResourceDirectoryFragment(props: {
 }) {
   const { t } = useTranslation("studio");
   const [error, setError] = useState<string | null>(null);
+  const [query, setQuery] = useState("");
   const resources = props.project.resources.filter(
     (resource): resource is PragmaExpertTeamResource | PragmaFlowResource =>
       props.kind === "team" ? resource.kind === "ExpertTeam" : resource.kind === "Flow",
   );
+  const matchingResources = resources.filter((resource) =>
+    matchesResourceDirectoryQuery(resource, query),
+  );
 
   const Icon = props.kind === "team" ? UsersThree : GitBranch;
   const headingId = props.kind === "team" ? "expert-teams-heading" : "flows-heading";
+  const searchLabel = props.kind === "team" ? t("searchExpertTeams") : t("searchFlows");
   return (
     <StudioScreenFrame
       className="studio-collection pragma-resource-directory"
@@ -126,8 +148,21 @@ export function PragmaResourceDirectoryFragment(props: {
         </header>
       }
     >
+      <div className="directory-controls">
+        <label className="directory-search">
+          <MagnifyingGlass size={18} aria-hidden="true" />
+          <span className="sr-only">{searchLabel}</span>
+          <input
+            type="search"
+            value={query}
+            onChange={(event) => setQuery(event.target.value)}
+            placeholder={searchLabel}
+          />
+        </label>
+      </div>
+
       <div className="studio-asset-rows">
-        {resources.map((resource) => (
+        {matchingResources.map((resource) => (
           <button
             className="studio-asset-row pragma-resource-row"
             type="button"
@@ -144,12 +179,21 @@ export function PragmaResourceDirectoryFragment(props: {
             <CaretRight size={17} aria-hidden="true" />
           </button>
         ))}
-        {resources.length === 0 ? (
+        {matchingResources.length === 0 ? (
           <p className="studio-empty-copy">
-            {t("noResourcesYet", { kind: props.kind === "team" ? t("expertTeam") : t("flow") })}
+            {query.trim()
+              ? t("noMatchesFound")
+              : t("noResourcesYet", {
+                  kind: props.kind === "team" ? t("expertTeam") : t("flow"),
+                })}
           </p>
         ) : null}
       </div>
+      <p className="directory-count">
+        {props.kind === "team"
+          ? t("expertTeamCount", { count: matchingResources.length })
+          : t("flowCount", { count: matchingResources.length })}
+      </p>
       {error ? (
         <p className="form-error" role="alert">
           {error}

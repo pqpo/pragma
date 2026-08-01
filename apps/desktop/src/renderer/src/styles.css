@@ -2061,17 +2061,6 @@ p {
   font-weight: 680;
 }
 
-.studio-nav-item.is-active::before {
-  position: absolute;
-  top: 0;
-  bottom: 0;
-  left: 0;
-  width: 2px;
-  border-radius: 2px;
-  background: var(--lime);
-  content: "";
-}
-
 .studio-nav-item em {
   color: #6f7971;
   font-family: "SFMono-Regular", Consolas, "Liberation Mono", monospace;
@@ -12982,13 +12971,6 @@ textarea:focus-visible,
   background: #fff;
   color: var(--green-dark);
   box-shadow: 0 1px 3px rgb(20 31 25 / 5%);
-}
-
-.studio-nav-item.is-active::before {
-  top: 10px;
-  bottom: 10px;
-  width: 3px;
-  background: var(--green);
 }
 
 .studio-content {

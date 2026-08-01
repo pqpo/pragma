@@ -10,6 +10,7 @@ import {
 import type { PragmaProjectSnapshot } from "../../../../shared/contracts/index.ts";
 
 import {
+  matchesResourceDirectoryQuery,
   matchingTeamExperts,
   PragmaResourceDetailFragment,
   PragmaResourceDirectoryFragment,
@@ -162,6 +163,49 @@ describe("PragmaResourceDirectoryFragment", () => {
     expect(html).toContain('class="studio-asset-row pragma-resource-row"');
     expect(html).not.toContain("Edit expert team");
     expect(html).not.toContain("Validate &amp; publish");
+    expect(html).toContain('placeholder="Search expert teams"');
+    expect(html).toContain("1 expert team");
+  });
+
+  it("uses the same searchable directory structure for Flows", () => {
+    const flow = createEmptyFlow("ffdfk2cczgqjda7q");
+    const project = {
+      schemaVersion: "pragma.project-snapshot/v3",
+      projectId: "test-project",
+      revision: 0,
+      resources: [flow],
+      diagnostics: [],
+    } satisfies PragmaProjectSnapshot;
+
+    const html = renderToStaticMarkup(
+      <PragmaResourceDirectoryFragment
+        kind="flow"
+        project={project}
+        onOpen={() => undefined}
+        onCreate={() => undefined}
+      />,
+    );
+
+    expect(html).toContain('placeholder="Search flows"');
+    expect(html).toContain("1 flow");
+  });
+
+  it("matches resource names, ids, descriptions, tags, and canonical refs", () => {
+    const flow = {
+      ...createEmptyFlow("ffdfk2cczgqjda7q"),
+      metadata: {
+        id: "ffdfk2cczgqjda7q",
+        name: "Approval flow",
+        description: "Coordinates manual review",
+        tags: ["governance"],
+      },
+    } satisfies PragmaFlowResource;
+
+    expect(matchesResourceDirectoryQuery(flow, "approval")).toBe(true);
+    expect(matchesResourceDirectoryQuery(flow, "manual review")).toBe(true);
+    expect(matchesResourceDirectoryQuery(flow, "governance")).toBe(true);
+    expect(matchesResourceDirectoryQuery(flow, "flow:ffdfk2cczgqjda7q")).toBe(true);
+    expect(matchesResourceDirectoryQuery(flow, "missing")).toBe(false);
   });
 });
 
