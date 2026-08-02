@@ -23,7 +23,7 @@
     "clean": "rm -rf dist"
   },
   "dependencies": {
-    "@earendil-works/pi-tui": "0.79.8",
+    "@earendil-works/pi-tui": "0.83.0",
     "@pragma/core": "workspace:*",
     "@pragma/plugin-repo-manager": "workspace:*",
     "@pragma/plugin-memory": "workspace:*",
