@@ -204,15 +204,23 @@ jobs:
         shell: bash
         run: |
           tag="${GITHUB_REF_NAME}"
-          release_json="$(gh api "repos/${GH_REPO}/releases/tags/${tag}" 2>/dev/null || true)"
+          release_matches="$(
+            gh api --paginate --slurp "repos/${GH_REPO}/releases?per_page=100" |
+              jq -c --arg tag "${tag}" '[.[][] | select(.tag_name == $tag)]'
+          )"
+          release_count="$(jq -r 'length' <<< "${release_matches}")"
 
-          if [[ -n "${release_json}" ]]; then
-            is_draft="$(jq -r '.draft' <<< "${release_json}")"
+          if [[ "${release_count}" == "1" ]]; then
+            is_draft="$(
+              jq -er \
+                '.[0].draft | if type == "boolean" then . else error("release draft field is not boolean") end' \
+                <<< "${release_matches}"
+            )"
             if [[ "${is_draft}" != "true" ]]; then
               echo "::error::Release ${tag} is already published and will not be overwritten."
               exit 1
             fi
-          else
+          elif [[ "${release_count}" == "0" ]]; then
             gh release create "${tag}" \
               --verify-tag \
               --title "Pragma ${tag}" \
@@ -220,6 +228,9 @@ jobs:
               --generate-notes \
               --draft \
               --prerelease
+          else
+            echo "::error::Expected at most one release for ${tag}, found ${release_count}."
+            exit 1
           fi
 
           gh release upload "${tag}" release-assets/* --clobber
