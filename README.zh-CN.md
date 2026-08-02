@@ -12,151 +12,135 @@
   <a href="./README.md">English</a> | 简体中文
 </p>
 
-> **愿景：Pragma 帮助沉淀和分享 AI-native 工作方式，让人人都能成为 AI 超级个体。**
+> **把你的 AI 工作方式，沉淀成可以复用的资产。**
 
-Pragma 帮助有经验的 AI 使用者，把可重复的工作方法沉淀成可运行资产。一套工作方式可以组合专家定义、工具、记忆、审批闸门、Runtime 选择、模型配置和交付验收标准；普通用户无需理解底层编排，也可以直接运行。
+Pragma 是一个用于创造、运行和分享 AI-native 工作方式的开放平台。一项 Mission 可以组合不同的模型、Agent Harness、专家、工具与人工决策，同时让上下文和积累的经验持续跟随工作流动。
 
-Pragma 不是另一个聊天机器人、Coding Agent、专家市场，也不是低代码工作流工具。它是位于模型与专业 Agent Harness 之上的开放组织层：Codex、Claude Code、PI 以及未来更多 Runtime Adapter，都可以成为不同任务的执行选择。
+Pragma 不试图替代 Gemini、Claude Code、Codex、PI、Qoder CLI，也不试图替代下一个优秀的 Agent。Pragma 让它们协同工作。
 
-## 为什么是 Pragma？
+## 为什么需要 Pragma？
 
-有效的 AI 工作通常不只是一个 Prompt。有经验的使用者会判断：哪些任务适合直接对话，哪些任务需要专业 Expert，哪些任务应该交给 Coding Harness，哪些任务需要浏览器或研究工具，哪些操作必须经过人工评审。
+真正高质量的 AI 工作，很少只发生在一个对话窗口里。有经验的 AI 使用者知道如何：
 
-Pragma 要沉淀和分享的正是这种判断：
+- 为每类任务选择合适的模型与 Harness；
+- 在切换 Agent 时保留已经形成的决策和约束；
+- 在正确的时机引入正确的上下文；
+- 让代码实现与独立审查彼此隔离；
+- 把成功路径和失败经验变成下一次更好的方法。
 
-- **Harness 中立执行**：不同 Expert 和步骤可以选择不同 Agent Harness 或 Runtime。
-- **可复用工作方式**：把专家角色、上下文、工具、权限、验证方法和交付标准一起打包。
-- **分享者足够深，使用者足够简单**：分享者可以设计和验证复杂执行组合，使用者只需要从任务出发。
-- **跨 Runtime 交接**：在 Runtime 边界之间交接 context、文件、artifact、session、usage 和评审信号。
-- **受治理的操作**：高权限动作必须经过工具、runtime adapter、服务端策略和本地权限闸门约束。
+今天，这些知识大多存在于个人头脑和零散对话中。每次切换工具，都要重新复制 Prompt、复述背景、搬运产物，并不断丢失经验。
 
-## AI-native 工作方式
+Pragma 把这种不可见的个人技巧，变成显式、可执行、可分享的工作方式。
 
-AI-native 工作方式不只是 Prompt，也不只是流程图。一套可分享的方法至少应该描述：
+## Pragma 的差异化
 
-```text
-适用任务与边界
-+ 输入要求
-+ Expert / ExpertTeam / Flow
-+ Runtime 与模型选择
-+ Skills / Tools / Context / Memory
-+ 权限、预算与人工确认
-+ 执行与失败处理
-+ 验证方法
-+ 交付物定义
-+ 推荐案例与已知限制
-```
+### 每一步都选择最合适的模型 × Harness
 
-Pragma 把这套方法作为用户发现、运行、修订和分享的产品对象。底层 Project、DSL、Runtime 绑定、Context Store 和 Execution Record，都是为了让这套方法可移植、可验证。
+模型不等于完整的 Agent。同一个模型运行在普通对话、Coding Harness、浏览器 Agent 或专业系统中，会展现出完全不同的能力。
 
-## Pragma 与其他产品的区别
+Pragma 把 **模型、Harness、工具、权限与上下文** 的组合视为真正的执行能力。不同 Expert 和 Flow 步骤可以使用不同组合，而不必把整套工作方式锁定在某一个厂商的执行环境里。
 
-| 维度             | Claude Code                           | WorkBuddy                          | 工作流工具                  | Pragma                                                   |
-| ---------------- | ------------------------------------- | ---------------------------------- | --------------------------- | -------------------------------------------------------- |
-| 主要角色         | 专业 Coding Harness                   | 内置专家生态的一体化 AI 工作台     | 节点式自动化或 LLM 流程设计 | 组织多个模型和 Agent Harness 的开放层                    |
-| 核心对象         | Coding Session、Subagent、Skill、Hook | 专家、专家团、Skill、项目          | 图、节点、触发器、集成      | Runtime、Expert、ExpertTeam、Flow、Mission               |
-| 主要优势         | 深入的软件工程执行能力                | 低门槛、一体化体验、专家与渠道生态 | 可视化编排和自动化          | Harness 中立执行与可复用 AI-native 工作方式              |
-| Runtime 模型     | Claude Code 自身就是 Harness          | 产品自有执行体系                   | 通常是单一编排引擎          | Codex、Claude Code、PI 和未来 Adapter 都是可插拔 Runtime |
-| 分享单元         | 仓库配置、Skill、插件                 | 专家、专家团、Skill、工作台资产    | 模板和工作流                | 包含 Runtime 要求、权限、验证方法和交付物的工作方式      |
-| 与 Pragma 的关系 | 可以成为 Pragma 的 Runtime            | 相邻产品形态                       | 相邻实现方式                | 跨 Runtime 组织执行组合                                  |
+### 一项 Mission，共享一套渐进式上下文
 
-Pragma 不应被理解成“更强的专家团”或“又一个工作流平台”。真正长期的区别在于：可复用工作方式可以跨不同模型和 Agent Harness 组合，而不是被锁在单一产品的执行体系里。
+上下文应该随着工作逐步生长，而不是每次切换工具都从头开始。Pragma 把需求、决策、知识、产物、评审意见与任务状态组织成统一的渐进式上下文，让每个阶段都能在前序成果上继续工作。
+
+这并不意味着把全部历史无差别地发送给每个 Agent。稳定约束可以始终可用，相关知识可以按需加载，大型产物可以通过引用传递。每个 Expert 只在需要的时候获得真正需要的信息。
+
+这才是跨 Harness 的上下文传递：不是假装把一个产品的私有 Session 搬进另一个产品，而是让工作的真实含义持续向前流动。
+
+### 记忆，是值得长期保留的特殊上下文
+
+Pragma 把 Memory 看成一种特殊 Context，而不是独立的黑盒系统。执行过程中产生的证据，可以从短期任务状态逐步演化为：
+
+- **Experience**：发生过什么，包括成功路径与失败路径；
+- **Fact**：有证据支持、值得长期保留的知识、约束与偏好；
+- **Skill**：可复用的方法、反模式与恢复手册。
+
+最终保留下来的不只是对话历史。一次完成的 Mission，可以改善下一次 Mission 被理解和执行的方式。
+
+### 工作方式可以跨系统移植
+
+AI-native 工作方式不只是一组 Prompt。它还描述谁来完成任务、使用哪个模型与 Harness、提供什么上下文、阶段之间如何交接、哪里需要人工确认，以及如何验证最终结果。
+
+Pragma 使用可移植 DSL 表达这套方法。解释器（Interpreter）与编译器（Compiler）可以解析、校验、链接、编译并重新生成定义。它既可以运行在 Pragma Desktop，也可以嵌入你自己的 Agent 系统，或者连接未来的新 Host，而不必围绕某个封闭执行引擎重新编写整套方法。
+
+### 可以接入任何 Agent 系统
+
+Pragma 是开放编排层，不是封闭的 Agent 世界。Runtime Adapter 用来连接专业 Harness，Model Provider 用来连接商业模型、模型网关与本地模型，Plugin 用来连接工具和领域能力，而 Host 始终拥有 UI、存储、权限与部署方式的控制权。
+
+当更好的模型和 Agent 产品出现时，它们可以直接加入系统，而不需要废弃已经沉淀的工作方式。
+
+## 示例：一次编码任务，组合六位 AI 专家
 
 ```mermaid
-flowchart TD
-  models["模型"]
-  harnesses["Agent Harness / Runtime"]
-  methods["Expert / ExpertTeam / Flow"]
-  missions["Mission / Execution"]
-  shared["可分享的 AI-native 工作方式"]
-
-  models --> harnesses
-  harnesses --> methods
-  methods --> missions
-  missions --> shared
+flowchart LR
+  brief["产品想法"] --> ui["Gemini<br/>UI 设计"]
+  ui --> requirements["Claude Code + Claude Opus 5<br/>需求讨论"]
+  requirements --> architecture["Codex + GPT-5.6 Sol<br/>技术方案"]
+  architecture --> implementation["Codex + GPT-5.6 Terra<br/>代码实现与测试"]
+  implementation --> review["Claude Code + DeepSeek V4 Pro<br/>独立 Code Review"]
+  review --> verify["Codex<br/>复核问题并修复"]
+  verify --> learn["可复用上下文<br/>事实、经验与技能"]
 ```
 
-## 当前可用能力
+这并不是简单地依次调用几个模型：
 
-Pragma 当前提供：
+1. UI 产物和设计理由成为需求讨论的上下文。
+2. 已确认需求、待决问题和仓库约束继续流入技术方案阶段。
+3. 实现 Expert 获得批准后的方案、相关文件与验收标准，而不是几段对话的有损复制。
+4. Code Review 从独立视角开始，并返回结构化评审意见。
+5. Codex 逐条对照仓库复核，只修复真实问题，并验证最终结果。
+6. 稳定事实、有价值的经验和可复用方法成为下一项 Mission 的上下文。
 
-- 用于定义可复用 AI 专家的 `Expert` 创建 API。
-- `ExpertTeam` 与 `Flow` 的协同执行基础。
-- 基于内存或文件系统存储的上下文系统。
-- Managed tools、MCP 工具集成、插件加载和审批策略。
-- Runtime adapter 合约，以及 PI / Codex / Claude Code runtime 实现包。
-- Runtime context、session ownership、invocation、event、usage 和 handoff 基础协议。
-- 基于 Zod 的浏览器安全 shared schema 和 DTO。
-- 基于 pnpm monorepo 的 Web、Server、Worker、Desktop、Client SDK 和基础设施包边界。
+整套方法——角色、路由、上下文、交接、评审闸门和完成标准——都可以被版本化、评测、改进与分享。
 
-当前仓库重点建设执行内核和长期工程底座。更完整的分享体验、Runtime 市场、云端控制面，以及面向分享者和使用者的产品界面仍在持续建设中。
+## 理念架构
 
-## 使用 Pragma 桌面应用
+```mermaid
+flowchart TB
+  method["AI-native 工作方式<br/>可移植 Pragma DSL"]
+  orchestration["Mission 编排<br/>Expert · ExpertTeam · Flow · 人工确认"]
+  context["渐进式上下文<br/>意图 · 知识 · 决策 · 产物 · 记忆"]
+  execution["可插拔执行能力<br/>任意模型 × 任意 Agent Harness"]
+  hosts["开放 Host<br/>Pragma Desktop · 自有 Agent 系统 · 云端或企业平台"]
 
-### 环境要求
+  method -->|解释与编译| orchestration
+  context <--> orchestration
+  orchestration --> execution
+  execution --> context
+  hosts --> method
+  hosts --> orchestration
+```
+
+这套架构遵循四个理念：
+
+- **工作方式与执行环境分离**：只描述一次方法，再为它绑定当下最合适的 Runtime。
+- **上下文持续流动**：知识和结果可以跨越单个模型、Session 与 Harness。
+- **复杂度渐进增加**：从一个 Expert 开始，再逐步扩展到 ExpertTeam、Flow、人工审批、评测与记忆。
+- **Host 保持控制权**：Pragma 可以驱动自己的 Desktop，也可以成为其他 Agent 产品的一部分。
+
+## 使用 Pragma
+
+### 从 Desktop 开始
+
+环境要求：
 
 ```text
 Node.js >= 22
 pnpm 10.12.1
 ```
 
-安装依赖：
-
 ```bash
 pnpm install
-pnpm -r list
-```
-
-启动 Desktop App：
-
-```bash
 pnpm --filter @pragma/desktop run prepare:electron
 pnpm --filter @pragma/desktop dev
 ```
 
-Electron 42 及更高版本会在首次调用 Electron CLI 时下载二进制文件。`prepare:electron` 会显式触发下载，减少本地开发和 CI 因缺少二进制文件而失败的情况。
-
 ![Pragma 桌面应用运行截图](./docs/assets/desktop-home.png)
 
-Desktop 是启动 Mission、选择工作区、选择执行者，并把任务路由到本地或云端 Runtime 的产品入口；更完整的 Host 集成仍在持续演进。
+Desktop 是启动 Mission、选择 Workspace，并使用本地或已连接 Runtime 的最简单入口。
 
-## 集成方式
-
-Pragma 可以按不同深度使用。你可以直接从 Desktop 开始，也可以把 Core 框架接入自己的系统，或者编写可移植 YAML，通过 interpreter 加载。
-
-### 基于 Core 构建
-
-当你的应用希望自己掌控 Host、Runtime 绑定、持久化和 UI，同时复用 Pragma 的 Expert、Session、Flow、Context 与 Runtime 合约时，可以直接使用 `@pragma/core`。
-
-```ts
-import { createPragma, createStaticRuntimeResolver, defineExpert } from "@pragma/core";
-
-const runtime = createYourRuntimeAdapter();
-
-const expert = await defineExpert({
-  id: "release-lead",
-  name: "Release Lead",
-  description: "Plans and reviews release work.",
-  scope: "Coordinate release preparation.",
-  instructions: "Ask for missing release context, identify risks, and produce a release checklist.",
-  tags: ["release"],
-  workspace: process.cwd(),
-});
-
-const app = createPragma({
-  runtimes: createStaticRuntimeResolver({
-    runtimes: [runtime],
-    defaultRuntimeId: runtime.descriptor.id,
-  }),
-});
-
-const session = await app.experts.createSession(expert);
-const turn = await session.prompt("Prepare a release checklist for v1.2.0.");
-```
-
-### 使用 Interpreter 加载 DSL
-
-当你希望 Expert、ExpertTeam、Flow、Capability、ContextStore 和 RuntimeProfile 以可移植的 `pragma/v3` YAML 形式保存时，可以使用 `@pragma/interpreter`。
+### 使用 Pragma DSL 描述可复用 Expert
 
 ```yaml
 apiVersion: pragma/v3
@@ -164,14 +148,17 @@ kind: Expert
 metadata:
   id: releaselead000001
   name: Release Lead
-  description: Plans and reviews release work.
+  description: Plans, verifies, and improves software releases.
 spec:
   scope: Coordinate release preparation.
-  instructions: Ask for missing release context, identify risks, and produce a release checklist.
+  instructions: Build an evidence-backed release plan, identify risks, and verify every gate.
 ```
 
+同一种语言可以描述 Expert、ExpertTeam、Flow、Capability、Context 和 Runtime Profile。定义可以跟随项目保存、从编译后的对象重新生成、在 Git 中评审，并在不同 Host 之间移动。
+
+### 嵌入自己的 Agent 系统
+
 ```ts
-import { createPragma } from "@pragma/core";
 import { loadPragmaProject } from "@pragma/interpreter";
 
 const project = await loadPragmaProject("./pragma.yaml");
@@ -180,110 +167,20 @@ const compiled = await project.compile("expert:releaselead000001", {
   runtimes: myRuntimeResolver,
 });
 
-const app = createPragma({ runtimes: myRuntimeResolver });
-const session = await app.experts.createSession(compiled.value, {
-  runtime: compiled.rootRuntimeId,
-});
+const expert = compiled.value;
 ```
 
-`examples/` workspace 仍然适合查看更深入的 Runtime、Context、Memory、Approval 和 Flow 示例，但它不是主要产品入口。
+使用 `@pragma/core` 获得 Expert 执行与 Runtime 合约；使用 `@pragma/interpreter` 获得可移植定义、校验、编译与 DSL 往返生成能力。你的应用仍然可以完全掌控产品体验、持久化、权限和基础设施。
 
-## Monorepo 结构
+## 进一步了解
 
-```text
-apps/
-  web/       Next.js Web 应用
-  server/    Fastify HTTP API 应用
-  worker/    Node.js Worker 应用
-  desktop/   Desktop 本地 Agent 桥接入口
-
-packages/
-  shared/         跨运行时 schema、DTO、领域模型和纯工具
-  client/         浏览器或客户端 HTTP SDK
-  server/         服务端基础设施边界
-  core/           ExpertAgent、上下文、工具、插件和 runtime 合约
-  interpreter/    Pragma YAML DSL 解析、校验、链接和编译
-  default-agent/  内置通用 Pragma Agent
-  runtime/pi/     PI runtime adapter
-  runtime/codex/  Codex local runtime adapter
-  runtime/claude-code/ Claude Code local runtime adapter
-  eslint-config/  共享 ESLint 配置
-  tsconfig/       共享 TypeScript 配置
-
-plugins/
-  memory/         记忆插件
-  repo-manager/   仓库管理插件
-
-examples/         可运行的 Expert 示例
-docs/             架构说明、ADR、编码约定和使用指南
-infra/            基础设施编排目录
-```
-
-## 架构边界
-
-Pragma 保持明确的 package 边界，让浏览器代码、服务端基础设施、专家定义和 runtime 实现可以独立演进。
-
-允许的内部依赖方向：
-
-```text
-apps/web        -> client -> shared
-apps/server     -> server -> core -> shared
-apps/worker     -> server -> runtime-* -> core -> shared
-apps/desktop    -> core -> shared
-runtime-*       -> core -> shared
-```
-
-关键规则：
-
-- `shared` 必须保持浏览器安全和运行时中立。
-- `client` 不能依赖 `server` 或 `core`。
-- `core` 不能依赖具体 runtime 包、server app、client SDK、React 或 Next.js。
-- 具体 runtime 实现放在独立的 `@pragma/runtime-*` 包。
-- 跨 package 导入必须使用 `@pragma/*` package import，不能使用相对路径。
-
-深入了解：
-
-- [模块边界](./docs/architecture/module-boundaries.md)
-- [Agent Core 架构](./docs/architecture/agent-core-architecture.md)
-- [Expert Agent 标准协议](./docs/architecture/expert-agent-standard-protocol.md)
-- [本地 Agent 桥接](./docs/architecture/local-agent-bridge.md)
-- [Monorepo 与依赖规则 ADR](./docs/adr/001-monorepo-and-dependency-rules.md)
-- [产品定位与竞争差异化](./docs/strategy/pragma-positioning-and-competitive-differentiation.md)
-
-## 文档
-
-- [使用指南索引](./docs/usage/README.md)
-- [Agents](./docs/usage/agents.md)
-- [Context](./docs/usage/context.md)
-- [Memory](./docs/usage/memory.md)
-- [Plugins](./docs/usage/plugins.md)
-- [Flows 与 HumanTask](./docs/usage/flows.md)
-- [编码约定](./docs/conventions/coding-conventions.md)
-
-## 质量命令
-
-```bash
-pnpm lint
-pnpm typecheck
-pnpm test
-pnpm build
-pnpm check
-```
-
-`pnpm check` 会运行 lint、typecheck 和 test。CI 会额外运行 `pnpm build`。
-
-## 安全模型
-
-不应依赖 AI 专家自行约束敏感操作。文件访问、shell 执行、网络访问、secrets、本地 runtime 执行和其他高权限操作，都必须由工具、runtime adapter、服务端策略或未来 Desktop 权限闸门来限制。
-
-本地 Agent 桥接的设计基于 Desktop 主动向云端建立连接、明确的设备和会话注册、能力注册以及本地用户审批，而不是把本地 runner 直接暴露到网络。
-
-## 贡献
-
-修改代码前，请先阅读 [CONTRIBUTING.md](./CONTRIBUTING.md)、[AGENTS.md](./AGENTS.md) 和架构边界文档。改动应放在正确的 package 中；行为变化需要补充或更新测试；提交 PR 前请运行相关质量命令。
-
-社区参与遵守[行为准则](./CODE_OF_CONDUCT.md)。安全漏洞应按照[安全政策](./SECURITY.md) 私下报告；项目支持、治理和品牌使用边界分别见 [SUPPORT.md](./SUPPORT.md)、[GOVERNANCE.md](./GOVERNANCE.md) 与[商标政策](./TRADEMARKS.md)。
+- [产品定位与差异化](./docs/strategy/pragma-positioning-and-competitive-differentiation.md)
+- [使用指南](./docs/usage/README.md)
+- [上下文](./docs/usage/context.md)
+- [记忆](./docs/usage/memory.md)
+- [Agent 架构](./docs/architecture/agent-core-architecture.md)
+- [参与贡献](./CONTRIBUTING.md)
 
 ## License
 
-Pragma 使用 [Pragma Source Available License 1.0](./LICENSE)。使用、再分发、托管或嵌入到其他产品和服务前，请先阅读许可证。Pragma 名称、Logo 和官方身份的使用方式由[商标政策](./TRADEMARKS.md)管理。
+Pragma 使用 [Pragma Source Available License 1.0](./LICENSE)。Pragma 名称、Logo 和官方身份的使用方式由[商标政策](./TRADEMARKS.md)管理。
