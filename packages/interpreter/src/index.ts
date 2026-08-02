@@ -1,5 +1,7 @@
 export * from "./ast/index.ts";
 export * from "./application/project-service.ts";
+export * from "./bundle/pragma-bundle-codec.ts";
+export * from "./bundle/pragma-bundle-environment.ts";
 export * from "./compiler/pragma-project.ts";
 export * from "./compiler-migrations/index.ts";
 export * from "./migrations/index.ts";

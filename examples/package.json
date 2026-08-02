@@ -5,6 +5,7 @@
   "type": "module",
   "scripts": {
     "dev": "tsx",
+    "example:bundle": "tsx src/bundles/export-load.ts",
     "example:context": "tsx src/capabilities/context.ts",
     "example:expert-chat": "tsx src/experts/getting-started/console-chat.ts",
     "example:expert-subagent": "tsx src/experts/subagents/delegation.ts",
@@ -25,6 +26,7 @@
   "dependencies": {
     "@earendil-works/pi-tui": "0.79.8",
     "@pragma/core": "workspace:*",
+    "@pragma/interpreter": "workspace:*",
     "@pragma/plugin-repo-manager": "workspace:*",
     "@pragma/plugin-memory": "workspace:*",
     "@pragma/runtime-claude-code": "workspace:*",

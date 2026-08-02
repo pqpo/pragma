@@ -32,6 +32,12 @@ Getting Started 与两个 delegation 入口共用 Expert TUI 的事件和 Human-
 - `capabilities/plugin.ts`：Plugin 配置、Context、Tool 与生命周期 Hooks。
 - `capabilities/tool-approval.ts`：Plugin 审批策略与 `ExpertTurn` 人工响应。
 
+## Interpreter bundle
+
+- `bundles/export-load.ts`：导出包含 Skill、MCP、Markdown 知识库的 Expert，随后从 `.pragma`
+  文件加载、绑定目标 Host 的 Runtime/MCP，并编译恢复 Expert。
+- `../projects/bundle-transfer/`：示例使用的 portable DSL 与随 bundle 传输的资产。
+
 对应的教学资产位于：
 
 - `../plugins/learning-plugin/`：贡献 Context、Tool 和 Hooks 的完整 Plugin。

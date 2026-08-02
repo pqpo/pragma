@@ -25,6 +25,7 @@
     "@pragma/core": "workspace:*",
     "@pragma/evaluation": "workspace:*",
     "@pragma/shared": "workspace:*",
+    "fflate": "^0.8.2",
     "yaml": "^2.9.0",
     "zod": "latest"
   },
