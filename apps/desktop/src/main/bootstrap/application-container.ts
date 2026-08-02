@@ -58,6 +58,7 @@ import { createDesktopPragmaBlueprintCacheStore } from "../features/projects/pra
 import { createPragmaProjectStore } from "../features/projects/pragma-project-store.ts";
 import { installWorkflowLayoutHandlers } from "../features/projects/workflow-layout-ipc.ts";
 import { createWorkflowLayoutStore } from "../features/projects/workflow-layout-store.ts";
+import { createDesktopRuntimeProcessEnvironment } from "../features/runtimes/desktop-runtime-process-environment.ts";
 import { getRuntimeAvailability } from "../features/runtimes/runtime-availability.ts";
 import {
   createBuiltInRuntimeFactories,
@@ -209,19 +210,23 @@ export async function createDesktopApplicationContainer(
   const runtimeEnvironments = createRuntimeEnvironmentStore({
     pragmaHome: pragmaPaths.root,
   });
+  const runtimeProcessEnvironment = createDesktopRuntimeProcessEnvironment({
+    logger: mainLogger,
+  });
   const runtimes = createRuntimeEnvironmentService({
     store: runtimeEnvironments,
     logger: mainLogger,
     getToolPermissionMode,
-    factories: createBuiltInRuntimeFactories(
-      modelProviderStore,
+    factories: createBuiltInRuntimeFactories({
+      modelProviders: modelProviderStore,
       getToolPermissionMode,
-      (runtimeId) => {
+      getRuntimeProcessEnvironment: runtimeProcessEnvironment.get,
+      onModelCatalogUpdated: (runtimeId) => {
         options.sendRuntimeModelCatalogUpdate(runtimeId);
       },
       tokenCounter,
       mcpToolRegistryPool,
-    ),
+    }),
   });
   const missionExecutors = createMissionExecutorCatalog({
     project: pragmaProjectStore,
@@ -537,6 +542,7 @@ export async function createDesktopApplicationContainer(
     startBackgroundTasks() {
       if (backgroundTasksStarted) return;
       backgroundTasksStarted = true;
+      runtimeProcessEnvironment.warmUp();
       void runtimeEnvironments.initialize().catch((error: unknown) => {
         mainLogger.warn(
           "desktop.runtime_environment_warmup_failed",

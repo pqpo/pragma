@@ -54,4 +54,44 @@ describe("Codex executable resolution", () => {
       }),
     ).toBe(executablePath);
   });
+
+  it("resolves the Codex executable bundled with ChatGPT on macOS", () => {
+    const applicationsDirectory = posix.join("/", "Applications");
+    const executablePath = posix.join(
+      applicationsDirectory,
+      "ChatGPT.app",
+      "Contents",
+      "Resources",
+      "codex",
+    );
+
+    expect(
+      resolveCodexExecutablePath({
+        env: { PATH: "/usr/bin:/bin" },
+        platform: "darwin",
+        macApplicationsDirectories: [applicationsDirectory],
+        isExecutable: (candidate) => candidate === executablePath,
+      }),
+    ).toBe(executablePath);
+  });
+
+  it("prefers ChatGPT.app over the legacy Codex.app in each macOS application directory", () => {
+    const applicationsDirectory = posix.join("/Users", "test", "Applications");
+    const chatGptExecutable = posix.join(
+      applicationsDirectory,
+      "ChatGPT.app",
+      "Contents",
+      "Resources",
+      "codex",
+    );
+
+    expect(
+      resolveCodexExecutablePath({
+        env: { PATH: "/usr/bin:/bin" },
+        platform: "darwin",
+        macApplicationsDirectories: [applicationsDirectory],
+        isExecutable: (candidate) => candidate.endsWith("/Contents/Resources/codex"),
+      }),
+    ).toBe(chatGptExecutable);
+  });
 });

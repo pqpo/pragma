@@ -10,6 +10,7 @@ export interface CodexExecutableResolutionOptions {
   readonly platform?: NodeJS.Platform | undefined;
   readonly isExecutable?: ((path: string) => boolean) | undefined;
   readonly windowsAppPackageRoots?: (() => readonly string[]) | undefined;
+  readonly macApplicationsDirectories?: readonly string[] | undefined;
 }
 
 const WINDOWS_APP_PACKAGE_REPOSITORY =
@@ -20,8 +21,9 @@ const WINDOWS_APP_PACKAGE_REPOSITORY =
  *
  * Desktop apps launched by Finder, VS Code, or a login service can inherit a narrower
  * PATH than an interactive shell. The standalone Codex installer places its command in
- * ~/.local/bin, while Codex Desktop on Windows keeps it inside the AppX package.
- * Check both known locations when PATH lookup cannot find it.
+ * ~/.local/bin, Codex Desktop on Windows keeps it inside the AppX package, and
+ * ChatGPT/Codex apps on macOS bundle the executable in their application resources.
+ * Check these known locations when PATH lookup cannot find it.
  */
 export function resolveCodexExecutablePath(options: CodexExecutableResolutionOptions = {}): string {
   if (options.executablePath !== undefined) {
@@ -46,12 +48,30 @@ export function resolveCodexExecutablePath(options: CodexExecutableResolutionOpt
   }
 
   if (platform === "win32") {
-    const packageRoots =
-      options.windowsAppPackageRoots?.() ?? findWindowsCodexAppPackageRoots();
+    const packageRoots = options.windowsAppPackageRoots?.() ?? findWindowsCodexAppPackageRoots();
     for (const packageRoot of packageRoots) {
       const appExecutable = path.join(packageRoot, "app", "resources", "codex.exe");
       if (canExecute(appExecutable)) {
         return appExecutable;
+      }
+    }
+  }
+
+  if (platform === "darwin") {
+    const applicationDirectories = options.macApplicationsDirectories ?? [
+      "/Applications",
+      path.join(options.homeDirectory ?? env["HOME"] ?? homedir(), "Applications"),
+    ];
+    for (const applicationDirectory of applicationDirectories) {
+      for (const applicationName of ["ChatGPT.app", "Codex.app"] as const) {
+        const appExecutable = path.join(
+          applicationDirectory,
+          applicationName,
+          "Contents",
+          "Resources",
+          "codex",
+        );
+        if (canExecute(appExecutable)) return appExecutable;
       }
     }
   }
@@ -86,12 +106,7 @@ function findExecutableInPath(
     if (directory === "") {
       continue;
     }
-    const executable = findExecutableInDirectory(
-      directory,
-      executableNames,
-      joinPath,
-      canExecute,
-    );
+    const executable = findExecutableInDirectory(directory, executableNames, joinPath, canExecute);
     if (executable !== undefined) {
       return executable;
     }
@@ -150,10 +165,7 @@ function findWindowsCodexAppPackageRoots(): readonly string[] {
     const packageKeys = packageQuery.stdout
       .split(/\r?\n/)
       .map((line) => line.trim())
-      .filter(
-        (line) =>
-          line.startsWith("HKEY_") && /\\OpenAI\.Codex_[^\\]+$/i.test(line),
-      );
+      .filter((line) => line.startsWith("HKEY_") && /\\OpenAI\.Codex_[^\\]+$/i.test(line));
 
     return packageKeys.flatMap((packageKey) => {
       const rootQuery = spawnSync("reg.exe", ["query", packageKey, "/v", "PackageRootFolder"], {

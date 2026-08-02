@@ -1,4 +1,4 @@
-import { mkdtemp } from "node:fs/promises";
+import { chmod, mkdir, mkdtemp, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
@@ -6,8 +6,10 @@ import { defineRuntimeDriver } from "@pragma/core";
 import { describe, expect, it, vi } from "vitest";
 
 import type { DesktopToolPermissionMode } from "../../../shared/contracts/index.ts";
+import type { ModelProviderStore } from "../model-providers/model-provider-store.ts";
 import {
   codexRuntimePermissionsForMode,
+  createBuiltInRuntimeFactories,
   createRuntimeEnvironmentService,
   qoderRuntimePermissionForMode,
   type RuntimeEnvironmentAdapterFactory,
@@ -220,6 +222,55 @@ describe("Qoder CLI tool permission mapping", () => {
     ["full-access", "bypassPermissions"],
   ] as const)("maps %s to %s", (mode, permissionMode) => {
     expect(qoderRuntimePermissionForMode(mode)).toBe(permissionMode);
+  });
+});
+
+describe("built-in Runtime process environments", () => {
+  it("injects one recovered environment into CLI availability probes and skips it for PI", async () => {
+    const root = await mkdtemp(join(tmpdir(), "pragma-runtime-factory-path-"));
+    const binDirectory = join(root, "bin");
+    await mkdir(binDirectory);
+    await Promise.all(
+      ["codex", "claude", "qodercli"].map(async (name) => {
+        const executable = join(binDirectory, name);
+        await writeFile(executable, "#!/bin/sh\nprintf 'fake-runtime 1.0\\n'\n");
+        await chmod(executable, 0o755);
+      }),
+    );
+    const environment = Object.freeze({
+      ...process.env,
+      HOME: root,
+      PATH: binDirectory,
+    });
+    const getRuntimeProcessEnvironment = vi.fn(async () => environment);
+    const factories = createBuiltInRuntimeFactories({
+      modelProviders: {} as ModelProviderStore,
+      getRuntimeProcessEnvironment,
+    });
+
+    const cliAdapters = await Promise.all(
+      [
+        ["codex", "pragma.runtime.codex"],
+        ["claude-code", "pragma.runtime.claude-code"],
+        ["qodercli", "pragma.runtime.qodercli"],
+      ].map(async ([id, adapterId]) => {
+        const factory = factories.find((candidate) => candidate.id === adapterId)!;
+        return await factory.create(definition(id!, id!, adapterId));
+      }),
+    );
+
+    await expect(
+      Promise.all(cliAdapters.map(async (adapter) => await adapter.canUse())),
+    ).resolves.toEqual([
+      expect.objectContaining({ usable: true }),
+      expect.objectContaining({ usable: true }),
+      expect.objectContaining({ usable: true }),
+    ]);
+    expect(getRuntimeProcessEnvironment).toHaveBeenCalledTimes(3);
+
+    const piFactory = factories.find((candidate) => candidate.id === "pragma.runtime.pi")!;
+    await piFactory.create(definition("pi", "PI", "pragma.runtime.pi"));
+    expect(getRuntimeProcessEnvironment).toHaveBeenCalledTimes(3);
   });
 });
 

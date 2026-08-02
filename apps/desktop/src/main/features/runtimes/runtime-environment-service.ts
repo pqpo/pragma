@@ -262,22 +262,34 @@ function environmentElapsedMs(startedAt: number): number {
   return Math.round((performance.now() - startedAt) * 100) / 100;
 }
 
+export interface CreateBuiltInRuntimeFactoriesOptions {
+  readonly modelProviders: ModelProviderStore;
+  readonly getToolPermissionMode?:
+    | (() => DesktopToolPermissionMode | Promise<DesktopToolPermissionMode>)
+    | undefined;
+  readonly getRuntimeProcessEnvironment?: (() => Promise<NodeJS.ProcessEnv>) | undefined;
+  readonly onModelCatalogUpdated?: ((runtimeId: string) => void) | undefined;
+  readonly tokenCounter?: RuntimeTokenCounter | undefined;
+  readonly mcpToolRegistryPool?: McpToolRegistryPool | undefined;
+}
+
 export function createBuiltInRuntimeFactories(
-  modelProviders: ModelProviderStore,
-  getToolPermissionMode: () =>
-    | DesktopToolPermissionMode
-    | Promise<DesktopToolPermissionMode> = () => "request-approval",
-  onModelCatalogUpdated?: ((runtimeId: string) => void) | undefined,
-  tokenCounter?: RuntimeTokenCounter | undefined,
-  mcpToolRegistryPool?: McpToolRegistryPool | undefined,
+  options: CreateBuiltInRuntimeFactoriesOptions,
 ): readonly RuntimeEnvironmentAdapterFactory[] {
+  const getToolPermissionMode = options.getToolPermissionMode ?? (() => "request-approval");
+  const getRuntimeProcessEnvironment =
+    options.getRuntimeProcessEnvironment ?? (async () => ({ ...process.env }));
+  const onModelCatalogUpdated = options.onModelCatalogUpdated;
   return [
     {
       id: "pragma.runtime.codex",
       version: "v1",
       create: async (environment, context) => {
         assertEmptyRuntimeConfig(environment);
-        const permissionMode = context?.toolPermissionMode ?? (await getToolPermissionMode());
+        const [permissionMode, env] = await Promise.all([
+          context?.toolPermissionMode ?? getToolPermissionMode(),
+          getRuntimeProcessEnvironment(),
+        ]);
         const permissions = codexRuntimePermissionsForMode(permissionMode);
         return createCodexRuntime({
           descriptor: { id: environment.id, displayName: environment.displayName },
@@ -285,8 +297,11 @@ export function createBuiltInRuntimeFactories(
             ? {}
             : { onModelCatalogUpdated: () => onModelCatalogUpdated(environment.id) }),
           ...permissions,
-          tokenCounter,
-          ...(mcpToolRegistryPool === undefined ? {} : { mcpToolRegistryPool }),
+          env,
+          tokenCounter: options.tokenCounter,
+          ...(options.mcpToolRegistryPool === undefined
+            ? {}
+            : { mcpToolRegistryPool: options.mcpToolRegistryPool }),
         });
       },
     },
@@ -295,7 +310,10 @@ export function createBuiltInRuntimeFactories(
       version: "v1",
       create: async (environment, context) => {
         assertEmptyRuntimeConfig(environment);
-        const permissionMode = context?.toolPermissionMode ?? (await getToolPermissionMode());
+        const [permissionMode, env] = await Promise.all([
+          context?.toolPermissionMode ?? getToolPermissionMode(),
+          getRuntimeProcessEnvironment(),
+        ]);
         return createClaudeCodeRuntime({
           descriptor: { id: environment.id, displayName: environment.displayName },
           ...(onModelCatalogUpdated === undefined
@@ -307,8 +325,11 @@ export function createBuiltInRuntimeFactories(
               : permissionMode === "auto-approve"
                 ? "auto"
                 : "bypassPermissions",
-          tokenCounter,
-          ...(mcpToolRegistryPool === undefined ? {} : { mcpToolRegistryPool }),
+          env,
+          tokenCounter: options.tokenCounter,
+          ...(options.mcpToolRegistryPool === undefined
+            ? {}
+            : { mcpToolRegistryPool: options.mcpToolRegistryPool }),
         });
       },
     },
@@ -317,15 +338,21 @@ export function createBuiltInRuntimeFactories(
       version: "v1",
       create: async (environment, context) => {
         assertEmptyRuntimeConfig(environment);
-        const permissionMode = context?.toolPermissionMode ?? (await getToolPermissionMode());
+        const [permissionMode, env] = await Promise.all([
+          context?.toolPermissionMode ?? getToolPermissionMode(),
+          getRuntimeProcessEnvironment(),
+        ]);
         return createQoderCliRuntime({
           descriptor: { id: environment.id, displayName: environment.displayName },
           ...(onModelCatalogUpdated === undefined
             ? {}
             : { onModelCatalogUpdated: () => onModelCatalogUpdated(environment.id) }),
           permissionMode: qoderRuntimePermissionForMode(permissionMode),
-          tokenCounter,
-          ...(mcpToolRegistryPool === undefined ? {} : { mcpToolRegistryPool }),
+          env,
+          tokenCounter: options.tokenCounter,
+          ...(options.mcpToolRegistryPool === undefined
+            ? {}
+            : { mcpToolRegistryPool: options.mcpToolRegistryPool }),
         });
       },
     },
@@ -336,9 +363,11 @@ export function createBuiltInRuntimeFactories(
         assertEmptyRuntimeConfig(environment);
         return createPiRuntime({
           descriptor: { id: environment.id, displayName: BUILT_IN_RUNTIME_DISPLAY_NAME },
-          modelProviders,
-          tokenCounter,
-          ...(mcpToolRegistryPool === undefined ? {} : { mcpToolRegistryPool }),
+          modelProviders: options.modelProviders,
+          tokenCounter: options.tokenCounter,
+          ...(options.mcpToolRegistryPool === undefined
+            ? {}
+            : { mcpToolRegistryPool: options.mcpToolRegistryPool }),
         });
       },
     },

@@ -5,6 +5,7 @@ node_modules
 dist
 out
 .next
+next-env.d.ts
 coverage
 .turbo
 .plugin-bundles

@@ -7,7 +7,7 @@
     "dev": "next dev --port 3000",
     "build": "next build",
     "lint": "eslint .",
-    "typecheck": "tsc --noEmit",
+    "typecheck": "next typegen && tsc --noEmit",
     "test": "vitest run --passWithNoTests",
     "clean": "rm -rf .next dist"
   },
