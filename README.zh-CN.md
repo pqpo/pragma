@@ -48,6 +48,19 @@ Pragma 把 **模型、Harness、工具、权限与上下文** 的组合视为真
 
 这才是跨 Harness 的上下文传递：不是假装把一个产品的私有 Session 搬进另一个产品，而是让工作的真实含义持续向前流动。
 
+### Expert 可以组合成可审计的 AI-native 系统
+
+Pragma 的基础单元可以在每个层级复用：
+
+```text
+Flow        = Expert + ExpertTeam + 子 Flow + 人工确认
+Expert Tool = Expert + ExpertTeam + Flow
+```
+
+一个 Flow 可以把某个步骤交给专业 Expert，把另一个步骤交给协作型 ExpertTeam，还可以把一整套子 Flow 当作步骤复用。一个 Expert 也可以把其他 Expert、ExpertTeam 或 Flow 暴露为受治理的 Tool，并自主判断何时调用。
+
+这种组合不会产生一组彼此割裂的 Agent Session。Compiler 会校验完整依赖图并拒绝循环依赖；所有嵌套工作都保留在同一个 Execution 中，交接、输出、工具调用、人工审批、用量、取消与恢复共同形成一条完整审计链。
+
 ### 记忆，是值得长期保留的特殊上下文
 
 Pragma 把 Memory 看成一种特殊 Context，而不是独立的黑盒系统。执行过程中产生的证据，可以从短期任务状态逐步演化为：
@@ -99,7 +112,7 @@ flowchart LR
 ```mermaid
 flowchart TB
   method["AI-native 工作方式<br/>可移植 Pragma DSL"]
-  orchestration["Mission 编排<br/>Expert · ExpertTeam · Flow · 人工确认"]
+  orchestration["可组合 Mission 编排<br/>Expert · ExpertTeam · 子 Flow · 人工确认"]
   context["渐进式上下文<br/>意图 · 知识 · 决策 · 产物 · 记忆"]
   execution["可插拔执行能力<br/>任意模型 × 任意 Agent Harness"]
   hosts["开放 Host<br/>Pragma Desktop · 自有 Agent 系统 · 云端或企业平台"]
@@ -112,9 +125,10 @@ flowchart TB
   hosts --> orchestration
 ```
 
-这套架构遵循四个理念：
+这套架构遵循五个理念：
 
 - **工作方式与执行环境分离**：只描述一次方法，再为它绑定当下最合适的 Runtime。
+- **一切皆可组合**：Expert、ExpertTeam 与 Flow 都可以成为更大系统中的步骤或 Tool。
 - **上下文持续流动**：知识和结果可以跨越单个模型、Session 与 Harness。
 - **复杂度渐进增加**：从一个 Expert 开始，再逐步扩展到 ExpertTeam、Flow、人工审批、评测与记忆。
 - **Host 保持控制权**：Pragma 可以驱动自己的 Desktop，也可以成为其他 Agent 产品的一部分。
@@ -140,37 +154,119 @@ pnpm --filter @pragma/desktop dev
 
 Desktop 是启动 Mission、选择 Workspace，并使用本地或已连接 Runtime 的最简单入口。
 
-### 使用 Pragma DSL 描述可复用 Expert
+Studio 可以把任意 Expert、ExpertTeam 或 Flow 导出为可移植的 `.pragma` Bundle。导出文件会以规范化 DSL 包含它的可复用依赖图，并可选择携带 Capability、Plugin、知识库和 Flow 视觉布局；Secret、本地 Session、Mission 与机器相关路径始终留在本机。另一台 Desktop 可以直接导入，你自己的 Agent 系统也可以通过 Pragma Interpreter 加载其中的 DSL。
+
+### 使用 Pragma DSL 描述可复用 AI-native 系统
+
+下面的片段展示了两个方向的组合。Expert 可以把 Expert、ExpertTeam 或 Flow 作为 Tool：
 
 ```yaml
 apiVersion: pragma/v3
 kind: Expert
 metadata:
-  id: releaselead000001
-  name: Release Lead
-  description: Plans, verifies, and improves software releases.
+  id: 0tyw4e02pw3d8vjt
+  name: Delivery Orchestrator
+  description: Coordinates a complete delivery mission.
 spec:
-  scope: Coordinate release preparation.
-  instructions: Build an evidence-backed release plan, identify risks, and verify every gate.
+  scope: Own delivery quality from design through final verification.
+  instructions: Choose the appropriate specialist or governed workflow for each task.
+  tools:
+    - adapter: pragma.tool.call@v1
+      target: { ref: expert:3sfd30h5017wd17d }
+      tool: { name: ask_reviewer, description: Ask the independent reviewer. }
+    - adapter: pragma.tool.call@v1
+      target: { ref: team:vyv9pwwzaksth2dd }
+      tool: { name: ask_delivery_team, description: Ask the delivery team. }
+    - adapter: pragma.tool.call@v1
+      target: { ref: flow:ffdfk2cczgqjda7q }
+      tool: { name: run_quality_gate, description: Run the quality-gate Flow. }
 ```
 
-同一种语言可以描述 Expert、ExpertTeam、Flow、Capability、Context 和 Runtime Profile。定义可以跟随项目保存、从编译后的对象重新生成、在 Git 中评审，并在不同 Host 之间移动。
+Flow 则可以把 Expert、ExpertTeam 和子 Flow 组合成显式、可审计的执行步骤：
 
-### 嵌入自己的 Agent 系统
+```yaml
+apiVersion: pragma/v3
+kind: Flow
+metadata:
+  id: t9ne4d8njvvxv2ea
+  name: AI-native Delivery
+  description: Coordinates planning, team review, and a reusable quality gate.
+spec:
+  input:
+    schema:
+      type: object
+      properties: { brief: { type: string } }
+      required: [brief]
+      additionalProperties: false
+  graph:
+    start: coordinate
+    steps:
+      coordinate:
+        expert: { ref: expert:0tyw4e02pw3d8vjt }
+        prompt:
+          segments:
+            - { text: "Plan this delivery: " }
+            - { variable: { source: flow-input, path: [brief] } }
+      team_review:
+        team: { ref: team:vyv9pwwzaksth2dd }
+        prompt: { segments: [{ text: "Review the delivery plan and implementation." }] }
+      quality_gate:
+        flow: { ref: flow:ffdfk2cczgqjda7q }
+        input: { brief: "$flow.input.brief" }
+    transitions:
+      coordinate: team_review
+      team_review: quality_gate
+      quality_gate: { end: true }
+```
+
+同一种语言可以描述 Expert、ExpertTeam、Flow、Capability、Context、Runtime Profile 与 Evaluation。定义可以跟随项目保存、从编译后的对象重新生成、在 Git 中评审、从 Desktop 导出，并在不同 Host 之间移动。
+
+### 加载、编译、获取流式输出与最终结果
+
+导入或解包已导出的项目后，自有 Host 可以加载项目入口、编译完整依赖图，并使用自己的 Runtime 绑定执行：
 
 ```ts
+import { createPragma, type Flow } from "@pragma/core";
 import { loadPragmaProject } from "@pragma/interpreter";
 
 const project = await loadPragmaProject("./pragma.yaml");
-const compiled = await project.compile("expert:releaselead000001", {
+const diagnostics = await project.validate();
+if (diagnostics.some((item) => item.severity === "error")) {
+  throw new Error(JSON.stringify(diagnostics, null, 2));
+}
+
+const compiled = await project.compile<Flow>("flow:t9ne4d8njvvxv2ea", {
   workspace: process.cwd(),
   runtimes: myRuntimeResolver,
 });
 
-const expert = compiled.value;
+const app = createPragma({ runtimes: myRuntimeResolver });
+const execution = await app.flows.start(compiled.value, {
+  input: { brief: "Build and verify the next product release." },
+});
+
+const output = await execution.subscribeOutput({ scope: { kind: "all" } });
+const streaming = (async () => {
+  try {
+    for await (const item of output) {
+      process.stdout.write(item.delta ?? String(item.value ?? ""));
+    }
+  } finally {
+    await output.close();
+  }
+})();
+
+const result = await execution.result;
+await streaming;
+
+console.log("Final result:", result);
+
+// 同一个 Execution 提供完整审计事件。
+const audit = await execution.listEvents({ scope: { kind: "all" }, limit: 1_000 });
+console.log("Audit events:", audit.items.length);
 ```
 
-使用 `@pragma/core` 获得 Expert 执行与 Runtime 合约；使用 `@pragma/interpreter` 获得可移植定义、校验、编译与 DSL 往返生成能力。你的应用仍然可以完全掌控产品体验、持久化、权限和基础设施。
+Interpreter 会解析导出的资源依赖图，Compiler 再把它编译成可运行的 Core 对象。`scope: { kind: "all" }` 会同时获得根 Flow 及其嵌套 Expert、ExpertTeam 与子 Flow 的流式输出。你的应用仍然完全掌控产品体验、持久化、权限和基础设施，同时获得实时输出、最终结果与可审计的执行事件。
 
 ## 进一步了解
 
@@ -178,6 +274,7 @@ const expert = compiled.value;
 - [使用指南](./docs/usage/README.md)
 - [上下文](./docs/usage/context.md)
 - [记忆](./docs/usage/memory.md)
+- [Desktop 可移植 Bundle](./docs/architecture/desktop-bundle-transfer.md)
 - [Agent 架构](./docs/architecture/agent-core-architecture.md)
 - [参与贡献](./CONTRIBUTING.md)
 

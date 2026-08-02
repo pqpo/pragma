@@ -48,6 +48,19 @@ It does not blindly send the entire history to every agent. Stable constraints c
 
 This is how context crosses harness boundaries: not by pretending one product's private session can be moved into another, but by carrying forward the meaning of the work.
 
+### Experts compose into auditable AI-native systems
+
+Pragma's building blocks are reusable at every level:
+
+```text
+Flow         = Expert + ExpertTeam + SubFlow + Human checkpoints
+Expert tools = Expert + ExpertTeam + Flow
+```
+
+A Flow can assign one step to a specialist Expert, another to a coordinated Team, and another to an entire child Flow. An Expert can expose other Experts, Teams, or Flows as governed tools and decide when to use them.
+
+This composition does not create a collection of disconnected agent sessions. The compiler validates the dependency graph and rejects cycles; nested work remains inside one Execution, where handoffs, outputs, tool calls, approvals, usage, cancellation, and recovery form a single audit trail.
+
 ### Memory is context that has earned the right to survive
 
 Pragma treats memory as a special form of context, not as a separate black box. Evidence from execution can evolve from short-lived task state into:
@@ -99,7 +112,7 @@ The entire method—roles, routing, context, handoffs, review gates, and definit
 ```mermaid
 flowchart TB
   method["AI-native way of working<br/>Portable Pragma DSL"]
-  orchestration["Mission orchestration<br/>Expert · ExpertTeam · Flow · Human checkpoints"]
+  orchestration["Composable Mission orchestration<br/>Expert · ExpertTeam · nested Flow · Human checkpoints"]
   context["Progressive context<br/>Intent · knowledge · decisions · artifacts · memory"]
   execution["Pluggable execution<br/>Any model × any agent harness"]
   hosts["Open hosts<br/>Pragma Desktop · your agent system · cloud or enterprise platform"]
@@ -112,9 +125,10 @@ flowchart TB
   hosts --> orchestration
 ```
 
-The architecture follows four ideas:
+The architecture follows five ideas:
 
 - **Method and execution are separate:** describe the work once, then bind it to the best available runtimes.
+- **Everything is composable:** Experts, Teams, and Flows can become steps or tools inside larger systems.
 - **Context is continuous:** knowledge and outcomes can survive individual models, sessions, and harnesses.
 - **Complexity is progressive:** users can start with one expert and grow into teams, flows, approvals, evaluation, and memory.
 - **The host stays in control:** Pragma can power its own Desktop experience or become part of another agent product.
@@ -140,37 +154,119 @@ pnpm --filter @pragma/desktop dev
 
 Desktop is the simplest way to start a mission, choose a workspace, and use local or connected runtimes.
 
-### Describe a reusable expert with Pragma DSL
+Studio can export any Expert, ExpertTeam, or Flow as a portable `.pragma` bundle. The export includes its reusable dependency graph as canonical DSL and can optionally include capabilities, plugins, knowledge, and visual Flow layouts. Secrets, local sessions, Missions, and machine-specific paths stay local. Another Desktop can import the bundle, or your own agent system can load the DSL through the Pragma interpreter.
+
+### Describe a reusable AI-native system with Pragma DSL
+
+The following excerpts show both directions of composition. An Expert can use an Expert, Team, or Flow as a tool:
 
 ```yaml
 apiVersion: pragma/v3
 kind: Expert
 metadata:
-  id: releaselead000001
-  name: Release Lead
-  description: Plans, verifies, and improves software releases.
+  id: 0tyw4e02pw3d8vjt
+  name: Delivery Orchestrator
+  description: Coordinates a complete delivery mission.
 spec:
-  scope: Coordinate release preparation.
-  instructions: Build an evidence-backed release plan, identify risks, and verify every gate.
+  scope: Own delivery quality from design through final verification.
+  instructions: Choose the appropriate specialist or governed workflow for each task.
+  tools:
+    - adapter: pragma.tool.call@v1
+      target: { ref: expert:3sfd30h5017wd17d }
+      tool: { name: ask_reviewer, description: Ask the independent reviewer. }
+    - adapter: pragma.tool.call@v1
+      target: { ref: team:vyv9pwwzaksth2dd }
+      tool: { name: ask_delivery_team, description: Ask the delivery team. }
+    - adapter: pragma.tool.call@v1
+      target: { ref: flow:ffdfk2cczgqjda7q }
+      tool: { name: run_quality_gate, description: Run the quality-gate Flow. }
 ```
 
-The same language describes experts, expert teams, flows, capabilities, context, and runtime profiles. Definitions can be stored with a project, generated from compiled objects, reviewed in Git, and moved between hosts.
+A Flow can compose an Expert, Team, and child Flow as explicit, auditable steps:
 
-### Embed Pragma into your own agent system
+```yaml
+apiVersion: pragma/v3
+kind: Flow
+metadata:
+  id: t9ne4d8njvvxv2ea
+  name: AI-native Delivery
+  description: Coordinates planning, team review, and a reusable quality gate.
+spec:
+  input:
+    schema:
+      type: object
+      properties: { brief: { type: string } }
+      required: [brief]
+      additionalProperties: false
+  graph:
+    start: coordinate
+    steps:
+      coordinate:
+        expert: { ref: expert:0tyw4e02pw3d8vjt }
+        prompt:
+          segments:
+            - { text: "Plan this delivery: " }
+            - { variable: { source: flow-input, path: [brief] } }
+      team_review:
+        team: { ref: team:vyv9pwwzaksth2dd }
+        prompt: { segments: [{ text: "Review the delivery plan and implementation." }] }
+      quality_gate:
+        flow: { ref: flow:ffdfk2cczgqjda7q }
+        input: { brief: "$flow.input.brief" }
+    transitions:
+      coordinate: team_review
+      team_review: quality_gate
+      quality_gate: { end: true }
+```
+
+The same language describes Experts, ExpertTeams, Flows, capabilities, context, runtime profiles, and evaluations. Definitions can be stored with a project, generated from compiled objects, reviewed in Git, exported from Desktop, and moved between hosts.
+
+### Load, compile, stream, and get the final result
+
+After importing or unpacking an exported project, a custom host can load the project entry, compile the complete dependency graph, and execute it with the host's own runtime bindings:
 
 ```ts
+import { createPragma, type Flow } from "@pragma/core";
 import { loadPragmaProject } from "@pragma/interpreter";
 
 const project = await loadPragmaProject("./pragma.yaml");
-const compiled = await project.compile("expert:releaselead000001", {
+const diagnostics = await project.validate();
+if (diagnostics.some((item) => item.severity === "error")) {
+  throw new Error(JSON.stringify(diagnostics, null, 2));
+}
+
+const compiled = await project.compile<Flow>("flow:t9ne4d8njvvxv2ea", {
   workspace: process.cwd(),
   runtimes: myRuntimeResolver,
 });
 
-const expert = compiled.value;
+const app = createPragma({ runtimes: myRuntimeResolver });
+const execution = await app.flows.start(compiled.value, {
+  input: { brief: "Build and verify the next product release." },
+});
+
+const output = await execution.subscribeOutput({ scope: { kind: "all" } });
+const streaming = (async () => {
+  try {
+    for await (const item of output) {
+      process.stdout.write(item.delta ?? String(item.value ?? ""));
+    }
+  } finally {
+    await output.close();
+  }
+})();
+
+const result = await execution.result;
+await streaming;
+
+console.log("Final result:", result);
+
+// The same Execution exposes the complete audit trail.
+const audit = await execution.listEvents({ scope: { kind: "all" }, limit: 1_000 });
+console.log("Audit events:", audit.items.length);
 ```
 
-Use `@pragma/core` for expert execution and runtime contracts, and `@pragma/interpreter` when you want portable definitions, validation, compilation, and round-trip DSL generation. Your application can continue to own the product experience, persistence, permissions, and infrastructure.
+The interpreter resolves the exported resource graph and the compiler turns it into runnable Core objects. `scope: { kind: "all" }` streams output from the root Flow and its nested Experts, Teams, and child Flows. Your application still owns the product experience, persistence, permissions, and infrastructure while receiving live output, a final result, and auditable execution events.
 
 ## Learn more
 
@@ -178,6 +274,7 @@ Use `@pragma/core` for expert execution and runtime contracts, and `@pragma/inte
 - [Usage guides](./docs/usage/README.md)
 - [Context](./docs/usage/context.md)
 - [Memory](./docs/usage/memory.md)
+- [Portable Desktop bundles](./docs/architecture/desktop-bundle-transfer.md)
 - [Agent architecture](./docs/architecture/agent-core-architecture.md)
 - [Contributing](./CONTRIBUTING.md)
 
