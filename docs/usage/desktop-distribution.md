@@ -3,7 +3,8 @@
 Pragma 使用 `electron-vite` 编译应用代码，使用 `electron-builder` 生成安装包。根命令
 `pnpm build` 只做可验证的代码构建；发行包通过 `@pragma/desktop` package 的 `dist:*` 命令显式生成。
 
-当前阶段发布未签名的 GitHub Pre-release，不包含自动更新。背景、完整 Plan 和 Release Process 见
+当前阶段发布未签名的 GitHub Pre-release，并将 macOS DMG 镜像到阿里云 OSS；不包含自动更新。
+背景、完整 Plan 和 Release Process 见
 [Pragma 桌面发行方案](../architecture/desktop-release-and-online-update.md)。
 
 ## 图标资源
@@ -132,6 +133,29 @@ SHA256SUMS.txt
 ```
 
 如果任一平台失败，Release 不会公开。同一 Tag 已经存在公开 Release 时，workflow 拒绝覆盖。
+
+### 阿里云 OSS macOS 镜像
+
+Tag workflow 使用 `desktop-release` GitHub Environment 的 OIDC 身份换取阿里云短期 STS 凭证，
+不保存长期 AccessKey。Environment 必须配置：
+
+```text
+ALIYUN_OIDC_PROVIDER_ARN
+ALIYUN_RELEASE_ROLE_ARN
+ALIYUN_OSS_BUCKET
+ALIYUN_OSS_REGION
+```
+
+版本 `v0.1.0` 上传到 OSS 的对象为：
+
+```text
+desktop/v0.1.0/Pragma-0.1.0-mac-arm64.dmg
+desktop/v0.1.0/Pragma-0.1.0-mac-x64.dmg
+desktop/v0.1.0/SHA256SUMS-mac.txt
+```
+
+macOS ZIP 和 Windows EXE 不上传 OSS。OSS 上传使用明确的 DMG allowlist，并在公开 GitHub Pre-release
+前逐个校验远端对象大小；任一上传或校验失败都会保留 GitHub Draft Release 并终止发布。
 
 ## 未签名安装提示
 

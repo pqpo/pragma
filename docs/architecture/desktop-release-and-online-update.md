@@ -4,7 +4,7 @@
 >
 > 基线：2026-07-30
 >
-> 当前范围：未签名的 macOS、Windows 安装包和 GitHub Pre-release
+> 当前范围：未签名的 macOS、Windows 安装包、GitHub Pre-release 和 macOS OSS 镜像
 
 本文记录 Pragma 桌面应用发行能力的背景、当前实现、发布 Process 和后续 Plan。产品名称统一为
 `Pragma`；`desktop` 只表示应用类型、仓库目录和 workspace package，不属于产品名称。
@@ -38,6 +38,8 @@ source
   → electron-builder
   → per-platform Actions artifacts
   → checksum validation
+  → GitHub Draft Release
+  → Alibaba Cloud OSS macOS mirror
   → GitHub Pre-release
 ```
 
@@ -77,6 +79,20 @@ SHA256SUMS.txt
 
 Release 汇总 Job 会检查五个安装包都存在且非空，并拒绝额外的 DMG、ZIP 或 EXE。只有三个平台 Job
 全部成功后，才会公开 Pre-release。
+
+### OSS 镜像
+
+Tag 发布还会将下列 macOS DMG 镜像到阿里云 OSS 的版本化路径
+`desktop/<tag>/`：
+
+```text
+Pragma-0.1.0-mac-arm64.dmg
+Pragma-0.1.0-mac-x64.dmg
+SHA256SUMS-mac.txt
+```
+
+macOS ZIP 和 Windows EXE 不上传 OSS，继续只通过 GitHub Release 分发。`SHA256SUMS-mac.txt` 只覆盖
+两个 macOS DMG；GitHub Release 中的 `SHA256SUMS.txt` 继续覆盖全部五个安装包。
 
 ### 明确排除
 
@@ -126,10 +142,23 @@ dist:win:x64
 `.github/workflows/desktop-release.yml` 支持：
 
 - `workflow_dispatch`：构建并保留 Actions artifacts，不发布 Release。
-- `v*` Tag push：验证、构建并发布 Pre-release。
+- `v*` Tag push：验证、构建、镜像 macOS 资产到 OSS 并发布 Pre-release。
 
 workflow 权限默认为 `contents: read`，只有最终 Release Job 使用 `contents: write`。发布使用 GitHub
-自动提供的短期 `GITHUB_TOKEN`，仓库不保存个人 Token。
+自动提供的短期 `GITHUB_TOKEN`。Release Job 绑定 `desktop-release` Environment，通过 GitHub OIDC
+换取 30 分钟有效的阿里云 STS 凭证；仓库不保存个人 Token 或阿里云长期 AccessKey。
+
+Release Environment 必须提供以下非敏感 Variables：
+
+```text
+ALIYUN_OIDC_PROVIDER_ARN
+ALIYUN_RELEASE_ROLE_ARN
+ALIYUN_OSS_BUCKET
+ALIYUN_OSS_REGION
+```
+
+阿里云 RAM 角色只能列出目标 Bucket 的 `desktop/` 前缀，并对该前缀执行上传、读取校验、列举分片和
+中止未完成分片；不得获得对象删除、Bucket 管理或 ACL 修改权限。
 
 ## Release Process
 
@@ -183,12 +212,17 @@ workflow 会在下载依赖前后执行完整验证，并在打包前确认：
 1. 下载并合并三个 Actions artifacts。
 2. 检查五个预期安装包。
 3. 生成 `SHA256SUMS.txt`。
-4. 创建 Draft Release。
-5. 上传全部产物。
-6. 将 Draft 发布为 Pre-release。
+4. 为两个 macOS DMG 生成 `SHA256SUMS-mac.txt`。
+5. 创建 Draft Release，并向 GitHub 上传全部跨平台产物。
+6. 通过 GitHub OIDC 换取阿里云短期 STS 凭证。
+7. 只向 OSS 的 `desktop/<tag>/` 上传两个 macOS DMG 和 macOS 校验清单。
+8. 逐个读取 OSS Object metadata，确认远端大小与本地文件一致。
+9. 将 Draft 发布为 Pre-release。
 
 如果同 Tag 已经存在公开 Release，workflow 会失败且不会覆盖。失败运行留下的 Draft 可以由同 Tag
-重新运行补齐；资产上传使用 `--clobber` 只作用于尚未公开的 Draft。
+重新运行补齐；GitHub 资产上传使用 `--clobber` 只作用于尚未公开的 Draft。OSS 使用版本化路径，重试
+只会补齐或覆盖当前尚未公开版本的同名 DMG。OSS 上传或校验失败时，GitHub Release 保持 Draft，
+不会公开一个缺少镜像的版本。
 
 ### 5. 安装验证
 
@@ -245,8 +279,11 @@ workflow 会在下载依赖前后执行完整验证，并在打包前确认：
 ## 安全与维护规则
 
 - 不提交 Token、证书、私钥、密码、临时 Keychain 或 Azure 凭据。
+- 不创建或提交阿里云长期 AccessKey；GitHub Actions 只通过受限 OIDC 角色取得短期 STS 凭证。
 - Pull Request workflow 不获得 Release 写权限。
 - 平台 Job 不直接发布 Release，防止出现单平台半成品。
+- OSS 上传使用显式 DMG allowlist，不使用包含 ZIP 和 Windows 产物的目录递归同步。
+- OIDC Action 固定到完整 commit；`ossutil` 固定版本并在执行前校验官方 SHA-256。
 - 已公开版本不可覆盖；修复必须提升 SemVer。
 - 校验和用于验证下载完整性，但不能替代平台代码签名。
 - 仓库为私有时，Release 也只对授权用户可见；公开下载前需要先确认仓库可见性和许可证表述。
@@ -261,6 +298,8 @@ Phase 1 完成需要同时满足：
 - 三个原生 runner 可以生成五个安装包。
 - 任一平台失败时不发布 Pre-release。
 - Pre-release 包含五个安装包和 `SHA256SUMS.txt`。
+- OSS 版本路径只包含两个 macOS DMG 和 `SHA256SUMS-mac.txt`，不包含 ZIP 或 Windows EXE。
+- OSS 上传与 metadata 校验成功后才公开 GitHub Pre-release。
 - 安装包不包含自动更新实现或签名凭据。
 - 文档与 package scripts、electron-builder 和 workflow 保持一致。
 
