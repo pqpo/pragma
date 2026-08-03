@@ -4,6 +4,7 @@ import {
   createUsageFromTokenCounts,
   defaultRuntimeTokenCounter,
   type Expert,
+  type ExpertAgentStartupMessage,
   type ExpertAgentHumanInteractionHandler,
   type ExpertToolRuntimeState,
   type PragmaLogger,
@@ -74,6 +75,7 @@ export interface QoderNativeSession {
   readonly tokenCounter: RuntimeTokenCounter;
   readonly messages: AgentMessage[];
   readonly toolNames: Map<string, string>;
+  pendingStartupMessages: readonly ExpertAgentStartupMessage[];
   sessionId: string;
   activeQuery?: Query | undefined;
   contextWindowUsage?: RuntimeContextWindowUsage | undefined;
@@ -171,6 +173,26 @@ export function mapQoderEvent(
 
 export function listQoderMessages(session: QoderNativeSession): readonly AgentMessage[] {
   return session.messages;
+}
+
+export function consumeQoderStartupMessages(
+  session: QoderNativeSession,
+): readonly ExpertAgentStartupMessage[] {
+  const startupMessages = session.pendingStartupMessages;
+  session.pendingStartupMessages = [];
+
+  if (startupMessages.length > 0) {
+    const timestamp = Date.now();
+    session.messages.push(
+      ...startupMessages.map((message, index) => ({
+        role: message.role,
+        content: message.content,
+        timestamp: timestamp + index,
+      })),
+    );
+  }
+
+  return startupMessages;
 }
 
 export function readQoderContextWindow(
@@ -385,7 +407,7 @@ async function runQoderQuery(
           usage: resolveQoderUsage(
             result,
             {
-              inputText: estimateQoderTurnInput(session, prompt),
+              inputText: estimateQoderTurnInput(session, prompt, turn.startupMessages.length),
               outputText: readQoderResultOutput(result),
             },
             session.tokenCounter,
@@ -398,7 +420,7 @@ async function runQoderQuery(
     const usage = resolveQoderUsage(
       successful,
       {
-        inputText: estimateQoderTurnInput(session, prompt),
+        inputText: estimateQoderTurnInput(session, prompt, turn.startupMessages.length),
         outputText: successful.result,
       },
       session.tokenCounter,
@@ -803,14 +825,22 @@ function qoderTokenModelIdentity(modelId: string | undefined) {
   };
 }
 
-function estimateQoderTurnInput(session: QoderNativeSession, prompt: string): string {
+function estimateQoderTurnInput(
+  session: QoderNativeSession,
+  prompt: string,
+  startupMessageCount: number,
+): string {
   const latestCompactionIndex = session.messages.findLastIndex(
     (message) => message.role === "compactionSummary",
   );
   const activeMessages =
     latestCompactionIndex < 0 ? session.messages : session.messages.slice(latestCompactionIndex);
-  const previousMessages =
+  const messagesBeforeCurrentTurn =
     activeMessages.at(-1)?.role === "user" ? activeMessages.slice(0, -1) : activeMessages;
+  const previousMessages =
+    startupMessageCount === 0
+      ? messagesBeforeCurrentTurn
+      : messagesBeforeCurrentTurn.slice(0, -startupMessageCount);
   return JSON.stringify({
     systemPrompt: session.systemPrompt,
     messages: previousMessages,

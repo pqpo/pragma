@@ -24,6 +24,7 @@ import {
   cancelQoderTurn,
   closeQoderSession,
   compactQoderContextWindow,
+  consumeQoderStartupMessages,
   listQoderMessages,
   mapQoderEvent,
   readQoderContextWindow,
@@ -195,6 +196,8 @@ export function createQoderCliRuntime(options: QoderCliRuntimeAdapterOptions = {
             tokenCounter: options.tokenCounter ?? defaultRuntimeTokenCounter,
             messages: [],
             toolNames: new Map(),
+            pendingStartupMessages:
+              restoredRuntimeSessionId === "" ? ctx.agentContext.startupMessages : [],
             sessionId: restoredRuntimeSessionId,
             mcpToolRegistryLease,
             expertToolsMcpRegistration,
@@ -211,6 +214,7 @@ export function createQoderCliRuntime(options: QoderCliRuntimeAdapterOptions = {
         };
       },
       listMessages: listQoderMessages,
+      consumeStartupMessages: consumeQoderStartupMessages,
       async startTurn(session, turn) {
         assertProvider(turn.modelSelection?.model.providerId);
         return await startQoderTurn(session, turn);
