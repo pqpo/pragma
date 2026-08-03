@@ -195,6 +195,8 @@ export interface PragmaCompileHost {
 }
 
 export interface DefinitionSerializer {
+  readonly id: string;
+  readonly version: string;
   readonly kind: PragmaResource["kind"];
   readonly canSerialize: (value: object) => boolean;
   readonly serialize: (value: object) => PragmaResource;
@@ -204,6 +206,17 @@ export class DefinitionSerializerRegistry {
   private readonly serializers: DefinitionSerializer[] = [];
 
   register(serializer: DefinitionSerializer): this {
+    if (!/^[A-Za-z0-9][A-Za-z0-9._-]*$/.test(serializer.id)) {
+      throw new Error(`Invalid definition serializer id: ${serializer.id}`);
+    }
+    if (!/^[A-Za-z0-9][A-Za-z0-9.+_-]*$/.test(serializer.version)) {
+      throw new Error(`Invalid definition serializer version: ${serializer.version}`);
+    }
+    const duplicate = this.serializers.some(
+      (entry) => entry.id === serializer.id && entry.version === serializer.version,
+    );
+    if (duplicate)
+      throw new Error(`Duplicate definition serializer: ${serializer.id}@${serializer.version}`);
     this.serializers.push(serializer);
     return this;
   }

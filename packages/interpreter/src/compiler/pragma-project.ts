@@ -1,5 +1,15 @@
-import { lstat, readFile, readdir, realpath } from "node:fs/promises";
-import { dirname, isAbsolute, relative, resolve } from "node:path";
+import {
+  lstat,
+  mkdir,
+  mkdtemp,
+  readFile,
+  readdir,
+  realpath,
+  rm,
+  writeFile,
+} from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { dirname, isAbsolute, join, relative, resolve } from "node:path";
 
 import { Validator, type Schema } from "@cfworker/json-schema";
 import {
@@ -81,8 +91,28 @@ import {
   isPragmaCompilerVersionDirectlyReadable,
   isPragmaCompilerVersionUpgradeable,
 } from "../ast/compiler-compatibility.ts";
+import type { PragmaBundleManifest, PragmaBundleRequirement } from "../ast/pragma-bundle.schema.ts";
+import {
+  encodePragmaBundle,
+  decodePragmaBundle,
+  PragmaBundleFormatError,
+  type PragmaBundleBinarySource,
+  type PragmaBundleLimits,
+} from "../bundle/pragma-bundle-codec.ts";
+import {
+  applyPragmaEnvironmentBindingOverlay,
+  mergePragmaBindingContributions,
+  type PragmaBundleBindingHost,
+  type PragmaBundleRequirementInspection,
+  type PragmaEnvironmentBindingOverlay,
+} from "../bundle/pragma-bundle-environment.ts";
 
 const provenance = new WeakMap<object, PragmaProvenance>();
+const PRAGMA_BUNDLE_BINDING_PREFIX = "binding:pragma.bundle." as const;
+const PRAGMA_BUNDLE_RESERVED_PROJECT_PATHS = new Set([
+  "project/pragma.yaml",
+  "project/pragma.lock.yaml",
+]);
 
 export interface LoadPragmaProjectOptions {
   readonly rootDir?: string | undefined;
@@ -96,7 +126,22 @@ export interface LoadPragmaProjectOptions {
   readonly onBlueprintCacheLookup?:
     | ((observation: PragmaBlueprintCacheObservation) => void)
     | undefined;
+  /** Host extension id@version values understood by this process. */
+  readonly supportedBundleExtensions?: ReadonlySet<string> | undefined;
 }
+
+export type LoadPragmaProjectSource =
+  | string
+  | {
+      readonly kind: "yaml";
+      readonly entryFile: string;
+      readonly rootDir?: string | undefined;
+    }
+  | {
+      readonly kind: "bundle";
+      readonly source: PragmaBundleBinarySource;
+      readonly limits?: PragmaBundleLimits | undefined;
+    };
 
 export interface PragmaBlueprintCacheStore {
   readonly read: (key: string) => Promise<Uint8Array | undefined>;
@@ -137,26 +182,107 @@ export interface DumpedFiles {
   readonly files: ReadonlyMap<string, string>;
 }
 
-export interface PragmaProject {
+export interface PragmaBundleExportPayload {
+  readonly codec: string;
+  /** Paths are relative to the requirement payload root. */
+  readonly files: ReadonlyMap<string, Uint8Array>;
+}
+
+export interface PragmaBundleExportHost {
+  readonly exportPayload?: (input: {
+    readonly requirement: PragmaBundleRequirement;
+    readonly originalBindingRef?: string | undefined;
+  }) => Promise<PragmaBundleExportPayload | undefined>;
+}
+
+export interface PragmaBundleExportExtensionInput {
+  readonly id: string;
+  readonly version: string;
+  readonly required?: boolean | undefined;
+  readonly files: ReadonlyMap<string, Uint8Array>;
+}
+
+export interface PragmaProjectBundleExportOptions {
+  readonly roots: readonly (PragmaResourceRef | object)[];
+  readonly additionalRoots?: readonly (PragmaResourceRef | object)[] | undefined;
+  readonly host?: PragmaBundleExportHost | undefined;
+  readonly extensions?: readonly PragmaBundleExportExtensionInput[] | undefined;
+  readonly createdAt?: string | undefined;
+}
+
+export interface PragmaBundleExportResult {
+  readonly bytes: Uint8Array;
+  readonly manifest: PragmaBundleManifest;
+}
+
+export interface ExportPragmaBundleOptions extends PragmaProjectBundleExportOptions {
+  readonly serializers?: DefinitionSerializerRegistry | undefined;
+  readonly resourceAdapters?: PragmaResourceAdapterRegistry | undefined;
+  readonly projectRoot?: string | undefined;
+  readonly include?: readonly object[] | undefined;
+}
+
+export interface PragmaLoadedBundle {
+  readonly manifest: PragmaBundleManifest;
+  readonly archiveBytes: number;
+}
+
+export interface PragmaProject extends AsyncDisposable {
   readonly entryFile: string;
+  readonly bundle?: PragmaLoadedBundle | undefined;
   listResources(): readonly PragmaResource[];
   validate(): Promise<readonly PragmaDiagnostic[]>;
   validateFor(ref: PragmaResourceRef): Promise<readonly PragmaDiagnostic[]>;
   validateEnvironment(host: PragmaCompileOptions): Promise<readonly PragmaDiagnostic[]>;
   inspectEnvironment(host: PragmaCompileOptions): Promise<PragmaEnvironmentInspection>;
+  inspectEnvironmentFor(
+    ref: PragmaResourceRef,
+    host: PragmaCompileOptions,
+  ): Promise<PragmaEnvironmentInspection>;
+  inspectBundleBindings(
+    ref: PragmaResourceRef,
+    host: PragmaBundleBindingHost,
+  ): Promise<readonly PragmaBundleRequirementInspection[]>;
+  bindEnvironment(
+    ref: PragmaResourceRef,
+    host: PragmaBundleBindingHost,
+    selections?: Readonly<Record<string, string>>,
+  ): Promise<PragmaBundleBindingResult>;
+  prepareCompile<T extends InvocableResource>(
+    ref: PragmaResourceRef,
+    host: PragmaCompileOptions,
+    overlay?: PragmaEnvironmentBindingOverlay,
+  ): Promise<PragmaPrepareCompileResult<T>>;
   compile<T extends InvocableResource>(
     ref: PragmaResourceRef,
     host: PragmaCompileOptions,
   ): Promise<CompiledResource<T>>;
   dump(resource: object, options?: DumpOptions): Promise<DumpedFiles>;
+  exportBundle(options: PragmaProjectBundleExportOptions): Promise<PragmaBundleExportResult>;
   createLock(): PragmaLock;
   readLock(): Promise<PragmaLock>;
+  dispose(): Promise<void>;
 }
 
 export interface PragmaEnvironmentInspection {
   readonly diagnostics: readonly PragmaDiagnostic[];
   readonly resources: readonly PragmaResourceHealth[];
 }
+
+export interface PragmaBundleBindingResult {
+  readonly overlay: PragmaEnvironmentBindingOverlay;
+  readonly requirements: readonly PragmaBundleRequirementInspection[];
+}
+
+export type PragmaPrepareCompileResult<T> =
+  | { readonly status: "ready"; readonly compiled: CompiledResource<T> }
+  | {
+      readonly status: "needs_binding";
+      readonly requirements: readonly PragmaBundleRequirement[];
+      readonly diagnostics: readonly PragmaDiagnostic[];
+      readonly resources: readonly PragmaResourceHealth[];
+    }
+  | { readonly status: "invalid"; readonly diagnostics: readonly PragmaDiagnostic[] };
 
 export class PragmaDslError extends Error {
   constructor(
@@ -268,9 +394,77 @@ async function readCompilerCompatibilityDiagnostic(
 }
 
 export async function loadPragmaProject(
-  entryFile: string,
+  source: LoadPragmaProjectSource,
   options: LoadPragmaProjectOptions = {},
 ): Promise<PragmaProject> {
+  if (typeof source !== "string" && source.kind === "bundle") {
+    const decoded = await decodePragmaBundle(source.source, source.limits);
+    for (const extension of decoded.manifest.extensions) {
+      const key = `${extension.id}@${extension.version}`;
+      if (extension.required && options.supportedBundleExtensions?.has(key) !== true) {
+        throw new PragmaBundleFormatError(
+          "manifest.invalid",
+          `Required bundle extension is not supported: ${key}.`,
+        );
+      }
+    }
+    const temporaryRoot = await mkdtemp(join(tmpdir(), "pragma-bundle-"));
+    try {
+      for (const [path, contents] of decoded.files) {
+        if (!path.startsWith("project/")) continue;
+        const destination = resolve(temporaryRoot, path);
+        await mkdir(dirname(destination), { recursive: true, mode: 0o700 });
+        await writeFile(destination, contents, { mode: 0o600 });
+      }
+      const entryFile = resolve(temporaryRoot, decoded.manifest.project.entry);
+      const project = await loadPragmaYamlProject(entryFile, {
+        ...options,
+        rootDir: resolve(temporaryRoot, "project"),
+        requireLock: true,
+        sourceIdentity: decoded.manifest.project.projectFingerprint,
+      });
+      const actualFingerprint = project.createLock().projectFingerprint;
+      if (actualFingerprint !== decoded.manifest.project.projectFingerprint) {
+        throw new PragmaBundleFormatError(
+          "manifest.fingerprint_invalid",
+          "The bundle project fingerprint does not match its portable project.",
+        );
+      }
+      const availableRefs = new Set(
+        project.listResources().map((resource) => canonicalRef(resource)),
+      );
+      const missingRoot = decoded.manifest.roots.find((ref) => !availableRefs.has(ref));
+      if (missingRoot !== undefined) {
+        throw new PragmaBundleFormatError(
+          "manifest.invalid",
+          `Bundle root is not present in the portable project: ${missingRoot}.`,
+        );
+      }
+      await project.assertBundleManifest(decoded.manifest);
+      project.attachBundle(
+        { manifest: decoded.manifest, archiveBytes: decoded.archiveBytes },
+        decoded.files,
+        async () => await rm(temporaryRoot, { recursive: true, force: true }),
+      );
+      return project;
+    } catch (error) {
+      await rm(temporaryRoot, { recursive: true, force: true }).catch(() => undefined);
+      throw error;
+    }
+  }
+  const entryFile = typeof source === "string" ? source : source.entryFile;
+  return await loadPragmaYamlProject(entryFile, {
+    ...options,
+    ...(typeof source === "string" || source.rootDir === undefined
+      ? {}
+      : { rootDir: source.rootDir }),
+  });
+}
+
+async function loadPragmaYamlProject(
+  entryFile: string,
+  options: LoadPragmaProjectOptions,
+): Promise<PragmaProjectImpl> {
   const absoluteEntry = resolve(entryFile);
   const configuredRoot = resolve(options.rootDir ?? dirname(absoluteEntry));
   const rootDir = await realpath(configuredRoot);
@@ -280,10 +474,14 @@ export async function loadPragmaProject(
     options,
   );
   if (compatibilityDiagnostic !== undefined) {
-    return new PragmaProjectImpl(canonicalEntry, new Map(), new Map(), [compatibilityDiagnostic], {
-      ...options,
-      requireLock: false,
-    });
+    return new PragmaProjectImpl(
+      canonicalEntry,
+      rootDir,
+      new Map(),
+      new Map(),
+      [compatibilityDiagnostic],
+      { ...options, requireLock: false },
+    );
   }
   const adapters = options.resourceAdapters ?? createDefaultPragmaResourceAdapterRegistry();
   const sourceIdentity = options.sourceIdentity;
@@ -329,6 +527,7 @@ export async function loadPragmaProject(
   await loader.collectArtifacts();
   return new PragmaProjectImpl(
     canonicalEntry,
+    rootDir,
     loader.resources,
     loader.artifacts,
     loader.diagnostics,
@@ -473,7 +672,7 @@ function projectFromBlueprint(
   rootDir: string,
   entryFile: string,
   options: LoadPragmaProjectOptions,
-): PragmaProject {
+): PragmaProjectImpl {
   const resolveSource = (source: string): string => {
     const value = resolve(rootDir, source);
     const child = relative(rootDir, value);
@@ -484,6 +683,7 @@ function projectFromBlueprint(
   };
   return new PragmaProjectImpl(
     entryFile,
+    rootDir,
     new Map(
       blueprint.resources.map((indexed) => [
         canonicalRef(indexed.resource),
@@ -515,6 +715,98 @@ export async function dumpPragmaResource(
     );
   }
   return await source.project.dump(resource, options);
+}
+
+export async function exportPragmaBundle(
+  options: ExportPragmaBundleOptions,
+): Promise<PragmaBundleExportResult> {
+  if (options.roots.length === 0) throw new PragmaDslError("A bundle requires at least one root.");
+  const provenances = options.roots
+    .filter((root): root is object => typeof root === "object")
+    .map((root) => provenance.get(root));
+  const project = provenances[0]?.project;
+  if (
+    project !== undefined &&
+    provenances.every((entry) => entry?.project === project) &&
+    (options.include ?? []).every((entry) => provenance.get(entry)?.project === project) &&
+    (options.additionalRoots ?? []).every(
+      (entry) => typeof entry === "string" || provenance.get(entry)?.project === project,
+    )
+  ) {
+    return await project.exportBundle({
+      ...options,
+      additionalRoots: [...(options.additionalRoots ?? []), ...(options.include ?? [])],
+    });
+  }
+
+  const serializers = options.serializers;
+  if (serializers === undefined) {
+    throw new PragmaDslError(
+      "Programmatic definitions require a versioned DefinitionSerializerRegistry.",
+    );
+  }
+  const values = [
+    ...options.roots.filter((root): root is object => typeof root === "object"),
+    ...(options.additionalRoots ?? []).filter((root): root is object => typeof root === "object"),
+    ...(options.include ?? []),
+  ];
+  const serializedByValue = new Map<object, PragmaResource>();
+  for (const value of values) {
+    if (serializedByValue.has(value)) continue;
+    const resource = serializers.serialize(value);
+    if (resource === undefined) {
+      throw new PragmaDslError("No versioned serializer can describe a programmatic definition.");
+    }
+    serializedByValue.set(value, resource);
+  }
+  const serialized = [...serializedByValue.values()];
+  const resources = new Map<string, IndexedResource>();
+  const projectRoot = resolve(options.projectRoot ?? process.cwd());
+  for (const resource of serialized) {
+    const normalized = stableStringify(resource);
+    const ref = canonicalRef(resource);
+    if (resources.has(ref)) throw new PragmaDslError(`Duplicate serialized resource: ${ref}`);
+    resources.set(ref, {
+      resource,
+      normalized,
+      contentHash: sha256(normalized),
+      source: resolve(projectRoot, "pragma.yaml"),
+    });
+  }
+  const adapters = options.resourceAdapters ?? createDefaultPragmaResourceAdapterRegistry();
+  const artifacts = await collectResourceArtifacts(resources, projectRoot, adapters);
+  const memoryProject = new PragmaProjectImpl(
+    resolve(projectRoot, "pragma.yaml"),
+    projectRoot,
+    resources,
+    artifacts,
+    [],
+    { serializers, resourceAdapters: adapters },
+  );
+  const rootRefs = options.roots.map((root) => {
+    if (typeof root === "string") return root;
+    const resource = serializedByValue.get(root);
+    if (resource === undefined) throw new PragmaDslError("No serializer found for bundle root.");
+    return canonicalRef(resource);
+  });
+  const explicitAdditionalRoots = (options.additionalRoots ?? []).map((root) => {
+    if (typeof root === "string") return root;
+    const resource = serializedByValue.get(root);
+    if (resource === undefined)
+      throw new PragmaDslError("No serializer found for additional bundle root.");
+    return canonicalRef(resource);
+  });
+  const includedRoots = (options.include ?? []).map((value) => {
+    const resource = serializedByValue.get(value);
+    if (resource === undefined)
+      throw new PragmaDslError("No serializer found for included resource.");
+    return canonicalRef(resource);
+  });
+  return await memoryProject.exportBundle({
+    ...options,
+    roots: rootRefs,
+    additionalRoots: [...explicitAdditionalRoots, ...includedRoots],
+  });
 }
 
 export function formatPragmaYaml(value: unknown): string {
@@ -721,14 +1013,204 @@ class PragmaProjectImpl implements PragmaProject {
     PragmaSemanticResourceRef,
     Promise<readonly PragmaDiagnostic[]>
   >();
+  bundle: PragmaLoadedBundle | undefined;
+  private cleanup: (() => Promise<void>) | undefined;
+  private bundleFiles: ReadonlyMap<string, Uint8Array> | undefined;
+  private disposed = false;
 
   constructor(
     readonly entryFile: string,
+    readonly rootDir: string,
     private readonly resources: ReadonlyMap<string, IndexedResource>,
     private readonly artifacts: ReadonlyMap<string, string>,
     private readonly sourceDiagnostics: readonly PragmaDiagnostic[],
     private readonly options: LoadPragmaProjectOptions,
   ) {}
+
+  attachBundle(
+    bundle: PragmaLoadedBundle,
+    files: ReadonlyMap<string, Uint8Array>,
+    cleanup: () => Promise<void>,
+  ): void {
+    this.bundle = bundle;
+    this.bundleFiles = files;
+    this.cleanup = cleanup;
+  }
+  async assertBundleManifest(manifest: PragmaBundleManifest): Promise<void> {
+    const lock = await this.readLock();
+    if (manifest.project.compilerVersion !== lock.compilerVersion) {
+      throw new PragmaBundleFormatError(
+        "manifest.invalid",
+        `Bundle compiler version ${manifest.project.compilerVersion} does not match its lock ${lock.compilerVersion}.`,
+      );
+    }
+    const byRef = new Map(
+      [...this.resources.values()].map((indexed) => [
+        canonicalRef(indexed.resource),
+        indexed.resource,
+      ]),
+    );
+    const fail = (message: string): never => {
+      throw new PragmaBundleFormatError("manifest.invalid", message);
+    };
+    const requirementsById = new Map(
+      manifest.requirements.map((requirement) => [requirement.id, requirement]),
+    );
+    const requirementsByLocation = new Map<string, PragmaBundleRequirement[]>();
+    for (const requirement of manifest.requirements) {
+      const key = requirementLocationKey(requirement.kind, requirement.ownerRef, requirement.path);
+      const matches = requirementsByLocation.get(key) ?? [];
+      matches.push(requirement);
+      requirementsByLocation.set(key, matches);
+    }
+    const requirementAt = (
+      kind: PragmaBundleRequirement["kind"],
+      ownerRef: string,
+      path: readonly (string | number)[],
+      contract?: string,
+    ): PragmaBundleRequirement | undefined =>
+      requirementsByLocation
+        .get(requirementLocationKey(kind, ownerRef, path))
+        ?.find((requirement) => contract === undefined || requirement.contract === contract);
+    for (const requirement of manifest.requirements) {
+      const resource = byRef.get(requirement.ownerRef);
+      if (resource === undefined) {
+        throw new PragmaBundleFormatError(
+          "manifest.invalid",
+          `Bundle requirement owner is missing: ${requirement.ownerRef}.`,
+        );
+      }
+      const value = valueAtPath(resource, requirement.path);
+      if (requirement.kind === "binding" || requirement.kind === "secret") {
+        if (value !== bundleBindingSlot(requirement.id)) {
+          fail(`Bundle binding slot does not match requirement ${requirement.id}.`);
+        }
+        if (
+          requirement.kind === "binding" &&
+          (!isDeclarativeResource(resource) ||
+            requirement.contract !== resource.spec.adapter ||
+            stableStringify(requirement.path) !== stableStringify(["spec", "binding"]))
+        ) {
+          fail(`Bundle binding contract is invalid: ${requirement.id}.`);
+        }
+        if (requirement.kind === "secret") {
+          const pluginIndex = requirement.path[2];
+          const secretName = requirement.path[4];
+          const plugin =
+            resource.kind === "Expert" &&
+            requirement.path[0] === "spec" &&
+            requirement.path[1] === "plugins" &&
+            typeof pluginIndex === "number" &&
+            requirement.path[3] === "secretBindings" &&
+            typeof secretName === "string"
+              ? resource.spec.plugins[pluginIndex]
+              : undefined;
+          if (
+            plugin === undefined ||
+            requirement.path.length !== 5 ||
+            requirement.contract !== `${plugin.ref}:secret:${secretName}`
+          ) {
+            fail(`Bundle secret contract is invalid: ${requirement.id}.`);
+          }
+        }
+      } else if (requirement.kind === "plugin") {
+        if (
+          typeof value !== "object" ||
+          value === null ||
+          (value as Record<string, unknown>)["ref"] !== requirement.contract
+        ) {
+          fail(`Bundle plugin contract does not match requirement ${requirement.id}.`);
+        }
+      } else if (requirement.kind === "runtime") {
+        const runtimeId = requirement.hints["runtimeId"];
+        if (
+          resource.kind !== "RuntimeProfile" ||
+          requirement.contract !== "pragma.runtime@v1" ||
+          typeof value !== "string" ||
+          value !== runtimeId
+        ) {
+          fail(`Bundle Runtime contract does not match requirement ${requirement.id}.`);
+        }
+      } else if (requirement.kind === "external-artifact") {
+        if (!isDeclarativeResource(resource)) {
+          throw new PragmaBundleFormatError(
+            "manifest.invalid",
+            `Bundle external artifact owner is invalid: ${requirement.id}.`,
+          );
+        }
+        const adapters =
+          this.options.resourceAdapters ?? createDefaultPragmaResourceAdapterRegistry();
+        const source = adapters
+          .artifactSources(resource)
+          .find(
+            (candidate) =>
+              candidate.type !== "project" && candidate.integrity === requirement.contract,
+          );
+        if (
+          source === undefined ||
+          source.type === "project" ||
+          requirement.hints["uri"] !== source.uri ||
+          requirement.hints["integrity"] !== source.integrity
+        ) {
+          fail(`Bundle external artifact contract is invalid: ${requirement.id}.`);
+        }
+      }
+    }
+    for (const [ownerRef, resource] of byRef) {
+      for (const slot of findBundleBindingSlots(resource)) {
+        const requirement = requirementsById.get(slot.requirementId);
+        if (
+          requirement === undefined ||
+          requirement.ownerRef !== ownerRef ||
+          stableStringify(requirement.path) !== stableStringify(slot.path)
+        ) {
+          fail(`Portable binding slot has no matching requirement: ${slot.value}.`);
+        }
+      }
+      if (resource.kind === "RuntimeProfile") {
+        const runtimeId = (resource.spec.config as Record<string, unknown>)["runtimeId"];
+        if (
+          requirementAt("runtime", ownerRef, ["spec", "config", "runtimeId"])?.hints[
+            "runtimeId"
+          ] !== runtimeId
+        ) {
+          fail(`RuntimeProfile requirement is missing or inconsistent: ${ownerRef}.`);
+        }
+      }
+      if (resource.kind === "Expert") {
+        for (const [index, plugin] of resource.spec.plugins.entries()) {
+          if (
+            requirementAt("plugin", ownerRef, ["spec", "plugins", index], plugin.ref) === undefined
+          ) {
+            fail(`Plugin requirement is missing: ${ownerRef} ${plugin.ref}.`);
+          }
+        }
+      }
+      if (isDeclarativeResource(resource)) {
+        const adapters =
+          this.options.resourceAdapters ?? createDefaultPragmaResourceAdapterRegistry();
+        for (const source of adapters.artifactSources(resource)) {
+          if (source.type === "project") continue;
+          if (
+            requirementAt("external-artifact", ownerRef, ["spec", "config"], source.integrity) ===
+            undefined
+          ) {
+            fail(`External artifact requirement is missing: ${ownerRef} ${source.uri}.`);
+          }
+        }
+      }
+    }
+  }
+
+  async dispose(): Promise<void> {
+    if (this.disposed) return;
+    this.disposed = true;
+    await this.cleanup?.();
+  }
+
+  async [Symbol.asyncDispose](): Promise<void> {
+    await this.dispose();
+  }
 
   listResources(): readonly PragmaResource[] {
     return [...this.resources.values()]
@@ -810,7 +1292,28 @@ class PragmaProjectImpl implements PragmaProject {
   }
 
   async inspectEnvironment(host: PragmaCompileOptions): Promise<PragmaEnvironmentInspection> {
-    const diagnostics = [...(await this.validate())];
+    return await this.inspectEnvironmentResources(this.resources, await this.validate(), host);
+  }
+
+  async inspectEnvironmentFor(
+    ref: PragmaResourceRef,
+    host: PragmaCompileOptions,
+  ): Promise<PragmaEnvironmentInspection> {
+    const root = this.resolveResource(ref);
+    return await this.inspectEnvironmentResources(
+      this.collectDependencyClosure(root),
+      await this.validateFor(ref),
+      host,
+    );
+  }
+
+  private async inspectEnvironmentResources(
+    resources: ReadonlyMap<string, IndexedResource>,
+    portableDiagnostics: readonly PragmaDiagnostic[],
+    host: PragmaCompileOptions,
+  ): Promise<PragmaEnvironmentInspection> {
+    host = this.withProjectRoot(host);
+    const diagnostics = [...portableDiagnostics];
     if (diagnostics.some((diagnostic) => diagnostic.severity === "error")) {
       return { diagnostics, resources: [] };
     }
@@ -823,9 +1326,9 @@ class PragmaProjectImpl implements PragmaProject {
       this.artifacts,
       this.options.sourceIdentity !== undefined,
     );
-    diagnostics.push(...validateExtensionEnvironment(this.resources, host));
+    diagnostics.push(...validateExtensionEnvironment(resources, host));
     if (host.plugins !== undefined) {
-      for (const indexed of this.resources.values()) {
+      for (const indexed of resources.values()) {
         if (indexed.resource.kind !== "Expert") continue;
         for (const [index, binding] of indexed.resource.spec.plugins.entries()) {
           try {
@@ -868,7 +1371,7 @@ class PragmaProjectImpl implements PragmaProject {
       }
     }
     const health: PragmaResourceHealth[] = [];
-    for (const indexed of this.resources.values()) {
+    for (const indexed of resources.values()) {
       if (!isDeclarativeResource(indexed.resource)) continue;
       const baseInspection = await adapters.inspect(indexed.resource, adapterHost);
       const inspection =
@@ -891,10 +1394,124 @@ class PragmaProjectImpl implements PragmaProject {
     return { diagnostics, resources: health };
   }
 
+  async inspectBundleBindings(
+    ref: PragmaResourceRef,
+    host: PragmaBundleBindingHost,
+  ): Promise<readonly PragmaBundleRequirementInspection[]> {
+    const requirements = this.bundleRequirementsFor(ref);
+    return await Promise.all(
+      requirements.map(async (requirement) => {
+        const inspection = await host.inspect({
+          requirement,
+          payload: this.readRequirementPayload(requirement.id),
+        });
+        if (inspection.requirementId !== requirement.id) {
+          throw new Error(
+            `Bundle binding Host returned ${inspection.requirementId} for ${requirement.id}.`,
+          );
+        }
+        return inspection;
+      }),
+    );
+  }
+
+  async bindEnvironment(
+    ref: PragmaResourceRef,
+    host: PragmaBundleBindingHost,
+    selections: Readonly<Record<string, string>> = {},
+  ): Promise<PragmaBundleBindingResult> {
+    const requirements = this.bundleRequirementsFor(ref);
+    const contributions = await Promise.all(
+      requirements.map(
+        async (requirement) =>
+          await host.bind({
+            requirement,
+            candidateId: selections[requirement.id],
+            payload: this.readRequirementPayload(requirement.id),
+          }),
+      ),
+    );
+    return {
+      overlay: mergePragmaBindingContributions(contributions),
+      requirements: await this.inspectBundleBindings(ref, host),
+    };
+  }
+
+  async prepareCompile<T extends InvocableResource>(
+    ref: PragmaResourceRef,
+    host: PragmaCompileOptions,
+    overlay?: PragmaEnvironmentBindingOverlay,
+  ): Promise<PragmaPrepareCompileResult<T>> {
+    const portable = await this.validateFor(ref);
+    if (portable.some((diagnostic) => diagnostic.severity === "error")) {
+      return { status: "invalid", diagnostics: portable };
+    }
+    const effectiveHost =
+      overlay === undefined ? host : applyPragmaEnvironmentBindingOverlay(host, overlay);
+    const environment = await this.inspectEnvironmentFor(ref, effectiveHost);
+    const unavailable =
+      environment.diagnostics.some((diagnostic) => diagnostic.severity === "error") ||
+      environment.resources.some((resource) => resource.status !== "ready");
+    if (unavailable) {
+      return {
+        status: "needs_binding",
+        requirements: this.bundleRequirementsFor(ref),
+        diagnostics: environment.diagnostics,
+        resources: environment.resources,
+      };
+    }
+    try {
+      return { status: "ready", compiled: await this.compile<T>(ref, effectiveHost) };
+    } catch (error) {
+      if (error instanceof PragmaResourceNeedsAttentionError) {
+        return {
+          status: "needs_binding",
+          requirements: this.bundleRequirementsFor(ref),
+          diagnostics: error.health.issues,
+          resources: [error.health],
+        };
+      }
+      if (error instanceof PragmaDslError) {
+        return { status: "invalid", diagnostics: error.diagnostics };
+      }
+      throw error;
+    }
+  }
+
+  private bundleRequirementsFor(ref: PragmaResourceRef): readonly PragmaBundleRequirement[] {
+    if (this.bundle === undefined) return [];
+    const closure = this.collectDependencyClosure(this.resolveResource(ref));
+    const refs = new Set([...closure.values()].map((indexed) => canonicalRef(indexed.resource)));
+    return this.bundle.manifest.requirements.filter((requirement) =>
+      refs.has(requirement.ownerRef),
+    );
+  }
+
+  private readRequirementPayload(requirementId: string): ReadonlyMap<string, Uint8Array> {
+    const requirement = this.bundle?.manifest.requirements.find(
+      (item) => item.id === requirementId,
+    );
+    if (requirement?.payload === undefined || this.bundleFiles === undefined) return new Map();
+    const root = `${requirement.payload.root}/`;
+    return new Map(
+      [...this.bundleFiles]
+        .filter(([path]) => path.startsWith(root))
+        .map(([path, contents]) => [path.slice(root.length), contents] as const),
+    );
+  }
+
+  private withProjectRoot(host: PragmaCompileHost): PragmaCompileHost {
+    return {
+      ...host,
+      projectRoot: this.bundle === undefined ? (host.projectRoot ?? this.rootDir) : this.rootDir,
+    };
+  }
+
   async compile<T extends InvocableResource>(
     ref: PragmaResourceRef,
     host: PragmaCompileOptions,
   ): Promise<CompiledResource<T>> {
+    host = this.withProjectRoot(host);
     const compilerErrors = this.sourceDiagnostics.filter(
       (diagnostic) => diagnostic.severity === "error" && diagnostic.code.startsWith("compiler."),
     );
@@ -1277,6 +1894,143 @@ class PragmaProjectImpl implements PragmaProject {
     return { files };
   }
 
+  async exportBundle(options: PragmaProjectBundleExportOptions): Promise<PragmaBundleExportResult> {
+    if (options.roots.length === 0)
+      throw new PragmaDslError("A bundle requires at least one root.");
+    const roots = options.roots.map((root) => {
+      if (typeof root === "string") return this.resolveResource(root);
+      const source = provenance.get(root);
+      if (source?.project === this) return source.root;
+      const serialized = this.options.serializers?.serialize(root);
+      if (serialized !== undefined) return this.resolveResource(canonicalRef(serialized));
+      throw new PragmaDslError("Bundle root has no DSL provenance or registered serializer.");
+    });
+    const additionalRoots = (options.additionalRoots ?? []).map((root) => {
+      if (typeof root === "string") return this.resolveResource(root);
+      const source = provenance.get(root);
+      if (source?.project === this) return source.root;
+      const serialized = this.options.serializers?.serialize(root);
+      if (serialized !== undefined) return this.resolveResource(canonicalRef(serialized));
+      throw new PragmaDslError("Additional bundle root has no DSL provenance or serializer.");
+    });
+    const selected = new Map<string, IndexedResource>();
+    for (const root of [...roots, ...additionalRoots]) {
+      for (const [ref, indexed] of this.collectDependencyClosure(root)) selected.set(ref, indexed);
+    }
+    const portable = portableizeBundleResources(selected, this.options.resourceAdapters);
+    const files = new Map<string, Uint8Array>();
+    const projectBundle = PragmaBundleSchema.parse({
+      apiVersion: "pragma/v3",
+      kind: "Bundle",
+      resources: portable.resources,
+    });
+    files.set("project/pragma.yaml", new TextEncoder().encode(formatPragmaYaml(projectBundle)));
+
+    const artifacts = await collectSelectedBundleArtifacts(
+      portable.resources,
+      this.rootDir,
+      this.options.resourceAdapters ?? createDefaultPragmaResourceAdapterRegistry(),
+      files,
+    );
+    const lockResources = portable.resources
+      .map((resource) => ({
+        ref: canonicalRef(resource),
+        contentHash: sha256(stableStringify(resource)),
+        source: "pragma.yaml",
+      }))
+      .toSorted((left, right) => left.ref.localeCompare(right.ref));
+    const projectFingerprint = sha256(
+      stableStringify({
+        resources: lockResources.map(({ ref, contentHash }) => ({ ref, contentHash })),
+        artifacts,
+      }),
+    );
+    const lock = PragmaLockSchema.parse({
+      apiVersion: "pragma/v3",
+      kind: "Lock",
+      compilerVersion: PRAGMA_COMPILER_WRITE_VERSION,
+      projectFingerprint,
+      resources: lockResources,
+      artifacts,
+    });
+    files.set("project/pragma.lock.yaml", new TextEncoder().encode(formatPragmaYaml(lock)));
+
+    const requirements: PragmaBundleRequirement[] = [];
+    for (const draft of portable.requirements) {
+      const payload =
+        draft.requirement.kind === "secret"
+          ? undefined
+          : await options.host?.exportPayload?.({
+              requirement: draft.requirement,
+              ...(draft.originalBindingRef === undefined
+                ? {}
+                : { originalBindingRef: draft.originalBindingRef }),
+            });
+      if (payload === undefined) {
+        requirements.push(draft.requirement);
+        continue;
+      }
+      if (payload.files.size === 0) {
+        throw new PragmaDslError(`Bundle payload is empty: ${draft.requirement.id}.`);
+      }
+      const root = `assets/${draft.requirement.id}`;
+      const payloadEntries: { path: string; sha256: string }[] = [];
+      for (const [relativePath, contents] of payload.files) {
+        const path = `${root}/${relativePath}`;
+        files.set(path, contents);
+        payloadEntries.push({ path: relativePath, sha256: sha256(contents) });
+      }
+      requirements.push({
+        ...draft.requirement,
+        payload: {
+          codec: payload.codec,
+          root,
+          fingerprint: sha256(
+            stableStringify(payloadEntries.toSorted((a, b) => a.path.localeCompare(b.path))),
+          ),
+        },
+      });
+    }
+
+    const extensions = (options.extensions ?? []).map((extension) => {
+      if (extension.files.size === 0) {
+        throw new PragmaDslError(
+          `Bundle extension is empty: ${extension.id}@${extension.version}.`,
+        );
+      }
+      const root = `extensions/${sha256(`${extension.id}@${extension.version}`).slice(0, 24)}`;
+      const entries: { path: string; sha256: string }[] = [];
+      for (const [relativePath, contents] of extension.files) {
+        files.set(`${root}/${relativePath}`, contents);
+        entries.push({ path: relativePath, sha256: sha256(contents) });
+      }
+      return {
+        id: extension.id,
+        version: extension.version,
+        required: extension.required ?? false,
+        root,
+        fingerprint: sha256(
+          stableStringify(entries.toSorted((a, b) => a.path.localeCompare(b.path))),
+        ),
+      };
+    });
+    return await encodePragmaBundle({
+      manifest: {
+        schemaVersion: "pragma.bundle/v1",
+        createdAt: options.createdAt ?? new Date().toISOString(),
+        roots: roots.map((root) => canonicalRef(root.resource)),
+        project: {
+          entry: "project/pragma.yaml",
+          compilerVersion: PRAGMA_COMPILER_WRITE_VERSION,
+          projectFingerprint,
+        },
+        requirements,
+        extensions,
+      },
+      files,
+    });
+  }
+
   createLock(): PragmaLock {
     const resources = [...this.resources.values()]
       .sort((left, right) =>
@@ -1653,6 +2407,7 @@ function compileTransition(
   ) {
     return { type: "next" as const, target: compileTarget(transition, references) };
   }
+
   if ("repeat" in transition) {
     return {
       type: "repeat" as const,
@@ -2471,6 +3226,258 @@ function createAdapterHost(
       return await external?.resolveSecret(ref);
     },
   };
+}
+
+interface PortableBundleRequirementDraft {
+  readonly requirement: PragmaBundleRequirement;
+  readonly originalBindingRef?: string | undefined;
+}
+
+function portableizeBundleResources(
+  resources: ReadonlyMap<string, IndexedResource>,
+  configuredAdapters: PragmaResourceAdapterRegistry | undefined,
+): {
+  readonly resources: readonly PragmaResource[];
+  readonly requirements: readonly PortableBundleRequirementDraft[];
+} {
+  const adapters = configuredAdapters ?? createDefaultPragmaResourceAdapterRegistry();
+  const requirements: PortableBundleRequirementDraft[] = [];
+  const output = [...resources.values()]
+    .toSorted((left, right) =>
+      canonicalRef(left.resource).localeCompare(canonicalRef(right.resource)),
+    )
+    .map((indexed) => {
+      const resource = structuredClone(indexed.resource);
+      const ownerRef = canonicalRef(resource);
+      const spec = resource.spec as unknown as Record<string, unknown>;
+      if (isDeclarativeResource(resource)) {
+        const binding = typeof spec["binding"] === "string" ? spec["binding"] : undefined;
+        if (binding !== undefined) {
+          const path = ["spec", "binding"] as const;
+          const requirement = createBundleRequirement({
+            kind: "binding",
+            ownerRef,
+            path,
+            contract: resource.spec.adapter,
+            name: `${resource.metadata.name} binding`,
+            hints: { adapter: resource.spec.adapter },
+          });
+          spec["binding"] = bundleBindingSlot(requirement.id);
+          requirements.push({ requirement, originalBindingRef: binding });
+        }
+        for (const source of adapters.artifactSources(resource)) {
+          if (source.type === "project") continue;
+          requirements.push({
+            requirement: createBundleRequirement({
+              kind: "external-artifact",
+              ownerRef,
+              path: ["spec", "config"],
+              contract: source.integrity,
+              name: `${resource.metadata.name} external artifact`,
+              hints: { uri: source.uri, integrity: source.integrity },
+            }),
+          });
+        }
+        if (resource.kind === "RuntimeProfile") {
+          const config = spec["config"] as Record<string, unknown>;
+          requirements.push({
+            requirement: createBundleRequirement({
+              kind: "runtime",
+              ownerRef,
+              path: ["spec", "config", "runtimeId"],
+              contract: "pragma.runtime@v1",
+              name: `${resource.metadata.name} runtime`,
+              hints: { runtimeId: config["runtimeId"] },
+            }),
+          });
+        }
+      }
+      if (resource.kind === "Expert") {
+        const plugins = spec["plugins"] as Record<string, unknown>[];
+        for (const [pluginIndex, plugin] of plugins.entries()) {
+          const pluginRef = plugin["ref"] as string;
+          requirements.push({
+            requirement: createBundleRequirement({
+              kind: "plugin",
+              ownerRef,
+              path: ["spec", "plugins", pluginIndex],
+              contract: pluginRef,
+              name: `${resource.metadata.name} plugin ${pluginRef}`,
+              hints: { ref: pluginRef },
+            }),
+          });
+          const secretBindings = plugin["secretBindings"] as Record<string, string> | undefined;
+          if (secretBindings === undefined) continue;
+          for (const [secretName, originalBindingRef] of Object.entries(secretBindings)) {
+            const requirement = createBundleRequirement({
+              kind: "secret",
+              ownerRef,
+              path: ["spec", "plugins", pluginIndex, "secretBindings", secretName],
+              contract: `${pluginRef}:secret:${secretName}`,
+              name: `${resource.metadata.name} secret ${secretName}`,
+              hints: { plugin: pluginRef, secretName },
+            });
+            secretBindings[secretName] = bundleBindingSlot(requirement.id);
+            requirements.push({ requirement, originalBindingRef });
+          }
+        }
+      }
+      return PragmaResourceSchema.parse(resource);
+    });
+  return { resources: output, requirements };
+}
+
+function createBundleRequirement(input: {
+  readonly kind: PragmaBundleRequirement["kind"];
+  readonly ownerRef: PragmaSemanticResourceRef;
+  readonly path: readonly (string | number)[];
+  readonly contract: string;
+  readonly name: string;
+  readonly hints: Readonly<Record<string, unknown>>;
+}): PragmaBundleRequirement {
+  const id = `req-${sha256(stableStringify(input)).slice(0, 24)}`;
+  return {
+    id,
+    kind: input.kind,
+    ownerRef: input.ownerRef,
+    path: [...input.path],
+    contract: input.contract,
+    required: true,
+    name: input.name,
+    hints: { ...input.hints },
+  };
+}
+
+function bundleBindingSlot(requirementId: string): `binding:${string}` {
+  return `${PRAGMA_BUNDLE_BINDING_PREFIX}${requirementId}`;
+}
+
+function requirementLocationKey(
+  kind: PragmaBundleRequirement["kind"],
+  ownerRef: string,
+  path: readonly (string | number)[],
+): string {
+  return stableStringify([kind, ownerRef, path]);
+}
+
+function valueAtPath(value: unknown, path: readonly (string | number)[]): unknown {
+  let current = value;
+  for (const segment of path) {
+    if (typeof current !== "object" || current === null) return undefined;
+    current = (current as Record<string | number, unknown>)[segment];
+  }
+  return current;
+}
+
+function findBundleBindingSlots(value: unknown): readonly {
+  readonly value: string;
+  readonly requirementId: string;
+  readonly path: readonly (string | number)[];
+}[] {
+  const slots: {
+    value: string;
+    requirementId: string;
+    path: (string | number)[];
+  }[] = [];
+  const visit = (current: unknown, path: (string | number)[]): void => {
+    if (typeof current === "string" && current.startsWith(`${PRAGMA_BUNDLE_BINDING_PREFIX}req-`)) {
+      slots.push({
+        value: current,
+        requirementId: current.slice(PRAGMA_BUNDLE_BINDING_PREFIX.length),
+        path,
+      });
+      return;
+    }
+    if (Array.isArray(current)) {
+      current.forEach((entry, index) => visit(entry, [...path, index]));
+      return;
+    }
+    if (typeof current !== "object" || current === null) return;
+    for (const [key, entry] of Object.entries(current)) visit(entry, [...path, key]);
+  };
+  visit(value, []);
+  return slots;
+}
+
+async function collectResourceArtifacts(
+  resources: ReadonlyMap<string, IndexedResource>,
+  projectRoot: string,
+  adapters: PragmaResourceAdapterRegistry,
+): Promise<ReadonlyMap<string, string>> {
+  const artifacts = new Map<string, string>();
+  for (const indexed of resources.values()) {
+    if (!isDeclarativeResource(indexed.resource)) continue;
+    for (const source of adapters.artifactSources(indexed.resource)) {
+      if (source.type === "project") {
+        const absolute = await assertPathInsideRoot(projectRoot, resolve(projectRoot, source.path));
+        artifacts.set(source.path, await hashArtifactPath(absolute));
+      } else {
+        artifacts.set(source.uri, source.integrity.slice("sha256:".length));
+      }
+    }
+  }
+  return artifacts;
+}
+
+async function collectSelectedBundleArtifacts(
+  resources: readonly PragmaResource[],
+  projectRoot: string,
+  adapters: PragmaResourceAdapterRegistry,
+  files: Map<string, Uint8Array>,
+): Promise<readonly { readonly source: string; readonly contentHash: string }[]> {
+  const artifacts = new Map<string, string>();
+  for (const resource of resources) {
+    if (!isDeclarativeResource(resource)) continue;
+    for (const source of adapters.artifactSources(resource)) {
+      if (source.type === "project") {
+        const absolute = await assertPathInsideRoot(projectRoot, resolve(projectRoot, source.path));
+        artifacts.set(source.path, await hashArtifactPath(absolute));
+        await collectArtifactFiles(absolute, source.path, projectRoot, files);
+      } else {
+        artifacts.set(source.uri, source.integrity.slice("sha256:".length));
+      }
+    }
+  }
+  return [...artifacts]
+    .map(([source, contentHash]) => ({ source, contentHash }))
+    .toSorted((left, right) => left.source.localeCompare(right.source));
+}
+
+async function collectArtifactFiles(
+  absolute: string,
+  logicalPath: string,
+  projectRoot: string,
+  files: Map<string, Uint8Array>,
+): Promise<void> {
+  const safePath = await assertPathInsideRoot(projectRoot, absolute);
+  const info = await lstat(safePath);
+  if (info.isFile()) {
+    const bundlePath = `project/${logicalPath.replaceAll("\\", "/")}`;
+    if (PRAGMA_BUNDLE_RESERVED_PROJECT_PATHS.has(bundlePath)) {
+      throw new PragmaDslError(
+        `Project artifact collides with a generated bundle file: ${logicalPath}.`,
+      );
+    }
+    files.set(bundlePath, new Uint8Array(await readFile(safePath)));
+    return;
+  }
+  if (!info.isDirectory()) throw new Error(`Unsupported project artifact: ${logicalPath}`);
+  for (const child of (await readdir(safePath)).toSorted()) {
+    await collectArtifactFiles(
+      resolve(safePath, child),
+      `${logicalPath.replace(/\/$/, "")}/${child}`,
+      projectRoot,
+      files,
+    );
+  }
+}
+
+async function assertPathInsideRoot(root: string, path: string): Promise<string> {
+  const canonicalRoot = await realpath(root);
+  const canonicalPath = await realpath(path);
+  const child = relative(canonicalRoot, canonicalPath);
+  if (child === "" || (!child.startsWith("..") && !isAbsolute(child))) return canonicalPath;
+  throw new Error(`Project artifact escapes the project root: ${path}`);
 }
 
 async function verifyRuntimeEnvironment(

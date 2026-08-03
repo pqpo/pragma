@@ -140,10 +140,25 @@ Tool 审批示例只演示当前进程中仍处于活动状态的 `ExpertTurn`�
 pending interaction 恢复语义；Session 恢复应使用当前 `app.experts.resumeSession()` API，
 Flow 恢复应使用 `app.flows.recover()`。
 
+## 4. 导出并加载 `.pragma` bundle
+
+下面的示例不依赖 Desktop。它加载一个同时引用 Skill、MCP 和 Markdown 知识库的 Expert，
+将根资源及其传递依赖导出为 `.pragma`，再直接通过 Interpreter 加载文件、检查环境需求、
+绑定 Runtime/MCP，并编译恢复 Expert：
+
+```bash
+pnpm --filter @pragma/examples example:bundle
+```
+
+生成的文件位于 `workspace/bundle-example/portable-product-expert.pragma`。Skill 和知识库作为
+portable project artifact 随 bundle 传输；MCP 与 Runtime 是目标 Host 的环境资产，通过
+`bindEnvironment()` 返回的 immutable overlay 补齐，不会改写 bundle 内的 DSL。
+
 ## 源码目录
 
 ```text
 src/
+  bundles/              # `.pragma` 导出、加载、绑定与编译
   capabilities/         # Context、MCP、Skills、Plugin 与 Tool 审批
   experts/
     getting-started/
@@ -160,6 +175,7 @@ src/
   support/              # 示例共用装配
 
 plugins/                 # 示例 Plugin 与 manifest
+projects/                # Bundle 示例使用的 portable DSL、Skill 与知识库
 skills/                  # 示例 SKILL.md
 ```
 

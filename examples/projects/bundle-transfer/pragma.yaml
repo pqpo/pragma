@@ -1,0 +1,75 @@
+apiVersion: pragma/v3
+kind: Bundle
+resources:
+  - apiVersion: pragma/v3
+    kind: RuntimeProfile
+    metadata:
+      id: knr7p5b7qc55wv92
+      name: Example Runtime
+      description: Runtime selected by the destination Host.
+      tags: [example]
+    spec:
+      adapter: pragma.runtime.profile@v1
+      config:
+        runtimeId: example-runtime
+
+  - apiVersion: pragma/v3
+    kind: Capability
+    metadata:
+      id: j35188zs37g69g0n
+      name: Bundle Authoring Skill
+      description: Teaches the Expert how to inspect and explain portable bundles.
+      tags: [example, skill]
+    spec:
+      adapter: pragma.capability.skill@v1
+      config:
+        source: { type: project, path: skill }
+        entry: SKILL.md
+
+  - apiVersion: pragma/v3
+    kind: Capability
+    metadata:
+      id: ygypdtr7bfev740a
+      name: Documentation MCP
+      description: An MCP endpoint supplied by the destination Host.
+      tags: [example, mcp]
+    spec:
+      adapter: pragma.capability.mcp@v1
+      binding: binding:source.documentation-mcp
+      config:
+        serverKey: documentation
+        timeoutMs: 10000
+
+  - apiVersion: pragma/v3
+    kind: ContextStore
+    metadata:
+      id: w01fppfxrn31gf7v
+      name: Product Knowledge Base
+      description: Markdown product knowledge transported inside the bundle.
+      tags: [example, knowledge]
+    spec:
+      adapter: pragma.context.file@v1
+      config:
+        source: { type: project, path: knowledge }
+
+  - apiVersion: pragma/v3
+    kind: Expert
+    metadata:
+      id: 1xddvess309a6gme
+      name: Portable Product Expert
+      description: Demonstrates a bundle containing Skill, MCP, and product knowledge.
+      tags: [example, bundle]
+    spec:
+      scope: Answer product questions and explain portable Pragma bundles.
+      instructions: Use the bundled Skill and knowledge base. Use Documentation MCP for live documentation lookups.
+      runtime: { ref: runtime-profile:knr7p5b7qc55wv92 }
+      capabilities:
+        - { ref: capability:j35188zs37g69g0n, kind: skill }
+        - { ref: capability:ygypdtr7bfev740a, kind: tools }
+      toolApprovals: {}
+      contextStores:
+        - ref: context-store:w01fppfxrn31gf7v
+          namespace: product
+          required: true
+      plugins: []
+      tools: []
