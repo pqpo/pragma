@@ -1,10 +1,10 @@
 import {
   Client,
   SSEClientTransport,
-  StdioClientTransport,
   StreamableHTTPClientTransport,
 } from "@modelcontextprotocol/client";
 import type { AuthProvider, Transport } from "@modelcontextprotocol/client";
+import { StdioClientTransport } from "@modelcontextprotocol/client/stdio";
 import type { IExpertAgentMcpConfig, IExpertAgentMcpServer } from "./agent/expert-agent.ts";
 import type { ExpertAgentManagedTool } from "./tools/managed-tool.ts";
 

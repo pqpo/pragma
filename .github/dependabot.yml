@@ -15,6 +15,15 @@ updates:
       - javascript
     commit-message:
       prefix: chore(deps)
+    ignore:
+      # electron-vite 5 supports Vite through v7. Keep Desktop on the newest
+      # compatible major until electron-vite publishes Vite 8 support.
+      - dependency-name: vite
+        update-types:
+          - version-update:semver-major
+      - dependency-name: "@vitejs/plugin-react"
+        update-types:
+          - version-update:semver-major
     groups:
       security-updates:
         applies-to: security-updates

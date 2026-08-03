@@ -4,11 +4,14 @@ packages:
   - "packages/runtime/*"
   - "plugins/*"
   - "examples"
-allowBuilds:
-  '@google/genai': true
-  esbuild: true
-  protobufjs: true
-  sharp: true
+# These are deprecated transitive dependencies of current upstream releases
+# (electron-builder and @google/genai), not packages selected by this workspace.
+allowedDeprecatedVersions:
+  boolean: 3.2.0
+  glob: 7.2.3
+  inflight: 1.0.6
+  node-domexception: 1.0.0
+  rimraf: 2.6.3
 
 supportedArchitectures:
   os:

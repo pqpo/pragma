@@ -1,6 +1,6 @@
 import { posix, win32 } from "node:path";
 
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 
 import { resolveCodexExecutablePath } from "../src/executable.ts";
 
@@ -53,6 +53,40 @@ describe("Codex executable resolution", () => {
         isExecutable: (candidate) => candidate === executablePath,
       }),
     ).toBe(executablePath);
+  });
+
+  it("finds Codex installed under an NVM-managed Node version outside PATH", () => {
+    const homeDirectory = posix.join("/Users", "test");
+    const nodeVersionsRoot = posix.join(homeDirectory, ".nvm", "version", "node");
+    const executablePath = posix.join(nodeVersionsRoot, "v22.18.0", "bin", "codex");
+
+    expect(
+      resolveCodexExecutablePath({
+        env: { HOME: homeDirectory, PATH: "/usr/bin:/bin" },
+        homeDirectory,
+        platform: "darwin",
+        macApplicationsDirectories: [],
+        readDirectoryNames: (candidate) =>
+          candidate === nodeVersionsRoot ? ["v20.19.0", "v22.18.0"] : [],
+        isExecutable: (candidate) => candidate === executablePath,
+      }),
+    ).toBe(executablePath);
+  });
+
+  it("prefers the active NVM bin directory before scanning installed versions", () => {
+    const activeBin = posix.join("/Users", "test", ".nvm", "versions", "node", "v22.18.0", "bin");
+    const executablePath = posix.join(activeBin, "codex");
+    const readDirectoryNames = vi.fn<() => readonly string[]>(() => []);
+
+    expect(
+      resolveCodexExecutablePath({
+        env: { HOME: "/Users/test", PATH: "/usr/bin:/bin", NVM_BIN: activeBin },
+        platform: "darwin",
+        readDirectoryNames,
+        isExecutable: (candidate) => candidate === executablePath,
+      }),
+    ).toBe(executablePath);
+    expect(readDirectoryNames).not.toHaveBeenCalled();
   });
 
   it("resolves the Codex executable bundled with ChatGPT on macOS", () => {

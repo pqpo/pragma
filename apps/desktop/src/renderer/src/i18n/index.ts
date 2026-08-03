@@ -18,10 +18,9 @@ void i18n.use(initReactI18next).init({
   supportedLngs: ["en", "zh-Hans", "zh-Hant"],
   defaultNS: "common",
   ns: ["common", "home", "missions", "studio", "settings", "usage"],
-  initImmediate: false,
+  initAsync: false,
   interpolation: { escapeValue: false },
   returnNull: false,
-  showSupportNotice: false,
 });
 
 export async function setDesktopLocale(locale: DesktopResolvedLocale): Promise<void> {
