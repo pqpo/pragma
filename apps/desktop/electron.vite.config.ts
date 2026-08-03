@@ -15,6 +15,7 @@ export default defineConfig({
           "@pragma/core",
           "@pragma/evaluation",
           "@pragma/interpreter",
+          "@pragma/memory",
           "@pragma/shared",
           "@pragma/default-agent",
         ],
