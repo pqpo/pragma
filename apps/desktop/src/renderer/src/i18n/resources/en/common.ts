@@ -33,6 +33,7 @@ export const common = {
     missions: "Missions",
     studio: "Studio",
     evaluations: "Evaluations",
+    memory: "Memory",
     usage: "Usage",
     settings: "Settings",
     main: "Main navigation",

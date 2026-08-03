@@ -5,6 +5,7 @@ import {
   ChartLineUp,
   GearSix,
   House,
+  Brain,
   RocketLaunch,
   TestTube,
   TerminalWindow,
@@ -13,7 +14,7 @@ import { useTranslation } from "react-i18next";
 
 import pragmaIcon from "../assets/pragma-icon.png";
 
-export type AppView = "home" | "missions" | "studio" | "evaluations" | "usage" | "settings";
+export type AppView = "home" | "missions" | "studio" | "evaluations" | "memory" | "usage" | "settings";
 
 const navigationItems: readonly {
   readonly id: AppView;
@@ -24,6 +25,7 @@ const navigationItems: readonly {
   { id: "missions", labelKey: "navigation.missions", icon: RocketLaunch },
   { id: "studio", labelKey: "navigation.studio", icon: TerminalWindow },
   { id: "evaluations", labelKey: "navigation.evaluations", icon: TestTube },
+  { id: "memory", labelKey: "navigation.memory", icon: Brain },
   { id: "usage", labelKey: "navigation.usage", icon: ChartLineUp },
   { id: "settings", labelKey: "navigation.settings", icon: GearSix },
 ];

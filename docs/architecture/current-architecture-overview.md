@@ -221,7 +221,8 @@ ADR 031 已替代 ADR 002/003，并由 `docs/architecture/memory-plane-implement
 - `plugin-memory` 在完成历史数据导入和调用方迁移后删除。
 
 当前已能形成按资产隔离的历史 Episode 和带冲突、置信度、时效、revision history 的 Semantic Fact。
-主动召回排序、管理中心、Knowledge/Skill Candidate、分享导出与 legacy owner-scoped 导入仍未完成，
+Agent 通过分层 ContextStore 自主召回，Desktop 已提供 Memory 管理中心与 Mission activity；Host 不实现
+prompt-derived 主动召回排序。Knowledge/Skill Candidate、分享导出与 legacy owner-scoped 导入仍未完成，
 旧插件只作为后续迁移数据源保留。
 
 ### P2：Desktop Main Process 正在变成第二个业务内核

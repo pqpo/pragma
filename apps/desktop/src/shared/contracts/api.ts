@@ -124,11 +124,16 @@ import type {
   DesktopMemoryExtractorProfile,
   UpdateDesktopMemoryExtractorProfile,
   DesktopSemanticFact,
-  ListDesktopSemanticFacts,
-  SearchDesktopSemanticFacts,
-  GetDesktopSemanticFact,
   ReviseDesktopSemanticFact,
   ReviewDesktopSemanticFact,
+  DesktopMemoryItem,
+  ListDesktopMemoryItems,
+  DesktopMemoryItemRef,
+  GetDesktopMemoryEvidence,
+  DesktopMemoryEvidence,
+  TightenDesktopMemoryAccess,
+  ReviewDesktopMemoryItem,
+  DesktopMissionMemoryActivity,
 } from "./types.ts";
 
 export interface PragmaDesktopAPI {
@@ -151,13 +156,16 @@ export interface PragmaDesktopAPI {
   updateMemoryExtractorProfile: (
     input: UpdateDesktopMemoryExtractorProfile,
   ) => Promise<DesktopMemoryExtractorProfile>;
-  listSemanticFacts: (input?: ListDesktopSemanticFacts) => Promise<DesktopSemanticFact[]>;
-  searchSemanticFacts: (input: SearchDesktopSemanticFacts) => Promise<DesktopSemanticFact[]>;
-  getSemanticFact: (input: GetDesktopSemanticFact) => Promise<DesktopSemanticFact>;
-  getSemanticFactHistory: (input: GetDesktopSemanticFact) => Promise<DesktopSemanticFact[]>;
   reviseSemanticFact: (input: ReviseDesktopSemanticFact) => Promise<DesktopSemanticFact>;
   verifySemanticFact: (input: ReviewDesktopSemanticFact) => Promise<DesktopSemanticFact>;
-  invalidateSemanticFact: (input: ReviewDesktopSemanticFact) => Promise<DesktopSemanticFact>;
+  listMemoryItems: (input?: ListDesktopMemoryItems) => Promise<DesktopMemoryItem[]>;
+  getMemoryItem: (input: DesktopMemoryItemRef) => Promise<DesktopMemoryItem>;
+  getMemoryItemHistory: (input: DesktopMemoryItemRef) => Promise<DesktopMemoryItem[]>;
+  getMemoryEvidence: (input: GetDesktopMemoryEvidence) => Promise<DesktopMemoryEvidence>;
+  tightenMemoryAccess: (input: TightenDesktopMemoryAccess) => Promise<DesktopMemoryItem>;
+  invalidateMemoryItem: (input: ReviewDesktopMemoryItem) => Promise<DesktopMemoryItem>;
+  forgetMemoryItem: (input: ReviewDesktopMemoryItem) => Promise<void>;
+  getMissionMemoryActivity: (missionId: string) => Promise<DesktopMissionMemoryActivity>;
   pickWorkspace: () => Promise<PickWorkspaceResult>;
   validateWorkspace: (path: string) => Promise<ValidateWorkspaceResult>;
   getModelProviderSettings: () => Promise<ModelProviderSettingsSnapshot>;

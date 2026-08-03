@@ -2,7 +2,7 @@
 
 - Status: Active plan
 - Last updated: 2026-08-03
-- Decisions: [ADR 031](../adr/031-extensible-memory-plane.md)、[ADR 032](../adr/032-durable-canonical-event-feed.md)、[ADR 033](../adr/033-layered-episodic-memory.md)、[ADR 034](../adr/034-conservative-semantic-memory.md)
+- Decisions: [ADR 031](../adr/031-extensible-memory-plane.md)、[ADR 032](../adr/032-durable-canonical-event-feed.md)、[ADR 033](../adr/033-layered-episodic-memory.md)、[ADR 034](../adr/034-conservative-semantic-memory.md)、[ADR 035](../adr/035-agent-driven-memory-recall-and-governance.md)
 
 ## 最终链路
 
@@ -15,7 +15,7 @@ Episodic / Semantic(Fact) / CodeGraph / future Memory Modules
         ↓
 Knowledge Memory / Skill Memory Candidate
         ↓
-Federated ContextStore + Retrieval + Governance
+Federated ContextStore + Agent-driven Recall + Host Governance
         ↓
 Skill Candidate 经 Evaluation 升级为现有 Skill Capability
 ```
@@ -31,20 +31,22 @@ Memory。Knowledge、CodeGraph 仍是 Memory type，不新增 KnowledgeBase/Know
 - 新持久协议使用 Zod、schemaVersion、静态相邻迁移和真实历史 fixture。
 - Desktop 先初始化最小存储根、IPC 和窗口，再启动 Memory 后台循环；不得启动时扫描所有 owner。
 - 权限只能在蒸馏时保持或收紧，扩大分享必须显式批准。
+- 召回相关性由 Agent 通过通用 ContextStore 自主判断；Host 不从 prompt 派生 query、不自动注入结果，
+  也不增加专用 recall tool。
 - 不建立长期 dual-write、旧字段兼容分支、第二套知识库对象或第二套 Skill authority。
 
 ## 阶段总览
 
-| 阶段 | 状态      | 交付目标                                                    |
-| ---- | --------- | ----------------------------------------------------------- |
-| 1    | Completed | 内置 Plane、Canonical Event Bus、Module SPI、策略与设置入口 |
-| 2    | Completed | 分层召回协议与 Episodic Memory：历史、结果、失败与恢复      |
-| 3    | Completed | Semantic / Fact Memory：真值、冲突、时效和置信度            |
-| 4    | Planned   | 主动召回排序、完整 binding 治理、管理中心与 Mission 可见性  |
-| 5    | Planned   | Knowledge Memory：多层提炼、稳定 revision 与团队分享        |
-| 6    | Planned   | Skill Memory Candidate、Evaluation 与 Capability 升级       |
-| 7    | Planned   | CodeGraph 独立 Module 扩展验收                              |
-| 8    | Planned   | 旧 plugin owner-scoped 导入、compiler cutover 与删除        |
+| 阶段 | 状态      | 交付目标                                                     |
+| ---- | --------- | ------------------------------------------------------------ |
+| 1    | Completed | 内置 Plane、Canonical Event Bus、Module SPI、策略与设置入口  |
+| 2    | Completed | 分层召回协议与 Episodic Memory：历史、结果、失败与恢复       |
+| 3    | Completed | Semantic / Fact Memory：真值、冲突、时效和置信度             |
+| 4    | Completed | Agent 驱动召回、完整 binding 治理、管理中心与 Mission 可见性 |
+| 5    | Planned   | Knowledge Memory：多层提炼、稳定 revision 与团队分享         |
+| 6    | Planned   | Skill Memory Candidate、Evaluation 与 Capability 升级        |
+| 7    | Planned   | CodeGraph 独立 Module 扩展验收                               |
+| 8    | Planned   | 旧 plugin owner-scoped 导入、compiler cutover 与删除         |
 
 状态只使用 `Planned`、`In progress`、`Blocked`、`Completed`。
 
@@ -146,7 +148,7 @@ Desktop 提供设置入口。
   `pragma.memory-dead-letter/v1`
 - Migration: 新 Store 从 v1 开始；Execution transaction 保持 v9；未改写既有状态
 - Verification: `pnpm lint`、`pnpm typecheck`、Core/Memory/Desktop tests、`pnpm build`
-- Known limitations: 尚无生产 Episodic/Semantic Module、主动 recall planner、Memory 管理中心、分享导出、
+- Known limitations: 尚无生产 Episodic/Semantic Module、Memory 管理中心、分享导出、
   Feed retention/replication 与 legacy importer；这些不能算作阶段 1 已提供的产品能力
 
 ## 阶段 2：Episodic Memory
@@ -227,8 +229,8 @@ Desktop 提供设置入口。
 - Migration: 新 Episodic Store 从 v1 开始并拒绝未来版本；Mission v5→v6 相邻升级补充 user origin
 - Verification: `pnpm check`、`pnpm build`，并覆盖 Expert/Team/Flow Runtime root identity、Desktop
   recall scope 解析、Memory Module 作用域契约和 Episodic list/search/detail/Evidence 越权测试
-- Known limitations: 阶段 2 完成时仅有 Episodic 生产模块；Knowledge、Skill Candidate、管理中心、分享、
-  跨设备同步和 query-aware retrieval ranking 仍属于后续阶段
+- Known limitations: 阶段 2 完成时仅有 Episodic 生产模块；Knowledge、Skill Candidate、管理中心、分享和
+  跨设备同步仍属于后续阶段
 
 ## 阶段 3：Semantic / Fact Memory
 
@@ -273,29 +275,48 @@ Evidence 使用 Expert、ExpertTeam、Flow 等运行归属，允许经治理绑�
   Interpreter compiler 或 Episodic Store
 - Verification: Memory/Shared/Desktop typecheck、Memory tests、Desktop Memory/Mission integration tests；
   完整 `pnpm check` 与 `pnpm build`
-- Known limitations: 尚无 Repository subject、跨设备账户合并、管理中心 UI、主动召回排序、分享导出或
+- Known limitations: 尚无 Repository subject、跨设备账户合并、分享导出或
   legacy Fact importer
 
-## 阶段 4：主动召回、完整治理 UI 与可见性
+## 阶段 4：Agent 驱动召回、完整治理 UI 与可见性
 
 ### 目标
 
-在阶段 2 已完成的 root/current-Expert 基础隔离上，增加 query-aware 主动召回、完整 binding/visibility
-治理、产品管理和可解释审计。阶段 4 不负责修补基本的跨专家越权边界。
+保持阶段 2 的分层 ContextStore，由 Agent 自己决定何时、用什么 query 召回；Host 负责 root/current
+Expert/principal scope、binding/visibility、预算、审计和生命周期。补齐完整治理、产品管理和 Mission
+可见性，不建立 Host prompt planner 或第二条召回旁路。
 
 ### 交付
 
-- `MemoryRetrievalPlanner`：先 policy/visibility/binding 鉴权，再排序与 token budget；
-- planner、managed tool 与未来治理 API 复用 Module 的 scope-bound 查询，不另开旁路；
-- Memory 管理中心：来源、provenance、冲突、修正、失效、删除、Module health；
-- Mission 显示 capture/distillation/recall 摘要；
-- revision binding 包含 recall/export、permissionRevision 和审计记录。
+- `memory/guide.md` 明确 Agent 决定是否召回；Host 不读取 prompt 派生 query、不自动注入、不提供
+  `recall_memory`；
+- 通用 `list/search/read` 复用 Module scope-bound 查询，先执行 policy、visibility 与 revision binding；
+- 搜索在 Module 之间轮询合并，普通搜索排除 Evidence；详情只暴露精确 Evidence 引用；
+- 每个 Execution 保存 capture/recall activity；search 只记录 query digest/length，不保存原文；
+- Episodic v2 与 Semantic binding 包含 recall/export、permissionRevision；mutation 使用 CAS 且只能收紧；
+- invalidate 保留历史；forget 清空内容、history 和孤立 Evidence，只保留 content-free tombstone 并阻止重放；
+- Memory 管理中心展示来源、provenance、冲突、历史、Evidence、治理操作和 Module health；
+- Mission 显示 capture/recall 摘要，Mission 删除级联回收 Execution activity。
 
 ### 退出门槛
 
-- 未授权 Memory 无法从 Context、planner 或 managed tool 旁路读取；
-- 每次 recall 可解释候选、选择和拒绝原因；
+- 未授权 Memory 无法从 list、search、detail 或精确 Evidence 读取旁路；
+- 每次 recall 可解释操作、结果和拒绝原因，且原始搜索 query 不落盘；
 - 单 Module 不可用时其他类型继续服务。
+
+### Implementation record
+
+- Status: Completed
+- Protocols: `pragma.memory-episodic/v2`、`pragma.memory-capture-activity/v1`、
+  `pragma.memory-recall-activity/v1`、`pragma.memory-execution-context/v1`、
+  `pragma.memory-tombstone/v1`；Semantic 内容协议保持 `pragma.memory-semantic/v1`
+- Storage: 每个 Execution 的 activity 位于 `state/memory/executions/<executionId>/activity.sqlite`；
+  Episodic 与 Semantic data store 升级到 user version 2
+- Migration: Episodic v1 使用历史 fixture 验证相邻 v1→v2 binding 转换；Semantic v1→v2 仅增加
+  tombstone 表，不改写 fact 内容；未来版本 fail closed
+- Verification: Memory/Core/Desktop typecheck，Memory 与 Desktop tests，仓库 `pnpm check`、`pnpm build`
+- Known limitations: 不提供跨设备账户合并、分享扩权审批、Knowledge/Skill/CodeGraph、legacy importer；
+  不计划增加 Host prompt retrieval planner
 
 ## 阶段 5：Knowledge Memory
 

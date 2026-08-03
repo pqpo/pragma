@@ -6,7 +6,7 @@ Pragma 的新 Memory Plane 是 Desktop 内置能力，随应用启动，不需�
 
 ## 当前已经可用的能力
 
-当前已完成 Memory Plane 基础设施、策略、Episodic Memory 和 Semantic Memory：
+当前已完成 Memory Plane 基础设施、策略、Episodic Memory、Semantic Memory 和治理管理中心：
 
 - Execution 语义事件通过持久 Canonical Event Feed 交给 Memory Plane；
 - Memory Evidence 自动记录 root Expert/ExpertTeam/Flow 与实际 producer Expert；
@@ -24,9 +24,14 @@ Pragma 的新 Memory Plane 是 Desktop 内置能力，随应用启动，不需�
 - Semantic 默认召回排除过期、失效和 superseded 投影，验证、更正和失效通过 revision CAS 保存历史；
 - Semantic subject 只来自可验证 allowlist：安装级 local User、Pragma Project、根资产和 producer Expert。
   当前不发现 Repository subject，普通 Agent 任务不依赖代码仓库。
+- Agent 自己决定是否需要记忆，并通过通用 ContextStore 逐层 list/search/read；Host 不根据当前 prompt
+  生成隐藏 query，不自动注入匹配项，也没有 `recall_memory` 专用工具；
+- Desktop 一级 Memory 页面可以查看 Episode/Fact、来源、binding、冲突、历史、精确 Evidence 和 Module
+  health，并执行收紧、修正、验证、失效或忘记；
+- Mission 的 Memory 页签显示每次 Execution 的 capture/recall 计数。搜索审计只保存 digest 和长度，
+  不保存 query 原文。
 
-当前尚未实现 Knowledge、Skill Candidate 或 CodeGraph Module。查询相关的主动
-召回排序、Memory 管理中心、候选评审和分享也在后续阶段。
+当前尚未实现 Knowledge、Skill Candidate、CodeGraph Module、候选评审、分享扩权审批或跨设备同步。
 
 ## 分层加载
 
@@ -43,6 +48,10 @@ memory/<type>/evidence/<evidenceId>.md  # 按需核验证据
 
 guide 最多 2KB，overview 最多 6KB。普通搜索不会返回 Evidence；模型必须先找到详情中的稳定引用，再精确
 读取证据。Episodic 是历史先例，不代表当前事实。
+
+这套分层结构就是召回协议：Agent 读取 overview 后自行判断是否继续搜索或加载详情。Host 只执行 scope、
+权限、预算和审计，不理解 prompt 的相关性，也不会在 Agent 不知情时附加检索结果。跨 Module search 使用
+轮询合并，避免某个 Module 因注册顺序独占结果预算。
 
 Semantic 是当前信念投影，也不是无条件真值。详情会展示 confidence、review/expiry、冲突和 Evidence；
 发生冲突时必须读取双方详情与证据，不得根据索引顺序猜测胜者。
@@ -78,6 +87,16 @@ global ∩ root asset ∩ producer experts ∩ mission restriction
 ```
 
 这些设置属于本机 Host binding metadata，不写入 Pragma DSL，不生成 Project Revision。
+
+## 管理与忘记
+
+Memory 管理中心的所有 mutation 都要求当前 revision 和变更原因。Binding 的 recall/export 与 visibility
+只能保持或收紧；当前页面不会授予新的主体或重新开放已拒绝的权限。更正、验证、失效和权限变更会生成
+新 revision，过期 revision 可在历史中核对。
+
+“忘记”与“失效”不同：失效保留内容和历史但停止默认召回；忘记会删除当前内容、全部 revision history、
+此前的 governance event 和不再被引用的 Evidence，只留下不含 Memory 内容和原始理由的 tombstone，以防
+后台 Evidence 重放恢复同一稳定 identity。该操作不可撤销。
 
 这里的“每个资产一个 Memory Store”是逻辑授权视图，不是每个 Expert/Team/Flow 创建一套 SQLite 或目录。
 Episodic 与 Semantic Module 都使用各自的共享物理 Store，并在查询阶段按稳定 binding 与当前 Expert
@@ -123,6 +142,7 @@ Memory revision。分享不会新建一个知识库对象，也不会自动导�
 ~/.pragma/state/memory/modules/<episodic>/jobs.sqlite # Evidence aggregation and durable jobs
 ~/.pragma/data/memory/modules/<semantic>/facts.sqlite # Semantic projection, revisions and audit
 ~/.pragma/state/memory/modules/<semantic>/jobs.sqlite # Semantic Evidence, subjects and durable jobs
+~/.pragma/state/memory/executions/<executionId>/activity.sqlite # capture/recall metadata audit
 ~/.pragma/data/memory/subject-identity.json # Desktop installation-local User identity
 ```
 
@@ -133,5 +153,6 @@ Memory 数据不写 Agent workspace。正常启动不会扫描全部 Mission、E
 - [ADR 031: Extensible Memory Plane](../adr/031-extensible-memory-plane.md)
 - [ADR 032: Durable Canonical Event Feed](../adr/032-durable-canonical-event-feed.md)
 - [ADR 034: Conservative Semantic Memory](../adr/034-conservative-semantic-memory.md)
+- [ADR 035: Agent-driven Memory Recall and Host Governance](../adr/035-agent-driven-memory-recall-and-governance.md)
 - [Memory Plane 落地计划](../architecture/memory-plane-implementation-plan.md)
 - [旧 Memory System ADR（已被替代）](../adr/002-memory-system.md)

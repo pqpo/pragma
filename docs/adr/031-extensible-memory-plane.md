@@ -188,8 +188,10 @@ memory/
 ContextStore 是统一读取协议，不是新的知识库对象或统一物理 Store。大型 CodeGraph 可以通过 Context
 提供摘要和符号文档，同时用 companion tools 做图遍历。
 
-管理修改必须走 Memory governance API；联邦 Context 的 `add/edit/delete` 一律拒绝。主动召回先校验
-有效 recall 策略、visibility 与 binding，再排序和执行 token budget。任何 Module 都不能绕过 Context
+管理修改必须走 Memory governance API；联邦 Context 的 `add/edit/delete` 一律拒绝。召回先校验有效
+recall 策略、visibility 与 binding，再执行 Context budget。Agent 通过通用 ContextStore 自主决定何时
+list/search/read；Host 不从 prompt 派生 query 或注入隐藏结果。该召回职责由
+[ADR 035](./035-agent-driven-memory-recall-and-governance.md) 进一步明确。任何 Module 都不能绕过 Context
 assembly 向 Runtime prompt 任意注入内容。
 
 ## Storage 与迁移

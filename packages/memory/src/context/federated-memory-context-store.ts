@@ -1,4 +1,5 @@
 import {
+  readExecutionRunScope,
   StaticContextStore,
   error,
   ok,
@@ -23,6 +24,7 @@ import {
   MemoryRecallScopeSchema,
   type MemoryRecallScope,
 } from "../pipeline/memory-module.ts";
+import { memoryQueryDigest, type MemoryActivityStore } from "../activity/memory-activity-store.ts";
 
 export const MEMORY_CONTEXT_NAMESPACE = "memory";
 export const MEMORY_GUIDE_CONTEXT_ID = "guide.md";
@@ -38,8 +40,11 @@ export function createFederatedMemoryContextStore(
     readonly resolveRecallScope: (
       context: ExpertAgentRunContext | undefined,
     ) => MemoryRecallScope | undefined | Promise<MemoryRecallScope | undefined>;
+    readonly activity?: Pick<MemoryActivityStore, "recordRecall"> | undefined;
+    readonly now?: (() => Date) | undefined;
   },
 ): ExpertAgentContextStore {
+  const now = options.now ?? (() => new Date());
   const resolveRecallScope = async (
     context: ExpertAgentRunContext | undefined,
   ): Promise<MemoryRecallScope | undefined> => {
@@ -89,7 +94,17 @@ export function createFederatedMemoryContextStore(
   return {
     async listContext(input: ExpertAgentContextItemListInput = {}) {
       const scope = await resolveRecallScope(input.context);
-      if (scope === undefined) return ok([]);
+      if (scope === undefined) {
+        await recordRecall(options.activity, input.context, {
+          operation: "list",
+          target: "memory",
+          resultRefs: [],
+          outcome: "denied",
+          reason: "recall_scope_unavailable",
+          occurredAt: now().toISOString(),
+        });
+        return ok([]);
+      }
       const catalog = await (await rootStore(scope, input.context)).listContext(input);
       if (!catalog.ok) return catalog;
       const items: ExpertAgentContextItemSummary[] = [...catalog.value];
@@ -106,18 +121,42 @@ export function createFederatedMemoryContextStore(
             })),
         );
       }
-      return ok(items.toSorted((left, right) => left.id.localeCompare(right.id)));
+      const sorted = items.toSorted((left, right) => left.id.localeCompare(right.id));
+      await recordRecall(options.activity, input.context, {
+        operation: "list",
+        target: "memory",
+        resultRefs: sorted.map(({ id, revision }) => ({
+          id,
+          ...(revision === undefined ? {} : { revision }),
+        })),
+        outcome: "allowed",
+        reason: "listed",
+        occurredAt: now().toISOString(),
+      });
+      return ok(sorted);
     },
 
     async readContext(input: ExpertAgentStoredContextItemReadInput) {
       const scope = await resolveRecallScope(input.context);
-      if (scope === undefined) return recallDenied(input.id);
+      if (scope === undefined) {
+        await recordRecall(options.activity, input.context, {
+          operation: "read",
+          target: input.id,
+          resultRefs: [],
+          outcome: "denied",
+          reason: "recall_scope_unavailable",
+          occurredAt: now().toISOString(),
+        });
+        return recallDenied(input.id);
+      }
       if (
         input.id === MEMORY_GUIDE_CONTEXT_ID ||
         input.id === MEMORY_OVERVIEW_CONTEXT_ID ||
         input.id === MEMORY_CATALOG_CONTEXT_ID
       ) {
-        return await (await rootStore(scope, input.context)).readContext(input);
+        const result = await (await rootStore(scope, input.context)).readContext(input);
+        await auditRead(options.activity, input.context, input.id, result, now());
+        return result;
       }
       const route = resolveRoute(registry, input.id);
       if (route === undefined)
@@ -126,28 +165,52 @@ export function createFederatedMemoryContextStore(
         ...input,
         id: route.localId,
       });
-      return mapReadResult(result, route.module.descriptor.pathPrefix);
+      const mapped = mapReadResult(result, route.module.descriptor.pathPrefix);
+      await auditRead(options.activity, input.context, input.id, mapped, now());
+      return mapped;
     },
 
     async searchContext(input: ExpertAgentStoredContextItemSearchInput) {
       const scope = await resolveRecallScope(input.context);
-      if (scope === undefined) return recallDenied("search");
-      const matches: ExpertAgentContextItemSearchMatch[] = [];
+      if (scope === undefined) {
+        await recordRecall(options.activity, input.context, {
+          operation: "search",
+          target: "memory",
+          queryDigest: memoryQueryDigest(input.query),
+          queryLength: input.query.length,
+          resultRefs: [],
+          outcome: "denied",
+          reason: "recall_scope_unavailable",
+          occurredAt: now().toISOString(),
+        });
+        return recallDenied("search");
+      }
+      const groups: ExpertAgentContextItemSearchMatch[][] = [];
       const catalog = await (await rootStore(scope, input.context)).searchContext(input);
-      if (catalog.ok) matches.push(...catalog.value);
+      if (catalog.ok && catalog.value.length > 0) groups.push([...catalog.value]);
       for (const module of registry.list()) {
         const result = await module.createContextProvider(scope).searchContext(input);
         if (!result.ok) continue;
-        matches.push(
-          ...result.value
-            .filter((match) => !match.id.startsWith(module.descriptor.contextLayers.evidencePrefix))
-            .map((match) => ({
-              ...match,
-              id: `${module.descriptor.pathPrefix}/${match.id}`,
-            })),
-        );
+        const matches = result.value
+          .filter((match) => !match.id.startsWith(module.descriptor.contextLayers.evidencePrefix))
+          .map((match) => ({
+            ...match,
+            id: `${module.descriptor.pathPrefix}/${match.id}`,
+          }));
+        if (matches.length > 0) groups.push(matches);
       }
-      return ok(matches.slice(0, input.maxResults ?? matches.length));
+      const matches = roundRobin(groups, input.maxResults);
+      await recordRecall(options.activity, input.context, {
+        operation: "search",
+        target: "memory",
+        queryDigest: memoryQueryDigest(input.query),
+        queryLength: input.query.length,
+        resultRefs: uniqueResultRefs(matches.map(({ id }) => ({ id }))),
+        outcome: "allowed",
+        reason: matches.length === 0 ? "no_match" : "matched",
+        occurredAt: now().toISOString(),
+      });
+      return ok(matches);
     },
 
     async addContext(input: ExpertAgentStoredContextRegisterInput) {
@@ -162,6 +225,73 @@ export function createFederatedMemoryContextStore(
   };
 }
 
+async function auditRead(
+  activity: Pick<MemoryActivityStore, "recordRecall"> | undefined,
+  context: ExpertAgentRunContext | undefined,
+  target: string,
+  result: ExpertAgentContextResult<ExpertAgentStoredContextItemReadResult>,
+  now: Date,
+): Promise<void> {
+  await recordRecall(activity, context, {
+    operation: "read",
+    target,
+    resultRefs: result.ok
+      ? [
+          {
+            id: result.value.id,
+            ...(result.value.revision === undefined ? {} : { revision: result.value.revision }),
+          },
+        ]
+      : [],
+    outcome: result.ok
+      ? "allowed"
+      : result.error.code === "permission_denied"
+        ? "denied"
+        : "failed",
+    reason: result.ok ? "read" : result.error.code,
+    occurredAt: now.toISOString(),
+  });
+}
+
+async function recordRecall(
+  activity: Pick<MemoryActivityStore, "recordRecall"> | undefined,
+  context: ExpertAgentRunContext | undefined,
+  input: Omit<Parameters<MemoryActivityStore["recordRecall"]>[0], "executionId" | "invocationId">,
+): Promise<void> {
+  if (activity === undefined) return;
+  const scope = readExecutionRunScope(context);
+  if (scope.executionId === undefined || scope.invocationId === undefined) return;
+  await activity
+    .recordRecall({ ...input, executionId: scope.executionId, invocationId: scope.invocationId })
+    .catch(() => undefined);
+}
+
+function roundRobin(
+  groups: readonly (readonly ExpertAgentContextItemSearchMatch[])[],
+  requestedLimit: number | undefined,
+): ExpertAgentContextItemSearchMatch[] {
+  const limit = requestedLimit ?? groups.reduce((total, group) => total + group.length, 0);
+  const result: ExpertAgentContextItemSearchMatch[] = [];
+  for (let index = 0; result.length < limit; index += 1) {
+    let added = false;
+    for (const group of groups) {
+      const match = group[index];
+      if (match === undefined) continue;
+      result.push(match);
+      added = true;
+      if (result.length >= limit) break;
+    }
+    if (!added) break;
+  }
+  return result;
+}
+
+function uniqueResultRefs(
+  refs: readonly { readonly id: string; readonly revision?: string | undefined }[],
+) {
+  return [...new Map(refs.map((ref) => [ref.id, ref])).values()];
+}
+
 function recallDenied<T>(id: string): ExpertAgentContextResult<T> {
   return error("permission_denied", `Memory recall is disabled for this context: ${id}`, { id });
 }
@@ -171,6 +301,7 @@ function renderGuide(registry: MemoryModuleRegistry): string {
     "# Memory Guide",
     "",
     "Memory is reference context, not a replacement for the current user instruction.",
+    "You decide whether and when memory is relevant. The Host does not derive a retrieval query or inject hidden matches from the current prompt.",
     "The current Memory view combines the root execution asset with the current Expert's personal Store. Keep those ownership scopes distinct.",
     "A Team or Flow Episode belongs to that Team or Flow; producer Experts are provenance and do not inherit it as personal history.",
     "Start with the bounded overview. Search when the relevant memory id is unknown, then read the item detail.",

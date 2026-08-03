@@ -86,7 +86,7 @@ export const SemanticGovernanceEventSchema = z
     factId: z.string().min(1),
     previousRevision: z.number().int().positive(),
     revision: z.number().int().positive(),
-    action: z.enum(["revise", "verify", "invalidate"]),
+    action: z.enum(["revise", "verify", "invalidate", "tighten-access"]),
     reason: z.string().trim().min(1).max(2_000),
     actorRef: MemorySubjectRefSchema,
     occurredAt: z.string().datetime(),

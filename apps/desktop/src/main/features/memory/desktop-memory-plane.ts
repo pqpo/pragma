@@ -1,5 +1,6 @@
 import {
   EXECUTION_CURRENT_EXPERT_ID_ATTR,
+  readExecutionRunScope,
   createFileCanonicalEventFeed,
   createFileExecutionStore,
   type FileExecutionStore,
@@ -18,6 +19,7 @@ import {
   createMemoryEvidenceFeed,
   createMemoryEvidencePublisher,
   createMemoryPipelineScheduler,
+  createMemoryActivityStore,
   MemoryRecallScopeSchema,
   type MemoryPolicyStore,
   type MemoryRecallScope,
@@ -25,19 +27,33 @@ import {
   type MemoryExtractorProfileStore,
   type SemanticMemoryExtractor,
   type SemanticMemoryStore,
+  type EpisodicMemoryStore,
+  type MemoryActivityStore,
 } from "@pragma/memory";
 
 import { createDesktopMemorySubjectIdentityStore } from "./memory-subject-identity.ts";
+
+export type DesktopMemoryMutationResult =
+  | {
+      readonly module: "episodic";
+      readonly record: import("@pragma/memory").EpisodicMemoryRecord;
+    }
+  | {
+      readonly module: "semantic";
+      readonly record: import("@pragma/shared").SemanticFact;
+    };
 
 export interface DesktopMemoryPlane {
   readonly executionStore: FileExecutionStore;
   readonly policies: MemoryPolicyStore;
   readonly extractorProfiles: MemoryExtractorProfileStore;
   readonly semanticStore: SemanticMemoryStore;
+  readonly episodicStore: EpisodicMemoryStore;
+  readonly activity: MemoryActivityStore;
   readonly contextStore: import("@pragma/core").ExpertAgentContextStore;
   setEpisodicExtractor(extractor: EpisodicMemoryExtractor | undefined): Promise<void>;
   setSemanticExtractor(extractor: SemanticMemoryExtractor | undefined): Promise<void>;
-  registerSemanticExecutionContext(input: {
+  registerMemoryExecutionContext(input: {
     readonly executionId: string;
     readonly projectId: string;
   }): Promise<void>;
@@ -47,9 +63,26 @@ export interface DesktopMemoryPlane {
   verifySemanticFact(
     input: Omit<Parameters<SemanticMemoryStore["verify"]>[0], "actorRef" | "now">,
   ): Promise<import("@pragma/shared").SemanticFact>;
-  invalidateSemanticFact(
-    input: Omit<Parameters<SemanticMemoryStore["invalidate"]>[0], "actorRef" | "now">,
-  ): Promise<import("@pragma/shared").SemanticFact>;
+  tightenMemoryAccess(input: {
+    readonly module: "episodic" | "semantic";
+    readonly id: string;
+    readonly expectedRevision: number;
+    readonly reason: string;
+    readonly bindings?: import("@pragma/shared").MemoryRevisionBinding[] | undefined;
+    readonly visibility?: import("@pragma/shared").MemoryVisibilityPolicy | undefined;
+  }): Promise<DesktopMemoryMutationResult>;
+  invalidateMemoryItem(input: {
+    readonly module: "episodic" | "semantic";
+    readonly id: string;
+    readonly expectedRevision: number;
+    readonly reason: string;
+  }): Promise<DesktopMemoryMutationResult>;
+  forgetMemoryItem(input: {
+    readonly module: "episodic" | "semantic";
+    readonly id: string;
+    readonly expectedRevision: number;
+    readonly reason: string;
+  }): Promise<void>;
   wakeMemoryJobs(): Promise<void>;
   getStatus(): Promise<{
     readonly state: "running" | "stopped" | "degraded";
@@ -91,10 +124,22 @@ export async function createDesktopMemoryPlane(options: {
   const subjectIdentities = createDesktopMemorySubjectIdentityStore({
     pragmaHome: options.pragmaHome,
   });
+  const activity = createMemoryActivityStore({ pragmaHome: options.pragmaHome });
   registry.register(episodic);
   registry.register(semantic);
   const contextStore = createFederatedMemoryContextStore(registry, {
-    resolveRecallScope: async (context) => await resolveDesktopMemoryRecallScope(policies, context),
+    resolveRecallScope: async (context) => {
+      const executionId = readExecutionRunScope(context).executionId;
+      const executionContext =
+        executionId === undefined ? undefined : await activity.getExecutionContext(executionId);
+      return await resolveDesktopMemoryRecallScope(
+        policies,
+        context,
+        new Date(),
+        executionContext?.principalRefs ?? [],
+      );
+    },
+    activity,
   });
   const adapter = createExecutionEvidenceAdapter({
     source: canonical,
@@ -102,6 +147,7 @@ export async function createDesktopMemoryPlane(options: {
     checkpoints: state,
     deadLetters: state,
     policies,
+    activity,
   });
   const scheduler = createMemoryPipelineScheduler({
     registry,
@@ -169,6 +215,8 @@ export async function createDesktopMemoryPlane(options: {
     policies,
     extractorProfiles,
     semanticStore: semantic.store,
+    episodicStore: episodic.store,
+    activity,
     contextStore,
     async setEpisodicExtractor(extractor) {
       await episodic.setExtractor(extractor);
@@ -178,11 +226,13 @@ export async function createDesktopMemoryPlane(options: {
       await semantic.setExtractor(extractor);
       scheduler.wake();
     },
-    async registerSemanticExecutionContext(input) {
+    async registerMemoryExecutionContext(input) {
       const localUser = await subjectIdentities.getLocalUserRef();
+      const principalRefs = [localUser, { type: "pragma.project" as const, id: input.projectId }];
+      await activity.registerExecutionContext({ executionId: input.executionId, principalRefs });
       await semantic.registerExecutionSubjects({
         executionId: input.executionId,
-        subjectRefs: [localUser, { type: "pragma.project", id: input.projectId }],
+        subjectRefs: principalRefs,
       });
       scheduler.wake();
     },
@@ -200,12 +250,43 @@ export async function createDesktopMemoryPlane(options: {
         now: new Date(),
       });
     },
-    async invalidateSemanticFact(input) {
-      return await semantic.store.invalidate({
-        ...input,
+    async tightenMemoryAccess(input) {
+      const actorRef = await subjectIdentities.getLocalUserRef();
+      const common = {
+        id: input.id,
+        expectedRevision: input.expectedRevision,
+        reason: input.reason,
+        actorRef,
+        now: new Date(),
+        ...(input.bindings === undefined ? {} : { bindings: input.bindings }),
+        ...(input.visibility === undefined ? {} : { visibility: input.visibility }),
+      };
+      return input.module === "episodic"
+        ? { module: "episodic", record: await episodic.store.tightenAccess(common) }
+        : { module: "semantic", record: await semantic.store.tightenAccess(common) };
+    },
+    async invalidateMemoryItem(input) {
+      const common = {
+        id: input.id,
+        expectedRevision: input.expectedRevision,
+        reason: input.reason,
         actorRef: await subjectIdentities.getLocalUserRef(),
         now: new Date(),
-      });
+      };
+      return input.module === "episodic"
+        ? { module: "episodic", record: await episodic.store.invalidate(common) }
+        : { module: "semantic", record: await semantic.store.invalidate(common) };
+    },
+    async forgetMemoryItem(input) {
+      const common = {
+        id: input.id,
+        expectedRevision: input.expectedRevision,
+        reason: input.reason,
+        actorRef: await subjectIdentities.getLocalUserRef(),
+        now: new Date(),
+      };
+      if (input.module === "episodic") await episodic.store.forget(common);
+      else await semantic.store.forget(common);
     },
     async wakeMemoryJobs() {
       await Promise.all([
@@ -279,12 +360,14 @@ export async function resolveDesktopMemoryRecallScope(
   policies: Pick<MemoryPolicyStore, "resolveAt">,
   context: ExpertAgentRunContext | undefined,
   now: Date = new Date(),
+  principalRefs: readonly import("@pragma/shared").MemorySubjectRef[] = [],
 ): Promise<MemoryRecallScope | undefined> {
   const source = context?.source;
   const currentExpertId = context?.attributes?.[EXECUTION_CURRENT_EXPERT_ID_ATTR];
   const scope = MemoryRecallScopeSchema.safeParse({
     rootRef: { type: source?.type, id: source?.id },
     expertRef: { type: "pragma.expert", id: currentExpertId },
+    ...(principalRefs.length === 0 ? {} : { principalRefs }),
   });
   if (!scope.success) return undefined;
   const policy = await policies.resolveAt({

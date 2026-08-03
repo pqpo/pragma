@@ -2,11 +2,12 @@ import {
   MemoryEvidenceEnvelopeSchema,
   MemorySensitivitySchema,
   MemorySubjectRefSchema,
+  MemoryRevisionBindingSchema,
   MemoryVisibilityPolicySchema,
 } from "@pragma/shared";
 import { z } from "zod";
 
-export const EPISODIC_MEMORY_SCHEMA_VERSION = "pragma.memory-episodic/v1" as const;
+export const EPISODIC_MEMORY_SCHEMA_VERSION = "pragma.memory-episodic/v2" as const;
 export const EPISODIC_JOB_SCHEMA_VERSION = "pragma.memory-extraction-job/v1" as const;
 
 const EvidenceRefsSchema = z.array(z.string().min(1)).min(1).max(100);
@@ -63,7 +64,7 @@ export const EpisodicMemoryRecordSchema = z.object({
   evidenceRefs: z.array(z.string().min(1)).min(1).max(500),
   visibility: MemoryVisibilityPolicySchema,
   sensitivity: MemorySensitivitySchema,
-  bindings: z.array(MemorySubjectRefSchema).max(100),
+  bindings: z.array(MemoryRevisionBindingSchema).min(1).max(100),
   valueScore: z.number().min(0).max(1),
   status: z.enum(["active", "invalidated"]),
   invalidatedAt: z.string().datetime().optional(),

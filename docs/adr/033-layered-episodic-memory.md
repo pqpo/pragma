@@ -60,4 +60,5 @@ profile，不读取环境变量。配置变化唤醒 `needs_attention` 任务。
 - Episodic projection 在 capture 开启时生成；`learning` 只控制 Knowledge/Skill 候选。
 - per-asset Store 是共享物理 Store 上的授权逻辑视图，不为每个资产创建数据库或目录孤岛。
 - Memory Curator 无工具、无 Memory recall，且不出现在普通 Mission 或执行器目录。
-- 主动召回排序、管理中心、分享和跨设备同步仍由后续阶段实现。
+- Agent 驱动召回和管理中心由 [ADR 035](./035-agent-driven-memory-recall-and-governance.md) 补齐；分享和
+  跨设备同步仍由后续阶段实现。Host 主动召回排序不再是目标架构。

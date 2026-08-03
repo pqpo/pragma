@@ -207,14 +207,11 @@ export function createMissionRunner(options: {
   readonly usage?: DesktopUsageStore | undefined;
   readonly loggerProvider?: import("@pragma/core").PragmaLoggerProvider | undefined;
   readonly runtimesForToolPermissionMode?:
-    | ((mode: DesktopToolPermissionMode) => RuntimeResolver)
-    | undefined;
+    ((mode: DesktopToolPermissionMode) => RuntimeResolver) | undefined;
   readonly automaticHumanInteractionHandler?:
-    | ExpertAgentAutomaticHumanInteractionHandler
-    | undefined;
+    ExpertAgentAutomaticHumanInteractionHandler | undefined;
   readonly automaticHumanInteractionHandlerForToolPermissionMode?:
-    | ((mode: DesktopToolPermissionMode) => ExpertAgentAutomaticHumanInteractionHandler)
-    | undefined;
+    ((mode: DesktopToolPermissionMode) => ExpertAgentAutomaticHumanInteractionHandler) | undefined;
   readonly compileSystemExecutor?:
     | ((input: {
         readonly mission: Mission;
@@ -222,8 +219,7 @@ export function createMissionRunner(options: {
       }) => Promise<CompiledResource<InvocableResource> | undefined>)
     | undefined;
   readonly getSystemExecutorFingerprint?:
-    | ((mission: Mission) => string | undefined | Promise<string | undefined>)
-    | undefined;
+    ((mission: Mission) => string | undefined | Promise<string | undefined>) | undefined;
   readonly assertStorageWriteAllowed?: (() => Promise<void>) | undefined;
   readonly assertExecutorReady?: ((ref: string) => void | Promise<void>) | undefined;
   readonly onStorageTrashed?: (() => void) | undefined;
@@ -1168,6 +1164,10 @@ export function createMissionRunner(options: {
         label: `execution-archives/${executionId}.jsonl.gz`,
         path: paths.executionArchive(executionId),
       })),
+      ...[...executionIds].map((executionId) => ({
+        label: `memory-execution-activity/${executionId}`,
+        path: paths.memoryExecutionActivityRoot(executionId),
+      })),
       ...(sessionId === undefined
         ? []
         : [
@@ -1888,8 +1888,7 @@ function toRuntimeModelSelection(
 function attachHostContextStores(
   resource: InvocableResource,
   stores:
-    | readonly { readonly namespace: string; readonly store: ExpertAgentContextStore }[]
-    | undefined,
+    readonly { readonly namespace: string; readonly store: ExpertAgentContextStore }[] | undefined,
 ): void {
   if (stores === undefined || stores.length === 0) return;
   const attachExpert = (expert: Expert): void => {

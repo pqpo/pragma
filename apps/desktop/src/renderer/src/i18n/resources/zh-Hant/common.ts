@@ -33,6 +33,7 @@ export const common = {
     missions: "任務",
     studio: "工作室",
     evaluations: "評測",
+    memory: "記憶",
     usage: "用量",
     settings: "設定",
     main: "主導覽",

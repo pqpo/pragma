@@ -409,7 +409,7 @@ export async function createDesktopApplicationContainer(
     onStorageTrashed: () => trashMaintenance.schedule("mission-storage-trashed"),
     onExecutionLinked: async ({ mission, executionId }) => {
       if (mission.origin.type === "system-memory") return;
-      await memoryPlane.registerSemanticExecutionContext({
+      await memoryPlane.registerMemoryExecutionContext({
         executionId,
         projectId: mission.project.id,
       });
@@ -585,7 +585,7 @@ export async function createDesktopApplicationContainer(
       }
     },
   });
-  installMemoryPolicyHandlers(memoryPlane);
+  installMemoryPolicyHandlers(memoryPlane, { missions: missionStore });
   installModelProviderHandlers(modelProviderStore, {
     isProviderReferenced: async (providerId) =>
       (await pragmaProjectStore.get()).resources.some(

@@ -24,6 +24,7 @@ import type {
 } from "../pipeline/pipeline-state-store.ts";
 import type { MemoryPolicyStore } from "../policy/memory-policy-store.ts";
 import { MEMORY_CURATOR_ID } from "../curator.ts";
+import type { MemoryActivityStore, MemoryCaptureDecision } from "../activity/memory-activity-store.ts";
 
 export const EXECUTION_EVIDENCE_ADAPTER_ID = "pragma.memory.execution-evidence-adapter";
 
@@ -39,6 +40,7 @@ export function createExecutionEvidenceAdapter(options: {
   readonly policies: Pick<MemoryPolicyStore, "resolveAt">;
   readonly batchSize?: number | undefined;
   readonly now?: (() => Date) | undefined;
+  readonly activity?: Pick<MemoryActivityStore, "recordCapture"> | undefined;
 }): ExecutionEvidenceAdapter {
   const now = options.now ?? (() => new Date());
   return {
@@ -52,6 +54,7 @@ export function createExecutionEvidenceAdapter(options: {
         return { published: 0, skipped: 0 };
       }
       const evidence: MemoryEvidenceEnvelope[] = [];
+      const captureDecisions: MemoryCaptureDecision[] = [];
       let skipped = 0;
       for (const item of page.items) {
         if (item.kind === "unreadable") {
@@ -75,6 +78,7 @@ export function createExecutionEvidenceAdapter(options: {
           attribution.rootRef?.type === "pragma.expert" &&
           attribution.rootRef.id === MEMORY_CURATOR_ID
         ) {
+          addCaptureDecision(captureDecisions, item.event, "skipped", "memory_curator_excluded");
           skipped += 1;
           continue;
         }
@@ -86,6 +90,7 @@ export function createExecutionEvidenceAdapter(options: {
             occurredAt: item.event.occurredAt,
           });
         } catch {
+          addCaptureDecision(captureDecisions, item.event, "failed", "memory_policy_unavailable");
           await options.deadLetters.put({
             schemaVersion: "pragma.memory-dead-letter/v1",
             consumerId: EXECUTION_EVIDENCE_ADAPTER_ID,
@@ -98,6 +103,7 @@ export function createExecutionEvidenceAdapter(options: {
           continue;
         }
         if (!policy.capture) {
+          addCaptureDecision(captureDecisions, item.event, "skipped", "capture_disabled");
           skipped += 1;
           continue;
         }
@@ -106,9 +112,15 @@ export function createExecutionEvidenceAdapter(options: {
             throw new Error(`Unsupported Execution event schema: ${item.event.schemaRef}`);
           }
           const mapped = mapExecutionEvent(item.event, policy, attribution);
-          if (mapped === undefined) skipped += 1;
-          else evidence.push(mapped);
+          if (mapped === undefined) {
+            addCaptureDecision(captureDecisions, item.event, "skipped", "not_memory_evidence");
+            skipped += 1;
+          } else {
+            evidence.push(mapped);
+            addCaptureDecision(captureDecisions, item.event, "published", "evidence_published");
+          }
         } catch {
+          addCaptureDecision(captureDecisions, item.event, "failed", "execution_evidence_invalid");
           await options.deadLetters.put({
             schemaVersion: "pragma.memory-dead-letter/v1",
             consumerId: EXECUTION_EVIDENCE_ADAPTER_ID,
@@ -121,6 +133,11 @@ export function createExecutionEvidenceAdapter(options: {
         }
       }
       await options.publisher.publish(evidence);
+      await Promise.all(
+        captureDecisions.map(async (decision) => {
+          await options.activity?.recordCapture(decision).catch(() => undefined);
+        }),
+      );
       await options.checkpoints.update(EXECUTION_EVIDENCE_ADAPTER_ID, (current) => ({
         ...current,
         sequence: page.nextCursor.sequence,
@@ -131,6 +148,23 @@ export function createExecutionEvidenceAdapter(options: {
       return { published: evidence.length, skipped };
     },
   };
+}
+
+function addCaptureDecision(
+  decisions: MemoryCaptureDecision[],
+  event: CanonicalEventEnvelope,
+  outcome: MemoryCaptureDecision["outcome"],
+  reason: string,
+): void {
+  if (event.correlationId === undefined) return;
+  decisions.push({
+    schemaVersion: "pragma.memory-capture-activity/v1",
+    sourceEventId: event.eventId,
+    executionId: event.correlationId,
+    outcome,
+    reason,
+    occurredAt: event.occurredAt,
+  });
 }
 
 function mapExecutionEvent(
