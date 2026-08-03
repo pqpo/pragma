@@ -1,4 +1,4 @@
-import { randomUUID } from "node:crypto";
+import { createHash, randomUUID } from "node:crypto";
 import {
   lstat,
   mkdir,
@@ -20,7 +20,17 @@ import {
   recoverAtomicStateMigration,
   withFileLock,
 } from "@pragma/core";
-import { PragmaProjectValidationError } from "@pragma/interpreter";
+import {
+  PragmaBundleFormatError,
+  PragmaProjectValidationError,
+  collectPragmaProjectArtifactPaths,
+  decodePragmaBundle,
+  loadPragmaProject,
+  localizePragmaBundleResources,
+  remapPragmaProjectArtifactPaths,
+  type DecodedPragmaBundle,
+  type PragmaBundleRequirement,
+} from "@pragma/interpreter";
 import {
   PragmaInvocableResourceRefSchema,
   PragmaResourceSchema,
@@ -29,11 +39,12 @@ import {
   type PragmaResource,
   type PragmaResourceRef,
 } from "@pragma/interpreter/ast";
-import { strFromU8, strToU8, zipSync } from "fflate";
+import { strFromU8, zipSync } from "fflate";
 import { z } from "zod";
 
 import {
   CreateCapabilitySchema,
+  CapabilityDefinitionSchema,
   PragmaBundleExportPreviewSchema,
   PragmaBundleExportResultSchema,
   PragmaBundleImportInspectionSchema,
@@ -57,28 +68,15 @@ import type { PluginStore } from "../plugins/plugin-store.ts";
 import type { PragmaProjectStore } from "../projects/pragma-project-store.ts";
 import { referencedPragmaResourceRefs } from "../projects/pragma-resource-references.ts";
 import type { WorkflowLayoutStore } from "../projects/workflow-layout-store.ts";
-import {
-  MAX_BUNDLE_ARCHIVE_BYTES,
-  MAX_BUNDLE_FILES,
-  MAX_BUNDLE_UNPACKED_BYTES,
-  PragmaBundleManifestSchema,
-  createBundleFingerprint,
-  createPragmaBundleZip,
-  isPortableValue,
-  readPragmaBundle,
-  sha256,
-  stableStringify,
-  writeBundleAtomically,
-  type BundleManifest,
-} from "./pragma-bundle-format.ts";
+import { writeBundleAtomically } from "./pragma-bundle-file.ts";
 import {
   assertPortablePluginConfigs,
   assertUniqueResolutionRefs,
   collectCapabilities,
   collectContexts,
   collectPlugins,
-  collectRuntimes,
   inspectPendingDependencies,
+  isPortableValue,
   mergePendingMetadata,
   pendingBinding,
   runtimeDependencyAvailable,
@@ -86,30 +84,37 @@ import {
 } from "./pragma-bundle-dependencies.ts";
 import {
   artifactPathIsReferenced,
-  collectProjectArtifactPaths,
-  collectResourceClosure,
   findBundleConflicts,
   isBundleOwnedArtifact,
-  makePortableBundleResources,
-  rewriteBundleWithResolutions,
-  rewriteProjectArtifactPaths,
+  resolveBundleIdentities,
 } from "./pragma-bundle-resources.ts";
 
 const InstallationCatalogSchema = z
   .object({
-    schemaVersion: z.literal("pragma.bundle-installations/v2"),
+    schemaVersion: z.literal("pragma.bundle-installations/v3"),
     installations: z.array(PragmaBundleInstallationSchema),
+  })
+  .strict();
+
+const DesktopContextPayloadDescriptorSchema = z
+  .object({
+    name: z.string().min(1),
+    description: z.string(),
+    fingerprint: z.string().regex(/^[a-f0-9]{64}$/),
   })
   .strict();
 
 function findIncompleteInstallation(
   installations: readonly PragmaBundleInstallation[],
   bundleFingerprint: string,
+  sourceRootRef: string,
 ): PragmaBundleInstallation | undefined {
   return installations
     .filter(
       (installation) =>
-        installation.bundleFingerprint === bundleFingerprint && installation.status !== "ready",
+        installation.bundleFingerprint === bundleFingerprint &&
+        installation.sourceRootRef === sourceRootRef &&
+        installation.status !== "ready",
     )
     .toSorted((left, right) => right.updatedAt.localeCompare(left.updatedAt))[0];
 }
@@ -122,6 +127,18 @@ function assertResolutionTargets(
   for (const resolution of resolutions) {
     if (!allowedRefs.has(resolution.resourceRef)) {
       throw new Error(`${label} is not requested by this Bundle: ${resolution.resourceRef}.`);
+    }
+  }
+}
+
+function assertRequirementTargets(
+  resolutions: readonly { readonly requirementId: string }[],
+  allowedIds: ReadonlySet<string>,
+  label: string,
+): void {
+  for (const resolution of resolutions) {
+    if (!allowedIds.has(resolution.requirementId)) {
+      throw new Error(`${label} is not requested by this Bundle: ${resolution.requirementId}.`);
     }
   }
 }
@@ -168,8 +185,9 @@ export interface PragmaBundleService {
   ): Promise<{
     readonly path: string;
     readonly bundleFingerprint: string;
+    readonly projectFingerprint: string;
   }>;
-  inspect(sourcePath: string): Promise<PragmaBundleImportInspection>;
+  inspect(sourcePath: string, rootRef?: string): Promise<PragmaBundleImportInspection>;
   startImport(input: StartPragmaBundleImport): Promise<PragmaBundleInstallation>;
   listInstallations(): Promise<readonly PragmaBundleInstallation[]>;
   resolveInstallation(input: ResolvePragmaBundleInstallation): Promise<PragmaBundleInstallation>;
@@ -185,7 +203,6 @@ export function createPragmaBundleService(options: {
   readonly plugins: PluginStore;
   readonly layouts: WorkflowLayoutStore;
   readonly getRuntimes: () => Promise<readonly DesktopRuntimeAvailability[]>;
-  readonly externalResourceRefs?: ReadonlySet<string> | undefined;
 }): PragmaBundleService {
   const readCatalogFile = async (): Promise<z.infer<typeof InstallationCatalogSchema>> => {
     try {
@@ -194,7 +211,7 @@ export function createPragmaBundleService(options: {
       );
     } catch (error) {
       if ((error as NodeJS.ErrnoException).code === "ENOENT") {
-        return { schemaVersion: "pragma.bundle-installations/v2", installations: [] };
+        return { schemaVersion: "pragma.bundle-installations/v3", installations: [] };
       }
       throw error;
     }
@@ -353,24 +370,38 @@ export function createPragmaBundleService(options: {
         `Project revision changed from ${projectRevision} to ${snapshot.revision}. Reopen the export dialog.`,
       );
     }
-    const root = snapshot.resources.find(
-      (resource): resource is PragmaInvocableResource =>
-        canonicalPragmaResourceRef(resource) === rootRef &&
-        (resource.kind === "Expert" || resource.kind === "ExpertTeam" || resource.kind === "Flow"),
-    );
-    if (root === undefined) throw new Error(`Bundle root not found: ${rootRef}`);
-    const resources = collectResourceClosure(
-      root,
-      snapshot.resources,
-      options.externalResourceRefs,
-    );
-    const capabilities = await collectCapabilities(resources, options.capabilities);
-    const contexts = await collectContexts(resources, options.contextStores);
-    const plugins = await collectPlugins(resources, options.plugins);
-    await assertPortablePluginConfigs(resources, plugins, options.plugins);
-    const runtimes = collectRuntimes(resources);
-    const flows = resources.filter((resource) => resource.kind === "Flow");
-    return { snapshot, root, resources, capabilities, contexts, plugins, runtimes, flows };
+    const project = await options.project.openRevision(projectRevision);
+    try {
+      const resources = project.listResourceClosure(
+        PragmaInvocableResourceRefSchema.parse(rootRef),
+      );
+      const root = resources.find(
+        (resource): resource is PragmaInvocableResource =>
+          canonicalPragmaResourceRef(resource) === rootRef &&
+          (resource.kind === "Expert" ||
+            resource.kind === "ExpertTeam" ||
+            resource.kind === "Flow"),
+      );
+      if (root === undefined) throw new Error(`Bundle root not found: ${rootRef}`);
+      const capabilities = await collectCapabilities(resources, options.capabilities);
+      const contexts = await collectContexts(resources, options.contextStores);
+      const plugins = await collectPlugins(resources, options.plugins);
+      await assertPortablePluginConfigs(resources, plugins, options.plugins);
+      const flows = resources.filter((resource) => resource.kind === "Flow");
+      return {
+        snapshot,
+        project,
+        root,
+        resources,
+        capabilities,
+        contexts,
+        plugins,
+        flows,
+      };
+    } catch (error) {
+      await project.dispose();
+      throw error;
+    }
   };
 
   const recheck = async (
@@ -421,7 +452,7 @@ export function createPragmaBundleService(options: {
         "Imported resources are referenced by other project resources and cannot be discarded.",
       );
     }
-    const retainedArtifactPaths = collectProjectArtifactPaths(retainedResources);
+    const retainedArtifactPaths = collectPragmaProjectArtifactPaths(retainedResources);
     if (retainedArtifactPaths.some((path) => path.startsWith(`imports/${installation.id}/`))) {
       throw new Error(
         "Imported files are referenced by retained project resources and cannot be discarded.",
@@ -466,220 +497,166 @@ export function createPragmaBundleService(options: {
 
     async prepareExport(input) {
       const prepared = await prepare(input.rootRef, input.projectRevision);
-      return PragmaBundleExportPreviewSchema.parse({
-        root: {
-          ref: canonicalPragmaResourceRef(prepared.root),
-          kind: prepared.root.kind,
-          name: prepared.root.metadata.name,
-        },
-        projectRevision: prepared.snapshot.revision,
-        resourceCount: prepared.resources.length,
-        capabilityCount: prepared.capabilities.length,
-        pluginCount: prepared.plugins.length,
-        knowledgeBaseCount: prepared.contexts.length,
-        hasFlowLayouts: prepared.flows.length > 0,
-        defaults: {
-          capabilities: true,
-          plugins: true,
-          knowledgeBases: false,
-          flowLayouts: true,
-        },
-      });
+      try {
+        return PragmaBundleExportPreviewSchema.parse({
+          root: {
+            ref: canonicalPragmaResourceRef(prepared.root),
+            kind: prepared.root.kind,
+            name: prepared.root.metadata.name,
+          },
+          projectRevision: prepared.snapshot.revision,
+          resourceCount: prepared.resources.length,
+          capabilityCount: prepared.capabilities.length,
+          pluginCount: prepared.plugins.length,
+          knowledgeBaseCount: prepared.contexts.length,
+          hasFlowLayouts: prepared.flows.length > 0,
+          defaults: {
+            capabilities: true,
+            plugins: true,
+            knowledgeBases: false,
+            flowLayouts: true,
+          },
+        });
+      } finally {
+        await prepared.project.dispose();
+      }
     },
 
     async exportTo(input, destinationPath) {
       const prepared = await prepare(input.rootRef, input.projectRevision);
-      const portableResources = makePortableBundleResources(prepared.resources);
-      const allArtifacts = await options.project.readArtifacts(input.projectRevision);
-      const artifactPaths = collectProjectArtifactPaths(portableResources);
-      const artifacts = new Map(
-        [...allArtifacts].filter(([path]) =>
-          artifactPaths.some(
-            (source) => path === source || path.startsWith(`${source.replace(/\/+$/, "")}/`),
-          ),
-        ),
-      );
-      let rendered: ReadonlyMap<string, string>;
       try {
-        rendered = await options.project.renderProjectFiles({
-          resources: portableResources,
-          artifacts,
-        });
-      } catch (error) {
-        throwBundleExportValidationError(error);
-      }
-      const files = new Map<string, Uint8Array>(
-        [...rendered].map(([path, contents]) => [path, strToU8(contents)]),
-      );
-
-      const capabilities = await Promise.all(
-        prepared.capabilities.map(async (dependency) => {
-          const definition =
-            input.modules.capabilities &&
-            dependency.capability !== undefined &&
-            isPortableValue(dependency.capability.definition)
-              ? dependency.capability.definition
-              : undefined;
-          const included = definition !== undefined;
-          const payloadRoot =
-            included && definition.kind === "skill"
-              ? `payloads/capabilities/${dependency.resource.metadata.id}`
-              : undefined;
-          if (payloadRoot !== undefined && dependency.capability !== undefined) {
-            const source = await options.capabilities.skillFilesPath(
-              dependency.capability.manifest.id,
-              dependency.capability.manifest.latestRevision,
-            );
-            await addDirectoryFiles(files, source, payloadRoot);
+        const resourcesByRef = new Map(
+          prepared.resources.map((resource) => [canonicalPragmaResourceRef(resource), resource]),
+        );
+        const capabilityByRef = new Map(
+          prepared.capabilities.map((entry) => [canonicalPragmaResourceRef(entry.resource), entry]),
+        );
+        const contextByRef = new Map(
+          prepared.contexts.map((entry) => [canonicalPragmaResourceRef(entry.resource), entry]),
+        );
+        const pluginByRef = new Map(prepared.plugins.map((entry) => [entry.ref, entry]));
+        const extensions = [];
+        if (input.modules.flowLayouts) {
+          const layoutFiles = new Map<string, Uint8Array>();
+          for (const flow of prepared.flows) {
+            const layout = await options.layouts.get({
+              projectId: prepared.snapshot.projectId,
+              flowId: flow.metadata.id,
+            });
+            if (layout !== null) {
+              layoutFiles.set(
+                `${flow.metadata.id}.json`,
+                new TextEncoder().encode(`${JSON.stringify(layout, null, 2)}\n`),
+              );
+            }
           }
-          return {
-            resourceRef: canonicalPragmaResourceRef(dependency.resource),
-            name: dependency.capability?.manifest.name ?? dependency.resource.metadata.name,
-            ...(dependency.capability === undefined
-              ? {}
-              : {
-                  kind: dependency.capability.definition.kind,
-                  definitionFingerprint: sha256(stableStringify(dependency.capability.definition)),
-                }),
-            ...(definition === undefined ? {} : { definition }),
-            included,
-            ...(payloadRoot === undefined ? {} : { payloadRoot }),
-          };
-        }),
-      );
-
-      const contextStores = await Promise.all(
-        prepared.contexts.map(async (dependency) => {
-          const included = input.modules.knowledgeBases && dependency.store !== undefined;
-          const payloadRoot = included
-            ? `payloads/context-stores/${dependency.resource.metadata.id}`
-            : undefined;
-          if (payloadRoot !== undefined && dependency.store !== undefined) {
-            await addDirectoryFiles(
-              files,
-              await options.contextStores.filesPath(dependency.store.id),
-              payloadRoot,
-            );
-          }
-          return {
-            resourceRef: canonicalPragmaResourceRef(dependency.resource),
-            name: dependency.store?.name ?? dependency.resource.metadata.name,
-            description: dependency.store?.description ?? dependency.resource.metadata.description,
-            ...(dependency.store === undefined
-              ? {}
-              : { fingerprint: await options.contextStores.fingerprint(dependency.store.id) }),
-            included,
-            ...(payloadRoot === undefined ? {} : { payloadRoot }),
-          };
-        }),
-      );
-
-      const plugins = await Promise.all(
-        prepared.plugins.map(async (dependency) => {
-          const packageInfo = dependency.packageInfo;
-          const origin: "built_in" | "user" | "missing" = packageInfo?.origin ?? "missing";
-          const included =
-            input.modules.plugins && packageInfo !== undefined && packageInfo.origin === "user";
-          const payloadRoot = included ? `payloads/plugins/${sha256(dependency.ref)}` : undefined;
-          if (payloadRoot !== undefined && packageInfo !== undefined) {
-            await addDirectoryFiles(
-              files,
-              packageInfo.root,
-              payloadRoot,
-              new Set([".pragma-install.json"]),
-            );
-          }
-          return {
-            ref: dependency.ref,
-            name: dependency.plugin?.manifest.name ?? dependency.ref,
-            origin,
-            contentHash: packageInfo?.contentHash,
-            ...(dependency.plugin === undefined ? {} : { manifest: dependency.plugin.manifest }),
-            included,
-            ...(payloadRoot === undefined ? {} : { payloadRoot }),
-          };
-        }),
-      );
-
-      if (input.modules.flowLayouts) {
-        for (const flow of prepared.flows) {
-          const layout = await options.layouts.get({
-            projectId: prepared.snapshot.projectId,
-            flowId: flow.metadata.id,
-          });
-          if (layout !== null) {
-            files.set(
-              `layouts/flows/${flow.metadata.id}.json`,
-              strToU8(`${JSON.stringify(layout, null, 2)}\n`),
-            );
+          if (layoutFiles.size > 0) {
+            extensions.push({
+              id: "pragma.desktop.flow-layout",
+              version: "v1",
+              required: false,
+              files: layoutFiles,
+            });
           }
         }
+        const exported = await prepared.project.exportBundle({
+          roots: [canonicalPragmaResourceRef(prepared.root)],
+          extensions,
+          host: {
+            exportPayload: async ({ requirement, originalBindingRef }) => {
+              if (requirement.kind === "binding") {
+                const resource = resourcesByRef.get(requirement.ownerRef);
+                if (resource?.kind === "Capability" && input.modules.capabilities) {
+                  const entry = capabilityByRef.get(requirement.ownerRef);
+                  if (entry?.capability === undefined || originalBindingRef === undefined) {
+                    return undefined;
+                  }
+                  if (!isPortableValue(entry.capability.definition)) return undefined;
+                  const files = new Map<string, Uint8Array>([
+                    [
+                      "descriptor.json",
+                      new TextEncoder().encode(
+                        `${JSON.stringify(entry.capability.definition, null, 2)}\n`,
+                      ),
+                    ],
+                  ]);
+                  if (entry.capability.definition.kind === "skill") {
+                    await addDirectoryFiles(
+                      files,
+                      await options.capabilities.skillFilesPath(
+                        entry.capability.manifest.id,
+                        entry.capability.manifest.latestRevision,
+                      ),
+                      "files",
+                    );
+                  }
+                  return { codec: "pragma.desktop.capability@v1", files };
+                }
+                if (resource?.kind === "ContextStore" && input.modules.knowledgeBases) {
+                  const entry = contextByRef.get(requirement.ownerRef);
+                  if (entry?.store === undefined || originalBindingRef === undefined)
+                    return undefined;
+                  const files = new Map<string, Uint8Array>([
+                    [
+                      "descriptor.json",
+                      new TextEncoder().encode(
+                        `${JSON.stringify(
+                          {
+                            name: entry.store.name,
+                            description: entry.store.description,
+                            fingerprint: await options.contextStores.fingerprint(entry.store.id),
+                          },
+                          null,
+                          2,
+                        )}\n`,
+                      ),
+                    ],
+                  ]);
+                  await addDirectoryFiles(
+                    files,
+                    await options.contextStores.filesPath(entry.store.id),
+                    "files",
+                  );
+                  return { codec: "pragma.desktop.context-store@v1", files };
+                }
+                return undefined;
+              }
+              if (requirement.kind === "plugin" && input.modules.plugins) {
+                const entry = pluginByRef.get(requirement.contract);
+                if (entry?.packageInfo?.origin !== "user") return undefined;
+                const files = new Map<string, Uint8Array>();
+                await addDirectoryFiles(
+                  files,
+                  entry.packageInfo.root,
+                  "",
+                  new Set([".pragma-install.json"]),
+                );
+                return { codec: "pragma.desktop.plugin@v1", files };
+              }
+              return undefined;
+            },
+          },
+        });
+        await writeBundleAtomically(destinationPath, exported.bytes);
+        return PragmaBundleExportResultSchema.parse({
+          cancelled: false,
+          path: destinationPath,
+          bundleFingerprint: exported.manifest.bundleFingerprint,
+          projectFingerprint: exported.manifest.project.projectFingerprint,
+        }) as {
+          readonly path: string;
+          readonly bundleFingerprint: string;
+          readonly projectFingerprint: string;
+        };
+      } catch (error) {
+        throwBundleExportValidationError(error);
+      } finally {
+        await prepared.project.dispose();
       }
-
-      if (files.size > MAX_BUNDLE_FILES) {
-        throw new Error(`The bundle exceeds the ${MAX_BUNDLE_FILES.toLocaleString()} file limit.`);
-      }
-      const unpackedBytes = [...files.values()].reduce(
-        (total, contents) => total + contents.byteLength,
-        0,
-      );
-      if (unpackedBytes > MAX_BUNDLE_UNPACKED_BYTES) {
-        throw new Error("The bundle exceeds the 1 GiB unpacked size limit.");
-      }
-
-      const fileIndex = [...files]
-        .map(([path, contents]) => ({
-          path,
-          size: contents.byteLength,
-          sha256: sha256(contents),
-        }))
-        .toSorted((left, right) => left.path.localeCompare(right.path));
-      const manifestWithoutFingerprint = {
-        schemaVersion: "pragma.desktop-bundle/v1" as const,
-        createdAt: new Date().toISOString(),
-        source: {
-          projectId: prepared.snapshot.projectId,
-          revision: prepared.snapshot.revision,
-          ...(prepared.snapshot.projectFingerprint === undefined
-            ? {}
-            : { projectFingerprint: prepared.snapshot.projectFingerprint }),
-        },
-        root: {
-          ref: canonicalPragmaResourceRef(prepared.root),
-          kind: prepared.root.kind,
-          name: prepared.root.metadata.name,
-        },
-        modules: input.modules,
-        resourceCount: portableResources.length,
-        projectArtifacts: [...artifacts.keys()].toSorted(),
-        dependencies: {
-          capabilities,
-          contextStores,
-          plugins,
-          runtimes: prepared.runtimes,
-        },
-        files: fileIndex,
-      } satisfies Omit<BundleManifest, "bundleFingerprint">;
-      const bundleFingerprint = createBundleFingerprint(manifestWithoutFingerprint);
-      const manifest = PragmaBundleManifestSchema.parse({
-        ...manifestWithoutFingerprint,
-        bundleFingerprint,
-      });
-      files.set("bundle.json", strToU8(`${JSON.stringify(manifest, null, 2)}\n`));
-      const archive = await createPragmaBundleZip(files);
-      if (archive.byteLength > MAX_BUNDLE_ARCHIVE_BYTES) {
-        throw new Error("The bundle exceeds the 512 MiB archive limit.");
-      }
-      await writeBundleAtomically(destinationPath, archive);
-      return PragmaBundleExportResultSchema.parse({
-        cancelled: false,
-        path: destinationPath,
-        bundleFingerprint,
-      }) as { readonly path: string; readonly bundleFingerprint: string };
     },
 
-    async inspect(sourcePath) {
-      const archive = await readPragmaBundle(sourcePath, options.externalResourceRefs);
+    async inspect(sourcePath, rootRef) {
+      const archive = await readDesktopBundle(sourcePath, rootRef);
       const current = await options.project.get();
       const conflicts = findBundleConflicts(archive.resources, current.resources);
       const [capabilities, contextStores, plugins, runtimes] = await Promise.all([
@@ -707,7 +684,7 @@ export function createPragmaBundleService(options: {
               );
         if (exact === undefined && !dependency.included) {
           requirements.push({
-            id: `capability:${dependency.resourceRef}`,
+            id: dependency.requirementId,
             kind: "capability",
             resourceRef: dependency.resourceRef,
             name: dependency.name,
@@ -726,7 +703,7 @@ export function createPragmaBundleService(options: {
               );
         if (exact === undefined && !dependency.included) {
           requirements.push({
-            id: `context-store:${dependency.resourceRef}`,
+            id: dependency.requirementId,
             kind: "context-store",
             resourceRef: dependency.resourceRef,
             name: dependency.name,
@@ -736,14 +713,10 @@ export function createPragmaBundleService(options: {
         }
       }
       for (const dependency of archive.manifest.dependencies.plugins) {
-        const exact = plugins.find(
-          (plugin) =>
-            plugin.ref === dependency.ref &&
-            (dependency.contentHash === undefined || plugin.contentHash === dependency.contentHash),
-        );
+        const exact = plugins.find((plugin) => plugin.ref === dependency.ref);
         if (exact === undefined && !dependency.included) {
           requirements.push({
-            id: `plugin:${dependency.ref}`,
+            id: dependency.requirementId,
             kind: "plugin",
             resourceRef: dependency.ref,
             name: dependency.name,
@@ -755,7 +728,7 @@ export function createPragmaBundleService(options: {
       for (const dependency of archive.manifest.dependencies.runtimes) {
         if (runtimes.some((runtime) => runtimeDependencyAvailable(runtime, dependency))) continue;
         requirements.push({
-          id: `runtime:${dependency.resourceRef}`,
+          id: dependency.requirementId,
           kind: "runtime",
           resourceRef: dependency.resourceRef,
           name: dependency.name,
@@ -771,49 +744,50 @@ export function createPragmaBundleService(options: {
           },
         });
       }
-      const secretBindings = unique(
-        archive.resources.flatMap((resource) =>
-          resource.kind === "Expert"
-            ? resource.spec.plugins.flatMap((plugin) => Object.values(plugin.secretBindings ?? {}))
-            : [],
-        ),
-      );
-      for (const binding of secretBindings) {
+      for (const secret of archive.manifest.dependencies.secrets) {
+        const binding = `binding:pragma.bundle.${secret.id}`;
         if (await options.plugins.hasSecret(binding)) continue;
-        const owner = archive.resources.find(
-          (resource) =>
-            resource.kind === "Expert" &&
-            resource.spec.plugins.some((plugin) =>
-              Object.values(plugin.secretBindings ?? {}).includes(binding),
-            ),
-        );
         requirements.push({
-          id: `secret:${binding}`,
+          id: secret.id,
           kind: "secret",
-          resourceRef:
-            owner === undefined ? archive.manifest.root.ref : canonicalPragmaResourceRef(owner),
-          name: binding,
-          message: `Enter the secret for ${binding}.`,
+          resourceRef: secret.ownerRef,
+          name:
+            typeof secret.hints["secretName"] === "string"
+              ? secret.hints["secretName"]
+              : secret.name,
+          message: `Enter the secret for ${secret.name}.`,
           required: true,
         });
       }
+      for (const dependency of archive.manifest.dependencies.unsupported) {
+        if (!dependency.required) continue;
+        requirements.push({
+          id: dependency.id,
+          kind: "plugin",
+          resourceRef: dependency.ownerRef,
+          name: dependency.name,
+          message: `Desktop does not support required Bundle dependency ${dependency.contract}.`,
+          required: true,
+        });
+      }
+      const installations = (await readCatalog()).installations;
       const incompleteInstallation = findIncompleteInstallation(
-        (await readCatalog()).installations,
+        installations,
         archive.manifest.bundleFingerprint,
+        archive.manifest.root.ref,
       );
       return PragmaBundleImportInspectionSchema.parse({
         sourcePath,
         sourceName: basename(sourcePath),
         bundleFingerprint: archive.manifest.bundleFingerprint,
+        projectFingerprint: archive.manifest.projectFingerprint,
         projectRevision: current.revision,
         root: archive.manifest.root,
+        roots: archive.manifest.roots,
         createdAt: archive.manifest.createdAt,
         archiveBytes: archive.archiveBytes,
-        unpackedBytes: [...archive.files.values()].reduce(
-          (total, contents) => total + contents.byteLength,
-          0,
-        ),
-        fileCount: archive.files.size,
+        unpackedBytes: archive.unpackedBytes,
+        fileCount: archive.fileCount,
         resources: archive.resources.length,
         dependencies: [
           ...archive.manifest.dependencies.runtimes.map((item) => ({
@@ -843,6 +817,13 @@ export function createPragmaBundleService(options: {
         ],
         conflicts,
         requirements,
+        sameContentInstallationIds: installations.flatMap((installation) =>
+          installation.sourceProjectFingerprint === archive.manifest.projectFingerprint &&
+          installation.sourceRootRef === archive.manifest.root.ref &&
+          installation.id !== incompleteInstallation?.id
+            ? [installation.id]
+            : [],
+        ),
         ...(incompleteInstallation === undefined
           ? {}
           : { alreadyInstalledId: incompleteInstallation.id }),
@@ -850,9 +831,22 @@ export function createPragmaBundleService(options: {
     },
 
     async startImport(input) {
-      const archive = await readPragmaBundle(input.sourcePath, options.externalResourceRefs);
+      const archive = await readDesktopBundle(input.sourcePath, input.rootRef);
+      const unsupportedRequirement = archive.manifest.dependencies.unsupported.find(
+        (requirement) => requirement.required,
+      );
+      if (unsupportedRequirement !== undefined) {
+        throw new Error(
+          `Desktop cannot install required Bundle dependency ${unsupportedRequirement.contract} (${unsupportedRequirement.id}).`,
+        );
+      }
       if (archive.manifest.bundleFingerprint !== input.expectedFingerprint) {
         throw new Error("The bundle changed after inspection. Inspect it again before importing.");
+      }
+      if (archive.manifest.projectFingerprint !== input.expectedProjectFingerprint) {
+        throw new Error(
+          "The portable project changed after inspection. Inspect it again before importing.",
+        );
       }
       return await withFileLock(
         options.paths.bundleImportLock(archive.manifest.bundleFingerprint),
@@ -861,6 +855,7 @@ export function createPragmaBundleService(options: {
           const existing = findIncompleteInstallation(
             catalog.installations,
             archive.manifest.bundleFingerprint,
+            archive.manifest.root.ref,
           );
           if (existing?.status === "needs_setup") return existing;
           if (existing !== undefined) {
@@ -913,11 +908,41 @@ export function createPragmaBundleService(options: {
             ),
             "Knowledge-base binding",
           );
-          const rewritten = rewriteBundleWithResolutions(
+          assertRequirementTargets(
+            input.runtimes,
+            new Set(
+              archive.manifest.dependencies.runtimes.map((dependency) => dependency.requirementId),
+            ),
+            "Runtime requirement",
+          );
+          assertRequirementTargets(
+            input.capabilities,
+            new Set(
+              archive.manifest.dependencies.capabilities.map(
+                (dependency) => dependency.requirementId,
+              ),
+            ),
+            "Capability requirement",
+          );
+          assertRequirementTargets(
+            input.contextStores,
+            new Set(
+              archive.manifest.dependencies.contextStores.map(
+                (dependency) => dependency.requirementId,
+              ),
+            ),
+            "Knowledge-base requirement",
+          );
+          const identityResolution = resolveBundleIdentities(
             archive.resources,
             current.resources,
             input.conflicts,
           );
+          const localized = localizePragmaBundleResources({
+            resources: archive.resources,
+            manifest: archive.bundle.manifest,
+            identities: identityResolution.identities,
+          });
           const installationId = randomUUID();
           const archivePath = options.paths.bundleInstallationArchive(installationId);
           await mkdir(dirname(archivePath), { recursive: true, mode: 0o700 });
@@ -927,7 +952,9 @@ export function createPragmaBundleService(options: {
           );
           const timestamp = new Date().toISOString();
           const initial = PragmaBundleInstallationSchema.parse({
-            schemaVersion: "pragma.bundle-installation/v2",
+            schemaVersion: "pragma.bundle-installation/v3",
+            bundleVersion: "pragma.bundle/v1",
+            sourceProjectFingerprint: archive.manifest.projectFingerprint,
             id: installationId,
             bundleFingerprint: archive.manifest.bundleFingerprint,
             projectId: options.project.projectId,
@@ -950,8 +977,8 @@ export function createPragmaBundleService(options: {
           });
           await addInstallation(initial);
           try {
-            let resources = rewritten.resources;
-            const sourceToTarget = rewritten.refMap;
+            let resources = [...localized.resources];
+            const sourceToTarget = localized.resourceMappings;
             const importedRefs = new Set(resources.map(canonicalPragmaResourceRef));
             const currentRefs = new Set(current.resources.map(canonicalPragmaResourceRef));
             const createdResourceRefs = [...importedRefs].filter((ref) => !currentRefs.has(ref));
@@ -994,7 +1021,7 @@ export function createPragmaBundleService(options: {
                 if (dependency.kind === "skill" && dependency.payloadRoot !== undefined) {
                   const temporary = await materializePrefix(
                     archive.files,
-                    dependency.payloadRoot,
+                    `${dependency.payloadRoot}/files`,
                     "pragma-bundle-skill-",
                   );
                   try {
@@ -1047,7 +1074,7 @@ export function createPragmaBundleService(options: {
               if (capability === undefined) {
                 resource.spec.binding = pendingBinding(installationId, targetRef);
                 pending.push({
-                  id: `capability:${targetRef}`,
+                  id: dependency.requirementId,
                   kind: "capability",
                   resourceRef: targetRef,
                   name: dependency.name,
@@ -1064,7 +1091,7 @@ export function createPragmaBundleService(options: {
                 );
                 if (capability.health.status !== "ready") {
                   pending.push({
-                    id: `capability:${targetRef}`,
+                    id: dependency.requirementId,
                     kind: "capability",
                     resourceRef: targetRef,
                     name: dependency.name,
@@ -1138,7 +1165,7 @@ export function createPragmaBundleService(options: {
               if (store === undefined) {
                 resource.spec.binding = pendingBinding(installationId, targetRef);
                 pending.push({
-                  id: `context-store:${targetRef}`,
+                  id: dependency.requirementId,
                   kind: "context-store",
                   resourceRef: targetRef,
                   name: dependency.name,
@@ -1151,10 +1178,7 @@ export function createPragmaBundleService(options: {
 
             for (const dependency of archive.manifest.dependencies.plugins) {
               let installed = (await options.plugins.list()).find(
-                (plugin) =>
-                  plugin.ref === dependency.ref &&
-                  (dependency.contentHash === undefined ||
-                    plugin.contentHash === dependency.contentHash),
+                (plugin) => plugin.ref === dependency.ref,
               );
               if (
                 installed === undefined &&
@@ -1183,11 +1207,13 @@ export function createPragmaBundleService(options: {
                 }
               }
               if (installed === undefined) {
+                const targetOwnerRef =
+                  sourceToTarget.get(dependency.ownerRef) ?? dependency.ownerRef;
                 pending.push({
-                  id: `plugin:${dependency.ref}`,
+                  id: dependency.requirementId,
                   kind: "plugin",
-                  resourceRef: dependency.ref,
-                  name: dependency.name,
+                  resourceRef: targetOwnerRef,
+                  name: dependency.ref,
                   message: "Install the exact plugin package before running this workflow.",
                 });
               }
@@ -1222,7 +1248,7 @@ export function createPragmaBundleService(options: {
                   )
                 ) {
                   pending.push({
-                    id: `runtime:${targetRef}`,
+                    id: dependency.requirementId,
                     kind: "runtime",
                     resourceRef: targetRef,
                     name: dependency.name,
@@ -1241,37 +1267,37 @@ export function createPragmaBundleService(options: {
               }
             }
 
-            const requestedSecretBindings = new Set(
-              archive.resources.flatMap((resource) =>
-                resource.kind === "Expert"
-                  ? resource.spec.plugins.flatMap((plugin) =>
-                      Object.values(plugin.secretBindings ?? {}),
-                    )
-                  : [],
-              ),
+            const secretById = new Map(
+              archive.manifest.dependencies.secrets.map((requirement) => [
+                requirement.id,
+                requirement,
+              ]),
             );
-            for (const binding of Object.keys(input.secrets)) {
-              if (!requestedSecretBindings.has(binding)) {
-                throw new Error(`Secret is not requested by this Bundle: ${binding}.`);
+            for (const requirementId of Object.keys(input.secrets)) {
+              if (!secretById.has(requirementId)) {
+                throw new Error(`Secret is not requested by this Bundle: ${requirementId}.`);
               }
             }
             if (Object.keys(input.secrets).length > 0) {
-              await options.plugins.setSecrets(input.secrets);
+              await options.plugins.setSecrets(
+                Object.fromEntries(
+                  Object.entries(input.secrets).map(([requirementId, value]) => [
+                    `binding:pragma.bundle.${requirementId}`,
+                    value,
+                  ]),
+                ),
+              );
             }
-            for (const resource of resources) {
-              if (resource.kind !== "Expert") continue;
-              for (const plugin of resource.spec.plugins) {
-                for (const binding of Object.values(plugin.secretBindings ?? {})) {
-                  if (await options.plugins.hasSecret(binding)) continue;
-                  pending.push({
-                    id: `secret:${binding}`,
-                    kind: "secret",
-                    resourceRef: canonicalPragmaResourceRef(resource),
-                    name: plugin.ref,
-                    message: `Enter the secret for ${binding}.`,
-                  });
-                }
-              }
+            for (const requirement of archive.manifest.dependencies.secrets) {
+              const binding = `binding:pragma.bundle.${requirement.id}`;
+              if (await options.plugins.hasSecret(binding)) continue;
+              pending.push({
+                id: requirement.id,
+                kind: "secret",
+                resourceRef: sourceToTarget.get(requirement.ownerRef) ?? requirement.ownerRef,
+                name: requirement.name,
+                message: `Enter the secret for ${requirement.name}.`,
+              });
             }
 
             const currentArtifacts =
@@ -1286,20 +1312,24 @@ export function createPragmaBundleService(options: {
                 }
               }
             }
-            resources = resources.map((resource) =>
-              rewriteProjectArtifactPaths(
-                resource,
-                installationId,
-                archive.manifest.projectArtifacts,
+            resources = [
+              ...remapPragmaProjectArtifactPaths(
+                resources,
+                Object.fromEntries(
+                  archive.manifest.projectArtifacts.map((path) => [
+                    path,
+                    `imports/${installationId}/${path}`,
+                  ]),
+                ),
               ),
-            );
+            ];
             const combined = [
               ...current.resources.filter(
                 (resource) => !importedRefs.has(canonicalPragmaResourceRef(resource)),
               ),
               ...resources,
             ];
-            const referencedArtifacts = collectProjectArtifactPaths(combined);
+            const referencedArtifacts = collectPragmaProjectArtifactPaths(combined);
             const retainedCurrentArtifacts = [...currentArtifacts].filter(
               ([path]) =>
                 !isBundleOwnedArtifact(path) || artifactPathIsReferenced(path, referencedArtifacts),
@@ -1500,9 +1530,7 @@ export function createPragmaBundleService(options: {
       if (Object.keys(input.secrets).length > 0) {
         const allowedSecrets = new Set(
           installation.pending.flatMap((dependency) =>
-            dependency.kind === "secret" && dependency.id.startsWith("secret:")
-              ? [dependency.id.slice("secret:".length)]
-              : [],
+            dependency.kind === "secret" ? [dependency.id] : [],
           ),
         );
         for (const binding of Object.keys(input.secrets)) {
@@ -1510,7 +1538,14 @@ export function createPragmaBundleService(options: {
             throw new Error(`Secret is not requested by this bundle installation: ${binding}`);
           }
         }
-        await options.plugins.setSecrets(input.secrets);
+        await options.plugins.setSecrets(
+          Object.fromEntries(
+            Object.entries(input.secrets).map(([requirementId, value]) => [
+              `binding:pragma.bundle.${requirementId}`,
+              value,
+            ]),
+          ),
+        );
       }
       if (replacements.size > 0) {
         await options.project.apply({
@@ -1547,11 +1582,259 @@ export function createPragmaBundleService(options: {
             resource.kind === "Flow"),
       );
       if (root === undefined) return false;
-      return collectResourceClosure(root, snapshot.resources, options.externalResourceRefs).some(
-        (resource) => pendingRefs.has(canonicalPragmaResourceRef(resource)),
-      );
+      const project = await options.project.openRevision(snapshot.revision);
+      try {
+        return project
+          .listResourceClosure(parsed.data)
+          .some((resource) => pendingRefs.has(canonicalPragmaResourceRef(resource)));
+      } finally {
+        await project.dispose();
+      }
     },
   };
+}
+
+interface DesktopBundleArchive {
+  readonly bundle: DecodedPragmaBundle;
+  readonly manifest: {
+    readonly bundleFingerprint: string;
+    readonly projectFingerprint: string;
+    readonly createdAt: string;
+    readonly roots: readonly {
+      readonly ref: string;
+      readonly kind: "Expert" | "ExpertTeam" | "Flow";
+      readonly name: string;
+    }[];
+    readonly root: {
+      readonly ref: string;
+      readonly kind: "Expert" | "ExpertTeam" | "Flow";
+      readonly name: string;
+    };
+    readonly projectArtifacts: readonly string[];
+    readonly dependencies: {
+      readonly capabilities: readonly {
+        readonly requirementId: string;
+        readonly resourceRef: string;
+        readonly name: string;
+        readonly kind?: "skill" | "mcp_server" | "http_service" | "code_service";
+        readonly definitionFingerprint?: string;
+        readonly definition?: z.infer<typeof CapabilityDefinitionSchema>;
+        readonly included: boolean;
+        readonly payloadRoot?: string;
+      }[];
+      readonly contextStores: readonly {
+        readonly requirementId: string;
+        readonly resourceRef: string;
+        readonly name: string;
+        readonly description: string;
+        readonly fingerprint?: string;
+        readonly included: boolean;
+        readonly payloadRoot?: string;
+      }[];
+      readonly plugins: readonly {
+        readonly requirementId: string;
+        readonly ownerRef: string;
+        readonly ref: string;
+        readonly name: string;
+        readonly included: boolean;
+        readonly payloadRoot?: string;
+      }[];
+      readonly runtimes: readonly {
+        readonly requirementId: string;
+        readonly resourceRef: string;
+        readonly name: string;
+        readonly runtimeId?: string;
+        readonly providerId?: string;
+        readonly modelId?: string;
+        readonly thinkingLevel?: string;
+      }[];
+      readonly secrets: readonly PragmaBundleRequirement[];
+      readonly unsupported: readonly PragmaBundleRequirement[];
+    };
+  };
+  readonly files: ReadonlyMap<string, Uint8Array>;
+  readonly resources: readonly PragmaResource[];
+  readonly archiveBytes: number;
+  readonly fileCount: number;
+  readonly unpackedBytes: number;
+}
+
+async function readDesktopBundle(
+  sourcePath: string,
+  requestedRootRef?: string,
+): Promise<DesktopBundleArchive> {
+  if (!sourcePath.toLowerCase().endsWith(".pragma")) throw new Error("Select a .pragma file.");
+  let decoded: DecodedPragmaBundle;
+  try {
+    decoded = await decodePragmaBundle({ kind: "file", path: sourcePath });
+  } catch (error) {
+    if (
+      error instanceof PragmaBundleFormatError &&
+      error.code === "manifest.version_unsupported" &&
+      error.message.includes("pragma.desktop-bundle/v1")
+    ) {
+      throw new Error(
+        "This legacy Desktop Bundle is no longer supported. Import it with Pragma Desktop v0.1.0, upgrade Pragma, then export it again.",
+        { cause: error },
+      );
+    }
+    throw error;
+  }
+  const project = await loadPragmaProject(
+    { kind: "decoded-bundle", bundle: decoded },
+    { supportedBundleExtensions: new Set(["pragma.desktop.flow-layout@v1"]) },
+  );
+  try {
+    const allResources = project.listResources();
+    const resourceByRef = new Map(
+      allResources.map((resource) => [canonicalPragmaResourceRef(resource), resource] as const),
+    );
+    const roots = decoded.manifest.roots.map((ref) => {
+      const resource = resourceByRef.get(ref);
+      if (
+        resource === undefined ||
+        (resource.kind !== "Expert" && resource.kind !== "ExpertTeam" && resource.kind !== "Flow")
+      ) {
+        throw new Error(`Bundle root is unavailable: ${ref}.`);
+      }
+      return { ref, kind: resource.kind, name: resource.metadata.name };
+    });
+    const selectedRef = requestedRootRef ?? roots[0]?.ref;
+    const root = roots.find((candidate) => candidate.ref === selectedRef);
+    if (root === undefined) throw new Error(`Bundle root is unavailable: ${String(selectedRef)}.`);
+    const resources = project.listResourceClosure(PragmaInvocableResourceRefSchema.parse(root.ref));
+    const closureRefs = new Set(resources.map(canonicalPragmaResourceRef));
+    const requirements = decoded.manifest.requirements.filter((requirement) =>
+      closureRefs.has(requirement.ownerRef),
+    );
+    const files = new Map(decoded.files);
+    const projectArtifacts = collectPragmaProjectArtifactPaths(resources);
+    for (const artifactPath of projectArtifacts) {
+      const prefix = `project/${artifactPath.replace(/\/+$/, "")}`;
+      for (const [path, contents] of decoded.files) {
+        if (path === prefix || path.startsWith(`${prefix}/`)) {
+          files.set(path.slice("project/".length), contents);
+        }
+      }
+    }
+    const layoutExtension = decoded.manifest.extensions.find(
+      (extension) => `${extension.id}@${extension.version}` === "pragma.desktop.flow-layout@v1",
+    );
+    if (layoutExtension !== undefined) {
+      for (const [path, contents] of filesBelowPrefix(decoded.files, layoutExtension.root)) {
+        files.set(`layouts/flows/${path}`, contents);
+      }
+    }
+
+    const capabilities = [];
+    const contextStores = [];
+    const plugins = [];
+    const runtimes = [];
+    const secrets = [];
+    const unsupported = [];
+    for (const requirement of requirements) {
+      const owner = resourceByRef.get(requirement.ownerRef);
+      const payloadFiles =
+        requirement.payload === undefined
+          ? new Map<string, Uint8Array>()
+          : filesBelowPrefix(decoded.files, requirement.payload.root);
+      if (requirement.kind === "binding" && owner?.kind === "Capability") {
+        const included = requirement.payload?.codec === "pragma.desktop.capability@v1";
+        const definition = included
+          ? parseBundlePayloadJson(
+              requiredBundlePayloadFile(payloadFiles, "descriptor.json", requirement.id),
+              CapabilityDefinitionSchema,
+              `Capability descriptor ${requirement.id}`,
+            )
+          : undefined;
+        capabilities.push({
+          requirementId: requirement.id,
+          resourceRef: requirement.ownerRef,
+          name: owner.metadata.name,
+          ...(definition === undefined
+            ? {}
+            : {
+                kind: definition.kind,
+                definition,
+                definitionFingerprint: sha256(stableStringify(definition)),
+              }),
+          included,
+          ...(requirement.payload === undefined ? {} : { payloadRoot: requirement.payload.root }),
+        });
+      } else if (requirement.kind === "binding" && owner?.kind === "ContextStore") {
+        const included = requirement.payload?.codec === "pragma.desktop.context-store@v1";
+        const metadata = included
+          ? parseBundlePayloadJson(
+              requiredBundlePayloadFile(payloadFiles, "descriptor.json", requirement.id),
+              DesktopContextPayloadDescriptorSchema,
+              `ContextStore descriptor ${requirement.id}`,
+            )
+          : undefined;
+        contextStores.push({
+          requirementId: requirement.id,
+          resourceRef: requirement.ownerRef,
+          name: metadata?.name ?? owner.metadata.name,
+          description: metadata?.description ?? owner.metadata.description,
+          ...(metadata === undefined ? {} : { fingerprint: metadata.fingerprint }),
+          included,
+          ...(requirement.payload === undefined
+            ? {}
+            : { payloadRoot: `${requirement.payload.root}/files` }),
+        });
+      } else if (requirement.kind === "plugin") {
+        plugins.push({
+          requirementId: requirement.id,
+          ownerRef: requirement.ownerRef,
+          ref: requirement.contract,
+          name: requirement.name,
+          included: requirement.payload?.codec === "pragma.desktop.plugin@v1",
+          ...(requirement.payload === undefined ? {} : { payloadRoot: requirement.payload.root }),
+        });
+      } else if (requirement.kind === "runtime" && owner?.kind === "RuntimeProfile") {
+        const config =
+          typeof owner.spec.config === "object" && owner.spec.config !== null
+            ? (owner.spec.config as Record<string, unknown>)
+            : {};
+        runtimes.push({
+          requirementId: requirement.id,
+          resourceRef: requirement.ownerRef,
+          name: owner.metadata.name,
+          ...(typeof config["runtimeId"] === "string" ? { runtimeId: config["runtimeId"] } : {}),
+          ...(typeof config["providerId"] === "string" ? { providerId: config["providerId"] } : {}),
+          ...(typeof config["model"] === "string" ? { modelId: config["model"] } : {}),
+          ...(typeof config["thinkingLevel"] === "string"
+            ? { thinkingLevel: config["thinkingLevel"] }
+            : {}),
+        });
+      } else if (requirement.kind === "secret") {
+        secrets.push(requirement);
+      } else {
+        unsupported.push(requirement);
+      }
+    }
+    return {
+      bundle: decoded,
+      manifest: {
+        bundleFingerprint: decoded.manifest.bundleFingerprint,
+        projectFingerprint: decoded.manifest.project.projectFingerprint,
+        createdAt: decoded.manifest.createdAt,
+        roots,
+        root,
+        projectArtifacts,
+        dependencies: { capabilities, contextStores, plugins, runtimes, secrets, unsupported },
+      },
+      files,
+      resources,
+      archiveBytes: decoded.archiveBytes,
+      fileCount: decoded.files.size,
+      unpackedBytes: [...decoded.files.values()].reduce(
+        (total, contents) => total + contents.byteLength,
+        0,
+      ),
+    };
+  } finally {
+    await project.dispose();
+  }
 }
 
 async function addDirectoryFiles(
@@ -1571,13 +1854,62 @@ async function addDirectoryFiles(
       if (info.isDirectory()) {
         await visit(source);
       } else if (info.isFile()) {
-        const path = `${targetRoot}/${relative(canonicalRoot, source).split(sep).join("/")}`;
+        const relativePath = relative(canonicalRoot, source).split(sep).join("/");
+        const path = targetRoot === "" ? relativePath : `${targetRoot}/${relativePath}`;
         if (files.has(path)) throw new Error(`Duplicate bundle path: ${path}`);
         files.set(path, new Uint8Array(await readFile(source)));
       }
     }
   };
   await visit(canonicalRoot);
+}
+
+function sha256(value: string | Uint8Array): string {
+  return createHash("sha256").update(value).digest("hex");
+}
+
+function stableStringify(value: unknown): string {
+  if (Array.isArray(value)) return `[${value.map(stableStringify).join(",")}]`;
+  if (typeof value === "object" && value !== null) {
+    return `{${Object.entries(value)
+      .sort(([left], [right]) => left.localeCompare(right))
+      .map(([key, entry]) => `${JSON.stringify(key)}:${stableStringify(entry)}`)
+      .join(",")}}`;
+  }
+  return JSON.stringify(value);
+}
+
+function requiredBundlePayloadFile(
+  files: ReadonlyMap<string, Uint8Array>,
+  path: string,
+  requirementId: string,
+): Uint8Array {
+  const contents = files.get(path);
+  if (contents === undefined) {
+    throw new Error(`Bundle payload ${requirementId} is missing ${path}.`);
+  }
+  return contents;
+}
+
+function parseBundlePayloadJson<TSchema extends z.ZodType>(
+  contents: Uint8Array,
+  schema: TSchema,
+  label: string,
+): z.infer<TSchema> {
+  let value: unknown;
+  try {
+    value = JSON.parse(strFromU8(contents)) as unknown;
+  } catch (error) {
+    throw new Error(`${label} is not valid JSON.`, { cause: error });
+  }
+  const parsed = schema.safeParse(value);
+  if (!parsed.success) {
+    throw new Error(
+      `${label} is invalid: ${parsed.error.issues.map((issue) => issue.message).join("; ")}`,
+      { cause: parsed.error },
+    );
+  }
+  return parsed.data;
 }
 
 async function resolveRegularDirectory(path: string): Promise<string> {

@@ -6,7 +6,7 @@ import { afterEach, describe, expect, it } from "vitest";
 
 import {
   applyAtomicStateMigration,
-  BundleInstallationsCatalogV2Schema,
+  BundleInstallationsCatalogV3Schema,
   bundleInstallationsMigrationChain,
   recoverAtomicStateMigration,
   StateVersionTooNewError,
@@ -29,13 +29,14 @@ describe("Bundle installation state migration", () => {
 
     expect(upgraded).toMatchObject({
       fromVersion: 1,
-      toVersion: 2,
+      toVersion: 3,
       migrated: true,
       value: {
-        schemaVersion: "pragma.bundle-installations/v2",
+        schemaVersion: "pragma.bundle-installations/v3",
         installations: [
           {
-            schemaVersion: "pragma.bundle-installation/v2",
+            schemaVersion: "pragma.bundle-installation/v3",
+            bundleVersion: "pragma.desktop-bundle/v1",
             id: "00000000-0000-4000-8000-000000000001",
             rootName: "Writer",
             status: "needs_setup",
@@ -47,14 +48,27 @@ describe("Bundle installation state migration", () => {
     });
   });
 
+  it("applies the adjacent v2 to v3 migration without inventing a portable fingerprint", () => {
+    const upgraded = bundleInstallationsMigrationChain.upgrade(v2Catalog());
+
+    expect(upgraded.fromVersion).toBe(2);
+    expect(upgraded.toVersion).toBe(3);
+    expect(upgraded.migrated).toBe(true);
+    expect(upgraded.value.installations[0]).toMatchObject({
+      schemaVersion: "pragma.bundle-installation/v3",
+      bundleVersion: "pragma.desktop-bundle/v1",
+    });
+    expect(upgraded.value.installations[0]).not.toHaveProperty("sourceProjectFingerprint");
+  });
+
   it("treats current state as a no-op and rejects future state", () => {
-    const current = bundleInstallationsMigrationChain.upgrade(v2Catalog());
+    const current = bundleInstallationsMigrationChain.upgrade(v3Catalog());
 
     expect(current.migrated).toBe(false);
-    expect(current.value).toEqual(v2Catalog());
+    expect(current.value).toEqual(v3Catalog());
     expect(() =>
       bundleInstallationsMigrationChain.upgrade({
-        schemaVersion: "pragma.bundle-installations/v3",
+        schemaVersion: "pragma.bundle-installations/v4",
         installations: [],
       }),
     ).toThrow(StateVersionTooNewError);
@@ -65,9 +79,9 @@ describe("Bundle installation state migration", () => {
     temporaryRoots.push(root);
     const journalFile = join(root, "state-migration.json");
     const catalogFile = join(root, "installations.json");
-    const documents = { "installations.json": v2Catalog() };
+    const documents = { "installations.json": v3Catalog() };
     const validateDocuments = (value: Readonly<Record<string, unknown>>) => {
-      BundleInstallationsCatalogV2Schema.parse(value["installations.json"]);
+      BundleInstallationsCatalogV3Schema.parse(value["installations.json"]);
     };
 
     await writeFile(catalogFile, `${JSON.stringify(v1Catalog(), null, 2)}\n`);
@@ -76,7 +90,7 @@ describe("Bundle installation state migration", () => {
       journalFile,
       resource: { family: "pragma.bundle-installations", id: "desktop" },
       fromVersion: 1,
-      toVersion: 2,
+      toVersion: 3,
       documents,
       validateDocuments,
     });
@@ -87,7 +101,7 @@ describe("Bundle installation state migration", () => {
         schemaVersion: "pragma.state-migration/v1",
         resource: { family: "pragma.bundle-installations", id: "desktop" },
         fromVersion: 1,
-        toVersion: 2,
+        toVersion: 3,
         documents,
       })}\n`,
     );
@@ -100,7 +114,7 @@ describe("Bundle installation state migration", () => {
         validateDocuments,
       }),
     ).resolves.toBe(true);
-    await expect(readJson(catalogFile)).resolves.toEqual(v2Catalog());
+    await expect(readJson(catalogFile)).resolves.toEqual(v3Catalog());
     await expect(readFile(journalFile, "utf8")).rejects.toMatchObject({ code: "ENOENT" });
   });
 });
@@ -150,6 +164,18 @@ function v2Catalog() {
       schemaVersion: "pragma.bundle-installation/v2",
       conflictResolutions: [],
       resourceMappings: [],
+    })),
+  };
+}
+
+function v3Catalog() {
+  const previous = v2Catalog();
+  return {
+    schemaVersion: "pragma.bundle-installations/v3",
+    installations: previous.installations.map((installation) => ({
+      ...installation,
+      schemaVersion: "pragma.bundle-installation/v3",
+      bundleVersion: "pragma.desktop-bundle/v1",
     })),
   };
 }

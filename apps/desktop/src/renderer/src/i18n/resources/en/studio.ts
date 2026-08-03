@@ -1027,6 +1027,9 @@ export const studio = {
   bundleChooseFileHint: "The archive is verified before anything is installed.",
   bundleResourceCount: "{{count}} resources",
   bundleChooseAnother: "Choose another",
+  bundleInstallRoot: "Install root",
+  bundleSameContentInstalled:
+    "The same portable content already has {{count}} installation(s). This import remains separate.",
   bundleIncluded: "included",
   bundleNeedsBinding: "local binding",
   bundleConflicts: "{{count}} conflicts need a decision",

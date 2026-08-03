@@ -987,6 +987,8 @@ export const studio = {
   bundleChooseFileHint: "安裝任何內容前都會驗證壓縮檔。",
   bundleResourceCount: "{{count}} 個資源",
   bundleChooseAnother: "選擇其他檔案",
+  bundleInstallRoot: "安裝根資源",
+  bundleSameContentInstalled: "相同的可攜內容已有 {{count}} 個安裝記錄；本次匯入仍會保持獨立。",
   bundleIncluded: "已包含",
   bundleNeedsBinding: "需本機綁定",
   bundleConflicts: "{{count}} 個衝突需要選擇處理方式",

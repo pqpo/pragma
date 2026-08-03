@@ -70,5 +70,15 @@ the same versioned bundle bytes; they do not fork the portable project semantics
 - Programmatic definitions require registered, named and versioned serializers. Objects compiled by
   the Interpreter reuse DSL provenance directly.
 - Bundle, DSL, Host storage, and Host extension versions remain independent compatibility axes.
-- Desktop migration is a separate phase. Phase 1 intentionally does not change Desktop export,
-  import, conflict resolution, or installation transactions.
+- Desktop is now a Host Adapter for this protocol. It delegates archive encoding/decoding,
+  dependency closure, portable project validation, requirement identity, and typed resource
+  localization to Interpreter APIs. Desktop retains only local conflict decisions, payload
+  installation, resource binding, project persistence, UI, and the installation transaction.
+- Desktop persists a localized project copy while keeping the decoded portable project immutable.
+  One root is selected per installation when a Bundle declares multiple roots.
+- Desktop installation state v3 records the wire `bundleVersion`, portable
+  `sourceProjectFingerprint`, archive `bundleFingerprint`, and selected `sourceRootRef`. The v2 to
+  v3 adjacent migration identifies existing records as legacy without attempting to reinterpret
+  their retained archives.
+- `pragma.desktop-bundle/v1` is a hard compatibility cut. It is not decoded through a long-lived
+  Desktop compatibility branch; users receive an offline v0.1.0 import and re-export instruction.

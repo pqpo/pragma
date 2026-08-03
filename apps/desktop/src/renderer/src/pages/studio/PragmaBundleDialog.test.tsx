@@ -102,12 +102,20 @@ describe("Bundle import inspection", () => {
       sourcePath: "/tmp/portable-workflow.pragma",
       sourceName: "portable-workflow.pragma",
       bundleFingerprint: "a".repeat(64),
+      projectFingerprint: "b".repeat(64),
       projectRevision: 3,
       root: {
         ref: "expert:1xddvess309a6gme",
         kind: "Expert",
         name: "菜鸟 APP 查件业务专家",
       },
+      roots: [
+        {
+          ref: "expert:1xddvess309a6gme",
+          kind: "Expert",
+          name: "菜鸟 APP 查件业务专家",
+        },
+      ],
       createdAt: "2026-07-29T08:00:00.000Z",
       archiveBytes: 1_024,
       unpackedBytes: 2_048,
@@ -169,6 +177,7 @@ describe("Bundle import inspection", () => {
         },
       ],
       requirements: [],
+      sameContentInstallationIds: [],
     };
 
     const html = renderToStaticMarkup(

@@ -96,6 +96,7 @@ import {
   encodePragmaBundle,
   decodePragmaBundle,
   PragmaBundleFormatError,
+  type DecodedPragmaBundle,
   type PragmaBundleBinarySource,
   type PragmaBundleLimits,
 } from "../bundle/pragma-bundle-codec.ts";
@@ -124,8 +125,7 @@ export interface LoadPragmaProjectOptions {
   readonly sourceIdentity?: string | undefined;
   readonly blueprintCache?: PragmaBlueprintCacheStore | undefined;
   readonly onBlueprintCacheLookup?:
-    | ((observation: PragmaBlueprintCacheObservation) => void)
-    | undefined;
+    ((observation: PragmaBlueprintCacheObservation) => void) | undefined;
   /** Host extension id@version values understood by this process. */
   readonly supportedBundleExtensions?: ReadonlySet<string> | undefined;
 }
@@ -141,6 +141,10 @@ export type LoadPragmaProjectSource =
       readonly kind: "bundle";
       readonly source: PragmaBundleBinarySource;
       readonly limits?: PragmaBundleLimits | undefined;
+    }
+  | {
+      readonly kind: "decoded-bundle";
+      readonly bundle: DecodedPragmaBundle;
     };
 
 export interface PragmaBlueprintCacheStore {
@@ -231,6 +235,7 @@ export interface PragmaProject extends AsyncDisposable {
   readonly entryFile: string;
   readonly bundle?: PragmaLoadedBundle | undefined;
   listResources(): readonly PragmaResource[];
+  listResourceClosure(ref: PragmaResourceRef): readonly PragmaResource[];
   validate(): Promise<readonly PragmaDiagnostic[]>;
   validateFor(ref: PragmaResourceRef): Promise<readonly PragmaDiagnostic[]>;
   validateEnvironment(host: PragmaCompileOptions): Promise<readonly PragmaDiagnostic[]>;
@@ -397,8 +402,14 @@ export async function loadPragmaProject(
   source: LoadPragmaProjectSource,
   options: LoadPragmaProjectOptions = {},
 ): Promise<PragmaProject> {
-  if (typeof source !== "string" && source.kind === "bundle") {
-    const decoded = await decodePragmaBundle(source.source, source.limits);
+  if (
+    typeof source !== "string" &&
+    (source.kind === "bundle" || source.kind === "decoded-bundle")
+  ) {
+    const decoded =
+      source.kind === "bundle"
+        ? await decodePragmaBundle(source.source, source.limits)
+        : source.bundle;
     for (const extension of decoded.manifest.extensions) {
       const key = `${extension.id}@${extension.version}`;
       if (extension.required && options.supportedBundleExtensions?.has(key) !== true) {
@@ -1214,6 +1225,12 @@ class PragmaProjectImpl implements PragmaProject {
 
   listResources(): readonly PragmaResource[] {
     return [...this.resources.values()]
+      .map((indexed) => indexed.resource)
+      .sort((left, right) => canonicalRef(left).localeCompare(canonicalRef(right)));
+  }
+
+  listResourceClosure(ref: PragmaResourceRef): readonly PragmaResource[] {
+    return [...this.collectDependencyClosure(this.resolveResource(ref)).values()]
       .map((indexed) => indexed.resource)
       .sort((left, right) => canonicalRef(left).localeCompare(canonicalRef(right)));
   }

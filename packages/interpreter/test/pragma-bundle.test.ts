@@ -13,6 +13,7 @@ import {
   exportPragmaBundle,
   encodePragmaBundle,
   formatPragmaYaml,
+  localizePragmaBundleResources,
   loadPragmaProject,
   PragmaBundleRequirementSchema,
   PragmaResourceSchema,
@@ -68,6 +69,72 @@ describe("portable .pragma bundles", () => {
     expect(ready.status).toBe("ready");
     if (ready.status === "ready") expect(ready.compiled.value.name).toBe("Writer");
     await loaded.dispose();
+  });
+
+  it("loads a decoded bundle and localizes a target graph without mutating portable resources", async () => {
+    const source = await createProject(true);
+    const project = await loadPragmaProject(source.entry);
+    const exported = await project.exportBundle({ roots: ["expert:1xddvess309a6gme"] });
+    const decoded = await decodePragmaBundle({ kind: "bytes", bytes: exported.bytes });
+    const loaded = await loadPragmaProject({ kind: "decoded-bundle", bundle: decoded });
+    const portable = loaded.listResourceClosure("expert:1xddvess309a6gme");
+    const binding = exported.manifest.requirements.find(
+      (requirement) => requirement.kind === "binding",
+    )!;
+    const runtime = exported.manifest.requirements.find(
+      (requirement) => requirement.kind === "runtime",
+    )!;
+
+    const localized = localizePragmaBundleResources({
+      resources: portable,
+      manifest: exported.manifest,
+      identities: [
+        {
+          sourceRef: "expert:1xddvess309a6gme",
+          targetId: "2222222222222222",
+          targetName: "Writer copy",
+        },
+      ],
+      requirements: [
+        {
+          requirementId: binding.id,
+          kind: "binding",
+          replacement: "binding:desktop.capability.1",
+        },
+        {
+          requirementId: runtime.id,
+          kind: "runtime",
+          config: { runtimeId: "pi", providerId: "openai", model: "gpt-test" },
+        },
+      ],
+    });
+
+    const portableExpert = portable.find((resource) => resource.kind === "Expert");
+    const localizedExpert = localized.resources.find((resource) => resource.kind === "Expert");
+    const localizedCapability = localized.resources.find(
+      (resource) => resource.kind === "Capability",
+    );
+    const localizedRuntime = localized.resources.find(
+      (resource) => resource.kind === "RuntimeProfile",
+    );
+    expect(portableExpert?.metadata.id).toBe("1xddvess309a6gme");
+    expect(localizedExpert?.metadata).toMatchObject({
+      id: "2222222222222222",
+      name: "Writer copy",
+    });
+    expect(localizedCapability?.kind === "Capability" ? localizedCapability.spec.binding : "").toBe(
+      "binding:desktop.capability.1",
+    );
+    expect(localizedRuntime?.kind === "RuntimeProfile" ? localizedRuntime.spec.config : {}).toEqual(
+      {
+        runtimeId: "pi",
+        providerId: "openai",
+        model: "gpt-test",
+      },
+    );
+    expect(localized.unresolvedRequirements).toEqual([]);
+    await loaded.dispose();
+    await project.dispose();
   });
 
   it("keeps Host bindings out of portable resources and applies an immutable binding overlay", async () => {
