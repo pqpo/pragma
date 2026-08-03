@@ -1,5 +1,5 @@
 import { randomUUID } from "node:crypto";
-import { mkdir, readFile, readdir, rename, rm, writeFile } from "node:fs/promises";
+import { mkdir, readFile, readdir, rename, writeFile } from "node:fs/promises";
 import { dirname, join } from "node:path";
 
 import { PragmaPaths } from "./pragma-paths.ts";
@@ -100,35 +100,6 @@ export async function runtimeSessionDeletionSources(
     }
   }
   return sources;
-}
-
-export async function purgeExpiredTrash(input: {
-  readonly paths: PragmaPaths;
-  readonly ttlMs: number;
-  readonly now?: number | undefined;
-}): Promise<{ readonly deleted: number }> {
-  let entries;
-  try {
-    entries = await readdir(input.paths.trashRoot(), { withFileTypes: true });
-  } catch (error) {
-    if (isNotFound(error)) return { deleted: 0 };
-    throw error;
-  }
-  const now = input.now ?? Date.now();
-  let deleted = 0;
-  for (const entry of entries) {
-    if (!entry.isDirectory()) continue;
-    const journalPath = join(input.paths.deletionJournalRoot(), `${entry.name}.json`);
-    const journal = await readFile(journalPath, "utf8")
-      .then((value) => JSON.parse(value) as { readonly completedAt?: unknown })
-      .catch(() => undefined);
-    if (typeof journal?.completedAt !== "string") continue;
-    if (now - Date.parse(journal.completedAt) < input.ttlMs) continue;
-    await rm(join(input.paths.trashRoot(), entry.name), { recursive: true, force: true });
-    await rm(journalPath, { force: true });
-    deleted += 1;
-  }
-  return { deleted };
 }
 
 async function writeJournal(path: string, value: unknown): Promise<void> {

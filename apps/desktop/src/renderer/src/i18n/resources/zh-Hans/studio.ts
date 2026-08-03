@@ -143,6 +143,25 @@ export const studio = {
   deleteResource: "删除此{{kind}}？",
   deleteResourceAction: "删除",
   deleteResourceDescription: "“{{name}}”将被永久删除。删除前，必须先更新所有依赖它的资源。",
+  deleteResourceReferenced:
+    "该资源被以下资源引用，无法删除：{{references}}。请先移除这些依赖关系。",
+  deleteResourceReferencedMore_one:
+    "该资源被以下资源引用，无法删除：{{references}}，以及另外{{count}}个资源。请先移除这些依赖关系。",
+  deleteResourceReferencedMore_other:
+    "该资源被以下资源引用，无法删除：{{references}}，以及另外{{count}}个资源。请先移除这些依赖关系。",
+  deleteResourceReferencedUnknown: "该资源仍被其他资源引用，无法删除。请先移除相关依赖关系。",
+  deleteResourceReference: "{{kind}}“{{name}}”",
+  deleteResourceReferenceSeparator: "、",
+  deleteResourceKind: {
+    expert: "专家",
+    team: "专家团队",
+    flow: "流程",
+    automation: "自动化",
+    capability: "能力",
+    contextStore: "上下文存储",
+    runtimeProfile: "运行时配置",
+    evaluation: "测评",
+  },
   backTeams: "返回专家团队列表",
   backTeamDetail: "返回团队详情",
   backExpertDetail: "返回专家详情",

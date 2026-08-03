@@ -149,18 +149,6 @@ export function consumeClaudeCodeStartupMessages(
 ): readonly ExpertAgentStartupMessage[] {
   const startupMessages = session.pendingStartupMessages;
   session.pendingStartupMessages = [];
-
-  if (startupMessages.length > 0) {
-    const timestamp = Date.now();
-    session.messages.push(
-      ...startupMessages.map((message, index) => ({
-        role: "user" as const,
-        content: message.content,
-        timestamp: timestamp + index,
-      })),
-    );
-  }
-
   return startupMessages;
 }
 
@@ -171,11 +159,19 @@ export async function startClaudeCodeTurn(
   session.tokenModelIdentity = claudeTokenModelIdentity(
     turn.modelSelection?.model.modelId ?? session.defaultModelName,
   );
-  session.messages.push({
-    role: "user",
-    content: turn.rawQuery,
-    timestamp: Date.now(),
-  });
+  const timestamp = Date.now();
+  session.messages.push(
+    ...turn.startupMessages.map((message, index) => ({
+      role: message.role,
+      content: message.content,
+      timestamp: timestamp + index,
+    })),
+    {
+      role: "user",
+      content: turn.rawQuery,
+      timestamp: timestamp + turn.startupMessages.length,
+    },
+  );
 
   const unsubscribeCompaction = session.compactionHookRelay.subscribe((event) => {
     turn.stream.writeNative(event);

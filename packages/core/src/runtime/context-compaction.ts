@@ -4,6 +4,10 @@ export const RUNTIME_CONTEXT_COMPACTION_STAGES = {
   failed: "context.compaction.failed",
 } as const;
 
+export const RUNTIME_STARTUP_MESSAGE_STAGES = {
+  reinjectionSkipped: "context.startup_messages.reinjection_skipped",
+} as const;
+
 export type RuntimeContextCompactionStage =
   (typeof RUNTIME_CONTEXT_COMPACTION_STAGES)[keyof typeof RUNTIME_CONTEXT_COMPACTION_STAGES];
 

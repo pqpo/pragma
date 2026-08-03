@@ -144,18 +144,6 @@ export function consumeCodexStartupMessages(
 ): readonly ExpertAgentStartupMessage[] {
   const startupMessages = session.pendingStartupMessages;
   session.pendingStartupMessages = [];
-
-  if (startupMessages.length > 0) {
-    const timestamp = Date.now();
-    session.messages.push(
-      ...startupMessages.map((message, index) => ({
-        role: message.role,
-        content: message.content,
-        timestamp: timestamp + index,
-      })),
-    );
-  }
-
   return startupMessages;
 }
 
@@ -194,11 +182,19 @@ export async function startCodexTurn(
   });
   const unsubscribe = session.notificationBus.subscribe(observer.handleNotification);
 
-  session.messages.push({
-    role: "user",
-    content: turn.rawQuery,
-    timestamp: Date.now(),
-  });
+  const timestamp = Date.now();
+  session.messages.push(
+    ...turn.startupMessages.map((message, index) => ({
+      role: message.role,
+      content: message.content,
+      timestamp: timestamp + index,
+    })),
+    {
+      role: "user",
+      content: turn.rawQuery,
+      timestamp: timestamp + turn.startupMessages.length,
+    },
+  );
 
   try {
     await session.client.startTurn({

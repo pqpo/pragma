@@ -10,6 +10,7 @@ import {
   assertStorageWriteAllowed,
   createStorageCapacityGuard,
   runStorageMaintenance,
+  runTrashMaintenance,
 } from "../src/storage/storage-maintenance.ts";
 import { DEFAULT_STORAGE_POLICY } from "../src/storage/storage-policy.ts";
 
@@ -202,4 +203,139 @@ describe("runStorageMaintenance", () => {
     ).resolves.toBeUndefined();
     await expect(readdir(paths.trashRoot())).resolves.toEqual([]);
   });
+
+  it("keeps only the newest completed trash entries within the count limit", async () => {
+    const root = await temporaryStorageRoot("pragma-trash-count-");
+    const paths = new PragmaPaths({ pragmaHome: root });
+    await createCompletedTrash(paths, "oldest", "2026-07-01T00:00:00.000Z", 1);
+    await createCompletedTrash(paths, "middle", "2026-07-02T00:00:00.000Z", 1);
+    await createCompletedTrash(paths, "newest", "2026-07-03T00:00:00.000Z", 1);
+
+    const result = await runTrashMaintenance({
+      paths,
+      now: Date.parse("2026-07-04T00:00:00.000Z"),
+      policy: {
+        ...DEFAULT_STORAGE_POLICY,
+        trashLimitBytes: Number.MAX_SAFE_INTEGER,
+        trashMaxEntries: 2,
+        trashTtlMs: Number.MAX_SAFE_INTEGER,
+      },
+    });
+
+    expect(result.deletedEntries).toBe(1);
+    await expect(readdir(paths.trashRoot())).resolves.toEqual(["middle", "newest"]);
+  });
+
+  it("removes oldest and oversized completed trash until the byte limit is satisfied", async () => {
+    const root = await temporaryStorageRoot("pragma-trash-bytes-");
+    const paths = new PragmaPaths({ pragmaHome: root });
+    await createCompletedTrash(paths, "old", "2026-07-01T00:00:00.000Z", 8);
+    await createCompletedTrash(paths, "new", "2026-07-02T00:00:00.000Z", 8);
+
+    const first = await runTrashMaintenance({
+      paths,
+      now: Date.parse("2026-07-03T00:00:00.000Z"),
+      policy: {
+        ...DEFAULT_STORAGE_POLICY,
+        trashLimitBytes: 10,
+        trashMaxEntries: Number.MAX_SAFE_INTEGER,
+        trashTtlMs: Number.MAX_SAFE_INTEGER,
+      },
+    });
+
+    expect(first.deletedEntries).toBe(1);
+    expect(first.reclaimedBytes).toBe(8);
+    await expect(readdir(paths.trashRoot())).resolves.toEqual(["new"]);
+
+    const second = await runTrashMaintenance({
+      paths,
+      now: Date.parse("2026-07-03T00:00:00.000Z"),
+      policy: {
+        ...DEFAULT_STORAGE_POLICY,
+        trashLimitBytes: 4,
+        trashMaxEntries: Number.MAX_SAFE_INTEGER,
+        trashTtlMs: Number.MAX_SAFE_INTEGER,
+      },
+    });
+
+    expect(second.deletedEntries).toBe(1);
+    await expect(readdir(paths.trashRoot())).resolves.toEqual([]);
+  });
+
+  it("expires completed trash but preserves incomplete deletion transactions", async () => {
+    const root = await temporaryStorageRoot("pragma-trash-ttl-");
+    const paths = new PragmaPaths({ pragmaHome: root });
+    await createCompletedTrash(paths, "expired", "2026-07-01T00:00:00.000Z", 1);
+    await createCompletedTrash(paths, "fresh", "2026-07-09T00:00:00.000Z", 1);
+    await createIncompleteTrash(paths, "moving", 1);
+    await createTrashFixture(paths, "invalid", 1, {
+      schemaVersion: "pragma.storage-deletion/v1",
+      deletionId: "different-id",
+      status: "trashed",
+      completedAt: "2026-07-01T00:00:00.000Z",
+    });
+
+    await runTrashMaintenance({
+      paths,
+      now: Date.parse("2026-07-10T00:00:00.000Z"),
+      policy: {
+        ...DEFAULT_STORAGE_POLICY,
+        trashLimitBytes: Number.MAX_SAFE_INTEGER,
+        trashMaxEntries: Number.MAX_SAFE_INTEGER,
+        trashTtlMs: 7 * 24 * 60 * 60 * 1_000,
+      },
+    });
+
+    await expect(readdir(paths.trashRoot())).resolves.toEqual(["fresh", "invalid", "moving"]);
+    await expect(stat(join(paths.deletionJournalRoot(), "invalid.json"))).resolves.toBeDefined();
+    await expect(stat(join(paths.deletionJournalRoot(), "moving.json"))).resolves.toBeDefined();
+  });
 });
+
+async function temporaryStorageRoot(prefix: string): Promise<string> {
+  const root = await mkdtemp(join(tmpdir(), prefix));
+  roots.push(root);
+  return root;
+}
+
+async function createCompletedTrash(
+  paths: PragmaPaths,
+  deletionId: string,
+  completedAt: string,
+  bytes: number,
+): Promise<void> {
+  await createTrashFixture(paths, deletionId, bytes, {
+    schemaVersion: "pragma.storage-deletion/v1",
+    deletionId,
+    status: "trashed",
+    completedAt,
+  });
+}
+
+async function createIncompleteTrash(
+  paths: PragmaPaths,
+  deletionId: string,
+  bytes: number,
+): Promise<void> {
+  await createTrashFixture(paths, deletionId, bytes, {
+    schemaVersion: "pragma.storage-deletion/v1",
+    deletionId,
+    status: "moving",
+  });
+}
+
+async function createTrashFixture(
+  paths: PragmaPaths,
+  deletionId: string,
+  bytes: number,
+  journal: unknown,
+): Promise<void> {
+  const trash = join(paths.trashRoot(), deletionId, "owner");
+  await mkdir(trash, { recursive: true });
+  await writeFile(join(trash, "payload.bin"), Buffer.alloc(bytes));
+  await mkdir(paths.deletionJournalRoot(), { recursive: true });
+  await writeFile(
+    join(paths.deletionJournalRoot(), `${deletionId}.json`),
+    `${JSON.stringify(journal)}\n`,
+  );
+}

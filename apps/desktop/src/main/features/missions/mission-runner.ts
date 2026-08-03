@@ -222,6 +222,7 @@ export function createMissionRunner(options: {
     ((mission: Mission) => string | undefined | Promise<string | undefined>) | undefined;
   readonly assertStorageWriteAllowed?: (() => Promise<void>) | undefined;
   readonly assertExecutorReady?: ((ref: string) => void | Promise<void>) | undefined;
+  readonly onStorageTrashed?: (() => void) | undefined;
   readonly onExecutionLinked?:
     | ((input: { readonly mission: Mission; readonly executionId: string }) => Promise<void>)
     | undefined;
@@ -1196,6 +1197,7 @@ export function createMissionRunner(options: {
     else options.missions.forget?.(id);
     options.usage?.markSubjectDeleted("mission", id);
     executionContexts.delete(id);
+    options.onStorageTrashed?.();
   };
 
   const getContextWindowState = async (

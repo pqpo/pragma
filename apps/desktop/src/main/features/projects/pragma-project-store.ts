@@ -54,6 +54,7 @@ import {
 
 import {
   PragmaProjectSnapshotSchema,
+  type DesktopMutationReferencedResource,
   type PragmaProjectSnapshot,
   type PragmaYamlValidationResult,
 } from "../../../shared/contracts/index.ts";
@@ -163,6 +164,7 @@ export class PragmaProjectStoreError extends Error {
           readonly retryable: boolean;
         }
       | undefined = undefined,
+    readonly referencedBy: readonly DesktopMutationReferencedResource[] = [],
   ) {
     super(message);
     this.name = "PragmaProjectStoreError";
@@ -170,10 +172,7 @@ export class PragmaProjectStoreError extends Error {
 }
 
 export type PragmaProjectRevisionUnavailableStage =
-  | "manifest"
-  | "compiler-migration"
-  | "validation"
-  | "io";
+  "manifest" | "compiler-migration" | "validation" | "io";
 
 export class PragmaProjectRevisionUnavailableError extends Error {
   readonly code = "project_revision_unavailable";
@@ -445,10 +444,19 @@ export function createPragmaProjectStore(options: {
       if (resource === undefined) {
         throw new PragmaProjectStoreError("resource_not_found", `Resource not found: ${input.ref}`);
       }
-      if (referencingPragmaResources(snapshot.resources, input.ref).length > 0) {
+      const referencedBy = referencingPragmaResources(snapshot.resources, input.ref).map(
+        (referencingResource) => ({
+          ref: canonicalPragmaResourceRef(referencingResource),
+          name: referencingResource.metadata.name,
+        }),
+      );
+      if (referencedBy.length > 0) {
         throw new PragmaProjectStoreError(
           "resource_referenced",
           "This resource is used by another Expert, Expert Team, Flow, or Evaluation. Remove those dependencies before deleting it.",
+          [],
+          undefined,
+          referencedBy,
         );
       }
       return await apply({
