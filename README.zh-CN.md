@@ -154,7 +154,7 @@ pnpm --filter @pragma/desktop dev
 
 Desktop 是启动 Mission、选择 Workspace，并使用本地或已连接 Runtime 的最简单入口。
 
-Studio 可以把任意 Expert、ExpertTeam 或 Flow 导出为可移植的 `.pragma` Bundle。导出文件会以规范化 DSL 包含它的可复用依赖图，并可选择携带 Capability、Plugin、知识库和 Flow 视觉布局；Secret、本地 Session、Mission 与机器相关路径始终留在本机。另一台 Desktop 可以直接导入，你自己的 Agent 系统也可以通过 Pragma Interpreter 加载其中的 DSL。
+Studio 可以把任意 Expert、ExpertTeam 或 Flow 导出为可移植的 `.pragma` Bundle。导出文件会以规范化 DSL 包含它的可复用依赖图，并可选择携带 Capability、Plugin、知识库和 Flow 视觉布局；Secret、本地 Session、Mission 与机器相关路径始终留在本机。另一台 Desktop 可以直接导入，你自己的 Agent 系统也可以把导出的文件直接交给 `@pragma/interpreter`，无需解包或依赖 Desktop 代码，再将其中的根资源编译成可运行的 `@pragma/core` 对象。
 
 ### 使用 Pragma DSL 描述可复用 AI-native 系统
 
@@ -221,52 +221,65 @@ spec:
 
 同一种语言可以描述 Expert、ExpertTeam、Flow、Capability、Context、Runtime Profile 与 Evaluation。定义可以跟随项目保存、从编译后的对象重新生成、在 Git 中评审、从 Desktop 导出，并在不同 Host 之间移动。
 
-### 加载、编译、获取流式输出与最终结果
+### 在自己的 Agent 系统中加载并运行 Desktop Bundle
 
-导入或解包已导出的项目后，自有 Host 可以加载项目入口、编译完整依赖图，并使用自己的 Runtime 绑定执行：
+Desktop 导出的 `.pragma` 文件实现了由 Interpreter 定义的 `pragma.bundle/v1` 协议。自有 Host 可以直接加载这个归档文件，选择其中一个导出根资源，使用自己的 Runtime 与 Host binding 解析该根资源的依赖闭包，再通过 `@pragma/core` 运行编译后的对象：
 
 ```ts
 import { createPragma, type Flow } from "@pragma/core";
 import { loadPragmaProject } from "@pragma/interpreter";
 
-const project = await loadPragmaProject("./pragma.yaml");
-const diagnostics = await project.validate();
-if (diagnostics.some((item) => item.severity === "error")) {
-  throw new Error(JSON.stringify(diagnostics, null, 2));
-}
-
-const compiled = await project.compile<Flow>("flow:t9ne4d8njvvxv2ea", {
-  workspace: process.cwd(),
-  runtimes: myRuntimeResolver,
+const project = await loadPragmaProject({
+  kind: "bundle",
+  source: { kind: "file", path: "./ai-native-delivery.pragma" },
 });
 
-const app = createPragma({ runtimes: myRuntimeResolver });
-const execution = await app.flows.start(compiled.value, {
-  input: { brief: "Build and verify the next product release." },
-});
+try {
+  // 一个 Bundle 可以导出多个根资源；本例运行其中的 Flow 根资源。
+  const root = project.bundle?.manifest.roots.find((ref) => ref.startsWith("flow:"));
+  if (root === undefined) throw new Error("Bundle 中没有导出的 Flow 根资源。");
 
-const output = await execution.subscribeOutput({ scope: { kind: "all" } });
-const streaming = (async () => {
-  try {
-    for await (const item of output) {
-      process.stdout.write(item.delta ?? String(item.value ?? ""));
-    }
-  } finally {
-    await output.close();
+  const prepared = await project.prepareCompile<Flow>(root, {
+    workspace: process.cwd(),
+    runtimes: myRuntimeResolver,
+  });
+  if (prepared.status !== "ready") {
+    // `needs_binding` 会列出集成方在编译前必须提供的 Runtime、Capability、
+    // Secret 或其他 Host requirement。
+    throw new Error(`Bundle 根资源暂不可运行：${JSON.stringify(prepared, null, 2)}`);
   }
-})();
 
-const result = await execution.result;
-await streaming;
+  const app = createPragma({ runtimes: myRuntimeResolver });
+  const execution = await app.flows.start(prepared.compiled.value, {
+    input: { brief: "Build and verify the next product release." },
+  });
 
-console.log("Final result:", result);
+  const output = await execution.subscribeOutput({ scope: { kind: "all" } });
+  const streaming = (async () => {
+    try {
+      for await (const item of output) {
+        process.stdout.write(item.delta ?? String(item.value ?? ""));
+      }
+    } finally {
+      await output.close();
+    }
+  })();
 
-// 同一个 Execution 提供完整审计事件。
-const audit = await execution.listEvents({ scope: { kind: "all" }, limit: 1_000 });
-console.log("Audit events:", audit.items.length);
+  const result = await execution.result;
+  await streaming;
+
+  console.log("Final result:", result);
+
+  // 同一个 Execution 提供完整审计事件。
+  const audit = await execution.listEvents({ scope: { kind: "all" }, limit: 1_000 });
+  console.log("Audit events:", audit.items.length);
+} finally {
+  // Bundle Project 使用由 Interpreter 管理的临时解包目录。
+  await project.dispose();
+}
 ```
 
-Interpreter 会解析导出的资源依赖图，Compiler 再把它编译成可运行的 Core 对象。`scope: { kind: "all" }` 会同时获得根 Flow 及其嵌套 Expert、ExpertTeam 与子 Flow 的流式输出。你的应用仍然完全掌控产品体验、持久化、权限和基础设施，同时获得实时输出、最终结果与可审计的执行事件。
+整个过程不需要经过 Desktop 的导入功能：Interpreter 会校验归档和 Lock，解析所选根资源的导出依赖图，再将其编译成可运行的 Core 对象。如果 `prepareCompile()` 返回 `needs_binding`，你的 Host 可以先通过 Interpreter 的 binding API 满足报告出的 Bundle requirements，再进行编译。`scope: { kind: "all" }` 会同时获得根 Flow 及其嵌套 Expert、ExpertTeam 与子 Flow 的流式输出。你的 Agent 系统仍然掌控 Runtime 选择、权限、持久化、产品体验和基础设施，同时复用在 Desktop 中构建的系统。
 
 ## 进一步了解
 
