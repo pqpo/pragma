@@ -14,6 +14,7 @@ import { randomUUID } from "node:crypto";
 import { AgentMessageUsageSchema, type AgentMessage, type AgentMessageUsage } from "@pragma/shared";
 import type {
   Expert,
+  ExpertAgentStartupMessage,
   RuntimeContextWindowUsage,
   RuntimeEventMappingContext,
   RuntimeEventMappingResult,
@@ -58,6 +59,7 @@ export interface PiNativeSession {
   readonly tokenCounter: RuntimeTokenCounter;
   tokenModelIdentity: RuntimeTokenModelIdentity;
   messageCountBeforeRun: number;
+  pendingStartupMessages: readonly ExpertAgentStartupMessage[];
   pendingCompactionOperationId?: string | undefined;
   compactionTriggerOverride?: RuntimeContextCompactionTrigger | undefined;
 }
@@ -78,6 +80,7 @@ export function createPiNativeSession(options: {
     readonly modelRuntime: ModelRuntime;
   };
   readonly compactionKeepRecentTokens: number;
+  readonly startupMessages?: readonly ExpertAgentStartupMessage[] | undefined;
   readonly tokenCounter?: RuntimeTokenCounter | undefined;
   readonly tokenModelIdentity?: RuntimeTokenModelIdentity | undefined;
 }): PiNativeSession {
@@ -86,6 +89,7 @@ export function createPiNativeSession(options: {
     tokenCounter: options.tokenCounter ?? defaultRuntimeTokenCounter,
     tokenModelIdentity: options.tokenModelIdentity ?? { runtimeKind: "cloud-pi-agent" },
     messageCountBeforeRun: options.session.messages.length,
+    pendingStartupMessages: options.startupMessages ?? [],
   };
 }
 
@@ -98,6 +102,14 @@ export function setPiTokenModelIdentity(
 
 export function listPiMessages(session: PiNativeSession): readonly AgentMessage[] {
   return convertPiAgentMessages(session.session.messages);
+}
+
+export function consumePiStartupMessages(
+  session: PiNativeSession,
+): readonly ExpertAgentStartupMessage[] {
+  const startupMessages = session.pendingStartupMessages;
+  session.pendingStartupMessages = [];
+  return startupMessages;
 }
 
 export async function startPiTurn(
@@ -153,7 +165,9 @@ export async function startPiTurn(
       nativeSession.session.setThinkingLevel(thinkingLevel);
     }
     await compactPiContextBeforePrompt(nativeSession);
-    await nativeSession.session.prompt(turn.prompt);
+    await nativeSession.session.prompt(
+      [...turn.startupMessages.map((message) => message.content), turn.prompt].join("\n\n"),
+    );
     assertAssistantTurnCompleted(
       nativeSession.session.messages.slice(nativeSession.messageCountBeforeRun),
     );

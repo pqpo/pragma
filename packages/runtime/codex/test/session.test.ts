@@ -200,7 +200,7 @@ describe("Codex turn completion", () => {
     const notificationBus = createCodexNotificationBus();
     const writeNative = vi.fn();
     const client = {
-      async startTurn() {
+      startTurn: vi.fn(async () => {
         notificationBus.publish({
           method: "item/started",
           params: {
@@ -226,7 +226,7 @@ describe("Codex turn completion", () => {
           method: "turn/completed",
           params: { threadId: "thread-1", turn: { status: "completed", error: null } },
         });
-      },
+      }),
     } as unknown as CodexAppServerClient;
     const session = createCodexNativeSession({
       client,
@@ -240,7 +240,7 @@ describe("Codex turn completion", () => {
       isRetry: false,
       rawQuery: "hello",
       prompt: "hello",
-      startupMessages: [],
+      startupMessages: [{ role: "user", content: "always-on context" }],
       signal: new AbortController().signal,
       source: {
         kind: "runtime",
@@ -259,6 +259,19 @@ describe("Codex turn completion", () => {
         },
       }),
     );
+    expect(client.startTurn).toHaveBeenCalledWith(
+      expect.objectContaining({
+        input: [
+          { type: "text", text: "always-on context", text_elements: [] },
+          { type: "text", text: "hello", text_elements: [] },
+        ],
+      }),
+    );
+    expect(session.messages).toMatchObject([
+      { role: "user", content: "always-on context" },
+      { role: "user", content: "hello" },
+      { role: "assistant" },
+    ]);
     expect(writeNative).toHaveBeenCalledWith(
       expect.objectContaining({
         compaction: {

@@ -101,6 +101,7 @@ export function createRuntimeStreamController<TNativeEvent>(options: {
   readonly session: () => RuntimeSessionInfo;
   readonly context?: ExpertAgentRunContext | undefined;
   readonly logger: PragmaLogger;
+  readonly onEvent?: ((event: RuntimeStreamEvent) => void) | undefined;
   readonly mapEvent: (
     event: TNativeEvent,
     context: RuntimeEventMappingContext,
@@ -141,6 +142,7 @@ export function createRuntimeStreamController<TNativeEvent>(options: {
 
   const emit = (event: RuntimeStreamEventInput): void => {
     const emitted = emitter.emit(event);
+    options.onEvent?.(emitted);
     pendingHookCalls.push(
       dispatchExpertAgentHook(options.agent.hooks, "onStreamEvent", {
         agent: options.agent,

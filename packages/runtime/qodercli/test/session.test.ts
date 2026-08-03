@@ -21,7 +21,7 @@ describe("Qoder startup messages", () => {
     queryMock.mockReset();
   });
 
-  it("consumes startup messages once and records them in session history", () => {
+  it("consumes startup messages once without recording them before a turn", () => {
     const session = createSession();
     session.pendingStartupMessages = [
       { role: "user", content: "always-on context one" },
@@ -33,13 +33,10 @@ describe("Qoder startup messages", () => {
       { role: "user", content: "always-on context two" },
     ]);
     expect(session.pendingStartupMessages).toEqual([]);
-    expect(session.messages).toMatchObject([
-      { role: "user", content: "always-on context one" },
-      { role: "user", content: "always-on context two" },
-    ]);
+    expect(session.messages).toEqual([]);
 
     expect(consumeQoderStartupMessages(session)).toEqual([]);
-    expect(session.messages).toHaveLength(2);
+    expect(session.messages).toEqual([]);
   });
 
   it("prepends startup messages to the first native prompt without double-counting fallback usage", async () => {
@@ -67,6 +64,11 @@ describe("Qoder startup messages", () => {
       messages: [],
       prompt: "always-on context one\n\nalways-on context two\n\nuser prompt",
     });
+    expect(session.messages.slice(0, 3)).toMatchObject([
+      { role: "user", content: "always-on context one" },
+      { role: "user", content: "always-on context two" },
+      { role: "user", content: "user prompt" },
+    ]);
     expect(sdkQuery.close).toHaveBeenCalledOnce();
   });
 

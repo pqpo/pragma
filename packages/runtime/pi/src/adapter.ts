@@ -38,6 +38,7 @@ import {
   canCompactPiContextWindow,
   compactPiContextWindow,
   collectPiUsage,
+  consumePiStartupMessages,
   createPiNativeSession,
   listPiMessages,
   mapPiAgentEvent,
@@ -295,9 +296,6 @@ export function createPiRuntime(options: CloudPiRuntimeAdapterOptions = {}): Run
             sessionStartedAt,
             async () => await createAgentSession(sessionOptions),
           ));
-          if (!piSessionManagerResult.resumedExistingSession) {
-            appendStartupMessages(session, ctx.agentContext.startupMessages);
-          }
           ctx.logger.info("runtime.pi_session_ready", "Runtime session preparation completed", {
             elapsedMs: piElapsedMs(sessionStartedAt),
             toolCount: sessionOptions.customTools?.length ?? 0,
@@ -318,6 +316,9 @@ export function createPiRuntime(options: CloudPiRuntimeAdapterOptions = {}): Run
                 modelRuntime,
               },
               compactionKeepRecentTokens,
+              startupMessages: piSessionManagerResult.resumedExistingSession
+                ? []
+                : ctx.agentContext.startupMessages,
               tokenCounter: options.tokenCounter,
               tokenModelIdentity: piTokenModelIdentity(registeredProvider, selectedModel),
             }),
@@ -346,6 +347,7 @@ export function createPiRuntime(options: CloudPiRuntimeAdapterOptions = {}): Run
         };
       },
       listMessages: listPiMessages,
+      consumeStartupMessages: consumePiStartupMessages,
       async startTurn(session, turn) {
         const selectedModel = turn.modelSelection?.model;
         if (selectedModel !== undefined) {
@@ -468,32 +470,4 @@ export function createPiSessionBashTool(options: {
       );
     },
   };
-}
-
-function appendStartupMessages(
-  session: AgentSession,
-  messages: readonly { readonly role: "user"; readonly content: string }[],
-): void {
-  if (messages.length === 0) {
-    return;
-  }
-
-  const timestamp = Date.now();
-  const piMessages = messages.map((message, index) => ({
-    role: message.role,
-    content: message.content,
-    timestamp: timestamp + index,
-  }));
-  const mutableSession = session as unknown as {
-    readonly state?: { messages: unknown[] } | undefined;
-    messages: unknown[];
-  };
-  const nextMessages = [...mutableSession.messages, ...piMessages];
-
-  if (mutableSession.state !== undefined) {
-    mutableSession.state.messages = nextMessages;
-    return;
-  }
-
-  mutableSession.messages = nextMessages;
 }
