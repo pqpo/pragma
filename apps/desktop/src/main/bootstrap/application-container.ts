@@ -402,6 +402,13 @@ export async function createDesktopApplicationContainer(
     automaticHumanInteractionHandlerForToolPermissionMode: (mode) =>
       createAutomaticToolPermissionHandler(() => mode),
     assertStorageWriteAllowed: async () => await storageCapacityGuard.assertWriteAllowed(),
+    onExecutionLinked: async ({ mission, executionId }) => {
+      if (mission.origin.type === "system-memory") return;
+      await memoryPlane.registerSemanticExecutionContext({
+        executionId,
+        projectId: mission.project.id,
+      });
+    },
     getSystemExecutorFingerprint: async (mission) =>
       mission.executor.ref === MEMORY_CURATOR_REF
         ? await memoryCuratorRef.current?.fingerprint()
@@ -500,7 +507,10 @@ export async function createDesktopApplicationContainer(
     loggerProvider,
   });
   memoryCuratorRef.current = memoryCurator;
-  await memoryPlane.setEpisodicExtractor(memoryCurator.extractor);
+  await Promise.all([
+    memoryPlane.setEpisodicExtractor(memoryCurator.episodicExtractor),
+    memoryPlane.setSemanticExtractor(memoryCurator.semanticExtractor),
+  ]);
   const unsubscribeTokenCounter = tokenCounter.subscribe(() => {
     void missionRunner.invalidateEstimatedContextWindows().catch((error: unknown) => {
       mainLogger.warn(

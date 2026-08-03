@@ -9,6 +9,7 @@ import {
 import {
   MemoryModuleRegistry,
   createEpisodicMemoryModule,
+  createSemanticMemoryModule,
   createFileMemoryExtractorProfileStore,
   createExecutionEvidenceAdapter,
   createFederatedMemoryContextStore,
@@ -22,15 +23,34 @@ import {
   type MemoryRecallScope,
   type EpisodicMemoryExtractor,
   type MemoryExtractorProfileStore,
+  type SemanticMemoryExtractor,
+  type SemanticMemoryStore,
 } from "@pragma/memory";
+
+import { createDesktopMemorySubjectIdentityStore } from "./memory-subject-identity.ts";
 
 export interface DesktopMemoryPlane {
   readonly executionStore: FileExecutionStore;
   readonly policies: MemoryPolicyStore;
   readonly extractorProfiles: MemoryExtractorProfileStore;
+  readonly semanticStore: SemanticMemoryStore;
   readonly contextStore: import("@pragma/core").ExpertAgentContextStore;
   setEpisodicExtractor(extractor: EpisodicMemoryExtractor | undefined): Promise<void>;
-  wakeEpisodicJobs(): Promise<void>;
+  setSemanticExtractor(extractor: SemanticMemoryExtractor | undefined): Promise<void>;
+  registerSemanticExecutionContext(input: {
+    readonly executionId: string;
+    readonly projectId: string;
+  }): Promise<void>;
+  reviseSemanticFact(
+    input: Omit<Parameters<SemanticMemoryStore["revise"]>[0], "actorRef" | "now">,
+  ): Promise<import("@pragma/shared").SemanticFact>;
+  verifySemanticFact(
+    input: Omit<Parameters<SemanticMemoryStore["verify"]>[0], "actorRef" | "now">,
+  ): Promise<import("@pragma/shared").SemanticFact>;
+  invalidateSemanticFact(
+    input: Omit<Parameters<SemanticMemoryStore["invalidate"]>[0], "actorRef" | "now">,
+  ): Promise<import("@pragma/shared").SemanticFact>;
+  wakeMemoryJobs(): Promise<void>;
   getStatus(): Promise<{
     readonly state: "running" | "stopped" | "degraded";
     readonly feed: { readonly lastSequence: number; readonly eventCount: number };
@@ -67,7 +87,12 @@ export async function createDesktopMemoryPlane(options: {
   const publisher = createMemoryEvidencePublisher(canonical);
   const registry = new MemoryModuleRegistry();
   const episodic = await createEpisodicMemoryModule({ pragmaHome: options.pragmaHome });
+  const semantic = await createSemanticMemoryModule({ pragmaHome: options.pragmaHome });
+  const subjectIdentities = createDesktopMemorySubjectIdentityStore({
+    pragmaHome: options.pragmaHome,
+  });
   registry.register(episodic);
+  registry.register(semantic);
   const contextStore = createFederatedMemoryContextStore(registry, {
     resolveRecallScope: async (context) => await resolveDesktopMemoryRecallScope(policies, context),
   });
@@ -143,13 +168,50 @@ export async function createDesktopMemoryPlane(options: {
     executionStore,
     policies,
     extractorProfiles,
+    semanticStore: semantic.store,
     contextStore,
     async setEpisodicExtractor(extractor) {
       await episodic.setExtractor(extractor);
       scheduler.wake();
     },
-    async wakeEpisodicJobs() {
-      await episodic.store.wakeNeedsAttention(new Date());
+    async setSemanticExtractor(extractor) {
+      await semantic.setExtractor(extractor);
+      scheduler.wake();
+    },
+    async registerSemanticExecutionContext(input) {
+      const localUser = await subjectIdentities.getLocalUserRef();
+      await semantic.registerExecutionSubjects({
+        executionId: input.executionId,
+        subjectRefs: [localUser, { type: "pragma.project", id: input.projectId }],
+      });
+      scheduler.wake();
+    },
+    async reviseSemanticFact(input) {
+      return await semantic.store.revise({
+        ...input,
+        actorRef: await subjectIdentities.getLocalUserRef(),
+        now: new Date(),
+      });
+    },
+    async verifySemanticFact(input) {
+      return await semantic.store.verify({
+        ...input,
+        actorRef: await subjectIdentities.getLocalUserRef(),
+        now: new Date(),
+      });
+    },
+    async invalidateSemanticFact(input) {
+      return await semantic.store.invalidate({
+        ...input,
+        actorRef: await subjectIdentities.getLocalUserRef(),
+        now: new Date(),
+      });
+    },
+    async wakeMemoryJobs() {
+      await Promise.all([
+        episodic.store.wakeNeedsAttention(new Date()),
+        semantic.store.wakeNeedsAttention(new Date()),
+      ]);
       scheduler.wake();
     },
     async getStatus() {
@@ -158,15 +220,21 @@ export async function createDesktopMemoryPlane(options: {
       for (const module of registry.list()) {
         const diagnostic = registry.diagnostic(module.descriptor.id);
         if (diagnostic === undefined) continue;
-        if (module.descriptor.id !== episodic.descriptor.id) {
+        if (
+          module.descriptor.id !== episodic.descriptor.id &&
+          module.descriptor.id !== semantic.descriptor.id
+        ) {
           modules.push(diagnostic);
           continue;
         }
-        const work = await episodic.store.inspect();
+        const work =
+          module.descriptor.id === episodic.descriptor.id
+            ? await episodic.store.inspect()
+            : await semantic.store.inspect();
         modules.push({
           ...diagnostic,
           work: {
-            records: work.episodes,
+            records: "episodes" in work ? work.episodes : work.facts,
             pending: work.pending,
             running: work.running,
             needsAttention: work.needsAttention,
@@ -201,6 +269,7 @@ export async function createDesktopMemoryPlane(options: {
       await running;
       await scheduler.stop();
       episodic.close();
+      semantic.close();
       canonical.close();
     },
   };

@@ -128,6 +128,7 @@ describe("MissionRunner", { timeout: 15_000 }, () => {
       startTurn: () => ({ outputText: "done", runtimeSessionId: "runtime" }),
       mapEvent: () => ({ events: [] }),
     });
+    const onExecutionLinked = vi.fn(async () => undefined);
     const runner = createMissionRunner({
       missions,
       project,
@@ -140,6 +141,7 @@ describe("MissionRunner", { timeout: 15_000 }, () => {
         defaultRuntimeId: "fake",
       }),
       assertStorageWriteAllowed: async () => undefined,
+      onExecutionLinked,
     });
 
     await runner.run(mission.id);
@@ -161,6 +163,11 @@ describe("MissionRunner", { timeout: 15_000 }, () => {
     );
 
     expect(compile).toHaveBeenCalledTimes(1);
+    expect(onExecutionLinked).toHaveBeenCalledTimes(2);
+    expect(onExecutionLinked).toHaveBeenCalledWith({
+      mission: expect.objectContaining({ id: mission.id }),
+      executionId: expect.any(String),
+    });
   });
 
   it("creates a successor Session when the live execution definition changes", async () => {

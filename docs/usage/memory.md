@@ -6,7 +6,7 @@ Pragma 的新 Memory Plane 是 Desktop 内置能力，随应用启动，不需�
 
 ## 当前已经可用的能力
 
-当前已完成 Memory Plane 基础设施、策略和 Episodic Memory：
+当前已完成 Memory Plane 基础设施、策略、Episodic Memory 和 Semantic Memory：
 
 - Execution 语义事件通过持久 Canonical Event Feed 交给 Memory Plane；
 - Memory Evidence 自动记录 root Expert/ExpertTeam/Flow 与实际 producer Expert；
@@ -19,8 +19,13 @@ Pragma 的新 Memory Plane 是 Desktop 内置能力，随应用启动，不需�
 - 独立 Expert 只能看到自己的 Episode；Team/Flow 内 Expert 看到当前 Team/Flow Episode 与自己的个人
   Episode，不会混入其他专家或其他团队资产；
 - 模型通过 `memory/episodic/items/**` 按需读取详情，需要核验时再读取精确 Evidence 引用。
+- 独立 Semantic Module 会提炼当前事实、偏好和约束；相同事实合并 Evidence，矛盾事实并存并标记，
+  不会因为新事实置信度较高而自动覆盖；
+- Semantic 默认召回排除过期、失效和 superseded 投影，验证、更正和失效通过 revision CAS 保存历史；
+- Semantic subject 只来自可验证 allowlist：安装级 local User、Pragma Project、根资产和 producer Expert。
+  当前不发现 Repository subject，普通 Agent 任务不依赖代码仓库。
 
-当前尚未实现生产级 Semantic/Fact、Knowledge、Skill Candidate 或 CodeGraph Module。查询相关的主动
+当前尚未实现 Knowledge、Skill Candidate 或 CodeGraph Module。查询相关的主动
 召回排序、Memory 管理中心、候选评审和分享也在后续阶段。
 
 ## 分层加载
@@ -38,6 +43,9 @@ memory/<type>/evidence/<evidenceId>.md  # 按需核验证据
 
 guide 最多 2KB，overview 最多 6KB。普通搜索不会返回 Evidence；模型必须先找到详情中的稳定引用，再精确
 读取证据。Episodic 是历史先例，不代表当前事实。
+
+Semantic 是当前信念投影，也不是无条件真值。详情会展示 confidence、review/expiry、冲突和 Evidence；
+发生冲突时必须读取双方详情与证据，不得根据索引顺序猜测胜者。
 
 因此可以询问独立 Expert“你以前做过什么”：回答只依据该 Expert 作为根资产执行过的个人 Episode。
 在 Team/Flow 中询问时，模型还可以使用当前 Team/Flow 的共同履历，但提示词和详情会明确区分
@@ -72,8 +80,8 @@ global ∩ root asset ∩ producer experts ∩ mission restriction
 这些设置属于本机 Host binding metadata，不写入 Pragma DSL，不生成 Project Revision。
 
 这里的“每个资产一个 Memory Store”是逻辑授权视图，不是每个 Expert/Team/Flow 创建一套 SQLite 或目录。
-Episodic Module 仍使用共享物理 Store，并在查询阶段按稳定 root asset 与当前 Expert 过滤 list、search、
-detail 和 Evidence。
+Episodic 与 Semantic Module 都使用各自的共享物理 Store，并在查询阶段按稳定 binding 与当前 Expert
+过滤 list、search、detail 和 Evidence。
 
 ## 类型边界
 
@@ -89,8 +97,9 @@ Knowledge 与 CodeGraph 仍是 Memory type，不是独立 KnowledgeBase 或 Memo
 
 ## 团队资产与分享
 
-事实描述的 subject 和它绑定给谁是两个维度。一个事实可以描述 User、Project 或 Repository，同时在权限
-允许、经过提炼后绑定给 Expert、ExpertTeam 或 Flow，成为团队资产的一部分。
+事实描述的 subject 和它绑定给谁是两个维度。当前自动 subject 支持 local User、Pragma Project、
+Expert、ExpertTeam 与 Flow；Repository 等其他 subject 等有稳定 registry 后再接入。事实可以在权限允许、
+经过提炼后绑定给 Expert、ExpertTeam 或 Flow，成为团队资产的一部分。
 
 未来分享 Expert/ExpertTeam/Flow 时，可选择一并导出绑定且允许 export 的 published/team-shareable
 Memory revision。分享不会新建一个知识库对象，也不会自动导出私有原始 Evidence。
@@ -112,6 +121,9 @@ Memory revision。分享不会新建一个知识库对象，也不会自动导�
 ~/.pragma/state/event-bus/handoff-quarantine/ # 原样保留的损坏/未来版本 handoff；所属 Execution fail closed
 ~/.pragma/state/memory/                     # checkpoint/dead-letter/outbox
 ~/.pragma/state/memory/modules/<episodic>/jobs.sqlite # Evidence aggregation and durable jobs
+~/.pragma/data/memory/modules/<semantic>/facts.sqlite # Semantic projection, revisions and audit
+~/.pragma/state/memory/modules/<semantic>/jobs.sqlite # Semantic Evidence, subjects and durable jobs
+~/.pragma/data/memory/subject-identity.json # Desktop installation-local User identity
 ```
 
 Memory 数据不写 Agent workspace。正常启动不会扫描全部 Mission、Execution 或 legacy memory 目录。
@@ -120,5 +132,6 @@ Memory 数据不写 Agent workspace。正常启动不会扫描全部 Mission、E
 
 - [ADR 031: Extensible Memory Plane](../adr/031-extensible-memory-plane.md)
 - [ADR 032: Durable Canonical Event Feed](../adr/032-durable-canonical-event-feed.md)
+- [ADR 034: Conservative Semantic Memory](../adr/034-conservative-semantic-memory.md)
 - [Memory Plane 落地计划](../architecture/memory-plane-implementation-plan.md)
 - [旧 Memory System ADR（已被替代）](../adr/002-memory-system.md)

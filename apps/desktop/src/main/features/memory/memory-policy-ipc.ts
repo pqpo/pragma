@@ -9,6 +9,13 @@ import {
   UpdateDesktopAssetMemoryPolicySchema,
   UpdateDesktopGlobalMemoryPolicySchema,
   UpdateDesktopMemoryExtractorProfileSchema,
+  DesktopSemanticFactListSchema,
+  DesktopSemanticFactSchema,
+  GetDesktopSemanticFactSchema,
+  ListDesktopSemanticFactsSchema,
+  SearchDesktopSemanticFactsSchema,
+  ReviseDesktopSemanticFactSchema,
+  ReviewDesktopSemanticFactSchema,
 } from "../../../shared/contracts/index.ts";
 import type { DesktopMemoryPlane } from "./desktop-memory-plane.ts";
 
@@ -60,7 +67,50 @@ export function installMemoryPolicyHandlers(plane: DesktopMemoryPlane): void {
   ipcMain.handle("memory-extractor-profile:update", async (_event, input: unknown) => {
     const parsed = UpdateDesktopMemoryExtractorProfileSchema.parse(input);
     const profile = await plane.extractorProfiles.update(parsed);
-    await plane.wakeEpisodicJobs();
+    await plane.wakeMemoryJobs();
     return DesktopMemoryExtractorProfileSchema.parse(profile);
+  });
+  ipcMain.handle("memory-semantic:list", async (_event, input: unknown) => {
+    const parsed = ListDesktopSemanticFactsSchema.parse(input);
+    const facts = (await plane.semanticStore.list())
+      .filter((fact) => parsed.status === "all" || fact.status === parsed.status)
+      .filter(
+        (fact) =>
+          parsed.subjectRef === undefined ||
+          fact.subjectRefs.some(
+            (ref) => ref.type === parsed.subjectRef!.type && ref.id === parsed.subjectRef!.id,
+          ),
+      )
+      .slice(0, parsed.limit);
+    return DesktopSemanticFactListSchema.parse(facts);
+  });
+  ipcMain.handle("memory-semantic:search", async (_event, input: unknown) => {
+    const parsed = SearchDesktopSemanticFactsSchema.parse(input);
+    const facts = (await plane.semanticStore.search(parsed.query, parsed.limit * 2))
+      .filter((fact) => parsed.status === "all" || fact.status === parsed.status)
+      .slice(0, parsed.limit);
+    return DesktopSemanticFactListSchema.parse(facts);
+  });
+  ipcMain.handle("memory-semantic:get", async (_event, input: unknown) => {
+    const parsed = GetDesktopSemanticFactSchema.parse(input);
+    const fact = await plane.semanticStore.get(parsed.id);
+    if (fact === undefined) throw new Error("semantic_fact_not_found");
+    return DesktopSemanticFactSchema.parse(fact);
+  });
+  ipcMain.handle("memory-semantic:history", async (_event, input: unknown) => {
+    const parsed = GetDesktopSemanticFactSchema.parse(input);
+    return DesktopSemanticFactListSchema.parse(await plane.semanticStore.history(parsed.id));
+  });
+  ipcMain.handle("memory-semantic:revise", async (_event, input: unknown) => {
+    const parsed = ReviseDesktopSemanticFactSchema.parse(input);
+    return DesktopSemanticFactSchema.parse(await plane.reviseSemanticFact(parsed));
+  });
+  ipcMain.handle("memory-semantic:verify", async (_event, input: unknown) => {
+    const parsed = ReviewDesktopSemanticFactSchema.parse(input);
+    return DesktopSemanticFactSchema.parse(await plane.verifySemanticFact(parsed));
+  });
+  ipcMain.handle("memory-semantic:invalidate", async (_event, input: unknown) => {
+    const parsed = ReviewDesktopSemanticFactSchema.parse(input);
+    return DesktopSemanticFactSchema.parse(await plane.invalidateSemanticFact(parsed));
   });
 }

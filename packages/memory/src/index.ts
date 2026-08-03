@@ -11,4 +11,8 @@ export * from "./episodic/store.ts";
 export * from "./episodic/context.ts";
 export * from "./episodic/module.ts";
 export * from "./episodic/extractor-profile.ts";
+export * from "./semantic/schema.ts";
+export * from "./semantic/store.ts";
+export * from "./semantic/context.ts";
+export * from "./semantic/module.ts";
 export * from "./curator.ts";
