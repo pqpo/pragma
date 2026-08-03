@@ -261,10 +261,12 @@ function BundleImportDialog(props: {
             const sourceRef =
               recovery.resourceMappings.find((mapping) => mapping.targetRef === pending.resourceRef)
                 ?.sourceRef ?? pending.resourceRef;
-            const inspected = inspection?.requirements.find(
-              (requirement) =>
-                requirement.kind === pending.kind && requirement.resourceRef === sourceRef,
-            );
+            const inspected =
+              inspection?.requirements.find((requirement) => requirement.id === pending.id) ??
+              inspection?.requirements.find(
+                (requirement) =>
+                  requirement.kind === pending.kind && requirement.resourceRef === sourceRef,
+              );
             return {
               id: pending.id,
               kind: pending.kind,
@@ -393,7 +395,7 @@ function BundleImportDialog(props: {
       request?.runtimeId === undefined ||
       request.providerId === undefined ||
       request.modelId === undefined ||
-      runtimeBindings[currentRequirement.resourceRef] !== undefined
+      runtimeBindings[currentRequirement.id] !== undefined
     ) {
       return;
     }
@@ -407,7 +409,7 @@ function BundleImportDialog(props: {
     if (runtime === undefined || model === undefined) return;
     setRuntimeBindings((current) => ({
       ...current,
-      [currentRequirement.resourceRef]: {
+      [currentRequirement.id]: {
         runtimeId: runtime.id,
         providerId: model.provider.id,
         modelId: model.id,
@@ -415,6 +417,22 @@ function BundleImportDialog(props: {
       },
     }));
   }, [currentRequirement, props.runtimes, runtimeBindings]);
+
+  const selectRoot = async (rootRef: string) => {
+    const api = desktopApi();
+    if (api === undefined || inspection === null || rootRef === inspection.root.ref) return;
+    setBusy(true);
+    setError(null);
+    try {
+      await resetForInspection(
+        await api.inspectPragmaBundle({ sourcePath: inspection.sourcePath, rootRef }),
+      );
+    } catch (cause) {
+      setError(errorMessage(cause));
+    } finally {
+      setBusy(false);
+    }
+  };
 
   const nextFromSelect = () => {
     if (inspection === null) return;
@@ -447,14 +465,14 @@ function BundleImportDialog(props: {
   const bindingIsComplete = (requirement: BindingRequirement | undefined): boolean => {
     if (requirement === undefined || !requirement.required) return true;
     if (requirement.kind === "runtime") {
-      const value = runtimeBindings[requirement.resourceRef];
+      const value = runtimeBindings[requirement.id];
       return value !== undefined && value.runtimeId !== "" && value.modelId !== "";
     }
     if (requirement.kind === "capability") {
-      return (capabilityBindings[requirement.resourceRef] ?? "") !== "";
+      return (capabilityBindings[requirement.id] ?? "") !== "";
     }
     if (requirement.kind === "context-store") {
-      return (contextBindings[requirement.resourceRef] ?? "") !== "";
+      return (contextBindings[requirement.id] ?? "") !== "";
     }
     return requirement.kind !== "secret" || (secrets[requirement.id] ?? "").trim() !== "";
   };
@@ -465,27 +483,42 @@ function BundleImportDialog(props: {
     setBusy(true);
     setError(null);
     try {
-      const runtimes = Object.entries(runtimeBindings).map(([resourceRef, value]) => ({
-        resourceRef,
-        ...value,
-      }));
-      const capabilities = Object.entries(capabilityBindings).flatMap(([resourceRef, value]) => {
-        const [capabilityId, revision] = value.split("@");
-        return capabilityId === undefined || revision === undefined
+      const requirementsById = new Map(
+        requirements.map((requirement) => [requirement.id, requirement]),
+      );
+      const runtimes = Object.entries(runtimeBindings).flatMap(([requirementId, value]) => {
+        const requirement = requirementsById.get(requirementId);
+        return requirement === undefined
           ? []
-          : [{ resourceRef, capabilityId, revision: Number(revision) }];
+          : [{ requirementId, resourceRef: requirement.resourceRef, ...value }];
       });
-      const contextStores = Object.entries(contextBindings).flatMap(([resourceRef, storeId]) =>
-        storeId === "" ? [] : [{ resourceRef, storeId }],
-      );
-      const resolvedSecrets = Object.fromEntries(
-        Object.entries(secrets).map(([id, value]) => [id.replace(/^secret:/, ""), value]),
-      );
+      const capabilities = Object.entries(capabilityBindings).flatMap(([requirementId, value]) => {
+        const requirement = requirementsById.get(requirementId);
+        const [capabilityId, revision] = value.split("@");
+        return requirement === undefined || capabilityId === undefined || revision === undefined
+          ? []
+          : [
+              {
+                requirementId,
+                resourceRef: requirement.resourceRef,
+                capabilityId,
+                revision: Number(revision),
+              },
+            ];
+      });
+      const contextStores = Object.entries(contextBindings).flatMap(([requirementId, storeId]) => {
+        const requirement = requirementsById.get(requirementId);
+        return requirement === undefined || storeId === ""
+          ? []
+          : [{ requirementId, resourceRef: requirement.resourceRef, storeId }];
+      });
       const next =
         recovery === null
           ? await api.importPragmaBundle({
               sourcePath: inspection.sourcePath,
+              rootRef: inspection.root.ref,
               expectedFingerprint: inspection.bundleFingerprint,
+              expectedProjectFingerprint: inspection.projectFingerprint,
               expectedProjectRevision: inspection.projectRevision,
               conflicts: inspection.conflicts.map((conflict) => ({
                 resourceRef: conflict.ref,
@@ -494,7 +527,7 @@ function BundleImportDialog(props: {
               runtimes,
               capabilities,
               contextStores,
-              secrets: resolvedSecrets,
+              secrets,
             })
           : await api.resolvePragmaBundleInstallation({
               installationId: recovery.id,
@@ -502,7 +535,7 @@ function BundleImportDialog(props: {
               runtimes,
               capabilities,
               contextStores,
-              secrets: resolvedSecrets,
+              secrets,
             });
       setInstallation(next);
       setStep("result");
@@ -622,6 +655,7 @@ function BundleImportDialog(props: {
             onDragging={setDragging}
             onPick={() => void inspectPickedBundle()}
             onDrop={(file) => void inspectDroppedBundle(file)}
+            onRoot={(rootRef) => void selectRoot(rootRef)}
           />
         ) : null}
         {step === "conflicts" && inspection !== null ? (
@@ -649,28 +683,28 @@ function BundleImportDialog(props: {
             runtimes={props.runtimes}
             capabilities={props.capabilities}
             contextStores={props.contextStores}
-            runtimeBinding={runtimeBindings[currentRequirement.resourceRef]}
-            capabilityBinding={capabilityBindings[currentRequirement.resourceRef] ?? ""}
-            contextBinding={contextBindings[currentRequirement.resourceRef] ?? ""}
+            runtimeBinding={runtimeBindings[currentRequirement.id]}
+            capabilityBinding={capabilityBindings[currentRequirement.id] ?? ""}
+            contextBinding={contextBindings[currentRequirement.id] ?? ""}
             secret={secrets[currentRequirement.id] ?? ""}
             refreshingRuntimes={refreshingRuntimes}
             onRefreshRuntimes={() => void refreshRuntimes()}
             onRuntime={(value) =>
               setRuntimeBindings((current) => ({
                 ...current,
-                [currentRequirement.resourceRef]: value,
+                [currentRequirement.id]: value,
               }))
             }
             onCapability={(value) =>
               setCapabilityBindings((current) => ({
                 ...current,
-                [currentRequirement.resourceRef]: value,
+                [currentRequirement.id]: value,
               }))
             }
             onContext={(value) =>
               setContextBindings((current) => ({
                 ...current,
-                [currentRequirement.resourceRef]: value,
+                [currentRequirement.id]: value,
               }))
             }
             onSecret={(value) =>
@@ -857,6 +891,7 @@ function BundleFileStep(props: {
   readonly onDragging: (value: boolean) => void;
   readonly onPick: () => void;
   readonly onDrop: (file: File) => void;
+  readonly onRoot: (rootRef: string) => void;
 }) {
   const { t } = useTranslation("studio");
   return (
@@ -897,11 +932,35 @@ function BundleFileStep(props: {
             <Check size={15} /> {t("bundleVerified")}
           </span>
           <strong>{props.inspection.sourceName}</strong>
-          <p>{props.inspection.root.name}</p>
+          {props.inspection.roots.length > 1 ? (
+            <label>
+              <span>{t("bundleInstallRoot")}</span>
+              <SelectMenu
+                ariaLabel={t("bundleInstallRoot")}
+                className="form-select"
+                value={props.inspection.root.ref}
+                disabled={props.busy}
+                options={props.inspection.roots.map((root) => ({
+                  value: root.ref,
+                  label: `${root.name} (${root.kind})`,
+                }))}
+                onChange={props.onRoot}
+              />
+            </label>
+          ) : (
+            <p>{props.inspection.root.name}</p>
+          )}
           <small>
             {props.inspection.root.kind} ·{" "}
             {t("bundleResourceCount", { count: props.inspection.resources })}
           </small>
+          {props.inspection.sameContentInstallationIds.length > 0 ? (
+            <p className="pragma-bundle-warning">
+              {t("bundleSameContentInstalled", {
+                count: props.inspection.sameContentInstallationIds.length,
+              })}
+            </p>
+          ) : null}
           <button type="button" onClick={props.onPick}>
             {t("bundleChooseAnother")}
           </button>

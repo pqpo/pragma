@@ -1,9 +1,11 @@
+import { createHash } from "node:crypto";
+import { isAbsolute } from "node:path";
+
 import {
   canonicalPragmaResourceRef,
   type PragmaResource,
   type PragmaResourceRef,
 } from "@pragma/interpreter/ast";
-import { z } from "zod";
 
 import type {
   DesktopRuntimeAvailability,
@@ -16,7 +18,16 @@ import {
 import type { CapabilityStore } from "../capabilities/capability-store.ts";
 import type { ContextStoreStore } from "../context-stores/context-store-store.ts";
 import type { PluginStore } from "../plugins/plugin-store.ts";
-import { BundleRuntimeDependencySchema, isPortableValue, sha256 } from "./pragma-bundle-format.ts";
+
+interface RuntimeDependency {
+  readonly requirementId?: string | undefined;
+  readonly resourceRef?: string | undefined;
+  readonly name?: string | undefined;
+  readonly runtimeId?: string | undefined;
+  readonly providerId?: string | undefined;
+  readonly modelId?: string | undefined;
+  readonly thinkingLevel?: string | undefined;
+}
 
 export async function collectCapabilities(
   resources: readonly PragmaResource[],
@@ -92,31 +103,9 @@ export async function assertPortablePluginConfigs(
   }
 }
 
-export function collectRuntimes(resources: readonly PragmaResource[]) {
-  return resources.flatMap((resource) => {
-    if (resource.kind !== "RuntimeProfile") return [];
-    const config =
-      typeof resource.spec.config === "object" && resource.spec.config !== null
-        ? (resource.spec.config as Record<string, unknown>)
-        : {};
-    return [
-      {
-        resourceRef: canonicalPragmaResourceRef(resource),
-        name: resource.metadata.name,
-        ...(typeof config["runtimeId"] === "string" ? { runtimeId: config["runtimeId"] } : {}),
-        ...(typeof config["providerId"] === "string" ? { providerId: config["providerId"] } : {}),
-        ...(typeof config["model"] === "string" ? { modelId: config["model"] } : {}),
-        ...(typeof config["thinkingLevel"] === "string"
-          ? { thinkingLevel: config["thinkingLevel"] }
-          : {}),
-      },
-    ];
-  });
-}
-
 export function runtimeDependencyAvailable(
   runtime: DesktopRuntimeAvailability,
-  dependency: z.infer<typeof BundleRuntimeDependencySchema>,
+  dependency: RuntimeDependency,
 ): boolean {
   if (
     dependency.runtimeId === undefined ||
@@ -260,19 +249,47 @@ export function pendingBinding(installationId: string, ref: string) {
   return `binding:bundle-pending.${installationId.replaceAll("-", "")}.${sha256(ref).slice(0, 12)}`;
 }
 
+function sha256(value: string): string {
+  return createHash("sha256").update(value).digest("hex");
+}
+
+export function isPortableValue(value: unknown): boolean {
+  if (typeof value === "string") {
+    return !isAbsolute(value) && !/^[a-z]:[\\/]/i.test(value) && !value.startsWith("~/");
+  }
+  if (Array.isArray(value)) return value.every(isPortableValue);
+  if (typeof value === "object" && value !== null) {
+    return Object.values(value as Record<string, unknown>).every(isPortableValue);
+  }
+  return true;
+}
+
 export function mergePendingMetadata(
   inspected: readonly PragmaBundleInstallation["pending"][number][],
   previous: readonly PragmaBundleInstallation["pending"][number][],
 ): PragmaBundleInstallation["pending"] {
-  const previousByKey = new Map(
-    previous.map((dependency) => [`${dependency.kind}:${dependency.id}`, dependency]),
-  );
+  const previousById = new Map(previous.map((dependency) => [dependency.id, dependency]));
+  const previousByScope = new Map<string, PragmaBundleInstallation["pending"][number][]>();
+  for (const dependency of previous) {
+    const key = `${dependency.kind}\0${dependency.resourceRef}`;
+    previousByScope.set(key, [...(previousByScope.get(key) ?? []), dependency]);
+  }
   return deduplicatePending(
     inspected.map((dependency) => {
-      const prior = previousByKey.get(`${dependency.kind}:${dependency.id}`);
-      return dependency.capabilityKind !== undefined || prior?.capabilityKind === undefined
-        ? dependency
-        : { ...dependency, capabilityKind: prior.capabilityKind };
+      const candidates = previousByScope.get(`${dependency.kind}\0${dependency.resourceRef}`) ?? [];
+      const prior =
+        previousById.get(dependency.id) ??
+        (candidates.length === 1
+          ? candidates[0]
+          : candidates.find((candidate) => candidate.name === dependency.name));
+      if (prior === undefined) return dependency;
+      return {
+        ...dependency,
+        id: prior.id,
+        ...(dependency.capabilityKind !== undefined || prior.capabilityKind === undefined
+          ? {}
+          : { capabilityKind: prior.capabilityKind }),
+      };
     }),
   );
 }

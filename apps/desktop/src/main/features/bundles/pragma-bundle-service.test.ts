@@ -15,16 +15,17 @@ import { strFromU8, strToU8, unzipSync, zipSync } from "fflate";
 import { afterEach, describe, expect, it } from "vitest";
 
 import type { CapabilityStore } from "../capabilities/capability-store.ts";
-import type { DesktopRuntimeAvailability } from "../../../shared/contracts/index.ts";
+import type {
+  DesktopRuntimeAvailability,
+  PragmaBundleInstallation,
+} from "../../../shared/contracts/index.ts";
 import type { ContextStoreStore } from "../context-stores/context-store-store.ts";
 import type { PluginStore } from "../plugins/plugin-store.ts";
 import { createPragmaProjectStore } from "../projects/pragma-project-store.ts";
 import { createWorkflowLayoutStore } from "../projects/workflow-layout-store.ts";
+import { mergePendingMetadata } from "./pragma-bundle-dependencies.ts";
 import { createPragmaBundleService } from "./pragma-bundle-service.ts";
-import {
-  makePortableBundleResources,
-  rewriteBundleWithResolutions,
-} from "./pragma-bundle-resources.ts";
+import { resolveBundleIdentities } from "./pragma-bundle-resources.ts";
 
 const directories: string[] = [];
 
@@ -37,6 +38,35 @@ afterEach(async () => {
 });
 
 describe("PragmaBundleService", () => {
+  it("preserves requirement ids for multiple pending plugins owned by one Expert", () => {
+    const previous: PragmaBundleInstallation["pending"] = [
+      {
+        id: "req-memory",
+        kind: "plugin",
+        resourceRef: "expert:1xddvess309a6gme",
+        name: "plugin:memory@1.0.0",
+        message: "Install memory.",
+      },
+      {
+        id: "req-review",
+        kind: "plugin",
+        resourceRef: "expert:1xddvess309a6gme",
+        name: "plugin:review@1.0.0",
+        message: "Install review.",
+      },
+    ];
+    const inspected: PragmaBundleInstallation["pending"] = previous.map((dependency) => ({
+      ...dependency,
+      id: `plugin:${dependency.name}`,
+      message: "Plugin needs attention.",
+    }));
+
+    expect(mergePendingMetadata(inspected, previous).map((dependency) => dependency.id)).toEqual([
+      "req-memory",
+      "req-review",
+    ]);
+  });
+
   it("upgrades its catalog lazily on first Bundle use", async () => {
     const fixture = await createFixture("lazy-catalog-upgrade");
     await mkdir(fixture.paths.bundleInstallationsStateRoot(), {
@@ -56,7 +86,7 @@ describe("PragmaBundleService", () => {
     );
     await expect(fixture.service.listInstallations()).resolves.toEqual([]);
     expect(await readFile(fixture.paths.bundleInstallationsCatalog(), "utf8")).toContain(
-      "pragma.bundle-installations/v2",
+      "pragma.bundle-installations/v3",
     );
   });
 
@@ -68,7 +98,7 @@ describe("PragmaBundleService", () => {
     });
     const catalogPath = fixture.paths.bundleInstallationsCatalog();
     const futureCatalog = {
-      schemaVersion: "pragma.bundle-installations/v3",
+      schemaVersion: "pragma.bundle-installations/v4",
       installations: [],
     };
     await writeFile(catalogPath, `${JSON.stringify(futureCatalog)}\n`);
@@ -95,10 +125,11 @@ describe("PragmaBundleService", () => {
     const second = await fixture.service.exportTo(exportInput(fixture.projectRevision), secondPath);
     const archive = unzipSync(new Uint8Array(await readFile(firstPath)));
 
-    expect(first.bundleFingerprint).toBe(second.bundleFingerprint);
+    expect(first.bundleFingerprint).not.toBe(second.bundleFingerprint);
+    expect(first.projectFingerprint).toBe(second.projectFingerprint);
     expect(Object.keys(archive)).toContain("bundle.json");
-    expect(Object.keys(archive)).toContain("pragma.yaml");
-    expect(strFromU8(archive["pragma.yaml"]!)).toContain("apiVersion: pragma/v3");
+    expect(Object.keys(archive)).toContain("project/pragma.yaml");
+    expect(strFromU8(archive["project/pragma.yaml"]!)).toContain("apiVersion: pragma/v3");
     await expect(fixture.service.inspect(firstPath)).resolves.toMatchObject({
       bundleFingerprint: first.bundleFingerprint,
       root: { ref: "expert:1xddvess309a6gme", name: "Writer" },
@@ -106,16 +137,135 @@ describe("PragmaBundleService", () => {
     });
   });
 
+  it("inspects one explicitly selected root from a multi-root Interpreter Bundle", async () => {
+    const fixture = await createFixture("multi-root");
+    const snapshot = await fixture.project.get();
+    const published = await fixture.project.publish({
+      expectedRevision: snapshot.revision,
+      resources: [...snapshot.resources, expertTeam()],
+    });
+    const project = await fixture.project.openRevision(published.revision);
+    const path = join(fixture.root, "multi-root.pragma");
+    try {
+      const exported = await project.exportBundle({
+        roots: ["expert:1xddvess309a6gme", "team:p8cbn3cg2avyksn4"],
+      });
+      await writeFile(path, exported.bytes);
+    } finally {
+      await project.dispose();
+    }
+
+    await expect(fixture.service.inspect(path, "team:p8cbn3cg2avyksn4")).resolves.toMatchObject({
+      root: { ref: "team:p8cbn3cg2avyksn4", kind: "ExpertTeam" },
+      roots: [{ ref: "expert:1xddvess309a6gme" }, { ref: "team:p8cbn3cg2avyksn4" }],
+      resources: 3,
+    });
+  });
+
+  it("hard-cuts the legacy Desktop wire format with an offline upgrade instruction", async () => {
+    const fixture = await createFixture("legacy-wire");
+    const path = join(fixture.root, "legacy.pragma");
+    await writeFile(
+      path,
+      zipSync({
+        "bundle.json": strToU8(JSON.stringify({ schemaVersion: "pragma.desktop-bundle/v1" })),
+      }),
+    );
+
+    await expect(fixture.service.inspect(path)).rejects.toThrow("Pragma Desktop v0.1.0");
+  });
+
+  it("reports matching portable content as an advisory without merging installations", async () => {
+    const source = await createFixture("same-content-source");
+    const firstPath = join(source.root, "first.pragma");
+    const secondPath = join(source.root, "second.pragma");
+    const firstExport = await source.service.exportTo(
+      exportInput(source.projectRevision),
+      firstPath,
+    );
+    await source.service.exportTo(exportInput(source.projectRevision), secondPath);
+    const target = await createFixture("same-content-target", {
+      instructions: "Existing local expert.",
+    });
+    const inspection = await target.service.inspect(firstPath);
+    const installation = await target.service.startImport({
+      ...importInput(
+        firstPath,
+        firstExport.bundleFingerprint,
+        firstExport.projectFingerprint,
+        inspection.projectRevision,
+      ),
+      conflicts: inspection.conflicts.map((conflict) => ({
+        resourceRef: conflict.ref,
+        action: "copy" as const,
+      })),
+    });
+
+    expect(installation.status).toBe("ready");
+    const advisory = await target.service.inspect(secondPath);
+    expect(advisory.sameContentInstallationIds).toEqual([installation.id]);
+    expect(advisory.alreadyInstalledId).toBeUndefined();
+  });
+
   it("rejects a bundle whose indexed project file was modified", async () => {
     const fixture = await createFixture("tamper");
     const path = join(fixture.root, "workflow.pragma");
     await fixture.service.exportTo(exportInput(fixture.projectRevision), path);
     const archive = unzipSync(new Uint8Array(await readFile(path)));
-    archive["pragma.yaml"] = strToU8(`${strFromU8(archive["pragma.yaml"]!)}\n# tampered\n`);
+    archive["project/pragma.yaml"] = strToU8(
+      `${strFromU8(archive["project/pragma.yaml"]!)}\n# tampered\n`,
+    );
     await writeFile(path, zipSync(archive));
 
     await expect(fixture.service.inspect(path)).rejects.toThrow(
-      "Bundle file verification failed: pragma.yaml",
+      "Bundle file verification failed: project/pragma.yaml",
+    );
+  });
+
+  it("reports an actionable error for a malformed Desktop payload descriptor", async () => {
+    const fixture = await createFixture("malformed-descriptor");
+    const snapshot = await fixture.project.get();
+    const sourceExpert = snapshot.resources.find(
+      (resource): resource is PragmaExpertResource => resource.kind === "Expert",
+    );
+    if (sourceExpert === undefined) throw new Error("Expected an Expert.");
+    const capability = portableCapability();
+    const published = await fixture.project.publish({
+      expectedRevision: snapshot.revision,
+      resources: [
+        {
+          ...sourceExpert,
+          spec: {
+            ...sourceExpert.spec,
+            capabilities: [{ ref: canonicalPragmaResourceRef(capability), kind: "tools" }],
+          },
+        },
+        ...snapshot.resources.filter((resource) => resource.kind !== "Expert"),
+        capability,
+      ],
+    });
+    const project = await fixture.project.openRevision(published.revision);
+    const path = join(fixture.root, "malformed.pragma");
+    try {
+      const exported = await project.exportBundle({
+        roots: ["expert:1xddvess309a6gme"],
+        host: {
+          exportPayload: async ({ requirement }) =>
+            requirement.kind === "binding"
+              ? {
+                  codec: "pragma.desktop.capability@v1",
+                  files: new Map([["descriptor.json", strToU8("{not-json")]]),
+                }
+              : undefined,
+        },
+      });
+      await writeFile(path, exported.bytes);
+    } finally {
+      await project.dispose();
+    }
+
+    await expect(fixture.service.inspect(path)).rejects.toThrow(
+      /Capability descriptor req-.+ is not valid JSON/,
     );
   });
 
@@ -137,7 +287,12 @@ describe("PragmaBundleService", () => {
     });
 
     const installation = await target.service.startImport({
-      ...importInput(path, exported.bundleFingerprint, target.projectRevision),
+      ...importInput(
+        path,
+        exported.bundleFingerprint,
+        exported.projectFingerprint,
+        target.projectRevision,
+      ),
       conflicts: [
         { resourceRef: "expert:1xddvess309a6gme", action: "copy" },
         { resourceRef: "runtime-profile:zdkgs0fde4xt00vr", action: "copy" },
@@ -198,15 +353,25 @@ describe("PragmaBundleService", () => {
         },
       ],
     });
+    const runtimeRequirement = (await target.service.inspect(path)).requirements.find(
+      (requirement) => requirement.kind === "runtime",
+    );
+    expect(runtimeRequirement).toBeDefined();
 
     const installation = await target.service.startImport({
-      ...importInput(path, exported.bundleFingerprint, target.projectRevision),
+      ...importInput(
+        path,
+        exported.bundleFingerprint,
+        exported.projectFingerprint,
+        target.projectRevision,
+      ),
       conflicts: [
         { resourceRef: "expert:1xddvess309a6gme", action: "copy" },
         { resourceRef: "runtime-profile:zdkgs0fde4xt00vr", action: "copy" },
       ],
       runtimes: [
         {
+          requirementId: runtimeRequirement!.id,
           resourceRef: "runtime-profile:zdkgs0fde4xt00vr",
           runtimeId: "pi",
           providerId: "openai",
@@ -249,12 +414,22 @@ describe("PragmaBundleService", () => {
     );
     await expect(
       target.service.startImport(
-        importInput(path, exported.bundleFingerprint, target.projectRevision),
+        importInput(
+          path,
+          exported.bundleFingerprint,
+          exported.projectFingerprint,
+          target.projectRevision,
+        ),
       ),
     ).rejects.toThrow("Choose one import action");
 
     const first = await target.service.startImport({
-      ...importInput(path, exported.bundleFingerprint, target.projectRevision),
+      ...importInput(
+        path,
+        exported.bundleFingerprint,
+        exported.projectFingerprint,
+        target.projectRevision,
+      ),
       conflicts: [
         { resourceRef: "expert:1xddvess309a6gme", action: "copy" },
         { resourceRef: "runtime-profile:zdkgs0fde4xt00vr", action: "copy" },
@@ -267,7 +442,12 @@ describe("PragmaBundleService", () => {
     expect(repeatedInspection.conflicts).not.toHaveLength(0);
 
     const second = await target.service.startImport({
-      ...importInput(path, exported.bundleFingerprint, first.projectRevision),
+      ...importInput(
+        path,
+        exported.bundleFingerprint,
+        exported.projectFingerprint,
+        first.projectRevision,
+      ),
       conflicts: repeatedInspection.conflicts.map((conflict) => ({
         resourceRef: conflict.ref,
         action: "copy" as const,
@@ -297,7 +477,12 @@ describe("PragmaBundleService", () => {
     });
 
     const installation = await target.service.startImport({
-      ...importInput(path, exported.bundleFingerprint, target.projectRevision),
+      ...importInput(
+        path,
+        exported.bundleFingerprint,
+        exported.projectFingerprint,
+        target.projectRevision,
+      ),
       conflicts: [
         { resourceRef: "expert:1xddvess309a6gme", action: "update" },
         { resourceRef: "runtime-profile:zdkgs0fde4xt00vr", action: "update" },
@@ -318,7 +503,7 @@ describe("PragmaBundleService", () => {
     );
   });
 
-  it("rewrites only typed DSL identities and leaves opaque plugin config unchanged", () => {
+  it("resolves new identities without mutating opaque plugin config", () => {
     const sourceExpert = expert("Write verified release notes.");
     sourceExpert.spec.plugins = [
       {
@@ -330,20 +515,21 @@ describe("PragmaBundleService", () => {
       },
     ];
 
-    const rewritten = rewriteBundleWithResolutions(
+    const originalConfig = structuredClone(sourceExpert.spec.plugins[0]?.config);
+    const resolved = resolveBundleIdentities(
       [sourceExpert, runtime("codex")],
       [expert("Existing"), runtime("codex")],
       [
         { resourceRef: "expert:1xddvess309a6gme", action: "copy" },
         { resourceRef: "runtime-profile:zdkgs0fde4xt00vr", action: "copy" },
       ],
-    ).resources;
-    const copied = rewritten.find(
-      (resource): resource is PragmaExpertResource => resource.kind === "Expert",
+    );
+    const copied = resolved.identities.find(
+      (identity) => identity.sourceRef === "expert:1xddvess309a6gme",
     );
 
-    expect(copied?.spec.runtime?.ref).not.toBe(sourceExpert.spec.runtime?.ref);
-    expect(copied?.spec.plugins[0]?.config).toEqual(sourceExpert.spec.plugins[0]?.config);
+    expect(copied?.targetId).not.toBe(sourceExpert.metadata.id);
+    expect(sourceExpert.spec.plugins[0]?.config).toEqual(originalConfig);
   });
 
   it("supports mixed copy and update decisions across one resource graph", () => {
@@ -351,7 +537,7 @@ describe("PragmaBundleService", () => {
     const localExpert = expert("Keep the local Expert.");
     const localRuntime = runtime("codex", "v3b460tasfhyf22d");
 
-    const rewritten = rewriteBundleWithResolutions(
+    const resolved = resolveBundleIdentities(
       [sourceExpert, runtime("codex")],
       [localExpert, localRuntime],
       [
@@ -359,15 +545,15 @@ describe("PragmaBundleService", () => {
         { resourceRef: "runtime-profile:zdkgs0fde4xt00vr", action: "update" },
       ],
     );
-    const copied = rewritten.resources.find(
-      (resource): resource is PragmaExpertResource => resource.kind === "Expert",
+    const copied = resolved.identities.find(
+      (identity) => identity.sourceRef === "expert:1xddvess309a6gme",
+    );
+    const updatedRuntime = resolved.identities.find(
+      (identity) => identity.sourceRef === "runtime-profile:zdkgs0fde4xt00vr",
     );
 
-    expect(rewritten.refMap.get("expert:1xddvess309a6gme")).not.toBe("expert:1xddvess309a6gme");
-    expect(rewritten.refMap.get("runtime-profile:zdkgs0fde4xt00vr")).toBe(
-      "runtime-profile:v3b460tasfhyf22d",
-    );
-    expect(copied?.spec.runtime?.ref).toBe("runtime-profile:v3b460tasfhyf22d");
+    expect(copied?.targetId).not.toBe("1xddvess309a6gme");
+    expect(updatedRuntime?.targetId).toBe("v3b460tasfhyf22d");
   });
 
   it("reserves unchanged imported names when naming conflict copies", () => {
@@ -375,46 +561,17 @@ describe("PragmaBundleService", () => {
     const unchanged = runtime("pi", "v3b460tasfhyf22d");
     unchanged.metadata.name = "Writer Runtime (copy)";
 
-    const rewritten = rewriteBundleWithResolutions(
+    const resolved = resolveBundleIdentities(
       [conflicting, unchanged],
       [runtime("codex")],
       [{ resourceRef: "runtime-profile:zdkgs0fde4xt00vr", action: "copy" }],
     );
 
     expect(
-      rewritten.resources
-        .filter((resource) => resource.kind === "RuntimeProfile")
-        .map((resource) => resource.metadata.name)
-        .toSorted(),
-    ).toEqual(["Writer Runtime (copy 2)", "Writer Runtime (copy)"]);
-  });
-
-  it("removes machine-local Runtime configuration from the portable DSL", () => {
-    const source = runtime("codex");
-    source.spec.config = {
-      runtimeId: "codex",
-      providerId: "openai",
-      model: "gpt-test",
-      executablePath: "/Users/source/bin/codex",
-      sessionHome: "C:\\source\\sessions",
-    };
-
-    const [portable] = makePortableBundleResources([source]);
-
-    if (portable?.kind !== "RuntimeProfile") throw new Error("Expected a Runtime profile.");
-    expect(portable.spec.config).toEqual({
-      runtimeId: "codex",
-      providerId: "openai",
-      model: "gpt-test",
-    });
-  });
-
-  it("keeps portable adapter config while removing a machine-local binding", () => {
-    const [portable] = makePortableBundleResources([portableCapability()]);
-
-    if (portable?.kind !== "Capability") throw new Error("Expected a Capability.");
-    expect(portable.spec.binding).toBeUndefined();
-    expect(portable.spec.config).toEqual({ key: "portable" });
+      resolved.identities.find(
+        (identity) => identity.sourceRef === "runtime-profile:zdkgs0fde4xt00vr",
+      )?.targetName,
+    ).toBe("Writer Runtime (copy 2)");
   });
 
   it("exports an ExpertTeam whose member uses a bound host capability", async () => {
@@ -457,7 +614,8 @@ describe("PragmaBundleService", () => {
       .join("\n");
 
     expect(projectFiles).toContain("key: portable");
-    expect(projectFiles).not.toContain("binding:");
+    expect(projectFiles).toContain("binding: binding:pragma.bundle.req-");
+    expect(projectFiles).not.toContain("binding: binding:portable");
   });
 
   it("rejects foreign and unavailable bindings and gates transitive Flow execution", async () => {
@@ -469,7 +627,12 @@ describe("PragmaBundleService", () => {
       runtimes: [],
     });
     const installation = await target.service.startImport({
-      ...importInput(path, exported.bundleFingerprint, target.projectRevision),
+      ...importInput(
+        path,
+        exported.bundleFingerprint,
+        exported.projectFingerprint,
+        target.projectRevision,
+      ),
       conflicts: [
         { resourceRef: "expert:1xddvess309a6gme", action: "copy" },
         { resourceRef: "runtime-profile:zdkgs0fde4xt00vr", action: "copy" },
@@ -478,8 +641,10 @@ describe("PragmaBundleService", () => {
     const importedRuntimeRef = installation.resourceRefs.find((ref) =>
       ref.startsWith("runtime-profile:"),
     );
+    const pendingRuntime = installation.pending.find((item) => item.kind === "runtime");
     expect(installation.status).toBe("needs_setup");
     expect(importedRuntimeRef).toBeDefined();
+    expect(pendingRuntime).toBeDefined();
 
     await expect(
       target.service.resolveInstallation({
@@ -487,6 +652,7 @@ describe("PragmaBundleService", () => {
         baseRevision: installation.projectRevision,
         runtimes: [
           {
+            requirementId: pendingRuntime!.id,
             resourceRef: "runtime-profile:zdkgs0fde4xt00vr",
             runtimeId: "codex",
             providerId: "openai",
@@ -504,6 +670,7 @@ describe("PragmaBundleService", () => {
         baseRevision: installation.projectRevision,
         runtimes: [
           {
+            requirementId: pendingRuntime!.id,
             resourceRef: importedRuntimeRef!,
             runtimeId: "codex",
             providerId: "openai",
@@ -525,16 +692,16 @@ describe("PragmaBundleService", () => {
     await expect(target.service.isRefPending(canonicalPragmaResourceRef(flow))).resolves.toBe(true);
   });
 
-  it("rejects case-insensitive duplicate archive paths before installing anything", async () => {
+  it("rejects unindexed archive paths before installing anything", async () => {
     const fixture = await createFixture("duplicate-path");
     const path = join(fixture.root, "workflow.pragma");
     await fixture.service.exportTo(exportInput(fixture.projectRevision), path);
     const archive = unzipSync(new Uint8Array(await readFile(path)));
-    archive["PRAGMA.YAML"] = archive["pragma.yaml"]!;
+    archive["UNINDEXED.txt"] = strToU8("not declared by bundle.json");
     await writeFile(path, zipSync(archive));
 
     await expect(fixture.service.inspect(path)).rejects.toThrow(
-      "Duplicate or non-portable bundle path",
+      "The bundle file index does not match the archive.",
     );
   });
 
@@ -548,14 +715,21 @@ describe("PragmaBundleService", () => {
       runtimes,
     });
     const installation = await target.service.startImport({
-      ...importInput(path, exported.bundleFingerprint, target.projectRevision),
+      ...importInput(
+        path,
+        exported.bundleFingerprint,
+        exported.projectFingerprint,
+        target.projectRevision,
+      ),
       conflicts: [
         { resourceRef: "expert:1xddvess309a6gme", action: "copy" },
         { resourceRef: "runtime-profile:zdkgs0fde4xt00vr", action: "copy" },
       ],
     });
     const runtimeRef = installation.resourceRefs.find((ref) => ref.startsWith("runtime-profile:"));
+    const pendingRuntime = installation.pending.find((item) => item.kind === "runtime");
     expect(runtimeRef).toBeDefined();
+    expect(pendingRuntime).toBeDefined();
     runtimes.push({
       id: "codex",
       isDefault: true,
@@ -576,6 +750,7 @@ describe("PragmaBundleService", () => {
       baseRevision: installation.projectRevision,
       runtimes: [
         {
+          requirementId: pendingRuntime!.id,
           resourceRef: runtimeRef!,
           runtimeId: "codex",
           providerId: "openai",
@@ -674,11 +849,14 @@ function exportInput(projectRevision: number) {
 function importInput(
   sourcePath: string,
   expectedFingerprint: string,
+  expectedProjectFingerprint: string,
   expectedProjectRevision: number,
 ) {
   return {
     sourcePath,
+    rootRef: "expert:1xddvess309a6gme" as const,
     expectedFingerprint,
+    expectedProjectFingerprint,
     expectedProjectRevision,
     conflicts: [],
     runtimes: [],

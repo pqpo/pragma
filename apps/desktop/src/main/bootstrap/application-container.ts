@@ -341,7 +341,6 @@ export async function createDesktopApplicationContainer(
     plugins: pluginStore,
     layouts: workflowLayouts,
     getRuntimes: async () => await getRuntimeAvailability(runtimes),
-    externalResourceRefs: new Set([BUILT_IN_PRAGMA_REF]),
   });
   installPragmaBundleHandlers(bundleService, options.getWindow);
   const missionCreator = createMissionCreator({

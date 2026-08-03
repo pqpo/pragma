@@ -1,9 +1,13 @@
 # ADR 026: Portable Desktop bundles
 
-- Status: Accepted
+- Status: Superseded by ADR 031
 - Date: 2026-07-29
 
 ## Context
+
+> This document records the retired `pragma.desktop-bundle/v1` design. Desktop no longer reads or
+> writes that wire format. Existing files must be imported by Pragma Desktop v0.1.0 and re-exported
+> after upgrading; the current protocol and Host boundary are defined by ADR 031.
 
 Pragma desktop app users need to move a designed Expert, ExpertTeam, or Flow between computers without
 copying the whole `~/.pragma` directory. A useful transfer must preserve the selected object,

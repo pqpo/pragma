@@ -48,12 +48,17 @@ export const PragmaBundleExportResultSchema = z
       .string()
       .regex(/^[a-f0-9]{64}$/)
       .optional(),
+    projectFingerprint: z
+      .string()
+      .regex(/^[a-f0-9]{64}$/)
+      .optional(),
   })
   .strict();
 
 export const InspectPragmaBundleSchema = z
   .object({
     sourcePath: z.string().trim().min(1).max(2_000),
+    rootRef: PragmaInvocableResourceRefSchema.optional(),
   })
   .strict();
 
@@ -107,6 +112,7 @@ export const PragmaBundleImportInspectionSchema = z
     sourcePath: z.string().trim().min(1).max(2_000),
     sourceName: z.string().trim().min(1).max(500),
     bundleFingerprint: z.string().regex(/^[a-f0-9]{64}$/),
+    projectFingerprint: z.string().regex(/^[a-f0-9]{64}$/),
     projectRevision: z.number().int().nonnegative(),
     root: z
       .object({
@@ -115,6 +121,17 @@ export const PragmaBundleImportInspectionSchema = z
         name: z.string().trim().min(1).max(200),
       })
       .strict(),
+    roots: z
+      .array(
+        z
+          .object({
+            ref: PragmaInvocableResourceRefSchema,
+            kind: z.enum(["Expert", "ExpertTeam", "Flow"]),
+            name: z.string().trim().min(1).max(200),
+          })
+          .strict(),
+      )
+      .min(1),
     createdAt: z.string().datetime(),
     archiveBytes: z.number().int().positive(),
     unpackedBytes: z.number().int().positive(),
@@ -146,6 +163,7 @@ export const PragmaBundleImportInspectionSchema = z
         })
         .strict(),
     ),
+    sameContentInstallationIds: z.array(z.string().uuid()),
     alreadyInstalledId: z.string().uuid().optional(),
   })
   .strict();
@@ -159,6 +177,7 @@ export const PragmaBundleConflictResolutionSchema = z
 
 export const BundleRuntimeResolutionSchema = z
   .object({
+    requirementId: z.string().trim().min(1).max(160),
     resourceRef: PragmaResourceRefSchema,
     runtimeId: z.string().trim().min(1).max(200),
     providerId: z.string().trim().min(1).max(200),
@@ -169,6 +188,7 @@ export const BundleRuntimeResolutionSchema = z
 
 export const BundleCapabilityResolutionSchema = z
   .object({
+    requirementId: z.string().trim().min(1).max(160),
     resourceRef: PragmaResourceRefSchema,
     capabilityId: z.string().uuid(),
     revision: z.number().int().positive(),
@@ -177,6 +197,7 @@ export const BundleCapabilityResolutionSchema = z
 
 export const BundleContextStoreResolutionSchema = z
   .object({
+    requirementId: z.string().trim().min(1).max(160),
     resourceRef: PragmaResourceRefSchema,
     storeId: z.string().uuid(),
   })
@@ -185,7 +206,9 @@ export const BundleContextStoreResolutionSchema = z
 export const StartPragmaBundleImportSchema = z
   .object({
     sourcePath: z.string().trim().min(1).max(2_000),
+    rootRef: PragmaInvocableResourceRefSchema,
     expectedFingerprint: z.string().regex(/^[a-f0-9]{64}$/),
+    expectedProjectFingerprint: z.string().regex(/^[a-f0-9]{64}$/),
     expectedProjectRevision: z.number().int().nonnegative(),
     conflicts: z.array(PragmaBundleConflictResolutionSchema).default([]),
     runtimes: z.array(BundleRuntimeResolutionSchema).default([]),
@@ -208,7 +231,12 @@ export const PragmaBundlePendingDependencySchema = z
 
 export const PragmaBundleInstallationSchema = z
   .object({
-    schemaVersion: z.literal("pragma.bundle-installation/v2"),
+    schemaVersion: z.literal("pragma.bundle-installation/v3"),
+    bundleVersion: z.enum(["pragma.desktop-bundle/v1", "pragma.bundle/v1"]),
+    sourceProjectFingerprint: z
+      .string()
+      .regex(/^[a-f0-9]{64}$/)
+      .optional(),
     id: z.string().uuid(),
     bundleFingerprint: z.string().regex(/^[a-f0-9]{64}$/),
     projectId: z.string().trim().min(1).max(120),

@@ -986,6 +986,8 @@ export const studio = {
   bundleChooseFileHint: "安装任何内容前都会校验压缩包。",
   bundleResourceCount: "{{count}} 个资源",
   bundleChooseAnother: "选择其他文件",
+  bundleInstallRoot: "安装根资源",
+  bundleSameContentInstalled: "相同的可移植内容已有 {{count}} 个安装记录；本次导入仍会保持独立。",
   bundleIncluded: "已包含",
   bundleNeedsBinding: "需本地绑定",
   bundleConflicts: "{{count}} 个冲突需要选择处理方式",
