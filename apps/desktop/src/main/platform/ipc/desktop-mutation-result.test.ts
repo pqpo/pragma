@@ -1,6 +1,5 @@
 import { describe, expect, it } from "vitest";
 
-import { DesktopMutationError } from "../../../shared/contracts/index.ts";
 import { runDesktopMutation } from "./desktop-mutation-result.ts";
 import { MissionOperationError } from "../../features/missions/mission-operation-error.ts";
 import {
@@ -45,12 +44,32 @@ describe("runDesktopMutation", () => {
         },
       },
     });
-    if (result.ok) throw new Error("Expected a mutation failure.");
-    expect(new DesktopMutationError(result.error)).toMatchObject({
-      code: "revision_conflict",
-      conflict: {
-        conflictingRefs: ["expert:1xddvess309a6gme"],
-        retryable: false,
+  });
+
+  it("preserves referenced resource details across the IPC boundary", async () => {
+    const result = await runDesktopMutation(async () => {
+      throw new PragmaProjectStoreError(
+        "resource_referenced",
+        "The resource is referenced.",
+        [],
+        undefined,
+        [
+          { ref: "expert:1xddvess309a6gme", name: "Code reviewer" },
+          { ref: "flow:ceq0qxcgdv75wg6b", name: "Issue reporter" },
+        ],
+      );
+    });
+
+    expect(result).toEqual({
+      ok: false,
+      error: {
+        code: "resource_referenced",
+        message: "The resource is referenced.",
+        diagnostics: [],
+        referencedBy: [
+          { ref: "expert:1xddvess309a6gme", name: "Code reviewer" },
+          { ref: "flow:ceq0qxcgdv75wg6b", name: "Issue reporter" },
+        ],
       },
     });
   });
@@ -105,14 +124,6 @@ describe("runDesktopMutation", () => {
           targetCompilerVersion: "pragma.dsl/v3",
           retryable: false,
         },
-      },
-    });
-    if (result.ok) throw new Error("Expected a revision failure.");
-    expect(new DesktopMutationError(result.error)).toMatchObject({
-      code: "project_revision_unavailable",
-      revisionFailure: {
-        projectId: "studio",
-        revision: 41,
       },
     });
   });

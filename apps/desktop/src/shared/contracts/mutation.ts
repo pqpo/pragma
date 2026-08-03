@@ -1,4 +1,8 @@
-import { PragmaDiagnosticSchema, PragmaResourceRefSchema } from "@pragma/interpreter/ast";
+import {
+  PragmaDiagnosticSchema,
+  PragmaResourceRefSchema,
+  PragmaSemanticResourceRefSchema,
+} from "@pragma/interpreter/ast";
 import { z } from "zod";
 
 export const DesktopMutationConflictSchema = z
@@ -21,6 +25,13 @@ export const DesktopProjectRevisionFailureSchema = z
   })
   .strict();
 
+export const DesktopMutationReferencedResourceSchema = z
+  .object({
+    ref: PragmaSemanticResourceRefSchema,
+    name: z.string().min(1).max(1_000),
+  })
+  .strict();
+
 export const DesktopMutationErrorSchema = z
   .object({
     code: z.string().trim().min(1).max(100),
@@ -28,6 +39,7 @@ export const DesktopMutationErrorSchema = z
     diagnostics: z.array(PragmaDiagnosticSchema).default([]),
     conflict: DesktopMutationConflictSchema.optional(),
     revisionFailure: DesktopProjectRevisionFailureSchema.optional(),
+    referencedBy: z.array(DesktopMutationReferencedResourceSchema).optional(),
   })
   .strict();
 
@@ -37,19 +49,6 @@ export const DesktopMutationResultSchema = z.discriminatedUnion("ok", [
 ]);
 
 export type DesktopMutationErrorData = z.infer<typeof DesktopMutationErrorSchema>;
-
-export class DesktopMutationError extends Error {
-  readonly code: string;
-  readonly diagnostics: DesktopMutationErrorData["diagnostics"];
-  readonly conflict: DesktopMutationErrorData["conflict"];
-  readonly revisionFailure: DesktopMutationErrorData["revisionFailure"];
-
-  constructor(input: DesktopMutationErrorData) {
-    super(input.message);
-    this.name = "DesktopMutationError";
-    this.code = input.code;
-    this.diagnostics = input.diagnostics;
-    this.conflict = input.conflict;
-    this.revisionFailure = input.revisionFailure;
-  }
-}
+export type DesktopMutationReferencedResource = z.infer<
+  typeof DesktopMutationReferencedResourceSchema
+>;
