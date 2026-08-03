@@ -68,7 +68,7 @@
     "electron-vite": "latest",
     "esbuild": "^0.28.1",
     "typescript": "latest",
-    "vite": "^7.0.0",
+    "vite": "^8.2.0",
     "vitest": "latest"
   }
 }
