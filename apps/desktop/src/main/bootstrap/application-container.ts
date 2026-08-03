@@ -85,6 +85,7 @@ import {
 import { validateWorkspace } from "../features/workspaces/workspace-scope.ts";
 import type { CredentialEncryption } from "../platform/security/credential-encryption.ts";
 import { initializeDesktopStorage } from "../platform/storage/storage-bootstrap.ts";
+import { createDesktopTrashMaintenance } from "../platform/storage/trash-maintenance.ts";
 
 export interface DesktopApplicationContainer {
   readonly startBackgroundTasks: () => void;
@@ -129,6 +130,10 @@ export async function createDesktopApplicationContainer(
     paths: pragmaPaths,
     refreshIntervalMs: 0,
     maxSnapshotAgeMs: 30_000,
+  });
+  const trashMaintenance = createDesktopTrashMaintenance({
+    paths: pragmaPaths,
+    logger: mainLogger,
   });
   const builtInDefaultWorkspace = pragmaPaths.workspaceRoot();
   const projectsPath = pragmaPaths.projectsRoot();
@@ -401,6 +406,7 @@ export async function createDesktopApplicationContainer(
     automaticHumanInteractionHandlerForToolPermissionMode: (mode) =>
       createAutomaticToolPermissionHandler(() => mode),
     assertStorageWriteAllowed: async () => await storageCapacityGuard.assertWriteAllowed(),
+    onStorageTrashed: () => trashMaintenance.schedule("mission-storage-trashed"),
     onExecutionLinked: async ({ mission, executionId }) => {
       if (mission.origin.type === "system-memory") return;
       await memoryPlane.registerSemanticExecutionContext({
@@ -527,6 +533,7 @@ export async function createDesktopApplicationContainer(
     creator: missionCreator,
     runner: missionRunner,
     loggerProvider,
+    onStorageTrashed: () => trashMaintenance.schedule("automation-storage-trashed"),
   });
   installAutomationHandlers(automationService);
   const defaultAgentTasks = createDesktopDefaultAgentTaskPort({
@@ -592,6 +599,7 @@ export async function createDesktopApplicationContainer(
     startBackgroundTasks() {
       if (backgroundTasksStarted) return;
       backgroundTasksStarted = true;
+      trashMaintenance.schedule("startup");
       runtimeProcessEnvironment.warmUp();
       void runtimeEnvironments.initialize().catch((error: unknown) => {
         mainLogger.warn(

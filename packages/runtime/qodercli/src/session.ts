@@ -32,6 +32,7 @@ import {
 } from "@qoder-ai/qoder-agent-sdk";
 
 import { resolveQoderContextWindow } from "./models.ts";
+import { cleanupManagedQoderExternalCommands } from "./qoder-config.ts";
 import type { QoderCliRuntimePermissionMode } from "./types.ts";
 
 export type QoderNativeEvent =
@@ -61,6 +62,7 @@ export interface QoderNativeSession {
   readonly executablePath: string;
   readonly env: NodeJS.ProcessEnv;
   readonly configDir: string;
+  readonly externalCommandsCacheDir?: string | undefined;
   readonly mcpServerUrl: string;
   readonly plugin: { readonly path: string; readonly skills: readonly string[] };
   readonly logger: PragmaLogger;
@@ -451,6 +453,15 @@ async function runQoderQuery(
     session.toolRuntimeState.runId = undefined;
     session.toolRuntimeState.source = undefined;
     await q.close().catch(() => undefined);
+    if (session.externalCommandsCacheDir !== undefined) {
+      await cleanupManagedQoderExternalCommands(session.externalCommandsCacheDir).catch((error) => {
+        session.logger.warn(
+          "runtime.qodercli_external_commands_cleanup_failed",
+          "Qoder CLI shared external-command artifacts could not be cleaned after the turn.",
+          { error },
+        );
+      });
+    }
   }
 }
 

@@ -8,6 +8,8 @@ export interface StoragePolicy {
   readonly executionArchiveLimitBytes: number;
   readonly executionArchiveTtlMs: number;
   readonly temporaryTtlMs: number;
+  readonly trashLimitBytes: number;
+  readonly trashMaxEntries: number;
   readonly trashTtlMs: number;
   readonly contentGcGraceMs: number;
 }
@@ -26,6 +28,8 @@ export const DEFAULT_STORAGE_POLICY: StoragePolicy = Object.freeze({
   executionArchiveLimitBytes: 512 * MIB,
   executionArchiveTtlMs: 90 * DAY_MS,
   temporaryTtlMs: DAY_MS,
+  trashLimitBytes: 300 * MIB,
+  trashMaxEntries: 10,
   trashTtlMs: 7 * DAY_MS,
   contentGcGraceMs: DAY_MS,
 });

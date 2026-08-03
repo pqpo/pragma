@@ -37,4 +37,12 @@ describe("PragmaPaths", () => {
       "Invalid diagnostic archive date",
     );
   });
+
+  it("places Qoder external commands in the shared rebuildable Runtime cache", () => {
+    const paths = new PragmaPaths({ pragmaHome: join("", "pragma-home") });
+
+    expect(paths.qoderCliExternalCommandsCacheRoot()).toBe(
+      join(paths.cacheRoot(), "runtimes", "qodercli", "external-commands"),
+    );
+  });
 });
