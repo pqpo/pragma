@@ -42,11 +42,26 @@ export function createProbeMemoryModule(
       version: "1.0.0",
       pathPrefix: prefix,
       storageModel: "dynamic-projection",
+      purpose: "projection",
+      contextLayers: {
+        usagePrompt: "Use probe memory only to verify Memory Plane delivery in tests.",
+        summaryPath: "summary.md",
+        indexPath: "index.md",
+        itemsPrefix: "items/",
+        evidencePrefix: "evidence/",
+        summaryMaxBytes: 512,
+        indexMaxBytes: 1_024,
+      },
     },
     subscriptions: [
-      { topic: "execution.message.appended", schemaRefs: ["pragma.memory.execution-message/v1"] },
+      {
+        topic: "execution.message.appended",
+        schemaRefs: ["pragma.memory.execution-message/v1", "pragma.memory.execution-message/v2"],
+      },
     ],
-    contextProvider,
+    createContextProvider() {
+      return contextProvider;
+    },
     async consume(envelopes) {
       if (options.fail === true) throw new Error("Probe Module configured failure.");
       await withFileLock(lockPath, async () => {
@@ -71,13 +86,37 @@ function createProbeContextStore(recordPath: string): ExpertAgentContextStore {
     const record = await readProbeRecord(recordPath, () => new Date());
     return new StaticContextStore([
       {
-        id: "entries.md",
+        id: "summary.md",
+        content: `# Probe Memory\n\nObserved ${record.messageIds.length} evidence messages.\n`,
+        metadata: {
+          description: "Summary of Probe Memory evidence delivery.",
+          trigger: "model_decision",
+          priority: "low",
+          trustLevel: "system",
+          sensitivity: "internal",
+        },
+      },
+      {
+        id: "index.md",
         content: ["# Probe Evidence", "", ...record.messageIds.map((id) => `- ${id}`), ""].join(
           "\n",
         ),
         metadata: {
           description: "Evidence observed by the test Probe Memory Module.",
           trigger: "model_decision",
+          priority: "low",
+          trustLevel: "system",
+          sensitivity: "internal",
+        },
+      },
+      {
+        id: "items/entries.md",
+        content: ["# Probe Evidence", "", ...record.messageIds.map((id) => `- ${id}`), ""].join(
+          "\n",
+        ),
+        metadata: {
+          description: "Detailed Probe Memory entries.",
+          trigger: "manual",
           priority: "low",
           trustLevel: "system",
           sensitivity: "internal",

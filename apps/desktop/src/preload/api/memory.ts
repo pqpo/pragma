@@ -5,9 +5,11 @@ import {
   DesktopAssetMemoryPolicySnapshotSchema,
   DesktopGlobalMemoryPolicySnapshotSchema,
   DesktopMemoryPlaneStatusSchema,
+  DesktopMemoryExtractorProfileSchema,
   GetDesktopAssetMemoryPolicySchema,
   UpdateDesktopAssetMemoryPolicySchema,
   UpdateDesktopGlobalMemoryPolicySchema,
+  UpdateDesktopMemoryExtractorProfileSchema,
 } from "../../shared/contracts/memory.ts";
 
 export const memoryApi = {
@@ -38,6 +40,17 @@ export const memoryApi = {
     ),
   getMemoryPlaneStatus: async () =>
     DesktopMemoryPlaneStatusSchema.parse(await ipcRenderer.invoke("memory-plane:status")),
+  getMemoryExtractorProfile: async () =>
+    DesktopMemoryExtractorProfileSchema.parse(
+      await ipcRenderer.invoke("memory-extractor-profile:get"),
+    ),
+  updateMemoryExtractorProfile: async (input) =>
+    DesktopMemoryExtractorProfileSchema.parse(
+      await ipcRenderer.invoke(
+        "memory-extractor-profile:update",
+        UpdateDesktopMemoryExtractorProfileSchema.parse(input),
+      ),
+    ),
 } satisfies Pick<
   PragmaDesktopAPI,
   | "getGlobalMemoryPolicy"
@@ -45,4 +58,6 @@ export const memoryApi = {
   | "getAssetMemoryPolicy"
   | "updateAssetMemoryPolicy"
   | "getMemoryPlaneStatus"
+  | "getMemoryExtractorProfile"
+  | "updateMemoryExtractorProfile"
 >;

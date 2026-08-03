@@ -23,6 +23,7 @@ import {
   defineContextIdResolver,
   defineFlow,
   defineRuntimeDriver,
+  EXECUTION_CURRENT_EXPERT_ID_ATTR,
   fingerprintExpertExecutionDefinition,
   PragmaPaths,
   readRuntimeSessionRecord,
@@ -485,6 +486,10 @@ describe("ExpertSession", () => {
       thinkingLevel: "high",
     };
     expect(stats.sessionModelSelections).toEqual([selection]);
+    expect(stats.sessionContexts[0]?.request.context).toEqual({
+      source: { type: "pragma.expert", id: "model-selection" },
+      attributes: { [EXECUTION_CURRENT_EXPERT_ID_ATTR]: "model-selection" },
+    });
     expect(stats.turnModelSelections).toEqual([selection, override]);
     const state = await session.getState();
     expect(state.contexts[state.rootContextId]?.modelSelection).toEqual(override);
@@ -772,6 +777,15 @@ describe("ExpertSession", () => {
     await first.result;
     const firstMember = (await first.getTree()).children[0]?.invocation;
     expect(firstMember).toBeDefined();
+    expect(stats.sessionContexts.map((context) => context.request.context?.source)).toEqual([
+      { type: "pragma.expert-team", id: "persistent-team" },
+      { type: "pragma.expert-team", id: "persistent-team" },
+    ]);
+    expect(
+      stats.sessionContexts.map(
+        (context) => context.request.context?.attributes?.[EXECUTION_CURRENT_EXPERT_ID_ATTR],
+      ),
+    ).toEqual(["lead", "member"]);
 
     await expect(session.close()).rejects.toThrow("Runtime Session pool cleanup failed");
     const recoveredStats = createFakeRuntimeStats();
@@ -2124,6 +2138,10 @@ describe("FlowExecution", () => {
     })();
     await expect(execution.result).resolves.toBeDefined();
     expect(stats.createSessionCalls).toBe(1);
+    expect(stats.sessionContexts[0]?.request.context).toEqual({
+      source: { type: "pragma.flow", id: "runtime-flow" },
+      attributes: { [EXECUTION_CURRENT_EXPERT_ID_ATTR]: expert.id },
+    });
     expect(stats.closeSessionCalls).toBe(1);
     expect((await execution.getTree()).children[0]?.invocation.contextResolution).toBeDefined();
     const store = createFileExecutionStore({ pragmaHome: home });

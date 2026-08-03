@@ -6,7 +6,7 @@ Pragma 的新 Memory Plane 是 Desktop 内置能力，随应用启动，不需�
 
 ## 当前已经可用的能力
 
-第一阶段完成的是基础设施和策略，不是完整长期记忆产品：
+当前已完成 Memory Plane 基础设施、策略和 Episodic Memory：
 
 - Execution 语义事件通过持久 Canonical Event Feed 交给 Memory Plane；
 - Memory Evidence 自动记录 root Expert/ExpertTeam/Flow 与实际 producer Expert；
@@ -14,9 +14,34 @@ Pragma 的新 Memory Plane 是 Desktop 内置能力，随应用启动，不需�
 - 联邦 `memory` ContextStore 可以按 Module prefix 路由只读内容；
 - Desktop 设置页可以控制全局 capture、recall、learning 并查看 Plane health；
 - Expert、ExpertTeam、Flow 编辑页可以继承或收紧全局策略。
+- Execution 终态会创建持久提炼任务，由隐藏 Memory Curator 生成目标、尝试、失败、恢复和结果；
+- 普通 Expert、ExpertTeam 和 Flow 内 Expert 会加载有界 Memory guide、类型摘要与热点索引；
+- 独立 Expert 只能看到自己的 Episode；Team/Flow 内 Expert 看到当前 Team/Flow Episode 与自己的个人
+  Episode，不会混入其他专家或其他团队资产；
+- 模型通过 `memory/episodic/items/**` 按需读取详情，需要核验时再读取精确 Evidence 引用。
 
-当前尚未实现生产级 Episodic、Semantic/Fact、Knowledge、Skill Candidate 或 CodeGraph Module，因此 Plane
-运行并不等于已经形成这些长期记忆。主动召回、Memory 管理中心、候选评审和分享也在后续阶段。
+当前尚未实现生产级 Semantic/Fact、Knowledge、Skill Candidate 或 CodeGraph Module。查询相关的主动
+召回排序、Memory 管理中心、候选评审和分享也在后续阶段。
+
+## 分层加载
+
+Memory 不会把全部记录塞进模型上下文：
+
+```text
+memory/guide.md                         # 常驻使用规则
+memory/overview.md                      # 预算内的各类型摘要与热点索引
+memory/<type>/summary.md                # 类型摘要
+memory/<type>/index.md                  # 可分段读取的完整索引
+memory/<type>/items/<id>.md             # 按需详情
+memory/<type>/evidence/<evidenceId>.md  # 按需核验证据
+```
+
+guide 最多 2KB，overview 最多 6KB。普通搜索不会返回 Evidence；模型必须先找到详情中的稳定引用，再精确
+读取证据。Episodic 是历史先例，不代表当前事实。
+
+因此可以询问独立 Expert“你以前做过什么”：回答只依据该 Expert 作为根资产执行过的个人 Episode。
+在 Team/Flow 中询问时，模型还可以使用当前 Team/Flow 的共同履历，但提示词和详情会明确区分
+`current-asset` 与 `personal`；成员在团队执行中只是 producer，不会把团队 Episode 自动算成个人履历。
 
 ## 设置维度
 
@@ -28,8 +53,12 @@ Pragma 的新 Memory Plane 是 Desktop 内置能力，随应用启动，不需�
 - Recall：是否允许从 Memory Context 读取；
 - Learning：是否生成本地 Knowledge/Skill 候选；候选不会自动发布；
 - Health：Plane 状态、Feed event 数量和 Module 数量。
+- Extraction model：继承系统默认模型，或固定 Memory Curator 使用的 Runtime 和模型。
 
 默认 capture、recall 开启，learning 为 local candidates。
+
+模型设置持久化为 `pragma.memory-extractor-profile/v1`，通过 revision CAS 更新，不使用环境变量。模型暂时
+不可用时任务保留在 durable queue；连续结构错误进入 needs-attention，设置变化后自动唤醒。
 
 ### Expert、ExpertTeam、Flow
 
@@ -41,6 +70,10 @@ global ∩ root asset ∩ producer experts ∩ mission restriction
 ```
 
 这些设置属于本机 Host binding metadata，不写入 Pragma DSL，不生成 Project Revision。
+
+这里的“每个资产一个 Memory Store”是逻辑授权视图，不是每个 Expert/Team/Flow 创建一套 SQLite 或目录。
+Episodic Module 仍使用共享物理 Store，并在查询阶段按稳定 root asset 与当前 Expert 过滤 list、search、
+detail 和 Evidence。
 
 ## 类型边界
 
@@ -73,9 +106,12 @@ Memory revision。分享不会新建一个知识库对象，也不会自动导�
 ```text
 ~/.pragma/data/event-bus/feed.sqlite       # Canonical Event Feed
 ~/.pragma/data/memory/policies/            # Global/asset policy history
+~/.pragma/data/memory/extractor-profile.json # Memory Curator Runtime/model profile
+~/.pragma/data/memory/modules/<episodic>/episodes.sqlite # Episodic projection
 ~/.pragma/state/event-bus/handoffs/        # Execution durable handoff
 ~/.pragma/state/event-bus/handoff-quarantine/ # 原样保留的损坏/未来版本 handoff；所属 Execution fail closed
 ~/.pragma/state/memory/                     # checkpoint/dead-letter/outbox
+~/.pragma/state/memory/modules/<episodic>/jobs.sqlite # Evidence aggregation and durable jobs
 ```
 
 Memory 数据不写 Agent workspace。正常启动不会扫描全部 Mission、Execution 或 legacy memory 目录。

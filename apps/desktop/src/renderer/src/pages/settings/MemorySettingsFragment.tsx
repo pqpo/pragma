@@ -3,7 +3,9 @@ import { useTranslation } from "react-i18next";
 
 import type {
   DesktopGlobalMemoryPolicySnapshot,
+  DesktopMemoryExtractorProfile,
   DesktopMemoryPlaneStatus,
+  DesktopRuntimeAvailability,
 } from "../../../../shared/contracts/index.ts";
 import { SelectMenu } from "../../components/SelectMenu.tsx";
 import { SettingsScreenFrame } from "./SettingsScreenFrame.tsx";
@@ -12,6 +14,10 @@ export function MemorySettingsFragment() {
   const { t } = useTranslation("settings");
   const [snapshot, setSnapshot] = useState<DesktopGlobalMemoryPolicySnapshot>();
   const [status, setStatus] = useState<DesktopMemoryPlaneStatus>();
+  const [extractor, setExtractor] = useState<DesktopMemoryExtractorProfile>();
+  const [runtimes, setRuntimes] = useState<readonly DesktopRuntimeAvailability[]>([]);
+  const [runtimeId, setRuntimeId] = useState("");
+  const [modelKey, setModelKey] = useState("");
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string>();
 
@@ -20,11 +26,23 @@ export function MemorySettingsFragment() {
     void Promise.all([
       window.pragmaDesktop.getGlobalMemoryPolicy(),
       window.pragmaDesktop.getMemoryPlaneStatus(),
+      window.pragmaDesktop.getMemoryExtractorProfile(),
+      window.pragmaDesktop.getRuntimeAvailability(),
     ])
-      .then(([nextSnapshot, nextStatus]) => {
+      .then(([nextSnapshot, nextStatus, nextExtractor, nextRuntimes]) => {
         if (cancelled) return;
         setSnapshot(nextSnapshot);
         setStatus(nextStatus);
+        setExtractor(nextExtractor);
+        setRuntimes(nextRuntimes);
+        const selectedRuntime =
+          nextExtractor.runtimeId ?? nextRuntimes.find((runtime) => runtime.isDefault)?.id ?? "";
+        setRuntimeId(selectedRuntime);
+        setModelKey(
+          nextExtractor.providerId === undefined || nextExtractor.modelId === undefined
+            ? ""
+            : `${nextExtractor.providerId}\0${nextExtractor.modelId}`,
+        );
       })
       .catch(() => {
         if (!cancelled) setError(t("memory.loadError"));
@@ -51,6 +69,36 @@ export function MemorySettingsFragment() {
       setSaving(false);
     }
   };
+
+  const updateExtractor = async (
+    profile:
+      | { readonly mode: "inherit-default" }
+      | {
+          readonly mode: "pinned";
+          readonly runtimeId: string;
+          readonly providerId: string;
+          readonly modelId: string;
+        },
+  ) => {
+    if (extractor === undefined) return;
+    setSaving(true);
+    setError(undefined);
+    try {
+      setExtractor(
+        await window.pragmaDesktop.updateMemoryExtractorProfile({
+          expectedRevision: extractor.revision,
+          profile,
+        }),
+      );
+    } catch {
+      setError(t("memory.saveError"));
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  const selectedRuntime = runtimes.find((runtime) => runtime.id === runtimeId);
+  const models = selectedRuntime?.models ?? [];
 
   return (
     <SettingsScreenFrame
@@ -89,6 +137,73 @@ export function MemorySettingsFragment() {
           ]}
           onChange={(learning) => void update({ ...snapshot!.policy, learning })}
         />
+        <MemorySelectRow
+          label={t("memory.extractorMode")}
+          description={t("memory.extractorModeDescription")}
+          value={extractor?.mode ?? "inherit-default"}
+          disabled={extractor === undefined || saving}
+          options={[
+            ["inherit-default", t("memory.inheritDefaultModel")],
+            ["pinned", t("memory.pinnedModel")],
+          ]}
+          onChange={(mode) => {
+            if (mode === "inherit-default") void updateExtractor({ mode });
+            else
+              setExtractor((current) =>
+                current === undefined ? current : { ...current, mode: "pinned" },
+              );
+          }}
+        />
+        {extractor?.mode !== "pinned" ? null : (
+          <>
+            <MemorySelectRow
+              label={t("memory.extractorRuntime")}
+              description={t("memory.extractorRuntimeDescription")}
+              value={runtimeId}
+              disabled={saving}
+              options={runtimes
+                .filter((runtime) => runtime.status === "available")
+                .map((runtime) => [runtime.id, runtime.displayName] as const)}
+              onChange={(value) => {
+                setRuntimeId(value);
+                setModelKey("");
+              }}
+            />
+            <MemorySelectRow
+              label={t("memory.extractorModel")}
+              description={t("memory.extractorModelDescription")}
+              value={modelKey}
+              disabled={saving || runtimeId === ""}
+              options={models.map(
+                (model) =>
+                  [
+                    `${model.provider.id}\0${model.id}`,
+                    `${model.provider.displayName} · ${model.displayName}`,
+                  ] as const,
+              )}
+              onChange={setModelKey}
+            />
+            <div className="setting-row">
+              <span className="setting-copy">
+                <strong>{t("memory.saveExtractor")}</strong>
+                <span>{t("memory.saveExtractorDescription")}</span>
+              </span>
+              <button
+                type="button"
+                className="secondary-button"
+                disabled={saving || runtimeId === "" || modelKey === ""}
+                onClick={() => {
+                  const [providerId, modelId] = modelKey.split("\0");
+                  if (providerId !== undefined && modelId !== undefined) {
+                    void updateExtractor({ mode: "pinned", runtimeId, providerId, modelId });
+                  }
+                }}
+              >
+                {t("memory.saveExtractor")}
+              </button>
+            </div>
+          </>
+        )}
         <div className="setting-row memory-health-setting">
           <span className="setting-copy">
             <strong>{t("memory.health")}</strong>
@@ -103,6 +218,19 @@ export function MemorySettingsFragment() {
                   quarantined: status.delivery.quarantined,
                 })}
               </small>
+            )}
+            {status?.modules.map((module) =>
+              module.work === undefined ? null : (
+                <small key={module.moduleId}>
+                  {t("memory.moduleWorkSummary", {
+                    module: module.moduleId,
+                    records: module.work.records,
+                    pending: module.work.pending + module.work.running,
+                    attention: module.work.needsAttention,
+                    rejected: module.work.rejected,
+                  })}
+                </small>
+              ),
             )}
           </span>
           <span className={`memory-health-badge is-${status?.state ?? "loading"}`}>

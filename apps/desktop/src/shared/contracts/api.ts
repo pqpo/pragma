@@ -121,6 +121,8 @@ import type {
   GetDesktopAssetMemoryPolicy,
   UpdateDesktopAssetMemoryPolicy,
   DesktopMemoryPlaneStatus,
+  DesktopMemoryExtractorProfile,
+  UpdateDesktopMemoryExtractorProfile,
 } from "./types.ts";
 
 export interface PragmaDesktopAPI {
@@ -139,6 +141,10 @@ export interface PragmaDesktopAPI {
     input: UpdateDesktopAssetMemoryPolicy,
   ) => Promise<DesktopAssetMemoryPolicySnapshot>;
   getMemoryPlaneStatus: () => Promise<DesktopMemoryPlaneStatus>;
+  getMemoryExtractorProfile: () => Promise<DesktopMemoryExtractorProfile>;
+  updateMemoryExtractorProfile: (
+    input: UpdateDesktopMemoryExtractorProfile,
+  ) => Promise<DesktopMemoryExtractorProfile>;
   pickWorkspace: () => Promise<PickWorkspaceResult>;
   validateWorkspace: (path: string) => Promise<ValidateWorkspaceResult>;
   getModelProviderSettings: () => Promise<ModelProviderSettingsSnapshot>;

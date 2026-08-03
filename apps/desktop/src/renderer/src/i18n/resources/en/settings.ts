@@ -46,11 +46,23 @@ export const settings = {
     enabled: "Enabled",
     disabled: "Disabled",
     localCandidates: "Local candidates",
+    extractorMode: "Extraction model",
+    extractorModeDescription: "Choose the Runtime and model used by the hidden Memory Curator.",
+    inheritDefaultModel: "Inherit system default",
+    pinnedModel: "Pinned Runtime and model",
+    extractorRuntime: "Memory Runtime",
+    extractorRuntimeDescription: "Runtime used only for background Memory extraction.",
+    extractorModel: "Memory model",
+    extractorModelDescription: "Model used to create structured Episodic Memory.",
+    saveExtractor: "Save extraction model",
+    saveExtractorDescription: "Changing this setting wakes extraction jobs that need attention.",
     loading: "Loading…",
     health: "Memory plane health",
     healthDescription: "The memory plane starts with Pragma and consumes the canonical event feed.",
     healthSummary:
       "{{state}} · {{events}} events · {{modules}} modules · {{pending}} pending · {{quarantined}} quarantined",
+    moduleWorkSummary:
+      "{{module}} · {{records}} records · {{pending}} extracting · {{attention}} need attention · {{rejected}} rejected",
     assetTitle: "Memory policy",
     assetDescription:
       "This team asset may only narrow the global policy. Runtime restrictions are intersected with this setting.",

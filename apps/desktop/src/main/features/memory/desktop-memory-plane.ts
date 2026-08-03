@@ -1,23 +1,36 @@
 import {
+  EXECUTION_CURRENT_EXPERT_ID_ATTR,
   createFileCanonicalEventFeed,
   createFileExecutionStore,
   type FileExecutionStore,
+  type ExpertAgentRunContext,
   type PragmaLogger,
 } from "@pragma/core";
 import {
   MemoryModuleRegistry,
+  createEpisodicMemoryModule,
+  createFileMemoryExtractorProfileStore,
   createExecutionEvidenceAdapter,
+  createFederatedMemoryContextStore,
   createFileMemoryPolicyStore,
   createFileMemoryPipelineStateStore,
   createMemoryEvidenceFeed,
   createMemoryEvidencePublisher,
   createMemoryPipelineScheduler,
+  MemoryRecallScopeSchema,
   type MemoryPolicyStore,
+  type MemoryRecallScope,
+  type EpisodicMemoryExtractor,
+  type MemoryExtractorProfileStore,
 } from "@pragma/memory";
 
 export interface DesktopMemoryPlane {
   readonly executionStore: FileExecutionStore;
   readonly policies: MemoryPolicyStore;
+  readonly extractorProfiles: MemoryExtractorProfileStore;
+  readonly contextStore: import("@pragma/core").ExpertAgentContextStore;
+  setEpisodicExtractor(extractor: EpisodicMemoryExtractor | undefined): Promise<void>;
+  wakeEpisodicJobs(): Promise<void>;
   getStatus(): Promise<{
     readonly state: "running" | "stopped" | "degraded";
     readonly feed: { readonly lastSequence: number; readonly eventCount: number };
@@ -48,8 +61,16 @@ export async function createDesktopMemoryPlane(options: {
   });
   const state = createFileMemoryPipelineStateStore({ pragmaHome: options.pragmaHome });
   const policies = createFileMemoryPolicyStore({ pragmaHome: options.pragmaHome });
+  const extractorProfiles = createFileMemoryExtractorProfileStore({
+    pragmaHome: options.pragmaHome,
+  });
   const publisher = createMemoryEvidencePublisher(canonical);
   const registry = new MemoryModuleRegistry();
+  const episodic = await createEpisodicMemoryModule({ pragmaHome: options.pragmaHome });
+  registry.register(episodic);
+  const contextStore = createFederatedMemoryContextStore(registry, {
+    resolveRecallScope: async (context) => await resolveDesktopMemoryRecallScope(policies, context),
+  });
   const adapter = createExecutionEvidenceAdapter({
     source: canonical,
     publisher,
@@ -121,8 +142,38 @@ export async function createDesktopMemoryPlane(options: {
   return {
     executionStore,
     policies,
+    extractorProfiles,
+    contextStore,
+    async setEpisodicExtractor(extractor) {
+      await episodic.setExtractor(extractor);
+      scheduler.wake();
+    },
+    async wakeEpisodicJobs() {
+      await episodic.store.wakeNeedsAttention(new Date());
+      scheduler.wake();
+    },
     async getStatus() {
       const delivery = await executionStore.inspectCanonicalEventDelivery();
+      const modules: import("@pragma/shared").MemoryModuleDiagnostic[] = [];
+      for (const module of registry.list()) {
+        const diagnostic = registry.diagnostic(module.descriptor.id);
+        if (diagnostic === undefined) continue;
+        if (module.descriptor.id !== episodic.descriptor.id) {
+          modules.push(diagnostic);
+          continue;
+        }
+        const work = await episodic.store.inspect();
+        modules.push({
+          ...diagnostic,
+          work: {
+            records: work.episodes,
+            pending: work.pending,
+            running: work.running,
+            needsAttention: work.needsAttention,
+            rejected: work.rejected,
+          },
+        });
+      }
       return {
         state: stopped
           ? "stopped"
@@ -132,10 +183,7 @@ export async function createDesktopMemoryPlane(options: {
         feed: await canonical.inspect(),
         delivery,
         ...(lastError === undefined ? {} : { lastError }),
-        modules: registry.list().flatMap((module) => {
-          const diagnostic = registry.diagnostic(module.descriptor.id);
-          return diagnostic === undefined ? [] : [diagnostic];
-        }),
+        modules,
       };
     },
     start() {
@@ -152,7 +200,28 @@ export async function createDesktopMemoryPlane(options: {
       timer = undefined;
       await running;
       await scheduler.stop();
+      episodic.close();
       canonical.close();
     },
   };
+}
+
+export async function resolveDesktopMemoryRecallScope(
+  policies: Pick<MemoryPolicyStore, "resolveAt">,
+  context: ExpertAgentRunContext | undefined,
+  now: Date = new Date(),
+): Promise<MemoryRecallScope | undefined> {
+  const source = context?.source;
+  const currentExpertId = context?.attributes?.[EXECUTION_CURRENT_EXPERT_ID_ATTR];
+  const scope = MemoryRecallScopeSchema.safeParse({
+    rootRef: { type: source?.type, id: source?.id },
+    expertRef: { type: "pragma.expert", id: currentExpertId },
+  });
+  if (!scope.success) return undefined;
+  const policy = await policies.resolveAt({
+    rootRef: scope.data.rootRef,
+    producerRefs: [scope.data.expertRef],
+    occurredAt: now.toISOString(),
+  });
+  return policy.recall ? scope.data : undefined;
 }

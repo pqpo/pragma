@@ -100,6 +100,7 @@ tsconfig.base.json
 @pragma/runtime-qodercli
 @pragma/desktop
 @pragma/examples
+@pragma/memory
 @pragma/plugin-memory
 @pragma/plugin-repo-manager
 @pragma/eslint-config

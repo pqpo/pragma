@@ -62,3 +62,32 @@ export const DesktopMemoryPlaneStatusSchema = z.object({
     .optional(),
   modules: z.array(MemoryModuleDiagnosticSchema),
 });
+
+export const DesktopMemoryExtractorProfileSchema = z
+  .object({
+    schemaVersion: z.literal("pragma.memory-extractor-profile/v1"),
+    revision: z.number().int().nonnegative(),
+    mode: z.enum(["inherit-default", "pinned"]),
+    runtimeId: z.string().min(1).optional(),
+    providerId: z.string().min(1).optional(),
+    modelId: z.string().min(1).optional(),
+    thinkingLevel: z.string().min(1).optional(),
+    updatedAt: z.string().datetime(),
+  })
+  .strict();
+
+export const UpdateDesktopMemoryExtractorProfileSchema = z.object({
+  expectedRevision: z.number().int().nonnegative(),
+  profile: z.discriminatedUnion("mode", [
+    z.object({ mode: z.literal("inherit-default") }).strict(),
+    z
+      .object({
+        mode: z.literal("pinned"),
+        runtimeId: z.string().trim().min(1),
+        providerId: z.string().trim().min(1),
+        modelId: z.string().trim().min(1),
+        thinkingLevel: z.string().trim().min(1).optional(),
+      })
+      .strict(),
+  ]),
+});

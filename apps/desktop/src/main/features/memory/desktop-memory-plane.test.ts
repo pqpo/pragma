@@ -1,15 +1,26 @@
-import { mkdir, mkdtemp, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
-import { createPragmaLogger, PragmaPaths } from "@pragma/core";
-import { describe, expect, it, vi } from "vitest";
+import { createPragmaLogger, EXECUTION_CURRENT_EXPERT_ID_ATTR, PragmaPaths } from "@pragma/core";
+import { afterEach, describe, expect, it, vi } from "vitest";
 
-import { createDesktopMemoryPlane } from "./desktop-memory-plane.ts";
+import {
+  createDesktopMemoryPlane,
+  resolveDesktopMemoryRecallScope,
+} from "./desktop-memory-plane.ts";
+
+const roots: string[] = [];
+
+afterEach(async () => {
+  await Promise.all(
+    roots.splice(0).map(async (root) => await rm(root, { recursive: true, force: true })),
+  );
+});
 
 describe("DesktopMemoryPlane", () => {
   it("is an always-available host service whose background loop starts explicitly", async () => {
-    const pragmaHome = await mkdtemp(join(tmpdir(), "pragma-desktop-memory-"));
+    const pragmaHome = await temporaryRoot("pragma-desktop-memory-");
     const plane = await createDesktopMemoryPlane({
       pragmaHome,
       logger: createPragmaLogger(undefined, { component: "desktop.memory-test" }),
@@ -28,7 +39,7 @@ describe("DesktopMemoryPlane", () => {
   });
 
   it("reports a quarantined handoff as degraded without exposing its payload", async () => {
-    const pragmaHome = await mkdtemp(join(tmpdir(), "pragma-desktop-memory-degraded-"));
+    const pragmaHome = await temporaryRoot("pragma-desktop-memory-degraded-");
     const paths = new PragmaPaths({ pragmaHome });
     const handoff = paths.canonicalEventHandoff("execution", "future");
     await mkdir(paths.canonicalEventHandoffsRoot(), { recursive: true });
@@ -53,3 +64,89 @@ describe("DesktopMemoryPlane", () => {
     await plane.stop();
   });
 });
+
+describe("Desktop Memory recall scope", () => {
+  it("intersects the root asset and current Expert policies", async () => {
+    const resolveAt = vi.fn(async () => ({
+      capture: true,
+      recall: true,
+      learning: "local-candidates" as const,
+      appliedRevisions: [],
+    }));
+    const now = new Date("2026-08-01T00:00:00.000Z");
+
+    await expect(
+      resolveDesktopMemoryRecallScope(
+        { resolveAt },
+        {
+          source: { type: "pragma.expert-team", id: "team-a" },
+          attributes: { [EXECUTION_CURRENT_EXPERT_ID_ATTR]: "expert-a" },
+        },
+        now,
+      ),
+    ).resolves.toEqual({
+      rootRef: { type: "pragma.expert-team", id: "team-a" },
+      expertRef: { type: "pragma.expert", id: "expert-a" },
+    });
+    expect(resolveAt).toHaveBeenCalledWith({
+      rootRef: { type: "pragma.expert-team", id: "team-a" },
+      producerRefs: [{ type: "pragma.expert", id: "expert-a" }],
+      occurredAt: now.toISOString(),
+    });
+  });
+
+  it("fails closed for missing identity or disabled recall", async () => {
+    const resolveAt = vi.fn(async () => ({
+      capture: true,
+      recall: false,
+      learning: "local-candidates" as const,
+      appliedRevisions: [],
+    }));
+    await expect(
+      resolveDesktopMemoryRecallScope({ resolveAt }, undefined),
+    ).resolves.toBeUndefined();
+    expect(resolveAt).not.toHaveBeenCalled();
+    await expect(
+      resolveDesktopMemoryRecallScope(
+        { resolveAt },
+        {
+          source: { type: "pragma.flow", id: "flow-a" },
+          attributes: { [EXECUTION_CURRENT_EXPERT_ID_ATTR]: "expert-a" },
+        },
+      ),
+    ).resolves.toBeUndefined();
+  });
+
+  it("resolves an enabled Flow to its root Flow and current Expert", async () => {
+    const resolveAt = vi.fn(async () => ({
+      capture: true,
+      recall: true,
+      learning: "local-candidates" as const,
+      appliedRevisions: [],
+    }));
+
+    await expect(
+      resolveDesktopMemoryRecallScope(
+        { resolveAt },
+        {
+          source: { type: "pragma.flow", id: "flow-a" },
+          attributes: { [EXECUTION_CURRENT_EXPERT_ID_ATTR]: "expert-a" },
+        },
+      ),
+    ).resolves.toEqual({
+      rootRef: { type: "pragma.flow", id: "flow-a" },
+      expertRef: { type: "pragma.expert", id: "expert-a" },
+    });
+    expect(resolveAt).toHaveBeenCalledWith({
+      rootRef: { type: "pragma.flow", id: "flow-a" },
+      producerRefs: [{ type: "pragma.expert", id: "expert-a" }],
+      occurredAt: expect.any(String),
+    });
+  });
+});
+
+async function temporaryRoot(prefix: string): Promise<string> {
+  const root = await mkdtemp(join(tmpdir(), prefix));
+  roots.push(root);
+  return root;
+}

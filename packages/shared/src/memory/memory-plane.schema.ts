@@ -70,6 +70,11 @@ export const MemoryEvidenceBindingSchema = z.object({
   access: z.enum(["allow", "deny"]),
 });
 
+export const MemoryEvidenceAttributionSchema = z.object({
+  rootRef: MemorySubjectRefSchema,
+  producerRefs: z.array(MemorySubjectRefSchema).default([]),
+});
+
 export const MemoryRevisionBindingSchema = z.object({
   consumerRef: MemorySubjectRefSchema,
   recall: z.enum(["allow", "deny"]),
@@ -138,8 +143,52 @@ export const MemoryEvidenceEnvelopeSchema = z.object({
   visibility: MemoryVisibilityPolicySchema,
   sensitivity: MemorySensitivitySchema,
   bindings: z.array(MemoryEvidenceBindingSchema).default([]),
+  attribution: MemoryEvidenceAttributionSchema.optional(),
   policySnapshot: EffectiveMemoryPolicySchema,
   payload: z.unknown(),
+});
+
+/**
+ * Closed, model-safe projections of Runtime messages. These deliberately do not
+ * carry reasoning, signatures, images, tool arguments, command output, or
+ * provider diagnostics. Memory extractors must consume this projection instead
+ * of the Runtime-native AgentMessage wire shape.
+ */
+export const MemorySafeExecutionMessageSchema = z.discriminatedUnion("role", [
+  z.object({
+    role: z.literal("user"),
+    text: z.string().max(32_000),
+  }),
+  z.object({
+    role: z.literal("assistant"),
+    text: z.string().max(32_000),
+    stopReason: z.enum(["stop", "length", "toolUse", "error", "aborted"]),
+  }),
+  z.object({
+    role: z.literal("tool"),
+    toolCallId: z.string().min(1),
+    toolName: z.string().min(1),
+    status: z.enum(["succeeded", "failed"]),
+  }),
+  z.object({
+    role: z.literal("summary"),
+    text: z.string().max(32_000),
+    kind: z.enum(["branch", "compaction"]),
+  }),
+]);
+
+export const MemorySafeExecutionMessagePayloadSchema = z.object({
+  message: MemorySafeExecutionMessageSchema,
+});
+
+export const MemorySafeToolEventPayloadSchema = z.object({
+  toolCallId: z.string().min(1),
+  toolName: z.string().min(1),
+  phase: z.enum(["started", "completed", "failed"]),
+});
+
+export const MemorySafeTerminalPayloadSchema = z.object({
+  outcome: z.enum(["succeeded", "failed", "cancelled", "interrupted"]),
 });
 
 export const MemoryFeedCursorSchema = CanonicalEventCursorSchema;
@@ -155,6 +204,15 @@ export const MemoryModuleDiagnosticSchema = z.object({
   deadLettered: z.number().int().nonnegative(),
   skipped: z.number().int().nonnegative(),
   lastErrorCode: z.string().min(1).optional(),
+  work: z
+    .object({
+      records: z.number().int().nonnegative(),
+      pending: z.number().int().nonnegative(),
+      running: z.number().int().nonnegative(),
+      needsAttention: z.number().int().nonnegative(),
+      rejected: z.number().int().nonnegative(),
+    })
+    .optional(),
   updatedAt: z.string().datetime(),
 });
 
@@ -168,8 +226,15 @@ export type MemoryEvidenceSourceRef = z.infer<typeof MemoryEvidenceSourceRefSche
 export type MemoryVisibilityPolicy = z.infer<typeof MemoryVisibilityPolicySchema>;
 export type MemorySensitivity = z.infer<typeof MemorySensitivitySchema>;
 export type MemoryEvidenceBinding = z.infer<typeof MemoryEvidenceBindingSchema>;
+export type MemoryEvidenceAttribution = z.infer<typeof MemoryEvidenceAttributionSchema>;
 export type MemoryRevisionBinding = z.infer<typeof MemoryRevisionBindingSchema>;
 export type MemoryEvidenceEnvelope = z.infer<typeof MemoryEvidenceEnvelopeSchema>;
+export type MemorySafeExecutionMessage = z.infer<typeof MemorySafeExecutionMessageSchema>;
+export type MemorySafeExecutionMessagePayload = z.infer<
+  typeof MemorySafeExecutionMessagePayloadSchema
+>;
+export type MemorySafeToolEventPayload = z.infer<typeof MemorySafeToolEventPayloadSchema>;
+export type MemorySafeTerminalPayload = z.infer<typeof MemorySafeTerminalPayloadSchema>;
 export type MemoryPolicySwitch = z.infer<typeof MemoryPolicySwitchSchema>;
 export type MemoryPolicyOverrideSwitch = z.infer<typeof MemoryPolicyOverrideSwitchSchema>;
 export type MemoryLearningMode = z.infer<typeof MemoryLearningModeSchema>;

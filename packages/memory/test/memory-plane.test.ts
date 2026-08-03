@@ -39,7 +39,36 @@ describe("Memory Plane phase one", () => {
       "execution",
       "root",
       "invocation.message.appended",
-      { message: { role: "user", content: "hello memory", timestamp: 1 } },
+      {
+        message: {
+          role: "assistant",
+          content: [
+            { type: "thinking", thinking: "private reasoning" },
+            {
+              type: "toolCall",
+              id: "tool-one",
+              name: "secret-tool",
+              arguments: { token: "must-not-enter-memory" },
+            },
+            { type: "text", text: "hello memory", textSignature: "private-signature" },
+          ],
+          api: "test",
+          provider: "test",
+          model: "test",
+          diagnostics: [{ private: true }],
+          usage: {
+            measurement: "reported",
+            input: 1,
+            output: 1,
+            cacheRead: 0,
+            cacheWrite: 0,
+            totalTokens: 2,
+            cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0 },
+          },
+          stopReason: "stop",
+          timestamp: 1,
+        },
+      },
       "message-one",
     );
 
@@ -62,6 +91,8 @@ describe("Memory Plane phase one", () => {
     const evidencePage = await evidence.read({ limit: 100 });
     expect(evidencePage.items).toHaveLength(1);
     expect(evidencePage.items[0]).toMatchObject({
+      schemaRef: "pragma.memory.execution-message/v2",
+      payload: { message: { role: "assistant", text: "hello memory", stopReason: "stop" } },
       subjectRefs: expect.arrayContaining([
         { type: "pragma.flow", id: "flow" },
         { type: "pragma.expert", id: "producer-expert" },
@@ -70,6 +101,10 @@ describe("Memory Plane phase one", () => {
         { consumerRef: { type: "pragma.flow", id: "flow" }, access: "allow" },
         { consumerRef: { type: "pragma.expert", id: "producer-expert" }, access: "allow" },
       ]),
+      attribution: {
+        rootRef: { type: "pragma.flow", id: "flow" },
+        producerRefs: [{ type: "pragma.expert", id: "producer-expert" }],
+      },
       policySnapshot: {
         capture: true,
         recall: true,
@@ -77,6 +112,9 @@ describe("Memory Plane phase one", () => {
         appliedRevisions: expect.any(Array),
       },
     });
+    expect(JSON.stringify(evidencePage.items[0])).not.toMatch(
+      /private reasoning|must-not-enter-memory|private-signature|diagnostics/,
+    );
 
     const registry = new MemoryModuleRegistry();
     registry.register(createProbeMemoryModule({ pragmaHome: home }));
@@ -104,8 +142,13 @@ describe("Memory Plane phase one", () => {
     }
     await expect(state.list("pragma.memory.failing-probe")).resolves.toHaveLength(1);
 
-    const context = createFederatedMemoryContextStore(registry);
-    const probe = await context.readContext({ id: "probe/entries.md" });
+    const context = createFederatedMemoryContextStore(registry, {
+      resolveRecallScope: () => ({
+        rootRef: { type: "pragma.flow", id: "flow" },
+        expertRef: { type: "pragma.expert", id: "producer-expert" },
+      }),
+    });
+    const probe = await context.readContext({ id: "probe/items/entries.md" });
     expect(probe).toMatchObject({
       ok: true,
       value: { content: expect.stringContaining("# Probe Evidence") },
@@ -280,8 +323,13 @@ describe("Memory Plane phase one", () => {
       cursor: { sequence: 3 },
       lag: 0,
     });
-    const context = createFederatedMemoryContextStore(registry);
-    const record = await context.readContext({ id: "probe/entries.md" });
+    const context = createFederatedMemoryContextStore(registry, {
+      resolveRecallScope: () => ({
+        rootRef: { type: "pragma.expert", id: "producer-expert" },
+        expertRef: { type: "pragma.expert", id: "producer-expert" },
+      }),
+    });
+    const record = await context.readContext({ id: "probe/items/entries.md" });
     expect(record.ok && record.value.content.match(/^- /gm)).toHaveLength(1);
     canonical.close();
   });

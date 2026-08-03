@@ -80,6 +80,20 @@ export function createMemoryPipelineScheduler(options: {
             error,
           });
         }
+        if (module.runBackgroundOnce !== undefined) {
+          try {
+            await module.runBackgroundOnce();
+          } catch (error) {
+            await recordUnavailableDiagnostic({
+              module,
+              registry: options.registry,
+              feed: options.feed,
+              checkpoints: options.checkpoints,
+              now,
+              error,
+            });
+          }
+        }
       }),
     ).then(() => undefined);
     try {
@@ -133,7 +147,9 @@ async function processModule(input: {
   });
   const subscribed = page.items.filter(
     (envelope) =>
-      envelope.policySnapshot.learning !== "disabled" && subscribes(input.module, envelope),
+      (input.module.descriptor.purpose === "projection" ||
+        envelope.policySnapshot.learning !== "disabled") &&
+      subscribes(input.module, envelope),
   );
   const invalid = subscribed.filter((envelope) => !input.registry.schemas.validate(envelope));
   const invalidIds = new Set(invalid.map((envelope) => envelope.messageId));
