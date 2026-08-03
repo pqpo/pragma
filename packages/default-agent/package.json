@@ -28,7 +28,7 @@
     "zod": "latest"
   },
   "devDependencies": {
-    "@modelcontextprotocol/client": "2.0.0-alpha.2",
+    "@modelcontextprotocol/client": "2.0.0",
     "@pragma/tsconfig": "workspace:*",
     "@types/node": "latest",
     "typescript": "latest",
