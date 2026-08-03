@@ -48,7 +48,7 @@
     "marked": "18.0.7",
     "react": "latest",
     "react-dom": "latest",
-    "react-i18next": "^16.0.0",
+    "react-i18next": "^17.0.11",
     "yaml": "^2.9.0",
     "zod": "latest"
   },
