@@ -100,6 +100,7 @@ export function createQoderCliRuntime(options: QoderCliRuntimeAdapterOptions = {
           async () =>
             await prepareManagedQoderConfig({
               sessionDir,
+              externalCommandsCacheDir: ctx.paths.pragma.qoderCliExternalCommandsCacheRoot(),
               env: ctx.processEnvironment,
               logger: ctx.logger,
             }),
@@ -116,13 +117,13 @@ export function createQoderCliRuntime(options: QoderCliRuntimeAdapterOptions = {
           sessionStartedAt,
           async () => await mcpToolRegistries.acquire(ctx.agent.mcp),
         );
-        let configDir: string;
+        let managedConfig: Awaited<ReturnType<typeof prepareManagedQoderConfig>>;
         let plugin: Awaited<ReturnType<typeof materializeQoderSkillPlugin>>;
         let mcpToolRegistry: McpToolRegistry | undefined;
         let mcpToolRegistryLease: McpToolRegistryLease | undefined;
         try {
           const prepared = await Promise.all([configPromise, pluginPromise, registryLeasePromise]);
-          [configDir, plugin, mcpToolRegistryLease] = prepared;
+          [managedConfig, plugin, mcpToolRegistryLease] = prepared;
           mcpToolRegistry = mcpToolRegistryLease.registry;
         } catch (error) {
           const registry = await Promise.allSettled([registryLeasePromise]);
@@ -143,7 +144,7 @@ export function createQoderCliRuntime(options: QoderCliRuntimeAdapterOptions = {
               sessionStartedAt,
               async () =>
                 await nativeSessionFileExists(
-                  join(configDir, "projects"),
+                  join(managedConfig.configDir, "projects"),
                   restoredRuntimeSessionId,
                 ),
             ))
@@ -180,7 +181,8 @@ export function createQoderCliRuntime(options: QoderCliRuntimeAdapterOptions = {
             auth: resolveQoderAuth(options),
             executablePath: resolveQoderCliExecutablePath(options),
             env: { ...ctx.processEnvironment },
-            configDir,
+            configDir: managedConfig.configDir,
+            externalCommandsCacheDir: managedConfig.externalCommandsCacheDir,
             mcpServerUrl: expertToolsMcpRegistration.url,
             plugin,
             logger: ctx.logger,

@@ -295,6 +295,7 @@ describe("MissionRunner", { timeout: 15_000 }, () => {
     const openRevision = vi
       .spyOn(project, "openRevision")
       .mockRejectedValueOnce(new Error("usage attribution unavailable"));
+    const onStorageTrashed = vi.fn();
     const runtime = defineRuntimeDriver<never, { id: string }>({
       descriptor: { id: "fake", kind: "fake", displayName: "Fake" },
       createSession: () => ({ id: "runtime" }),
@@ -317,12 +318,14 @@ describe("MissionRunner", { timeout: 15_000 }, () => {
       }),
       usage,
       loggerProvider: createNoopLoggerProvider(),
+      onStorageTrashed,
     });
 
     await expect(runner.delete(target.id)).resolves.toBeUndefined();
     await expect(missions.get(target.id)).rejects.toThrow();
     expect(openRevision).toHaveBeenCalledTimes(1);
     expect(markSubjectDeleted).toHaveBeenCalledWith("mission", target.id);
+    expect(onStorageTrashed).toHaveBeenCalledOnce();
     expect(await missions.list()).toHaveLength(1);
   });
 

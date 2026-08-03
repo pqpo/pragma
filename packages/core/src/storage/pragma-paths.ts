@@ -431,6 +431,10 @@ export class PragmaPaths {
     return join(this.cacheRoot(), "runtimes", "codex");
   }
 
+  qoderCliExternalCommandsCacheRoot(): string {
+    return join(this.cacheRoot(), "runtimes", "qodercli", "external-commands");
+  }
+
   projectViewsCacheRoot(): string {
     return join(this.cacheRoot(), "project-views");
   }

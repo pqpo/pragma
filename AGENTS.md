@@ -305,6 +305,8 @@ Server 与 Agent 的关系：
 - Runtime Session、Runtime 配置和插件安装副本不得写入 workspace。
 - 权威数据存放在 `~/.pragma/data/`，可恢复运行状态存放在 `state/`，有界诊断归档存放在
   `archives/`，可重建内容存放在 `cache/`；`tmp/` 与 `trash/` 使用短期保留策略。
+- Trash 只清理已完成且 journal 合法的删除项，固定按七天、总计 300 MiB、最多十项三个上限中
+  最先达到者淘汰；Desktop 在首个窗口创建后及成功删除 owner 后触发定向维护，不在启动时扫描全部 owner。
 - ExpertSession、Execution 与 Runtime Session 分别存放在 `~/.pragma/state/expert-sessions/`、`~/.pragma/state/executions/` 和 `~/.pragma/state/runtime-sessions/`。
 - Execution 大输出交接文件和 manifest 存放在
   `~/.pragma/state/executions/<executionId>/handoffs/`，作为可恢复 Execution 状态随 owner 生命周期清理；
@@ -320,6 +322,10 @@ Server 与 Agent 的关系：
   不得跨 Context 共享，`CODEX_SQLITE_HOME` 必须指向私有目录。宿主
   `~/.codex/plugins/cache` 作为可重建缓存可以直接链接共享；不得复制或扫描完整
   `plugins`、`packages`、通用 `cache` 或宿主 sessions 树。
+- Qoder CLI 新建 Runtime Session 将整个 `external-commands` 目录链接到
+  `~/.pragma/cache/runtimes/qodercli/external-commands/`；认证、Project、日志和 Session 状态继续私有。
+  已有 Session 的本地 `external-commands` 目录不得在启动时扫描、迁移或替换；Pragma 只清理共享缓存中
+  已完成的 `download-*` 与无活动锁保护的过期 `.tmp-*`。
 - Runtime 进程停止不等于持久数据删除。Mission 删除必须按 owner 图级联移动 ExpertSession、
   Execution、Runtime Session 和 ownership claim 到带 journal 的回收站。
 - 外部 ID 目录段统一通过 `@pragma/core` 的 `PragmaPaths` 编码和解析，具体 Runtime 或插件 loader 不自行拼接管理路径。

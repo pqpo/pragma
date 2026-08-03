@@ -2,7 +2,6 @@ import { readFile, readdir, rm, rmdir, stat } from "node:fs/promises";
 import { basename, join } from "node:path";
 
 import { ContentAddressedStore, type ContentObjectRef } from "./content-addressed-store.ts";
-import { purgeExpiredTrash } from "./deletion-transaction.ts";
 import { withFileLock } from "./file-lock.ts";
 import { PragmaPaths } from "./pragma-paths.ts";
 import { DEFAULT_STORAGE_POLICY, type StoragePolicy } from "./storage-policy.ts";
@@ -29,6 +28,13 @@ export interface StorageMaintenanceResult {
   readonly deletedTrashEntries: number;
   readonly deletedContentObjects: number;
   readonly reclaimedContentBytes: number;
+}
+
+export interface TrashMaintenanceResult {
+  readonly beforeBytes: number;
+  readonly afterBytes: number;
+  readonly deletedEntries: number;
+  readonly reclaimedBytes: number;
 }
 
 export interface StorageCapacityGuard {
@@ -189,7 +195,7 @@ export async function runStorageMaintenance(input: {
       now,
       ttlOnly: true,
     });
-    const trash = await purgeExpiredTrash({ paths: input.paths, ttlMs: policy.trashTtlMs, now });
+    const trash = await pruneCompletedTrash({ paths: input.paths, policy, now });
     const roots = await readProjectSnapshotRoots(input.paths);
     const content = await new ContentAddressedStore(
       input.paths.contentObjectsRoot(),
@@ -221,12 +227,73 @@ export async function runStorageMaintenance(input: {
   });
 }
 
+export async function runTrashMaintenance(input: {
+  readonly paths: PragmaPaths;
+  readonly policy?: StoragePolicy | undefined;
+  readonly now?: number | undefined;
+}): Promise<TrashMaintenanceResult> {
+  const policy = input.policy ?? DEFAULT_STORAGE_POLICY;
+  const now = input.now ?? Date.now();
+  return await withFileLock(input.paths.storageGcLock(), async () => {
+    const beforeBytes = await directoryBytes(input.paths.trashRoot());
+    const result = await pruneCompletedTrash({ paths: input.paths, policy, now });
+    const afterBytes = await directoryBytes(input.paths.trashRoot());
+    return {
+      beforeBytes,
+      afterBytes,
+      deletedEntries: result.deleted,
+      reclaimedBytes: Math.max(0, beforeBytes - afterBytes),
+    };
+  });
+}
+
+async function pruneCompletedTrash(input: {
+  readonly paths: PragmaPaths;
+  readonly policy: StoragePolicy;
+  readonly now: number;
+}): Promise<{ readonly deleted: number }> {
+  const candidates = await completedTrashCandidates(input.paths);
+  let bytes = candidates.reduce((total, candidate) => total + candidate.bytes, 0);
+  let entries = candidates.length;
+  let deleted = 0;
+  for (const candidate of candidates) {
+    const expired = input.now - candidate.completedAt >= input.policy.trashTtlMs;
+    const overLimit =
+      bytes > input.policy.trashLimitBytes || entries > input.policy.trashMaxEntries;
+    if (!expired && !overLimit) continue;
+    await deleteTrashCandidate(candidate);
+    bytes -= candidate.bytes;
+    entries -= 1;
+    deleted += 1;
+  }
+  return { deleted };
+}
+
 async function purgeCompletedTrashForPressure(
   paths: PragmaPaths,
   reclaimBytes: number,
 ): Promise<{ readonly deleted: number }> {
+  const completed = await completedTrashCandidates(paths);
+  let reclaimed = 0;
+  let deleted = 0;
+  for (const candidate of completed) {
+    if (reclaimed >= reclaimBytes) break;
+    await deleteTrashCandidate(candidate);
+    reclaimed += candidate.bytes;
+    deleted += 1;
+  }
+  return { deleted };
+}
+
+interface CompletedTrashCandidate extends Candidate {
+  readonly deletionId: string;
+  readonly journalPath: string;
+  readonly completedAt: number;
+}
+
+async function completedTrashCandidates(paths: PragmaPaths): Promise<CompletedTrashCandidate[]> {
   const candidates = await directChildren(paths.trashRoot());
-  const completed = (
+  return (
     await Promise.all(
       candidates.map(async (candidate) => {
         const deletionId = basename(candidate.path);
@@ -235,33 +302,38 @@ async function purgeCompletedTrashForPressure(
           .then(
             (value) =>
               JSON.parse(value) as {
+                readonly schemaVersion?: unknown;
+                readonly deletionId?: unknown;
                 readonly status?: unknown;
                 readonly completedAt?: unknown;
               },
           )
           .catch(() => undefined);
-        if (journal?.status !== "trashed" || typeof journal.completedAt !== "string") {
+        if (
+          journal?.schemaVersion !== "pragma.storage-deletion/v1" ||
+          journal.deletionId !== deletionId ||
+          journal.status !== "trashed" ||
+          typeof journal.completedAt !== "string"
+        ) {
           return undefined;
         }
         const completedAt = Date.parse(journal.completedAt);
         return Number.isFinite(completedAt)
-          ? { ...candidate, journalPath, completedAt }
+          ? { ...candidate, deletionId, journalPath, completedAt }
           : undefined;
       }),
     )
   )
     .filter((candidate) => candidate !== undefined)
-    .toSorted((left, right) => left.completedAt - right.completedAt);
-  let reclaimed = 0;
-  let deleted = 0;
-  for (const candidate of completed) {
-    if (reclaimed >= reclaimBytes) break;
-    await rm(candidate.path, { recursive: true, force: true });
-    await rm(candidate.journalPath, { force: true });
-    reclaimed += candidate.bytes;
-    deleted += 1;
-  }
-  return { deleted };
+    .toSorted(
+      (left, right) =>
+        left.completedAt - right.completedAt || left.deletionId.localeCompare(right.deletionId),
+    );
+}
+
+async function deleteTrashCandidate(candidate: CompletedTrashCandidate): Promise<void> {
+  await rm(candidate.path, { recursive: true, force: true });
+  await rm(candidate.journalPath, { force: true });
 }
 
 interface Candidate {

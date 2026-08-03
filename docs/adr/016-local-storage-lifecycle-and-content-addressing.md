@@ -40,9 +40,20 @@ but is diagnostic rather than the durable Mission chat source. Plugin packages a
 `cache/plugins/sha256/<fingerprint>`; Agent directories contain binding metadata only.
 
 Mission deletion is an owner-graph operation. It writes a deletion journal and moves uniquely owned
-ExpertSession, Execution, Runtime Session, ownership-claim, and archive data to a seven-day trash
-area. GC uses mark-sweep plus a grace period instead of mutable reference counts. Leased or referenced
-objects cannot be collected.
+ExpertSession, Execution, Runtime Session, ownership-claim, and archive data to the managed trash
+area. Completed trash entries are retained until the first of three fixed limits: seven days,
+300 MiB total, or ten entries. Incomplete and invalid deletion journals are never removed by this
+retention pass. Desktop schedules targeted trash maintenance after its first window is available and
+after successful owner deletions; startup does not scan or upgrade unrelated owners. GC uses
+mark-sweep plus a grace period instead of mutable reference counts. Leased or referenced objects
+cannot be collected.
+
+New Qoder CLI Runtime Sessions project one shared rebuildable external-command cache at
+`cache/runtimes/qodercli/external-commands` into their otherwise private Qoder configuration. Existing
+session-local `external-commands` directories are left untouched and are not discovered or migrated
+at startup. Qoder remains responsible for command installation and atomic `current` replacement;
+Pragma removes completed `download-*` archives and stale `.tmp-*` staging directories after Runtime
+use while respecting a live command lock.
 
 Default limits are 4 GiB soft and 6 GiB hard globally, 1 GiB for rebuildable cache, and 512 MiB or 90
 days for Execution archives. Persistent data is never silently evicted. At the hard limit Pragma
@@ -61,6 +72,10 @@ a process or machine failure without orphaning the legacy backup.
   complete project directory.
 - Mutable Codex session data remains isolated; ADR 026 defines how rebuildable native caches are
   projected without a Pragma-owned full cache snapshot.
+- Qoder authentication, project state, logs, and native session data remain private while new
+  sessions reuse downloaded external commands. Legacy active sessions keep their existing layout.
+- Trash retention is bounded without introducing a settings surface; an unfinished deletion journal
+  remains recoverable even when completed entries are pruned.
 - Keeping all Missions and all revisions can still consume the configured persistent capacity; the
   hard limit makes this bounded and requires an explicit owner deletion decision.
 - Mission chat remains readable after Execution diagnostic archives expire.

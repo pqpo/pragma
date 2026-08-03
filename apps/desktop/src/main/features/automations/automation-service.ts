@@ -62,6 +62,7 @@ export function createAutomationService(options: {
   readonly creator: MissionCreator;
   readonly runner: MissionRunner;
   readonly loggerProvider?: PragmaLoggerProvider | undefined;
+  readonly onStorageTrashed?: (() => void) | undefined;
   readonly now?: (() => Date) | undefined;
 }): AutomationService {
   const logger = createPragmaLogger(options.loggerProvider, {
@@ -519,6 +520,7 @@ export function createAutomationService(options: {
           owner: { type: "automation-generation", id: ref },
           sources: [{ label: "state", path: options.paths.automationStateRoot(ref) }],
         });
+        options.onStorageTrashed?.();
       }
       if (snapshot.resources.every((candidate) => canonicalPragmaResourceRef(candidate) !== ref)) {
         throw new Error(`Automation was not published: ${ref}.`);
@@ -541,6 +543,7 @@ export function createAutomationService(options: {
           { label: "state", path: options.paths.automationStateRoot(input.ref) },
         ],
       });
+      options.onStorageTrashed?.();
     },
     async resetSession(ref) {
       const resource = await findAutomation(ref);
@@ -561,6 +564,7 @@ export function createAutomationService(options: {
         owner: { type: "automation-generation", id: ref },
         sources: [{ label: "state", path: options.paths.automationStateRoot(ref) }],
       });
+      options.onStorageTrashed?.();
       await scheduleResource(resource, binding);
       return await summaryFor(resource);
     },

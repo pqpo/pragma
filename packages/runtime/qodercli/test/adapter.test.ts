@@ -41,7 +41,7 @@ vi.mock("@pragma/core", async (importOriginal) => {
 });
 
 vi.mock("../src/qoder-config.ts", () => ({
-  prepareManagedQoderConfig: vi.fn(async () => runtimeMocks.configDir),
+  prepareManagedQoderConfig: vi.fn(async () => ({ configDir: runtimeMocks.configDir })),
 }));
 
 vi.mock("../src/skills.ts", () => ({
@@ -158,7 +158,9 @@ function createSessionContext(
     workspace: "/workspace",
     logger: { info: vi.fn() },
     paths: {
-      pragma: {},
+      pragma: {
+        qoderCliExternalCommandsCacheRoot: () => join(sessionDir, "shared-external-commands"),
+      },
       systemSessionDir: sessionDir,
       runtimeSessionDir: () => sessionDir,
     },
