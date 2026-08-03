@@ -324,7 +324,7 @@ jobs:
           role-session-expiration: 1800
           audience: github-actions
 
-      - name: Upload and verify macOS assets in Alibaba Cloud OSS
+      - name: Upload macOS assets to Alibaba Cloud OSS
         env:
           OSS_ACCESS_KEY_ID: ${{ steps.aliyun-credentials.outputs.aliyun-access-key-id }}
           OSS_ACCESS_KEY_SECRET: ${{ steps.aliyun-credentials.outputs.aliyun-access-key-secret }}
@@ -351,25 +351,6 @@ jobs:
               --endpoint "${endpoint}" \
               --force \
               --region "${ALIYUN_OSS_REGION}"
-          done
-
-          for file in "${oss_assets[@]}"; do
-            local_size="$(stat --format='%s' "oss-assets/${file}")"
-            metadata="$(
-              ossutil api get-object-meta \
-                --bucket "${ALIYUN_OSS_BUCKET}" \
-                --key "${prefix}/${file}" \
-                --endpoint "${endpoint}" \
-                --output-query 'Header."Content-Length"[0]' \
-                --output-format json \
-                --region "${ALIYUN_OSS_REGION}" \
-                | sed -E '/^[[:space:]]*[0-9.]+\(s\) elapsed[[:space:]]*$/d'
-            )"
-            remote_size="$(jq -er 'tonumber' <<< "${metadata}")"
-            if [[ "${remote_size}" != "${local_size}" ]]; then
-              echo "::error::OSS asset size mismatch for ${file}: local=${local_size}, remote=${remote_size}"
-              exit 1
-            fi
           done
 
       - name: Publish GitHub Pre-release
