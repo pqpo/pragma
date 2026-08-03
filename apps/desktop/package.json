@@ -62,7 +62,7 @@
     "@types/node": "latest",
     "@types/react": "latest",
     "@types/react-dom": "latest",
-    "@vitejs/plugin-react": "^5.0.0",
+    "@vitejs/plugin-react": "^6.0.5",
     "electron": "latest",
     "electron-builder": "^26.15.3",
     "electron-vite": "latest",
