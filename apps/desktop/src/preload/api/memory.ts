@@ -10,13 +10,18 @@ import {
   UpdateDesktopAssetMemoryPolicySchema,
   UpdateDesktopGlobalMemoryPolicySchema,
   UpdateDesktopMemoryExtractorProfileSchema,
-  DesktopSemanticFactListSchema,
   DesktopSemanticFactSchema,
-  GetDesktopSemanticFactSchema,
-  ListDesktopSemanticFactsSchema,
-  SearchDesktopSemanticFactsSchema,
   ReviseDesktopSemanticFactSchema,
   ReviewDesktopSemanticFactSchema,
+  DesktopMemoryItemListSchema,
+  DesktopMemoryItemSchema,
+  ListDesktopMemoryItemsSchema,
+  DesktopMemoryItemRefSchema,
+  GetDesktopMemoryEvidenceSchema,
+  DesktopMemoryEvidenceSchema,
+  TightenDesktopMemoryAccessSchema,
+  ReviewDesktopMemoryItemSchema,
+  DesktopMissionMemoryActivitySchema,
 } from "../../shared/contracts/memory.ts";
 
 export const memoryApi = {
@@ -58,28 +63,6 @@ export const memoryApi = {
         UpdateDesktopMemoryExtractorProfileSchema.parse(input),
       ),
     ),
-  listSemanticFacts: async (input = {}) =>
-    DesktopSemanticFactListSchema.parse(
-      await ipcRenderer.invoke("memory-semantic:list", ListDesktopSemanticFactsSchema.parse(input)),
-    ),
-  searchSemanticFacts: async (input) =>
-    DesktopSemanticFactListSchema.parse(
-      await ipcRenderer.invoke(
-        "memory-semantic:search",
-        SearchDesktopSemanticFactsSchema.parse(input),
-      ),
-    ),
-  getSemanticFact: async (input) =>
-    DesktopSemanticFactSchema.parse(
-      await ipcRenderer.invoke("memory-semantic:get", GetDesktopSemanticFactSchema.parse(input)),
-    ),
-  getSemanticFactHistory: async (input) =>
-    DesktopSemanticFactListSchema.parse(
-      await ipcRenderer.invoke(
-        "memory-semantic:history",
-        GetDesktopSemanticFactSchema.parse(input),
-      ),
-    ),
   reviseSemanticFact: async (input) =>
     DesktopSemanticFactSchema.parse(
       await ipcRenderer.invoke(
@@ -94,12 +77,45 @@ export const memoryApi = {
         ReviewDesktopSemanticFactSchema.parse(input),
       ),
     ),
-  invalidateSemanticFact: async (input) =>
-    DesktopSemanticFactSchema.parse(
+  listMemoryItems: async (input = {}) =>
+    DesktopMemoryItemListSchema.parse(
+      await ipcRenderer.invoke("memory-items:list", ListDesktopMemoryItemsSchema.parse(input)),
+    ),
+  getMemoryItem: async (input) =>
+    DesktopMemoryItemSchema.parse(
+      await ipcRenderer.invoke("memory-items:get", DesktopMemoryItemRefSchema.parse(input)),
+    ),
+  getMemoryItemHistory: async (input) =>
+    DesktopMemoryItemListSchema.parse(
+      await ipcRenderer.invoke("memory-items:history", DesktopMemoryItemRefSchema.parse(input)),
+    ),
+  getMemoryEvidence: async (input) =>
+    DesktopMemoryEvidenceSchema.parse(
       await ipcRenderer.invoke(
-        "memory-semantic:invalidate",
-        ReviewDesktopSemanticFactSchema.parse(input),
+        "memory-items:evidence",
+        GetDesktopMemoryEvidenceSchema.parse(input),
       ),
+    ),
+  tightenMemoryAccess: async (input) =>
+    DesktopMemoryItemSchema.parse(
+      await ipcRenderer.invoke(
+        "memory-items:tighten",
+        TightenDesktopMemoryAccessSchema.parse(input),
+      ),
+    ),
+  invalidateMemoryItem: async (input) =>
+    DesktopMemoryItemSchema.parse(
+      await ipcRenderer.invoke(
+        "memory-items:invalidate",
+        ReviewDesktopMemoryItemSchema.parse(input),
+      ),
+    ),
+  forgetMemoryItem: async (input) => {
+    await ipcRenderer.invoke("memory-items:forget", ReviewDesktopMemoryItemSchema.parse(input));
+  },
+  getMissionMemoryActivity: async (missionId) =>
+    DesktopMissionMemoryActivitySchema.parse(
+      await ipcRenderer.invoke("memory-mission:activity", { missionId }),
     ),
 } satisfies Pick<
   PragmaDesktopAPI,
@@ -110,11 +126,14 @@ export const memoryApi = {
   | "getMemoryPlaneStatus"
   | "getMemoryExtractorProfile"
   | "updateMemoryExtractorProfile"
-  | "listSemanticFacts"
-  | "searchSemanticFacts"
-  | "getSemanticFact"
-  | "getSemanticFactHistory"
   | "reviseSemanticFact"
   | "verifySemanticFact"
-  | "invalidateSemanticFact"
+  | "listMemoryItems"
+  | "getMemoryItem"
+  | "getMemoryItemHistory"
+  | "getMemoryEvidence"
+  | "tightenMemoryAccess"
+  | "invalidateMemoryItem"
+  | "forgetMemoryItem"
+  | "getMissionMemoryActivity"
 >;

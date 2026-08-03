@@ -166,6 +166,8 @@ function fromDefaultTool(tool: ExpertAgentDefaultTool): ExecutionTool {
       return await tool.call(args, signal, {
         toolCallId: context?.toolCallId,
         humanInteraction: context?.humanInteraction,
+        runContext: context?.runContext,
+        execution: context?.execution,
       });
     },
   };

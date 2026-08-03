@@ -14,6 +14,7 @@ import { StudioPage } from "./pages/studio/StudioPage.tsx";
 import { EvaluationsPage } from "./pages/evaluations/EvaluationsPage.tsx";
 import { HomePage } from "./pages/home/HomePage.tsx";
 import { UsagePage } from "./pages/usage/UsagePage.tsx";
+import { MemoryPage } from "./pages/memory/MemoryPage.tsx";
 import type { Mission } from "../../shared/contracts/index.ts";
 
 export function App() {
@@ -109,6 +110,8 @@ export function App() {
         <EvaluationsPage />
       ) : activeView === "usage" ? (
         <UsagePage />
+      ) : activeView === "memory" ? (
+        <MemoryPage />
       ) : (
         <SettingsPage initialView={settingsView} />
       )}

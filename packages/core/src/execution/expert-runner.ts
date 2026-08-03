@@ -36,7 +36,11 @@ import type {
 } from "../runtime/runtime-adapter.ts";
 import { mergeUsage, type UsageSink } from "../runtime/usage.ts";
 import { openRuntimeSession } from "../runtime/session-factory.ts";
-import { EXECUTION_CURRENT_EXPERT_ID_ATTR } from "../runtime/run-context.ts";
+import {
+  EXECUTION_CURRENT_EXPERT_ID_ATTR,
+  EXECUTION_ID_ATTR,
+  INVOCATION_ID_ATTR,
+} from "../runtime/run-context.ts";
 import type { RuntimeResolver } from "../runtime-resolver.ts";
 import { createPragmaLogger, type PragmaLoggerProvider } from "../logging/logger.ts";
 import type {
@@ -771,7 +775,11 @@ export async function runExpertInvocation(options: RunExpertInvocationOptions): 
       runtimeSession: options.context.snapshot?.runtimeSession,
       context: {
         source: executionRootSource(execution.definition),
-        attributes: { [EXECUTION_CURRENT_EXPERT_ID_ATTR]: nativeExpert.id },
+        attributes: {
+          [EXECUTION_ID_ATTR]: options.executionId,
+          [INVOCATION_ID_ATTR]: options.invocationId,
+          [EXECUTION_CURRENT_EXPERT_ID_ATTR]: nativeExpert.id,
+        },
       },
       executionContext,
       humanInteractionHandler,

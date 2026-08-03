@@ -17,10 +17,11 @@ import type {
   ExpertAgentContextItemSummary,
 } from "./context-system.ts";
 import type { ExpertAgentRunContext } from "../runtime/run-context.ts";
-import { createExpertAgentRunContext } from "../runtime/run-context.ts";
+import { createExpertAgentRunContext, withExecutionRunScope } from "../runtime/run-context.ts";
 import type {
   ExpertAgentHumanInteractionHandler,
   ExpertAgentToolApproval,
+  ExpertToolExecutionContext,
   ExpertAgentUserQuestion,
 } from "../tools/managed-tool.ts";
 
@@ -42,6 +43,8 @@ export interface ExpertAgentDefaultTool {
     context?: {
       readonly humanInteraction?: ExpertAgentHumanInteractionHandler | undefined;
       readonly toolCallId?: string | undefined;
+      readonly runContext?: ExpertAgentRunContext | undefined;
+      readonly execution?: ExpertToolExecutionContext | undefined;
     },
   ) => Promise<ExpertAgentDefaultToolCallResult>;
 }
@@ -83,8 +86,8 @@ export function createContextTools(
       label: "List expert context",
       description: "List Expert context by context id, description, and trigger.",
       inputSchema: objectSchema({}),
-      call: async () => {
-        const result = await contextOperations.listContext(readRunContext(options));
+      call: async (_args, _signal, context) => {
+        const result = await contextOperations.listContext(readRunContext(options, context));
 
         if (!result.ok) {
           return errorResult(result.error);
@@ -112,7 +115,7 @@ export function createContextTools(
         },
         ["namespace", "id"],
       ),
-      call: async (args) => {
+      call: async (args, _signal, context) => {
         const id = readStringParam(args, "id");
         const requestedOffset = readOptionalNumberParam(args, "offset");
         const result = await contextOperations.readContext({
@@ -120,7 +123,7 @@ export function createContextTools(
           id,
           start: readOptionalNumberParam(args, "start"),
           offset: normalizeToolReadOffset(requestedOffset, options),
-          context: readRunContext(options),
+          context: readRunContext(options, context),
         });
 
         if (!result.ok) {
@@ -156,7 +159,7 @@ export function createContextTools(
         },
         ["query"],
       ),
-      call: async (args) => {
+      call: async (args, _signal, context) => {
         const result = await contextOperations.searchContext({
           namespace: readOptionalStringParam(args, "namespace"),
           query: readStringParam(args, "query"),
@@ -164,7 +167,7 @@ export function createContextTools(
           maxResults: readOptionalNumberParam(args, "maxResults"),
           contextLines: readOptionalNumberParam(args, "contextLines"),
           caseSensitive: readOptionalBooleanParam(args, "caseSensitive"),
-          context: readRunContext(options),
+          context: readRunContext(options, context),
         });
 
         if (!result.ok) {
@@ -198,13 +201,13 @@ export function createContextTools(
         },
         ["namespace", "id", "content"],
       ),
-      call: async (args) => {
+      call: async (args, _signal, context) => {
         const result = await contextOperations.addContext({
           namespace: readStringParam(args, "namespace"),
           id: readStringParam(args, "id"),
           content: readStringParam(args, "content"),
           metadata: readMetadataParams(args),
-          context: readRunContext(options),
+          context: readRunContext(options, context),
         });
 
         if (!result.ok) {
@@ -251,7 +254,7 @@ export function createContextTools(
         },
         ["namespace", "id"],
       ),
-      call: async (args) => {
+      call: async (args, _signal, context) => {
         const mode = readOptionalEditModeParam(args);
         const input =
           mode === "replace"
@@ -263,7 +266,7 @@ export function createContextTools(
                 metadata: readMetadataParams(args),
                 expectedRevision: readOptionalStringParam(args, "expectedRevision"),
                 expectedEtag: readOptionalStringParam(args, "expectedEtag"),
-                context: readRunContext(options),
+                context: readRunContext(options, context),
               }
             : {
                 namespace: readStringParam(args, "namespace"),
@@ -274,7 +277,7 @@ export function createContextTools(
                 replaceAll: readOptionalBooleanParam(args, "replaceAll"),
                 expectedRevision: readOptionalStringParam(args, "expectedRevision"),
                 expectedEtag: readOptionalStringParam(args, "expectedEtag"),
-                context: readRunContext(options),
+                context: readRunContext(options, context),
               };
         const result = await contextOperations.editContext(input);
 
@@ -310,13 +313,13 @@ export function createContextTools(
         },
         ["namespace", "id"],
       ),
-      call: async (args) => {
+      call: async (args, _signal, context) => {
         const namespace = readStringParam(args, "namespace");
         const id = readStringParam(args, "id");
         const result = await contextOperations.deleteContext({
           namespace,
           id,
-          context: readRunContext(options),
+          context: readRunContext(options, context),
         });
 
         if (!result.ok) {
@@ -680,10 +683,24 @@ function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null;
 }
 
-function readRunContext(options: CreateContextToolsOptions): ExpertAgentRunContext {
-  const baseContext = options.getContext?.();
+function readRunContext(
+  options: CreateContextToolsOptions,
+  callContext?: {
+    readonly runContext?: ExpertAgentRunContext | undefined;
+    readonly execution?: ExpertToolExecutionContext | undefined;
+  },
+): ExpertAgentRunContext {
+  const baseContext = createExpertAgentRunContext(
+    callContext?.runContext ?? options.getContext?.(),
+  );
+  const execution = callContext?.execution;
 
-  return createExpertAgentRunContext(baseContext);
+  return execution === undefined
+    ? baseContext
+    : withExecutionRunScope(baseContext, {
+        executionId: execution.executionId,
+        invocationId: execution.invocationId,
+      });
 }
 
 function formatContextSummaries(context: readonly ExpertAgentContextItemSummary[]): string {

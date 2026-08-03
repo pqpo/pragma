@@ -17,7 +17,7 @@ void i18n.use(initReactI18next).init({
   fallbackLng: "en",
   supportedLngs: ["en", "zh-Hans", "zh-Hant"],
   defaultNS: "common",
-  ns: ["common", "home", "missions", "studio", "settings", "usage"],
+  ns: ["common", "home", "missions", "studio", "settings", "usage", "memory"],
   initAsync: false,
   interpolation: { escapeValue: false },
   returnNull: false,

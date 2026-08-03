@@ -37,4 +37,15 @@ describe("PragmaPaths", () => {
       "Invalid diagnostic archive date",
     );
   });
+
+  it("owns encoded per-execution Memory activity paths outside the workspace", () => {
+    const paths = new PragmaPaths({ pragmaHome: join("", "pragma-home") });
+    const root = paths.memoryExecutionActivityRoot("execution/with spaces");
+
+    expect(root).toBe(join(paths.memoryStateRoot(), "executions", "ZXhlY3V0aW9uL3dpdGggc3BhY2Vz"));
+    expect(paths.memoryExecutionActivity("execution/with spaces")).toBe(
+      join(root, "activity.sqlite"),
+    );
+    expect(root.startsWith(paths.workspaceRoot())).toBe(false);
+  });
 });

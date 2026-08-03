@@ -4,6 +4,10 @@ import {
   MemoryGlobalPolicySchema,
   MemoryModuleDiagnosticSchema,
   MemorySubjectRefSchema,
+  MemoryRevisionBindingSchema,
+  MemoryVisibilityPolicySchema,
+  MemorySensitivitySchema,
+  MemoryEvidenceEnvelopeSchema,
   SemanticFactSchema,
 } from "@pragma/shared";
 import { z } from "zod";
@@ -93,24 +97,6 @@ export const UpdateDesktopMemoryExtractorProfileSchema = z.object({
   ]),
 });
 
-export const ListDesktopSemanticFactsSchema = z
-  .object({
-    status: z.enum(["active", "invalidated", "all"]).default("active"),
-    subjectRef: MemorySubjectRefSchema.optional(),
-    limit: z.number().int().min(1).max(100).default(50),
-  })
-  .strict();
-
-export const SearchDesktopSemanticFactsSchema = z
-  .object({
-    query: z.string().trim().min(1).max(2_000),
-    status: z.enum(["active", "invalidated", "all"]).default("active"),
-    limit: z.number().int().min(1).max(100).default(50),
-  })
-  .strict();
-
-export const GetDesktopSemanticFactSchema = z.object({ id: z.string().min(1) }).strict();
-
 export const ReviseDesktopSemanticFactSchema = z
   .object({
     id: z.string().min(1),
@@ -146,4 +132,101 @@ export const ReviewDesktopSemanticFactSchema = z
   .strict();
 
 export const DesktopSemanticFactSchema = SemanticFactSchema;
-export const DesktopSemanticFactListSchema = z.array(DesktopSemanticFactSchema);
+
+const DesktopMemoryCommonSchema = z.object({
+  id: z.string().min(1),
+  revision: z.number().int().positive(),
+  status: z.enum(["active", "invalidated"]),
+  title: z.string().min(1),
+  summary: z.string().min(1),
+  rootRefs: z.array(MemorySubjectRefSchema),
+  producerRefs: z.array(MemorySubjectRefSchema),
+  evidenceRefs: z.array(z.string().min(1)),
+  visibility: MemoryVisibilityPolicySchema,
+  sensitivity: MemorySensitivitySchema,
+  bindings: z.array(MemoryRevisionBindingSchema),
+  createdAt: z.string().datetime(),
+  updatedAt: z.string().datetime(),
+});
+
+export const DesktopMemoryItemSchema = z.discriminatedUnion("module", [
+  DesktopMemoryCommonSchema.extend({
+    module: z.literal("episodic"),
+    executionId: z.string().min(1),
+    goal: z.string().min(1),
+    outcome: z.enum(["succeeded", "failed", "cancelled", "interrupted"]),
+    valueScore: z.number().min(0).max(1),
+    attempts: z.array(z.object({ description: z.string(), result: z.string().optional() })),
+    failuresAndRecoveries: z.array(
+      z.object({ failure: z.string(), recovery: z.string().optional() }),
+    ),
+  }).strict(),
+  DesktopMemoryCommonSchema.extend({
+    module: z.literal("semantic"),
+    statement: z.string().min(1),
+    subjectRefs: z.array(MemorySubjectRefSchema),
+    predicate: z.string().min(1),
+    normalizedValue: z.string().min(1),
+    confidence: z.number().min(0).max(1),
+    verifiedAt: z.string().datetime().optional(),
+    reviewAt: z.string().datetime().optional(),
+    expiresAt: z.string().datetime().optional(),
+    conflictsWith: z.array(z.string().min(1)),
+  }).strict(),
+]);
+
+export const DesktopMemoryItemListSchema = z.array(DesktopMemoryItemSchema);
+
+export const ListDesktopMemoryItemsSchema = z
+  .object({
+    module: z.enum(["all", "episodic", "semantic"]).default("all"),
+    status: z.enum(["active", "invalidated", "all"]).default("active"),
+    query: z.string().trim().max(2_000).default(""),
+    limit: z.number().int().min(1).max(200).default(100),
+  })
+  .strict();
+
+export const DesktopMemoryItemRefSchema = z
+  .object({ module: z.enum(["episodic", "semantic"]), id: z.string().min(1) })
+  .strict();
+
+export const GetDesktopMemoryEvidenceSchema = DesktopMemoryItemRefSchema.extend({
+  evidenceId: z.string().min(1),
+}).strict();
+
+export const TightenDesktopMemoryAccessSchema = DesktopMemoryItemRefSchema.extend({
+  expectedRevision: z.number().int().positive(),
+  reason: z.string().trim().min(1).max(2_000),
+  bindings: z.array(MemoryRevisionBindingSchema).min(1).max(100).optional(),
+  visibility: MemoryVisibilityPolicySchema.optional(),
+})
+  .refine((value) => value.bindings !== undefined || value.visibility !== undefined, {
+    message: "A binding or visibility change is required.",
+  })
+  .strict();
+
+export const ReviewDesktopMemoryItemSchema = DesktopMemoryItemRefSchema.extend({
+  expectedRevision: z.number().int().positive(),
+  reason: z.string().trim().min(1).max(2_000),
+}).strict();
+
+export const DesktopMemoryEvidenceSchema = MemoryEvidenceEnvelopeSchema;
+
+export const DesktopMissionMemoryActivitySchema = z.object({
+  missionId: z.string().uuid(),
+  executions: z.array(
+    z.object({
+      executionId: z.string().min(1),
+      capture: z.object({ published: z.number(), skipped: z.number(), failed: z.number() }),
+      recall: z.object({
+        list: z.number(),
+        search: z.number(),
+        read: z.number(),
+        denied: z.number(),
+        failed: z.number(),
+      }),
+    }),
+  ),
+});
+
+export const GetDesktopMissionMemoryActivitySchema = z.object({ missionId: z.string().uuid() });

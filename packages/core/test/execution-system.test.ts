@@ -24,6 +24,8 @@ import {
   defineFlow,
   defineRuntimeDriver,
   EXECUTION_CURRENT_EXPERT_ID_ATTR,
+  EXECUTION_ID_ATTR,
+  INVOCATION_ID_ATTR,
   fingerprintExpertExecutionDefinition,
   PragmaPaths,
   readRuntimeSessionRecord,
@@ -488,7 +490,11 @@ describe("ExpertSession", () => {
     expect(stats.sessionModelSelections).toEqual([selection]);
     expect(stats.sessionContexts[0]?.request.context).toEqual({
       source: { type: "pragma.expert", id: "model-selection" },
-      attributes: { [EXECUTION_CURRENT_EXPERT_ID_ATTR]: "model-selection" },
+      attributes: {
+        [EXECUTION_CURRENT_EXPERT_ID_ATTR]: "model-selection",
+        [EXECUTION_ID_ATTR]: expect.any(String),
+        [INVOCATION_ID_ATTR]: expect.any(String),
+      },
     });
     expect(stats.turnModelSelections).toEqual([selection, override]);
     const state = await session.getState();
@@ -2140,7 +2146,11 @@ describe("FlowExecution", () => {
     expect(stats.createSessionCalls).toBe(1);
     expect(stats.sessionContexts[0]?.request.context).toEqual({
       source: { type: "pragma.flow", id: "runtime-flow" },
-      attributes: { [EXECUTION_CURRENT_EXPERT_ID_ATTR]: expert.id },
+      attributes: {
+        [EXECUTION_CURRENT_EXPERT_ID_ATTR]: expert.id,
+        [EXECUTION_ID_ATTR]: execution.executionId,
+        [INVOCATION_ID_ATTR]: expect.any(String),
+      },
     });
     expect(stats.closeSessionCalls).toBe(1);
     expect((await execution.getTree()).children[0]?.invocation.contextResolution).toBeDefined();

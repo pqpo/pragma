@@ -24,6 +24,11 @@ import {
   type SemanticFactCandidate,
   type SemanticGovernanceEvent,
 } from "./schema.ts";
+import {
+  assertMemoryBindingsTightened,
+  assertMemoryVisibilityTightened,
+  createMemoryTombstone,
+} from "../governance/access-governance.ts";
 import type { MemoryRecallScope } from "../pipeline/memory-module.ts";
 
 export type SemanticRejectionReason =
@@ -67,6 +72,14 @@ export interface SemanticFactRevisionInput {
   readonly now: Date;
 }
 
+export interface SemanticGovernanceInput {
+  readonly id: string;
+  readonly expectedRevision: number;
+  readonly actorRef: MemorySubjectRef;
+  readonly reason: string;
+  readonly now: Date;
+}
+
 export interface SemanticMemoryStore {
   ingest(envelopes: readonly MemoryEvidenceEnvelope[]): Promise<void>;
   registerSubjectContext(context: SemanticExecutionSubjectContext): Promise<void>;
@@ -101,6 +114,7 @@ export interface SemanticMemoryStore {
     messageId: string,
     now: Date,
   ): Promise<MemoryEvidenceEnvelope | undefined>;
+  getEvidence(messageId: string): Promise<MemoryEvidenceEnvelope | undefined>;
   revise(input: SemanticFactRevisionInput): Promise<SemanticFact>;
   verify(input: {
     readonly id: string;
@@ -116,6 +130,13 @@ export interface SemanticMemoryStore {
     readonly reason: string;
     readonly now: Date;
   }): Promise<SemanticFact>;
+  tightenAccess(
+    input: SemanticGovernanceInput & {
+      readonly bindings?: SemanticFact["bindings"] | undefined;
+      readonly visibility?: SemanticFact["visibility"] | undefined;
+    },
+  ): Promise<SemanticFact>;
+  forget(input: SemanticGovernanceInput): Promise<void>;
   inspect(): Promise<SemanticMemoryStoreDiagnostic>;
   close(): void;
 }
@@ -176,7 +197,7 @@ export async function createSemanticMemoryStore(
   };
 
   const governanceMutation = (
-    action: "revise" | "verify" | "invalidate",
+    action: "revise" | "verify" | "invalidate" | "tighten-access",
     input: {
       readonly id: string;
       readonly expectedRevision: number;
@@ -404,6 +425,7 @@ export async function createSemanticMemoryStore(
             const timestamp = input.now.toISOString();
             const priorRevision = existing?.revision;
             const id = existing?.id ?? semanticFactId(input.job.id, candidate);
+            if (existing === undefined && hasSemanticTombstone(data, id)) continue;
             const record = SemanticFactSchema.parse({
               schemaVersion: "pragma.memory-semantic/v1",
               id,
@@ -594,6 +616,15 @@ export async function createSemanticMemoryStore(
         : MemoryEvidenceEnvelopeSchema.parse(JSON.parse(row.envelopeJson));
     },
 
+    async getEvidence(messageId) {
+      const row = data
+        .prepare("SELECT envelope_json AS envelopeJson FROM evidence WHERE message_id = ?")
+        .get(messageId) as { readonly envelopeJson: string } | undefined;
+      return row === undefined
+        ? undefined
+        : MemoryEvidenceEnvelopeSchema.parse(JSON.parse(row.envelopeJson));
+    },
+
     async revise(input) {
       return governanceMutation("revise", input, (current) => {
         const timestamp = input.now.toISOString();
@@ -627,6 +658,58 @@ export async function createSemanticMemoryStore(
         supersedes: appendRevisionRef(current.supersedes, current.id, current.revision),
         updatedAt: input.now.toISOString(),
       }));
+    },
+
+    async tightenAccess(input) {
+      return governanceMutation("tighten-access", input, (current) => ({
+        ...current,
+        ...(input.bindings === undefined
+          ? {}
+          : { bindings: assertMemoryBindingsTightened(current.bindings, input.bindings) }),
+        ...(input.visibility === undefined
+          ? {}
+          : {
+              visibility: assertMemoryVisibilityTightened(current.visibility, input.visibility),
+            }),
+        revision: current.revision + 1,
+        supersedes: appendRevisionRef(current.supersedes, current.id, current.revision),
+        updatedAt: input.now.toISOString(),
+      }));
+    },
+
+    async forget(input) {
+      data.exec("BEGIN IMMEDIATE;");
+      try {
+        const current = readFact(data, input.id);
+        if (current === undefined) throw new Error("semantic_fact_not_found");
+        if (current.revision !== input.expectedRevision) {
+          throw revisionConflict(input.expectedRevision, current.revision);
+        }
+        data.prepare("DELETE FROM fact_evidence WHERE fact_id = ?").run(input.id);
+        data.prepare("DELETE FROM fact_revisions WHERE fact_id = ?").run(input.id);
+        data.prepare("DELETE FROM governance_events WHERE fact_id = ?").run(input.id);
+        data.prepare("DELETE FROM current_facts WHERE id = ?").run(input.id);
+        data
+          .prepare(
+            "DELETE FROM evidence WHERE message_id NOT IN (SELECT evidence_id FROM fact_evidence)",
+          )
+          .run();
+        data
+          .prepare(
+            "INSERT INTO tombstones(id, last_revision, forgotten_at, tombstone_json) VALUES (?, ?, ?, ?)",
+          )
+          .run(
+            input.id,
+            current.revision,
+            input.now.toISOString(),
+            JSON.stringify(createMemoryTombstone("semantic", current.id, current.revision, input)),
+          );
+        recomputeConflicts(data, new Set());
+        data.exec("COMMIT;");
+      } catch (error) {
+        rollback(data);
+        throw error;
+      }
     },
 
     async inspect() {
@@ -693,7 +776,11 @@ function semanticJobId(terminalMessageId: string): string {
 }
 
 function initializeData(database: DatabaseSync): void {
-  assertVersion(database, "pragma.memory-semantic-store");
+  const version = readDatabaseVersion(database);
+  if (version > 2) {
+    database.close();
+    throw new Error(`unsupported-state-version:pragma.memory-semantic-store/v${version}`);
+  }
   database.exec(`
     PRAGMA journal_mode = WAL;
     PRAGMA synchronous = FULL;
@@ -735,12 +822,18 @@ function initializeData(database: DatabaseSync): void {
       revision INTEGER NOT NULL,
       event_json TEXT NOT NULL
     );
-    PRAGMA user_version = 1;
+    CREATE TABLE IF NOT EXISTS tombstones (
+      id TEXT PRIMARY KEY,
+      last_revision INTEGER NOT NULL,
+      forgotten_at TEXT NOT NULL,
+      tombstone_json TEXT NOT NULL
+    );
   `);
+  database.exec("PRAGMA user_version = 2;");
 }
 
 function initializeState(database: DatabaseSync): void {
-  assertVersion(database, "pragma.memory-semantic-jobs");
+  assertVersion(database, "pragma.memory-semantic-jobs", 1);
   database.exec(`
     PRAGMA journal_mode = WAL;
     PRAGMA synchronous = FULL;
@@ -771,14 +864,19 @@ function initializeState(database: DatabaseSync): void {
   `);
 }
 
-function assertVersion(database: DatabaseSync, family: string): void {
+function assertVersion(database: DatabaseSync, family: string, current: number): void {
+  const version = readDatabaseVersion(database);
+  if (version > current) {
+    database.close();
+    throw new Error(`unsupported-state-version:${family}/v${version}`);
+  }
+}
+
+function readDatabaseVersion(database: DatabaseSync): number {
   const row = database.prepare("PRAGMA user_version").get() as unknown as {
     readonly user_version: number;
   };
-  if (row.user_version > 1) {
-    database.close();
-    throw new Error(`unsupported-state-version:${family}/v${row.user_version}`);
-  }
+  return row.user_version;
 }
 
 function readJob(database: DatabaseSync, id: string): SemanticExtractionJob | undefined {
@@ -945,13 +1043,27 @@ function recallPredicate(
           AND json_extract(binding.value, '$.recall') = 'allow'
       )`,
   );
+  const principals = uniqueRefs([scope.rootRef, scope.expertRef, ...(scope.principalRefs ?? [])]);
+  const principalClauses = principals.map(
+    () =>
+      `(json_extract(principal.value, '$.type') = ?
+        AND json_extract(principal.value, '$.id') = ?)`,
+  );
   return {
     sql: `json_extract(${alias}.record_json, '$.status') = 'active'
-      AND json_extract(${alias}.record_json, '$.visibility.mode') != 'restricted'
       AND (json_extract(${alias}.record_json, '$.expiresAt') IS NULL
         OR json_extract(${alias}.record_json, '$.expiresAt') > ?)
-      AND (${clauses.join(" OR ")})`,
-    parameters: [now.toISOString(), ...refs.flatMap((ref) => [ref.type, ref.id])],
+      AND (${clauses.join(" OR ")})
+      AND (json_extract(${alias}.record_json, '$.visibility.mode') != 'restricted'
+        OR EXISTS (
+          SELECT 1 FROM json_each(${alias}.record_json, '$.visibility.principals') AS principal
+          WHERE ${principalClauses.length === 0 ? "0" : principalClauses.join(" OR ")}
+        ))`,
+    parameters: [
+      now.toISOString(),
+      ...refs.flatMap((ref) => [ref.type, ref.id]),
+      ...principals.flatMap((ref) => [ref.type, ref.id]),
+    ],
   };
 }
 
@@ -959,6 +1071,10 @@ function insertGovernanceEvent(database: DatabaseSync, event: SemanticGovernance
   database
     .prepare("INSERT INTO governance_events(id, fact_id, revision, event_json) VALUES (?, ?, ?, ?)")
     .run(event.id, event.factId, event.revision, JSON.stringify(event));
+}
+
+function hasSemanticTombstone(database: DatabaseSync, id: string): boolean {
+  return database.prepare("SELECT 1 FROM tombstones WHERE id = ?").get(id) !== undefined;
 }
 
 function definedPatch(patch: SemanticFactRevisionInput["patch"]): Record<string, unknown> {

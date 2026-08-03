@@ -49,6 +49,7 @@ import {
   type MissionSummary,
   type MissionWorkConversationSnapshot,
   type MissionWorkRecord,
+  type DesktopMissionMemoryActivity,
   type DesktopRuntimeModel,
   type DesktopToolPermissionMode,
   type MissionModelOverride,
@@ -964,7 +965,7 @@ export function MissionDetailFragment(props: {
   readonly onEditExpert?: ((expertRef?: string | undefined) => void) | undefined;
 }) {
   const { t } = useTranslation(["missions", "common"]);
-  const [tab, setTab] = useState<"chat" | "work">("chat");
+  const [tab, setTab] = useState<"chat" | "work" | "memory">("chat");
   const [workspaceAvailable, setWorkspaceAvailable] = useState<boolean | null>(null);
   const [chat, setChat] = useState<MissionChatSnapshot | null>(null);
   const [workRecords, setWorkRecords] = useState<readonly MissionWorkRecord[]>([]);
@@ -975,6 +976,9 @@ export function MissionDetailFragment(props: {
   const [selectedWorkKey, setSelectedWorkKey] = useState<string | null>(null);
   const [workError, setWorkError] = useState<string | null>(null);
   const [workRefreshRevision, setWorkRefreshRevision] = useState(0);
+  const [memoryActivity, setMemoryActivity] = useState<DesktopMissionMemoryActivity>();
+  const [memoryActivityError, setMemoryActivityError] = useState<string>();
+  const [memoryActivityLoading, setMemoryActivityLoading] = useState(false);
   const [draft, setDraft] = useState(() =>
     props.mission.lifecycleStatus === "active"
       ? readMissionDraft(
@@ -1424,6 +1428,29 @@ export function MissionDetailFragment(props: {
       unsubscribe();
     };
   }, [props.mission.id, props.mission.execution?.id, selectedWorkKey, tab, workRefreshRevision]);
+
+  useEffect(() => {
+    const api = desktopApi();
+    if (api === undefined || tab !== "memory") return;
+    let cancelled = false;
+    setMemoryActivityLoading(true);
+    void api
+      .getMissionMemoryActivity(props.mission.id)
+      .then((activity) => {
+        if (cancelled) return;
+        setMemoryActivity(activity);
+        setMemoryActivityError(undefined);
+      })
+      .catch((loadError: unknown) => {
+        if (!cancelled) setMemoryActivityError(errorMessage(loadError));
+      })
+      .finally(() => {
+        if (!cancelled) setMemoryActivityLoading(false);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [props.mission.execution?.id, props.mission.id, tab]);
 
   const beginClientOperation = (
     kind: Exclude<MissionClientOperationState["kind"], "idle">,
@@ -1884,6 +1911,15 @@ export function MissionDetailFragment(props: {
         >
           {t("work", { ns: "missions" })}
         </button>
+        <button
+          className={tab === "memory" ? "is-active" : ""}
+          type="button"
+          role="tab"
+          aria-selected={tab === "memory"}
+          onClick={() => setTab("memory")}
+        >
+          {t("memory", { ns: "missions" })}
+        </button>
       </div>
       <div className="mission-detail-body">
         {tab !== "chat" && presentedError !== null && presentedError !== undefined ? (
@@ -2157,6 +2193,12 @@ export function MissionDetailFragment(props: {
               )}
             </div>
           </div>
+        ) : tab === "memory" ? (
+          <MissionMemoryActivity
+            activity={memoryActivity}
+            error={memoryActivityError}
+            loading={memoryActivityLoading}
+          />
         ) : workError !== null && workRecords.length === 0 ? (
           <div className="mission-work-empty" role="alert">
             <WarningCircle size={31} weight="thin" aria-hidden="true" />
@@ -2255,6 +2297,65 @@ export function MissionDetailFragment(props: {
         />
       )}
     </section>
+  );
+}
+
+function MissionMemoryActivity(props: {
+  readonly activity?: DesktopMissionMemoryActivity | undefined;
+  readonly error?: string | undefined;
+  readonly loading: boolean;
+}) {
+  const { t } = useTranslation("missions");
+  if (props.loading)
+    return <div className="mission-memory-empty">{t("memoryActivityLoading")}</div>;
+  if (props.error !== undefined) {
+    return (
+      <div className="mission-memory-empty" role="alert">
+        <WarningCircle size={31} weight="thin" aria-hidden="true" />
+        <h2>{t("memoryActivityUnavailable")}</h2>
+        <p>{props.error}</p>
+      </div>
+    );
+  }
+  if (props.activity === undefined || props.activity.executions.length === 0) {
+    return (
+      <div className="mission-memory-empty">
+        <CheckCircle size={31} weight="thin" aria-hidden="true" />
+        <h2>{t("noMemoryActivity")}</h2>
+        <p>{t("noMemoryActivityDescription")}</p>
+      </div>
+    );
+  }
+  return (
+    <div className="mission-memory-activity">
+      <header>
+        <h2>{t("memoryActivity")}</h2>
+        <p>{t("memoryActivityDescription")}</p>
+      </header>
+      {props.activity.executions.map((execution) => (
+        <article key={execution.executionId}>
+          <strong>{t("executionId", { id: execution.executionId })}</strong>
+          <dl>
+            <dt>{t("memoryCaptured")}</dt>
+            <dd>{execution.capture.published}</dd>
+            <dt>{t("memorySkipped")}</dt>
+            <dd>{execution.capture.skipped}</dd>
+            <dt>{t("memoryCaptureFailed")}</dt>
+            <dd>{execution.capture.failed}</dd>
+            <dt>{t("memoryListed")}</dt>
+            <dd>{execution.recall.list}</dd>
+            <dt>{t("memorySearched")}</dt>
+            <dd>{execution.recall.search}</dd>
+            <dt>{t("memoryRead")}</dt>
+            <dd>{execution.recall.read}</dd>
+            <dt>{t("memoryRecallDenied")}</dt>
+            <dd>{execution.recall.denied}</dd>
+            <dt>{t("memoryRecallFailed")}</dt>
+            <dd>{execution.recall.failed}</dd>
+          </dl>
+        </article>
+      ))}
+    </div>
   );
 }
 
@@ -2571,8 +2672,7 @@ function LocalMissionUserMessageView(props: { readonly message: LocalMissionUser
 
 export function MissionContextOperationEntry(props: {
   readonly operation:
-    | LocalMissionContextOperation
-    | Extract<MissionChatEntry, { kind: "context_operation" }>;
+    LocalMissionContextOperation | Extract<MissionChatEntry, { kind: "context_operation" }>;
   readonly retryDisabled?: boolean | undefined;
   readonly onRetry?: (() => void) | undefined;
 }) {

@@ -71,12 +71,12 @@ describe("DesktopMemoryPlane", () => {
       logger: createPragmaLogger(undefined, { component: "desktop.memory-test" }),
     });
 
-    await plane.registerSemanticExecutionContext({
+    await plane.registerMemoryExecutionContext({
       executionId: "execution-a",
       projectId: "project-a",
     });
     const first = await plane.semanticStore.getSubjectContext("execution-a");
-    await plane.registerSemanticExecutionContext({
+    await plane.registerMemoryExecutionContext({
       executionId: "execution-b",
       projectId: "project-a",
     });
@@ -88,6 +88,13 @@ describe("DesktopMemoryPlane", () => {
     expect(secondUser).toEqual(firstUser);
     expect(first?.subjectRefs).toContainEqual({ type: "pragma.project", id: "project-a" });
     expect(first?.subjectRefs.some((ref) => ref.type === "pragma.repository")).toBe(false);
+    await expect(plane.activity.getExecutionContext("execution-a")).resolves.toMatchObject({
+      executionId: "execution-a",
+      principalRefs: expect.arrayContaining([
+        firstUser,
+        { type: "pragma.project", id: "project-a" },
+      ]),
+    });
     await plane.stop();
   });
 });

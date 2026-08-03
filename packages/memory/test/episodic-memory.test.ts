@@ -1,4 +1,4 @@
-import { mkdtemp, rm } from "node:fs/promises";
+import { mkdir, mkdtemp, readFile, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { DatabaseSync } from "node:sqlite";
@@ -143,7 +143,14 @@ describe("Episodic Memory", () => {
     expect(byExecution.get("team-a")).toMatchObject({
       rootRefs: [{ type: "pragma.expert-team", id: "team-t" }],
       producerRefs: [{ type: "pragma.expert", id: "expert-a" }],
-      bindings: [{ type: "pragma.expert-team", id: "team-t" }],
+      bindings: [
+        {
+          consumerRef: { type: "pragma.expert-team", id: "team-t" },
+          recall: "allow",
+          export: "deny",
+          permissionRevision: 1,
+        },
+      ],
     });
 
     const registry = new MemoryModuleRegistry();
@@ -210,6 +217,145 @@ describe("Episodic Memory", () => {
     await module.runBackgroundOnce?.();
     expect((await module.store.list())[0]?.revision).toBe(2);
     expect(extractor.extract).toHaveBeenCalledTimes(2);
+    module.close();
+  });
+
+  it("only tightens recall permissions and forgets content without allowing replay to recreate it", async () => {
+    const root = await temporaryRoot();
+    const module = await createEpisodicMemoryModule({
+      pragmaHome: root,
+      extractor: fakeExtractor(),
+    });
+    const evidence = executionEvidence("execution-governance");
+    await module.consume(evidence);
+    await module.runBackgroundOnce?.();
+    const initial = (await module.store.list())[0]!;
+    const actorRef = ref("pragma.user", "local-user");
+    const tightened = await module.store.tightenAccess({
+      id: initial.id,
+      expectedRevision: initial.revision,
+      actorRef,
+      reason: "Keep this episode out of recall.",
+      bindings: initial.bindings.map((binding) => ({
+        ...binding,
+        recall: "deny" as const,
+        permissionRevision: binding.permissionRevision + 1,
+      })),
+      now: new Date("2026-08-03T12:00:00.000Z"),
+    });
+    await expect(
+      module.store.tightenAccess({
+        id: tightened.id,
+        expectedRevision: tightened.revision,
+        actorRef,
+        reason: "Attempt to expand recall.",
+        bindings: tightened.bindings.map((binding) => ({
+          ...binding,
+          recall: "allow" as const,
+          permissionRevision: binding.permissionRevision + 1,
+        })),
+        now: new Date("2026-08-03T12:01:00.000Z"),
+      }),
+    ).rejects.toThrow("memory_permission_expansion_denied");
+    expect(await module.store.listForRecall(expertScope("expert-a"))).toEqual([]);
+    expect(await module.store.history(initial.id)).toHaveLength(2);
+    expect(await module.store.getEvidence(evidence[0]!.messageId)).toBeDefined();
+
+    await expect(
+      module.store.forget({
+        id: tightened.id,
+        expectedRevision: tightened.revision,
+        actorRef: null as unknown as MemorySubjectRef,
+        reason: "Malformed governance actor.",
+        now: new Date("2026-08-03T12:01:30.000Z"),
+      }),
+    ).rejects.toThrow();
+    expect(await module.store.get(initial.id)).toBeDefined();
+
+    await module.store.forget({
+      id: tightened.id,
+      expectedRevision: tightened.revision,
+      actorRef,
+      reason: "User requested forgetting.",
+      now: new Date("2026-08-03T12:02:00.000Z"),
+    });
+    expect(await module.store.get(initial.id)).toBeUndefined();
+    expect(await module.store.history(initial.id)).toEqual([]);
+    expect(await module.store.getEvidence(evidence[0]!.messageId)).toBeUndefined();
+
+    await module.consume([
+      terminalEvidence("execution-governance", "terminal-after-forget", "2026-08-03T12:03:00.000Z"),
+    ]);
+    await module.runBackgroundOnce?.();
+    expect(await module.store.list()).toEqual([]);
+    module.close();
+
+    const database = new DatabaseSync(
+      join(
+        new PragmaPaths({ pragmaHome: root }).memoryModuleDataRoot("pragma.memory.episodic"),
+        "episodes.sqlite",
+      ),
+    );
+    const tombstone = database
+      .prepare("SELECT tombstone_json AS value FROM tombstones WHERE id = ?")
+      .get(initial.id) as { readonly value: string };
+    const governance = database
+      .prepare("SELECT COUNT(*) AS count FROM governance_events WHERE episode_id = ?")
+      .get(initial.id) as { readonly count: number };
+    database.close();
+    expect(governance.count).toBe(0);
+    expect(tombstone.value).not.toMatch(
+      /Repair|goal|summary|evidenceRefs|Keep this episode|User requested forgetting/,
+    );
+  });
+
+  it("upgrades a historical episodic v1 database to revision bindings", async () => {
+    const root = await temporaryRoot();
+    const dataRoot = new PragmaPaths({ pragmaHome: root }).memoryModuleDataRoot(
+      "pragma.memory.episodic",
+    );
+    await mkdir(dataRoot, { recursive: true });
+    const database = new DatabaseSync(join(dataRoot, "episodes.sqlite"));
+    database.exec(`
+      CREATE TABLE episodes (
+        id TEXT PRIMARY KEY,
+        execution_id TEXT NOT NULL UNIQUE,
+        revision INTEGER NOT NULL,
+        status TEXT NOT NULL,
+        updated_at TEXT NOT NULL,
+        record_json TEXT NOT NULL
+      );
+      PRAGMA user_version = 1;
+    `);
+    const historical = JSON.parse(
+      await readFile(new URL("./fixtures/episodic-v1-record.json", import.meta.url), "utf8"),
+    ) as Record<string, unknown>;
+    database
+      .prepare(
+        "INSERT INTO episodes(id, execution_id, revision, status, updated_at, record_json) VALUES (?, ?, ?, ?, ?, ?)",
+      )
+      .run(
+        historical["id"] as string,
+        historical["executionId"] as string,
+        historical["revision"] as number,
+        historical["status"] as string,
+        historical["updatedAt"] as string,
+        JSON.stringify(historical),
+      );
+    database.close();
+
+    const module = await createEpisodicMemoryModule({ pragmaHome: root });
+    expect((await module.store.list())[0]).toMatchObject({
+      schemaVersion: "pragma.memory-episodic/v2",
+      bindings: [
+        {
+          consumerRef: { type: "pragma.expert", id: "expert-a" },
+          recall: "allow",
+          export: "deny",
+          permissionRevision: 1,
+        },
+      ],
+    });
     module.close();
   });
 
@@ -301,7 +447,14 @@ describe("Episodic Memory", () => {
     await legacy.runBackgroundOnce?.();
     expect((await legacy.store.list())[0]).toMatchObject({
       rootRefs: [{ type: "pragma.expert", id: "expert-a" }],
-      bindings: [{ type: "pragma.expert", id: "expert-a" }],
+      bindings: [
+        {
+          consumerRef: { type: "pragma.expert", id: "expert-a" },
+          recall: "allow",
+          export: "deny",
+          permissionRevision: 1,
+        },
+      ],
     });
 
     const legacyTeam = executionEvidence(

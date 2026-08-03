@@ -1,0 +1,46 @@
+{
+  "schemaVersion": "pragma.memory-episodic/v1",
+  "id": "episode-historical-v1",
+  "revision": 1,
+  "executionId": "execution-historical-v1",
+  "terminalMessageId": "terminal-historical-v1",
+  "rootRefs": [{ "type": "pragma.expert", "id": "expert-a" }],
+  "producerRefs": [{ "type": "pragma.expert", "id": "expert-a" }],
+  "language": "en",
+  "goal": { "text": "Repair the release workflow.", "evidenceRefs": ["evidence-v1"] },
+  "summary": {
+    "text": "The workflow was repaired and verified.",
+    "evidenceRefs": ["evidence-v1"]
+  },
+  "attempts": [
+    {
+      "description": "Inspect the failing workflow.",
+      "result": "Found a stale command.",
+      "evidenceRefs": ["evidence-v1"]
+    }
+  ],
+  "failuresAndRecoveries": [],
+  "outcome": {
+    "status": "succeeded",
+    "summary": "Verification passed.",
+    "evidenceRefs": ["evidence-v1"]
+  },
+  "artifactRefs": [],
+  "evidenceRefs": ["evidence-v1"],
+  "visibility": { "mode": "host-private" },
+  "sensitivity": "confidential",
+  "bindings": [{ "type": "pragma.expert", "id": "expert-a" }],
+  "valueScore": 0.9,
+  "status": "active",
+  "extractor": {
+    "curatorRef": "expert:0000000000memory",
+    "promptVersion": "episodic-v1",
+    "profileRevision": 0,
+    "runtimeId": "runtime-test",
+    "providerId": "provider-test",
+    "modelId": "model-test",
+    "extractedAt": "2026-07-01T00:00:00.000Z"
+  },
+  "createdAt": "2026-07-01T00:00:00.000Z",
+  "updatedAt": "2026-07-01T00:00:00.000Z"
+}

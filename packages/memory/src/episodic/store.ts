@@ -1,10 +1,14 @@
-import { createHash } from "node:crypto";
+import { createHash, randomUUID } from "node:crypto";
 import { mkdir } from "node:fs/promises";
 import { join } from "node:path";
 import { DatabaseSync } from "node:sqlite";
 
 import { PragmaPaths } from "@pragma/core";
-import { MemoryEvidenceEnvelopeSchema, type MemoryEvidenceEnvelope } from "@pragma/shared";
+import {
+  MemoryEvidenceEnvelopeSchema,
+  type MemoryEvidenceEnvelope,
+  type MemorySubjectRef,
+} from "@pragma/shared";
 
 import {
   EpisodicExtractionJobSchema,
@@ -12,7 +16,20 @@ import {
   type EpisodicExtractionJob,
   type EpisodicMemoryRecord,
 } from "./schema.ts";
+import {
+  assertMemoryBindingsTightened,
+  assertMemoryVisibilityTightened,
+  createMemoryTombstone,
+} from "../governance/access-governance.ts";
 import type { MemoryRecallScope } from "../pipeline/memory-module.ts";
+
+export interface EpisodicGovernanceInput {
+  readonly id: string;
+  readonly expectedRevision: number;
+  readonly actorRef: MemorySubjectRef;
+  readonly reason: string;
+  readonly now: Date;
+}
 
 export interface EpisodicMemoryStoreDiagnostic {
   readonly episodes: number;
@@ -24,10 +41,7 @@ export interface EpisodicMemoryStoreDiagnostic {
 }
 
 export type EpisodicRejectionReason =
-  | "low-value"
-  | "insufficient-evidence"
-  | "sensitive"
-  | "policy";
+  "low-value" | "insufficient-evidence" | "sensitive" | "policy";
 
 export interface EpisodicMemoryStore {
   ingest(envelopes: readonly MemoryEvidenceEnvelope[]): Promise<void>;
@@ -35,6 +49,7 @@ export interface EpisodicMemoryStore {
   readEvidence(executionId: string): Promise<readonly MemoryEvidenceEnvelope[]>;
   getByExecution(executionId: string): Promise<EpisodicMemoryRecord | undefined>;
   get(id: string): Promise<EpisodicMemoryRecord | undefined>;
+  history(id: string): Promise<readonly EpisodicMemoryRecord[]>;
   list(): Promise<readonly EpisodicMemoryRecord[]>;
   listForRecall(scope: MemoryRecallScope): Promise<readonly EpisodicMemoryRecord[]>;
   searchForRecall(
@@ -47,6 +62,15 @@ export interface EpisodicMemoryStore {
     scope: MemoryRecallScope,
     messageId: string,
   ): Promise<MemoryEvidenceEnvelope | undefined>;
+  getEvidence(messageId: string): Promise<MemoryEvidenceEnvelope | undefined>;
+  tightenAccess(
+    input: EpisodicGovernanceInput & {
+      readonly bindings?: EpisodicMemoryRecord["bindings"] | undefined;
+      readonly visibility?: EpisodicMemoryRecord["visibility"] | undefined;
+    },
+  ): Promise<EpisodicMemoryRecord>;
+  invalidate(input: EpisodicGovernanceInput): Promise<EpisodicMemoryRecord>;
+  forget(input: EpisodicGovernanceInput): Promise<void>;
   completeRetained(input: {
     readonly job: EpisodicExtractionJob;
     readonly record: EpisodicMemoryRecord;
@@ -162,8 +186,7 @@ export async function createEpisodicMemoryStore(
              ORDER BY retry_at IS NOT NULL, retry_at, id LIMIT 1`,
           )
           .get(now.toISOString(), now.toISOString()) as unknown as
-          | { readonly jobJson: string }
-          | undefined;
+          { readonly jobJson: string } | undefined;
         if (row === undefined) {
           state.exec("COMMIT;");
           return undefined;
@@ -213,6 +236,16 @@ export async function createEpisodicMemoryStore(
 
     async get(id) {
       return readEpisodeBy(data, "id", id);
+    },
+
+    async history(id) {
+      return readEpisodeRows(
+        data
+          .prepare(
+            "SELECT record_json AS recordJson FROM episode_revisions WHERE episode_id = ? ORDER BY revision DESC",
+          )
+          .all(id),
+      );
     },
 
     async list() {
@@ -282,10 +315,26 @@ export async function createEpisodicMemoryStore(
         : MemoryEvidenceEnvelopeSchema.parse(JSON.parse(row.envelopeJson));
     },
 
+    async getEvidence(messageId) {
+      const row = data
+        .prepare(
+          "SELECT envelope_json AS envelopeJson FROM episode_evidence WHERE evidence_id = ? LIMIT 1",
+        )
+        .get(messageId) as { readonly envelopeJson: string } | undefined;
+      return row === undefined
+        ? undefined
+        : MemoryEvidenceEnvelopeSchema.parse(JSON.parse(row.envelopeJson));
+    },
+
     async completeRetained(input) {
       const record = EpisodicMemoryRecordSchema.parse(input.record);
       data.exec("BEGIN IMMEDIATE;");
       try {
+        if (hasTombstone(data, record.id)) {
+          data.exec("COMMIT;");
+          completeRetainedJob(state, input.job);
+          return;
+        }
         data
           .prepare(
             `INSERT INTO episodes(id, execution_id, revision, status, updated_at, record_json)
@@ -301,6 +350,11 @@ export async function createEpisodicMemoryStore(
             record.updatedAt,
             JSON.stringify(record),
           );
+        data
+          .prepare(
+            "INSERT OR IGNORE INTO episode_revisions(episode_id, revision, record_json) VALUES (?, ?, ?)",
+          )
+          .run(record.id, record.revision, JSON.stringify(record));
         const insert = data.prepare(
           `INSERT OR REPLACE INTO episode_evidence(episode_id, evidence_id, occurred_at, envelope_json)
            VALUES (?, ?, ?, ?)`,
@@ -313,13 +367,56 @@ export async function createEpisodicMemoryStore(
         rollback(data);
         throw error;
       }
-      state.exec("BEGIN IMMEDIATE;");
+      completeRetainedJob(state, input.job);
+    },
+
+    async tightenAccess(input) {
+      return governEpisode(data, "tighten-access", input, (current) => ({
+        ...current,
+        ...(input.bindings === undefined
+          ? {}
+          : { bindings: assertMemoryBindingsTightened(current.bindings, input.bindings) }),
+        ...(input.visibility === undefined
+          ? {}
+          : { visibility: assertMemoryVisibilityTightened(current.visibility, input.visibility) }),
+        revision: current.revision + 1,
+        updatedAt: input.now.toISOString(),
+      }));
+    },
+
+    async invalidate(input) {
+      return governEpisode(data, "invalidate", input, (current) => ({
+        ...current,
+        revision: current.revision + 1,
+        status: "invalidated",
+        invalidatedAt: input.now.toISOString(),
+        updatedAt: input.now.toISOString(),
+      }));
+    },
+
+    async forget(input) {
+      data.exec("BEGIN IMMEDIATE;");
       try {
-        finishJob(state, input.job, "retained");
-        state.prepare("DELETE FROM evidence WHERE execution_id = ?").run(input.job.executionId);
-        state.exec("COMMIT;");
+        const current = readEpisodeBy(data, "id", input.id);
+        if (current === undefined) throw new Error("episodic_memory_not_found");
+        assertExpectedRevision(input.expectedRevision, current.revision, "episodic_memory");
+        data.prepare("DELETE FROM episode_evidence WHERE episode_id = ?").run(input.id);
+        data.prepare("DELETE FROM episode_revisions WHERE episode_id = ?").run(input.id);
+        data.prepare("DELETE FROM governance_events WHERE episode_id = ?").run(input.id);
+        data.prepare("DELETE FROM episodes WHERE id = ?").run(input.id);
+        data
+          .prepare(
+            "INSERT INTO tombstones(id, last_revision, forgotten_at, tombstone_json) VALUES (?, ?, ?, ?)",
+          )
+          .run(
+            input.id,
+            current.revision,
+            input.now.toISOString(),
+            JSON.stringify(createMemoryTombstone("episodic", current.id, current.revision, input)),
+          );
+        data.exec("COMMIT;");
       } catch (error) {
-        rollback(state);
+        rollback(data);
         throw error;
       }
     },
@@ -417,7 +514,11 @@ function extractionJobId(executionId: string): string {
 }
 
 function initializeData(database: DatabaseSync): void {
-  assertVersion(database, "pragma.memory-episodic-store");
+  const version = readVersion(database);
+  if (version > 2) {
+    database.close();
+    throw new Error(`unsupported-state-version:pragma.memory-episodic-store/v${version}`);
+  }
   database.exec(`
     PRAGMA journal_mode = WAL;
     PRAGMA synchronous = FULL;
@@ -438,12 +539,31 @@ function initializeData(database: DatabaseSync): void {
       PRIMARY KEY (episode_id, evidence_id),
       FOREIGN KEY (episode_id) REFERENCES episodes(id) ON DELETE CASCADE
     );
-    PRAGMA user_version = 1;
+    CREATE TABLE IF NOT EXISTS episode_revisions (
+      episode_id TEXT NOT NULL,
+      revision INTEGER NOT NULL,
+      record_json TEXT NOT NULL,
+      PRIMARY KEY (episode_id, revision)
+    );
+    CREATE TABLE IF NOT EXISTS governance_events (
+      id TEXT PRIMARY KEY,
+      episode_id TEXT NOT NULL,
+      revision INTEGER NOT NULL,
+      event_json TEXT NOT NULL
+    );
+    CREATE TABLE IF NOT EXISTS tombstones (
+      id TEXT PRIMARY KEY,
+      last_revision INTEGER NOT NULL,
+      forgotten_at TEXT NOT NULL,
+      tombstone_json TEXT NOT NULL
+    );
   `);
+  if (version === 1) migrateEpisodicDataV1ToV2(database);
+  database.exec("PRAGMA user_version = 2;");
 }
 
 function initializeState(database: DatabaseSync): void {
-  assertVersion(database, "pragma.memory-episodic-jobs");
+  assertVersion(database, "pragma.memory-episodic-jobs", 1);
   database.exec(`
     PRAGMA journal_mode = WAL;
     PRAGMA synchronous = FULL;
@@ -469,20 +589,59 @@ function initializeState(database: DatabaseSync): void {
   `);
 }
 
-function assertVersion(database: DatabaseSync, family: string): void {
+function assertVersion(database: DatabaseSync, family: string, current: number): void {
+  const version = readVersion(database);
+  if (version > current) {
+    database.close();
+    throw new Error(`unsupported-state-version:${family}/v${version}`);
+  }
+}
+
+function readVersion(database: DatabaseSync): number {
   const row = database.prepare("PRAGMA user_version").get() as unknown as {
     readonly user_version: number;
   };
-  if (row.user_version > 1) {
-    database.close();
-    throw new Error(`unsupported-state-version:${family}/v${row.user_version}`);
+  return row.user_version;
+}
+
+function migrateEpisodicDataV1ToV2(database: DatabaseSync): void {
+  const rows = database
+    .prepare("SELECT id, record_json AS recordJson FROM episodes")
+    .all() as unknown as readonly { readonly id: string; readonly recordJson: string }[];
+  database.exec("BEGIN IMMEDIATE;");
+  try {
+    for (const row of rows) {
+      const previous = JSON.parse(row.recordJson) as Record<string, unknown>;
+      const refs = Array.isArray(previous["bindings"]) ? previous["bindings"] : [];
+      const migrated = EpisodicMemoryRecordSchema.parse({
+        ...previous,
+        schemaVersion: "pragma.memory-episodic/v2",
+        bindings: refs.map((consumerRef) => ({
+          consumerRef,
+          recall: "allow",
+          export: "deny",
+          permissionRevision: 1,
+        })),
+      });
+      database
+        .prepare("UPDATE episodes SET record_json = ? WHERE id = ?")
+        .run(JSON.stringify(migrated), row.id);
+      database
+        .prepare(
+          "INSERT OR IGNORE INTO episode_revisions(episode_id, revision, record_json) VALUES (?, ?, ?)",
+        )
+        .run(migrated.id, migrated.revision, JSON.stringify(migrated));
+    }
+    database.exec("COMMIT;");
+  } catch (error) {
+    rollback(database);
+    throw error;
   }
 }
 
 function readJob(database: DatabaseSync, id: string): EpisodicExtractionJob | undefined {
   const row = database.prepare("SELECT job_json AS jobJson FROM jobs WHERE id = ?").get(id) as
-    | { readonly jobJson: string }
-    | undefined;
+    { readonly jobJson: string } | undefined;
   return row === undefined ? undefined : EpisodicExtractionJobSchema.parse(JSON.parse(row.jobJson));
 }
 
@@ -505,6 +664,18 @@ function finishJob(
       "UPDATE jobs SET status = ?, retry_at = NULL, lease_until = NULL, job_json = ? WHERE id = ?",
     )
     .run(completed.status, JSON.stringify(completed), completed.id);
+}
+
+function completeRetainedJob(database: DatabaseSync, job: EpisodicExtractionJob): void {
+  database.exec("BEGIN IMMEDIATE;");
+  try {
+    finishJob(database, job, "retained");
+    database.prepare("DELETE FROM evidence WHERE execution_id = ?").run(job.executionId);
+    database.exec("COMMIT;");
+  } catch (error) {
+    rollback(database);
+    throw error;
+  }
 }
 
 function incrementCounter(database: DatabaseSync, name: string): void {
@@ -547,16 +718,94 @@ function recallPredicate(
   const clauses = refs.map(
     () =>
       `EXISTS (
-        SELECT 1 FROM json_each(${tableAlias}.record_json, '$.rootRefs') AS root
-        WHERE json_extract(root.value, '$.type') = ?
-          AND json_extract(root.value, '$.id') = ?
+        SELECT 1 FROM json_each(${tableAlias}.record_json, '$.bindings') AS binding
+        WHERE json_extract(binding.value, '$.consumerRef.type') = ?
+          AND json_extract(binding.value, '$.consumerRef.id') = ?
+          AND json_extract(binding.value, '$.recall') = 'allow'
       )`,
   );
+  const principals = uniqueRefs([scope.rootRef, scope.expertRef, ...(scope.principalRefs ?? [])]);
+  const principalClauses = principals.map(
+    () =>
+      `(json_extract(principal.value, '$.type') = ?
+        AND json_extract(principal.value, '$.id') = ?)`,
+  );
   return {
-    sql: `(json_extract(${tableAlias}.record_json, '$.visibility.mode') != 'restricted')
+    sql: `(json_extract(${tableAlias}.record_json, '$.visibility.mode') != 'restricted'
+        OR EXISTS (
+          SELECT 1 FROM json_each(${tableAlias}.record_json, '$.visibility.principals') AS principal
+          WHERE ${principalClauses.length === 0 ? "0" : principalClauses.join(" OR ")}
+        ))
       AND (${clauses.join(" OR ")})`,
-    parameters: refs.flatMap((ref) => [ref.type, ref.id]),
+    parameters: [
+      ...principals.flatMap((ref) => [ref.type, ref.id]),
+      ...refs.flatMap((ref) => [ref.type, ref.id]),
+    ],
   };
+}
+
+function governEpisode(
+  database: DatabaseSync,
+  action: string,
+  input: EpisodicGovernanceInput,
+  mutate: (current: EpisodicMemoryRecord) => EpisodicMemoryRecord,
+): EpisodicMemoryRecord {
+  database.exec("BEGIN IMMEDIATE;");
+  try {
+    const current = readEpisodeBy(database, "id", input.id);
+    if (current === undefined) throw new Error("episodic_memory_not_found");
+    assertExpectedRevision(input.expectedRevision, current.revision, "episodic_memory");
+    const next = EpisodicMemoryRecordSchema.parse(mutate(current));
+    database
+      .prepare(
+        "UPDATE episodes SET revision = ?, status = ?, updated_at = ?, record_json = ? WHERE id = ?",
+      )
+      .run(next.revision, next.status, next.updatedAt, JSON.stringify(next), next.id);
+    database
+      .prepare("INSERT INTO episode_revisions(episode_id, revision, record_json) VALUES (?, ?, ?)")
+      .run(next.id, next.revision, JSON.stringify(next));
+    database
+      .prepare(
+        "INSERT INTO governance_events(id, episode_id, revision, event_json) VALUES (?, ?, ?, ?)",
+      )
+      .run(
+        randomUUID(),
+        next.id,
+        next.revision,
+        JSON.stringify({
+          schemaVersion: "pragma.memory-governance-event/v1",
+          module: "episodic",
+          memoryId: next.id,
+          previousRevision: current.revision,
+          revision: next.revision,
+          action,
+          actorRef: input.actorRef,
+          reason: input.reason,
+          occurredAt: input.now.toISOString(),
+        }),
+      );
+    database.exec("COMMIT;");
+    return next;
+  } catch (error) {
+    rollback(database);
+    throw error;
+  }
+}
+
+function assertExpectedRevision(expected: number, actual: number, family: string): void {
+  if (expected !== actual) {
+    throw new Error(`${family}_revision_conflict:${expected}:${actual}`);
+  }
+}
+
+function hasTombstone(database: DatabaseSync, id: string): boolean {
+  return database.prepare("SELECT 1 FROM tombstones WHERE id = ?").get(id) !== undefined;
+}
+
+function uniqueRefs<T extends { readonly type: string; readonly id: string }>(
+  refs: readonly T[],
+): T[] {
+  return [...new Map(refs.map((ref) => [`${ref.type}\0${ref.id}`, ref])).values()];
 }
 
 function rollback(database: DatabaseSync): void {

@@ -116,7 +116,7 @@ export async function createEpisodicMemoryModule(
         const timestamp = now().toISOString();
         const attribution = resolveAttribution(evidence);
         const record = EpisodicMemoryRecordSchema.parse({
-          schemaVersion: "pragma.memory-episodic/v1",
+          schemaVersion: "pragma.memory-episodic/v2",
           id: episodicMemoryId(job.executionId),
           revision: (previousEpisode?.revision ?? 0) + 1,
           executionId: job.executionId,
@@ -133,7 +133,14 @@ export async function createEpisodicMemoryModule(
           evidenceRefs: collectEvidenceRefs(output),
           visibility,
           sensitivity: strictestSensitivity(evidence),
-          bindings: [attribution.rootRef],
+          bindings: [
+            {
+              consumerRef: attribution.rootRef,
+              recall: "allow",
+              export: "deny",
+              permissionRevision: 1,
+            },
+          ],
           valueScore: output.valueScore,
           status: "active",
           extractor: extracted.provenance,

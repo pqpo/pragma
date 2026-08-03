@@ -163,6 +163,18 @@ export class PragmaPaths {
     return join(this.memoryDataRoot(), "extractor-profile.json");
   }
 
+  memoryExecutionActivityRoot(executionId: string): string {
+    return join(
+      this.memoryStateRoot(),
+      "executions",
+      encodePragmaPathSegment(executionId),
+    );
+  }
+
+  memoryExecutionActivity(executionId: string): string {
+    return join(this.memoryExecutionActivityRoot(executionId), "activity.sqlite");
+  }
+
   memoryAssetPolicy(type: string, id: string): string {
     return join(
       this.memoryPoliciesRoot(),

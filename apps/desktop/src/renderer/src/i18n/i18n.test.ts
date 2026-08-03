@@ -32,6 +32,15 @@ describe("desktop translations", () => {
   });
 
   it.each([
+    ["en", "Memory"],
+    ["zh-Hans", "记忆"],
+    ["zh-Hant", "記憶"],
+  ] as const)("renders the Memory navigation in %s", async (locale, expected) => {
+    await i18n.changeLanguage(locale);
+    expect(i18n.t("navigation.memory", { ns: "common" })).toBe(expected);
+  });
+
+  it.each([
     ["en", "Your AI workspace"],
     ["zh-Hans", "你的 AI 工作空间"],
     ["zh-Hant", "你的 AI 工作空間"],

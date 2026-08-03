@@ -287,6 +287,97 @@ describe("Semantic Memory", () => {
     module.close();
   });
 
+  it("enforces restricted principals and purges forgotten fact content and Evidence", async () => {
+    const root = await temporaryRoot();
+    const module = await createSemanticMemoryModule({
+      pragmaHome: root,
+      extractor: fakeExtractor(),
+    });
+    await module.registerExecutionSubjects({
+      executionId: "execution-private-fact",
+      subjectRefs: [ref("pragma.user", "local-user")],
+    });
+    const evidence = executionEvidence(
+      "execution-private-fact",
+      "Use concise Chinese answers.",
+    ).map((item) =>
+      MemoryEvidenceEnvelopeSchema.parse({
+        ...item,
+        visibility: {
+          mode: "restricted",
+          principals: [ref("pragma.user", "local-user")],
+        },
+      }),
+    );
+    await module.consume(evidence);
+    await module.runBackgroundOnce?.();
+    const initial = (await module.store.list())[0]!;
+    expect(await module.store.listForRecall(expertScope("expert-a"), new Date())).toEqual([]);
+    const principalScope = {
+      ...expertScope("expert-a"),
+      principalRefs: [ref("pragma.user", "local-user")],
+    };
+    expect(await module.store.listForRecall(principalScope, new Date())).toHaveLength(1);
+
+    const actorRef = ref("pragma.user", "local-user");
+    const tightened = await module.store.tightenAccess({
+      id: initial.id,
+      expectedRevision: initial.revision,
+      actorRef,
+      reason: "Disable recall for this fact.",
+      bindings: initial.bindings.map((binding) => ({
+        ...binding,
+        recall: "deny" as const,
+        permissionRevision: binding.permissionRevision + 1,
+      })),
+      now: new Date("2026-08-03T13:00:00.000Z"),
+    });
+    await expect(
+      module.store.tightenAccess({
+        id: tightened.id,
+        expectedRevision: tightened.revision,
+        actorRef,
+        reason: "Attempt to expand recall.",
+        bindings: tightened.bindings.map((binding) => ({
+          ...binding,
+          recall: "allow" as const,
+          permissionRevision: binding.permissionRevision + 1,
+        })),
+        now: new Date("2026-08-03T13:01:00.000Z"),
+      }),
+    ).rejects.toThrow("memory_permission_expansion_denied");
+
+    await module.store.forget({
+      id: tightened.id,
+      expectedRevision: tightened.revision,
+      actorRef,
+      reason: "User requested forgetting.",
+      now: new Date("2026-08-03T13:02:00.000Z"),
+    });
+    expect(await module.store.get(initial.id)).toBeUndefined();
+    expect(await module.store.history(initial.id)).toEqual([]);
+    expect(await module.store.getEvidence(evidence[0]!.messageId)).toBeUndefined();
+    module.close();
+
+    const database = new DatabaseSync(
+      join(
+        new PragmaPaths({ pragmaHome: root }).memoryModuleDataRoot("pragma.memory.semantic"),
+        "facts.sqlite",
+      ),
+    );
+    const tombstone = database
+      .prepare("SELECT tombstone_json AS value FROM tombstones WHERE id = ?")
+      .get(initial.id) as { readonly value: string };
+    const governance = database
+      .prepare("SELECT COUNT(*) AS count FROM governance_events WHERE fact_id = ?")
+      .get(initial.id) as { readonly count: number };
+    database.close();
+    expect(governance.count).toBe(0);
+    expect(tombstone.value).not.toMatch(
+      /concise Chinese|statement|normalizedValue|evidenceRefs|Disable recall|User requested forgetting/,
+    );
+  });
+
   it("reopens the current store version and rejects a future data version", async () => {
     const root = await temporaryRoot();
     const module = await createSemanticMemoryModule({
@@ -307,12 +398,12 @@ describe("Semantic Memory", () => {
         "facts.sqlite",
       ),
     );
-    database.exec("PRAGMA user_version = 2");
+    database.exec("PRAGMA user_version = 3");
     database.close();
 
     await expect(
       createSemanticMemoryModule({ pragmaHome: root, extractor: fakeExtractor() }),
-    ).rejects.toThrow("unsupported-state-version:pragma.memory-semantic-store/v2");
+    ).rejects.toThrow("unsupported-state-version:pragma.memory-semantic-store/v3");
   });
 
   it("rejects extractor subject and Evidence references outside the supplied allowlists", async () => {

@@ -193,11 +193,17 @@ import {
   UpdateDesktopGlobalMemoryPolicySchema,
   UpdateDesktopMemoryExtractorProfileSchema,
   DesktopSemanticFactSchema,
-  ListDesktopSemanticFactsSchema,
-  SearchDesktopSemanticFactsSchema,
-  GetDesktopSemanticFactSchema,
   ReviseDesktopSemanticFactSchema,
   ReviewDesktopSemanticFactSchema,
+  DesktopMemoryItemSchema,
+  DesktopMemoryEvidenceSchema,
+  ListDesktopMemoryItemsSchema,
+  DesktopMemoryItemRefSchema,
+  GetDesktopMemoryEvidenceSchema,
+  TightenDesktopMemoryAccessSchema,
+  ReviewDesktopMemoryItemSchema,
+  DesktopMissionMemoryActivitySchema,
+  GetDesktopMissionMemoryActivitySchema,
 } from "./memory.ts";
 export type DesktopAppInfo = z.infer<typeof DesktopAppInfoSchema>;
 export type PragmaBundleModuleOptions = z.infer<typeof PragmaBundleModuleOptionsSchema>;
@@ -251,11 +257,17 @@ export type UpdateDesktopMemoryExtractorProfile = z.infer<
   typeof UpdateDesktopMemoryExtractorProfileSchema
 >;
 export type DesktopSemanticFact = z.infer<typeof DesktopSemanticFactSchema>;
-export type ListDesktopSemanticFacts = z.input<typeof ListDesktopSemanticFactsSchema>;
-export type SearchDesktopSemanticFacts = z.input<typeof SearchDesktopSemanticFactsSchema>;
-export type GetDesktopSemanticFact = z.infer<typeof GetDesktopSemanticFactSchema>;
 export type ReviseDesktopSemanticFact = z.infer<typeof ReviseDesktopSemanticFactSchema>;
 export type ReviewDesktopSemanticFact = z.infer<typeof ReviewDesktopSemanticFactSchema>;
+export type DesktopMemoryItem = z.infer<typeof DesktopMemoryItemSchema>;
+export type DesktopMemoryEvidence = z.infer<typeof DesktopMemoryEvidenceSchema>;
+export type ListDesktopMemoryItems = z.input<typeof ListDesktopMemoryItemsSchema>;
+export type DesktopMemoryItemRef = z.infer<typeof DesktopMemoryItemRefSchema>;
+export type GetDesktopMemoryEvidence = z.infer<typeof GetDesktopMemoryEvidenceSchema>;
+export type TightenDesktopMemoryAccess = z.infer<typeof TightenDesktopMemoryAccessSchema>;
+export type ReviewDesktopMemoryItem = z.infer<typeof ReviewDesktopMemoryItemSchema>;
+export type DesktopMissionMemoryActivity = z.infer<typeof DesktopMissionMemoryActivitySchema>;
+export type GetDesktopMissionMemoryActivity = z.infer<typeof GetDesktopMissionMemoryActivitySchema>;
 export type ModelProviderModel = z.infer<typeof ModelProviderModelSchema>;
 export type ModelCompatibilityProfileDescriptor = z.infer<
   typeof ModelCompatibilityProfileDescriptorSchema
