@@ -360,10 +360,12 @@ jobs:
                 --bucket "${ALIYUN_OSS_BUCKET}" \
                 --key "${prefix}/${file}" \
                 --endpoint "${endpoint}" \
+                --output-query ContentLength \
                 --output-format json \
-                --region "${ALIYUN_OSS_REGION}"
+                --region "${ALIYUN_OSS_REGION}" \
+                | sed -E '/^[[:space:]]*[0-9.]+\(s\) elapsed[[:space:]]*$/d'
             )"
-            remote_size="$(jq -er '(.Size // .size) | tonumber' <<< "${metadata}")"
+            remote_size="$(jq -er 'tonumber' <<< "${metadata}")"
             if [[ "${remote_size}" != "${local_size}" ]]; then
               echo "::error::OSS asset size mismatch for ${file}: local=${local_size}, remote=${remote_size}"
               exit 1
