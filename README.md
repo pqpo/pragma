@@ -154,7 +154,7 @@ pnpm --filter @pragma/desktop dev
 
 Desktop is the simplest way to start a mission, choose a workspace, and use local or connected runtimes.
 
-Studio can export any Expert, ExpertTeam, or Flow as a portable `.pragma` bundle. The export includes its reusable dependency graph as canonical DSL and can optionally include capabilities, plugins, knowledge, and visual Flow layouts. Secrets, local sessions, Missions, and machine-specific paths stay local. Another Desktop can import the bundle, or your own agent system can load the DSL through the Pragma interpreter.
+Studio can export any Expert, ExpertTeam, or Flow as a portable `.pragma` bundle. The export includes its reusable dependency graph as canonical DSL and can optionally include capabilities, plugins, knowledge, and visual Flow layouts. Secrets, local sessions, Missions, and machine-specific paths stay local. Another Desktop can import the bundle, or your own agent system can pass the exported file directly to `@pragma/interpreter`—without unpacking it or depending on Desktop code—and compile its root into a runnable `@pragma/core` object.
 
 ### Describe a reusable AI-native system with Pragma DSL
 
@@ -221,52 +221,65 @@ spec:
 
 The same language describes Experts, ExpertTeams, Flows, capabilities, context, runtime profiles, and evaluations. Definitions can be stored with a project, generated from compiled objects, reviewed in Git, exported from Desktop, and moved between hosts.
 
-### Load, compile, stream, and get the final result
+### Load and run a Desktop bundle in your own agent system
 
-After importing or unpacking an exported project, a custom host can load the project entry, compile the complete dependency graph, and execute it with the host's own runtime bindings:
+The `.pragma` file exported by Desktop implements the Interpreter-owned `pragma.bundle/v1` protocol. A custom Host can load the archive directly, select one of its exported roots, resolve that root's dependency closure against its own Runtime and Host bindings, and run the compiled object through `@pragma/core`:
 
 ```ts
 import { createPragma, type Flow } from "@pragma/core";
 import { loadPragmaProject } from "@pragma/interpreter";
 
-const project = await loadPragmaProject("./pragma.yaml");
-const diagnostics = await project.validate();
-if (diagnostics.some((item) => item.severity === "error")) {
-  throw new Error(JSON.stringify(diagnostics, null, 2));
-}
-
-const compiled = await project.compile<Flow>("flow:t9ne4d8njvvxv2ea", {
-  workspace: process.cwd(),
-  runtimes: myRuntimeResolver,
+const project = await loadPragmaProject({
+  kind: "bundle",
+  source: { kind: "file", path: "./ai-native-delivery.pragma" },
 });
 
-const app = createPragma({ runtimes: myRuntimeResolver });
-const execution = await app.flows.start(compiled.value, {
-  input: { brief: "Build and verify the next product release." },
-});
+try {
+  // A bundle can export more than one root. This example runs its Flow root.
+  const root = project.bundle?.manifest.roots.find((ref) => ref.startsWith("flow:"));
+  if (root === undefined) throw new Error("The bundle does not export a Flow root.");
 
-const output = await execution.subscribeOutput({ scope: { kind: "all" } });
-const streaming = (async () => {
-  try {
-    for await (const item of output) {
-      process.stdout.write(item.delta ?? String(item.value ?? ""));
-    }
-  } finally {
-    await output.close();
+  const prepared = await project.prepareCompile<Flow>(root, {
+    workspace: process.cwd(),
+    runtimes: myRuntimeResolver,
+  });
+  if (prepared.status !== "ready") {
+    // `needs_binding` identifies Runtime, capability, secret, or other Host
+    // requirements that your integration must provide before compiling.
+    throw new Error(`Bundle root is not runnable: ${JSON.stringify(prepared, null, 2)}`);
   }
-})();
 
-const result = await execution.result;
-await streaming;
+  const app = createPragma({ runtimes: myRuntimeResolver });
+  const execution = await app.flows.start(prepared.compiled.value, {
+    input: { brief: "Build and verify the next product release." },
+  });
 
-console.log("Final result:", result);
+  const output = await execution.subscribeOutput({ scope: { kind: "all" } });
+  const streaming = (async () => {
+    try {
+      for await (const item of output) {
+        process.stdout.write(item.delta ?? String(item.value ?? ""));
+      }
+    } finally {
+      await output.close();
+    }
+  })();
 
-// The same Execution exposes the complete audit trail.
-const audit = await execution.listEvents({ scope: { kind: "all" }, limit: 1_000 });
-console.log("Audit events:", audit.items.length);
+  const result = await execution.result;
+  await streaming;
+
+  console.log("Final result:", result);
+
+  // The same Execution exposes the complete audit trail.
+  const audit = await execution.listEvents({ scope: { kind: "all" }, limit: 1_000 });
+  console.log("Audit events:", audit.items.length);
+} finally {
+  // Bundle projects use a temporary extraction root owned by the Interpreter.
+  await project.dispose();
+}
 ```
 
-The interpreter resolves the exported resource graph and the compiler turns it into runnable Core objects. `scope: { kind: "all" }` streams output from the root Flow and its nested Experts, Teams, and child Flows. Your application still owns the product experience, persistence, permissions, and infrastructure while receiving live output, a final result, and auditable execution events.
+No Desktop import step is involved: the Interpreter verifies the archive and lock, resolves the selected root's exported dependency graph, and compiles it into a runnable Core object. If `prepareCompile()` returns `needs_binding`, your Host can satisfy the reported Bundle requirements through the Interpreter's binding APIs before compiling. `scope: { kind: "all" }` streams output from the root Flow and its nested Experts, Teams, and child Flows. Your agent system continues to own Runtime selection, permissions, persistence, product experience, and infrastructure while reusing the system authored in Desktop.
 
 ## Learn more
 
