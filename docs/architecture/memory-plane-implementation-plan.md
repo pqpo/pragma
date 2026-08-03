@@ -1,8 +1,8 @@
 # Memory Plane 落地计划
 
 - Status: Active plan
-- Last updated: 2026-08-01
-- Decisions: [ADR 031](../adr/031-extensible-memory-plane.md)、[ADR 032](../adr/032-durable-canonical-event-feed.md)、[ADR 033](../adr/033-layered-episodic-memory.md)
+- Last updated: 2026-08-03
+- Decisions: [ADR 031](../adr/031-extensible-memory-plane.md)、[ADR 032](../adr/032-durable-canonical-event-feed.md)、[ADR 033](../adr/033-layered-episodic-memory.md)、[ADR 034](../adr/034-conservative-semantic-memory.md)
 
 ## 最终链路
 
@@ -39,7 +39,7 @@ Memory。Knowledge、CodeGraph 仍是 Memory type，不新增 KnowledgeBase/Know
 | ---- | --------- | ----------------------------------------------------------- |
 | 1    | Completed | 内置 Plane、Canonical Event Bus、Module SPI、策略与设置入口 |
 | 2    | Completed | 分层召回协议与 Episodic Memory：历史、结果、失败与恢复      |
-| 3    | Planned   | Semantic / Fact Memory：真值、冲突、时效和置信度            |
+| 3    | Completed | Semantic / Fact Memory：真值、冲突、时效和置信度            |
 | 4    | Planned   | 主动召回排序、完整 binding 治理、管理中心与 Mission 可见性  |
 | 5    | Planned   | Knowledge Memory：多层提炼、稳定 revision 与团队分享        |
 | 6    | Planned   | Skill Memory Candidate、Evaluation 与 Capability 升级       |
@@ -227,23 +227,31 @@ Desktop 提供设置入口。
 - Migration: 新 Episodic Store 从 v1 开始并拒绝未来版本；Mission v5→v6 相邻升级补充 user origin
 - Verification: `pnpm check`、`pnpm build`，并覆盖 Expert/Team/Flow Runtime root identity、Desktop
   recall scope 解析、Memory Module 作用域契约和 Episodic list/search/detail/Evidence 越权测试
-- Known limitations: 当前仅有 Episodic 生产模块；Semantic、Knowledge、Skill Candidate、管理中心、分享、
+- Known limitations: 阶段 2 完成时仅有 Episodic 生产模块；Knowledge、Skill Candidate、管理中心、分享、
   跨设备同步和 query-aware retrieval ranking 仍属于后续阶段
 
 ## 阶段 3：Semantic / Fact Memory
 
 ### 目标
 
-回答“当前相信什么是真的”，支持 User、Project、Repository、Expert 等 subject，同时允许经治理绑定为
-团队资产。
+回答“当前相信什么是真的”。Subject Schema 保持可扩展；本阶段由 Desktop 登记 User、Project，并从
+Evidence 使用 Expert、ExpertTeam、Flow 等运行归属，允许经治理绑定为团队资产。Repository 留待后续
+具备明确发现和身份规则的阶段。
 
-### 交付
+### 已完成范围
 
-- statement、subjectRefs、confidence、observed/verified/review/expires 时间；
-- evidenceRefs、conflictsWith、supersedes、invalidatedAt；
-- extract、normalize、entity resolution、conflict grouping、temporal invalidation；
-- 不按 Personal/Project/Expert 建物理孤岛；subject 与 binding 分离；
-- `memory/semantic/**` Context projection 与更正/失效 API。
+- `pragma.memory.semantic` 独立消费安全 execution Evidence，以 subject、predicate 和 normalized value
+  归一化事实；相同观察合并 Evidence，exclusive 不同值双向标记冲突，不自动覆盖；
+- Fact 保存 confidence、observed/verified/review/expires 时间、Evidence、冲突、失效、binding、权限和
+  Curator provenance；验证只允许由治理 API 完成；
+- Desktop 为普通 Mission Execution 幂等登记安装级 local User 和 Pragma Project subject，根资产与
+  producer Expert 使用 Evidence attribution；Curator 只能选择 allowlist subject；
+- Repository subject 不在本阶段发现或登记，非代码 Agent 任务不依赖仓库；
+- 独立 facts/jobs SQLite、applied-job、lease、退避和 needs-attention 覆盖模型失败与提交后崩溃恢复；
+- `memory/semantic/**` 提供 summary、index、item、Evidence 四层投影；expired、invalidated、superseded
+  默认不召回，冲突事实全部保留并标记；
+- Desktop preload/main 提供 list、search、detail、history、revise、verify、invalidate 类型化 IPC；
+  mutation 使用 revision CAS，同 fact id 保存不可变 revision history 与原子治理审计；管理 UI 留在阶段 4。
 
 ### 退出门槛
 
@@ -251,6 +259,22 @@ Desktop 提供设置入口。
 - 过期/失效事实不参与默认召回；
 - user-private 事实不会因绑定自动变为 team-shareable；
 - Expert/Team/Flow 的有效策略能阻止对应 capture 或 recall。
+
+### Implementation record
+
+- Status: Completed
+- Protocols: `pragma.memory-semantic/v1`、`pragma.memory-semantic-job/v1`、
+  `pragma.memory-semantic-extraction-input/v1`、
+  `pragma.memory-semantic-execution-subject-context/v1`、
+  `pragma.memory-semantic-governance-event/v1`
+- Storage: `data/memory/modules/<semantic>/facts.sqlite` 与
+  `state/memory/modules/<semantic>/jobs.sqlite`
+- Migration: 新 Semantic Store 与 Desktop local User identity 从 v1 开始；未修改 Core Execution、Mission、
+  Interpreter compiler 或 Episodic Store
+- Verification: Memory/Shared/Desktop typecheck、Memory tests、Desktop Memory/Mission integration tests；
+  完整 `pnpm check` 与 `pnpm build`
+- Known limitations: 尚无 Repository subject、跨设备账户合并、管理中心 UI、主动召回排序、分享导出或
+  legacy Fact importer
 
 ## 阶段 4：主动召回、完整治理 UI 与可见性
 

@@ -10,6 +10,13 @@ import {
   UpdateDesktopAssetMemoryPolicySchema,
   UpdateDesktopGlobalMemoryPolicySchema,
   UpdateDesktopMemoryExtractorProfileSchema,
+  DesktopSemanticFactListSchema,
+  DesktopSemanticFactSchema,
+  GetDesktopSemanticFactSchema,
+  ListDesktopSemanticFactsSchema,
+  SearchDesktopSemanticFactsSchema,
+  ReviseDesktopSemanticFactSchema,
+  ReviewDesktopSemanticFactSchema,
 } from "../../shared/contracts/memory.ts";
 
 export const memoryApi = {
@@ -51,6 +58,49 @@ export const memoryApi = {
         UpdateDesktopMemoryExtractorProfileSchema.parse(input),
       ),
     ),
+  listSemanticFacts: async (input = {}) =>
+    DesktopSemanticFactListSchema.parse(
+      await ipcRenderer.invoke("memory-semantic:list", ListDesktopSemanticFactsSchema.parse(input)),
+    ),
+  searchSemanticFacts: async (input) =>
+    DesktopSemanticFactListSchema.parse(
+      await ipcRenderer.invoke(
+        "memory-semantic:search",
+        SearchDesktopSemanticFactsSchema.parse(input),
+      ),
+    ),
+  getSemanticFact: async (input) =>
+    DesktopSemanticFactSchema.parse(
+      await ipcRenderer.invoke("memory-semantic:get", GetDesktopSemanticFactSchema.parse(input)),
+    ),
+  getSemanticFactHistory: async (input) =>
+    DesktopSemanticFactListSchema.parse(
+      await ipcRenderer.invoke(
+        "memory-semantic:history",
+        GetDesktopSemanticFactSchema.parse(input),
+      ),
+    ),
+  reviseSemanticFact: async (input) =>
+    DesktopSemanticFactSchema.parse(
+      await ipcRenderer.invoke(
+        "memory-semantic:revise",
+        ReviseDesktopSemanticFactSchema.parse(input),
+      ),
+    ),
+  verifySemanticFact: async (input) =>
+    DesktopSemanticFactSchema.parse(
+      await ipcRenderer.invoke(
+        "memory-semantic:verify",
+        ReviewDesktopSemanticFactSchema.parse(input),
+      ),
+    ),
+  invalidateSemanticFact: async (input) =>
+    DesktopSemanticFactSchema.parse(
+      await ipcRenderer.invoke(
+        "memory-semantic:invalidate",
+        ReviewDesktopSemanticFactSchema.parse(input),
+      ),
+    ),
 } satisfies Pick<
   PragmaDesktopAPI,
   | "getGlobalMemoryPolicy"
@@ -60,4 +110,11 @@ export const memoryApi = {
   | "getMemoryPlaneStatus"
   | "getMemoryExtractorProfile"
   | "updateMemoryExtractorProfile"
+  | "listSemanticFacts"
+  | "searchSemanticFacts"
+  | "getSemanticFact"
+  | "getSemanticFactHistory"
+  | "reviseSemanticFact"
+  | "verifySemanticFact"
+  | "invalidateSemanticFact"
 >;

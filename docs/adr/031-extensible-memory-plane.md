@@ -6,6 +6,7 @@
 - Implementation plan: [Memory Plane 落地计划](../architecture/memory-plane-implementation-plan.md)
 - Durable delivery decision: [ADR 032](./032-durable-canonical-event-feed.md)
 - Layered projection and Episodic decision: [ADR 033](./033-layered-episodic-memory.md)
+- Semantic conflict and governance decision: [ADR 034](./034-conservative-semantic-memory.md)
 
 ## Context
 

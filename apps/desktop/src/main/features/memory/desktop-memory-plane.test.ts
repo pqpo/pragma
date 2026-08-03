@@ -63,6 +63,33 @@ describe("DesktopMemoryPlane", () => {
     });
     await plane.stop();
   });
+
+  it("registers stable local User and Project subjects without inventing a Repository", async () => {
+    const pragmaHome = await temporaryRoot("pragma-desktop-memory-subjects-");
+    const plane = await createDesktopMemoryPlane({
+      pragmaHome,
+      logger: createPragmaLogger(undefined, { component: "desktop.memory-test" }),
+    });
+
+    await plane.registerSemanticExecutionContext({
+      executionId: "execution-a",
+      projectId: "project-a",
+    });
+    const first = await plane.semanticStore.getSubjectContext("execution-a");
+    await plane.registerSemanticExecutionContext({
+      executionId: "execution-b",
+      projectId: "project-a",
+    });
+    const second = await plane.semanticStore.getSubjectContext("execution-b");
+
+    const firstUser = first?.subjectRefs.find((ref) => ref.type === "pragma.user");
+    const secondUser = second?.subjectRefs.find((ref) => ref.type === "pragma.user");
+    expect(firstUser?.id).toMatch(/^[0-9a-f-]{36}$/);
+    expect(secondUser).toEqual(firstUser);
+    expect(first?.subjectRefs).toContainEqual({ type: "pragma.project", id: "project-a" });
+    expect(first?.subjectRefs.some((ref) => ref.type === "pragma.repository")).toBe(false);
+    await plane.stop();
+  });
 });
 
 describe("Desktop Memory recall scope", () => {

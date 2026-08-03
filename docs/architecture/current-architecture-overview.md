@@ -204,7 +204,7 @@ Expert 未指定 Runtime 时由 Resolver 读取，而不是在 Expert 或 DSL �
 
 ### P2：Memory Plane 第一阶段已落地，业务 Memory Module 仍待迁移
 
-**状态：ADR 031 已接受；Canonical Feed、Module SPI、策略与 Desktop 入口已实现。**
+**状态：ADR 031–034 已接受；Canonical Feed、Module SPI、策略、Episodic 与 Semantic Module 已实现。**
 
 ADR 002 曾把 Memory System 定义为 Core 抽象，但当前 `MemorySystem`、Memory record、Evidence Store 和 Distillation SPI 都在 `@pragma/plugin-memory`。ADR 003 又只完成了部分实现，代码已经同时包含 direct-write memory 与 evidence distillation。两份旧 ADR 现已被 ADR 031 替代。
 
@@ -220,8 +220,9 @@ ADR 031 已替代 ADR 002/003，并由 `docs/architecture/memory-plane-implement
   Memory type，不新增独立 KnowledgeBase/MemoryAsset 对象；Skill Candidate 评测后升级为现有 Capability；
 - `plugin-memory` 在完成历史数据导入和调用方迁移后删除。
 
-当前还没有生产级 Episodic/Semantic Module、主动召回、管理中心或分享导出，因此旧插件仍只作为后续
-owner-scoped 导入的数据来源保留，不能把第一阶段基础设施描述成完整长期记忆能力。
+当前已能形成按资产隔离的历史 Episode 和带冲突、置信度、时效、revision history 的 Semantic Fact。
+主动召回排序、管理中心、Knowledge/Skill Candidate、分享导出与 legacy owner-scoped 导入仍未完成，
+旧插件只作为后续迁移数据源保留。
 
 ### P2：Desktop Main Process 正在变成第二个业务内核
 

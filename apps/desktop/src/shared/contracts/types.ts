@@ -192,6 +192,12 @@ import {
   UpdateDesktopAssetMemoryPolicySchema,
   UpdateDesktopGlobalMemoryPolicySchema,
   UpdateDesktopMemoryExtractorProfileSchema,
+  DesktopSemanticFactSchema,
+  ListDesktopSemanticFactsSchema,
+  SearchDesktopSemanticFactsSchema,
+  GetDesktopSemanticFactSchema,
+  ReviseDesktopSemanticFactSchema,
+  ReviewDesktopSemanticFactSchema,
 } from "./memory.ts";
 export type DesktopAppInfo = z.infer<typeof DesktopAppInfoSchema>;
 export type PragmaBundleModuleOptions = z.infer<typeof PragmaBundleModuleOptionsSchema>;
@@ -244,6 +250,12 @@ export type DesktopMemoryExtractorProfile = z.infer<typeof DesktopMemoryExtracto
 export type UpdateDesktopMemoryExtractorProfile = z.infer<
   typeof UpdateDesktopMemoryExtractorProfileSchema
 >;
+export type DesktopSemanticFact = z.infer<typeof DesktopSemanticFactSchema>;
+export type ListDesktopSemanticFacts = z.input<typeof ListDesktopSemanticFactsSchema>;
+export type SearchDesktopSemanticFacts = z.input<typeof SearchDesktopSemanticFactsSchema>;
+export type GetDesktopSemanticFact = z.infer<typeof GetDesktopSemanticFactSchema>;
+export type ReviseDesktopSemanticFact = z.infer<typeof ReviseDesktopSemanticFactSchema>;
+export type ReviewDesktopSemanticFact = z.infer<typeof ReviewDesktopSemanticFactSchema>;
 export type ModelProviderModel = z.infer<typeof ModelProviderModelSchema>;
 export type ModelCompatibilityProfileDescriptor = z.infer<
   typeof ModelCompatibilityProfileDescriptorSchema

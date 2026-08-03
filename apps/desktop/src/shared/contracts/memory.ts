@@ -4,6 +4,7 @@ import {
   MemoryGlobalPolicySchema,
   MemoryModuleDiagnosticSchema,
   MemorySubjectRefSchema,
+  SemanticFactSchema,
 } from "@pragma/shared";
 import { z } from "zod";
 
@@ -91,3 +92,58 @@ export const UpdateDesktopMemoryExtractorProfileSchema = z.object({
       .strict(),
   ]),
 });
+
+export const ListDesktopSemanticFactsSchema = z
+  .object({
+    status: z.enum(["active", "invalidated", "all"]).default("active"),
+    subjectRef: MemorySubjectRefSchema.optional(),
+    limit: z.number().int().min(1).max(100).default(50),
+  })
+  .strict();
+
+export const SearchDesktopSemanticFactsSchema = z
+  .object({
+    query: z.string().trim().min(1).max(2_000),
+    status: z.enum(["active", "invalidated", "all"]).default("active"),
+    limit: z.number().int().min(1).max(100).default(50),
+  })
+  .strict();
+
+export const GetDesktopSemanticFactSchema = z.object({ id: z.string().min(1) }).strict();
+
+export const ReviseDesktopSemanticFactSchema = z
+  .object({
+    id: z.string().min(1),
+    expectedRevision: z.number().int().positive(),
+    reason: z.string().trim().min(1).max(2_000),
+    patch: z
+      .object({
+        statement: z.string().trim().min(1).max(4_000).optional(),
+        predicate: z
+          .string()
+          .regex(/^[a-z][a-z0-9]*(?:[.-][a-z0-9]+)+$/)
+          .max(200)
+          .optional(),
+        normalizedValue: z.string().trim().min(1).max(2_000).optional(),
+        conflictMode: z.enum(["exclusive", "compatible"]).optional(),
+        confidence: z.number().min(0).max(0.95).optional(),
+        reviewAt: z.string().datetime().nullable().optional(),
+        expiresAt: z.string().datetime().nullable().optional(),
+      })
+      .strict()
+      .refine((patch) => Object.values(patch).some((value) => value !== undefined), {
+        message: "Semantic fact revision requires at least one change.",
+      }),
+  })
+  .strict();
+
+export const ReviewDesktopSemanticFactSchema = z
+  .object({
+    id: z.string().min(1),
+    expectedRevision: z.number().int().positive(),
+    reason: z.string().trim().min(1).max(2_000),
+  })
+  .strict();
+
+export const DesktopSemanticFactSchema = SemanticFactSchema;
+export const DesktopSemanticFactListSchema = z.array(DesktopSemanticFactSchema);

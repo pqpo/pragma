@@ -123,6 +123,12 @@ import type {
   DesktopMemoryPlaneStatus,
   DesktopMemoryExtractorProfile,
   UpdateDesktopMemoryExtractorProfile,
+  DesktopSemanticFact,
+  ListDesktopSemanticFacts,
+  SearchDesktopSemanticFacts,
+  GetDesktopSemanticFact,
+  ReviseDesktopSemanticFact,
+  ReviewDesktopSemanticFact,
 } from "./types.ts";
 
 export interface PragmaDesktopAPI {
@@ -145,6 +151,13 @@ export interface PragmaDesktopAPI {
   updateMemoryExtractorProfile: (
     input: UpdateDesktopMemoryExtractorProfile,
   ) => Promise<DesktopMemoryExtractorProfile>;
+  listSemanticFacts: (input?: ListDesktopSemanticFacts) => Promise<DesktopSemanticFact[]>;
+  searchSemanticFacts: (input: SearchDesktopSemanticFacts) => Promise<DesktopSemanticFact[]>;
+  getSemanticFact: (input: GetDesktopSemanticFact) => Promise<DesktopSemanticFact>;
+  getSemanticFactHistory: (input: GetDesktopSemanticFact) => Promise<DesktopSemanticFact[]>;
+  reviseSemanticFact: (input: ReviseDesktopSemanticFact) => Promise<DesktopSemanticFact>;
+  verifySemanticFact: (input: ReviewDesktopSemanticFact) => Promise<DesktopSemanticFact>;
+  invalidateSemanticFact: (input: ReviewDesktopSemanticFact) => Promise<DesktopSemanticFact>;
   pickWorkspace: () => Promise<PickWorkspaceResult>;
   validateWorkspace: (path: string) => Promise<ValidateWorkspaceResult>;
   getModelProviderSettings: () => Promise<ModelProviderSettingsSnapshot>;
