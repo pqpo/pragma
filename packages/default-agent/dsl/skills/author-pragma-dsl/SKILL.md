@@ -26,7 +26,10 @@ source of truth and use only the Pragma DSL tools to inspect, validate, and save
    never invent, copy, or change an ID.
 6. For a new or non-trivial Flow change, create a Flow draft and build it in small batches with
    `update_flow_draft`: contracts, steps, start, transitions, and loops. Read diagnostics after every
-   batch. Flow drafts never contain Run Dry cases and never require an Evaluation draft.
+   batch. Pass `operations` as a native JSON array, never as a string containing serialized JSON;
+   string parsing is only a recovery path. The update response is a compact revision summary. Call
+   `get_flow_draft` only when the complete current resource is needed. Flow drafts never contain Run
+   Dry cases and never require an Evaluation draft.
 7. Call `validate_flow_draft`, then `prepare_flow_draft` when the Flow is structurally complete.
    `prepare_flow_draft` prepares the Flow and optional non-Evaluation dependencies only. Fix every
    diagnostic, explain the normalized diff, and call `commit_dsl_changes` with the returned

@@ -84,5 +84,8 @@ spec:
 - Human prompts use the same typed variable segments as Expert and Team prompts.
 - Build Flow resources with the draft tools. Missing nodes or edges are allowed only while a draft
   is incomplete; `prepare_flow_draft` requires a complete, valid graph.
+- Pass `update_flow_draft.operations` as a native JSON array. Its normal response is a compact
+  summary of the applied operations, current counts, and diagnostics; use `get_flow_draft` when the
+  complete resource is required.
 - Never add `spec.runDry`. Run Dry cases belong to a separate `Evaluation` resource. Read
   `references/run-dry.md` before creating or changing that resource.

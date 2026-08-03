@@ -11,6 +11,7 @@ import { describe, expect, it } from "vitest";
 
 import { BUILT_IN_PRAGMA_FILES } from "../src/builtin.generated.ts";
 import { builtInPragmaResource, materializeBuiltInDefaultAgent } from "../src/builtin.ts";
+import { DefaultAgentFlowDraftSchema } from "../src/contracts.ts";
 import { createDefaultAgentTools } from "../src/tools.ts";
 
 describe("built-in Pragma Agent DSL", () => {
@@ -30,6 +31,7 @@ describe("built-in Pragma Agent DSL", () => {
     const unavailable = async (): Promise<never> => {
       throw new Error("This compile-only test does not execute Pragma tools.");
     };
+    let updatedOperationCount = 0;
     const tools = createDefaultAgentTools({
       project: {
         list: unavailable,
@@ -39,7 +41,10 @@ describe("built-in Pragma Agent DSL", () => {
         prepare: unavailable,
         createFlowDraft: unavailable,
         getFlowDraft: unavailable,
-        updateFlowDraft: unavailable,
+        updateFlowDraft: async (input) => {
+          updatedOperationCount = input.operations.length;
+          return flowDraft();
+        },
         validateFlowDraft: unavailable,
         createEvaluationDraft: unavailable,
         getEvaluationDraft: unavailable,
@@ -121,6 +126,16 @@ describe("built-in Pragma Agent DSL", () => {
       expect(catalog.tools.map((tool) => tool.name)).toContain("create_flow_draft");
       expect(catalog.tools.map((tool) => tool.name)).toContain("update_flow_draft");
       expect(
+        catalog.tools.find((tool) => tool.name === "update_flow_draft")?.inputSchema,
+      ).toMatchObject({
+        properties: {
+          operations: {
+            anyOf: [{ type: "array", minItems: 1, maxItems: 50 }, { type: "string" }],
+            description: expect.stringContaining("native JSON array"),
+          },
+        },
+      });
+      expect(
         catalog.tools.find((tool) => tool.name === "create_evaluation_draft")?.inputSchema,
       ).toMatchObject({
         type: "object",
@@ -140,6 +155,20 @@ describe("built-in Pragma Agent DSL", () => {
           ...findConflictingReferenceSiblings(tool.outputSchema),
         ]),
       ).toEqual([]);
+      const recovered = await client.callTool({
+        name: "update_flow_draft",
+        arguments: {
+          draftId: "4fc96ef9-1825-447d-a17f-d820f6fd4855",
+          expectedDraftRevision: 0,
+          operations: '\n[{"type":"remove_step","stepId":"review"}]\n',
+        },
+      });
+      expect(recovered.isError).not.toBe(true);
+      expect(recovered.structuredContent).toMatchObject({
+        applied: { operationCount: 1, stepsChanged: ["review"] },
+        diagnostics: [expect.objectContaining({ code: "flow_draft.operations_string_coerced" })],
+      });
+      expect(updatedOperationCount).toBe(1);
     } finally {
       await client.close().catch(() => undefined);
       await registration.dispose();
@@ -193,6 +222,17 @@ describe("built-in Pragma Agent DSL", () => {
     expect(resourceReference).toContain(
       "option's `runtimeProfileRef`; `prepare_dsl_changes` adds that dependency automatically.",
     );
+  });
+
+  it("teaches compact Flow draft updates with native operation arrays", () => {
+    const skill = BUILT_IN_PRAGMA_FILES["skills/author-pragma-dsl/SKILL.md"] ?? "";
+    const reference = BUILT_IN_PRAGMA_FILES["skills/author-pragma-dsl/references/flow.md"] ?? "";
+
+    expect(skill).toContain("Pass `operations` as a native JSON array");
+    expect(skill).toContain("string parsing is only a recovery path");
+    expect(skill).toContain("compact revision summary");
+    expect(reference).toContain("`update_flow_draft.operations` as a native JSON array");
+    expect(reference).toContain("use `get_flow_draft`");
   });
 
   it("teaches incremental Run Dry authoring with bounded explicit batches", () => {
@@ -327,4 +367,26 @@ async function filesAt(path: string): Promise<string[]> {
 
 function normalizeLineEndings(source: string): string {
   return source.replaceAll("\r\n", "\n");
+}
+
+function flowDraft() {
+  return DefaultAgentFlowDraftSchema.parse({
+    draftId: "4fc96ef9-1825-447d-a17f-d820f6fd4855",
+    baseProjectRevision: 0,
+    draftRevision: 1,
+    resource: {
+      apiVersion: "pragma/v3",
+      kind: "Flow",
+      metadata: {
+        id: "8h9j0k1m2n3p4q5r",
+        name: "Review Flow",
+        description: "Reviews a change.",
+        tags: [],
+      },
+      spec: { graph: { steps: {}, transitions: {}, loops: {} } },
+    },
+    diagnostics: [],
+    createdAt: "2026-08-03T00:00:00.000Z",
+    updatedAt: "2026-08-03T00:00:01.000Z",
+  });
 }

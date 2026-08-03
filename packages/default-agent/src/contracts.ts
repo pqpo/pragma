@@ -167,6 +167,28 @@ export const DefaultAgentFlowDraftOperationSchema = z.discriminatedUnion("type",
   z.object({ type: z.literal("rebase"), projectRevision: z.number().int().nonnegative() }),
 ]);
 
+export const DefaultAgentFlowDraftUpdateSummarySchema = z.object({
+  draftId: z.string().uuid(),
+  baseProjectRevision: z.number().int().nonnegative(),
+  draftRevision: z.number().int().nonnegative(),
+  applied: z.object({
+    operationCount: z.number().int().positive(),
+    stepsChanged: z.array(DraftGraphIdSchema),
+    transitionsChanged: z.array(DraftGraphIdSchema),
+    loopsChanged: z.array(DraftGraphIdSchema),
+    startChanged: z.boolean(),
+    contractsChanged: z.boolean(),
+    rebasedToProjectRevision: z.number().int().nonnegative().optional(),
+  }),
+  diagnostics: z.array(DefaultAgentFlowDraftDiagnosticSchema),
+  stepCount: z.number().int().nonnegative(),
+  transitionCount: z.number().int().nonnegative(),
+  loopCount: z.number().int().nonnegative(),
+  hasErrors: z.boolean(),
+  isComplete: z.boolean(),
+  updatedAt: z.string().datetime(),
+});
+
 export const DefaultAgentEvaluationDraftDiagnosticSchema = z.object({
   severity: z.enum(["incomplete", "warning", "error"]),
   code: z.string().min(1),
@@ -303,6 +325,9 @@ export type DefaultAgentPrepareResult = z.infer<typeof DefaultAgentPrepareResult
 export type DefaultAgentFlowDraft = z.infer<typeof DefaultAgentFlowDraftSchema>;
 export type DefaultAgentFlowDraftDiagnostic = z.infer<typeof DefaultAgentFlowDraftDiagnosticSchema>;
 export type DefaultAgentFlowDraftOperation = z.infer<typeof DefaultAgentFlowDraftOperationSchema>;
+export type DefaultAgentFlowDraftUpdateSummary = z.infer<
+  typeof DefaultAgentFlowDraftUpdateSummarySchema
+>;
 export type DefaultAgentEvaluationDraft = z.infer<typeof DefaultAgentEvaluationDraftSchema>;
 export type DefaultAgentEvaluationDraftDiagnostic = z.infer<
   typeof DefaultAgentEvaluationDraftDiagnosticSchema

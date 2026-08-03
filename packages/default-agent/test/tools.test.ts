@@ -5,7 +5,10 @@ import type {
   DefaultAgentDslProjectPort,
   DefaultAgentTaskPort,
 } from "../src/ports.ts";
-import { DefaultAgentEvaluationDraftSchema } from "../src/contracts.ts";
+import {
+  DefaultAgentEvaluationDraftSchema,
+  DefaultAgentFlowDraftSchema,
+} from "../src/contracts.ts";
 import { createDefaultAgentTools } from "../src/tools.ts";
 
 describe("DefaultAgent managed tools", () => {
@@ -245,6 +248,146 @@ describe("DefaultAgent managed tools", () => {
     ).rejects.toThrow();
   });
 
+  it("keeps the Flow operation schema strict while recovering JSON array strings", async () => {
+    const inputs: Parameters<DefaultAgentDslProjectPort["updateFlowDraft"]>[0][] = [];
+    const project = projectPort({
+      async getFlowDraft() {
+        return flowDraft();
+      },
+      async updateFlowDraft(input) {
+        inputs.push(input);
+        return flowDraft();
+      },
+    });
+    const tools = createDefaultAgentTools({ project, tasks: taskPort() });
+    const update = tools.find((candidate) => candidate.name === "update_flow_draft")!;
+    const get = tools.find((candidate) => candidate.name === "get_flow_draft")!;
+
+    expect(update.inputSchema).toMatchObject({
+      type: "object",
+      properties: {
+        operations: {
+          anyOf: [{ type: "array", minItems: 1, maxItems: 50 }, { type: "string" }],
+          description: expect.stringContaining("native JSON array"),
+        },
+      },
+    });
+    const result = await update.call(
+      {
+        draftId: "4fc96ef9-1825-447d-a17f-d820f6fd4855",
+        expectedDraftRevision: 0,
+        operations: `\n${JSON.stringify([
+          { type: "set_start", stepId: "review" },
+          { type: "remove_step", stepId: "review" },
+          { type: "remove_step", stepId: "review" },
+          { type: "remove_transition", stepId: "review" },
+          { type: "remove_loop", loopId: "retry" },
+          { type: "set_contracts" },
+          { type: "rebase", projectRevision: 3 },
+        ])}\n`,
+      },
+      undefined,
+      undefined,
+    );
+
+    expect(inputs).toHaveLength(1);
+    expect(inputs[0]?.operations).toHaveLength(7);
+    expect(result.details).toMatchObject({
+      draftId: "4fc96ef9-1825-447d-a17f-d820f6fd4855",
+      draftRevision: 1,
+      applied: {
+        operationCount: 7,
+        stepsChanged: ["review"],
+        transitionsChanged: ["review"],
+        loopsChanged: ["retry"],
+        startChanged: true,
+        contractsChanged: true,
+        rebasedToProjectRevision: 3,
+      },
+      diagnostics: [
+        expect.objectContaining({
+          severity: "warning",
+          code: "flow_draft.operations_string_coerced",
+          path: ["operations"],
+        }),
+      ],
+      stepCount: 2,
+      transitionCount: 2,
+      loopCount: 1,
+      hasErrors: false,
+      isComplete: true,
+      updatedAt: "2026-08-03T00:00:01.000Z",
+    });
+    expect(result.details).not.toHaveProperty("resource");
+    expect(result.text).not.toContain('"resource"');
+
+    const nativeResult = await update.call(
+      {
+        draftId: "4fc96ef9-1825-447d-a17f-d820f6fd4855",
+        expectedDraftRevision: 0,
+        operations: [{ type: "remove_step", stepId: "review" }],
+      },
+      undefined,
+      undefined,
+    );
+    expect(inputs).toHaveLength(2);
+    expect(nativeResult.details).toMatchObject({
+      applied: { operationCount: 1, stepsChanged: ["review"] },
+      diagnostics: [],
+    });
+
+    const complete = await get.call(
+      { draftId: "4fc96ef9-1825-447d-a17f-d820f6fd4855" },
+      undefined,
+      undefined,
+    );
+    expect(complete.details).toHaveProperty("resource");
+    expect(complete.details).toMatchObject({ diagnostics: [] });
+  });
+
+  it("rejects malformed string fallbacks before updating a Flow draft", async () => {
+    let updateCount = 0;
+    const project = projectPort({
+      async updateFlowDraft() {
+        updateCount += 1;
+        return flowDraft();
+      },
+    });
+    const update = createDefaultAgentTools({ project, tasks: taskPort() }).find(
+      (candidate) => candidate.name === "update_flow_draft",
+    )!;
+    const base = {
+      draftId: "4fc96ef9-1825-447d-a17f-d820f6fd4855",
+      expectedDraftRevision: 0,
+    };
+
+    await expect(
+      update.call({ ...base, operations: "not json" }, undefined, undefined),
+    ).rejects.toThrow("received a string that could not be parsed as JSON");
+    await expect(
+      update.call({ ...base, operations: '{"type":"set_start"}' }, undefined, undefined),
+    ).rejects.toThrow("parsed string did not contain an array");
+    await expect(
+      update.call({ ...base, operations: "[]" }, undefined, undefined),
+    ).rejects.toThrow();
+    await expect(
+      update.call({ ...base, operations: '[{"type":"unknown_operation"}]' }, undefined, undefined),
+    ).rejects.toThrow();
+    await expect(
+      update.call(
+        {
+          ...base,
+          operations: JSON.stringify(
+            Array.from({ length: 51 }, () => ({ type: "remove_step", stepId: "review" })),
+          ),
+        },
+        undefined,
+        undefined,
+      ),
+    ).rejects.toThrow();
+    expect(updateCount).toBe(0);
+  });
+
   it("exposes approved Automation maintenance tools when the host supplies the port", async () => {
     let operationId = "";
     const automations = automationPort({
@@ -410,5 +553,57 @@ function evaluationDraft() {
     diagnostics: [],
     createdAt: "2026-07-29T00:00:00.000Z",
     updatedAt: "2026-07-29T00:00:01.000Z",
+  });
+}
+
+function flowDraft() {
+  return DefaultAgentFlowDraftSchema.parse({
+    draftId: "4fc96ef9-1825-447d-a17f-d820f6fd4855",
+    baseProjectRevision: 3,
+    draftRevision: 1,
+    resource: {
+      apiVersion: "pragma/v3",
+      kind: "Flow",
+      metadata: {
+        id: "8h9j0k1m2n3p4q5r",
+        name: "Review Flow",
+        description: "Reviews a change.",
+        tags: [],
+      },
+      spec: {
+        graph: {
+          start: "review",
+          steps: {
+            review: {
+              human: {
+                selectionMode: "single",
+                prompt: { segments: [{ text: "Approve?" }] },
+                options: [
+                  { value: "approve", label: "Approve" },
+                  { value: "reject", label: "Reject" },
+                ],
+              },
+            },
+            revise: {
+              human: {
+                selectionMode: "single",
+                prompt: { segments: [{ text: "Revise?" }] },
+                options: [
+                  { value: "revise", label: "Revise" },
+                  { value: "stop", label: "Stop" },
+                ],
+              },
+            },
+          },
+          transitions: { review: { end: true }, revise: { end: true } },
+          loops: {
+            retry: { entry: "review", maxIterations: 2, onLimit: { end: true } },
+          },
+        },
+      },
+    },
+    diagnostics: [],
+    createdAt: "2026-08-03T00:00:00.000Z",
+    updatedAt: "2026-08-03T00:00:01.000Z",
   });
 }

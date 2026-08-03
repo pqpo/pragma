@@ -17,7 +17,11 @@ import {
   DefaultAgentEvaluationDraftViewSchema,
   DefaultAgentFlowDraftOperationSchema,
   DefaultAgentFlowDraftSchema,
+  DefaultAgentFlowDraftUpdateSummarySchema,
   type DefaultAgentEvaluationDraft,
+  type DefaultAgentFlowDraft,
+  type DefaultAgentFlowDraftDiagnostic,
+  type DefaultAgentFlowDraftOperation,
 } from "./contracts.ts";
 import {
   PragmaEvaluationFlowRefSchema,
@@ -65,6 +69,13 @@ const UpdateFlowDraftInput = z.object({
   draftId: z.string().uuid(),
   expectedDraftRevision: z.number().int().nonnegative(),
   operations: z.array(DefaultAgentFlowDraftOperationSchema).min(1).max(50),
+});
+const UpdateFlowDraftToolInput = UpdateFlowDraftInput.extend({
+  operations: z
+    .union([UpdateFlowDraftInput.shape.operations, z.string()])
+    .describe(
+      "Pass a native JSON array. A string containing a JSON array is accepted only as a recovery path.",
+    ),
 });
 const EvaluationDraftRevisionInput = z.object({
   draftId: z.string().uuid(),
@@ -272,15 +283,24 @@ export function createDefaultAgentTools(options: {
     ),
     tool(
       "get_flow_draft",
-      "Read one durable Flow draft with its current diagnostics.",
+      "Read one durable Flow draft with its full resource and current diagnostics.",
       z.toJSONSchema(DraftIdInput),
       async (args) => ok(await options.project.getFlowDraft(DraftIdInput.parse(args).draftId)),
     ),
     tool(
       "update_flow_draft",
-      "Apply typed incremental operations to a Flow draft and validate the new draft revision.",
-      z.toJSONSchema(UpdateFlowDraftInput),
-      async (args) => ok(await options.project.updateFlowDraft(UpdateFlowDraftInput.parse(args))),
+      "Apply typed incremental operations to a Flow draft and return a compact validated revision summary. Use get_flow_draft when the complete resource is needed.",
+      z.toJSONSchema(UpdateFlowDraftToolInput),
+      async (args) => {
+        const { input, warning } = parseUpdateFlowDraftInput(args);
+        return ok(
+          summarizeFlowDraftUpdate(
+            await options.project.updateFlowDraft(input),
+            input.operations,
+            warning,
+          ),
+        );
+      },
     ),
     tool(
       "validate_flow_draft",
@@ -470,6 +490,101 @@ function ok(details: unknown): ExpertAgentToolCallResult {
   return { text: JSON.stringify(details, null, 2), details };
 }
 
+function parseUpdateFlowDraftInput(args: unknown): {
+  readonly input: z.infer<typeof UpdateFlowDraftInput>;
+  readonly warning?: DefaultAgentFlowDraftDiagnostic | undefined;
+} {
+  if (!isRecord(args) || typeof args["operations"] !== "string") {
+    return { input: UpdateFlowDraftInput.parse(args) };
+  }
+
+  let operations: unknown;
+  try {
+    operations = JSON.parse(args["operations"]);
+  } catch {
+    throw new Error(
+      "operations must be a JSON array; received a string that could not be parsed as JSON.",
+    );
+  }
+  if (!Array.isArray(operations)) {
+    throw new Error("operations must be a JSON array; parsed string did not contain an array.");
+  }
+
+  return {
+    input: UpdateFlowDraftInput.parse({ ...args, operations }),
+    warning: {
+      severity: "warning",
+      code: "flow_draft.operations_string_coerced",
+      message: "operations was parsed from a JSON string; pass a native JSON array instead.",
+      path: ["operations"],
+    },
+  };
+}
+
+function summarizeFlowDraftUpdate(
+  draft: DefaultAgentFlowDraft,
+  operations: readonly DefaultAgentFlowDraftOperation[],
+  warning?: DefaultAgentFlowDraftDiagnostic,
+): z.infer<typeof DefaultAgentFlowDraftUpdateSummarySchema> {
+  const stepsChanged = new Set<string>();
+  const transitionsChanged = new Set<string>();
+  const loopsChanged = new Set<string>();
+  let startChanged = false;
+  let contractsChanged = false;
+  let rebasedToProjectRevision: number | undefined;
+
+  for (const operation of operations) {
+    switch (operation.type) {
+      case "set_start":
+        startChanged = true;
+        break;
+      case "upsert_step":
+      case "remove_step":
+        stepsChanged.add(operation.stepId);
+        break;
+      case "set_transition":
+      case "remove_transition":
+        transitionsChanged.add(operation.stepId);
+        break;
+      case "upsert_loop":
+      case "remove_loop":
+        loopsChanged.add(operation.loopId);
+        break;
+      case "set_contracts":
+        contractsChanged = true;
+        break;
+      case "rebase":
+        rebasedToProjectRevision = operation.projectRevision;
+        break;
+    }
+  }
+
+  const diagnostics = warning === undefined ? draft.diagnostics : [warning, ...draft.diagnostics];
+  return DefaultAgentFlowDraftUpdateSummarySchema.parse({
+    draftId: draft.draftId,
+    baseProjectRevision: draft.baseProjectRevision,
+    draftRevision: draft.draftRevision,
+    applied: {
+      operationCount: operations.length,
+      stepsChanged: [...stepsChanged],
+      transitionsChanged: [...transitionsChanged],
+      loopsChanged: [...loopsChanged],
+      startChanged,
+      contractsChanged,
+      ...(rebasedToProjectRevision === undefined ? {} : { rebasedToProjectRevision }),
+    },
+    diagnostics,
+    stepCount: Object.keys(draft.resource.spec.graph.steps).length,
+    transitionCount: Object.keys(draft.resource.spec.graph.transitions).length,
+    loopCount: Object.keys(draft.resource.spec.graph.loops).length,
+    hasErrors: diagnostics.some((diagnostic) => diagnostic.severity === "error"),
+    isComplete: diagnostics.every(
+      (diagnostic) => diagnostic.severity !== "error" && diagnostic.severity !== "incomplete",
+    ),
+    updatedAt: draft.updatedAt,
+  });
+}
+
 function summarizeEvaluationDraft(
   draft: DefaultAgentEvaluationDraft,
 ): z.infer<typeof DefaultAgentEvaluationDraftSummarySchema> {
@@ -512,4 +627,8 @@ function objectSchema(
   required: readonly string[] = [],
 ): Record<string, unknown> {
   return { type: "object", properties, required, additionalProperties: false };
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null && !Array.isArray(value);
 }
