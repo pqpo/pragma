@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useState, type ReactNode } from "react";
+import type { TFunction } from "i18next";
 import { useTranslation } from "react-i18next";
 
 import {
@@ -15,7 +16,9 @@ import {
 } from "@phosphor-icons/react";
 import {
   PragmaExpertTeamResourceSchema,
+  PragmaResourceKindSchema,
   canonicalPragmaResourceRef,
+  parsePragmaReference,
   type PragmaExpertResource,
   type PragmaExpertTeamResource,
   type PragmaFlowResource,
@@ -25,7 +28,10 @@ import {
   pragmaUnicodeLength,
   truncatePragmaTrimmedUnicode,
 } from "@pragma/shared";
-import type { PragmaProjectSnapshot } from "../../../../shared/contracts/index.ts";
+import {
+  DesktopMutationErrorSchema,
+  type PragmaProjectSnapshot,
+} from "../../../../shared/contracts/index.ts";
 
 import { CharacterCount } from "../../components/CharacterCount.tsx";
 import { errorMessage } from "../../lib/errors.ts";
@@ -39,6 +45,17 @@ type TeamExpertPickerKind = "coordinator" | "members";
 export type ResourceEditorMode = "create" | "edit";
 
 const TEAM_EXPERT_RESULT_LIMIT = 8;
+const DELETE_REFERENCE_LIMIT = 2;
+const DELETE_REFERENCE_KIND_KEYS = {
+  expert: "deleteResourceKind.expert",
+  team: "deleteResourceKind.team",
+  flow: "deleteResourceKind.flow",
+  automation: "deleteResourceKind.automation",
+  capability: "deleteResourceKind.capability",
+  "context-store": "deleteResourceKind.contextStore",
+  "runtime-profile": "deleteResourceKind.runtimeProfile",
+  evaluation: "deleteResourceKind.evaluation",
+} as const;
 type FlowHumanPrompt = NonNullable<
   PragmaFlowResource["spec"]["graph"]["steps"][string]["human"]
 >["prompt"];
@@ -49,6 +66,34 @@ function expertRef(expert: PragmaExpertResource): string {
 
 function normalized(value: string): string {
   return value.trim().toLocaleLowerCase();
+}
+
+export function deletePragmaResourceErrorMessage(error: unknown, t: TFunction<"studio">): string {
+  const parsed = DesktopMutationErrorSchema.safeParse(error);
+  if (!parsed.success || parsed.data.code !== "resource_referenced") {
+    return errorMessage(error);
+  }
+
+  const referencedBy = parsed.data.referencedBy ?? [];
+  if (referencedBy.length === 0) return t("deleteResourceReferencedUnknown");
+
+  const visibleReferences = referencedBy.slice(0, DELETE_REFERENCE_LIMIT);
+  const references = visibleReferences
+    .map(({ ref, name }) =>
+      t("deleteResourceReference", {
+        kind: t(
+          DELETE_REFERENCE_KIND_KEYS[
+            PragmaResourceKindSchema.parse(parsePragmaReference(ref).kind)
+          ],
+        ),
+        name,
+      }),
+    )
+    .join(t("deleteResourceReferenceSeparator"));
+  const remaining = referencedBy.length - visibleReferences.length;
+  return remaining > 0
+    ? t("deleteResourceReferencedMore", { references, count: remaining })
+    : t("deleteResourceReferenced", { references });
 }
 
 export function matchingTeamExperts(
@@ -225,7 +270,7 @@ export function PragmaResourceDetailFragment(props: {
     try {
       await props.onDelete();
     } catch (cause) {
-      setDeleteError(errorMessage(cause));
+      setDeleteError(deletePragmaResourceErrorMessage(cause, t));
       setConfirmOpen(false);
     } finally {
       setDeleting(false);
@@ -277,7 +322,7 @@ export function PragmaResourceDetailFragment(props: {
         </div>
       </header>
       {deleteError ? (
-        <p className="form-error" role="alert">
+        <p className="form-error pragma-resource-delete-error" role="alert">
           {deleteError}
         </p>
       ) : null}

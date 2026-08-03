@@ -1615,6 +1615,14 @@ html.is-resizing-sidebar * {
   font-size: 13px;
 }
 
+.pragma-resource-delete-error {
+  display: -webkit-box;
+  overflow: hidden;
+  overflow-wrap: anywhere;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 2;
+}
+
 .provider-actions {
   justify-content: flex-end;
   margin-top: 3px;

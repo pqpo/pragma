@@ -904,10 +904,16 @@ describe("PragmaProjectStore", () => {
 
     await expect(
       project.remove({ baseRevision: 1, ref: "team:p8cbn3cg2avyksn4" }),
-    ).rejects.toMatchObject({ code: "resource_referenced" });
+    ).rejects.toMatchObject({
+      code: "resource_referenced",
+      referencedBy: [{ ref: "flow:n37vf3n8d5g3j195", name: "Team consumer" }],
+    });
     await expect(
       project.remove({ baseRevision: 1, ref: "flow:ceq0qxcgdv75wg6b" }),
-    ).rejects.toMatchObject({ code: "resource_referenced" });
+    ).rejects.toMatchObject({
+      code: "resource_referenced",
+      referencedBy: [{ ref: "flow:3th2yww0c5q3m65t", name: "Parent flow" }],
+    });
     expect((await project.get()).revision).toBe(1);
   });
 
@@ -965,6 +971,7 @@ describe("PragmaProjectStore", () => {
       code: "resource_referenced",
       message:
         "This resource is used by another Expert, Expert Team, Flow, or Evaluation. Remove those dependencies before deleting it.",
+      referencedBy: [{ ref: "evaluation:7h8j9k0m1n2p3q4r", name: "Release Run Dry" }],
     });
   });
 

@@ -51,6 +51,7 @@ function serializeDesktopMutationError(error: unknown): DesktopMutationErrorData
       message: error.message,
       diagnostics: error.diagnostics,
       ...(error.conflict === undefined ? {} : { conflict: error.conflict }),
+      ...(error.referencedBy.length === 0 ? {} : { referencedBy: error.referencedBy }),
     });
   }
   if (error instanceof ExpertDefinitionStoreError) {

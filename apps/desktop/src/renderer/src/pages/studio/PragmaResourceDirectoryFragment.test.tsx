@@ -1,5 +1,5 @@
 import { renderToStaticMarkup } from "react-dom/server";
-import { describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it } from "vitest";
 
 import {
   PragmaExpertResourceSchema,
@@ -8,8 +8,10 @@ import {
   type PragmaExpertResource,
 } from "@pragma/interpreter/ast";
 import type { PragmaProjectSnapshot } from "../../../../shared/contracts/index.ts";
+import { i18n } from "../../i18n/index.ts";
 
 import {
+  deletePragmaResourceErrorMessage,
   matchesResourceDirectoryQuery,
   matchingTeamExperts,
   PragmaResourceDetailFragment,
@@ -17,6 +19,10 @@ import {
   TeamEditor,
 } from "./PragmaResourceDirectoryFragment.tsx";
 import { createEmptyFlow } from "./flow-editor/flow-model.ts";
+
+afterEach(async () => {
+  await i18n.changeLanguage("en");
+});
 
 function expert(index: number): PragmaExpertResource {
   const id = String(index).padStart(16, "0");
@@ -210,6 +216,50 @@ describe("PragmaResourceDirectoryFragment", () => {
 });
 
 describe("PragmaResourceDetailFragment", () => {
+  it.each([
+    ["en", "Expert “Code reviewer”", "Flow “Issue reporter”", "1 more resource"],
+    ["zh-Hans", "专家“Code reviewer”", "流程“Issue reporter”", "另外1个资源"],
+    ["zh-Hant", "專家「Code reviewer」", "流程「Issue reporter」", "另外1個資源"],
+  ] as const)(
+    "localizes and truncates referenced-resource deletion errors in %s",
+    async (locale, first, second, remainder) => {
+      await i18n.changeLanguage(locale);
+      const message = deletePragmaResourceErrorMessage(
+        {
+          code: "resource_referenced",
+          message: "Raw backend message",
+          diagnostics: [],
+          referencedBy: [
+            { ref: "expert:0000000000000001", name: "Code reviewer" },
+            { ref: "flow:ffdfk2cczgqjda7q", name: "Issue reporter" },
+            { ref: "automation:hrxn3mv2e991j2rj", name: "Nightly cleanup" },
+          ],
+        },
+        i18n.getFixedT(locale, "studio"),
+      );
+
+      expect(message).toContain(first);
+      expect(message).toContain(second);
+      expect(message).toContain(remainder);
+      expect(message).not.toContain("Nightly cleanup");
+      expect(message).not.toContain("Raw backend message");
+    },
+  );
+
+  it("uses a localized fallback when reference details are unavailable", async () => {
+    await i18n.changeLanguage("zh-Hans");
+    expect(
+      deletePragmaResourceErrorMessage(
+        {
+          code: "resource_referenced",
+          message: "Raw backend message",
+          diagnostics: [],
+        },
+        i18n.getFixedT("zh-Hans", "studio"),
+      ),
+    ).toBe("该资源仍被其他资源引用，无法删除。请先移除相关依赖关系。");
+  });
+
   it("shows Team details with edit and delete actions", () => {
     const experts = [expert(1), expert(2)];
     const team = PragmaExpertTeamResourceSchema.parse({
