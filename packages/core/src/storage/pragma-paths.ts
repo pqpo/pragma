@@ -104,6 +104,74 @@ export class PragmaPaths {
     return join(this.storageStateRoot(), ".gc.lock");
   }
 
+  canonicalEventDataRoot(): string {
+    return join(this.dataRoot(), "event-bus");
+  }
+
+  canonicalEventFeed(): string {
+    return join(this.canonicalEventDataRoot(), "feed.sqlite");
+  }
+
+  canonicalEventHandoffsRoot(): string {
+    return join(this.stateRoot(), "event-bus", "handoffs");
+  }
+
+  canonicalEventHandoffQuarantineRoot(): string {
+    return join(this.stateRoot(), "event-bus", "handoff-quarantine");
+  }
+
+  canonicalEventHandoff(executionId: string, commitId: string): string {
+    return join(
+      this.canonicalEventHandoffsRoot(),
+      `${encodePragmaPathSegment(executionId)}.${encodePragmaPathSegment(commitId)}.json`,
+    );
+  }
+
+  memoryDataRoot(): string {
+    return join(this.dataRoot(), "memory");
+  }
+
+  memoryStateRoot(): string {
+    return join(this.stateRoot(), "memory");
+  }
+
+  memoryCacheRoot(): string {
+    return join(this.cacheRoot(), "memory");
+  }
+
+  memoryModuleDataRoot(moduleId: string): string {
+    return join(this.memoryDataRoot(), "modules", encodePragmaPathSegment(moduleId));
+  }
+
+  memoryModuleStateRoot(moduleId: string): string {
+    return join(this.memoryStateRoot(), "modules", encodePragmaPathSegment(moduleId));
+  }
+
+  memoryModuleCacheRoot(moduleId: string): string {
+    return join(this.memoryCacheRoot(), "modules", encodePragmaPathSegment(moduleId));
+  }
+
+  memoryPoliciesRoot(): string {
+    return join(this.memoryDataRoot(), "policies");
+  }
+
+  memoryGlobalPolicy(): string {
+    return join(this.memoryPoliciesRoot(), "global.json");
+  }
+
+  memoryExtractorProfile(): string {
+    return join(this.memoryDataRoot(), "extractor-profile.json");
+  }
+
+  memoryAssetPolicy(type: string, id: string): string {
+    return join(
+      this.memoryPoliciesRoot(),
+      "assets",
+      encodePragmaPathSegment(type),
+      `${encodePragmaPathSegment(id)}.json`,
+    );
+  }
+
   deletionJournalRoot(): string {
     return join(this.storageStateRoot(), "deletion-journal");
   }

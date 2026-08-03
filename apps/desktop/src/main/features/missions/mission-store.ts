@@ -25,6 +25,7 @@ import {
   MissionSchema,
   MissionV3Schema,
   MissionV4Schema,
+  MissionV5Schema,
   MissionTimelineRecordSchema,
   MissionChatEntrySchema,
   MissionUserMessageSchema,
@@ -71,6 +72,7 @@ export interface MissionStore {
     readonly executor: MissionExecutor;
     readonly toolPermissionMode?: DesktopToolPermissionMode | undefined;
     readonly modelOverride?: MissionModelOverride | undefined;
+    readonly origin?: Mission["origin"] | undefined;
   }): Promise<Mission>;
   updateOptions(
     id: string,
@@ -210,15 +212,26 @@ export function createMissionStore(options: { readonly missionsPath: string }): 
           ...executor,
           ref: migrateLegacyPragmaResourceRef(executor.ref, legacy.project.id),
         };
-        const migrated = MissionSchema.parse({
+        const migrated = MissionV5Schema.parse({
           ...legacy,
           schemaVersion: "pragma.mission/v5",
           executor: migratedExecutor,
         });
         await writeYamlAtomically(manifestPath(id), migrated);
+        current = migrated;
+      }
+      const versionAfterRefMigration = readSchemaVersion(current);
+      if (versionAfterRefMigration === "pragma.mission/v5") {
+        const legacy = MissionV5Schema.parse(current);
+        const migrated = MissionSchema.parse({
+          ...legacy,
+          schemaVersion: "pragma.mission/v6",
+          origin: { type: "user" },
+        });
+        await writeYamlAtomically(manifestPath(id), migrated);
         return migrated;
       }
-      if (currentVersion !== "pragma.mission/v5") {
+      if (versionAfterRefMigration !== "pragma.mission/v6") {
         throw new MissionStoreError(
           "unsupported_schema",
           `Mission ${id} uses an unsupported schema. Remove the old Mission directory and create a new Mission.`,
@@ -378,6 +391,7 @@ export function createMissionStore(options: { readonly missionsPath: string }): 
         );
         const missions = await Promise.all(directories.map((entry) => readMission(entry.name)));
         return missions
+          .filter((mission) => mission.origin.type === "user")
           .map(toMissionSummary)
           .toSorted((left, right) => right.updatedAt.localeCompare(left.updatedAt));
       } catch (error) {
@@ -394,7 +408,7 @@ export function createMissionStore(options: { readonly missionsPath: string }): 
       const timestamp = new Date().toISOString();
       const goal = input.goal.trim();
       const mission = MissionSchema.parse({
-        schemaVersion: "pragma.mission/v5",
+        schemaVersion: "pragma.mission/v6",
         id,
         title: input.title === undefined ? titleFromGoal(goal) : normalizeMissionTitle(input.title),
         goal,
@@ -405,6 +419,7 @@ export function createMissionStore(options: { readonly missionsPath: string }): 
         executor: input.executor,
         ...(input.flowInput === undefined ? {} : { flowInput: input.flowInput }),
         ...(input.modelOverride === undefined ? {} : { modelOverride: input.modelOverride }),
+        origin: input.origin ?? { type: "user" },
         lifecycleStatus: "active",
         createdAt: timestamp,
         updatedAt: timestamp,

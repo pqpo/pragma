@@ -5,6 +5,7 @@ export * from "./capabilities.ts";
 export * from "./context-stores.ts";
 export * from "./experts.ts";
 export * from "./logging.ts";
+export * from "./memory.ts";
 export * from "./mission-base.ts";
 export * from "./missions.ts";
 export * from "./model-provider.ts";

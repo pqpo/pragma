@@ -202,31 +202,33 @@ Pragma Expert Invocation 或 Flow step。
 
 ```text
 Codex Session ─────┐
-Claude Code Session ├─→ 统一 Evidence → Pragma Memory
+Claude Code Session ├─→ 持久 Evidence Feed → Dynamic Memory
 PI Session ────────┘                       ↓
-                                 Task / Experience
-                                 Fact / Skill
-                                           ↓
-                         注入后续任意 Harness
+                             Knowledge / Skill / CodeGraph
+                                            ↓
+                           注入后续任意 Harness
 ```
 
 Pragma 应拥有记忆语义，Runtime 只负责产生 Evidence 和消费经过授权、筛选的 Context。
 
-四类记忆分别回答不同问题：
+Memory 不是闭合的四类 Record。默认动态投影回答两个基本问题：
 
-- `Task Memory`：当前任务还要记住什么、谁在做什么、还有哪些待办；
-- `Experience Memory`：过去发生过什么、尝试过什么、结果如何；
-- `Fact Memory`：当前确认什么是真的，置信度、时效和冲突是什么；
-- `Skill Memory`：下次遇到类似问题，推荐怎么做。
+- `Episodic Memory`：过去发生过什么、尝试过什么、结果如何；
+- `Semantic Memory`：当前相信什么是真的，置信度、时效和冲突是什么。
+
+TODO、共享白板和 Handoff 是可选 Execution working state，只能作为 Evidence 来源之一。Knowledge、
+CodeGraph 和未来索引是相对稳定、带不可变 Revision 的 Memory type，由独立 Memory Module
+消费同一条 Evidence Feed 后生成。正式 Skill 复用 Capability，不维护平行的 Skill Memory 权威 Store。
 
 记忆不应只是跨 Harness 共享原始聊天记录。Pragma 需要完成：
 
-- 不同 Runtime Evidence 的规范化；
-- Evidence 到 Experience、Fact、Skill 的可审计沉淀；
-- 用户、项目、工作方式、Expert、Team 和 Mission 级 scope；
+- 不同 Runtime、Artifact、Repository 和外部来源 Evidence 的规范化；
+- Evidence 到动态 Memory、Knowledge、Skill 和可扩展资产的可审计沉淀；
+- Host 级静态 Memory Module 注册、独立 checkpoint、重放和失败隔离；
+- 用户、项目、工作方式、Expert、Team 和 Mission 的 subject、ownership 与 binding；
 - shared/private 可见性和最小权限；
 - 冲突、失效、替代、删除和重新提炼；
-- 有界检索和 Context 注入，避免记忆污染；
+- 联邦 Memory Context、有界检索和 Context 注入，避免记忆污染；
 - 加密同步、导出、导入和设备间冲突处理。
 
 工作方式与记忆应形成持续改进闭环：
@@ -325,15 +327,18 @@ Pragma 应建立两个相互增强的循环。
 
 ```text
 跨 Harness 执行
-→ 统一采集 Evidence
-→ 形成 Task / Experience / Fact / Skill Memory
-→ 后续任务按需检索
+→ 持久采集并重放 Evidence
+→ 形成 Episodic / Semantic Dynamic Memory
+→ 有价值的部分形成 Knowledge / Skill / CodeGraph Candidate
+→ 验证后发布不可变 Asset Revision
+→ 后续任务按绑定与权限检索
 → 结果质量提升
-→ 稳定经验经用户确认进入工作方式
+→ 稳定经验经用户确认进入 Knowledge、Skill 或工作方式
 → 工作方式再次被执行和验证
 ```
 
-工作方式是可分享的方法，Memory 是用户持续积累的经验。二者必须关联，但不能默认混在同一个发布包中。
+工作方式是可分享的编排，Dynamic Memory 是持续变化的当前认知，Knowledge 与 Skill 是相对稳定、
+可绑定和可发布的核心资产。它们必须关联，但不能默认混在同一个发布包中。
 
 ## 6. 当前基础与尚未兑现的价值
 
@@ -346,7 +351,7 @@ Pragma 应建立两个相互增强的循环。
 - Runtime Context、Session 所有权、Canonical Event 和 Usage；
 - Pragma YAML DSL、Project Revision 和环境指纹；
 - Plugin、Capability、Context System 和本地凭据边界；
-- Task、Experience、Fact、Skill Memory；
+- 当前插件实现的 Task、Experience、Fact、Skill Memory 原型；
 - Evidence-based distillation 和统一 memory Context；
 - Desktop 的对话入口、Studio 和本地持久化。
 
@@ -395,10 +400,12 @@ Pragma 应建立两个相互增强的循环。
 
 #### 7.3 将跨 Harness Memory 提升为产品级 Memory Plane
 
-- 明确用户、项目、工作方式、Expert、Team、Mission、Execution 的记忆 scope；
+- 按 ADR 031 建立 Host 内置的持久 Evidence Feed、Memory Module SPI 和联邦 Memory Context；
+- 明确用户、项目、工作方式、Expert、Team、Mission、Execution 的 subject、ownership 和 binding；
 - 统一不同 Runtime 的 Evidence identity 和 provenance；
-- 保持 Task Memory 与长期沉淀记忆的生命周期隔离；
-- 实现私有、共享、可发布记忆之间的显式 promotion；
+- 保持可选 Execution working state 与 Memory 生命周期隔离；
+- 实现 Dynamic Memory 到私有、共享、可发布 Knowledge/Skill/CodeGraph Asset 的显式 promotion；
+- 用 CodeGraph 验证新增类型不修改 Core union、默认 Store 或联邦 Context 实现；
 - 支持加密同步、导出、导入、删除和设备间冲突处理；
 - 为记忆注入建立预算、相关性、时效和权限策略；
 - 用跨 Runtime、跨设备恢复测试验证，而不只验证文件 Store。

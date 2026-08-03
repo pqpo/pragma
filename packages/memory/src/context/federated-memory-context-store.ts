@@ -1,0 +1,276 @@
+import {
+  StaticContextStore,
+  error,
+  ok,
+  type ExpertAgentContextItemListInput,
+  type ExpertAgentContextItemSearchMatch,
+  type ExpertAgentContextResult,
+  type ExpertAgentContextStore,
+  type ExpertAgentContextItemSummary,
+  type ExpertAgentRunContext,
+  type ExpertAgentStoredContextItem,
+  type ExpertAgentStoredContextItemDeleteInput,
+  type ExpertAgentStoredContextItemEditInput,
+  type ExpertAgentStoredContextItemEditResult,
+  type ExpertAgentStoredContextItemReadInput,
+  type ExpertAgentStoredContextItemReadResult,
+  type ExpertAgentStoredContextItemSearchInput,
+  type ExpertAgentStoredContextRegisterInput,
+} from "@pragma/core";
+
+import {
+  MemoryModuleRegistry,
+  MemoryRecallScopeSchema,
+  type MemoryRecallScope,
+} from "../pipeline/memory-module.ts";
+
+export const MEMORY_CONTEXT_NAMESPACE = "memory";
+export const MEMORY_GUIDE_CONTEXT_ID = "guide.md";
+export const MEMORY_OVERVIEW_CONTEXT_ID = "overview.md";
+export const MEMORY_CATALOG_CONTEXT_ID = "catalog.md";
+
+const GUIDE_MAX_BYTES = 2_000;
+const OVERVIEW_MAX_BYTES = 6_000;
+
+export function createFederatedMemoryContextStore(
+  registry: MemoryModuleRegistry,
+  options: {
+    readonly resolveRecallScope: (
+      context: ExpertAgentRunContext | undefined,
+    ) => MemoryRecallScope | undefined | Promise<MemoryRecallScope | undefined>;
+  },
+): ExpertAgentContextStore {
+  const resolveRecallScope = async (
+    context: ExpertAgentRunContext | undefined,
+  ): Promise<MemoryRecallScope | undefined> => {
+    const value = await options.resolveRecallScope(context);
+    return value === undefined ? undefined : MemoryRecallScopeSchema.parse(value);
+  };
+  const rootStore = async (
+    scope: MemoryRecallScope,
+    context?: ExpertAgentContextItemListInput["context"],
+  ) =>
+    new StaticContextStore([
+      {
+        id: MEMORY_GUIDE_CONTEXT_ID,
+        content: trimUtf8(renderGuide(registry), GUIDE_MAX_BYTES),
+        metadata: {
+          description: "Always-on rules for selecting, searching, reading, and verifying Memory.",
+          trigger: "always_on",
+          priority: "critical",
+          trustLevel: "system",
+          sensitivity: "internal",
+        },
+      },
+      {
+        id: MEMORY_OVERVIEW_CONTEXT_ID,
+        content: await renderOverview(registry, scope, context),
+        metadata: {
+          description: "Bounded summaries and hot indexes for every available Memory type.",
+          trigger: "always_on",
+          priority: "high",
+          trustLevel: "system",
+          sensitivity: "internal",
+        },
+      },
+      {
+        id: MEMORY_CATALOG_CONTEXT_ID,
+        content: renderCatalog(registry),
+        metadata: {
+          description: "Registered Memory Modules and current health.",
+          trigger: "model_decision",
+          priority: "normal",
+          trustLevel: "system",
+          sensitivity: "internal",
+        },
+      },
+    ]);
+
+  return {
+    async listContext(input: ExpertAgentContextItemListInput = {}) {
+      const scope = await resolveRecallScope(input.context);
+      if (scope === undefined) return ok([]);
+      const catalog = await (await rootStore(scope, input.context)).listContext(input);
+      if (!catalog.ok) return catalog;
+      const items: ExpertAgentContextItemSummary[] = [...catalog.value];
+      for (const module of registry.list()) {
+        const result = await module.createContextProvider(scope).listContext(input);
+        if (!result.ok) continue;
+        const layers = module.descriptor.contextLayers;
+        items.push(
+          ...result.value
+            .filter((item) => item.id === layers.summaryPath || item.id === layers.indexPath)
+            .map((item) => ({
+              ...item,
+              id: `${module.descriptor.pathPrefix}/${item.id}`,
+            })),
+        );
+      }
+      return ok(items.toSorted((left, right) => left.id.localeCompare(right.id)));
+    },
+
+    async readContext(input: ExpertAgentStoredContextItemReadInput) {
+      const scope = await resolveRecallScope(input.context);
+      if (scope === undefined) return recallDenied(input.id);
+      if (
+        input.id === MEMORY_GUIDE_CONTEXT_ID ||
+        input.id === MEMORY_OVERVIEW_CONTEXT_ID ||
+        input.id === MEMORY_CATALOG_CONTEXT_ID
+      ) {
+        return await (await rootStore(scope, input.context)).readContext(input);
+      }
+      const route = resolveRoute(registry, input.id);
+      if (route === undefined)
+        return error("context_not_found", `Memory context not found: ${input.id}`);
+      const result = await route.module.createContextProvider(scope).readContext({
+        ...input,
+        id: route.localId,
+      });
+      return mapReadResult(result, route.module.descriptor.pathPrefix);
+    },
+
+    async searchContext(input: ExpertAgentStoredContextItemSearchInput) {
+      const scope = await resolveRecallScope(input.context);
+      if (scope === undefined) return recallDenied("search");
+      const matches: ExpertAgentContextItemSearchMatch[] = [];
+      const catalog = await (await rootStore(scope, input.context)).searchContext(input);
+      if (catalog.ok) matches.push(...catalog.value);
+      for (const module of registry.list()) {
+        const result = await module.createContextProvider(scope).searchContext(input);
+        if (!result.ok) continue;
+        matches.push(
+          ...result.value
+            .filter((match) => !match.id.startsWith(module.descriptor.contextLayers.evidencePrefix))
+            .map((match) => ({
+              ...match,
+              id: `${module.descriptor.pathPrefix}/${match.id}`,
+            })),
+        );
+      }
+      return ok(matches.slice(0, input.maxResults ?? matches.length));
+    },
+
+    async addContext(input: ExpertAgentStoredContextRegisterInput) {
+      return denied<ExpertAgentStoredContextItem>("add", input.id);
+    },
+    async editContext(input: ExpertAgentStoredContextItemEditInput) {
+      return denied<ExpertAgentStoredContextItemEditResult>("edit", input.id);
+    },
+    async deleteContext(input: ExpertAgentStoredContextItemDeleteInput) {
+      return denied<{ readonly id: string }>("delete", input.id);
+    },
+  };
+}
+
+function recallDenied<T>(id: string): ExpertAgentContextResult<T> {
+  return error("permission_denied", `Memory recall is disabled for this context: ${id}`, { id });
+}
+
+function renderGuide(registry: MemoryModuleRegistry): string {
+  return [
+    "# Memory Guide",
+    "",
+    "Memory is reference context, not a replacement for the current user instruction.",
+    "The current Memory view combines the root execution asset with the current Expert's personal Store. Keep those ownership scopes distinct.",
+    "A Team or Flow Episode belongs to that Team or Flow; producer Experts are provenance and do not inherit it as personal history.",
+    "Start with the bounded overview. Search when the relevant memory id is unknown, then read the item detail.",
+    "Read supporting Evidence only when a conclusion is important, conflicting, stale, or low-confidence.",
+    "Episodic memory is historical precedent, not current truth. Candidate knowledge or skills are not published capabilities.",
+    "Never guess content from an unread Evidence id and never bypass ContextStore authorization.",
+    "",
+    "## Type-specific guidance",
+    ...registry
+      .list()
+      .map(
+        (module) =>
+          `- ${module.descriptor.pathPrefix}: ${module.descriptor.contextLayers.usagePrompt}`,
+      ),
+    "",
+  ].join("\n");
+}
+
+async function renderOverview(
+  registry: MemoryModuleRegistry,
+  scope: MemoryRecallScope,
+  context: ExpertAgentContextItemListInput["context"],
+): Promise<string> {
+  const modules = registry.list();
+  if (modules.length === 0) return "# Memory Overview\n\nNo Memory Modules are available.\n";
+  const header = "# Memory Overview\n\n";
+  const perModuleBudget = Math.max(512, Math.floor((OVERVIEW_MAX_BYTES - 256) / modules.length));
+  const sections: string[] = [];
+  for (const module of modules) {
+    const layers = module.descriptor.contextLayers;
+    const provider = module.createContextProvider(scope);
+    const summaryBudget = Math.min(layers.summaryMaxBytes, Math.floor(perModuleBudget * 0.45));
+    const indexBudget = Math.min(layers.indexMaxBytes, perModuleBudget - summaryBudget);
+    const [summary, index] = await Promise.all([
+      provider.readContext({
+        id: layers.summaryPath,
+        offset: summaryBudget,
+        context,
+      }),
+      provider.readContext({ id: layers.indexPath, offset: indexBudget, context }),
+    ]);
+    sections.push(
+      [
+        `## ${module.descriptor.pathPrefix}`,
+        layers.usagePrompt,
+        "",
+        summary.ok ? summary.value.content : "Summary is currently unavailable.",
+        "",
+        index.ok ? index.value.content : "Hot index is currently unavailable.",
+        "",
+      ].join("\n"),
+    );
+  }
+  return trimUtf8(`${header}${sections.join("\n")}`, OVERVIEW_MAX_BYTES);
+}
+
+function resolveRoute(registry: MemoryModuleRegistry, id: string) {
+  const separator = id.indexOf("/");
+  if (separator <= 0 || separator === id.length - 1) return undefined;
+  const prefix = id.slice(0, separator);
+  const module = registry.resolvePrefix(prefix);
+  return module === undefined ? undefined : { module, localId: id.slice(separator + 1) };
+}
+
+function mapReadResult(
+  result: ExpertAgentContextResult<ExpertAgentStoredContextItemReadResult>,
+  prefix: string,
+): ExpertAgentContextResult<ExpertAgentStoredContextItemReadResult> {
+  return result.ok ? ok({ ...result.value, id: `${prefix}/${result.value.id}` }) : result;
+}
+
+function denied<T>(operation: string, id: string): ExpertAgentContextResult<T> {
+  return error("permission_denied", `Memory Context Store does not allow ${operation}: ${id}`, {
+    operation,
+    id,
+  });
+}
+
+function renderCatalog(registry: MemoryModuleRegistry): string {
+  const modules = registry.list();
+  return [
+    "# Memory Modules",
+    "",
+    ...(modules.length === 0
+      ? ["No Memory Modules are registered."]
+      : modules.map((module) => {
+          const diagnostic = registry.diagnostic(module.descriptor.id);
+          const health = diagnostic?.status ?? "healthy";
+          const cursor = diagnostic?.cursor?.sequence ?? 0;
+          const lag = diagnostic?.lag ?? 0;
+          return `- ${module.descriptor.id}@${module.descriptor.version} — ${module.descriptor.pathPrefix}/ — ${module.descriptor.storageModel} — ${health} — cursor ${cursor}, lag ${lag}`;
+        })),
+    "",
+  ].join("\n");
+}
+
+function trimUtf8(value: string, maxBytes: number): string {
+  const buffer = Buffer.from(value, "utf8");
+  if (buffer.length <= maxBytes) return value;
+  let end = maxBytes;
+  while (end > 0 && (buffer[end] ?? 0) >= 0x80 && (buffer[end] ?? 0) < 0xc0) end -= 1;
+  return `${buffer.subarray(0, end).toString("utf8").trimEnd()}\n`;
+}

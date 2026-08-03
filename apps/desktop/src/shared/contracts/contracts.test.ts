@@ -29,6 +29,10 @@ import {
   UpdateHomeExecutorPreferenceSchema,
   UpdateBuiltInExpertDefinitionSchema,
   UpdateContextStoreFileSchema,
+  DesktopGlobalMemoryPolicySnapshotSchema,
+  DesktopAssetMemoryPolicySnapshotSchema,
+  DesktopMemoryPlaneStatusSchema,
+  UpdateDesktopAssetMemoryPolicySchema,
 } from "./index.ts";
 
 describe("desktop settings contracts", () => {
@@ -58,6 +62,55 @@ describe("desktop settings contracts", () => {
       resolvedLocale: "zh-Hant",
     });
     expect(UpdateDesktopSettingsSchema.safeParse({ localePreference: "fr" }).success).toBe(false);
+  });
+});
+
+describe("desktop memory contracts", () => {
+  it("validates versioned global and asset policy snapshots", () => {
+    expect(
+      DesktopGlobalMemoryPolicySnapshotSchema.parse({
+        revision: 1,
+        effectiveFrom: "2026-08-01T00:00:00.000Z",
+        policy: { capture: "enabled", recall: "enabled", learning: "local-candidates" },
+      }),
+    ).toMatchObject({ revision: 1, policy: { capture: "enabled" } });
+    expect(
+      DesktopAssetMemoryPolicySnapshotSchema.parse({
+        targetRef: { type: "pragma.expert-team", id: "review-team" },
+        revision: 0,
+        effectiveFrom: "1970-01-01T00:00:00.000Z",
+        policy: { capture: "inherit", recall: "disabled", learning: "inherit" },
+        effective: {
+          capture: true,
+          recall: false,
+          learning: "local-candidates",
+          appliedRevisions: [{ scope: "global", revision: 0 }],
+        },
+      }),
+    ).toMatchObject({ targetRef: { type: "pragma.expert-team" }, effective: { recall: false } });
+    expect(
+      UpdateDesktopAssetMemoryPolicySchema.safeParse({
+        targetRef: { type: "pragma.project", id: "project" },
+        expectedRevision: 0,
+        policy: { capture: "inherit", recall: "inherit", learning: "inherit" },
+      }).success,
+    ).toBe(false);
+  });
+
+  it("exposes bounded plane health without sensitive payloads", () => {
+    expect(
+      DesktopMemoryPlaneStatusSchema.parse({
+        state: "running",
+        feed: { lastSequence: 12, eventCount: 10 },
+        delivery: { pending: 1, quarantined: 0 },
+        modules: [],
+      }),
+    ).toEqual({
+      state: "running",
+      feed: { lastSequence: 12, eventCount: 10 },
+      delivery: { pending: 1, quarantined: 0 },
+      modules: [],
+    });
   });
 });
 
@@ -719,7 +772,7 @@ describe("mission contracts", () => {
   it("pins a team executor to a project revision", () => {
     expect(
       MissionSchema.parse({
-        schemaVersion: "pragma.mission/v5",
+        schemaVersion: "pragma.mission/v6",
         id: "00000000-0000-4000-8000-000000000000",
         title: "Deliver the feature",
         goal: "Deliver the feature",
@@ -740,7 +793,7 @@ describe("mission contracts", () => {
 
   it("drops the retired Desktop environment fingerprint from persisted Missions", () => {
     const parsed = MissionSchema.parse({
-      schemaVersion: "pragma.mission/v5",
+      schemaVersion: "pragma.mission/v6",
       id: "00000000-0000-4000-8000-000000000000",
       title: "Continue the mission",
       goal: "Continue the mission",

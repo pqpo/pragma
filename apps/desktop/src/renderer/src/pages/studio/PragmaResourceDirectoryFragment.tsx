@@ -29,6 +29,7 @@ import type { PragmaProjectSnapshot } from "../../../../shared/contracts/index.t
 
 import { CharacterCount } from "../../components/CharacterCount.tsx";
 import { errorMessage } from "../../lib/errors.ts";
+import { AssetMemoryPolicySection } from "../settings/AssetMemoryPolicySection.tsx";
 import { StudioScreenFrame } from "./StudioScreenFrame.tsx";
 import { desktopApi } from "./studio-model.ts";
 import { StudioConfirmationDialog } from "./StudioDialog.tsx";
@@ -595,6 +596,11 @@ export function TeamEditor(props: {
           />
         </label>
       </div>
+      {props.mode === "edit" && props.initial !== undefined ? (
+        <AssetMemoryPolicySection
+          targetRef={{ type: "pragma.expert-team", id: props.initial.metadata.id }}
+        />
+      ) : null}
     </ResourceEditor>
   );
 }

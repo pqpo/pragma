@@ -36,6 +36,7 @@ import type {
 } from "../runtime/runtime-adapter.ts";
 import { mergeUsage, type UsageSink } from "../runtime/usage.ts";
 import { openRuntimeSession } from "../runtime/session-factory.ts";
+import { EXECUTION_CURRENT_EXPERT_ID_ATTR } from "../runtime/run-context.ts";
 import type { RuntimeResolver } from "../runtime-resolver.ts";
 import { createPragmaLogger, type PragmaLoggerProvider } from "../logging/logger.ts";
 import type {
@@ -619,6 +620,7 @@ export interface RunExpertInvocationOptions {
 }
 
 export async function runExpertInvocation(options: RunExpertInvocationOptions): Promise<unknown> {
+  const execution = await requireExecution(options.store, options.executionId);
   const team = isExpertTeam(options.expert) ? options.expert : options.team;
   const nativeExpert = isExpertTeam(options.expert) ? options.expert.coordinator : options.expert;
   const depth = options.depth ?? 0;
@@ -644,8 +646,7 @@ export async function runExpertInvocation(options: RunExpertInvocationOptions): 
   if (orchestrator === undefined && delegation !== undefined) {
     const created: ExpertOrchestrator = new ExpertOrchestrator({
       executionId: options.executionId,
-      rootInvocationId: (await requireExecution(options.store, options.executionId))
-        .rootInvocationId,
+      rootInvocationId: execution.rootInvocationId,
       store: options.store,
       maxConcurrency: delegation.maxConcurrency,
       maxDepth: delegation.maxDepth,
@@ -768,6 +769,10 @@ export async function runExpertInvocation(options: RunExpertInvocationOptions): 
             },
       systemSessionId: options.context.snapshot?.systemSessionId,
       runtimeSession: options.context.snapshot?.runtimeSession,
+      context: {
+        source: executionRootSource(execution.definition),
+        attributes: { [EXECUTION_CURRENT_EXPERT_ID_ATTR]: nativeExpert.id },
+      },
       executionContext,
       humanInteractionHandler,
       modelSelection,
@@ -937,6 +942,16 @@ export async function runExpertInvocation(options: RunExpertInvocationOptions): 
   } finally {
     // Context lifetime is controlled by its owner, not by one Invocation.
   }
+}
+
+function executionRootSource(definition: { readonly kind: string; readonly id: string }) {
+  const type =
+    definition.kind === "expert-team"
+      ? "pragma.expert-team"
+      : definition.kind === "flow"
+        ? "pragma.flow"
+        : "pragma.expert";
+  return { type, id: definition.id };
 }
 
 async function executeAgentJob(

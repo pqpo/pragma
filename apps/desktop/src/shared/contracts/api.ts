@@ -115,6 +115,14 @@ import type {
   PragmaBundleInstallation,
   ResolvePragmaBundleInstallation,
   PragmaBundleInstallationAction,
+  DesktopGlobalMemoryPolicySnapshot,
+  DesktopAssetMemoryPolicySnapshot,
+  UpdateDesktopGlobalMemoryPolicy,
+  GetDesktopAssetMemoryPolicy,
+  UpdateDesktopAssetMemoryPolicy,
+  DesktopMemoryPlaneStatus,
+  DesktopMemoryExtractorProfile,
+  UpdateDesktopMemoryExtractorProfile,
 } from "./types.ts";
 
 export interface PragmaDesktopAPI {
@@ -122,6 +130,21 @@ export interface PragmaDesktopAPI {
   getBridgeSnapshot: () => Promise<DesktopBridgeSnapshot>;
   getDesktopSettings: () => Promise<DesktopSettingsSnapshot>;
   updateDesktopSettings: (input: UpdateDesktopSettings) => Promise<DesktopSettingsSnapshot>;
+  getGlobalMemoryPolicy: () => Promise<DesktopGlobalMemoryPolicySnapshot>;
+  updateGlobalMemoryPolicy: (
+    input: UpdateDesktopGlobalMemoryPolicy,
+  ) => Promise<DesktopGlobalMemoryPolicySnapshot>;
+  getAssetMemoryPolicy: (
+    input: GetDesktopAssetMemoryPolicy,
+  ) => Promise<DesktopAssetMemoryPolicySnapshot>;
+  updateAssetMemoryPolicy: (
+    input: UpdateDesktopAssetMemoryPolicy,
+  ) => Promise<DesktopAssetMemoryPolicySnapshot>;
+  getMemoryPlaneStatus: () => Promise<DesktopMemoryPlaneStatus>;
+  getMemoryExtractorProfile: () => Promise<DesktopMemoryExtractorProfile>;
+  updateMemoryExtractorProfile: (
+    input: UpdateDesktopMemoryExtractorProfile,
+  ) => Promise<DesktopMemoryExtractorProfile>;
   pickWorkspace: () => Promise<PickWorkspaceResult>;
   validateWorkspace: (path: string) => Promise<ValidateWorkspaceResult>;
   getModelProviderSettings: () => Promise<ModelProviderSettingsSnapshot>;

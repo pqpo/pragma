@@ -2209,6 +2209,101 @@ html.is-resizing-sidebar * {
   letter-spacing: 0.035em;
 }
 
+.memory-health-badge,
+.memory-effective-summary {
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  padding: 7px 11px;
+  color: var(--muted);
+  font-size: 12px;
+  white-space: nowrap;
+}
+
+.memory-health-badge.is-running {
+  border-color: color-mix(in srgb, #2e8b57 42%, var(--border));
+  color: #277449;
+  background: color-mix(in srgb, #2e8b57 8%, transparent);
+}
+
+.memory-health-badge.is-degraded {
+  border-color: color-mix(in srgb, #b7791f 48%, var(--border));
+  color: #966016;
+  background: color-mix(in srgb, #b7791f 10%, transparent);
+}
+
+.asset-memory-policy {
+  margin-top: 26px;
+  padding: 22px;
+  border: 1px solid var(--border);
+  border-radius: 18px;
+  background: color-mix(in srgb, var(--surface) 88%, transparent);
+}
+
+.asset-memory-policy-heading {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 20px;
+}
+
+.asset-memory-policy-heading h3 {
+  margin: 0;
+  font-size: 16px;
+}
+
+.asset-memory-policy-heading p {
+  max-width: 650px;
+  margin: 5px 0 0;
+  color: var(--muted);
+  font-size: 13px;
+  line-height: 1.5;
+}
+
+.asset-memory-policy-fields {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 12px;
+  margin-top: 18px;
+}
+
+.asset-memory-policy-fields > label {
+  display: grid;
+  gap: 7px;
+  color: var(--muted);
+  font-size: 12px;
+}
+
+.asset-memory-policy-fields .protocol-select-shell,
+.asset-memory-policy-fields select {
+  width: 100%;
+}
+
+.asset-memory-policy.is-compact {
+  margin-top: 12px;
+  padding: 14px;
+  border-radius: 12px;
+}
+
+.asset-memory-policy.is-compact .asset-memory-policy-heading,
+.asset-memory-policy.is-compact .asset-memory-policy-fields {
+  display: grid;
+  grid-template-columns: 1fr;
+}
+
+.asset-memory-policy.is-compact .memory-effective-summary {
+  white-space: normal;
+}
+
+@media (max-width: 900px) {
+  .asset-memory-policy-fields {
+    grid-template-columns: 1fr;
+  }
+
+  .asset-memory-policy-heading {
+    display: grid;
+  }
+}
+
 .temperature-setting {
   padding-top: 27px;
 }

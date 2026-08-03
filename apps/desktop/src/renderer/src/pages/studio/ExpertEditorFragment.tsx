@@ -30,6 +30,7 @@ import {
 import { ExpertCapabilityPicker } from "./ExpertCapabilityPicker.tsx";
 import { ExpertPluginPicker } from "./ExpertPluginPicker.tsx";
 import { StudioScreenFrame } from "./StudioScreenFrame.tsx";
+import { AssetMemoryPolicySection } from "../settings/AssetMemoryPolicySection.tsx";
 
 type CreateStep = "identity" | "instructions" | "capabilities" | "review";
 export type ExpertEditorMode = "create" | "edit";
@@ -639,6 +640,9 @@ export function ExpertEditorFragment(props: {
                     </dd>
                   </div>
                 </dl>
+                {isEditing ? (
+                  <AssetMemoryPolicySection targetRef={{ type: "pragma.expert", id: draft.id }} />
+                ) : null}
               </div>
             ) : null}
             {error ? (

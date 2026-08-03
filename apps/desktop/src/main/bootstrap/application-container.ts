@@ -15,6 +15,7 @@ import {
   compileBuiltInDefaultAgent,
   createDefaultAgentTools,
 } from "@pragma/default-agent";
+import { MEMORY_CURATOR_REF } from "@pragma/memory";
 
 import { installAutomationHandlers } from "../features/automations/automation-ipc.ts";
 import { createAutomationService } from "../features/automations/automation-service.ts";
@@ -48,6 +49,12 @@ import {
   createMissionRunner,
 } from "../features/missions/mission-runner.ts";
 import { createMissionStore } from "../features/missions/mission-store.ts";
+import { createDesktopMemoryPlane } from "../features/memory/desktop-memory-plane.ts";
+import {
+  createDesktopMemoryCurator,
+  type DesktopMemoryCurator,
+} from "../features/memory/memory-curator.ts";
+import { installMemoryPolicyHandlers } from "../features/memory/memory-policy-ipc.ts";
 import { installModelProviderHandlers } from "../features/model-providers/model-provider-ipc.ts";
 import { createModelProviderStore } from "../features/model-providers/model-provider-store.ts";
 import { createPluginCredentialStore } from "../features/plugins/plugin-credential-store.ts";
@@ -363,6 +370,10 @@ export async function createDesktopApplicationContainer(
     },
   );
   const defaultAgentStateRoot = join(pragmaPaths.stateRoot(), "pragma");
+  const memoryPlane = await createDesktopMemoryPlane({
+    pragmaHome: pragmaPaths.root,
+    logger: mainLogger,
+  });
   const defaultAgentProject = createDesktopDefaultAgentProjectPort({
     project: pragmaProjectStore,
     stateRoot: defaultAgentStateRoot,
@@ -370,6 +381,7 @@ export async function createDesktopApplicationContainer(
     runtimes,
   });
   const defaultAgentToolsRef: { current?: ReturnType<typeof createDefaultAgentTools> } = {};
+  const memoryCuratorRef: { current?: DesktopMemoryCurator } = {};
   const missionRunner = createMissionRunner({
     missions: missionStore,
     project: pragmaProjectStore,
@@ -378,7 +390,9 @@ export async function createDesktopApplicationContainer(
     capabilitiesPath,
     mcpToolRegistryPool,
     pragmaHome: pragmaPaths.root,
+    executionStore: memoryPlane.executionStore,
     contextStores,
+    hostContextStores: [{ namespace: "memory", store: memoryPlane.contextStore }],
     plugins: pluginStore,
     runtimes,
     usage: usageStore,
@@ -388,7 +402,10 @@ export async function createDesktopApplicationContainer(
     automaticHumanInteractionHandlerForToolPermissionMode: (mode) =>
       createAutomaticToolPermissionHandler(() => mode),
     assertStorageWriteAllowed: async () => await storageCapacityGuard.assertWriteAllowed(),
-    getSystemExecutorFingerprint: (mission) => systemExperts.fingerprint(mission.executor.ref),
+    getSystemExecutorFingerprint: async (mission) =>
+      mission.executor.ref === MEMORY_CURATOR_REF
+        ? await memoryCuratorRef.current?.fingerprint()
+        : systemExperts.fingerprint(mission.executor.ref),
     assertExecutorReady: async (ref) => {
       if (await bundleService.isRefPending(ref)) {
         throw new Error(
@@ -397,6 +414,17 @@ export async function createDesktopApplicationContainer(
       }
     },
     compileSystemExecutor: async ({ mission, runtimes: scopedRuntimes }) => {
+      if (mission.executor.ref === MEMORY_CURATOR_REF) {
+        if (memoryCuratorRef.current === undefined) {
+          throw new Error("The Memory Curator has not been initialized.");
+        }
+        return await memoryCuratorRef.current.compile({
+          runtimes: scopedRuntimes,
+          workspace: mission.workspace.path,
+          pragmaHome: pragmaPaths.root,
+          loggerProvider,
+        });
+      }
       if (mission.executor.ref !== BUILT_IN_PRAGMA_REF) return undefined;
       if (defaultAgentToolsRef.current === undefined) {
         throw new Error("The built-in Pragma tools have not been initialized.");
@@ -461,6 +489,18 @@ export async function createDesktopApplicationContainer(
       });
     },
   });
+  const memoryCurator = createDesktopMemoryCurator({
+    profiles: memoryPlane.extractorProfiles,
+    missions: missionStore,
+    runner: missionRunner,
+    project: pragmaProjectStore,
+    runtimes,
+    workspace: initialSettings.defaultWorkspace,
+    pragmaHome: pragmaPaths.root,
+    loggerProvider,
+  });
+  memoryCuratorRef.current = memoryCurator;
+  await memoryPlane.setEpisodicExtractor(memoryCurator.extractor);
   const unsubscribeTokenCounter = tokenCounter.subscribe(() => {
     void missionRunner.invalidateEstimatedContextWindows().catch((error: unknown) => {
       mainLogger.warn(
@@ -529,6 +569,7 @@ export async function createDesktopApplicationContainer(
       }
     },
   });
+  installMemoryPolicyHandlers(memoryPlane);
   installModelProviderHandlers(modelProviderStore, {
     isProviderReferenced: async (providerId) =>
       (await pragmaProjectStore.get()).resources.some(
@@ -585,11 +626,19 @@ export async function createDesktopApplicationContainer(
           { error },
         );
       });
+      memoryPlane.start();
     },
     dispose: () => {
       unsubscribeUsageUpdates();
       unsubscribeTokenCounter();
       automationService.stop();
+      void memoryPlane.stop().catch((error: unknown) => {
+        mainLogger.warn(
+          "desktop.memory_shutdown_failed",
+          "The Memory pipeline could not be stopped cleanly.",
+          { error },
+        );
+      });
       storageCapacityGuard.close();
       tokenCounter.dispose();
       void mcpToolRegistryPool.close().catch((error: unknown) => {

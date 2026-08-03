@@ -2,7 +2,11 @@
 
 ## 状态
 
-Accepted
+Superseded by [ADR 031](./031-extensible-memory-plane.md).
+
+本 ADR 保留为早期四类 Memory 语义模型的历史记录。ADR 031 删除 Task Memory 作为必需长期记忆类型，
+将 Experience 与 Fact 重新定位为默认动态投影，并将 Knowledge、CodeGraph 定义为可扩展、版本化的
+Memory type；Skill Candidate 经评测后升级为现有 Skill Capability。
 
 ## 背景
 

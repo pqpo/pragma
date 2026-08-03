@@ -1,17 +1,19 @@
 import { createHash, randomUUID } from "node:crypto";
-import { mkdir, readFile, rename, rm, stat, writeFile } from "node:fs/promises";
-import { dirname, join } from "node:path";
+import { mkdir, readFile, readdir, rename, rm, stat, writeFile } from "node:fs/promises";
+import { basename, dirname, join } from "node:path";
 import { gzip, gunzip } from "node:zlib";
 import { promisify } from "node:util";
 
 import {
   AgentInstanceSchema,
+  CanonicalEventEnvelopeSchema,
   ExecutionEventSchema,
   ExecutionRecordSchema,
   InvocationSchema,
   RuntimeContextRecordSchema,
   isTerminalExecutionStatus,
   type AgentInstance,
+  type CanonicalEventEnvelope,
   type ExecutionCursor,
   type ExecutionEvent,
   type ExecutionRecord,
@@ -22,6 +24,7 @@ import {
 import { z } from "zod";
 
 import { withFileLock } from "../storage/file-lock.ts";
+import type { CanonicalEventFeed } from "../events/canonical-event-feed.ts";
 import {
   ExecutionCommitJournalSchema,
   executionCommitJournalMigrationChain,
@@ -32,13 +35,17 @@ import {
   migrateExecutionInvocationsV5ToV6,
   migrateInvocationUsageV7ToV8,
 } from "../storage/migrations/execution/index.ts";
-import { PragmaPaths } from "../storage/pragma-paths.ts";
+import { encodePragmaPathSegment, PragmaPaths } from "../storage/pragma-paths.ts";
 import {
   applyAtomicStateMigration,
   recoverAtomicStateMigration,
 } from "../storage/state-migration.ts";
 import { getExecutionLiveBus } from "./execution-live-bus.ts";
 import { sameRuntimeContextOrigin } from "./runtime-context-record.ts";
+import {
+  CanonicalEventHandoffSchema,
+  type CanonicalEventHandoff,
+} from "./canonical-event-handoff.ts";
 
 export const EXECUTION_RECOVERY_CLAIM_STATE_KEY = "__recoveryClaim";
 
@@ -135,6 +142,25 @@ export interface ExecutionStore {
   archive(executionId: string): Promise<void>;
 }
 
+export interface FileExecutionStore extends ExecutionStore {
+  recoverPendingCanonicalEvents(input?: {
+    readonly limit?: number | undefined;
+  }): Promise<CanonicalEventRecoveryResult>;
+  inspectCanonicalEventDelivery(): Promise<CanonicalEventDeliveryStatus>;
+}
+
+export interface CanonicalEventRecoveryResult {
+  readonly recovered: number;
+  readonly pending: number;
+  readonly failed: number;
+  readonly quarantined: number;
+}
+
+export interface CanonicalEventDeliveryStatus {
+  readonly pending: number;
+  readonly quarantined: number;
+}
+
 const ExecutionCommitRecordSchema = z.object({
   commitId: z.string().min(1),
   signature: z.string().length(64),
@@ -145,11 +171,88 @@ const ExecutionCommitRecordSchema = z.object({
 type ExecutionCommitRecord = z.infer<typeof ExecutionCommitRecordSchema>;
 
 export function createFileExecutionStore(
-  options: { readonly pragmaHome?: string } = {},
-): ExecutionStore {
+  options: {
+    readonly pragmaHome?: string | undefined;
+    readonly canonicalEventFeed?: CanonicalEventFeed | undefined;
+    readonly onCanonicalEventDeliveryError?:
+      | ((
+          error: unknown,
+          context: {
+            readonly executionId: string;
+            readonly commitId: string;
+            readonly handoffPath?: string | undefined;
+          },
+        ) => void)
+      | undefined;
+  } = {},
+): FileExecutionStore {
   const paths = new PragmaPaths(options);
 
-  const store: ExecutionStore = {
+  const store: FileExecutionStore = {
+    async recoverPendingCanonicalEvents(input = {}) {
+      if (options.canonicalEventFeed === undefined) {
+        return { recovered: 0, pending: 0, failed: 0, quarantined: 0 };
+      }
+      const files = await listCanonicalHandoffFiles(paths);
+      const selected = files.slice(0, input.limit ?? 1_000);
+      const executionIds = new Set<string>();
+      let recovered = 0;
+      let failed = 0;
+      for (const file of selected) {
+        try {
+          const handoff = await readCanonicalHandoff(file);
+          assertCanonicalHandoffFileOwner(file, handoff.executionId);
+          executionIds.add(handoff.executionId);
+        } catch (error) {
+          failed += 1;
+          const quarantinedPath = await quarantineCanonicalHandoff(paths, file);
+          options.onCanonicalEventDeliveryError?.(error, {
+            executionId: "unknown",
+            commitId: "unknown",
+            handoffPath: quarantinedPath,
+          });
+        }
+      }
+      for (const executionId of executionIds) {
+        if (
+          (await listQuarantinedCanonicalHandoffFilesForExecution(paths, executionId)).length > 0
+        ) {
+          continue;
+        }
+        try {
+          const result = await withFileLock(paths.executionLock(executionId), async () =>
+            recoverCanonicalHandoffsForExecution(paths, executionId, options.canonicalEventFeed!),
+          );
+          recovered += result.recovered;
+          if (result.deliveryFailure !== undefined) {
+            failed += 1;
+            options.onCanonicalEventDeliveryError?.(result.deliveryFailure.error, {
+              executionId,
+              commitId: result.deliveryFailure.handoff.commitId,
+              handoffPath: result.deliveryFailure.file,
+            });
+          }
+        } catch (error) {
+          failed += 1;
+          options.onCanonicalEventDeliveryError?.(error, {
+            executionId,
+            commitId: "pending",
+          });
+        }
+      }
+      return {
+        recovered,
+        pending: (await listCanonicalHandoffFiles(paths)).length,
+        failed,
+        quarantined: (await listQuarantinedCanonicalHandoffFiles(paths)).length,
+      };
+    },
+    async inspectCanonicalEventDelivery() {
+      return {
+        pending: (await listCanonicalHandoffFiles(paths)).length,
+        quarantined: (await listQuarantinedCanonicalHandoffFiles(paths)).length,
+      };
+    },
     async delete(executionId) {
       await withFileLock(paths.executionLock(executionId), async () => {
         await rm(paths.executionRoot(executionId), { recursive: true, force: true });
@@ -158,7 +261,7 @@ export function createFileExecutionStore(
     },
     async archive(executionId) {
       await withFileLock(paths.executionLock(executionId), async () => {
-        await prepareExecution(paths, executionId);
+        await prepareExecution(paths, executionId, options.canonicalEventFeed);
         const state = await requireExecution(paths, executionId);
         if (!isTerminalExecutionStatus(state.status)) {
           throw new Error(`Cannot archive a non-terminal Execution: ${executionId}.`);
@@ -182,7 +285,7 @@ export function createFileExecutionStore(
     async create(record, root) {
       void stableStringify({ record, root });
       await withFileLock(paths.executionLock(record.executionId), async () => {
-        await prepareExecution(paths, record.executionId);
+        await prepareExecution(paths, record.executionId, options.canonicalEventFeed);
         if ((await readJsonIfExists(paths.executionState(record.executionId))) !== undefined) {
           throw new Error(`Execution already exists: ${record.executionId}`);
         }
@@ -202,7 +305,7 @@ export function createFileExecutionStore(
 
     async get(executionId) {
       return await withFileLock(paths.executionLock(executionId), async () => {
-        await prepareExecution(paths, executionId);
+        await prepareExecution(paths, executionId, options.canonicalEventFeed);
         const value = await readJsonIfExists(paths.executionState(executionId));
         if (value === undefined) return undefined;
         const parsed = ExecutionRecordSchema.safeParse(value);
@@ -224,7 +327,7 @@ export function createFileExecutionStore(
       if (request.commitId.trim() === "") throw new Error("Execution commitId must not be empty.");
       const signature = commitSignature(request);
       return await withFileLock(paths.executionLock(request.executionId), async () => {
-        await prepareExecution(paths, request.executionId);
+        await prepareExecution(paths, request.executionId, options.canonicalEventFeed);
         const commits = await readCommitRecords(paths, request.executionId);
         const duplicate = commits.find((commit) => commit.commitId === request.commitId);
         if (duplicate !== undefined) {
@@ -297,8 +400,33 @@ export function createFileExecutionStore(
           events: materialized.newEvents,
           eventIds: materialized.requestedEvents.map((event) => event.eventId),
         });
-        await writeJsonAtomic(paths.executionTransaction(request.executionId), journal);
-        await applyTransaction(paths, request.executionId, journal);
+        if (options.canonicalEventFeed !== undefined && materialized.newEvents.length > 0) {
+          const handoff = CanonicalEventHandoffSchema.parse({
+            schemaVersion: "pragma.canonical-event-handoff/v1",
+            executionId: request.executionId,
+            commitId: request.commitId,
+            signature,
+            createdAt: now,
+            transaction: journal,
+            events: materialized.newEvents.map((event) =>
+              toCanonicalExecutionEvent(event, journal),
+            ),
+          });
+          const handoffPath = paths.canonicalEventHandoff(request.executionId, request.commitId);
+          await writeJsonAtomic(handoffPath, handoff);
+          await applyTransaction(paths, request.executionId, journal);
+          try {
+            await publishCanonicalHandoff(handoffPath, handoff, options.canonicalEventFeed);
+          } catch (error) {
+            options.onCanonicalEventDeliveryError?.(error, {
+              executionId: request.executionId,
+              commitId: request.commitId,
+            });
+          }
+        } else {
+          await writeJsonAtomic(paths.executionTransaction(request.executionId), journal);
+          await applyTransaction(paths, request.executionId, journal);
+        }
         for (const event of materialized.newEvents) {
           getExecutionLiveBus(store).publishEvent(request.executionId, event);
         }
@@ -314,7 +442,7 @@ export function createFileExecutionStore(
 
     async claimRecovery(executionId, claimId, leaseMs) {
       return await withFileLock(paths.executionLock(executionId), async () => {
-        await prepareExecution(paths, executionId);
+        await prepareExecution(paths, executionId, options.canonicalEventFeed);
         const current = await requireExecution(paths, executionId);
         const value = current.state[EXECUTION_RECOVERY_CLAIM_STATE_KEY];
         if (typeof value === "object" && value !== null) {
@@ -350,7 +478,7 @@ export function createFileExecutionStore(
 
     async getInvocation(executionId, invocationId) {
       return await withFileLock(paths.executionLock(executionId), async () => {
-        await prepareExecution(paths, executionId);
+        await prepareExecution(paths, executionId, options.canonicalEventFeed);
         return (await readInvocations(paths, executionId)).find(
           (invocation) => invocation.invocationId === invocationId,
         );
@@ -359,28 +487,28 @@ export function createFileExecutionStore(
 
     async listInvocations(executionId) {
       return await withFileLock(paths.executionLock(executionId), async () => {
-        await prepareExecution(paths, executionId);
+        await prepareExecution(paths, executionId, options.canonicalEventFeed);
         return await readInvocations(paths, executionId);
       });
     },
 
     async getAgent(executionId, agentId) {
       return await withFileLock(paths.executionLock(executionId), async () => {
-        await prepareExecution(paths, executionId);
+        await prepareExecution(paths, executionId, options.canonicalEventFeed);
         return (await readAgents(paths, executionId)).find((agent) => agent.agentId === agentId);
       });
     },
 
     async listAgents(executionId) {
       return await withFileLock(paths.executionLock(executionId), async () => {
-        await prepareExecution(paths, executionId);
+        await prepareExecution(paths, executionId, options.canonicalEventFeed);
         return await readAgents(paths, executionId);
       });
     },
 
     async getContext(executionId, contextId) {
       return await withFileLock(paths.executionLock(executionId), async () => {
-        await prepareExecution(paths, executionId);
+        await prepareExecution(paths, executionId, options.canonicalEventFeed);
         return (await readContexts(paths, executionId)).find(
           (context) => context.contextId === contextId,
         );
@@ -389,7 +517,7 @@ export function createFileExecutionStore(
 
     async listContexts(executionId) {
       return await withFileLock(paths.executionLock(executionId), async () => {
-        await prepareExecution(paths, executionId);
+        await prepareExecution(paths, executionId, options.canonicalEventFeed);
         return await readContexts(paths, executionId);
       });
     },
@@ -404,7 +532,7 @@ export function createFileExecutionStore(
 
     async getTree(executionId) {
       return await withFileLock(paths.executionLock(executionId), async () => {
-        await prepareExecution(paths, executionId);
+        await prepareExecution(paths, executionId, options.canonicalEventFeed);
         const value = await readJsonIfExists(paths.executionState(executionId));
         if (value === undefined) return undefined;
         const record = ExecutionRecordSchema.parse(value);
@@ -425,7 +553,7 @@ export function createFileExecutionStore(
 
     async readEvents(executionId, after) {
       return await withFileLock(paths.executionLock(executionId), async () => {
-        await prepareExecution(paths, executionId);
+        await prepareExecution(paths, executionId, options.canonicalEventFeed);
         return filterAfter(await readExecutionEvents(paths, executionId), executionId, after);
       });
     },
@@ -704,7 +832,11 @@ async function recoverTransaction(paths: PragmaPaths, executionId: string): Prom
   await applyTransaction(paths, executionId, journal.value);
 }
 
-async function prepareExecution(paths: PragmaPaths, executionId: string): Promise<void> {
+async function prepareExecution(
+  paths: PragmaPaths,
+  executionId: string,
+  canonicalEventFeed?: CanonicalEventFeed,
+): Promise<void> {
   try {
     await recoverAtomicStateMigration({
       aggregateRoot: paths.executionRoot(executionId),
@@ -713,6 +845,10 @@ async function prepareExecution(paths: PragmaPaths, executionId: string): Promis
       validateDocuments: validateExecutionMigrationDocuments,
     });
     await recoverTransaction(paths, executionId);
+    if (canonicalEventFeed !== undefined) {
+      await assertNoQuarantinedCanonicalHandoffs(paths, executionId);
+      await recoverCanonicalHandoffsForExecution(paths, executionId, canonicalEventFeed);
+    }
     await migrateExecutionState(paths, executionId);
   } catch (error) {
     if (error instanceof Error && error.message.startsWith("unsupported-state-version:")) {
@@ -720,6 +856,238 @@ async function prepareExecution(paths: PragmaPaths, executionId: string): Promis
     }
     throw unsupportedState(executionId, error);
   }
+}
+
+function toCanonicalExecutionEvent(
+  event: ExecutionEvent,
+  transaction: CanonicalEventHandoff["transaction"],
+): CanonicalEventEnvelope {
+  const eventId = createHash("sha256")
+    .update(JSON.stringify(["pragma.execution-event/v5", event.executionId, event.eventId]))
+    .digest("hex");
+  return CanonicalEventEnvelopeSchema.parse({
+    schemaVersion: "pragma.canonical-event/v1",
+    eventId,
+    topic: "pragma.execution.event.committed",
+    schemaRef: "pragma.execution-event/v5",
+    sourceRef: {
+      type: "pragma.execution-event",
+      id: event.eventId,
+      ownerRef: { type: "pragma.execution", id: event.executionId },
+      cursor: String(event.cursor.sequence),
+    },
+    relatedRefs: canonicalEventRelatedRefs(event, transaction),
+    correlationId: event.executionId,
+    occurredAt: event.occurredAt,
+    payload: event,
+  });
+}
+
+function canonicalEventRelatedRefs(
+  event: ExecutionEvent,
+  transaction: CanonicalEventHandoff["transaction"],
+) {
+  const related = [
+    {
+      relation: "pragma.execution-root",
+      ref: {
+        type: canonicalDefinitionType(transaction.execution.definition.kind),
+        id: transaction.execution.definition.id,
+      },
+    },
+  ];
+  const invocation = transaction.invocations.find(
+    (candidate) => candidate.invocationId === event.invocationId,
+  );
+  const context =
+    invocation === undefined
+      ? undefined
+      : transaction.contexts.find((candidate) => candidate.contextId === invocation.contextId);
+  if (context !== undefined) {
+    related.push({
+      relation: "pragma.event-producer",
+      ref: { type: "pragma.expert", id: context.expert.id },
+    });
+  }
+  return related.filter(
+    (candidate, index, all) =>
+      all.findIndex(
+        (other) =>
+          other.relation === candidate.relation &&
+          other.ref.type === candidate.ref.type &&
+          other.ref.id === candidate.ref.id,
+      ) === index,
+  );
+}
+
+function canonicalDefinitionType(kind: string): string {
+  switch (kind) {
+    case "expert":
+      return "pragma.expert";
+    case "expert-team":
+      return "pragma.expert-team";
+    case "flow":
+      return "pragma.flow";
+    case "task":
+      return "pragma.task";
+    case "human-task":
+      return "pragma.human-task";
+    default:
+      return "pragma.definition";
+  }
+}
+
+async function recoverCanonicalHandoffsForExecution(
+  paths: PragmaPaths,
+  executionId: string,
+  feed: CanonicalEventFeed,
+): Promise<{
+  readonly recovered: number;
+  readonly deliveryFailure?: {
+    readonly error: unknown;
+    readonly file: string;
+    readonly handoff: CanonicalEventHandoff;
+  };
+}> {
+  await assertNoQuarantinedCanonicalHandoffs(paths, executionId);
+  const files = await listCanonicalHandoffFilesForExecution(paths, executionId);
+  const handoffs: { readonly file: string; readonly handoff: CanonicalEventHandoff }[] = [];
+  for (const file of files) {
+    try {
+      const handoff = await readCanonicalHandoff(file);
+      if (handoff.executionId !== executionId) {
+        throw new Error(`Canonical event handoff owner mismatch: ${handoff.executionId}`);
+      }
+      assertCanonicalHandoffFileOwner(file, handoff.executionId);
+      handoffs.push({ file, handoff });
+    } catch (error) {
+      const quarantinedPath = await quarantineCanonicalHandoff(paths, file);
+      throw new Error(
+        `unsupported-state-version:pragma.canonical-event-handoff-quarantined:${executionId}:${quarantinedPath}`,
+        { cause: error },
+      );
+    }
+  }
+  let recovered = 0;
+  for (const entry of handoffs.toSorted(
+    (left, right) =>
+      left.handoff.transaction.execution.version - right.handoff.transaction.execution.version,
+  )) {
+    const result = await recoverCanonicalHandoffFile(paths, entry.file, entry.handoff, feed);
+    if (!result.delivered) {
+      return {
+        recovered,
+        deliveryFailure: { error: result.error, file: entry.file, handoff: entry.handoff },
+      };
+    }
+    recovered += 1;
+  }
+  return { recovered };
+}
+
+async function listCanonicalHandoffFilesForExecution(
+  paths: PragmaPaths,
+  executionId: string,
+): Promise<string[]> {
+  const prefix = `${encodePragmaPathSegment(executionId)}.`;
+  return (await listCanonicalHandoffFiles(paths)).filter((file) =>
+    basename(file).startsWith(prefix),
+  );
+}
+
+function assertCanonicalHandoffFileOwner(file: string, executionId: string): void {
+  const prefix = `${encodePragmaPathSegment(executionId)}.`;
+  if (!basename(file).startsWith(prefix)) {
+    throw new Error(`Canonical event handoff filename owner mismatch: ${executionId}`);
+  }
+}
+
+async function listQuarantinedCanonicalHandoffFilesForExecution(
+  paths: PragmaPaths,
+  executionId: string,
+): Promise<string[]> {
+  const prefix = `${encodePragmaPathSegment(executionId)}.`;
+  return (await listQuarantinedCanonicalHandoffFiles(paths)).filter((file) =>
+    basename(file).startsWith(prefix),
+  );
+}
+
+async function assertNoQuarantinedCanonicalHandoffs(
+  paths: PragmaPaths,
+  executionId: string,
+): Promise<void> {
+  const files = await listQuarantinedCanonicalHandoffFilesForExecution(paths, executionId);
+  if (files.length === 0) return;
+  throw new Error(
+    `unsupported-state-version:pragma.canonical-event-handoff-quarantined:${executionId}:${files[0]}`,
+  );
+}
+
+async function recoverCanonicalHandoffFile(
+  paths: PragmaPaths,
+  file: string,
+  handoff: CanonicalEventHandoff,
+  feed: CanonicalEventFeed,
+): Promise<{ readonly delivered: true } | { readonly delivered: false; readonly error: unknown }> {
+  const commits = await readCommitRecords(paths, handoff.executionId);
+  const committed = commits.find((candidate) => candidate.commitId === handoff.commitId);
+  if (committed === undefined) {
+    await applyTransaction(paths, handoff.executionId, handoff.transaction);
+  } else if (committed.signature !== handoff.signature) {
+    throw new Error(`Canonical event handoff signature conflict: ${handoff.commitId}`);
+  }
+  try {
+    await publishCanonicalHandoff(file, handoff, feed);
+    return { delivered: true };
+  } catch (error) {
+    // Source durability must not depend on transient delivery availability.
+    return { delivered: false, error };
+  }
+}
+
+async function publishCanonicalHandoff(
+  file: string,
+  handoff: CanonicalEventHandoff,
+  feed: CanonicalEventFeed,
+): Promise<void> {
+  await feed.append(handoff.events);
+  await rm(file, { force: true });
+}
+
+async function readCanonicalHandoff(file: string): Promise<CanonicalEventHandoff> {
+  return CanonicalEventHandoffSchema.parse(JSON.parse(await readFile(file, "utf8")));
+}
+
+async function listCanonicalHandoffFiles(paths: PragmaPaths): Promise<string[]> {
+  try {
+    return (await readdir(paths.canonicalEventHandoffsRoot(), { withFileTypes: true }))
+      .filter((entry) => entry.isFile() && entry.name.endsWith(".json"))
+      .map((entry) => join(paths.canonicalEventHandoffsRoot(), entry.name))
+      .toSorted();
+  } catch (error) {
+    if (isNotFound(error)) return [];
+    throw error;
+  }
+}
+
+async function listQuarantinedCanonicalHandoffFiles(paths: PragmaPaths): Promise<string[]> {
+  try {
+    return (await readdir(paths.canonicalEventHandoffQuarantineRoot(), { withFileTypes: true }))
+      .filter((entry) => entry.isFile())
+      .map((entry) => join(paths.canonicalEventHandoffQuarantineRoot(), entry.name))
+      .toSorted();
+  } catch (error) {
+    if (isNotFound(error)) return [];
+    throw error;
+  }
+}
+
+async function quarantineCanonicalHandoff(paths: PragmaPaths, file: string): Promise<string> {
+  const root = paths.canonicalEventHandoffQuarantineRoot();
+  await mkdir(root, { recursive: true, mode: 0o700 });
+  const target = join(root, `${basename(file)}.${randomUUID()}.blocked`);
+  await rename(file, target);
+  return target;
 }
 
 async function migrateExecutionState(paths: PragmaPaths, executionId: string): Promise<void> {

@@ -182,6 +182,17 @@ import {
   UsageSubjectListSchema,
   UsageUpdateSchema,
 } from "./usage.ts";
+import {
+  DesktopAssetMemoryPolicySnapshotSchema,
+  DesktopGlobalMemoryPolicySnapshotSchema,
+  DesktopMemoryPlaneStatusSchema,
+  DesktopMemoryExtractorProfileSchema,
+  DesktopMemoryPolicyTargetSchema,
+  GetDesktopAssetMemoryPolicySchema,
+  UpdateDesktopAssetMemoryPolicySchema,
+  UpdateDesktopGlobalMemoryPolicySchema,
+  UpdateDesktopMemoryExtractorProfileSchema,
+} from "./memory.ts";
 export type DesktopAppInfo = z.infer<typeof DesktopAppInfoSchema>;
 export type PragmaBundleModuleOptions = z.infer<typeof PragmaBundleModuleOptionsSchema>;
 export type PreparePragmaBundleExport = z.infer<typeof PreparePragmaBundleExportSchema>;
@@ -218,6 +229,21 @@ export type UsageSubjectListRequest = z.infer<typeof UsageSubjectListRequestSche
 export type UsageSubjectList = z.infer<typeof UsageSubjectListSchema>;
 export type MissionUsage = z.infer<typeof MissionUsageSchema>;
 export type UsageUpdate = z.infer<typeof UsageUpdateSchema>;
+export type DesktopMemoryPolicyTarget = z.infer<typeof DesktopMemoryPolicyTargetSchema>;
+export type DesktopGlobalMemoryPolicySnapshot = z.infer<
+  typeof DesktopGlobalMemoryPolicySnapshotSchema
+>;
+export type DesktopAssetMemoryPolicySnapshot = z.infer<
+  typeof DesktopAssetMemoryPolicySnapshotSchema
+>;
+export type UpdateDesktopGlobalMemoryPolicy = z.infer<typeof UpdateDesktopGlobalMemoryPolicySchema>;
+export type GetDesktopAssetMemoryPolicy = z.infer<typeof GetDesktopAssetMemoryPolicySchema>;
+export type UpdateDesktopAssetMemoryPolicy = z.infer<typeof UpdateDesktopAssetMemoryPolicySchema>;
+export type DesktopMemoryPlaneStatus = z.infer<typeof DesktopMemoryPlaneStatusSchema>;
+export type DesktopMemoryExtractorProfile = z.infer<typeof DesktopMemoryExtractorProfileSchema>;
+export type UpdateDesktopMemoryExtractorProfile = z.infer<
+  typeof UpdateDesktopMemoryExtractorProfileSchema
+>;
 export type ModelProviderModel = z.infer<typeof ModelProviderModelSchema>;
 export type ModelCompatibilityProfileDescriptor = z.infer<
   typeof ModelCompatibilityProfileDescriptorSchema

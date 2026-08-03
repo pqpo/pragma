@@ -58,7 +58,7 @@ describe("mission store", () => {
       expect.objectContaining({ id: created.id, title: created.title }),
     ]);
     const manifest = await readFile(join(root, "missions", created.id, "mission.yaml"), "utf8");
-    expect(manifest).toContain("schemaVersion: pragma.mission/v5");
+    expect(manifest).toContain("schemaVersion: pragma.mission/v6");
     expect(manifest).toContain("revision: 3");
     expect(manifest).toContain("toolPermissionMode: full-access");
     expect(manifest).toContain("modelOverride:");
@@ -481,7 +481,7 @@ describe("mission store", () => {
     const manifestPath = join(directory, "mission.yaml");
     await writeFile(
       manifestPath,
-      (await readFile(manifestPath, "utf8")).replace("pragma.mission/v5", "pragma.mission/v2"),
+      (await readFile(manifestPath, "utf8")).replace("pragma.mission/v6", "pragma.mission/v2"),
       "utf8",
     );
     await expect(store.get(created.id)).rejects.toMatchObject({ code: "unsupported_schema" });
@@ -510,15 +510,37 @@ describe("mission store", () => {
     await writeFile(manifestPath, formatPragmaYaml(legacy), "utf8");
 
     await expect(store.get(created.id)).resolves.toMatchObject({
-      schemaVersion: "pragma.mission/v5",
+      schemaVersion: "pragma.mission/v6",
       flowInput: { goal: "Legacy Flow goal", workspace },
     });
-    expect(await readFile(manifestPath, "utf8")).toContain("schemaVersion: pragma.mission/v5");
+    expect(await readFile(manifestPath, "utf8")).toContain("schemaVersion: pragma.mission/v6");
 
     const future = parsePragmaYaml(await readFile(manifestPath, "utf8")) as Record<string, unknown>;
-    future["schemaVersion"] = "pragma.mission/v6";
+    future["schemaVersion"] = "pragma.mission/v7";
     await writeFile(manifestPath, formatPragmaYaml(future), "utf8");
     await expect(store.get(created.id)).rejects.toMatchObject({ code: "unsupported_schema" });
+  });
+
+  it("migrates v5 Missions to an explicit user origin", async () => {
+    const root = await temporaryRoot();
+    const store = createMissionStore({ missionsPath: join(root, "missions") });
+    const created = await store.create({
+      workspace: { path: join(root, "workspace"), basename: "workspace" },
+      goal: "Migrate Mission ownership",
+      project: { id: "studio", revision: 1 },
+      executor: missionExecutorSnapshot(expertFixture()),
+    });
+    const manifestPath = join(root, "missions", created.id, "mission.yaml");
+    const legacy = parsePragmaYaml(await readFile(manifestPath, "utf8")) as Record<string, unknown>;
+    legacy["schemaVersion"] = "pragma.mission/v5";
+    delete legacy["origin"];
+    await writeFile(manifestPath, formatPragmaYaml(legacy), "utf8");
+
+    await expect(store.get(created.id)).resolves.toMatchObject({
+      schemaVersion: "pragma.mission/v6",
+      origin: { type: "user" },
+    });
+    expect(await readFile(manifestPath, "utf8")).toContain("type: user");
   });
 });
 

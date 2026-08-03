@@ -2,7 +2,10 @@
 
 ## Status
 
-Proposed.
+Superseded by [ADR 031](./031-extensible-memory-plane.md).
+
+ADR 031 retains evidence-based distillation but replaces the Agent-plugin pipeline with a durable,
+Host-scoped Evidence Feed and an extensible Memory Module SPI.
 
 ## Context
 
