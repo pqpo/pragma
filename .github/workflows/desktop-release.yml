@@ -360,7 +360,7 @@ jobs:
                 --bucket "${ALIYUN_OSS_BUCKET}" \
                 --key "${prefix}/${file}" \
                 --endpoint "${endpoint}" \
-                --output-query '[0].Size' \
+                --output-query 'Header."Content-Length"[0]' \
                 --output-format json \
                 --region "${ALIYUN_OSS_REGION}" \
                 | sed -E '/^[[:space:]]*[0-9.]+\(s\) elapsed[[:space:]]*$/d'
