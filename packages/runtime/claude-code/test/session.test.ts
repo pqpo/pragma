@@ -6,6 +6,7 @@ import { describe, expect, it, vi } from "vitest";
 import type { RuntimeEventMappingContext } from "@pragma/core";
 
 import {
+  consumeClaudeCodeStartupMessages,
   mapClaudeCodeNativeEvent,
   normalizeClaudeToolRuntimeEvents,
   readAssistantMessageEvent,
@@ -15,6 +16,21 @@ import {
   type ClaudeToolStreamState,
   type ClaudeCodeNativeSession,
 } from "../src/session.ts";
+
+describe("Claude Code startup messages", () => {
+  it("consumes mounted messages once without recording them before a turn", () => {
+    const session = {
+      pendingStartupMessages: [{ role: "user", content: "always-on context" }],
+      messages: [],
+    } as unknown as ClaudeCodeNativeSession;
+
+    expect(consumeClaudeCodeStartupMessages(session)).toEqual([
+      { role: "user", content: "always-on context" },
+    ]);
+    expect(consumeClaudeCodeStartupMessages(session)).toEqual([]);
+    expect(session.messages).toEqual([]);
+  });
+});
 
 describe("Claude Code context window", () => {
   it("pairs the latest assistant-step usage with the selected model context window", () => {

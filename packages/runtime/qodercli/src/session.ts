@@ -100,11 +100,19 @@ export async function startQoderTurn(
 ): Promise<RuntimeTurnResult> {
   session.toolRuntimeState.runId = turn.runId;
   session.toolRuntimeState.source = turn.source;
-  session.messages.push({
-    role: "user",
-    content: turn.rawQuery,
-    timestamp: Date.now(),
-  });
+  const timestamp = Date.now();
+  session.messages.push(
+    ...turn.startupMessages.map((message, index) => ({
+      role: message.role,
+      content: message.content,
+      timestamp: timestamp + index,
+    })),
+    {
+      role: "user",
+      content: turn.rawQuery,
+      timestamp: timestamp + turn.startupMessages.length,
+    },
+  );
 
   const prompt = [...turn.startupMessages.map((message) => message.content), turn.prompt].join(
     "\n\n",
@@ -182,18 +190,6 @@ export function consumeQoderStartupMessages(
 ): readonly ExpertAgentStartupMessage[] {
   const startupMessages = session.pendingStartupMessages;
   session.pendingStartupMessages = [];
-
-  if (startupMessages.length > 0) {
-    const timestamp = Date.now();
-    session.messages.push(
-      ...startupMessages.map((message, index) => ({
-        role: message.role,
-        content: message.content,
-        timestamp: timestamp + index,
-      })),
-    );
-  }
-
   return startupMessages;
 }
 

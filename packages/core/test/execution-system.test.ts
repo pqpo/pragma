@@ -3539,6 +3539,15 @@ describe("Expert delegation declarations", () => {
       expect(context.agentContext.startupMessages[0]?.content).toContain(
         "Existing project context.",
       );
+      expect(context.agentContext.startupMessages[0]?.content).toContain(
+        "do not include this block in the generated summary",
+      );
+      expect(context.agentContext.startupMessages[0]?.content).toContain(
+        "supersedes any summary, paraphrase, or older copy",
+      );
+      expect(context.agentContext.systemPrompt).toContain(
+        "use read_expert_context to reload the relevant context id",
+      );
     }
 
     stats.sessionContexts.length = 0;

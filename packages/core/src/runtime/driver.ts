@@ -40,6 +40,12 @@ import {
   type RuntimeEventMappingResult,
   type RuntimeStreamWriter,
 } from "./stream-controller.ts";
+import {
+  RUNTIME_CONTEXT_COMPACTION_STAGES,
+  RUNTIME_STARTUP_MESSAGE_STAGES,
+  readRuntimeContextCompactionProgressData,
+} from "./context-compaction.ts";
+import { defaultRuntimeTokenCounter } from "./token-counter.ts";
 import { mergeUsage, hasNonZeroUsage } from "./usage.ts";
 import { createExpertAgentRunContext, type ExpertAgentRunContext } from "./run-context.ts";
 import { PragmaPaths } from "../storage/pragma-paths.ts";
@@ -174,11 +180,9 @@ export interface RuntimeDriver<TNativeEvent, TNativeSession, TPrepared = Runtime
   readonly defaultOutputParser?: RuntimeOutputParser | undefined;
   readonly outputRetryLimit?: number | undefined;
   readonly resolvePersistence?:
-    | ((context: RuntimePrepareContext) => RuntimeSessionPersistenceSpec | undefined)
-    | undefined;
+    ((context: RuntimePrepareContext) => RuntimeSessionPersistenceSpec | undefined) | undefined;
   readonly prepare?:
-    | ((context: RuntimePrepareContext) => Promise<TPrepared> | TPrepared)
-    | undefined;
+    ((context: RuntimePrepareContext) => Promise<TPrepared> | TPrepared) | undefined;
   readonly createSession: (
     context: RuntimeDriverSessionContext<TPrepared>,
   ) => Promise<TNativeSession> | TNativeSession;
@@ -219,16 +223,14 @@ export interface RuntimeDriver<TNativeEvent, TNativeSession, TPrepared = Runtime
       ) => Promise<RuntimeContextWindowUsage | undefined> | RuntimeContextWindowUsage | undefined)
     | undefined;
   readonly canCompactContext?:
-    | ((session: TNativeSession) => Promise<boolean> | boolean)
-    | undefined;
+    ((session: TNativeSession) => Promise<boolean> | boolean) | undefined;
   readonly compactContext?:
     | ((
         session: TNativeSession,
       ) => Promise<RuntimeContextWindowUsage | undefined> | RuntimeContextWindowUsage | undefined)
     | undefined;
   readonly cancelTurn?:
-    | ((session: TNativeSession, context: RuntimeCancelContext) => Promise<void> | void)
-    | undefined;
+    ((session: TNativeSession, context: RuntimeCancelContext) => Promise<void> | void) | undefined;
   readonly steerTurn?:
     | ((
         session: TNativeSession,
@@ -240,8 +242,7 @@ export interface RuntimeDriver<TNativeEvent, TNativeSession, TPrepared = Runtime
       ) => Promise<void> | void)
     | undefined;
   readonly closeSession?:
-    | ((session: TNativeSession, context: RuntimeCloseContext) => Promise<void> | void)
-    | undefined;
+    ((session: TNativeSession, context: RuntimeCloseContext) => Promise<void> | void) | undefined;
 }
 
 export function defineRuntimeDriver<
@@ -554,6 +555,7 @@ async function createManagedRuntimeSession<TNativeEvent, TNativeSession, TPrepar
       lifecycle,
       logger,
       runContext,
+      startupMessages: agentContext.startupMessages,
       systemSessionId,
       outputRetryLimit: driver.outputRetryLimit,
       defaultOutputParser: driver.defaultOutputParser,
@@ -712,6 +714,8 @@ class ManagedRuntimeSession<TNativeEvent, TNativeSession, TPrepared> {
   private watcher: RuntimeSessionWatcher | undefined;
   private activeRunId: string | undefined;
   private contextWindowCalibrated = false;
+  private initialStartupMessagesConsumed = false;
+  private startupMessagesReinjectionPending = false;
 
   constructor(
     private readonly options: {
@@ -722,6 +726,7 @@ class ManagedRuntimeSession<TNativeEvent, TNativeSession, TPrepared> {
       readonly lifecycle: AgentLifecycle<ExpertAgentRunContext | undefined>;
       readonly logger: PragmaLogger;
       readonly runContext: ExpertAgentRunContext;
+      readonly startupMessages: readonly ExpertAgentStartupMessage[];
       readonly systemSessionId: string;
       readonly outputRetryLimit?: number | undefined;
       readonly defaultOutputParser?: RuntimeOutputParser | undefined;
@@ -775,6 +780,7 @@ class ManagedRuntimeSession<TNativeEvent, TNativeSession, TPrepared> {
           : async () => {
               this.assertIdle("compact the context window");
               const usage = await this.options.driver.compactContext!(this.options.nativeSession);
+              this.rearmStartupMessages();
               await this.options.persistContextWindowUsage(usage ?? null);
               await this.options.checkpoint("context.compacted");
               return usage;
@@ -801,6 +807,7 @@ class ManagedRuntimeSession<TNativeEvent, TNativeSession, TPrepared> {
       context: this.options.runContext,
       logger: this.options.logger,
       mapEvent: this.options.driver.mapEvent,
+      onEvent: (event) => this.observeRuntimeEvent(event),
     });
     let enteredLifecycle = false;
     let finalized = false;
@@ -1012,11 +1019,7 @@ class ManagedRuntimeSession<TNativeEvent, TNativeSession, TPrepared> {
     controller: ReturnType<typeof createRuntimeStreamController<TNativeEvent>>,
     observeUsage: (usage: AgentMessageUsage | undefined) => void,
   ): Promise<RuntimeRunResult<TOutput>> {
-    const startupMessages =
-      this.options.driver.consumeStartupMessages?.(this.options.nativeSession, {
-        agent: this.options.agent,
-        runContext: this.options.runContext,
-      }) ?? [];
+    const startupMessages = this.takeStartupMessages();
     const maxAttempts =
       submission.output === undefined
         ? 1
@@ -1032,8 +1035,11 @@ class ManagedRuntimeSession<TNativeEvent, TNativeSession, TPrepared> {
         attempt === 1
           ? createInitialRuntimePrompt(submission.query, submission.output)
           : createRuntimeOutputRetryPrompt(parseResult);
-      const attemptStartupMessages = attempt === 1 ? startupMessages : [];
       const contextWindow = await this.refreshContextWindow(false);
+      const attemptStartupMessages =
+        attempt === 1
+          ? this.applyStartupMessageBudget(startupMessages, contextWindow, submission, controller)
+          : [];
       controller.resetCapture();
       controller.beginUsagePreview({
         prompt,
@@ -1118,6 +1124,111 @@ class ManagedRuntimeSession<TNativeEvent, TNativeSession, TPrepared> {
     controller.updateUsage(usage);
 
     return createRuntimeRunResult(runId, parseResult.value, usage);
+  }
+
+  private takeStartupMessages(): {
+    readonly kind: "initial" | "reinjection";
+    readonly messages: readonly ExpertAgentStartupMessage[];
+  } {
+    if (!this.initialStartupMessagesConsumed) {
+      this.initialStartupMessagesConsumed = true;
+      const messages =
+        this.options.driver.consumeStartupMessages?.(this.options.nativeSession, {
+          agent: this.options.agent,
+          runContext: this.options.runContext,
+        }) ?? [];
+      if (messages.length > 0) {
+        this.startupMessagesReinjectionPending = false;
+        return { kind: "initial", messages };
+      }
+    }
+
+    if (this.startupMessagesReinjectionPending) {
+      this.startupMessagesReinjectionPending = false;
+      return { kind: "reinjection", messages: this.options.startupMessages };
+    }
+
+    return { kind: "initial", messages: [] };
+  }
+
+  private applyStartupMessageBudget<TOutput>(
+    candidate: {
+      readonly kind: "initial" | "reinjection";
+      readonly messages: readonly ExpertAgentStartupMessage[];
+    },
+    contextWindow: RuntimeContextWindowUsage | undefined,
+    submission: RuntimeSubmitRequest<TOutput>,
+    controller: ReturnType<typeof createRuntimeStreamController<TNativeEvent>>,
+  ): readonly ExpertAgentStartupMessage[] {
+    if (
+      candidate.kind !== "reinjection" ||
+      candidate.messages.length === 0 ||
+      contextWindow?.usedTokens === null ||
+      contextWindow?.usedTokens === undefined
+    ) {
+      return candidate.messages;
+    }
+
+    const remainingTokens = Math.max(
+      0,
+      contextWindow.contextWindowTokens - contextWindow.usedTokens,
+    );
+    const thresholdTokens = Math.floor(remainingTokens * 0.5);
+    const count = defaultRuntimeTokenCounter.countText(
+      candidate.messages.map((message) => message.content).join("\n\n"),
+      {
+        runtimeKind: this.options.descriptor.kind,
+        providerId: submission.modelSelection?.model.providerId,
+        modelId: submission.modelSelection?.model.modelId,
+      },
+    );
+    if (count.tokens <= thresholdTokens) {
+      return candidate.messages;
+    }
+
+    const data = {
+      reason: "insufficient_remaining_context",
+      startupMessageTokens: count.tokens,
+      tokenCountSource: count.source,
+      remainingTokens,
+      thresholdTokens,
+      thresholdRatio: 0.5,
+      contextWindow,
+    };
+    this.options.logger.warn(
+      "runtime.startup_messages_reinjection_skipped",
+      "Always-on context reinjection was skipped because it exceeded the remaining context budget.",
+      data,
+    );
+    controller.writer.write({
+      runId: controller.source.runId,
+      source: controller.source,
+      type: "progress",
+      payload: {
+        stage: RUNTIME_STARTUP_MESSAGE_STAGES.reinjectionSkipped,
+        message:
+          "Always-on context reinjection was skipped; use read_expert_context when the full context is needed.",
+        data,
+      },
+    });
+    return [];
+  }
+
+  private observeRuntimeEvent(event: RuntimeStreamEvent): void {
+    if (
+      event.type !== "progress" ||
+      event.payload.stage !== RUNTIME_CONTEXT_COMPACTION_STAGES.completed ||
+      readRuntimeContextCompactionProgressData(event.payload.data) === undefined
+    ) {
+      return;
+    }
+    this.rearmStartupMessages();
+  }
+
+  private rearmStartupMessages(): void {
+    if (this.options.startupMessages.length > 0) {
+      this.startupMessagesReinjectionPending = true;
+    }
   }
 }
 
