@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useId, useMemo, useState } from "react";
 import { MagnifyingGlass, ShieldCheck, Trash, WarningCircle } from "@phosphor-icons/react";
 import { useTranslation } from "react-i18next";
 
@@ -191,60 +191,8 @@ export function MemoryPage() {
                         {t("recall")} {binding.recall} · {t("export")} {binding.export} · p
                         {binding.permissionRevision}
                       </span>
-                      {binding.recall === "allow" ? (
-                        <button
-                          type="button"
-                          disabled={reason.trim() === "" || actionBusy}
-                          onClick={() =>
-                            void run(
-                              async () =>
-                                await window.pragmaDesktop.tightenMemoryAccess({
-                                  module: selected.module,
-                                  id: selected.id,
-                                  expectedRevision: selected.revision,
-                                  reason,
-                                  bindings: selected.bindings.map((candidate) =>
-                                    candidate === binding
-                                      ? {
-                                          ...candidate,
-                                          recall: "deny",
-                                          permissionRevision: candidate.permissionRevision + 1,
-                                        }
-                                      : candidate,
-                                  ),
-                                }),
-                            )
-                          }
-                        >
-                          {t("disableRecall")}
-                        </button>
-                      ) : null}
                     </div>
                   ))}
-                  {selected.visibility.mode === "restricted" ||
-                  selected.rootRefs.length === 0 ? null : (
-                    <button
-                      type="button"
-                      disabled={reason.trim() === "" || actionBusy}
-                      onClick={() =>
-                        void run(
-                          async () =>
-                            await window.pragmaDesktop.tightenMemoryAccess({
-                              module: selected.module,
-                              id: selected.id,
-                              expectedRevision: selected.revision,
-                              reason,
-                              visibility: {
-                                mode: "restricted",
-                                principals: selected.rootRefs,
-                              },
-                            }),
-                        )
-                      }
-                    >
-                      {t("restrictVisibility")}
-                    </button>
-                  )}
                 </section>
                 <section>
                   <h3>{t("evidence")}</h3>
@@ -334,6 +282,63 @@ export function MemoryPage() {
                   >
                     <Trash size={17} aria-hidden="true" /> {t("forget")}
                   </button>
+                  {selected.bindings.map((binding) =>
+                    binding.recall === "allow" ? (
+                      <MemoryActionWithTooltip
+                        key={`${binding.consumerRef.type}:${binding.consumerRef.id}`}
+                        disabled={reason.trim() === "" || actionBusy}
+                        label={t("disableRecall")}
+                        tooltip={t("disableRecallTooltip", {
+                          consumer: refs([binding.consumerRef]),
+                        })}
+                        onClick={() =>
+                          void run(
+                            async () =>
+                              await window.pragmaDesktop.tightenMemoryAccess({
+                                module: selected.module,
+                                id: selected.id,
+                                expectedRevision: selected.revision,
+                                reason,
+                                bindings: selected.bindings.map((candidate) =>
+                                  candidate === binding
+                                    ? {
+                                        ...candidate,
+                                        recall: "deny",
+                                        permissionRevision: candidate.permissionRevision + 1,
+                                      }
+                                    : candidate,
+                                ),
+                              }),
+                          )
+                        }
+                      />
+                    ) : null,
+                  )}
+                  {selected.visibility.mode === "restricted" ||
+                  selected.rootRefs.length === 0 ? null : (
+                    <MemoryActionWithTooltip
+                      disabled={reason.trim() === "" || actionBusy}
+                      label={t("restrictVisibility")}
+                      tooltip={t("restrictVisibilityTooltip", {
+                        principals: refs(selected.rootRefs),
+                      })}
+                      onClick={() =>
+                        void run(
+                          async () =>
+                            await window.pragmaDesktop.tightenMemoryAccess({
+                              module: selected.module,
+                              id: selected.id,
+                              expectedRevision: selected.revision,
+                              reason,
+                              visibility: {
+                                mode: "restricted",
+                                principals: selected.rootRefs,
+                              },
+                            }),
+                        )
+                      }
+                    />
+                  )}
                 </div>
               </>
             )}
@@ -424,6 +429,30 @@ export function MemoryPage() {
         />
       ) : null}
     </section>
+  );
+}
+
+export function MemoryActionWithTooltip(props: {
+  readonly disabled: boolean;
+  readonly label: string;
+  readonly tooltip: string;
+  readonly onClick: () => void;
+}) {
+  const tooltipId = useId();
+  return (
+    <span className="memory-action-with-tooltip">
+      <button
+        type="button"
+        aria-describedby={tooltipId}
+        disabled={props.disabled}
+        onClick={props.onClick}
+      >
+        {props.label}
+      </button>
+      <span id={tooltipId} className="memory-action-tooltip" role="tooltip">
+        {props.tooltip}
+      </span>
+    </span>
   );
 }
 

@@ -24,7 +24,11 @@ export const memory = {
   evidence: "證據",
   reason: "本次變更原因",
   disableRecall: "關閉召回",
+  disableRecallTooltip:
+    "禁止綁定「{{consumer}}」繼續召回這筆記憶。記憶不會被刪除，其他綁定不受影響。",
   restrictVisibility: "縮小可見性",
+  restrictVisibilityTooltip:
+    "將這筆記憶改為僅根資產主體（{{principals}}）可見，其他主體將無法再發現它。",
   verify: "驗證事實",
   revise: "修正事實",
   invalidate: "設為失效",

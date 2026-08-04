@@ -15606,7 +15606,6 @@ textarea:focus-visible,
   border-top: 1px solid var(--border);
 }
 
-.memory-binding button,
 .memory-evidence-list button,
 .memory-actions button {
   padding: 7px 10px;
@@ -15646,7 +15645,7 @@ textarea:focus-visible,
   display: flex;
   flex-wrap: wrap;
   gap: 8px;
-  margin-top: 12px;
+  margin: 12px 0 48px;
 }
 
 .memory-actions button {
@@ -15658,6 +15657,53 @@ textarea:focus-visible,
 .memory-actions button.is-danger {
   border-color: #e3b1aa;
   color: #9a3f35;
+}
+
+.memory-action-with-tooltip {
+  position: relative;
+  display: inline-flex;
+}
+
+.memory-action-tooltip {
+  position: absolute;
+  z-index: 4;
+  top: calc(100% + 8px);
+  left: 50%;
+  width: max-content;
+  max-width: min(320px, calc(100vw - 80px));
+  padding: 7px 9px;
+  border-radius: 7px;
+  background: #35443b;
+  color: #fff;
+  font-size: 12px;
+  line-height: 1.45;
+  opacity: 0;
+  pointer-events: none;
+  text-align: left;
+  transform: translate(-50%, -3px);
+  transition:
+    opacity 120ms ease,
+    transform 120ms ease;
+  visibility: hidden;
+  white-space: normal;
+}
+
+.memory-action-with-tooltip:hover .memory-action-tooltip,
+.memory-action-with-tooltip:focus-within .memory-action-tooltip {
+  opacity: 1;
+  transform: translate(-50%, 0);
+  visibility: visible;
+}
+
+.memory-action-with-tooltip:last-child .memory-action-tooltip {
+  right: 0;
+  left: auto;
+  transform: translate(0, -3px);
+}
+
+.memory-action-with-tooltip:last-child:hover .memory-action-tooltip,
+.memory-action-with-tooltip:last-child:focus-within .memory-action-tooltip {
+  transform: translate(0, 0);
 }
 
 .memory-dialog-field {
