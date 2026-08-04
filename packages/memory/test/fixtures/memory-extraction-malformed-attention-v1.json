@@ -1,0 +1,156 @@
+{
+  "episodic": [
+    {
+      "schemaVersion": "pragma.memory-extraction-job/v1",
+      "id": "legacy-episodic-0",
+      "executionId": "legacy-episodic-execution-0",
+      "terminalMessageId": "legacy-episodic-terminal-0",
+      "status": "needs_attention",
+      "attempts": 3,
+      "lastErrorCode": "[\n  {\n    \"origin\"",
+      "updatedAt": "2026-08-01T00:00:00.000Z"
+    },
+    {
+      "schemaVersion": "pragma.memory-extraction-job/v1",
+      "id": "legacy-episodic-1",
+      "executionId": "legacy-episodic-execution-1",
+      "terminalMessageId": "legacy-episodic-terminal-1",
+      "status": "needs_attention",
+      "attempts": 3,
+      "lastErrorCode": "[\n  {\n    \"origin\"",
+      "updatedAt": "2026-08-01T00:00:01.000Z"
+    },
+    {
+      "schemaVersion": "pragma.memory-extraction-job/v1",
+      "id": "legacy-episodic-2",
+      "executionId": "legacy-episodic-execution-2",
+      "terminalMessageId": "legacy-episodic-terminal-2",
+      "status": "needs_attention",
+      "attempts": 3,
+      "lastErrorCode": "[\n  {\n    \"origin\"",
+      "updatedAt": "2026-08-01T00:00:02.000Z"
+    },
+    {
+      "schemaVersion": "pragma.memory-extraction-job/v1",
+      "id": "legacy-episodic-3",
+      "executionId": "legacy-episodic-execution-3",
+      "terminalMessageId": "legacy-episodic-terminal-3",
+      "status": "needs_attention",
+      "attempts": 3,
+      "lastErrorCode": "[\n  {\n    \"origin\"",
+      "updatedAt": "2026-08-01T00:00:03.000Z"
+    },
+    {
+      "schemaVersion": "pragma.memory-extraction-job/v1",
+      "id": "legacy-episodic-4",
+      "executionId": "legacy-episodic-execution-4",
+      "terminalMessageId": "legacy-episodic-terminal-4",
+      "status": "needs_attention",
+      "attempts": 3,
+      "lastErrorCode": "[\n  {\n    \"origin\"",
+      "updatedAt": "2026-08-01T00:00:04.000Z"
+    },
+    {
+      "schemaVersion": "pragma.memory-extraction-job/v1",
+      "id": "legacy-episodic-5",
+      "executionId": "legacy-episodic-execution-5",
+      "terminalMessageId": "legacy-episodic-terminal-5",
+      "status": "needs_attention",
+      "attempts": 3,
+      "lastErrorCode": "[\n  {\n    \"origin\"",
+      "updatedAt": "2026-08-01T00:00:05.000Z"
+    }
+  ],
+  "semantic": [
+    {
+      "schemaVersion": "pragma.memory-semantic-job/v1",
+      "id": "legacy-semantic-0",
+      "executionId": "legacy-semantic-execution-0",
+      "terminalMessageId": "legacy-semantic-terminal-0",
+      "status": "needs_attention",
+      "attempts": 3,
+      "lastErrorCode": "[\n  {\n    \"origin\"",
+      "updatedAt": "2026-08-01T00:01:00.000Z"
+    },
+    {
+      "schemaVersion": "pragma.memory-semantic-job/v1",
+      "id": "legacy-semantic-1",
+      "executionId": "legacy-semantic-execution-1",
+      "terminalMessageId": "legacy-semantic-terminal-1",
+      "status": "needs_attention",
+      "attempts": 3,
+      "lastErrorCode": "[\n  {\n    \"origin\"",
+      "updatedAt": "2026-08-01T00:01:01.000Z"
+    },
+    {
+      "schemaVersion": "pragma.memory-semantic-job/v1",
+      "id": "legacy-semantic-2",
+      "executionId": "legacy-semantic-execution-2",
+      "terminalMessageId": "legacy-semantic-terminal-2",
+      "status": "needs_attention",
+      "attempts": 3,
+      "lastErrorCode": "[\n  {\n    \"origin\"",
+      "updatedAt": "2026-08-01T00:01:02.000Z"
+    },
+    {
+      "schemaVersion": "pragma.memory-semantic-job/v1",
+      "id": "legacy-semantic-3",
+      "executionId": "legacy-semantic-execution-3",
+      "terminalMessageId": "legacy-semantic-terminal-3",
+      "status": "needs_attention",
+      "attempts": 3,
+      "lastErrorCode": "[\n  {\n    \"origin\"",
+      "updatedAt": "2026-08-01T00:01:03.000Z"
+    },
+    {
+      "schemaVersion": "pragma.memory-semantic-job/v1",
+      "id": "legacy-semantic-4",
+      "executionId": "legacy-semantic-execution-4",
+      "terminalMessageId": "legacy-semantic-terminal-4",
+      "status": "needs_attention",
+      "attempts": 3,
+      "lastErrorCode": "[\n  {\n    \"origin\"",
+      "updatedAt": "2026-08-01T00:01:04.000Z"
+    },
+    {
+      "schemaVersion": "pragma.memory-semantic-job/v1",
+      "id": "legacy-semantic-5",
+      "executionId": "legacy-semantic-execution-5",
+      "terminalMessageId": "legacy-semantic-terminal-5",
+      "status": "needs_attention",
+      "attempts": 3,
+      "lastErrorCode": "[\n  {\n    \"origin\"",
+      "updatedAt": "2026-08-01T00:01:05.000Z"
+    },
+    {
+      "schemaVersion": "pragma.memory-semantic-job/v1",
+      "id": "legacy-semantic-6",
+      "executionId": "legacy-semantic-execution-6",
+      "terminalMessageId": "legacy-semantic-terminal-6",
+      "status": "needs_attention",
+      "attempts": 3,
+      "lastErrorCode": "[\n  {\n    \"origin\"",
+      "updatedAt": "2026-08-01T00:01:06.000Z"
+    },
+    {
+      "schemaVersion": "pragma.memory-semantic-job/v1",
+      "id": "legacy-semantic-7",
+      "executionId": "legacy-semantic-execution-7",
+      "terminalMessageId": "legacy-semantic-terminal-7",
+      "status": "needs_attention",
+      "attempts": 3,
+      "lastErrorCode": "[\n  {\n    \"origin\"",
+      "updatedAt": "2026-08-01T00:01:07.000Z"
+    },
+    {
+      "schemaVersion": "pragma.memory-semantic-job/v1",
+      "id": "legacy-semantic-8",
+      "executionId": "legacy-semantic-execution-8",
+      "terminalMessageId": "legacy-semantic-terminal-8",
+      "status": "needs_attention",
+      "attempts": 3,
+      "lastErrorCode": "[\n  {\n    \"origin\"",
+      "updatedAt": "2026-08-01T00:01:08.000Z"
+    }
+  ]
+}

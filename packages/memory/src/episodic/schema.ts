@@ -9,8 +9,8 @@ import { z } from "zod";
 
 import { MemoryEvidenceOmissionStatsSchema } from "../storage/bounded-evidence.ts";
 
-export const EPISODIC_MEMORY_SCHEMA_VERSION = "pragma.memory-episodic/v2" as const;
-export const EPISODIC_JOB_SCHEMA_VERSION = "pragma.memory-extraction-job/v2" as const;
+export const EPISODIC_MEMORY_SCHEMA_VERSION = "pragma.memory-episodic/v3" as const;
+export const EPISODIC_JOB_SCHEMA_VERSION = "pragma.memory-extraction-job/v3" as const;
 
 const EvidenceRefsSchema = z.array(z.string().min(1)).min(1).max(100);
 
@@ -52,6 +52,9 @@ export const EpisodicMemoryRecordSchema = z.object({
   schemaVersion: z.literal(EPISODIC_MEMORY_SCHEMA_VERSION),
   id: z.string().min(1),
   revision: z.number().int().positive(),
+  conversationRef: MemorySubjectRefSchema,
+  sourceExecutionIds: z.array(z.string().min(1)).min(1).max(1_000),
+  sourceUpdatedAt: z.string().datetime(),
   executionId: z.string().min(1),
   terminalMessageId: z.string().min(1),
   rootRefs: z.array(MemorySubjectRefSchema).max(100),
@@ -109,12 +112,17 @@ export const EpisodicExtractionJobSchema = z.object({
   schemaVersion: z.literal(EPISODIC_JOB_SCHEMA_VERSION),
   id: z.string().min(1),
   revision: z.number().int().positive(),
+  conversationRef: MemorySubjectRefSchema,
+  sourceExecutionIds: z.array(z.string().min(1)).min(1).max(1_000),
+  sourceUpdatedAt: z.string().datetime(),
+  inputWatermark: z.string().min(1),
   executionId: z.string().min(1),
   terminalMessageId: z.string().min(1),
-  status: z.enum(["pending", "running", "needs_attention", "completed", "expired"]),
+  status: z.enum(["waiting_idle", "pending", "running", "needs_attention", "completed", "expired"]),
   attempts: z.number().int().nonnegative(),
   totalAttempts: z.number().int().nonnegative(),
   retryAt: z.string().datetime().optional(),
+  eligibleAt: z.string().datetime().optional(),
   leaseUntil: z.string().datetime().optional(),
   lastErrorCode: z.string().min(1).optional(),
   failureClass: z.enum(["configuration", "transient-exhausted"]).optional(),
@@ -132,7 +140,10 @@ export type EpisodicExtractionJob = z.infer<typeof EpisodicExtractionJobSchema>;
 export type EpisodicExtractorProvenance = z.infer<typeof EpisodicExtractorProvenanceSchema>;
 
 export interface EpisodicMemoryExtractor {
-  extract(input: EpisodicExtractionInput): Promise<{
+  extract(
+    input: EpisodicExtractionInput,
+    options?: { readonly signal?: AbortSignal },
+  ): Promise<{
     readonly output: EpisodicExtractionOutput;
     readonly provenance: EpisodicExtractorProvenance;
   }>;

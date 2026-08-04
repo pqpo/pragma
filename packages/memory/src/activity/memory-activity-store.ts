@@ -40,6 +40,7 @@ export const MemoryExecutionContextSchema = z
   .object({
     schemaVersion: z.literal("pragma.memory-execution-context/v1"),
     executionId: z.string().min(1),
+    conversationRef: MemorySubjectRefSchema.optional(),
     principalRefs: z.array(MemorySubjectRefSchema),
     registeredAt: z.string().datetime(),
   })
@@ -71,6 +72,7 @@ export type MemoryExecutionActivitySummary = z.infer<typeof MemoryExecutionActiv
 export interface MemoryActivityStore {
   registerExecutionContext(input: {
     readonly executionId: string;
+    readonly conversationRef?: MemorySubjectRef | undefined;
     readonly principalRefs: readonly MemorySubjectRef[];
     readonly now?: Date | undefined;
   }): Promise<void>;
@@ -111,6 +113,7 @@ export function createMemoryActivityStore(options: {
       const context = MemoryExecutionContextSchema.parse({
         schemaVersion: "pragma.memory-execution-context/v1",
         executionId: input.executionId,
+        ...(input.conversationRef === undefined ? {} : { conversationRef: input.conversationRef }),
         principalRefs: uniqueRefs(input.principalRefs),
         registeredAt: (input.now ?? new Date()).toISOString(),
       });

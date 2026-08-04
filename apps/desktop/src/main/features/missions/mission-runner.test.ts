@@ -131,6 +131,8 @@ describe("MissionRunner", { timeout: 15_000 }, () => {
       mapEvent: () => ({ events: [] }),
     });
     const onExecutionLinked = vi.fn(async () => undefined);
+    const onMissionActivity = vi.fn(async () => undefined);
+    const onExecutionTerminal = vi.fn(async () => undefined);
     const runner = createMissionRunner({
       missions,
       project,
@@ -145,6 +147,8 @@ describe("MissionRunner", { timeout: 15_000 }, () => {
       assertStorageWriteAllowed: async () => undefined,
       hostContextStores: [{ namespace: "memory", store: new InMemoryContextStore() }],
       onExecutionLinked,
+      onMissionActivity,
+      onExecutionTerminal,
     });
 
     await runner.run(mission.id);
@@ -171,6 +175,8 @@ describe("MissionRunner", { timeout: 15_000 }, () => {
       mission: expect.objectContaining({ id: mission.id }),
       executionId: expect.any(String),
     });
+    expect(onMissionActivity).toHaveBeenCalledTimes(2);
+    await vi.waitFor(() => expect(onExecutionTerminal).toHaveBeenCalledTimes(2));
   });
 
   it("creates a successor Session when the live execution definition changes", async () => {

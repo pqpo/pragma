@@ -5,6 +5,7 @@ export interface MemoryStoragePolicy {
   readonly evidenceMaxRecordsPerExecution: number;
   readonly evidenceMaxBytesPerExecution: number;
   readonly extractionPromptMaxBytes: number;
+  readonly extractionIdleMs: number;
   readonly jobRecordRetentionMs: number;
   readonly failedPayloadRetentionMs: number;
   readonly expiredDiagnosticRetentionMs: number;
@@ -27,6 +28,7 @@ export const DEFAULT_MEMORY_STORAGE_POLICY: MemoryStoragePolicy = Object.freeze(
   evidenceMaxRecordsPerExecution: 2_000,
   evidenceMaxBytesPerExecution: 16 * MIB,
   extractionPromptMaxBytes: 78_000,
+  extractionIdleMs: 6 * 60 * 60 * 1_000,
   jobRecordRetentionMs: 30 * DAY_MS,
   failedPayloadRetentionMs: 30 * DAY_MS,
   expiredDiagnosticRetentionMs: 30 * DAY_MS,

@@ -414,7 +414,22 @@ export async function createDesktopApplicationContainer(
       if (mission.origin.type === "system-memory") return;
       await memoryPlane.registerMemoryExecutionContext({
         executionId,
+        missionId: mission.id,
         projectId: mission.project.id,
+      });
+    },
+    onMissionActivity: async ({ mission }) => {
+      if (mission.origin.type !== "user") return;
+      await memoryPlane.setMemoryConversationState({
+        missionId: mission.id,
+        state: "active",
+      });
+    },
+    onExecutionTerminal: async ({ mission }) => {
+      if (mission.origin.type !== "user") return;
+      await memoryPlane.setMemoryConversationState({
+        missionId: mission.id,
+        state: mission.lifecycleStatus === "completed" ? "completed" : "active",
       });
     },
     getSystemExecutorFingerprint: async (mission) =>
@@ -578,6 +593,9 @@ export async function createDesktopApplicationContainer(
       }
     },
     defaultExecutorRef: BUILT_IN_PRAGMA_REF,
+    onMissionLifecycleChange: async ({ missionId, state }) => {
+      await memoryPlane.setMemoryConversationState({ missionId, state });
+    },
   });
   installDesktopSettingsHandlers({
     store: desktopSettings,

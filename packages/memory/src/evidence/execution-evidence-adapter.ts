@@ -24,7 +24,10 @@ import type {
 } from "../pipeline/pipeline-state-store.ts";
 import type { MemoryPolicyStore } from "../policy/memory-policy-store.ts";
 import { MEMORY_CURATOR_ID } from "../curator.ts";
-import type { MemoryActivityStore, MemoryCaptureDecision } from "../activity/memory-activity-store.ts";
+import type {
+  MemoryActivityStore,
+  MemoryCaptureDecision,
+} from "../activity/memory-activity-store.ts";
 
 export const EXECUTION_EVIDENCE_ADAPTER_ID = "pragma.memory.execution-evidence-adapter";
 
@@ -40,7 +43,8 @@ export function createExecutionEvidenceAdapter(options: {
   readonly policies: Pick<MemoryPolicyStore, "resolveAt">;
   readonly batchSize?: number | undefined;
   readonly now?: (() => Date) | undefined;
-  readonly activity?: Pick<MemoryActivityStore, "recordCapture"> | undefined;
+  readonly activity?:
+    Pick<MemoryActivityStore, "recordCapture" | "getExecutionContext"> | undefined;
 }): ExecutionEvidenceAdapter {
   const now = options.now ?? (() => new Date());
   return {
@@ -111,7 +115,12 @@ export function createExecutionEvidenceAdapter(options: {
           if (item.event.schemaRef !== "pragma.execution-event/v5") {
             throw new Error(`Unsupported Execution event schema: ${item.event.schemaRef}`);
           }
-          const mapped = mapExecutionEvent(item.event, policy, attribution);
+          const executionId = item.event.correlationId;
+          const conversationRef =
+            executionId === undefined
+              ? undefined
+              : (await options.activity?.getExecutionContext(executionId))?.conversationRef;
+          const mapped = mapExecutionEvent(item.event, policy, attribution, conversationRef);
           if (mapped === undefined) {
             addCaptureDecision(captureDecisions, item.event, "skipped", "not_memory_evidence");
             skipped += 1;
@@ -171,6 +180,7 @@ function mapExecutionEvent(
   canonical: CanonicalEventEnvelope,
   policy: EffectiveMemoryPolicy,
   attribution: ReturnType<typeof eventAttribution>,
+  conversationRef?: MemorySubjectRef,
 ): MemoryEvidenceEnvelope | undefined {
   const bindingRefs = attribution.bindingRefs;
   const event = ExecutionEventSchema.parse(canonical.payload);
@@ -187,6 +197,7 @@ function mapExecutionEvent(
       policy,
       bindingRefs,
       attribution,
+      conversationRef,
     );
   }
   if (/^(invocation|execution)\.(succeeded|failed|cancelled|interrupted)$/.test(event.type)) {
@@ -200,6 +211,7 @@ function mapExecutionEvent(
       policy,
       bindingRefs,
       attribution,
+      conversationRef,
       "internal",
     );
   }
@@ -213,6 +225,7 @@ function mapExecutionEvent(
       policy,
       bindingRefs,
       attribution,
+      conversationRef,
     );
   }
   if (event.type !== "runtime.event") return undefined;
@@ -231,6 +244,7 @@ function mapExecutionEvent(
       policy,
       bindingRefs,
       attribution,
+      conversationRef,
     );
   }
   if (runtime.type === "tool.completed" || runtime.type === "tool.failed") {
@@ -247,6 +261,7 @@ function mapExecutionEvent(
       policy,
       bindingRefs,
       attribution,
+      conversationRef,
     );
   }
   if (runtime.type === "artifact.created") {
@@ -259,6 +274,7 @@ function mapExecutionEvent(
       policy,
       bindingRefs,
       attribution,
+      conversationRef,
     );
   }
   return undefined;
@@ -273,6 +289,7 @@ function evidence(
   policy: EffectiveMemoryPolicy,
   bindingRefs: readonly MemorySubjectRef[],
   attribution: ReturnType<typeof eventAttribution>,
+  conversationRef?: MemorySubjectRef,
   sensitivity: "internal" | "confidential" = "confidential",
 ): MemoryEvidenceEnvelope {
   const messageId = createHash("sha256")
@@ -295,6 +312,7 @@ function evidence(
       ...bindingRefs,
     ]),
     correlationId: event.executionId,
+    ...(conversationRef === undefined ? {} : { conversationRef }),
     causationId: canonical.eventId,
     occurredAt: event.occurredAt,
     visibility: { mode: "host-private" },

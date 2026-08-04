@@ -244,6 +244,11 @@ export function createMissionRunner(options: {
   readonly onExecutionLinked?:
     | ((input: { readonly mission: Mission; readonly executionId: string }) => Promise<void>)
     | undefined;
+  readonly onMissionActivity?:
+    ((input: { readonly mission: Mission }) => Promise<void>) | undefined;
+  readonly onExecutionTerminal?:
+    | ((input: { readonly mission: Mission; readonly executionId: string }) => Promise<void>)
+    | undefined;
 }): MissionRunner {
   const logger = createPragmaLogger(options.loggerProvider, {
     component: "desktop.mission-runner",
@@ -258,6 +263,17 @@ export function createMissionRunner(options: {
         "mission.memory_subject_registration_failed",
         "Memory subject context could not be registered; the Mission will continue.",
         { error, missionId: mission.id, executionId },
+      );
+    }
+  };
+  const notifyMissionActivity = async (mission: Mission): Promise<void> => {
+    try {
+      await options.onMissionActivity?.({ mission });
+    } catch (error) {
+      logger.warn(
+        "mission.memory_conversation_activity_failed",
+        "Memory conversation activity could not be recorded; the Mission will continue.",
+        { error, missionId: mission.id },
       );
     }
   };
@@ -822,13 +838,18 @@ export function createMissionRunner(options: {
       input.onFinished ?? (() => undefined),
       input.sessionId,
       logger,
-      async () =>
+      async () => {
         await persistMissionExecutionProjection(
           options.missions,
           executionStore,
           missionId,
           input.handle.executionId,
-        ),
+        );
+        await options.onExecutionTerminal?.({
+          mission: await options.missions.get(missionId),
+          executionId: input.handle.executionId,
+        });
+      },
     )
       .then(() => {
         if (input.acceptedAt !== undefined) {
@@ -866,6 +887,7 @@ export function createMissionRunner(options: {
     const mission = await options.missions.get(id);
     await options.assertExecutorReady?.(mission.executor.ref);
     if (active.has(mission.id)) return mission;
+    if (mission.lifecycleStatus === "active") await notifyMissionActivity(mission);
     const { app, runtimes: baseRuntimes } = await executionContext(mission);
     const runtimes = withMissionRuntimeBinding(baseRuntimes, await readMissionRootContext(mission));
     let phaseStartedAt = performance.now();
@@ -1058,9 +1080,6 @@ export function createMissionRunner(options: {
     logMissionPhase(logger, input.id, "storage_capacity_check", capacityCheckStartedAt, acceptedAt);
     const mission = await options.missions.get(input.id);
     await options.assertExecutorReady?.(mission.executor.ref);
-    const { app, runtimes: baseRuntimes } = await executionContext(mission);
-    const rootContext = await readMissionRootContext(mission);
-    const runtimes = withMissionRuntimeBinding(baseRuntimes, rootContext);
     if (mission.executor.kind === "flow") {
       throw new Error("Flow missions accept input through workflow steps, not chat messages.");
     }
@@ -1070,6 +1089,10 @@ export function createMissionRunner(options: {
     if (active.has(mission.id)) {
       throw new Error("Wait for the current expert turn before sending another message.");
     }
+    await notifyMissionActivity(mission);
+    const { app, runtimes: baseRuntimes } = await executionContext(mission);
+    const rootContext = await readMissionRootContext(mission);
+    const runtimes = withMissionRuntimeBinding(baseRuntimes, rootContext);
     const desiredCompilationIdentity = await compilationIdentity(mission);
     let session = sessions.get(mission.id);
     let compiled: CompiledResource<InvocableResource> | undefined;

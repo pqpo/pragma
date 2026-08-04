@@ -13,6 +13,16 @@ import type { MemoryModule } from "../pipeline/memory-module.ts";
 
 export interface EpisodicMemoryModule extends MemoryModule {
   setExtractor(extractor: EpisodicMemoryExtractor | undefined): Promise<void>;
+  setConversationState(input: {
+    readonly conversationRef: MemorySubjectRef;
+    readonly state: "active" | "running" | "completed";
+    readonly now: Date;
+  }): Promise<void>;
+  bindExecutionConversation(input: {
+    readonly executionId: string;
+    readonly conversationRef: MemorySubjectRef;
+    readonly now: Date;
+  }): Promise<void>;
   readonly store: EpisodicMemoryStore;
   close(): void;
 }
@@ -27,6 +37,7 @@ export async function createEpisodicMemoryModule(
   const store = await createEpisodicMemoryStore(options);
   const now = options.now ?? (() => new Date());
   let extractor = options.extractor;
+  const running = new Map<string, AbortController>();
 
   return {
     descriptor: {
@@ -80,8 +91,11 @@ export async function createEpisodicMemoryModule(
       if (extractor === undefined) return;
       const job = await store.claimDueJob(now());
       if (job === undefined) return;
-      const evidence = sanitizeEvidence(await store.readEvidence(job.executionId));
+      const key = conversationKey(job.conversationRef);
+      const controller = new AbortController();
+      running.set(key, controller);
       try {
+        const evidence = sanitizeEvidence(await store.readEvidenceForJob(job));
         if (evidence.some((item) => item.sensitivity === "restricted")) {
           await store.completeRejected(job, "sensitive", now());
           return;
@@ -95,7 +109,7 @@ export async function createEpisodicMemoryModule(
           await store.completeRejected(job, "policy", now());
           return;
         }
-        const previousEpisode = await store.getByExecution(job.executionId);
+        const previousEpisode = await store.getByConversation(job.conversationRef);
         if (previousEpisode?.terminalMessageId === job.terminalMessageId) {
           await store.completeRetained({ job, record: previousEpisode, evidence, now: now() });
           return;
@@ -106,9 +120,12 @@ export async function createEpisodicMemoryModule(
           executionId: job.executionId,
           ...(previousEpisode === undefined ? {} : { previousEpisode }),
           evidence,
-          omittedEvidence: await store.readOmissionStats(job.executionId),
+          omittedEvidence: await store.readOmissionStatsForJob(job),
         });
-        const extracted = await extractor.extract(input);
+        if (!(await store.isClaimCurrent(job))) return;
+        controller.signal.throwIfAborted();
+        const extracted = await extractor.extract(input, { signal: controller.signal });
+        controller.signal.throwIfAborted();
         const output = EpisodicExtractionOutputSchema.parse(extracted.output);
         if (!output.retain) {
           await store.completeRejected(job, output.reason, now());
@@ -119,9 +136,12 @@ export async function createEpisodicMemoryModule(
         const timestamp = completedAt.toISOString();
         const attribution = resolveAttribution(evidence);
         const record = EpisodicMemoryRecordSchema.parse({
-          schemaVersion: "pragma.memory-episodic/v2",
-          id: episodicMemoryId(job.executionId),
+          schemaVersion: "pragma.memory-episodic/v3",
+          id: episodicMemoryId(job.conversationRef),
           revision: (previousEpisode?.revision ?? 0) + 1,
+          conversationRef: job.conversationRef,
+          sourceExecutionIds: job.sourceExecutionIds,
+          sourceUpdatedAt: job.sourceUpdatedAt,
           executionId: job.executionId,
           terminalMessageId: job.terminalMessageId,
           rootRefs: [attribution.rootRef],
@@ -158,16 +178,33 @@ export async function createEpisodicMemoryModule(
           now: now(),
           retry: isConfigurationError(error) ? "configuration" : "transient",
         });
+      } finally {
+        if (running.get(key) === controller) running.delete(key);
       }
     },
     async setExtractor(next) {
       extractor = next;
+    },
+    async setConversationState(input) {
+      if (input.state !== "completed") {
+        running.get(conversationKey(input.conversationRef))?.abort();
+      }
+      await store.touchConversation(input);
+    },
+    async bindExecutionConversation(input) {
+      running.get(conversationKey({ type: "pragma.execution", id: input.executionId }))?.abort();
+      running.get(conversationKey(input.conversationRef))?.abort();
+      await store.bindExecutionConversation(input);
     },
     store,
     close() {
       store.close();
     },
   };
+}
+
+function conversationKey(ref: MemorySubjectRef): string {
+  return `${ref.type}\0${ref.id}`;
 }
 
 function isLowValue(evidence: readonly MemoryEvidenceEnvelope[]): boolean {

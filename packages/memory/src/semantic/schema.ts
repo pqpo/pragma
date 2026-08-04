@@ -8,7 +8,7 @@ import { z } from "zod";
 
 import { MemoryEvidenceOmissionStatsSchema } from "../storage/bounded-evidence.ts";
 
-export const SEMANTIC_JOB_SCHEMA_VERSION = "pragma.memory-semantic-job/v2" as const;
+export const SEMANTIC_JOB_SCHEMA_VERSION = "pragma.memory-semantic-job/v3" as const;
 export const SEMANTIC_SUBJECT_CONTEXT_SCHEMA_VERSION =
   "pragma.memory-semantic-execution-subject-context/v1" as const;
 export const SEMANTIC_GOVERNANCE_EVENT_SCHEMA_VERSION =
@@ -62,12 +62,24 @@ export const SemanticExtractionJobSchema = z
     schemaVersion: z.literal(SEMANTIC_JOB_SCHEMA_VERSION),
     id: z.string().min(1),
     revision: z.number().int().positive(),
+    conversationRef: MemorySubjectRefSchema,
+    sourceExecutionIds: z.array(z.string().min(1)).min(1).max(1_000),
+    sourceUpdatedAt: z.string().datetime(),
+    inputWatermark: z.string().min(1),
     executionId: z.string().min(1),
     terminalMessageId: z.string().min(1),
-    status: z.enum(["pending", "running", "needs_attention", "completed", "expired"]),
+    status: z.enum([
+      "waiting_idle",
+      "pending",
+      "running",
+      "needs_attention",
+      "completed",
+      "expired",
+    ]),
     attempts: z.number().int().nonnegative(),
     totalAttempts: z.number().int().nonnegative(),
     retryAt: z.string().datetime().optional(),
+    eligibleAt: z.string().datetime().optional(),
     leaseUntil: z.string().datetime().optional(),
     lastErrorCode: z.string().min(1).optional(),
     failureClass: z.enum(["configuration", "transient-exhausted"]).optional(),
@@ -110,7 +122,10 @@ export type SemanticExecutionSubjectContext = z.infer<typeof SemanticExecutionSu
 export type SemanticGovernanceEvent = z.infer<typeof SemanticGovernanceEventSchema>;
 
 export interface SemanticMemoryExtractor {
-  extract(input: SemanticExtractionInput): Promise<{
+  extract(
+    input: SemanticExtractionInput,
+    options?: { readonly signal?: AbortSignal },
+  ): Promise<{
     readonly output: SemanticExtractionOutput;
     readonly provenance: z.infer<typeof SemanticFactExtractorProvenanceSchema>;
   }>;

@@ -114,12 +114,13 @@ describe("DesktopMemoryPlane", () => {
         payload: { outcome: "succeeded" },
       }),
     ]);
-    const job = await plane.episodicStore.claimDueJob(now);
+    const due = new Date(now.getTime() + 6 * 60 * 60 * 1_000);
+    const job = await plane.episodicStore.claimDueJob(due);
     if (job === undefined) throw new Error("Expected an episodic extraction job.");
     await plane.episodicStore.fail({
       job,
       errorCode: "memory_curator_failed",
-      now,
+      now: due,
       retry: "configuration",
     });
 
@@ -188,11 +189,13 @@ describe("DesktopMemoryPlane", () => {
 
     await plane.registerMemoryExecutionContext({
       executionId: "execution-a",
+      missionId: "mission-a",
       projectId: "project-a",
     });
     const first = await plane.semanticStore.getSubjectContext("execution-a");
     await plane.registerMemoryExecutionContext({
       executionId: "execution-b",
+      missionId: "mission-a",
       projectId: "project-a",
     });
     const second = await plane.semanticStore.getSubjectContext("execution-b");

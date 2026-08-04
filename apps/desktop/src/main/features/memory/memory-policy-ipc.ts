@@ -78,12 +78,14 @@ export function installMemoryPolicyHandlers(
     const jobs = [
       ...(await Promise.all(
         (await plane.episodicStore.listExtractionJobs()).map(
-          async (job) => await toDesktopExtractionJob("episodic", job, plane.episodicStore),
+          async (job) =>
+            await toDesktopExtractionJob("episodic", job, plane.episodicStore, options.missions),
         ),
       )),
       ...(await Promise.all(
         (await plane.semanticStore.listExtractionJobs()).map(
-          async (job) => await toDesktopExtractionJob("semantic", job, plane.semanticStore),
+          async (job) =>
+            await toDesktopExtractionJob("semantic", job, plane.semanticStore, options.missions),
         ),
       )),
     ].toSorted((left, right) => right.updatedAt.localeCompare(left.updatedAt));
@@ -96,7 +98,7 @@ export function installMemoryPolicyHandlers(
     const job = (await store.listExtractionJobs()).find((candidate) => candidate.id === parsed.id);
     if (job === undefined) throw new Error("memory_extraction_job_not_found");
     return DesktopMemoryExtractionJobSchema.parse(
-      await toDesktopExtractionJob(parsed.module, job, store),
+      await toDesktopExtractionJob(parsed.module, job, store, options.missions),
     );
   });
   ipcMain.handle("memory-extractor-profile:get", async () =>
@@ -263,16 +265,45 @@ async function toDesktopExtractionJob(
   module: "episodic" | "semantic",
   job:
     import("@pragma/memory").EpisodicExtractionJob | import("@pragma/memory").SemanticExtractionJob,
-  store: Pick<import("@pragma/memory").EpisodicMemoryStore, "readEvidence" | "readOmissionStats">,
+  store:
+    import("@pragma/memory").EpisodicMemoryStore | import("@pragma/memory").SemanticMemoryStore,
+  missions?: MissionStore,
 ) {
-  const hasPayload = ["pending", "running", "needs_attention"].includes(job.status);
-  const evidence = hasPayload ? await store.readEvidence(job.executionId) : [];
-  const omitted = await store.readOmissionStats(job.executionId);
+  const hasPayload = ["waiting_idle", "pending", "running", "needs_attention"].includes(job.status);
+  const evidence = hasPayload
+    ? module === "episodic"
+      ? await (store as import("@pragma/memory").EpisodicMemoryStore).readEvidenceForJob(
+          job as import("@pragma/memory").EpisodicExtractionJob,
+        )
+      : await (store as import("@pragma/memory").SemanticMemoryStore).readEvidenceForJob(
+          job as import("@pragma/memory").SemanticExtractionJob,
+        )
+    : [];
+  const omitted =
+    module === "episodic"
+      ? await (store as import("@pragma/memory").EpisodicMemoryStore).readOmissionStatsForJob(
+          job as import("@pragma/memory").EpisodicExtractionJob,
+        )
+      : await (store as import("@pragma/memory").SemanticMemoryStore).readOmissionStatsForJob(
+          job as import("@pragma/memory").SemanticExtractionJob,
+        );
+  const conversationTitle =
+    missions !== undefined && job.conversationRef.type === "pragma.mission"
+      ? await missions
+          .get(job.conversationRef.id)
+          .then((mission) => (mission.origin.type === "user" ? mission.title : undefined))
+          .catch(() => undefined)
+      : undefined;
   return {
     module,
     id: job.id,
     revision: job.revision,
     status: job.status,
+    conversationRef: job.conversationRef,
+    ...(conversationTitle === undefined ? {} : { conversationTitle }),
+    sourceExecutionCount: job.sourceExecutionIds.length,
+    sourceUpdatedAt: job.sourceUpdatedAt,
+    ...(job.eligibleAt === undefined ? {} : { eligibleAt: job.eligibleAt }),
     attempts: job.attempts,
     totalAttempts: job.totalAttempts,
     ...(job.lastErrorCode === undefined ? {} : { lastErrorCode: job.lastErrorCode }),

@@ -70,9 +70,23 @@ export type EpisodicRejectionReason =
 export interface EpisodicMemoryStore {
   ingest(envelopes: readonly MemoryEvidenceEnvelope[]): Promise<void>;
   claimDueJob(now: Date): Promise<EpisodicExtractionJob | undefined>;
+  isClaimCurrent(job: EpisodicExtractionJob): Promise<boolean>;
+  bindExecutionConversation(input: {
+    readonly executionId: string;
+    readonly conversationRef: MemorySubjectRef;
+    readonly now: Date;
+  }): Promise<void>;
+  touchConversation(input: {
+    readonly conversationRef: MemorySubjectRef;
+    readonly state: "active" | "running" | "completed";
+    readonly now: Date;
+  }): Promise<void>;
   readEvidence(executionId: string): Promise<readonly MemoryEvidenceEnvelope[]>;
+  readEvidenceForJob(job: EpisodicExtractionJob): Promise<readonly MemoryEvidenceEnvelope[]>;
   readOmissionStats(executionId: string): Promise<MemoryEvidenceOmissionStats>;
+  readOmissionStatsForJob(job: EpisodicExtractionJob): Promise<MemoryEvidenceOmissionStats>;
   getByExecution(executionId: string): Promise<EpisodicMemoryRecord | undefined>;
+  getByConversation(conversationRef: MemorySubjectRef): Promise<EpisodicMemoryRecord | undefined>;
   get(id: string): Promise<EpisodicMemoryRecord | undefined>;
   history(id: string): Promise<readonly EpisodicMemoryRecord[]>;
   list(): Promise<readonly EpisodicMemoryRecord[]>;
@@ -148,7 +162,7 @@ export async function createEpisodicMemoryStore(
           database: data,
           databasePath: dataPath,
           family: "pragma.memory-episodic-store",
-          targetVersion: 2,
+          targetVersion: 3,
           migrations: EPISODIC_DATA_STORAGE_MIGRATIONS,
         });
       }
@@ -162,7 +176,7 @@ export async function createEpisodicMemoryStore(
           database: state,
           databasePath: statePath,
           family: "pragma.memory-episodic-jobs",
-          targetVersion: 2,
+          targetVersion: 3,
           migrations: EPISODIC_JOB_STORAGE_MIGRATIONS,
         });
       }
@@ -177,9 +191,11 @@ export async function createEpisodicMemoryStore(
   const writeJob = (job: EpisodicExtractionJob): void => {
     state
       .prepare(
-        `INSERT INTO jobs(id, execution_id, terminal_message_id, status, retry_at, lease_until, job_json)
-         VALUES (?, ?, ?, ?, ?, ?, ?)
+        `INSERT INTO jobs(id, conversation_key, execution_id, terminal_message_id, status, retry_at, lease_until, job_json)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?)
          ON CONFLICT(id) DO UPDATE SET
+           conversation_key=excluded.conversation_key,
+           execution_id=excluded.execution_id,
            terminal_message_id=excluded.terminal_message_id,
            status=excluded.status,
            retry_at=excluded.retry_at,
@@ -188,6 +204,7 @@ export async function createEpisodicMemoryStore(
       )
       .run(
         job.id,
+        conversationKey(job.conversationRef),
         job.executionId,
         job.terminalMessageId,
         job.status,
@@ -220,22 +237,52 @@ export async function createEpisodicMemoryStore(
             JSON.stringify(envelope),
           );
           if (envelope.topic !== "execution.execution.terminal") continue;
-          const id = extractionJobId(executionId);
-          const existing = readJob(state, id);
+          const conversationRef = envelope.conversationRef ?? {
+            type: "pragma.execution",
+            id: executionId,
+          };
+          const existing = readJobByConversation(state, conversationRef);
           if (existing?.terminalMessageId === envelope.messageId) continue;
+          const activity = readConversationActivity(state, conversationRef);
+          const sourceExecutionIds = uniqueStrings([
+            ...(existing?.sourceExecutionIds ?? []),
+            executionId,
+          ]);
+          const eligibleAt =
+            activity?.state === "completed"
+              ? activity.updatedAt
+              : new Date(
+                  (activity === undefined
+                    ? Date.parse(envelope.occurredAt)
+                    : Math.max(Date.parse(envelope.occurredAt), Date.parse(activity.updatedAt))) +
+                    DEFAULT_MEMORY_STORAGE_POLICY.extractionIdleMs,
+                ).toISOString();
           writeJob(
             EpisodicExtractionJobSchema.parse({
-              schemaVersion: "pragma.memory-extraction-job/v2",
-              id,
-              revision: 1,
+              schemaVersion: "pragma.memory-extraction-job/v3",
+              id: existing?.id ?? extractionJobId(conversationRef),
+              revision: (existing?.revision ?? 0) + 1,
+              conversationRef,
+              sourceExecutionIds,
+              sourceUpdatedAt: envelope.occurredAt,
+              inputWatermark: envelope.messageId,
               executionId,
               terminalMessageId: envelope.messageId,
-              status: "pending",
+              status: activity?.state === "completed" ? "pending" : "waiting_idle",
               attempts: 0,
-              totalAttempts: 0,
+              totalAttempts: existing?.totalAttempts ?? 0,
+              eligibleAt,
+              retryAt: eligibleAt,
               updatedAt: envelope.occurredAt,
             }),
           );
+          if (activity?.state !== "completed") {
+            writeConversationActivity(state, {
+              conversationRef,
+              state: "active",
+              now: new Date(envelope.occurredAt),
+            });
+          }
         }
         for (const executionId of touched) compactEvidence(state, executionId);
         state.exec("COMMIT;");
@@ -250,12 +297,18 @@ export async function createEpisodicMemoryStore(
       try {
         const row = state
           .prepare(
-            `SELECT job_json AS jobJson FROM jobs
-             WHERE (status = 'pending' AND (retry_at IS NULL OR retry_at <= ?))
-                OR (status = 'running' AND lease_until <= ?)
-             ORDER BY retry_at IS NOT NULL, retry_at, id LIMIT 1`,
+            `SELECT job.job_json AS jobJson FROM jobs AS job
+             WHERE (((job.status = 'pending' AND (job.retry_at IS NULL OR job.retry_at <= ?))
+                OR (job.status = 'waiting_idle' AND job.retry_at <= ?))
+                OR (job.status = 'running' AND job.lease_until <= ?))
+               AND NOT EXISTS (
+                 SELECT 1 FROM conversation_activity AS activity
+                 WHERE activity.conversation_key = job.conversation_key
+                   AND activity.state = 'running'
+               )
+             ORDER BY job.retry_at IS NOT NULL, job.retry_at, job.id LIMIT 1`,
           )
-          .get(now.toISOString(), now.toISOString()) as unknown as
+          .get(now.toISOString(), now.toISOString(), now.toISOString()) as unknown as
           { readonly jobJson: string } | undefined;
         if (row === undefined) {
           state.exec("COMMIT;");
@@ -281,33 +334,84 @@ export async function createEpisodicMemoryStore(
       }
     },
 
-    async readEvidence(executionId) {
-      const current = state
-        .prepare(
-          "SELECT envelope_json AS envelopeJson FROM evidence WHERE execution_id = ? ORDER BY occurred_at, message_id",
-        )
-        .all(executionId) as unknown as readonly { readonly envelopeJson: string }[];
-      const previous = data
-        .prepare(
-          `SELECT e.envelope_json AS envelopeJson FROM episode_evidence e
-           JOIN episodes p ON p.id = e.episode_id WHERE p.execution_id = ?
-           ORDER BY e.occurred_at, e.evidence_id`,
-        )
-        .all(executionId) as unknown as readonly { readonly envelopeJson: string }[];
-      const unique = new Map<string, MemoryEvidenceEnvelope>();
-      for (const row of [...previous, ...current]) {
-        const envelope = MemoryEvidenceEnvelopeSchema.parse(JSON.parse(row.envelopeJson));
-        unique.set(envelope.messageId, envelope);
+    async isClaimCurrent(job) {
+      return isCurrentRunningJob(state, job);
+    },
+
+    async bindExecutionConversation(input) {
+      state.exec("BEGIN IMMEDIATE;");
+      try {
+        bindExecutionConversationJob(state, writeJob, input, extractionJobId);
+        state.exec("COMMIT;");
+      } catch (error) {
+        rollback(state);
+        throw error;
       }
-      return [...unique.values()].slice(-2_000);
+    },
+
+    async touchConversation(input) {
+      state.exec("BEGIN IMMEDIATE;");
+      try {
+        writeConversationActivity(state, input);
+        const current = readJobByConversation(state, input.conversationRef);
+        if (current !== undefined && current.status !== "expired") {
+          const eligibleAt =
+            input.state === "completed"
+              ? input.now.toISOString()
+              : new Date(
+                  input.now.getTime() + DEFAULT_MEMORY_STORAGE_POLICY.extractionIdleMs,
+                ).toISOString();
+          writeJob(
+            EpisodicExtractionJobSchema.parse({
+              ...current,
+              revision: current.revision + 1,
+              status: input.state === "completed" ? "pending" : "waiting_idle",
+              attempts: 0,
+              retryAt: eligibleAt,
+              eligibleAt,
+              leaseUntil: undefined,
+              completedAt: undefined,
+              completion: undefined,
+              updatedAt: input.now.toISOString(),
+            }),
+          );
+        }
+        state.exec("COMMIT;");
+      } catch (error) {
+        rollback(state);
+        throw error;
+      }
+    },
+
+    async readEvidence(executionId) {
+      return readExecutionEvidence(state, data, executionId);
+    },
+
+    async readEvidenceForJob(job) {
+      const pages = job.sourceExecutionIds.map((id) => readExecutionEvidence(state, data, id));
+      return [...new Map(pages.flat().map((item) => [item.messageId, item])).values()]
+        .toSorted((left, right) => left.occurredAt.localeCompare(right.occurredAt))
+        .slice(-2_000);
     },
 
     async readOmissionStats(executionId) {
       return readOmissionStats(state, executionId);
     },
 
+    async readOmissionStatsForJob(job) {
+      return job.sourceExecutionIds.reduce(
+        (stats, executionId) =>
+          mergeMemoryEvidenceOmissionStats(stats, readOmissionStats(state, executionId)),
+        EMPTY_MEMORY_EVIDENCE_OMISSION_STATS,
+      );
+    },
+
     async getByExecution(executionId) {
       return readEpisodeBy(data, "execution_id", executionId);
+    },
+
+    async getByConversation(conversationRef) {
+      return readEpisodeBy(data, "conversation_key", conversationKey(conversationRef));
     },
 
     async get(id) {
@@ -404,6 +508,7 @@ export async function createEpisodicMemoryStore(
 
     async completeRetained(input) {
       if (isDeletedExecution(state, input.job.executionId)) return;
+      if (!isCurrentRunningJob(state, input.job)) return;
       const record = EpisodicMemoryRecordSchema.parse(input.record);
       data.exec("BEGIN IMMEDIATE;");
       try {
@@ -414,13 +519,15 @@ export async function createEpisodicMemoryStore(
         }
         data
           .prepare(
-            `INSERT INTO episodes(id, execution_id, revision, status, updated_at, record_json)
-             VALUES (?, ?, ?, ?, ?, ?)
+            `INSERT INTO episodes(id, conversation_key, execution_id, revision, status, updated_at, record_json)
+             VALUES (?, ?, ?, ?, ?, ?, ?)
              ON CONFLICT(id) DO UPDATE SET revision=excluded.revision, status=excluded.status,
+               conversation_key=excluded.conversation_key, execution_id=excluded.execution_id,
                updated_at=excluded.updated_at, record_json=excluded.record_json`,
           )
           .run(
             record.id,
+            conversationKey(record.conversationRef),
             record.executionId,
             record.revision,
             record.status,
@@ -432,6 +539,13 @@ export async function createEpisodicMemoryStore(
             "INSERT OR IGNORE INTO episode_revisions(episode_id, revision, record_json) VALUES (?, ?, ?)",
           )
           .run(record.id, record.revision, JSON.stringify(record));
+        const insertSourceExecution = data.prepare(
+          `INSERT OR IGNORE INTO episode_source_executions(episode_id, execution_id)
+           VALUES (?, ?)`,
+        );
+        for (const executionId of record.sourceExecutionIds) {
+          insertSourceExecution.run(record.id, executionId);
+        }
         const insert = data.prepare(
           `INSERT OR REPLACE INTO episode_evidence(episode_id, evidence_id, occurred_at, envelope_json)
            VALUES (?, ?, ?, ?)`,
@@ -480,6 +594,7 @@ export async function createEpisodicMemoryStore(
         if (current === undefined) throw new Error("episodic_memory_not_found");
         assertExpectedRevision(input.expectedRevision, current.revision, "episodic_memory");
         data.prepare("DELETE FROM episode_evidence WHERE episode_id = ?").run(input.id);
+        data.prepare("DELETE FROM episode_source_executions WHERE episode_id = ?").run(input.id);
         data.prepare("DELETE FROM episode_revisions WHERE episode_id = ?").run(input.id);
         data.prepare("DELETE FROM governance_events WHERE episode_id = ?").run(input.id);
         data.prepare("DELETE FROM episodes WHERE id = ?").run(input.id);
@@ -502,10 +617,12 @@ export async function createEpisodicMemoryStore(
 
     async completeRejected(job, reason, now) {
       if (isDeletedExecution(state, job.executionId)) return;
+      if (!isCurrentRunningJob(state, job)) return;
       state.exec("BEGIN IMMEDIATE;");
       try {
         finishJob(state, job, "rejected", now);
-        state.prepare("DELETE FROM evidence WHERE execution_id = ?").run(job.executionId);
+        const deleteEvidence = state.prepare("DELETE FROM evidence WHERE execution_id = ?");
+        for (const executionId of job.sourceExecutionIds) deleteEvidence.run(executionId);
         incrementCounter(state, "rejected_total");
         incrementCounter(state, `rejected_${reason.replaceAll("-", "_")}`);
         state.exec("COMMIT;");
@@ -517,6 +634,7 @@ export async function createEpisodicMemoryStore(
 
     async fail(input) {
       if (isDeletedExecution(state, input.job.executionId)) return;
+      if (!isCurrentRunningJob(state, input.job)) return;
       const attempts = input.job.attempts;
       const needsAttention = input.retry === "configuration" || attempts >= 3;
       const delay = attempts <= 1 ? 60_000 : attempts === 2 ? 5 * 60_000 : 15 * 60_000;
@@ -554,9 +672,15 @@ export async function createEpisodicMemoryStore(
           EpisodicExtractionJobSchema.parse({
             ...job,
             revision: job.revision + 1,
-            status: "pending",
+            status:
+              job.eligibleAt !== undefined && Date.parse(job.eligibleAt) > now.getTime()
+                ? "waiting_idle"
+                : "pending",
             attempts: 0,
-            retryAt: now.toISOString(),
+            retryAt:
+              job.eligibleAt !== undefined && Date.parse(job.eligibleAt) > now.getTime()
+                ? job.eligibleAt
+                : now.toISOString(),
             lastErrorCode: undefined,
             failureClass: undefined,
             attentionSince: undefined,
@@ -577,9 +701,15 @@ export async function createEpisodicMemoryStore(
         EpisodicExtractionJobSchema.parse({
           ...job,
           revision: job.revision + 1,
-          status: "pending",
+          status:
+            job.eligibleAt !== undefined && Date.parse(job.eligibleAt) > input.now.getTime()
+              ? "waiting_idle"
+              : "pending",
           attempts: 0,
-          retryAt: input.now.toISOString(),
+          retryAt:
+            job.eligibleAt !== undefined && Date.parse(job.eligibleAt) > input.now.getTime()
+              ? job.eligibleAt
+              : input.now.toISOString(),
           lastErrorCode: undefined,
           failureClass: undefined,
           attentionSince: undefined,
@@ -632,7 +762,7 @@ export async function createEpisodicMemoryStore(
       );
       return {
         episodes: episodes.count,
-        pending: byStatus.get("pending") ?? 0,
+        pending: (byStatus.get("pending") ?? 0) + (byStatus.get("waiting_idle") ?? 0),
         running: byStatus.get("running") ?? 0,
         needsAttention: byStatus.get("needs_attention") ?? 0,
         expired: byStatus.get("expired") ?? 0,
@@ -655,17 +785,25 @@ export async function createEpisodicMemoryStore(
   };
 }
 
-export function episodicMemoryId(executionId: string): string {
-  return `episode-${createHash("sha256").update(executionId).digest("hex").slice(0, 24)}`;
+export function episodicMemoryId(conversationRef: MemorySubjectRef): string {
+  return `episode-${createHash("sha256").update(conversationKey(conversationRef)).digest("hex").slice(0, 24)}`;
 }
 
-function extractionJobId(executionId: string): string {
-  return `episodic-${createHash("sha256").update(executionId).digest("hex").slice(0, 24)}`;
+function extractionJobId(conversationRef: MemorySubjectRef): string {
+  return `episodic-${createHash("sha256").update(conversationKey(conversationRef)).digest("hex").slice(0, 24)}`;
+}
+
+function conversationKey(ref: MemorySubjectRef): string {
+  return `${ref.type}\0${ref.id}`;
+}
+
+function uniqueStrings(values: readonly string[]): string[] {
+  return [...new Set(values)];
 }
 
 function initializeData(database: DatabaseSync): void {
   const version = readVersion(database);
-  if (version > 2) {
+  if (version > 3) {
     database.close();
     throw new Error(`unsupported-state-version:pragma.memory-episodic-store/v${version}`);
   }
@@ -674,6 +812,7 @@ function initializeData(database: DatabaseSync): void {
     PRAGMA synchronous = FULL;
     CREATE TABLE IF NOT EXISTS episodes (
       id TEXT PRIMARY KEY,
+      conversation_key TEXT NOT NULL UNIQUE,
       execution_id TEXT NOT NULL UNIQUE,
       revision INTEGER NOT NULL,
       status TEXT NOT NULL,
@@ -689,6 +828,14 @@ function initializeData(database: DatabaseSync): void {
       PRIMARY KEY (episode_id, evidence_id),
       FOREIGN KEY (episode_id) REFERENCES episodes(id) ON DELETE CASCADE
     );
+    CREATE TABLE IF NOT EXISTS episode_source_executions (
+      episode_id TEXT NOT NULL,
+      execution_id TEXT NOT NULL,
+      PRIMARY KEY (episode_id, execution_id),
+      FOREIGN KEY (episode_id) REFERENCES episodes(id) ON DELETE CASCADE
+    );
+    CREATE INDEX IF NOT EXISTS episode_source_executions_execution
+      ON episode_source_executions(execution_id, episode_id);
     CREATE TABLE IF NOT EXISTS episode_revisions (
       episode_id TEXT NOT NULL,
       revision INTEGER NOT NULL,
@@ -708,14 +855,14 @@ function initializeData(database: DatabaseSync): void {
       tombstone_json TEXT NOT NULL
     );
   `);
-  if (version !== 0 && version !== 2) {
+  if (version !== 0 && version !== 3) {
     throw new Error(`missing-adjacent-migration:pragma.memory-episodic-store/v${version}`);
   }
-  database.exec("PRAGMA user_version = 2;");
+  database.exec("PRAGMA user_version = 3;");
 }
 
 function initializeState(database: DatabaseSync): void {
-  assertVersion(database, "pragma.memory-episodic-jobs", 2);
+  assertVersion(database, "pragma.memory-episodic-jobs", 3);
   const version = readVersion(database);
   database.exec(`
     PRAGMA journal_mode = WAL;
@@ -729,7 +876,8 @@ function initializeState(database: DatabaseSync): void {
     CREATE INDEX IF NOT EXISTS evidence_execution ON evidence(execution_id, occurred_at);
     CREATE TABLE IF NOT EXISTS jobs (
       id TEXT PRIMARY KEY,
-      execution_id TEXT NOT NULL UNIQUE,
+      conversation_key TEXT NOT NULL UNIQUE,
+      execution_id TEXT NOT NULL,
       terminal_message_id TEXT NOT NULL,
       status TEXT NOT NULL,
       retry_at TEXT,
@@ -737,6 +885,11 @@ function initializeState(database: DatabaseSync): void {
       job_json TEXT NOT NULL
     );
     CREATE INDEX IF NOT EXISTS jobs_due ON jobs(status, retry_at, lease_until);
+    CREATE TABLE IF NOT EXISTS conversation_activity (
+      conversation_key TEXT PRIMARY KEY,
+      state TEXT NOT NULL,
+      updated_at TEXT NOT NULL
+    );
     CREATE TABLE IF NOT EXISTS counters (name TEXT PRIMARY KEY, value INTEGER NOT NULL);
     CREATE TABLE IF NOT EXISTS capture_stats (
       execution_id TEXT PRIMARY KEY,
@@ -747,10 +900,10 @@ function initializeState(database: DatabaseSync): void {
       deleted_at TEXT NOT NULL
     );
   `);
-  if (version !== 0 && version !== 2) {
+  if (version !== 0 && version !== 3) {
     throw new Error(`missing-adjacent-migration:pragma.memory-episodic-jobs/v${version}`);
   }
-  database.exec("PRAGMA user_version = 2;");
+  database.exec("PRAGMA user_version = 3;");
 }
 
 function assertVersion(database: DatabaseSync, family: string, current: number): void {
@@ -772,6 +925,100 @@ function readJob(database: DatabaseSync, id: string): EpisodicExtractionJob | un
   const row = database.prepare("SELECT job_json AS jobJson FROM jobs WHERE id = ?").get(id) as
     { readonly jobJson: string } | undefined;
   return row === undefined ? undefined : EpisodicExtractionJobSchema.parse(JSON.parse(row.jobJson));
+}
+
+function readJobByConversation(
+  database: DatabaseSync,
+  conversationRef: MemorySubjectRef,
+): EpisodicExtractionJob | undefined {
+  const row = database
+    .prepare("SELECT job_json AS jobJson FROM jobs WHERE conversation_key = ?")
+    .get(conversationKey(conversationRef)) as { readonly jobJson: string } | undefined;
+  return row === undefined ? undefined : EpisodicExtractionJobSchema.parse(JSON.parse(row.jobJson));
+}
+
+function bindExecutionConversationJob(
+  database: DatabaseSync,
+  writeJob: (job: EpisodicExtractionJob) => void,
+  input: {
+    readonly executionId: string;
+    readonly conversationRef: MemorySubjectRef;
+    readonly now: Date;
+  },
+  createJobId: (conversationRef: MemorySubjectRef) => string,
+): void {
+  const fallback = database
+    .prepare("SELECT job_json AS jobJson FROM jobs WHERE execution_id = ?")
+    .get(input.executionId) as { readonly jobJson: string } | undefined;
+  if (fallback === undefined) return;
+  const job = EpisodicExtractionJobSchema.parse(JSON.parse(fallback.jobJson));
+  if (
+    job.conversationRef.type === input.conversationRef.type &&
+    job.conversationRef.id === input.conversationRef.id
+  ) {
+    return;
+  }
+  if (
+    job.conversationRef.type !== "pragma.execution" ||
+    job.conversationRef.id !== input.executionId
+  ) {
+    return;
+  }
+  const existing = readJobByConversation(database, input.conversationRef);
+  database.prepare("DELETE FROM jobs WHERE id = ?").run(job.id);
+  database
+    .prepare("DELETE FROM conversation_activity WHERE conversation_key = ?")
+    .run(conversationKey(job.conversationRef));
+  const latest =
+    existing === undefined || job.sourceUpdatedAt >= existing.sourceUpdatedAt ? job : existing;
+  writeJob(
+    EpisodicExtractionJobSchema.parse({
+      ...latest,
+      id: existing?.id ?? createJobId(input.conversationRef),
+      revision: Math.max(existing?.revision ?? 0, job.revision) + 1,
+      conversationRef: input.conversationRef,
+      sourceExecutionIds: uniqueStrings([
+        ...(existing?.sourceExecutionIds ?? []),
+        ...job.sourceExecutionIds,
+      ]),
+      totalAttempts: (existing?.totalAttempts ?? 0) + job.totalAttempts,
+      updatedAt: input.now.toISOString(),
+    }),
+  );
+}
+
+function writeConversationActivity(
+  database: DatabaseSync,
+  input: {
+    readonly conversationRef: MemorySubjectRef;
+    readonly state: "active" | "running" | "completed";
+    readonly now: Date;
+  },
+): void {
+  database
+    .prepare(
+      `INSERT INTO conversation_activity(conversation_key, state, updated_at) VALUES (?, ?, ?)
+       ON CONFLICT(conversation_key) DO UPDATE SET state=excluded.state, updated_at=excluded.updated_at`,
+    )
+    .run(conversationKey(input.conversationRef), input.state, input.now.toISOString());
+}
+
+function readConversationActivity(
+  database: DatabaseSync,
+  conversationRef: MemorySubjectRef,
+): { readonly state: "active" | "running" | "completed"; readonly updatedAt: string } | undefined {
+  const row = database
+    .prepare(
+      "SELECT state, updated_at AS updatedAt FROM conversation_activity WHERE conversation_key = ?",
+    )
+    .get(conversationKey(conversationRef)) as
+    { readonly state: "active" | "running" | "completed"; readonly updatedAt: string } | undefined;
+  return row;
+}
+
+function isCurrentRunningJob(database: DatabaseSync, claimed: EpisodicExtractionJob): boolean {
+  const current = readJob(database, claimed.id);
+  return current?.status === "running" && current.revision === claimed.revision;
 }
 
 function readJobRows(database: DatabaseSync): EpisodicExtractionJob[] {
@@ -864,8 +1111,12 @@ function maintainJobs(
           expiredAt: now.toISOString(),
           updatedAt: now.toISOString(),
         });
-        database.prepare("DELETE FROM evidence WHERE execution_id = ?").run(job.executionId);
-        database.prepare("DELETE FROM capture_stats WHERE execution_id = ?").run(job.executionId);
+        const deleteEvidence = database.prepare("DELETE FROM evidence WHERE execution_id = ?");
+        const deleteStats = database.prepare("DELETE FROM capture_stats WHERE execution_id = ?");
+        for (const executionId of job.sourceExecutionIds) {
+          deleteEvidence.run(executionId);
+          deleteStats.run(executionId);
+        }
         database
           .prepare("UPDATE jobs SET status = 'expired', job_json = ? WHERE id = ?")
           .run(JSON.stringify(next), next.id);
@@ -883,7 +1134,8 @@ function maintainJobs(
         timestamp - Date.parse(terminalAt) >= retention
       ) {
         database.prepare("DELETE FROM jobs WHERE id = ?").run(job.id);
-        database.prepare("DELETE FROM capture_stats WHERE execution_id = ?").run(job.executionId);
+        const deleteStats = database.prepare("DELETE FROM capture_stats WHERE execution_id = ?");
+        for (const executionId of job.sourceExecutionIds) deleteStats.run(executionId);
         deleted += 1;
       }
     }
@@ -907,18 +1159,26 @@ function deleteExecutionState(
 ): void {
   database.exec("BEGIN IMMEDIATE;");
   try {
+    const targets = new Set(executionIds);
+    const deleteJob = database.prepare("DELETE FROM jobs WHERE id = ?");
+    const deleteActivity = database.prepare(
+      "DELETE FROM conversation_activity WHERE conversation_key = ?",
+    );
+    for (const job of readJobRows(database)) {
+      if (!job.sourceExecutionIds.some((executionId) => targets.has(executionId))) continue;
+      deleteJob.run(job.id);
+      deleteActivity.run(conversationKey(job.conversationRef));
+    }
     const markDeleted = database.prepare(
       `INSERT INTO deleted_executions(execution_id, deleted_at) VALUES (?, ?)
        ON CONFLICT(execution_id) DO UPDATE SET deleted_at=excluded.deleted_at`,
     );
     const deleteEvidence = database.prepare("DELETE FROM evidence WHERE execution_id = ?");
     const deleteStats = database.prepare("DELETE FROM capture_stats WHERE execution_id = ?");
-    const deleteJobs = database.prepare("DELETE FROM jobs WHERE execution_id = ?");
     for (const executionId of new Set(executionIds)) {
       markDeleted.run(executionId, now.toISOString());
       deleteEvidence.run(executionId);
       deleteStats.run(executionId);
-      deleteJobs.run(executionId);
     }
     database.exec("COMMIT;");
   } catch (error) {
@@ -964,7 +1224,8 @@ function completeRetainedJob(database: DatabaseSync, job: EpisodicExtractionJob,
   database.exec("BEGIN IMMEDIATE;");
   try {
     finishJob(database, job, "retained", now);
-    database.prepare("DELETE FROM evidence WHERE execution_id = ?").run(job.executionId);
+    const deleteEvidence = database.prepare("DELETE FROM evidence WHERE execution_id = ?");
+    for (const executionId of job.sourceExecutionIds) deleteEvidence.run(executionId);
     database.exec("COMMIT;");
   } catch (error) {
     rollback(database);
@@ -983,7 +1244,7 @@ function incrementCounter(database: DatabaseSync, name: string): void {
 
 function readEpisodeBy(
   database: DatabaseSync,
-  column: "id" | "execution_id",
+  column: "id" | "execution_id" | "conversation_key",
   value: string,
 ): EpisodicMemoryRecord | undefined {
   const row = database
@@ -992,6 +1253,32 @@ function readEpisodeBy(
   return row === undefined
     ? undefined
     : EpisodicMemoryRecordSchema.parse(JSON.parse(row.recordJson));
+}
+
+function readExecutionEvidence(
+  state: DatabaseSync,
+  data: DatabaseSync,
+  executionId: string,
+): MemoryEvidenceEnvelope[] {
+  const current = state
+    .prepare(
+      "SELECT envelope_json AS envelopeJson FROM evidence WHERE execution_id = ? ORDER BY occurred_at, message_id",
+    )
+    .all(executionId) as unknown as readonly { readonly envelopeJson: string }[];
+  const previous = data
+    .prepare(
+      `SELECT e.envelope_json AS envelopeJson FROM episode_evidence e
+       JOIN episode_source_executions source ON source.episode_id = e.episode_id
+       WHERE source.execution_id = ?
+       ORDER BY e.occurred_at, e.evidence_id`,
+    )
+    .all(executionId) as unknown as readonly { readonly envelopeJson: string }[];
+  const unique = new Map<string, MemoryEvidenceEnvelope>();
+  for (const row of [...previous, ...current]) {
+    const envelope = MemoryEvidenceEnvelopeSchema.parse(JSON.parse(row.envelopeJson));
+    unique.set(envelope.messageId, envelope);
+  }
+  return [...unique.values()].slice(-2_000);
 }
 
 function readEpisodeRows(rows: readonly unknown[]): EpisodicMemoryRecord[] {

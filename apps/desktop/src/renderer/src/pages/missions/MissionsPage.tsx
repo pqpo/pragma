@@ -173,6 +173,15 @@ export function MissionsPage(props: {
     if (api === undefined) return;
     return api.subscribeMissionUpdates((update) => {
       if (update.kind === "upsert") {
+        if (update.mission.origin.type !== "user") {
+          setMissions((current) => current.filter((mission) => mission.id !== update.mission.id));
+          if (selectedMissionIdRef.current === update.mission.id) {
+            selectedMissionIdRef.current = null;
+            setSelectedMissionId(null);
+            setSelectedMission(null);
+          }
+          return;
+        }
         if (removedMissionIdsRef.current.has(update.mission.id)) return;
         replaceMission(update.mission);
         return;
