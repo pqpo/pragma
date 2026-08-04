@@ -119,6 +119,19 @@ export function createMissionExecutorCatalog(options: {
         });
   };
 
+  const modelOverrideUnavailableError = async (
+    ref: string,
+    projectResources?: readonly PragmaResource[],
+  ): Promise<Error> => {
+    const resources = projectResources ?? (await options.project.get()).resources;
+    const resource = resources
+      .filter(isMissionExecutorResource)
+      .find((candidate) => missionExecutorRef(candidate) === ref);
+    return resource?.kind === "Flow"
+      ? new Error("Flow missions do not support a model override.")
+      : new Error(`Mission executor not found: ${ref}.`);
+  };
+
   return {
     async list() {
       const snapshot = await options.project.get();
@@ -139,7 +152,7 @@ export function createMissionExecutorCatalog(options: {
     },
     async getModelOptions(ref, runtimeBinding, projectResources) {
       const defaults = await resolveRuntimeDefaults(ref, projectResources);
-      if (defaults === undefined) throw new Error("Flow missions do not support a model override.");
+      if (defaults === undefined) throw await modelOverrideUnavailableError(ref, projectResources);
       const resolved = await bindRuntimeDefaults(defaults, undefined, runtimeBinding);
       const availability = await resolved.adapter.canUse();
       if (!availability.usable) {
@@ -176,7 +189,7 @@ export function createMissionExecutorCatalog(options: {
     },
     async validateModelOverride(ref, override, project, runtimeBinding) {
       const defaults = await resolveRuntimeDefaults(ref, project.resources);
-      if (defaults === undefined) throw new Error("Flow missions do not support a model override.");
+      if (defaults === undefined) throw await modelOverrideUnavailableError(ref, project.resources);
       await bindRuntimeDefaults(defaults, toModelSelection(override), runtimeBinding);
     },
   };

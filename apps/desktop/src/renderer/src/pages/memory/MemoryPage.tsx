@@ -1,16 +1,23 @@
 import { useCallback, useEffect, useId, useMemo, useState } from "react";
-import { MagnifyingGlass, ShieldCheck, Trash, WarningCircle } from "@phosphor-icons/react";
+import {
+  ArrowClockwise,
+  MagnifyingGlass,
+  ShieldCheck,
+  Trash,
+  WarningCircle,
+} from "@phosphor-icons/react";
 import { useTranslation } from "react-i18next";
 
 import type {
   DesktopMemoryEvidence,
+  DesktopMemoryExtractionJob,
   DesktopMemoryItem,
   DesktopMemoryPlaneStatus,
 } from "../../../../shared/contracts/index.ts";
 import { ConfirmationDialog, Dialog } from "../../components/Dialog.tsx";
 import { errorMessage } from "../../lib/errors.ts";
 
-type MemoryView = "all" | "episodic" | "semantic" | "health";
+type MemoryView = "all" | "episodic" | "semantic" | "extractions" | "health";
 
 export function MemoryPage() {
   const { t } = useTranslation("memory");
@@ -19,6 +26,7 @@ export function MemoryPage() {
   const [items, setItems] = useState<readonly DesktopMemoryItem[]>([]);
   const [selectedId, setSelectedId] = useState<string>();
   const [health, setHealth] = useState<DesktopMemoryPlaneStatus>();
+  const [jobs, setJobs] = useState<readonly DesktopMemoryExtractionJob[]>([]);
   const [evidence, setEvidence] = useState<DesktopMemoryEvidence>();
   const [reason, setReason] = useState("");
   const [dialog, setDialog] = useState<"revise" | "forget">();
@@ -30,17 +38,23 @@ export function MemoryPage() {
   const reload = useCallback(async () => {
     setLoading(true);
     try {
-      const [records, status] = await Promise.all([
-        window.pragmaDesktop.listMemoryItems({
-          module: view === "health" ? "all" : view,
-          status: "all",
-          query,
-          limit: 200,
-        }),
+      const [records, status, extractionJobs] = await Promise.all([
+        view === "extractions"
+          ? Promise.resolve([])
+          : window.pragmaDesktop.listMemoryItems({
+              module: view === "health" ? "all" : view,
+              status: "all",
+              query,
+              limit: 200,
+            }),
         window.pragmaDesktop.getMemoryPlaneStatus(),
+        view === "extractions"
+          ? window.pragmaDesktop.listMemoryExtractionJobs()
+          : Promise.resolve([]),
       ]);
       setItems(records);
       setHealth(status);
+      setJobs(extractionJobs);
       setSelectedId((current) =>
         current !== undefined && records.some((item) => key(item) === current)
           ? current
@@ -61,6 +75,17 @@ export function MemoryPage() {
     return () => clearTimeout(timer);
   }, [reload]);
 
+  useEffect(() => {
+    if (
+      view !== "extractions" ||
+      !jobs.some((job) => ["waiting_idle", "pending", "running"].includes(job.status))
+    ) {
+      return;
+    }
+    const timer = setInterval(() => void reload(), 2_000);
+    return () => clearInterval(timer);
+  }, [jobs, reload, view]);
+
   const selected = useMemo(
     () => items.find((item) => key(item) === selectedId),
     [items, selectedId],
@@ -78,6 +103,23 @@ export function MemoryPage() {
     } catch (actionError) {
       setError(errorMessage(actionError));
       return false;
+    } finally {
+      setActionBusy(false);
+    }
+  };
+
+  const retryExtraction = async (job: DesktopMemoryExtractionJob) => {
+    setActionBusy(true);
+    setError(undefined);
+    try {
+      await window.pragmaDesktop.retryMemoryExtractionJob({
+        module: job.module,
+        id: job.id,
+        expectedRevision: job.revision,
+      });
+      await reload();
+    } catch (actionError) {
+      setError(errorMessage(actionError));
     } finally {
       setActionBusy(false);
     }
@@ -102,7 +144,7 @@ export function MemoryPage() {
       </header>
 
       <nav className="memory-tabs" aria-label={t("title")}>
-        {(["all", "episodic", "semantic", "health"] as const).map((id) => (
+        {(["all", "episodic", "semantic", "extractions", "health"] as const).map((id) => (
           <button
             key={id}
             type="button"
@@ -124,6 +166,14 @@ export function MemoryPage() {
 
       {view === "health" ? (
         <MemoryHealth health={health} />
+      ) : view === "extractions" ? (
+        <MemoryExtractionJobs
+          jobs={jobs}
+          loading={loading}
+          busy={actionBusy}
+          onRefresh={() => void reload()}
+          onRetry={(job) => void retryExtraction(job)}
+        />
       ) : (
         <div className="memory-browser">
           <aside className="memory-list">
@@ -453,6 +503,69 @@ export function MemoryActionWithTooltip(props: {
         {props.tooltip}
       </span>
     </span>
+  );
+}
+
+function MemoryExtractionJobs(props: {
+  readonly jobs: readonly DesktopMemoryExtractionJob[];
+  readonly loading: boolean;
+  readonly busy: boolean;
+  readonly onRefresh: () => void;
+  readonly onRetry: (job: DesktopMemoryExtractionJob) => void;
+}) {
+  const { t, i18n } = useTranslation("memory");
+  const date = (value: string | undefined): string =>
+    value === undefined
+      ? "—"
+      : new Intl.DateTimeFormat(i18n.language, {
+          dateStyle: "medium",
+          timeStyle: "short",
+        }).format(new Date(value));
+  return (
+    <section className="memory-health memory-extraction-jobs">
+      <header className="memory-extraction-jobs-header">
+        <div>
+          <h2>{t("extractions")}</h2>
+          <p>{t("extractionsDescription")}</p>
+        </div>
+        <button type="button" disabled={props.loading} onClick={props.onRefresh}>
+          <ArrowClockwise size={17} aria-hidden="true" /> {t("refresh")}
+        </button>
+      </header>
+      {props.loading ? <p>{t("loading")}</p> : null}
+      {!props.loading && props.jobs.length === 0 ? <p>{t("noExtractionJobs")}</p> : null}
+      {props.jobs.map((job) => (
+        <article className="memory-extraction-job" key={`${job.module}:${job.id}`}>
+          <strong>
+            {job.conversationTitle ?? `${job.conversationRef.type}:${job.conversationRef.id}`}
+          </strong>
+          <span className={`memory-status is-${job.status}`}>
+            {t(`extractionStatus.${job.status}`)}
+          </span>
+          <dl>
+            <dt>{t("module")}</dt>
+            <dd>{job.module}</dd>
+            <dt>{t("eligibleAt")}</dt>
+            <dd>{date(job.eligibleAt)}</dd>
+            <dt>{t("sourceExecutions")}</dt>
+            <dd>{job.sourceExecutionCount}</dd>
+            <dt>{t("attemptCount")}</dt>
+            <dd>{job.totalAttempts}</dd>
+            <dt>{t("evidenceCount")}</dt>
+            <dd>{job.evidenceRecords}</dd>
+            <dt>{t("errorCode")}</dt>
+            <dd>
+              <code>{job.lastErrorCode ?? "—"}</code>
+            </dd>
+          </dl>
+          {job.status === "needs_attention" ? (
+            <button type="button" disabled={props.busy} onClick={() => props.onRetry(job)}>
+              {t("retryExtraction")}
+            </button>
+          ) : null}
+        </article>
+      ))}
+    </section>
   );
 }
 

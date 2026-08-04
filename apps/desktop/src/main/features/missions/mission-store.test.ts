@@ -87,6 +87,29 @@ describe("mission store", () => {
     expect(reopened.completedAt).toBeUndefined();
   });
 
+  it("keeps system Memory Missions out of the user Mission list", async () => {
+    const root = await temporaryRoot();
+    const store = createMissionStore({ missionsPath: join(root, "missions") });
+    const user = await store.create({
+      workspace: { path: join(root, "workspace"), basename: "workspace" },
+      goal: "Visible Mission",
+      project: { id: "studio", revision: 1 },
+      executor: missionExecutorSnapshot(expertFixture()),
+    });
+    const internal = await store.create({
+      workspace: { path: join(root, "workspace"), basename: "workspace" },
+      goal: "Internal extraction",
+      project: { id: "studio", revision: 1 },
+      executor: missionExecutorSnapshot(expertFixture()),
+      origin: { type: "system-memory", jobId: "memory-job" },
+    });
+
+    await expect(store.list()).resolves.toEqual([expect.objectContaining({ id: user.id })]);
+    await expect(store.get(internal.id)).resolves.toMatchObject({
+      origin: { type: "system-memory" },
+    });
+  });
+
   it("limits rule-based titles derived from the Mission goal", async () => {
     const root = await temporaryRoot();
     const store = createMissionStore({ missionsPath: join(root, "missions") });

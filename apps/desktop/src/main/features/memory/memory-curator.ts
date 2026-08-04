@@ -197,7 +197,7 @@ export function createDesktopMemoryCurator(options: {
       return await createFingerprint(await options.profiles.get());
     },
     episodicExtractor: {
-      async extract(input) {
+      async extract(input, extractionOptions) {
         const profile = await options.profiles.get();
         const runtime = await resolveRuntime(profile);
         const content = await runCuratorMission({
@@ -206,6 +206,7 @@ export function createDesktopMemoryCurator(options: {
           jobId: input.jobId,
           title: `Memory extraction ${input.executionId.slice(0, 12)}`,
           goal: renderExtractionPrompt(input),
+          signal: extractionOptions?.signal,
         });
         const output = EpisodicExtractionOutputSchema.parse(JSON.parse(extractJson(content)));
         return {
@@ -223,7 +224,7 @@ export function createDesktopMemoryCurator(options: {
       },
     },
     semanticExtractor: {
-      async extract(input) {
+      async extract(input, extractionOptions) {
         const profile = await options.profiles.get();
         const runtime = await resolveRuntime(profile);
         const content = await runCuratorMission({
@@ -232,6 +233,7 @@ export function createDesktopMemoryCurator(options: {
           jobId: input.jobId,
           title: `Semantic extraction ${input.executionId.slice(0, 12)}`,
           goal: renderSemanticExtractionPrompt(input),
+          signal: extractionOptions?.signal,
         });
         const output = SemanticExtractionOutputSchema.parse(JSON.parse(extractJson(content)));
         return {
@@ -338,7 +340,9 @@ async function runCuratorMission(input: {
   readonly jobId: string;
   readonly title: string;
   readonly goal: string;
+  readonly signal?: AbortSignal | undefined;
 }): Promise<string> {
+  input.signal?.throwIfAborted();
   const project = await input.options.project.ensurePublished();
   const mission = await input.options.missions.create({
     workspace: {
@@ -368,9 +372,14 @@ async function runCuratorMission(input: {
     component: "desktop.memory-curator",
   });
   await registerCuratorMission(pragmaHome, mission.id, input.jobId);
+  const interrupt = (): void => {
+    void input.options.runner.interrupt(mission.id).catch(() => undefined);
+  };
+  input.signal?.addEventListener("abort", interrupt, { once: true });
   try {
+    input.signal?.throwIfAborted();
     await input.options.runner.run(mission.id);
-    await waitForMission(input.options.missions, mission.id);
+    await waitForMission(input.options.missions, mission.id, input.signal);
     const finished = await input.options.missions.get(mission.id);
     if (finished.execution?.status !== "succeeded") {
       throw new Error(`memory_curator_failed:${finished.execution?.error ?? "unknown"}`);
@@ -383,6 +392,7 @@ async function runCuratorMission(input: {
     if (content === undefined) throw new Error("memory_curator_output_missing");
     return content;
   } finally {
+    input.signal?.removeEventListener("abort", interrupt);
     if (await cleanupCuratorMission(input.options.runner, mission.id)) {
       await unregisterCuratorMission(pragmaHome, mission.id).catch((error: unknown) => {
         logger.warn(
@@ -395,9 +405,14 @@ async function runCuratorMission(input: {
   }
 }
 
-async function waitForMission(missions: MissionStore, id: string): Promise<void> {
+async function waitForMission(
+  missions: MissionStore,
+  id: string,
+  signal?: AbortSignal,
+): Promise<void> {
   const deadline = Date.now() + 10 * 60_000;
   while (Date.now() < deadline) {
+    signal?.throwIfAborted();
     const mission = await missions.get(id);
     if (
       mission.execution !== undefined &&
@@ -405,7 +420,17 @@ async function waitForMission(missions: MissionStore, id: string): Promise<void>
     ) {
       return;
     }
-    await new Promise((resolve) => setTimeout(resolve, 200));
+    await new Promise<void>((resolve, reject) => {
+      const timer = setTimeout(() => {
+        signal?.removeEventListener("abort", abort);
+        resolve();
+      }, 200);
+      const abort = (): void => {
+        clearTimeout(timer);
+        reject(signal?.reason ?? new DOMException("Aborted", "AbortError"));
+      };
+      signal?.addEventListener("abort", abort, { once: true });
+    });
   }
   throw new Error("memory_curator_timeout");
 }

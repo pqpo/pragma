@@ -217,6 +217,21 @@ describe("Episodic Memory", () => {
     expect((await module.store.list())[0]?.revision).toBe(1);
     expect(extractor.extract).toHaveBeenCalledTimes(1);
 
+    const data = new DatabaseSync(
+      join(
+        new PragmaPaths({ pragmaHome: root }).memoryModuleDataRoot("pragma.memory.episodic"),
+        "episodes.sqlite",
+      ),
+    );
+    expect(
+      data
+        .prepare(
+          "SELECT execution_id AS executionId FROM episode_source_executions ORDER BY execution_id",
+        )
+        .all(),
+    ).toEqual([{ executionId: "execution-b" }]);
+    data.close();
+
     await module.consume(evidence);
     await module.runBackgroundOnce?.();
     expect((await module.store.list())[0]?.revision).toBe(1);
@@ -228,6 +243,226 @@ describe("Episodic Memory", () => {
     expect((await module.store.list())[0]?.revision).toBe(2);
     expect(extractor.extract).toHaveBeenCalledTimes(2);
     module.close();
+  });
+
+  it("releases a claimed job when persisted Evidence cannot be decoded", async () => {
+    const root = await temporaryRoot();
+    const module = await createEpisodicMemoryModule({
+      pragmaHome: root,
+      extractor: fakeExtractor(),
+      now: () => new Date("2026-08-04T00:00:00.000Z"),
+    });
+    await module.consume(executionEvidence("execution-corrupt"));
+    const state = new DatabaseSync(
+      join(
+        new PragmaPaths({ pragmaHome: root }).memoryModuleStateRoot("pragma.memory.episodic"),
+        "jobs.sqlite",
+      ),
+    );
+    state
+      .prepare("UPDATE evidence SET envelope_json = '{}' WHERE execution_id = ?")
+      .run("execution-corrupt");
+    state.close();
+
+    await module.runBackgroundOnce?.();
+
+    await expect(module.store.listExtractionJobs()).resolves.toEqual([
+      expect.objectContaining({ status: "pending", attempts: 1 }),
+    ]);
+    module.close();
+  });
+
+  it("waits for six idle hours, resets the deadline on new Mission activity, and aggregates turns", async () => {
+    let clock = new Date("2026-08-01T00:00:03.000Z");
+    const extractor = fakeExtractor();
+    const module = await createEpisodicMemoryModule({
+      pragmaHome: await temporaryRoot(),
+      extractor,
+      now: () => clock,
+    });
+    const conversationRef = ref("pragma.mission", "mission-idle");
+    await module.consume(
+      executionEvidence("idle-turn-1").map((item) =>
+        MemoryEvidenceEnvelopeSchema.parse({ ...item, conversationRef }),
+      ),
+    );
+    await module.runBackgroundOnce?.();
+    expect(extractor.extract).not.toHaveBeenCalled();
+    expect((await module.store.listExtractionJobs())[0]).toMatchObject({
+      status: "waiting_idle",
+      conversationRef,
+      sourceExecutionIds: ["idle-turn-1"],
+    });
+
+    clock = new Date("2026-08-01T05:59:00.000Z");
+    const second = executionEvidence("idle-turn-2").map((item) =>
+      MemoryEvidenceEnvelopeSchema.parse({
+        ...item,
+        conversationRef,
+        occurredAt:
+          item.topic === "execution.execution.terminal"
+            ? "2026-08-01T05:59:00.000Z"
+            : "2026-08-01T05:58:59.000Z",
+      }),
+    );
+    await module.consume(second);
+    clock = new Date("2026-08-01T11:58:59.000Z");
+    await module.runBackgroundOnce?.();
+    expect(extractor.extract).not.toHaveBeenCalled();
+
+    clock = new Date("2026-08-01T11:59:01.000Z");
+    await module.runBackgroundOnce?.();
+    expect(extractor.extract).toHaveBeenCalledOnce();
+    expect(extractor.extract.mock.calls[0]?.[0].evidence).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ correlationId: "idle-turn-1" }),
+        expect.objectContaining({ correlationId: "idle-turn-2" }),
+      ]),
+    );
+    expect((await module.store.list())[0]).toMatchObject({
+      conversationRef,
+      sourceExecutionIds: ["idle-turn-1", "idle-turn-2"],
+      revision: 1,
+    });
+    module.close();
+  });
+
+  it("merges an execution-scoped fallback job when the Mission binding arrives", async () => {
+    const module = await createEpisodicMemoryModule({ pragmaHome: await temporaryRoot() });
+    const conversationRef = ref("pragma.mission", "mission-late-binding");
+    await module.consume(
+      executionEvidence("bound-turn").map((item) =>
+        MemoryEvidenceEnvelopeSchema.parse({ ...item, conversationRef }),
+      ),
+    );
+    await module.consume(executionEvidence("fallback-turn"));
+    expect(await module.store.listExtractionJobs()).toHaveLength(2);
+
+    await module.bindExecutionConversation({
+      executionId: "fallback-turn",
+      conversationRef,
+      now: new Date("2026-08-01T00:01:00.000Z"),
+    });
+
+    await expect(module.store.listExtractionJobs()).resolves.toEqual([
+      expect.objectContaining({
+        conversationRef,
+        sourceExecutionIds: ["bound-turn", "fallback-turn"],
+      }),
+    ]);
+    module.close();
+  });
+
+  it("allows completed Missions immediately and rejects a superseded running result", async () => {
+    let clock = new Date("2026-08-01T00:00:03.000Z");
+    let release!: () => void;
+    const released = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    const base = fakeExtractor();
+    let signal: AbortSignal | undefined;
+    const extractor: EpisodicMemoryExtractor & { extract: ReturnType<typeof vi.fn> } = {
+      extract: vi.fn(async (input, options) => {
+        signal = options?.signal;
+        await released;
+        return await base.extract(input);
+      }),
+    };
+    const module = await createEpisodicMemoryModule({
+      pragmaHome: await temporaryRoot(),
+      extractor,
+      now: () => clock,
+    });
+    const conversationRef = ref("pragma.mission", "mission-superseded");
+    await module.setConversationState({ conversationRef, state: "completed", now: clock });
+    await module.consume(
+      executionEvidence("superseded-turn").map((item) =>
+        MemoryEvidenceEnvelopeSchema.parse({ ...item, conversationRef }),
+      ),
+    );
+    const running = module.runBackgroundOnce?.();
+    await vi.waitFor(() => expect(extractor.extract).toHaveBeenCalledOnce());
+    clock = new Date("2026-08-01T00:01:00.000Z");
+    await module.setConversationState({ conversationRef, state: "active", now: clock });
+    expect(signal?.aborted).toBe(true);
+    release();
+    await running;
+    expect(await module.store.list()).toEqual([]);
+    expect((await module.store.listExtractionJobs())[0]).toMatchObject({
+      status: "waiting_idle",
+      attempts: 0,
+    });
+    module.close();
+  });
+
+  it("rechecks the conversation watermark before invoking the extractor", async () => {
+    const clock = new Date("2026-08-01T00:00:03.000Z");
+    const extractor = fakeExtractor();
+    const module = await createEpisodicMemoryModule({
+      pragmaHome: await temporaryRoot(),
+      extractor,
+      now: () => clock,
+    });
+    const conversationRef = ref("pragma.mission", "mission-preflight-superseded");
+    await module.setConversationState({ conversationRef, state: "completed", now: clock });
+    await module.consume(
+      executionEvidence("preflight-turn").map((item) =>
+        MemoryEvidenceEnvelopeSchema.parse({ ...item, conversationRef }),
+      ),
+    );
+    const readEvidence = module.store.readEvidenceForJob.bind(module.store);
+    vi.spyOn(module.store, "readEvidenceForJob").mockImplementationOnce(async (job) => {
+      const evidence = await readEvidence(job);
+      await module.setConversationState({
+        conversationRef,
+        state: "active",
+        now: new Date("2026-08-01T00:01:00.000Z"),
+      });
+      return evidence;
+    });
+
+    await module.runBackgroundOnce?.();
+
+    expect(extractor.extract).not.toHaveBeenCalled();
+    expect((await module.store.listExtractionJobs())[0]).toMatchObject({
+      status: "waiting_idle",
+      attempts: 0,
+    });
+    module.close();
+  });
+
+  it("persists a running-Execution claim barrier across restart", async () => {
+    const root = await temporaryRoot();
+    const conversationRef = ref("pragma.mission", "mission-running");
+    const module = await createEpisodicMemoryModule({ pragmaHome: root });
+    await module.consume(
+      executionEvidence("long-running-turn").map((item) =>
+        MemoryEvidenceEnvelopeSchema.parse({ ...item, conversationRef }),
+      ),
+    );
+    await module.setConversationState({
+      conversationRef,
+      state: "running",
+      now: new Date("2026-08-01T01:00:00.000Z"),
+    });
+    module.close();
+
+    const reopened = await createEpisodicMemoryModule({ pragmaHome: root });
+    await expect(
+      reopened.store.claimDueJob(new Date("2026-08-03T00:00:00.000Z")),
+    ).resolves.toBeUndefined();
+    await reopened.setConversationState({
+      conversationRef,
+      state: "active",
+      now: new Date("2026-08-03T00:00:00.000Z"),
+    });
+    await expect(
+      reopened.store.claimDueJob(new Date("2026-08-03T05:59:59.000Z")),
+    ).resolves.toBeUndefined();
+    await expect(
+      reopened.store.claimDueJob(new Date("2026-08-03T06:00:00.000Z")),
+    ).resolves.toMatchObject({ status: "running", conversationRef });
+    reopened.close();
   });
 
   it("only tightens recall permissions and forgets content without allowing replay to recreate it", async () => {
@@ -356,7 +591,7 @@ describe("Episodic Memory", () => {
 
     const module = await createEpisodicMemoryModule({ pragmaHome: root });
     expect((await module.store.list())[0]).toMatchObject({
-      schemaVersion: "pragma.memory-episodic/v2",
+      schemaVersion: "pragma.memory-episodic/v3",
       bindings: [
         {
           consumerRef: { type: "pragma.expert", id: "expert-a" },
@@ -431,7 +666,7 @@ describe("Episodic Memory", () => {
 
   it("moves repeated invalid Evidence references to needs_attention without dropping the job", async () => {
     const root = await temporaryRoot();
-    let clock = new Date("2026-08-01T00:00:00.000Z");
+    let clock = new Date("2026-08-01T06:00:03.000Z");
     const extractor = fakeExtractor("unknown-evidence-id");
     const module = await createEpisodicMemoryModule({
       pragmaHome: root,
@@ -521,7 +756,7 @@ describe("Episodic Memory", () => {
     legacy.close();
 
     const conflictRoot = await temporaryRoot();
-    let clock = new Date("2026-08-01T00:00:00.000Z");
+    let clock = new Date("2026-08-01T06:00:03.000Z");
     const conflict = await createEpisodicMemoryModule({
       pragmaHome: conflictRoot,
       extractor: fakeExtractor(),
@@ -548,8 +783,15 @@ describe("Episodic Memory", () => {
 
   it("expires failed payloads after 30 days without startup-style retry", async () => {
     const module = await createEpisodicMemoryModule({ pragmaHome: await temporaryRoot() });
-    await module.consume(executionEvidence("expiry"));
-    const job = await module.store.claimDueJob(new Date("2026-08-01T00:00:03.000Z"));
+    const conversationRef = ref("pragma.mission", "mission-expiry");
+    for (const executionId of ["expiry-a", "expiry-b"]) {
+      await module.consume(
+        executionEvidence(executionId).map((item) =>
+          MemoryEvidenceEnvelopeSchema.parse({ ...item, conversationRef }),
+        ),
+      );
+    }
+    const job = await module.store.claimDueJob(new Date("2026-08-01T06:00:03.000Z"));
     expect(job).toBeDefined();
     await module.store.fail({
       job: job!,
@@ -561,7 +803,8 @@ describe("Episodic Memory", () => {
     await module.store.maintain(new Date("2026-09-01T00:00:05.000Z"));
     const [expired] = await module.store.listExtractionJobs();
     expect(expired).toMatchObject({ status: "expired", failureClass: "configuration" });
-    expect(await module.store.readEvidence("expiry")).toEqual([]);
+    await expect(module.store.readEvidence("expiry-a")).resolves.toEqual([]);
+    await expect(module.store.readEvidence("expiry-b")).resolves.toEqual([]);
     await expect(
       module.store.retryJob({
         id: expired!.id,
@@ -599,7 +842,7 @@ describe("Episodic Memory", () => {
     module.close();
   });
 
-  it("upgrades persisted extraction jobs from v1 to v2 on first access", async () => {
+  it("upgrades persisted extraction jobs from v1 through v3 on first access", async () => {
     const root = await temporaryRoot();
     const stateRoot = new PragmaPaths({ pragmaHome: root }).memoryModuleStateRoot(
       "pragma.memory.episodic",
@@ -645,9 +888,9 @@ describe("Episodic Memory", () => {
     const module = await createEpisodicMemoryModule({ pragmaHome: root });
     await expect(module.store.listExtractionJobs()).resolves.toEqual([
       expect.objectContaining({
-        schemaVersion: "pragma.memory-extraction-job/v2",
+        schemaVersion: "pragma.memory-extraction-job/v3",
         id: "legacy-job",
-        revision: 1,
+        revision: 2,
         totalAttempts: 3,
         status: "needs_attention",
         failureClass: "transient-exhausted",
@@ -662,10 +905,10 @@ describe("Episodic Memory", () => {
     module.close();
 
     const future = new DatabaseSync(join(stateRoot, "jobs.sqlite"));
-    future.exec("PRAGMA user_version = 3;");
+    future.exec("PRAGMA user_version = 4;");
     future.close();
     await expect(createEpisodicMemoryModule({ pragmaHome: root })).rejects.toThrow(
-      "unsupported-state-version:pragma.memory-episodic-jobs/v3",
+      "unsupported-state-version:pragma.memory-episodic-jobs/v4",
     );
   });
 
@@ -742,7 +985,7 @@ describe("Episodic Memory", () => {
 
     const recovered = await createEpisodicMemoryModule({ pragmaHome: root });
     expect((await recovered.store.listExtractionJobs())[0]).toMatchObject({
-      schemaVersion: "pragma.memory-extraction-job/v2",
+      schemaVersion: "pragma.memory-extraction-job/v3",
       id: malformed.id,
     });
     recovered.close();

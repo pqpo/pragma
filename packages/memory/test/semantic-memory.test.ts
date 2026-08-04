@@ -81,7 +81,7 @@ describe("Semantic Memory", () => {
   });
 
   it("merges equivalent observations and preserves exclusive conflicts symmetrically", async () => {
-    const now = new Date("2026-08-03T12:00:00.000Z");
+    const now = new Date("2026-08-03T18:00:01.000Z");
     const extractor = fakeExtractor((input) => {
       const text = evidenceText(input);
       return text.includes("light")
@@ -145,8 +145,67 @@ describe("Semantic Memory", () => {
     module.close();
   });
 
+  it("applies later watermarks for the same Mission instead of treating the conversation as already applied", async () => {
+    let clock = new Date("2026-08-03T16:00:02.000Z");
+    const extractor = fakeExtractor();
+    const module = await createSemanticMemoryModule({
+      pragmaHome: await temporaryRoot(),
+      extractor,
+      now: () => clock,
+    });
+    const conversationRef = ref("pragma.mission", "mission-semantic-revision");
+    for (const executionId of ["semantic-turn-1", "semantic-turn-2"]) {
+      await module.registerExecutionSubjects({
+        executionId,
+        subjectRefs: [ref("pragma.user", "local-user")],
+      });
+      await module.consume(
+        executionEvidence(executionId, "Use concise Chinese answers.").map((item) =>
+          MemoryEvidenceEnvelopeSchema.parse({ ...item, conversationRef }),
+        ),
+      );
+      await module.runBackgroundOnce?.();
+      clock = new Date(clock.getTime() + 1_000);
+    }
+    expect(extractor.extract).toHaveBeenCalledTimes(2);
+    const facts = await module.store.list();
+    expect(facts).toHaveLength(1);
+    expect(facts[0]).toMatchObject({ revision: 2 });
+    expect((await module.store.listExtractionJobs())[0]).toMatchObject({
+      status: "completed",
+      sourceExecutionIds: ["semantic-turn-1", "semantic-turn-2"],
+    });
+    module.close();
+  });
+
+  it("merges an execution-scoped fallback job when the Mission binding arrives", async () => {
+    const module = await createSemanticMemoryModule({ pragmaHome: await temporaryRoot() });
+    const conversationRef = ref("pragma.mission", "mission-semantic-late-binding");
+    await module.consume(
+      executionEvidence("semantic-bound", "Use concise Chinese answers.").map((item) =>
+        MemoryEvidenceEnvelopeSchema.parse({ ...item, conversationRef }),
+      ),
+    );
+    await module.consume(executionEvidence("semantic-fallback", "Use concise Chinese answers."));
+    expect(await module.store.listExtractionJobs()).toHaveLength(2);
+
+    await module.bindExecutionConversation({
+      executionId: "semantic-fallback",
+      conversationRef,
+      now: new Date("2026-08-03T10:01:00.000Z"),
+    });
+
+    await expect(module.store.listExtractionJobs()).resolves.toEqual([
+      expect.objectContaining({
+        conversationRef,
+        sourceExecutionIds: ["semantic-bound", "semantic-fallback"],
+      }),
+    ]);
+    module.close();
+  });
+
   it("isolates bindings across Experts and excludes expired facts from recall", async () => {
-    const now = new Date("2026-08-03T12:00:00.000Z");
+    const now = new Date("2026-08-03T18:00:01.000Z");
     const extractor = fakeExtractor((input) => ({
       statement: `Fact for ${input.executionId}`,
       normalizedValue: input.executionId,
@@ -408,12 +467,12 @@ describe("Semantic Memory", () => {
         "facts.sqlite",
       ),
     );
-    database.exec("PRAGMA user_version = 3");
+    database.exec("PRAGMA user_version = 4");
     database.close();
 
     await expect(
       createSemanticMemoryModule({ pragmaHome: root, extractor: fakeExtractor() }),
-    ).rejects.toThrow("unsupported-state-version:pragma.memory-semantic-store/v3");
+    ).rejects.toThrow("unsupported-state-version:pragma.memory-semantic-store/v4");
   });
 
   it("upgrades historical semantic jobs through the registered migration and keeps a backup", async () => {
@@ -463,9 +522,9 @@ describe("Semantic Memory", () => {
     const module = await createSemanticMemoryModule({ pragmaHome: root });
     await expect(module.store.listExtractionJobs()).resolves.toEqual([
       expect.objectContaining({
-        schemaVersion: "pragma.memory-semantic-job/v2",
+        schemaVersion: "pragma.memory-semantic-job/v3",
         id: legacy.id,
-        revision: 1,
+        revision: 2,
         totalAttempts: 3,
         status: "needs_attention",
         failureClass: "transient-exhausted",

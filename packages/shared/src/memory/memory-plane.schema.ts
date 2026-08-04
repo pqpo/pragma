@@ -138,6 +138,7 @@ export const MemoryEvidenceEnvelopeSchema = z.object({
   sourceRef: MemoryEvidenceSourceRefSchema,
   subjectRefs: z.array(MemorySubjectRefSchema).min(1),
   correlationId: z.string().min(1).optional(),
+  conversationRef: MemorySubjectRefSchema.optional(),
   causationId: z.string().min(1).optional(),
   occurredAt: z.string().datetime(),
   visibility: MemoryVisibilityPolicySchema,

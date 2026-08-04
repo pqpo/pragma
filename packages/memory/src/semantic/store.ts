@@ -109,9 +109,22 @@ export interface SemanticMemoryStore {
   registerSubjectContext(context: SemanticExecutionSubjectContext): Promise<void>;
   getSubjectContext(executionId: string): Promise<SemanticExecutionSubjectContext | undefined>;
   claimDueJob(now: Date): Promise<SemanticExtractionJob | undefined>;
+  isClaimCurrent(job: SemanticExtractionJob): Promise<boolean>;
+  bindExecutionConversation(input: {
+    readonly executionId: string;
+    readonly conversationRef: MemorySubjectRef;
+    readonly now: Date;
+  }): Promise<void>;
+  touchConversation(input: {
+    readonly conversationRef: MemorySubjectRef;
+    readonly state: "active" | "running" | "completed";
+    readonly now: Date;
+  }): Promise<void>;
   readEvidence(executionId: string): Promise<readonly MemoryEvidenceEnvelope[]>;
+  readEvidenceForJob(job: SemanticExtractionJob): Promise<readonly MemoryEvidenceEnvelope[]>;
   readOmissionStats(executionId: string): Promise<MemoryEvidenceOmissionStats>;
-  hasAppliedJob(jobId: string): Promise<boolean>;
+  readOmissionStatsForJob(job: SemanticExtractionJob): Promise<MemoryEvidenceOmissionStats>;
+  hasAppliedJob(job: SemanticExtractionJob): Promise<boolean>;
   completePreviouslyApplied(job: SemanticExtractionJob, now: Date): Promise<void>;
   completeRetained(input: SemanticFactMaterialization): Promise<readonly SemanticFact[]>;
   completeRejected(
@@ -202,7 +215,7 @@ export async function createSemanticMemoryStore(
           database: data,
           databasePath: dataPath,
           family: "pragma.memory-semantic-store",
-          targetVersion: 2,
+          targetVersion: 3,
           migrations: SEMANTIC_DATA_STORAGE_MIGRATIONS,
         });
       }
@@ -216,7 +229,7 @@ export async function createSemanticMemoryStore(
           database: state,
           databasePath: statePath,
           family: "pragma.memory-semantic-jobs",
-          targetVersion: 2,
+          targetVersion: 3,
           migrations: SEMANTIC_JOB_STORAGE_MIGRATIONS,
         });
       }
@@ -231,13 +244,16 @@ export async function createSemanticMemoryStore(
   const writeJob = (job: SemanticExtractionJob): void => {
     state
       .prepare(
-        `INSERT INTO jobs(id, execution_id, terminal_message_id, status, retry_at, lease_until, job_json)
-         VALUES (?, ?, ?, ?, ?, ?, ?)
-         ON CONFLICT(id) DO UPDATE SET status=excluded.status, retry_at=excluded.retry_at,
+        `INSERT INTO jobs(id, conversation_key, execution_id, terminal_message_id, status, retry_at, lease_until, job_json)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+         ON CONFLICT(id) DO UPDATE SET conversation_key=excluded.conversation_key,
+           execution_id=excluded.execution_id, terminal_message_id=excluded.terminal_message_id,
+           status=excluded.status, retry_at=excluded.retry_at,
            lease_until=excluded.lease_until, job_json=excluded.job_json`,
       )
       .run(
         job.id,
+        conversationKey(job.conversationRef),
         job.executionId,
         job.terminalMessageId,
         job.status,
@@ -265,7 +281,8 @@ export async function createSemanticMemoryStore(
       updatedAt: completedAt,
     });
     writeJob(finished);
-    state.prepare("DELETE FROM evidence WHERE execution_id = ?").run(job.executionId);
+    const deleteEvidence = state.prepare("DELETE FROM evidence WHERE execution_id = ?");
+    for (const executionId of job.sourceExecutionIds) deleteEvidence.run(executionId);
   };
 
   const governanceMutation = (
@@ -334,21 +351,52 @@ export async function createSemanticMemoryStore(
             JSON.stringify(envelope),
           );
           if (envelope.topic !== "execution.execution.terminal") continue;
-          const id = semanticJobId(envelope.messageId);
-          if (readJob(state, id) !== undefined) continue;
+          const conversationRef = envelope.conversationRef ?? {
+            type: "pragma.execution",
+            id: envelope.correlationId,
+          };
+          const existing = readJobByConversation(state, conversationRef);
+          if (existing?.terminalMessageId === envelope.messageId) continue;
+          const activity = readConversationActivity(state, conversationRef);
+          const sourceExecutionIds = uniqueStrings([
+            ...(existing?.sourceExecutionIds ?? []),
+            envelope.correlationId,
+          ]);
+          const eligibleAt =
+            activity?.state === "completed"
+              ? activity.updatedAt
+              : new Date(
+                  (activity === undefined
+                    ? Date.parse(envelope.occurredAt)
+                    : Math.max(Date.parse(envelope.occurredAt), Date.parse(activity.updatedAt))) +
+                    DEFAULT_MEMORY_STORAGE_POLICY.extractionIdleMs,
+                ).toISOString();
           writeJob(
             SemanticExtractionJobSchema.parse({
-              schemaVersion: "pragma.memory-semantic-job/v2",
-              id,
-              revision: 1,
+              schemaVersion: "pragma.memory-semantic-job/v3",
+              id: existing?.id ?? semanticJobId(conversationRef),
+              revision: (existing?.revision ?? 0) + 1,
+              conversationRef,
+              sourceExecutionIds,
+              sourceUpdatedAt: envelope.occurredAt,
+              inputWatermark: envelope.messageId,
               executionId: envelope.correlationId,
               terminalMessageId: envelope.messageId,
-              status: "pending",
+              status: activity?.state === "completed" ? "pending" : "waiting_idle",
               attempts: 0,
-              totalAttempts: 0,
+              totalAttempts: existing?.totalAttempts ?? 0,
+              eligibleAt,
+              retryAt: eligibleAt,
               updatedAt: envelope.occurredAt,
             }),
           );
+          if (activity?.state !== "completed") {
+            writeConversationActivity(state, {
+              conversationRef,
+              state: "active",
+              now: new Date(envelope.occurredAt),
+            });
+          }
         }
         for (const executionId of touched) compactEvidence(state, executionId);
         state.exec("COMMIT;");
@@ -379,9 +427,17 @@ export async function createSemanticMemoryStore(
           SemanticExtractionJobSchema.parse({
             ...job,
             revision: job.revision + 1,
-            status: "pending",
+            status:
+              job.eligibleAt !== undefined &&
+              Date.parse(job.eligibleAt) > Date.parse(context.registeredAt)
+                ? "waiting_idle"
+                : "pending",
             attempts: 0,
-            retryAt: context.registeredAt,
+            retryAt:
+              job.eligibleAt !== undefined &&
+              Date.parse(job.eligibleAt) > Date.parse(context.registeredAt)
+                ? job.eligibleAt
+                : context.registeredAt,
             lastErrorCode: undefined,
             failureClass: undefined,
             attentionSince: undefined,
@@ -405,12 +461,18 @@ export async function createSemanticMemoryStore(
       try {
         const row = state
           .prepare(
-            `SELECT job_json AS jobJson FROM jobs
-             WHERE (status = 'pending' AND (retry_at IS NULL OR retry_at <= ?))
-                OR (status = 'running' AND lease_until <= ?)
-             ORDER BY retry_at IS NOT NULL, retry_at, id LIMIT 1`,
+            `SELECT job.job_json AS jobJson FROM jobs AS job
+             WHERE (((job.status = 'pending' AND (job.retry_at IS NULL OR job.retry_at <= ?))
+                OR (job.status = 'waiting_idle' AND job.retry_at <= ?))
+                OR (job.status = 'running' AND job.lease_until <= ?))
+               AND NOT EXISTS (
+                 SELECT 1 FROM conversation_activity AS activity
+                 WHERE activity.conversation_key = job.conversation_key
+                   AND activity.state = 'running'
+               )
+             ORDER BY job.retry_at IS NOT NULL, job.retry_at, job.id LIMIT 1`,
           )
-          .get(now.toISOString(), now.toISOString()) as unknown as
+          .get(now.toISOString(), now.toISOString(), now.toISOString()) as unknown as
           { readonly jobJson: string } | undefined;
         if (row === undefined) {
           state.exec("COMMIT;");
@@ -430,6 +492,55 @@ export async function createSemanticMemoryStore(
         writeJob(claimed);
         state.exec("COMMIT;");
         return claimed;
+      } catch (error) {
+        rollback(state);
+        throw error;
+      }
+    },
+
+    async isClaimCurrent(job) {
+      return isCurrentRunningJob(state, job);
+    },
+
+    async bindExecutionConversation(input) {
+      state.exec("BEGIN IMMEDIATE;");
+      try {
+        bindExecutionConversationJob(state, writeJob, input, semanticJobId);
+        state.exec("COMMIT;");
+      } catch (error) {
+        rollback(state);
+        throw error;
+      }
+    },
+
+    async touchConversation(input) {
+      state.exec("BEGIN IMMEDIATE;");
+      try {
+        writeConversationActivity(state, input);
+        const current = readJobByConversation(state, input.conversationRef);
+        if (current !== undefined && current.status !== "expired") {
+          const eligibleAt =
+            input.state === "completed"
+              ? input.now.toISOString()
+              : new Date(
+                  input.now.getTime() + DEFAULT_MEMORY_STORAGE_POLICY.extractionIdleMs,
+                ).toISOString();
+          writeJob(
+            SemanticExtractionJobSchema.parse({
+              ...current,
+              revision: current.revision + 1,
+              status: input.state === "completed" ? "pending" : "waiting_idle",
+              attempts: 0,
+              retryAt: eligibleAt,
+              eligibleAt,
+              leaseUntil: undefined,
+              completedAt: undefined,
+              completion: undefined,
+              updatedAt: input.now.toISOString(),
+            }),
+          );
+        }
+        state.exec("COMMIT;");
       } catch (error) {
         rollback(state);
         throw error;
@@ -464,14 +575,37 @@ export async function createSemanticMemoryStore(
         .slice(-2_000);
     },
 
+    async readEvidenceForJob(job) {
+      const pages = job.sourceExecutionIds.map((id) => {
+        const rows = state
+          .prepare(
+            "SELECT envelope_json AS envelopeJson FROM evidence WHERE execution_id = ? ORDER BY occurred_at, message_id",
+          )
+          .all(id) as unknown as readonly { envelopeJson: string }[];
+        return rows.map((row) => MemoryEvidenceEnvelopeSchema.parse(JSON.parse(row.envelopeJson)));
+      });
+      return [...new Map(pages.flat().map((item) => [item.messageId, item])).values()]
+        .toSorted((left, right) => left.occurredAt.localeCompare(right.occurredAt))
+        .slice(-2_000);
+    },
+
     async readOmissionStats(executionId) {
       return readOmissionStats(state, executionId);
     },
 
-    async hasAppliedJob(jobId) {
+    async readOmissionStatsForJob(job) {
+      return job.sourceExecutionIds.reduce(
+        (stats, executionId) =>
+          mergeMemoryEvidenceOmissionStats(stats, readOmissionStats(state, executionId)),
+        EMPTY_MEMORY_EVIDENCE_OMISSION_STATS,
+      );
+    },
+
+    async hasAppliedJob(job) {
       return (
-        data.prepare("SELECT 1 AS found FROM applied_jobs WHERE job_id = ?").get(jobId) !==
-        undefined
+        data
+          .prepare("SELECT 1 AS found FROM applied_jobs WHERE job_id = ? AND input_watermark = ?")
+          .get(job.id, job.inputWatermark) !== undefined
       );
     },
 
@@ -479,7 +613,7 @@ export async function createSemanticMemoryStore(
       if (isDeletedExecution(state, job.executionId)) return;
       state.exec("BEGIN IMMEDIATE;");
       try {
-        finishJob(job, "retained", now);
+        if (isCurrentRunningJob(state, job)) finishJob(job, "retained", now);
         state.exec("COMMIT;");
       } catch (error) {
         rollback(state);
@@ -489,11 +623,16 @@ export async function createSemanticMemoryStore(
 
     async completeRetained(input) {
       if (isDeletedExecution(state, input.job.executionId)) return [];
+      if (!isCurrentRunningJob(state, input.job)) return [];
       const evidenceById = new Map(input.evidence.map((item) => [item.messageId, item]));
       const touched = new Set<string>();
       data.exec("BEGIN IMMEDIATE;");
       try {
-        if (data.prepare("SELECT 1 FROM applied_jobs WHERE job_id = ?").get(input.job.id)) {
+        if (
+          data
+            .prepare("SELECT 1 FROM applied_jobs WHERE job_id = ? AND input_watermark = ?")
+            .get(input.job.id, input.job.inputWatermark)
+        ) {
           data.exec("COMMIT;");
         } else {
           for (const candidate of input.candidates) {
@@ -569,9 +708,14 @@ export async function createSemanticMemoryStore(
           recomputeConflicts(data, touched, input.now);
           data
             .prepare(
-              "INSERT INTO applied_jobs(job_id, terminal_message_id, applied_at) VALUES (?, ?, ?)",
+              "INSERT INTO applied_jobs(job_id, input_watermark, terminal_message_id, applied_at) VALUES (?, ?, ?, ?)",
             )
-            .run(input.job.id, input.job.terminalMessageId, input.now.toISOString());
+            .run(
+              input.job.id,
+              input.job.inputWatermark,
+              input.job.terminalMessageId,
+              input.now.toISOString(),
+            );
           data.exec("COMMIT;");
         }
       } catch (error) {
@@ -591,6 +735,7 @@ export async function createSemanticMemoryStore(
 
     async completeRejected(job, reason, now) {
       if (isDeletedExecution(state, job.executionId)) return;
+      if (!isCurrentRunningJob(state, job)) return;
       state.exec("BEGIN IMMEDIATE;");
       try {
         finishJob(job, "rejected", now);
@@ -605,6 +750,7 @@ export async function createSemanticMemoryStore(
 
     async fail(input) {
       if (isDeletedExecution(state, input.job.executionId)) return;
+      if (!isCurrentRunningJob(state, input.job)) return;
       const needsAttention = input.retry === "configuration" || input.job.attempts >= 3;
       const delay = input.job.attempts <= 1 ? 60_000 : 5 * 60_000;
       writeJob(
@@ -641,9 +787,15 @@ export async function createSemanticMemoryStore(
           SemanticExtractionJobSchema.parse({
             ...job,
             revision: job.revision + 1,
-            status: "pending",
+            status:
+              job.eligibleAt !== undefined && Date.parse(job.eligibleAt) > now.getTime()
+                ? "waiting_idle"
+                : "pending",
             attempts: 0,
-            retryAt: now.toISOString(),
+            retryAt:
+              job.eligibleAt !== undefined && Date.parse(job.eligibleAt) > now.getTime()
+                ? job.eligibleAt
+                : now.toISOString(),
             lastErrorCode: undefined,
             failureClass: undefined,
             attentionSince: undefined,
@@ -664,9 +816,15 @@ export async function createSemanticMemoryStore(
         SemanticExtractionJobSchema.parse({
           ...job,
           revision: job.revision + 1,
-          status: "pending",
+          status:
+            job.eligibleAt !== undefined && Date.parse(job.eligibleAt) > input.now.getTime()
+              ? "waiting_idle"
+              : "pending",
           attempts: 0,
-          retryAt: input.now.toISOString(),
+          retryAt:
+            job.eligibleAt !== undefined && Date.parse(job.eligibleAt) > input.now.getTime()
+              ? job.eligibleAt
+              : input.now.toISOString(),
           lastErrorCode: undefined,
           failureClass: undefined,
           attentionSince: undefined,
@@ -896,7 +1054,7 @@ export async function createSemanticMemoryStore(
       );
       return {
         facts: facts.count,
-        pending: byStatus.get("pending") ?? 0,
+        pending: (byStatus.get("pending") ?? 0) + (byStatus.get("waiting_idle") ?? 0),
         running: byStatus.get("running") ?? 0,
         needsAttention: byStatus.get("needs_attention") ?? 0,
         expired: byStatus.get("expired") ?? 0,
@@ -933,13 +1091,17 @@ export function semanticFactId(jobId: string, candidate: SemanticFactCandidate):
     .slice(0, 24)}`;
 }
 
-function semanticJobId(terminalMessageId: string): string {
-  return `semantic-${createHash("sha256").update(terminalMessageId).digest("hex").slice(0, 24)}`;
+function semanticJobId(conversationRef: MemorySubjectRef): string {
+  return `semantic-${createHash("sha256").update(conversationKey(conversationRef)).digest("hex").slice(0, 24)}`;
+}
+
+function conversationKey(ref: MemorySubjectRef): string {
+  return `${ref.type}\0${ref.id}`;
 }
 
 function initializeData(database: DatabaseSync): void {
   const version = readDatabaseVersion(database);
-  if (version > 2) {
+  if (version > 3) {
     database.close();
     throw new Error(`unsupported-state-version:pragma.memory-semantic-store/v${version}`);
   }
@@ -974,9 +1136,11 @@ function initializeData(database: DatabaseSync): void {
       FOREIGN KEY (evidence_id) REFERENCES evidence(message_id) ON DELETE CASCADE
     );
     CREATE TABLE IF NOT EXISTS applied_jobs (
-      job_id TEXT PRIMARY KEY,
+      job_id TEXT NOT NULL,
+      input_watermark TEXT NOT NULL,
       terminal_message_id TEXT NOT NULL,
-      applied_at TEXT NOT NULL
+      applied_at TEXT NOT NULL,
+      PRIMARY KEY (job_id, input_watermark)
     );
     CREATE TABLE IF NOT EXISTS governance_events (
       id TEXT PRIMARY KEY,
@@ -991,14 +1155,14 @@ function initializeData(database: DatabaseSync): void {
       tombstone_json TEXT NOT NULL
     );
   `);
-  if (version !== 0 && version !== 2) {
+  if (version !== 0 && version !== 3) {
     throw new Error(`missing-adjacent-migration:pragma.memory-semantic-store/v${version}`);
   }
-  database.exec("PRAGMA user_version = 2;");
+  database.exec("PRAGMA user_version = 3;");
 }
 
 function initializeState(database: DatabaseSync): void {
-  assertVersion(database, "pragma.memory-semantic-jobs", 2);
+  assertVersion(database, "pragma.memory-semantic-jobs", 3);
   const version = readDatabaseVersion(database);
   database.exec(`
     PRAGMA journal_mode = WAL;
@@ -1013,14 +1177,20 @@ function initializeState(database: DatabaseSync): void {
       ON evidence(execution_id, occurred_at);
     CREATE TABLE IF NOT EXISTS jobs (
       id TEXT PRIMARY KEY,
+      conversation_key TEXT NOT NULL UNIQUE,
       execution_id TEXT NOT NULL,
-      terminal_message_id TEXT NOT NULL UNIQUE,
+      terminal_message_id TEXT NOT NULL,
       status TEXT NOT NULL,
       retry_at TEXT,
       lease_until TEXT,
       job_json TEXT NOT NULL
     );
     CREATE INDEX IF NOT EXISTS semantic_jobs_due ON jobs(status, retry_at, lease_until);
+    CREATE TABLE IF NOT EXISTS conversation_activity (
+      conversation_key TEXT PRIMARY KEY,
+      state TEXT NOT NULL,
+      updated_at TEXT NOT NULL
+    );
     CREATE TABLE IF NOT EXISTS subject_contexts (
       execution_id TEXT PRIMARY KEY,
       context_json TEXT NOT NULL
@@ -1035,10 +1205,10 @@ function initializeState(database: DatabaseSync): void {
       deleted_at TEXT NOT NULL
     );
   `);
-  if (version !== 0 && version !== 2) {
+  if (version !== 0 && version !== 3) {
     throw new Error(`missing-adjacent-migration:pragma.memory-semantic-jobs/v${version}`);
   }
-  database.exec("PRAGMA user_version = 2;");
+  database.exec("PRAGMA user_version = 3;");
 }
 
 function assertVersion(database: DatabaseSync, family: string, current: number): void {
@@ -1060,6 +1230,99 @@ function readJob(database: DatabaseSync, id: string): SemanticExtractionJob | un
   const row = database.prepare("SELECT job_json AS jobJson FROM jobs WHERE id = ?").get(id) as
     { readonly jobJson: string } | undefined;
   return row === undefined ? undefined : SemanticExtractionJobSchema.parse(JSON.parse(row.jobJson));
+}
+
+function readJobByConversation(
+  database: DatabaseSync,
+  conversationRef: MemorySubjectRef,
+): SemanticExtractionJob | undefined {
+  const row = database
+    .prepare("SELECT job_json AS jobJson FROM jobs WHERE conversation_key = ?")
+    .get(conversationKey(conversationRef)) as { readonly jobJson: string } | undefined;
+  return row === undefined ? undefined : SemanticExtractionJobSchema.parse(JSON.parse(row.jobJson));
+}
+
+function bindExecutionConversationJob(
+  database: DatabaseSync,
+  writeJob: (job: SemanticExtractionJob) => void,
+  input: {
+    readonly executionId: string;
+    readonly conversationRef: MemorySubjectRef;
+    readonly now: Date;
+  },
+  createJobId: (conversationRef: MemorySubjectRef) => string,
+): void {
+  const fallback = database
+    .prepare("SELECT job_json AS jobJson FROM jobs WHERE execution_id = ?")
+    .get(input.executionId) as { readonly jobJson: string } | undefined;
+  if (fallback === undefined) return;
+  const job = SemanticExtractionJobSchema.parse(JSON.parse(fallback.jobJson));
+  if (
+    job.conversationRef.type === input.conversationRef.type &&
+    job.conversationRef.id === input.conversationRef.id
+  ) {
+    return;
+  }
+  if (
+    job.conversationRef.type !== "pragma.execution" ||
+    job.conversationRef.id !== input.executionId
+  ) {
+    return;
+  }
+  const existing = readJobByConversation(database, input.conversationRef);
+  database.prepare("DELETE FROM jobs WHERE id = ?").run(job.id);
+  database
+    .prepare("DELETE FROM conversation_activity WHERE conversation_key = ?")
+    .run(conversationKey(job.conversationRef));
+  const latest =
+    existing === undefined || job.sourceUpdatedAt >= existing.sourceUpdatedAt ? job : existing;
+  writeJob(
+    SemanticExtractionJobSchema.parse({
+      ...latest,
+      id: existing?.id ?? createJobId(input.conversationRef),
+      revision: Math.max(existing?.revision ?? 0, job.revision) + 1,
+      conversationRef: input.conversationRef,
+      sourceExecutionIds: uniqueStrings([
+        ...(existing?.sourceExecutionIds ?? []),
+        ...job.sourceExecutionIds,
+      ]),
+      totalAttempts: (existing?.totalAttempts ?? 0) + job.totalAttempts,
+      updatedAt: input.now.toISOString(),
+    }),
+  );
+}
+
+function writeConversationActivity(
+  database: DatabaseSync,
+  input: {
+    readonly conversationRef: MemorySubjectRef;
+    readonly state: "active" | "running" | "completed";
+    readonly now: Date;
+  },
+): void {
+  database
+    .prepare(
+      `INSERT INTO conversation_activity(conversation_key, state, updated_at) VALUES (?, ?, ?)
+       ON CONFLICT(conversation_key) DO UPDATE SET state=excluded.state, updated_at=excluded.updated_at`,
+    )
+    .run(conversationKey(input.conversationRef), input.state, input.now.toISOString());
+}
+
+function readConversationActivity(
+  database: DatabaseSync,
+  conversationRef: MemorySubjectRef,
+): { readonly state: "active" | "running" | "completed"; readonly updatedAt: string } | undefined {
+  return database
+    .prepare(
+      "SELECT state, updated_at AS updatedAt FROM conversation_activity WHERE conversation_key = ?",
+    )
+    .get(conversationKey(conversationRef)) as
+    { readonly state: "active" | "running" | "completed"; readonly updatedAt: string } | undefined;
+}
+
+function isCurrentRunningJob(database: DatabaseSync, claimed: SemanticExtractionJob): boolean {
+  const current = readJob(database, claimed.id);
+  return current?.status === "running" && current.revision === claimed.revision;
 }
 
 function readJobRows(database: DatabaseSync): SemanticExtractionJob[] {
@@ -1152,11 +1415,16 @@ function maintainJobs(
           expiredAt: now.toISOString(),
           updatedAt: now.toISOString(),
         });
-        database.prepare("DELETE FROM evidence WHERE execution_id = ?").run(job.executionId);
-        database.prepare("DELETE FROM capture_stats WHERE execution_id = ?").run(job.executionId);
-        database
-          .prepare("DELETE FROM subject_contexts WHERE execution_id = ?")
-          .run(job.executionId);
+        const deleteEvidence = database.prepare("DELETE FROM evidence WHERE execution_id = ?");
+        const deleteStats = database.prepare("DELETE FROM capture_stats WHERE execution_id = ?");
+        const deleteSubjects = database.prepare(
+          "DELETE FROM subject_contexts WHERE execution_id = ?",
+        );
+        for (const executionId of job.sourceExecutionIds) {
+          deleteEvidence.run(executionId);
+          deleteStats.run(executionId);
+          deleteSubjects.run(executionId);
+        }
         database
           .prepare("UPDATE jobs SET status = 'expired', job_json = ? WHERE id = ?")
           .run(JSON.stringify(next), next.id);
@@ -1174,10 +1442,14 @@ function maintainJobs(
         timestamp - Date.parse(terminalAt) >= retention
       ) {
         database.prepare("DELETE FROM jobs WHERE id = ?").run(job.id);
-        database.prepare("DELETE FROM capture_stats WHERE execution_id = ?").run(job.executionId);
-        database
-          .prepare("DELETE FROM subject_contexts WHERE execution_id = ?")
-          .run(job.executionId);
+        const deleteStats = database.prepare("DELETE FROM capture_stats WHERE execution_id = ?");
+        const deleteSubjects = database.prepare(
+          "DELETE FROM subject_contexts WHERE execution_id = ?",
+        );
+        for (const executionId of job.sourceExecutionIds) {
+          deleteStats.run(executionId);
+          deleteSubjects.run(executionId);
+        }
         deleted += 1;
       }
     }
@@ -1201,19 +1473,27 @@ function deleteExecutionState(
 ): void {
   database.exec("BEGIN IMMEDIATE;");
   try {
+    const targets = new Set(executionIds);
+    const deleteJob = database.prepare("DELETE FROM jobs WHERE id = ?");
+    const deleteActivity = database.prepare(
+      "DELETE FROM conversation_activity WHERE conversation_key = ?",
+    );
+    for (const job of readJobRows(database)) {
+      if (!job.sourceExecutionIds.some((executionId) => targets.has(executionId))) continue;
+      deleteJob.run(job.id);
+      deleteActivity.run(conversationKey(job.conversationRef));
+    }
     const markDeleted = database.prepare(
       `INSERT INTO deleted_executions(execution_id, deleted_at) VALUES (?, ?)
        ON CONFLICT(execution_id) DO UPDATE SET deleted_at=excluded.deleted_at`,
     );
     const deleteEvidence = database.prepare("DELETE FROM evidence WHERE execution_id = ?");
     const deleteStats = database.prepare("DELETE FROM capture_stats WHERE execution_id = ?");
-    const deleteJobs = database.prepare("DELETE FROM jobs WHERE execution_id = ?");
     const deleteSubjects = database.prepare("DELETE FROM subject_contexts WHERE execution_id = ?");
     for (const executionId of new Set(executionIds)) {
       markDeleted.run(executionId, now.toISOString());
       deleteEvidence.run(executionId);
       deleteStats.run(executionId);
-      deleteJobs.run(executionId);
       deleteSubjects.run(executionId);
     }
     database.exec("COMMIT;");

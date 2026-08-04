@@ -6,7 +6,6 @@ import type {
   DesktopMemoryExtractorProfile,
   DesktopMemoryPlaneStatus,
   DesktopRuntimeAvailability,
-  DesktopMemoryExtractionJob,
 } from "../../../../shared/contracts/index.ts";
 import { SelectMenu } from "../../components/SelectMenu.tsx";
 import { SettingsScreenFrame } from "./SettingsScreenFrame.tsx";
@@ -17,7 +16,6 @@ export function MemorySettingsFragment() {
   const [status, setStatus] = useState<DesktopMemoryPlaneStatus>();
   const [extractor, setExtractor] = useState<DesktopMemoryExtractorProfile>();
   const [runtimes, setRuntimes] = useState<readonly DesktopRuntimeAvailability[]>([]);
-  const [jobs, setJobs] = useState<readonly DesktopMemoryExtractionJob[]>([]);
   const [runtimeId, setRuntimeId] = useState("");
   const [modelKey, setModelKey] = useState("");
   const [saving, setSaving] = useState(false);
@@ -30,15 +28,13 @@ export function MemorySettingsFragment() {
       window.pragmaDesktop.getMemoryPlaneStatus(),
       window.pragmaDesktop.getMemoryExtractorProfile(),
       window.pragmaDesktop.getRuntimeAvailability(),
-      window.pragmaDesktop.listMemoryExtractionJobs(),
     ])
-      .then(([nextSnapshot, nextStatus, nextExtractor, nextRuntimes, nextJobs]) => {
+      .then(([nextSnapshot, nextStatus, nextExtractor, nextRuntimes]) => {
         if (cancelled) return;
         setSnapshot(nextSnapshot);
         setStatus(nextStatus);
         setExtractor(nextExtractor);
         setRuntimes(nextRuntimes);
-        setJobs(nextJobs);
         const selectedRuntime =
           nextExtractor.runtimeId ?? nextRuntimes.find((runtime) => runtime.isDefault)?.id ?? "";
         setRuntimeId(selectedRuntime);
@@ -103,25 +99,6 @@ export function MemorySettingsFragment() {
 
   const selectedRuntime = runtimes.find((runtime) => runtime.id === runtimeId);
   const models = selectedRuntime?.models ?? [];
-  const retryJob = async (job: DesktopMemoryExtractionJob) => {
-    setSaving(true);
-    setError(undefined);
-    try {
-      const updated = await window.pragmaDesktop.retryMemoryExtractionJob({
-        module: job.module,
-        id: job.id,
-        expectedRevision: job.revision,
-      });
-      setJobs((current) =>
-        current.map((candidate) => (candidate.id === job.id ? updated : candidate)),
-      );
-    } catch {
-      setError(t("memory.retryError"));
-    } finally {
-      setSaving(false);
-    }
-  };
-
   return (
     <SettingsScreenFrame
       id="memory-panel"
@@ -298,34 +275,6 @@ export function MemorySettingsFragment() {
             </span>
           </div>
         )}
-        {jobs
-          .filter((job) => ["needs_attention", "expired"].includes(job.status))
-          .map((job) => (
-            <div className="setting-row" key={`${job.module}:${job.id}`}>
-              <span className="setting-copy">
-                <strong>{t("memory.extractionJob", { module: job.module })}</strong>
-                <span>
-                  {t("memory.extractionJobSummary", {
-                    status: job.status,
-                    attempts: job.totalAttempts,
-                    evidence: job.evidenceRecords,
-                    omitted: job.omittedRecords,
-                    error: job.lastErrorCode ?? "—",
-                  })}
-                </span>
-              </span>
-              {job.status !== "needs_attention" ? null : (
-                <button
-                  type="button"
-                  className="secondary-button"
-                  disabled={saving}
-                  onClick={() => void retryJob(job)}
-                >
-                  {t("memory.retryExtraction")}
-                </button>
-              )}
-            </div>
-          ))}
       </div>
       {error === undefined ? null : <p className="form-error">{error}</p>}
     </SettingsScreenFrame>

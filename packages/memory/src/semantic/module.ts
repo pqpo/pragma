@@ -14,6 +14,16 @@ import type { MemoryModule } from "../pipeline/memory-module.ts";
 export interface SemanticMemoryModule extends MemoryModule {
   readonly store: SemanticMemoryStore;
   setExtractor(extractor: SemanticMemoryExtractor | undefined): Promise<void>;
+  setConversationState(input: {
+    readonly conversationRef: MemorySubjectRef;
+    readonly state: "active" | "running" | "completed";
+    readonly now: Date;
+  }): Promise<void>;
+  bindExecutionConversation(input: {
+    readonly executionId: string;
+    readonly conversationRef: MemorySubjectRef;
+    readonly now: Date;
+  }): Promise<void>;
   registerExecutionSubjects(input: {
     readonly executionId: string;
     readonly subjectRefs: readonly MemorySubjectRef[];
@@ -32,6 +42,7 @@ export async function createSemanticMemoryModule(
   const store = await createSemanticMemoryStore(options);
   const now = options.now ?? (() => new Date());
   let extractor = options.extractor;
+  const running = new Map<string, AbortController>();
 
   return {
     descriptor: {
@@ -78,14 +89,17 @@ export async function createSemanticMemoryModule(
       if (extractor === undefined) return;
       const job = await store.claimDueJob(now());
       if (job === undefined) return;
+      const key = conversationKey(job.conversationRef);
+      const controller = new AbortController();
+      running.set(key, controller);
       try {
-        if (await store.hasAppliedJob(job.id)) {
+        if (await store.hasAppliedJob(job)) {
           await store.completePreviouslyApplied(job, now());
           return;
         }
         const subjectContext = await store.getSubjectContext(job.executionId);
         if (subjectContext === undefined) throw new Error("semantic_subject_context_missing");
-        const evidence = sanitizeEvidence(await store.readEvidence(job.executionId));
+        const evidence = sanitizeEvidence(await store.readEvidenceForJob(job));
         if (evidence.some((item) => item.sensitivity === "restricted")) {
           await store.completeRejected(job, "sensitive", now());
           return;
@@ -111,9 +125,12 @@ export async function createSemanticMemoryModule(
           executionId: job.executionId,
           allowedSubjectRefs,
           evidence,
-          omittedEvidence: await store.readOmissionStats(job.executionId),
+          omittedEvidence: await store.readOmissionStatsForJob(job),
         });
-        const extracted = await extractor.extract(input);
+        if (!(await store.isClaimCurrent(job))) return;
+        controller.signal.throwIfAborted();
+        const extracted = await extractor.extract(input, { signal: controller.signal });
+        controller.signal.throwIfAborted();
         const output = SemanticExtractionOutputSchema.parse(extracted.output);
         if (!output.retain) {
           await store.completeRejected(job, output.reason, now());
@@ -138,10 +155,23 @@ export async function createSemanticMemoryModule(
           now: now(),
           retry: isConfigurationError(error) ? "configuration" : "transient",
         });
+      } finally {
+        if (running.get(key) === controller) running.delete(key);
       }
     },
     async setExtractor(next) {
       extractor = next;
+    },
+    async setConversationState(input) {
+      if (input.state !== "completed") {
+        running.get(conversationKey(input.conversationRef))?.abort();
+      }
+      await store.touchConversation(input);
+    },
+    async bindExecutionConversation(input) {
+      running.get(conversationKey({ type: "pragma.execution", id: input.executionId }))?.abort();
+      running.get(conversationKey(input.conversationRef))?.abort();
+      await store.bindExecutionConversation(input);
     },
     async registerExecutionSubjects(input) {
       await store.registerSubjectContext(
@@ -158,6 +188,10 @@ export async function createSemanticMemoryModule(
       store.close();
     },
   };
+}
+
+function conversationKey(ref: MemorySubjectRef): string {
+  return `${ref.type}\0${ref.id}`;
 }
 
 function hasTextEvidence(evidence: readonly MemoryEvidenceEnvelope[]): boolean {

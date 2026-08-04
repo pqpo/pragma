@@ -58,7 +58,12 @@ export interface DesktopMemoryPlane {
   setSemanticExtractor(extractor: SemanticMemoryExtractor | undefined): Promise<void>;
   registerMemoryExecutionContext(input: {
     readonly executionId: string;
+    readonly missionId: string;
     readonly projectId: string;
+  }): Promise<void>;
+  setMemoryConversationState(input: {
+    readonly missionId: string;
+    readonly state: "active" | "running" | "completed";
   }): Promise<void>;
   reviseSemanticFact(
     input: Omit<Parameters<SemanticMemoryStore["revise"]>[0], "actorRef" | "now">,
@@ -373,11 +378,42 @@ export async function createDesktopMemoryPlane(options: {
     async registerMemoryExecutionContext(input) {
       const localUser = await subjectIdentities.getLocalUserRef();
       const principalRefs = [localUser, { type: "pragma.project" as const, id: input.projectId }];
-      await activity.registerExecutionContext({ executionId: input.executionId, principalRefs });
-      await semantic.registerExecutionSubjects({
+      const conversationRef = { type: "pragma.mission" as const, id: input.missionId };
+      await activity.registerExecutionContext({
         executionId: input.executionId,
-        subjectRefs: principalRefs,
+        conversationRef,
+        principalRefs,
       });
+      const now = new Date();
+      await Promise.all([
+        semantic.registerExecutionSubjects({
+          executionId: input.executionId,
+          subjectRefs: principalRefs,
+        }),
+        episodic.bindExecutionConversation({
+          executionId: input.executionId,
+          conversationRef,
+          now,
+        }),
+        semantic.bindExecutionConversation({
+          executionId: input.executionId,
+          conversationRef,
+          now,
+        }),
+      ]);
+      await Promise.all([
+        episodic.setConversationState({ conversationRef, state: "running", now }),
+        semantic.setConversationState({ conversationRef, state: "running", now }),
+      ]);
+      scheduler.wake();
+    },
+    async setMemoryConversationState(input) {
+      const conversationRef = { type: "pragma.mission" as const, id: input.missionId };
+      const now = new Date();
+      await Promise.all([
+        episodic.setConversationState({ conversationRef, state: input.state, now }),
+        semantic.setConversationState({ conversationRef, state: input.state, now }),
+      ]);
       scheduler.wake();
     },
     async reviseSemanticFact(input) {
@@ -563,6 +599,7 @@ function desktopStoragePolicy(): Readonly<Record<string, string | number>> {
     evidenceMaxRecordsPerExecution: DEFAULT_MEMORY_STORAGE_POLICY.evidenceMaxRecordsPerExecution,
     evidenceMaxBytesPerExecution: DEFAULT_MEMORY_STORAGE_POLICY.evidenceMaxBytesPerExecution,
     extractionPromptMaxBytes: DEFAULT_MEMORY_STORAGE_POLICY.extractionPromptMaxBytes,
+    extractionIdleHours: DEFAULT_MEMORY_STORAGE_POLICY.extractionIdleMs / 3_600_000,
     jobRecordRetentionDays: 30,
     failedPayloadRetentionDays: 30,
     deadLetterRetentionDays: 30,
