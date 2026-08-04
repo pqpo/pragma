@@ -15779,6 +15779,18 @@ textarea:focus-visible,
   width: 100%;
 }
 
+.mission-output-executor {
+  display: block;
+  overflow: hidden;
+  margin-bottom: 5px;
+  color: var(--green-dark);
+  font-size: 11px;
+  font-weight: 700;
+  line-height: 1.35;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
 .mission-user-message {
   display: flex;
   justify-content: end;
@@ -16454,6 +16466,18 @@ textarea:focus-visible,
   font-size: 12px;
 }
 
+.mission-tool-entry.has-executor summary,
+.mission-tool-entry.has-executor.mission-tool-static-row {
+  grid-template-columns: auto minmax(0, 140px) minmax(0, 1fr) auto auto;
+}
+
+.mission-tool-entry .mission-output-executor {
+  min-width: 0;
+  margin: 0;
+  color: var(--green-dark);
+  font-size: 10px;
+}
+
 .mission-chat-activity summary {
   cursor: pointer;
   list-style: none;
@@ -16505,6 +16529,11 @@ textarea:focus-visible,
   line-height: 1.6;
   text-overflow: ellipsis;
   white-space: nowrap;
+}
+
+.mission-thinking-entry > .mission-output-executor {
+  grid-column: 1 / -1;
+  margin-bottom: 1px;
 }
 
 .mission-thinking-entry.is-expanded > p {

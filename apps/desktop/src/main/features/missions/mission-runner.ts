@@ -178,6 +178,8 @@ interface LiveMissionChat {
   sequence: number;
 }
 
+type ExecutorNameResolver = (executorId: string) => string | undefined;
+
 interface MissionExecutionContext {
   readonly app: ReturnType<typeof createPragma>;
   readonly runtimes: RuntimeResolver;
@@ -340,19 +342,38 @@ export function createMissionRunner(options: {
   const liveWorkOutputs = new Map<string, Map<string, LiveMissionChat>>();
   const executorNameCache = new Map<string, ReadonlyMap<string, string>>();
 
+  const readExecutorNames = async (
+    mission: Pick<Mission, "project">,
+  ): Promise<ReadonlyMap<string, string>> => {
+    const project = await options.project.openRevision(mission.project.revision);
+    return new Map(
+      project.listResources().map((resource) => [resource.metadata.id, resource.metadata.name]),
+    );
+  };
+
   const getExecutorNames = async (
     mission: Pick<Mission, "project">,
   ): Promise<ReadonlyMap<string, string>> => {
     const projectKey = `${mission.project.id}:${mission.project.revision}`;
     const existing = executorNameCache.get(projectKey);
     if (existing !== undefined) return existing;
-    const project = await options.project.openRevision(mission.project.revision);
-    const names = new Map(
-      project.listResources().map((resource) => [resource.metadata.id, resource.metadata.name]),
-    );
+    const names = await readExecutorNames(mission);
     executorNameCache.set(projectKey, names);
     return names;
   };
+
+  const getExecutorNamesOrFallback = async (
+    mission: Mission,
+    surface: "live" | "historical" | "work",
+  ): Promise<ReadonlyMap<string, string>> =>
+    await getExecutorNames(mission).catch((error: unknown) => {
+      logger.warn(
+        "mission.executor_names_unavailable",
+        `Mission ${mission.id} will use Expert IDs for ${surface} output labels.`,
+        { error, missionId: mission.id },
+      );
+      return new Map<string, string>();
+    });
 
   const trackOperation = (id: string, operation: PendingMissionOperation): void => {
     pendingOperations.set(id, operation);
@@ -640,19 +661,25 @@ export function createMissionRunner(options: {
   };
 
   const trackExecution = (input: {
-    readonly missionId: string;
+    readonly mission: Mission;
     readonly handle: MutableExecution & { readonly result: Promise<unknown> };
     readonly startedAt: string;
     readonly inputMessageId: string;
     readonly sessionId?: string | undefined;
+    readonly executorNames: ReadonlyMap<string, string>;
     readonly acceptedAt?: number | undefined;
     readonly onFinished?: (() => void | Promise<void>) | undefined;
   }): void => {
+    const missionId = input.mission.id;
+    const resolveExecutorName = createMissionExecutorNameResolver(
+      input.mission,
+      input.executorNames,
+    );
     let firstProjectionLogged = false;
     const live = observeMissionChat(
       input.handle,
       (patches) => {
-        emitChatPatches(input.missionId, patches);
+        emitChatPatches(missionId, patches);
         if (
           !firstProjectionLogged &&
           input.acceptedAt !== undefined &&
@@ -663,31 +690,29 @@ export function createMissionRunner(options: {
             "mission.first_ui_projection",
             "Mission emitted its first UI-visible text projection",
             {
-              missionId: input.missionId,
+              missionId,
               executionId: input.handle.executionId,
               elapsedMs: elapsedMissionMs(input.acceptedAt),
             },
           );
         }
       },
-      () => invalidateChat(input.missionId),
+      () => invalidateChat(missionId),
       (item) => {
         if (item.channel === "telemetry" && item.parentInvocationId === undefined) {
           const payload = asRecord(item.value);
           if (readString(payload, "type") === "context-window.updated") {
             const usage = RuntimeContextWindowUsageSchema.safeParse(payload["usage"]);
             if (usage.success) {
-              liveContextWindows.set(input.missionId, usage.data);
-              emitChatPatches(input.missionId, [
-                { type: "context-window.update", usage: usage.data },
-              ]);
+              liveContextWindows.set(missionId, usage.data);
+              emitChatPatches(missionId, [{ type: "context-window.update", usage: usage.data }]);
             }
           }
         }
         const sessionId = item.source.sessionId;
         if (item.source.parentSessionId !== undefined && sessionId !== undefined) {
           const recordId = `runtime-agent:${sessionId}`;
-          const byRecord = liveWorkOutputs.get(input.missionId) ?? new Map();
+          const byRecord = liveWorkOutputs.get(missionId) ?? new Map();
           const output =
             byRecord.get(recordId) ??
             ({
@@ -697,18 +722,22 @@ export function createMissionRunner(options: {
               close: async () => undefined,
             } satisfies LiveMissionChat);
           byRecord.set(recordId, output);
-          liveWorkOutputs.set(input.missionId, byRecord);
+          liveWorkOutputs.set(missionId, byRecord);
           if (item.channel !== "agent" && item.channel !== "progress") {
-            consumeLiveChatOutput(output, item, { includeNestedSource: true });
+            consumeLiveChatOutput(output, item, {
+              includeNestedSource: true,
+              resolveExecutorName,
+            });
           }
         }
-        invalidateWork(input.missionId);
+        invalidateWork(missionId);
       },
+      resolveExecutorName,
     );
-    liveChats.set(input.missionId, live);
+    liveChats.set(missionId, live);
     const settlement = observeExecution(
       options.missions,
-      input.missionId,
+      missionId,
       input.handle,
       input.startedAt,
       input.inputMessageId,
@@ -719,29 +748,29 @@ export function createMissionRunner(options: {
         await persistMissionExecutionProjection(
           options.missions,
           executionStore,
-          input.missionId,
+          missionId,
           input.handle.executionId,
         ),
     )
       .then(() => {
         if (input.acceptedAt !== undefined) {
           logger.info("mission.final_result", "Mission execution reached a final result", {
-            missionId: input.missionId,
+            missionId,
             executionId: input.handle.executionId,
             elapsedMs: elapsedMissionMs(input.acceptedAt),
           });
         }
       })
-      .finally(async () => await forgetActive(input.missionId, input.handle.executionId));
-    active.set(input.missionId, { handle: input.handle, settlement });
-    invalidateChat(input.missionId);
-    invalidateWork(input.missionId);
+      .finally(async () => await forgetActive(missionId, input.handle.executionId));
+    active.set(missionId, { handle: input.handle, settlement });
+    invalidateChat(missionId);
+    invalidateWork(missionId);
     void settlement.catch((error: unknown) => {
       logger.error(
         "mission.execution_observer_failed",
         `Failed to observe Mission execution ${input.handle.executionId}.`,
         error,
-        { missionId: input.missionId, executionId: input.handle.executionId },
+        { missionId, executionId: input.handle.executionId },
       );
     });
   };
@@ -765,6 +794,7 @@ export function createMissionRunner(options: {
     const compiled = await compileMissionExecutor(mission, runtimes);
     const compiledIdentity = await compilationIdentity(mission);
     logMissionPhase(logger, mission.id, "default_agent_compile", phaseStartedAt, acceptedAt);
+    const executorNames = await getExecutorNamesOrFallback(mission, "live");
     const modelSelection = toRuntimeModelSelection(mission.modelOverride);
     if (mission.modelOverride !== undefined && compiled !== undefined) {
       phaseStartedAt = performance.now();
@@ -837,8 +867,9 @@ export function createMissionRunner(options: {
         startedAt: executionStartedAt,
       });
       trackExecution({
-        missionId: mission.id,
+        mission,
         handle,
+        executorNames,
         startedAt: executionStartedAt,
         inputMessageId,
         acceptedAt,
@@ -920,8 +951,9 @@ export function createMissionRunner(options: {
       startedAt: executionStartedAt,
     });
     trackExecution({
-      missionId: mission.id,
+      mission,
       handle: turn,
+      executorNames,
       startedAt: executionStartedAt,
       inputMessageId,
       sessionId: session.sessionId,
@@ -995,6 +1027,7 @@ export function createMissionRunner(options: {
       }
       compiledExpert = compiled.value;
     }
+    const executorNames = await getExecutorNamesOrFallback(mission, "live");
     const rootExpert =
       compiledExpert === undefined
         ? undefined
@@ -1086,8 +1119,9 @@ export function createMissionRunner(options: {
       startedAt,
     });
     trackExecution({
-      missionId: mission.id,
+      mission,
       handle: turn,
+      executorNames,
       startedAt,
       inputMessageId: input.requestId,
       sessionId: session.sessionId,
@@ -1358,7 +1392,7 @@ export function createMissionRunner(options: {
       capturedLive?.executionId,
     );
 
-    const names = await getExecutorNames(mission);
+    const names = await getExecutorNamesOrFallback(mission, "historical");
     const current = active.get(mission.id);
     const pendingInteractions = await listMissionPendingHumanInteractions(mission);
 
@@ -1374,11 +1408,12 @@ export function createMissionRunner(options: {
     const latestMission = await options.missions.get(mission.id);
     const contextWindow = await getContextWindowState(latestMission);
     const revision = chatRevisions.get(mission.id) ?? 0;
+    const resolveExecutorName = createMissionExecutorNameResolver(mission, names);
     const namedEntries = entries.map((entry) => {
       if (entry.executorName !== undefined || entry.executorId === undefined) return entry;
       return {
         ...entry,
-        executorName: names.get(entry.executorId) ?? entry.executorId,
+        executorName: resolveExecutorName(entry.executorId) ?? entry.executorId,
       };
     });
     return {
@@ -1461,7 +1496,7 @@ export function createMissionRunner(options: {
         ? {}
         : { rootSessionId: mission.execution.sessionId }),
     });
-    const names = await getExecutorNames(mission);
+    const names = await getExecutorNamesOrFallback(mission, "work");
     const runtimeAgentOrdinals = createRuntimeAgentOrdinals(records);
     return {
       missionId: mission.id,
@@ -2437,11 +2472,26 @@ function messageRecordsToChatEntries(records: readonly AgentMessageRecord[]): Mi
   return entries;
 }
 
+function createMissionExecutorNameResolver(
+  mission: Pick<Mission, "executor">,
+  names: ReadonlyMap<string, string>,
+): ExecutorNameResolver {
+  // A Team or Flow name identifies the invocable resource, not the concrete Expert producing an
+  // entry. Their Experts must resolve through the pinned Project Revision or fall back to IDs.
+  const rootExpertId =
+    mission.executor.kind === "expert" && mission.executor.ref.startsWith("expert:")
+      ? mission.executor.ref.slice("expert:".length)
+      : undefined;
+  return (executorId) =>
+    names.get(executorId) ?? (executorId === rootExpertId ? mission.executor.name : undefined);
+}
+
 function observeMissionChat(
   execution: MutableExecution & { readonly result: Promise<unknown> },
   onOutput: (patches: readonly MissionChatPatch[]) => void,
   onInvalidate: () => void,
   onItem: (item: ExecutionOutputItem) => void,
+  resolveExecutorName: ExecutorNameResolver,
 ): LiveMissionChat {
   const chat: LiveMissionChat = {
     executionId: execution.executionId,
@@ -2458,7 +2508,9 @@ function observeMissionChat(
         for await (const item of subscription) {
           if (closed) break;
           onItem(item);
-          const patches = consumeLiveChatOutput(chat, item);
+          const patches = consumeLiveChatOutput(chat, item, {
+            resolveExecutorName,
+          });
           if (patches.length > 0) onOutput(patches);
           if (isTerminalContextCompactionOutput(item)) onInvalidate();
         }
@@ -2543,12 +2595,18 @@ function isTerminalContextCompactionOutput(item: ExecutionOutputItem): boolean {
 function consumeLiveChatOutput(
   chat: LiveMissionChat,
   item: ExecutionOutputItem,
-  options: { readonly includeNestedSource?: boolean } = {},
+  options: {
+    readonly includeNestedSource?: boolean;
+    readonly resolveExecutorName?: ExecutorNameResolver;
+  } = {},
 ): MissionChatPatch[] {
+  const executorName =
+    item.executorId === undefined ? undefined : options.resolveExecutorName?.(item.executorId);
   const base = {
     executionId: item.executionId,
     invocationId: item.invocationId,
     ...(item.executorId === undefined ? {} : { executorId: item.executorId }),
+    ...(executorName === undefined ? {} : { executorName }),
     createdAt: item.occurredAt,
   };
   if (item.channel === "agent") {

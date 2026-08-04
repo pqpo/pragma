@@ -22,6 +22,7 @@ import {
 } from "@pragma/core";
 import type {
   PragmaExpertResource,
+  PragmaExpertTeamResource,
   PragmaFlowResource,
   PragmaRuntimeProfileResource,
 } from "@pragma/interpreter/ast";
@@ -591,8 +592,17 @@ describe("MissionRunner", { timeout: 15_000 }, () => {
         expect(chat.execution?.interruptible).toBe(true);
         expect(chat.entries).toEqual(
           expect.arrayContaining([
-            expect.objectContaining({ kind: "thinking", content: "Checking constraints." }),
-            expect.objectContaining({ kind: "tool", toolName: "read_file", status: "running" }),
+            expect.objectContaining({
+              kind: "thinking",
+              executorName: "Writer",
+              content: "Checking constraints.",
+            }),
+            expect.objectContaining({
+              kind: "tool",
+              executorName: "Writer",
+              toolName: "read_file",
+              status: "running",
+            }),
             expect.objectContaining({
               kind: "context_operation",
               operationId: "compact-live",
@@ -629,11 +639,11 @@ describe("MissionRunner", { timeout: 15_000 }, () => {
       expect.arrayContaining([
         expect.objectContaining({
           type: "entry.upsert",
-          entry: expect.objectContaining({ kind: "thinking" }),
+          entry: expect.objectContaining({ kind: "thinking", executorName: "Writer" }),
         }),
         expect.objectContaining({
           type: "entry.upsert",
-          entry: expect.objectContaining({ kind: "tool" }),
+          entry: expect.objectContaining({ kind: "tool", executorName: "Writer" }),
         }),
         expect.objectContaining({
           type: "entry.upsert",
@@ -877,6 +887,186 @@ describe("MissionRunner", { timeout: 15_000 }, () => {
     );
   });
 
+  it("identifies Team, delegated Expert, and Flow output in live and historical chat", async () => {
+    const root = await mkdtemp(join(tmpdir(), "pragma-mission-executor-labels-"));
+    temporaryPaths.push(root);
+    const project = createPragmaProjectStore({ projectsPath: join(root, "projects") });
+    const writer = expertFixtureWithReviewerTool();
+    const reviewer = reviewerFixture();
+    const team = expertTeamFixture();
+    const flow = expertFlowFixture();
+    const snapshot = await project.publish({
+      expectedRevision: 0,
+      resources: [runtimeFixture(), writer, reviewer, team, flow],
+    });
+    const missions = createMissionStore({ missionsPath: join(root, "missions") });
+    const missionFor = async (
+      resource: PragmaExpertResource | PragmaExpertTeamResource | PragmaFlowResource,
+      goal: string,
+    ) =>
+      await missions.create({
+        workspace: { path: root, basename: "workspace" },
+        goal,
+        ...(resource.kind === "Flow" ? { flowInput: {} } : {}),
+        project: { id: snapshot.projectId, revision: snapshot.revision },
+        executor: missionExecutorSnapshot(resource),
+      });
+    const expertMission = await missionFor(writer, "Delegate review");
+    const teamMission = await missionFor(team, "Coordinate review");
+    const flowMission = await missionFor(flow, "Run review flow");
+    const runtime = defineRuntimeDriver<
+      never,
+      { context: RuntimeDriverSessionContext; id: string }
+    >({
+      descriptor: { id: "fake", kind: "fake", displayName: "Fake" },
+      createSession: (context) => ({ context, id: `runtime:${context.systemSessionId}` }),
+      readSession: (session) => ({ runtimeSessionId: session.id }),
+      async startTurn(session, turn) {
+        const tools = session.context.agent.tools ?? [];
+        const spawn = tools.find((tool) => tool.name === "spawn_expert");
+        const wait = tools.find((tool) => tool.name === "wait_experts");
+        const callReviewer = tools.find((tool) => tool.name === "call_reviewer");
+        let output = `${session.context.agent.id}:${turn.rawQuery}`;
+        if (
+          spawn !== undefined &&
+          wait !== undefined &&
+          session.context.agent.id === writer.metadata.id
+        ) {
+          const spawned = await spawn.call(
+            { expertId: reviewer.metadata.id, prompt: "Team review" },
+            turn.signal,
+            { execution: session.context.request.executionContext },
+          );
+          const invocationId = (spawned.details as { invocationId: string }).invocationId;
+          const waited = await wait.call({ invocationIds: [invocationId] }, turn.signal, {
+            execution: session.context.request.executionContext,
+          });
+          const completed = (waited.details as { completed: Array<{ output?: unknown }> })
+            .completed;
+          output = `writer:${String(completed[0]?.output)}`;
+        } else if (callReviewer !== undefined && turn.rawQuery === "Delegate review") {
+          const delegated = await callReviewer.call({ prompt: "Standalone review" }, turn.signal, {
+            execution: session.context.request.executionContext,
+          });
+          output = `writer:${String(delegated.details)}`;
+        }
+        turn.stream.write({
+          runId: turn.runId,
+          source: turn.source,
+          type: "message.delta",
+          payload: { role: "assistant", contentType: "text", delta: output },
+        });
+        return { outputText: output, runtimeSessionId: session.id };
+      },
+      mapEvent: () => ({ events: [] }),
+      closeSession: () => undefined,
+    });
+    const runner = createMissionRunner({
+      missions,
+      project,
+      capabilityStore: {} as CapabilityStore,
+      capabilityCredentials: {} as CapabilityCredentialStore,
+      capabilitiesPath: join(root, "capabilities"),
+      pragmaHome: join(root, "state"),
+      runtimes: createStaticRuntimeResolver({ runtimes: [runtime], defaultRuntimeId: "fake" }),
+    });
+    const updates: MissionChatUpdate[] = [];
+    const unsubscribe = runner.subscribeChat((update) => updates.push(update));
+
+    for (const mission of [expertMission, teamMission, flowMission]) {
+      await runner.run(mission.id);
+      await vi.waitFor(
+        async () => expect((await missions.get(mission.id)).execution?.status).toBe("succeeded"),
+        { timeout: settlementTimeoutMs },
+      );
+    }
+
+    const expertChat = await runner.getChat({ id: expertMission.id, limit: 50 });
+    const teamChat = await runner.getChat({ id: teamMission.id, limit: 50 });
+    const flowChat = await runner.getChat({ id: flowMission.id, limit: 50 });
+    const expertOutputs = expertChat.entries.filter((entry) => entry.kind === "assistant");
+    const teamOutputs = teamChat.entries.filter((entry) => entry.kind === "assistant");
+    const flowOutputs = flowChat.entries.filter((entry) => entry.kind === "assistant");
+
+    expect(expertOutputs).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ executorId: writer.metadata.id, executorName: "Writer" }),
+        expect.objectContaining({ executorId: reviewer.metadata.id, executorName: "Reviewer" }),
+      ]),
+    );
+    expect(teamOutputs).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ executorId: writer.metadata.id, executorName: "Writer" }),
+        expect.objectContaining({ executorId: reviewer.metadata.id, executorName: "Reviewer" }),
+      ]),
+    );
+    expect(flowOutputs).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ executorId: reviewer.metadata.id, executorName: "Reviewer" }),
+      ]),
+    );
+    expect(
+      updates
+        .filter((update) => update.kind === "patch")
+        .flatMap((update) => update.patches)
+        .filter((patch) => patch.type === "entry.upsert")
+        .map((patch) => patch.entry)
+        .filter((entry) => entry.kind === "assistant"),
+    ).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ executorId: writer.metadata.id, executorName: "Writer" }),
+        expect.objectContaining({ executorId: reviewer.metadata.id, executorName: "Reviewer" }),
+      ]),
+    );
+    unsubscribe();
+  });
+
+  it("keeps Work available with ID fallbacks when executor names cannot be read", async () => {
+    const root = await mkdtemp(join(tmpdir(), "pragma-mission-work-name-fallback-"));
+    temporaryPaths.push(root);
+    const project = createPragmaProjectStore({ projectsPath: join(root, "projects") });
+    const snapshot = await project.publish({
+      expectedRevision: 0,
+      resources: [runtimeFixture(), expertFixture()],
+    });
+    const missions = createMissionStore({ missionsPath: join(root, "missions") });
+    const mission = await missions.create({
+      workspace: { path: root, basename: "workspace" },
+      goal: "Read work without project metadata",
+      project: { id: snapshot.projectId, revision: snapshot.revision },
+      executor: missionExecutorSnapshot(
+        snapshot.resources.find((resource) => resource.kind === "Expert")!,
+      ),
+    });
+    vi.spyOn(project, "openRevision").mockRejectedValueOnce(
+      new Error("Project metadata unavailable"),
+    );
+    const unavailableRuntimes: RuntimeResolver = {
+      getDefaultRuntimeId: async () => "fake",
+      bind: async () => {
+        throw new Error("Runtime is unavailable.");
+      },
+      resolve: async () => {
+        throw new Error("Runtime is unavailable.");
+      },
+    };
+    const runner = createMissionRunner({
+      missions,
+      project,
+      capabilityStore: {} as CapabilityStore,
+      capabilityCredentials: {} as CapabilityCredentialStore,
+      capabilitiesPath: join(root, "capabilities"),
+      pragmaHome: join(root, "state"),
+      runtimes: unavailableRuntimes,
+      loggerProvider: createNoopLoggerProvider(),
+    });
+
+    await expect(runner.getWork(mission.id)).resolves.toMatchObject({
+      missionId: mission.id,
+      records: [],
+    });
+  });
+
   it("keeps the captured live answer when the execution settles during a chat read", async () => {
     const root = await mkdtemp(join(tmpdir(), "pragma-mission-chat-settlement-"));
     temporaryPaths.push(root);
@@ -937,23 +1127,26 @@ describe("MissionRunner", { timeout: 15_000 }, () => {
     await runner.run(mission.id);
     await deltaWritten;
 
-    const openRevision = project.openRevision.bind(project);
-    let enterProjectRead = (): void => undefined;
-    const projectReadEntered = new Promise<void>((resolve) => {
-      enterProjectRead = resolve;
+    const getMission = missions.get.bind(missions);
+    let missionReads = 0;
+    let enterFinalMissionRead = (): void => undefined;
+    const finalMissionReadEntered = new Promise<void>((resolve) => {
+      enterFinalMissionRead = resolve;
     });
-    let releaseProjectRead = (): void => undefined;
-    const projectReadCanFinish = new Promise<void>((resolve) => {
-      releaseProjectRead = resolve;
+    let releaseFinalMissionRead = (): void => undefined;
+    const finalMissionReadCanFinish = new Promise<void>((resolve) => {
+      releaseFinalMissionRead = resolve;
     });
-    vi.spyOn(project, "openRevision").mockImplementationOnce(async (revision) => {
-      enterProjectRead();
-      await projectReadCanFinish;
-      return await openRevision(revision);
+    vi.spyOn(missions, "get").mockImplementation(async (id) => {
+      if (id === mission.id && (missionReads += 1) === 2) {
+        enterFinalMissionRead();
+        await finalMissionReadCanFinish;
+      }
+      return await getMission(id);
     });
 
     const racedSnapshot = runner.getChat({ id: mission.id, limit: 50 });
-    await projectReadEntered;
+    await finalMissionReadEntered;
     finishTurn();
     try {
       await vi.waitFor(
@@ -973,7 +1166,7 @@ describe("MissionRunner", { timeout: 15_000 }, () => {
         { timeout: settlementTimeoutMs },
       );
     } finally {
-      releaseProjectRead();
+      releaseFinalMissionRead();
     }
 
     await expect(racedSnapshot).resolves.toMatchObject({
@@ -1069,8 +1262,8 @@ describe("MissionRunner", { timeout: 15_000 }, () => {
         createStaticRuntimeResolver({ runtimes: [runtimeForMode(mode)], defaultRuntimeId: "fake" }),
       ]),
     );
-    const runtimesForToolPermissionMode = vi.fn(
-      (mode: DesktopToolPermissionMode) => runtimeResolvers.get(mode)!,
+    const runtimesForToolPermissionMode = vi.fn((mode: DesktopToolPermissionMode) =>
+      runtimeResolvers.get(mode)!,
     );
     const runner = createMissionRunner({
       missions,
@@ -2393,6 +2586,95 @@ function expertFixture(): PragmaExpertResource {
       contextStores: [],
       plugins: [],
       tools: [],
+    },
+  };
+}
+
+function expertFixtureWithReviewerTool(): PragmaExpertResource {
+  const expert = expertFixture();
+  return {
+    ...expert,
+    spec: {
+      ...expert.spec,
+      tools: [
+        {
+          adapter: "pragma.tool.call@v1",
+          target: { ref: "expert:3sfd30h5017wd17d" },
+          tool: {
+            name: "call_reviewer",
+            description: "Call the reviewer",
+            approval: "none",
+          },
+        },
+      ],
+    },
+  };
+}
+
+function reviewerFixture(): PragmaExpertResource {
+  return {
+    ...expertFixture(),
+    metadata: {
+      id: "3sfd30h5017wd17d",
+      name: "Reviewer",
+      description: "Reviews proposed work",
+      tags: [],
+    },
+    spec: {
+      ...expertFixture().spec,
+      scope: "Review",
+      instructions: "Review the delegated work.",
+    },
+  };
+}
+
+function expertTeamFixture(): PragmaExpertTeamResource {
+  return {
+    apiVersion: "pragma/v3",
+    kind: "ExpertTeam",
+    metadata: {
+      id: "vyv9pwwzaksth2dd",
+      name: "Editorial Team",
+      description: "Coordinates writing and review",
+      tags: [],
+    },
+    spec: {
+      coordinator: { ref: "expert:1xddvess309a6gme" },
+      members: [{ ref: "expert:3sfd30h5017wd17d" }],
+      delegation: {
+        allow: { "1xddvess309a6gme": ["3sfd30h5017wd17d"], "3sfd30h5017wd17d": [] },
+        maxConcurrency: 2,
+        maxDepth: 2,
+        context: "context-policy:pragma.fresh@v1",
+        runtimes: {},
+      },
+    },
+  };
+}
+
+function expertFlowFixture(): PragmaFlowResource {
+  return {
+    apiVersion: "pragma/v3",
+    kind: "Flow",
+    metadata: {
+      id: "ffdfk2cczgqjda7q",
+      name: "Review Flow",
+      description: "Runs the reviewer",
+      tags: [],
+    },
+    spec: {
+      limits: { maxNodeVisits: 10 },
+      graph: {
+        start: "review",
+        steps: {
+          review: {
+            expert: { ref: "expert:3sfd30h5017wd17d" },
+            prompt: { segments: [{ text: "Flow review" }] },
+          },
+        },
+        loops: {},
+        transitions: { review: { end: true } },
+      },
     },
   };
 }
