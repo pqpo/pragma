@@ -2,7 +2,7 @@
 
 ## Status
 
-Accepted.
+Superseded for new executions by [ADR 037](037-mission-board-context-store.md).
 
 ## Context
 

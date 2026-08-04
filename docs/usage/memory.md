@@ -32,9 +32,9 @@ Pragma 的新 Memory Plane 是 Desktop 内置能力，随应用启动，不需�
 - Mission 的 Memory 页签显示每次 Execution 的 capture/recall 计数。搜索审计只保存 digest 和长度，
   不保存 query 原文。
 
-当前尚未实现新版内置 WorkingState/Task Board、Knowledge、Skill Candidate、CodeGraph Module、候选评审、
+当前已实现独立的内置 Mission Board；尚未实现 Knowledge、Skill Candidate、CodeGraph Module、候选评审、
 分享扩权审批或跨设备同步。旧 `@pragma/plugin-memory` 中的 Task Memory 只属于迁移源，不是新版
-WorkingState 的完成实现。
+后续 Memory 阶段的完成实现。
 
 ## 分层加载
 
@@ -132,7 +132,7 @@ Episodic 与 Semantic Module 都使用各自的共享物理 Store，并在查询
 
 旧四类记忆不再作为目标架构的闭合枚举：
 
-- 原 TaskMemory：改为可选 WorkingState/TODO/白板，不是 Memory 前置依赖；
+- 原 TaskMemory：改为可选 Mission Board 使用范式，不是 Memory 前置依赖；
 - Experience：进入 Episodic Memory，记录过去做过什么；
 - Fact：进入 Semantic/Fact Memory，记录当前相信什么是真的；
 - Skill：先成为 Skill Memory Candidate，评测通过后升级为现有 Skill Capability。

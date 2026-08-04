@@ -199,7 +199,7 @@ describe("ExpertSession human interaction recovery", () => {
     });
     await executions.create(
       {
-        schemaVersion: "pragma.execution/v8",
+        schemaVersion: "pragma.execution/v9",
         executionId,
         version: 0,
         kind: "expert-turn",

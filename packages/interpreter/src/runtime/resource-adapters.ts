@@ -4,7 +4,6 @@ import { isAbsolute, relative, resolve } from "node:path";
 
 import {
   ContextSystem,
-  FileSystemContextStore,
   StaticContextStore,
   createCodeServiceMcpServer,
   createHttpServiceMcpServer,
@@ -14,6 +13,7 @@ import {
   type IExpertAgentMcpConfig,
   type IExpertAgentModelsConfig,
   type IExpertAgentSkillsConfig,
+  FileSystemContextStore,
 } from "@pragma/core";
 import { z } from "zod";
 

@@ -2,7 +2,7 @@
 
 - Status: Active plan
 - Last updated: 2026-08-04
-- Decisions: [ADR 031](../adr/031-extensible-memory-plane.md)、[ADR 032](../adr/032-durable-canonical-event-feed.md)、[ADR 033](../adr/033-layered-episodic-memory.md)、[ADR 034](../adr/034-conservative-semantic-memory.md)、[ADR 035](../adr/035-agent-driven-memory-recall-and-governance.md)、[ADR 036](../adr/036-memory-storage-retention-and-recovery.md)
+- Decisions: [ADR 031](../adr/031-extensible-memory-plane.md)、[ADR 032](../adr/032-durable-canonical-event-feed.md)、[ADR 033](../adr/033-layered-episodic-memory.md)、[ADR 034](../adr/034-conservative-semantic-memory.md)、[ADR 035](../adr/035-agent-driven-memory-recall-and-governance.md)、[ADR 036](../adr/036-memory-storage-retention-and-recovery.md)、[ADR 037](../adr/037-mission-board-context-store.md)
 
 ## 最终链路
 
@@ -20,8 +20,8 @@ Federated ContextStore + Agent-driven Recall + Host Governance
 Skill Candidate 经 Evaluation 升级为现有 Skill Capability
 ```
 
-WorkingState、TODO List 和多人白板不在 Memory 提炼主链上，但仍是需要独立交付的 Host 内置短期协作
-能力；它们可以发布 Evidence，但 Agent 不使用白板也必须产生 Memory。Knowledge、CodeGraph 仍是
+Mission Board 不在 Memory 提炼主链上，但仍是 Host 内置的持久短期协作能力；其中的 TODO、plan、
+handoff 等变化可以发布 Evidence，但 Agent 不使用白板也必须产生 Memory。Knowledge、CodeGraph 仍是
 Memory type，不新增 KnowledgeBase/KnowledgeAsset/MemoryAsset 对象。
 
 ## 执行原则
@@ -44,7 +44,7 @@ Memory type，不新增 KnowledgeBase/KnowledgeAsset/MemoryAsset 对象。
 | 2    | Completed | 分层召回协议与 Episodic Memory：历史、结果、失败与恢复       |
 | 3    | Completed | Semantic / Fact Memory：真值、冲突、时效和置信度             |
 | 4    | Completed | Agent 驱动召回、完整 binding 治理、管理中心与 Mission 可见性 |
-| 5    | Planned   | WorkingState / Task Board：短期 TODO、私有状态与团队白板     |
+| 5    | Completed | Mission Board：持久通用白板、私有 Context 与跨专家协作       |
 | 6    | Planned   | Knowledge Memory：多层提炼、稳定 revision 与团队分享         |
 | 7    | Planned   | Skill Memory Candidate、Evaluation 与 Capability 升级        |
 | 8    | Planned   | CodeGraph 独立 Module 扩展验收                               |
@@ -340,43 +340,43 @@ Expert/principal scope、binding/visibility、预算、审计和生命周期。�
 
 具体不变量、时限和恢复语义见 [ADR 036](../adr/036-memory-storage-retention-and-recovery.md)。
 
-## 阶段 5：WorkingState / Task Board
+## 阶段 5：Mission Board
 
 ### 目标
 
-提供类似 TODO List 的短期工作记忆和多人协作白板。WorkingState 服务于正在进行的 Mission/Execution，
-不是长期 Memory type，也不是 Memory Plane 产生 Episodic、Semantic Memory 的前置条件；其已提交变化通过
-Canonical Event Feed 成为后续提炼可选使用的 Evidence。
+提供 Mission-scoped 持久通用白板。plan、TODO、progress、decision、handoff 和 process 都是白板使用
+范式，不是独立协议或 managed tool。Mission Board 不是长期 Memory type，也不是 Episodic、Semantic
+Memory 的前置条件；已提交变化可以作为后续提炼的可选 Evidence。
 
 ### 对象与权限边界
 
-- 支持 `todo`、`decision`、`question`、`progress`、`handoff`、`note` 等结构化条目；
-- 共享条目绑定当前根 ExpertTeam/Flow 与 Execution，参与该运行的 Agent 可在权限范围内协作读写；
-- 私有条目绑定稳定 `ownerContextId`，普通 Agent 只能由所属 Runtime Context 读取和修改，不能由团队成员、
+- `mission-board` 绑定 Mission，参与该 Mission 的 Expert 可协作读写；
+- `mission-board-private` 绑定稳定 Runtime `contextId`，普通 Agent 只能由所属 Runtime Context 读取和修改，不能由团队成员、
   coordinator 或通过猜测 ID 旁路读取；Host 用户治理和审计使用独立显式权限；
 - assignee 使用稳定 Expert/Context identity，不使用展示名称或数组顺序推导身份；
 - visibility、owner、scope 和 permission revision 分离，私有内容不能因 handoff、提炼或导出自动扩大可见性；
-- WorkingState 随 Mission/Execution owner 生命周期持久化和级联清理，不进入 Project Revision，也不写
+- Mission Board 随 Mission owner 生命周期持久化和级联清理，不进入 Project Revision，也不写
   Agent workspace。
 
 ### 交付
 
-- 使用 Zod 定义当前协议、条目 revision、状态、assignee、visibility、provenance 和 mutation event；
-- 提供 `list/read/create/update/resolve/archive` managed tools，所有 mutation 使用 revision CAS；
-- 提供 durable Store、稳定 journal、原子 mutation、幂等重放和未来 schema fail-closed；
-- ExpertTeam/Flow 的共享视图与 Agent 私有视图在 Store 查询层鉴权，list、read 和精确 ID 读取使用同一规则；
-- Desktop 提供 Mission/Execution 白板、TODO 状态、负责人、共享/私有标识和治理审计；
-- 已提交 mutation 发布 content-safe Canonical Event；Evidence adapter 按原 visibility 保持或收紧权限，
-  不把私有正文暴露给其他 Agent；
-- 阶段 9 将旧 Task Memory 按 owner 显式导入 WorkingState 或归档 Evidence；阶段 5 不维持 dual-write。
+- `@pragma/mission-board` 只提供可复用 Context bindings，不依赖文件系统或具体 Host；
+- 复用 Context System 的 `list/read/search/add/edit/delete`，不新增 Mission Board CRUD 或 handoff 方法；
+- `GUIDE.md` 说明 plan、TODO、progress、decision、handoff、process、大输出与 workspace 引用约定；
+- 私有视图在 Store 路由层使用可信 Runtime `contextId` 隔离，list、read 和精确 ID 读取规则一致；
+- Desktop 在 Host composition root 使用 `@pragma/context-filesystem` 持久化，退出重启后继续生效；
+- Core 只消费 Host 注入的通用 Context binding 与 overflow target，不依赖 Mission Board 或文件系统实现；
+- 提供不含正文的 mutation observation hook，Host 可据此发布 content-safe Canonical Event 或 Evidence；
+  后续 adapter 必须保持或收紧原 visibility，不把私有正文暴露给其他 Agent；
+- 阶段 9 将旧 Task Memory 按 owner 显式导入 Mission Board 或归档 Evidence；阶段 5 不维持 dual-write。
 
 ### 退出门槛
 
-- 不使用 WorkingState 的 Mission 仍能正常形成 Episodic/Semantic Memory；
+- 不使用 Mission Board 的 Mission 仍能正常形成 Episodic/Semantic Memory；
 - 同一 Team/Flow Execution 的授权参与者能协作维护共享 TODO 和 handoff；
 - Agent A 无法从 list、read、精确 ID、Context 或 Evidence 读取 Agent B 的私有条目；
 - 并发更新产生明确 CAS 冲突，不静默覆盖；崩溃恢复不重复应用 mutation；
-- Mission/Execution 删除按 owner 图回收 WorkingState，且不影响长期 Memory 的独立生命周期；
+- Mission 删除按 owner 图回收 Mission Board，且不影响长期 Memory 的独立生命周期；
 - 私有条目发布 Evidence、提炼、导出时不会自动提升为 shared/team-shareable。
 
 ## 阶段 6：Knowledge Memory

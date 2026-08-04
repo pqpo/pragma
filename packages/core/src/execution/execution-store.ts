@@ -383,14 +383,14 @@ export function createFileExecutionStore(
         const nextExecution = ExecutionRecordSchema.parse({
           ...current,
           ...request.executionPatch,
-          schemaVersion: "pragma.execution/v8",
+          schemaVersion: "pragma.execution/v9",
           executionId: request.executionId,
           version: current.version + 1,
           lastAppliedSequence: lastSequence,
           updatedAt: now,
         });
         const journal = ExecutionCommitJournalSchema.parse({
-          schemaVersion: "pragma.execution-transaction/v9",
+          schemaVersion: "pragma.execution-transaction/v10",
           commitId: request.commitId,
           signature,
           execution: nextExecution,

@@ -16,7 +16,8 @@ import { dirname, extname, isAbsolute, join, relative, resolve, sep } from "node
 
 import { z } from "zod";
 
-import { FileSystemContextStore, withFileLock, type ExpertAgentContextStore } from "@pragma/core";
+import { FileSystemContextStore, withFileLock } from "@pragma/context-filesystem";
+import type { ExpertAgentContextStore } from "@pragma/core";
 import { pragmaKnowledgeBaseEntryNameIssue } from "@pragma/shared";
 
 import {

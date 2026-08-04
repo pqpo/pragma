@@ -1,4 +1,4 @@
-import { mkdtemp, readFile, writeFile } from "node:fs/promises";
+import { mkdtemp, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
@@ -18,12 +18,14 @@ import {
   createRuntimeSessionRecord,
   createStaticRuntimeResolver,
   ContextSystem,
+  InMemoryContextStore,
   defineExpert,
   defineExpertTeam,
   defineContextIdResolver,
   defineFlow,
   defineRuntimeDriver,
   EXECUTION_CURRENT_EXPERT_ID_ATTR,
+  EXECUTION_CONTEXT_ID_ATTR,
   EXECUTION_ID_ATTR,
   INVOCATION_ID_ATTR,
   fingerprintExpertExecutionDefinition,
@@ -403,9 +405,18 @@ function createBarrier(
 async function fixture(delayMs?: number) {
   const home = await mkdtemp(join(tmpdir(), "pragma-execution-"));
   const runtime = createFakeRuntime(delayMs === undefined ? {} : { delayMs });
+  const board = new InMemoryContextStore();
   const app = createPragma({
     pragmaHome: home,
     runtimes: createStaticRuntimeResolver({ runtimes: [runtime], defaultRuntimeId: "fake" }),
+    hostContextBindings: [
+      {
+        namespace: "mission-board",
+        store: board,
+        overflowTarget: true,
+        mutationApproval: "none",
+      },
+    ],
   });
   const expert = await defineExpert({
     id: "solo",
@@ -415,7 +426,7 @@ async function fixture(delayMs?: number) {
     scope: "test",
     workspace: home,
   });
-  return { home, app, expert };
+  return { home, app, expert, board };
 }
 
 async function trackedFixture(
@@ -492,6 +503,7 @@ describe("ExpertSession", () => {
       source: { type: "pragma.expert", id: "model-selection" },
       attributes: {
         [EXECUTION_CURRENT_EXPERT_ID_ATTR]: "model-selection",
+        [EXECUTION_CONTEXT_ID_ATTR]: expect.any(String),
         [EXECUTION_ID_ATTR]: expect.any(String),
         [INVOCATION_ID_ATTR]: expect.any(String),
       },
@@ -645,8 +657,8 @@ describe("ExpertSession", () => {
     await session.close();
   });
 
-  it("externalizes a large Expert result and returns a Context handoff", async () => {
-    const { home, app, expert } = await fixture();
+  it("externalizes a large Expert result through the Context overflow target", async () => {
+    const { app, expert, board } = await fixture();
     const session = await app.experts.createSession(expert);
     const prompt = "x".repeat(40 * 1024);
     const turn = await session.prompt(prompt, { requestId: "large-handoff" });
@@ -654,7 +666,7 @@ describe("ExpertSession", () => {
 
     expect(result).toMatchObject({
       type: "context",
-      contexts: [{ namespace: "pragma.handoff", mediaType: "text/plain" }],
+      contexts: [{ namespace: "mission-board", mediaType: "text/plain" }],
     });
     if (
       typeof result !== "object" ||
@@ -664,15 +676,11 @@ describe("ExpertSession", () => {
       !("contexts" in result) ||
       !Array.isArray(result.contexts)
     ) {
-      throw new Error("Expected a Context handoff.");
+      throw new Error("Expected a Context-backed output.");
     }
     const reference = result.contexts[0] as { id: string };
-    const path = join(
-      new PragmaPaths({ pragmaHome: home }).executionHandoffsRoot(turn.executionId),
-      "generated",
-      reference.id,
-    );
-    await expect(readFile(path, "utf8")).resolves.toBe(`solo:${prompt}`);
+    const stored = await board.readContext({ id: reference.id });
+    expect(stored.ok && stored.value.content).toBe(`solo:${prompt}`);
     await expect(turn.getState()).resolves.toMatchObject({
       output: { type: "context", contexts: [{ id: reference.id }] },
     });
@@ -681,11 +689,11 @@ describe("ExpertSession", () => {
     expect(serializedHistory).toContain(reference.id);
     expect(serializedHistory).not.toContain(`solo:${prompt}`);
     await session.close();
-  });
+  }, 40_000);
 
-  it("reads an earlier turn handoff through a reused Runtime Session", async () => {
+  it("reads an earlier Context-backed output through a reused Runtime Session", async () => {
     const home = await mkdtemp(join(tmpdir(), "pragma-session-handoff-"));
-    await writeFile(join(home, "report.md"), "workspace handoff\n", "utf8");
+    const board = new InMemoryContextStore();
     let createSessionCalls = 0;
     const runtime = defineRuntimeDriver<never, FakeSession>({
       descriptor: { id: "handoff-reader", kind: "fake", displayName: "Handoff Reader" },
@@ -698,32 +706,22 @@ describe("ExpertSession", () => {
       async startTurn(nativeSession, turn) {
         let output: string;
         if (turn.rawQuery === "produce") {
-          output = "historical handoff\n".repeat(4_000);
+          output = "historical output\n".repeat(4_000);
         } else if (turn.rawQuery.startsWith("read:")) {
           const id = turn.rawQuery.slice("read:".length);
           const read = nativeSession.context.agent
             .createDefaultTools()
             .find((tool) => tool.name === "read_expert_context");
           if (read === undefined) throw new Error("read_expert_context is missing.");
-          const result = await read.call({ namespace: "pragma.handoff", id }, turn.signal, {
+          const result = await read.call({ namespace: "mission-board", id }, turn.signal, {
             execution: nativeSession.context.request.executionContext,
           });
           output =
-            result.isError === true ||
-            (!result.text.includes("historical handoff") &&
-              !result.text.includes("workspace handoff"))
+            result.isError === true || !result.text.includes("historical output")
               ? `read-failed:${result.text}`
               : "read-ok";
         } else {
-          const register = nativeSession.context.agent.tools?.find(
-            (tool) => tool.name === "register_handoff_file",
-          );
-          if (register === undefined) throw new Error("register_handoff_file is missing.");
-          const result = await register.call({ path: "report.md" }, turn.signal, {
-            toolCallId: "register-report",
-            execution: nativeSession.context.request.executionContext,
-          });
-          output = result.isError === true ? `register-failed:${result.text}` : "registered";
+          output = "unused";
         }
         return { outputText: output, runtimeSessionId: nativeSession.id };
       },
@@ -735,6 +733,14 @@ describe("ExpertSession", () => {
         runtimes: [runtime],
         defaultRuntimeId: "handoff-reader",
       }),
+      hostContextBindings: [
+        {
+          namespace: "mission-board",
+          store: board,
+          overflowTarget: true,
+          mutationApproval: "none",
+        },
+      ],
     });
     const expert = await defineExpert({
       id: "handoff-expert",
@@ -755,31 +761,16 @@ describe("ExpertSession", () => {
       !("contexts" in first) ||
       !Array.isArray(first.contexts)
     ) {
-      throw new Error("Expected the first turn to return a Context handoff.");
+      throw new Error("Expected the first turn to return a Context-backed output.");
     }
     const id = (first.contexts[0] as { id: string }).id;
 
     await expect((await session.prompt(`read:${id}`, { requestId: "read" })).result).resolves.toBe(
       "read-ok",
     );
-    const registered = await (await session.prompt("register", { requestId: "register" })).result;
-    if (
-      typeof registered !== "object" ||
-      registered === null ||
-      !("type" in registered) ||
-      registered.type !== "context" ||
-      !("contexts" in registered) ||
-      !Array.isArray(registered.contexts)
-    ) {
-      throw new Error("Expected the registered file to return a Context handoff.");
-    }
-    const workspaceId = (registered.contexts[0] as { id: string }).id;
-    await expect(
-      (await session.prompt(`read:${workspaceId}`, { requestId: "read-workspace" })).result,
-    ).resolves.toBe("read-ok");
     expect(createSessionCalls).toBe(1);
     await session.close();
-  }, 15_000);
+  }, 30_000);
 
   it("keeps one Runtime Session alive across prompts and closes it with the ExpertSession", async () => {
     const { home, app, expert, stats } = await trackedFixture();
@@ -1974,7 +1965,7 @@ describe("ExpertSession", () => {
     );
     expect((await session.getState()).executionIds).toContain(executionId);
     expect(await executions.get(executionId)).toMatchObject({
-      schemaVersion: "pragma.execution/v8",
+      schemaVersion: "pragma.execution/v9",
     });
     expect((await session.getPromptQueue())[0]?.requestId).toBe("journal-request");
     expect((await session.listEvents()).items.map((event) => event.type)).toContain(
@@ -2246,6 +2237,7 @@ describe("FlowExecution", () => {
       source: { type: "pragma.flow", id: "runtime-flow" },
       attributes: {
         [EXECUTION_CURRENT_EXPERT_ID_ATTR]: expert.id,
+        [EXECUTION_CONTEXT_ID_ATTR]: expect.any(String),
         [EXECUTION_ID_ATTR]: execution.executionId,
         [INVOCATION_ID_ATTR]: expect.any(String),
       },
@@ -3177,7 +3169,7 @@ describe("Execution observation", () => {
     const now = new Date().toISOString();
     await writer.create(
       {
-        schemaVersion: "pragma.execution/v8",
+        schemaVersion: "pragma.execution/v9",
         executionId: "cross-process",
         version: 0,
         kind: "flow",

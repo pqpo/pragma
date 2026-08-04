@@ -3,12 +3,8 @@ import { join, resolve } from "node:path";
 import { stdin, stdout } from "node:process";
 import { createInterface } from "node:readline/promises";
 
-import {
-  ContextSystem,
-  FileSystemContextStore,
-  HOST_CONTEXT_NAMESPACE,
-  defineExpert,
-} from "@pragma/core";
+import { ContextSystem, HOST_CONTEXT_NAMESPACE, defineExpert } from "@pragma/core";
+import { FileSystemContextStore } from "@pragma/context-filesystem";
 import type { ExpertAgentRunContext } from "@pragma/core";
 
 type ExampleRole = "member" | "admin";

@@ -1,4 +1,6 @@
 import { createHash, randomUUID } from "node:crypto";
+import { mkdir } from "node:fs/promises";
+import { join } from "node:path";
 
 import {
   createPragma,
@@ -17,6 +19,7 @@ import {
   moveOwnedStorageToTrash,
   runtimeSessionDeletionSources,
   assertStorageWriteAllowed,
+  encodePragmaPathSegment,
   isRuntimeContextCompactionStage,
   readRuntimeContextCompactionProgressData,
   RUNTIME_CONTEXT_COMPACTION_STAGES,
@@ -28,8 +31,7 @@ import {
   type ExpertAgentHumanRequest,
   type ExpertAgentHumanResponse,
   type ExpertDefinition,
-  type Expert,
-  type ExpertAgentContextStore,
+  type ExpertAgentContextStoreRegistrationInput,
   type ExpertSession,
   type MutableExecution,
   type McpToolRegistryPool,
@@ -38,6 +40,12 @@ import {
   type RuntimeContextWindowUsage,
   type RuntimeModelSelection,
 } from "@pragma/core";
+import {
+  FileSystemContextStore,
+  LEGACY_EXECUTION_OUTPUT_NAMESPACE,
+  LegacyExecutionOutputContextStore,
+} from "@pragma/context-filesystem";
+import { createMissionBoard } from "@pragma/mission-board";
 import type {
   InvocableResource,
   CompiledResource,
@@ -45,7 +53,6 @@ import type {
   PragmaBindingRecord,
 } from "@pragma/interpreter";
 import { createPragmaResourceIdentityMigrationIndex } from "@pragma/interpreter";
-import { MEMORY_CURATOR_ID } from "@pragma/memory";
 import type {
   HumanInteractionRequest,
   HumanInteractionResponse,
@@ -191,7 +198,6 @@ type ExecutorNameResolver = (executorId: string) => string | undefined;
 interface MissionExecutionContext {
   readonly app: ReturnType<typeof createPragma>;
   readonly runtimes: RuntimeResolver;
-  readonly rememberHandoffExecution: (executionId: string) => void;
   readonly setToolPermissionMode: (mode: DesktopToolPermissionMode) => void;
 }
 
@@ -207,12 +213,7 @@ export function createMissionRunner(options: {
   readonly pragmaHome: string;
   readonly executionStore?: FileExecutionStore | undefined;
   readonly contextStores?: ContextStoreStore | undefined;
-  readonly hostContextStores?:
-    | readonly {
-        readonly namespace: string;
-        readonly store: ExpertAgentContextStore;
-      }[]
-    | undefined;
+  readonly hostContextStores?: readonly ExpertAgentContextStoreRegistrationInput[] | undefined;
   readonly plugins?: PluginStore | undefined;
   readonly runtimes: RuntimeResolver;
   readonly usage?: DesktopUsageStore | undefined;
@@ -270,10 +271,20 @@ export function createMissionRunner(options: {
   const automaticHumanInteractionHandlerForToolPermissionMode = (mode: DesktopToolPermissionMode) =>
     options.automaticHumanInteractionHandlerForToolPermissionMode?.(mode) ??
     options.automaticHumanInteractionHandler;
-  const executionContexts = new Map<string, MissionExecutionContext>();
-  const executionContext = (mission: Pick<Mission, "id" | "toolPermissionMode">) => {
+  const executionContexts = new Map<string, Promise<MissionExecutionContext>>();
+  const executionContext = async (mission: Mission): Promise<MissionExecutionContext> => {
     const existing = executionContexts.get(mission.id);
-    if (existing !== undefined) return existing;
+    if (existing !== undefined) return await existing;
+    const creating = createExecutionContext(mission);
+    executionContexts.set(mission.id, creating);
+    try {
+      return await creating;
+    } catch (error) {
+      if (executionContexts.get(mission.id) === creating) executionContexts.delete(mission.id);
+      throw error;
+    }
+  };
+  const createExecutionContext = async (mission: Mission): Promise<MissionExecutionContext> => {
     let toolPermissionMode = mission.toolPermissionMode;
     const runtimes: RuntimeResolver = {
       getDefaultRuntimeId: async () =>
@@ -283,26 +294,62 @@ export function createMissionRunner(options: {
       resolve: async (request) =>
         await runtimeResolverForToolPermissionMode(toolPermissionMode).resolve(request),
     };
-    const pendingHandoffExecutionIds = new Set<string>();
-    let handoffExecutionIds: Set<string> | undefined;
-    let handoffExecutionIdsLoad: Promise<Set<string>> | undefined;
-    const resolveHandoffExecutionIds = async (): Promise<readonly string[]> => {
-      if (handoffExecutionIds !== undefined) return [...handoffExecutionIds];
-      const load =
-        handoffExecutionIdsLoad ??
-        (handoffExecutionIdsLoad = collectMissionExecutionIds(options.missions, mission.id).then(
-          (persisted) => new Set([...persisted, ...pendingHandoffExecutionIds]),
-        ));
-      try {
-        handoffExecutionIds = await load;
-        for (const executionId of pendingHandoffExecutionIds) {
-          handoffExecutionIds.add(executionId);
-        }
-        return [...handoffExecutionIds];
-      } finally {
-        if (handoffExecutionIdsLoad === load) handoffExecutionIdsLoad = undefined;
-      }
+    const missionRoot =
+      options.missions.storagePath?.(mission.id) ??
+      join(new PragmaPaths({ pragmaHome: options.pragmaHome }).missionsRoot(), mission.id);
+    const authorizeBoard = async (input: {
+      readonly operation: "list" | "read" | "search" | "add" | "edit" | "delete";
+      readonly ids: readonly string[];
+    }): Promise<readonly string[]> => {
+      if (["list", "read", "search"].includes(input.operation)) return input.ids;
+      const current = await options.missions.get(mission.id);
+      return current.lifecycleStatus === "active" ? input.ids : [];
     };
+    const board = await createMissionBoard({
+      ownerId: mission.id,
+      openSharedStore: async () => {
+        const rootDir = join(missionRoot, "board", "shared");
+        await mkdir(rootDir, { recursive: true });
+        return new FileSystemContextStore({
+          rootDir,
+          include: ["*.md", "**/*.md", "*.json", "**/*.json", "*.txt", "**/*.txt"],
+          authorize: authorizeBoard,
+        });
+      },
+      openPrivateStore: async (_ownerId, contextId) => {
+        const rootDir = join(missionRoot, "board", "private", encodePragmaPathSegment(contextId));
+        await mkdir(rootDir, { recursive: true });
+        return new FileSystemContextStore({
+          rootDir,
+          include: ["*.md", "**/*.md", "*.json", "**/*.json", "*.txt", "**/*.txt"],
+          authorize: authorizeBoard,
+        });
+      },
+    });
+    let historicalExecutionIds: Promise<ReadonlySet<string>> | undefined;
+    const legacyExecutionOutputBindings: readonly ExpertAgentContextStoreRegistrationInput[] =
+      mission.origin.type === "system-memory"
+        ? []
+        : [
+            {
+              namespace: LEGACY_EXECUTION_OUTPUT_NAMESPACE,
+              store: new LegacyExecutionOutputContextStore({
+                pragmaHome: options.pragmaHome,
+                resolveVisibleExecutionIds: async () => [
+                  ...(await (historicalExecutionIds ??= collectMissionExecutionIds(
+                    options.missions,
+                    mission.id,
+                  ))),
+                ],
+              }),
+              required: false,
+            },
+          ];
+    const hostContextBindings = [
+      ...(mission.origin.type === "system-memory" ? [] : (options.hostContextStores ?? [])),
+      ...legacyExecutionOutputBindings,
+      ...board.bindings,
+    ];
     const context = {
       runtimes,
       app: createPragma({
@@ -310,7 +357,7 @@ export function createMissionRunner(options: {
         runtimes,
         executionStore,
         expertSessionStore,
-        handoffContextVisibilityResolver: resolveHandoffExecutionIds,
+        hostContextBindings,
         loggerProvider: options.loggerProvider?.withScope({ missionId: mission.id }),
         automaticHumanInteractionHandler: async (request) =>
           await automaticHumanInteractionHandlerForToolPermissionMode(toolPermissionMode)?.(
@@ -357,15 +404,10 @@ export function createMissionRunner(options: {
                 clearPreview: (observationId) => options.usage!.clearPreview(observationId),
               },
       }),
-      rememberHandoffExecution: (executionId: string) => {
-        pendingHandoffExecutionIds.add(executionId);
-        handoffExecutionIds?.add(executionId);
-      },
       setToolPermissionMode: (mode: DesktopToolPermissionMode) => {
         toolPermissionMode = mode;
       },
     };
-    executionContexts.set(mission.id, context);
     return context;
   };
   const active = new Map<string, ActiveMissionExecution>();
@@ -491,10 +533,7 @@ export function createMissionRunner(options: {
     runtimes: RuntimeResolver,
   ): Promise<CompiledResource<InvocableResource>> => {
     const system = await options.compileSystemExecutor?.({ mission, runtimes });
-    if (system !== undefined) {
-      attachHostContextStores(system.value, options.hostContextStores);
-      return system;
-    }
+    if (system !== undefined) return system;
     const compiled = await options.project.compile<InvocableResource>({
       projectId: mission.project.id,
       revision: mission.project.revision,
@@ -538,7 +577,6 @@ export function createMissionRunner(options: {
             },
           }),
     });
-    attachHostContextStores(compiled.value, options.hostContextStores);
     return compiled;
   };
 
@@ -828,7 +866,7 @@ export function createMissionRunner(options: {
     const mission = await options.missions.get(id);
     await options.assertExecutorReady?.(mission.executor.ref);
     if (active.has(mission.id)) return mission;
-    const { app, rememberHandoffExecution, runtimes: baseRuntimes } = executionContext(mission);
+    const { app, runtimes: baseRuntimes } = await executionContext(mission);
     const runtimes = withMissionRuntimeBinding(baseRuntimes, await readMissionRootContext(mission));
     let phaseStartedAt = performance.now();
     const compiled = await compileMissionExecutor(mission, runtimes);
@@ -879,7 +917,6 @@ export function createMissionRunner(options: {
           executionId: mission.execution!.id,
           createdAt: executionStartedAt,
         });
-        rememberHandoffExecution(mission.execution!.id);
         await notifyExecutionLinked(mission, mission.execution!.id);
       }
       const handle = recoverable
@@ -898,7 +935,6 @@ export function createMissionRunner(options: {
           executionId: handle.executionId,
           createdAt: executionStartedAt,
         });
-        rememberHandoffExecution(handle.executionId);
         await notifyExecutionLinked(mission, handle.executionId);
       }
       const recoveredWaiting = recoverable && (await hasPendingHumanInteraction(handle));
@@ -984,7 +1020,6 @@ export function createMissionRunner(options: {
       executionId: turn.executionId,
       createdAt: executionStartedAt,
     });
-    rememberHandoffExecution(turn.executionId);
     await notifyExecutionLinked(mission, turn.executionId);
     const running = await options.missions.updateExecution(mission.id, {
       id: turn.executionId,
@@ -1023,7 +1058,7 @@ export function createMissionRunner(options: {
     logMissionPhase(logger, input.id, "storage_capacity_check", capacityCheckStartedAt, acceptedAt);
     const mission = await options.missions.get(input.id);
     await options.assertExecutorReady?.(mission.executor.ref);
-    const { app, rememberHandoffExecution, runtimes: baseRuntimes } = executionContext(mission);
+    const { app, runtimes: baseRuntimes } = await executionContext(mission);
     const rootContext = await readMissionRootContext(mission);
     const runtimes = withMissionRuntimeBinding(baseRuntimes, rootContext);
     if (mission.executor.kind === "flow") {
@@ -1153,7 +1188,6 @@ export function createMissionRunner(options: {
       executionId: turn.executionId,
       createdAt: startedAt,
     });
-    rememberHandoffExecution(turn.executionId);
     await notifyExecutionLinked(mission, turn.executionId);
     const running = await options.missions.updateExecution(mission.id, {
       id: turn.executionId,
@@ -1202,7 +1236,7 @@ export function createMissionRunner(options: {
         ? {}
         : { modelOverride: prospective.modelOverride }),
     });
-    executionContexts.get(mission.id)?.setToolPermissionMode(input.toolPermissionMode);
+    (await executionContexts.get(mission.id))?.setToolPermissionMode(input.toolPermissionMode);
     if (sessions.has(mission.id)) {
       rememberSessionCompilation(mission.id, await compilationIdentity(updated), compiled);
     }
@@ -1286,7 +1320,7 @@ export function createMissionRunner(options: {
     if (mission.executor.kind === "flow") return undefined;
     const rootContext = await readMissionRootContext(mission);
     if (rootContext === undefined) return undefined;
-    const { runtimes } = executionContext(mission);
+    const { runtimes } = await executionContext(mission);
     const resolved = await runtimes
       .resolve({
         binding: rootContext.runtime,
@@ -1384,7 +1418,7 @@ export function createMissionRunner(options: {
     if (rootContext?.snapshot === undefined) {
       throw new Error("The mission Runtime context has not started yet.");
     }
-    const { app, runtimes: baseRuntimes } = executionContext(mission);
+    const { app, runtimes: baseRuntimes } = await executionContext(mission);
     const runtimes = withMissionRuntimeBinding(baseRuntimes, rootContext);
     let session = sessions.get(id);
     if (session === undefined) {
@@ -1963,41 +1997,6 @@ function toRuntimeModelSelection(
         model: { providerId: override.providerId, modelId: override.modelId },
         ...(override.thinkingLevel === undefined ? {} : { thinkingLevel: override.thinkingLevel }),
       };
-}
-
-function attachHostContextStores(
-  resource: InvocableResource,
-  stores:
-    readonly { readonly namespace: string; readonly store: ExpertAgentContextStore }[] | undefined,
-): void {
-  if (stores === undefined || stores.length === 0) return;
-  const attachExpert = (expert: Expert): void => {
-    if (expert.id === MEMORY_CURATOR_ID) return;
-    for (const binding of stores) {
-      const result = expert.contextSystem.register({
-        namespace: binding.namespace,
-        store: binding.store,
-        required: false,
-      });
-      if (!result.ok && result.error.code !== "context_already_exists") {
-        throw new Error(result.error.message);
-      }
-    }
-  };
-  const visit = (value: InvocableResource | import("@pragma/core").FlowNodeDefinition): void => {
-    if ("kind" in value && value.kind === "flow") {
-      for (const step of value.steps.values()) visit(step.definition);
-      return;
-    }
-    if ("kind" in value && (value.kind === "task" || value.kind === "human-task")) return;
-    if (isExpertTeam(value)) {
-      attachExpert(value.coordinator);
-      value.members.forEach(attachExpert);
-      return;
-    }
-    attachExpert(value);
-  };
-  visit(resource);
 }
 
 function requireRootRuntimeId(compiled: CompiledResource<InvocableResource>): string {

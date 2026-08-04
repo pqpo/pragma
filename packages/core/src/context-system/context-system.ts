@@ -106,11 +106,17 @@ export interface ExpertAgentContextStoreRegistrationInput {
   readonly namespace: string;
   readonly store: ExpertAgentContextStore;
   readonly required?: boolean | undefined;
+  readonly mutationApproval?: ContextMutationApproval | undefined;
+  readonly overflowTarget?: boolean | undefined;
 }
+
+export type ContextMutationApproval = "none" | "required";
 
 export interface ExpertAgentContextStoreRegistration {
   readonly namespace: string;
   readonly required: boolean;
+  readonly mutationApproval: ContextMutationApproval;
+  readonly overflowTarget: boolean;
 }
 
 export interface ExpertAgentContextAddInput {
@@ -164,8 +170,7 @@ export interface ExpertAgentContextItemSearchReplaceEditInput extends ExpertAgen
 }
 
 export type ExpertAgentContextItemEditInput =
-  | ExpertAgentContextItemReplaceEditInput
-  | ExpertAgentContextItemSearchReplaceEditInput;
+  ExpertAgentContextItemReplaceEditInput | ExpertAgentContextItemSearchReplaceEditInput;
 
 interface ExpertAgentStoredContextItemEditBaseInput {
   readonly id: string;
@@ -188,8 +193,7 @@ export interface ExpertAgentStoredContextItemSearchReplaceEditInput extends Expe
 }
 
 export type ExpertAgentStoredContextItemEditInput =
-  | ExpertAgentStoredContextItemReplaceEditInput
-  | ExpertAgentStoredContextItemSearchReplaceEditInput;
+  ExpertAgentStoredContextItemReplaceEditInput | ExpertAgentStoredContextItemSearchReplaceEditInput;
 
 export interface ExpertAgentContextItemEditResult extends ExpertAgentContextItem {
   readonly mode: ContextEditMode;
@@ -335,7 +339,12 @@ export interface ContextSystemOptions {
 export class ContextSystem {
   private readonly stores = new Map<
     string,
-    { readonly store: ExpertAgentContextStore; readonly required: boolean }
+    {
+      readonly store: ExpertAgentContextStore;
+      readonly required: boolean;
+      readonly mutationApproval: ContextMutationApproval;
+      readonly overflowTarget: boolean;
+    }
   >();
   readonly roots: readonly NormalizedExpertAgentContextRoot[];
 
@@ -362,7 +371,7 @@ export class ContextSystem {
     });
 
     for (const [namespace, binding] of this.stores) {
-      extended.registerOrThrow({ namespace, store: binding.store, required: binding.required });
+      extended.registerOrThrow({ namespace, ...binding });
     }
 
     if (options.store !== undefined) {
@@ -400,9 +409,32 @@ export class ContextSystem {
     }
 
     const required = input.required ?? false;
-    this.stores.set(namespaceResult.value, { store: input.store, required });
+    const mutationApproval = input.mutationApproval ?? "required";
+    const overflowTarget = input.overflowTarget ?? false;
 
-    return ok({ namespace: namespaceResult.value, required });
+    if (overflowTarget && this.overflowTargetNamespace !== undefined) {
+      return error(
+        "invalid_input",
+        `Only one Context store can be the overflow target; already configured: ${this.overflowTargetNamespace}`,
+      );
+    }
+
+    this.stores.set(namespaceResult.value, {
+      store: input.store,
+      required,
+      mutationApproval,
+      overflowTarget,
+    });
+
+    return ok({ namespace: namespaceResult.value, required, mutationApproval, overflowTarget });
+  }
+
+  get overflowTargetNamespace(): string | undefined {
+    return [...this.stores].find(([, binding]) => binding.overflowTarget)?.[0];
+  }
+
+  mutationApprovalFor(namespace: string): ContextMutationApproval {
+    return this.stores.get(namespace)?.mutationApproval ?? "required";
   }
 
   private registerOrThrow(input: ExpertAgentContextStoreRegistrationInput): void {

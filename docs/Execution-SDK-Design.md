@@ -33,20 +33,21 @@ Invocation，并跳过已经成功的节点。`interrupted` 对普通提交是�
 Execution recovery claim 的恢复提交可以将 Flow 自身及未完成子 Invocation 重新置为 queued/running，
 避免迟到的 Runtime 事件把已中断任务意外复活。
 
-## Execution Handoff
+## Context Output 与 Mission Board
 
-Expert、ExpertTeam 成员和 Flow Expert step 的输出统一经过 Execution Handoff。序列化后不超过
-32 KiB 的结果以内联值交接；更大的 UTF-8 文本或 JSON 写入
-`state/executions/<executionId>/handoffs/`，Invocation、Execution event 和父 Agent continuation
-只保存摘要与 `pragma.handoff` Context 引用。接收 Agent 使用现有 Context list、read 和 search
-工具按需读取。
+Expert、ExpertTeam 成员和 Flow Expert step 使用统一的 Invocation Output。序列化后不超过 32 KiB 的
+结果以内联值返回；更大的 UTF-8 文本或 JSON 通过 Host 注入的唯一 Context overflow target 写入
+`system/outputs/<executionId>/<invocationId>.*`。Invocation、Execution event 和父 Agent continuation
+只保存有界摘要与通用 Context 引用，接收 Agent 使用现有 Context list、read 和 search 工具按需读取。
 
-Agent 已经在 workspace 中生成大型 UTF-8 文件时，使用 `register_handoff_file` 注册受控相对路径，
-不复制文件。Handoff 属于 Execution 可恢复状态，不是已发布 Artifact。Flow Task 和 HumanTask 的
-结构化内部数据不自动外置，Flow 最终结果仍应用同一 Handoff 规则。
+Desktop 将 `mission-board` 注册为 Mission 的 overflow target。plan、TODO、progress、decision、handoff
+和 process 都是该持久白板的使用约定，不是 Execution SDK 的独立对象或方法；原
+`register_handoff_file` 与 `pragma.handoff` 输出协议不再用于新 Execution。
 
-Handoff 文件由产出它的 Execution 持有，但读取视图按 owner 联邦：ExpertSession 默认包含其全部
-Execution，Desktop 进一步以持久 Mission timeline 覆盖 successor ExpertSession 和 Flow Execution。
-因此后续多轮和应用重启后仍可通过原 Context id 读取；不同 Mission 不共享视图。可见 Execution 中若
-出现重复 Context id，list、read、search 均返回 `context_conflict`，不隐式选择。workspace 注册项继续是
-实时路径引用，读取时反映文件后续修改；Mission 删除仍通过 timeline 删除实际持有 handoff 的 Execution。
+支持窗口内的历史 `pragma.handoff` 引用由 Desktop 的只读、Mission 授权兼容 Context Store 读取；
+兼容层不能创建或修改旧 handoff，也不参与新输出写入。
+
+Workspace 中的产物仍由 workspace 持有。需要跨 Expert 交接时，在 Mission Board 记录受控相对路径，
+不自动复制文件。Mission Board 随 Mission owner 生命周期持久化和清理，因此 successor
+ExpertSession、Flow Execution 与 Desktop 重启后仍能读取同一 Mission 的共享内容；私有内容按可信
+Runtime `contextId` 隔离。

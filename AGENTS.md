@@ -41,6 +41,8 @@ packages/
   server/         Node 服务端基础设施边界，例如数据库边界
   core/           ExpertAgent、Context、工具、插件、Runtime Adapter 与默认 Runtime
   memory/         Host 内置 Memory Plane、Evidence adapter、Module registry 与联邦 Context
+  mission-board/  Host 可复用的 Mission 白板 Context bindings 与使用 Guide
+  context-filesystem/ Host 侧文件系统 Context adapter 出口
   interpreter/    Pragma YAML DSL 的 AST、解析、校验、编译、扩展 registry 与 dump
   eslint-config/ 共享 ESLint 配置出口
   tsconfig/      共享 TypeScript 配置
@@ -132,6 +134,8 @@ lib
 - `interpreter` 是 Pragma DSL 的语言实现，拥有 AST、解析、链接、校验、编译、扩展 registry 和 dump；可以依赖 `evaluation` 和 `core`，但 `core` 与 `evaluation` 不得反向依赖 `interpreter`。
 - `default-agent` 是内置通用 Agent `Pragma` 的可复用产品能力包，拥有 DSL、Skill、descriptor/compiler、宿主端口和 managed tools；应用负责系统专家注册、Mission 存储、任务和 Runtime 适配。
 - `memory` 是 Host 内置 Memory Plane，拥有 Evidence adapter、Module SPI、独立消费状态和联邦只读 Context；只依赖 `core` 与 `shared`，不得反向进入 Core。
+- `mission-board` 是 Host 可复用的 Mission-scoped 通用白板，只依赖 `core` Context 合约，不依赖文件系统、Memory 或应用。
+- `context-filesystem` 是显式 Node/Host 文件系统 adapter 出口；Mission Board 与 Memory 不得依赖它。
 - `runtime-*` 是具体 Runtime Adapter 实现，依赖 `core`、`shared` 和该 runtime 自己的 SDK；不同 runtime 包相互独立。
 - `server` 是服务端控制面与基础设施层，可以依赖 `shared` 和 `core` 抽象。
 - `apps/server` 和 `apps/worker` 是云端运行入口，未来由它们调度专家 Agent；不是 Agent 反过来依赖 Server。
@@ -321,9 +325,8 @@ Server 与 Agent 的关系：
 - Trash 只清理已完成且 journal 合法的删除项，固定按七天、总计 300 MiB、最多十项三个上限中
   最先达到者淘汰；Desktop 在首个窗口创建后及成功删除 owner 后触发定向维护，不在启动时扫描全部 owner。
 - ExpertSession、Execution 与 Runtime Session 分别存放在 `~/.pragma/state/expert-sessions/`、`~/.pragma/state/executions/` 和 `~/.pragma/state/runtime-sessions/`。
-- Execution 大输出交接文件和 manifest 存放在
-  `~/.pragma/state/executions/<executionId>/handoffs/`，作为可恢复 Execution 状态随 owner 生命周期清理；
-  workspace 文件交接只保存受控相对路径引用，不复制文件。
+- Execution 大输出通过 Host 注入的 Context overflow target 持久化；Desktop 使用 Mission Board 的
+  `system/outputs/`。workspace 文件交接只在白板保存受控相对路径引用，不复制文件。
 - Project Revision 只保存不可变 manifest 和 Merkle `snapshotHash`；文件实体全局去重到
   `~/.pragma/data/objects/sha256/`，所有 Revision 在 Project 删除前都是强引用根。
 - Project Revision 的 compiler 升级不得改写权威 Revision、重发全部历史或改变 revision number；
@@ -660,8 +663,8 @@ Expert API 设计要求：
   retry 触发。
 - Mission 删除只清理关联 Execution 的 Feed、job、Evidence、subject context 等 transient state，并使用
   稳定 journal 保证可重放；已经提炼的 Episode/Fact 是独立治理的长期 Memory，不随 Mission 自动删除。
-- WorkingState、TODO、Task Board 与专家团白板不是 Memory Plane 的必需输入，但它们仍是独立的 Host
-  内置短期协作能力。共享条目按根 Team/Flow 与 Execution 授权，私有条目按稳定 Runtime Context
+- Mission Board、TODO 与专家团白板不是 Memory Plane 的必需输入，但它们仍是独立的 Host
+  内置短期协作能力。共享条目按 Mission 授权，私有条目按稳定 Runtime Context
   隔离；已提交变化可以发布 Evidence，但不得让私有内容在提炼、handoff 或导出时自动扩大可见性。
 
 禁止依赖 Interpreter、具体 Runtime、Expert plugin、Desktop UI、Server 应用层或 Client SDK。

@@ -14,7 +14,7 @@ import type {
   PromptRequest,
   RuntimeContextRecord,
 } from "@pragma/shared";
-import { ExpertMessageHistorySchema, InvocationHandoffSchema } from "@pragma/shared";
+import { ExpertMessageHistorySchema, InvocationOutputSchema } from "@pragma/shared";
 import { isFinalExecutionStatus as isFinal } from "@pragma/shared";
 
 import type { ExpertDefinition } from "../agent/expert-team.ts";
@@ -41,8 +41,8 @@ import {
   persistHumanInteractionResponse,
   runExpertInvocation,
 } from "./expert-runner.ts";
-import { HandoffService, unwrapInvocationHandoff } from "./handoff/handoff-service.ts";
-import type { HandoffContextVisibilityResolver } from "./handoff/handoff-visibility.ts";
+import { unwrapInvocationOutput } from "./context-output-service.ts";
+import type { HostContextBindings } from "../context-system/host-context-bindings.ts";
 import { RuntimeSessionPool } from "./runtime-session-pool.ts";
 import type { ExecutionStore } from "./execution-store.ts";
 import {
@@ -155,7 +155,7 @@ export interface ExpertSessionManagerDependencies {
   readonly pragmaHome?: string | undefined;
   readonly automaticHumanInteractionHandler?:
     ExpertAgentAutomaticHumanInteractionHandler | undefined;
-  readonly handoffContextVisibilityResolver?: HandoffContextVisibilityResolver | undefined;
+  readonly hostContextBindings?: HostContextBindings | undefined;
 }
 
 type SteerClaim =
@@ -491,7 +491,6 @@ export class ExpertSessionManager {
 
 class ExpertSessionImpl implements ExpertSession {
   private controller: ExecutionController | undefined;
-  private activeHandoffService: HandoffService | undefined;
   private processing: Promise<void> | undefined;
   private readonly runtimeSessions = new RuntimeSessionPool();
   private closePromise: Promise<void> | undefined;
@@ -543,7 +542,7 @@ class ExpertSessionImpl implements ExpertSession {
     const modelSelection = options.modelSelection;
     const definitionKind = isExpertTeam(this.expert) ? "expert-team" : "expert";
     const execution: ExecutionRecord = {
-      schemaVersion: "pragma.execution/v8",
+      schemaVersion: "pragma.execution/v9",
       executionId: id,
       version: 0,
       kind: "expert-turn",
@@ -1116,32 +1115,12 @@ class ExpertSessionImpl implements ExpertSession {
         automaticHumanInteractionHandler: this.dependencies.automaticHumanInteractionHandler,
       },
     );
-    const handoffs = new HandoffService({
-      executionId: prompt.executionId,
-      executions: this.dependencies.executions,
-      resolveVisibleExecutionIds: async (activeExecutionId) => {
-        const currentSession = await this.dependencies.sessions.get(this.sessionId);
-        const hostExecutionIds = await this.dependencies.handoffContextVisibilityResolver?.({
-          currentExecutionId: activeExecutionId,
-          owner: { type: "expert-session", ownerId: this.sessionId },
-        });
-        return [...(currentSession?.executionIds ?? []), ...(hostExecutionIds ?? [])];
-      },
-      resolveActiveService: (executionId) =>
-        this.activeHandoffService?.executionId === executionId
-          ? this.activeHandoffService
-          : undefined,
-      ...(this.dependencies.pragmaHome === undefined
-        ? {}
-        : { pragmaHome: this.dependencies.pragmaHome }),
-    });
-    this.activeHandoffService = handoffs;
     this.controller = controller;
     let status: "succeeded" | "failed" | "cancelled" = "succeeded";
-    let output: ReturnType<typeof InvocationHandoffSchema.parse> | undefined;
+    let output: ReturnType<typeof InvocationOutputSchema.parse> | undefined;
     let error: unknown;
     try {
-      output = InvocationHandoffSchema.parse(
+      output = InvocationOutputSchema.parse(
         await runExpertInvocation({
           executionId: prompt.executionId,
           invocationId: prompt.executionId,
@@ -1159,7 +1138,7 @@ class ExpertSessionImpl implements ExpertSession {
             expertSessionId: this.sessionId,
           }),
           usageSink: this.dependencies.usageSink,
-          handoffs,
+          hostContextBindings: this.dependencies.hostContextBindings,
           ...(this.recoveredExecutionId === prompt.executionId
             ? { runtimeRunId: `${prompt.executionId}:recovery:${randomUUID()}` }
             : {}),
@@ -1223,9 +1202,6 @@ class ExpertSessionImpl implements ExpertSession {
     }));
     if (this.controller === controller) {
       this.controller = undefined;
-    }
-    if (this.activeHandoffService === handoffs) {
-      this.activeHandoffService = undefined;
     }
     controller.finish();
   }
@@ -1371,7 +1347,7 @@ async function waitForTerminalExecution(
 
 function readExecutionResult(record: ExecutionRecord): unknown {
   if (record.status === "succeeded") {
-    return record.output === undefined ? undefined : unwrapInvocationHandoff(record.output);
+    return record.output === undefined ? undefined : unwrapInvocationOutput(record.output);
   }
   throw new Error(
     record.error === undefined
