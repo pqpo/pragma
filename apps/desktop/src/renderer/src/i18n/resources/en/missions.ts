@@ -140,7 +140,7 @@ export const missions = {
   memory: "Memory",
   memoryActivity: "Memory activity",
   memoryActivityDescription:
-    "Capture and agent-initiated ContextStore recall activity for each execution.",
+    "Evidence publication and agent-initiated ContextStore recall activity for each execution. Evidence publication does not mean a memory was extracted.",
   memoryActivityLoading: "Loading memory activity…",
   memoryActivityUnavailable: "Memory activity is unavailable",
   noMemoryActivity: "No memory activity",

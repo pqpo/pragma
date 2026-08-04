@@ -133,7 +133,8 @@ export const missions = {
   work: "工作",
   memory: "記憶",
   memoryActivity: "記憶活動",
-  memoryActivityDescription: "每次執行的擷取活動與 Agent 主動發起的 ContextStore 召回活動。",
+  memoryActivityDescription:
+    "每次執行的證據發布與 Agent 主動發起的 ContextStore 召回活動；發布證據不代表已經提取出記憶。",
   memoryActivityLoading: "正在載入記憶活動…",
   memoryActivityUnavailable: "無法讀取記憶活動",
   noMemoryActivity: "暫無記憶活動",

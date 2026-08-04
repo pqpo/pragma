@@ -75,6 +75,8 @@ export const settings = {
       "{{status}} · {{attempts}} attempts · {{evidence}} Evidence retained · {{omitted}} omitted · {{error}}",
     retryExtraction: "Retry extraction",
     retryError: "The extraction job changed or can no longer be retried.",
+    extractionError: "Memory extraction failed: {{code}}",
+    pipelineError: "Memory pipeline error: {{code}}",
     assetTitle: "Memory policy",
     assetDescription:
       "This team asset may only narrow the global policy. Runtime restrictions are intersected with this setting.",

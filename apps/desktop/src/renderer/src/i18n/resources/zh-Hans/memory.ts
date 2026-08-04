@@ -42,5 +42,13 @@ export const memory = {
   actionError: "无法保存记忆变更。",
   healthSummary: "{{state}} · {{modules}} 个模块 · {{events}} 个规范事件",
   storageHealth: "Feed {{logical}} / {{target}} · 安全水位 {{safe}} · {{blocked}} 被持久消费者阻塞",
+  extractionDegraded: "记忆提取需要处理",
+  extractionDegradedDescription:
+    "{{count}} 个提取任务未能生成记忆；已捕获的证据仍保留，可在修复配置后重试。",
+  memoryDegraded: "记忆系统异常",
+  memoryDegradedDescription: "记忆流水线未正常工作，请在健康状态中检查受影响的模块或投递阶段。",
+  moduleHealthSummary:
+    "{{status}} · 延迟 {{lag}} · {{records}} 条记忆 · {{pending}} 条提取中 · {{attention}} 条需处理 · {{rejected}} 条已拒绝",
+  lastExtractionError: "最近提取错误：{{code}}",
   permissionNote: "本阶段只能保持或收紧权限。",
 } satisfies DesktopTranslationResource["memory"];

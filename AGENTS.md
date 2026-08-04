@@ -235,6 +235,19 @@ import { HealthResponseSchema } from "../../../shared/contracts/src/index.ts";
 
 禁止对内部依赖使用 `"*"`、固定 semver 或 npm registry 版本。
 
+## 语义资源 ID 与后台任务可观测性
+
+- Expert、ExpertTeam、Flow、Automation、Capability、ContextStore、RuntimeProfile 和 Evaluation
+  的 ID 必须是 16 位小写 Crockford Base32；允许 `0-9`、`a-h`、`j-k`、`m-n`、`p-t`、`v-z`，
+  禁止易混淆字符 `i`、`l`、`o`、`u`。
+- 内置或系统资源 ID 不得只靠人工检查字符串。必须在常量声明处通过权威运行时 Schema 构造 canonical ref，
+  并在第一个持久化或跨进程消费边界补集成测试；只 mock 掉边界的单元测试不算覆盖。
+- Evidence 捕获/发布不等于成功生成 Memory。计数器、日志和 UI 必须使用准确阶段名称，禁止把 Evidence
+  数量展示为记忆生成成功数量。
+- 后台任务进入 `needs_attention`、Module unavailable 或投递隔离时，所属子系统必须报告 degraded，日志和
+  用户界面必须展示 Module 与稳定错误码。可重试 Evidence 必须保留，修复配置或升级应用后可直接唤醒，
+  不要求用户重跑原任务。
+
 ## 协议与版本升级治理
 
 以下规则适用于所有持久化和跨进程协议，包括 DSL `apiVersion`、状态 `schemaVersion`、

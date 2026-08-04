@@ -2,12 +2,19 @@ import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
-import { createPragmaLogger, EXECUTION_CURRENT_EXPERT_ID_ATTR, PragmaPaths } from "@pragma/core";
+import {
+  createLoggerProvider,
+  createPragmaLogger,
+  EXECUTION_CURRENT_EXPERT_ID_ATTR,
+  PragmaPaths,
+} from "@pragma/core";
+import { MemoryEvidenceEnvelopeSchema, type PragmaLogRecord } from "@pragma/shared";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
 import {
   createDesktopMemoryPlane,
   resolveDesktopMemoryRecallScope,
+  resolveMemoryModuleHealthStatus,
 } from "./desktop-memory-plane.ts";
 
 const roots: string[] = [];
@@ -62,6 +69,114 @@ describe("DesktopMemoryPlane", () => {
       });
     });
     await plane.stop();
+  });
+
+  it("reports extraction jobs that need attention as a degraded user-visible status", async () => {
+    const pragmaHome = await temporaryRoot("pragma-desktop-memory-extraction-failed-");
+    const logs: PragmaLogRecord[] = [];
+    const loggerProvider = createLoggerProvider({
+      handler: { write: (record) => logs.push(record) },
+      minimumLevel: "debug",
+    });
+    const plane = await createDesktopMemoryPlane({
+      pragmaHome,
+      logger: createPragmaLogger(loggerProvider, { component: "desktop.memory-test" }),
+      pollIntervalMs: 10,
+    });
+    const now = new Date("2026-08-04T00:00:00.000Z");
+    await plane.episodicStore.ingest([
+      MemoryEvidenceEnvelopeSchema.parse({
+        schemaVersion: "pragma.memory-evidence/v1",
+        messageId: "terminal-memory-extraction-failed",
+        topic: "execution.execution.terminal",
+        schemaRef: "pragma.memory.execution-terminal/v2",
+        sourceRef: {
+          type: "pragma.execution",
+          id: "execution-memory-extraction-failed",
+          canonicalEventId: "canonical-memory-extraction-failed",
+        },
+        subjectRefs: [{ type: "pragma.expert", id: "7k2m9q4v8np6r3dt" }],
+        correlationId: "execution-memory-extraction-failed",
+        occurredAt: now.toISOString(),
+        visibility: { mode: "host-private" },
+        sensitivity: "internal",
+        bindings: [],
+        attribution: {
+          rootRef: { type: "pragma.expert", id: "7k2m9q4v8np6r3dt" },
+          producerRefs: [{ type: "pragma.expert", id: "7k2m9q4v8np6r3dt" }],
+        },
+        policySnapshot: {
+          capture: true,
+          recall: true,
+          learning: "local-candidates",
+          appliedRevisions: [],
+        },
+        payload: { outcome: "succeeded" },
+      }),
+    ]);
+    const job = await plane.episodicStore.claimDueJob(now);
+    if (job === undefined) throw new Error("Expected an episodic extraction job.");
+    await plane.episodicStore.fail({
+      job,
+      errorCode: "memory_curator_failed",
+      now,
+      retry: "configuration",
+    });
+
+    plane.start();
+    await vi.waitFor(async () => {
+      await expect(plane.getStatus()).resolves.toMatchObject({
+        state: "degraded",
+        lastError: { code: "memory_curator_failed" },
+        modules: expect.arrayContaining([
+          expect.objectContaining({
+            moduleId: "pragma.memory.episodic",
+            status: "degraded",
+            lastErrorCode: "memory_curator_failed",
+            work: expect.objectContaining({ needsAttention: 1 }),
+          }),
+        ]),
+      });
+    });
+    expect(logs).toContainEqual(
+      expect.objectContaining({
+        level: "error",
+        event: "desktop.memory_pipeline_degraded",
+        attributes: expect.objectContaining({ code: "memory_curator_failed" }),
+      }),
+    );
+    expect(logs).toContainEqual(
+      expect.objectContaining({
+        level: "error",
+        event: "desktop.memory_extraction_needs_attention",
+        attributes: expect.objectContaining({
+          moduleId: "pragma.memory.episodic",
+          code: "memory_curator_failed",
+          needsAttention: 1,
+        }),
+      }),
+    );
+
+    await plane.wakeMemoryJobs();
+    await vi.waitFor(async () => {
+      await expect(plane.getStatus()).resolves.toMatchObject({
+        state: "running",
+        modules: expect.arrayContaining([
+          expect.objectContaining({
+            moduleId: "pragma.memory.episodic",
+            status: "healthy",
+            work: expect.objectContaining({ pending: 1, needsAttention: 0 }),
+          }),
+        ]),
+      });
+    });
+    await plane.stop();
+  });
+
+  it("does not downgrade an unavailable module when extraction also needs attention", () => {
+    expect(resolveMemoryModuleHealthStatus("unavailable", 1)).toBe("unavailable");
+    expect(resolveMemoryModuleHealthStatus("degraded", 1)).toBe("degraded");
+    expect(resolveMemoryModuleHealthStatus("healthy", 1)).toBe("degraded");
   });
 
   it("registers stable local User and Project subjects without inventing a Repository", async () => {

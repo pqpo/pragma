@@ -2239,6 +2239,15 @@ html.is-resizing-sidebar * {
   background: color-mix(in srgb, #b7791f 10%, transparent);
 }
 
+.memory-module-status {
+  display: grid;
+  gap: 3px;
+}
+
+.setting-copy .memory-module-status .form-error {
+  color: var(--danger);
+}
+
 .asset-memory-policy {
   margin-top: 26px;
   padding: 22px;

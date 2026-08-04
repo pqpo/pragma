@@ -41,5 +41,14 @@ export const memory = {
   healthSummary: "{{state}} · {{modules}} modules · {{events}} canonical events",
   storageHealth:
     "Feed {{logical}} / {{target}} · safe through {{safe}} · {{blocked}} blocked by durable consumers",
+  extractionDegraded: "Memory extraction needs attention",
+  extractionDegradedDescription:
+    "{{count}} extraction job(s) could not produce memory. Captured evidence remains available for retry.",
+  memoryDegraded: "Memory is degraded",
+  memoryDegradedDescription:
+    "The memory pipeline is not operating normally. Check Health for the affected module or delivery stage.",
+  moduleHealthSummary:
+    "{{status}} · lag {{lag}} · {{records}} memories · {{pending}} extracting · {{attention}} need attention · {{rejected}} rejected",
+  lastExtractionError: "Latest extraction error: {{code}}",
   permissionNote: "Permissions can only be kept or tightened in this phase.",
 };

@@ -29,6 +29,10 @@ import {
   assertMemoryVisibilityTightened,
   createMemoryTombstone,
 } from "../governance/access-governance.ts";
+import {
+  latestExtractionJobErrorCode,
+  parseExtractionJobJson,
+} from "../pipeline/extraction-job-diagnostic.ts";
 import type { MemoryRecallScope } from "../pipeline/memory-module.ts";
 import {
   EMPTY_MEMORY_EVIDENCE_OMISSION_STATS,
@@ -59,6 +63,7 @@ export interface SemanticMemoryStoreDiagnostic {
   readonly evidenceBytes: number;
   readonly truncatedExecutions: number;
   readonly rejected: number;
+  readonly lastErrorCode?: string | undefined;
   readonly rejectedByReason: Readonly<Record<SemanticRejectionReason, number>>;
 }
 
@@ -629,7 +634,8 @@ export async function createSemanticMemoryStore(
         .prepare("SELECT job_json AS jobJson FROM jobs WHERE status = 'needs_attention'")
         .all() as unknown as readonly { readonly jobJson: string }[];
       for (const row of rows) {
-        const job = SemanticExtractionJobSchema.parse(JSON.parse(row.jobJson));
+        const job = parseExtractionJobJson(row.jobJson, SemanticExtractionJobSchema);
+        if (job === undefined) continue;
         if (reason === "configuration" && job.failureClass !== "configuration") continue;
         writeJob(
           SemanticExtractionJobSchema.parse({
@@ -880,6 +886,14 @@ export async function createSemanticMemoryStore(
         .get() as unknown as {
         readonly count: number;
       };
+      const attentionRows = state
+        .prepare("SELECT job_json AS jobJson FROM jobs WHERE status = 'needs_attention'")
+        .all() as unknown as readonly { readonly jobJson: string }[];
+      const lastErrorCode = latestExtractionJobErrorCode(
+        attentionRows,
+        SemanticExtractionJobSchema,
+        "semantic_extraction_job_invalid",
+      );
       return {
         facts: facts.count,
         pending: byStatus.get("pending") ?? 0,
@@ -888,6 +902,7 @@ export async function createSemanticMemoryStore(
         expired: byStatus.get("expired") ?? 0,
         ...inspectEvidenceState(state),
         rejected: counters.get("rejected_total") ?? 0,
+        ...(lastErrorCode === undefined ? {} : { lastErrorCode }),
         rejectedByReason: {
           "no-stable-fact": counters.get("rejected_no_stable_fact") ?? 0,
           "insufficient-evidence": counters.get("rejected_insufficient_evidence") ?? 0,

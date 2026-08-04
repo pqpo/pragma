@@ -133,7 +133,8 @@ export const missions = {
   work: "工作",
   memory: "记忆",
   memoryActivity: "记忆活动",
-  memoryActivityDescription: "每次执行的捕获活动与 Agent 主动发起的 ContextStore 召回活动。",
+  memoryActivityDescription:
+    "每次执行的证据发布与 Agent 主动发起的 ContextStore 召回活动；发布证据不代表已经提取出记忆。",
   memoryActivityLoading: "正在加载记忆活动…",
   memoryActivityUnavailable: "无法读取记忆活动",
   noMemoryActivity: "暂无记忆活动",

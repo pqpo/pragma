@@ -46,7 +46,7 @@ Expert 读取“当前 Team/Flow Store + 自己的个人 Store”。其他专家
 同一 Episode 的 restricted Evidence 若没有共同 authorized principal，则在调用 extractor 前以 policy
 reason 完成拒绝，不能降级成 `host-private`、扩大可见性，也不进入无意义的重试或 needs-attention。
 
-Desktop 通过隐藏系统 Expert `expert:0000000000memory` 运行 extractor。每个任务使用新的内部 Mission，
+Desktop 通过隐藏系统 Expert `expert:0000000000mem0ry` 运行 extractor。每个任务使用新的内部 Mission，
 Mission v6 以 `origin: system-memory` 标记并从普通列表排除，但仍沿用标准 Runtime、Execution、Usage
 和 ownership 链路。Evidence adapter 无条件排除 Memory Curator 作为 root Expert 的事件，避免递归记忆。
 

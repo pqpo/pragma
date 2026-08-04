@@ -120,6 +120,7 @@ export function MemoryPage() {
           <WarningCircle size={18} aria-hidden="true" /> {error}
         </div>
       ) : null}
+      <MemoryDegradedAlert health={health} />
 
       {view === "health" ? (
         <MemoryHealth health={health} />
@@ -455,7 +456,20 @@ function MemoryHealth(props: { readonly health?: DesktopMemoryPlaneStatus | unde
             {module.moduleId}@{module.moduleVersion}
           </strong>
           <span>
-            {module.status} · lag {module.lag} · records {module.work?.records ?? 0}
+            {t("moduleHealthSummary", {
+              status: module.status,
+              lag: module.lag,
+              records: module.work?.records ?? 0,
+              pending: (module.work?.pending ?? 0) + (module.work?.running ?? 0),
+              attention: module.work?.needsAttention ?? 0,
+              rejected: module.work?.rejected ?? 0,
+            })}
+            {module.lastErrorCode === undefined ? null : (
+              <>
+                <br />
+                <code>{t("lastExtractionError", { code: module.lastErrorCode })}</code>
+              </>
+            )}
           </span>
         </article>
       ))}
@@ -465,6 +479,53 @@ function MemoryHealth(props: { readonly health?: DesktopMemoryPlaneStatus | unde
 
 function formatHealthBytes(bytes: number): string {
   return `${(bytes / (1_024 * 1_024)).toFixed(1)} MiB`;
+}
+
+export function MemoryDegradedAlert(props: {
+  readonly health?: DesktopMemoryPlaneStatus | undefined;
+}) {
+  const { t } = useTranslation("memory");
+  if (props.health?.state !== "degraded") return null;
+  const attention = props.health.modules.reduce(
+    (total, module) => total + (module.work?.needsAttention ?? 0),
+    0,
+  );
+  const codes = [
+    props.health.lastError?.code,
+    ...props.health.modules.map((module) => module.lastErrorCode),
+  ].filter(
+    (code, index, values): code is string => code !== undefined && values.indexOf(code) === index,
+  );
+  const extractionOnly =
+    attention > 0 &&
+    !props.health.modules.some((module) => module.status === "unavailable") &&
+    !isNonExtractionPipelineError(props.health.lastError?.code);
+  return (
+    <div className="memory-error" role="alert">
+      <WarningCircle size={20} aria-hidden="true" />
+      <span>
+        <strong>{t(extractionOnly ? "extractionDegraded" : "memoryDegraded")}</strong>
+        <br />
+        {extractionOnly
+          ? t("extractionDegradedDescription", { count: attention })
+          : t("memoryDegradedDescription")}
+        {codes.length === 0 ? null : (
+          <>
+            <br />
+            <code>{t("lastExtractionError", { code: codes.join(", ") })}</code>
+          </>
+        )}
+      </span>
+    </div>
+  );
+}
+
+function isNonExtractionPipelineError(code: string | undefined): boolean {
+  return [
+    "canonical_event_handoff_quarantined",
+    "canonical_event_delivery_failed",
+    "memory_pipeline_iteration_failed",
+  ].includes(code ?? "");
 }
 
 function key(item: DesktopMemoryItem): string {

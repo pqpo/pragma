@@ -201,7 +201,7 @@ Desktop 提供设置入口。
 
 #### 2D. Desktop Curator 与设置
 
-- 隐藏系统 Expert `expert:0000000000memory` 通过正常 Mission/ExpertSession/Runtime/Usage 链路执行；
+- 隐藏系统 Expert `expert:0000000000mem0ry` 通过正常 Mission/ExpertSession/Runtime/Usage 链路执行；
 - Mission 升级为 v6，显式记录 `origin: user | system-memory`；v5 首次读取相邻升级为 user；
 - Curator Mission 从普通列表排除，Curator 无工具、无 Memory Context，Evidence adapter 硬性排除其事件；
 - Memory Settings 保存 `pragma.memory-extractor-profile/v1`，支持继承默认或固定 Runtime/provider/model，

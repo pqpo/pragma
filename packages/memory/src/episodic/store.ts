@@ -21,6 +21,10 @@ import {
   assertMemoryVisibilityTightened,
   createMemoryTombstone,
 } from "../governance/access-governance.ts";
+import {
+  latestExtractionJobErrorCode,
+  parseExtractionJobJson,
+} from "../pipeline/extraction-job-diagnostic.ts";
 import type { MemoryRecallScope } from "../pipeline/memory-module.ts";
 import {
   EMPTY_MEMORY_EVIDENCE_OMISSION_STATS,
@@ -56,6 +60,7 @@ export interface EpisodicMemoryStoreDiagnostic {
   readonly evidenceBytes: number;
   readonly truncatedExecutions: number;
   readonly rejected: number;
+  readonly lastErrorCode?: string | undefined;
   readonly rejectedByReason: Readonly<Record<EpisodicRejectionReason, number>>;
 }
 
@@ -542,7 +547,8 @@ export async function createEpisodicMemoryStore(
         .prepare("SELECT job_json AS jobJson FROM jobs WHERE status = 'needs_attention'")
         .all() as unknown as readonly { readonly jobJson: string }[];
       for (const row of rows) {
-        const job = EpisodicExtractionJobSchema.parse(JSON.parse(row.jobJson));
+        const job = parseExtractionJobJson(row.jobJson, EpisodicExtractionJobSchema);
+        if (job === undefined) continue;
         if (reason === "configuration" && job.failureClass !== "configuration") continue;
         writeJob(
           EpisodicExtractionJobSchema.parse({
@@ -616,6 +622,14 @@ export async function createEpisodicMemoryStore(
       const episodes = data.prepare("SELECT COUNT(*) AS count FROM episodes").get() as unknown as {
         readonly count: number;
       };
+      const attentionRows = state
+        .prepare("SELECT job_json AS jobJson FROM jobs WHERE status = 'needs_attention'")
+        .all() as unknown as readonly { readonly jobJson: string }[];
+      const lastErrorCode = latestExtractionJobErrorCode(
+        attentionRows,
+        EpisodicExtractionJobSchema,
+        "episodic_extraction_job_invalid",
+      );
       return {
         episodes: episodes.count,
         pending: byStatus.get("pending") ?? 0,
@@ -624,6 +638,7 @@ export async function createEpisodicMemoryStore(
         expired: byStatus.get("expired") ?? 0,
         ...inspectEvidenceState(state),
         rejected: counters.get("rejected_total") ?? 0,
+        ...(lastErrorCode === undefined ? {} : { lastErrorCode }),
         rejectedByReason: {
           "low-value": counters.get("rejected_low_value") ?? 0,
           "insufficient-evidence": counters.get("rejected_insufficient_evidence") ?? 0,

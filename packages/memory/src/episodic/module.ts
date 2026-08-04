@@ -8,6 +8,7 @@ import {
   type EpisodicMemoryExtractor,
 } from "./schema.ts";
 import { createEpisodicMemoryStore, episodicMemoryId, type EpisodicMemoryStore } from "./store.ts";
+import { extractionErrorCode } from "../pipeline/extraction-error-code.ts";
 import type { MemoryModule } from "../pipeline/memory-module.ts";
 
 export interface EpisodicMemoryModule extends MemoryModule {
@@ -153,7 +154,7 @@ export async function createEpisodicMemoryModule(
       } catch (error) {
         await store.fail({
           job,
-          errorCode: errorCode(error),
+          errorCode: extractionErrorCode(error, "episodic_extraction"),
           now: now(),
           retry: isConfigurationError(error) ? "configuration" : "transient",
         });
@@ -338,12 +339,7 @@ function refKey(ref: MemorySubjectRef): string {
   return `${ref.type}\0${ref.id}`;
 }
 
-function errorCode(error: unknown): string {
-  if (error instanceof Error) return error.message.split(":", 1)[0] || "episodic_extraction_failed";
-  return "episodic_extraction_failed";
-}
-
 function isConfigurationError(error: unknown): boolean {
-  const code = errorCode(error);
+  const code = extractionErrorCode(error, "episodic_extraction");
   return code.includes("unavailable") || code.includes("configuration") || code.includes("profile");
 }
