@@ -1971,6 +1971,7 @@ export function MissionDetailFragment(props: {
                         collapsed={block.collapsed}
                         entries={block.entries}
                         key={`tools:${block.entries[0]!.id}`}
+                        showExecutorLabel
                       />
                     );
                   }
@@ -1993,6 +1994,7 @@ export function MissionDetailFragment(props: {
                       entry={block.item.entry}
                       key={block.item.entry.id}
                       paintExecutionId={block.item.entry.executionId ?? chat?.execution?.id}
+                      showExecutorLabel
                     />
                   );
                 })}
@@ -2724,10 +2726,11 @@ function MissionThinkingPlaceholder(props: { readonly executorName: string }) {
   );
 }
 
-const MissionChatEntryView = memo(function MissionChatEntryView(props: {
+export const MissionChatEntryView = memo(function MissionChatEntryView(props: {
   readonly entry: MissionChatEntry;
   readonly userLabel?: string | undefined;
   readonly paintExecutionId?: string | undefined;
+  readonly showExecutorLabel?: boolean | undefined;
 }) {
   if (props.entry.kind === "user") {
     return (
@@ -2742,10 +2745,16 @@ const MissionChatEntryView = memo(function MissionChatEntryView(props: {
     );
   }
   if (props.entry.kind === "thinking") {
-    return <MissionThinkingEntry entry={props.entry} paintExecutionId={props.paintExecutionId} />;
+    return (
+      <MissionThinkingEntry
+        entry={props.entry}
+        paintExecutionId={props.paintExecutionId}
+        showExecutorLabel={props.showExecutorLabel}
+      />
+    );
   }
   if (props.entry.kind === "tool") {
-    return <MissionToolCallEntry entry={props.entry} />;
+    return <MissionToolCallEntry entry={props.entry} showExecutorLabel={props.showExecutorLabel} />;
   }
   if (props.entry.kind === "agent_activity") {
     return <MissionAgentActivityEntry entry={props.entry} />;
@@ -2755,10 +2764,25 @@ const MissionChatEntryView = memo(function MissionChatEntryView(props: {
   }
   return (
     <div className="mission-assistant-message" data-mission-execution-id={props.paintExecutionId}>
+      {props.showExecutorLabel ? <MissionExecutorLabel entry={props.entry} /> : null}
       <MissionMessageContent source={props.entry.content} />
     </div>
   );
 });
+
+function MissionExecutorLabel(props: { readonly entry: MissionChatEntry }) {
+  const label = missionChatEntryExecutorLabel(props.entry);
+  if (label === undefined) return null;
+  return (
+    <small
+      className="mission-output-executor"
+      data-mission-executor-id={props.entry.executorId}
+      title={props.entry.executorId}
+    >
+      {label}
+    </small>
+  );
+}
 
 function MissionAgentActivityEntry(props: {
   readonly entry: Extract<MissionChatEntry, { kind: "agent_activity" }>;
@@ -2787,6 +2811,7 @@ function MissionAgentActivityEntry(props: {
 export function MissionThinkingEntry(props: {
   readonly entry: Extract<MissionChatEntry, { kind: "thinking" }>;
   readonly paintExecutionId?: string | undefined;
+  readonly showExecutorLabel?: boolean | undefined;
 }) {
   const { t } = useTranslation("missions");
   const [expanded, setExpanded] = useState(false);
@@ -2802,6 +2827,7 @@ export function MissionThinkingEntry(props: {
       data-mission-execution-id={props.paintExecutionId ?? props.entry.executionId}
       aria-live={streaming ? "polite" : undefined}
     >
+      {props.showExecutorLabel ? <MissionExecutorLabel entry={props.entry} /> : null}
       <p id={contentId}>{props.entry.content}</p>
       {streaming ? null : (
         <button
@@ -2819,26 +2845,43 @@ export function MissionThinkingEntry(props: {
   );
 }
 
-function MissionToolCallBlock(props: {
+export function MissionToolCallBlock(props: {
   readonly collapsed: boolean;
   readonly entries: readonly Extract<MissionChatEntry, { kind: "tool" }>[];
+  readonly showExecutorLabel?: boolean | undefined;
 }) {
   const { t } = useTranslation("missions");
-  if (props.entries.length === 1) return <MissionToolCallEntry entry={props.entries[0]!} />;
+  if (props.entries.length === 1) {
+    return (
+      <MissionToolCallEntry entry={props.entries[0]!} showExecutorLabel={props.showExecutorLabel} />
+    );
+  }
   if (!props.collapsed) {
     return (
       <div className="mission-tool-run">
         {props.entries.map((entry) => (
-          <MissionToolCallEntry entry={entry} key={entry.id} />
+          <MissionToolCallEntry
+            entry={entry}
+            key={entry.id}
+            showExecutorLabel={props.showExecutorLabel}
+          />
         ))}
       </div>
     );
   }
+  const showExecutorLabel =
+    props.showExecutorLabel === true &&
+    missionChatEntryExecutorLabel(props.entries[0]!) !== undefined;
   const status = toolGroupStatus(props.entries);
   return (
-    <details className={`mission-chat-activity mission-tool-entry mission-tool-group is-${status}`}>
+    <details
+      className={`mission-chat-activity mission-tool-entry mission-tool-group is-${status}${
+        showExecutorLabel ? " has-executor" : ""
+      }`}
+    >
       <summary>
         <Toolbox size={16} aria-hidden="true" />
+        {showExecutorLabel ? <MissionExecutorLabel entry={props.entries[0]!} /> : null}
         <span>{t("toolCalls", { count: props.entries.length })}</span>
         <small>{toolStatusLabel(status)}</small>
         <CaretDown size={14} aria-hidden="true" />
@@ -2854,9 +2897,14 @@ function MissionToolCallBlock(props: {
 
 function MissionToolCallEntry(props: {
   readonly entry: Extract<MissionChatEntry, { kind: "tool" }>;
+  readonly showExecutorLabel?: boolean | undefined;
 }) {
   const { t } = useTranslation("missions");
-  const className = `mission-chat-activity mission-tool-entry is-${props.entry.status}`;
+  const showExecutorLabel =
+    props.showExecutorLabel === true && missionChatEntryExecutorLabel(props.entry) !== undefined;
+  const className = `mission-chat-activity mission-tool-entry is-${props.entry.status}${
+    showExecutorLabel ? " has-executor" : ""
+  }`;
   const hasDetails =
     props.entry.inputPreview !== undefined ||
     props.entry.outputPreview !== undefined ||
@@ -2864,6 +2912,7 @@ function MissionToolCallEntry(props: {
   const row = (
     <>
       <Toolbox size={16} aria-hidden="true" />
+      {showExecutorLabel ? <MissionExecutorLabel entry={props.entry} /> : null}
       <span>{props.entry.toolName}</span>
       <small>{toolStatusLabel(props.entry.status)}</small>
     </>
@@ -3337,16 +3386,26 @@ export function groupMissionConversationEntries(
   entries: readonly MissionConversationEntry[],
 ): MissionConversationBlock[] {
   const blocks: MissionConversationBlock[] = [];
-  let pendingTools: Extract<MissionChatEntry, { kind: "tool" }>[] = [];
+  let pendingToolGroups: Array<Extract<MissionChatEntry, { kind: "tool" }>[]> = [];
   const flushTools = (collapsed: boolean): void => {
-    if (pendingTools.length === 0) return;
-    blocks.push({ type: "tools", entries: pendingTools, collapsed });
-    pendingTools = [];
+    for (const group of pendingToolGroups) {
+      blocks.push({ type: "tools", entries: group, collapsed });
+    }
+    pendingToolGroups = [];
   };
 
   for (const item of entries) {
     if (item.type === "durable" && item.entry.kind === "tool") {
-      pendingTools.push(item.entry);
+      const currentGroup = pendingToolGroups.at(-1);
+      const currentExecutor = currentGroup?.[0]
+        ? missionChatEntryExecutorKey(currentGroup[0])
+        : undefined;
+      const nextExecutor = missionChatEntryExecutorKey(item.entry);
+      if (currentGroup === undefined || currentExecutor !== nextExecutor) {
+        pendingToolGroups.push([item.entry]);
+      } else {
+        currentGroup.push(item.entry);
+      }
       continue;
     }
     flushTools(
@@ -3357,6 +3416,16 @@ export function groupMissionConversationEntries(
   }
   flushTools(false);
   return blocks;
+}
+
+function missionChatEntryExecutorKey(entry: MissionChatEntry): string {
+  if (entry.executorId !== undefined) return `id:${entry.executorId}`;
+  if (entry.executorName !== undefined) return `name:${entry.executorName}`;
+  return "unknown";
+}
+
+function missionChatEntryExecutorLabel(entry: MissionChatEntry): string | undefined {
+  return entry.executorName ?? entry.executorId;
 }
 
 export function applyMissionChatPatches(

@@ -15,9 +15,11 @@ import {
   ContextWindowControl,
   groupMissionConversationEntries,
   MissionContextOperationEntry,
+  MissionChatEntryView,
   startMissionContextOperation,
   MissionDetailFragment,
   MissionThinkingEntry,
+  MissionToolCallBlock,
   MissionWorkDrawer,
   MissionsPage,
   missionWorkInputSenderName,
@@ -843,6 +845,189 @@ describe("Mission tool call grouping", () => {
       type: "entry",
       item: { entry: { kind: "agent_activity", action: "spawn" } },
     });
+  });
+
+  it("splits consecutive tool calls when the active Expert changes", () => {
+    const createdAt = "2026-07-21T00:00:00.000Z";
+    const blocks = groupMissionConversationEntries(
+      [
+        ["tool-1", "call-1", "writer"],
+        ["tool-2", "call-2", "researcher"],
+        ["tool-3", "call-3", "researcher"],
+      ].map(([id, toolCallId, executorId]) => ({
+        type: "durable" as const,
+        entry: {
+          id: id!,
+          kind: "tool" as const,
+          toolCallId: toolCallId!,
+          toolName: "read_file",
+          status: "succeeded" as const,
+          executorId: executorId!,
+          createdAt,
+        },
+      })),
+    );
+
+    expect(blocks).toMatchObject([
+      { type: "tools", entries: [{ id: "tool-1" }] },
+      { type: "tools", entries: [{ id: "tool-2" }, { id: "tool-3" }] },
+    ]);
+  });
+
+  it("does not collide an Expert ID with another entry's name", () => {
+    const createdAt = "2026-07-21T00:00:00.000Z";
+    const blocks = groupMissionConversationEntries([
+      {
+        type: "durable",
+        entry: {
+          id: "tool-by-id",
+          kind: "tool",
+          executorId: "shared-value",
+          toolCallId: "call-by-id",
+          toolName: "read_file",
+          status: "succeeded",
+          createdAt,
+        },
+      },
+      {
+        type: "durable",
+        entry: {
+          id: "tool-by-name",
+          kind: "tool",
+          executorName: "shared-value",
+          toolCallId: "call-by-name",
+          toolName: "search_files",
+          status: "succeeded",
+          createdAt,
+        },
+      },
+    ]);
+
+    expect(blocks).toMatchObject([
+      { type: "tools", entries: [{ id: "tool-by-id" }] },
+      { type: "tools", entries: [{ id: "tool-by-name" }] },
+    ]);
+  });
+});
+
+describe("Mission Expert output labels", () => {
+  const createdAt = "2026-07-21T00:00:00.000Z";
+
+  it("shows the friendly Expert name on answers, thinking, and tool groups", () => {
+    const answer = renderToStaticMarkup(
+      <MissionChatEntryView
+        entry={{
+          id: "answer",
+          kind: "assistant",
+          executorId: "writer",
+          executorName: "Writer",
+          content: "Draft complete.",
+          streaming: false,
+          createdAt,
+        }}
+        showExecutorLabel
+      />,
+    );
+    const thinking = renderToStaticMarkup(
+      <MissionThinkingEntry
+        entry={{
+          id: "thinking",
+          kind: "thinking",
+          executorId: "researcher",
+          executorName: "Researcher",
+          content: "Inspecting sources.",
+          streaming: true,
+          createdAt,
+        }}
+        showExecutorLabel
+      />,
+    );
+    const tools = renderToStaticMarkup(
+      <MissionToolCallBlock
+        collapsed
+        entries={[
+          {
+            id: "tool-1",
+            kind: "tool",
+            executorId: "reviewer",
+            executorName: "Reviewer",
+            toolCallId: "call-1",
+            toolName: "read_file",
+            status: "succeeded",
+            createdAt,
+          },
+          {
+            id: "tool-2",
+            kind: "tool",
+            executorId: "reviewer",
+            executorName: "Reviewer",
+            toolCallId: "call-2",
+            toolName: "search_files",
+            status: "succeeded",
+            createdAt,
+          },
+        ]}
+        showExecutorLabel
+      />,
+    );
+
+    expect(answer).toContain('data-mission-executor-id="writer"');
+    expect(answer).toContain(">Writer<");
+    expect(thinking).toContain('data-mission-executor-id="researcher"');
+    expect(thinking).toContain(">Researcher<");
+    expect(tools).toContain('data-mission-executor-id="reviewer"');
+    expect(tools).toContain(">Reviewer<");
+  });
+
+  it("falls back to the Expert ID and keeps Work drawer output labels suppressed", () => {
+    const fallback = renderToStaticMarkup(
+      <MissionChatEntryView
+        entry={{
+          id: "answer",
+          kind: "assistant",
+          executorId: "expert-without-name",
+          content: "Done.",
+          streaming: false,
+          createdAt,
+        }}
+        showExecutorLabel
+      />,
+    );
+    const work = renderToStaticMarkup(
+      <MissionWorkDrawer
+        record={{
+          recordId: "runtime-agent:researcher",
+          kind: "runtime-agent",
+          sessionId: "researcher",
+          title: "Runtime Researcher",
+          origin: "runtime",
+          status: "running",
+          tasks: [],
+          summary: "Inspect",
+          createdAt,
+          updatedAt: createdAt,
+        }}
+        inputSenderName="Main agent"
+        entries={[
+          {
+            id: "answer",
+            kind: "assistant",
+            executorId: "parent-expert",
+            executorName: "Parent Expert",
+            content: "Runtime child output.",
+            streaming: false,
+            createdAt,
+          },
+        ]}
+        loading={false}
+        onClose={() => undefined}
+      />,
+    );
+
+    expect(fallback).toContain(">expert-without-name<");
+    expect(work).toContain("Runtime Researcher");
+    expect(work).not.toContain("mission-output-executor");
+    expect(work).not.toContain("Parent Expert");
   });
 });
 
