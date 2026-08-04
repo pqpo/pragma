@@ -22,7 +22,11 @@ export const memory = {
   evidence: "Evidence",
   reason: "Reason for this change",
   disableRecall: "Disable recall",
+  disableRecallTooltip:
+    "Prevent {{consumer}} from recalling this memory. The memory is not deleted, and other bindings are unaffected.",
   restrictVisibility: "Restrict visibility",
+  restrictVisibilityTooltip:
+    "Make this memory visible only to its root asset principals ({{principals}}). Other principals will no longer be able to discover it.",
   verify: "Verify fact",
   revise: "Revise fact",
   invalidate: "Invalidate",
