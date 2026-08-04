@@ -17306,6 +17306,20 @@ textarea:focus-visible,
   padding: 0;
 }
 
+.home-app-version {
+  position: absolute;
+  z-index: 4;
+  right: 20px;
+  bottom: 16px;
+  margin: 0;
+  color: var(--ui-text-disabled);
+  font-size: 11px;
+  font-weight: 400;
+  line-height: 1;
+  pointer-events: none;
+  user-select: none;
+}
+
 .home-mission-create
   > .mission-create:has(.mission-executor-picker.is-open, .mission-executor-manager-backdrop) {
   z-index: 4;

@@ -74,10 +74,24 @@ export function HomePage(props: {
   const [modelError, setModelError] = useState<string | null>(null);
   const [modelResetRequired, setModelResetRequired] = useState(false);
   const [persistenceReady, setPersistenceReady] = useState(false);
+  const [appVersion, setAppVersion] = useState<string>();
   const modelRuntimeIdRef = useRef<string | undefined>(undefined);
   const inputExecutorRef = useRef(props.initialExecutorRef ?? "");
   const pendingModelOverrideRef = useRef<MissionModelOverride | undefined>(undefined);
   const workspaceAssociationRequestRef = useRef(props.initialExecutorRef ?? "");
+
+  useEffect(() => {
+    let cancelled = false;
+    void window.pragmaDesktop
+      .getBridgeSnapshot()
+      .then((snapshot) => {
+        if (!cancelled) setAppVersion(snapshot.app.version);
+      })
+      .catch(() => undefined);
+    return () => {
+      cancelled = true;
+    };
+  }, []);
 
   useEffect(() => {
     let cancelled = false;
@@ -513,6 +527,7 @@ export function HomePage(props: {
         ) : null}
       </section>
       <ExpertConstellation focused={composerFocused} submitting={saving} />
+      {appVersion !== undefined ? <p className="home-app-version">v{appVersion}</p> : null}
     </section>
   );
 }
