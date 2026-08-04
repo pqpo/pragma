@@ -82,38 +82,40 @@ export async function createEpisodicMemoryModule(
       const evidence = sanitizeEvidence(await store.readEvidence(job.executionId));
       try {
         if (evidence.some((item) => item.sensitivity === "restricted")) {
-          await store.completeRejected(job, "sensitive");
+          await store.completeRejected(job, "sensitive", now());
           return;
         }
         if (isLowValue(evidence)) {
-          await store.completeRejected(job, "low-value");
+          await store.completeRejected(job, "low-value", now());
           return;
         }
         const visibility = strictestVisibility(evidence);
         if (visibility === undefined) {
-          await store.completeRejected(job, "policy");
+          await store.completeRejected(job, "policy", now());
           return;
         }
         const previousEpisode = await store.getByExecution(job.executionId);
         if (previousEpisode?.terminalMessageId === job.terminalMessageId) {
-          await store.completeRetained({ job, record: previousEpisode, evidence });
+          await store.completeRetained({ job, record: previousEpisode, evidence, now: now() });
           return;
         }
         const input = EpisodicExtractionInputSchema.parse({
-          schemaVersion: "pragma.memory-episodic-extraction-input/v1",
+          schemaVersion: "pragma.memory-episodic-extraction-input/v2",
           jobId: job.id,
           executionId: job.executionId,
           ...(previousEpisode === undefined ? {} : { previousEpisode }),
           evidence,
+          omittedEvidence: await store.readOmissionStats(job.executionId),
         });
         const extracted = await extractor.extract(input);
         const output = EpisodicExtractionOutputSchema.parse(extracted.output);
         if (!output.retain) {
-          await store.completeRejected(job, output.reason);
+          await store.completeRejected(job, output.reason, now());
           return;
         }
         assertEvidenceRefs(output, new Set(evidence.map((item) => item.messageId)));
-        const timestamp = now().toISOString();
+        const completedAt = now();
+        const timestamp = completedAt.toISOString();
         const attribution = resolveAttribution(evidence);
         const record = EpisodicMemoryRecordSchema.parse({
           schemaVersion: "pragma.memory-episodic/v2",
@@ -147,7 +149,7 @@ export async function createEpisodicMemoryModule(
           createdAt: previousEpisode?.createdAt ?? timestamp,
           updatedAt: timestamp,
         });
-        await store.completeRetained({ job, record, evidence });
+        await store.completeRetained({ job, record, evidence, now: completedAt });
       } catch (error) {
         await store.fail({
           job,
@@ -159,7 +161,6 @@ export async function createEpisodicMemoryModule(
     },
     async setExtractor(next) {
       extractor = next;
-      if (next !== undefined) await store.wakeNeedsAttention(now());
     },
     store,
     close() {

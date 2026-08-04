@@ -39,5 +39,7 @@ export const memory = {
   loadError: "Memory could not be loaded.",
   actionError: "The memory change could not be saved.",
   healthSummary: "{{state}} · {{modules}} modules · {{events}} canonical events",
+  storageHealth:
+    "Feed {{logical}} / {{target}} · safe through {{safe}} · {{blocked}} blocked by durable consumers",
   permissionNote: "Permissions can only be kept or tightened in this phase.",
 };

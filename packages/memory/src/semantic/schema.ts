@@ -6,7 +6,9 @@ import {
 } from "@pragma/shared";
 import { z } from "zod";
 
-export const SEMANTIC_JOB_SCHEMA_VERSION = "pragma.memory-semantic-job/v1" as const;
+import { MemoryEvidenceOmissionStatsSchema } from "../storage/bounded-evidence.ts";
+
+export const SEMANTIC_JOB_SCHEMA_VERSION = "pragma.memory-semantic-job/v2" as const;
 export const SEMANTIC_SUBJECT_CONTEXT_SCHEMA_VERSION =
   "pragma.memory-semantic-execution-subject-context/v1" as const;
 export const SEMANTIC_GOVERNANCE_EVENT_SCHEMA_VERSION =
@@ -31,11 +33,12 @@ export const SemanticFactCandidateSchema = z
 
 export const SemanticExtractionInputSchema = z
   .object({
-    schemaVersion: z.literal("pragma.memory-semantic-extraction-input/v1"),
+    schemaVersion: z.literal("pragma.memory-semantic-extraction-input/v2"),
     jobId: z.string().min(1),
     executionId: z.string().min(1),
     allowedSubjectRefs: z.array(MemorySubjectRefSchema).min(1).max(200),
     evidence: z.array(MemoryEvidenceEnvelopeSchema).min(1).max(2_000),
+    omittedEvidence: MemoryEvidenceOmissionStatsSchema,
   })
   .strict();
 
@@ -58,13 +61,19 @@ export const SemanticExtractionJobSchema = z
   .object({
     schemaVersion: z.literal(SEMANTIC_JOB_SCHEMA_VERSION),
     id: z.string().min(1),
+    revision: z.number().int().positive(),
     executionId: z.string().min(1),
     terminalMessageId: z.string().min(1),
-    status: z.enum(["pending", "running", "needs_attention", "completed"]),
+    status: z.enum(["pending", "running", "needs_attention", "completed", "expired"]),
     attempts: z.number().int().nonnegative(),
+    totalAttempts: z.number().int().nonnegative(),
     retryAt: z.string().datetime().optional(),
     leaseUntil: z.string().datetime().optional(),
     lastErrorCode: z.string().min(1).optional(),
+    failureClass: z.enum(["configuration", "transient-exhausted"]).optional(),
+    attentionSince: z.string().datetime().optional(),
+    completedAt: z.string().datetime().optional(),
+    expiredAt: z.string().datetime().optional(),
     completion: z.enum(["retained", "rejected"]).optional(),
     updatedAt: z.string().datetime(),
   })

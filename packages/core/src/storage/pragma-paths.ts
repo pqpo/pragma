@@ -135,6 +135,14 @@ export class PragmaPaths {
     return join(this.stateRoot(), "memory");
   }
 
+  memoryCleanupJournalRoot(): string {
+    return join(this.memoryStateRoot(), "cleanup-journal");
+  }
+
+  memoryCuratorMissionRegistry(): string {
+    return join(this.memoryStateRoot(), "curator-missions.json");
+  }
+
   memoryCacheRoot(): string {
     return join(this.cacheRoot(), "memory");
   }
@@ -164,11 +172,7 @@ export class PragmaPaths {
   }
 
   memoryExecutionActivityRoot(executionId: string): string {
-    return join(
-      this.memoryStateRoot(),
-      "executions",
-      encodePragmaPathSegment(executionId),
-    );
+    return join(this.memoryStateRoot(), "executions", encodePragmaPathSegment(executionId));
   }
 
   memoryExecutionActivity(executionId: string): string {

@@ -31,8 +31,13 @@ afterEach(async () => {
 describe("Episodic Memory", () => {
   it("extracts a layered, evidence-traceable episode without WorkingState", async () => {
     const root = await temporaryRoot();
+    const now = new Date("2026-08-03T12:00:00.000Z");
     const extractor = fakeExtractor();
-    const module = await createEpisodicMemoryModule({ pragmaHome: root, extractor });
+    const module = await createEpisodicMemoryModule({
+      pragmaHome: root,
+      extractor,
+      now: () => now,
+    });
     const evidence = executionEvidence("execution-a");
 
     await module.consume(evidence);
@@ -47,6 +52,7 @@ describe("Episodic Memory", () => {
       outcome: { status: "succeeded" },
     });
     expect(extractor.extract).toHaveBeenCalledOnce();
+    expect((await module.store.listExtractionJobs())[0]?.completedAt).toBe(now.toISOString());
     const readEvidence = vi.spyOn(module.store, "readEvidence");
     const getEvidence = vi.spyOn(module.store, "getEvidenceForRecall");
 
@@ -69,11 +75,14 @@ describe("Episodic Memory", () => {
     expect(detail.ok && detail.value.content).toContain("## Evidence");
     expect(readEvidence).not.toHaveBeenCalled();
     expect(getEvidence).not.toHaveBeenCalled();
+    await expect(
+      context.readContext({ id: `episodic/evidence/${evidence[0]!.messageId}.md` }),
+    ).resolves.toMatchObject({ ok: false, error: { code: "context_not_found" } });
     const evidenceDetail = await context.readContext({
-      id: `episodic/evidence/${evidence[0]!.messageId}.md`,
+      id: `episodic/evidence/${evidence.at(-1)!.messageId}.md`,
     });
-    expect(evidenceDetail.ok && evidenceDetail.value.content).toContain("Safe payload");
-    expect(getEvidence).toHaveBeenCalledOnce();
+    expect(evidenceDetail.ok && evidenceDetail.value.content).toContain("succeeded");
+    expect(getEvidence).toHaveBeenCalledTimes(2);
     const search = await context.searchContext({ query: evidence[0]!.messageId });
     expect(search.ok && search.value.some((match) => match.id.includes("/evidence/"))).toBe(false);
     module.close();
@@ -259,7 +268,7 @@ describe("Episodic Memory", () => {
     ).rejects.toThrow("memory_permission_expansion_denied");
     expect(await module.store.listForRecall(expertScope("expert-a"))).toEqual([]);
     expect(await module.store.history(initial.id)).toHaveLength(2);
-    expect(await module.store.getEvidence(evidence[0]!.messageId)).toBeDefined();
+    expect(await module.store.getEvidence(evidence.at(-1)!.messageId)).toBeDefined();
 
     await expect(
       module.store.forget({
@@ -281,7 +290,7 @@ describe("Episodic Memory", () => {
     });
     expect(await module.store.get(initial.id)).toBeUndefined();
     expect(await module.store.history(initial.id)).toEqual([]);
-    expect(await module.store.getEvidence(evidence[0]!.messageId)).toBeUndefined();
+    expect(await module.store.getEvidence(evidence.at(-1)!.messageId)).toBeUndefined();
 
     await module.consume([
       terminalEvidence("execution-governance", "terminal-after-forget", "2026-08-03T12:03:00.000Z"),
@@ -356,6 +365,12 @@ describe("Episodic Memory", () => {
         },
       ],
     });
+    const backup = new DatabaseSync(join(dataRoot, "episodes.sqlite.v1.backup"));
+    expect(
+      (backup.prepare("PRAGMA user_version").get() as unknown as { readonly user_version: number })
+        .user_version,
+    ).toBe(1);
+    backup.close();
     module.close();
   });
 
@@ -504,6 +519,208 @@ describe("Episodic Memory", () => {
     expect(await conflict.store.list()).toEqual([]);
     expect((await conflict.store.inspect()).needsAttention).toBe(1);
     conflict.close();
+  });
+
+  it("expires failed payloads after 30 days without startup-style retry", async () => {
+    const module = await createEpisodicMemoryModule({ pragmaHome: await temporaryRoot() });
+    await module.consume(executionEvidence("expiry"));
+    const job = await module.store.claimDueJob(new Date("2026-08-01T00:00:03.000Z"));
+    expect(job).toBeDefined();
+    await module.store.fail({
+      job: job!,
+      errorCode: "memory_extractor_profile_invalid",
+      now: new Date("2026-08-01T00:00:04.000Z"),
+      retry: "configuration",
+    });
+
+    await module.store.maintain(new Date("2026-09-01T00:00:05.000Z"));
+    const [expired] = await module.store.listExtractionJobs();
+    expect(expired).toMatchObject({ status: "expired", failureClass: "configuration" });
+    expect(await module.store.readEvidence("expiry")).toEqual([]);
+    await expect(
+      module.store.retryJob({
+        id: expired!.id,
+        expectedRevision: expired!.revision,
+        now: new Date(),
+      }),
+    ).rejects.toThrow("memory_extraction_job_not_retryable");
+    module.close();
+  });
+
+  it("does not recreate transient state or long-term memory after an Execution is deleted", async () => {
+    const module = await createEpisodicMemoryModule({
+      pragmaHome: await temporaryRoot(),
+      extractor: fakeExtractor(),
+    });
+    const evidence = executionEvidence("deleted-execution");
+    await module.consume(evidence);
+    const claimed = await module.store.claimDueJob(new Date("2026-08-04T00:00:00.000Z"));
+    expect(claimed).toBeDefined();
+    await module.store.deleteExecutionState(["deleted-execution"]);
+    await module.store.fail({
+      job: claimed!,
+      errorCode: "late_extractor_failure",
+      now: new Date("2026-08-04T00:01:00.000Z"),
+      retry: "transient",
+    });
+
+    await module.runBackgroundOnce?.();
+    await module.consume(evidence);
+    await module.runBackgroundOnce?.();
+
+    expect(await module.store.readEvidence("deleted-execution")).toEqual([]);
+    expect(await module.store.listExtractionJobs()).toEqual([]);
+    expect(await module.store.list()).toEqual([]);
+    module.close();
+  });
+
+  it("upgrades persisted extraction jobs from v1 to v2 on first access", async () => {
+    const root = await temporaryRoot();
+    const stateRoot = new PragmaPaths({ pragmaHome: root }).memoryModuleStateRoot(
+      "pragma.memory.episodic",
+    );
+    await mkdir(stateRoot, { recursive: true });
+    const database = new DatabaseSync(join(stateRoot, "jobs.sqlite"));
+    database.exec(`
+      CREATE TABLE jobs (
+        id TEXT PRIMARY KEY,
+        execution_id TEXT NOT NULL UNIQUE,
+        terminal_message_id TEXT NOT NULL,
+        status TEXT NOT NULL,
+        retry_at TEXT,
+        lease_until TEXT,
+        job_json TEXT NOT NULL
+      );
+      PRAGMA user_version = 1;
+    `);
+    const legacyJob = {
+      schemaVersion: "pragma.memory-extraction-job/v1",
+      id: "legacy-job",
+      executionId: "legacy-execution",
+      terminalMessageId: "legacy-terminal",
+      status: "needs_attention",
+      attempts: 3,
+      lastErrorCode: "legacy_failure",
+      updatedAt: "2026-08-01T00:00:00.000Z",
+    };
+    database
+      .prepare(
+        `INSERT INTO jobs(id, execution_id, terminal_message_id, status, retry_at, lease_until, job_json)
+         VALUES (?, ?, ?, ?, NULL, NULL, ?)`,
+      )
+      .run(
+        legacyJob.id,
+        legacyJob.executionId,
+        legacyJob.terminalMessageId,
+        legacyJob.status,
+        JSON.stringify(legacyJob),
+      );
+    database.close();
+
+    const module = await createEpisodicMemoryModule({ pragmaHome: root });
+    await expect(module.store.listExtractionJobs()).resolves.toEqual([
+      expect.objectContaining({
+        schemaVersion: "pragma.memory-extraction-job/v2",
+        id: "legacy-job",
+        revision: 1,
+        totalAttempts: 3,
+        status: "needs_attention",
+        failureClass: "transient-exhausted",
+      }),
+    ]);
+    const backup = new DatabaseSync(join(stateRoot, "jobs.sqlite.v1.backup"));
+    expect(
+      (backup.prepare("PRAGMA user_version").get() as unknown as { readonly user_version: number })
+        .user_version,
+    ).toBe(1);
+    backup.close();
+    module.close();
+
+    const future = new DatabaseSync(join(stateRoot, "jobs.sqlite"));
+    future.exec("PRAGMA user_version = 3;");
+    future.close();
+    await expect(createEpisodicMemoryModule({ pragmaHome: root })).rejects.toThrow(
+      "unsupported-state-version:pragma.memory-episodic-jobs/v3",
+    );
+  });
+
+  it("fails closed when an unversioned episodic database already contains tables", async () => {
+    const root = await temporaryRoot();
+    const stateRoot = new PragmaPaths({ pragmaHome: root }).memoryModuleStateRoot(
+      "pragma.memory.episodic",
+    );
+    await mkdir(stateRoot, { recursive: true });
+    const database = new DatabaseSync(join(stateRoot, "jobs.sqlite"));
+    database.exec("CREATE TABLE jobs (id TEXT PRIMARY KEY);");
+    database.close();
+
+    await expect(createEpisodicMemoryModule({ pragmaHome: root })).rejects.toThrow(
+      "corrupt-state-version:pragma.memory-episodic-jobs/v0-with-table:jobs",
+    );
+  });
+
+  it("preserves v1 state and replays the migration after a malformed job is repaired", async () => {
+    const root = await temporaryRoot();
+    const stateRoot = new PragmaPaths({ pragmaHome: root }).memoryModuleStateRoot(
+      "pragma.memory.episodic",
+    );
+    await mkdir(stateRoot, { recursive: true });
+    const statePath = join(stateRoot, "jobs.sqlite");
+    const database = new DatabaseSync(statePath);
+    database.exec(`
+      CREATE TABLE jobs (
+        id TEXT PRIMARY KEY,
+        execution_id TEXT NOT NULL UNIQUE,
+        terminal_message_id TEXT NOT NULL,
+        status TEXT NOT NULL,
+        retry_at TEXT,
+        lease_until TEXT,
+        job_json TEXT NOT NULL
+      );
+      PRAGMA user_version = 1;
+    `);
+    const malformed = {
+      schemaVersion: "pragma.memory-extraction-job/v1",
+      id: "repairable-job",
+      executionId: "repairable-execution",
+      terminalMessageId: "repairable-terminal",
+      status: "pending",
+      attempts: 0,
+    };
+    database
+      .prepare(
+        `INSERT INTO jobs(id, execution_id, terminal_message_id, status, retry_at, lease_until, job_json)
+         VALUES (?, ?, ?, ?, NULL, NULL, ?)`,
+      )
+      .run(
+        malformed.id,
+        malformed.executionId,
+        malformed.terminalMessageId,
+        malformed.status,
+        JSON.stringify(malformed),
+      );
+    database.close();
+
+    await expect(createEpisodicMemoryModule({ pragmaHome: root })).rejects.toThrow();
+    const preserved = new DatabaseSync(statePath);
+    expect(
+      (
+        preserved.prepare("PRAGMA user_version").get() as unknown as {
+          readonly user_version: number;
+        }
+      ).user_version,
+    ).toBe(1);
+    preserved
+      .prepare("UPDATE jobs SET job_json = ? WHERE id = ?")
+      .run(JSON.stringify({ ...malformed, updatedAt: "2026-08-01T00:00:00.000Z" }), malformed.id);
+    preserved.close();
+
+    const recovered = await createEpisodicMemoryModule({ pragmaHome: root });
+    expect((await recovered.store.listExtractionJobs())[0]).toMatchObject({
+      schemaVersion: "pragma.memory-extraction-job/v2",
+      id: malformed.id,
+    });
+    recovered.close();
   });
 });
 

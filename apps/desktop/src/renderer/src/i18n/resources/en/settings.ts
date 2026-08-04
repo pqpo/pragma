@@ -63,6 +63,18 @@ export const settings = {
       "{{state}} · {{events}} events · {{modules}} modules · {{pending}} pending · {{quarantined}} quarantined",
     moduleWorkSummary:
       "{{module}} · {{records}} records · {{pending}} extracting · {{attention}} need attention · {{rejected}} rejected",
+    storageGovernance: "Storage governance",
+    storageGovernanceDescription:
+      "Fixed, read-only retention limits bound raw events, extraction payloads, and diagnostics.",
+    storageSummary:
+      "{{events}} events · {{logical}} logical / {{file}} file · {{target}} target · safe through {{safe}} · {{blocked}} blocked",
+    retentionSummary:
+      "Feed {{feedDays}} days · jobs {{jobDays}} days · {{records}} or {{bytes}} per execution · {{deadLetters}} dead letters",
+    extractionJob: "{{module}} extraction job",
+    extractionJobSummary:
+      "{{status}} · {{attempts}} attempts · {{evidence}} Evidence retained · {{omitted}} omitted · {{error}}",
+    retryExtraction: "Retry extraction",
+    retryError: "The extraction job changed or can no longer be retried.",
     assetTitle: "Memory policy",
     assetDescription:
       "This team asset may only narrow the global policy. Runtime restrictions are intersected with this setting.",

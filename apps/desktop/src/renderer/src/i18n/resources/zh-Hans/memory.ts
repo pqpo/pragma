@@ -41,5 +41,6 @@ export const memory = {
   loadError: "无法加载记忆。",
   actionError: "无法保存记忆变更。",
   healthSummary: "{{state}} · {{modules}} 个模块 · {{events}} 个规范事件",
+  storageHealth: "Feed {{logical}} / {{target}} · 安全水位 {{safe}} · {{blocked}} 被持久消费者阻塞",
   permissionNote: "本阶段只能保持或收紧权限。",
 } satisfies DesktopTranslationResource["memory"];

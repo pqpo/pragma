@@ -439,6 +439,16 @@ function MemoryHealth(props: { readonly health?: DesktopMemoryPlaneStatus | unde
           events: props.health.feed.eventCount,
         })}
       </p>
+      <p>
+        {t("storageHealth", {
+          logical: formatHealthBytes(props.health.feed.logicalBytes),
+          target: formatHealthBytes(
+            props.health.storagePolicy?.canonicalFeedTargetBytes ?? 512 * 1_024 * 1_024,
+          ),
+          blocked: formatHealthBytes(props.health.feed.blockedBytes),
+          safe: props.health.feed.safeThroughSequence,
+        })}
+      </p>
       {props.health.modules.map((module) => (
         <article key={module.moduleId}>
           <strong>
@@ -451,6 +461,10 @@ function MemoryHealth(props: { readonly health?: DesktopMemoryPlaneStatus | unde
       ))}
     </section>
   );
+}
+
+function formatHealthBytes(bytes: number): string {
+  return `${(bytes / (1_024 * 1_024)).toFixed(1)} MiB`;
 }
 
 function key(item: DesktopMemoryItem): string {

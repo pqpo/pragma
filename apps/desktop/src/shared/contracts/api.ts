@@ -134,6 +134,8 @@ import type {
   TightenDesktopMemoryAccess,
   ReviewDesktopMemoryItem,
   DesktopMissionMemoryActivity,
+  DesktopMemoryExtractionJob,
+  RetryDesktopMemoryExtractionJob,
 } from "./types.ts";
 
 export interface PragmaDesktopAPI {
@@ -152,6 +154,10 @@ export interface PragmaDesktopAPI {
     input: UpdateDesktopAssetMemoryPolicy,
   ) => Promise<DesktopAssetMemoryPolicySnapshot>;
   getMemoryPlaneStatus: () => Promise<DesktopMemoryPlaneStatus>;
+  listMemoryExtractionJobs: () => Promise<DesktopMemoryExtractionJob[]>;
+  retryMemoryExtractionJob: (
+    input: RetryDesktopMemoryExtractionJob,
+  ) => Promise<DesktopMemoryExtractionJob>;
   getMemoryExtractorProfile: () => Promise<DesktopMemoryExtractorProfile>;
   updateMemoryExtractorProfile: (
     input: UpdateDesktopMemoryExtractorProfile,

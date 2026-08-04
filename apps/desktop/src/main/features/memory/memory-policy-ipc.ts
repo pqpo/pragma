@@ -22,6 +22,9 @@ import {
   ReviewDesktopMemoryItemSchema,
   DesktopMissionMemoryActivitySchema,
   GetDesktopMissionMemoryActivitySchema,
+  DesktopMemoryExtractionJobSchema,
+  DesktopMemoryExtractionJobListSchema,
+  RetryDesktopMemoryExtractionJobSchema,
 } from "../../../shared/contracts/index.ts";
 import type { DesktopMemoryPlane } from "./desktop-memory-plane.ts";
 import type { MissionStore } from "../missions/mission-store.ts";
@@ -71,6 +74,31 @@ export function installMemoryPolicyHandlers(
   ipcMain.handle("memory-plane:status", async () =>
     DesktopMemoryPlaneStatusSchema.parse(await plane.getStatus()),
   );
+  ipcMain.handle("memory-extraction-jobs:list", async () => {
+    const jobs = [
+      ...(await Promise.all(
+        (await plane.episodicStore.listExtractionJobs()).map(
+          async (job) => await toDesktopExtractionJob("episodic", job, plane.episodicStore),
+        ),
+      )),
+      ...(await Promise.all(
+        (await plane.semanticStore.listExtractionJobs()).map(
+          async (job) => await toDesktopExtractionJob("semantic", job, plane.semanticStore),
+        ),
+      )),
+    ].toSorted((left, right) => right.updatedAt.localeCompare(left.updatedAt));
+    return DesktopMemoryExtractionJobListSchema.parse(jobs.slice(0, 100));
+  });
+  ipcMain.handle("memory-extraction-jobs:retry", async (_event, input: unknown) => {
+    const parsed = RetryDesktopMemoryExtractionJobSchema.parse(input);
+    await plane.retryMemoryJob(parsed);
+    const store = parsed.module === "episodic" ? plane.episodicStore : plane.semanticStore;
+    const job = (await store.listExtractionJobs()).find((candidate) => candidate.id === parsed.id);
+    if (job === undefined) throw new Error("memory_extraction_job_not_found");
+    return DesktopMemoryExtractionJobSchema.parse(
+      await toDesktopExtractionJob(parsed.module, job, store),
+    );
+  });
   ipcMain.handle("memory-extractor-profile:get", async () =>
     DesktopMemoryExtractorProfileSchema.parse(await plane.extractorProfiles.get()),
   );
@@ -228,6 +256,37 @@ function toDesktopFact(record: import("@pragma/shared").SemanticFact) {
     ...(record.reviewAt === undefined ? {} : { reviewAt: record.reviewAt }),
     ...(record.expiresAt === undefined ? {} : { expiresAt: record.expiresAt }),
     conflictsWith: record.conflictsWith,
+  };
+}
+
+async function toDesktopExtractionJob(
+  module: "episodic" | "semantic",
+  job:
+    import("@pragma/memory").EpisodicExtractionJob | import("@pragma/memory").SemanticExtractionJob,
+  store: Pick<import("@pragma/memory").EpisodicMemoryStore, "readEvidence" | "readOmissionStats">,
+) {
+  const hasPayload = ["pending", "running", "needs_attention"].includes(job.status);
+  const evidence = hasPayload ? await store.readEvidence(job.executionId) : [];
+  const omitted = await store.readOmissionStats(job.executionId);
+  return {
+    module,
+    id: job.id,
+    revision: job.revision,
+    status: job.status,
+    attempts: job.attempts,
+    totalAttempts: job.totalAttempts,
+    ...(job.lastErrorCode === undefined ? {} : { lastErrorCode: job.lastErrorCode }),
+    ...(job.failureClass === undefined ? {} : { failureClass: job.failureClass }),
+    evidenceRecords: evidence.length,
+    evidenceBytes: evidence.reduce(
+      (total, item) => total + Buffer.byteLength(JSON.stringify(item)),
+      0,
+    ),
+    omittedRecords: omitted.records,
+    updatedAt: job.updatedAt,
+    ...(job.attentionSince === undefined ? {} : { attentionSince: job.attentionSince }),
+    ...(job.completedAt === undefined ? {} : { completedAt: job.completedAt }),
+    ...(job.expiredAt === undefined ? {} : { expiredAt: job.expiredAt }),
   };
 }
 

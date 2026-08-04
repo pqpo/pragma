@@ -105,7 +105,7 @@ describe("desktop memory contracts", () => {
         delivery: { pending: 1, quarantined: 0 },
         modules: [],
       }),
-    ).toEqual({
+    ).toMatchObject({
       state: "running",
       feed: { lastSequence: 12, eventCount: 10 },
       delivery: { pending: 1, quarantined: 0 },

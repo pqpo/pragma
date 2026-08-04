@@ -6,6 +6,7 @@ import type {
   DesktopMemoryExtractorProfile,
   DesktopMemoryPlaneStatus,
   DesktopRuntimeAvailability,
+  DesktopMemoryExtractionJob,
 } from "../../../../shared/contracts/index.ts";
 import { SelectMenu } from "../../components/SelectMenu.tsx";
 import { SettingsScreenFrame } from "./SettingsScreenFrame.tsx";
@@ -16,6 +17,7 @@ export function MemorySettingsFragment() {
   const [status, setStatus] = useState<DesktopMemoryPlaneStatus>();
   const [extractor, setExtractor] = useState<DesktopMemoryExtractorProfile>();
   const [runtimes, setRuntimes] = useState<readonly DesktopRuntimeAvailability[]>([]);
+  const [jobs, setJobs] = useState<readonly DesktopMemoryExtractionJob[]>([]);
   const [runtimeId, setRuntimeId] = useState("");
   const [modelKey, setModelKey] = useState("");
   const [saving, setSaving] = useState(false);
@@ -28,13 +30,15 @@ export function MemorySettingsFragment() {
       window.pragmaDesktop.getMemoryPlaneStatus(),
       window.pragmaDesktop.getMemoryExtractorProfile(),
       window.pragmaDesktop.getRuntimeAvailability(),
+      window.pragmaDesktop.listMemoryExtractionJobs(),
     ])
-      .then(([nextSnapshot, nextStatus, nextExtractor, nextRuntimes]) => {
+      .then(([nextSnapshot, nextStatus, nextExtractor, nextRuntimes, nextJobs]) => {
         if (cancelled) return;
         setSnapshot(nextSnapshot);
         setStatus(nextStatus);
         setExtractor(nextExtractor);
         setRuntimes(nextRuntimes);
+        setJobs(nextJobs);
         const selectedRuntime =
           nextExtractor.runtimeId ?? nextRuntimes.find((runtime) => runtime.isDefault)?.id ?? "";
         setRuntimeId(selectedRuntime);
@@ -99,6 +103,24 @@ export function MemorySettingsFragment() {
 
   const selectedRuntime = runtimes.find((runtime) => runtime.id === runtimeId);
   const models = selectedRuntime?.models ?? [];
+  const retryJob = async (job: DesktopMemoryExtractionJob) => {
+    setSaving(true);
+    setError(undefined);
+    try {
+      const updated = await window.pragmaDesktop.retryMemoryExtractionJob({
+        module: job.module,
+        id: job.id,
+        expectedRevision: job.revision,
+      });
+      setJobs((current) =>
+        current.map((candidate) => (candidate.id === job.id ? updated : candidate)),
+      );
+    } catch {
+      setError(t("memory.retryError"));
+    } finally {
+      setSaving(false);
+    }
+  };
 
   return (
     <SettingsScreenFrame
@@ -237,10 +259,71 @@ export function MemorySettingsFragment() {
             {status === undefined ? t("memory.loading") : t(`memory.states.${status.state}`)}
           </span>
         </div>
+        {status?.storagePolicy === undefined ? null : (
+          <div className="setting-row">
+            <span className="setting-copy">
+              <strong>{t("memory.storageGovernance")}</strong>
+              <span>{t("memory.storageGovernanceDescription")}</span>
+              <small>
+                {t("memory.storageSummary", {
+                  events: status.feed.eventCount,
+                  logical: formatBytes(status.feed.logicalBytes),
+                  file: formatBytes(status.feed.fileBytes),
+                  target: formatBytes(status.storagePolicy.canonicalFeedTargetBytes),
+                  safe: status.feed.safeThroughSequence,
+                  blocked: formatBytes(status.feed.blockedBytes),
+                })}
+              </small>
+              <small>
+                {t("memory.retentionSummary", {
+                  feedDays: status.storagePolicy.canonicalFeedRetentionDays,
+                  jobDays: status.storagePolicy.jobRecordRetentionDays,
+                  records: status.storagePolicy.evidenceMaxRecordsPerExecution,
+                  bytes: formatBytes(status.storagePolicy.evidenceMaxBytesPerExecution),
+                  deadLetters: status.maintenance.deadLetterEntries,
+                })}
+              </small>
+            </span>
+          </div>
+        )}
+        {jobs
+          .filter((job) => ["needs_attention", "expired"].includes(job.status))
+          .map((job) => (
+            <div className="setting-row" key={`${job.module}:${job.id}`}>
+              <span className="setting-copy">
+                <strong>{t("memory.extractionJob", { module: job.module })}</strong>
+                <span>
+                  {t("memory.extractionJobSummary", {
+                    status: job.status,
+                    attempts: job.totalAttempts,
+                    evidence: job.evidenceRecords,
+                    omitted: job.omittedRecords,
+                    error: job.lastErrorCode ?? "—",
+                  })}
+                </span>
+              </span>
+              {job.status !== "needs_attention" ? null : (
+                <button
+                  type="button"
+                  className="secondary-button"
+                  disabled={saving}
+                  onClick={() => void retryJob(job)}
+                >
+                  {t("memory.retryExtraction")}
+                </button>
+              )}
+            </div>
+          ))}
       </div>
       {error === undefined ? null : <p className="form-error">{error}</p>}
     </SettingsScreenFrame>
   );
+}
+
+function formatBytes(bytes: number): string {
+  if (bytes < 1_024) return `${bytes} B`;
+  if (bytes < 1_024 * 1_024) return `${(bytes / 1_024).toFixed(1)} KiB`;
+  return `${(bytes / (1_024 * 1_024)).toFixed(1)} MiB`;
 }
 
 function MemoryGlobalSwitch(props: {

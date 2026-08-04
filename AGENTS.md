@@ -639,7 +639,17 @@ Expert API 设计要求：
 - `@pragma/core` 不得反向依赖 `@pragma/memory`；Core 的 Canonical Event Bus 必须保持 Memory 无关。
 - Module 静态注册，不扫描目录；Module id、版本和 Context prefix 必须唯一。
 - Module 不直接写另一个 Module Store，只通过版本化 Evidence/derived event 协作。
-- WorkingState、TODO、Task Board 与专家团白板不是 Memory Plane 的必需输入。
+- Memory 存储治理使用 `@pragma/memory` 的固定版本化 policy；Feed 只能在所有注册 consumer 的最小
+  checkpoint 之前清理，落后 consumer 固定的数据必须报告 degraded/blocked，不能为满足容量目标越过
+  checkpoint 删除。
+- 每个 Module 的待提炼 Evidence、curator prompt、失败 payload、job diagnostic 与 dead letter 必须有
+  硬上限或固定保留期；应用启动不得自动唤醒 `needs_attention`，只能由匹配的配置修复或用户显式 CAS
+  retry 触发。
+- Mission 删除只清理关联 Execution 的 Feed、job、Evidence、subject context 等 transient state，并使用
+  稳定 journal 保证可重放；已经提炼的 Episode/Fact 是独立治理的长期 Memory，不随 Mission 自动删除。
+- WorkingState、TODO、Task Board 与专家团白板不是 Memory Plane 的必需输入，但它们仍是独立的 Host
+  内置短期协作能力。共享条目按根 Team/Flow 与 Execution 授权，私有条目按稳定 Runtime Context
+  隔离；已提交变化可以发布 Evidence，但不得让私有内容在提炼、handoff 或导出时自动扩大可见性。
 
 禁止依赖 Interpreter、具体 Runtime、Expert plugin、Desktop UI、Server 应用层或 Client SDK。
 

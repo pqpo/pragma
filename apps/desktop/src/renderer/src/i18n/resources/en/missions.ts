@@ -145,7 +145,7 @@ export const missions = {
   memoryActivityUnavailable: "Memory activity is unavailable",
   noMemoryActivity: "No memory activity",
   noMemoryActivityDescription: "Run this mission to create capture and recall activity.",
-  memoryCaptured: "Captured",
+  memoryCaptured: "Evidence published (not memories)",
   memorySkipped: "Capture skipped",
   memoryCaptureFailed: "Capture failed",
   memoryListed: "Lists",

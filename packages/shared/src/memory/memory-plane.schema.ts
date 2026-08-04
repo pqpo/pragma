@@ -211,6 +211,10 @@ export const MemoryModuleDiagnosticSchema = z.object({
       running: z.number().int().nonnegative(),
       needsAttention: z.number().int().nonnegative(),
       rejected: z.number().int().nonnegative(),
+      expired: z.number().int().nonnegative().default(0),
+      evidenceRecords: z.number().int().nonnegative().default(0),
+      evidenceBytes: z.number().int().nonnegative().default(0),
+      truncatedExecutions: z.number().int().nonnegative().default(0),
     })
     .optional(),
   updatedAt: z.string().datetime(),

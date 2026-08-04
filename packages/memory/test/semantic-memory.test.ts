@@ -1,4 +1,4 @@
-import { mkdtemp, rm } from "node:fs/promises";
+import { mkdir, mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { DatabaseSync } from "node:sqlite";
@@ -80,6 +80,7 @@ describe("Semantic Memory", () => {
   });
 
   it("merges equivalent observations and preserves exclusive conflicts symmetrically", async () => {
+    const now = new Date("2026-08-03T12:00:00.000Z");
     const extractor = fakeExtractor((input) => {
       const text = evidenceText(input);
       return text.includes("light")
@@ -89,6 +90,7 @@ describe("Semantic Memory", () => {
     const module = await createSemanticMemoryModule({
       pragmaHome: await temporaryRoot(),
       extractor,
+      now: () => now,
     });
     for (const [executionId, text] of [
       ["execution-dark-1", "The theme is dark."],
@@ -112,6 +114,13 @@ describe("Semantic Memory", () => {
     expect(light.conflictsWith).toEqual([dark.id]);
     expect(dark.status).toBe("active");
     expect(light.status).toBe("active");
+    expect(dark.updatedAt).toBe(now.toISOString());
+    expect(light.updatedAt).toBe(now.toISOString());
+    expect(
+      (await module.store.listExtractionJobs()).every(
+        (job) => job.completedAt === now.toISOString(),
+      ),
+    ).toBe(true);
     module.close();
   });
 
@@ -404,6 +413,70 @@ describe("Semantic Memory", () => {
     await expect(
       createSemanticMemoryModule({ pragmaHome: root, extractor: fakeExtractor() }),
     ).rejects.toThrow("unsupported-state-version:pragma.memory-semantic-store/v3");
+  });
+
+  it("upgrades historical semantic jobs through the registered migration and keeps a backup", async () => {
+    const root = await temporaryRoot();
+    const stateRoot = new PragmaPaths({ pragmaHome: root }).memoryModuleStateRoot(
+      "pragma.memory.semantic",
+    );
+    await mkdir(stateRoot, { recursive: true });
+    const statePath = join(stateRoot, "jobs.sqlite");
+    const database = new DatabaseSync(statePath);
+    database.exec(`
+      CREATE TABLE jobs (
+        id TEXT PRIMARY KEY,
+        execution_id TEXT NOT NULL,
+        terminal_message_id TEXT NOT NULL UNIQUE,
+        status TEXT NOT NULL,
+        retry_at TEXT,
+        lease_until TEXT,
+        job_json TEXT NOT NULL
+      );
+      PRAGMA user_version = 1;
+    `);
+    const legacy = {
+      schemaVersion: "pragma.memory-semantic-job/v1",
+      id: "legacy-semantic-job",
+      executionId: "legacy-semantic-execution",
+      terminalMessageId: "legacy-semantic-terminal",
+      status: "needs_attention",
+      attempts: 3,
+      lastErrorCode: "legacy_failure",
+      updatedAt: "2026-08-01T00:00:00.000Z",
+    };
+    database
+      .prepare(
+        `INSERT INTO jobs(id, execution_id, terminal_message_id, status, retry_at, lease_until, job_json)
+         VALUES (?, ?, ?, ?, NULL, NULL, ?)`,
+      )
+      .run(
+        legacy.id,
+        legacy.executionId,
+        legacy.terminalMessageId,
+        legacy.status,
+        JSON.stringify(legacy),
+      );
+    database.close();
+
+    const module = await createSemanticMemoryModule({ pragmaHome: root });
+    await expect(module.store.listExtractionJobs()).resolves.toEqual([
+      expect.objectContaining({
+        schemaVersion: "pragma.memory-semantic-job/v2",
+        id: legacy.id,
+        revision: 1,
+        totalAttempts: 3,
+        status: "needs_attention",
+        failureClass: "transient-exhausted",
+      }),
+    ]);
+    const backup = new DatabaseSync(`${statePath}.v1.backup`);
+    expect(
+      (backup.prepare("PRAGMA user_version").get() as unknown as { readonly user_version: number })
+        .user_version,
+    ).toBe(1);
+    backup.close();
+    module.close();
   });
 
   it("rejects extractor subject and Evidence references outside the supplied allowlists", async () => {

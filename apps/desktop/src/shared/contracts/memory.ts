@@ -54,6 +54,12 @@ export const DesktopMemoryPlaneStatusSchema = z.object({
   feed: z.object({
     lastSequence: z.number().int().nonnegative(),
     eventCount: z.number().int().nonnegative(),
+    logicalBytes: z.number().int().nonnegative().default(0),
+    fileBytes: z.number().int().nonnegative().default(0),
+    receiptCount: z.number().int().nonnegative().default(0),
+    oldestOccurredAt: z.string().datetime().optional(),
+    safeThroughSequence: z.number().int().nonnegative().default(0),
+    blockedBytes: z.number().int().nonnegative().default(0),
   }),
   delivery: z.object({
     pending: z.number().int().nonnegative(),
@@ -66,7 +72,66 @@ export const DesktopMemoryPlaneStatusSchema = z.object({
     })
     .optional(),
   modules: z.array(MemoryModuleDiagnosticSchema),
+  storagePolicy: z
+    .object({
+      schemaVersion: z.literal("pragma.memory-storage-policy/v1"),
+      canonicalFeedRetentionDays: z.literal(30),
+      canonicalFeedTargetBytes: z.literal(512 * 1_024 * 1_024),
+      evidenceMaxRecordsPerExecution: z.literal(2_000),
+      evidenceMaxBytesPerExecution: z.literal(16 * 1_024 * 1_024),
+      extractionPromptMaxBytes: z.literal(78_000),
+      jobRecordRetentionDays: z.literal(30),
+      failedPayloadRetentionDays: z.literal(30),
+      deadLetterRetentionDays: z.literal(30),
+      deadLetterMaxEntries: z.literal(10_000),
+      deadLetterMaxBytes: z.literal(64 * 1_024 * 1_024),
+    })
+    .optional(),
+  maintenance: z
+    .object({
+      lastRunAt: z.string().datetime().optional(),
+      deletedEvents: z.number().int().nonnegative(),
+      reclaimedBytes: z.number().int().nonnegative(),
+      deletedDeadLetters: z.number().int().nonnegative(),
+      deadLetterEntries: z.number().int().nonnegative(),
+      deadLetterBytes: z.number().int().nonnegative(),
+    })
+    .default({
+      deletedEvents: 0,
+      reclaimedBytes: 0,
+      deletedDeadLetters: 0,
+      deadLetterEntries: 0,
+      deadLetterBytes: 0,
+    }),
 });
+
+export const DesktopMemoryExtractionJobSchema = z.object({
+  module: z.enum(["episodic", "semantic"]),
+  id: z.string().min(1),
+  revision: z.number().int().positive(),
+  status: z.enum(["pending", "running", "needs_attention", "completed", "expired"]),
+  attempts: z.number().int().nonnegative(),
+  totalAttempts: z.number().int().nonnegative(),
+  lastErrorCode: z.string().min(1).optional(),
+  failureClass: z.enum(["configuration", "transient-exhausted"]).optional(),
+  evidenceRecords: z.number().int().nonnegative(),
+  evidenceBytes: z.number().int().nonnegative(),
+  omittedRecords: z.number().int().nonnegative(),
+  updatedAt: z.string().datetime(),
+  attentionSince: z.string().datetime().optional(),
+  completedAt: z.string().datetime().optional(),
+  expiredAt: z.string().datetime().optional(),
+});
+
+export const DesktopMemoryExtractionJobListSchema = z.array(DesktopMemoryExtractionJobSchema);
+
+export const RetryDesktopMemoryExtractionJobSchema = z
+  .object({
+    module: z.enum(["episodic", "semantic"]),
+    id: z.string().min(1),
+    expectedRevision: z.number().int().positive(),
+  })
+  .strict();
 
 export const DesktopMemoryExtractorProfileSchema = z
   .object({

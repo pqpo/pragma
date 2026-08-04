@@ -17,3 +17,5 @@ export * from "./semantic/store.ts";
 export * from "./semantic/context.ts";
 export * from "./semantic/module.ts";
 export * from "./curator.ts";
+export * from "./storage/memory-storage-policy.ts";
+export * from "./storage/bounded-evidence.ts";
