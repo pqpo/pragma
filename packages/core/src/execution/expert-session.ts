@@ -42,6 +42,7 @@ import {
   runExpertInvocation,
 } from "./expert-runner.ts";
 import { HandoffService, unwrapInvocationHandoff } from "./handoff/handoff-service.ts";
+import type { HandoffContextVisibilityResolver } from "./handoff/handoff-visibility.ts";
 import { RuntimeSessionPool } from "./runtime-session-pool.ts";
 import type { ExecutionStore } from "./execution-store.ts";
 import {
@@ -153,8 +154,8 @@ export interface ExpertSessionManagerDependencies {
   readonly usageSink?: UsageSink | undefined;
   readonly pragmaHome?: string | undefined;
   readonly automaticHumanInteractionHandler?:
-    | ExpertAgentAutomaticHumanInteractionHandler
-    | undefined;
+    ExpertAgentAutomaticHumanInteractionHandler | undefined;
+  readonly handoffContextVisibilityResolver?: HandoffContextVisibilityResolver | undefined;
 }
 
 type SteerClaim =
@@ -490,6 +491,7 @@ export class ExpertSessionManager {
 
 class ExpertSessionImpl implements ExpertSession {
   private controller: ExecutionController | undefined;
+  private activeHandoffService: HandoffService | undefined;
   private processing: Promise<void> | undefined;
   private readonly runtimeSessions = new RuntimeSessionPool();
   private closePromise: Promise<void> | undefined;
@@ -1117,10 +1119,23 @@ class ExpertSessionImpl implements ExpertSession {
     const handoffs = new HandoffService({
       executionId: prompt.executionId,
       executions: this.dependencies.executions,
+      resolveVisibleExecutionIds: async (activeExecutionId) => {
+        const currentSession = await this.dependencies.sessions.get(this.sessionId);
+        const hostExecutionIds = await this.dependencies.handoffContextVisibilityResolver?.({
+          currentExecutionId: activeExecutionId,
+          owner: { type: "expert-session", ownerId: this.sessionId },
+        });
+        return [...(currentSession?.executionIds ?? []), ...(hostExecutionIds ?? [])];
+      },
+      resolveActiveService: (executionId) =>
+        this.activeHandoffService?.executionId === executionId
+          ? this.activeHandoffService
+          : undefined,
       ...(this.dependencies.pragmaHome === undefined
         ? {}
         : { pragmaHome: this.dependencies.pragmaHome }),
     });
+    this.activeHandoffService = handoffs;
     this.controller = controller;
     let status: "succeeded" | "failed" | "cancelled" = "succeeded";
     let output: ReturnType<typeof InvocationHandoffSchema.parse> | undefined;
@@ -1208,6 +1223,9 @@ class ExpertSessionImpl implements ExpertSession {
     }));
     if (this.controller === controller) {
       this.controller = undefined;
+    }
+    if (this.activeHandoffService === handoffs) {
+      this.activeHandoffService = undefined;
     }
     controller.finish();
   }

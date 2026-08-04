@@ -16,7 +16,10 @@ import type {
   ExpertAgentToolCallResult,
 } from "../../tools/managed-tool.ts";
 import type { ExecutionStore } from "../execution-store.ts";
-import { ExecutionHandoffContextStore } from "./handoff-context-store.ts";
+import {
+  ExecutionHandoffContextStore,
+  FederatedExecutionHandoffContextStore,
+} from "./handoff-context-store.ts";
 
 export const DEFAULT_HANDOFF_INLINE_LIMIT_BYTES = 32 * 1024;
 export const DEFAULT_HANDOFF_SUMMARY_LIMIT_BYTES = 4 * 1024;
@@ -27,16 +30,29 @@ export interface HandoffServiceOptions {
   readonly pragmaHome?: string | undefined;
   readonly inlineLimitBytes?: number | undefined;
   readonly summaryLimitBytes?: number | undefined;
+  readonly resolveVisibleExecutionIds?:
+    ((activeExecutionId: string) => Promise<readonly string[]> | readonly string[]) | undefined;
+  readonly resolveActiveService?: ((executionId: string) => HandoffService | undefined) | undefined;
 }
 
 export class HandoffService {
+  readonly executionId: string;
   readonly store: ExecutionHandoffContextStore;
+  readonly contextStore: FederatedExecutionHandoffContextStore;
   readonly inlineLimitBytes: number;
   readonly summaryLimitBytes: number;
   private readonly attempts = new Map<string, string>();
 
   constructor(private readonly options: HandoffServiceOptions) {
+    this.executionId = options.executionId;
     this.store = new ExecutionHandoffContextStore(options.executionId, {
+      ...(options.pragmaHome === undefined ? {} : { pragmaHome: options.pragmaHome }),
+    });
+    this.contextStore = new FederatedExecutionHandoffContextStore({
+      defaultExecutionId: options.executionId,
+      defaultStore: this.store,
+      resolveVisibleExecutionIds:
+        options.resolveVisibleExecutionIds ?? ((activeExecutionId) => [activeExecutionId]),
       ...(options.pragmaHome === undefined ? {} : { pragmaHome: options.pragmaHome }),
     });
     this.inlineLimitBytes = normalizeLimit(
@@ -54,7 +70,7 @@ export class HandoffService {
     Object.defineProperties(clone, Object.getOwnPropertyDescriptors(expert));
     const contextSystem = expert.contextSystem.extend({
       stores: [
-        ["pragma.handoff", this.store],
+        ["pragma.handoff", this.contextStore],
         [
           "pragma.handoff-policy",
           new StaticContextStore([
@@ -62,7 +78,7 @@ export class HandoffService {
               id: "HANDOFF.md",
               content: createHandoffPolicy(this.inlineLimitBytes),
               metadata: {
-                description: "Execution-scoped output handoff rules.",
+                description: "Owner-scoped output handoff rules.",
                 trigger: "always_on",
                 priority: "critical",
                 trustLevel: "system",
@@ -187,14 +203,19 @@ export class HandoffService {
           const path = readRequiredString(record, "path");
           const execution = context?.execution;
           const invocationId = execution?.invocationId;
-          if (
-            invocationId === undefined ||
-            execution === undefined ||
-            execution.executionId !== this.options.executionId
-          ) {
+          if (invocationId === undefined || execution === undefined) {
             throw new Error("register_handoff_file requires the active Execution context.");
           }
-          const reference = await this.registerWorkspaceFile({
+          const activeService =
+            execution.executionId === this.options.executionId
+              ? this
+              : this.options.resolveActiveService?.(execution.executionId);
+          if (activeService === undefined) {
+            throw new Error(
+              `register_handoff_file cannot resolve the active Execution: ${execution.executionId}`,
+            );
+          }
+          const reference = await activeService.registerWorkspaceFile({
             invocationId,
             toolCallId: context?.toolCallId ?? `untracked-${encodePragmaPathSegment(path)}`,
             workspaceRoot: expert.workspace,

@@ -44,3 +44,9 @@ Expert、ExpertTeam 成员和 Flow Expert step 的输出统一经过 Execution H
 Agent 已经在 workspace 中生成大型 UTF-8 文件时，使用 `register_handoff_file` 注册受控相对路径，
 不复制文件。Handoff 属于 Execution 可恢复状态，不是已发布 Artifact。Flow Task 和 HumanTask 的
 结构化内部数据不自动外置，Flow 最终结果仍应用同一 Handoff 规则。
+
+Handoff 文件由产出它的 Execution 持有，但读取视图按 owner 联邦：ExpertSession 默认包含其全部
+Execution，Desktop 进一步以持久 Mission timeline 覆盖 successor ExpertSession 和 Flow Execution。
+因此后续多轮和应用重启后仍可通过原 Context id 读取；不同 Mission 不共享视图。可见 Execution 中若
+出现重复 Context id，list、read、search 均返回 `context_conflict`，不隐式选择。workspace 注册项继续是
+实时路径引用，读取时反映文件后续修改；Mission 删除仍通过 timeline 删除实际持有 handoff 的 Execution。

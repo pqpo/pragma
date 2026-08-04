@@ -28,6 +28,7 @@ import {
   runExpertInvocation,
 } from "../execution/expert-runner.ts";
 import { HandoffService, unwrapInvocationHandoff } from "../execution/handoff/handoff-service.ts";
+import type { HandoffContextVisibilityResolver } from "../execution/handoff/handoff-visibility.ts";
 import {
   ContextResolutionService,
   closeExecutionContexts,
@@ -86,11 +87,12 @@ export class FlowExecutionManager {
     private readonly executions: ExecutionStore,
     private readonly runtimes: RuntimeResolver,
     private readonly automaticHumanInteractionHandler?:
-      | ExpertAgentAutomaticHumanInteractionHandler
-      | undefined,
+      ExpertAgentAutomaticHumanInteractionHandler | undefined,
     private readonly pragmaHome?: string | undefined,
     private readonly loggerProvider?: PragmaLoggerProvider | undefined,
     private readonly usageSink?: UsageSink | undefined,
+    private readonly handoffContextVisibilityResolver?:
+      HandoffContextVisibilityResolver | undefined,
   ) {}
 
   async start<TInput>(
@@ -279,6 +281,11 @@ export class FlowExecutionManager {
     const handoffs = new HandoffService({
       executionId,
       executions: this.executions,
+      resolveVisibleExecutionIds: async (activeExecutionId) =>
+        (await this.handoffContextVisibilityResolver?.({
+          currentExecutionId: activeExecutionId,
+          owner: { type: "flow-execution", ownerId: executionId },
+        })) ?? [],
       ...(this.pragmaHome === undefined ? {} : { pragmaHome: this.pragmaHome }),
     });
     await handoffs.beginInvocationAttempt(executionId, `flow-execution-attempt:${randomUUID()}`);
