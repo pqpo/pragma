@@ -128,7 +128,7 @@ async function collectMissionExecutionIds(
   missions: MissionStore,
   missionId: string,
 ): Promise<ReadonlySet<string>> {
-  const executionIds = new Set<string>();
+  const executionTurns: { readonly sequence: number; readonly executionId: string }[] = [];
   let beforeSequence: number | undefined;
   while (true) {
     const page = await missions.readTimelinePage(missionId, {
@@ -136,9 +136,17 @@ async function collectMissionExecutionIds(
       limit: 500,
     });
     for (const turn of page.turns) {
-      if (turn.executionId !== undefined) executionIds.add(turn.executionId);
+      if (turn.executionId !== undefined) {
+        executionTurns.push({ sequence: turn.sequence, executionId: turn.executionId });
+      }
     }
-    if (page.nextBeforeSequence === undefined) return executionIds;
+    if (page.nextBeforeSequence === undefined) {
+      return new Set(
+        executionTurns
+          .toSorted((left, right) => left.sequence - right.sequence)
+          .map((turn) => turn.executionId),
+      );
+    }
     beforeSequence = page.nextBeforeSequence;
   }
 }
@@ -181,6 +189,7 @@ interface LiveMissionChat {
 interface MissionExecutionContext {
   readonly app: ReturnType<typeof createPragma>;
   readonly runtimes: RuntimeResolver;
+  readonly rememberHandoffExecution: (executionId: string) => void;
   readonly setToolPermissionMode: (mode: DesktopToolPermissionMode) => void;
 }
 
@@ -266,6 +275,26 @@ export function createMissionRunner(options: {
       resolve: async (request) =>
         await runtimeResolverForToolPermissionMode(toolPermissionMode).resolve(request),
     };
+    const pendingHandoffExecutionIds = new Set<string>();
+    let handoffExecutionIds: Set<string> | undefined;
+    let handoffExecutionIdsLoad: Promise<Set<string>> | undefined;
+    const resolveHandoffExecutionIds = async (): Promise<readonly string[]> => {
+      if (handoffExecutionIds !== undefined) return [...handoffExecutionIds];
+      const load =
+        handoffExecutionIdsLoad ??
+        (handoffExecutionIdsLoad = collectMissionExecutionIds(options.missions, mission.id).then(
+          (persisted) => new Set([...persisted, ...pendingHandoffExecutionIds]),
+        ));
+      try {
+        handoffExecutionIds = await load;
+        for (const executionId of pendingHandoffExecutionIds) {
+          handoffExecutionIds.add(executionId);
+        }
+        return [...handoffExecutionIds];
+      } finally {
+        if (handoffExecutionIdsLoad === load) handoffExecutionIdsLoad = undefined;
+      }
+    };
     const context = {
       runtimes,
       app: createPragma({
@@ -273,6 +302,7 @@ export function createMissionRunner(options: {
         runtimes,
         executionStore,
         expertSessionStore,
+        handoffContextVisibilityResolver: resolveHandoffExecutionIds,
         loggerProvider: options.loggerProvider?.withScope({ missionId: mission.id }),
         automaticHumanInteractionHandler: async (request) =>
           await automaticHumanInteractionHandlerForToolPermissionMode(toolPermissionMode)?.(
@@ -319,6 +349,10 @@ export function createMissionRunner(options: {
                 clearPreview: (observationId) => options.usage!.clearPreview(observationId),
               },
       }),
+      rememberHandoffExecution: (executionId: string) => {
+        pendingHandoffExecutionIds.add(executionId);
+        handoffExecutionIds?.add(executionId);
+      },
       setToolPermissionMode: (mode: DesktopToolPermissionMode) => {
         toolPermissionMode = mode;
       },
@@ -759,7 +793,7 @@ export function createMissionRunner(options: {
     const mission = await options.missions.get(id);
     await options.assertExecutorReady?.(mission.executor.ref);
     if (active.has(mission.id)) return mission;
-    const { app, runtimes: baseRuntimes } = executionContext(mission);
+    const { app, rememberHandoffExecution, runtimes: baseRuntimes } = executionContext(mission);
     const runtimes = withMissionRuntimeBinding(baseRuntimes, await readMissionRootContext(mission));
     let phaseStartedAt = performance.now();
     const compiled = await compileMissionExecutor(mission, runtimes);
@@ -809,6 +843,7 @@ export function createMissionRunner(options: {
           executionId: mission.execution!.id,
           createdAt: executionStartedAt,
         });
+        rememberHandoffExecution(mission.execution!.id);
         await notifyExecutionLinked(mission, mission.execution!.id);
       }
       const handle = recoverable
@@ -827,6 +862,7 @@ export function createMissionRunner(options: {
           executionId: handle.executionId,
           createdAt: executionStartedAt,
         });
+        rememberHandoffExecution(handle.executionId);
         await notifyExecutionLinked(mission, handle.executionId);
       }
       const recoveredWaiting = recoverable && (await hasPendingHumanInteraction(handle));
@@ -911,6 +947,7 @@ export function createMissionRunner(options: {
       executionId: turn.executionId,
       createdAt: executionStartedAt,
     });
+    rememberHandoffExecution(turn.executionId);
     await notifyExecutionLinked(mission, turn.executionId);
     const running = await options.missions.updateExecution(mission.id, {
       id: turn.executionId,
@@ -948,7 +985,7 @@ export function createMissionRunner(options: {
     logMissionPhase(logger, input.id, "storage_capacity_check", capacityCheckStartedAt, acceptedAt);
     const mission = await options.missions.get(input.id);
     await options.assertExecutorReady?.(mission.executor.ref);
-    const { app, runtimes: baseRuntimes } = executionContext(mission);
+    const { app, rememberHandoffExecution, runtimes: baseRuntimes } = executionContext(mission);
     const rootContext = await readMissionRootContext(mission);
     const runtimes = withMissionRuntimeBinding(baseRuntimes, rootContext);
     if (mission.executor.kind === "flow") {
@@ -1077,6 +1114,7 @@ export function createMissionRunner(options: {
       executionId: turn.executionId,
       createdAt: startedAt,
     });
+    rememberHandoffExecution(turn.executionId);
     await notifyExecutionLinked(mission, turn.executionId);
     const running = await options.missions.updateExecution(mission.id, {
       id: turn.executionId,

@@ -9,6 +9,7 @@ import {
   HandoffService,
   unwrapInvocationHandoff,
 } from "../src/execution/handoff/handoff-service.ts";
+import { withExecutionRunScope } from "../src/runtime/run-context.ts";
 import { PragmaPaths } from "../src/storage/pragma-paths.ts";
 
 describe("Execution handoff", () => {
@@ -58,6 +59,92 @@ describe("Execution handoff", () => {
     );
     await expect(readFile(outputPath, "utf8")).resolves.toBe(largeText);
     expect(unwrapInvocationHandoff(handoff)).toEqual(handoff);
+  });
+
+  it("federates handoffs from every visible Execution", async () => {
+    const fixture = await createFixture();
+    const previousService = new HandoffService({
+      executionId: "previous-execution",
+      executions: fixture.executions,
+      pragmaHome: fixture.home,
+    });
+    await previousService.beginInvocationAttempt("child", "attempt-1");
+    const output = "previous handoff\n".repeat(4_000);
+    const handoff = await previousService.normalize("child", output);
+    if (handoff.type !== "context") throw new Error("Expected a Context handoff.");
+
+    const currentService = new HandoffService({
+      executionId: "current-execution",
+      executions: fixture.executions,
+      pragmaHome: fixture.home,
+      resolveVisibleExecutionIds: () => ["previous-execution", "current-execution"],
+    });
+    const context = withExecutionRunScope(undefined, { executionId: "current-execution" });
+
+    const read = await currentService.contextStore.readContext({
+      id: handoff.contexts[0]!.id,
+      context,
+    });
+    const list = await currentService.contextStore.listContext({ context });
+    const search = await currentService.contextStore.searchContext({
+      query: "previous handoff",
+      context,
+    });
+
+    expect(read).toMatchObject({ ok: true, value: { content: output } });
+    expect(list).toMatchObject({ ok: true, value: [{ id: handoff.contexts[0]!.id }] });
+    expect(search).toMatchObject({ ok: true });
+    if (!search.ok) throw new Error(search.error.message);
+    expect(search.value.some((match) => match.id === handoff.contexts[0]!.id)).toBe(true);
+
+    const isolatedService = new HandoffService({
+      executionId: "isolated-execution",
+      executions: fixture.executions,
+      pragmaHome: fixture.home,
+      resolveVisibleExecutionIds: () => ["isolated-execution"],
+    });
+    await expect(
+      isolatedService.contextStore.readContext({ id: handoff.contexts[0]!.id }),
+    ).resolves.toMatchObject({
+      ok: false,
+      error: { code: "context_not_found" },
+    });
+  });
+
+  it("fails closed when visible Executions contain the same context id", async () => {
+    const fixture = await createFixture();
+    const services = ["execution-a", "execution-b"].map(
+      (executionId) =>
+        new HandoffService({
+          executionId,
+          executions: fixture.executions,
+          pragmaHome: fixture.home,
+        }),
+    );
+    for (const service of services) {
+      await service.beginInvocationAttempt("shared-invocation", "attempt-1");
+      await service.normalize("shared-invocation", "duplicate\n".repeat(5_000));
+    }
+    const reader = new HandoffService({
+      executionId: "current-execution",
+      executions: fixture.executions,
+      pragmaHome: fixture.home,
+      resolveVisibleExecutionIds: () => ["execution-a", "execution-b"],
+    });
+    const id = "invocations/c2hhcmVkLWludm9jYXRpb24/output.txt";
+
+    await expect(reader.contextStore.listContext()).resolves.toMatchObject({
+      ok: false,
+      error: { code: "context_conflict" },
+    });
+    await expect(reader.contextStore.readContext({ id })).resolves.toMatchObject({
+      ok: false,
+      error: { code: "context_conflict" },
+    });
+    await expect(reader.contextStore.searchContext({ query: "duplicate" })).resolves.toMatchObject({
+      ok: false,
+      error: { code: "context_conflict" },
+    });
   });
 
   it("registers a workspace file without copying it and exposes revision changes", async () => {

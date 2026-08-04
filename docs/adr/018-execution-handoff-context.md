@@ -1,4 +1,4 @@
-# ADR 018: Execution-scoped handoff through Context System
+# ADR 018: Execution-owned handoff through Context System
 
 ## Status
 
@@ -21,8 +21,20 @@ The coordinator receives only a bounded summary and Context references.
 
 Core owns this behavior as an internal Execution module. Cross-process handoff schemas live in
 `@pragma/shared`; it is not an optional plugin or a separately installed package. Every
-Execution-scoped Expert receives the same Handoff Context Store, an always-on policy Context, and
-the `register_handoff_file` managed tool.
+Execution-scoped Expert receives the Handoff Context Store, an always-on policy Context, and the
+`register_handoff_file` managed tool.
+
+Each handoff remains physically owned by the Execution that produced it, but Context visibility is
+owner-scoped. Core federates all persisted Execution ids of an ExpertSession, so later turns and a
+reconstructed Session can read earlier handoffs. A Host may extend that visible set through a
+`HandoffContextVisibilityResolver`. Desktop uses the persistent Mission timeline for this purpose,
+which keeps handoffs visible after an incompatible Expert revision creates a successor
+ExpertSession and after the application restarts. Flow execution visibility remains limited to its
+own Execution unless the Host supplies a wider owner scope.
+
+Federation does not copy or rewrite handoff files. Duplicate Context ids in the visible Execution
+set fail with `context_conflict` instead of selecting one by iteration order. Writes and attempt
+cleanup always target the currently active Execution.
 
 `register_handoff_file` registers an existing UTF-8 regular file under the producing Expert's
 workspace without copying it. Registration validates the real path against the workspace root.
@@ -53,6 +65,8 @@ bounded summary and Context references before entering canonical message history
 - Small Expert results preserve their current SDK behavior.
 - Large results remain searchable and range-readable without entering the parent prompt.
 - Workspace-backed handoffs are mutable references; revision and etag changes reveal later edits.
-- Handoffs are Execution-scoped collaboration data, not durable published Artifacts.
-- Binary files, directories, cross-Execution sharing, CAS publication, and DSL Artifact contracts
+- Handoffs are Execution-owned, owner-visible collaboration data, not durable published Artifacts.
+- The persisted ExpertSession execution list and Desktop Mission timeline reconstruct visibility;
+  no Context contents or Runtime-session closures are the source of truth.
+- Binary files, directories, cross-Mission sharing, CAS publication, and DSL Artifact contracts
   remain outside this decision.

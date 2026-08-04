@@ -187,11 +187,48 @@ describe("MissionRunner", { timeout: 15_000 }, () => {
         snapshot.resources.find((resource) => resource.kind === "Expert")!,
       ),
     });
-    const runtime = defineRuntimeDriver<never, { id: string }>({
+    const historicalHandoff: { id: string | undefined } = { id: undefined };
+    const runtime = defineRuntimeDriver<
+      never,
+      { id: string; context: RuntimeDriverSessionContext }
+    >({
       descriptor: { id: "fake", kind: "fake", displayName: "Fake" },
-      createSession: (context) => ({ id: `runtime-${context.systemSessionId}` }),
+      createSession: (context) => ({ id: `runtime-${context.systemSessionId}`, context }),
+      restoreSession: (context) => ({ id: context.request.runtimeSession!.id, context }),
       readSession: (session) => ({ runtimeSessionId: session.id }),
-      startTurn: () => ({ outputText: "done", runtimeSessionId: "runtime" }),
+      async startTurn(session, turn) {
+        if (turn.rawQuery === mission.goal) {
+          return {
+            outputText: "historical mission handoff\n".repeat(4_000),
+            runtimeSessionId: session.id,
+          };
+        }
+        const historicalHandoffId = historicalHandoff.id;
+        if (historicalHandoffId === undefined) throw new Error("Historical handoff id is missing.");
+        const read = session.context.agent
+          .createDefaultTools()
+          .find((tool) => tool.name === "read_expert_context");
+        if (read === undefined) throw new Error("read_expert_context is missing.");
+        const results = await Promise.all(
+          [0, 1].map(
+            async () =>
+              await read.call(
+                { namespace: "pragma.handoff", id: historicalHandoffId },
+                turn.signal,
+                { execution: session.context.request.executionContext },
+              ),
+          ),
+        );
+        const failed = results.find(
+          (result) =>
+            result.isError === true || !result.text.includes("historical mission handoff"),
+        );
+        return {
+          outputText:
+            failed === undefined ? "successor-read-ok" : `successor-read-failed:${failed.text}`,
+          runtimeSessionId: session.id,
+        };
+      },
       mapEvent: () => ({ events: [] }),
       closeSession: () => undefined,
     });
@@ -224,21 +261,25 @@ describe("MissionRunner", { timeout: 15_000 }, () => {
         dependencies: [],
       };
     });
-    const runner = createMissionRunner({
-      missions,
-      project,
-      capabilityStore: {} as CapabilityStore,
-      capabilityCredentials: {} as CapabilityCredentialStore,
-      capabilitiesPath: join(root, "capabilities"),
-      pragmaHome: join(root, "state"),
-      runtimes: createStaticRuntimeResolver({
-        runtimes: [runtime],
-        defaultRuntimeId: "fake",
-      }),
-      compileSystemExecutor,
-      getSystemExecutorFingerprint: () => `definition-${definitionVersion}`,
-      assertStorageWriteAllowed: async () => undefined,
-    });
+    const createRunner = (missionStore = missions) =>
+      createMissionRunner({
+        missions: missionStore,
+        project,
+        capabilityStore: {} as CapabilityStore,
+        capabilityCredentials: {} as CapabilityCredentialStore,
+        capabilitiesPath: join(root, "capabilities"),
+        pragmaHome: join(root, "state"),
+        executionStore: createFileExecutionStore({ pragmaHome: join(root, "state") }),
+        runtimes: createStaticRuntimeResolver({
+          runtimes: [runtime],
+          defaultRuntimeId: "fake",
+        }),
+        compileSystemExecutor,
+        getSystemExecutorFingerprint: () => `definition-${definitionVersion}`,
+        assertStorageWriteAllowed: async () => undefined,
+      });
+    let activeMissions = missions;
+    let runner = createRunner();
 
     await runner.run(mission.id);
     await vi.waitFor(
@@ -247,7 +288,23 @@ describe("MissionRunner", { timeout: 15_000 }, () => {
     );
     const originalSessionId = (await missions.get(mission.id)).execution?.sessionId;
     expect(originalSessionId).toMatch(/^[0-9a-f-]{36}$/);
+    if (originalSessionId === undefined) throw new Error("Original Session id is missing.");
+    const originalExecutionId = (await missions.get(mission.id)).execution!.id;
+    const originalExecution = await createFileExecutionStore({
+      pragmaHome: join(root, "state"),
+    }).get(originalExecutionId);
+    if (originalExecution?.output?.type !== "context") {
+      throw new Error("Expected the original Mission turn to produce a Context handoff.");
+    }
+    const originalHandoff = originalExecution.output.contexts[0];
+    if (originalHandoff === undefined) {
+      throw new Error("Expected the original Mission turn to produce a Context reference.");
+    }
+    historicalHandoff.id = originalHandoff.id;
     definitionVersion = 2;
+    activeMissions = createMissionStore({ missionsPath: join(root, "missions") });
+    const timelineRead = vi.spyOn(activeMissions, "readTimelinePage");
+    runner = createRunner(activeMissions);
 
     await runner.sendMessage({
       id: mission.id,
@@ -255,12 +312,28 @@ describe("MissionRunner", { timeout: 15_000 }, () => {
       requestId: "00000000-0000-4000-8000-000000000098",
     });
     await vi.waitFor(
-      async () => expect((await missions.get(mission.id)).execution?.status).toBe("succeeded"),
+      async () =>
+        expect((await activeMissions.get(mission.id)).execution?.status).toBe("succeeded"),
       { timeout: settlementTimeoutMs },
     );
 
-    expect((await missions.get(mission.id)).execution?.sessionId).not.toBe(originalSessionId);
+    expect((await activeMissions.get(mission.id)).execution?.sessionId).not.toBe(originalSessionId);
     expect(compileSystemExecutor).toHaveBeenCalledTimes(2);
+    // One read restores Mission context; both concurrent handoff reads share one visibility load.
+    expect(timelineRead).toHaveBeenCalledTimes(2);
+    await expect(runner.getChat({ id: mission.id, limit: 50 })).resolves.toMatchObject({
+      entries: expect.arrayContaining([
+        expect.objectContaining({ kind: "assistant", content: "successor-read-ok" }),
+      ]),
+    });
+    await runner.delete(mission.id);
+    await expect(
+      readFile(
+        new PragmaPaths({ pragmaHome: join(root, "state") }).executionHandoffsManifest(
+          originalExecutionId,
+        ),
+      ),
+    ).rejects.toMatchObject({ code: "ENOENT" });
   });
 
   it("limits deletion reconciliation to the target Mission and does not let analytics block deletion", async () => {
@@ -1069,8 +1142,8 @@ describe("MissionRunner", { timeout: 15_000 }, () => {
         createStaticRuntimeResolver({ runtimes: [runtimeForMode(mode)], defaultRuntimeId: "fake" }),
       ]),
     );
-    const runtimesForToolPermissionMode = vi.fn(
-      (mode: DesktopToolPermissionMode) => runtimeResolvers.get(mode)!,
+    const runtimesForToolPermissionMode = vi.fn((mode: DesktopToolPermissionMode) =>
+      runtimeResolvers.get(mode)!,
     );
     const runner = createMissionRunner({
       missions,

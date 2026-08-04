@@ -683,6 +683,104 @@ describe("ExpertSession", () => {
     await session.close();
   });
 
+  it("reads an earlier turn handoff through a reused Runtime Session", async () => {
+    const home = await mkdtemp(join(tmpdir(), "pragma-session-handoff-"));
+    await writeFile(join(home, "report.md"), "workspace handoff\n", "utf8");
+    let createSessionCalls = 0;
+    const runtime = defineRuntimeDriver<never, FakeSession>({
+      descriptor: { id: "handoff-reader", kind: "fake", displayName: "Handoff Reader" },
+      createSession: (context) => {
+        createSessionCalls += 1;
+        return { context, id: `native-${context.systemSessionId}` };
+      },
+      restoreSession: (context) => ({ context, id: context.request.runtimeSession!.id }),
+      readSession: (nativeSession) => ({ runtimeSessionId: nativeSession.id }),
+      async startTurn(nativeSession, turn) {
+        let output: string;
+        if (turn.rawQuery === "produce") {
+          output = "historical handoff\n".repeat(4_000);
+        } else if (turn.rawQuery.startsWith("read:")) {
+          const id = turn.rawQuery.slice("read:".length);
+          const read = nativeSession.context.agent
+            .createDefaultTools()
+            .find((tool) => tool.name === "read_expert_context");
+          if (read === undefined) throw new Error("read_expert_context is missing.");
+          const result = await read.call({ namespace: "pragma.handoff", id }, turn.signal, {
+            execution: nativeSession.context.request.executionContext,
+          });
+          output =
+            result.isError === true ||
+            (!result.text.includes("historical handoff") &&
+              !result.text.includes("workspace handoff"))
+              ? `read-failed:${result.text}`
+              : "read-ok";
+        } else {
+          const register = nativeSession.context.agent.tools?.find(
+            (tool) => tool.name === "register_handoff_file",
+          );
+          if (register === undefined) throw new Error("register_handoff_file is missing.");
+          const result = await register.call({ path: "report.md" }, turn.signal, {
+            toolCallId: "register-report",
+            execution: nativeSession.context.request.executionContext,
+          });
+          output = result.isError === true ? `register-failed:${result.text}` : "registered";
+        }
+        return { outputText: output, runtimeSessionId: nativeSession.id };
+      },
+      mapEvent: () => ({ events: [] }),
+    });
+    const app = createPragma({
+      pragmaHome: home,
+      runtimes: createStaticRuntimeResolver({
+        runtimes: [runtime],
+        defaultRuntimeId: "handoff-reader",
+      }),
+    });
+    const expert = await defineExpert({
+      id: "handoff-expert",
+      name: "Handoff Expert",
+      description: "Reads earlier handoffs",
+      tags: [],
+      scope: "test",
+      workspace: home,
+      pragmaHome: home,
+    });
+    const session = await app.experts.createSession(expert);
+    const first = await (await session.prompt("produce", { requestId: "produce" })).result;
+    if (
+      typeof first !== "object" ||
+      first === null ||
+      !("type" in first) ||
+      first.type !== "context" ||
+      !("contexts" in first) ||
+      !Array.isArray(first.contexts)
+    ) {
+      throw new Error("Expected the first turn to return a Context handoff.");
+    }
+    const id = (first.contexts[0] as { id: string }).id;
+
+    await expect((await session.prompt(`read:${id}`, { requestId: "read" })).result).resolves.toBe(
+      "read-ok",
+    );
+    const registered = await (await session.prompt("register", { requestId: "register" })).result;
+    if (
+      typeof registered !== "object" ||
+      registered === null ||
+      !("type" in registered) ||
+      registered.type !== "context" ||
+      !("contexts" in registered) ||
+      !Array.isArray(registered.contexts)
+    ) {
+      throw new Error("Expected the registered file to return a Context handoff.");
+    }
+    const workspaceId = (registered.contexts[0] as { id: string }).id;
+    await expect(
+      (await session.prompt(`read:${workspaceId}`, { requestId: "read-workspace" })).result,
+    ).resolves.toBe("read-ok");
+    expect(createSessionCalls).toBe(1);
+    await session.close();
+  }, 15_000);
+
   it("keeps one Runtime Session alive across prompts and closes it with the ExpertSession", async () => {
     const { home, app, expert, stats } = await trackedFixture();
     const session = await app.experts.createSession(expert);

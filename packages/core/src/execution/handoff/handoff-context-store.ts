@@ -33,6 +33,7 @@ import {
   type ExpertAgentStoredContextItemSearchInput,
   type ExpertAgentStoredContextRegisterInput,
 } from "../../context-system/context-system.ts";
+import { readExecutionRunScope } from "../../runtime/run-context.ts";
 import { withFileLock } from "../../storage/file-lock.ts";
 import { PragmaPaths } from "../../storage/pragma-paths.ts";
 
@@ -100,6 +101,166 @@ export interface RegisterWorkspaceHandoffInput {
   readonly mediaType: string;
   readonly description?: string | undefined;
   readonly idempotencyKey: string;
+}
+
+export interface FederatedExecutionHandoffContextStoreOptions {
+  readonly defaultExecutionId: string;
+  readonly defaultStore?: ExecutionHandoffContextStore | undefined;
+  readonly resolveVisibleExecutionIds: (
+    activeExecutionId: string,
+  ) => Promise<readonly string[]> | readonly string[];
+  readonly pragmaHome?: string | undefined;
+}
+
+export class FederatedExecutionHandoffContextStore implements ExpertAgentContextStore {
+  readonly namespace = HANDOFF_NAMESPACE;
+  private readonly paths: PragmaPaths;
+  private readonly stores = new Map<string, ExecutionHandoffContextStore>();
+
+  constructor(private readonly options: FederatedExecutionHandoffContextStoreOptions) {
+    this.paths = new PragmaPaths(options);
+    if (options.defaultStore !== undefined) {
+      if (options.defaultStore.executionId !== options.defaultExecutionId) {
+        throw new Error("Federated handoff default Store must match the default Execution id.");
+      }
+      this.stores.set(options.defaultExecutionId, options.defaultStore);
+    }
+  }
+
+  async listContext(
+    input: ExpertAgentContextItemListInput = {},
+  ): Promise<ExpertAgentContextResult<readonly ExpertAgentContextItemSummary[]>> {
+    try {
+      const stores = await this.resolveStores(input.context);
+      const conflict = findDuplicateEntryId(
+        await Promise.all(
+          stores.map(async (store) => ({
+            executionId: store.executionId,
+            ids: await store.listContextIds(),
+          })),
+        ),
+      );
+      if (conflict !== undefined) return duplicateContextError(conflict.id, conflict.executionIds);
+
+      const results = await Promise.all(
+        stores.map(async (store) => await store.listContext(input)),
+      );
+      const summaries: ExpertAgentContextItemSummary[] = [];
+      for (const result of results) {
+        if (!result.ok) return result;
+        summaries.push(...result.value);
+      }
+      return ok(summaries);
+    } catch (caught) {
+      return error("store_error", "Failed to list visible handoffs.", toErrorDetails(caught));
+    }
+  }
+
+  async readContext(
+    input: ExpertAgentStoredContextItemReadInput,
+  ): Promise<ExpertAgentContextResult<ExpertAgentStoredContextItemReadResult>> {
+    try {
+      const stores = await this.resolveStores(input.context);
+      const matches: ExecutionHandoffContextStore[] = [];
+      for (const store of stores) {
+        if (await store.hasContext(input.id)) matches.push(store);
+      }
+      if (matches.length === 0) {
+        return error("context_not_found", `Handoff context not found: ${input.id}`, {
+          id: input.id,
+        });
+      }
+      if (matches.length > 1) {
+        return duplicateContextError(
+          input.id,
+          matches.map((store) => store.executionId),
+        );
+      }
+      return await matches[0]!.readContext(input);
+    } catch (caught) {
+      return error(
+        "store_error",
+        `Failed to read visible handoff context: ${input.id}`,
+        toErrorDetails(caught),
+      );
+    }
+  }
+
+  async searchContext(
+    input: ExpertAgentStoredContextItemSearchInput,
+  ): Promise<ExpertAgentContextResult<readonly ExpertAgentContextItemSearchMatch[]>> {
+    const query = input.query.trim();
+    if (query === "") return error("invalid_input", "Context search query must not be empty.");
+    try {
+      const stores = await this.resolveStores(input.context);
+      const duplicate = findDuplicateEntryId(
+        await Promise.all(
+          stores.map(async (store) => ({
+            executionId: store.executionId,
+            ids: await store.listContextIds(),
+          })),
+        ),
+      );
+      if (duplicate !== undefined) {
+        return duplicateContextError(duplicate.id, duplicate.executionIds);
+      }
+
+      const maxResults = Math.max(1, Math.trunc(input.maxResults ?? 20));
+      const matches: ExpertAgentContextItemSearchMatch[] = [];
+      for (const store of stores.toReversed()) {
+        const result = await store.searchContext({
+          ...input,
+          maxResults: maxResults - matches.length,
+        });
+        if (!result.ok) return result;
+        matches.push(...result.value);
+        if (matches.length >= maxResults) break;
+      }
+      return ok(matches);
+    } catch (caught) {
+      return error("store_error", "Failed to search visible handoffs.", toErrorDetails(caught));
+    }
+  }
+
+  async addContext(
+    input: ExpertAgentStoredContextRegisterInput,
+  ): Promise<ExpertAgentContextResult<ExpertAgentStoredContextItem>> {
+    void input;
+    return error("permission_denied", "Execution handoffs are read-only.");
+  }
+
+  async editContext(
+    input: ExpertAgentStoredContextItemEditInput,
+  ): Promise<ExpertAgentContextResult<ExpertAgentStoredContextItemEditResult>> {
+    void input;
+    return error("permission_denied", "Execution handoffs are read-only.");
+  }
+
+  async deleteContext(
+    input: ExpertAgentStoredContextItemDeleteInput,
+  ): Promise<ExpertAgentContextResult<{ readonly id: string }>> {
+    void input;
+    return error("permission_denied", "Execution handoffs are read-only.");
+  }
+
+  private async resolveStores(
+    context: ExpertAgentContextItemListInput["context"],
+  ): Promise<readonly ExecutionHandoffContextStore[]> {
+    const activeExecutionId =
+      readExecutionRunScope(context).executionId ?? this.options.defaultExecutionId;
+    const configured = await this.options.resolveVisibleExecutionIds(activeExecutionId);
+    const executionIds = [...new Set([...configured, activeExecutionId])];
+    return executionIds.map((executionId) => this.getStore(executionId));
+  }
+
+  private getStore(executionId: string): ExecutionHandoffContextStore {
+    let store = this.stores.get(executionId);
+    if (store === undefined) {
+      store = new ExecutionHandoffContextStore(executionId, { pragmaHome: this.paths.root });
+      this.stores.set(executionId, store);
+    }
+    return store;
+  }
 }
 
 export class ExecutionHandoffContextStore implements ExpertAgentContextStore {
@@ -312,6 +473,14 @@ export class ExecutionHandoffContextStore implements ExpertAgentContextStore {
     );
   }
 
+  async hasContext(id: string): Promise<boolean> {
+    return (await this.readManifest()).entries.some((entry) => entry.id === id);
+  }
+
+  async listContextIds(): Promise<readonly string[]> {
+    return (await this.readManifest()).entries.map((entry) => entry.id);
+  }
+
   async addContext(
     input: ExpertAgentStoredContextRegisterInput,
   ): Promise<ExpertAgentContextResult<ExpertAgentStoredContextItem>> {
@@ -493,6 +662,30 @@ export class ExecutionHandoffContextStore implements ExpertAgentContextStore {
       throw caught;
     }
   }
+}
+
+function findDuplicateEntryId(
+  entries: readonly { readonly executionId: string; readonly ids: readonly string[] }[],
+): { readonly id: string; readonly executionIds: readonly string[] } | undefined {
+  const owners = new Map<string, string>();
+  for (const entry of entries) {
+    for (const id of entry.ids) {
+      const owner = owners.get(id);
+      if (owner !== undefined) return { id, executionIds: [owner, entry.executionId] };
+      owners.set(id, entry.executionId);
+    }
+  }
+  return undefined;
+}
+
+function duplicateContextError<TValue>(
+  id: string,
+  executionIds: readonly string[],
+): ExpertAgentContextResult<TValue> {
+  return error("context_conflict", `Handoff context id is ambiguous: ${id}`, {
+    id,
+    executionIds,
+  });
 }
 
 function createEntryMetadata(entry: HandoffEntry, stats: BigIntStats): HandoffEntryMetadata {

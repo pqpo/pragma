@@ -66,7 +66,11 @@ Invocation 创建。Snapshot 只保存 `systemSessionId` 与 `RuntimeSessionRef`
 
 Invocation 输出通过 Core 内部的 Execution Handoff 模块进入 `inline` 或 `context` 交接。大型输出和
 已注册 workspace 文件以 `pragma.handoff` Context item 暴露；`wait_experts` 和自动续跑只传摘要与引用。
-Handoff Context Store 是 Execution-scoped 动态 overlay，不属于 Expert 定义，也不通过 Plugin 可选安装。
+Handoff 的物理 owner 是产出它的 Execution；Context Store 按 ExpertSession 的持久 executionIds 联邦读取，
+Host 可通过 `HandoffContextVisibilityResolver` 扩展 owner 可见范围。Desktop 以 Mission timeline 联邦
+successor Session 和 Flow Execution，因此重启后仍可重建同一读取视图。写入始终落到当前 Execution，
+不同 owner 不共享视图，重复 Context id fail closed。该 overlay 不属于 Expert 定义，也不通过 Plugin
+可选安装。
 
 ## Dispatcher 与通知边界
 
