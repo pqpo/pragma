@@ -58,5 +58,6 @@ invoke the Module again, which is why Module mutation idempotency remains mandat
 - A malformed handoff only blocks its owning Execution, while degraded Plane health remains visible.
 - The Feed supplies global delivery order; business causality remains explicit through source,
   correlation, and causation ids.
-- Phase one retains Feed rows indefinitely. Retention, remote replication, and historical import
-  require later decisions.
+- Feed retention and safe-checkpoint compaction are governed by
+  [ADR 036](./036-memory-storage-retention-and-recovery.md). Remote replication and historical import
+  remain separate future decisions.

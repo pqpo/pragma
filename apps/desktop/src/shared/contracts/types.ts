@@ -204,6 +204,8 @@ import {
   ReviewDesktopMemoryItemSchema,
   DesktopMissionMemoryActivitySchema,
   GetDesktopMissionMemoryActivitySchema,
+  DesktopMemoryExtractionJobSchema,
+  RetryDesktopMemoryExtractionJobSchema,
 } from "./memory.ts";
 export type DesktopAppInfo = z.infer<typeof DesktopAppInfoSchema>;
 export type PragmaBundleModuleOptions = z.infer<typeof PragmaBundleModuleOptionsSchema>;
@@ -268,6 +270,8 @@ export type TightenDesktopMemoryAccess = z.infer<typeof TightenDesktopMemoryAcce
 export type ReviewDesktopMemoryItem = z.infer<typeof ReviewDesktopMemoryItemSchema>;
 export type DesktopMissionMemoryActivity = z.infer<typeof DesktopMissionMemoryActivitySchema>;
 export type GetDesktopMissionMemoryActivity = z.infer<typeof GetDesktopMissionMemoryActivitySchema>;
+export type DesktopMemoryExtractionJob = z.infer<typeof DesktopMemoryExtractionJobSchema>;
+export type RetryDesktopMemoryExtractionJob = z.infer<typeof RetryDesktopMemoryExtractionJobSchema>;
 export type ModelProviderModel = z.infer<typeof ModelProviderModelSchema>;
 export type ModelCompatibilityProfileDescriptor = z.infer<
   typeof ModelCompatibilityProfileDescriptorSchema

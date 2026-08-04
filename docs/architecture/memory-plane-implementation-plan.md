@@ -1,8 +1,8 @@
 # Memory Plane 落地计划
 
 - Status: Active plan
-- Last updated: 2026-08-03
-- Decisions: [ADR 031](../adr/031-extensible-memory-plane.md)、[ADR 032](../adr/032-durable-canonical-event-feed.md)、[ADR 033](../adr/033-layered-episodic-memory.md)、[ADR 034](../adr/034-conservative-semantic-memory.md)、[ADR 035](../adr/035-agent-driven-memory-recall-and-governance.md)
+- Last updated: 2026-08-04
+- Decisions: [ADR 031](../adr/031-extensible-memory-plane.md)、[ADR 032](../adr/032-durable-canonical-event-feed.md)、[ADR 033](../adr/033-layered-episodic-memory.md)、[ADR 034](../adr/034-conservative-semantic-memory.md)、[ADR 035](../adr/035-agent-driven-memory-recall-and-governance.md)、[ADR 036](../adr/036-memory-storage-retention-and-recovery.md)
 
 ## 最终链路
 
@@ -20,8 +20,9 @@ Federated ContextStore + Agent-driven Recall + Host Governance
 Skill Candidate 经 Evaluation 升级为现有 Skill Capability
 ```
 
-WorkingState、TODO List 和多人白板不在主链上；它们可以发布 Evidence，但 Agent 不使用白板也必须产生
-Memory。Knowledge、CodeGraph 仍是 Memory type，不新增 KnowledgeBase/KnowledgeAsset/MemoryAsset 对象。
+WorkingState、TODO List 和多人白板不在 Memory 提炼主链上，但仍是需要独立交付的 Host 内置短期协作
+能力；它们可以发布 Evidence，但 Agent 不使用白板也必须产生 Memory。Knowledge、CodeGraph 仍是
+Memory type，不新增 KnowledgeBase/KnowledgeAsset/MemoryAsset 对象。
 
 ## 执行原则
 
@@ -43,10 +44,11 @@ Memory。Knowledge、CodeGraph 仍是 Memory type，不新增 KnowledgeBase/Know
 | 2    | Completed | 分层召回协议与 Episodic Memory：历史、结果、失败与恢复       |
 | 3    | Completed | Semantic / Fact Memory：真值、冲突、时效和置信度             |
 | 4    | Completed | Agent 驱动召回、完整 binding 治理、管理中心与 Mission 可见性 |
-| 5    | Planned   | Knowledge Memory：多层提炼、稳定 revision 与团队分享         |
-| 6    | Planned   | Skill Memory Candidate、Evaluation 与 Capability 升级        |
-| 7    | Planned   | CodeGraph 独立 Module 扩展验收                               |
-| 8    | Planned   | 旧 plugin owner-scoped 导入、compiler cutover 与删除         |
+| 5    | Planned   | WorkingState / Task Board：短期 TODO、私有状态与团队白板     |
+| 6    | Planned   | Knowledge Memory：多层提炼、稳定 revision 与团队分享         |
+| 7    | Planned   | Skill Memory Candidate、Evaluation 与 Capability 升级        |
+| 8    | Planned   | CodeGraph 独立 Module 扩展验收                               |
+| 9    | Planned   | 旧 plugin owner-scoped 导入、compiler cutover 与删除         |
 
 状态只使用 `Planned`、`In progress`、`Blocked`、`Completed`。
 
@@ -115,7 +117,7 @@ Desktop 提供设置入口。
 - 设置页提供 Global capture/recall/learning 与 Plane health；
 - Expert、ExpertTeam、Flow 编辑页提供继承/收紧策略；
 - 不需要环境变量，不再对 legacy Memory plugin 做运行时二选一冲突判断；
-- 旧 plugin 仅作为阶段 8 的历史数据迁移源，不能继续定义新架构。
+- 旧 plugin 仅作为阶段 9 的历史数据迁移源，不能继续定义新架构。
 
 ### 持久路径
 
@@ -318,7 +320,66 @@ Expert/principal scope、binding/visibility、预算、审计和生命周期。�
 - Known limitations: 不提供跨设备账户合并、分享扩权审批、Knowledge/Skill/CodeGraph、legacy importer；
   不计划增加 Host prompt retrieval planner
 
-## 阶段 5：Knowledge Memory
+## 已完成的跨阶段存储治理
+
+存储治理不是新的 Memory 类型阶段，而是阶段 1–4 的横切完成项：
+
+- Feed v2 使用独立 receipt 保留历史 event id 幂等性，只在所有注册消费者的最小 checkpoint 之前按
+  30 天/512 MiB 目标清理 payload；落后消费者固定数据时报告 blocked bytes，不越过 checkpoint 删除；
+- 每个 Module、每个 Execution 的待提炼 Evidence 固定为最多 2,000 条或 16 MiB，按终态、用户意图、
+  最终回答、失败、artifact、summary 的确定性优先级保留；实际 curator prompt 再限制为 78 KiB；
+- Episode/Fact 只长期保存被产物引用的 Evidence；遗漏只保留按 topic 统计的 content-free 诊断；
+- configuration failure 与耗尽的 transient failure 进入 `needs_attention`，不因应用重启自动重试；配置
+  修复或用户在设置页执行带 revision 的显式重试后才重新入队；
+- 失败 payload 30 天后转为 `expired` 诊断并删除内容；completed/expired job、dead letter 和旧迁移备份均
+  有固定期限，dead letter 另有 10,000 条/64 MiB 上限；
+- Mission 删除通过稳定 cleanup journal 清除关联 Execution 的 Feed 与 transient extraction state，
+  已完成的 Episode/Fact 继续作为独立治理的长期 Memory；删除标记阻止在途提炼或事件重放复活状态；
+- 隐藏 Memory Curator Mission 正常结束立即删除；异常遗留只通过专用有界 registry 定向恢复，不扫描全部
+  Mission。
+
+具体不变量、时限和恢复语义见 [ADR 036](../adr/036-memory-storage-retention-and-recovery.md)。
+
+## 阶段 5：WorkingState / Task Board
+
+### 目标
+
+提供类似 TODO List 的短期工作记忆和多人协作白板。WorkingState 服务于正在进行的 Mission/Execution，
+不是长期 Memory type，也不是 Memory Plane 产生 Episodic、Semantic Memory 的前置条件；其已提交变化通过
+Canonical Event Feed 成为后续提炼可选使用的 Evidence。
+
+### 对象与权限边界
+
+- 支持 `todo`、`decision`、`question`、`progress`、`handoff`、`note` 等结构化条目；
+- 共享条目绑定当前根 ExpertTeam/Flow 与 Execution，参与该运行的 Agent 可在权限范围内协作读写；
+- 私有条目绑定稳定 `ownerContextId`，普通 Agent 只能由所属 Runtime Context 读取和修改，不能由团队成员、
+  coordinator 或通过猜测 ID 旁路读取；Host 用户治理和审计使用独立显式权限；
+- assignee 使用稳定 Expert/Context identity，不使用展示名称或数组顺序推导身份；
+- visibility、owner、scope 和 permission revision 分离，私有内容不能因 handoff、提炼或导出自动扩大可见性；
+- WorkingState 随 Mission/Execution owner 生命周期持久化和级联清理，不进入 Project Revision，也不写
+  Agent workspace。
+
+### 交付
+
+- 使用 Zod 定义当前协议、条目 revision、状态、assignee、visibility、provenance 和 mutation event；
+- 提供 `list/read/create/update/resolve/archive` managed tools，所有 mutation 使用 revision CAS；
+- 提供 durable Store、稳定 journal、原子 mutation、幂等重放和未来 schema fail-closed；
+- ExpertTeam/Flow 的共享视图与 Agent 私有视图在 Store 查询层鉴权，list、read 和精确 ID 读取使用同一规则；
+- Desktop 提供 Mission/Execution 白板、TODO 状态、负责人、共享/私有标识和治理审计；
+- 已提交 mutation 发布 content-safe Canonical Event；Evidence adapter 按原 visibility 保持或收紧权限，
+  不把私有正文暴露给其他 Agent；
+- 阶段 9 将旧 Task Memory 按 owner 显式导入 WorkingState 或归档 Evidence；阶段 5 不维持 dual-write。
+
+### 退出门槛
+
+- 不使用 WorkingState 的 Mission 仍能正常形成 Episodic/Semantic Memory；
+- 同一 Team/Flow Execution 的授权参与者能协作维护共享 TODO 和 handoff；
+- Agent A 无法从 list、read、精确 ID、Context 或 Evidence 读取 Agent B 的私有条目；
+- 并发更新产生明确 CAS 冲突，不静默覆盖；崩溃恢复不重复应用 mutation；
+- Mission/Execution 删除按 owner 图回收 WorkingState，且不影响长期 Memory 的独立生命周期；
+- 私有条目发布 Evidence、提炼、导出时不会自动提升为 shared/team-shareable。
+
+## 阶段 6：Knowledge Memory
 
 ### 目标
 
@@ -345,7 +406,7 @@ Context binding to Expert / ExpertTeam / Flow / Project
 - 分享包只含显式选择且 export binding 允许的 revision；
 - 导入分享包仍生成 Memory revision，不生成第二种知识库对象。
 
-## 阶段 6：Skill Memory Candidate → Skill Capability
+## 阶段 7：Skill Memory Candidate → Skill Capability
 
 ### 目标
 
@@ -359,7 +420,7 @@ Context binding to Expert / ExpertTeam / Flow / Project
 - draft、evaluating、approved、rejected、promoted 状态与审计；
 - promoted 后引用 Capability id/revision，不保留平行永久 Skill 内容 authority。
 
-## 阶段 7：CodeGraph Module
+## 阶段 8：CodeGraph Module
 
 ### 目标
 
@@ -373,7 +434,7 @@ Context binding to Expert / ExpertTeam / Flow / Project
 - 可绑定 Expert/ExpertTeam/Flow；
 - 实现不修改 Core Memory union、Episodic/Semantic Store 或联邦路由代码。
 
-## 阶段 8：旧插件导入与切换
+## 阶段 9：旧插件导入与切换
 
 ### 映射
 

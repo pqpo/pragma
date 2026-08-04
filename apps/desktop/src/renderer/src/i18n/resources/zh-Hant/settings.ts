@@ -60,6 +60,17 @@ export const settings = {
       "{{state}} · {{events}} 筆事件 · {{modules}} 個模組 · {{pending}} 筆待投遞 · {{quarantined}} 筆已隔離",
     moduleWorkSummary:
       "{{module}} · {{records}} 筆記憶 · {{pending}} 筆提煉中 · {{attention}} 筆需處理 · {{rejected}} 筆已拒絕",
+    storageGovernance: "儲存治理",
+    storageGovernanceDescription: "以固定唯讀策略限制原始事件、提煉載荷和診斷資料的增長。",
+    storageSummary:
+      "{{events}} 筆事件 · 邏輯 {{logical}} / 檔案 {{file}} · 目標 {{target}} · 安全水位 {{safe}} · 阻塞 {{blocked}}",
+    retentionSummary:
+      "Feed {{feedDays}} 天 · 任務 {{jobDays}} 天 · 每次執行 {{records}} 筆或 {{bytes}} · {{deadLetters}} 筆死信",
+    extractionJob: "{{module}} 提煉任務",
+    extractionJobSummary:
+      "{{status}} · 累計 {{attempts}} 次 · 保留 {{evidence}} 筆 Evidence · 省略 {{omitted}} 筆 · {{error}}",
+    retryExtraction: "重試提煉",
+    retryError: "提煉任務已經變更或不再允許重試。",
     assetTitle: "記憶策略",
     assetDescription: "此團隊資產只能收緊全域策略；執行階段限制還會與本設定取交集。",
     effectiveSummary: "目前生效：採集{{capture}}，召回{{recall}}，學習{{learning}}",

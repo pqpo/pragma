@@ -138,7 +138,7 @@ export const missions = {
   memoryActivityUnavailable: "無法讀取記憶活動",
   noMemoryActivity: "暫無記憶活動",
   noMemoryActivityDescription: "執行此任務後會產生擷取與召回活動。",
-  memoryCaptured: "已擷取",
+  memoryCaptured: "已發佈 Evidence（不是記憶筆數）",
   memorySkipped: "略過擷取",
   memoryCaptureFailed: "擷取失敗",
   memoryListed: "列舉",

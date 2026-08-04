@@ -79,23 +79,23 @@ export async function createSemanticMemoryModule(
       if (job === undefined) return;
       try {
         if (await store.hasAppliedJob(job.id)) {
-          await store.completePreviouslyApplied(job);
+          await store.completePreviouslyApplied(job, now());
           return;
         }
         const subjectContext = await store.getSubjectContext(job.executionId);
         if (subjectContext === undefined) throw new Error("semantic_subject_context_missing");
         const evidence = sanitizeEvidence(await store.readEvidence(job.executionId));
         if (evidence.some((item) => item.sensitivity === "restricted")) {
-          await store.completeRejected(job, "sensitive");
+          await store.completeRejected(job, "sensitive", now());
           return;
         }
         if (!hasTextEvidence(evidence)) {
-          await store.completeRejected(job, "insufficient-evidence");
+          await store.completeRejected(job, "insufficient-evidence", now());
           return;
         }
         const visibility = strictestVisibility(evidence);
         if (visibility === undefined) {
-          await store.completeRejected(job, "policy");
+          await store.completeRejected(job, "policy", now());
           return;
         }
         const attribution = resolveAttribution(evidence);
@@ -105,16 +105,17 @@ export async function createSemanticMemoryModule(
           ...attribution.producerRefs,
         ]);
         const input = SemanticExtractionInputSchema.parse({
-          schemaVersion: "pragma.memory-semantic-extraction-input/v1",
+          schemaVersion: "pragma.memory-semantic-extraction-input/v2",
           jobId: job.id,
           executionId: job.executionId,
           allowedSubjectRefs,
           evidence,
+          omittedEvidence: await store.readOmissionStats(job.executionId),
         });
         const extracted = await extractor.extract(input);
         const output = SemanticExtractionOutputSchema.parse(extracted.output);
         if (!output.retain) {
-          await store.completeRejected(job, output.reason);
+          await store.completeRejected(job, output.reason, now());
           return;
         }
         assertCandidateRefs(output.facts, evidence, allowedSubjectRefs);
@@ -140,7 +141,6 @@ export async function createSemanticMemoryModule(
     },
     async setExtractor(next) {
       extractor = next;
-      if (next !== undefined) await store.wakeNeedsAttention(now());
     },
     async registerExecutionSubjects(input) {
       await store.registerSubjectContext(

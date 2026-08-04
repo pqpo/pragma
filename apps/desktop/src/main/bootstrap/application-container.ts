@@ -407,6 +407,9 @@ export async function createDesktopApplicationContainer(
       createAutomaticToolPermissionHandler(() => mode),
     assertStorageWriteAllowed: async () => await storageCapacityGuard.assertWriteAllowed(),
     onStorageTrashed: () => trashMaintenance.schedule("mission-storage-trashed"),
+    onOwnerDeleting: async ({ executionIds }) => {
+      await memoryPlane.deleteExecutionState(executionIds);
+    },
     onExecutionLinked: async ({ mission, executionId }) => {
       if (mission.origin.type === "system-memory") return;
       await memoryPlane.registerMemoryExecutionContext({
@@ -640,6 +643,13 @@ export async function createDesktopApplicationContainer(
         mainLogger.warn(
           "desktop.tokenizer_warmup_failed",
           "The Runtime token counter could not be warmed up.",
+          { error },
+        );
+      });
+      void memoryCurator.recoverOrphans().catch((error: unknown) => {
+        mainLogger.warn(
+          "desktop.memory_curator_orphan_cleanup_failed",
+          "Orphaned Memory Curator Missions could not be cleaned up.",
           { error },
         );
       });

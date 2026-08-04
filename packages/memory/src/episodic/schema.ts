@@ -7,8 +7,10 @@ import {
 } from "@pragma/shared";
 import { z } from "zod";
 
+import { MemoryEvidenceOmissionStatsSchema } from "../storage/bounded-evidence.ts";
+
 export const EPISODIC_MEMORY_SCHEMA_VERSION = "pragma.memory-episodic/v2" as const;
-export const EPISODIC_JOB_SCHEMA_VERSION = "pragma.memory-extraction-job/v1" as const;
+export const EPISODIC_JOB_SCHEMA_VERSION = "pragma.memory-extraction-job/v2" as const;
 
 const EvidenceRefsSchema = z.array(z.string().min(1)).min(1).max(100);
 
@@ -74,11 +76,12 @@ export const EpisodicMemoryRecordSchema = z.object({
 });
 
 export const EpisodicExtractionInputSchema = z.object({
-  schemaVersion: z.literal("pragma.memory-episodic-extraction-input/v1"),
+  schemaVersion: z.literal("pragma.memory-episodic-extraction-input/v2"),
   jobId: z.string().min(1),
   executionId: z.string().min(1),
   previousEpisode: EpisodicMemoryRecordSchema.optional(),
   evidence: z.array(MemoryEvidenceEnvelopeSchema).min(1).max(2_000),
+  omittedEvidence: MemoryEvidenceOmissionStatsSchema,
 });
 
 const RetainedExtractionSchema = z.object({
@@ -105,13 +108,19 @@ export const EpisodicExtractionOutputSchema = z.discriminatedUnion("retain", [
 export const EpisodicExtractionJobSchema = z.object({
   schemaVersion: z.literal(EPISODIC_JOB_SCHEMA_VERSION),
   id: z.string().min(1),
+  revision: z.number().int().positive(),
   executionId: z.string().min(1),
   terminalMessageId: z.string().min(1),
-  status: z.enum(["pending", "running", "needs_attention", "completed"]),
+  status: z.enum(["pending", "running", "needs_attention", "completed", "expired"]),
   attempts: z.number().int().nonnegative(),
+  totalAttempts: z.number().int().nonnegative(),
   retryAt: z.string().datetime().optional(),
   leaseUntil: z.string().datetime().optional(),
   lastErrorCode: z.string().min(1).optional(),
+  failureClass: z.enum(["configuration", "transient-exhausted"]).optional(),
+  attentionSince: z.string().datetime().optional(),
+  completedAt: z.string().datetime().optional(),
+  expiredAt: z.string().datetime().optional(),
   completion: z.enum(["retained", "rejected"]).optional(),
   updatedAt: z.string().datetime(),
 });

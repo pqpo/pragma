@@ -138,7 +138,7 @@ export const missions = {
   memoryActivityUnavailable: "无法读取记忆活动",
   noMemoryActivity: "暂无记忆活动",
   noMemoryActivityDescription: "运行此任务后会产生捕获与召回活动。",
-  memoryCaptured: "已捕获",
+  memoryCaptured: "已发布 Evidence（不是记忆条数）",
   memorySkipped: "跳过捕获",
   memoryCaptureFailed: "捕获失败",
   memoryListed: "列举",

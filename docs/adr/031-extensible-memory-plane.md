@@ -93,6 +93,10 @@ TaskMemory 原有语义本质是 TODO List Manager、handoff 区或多人白板�
 可以完全不使用它。WorkingState 的已提交变化可以成为 Evidence，但 Memory 提炼始终基于 canonical
 消息与执行事件，不依赖白板是否存在。
 
+“不是 Memory 的前置依赖”不表示不提供该产品能力。WorkingState 作为 Host 内置、Mission/Execution
+生命周期内的短期协作状态独立实现，支持团队共享条目和按 Runtime Context 隔离的私有条目；其协议、
+权限、持久化、工具和 Desktop UI 由落地计划的独立阶段交付，而不作为 `@pragma/memory` Module。
+
 ## Subject、生产者、绑定与团队资产
 
 以下维度必须分开：

@@ -225,6 +225,12 @@ export function createMissionRunner(options: {
   readonly assertStorageWriteAllowed?: (() => Promise<void>) | undefined;
   readonly assertExecutorReady?: ((ref: string) => void | Promise<void>) | undefined;
   readonly onStorageTrashed?: (() => void) | undefined;
+  readonly onOwnerDeleting?:
+    | ((input: {
+        readonly mission: Mission;
+        readonly executionIds: readonly string[];
+      }) => Promise<void>)
+    | undefined;
   readonly onExecutionLinked?:
     | ((input: { readonly mission: Mission; readonly executionId: string }) => Promise<void>)
     | undefined;
@@ -1188,6 +1194,7 @@ export function createMissionRunner(options: {
       sessionCompilationIdentities.delete(id);
       sessionDefinitionFingerprints.delete(id);
     }
+    await options.onOwnerDeleting?.({ mission, executionIds: [...executionIds] });
     const paths = new PragmaPaths({ pragmaHome: options.pragmaHome });
     const sources = [
       ...[...executionIds].map((executionId) => ({

@@ -12,7 +12,8 @@ Pragma 的新 Memory Plane 是 Desktop 内置能力，随应用启动，不需�
 - Memory Evidence 自动记录 root Expert/ExpertTeam/Flow 与实际 producer Expert；
 - 每个 Memory Module 可以独立消费、重试、保存 checkpoint 和发布派生事件；
 - 联邦 `memory` ContextStore 可以按 Module prefix 路由只读内容；
-- Desktop 设置页可以控制全局 capture、recall、learning 并查看 Plane health；
+- Desktop 设置页可以控制全局 capture、recall、learning，并查看 Feed 容量、安全 checkpoint、固定保留
+  策略、Evidence 截断、dead letter 和提炼失败；
 - Expert、ExpertTeam、Flow 编辑页可以继承或收紧全局策略。
 - Execution 终态会创建持久提炼任务，由隐藏 Memory Curator 生成目标、尝试、失败、恢复和结果；
 - 普通 Expert、ExpertTeam 和 Flow 内 Expert 会加载有界 Memory guide、类型摘要与热点索引；
@@ -31,7 +32,9 @@ Pragma 的新 Memory Plane 是 Desktop 内置能力，随应用启动，不需�
 - Mission 的 Memory 页签显示每次 Execution 的 capture/recall 计数。搜索审计只保存 digest 和长度，
   不保存 query 原文。
 
-当前尚未实现 Knowledge、Skill Candidate、CodeGraph Module、候选评审、分享扩权审批或跨设备同步。
+当前尚未实现新版内置 WorkingState/Task Board、Knowledge、Skill Candidate、CodeGraph Module、候选评审、
+分享扩权审批或跨设备同步。旧 `@pragma/plugin-memory` 中的 Task Memory 只属于迁移源，不是新版
+WorkingState 的完成实现。
 
 ## 分层加载
 
@@ -69,13 +72,36 @@ Semantic 是当前信念投影，也不是无条件真值。详情会展示 conf
 - Capture：是否允许 canonical execution event 进入 Memory pipeline；
 - Recall：是否允许从 Memory Context 读取；
 - Learning：是否生成本地 Knowledge/Skill 候选；候选不会自动发布；
-- Health：Plane 状态、Feed event 数量和 Module 数量。
+- Health：Plane 状态、Feed logical/file bytes、安全 checkpoint、blocked bytes、Module Evidence 和
+  dead letter 数量；
 - Extraction model：继承系统默认模型，或固定 Memory Curator 使用的 Runtime 和模型。
 
 默认 capture、recall 开启，learning 为 local candidates。
 
 模型设置持久化为 `pragma.memory-extractor-profile/v1`，通过 revision CAS 更新，不使用环境变量。模型暂时
-不可用时任务保留在 durable queue；连续结构错误进入 needs-attention，设置变化后自动唤醒。
+不可用时任务保留在 durable queue；配置错误或耗尽自动重试后进入 `needs_attention`。应用重启不会自动
+唤醒这些任务：匹配的模型配置修复会唤醒 configuration failure，用户也可以在设置页按当前 revision
+显式重试。失败 Evidence 只保留 30 天，随后任务变成不含原始内容的 `expired` 诊断。
+
+## 存储治理与失败恢复
+
+Memory 持续捕获，但不会无限积累原始上下文：
+
+- Canonical Feed 的 payload 按 30 天、512 MiB 目标维护，删除边界是所有注册 consumer 的最小 durable
+  checkpoint。consumer 落后时数据会被固定并显示 blocked bytes，不会静默越界删除；
+- 每个 Module、每个 Execution 最多保留 2,000 条或 16 MiB 待提炼 Evidence；curator prompt 最多
+  78 KiB。超出部分按确定性优先级省略，并显示 content-free topic 计数；
+- Episode 和 Fact 只长期保存它们实际引用的 Evidence；完成的 job 与过期诊断保留 30 天；
+- dead letter 每个 consumer 保留 30 天，并同时限制为最多 10,000 条、64 MiB；
+- SQLite 升级在首次访问时按静态相邻迁移链执行，升级前备份保留 30 天；异常退出遗留的原子写临时文件
+  最多保留一天；
+- Mission 删除使用可重放 cleanup journal 清除该 Mission Execution 的 Feed、job、待提炼 Evidence 和
+  subject context。已经生成的 Episode/Fact 不随 Mission 删除；需要删除长期 Memory 时应在 Memory
+  管理中心执行独立的 invalidate/forget 治理；
+- 隐藏 Memory Curator Mission 正常结束立即删除；崩溃遗留通过专用 registry 定向恢复，不扫描所有
+  Mission。
+
+这些值来自 `pragma.memory-storage-policy/v1` 固定策略，设置页只读展示，当前不提供用户自定义。
 
 ### Expert、ExpertTeam、Flow
 
@@ -126,7 +152,7 @@ Memory revision。分享不会新建一个知识库对象，也不会自动导�
 ## Legacy plugin
 
 仓库中的 `@pragma/plugin-memory` 暂时只承担旧数据来源和兼容迁移窗口。新架构不再通过它启用 Plane，
-也不继续扩展旧 Task/Experience/Fact/Skill 文件 Store。阶段 8 会提供 owner-scoped、带备份和 journal 的
+也不继续扩展旧 Task/Experience/Fact/Skill 文件 Store。阶段 9 会提供 owner-scoped、带备份和 journal 的
 导入，然后升级受影响的 DSL compiler 并删除旧插件。
 
 ## 当前持久路径
@@ -139,10 +165,13 @@ Memory revision。分享不会新建一个知识库对象，也不会自动导�
 ~/.pragma/state/event-bus/handoffs/        # Execution durable handoff
 ~/.pragma/state/event-bus/handoff-quarantine/ # 原样保留的损坏/未来版本 handoff；所属 Execution fail closed
 ~/.pragma/state/memory/                     # checkpoint/dead-letter/outbox
+~/.pragma/state/memory/modules/<consumer>/dead-letters.sqlite # 有界 dead letter
 ~/.pragma/state/memory/modules/<episodic>/jobs.sqlite # Evidence aggregation and durable jobs
 ~/.pragma/data/memory/modules/<semantic>/facts.sqlite # Semantic projection, revisions and audit
 ~/.pragma/state/memory/modules/<semantic>/jobs.sqlite # Semantic Evidence, subjects and durable jobs
 ~/.pragma/state/memory/executions/<executionId>/activity.sqlite # capture/recall metadata audit
+~/.pragma/state/memory/cleanup-journal/     # Mission/Execution transient cleanup journal
+~/.pragma/state/memory/curator-missions.json # 有界隐藏 Curator Mission registry
 ~/.pragma/data/memory/subject-identity.json # Desktop installation-local User identity
 ```
 
@@ -154,5 +183,6 @@ Memory 数据不写 Agent workspace。正常启动不会扫描全部 Mission、E
 - [ADR 032: Durable Canonical Event Feed](../adr/032-durable-canonical-event-feed.md)
 - [ADR 034: Conservative Semantic Memory](../adr/034-conservative-semantic-memory.md)
 - [ADR 035: Agent-driven Memory Recall and Host Governance](../adr/035-agent-driven-memory-recall-and-governance.md)
+- [ADR 036: Memory Storage Retention and Recovery](../adr/036-memory-storage-retention-and-recovery.md)
 - [Memory Plane 落地计划](../architecture/memory-plane-implementation-plan.md)
 - [旧 Memory System ADR（已被替代）](../adr/002-memory-system.md)

@@ -22,6 +22,9 @@ import {
   TightenDesktopMemoryAccessSchema,
   ReviewDesktopMemoryItemSchema,
   DesktopMissionMemoryActivitySchema,
+  DesktopMemoryExtractionJobListSchema,
+  DesktopMemoryExtractionJobSchema,
+  RetryDesktopMemoryExtractionJobSchema,
 } from "../../shared/contracts/memory.ts";
 
 export const memoryApi = {
@@ -52,6 +55,17 @@ export const memoryApi = {
     ),
   getMemoryPlaneStatus: async () =>
     DesktopMemoryPlaneStatusSchema.parse(await ipcRenderer.invoke("memory-plane:status")),
+  listMemoryExtractionJobs: async () =>
+    DesktopMemoryExtractionJobListSchema.parse(
+      await ipcRenderer.invoke("memory-extraction-jobs:list"),
+    ),
+  retryMemoryExtractionJob: async (input) =>
+    DesktopMemoryExtractionJobSchema.parse(
+      await ipcRenderer.invoke(
+        "memory-extraction-jobs:retry",
+        RetryDesktopMemoryExtractionJobSchema.parse(input),
+      ),
+    ),
   getMemoryExtractorProfile: async () =>
     DesktopMemoryExtractorProfileSchema.parse(
       await ipcRenderer.invoke("memory-extractor-profile:get"),
@@ -124,6 +138,8 @@ export const memoryApi = {
   | "getAssetMemoryPolicy"
   | "updateAssetMemoryPolicy"
   | "getMemoryPlaneStatus"
+  | "listMemoryExtractionJobs"
+  | "retryMemoryExtractionJob"
   | "getMemoryExtractorProfile"
   | "updateMemoryExtractorProfile"
   | "reviseSemanticFact"

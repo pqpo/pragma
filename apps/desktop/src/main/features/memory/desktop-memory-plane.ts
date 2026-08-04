@@ -29,9 +29,12 @@ import {
   type SemanticMemoryStore,
   type EpisodicMemoryStore,
   type MemoryActivityStore,
+  DEFAULT_MEMORY_STORAGE_POLICY,
+  EXECUTION_EVIDENCE_ADAPTER_ID,
 } from "@pragma/memory";
 
 import { createDesktopMemorySubjectIdentityStore } from "./memory-subject-identity.ts";
+import { createMemoryCleanupJournal } from "./memory-cleanup-journal.ts";
 
 export type DesktopMemoryMutationResult =
   | {
@@ -84,12 +87,31 @@ export interface DesktopMemoryPlane {
     readonly reason: string;
   }): Promise<void>;
   wakeMemoryJobs(): Promise<void>;
+  retryMemoryJob(input: {
+    readonly module: "episodic" | "semantic";
+    readonly id: string;
+    readonly expectedRevision: number;
+  }): Promise<void>;
+  deleteExecutionState(executionIds: readonly string[]): Promise<void>;
+  maintainStorage(): Promise<void>;
   getStatus(): Promise<{
     readonly state: "running" | "stopped" | "degraded";
-    readonly feed: { readonly lastSequence: number; readonly eventCount: number };
+    readonly feed: import("@pragma/core").CanonicalEventFeedDiagnostic & {
+      readonly safeThroughSequence: number;
+      readonly blockedBytes: number;
+    };
     readonly delivery: { readonly pending: number; readonly quarantined: number };
     readonly lastError?: { readonly code: string; readonly occurredAt: string } | undefined;
     readonly modules: readonly import("@pragma/shared").MemoryModuleDiagnostic[];
+    readonly storagePolicy: Readonly<Record<string, string | number>>;
+    readonly maintenance: {
+      readonly lastRunAt?: string | undefined;
+      readonly deletedEvents: number;
+      readonly reclaimedBytes: number;
+      readonly deletedDeadLetters: number;
+      readonly deadLetterEntries: number;
+      readonly deadLetterBytes: number;
+    };
   }>;
   start(): void;
   stop(): Promise<void>;
@@ -125,6 +147,12 @@ export async function createDesktopMemoryPlane(options: {
     pragmaHome: options.pragmaHome,
   });
   const activity = createMemoryActivityStore({ pragmaHome: options.pragmaHome });
+  const cleanup = createMemoryCleanupJournal({
+    pragmaHome: options.pragmaHome,
+    feed: canonical,
+    episodic: episodic.store,
+    semantic: semantic.store,
+  });
   registry.register(episodic);
   registry.register(semantic);
   const contextStore = createFederatedMemoryContextStore(registry, {
@@ -161,6 +189,66 @@ export async function createDesktopMemoryPlane(options: {
   let timer: ReturnType<typeof setTimeout> | undefined;
   let running: Promise<void> | undefined;
   let lastError: { readonly code: string; readonly occurredAt: string } | undefined;
+  let maintenanceRunning: Promise<void> | undefined;
+  let lastMaintenanceAtMs = 0;
+  let safeThroughSequence = 0;
+  let blockedBytes = 0;
+  let maintenanceDiagnostic: {
+    readonly lastRunAt?: string | undefined;
+    readonly deletedEvents: number;
+    readonly reclaimedBytes: number;
+    readonly deletedDeadLetters: number;
+    readonly deadLetterEntries: number;
+    readonly deadLetterBytes: number;
+  } = {
+    deletedEvents: 0,
+    reclaimedBytes: 0,
+    deletedDeadLetters: 0,
+    deadLetterEntries: 0,
+    deadLetterBytes: 0,
+  };
+
+  const maintainStorage = async (): Promise<void> => {
+    if (maintenanceRunning !== undefined) return await maintenanceRunning;
+    maintenanceRunning = (async () => {
+      const maintenanceNow = new Date();
+      await cleanup.recover();
+      const consumerIds = [
+        EXECUTION_EVIDENCE_ADAPTER_ID,
+        ...registry.list().map((module) => module.descriptor.id),
+      ];
+      const checkpoints = await Promise.all(consumerIds.map(async (id) => await state.read(id)));
+      safeThroughSequence = Math.min(...checkpoints.map((checkpoint) => checkpoint.sequence));
+      const feed = await canonical.maintain({
+        safeThrough: { sequence: safeThroughSequence },
+        retainAfter: new Date(
+          maintenanceNow.getTime() - DEFAULT_MEMORY_STORAGE_POLICY.canonicalFeedRetentionMs,
+        ).toISOString(),
+        targetBytes: DEFAULT_MEMORY_STORAGE_POLICY.canonicalFeedTargetBytes,
+      });
+      await Promise.all([
+        episodic.store.maintain(maintenanceNow),
+        semantic.store.maintain(maintenanceNow),
+      ]);
+      const pipeline = await state.maintain(maintenanceNow);
+      const deadLetters = await state.inspectDeadLetters();
+      blockedBytes = feed.blockedBytes;
+      lastMaintenanceAtMs = maintenanceNow.getTime();
+      maintenanceDiagnostic = {
+        lastRunAt: maintenanceNow.toISOString(),
+        deletedEvents: feed.deletedEvents,
+        reclaimedBytes: feed.reclaimedLogicalBytes,
+        deletedDeadLetters: pipeline.deletedDeadLetters,
+        deadLetterEntries: deadLetters.entries,
+        deadLetterBytes: deadLetters.bytes,
+      };
+    })();
+    try {
+      await maintenanceRunning;
+    } finally {
+      maintenanceRunning = undefined;
+    }
+  };
 
   const markDegraded = (code: string, error?: unknown): void => {
     if (lastError?.code === code) return;
@@ -189,6 +277,9 @@ export async function createDesktopMemoryPlane(options: {
       const recovery = await executionStore.recoverPendingCanonicalEvents();
       const adapted = await adapter.runOnce();
       await scheduler.runOnce();
+      if (Date.now() - lastMaintenanceAtMs >= DEFAULT_MEMORY_STORAGE_POLICY.maintenanceIntervalMs) {
+        await maintainStorage();
+      }
       if (recovery.quarantined > 0) {
         markDegraded("canonical_event_handoff_quarantined");
       } else if (recovery.failed > 0) {
@@ -290,10 +381,27 @@ export async function createDesktopMemoryPlane(options: {
     },
     async wakeMemoryJobs() {
       await Promise.all([
-        episodic.store.wakeNeedsAttention(new Date()),
-        semantic.store.wakeNeedsAttention(new Date()),
+        episodic.store.wakeNeedsAttention(new Date(), "configuration"),
+        semantic.store.wakeNeedsAttention(new Date(), "configuration"),
       ]);
       scheduler.wake();
+    },
+    async retryMemoryJob(input) {
+      const retry = {
+        id: input.id,
+        expectedRevision: input.expectedRevision,
+        now: new Date(),
+      };
+      if (input.module === "episodic") await episodic.store.retryJob(retry);
+      else await semantic.store.retryJob(retry);
+      scheduler.wake();
+    },
+    async deleteExecutionState(executionIds) {
+      await cleanup.cleanup(executionIds);
+      await maintainStorage();
+    },
+    async maintainStorage() {
+      await maintainStorage();
     },
     async getStatus() {
       const delivery = await executionStore.inspectCanonicalEventDelivery();
@@ -320,19 +428,29 @@ export async function createDesktopMemoryPlane(options: {
             running: work.running,
             needsAttention: work.needsAttention,
             rejected: work.rejected,
+            expired: work.expired,
+            evidenceRecords: work.evidenceRecords,
+            evidenceBytes: work.evidenceBytes,
+            truncatedExecutions: work.truncatedExecutions,
           },
         });
       }
       return {
         state: stopped
           ? "stopped"
-          : lastError !== undefined || delivery.quarantined > 0
+          : lastError !== undefined || delivery.quarantined > 0 || blockedBytes > 0
             ? "degraded"
             : "running",
-        feed: await canonical.inspect(),
+        feed: {
+          ...(await canonical.inspect()),
+          safeThroughSequence,
+          blockedBytes,
+        },
         delivery,
         ...(lastError === undefined ? {} : { lastError }),
         modules,
+        storagePolicy: desktopStoragePolicy(),
+        maintenance: maintenanceDiagnostic,
       };
     },
     start() {
@@ -348,6 +466,7 @@ export async function createDesktopMemoryPlane(options: {
       if (timer !== undefined) clearTimeout(timer);
       timer = undefined;
       await running;
+      await maintenanceRunning;
       await scheduler.stop();
       episodic.close();
       semantic.close();
@@ -376,4 +495,20 @@ export async function resolveDesktopMemoryRecallScope(
     occurredAt: now.toISOString(),
   });
   return policy.recall ? scope.data : undefined;
+}
+
+function desktopStoragePolicy(): Readonly<Record<string, string | number>> {
+  return {
+    schemaVersion: DEFAULT_MEMORY_STORAGE_POLICY.schemaVersion,
+    canonicalFeedRetentionDays: 30,
+    canonicalFeedTargetBytes: DEFAULT_MEMORY_STORAGE_POLICY.canonicalFeedTargetBytes,
+    evidenceMaxRecordsPerExecution: DEFAULT_MEMORY_STORAGE_POLICY.evidenceMaxRecordsPerExecution,
+    evidenceMaxBytesPerExecution: DEFAULT_MEMORY_STORAGE_POLICY.evidenceMaxBytesPerExecution,
+    extractionPromptMaxBytes: DEFAULT_MEMORY_STORAGE_POLICY.extractionPromptMaxBytes,
+    jobRecordRetentionDays: 30,
+    failedPayloadRetentionDays: 30,
+    deadLetterRetentionDays: 30,
+    deadLetterMaxEntries: DEFAULT_MEMORY_STORAGE_POLICY.deadLetterMaxEntries,
+    deadLetterMaxBytes: DEFAULT_MEMORY_STORAGE_POLICY.deadLetterMaxBytes,
+  };
 }
