@@ -117,6 +117,13 @@ export interface DesktopMemoryPlane {
   stop(): Promise<void>;
 }
 
+export function resolveMemoryModuleHealthStatus(
+  status: "healthy" | "degraded" | "unavailable",
+  needsAttention: number,
+): "healthy" | "degraded" | "unavailable" {
+  return needsAttention > 0 && status === "healthy" ? "degraded" : status;
+}
+
 export async function createDesktopMemoryPlane(options: {
   readonly pragmaHome: string;
   readonly logger: PragmaLogger;
@@ -189,6 +196,7 @@ export async function createDesktopMemoryPlane(options: {
   let timer: ReturnType<typeof setTimeout> | undefined;
   let running: Promise<void> | undefined;
   let lastError: { readonly code: string; readonly occurredAt: string } | undefined;
+  let reportedExtractionIssues = new Set<string>();
   let maintenanceRunning: Promise<void> | undefined;
   let lastMaintenanceAtMs = 0;
   let safeThroughSequence = 0;
@@ -272,6 +280,33 @@ export async function createDesktopMemoryPlane(options: {
     }, options.pollIntervalMs ?? 1_000);
   };
 
+  const reportExtractionIssues = (
+    issues: readonly {
+      readonly moduleId: string;
+      readonly work: {
+        readonly needsAttention: number;
+        readonly lastErrorCode?: string | undefined;
+      };
+    }[],
+  ): void => {
+    const current = new Set<string>();
+    for (const issue of issues) {
+      const code = issue.work.lastErrorCode ?? "memory_extraction_needs_attention";
+      const key = `${issue.moduleId}\0${code}`;
+      current.add(key);
+      if (reportedExtractionIssues.has(key)) continue;
+      options.logger.error(
+        "desktop.memory_extraction_needs_attention",
+        "A Memory extraction module has jobs that need attention.",
+        new Error(
+          `${issue.moduleId} has ${issue.work.needsAttention} extraction job(s) that need attention.`,
+        ),
+        { moduleId: issue.moduleId, code, needsAttention: issue.work.needsAttention },
+      );
+    }
+    reportedExtractionIssues = current;
+  };
+
   const tick = async (): Promise<void> => {
     try {
       const recovery = await executionStore.recoverPendingCanonicalEvents();
@@ -280,10 +315,28 @@ export async function createDesktopMemoryPlane(options: {
       if (Date.now() - lastMaintenanceAtMs >= DEFAULT_MEMORY_STORAGE_POLICY.maintenanceIntervalMs) {
         await maintainStorage();
       }
+      const [episodicWork, semanticWork] = await Promise.all([
+        episodic.store.inspect(),
+        semantic.store.inspect(),
+      ]);
+      const extractionIssues = [
+        { moduleId: episodic.descriptor.id, work: episodicWork },
+        { moduleId: semantic.descriptor.id, work: semanticWork },
+      ].filter((item) => item.work.needsAttention > 0);
+      reportExtractionIssues(extractionIssues);
       if (recovery.quarantined > 0) {
         markDegraded("canonical_event_handoff_quarantined");
       } else if (recovery.failed > 0) {
         markDegraded("canonical_event_delivery_failed");
+      } else if (extractionIssues[0] !== undefined) {
+        const extractionIssue = extractionIssues[0];
+        const code = extractionIssue.work.lastErrorCode ?? "memory_extraction_needs_attention";
+        markDegraded(
+          code,
+          new Error(
+            `${extractionIssue.moduleId} has ${extractionIssue.work.needsAttention} extraction job(s) that need attention.`,
+          ),
+        );
       } else {
         lastError = undefined;
       }
@@ -422,6 +475,8 @@ export async function createDesktopMemoryPlane(options: {
             : await semantic.store.inspect();
         modules.push({
           ...diagnostic,
+          status: resolveMemoryModuleHealthStatus(diagnostic.status, work.needsAttention),
+          ...(work.lastErrorCode === undefined ? {} : { lastErrorCode: work.lastErrorCode }),
           work: {
             records: "episodes" in work ? work.episodes : work.facts,
             pending: work.pending,
@@ -438,7 +493,10 @@ export async function createDesktopMemoryPlane(options: {
       return {
         state: stopped
           ? "stopped"
-          : lastError !== undefined || delivery.quarantined > 0 || blockedBytes > 0
+          : lastError !== undefined ||
+              delivery.quarantined > 0 ||
+              blockedBytes > 0 ||
+              modules.some((module) => module.status !== "healthy")
             ? "degraded"
             : "running",
         feed: {

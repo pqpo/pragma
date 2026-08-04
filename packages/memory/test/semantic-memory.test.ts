@@ -13,6 +13,7 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 
 import {
   MemoryModuleRegistry,
+  MEMORY_CURATOR_REF,
   SemanticExtractionOutputSchema,
   createFederatedMemoryContextStore,
   createSemanticMemoryModule,
@@ -535,7 +536,7 @@ function fakeExtractor(
         ],
       }),
       provenance: {
-        curatorRef: "expert:0000000000memory",
+        curatorRef: MEMORY_CURATOR_REF,
         promptVersion: "pragma.memory-curator.semantic/v1",
         profileRevision: 0,
         runtimeId: "runtime",

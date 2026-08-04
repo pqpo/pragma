@@ -30,6 +30,10 @@ pinned revision.
 - Plugins, Runtime adapters, tool adapters, Context policies, and other independently shipped
   extensions retain explicit versions such as `plugin:pragma.memory@1.0.0` and
   `pragma.tool.call@v1`.
+- Reserved and built-in semantic IDs follow the same Crockford Base32 grammar as Host-allocated
+  IDs. Their canonical refs are runtime-Schema-validated where declared and covered at the first
+  persisted or cross-process consumer boundary; human-readable mnemonics do not bypass identity
+  validation.
 
 ## Migration
 
@@ -54,3 +58,5 @@ rewritten by compiler compatibility upgrades.
 - Two same-kind resources cannot share a normalized name.
 - Import and migration code must detect identity conflicts rather than preserving duplicate legacy
   versions.
+- TypeScript string types alone cannot prove the lexical validity of a built-in identity. Runtime
+  Schema validation and boundary integration tests are required for every built-in semantic ref.

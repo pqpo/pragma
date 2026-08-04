@@ -71,6 +71,8 @@ export const settings = {
       "{{status}} · 累計 {{attempts}} 次 · 保留 {{evidence}} 筆 Evidence · 省略 {{omitted}} 筆 · {{error}}",
     retryExtraction: "重試提煉",
     retryError: "提煉任務已經變更或不再允許重試。",
+    extractionError: "記憶提取失敗：{{code}}",
+    pipelineError: "記憶流水線錯誤：{{code}}",
     assetTitle: "記憶策略",
     assetDescription: "此團隊資產只能收緊全域策略；執行階段限制還會與本設定取交集。",
     effectiveSummary: "目前生效：採集{{capture}}，召回{{recall}}，學習{{learning}}",

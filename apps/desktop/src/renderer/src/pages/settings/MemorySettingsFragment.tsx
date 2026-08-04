@@ -241,17 +241,29 @@ export function MemorySettingsFragment() {
                 })}
               </small>
             )}
+            {status?.lastError === undefined ? null : (
+              <small className="form-error" role="alert">
+                {t("memory.pipelineError", { code: status.lastError.code })}
+              </small>
+            )}
             {status?.modules.map((module) =>
               module.work === undefined ? null : (
-                <small key={module.moduleId}>
-                  {t("memory.moduleWorkSummary", {
-                    module: module.moduleId,
-                    records: module.work.records,
-                    pending: module.work.pending + module.work.running,
-                    attention: module.work.needsAttention,
-                    rejected: module.work.rejected,
-                  })}
-                </small>
+                <span className="memory-module-status" key={module.moduleId}>
+                  <small>
+                    {t("memory.moduleWorkSummary", {
+                      module: module.moduleId,
+                      records: module.work.records,
+                      pending: module.work.pending + module.work.running,
+                      attention: module.work.needsAttention,
+                      rejected: module.work.rejected,
+                    })}
+                  </small>
+                  {module.lastErrorCode === undefined ? null : (
+                    <small className="form-error" role="alert">
+                      {t("memory.extractionError", { code: module.lastErrorCode })}
+                    </small>
+                  )}
+                </span>
               ),
             )}
           </span>

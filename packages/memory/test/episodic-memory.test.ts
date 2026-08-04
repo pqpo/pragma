@@ -14,6 +14,7 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import {
   createEpisodicMemoryModule,
   createFederatedMemoryContextStore,
+  MEMORY_CURATOR_REF,
   MemoryModuleRegistry,
   type EpisodicExtractionInput,
   type EpisodicMemoryExtractor,
@@ -444,8 +445,32 @@ describe("Episodic Memory", () => {
     clock = new Date(clock.getTime() + 5 * 60_000 + 1_000);
     await module.runBackgroundOnce?.();
     const diagnostic = await module.store.inspect();
-    expect(diagnostic.needsAttention).toBe(1);
+    expect(diagnostic).toMatchObject({
+      needsAttention: 1,
+      lastErrorCode: "extractor_evidence_ref_invalid",
+    });
     expect(await module.store.list()).toEqual([]);
+
+    const database = new DatabaseSync(
+      join(
+        new PragmaPaths({ pragmaHome: root }).memoryModuleStateRoot("pragma.memory.episodic"),
+        "jobs.sqlite",
+      ),
+    );
+    database
+      .prepare("UPDATE jobs SET job_json = ? WHERE status = 'needs_attention'")
+      .run("{invalid-json");
+    database.close();
+
+    await expect(module.store.inspect()).resolves.toMatchObject({
+      needsAttention: 1,
+      lastErrorCode: "episodic_extraction_job_invalid",
+    });
+    await expect(module.store.wakeNeedsAttention(clock)).resolves.toBeUndefined();
+    await expect(module.store.inspect()).resolves.toMatchObject({
+      needsAttention: 1,
+      lastErrorCode: "episodic_extraction_job_invalid",
+    });
     module.close();
   });
 
@@ -741,7 +766,7 @@ function fakeExtractor(
         valueScore: 0.9,
       },
       provenance: {
-        curatorRef: "expert:0000000000memory",
+        curatorRef: MEMORY_CURATOR_REF,
         promptVersion: "pragma.memory-curator/v1",
         profileRevision: 0,
         runtimeId: "test-runtime",

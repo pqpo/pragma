@@ -8,6 +8,7 @@ import {
   type SemanticMemoryExtractor,
 } from "./schema.ts";
 import { createSemanticMemoryStore, type SemanticMemoryStore } from "./store.ts";
+import { extractionErrorCode } from "../pipeline/extraction-error-code.ts";
 import type { MemoryModule } from "../pipeline/memory-module.ts";
 
 export interface SemanticMemoryModule extends MemoryModule {
@@ -133,7 +134,7 @@ export async function createSemanticMemoryModule(
       } catch (error) {
         await store.fail({
           job,
-          errorCode: errorCode(error),
+          errorCode: extractionErrorCode(error, "semantic_extraction"),
           now: now(),
           retry: isConfigurationError(error) ? "configuration" : "transient",
         });
@@ -276,14 +277,8 @@ function refKey(ref: MemorySubjectRef): string {
   return `${ref.type}\0${ref.id}`;
 }
 
-function errorCode(error: unknown): string {
-  return error instanceof Error
-    ? error.message.split(":", 1)[0] || "semantic_extraction_failed"
-    : "semantic_extraction_failed";
-}
-
 function isConfigurationError(error: unknown): boolean {
-  const code = errorCode(error);
+  const code = extractionErrorCode(error, "semantic_extraction");
   return (
     code.includes("unavailable") ||
     code.includes("configuration") ||
