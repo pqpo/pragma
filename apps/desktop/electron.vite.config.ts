@@ -1,24 +1,25 @@
+import { readFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 
 import react from "@vitejs/plugin-react";
 import { defineConfig } from "electron-vite";
 
+interface DesktopPackageManifest {
+  readonly dependencies?: Readonly<Record<string, string>>;
+}
+
+const desktopPackageManifest = JSON.parse(
+  readFileSync(fileURLToPath(new URL("./package.json", import.meta.url)), "utf8"),
+) as DesktopPackageManifest;
+const workspaceDependencies = Object.entries(desktopPackageManifest.dependencies ?? {})
+  .filter(([, version]) => version.startsWith("workspace:"))
+  .map(([name]) => name);
+
 export default defineConfig({
   main: {
     build: {
       externalizeDeps: {
-        exclude: [
-          "@pragma/runtime-claude-code",
-          "@pragma/runtime-codex",
-          "@pragma/runtime-pi",
-          "@pragma/runtime-qodercli",
-          "@pragma/core",
-          "@pragma/evaluation",
-          "@pragma/interpreter",
-          "@pragma/memory",
-          "@pragma/shared",
-          "@pragma/default-agent",
-        ],
+        exclude: workspaceDependencies,
       },
       rollupOptions: {
         input: {
