@@ -64,13 +64,11 @@ Invocation 创建。Snapshot 只保存 `systemSessionId` 与 `RuntimeSessionRef`
 子 Invocation 都是可收集终态，不会自动使父 Invocation 失败。只有全部直属任务被 join 后父 Invocation
 才能成功，因此不会依赖模型记住调用 wait。
 
-Invocation 输出通过 Core 内部的 Execution Handoff 模块进入 `inline` 或 `context` 交接。大型输出和
-已注册 workspace 文件以 `pragma.handoff` Context item 暴露；`wait_experts` 和自动续跑只传摘要与引用。
-Handoff 的物理 owner 是产出它的 Execution；Context Store 按 ExpertSession 的持久 executionIds 联邦读取，
-Host 可通过 `HandoffContextVisibilityResolver` 扩展 owner 可见范围。Desktop 以 Mission timeline 联邦
-successor Session 和 Flow Execution，因此重启后仍可重建同一读取视图。写入始终落到当前 Execution，
-不同 owner 不共享视图，重复 Context id fail closed。该 overlay 不属于 Expert 定义，也不通过 Plugin
-可选安装。
+Invocation 输出统一为 `inline` 或通用 `context` 引用。超过阈值的输出由 Core 通过 Host 注入的唯一
+Context overflow target 写入；Core 不认识 Mission Board 包或物理存储。Desktop 将 Mission Board 作为
+Mission-scoped Context binding 注入，因此 successor Session、Flow 与应用重启后仍共享同一白板。
+`wait_experts` 和自动续跑只传有界摘要与 Context 引用。计划、TODO、进度、决策、handoff 和 process
+都是 Mission Board `GUIDE.md` 描述的使用范式，不新增专用 managed tool。
 
 ## Dispatcher 与通知边界
 

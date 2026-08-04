@@ -154,8 +154,7 @@ const defineExpertSymbol = Symbol("pragma.define-expert");
 interface ExpertRuntimeOptions extends Omit<ExpertOptions, "pragmaHome"> {
   readonly pragmaHome: string;
   readonly pluginEntries?:
-    | readonly (ExpertAgentPluginEntry | ExpertAgentPluginRegistration)[]
-    | undefined;
+    readonly (ExpertAgentPluginEntry | ExpertAgentPluginRegistration)[] | undefined;
   readonly pluginLoadIssues?: readonly ExpertAgentPluginLoadIssue[] | undefined;
   readonly env?: NodeJS.ProcessEnv | undefined;
 }
@@ -302,7 +301,10 @@ export class Expert implements IExpertAgent {
   }
 
   createDefaultTools(options: CreateContextToolsOptions = {}): readonly ExpertAgentDefaultTool[] {
-    return createContextTools(this, options);
+    return createContextTools(this, {
+      ...options,
+      mutationApprovalFor: (namespace) => this.contextSystem.mutationApprovalFor(namespace),
+    });
   }
 
   async listContext(

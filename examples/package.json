@@ -26,6 +26,7 @@
   "dependencies": {
     "@earendil-works/pi-tui": "0.83.0",
     "@pragma/core": "workspace:*",
+    "@pragma/context-filesystem": "workspace:*",
     "@pragma/interpreter": "workspace:*",
     "@pragma/plugin-repo-manager": "workspace:*",
     "@pragma/plugin-memory": "workspace:*",

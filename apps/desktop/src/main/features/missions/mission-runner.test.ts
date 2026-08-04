@@ -10,6 +10,7 @@ import {
   defineExpert,
   defineRuntimeDriver,
   fingerprintExpertExecutionDefinition,
+  InMemoryContextStore,
   PragmaPaths,
   readRuntimeSessionRecord,
   RuntimeContextCompactionNotNeededError,
@@ -142,6 +143,7 @@ describe("MissionRunner", { timeout: 15_000 }, () => {
         defaultRuntimeId: "fake",
       }),
       assertStorageWriteAllowed: async () => undefined,
+      hostContextStores: [{ namespace: "memory", store: new InMemoryContextStore() }],
       onExecutionLinked,
     });
 
@@ -188,7 +190,7 @@ describe("MissionRunner", { timeout: 15_000 }, () => {
         snapshot.resources.find((resource) => resource.kind === "Expert")!,
       ),
     });
-    const historicalHandoff: { id: string | undefined } = { id: undefined };
+    const historicalBoardOutput: { id: string | undefined } = { id: undefined };
     const runtime = defineRuntimeDriver<
       never,
       { id: string; context: RuntimeDriverSessionContext }
@@ -200,12 +202,13 @@ describe("MissionRunner", { timeout: 15_000 }, () => {
       async startTurn(session, turn) {
         if (turn.rawQuery === mission.goal) {
           return {
-            outputText: "historical mission handoff\n".repeat(4_000),
+            outputText: "historical mission board output\n".repeat(4_000),
             runtimeSessionId: session.id,
           };
         }
-        const historicalHandoffId = historicalHandoff.id;
-        if (historicalHandoffId === undefined) throw new Error("Historical handoff id is missing.");
+        const historicalOutputId = historicalBoardOutput.id;
+        if (historicalOutputId === undefined)
+          throw new Error("Historical board output id is missing.");
         const read = session.context.agent
           .createDefaultTools()
           .find((tool) => tool.name === "read_expert_context");
@@ -213,16 +216,14 @@ describe("MissionRunner", { timeout: 15_000 }, () => {
         const results = await Promise.all(
           [0, 1].map(
             async () =>
-              await read.call(
-                { namespace: "pragma.handoff", id: historicalHandoffId },
-                turn.signal,
-                { execution: session.context.request.executionContext },
-              ),
+              await read.call({ namespace: "mission-board", id: historicalOutputId }, turn.signal, {
+                execution: session.context.request.executionContext,
+              }),
           ),
         );
         const failed = results.find(
           (result) =>
-            result.isError === true || !result.text.includes("historical mission handoff"),
+            result.isError === true || !result.text.includes("historical mission board output"),
         );
         return {
           outputText:
@@ -295,16 +296,16 @@ describe("MissionRunner", { timeout: 15_000 }, () => {
       pragmaHome: join(root, "state"),
     }).get(originalExecutionId);
     if (originalExecution?.output?.type !== "context") {
-      throw new Error("Expected the original Mission turn to produce a Context handoff.");
+      throw new Error("Expected the original Mission turn to produce a Context output.");
     }
-    const originalHandoff = originalExecution.output.contexts[0];
-    if (originalHandoff === undefined) {
+    const originalBoardOutput = originalExecution.output.contexts[0];
+    if (originalBoardOutput === undefined) {
       throw new Error("Expected the original Mission turn to produce a Context reference.");
     }
-    historicalHandoff.id = originalHandoff.id;
+    expect(originalBoardOutput.namespace).toBe("mission-board");
+    historicalBoardOutput.id = originalBoardOutput.id;
     definitionVersion = 2;
     activeMissions = createMissionStore({ missionsPath: join(root, "missions") });
-    const timelineRead = vi.spyOn(activeMissions, "readTimelinePage");
     runner = createRunner(activeMissions);
 
     await runner.sendMessage({
@@ -320,8 +321,6 @@ describe("MissionRunner", { timeout: 15_000 }, () => {
 
     expect((await activeMissions.get(mission.id)).execution?.sessionId).not.toBe(originalSessionId);
     expect(compileSystemExecutor).toHaveBeenCalledTimes(2);
-    // One read restores Mission context; both concurrent handoff reads share one visibility load.
-    expect(timelineRead).toHaveBeenCalledTimes(2);
     await expect(runner.getChat({ id: mission.id, limit: 50 })).resolves.toMatchObject({
       entries: expect.arrayContaining([
         expect.objectContaining({ kind: "assistant", content: "successor-read-ok" }),
@@ -329,11 +328,7 @@ describe("MissionRunner", { timeout: 15_000 }, () => {
     });
     await runner.delete(mission.id);
     await expect(
-      readFile(
-        new PragmaPaths({ pragmaHome: join(root, "state") }).executionHandoffsManifest(
-          originalExecutionId,
-        ),
-      ),
+      readFile(join(root, "missions", mission.id, "board", "shared", originalBoardOutput.id)),
     ).rejects.toMatchObject({ code: "ENOENT" });
   });
 
@@ -1963,7 +1958,7 @@ describe("MissionRunner", { timeout: 15_000 }, () => {
     });
     await executions.create(
       {
-        schemaVersion: "pragma.execution/v8",
+        schemaVersion: "pragma.execution/v9",
         executionId,
         version: 0,
         kind: "expert-turn",
@@ -2362,7 +2357,7 @@ describe("MissionRunner", { timeout: 15_000 }, () => {
     });
     await executions.create(
       {
-        schemaVersion: "pragma.execution/v8",
+        schemaVersion: "pragma.execution/v9",
         executionId,
         version: 0,
         kind: "expert-turn",
@@ -2568,7 +2563,7 @@ describe("MissionRunner", { timeout: 15_000 }, () => {
     });
   });
 
-  it("projects oversized replies as Handoff references without copying full text", async () => {
+  it("projects oversized replies as Mission Board references without copying full text", async () => {
     const root = await mkdtemp(join(tmpdir(), "pragma-mission-reply-"));
     temporaryPaths.push(root);
     const project = createPragmaProjectStore({ projectsPath: join(root, "projects") });
@@ -2630,9 +2625,9 @@ describe("MissionRunner", { timeout: 15_000 }, () => {
     expect(reply?.kind).toBe("assistant");
     if (reply?.kind !== "assistant") throw new Error("Expected an assistant reply.");
     expect(reply.content.length).toBeLessThan(10_000);
-    expect(reply.content).toContain("[Handoff summary truncated.]");
+    expect(reply.content).toContain("[Context output summary truncated.]");
     expect(reply.content).toContain("Full output is available through Context System:");
-    expect(reply.content).toContain("pragma.handoff/");
+    expect(reply.content).toContain("mission-board/");
     expect(reply.content).not.toContain("x".repeat(5_000));
     const timeline = await readFile(join(root, "missions", mission.id, "messages.jsonl"), "utf8");
     expect(timeline).not.toContain('"kind":"assistant"');

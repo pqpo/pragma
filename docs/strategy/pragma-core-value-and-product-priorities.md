@@ -216,7 +216,7 @@ Memory 不是闭合的四类 Record。默认动态投影回答两个基本问题
 - `Episodic Memory`：过去发生过什么、尝试过什么、结果如何；
 - `Semantic Memory`：当前相信什么是真的，置信度、时效和冲突是什么。
 
-TODO、共享白板和 Handoff 是可选 Execution working state，只能作为 Evidence 来源之一。Knowledge、
+TODO、plan 和 Handoff 是 Mission Board 的可选使用范式，只能作为 Evidence 来源之一。Knowledge、
 CodeGraph 和未来索引是相对稳定、带不可变 Revision 的 Memory type，由独立 Memory Module
 消费同一条 Evidence Feed 后生成。正式 Skill 复用 Capability，不维护平行的 Skill Memory 权威 Store。
 
@@ -403,7 +403,7 @@ Pragma 应建立两个相互增强的循环。
 - 按 ADR 031 建立 Host 内置的持久 Evidence Feed、Memory Module SPI 和联邦 Memory Context；
 - 明确用户、项目、工作方式、Expert、Team、Mission、Execution 的 subject、ownership 和 binding；
 - 统一不同 Runtime 的 Evidence identity 和 provenance；
-- 保持可选 Execution working state 与 Memory 生命周期隔离；
+- 保持 Mission Board 与 Memory 生命周期隔离；
 - 实现 Dynamic Memory 到私有、共享、可发布 Knowledge/Skill/CodeGraph Asset 的显式 promotion；
 - 用 CodeGraph 验证新增类型不修改 Core union、默认 Store 或联邦 Context 实现；
 - 支持加密同步、导出、导入、删除和设备间冲突处理；

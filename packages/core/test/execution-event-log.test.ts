@@ -685,7 +685,7 @@ async function fixture() {
   const timestamp = new Date().toISOString();
   const definition = { id: "flow", kind: "flow" as const };
   const execution: ExecutionRecord = {
-    schemaVersion: "pragma.execution/v8",
+    schemaVersion: "pragma.execution/v9",
     executionId: "execution",
     version: 0,
     kind: "flow",

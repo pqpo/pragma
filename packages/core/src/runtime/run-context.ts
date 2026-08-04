@@ -10,6 +10,7 @@ export const EXECUTION_ID_ATTR = "execution.executionId";
 export const INVOCATION_ID_ATTR = "execution.invocationId";
 export const EXECUTION_RUNTIME_SESSION_ATTR = "execution.runtimeSession";
 export const EXECUTION_CURRENT_EXPERT_ID_ATTR = "execution.currentExpertId";
+export const EXECUTION_CONTEXT_ID_ATTR = "execution.contextId";
 
 export interface ExpertAgentRunContext {
   readonly source?: ExpertAgentRunSource | undefined;
@@ -19,6 +20,7 @@ export interface ExpertAgentRunContext {
 export interface ExecutionRunScope {
   readonly executionId?: string | undefined;
   readonly invocationId?: string | undefined;
+  readonly contextId?: string | undefined;
   readonly runtimeSession?: RuntimeSessionRef | undefined;
 }
 
@@ -48,6 +50,7 @@ export function withExecutionRunScope(
       ...base.attributes,
       ...(scope.executionId === undefined ? {} : { [EXECUTION_ID_ATTR]: scope.executionId }),
       ...(scope.invocationId === undefined ? {} : { [INVOCATION_ID_ATTR]: scope.invocationId }),
+      ...(scope.contextId === undefined ? {} : { [EXECUTION_CONTEXT_ID_ATTR]: scope.contextId }),
       ...(scope.runtimeSession === undefined
         ? {}
         : {
@@ -63,6 +66,7 @@ export function readExecutionRunScope(
   return {
     executionId: readContextAttribute(context, EXECUTION_ID_ATTR),
     invocationId: readContextAttribute(context, INVOCATION_ID_ATTR),
+    contextId: readContextAttribute(context, EXECUTION_CONTEXT_ID_ATTR),
     runtimeSession: readRuntimeSessionAttribute(context),
   };
 }

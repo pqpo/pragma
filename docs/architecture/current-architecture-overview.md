@@ -213,7 +213,8 @@ ADR 002 曾把 Memory System 定义为 Core 抽象，但当前 `MemorySystem`、
 ADR 031 已替代 ADR 002/003，并由 `docs/architecture/memory-plane-implementation-plan.md` 固化分阶段
 实施顺序。目标边界为：
 
-- Core 只拥有 Memory-neutral Canonical Event Feed、durable handoff 和 canonical identity；
+- Core 只拥有 Memory-neutral Canonical Event Feed、durable canonical-event commit handoff 和
+  canonical identity；Mission Board 由 Host 注入通用 Context binding；
 - `@pragma/memory` 拥有 Evidence adapter、Memory Module SPI、策略、联邦 Context 和后续检索；
 - Memory 是 Host 内置能力，不再由每个 Expert 选择安装；
 - Experience 与 Fact 是默认动态投影；Knowledge 与 CodeGraph 是相对稳定的 Memory revision，仍是

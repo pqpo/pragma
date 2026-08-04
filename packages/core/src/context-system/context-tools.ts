@@ -52,6 +52,7 @@ export interface ExpertAgentDefaultTool {
 export interface CreateContextToolsOptions {
   readonly getContext?: (() => ExpertAgentRunContext | undefined) | undefined;
   readonly readByteBudget?: number | undefined;
+  readonly mutationApprovalFor?: ((namespace: string) => "none" | "required") | undefined;
 }
 
 export interface ExpertAgentContextItemOperations {
@@ -189,6 +190,7 @@ export function createContextTools(
       approval: {
         mode: "required",
         reason: "Writing Expert context requires explicit approval.",
+        when: (request) => requiresMutationApproval(request.input, options),
       },
       inputSchema: objectSchema(
         {
@@ -230,6 +232,7 @@ export function createContextTools(
       approval: {
         mode: "required",
         reason: "Writing Expert context requires explicit approval.",
+        when: (request) => requiresMutationApproval(request.input, options),
       },
       inputSchema: objectSchema(
         {
@@ -305,6 +308,7 @@ export function createContextTools(
       approval: {
         mode: "required",
         reason: "Deleting Expert context requires explicit approval.",
+        when: (request) => requiresMutationApproval(request.input, options),
       },
       inputSchema: objectSchema(
         {
@@ -336,6 +340,14 @@ export function createContextTools(
       },
     },
   ];
+}
+
+function requiresMutationApproval(input: unknown, options: CreateContextToolsOptions): boolean {
+  if (!isRecord(input) || typeof input.namespace !== "string") {
+    return true;
+  }
+
+  return (options.mutationApprovalFor?.(input.namespace) ?? "required") === "required";
 }
 
 function createAskUserQuestionTool(): ExpertAgentDefaultTool {
