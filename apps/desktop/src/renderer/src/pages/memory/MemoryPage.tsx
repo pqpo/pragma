@@ -162,7 +162,7 @@ export function MemoryPage() {
   };
 
   return (
-    <section className={`memory-page is-${view}`}>
+    <section className="memory-page">
       <header className="memory-page-header">
         <div>
           <h1>{t("title")}</h1>

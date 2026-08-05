@@ -56,6 +56,8 @@
   --radius-control: var(--ui-radius-md);
   --radius-card: var(--ui-radius-lg);
   --radius-large: var(--ui-radius-lg);
+  --page-content-gutter: 40px;
+  --page-content-gutter-compact: 24px;
   --screen-title-content-gap: 24px;
 }
 
@@ -15810,11 +15812,7 @@ textarea:focus-visible,
   min-width: 0;
   min-height: 0;
   grid-template-rows: auto auto auto minmax(0, 1fr);
-  padding: 40px 42px 28px;
-}
-
-.memory-page.is-extractions {
-  padding-bottom: 12px;
+  padding: 40px var(--page-content-gutter) var(--page-content-gutter);
 }
 
 .memory-page-header {
@@ -16291,6 +16289,13 @@ textarea:focus-visible,
   gap: 16px;
 }
 
+.memory-extraction-jobs {
+  display: flex;
+  min-height: 0;
+  flex-direction: column;
+  overflow: hidden;
+}
+
 .memory-extraction-jobs-header p {
   margin: 0;
 }
@@ -16339,6 +16344,8 @@ textarea:focus-visible,
 
 .memory-extraction-board {
   display: grid;
+  min-height: 0;
+  flex: 1;
   grid-template-columns: repeat(4, minmax(220px, 1fr));
   gap: 24px;
   min-width: 940px;
@@ -16346,7 +16353,10 @@ textarea:focus-visible,
 }
 
 .memory-extraction-lane {
+  display: flex;
   min-width: 0;
+  min-height: 0;
+  flex-direction: column;
 }
 
 .memory-extraction-lane > header {
@@ -16374,7 +16384,8 @@ textarea:focus-visible,
 
 .memory-extraction-lane-items {
   display: flex;
-  max-height: min(62vh, 680px);
+  min-height: 0;
+  flex: 1;
   flex-direction: column;
   gap: 9px;
   overflow-y: auto;
@@ -16511,7 +16522,7 @@ textarea:focus-visible,
 
 @media (max-width: 900px) {
   .memory-page {
-    padding: 28px 24px;
+    padding: 28px var(--page-content-gutter-compact) var(--page-content-gutter-compact);
   }
 
   .memory-page-header,
