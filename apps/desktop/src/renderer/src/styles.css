@@ -15949,6 +15949,159 @@ textarea:focus-visible,
   color: var(--muted);
 }
 
+.memory-candidate-header {
+  display: grid;
+  min-width: 0;
+  gap: 16px;
+  padding: 2px 0 24px;
+  border-bottom: 1px solid var(--border);
+}
+
+.memory-candidate-meta {
+  display: flex;
+  min-width: 0;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.memory-candidate-meta > small {
+  min-width: 0;
+  overflow: hidden;
+  color: var(--muted);
+  font-family: "SFMono-Regular", Consolas, "Liberation Mono", monospace;
+  font-size: 11px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.memory-candidate-field {
+  display: grid;
+  min-width: 0;
+  gap: 7px;
+  color: var(--text);
+  font-size: 12px;
+  font-weight: 650;
+}
+
+.memory-candidate-field :is(input, textarea) {
+  box-sizing: border-box;
+  width: 100%;
+  border: 1px solid var(--border-strong);
+  border-radius: var(--radius-control);
+  background: var(--surface);
+  color: var(--text);
+  font: inherit;
+  font-weight: 450;
+}
+
+.memory-candidate-field input {
+  min-height: 42px;
+  padding: 9px 11px;
+}
+
+.memory-candidate-field.is-name input {
+  font-size: 16px;
+  font-weight: 650;
+}
+
+.memory-candidate-field textarea {
+  min-height: 88px;
+  padding: 10px 11px;
+  line-height: 1.5;
+  resize: vertical;
+}
+
+.memory-candidate-field :is(input, textarea):focus-visible {
+  border-color: var(--green);
+  outline: 0;
+  box-shadow: 0 0 0 3px var(--focus-ring);
+}
+
+.memory-candidate-files > .memory-note {
+  margin: -2px 0 14px;
+  line-height: 1.55;
+}
+
+.memory-candidate-file {
+  overflow: hidden;
+  margin-top: 8px;
+  border: 1px solid var(--border);
+  border-radius: 9px;
+  background: var(--surface);
+}
+
+.memory-candidate-file > summary {
+  display: flex;
+  min-width: 0;
+  align-items: center;
+  gap: 8px;
+  padding: 10px 12px;
+  color: var(--text);
+  cursor: pointer;
+  font-size: 13px;
+  list-style: none;
+}
+
+.memory-candidate-file > summary::-webkit-details-marker {
+  display: none;
+}
+
+.memory-candidate-file > summary::before {
+  flex: 0 0 auto;
+  color: var(--muted);
+  content: "›";
+  font-size: 18px;
+  line-height: 1;
+  transform: rotate(0deg);
+  transition: transform 120ms ease;
+}
+
+.memory-candidate-file[open] > summary::before {
+  transform: rotate(90deg);
+}
+
+.memory-candidate-file > summary > span {
+  min-width: 0;
+  flex: 1;
+  overflow-wrap: anywhere;
+}
+
+.memory-candidate-file > summary > small {
+  flex: 0 0 auto;
+  padding: 2px 7px;
+  border-radius: 999px;
+  background: var(--surface-subtle, #f4f7f5);
+  color: var(--muted);
+  font-size: 11px;
+}
+
+.memory-candidate-file[open] > summary {
+  border-bottom: 1px solid var(--border);
+  background: var(--surface-subtle, #f4f7f5);
+}
+
+.memory-candidate-file > textarea {
+  display: block;
+  box-sizing: border-box;
+  width: 100%;
+  min-height: 260px;
+  max-height: 55vh;
+  padding: 14px;
+  border: 0;
+  outline: 0;
+  background: var(--surface);
+  color: var(--text);
+  font-family: "SFMono-Regular", Consolas, "Liberation Mono", monospace;
+  font-size: 12px;
+  line-height: 1.65;
+  resize: vertical;
+}
+
+.memory-candidate-file > textarea:focus-visible {
+  box-shadow: inset 0 0 0 2px var(--focus-ring);
+}
+
 .memory-binding {
   display: flex;
   align-items: center;
@@ -16009,6 +16162,37 @@ textarea:focus-visible,
 .memory-actions button.is-danger {
   border-color: #e3b1aa;
   color: #9a3f35;
+}
+
+.memory-candidate-actions {
+  margin-top: 18px;
+}
+
+.memory-candidate-actions .primary-button {
+  border-color: transparent;
+  background: var(--ui-accent);
+  color: #fff;
+}
+
+.memory-candidate-actions .primary-button:hover:not(:disabled) {
+  background: var(--ui-accent-strong);
+}
+
+.memory-candidate-actions .secondary-button {
+  border-color: var(--ui-line-strong);
+  background: var(--ui-surface);
+  color: var(--ui-text);
+}
+
+.memory-candidate-actions .danger-button {
+  border-color: #d8bbb6;
+  background: #fff8f7;
+  color: #9d3f34;
+}
+
+.memory-candidate-actions button:disabled {
+  cursor: wait;
+  opacity: 0.65;
 }
 
 .memory-action-with-tooltip {
@@ -16258,6 +16442,15 @@ textarea:focus-visible,
     max-height: 220px;
     border-right: 0;
     border-bottom: 1px solid var(--border);
+  }
+
+  .memory-candidate-meta {
+    align-items: flex-start;
+    flex-direction: column;
+  }
+
+  .memory-candidate-meta > small {
+    max-width: 100%;
   }
 
   .mission-memory-activity dl {

@@ -239,45 +239,55 @@ export function MemoryPage() {
               if (candidate === undefined) return <p>{t("selectCandidate")}</p>;
               return (
                 <>
-                  <header>
-                    <span className="memory-status is-pending_review">pending_review</span>
-                    <input
-                      aria-label={t("candidateName")}
-                      value={candidate.name}
-                      maxLength={50}
-                      onChange={(event) =>
-                        setCandidates((current) =>
-                          current.map((item) =>
-                            item.id === candidate.id ? { ...item, name: event.target.value } : item,
-                          ),
-                        )
-                      }
-                    />
-                    <textarea
-                      aria-label={t("candidateDescription")}
-                      value={candidate.description}
-                      maxLength={500}
-                      onChange={(event) =>
-                        setCandidates((current) =>
-                          current.map((item) =>
-                            item.id === candidate.id
-                              ? { ...item, description: event.target.value }
-                              : item,
-                          ),
-                        )
-                      }
-                    />
-                    <small>{candidate.expertRef}</small>
+                  <header className="memory-candidate-header">
+                    <div className="memory-candidate-meta">
+                      <span className="memory-status is-pending_review">pending_review</span>
+                      <small title={candidate.expertRef}>{candidate.expertRef}</small>
+                    </div>
+                    <label className="memory-candidate-field is-name">
+                      <span>{t("candidateName")}</span>
+                      <input
+                        value={candidate.name}
+                        maxLength={50}
+                        onChange={(event) =>
+                          setCandidates((current) =>
+                            current.map((item) =>
+                              item.id === candidate.id
+                                ? { ...item, name: event.target.value }
+                                : item,
+                            ),
+                          )
+                        }
+                      />
+                    </label>
+                    <label className="memory-candidate-field">
+                      <span>{t("candidateDescription")}</span>
+                      <textarea
+                        value={candidate.description}
+                        maxLength={500}
+                        onChange={(event) =>
+                          setCandidates((current) =>
+                            current.map((item) =>
+                              item.id === candidate.id
+                                ? { ...item, description: event.target.value }
+                                : item,
+                            ),
+                          )
+                        }
+                      />
+                    </label>
                   </header>
-                  <section>
+                  <section className="memory-candidate-files">
                     <h3>{t("initializationFiles")}</h3>
                     <p className="memory-note">{t("initializationFilesDescription")}</p>
                     {candidate.files.map((file) => (
-                      <details key={file.id}>
+                      <details className="memory-candidate-file" key={file.id}>
                         <summary>
-                          {file.id} · {file.metadata.trigger}
+                          <span>{file.id}</span>
+                          <small>{file.metadata.trigger}</small>
                         </summary>
                         <textarea
+                          aria-label={file.id}
                           value={file.content}
                           onChange={(event) =>
                             setCandidates((current) =>
@@ -299,8 +309,9 @@ export function MemoryPage() {
                       </details>
                     ))}
                   </section>
-                  <div className="memory-actions">
+                  <div className="memory-actions memory-candidate-actions">
                     <button
+                      className="secondary-button"
                       type="button"
                       disabled={actionBusy}
                       onClick={() =>
@@ -320,6 +331,7 @@ export function MemoryPage() {
                       {t("saveCandidate")}
                     </button>
                     <button
+                      className="primary-button"
                       type="button"
                       disabled={actionBusy}
                       onClick={() =>
@@ -336,7 +348,7 @@ export function MemoryPage() {
                       {t("createKnowledgeStore")}
                     </button>
                     <button
-                      className="is-danger"
+                      className="danger-button is-danger"
                       type="button"
                       disabled={actionBusy}
                       onClick={() =>
