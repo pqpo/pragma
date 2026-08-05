@@ -49,6 +49,15 @@ describe("PragmaPaths", () => {
     expect(root.startsWith(paths.workspaceRoot())).toBe(false);
   });
 
+  it("keeps Memory extraction settings in the authoritative Memory data root", () => {
+    const paths = new PragmaPaths({ pragmaHome: join("", "pragma-home") });
+
+    expect(paths.memoryExtractionSettings()).toBe(
+      join(paths.memoryDataRoot(), "extraction-settings.json"),
+    );
+    expect(paths.memoryExtractionSettings().startsWith(paths.workspaceRoot())).toBe(false);
+  });
+
   it("places Qoder external commands in the shared rebuildable Runtime cache", () => {
     const paths = new PragmaPaths({ pragmaHome: join("", "pragma-home") });
 

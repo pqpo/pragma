@@ -6,10 +6,12 @@ import {
   DesktopGlobalMemoryPolicySnapshotSchema,
   DesktopMemoryPlaneStatusSchema,
   DesktopMemoryExtractorProfileSchema,
+  DesktopMemoryExtractionSettingsSchema,
   GetDesktopAssetMemoryPolicySchema,
   UpdateDesktopAssetMemoryPolicySchema,
   UpdateDesktopGlobalMemoryPolicySchema,
   UpdateDesktopMemoryExtractorProfileSchema,
+  UpdateDesktopMemoryExtractionSettingsSchema,
   DesktopSemanticFactSchema,
   ReviseDesktopSemanticFactSchema,
   ReviewDesktopSemanticFactSchema,
@@ -83,6 +85,17 @@ export const memoryApi = {
       await ipcRenderer.invoke(
         "memory-extractor-profile:update",
         UpdateDesktopMemoryExtractorProfileSchema.parse(input),
+      ),
+    ),
+  getMemoryExtractionSettings: async () =>
+    DesktopMemoryExtractionSettingsSchema.parse(
+      await ipcRenderer.invoke("memory-extraction-settings:get"),
+    ),
+  updateMemoryExtractionSettings: async (input) =>
+    DesktopMemoryExtractionSettingsSchema.parse(
+      await ipcRenderer.invoke(
+        "memory-extraction-settings:update",
+        UpdateDesktopMemoryExtractionSettingsSchema.parse(input),
       ),
     ),
   reviseSemanticFact: async (input) =>
@@ -192,6 +205,8 @@ export const memoryApi = {
   | "manageMemoryExtractionTask"
   | "getMemoryExtractorProfile"
   | "updateMemoryExtractorProfile"
+  | "getMemoryExtractionSettings"
+  | "updateMemoryExtractionSettings"
   | "reviseSemanticFact"
   | "verifySemanticFact"
   | "listMemoryItems"

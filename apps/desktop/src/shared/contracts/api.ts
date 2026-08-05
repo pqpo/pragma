@@ -122,7 +122,9 @@ import type {
   UpdateDesktopAssetMemoryPolicy,
   DesktopMemoryPlaneStatus,
   DesktopMemoryExtractorProfile,
+  DesktopMemoryExtractionSettings,
   UpdateDesktopMemoryExtractorProfile,
+  UpdateDesktopMemoryExtractionSettings,
   DesktopSemanticFact,
   ReviseDesktopSemanticFact,
   ReviewDesktopSemanticFact,
@@ -169,6 +171,10 @@ export interface PragmaDesktopAPI {
   updateMemoryExtractorProfile: (
     input: UpdateDesktopMemoryExtractorProfile,
   ) => Promise<DesktopMemoryExtractorProfile>;
+  getMemoryExtractionSettings: () => Promise<DesktopMemoryExtractionSettings>;
+  updateMemoryExtractionSettings: (
+    input: UpdateDesktopMemoryExtractionSettings,
+  ) => Promise<DesktopMemoryExtractionSettings>;
   reviseSemanticFact: (input: ReviseDesktopSemanticFact) => Promise<DesktopSemanticFact>;
   verifySemanticFact: (input: ReviewDesktopSemanticFact) => Promise<DesktopSemanticFact>;
   listMemoryItems: (input?: ListDesktopMemoryItems) => Promise<DesktopMemoryItem[]>;

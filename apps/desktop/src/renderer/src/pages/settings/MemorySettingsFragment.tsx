@@ -3,6 +3,7 @@ import { useTranslation } from "react-i18next";
 
 import type {
   DesktopGlobalMemoryPolicySnapshot,
+  DesktopMemoryExtractionSettings,
   DesktopMemoryExtractorProfile,
   DesktopMemoryPlaneStatus,
   DesktopRuntimeAvailability,
@@ -15,6 +16,7 @@ export function MemorySettingsFragment() {
   const [snapshot, setSnapshot] = useState<DesktopGlobalMemoryPolicySnapshot>();
   const [status, setStatus] = useState<DesktopMemoryPlaneStatus>();
   const [extractor, setExtractor] = useState<DesktopMemoryExtractorProfile>();
+  const [extractionSettings, setExtractionSettings] = useState<DesktopMemoryExtractionSettings>();
   const [runtimes, setRuntimes] = useState<readonly DesktopRuntimeAvailability[]>([]);
   const [runtimeId, setRuntimeId] = useState("");
   const [modelKey, setModelKey] = useState("");
@@ -27,13 +29,15 @@ export function MemorySettingsFragment() {
       window.pragmaDesktop.getGlobalMemoryPolicy(),
       window.pragmaDesktop.getMemoryPlaneStatus(),
       window.pragmaDesktop.getMemoryExtractorProfile(),
+      window.pragmaDesktop.getMemoryExtractionSettings(),
       window.pragmaDesktop.getRuntimeAvailability(),
     ])
-      .then(([nextSnapshot, nextStatus, nextExtractor, nextRuntimes]) => {
+      .then(([nextSnapshot, nextStatus, nextExtractor, nextExtractionSettings, nextRuntimes]) => {
         if (cancelled) return;
         setSnapshot(nextSnapshot);
         setStatus(nextStatus);
         setExtractor(nextExtractor);
+        setExtractionSettings(nextExtractionSettings);
         setRuntimes(nextRuntimes);
         const selectedRuntime =
           nextExtractor.runtimeId ?? nextRuntimes.find((runtime) => runtime.isDefault)?.id ?? "";
@@ -97,6 +101,26 @@ export function MemorySettingsFragment() {
     }
   };
 
+  const updateExtractionSettings = async (
+    allowToolAssisted: DesktopMemoryExtractionSettings["allowToolAssisted"],
+  ) => {
+    if (extractionSettings === undefined) return;
+    setSaving(true);
+    setError(undefined);
+    try {
+      setExtractionSettings(
+        await window.pragmaDesktop.updateMemoryExtractionSettings({
+          expectedRevision: extractionSettings.revision,
+          allowToolAssisted,
+        }),
+      );
+    } catch {
+      setError(t("memory.saveError"));
+    } finally {
+      setSaving(false);
+    }
+  };
+
   const selectedRuntime = runtimes.find((runtime) => runtime.id === runtimeId);
   const models = selectedRuntime?.models ?? [];
   return (
@@ -135,6 +159,30 @@ export function MemorySettingsFragment() {
             ["disabled", t("memory.disabled")],
           ]}
           onChange={(learning) => void update({ ...snapshot!.policy, learning })}
+        />
+        <MemoryGlobalSwitch
+          label={t("memory.episodicToolAssistedExtraction")}
+          description={t("memory.episodicToolAssistedExtractionDescription")}
+          value={extractionSettings?.allowToolAssisted.episodic ? "enabled" : "disabled"}
+          disabled={extractionSettings === undefined || saving}
+          onChange={(value) =>
+            void updateExtractionSettings({
+              ...extractionSettings!.allowToolAssisted,
+              episodic: value === "enabled",
+            })
+          }
+        />
+        <MemoryGlobalSwitch
+          label={t("memory.semanticToolAssistedExtraction")}
+          description={t("memory.semanticToolAssistedExtractionDescription")}
+          value={extractionSettings?.allowToolAssisted.semantic ? "enabled" : "disabled"}
+          disabled={extractionSettings === undefined || saving}
+          onChange={(value) =>
+            void updateExtractionSettings({
+              ...extractionSettings!.allowToolAssisted,
+              semantic: value === "enabled",
+            })
+          }
         />
         <MemorySelectRow
           label={t("memory.extractorMode")}

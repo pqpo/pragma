@@ -43,6 +43,12 @@ export const settings = {
     enabled: "启用",
     disabled: "停用",
     localCandidates: "本地候选",
+    episodicToolAssistedExtraction: "允许从工具辅助记忆提炼：情景记忆",
+    episodicToolAssistedExtractionDescription:
+      "工具名、调用状态和时序始终保留；启用后可使用经过脱敏的工具输入与结果内容。默认停用。",
+    semanticToolAssistedExtraction: "允许从工具辅助记忆提炼：事实记忆",
+    semanticToolAssistedExtractionDescription:
+      "工具名、调用状态和时序始终保留；启用后可使用经过脱敏的工具输入与结果内容。默认停用。",
     extractorMode: "提炼模型",
     extractorModeDescription: "选择隐藏 Memory Curator 使用的 Runtime 和模型。",
     inheritDefaultModel: "继承系统默认",

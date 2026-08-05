@@ -62,7 +62,11 @@ export function selectBoundedMemoryEvidence(
   }
   const retainedItems = ordered.filter((item) => retained.has(item.messageId));
   const omitted = ordered.filter((item) => !retained.has(item.messageId));
-  return { retained: retainedItems, omitted, omittedStats: omissionStats(omitted) };
+  return {
+    retained: retainedItems,
+    omitted,
+    omittedStats: summarizeMemoryEvidenceOmissions(omitted),
+  };
 }
 
 export function mergeMemoryEvidenceOmissionStats(
@@ -111,7 +115,9 @@ function evidencePriority(
   return 500;
 }
 
-function omissionStats(evidence: readonly MemoryEvidenceEnvelope[]): MemoryEvidenceOmissionStats {
+export function summarizeMemoryEvidenceOmissions(
+  evidence: readonly MemoryEvidenceEnvelope[],
+): MemoryEvidenceOmissionStats {
   const byTopic: Record<string, number> = {};
   let bytes = 0;
   for (const item of evidence) {

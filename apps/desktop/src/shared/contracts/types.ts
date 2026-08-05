@@ -187,11 +187,13 @@ import {
   DesktopGlobalMemoryPolicySnapshotSchema,
   DesktopMemoryPlaneStatusSchema,
   DesktopMemoryExtractorProfileSchema,
+  DesktopMemoryExtractionSettingsSchema,
   DesktopMemoryPolicyTargetSchema,
   GetDesktopAssetMemoryPolicySchema,
   UpdateDesktopAssetMemoryPolicySchema,
   UpdateDesktopGlobalMemoryPolicySchema,
   UpdateDesktopMemoryExtractorProfileSchema,
+  UpdateDesktopMemoryExtractionSettingsSchema,
   DesktopSemanticFactSchema,
   ReviseDesktopSemanticFactSchema,
   ReviewDesktopSemanticFactSchema,
@@ -267,6 +269,10 @@ export type DesktopMemoryPlaneStatus = z.infer<typeof DesktopMemoryPlaneStatusSc
 export type DesktopMemoryExtractorProfile = z.infer<typeof DesktopMemoryExtractorProfileSchema>;
 export type UpdateDesktopMemoryExtractorProfile = z.infer<
   typeof UpdateDesktopMemoryExtractorProfileSchema
+>;
+export type DesktopMemoryExtractionSettings = z.infer<typeof DesktopMemoryExtractionSettingsSchema>;
+export type UpdateDesktopMemoryExtractionSettings = z.infer<
+  typeof UpdateDesktopMemoryExtractionSettingsSchema
 >;
 export type DesktopSemanticFact = z.infer<typeof DesktopSemanticFactSchema>;
 export type ReviseDesktopSemanticFact = z.infer<typeof ReviseDesktopSemanticFactSchema>;
