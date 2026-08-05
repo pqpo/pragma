@@ -162,7 +162,7 @@ export function MemoryPage() {
   };
 
   return (
-    <section className="memory-page">
+    <section className={`memory-page is-${view}`}>
       <header className="memory-page-header">
         <div>
           <h1>{t("title")}</h1>
@@ -743,10 +743,7 @@ export function MemoryExtractionJobs(props: {
   return (
     <section className="memory-health memory-extraction-jobs">
       <header className="memory-extraction-jobs-header">
-        <div>
-          <h2>{t("extractions")}</h2>
-          <p>{t("extractionsDescription")}</p>
-        </div>
+        <p>{t("extractionsDescription")}</p>
         <button
           className="memory-extraction-refresh"
           type="button"

@@ -117,6 +117,8 @@ describe("MemoryPage", () => {
     );
 
     expect(html).toContain("Waiting for idle");
+    expect(html).toContain("Review and manage queued, active, and completed memory refinements.");
+    expect(html).not.toContain(">Extraction jobs</");
     expect(html).toContain("Needs attention");
     expect(html).toContain("In progress");
     expect(html).toContain("Completed");

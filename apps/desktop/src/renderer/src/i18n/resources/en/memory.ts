@@ -31,8 +31,7 @@ export const memory = {
   importedKnowledgePersists:
     "This Knowledge was imported from a Bundle and remains after that Bundle installation is discarded.",
   extractions: "Extraction jobs",
-  extractionsDescription:
-    "Monitor Episodic, Semantic, and Knowledge refinement. Conversation-level jobs wait until a mission has been idle for six hours or completes; Knowledge jobs run from eligible published sources.",
+  extractionsDescription: "Review and manage queued, active, and completed memory refinements.",
   refresh: "Refresh",
   extractionLanes: {
     waiting: "Waiting for idle",

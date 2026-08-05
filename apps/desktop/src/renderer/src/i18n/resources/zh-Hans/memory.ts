@@ -29,8 +29,7 @@ export const memory = {
   withdraw: "撤回",
   importedKnowledgePersists: "这条知识来自 Bundle；即使丢弃该 Bundle 安装，它仍会保留。",
   extractions: "提炼任务",
-  extractionsDescription:
-    "查看情景、语义与知识提炼。会话级任务在 Mission 闲置满 6 小时或完成后执行；知识任务从满足条件的已发布来源生成。",
+  extractionsDescription: "查看和管理等待、处理及已完成的记忆提炼任务。",
   refresh: "刷新",
   extractionLanes: {
     waiting: "等待空闲",

@@ -15813,6 +15813,10 @@ textarea:focus-visible,
   padding: 40px 42px 28px;
 }
 
+.memory-page.is-extractions {
+  padding-bottom: 12px;
+}
+
 .memory-page-header {
   display: flex;
   align-items: end;
@@ -16287,14 +16291,13 @@ textarea:focus-visible,
   gap: 16px;
 }
 
-.memory-extraction-jobs-header h2,
 .memory-extraction-jobs-header p {
   margin: 0;
 }
 
 .memory-extraction-jobs-header p {
-  margin-top: 6px;
   color: var(--muted);
+  font-size: 0.86rem;
 }
 
 .memory-extraction-jobs button {
@@ -16339,7 +16342,7 @@ textarea:focus-visible,
   grid-template-columns: repeat(4, minmax(220px, 1fr));
   gap: 24px;
   min-width: 940px;
-  margin-top: 24px;
+  margin-top: 16px;
 }
 
 .memory-extraction-lane {
@@ -16413,13 +16416,13 @@ textarea:focus-visible,
 
 .memory-extraction-lane.is-completed article.memory-extraction-task {
   gap: 8px;
-  background: var(--surface-soft);
-  box-shadow: none;
+  background: #e9eeeb;
+  box-shadow: 0 1px 2px rgb(20 31 25 / 5%);
 }
 
 .memory-extraction-lane.is-completed article.memory-extraction-task:hover {
-  background: var(--surface-muted);
-  box-shadow: none;
+  background: #e2e9e5;
+  box-shadow: 0 1px 3px rgb(20 31 25 / 7%);
   transform: none;
 }
 
