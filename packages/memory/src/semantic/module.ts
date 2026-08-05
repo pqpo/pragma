@@ -29,6 +29,11 @@ export interface SemanticMemoryModule extends MemoryModule {
     readonly subjectRefs: readonly MemorySubjectRef[];
     readonly registeredAt?: string | undefined;
   }): Promise<void>;
+  interruptExtractionJob(input: {
+    readonly id: string;
+    readonly expectedRevision: number;
+    readonly now: Date;
+  }): Promise<void>;
   close(): void;
 }
 
@@ -182,6 +187,10 @@ export async function createSemanticMemoryModule(
           registeredAt: input.registeredAt ?? now().toISOString(),
         }),
       );
+    },
+    async interruptExtractionJob(input) {
+      const interrupted = await store.interruptJob(input);
+      running.get(conversationKey(interrupted.conversationRef))?.abort();
     },
     store,
     close() {

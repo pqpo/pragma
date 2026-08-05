@@ -1,8 +1,11 @@
-import { useCallback, useEffect, useId, useMemo, useState } from "react";
+import { useCallback, useEffect, useId, useMemo, useRef, useState } from "react";
 import {
   ArrowClockwise,
+  ArrowCounterClockwise,
   MagnifyingGlass,
+  Play,
   ShieldCheck,
+  StopCircle,
   Trash,
   WarningCircle,
 } from "@phosphor-icons/react";
@@ -10,11 +13,11 @@ import { useTranslation } from "react-i18next";
 
 import type {
   DesktopMemoryEvidence,
-  DesktopMemoryExtractionJob,
+  DesktopMemoryExtractionBoard,
+  DesktopMemoryExtractionTask,
   DesktopMemoryItem,
   DesktopMemoryPlaneStatus,
   DesktopKnowledgeCandidate,
-  DesktopKnowledgeJob,
   DesktopKnowledgeSource,
 } from "../../../../shared/contracts/index.ts";
 import { ConfirmationDialog, Dialog } from "../../components/Dialog.tsx";
@@ -31,8 +34,7 @@ export function MemoryPage() {
   const [items, setItems] = useState<readonly DesktopMemoryItem[]>([]);
   const [selectedId, setSelectedId] = useState<string>();
   const [health, setHealth] = useState<DesktopMemoryPlaneStatus>();
-  const [jobs, setJobs] = useState<readonly DesktopMemoryExtractionJob[]>([]);
-  const [knowledgeJobs, setKnowledgeJobs] = useState<readonly DesktopKnowledgeJob[]>([]);
+  const [extractionBoard, setExtractionBoard] = useState<DesktopMemoryExtractionBoard>();
   const [evidence, setEvidence] = useState<DesktopMemoryEvidence>();
   const [candidates, setCandidates] = useState<readonly DesktopKnowledgeCandidate[]>([]);
   const [knowledgeSource, setKnowledgeSource] = useState<DesktopKnowledgeSource>();
@@ -48,12 +50,14 @@ export function MemoryPage() {
   const [actionBusy, setActionBusy] = useState(false);
   const [error, setError] = useState<string>();
   const [loading, setLoading] = useState(true);
+  const [busyExtractionTask, setBusyExtractionTask] = useState<string>();
+  const hasLoaded = useRef(false);
 
-  const reload = useCallback(async () => {
-    setLoading(true);
-    try {
-      const [records, status, extractionJobs, knowledgeExtractionJobs, candidateRecords] =
-        await Promise.all([
+  const reload = useCallback(
+    async (silent = false) => {
+      if (!silent && !hasLoaded.current) setLoading(true);
+      try {
+        const [records, status, extractionJobs, candidateRecords] = await Promise.all([
           view === "extractions" || view === "candidates"
             ? Promise.resolve([])
             : window.pragmaDesktop.listMemoryItems({
@@ -65,35 +69,38 @@ export function MemoryPage() {
           window.pragmaDesktop.getMemoryPlaneStatus(),
           view === "extractions"
             ? window.pragmaDesktop.listMemoryExtractionJobs()
-            : Promise.resolve([]),
-          view === "extractions" ? window.pragmaDesktop.listKnowledgeJobs() : Promise.resolve([]),
+            : Promise.resolve(undefined),
           view === "candidates"
             ? window.pragmaDesktop.listKnowledgeCandidates({ state: "pending_review" })
             : Promise.resolve([]),
         ]);
-      setItems(records);
-      setHealth(status);
-      setJobs(extractionJobs);
-      setKnowledgeJobs(knowledgeExtractionJobs);
-      setCandidates(candidateRecords);
-      const selectableIds =
-        view === "candidates"
-          ? candidateRecords.map((candidate) => candidate.id)
-          : records.map(key);
-      setSelectedId((current) =>
-        current !== undefined && selectableIds.includes(current)
-          ? current
-          : selectableIds[0] === undefined
-            ? undefined
-            : selectableIds[0],
-      );
-      setError(undefined);
-    } catch (loadError) {
-      setError(errorMessage(loadError));
-    } finally {
-      setLoading(false);
-    }
-  }, [query, view]);
+        setItems(records);
+        setHealth(status);
+        if (extractionJobs !== undefined) setExtractionBoard(extractionJobs);
+        setCandidates(candidateRecords);
+        const selectableIds =
+          view === "candidates"
+            ? candidateRecords.map((candidate) => candidate.id)
+            : records.map(key);
+        setSelectedId((current) =>
+          current !== undefined && selectableIds.includes(current)
+            ? current
+            : selectableIds[0] === undefined
+              ? undefined
+              : selectableIds[0],
+        );
+        setError(undefined);
+        return extractionJobs;
+      } catch (loadError) {
+        setError(errorMessage(loadError));
+        return undefined;
+      } finally {
+        hasLoaded.current = true;
+        setLoading(false);
+      }
+    },
+    [query, view],
+  );
 
   useEffect(() => {
     const timer = setTimeout(() => void reload(), 120);
@@ -101,16 +108,19 @@ export function MemoryPage() {
   }, [reload]);
 
   useEffect(() => {
-    if (
-      view !== "extractions" ||
-      (!jobs.some((job) => ["waiting_idle", "pending", "running"].includes(job.status)) &&
-        !knowledgeJobs.some((job) => ["pending", "running"].includes(job.status)))
-    ) {
-      return;
-    }
-    const timer = setInterval(() => void reload(), 2_000);
-    return () => clearInterval(timer);
-  }, [jobs, knowledgeJobs, reload, view]);
+    if (view !== "extractions") return;
+    let cancelled = false;
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    const poll = async () => {
+      const board = await reload(true);
+      if (!cancelled) timer = setTimeout(() => void poll(), memoryExtractionPollDelay(board));
+    };
+    timer = setTimeout(() => void poll(), 2_000);
+    return () => {
+      cancelled = true;
+      if (timer !== undefined) clearTimeout(timer);
+    };
+  }, [reload, view]);
 
   const selected = useMemo(
     () => items.find((item) => key(item) === selectedId),
@@ -134,36 +144,25 @@ export function MemoryPage() {
     }
   };
 
-  const retryExtraction = async (job: DesktopMemoryExtractionJob) => {
-    setActionBusy(true);
+  const manageExtraction = async (
+    task: DesktopMemoryExtractionTask,
+    action: "expedite" | "retry" | "interrupt" | "delete",
+  ) => {
+    const key = `${task.module}:${task.id}`;
+    setBusyExtractionTask(key);
     setError(undefined);
     try {
-      await window.pragmaDesktop.retryMemoryExtractionJob({
-        module: job.module,
-        id: job.id,
-        expectedRevision: job.revision,
+      await window.pragmaDesktop.manageMemoryExtractionTask({
+        module: task.module,
+        action,
+        id: task.id,
+        expectedRevision: task.revision,
       });
-      await reload();
+      await reload(true);
     } catch (actionError) {
       setError(errorMessage(actionError));
     } finally {
-      setActionBusy(false);
-    }
-  };
-
-  const retryKnowledgeExtraction = async (job: DesktopKnowledgeJob) => {
-    setActionBusy(true);
-    setError(undefined);
-    try {
-      await window.pragmaDesktop.retryKnowledgeJob({
-        id: job.id,
-        expectedRevision: job.revision,
-      });
-      await reload();
-    } catch (actionError) {
-      setError(errorMessage(actionError));
-    } finally {
-      setActionBusy(false);
+      setBusyExtractionTask(undefined);
     }
   };
 
@@ -220,13 +219,11 @@ export function MemoryPage() {
         <MemoryHealth health={health} />
       ) : view === "extractions" ? (
         <MemoryExtractionJobs
-          jobs={jobs}
-          knowledgeJobs={knowledgeJobs}
-          loading={loading}
-          busy={actionBusy}
-          onRefresh={() => void reload()}
-          onRetry={(job) => void retryExtraction(job)}
-          onRetryKnowledge={(job) => void retryKnowledgeExtraction(job)}
+          board={extractionBoard}
+          loading={loading && extractionBoard === undefined}
+          busyTask={busyExtractionTask}
+          onRefresh={() => void reload(true)}
+          onAction={manageExtraction}
         />
       ) : view === "candidates" ? (
         <div className="memory-browser">
@@ -731,6 +728,12 @@ export function MemoryPage() {
   );
 }
 
+export function memoryExtractionPollDelay(board: DesktopMemoryExtractionBoard | undefined): number {
+  return board !== undefined && (board.counts.waiting > 0 || board.counts.running > 0)
+    ? 2_000
+    : 10_000;
+}
+
 export function MemoryActionWithTooltip(props: {
   readonly disabled: boolean;
   readonly label: string;
@@ -756,22 +759,19 @@ export function MemoryActionWithTooltip(props: {
 }
 
 export function MemoryExtractionJobs(props: {
-  readonly jobs: readonly DesktopMemoryExtractionJob[];
-  readonly knowledgeJobs: readonly DesktopKnowledgeJob[];
+  readonly board?: DesktopMemoryExtractionBoard | undefined;
   readonly loading: boolean;
-  readonly busy: boolean;
+  readonly busyTask?: string | undefined;
   readonly onRefresh: () => void;
-  readonly onRetry: (job: DesktopMemoryExtractionJob) => void;
-  readonly onRetryKnowledge: (job: DesktopKnowledgeJob) => void;
+  readonly onAction: (
+    task: DesktopMemoryExtractionTask,
+    action: "expedite" | "retry" | "interrupt" | "delete",
+  ) => Promise<void>;
 }) {
-  const { t, i18n } = useTranslation("memory");
-  const date = (value: string | undefined): string =>
-    value === undefined
-      ? "—"
-      : new Intl.DateTimeFormat(i18n.language, {
-          dateStyle: "medium",
-          timeStyle: "short",
-        }).format(new Date(value));
+  const { t } = useTranslation("memory");
+  const [pendingDelete, setPendingDelete] = useState<DesktopMemoryExtractionTask>();
+  const lanes = ["waiting", "attention", "running", "completed"] as const;
+  const tasks = props.board?.tasks ?? [];
   return (
     <section className="memory-health memory-extraction-jobs">
       <header className="memory-extraction-jobs-header">
@@ -784,65 +784,106 @@ export function MemoryExtractionJobs(props: {
         </button>
       </header>
       {props.loading ? <p>{t("loading")}</p> : null}
-      {!props.loading && props.jobs.length === 0 && props.knowledgeJobs.length === 0 ? (
-        <p>{t("noExtractionJobs")}</p>
+      {!props.loading ? (
+        <div className="memory-extraction-board">
+          {lanes.map((lane) => {
+            const laneTasks = tasks.filter((task) => task.lane === lane);
+            return (
+              <section className={`memory-extraction-lane is-${lane}`} key={lane}>
+                <header>
+                  <h3>{t(`extractionLanes.${lane}`)}</h3>
+                  <span>{props.board?.counts[lane] ?? 0}</span>
+                </header>
+                <div className="memory-extraction-lane-items">
+                  {laneTasks.length === 0 ? (
+                    <p className="memory-extraction-lane-empty">{t("emptyExtractionLane")}</p>
+                  ) : null}
+                  {laneTasks.map((task) => {
+                    const taskKey = `${task.module}:${task.id}`;
+                    const busy = props.busyTask === taskKey;
+                    return (
+                      <article className="memory-extraction-task" key={taskKey}>
+                        <strong>
+                          {task.title ??
+                            t(task.module === "knowledge" ? "unknownAsset" : "unknownMission")}
+                        </strong>
+                        <span className={`memory-extraction-type is-${task.module}`}>
+                          {t(`extractionTaskTypes.${task.module}`)}
+                        </span>
+                        {lane === "attention" && task.lastErrorCode !== undefined ? (
+                          <code className="memory-extraction-error">{task.lastErrorCode}</code>
+                        ) : null}
+                        {lane !== "completed" ? (
+                          <footer>
+                            {lane === "waiting" ? (
+                              <button
+                                type="button"
+                                disabled={busy}
+                                onClick={() => void props.onAction(task, "expedite")}
+                              >
+                                <Play size={16} aria-hidden="true" /> {t("extractNow")}
+                              </button>
+                            ) : null}
+                            {lane === "attention" ? (
+                              <>
+                                <button
+                                  type="button"
+                                  disabled={busy}
+                                  onClick={() => void props.onAction(task, "retry")}
+                                >
+                                  <ArrowCounterClockwise size={16} aria-hidden="true" />
+                                  {t("retryExtraction")}
+                                </button>
+                                <button
+                                  className="is-danger"
+                                  type="button"
+                                  disabled={busy}
+                                  onClick={() => setPendingDelete(task)}
+                                >
+                                  <Trash size={16} aria-hidden="true" /> {t("deleteExtraction")}
+                                </button>
+                              </>
+                            ) : null}
+                            {lane === "running" ? (
+                              <button
+                                type="button"
+                                disabled={busy}
+                                onClick={() => void props.onAction(task, "interrupt")}
+                              >
+                                <StopCircle size={16} aria-hidden="true" />
+                                {t("interruptExtraction")}
+                              </button>
+                            ) : null}
+                          </footer>
+                        ) : null}
+                      </article>
+                    );
+                  })}
+                </div>
+              </section>
+            );
+          })}
+        </div>
       ) : null}
-      {props.jobs.map((job) => (
-        <article className="memory-extraction-job" key={`${job.module}:${job.id}`}>
-          <strong>
-            {job.conversationTitle ?? `${job.conversationRef.type}:${job.conversationRef.id}`}
-          </strong>
-          <span className={`memory-status is-${job.status}`}>
-            {t(`extractionStatus.${job.status}`)}
-          </span>
-          <dl>
-            <dt>{t("module")}</dt>
-            <dd>{job.module}</dd>
-            <dt>{t("eligibleAt")}</dt>
-            <dd>{date(job.eligibleAt)}</dd>
-            <dt>{t("sourceExecutions")}</dt>
-            <dd>{job.sourceExecutionCount}</dd>
-            <dt>{t("attemptCount")}</dt>
-            <dd>{job.totalAttempts}</dd>
-            <dt>{t("evidenceCount")}</dt>
-            <dd>{job.evidenceRecords}</dd>
-            <dt>{t("errorCode")}</dt>
-            <dd>
-              <code>{job.lastErrorCode ?? "—"}</code>
-            </dd>
-          </dl>
-          {job.status === "needs_attention" ? (
-            <button type="button" disabled={props.busy} onClick={() => props.onRetry(job)}>
-              {t("retryExtraction")}
-            </button>
-          ) : null}
-        </article>
-      ))}
-      {props.knowledgeJobs.map((job) => (
-        <article className="memory-extraction-job" key={`knowledge:${job.id}`}>
-          <strong>{`${job.rootRef.type}:${job.rootRef.id}`}</strong>
-          <span className={`memory-status is-${job.status}`}>
-            {t(`extractionStatus.${job.status}`)}
-          </span>
-          <dl>
-            <dt>{t("module")}</dt>
-            <dd>knowledge</dd>
-            <dt>{t("root")}</dt>
-            <dd>{`${job.rootRef.type}:${job.rootRef.id}`}</dd>
-            <dt>{t("attemptCount")}</dt>
-            <dd>{job.attempts}</dd>
-            <dt>{t("errorCode")}</dt>
-            <dd>
-              <code>{job.lastErrorCode ?? "—"}</code>
-            </dd>
-          </dl>
-          {job.status === "needs_attention" ? (
-            <button type="button" disabled={props.busy} onClick={() => props.onRetryKnowledge(job)}>
-              {t("retryExtraction")}
-            </button>
-          ) : null}
-        </article>
-      ))}
+      {pendingDelete === undefined ? null : (
+        <ConfirmationDialog
+          title={t("deleteExtractionTitle")}
+          description={t("deleteExtractionDescription", {
+            title:
+              pendingDelete.title ??
+              t(pendingDelete.module === "knowledge" ? "unknownAsset" : "unknownMission"),
+          })}
+          cancelLabel={t("cancel")}
+          confirmLabel={t("deleteExtraction")}
+          busyLabel={t("deletingExtraction")}
+          busy={props.busyTask === `${pendingDelete.module}:${pendingDelete.id}`}
+          tone="danger"
+          onCancel={() => setPendingDelete(undefined)}
+          onConfirm={() => {
+            void props.onAction(pendingDelete, "delete").then(() => setPendingDelete(undefined));
+          }}
+        />
+      )}
     </section>
   );
 }

@@ -7,6 +7,7 @@ import {
   MemoryDegradedAlert,
   MemoryExtractionJobs,
   MemoryPage,
+  memoryExtractionPollDelay,
 } from "./MemoryPage.tsx";
 
 afterEach(async () => {
@@ -14,6 +15,21 @@ afterEach(async () => {
 });
 
 describe("MemoryPage", () => {
+  it("polls active extraction work quickly and terminal boards at a lower idle cadence", () => {
+    expect(
+      memoryExtractionPollDelay({
+        tasks: [],
+        counts: { waiting: 1, attention: 0, running: 0, completed: 0 },
+      }),
+    ).toBe(2_000);
+    expect(
+      memoryExtractionPollDelay({
+        tasks: [],
+        counts: { waiting: 0, attention: 1, running: 0, completed: 4 },
+      }),
+    ).toBe(10_000);
+  });
+
   it("renders the first-level layered Memory management entry", () => {
     const html = renderToStaticMarkup(<MemoryPage />);
 
@@ -48,36 +64,50 @@ describe("MemoryPage", () => {
     expect(html).toContain("Only root asset principals");
   });
 
-  it("shows retryable Knowledge extraction jobs with their stable error code", () => {
+  it("renders the four-lane extraction board with compact, human-readable tasks", () => {
     const html = renderToStaticMarkup(
       <MemoryExtractionJobs
-        jobs={[]}
-        knowledgeJobs={[
-          {
-            schemaVersion: "pragma.memory-knowledge-job/v1",
-            id: "knowledge-job-a",
-            revision: 3,
-            rootRef: { type: "pragma.expert", id: "expert-a" },
-            sourceDigest: "a".repeat(64),
-            status: "needs_attention",
-            attempts: 3,
-            lastErrorCode: "knowledge_candidate_capacity_exceeded",
-            failureClass: "capacity",
-            createdAt: "2026-08-05T00:00:00.000Z",
-            updatedAt: "2026-08-05T01:00:00.000Z",
-          },
-        ]}
+        board={{
+          tasks: [
+            {
+              module: "episodic",
+              id: "internal-job-a",
+              revision: 1,
+              lane: "waiting",
+              title: "Prepare the release",
+              updatedAt: "2026-08-05T00:00:00.000Z",
+            },
+            {
+              module: "knowledge",
+              id: "internal-job-b",
+              revision: 3,
+              lane: "attention",
+              title: "Pragma",
+              lastErrorCode: "knowledge_candidate_capacity_exceeded",
+              updatedAt: "2026-08-05T01:00:00.000Z",
+            },
+          ],
+          counts: { waiting: 1, attention: 1, running: 0, completed: 0 },
+        }}
         loading={false}
-        busy={false}
         onRefresh={() => undefined}
-        onRetry={() => undefined}
-        onRetryKnowledge={() => undefined}
+        onAction={async () => undefined}
       />,
     );
 
-    expect(html).toContain("knowledge");
+    expect(html).toContain("Waiting for idle");
+    expect(html).toContain("Needs attention");
+    expect(html).toContain("In progress");
+    expect(html).toContain("Completed");
+    expect(html).toContain("Prepare the release");
+    expect(html).toContain("Episodic memory");
+    expect(html).toContain("Knowledge memory");
     expect(html).toContain("knowledge_candidate_capacity_exceeded");
+    expect(html).toContain("Extract now");
     expect(html).toContain("Retry extraction");
+    expect(html).toContain("Delete");
+    expect(html).not.toContain("internal-job-a");
+    expect(html).not.toContain("Evidence records");
   });
 
   it("shows extraction failures without requiring the Health tab", async () => {

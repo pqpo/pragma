@@ -68,6 +68,31 @@ describe("mission store", () => {
     );
   });
 
+  it("resolves legacy execution-scoped jobs to their Mission titles", async () => {
+    const root = await temporaryRoot();
+    const store = createMissionStore({ missionsPath: join(root, "missions") });
+    const mission = await store.create({
+      workspace: { path: join(root, "workspace"), basename: "workspace" },
+      goal: "Prepare the release notes",
+      project: { id: "studio", revision: 1 },
+      executor: missionExecutorSnapshot(expertFixture()),
+    });
+    const executionId = "18e8cabd-dab7-4256-be4c-731ad50339b1";
+    await store.appendExecutionReference({
+      missionId: mission.id,
+      inputMessageId: mission.initialMessageId,
+      executionId,
+      createdAt: "2026-08-05T08:00:00.000Z",
+    });
+
+    const titles = await store.resolveExecutionTitles([executionId, crypto.randomUUID()]);
+    expect(titles.get(executionId)).toBe("Prepare the release notes");
+    expect(titles.size).toBe(1);
+
+    await store.remove(mission.id);
+    expect(await store.resolveExecutionTitles([executionId])).toEqual(new Map());
+  });
+
   it("marks a mission complete and reopens it", async () => {
     const root = await temporaryRoot();
     const store = createMissionStore({ missionsPath: join(root, "missions") });

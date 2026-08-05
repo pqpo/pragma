@@ -608,7 +608,7 @@ export async function createDesktopApplicationContainer(
       }
     },
   });
-  installMemoryPolicyHandlers(memoryPlane, { missions: missionStore });
+  installMemoryPolicyHandlers(memoryPlane, { missions: missionStore, project: pragmaProjectStore });
   installModelProviderHandlers(modelProviderStore, {
     isProviderReferenced: async (providerId) =>
       (await pragmaProjectStore.get()).resources.some(

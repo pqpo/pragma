@@ -28,6 +28,54 @@ afterEach(async () => {
 });
 
 describe("Knowledge Memory", () => {
+  it("expedites, interrupts, retries, and deletes extraction jobs", async () => {
+    const store = await temporaryStore();
+    await store.schedule({
+      rootRef: ref("pragma.expert", "expert-a"),
+      sourceDigest,
+      now: new Date(now.getTime() - 60_000),
+    });
+    const [pending] = await store.listJobs();
+    await store.expediteJob({ id: pending!.id, expectedRevision: pending!.revision, now });
+    const claimed = await store.claimDueJob(now);
+    const interrupted = await store.interruptJob({
+      id: claimed!.id,
+      expectedRevision: claimed!.revision,
+      now,
+    });
+    expect(interrupted).toMatchObject({
+      status: "pending",
+      retryAt: "2026-08-05T14:00:00.000Z",
+    });
+    await store.expediteJob({
+      id: interrupted.id,
+      expectedRevision: interrupted.revision,
+      now,
+    });
+    const reclaimed = await store.claimDueJob(now);
+    await store.fail({
+      job: reclaimed!,
+      errorCode: "memory_extractor_profile_invalid",
+      retry: "configuration",
+      now,
+    });
+    const [attention] = await store.listJobs();
+    await store.retryJob({ id: attention!.id, expectedRevision: attention!.revision, now });
+    const [retried] = await store.listJobs();
+    const rerun = await store.claimDueJob(now);
+    await store.fail({
+      job: rerun!,
+      errorCode: "memory_extractor_profile_invalid",
+      retry: "configuration",
+      now,
+    });
+    const [deletable] = await store.listJobs();
+    expect(retried?.status).toBe("pending");
+    await store.deleteJob({ id: deletable!.id, expectedRevision: deletable!.revision });
+    expect(await store.listJobs()).toEqual([]);
+    store.close();
+  });
+
   it("keeps candidates out of recall until explicit publication with bindings", async () => {
     const store = await temporaryStore();
     const candidate = await createCandidate(store);

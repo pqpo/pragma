@@ -29,8 +29,8 @@ Pragma 的新 Memory Plane 是 Desktop 内置能力，随应用启动，不需�
   生成隐藏 query，不自动注入匹配项，也没有 `recall_memory` 专用工具；
 - Desktop 一级 Memory 页面可以查看 Episode/Fact、来源、binding、冲突、历史、精确 Evidence 和 Module
   health，并执行收紧、修正、验证、失效或忘记；
-- 提炼任务页同时展示 Episodic、Semantic 与 Knowledge job，并允许对 `needs_attention` Knowledge job 按
-  revision 显式重试；
+- 提炼任务页把 Episodic、Semantic 与 Knowledge job 按等待空闲、需要处理、处理中、已完成分列展示；
+  支持按 revision 立即提炼、重试、删除失败输入，或中断运行任务并重新等待六小时；
 - Mission 的 Memory 页签显示每次 Execution 的 capture/recall 计数。搜索审计只保存 digest 和长度，
   不保存 query 原文。
 - Knowledge Module 从有效 Episode 与已验证/无冲突 Fact 提炼本地候选；候选必须在 Memory 页面检查精确
@@ -95,8 +95,8 @@ Semantic 是当前信念投影，也不是无条件真值。详情会展示 conf
 
 模型设置持久化为 `pragma.memory-extractor-profile/v1`，通过 revision CAS 更新，不使用环境变量。模型暂时
 不可用时任务保留在 durable queue；配置错误或耗尽自动重试后进入 `needs_attention`。应用重启不会自动
-唤醒这些任务：匹配的模型配置修复会唤醒 configuration failure，用户也可以在设置页按当前 revision
-显式重试。失败 Evidence 只保留 30 天，随后任务变成不含原始内容的 `expired` 诊断。
+唤醒这些任务：匹配的模型配置修复会唤醒 configuration failure，用户也可以在提炼任务页按当前
+revision 显式重试或删除。失败 Evidence 只保留 30 天，随后任务变成不含原始内容的 `expired` 诊断。
 
 ## 存储治理与失败恢复
 
