@@ -66,7 +66,8 @@ describe("SettingsPage", () => {
     expect(html).toContain("Learning");
     expect(html).toContain("Allow tool-assisted extraction: Episodic Memory");
     expect(html).toContain("Allow tool-assisted extraction: Fact Memory");
-    expect(html).toContain("Memory plane health");
+    expect(html).not.toContain("Memory plane health");
+    expect(html).not.toContain("Storage governance");
     expect(html).toContain('<div class="setting-row general-language-setting">');
     expect(html).not.toContain('<label class="setting-row general-language-setting">');
   });

@@ -6,6 +6,7 @@ import {
   MemoryActionWithTooltip,
   MemoryDegradedAlert,
   MemoryExtractionJobs,
+  MemoryHealth,
   MemoryPage,
   canRunMemoryAction,
   formatMemorySubjectRefs,
@@ -68,6 +69,66 @@ describe("MemoryPage", () => {
     expect(html).toContain("<h1>记忆</h1>");
     expect(html).toContain("情景记忆");
     expect(html).toContain("健康状态");
+  });
+
+  it("presents health as a scannable overview without repeating the selected tab title", () => {
+    const html = renderToStaticMarkup(
+      <MemoryHealth
+        health={{
+          state: "running",
+          feed: {
+            lastSequence: 1_325,
+            eventCount: 1_325,
+            logicalBytes: 2.7 * 1_024 * 1_024,
+            fileBytes: 3 * 1_024 * 1_024,
+            receiptCount: 1_325,
+            safeThroughSequence: 200,
+            blockedBytes: 0,
+          },
+          delivery: { pending: 0, quarantined: 0 },
+          modules: [
+            {
+              moduleId: "pragma.memory.episodic",
+              moduleVersion: "1.0.0",
+              status: "healthy",
+              lag: 0,
+              processed: 1_325,
+              retried: 0,
+              deadLettered: 0,
+              skipped: 0,
+              work: {
+                records: 4,
+                pending: 1,
+                running: 0,
+                needsAttention: 0,
+                rejected: 9,
+                expired: 0,
+                evidenceRecords: 8,
+                evidenceBytes: 1_024,
+                truncatedExecutions: 0,
+              },
+              updatedAt: "2026-08-05T00:00:00.000Z",
+            },
+          ],
+          maintenance: {
+            deletedEvents: 0,
+            reclaimedBytes: 0,
+            deletedDeadLetters: 0,
+            deadLetterEntries: 0,
+            deadLetterBytes: 0,
+          },
+        }}
+      />,
+    );
+
+    expect(html).toContain('aria-label="Health"');
+    expect(html).not.toContain("<h2>Health</h2>");
+    expect(html).toContain("Memory is running normally");
+    expect(html).toContain("Feed storage");
+    expect(html).toContain("Module status");
+    expect(html).toContain("Episodic memory");
+    expect(html).toContain("pragma.memory.episodic@1.0.0");
+    expect(html).toContain('aria-label="Storage usage"');
   });
 
   it("describes governance actions with an accessible tooltip", () => {

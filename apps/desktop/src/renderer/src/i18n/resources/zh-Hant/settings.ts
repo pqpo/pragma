@@ -70,35 +70,12 @@ export const settings = {
     extractorModelDescription: "用於產生結構化 Episodic Memory 的模型。",
     saveExtractor: "儲存提煉模型",
     saveExtractorDescription: "修改設定後會喚醒需要處理的記憶提煉任務。",
-    loading: "載入中…",
-    health: "記憶平面健康狀態",
-    healthDescription: "記憶平面隨 Pragma 啟動，並持續消費規範訊息流水。",
-    healthSummary:
-      "{{state}} · {{events}} 筆事件 · {{modules}} 個模組 · {{pending}} 筆待投遞 · {{quarantined}} 筆已隔離",
-    moduleWorkSummary:
-      "{{module}} · {{records}} 筆記憶 · {{pending}} 筆提煉中 · {{attention}} 筆需處理 · {{rejected}} 筆已拒絕",
-    storageGovernance: "儲存治理",
-    storageGovernanceDescription: "以固定唯讀策略限制原始事件、提煉載荷和診斷資料的增長。",
-    storageSummary:
-      "{{events}} 筆事件 · 邏輯 {{logical}} / 檔案 {{file}} · 目標 {{target}} · 安全水位 {{safe}} · 阻塞 {{blocked}}",
-    retentionSummary:
-      "Feed {{feedDays}} 天 · 任務 {{jobDays}} 天 · 每次執行 {{records}} 筆或 {{bytes}} · {{deadLetters}} 筆死信",
-    extractionJob: "{{module}} 提煉任務",
-    extractionJobSummary:
-      "{{status}} · 累計 {{attempts}} 次 · 保留 {{evidence}} 筆 Evidence · 省略 {{omitted}} 筆 · {{error}}",
-    retryExtraction: "重試提煉",
-    retryError: "提煉任務已經變更或不再允許重試。",
-    extractionError: "記憶提取失敗：{{code}}",
-    pipelineError: "記憶流水線錯誤：{{code}}",
     assetTitle: "記憶策略",
     assetDescription: "此團隊資產只能收緊全域策略；執行階段限制還會與本設定取交集。",
     effectiveSummary: "目前生效：採集{{capture}}，召回{{recall}}，學習{{learning}}",
     loadError: "無法載入記憶設定。",
     saveError: "無法儲存記憶設定，請重新整理以取得最新修訂。",
     states: {
-      running: "執行中",
-      degraded: "異常",
-      stopped: "已停止",
       enabled: "啟用",
       disabled: "停用",
     },

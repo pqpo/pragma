@@ -2,6 +2,10 @@ import { useCallback, useEffect, useId, useMemo, useRef, useState } from "react"
 import {
   ArrowClockwise,
   ArrowCounterClockwise,
+  CheckCircle,
+  Cube,
+  Database,
+  FileText,
   MagnifyingGlass,
   Play,
   ShieldCheck,
@@ -861,58 +865,160 @@ export function MemoryExtractionJobs(props: {
   );
 }
 
-function MemoryHealth(props: { readonly health?: DesktopMemoryPlaneStatus | undefined }) {
+export function MemoryHealth(props: { readonly health?: DesktopMemoryPlaneStatus | undefined }) {
   const { t } = useTranslation("memory");
   if (props.health === undefined) return <p>{t("loading")}</p>;
+  const targetBytes = props.health.storagePolicy?.canonicalFeedTargetBytes ?? 512 * 1_024 * 1_024;
+  const usagePercent = Math.min(
+    100,
+    targetBytes === 0 ? 0 : (props.health.feed.logicalBytes / targetBytes) * 100,
+  );
+  const HealthIcon =
+    props.health.state === "running"
+      ? CheckCircle
+      : props.health.state === "stopped"
+        ? StopCircle
+        : WarningCircle;
   return (
-    <section className="memory-health">
-      <h2>{t("health")}</h2>
-      <p>
-        {t("healthSummary", {
-          state: props.health.state,
-          modules: props.health.modules.length,
-          events: props.health.feed.eventCount,
-        })}
-      </p>
-      <p>
-        {t("storageHealth", {
-          logical: formatHealthBytes(props.health.feed.logicalBytes),
-          target: formatHealthBytes(
-            props.health.storagePolicy?.canonicalFeedTargetBytes ?? 512 * 1_024 * 1_024,
-          ),
-          blocked: formatHealthBytes(props.health.feed.blockedBytes),
-          safe: props.health.feed.safeThroughSequence,
-        })}
-      </p>
-      {props.health.modules.map((module) => (
-        <article key={module.moduleId}>
-          <strong>
-            {module.moduleId}@{module.moduleVersion}
-          </strong>
-          <span>
-            {t("moduleHealthSummary", {
-              status: module.status,
-              lag: module.lag,
-              records: module.work?.records ?? 0,
-              pending: (module.work?.pending ?? 0) + (module.work?.running ?? 0),
-              attention: module.work?.needsAttention ?? 0,
-              rejected: module.work?.rejected ?? 0,
-            })}
-            {module.lastErrorCode === undefined ? null : (
-              <>
-                <br />
-                <code>{t("lastExtractionError", { code: module.lastErrorCode })}</code>
-              </>
-            )}
+    <section className={`memory-health is-${props.health.state}`} aria-label={t("health")}>
+      <header className="memory-health-overview">
+        <div className="memory-health-overview-state" role="status">
+          <span className="memory-health-overview-icon" aria-hidden="true">
+            <HealthIcon size={25} weight="bold" />
           </span>
-        </article>
-      ))}
+          <div>
+            <strong>{t(`healthStates.${props.health.state}`)}</strong>
+            <span>
+              {t("healthOverviewDescription", {
+                modules: props.health.modules.length,
+              })}
+            </span>
+          </div>
+        </div>
+        <dl className="memory-health-overview-metrics">
+          <div>
+            <Cube size={23} aria-hidden="true" />
+            <dt>{t("healthMetrics.modules")}</dt>
+            <dd>{props.health.modules.length}</dd>
+          </div>
+          <div>
+            <FileText size={23} aria-hidden="true" />
+            <dt>{t("healthMetrics.events")}</dt>
+            <dd>{props.health.feed.eventCount}</dd>
+          </div>
+          <div>
+            <ShieldCheck size={23} aria-hidden="true" />
+            <dt>{t("healthMetrics.blocked")}</dt>
+            <dd>{formatHealthBytes(props.health.feed.blockedBytes)}</dd>
+          </div>
+        </dl>
+      </header>
+
+      <div className="memory-health-details">
+        <section className="memory-health-feed" aria-labelledby="memory-health-feed-title">
+          <h3 id="memory-health-feed-title">{t("feedStorage")}</h3>
+          <div className="memory-health-capacity">
+            <span>{t("feedUsage")}</span>
+            <strong>
+              {formatHealthBytes(props.health.feed.logicalBytes)}
+              <small> / {formatHealthBytes(targetBytes)}</small>
+            </strong>
+            <span>{formatHealthPercent(usagePercent)}</span>
+            <progress max={100} value={usagePercent} aria-label={t("feedUsage")} />
+            <small>{t("feedCapacity", { capacity: formatHealthBytes(targetBytes) })}</small>
+          </div>
+          <dl className="memory-health-feed-metrics">
+            <div>
+              <ShieldCheck size={24} aria-hidden="true" />
+              <dt>{t("safeThrough")}</dt>
+              <dd>{props.health.feed.safeThroughSequence}</dd>
+            </div>
+            <div>
+              <Database size={24} aria-hidden="true" />
+              <dt>{t("durableBlocked")}</dt>
+              <dd>{formatHealthBytes(props.health.feed.blockedBytes)}</dd>
+            </div>
+          </dl>
+        </section>
+
+        <section className="memory-health-modules" aria-labelledby="memory-health-modules-title">
+          <h3 id="memory-health-modules-title">{t("moduleStatus")}</h3>
+          <div className="memory-health-module-table-wrap">
+            <table className="memory-health-module-table">
+              <thead>
+                <tr>
+                  <th>{t("moduleTable.module")}</th>
+                  <th>{t("moduleTable.status")}</th>
+                  <th>{t("moduleTable.lag")}</th>
+                  <th>{t("moduleTable.records")}</th>
+                  <th>{t("moduleTable.extracting")}</th>
+                  <th>{t("moduleTable.attention")}</th>
+                  <th>{t("moduleTable.rejected")}</th>
+                </tr>
+              </thead>
+              <tbody>
+                {props.health.modules.map((module) => {
+                  const nameKey = memoryModuleNameKey(module.moduleId);
+                  return (
+                    <tr key={module.moduleId}>
+                      <th scope="row">
+                        <span className="memory-health-module-icon" aria-hidden="true">
+                          <Cube size={19} />
+                        </span>
+                        <span>
+                          <strong>
+                            {nameKey === undefined ? module.moduleId : t(`moduleNames.${nameKey}`)}
+                          </strong>
+                          <small>
+                            {module.moduleId}@{module.moduleVersion}
+                          </small>
+                          {module.lastErrorCode === undefined ? null : (
+                            <code>{module.lastErrorCode}</code>
+                          )}
+                        </span>
+                      </th>
+                      <td>
+                        <span className={`memory-health-status is-${module.status}`}>
+                          {module.status === "healthy" ? (
+                            <CheckCircle size={15} weight="fill" aria-hidden="true" />
+                          ) : (
+                            <WarningCircle size={15} weight="fill" aria-hidden="true" />
+                          )}
+                          {t(`moduleStatuses.${module.status}`)}
+                        </span>
+                      </td>
+                      <td>{module.lag}</td>
+                      <td>{module.work?.records ?? 0}</td>
+                      <td>{(module.work?.pending ?? 0) + (module.work?.running ?? 0)}</td>
+                      <td>{module.work?.needsAttention ?? 0}</td>
+                      <td className="is-historical">{module.work?.rejected ?? 0}</td>
+                    </tr>
+                  );
+                })}
+              </tbody>
+            </table>
+          </div>
+        </section>
+      </div>
     </section>
   );
 }
 
 function formatHealthBytes(bytes: number): string {
   return `${(bytes / (1_024 * 1_024)).toFixed(1)} MiB`;
+}
+
+function formatHealthPercent(percent: number): string {
+  return `${percent.toFixed(1)}%`;
+}
+
+function memoryModuleNameKey(
+  moduleId: string,
+): "episodic" | "knowledgeLearning" | "semantic" | undefined {
+  if (moduleId === "pragma.memory.episodic") return "episodic";
+  if (moduleId === "pragma.memory.knowledge-learning") return "knowledgeLearning";
+  if (moduleId === "pragma.memory.semantic") return "semantic";
+  return undefined;
 }
 
 export function MemoryDegradedAlert(props: {

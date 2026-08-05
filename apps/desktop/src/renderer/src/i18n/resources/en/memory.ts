@@ -93,17 +93,48 @@ export const memory = {
   loading: "Loading memory…",
   loadError: "Memory could not be loaded.",
   actionError: "The memory change could not be saved.",
-  healthSummary: "{{state}} · {{modules}} modules · {{events}} canonical events",
-  storageHealth:
-    "Feed {{logical}} / {{target}} · safe through {{safe}} · {{blocked}} blocked by durable consumers",
+  healthStates: {
+    running: "Memory is running normally",
+    stopped: "Memory is stopped",
+    degraded: "Memory needs attention",
+  },
+  healthOverviewDescription: "All {{modules}} registered modules are continuously monitored.",
+  healthMetrics: {
+    modules: "Modules",
+    events: "Canonical events",
+    blocked: "Durable blocked",
+  },
+  feedStorage: "Feed storage",
+  feedUsage: "Storage usage",
+  feedCapacity: "Feed capacity: {{capacity}}",
+  safeThrough: "Safe-through sequence",
+  durableBlocked: "Blocked by durable consumers",
+  moduleStatus: "Module status",
+  moduleTable: {
+    module: "Module",
+    status: "Status",
+    lag: "Lag",
+    records: "Memories",
+    extracting: "Extracting",
+    attention: "Needs attention",
+    rejected: "Rejected",
+  },
+  moduleNames: {
+    episodic: "Episodic memory",
+    knowledgeLearning: "Knowledge learning",
+    semantic: "Semantic memory",
+  },
+  moduleStatuses: {
+    healthy: "Healthy",
+    degraded: "Degraded",
+    unavailable: "Unavailable",
+  },
   extractionDegraded: "Memory extraction needs attention",
   extractionDegradedDescription:
     "{{count}} extraction job(s) could not produce memory. Captured evidence remains available for retry.",
   memoryDegraded: "Memory is degraded",
   memoryDegradedDescription:
     "The memory pipeline is not operating normally. Check Health for the affected module or delivery stage.",
-  moduleHealthSummary:
-    "{{status}} · lag {{lag}} · {{records}} memories · {{pending}} extracting · {{attention}} need attention · {{rejected}} rejected",
   lastExtractionError: "Latest extraction error: {{code}}",
   permissionNote: "Permissions can only be kept or tightened in this phase.",
 };

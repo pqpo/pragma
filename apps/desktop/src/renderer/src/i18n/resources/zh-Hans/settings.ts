@@ -70,35 +70,12 @@ export const settings = {
     extractorModelDescription: "用于生成结构化 Episodic Memory 的模型。",
     saveExtractor: "保存提炼模型",
     saveExtractorDescription: "修改设置后会唤醒需要处理的记忆提炼任务。",
-    loading: "加载中…",
-    health: "记忆平面健康状态",
-    healthDescription: "记忆平面随 Pragma 启动，并持续消费规范消息流水。",
-    healthSummary:
-      "{{state}} · {{events}} 条事件 · {{modules}} 个模块 · {{pending}} 条待投递 · {{quarantined}} 条已隔离",
-    moduleWorkSummary:
-      "{{module}} · {{records}} 条记忆 · {{pending}} 条提炼中 · {{attention}} 条需处理 · {{rejected}} 条已拒绝",
-    storageGovernance: "存储治理",
-    storageGovernanceDescription: "以固定只读策略限制原始事件、提炼载荷和诊断数据的增长。",
-    storageSummary:
-      "{{events}} 条事件 · 逻辑 {{logical}} / 文件 {{file}} · 目标 {{target}} · 安全水位 {{safe}} · 阻塞 {{blocked}}",
-    retentionSummary:
-      "Feed {{feedDays}} 天 · 任务 {{jobDays}} 天 · 每次执行 {{records}} 条或 {{bytes}} · {{deadLetters}} 条死信",
-    extractionJob: "{{module}} 提炼任务",
-    extractionJobSummary:
-      "{{status}} · 累计 {{attempts}} 次 · 保留 {{evidence}} 条 Evidence · 省略 {{omitted}} 条 · {{error}}",
-    retryExtraction: "重试提炼",
-    retryError: "提炼任务已经变化或不再允许重试。",
-    extractionError: "记忆提取失败：{{code}}",
-    pipelineError: "记忆流水线错误：{{code}}",
     assetTitle: "记忆策略",
     assetDescription: "此团队资产只能收紧全局策略；运行时限制还会与本设置取交集。",
     effectiveSummary: "当前生效：采集{{capture}}，召回{{recall}}，学习{{learning}}",
     loadError: "无法加载记忆设置。",
     saveError: "无法保存记忆设置，请刷新后获取最新修订。",
     states: {
-      running: "运行中",
-      degraded: "异常",
-      stopped: "已停止",
       enabled: "启用",
       disabled: "停用",
     },

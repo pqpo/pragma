@@ -1,3 +1,78 @@
+# Memory Health Design QA
+
+- Source visual truth: `design-qa/source-option-2.png`
+  - Original generated result:
+    `/Users/linminqiu/.codex/generated_images/019fd27b-b893-77f0-a08d-4812bd2ce043/exec-2f71bdee-13b2-40ad-b10f-62a724b418d9.png`
+- Implementation screenshot: `design-qa/implementation-final.jpg`
+- Combined comparison: `design-qa/comparison-final.jpg`
+- Viewport: 1400 × 933 CSS pixels at DPR 1, light theme, collapsed application rail
+- Density normalization:
+  - Source: 1557 × 1010 pixels, rendered at 1400px width with its aspect ratio preserved.
+  - Implementation: 1400 × 933 pixels captured at the CSS viewport size.
+  - The comparison keeps the implementation's additional 25px of empty lower canvas rather than
+    distorting either image.
+- State: Memory page with Health selected, a running plane, three healthy modules, 1325 canonical
+  events, 2.7 MiB of 512 MiB Feed storage, safe-through sequence 200, and no durable-consumer block.
+
+**Findings**
+
+- No actionable P0, P1, or P2 visual differences remain.
+- Fonts and typography preserve the existing Inter/SF Pro/PingFang stack, compact table sizing,
+  tabular numerals, localized status labels, and the selected direction's hierarchy.
+- Spacing and layout rhythm match the selected two-stage composition: one restrained overview
+  surface followed by a 31/69 Feed-and-module split with lightweight row separators. The redundant
+  visible `健康状态` content heading is removed.
+- Colors and visual tokens reuse the current Pragma canvas, surface, graphite, sage, border, focus,
+  radius, and low-elevation tokens. Degraded, unavailable, and stopped states retain distinct
+  semantic colors without relying on color alone.
+- Image and asset fidelity: the screen requires no raster content beyond the existing Pragma brand
+  asset. All new interface icons use the installed Phosphor library; no handwritten SVG, CSS art,
+  placeholder asset, gradient, or decorative chart was introduced.
+- Copy and content are complete in English, Simplified Chinese, and Traditional Chinese. The
+  implementation intentionally localizes `healthy` as `健康` and shows blocked storage as
+  `0.0 MiB`, which is more precise than the generated visual's unitless zero.
+
+**Full-view comparison evidence**
+
+- The selected design and rendered implementation were opened together in
+  `design-qa/comparison-final.jpg` at the same normalized width and state.
+- Both retain the collapsed application rail, Memory header and tabs, one global status overview,
+  a capacity-focused Feed column, and an aligned module diagnostic table.
+- The implementation preserves the product's real page insets and denser typography while matching
+  the selected visual's information hierarchy and major-region proportions.
+
+**Focused region comparison evidence**
+
+- A separate crop was not required because the stacked 1400px comparison keeps overview metrics,
+  Feed labels, module IDs, status pills, headers, and every numeric cell readable.
+
+**Interactions and diagnostics**
+
+- Verified selecting the Health tab from the Memory navigation and confirmed its active state in
+  the browser DOM.
+- Verified the Feed utilization is exposed as a named progressbar, the overview is announced as a
+  status, and the module diagnostics use table, row-header, and column-header semantics.
+- Browser console contained no warnings or errors in the verified state.
+- Focused Memory tests passed 10/10. Desktop renderer typecheck and focused ESLint checks passed.
+
+**Comparison history**
+
+1. Pass 1 found a P2 proportion mismatch: the overview metric group and Feed column were narrower
+   than the selected direction, making the status sentence dominate the top surface.
+2. Increased the overview metrics to 58% of the inner surface and the Feed column to 31% of the
+   detail grid while preserving minimum table width and responsive overflow behavior.
+3. Pass 2 aligned the overview dividers and two-column composition with the selected design. No
+   actionable P0/P1/P2 differences remained.
+
+**Follow-up Polish**
+
+- P3: after real degraded and unavailable module states appear in production data, capture those
+  states to tune long error-code truncation without changing the current layout.
+
+final result: passed
+
+---
+
 # Evaluations Directory Design QA
 
 - Source visual truth:
