@@ -215,6 +215,31 @@ describe("DesktopMemoryPlane", () => {
     });
     await plane.stop();
   });
+
+  it("checks ContextStore view availability without constructing a view", async () => {
+    const pragmaHome = await temporaryRoot("pragma-desktop-memory-context-view-");
+    const plane = await createDesktopMemoryPlane({
+      pragmaHome,
+      logger: createPragmaLogger(undefined, { component: "desktop.memory-test" }),
+    });
+    const input = {
+      rootRef: { type: "pragma.expert-team" as const, id: "vyv9pwwzaksth2dd" },
+      expertRef: { type: "pragma.expert" as const, id: "1xddvess309a6gme" },
+      projectId: "pragma",
+    };
+
+    await expect(plane.isContextStoreViewAvailable(input)).resolves.toBe(true);
+    const global = await plane.policies.getGlobal();
+    await plane.policies.updateGlobal({
+      expectedRevision: global.revision,
+      policy: { capture: "enabled", recall: "disabled", learning: "local-candidates" },
+    });
+    await expect(plane.isContextStoreViewAvailable(input)).resolves.toBe(false);
+    await expect(plane.createContextStoreView(input)).rejects.toMatchObject({
+      code: "memory_recall_disabled",
+    });
+    await plane.stop();
+  });
 });
 
 describe("Desktop Memory recall scope", () => {

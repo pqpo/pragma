@@ -44,6 +44,8 @@ import { createHomeExecutorCatalog } from "../features/missions/home-executor-ca
 import { createHomeExecutorPreferenceStore } from "../features/missions/home-executor-preference-store.ts";
 import { createMissionExecutorCatalog } from "../features/missions/mission-executor-catalog.ts";
 import { installMissionHandlers } from "../features/missions/mission-ipc.ts";
+import { installMissionContextStoreBrowserHandlers } from "../features/missions/mission-context-store-browser-ipc.ts";
+import { createMissionContextStoreBrowserService } from "../features/missions/mission-context-store-browser.ts";
 import {
   createDesktopAdapterHost,
   createMissionRunner,
@@ -599,6 +601,15 @@ export async function createDesktopApplicationContainer(
       await memoryPlane.setMemoryConversationState({ missionId, state });
     },
   });
+  installMissionContextStoreBrowserHandlers(
+    createMissionContextStoreBrowserService({
+      missions: missionStore,
+      project: pragmaProjectStore,
+      systemExperts,
+      memory: memoryPlane,
+      runner: missionRunner,
+    }),
+  );
   installDesktopSettingsHandlers({
     store: desktopSettings,
     validateDefaultWorkspace: async (path) => {

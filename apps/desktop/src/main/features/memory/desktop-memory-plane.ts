@@ -56,6 +56,12 @@ export type DesktopMemoryMutationResult =
       readonly record: import("@pragma/shared").Knowledge;
     };
 
+export interface DesktopMemoryContextStoreViewInput {
+  readonly rootRef: MemoryRecallScope["rootRef"];
+  readonly expertRef: MemoryRecallScope["expertRef"];
+  readonly projectId: string;
+}
+
 export interface DesktopMemoryPlane {
   readonly executionStore: FileExecutionStore;
   readonly policies: MemoryPolicyStore;
@@ -66,6 +72,10 @@ export interface DesktopMemoryPlane {
   readonly knowledgeStore: KnowledgeMemoryStore;
   readonly activity: MemoryActivityStore;
   readonly contextStore: import("@pragma/core").ExpertAgentContextStore;
+  isContextStoreViewAvailable(input: DesktopMemoryContextStoreViewInput): Promise<boolean>;
+  createContextStoreView(
+    input: DesktopMemoryContextStoreViewInput,
+  ): Promise<import("@pragma/core").ExpertAgentContextStore>;
   setEpisodicExtractor(extractor: EpisodicMemoryExtractor | undefined): Promise<void>;
   setSemanticExtractor(extractor: SemanticMemoryExtractor | undefined): Promise<void>;
   setKnowledgeExtractor(extractor: KnowledgeMemoryExtractor | undefined): Promise<void>;
@@ -399,6 +409,23 @@ export async function createDesktopMemoryPlane(options: {
     }
   };
 
+  const resolveContextStoreViewScope = async (
+    input: DesktopMemoryContextStoreViewInput,
+  ): Promise<{ readonly scope: MemoryRecallScope; readonly available: boolean }> => {
+    const localUser = await subjectIdentities.getLocalUserRef();
+    const scope = MemoryRecallScopeSchema.parse({
+      rootRef: input.rootRef,
+      expertRef: input.expertRef,
+      principalRefs: [localUser, { type: "pragma.project", id: input.projectId }],
+    });
+    const policy = await policies.resolveAt({
+      rootRef: scope.rootRef,
+      producerRefs: [scope.expertRef],
+      occurredAt: new Date().toISOString(),
+    });
+    return { scope, available: policy.recall };
+  };
+
   return {
     executionStore,
     policies,
@@ -409,6 +436,20 @@ export async function createDesktopMemoryPlane(options: {
     knowledgeStore: knowledge.store,
     activity,
     contextStore,
+    async isContextStoreViewAvailable(input) {
+      return (await resolveContextStoreViewScope(input)).available;
+    },
+    async createContextStoreView(input) {
+      const resolved = await resolveContextStoreViewScope(input);
+      if (!resolved.available) {
+        const error = new Error("Memory recall is disabled for this Expert scope.");
+        Object.assign(error, { code: "memory_recall_disabled" });
+        throw error;
+      }
+      return createFederatedMemoryContextStore(registry, {
+        resolveRecallScope: () => resolved.scope,
+      });
+    },
     async setEpisodicExtractor(extractor) {
       await episodic.setExtractor(extractor);
       scheduler.wake();

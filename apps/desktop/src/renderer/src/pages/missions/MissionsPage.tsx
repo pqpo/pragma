@@ -64,6 +64,10 @@ import { formatTokens } from "../../lib/usage-format.ts";
 import { ToolPermissionSelect } from "../../components/ToolPermissionSelect.tsx";
 import { MissionModelOverrideControls } from "../../components/MissionModelOverrideControls.tsx";
 import { MarkdownContent } from "../../components/MarkdownContent.tsx";
+import {
+  ContextStoreBrowser,
+  type ContextStoreBrowserSource,
+} from "../../components/ContextStoreBrowser.tsx";
 import { SidebarResizeHandle } from "../../components/SidebarResizeHandle.tsx";
 import {
   SIDEBAR_WIDTH_PREFERENCES,
@@ -975,6 +979,7 @@ export function MissionDetailFragment(props: {
 }) {
   const { t } = useTranslation(["missions", "common"]);
   const [tab, setTab] = useState<"chat" | "work" | "memory">("chat");
+  const [memoryView, setMemoryView] = useState<"store" | "activity">("store");
   const [workspaceAvailable, setWorkspaceAvailable] = useState<boolean | null>(null);
   const [chat, setChat] = useState<MissionChatSnapshot | null>(null);
   const [workRecords, setWorkRecords] = useState<readonly MissionWorkRecord[]>([]);
@@ -1038,6 +1043,30 @@ export function MissionDetailFragment(props: {
   const clientOperationRef = useRef<MissionClientOperationState>({ kind: "idle" });
   const autoRestoreExecutionRef = useRef<string | null>(null);
   const followLatestRef = useRef(true);
+  const memoryStoreSource = useMemo<ContextStoreBrowserSource>(() => {
+    const target = { missionId: props.mission.id, storeId: "memory" } as const;
+    return {
+      getDescriptor: async () => await window.pragmaDesktop.getMissionContextStore(target),
+      list: async (scopeId) =>
+        await window.pragmaDesktop.listMissionContextStoreEntries({ ...target, scopeId }),
+      read: async (scopeId, id, start) =>
+        await window.pragmaDesktop.readMissionContextStoreEntry({
+          ...target,
+          scopeId,
+          id,
+          start,
+          maxBytes: 64_000,
+        }),
+      search: async (scopeId, query) =>
+        await window.pragmaDesktop.searchMissionContextStore({
+          ...target,
+          scopeId,
+          query,
+          maxResults: 50,
+          contextLines: 2,
+        }),
+    };
+  }, [props.mission.id]);
   const prependScrollHeightRef = useRef<number | null>(null);
   const updateChat = useCallback((update: SetStateAction<MissionChatSnapshot | null>) => {
     const next = typeof update === "function" ? update(chatRef.current) : update;
@@ -1440,7 +1469,7 @@ export function MissionDetailFragment(props: {
 
   useEffect(() => {
     const api = desktopApi();
-    if (api === undefined || tab !== "memory") return;
+    if (api === undefined || tab !== "memory" || memoryView !== "activity") return;
     let cancelled = false;
     setMemoryActivityLoading(true);
     void api
@@ -1459,7 +1488,7 @@ export function MissionDetailFragment(props: {
     return () => {
       cancelled = true;
     };
-  }, [props.mission.execution?.id, props.mission.id, tab]);
+  }, [memoryView, props.mission.execution?.id, props.mission.id, tab]);
 
   const beginClientOperation = (
     kind: Exclude<MissionClientOperationState["kind"], "idle">,
@@ -2205,11 +2234,35 @@ export function MissionDetailFragment(props: {
             </div>
           </div>
         ) : tab === "memory" ? (
-          <MissionMemoryActivity
-            activity={memoryActivity}
-            error={memoryActivityError}
-            loading={memoryActivityLoading}
-          />
+          <div className="mission-memory-shell">
+            <nav className="mission-memory-views" aria-label={t("memoryViews")}>
+              <button
+                type="button"
+                className={memoryView === "store" ? "is-active" : ""}
+                aria-current={memoryView === "store" ? "page" : undefined}
+                onClick={() => setMemoryView("store")}
+              >
+                {t("memoryStore")}
+              </button>
+              <button
+                type="button"
+                className={memoryView === "activity" ? "is-active" : ""}
+                aria-current={memoryView === "activity" ? "page" : undefined}
+                onClick={() => setMemoryView("activity")}
+              >
+                {t("memoryActivity")}
+              </button>
+            </nav>
+            {memoryView === "store" ? (
+              <ContextStoreBrowser source={memoryStoreSource} />
+            ) : (
+              <MissionMemoryActivity
+                activity={memoryActivity}
+                error={memoryActivityError}
+                loading={memoryActivityLoading}
+              />
+            )}
+          </div>
         ) : workError !== null && workRecords.length === 0 ? (
           <div className="mission-work-empty" role="alert">
             <WarningCircle size={31} weight="thin" aria-hidden="true" />
