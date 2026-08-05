@@ -363,7 +363,7 @@ function MemorySelectRow<T extends string>(props: {
   readonly onChange: (value: T) => void;
 }) {
   return (
-    <label className="setting-row general-language-setting">
+    <div className="setting-row general-language-setting">
       <span className="setting-copy">
         <strong>{props.label}</strong>
         <span>{props.description}</span>
@@ -377,6 +377,6 @@ function MemorySelectRow<T extends string>(props: {
         options={props.options.map(([value, label]) => ({ value, label }))}
         onChange={props.onChange}
       />
-    </label>
+    </div>
   );
 }
