@@ -202,10 +202,10 @@ Desktop 的 `RuntimeEnvironmentService` 每次解析都读取版本化 Store，�
 之后创建的 Context；已有 Context 和 Runtime Session 保持原 binding。默认 Runtime 是安装级显式配置，
 Expert 未指定 Runtime 时由 Resolver 读取，而不是在 Expert 或 DSL 中推断 Codex。
 
-### P2：Memory Plane 前六阶段已落地，Skill/CodeGraph 与 legacy 切换仍待完成
+### P2：Memory Plane 前六阶段已落地，Skill 与 legacy 切换仍待完成
 
-**状态：ADR 031–038 已接受；Canonical Feed、Module SPI、策略、Episodic、Semantic、
-Mission Board 与 Knowledge 已实现。**
+**状态：ADR 031–039 已接受；Canonical Feed、Module SPI、策略、Episodic、Semantic、Mission Board 与
+Knowledge Store promotion/revision 闭环已实现。**
 
 ADR 002 曾把 Memory System 定义为 Core 抽象，但当前 `MemorySystem`、Memory record、Evidence Store 和 Distillation SPI 都在 `@pragma/plugin-memory`。ADR 003 又只完成了部分实现，代码已经同时包含 direct-write memory 与 evidence distillation。两份旧 ADR 现已被 ADR 031 替代。
 
@@ -218,14 +218,18 @@ ADR 031 已替代 ADR 002/003，并由 `docs/architecture/memory-plane-implement
   canonical identity；Mission Board 由 Host 注入通用 Context binding；
 - `@pragma/memory` 拥有 Evidence adapter、Memory Module SPI、策略、联邦 Context 和后续检索；
 - Memory 是 Host 内置能力，不再由每个 Expert 选择安装；
-- Experience 与 Fact 是默认动态投影；Knowledge 与 CodeGraph 是相对稳定的 Memory revision，仍是
-  Memory type，不新增独立 KnowledgeBase/MemoryAsset 对象；Skill Candidate 评测后升级为现有 Capability；
+- Experience 与 Fact 是默认动态投影；可选 CodeGraph 仍是独立 Memory type；
+- Memory 只产生 Knowledge promotion/revision Candidate。用户批准后的 Knowledge 进入“工作室 → 知识库”
+  托管 Context Store，并与 Memory/Evidence 解耦；
+- 通用 Store Revision Agent 加载目标 Store 与 revision prompt，生成 change set，用户批准后才激活新
+  Store revision；Skill Candidate 评测后升级为现有 Capability；
 - `plugin-memory` 在完成历史数据导入和调用方迁移后删除。
 
-当前已能形成按资产隔离的历史 Episode、带冲突/时效的 Semantic Fact，以及必须人工审阅后才进入召回的
-不可变 Knowledge revision。Agent 通过分层 ContextStore 自主召回；Bundle 仅分享显式选择且 export binding
-允许的 Knowledge，导入幂等并独立于 Bundle discard 生命周期。Skill Candidate、CodeGraph 与 legacy
-owner-scoped 导入仍未完成，旧插件只作为后续迁移数据源保留。
+当前已能形成按资产隔离的历史 Episode、带冲突/时效的 Semantic Fact，并将用户批准的结构化 Knowledge
+初始化为每个 Expert 唯一的 Studio Context Store。后续 Memory 变化只提交 Store 修订任务，由独立 Agent
+生成 change set，用户批准后以 CAS 原子激活。旧 Published Knowledge 与 Bundle extension 已 hard cut，旧
+目录不迁移、不读取。Skill Candidate 与 legacy owner-scoped 导入仍未完成，旧插件只作为后续迁移数据源
+保留。CodeGraph 是最后的可选扩展验收，不作为 Memory 重构或 legacy 切换的前置条件。
 
 ### P2：Desktop Main Process 正在变成第二个业务内核
 

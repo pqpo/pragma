@@ -41,13 +41,6 @@ import {
 } from "@pragma/interpreter/ast";
 import { strFromU8, zipSync } from "fflate";
 import { z } from "zod";
-import { createKnowledgeShare, type KnowledgeMemoryStore } from "@pragma/memory";
-import {
-  KnowledgeShareSchema,
-  type Knowledge,
-  type KnowledgeShare,
-  type MemorySubjectRef,
-} from "@pragma/shared";
 
 import {
   CreateCapabilitySchema,
@@ -187,9 +180,7 @@ export interface PragmaBundleService {
     readonly projectRevision: number;
   }): Promise<PragmaBundleExportPreview>;
   exportTo(
-    input: Omit<ExportPragmaBundle, "knowledgeRevisionRefs"> & {
-      readonly knowledgeRevisionRefs?: ExportPragmaBundle["knowledgeRevisionRefs"] | undefined;
-    },
+    input: ExportPragmaBundle,
     destinationPath: string,
   ): Promise<{
     readonly path: string;
@@ -212,7 +203,6 @@ export function createPragmaBundleService(options: {
   readonly plugins: PluginStore;
   readonly layouts: WorkflowLayoutStore;
   readonly getRuntimes: () => Promise<readonly DesktopRuntimeAvailability[]>;
-  readonly knowledge?: KnowledgeMemoryStore | undefined;
 }): PragmaBundleService {
   const readCatalogFile = async (): Promise<z.infer<typeof InstallationCatalogSchema>> => {
     try {
@@ -398,13 +388,6 @@ export function createPragmaBundleService(options: {
       const plugins = await collectPlugins(resources, options.plugins);
       await assertPortablePluginConfigs(resources, plugins, options.plugins);
       const flows = resources.filter((resource) => resource.kind === "Flow");
-      const knowledge =
-        options.knowledge === undefined
-          ? []
-          : eligibleKnowledgeForExport(await options.knowledge.list(), resources, {
-              type: "pragma.project",
-              id: snapshot.projectId,
-            });
       return {
         snapshot,
         project,
@@ -414,7 +397,6 @@ export function createPragmaBundleService(options: {
         contexts,
         plugins,
         flows,
-        knowledge,
       };
     } catch (error) {
       await project.dispose();
@@ -528,12 +510,6 @@ export function createPragmaBundleService(options: {
           pluginCount: prepared.plugins.length,
           knowledgeBaseCount: prepared.contexts.length,
           hasFlowLayouts: prepared.flows.length > 0,
-          knowledge: prepared.knowledge.map((item) => ({
-            id: item.id,
-            revision: item.revision,
-            title: item.content.title,
-            summary: item.content.summary,
-          })),
           defaults: {
             capabilities: true,
             plugins: true,
@@ -560,48 +536,6 @@ export function createPragmaBundleService(options: {
         );
         const pluginByRef = new Map(prepared.plugins.map((entry) => [entry.ref, entry]));
         const extensions = [];
-        const knowledgeRevisionRefs = input.knowledgeRevisionRefs ?? [];
-        if (knowledgeRevisionRefs.length > 0) {
-          if (options.knowledge === undefined) throw new Error("Knowledge Memory is unavailable.");
-          const requested = await options.knowledge.listExportable({
-            projectRef: { type: "pragma.project", id: prepared.snapshot.projectId },
-            refs: knowledgeRevisionRefs,
-          });
-          const eligibleRefs = new Set(
-            prepared.knowledge.map((item) => `${item.id}\0${item.revision}`),
-          );
-          for (const item of requested) {
-            if (!eligibleRefs.has(`${item.id}\0${item.revision}`)) {
-              throw new Error(
-                `Knowledge revision is outside this Bundle root: ${item.id}@${item.revision}.`,
-              );
-            }
-          }
-          const projectFingerprint = prepared.snapshot.projectFingerprint;
-          if (projectFingerprint === undefined) {
-            throw new Error("The current Project revision has no portable fingerprint.");
-          }
-          const shares = requested.map((knowledge) =>
-            createKnowledgeShare({
-              knowledge,
-              sourceProjectFingerprint: projectFingerprint,
-              provenance: knowledge.sourceRefs.map((source) => ({
-                sourceKind: source.kind,
-                sourceId: source.id,
-                sourceRevision: source.revision,
-                summary: "Reviewed Memory source revision.",
-              })),
-            }),
-          );
-          extensions.push({
-            id: "pragma.memory.knowledge",
-            version: "v1",
-            required: true,
-            files: new Map([
-              ["knowledge.json", new TextEncoder().encode(`${JSON.stringify(shares, null, 2)}\n`)],
-            ]),
-          });
-        }
         if (input.modules.flowLayouts) {
           const layoutFiles = new Map<string, Uint8Array>();
           for (const flow of prepared.flows) {
@@ -855,8 +789,6 @@ export function createPragmaBundleService(options: {
         unpackedBytes: archive.unpackedBytes,
         fileCount: archive.fileCount,
         resources: archive.resources.length,
-        knowledgeCount: archive.knowledgeShares.length,
-        importedKnowledgePersistsAfterDiscard: archive.knowledgeShares.length > 0,
         dependencies: [
           ...archive.manifest.dependencies.runtimes.map((item) => ({
             kind: "runtime" as const,
@@ -1436,19 +1368,6 @@ export function createPragmaBundleService(options: {
               });
             }
 
-            if (archive.knowledgeShares.length > 0) {
-              if (options.knowledge === undefined) {
-                throw new Error("This Bundle requires Knowledge Memory support.");
-              }
-              await options.knowledge.importShares({
-                shares: archive.knowledgeShares,
-                mapRef: (sourceRef) =>
-                  mapImportedKnowledgeSubject(sourceRef, sourceToTarget, published.projectId),
-                actorRef: { type: "pragma.bundle-installation", id: initial.id },
-                now: new Date(),
-              });
-            }
-
             const verifiedPending = await inspectPendingDependencies(
               published.resources.filter((resource) =>
                 importedRefs.has(canonicalPragmaResourceRef(resource)),
@@ -1735,7 +1654,6 @@ interface DesktopBundleArchive {
   };
   readonly files: ReadonlyMap<string, Uint8Array>;
   readonly resources: readonly PragmaResource[];
-  readonly knowledgeShares: readonly KnowledgeShare[];
   readonly archiveBytes: number;
   readonly fileCount: number;
   readonly unpackedBytes: number;
@@ -1765,10 +1683,7 @@ async function readDesktopBundle(
   const project = await loadPragmaProject(
     { kind: "decoded-bundle", bundle: decoded },
     {
-      supportedBundleExtensions: new Set([
-        "pragma.desktop.flow-layout@v1",
-        "pragma.memory.knowledge@v1",
-      ]),
+      supportedBundleExtensions: new Set(["pragma.desktop.flow-layout@v1"]),
     },
   );
   try {
@@ -1812,24 +1727,6 @@ async function readDesktopBundle(
         files.set(`layouts/flows/${path}`, contents);
       }
     }
-    const knowledgeExtension = decoded.manifest.extensions.find(
-      (extension) => `${extension.id}@${extension.version}` === "pragma.memory.knowledge@v1",
-    );
-    const knowledgeShares =
-      knowledgeExtension === undefined
-        ? []
-        : KnowledgeShareSchema.array().parse(
-            JSON.parse(
-              strFromU8(
-                requiredBundlePayloadFile(
-                  filesBelowPrefix(decoded.files, knowledgeExtension.root),
-                  "knowledge.json",
-                  "pragma.memory.knowledge@v1",
-                ),
-              ),
-            ),
-          );
-
     const capabilities = [];
     const contextStores = [];
     const plugins = [];
@@ -1929,7 +1826,6 @@ async function readDesktopBundle(
       },
       files,
       resources,
-      knowledgeShares,
       archiveBytes: decoded.archiveBytes,
       fileCount: decoded.files.size,
       unpackedBytes: [...decoded.files.values()].reduce(
@@ -1967,68 +1863,6 @@ async function addDirectoryFiles(
     }
   };
   await visit(canonicalRoot);
-}
-
-function eligibleKnowledgeForExport(
-  items: readonly Knowledge[],
-  resources: readonly PragmaResource[],
-  projectRef: MemorySubjectRef,
-): readonly Knowledge[] {
-  const closure = new Set(resources.map(canonicalPragmaResourceRef));
-  const mappable = (ref: MemorySubjectRef): boolean =>
-    sameSubject(ref, projectRef) ||
-    (subjectToPragmaRef(ref) !== undefined && closure.has(subjectToPragmaRef(ref)!));
-  return items.filter(
-    (item) =>
-      item.status === "active" &&
-      item.visibility.mode !== "host-private" &&
-      item.sensitivity !== "restricted" &&
-      mappable(item.rootRef) &&
-      item.producerRefs.every(mappable) &&
-      item.bindings.every((binding) => mappable(binding.consumerRef)) &&
-      (item.visibility.mode !== "restricted" || item.visibility.principals.every(mappable)) &&
-      item.bindings.some(
-        (binding) => sameSubject(binding.consumerRef, projectRef) && binding.export === "allow",
-      ),
-  );
-}
-
-function mapImportedKnowledgeSubject(
-  ref: MemorySubjectRef,
-  resourceMappings: ReadonlyMap<string, string>,
-  projectId: string,
-): MemorySubjectRef | undefined {
-  if (ref.type === "pragma.project") return { type: "pragma.project", id: projectId };
-  const source = subjectToPragmaRef(ref);
-  if (source === undefined) return undefined;
-  const target = resourceMappings.get(source) ?? source;
-  const separator = target.indexOf(":");
-  if (separator <= 0 || separator === target.length - 1) return undefined;
-  const type =
-    target.slice(0, separator) === "expert"
-      ? "pragma.expert"
-      : target.slice(0, separator) === "team"
-        ? "pragma.expert-team"
-        : target.slice(0, separator) === "flow"
-          ? "pragma.flow"
-          : undefined;
-  return type === undefined ? undefined : { type, id: target.slice(separator + 1) };
-}
-
-function subjectToPragmaRef(ref: MemorySubjectRef): string | undefined {
-  const namespace =
-    ref.type === "pragma.expert"
-      ? "expert"
-      : ref.type === "pragma.expert-team"
-        ? "team"
-        : ref.type === "pragma.flow"
-          ? "flow"
-          : undefined;
-  return namespace === undefined ? undefined : `${namespace}:${ref.id}`;
-}
-
-function sameSubject(left: MemorySubjectRef, right: MemorySubjectRef): boolean {
-  return left.type === right.type && left.id === right.id;
 }
 
 function sha256(value: string | Uint8Array): string {

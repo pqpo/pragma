@@ -204,9 +204,11 @@ Pragma Expert Invocation 或 Flow step。
 Codex Session ─────┐
 Claude Code Session ├─→ 持久 Evidence Feed → Dynamic Memory
 PI Session ────────┘                       ↓
-                             Knowledge / Skill / CodeGraph
+                         Knowledge promotion / Skill / 可选 CodeGraph
                                             ↓
-                           注入后续任意 Harness
+                         Studio Context Store / Capability
+                                            ↓
+                              注入后续任意 Harness
 ```
 
 Pragma 应拥有记忆语义，Runtime 只负责产生 Evidence 和消费经过授权、筛选的 Context。
@@ -216,14 +218,15 @@ Memory 不是闭合的四类 Record。默认动态投影回答两个基本问题
 - `Episodic Memory`：过去发生过什么、尝试过什么、结果如何；
 - `Semantic Memory`：当前相信什么是真的，置信度、时效和冲突是什么。
 
-TODO、plan 和 Handoff 是 Mission Board 的可选使用范式，只能作为 Evidence 来源之一。Knowledge、
-CodeGraph 和未来索引是相对稳定、带不可变 Revision 的 Memory type，由独立 Memory Module
-消费同一条 Evidence Feed 后生成。正式 Skill 复用 Capability，不维护平行的 Skill Memory 权威 Store。
+TODO、plan 和 Handoff 是 Mission Board 的可选使用范式，只能作为 Evidence 来源之一。Knowledge 先由
+Memory 产生 promotion Candidate，用户批准后进入“工作室 → 知识库”的托管 Context Store，并与
+Memory/Evidence 解耦。CodeGraph 和未来索引可以作为可选 Memory type；正式 Skill 复用 Capability，
+不维护平行的 Skill Memory 权威 Store。
 
 记忆不应只是跨 Harness 共享原始聊天记录。Pragma 需要完成：
 
 - 不同 Runtime、Artifact、Repository 和外部来源 Evidence 的规范化；
-- Evidence 到动态 Memory、Knowledge、Skill 和可扩展资产的可审计沉淀；
+- Evidence 到动态 Memory，再到 Studio Knowledge Store、Skill 和可扩展资产的可审计 promotion；
 - Host 级静态 Memory Module 注册、独立 checkpoint、重放和失败隔离；
 - 用户、项目、工作方式、Expert、Team 和 Mission 的 subject、ownership 与 binding；
 - shared/private 可见性和最小权限；
@@ -329,8 +332,8 @@ Pragma 应建立两个相互增强的循环。
 跨 Harness 执行
 → 持久采集并重放 Evidence
 → 形成 Episodic / Semantic Dynamic Memory
-→ 有价值的部分形成 Knowledge / Skill / CodeGraph Candidate
-→ 验证后发布不可变 Asset Revision
+→ 有价值的部分形成 Knowledge / Skill / 可选 CodeGraph Candidate
+→ 验证后发布 Studio Knowledge Store / Capability / 可选 CodeGraph Revision
 → 后续任务按绑定与权限检索
 → 结果质量提升
 → 稳定经验经用户确认进入 Knowledge、Skill 或工作方式
@@ -404,8 +407,9 @@ Pragma 应建立两个相互增强的循环。
 - 明确用户、项目、工作方式、Expert、Team、Mission、Execution 的 subject、ownership 和 binding；
 - 统一不同 Runtime 的 Evidence identity 和 provenance；
 - 保持 Mission Board 与 Memory 生命周期隔离；
-- 实现 Dynamic Memory 到私有、共享、可发布 Knowledge/Skill/CodeGraph Asset 的显式 promotion；
-- 用 CodeGraph 验证新增类型不修改 Core union、默认 Store 或联邦 Context 实现；
+- 实现 Dynamic Memory 到私有、共享、可发布 Studio Knowledge Store、Skill Capability 和可选 CodeGraph
+  的显式 promotion；
+- 当存在明确产品价值时，可用 CodeGraph 验证新增类型不修改 Core union、默认 Store 或联邦 Context 实现；
 - 支持加密同步、导出、导入、删除和设备间冲突处理；
 - 为记忆注入建立预算、相关性、时效和权限策略；
 - 用跨 Runtime、跨设备恢复测试验证，而不只验证文件 Store。

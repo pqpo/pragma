@@ -31,6 +31,12 @@ import type {
   UpdateContextStoreFile,
   RenameContextStoreEntry,
   DeleteContextStoreEntry,
+  ContextStoreRevisionRequest,
+  ContextStoreRevisionJob,
+  ListContextStoreRevisionJobs,
+  ContextStoreRevisionJobRef,
+  ContextStoreRevisionProfile,
+  UpdateContextStoreRevisionProfile,
   DesktopPlugin,
   PluginZipInspection,
   ImportPluginZip,
@@ -138,15 +144,10 @@ import type {
   DesktopMissionMemoryActivity,
   DesktopMemoryExtractionBoard,
   ManageDesktopMemoryExtractionTask,
-  DesktopKnowledgeCandidate,
-  ListDesktopKnowledgeCandidates,
-  UpdateDesktopKnowledgeCandidate,
-  RejectDesktopKnowledgeCandidate,
-  PublishDesktopKnowledgeCandidate,
-  CreateDesktopKnowledgeSuccessor,
-  DesktopKnowledge,
-  GetDesktopKnowledgeSource,
-  DesktopKnowledgeSource,
+  MemoryKnowledgeInitializationCandidate,
+  ListMemoryKnowledgeInitializationCandidates,
+  MemoryKnowledgeInitializationCandidateRef,
+  UpdateMemoryKnowledgeInitializationCandidate,
   GetMissionContextStore,
   ListMissionContextStoreEntries,
   ReadMissionContextStoreEntry,
@@ -192,20 +193,18 @@ export interface PragmaDesktopAPI {
   tightenMemoryAccess: (input: TightenDesktopMemoryAccess) => Promise<DesktopMemoryItem>;
   invalidateMemoryItem: (input: ReviewDesktopMemoryItem) => Promise<DesktopMemoryItem>;
   forgetMemoryItem: (input: ReviewDesktopMemoryItem) => Promise<void>;
-  listKnowledgeCandidates: (
-    input?: ListDesktopKnowledgeCandidates,
-  ) => Promise<DesktopKnowledgeCandidate[]>;
-  updateKnowledgeCandidate: (
-    input: UpdateDesktopKnowledgeCandidate,
-  ) => Promise<DesktopKnowledgeCandidate>;
-  rejectKnowledgeCandidate: (
-    input: RejectDesktopKnowledgeCandidate,
-  ) => Promise<DesktopKnowledgeCandidate>;
-  publishKnowledgeCandidate: (input: PublishDesktopKnowledgeCandidate) => Promise<DesktopKnowledge>;
-  createKnowledgeSuccessor: (
-    input: CreateDesktopKnowledgeSuccessor,
-  ) => Promise<DesktopKnowledgeCandidate>;
-  getKnowledgeSource: (input: GetDesktopKnowledgeSource) => Promise<DesktopKnowledgeSource>;
+  listMemoryKnowledgeInitializations: (
+    input?: ListMemoryKnowledgeInitializationCandidates,
+  ) => Promise<MemoryKnowledgeInitializationCandidate[]>;
+  updateMemoryKnowledgeInitialization: (
+    input: UpdateMemoryKnowledgeInitializationCandidate,
+  ) => Promise<MemoryKnowledgeInitializationCandidate>;
+  rejectMemoryKnowledgeInitialization: (
+    input: MemoryKnowledgeInitializationCandidateRef,
+  ) => Promise<MemoryKnowledgeInitializationCandidate>;
+  createMemoryKnowledgeStore: (
+    input: MemoryKnowledgeInitializationCandidateRef,
+  ) => Promise<ContextStore>;
   getMissionMemoryActivity: (missionId: string) => Promise<DesktopMissionMemoryActivity>;
   getMissionContextStore: (input: GetMissionContextStore) => Promise<MissionContextStoreDescriptor>;
   listMissionContextStoreEntries: (
@@ -241,6 +240,27 @@ export interface PragmaDesktopAPI {
   updateContextStoreFile: (input: UpdateContextStoreFile) => Promise<ContextStoreContent>;
   renameContextStoreEntry: (input: RenameContextStoreEntry) => Promise<void>;
   deleteContextStoreEntry: (input: DeleteContextStoreEntry) => Promise<void>;
+  submitContextStoreRevision: (
+    input: ContextStoreRevisionRequest,
+  ) => Promise<ContextStoreRevisionJob>;
+  listContextStoreRevisions: (
+    input?: ListContextStoreRevisionJobs,
+  ) => Promise<ContextStoreRevisionJob[]>;
+  getContextStoreRevision: (jobId: string) => Promise<ContextStoreRevisionJob>;
+  approveContextStoreRevision: (
+    input: ContextStoreRevisionJobRef,
+  ) => Promise<ContextStoreRevisionJob>;
+  rejectContextStoreRevision: (
+    input: ContextStoreRevisionJobRef,
+  ) => Promise<ContextStoreRevisionJob>;
+  retryContextStoreRevision: (
+    input: ContextStoreRevisionJobRef,
+  ) => Promise<ContextStoreRevisionJob>;
+  deleteContextStoreRevision: (input: ContextStoreRevisionJobRef) => Promise<void>;
+  getContextStoreRevisionProfile: () => Promise<ContextStoreRevisionProfile>;
+  updateContextStoreRevisionProfile: (
+    input: UpdateContextStoreRevisionProfile,
+  ) => Promise<ContextStoreRevisionProfile>;
   subscribeContextStoreChanges: (storeId: string, listener: () => void) => () => void;
   pickContextStoreFolder: () => Promise<PickWorkspaceResult>;
   listExperts: () => Promise<ExpertSummary[]>;

@@ -12,31 +12,23 @@ import {
 export const KNOWLEDGE_MEMORY_CURATOR_PROMPT_VERSION = "knowledge-curator/v1" as const;
 
 export {
-  KnowledgeCandidateSchema,
   KnowledgeContentSchema,
   KnowledgeExtractionCandidateSchema,
   KnowledgeExtractionInputSchema,
   KnowledgeExtractionJobSchema,
   KnowledgeExtractionOutputSchema,
   KnowledgeExtractorProvenanceSchema,
-  KnowledgeGovernanceEventSchema,
-  KnowledgeSchema,
-  KnowledgeShareSchema,
   KnowledgeSourceRevisionRefSchema,
   KnowledgeSourceSnapshotSchema,
 } from "@pragma/shared";
 
 export type {
-  Knowledge,
-  KnowledgeCandidate,
   KnowledgeContent,
   KnowledgeExtractionCandidate,
   KnowledgeExtractionInput,
   KnowledgeExtractionJob,
   KnowledgeExtractionOutput,
   KnowledgeExtractorProvenance,
-  KnowledgeGovernanceEvent,
-  KnowledgeShare,
   KnowledgeSourceRevisionRef,
   KnowledgeSourceSnapshot,
 } from "@pragma/shared";

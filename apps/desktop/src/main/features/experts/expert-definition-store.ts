@@ -69,6 +69,7 @@ export function createExpertDefinitionStore(options: {
   readonly project: PragmaProjectStore;
   readonly systemExperts: DesktopSystemExpertRegistry;
   readonly validateModel: (model: CreateExpertDefinition["model"]) => Promise<void>;
+  readonly onRemoved?: ((expertRef: string) => Promise<void>) | undefined;
 }): ExpertDefinitionStore {
   const getResource = async (
     ref: string,
@@ -253,6 +254,7 @@ export function createExpertDefinitionStore(options: {
           .map(canonicalPragmaResourceRef)
           .filter((ref) => !retainedRefs.has(ref)),
       });
+      await options.onRemoved?.(id);
     },
   };
 }

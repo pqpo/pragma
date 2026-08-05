@@ -28,7 +28,17 @@ import { createCapabilityRevisionCoordinator } from "../features/capabilities/ca
 import { createCapabilityStore } from "../features/capabilities/capability-store.ts";
 import { createCapabilityVerifier } from "../features/capabilities/capability-verifier.ts";
 import { installContextStoreHandlers } from "../features/context-stores/context-store-ipc.ts";
+import {
+  createContextStoreRevisionService,
+  STORE_REVISION_EXPERT_REF,
+  type ContextStoreRevisionGenerator,
+  type ContextStoreRevisionService,
+} from "../features/context-stores/context-store-revision-service.ts";
 import { createContextStoreStore } from "../features/context-stores/context-store-store.ts";
+import {
+  createDesktopStoreRevisionAgent,
+  type DesktopStoreRevisionAgent,
+} from "../features/context-stores/store-revision-agent.ts";
 import { createDesktopDefaultAgentAutomationPort } from "../features/default-agent/default-agent-automation-adapter.ts";
 import { createDesktopDefaultAgentProjectPort } from "../features/default-agent/default-agent-project-adapter.ts";
 import { createDesktopDefaultAgentTaskPort } from "../features/default-agent/default-agent-task-adapter.ts";
@@ -57,6 +67,11 @@ import {
   type DesktopMemoryCurator,
 } from "../features/memory/memory-curator.ts";
 import { installMemoryPolicyHandlers } from "../features/memory/memory-policy-ipc.ts";
+import {
+  createMemoryKnowledgePromotionService,
+  groupMemoryKnowledgeProposalsByExpert,
+  type MemoryKnowledgePromotionService,
+} from "../features/memory/memory-knowledge-promotion.ts";
 import { installModelProviderHandlers } from "../features/model-providers/model-provider-ipc.ts";
 import { createModelProviderStore } from "../features/model-providers/model-provider-store.ts";
 import { createPluginCredentialStore } from "../features/plugins/plugin-credential-store.ts";
@@ -179,7 +194,7 @@ export async function createDesktopApplicationContainer(
     storagePaths: pragmaPaths,
     loggerProvider,
     blueprintCache,
-    reservedResourceRefs: new Set([BUILT_IN_PRAGMA_REF]),
+    reservedResourceRefs: new Set([BUILT_IN_PRAGMA_REF, STORE_REVISION_EXPERT_REF]),
   });
   const workflowLayouts = createWorkflowLayoutStore({ projectsPath });
   installWorkflowLayoutHandlers(workflowLayouts);
@@ -258,6 +273,7 @@ export async function createDesktopApplicationContainer(
       mainLogger.warn("desktop.home_executor_usage_failed", message, { error }),
   });
   installRuntimeHandlers(runtimes);
+  const knowledgePromotionRef: { current?: MemoryKnowledgePromotionService } = {};
   const expertStore = createExpertDefinitionStore({
     project: pragmaProjectStore,
     systemExperts,
@@ -284,6 +300,9 @@ export async function createDesktopApplicationContainer(
           `Thinking level is unavailable: ${selection.modelId}/${selection.thinkingLevel}.`,
         );
       }
+    },
+    onRemoved: async (expertRef) => {
+      await knowledgePromotionRef.current?.clearExpertBinding(expertRef);
     },
   });
   const pluginStore = createPluginStore({
@@ -327,6 +346,7 @@ export async function createDesktopApplicationContainer(
   });
   capabilityStore.setRevisionPublisher(capabilityRevisionCoordinator);
   installCapabilityHandlers(capabilityStore, options.getWindow);
+  const storeRevisionsRef: { current?: ContextStoreRevisionService } = {};
   const contextStores = createContextStoreStore({
     storesPath: contextStoresPath,
     trashItem: options.trashItem,
@@ -338,11 +358,97 @@ export async function createDesktopApplicationContainer(
         expert.contextStoreMounts.some((mount) => mount.storeId === storeId),
       );
     },
+    onRemoved: async (storeId) => {
+      await knowledgePromotionRef.current?.clearStoreBinding(storeId);
+    },
+    hasActiveRevisions: async (storeId) =>
+      (await storeRevisionsRef.current?.hasActiveJobs(storeId)) ?? false,
   });
-  installContextStoreHandlers(contextStores, options.getWindow);
+  const storeRevisionAgentRef: { current?: DesktopStoreRevisionAgent } = {};
+  const revisionGenerator: ContextStoreRevisionGenerator = {
+    async generate(input) {
+      if (storeRevisionAgentRef.current === undefined) {
+        throw new Error("The Store Revision Agent has not been initialized.");
+      }
+      return await storeRevisionAgentRef.current.generator.generate(input);
+    },
+  };
+  const storeRevisions = createContextStoreRevisionService({
+    statePath: join(pragmaPaths.stateRoot(), "context-store-revisions"),
+    contextStores,
+    generator: revisionGenerator,
+    warn: (message, error) =>
+      mainLogger.warn("desktop.context_store_revision_processing_failed", message, { error }),
+  });
+  storeRevisionsRef.current = storeRevisions;
+  const knowledgePromotion = createMemoryKnowledgePromotionService({
+    statePath: join(pragmaPaths.stateRoot(), "memory-knowledge-promotion"),
+    contextStores,
+    revisions: storeRevisions,
+    expertExists: async (expertRef) =>
+      (await expertStore.list()).some((expert) => expert.ref === expertRef),
+    mountStore: async (expertRef, storeId) => {
+      const expert = await expertStore.get(expertRef);
+      if (expert.contextStoreMounts.some((mount) => mount.storeId === storeId)) return;
+      const contextStoreMounts = [
+        ...expert.contextStoreMounts,
+        { storeId, enabled: true, priority: expert.contextStoreMounts.length },
+      ];
+      if (expert.origin === "built-in") {
+        await expertStore.updateBuiltIn(expertRef, {
+          name: expert.name,
+          description: expert.description,
+          tags: expert.tags,
+          additionalInstructions: expert.additionalInstructions,
+          ...(expert.executionProfile.mode === "pinned"
+            ? { model: expert.executionProfile.model }
+            : {}),
+          capabilities: expert.capabilities,
+          toolApprovals: expert.toolApprovals,
+          plugins: expert.plugins,
+          contextStoreMounts,
+        });
+        return;
+      }
+      if (expert.executionProfile.mode !== "pinned") {
+        throw new Error("Project Expert has no pinned execution profile.");
+      }
+      await expertStore.update(expertRef, {
+        baseRevision: expert.revision,
+        name: expert.name,
+        description: expert.description,
+        tags: expert.tags,
+        scope: expert.scope,
+        instructions: expert.instructions,
+        model: expert.executionProfile.model,
+        capabilities: expert.capabilities,
+        toolApprovals: expert.toolApprovals,
+        plugins: expert.plugins,
+        contextStoreMounts,
+        resourceTools: expert.resourceTools,
+        opaqueCapabilities: expert.opaqueCapabilities,
+        opaqueContextStores: expert.opaqueContextStores,
+      });
+    },
+  });
+  knowledgePromotionRef.current = knowledgePromotion;
+  installContextStoreHandlers(contextStores, options.getWindow, storeRevisions);
   const memoryPlane = await createDesktopMemoryPlane({
     pragmaHome: pragmaPaths.root,
     logger: mainLogger,
+    knowledgeLearningSink: {
+      async submit(input) {
+        const proposalsByExpert = groupMemoryKnowledgeProposalsByExpert(input);
+        if (proposalsByExpert.size === 0) throw new Error("knowledge_producer_expert_missing");
+        for (const [expertRef, proposals] of proposalsByExpert) {
+          await knowledgePromotion.routeLearning({
+            expertRefs: [expertRef],
+            sourceDigest: input.sourceDigest,
+            proposals,
+          });
+        }
+      },
+    },
   });
   const bundleService = createPragmaBundleService({
     paths: pragmaPaths,
@@ -351,7 +457,6 @@ export async function createDesktopApplicationContainer(
     contextStores,
     plugins: pluginStore,
     layouts: workflowLayouts,
-    knowledge: memoryPlane.knowledgeStore,
     getRuntimes: async () => await getRuntimeAvailability(runtimes),
   });
   installPragmaBundleHandlers(bundleService, options.getWindow);
@@ -438,7 +543,9 @@ export async function createDesktopApplicationContainer(
     getSystemExecutorFingerprint: async (mission) =>
       mission.executor.ref === MEMORY_CURATOR_REF
         ? await memoryCuratorRef.current?.fingerprint()
-        : systemExperts.fingerprint(mission.executor.ref),
+        : mission.executor.ref === STORE_REVISION_EXPERT_REF
+          ? await storeRevisionAgentRef.current?.fingerprint(await storeRevisions.getProfile())
+          : systemExperts.fingerprint(mission.executor.ref),
     assertExecutorReady: async (ref) => {
       if (await bundleService.isRefPending(ref)) {
         throw new Error(
@@ -456,6 +563,19 @@ export async function createDesktopApplicationContainer(
           workspace: mission.workspace.path,
           pragmaHome: pragmaPaths.root,
           loggerProvider,
+        });
+      }
+      if (mission.executor.ref === STORE_REVISION_EXPERT_REF) {
+        if (
+          storeRevisionAgentRef.current === undefined ||
+          mission.origin.type !== "system-store-revision"
+        ) {
+          throw new Error("The Store Revision Agent mission is invalid or unavailable.");
+        }
+        return await storeRevisionAgentRef.current.compile({
+          storeId: mission.origin.storeId,
+          profile: await storeRevisions.getProfile(),
+          runtimes: scopedRuntimes,
         });
       }
       if (mission.executor.ref !== BUILT_IN_PRAGMA_REF) return undefined;
@@ -533,6 +653,16 @@ export async function createDesktopApplicationContainer(
     loggerProvider,
   });
   memoryCuratorRef.current = memoryCurator;
+  storeRevisionAgentRef.current = createDesktopStoreRevisionAgent({
+    profiles: storeRevisions,
+    contextStores,
+    missions: missionStore,
+    runner: missionRunner,
+    project: pragmaProjectStore,
+    runtimes,
+    pragmaHome: pragmaPaths.root,
+    loggerProvider,
+  });
   await Promise.all([
     memoryPlane.setEpisodicExtractor(memoryCurator.episodicExtractor),
     memoryPlane.setSemanticExtractor(memoryCurator.semanticExtractor),
@@ -623,6 +753,7 @@ export async function createDesktopApplicationContainer(
     missions: missionStore,
     project: pragmaProjectStore,
     systemExperts,
+    knowledgePromotion,
   });
   installModelProviderHandlers(modelProviderStore, {
     isProviderReferenced: async (providerId) =>
@@ -685,6 +816,27 @@ export async function createDesktopApplicationContainer(
         mainLogger.warn(
           "desktop.memory_curator_orphan_cleanup_failed",
           "Orphaned Memory Curator Missions could not be cleaned up.",
+          { error },
+        );
+      });
+      void knowledgePromotion.recover().catch((error: unknown) => {
+        mainLogger.warn(
+          "desktop.memory_knowledge_promotion_recovery_failed",
+          "An interrupted Memory knowledge-store initialization could not be recovered.",
+          { error },
+        );
+      });
+      void storeRevisionAgentRef.current?.recoverOrphans().catch((error: unknown) => {
+        mainLogger.warn(
+          "desktop.context_store_revision_orphan_cleanup_failed",
+          "Orphaned Store Revision Agent Missions could not be cleaned up.",
+          { error },
+        );
+      });
+      void storeRevisions.processPending().catch((error: unknown) => {
+        mainLogger.warn(
+          "desktop.context_store_revision_resume_failed",
+          "Pending Context Store revisions could not be resumed.",
           { error },
         );
       });

@@ -3,6 +3,11 @@
 - Status: Accepted
 - Date: 2026-08-05
 - Extends: [ADR 031](./031-extensible-memory-plane.md)、[ADR 034](./034-conservative-semantic-memory.md)
+- Superseded in part by: [ADR 039](./039-promoted-knowledge-stores-and-agent-revision.md)
+
+> 本 ADR 已实现的 Candidate 审阅、不可变 revision 与显式分享仍是过渡实现记录。ADR 039 将最终 published
+> Knowledge authority 改为“工作室 → 知识库”的托管 Context Store，并以通用 Store Revision Agent 取代
+> Memory Knowledge 的长期修订路径。
 
 ## Context
 

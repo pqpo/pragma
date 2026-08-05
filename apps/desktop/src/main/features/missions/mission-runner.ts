@@ -301,6 +301,7 @@ export function createMissionRunner(options: {
     }
   };
   const createExecutionContext = async (mission: Mission): Promise<MissionExecutionContext> => {
+    const systemMission = mission.origin.type !== "user";
     let toolPermissionMode = mission.toolPermissionMode;
     const runtimes: RuntimeResolver = {
       getDefaultRuntimeId: async () =>
@@ -321,30 +322,37 @@ export function createMissionRunner(options: {
       const current = await options.missions.get(mission.id);
       return current.lifecycleStatus === "active" ? input.ids : [];
     };
-    const board = await createMissionBoard({
-      ownerId: mission.id,
-      openSharedStore: async () => {
-        const rootDir = join(missionRoot, "board", "shared");
-        await mkdir(rootDir, { recursive: true });
-        return new FileSystemContextStore({
-          rootDir,
-          include: ["*.md", "**/*.md", "*.json", "**/*.json", "*.txt", "**/*.txt"],
-          authorize: authorizeBoard,
+    const board = systemMission
+      ? { bindings: [] as readonly ExpertAgentContextStoreRegistrationInput[] }
+      : await createMissionBoard({
+          ownerId: mission.id,
+          openSharedStore: async () => {
+            const rootDir = join(missionRoot, "board", "shared");
+            await mkdir(rootDir, { recursive: true });
+            return new FileSystemContextStore({
+              rootDir,
+              include: ["*.md", "**/*.md", "*.json", "**/*.json", "*.txt", "**/*.txt"],
+              authorize: authorizeBoard,
+            });
+          },
+          openPrivateStore: async (_ownerId, contextId) => {
+            const rootDir = join(
+              missionRoot,
+              "board",
+              "private",
+              encodePragmaPathSegment(contextId),
+            );
+            await mkdir(rootDir, { recursive: true });
+            return new FileSystemContextStore({
+              rootDir,
+              include: ["*.md", "**/*.md", "*.json", "**/*.json", "*.txt", "**/*.txt"],
+              authorize: authorizeBoard,
+            });
+          },
         });
-      },
-      openPrivateStore: async (_ownerId, contextId) => {
-        const rootDir = join(missionRoot, "board", "private", encodePragmaPathSegment(contextId));
-        await mkdir(rootDir, { recursive: true });
-        return new FileSystemContextStore({
-          rootDir,
-          include: ["*.md", "**/*.md", "*.json", "**/*.json", "*.txt", "**/*.txt"],
-          authorize: authorizeBoard,
-        });
-      },
-    });
     let historicalExecutionIds: Promise<ReadonlySet<string>> | undefined;
     const legacyExecutionOutputBindings: readonly ExpertAgentContextStoreRegistrationInput[] =
-      mission.origin.type === "system-memory"
+      systemMission
         ? []
         : [
             {
@@ -362,7 +370,7 @@ export function createMissionRunner(options: {
             },
           ];
     const hostContextBindings = [
-      ...(mission.origin.type === "system-memory" ? [] : (options.hostContextStores ?? [])),
+      ...(systemMission ? [] : (options.hostContextStores ?? [])),
       ...legacyExecutionOutputBindings,
       ...board.bindings,
     ];
@@ -375,10 +383,14 @@ export function createMissionRunner(options: {
         expertSessionStore,
         hostContextBindings,
         loggerProvider: options.loggerProvider?.withScope({ missionId: mission.id }),
-        automaticHumanInteractionHandler: async (request) =>
-          await automaticHumanInteractionHandlerForToolPermissionMode(toolPermissionMode)?.(
+        automaticHumanInteractionHandler: async (request) => {
+          if (mission.origin.type === "system-store-revision" && request.kind === "tool_approval") {
+            return { kind: "tool_approval", approved: false, updatedInput: request.input };
+          }
+          return await automaticHumanInteractionHandlerForToolPermissionMode(toolPermissionMode)?.(
             request,
-          ),
+          );
+        },
         usageSink:
           options.usage === undefined
             ? undefined

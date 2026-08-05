@@ -174,10 +174,24 @@ export const MissionOriginSchema = z.discriminatedUnion("type", [
     type: z.literal("system-memory"),
     jobId: z.string().min(1),
   }),
+  z.object({
+    type: z.literal("system-store-revision"),
+    jobId: z.string().uuid(),
+    storeId: z.string().uuid(),
+  }),
 ]);
 
-export const MissionSchema = MissionBaseSchema.extend({
+export const MissionV6Schema = MissionBaseSchema.extend({
   schemaVersion: z.literal("pragma.mission/v6"),
+  flowInput: z.record(z.string(), z.unknown()).optional(),
+  origin: z.discriminatedUnion("type", [
+    z.object({ type: z.literal("user") }),
+    z.object({ type: z.literal("system-memory"), jobId: z.string().min(1) }),
+  ]),
+});
+
+export const MissionSchema = MissionBaseSchema.extend({
+  schemaVersion: z.literal("pragma.mission/v7"),
   flowInput: z.record(z.string(), z.unknown()).optional(),
   origin: MissionOriginSchema.default({ type: "user" }),
 }).superRefine((mission, context) => {

@@ -1,4 +1,5 @@
 import { createHash } from "node:crypto";
+import { StaticContextStore } from "@pragma/core";
 
 import {
   KnowledgeExtractionInputSchema,
@@ -9,17 +10,22 @@ import {
   type MemorySubjectRef,
 } from "@pragma/shared";
 
-import { createKnowledgeMemoryContextProvider } from "./context.ts";
 import type { KnowledgeMemoryExtractor, KnowledgeSourceReader } from "./schema.ts";
-import { createKnowledgeMemoryStore, type KnowledgeMemoryStore } from "./store.ts";
+import { createKnowledgeLearningStore, type KnowledgeLearningStore } from "./store.ts";
 import { extractionErrorCode } from "../pipeline/extraction-error-code.ts";
 import type { MemoryModule } from "../pipeline/memory-module.ts";
 import { DEFAULT_MEMORY_STORAGE_POLICY } from "../storage/memory-storage-policy.ts";
 
 const MAX_SOURCE_REVISIONS = 100;
 
+export {
+  KNOWLEDGE_MEMORY_CURATOR_PROMPT_VERSION,
+  type KnowledgeMemoryExtractor,
+  type KnowledgeSourceReader,
+} from "./schema.ts";
+
 export interface KnowledgeMemoryModule extends MemoryModule {
-  readonly store: KnowledgeMemoryStore;
+  readonly store: KnowledgeLearningStore;
   setExtractor(extractor: KnowledgeMemoryExtractor | undefined): Promise<void>;
   interruptExtractionJob(input: {
     readonly id: string;
@@ -29,27 +35,37 @@ export interface KnowledgeMemoryModule extends MemoryModule {
   close(): void;
 }
 
+export interface KnowledgeLearningSink {
+  submit(input: {
+    readonly rootRef: MemorySubjectRef;
+    readonly sourceDigest: string;
+    readonly candidates: readonly KnowledgeExtractionCandidate[];
+    readonly sources: readonly KnowledgeSourceSnapshot[];
+  }): Promise<void>;
+}
+
 export async function createKnowledgeMemoryModule(options: {
   readonly sourceReader: KnowledgeSourceReader;
   readonly pragmaHome?: string | undefined;
   readonly extractor?: KnowledgeMemoryExtractor | undefined;
+  readonly learningSink: KnowledgeLearningSink;
   readonly now?: (() => Date) | undefined;
 }): Promise<KnowledgeMemoryModule> {
-  const store = await createKnowledgeMemoryStore(options);
+  const store = await createKnowledgeLearningStore(options);
   const now = options.now ?? (() => new Date());
   let extractor = options.extractor;
   const running = new Map<string, AbortController>();
 
   return {
     descriptor: {
-      id: "pragma.memory.knowledge",
-      version: "1.0.0",
-      pathPrefix: "knowledge",
+      id: "pragma.memory.knowledge-learning",
+      version: "2.0.0",
+      pathPrefix: "knowledge-learning",
       storageModel: "immutable-revision",
       purpose: "learning",
       contextLayers: {
         usagePrompt:
-          "Use Knowledge Memory for reviewed and published reusable guidance. Candidates are never recallable. Read the exact immutable revision and respect its binding scope.",
+          "Knowledge learning only proposes Studio Context Store initialization or revision tasks. It has no recallable published projection.",
         summaryPath: "summary.md",
         indexPath: "index.md",
         itemsPrefix: "items/",
@@ -64,8 +80,8 @@ export async function createKnowledgeMemoryModule(options: {
         schemaRefs: ["pragma.memory.execution-terminal/v2"],
       },
     ],
-    createContextProvider(scope) {
-      return createKnowledgeMemoryContextProvider(store, scope);
+    createContextProvider() {
+      return new StaticContextStore();
     },
     async consume(envelopes) {
       for (const [rootKey, group] of groupTerminalSignals(envelopes)) {
@@ -123,13 +139,13 @@ export async function createKnowledgeMemoryModule(options: {
           return;
         }
         assertEligibleCandidates(output.candidates, sources);
-        await store.completeCandidates({
-          job,
+        await options.learningSink.submit({
+          rootRef: job.rootRef,
+          sourceDigest,
           candidates: output.candidates,
           sources,
-          provenance: result.provenance,
-          now: now(),
         });
+        await store.completeLearned(job, now());
       } catch (error) {
         await store.fail({
           job,
