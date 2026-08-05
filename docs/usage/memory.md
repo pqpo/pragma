@@ -6,7 +6,7 @@ Pragma 的新 Memory Plane 是 Desktop 内置能力，随应用启动，不需�
 
 ## 当前已经可用的能力
 
-当前已完成 Memory Plane 基础设施、策略、Episodic Memory、Semantic Memory 和治理管理中心：
+当前已完成 Memory Plane 基础设施、策略、Episodic Memory、Semantic Memory、Knowledge Memory 和治理管理中心：
 
 - Execution 语义事件通过持久 Canonical Event Feed 交给 Memory Plane；
 - Memory Evidence 自动记录 root Expert/ExpertTeam/Flow 与实际 producer Expert；
@@ -29,12 +29,24 @@ Pragma 的新 Memory Plane 是 Desktop 内置能力，随应用启动，不需�
   生成隐藏 query，不自动注入匹配项，也没有 `recall_memory` 专用工具；
 - Desktop 一级 Memory 页面可以查看 Episode/Fact、来源、binding、冲突、历史、精确 Evidence 和 Module
   health，并执行收紧、修正、验证、失效或忘记；
+- 提炼任务页同时展示 Episodic、Semantic 与 Knowledge job，并允许对 `needs_attention` Knowledge job 按
+  revision 显式重试；
 - Mission 的 Memory 页签显示每次 Execution 的 capture/recall 计数。搜索审计只保存 digest 和长度，
   不保存 query 原文。
+- Knowledge Module 从有效 Episode 与已验证/无冲突 Fact 提炼本地候选；候选必须在 Memory 页面检查精确
+  来源、逐项选择 recall/export binding 后才能发布，未发布候选不会进入 Agent Context；
+- published Knowledge 通过 `memory/knowledge/items/<id>/<revision>.md` 读取，内容、权限收紧和撤回均保存
+  不可变 revision；
+- Bundle 默认不导出任何 Knowledge。导出时只能逐条选择当前 Project 明确允许 export 的修订；导入确认
+  即发布为本地 Knowledge，重复导入幂等，丢弃 Bundle 安装不会删除已导入 Knowledge。
 
-当前已实现独立的内置 Mission Board；尚未实现 Knowledge、Skill Candidate、CodeGraph Module、候选评审、
-分享扩权审批或跨设备同步。旧 `@pragma/plugin-memory` 中的 Task Memory 只属于迁移源，不是新版
+当前已实现独立的内置 Mission Board；尚未实现 Skill Candidate、CodeGraph Module、跨设备同步和 legacy
+导入。旧 `@pragma/plugin-memory` 中的 Task Memory 只属于迁移源，不是新版
 后续 Memory 阶段的完成实现。
+
+Episodic 与 Semantic 的 data/job Store 当前为 user version 3。相邻 v2→v3 迁移将提炼生命周期
+升级为 conversation、source Execution 和 input-watermark 模型，并对升级前数据创建备份；未来
+版本仍 fail closed。
 
 ## 分层加载
 
@@ -48,6 +60,9 @@ memory/<type>/index.md                  # 可分段读取的完整索引
 memory/<type>/items/<id>.md             # 按需详情
 memory/<type>/evidence/<evidenceId>.md  # 按需核验证据
 ```
+
+Knowledge 使用带修订的 `memory/knowledge/items/<id>/<revision>.md`，保证 Agent 读取和审计引用的是同一份
+不可变发布快照。Knowledge Candidate 不属于这棵可召回 Context。
 
 guide 最多 2KB，overview 最多 6KB。普通搜索不会返回 Evidence；模型必须先找到详情中的稳定引用，再精确
 读取证据。Episodic 是历史先例，不代表当前事实。
@@ -146,8 +161,9 @@ Knowledge 与 CodeGraph 仍是 Memory type，不是独立 KnowledgeBase 或 Memo
 Expert、ExpertTeam 与 Flow；Repository 等其他 subject 等有稳定 registry 后再接入。事实可以在权限允许、
 经过提炼后绑定给 Expert、ExpertTeam 或 Flow，成为团队资产的一部分。
 
-未来分享 Expert/ExpertTeam/Flow 时，可选择一并导出绑定且允许 export 的 published/team-shareable
-Memory revision。分享不会新建一个知识库对象，也不会自动导出私有原始 Evidence。
+分享 Expert/ExpertTeam/Flow 时，可逐条选择一并导出绑定且允许 export 的 published Knowledge revision。
+分享不会新建一个知识库对象，也不会导出私有原始 Evidence、Curator prompt 或本机路径。host-private、
+restricted sensitivity 和存在不可映射受限主体的 Knowledge 会被拒绝导出。
 
 ## Legacy plugin
 
@@ -169,10 +185,13 @@ Memory revision。分享不会新建一个知识库对象，也不会自动导�
 ~/.pragma/state/memory/modules/<episodic>/jobs.sqlite # Evidence aggregation and durable jobs
 ~/.pragma/data/memory/modules/<semantic>/facts.sqlite # Semantic projection, revisions and audit
 ~/.pragma/state/memory/modules/<semantic>/jobs.sqlite # Semantic Evidence, subjects and durable jobs
+~/.pragma/data/memory/modules/<knowledge>/knowledge.sqlite # Candidate、published revision、job 与治理
 ~/.pragma/state/memory/executions/<executionId>/activity.sqlite # capture/recall metadata audit
 ~/.pragma/state/memory/cleanup-journal/     # Mission/Execution transient cleanup journal
 ~/.pragma/state/memory/curator-missions.json # 有界隐藏 Curator Mission registry
 ~/.pragma/data/memory/subject-identity.json # Desktop installation-local User identity
+~/.pragma/data/missions/<missionId>/board/shared/ # Mission 共享白板
+~/.pragma/data/missions/<missionId>/board/private/<encodedContextId>/ # Runtime Context 私有白板
 ```
 
 Memory 数据不写 Agent workspace。正常启动不会扫描全部 Mission、Execution 或 legacy memory 目录。
@@ -181,8 +200,11 @@ Memory 数据不写 Agent workspace。正常启动不会扫描全部 Mission、E
 
 - [ADR 031: Extensible Memory Plane](../adr/031-extensible-memory-plane.md)
 - [ADR 032: Durable Canonical Event Feed](../adr/032-durable-canonical-event-feed.md)
+- [ADR 033: Layered Episodic Memory](../adr/033-layered-episodic-memory.md)
 - [ADR 034: Conservative Semantic Memory](../adr/034-conservative-semantic-memory.md)
 - [ADR 035: Agent-driven Memory Recall and Host Governance](../adr/035-agent-driven-memory-recall-and-governance.md)
 - [ADR 036: Memory Storage Retention and Recovery](../adr/036-memory-storage-retention-and-recovery.md)
+- [ADR 037: Mission Board as a Host-bound Context Store](../adr/037-mission-board-context-store.md)
+- [ADR 038: Reviewed Knowledge Memory and Explicit Bundle Sharing](../adr/038-reviewed-knowledge-memory-and-bundle-sharing.md)
 - [Memory Plane 落地计划](../architecture/memory-plane-implementation-plan.md)
 - [旧 Memory System ADR（已被替代）](../adr/002-memory-system.md)

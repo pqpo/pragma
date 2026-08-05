@@ -16,7 +16,7 @@ Desktop 当前没有 Repository registry，也没有跨设备账户身份。为 
 ## Decision
 
 `pragma.memory.semantic` 是独立的 dynamic-projection Module，直接消费安全 execution Evidence，不依赖
-Episodic Memory 或 WorkingState。每个事实记录 statement、subjectRefs、predicate、normalizedValue、
+Episodic Memory 或 Mission Board。每个事实记录 statement、subjectRefs、predicate、normalizedValue、
 confidence、时效、Evidence、visibility、binding、冲突和 provenance。
 
 Subject 使用 allowlist：Desktop 为每个普通 Mission Execution 幂等登记安装级 local User 和 Pragma

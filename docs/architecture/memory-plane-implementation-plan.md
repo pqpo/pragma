@@ -1,8 +1,8 @@
 # Memory Plane 落地计划
 
 - Status: Active plan
-- Last updated: 2026-08-04
-- Decisions: [ADR 031](../adr/031-extensible-memory-plane.md)、[ADR 032](../adr/032-durable-canonical-event-feed.md)、[ADR 033](../adr/033-layered-episodic-memory.md)、[ADR 034](../adr/034-conservative-semantic-memory.md)、[ADR 035](../adr/035-agent-driven-memory-recall-and-governance.md)、[ADR 036](../adr/036-memory-storage-retention-and-recovery.md)、[ADR 037](../adr/037-mission-board-context-store.md)
+- Last updated: 2026-08-05
+- Decisions: [ADR 031](../adr/031-extensible-memory-plane.md)、[ADR 032](../adr/032-durable-canonical-event-feed.md)、[ADR 033](../adr/033-layered-episodic-memory.md)、[ADR 034](../adr/034-conservative-semantic-memory.md)、[ADR 035](../adr/035-agent-driven-memory-recall-and-governance.md)、[ADR 036](../adr/036-memory-storage-retention-and-recovery.md)、[ADR 037](../adr/037-mission-board-context-store.md)、[ADR 038](../adr/038-reviewed-knowledge-memory-and-bundle-sharing.md)
 
 ## 最终链路
 
@@ -45,7 +45,7 @@ Memory type，不新增 KnowledgeBase/KnowledgeAsset/MemoryAsset 对象。
 | 3    | Completed | Semantic / Fact Memory：真值、冲突、时效和置信度             |
 | 4    | Completed | Agent 驱动召回、完整 binding 治理、管理中心与 Mission 可见性 |
 | 5    | Completed | Mission Board：持久通用白板、私有 Context 与跨专家协作       |
-| 6    | Planned   | Knowledge Memory：多层提炼、稳定 revision 与团队分享         |
+| 6    | Completed | Knowledge Memory：多层提炼、稳定 revision 与团队分享         |
 | 7    | Planned   | Skill Memory Candidate、Evaluation 与 Capability 升级        |
 | 8    | Planned   | CodeGraph 独立 Module 扩展验收                               |
 | 9    | Planned   | 旧 plugin owner-scoped 导入、compiler cutover 与删除         |
@@ -157,7 +157,7 @@ Desktop 提供设置入口。
 
 ### 目标
 
-回答“过去发生过什么”：目标、尝试、结果、失败和恢复。直接消费 Evidence，不依赖 WorkingState。
+回答“过去发生过什么”：目标、尝试、结果、失败和恢复。直接消费 Evidence，不依赖 Mission Board。
 
 ### 已完成范围
 
@@ -309,14 +309,19 @@ Expert/principal scope、binding/visibility、预算、审计和生命周期。�
 ### Implementation record
 
 - Status: Completed
-- Protocols: `pragma.memory-episodic/v2`、`pragma.memory-capture-activity/v1`、
+- Protocols: `pragma.memory-episodic/v3`、`pragma.memory-extraction-job/v3`、
+  `pragma.memory-semantic-job/v3`、`pragma.memory-episodic-extraction-input/v2`、
+  `pragma.memory-semantic-extraction-input/v2`、`pragma.memory-capture-activity/v1`、
   `pragma.memory-recall-activity/v1`、`pragma.memory-execution-context/v1`、
   `pragma.memory-tombstone/v1`；Semantic 内容协议保持 `pragma.memory-semantic/v1`
 - Storage: 每个 Execution 的 activity 位于 `state/memory/executions/<executionId>/activity.sqlite`；
-  Episodic 与 Semantic data store 升级到 user version 2
-- Migration: Episodic v1 使用历史 fixture 验证相邻 v1→v2 binding 转换；Semantic v1→v2 仅增加
-  tombstone 表，不改写 fact 内容；未来版本 fail closed
-- Verification: Memory/Core/Desktop typecheck，Memory 与 Desktop tests，仓库 `pnpm check`、`pnpm build`
+  Episodic 与 Semantic data/job store 均为 user version 3
+- Migration: Episodic data v1→v2 完成 binding 转换，Semantic data v1→v2 增加 tombstone；
+  data/job store 的 v2→v3 将单 Execution 身份升级为 conversation、source Execution 与 input-watermark
+  生命周期，并将历史非法 `needs_attention` 任务恢复为可重试 pending；相邻迁移使用历史
+  fixture、升级前备份且对未来版本 fail closed
+- Verification: Memory/Core/Desktop typecheck，Memory 与 Desktop tests，
+  `packages/memory/test/memory-job-v3-migration.test.ts`，仓库 `pnpm check`、`pnpm build`
 - Known limitations: 不提供跨设备账户合并、分享扩权审批、Knowledge/Skill/CodeGraph、legacy importer；
   不计划增加 Host prompt retrieval planner
 
@@ -379,6 +384,24 @@ Memory 的前置条件；已提交变化可以作为后续提炼的可选 Eviden
 - Mission 删除按 owner 图回收 Mission Board，且不影响长期 Memory 的独立生命周期；
 - 私有条目发布 Evidence、提炼、导出时不会自动提升为 shared/team-shareable。
 
+### Implementation record
+
+- Status: Completed
+- Protocols: 不新增持久或跨进程白板协议；Host-local mutation observation 形状为
+  `pragma.mission-board-mutation/v1`，读写复用 Core Context Store 的 revision/etag CAS 和通用
+  Context output reference，不新增白板专用 CRUD 协议
+- Storage: Desktop 默认保存到
+  `data/missions/<missionId>/board/shared/` 与
+  `data/missions/<missionId>/board/private/<encodedContextId>/`；路径随 Mission owner 进入带 journal 的
+  Trash 回收流程
+- Migration: 新 Execution 从 legacy `pragma.handoff` Store 切换为通用 Context reference；旧
+  handoff 只通过有界、Mission-authorized 的只读 Context adapter 保持可读，不保留旧写入或
+  registration API
+- Verification: Mission Board package tests，Core Context binding/output/execution tests，Desktop Mission
+  restart、successor Session、大输出与 owner 删除测试，仓库 `pnpm check`、`pnpm build`
+- Known limitations: mutation observation hook 只暴露不含正文的变更元数据；Desktop 尚未将
+  Mission Board mutation 接入 Memory Evidence，它不影响 Episodic/Semantic 的默认提炼链路
+
 ## 阶段 6：Knowledge Memory
 
 ### 目标
@@ -405,6 +428,23 @@ Context binding to Expert / ExpertTeam / Flow / Project
 - 候选不能被默认 recall 当作已发布知识；
 - 分享包只含显式选择且 export binding 允许的 revision；
 - 导入分享包仍生成 Memory revision，不生成第二种知识库对象。
+
+### Implementation record
+
+- Status: Completed
+- Protocols: `pragma.memory-knowledge-candidate/v1`、`pragma.memory-knowledge/v1`、
+  `pragma.memory-knowledge-job/v1`、`pragma.memory-knowledge-extraction-input/v1`、
+  `pragma.memory-knowledge-governance-event/v1`、`pragma.memory-knowledge-share/v1`；Bundle 扩展为
+  required `pragma.memory.knowledge@v1`，Bundle 主协议与 compiler version 不变
+- Storage: `data/memory/modules/<knowledge>/knowledge.sqlite`；Candidate、published revision、job、来源
+  digest、治理事件和 Bundle import origin 由 Knowledge Module 独立拥有
+- Migration: 新 Knowledge Store 从 v1 开始并拒绝未来版本；未修改 Episodic/Semantic data schema、Core
+  Execution、Project Revision 或 DSL
+- Verification: Shared/Memory/Desktop typecheck，Knowledge candidate/publication/recall/access/import tests，
+  导出 fail-closed、批量导入原子回滚，Bundle 显式选择、required extension、identity mapping、幂等导入和
+  discard-retention 集成测试，仓库 `pnpm check` 与 `pnpm build`
+- Known limitations: 不提供跨设备账户合并、阶段 7 Skill Candidate、阶段 8 CodeGraph 或阶段 9 legacy
+  importer；导入后若其 Bundle 资源被丢弃，Knowledge 仍保留但可能不再有可召回的 root binding
 
 ## 阶段 7：Skill Memory Candidate → Skill Capability
 
@@ -438,12 +478,12 @@ Context binding to Expert / ExpertTeam / Flow / Project
 
 ### 映射
 
-| Legacy      | New plane                        |
-| ----------- | -------------------------------- |
-| Task Memory | WorkingState 或 archive Evidence |
-| Experience  | Episodic import candidate        |
-| Fact        | Semantic import candidate        |
-| Skill card  | Skill Memory Candidate           |
+| Legacy      | New plane                             |
+| ----------- | ------------------------------------- |
+| Task Memory | Mission Board 导入或 archive Evidence |
+| Experience  | Episodic import candidate             |
+| Fact        | Semantic import candidate             |
+| Skill card  | Skill Memory Candidate                |
 
 ### 要求
 

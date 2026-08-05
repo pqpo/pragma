@@ -995,6 +995,10 @@ export const studio = {
   bundlePluginsHint: "可用时包含用户安装的插件包。",
   bundleKnowledgeBases: "知识库",
   bundleKnowledgeBasesHint: "默认关闭，因为内容可能很大或包含敏感信息。",
+  bundleKnowledgeMemory: "已发布的知识记忆",
+  bundleKnowledgeMemoryHint: "默认不选择任何内容。请逐条选择已允许当前项目导出的精确发布修订。",
+  bundleImportedKnowledgePersists:
+    "此 Bundle 包含 {{count}} 条已发布知识。确认导入即视为本地发布；以后放弃 Bundle 安装时，这些知识仍会保留。",
   bundleFlowLayouts: "Flow 布局",
   bundleFlowLayoutsHint: "保留画布节点位置和视口。",
   bundleSafetyHint:

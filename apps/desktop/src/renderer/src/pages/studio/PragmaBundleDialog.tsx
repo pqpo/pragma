@@ -22,6 +22,7 @@ import type {
   ContextStore,
   DesktopRuntimeAvailability,
   PragmaBundleImportInspection,
+  PragmaBundleExportPreview,
   PragmaBundleInstallation,
   PragmaBundleModuleOptions,
   PragmaProjectSnapshot,
@@ -129,12 +130,42 @@ function BundleExportDialog(props: {
     flowLayouts: true,
   });
   const [resultPath, setResultPath] = useState<string | null>(null);
+  const [preview, setPreview] = useState<PragmaBundleExportPreview | null>(null);
+  const [knowledgeRevisionRefs, setKnowledgeRevisionRefs] = useState<
+    { id: string; revision: number }[]
+  >([]);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const roots = useMemo(
     () => orderBundleExportRoots(props.project.resources.filter(isBundleExportRoot)),
     [props.project.resources],
   );
+
+  useEffect(() => {
+    const api = desktopApi();
+    if (api === undefined || rootRef === "") {
+      setPreview(null);
+      setKnowledgeRevisionRefs([]);
+      return;
+    }
+    let active = true;
+    void api
+      .preparePragmaBundleExport({
+        rootRef,
+        projectRevision: props.project.revision,
+      })
+      .then((value) => {
+        if (!active) return;
+        setPreview(value);
+        setKnowledgeRevisionRefs([]);
+      })
+      .catch((cause: unknown) => {
+        if (active) setError(errorMessage(cause));
+      });
+    return () => {
+      active = false;
+    };
+  }, [props.project.revision, rootRef]);
 
   const exportBundle = async () => {
     const api = desktopApi();
@@ -147,6 +178,7 @@ function BundleExportDialog(props: {
         rootRef,
         projectRevision: props.project.revision,
         modules,
+        knowledgeRevisionRefs,
       });
       if (!result.cancelled) setResultPath(result.path ?? null);
     } catch (cause) {
@@ -212,6 +244,35 @@ function BundleExportDialog(props: {
           onChange={(flowLayouts) => setModules({ ...modules, flowLayouts })}
         />
       </fieldset>
+      {preview !== null && preview.knowledge.length > 0 ? (
+        <fieldset className="pragma-bundle-modules">
+          <legend>{t("bundleKnowledgeMemory")}</legend>
+          <p>{t("bundleKnowledgeMemoryHint")}</p>
+          {preview.knowledge.map((knowledge) => {
+            const selected = knowledgeRevisionRefs.some(
+              (ref) => ref.id === knowledge.id && ref.revision === knowledge.revision,
+            );
+            return (
+              <label key={`${knowledge.id}:${knowledge.revision}`}>
+                <input
+                  type="checkbox"
+                  checked={selected}
+                  onChange={(event) =>
+                    setKnowledgeRevisionRefs((current) =>
+                      event.target.checked
+                        ? [...current, { id: knowledge.id, revision: knowledge.revision }]
+                        : current.filter(
+                            (ref) => ref.id !== knowledge.id || ref.revision !== knowledge.revision,
+                          ),
+                    )
+                  }
+                />{" "}
+                <strong>{knowledge.title}</strong> — {knowledge.summary}
+              </label>
+            );
+          })}
+        </fieldset>
+      ) : null}
       <p className="pragma-bundle-safety">{t("bundleSafetyHint")}</p>
       {resultPath ? (
         <p className="pragma-bundle-success" role="status">
@@ -958,6 +1019,13 @@ function BundleFileStep(props: {
             <p className="pragma-bundle-warning">
               {t("bundleSameContentInstalled", {
                 count: props.inspection.sameContentInstallationIds.length,
+              })}
+            </p>
+          ) : null}
+          {props.inspection.importedKnowledgePersistsAfterDiscard ? (
+            <p className="pragma-bundle-warning">
+              {t("bundleImportedKnowledgePersists", {
+                count: props.inspection.knowledgeCount,
               })}
             </p>
           ) : null}

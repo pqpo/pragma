@@ -2,7 +2,12 @@ import { renderToStaticMarkup } from "react-dom/server";
 import { afterEach, describe, expect, it } from "vitest";
 
 import { i18n } from "../../i18n/index.ts";
-import { MemoryActionWithTooltip, MemoryDegradedAlert, MemoryPage } from "./MemoryPage.tsx";
+import {
+  MemoryActionWithTooltip,
+  MemoryDegradedAlert,
+  MemoryExtractionJobs,
+  MemoryPage,
+} from "./MemoryPage.tsx";
 
 afterEach(async () => {
   await i18n.changeLanguage("en");
@@ -41,6 +46,38 @@ describe("MemoryPage", () => {
     expect(html).toContain('aria-describedby="');
     expect(html).toContain('role="tooltip"');
     expect(html).toContain("Only root asset principals");
+  });
+
+  it("shows retryable Knowledge extraction jobs with their stable error code", () => {
+    const html = renderToStaticMarkup(
+      <MemoryExtractionJobs
+        jobs={[]}
+        knowledgeJobs={[
+          {
+            schemaVersion: "pragma.memory-knowledge-job/v1",
+            id: "knowledge-job-a",
+            revision: 3,
+            rootRef: { type: "pragma.expert", id: "expert-a" },
+            sourceDigest: "a".repeat(64),
+            status: "needs_attention",
+            attempts: 3,
+            lastErrorCode: "knowledge_candidate_capacity_exceeded",
+            failureClass: "capacity",
+            createdAt: "2026-08-05T00:00:00.000Z",
+            updatedAt: "2026-08-05T01:00:00.000Z",
+          },
+        ]}
+        loading={false}
+        busy={false}
+        onRefresh={() => undefined}
+        onRetry={() => undefined}
+        onRetryKnowledge={() => undefined}
+      />,
+    );
+
+    expect(html).toContain("knowledge");
+    expect(html).toContain("knowledge_candidate_capacity_exceeded");
+    expect(html).toContain("Retry extraction");
   });
 
   it("shows extraction failures without requiring the Health tab", async () => {

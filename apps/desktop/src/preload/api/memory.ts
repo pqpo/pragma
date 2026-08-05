@@ -25,6 +25,19 @@ import {
   DesktopMemoryExtractionJobListSchema,
   DesktopMemoryExtractionJobSchema,
   RetryDesktopMemoryExtractionJobSchema,
+  DesktopKnowledgeCandidateSchema,
+  DesktopKnowledgeCandidateListSchema,
+  ListDesktopKnowledgeCandidatesSchema,
+  UpdateDesktopKnowledgeCandidateSchema,
+  RejectDesktopKnowledgeCandidateSchema,
+  PublishDesktopKnowledgeCandidateSchema,
+  CreateDesktopKnowledgeSuccessorSchema,
+  DesktopKnowledgeSchema,
+  DesktopKnowledgeJobSchema,
+  DesktopKnowledgeJobListSchema,
+  RetryDesktopKnowledgeJobSchema,
+  GetDesktopKnowledgeSourceSchema,
+  DesktopKnowledgeSourceSchema,
 } from "../../shared/contracts/memory.ts";
 
 export const memoryApi = {
@@ -127,6 +140,57 @@ export const memoryApi = {
   forgetMemoryItem: async (input) => {
     await ipcRenderer.invoke("memory-items:forget", ReviewDesktopMemoryItemSchema.parse(input));
   },
+  listKnowledgeCandidates: async (input = {}) =>
+    DesktopKnowledgeCandidateListSchema.parse(
+      await ipcRenderer.invoke(
+        "memory-knowledge-candidates:list",
+        ListDesktopKnowledgeCandidatesSchema.parse(input),
+      ),
+    ),
+  updateKnowledgeCandidate: async (input) =>
+    DesktopKnowledgeCandidateSchema.parse(
+      await ipcRenderer.invoke(
+        "memory-knowledge-candidates:update",
+        UpdateDesktopKnowledgeCandidateSchema.parse(input),
+      ),
+    ),
+  rejectKnowledgeCandidate: async (input) =>
+    DesktopKnowledgeCandidateSchema.parse(
+      await ipcRenderer.invoke(
+        "memory-knowledge-candidates:reject",
+        RejectDesktopKnowledgeCandidateSchema.parse(input),
+      ),
+    ),
+  publishKnowledgeCandidate: async (input) =>
+    DesktopKnowledgeSchema.parse(
+      await ipcRenderer.invoke(
+        "memory-knowledge-candidates:publish",
+        PublishDesktopKnowledgeCandidateSchema.parse(input),
+      ),
+    ),
+  createKnowledgeSuccessor: async (input) =>
+    DesktopKnowledgeCandidateSchema.parse(
+      await ipcRenderer.invoke(
+        "memory-knowledge:successor",
+        CreateDesktopKnowledgeSuccessorSchema.parse(input),
+      ),
+    ),
+  listKnowledgeJobs: async () =>
+    DesktopKnowledgeJobListSchema.parse(await ipcRenderer.invoke("memory-knowledge-jobs:list")),
+  retryKnowledgeJob: async (input) =>
+    DesktopKnowledgeJobSchema.parse(
+      await ipcRenderer.invoke(
+        "memory-knowledge-jobs:retry",
+        RetryDesktopKnowledgeJobSchema.parse(input),
+      ),
+    ),
+  getKnowledgeSource: async (input) =>
+    DesktopKnowledgeSourceSchema.parse(
+      await ipcRenderer.invoke(
+        "memory-knowledge-source:get",
+        GetDesktopKnowledgeSourceSchema.parse(input),
+      ),
+    ),
   getMissionMemoryActivity: async (missionId) =>
     DesktopMissionMemoryActivitySchema.parse(
       await ipcRenderer.invoke("memory-mission:activity", { missionId }),
@@ -151,5 +215,13 @@ export const memoryApi = {
   | "tightenMemoryAccess"
   | "invalidateMemoryItem"
   | "forgetMemoryItem"
+  | "listKnowledgeCandidates"
+  | "updateKnowledgeCandidate"
+  | "rejectKnowledgeCandidate"
+  | "publishKnowledgeCandidate"
+  | "createKnowledgeSuccessor"
+  | "listKnowledgeJobs"
+  | "retryKnowledgeJob"
+  | "getKnowledgeSource"
   | "getMissionMemoryActivity"
 >;

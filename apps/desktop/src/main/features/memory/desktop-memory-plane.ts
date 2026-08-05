@@ -10,6 +10,8 @@ import {
 import {
   MemoryModuleRegistry,
   createEpisodicMemoryModule,
+  createKnowledgeMemoryModule,
+  createKnowledgeSourceReader,
   createSemanticMemoryModule,
   createFileMemoryExtractorProfileStore,
   createExecutionEvidenceAdapter,
@@ -24,6 +26,8 @@ import {
   type MemoryPolicyStore,
   type MemoryRecallScope,
   type EpisodicMemoryExtractor,
+  type KnowledgeMemoryExtractor,
+  type KnowledgeMemoryStore,
   type MemoryExtractorProfileStore,
   type SemanticMemoryExtractor,
   type SemanticMemoryStore,
@@ -44,6 +48,10 @@ export type DesktopMemoryMutationResult =
   | {
       readonly module: "semantic";
       readonly record: import("@pragma/shared").SemanticFact;
+    }
+  | {
+      readonly module: "knowledge";
+      readonly record: import("@pragma/shared").Knowledge;
     };
 
 export interface DesktopMemoryPlane {
@@ -52,10 +60,18 @@ export interface DesktopMemoryPlane {
   readonly extractorProfiles: MemoryExtractorProfileStore;
   readonly semanticStore: SemanticMemoryStore;
   readonly episodicStore: EpisodicMemoryStore;
+  readonly knowledgeStore: KnowledgeMemoryStore;
   readonly activity: MemoryActivityStore;
   readonly contextStore: import("@pragma/core").ExpertAgentContextStore;
   setEpisodicExtractor(extractor: EpisodicMemoryExtractor | undefined): Promise<void>;
   setSemanticExtractor(extractor: SemanticMemoryExtractor | undefined): Promise<void>;
+  setKnowledgeExtractor(extractor: KnowledgeMemoryExtractor | undefined): Promise<void>;
+  publishKnowledgeCandidate(
+    input: Omit<Parameters<KnowledgeMemoryStore["publishCandidate"]>[0], "actorRef" | "now">,
+  ): Promise<import("@pragma/shared").Knowledge>;
+  createKnowledgeSuccessor(
+    input: Omit<Parameters<KnowledgeMemoryStore["createSuccessor"]>[0], "actorRef" | "now">,
+  ): Promise<import("@pragma/shared").KnowledgeCandidate>;
   registerMemoryExecutionContext(input: {
     readonly executionId: string;
     readonly missionId: string;
@@ -72,7 +88,7 @@ export interface DesktopMemoryPlane {
     input: Omit<Parameters<SemanticMemoryStore["verify"]>[0], "actorRef" | "now">,
   ): Promise<import("@pragma/shared").SemanticFact>;
   tightenMemoryAccess(input: {
-    readonly module: "episodic" | "semantic";
+    readonly module: "episodic" | "semantic" | "knowledge";
     readonly id: string;
     readonly expectedRevision: number;
     readonly reason: string;
@@ -80,7 +96,7 @@ export interface DesktopMemoryPlane {
     readonly visibility?: import("@pragma/shared").MemoryVisibilityPolicy | undefined;
   }): Promise<DesktopMemoryMutationResult>;
   invalidateMemoryItem(input: {
-    readonly module: "episodic" | "semantic";
+    readonly module: "episodic" | "semantic" | "knowledge";
     readonly id: string;
     readonly expectedRevision: number;
     readonly reason: string;
@@ -93,7 +109,7 @@ export interface DesktopMemoryPlane {
   }): Promise<void>;
   wakeMemoryJobs(): Promise<void>;
   retryMemoryJob(input: {
-    readonly module: "episodic" | "semantic";
+    readonly module: "episodic" | "semantic" | "knowledge";
     readonly id: string;
     readonly expectedRevision: number;
   }): Promise<void>;
@@ -155,6 +171,13 @@ export async function createDesktopMemoryPlane(options: {
   const registry = new MemoryModuleRegistry();
   const episodic = await createEpisodicMemoryModule({ pragmaHome: options.pragmaHome });
   const semantic = await createSemanticMemoryModule({ pragmaHome: options.pragmaHome });
+  const knowledge = await createKnowledgeMemoryModule({
+    pragmaHome: options.pragmaHome,
+    sourceReader: createKnowledgeSourceReader({
+      episodic: episodic.store,
+      semantic: semantic.store,
+    }),
+  });
   const subjectIdentities = createDesktopMemorySubjectIdentityStore({
     pragmaHome: options.pragmaHome,
   });
@@ -166,6 +189,7 @@ export async function createDesktopMemoryPlane(options: {
     semantic: semantic.store,
   });
   registry.register(episodic);
+  registry.register(knowledge);
   registry.register(semantic);
   const contextStore = createFederatedMemoryContextStore(registry, {
     resolveRecallScope: async (context) => {
@@ -241,6 +265,7 @@ export async function createDesktopMemoryPlane(options: {
       });
       await Promise.all([
         episodic.store.maintain(maintenanceNow),
+        knowledge.store.maintain(maintenanceNow),
         semantic.store.maintain(maintenanceNow),
       ]);
       const pipeline = await state.maintain(maintenanceNow);
@@ -320,12 +345,14 @@ export async function createDesktopMemoryPlane(options: {
       if (Date.now() - lastMaintenanceAtMs >= DEFAULT_MEMORY_STORAGE_POLICY.maintenanceIntervalMs) {
         await maintainStorage();
       }
-      const [episodicWork, semanticWork] = await Promise.all([
+      const [episodicWork, knowledgeWork, semanticWork] = await Promise.all([
         episodic.store.inspect(),
+        knowledge.store.inspect(),
         semantic.store.inspect(),
       ]);
       const extractionIssues = [
         { moduleId: episodic.descriptor.id, work: episodicWork },
+        { moduleId: knowledge.descriptor.id, work: knowledgeWork },
         { moduleId: semantic.descriptor.id, work: semanticWork },
       ].filter((item) => item.work.needsAttention > 0);
       reportExtractionIssues(extractionIssues);
@@ -365,6 +392,7 @@ export async function createDesktopMemoryPlane(options: {
     extractorProfiles,
     semanticStore: semantic.store,
     episodicStore: episodic.store,
+    knowledgeStore: knowledge.store,
     activity,
     contextStore,
     async setEpisodicExtractor(extractor) {
@@ -374,6 +402,24 @@ export async function createDesktopMemoryPlane(options: {
     async setSemanticExtractor(extractor) {
       await semantic.setExtractor(extractor);
       scheduler.wake();
+    },
+    async setKnowledgeExtractor(extractor) {
+      await knowledge.setExtractor(extractor);
+      scheduler.wake();
+    },
+    async publishKnowledgeCandidate(input) {
+      return await knowledge.store.publishCandidate({
+        ...input,
+        actorRef: await subjectIdentities.getLocalUserRef(),
+        now: new Date(),
+      });
+    },
+    async createKnowledgeSuccessor(input) {
+      return await knowledge.store.createSuccessor({
+        ...input,
+        actorRef: await subjectIdentities.getLocalUserRef(),
+        now: new Date(),
+      });
     },
     async registerMemoryExecutionContext(input) {
       const localUser = await subjectIdentities.getLocalUserRef();
@@ -441,9 +487,13 @@ export async function createDesktopMemoryPlane(options: {
         ...(input.bindings === undefined ? {} : { bindings: input.bindings }),
         ...(input.visibility === undefined ? {} : { visibility: input.visibility }),
       };
-      return input.module === "episodic"
-        ? { module: "episodic", record: await episodic.store.tightenAccess(common) }
-        : { module: "semantic", record: await semantic.store.tightenAccess(common) };
+      if (input.module === "episodic") {
+        return { module: "episodic", record: await episodic.store.tightenAccess(common) };
+      }
+      if (input.module === "semantic") {
+        return { module: "semantic", record: await semantic.store.tightenAccess(common) };
+      }
+      return { module: "knowledge", record: await knowledge.store.tightenAccess(common) };
     },
     async invalidateMemoryItem(input) {
       const common = {
@@ -453,9 +503,13 @@ export async function createDesktopMemoryPlane(options: {
         actorRef: await subjectIdentities.getLocalUserRef(),
         now: new Date(),
       };
-      return input.module === "episodic"
-        ? { module: "episodic", record: await episodic.store.invalidate(common) }
-        : { module: "semantic", record: await semantic.store.invalidate(common) };
+      if (input.module === "episodic") {
+        return { module: "episodic", record: await episodic.store.invalidate(common) };
+      }
+      if (input.module === "semantic") {
+        return { module: "semantic", record: await semantic.store.invalidate(common) };
+      }
+      return { module: "knowledge", record: await knowledge.store.withdraw(common) };
     },
     async forgetMemoryItem(input) {
       const common = {
@@ -471,6 +525,7 @@ export async function createDesktopMemoryPlane(options: {
     async wakeMemoryJobs() {
       await Promise.all([
         episodic.store.wakeNeedsAttention(new Date(), "configuration"),
+        knowledge.store.wakeNeedsAttention(new Date(), "configuration"),
         semantic.store.wakeNeedsAttention(new Date(), "configuration"),
       ]);
       scheduler.wake();
@@ -482,7 +537,8 @@ export async function createDesktopMemoryPlane(options: {
         now: new Date(),
       };
       if (input.module === "episodic") await episodic.store.retryJob(retry);
-      else await semantic.store.retryJob(retry);
+      else if (input.module === "semantic") await semantic.store.retryJob(retry);
+      else await knowledge.store.retryJob(retry);
       scheduler.wake();
     },
     async deleteExecutionState(executionIds) {
@@ -500,21 +556,64 @@ export async function createDesktopMemoryPlane(options: {
         if (diagnostic === undefined) continue;
         if (
           module.descriptor.id !== episodic.descriptor.id &&
-          module.descriptor.id !== semantic.descriptor.id
+          module.descriptor.id !== semantic.descriptor.id &&
+          module.descriptor.id !== knowledge.descriptor.id
         ) {
           modules.push(diagnostic);
           continue;
         }
-        const work =
-          module.descriptor.id === episodic.descriptor.id
-            ? await episodic.store.inspect()
-            : await semantic.store.inspect();
+        let work: NonNullable<import("@pragma/shared").MemoryModuleDiagnostic["work"]> & {
+          readonly lastErrorCode?: string | undefined;
+        };
+        if (module.descriptor.id === episodic.descriptor.id) {
+          const diagnostic = await episodic.store.inspect();
+          work = {
+            records: diagnostic.episodes,
+            pending: diagnostic.pending,
+            running: diagnostic.running,
+            needsAttention: diagnostic.needsAttention,
+            rejected: diagnostic.rejected,
+            expired: diagnostic.expired,
+            evidenceRecords: diagnostic.evidenceRecords,
+            evidenceBytes: diagnostic.evidenceBytes,
+            truncatedExecutions: diagnostic.truncatedExecutions,
+            lastErrorCode: diagnostic.lastErrorCode,
+          };
+        } else if (module.descriptor.id === semantic.descriptor.id) {
+          const diagnostic = await semantic.store.inspect();
+          work = {
+            records: diagnostic.facts,
+            pending: diagnostic.pending,
+            running: diagnostic.running,
+            needsAttention: diagnostic.needsAttention,
+            rejected: diagnostic.rejected,
+            expired: diagnostic.expired,
+            evidenceRecords: diagnostic.evidenceRecords,
+            evidenceBytes: diagnostic.evidenceBytes,
+            truncatedExecutions: diagnostic.truncatedExecutions,
+            lastErrorCode: diagnostic.lastErrorCode,
+          };
+        } else {
+          const diagnostic = await knowledge.store.inspect();
+          work = {
+            records: diagnostic.knowledge,
+            pending: diagnostic.pending,
+            running: diagnostic.running,
+            needsAttention: diagnostic.needsAttention,
+            rejected: diagnostic.rejected,
+            expired: 0,
+            evidenceRecords: 0,
+            evidenceBytes: 0,
+            truncatedExecutions: 0,
+            lastErrorCode: diagnostic.lastErrorCode,
+          };
+        }
         modules.push({
           ...diagnostic,
           status: resolveMemoryModuleHealthStatus(diagnostic.status, work.needsAttention),
           ...(work.lastErrorCode === undefined ? {} : { lastErrorCode: work.lastErrorCode }),
           work: {
-            records: "episodes" in work ? work.episodes : work.facts,
+            records: work.records,
             pending: work.pending,
             running: work.running,
             needsAttention: work.needsAttention,
@@ -563,6 +662,7 @@ export async function createDesktopMemoryPlane(options: {
       await maintenanceRunning;
       await scheduler.stop();
       episodic.close();
+      knowledge.close();
       semantic.close();
       canonical.close();
     },

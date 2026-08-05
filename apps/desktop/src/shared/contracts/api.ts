@@ -136,6 +136,17 @@ import type {
   DesktopMissionMemoryActivity,
   DesktopMemoryExtractionJob,
   RetryDesktopMemoryExtractionJob,
+  DesktopKnowledgeCandidate,
+  ListDesktopKnowledgeCandidates,
+  UpdateDesktopKnowledgeCandidate,
+  RejectDesktopKnowledgeCandidate,
+  PublishDesktopKnowledgeCandidate,
+  CreateDesktopKnowledgeSuccessor,
+  DesktopKnowledge,
+  DesktopKnowledgeJob,
+  RetryDesktopKnowledgeJob,
+  GetDesktopKnowledgeSource,
+  DesktopKnowledgeSource,
 } from "./types.ts";
 
 export interface PragmaDesktopAPI {
@@ -171,6 +182,22 @@ export interface PragmaDesktopAPI {
   tightenMemoryAccess: (input: TightenDesktopMemoryAccess) => Promise<DesktopMemoryItem>;
   invalidateMemoryItem: (input: ReviewDesktopMemoryItem) => Promise<DesktopMemoryItem>;
   forgetMemoryItem: (input: ReviewDesktopMemoryItem) => Promise<void>;
+  listKnowledgeCandidates: (
+    input?: ListDesktopKnowledgeCandidates,
+  ) => Promise<DesktopKnowledgeCandidate[]>;
+  updateKnowledgeCandidate: (
+    input: UpdateDesktopKnowledgeCandidate,
+  ) => Promise<DesktopKnowledgeCandidate>;
+  rejectKnowledgeCandidate: (
+    input: RejectDesktopKnowledgeCandidate,
+  ) => Promise<DesktopKnowledgeCandidate>;
+  publishKnowledgeCandidate: (input: PublishDesktopKnowledgeCandidate) => Promise<DesktopKnowledge>;
+  createKnowledgeSuccessor: (
+    input: CreateDesktopKnowledgeSuccessor,
+  ) => Promise<DesktopKnowledgeCandidate>;
+  listKnowledgeJobs: () => Promise<DesktopKnowledgeJob[]>;
+  retryKnowledgeJob: (input: RetryDesktopKnowledgeJob) => Promise<DesktopKnowledgeJob>;
+  getKnowledgeSource: (input: GetDesktopKnowledgeSource) => Promise<DesktopKnowledgeSource>;
   getMissionMemoryActivity: (missionId: string) => Promise<DesktopMissionMemoryActivity>;
   pickWorkspace: () => Promise<PickWorkspaceResult>;
   validateWorkspace: (path: string) => Promise<ValidateWorkspaceResult>;

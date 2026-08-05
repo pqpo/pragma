@@ -25,6 +25,19 @@ import {
   DesktopMemoryExtractionJobSchema,
   DesktopMemoryExtractionJobListSchema,
   RetryDesktopMemoryExtractionJobSchema,
+  DesktopKnowledgeCandidateSchema,
+  DesktopKnowledgeCandidateListSchema,
+  ListDesktopKnowledgeCandidatesSchema,
+  UpdateDesktopKnowledgeCandidateSchema,
+  RejectDesktopKnowledgeCandidateSchema,
+  PublishDesktopKnowledgeCandidateSchema,
+  CreateDesktopKnowledgeSuccessorSchema,
+  DesktopKnowledgeSchema,
+  DesktopKnowledgeJobSchema,
+  DesktopKnowledgeJobListSchema,
+  RetryDesktopKnowledgeJobSchema,
+  GetDesktopKnowledgeSourceSchema,
+  DesktopKnowledgeSourceSchema,
 } from "../../../shared/contracts/index.ts";
 import type { DesktopMemoryPlane } from "./desktop-memory-plane.ts";
 import type { MissionStore } from "../missions/mission-store.ts";
@@ -121,12 +134,15 @@ export function installMemoryPolicyHandlers(
   ipcMain.handle("memory-items:list", async (_event, input: unknown) => {
     const parsed = ListDesktopMemoryItemsSchema.parse(input ?? {});
     const items = [
-      ...(parsed.module === "semantic"
-        ? []
-        : (await plane.episodicStore.list()).map(toDesktopEpisode)),
-      ...(parsed.module === "episodic"
-        ? []
-        : (await plane.semanticStore.list()).map(toDesktopFact)),
+      ...(parsed.module === "all" || parsed.module === "episodic"
+        ? (await plane.episodicStore.list()).map(toDesktopEpisode)
+        : []),
+      ...(parsed.module === "all" || parsed.module === "semantic"
+        ? (await plane.semanticStore.list()).map(toDesktopFact)
+        : []),
+      ...(parsed.module === "all" || parsed.module === "knowledge"
+        ? (await plane.knowledgeStore.list()).map(toDesktopKnowledge)
+        : []),
     ]
       .filter((item) => parsed.status === "all" || item.status === parsed.status)
       .filter((item) => {
@@ -144,16 +160,23 @@ export function installMemoryPolicyHandlers(
       if (record === undefined) throw new Error("memory_item_not_found");
       return DesktopMemoryItemSchema.parse(toDesktopEpisode(record));
     }
-    const record = await plane.semanticStore.get(parsed.id);
+    if (parsed.module === "semantic") {
+      const record = await plane.semanticStore.get(parsed.id);
+      if (record === undefined) throw new Error("memory_item_not_found");
+      return DesktopMemoryItemSchema.parse(toDesktopFact(record));
+    }
+    const record = await plane.knowledgeStore.get(parsed.id);
     if (record === undefined) throw new Error("memory_item_not_found");
-    return DesktopMemoryItemSchema.parse(toDesktopFact(record));
+    return DesktopMemoryItemSchema.parse(toDesktopKnowledge(record));
   });
   ipcMain.handle("memory-items:history", async (_event, input: unknown) => {
     const parsed = DesktopMemoryItemRefSchema.parse(input);
     return DesktopMemoryItemListSchema.parse(
       parsed.module === "episodic"
         ? (await plane.episodicStore.history(parsed.id)).map(toDesktopEpisode)
-        : (await plane.semanticStore.history(parsed.id)).map(toDesktopFact),
+        : parsed.module === "semantic"
+          ? (await plane.semanticStore.history(parsed.id)).map(toDesktopFact)
+          : (await plane.knowledgeStore.history(parsed.id)).map(toDesktopKnowledge),
     );
   });
   ipcMain.handle("memory-items:evidence", async (_event, input: unknown) => {
@@ -176,19 +199,104 @@ export function installMemoryPolicyHandlers(
     const parsed = TightenDesktopMemoryAccessSchema.parse(input);
     const result = await plane.tightenMemoryAccess(parsed);
     return DesktopMemoryItemSchema.parse(
-      result.module === "episodic" ? toDesktopEpisode(result.record) : toDesktopFact(result.record),
+      result.module === "episodic"
+        ? toDesktopEpisode(result.record)
+        : result.module === "semantic"
+          ? toDesktopFact(result.record)
+          : toDesktopKnowledge(result.record),
     );
   });
   ipcMain.handle("memory-items:invalidate", async (_event, input: unknown) => {
     const parsed = ReviewDesktopMemoryItemSchema.parse(input);
     const result = await plane.invalidateMemoryItem(parsed);
     return DesktopMemoryItemSchema.parse(
-      result.module === "episodic" ? toDesktopEpisode(result.record) : toDesktopFact(result.record),
+      result.module === "episodic"
+        ? toDesktopEpisode(result.record)
+        : result.module === "semantic"
+          ? toDesktopFact(result.record)
+          : toDesktopKnowledge(result.record),
     );
   });
   ipcMain.handle("memory-items:forget", async (_event, input: unknown) => {
     const parsed = ReviewDesktopMemoryItemSchema.parse(input);
-    await plane.forgetMemoryItem(parsed);
+    if (parsed.module === "knowledge") throw new Error("knowledge_forget_not_supported");
+    await plane.forgetMemoryItem({
+      module: parsed.module,
+      id: parsed.id,
+      expectedRevision: parsed.expectedRevision,
+      reason: parsed.reason,
+    });
+  });
+  ipcMain.handle("memory-knowledge-candidates:list", async (_event, input: unknown) => {
+    const parsed = ListDesktopKnowledgeCandidatesSchema.parse(input ?? {});
+    return DesktopKnowledgeCandidateListSchema.parse(
+      await plane.knowledgeStore.listCandidates(parsed.state === "all" ? undefined : parsed.state),
+    );
+  });
+  ipcMain.handle("memory-knowledge-candidates:update", async (_event, input: unknown) => {
+    const parsed = UpdateDesktopKnowledgeCandidateSchema.parse(input);
+    return DesktopKnowledgeCandidateSchema.parse(
+      await plane.knowledgeStore.updateCandidate({ ...parsed, now: new Date() }),
+    );
+  });
+  ipcMain.handle("memory-knowledge-candidates:reject", async (_event, input: unknown) => {
+    const parsed = RejectDesktopKnowledgeCandidateSchema.parse(input);
+    return DesktopKnowledgeCandidateSchema.parse(
+      await plane.knowledgeStore.rejectCandidate({ ...parsed, now: new Date() }),
+    );
+  });
+  ipcMain.handle("memory-knowledge-candidates:publish", async (_event, input: unknown) => {
+    const parsed = PublishDesktopKnowledgeCandidateSchema.parse(input);
+    return DesktopKnowledgeSchema.parse(
+      await plane.publishKnowledgeCandidate({
+        candidateId: parsed.id,
+        expectedRevision: parsed.expectedRevision,
+        reason: parsed.reason,
+        bindings: parsed.bindings,
+        visibility: parsed.visibility,
+      }),
+    );
+  });
+  ipcMain.handle("memory-knowledge:successor", async (_event, input: unknown) => {
+    const parsed = CreateDesktopKnowledgeSuccessorSchema.parse(input);
+    return DesktopKnowledgeCandidateSchema.parse(
+      await plane.createKnowledgeSuccessor({
+        knowledgeId: parsed.id,
+        expectedRevision: parsed.expectedRevision,
+        content: parsed.content,
+      }),
+    );
+  });
+  ipcMain.handle("memory-knowledge-jobs:list", async () =>
+    DesktopKnowledgeJobListSchema.parse(await plane.knowledgeStore.listJobs()),
+  );
+  ipcMain.handle("memory-knowledge-jobs:retry", async (_event, input: unknown) => {
+    const parsed = RetryDesktopKnowledgeJobSchema.parse(input);
+    await plane.knowledgeStore.retryJob({ ...parsed, now: new Date() });
+    const job = (await plane.knowledgeStore.listJobs()).find(
+      (candidate) => candidate.id === parsed.id,
+    );
+    if (job === undefined) throw new Error("knowledge_job_not_found");
+    return DesktopKnowledgeJobSchema.parse(job);
+  });
+  ipcMain.handle("memory-knowledge-source:get", async (_event, input: unknown) => {
+    const { sourceRef } = GetDesktopKnowledgeSourceSchema.parse(input);
+    if (sourceRef.kind === "episodic") {
+      const record = (await plane.episodicStore.history(sourceRef.id)).find(
+        (candidate) => candidate.revision === sourceRef.revision,
+      );
+      if (record === undefined || record.rootRefs[0] === undefined) {
+        throw new Error("knowledge_source_not_found");
+      }
+      return DesktopKnowledgeSourceSchema.parse(toEpisodeSource(record));
+    }
+    const record = (await plane.semanticStore.history(sourceRef.id)).find(
+      (candidate) => candidate.revision === sourceRef.revision,
+    );
+    if (record === undefined || record.rootRefs[0] === undefined) {
+      throw new Error("knowledge_source_not_found");
+    }
+    return DesktopKnowledgeSourceSchema.parse(toFactSource(record));
   });
   ipcMain.handle("memory-mission:activity", async (_event, input: unknown) => {
     const parsed = GetDesktopMissionMemoryActivitySchema.parse(input);
@@ -258,6 +366,58 @@ function toDesktopFact(record: import("@pragma/shared").SemanticFact) {
     ...(record.reviewAt === undefined ? {} : { reviewAt: record.reviewAt }),
     ...(record.expiresAt === undefined ? {} : { expiresAt: record.expiresAt }),
     conflictsWith: record.conflictsWith,
+  };
+}
+
+function toDesktopKnowledge(record: import("@pragma/shared").Knowledge) {
+  return {
+    module: "knowledge" as const,
+    id: record.id,
+    revision: record.revision,
+    status: record.status,
+    title: record.content.title,
+    summary: record.content.summary,
+    rootRefs: [record.rootRef],
+    producerRefs: record.producerRefs,
+    evidenceRefs: [],
+    visibility: record.visibility,
+    sensitivity: record.sensitivity,
+    bindings: record.bindings,
+    createdAt: record.createdAt,
+    updatedAt: record.updatedAt,
+    guidance: record.content.guidance,
+    normalizedKey: record.content.normalizedKey,
+    sourceRefs: record.sourceRefs,
+    origin: record.origin.kind,
+  };
+}
+
+function toEpisodeSource(record: import("@pragma/memory").EpisodicMemoryRecord) {
+  return {
+    ref: { kind: "episodic" as const, id: record.id, revision: record.revision },
+    rootRef: record.rootRefs[0]!,
+    producerRefs: record.producerRefs,
+    title: record.goal.text,
+    body: `${record.summary.text}\n${record.outcome.summary}`,
+    observedAt: record.updatedAt,
+    verified: false,
+    valueScore: record.valueScore,
+    visibility: record.visibility,
+    sensitivity: record.sensitivity,
+  };
+}
+
+function toFactSource(record: import("@pragma/shared").SemanticFact) {
+  return {
+    ref: { kind: "semantic" as const, id: record.id, revision: record.revision },
+    rootRef: record.rootRefs[0]!,
+    producerRefs: record.producerRefs,
+    title: `${record.predicate}: ${record.normalizedValue}`,
+    body: record.statement,
+    observedAt: record.observedAt,
+    verified: record.verifiedAt !== undefined,
+    visibility: record.visibility,
+    sensitivity: record.sensitivity,
   };
 }
 

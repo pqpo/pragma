@@ -15,15 +15,18 @@ import {
 import type { CompiledResource, InvocableResource } from "@pragma/interpreter";
 import {
   EpisodicExtractionOutputSchema,
+  KnowledgeExtractionOutputSchema,
   SemanticExtractionOutputSchema,
   MEMORY_CURATOR_ID,
   MEMORY_CURATOR_PROMPT_VERSION,
   SEMANTIC_MEMORY_CURATOR_PROMPT_VERSION,
+  KNOWLEDGE_MEMORY_CURATOR_PROMPT_VERSION,
   MEMORY_CURATOR_REF,
   DEFAULT_MEMORY_STORAGE_POLICY,
   selectBoundedMemoryEvidence,
   mergeMemoryEvidenceOmissionStats,
   type EpisodicMemoryExtractor,
+  type KnowledgeMemoryExtractor,
   type SemanticMemoryExtractor,
   type MemoryExtractorProfile,
   type MemoryExtractorProfileStore,
@@ -50,6 +53,7 @@ const CuratorMissionRegistrySchema = z.object({
 export interface DesktopMemoryCurator {
   readonly episodicExtractor: EpisodicMemoryExtractor;
   readonly semanticExtractor: SemanticMemoryExtractor;
+  readonly knowledgeExtractor: KnowledgeMemoryExtractor;
   compile(input: {
     readonly runtimes: RuntimeResolver;
     readonly workspace: string;
@@ -250,6 +254,33 @@ export function createDesktopMemoryCurator(options: {
         };
       },
     },
+    knowledgeExtractor: {
+      async extract(input, extractionOptions) {
+        const profile = await options.profiles.get();
+        const runtime = await resolveRuntime(profile);
+        const content = await runCuratorMission({
+          options,
+          runtime,
+          jobId: input.jobId,
+          title: `Knowledge extraction ${input.rootRef.id.slice(0, 12)}`,
+          goal: renderKnowledgeExtractionPrompt(input),
+          signal: extractionOptions?.signal,
+        });
+        const output = KnowledgeExtractionOutputSchema.parse(JSON.parse(extractJson(content)));
+        return {
+          output,
+          provenance: {
+            curatorRef: MEMORY_CURATOR_REF,
+            promptVersion: KNOWLEDGE_MEMORY_CURATOR_PROMPT_VERSION,
+            profileRevision: profile.revision,
+            runtimeId: runtime.runtimeId,
+            providerId: runtime.modelSelection?.model.providerId ?? "runtime-managed",
+            modelId: runtime.modelSelection?.model.modelId ?? "runtime-default",
+            extractedAt: now().toISOString(),
+          },
+        };
+      },
+    },
   };
 }
 
@@ -300,6 +331,29 @@ function renderSemanticExtractionPrompt(
       JSON.stringify(omissions),
     ].join("\n\n"),
   );
+}
+
+function renderKnowledgeExtractionPrompt(
+  input: Parameters<KnowledgeMemoryExtractor["extract"]>[0],
+): string {
+  const prompt = [
+    "Extract reusable Knowledge candidates from these already-curated Memory source revisions.",
+    "Candidates are proposals for human review, not automatically published instructions.",
+    "Each candidate must cite exact supplied sourceRefs. It is eligible only with two distinct source revisions, one verified Semantic source, or one Episodic source with valueScore at least 0.85.",
+    "normalizedKey must be a stable lowercase root-scoped deduplication key using only letters, numbers, dot, underscore, colon, slash, or hyphen.",
+    "Keep guidance concrete and reusable. Do not invent facts, identifiers, permissions, or provenance.",
+    "Output schema:",
+    '{"retain":true,"candidates":[{"content":{"title":"...","summary":"...","guidance":["..."],"normalizedKey":"workflow.example"},"sourceRefs":[{"kind":"episodic|semantic","id":"...","revision":1}]}]}',
+    'or {"retain":false,"reason":"no-reusable-knowledge|insufficient-sources|sensitive"}.',
+    "Root:",
+    JSON.stringify(input.rootRef),
+    "Sources:",
+    JSON.stringify(input.sources),
+  ].join("\n\n");
+  if (Buffer.byteLength(prompt) > DEFAULT_MEMORY_STORAGE_POLICY.extractionPromptMaxBytes) {
+    throw new Error("memory_curator_prompt_metadata_too_large");
+  }
+  return prompt;
 }
 
 function renderBoundedPrompt(
