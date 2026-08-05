@@ -327,6 +327,55 @@ describe("Episodic Memory", () => {
     module.close();
   });
 
+  it("expedites, interrupts, and deletes a user-managed extraction job", async () => {
+    const root = await temporaryRoot();
+    const module = await createEpisodicMemoryModule({ pragmaHome: root });
+    const now = new Date("2026-08-05T08:00:00.000Z");
+    const conversationRef = ref("pragma.mission", "mission-managed");
+    await module.consume(
+      executionEvidence("managed-execution").map((item) =>
+        MemoryEvidenceEnvelopeSchema.parse({ ...item, conversationRef }),
+      ),
+    );
+    const [waiting] = await module.store.listExtractionJobs();
+    await module.store.expediteJob({ id: waiting!.id, expectedRevision: waiting!.revision, now });
+    const claimed = await module.store.claimDueJob(now);
+    expect(claimed?.status).toBe("running");
+
+    const interrupted = await module.store.interruptJob({
+      id: claimed!.id,
+      expectedRevision: claimed!.revision,
+      now,
+    });
+    expect(interrupted).toMatchObject({
+      status: "waiting_idle",
+      eligibleAt: "2026-08-05T14:00:00.000Z",
+      retryAt: "2026-08-05T14:00:00.000Z",
+    });
+
+    await module.store.expediteJob({
+      id: interrupted.id,
+      expectedRevision: interrupted.revision,
+      now,
+    });
+    const reclaimed = await module.store.claimDueJob(now);
+    await module.store.fail({
+      job: reclaimed!,
+      errorCode: "memory_extractor_profile_invalid",
+      retry: "configuration",
+      now,
+    });
+    const [attention] = await module.store.listExtractionJobs();
+    await module.store.deleteJob({
+      id: attention!.id,
+      expectedRevision: attention!.revision,
+      now,
+    });
+    expect(await module.store.listExtractionJobs()).toEqual([]);
+    expect(await module.store.readEvidence("managed-execution")).toEqual([]);
+    module.close();
+  });
+
   it("merges an execution-scoped fallback job when the Mission binding arrives", async () => {
     const module = await createEpisodicMemoryModule({ pragmaHome: await temporaryRoot() });
     const conversationRef = ref("pragma.mission", "mission-late-binding");

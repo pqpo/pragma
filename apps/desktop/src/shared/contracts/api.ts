@@ -134,8 +134,8 @@ import type {
   TightenDesktopMemoryAccess,
   ReviewDesktopMemoryItem,
   DesktopMissionMemoryActivity,
-  DesktopMemoryExtractionJob,
-  RetryDesktopMemoryExtractionJob,
+  DesktopMemoryExtractionBoard,
+  ManageDesktopMemoryExtractionTask,
   DesktopKnowledgeCandidate,
   ListDesktopKnowledgeCandidates,
   UpdateDesktopKnowledgeCandidate,
@@ -143,8 +143,6 @@ import type {
   PublishDesktopKnowledgeCandidate,
   CreateDesktopKnowledgeSuccessor,
   DesktopKnowledge,
-  DesktopKnowledgeJob,
-  RetryDesktopKnowledgeJob,
   GetDesktopKnowledgeSource,
   DesktopKnowledgeSource,
 } from "./types.ts";
@@ -165,10 +163,8 @@ export interface PragmaDesktopAPI {
     input: UpdateDesktopAssetMemoryPolicy,
   ) => Promise<DesktopAssetMemoryPolicySnapshot>;
   getMemoryPlaneStatus: () => Promise<DesktopMemoryPlaneStatus>;
-  listMemoryExtractionJobs: () => Promise<DesktopMemoryExtractionJob[]>;
-  retryMemoryExtractionJob: (
-    input: RetryDesktopMemoryExtractionJob,
-  ) => Promise<DesktopMemoryExtractionJob>;
+  listMemoryExtractionJobs: () => Promise<DesktopMemoryExtractionBoard>;
+  manageMemoryExtractionTask: (input: ManageDesktopMemoryExtractionTask) => Promise<void>;
   getMemoryExtractorProfile: () => Promise<DesktopMemoryExtractorProfile>;
   updateMemoryExtractorProfile: (
     input: UpdateDesktopMemoryExtractorProfile,
@@ -195,8 +191,6 @@ export interface PragmaDesktopAPI {
   createKnowledgeSuccessor: (
     input: CreateDesktopKnowledgeSuccessor,
   ) => Promise<DesktopKnowledgeCandidate>;
-  listKnowledgeJobs: () => Promise<DesktopKnowledgeJob[]>;
-  retryKnowledgeJob: (input: RetryDesktopKnowledgeJob) => Promise<DesktopKnowledgeJob>;
   getKnowledgeSource: (input: GetDesktopKnowledgeSource) => Promise<DesktopKnowledgeSource>;
   getMissionMemoryActivity: (missionId: string) => Promise<DesktopMissionMemoryActivity>;
   pickWorkspace: () => Promise<PickWorkspaceResult>;

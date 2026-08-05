@@ -61,6 +61,7 @@ export interface MissionStore {
   readonly storagePath?: ((id: string) => string) | undefined;
   readonly forget?: ((id: string) => void) | undefined;
   list(): Promise<MissionSummary[]>;
+  resolveExecutionTitles(executionIds: readonly string[]): Promise<ReadonlyMap<string, string>>;
   get(id: string): Promise<Mission>;
   create(input: {
     readonly id?: string | undefined;
@@ -153,6 +154,11 @@ export function createMissionStore(options: { readonly missionsPath: string }): 
     string,
     { readonly size: number; readonly mtimeMs: number; readonly records: MissionTimelineRecord[] }
   >();
+  const executionTitleIndex = new Map<
+    string,
+    { readonly missionId: string; readonly title: string }
+  >();
+  let executionTitleIndexInitialized = false;
 
   const withMissionLock = async <T>(id: string, operation: () => Promise<T>): Promise<T> =>
     await withFileLock(lockPath(id), operation);
@@ -399,6 +405,46 @@ export function createMissionStore(options: { readonly missionsPath: string }): 
         throw error;
       }
     },
+    async resolveExecutionTitles(executionIds) {
+      const unresolved = new Set(executionIds);
+      const resolved = new Map<string, string>();
+      if (unresolved.size === 0) return resolved;
+      for (const executionId of unresolved) {
+        const cached = executionTitleIndex.get(executionId);
+        if (cached === undefined) continue;
+        resolved.set(executionId, cached.title);
+        unresolved.delete(executionId);
+      }
+      if (unresolved.size === 0 || executionTitleIndexInitialized) return resolved;
+      let directories;
+      try {
+        directories = (await readdir(options.missionsPath, { withFileTypes: true })).filter(
+          (entry) => entry.isDirectory() && !entry.name.startsWith("."),
+        );
+      } catch (error) {
+        if (isNodeError(error, "ENOENT")) return resolved;
+        throw error;
+      }
+      for (const entry of directories) {
+        const records = await readRecords(entry.name, false);
+        const executions = records.filter((record) => record.kind === "execution");
+        if (executions.length === 0) continue;
+        const mission = await readMission(entry.name);
+        for (const record of executions) {
+          if (record.kind !== "execution") continue;
+          executionTitleIndex.set(record.executionId, {
+            missionId: mission.id,
+            title: mission.title,
+          });
+        }
+      }
+      executionTitleIndexInitialized = true;
+      for (const executionId of unresolved) {
+        const indexed = executionTitleIndex.get(executionId);
+        if (indexed !== undefined) resolved.set(executionId, indexed.title);
+      }
+      return resolved;
+    },
     async get(id) {
       return await readMission(MissionIdSchema.parse(id));
     },
@@ -501,14 +547,18 @@ export function createMissionStore(options: { readonly missionsPath: string }): 
     },
     async appendExecutionReference(input) {
       const missionId = MissionIdSchema.parse(input.missionId);
-      return await appendRecord(missionId, (sequence) => ({
+      const executionId = MissionIdSchema.parse(input.executionId);
+      const mission = await readMission(missionId);
+      const record = await appendRecord(missionId, (sequence) => ({
         schemaVersion: "pragma.mission-message/v1",
         sequence,
         kind: "execution",
         inputMessageId: MissionIdSchema.parse(input.inputMessageId),
-        executionId: MissionIdSchema.parse(input.executionId),
+        executionId,
         createdAt: z.string().datetime().parse(input.createdAt),
       }));
+      executionTitleIndex.set(executionId, { missionId, title: mission.title });
+      return record;
     },
     async readTimelinePage(id, pageOptions) {
       const parsedId = MissionIdSchema.parse(id);
@@ -566,6 +616,9 @@ export function createMissionStore(options: { readonly missionsPath: string }): 
         }
         await rm(missionPath(parsedId), { recursive: true, force: true });
         timelineCache.delete(parsedId);
+        for (const [executionId, entry] of executionTitleIndex) {
+          if (entry.missionId === parsedId) executionTitleIndex.delete(executionId);
+        }
       });
     },
   };

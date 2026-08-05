@@ -22,9 +22,8 @@ import {
   TightenDesktopMemoryAccessSchema,
   ReviewDesktopMemoryItemSchema,
   DesktopMissionMemoryActivitySchema,
-  DesktopMemoryExtractionJobListSchema,
-  DesktopMemoryExtractionJobSchema,
-  RetryDesktopMemoryExtractionJobSchema,
+  DesktopMemoryExtractionBoardSchema,
+  ManageDesktopMemoryExtractionTaskSchema,
   DesktopKnowledgeCandidateSchema,
   DesktopKnowledgeCandidateListSchema,
   ListDesktopKnowledgeCandidatesSchema,
@@ -33,9 +32,6 @@ import {
   PublishDesktopKnowledgeCandidateSchema,
   CreateDesktopKnowledgeSuccessorSchema,
   DesktopKnowledgeSchema,
-  DesktopKnowledgeJobSchema,
-  DesktopKnowledgeJobListSchema,
-  RetryDesktopKnowledgeJobSchema,
   GetDesktopKnowledgeSourceSchema,
   DesktopKnowledgeSourceSchema,
 } from "../../shared/contracts/memory.ts";
@@ -69,16 +65,15 @@ export const memoryApi = {
   getMemoryPlaneStatus: async () =>
     DesktopMemoryPlaneStatusSchema.parse(await ipcRenderer.invoke("memory-plane:status")),
   listMemoryExtractionJobs: async () =>
-    DesktopMemoryExtractionJobListSchema.parse(
+    DesktopMemoryExtractionBoardSchema.parse(
       await ipcRenderer.invoke("memory-extraction-jobs:list"),
     ),
-  retryMemoryExtractionJob: async (input) =>
-    DesktopMemoryExtractionJobSchema.parse(
-      await ipcRenderer.invoke(
-        "memory-extraction-jobs:retry",
-        RetryDesktopMemoryExtractionJobSchema.parse(input),
-      ),
-    ),
+  manageMemoryExtractionTask: async (input) => {
+    await ipcRenderer.invoke(
+      "memory-extraction-jobs:manage",
+      ManageDesktopMemoryExtractionTaskSchema.parse(input),
+    );
+  },
   getMemoryExtractorProfile: async () =>
     DesktopMemoryExtractorProfileSchema.parse(
       await ipcRenderer.invoke("memory-extractor-profile:get"),
@@ -175,15 +170,6 @@ export const memoryApi = {
         CreateDesktopKnowledgeSuccessorSchema.parse(input),
       ),
     ),
-  listKnowledgeJobs: async () =>
-    DesktopKnowledgeJobListSchema.parse(await ipcRenderer.invoke("memory-knowledge-jobs:list")),
-  retryKnowledgeJob: async (input) =>
-    DesktopKnowledgeJobSchema.parse(
-      await ipcRenderer.invoke(
-        "memory-knowledge-jobs:retry",
-        RetryDesktopKnowledgeJobSchema.parse(input),
-      ),
-    ),
   getKnowledgeSource: async (input) =>
     DesktopKnowledgeSourceSchema.parse(
       await ipcRenderer.invoke(
@@ -203,7 +189,7 @@ export const memoryApi = {
   | "updateAssetMemoryPolicy"
   | "getMemoryPlaneStatus"
   | "listMemoryExtractionJobs"
-  | "retryMemoryExtractionJob"
+  | "manageMemoryExtractionTask"
   | "getMemoryExtractorProfile"
   | "updateMemoryExtractorProfile"
   | "reviseSemanticFact"
@@ -220,8 +206,6 @@ export const memoryApi = {
   | "rejectKnowledgeCandidate"
   | "publishKnowledgeCandidate"
   | "createKnowledgeSuccessor"
-  | "listKnowledgeJobs"
-  | "retryKnowledgeJob"
   | "getKnowledgeSource"
   | "getMissionMemoryActivity"
 >;

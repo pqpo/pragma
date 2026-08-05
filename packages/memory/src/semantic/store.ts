@@ -144,6 +144,21 @@ export interface SemanticMemoryStore {
     readonly expectedRevision: number;
     readonly now: Date;
   }): Promise<void>;
+  expediteJob(input: {
+    readonly id: string;
+    readonly expectedRevision: number;
+    readonly now: Date;
+  }): Promise<void>;
+  interruptJob(input: {
+    readonly id: string;
+    readonly expectedRevision: number;
+    readonly now: Date;
+  }): Promise<SemanticExtractionJob>;
+  deleteJob(input: {
+    readonly id: string;
+    readonly expectedRevision: number;
+    readonly now: Date;
+  }): Promise<void>;
   listExtractionJobs(): Promise<readonly SemanticExtractionJob[]>;
   maintain(now: Date): Promise<{ readonly expired: number; readonly deleted: number }>;
   deleteExecutionState(executionIds: readonly string[], now?: Date): Promise<void>;
@@ -833,6 +848,53 @@ export async function createSemanticMemoryStore(
       );
     },
 
+    async expediteJob(input) {
+      const job = readJob(state, input.id);
+      assertManageableJob(job, input.expectedRevision, ["waiting_idle", "pending"]);
+      const timestamp = input.now.toISOString();
+      writeJob(
+        SemanticExtractionJobSchema.parse({
+          ...job,
+          revision: job.revision + 1,
+          status: "pending",
+          eligibleAt: timestamp,
+          retryAt: timestamp,
+          leaseUntil: undefined,
+          updatedAt: timestamp,
+        }),
+      );
+    },
+
+    async interruptJob(input) {
+      const job = readJob(state, input.id);
+      assertManageableJob(job, input.expectedRevision, ["running"]);
+      const timestamp = input.now.toISOString();
+      const eligibleAt = new Date(
+        input.now.getTime() + DEFAULT_MEMORY_STORAGE_POLICY.extractionIdleMs,
+      ).toISOString();
+      const interrupted = SemanticExtractionJobSchema.parse({
+        ...job,
+        revision: job.revision + 1,
+        status: "waiting_idle",
+        attempts: 0,
+        eligibleAt,
+        retryAt: eligibleAt,
+        leaseUntil: undefined,
+        lastErrorCode: undefined,
+        failureClass: undefined,
+        attentionSince: undefined,
+        updatedAt: timestamp,
+      });
+      writeJob(interrupted);
+      return interrupted;
+    },
+
+    async deleteJob(input) {
+      const job = readJob(state, input.id);
+      assertManageableJob(job, input.expectedRevision, ["needs_attention"]);
+      deleteExtractionJobState(state, job, input.now);
+    },
+
     async listExtractionJobs() {
       return readJobRows(state);
     },
@@ -1491,6 +1553,49 @@ function deleteExecutionState(
     const deleteStats = database.prepare("DELETE FROM capture_stats WHERE execution_id = ?");
     const deleteSubjects = database.prepare("DELETE FROM subject_contexts WHERE execution_id = ?");
     for (const executionId of new Set(executionIds)) {
+      markDeleted.run(executionId, now.toISOString());
+      deleteEvidence.run(executionId);
+      deleteStats.run(executionId);
+      deleteSubjects.run(executionId);
+    }
+    database.exec("COMMIT;");
+  } catch (error) {
+    rollback(database);
+    throw error;
+  }
+}
+
+function assertManageableJob(
+  job: SemanticExtractionJob | undefined,
+  expectedRevision: number,
+  statuses: readonly SemanticExtractionJob["status"][],
+): asserts job is SemanticExtractionJob {
+  if (job === undefined) throw new Error("memory_extraction_job_not_found");
+  if (job.revision !== expectedRevision) {
+    throw new Error("memory_extraction_job_revision_conflict");
+  }
+  if (!statuses.includes(job.status)) throw new Error("memory_extraction_job_action_invalid");
+}
+
+function deleteExtractionJobState(
+  database: DatabaseSync,
+  job: SemanticExtractionJob,
+  now: Date,
+): void {
+  database.exec("BEGIN IMMEDIATE;");
+  try {
+    database.prepare("DELETE FROM jobs WHERE id = ?").run(job.id);
+    database
+      .prepare("DELETE FROM conversation_activity WHERE conversation_key = ?")
+      .run(conversationKey(job.conversationRef));
+    const markDeleted = database.prepare(
+      `INSERT INTO deleted_executions(execution_id, deleted_at) VALUES (?, ?)
+       ON CONFLICT(execution_id) DO UPDATE SET deleted_at=excluded.deleted_at`,
+    );
+    const deleteEvidence = database.prepare("DELETE FROM evidence WHERE execution_id = ?");
+    const deleteStats = database.prepare("DELETE FROM capture_stats WHERE execution_id = ?");
+    const deleteSubjects = database.prepare("DELETE FROM subject_contexts WHERE execution_id = ?");
+    for (const executionId of job.sourceExecutionIds) {
       markDeleted.run(executionId, now.toISOString());
       deleteEvidence.run(executionId);
       deleteStats.run(executionId);

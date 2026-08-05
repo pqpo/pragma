@@ -11,7 +11,6 @@ import {
   SemanticFactSchema,
   KnowledgeCandidateSchema,
   KnowledgeContentSchema,
-  KnowledgeExtractionJobSchema,
   KnowledgeSchema,
   KnowledgeSourceRevisionRefSchema,
   KnowledgeSourceSnapshotSchema,
@@ -112,34 +111,30 @@ export const DesktopMemoryPlaneStatusSchema = z.object({
     }),
 });
 
-export const DesktopMemoryExtractionJobSchema = z.object({
-  module: z.enum(["episodic", "semantic"]),
+export const DesktopMemoryExtractionTaskSchema = z.object({
+  module: z.enum(["episodic", "semantic", "knowledge"]),
   id: z.string().min(1),
   revision: z.number().int().positive(),
-  status: z.enum(["waiting_idle", "pending", "running", "needs_attention", "completed", "expired"]),
-  conversationRef: MemorySubjectRefSchema,
-  conversationTitle: z.string().min(1).optional(),
-  sourceExecutionCount: z.number().int().positive(),
-  sourceUpdatedAt: z.string().datetime(),
-  eligibleAt: z.string().datetime().optional(),
-  attempts: z.number().int().nonnegative(),
-  totalAttempts: z.number().int().nonnegative(),
+  lane: z.enum(["waiting", "attention", "running", "completed"]),
+  title: z.string().trim().min(1).max(200).optional(),
   lastErrorCode: z.string().min(1).optional(),
-  failureClass: z.enum(["configuration", "transient-exhausted"]).optional(),
-  evidenceRecords: z.number().int().nonnegative(),
-  evidenceBytes: z.number().int().nonnegative(),
-  omittedRecords: z.number().int().nonnegative(),
   updatedAt: z.string().datetime(),
-  attentionSince: z.string().datetime().optional(),
-  completedAt: z.string().datetime().optional(),
-  expiredAt: z.string().datetime().optional(),
 });
 
-export const DesktopMemoryExtractionJobListSchema = z.array(DesktopMemoryExtractionJobSchema);
+export const DesktopMemoryExtractionBoardSchema = z.object({
+  tasks: z.array(DesktopMemoryExtractionTaskSchema),
+  counts: z.object({
+    waiting: z.number().int().nonnegative(),
+    attention: z.number().int().nonnegative(),
+    running: z.number().int().nonnegative(),
+    completed: z.number().int().nonnegative(),
+  }),
+});
 
-export const RetryDesktopMemoryExtractionJobSchema = z
+export const ManageDesktopMemoryExtractionTaskSchema = z
   .object({
-    module: z.enum(["episodic", "semantic"]),
+    module: z.enum(["episodic", "semantic", "knowledge"]),
+    action: z.enum(["expedite", "retry", "interrupt", "delete"]),
     id: z.string().min(1),
     expectedRevision: z.number().int().positive(),
   })
@@ -364,11 +359,6 @@ export const CreateDesktopKnowledgeSuccessorSchema = z
   })
   .strict();
 export const DesktopKnowledgeSchema = KnowledgeSchema;
-export const DesktopKnowledgeJobSchema = KnowledgeExtractionJobSchema;
-export const DesktopKnowledgeJobListSchema = z.array(DesktopKnowledgeJobSchema);
-export const RetryDesktopKnowledgeJobSchema = z
-  .object({ id: z.string().min(1), expectedRevision: z.number().int().positive() })
-  .strict();
 export const GetDesktopKnowledgeSourceSchema = z
   .object({ sourceRef: KnowledgeSourceRevisionRefSchema })
   .strict();

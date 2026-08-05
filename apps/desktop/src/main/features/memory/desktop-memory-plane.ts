@@ -108,8 +108,9 @@ export interface DesktopMemoryPlane {
     readonly reason: string;
   }): Promise<void>;
   wakeMemoryJobs(): Promise<void>;
-  retryMemoryJob(input: {
+  manageMemoryJob(input: {
     readonly module: "episodic" | "semantic" | "knowledge";
+    readonly action: "expedite" | "retry" | "interrupt" | "delete";
     readonly id: string;
     readonly expectedRevision: number;
   }): Promise<void>;
@@ -530,15 +531,30 @@ export async function createDesktopMemoryPlane(options: {
       ]);
       scheduler.wake();
     },
-    async retryMemoryJob(input) {
-      const retry = {
+    async manageMemoryJob(input) {
+      const command = {
         id: input.id,
         expectedRevision: input.expectedRevision,
         now: new Date(),
       };
-      if (input.module === "episodic") await episodic.store.retryJob(retry);
-      else if (input.module === "semantic") await semantic.store.retryJob(retry);
-      else await knowledge.store.retryJob(retry);
+      const store =
+        input.module === "episodic"
+          ? episodic.store
+          : input.module === "semantic"
+            ? semantic.store
+            : knowledge.store;
+      if (input.action === "expedite") await store.expediteJob(command);
+      else if (input.action === "retry") await store.retryJob(command);
+      else if (input.action === "delete") await store.deleteJob(command);
+      else if (input.action === "interrupt") {
+        // Interrupt routes through the Module so the persisted transition and in-flight abort agree.
+        if (input.module === "episodic") await episodic.interruptExtractionJob(command);
+        else if (input.module === "semantic") await semantic.interruptExtractionJob(command);
+        else await knowledge.interruptExtractionJob(command);
+      } else {
+        const unsupported: never = input.action;
+        throw new Error(`memory_extraction_job_action_unsupported:${String(unsupported)}`);
+      }
       scheduler.wake();
     },
     async deleteExecutionState(executionIds) {

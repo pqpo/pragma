@@ -23,6 +23,11 @@ export interface EpisodicMemoryModule extends MemoryModule {
     readonly conversationRef: MemorySubjectRef;
     readonly now: Date;
   }): Promise<void>;
+  interruptExtractionJob(input: {
+    readonly id: string;
+    readonly expectedRevision: number;
+    readonly now: Date;
+  }): Promise<void>;
   readonly store: EpisodicMemoryStore;
   close(): void;
 }
@@ -195,6 +200,10 @@ export async function createEpisodicMemoryModule(
       running.get(conversationKey({ type: "pragma.execution", id: input.executionId }))?.abort();
       running.get(conversationKey(input.conversationRef))?.abort();
       await store.bindExecutionConversation(input);
+    },
+    async interruptExtractionJob(input) {
+      const interrupted = await store.interruptJob(input);
+      running.get(conversationKey(interrupted.conversationRef))?.abort();
     },
     store,
     close() {

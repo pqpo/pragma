@@ -28,6 +28,7 @@ import {
   assertMemoryVisibilityTightened,
 } from "../governance/access-governance.ts";
 import type { MemoryRecallScope } from "../pipeline/memory-module.ts";
+import { DEFAULT_MEMORY_STORAGE_POLICY } from "../storage/memory-storage-policy.ts";
 import { assertFreshSqliteDatabase } from "../storage/sqlite-migration-backup.ts";
 import { assertKnowledgeShareDigest } from "./share.ts";
 
@@ -83,6 +84,17 @@ export interface KnowledgeMemoryStore {
     readonly expectedRevision: number;
     readonly now: Date;
   }): Promise<void>;
+  expediteJob(input: {
+    readonly id: string;
+    readonly expectedRevision: number;
+    readonly now: Date;
+  }): Promise<void>;
+  interruptJob(input: {
+    readonly id: string;
+    readonly expectedRevision: number;
+    readonly now: Date;
+  }): Promise<KnowledgeExtractionJob>;
+  deleteJob(input: { readonly id: string; readonly expectedRevision: number }): Promise<void>;
   wakeNeedsAttention(now: Date, reason?: "configuration" | "manual"): Promise<void>;
   listJobs(): Promise<readonly KnowledgeExtractionJob[]>;
   listCandidates(state?: KnowledgeCandidate["state"]): Promise<readonly KnowledgeCandidate[]>;
@@ -412,6 +424,43 @@ export async function createKnowledgeMemoryStore(
           updatedAt: input.now.toISOString(),
         }),
       );
+    },
+    async expediteJob(input) {
+      const job = readJob(database, input.id);
+      assertManageableJob(job, input.expectedRevision, ["pending"]);
+      writeJob(
+        KnowledgeExtractionJobSchema.parse({
+          ...job,
+          revision: job.revision + 1,
+          retryAt: input.now.toISOString(),
+          leaseUntil: undefined,
+          updatedAt: input.now.toISOString(),
+        }),
+      );
+    },
+    async interruptJob(input) {
+      const job = readJob(database, input.id);
+      assertManageableJob(job, input.expectedRevision, ["running"]);
+      const interrupted = KnowledgeExtractionJobSchema.parse({
+        ...job,
+        revision: job.revision + 1,
+        status: "pending",
+        attempts: 0,
+        retryAt: new Date(
+          input.now.getTime() + DEFAULT_MEMORY_STORAGE_POLICY.extractionIdleMs,
+        ).toISOString(),
+        leaseUntil: undefined,
+        lastErrorCode: undefined,
+        failureClass: undefined,
+        updatedAt: input.now.toISOString(),
+      });
+      writeJob(interrupted);
+      return interrupted;
+    },
+    async deleteJob(input) {
+      const job = readJob(database, input.id);
+      assertManageableJob(job, input.expectedRevision, ["needs_attention"]);
+      database.prepare("DELETE FROM jobs WHERE id = ?").run(job.id);
     },
     async wakeNeedsAttention(now, reason = "configuration") {
       const rows = database
@@ -1107,6 +1156,16 @@ function isDefined<T>(value: T | undefined): value is T {
 
 function conflict(): Error {
   return new Error("knowledge_revision_conflict");
+}
+
+function assertManageableJob(
+  job: KnowledgeExtractionJob | undefined,
+  expectedRevision: number,
+  statuses: readonly KnowledgeExtractionJob["status"][],
+): asserts job is KnowledgeExtractionJob {
+  if (job === undefined) throw new Error("knowledge_job_not_found");
+  if (job.revision !== expectedRevision) throw conflict();
+  if (!statuses.includes(job.status)) throw new Error("knowledge_job_action_invalid");
 }
 
 function count(database: DatabaseSync, table: "knowledge" | "candidates", where: string): number {

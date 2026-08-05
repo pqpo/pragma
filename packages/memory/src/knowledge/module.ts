@@ -21,6 +21,11 @@ const MAX_SOURCE_REVISIONS = 100;
 export interface KnowledgeMemoryModule extends MemoryModule {
   readonly store: KnowledgeMemoryStore;
   setExtractor(extractor: KnowledgeMemoryExtractor | undefined): Promise<void>;
+  interruptExtractionJob(input: {
+    readonly id: string;
+    readonly expectedRevision: number;
+    readonly now: Date;
+  }): Promise<void>;
   close(): void;
 }
 
@@ -33,6 +38,7 @@ export async function createKnowledgeMemoryModule(options: {
   const store = await createKnowledgeMemoryStore(options);
   const now = options.now ?? (() => new Date());
   let extractor = options.extractor;
+  const running = new Map<string, AbortController>();
 
   return {
     descriptor: {
@@ -80,6 +86,8 @@ export async function createKnowledgeMemoryModule(options: {
       if (extractor === undefined) return;
       const job = await store.claimDueJob(now());
       if (job === undefined) return;
+      const controller = new AbortController();
+      running.set(job.id, controller);
       try {
         const available = await options.sourceReader.listEligibleSources({
           rootRef: job.rootRef,
@@ -106,7 +114,9 @@ export async function createKnowledgeMemoryModule(options: {
           sources,
         });
         if (!(await store.isClaimCurrent(job))) return;
-        const result = await extractor.extract(input);
+        controller.signal.throwIfAborted();
+        const result = await extractor.extract(input, { signal: controller.signal });
+        controller.signal.throwIfAborted();
         const output = KnowledgeExtractionOutputSchema.parse(result.output);
         if (!output.retain) {
           await store.completeRejected(job, now());
@@ -127,10 +137,16 @@ export async function createKnowledgeMemoryModule(options: {
           retry: isConfigurationError(error) ? "configuration" : "transient",
           now: now(),
         });
+      } finally {
+        if (running.get(job.id) === controller) running.delete(job.id);
       }
     },
     async setExtractor(next) {
       extractor = next;
+    },
+    async interruptExtractionJob(input) {
+      const interrupted = await store.interruptJob(input);
+      running.get(interrupted.id)?.abort();
     },
     store,
     close() {
