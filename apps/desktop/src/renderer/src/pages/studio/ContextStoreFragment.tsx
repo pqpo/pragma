@@ -762,16 +762,18 @@ export function ContextStoreDetailFragment(props: {
               <p>{props.store.description || t("noDescription")}</p>
             </div>
           </div>
-          <button className="danger-button" type="button" onClick={() => setConfirmOpen(true)}>
-            <Trash size={17} aria-hidden="true" />
-            {t("deleteKnowledgeBaseAction")}
-          </button>
-          {props.onOpenRevisions !== undefined ? (
-            <button type="button" onClick={props.onOpenRevisions}>
-              <ArrowClockwise size={17} aria-hidden="true" />
-              {t("viewStoreRevisions")}
+          <div className="knowledge-base-editor-actions">
+            {props.onOpenRevisions !== undefined ? (
+              <button className="secondary-button" type="button" onClick={props.onOpenRevisions}>
+                <ArrowClockwise size={17} aria-hidden="true" />
+                {t("viewStoreRevisions")}
+              </button>
+            ) : null}
+            <button className="danger-button" type="button" onClick={() => setConfirmOpen(true)}>
+              <Trash size={17} aria-hidden="true" />
+              {t("deleteKnowledgeBaseAction")}
             </button>
-          ) : null}
+          </div>
         </div>
       }
     >

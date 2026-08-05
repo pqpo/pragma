@@ -5301,6 +5301,13 @@ html.is-resizing-sidebar * {
   margin-bottom: 6px;
 }
 
+.knowledge-base-editor-actions {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 10px;
+}
+
 .knowledge-base-title {
   display: flex;
   min-width: 0;
@@ -5459,7 +5466,15 @@ html.is-resizing-sidebar * {
   text-align: left;
 }
 
+.knowledge-file-open > svg {
+  width: 17px;
+  height: 17px;
+  flex: 0 0 17px;
+}
+
 .knowledge-file-open span {
+  min-width: 0;
+  flex: 1;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
