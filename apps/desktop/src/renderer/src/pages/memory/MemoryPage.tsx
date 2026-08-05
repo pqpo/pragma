@@ -456,9 +456,9 @@ export function MemoryPage() {
                     <dt>{t("id")}</dt>
                     <dd>{selected.id}</dd>
                     <dt>{t("root")}</dt>
-                    <dd>{refs(selected.rootRefs)}</dd>
+                    <dd>{formatMemorySubjectRefs(selected.rootRefs, selected.subjectNames)}</dd>
                     <dt>{t("producers")}</dt>
-                    <dd>{refs(selected.producerRefs)}</dd>
+                    <dd>{formatMemorySubjectRefs(selected.producerRefs, selected.subjectNames)}</dd>
                     <dt>{t("visibility")}</dt>
                     <dd>{selected.visibility.mode}</dd>
                     <dt>{t("sensitivity")}</dt>
@@ -474,7 +474,7 @@ export function MemoryPage() {
                       key={`${binding.consumerRef.type}:${binding.consumerRef.id}`}
                     >
                       <span>
-                        {binding.consumerRef.type}:{binding.consumerRef.id}
+                        {formatMemorySubjectRefs([binding.consumerRef], selected.subjectNames)}
                       </span>
                       <span>
                         {t("recall")} {binding.recall} · {t("export")} {binding.export} · p
@@ -585,7 +585,10 @@ export function MemoryPage() {
                         disabled={reason.trim() === "" || actionBusy}
                         label={t("disableRecall")}
                         tooltip={t("disableRecallTooltip", {
-                          consumer: refs([binding.consumerRef]),
+                          consumer: formatMemorySubjectRefs(
+                            [binding.consumerRef],
+                            selected.subjectNames,
+                          ),
                         })}
                         onClick={() =>
                           void run(
@@ -616,7 +619,10 @@ export function MemoryPage() {
                       disabled={reason.trim() === "" || actionBusy}
                       label={t("restrictVisibility")}
                       tooltip={t("restrictVisibilityTooltip", {
-                        principals: refs(selected.rootRefs),
+                        principals: formatMemorySubjectRefs(
+                          selected.rootRefs,
+                          selected.subjectNames,
+                        ),
                       })}
                       onClick={() =>
                         void run(
@@ -993,6 +999,17 @@ function key(item: DesktopMemoryItem): string {
   return `${item.module}:${item.id}`;
 }
 
-function refs(values: readonly { readonly type: string; readonly id: string }[]): string {
-  return values.map((value) => `${value.type}:${value.id}`).join(", ") || "—";
+export function formatMemorySubjectRefs(
+  values: readonly { readonly type: string; readonly id: string }[],
+  names: Readonly<Record<string, string>> = {},
+): string {
+  return (
+    values
+      .map((value) => {
+        const ref = `${value.type}:${value.id}`;
+        const name = names[ref];
+        return name === undefined ? ref : `${name}(${ref})`;
+      })
+      .join(", ") || "—"
+  );
 }

@@ -7,6 +7,7 @@ import {
   MemoryDegradedAlert,
   MemoryExtractionJobs,
   MemoryPage,
+  formatMemorySubjectRefs,
   memoryExtractionPollDelay,
 } from "./MemoryPage.tsx";
 
@@ -15,6 +16,19 @@ afterEach(async () => {
 });
 
 describe("MemoryPage", () => {
+  it("shows human-readable subject names while preserving canonical memory references", () => {
+    expect(
+      formatMemorySubjectRefs(
+        [
+          { type: "pragma.expert-team", id: "r5pjstt2yftkg8dx" },
+          { type: "pragma.expert", id: "missing" },
+        ],
+        { "pragma.expert-team:r5pjstt2yftkg8dx": "AI研发团队" },
+      ),
+    ).toBe("AI研发团队(pragma.expert-team:r5pjstt2yftkg8dx), pragma.expert:missing");
+    expect(formatMemorySubjectRefs([])).toBe("—");
+  });
+
   it("polls active extraction work quickly and terminal boards at a lower idle cadence", () => {
     expect(
       memoryExtractionPollDelay({
