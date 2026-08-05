@@ -29,6 +29,18 @@ export const settings = {
       "Used when Home starts a mission without a task-specific workspace.",
     chooseWorkspace: "Choose folder",
     restoreDefaultWorkspace: "Restore built-in default workspace",
+    revisionAgent: "Knowledge revision Agent",
+    revisionAgentDescription:
+      "Choose the Runtime and model that prepares reviewable knowledge base changes.",
+    revisionAgentInherit: "Inherit system default",
+    revisionAgentPinned: "Pinned Runtime and model",
+    revisionAgentRuntime: "Revision Runtime",
+    revisionAgentRuntimeDescription: "Runtime used only for knowledge base revision tasks.",
+    revisionAgentModel: "Revision model",
+    revisionAgentModelDescription: "Model used to prepare structured knowledge base changes.",
+    revisionAgentChooseModel: "Choose a model",
+    revisionAgentSave: "Save revision model",
+    revisionAgentSaveDescription: "New revision tasks will use this Runtime and model.",
     saveError: "The general setting could not be saved.",
   },
   memory: {

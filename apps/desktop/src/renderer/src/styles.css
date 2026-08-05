@@ -6492,6 +6492,334 @@ html.is-resizing-sidebar * {
   }
 }
 
+/* Knowledge-base revision tasks */
+.context-store-revisions {
+  container-name: context-store-revisions;
+  container-type: inline-size;
+}
+
+.context-store-revisions .studio-screen-body {
+  padding: 0 48px 48px 0;
+}
+
+.revision-task-heading {
+  padding-right: 48px;
+}
+
+.revision-task-count {
+  display: inline-grid;
+  min-width: 30px;
+  height: 30px;
+  place-items: center;
+  padding: 0 9px;
+  border-radius: var(--ui-radius-round);
+  background: var(--ui-surface-subtle);
+  color: var(--ui-text-secondary);
+  font-size: 12px;
+  font-weight: 600;
+}
+
+.revision-task-content {
+  display: grid;
+  gap: 24px;
+  min-width: 0;
+}
+
+.revision-task-composer {
+  display: grid;
+  gap: 22px;
+  padding: 22px;
+  border: 1px solid var(--ui-line);
+  border-radius: var(--ui-radius-lg);
+  background: var(--ui-surface);
+  box-shadow: var(--ui-shadow-composer);
+}
+
+.revision-task-composer-heading {
+  display: flex;
+  align-items: flex-start;
+  gap: 12px;
+  color: var(--ui-accent-strong);
+}
+
+.revision-task-composer-heading > div {
+  display: grid;
+  gap: 4px;
+}
+
+.revision-task-composer-heading h2 {
+  color: var(--ui-text);
+  font-size: 16px;
+  font-weight: 650;
+  line-height: 1.35;
+}
+
+.revision-task-composer-heading p {
+  color: var(--ui-text-secondary);
+  font-size: 12px;
+  line-height: 1.5;
+}
+
+.revision-task-fields {
+  display: grid;
+  grid-template-columns: minmax(190px, 0.55fr) minmax(280px, 1.45fr) auto;
+  align-items: end;
+  gap: 16px;
+}
+
+.revision-task-field {
+  display: grid;
+  min-width: 0;
+  gap: 8px;
+}
+
+.revision-task-field > span {
+  color: var(--ui-text-secondary);
+  font-size: 12px;
+  font-weight: 600;
+}
+
+.revision-task-select {
+  width: 100%;
+  min-width: 0;
+  border: 1px solid var(--ui-line-strong);
+  border-radius: var(--ui-radius-md);
+  background: var(--ui-surface);
+}
+
+.revision-task-select .ui-select-trigger {
+  min-height: 42px;
+  padding: 0 12px;
+}
+
+.revision-task-prompt-field textarea {
+  width: 100%;
+  min-height: 80px;
+  max-height: 220px;
+  resize: vertical;
+  padding: 11px 12px;
+  border: 1px solid var(--ui-line-strong);
+  border-radius: var(--ui-radius-md);
+  background: var(--ui-surface);
+  color: var(--ui-text);
+  font: inherit;
+  font-size: 13px;
+  line-height: 1.5;
+}
+
+.revision-task-prompt-field textarea::placeholder {
+  color: var(--ui-text-disabled);
+}
+
+.revision-task-prompt-field textarea:focus-visible {
+  border-color: var(--ui-accent);
+}
+
+.revision-task-submit {
+  min-height: 42px;
+  padding: 0 16px;
+}
+
+.revision-task-empty {
+  display: grid;
+  min-height: 230px;
+  place-items: center;
+  align-content: center;
+  gap: 8px;
+  border: 1px dashed var(--ui-line-strong);
+  border-radius: var(--ui-radius-lg);
+  color: var(--ui-text-secondary);
+  text-align: center;
+}
+
+.revision-task-empty h3 {
+  color: var(--ui-text);
+  font-size: 15px;
+  font-weight: 650;
+}
+
+.revision-task-empty p {
+  max-width: 360px;
+  font-size: 12px;
+  line-height: 1.55;
+}
+
+.revision-task-list {
+  display: grid;
+  min-width: 0;
+  border-top: 1px solid var(--ui-line);
+}
+
+.revision-task-row {
+  display: grid;
+  min-width: 0;
+  grid-template-columns: minmax(220px, 1.15fr) minmax(220px, 1fr) auto;
+  align-items: start;
+  gap: 24px;
+  padding: 22px 0;
+  border-bottom: 1px solid var(--ui-line);
+}
+
+.revision-task-summary,
+.revision-task-result {
+  display: grid;
+  min-width: 0;
+  justify-items: start;
+  gap: 8px;
+}
+
+.revision-task-summary strong {
+  color: var(--ui-text);
+  font-size: 14px;
+  font-weight: 650;
+}
+
+.revision-task-summary small {
+  display: -webkit-box;
+  overflow: hidden;
+  color: var(--ui-text-secondary);
+  font-size: 12px;
+  line-height: 1.55;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 3;
+}
+
+.revision-task-state {
+  display: inline-flex;
+  min-height: 26px;
+  align-items: center;
+  padding: 0 9px;
+  border-radius: var(--ui-radius-round);
+  background: var(--ui-surface-subtle);
+  color: var(--ui-text-secondary);
+  font-size: 11px;
+  font-weight: 600;
+}
+
+.revision-task-state:is(.is-pending_review, .is-applying, .is-running) {
+  background: var(--ui-selection);
+  color: var(--ui-accent-strong);
+}
+
+.revision-task-state.is-completed {
+  background: rgb(46 139 87 / 10%);
+  color: #277449;
+}
+
+.revision-task-state:is(.is-needs_attention, .is-rejected) {
+  background: rgb(183 121 31 / 11%);
+  color: #966016;
+}
+
+.revision-task-changes {
+  width: 100%;
+  color: var(--ui-text-secondary);
+  font-size: 12px;
+}
+
+.revision-task-changes summary {
+  cursor: pointer;
+  line-height: 1.5;
+}
+
+.revision-task-changes ul {
+  display: grid;
+  gap: 8px;
+  margin: 10px 0 0;
+  padding-left: 18px;
+}
+
+.revision-task-changes pre {
+  max-height: 180px;
+  margin-top: 6px;
+  overflow: auto;
+  padding: 10px;
+  border-radius: var(--ui-radius-md);
+  background: var(--ui-surface-subtle);
+  white-space: pre-wrap;
+}
+
+.revision-task-actions {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+  gap: 8px;
+}
+
+.revision-task-actions button {
+  white-space: nowrap;
+}
+
+/* The knowledge revision Agent is a device-level preference, not page-local state. */
+.revision-agent-settings-select {
+  flex: 0 0 min(304px, 44%);
+}
+
+.revision-agent-pinned-settings {
+  padding-left: 18px;
+  border-left: 2px solid var(--ui-selection);
+}
+
+.revision-agent-pinned-settings > .setting-row:first-child {
+  border-top: 1px solid var(--ui-line);
+}
+
+@container context-store-revisions (max-width: 900px) {
+  .revision-task-fields {
+    grid-template-columns: minmax(180px, 0.65fr) minmax(240px, 1.35fr);
+  }
+
+  .revision-task-submit {
+    grid-column: 2;
+    justify-self: end;
+  }
+
+  .revision-task-row {
+    grid-template-columns: minmax(190px, 0.8fr) minmax(260px, 1.2fr);
+  }
+
+  .revision-task-actions {
+    grid-column: 1 / -1;
+    justify-content: flex-start;
+  }
+}
+
+@container context-store-revisions (max-width: 620px) {
+  .context-store-revisions .studio-screen-body,
+  .revision-task-heading {
+    padding-right: 24px;
+  }
+
+  .revision-task-fields,
+  .revision-task-row {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .revision-task-submit {
+    grid-column: 1;
+    width: 100%;
+  }
+}
+
+@media (max-width: 900px) {
+  .revision-agent-mode-setting,
+  .revision-agent-runtime-setting,
+  .revision-agent-model-setting,
+  .revision-agent-save-setting {
+    align-items: stretch;
+    flex-direction: column;
+  }
+
+  .revision-agent-settings-select {
+    width: 100%;
+    flex-basis: auto;
+  }
+
+  .revision-agent-save-setting .secondary-button {
+    align-self: flex-start;
+  }
+}
+
 .studio-bundle-actions {
   display: grid;
   gap: 6px;

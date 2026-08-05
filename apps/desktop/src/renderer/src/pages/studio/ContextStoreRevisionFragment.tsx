@@ -1,13 +1,8 @@
-import { ArrowClockwise, Check, Trash, X } from "@phosphor-icons/react";
+import { ArrowClockwise, Check, ClockCounterClockwise, Trash, X } from "@phosphor-icons/react";
 import { useEffect, useState } from "react";
 import { useTranslation } from "react-i18next";
 
-import type {
-  ContextStore,
-  ContextStoreRevisionJob,
-  ContextStoreRevisionProfile,
-  DesktopRuntimeAvailability,
-} from "../../../../shared/contracts/index.ts";
+import type { ContextStore, ContextStoreRevisionJob } from "../../../../shared/contracts/index.ts";
 import { SelectMenu } from "../../components/SelectMenu.tsx";
 import { errorMessage } from "../../lib/errors.ts";
 import { StudioScreenFrame } from "./StudioScreenFrame.tsx";
@@ -23,10 +18,6 @@ export function ContextStoreRevisionFragment(props: {
   const [jobs, setJobs] = useState<readonly ContextStoreRevisionJob[]>([]);
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState<string | null>(null);
-  const [profile, setProfile] = useState<ContextStoreRevisionProfile>();
-  const [runtimes, setRuntimes] = useState<readonly DesktopRuntimeAvailability[]>([]);
-  const [runtimeId, setRuntimeId] = useState("");
-  const [modelKey, setModelKey] = useState("");
   const [prompt, setPrompt] = useState("");
 
   const load = async () => {
@@ -47,33 +38,6 @@ export function ContextStoreRevisionFragment(props: {
   useEffect(() => {
     setStoreId(props.initialStoreId ?? "");
   }, [props.initialStoreId]);
-  useEffect(() => {
-    const api = desktopApi();
-    if (api === undefined) return;
-    let cancelled = false;
-    void Promise.all([api.getContextStoreRevisionProfile(), api.getRuntimeAvailability()])
-      .then(([nextProfile, nextRuntimes]) => {
-        if (cancelled) return;
-        setProfile(nextProfile);
-        setRuntimes(nextRuntimes);
-        setRuntimeId(
-          nextProfile.model?.runtimeId ??
-            nextRuntimes.find((runtime) => runtime.isDefault)?.id ??
-            "",
-        );
-        setModelKey(
-          nextProfile.model === undefined
-            ? ""
-            : `${nextProfile.model.providerId}\0${nextProfile.model.modelId}`,
-        );
-      })
-      .catch((caught: unknown) => {
-        if (!cancelled) setError(errorMessage(caught));
-      });
-    return () => {
-      cancelled = true;
-    };
-  }, []);
   useEffect(() => {
     void load();
     const timer = window.setInterval(() => void load(), 2_000);
@@ -101,39 +65,6 @@ export function ContextStoreRevisionFragment(props: {
     }
   };
 
-  const saveProfile = async (mode: "inherit-default" | "pinned") => {
-    const api = desktopApi();
-    if (api === undefined || profile === undefined) return;
-    setBusy("profile");
-    try {
-      if (mode === "inherit-default") {
-        setProfile(
-          await api.updateContextStoreRevisionProfile({
-            expectedRevision: profile.revision,
-            mode,
-          }),
-        );
-      } else {
-        const [providerId, modelId] = modelKey.split("\0");
-        if (runtimeId === "" || providerId === undefined || modelId === undefined) return;
-        setProfile(
-          await api.updateContextStoreRevisionProfile({
-            expectedRevision: profile.revision,
-            mode,
-            model: { runtimeId, providerId, modelId },
-          }),
-        );
-      }
-      setError(null);
-    } catch (caught) {
-      setError(errorMessage(caught));
-    } finally {
-      setBusy(null);
-    }
-  };
-
-  const selectedRuntime = runtimes.find((runtime) => runtime.id === runtimeId);
-
   const submitRevision = async () => {
     const api = desktopApi();
     if (api === undefined || storeId === "" || prompt.trim() === "") return;
@@ -156,125 +87,88 @@ export function ContextStoreRevisionFragment(props: {
 
   return (
     <StudioScreenFrame
+      className="context-store-revisions"
       labelledBy="context-store-revisions-title"
       header={
-        <div>
-          <h1 id="context-store-revisions-title">{t("contextStoreRevisions")}</h1>
-          <p>{t("contextStoreRevisionsDescription")}</p>
-        </div>
+        <header className="studio-heading revision-task-heading">
+          <div>
+            <h1 id="context-store-revisions-title">{t("contextStoreRevisions")}</h1>
+            <p>{t("contextStoreRevisionsDescription")}</p>
+          </div>
+          <span className="revision-task-count">{jobs.length}</span>
+        </header>
       }
     >
-      <div className="store-directory">
-        <section>
-          <h2>{t("revisionAgentProfile")}</h2>
-          <p>{t("revisionAgentProfileDescription")}</p>
-          <label>
-            <span>{t("revisionAgentMode")}</span>
-            <SelectMenu
-              ariaLabel={t("revisionAgentMode")}
-              value={profile?.mode ?? "inherit-default"}
-              disabled={profile === undefined || busy === "profile"}
-              options={[
-                { value: "inherit-default", label: t("revisionAgentInherit") },
-                { value: "pinned", label: t("revisionAgentPinned") },
-              ]}
-              onChange={(mode) => {
-                if (mode === "inherit-default") void saveProfile(mode);
-                else
-                  setProfile((current) =>
-                    current === undefined ? current : { ...current, mode: "pinned" },
-                  );
-              }}
-            />
-          </label>
-          {profile?.mode !== "pinned" ? null : (
-            <>
-              <label>
-                <span>{t("revisionAgentRuntime")}</span>
-                <SelectMenu
-                  ariaLabel={t("revisionAgentRuntime")}
-                  value={runtimeId}
-                  options={runtimes
-                    .filter((runtime) => runtime.status === "available")
-                    .map((runtime) => ({ value: runtime.id, label: runtime.displayName }))}
-                  onChange={(value) => {
-                    setRuntimeId(value);
-                    setModelKey("");
-                  }}
-                />
-              </label>
-              <label>
-                <span>{t("revisionAgentModel")}</span>
-                <SelectMenu
-                  ariaLabel={t("revisionAgentModel")}
-                  value={modelKey}
-                  emptyLabel={t("revisionAgentChooseModel")}
-                  options={[
-                    {
-                      value: "",
-                      label: t("revisionAgentChooseModel"),
-                      disabled: true,
-                    },
-                    ...(selectedRuntime?.models ?? []).map((model) => ({
-                      value: `${model.provider.id}\0${model.id}`,
-                      label: `${model.provider.displayName} · ${model.displayName}`,
-                    })),
-                  ]}
-                  onChange={setModelKey}
-                />
-              </label>
-              <button
-                type="button"
-                disabled={busy === "profile" || runtimeId === "" || modelKey === ""}
-                onClick={() => void saveProfile("pinned")}
-              >
-                {t("revisionAgentSave")}
-              </button>
-            </>
-          )}
-        </section>
-        <label>
-          <span>{t("revisionStoreFilter")}</span>
-          <SelectMenu
-            ariaLabel={t("revisionStoreFilter")}
-            value={storeId}
-            options={[
-              { value: "", label: t("allKnowledgeBases") },
-              ...props.stores.map((store) => ({ value: store.id, label: store.name })),
-            ]}
-            onChange={setStoreId}
-          />
-        </label>
-        <label>
-          <span>{t("revisionPrompt")}</span>
-          <textarea
-            value={prompt}
-            maxLength={50_000}
-            placeholder={t("revisionPromptPlaceholder")}
-            onChange={(event) => setPrompt(event.target.value)}
-          />
-        </label>
-        <button
-          type="button"
-          disabled={storeId === "" || prompt.trim() === "" || busy === "submit"}
-          onClick={() => void submitRevision()}
+      <div className="revision-task-content">
+        <form
+          className="revision-task-composer"
+          onSubmit={(event) => {
+            event.preventDefault();
+            void submitRevision();
+          }}
         >
-          {t("submitRevisionTask")}
-        </button>
-        {jobs.length === 0 ? <p>{t("noStoreRevisionTasks")}</p> : null}
-        <div className="store-table" role="list">
+          <div className="revision-task-composer-heading">
+            <ClockCounterClockwise size={20} aria-hidden="true" />
+            <div>
+              <h2>{t("newRevisionTask")}</h2>
+              <p>{t("newRevisionTaskDescription")}</p>
+            </div>
+          </div>
+          <div className="revision-task-fields">
+            <label className="revision-task-field revision-task-store-field">
+              <span>{t("revisionStoreFilter")}</span>
+              <SelectMenu
+                className="revision-task-select"
+                ariaLabel={t("revisionStoreFilter")}
+                value={storeId}
+                options={[
+                  { value: "", label: t("allKnowledgeBases") },
+                  ...props.stores.map((store) => ({ value: store.id, label: store.name })),
+                ]}
+                onChange={setStoreId}
+              />
+            </label>
+            <label className="revision-task-field revision-task-prompt-field">
+              <span>{t("revisionPrompt")}</span>
+              <textarea
+                value={prompt}
+                maxLength={50_000}
+                placeholder={t("revisionPromptPlaceholder")}
+                onChange={(event) => setPrompt(event.target.value)}
+              />
+            </label>
+            <button
+              className="primary-button revision-task-submit"
+              type="submit"
+              disabled={storeId === "" || prompt.trim() === "" || busy === "submit"}
+            >
+              {t("submitRevisionTask")}
+            </button>
+          </div>
+        </form>
+
+        {jobs.length === 0 ? (
+          <div className="revision-task-empty">
+            <ClockCounterClockwise size={28} aria-hidden="true" />
+            <h3>{t("noStoreRevisionTasks")}</h3>
+            <p>{t("noStoreRevisionTasksDescription")}</p>
+          </div>
+        ) : null}
+        <div className="revision-task-list" role="list">
           {jobs.map((job) => {
             const store = props.stores.find((candidate) => candidate.id === job.request.storeId);
             return (
-              <article className="store-row" role="listitem" key={job.id}>
-                <div className="store-column-name">
+              <article className="revision-task-row" role="listitem" key={job.id}>
+                <div className="revision-task-summary">
                   <strong>{store?.name ?? job.request.storeId}</strong>
                   <small>{job.request.prompt}</small>
                 </div>
-                <div>
-                  <span>{t(`revisionState.${job.state}`)}</span>
+                <div className="revision-task-result">
+                  <span className={`revision-task-state is-${job.state}`}>
+                    {t(`revisionState.${job.state}`)}
+                  </span>
                   {job.changeSet !== undefined ? (
-                    <details>
+                    <details className="revision-task-changes">
                       <summary>{job.changeSet.summary}</summary>
                       <ul>
                         {job.changeSet.operations.map((operation, index) => (
@@ -289,26 +183,50 @@ export function ContextStoreRevisionFragment(props: {
                       </ul>
                     </details>
                   ) : null}
-                  {job.error !== undefined ? <p role="alert">{job.error.message}</p> : null}
+                  {job.error !== undefined ? (
+                    <p className="form-error" role="alert">
+                      {job.error.message}
+                    </p>
+                  ) : null}
                 </div>
-                <div className="directory-actions">
+                <div className="revision-task-actions">
                   {job.state === "pending_review" ? (
                     <>
-                      <button disabled={busy === job.id} onClick={() => void act(job, "approve")}>
+                      <button
+                        className="primary-button"
+                        type="button"
+                        disabled={busy === job.id}
+                        onClick={() => void act(job, "approve")}
+                      >
                         <Check size={16} /> {t("approveRevision")}
                       </button>
-                      <button disabled={busy === job.id} onClick={() => void act(job, "reject")}>
+                      <button
+                        className="secondary-button"
+                        type="button"
+                        disabled={busy === job.id}
+                        onClick={() => void act(job, "reject")}
+                      >
                         <X size={16} /> {t("rejectRevision")}
                       </button>
                     </>
                   ) : null}
                   {job.state === "needs_attention" || job.state === "rejected" ? (
-                    <button disabled={busy === job.id} onClick={() => void act(job, "retry")}>
+                    <button
+                      className="secondary-button"
+                      type="button"
+                      disabled={busy === job.id}
+                      onClick={() => void act(job, "retry")}
+                    >
                       <ArrowClockwise size={16} /> {t("retryRevision")}
                     </button>
                   ) : null}
                   {["completed", "rejected", "superseded"].includes(job.state) ? (
-                    <button disabled={busy === job.id} onClick={() => void act(job, "delete")}>
+                    <button
+                      className="danger-button"
+                      type="button"
+                      disabled={busy === job.id}
+                      onClick={() => void act(job, "delete")}
+                    >
                       <Trash size={16} /> {t("deleteRevisionTask")}
                     </button>
                   ) : null}

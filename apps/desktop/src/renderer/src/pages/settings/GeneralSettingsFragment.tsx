@@ -3,7 +3,9 @@ import { useEffect, useState } from "react";
 import { useTranslation } from "react-i18next";
 
 import type {
+  ContextStoreRevisionProfile,
   DesktopLocalePreference,
+  DesktopRuntimeAvailability,
   DesktopSettingsSnapshot,
   DesktopToolPermissionMode,
 } from "../../../../shared/contracts/index.ts";
@@ -23,6 +25,10 @@ const languageOptions: readonly {
 export function GeneralSettingsFragment() {
   const { t } = useTranslation(["settings", "common"]);
   const [settings, setSettings] = useState<DesktopSettingsSnapshot>();
+  const [revisionAgent, setRevisionAgent] = useState<ContextStoreRevisionProfile>();
+  const [runtimes, setRuntimes] = useState<readonly DesktopRuntimeAvailability[]>([]);
+  const [revisionRuntimeId, setRevisionRuntimeId] = useState("");
+  const [revisionModelKey, setRevisionModelKey] = useState("");
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string>();
 
@@ -33,6 +39,35 @@ export function GeneralSettingsFragment() {
       .then((snapshot) => {
         if (cancelled) return;
         setSettings(snapshot);
+      })
+      .catch(() => {
+        if (!cancelled) setError(t("general.saveError", { ns: "settings" }));
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [t]);
+
+  useEffect(() => {
+    let cancelled = false;
+    void Promise.all([
+      window.pragmaDesktop.getContextStoreRevisionProfile(),
+      window.pragmaDesktop.getRuntimeAvailability(),
+    ])
+      .then(([profile, availableRuntimes]) => {
+        if (cancelled) return;
+        setRevisionAgent(profile);
+        setRuntimes(availableRuntimes);
+        setRevisionRuntimeId(
+          profile.model?.runtimeId ??
+            availableRuntimes.find((runtime) => runtime.isDefault)?.id ??
+            "",
+        );
+        setRevisionModelKey(
+          profile.model === undefined
+            ? ""
+            : `${profile.model.providerId}\0${profile.model.modelId}`,
+        );
       })
       .catch(() => {
         if (!cancelled) setError(t("general.saveError", { ns: "settings" }));
@@ -101,8 +136,31 @@ export function GeneralSettingsFragment() {
     }
   };
 
+  const updateRevisionAgent = async (
+    mode: "inherit-default" | "pinned",
+    model?: { readonly runtimeId: string; readonly providerId: string; readonly modelId: string },
+  ) => {
+    if (revisionAgent === undefined) return;
+    setSaving(true);
+    setError(undefined);
+    try {
+      setRevisionAgent(
+        await window.pragmaDesktop.updateContextStoreRevisionProfile({
+          expectedRevision: revisionAgent.revision,
+          mode,
+          ...(model === undefined ? {} : { model }),
+        }),
+      );
+    } catch {
+      setError(t("general.saveError", { ns: "settings" }));
+    } finally {
+      setSaving(false);
+    }
+  };
+
   const workspace = settings?.defaultWorkspace ?? "";
   const workspaceName = workspace.split(/[\\/]/).at(-1);
+  const selectedRevisionRuntime = runtimes.find((runtime) => runtime.id === revisionRuntimeId);
 
   return (
     <SettingsScreenFrame
@@ -209,6 +267,109 @@ export function GeneralSettingsFragment() {
             ) : null}
           </span>
         </div>
+        <div className="setting-row revision-agent-mode-setting">
+          <span className="setting-copy">
+            <strong>{t("general.revisionAgent", { ns: "settings" })}</strong>
+            <span>{t("general.revisionAgentDescription", { ns: "settings" })}</span>
+          </span>
+          <SelectMenu<"inherit-default" | "pinned">
+            ariaLabel={t("general.revisionAgent", { ns: "settings" })}
+            className="settings-select revision-agent-settings-select"
+            value={revisionAgent?.mode ?? "inherit-default"}
+            disabled={revisionAgent === undefined || saving}
+            placement="bottom"
+            options={[
+              {
+                value: "inherit-default",
+                label: t("general.revisionAgentInherit", { ns: "settings" }),
+              },
+              {
+                value: "pinned",
+                label: t("general.revisionAgentPinned", { ns: "settings" }),
+              },
+            ]}
+            onChange={(mode) => {
+              if (mode === "inherit-default") void updateRevisionAgent(mode);
+              else
+                setRevisionAgent((current) =>
+                  current === undefined ? current : { ...current, mode: "pinned" },
+                );
+            }}
+          />
+        </div>
+        {revisionAgent?.mode !== "pinned" ? null : (
+          <div className="revision-agent-pinned-settings">
+            <div className="setting-row revision-agent-runtime-setting">
+              <span className="setting-copy">
+                <strong>{t("general.revisionAgentRuntime", { ns: "settings" })}</strong>
+                <span>{t("general.revisionAgentRuntimeDescription", { ns: "settings" })}</span>
+              </span>
+              <SelectMenu
+                ariaLabel={t("general.revisionAgentRuntime", { ns: "settings" })}
+                className="settings-select revision-agent-settings-select"
+                value={revisionRuntimeId}
+                disabled={saving}
+                placement="bottom"
+                options={runtimes
+                  .filter((runtime) => runtime.status === "available")
+                  .map((runtime) => ({ value: runtime.id, label: runtime.displayName }))}
+                onChange={(value) => {
+                  setRevisionRuntimeId(value);
+                  setRevisionModelKey("");
+                }}
+              />
+            </div>
+            <div className="setting-row revision-agent-model-setting">
+              <span className="setting-copy">
+                <strong>{t("general.revisionAgentModel", { ns: "settings" })}</strong>
+                <span>{t("general.revisionAgentModelDescription", { ns: "settings" })}</span>
+              </span>
+              <SelectMenu
+                ariaLabel={t("general.revisionAgentModel", { ns: "settings" })}
+                className="settings-select revision-agent-settings-select"
+                value={revisionModelKey}
+                disabled={saving || revisionRuntimeId === ""}
+                emptyLabel={t("general.revisionAgentChooseModel", { ns: "settings" })}
+                placement="bottom"
+                options={[
+                  {
+                    value: "",
+                    label: t("general.revisionAgentChooseModel", { ns: "settings" }),
+                    disabled: true,
+                  },
+                  ...(selectedRevisionRuntime?.models ?? []).map((model) => ({
+                    value: `${model.provider.id}\0${model.id}`,
+                    label: `${model.provider.displayName} · ${model.displayName}`,
+                  })),
+                ]}
+                onChange={setRevisionModelKey}
+              />
+            </div>
+            <div className="setting-row revision-agent-save-setting">
+              <span className="setting-copy">
+                <strong>{t("general.revisionAgentSave", { ns: "settings" })}</strong>
+                <span>{t("general.revisionAgentSaveDescription", { ns: "settings" })}</span>
+              </span>
+              <button
+                className="secondary-button"
+                type="button"
+                disabled={saving || revisionRuntimeId === "" || revisionModelKey === ""}
+                onClick={() => {
+                  const [providerId, modelId] = revisionModelKey.split("\0");
+                  if (providerId !== undefined && modelId !== undefined) {
+                    void updateRevisionAgent("pinned", {
+                      runtimeId: revisionRuntimeId,
+                      providerId,
+                      modelId,
+                    });
+                  }
+                }}
+              >
+                {t("general.revisionAgentSave", { ns: "settings" })}
+              </button>
+            </div>
+          </div>
+        )}
         {error ? (
           <p className="form-error" role="alert">
             {error}
