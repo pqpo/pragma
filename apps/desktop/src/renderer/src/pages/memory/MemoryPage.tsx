@@ -747,7 +747,12 @@ export function MemoryExtractionJobs(props: {
           <h2>{t("extractions")}</h2>
           <p>{t("extractionsDescription")}</p>
         </div>
-        <button type="button" disabled={props.loading} onClick={props.onRefresh}>
+        <button
+          className="memory-extraction-refresh"
+          type="button"
+          disabled={props.loading}
+          onClick={props.onRefresh}
+        >
           <ArrowClockwise size={17} aria-hidden="true" /> {t("refresh")}
         </button>
       </header>
@@ -785,6 +790,7 @@ export function MemoryExtractionJobs(props: {
                           <footer>
                             {lane === "waiting" ? (
                               <button
+                                className="is-primary"
                                 type="button"
                                 disabled={busy}
                                 onClick={() => void props.onAction(task, "expedite")}
@@ -795,6 +801,7 @@ export function MemoryExtractionJobs(props: {
                             {lane === "attention" ? (
                               <>
                                 <button
+                                  className="is-primary"
                                   type="button"
                                   disabled={busy}
                                   onClick={() => void props.onAction(task, "retry")}
@@ -814,6 +821,7 @@ export function MemoryExtractionJobs(props: {
                             ) : null}
                             {lane === "running" ? (
                               <button
+                                className="is-secondary"
                                 type="button"
                                 disabled={busy}
                                 onClick={() => void props.onAction(task, "interrupt")}

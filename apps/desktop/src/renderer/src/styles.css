@@ -16300,27 +16300,50 @@ textarea:focus-visible,
 .memory-extraction-jobs button {
   display: inline-flex;
   align-items: center;
+  justify-content: center;
   gap: 6px;
   padding: 7px 10px;
-  border: 1px solid var(--border);
-  border-radius: 8px;
-  background: var(--surface);
+  border: 0;
+  border-radius: var(--radius-control);
+  cursor: pointer;
+  font-size: 0.82rem;
+  font-weight: 650;
+  transition:
+    background 140ms ease,
+    color 140ms ease,
+    transform 140ms ease;
+}
+
+.memory-extraction-jobs button:focus-visible {
+  outline: 0;
+  box-shadow: 0 0 0 3px var(--focus-ring);
+}
+
+.memory-extraction-jobs button:disabled {
+  cursor: wait;
+  opacity: 0.55;
+}
+
+.memory-extraction-refresh {
+  background: transparent;
+  color: var(--muted);
+}
+
+.memory-extraction-refresh:hover:not(:disabled) {
+  background: var(--surface-soft);
+  color: var(--text);
 }
 
 .memory-extraction-board {
   display: grid;
   grid-template-columns: repeat(4, minmax(220px, 1fr));
-  gap: 14px;
+  gap: 24px;
   min-width: 940px;
-  margin-top: 18px;
+  margin-top: 24px;
 }
 
 .memory-extraction-lane {
   min-width: 0;
-  padding: 10px;
-  border: 1px solid var(--border);
-  border-radius: 12px;
-  background: color-mix(in srgb, var(--surface) 92%, var(--border));
 }
 
 .memory-extraction-lane > header {
@@ -16328,22 +16351,21 @@ textarea:focus-visible,
   align-items: center;
   justify-content: space-between;
   gap: 10px;
-  padding: 2px 2px 10px;
+  padding: 0 2px 12px;
 }
 
 .memory-extraction-lane > header h3 {
   margin: 0;
-  font-size: 0.92rem;
+  font-size: 0.88rem;
+  font-weight: 680;
+  letter-spacing: 0.01em;
 }
 
 .memory-extraction-lane > header span {
-  min-width: 24px;
-  padding: 2px 7px;
-  border-radius: 999px;
-  background: var(--surface);
   color: var(--muted);
-  font-size: 0.78rem;
-  font-weight: 700;
+  font-size: 0.76rem;
+  font-variant-numeric: tabular-nums;
+  font-weight: 650;
   text-align: center;
 }
 
@@ -16356,20 +16378,49 @@ textarea:focus-visible,
 }
 
 .memory-extraction-lane-empty {
-  margin: 6px 4px;
-  color: var(--muted);
-  font-size: 0.84rem;
+  margin: 2px;
+  color: var(--faint);
+  font-size: 0.8rem;
 }
 
 .memory-health article.memory-extraction-task {
   display: flex;
   align-items: flex-start;
   flex-direction: column;
-  gap: 9px;
-  padding: 12px;
-  border: 1px solid var(--border);
-  border-radius: 10px;
+  gap: 10px;
+  padding: 14px;
+  border: 0;
+  border-radius: var(--radius-card);
   background: var(--surface);
+  box-shadow: var(--shadow-soft);
+  transition:
+    box-shadow 140ms ease,
+    transform 140ms ease;
+}
+
+.memory-health article.memory-extraction-task:hover {
+  box-shadow: var(--shadow-hover);
+  transform: translateY(-1px);
+}
+
+.memory-extraction-lane.is-attention article.memory-extraction-task {
+  background: color-mix(in srgb, var(--ui-danger-subtle) 76%, var(--surface));
+}
+
+.memory-extraction-lane.is-running article.memory-extraction-task {
+  background: color-mix(in srgb, #eef4fa 48%, var(--surface));
+}
+
+.memory-extraction-lane.is-completed article.memory-extraction-task {
+  gap: 8px;
+  background: var(--surface-soft);
+  box-shadow: none;
+}
+
+.memory-extraction-lane.is-completed article.memory-extraction-task:hover {
+  background: var(--surface-muted);
+  box-shadow: none;
+  transform: none;
 }
 
 .memory-extraction-task strong {
@@ -16415,21 +16466,44 @@ textarea:focus-visible,
 .memory-extraction-task footer {
   display: flex;
   width: 100%;
+  align-items: center;
+  justify-content: flex-end;
   flex-wrap: wrap;
   gap: 6px;
-  padding-top: 2px;
-  border-top: 1px solid color-mix(in srgb, var(--border) 70%, transparent);
+  padding-top: 4px;
 }
 
 .memory-extraction-task footer button {
-  flex: 1 1 auto;
-  justify-content: center;
-  padding: 6px 8px;
-  font-size: 0.78rem;
+  min-height: 32px;
+  padding: 6px 10px;
+}
+
+.memory-extraction-task footer button.is-primary {
+  background: var(--green);
+  color: #fff;
+}
+
+.memory-extraction-task footer button.is-primary:hover:not(:disabled) {
+  background: var(--green-dark);
+  transform: translateY(-1px);
+}
+
+.memory-extraction-task footer button.is-secondary {
+  background: var(--surface-soft);
+  color: var(--text);
+}
+
+.memory-extraction-task footer button.is-secondary:hover:not(:disabled) {
+  background: var(--surface-muted);
 }
 
 .memory-extraction-task footer button.is-danger {
+  background: transparent;
   color: #9a3f35;
+}
+
+.memory-extraction-task footer button.is-danger:hover:not(:disabled) {
+  background: var(--ui-danger-subtle);
 }
 
 @media (max-width: 900px) {

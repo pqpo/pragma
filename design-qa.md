@@ -777,3 +777,56 @@ The full Desktop capture preserves the three-column composition, selected primar
 - None for this regression.
 
 final result: passed
+
+---
+
+# Memory Extraction Jobs Design QA
+
+- Source visual truth: `/var/folders/7y/x39kntq56gvcfdymbtjb36280000gn/T/codex-clipboard-04e1d31a-48d9-490f-a264-29e30f6c9a05.png`
+- Rendered implementation: `/Users/linminqiu/.codex/visualizations/2026/08/05/019fd259-0e20-7e32-822c-5be7dc191aac/memory-extraction-after-final.jpg`
+- Full-view comparison: `/Users/linminqiu/.codex/visualizations/2026/08/05/019fd259-0e20-7e32-822c-5be7dc191aac/memory-extraction-comparison-final.jpg`
+- Focused card comparison: `/Users/linminqiu/.codex/visualizations/2026/08/05/019fd259-0e20-7e32-822c-5be7dc191aac/memory-extraction-card-comparison-final.jpg`
+- State: Simplified Chinese, extraction jobs tab, two waiting jobs, empty attention/running lanes, seven visible completed jobs.
+- Browser: Codex in-app browser.
+- Viewport: 1353 × 900 CSS px.
+- Source pixels: 2880 × 1800 at an inferred 2× density. The 174 px collapsed sidebar was cropped, leaving a 2706 × 1800 source region representing 1353 × 900 CSS px.
+- Implementation pixels: 1353 × 900 at 1× density. It was scaled to 2706 × 1800 only for the combined comparison artifact.
+
+## Full-view comparison evidence
+
+The information architecture, copy, four-lane order, task counts, tab state, search field, and section-level refresh action remain consistent with the source. The requested redesign is visible in the board itself: lanes no longer have enclosing card borders, spacing creates the column structure, waiting tasks use one elevated surface, and completed tasks use quiet tinted rows instead of nested outlined cards.
+
+## Focused comparison evidence
+
+The focused task comparison confirms that the task's title and type hierarchy are preserved. The former footer divider and full-width outlined action are removed. The primary action is now a compact filled control aligned to the lower right, with a visible icon and accessible text label.
+
+## Required fidelity surfaces
+
+- Fonts and typography: Existing application typography and weights are preserved. Lane headings and counts are slightly quieter without reducing legibility.
+- Spacing and layout rhythm: The board uses 24 px inter-column space, 12 px task gaps, and a single card surface per waiting task. No nested lane/card border stack remains.
+- Colors and visual tokens: Existing `--green`, `--green-dark`, surface, muted, focus, radius, and shadow tokens are reused. The primary button's white-on-green treatment has clear visual priority.
+- Image quality and asset fidelity: No raster assets are part of this screen. Existing Phosphor icons remain sharp and are not replaced with custom drawings.
+- Copy and content: All existing localized copy and task data are unchanged.
+
+## Interaction and accessibility checks
+
+- The first waiting task's “立即提炼” action resolved uniquely and was clickable.
+- The “刷新” action resolved uniquely and was clickable.
+- Buttons retain visible keyboard focus treatment through the existing focus token.
+- Disabled controls retain a distinct state and wait cursor.
+- The browser console reported no errors or warnings during the interaction check.
+- Screenshot review cannot establish full keyboard order, screen-reader announcement quality, or contrast compliance in every OS rendering mode; those remain suitable for automated or assistive-technology testing.
+
+## Findings
+
+No actionable P0, P1, or P2 issues remain. The visual differences from the source are intentional and directly implement the requested removal of nested borders, footer separators, and outlined task actions.
+
+## Comparison history
+
+- Pass 1: No actionable P0/P1/P2 differences were found after density normalization. No visual rework loop was required.
+
+## Follow-up polish
+
+- P3: If completed-job volume grows substantially beyond the shown state, a compact grouping or progressive disclosure pattern could reduce scan length without bringing card borders back.
+
+final result: passed
