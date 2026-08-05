@@ -17,15 +17,12 @@ import type {
   DesktopMemoryExtractionTask,
   DesktopMemoryItem,
   DesktopMemoryPlaneStatus,
-  DesktopKnowledgeCandidate,
-  DesktopKnowledgeSource,
+  MemoryKnowledgeInitializationCandidate,
 } from "../../../../shared/contracts/index.ts";
 import { ConfirmationDialog, Dialog } from "../../components/Dialog.tsx";
-import { SelectMenu } from "../../components/SelectMenu.tsx";
 import { errorMessage } from "../../lib/errors.ts";
 
-type MemoryView =
-  "all" | "episodic" | "semantic" | "knowledge" | "candidates" | "extractions" | "health";
+type MemoryView = "all" | "episodic" | "semantic" | "candidates" | "extractions" | "health";
 
 export function MemoryPage() {
   const { t } = useTranslation("memory");
@@ -36,14 +33,9 @@ export function MemoryPage() {
   const [health, setHealth] = useState<DesktopMemoryPlaneStatus>();
   const [extractionBoard, setExtractionBoard] = useState<DesktopMemoryExtractionBoard>();
   const [evidence, setEvidence] = useState<DesktopMemoryEvidence>();
-  const [candidates, setCandidates] = useState<readonly DesktopKnowledgeCandidate[]>([]);
-  const [knowledgeSource, setKnowledgeSource] = useState<DesktopKnowledgeSource>();
-  const [bindingType, setBindingType] = useState<
-    "pragma.expert" | "pragma.expert-team" | "pragma.flow" | "pragma.project"
-  >("pragma.expert");
-  const [bindingId, setBindingId] = useState("");
-  const [allowExport, setAllowExport] = useState(false);
-  const [publishPublic, setPublishPublic] = useState(false);
+  const [candidates, setCandidates] = useState<readonly MemoryKnowledgeInitializationCandidate[]>(
+    [],
+  );
   const [reason, setReason] = useState("");
   const [dialog, setDialog] = useState<"revise" | "forget">();
   const [revisionDraft, setRevisionDraft] = useState("");
@@ -71,7 +63,7 @@ export function MemoryPage() {
             ? window.pragmaDesktop.listMemoryExtractionJobs()
             : Promise.resolve(undefined),
           view === "candidates"
-            ? window.pragmaDesktop.listKnowledgeCandidates({ state: "pending_review" })
+            ? window.pragmaDesktop.listMemoryKnowledgeInitializations({ state: "pending_review" })
             : Promise.resolve([]),
         ]);
         setItems(records);
@@ -127,8 +119,11 @@ export function MemoryPage() {
     [items, selectedId],
   );
 
-  const run = async (operation: () => Promise<unknown>) => {
-    if (reason.trim() === "") return false;
+  const run = async (
+    operation: () => Promise<unknown>,
+    action: MemoryActionKind = "memory-governance",
+  ) => {
+    if (!canRunMemoryAction(action, reason)) return false;
     setActionBusy(true);
     try {
       await operation();
@@ -185,27 +180,19 @@ export function MemoryPage() {
       </header>
 
       <nav className="memory-tabs" aria-label={t("title")}>
-        {(
-          [
-            "all",
-            "episodic",
-            "semantic",
-            "knowledge",
-            "candidates",
-            "extractions",
-            "health",
-          ] as const
-        ).map((id) => (
-          <button
-            key={id}
-            type="button"
-            className={view === id ? "is-active" : undefined}
-            aria-current={view === id ? "page" : undefined}
-            onClick={() => setView(id)}
-          >
-            {t(id === "episodic" ? "episodes" : id === "semantic" ? "facts" : id)}
-          </button>
-        ))}
+        {(["all", "episodic", "semantic", "candidates", "extractions", "health"] as const).map(
+          (id) => (
+            <button
+              key={id}
+              type="button"
+              className={view === id ? "is-active" : undefined}
+              aria-current={view === id ? "page" : undefined}
+              onClick={() => setView(id)}
+            >
+              {t(id === "episodic" ? "episodes" : id === "semantic" ? "facts" : id)}
+            </button>
+          ),
+        )}
       </nav>
 
       {error !== undefined ? (
@@ -238,19 +225,10 @@ export function MemoryPage() {
                 }
                 onClick={() => {
                   setSelectedId(candidate.id);
-                  setBindingType(
-                    candidate.rootRef.type === "pragma.expert" ||
-                      candidate.rootRef.type === "pragma.expert-team" ||
-                      candidate.rootRef.type === "pragma.flow"
-                      ? candidate.rootRef.type
-                      : "pragma.expert",
-                  );
-                  setBindingId(candidate.rootRef.id);
-                  setKnowledgeSource(undefined);
                 }}
               >
                 <span>{t("candidates")}</span>
-                <strong>{candidate.content.title}</strong>
+                <strong>{candidate.name}</strong>
                 <small>{t("revision", { revision: candidate.revision })}</small>
               </button>
             ))}
@@ -259,130 +237,116 @@ export function MemoryPage() {
             {(() => {
               const candidate = candidates.find((item) => item.id === selectedId);
               if (candidate === undefined) return <p>{t("selectCandidate")}</p>;
-              const binding = { type: bindingType, id: bindingId.trim() };
               return (
                 <>
                   <header>
                     <span className="memory-status is-pending_review">pending_review</span>
-                    <h2>{candidate.content.title}</h2>
-                    <p>{candidate.content.summary}</p>
+                    <input
+                      aria-label={t("candidateName")}
+                      value={candidate.name}
+                      maxLength={50}
+                      onChange={(event) =>
+                        setCandidates((current) =>
+                          current.map((item) =>
+                            item.id === candidate.id ? { ...item, name: event.target.value } : item,
+                          ),
+                        )
+                      }
+                    />
+                    <textarea
+                      aria-label={t("candidateDescription")}
+                      value={candidate.description}
+                      maxLength={500}
+                      onChange={(event) =>
+                        setCandidates((current) =>
+                          current.map((item) =>
+                            item.id === candidate.id
+                              ? { ...item, description: event.target.value }
+                              : item,
+                          ),
+                        )
+                      }
+                    />
+                    <small>{candidate.expertRef}</small>
                   </header>
                   <section>
-                    <h3>{t("guidance")}</h3>
-                    <ul>
-                      {candidate.content.guidance.map((entry) => (
-                        <li key={entry}>{entry}</li>
-                      ))}
-                    </ul>
-                  </section>
-                  <section>
-                    <h3>{t("sources")}</h3>
-                    <div className="memory-evidence-list">
-                      {candidate.sourceRefs.map((sourceRef) => (
-                        <button
-                          key={`${sourceRef.kind}:${sourceRef.id}:${sourceRef.revision}`}
-                          type="button"
-                          onClick={() =>
-                            void window.pragmaDesktop
-                              .getKnowledgeSource({ sourceRef })
-                              .then(setKnowledgeSource)
-                              .catch((value: unknown) => setError(errorMessage(value)))
+                    <h3>{t("initializationFiles")}</h3>
+                    <p className="memory-note">{t("initializationFilesDescription")}</p>
+                    {candidate.files.map((file) => (
+                      <details key={file.id}>
+                        <summary>
+                          {file.id} · {file.metadata.trigger}
+                        </summary>
+                        <textarea
+                          value={file.content}
+                          onChange={(event) =>
+                            setCandidates((current) =>
+                              current.map((item) =>
+                                item.id !== candidate.id
+                                  ? item
+                                  : {
+                                      ...item,
+                                      files: item.files.map((entry) =>
+                                        entry.id === file.id
+                                          ? { ...entry, content: event.target.value }
+                                          : entry,
+                                      ),
+                                    },
+                              ),
+                            )
                           }
-                        >
-                          {sourceRef.kind}:{sourceRef.id}@{sourceRef.revision}
-                        </button>
-                      ))}
-                    </div>
-                    {knowledgeSource === undefined ? null : (
-                      <pre>{JSON.stringify(knowledgeSource, null, 2)}</pre>
-                    )}
+                        />
+                      </details>
+                    ))}
                   </section>
-                  <section>
-                    <h3>{t("publishBindings")}</h3>
-                    <p className="memory-note">{t("publishBindingsDescription")}</p>
-                    <label className="memory-dialog-field">
-                      <span>{t("bindingType")}</span>
-                      <SelectMenu
-                        ariaLabel={t("bindingType")}
-                        value={bindingType}
-                        options={[
-                          { value: "pragma.expert", label: "Expert" },
-                          { value: "pragma.expert-team", label: "ExpertTeam" },
-                          { value: "pragma.flow", label: "Flow" },
-                          { value: "pragma.project", label: "Project" },
-                        ]}
-                        onChange={(value) => setBindingType(value as typeof bindingType)}
-                      />
-                    </label>
-                    <label className="memory-dialog-field">
-                      <span>{t("bindingId")}</span>
-                      <input
-                        value={bindingId}
-                        onChange={(event) => setBindingId(event.target.value)}
-                      />
-                    </label>
-                    <label>
-                      <input
-                        type="checkbox"
-                        checked={allowExport}
-                        onChange={(event) => setAllowExport(event.target.checked)}
-                      />{" "}
-                      {t("allowBundleExport")}
-                    </label>
-                    <label>
-                      <input
-                        type="checkbox"
-                        checked={publishPublic}
-                        onChange={(event) => setPublishPublic(event.target.checked)}
-                      />{" "}
-                      {t("confirmPublic")}
-                    </label>
-                  </section>
-                  <label className="memory-reason">
-                    <span>{t("reason")}</span>
-                    <input value={reason} onChange={(event) => setReason(event.target.value)} />
-                  </label>
                   <div className="memory-actions">
                     <button
                       type="button"
-                      disabled={reason.trim() === "" || binding.id === "" || actionBusy}
+                      disabled={actionBusy}
                       onClick={() =>
                         void run(
                           async () =>
-                            await window.pragmaDesktop.publishKnowledgeCandidate({
+                            window.pragmaDesktop.updateMemoryKnowledgeInitialization({
                               id: candidate.id,
                               expectedRevision: candidate.revision,
-                              reason,
-                              bindings: [
-                                {
-                                  consumerRef: binding,
-                                  recall: "allow",
-                                  export: allowExport ? "allow" : "deny",
-                                  permissionRevision: 1,
-                                },
-                              ],
-                              visibility: publishPublic
-                                ? { mode: "public" }
-                                : { mode: "restricted", principals: [binding] },
-                              confirmPublic: publishPublic,
+                              name: candidate.name,
+                              description: candidate.description,
+                              files: [...candidate.files],
                             }),
+                          "knowledge-initialization",
                         )
                       }
                     >
-                      {t("publish")}
+                      {t("saveCandidate")}
+                    </button>
+                    <button
+                      type="button"
+                      disabled={actionBusy}
+                      onClick={() =>
+                        void run(
+                          async () =>
+                            await window.pragmaDesktop.createMemoryKnowledgeStore({
+                              id: candidate.id,
+                              expectedRevision: candidate.revision,
+                            }),
+                          "knowledge-initialization",
+                        )
+                      }
+                    >
+                      {t("createKnowledgeStore")}
                     </button>
                     <button
                       className="is-danger"
                       type="button"
-                      disabled={reason.trim() === "" || actionBusy}
+                      disabled={actionBusy}
                       onClick={() =>
                         void run(
                           async () =>
-                            await window.pragmaDesktop.rejectKnowledgeCandidate({
+                            await window.pragmaDesktop.rejectMemoryKnowledgeInitialization({
                               id: candidate.id,
                               expectedRevision: candidate.revision,
-                              reason,
                             }),
+                          "knowledge-initialization",
                         )
                       }
                     >
@@ -435,19 +399,6 @@ export function MemoryPage() {
                   <h2>{selected.title}</h2>
                   <p>{selected.summary}</p>
                 </header>
-                {selected.module === "knowledge" ? (
-                  <section>
-                    <h3>{t("guidance")}</h3>
-                    <ul>
-                      {selected.guidance.map((entry) => (
-                        <li key={entry}>{entry}</li>
-                      ))}
-                    </ul>
-                    {selected.origin === "bundle-import" ? (
-                      <p className="memory-note">{t("importedKnowledgePersists")}</p>
-                    ) : null}
-                  </section>
-                ) : null}
                 <section>
                   <h3>{t("provenance")}</h3>
                   <dl>
@@ -483,34 +434,32 @@ export function MemoryPage() {
                     </div>
                   ))}
                 </section>
-                {selected.module === "knowledge" ? null : (
-                  <section>
-                    <h3>{t("evidence")}</h3>
-                    <div className="memory-evidence-list">
-                      {selected.evidenceRefs.map((evidenceId) => (
-                        <button
-                          key={evidenceId}
-                          type="button"
-                          onClick={() =>
-                            void window.pragmaDesktop
-                              .getMemoryEvidence({
-                                module: selected.module,
-                                id: selected.id,
-                                evidenceId,
-                              })
-                              .then(setEvidence)
-                              .catch((value: unknown) => setError(errorMessage(value)))
-                          }
-                        >
-                          {evidenceId}
-                        </button>
-                      ))}
-                    </div>
-                    {evidence !== undefined ? (
-                      <pre>{JSON.stringify(evidence.payload, null, 2)}</pre>
-                    ) : null}
-                  </section>
-                )}
+                <section>
+                  <h3>{t("evidence")}</h3>
+                  <div className="memory-evidence-list">
+                    {selected.evidenceRefs.map((evidenceId) => (
+                      <button
+                        key={evidenceId}
+                        type="button"
+                        onClick={() =>
+                          void window.pragmaDesktop
+                            .getMemoryEvidence({
+                              module: selected.module,
+                              id: selected.id,
+                              evidenceId,
+                            })
+                            .then(setEvidence)
+                            .catch((value: unknown) => setError(errorMessage(value)))
+                        }
+                      >
+                        {evidenceId}
+                      </button>
+                    ))}
+                  </div>
+                  {evidence !== undefined ? (
+                    <pre>{JSON.stringify(evidence.payload, null, 2)}</pre>
+                  ) : null}
+                </section>
                 <label className="memory-reason">
                   <span>{t("reason")}</span>
                   <input value={reason} onChange={(event) => setReason(event.target.value)} />
@@ -549,10 +498,7 @@ export function MemoryPage() {
                   <button
                     type="button"
                     disabled={
-                      reason.trim() === "" ||
-                      actionBusy ||
-                      selected.status === "invalidated" ||
-                      selected.status === "withdrawn"
+                      reason.trim() === "" || actionBusy || selected.status === "invalidated"
                     }
                     onClick={() =>
                       void run(
@@ -566,18 +512,16 @@ export function MemoryPage() {
                       )
                     }
                   >
-                    {selected.module === "knowledge" ? t("withdraw") : t("invalidate")}
+                    {t("invalidate")}
                   </button>
-                  {selected.module === "knowledge" ? null : (
-                    <button
-                      className="is-danger"
-                      type="button"
-                      disabled={reason.trim() === "" || actionBusy}
-                      onClick={() => setDialog("forget")}
-                    >
-                      <Trash size={17} aria-hidden="true" /> {t("forget")}
-                    </button>
-                  )}
+                  <button
+                    className="is-danger"
+                    type="button"
+                    disabled={reason.trim() === "" || actionBusy}
+                    onClick={() => setDialog("forget")}
+                  >
+                    <Trash size={17} aria-hidden="true" /> {t("forget")}
+                  </button>
                   {selected.bindings.map((binding) =>
                     binding.recall === "allow" ? (
                       <MemoryActionWithTooltip
@@ -732,6 +676,12 @@ export function MemoryPage() {
       ) : null}
     </section>
   );
+}
+
+export type MemoryActionKind = "memory-governance" | "knowledge-initialization";
+
+export function canRunMemoryAction(action: MemoryActionKind, reason: string): boolean {
+  return action === "knowledge-initialization" || reason.trim() !== "";
 }
 
 export function memoryExtractionPollDelay(board: DesktopMemoryExtractionBoard | undefined): number {

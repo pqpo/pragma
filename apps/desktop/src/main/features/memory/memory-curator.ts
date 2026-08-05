@@ -15,7 +15,6 @@ import {
 import type { CompiledResource, InvocableResource } from "@pragma/interpreter";
 import {
   EpisodicExtractionOutputSchema,
-  KnowledgeExtractionOutputSchema,
   SemanticExtractionOutputSchema,
   MEMORY_CURATOR_ID,
   MEMORY_CURATOR_PROMPT_VERSION,
@@ -31,6 +30,7 @@ import {
   type MemoryExtractorProfile,
   type MemoryExtractorProfileStore,
 } from "@pragma/memory";
+import { KnowledgeExtractionOutputSchema } from "@pragma/shared";
 
 import type { MissionRunner } from "../missions/mission-runner.ts";
 import { MissionStoreError, type MissionStore } from "../missions/mission-store.ts";

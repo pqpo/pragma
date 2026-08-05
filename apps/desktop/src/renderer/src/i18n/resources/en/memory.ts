@@ -6,8 +6,16 @@ export const memory = {
   facts: "Facts",
   knowledge: "Knowledge",
   candidates: "Candidates",
-  noCandidates: "No Knowledge candidates are awaiting review.",
-  selectCandidate: "Select a Knowledge candidate to inspect and publish or reject it.",
+  noCandidates: "No knowledge-store initialization candidates are awaiting review.",
+  selectCandidate:
+    "Select an initialization candidate, then preview or edit its file tree before creating the store.",
+  initializationFiles: "Initialization file tree",
+  candidateName: "Knowledge base name",
+  candidateDescription: "Knowledge base description",
+  initializationFilesDescription:
+    "After creation these files are ordinary knowledge-base content and no longer depend on Memory or Evidence.",
+  saveCandidate: "Save candidate",
+  createKnowledgeStore: "Confirm and create store",
   guidance: "Guidance",
   sources: "Source revisions",
   publishBindings: "Publication bindings",

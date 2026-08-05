@@ -3,6 +3,7 @@ import { access, stat } from "node:fs/promises";
 import { basename } from "node:path";
 
 import { BrowserWindow, dialog, ipcMain, type WebContents } from "electron";
+import { z } from "zod";
 
 import {
   CreateContextStoreFileSchema,
@@ -16,9 +17,14 @@ import {
   RenameContextStoreEntrySchema,
   SubscribeContextStoreChangesSchema,
   UpdateContextStoreFileSchema,
+  ContextStoreRevisionJobRefSchema,
+  ContextStoreRevisionRequestSchema,
+  ListContextStoreRevisionJobsSchema,
+  UpdateContextStoreRevisionProfileSchema,
   type PickWorkspaceResult,
 } from "../../../shared/contracts/index.ts";
 import type { ContextStoreStore } from "./context-store-store.ts";
+import type { ContextStoreRevisionService } from "./context-store-revision-service.ts";
 
 interface ContextStoreWatchSubscription {
   readonly sender: WebContents;
@@ -34,6 +40,7 @@ function errorMessage(error: unknown): string {
 export function installContextStoreHandlers(
   store: ContextStoreStore,
   windowGetter: () => BrowserWindow | null,
+  revisions?: ContextStoreRevisionService,
 ): void {
   const watchers = new Map<string, ContextStoreWatchSubscription>();
   const watcherKey = (webContentsId: number, storeId: string) => `${webContentsId}:${storeId}`;
@@ -92,6 +99,49 @@ export function installContextStoreHandlers(
     const parsed = DeleteContextStoreEntrySchema.parse(input);
     await store.deleteEntry(parsed.storeId, parsed.id, parsed.kind);
   });
+  if (revisions !== undefined) {
+    ipcMain.handle("context-store-revisions:submit", async (_event, input: unknown) => {
+      const job = await revisions.submit(ContextStoreRevisionRequestSchema.parse(input));
+      revisions.scheduleProcessing();
+      return job;
+    });
+    ipcMain.handle("context-store-revisions:list", (_event, input: unknown) =>
+      revisions.list(ListContextStoreRevisionJobsSchema.parse(input ?? {})),
+    );
+    ipcMain.handle("context-store-revisions:get", (_event, jobId: unknown) =>
+      revisions.get(z.string().uuid().parse(jobId)),
+    );
+    ipcMain.handle("context-store-revisions:approve", async (_event, input: unknown) => {
+      const parsed = ContextStoreRevisionJobRefSchema.parse(input);
+      const result = await revisions.approve(parsed.jobId, parsed.expectedRevision);
+      revisions.scheduleProcessing();
+      return result;
+    });
+    ipcMain.handle("context-store-revisions:reject", async (_event, input: unknown) => {
+      const parsed = ContextStoreRevisionJobRefSchema.parse(input);
+      const result = await revisions.reject(parsed.jobId, parsed.expectedRevision);
+      revisions.scheduleProcessing();
+      return result;
+    });
+    ipcMain.handle("context-store-revisions:retry", async (_event, input: unknown) => {
+      const parsed = ContextStoreRevisionJobRefSchema.parse(input);
+      const result = await revisions.retry(parsed.jobId, parsed.expectedRevision);
+      revisions.scheduleProcessing();
+      return result;
+    });
+    ipcMain.handle("context-store-revisions:delete", async (_event, input: unknown) => {
+      const parsed = ContextStoreRevisionJobRefSchema.parse(input);
+      await revisions.delete(parsed.jobId, parsed.expectedRevision);
+    });
+    ipcMain.handle("context-store-revisions:get-profile", () => revisions.getProfile());
+    ipcMain.handle("context-store-revisions:update-profile", async (_event, input: unknown) => {
+      const profile = await revisions.updateProfile(
+        UpdateContextStoreRevisionProfileSchema.parse(input),
+      );
+      revisions.scheduleProcessing();
+      return profile;
+    });
+  }
   ipcMain.on("context-stores:watch", (event, input: unknown) => {
     const parsed = SubscribeContextStoreChangesSchema.parse(input);
     const key = watcherKey(event.sender.id, parsed.storeId);

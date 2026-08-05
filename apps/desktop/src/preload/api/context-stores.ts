@@ -17,6 +17,14 @@ import {
   SubscribeContextStoreChangesSchema,
   UpdateContextStoreFileSchema,
 } from "../../shared/contracts/context-stores.ts";
+import {
+  ContextStoreRevisionJobRefSchema,
+  ContextStoreRevisionJobSchema,
+  ContextStoreRevisionProfileSchema,
+  ContextStoreRevisionRequestSchema,
+  ListContextStoreRevisionJobsSchema,
+  UpdateContextStoreRevisionProfileSchema,
+} from "../../shared/contracts/context-store-revisions.ts";
 import { PickWorkspaceResultSchema } from "../../shared/contracts/settings.ts";
 import type { PragmaDesktopAPI } from "../../shared/contracts/api.ts";
 export const contextStoresApi = {
@@ -82,6 +90,62 @@ export const contextStoresApi = {
       DeleteContextStoreEntrySchema.parse(input),
     );
   },
+  submitContextStoreRevision: async (input) =>
+    ContextStoreRevisionJobSchema.parse(
+      await ipcRenderer.invoke(
+        "context-store-revisions:submit",
+        ContextStoreRevisionRequestSchema.parse(input),
+      ),
+    ),
+  listContextStoreRevisions: async (input = {}) =>
+    ContextStoreRevisionJobSchema.array().parse(
+      await ipcRenderer.invoke(
+        "context-store-revisions:list",
+        ListContextStoreRevisionJobsSchema.parse(input),
+      ),
+    ),
+  getContextStoreRevision: async (jobId) =>
+    ContextStoreRevisionJobSchema.parse(
+      await ipcRenderer.invoke("context-store-revisions:get", jobId),
+    ),
+  approveContextStoreRevision: async (input) =>
+    ContextStoreRevisionJobSchema.parse(
+      await ipcRenderer.invoke(
+        "context-store-revisions:approve",
+        ContextStoreRevisionJobRefSchema.parse(input),
+      ),
+    ),
+  rejectContextStoreRevision: async (input) =>
+    ContextStoreRevisionJobSchema.parse(
+      await ipcRenderer.invoke(
+        "context-store-revisions:reject",
+        ContextStoreRevisionJobRefSchema.parse(input),
+      ),
+    ),
+  retryContextStoreRevision: async (input) =>
+    ContextStoreRevisionJobSchema.parse(
+      await ipcRenderer.invoke(
+        "context-store-revisions:retry",
+        ContextStoreRevisionJobRefSchema.parse(input),
+      ),
+    ),
+  deleteContextStoreRevision: async (input) => {
+    await ipcRenderer.invoke(
+      "context-store-revisions:delete",
+      ContextStoreRevisionJobRefSchema.parse(input),
+    );
+  },
+  getContextStoreRevisionProfile: async () =>
+    ContextStoreRevisionProfileSchema.parse(
+      await ipcRenderer.invoke("context-store-revisions:get-profile"),
+    ),
+  updateContextStoreRevisionProfile: async (input) =>
+    ContextStoreRevisionProfileSchema.parse(
+      await ipcRenderer.invoke(
+        "context-store-revisions:update-profile",
+        UpdateContextStoreRevisionProfileSchema.parse(input),
+      ),
+    ),
   subscribeContextStoreChanges: (storeId, listener) => {
     const input = SubscribeContextStoreChangesSchema.parse({ storeId });
     const handler = (_event: IpcRendererEvent, payload: unknown) => {
@@ -110,6 +174,15 @@ export const contextStoresApi = {
   | "updateContextStoreFile"
   | "renameContextStoreEntry"
   | "deleteContextStoreEntry"
+  | "submitContextStoreRevision"
+  | "listContextStoreRevisions"
+  | "getContextStoreRevision"
+  | "approveContextStoreRevision"
+  | "rejectContextStoreRevision"
+  | "retryContextStoreRevision"
+  | "deleteContextStoreRevision"
+  | "getContextStoreRevisionProfile"
+  | "updateContextStoreRevisionProfile"
   | "subscribeContextStoreChanges"
   | "pickContextStoreFolder"
 >;

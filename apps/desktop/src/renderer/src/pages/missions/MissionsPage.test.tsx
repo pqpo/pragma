@@ -1128,7 +1128,7 @@ describe("Mission thinking entry", () => {
 
 function missionFixture(kind: "expert" | "team"): Mission {
   return {
-    schemaVersion: "pragma.mission/v6",
+    schemaVersion: "pragma.mission/v7",
     origin: { type: "user" },
     id: "00000000-0000-4000-8000-000000000000",
     title: "Missions page design",

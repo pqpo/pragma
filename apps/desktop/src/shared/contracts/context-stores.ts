@@ -28,6 +28,36 @@ const ContextStoreEntryIdSchema = z
   .max(2_000)
   .refine((value) => value.trim().length > 0, { message: "Entry path is required." });
 
+function isSafeRelativeEntryId(value: string, kind: "file" | "directory"): boolean {
+  const portable = value.replaceAll("\\", "/");
+  const normalized = portable.replace(/\/+$/gu, "");
+  return (
+    normalized.length > 0 &&
+    !portable.startsWith("/") &&
+    !/^[a-z]:/iu.test(portable) &&
+    !normalized
+      .split("/")
+      .some((segment) => segment === "" || segment === "." || segment === "..") &&
+    (kind === "directory" || normalized.toLowerCase().endsWith(".md"))
+  );
+}
+
+// Historical v3 imports accepted every safe Markdown path supported by the host filesystem.
+// Revision snapshots must remain able to describe that data even when a name is not portable for
+// newly-created entries.
+const StoredDirectoryIdSchema = z
+  .string()
+  .min(1)
+  .refine((id) => isSafeRelativeEntryId(id, "directory"), {
+    message: "Directory path must stay inside the knowledge base.",
+  });
+const StoredMarkdownFileIdSchema = z
+  .string()
+  .min(1)
+  .refine((id) => isSafeRelativeEntryId(id, "file"), {
+    message: "File path must be a relative Markdown path inside the knowledge base.",
+  });
+
 function entryNameFromId(id: string, kind: "file" | "directory"): string {
   const segment = id.replaceAll("\\", "/").replace(/\/+$/u, "").split("/").at(-1) ?? "";
   return kind === "file" ? segment.replace(/\.md$/iu, "") : segment;
@@ -38,19 +68,21 @@ function hasValidEntryName(id: string, kind: "file" | "directory"): boolean {
 }
 
 const ManagedFolderIdSchema = ContextStoreEntryIdSchema.refine(
-  (id) => hasValidEntryName(id, "directory"),
+  (id) => isSafeRelativeEntryId(id, "directory") && hasValidEntryName(id, "directory"),
   { message: "The folder name is not portable or exceeds 100 characters." },
 );
 const ManagedFileIdSchema = ContextStoreEntryIdSchema.refine(
-  (id) => hasValidEntryName(id, "file"),
+  (id) => isSafeRelativeEntryId(id, "file") && hasValidEntryName(id, "file"),
   { message: "The file name is not portable or exceeds 100 characters." },
 );
 
 const ContextStoreBaseSchema = z.object({
-  schemaVersion: z.literal("pragma.context-store/v3"),
+  schemaVersion: z.literal("pragma.context-store/v4"),
   id: ContextStoreIdSchema,
   name: KnowledgeBaseNameSchema,
   description: KnowledgeBaseDescriptionSchema,
+  contentRevision: z.number().int().positive(),
+  snapshotHash: z.string().regex(/^[a-f0-9]{64}$/u),
   createdAt: z.string().datetime(),
   updatedAt: z.string().datetime(),
 });
@@ -64,6 +96,92 @@ export const FileContextStoreSchema = ContextStoreBaseSchema.extend({
 });
 
 export const ContextStoreSchema = FileContextStoreSchema;
+
+export const ContextStoreSnapshotFileSchema = z.object({
+  id: StoredMarkdownFileIdSchema,
+  content: z.string().max(1_000_000),
+  metadata: z.lazy(() => ContextStoreContentMetadataSchema),
+});
+
+export const ContextStoreSnapshotSchema = z
+  .object({
+    schemaVersion: z.literal("pragma.context-store-snapshot/v1"),
+    storeId: ContextStoreIdSchema,
+    revision: z.number().int().positive(),
+    snapshotHash: z.string().regex(/^[a-f0-9]{64}$/u),
+    createdAt: z.string().datetime(),
+    directories: StoredDirectoryIdSchema.array().default([]),
+    files: ContextStoreSnapshotFileSchema.array(),
+  })
+  .superRefine((snapshot, context) => {
+    const fileIds = new Set<string>();
+    for (const [index, file] of snapshot.files.entries()) {
+      if (fileIds.has(file.id)) {
+        context.addIssue({
+          code: "custom",
+          path: ["files", index, "id"],
+          message: `Duplicate snapshot file id: ${file.id}`,
+        });
+      }
+      fileIds.add(file.id);
+    }
+    const directoryIds = new Set<string>();
+    for (const [index, id] of snapshot.directories.entries()) {
+      if (directoryIds.has(id)) {
+        context.addIssue({
+          code: "custom",
+          path: ["directories", index],
+          message: `Duplicate snapshot directory id: ${id}`,
+        });
+      }
+      directoryIds.add(id);
+    }
+  });
+
+const ContextStoreUpsertOperationSchema = z.object({
+  operation: z.literal("upsert"),
+  id: ManagedFileIdSchema,
+  content: z.string().max(1_000_000),
+  metadata: z.lazy(() => ContextStoreContentMetadataSchema),
+});
+
+const ContextStoreDeleteOperationSchema = z.object({
+  operation: z.literal("delete"),
+  id: StoredMarkdownFileIdSchema,
+});
+
+const ContextStoreRenameOperationSchema = z.object({
+  operation: z.literal("rename"),
+  id: StoredMarkdownFileIdSchema,
+  nextId: ManagedFileIdSchema,
+});
+
+export const ContextStoreChangeOperationSchema = z.discriminatedUnion("operation", [
+  ContextStoreUpsertOperationSchema,
+  ContextStoreDeleteOperationSchema,
+  ContextStoreRenameOperationSchema,
+]);
+
+export const ContextStoreChangeSetSchema = z.object({
+  schemaVersion: z.literal("pragma.context-store-change-set/v1"),
+  storeId: ContextStoreIdSchema,
+  baseRevision: z.number().int().positive(),
+  baseSnapshotHash: z.string().regex(/^[a-f0-9]{64}$/u),
+  summary: z.string().trim().min(1).max(2_000),
+  operations: ContextStoreChangeOperationSchema.array().min(1).max(1_000),
+});
+
+export const ContextStoreRevisionRecordSchema = z.object({
+  schemaVersion: z.literal("pragma.context-store-revision-record/v1"),
+  storeId: ContextStoreIdSchema,
+  revision: z.number().int().positive(),
+  snapshotHash: z.string().regex(/^[a-f0-9]{64}$/u),
+  parentRevision: z.number().int().positive().nullable(),
+  author: z.enum(["user", "import", "memory-initialization", "store-revision-agent", "migration"]),
+  revisionJobId: z.string().uuid().optional(),
+  summary: z.string().trim().min(1).max(2_000),
+  createdAt: z.string().datetime(),
+});
 
 const CreateContextStoreBaseShape = {
   name: KnowledgeBaseNameSchema,

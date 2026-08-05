@@ -64,9 +64,12 @@ import {
   ContextStoreContentMetadataSchema,
   ContextStoreContentSchema,
   ContextStoreContentSummarySchema,
+  ContextStoreChangeSetSchema,
   ContextStoreEntrySchema,
   ContextStoreImportInspectionSchema,
   ContextStoreSchema,
+  ContextStoreSnapshotSchema,
+  ContextStoreRevisionRecordSchema,
   CreateContextStoreFileSchema,
   CreateContextStoreFolderSchema,
   CreateContextStoreSchema,
@@ -79,6 +82,14 @@ import {
   RenameContextStoreEntrySchema,
   UpdateContextStoreFileSchema,
 } from "./context-stores.ts";
+import {
+  ContextStoreRevisionJobRefSchema,
+  ContextStoreRevisionJobSchema,
+  ContextStoreRevisionProfileSchema,
+  ContextStoreRevisionRequestSchema,
+  ListContextStoreRevisionJobsSchema,
+  UpdateContextStoreRevisionProfileSchema,
+} from "./context-store-revisions.ts";
 import {
   GetMissionContextStoreSchema,
   ListMissionContextStoreEntriesSchema,
@@ -220,15 +231,10 @@ import {
   DesktopMemoryExtractionTaskSchema,
   DesktopMemoryExtractionBoardSchema,
   ManageDesktopMemoryExtractionTaskSchema,
-  DesktopKnowledgeCandidateSchema,
-  ListDesktopKnowledgeCandidatesSchema,
-  UpdateDesktopKnowledgeCandidateSchema,
-  RejectDesktopKnowledgeCandidateSchema,
-  PublishDesktopKnowledgeCandidateSchema,
-  CreateDesktopKnowledgeSuccessorSchema,
-  DesktopKnowledgeSchema,
-  GetDesktopKnowledgeSourceSchema,
-  DesktopKnowledgeSourceSchema,
+  MemoryKnowledgeInitializationCandidateSchema,
+  ListMemoryKnowledgeInitializationCandidatesSchema,
+  MemoryKnowledgeInitializationCandidateRefSchema,
+  UpdateMemoryKnowledgeInitializationCandidateSchema,
 } from "./memory.ts";
 export type DesktopAppInfo = z.infer<typeof DesktopAppInfoSchema>;
 export type PragmaBundleModuleOptions = z.infer<typeof PragmaBundleModuleOptionsSchema>;
@@ -302,17 +308,18 @@ export type DesktopMemoryExtractionBoard = z.infer<typeof DesktopMemoryExtractio
 export type ManageDesktopMemoryExtractionTask = z.infer<
   typeof ManageDesktopMemoryExtractionTaskSchema
 >;
-export type DesktopKnowledgeCandidate = z.infer<typeof DesktopKnowledgeCandidateSchema>;
-export type ListDesktopKnowledgeCandidates = z.input<typeof ListDesktopKnowledgeCandidatesSchema>;
-export type UpdateDesktopKnowledgeCandidate = z.infer<typeof UpdateDesktopKnowledgeCandidateSchema>;
-export type RejectDesktopKnowledgeCandidate = z.infer<typeof RejectDesktopKnowledgeCandidateSchema>;
-export type PublishDesktopKnowledgeCandidate = z.infer<
-  typeof PublishDesktopKnowledgeCandidateSchema
+export type MemoryKnowledgeInitializationCandidate = z.infer<
+  typeof MemoryKnowledgeInitializationCandidateSchema
 >;
-export type CreateDesktopKnowledgeSuccessor = z.infer<typeof CreateDesktopKnowledgeSuccessorSchema>;
-export type DesktopKnowledge = z.infer<typeof DesktopKnowledgeSchema>;
-export type GetDesktopKnowledgeSource = z.infer<typeof GetDesktopKnowledgeSourceSchema>;
-export type DesktopKnowledgeSource = z.infer<typeof DesktopKnowledgeSourceSchema>;
+export type ListMemoryKnowledgeInitializationCandidates = z.input<
+  typeof ListMemoryKnowledgeInitializationCandidatesSchema
+>;
+export type MemoryKnowledgeInitializationCandidateRef = z.infer<
+  typeof MemoryKnowledgeInitializationCandidateRefSchema
+>;
+export type UpdateMemoryKnowledgeInitializationCandidate = z.infer<
+  typeof UpdateMemoryKnowledgeInitializationCandidateSchema
+>;
 export type ModelProviderModel = z.infer<typeof ModelProviderModelSchema>;
 export type ModelCompatibilityProfileDescriptor = z.infer<
   typeof ModelCompatibilityProfileDescriptorSchema
@@ -329,6 +336,17 @@ export type ModelDiscoveryResult = z.infer<typeof ModelDiscoveryResultSchema>;
 export type ModelProviderSettingsSnapshot = z.infer<typeof ModelProviderSettingsSnapshotSchema>;
 export type ResetModelProvidersResult = z.infer<typeof ResetModelProvidersResultSchema>;
 export type ContextStore = z.infer<typeof ContextStoreSchema>;
+export type ContextStoreSnapshot = z.infer<typeof ContextStoreSnapshotSchema>;
+export type ContextStoreChangeSet = z.infer<typeof ContextStoreChangeSetSchema>;
+export type ContextStoreRevisionRecord = z.infer<typeof ContextStoreRevisionRecordSchema>;
+export type ContextStoreRevisionRequest = z.infer<typeof ContextStoreRevisionRequestSchema>;
+export type ContextStoreRevisionJob = z.infer<typeof ContextStoreRevisionJobSchema>;
+export type ListContextStoreRevisionJobs = z.infer<typeof ListContextStoreRevisionJobsSchema>;
+export type ContextStoreRevisionJobRef = z.infer<typeof ContextStoreRevisionJobRefSchema>;
+export type ContextStoreRevisionProfile = z.infer<typeof ContextStoreRevisionProfileSchema>;
+export type UpdateContextStoreRevisionProfile = z.infer<
+  typeof UpdateContextStoreRevisionProfileSchema
+>;
 export type CreateContextStore = z.infer<typeof CreateContextStoreSchema>;
 export type DeleteContextStore = z.infer<typeof DeleteContextStoreSchema>;
 export type InspectContextStoreImport = z.infer<typeof InspectContextStoreImportSchema>;

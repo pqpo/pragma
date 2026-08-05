@@ -26,6 +26,7 @@ import {
   MissionV3Schema,
   MissionV4Schema,
   MissionV5Schema,
+  MissionV6Schema,
   MissionTimelineRecordSchema,
   MissionChatEntrySchema,
   MissionUserMessageSchema,
@@ -140,11 +141,21 @@ const MessageTransactionSchema = z.object({
 
 type MessageTransaction = z.infer<typeof MessageTransactionSchema>;
 
+const MissionV7MigrationTransactionSchema = z.object({
+  schemaVersion: z.literal("pragma.mission-v7-migration/v1"),
+  missionId: MissionIdSchema,
+  target: MissionSchema,
+});
+
 export function createMissionStore(options: { readonly missionsPath: string }): MissionStore {
   const missionPath = (id: string) => join(options.missionsPath, id);
   const manifestPath = (id: string) => join(missionPath(id), "mission.yaml");
   const messagesPath = (id: string) => join(missionPath(id), "messages.jsonl");
   const transactionPath = (id: string) => join(missionPath(id), ".messages.transaction.json");
+  const v7MigrationTransactionPath = (id: string) =>
+    join(missionPath(id), ".v6-to-v7.transaction.json");
+  const v6BackupPath = (id: string) =>
+    join(missionPath(id), "migration-backups", "mission.v6.yaml");
   const legacyProjectionPath = (id: string, executionId: string) =>
     join(missionPath(id), "execution-projections", `${executionId}.json`);
   const projectionPath = (id: string, executionId: string) =>
@@ -162,6 +173,48 @@ export function createMissionStore(options: { readonly missionsPath: string }): 
 
   const withMissionLock = async <T>(id: string, operation: () => Promise<T>): Promise<T> =>
     await withFileLock(lockPath(id), operation);
+
+  const recoverV7Migration = async (id: string): Promise<Mission | undefined> => {
+    const value = await readJsonIfExists(v7MigrationTransactionPath(id));
+    if (value === undefined) return undefined;
+    const transaction = MissionV7MigrationTransactionSchema.parse(value);
+    if (transaction.missionId !== id || transaction.target.id !== id) {
+      throw new MissionStoreError(
+        "config_invalid",
+        `Mission ${id} has a migration journal for a different Mission.`,
+      );
+    }
+    const persisted = parsePragmaYaml(await readFile(manifestPath(id), "utf8"));
+    const persistedVersion = readSchemaVersion(persisted);
+    if (persistedVersion !== "pragma.mission/v6" && persistedVersion !== "pragma.mission/v7") {
+      throw new MissionStoreError(
+        "unsupported_schema",
+        `Mission ${id} cannot replay its v6-to-v7 migration from ${String(persistedVersion)}.`,
+      );
+    }
+    await writeYamlAtomically(manifestPath(id), transaction.target);
+    await rm(v7MigrationTransactionPath(id), { force: true });
+    return transaction.target;
+  };
+
+  const migrateV6ToV7 = async (
+    id: string,
+    legacy: z.infer<typeof MissionV6Schema>,
+  ): Promise<Mission> => {
+    const target = MissionSchema.parse({ ...legacy, schemaVersion: "pragma.mission/v7" });
+    await writeTextIfAbsent(v6BackupPath(id), formatPragmaYaml(legacy));
+    await writeJsonAtomically(
+      v7MigrationTransactionPath(id),
+      MissionV7MigrationTransactionSchema.parse({
+        schemaVersion: "pragma.mission-v7-migration/v1",
+        missionId: id,
+        target,
+      }),
+    );
+    await writeYamlAtomically(manifestPath(id), target);
+    await rm(v7MigrationTransactionPath(id), { force: true });
+    return target;
+  };
 
   const readRecords = async (
     id: string,
@@ -190,7 +243,8 @@ export function createMissionStore(options: { readonly missionsPath: string }): 
 
   const readMissionUnlocked = async (id: string): Promise<Mission> => {
     try {
-      const value = parsePragmaYaml(await readFile(manifestPath(id), "utf8"));
+      const recovered = await recoverV7Migration(id);
+      const value = recovered ?? parsePragmaYaml(await readFile(manifestPath(id), "utf8"));
       const schemaVersion = readSchemaVersion(value);
       let current = value;
       if (schemaVersion === "pragma.mission/v3") {
@@ -229,15 +283,19 @@ export function createMissionStore(options: { readonly missionsPath: string }): 
       const versionAfterRefMigration = readSchemaVersion(current);
       if (versionAfterRefMigration === "pragma.mission/v5") {
         const legacy = MissionV5Schema.parse(current);
-        const migrated = MissionSchema.parse({
+        const migrated = MissionV6Schema.parse({
           ...legacy,
           schemaVersion: "pragma.mission/v6",
           origin: { type: "user" },
         });
         await writeYamlAtomically(manifestPath(id), migrated);
-        return migrated;
+        return await migrateV6ToV7(id, migrated);
       }
-      if (versionAfterRefMigration !== "pragma.mission/v6") {
+      if (versionAfterRefMigration === "pragma.mission/v6") {
+        const legacy = MissionV6Schema.parse(current);
+        return await migrateV6ToV7(id, legacy);
+      }
+      if (versionAfterRefMigration !== "pragma.mission/v7") {
         throw new MissionStoreError(
           "unsupported_schema",
           `Mission ${id} uses an unsupported schema. Remove the old Mission directory and create a new Mission.`,
@@ -454,7 +512,7 @@ export function createMissionStore(options: { readonly missionsPath: string }): 
       const timestamp = new Date().toISOString();
       const goal = input.goal.trim();
       const mission = MissionSchema.parse({
-        schemaVersion: "pragma.mission/v6",
+        schemaVersion: "pragma.mission/v7",
         id,
         title: input.title === undefined ? titleFromGoal(goal) : normalizeMissionTitle(input.title),
         goal,
@@ -741,6 +799,20 @@ async function writeTextAtomically(path: string, content: string): Promise<void>
   const temporaryPath = `${path}.${randomUUID()}.tmp`;
   await writeFile(temporaryPath, content, { mode: 0o600 });
   await rename(temporaryPath, path);
+}
+
+async function writeTextIfAbsent(path: string, content: string): Promise<void> {
+  await mkdir(dirname(path), { recursive: true, mode: 0o700 });
+  let handle;
+  try {
+    handle = await open(path, "wx", 0o600);
+    await handle.writeFile(content, "utf8");
+    await handle.sync();
+  } catch (error) {
+    if (!isNodeError(error, "EEXIST")) throw error;
+  } finally {
+    await handle?.close();
+  }
 }
 
 async function readJsonIfExists(path: string): Promise<unknown | undefined> {

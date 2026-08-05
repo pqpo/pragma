@@ -86,6 +86,7 @@ describe("studioSections", () => {
       "capabilities",
       "plugins",
       "context-stores",
+      "context-store-revisions",
     ]);
   });
 });

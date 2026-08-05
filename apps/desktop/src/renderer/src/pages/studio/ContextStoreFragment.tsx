@@ -269,6 +269,7 @@ export function ContextStoreDirectoryFragment(props: {
 export function ContextStoreDetailFragment(props: {
   readonly store: ContextStore;
   readonly onBack: () => void;
+  readonly onOpenRevisions?: (() => void) | undefined;
   readonly onDelete: () => Promise<void>;
   readonly onListEntries: (storeId: string) => Promise<readonly ContextStoreEntry[]>;
   readonly onGetContent: (storeId: string, contentId: string) => Promise<ContextStoreContent>;
@@ -765,6 +766,12 @@ export function ContextStoreDetailFragment(props: {
             <Trash size={17} aria-hidden="true" />
             {t("deleteKnowledgeBaseAction")}
           </button>
+          {props.onOpenRevisions !== undefined ? (
+            <button type="button" onClick={props.onOpenRevisions}>
+              <ArrowClockwise size={17} aria-hidden="true" />
+              {t("viewStoreRevisions")}
+            </button>
+          ) : null}
         </div>
       }
     >

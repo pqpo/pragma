@@ -8,6 +8,10 @@
 - Layered projection and Episodic decision: [ADR 033](./033-layered-episodic-memory.md)
 - Semantic conflict and governance decision: [ADR 034](./034-conservative-semantic-memory.md)
 - Short-term collaboration refinement: [ADR 037](./037-mission-board-context-store.md)
+- Knowledge authority refinement: [ADR 039](./039-promoted-knowledge-stores-and-agent-revision.md)
+
+> ADR 039 已替代本 ADR 中“published Knowledge 继续作为 Memory type 和 Memory Module authority”的
+> 决策。Episodic、Semantic、Memory Evidence、Module SPI 与可选 CodeGraph 边界不受影响。
 
 ## Context
 

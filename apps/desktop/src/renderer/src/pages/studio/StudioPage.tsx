@@ -48,6 +48,7 @@ import { PluginDetailFragment, PluginDirectoryFragment } from "./PluginDirectory
 import { AutomationDirectoryFragment } from "./AutomationDirectoryFragment.tsx";
 import { FlowEditor } from "./flow-editor/FlowEditor.tsx";
 import { PragmaBundleDialog } from "./PragmaBundleDialog.tsx";
+import { ContextStoreRevisionFragment } from "./ContextStoreRevisionFragment.tsx";
 import { DownloadSimple, UploadSimple } from "@phosphor-icons/react";
 import { createEmptyFlow } from "./flow-editor/flow-model.ts";
 import {
@@ -92,6 +93,8 @@ export function StudioPage(props: {
   const [runtimes, setRuntimes] = useState<readonly DesktopRuntimeAvailability[]>([]);
   const [contextStores, setContextStores] = useState<readonly ContextStore[]>([]);
   const [selectedContextStoreId, setSelectedContextStoreId] = useState<string | null>(null);
+  const [revisionStoreFilter, setRevisionStoreFilter] = useState<string | undefined>();
+  const [revisionTaskCount, setRevisionTaskCount] = useState(0);
   const [capabilities, setCapabilities] = useState<readonly Capability[]>([]);
   const [plugins, setPlugins] = useState<readonly DesktopPlugin[]>([]);
   const [selectedPluginRef, setSelectedPluginRef] = useState<string | null>(null);
@@ -150,6 +153,19 @@ export function StudioPage(props: {
       .listContextStores()
       .then((stores) => {
         if (!cancelled) setContextStores(stores);
+      })
+      .catch((loadError: unknown) => {
+        if (!cancelled) setExpertError(errorMessage(loadError));
+      });
+    void api
+      .listContextStoreRevisions()
+      .then((jobs) => {
+        if (!cancelled) {
+          setRevisionTaskCount(
+            jobs.filter((job) => !["completed", "rejected", "superseded"].includes(job.state))
+              .length,
+          );
+        }
       })
       .catch((loadError: unknown) => {
         if (!cancelled) setExpertError(errorMessage(loadError));
@@ -295,13 +311,15 @@ export function StudioPage(props: {
     const store =
       api === undefined
         ? ContextStoreSchema.parse({
-            schemaVersion: "pragma.context-store/v3",
+            schemaVersion: "pragma.context-store/v4",
             id: crypto.randomUUID(),
             name: input.name,
             description: input.description,
             type: "file",
             status: "ready",
             source: { origin: input.mode === "blank" ? "created" : "copied" },
+            contentRevision: 1,
+            snapshotHash: "0".repeat(64),
             createdAt: timestamp,
             updatedAt: timestamp,
           })
@@ -576,21 +594,23 @@ export function StudioPage(props: {
           const count =
             section.id === "context-stores"
               ? contextStores.length
-              : section.id === "experts"
-                ? experts.length
-                : section.id === "teams"
-                  ? (project?.resources.filter((resource) => resource.kind === "ExpertTeam")
-                      .length ?? 0)
-                  : section.id === "flows"
-                    ? (project?.resources.filter((resource) => resource.kind === "Flow").length ??
-                      0)
-                    : section.id === "integrations"
-                      ? automations.length
-                      : section.id === "capabilities"
-                        ? capabilities.length
-                        : section.id === "plugins"
-                          ? plugins.length
-                          : 0;
+              : section.id === "context-store-revisions"
+                ? revisionTaskCount
+                : section.id === "experts"
+                  ? experts.length
+                  : section.id === "teams"
+                    ? (project?.resources.filter((resource) => resource.kind === "ExpertTeam")
+                        .length ?? 0)
+                    : section.id === "flows"
+                      ? (project?.resources.filter((resource) => resource.kind === "Flow").length ??
+                        0)
+                      : section.id === "integrations"
+                        ? automations.length
+                        : section.id === "capabilities"
+                          ? capabilities.length
+                          : section.id === "plugins"
+                            ? plugins.length
+                            : 0;
           return (
             <button
               key={section.id}
@@ -599,6 +619,7 @@ export function StudioPage(props: {
               aria-current={isActive ? "page" : undefined}
               onClick={() => {
                 setActiveView(section.id);
+                if (section.id === "context-store-revisions") setRevisionStoreFilter(undefined);
                 setScreen("directory");
                 setContextDrawerOpen(false);
                 setResourceEditor(null);
@@ -683,10 +704,22 @@ export function StudioPage(props: {
             }}
           />
         ) : null}
+        {screen === "directory" && activeView === "context-store-revisions" ? (
+          <ContextStoreRevisionFragment
+            stores={contextStores}
+            initialStoreId={revisionStoreFilter}
+            onCountChanged={setRevisionTaskCount}
+          />
+        ) : null}
         {screen === "context-store-detail" && selectedContextStore !== null ? (
           <ContextStoreDetailFragment
             store={selectedContextStore}
             onBack={() => setScreen("directory")}
+            onOpenRevisions={() => {
+              setRevisionStoreFilter(selectedContextStore.id);
+              setActiveView("context-store-revisions");
+              setScreen("directory");
+            }}
             onListEntries={listContextStoreEntries}
             onGetContent={getContextStoreContent}
             onCreateFile={createContextStoreFile}

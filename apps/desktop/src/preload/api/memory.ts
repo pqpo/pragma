@@ -26,17 +26,12 @@ import {
   DesktopMissionMemoryActivitySchema,
   DesktopMemoryExtractionBoardSchema,
   ManageDesktopMemoryExtractionTaskSchema,
-  DesktopKnowledgeCandidateSchema,
-  DesktopKnowledgeCandidateListSchema,
-  ListDesktopKnowledgeCandidatesSchema,
-  UpdateDesktopKnowledgeCandidateSchema,
-  RejectDesktopKnowledgeCandidateSchema,
-  PublishDesktopKnowledgeCandidateSchema,
-  CreateDesktopKnowledgeSuccessorSchema,
-  DesktopKnowledgeSchema,
-  GetDesktopKnowledgeSourceSchema,
-  DesktopKnowledgeSourceSchema,
+  MemoryKnowledgeInitializationCandidateSchema,
+  ListMemoryKnowledgeInitializationCandidatesSchema,
+  MemoryKnowledgeInitializationCandidateRefSchema,
+  UpdateMemoryKnowledgeInitializationCandidateSchema,
 } from "../../shared/contracts/memory.ts";
+import { ContextStoreSchema } from "../../shared/contracts/context-stores.ts";
 
 export const memoryApi = {
   getGlobalMemoryPolicy: async () =>
@@ -148,46 +143,32 @@ export const memoryApi = {
   forgetMemoryItem: async (input) => {
     await ipcRenderer.invoke("memory-items:forget", ReviewDesktopMemoryItemSchema.parse(input));
   },
-  listKnowledgeCandidates: async (input = {}) =>
-    DesktopKnowledgeCandidateListSchema.parse(
+  listMemoryKnowledgeInitializations: async (input = {}) =>
+    MemoryKnowledgeInitializationCandidateSchema.array().parse(
       await ipcRenderer.invoke(
-        "memory-knowledge-candidates:list",
-        ListDesktopKnowledgeCandidatesSchema.parse(input),
+        "memory-knowledge-initializations:list",
+        ListMemoryKnowledgeInitializationCandidatesSchema.parse(input),
       ),
     ),
-  updateKnowledgeCandidate: async (input) =>
-    DesktopKnowledgeCandidateSchema.parse(
+  updateMemoryKnowledgeInitialization: async (input) =>
+    MemoryKnowledgeInitializationCandidateSchema.parse(
       await ipcRenderer.invoke(
-        "memory-knowledge-candidates:update",
-        UpdateDesktopKnowledgeCandidateSchema.parse(input),
+        "memory-knowledge-initializations:update",
+        UpdateMemoryKnowledgeInitializationCandidateSchema.parse(input),
       ),
     ),
-  rejectKnowledgeCandidate: async (input) =>
-    DesktopKnowledgeCandidateSchema.parse(
+  rejectMemoryKnowledgeInitialization: async (input) =>
+    MemoryKnowledgeInitializationCandidateSchema.parse(
       await ipcRenderer.invoke(
-        "memory-knowledge-candidates:reject",
-        RejectDesktopKnowledgeCandidateSchema.parse(input),
+        "memory-knowledge-initializations:reject",
+        MemoryKnowledgeInitializationCandidateRefSchema.parse(input),
       ),
     ),
-  publishKnowledgeCandidate: async (input) =>
-    DesktopKnowledgeSchema.parse(
+  createMemoryKnowledgeStore: async (input) =>
+    ContextStoreSchema.parse(
       await ipcRenderer.invoke(
-        "memory-knowledge-candidates:publish",
-        PublishDesktopKnowledgeCandidateSchema.parse(input),
-      ),
-    ),
-  createKnowledgeSuccessor: async (input) =>
-    DesktopKnowledgeCandidateSchema.parse(
-      await ipcRenderer.invoke(
-        "memory-knowledge:successor",
-        CreateDesktopKnowledgeSuccessorSchema.parse(input),
-      ),
-    ),
-  getKnowledgeSource: async (input) =>
-    DesktopKnowledgeSourceSchema.parse(
-      await ipcRenderer.invoke(
-        "memory-knowledge-source:get",
-        GetDesktopKnowledgeSourceSchema.parse(input),
+        "memory-knowledge-initializations:create-store",
+        MemoryKnowledgeInitializationCandidateRefSchema.parse(input),
       ),
     ),
   getMissionMemoryActivity: async (missionId) =>
@@ -216,11 +197,9 @@ export const memoryApi = {
   | "tightenMemoryAccess"
   | "invalidateMemoryItem"
   | "forgetMemoryItem"
-  | "listKnowledgeCandidates"
-  | "updateKnowledgeCandidate"
-  | "rejectKnowledgeCandidate"
-  | "publishKnowledgeCandidate"
-  | "createKnowledgeSuccessor"
-  | "getKnowledgeSource"
+  | "listMemoryKnowledgeInitializations"
+  | "updateMemoryKnowledgeInitialization"
+  | "rejectMemoryKnowledgeInitialization"
+  | "createMemoryKnowledgeStore"
   | "getMissionMemoryActivity"
 >;

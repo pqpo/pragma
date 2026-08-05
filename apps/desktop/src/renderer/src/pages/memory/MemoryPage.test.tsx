@@ -7,6 +7,7 @@ import {
   MemoryDegradedAlert,
   MemoryExtractionJobs,
   MemoryPage,
+  canRunMemoryAction,
   formatMemorySubjectRefs,
   memoryExtractionPollDelay,
 } from "./MemoryPage.tsx";
@@ -42,6 +43,12 @@ describe("MemoryPage", () => {
         counts: { waiting: 0, attention: 1, running: 0, completed: 4 },
       }),
     ).toBe(10_000);
+  });
+
+  it("does not require a Fact reason for Knowledge initialization candidate actions", () => {
+    expect(canRunMemoryAction("knowledge-initialization", "")).toBe(true);
+    expect(canRunMemoryAction("memory-governance", "")).toBe(false);
+    expect(canRunMemoryAction("memory-governance", "confirmed by the user")).toBe(true);
   });
 
   it("renders the first-level layered Memory management entry", () => {

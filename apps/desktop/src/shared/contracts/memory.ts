@@ -9,13 +9,9 @@ import {
   MemorySensitivitySchema,
   MemoryEvidenceEnvelopeSchema,
   SemanticFactSchema,
-  KnowledgeCandidateSchema,
-  KnowledgeContentSchema,
-  KnowledgeSchema,
-  KnowledgeSourceRevisionRefSchema,
-  KnowledgeSourceSnapshotSchema,
 } from "@pragma/shared";
 import { z } from "zod";
+import { ContextStoreIdSchema, ContextStoreSnapshotFileSchema } from "./context-stores.ts";
 
 export const DesktopMemoryPolicyTargetSchema = MemorySubjectRefSchema.refine(
   (target) =>
@@ -190,6 +186,93 @@ export const UpdateDesktopMemoryExtractionSettingsSchema = z
   })
   .strict();
 
+export const ProgressiveKnowledgeStoreFilesSchema = ContextStoreSnapshotFileSchema.array()
+  .min(4)
+  .max(1_000)
+  .superRefine((files, context) => {
+    const byId = new Map(files.map((file) => [file.id, file]));
+    if (byId.size !== files.length) {
+      context.addIssue({
+        code: "custom",
+        message: "Knowledge store file ids must be unique.",
+      });
+    }
+    for (const [id, limit, trigger] of [
+      ["guide.md", 2_048, "always_on"],
+      ["overview.md", 6_144, "model_decision"],
+      ["index.md", 8_192, "model_decision"],
+    ] as const) {
+      const file = byId.get(id);
+      if (file === undefined) {
+        context.addIssue({ code: "custom", message: `${id} is required.` });
+      } else {
+        if (new TextEncoder().encode(file.content).byteLength > limit) {
+          context.addIssue({ code: "custom", message: `${id} exceeds ${limit} bytes.` });
+        }
+        if (file.metadata.trigger !== trigger) {
+          context.addIssue({ code: "custom", message: `${id} must use ${trigger}.` });
+        }
+      }
+    }
+    if (!files.some((file) => file.id.startsWith("items/"))) {
+      context.addIssue({
+        code: "custom",
+        message: "At least one items/** document is required.",
+      });
+    }
+    for (const file of files.filter((entry) => entry.id.startsWith("indexes/"))) {
+      if (new TextEncoder().encode(file.content).byteLength > 8_192) {
+        context.addIssue({
+          code: "custom",
+          message: `${file.id} exceeds 8192 bytes. Split large indexes into more shards.`,
+        });
+      }
+    }
+  });
+
+export const MemoryKnowledgeInitializationCandidateSchema = z
+  .object({
+    schemaVersion: z.literal("pragma.memory-knowledge-initialization-candidate/v1"),
+    id: z.string().uuid(),
+    revision: z.number().int().positive(),
+    expertRef: z.string().regex(/^expert:[0-9a-hjkmnp-tv-z]{16}$/u),
+    sourceDigest: z.string().regex(/^[a-f0-9]{64}$/u),
+    name: z.string().trim().min(1).max(50),
+    description: z.string().trim().max(500),
+    files: ProgressiveKnowledgeStoreFilesSchema,
+    state: z.enum(["pending_review", "rejected", "created"]),
+    storeId: ContextStoreIdSchema.optional(),
+    createdAt: z.string().datetime(),
+    updatedAt: z.string().datetime(),
+  })
+  .strict()
+  .superRefine((candidate, context) => {
+    if (candidate.state === "created" && candidate.storeId === undefined) {
+      context.addIssue({
+        code: "custom",
+        path: ["storeId"],
+        message: "Created candidates require a store id.",
+      });
+    }
+  });
+
+export const ListMemoryKnowledgeInitializationCandidatesSchema = z
+  .object({
+    state: z.enum(["all", "pending_review", "rejected", "created"]).default("pending_review"),
+  })
+  .strict();
+
+export const MemoryKnowledgeInitializationCandidateRefSchema = z
+  .object({ id: z.string().uuid(), expectedRevision: z.number().int().positive() })
+  .strict();
+
+export const UpdateMemoryKnowledgeInitializationCandidateSchema =
+  MemoryKnowledgeInitializationCandidateRefSchema.extend({
+    name: z.string().trim().min(1).max(50),
+    description: z.string().trim().max(500),
+    files: ContextStoreSnapshotFileSchema.array().min(4).max(1_000),
+  }).strict();
+
 export const ReviseDesktopSemanticFactSchema = z
   .object({
     id: z.string().min(1),
@@ -271,36 +354,13 @@ export const DesktopMemoryItemSchema = z.discriminatedUnion("module", [
     expiresAt: z.string().datetime().optional(),
     conflictsWith: z.array(z.string().min(1)),
   }).strict(),
-  z
-    .object({
-      module: z.literal("knowledge"),
-      id: z.string().min(1),
-      revision: z.number().int().positive(),
-      status: z.enum(["active", "withdrawn"]),
-      title: z.string().min(1),
-      summary: z.string().min(1),
-      rootRefs: z.array(MemorySubjectRefSchema),
-      producerRefs: z.array(MemorySubjectRefSchema),
-      evidenceRefs: z.array(z.string().min(1)).length(0),
-      visibility: MemoryVisibilityPolicySchema,
-      sensitivity: MemorySensitivitySchema,
-      bindings: z.array(MemoryRevisionBindingSchema),
-      subjectNames: DesktopMemorySubjectNamesSchema,
-      createdAt: z.string().datetime(),
-      updatedAt: z.string().datetime(),
-      guidance: z.array(z.string().min(1)),
-      normalizedKey: z.string().min(1),
-      sourceRefs: z.array(KnowledgeSourceRevisionRefSchema),
-      origin: z.enum(["local", "bundle-import"]),
-    })
-    .strict(),
 ]);
 
 export const DesktopMemoryItemListSchema = z.array(DesktopMemoryItemSchema);
 
 export const ListDesktopMemoryItemsSchema = z
   .object({
-    module: z.enum(["all", "episodic", "semantic", "knowledge"]).default("all"),
+    module: z.enum(["all", "episodic", "semantic"]).default("all"),
     status: z.enum(["active", "invalidated", "withdrawn", "all"]).default("active"),
     query: z.string().trim().max(2_000).default(""),
     limit: z.number().int().min(1).max(200).default(100),
@@ -308,7 +368,7 @@ export const ListDesktopMemoryItemsSchema = z
   .strict();
 
 export const DesktopMemoryItemRefSchema = z
-  .object({ module: z.enum(["episodic", "semantic", "knowledge"]), id: z.string().min(1) })
+  .object({ module: z.enum(["episodic", "semantic"]), id: z.string().min(1) })
   .strict();
 
 export const GetDesktopMemoryEvidenceSchema = z
@@ -336,60 +396,6 @@ export const ReviewDesktopMemoryItemSchema = DesktopMemoryItemRefSchema.extend({
 }).strict();
 
 export const DesktopMemoryEvidenceSchema = MemoryEvidenceEnvelopeSchema;
-
-export const DesktopKnowledgeCandidateSchema = KnowledgeCandidateSchema;
-export const DesktopKnowledgeCandidateListSchema = z.array(DesktopKnowledgeCandidateSchema);
-export const ListDesktopKnowledgeCandidatesSchema = z
-  .object({
-    state: z
-      .enum(["pending_review", "rejected", "published", "superseded", "all"])
-      .default("pending_review"),
-  })
-  .strict();
-export const UpdateDesktopKnowledgeCandidateSchema = z
-  .object({
-    id: z.string().min(1),
-    expectedRevision: z.number().int().positive(),
-    content: KnowledgeContentSchema,
-  })
-  .strict();
-export const RejectDesktopKnowledgeCandidateSchema = z
-  .object({
-    id: z.string().min(1),
-    expectedRevision: z.number().int().positive(),
-    reason: z.string().trim().min(1).max(2_000),
-  })
-  .strict();
-export const PublishDesktopKnowledgeCandidateSchema = z
-  .object({
-    id: z.string().min(1),
-    expectedRevision: z.number().int().positive(),
-    reason: z.string().trim().min(1).max(2_000),
-    bindings: z.array(MemoryRevisionBindingSchema).min(1).max(100),
-    visibility: MemoryVisibilityPolicySchema,
-    confirmPublic: z.boolean().default(false),
-  })
-  .strict()
-  .refine((input) => input.visibility.mode !== "public" || input.confirmPublic, {
-    path: ["confirmPublic"],
-    message: "Public Knowledge publication requires explicit confirmation.",
-  })
-  .refine((input) => input.bindings.some((binding) => binding.recall === "allow"), {
-    path: ["bindings"],
-    message: "Knowledge publication requires at least one recall binding.",
-  });
-export const CreateDesktopKnowledgeSuccessorSchema = z
-  .object({
-    id: z.string().min(1),
-    expectedRevision: z.number().int().positive(),
-    content: KnowledgeContentSchema,
-  })
-  .strict();
-export const DesktopKnowledgeSchema = KnowledgeSchema;
-export const GetDesktopKnowledgeSourceSchema = z
-  .object({ sourceRef: KnowledgeSourceRevisionRefSchema })
-  .strict();
-export const DesktopKnowledgeSourceSchema = KnowledgeSourceSnapshotSchema;
 
 export const DesktopMissionMemoryActivitySchema = z.object({
   missionId: z.string().uuid(),

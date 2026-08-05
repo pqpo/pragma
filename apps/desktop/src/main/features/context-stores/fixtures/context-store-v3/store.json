@@ -1,0 +1,11 @@
+{
+  "schemaVersion": "pragma.context-store/v3",
+  "id": "00000000-0000-4000-8000-000000000031",
+  "name": "Historical v3 knowledge",
+  "description": "Fixture written in the v3 storage shape.",
+  "type": "file",
+  "status": "ready",
+  "source": { "origin": "copied" },
+  "createdAt": "2026-06-01T00:00:00.000Z",
+  "updatedAt": "2026-06-01T00:00:00.000Z"
+}

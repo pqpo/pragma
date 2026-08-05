@@ -4,9 +4,13 @@ Pragma 的新 Memory Plane 是 Desktop 内置能力，随应用启动，不需�
 插件。架构决策见 [ADR 031](../adr/031-extensible-memory-plane.md)，分阶段范围见
 [Memory Plane 落地计划](../architecture/memory-plane-implementation-plan.md)。
 
+> [ADR 039](../adr/039-promoted-knowledge-stores-and-agent-revision.md) 已调整并落实 Knowledge 最终边界：
+> 用户批准升级后，Knowledge 进入“工作室 → 知识库”的托管 Context Store，并与 Memory/Evidence 解耦。
+
 ## 当前已经可用的能力
 
-当前已完成 Memory Plane 基础设施、策略、Episodic Memory、Semantic Memory、Knowledge Memory 和治理管理中心：
+当前已完成 Memory Plane 基础设施、策略、Episodic Memory、Semantic Memory、治理管理中心，以及
+Knowledge Store promotion/revision 闭环：
 
 - Execution 语义事件通过持久 Canonical Event Feed 交给 Memory Plane；
 - Memory Evidence 自动记录 root Expert/ExpertTeam/Flow 与实际 producer Expert；
@@ -33,16 +37,18 @@ Pragma 的新 Memory Plane 是 Desktop 内置能力，随应用启动，不需�
   支持按 revision 立即提炼、重试、删除失败输入，或中断运行任务并重新等待六小时；
 - Mission 的 Memory 页签显示每次 Execution 的 capture/recall 计数。搜索审计只保存 digest 和长度，
   不保存 query 原文。
-- Knowledge Module 从有效 Episode 与已验证/无冲突 Fact 提炼本地候选；候选必须在 Memory 页面检查精确
-  来源、逐项选择 recall/export binding 后才能发布，未发布候选不会进入 Agent Context；
-- published Knowledge 通过 `memory/knowledge/items/<id>/<revision>.md` 读取，内容、权限收紧和撤回均保存
-  不可变 revision；
-- Bundle 默认不导出任何 Knowledge。导出时只能逐条选择当前 Project 明确允许 export 的修订；导入确认
-  即发布为本地 Knowledge，重复导入幂等，丢弃 Bundle 安装不会删除已导入 Knowledge。
+- Knowledge learning 从有效 Episode 与已验证/无冲突 Fact 提炼初始化 Candidate；每个 Expert 最多一个
+  Memory Knowledge Store，ExpertTeam/Flow 按实际 producer Expert 路由；
+- 首次 Candidate 在 Memory 页面预览和编辑；确认后原子创建普通 Studio Context Store rev1 并自动挂载；
+- Store 已存在时，Memory 只能提交修订提示词。修订任务只在“工作室 → 知识库 → 修订任务”显示，由独立
+  Store Revision Agent 生成 change set；用户批准前不改 Store，批准时以 revision/hash CAS 原子激活；
+- Store 使用 `guide → overview → index/indexes → items` 渐进披露，不保存 Evidence、sourceRefs 或提炼提示词；
+- 分享与导入只使用普通 Context Store Bundle 路径。旧 Published Knowledge API/UI 与
+  `pragma.memory.knowledge@v1` extension 已删除，旧目录不迁移、不读取。
 
-当前已实现独立的内置 Mission Board；尚未实现 Skill Candidate、CodeGraph Module、跨设备同步和 legacy
-导入。旧 `@pragma/plugin-memory` 中的 Task Memory 只属于迁移源，不是新版
-后续 Memory 阶段的完成实现。
+当前已实现独立的内置 Mission Board；尚未实现 Skill Candidate、跨设备同步和 legacy 导入。CodeGraph
+Module 是最后的可选扩展，不作为 Memory 重构完成条件。旧 `@pragma/plugin-memory` 中的 Task Memory
+只属于迁移源，不是新版后续 Memory 阶段的完成实现。
 
 Episodic 与 Semantic 的 data/job Store 当前为 user version 3。相邻 v2→v3 迁移将提炼生命周期
 升级为 conversation、source Execution 和 input-watermark 模型，并对升级前数据创建备份；未来
@@ -61,8 +67,9 @@ memory/<type>/items/<id>.md             # 按需详情
 memory/<type>/evidence/<evidenceId>.md  # 按需核验证据
 ```
 
-Knowledge 使用带修订的 `memory/knowledge/items/<id>/<revision>.md`，保证 Agent 读取和审计引用的是同一份
-不可变发布快照。Knowledge Candidate 不属于这棵可召回 Context。
+Promoted Knowledge 由 Studio Context Store 以 `guide → overview/summary → index → items` 渐进披露；入口
+保持有界，大型索引分页或分片，不能把全部内容合并成巨型文档。初始化 Candidate 不进入任何可召回
+Context。
 
 guide 最多 2KB，overview 最多 6KB。普通搜索不会返回 Evidence；模型必须先找到详情中的稳定引用，再精确
 读取证据。Episodic 是历史先例，不代表当前事实。
@@ -152,8 +159,8 @@ Episodic 与 Semantic Module 都使用各自的共享物理 Store，并在查询
 - Fact：进入 Semantic/Fact Memory，记录当前相信什么是真的；
 - Skill：先成为 Skill Memory Candidate，评测通过后升级为现有 Skill Capability。
 
-Knowledge 与 CodeGraph 仍是 Memory type，不是独立 KnowledgeBase 或 MemoryAsset。它们由独立 Module 管理
-自己的 Schema、Store 和 revision，最终通过同一个 `memory` ContextStore 被授权模型读取。
+Knowledge promotion Candidate 来自 Memory，但用户批准后的 Knowledge 是 Studio 托管 Context Store，
+不再是 Memory type，也不再依赖 Memory Evidence。可选 CodeGraph 仍可作为独立 Memory Module。
 
 ## 团队资产与分享
 
@@ -161,14 +168,13 @@ Knowledge 与 CodeGraph 仍是 Memory type，不是独立 KnowledgeBase 或 Memo
 Expert、ExpertTeam 与 Flow；Repository 等其他 subject 等有稳定 registry 后再接入。事实可以在权限允许、
 经过提炼后绑定给 Expert、ExpertTeam 或 Flow，成为团队资产的一部分。
 
-分享 Expert/ExpertTeam/Flow 时，可逐条选择一并导出绑定且允许 export 的 published Knowledge revision。
-分享不会新建一个知识库对象，也不会导出私有原始 Evidence、Curator prompt 或本机路径。host-private、
-restricted sensitivity 和存在不可映射受限主体的 Knowledge 会被拒绝导出。
+分享路径复用 Studio Context Store 的现有 Bundle authority，不导出私有 Memory Evidence、Curator prompt
+或本机路径。旧 `pragma.memory.knowledge@v1` extension 不再接受。
 
 ## Legacy plugin
 
 仓库中的 `@pragma/plugin-memory` 暂时只承担旧数据来源和兼容迁移窗口。新架构不再通过它启用 Plane，
-也不继续扩展旧 Task/Experience/Fact/Skill 文件 Store。阶段 9 会提供 owner-scoped、带备份和 journal 的
+也不继续扩展旧 Task/Experience/Fact/Skill 文件 Store。阶段 8 会提供 owner-scoped、带备份和 journal 的
 导入，然后升级受影响的 DSL compiler 并删除旧插件。
 
 ## 当前持久路径
@@ -185,7 +191,10 @@ restricted sensitivity 和存在不可映射受限主体的 Knowledge 会被拒�
 ~/.pragma/state/memory/modules/<episodic>/jobs.sqlite # Evidence aggregation and durable jobs
 ~/.pragma/data/memory/modules/<semantic>/facts.sqlite # Semantic projection, revisions and audit
 ~/.pragma/state/memory/modules/<semantic>/jobs.sqlite # Semantic Evidence, subjects and durable jobs
-~/.pragma/data/memory/modules/<knowledge>/knowledge.sqlite # Candidate、published revision、job 与治理
+~/.pragma/data/memory/modules/<knowledge-learning>/knowledge.sqlite # Knowledge learning jobs；无 published authority
+~/.pragma/data/context-stores/<storeId>/                 # promoted Knowledge 内容与 revision history
+~/.pragma/state/context-store-revisions/                 # 修订任务、Agent profile 与隐藏 Mission registry
+~/.pragma/state/memory-knowledge-promotion/              # 初始化 Candidate 与 content-free Expert binding
 ~/.pragma/state/memory/executions/<executionId>/activity.sqlite # capture/recall metadata audit
 ~/.pragma/state/memory/cleanup-journal/     # Mission/Execution transient cleanup journal
 ~/.pragma/state/memory/curator-missions.json # 有界隐藏 Curator Mission registry
@@ -206,5 +215,6 @@ Memory 数据不写 Agent workspace。正常启动不会扫描全部 Mission、E
 - [ADR 036: Memory Storage Retention and Recovery](../adr/036-memory-storage-retention-and-recovery.md)
 - [ADR 037: Mission Board as a Host-bound Context Store](../adr/037-mission-board-context-store.md)
 - [ADR 038: Reviewed Knowledge Memory and Explicit Bundle Sharing](../adr/038-reviewed-knowledge-memory-and-bundle-sharing.md)
+- [ADR 039: Promoted Knowledge Stores and Agent-driven Store Revision](../adr/039-promoted-knowledge-stores-and-agent-revision.md)
 - [Memory Plane 落地计划](../architecture/memory-plane-implementation-plan.md)
 - [旧 Memory System ADR（已被替代）](../adr/002-memory-system.md)
