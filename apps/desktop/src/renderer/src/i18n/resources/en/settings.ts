@@ -46,6 +46,12 @@ export const settings = {
     enabled: "Enabled",
     disabled: "Disabled",
     localCandidates: "Local candidates",
+    episodicToolAssistedExtraction: "Allow tool-assisted extraction: Episodic Memory",
+    episodicToolAssistedExtractionDescription:
+      "Tool names, status, and sequence are always preserved. Turn this on to use sanitized tool input and result content. Off by default.",
+    semanticToolAssistedExtraction: "Allow tool-assisted extraction: Fact Memory",
+    semanticToolAssistedExtractionDescription:
+      "Tool names, status, and sequence are always preserved. Turn this on to use sanitized tool input and result content. Off by default.",
     extractorMode: "Extraction model",
     extractorModeDescription: "Choose the Runtime and model used by the hidden Memory Curator.",
     inheritDefaultModel: "Inherit system default",

@@ -9,7 +9,12 @@ import {
 } from "./schema.ts";
 import { createEpisodicMemoryStore, episodicMemoryId, type EpisodicMemoryStore } from "./store.ts";
 import { extractionErrorCode } from "../pipeline/extraction-error-code.ts";
+import {
+  selectMemoryExtractionEvidence,
+  type MemoryExtractionSettingsStore,
+} from "../pipeline/extraction-settings.ts";
 import type { MemoryModule } from "../pipeline/memory-module.ts";
+import { mergeMemoryEvidenceOmissionStats } from "../storage/bounded-evidence.ts";
 
 export interface EpisodicMemoryModule extends MemoryModule {
   setExtractor(extractor: EpisodicMemoryExtractor | undefined): Promise<void>;
@@ -36,6 +41,7 @@ export async function createEpisodicMemoryModule(
   options: {
     readonly pragmaHome?: string | undefined;
     readonly extractor?: EpisodicMemoryExtractor | undefined;
+    readonly extractionSettings?: Pick<MemoryExtractionSettingsStore, "get"> | undefined;
     readonly now?: (() => Date) | undefined;
   } = {},
 ): Promise<EpisodicMemoryModule> {
@@ -100,7 +106,22 @@ export async function createEpisodicMemoryModule(
       const controller = new AbortController();
       running.set(key, controller);
       try {
-        const evidence = sanitizeEvidence(await store.readEvidenceForJob(job));
+        const capturedEvidence = await store.readEvidenceForJob(job);
+        const allowToolAssisted =
+          (await options.extractionSettings?.get())?.allowToolAssisted.episodic ?? false;
+        const selectedEvidence = selectMemoryExtractionEvidence(
+          capturedEvidence,
+          allowToolAssisted,
+        );
+        const evidence = sanitizeEvidence(selectedEvidence.retained);
+        const omittedEvidence = mergeMemoryEvidenceOmissionStats(
+          await store.readOmissionStatsForJob(job),
+          selectedEvidence.omittedStats,
+        );
+        if (evidence.length === 0) {
+          await store.completeRejected(job, "insufficient-evidence", now());
+          return;
+        }
         if (evidence.some((item) => item.sensitivity === "restricted")) {
           await store.completeRejected(job, "sensitive", now());
           return;
@@ -125,7 +146,7 @@ export async function createEpisodicMemoryModule(
           executionId: job.executionId,
           ...(previousEpisode === undefined ? {} : { previousEpisode }),
           evidence,
-          omittedEvidence: await store.readOmissionStatsForJob(job),
+          omittedEvidence,
         });
         if (!(await store.isClaimCurrent(job))) return;
         controller.signal.throwIfAborted();

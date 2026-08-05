@@ -60,6 +60,8 @@ describe("SettingsPage", () => {
     expect(html).toContain("Capture");
     expect(html).toContain("Recall");
     expect(html).toContain("Learning");
+    expect(html).toContain("Allow tool-assisted extraction: Episodic Memory");
+    expect(html).toContain("Allow tool-assisted extraction: Fact Memory");
     expect(html).toContain("Memory plane health");
   });
 });

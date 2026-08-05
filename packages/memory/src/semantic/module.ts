@@ -9,7 +9,12 @@ import {
 } from "./schema.ts";
 import { createSemanticMemoryStore, type SemanticMemoryStore } from "./store.ts";
 import { extractionErrorCode } from "../pipeline/extraction-error-code.ts";
+import {
+  selectMemoryExtractionEvidence,
+  type MemoryExtractionSettingsStore,
+} from "../pipeline/extraction-settings.ts";
 import type { MemoryModule } from "../pipeline/memory-module.ts";
+import { mergeMemoryEvidenceOmissionStats } from "../storage/bounded-evidence.ts";
 
 export interface SemanticMemoryModule extends MemoryModule {
   readonly store: SemanticMemoryStore;
@@ -41,6 +46,7 @@ export async function createSemanticMemoryModule(
   options: {
     readonly pragmaHome?: string | undefined;
     readonly extractor?: SemanticMemoryExtractor | undefined;
+    readonly extractionSettings?: Pick<MemoryExtractionSettingsStore, "get"> | undefined;
     readonly now?: (() => Date) | undefined;
   } = {},
 ): Promise<SemanticMemoryModule> {
@@ -104,7 +110,18 @@ export async function createSemanticMemoryModule(
         }
         const subjectContext = await store.getSubjectContext(job.executionId);
         if (subjectContext === undefined) throw new Error("semantic_subject_context_missing");
-        const evidence = sanitizeEvidence(await store.readEvidenceForJob(job));
+        const capturedEvidence = await store.readEvidenceForJob(job);
+        const allowToolAssisted =
+          (await options.extractionSettings?.get())?.allowToolAssisted.semantic ?? false;
+        const selectedEvidence = selectMemoryExtractionEvidence(
+          capturedEvidence,
+          allowToolAssisted,
+        );
+        const evidence = sanitizeEvidence(selectedEvidence.retained);
+        const omittedEvidence = mergeMemoryEvidenceOmissionStats(
+          await store.readOmissionStatsForJob(job),
+          selectedEvidence.omittedStats,
+        );
         if (evidence.some((item) => item.sensitivity === "restricted")) {
           await store.completeRejected(job, "sensitive", now());
           return;
@@ -130,7 +147,7 @@ export async function createSemanticMemoryModule(
           executionId: job.executionId,
           allowedSubjectRefs,
           evidence,
-          omittedEvidence: await store.readOmissionStatsForJob(job),
+          omittedEvidence,
         });
         if (!(await store.isClaimCurrent(job))) return;
         controller.signal.throwIfAborted();

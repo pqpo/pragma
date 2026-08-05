@@ -169,6 +169,27 @@ export const UpdateDesktopMemoryExtractorProfileSchema = z.object({
   ]),
 });
 
+export const DesktopMemoryExtractionSettingsSchema = z
+  .object({
+    schemaVersion: z.literal("pragma.memory-extraction-settings/v1"),
+    revision: z.number().int().nonnegative(),
+    allowToolAssisted: z
+      .object({
+        episodic: z.boolean(),
+        semantic: z.boolean(),
+      })
+      .strict(),
+    updatedAt: z.string().datetime(),
+  })
+  .strict();
+
+export const UpdateDesktopMemoryExtractionSettingsSchema = z
+  .object({
+    expectedRevision: z.number().int().nonnegative(),
+    allowToolAssisted: DesktopMemoryExtractionSettingsSchema.shape.allowToolAssisted,
+  })
+  .strict();
+
 export const ReviseDesktopSemanticFactSchema = z
   .object({
     id: z.string().min(1),

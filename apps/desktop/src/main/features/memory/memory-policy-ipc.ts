@@ -5,10 +5,12 @@ import {
   DesktopGlobalMemoryPolicySnapshotSchema,
   DesktopMemoryPlaneStatusSchema,
   DesktopMemoryExtractorProfileSchema,
+  DesktopMemoryExtractionSettingsSchema,
   GetDesktopAssetMemoryPolicySchema,
   UpdateDesktopAssetMemoryPolicySchema,
   UpdateDesktopGlobalMemoryPolicySchema,
   UpdateDesktopMemoryExtractorProfileSchema,
+  UpdateDesktopMemoryExtractionSettingsSchema,
   DesktopSemanticFactSchema,
   ReviseDesktopSemanticFactSchema,
   ReviewDesktopSemanticFactSchema,
@@ -186,6 +188,15 @@ export function installMemoryPolicyHandlers(
     const profile = await plane.extractorProfiles.update(parsed);
     await plane.wakeMemoryJobs();
     return DesktopMemoryExtractorProfileSchema.parse(profile);
+  });
+  ipcMain.handle("memory-extraction-settings:get", async () =>
+    DesktopMemoryExtractionSettingsSchema.parse(await plane.extractionSettings.get()),
+  );
+  ipcMain.handle("memory-extraction-settings:update", async (_event, input: unknown) => {
+    const parsed = UpdateDesktopMemoryExtractionSettingsSchema.parse(input);
+    return DesktopMemoryExtractionSettingsSchema.parse(
+      await plane.extractionSettings.update(parsed),
+    );
   });
   ipcMain.handle("memory-semantic:revise", async (_event, input: unknown) => {
     const parsed = ReviseDesktopSemanticFactSchema.parse(input);

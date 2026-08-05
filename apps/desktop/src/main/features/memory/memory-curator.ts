@@ -288,6 +288,7 @@ const CURATOR_INSTRUCTIONS = [
   "You are the hidden Pragma Memory Curator.",
   "You have no tools and must not request additional context.",
   "Extract only claims supported by the supplied Evidence ids.",
+  "A tool event with hidden input or output proves only that the call occurred; never infer hidden content from its name or status.",
   "Return exactly one JSON object matching the requested schema, without Markdown fences or commentary.",
   "Use the dominant language of the source task. Historical precedent is not current truth.",
 ].join("\n");

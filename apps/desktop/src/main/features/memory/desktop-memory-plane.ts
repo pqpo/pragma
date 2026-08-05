@@ -13,6 +13,7 @@ import {
   createKnowledgeMemoryModule,
   createKnowledgeSourceReader,
   createSemanticMemoryModule,
+  createFileMemoryExtractionSettingsStore,
   createFileMemoryExtractorProfileStore,
   createExecutionEvidenceAdapter,
   createFederatedMemoryContextStore,
@@ -29,6 +30,7 @@ import {
   type KnowledgeMemoryExtractor,
   type KnowledgeMemoryStore,
   type MemoryExtractorProfileStore,
+  type MemoryExtractionSettingsStore,
   type SemanticMemoryExtractor,
   type SemanticMemoryStore,
   type EpisodicMemoryStore,
@@ -58,6 +60,7 @@ export interface DesktopMemoryPlane {
   readonly executionStore: FileExecutionStore;
   readonly policies: MemoryPolicyStore;
   readonly extractorProfiles: MemoryExtractorProfileStore;
+  readonly extractionSettings: MemoryExtractionSettingsStore;
   readonly semanticStore: SemanticMemoryStore;
   readonly episodicStore: EpisodicMemoryStore;
   readonly knowledgeStore: KnowledgeMemoryStore;
@@ -168,10 +171,19 @@ export async function createDesktopMemoryPlane(options: {
   const extractorProfiles = createFileMemoryExtractorProfileStore({
     pragmaHome: options.pragmaHome,
   });
+  const extractionSettings = createFileMemoryExtractionSettingsStore({
+    pragmaHome: options.pragmaHome,
+  });
   const publisher = createMemoryEvidencePublisher(canonical);
   const registry = new MemoryModuleRegistry();
-  const episodic = await createEpisodicMemoryModule({ pragmaHome: options.pragmaHome });
-  const semantic = await createSemanticMemoryModule({ pragmaHome: options.pragmaHome });
+  const episodic = await createEpisodicMemoryModule({
+    pragmaHome: options.pragmaHome,
+    extractionSettings,
+  });
+  const semantic = await createSemanticMemoryModule({
+    pragmaHome: options.pragmaHome,
+    extractionSettings,
+  });
   const knowledge = await createKnowledgeMemoryModule({
     pragmaHome: options.pragmaHome,
     sourceReader: createKnowledgeSourceReader({
@@ -391,6 +403,7 @@ export async function createDesktopMemoryPlane(options: {
     executionStore,
     policies,
     extractorProfiles,
+    extractionSettings,
     semanticStore: semantic.store,
     episodicStore: episodic.store,
     knowledgeStore: knowledge.store,
