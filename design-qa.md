@@ -1,3 +1,57 @@
+# Mission Memory Tab Design QA
+
+- Source visual truth: `/var/folders/7y/x39kntq56gvcfdymbtjb36280000gn/T/codex-clipboard-b5b1e664-b537-4cd4-8617-5168fc64d0cf.png`
+- Implementation screenshot: `/Users/linminqiu/.codex/worktrees/7deb/expert-mesh/artifacts/design-qa/mission-memory-activity.png`
+- Store screenshot: `/Users/linminqiu/.codex/worktrees/7deb/expert-mesh/artifacts/design-qa/mission-memory-store.png`
+- Combined comparison: `/Users/linminqiu/.codex/worktrees/7deb/expert-mesh/artifacts/design-qa/mission-memory-before-after-final.png`
+- Viewport: 1440 × 900 CSS px
+- Source pixels: 2880 × 1800
+- Implementation pixels: 2880 × 1800
+- Device scale factor: 2
+- Density normalization: none required; both captures are the same pixel dimensions and 2× density.
+- State: the same Mission (`我叫什么名字`) with the top-level Memory tab selected. The source shows Store as the nested default; the implementation intentionally shows Memory activity as the default.
+
+## Full-view comparison evidence
+
+The final side-by-side comparison confirms that the redesigned surface preserves the existing Pragma type scale, gray-green palette, borders, radii, header spacing, top-level tabs, Mission rail, and content width. The nested Store/Memory activity tab strip is removed. Memory activity now owns the page hierarchy, while Store is available through a compact secondary action.
+
+## Focused region comparison evidence
+
+The activity region was inspected at native 2× density. Summary cards remain legible without collisions, execution IDs truncate safely, metrics are separated into Evidence capture and ContextStore recall, and the Store action is visually secondary to the activity title. The Store view was separately captured and verified to expose one clear `Back to memory activity` action with no nested tab strip.
+
+## Required fidelity surfaces
+
+- Fonts and typography: existing application font stack and weight hierarchy are preserved. Activity title, card metrics, group labels, and metadata remain consistent with adjacent Mission UI.
+- Spacing and layout rhythm: the second navigation bar was removed. The activity view uses a 24 px summary gap followed by compact execution cards; the Store back action sits outside the top-level tabs.
+- Colors and visual tokens: existing `--surface`, `--surface-soft`, `--border`, `--muted`, and green semantic colors are reused. Warning color is reserved for non-zero attention counts.
+- Image quality and asset fidelity: no new raster imagery is required. Existing product branding remains unchanged, and new controls use the installed Phosphor icon library.
+- Copy and content: Evidence counts are explicitly labeled as published Evidence, not generated memories. Recall operations and attention states use accurate stage names.
+
+## Comparison history
+
+1. Initial implementation finding: **P2**, the long `已发布 Evidence（不是记忆条数）` label truncated inside the per-execution metric grid.
+2. Fix: replaced the dense-card label with `已发布 Evidence`; retained the semantic clarification in the summary card and page description. Reduced uppercase styling on group headings for readability.
+3. Post-fix evidence: `/Users/linminqiu/.codex/worktrees/7deb/expert-mesh/artifacts/design-qa/mission-memory-activity.png`; measured metric labels have no horizontal overflow at 1440 × 900.
+4. Follow-up alignment pass removed Memory content horizontal and bottom padding. Activity and Store now share the top-level tab bounds exactly; the redundant `Memory ContextStore` heading was removed.
+5. Store cleanup removed the explanatory preview copy and moved refresh into the scope row beside the root-memory formula.
+
+## Interaction and runtime checks
+
+- Default Memory view: activity.
+- `Browse memory store`: opens the existing ContextStore browser.
+- `Back to memory activity`: returns to the activity overview.
+- Loading, empty, and error activity states keep the Store action available.
+- Nested memory tab strip count: 0.
+- Console errors during the Store round trip: 0.
+
+## Findings
+
+No remaining P0, P1, or P2 findings. No P3 follow-up is required for the requested desktop state.
+
+final result: passed
+
+---
+
 # Expert Studio design QA
 
 ## Comparison targets

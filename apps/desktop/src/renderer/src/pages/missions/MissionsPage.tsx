@@ -14,9 +14,11 @@ import {
 import { flushSync } from "react-dom";
 
 import {
+  ArrowLeft,
   ArrowCounterClockwise,
   CaretDown,
   CheckCircle,
+  Database,
   Folder,
   GitBranch,
   MagnifyingGlass,
@@ -958,6 +960,10 @@ export type MissionConversationBlock =
       readonly collapsed: boolean;
     };
 
+type MissionMemoryView = "store" | "activity";
+
+export const DEFAULT_MISSION_MEMORY_VIEW: MissionMemoryView = "activity";
+
 export function MissionDetailFragment(props: {
   readonly mission: Mission;
   readonly initialThinkingRequestId?: string | undefined;
@@ -979,7 +985,7 @@ export function MissionDetailFragment(props: {
 }) {
   const { t } = useTranslation(["missions", "common"]);
   const [tab, setTab] = useState<"chat" | "work" | "memory">("chat");
-  const [memoryView, setMemoryView] = useState<"store" | "activity">("store");
+  const [memoryView, setMemoryView] = useState<MissionMemoryView>(DEFAULT_MISSION_MEMORY_VIEW);
   const [workspaceAvailable, setWorkspaceAvailable] = useState<boolean | null>(null);
   const [chat, setChat] = useState<MissionChatSnapshot | null>(null);
   const [workRecords, setWorkRecords] = useState<readonly MissionWorkRecord[]>([]);
@@ -2235,31 +2241,24 @@ export function MissionDetailFragment(props: {
           </div>
         ) : tab === "memory" ? (
           <div className="mission-memory-shell">
-            <nav className="mission-memory-views" aria-label={t("memoryViews")}>
-              <button
-                type="button"
-                className={memoryView === "store" ? "is-active" : ""}
-                aria-current={memoryView === "store" ? "page" : undefined}
-                onClick={() => setMemoryView("store")}
-              >
-                {t("memoryStore")}
-              </button>
-              <button
-                type="button"
-                className={memoryView === "activity" ? "is-active" : ""}
-                aria-current={memoryView === "activity" ? "page" : undefined}
-                onClick={() => setMemoryView("activity")}
-              >
-                {t("memoryActivity")}
-              </button>
-            </nav>
             {memoryView === "store" ? (
-              <ContextStoreBrowser source={memoryStoreSource} />
+              <div className="mission-memory-store">
+                <button
+                  type="button"
+                  className="mission-memory-back"
+                  onClick={() => setMemoryView("activity")}
+                >
+                  <ArrowLeft size={16} aria-hidden="true" />
+                  {t("backToMemoryActivity")}
+                </button>
+                <ContextStoreBrowser source={memoryStoreSource} />
+              </div>
             ) : (
               <MissionMemoryActivity
                 activity={memoryActivity}
                 error={memoryActivityError}
                 loading={memoryActivityLoading}
+                onBrowseStore={() => setMemoryView("store")}
               />
             )}
           </div>
@@ -2364,62 +2363,159 @@ export function MissionDetailFragment(props: {
   );
 }
 
-function MissionMemoryActivity(props: {
+export function MissionMemoryActivity(props: {
   readonly activity?: DesktopMissionMemoryActivity | undefined;
   readonly error?: string | undefined;
   readonly loading: boolean;
+  readonly onBrowseStore: () => void;
 }) {
   const { t } = useTranslation("missions");
   if (props.loading)
-    return <div className="mission-memory-empty">{t("memoryActivityLoading")}</div>;
+    return (
+      <div className="mission-memory-activity">
+        <MissionMemoryActivityHeader onBrowseStore={props.onBrowseStore} />
+        <div className="mission-memory-empty">{t("memoryActivityLoading")}</div>
+      </div>
+    );
   if (props.error !== undefined) {
     return (
-      <div className="mission-memory-empty" role="alert">
-        <WarningCircle size={31} weight="thin" aria-hidden="true" />
-        <h2>{t("memoryActivityUnavailable")}</h2>
-        <p>{props.error}</p>
+      <div className="mission-memory-activity">
+        <MissionMemoryActivityHeader onBrowseStore={props.onBrowseStore} />
+        <div className="mission-memory-empty" role="alert">
+          <WarningCircle size={31} weight="thin" aria-hidden="true" />
+          <h2>{t("memoryActivityUnavailable")}</h2>
+          <p>{props.error}</p>
+        </div>
       </div>
     );
   }
   if (props.activity === undefined || props.activity.executions.length === 0) {
     return (
-      <div className="mission-memory-empty">
-        <CheckCircle size={31} weight="thin" aria-hidden="true" />
-        <h2>{t("noMemoryActivity")}</h2>
-        <p>{t("noMemoryActivityDescription")}</p>
+      <div className="mission-memory-activity">
+        <MissionMemoryActivityHeader onBrowseStore={props.onBrowseStore} />
+        <div className="mission-memory-empty">
+          <CheckCircle size={31} weight="thin" aria-hidden="true" />
+          <h2>{t("noMemoryActivity")}</h2>
+          <p>{t("noMemoryActivityDescription")}</p>
+        </div>
       </div>
     );
   }
+  const totals = props.activity.executions.reduce(
+    (current, execution) => ({
+      evidence: current.evidence + execution.capture.published,
+      recall:
+        current.recall + execution.recall.list + execution.recall.search + execution.recall.read,
+      attention:
+        current.attention +
+        execution.capture.failed +
+        execution.recall.denied +
+        execution.recall.failed,
+    }),
+    { evidence: 0, recall: 0, attention: 0 },
+  );
   return (
     <div className="mission-memory-activity">
-      <header>
+      <MissionMemoryActivityHeader onBrowseStore={props.onBrowseStore} />
+      <dl className="mission-memory-summary" aria-label={t("memoryActivitySummary")}>
+        <div>
+          <dt>{t("memoryCapturedShort")}</dt>
+          <dd>{totals.evidence}</dd>
+          <small>{t("memoryCapturedClarification")}</small>
+        </div>
+        <div>
+          <dt>{t("memoryRecallOperations")}</dt>
+          <dd>{totals.recall}</dd>
+          <small>{t("memoryRecallOperationsDescription")}</small>
+        </div>
+        <div className={totals.attention > 0 ? "is-warning" : ""}>
+          <dt>{t("memoryNeedsAttention")}</dt>
+          <dd>{totals.attention}</dd>
+          <small>{t("memoryNeedsAttentionDescription")}</small>
+        </div>
+      </dl>
+      <section className="mission-memory-executions" aria-label={t("memoryExecutionActivity")}>
+        <header>
+          <h3>{t("memoryExecutionActivity")}</h3>
+          <span>{t("memoryExecutionCount", { count: props.activity.executions.length })}</span>
+        </header>
+        {props.activity.executions.map((execution, index) => (
+          <article key={execution.executionId}>
+            <header>
+              <div>
+                <strong>{t("memoryExecutionNumber", { number: index + 1 })}</strong>
+                <code>{execution.executionId}</code>
+              </div>
+              {execution.capture.failed + execution.recall.denied + execution.recall.failed > 0 ? (
+                <span className="mission-memory-attention-badge">{t("memoryNeedsAttention")}</span>
+              ) : (
+                <span className="mission-memory-success-badge">{t("memoryActivityHealthy")}</span>
+              )}
+            </header>
+            <div className="mission-memory-groups">
+              <section>
+                <h4>{t("memoryCaptureGroup")}</h4>
+                <dl>
+                  <div>
+                    <dt>{t("memoryCapturedShort")}</dt>
+                    <dd>{execution.capture.published}</dd>
+                  </div>
+                  <div>
+                    <dt>{t("memorySkipped")}</dt>
+                    <dd>{execution.capture.skipped}</dd>
+                  </div>
+                  <div className={execution.capture.failed > 0 ? "is-warning" : ""}>
+                    <dt>{t("memoryCaptureFailed")}</dt>
+                    <dd>{execution.capture.failed}</dd>
+                  </div>
+                </dl>
+              </section>
+              <section>
+                <h4>{t("memoryRecallGroup")}</h4>
+                <dl>
+                  <div>
+                    <dt>{t("memoryListed")}</dt>
+                    <dd>{execution.recall.list}</dd>
+                  </div>
+                  <div>
+                    <dt>{t("memorySearched")}</dt>
+                    <dd>{execution.recall.search}</dd>
+                  </div>
+                  <div>
+                    <dt>{t("memoryRead")}</dt>
+                    <dd>{execution.recall.read}</dd>
+                  </div>
+                  <div className={execution.recall.denied > 0 ? "is-warning" : ""}>
+                    <dt>{t("memoryRecallDenied")}</dt>
+                    <dd>{execution.recall.denied}</dd>
+                  </div>
+                  <div className={execution.recall.failed > 0 ? "is-warning" : ""}>
+                    <dt>{t("memoryRecallFailed")}</dt>
+                    <dd>{execution.recall.failed}</dd>
+                  </div>
+                </dl>
+              </section>
+            </div>
+          </article>
+        ))}
+      </section>
+    </div>
+  );
+}
+
+function MissionMemoryActivityHeader(props: { readonly onBrowseStore: () => void }) {
+  const { t } = useTranslation("missions");
+  return (
+    <header className="mission-memory-activity-header">
+      <div>
         <h2>{t("memoryActivity")}</h2>
         <p>{t("memoryActivityDescription")}</p>
-      </header>
-      {props.activity.executions.map((execution) => (
-        <article key={execution.executionId}>
-          <strong>{t("executionId", { id: execution.executionId })}</strong>
-          <dl>
-            <dt>{t("memoryCaptured")}</dt>
-            <dd>{execution.capture.published}</dd>
-            <dt>{t("memorySkipped")}</dt>
-            <dd>{execution.capture.skipped}</dd>
-            <dt>{t("memoryCaptureFailed")}</dt>
-            <dd>{execution.capture.failed}</dd>
-            <dt>{t("memoryListed")}</dt>
-            <dd>{execution.recall.list}</dd>
-            <dt>{t("memorySearched")}</dt>
-            <dd>{execution.recall.search}</dd>
-            <dt>{t("memoryRead")}</dt>
-            <dd>{execution.recall.read}</dd>
-            <dt>{t("memoryRecallDenied")}</dt>
-            <dd>{execution.recall.denied}</dd>
-            <dt>{t("memoryRecallFailed")}</dt>
-            <dd>{execution.recall.failed}</dd>
-          </dl>
-        </article>
-      ))}
-    </div>
+      </div>
+      <button type="button" onClick={props.onBrowseStore}>
+        <Database size={17} aria-hidden="true" />
+        {t("browseMemoryStore")}
+      </button>
+    </header>
   );
 }
 

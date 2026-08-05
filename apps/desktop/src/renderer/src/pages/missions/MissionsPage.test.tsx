@@ -13,11 +13,13 @@ import {
   claimMissionClientOperation,
   CONTEXT_POPOVER_CLOSE_DELAY_MS,
   ContextWindowControl,
+  DEFAULT_MISSION_MEMORY_VIEW,
   groupMissionConversationEntries,
   MissionContextOperationEntry,
   MissionChatEntryView,
   startMissionContextOperation,
   MissionDetailFragment,
+  MissionMemoryActivity,
   MissionThinkingEntry,
   MissionToolCallBlock,
   MissionWorkDrawer,
@@ -241,6 +243,47 @@ describe("MissionsPage", () => {
 });
 
 describe("MissionDetailFragment", () => {
+  it("opens memory on activity and groups capture separately from recall", () => {
+    expect(DEFAULT_MISSION_MEMORY_VIEW).toBe("activity");
+
+    const html = renderToStaticMarkup(
+      <MissionMemoryActivity
+        loading={false}
+        onBrowseStore={() => undefined}
+        activity={{
+          missionId: "00000000-0000-4000-8000-000000000001",
+          executions: [
+            {
+              executionId: "execution-1",
+              capture: { published: 3, skipped: 1, failed: 0 },
+              recall: { list: 1, search: 2, read: 4, denied: 0, failed: 0 },
+            },
+          ],
+        }}
+      />,
+    );
+
+    expect(html).toContain("Browse memory store");
+    expect(html).toContain("Evidence capture");
+    expect(html).toContain("ContextStore recall");
+    expect(html).toContain("Evidence entering memory processing, not memories created");
+    expect(html).not.toContain("mission-memory-views");
+  });
+
+  it("keeps the Store reachable when memory activity is unavailable", () => {
+    const html = renderToStaticMarkup(
+      <MissionMemoryActivity
+        loading={false}
+        error="activity unavailable"
+        onBrowseStore={() => undefined}
+      />,
+    );
+
+    expect(html).toContain("Browse memory store");
+    expect(html).toContain("Memory activity is unavailable");
+    expect(html).toContain('role="alert"');
+  });
+
   it("reuses the failed context operation when retrying", () => {
     const failed = [
       {

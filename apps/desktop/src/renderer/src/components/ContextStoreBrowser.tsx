@@ -205,22 +205,6 @@ export function ContextStoreBrowser(props: { readonly source: ContextStoreBrowse
 
   return (
     <div className="context-browser">
-      <header className="context-browser-header">
-        <div>
-          <h2>{descriptor.name}</h2>
-          <p>{t("contextStoreDescription")}</p>
-        </div>
-        <button
-          type="button"
-          className="context-browser-refresh"
-          aria-label={t("contextStoreRefresh")}
-          title={t("contextStoreRefresh")}
-          onClick={() => setRefreshRevision((current) => current + 1)}
-        >
-          <ArrowClockwise size={17} aria-hidden="true" />
-        </button>
-      </header>
-
       <div className="context-browser-scope-bar">
         <span>{t("contextStoreRoot", { name: descriptor.root.name })}</span>
         <label>
@@ -235,6 +219,15 @@ export function ContextStoreBrowser(props: { readonly source: ContextStoreBrowse
           </select>
         </label>
         <small>{t("contextStoreScopeFormula", { expert: selectedScope?.name ?? "" })}</small>
+        <button
+          type="button"
+          className="context-browser-refresh"
+          aria-label={t("contextStoreRefresh")}
+          title={t("contextStoreRefresh")}
+          onClick={() => setRefreshRevision((current) => current + 1)}
+        >
+          <ArrowClockwise size={17} aria-hidden="true" />
+        </button>
       </div>
 
       {selectedScope?.availability === "recall_disabled" ? (
