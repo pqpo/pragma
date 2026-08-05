@@ -143,6 +143,7 @@ import type {
   ReviewDesktopMemoryItem,
   DesktopMissionMemoryActivity,
   DesktopMemoryExtractionBoard,
+  ListDesktopMemoryExtractionJobs,
   ManageDesktopMemoryExtractionTask,
   MemoryKnowledgeInitializationCandidate,
   ListMemoryKnowledgeInitializationCandidates,
@@ -174,7 +175,9 @@ export interface PragmaDesktopAPI {
     input: UpdateDesktopAssetMemoryPolicy,
   ) => Promise<DesktopAssetMemoryPolicySnapshot>;
   getMemoryPlaneStatus: () => Promise<DesktopMemoryPlaneStatus>;
-  listMemoryExtractionJobs: () => Promise<DesktopMemoryExtractionBoard>;
+  listMemoryExtractionJobs: (
+    input: ListDesktopMemoryExtractionJobs,
+  ) => Promise<DesktopMemoryExtractionBoard>;
   manageMemoryExtractionTask: (input: ManageDesktopMemoryExtractionTask) => Promise<void>;
   getMemoryExtractorProfile: () => Promise<DesktopMemoryExtractorProfile>;
   updateMemoryExtractorProfile: (

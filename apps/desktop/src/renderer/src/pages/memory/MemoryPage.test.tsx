@@ -34,14 +34,22 @@ describe("MemoryPage", () => {
   it("polls active extraction work quickly and terminal boards at a lower idle cadence", () => {
     expect(
       memoryExtractionPollDelay({
-        tasks: [],
-        counts: { waiting: 1, attention: 0, running: 0, completed: 0 },
+        lanes: {
+          waiting: { tasks: [], pageIndex: 0, pageCount: 1, totalTasks: 1 },
+          attention: { tasks: [], pageIndex: 0, pageCount: 1, totalTasks: 0 },
+          running: { tasks: [], pageIndex: 0, pageCount: 1, totalTasks: 0 },
+          completed: { tasks: [], pageIndex: 0, pageCount: 1, totalTasks: 0 },
+        },
       }),
     ).toBe(2_000);
     expect(
       memoryExtractionPollDelay({
-        tasks: [],
-        counts: { waiting: 0, attention: 1, running: 0, completed: 4 },
+        lanes: {
+          waiting: { tasks: [], pageIndex: 0, pageCount: 1, totalTasks: 0 },
+          attention: { tasks: [], pageIndex: 0, pageCount: 1, totalTasks: 1 },
+          running: { tasks: [], pageIndex: 0, pageCount: 1, totalTasks: 0 },
+          completed: { tasks: [], pageIndex: 0, pageCount: 1, totalTasks: 4 },
+        },
       }),
     ).toBe(10_000);
   });
@@ -150,30 +158,46 @@ describe("MemoryPage", () => {
     const html = renderToStaticMarkup(
       <MemoryExtractionJobs
         board={{
-          tasks: [
-            {
-              module: "episodic",
-              id: "internal-job-a",
-              revision: 1,
-              lane: "waiting",
-              title: "Prepare the release",
-              updatedAt: "2026-08-05T00:00:00.000Z",
+          lanes: {
+            waiting: {
+              tasks: [
+                {
+                  module: "episodic",
+                  id: "internal-job-a",
+                  revision: 1,
+                  lane: "waiting",
+                  title: "Prepare the release",
+                  updatedAt: "2026-08-05T00:00:00.000Z",
+                },
+              ],
+              pageIndex: 0,
+              pageCount: 1,
+              totalTasks: 1,
             },
-            {
-              module: "knowledge",
-              id: "internal-job-b",
-              revision: 3,
-              lane: "attention",
-              title: "Pragma",
-              lastErrorCode: "knowledge_candidate_capacity_exceeded",
-              updatedAt: "2026-08-05T01:00:00.000Z",
+            attention: {
+              tasks: [
+                {
+                  module: "knowledge",
+                  id: "internal-job-b",
+                  revision: 3,
+                  lane: "attention",
+                  title: "Pragma",
+                  lastErrorCode: "knowledge_candidate_capacity_exceeded",
+                  updatedAt: "2026-08-05T01:00:00.000Z",
+                },
+              ],
+              pageIndex: 0,
+              pageCount: 1,
+              totalTasks: 1,
             },
-          ],
-          counts: { waiting: 1, attention: 1, running: 0, completed: 0 },
+            running: { tasks: [], pageIndex: 0, pageCount: 1, totalTasks: 0 },
+            completed: { tasks: [], pageIndex: 0, pageCount: 1, totalTasks: 0 },
+          },
         }}
         loading={false}
         onRefresh={() => undefined}
         onAction={async () => undefined}
+        onPageChange={() => undefined}
       />,
     );
 

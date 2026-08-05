@@ -33,6 +33,11 @@ import {
   latestExtractionJobErrorCode,
   parseExtractionJobJson,
 } from "../pipeline/extraction-job-diagnostic.ts";
+import {
+  queryMemoryJobPage,
+  type MemoryJobPage,
+  type MemoryJobPageInput,
+} from "../pipeline/memory-job-page.ts";
 import type { MemoryRecallScope } from "../pipeline/memory-module.ts";
 import {
   EMPTY_MEMORY_EVIDENCE_OMISSION_STATS,
@@ -160,6 +165,9 @@ export interface SemanticMemoryStore {
     readonly now: Date;
   }): Promise<void>;
   listExtractionJobs(): Promise<readonly SemanticExtractionJob[]>;
+  listExtractionJobsPage(
+    input: MemoryJobPageInput<SemanticExtractionJob["status"]>,
+  ): Promise<MemoryJobPage<SemanticExtractionJob>>;
   maintain(now: Date): Promise<{ readonly expired: number; readonly deleted: number }>;
   deleteExecutionState(executionIds: readonly string[], now?: Date): Promise<void>;
   list(): Promise<readonly SemanticFact[]>;
@@ -897,6 +905,12 @@ export async function createSemanticMemoryStore(
 
     async listExtractionJobs() {
       return readJobRows(state);
+    },
+
+    async listExtractionJobsPage(input) {
+      return queryMemoryJobPage(state, input, (json) =>
+        SemanticExtractionJobSchema.parse(JSON.parse(json)),
+      );
     },
 
     async maintain(now) {

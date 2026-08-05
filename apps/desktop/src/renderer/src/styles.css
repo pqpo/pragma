@@ -17246,6 +17246,33 @@ textarea:focus-visible,
   font-size: 0.8rem;
 }
 
+.memory-extraction-pagination {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  padding: 8px 2px 0;
+  color: var(--muted);
+  font-size: 0.76rem;
+  font-variant-numeric: tabular-nums;
+}
+
+.memory-extraction-pagination button {
+  min-height: 32px;
+  padding: 4px 8px;
+  background: transparent;
+  color: var(--muted);
+}
+
+.memory-extraction-pagination button:hover:not(:disabled) {
+  background: var(--surface-soft);
+  color: var(--text);
+}
+
+.memory-extraction-pagination button:disabled {
+  cursor: default;
+}
+
 .memory-health article.memory-extraction-task {
   display: flex;
   align-items: flex-start;

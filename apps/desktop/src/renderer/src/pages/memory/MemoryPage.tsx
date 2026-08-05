@@ -21,12 +21,24 @@ import type {
   DesktopMemoryExtractionTask,
   DesktopMemoryItem,
   DesktopMemoryPlaneStatus,
+  ListDesktopMemoryExtractionJobs,
   MemoryKnowledgeInitializationCandidate,
 } from "../../../../shared/contracts/index.ts";
 import { ConfirmationDialog, Dialog } from "../../components/Dialog.tsx";
 import { errorMessage } from "../../lib/errors.ts";
 
 type MemoryView = "all" | "episodic" | "semantic" | "candidates" | "extractions" | "health";
+const MEMORY_EXTRACTION_LANES = ["waiting", "attention", "running", "completed"] as const;
+type MemoryExtractionLane = (typeof MEMORY_EXTRACTION_LANES)[number];
+type MemoryExtractionPageCursor = NonNullable<
+  ListDesktopMemoryExtractionJobs["pages"][MemoryExtractionLane]["cursor"]
+>;
+const INITIAL_MEMORY_EXTRACTION_PAGES: ListDesktopMemoryExtractionJobs["pages"] = {
+  waiting: { pageIndex: 0 },
+  attention: { pageIndex: 0 },
+  running: { pageIndex: 0 },
+  completed: { pageIndex: 0 },
+};
 
 export function MemoryPage() {
   const { t } = useTranslation("memory");
@@ -47,10 +59,16 @@ export function MemoryPage() {
   const [error, setError] = useState<string>();
   const [loading, setLoading] = useState(true);
   const [busyExtractionTask, setBusyExtractionTask] = useState<string>();
+  const [extractionPages, setExtractionPages] = useState(INITIAL_MEMORY_EXTRACTION_PAGES);
+  const [extractionPageCursors, setExtractionPageCursors] = useState<
+    Record<MemoryExtractionLane, readonly (MemoryExtractionPageCursor | undefined)[]>
+  >({ waiting: [undefined], attention: [undefined], running: [undefined], completed: [undefined] });
+  const extractionRequestVersion = useRef(0);
   const hasLoaded = useRef(false);
 
   const reload = useCallback(
     async (silent = false) => {
+      const requestVersion = (extractionRequestVersion.current += 1);
       if (!silent && !hasLoaded.current) setLoading(true);
       try {
         const [records, status, extractionJobs, candidateRecords] = await Promise.all([
@@ -64,7 +82,7 @@ export function MemoryPage() {
               }),
           window.pragmaDesktop.getMemoryPlaneStatus(),
           view === "extractions"
-            ? window.pragmaDesktop.listMemoryExtractionJobs()
+            ? window.pragmaDesktop.listMemoryExtractionJobs({ pages: extractionPages })
             : Promise.resolve(undefined),
           view === "candidates"
             ? window.pragmaDesktop.listMemoryKnowledgeInitializations({ state: "pending_review" })
@@ -72,7 +90,24 @@ export function MemoryPage() {
         ]);
         setItems(records);
         setHealth(status);
-        if (extractionJobs !== undefined) setExtractionBoard(extractionJobs);
+        if (extractionJobs !== undefined && requestVersion === extractionRequestVersion.current) {
+          setExtractionBoard(extractionJobs);
+          const resetLanes = MEMORY_EXTRACTION_LANES.filter(
+            (lane) => extractionJobs.lanes[lane].pageIndex !== extractionPages[lane].pageIndex,
+          );
+          if (resetLanes.length > 0) {
+            setExtractionPages((current) => {
+              const next = { ...current };
+              for (const lane of resetLanes) next[lane] = { pageIndex: 0 };
+              return next;
+            });
+            setExtractionPageCursors((current) => {
+              const next = { ...current };
+              for (const lane of resetLanes) next[lane] = [undefined];
+              return next;
+            });
+          }
+        }
         setCandidates(candidateRecords);
         const selectableIds =
           view === "candidates"
@@ -95,7 +130,7 @@ export function MemoryPage() {
         setLoading(false);
       }
     },
-    [query, view],
+    [extractionPages, query, view],
   );
 
   useEffect(() => {
@@ -165,6 +200,25 @@ export function MemoryPage() {
     }
   };
 
+  const changeExtractionPage = (lane: MemoryExtractionLane, pageIndex: number) => {
+    const currentPage = extractionPages[lane].pageIndex;
+    const cursor =
+      pageIndex === currentPage + 1
+        ? extractionBoard?.lanes[lane].nextCursor
+        : extractionPageCursors[lane][pageIndex];
+    if (pageIndex > 0 && cursor === undefined) return;
+    extractionRequestVersion.current += 1;
+    setExtractionPageCursors((current) => {
+      const laneCursors = [...current[lane]];
+      laneCursors[pageIndex] = cursor;
+      return { ...current, [lane]: laneCursors };
+    });
+    setExtractionPages((current) => ({
+      ...current,
+      [lane]: pageIndex === 0 ? { pageIndex } : { pageIndex, cursor: cursor! },
+    }));
+  };
+
   return (
     <section className="memory-page">
       <header className="memory-page-header">
@@ -215,6 +269,7 @@ export function MemoryPage() {
           busyTask={busyExtractionTask}
           onRefresh={() => void reload(true)}
           onAction={manageExtraction}
+          onPageChange={changeExtractionPage}
         />
       ) : view === "candidates" ? (
         <div className="memory-browser">
@@ -701,10 +756,18 @@ export function canRunMemoryAction(action: MemoryActionKind, reason: string): bo
 }
 
 export function memoryExtractionPollDelay(board: DesktopMemoryExtractionBoard | undefined): number {
-  return board !== undefined && (board.counts.waiting > 0 || board.counts.running > 0)
+  return board !== undefined &&
+    (board.lanes.waiting.totalTasks > 0 || board.lanes.running.totalTasks > 0)
     ? 2_000
     : 10_000;
 }
+
+const EMPTY_MEMORY_EXTRACTION_LANE = {
+  tasks: [] as readonly DesktopMemoryExtractionTask[],
+  pageIndex: 0,
+  pageCount: 1,
+  totalTasks: 0,
+};
 
 export function MemoryActionWithTooltip(props: {
   readonly disabled: boolean;
@@ -739,11 +802,17 @@ export function MemoryExtractionJobs(props: {
     task: DesktopMemoryExtractionTask,
     action: "expedite" | "retry" | "interrupt" | "delete",
   ) => Promise<void>;
+  readonly onPageChange: (lane: MemoryExtractionLane, pageIndex: number) => void;
 }) {
   const { t } = useTranslation("memory");
   const [pendingDelete, setPendingDelete] = useState<DesktopMemoryExtractionTask>();
-  const lanes = ["waiting", "attention", "running", "completed"] as const;
-  const tasks = props.board?.tasks ?? [];
+  const laneItemRefs = useRef<Partial<Record<MemoryExtractionLane, HTMLDivElement>>>({});
+
+  const changeLanePage = (lane: MemoryExtractionLane, pageIndex: number) => {
+    props.onPageChange(lane, pageIndex);
+    laneItemRefs.current[lane]?.scrollTo({ top: 0 });
+  };
+
   return (
     <section className="memory-health memory-extraction-jobs">
       <header className="memory-extraction-jobs-header">
@@ -760,19 +829,25 @@ export function MemoryExtractionJobs(props: {
       {props.loading ? <p>{t("loading")}</p> : null}
       {!props.loading ? (
         <div className="memory-extraction-board">
-          {lanes.map((lane) => {
-            const laneTasks = tasks.filter((task) => task.lane === lane);
+          {MEMORY_EXTRACTION_LANES.map((lane) => {
+            const page = props.board?.lanes[lane] ?? EMPTY_MEMORY_EXTRACTION_LANE;
             return (
               <section className={`memory-extraction-lane is-${lane}`} key={lane}>
                 <header>
                   <h3>{t(`extractionLanes.${lane}`)}</h3>
-                  <span>{props.board?.counts[lane] ?? 0}</span>
+                  <span>{page.totalTasks}</span>
                 </header>
-                <div className="memory-extraction-lane-items">
-                  {laneTasks.length === 0 ? (
+                <div
+                  className="memory-extraction-lane-items"
+                  ref={(element) => {
+                    if (element === null) delete laneItemRefs.current[lane];
+                    else laneItemRefs.current[lane] = element;
+                  }}
+                >
+                  {page.totalTasks === 0 ? (
                     <p className="memory-extraction-lane-empty">{t("emptyExtractionLane")}</p>
                   ) : null}
-                  {laneTasks.map((task) => {
+                  {page.tasks.map((task) => {
                     const taskKey = `${task.module}:${task.id}`;
                     const busy = props.busyTask === taskKey;
                     return (
@@ -837,6 +912,35 @@ export function MemoryExtractionJobs(props: {
                     );
                   })}
                 </div>
+                {page.pageCount > 1 ? (
+                  <nav
+                    className="memory-extraction-pagination"
+                    aria-label={t("extractionPagination", {
+                      lane: t(`extractionLanes.${lane}`),
+                    })}
+                  >
+                    <button
+                      type="button"
+                      disabled={page.pageIndex === 0}
+                      onClick={() => changeLanePage(lane, page.pageIndex - 1)}
+                    >
+                      {t("previousPage")}
+                    </button>
+                    <span>
+                      {t("pageStatus", {
+                        page: page.pageIndex + 1,
+                        total: page.pageCount,
+                      })}
+                    </span>
+                    <button
+                      type="button"
+                      disabled={page.pageIndex === page.pageCount - 1}
+                      onClick={() => changeLanePage(lane, page.pageIndex + 1)}
+                    >
+                      {t("nextPage")}
+                    </button>
+                  </nav>
+                ) : null}
               </section>
             );
           })}

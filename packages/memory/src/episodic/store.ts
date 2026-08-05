@@ -25,6 +25,11 @@ import {
   latestExtractionJobErrorCode,
   parseExtractionJobJson,
 } from "../pipeline/extraction-job-diagnostic.ts";
+import {
+  queryMemoryJobPage,
+  type MemoryJobPage,
+  type MemoryJobPageInput,
+} from "../pipeline/memory-job-page.ts";
 import type { MemoryRecallScope } from "../pipeline/memory-module.ts";
 import {
   EMPTY_MEMORY_EVIDENCE_OMISSION_STATS,
@@ -149,6 +154,9 @@ export interface EpisodicMemoryStore {
     readonly now: Date;
   }): Promise<void>;
   listExtractionJobs(): Promise<readonly EpisodicExtractionJob[]>;
+  listExtractionJobsPage(
+    input: MemoryJobPageInput<EpisodicExtractionJob["status"]>,
+  ): Promise<MemoryJobPage<EpisodicExtractionJob>>;
   maintain(now: Date): Promise<{ readonly expired: number; readonly deleted: number }>;
   deleteExecutionState(executionIds: readonly string[], now?: Date): Promise<void>;
   inspect(): Promise<EpisodicMemoryStoreDiagnostic>;
@@ -782,6 +790,12 @@ export async function createEpisodicMemoryStore(
 
     async listExtractionJobs() {
       return readJobRows(state);
+    },
+
+    async listExtractionJobsPage(input) {
+      return queryMemoryJobPage(state, input, (json) =>
+        EpisodicExtractionJobSchema.parse(JSON.parse(json)),
+      );
     },
 
     async maintain(now) {

@@ -117,14 +117,62 @@ export const DesktopMemoryExtractionTaskSchema = z.object({
   updatedAt: z.string().datetime(),
 });
 
+export const DESKTOP_MEMORY_EXTRACTION_PAGE_SIZE = 10;
+
+const DesktopMemoryExtractionPageCursorSchema = z
+  .object({
+    updatedAt: z.string().datetime(),
+    tieBreaker: z.string().min(1),
+  })
+  .strict();
+
+const DesktopMemoryExtractionPageRequestSchema = z
+  .object({
+    pageIndex: z.number().int().nonnegative(),
+    cursor: DesktopMemoryExtractionPageCursorSchema.optional(),
+  })
+  .strict()
+  .superRefine((page, context) => {
+    if ((page.pageIndex === 0) !== (page.cursor === undefined)) {
+      context.addIssue({
+        code: "custom",
+        message: "Only the first extraction page may omit its cursor.",
+      });
+    }
+  });
+
+export const ListDesktopMemoryExtractionJobsSchema = z
+  .object({
+    pages: z
+      .object({
+        waiting: DesktopMemoryExtractionPageRequestSchema,
+        attention: DesktopMemoryExtractionPageRequestSchema,
+        running: DesktopMemoryExtractionPageRequestSchema,
+        completed: DesktopMemoryExtractionPageRequestSchema,
+      })
+      .strict(),
+  })
+  .strict();
+
+const DesktopMemoryExtractionLanePageSchema = z
+  .object({
+    tasks: z.array(DesktopMemoryExtractionTaskSchema).max(DESKTOP_MEMORY_EXTRACTION_PAGE_SIZE),
+    pageIndex: z.number().int().nonnegative(),
+    pageCount: z.number().int().positive(),
+    totalTasks: z.number().int().nonnegative(),
+    nextCursor: DesktopMemoryExtractionPageCursorSchema.optional(),
+  })
+  .strict();
+
 export const DesktopMemoryExtractionBoardSchema = z.object({
-  tasks: z.array(DesktopMemoryExtractionTaskSchema),
-  counts: z.object({
-    waiting: z.number().int().nonnegative(),
-    attention: z.number().int().nonnegative(),
-    running: z.number().int().nonnegative(),
-    completed: z.number().int().nonnegative(),
-  }),
+  lanes: z
+    .object({
+      waiting: DesktopMemoryExtractionLanePageSchema,
+      attention: DesktopMemoryExtractionLanePageSchema,
+      running: DesktopMemoryExtractionLanePageSchema,
+      completed: DesktopMemoryExtractionLanePageSchema,
+    })
+    .strict(),
 });
 
 export const ManageDesktopMemoryExtractionTaskSchema = z

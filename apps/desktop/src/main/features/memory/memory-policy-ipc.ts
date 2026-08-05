@@ -24,7 +24,7 @@ import {
   ReviewDesktopMemoryItemSchema,
   DesktopMissionMemoryActivitySchema,
   GetDesktopMissionMemoryActivitySchema,
-  DesktopMemoryExtractionBoardSchema,
+  ListDesktopMemoryExtractionJobsSchema,
   ManageDesktopMemoryExtractionTaskSchema,
   MemoryKnowledgeInitializationCandidateSchema,
   ListMemoryKnowledgeInitializationCandidatesSchema,
@@ -37,6 +37,7 @@ import type { MissionStore } from "../missions/mission-store.ts";
 import type { PragmaProjectStore } from "../projects/pragma-project-store.ts";
 import type { DesktopSystemExpertRegistry } from "../experts/system-expert-registry.ts";
 import type { MemoryKnowledgePromotionService } from "./memory-knowledge-promotion.ts";
+import { listDesktopMemoryExtractionJobs } from "./memory-extraction-jobs.ts";
 import {
   loadMemorySubjectNameIndex,
   selectMemorySubjectNames,
@@ -99,80 +100,12 @@ export function installMemoryPolicyHandlers(
   ipcMain.handle("memory-plane:status", async () =>
     DesktopMemoryPlaneStatusSchema.parse(await plane.getStatus()),
   );
-  ipcMain.handle("memory-extraction-jobs:list", async () => {
-    const [episodicJobs, semanticJobs, knowledgeJobs, missions, project] = await Promise.all([
-      plane.episodicStore.listExtractionJobs(),
-      plane.semanticStore.listExtractionJobs(),
-      plane.knowledgeLearningStore.listJobs(),
-      options.missions.list(),
-      options.project.get(),
-    ]);
-    const conversationJobs = [...episodicJobs, ...semanticJobs];
-    const executionTitles = await options.missions.resolveExecutionTitles(
-      conversationJobs
-        .filter((job) => job.conversationRef.type === "pragma.execution")
-        .map((job) => job.conversationRef.id),
+  ipcMain.handle("memory-extraction-jobs:list", async (_event, input: unknown) => {
+    return await listDesktopMemoryExtractionJobs(
+      plane,
+      options,
+      ListDesktopMemoryExtractionJobsSchema.parse(input),
     );
-    const missionTitles = new Map(missions.map((mission) => [mission.id, mission.title]));
-    const resourceTitles = new Map(
-      project.resources.map((resource) => [resource.metadata.id, resource.metadata.name]),
-    );
-    const conversationTasks = (
-      [
-        ...episodicJobs.map((job) => ({ module: "episodic" as const, job })),
-        ...semanticJobs.map((job) => ({ module: "semantic" as const, job })),
-      ] as const
-    ).flatMap(({ module, job }) => {
-      const lane = extractionLane(job.status);
-      if (lane === undefined) return [];
-      const title =
-        job.conversationRef.type === "pragma.mission"
-          ? missionTitles.get(job.conversationRef.id)
-          : executionTitles.get(job.conversationRef.id);
-      return [
-        {
-          module,
-          id: job.id,
-          revision: job.revision,
-          lane,
-          ...(title === undefined ? {} : { title }),
-          ...(job.status === "needs_attention" && job.lastErrorCode !== undefined
-            ? { lastErrorCode: job.lastErrorCode }
-            : {}),
-          updatedAt: job.updatedAt,
-        },
-      ];
-    });
-    const knowledgeTasks = knowledgeJobs.flatMap((job) => {
-      const lane = extractionLane(job.status);
-      if (lane === undefined) return [];
-      const title = resourceTitles.get(job.rootRef.id);
-      return [
-        {
-          module: "knowledge" as const,
-          id: job.id,
-          revision: job.revision,
-          lane,
-          ...(title === undefined ? {} : { title }),
-          ...(job.status === "needs_attention" && job.lastErrorCode !== undefined
-            ? { lastErrorCode: job.lastErrorCode }
-            : {}),
-          updatedAt: job.updatedAt,
-        },
-      ];
-    });
-    const tasks = [...conversationTasks, ...knowledgeTasks].toSorted((left, right) =>
-      right.updatedAt.localeCompare(left.updatedAt),
-    );
-    return DesktopMemoryExtractionBoardSchema.parse({
-      tasks,
-      counts: {
-        waiting: tasks.filter((task) => task.lane === "waiting").length,
-        attention: tasks.filter((task) => task.lane === "attention").length,
-        running: tasks.filter((task) => task.lane === "running").length,
-        completed: tasks.filter((task) => task.lane === "completed").length,
-      },
-    });
   });
   ipcMain.handle("memory-extraction-jobs:manage", async (_event, input: unknown) => {
     await plane.manageMemoryJob(ManageDesktopMemoryExtractionTaskSchema.parse(input));
@@ -432,17 +365,6 @@ function memoryItemSubjectNames(
     ...item.producerRefs,
     ...item.bindings.map((binding) => binding.consumerRef),
   ]);
-}
-
-function extractionLane(
-  status: "waiting_idle" | "pending" | "running" | "needs_attention" | "completed" | "expired",
-): "waiting" | "attention" | "running" | "completed" | undefined {
-  if (status === "waiting_idle" || status === "pending") return "waiting";
-  if (status === "needs_attention") return "attention";
-  if (status === "running") return "running";
-  if (status === "completed") return "completed";
-  // Expired jobs retain diagnostics without payload, but the product board intentionally has four lanes.
-  return undefined;
 }
 
 async function missionExecutionIds(store: MissionStore, missionId: string): Promise<string[]> {

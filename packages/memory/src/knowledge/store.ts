@@ -11,6 +11,11 @@ import {
 } from "@pragma/shared";
 
 import { DEFAULT_MEMORY_STORAGE_POLICY } from "../storage/memory-storage-policy.ts";
+import {
+  queryMemoryJobPage,
+  type MemoryJobPage,
+  type MemoryJobPageInput,
+} from "../pipeline/memory-job-page.ts";
 import { assertFreshSqliteDatabase } from "../storage/sqlite-migration-backup.ts";
 
 const MODULE_ID = "pragma.memory.knowledge-learning";
@@ -60,6 +65,9 @@ export interface KnowledgeLearningStore {
   deleteJob(input: { readonly id: string; readonly expectedRevision: number }): Promise<void>;
   wakeNeedsAttention(now: Date, reason?: "configuration" | "manual"): Promise<void>;
   listJobs(): Promise<readonly KnowledgeExtractionJob[]>;
+  listJobsPage(
+    input: MemoryJobPageInput<KnowledgeExtractionJob["status"]>,
+  ): Promise<MemoryJobPage<KnowledgeExtractionJob>>;
   maintain(now: Date): Promise<{ readonly deletedJobs: number }>;
   inspect(): Promise<KnowledgeLearningStoreDiagnostic>;
   close(): void;
@@ -239,6 +247,9 @@ export async function createKnowledgeLearningStore(
           job_json: string;
         }[]
       ).map((row) => parseJob(row.job_json));
+    },
+    async listJobsPage(input) {
+      return queryMemoryJobPage(database, input, parseJob);
     },
     async maintain(now) {
       const cutoff = now.getTime() - DEFAULT_MEMORY_STORAGE_POLICY.jobRecordRetentionMs;

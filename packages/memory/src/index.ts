@@ -5,6 +5,7 @@ export * from "./pipeline/memory-module.ts";
 export * from "./pipeline/memory-schema-registry.ts";
 export * from "./pipeline/memory-pipeline-scheduler.ts";
 export * from "./pipeline/extraction-settings.ts";
+export * from "./pipeline/memory-job-page.ts";
 export * from "./policy/memory-policy-store.ts";
 export * from "./context/federated-memory-context-store.ts";
 export * from "./activity/memory-activity-store.ts";

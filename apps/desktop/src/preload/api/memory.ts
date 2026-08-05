@@ -25,6 +25,7 @@ import {
   ReviewDesktopMemoryItemSchema,
   DesktopMissionMemoryActivitySchema,
   DesktopMemoryExtractionBoardSchema,
+  ListDesktopMemoryExtractionJobsSchema,
   ManageDesktopMemoryExtractionTaskSchema,
   MemoryKnowledgeInitializationCandidateSchema,
   ListMemoryKnowledgeInitializationCandidatesSchema,
@@ -61,9 +62,12 @@ export const memoryApi = {
     ),
   getMemoryPlaneStatus: async () =>
     DesktopMemoryPlaneStatusSchema.parse(await ipcRenderer.invoke("memory-plane:status")),
-  listMemoryExtractionJobs: async () =>
+  listMemoryExtractionJobs: async (input) =>
     DesktopMemoryExtractionBoardSchema.parse(
-      await ipcRenderer.invoke("memory-extraction-jobs:list"),
+      await ipcRenderer.invoke(
+        "memory-extraction-jobs:list",
+        ListDesktopMemoryExtractionJobsSchema.parse(input),
+      ),
     ),
   manageMemoryExtractionTask: async (input) => {
     await ipcRenderer.invoke(

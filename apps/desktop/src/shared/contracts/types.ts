@@ -230,6 +230,7 @@ import {
   GetDesktopMissionMemoryActivitySchema,
   DesktopMemoryExtractionTaskSchema,
   DesktopMemoryExtractionBoardSchema,
+  ListDesktopMemoryExtractionJobsSchema,
   ManageDesktopMemoryExtractionTaskSchema,
   MemoryKnowledgeInitializationCandidateSchema,
   ListMemoryKnowledgeInitializationCandidatesSchema,
@@ -305,6 +306,7 @@ export type DesktopMissionMemoryActivity = z.infer<typeof DesktopMissionMemoryAc
 export type GetDesktopMissionMemoryActivity = z.infer<typeof GetDesktopMissionMemoryActivitySchema>;
 export type DesktopMemoryExtractionTask = z.infer<typeof DesktopMemoryExtractionTaskSchema>;
 export type DesktopMemoryExtractionBoard = z.infer<typeof DesktopMemoryExtractionBoardSchema>;
+export type ListDesktopMemoryExtractionJobs = z.infer<typeof ListDesktopMemoryExtractionJobsSchema>;
 export type ManageDesktopMemoryExtractionTask = z.infer<
   typeof ManageDesktopMemoryExtractionTaskSchema
 >;
