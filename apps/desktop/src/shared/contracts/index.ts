@@ -3,6 +3,7 @@ export * from "./automations.ts";
 export * from "./bundles.ts";
 export * from "./capabilities.ts";
 export * from "./context-stores.ts";
+export * from "./context-store-browser.ts";
 export * from "./experts.ts";
 export * from "./logging.ts";
 export * from "./memory.ts";

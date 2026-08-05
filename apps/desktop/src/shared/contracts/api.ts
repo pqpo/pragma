@@ -147,6 +147,14 @@ import type {
   DesktopKnowledge,
   GetDesktopKnowledgeSource,
   DesktopKnowledgeSource,
+  GetMissionContextStore,
+  ListMissionContextStoreEntries,
+  ReadMissionContextStoreEntry,
+  SearchMissionContextStore,
+  MissionContextStoreDescriptor,
+  MissionContextStoreEntry,
+  MissionContextStoreContent,
+  MissionContextStoreSearchMatch,
 } from "./types.ts";
 
 export interface PragmaDesktopAPI {
@@ -199,6 +207,16 @@ export interface PragmaDesktopAPI {
   ) => Promise<DesktopKnowledgeCandidate>;
   getKnowledgeSource: (input: GetDesktopKnowledgeSource) => Promise<DesktopKnowledgeSource>;
   getMissionMemoryActivity: (missionId: string) => Promise<DesktopMissionMemoryActivity>;
+  getMissionContextStore: (input: GetMissionContextStore) => Promise<MissionContextStoreDescriptor>;
+  listMissionContextStoreEntries: (
+    input: ListMissionContextStoreEntries,
+  ) => Promise<MissionContextStoreEntry[]>;
+  readMissionContextStoreEntry: (
+    input: ReadMissionContextStoreEntry,
+  ) => Promise<MissionContextStoreContent>;
+  searchMissionContextStore: (
+    input: SearchMissionContextStore,
+  ) => Promise<MissionContextStoreSearchMatch[]>;
   pickWorkspace: () => Promise<PickWorkspaceResult>;
   validateWorkspace: (path: string) => Promise<ValidateWorkspaceResult>;
   getModelProviderSettings: () => Promise<ModelProviderSettingsSnapshot>;

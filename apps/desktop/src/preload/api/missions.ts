@@ -30,6 +30,16 @@ import {
   UpdateMissionOptionsSchema,
 } from "../../shared/contracts/missions.ts";
 import type { PragmaDesktopAPI } from "../../shared/contracts/api.ts";
+import {
+  GetMissionContextStoreSchema,
+  ListMissionContextStoreEntriesSchema,
+  MissionContextStoreContentSchema,
+  MissionContextStoreDescriptorSchema,
+  MissionContextStoreEntrySchema,
+  MissionContextStoreSearchMatchSchema,
+  ReadMissionContextStoreEntrySchema,
+  SearchMissionContextStoreSchema,
+} from "../../shared/contracts/context-store-browser.ts";
 import { invokeMutation } from "../invoke-mutation.ts";
 export const missionsApi = {
   listMissions: async () =>
@@ -59,6 +69,34 @@ export const missionsApi = {
     MissionCreationDefaultsSchema.parse(await ipcRenderer.invoke("missions:create-defaults:get")),
   getMission: async (id) =>
     MissionSchema.parse(await ipcRenderer.invoke("missions:get", MissionIdSchema.parse(id))),
+  getMissionContextStore: async (input) =>
+    MissionContextStoreDescriptorSchema.parse(
+      await ipcRenderer.invoke(
+        "mission-context-stores:get",
+        GetMissionContextStoreSchema.parse(input),
+      ),
+    ),
+  listMissionContextStoreEntries: async (input) =>
+    MissionContextStoreEntrySchema.array().parse(
+      await ipcRenderer.invoke(
+        "mission-context-stores:list",
+        ListMissionContextStoreEntriesSchema.parse(input),
+      ),
+    ),
+  readMissionContextStoreEntry: async (input) =>
+    MissionContextStoreContentSchema.parse(
+      await ipcRenderer.invoke(
+        "mission-context-stores:read",
+        ReadMissionContextStoreEntrySchema.parse(input),
+      ),
+    ),
+  searchMissionContextStore: async (input) =>
+    MissionContextStoreSearchMatchSchema.array().parse(
+      await ipcRenderer.invoke(
+        "mission-context-stores:search",
+        SearchMissionContextStoreSchema.parse(input),
+      ),
+    ),
   subscribeMissionUpdates: (listener) => {
     const handler = (_event: IpcRendererEvent, value: unknown) => {
       listener(MissionUpdateSchema.parse(value));
@@ -151,6 +189,10 @@ export const missionsApi = {
   | "getMissionModelOptions"
   | "getMissionCreationDefaults"
   | "getMission"
+  | "getMissionContextStore"
+  | "listMissionContextStoreEntries"
+  | "readMissionContextStoreEntry"
+  | "searchMissionContextStore"
   | "subscribeMissionUpdates"
   | "createMission"
   | "updateMissionOptions"

@@ -80,6 +80,17 @@ import {
   UpdateContextStoreFileSchema,
 } from "./context-stores.ts";
 import {
+  GetMissionContextStoreSchema,
+  ListMissionContextStoreEntriesSchema,
+  MissionContextStoreContentSchema,
+  MissionContextStoreDescriptorSchema,
+  MissionContextStoreEntrySchema,
+  MissionContextStoreScopeSchema,
+  MissionContextStoreSearchMatchSchema,
+  ReadMissionContextStoreEntrySchema,
+  SearchMissionContextStoreSchema,
+} from "./context-store-browser.ts";
+import {
   CreateExpertDefinitionSchema,
   ExpertDefinitionSchema,
   ExpertExecutionProfileSchema,
@@ -334,6 +345,15 @@ export type UpdateContextStoreFile = z.infer<typeof UpdateContextStoreFileSchema
 export type RenameContextStoreEntry = z.infer<typeof RenameContextStoreEntrySchema>;
 export type DeleteContextStoreEntry = z.infer<typeof DeleteContextStoreEntrySchema>;
 export type ExpertContextStoreMount = z.infer<typeof ExpertContextStoreMountSchema>;
+export type GetMissionContextStore = z.infer<typeof GetMissionContextStoreSchema>;
+export type ListMissionContextStoreEntries = z.infer<typeof ListMissionContextStoreEntriesSchema>;
+export type ReadMissionContextStoreEntry = z.infer<typeof ReadMissionContextStoreEntrySchema>;
+export type SearchMissionContextStore = z.infer<typeof SearchMissionContextStoreSchema>;
+export type MissionContextStoreScope = z.infer<typeof MissionContextStoreScopeSchema>;
+export type MissionContextStoreDescriptor = z.infer<typeof MissionContextStoreDescriptorSchema>;
+export type MissionContextStoreEntry = z.infer<typeof MissionContextStoreEntrySchema>;
+export type MissionContextStoreContent = z.infer<typeof MissionContextStoreContentSchema>;
+export type MissionContextStoreSearchMatch = z.infer<typeof MissionContextStoreSearchMatchSchema>;
 export type DesktopPluginManifest = z.infer<typeof DesktopPluginManifestSchema>;
 export type DesktopPlugin = z.infer<typeof DesktopPluginSchema>;
 export type PluginZipInspection = z.infer<typeof PluginZipInspectionSchema>;
