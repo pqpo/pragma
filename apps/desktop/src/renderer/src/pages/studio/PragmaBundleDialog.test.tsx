@@ -121,6 +121,8 @@ describe("Bundle import inspection", () => {
       unpackedBytes: 2_048,
       fileCount: 4,
       resources: 3,
+      knowledgeCount: 0,
+      importedKnowledgePersistsAfterDiscard: false,
       dependencies: [
         {
           kind: "runtime",

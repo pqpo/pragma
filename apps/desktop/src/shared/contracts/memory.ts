@@ -9,6 +9,12 @@ import {
   MemorySensitivitySchema,
   MemoryEvidenceEnvelopeSchema,
   SemanticFactSchema,
+  KnowledgeCandidateSchema,
+  KnowledgeContentSchema,
+  KnowledgeExtractionJobSchema,
+  KnowledgeSchema,
+  KnowledgeSourceRevisionRefSchema,
+  KnowledgeSourceSnapshotSchema,
 } from "@pragma/shared";
 import { z } from "zod";
 
@@ -244,26 +250,52 @@ export const DesktopMemoryItemSchema = z.discriminatedUnion("module", [
     expiresAt: z.string().datetime().optional(),
     conflictsWith: z.array(z.string().min(1)),
   }).strict(),
+  z
+    .object({
+      module: z.literal("knowledge"),
+      id: z.string().min(1),
+      revision: z.number().int().positive(),
+      status: z.enum(["active", "withdrawn"]),
+      title: z.string().min(1),
+      summary: z.string().min(1),
+      rootRefs: z.array(MemorySubjectRefSchema),
+      producerRefs: z.array(MemorySubjectRefSchema),
+      evidenceRefs: z.array(z.string().min(1)).length(0),
+      visibility: MemoryVisibilityPolicySchema,
+      sensitivity: MemorySensitivitySchema,
+      bindings: z.array(MemoryRevisionBindingSchema),
+      createdAt: z.string().datetime(),
+      updatedAt: z.string().datetime(),
+      guidance: z.array(z.string().min(1)),
+      normalizedKey: z.string().min(1),
+      sourceRefs: z.array(KnowledgeSourceRevisionRefSchema),
+      origin: z.enum(["local", "bundle-import"]),
+    })
+    .strict(),
 ]);
 
 export const DesktopMemoryItemListSchema = z.array(DesktopMemoryItemSchema);
 
 export const ListDesktopMemoryItemsSchema = z
   .object({
-    module: z.enum(["all", "episodic", "semantic"]).default("all"),
-    status: z.enum(["active", "invalidated", "all"]).default("active"),
+    module: z.enum(["all", "episodic", "semantic", "knowledge"]).default("all"),
+    status: z.enum(["active", "invalidated", "withdrawn", "all"]).default("active"),
     query: z.string().trim().max(2_000).default(""),
     limit: z.number().int().min(1).max(200).default(100),
   })
   .strict();
 
 export const DesktopMemoryItemRefSchema = z
-  .object({ module: z.enum(["episodic", "semantic"]), id: z.string().min(1) })
+  .object({ module: z.enum(["episodic", "semantic", "knowledge"]), id: z.string().min(1) })
   .strict();
 
-export const GetDesktopMemoryEvidenceSchema = DesktopMemoryItemRefSchema.extend({
-  evidenceId: z.string().min(1),
-}).strict();
+export const GetDesktopMemoryEvidenceSchema = z
+  .object({
+    module: z.enum(["episodic", "semantic"]),
+    id: z.string().min(1),
+    evidenceId: z.string().min(1),
+  })
+  .strict();
 
 export const TightenDesktopMemoryAccessSchema = DesktopMemoryItemRefSchema.extend({
   expectedRevision: z.number().int().positive(),
@@ -282,6 +314,65 @@ export const ReviewDesktopMemoryItemSchema = DesktopMemoryItemRefSchema.extend({
 }).strict();
 
 export const DesktopMemoryEvidenceSchema = MemoryEvidenceEnvelopeSchema;
+
+export const DesktopKnowledgeCandidateSchema = KnowledgeCandidateSchema;
+export const DesktopKnowledgeCandidateListSchema = z.array(DesktopKnowledgeCandidateSchema);
+export const ListDesktopKnowledgeCandidatesSchema = z
+  .object({
+    state: z
+      .enum(["pending_review", "rejected", "published", "superseded", "all"])
+      .default("pending_review"),
+  })
+  .strict();
+export const UpdateDesktopKnowledgeCandidateSchema = z
+  .object({
+    id: z.string().min(1),
+    expectedRevision: z.number().int().positive(),
+    content: KnowledgeContentSchema,
+  })
+  .strict();
+export const RejectDesktopKnowledgeCandidateSchema = z
+  .object({
+    id: z.string().min(1),
+    expectedRevision: z.number().int().positive(),
+    reason: z.string().trim().min(1).max(2_000),
+  })
+  .strict();
+export const PublishDesktopKnowledgeCandidateSchema = z
+  .object({
+    id: z.string().min(1),
+    expectedRevision: z.number().int().positive(),
+    reason: z.string().trim().min(1).max(2_000),
+    bindings: z.array(MemoryRevisionBindingSchema).min(1).max(100),
+    visibility: MemoryVisibilityPolicySchema,
+    confirmPublic: z.boolean().default(false),
+  })
+  .strict()
+  .refine((input) => input.visibility.mode !== "public" || input.confirmPublic, {
+    path: ["confirmPublic"],
+    message: "Public Knowledge publication requires explicit confirmation.",
+  })
+  .refine((input) => input.bindings.some((binding) => binding.recall === "allow"), {
+    path: ["bindings"],
+    message: "Knowledge publication requires at least one recall binding.",
+  });
+export const CreateDesktopKnowledgeSuccessorSchema = z
+  .object({
+    id: z.string().min(1),
+    expectedRevision: z.number().int().positive(),
+    content: KnowledgeContentSchema,
+  })
+  .strict();
+export const DesktopKnowledgeSchema = KnowledgeSchema;
+export const DesktopKnowledgeJobSchema = KnowledgeExtractionJobSchema;
+export const DesktopKnowledgeJobListSchema = z.array(DesktopKnowledgeJobSchema);
+export const RetryDesktopKnowledgeJobSchema = z
+  .object({ id: z.string().min(1), expectedRevision: z.number().int().positive() })
+  .strict();
+export const GetDesktopKnowledgeSourceSchema = z
+  .object({ sourceRef: KnowledgeSourceRevisionRefSchema })
+  .strict();
+export const DesktopKnowledgeSourceSchema = KnowledgeSourceSnapshotSchema;
 
 export const DesktopMissionMemoryActivitySchema = z.object({
   missionId: z.string().uuid(),

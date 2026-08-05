@@ -206,6 +206,17 @@ import {
   GetDesktopMissionMemoryActivitySchema,
   DesktopMemoryExtractionJobSchema,
   RetryDesktopMemoryExtractionJobSchema,
+  DesktopKnowledgeCandidateSchema,
+  ListDesktopKnowledgeCandidatesSchema,
+  UpdateDesktopKnowledgeCandidateSchema,
+  RejectDesktopKnowledgeCandidateSchema,
+  PublishDesktopKnowledgeCandidateSchema,
+  CreateDesktopKnowledgeSuccessorSchema,
+  DesktopKnowledgeSchema,
+  DesktopKnowledgeJobSchema,
+  RetryDesktopKnowledgeJobSchema,
+  GetDesktopKnowledgeSourceSchema,
+  DesktopKnowledgeSourceSchema,
 } from "./memory.ts";
 export type DesktopAppInfo = z.infer<typeof DesktopAppInfoSchema>;
 export type PragmaBundleModuleOptions = z.infer<typeof PragmaBundleModuleOptionsSchema>;
@@ -272,6 +283,19 @@ export type DesktopMissionMemoryActivity = z.infer<typeof DesktopMissionMemoryAc
 export type GetDesktopMissionMemoryActivity = z.infer<typeof GetDesktopMissionMemoryActivitySchema>;
 export type DesktopMemoryExtractionJob = z.infer<typeof DesktopMemoryExtractionJobSchema>;
 export type RetryDesktopMemoryExtractionJob = z.infer<typeof RetryDesktopMemoryExtractionJobSchema>;
+export type DesktopKnowledgeCandidate = z.infer<typeof DesktopKnowledgeCandidateSchema>;
+export type ListDesktopKnowledgeCandidates = z.input<typeof ListDesktopKnowledgeCandidatesSchema>;
+export type UpdateDesktopKnowledgeCandidate = z.infer<typeof UpdateDesktopKnowledgeCandidateSchema>;
+export type RejectDesktopKnowledgeCandidate = z.infer<typeof RejectDesktopKnowledgeCandidateSchema>;
+export type PublishDesktopKnowledgeCandidate = z.infer<
+  typeof PublishDesktopKnowledgeCandidateSchema
+>;
+export type CreateDesktopKnowledgeSuccessor = z.infer<typeof CreateDesktopKnowledgeSuccessorSchema>;
+export type DesktopKnowledge = z.infer<typeof DesktopKnowledgeSchema>;
+export type DesktopKnowledgeJob = z.infer<typeof DesktopKnowledgeJobSchema>;
+export type RetryDesktopKnowledgeJob = z.infer<typeof RetryDesktopKnowledgeJobSchema>;
+export type GetDesktopKnowledgeSource = z.infer<typeof GetDesktopKnowledgeSourceSchema>;
+export type DesktopKnowledgeSource = z.infer<typeof DesktopKnowledgeSourceSchema>;
 export type ModelProviderModel = z.infer<typeof ModelProviderModelSchema>;
 export type ModelCompatibilityProfileDescriptor = z.infer<
   typeof ModelCompatibilityProfileDescriptorSchema

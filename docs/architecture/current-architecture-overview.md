@@ -202,9 +202,10 @@ Desktop 的 `RuntimeEnvironmentService` 每次解析都读取版本化 Store，�
 之后创建的 Context；已有 Context 和 Runtime Session 保持原 binding。默认 Runtime 是安装级显式配置，
 Expert 未指定 Runtime 时由 Resolver 读取，而不是在 Expert 或 DSL 中推断 Codex。
 
-### P2：Memory Plane 第一阶段已落地，业务 Memory Module 仍待迁移
+### P2：Memory Plane 前六阶段已落地，Skill/CodeGraph 与 legacy 切换仍待完成
 
-**状态：ADR 031–034 已接受；Canonical Feed、Module SPI、策略、Episodic 与 Semantic Module 已实现。**
+**状态：ADR 031–038 已接受；Canonical Feed、Module SPI、策略、Episodic、Semantic、
+Mission Board 与 Knowledge 已实现。**
 
 ADR 002 曾把 Memory System 定义为 Core 抽象，但当前 `MemorySystem`、Memory record、Evidence Store 和 Distillation SPI 都在 `@pragma/plugin-memory`。ADR 003 又只完成了部分实现，代码已经同时包含 direct-write memory 与 evidence distillation。两份旧 ADR 现已被 ADR 031 替代。
 
@@ -221,10 +222,10 @@ ADR 031 已替代 ADR 002/003，并由 `docs/architecture/memory-plane-implement
   Memory type，不新增独立 KnowledgeBase/MemoryAsset 对象；Skill Candidate 评测后升级为现有 Capability；
 - `plugin-memory` 在完成历史数据导入和调用方迁移后删除。
 
-当前已能形成按资产隔离的历史 Episode 和带冲突、置信度、时效、revision history 的 Semantic Fact。
-Agent 通过分层 ContextStore 自主召回，Desktop 已提供 Memory 管理中心与 Mission activity；Host 不实现
-prompt-derived 主动召回排序。Knowledge/Skill Candidate、分享导出与 legacy owner-scoped 导入仍未完成，
-旧插件只作为后续迁移数据源保留。
+当前已能形成按资产隔离的历史 Episode、带冲突/时效的 Semantic Fact，以及必须人工审阅后才进入召回的
+不可变 Knowledge revision。Agent 通过分层 ContextStore 自主召回；Bundle 仅分享显式选择且 export binding
+允许的 Knowledge，导入幂等并独立于 Bundle discard 生命周期。Skill Candidate、CodeGraph 与 legacy
+owner-scoped 导入仍未完成，旧插件只作为后续迁移数据源保留。
 
 ### P2：Desktop Main Process 正在变成第二个业务内核
 

@@ -32,12 +32,28 @@ export const PragmaBundleExportPreviewSchema = z
     pluginCount: z.number().int().nonnegative(),
     knowledgeBaseCount: z.number().int().nonnegative(),
     hasFlowLayouts: z.boolean(),
+    knowledge: z
+      .array(
+        z
+          .object({
+            id: z.string().min(1),
+            revision: z.number().int().positive(),
+            title: z.string().trim().min(1).max(200),
+            summary: z.string().trim().min(1).max(4_000),
+          })
+          .strict(),
+      )
+      .default([]),
     defaults: PragmaBundleModuleOptionsSchema,
   })
   .strict();
 
 export const ExportPragmaBundleSchema = PreparePragmaBundleExportSchema.extend({
   modules: PragmaBundleModuleOptionsSchema,
+  knowledgeRevisionRefs: z
+    .array(z.object({ id: z.string().min(1), revision: z.number().int().positive() }).strict())
+    .max(1_000)
+    .default([]),
 }).strict();
 
 export const PragmaBundleExportResultSchema = z
@@ -137,6 +153,8 @@ export const PragmaBundleImportInspectionSchema = z
     unpackedBytes: z.number().int().positive(),
     fileCount: z.number().int().positive(),
     resources: z.number().int().positive(),
+    knowledgeCount: z.number().int().nonnegative().default(0),
+    importedKnowledgePersistsAfterDiscard: z.boolean().default(false),
     dependencies: z.array(PragmaBundleDependencySummarySchema),
     conflicts: z.array(PragmaBundleConflictSchema),
     requirements: z.array(

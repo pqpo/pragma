@@ -996,6 +996,10 @@ export const studio = {
   bundlePluginsHint: "可用時包含使用者安裝的外掛套件。",
   bundleKnowledgeBases: "知識庫",
   bundleKnowledgeBasesHint: "預設關閉，因為內容可能很大或包含敏感資訊。",
+  bundleKnowledgeMemory: "已發佈的知識記憶",
+  bundleKnowledgeMemoryHint: "預設不選擇任何內容。請逐筆選擇已允許目前專案匯出的精確發佈修訂。",
+  bundleImportedKnowledgePersists:
+    "此 Bundle 包含 {{count}} 筆已發佈知識。確認匯入即視為本機發佈；日後放棄 Bundle 安裝時，這些知識仍會保留。",
   bundleFlowLayouts: "Flow 版面配置",
   bundleFlowLayoutsHint: "保留畫布節點位置和視口。",
   bundleSafetyHint:

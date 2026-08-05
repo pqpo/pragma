@@ -3,6 +3,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 
 import { PragmaPaths } from "@pragma/core";
+import { createKnowledgeMemoryStore, type KnowledgeMemoryStore } from "@pragma/memory";
 import {
   canonicalPragmaResourceRef,
   type PragmaCapabilityResource,
@@ -28,8 +29,10 @@ import { createPragmaBundleService } from "./pragma-bundle-service.ts";
 import { resolveBundleIdentities } from "./pragma-bundle-resources.ts";
 
 const directories: string[] = [];
+const knowledgeStores: KnowledgeMemoryStore[] = [];
 
 afterEach(async () => {
+  for (const store of knowledgeStores.splice(0)) store.close();
   await Promise.all(
     directories
       .splice(0)
@@ -135,6 +138,62 @@ describe("PragmaBundleService", () => {
       root: { ref: "expert:1xddvess309a6gme", name: "Writer" },
       resources: 2,
     });
+  });
+
+  it("exports only explicitly selected Knowledge revisions and keeps imports after discard", async () => {
+    const source = await createFixture("knowledge-source", { withKnowledge: true });
+    const knowledge = await seedKnowledge(source.knowledge!, source.project.projectId);
+    const emptyPath = join(source.root, "knowledge-empty.pragma");
+    const selectedPath = join(source.root, "knowledge-selected.pragma");
+
+    await source.service.exportTo(exportInput(source.projectRevision), emptyPath);
+    await expect(source.service.inspect(emptyPath)).resolves.toMatchObject({ knowledgeCount: 0 });
+    const exported = await source.service.exportTo(
+      {
+        ...exportInput(source.projectRevision),
+        knowledgeRevisionRefs: [{ id: knowledge.id, revision: knowledge.revision }],
+      },
+      selectedPath,
+    );
+    const inspection = await source.service.inspect(selectedPath);
+    expect(inspection).toMatchObject({
+      knowledgeCount: 1,
+      importedKnowledgePersistsAfterDiscard: true,
+    });
+
+    const target = await createFixture("knowledge-target", {
+      instructions: "Conflicting local expert.",
+      withKnowledge: true,
+    });
+    const targetInspection = await target.service.inspect(selectedPath);
+    const installation = await target.service.startImport({
+      ...importInput(
+        selectedPath,
+        exported.bundleFingerprint,
+        exported.projectFingerprint,
+        targetInspection.projectRevision,
+      ),
+      conflicts: targetInspection.conflicts.map((conflict) => ({
+        resourceRef: conflict.ref,
+        action: "copy" as const,
+      })),
+    });
+    const imported = await target.knowledge!.list();
+    expect(imported).toHaveLength(1);
+    expect(imported[0]).toMatchObject({
+      origin: { kind: "bundle-import", sourceKnowledgeId: knowledge.id },
+      bindings: [
+        {
+          consumerRef: { type: "pragma.project", id: target.project.projectId },
+          recall: "allow",
+          export: "allow",
+        },
+      ],
+    });
+    expect(imported[0]?.rootRef.id).not.toBe("1xddvess309a6gme");
+
+    await target.service.discardInstallation(installation.id);
+    expect(await target.knowledge!.list()).toHaveLength(1);
   });
 
   it("inspects one explicitly selected root from a multi-root Interpreter Bundle", async () => {
@@ -777,6 +836,7 @@ async function createFixture(
     readonly expertId?: string;
     readonly runtimeResourceId?: string;
     readonly runtimes?: DesktopRuntimeAvailability[];
+    readonly withKnowledge?: boolean;
   } = {},
 ) {
   const root = await mkdtemp(join(tmpdir(), `pragma-bundle-${name}-`));
@@ -799,6 +859,10 @@ async function createFixture(
       runtime(overrides.runtimeId ?? "codex", overrides.runtimeResourceId),
     ],
   });
+  const knowledge = overrides.withKnowledge
+    ? await createKnowledgeMemoryStore({ pragmaHome: paths.root })
+    : undefined;
+  if (knowledge !== undefined) knowledgeStores.push(knowledge);
   const service = createPragmaBundleService({
     paths,
     project,
@@ -829,8 +893,74 @@ async function createFixture(
           ],
         },
       ],
+    ...(knowledge === undefined ? {} : { knowledge }),
   });
-  return { root, paths, project, projectRevision: published.revision, service };
+  return { root, paths, project, projectRevision: published.revision, service, knowledge };
+}
+
+async function seedKnowledge(store: KnowledgeMemoryStore, projectId: string) {
+  const rootRef = { type: "pragma.expert", id: "1xddvess309a6gme" } as const;
+  const sourceDigest = "a".repeat(64);
+  await store.schedule({ rootRef, sourceDigest, now: new Date("2026-08-05T08:00:00.000Z") });
+  const job = await store.claimDueJob(new Date("2026-08-05T08:00:00.000Z"));
+  if (job === undefined) throw new Error("Expected Knowledge extraction job.");
+  const source = {
+    ref: { kind: "episodic" as const, id: "episode-release", revision: 1 },
+    rootRef,
+    producerRefs: [rootRef],
+    title: "Verified release notes",
+    body: "Release notes were verified before publication.",
+    observedAt: "2026-08-05T07:00:00.000Z",
+    verified: false,
+    valueScore: 0.9,
+    visibility: { mode: "public" as const },
+    sensitivity: "internal" as const,
+  };
+  const [candidate] = await store.completeCandidates({
+    job,
+    candidates: [
+      {
+        content: {
+          title: "Verify release notes",
+          summary: "Verify release notes against shipped behavior before publication.",
+          guidance: ["Check every user-visible claim against the release artifact."],
+          normalizedKey: "release.verify-notes",
+        },
+        sourceRefs: [source.ref],
+      },
+    ],
+    sources: [source],
+    provenance: {
+      curatorRef: "pragma.memory.curator",
+      promptVersion: "knowledge-curator/v1",
+      profileRevision: 1,
+      runtimeId: "runtime-a",
+      providerId: "provider-a",
+      modelId: "model-a",
+      extractedAt: "2026-08-05T08:00:00.000Z",
+    },
+    now: new Date("2026-08-05T08:00:00.000Z"),
+  });
+  if (candidate === undefined) throw new Error("Expected Knowledge candidate.");
+  return await store.publishCandidate({
+    candidateId: candidate.id,
+    expectedRevision: candidate.revision,
+    actorRef: { type: "pragma.user", id: "local-user" },
+    reason: "Reviewed for Bundle export.",
+    bindings: [
+      {
+        consumerRef: { type: "pragma.project", id: projectId },
+        recall: "allow",
+        export: "allow",
+        permissionRevision: 1,
+      },
+    ],
+    visibility: {
+      mode: "restricted",
+      principals: [{ type: "pragma.project", id: projectId }],
+    },
+    now: new Date("2026-08-05T08:01:00.000Z"),
+  });
 }
 
 function exportInput(projectRevision: number) {

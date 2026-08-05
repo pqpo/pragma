@@ -1037,6 +1037,11 @@ export const studio = {
   bundlePluginsHint: "Include user-installed plugin packages when available.",
   bundleKnowledgeBases: "Knowledge bases",
   bundleKnowledgeBasesHint: "Off by default because content may be large or sensitive.",
+  bundleKnowledgeMemory: "Published Knowledge Memory",
+  bundleKnowledgeMemoryHint:
+    "Nothing is selected by default. Select exact published revisions whose Project export binding allows sharing.",
+  bundleImportedKnowledgePersists:
+    "This Bundle contains {{count}} published Knowledge item(s). Import confirms publication locally, and the Knowledge remains if the Bundle installation is later discarded.",
   bundleFlowLayouts: "Flow layouts",
   bundleFlowLayoutsHint: "Keep canvas positions and viewport settings.",
   bundleSafetyHint:

@@ -338,6 +338,10 @@ export async function createDesktopApplicationContainer(
     },
   });
   installContextStoreHandlers(contextStores, options.getWindow);
+  const memoryPlane = await createDesktopMemoryPlane({
+    pragmaHome: pragmaPaths.root,
+    logger: mainLogger,
+  });
   const bundleService = createPragmaBundleService({
     paths: pragmaPaths,
     project: pragmaProjectStore,
@@ -345,6 +349,7 @@ export async function createDesktopApplicationContainer(
     contextStores,
     plugins: pluginStore,
     layouts: workflowLayouts,
+    knowledge: memoryPlane.knowledgeStore,
     getRuntimes: async () => await getRuntimeAvailability(runtimes),
   });
   installPragmaBundleHandlers(bundleService, options.getWindow);
@@ -374,10 +379,6 @@ export async function createDesktopApplicationContainer(
     },
   );
   const defaultAgentStateRoot = join(pragmaPaths.stateRoot(), "pragma");
-  const memoryPlane = await createDesktopMemoryPlane({
-    pragmaHome: pragmaPaths.root,
-    logger: mainLogger,
-  });
   const defaultAgentProject = createDesktopDefaultAgentProjectPort({
     project: pragmaProjectStore,
     stateRoot: defaultAgentStateRoot,
@@ -533,6 +534,7 @@ export async function createDesktopApplicationContainer(
   await Promise.all([
     memoryPlane.setEpisodicExtractor(memoryCurator.episodicExtractor),
     memoryPlane.setSemanticExtractor(memoryCurator.semanticExtractor),
+    memoryPlane.setKnowledgeExtractor(memoryCurator.knowledgeExtractor),
   ]);
   const unsubscribeTokenCounter = tokenCounter.subscribe(() => {
     void missionRunner.invalidateEstimatedContextWindows().catch((error: unknown) => {

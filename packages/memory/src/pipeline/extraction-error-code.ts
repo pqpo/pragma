@@ -4,7 +4,7 @@ const STABLE_ERROR_CODE = /^[a-z][a-z0-9_.-]{0,199}$/;
 
 export function extractionErrorCode(
   error: unknown,
-  family: "episodic_extraction" | "semantic_extraction",
+  family: "episodic_extraction" | "semantic_extraction" | "knowledge_extraction",
 ): string {
   if (error instanceof ZodError) return `${family}_validation_failed`;
   if (typeof error === "object" && error !== null && "code" in error) {

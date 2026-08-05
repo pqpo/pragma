@@ -7,6 +7,7 @@
 - Durable delivery decision: [ADR 032](./032-durable-canonical-event-feed.md)
 - Layered projection and Episodic decision: [ADR 033](./033-layered-episodic-memory.md)
 - Semantic conflict and governance decision: [ADR 034](./034-conservative-semantic-memory.md)
+- Short-term collaboration refinement: [ADR 037](./037-mission-board-context-store.md)
 
 ## Context
 
@@ -17,7 +18,8 @@ Agent 事件，也无法自然支持 ExpertTeam、Flow、Project、组织资产�
 本 ADR 接受以下产品判断：
 
 - Memory 是 Agent 的内置核心能力，不是 Expert 插件；
-- WorkingState、TODO List、任务白板是可选协作工具，不是 Memory 的前置依赖；
+- 短期协作白板是可选能力，不是 Memory 的前置依赖；ADR 037 后续将其定名为
+  Mission Board；
 - Memory 是持续变化、可重算的解释；知识与技能是从 Memory 逐层蒸馏出的高价值形态；
 - 不新增独立 `KnowledgeBase`、`KnowledgeAsset` 或 `MemoryAsset` 领域。知识仍是一种 Memory；
 - 所有 Memory 类型最终通过 ContextStore 被模型读取，但不要求共享同一个物理数据库；
@@ -87,7 +89,7 @@ ContextStore 暴露。所谓“记忆知识库”只是 ContextStore 中一类�
 Skill 是唯一特殊出口：Skill Memory Candidate 通过 Evaluation 和批准后，升级为现有 Skill
 Capability revision；不保留第二套永久 Skill Memory 权威 Store。
 
-### WorkingState
+### WorkingState（后由 ADR 037 定名为 Mission Board）
 
 TaskMemory 原有语义本质是 TODO List Manager、handoff 区或多人白板，因此改称 WorkingState。Agent
 可以完全不使用它。WorkingState 的已提交变化可以成为 Evidence，但 Memory 提炼始终基于 canonical
@@ -96,6 +98,10 @@ TaskMemory 原有语义本质是 TODO List Manager、handoff 区或多人白板�
 “不是 Memory 的前置依赖”不表示不提供该产品能力。WorkingState 作为 Host 内置、Mission/Execution
 生命周期内的短期协作状态独立实现，支持团队共享条目和按 Runtime Context 隔离的私有条目；其协议、
 权限、持久化、工具和 Desktop UI 由落地计划的独立阶段交付，而不作为 `@pragma/memory` Module。
+
+ADR 037 保留了这些产品语义，但将实现收敛为 Mission-scoped 的 `mission-board` 与按稳定
+Runtime `contextId` 隔离的 `mission-board-private` Context Store；不再定义 WorkingState 专用对象或
+managed tool。
 
 ## Subject、生产者、绑定与团队资产
 
@@ -230,12 +236,12 @@ Evaluation、权限或远端存储时，由 Host 注入窄端口。
 
 迁移按落地计划分阶段执行。旧四类数据的映射是：
 
-| 旧类型            | 新归宿                                                  |
-| ----------------- | ------------------------------------------------------- |
-| Task Memory       | 可选 WorkingState 或归档 Evidence，不是默认 Memory type |
-| Experience Memory | Episodic import candidate                               |
-| Fact Memory       | Semantic/Fact import candidate，重新校验冲突与时效      |
-| Skill Memory card | Skill Memory Candidate，不能直接成为 Capability         |
+| 旧类型            | 新归宿                                                       |
+| ----------------- | ------------------------------------------------------------ |
+| Task Memory       | 可选 Mission Board 导入或归档 Evidence，不是默认 Memory type |
+| Experience Memory | Episodic import candidate                                    |
+| Fact Memory       | Semantic/Fact import candidate，重新校验冲突与时效           |
+| Skill Memory card | Skill Memory Candidate，不能直接成为 Capability              |
 
 在 owner 首次显式导入时执行带备份、journal 和诊断的迁移；不在启动时全盘扫描。最终切换删除
 `@pragma/plugin-memory`、旧工具和并行 Skill authority，并按仓库规则升级受影响的 Interpreter compiler。
