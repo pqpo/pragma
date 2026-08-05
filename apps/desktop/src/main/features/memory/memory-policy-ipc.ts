@@ -38,11 +38,27 @@ import {
 import type { DesktopMemoryPlane } from "./desktop-memory-plane.ts";
 import type { MissionStore } from "../missions/mission-store.ts";
 import type { PragmaProjectStore } from "../projects/pragma-project-store.ts";
+import type { DesktopSystemExpertRegistry } from "../experts/system-expert-registry.ts";
+import {
+  loadMemorySubjectNameIndex,
+  selectMemorySubjectNames,
+  type MemorySubjectNameIndex,
+  type MemorySubjectReference,
+} from "./memory-subject-names.ts";
 
 export function installMemoryPolicyHandlers(
   plane: DesktopMemoryPlane,
-  options: { readonly missions: MissionStore; readonly project: PragmaProjectStore },
+  options: {
+    readonly missions: MissionStore;
+    readonly project: PragmaProjectStore;
+    readonly systemExperts: Pick<DesktopSystemExpertRegistry, "list">;
+  },
 ): void {
+  const loadSubjectNameIndex = (): Promise<MemorySubjectNameIndex> =>
+    loadMemorySubjectNameIndex({
+      getProject: () => options.project.get(),
+      listSystemExperts: () => options.systemExperts.list(),
+    });
   const globalSnapshot = async () => {
     const revision = await plane.policies.getGlobal();
     return DesktopGlobalMemoryPolicySnapshotSchema.parse({
@@ -181,16 +197,22 @@ export function installMemoryPolicyHandlers(
   });
   ipcMain.handle("memory-items:list", async (_event, input: unknown) => {
     const parsed = ListDesktopMemoryItemsSchema.parse(input ?? {});
+    const [episodes, facts, knowledge, subjectNameIndex] = await Promise.all([
+      parsed.module === "all" || parsed.module === "episodic"
+        ? plane.episodicStore.list()
+        : Promise.resolve([]),
+      parsed.module === "all" || parsed.module === "semantic"
+        ? plane.semanticStore.list()
+        : Promise.resolve([]),
+      parsed.module === "all" || parsed.module === "knowledge"
+        ? plane.knowledgeStore.list()
+        : Promise.resolve([]),
+      loadSubjectNameIndex(),
+    ]);
     const items = [
-      ...(parsed.module === "all" || parsed.module === "episodic"
-        ? (await plane.episodicStore.list()).map(toDesktopEpisode)
-        : []),
-      ...(parsed.module === "all" || parsed.module === "semantic"
-        ? (await plane.semanticStore.list()).map(toDesktopFact)
-        : []),
-      ...(parsed.module === "all" || parsed.module === "knowledge"
-        ? (await plane.knowledgeStore.list()).map(toDesktopKnowledge)
-        : []),
+      ...episodes.map((record) => toDesktopEpisode(record, subjectNameIndex)),
+      ...facts.map((record) => toDesktopFact(record, subjectNameIndex)),
+      ...knowledge.map((record) => toDesktopKnowledge(record, subjectNameIndex)),
     ]
       .filter((item) => parsed.status === "all" || item.status === parsed.status)
       .filter((item) => {
@@ -204,27 +226,54 @@ export function installMemoryPolicyHandlers(
   ipcMain.handle("memory-items:get", async (_event, input: unknown) => {
     const parsed = DesktopMemoryItemRefSchema.parse(input);
     if (parsed.module === "episodic") {
-      const record = await plane.episodicStore.get(parsed.id);
+      const [record, subjectNameIndex] = await Promise.all([
+        plane.episodicStore.get(parsed.id),
+        loadSubjectNameIndex(),
+      ]);
       if (record === undefined) throw new Error("memory_item_not_found");
-      return DesktopMemoryItemSchema.parse(toDesktopEpisode(record));
+      return DesktopMemoryItemSchema.parse(toDesktopEpisode(record, subjectNameIndex));
     }
     if (parsed.module === "semantic") {
-      const record = await plane.semanticStore.get(parsed.id);
+      const [record, subjectNameIndex] = await Promise.all([
+        plane.semanticStore.get(parsed.id),
+        loadSubjectNameIndex(),
+      ]);
       if (record === undefined) throw new Error("memory_item_not_found");
-      return DesktopMemoryItemSchema.parse(toDesktopFact(record));
+      return DesktopMemoryItemSchema.parse(toDesktopFact(record, subjectNameIndex));
     }
-    const record = await plane.knowledgeStore.get(parsed.id);
+    const [record, subjectNameIndex] = await Promise.all([
+      plane.knowledgeStore.get(parsed.id),
+      loadSubjectNameIndex(),
+    ]);
     if (record === undefined) throw new Error("memory_item_not_found");
-    return DesktopMemoryItemSchema.parse(toDesktopKnowledge(record));
+    return DesktopMemoryItemSchema.parse(toDesktopKnowledge(record, subjectNameIndex));
   });
   ipcMain.handle("memory-items:history", async (_event, input: unknown) => {
     const parsed = DesktopMemoryItemRefSchema.parse(input);
+    if (parsed.module === "episodic") {
+      const [records, subjectNameIndex] = await Promise.all([
+        plane.episodicStore.history(parsed.id),
+        loadSubjectNameIndex(),
+      ]);
+      return DesktopMemoryItemListSchema.parse(
+        records.map((record) => toDesktopEpisode(record, subjectNameIndex)),
+      );
+    }
+    if (parsed.module === "semantic") {
+      const [records, subjectNameIndex] = await Promise.all([
+        plane.semanticStore.history(parsed.id),
+        loadSubjectNameIndex(),
+      ]);
+      return DesktopMemoryItemListSchema.parse(
+        records.map((record) => toDesktopFact(record, subjectNameIndex)),
+      );
+    }
+    const [records, subjectNameIndex] = await Promise.all([
+      plane.knowledgeStore.history(parsed.id),
+      loadSubjectNameIndex(),
+    ]);
     return DesktopMemoryItemListSchema.parse(
-      parsed.module === "episodic"
-        ? (await plane.episodicStore.history(parsed.id)).map(toDesktopEpisode)
-        : parsed.module === "semantic"
-          ? (await plane.semanticStore.history(parsed.id)).map(toDesktopFact)
-          : (await plane.knowledgeStore.history(parsed.id)).map(toDesktopKnowledge),
+      records.map((record) => toDesktopKnowledge(record, subjectNameIndex)),
     );
   });
   ipcMain.handle("memory-items:evidence", async (_event, input: unknown) => {
@@ -245,24 +294,30 @@ export function installMemoryPolicyHandlers(
   });
   ipcMain.handle("memory-items:tighten", async (_event, input: unknown) => {
     const parsed = TightenDesktopMemoryAccessSchema.parse(input);
-    const result = await plane.tightenMemoryAccess(parsed);
+    const [result, subjectNameIndex] = await Promise.all([
+      plane.tightenMemoryAccess(parsed),
+      loadSubjectNameIndex(),
+    ]);
     return DesktopMemoryItemSchema.parse(
       result.module === "episodic"
-        ? toDesktopEpisode(result.record)
+        ? toDesktopEpisode(result.record, subjectNameIndex)
         : result.module === "semantic"
-          ? toDesktopFact(result.record)
-          : toDesktopKnowledge(result.record),
+          ? toDesktopFact(result.record, subjectNameIndex)
+          : toDesktopKnowledge(result.record, subjectNameIndex),
     );
   });
   ipcMain.handle("memory-items:invalidate", async (_event, input: unknown) => {
     const parsed = ReviewDesktopMemoryItemSchema.parse(input);
-    const result = await plane.invalidateMemoryItem(parsed);
+    const [result, subjectNameIndex] = await Promise.all([
+      plane.invalidateMemoryItem(parsed),
+      loadSubjectNameIndex(),
+    ]);
     return DesktopMemoryItemSchema.parse(
       result.module === "episodic"
-        ? toDesktopEpisode(result.record)
+        ? toDesktopEpisode(result.record, subjectNameIndex)
         : result.module === "semantic"
-          ? toDesktopFact(result.record)
-          : toDesktopKnowledge(result.record),
+          ? toDesktopFact(result.record, subjectNameIndex)
+          : toDesktopKnowledge(result.record, subjectNameIndex),
     );
   });
   ipcMain.handle("memory-items:forget", async (_event, input: unknown) => {
@@ -346,7 +401,10 @@ export function installMemoryPolicyHandlers(
   });
 }
 
-function toDesktopEpisode(record: import("@pragma/memory").EpisodicMemoryRecord) {
+function toDesktopEpisode(
+  record: import("@pragma/memory").EpisodicMemoryRecord,
+  subjectNameIndex: MemorySubjectNameIndex,
+) {
   return {
     module: "episodic" as const,
     id: record.id,
@@ -360,6 +418,7 @@ function toDesktopEpisode(record: import("@pragma/memory").EpisodicMemoryRecord)
     visibility: record.visibility,
     sensitivity: record.sensitivity,
     bindings: record.bindings,
+    subjectNames: memoryItemSubjectNames(record, subjectNameIndex),
     createdAt: record.createdAt,
     updatedAt: record.updatedAt,
     executionId: record.executionId,
@@ -377,7 +436,10 @@ function toDesktopEpisode(record: import("@pragma/memory").EpisodicMemoryRecord)
   };
 }
 
-function toDesktopFact(record: import("@pragma/shared").SemanticFact) {
+function toDesktopFact(
+  record: import("@pragma/shared").SemanticFact,
+  subjectNameIndex: MemorySubjectNameIndex,
+) {
   return {
     module: "semantic" as const,
     id: record.id,
@@ -391,6 +453,7 @@ function toDesktopFact(record: import("@pragma/shared").SemanticFact) {
     visibility: record.visibility,
     sensitivity: record.sensitivity,
     bindings: record.bindings,
+    subjectNames: memoryItemSubjectNames(record, subjectNameIndex),
     createdAt: record.createdAt,
     updatedAt: record.updatedAt,
     statement: record.statement,
@@ -405,7 +468,10 @@ function toDesktopFact(record: import("@pragma/shared").SemanticFact) {
   };
 }
 
-function toDesktopKnowledge(record: import("@pragma/shared").Knowledge) {
+function toDesktopKnowledge(
+  record: import("@pragma/shared").Knowledge,
+  subjectNameIndex: MemorySubjectNameIndex,
+) {
   return {
     module: "knowledge" as const,
     id: record.id,
@@ -419,6 +485,10 @@ function toDesktopKnowledge(record: import("@pragma/shared").Knowledge) {
     visibility: record.visibility,
     sensitivity: record.sensitivity,
     bindings: record.bindings,
+    subjectNames: memoryItemSubjectNames(
+      { rootRefs: [record.rootRef], producerRefs: record.producerRefs, bindings: record.bindings },
+      subjectNameIndex,
+    ),
     createdAt: record.createdAt,
     updatedAt: record.updatedAt,
     guidance: record.content.guidance,
@@ -426,6 +496,21 @@ function toDesktopKnowledge(record: import("@pragma/shared").Knowledge) {
     sourceRefs: record.sourceRefs,
     origin: record.origin.kind,
   };
+}
+
+function memoryItemSubjectNames(
+  item: {
+    readonly rootRefs: readonly MemorySubjectReference[];
+    readonly producerRefs: readonly MemorySubjectReference[];
+    readonly bindings: readonly { readonly consumerRef: MemorySubjectReference }[];
+  },
+  subjectNameIndex: MemorySubjectNameIndex,
+): Record<string, string> {
+  return selectMemorySubjectNames(subjectNameIndex, [
+    ...item.rootRefs,
+    ...item.producerRefs,
+    ...item.bindings.map((binding) => binding.consumerRef),
+  ]);
 }
 
 function toEpisodeSource(record: import("@pragma/memory").EpisodicMemoryRecord) {

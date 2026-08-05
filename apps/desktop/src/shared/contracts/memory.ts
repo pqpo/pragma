@@ -205,6 +205,10 @@ export const ReviewDesktopSemanticFactSchema = z
 
 export const DesktopSemanticFactSchema = SemanticFactSchema;
 
+const DesktopMemorySubjectNamesSchema = z
+  .record(z.string().min(1), z.string().trim().min(1))
+  .default({});
+
 const DesktopMemoryCommonSchema = z.object({
   id: z.string().min(1),
   revision: z.number().int().positive(),
@@ -217,6 +221,7 @@ const DesktopMemoryCommonSchema = z.object({
   visibility: MemoryVisibilityPolicySchema,
   sensitivity: MemorySensitivitySchema,
   bindings: z.array(MemoryRevisionBindingSchema),
+  subjectNames: DesktopMemorySubjectNamesSchema,
   createdAt: z.string().datetime(),
   updatedAt: z.string().datetime(),
 });
@@ -259,6 +264,7 @@ export const DesktopMemoryItemSchema = z.discriminatedUnion("module", [
       visibility: MemoryVisibilityPolicySchema,
       sensitivity: MemorySensitivitySchema,
       bindings: z.array(MemoryRevisionBindingSchema),
+      subjectNames: DesktopMemorySubjectNamesSchema,
       createdAt: z.string().datetime(),
       updatedAt: z.string().datetime(),
       guidance: z.array(z.string().min(1)),

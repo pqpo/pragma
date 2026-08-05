@@ -32,6 +32,7 @@ import {
   DesktopGlobalMemoryPolicySnapshotSchema,
   DesktopAssetMemoryPolicySnapshotSchema,
   DesktopMemoryPlaneStatusSchema,
+  DesktopMemoryItemSchema,
   UpdateDesktopAssetMemoryPolicySchema,
 } from "./index.ts";
 
@@ -66,6 +67,33 @@ describe("desktop settings contracts", () => {
 });
 
 describe("desktop memory contracts", () => {
+  it("defaults missing subject names for backward-compatible memory item IPC", () => {
+    expect(
+      DesktopMemoryItemSchema.parse({
+        module: "episodic",
+        id: "episode-a",
+        revision: 1,
+        status: "active",
+        title: "Release",
+        summary: "Released successfully.",
+        rootRefs: [{ type: "pragma.expert-team", id: "team-a" }],
+        producerRefs: [{ type: "pragma.expert", id: "expert-a" }],
+        evidenceRefs: [],
+        visibility: { mode: "host-private" },
+        sensitivity: "internal",
+        bindings: [],
+        createdAt: "2026-08-05T00:00:00.000Z",
+        updatedAt: "2026-08-05T00:00:00.000Z",
+        executionId: "execution-a",
+        goal: "Release",
+        outcome: "succeeded",
+        valueScore: 0.9,
+        attempts: [],
+        failuresAndRecoveries: [],
+      }).subjectNames,
+    ).toEqual({});
+  });
+
   it("validates versioned global and asset policy snapshots", () => {
     expect(
       DesktopGlobalMemoryPolicySnapshotSchema.parse({
