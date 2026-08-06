@@ -1,19 +1,16 @@
 import { describe, expect, it } from "vitest";
 
 import type {
-  DefaultAgentAutomationPort,
-  DefaultAgentDslProjectPort,
-  DefaultAgentTaskPort,
+  PragmaAgentAutomationPort,
+  PragmaAgentDslProjectPort,
+  PragmaAgentTaskPort,
 } from "../src/ports.ts";
-import {
-  DefaultAgentEvaluationDraftSchema,
-  DefaultAgentFlowDraftSchema,
-} from "../src/contracts.ts";
-import { createDefaultAgentTools } from "../src/tools.ts";
+import { PragmaAgentEvaluationDraftSchema, PragmaAgentFlowDraftSchema } from "../src/contracts.ts";
+import { createPragmaAgentTools } from "../src/tools.ts";
 
-describe("DefaultAgent managed tools", () => {
+describe("PragmaAgent managed tools", () => {
   it("keeps read tools open and gates durable writes", async () => {
-    const tools = createDefaultAgentTools({ project: projectPort(), tasks: taskPort() });
+    const tools = createPragmaAgentTools({ project: projectPort(), tasks: taskPort() });
     expect(tools.find((tool) => tool.name === "list_dsl_resources")?.approval).toBeUndefined();
     expect(tools.find((tool) => tool.name === "list_expert_options")?.approval).toBeUndefined();
     expect(tools.find((tool) => tool.name === "commit_dsl_changes")?.approval?.mode).toBe(
@@ -31,7 +28,7 @@ describe("DefaultAgent managed tools", () => {
         return { projectId: "studio", projectRevision: 2, changedRefs: [] };
       },
     });
-    const tool = createDefaultAgentTools({ project, tasks: taskPort() }).find(
+    const tool = createPragmaAgentTools({ project, tasks: taskPort() }).find(
       (candidate) => candidate.name === "commit_dsl_changes",
     )!;
     await tool.call({ changeSetId: "ed1bcbb5-b1e6-4aa5-9357-7853ce745f6b" }, undefined, {
@@ -46,7 +43,7 @@ describe("DefaultAgent managed tools", () => {
         return {} as never;
       },
     });
-    const tools = createDefaultAgentTools({ project, tasks: taskPort() });
+    const tools = createPragmaAgentTools({ project, tasks: taskPort() });
     expect(tools.some((candidate) => candidate.name === "run_evaluation")).toBe(false);
     const tool = tools.find((candidate) => candidate.name === "run_evaluation_draft")!;
 
@@ -73,7 +70,7 @@ describe("DefaultAgent managed tools", () => {
   });
 
   it("exposes independent Flow and Evaluation prepare-and-save paths", () => {
-    const tools = createDefaultAgentTools({ project: projectPort(), tasks: taskPort() });
+    const tools = createPragmaAgentTools({ project: projectPort(), tasks: taskPort() });
     const createEvaluation = tools.find(
       (candidate) => candidate.name === "create_evaluation_draft",
     )!;
@@ -105,14 +102,14 @@ describe("DefaultAgent managed tools", () => {
   });
 
   it("validates both create_evaluation_draft modes before calling the project port", async () => {
-    const inputs: Parameters<DefaultAgentDslProjectPort["createEvaluationDraft"]>[0][] = [];
+    const inputs: Parameters<PragmaAgentDslProjectPort["createEvaluationDraft"]>[0][] = [];
     const project = projectPort({
       async createEvaluationDraft(input) {
         inputs.push(input);
         return evaluationDraft();
       },
     });
-    const tool = createDefaultAgentTools({ project, tasks: taskPort() }).find(
+    const tool = createPragmaAgentTools({ project, tasks: taskPort() }).find(
       (candidate) => candidate.name === "create_evaluation_draft",
     )!;
 
@@ -185,7 +182,7 @@ describe("DefaultAgent managed tools", () => {
         return evaluationDraft();
       },
     });
-    const tools = createDefaultAgentTools({ project, tasks: taskPort() });
+    const tools = createPragmaAgentTools({ project, tasks: taskPort() });
     const get = tools.find((candidate) => candidate.name === "get_evaluation_draft")!;
     const summary = await get.call(
       { draftId: "ed1bcbb5-b1e6-4aa5-9357-7853ce745f6b" },
@@ -249,7 +246,7 @@ describe("DefaultAgent managed tools", () => {
   });
 
   it("keeps the Flow operation schema strict while recovering JSON array strings", async () => {
-    const inputs: Parameters<DefaultAgentDslProjectPort["updateFlowDraft"]>[0][] = [];
+    const inputs: Parameters<PragmaAgentDslProjectPort["updateFlowDraft"]>[0][] = [];
     const project = projectPort({
       async getFlowDraft() {
         return flowDraft();
@@ -259,7 +256,7 @@ describe("DefaultAgent managed tools", () => {
         return flowDraft();
       },
     });
-    const tools = createDefaultAgentTools({ project, tasks: taskPort() });
+    const tools = createPragmaAgentTools({ project, tasks: taskPort() });
     const update = tools.find((candidate) => candidate.name === "update_flow_draft")!;
     const get = tools.find((candidate) => candidate.name === "get_flow_draft")!;
 
@@ -353,7 +350,7 @@ describe("DefaultAgent managed tools", () => {
         return flowDraft();
       },
     });
-    const update = createDefaultAgentTools({ project, tasks: taskPort() }).find(
+    const update = createPragmaAgentTools({ project, tasks: taskPort() }).find(
       (candidate) => candidate.name === "update_flow_draft",
     )!;
     const base = {
@@ -396,7 +393,7 @@ describe("DefaultAgent managed tools", () => {
         return automationSummary();
       },
     });
-    const tools = createDefaultAgentTools({
+    const tools = createPragmaAgentTools({
       project: projectPort(),
       tasks: taskPort(),
       automations,
@@ -416,8 +413,8 @@ describe("DefaultAgent managed tools", () => {
 });
 
 function projectPort(
-  overrides: Partial<DefaultAgentDslProjectPort> = {},
-): DefaultAgentDslProjectPort {
+  overrides: Partial<PragmaAgentDslProjectPort> = {},
+): PragmaAgentDslProjectPort {
   return {
     list: async () => ({ projectRevision: 0, resources: [] }),
     listExpertOptions: async () => ({ runtimeModels: [], capabilities: [] }),
@@ -473,7 +470,7 @@ function projectPort(
   };
 }
 
-function taskPort(): DefaultAgentTaskPort {
+function taskPort(): PragmaAgentTaskPort {
   return {
     list: async () => [],
     get: async () => {
@@ -493,8 +490,8 @@ function taskPort(): DefaultAgentTaskPort {
 }
 
 function automationPort(
-  overrides: Partial<DefaultAgentAutomationPort> = {},
-): DefaultAgentAutomationPort {
+  overrides: Partial<PragmaAgentAutomationPort> = {},
+): PragmaAgentAutomationPort {
   return {
     list: async () => ({ projectRevision: 1, automations: [] }),
     save: async () => automationSummary(),
@@ -519,7 +516,7 @@ function automationSummary() {
 }
 
 function evaluationDraft() {
-  return DefaultAgentEvaluationDraftSchema.parse({
+  return PragmaAgentEvaluationDraftSchema.parse({
     draftId: "ed1bcbb5-b1e6-4aa5-9357-7853ce745f6b",
     baseProjectRevision: 0,
     draftRevision: 1,
@@ -557,7 +554,7 @@ function evaluationDraft() {
 }
 
 function flowDraft() {
-  return DefaultAgentFlowDraftSchema.parse({
+  return PragmaAgentFlowDraftSchema.parse({
     draftId: "4fc96ef9-1825-447d-a17f-d820f6fd4855",
     baseProjectRevision: 3,
     draftRevision: 1,

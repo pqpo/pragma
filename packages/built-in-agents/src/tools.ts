@@ -6,22 +6,22 @@ import type {
 import { z } from "zod";
 
 import type {
-  DefaultAgentAutomationPort,
-  DefaultAgentDslProjectPort,
-  DefaultAgentTaskPort,
+  PragmaAgentAutomationPort,
+  PragmaAgentDslProjectPort,
+  PragmaAgentTaskPort,
 } from "./ports.ts";
 import {
-  DefaultAgentEvaluationDraftOperationSchema,
-  DefaultAgentEvaluationDraftRunResultSchema,
-  DefaultAgentEvaluationDraftSummarySchema,
-  DefaultAgentEvaluationDraftViewSchema,
-  DefaultAgentFlowDraftOperationSchema,
-  DefaultAgentFlowDraftSchema,
-  DefaultAgentFlowDraftUpdateSummarySchema,
-  type DefaultAgentEvaluationDraft,
-  type DefaultAgentFlowDraft,
-  type DefaultAgentFlowDraftDiagnostic,
-  type DefaultAgentFlowDraftOperation,
+  PragmaAgentEvaluationDraftOperationSchema,
+  PragmaAgentEvaluationDraftRunResultSchema,
+  PragmaAgentEvaluationDraftSummarySchema,
+  PragmaAgentEvaluationDraftViewSchema,
+  PragmaAgentFlowDraftOperationSchema,
+  PragmaAgentFlowDraftSchema,
+  PragmaAgentFlowDraftUpdateSummarySchema,
+  type PragmaAgentEvaluationDraft,
+  type PragmaAgentFlowDraft,
+  type PragmaAgentFlowDraftDiagnostic,
+  type PragmaAgentFlowDraftOperation,
 } from "./contracts.ts";
 import {
   PragmaEvaluationFlowRefSchema,
@@ -61,14 +61,14 @@ const AllocateResourceIdsInput = z.object({
 const CreateFlowDraftInput = z.object({
   expectedProjectRevision: z.number().int().nonnegative(),
   metadata: PragmaMetadataSchema,
-  input: DefaultAgentFlowDraftSchema.shape.resource.shape.spec.shape.input.optional(),
-  output: DefaultAgentFlowDraftSchema.shape.resource.shape.spec.shape.output.optional(),
-  limits: DefaultAgentFlowDraftSchema.shape.resource.shape.spec.shape.limits.optional(),
+  input: PragmaAgentFlowDraftSchema.shape.resource.shape.spec.shape.input.optional(),
+  output: PragmaAgentFlowDraftSchema.shape.resource.shape.spec.shape.output.optional(),
+  limits: PragmaAgentFlowDraftSchema.shape.resource.shape.spec.shape.limits.optional(),
 });
 const UpdateFlowDraftInput = z.object({
   draftId: z.string().uuid(),
   expectedDraftRevision: z.number().int().nonnegative(),
-  operations: z.array(DefaultAgentFlowDraftOperationSchema).min(1).max(50),
+  operations: z.array(PragmaAgentFlowDraftOperationSchema).min(1).max(50),
 });
 const UpdateFlowDraftToolInput = UpdateFlowDraftInput.extend({
   operations: z
@@ -131,7 +131,7 @@ const GetEvaluationDraftInput = z.object({
 const UpdateEvaluationDraftInput = z.object({
   draftId: z.string().uuid(),
   expectedDraftRevision: z.number().int().nonnegative(),
-  operations: z.array(DefaultAgentEvaluationDraftOperationSchema).min(1).max(10),
+  operations: z.array(PragmaAgentEvaluationDraftOperationSchema).min(1).max(10),
 });
 const RunEvaluationDraftInput = z.object({
   draftId: z.string().uuid(),
@@ -158,19 +158,19 @@ const DeleteAutomationInput = z.object({
   ref: z.string().min(1),
 });
 
-type DefaultAgentTool = ExpertAgentManagedTool<string, ExpertAgentToolCallResult>;
+type PragmaAgentTool = ExpertAgentManagedTool<string, ExpertAgentToolCallResult>;
 
-export function createDefaultAgentTools(options: {
-  readonly project: DefaultAgentDslProjectPort;
-  readonly tasks: DefaultAgentTaskPort;
-  readonly automations?: DefaultAgentAutomationPort | undefined;
-}): readonly DefaultAgentTool[] {
+export function createPragmaAgentTools(options: {
+  readonly project: PragmaAgentDslProjectPort;
+  readonly tasks: PragmaAgentTaskPort;
+  readonly automations?: PragmaAgentAutomationPort | undefined;
+}): readonly PragmaAgentTool[] {
   const operationId = (context: ExpertAgentManagedToolCallContext | undefined): string => {
     const id = context?.toolCallId;
     if (id === undefined) throw new Error("A default Agent write tool requires a toolCallId.");
     return id;
   };
-  const automationTools: readonly DefaultAgentTool[] =
+  const automationTools: readonly PragmaAgentTool[] =
     options.automations === undefined
       ? []
       : [
@@ -351,7 +351,7 @@ export function createDefaultAgentTools(options: {
       z.toJSONSchema(RunEvaluationDraftInput),
       async (args) =>
         ok(
-          DefaultAgentEvaluationDraftRunResultSchema.parse(
+          PragmaAgentEvaluationDraftRunResultSchema.parse(
             await options.project.runEvaluationDraft(RunEvaluationDraftInput.parse(args)),
           ),
         ),
@@ -477,7 +477,7 @@ function tool(
     args: unknown,
     context?: ExpertAgentManagedToolCallContext,
   ) => Promise<ExpertAgentToolCallResult>,
-): DefaultAgentTool {
+): PragmaAgentTool {
   return {
     name,
     description,
@@ -492,7 +492,7 @@ function ok(details: unknown): ExpertAgentToolCallResult {
 
 function parseUpdateFlowDraftInput(args: unknown): {
   readonly input: z.infer<typeof UpdateFlowDraftInput>;
-  readonly warning?: DefaultAgentFlowDraftDiagnostic | undefined;
+  readonly warning?: PragmaAgentFlowDraftDiagnostic | undefined;
 } {
   if (!isRecord(args) || typeof args["operations"] !== "string") {
     return { input: UpdateFlowDraftInput.parse(args) };
@@ -522,10 +522,10 @@ function parseUpdateFlowDraftInput(args: unknown): {
 }
 
 function summarizeFlowDraftUpdate(
-  draft: DefaultAgentFlowDraft,
-  operations: readonly DefaultAgentFlowDraftOperation[],
-  warning?: DefaultAgentFlowDraftDiagnostic,
-): z.infer<typeof DefaultAgentFlowDraftUpdateSummarySchema> {
+  draft: PragmaAgentFlowDraft,
+  operations: readonly PragmaAgentFlowDraftOperation[],
+  warning?: PragmaAgentFlowDraftDiagnostic,
+): z.infer<typeof PragmaAgentFlowDraftUpdateSummarySchema> {
   const stepsChanged = new Set<string>();
   const transitionsChanged = new Set<string>();
   const loopsChanged = new Set<string>();
@@ -560,7 +560,7 @@ function summarizeFlowDraftUpdate(
   }
 
   const diagnostics = warning === undefined ? draft.diagnostics : [warning, ...draft.diagnostics];
-  return DefaultAgentFlowDraftUpdateSummarySchema.parse({
+  return PragmaAgentFlowDraftUpdateSummarySchema.parse({
     draftId: draft.draftId,
     baseProjectRevision: draft.baseProjectRevision,
     draftRevision: draft.draftRevision,
@@ -586,9 +586,9 @@ function summarizeFlowDraftUpdate(
 }
 
 function summarizeEvaluationDraft(
-  draft: DefaultAgentEvaluationDraft,
-): z.infer<typeof DefaultAgentEvaluationDraftSummarySchema> {
-  return DefaultAgentEvaluationDraftSummarySchema.parse({
+  draft: PragmaAgentEvaluationDraft,
+): z.infer<typeof PragmaAgentEvaluationDraftSummarySchema> {
+  return PragmaAgentEvaluationDraftSummarySchema.parse({
     draftId: draft.draftId,
     baseProjectRevision: draft.baseProjectRevision,
     draftRevision: draft.draftRevision,
@@ -605,9 +605,9 @@ function summarizeEvaluationDraft(
 }
 
 function viewEvaluationDraft(
-  draft: DefaultAgentEvaluationDraft,
+  draft: PragmaAgentEvaluationDraft,
   caseIds: readonly string[],
-): z.infer<typeof DefaultAgentEvaluationDraftViewSchema> {
+): z.infer<typeof PragmaAgentEvaluationDraftViewSchema> {
   const cases = new Map(
     draft.resource.spec.method.cases.map((testCase) => [testCase.id, testCase] as const),
   );
@@ -616,7 +616,7 @@ function viewEvaluationDraft(
     if (testCase === undefined) throw new Error(`Evaluation draft case not found: ${caseId}`);
     return testCase;
   });
-  return DefaultAgentEvaluationDraftViewSchema.parse({
+  return PragmaAgentEvaluationDraftViewSchema.parse({
     ...summarizeEvaluationDraft(draft),
     selectedCases,
   });

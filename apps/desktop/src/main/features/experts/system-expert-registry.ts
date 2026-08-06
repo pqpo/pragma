@@ -9,10 +9,11 @@ import {
   type PragmaResource,
 } from "@pragma/interpreter/ast";
 import {
+  BUILT_IN_AGENT_REFS,
   BUILT_IN_PRAGMA_REF,
-  builtInPragmaFingerprint,
-  builtInPragmaResource,
-} from "@pragma/default-agent";
+  builtInAgentFingerprint,
+  builtInAgentResource,
+} from "@pragma/built-in-agents";
 import { z } from "zod";
 
 import {
@@ -84,7 +85,9 @@ export function createDesktopSystemExpertRegistry(options?: {
   readonly configPath?: string | undefined;
   readonly warn?: ((message: string, error: unknown) => void) | undefined;
 }): DesktopSystemExpertRegistry {
-  const defaultResource = builtInPragmaResource();
+  const defaultResource = builtInAgentResource(BUILT_IN_PRAGMA_REF);
+  const reservedRefs = new Set<string>(BUILT_IN_AGENT_REFS);
+  const reservedIds = new Set(BUILT_IN_AGENT_REFS.map((ref) => ref.slice("expert:".length)));
   let customizations = new Map<string, SystemExpertCustomization>();
 
   const requireBuiltInRef = (ref: string): void => {
@@ -255,13 +258,14 @@ export function createDesktopSystemExpertRegistry(options?: {
     },
     fingerprint: (ref) =>
       ref === BUILT_IN_PRAGMA_REF
-        ? builtInPragmaFingerprint(
+        ? builtInAgentFingerprint(
+            BUILT_IN_PRAGMA_REF,
             customizations.has(BUILT_IN_PRAGMA_REF) ? effectiveResource() : undefined,
             customizationResources(customizations.get(BUILT_IN_PRAGMA_REF)),
           )
         : undefined,
-    isReservedRef: (ref) => ref === BUILT_IN_PRAGMA_REF,
-    isReservedId: (id) => id === defaultResource.metadata.id,
+    isReservedRef: (ref) => reservedRefs.has(ref),
+    isReservedId: (id) => reservedIds.has(id),
     async update(ref, input) {
       requireBuiltInRef(ref);
       const parsed = UpdateBuiltInExpertDefinitionSchema.parse(input);

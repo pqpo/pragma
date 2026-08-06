@@ -4,10 +4,10 @@ import { dirname, join } from "node:path";
 
 import { encodePragmaPathSegment, withFileLock } from "@pragma/core";
 import {
-  DefaultAgentAutomationSummarySchema,
-  type DefaultAgentAutomationPort,
-  type DefaultAgentAutomationSummary,
-} from "@pragma/default-agent";
+  PragmaAgentAutomationSummarySchema,
+  type PragmaAgentAutomationPort,
+  type PragmaAgentAutomationSummary,
+} from "@pragma/built-in-agents";
 import { parsePragmaYaml } from "@pragma/interpreter";
 import { PragmaAutomationResourceSchema } from "@pragma/interpreter/ast";
 import { z } from "zod";
@@ -21,11 +21,11 @@ const DeleteResultSchema = z.object({
   ref: z.string().min(1),
 });
 
-export function createDesktopDefaultAgentAutomationPort(options: {
+export function createDesktopPragmaAgentAutomationPort(options: {
   readonly service: AutomationService;
   readonly project: PragmaProjectStore;
   readonly stateRoot: string;
-}): DefaultAgentAutomationPort {
+}): PragmaAgentAutomationPort {
   const operationPath = (operationId: string) =>
     join(
       options.stateRoot,
@@ -41,16 +41,16 @@ export function createDesktopDefaultAgentAutomationPort(options: {
       ]);
       return {
         projectRevision: project.revision,
-        automations: automations.map(toDefaultAgentSummary),
+        automations: automations.map(toPragmaAgentSummary),
       };
     },
     async save(input) {
       return await idempotentOperation(
         operationPath(input.operationId),
-        DefaultAgentAutomationSummarySchema,
+        PragmaAgentAutomationSummarySchema,
         async () => {
           const resource = PragmaAutomationResourceSchema.parse(parsePragmaYaml(input.source));
-          return toDefaultAgentSummary(
+          return toPragmaAgentSummary(
             await options.service.save({
               expectedProjectRevision: input.expectedProjectRevision,
               resource,
@@ -79,15 +79,15 @@ export function createDesktopDefaultAgentAutomationPort(options: {
     async resetSession(input) {
       return await idempotentOperation(
         operationPath(input.operationId),
-        DefaultAgentAutomationSummarySchema,
-        async () => toDefaultAgentSummary(await options.service.resetSession(input.ref)),
+        PragmaAgentAutomationSummarySchema,
+        async () => toPragmaAgentSummary(await options.service.resetSession(input.ref)),
       );
     },
   };
 }
 
-function toDefaultAgentSummary(summary: AutomationSummary): DefaultAgentAutomationSummary {
-  return DefaultAgentAutomationSummarySchema.parse({
+function toPragmaAgentSummary(summary: AutomationSummary): PragmaAgentAutomationSummary {
+  return PragmaAgentAutomationSummarySchema.parse({
     ref: summary.ref,
     name: summary.resource.metadata.name,
     enabled: summary.resource.spec.enabled,

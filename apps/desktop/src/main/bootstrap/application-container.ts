@@ -12,9 +12,13 @@ import {
 } from "@pragma/core";
 import {
   BUILT_IN_PRAGMA_REF,
-  compileBuiltInDefaultAgent,
-  createDefaultAgentTools,
-} from "@pragma/default-agent";
+  SKILL_EVALUATION_EXPERT_REF,
+  SKILL_REVISION_EXPERT_REF,
+  STORE_REVISION_EXPERT_REF,
+  STORE_REVISION_TARGET_CONTEXT_REF,
+  compileBuiltInAgent,
+  createPragmaAgentTools,
+} from "@pragma/built-in-agents";
 import { MEMORY_CURATOR_REF } from "@pragma/memory";
 
 import { installAutomationHandlers } from "../features/automations/automation-ipc.ts";
@@ -29,8 +33,6 @@ import { createCapabilityStore } from "../features/capabilities/capability-store
 import {
   createDesktopSkillAgents,
   createSkillEvaluationProfileStore,
-  SKILL_EVALUATION_EXPERT_REF,
-  SKILL_REVISION_EXPERT_REF,
   type DesktopSkillAgents,
 } from "../features/capabilities/skill-agents.ts";
 import {
@@ -43,7 +45,6 @@ import { createCapabilityVerifier } from "../features/capabilities/capability-ve
 import { installContextStoreHandlers } from "../features/context-stores/context-store-ipc.ts";
 import {
   createContextStoreRevisionService,
-  STORE_REVISION_EXPERT_REF,
   type ContextStoreRevisionGenerator,
   type ContextStoreRevisionService,
 } from "../features/context-stores/context-store-revision-service.ts";
@@ -52,9 +53,9 @@ import {
   createDesktopStoreRevisionAgent,
   type DesktopStoreRevisionAgent,
 } from "../features/context-stores/store-revision-agent.ts";
-import { createDesktopDefaultAgentAutomationPort } from "../features/default-agent/default-agent-automation-adapter.ts";
-import { createDesktopDefaultAgentProjectPort } from "../features/default-agent/default-agent-project-adapter.ts";
-import { createDesktopDefaultAgentTaskPort } from "../features/default-agent/default-agent-task-adapter.ts";
+import { createDesktopPragmaAgentAutomationPort } from "../features/built-in-agents/pragma-agent-automation-adapter.ts";
+import { createDesktopPragmaAgentProjectPort } from "../features/built-in-agents/pragma-agent-project-adapter.ts";
+import { createDesktopPragmaAgentTaskPort } from "../features/built-in-agents/pragma-agent-task-adapter.ts";
 import { installExpertDefinitionHandlers } from "../features/experts/expert-definition-ipc.ts";
 import { createExpertDefinitionStore } from "../features/experts/expert-definition-store.ts";
 import { createDesktopSystemExpertRegistry } from "../features/experts/system-expert-registry.ts";
@@ -214,9 +215,11 @@ export async function createDesktopApplicationContainer(
     blueprintCache,
     reservedResourceRefs: new Set([
       BUILT_IN_PRAGMA_REF,
+      MEMORY_CURATOR_REF,
       STORE_REVISION_EXPERT_REF,
       SKILL_REVISION_EXPERT_REF,
       SKILL_EVALUATION_EXPERT_REF,
+      STORE_REVISION_TARGET_CONTEXT_REF,
     ]),
   });
   const workflowLayouts = createWorkflowLayoutStore({ projectsPath });
@@ -626,13 +629,13 @@ export async function createDesktopApplicationContainer(
     },
   );
   const defaultAgentStateRoot = join(pragmaPaths.stateRoot(), "pragma");
-  const defaultAgentProject = createDesktopDefaultAgentProjectPort({
+  const pragmaAgentProject = createDesktopPragmaAgentProjectPort({
     project: pragmaProjectStore,
     stateRoot: defaultAgentStateRoot,
     capabilities: capabilityStore,
     runtimes,
   });
-  const defaultAgentToolsRef: { current?: ReturnType<typeof createDefaultAgentTools> } = {};
+  const pragmaAgentToolsRef: { current?: ReturnType<typeof createPragmaAgentTools> } = {};
   const memoryCuratorRef: { current?: DesktopMemoryCurator } = {};
   const missionRunner = createMissionRunner({
     missions: missionStore,
@@ -744,7 +747,7 @@ export async function createDesktopApplicationContainer(
         });
       }
       if (mission.executor.ref !== BUILT_IN_PRAGMA_REF) return undefined;
-      if (defaultAgentToolsRef.current === undefined) {
+      if (pragmaAgentToolsRef.current === undefined) {
         throw new Error("The built-in Pragma tools have not been initialized.");
       }
       const definition = systemExperts.get(BUILT_IN_PRAGMA_REF);
@@ -759,7 +762,9 @@ export async function createDesktopApplicationContainer(
         configuredModel,
         createsSession ? mission.modelOverride : undefined,
       );
-      return await compileBuiltInDefaultAgent({
+      return await compileBuiltInAgent({
+        ref: BUILT_IN_PRAGMA_REF,
+        environmentId: "desktop-system-expert",
         definitionStateRoot: join(defaultAgentStateRoot, "definitions"),
         workspace: mission.workspace.path,
         pragmaHome: pragmaPaths.root,
@@ -774,7 +779,7 @@ export async function createDesktopApplicationContainer(
             ? {}
             : { modelSelection: defaults.modelSelection }),
         },
-        tools: defaultAgentToolsRef.current,
+        tools: pragmaAgentToolsRef.current,
         blueprintCache,
         ...(definition.customized
           ? { expertResource: systemExperts.getResource(BUILT_IN_PRAGMA_REF) }
@@ -864,16 +869,16 @@ export async function createDesktopApplicationContainer(
     onStorageTrashed: () => trashMaintenance.schedule("automation-storage-trashed"),
   });
   installAutomationHandlers(automationService);
-  const defaultAgentTasks = createDesktopDefaultAgentTaskPort({
+  const pragmaAgentTasks = createDesktopPragmaAgentTaskPort({
     missions: missionStore,
     runner: missionRunner,
     creator: missionCreator,
     stateRoot: defaultAgentStateRoot,
   });
-  defaultAgentToolsRef.current = createDefaultAgentTools({
-    project: defaultAgentProject,
-    tasks: defaultAgentTasks,
-    automations: createDesktopDefaultAgentAutomationPort({
+  pragmaAgentToolsRef.current = createPragmaAgentTools({
+    project: pragmaAgentProject,
+    tasks: pragmaAgentTasks,
+    automations: createDesktopPragmaAgentAutomationPort({
       service: automationService,
       project: pragmaProjectStore,
       stateRoot: defaultAgentStateRoot,

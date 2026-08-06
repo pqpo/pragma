@@ -3,6 +3,7 @@ import { mkdir, readFile, readdir, rename, rm, writeFile } from "node:fs/promise
 import { dirname, join } from "node:path";
 
 import { withFileLock } from "@pragma/context-filesystem";
+import { applySkillChangeSet, transitionSkillRevisionJob } from "@pragma/built-in-agents";
 import { SkillPackageSchema, type SkillPackage } from "@pragma/shared";
 
 import {
@@ -107,15 +108,11 @@ export function createSkillRevisionService(options: {
     });
 
   const processJob = async (pending: SkillRevisionJob): Promise<void> => {
-    let running = await mutate(pending.id, pending.revision, (job) => {
-      if (job.state !== "pending") return job;
-      return {
-        ...job,
-        revision: job.revision + 1,
-        state: "running",
-        updatedAt: new Date().toISOString(),
-      };
-    });
+    let running = await mutate(pending.id, pending.revision, (job) =>
+      job.state === "pending"
+        ? transitionSkillRevisionJob(job, { type: "generation_started" })
+        : job,
+    );
     if (running.state !== "running") return;
     try {
       const base = await readSkillPackage(options.capabilities, running.request.capabilityId);
@@ -135,43 +132,27 @@ export function createSkillRevisionService(options: {
       )
         throw new Error("skill_revision_base_mismatch");
       const nextPackage = applySkillChangeSet(base.package, changeSet);
-      running = await mutate(running.id, running.revision, (job) => ({
-        ...job,
-        revision: job.revision + 1,
-        state: "evaluating",
-        changeSet,
-        updatedAt: new Date().toISOString(),
-      }));
+      running = await mutate(running.id, running.revision, (job) =>
+        transitionSkillRevisionJob(job, { type: "generation_succeeded", changeSet }),
+      );
       const evaluation = await options.evaluator.evaluate({
         jobId: running.id,
         package: nextPackage,
         request: running.request,
       });
-      await mutate(running.id, running.revision, (job) => ({
-        ...job,
-        revision: job.revision + 1,
-        state: evaluation.passed ? "pending_review" : "needs_attention",
-        evaluation,
-        ...(evaluation.passed
-          ? { error: undefined }
-          : {
-              error: {
-                code: "skill_evaluation_failed",
-                message: "The proposed Skill revision did not pass evaluation.",
-              },
-            }),
-        updatedAt: new Date().toISOString(),
-      }));
+      await mutate(running.id, running.revision, (job) =>
+        transitionSkillRevisionJob(job, { type: "evaluation_succeeded", evaluation }),
+      );
     } catch (error) {
       const current = await readJob(running.id);
       if (!["running", "evaluating"].includes(current.state)) return;
-      await mutate(current.id, current.revision, (job) => ({
-        ...job,
-        revision: job.revision + 1,
-        state: "needs_attention",
-        error: { code: errorCode(error), message: errorMessage(error) },
-        updatedAt: new Date().toISOString(),
-      }));
+      await mutate(current.id, current.revision, (job) =>
+        transitionSkillRevisionJob(job, {
+          type: "processing_failed",
+          code: errorCode(error),
+          message: errorMessage(error),
+        }),
+      );
     }
   };
 
@@ -205,20 +186,9 @@ export function createSkillRevisionService(options: {
         .toSorted((a, b) => b.updatedAt.localeCompare(a.updatedAt));
     },
     async approve(jobId, expectedRevision) {
-      const applying = await mutate(jobId, expectedRevision, (job) => {
-        if (
-          job.state !== "pending_review" ||
-          job.changeSet === undefined ||
-          job.evaluation?.passed !== true
-        )
-          throw new Error("skill_revision_state_invalid");
-        return {
-          ...job,
-          revision: job.revision + 1,
-          state: "applying",
-          updatedAt: new Date().toISOString(),
-        };
-      });
+      const applying = await mutate(jobId, expectedRevision, (job) =>
+        transitionSkillRevisionJob(job, { type: "approved" }),
+      );
       const changeSet = applying.changeSet!;
       const current = await readSkillPackage(options.capabilities, applying.request.capabilityId);
       if (
@@ -234,12 +204,9 @@ export function createSkillRevisionService(options: {
           }
           const replacement = createJob(applying.request);
           await writeJob(replacement);
-          const superseded = SkillRevisionJobSchema.parse({
-            ...currentJob,
-            revision: currentJob.revision + 1,
-            state: "superseded",
-            supersededBy: replacement.id,
-            updatedAt: new Date().toISOString(),
+          const superseded = transitionSkillRevisionJob(currentJob, {
+            type: "superseded",
+            replacementId: replacement.id,
           });
           await writeJob(superseded);
           service.scheduleProcessing();
@@ -251,47 +218,29 @@ export function createSkillRevisionService(options: {
           id: applying.request.capabilityId,
           package: applySkillChangeSet(current.package, changeSet),
         });
-        return await mutate(applying.id, applying.revision, (job) => ({
-          ...job,
-          revision: job.revision + 1,
-          state: "completed",
-          updatedAt: new Date().toISOString(),
-        }));
+        return await mutate(applying.id, applying.revision, (job) =>
+          transitionSkillRevisionJob(job, { type: "apply_succeeded" }),
+        );
       } catch (error) {
-        await mutate(applying.id, applying.revision, (job) => ({
-          ...job,
-          revision: job.revision + 1,
-          state: "needs_attention",
-          error: { code: "skill_revision_apply_failed", message: errorMessage(error) },
-          updatedAt: new Date().toISOString(),
-        }));
+        await mutate(applying.id, applying.revision, (job) =>
+          transitionSkillRevisionJob(job, {
+            type: "apply_failed",
+            code: "skill_revision_apply_failed",
+            message: errorMessage(error),
+          }),
+        );
         throw error;
       }
     },
     async reject(id, revision) {
-      return await mutate(id, revision, (job) => {
-        if (job.state !== "pending_review") throw new Error("skill_revision_state_invalid");
-        return {
-          ...job,
-          revision: job.revision + 1,
-          state: "rejected",
-          updatedAt: new Date().toISOString(),
-        };
-      });
+      return await mutate(id, revision, (job) =>
+        transitionSkillRevisionJob(job, { type: "rejected" }),
+      );
     },
     async retry(id, revision) {
-      const next = await mutate(id, revision, (job) => {
-        if (job.state !== "needs_attention") throw new Error("skill_revision_state_invalid");
-        return {
-          ...job,
-          revision: job.revision + 1,
-          state: "pending",
-          changeSet: undefined,
-          evaluation: undefined,
-          error: undefined,
-          updatedAt: new Date().toISOString(),
-        };
-      });
+      const next = await mutate(id, revision, (job) =>
+        transitionSkillRevisionJob(job, { type: "retried" }),
+      );
       service.scheduleProcessing();
       return next;
     },
@@ -349,31 +298,6 @@ export function createSkillRevisionService(options: {
     },
   };
   return service;
-}
-
-export function applySkillChangeSet(
-  base: SkillPackage,
-  rawChangeSet: SkillRevisionChangeSet,
-): SkillPackage {
-  const changeSet = SkillRevisionChangeSetSchema.parse(rawChangeSet);
-  const files = new Map(base.files.map((file) => [file.path, file.content]));
-  for (const operation of changeSet.operations) {
-    if (operation.operation === "delete") files.delete(operation.path);
-    else if (operation.operation === "rename") {
-      const content = files.get(operation.path);
-      if (content === undefined || files.has(operation.nextPath))
-        throw new Error("skill_revision_rename_invalid");
-      files.delete(operation.path);
-      files.set(operation.nextPath, content);
-    } else files.set(operation.path, operation.content);
-  }
-  return SkillPackageSchema.parse({
-    name: changeSet.name,
-    description: changeSet.description,
-    files: [...files]
-      .map(([path, content]) => ({ path, content }))
-      .toSorted((a, b) => a.path.localeCompare(b.path)),
-  });
 }
 
 async function readSkillPackage(

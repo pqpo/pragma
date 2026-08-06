@@ -4,29 +4,26 @@ import { basename, dirname, join } from "node:path";
 
 import { withFileLock } from "@pragma/context-filesystem";
 import {
-  ContextSystem,
-  defineExpert,
-  error,
-  type ExpertAgentContextStore,
   type PragmaLoggerProvider,
   type RuntimeModelSelection,
   type RuntimeResolver,
 } from "@pragma/core";
+import {
+  STORE_REVISION_EXPERT_REF,
+  STORE_REVISION_TARGET_BINDING_REF,
+  builtInAgentFingerprint,
+  compileBuiltInAgent,
+  createBuiltInStoreRevisionGenerator,
+  readOnlyContextStore,
+} from "@pragma/built-in-agents";
 import type { CompiledResource, InvocableResource } from "@pragma/interpreter";
 import { z } from "zod";
 
-import {
-  ContextStoreChangeSetSchema,
-  type ContextStoreRevisionProfile,
-} from "../../../shared/contracts/index.ts";
+import type { ContextStoreRevisionProfile } from "../../../shared/contracts/index.ts";
 import type { MissionRunner } from "../missions/mission-runner.ts";
 import { MissionStoreError, type MissionStore } from "../missions/mission-store.ts";
 import type { PragmaProjectStore } from "../projects/pragma-project-store.ts";
-import {
-  STORE_REVISION_EXPERT_ID,
-  STORE_REVISION_EXPERT_REF,
-  type ContextStoreRevisionGenerator,
-} from "./context-store-revision-service.ts";
+import type { ContextStoreRevisionGenerator } from "./context-store-revision-service.ts";
 import type { ContextStoreStore } from "./context-store-store.ts";
 
 export interface DesktopStoreRevisionAgent {
@@ -84,53 +81,118 @@ export function createDesktopStoreRevisionAgent(options: {
     return { runtimeId, modelSelection };
   };
 
+  const generator = createBuiltInStoreRevisionGenerator({
+    execution: {
+      async generate(input) {
+        const runtime = await resolveRuntime(input.profile);
+        const project = await options.project.ensurePublished();
+        await mkdir(isolatedWorkspace, { recursive: true, mode: 0o700 });
+        const mission = await options.missions.create({
+          workspace: { path: isolatedWorkspace, basename: basename(isolatedWorkspace) },
+          goal: input.prompt,
+          title: input.title,
+          project: { id: project.projectId, revision: project.revision },
+          executor: {
+            kind: "expert",
+            ref: STORE_REVISION_EXPERT_REF,
+            name: "Store Revision Agent",
+          },
+          origin: {
+            type: "system-store-revision",
+            jobId: input.jobId,
+            storeId: input.storeId,
+          },
+          toolPermissionMode: "request-approval",
+          ...(runtime.modelSelection === undefined
+            ? {}
+            : {
+                modelOverride: {
+                  providerId: runtime.modelSelection.model.providerId,
+                  modelId: runtime.modelSelection.model.modelId,
+                  ...(runtime.modelSelection.thinkingLevel === undefined
+                    ? {}
+                    : { thinkingLevel: runtime.modelSelection.thinkingLevel }),
+                },
+              }),
+        });
+        await registerAgentMission(registryPath, mission.id, input.jobId, input.storeId);
+        try {
+          await options.runner.run(mission.id);
+          await waitForMission(options.missions, mission.id);
+          const finished = await options.missions.get(mission.id);
+          if (finished.execution?.status !== "succeeded") {
+            throw new Error(
+              `store_revision_agent_failed:${finished.execution?.error ?? "unknown"}`,
+            );
+          }
+          const chat = await options.runner.getChat({ id: mission.id, limit: 100 });
+          const output = chat.entries
+            .filter((entry) => entry.kind === "assistant")
+            .map((entry) => entry.content)
+            .at(-1);
+          if (output === undefined) throw new Error("store_revision_agent_output_missing");
+          return { content: output };
+        } finally {
+          if (await cleanupAgentMission(options.runner, mission.id)) {
+            await unregisterAgentMission(registryPath, mission.id).catch(() => undefined);
+          }
+        }
+      },
+    },
+  });
+
   const agent: DesktopStoreRevisionAgent = {
     async compile(input) {
       const runtime = await resolveRuntime(input.profile, input.runtimes);
       const resolved = await options.contextStores.resolve(input.storeId);
-      const contextSystem = new ContextSystem({
-        stores: { "target-store": readOnlyStore(resolved.store) },
-        roots: [{ namespace: "target-store" }],
-      });
-      const expert = await defineExpert({
-        schemaVersion: "pragma.expert/v1",
-        id: STORE_REVISION_EXPERT_ID,
-        name: "Store Revision Agent",
-        description: "Hidden system Expert that proposes structured Context Store revisions.",
-        scope: "system-store-revision",
-        tags: ["system", "context-store", "revision"],
-        instructions: STORE_REVISION_INSTRUCTIONS,
+      return await compileBuiltInAgent({
+        ref: STORE_REVISION_EXPERT_REF,
+        environmentId: "desktop-store-revision",
+        definitionStateRoot: join(options.pragmaHome, "cache", "built-in-agents", "definitions"),
         workspace: isolatedWorkspace,
         pragmaHome: options.pragmaHome,
-        defaultRuntimeId: runtime.runtimeId,
+        runtimes: input.runtimes ?? options.runtimes,
+        rootExecutionOverride: {
+          runtimeId: runtime.runtimeId,
+          ...(runtime.modelSelection === undefined
+            ? {}
+            : { modelSelection: runtime.modelSelection }),
+        },
         ...(runtime.modelSelection === undefined
           ? {}
-          : { models: { default: runtime.modelSelection } }),
-        contextSystem,
-        tools: [],
+          : { defaultModelSelection: runtime.modelSelection }),
         loggerProvider: options.loggerProvider,
-      });
-      const fingerprint = await agent.fingerprint(input.profile);
-      return {
-        ref: STORE_REVISION_EXPERT_REF,
-        value: expert,
-        fingerprint,
-        projectFingerprint: fingerprint,
-        environmentFingerprint: {
-          environmentId: "desktop",
-          projectFingerprint: fingerprint,
-          value: fingerprint,
-          resources: [],
-          plugins: [],
+        adapterHost: {
+          environmentId: "desktop-store-revision",
+          projectRoot: isolatedWorkspace,
+          async resolveBinding(ref) {
+            if (ref !== STORE_REVISION_TARGET_BINDING_REF) return undefined;
+            return {
+              ref,
+              revision: resolved.revision,
+              fingerprint: createHash("sha256").update(resolved.revision).digest("hex"),
+              value: { store: readOnlyContextStore(resolved.store) },
+            };
+          },
+          async resolveArtifact(source) {
+            throw new Error(`Unexpected Store Revision artifact: ${JSON.stringify(source)}`);
+          },
+          async resolveSecret() {
+            return undefined;
+          },
         },
-        rootRuntimeId: runtime.runtimeId,
-        dependencies: [],
-      };
+      });
     },
 
     async fingerprint(profile) {
       return createHash("sha256")
-        .update(JSON.stringify({ version: 1, profile, instructions: STORE_REVISION_INSTRUCTIONS }))
+        .update(
+          JSON.stringify({
+            version: 2,
+            profile,
+            definition: builtInAgentFingerprint(STORE_REVISION_EXPERT_REF),
+          }),
+        )
         .digest("hex");
     },
 
@@ -155,103 +217,9 @@ export function createDesktopStoreRevisionAgent(options: {
       return recovered;
     },
 
-    generator: {
-      async generate(input) {
-        const runtime = await resolveRuntime(input.profile);
-        const project = await options.project.ensurePublished();
-        await mkdir(isolatedWorkspace, { recursive: true, mode: 0o700 });
-        const mission = await options.missions.create({
-          workspace: { path: isolatedWorkspace, basename: basename(isolatedWorkspace) },
-          goal: renderRevisionPrompt(input),
-          title: `Revise knowledge base ${input.request.storeId.slice(0, 8)}`,
-          project: { id: project.projectId, revision: project.revision },
-          executor: {
-            kind: "expert",
-            ref: STORE_REVISION_EXPERT_REF,
-            name: "Store Revision Agent",
-          },
-          origin: {
-            type: "system-store-revision",
-            jobId: input.jobId,
-            storeId: input.request.storeId,
-          },
-          toolPermissionMode: "request-approval",
-          ...(runtime.modelSelection === undefined
-            ? {}
-            : {
-                modelOverride: {
-                  providerId: runtime.modelSelection.model.providerId,
-                  modelId: runtime.modelSelection.model.modelId,
-                  ...(runtime.modelSelection.thinkingLevel === undefined
-                    ? {}
-                    : { thinkingLevel: runtime.modelSelection.thinkingLevel }),
-                },
-              }),
-        });
-        await registerAgentMission(registryPath, mission.id, input.jobId, input.request.storeId);
-        try {
-          await options.runner.run(mission.id);
-          await waitForMission(options.missions, mission.id);
-          const finished = await options.missions.get(mission.id);
-          if (finished.execution?.status !== "succeeded") {
-            throw new Error(
-              `store_revision_agent_failed:${finished.execution?.error ?? "unknown"}`,
-            );
-          }
-          const chat = await options.runner.getChat({ id: mission.id, limit: 100 });
-          const output = chat.entries
-            .filter((entry) => entry.kind === "assistant")
-            .map((entry) => entry.content)
-            .at(-1);
-          if (output === undefined) throw new Error("store_revision_agent_output_missing");
-          return ContextStoreChangeSetSchema.parse(JSON.parse(extractJson(output)));
-        } finally {
-          if (await cleanupAgentMission(options.runner, mission.id)) {
-            await unregisterAgentMission(registryPath, mission.id).catch(() => undefined);
-          }
-        }
-      },
-    },
+    generator,
   };
   return agent;
-}
-
-const STORE_REVISION_INSTRUCTIONS = [
-  "You are the hidden Pragma Store Revision Agent.",
-  "The target-store Context is the only store you may inspect. It is read-only.",
-  "Return exactly one pragma.context-store-change-set/v1 JSON object without Markdown fences.",
-  "Never replace the store with one giant document.",
-  "Preserve progressive disclosure: guide.md is always_on and at most 2 KiB; overview.md is always_on and at most 3 KiB; index.md and indexes/** are bounded navigation; detailed knowledge belongs in multiple items/** files.",
-  "Keep internal Markdown links accurate: overview.md links relevant items/** files, index.md links indexes/** shards, and each shard links its items/** files.",
-  "Make the smallest coherent revision that satisfies the prompt. Preserve unrelated knowledge.",
-].join("\n");
-
-function renderRevisionPrompt(
-  input: Parameters<ContextStoreRevisionGenerator["generate"]>[0],
-): string {
-  return [
-    "Prepare a reviewable revision of the target Context Store.",
-    `Store id: ${input.request.storeId}`,
-    `Base revision: ${input.snapshot.revision}`,
-    `Base snapshot hash: ${input.snapshot.snapshotHash}`,
-    "Use target-store list/search/read to inspect only what is needed.",
-    "Revision request:",
-    input.request.prompt,
-    "Required JSON shape:",
-    '{"schemaVersion":"pragma.context-store-change-set/v1","storeId":"...","baseRevision":1,"baseSnapshotHash":"64 hex","summary":"...","operations":[{"operation":"upsert","id":"items/example.md","content":"...","metadata":{"trigger":"model_decision","priority":"normal"}},{"operation":"rename","id":"old.md","nextId":"new.md"},{"operation":"delete","id":"obsolete.md"}]}',
-  ].join("\n\n");
-}
-
-function readOnlyStore(store: ExpertAgentContextStore): ExpertAgentContextStore {
-  const denied = async () => error("permission_denied", "The Store Revision Agent is read-only.");
-  return {
-    listContext: async (input) => await store.listContext(input),
-    readContext: async (input) => await store.readContext(input),
-    searchContext: async (input) => await store.searchContext(input),
-    addContext: denied,
-    editContext: denied,
-    deleteContext: denied,
-  };
 }
 
 async function waitForMission(missions: MissionStore, id: string): Promise<void> {
@@ -267,12 +235,6 @@ async function waitForMission(missions: MissionStore, id: string): Promise<void>
     await new Promise<void>((resolve) => setTimeout(resolve, 200));
   }
   throw new Error("store_revision_agent_timeout");
-}
-
-function extractJson(content: string): string {
-  const trimmed = content.trim();
-  if (!trimmed.startsWith("```")) return trimmed;
-  return trimmed.replace(/^```(?:json)?\s*/iu, "").replace(/\s*```$/u, "");
 }
 
 const AgentMissionRegistrySchema = z

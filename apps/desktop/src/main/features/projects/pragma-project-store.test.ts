@@ -13,7 +13,11 @@ import type {
 } from "@pragma/interpreter/ast";
 import type { PragmaEvaluationResource } from "@pragma/evaluation/ast";
 import { afterEach, describe, expect, it } from "vitest";
-import { BUILT_IN_PRAGMA_REF, builtInPragmaResource } from "@pragma/default-agent";
+import {
+  BUILT_IN_PRAGMA_REF,
+  STORE_REVISION_TARGET_CONTEXT_REF,
+  builtInAgentResource,
+} from "@pragma/built-in-agents";
 import { ContentAddressedStore, derivePragmaResourceId } from "@pragma/core";
 
 import type { ExpertDefinition, UpdateExpertDefinition } from "../../../shared/contracts/index.ts";
@@ -40,7 +44,7 @@ async function stores() {
   directories.push(directory);
   const project = createPragmaProjectStore({
     projectsPath: directory,
-    reservedResourceRefs: new Set([BUILT_IN_PRAGMA_REF]),
+    reservedResourceRefs: new Set([BUILT_IN_PRAGMA_REF, STORE_REVISION_TARGET_CONTEXT_REF]),
   });
   return {
     directory,
@@ -870,12 +874,35 @@ describe("PragmaProjectStore", () => {
       code: "expert_referenced",
     });
     await expect(
-      project.upsert({ baseRevision: 1, resource: builtInPragmaResource() }),
+      project.upsert({ baseRevision: 1, resource: builtInAgentResource(BUILT_IN_PRAGMA_REF) }),
     ).rejects.toMatchObject({ code: "built_in_readonly" });
     await expect(experts.remove(BUILT_IN_PRAGMA_REF)).rejects.toMatchObject({
       code: "built_in_readonly",
     });
     expect((await project.get()).revision).toBe(1);
+  });
+
+  it("reserves the Store Revision Agent target Context identity", async () => {
+    const { project } = await stores();
+    const resource: PragmaContextStoreResource = {
+      apiVersion: "pragma/v3",
+      kind: "ContextStore",
+      metadata: {
+        id: "0000000000st0ctx",
+        name: "Conflicting store",
+        description: "A project resource that collides with the system target.",
+        tags: [],
+      },
+      spec: {
+        adapter: "pragma.context.host@v1",
+        binding: "binding:pragma.store-revision-target",
+        config: { key: "conflict" },
+      },
+    };
+
+    await expect(project.upsert({ baseRevision: 0, resource })).rejects.toMatchObject({
+      code: "built_in_readonly",
+    });
   });
 
   it("blocks deletion of Teams and Flows referenced by another Flow", async () => {

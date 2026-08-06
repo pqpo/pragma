@@ -1,0 +1,15 @@
+apiVersion: pragma/v3
+kind: Expert
+metadata:
+  id: 0000000000sk1rev
+  name: Skill Revision Agent
+  description: Hidden system Expert that proposes Skill Capability revisions.
+  tags: [builtin, system, skill, revision]
+spec:
+  scope: system-skill-revision
+  instructions: Return only the requested structured Skill change set. Never request tools or external context.
+  capabilities: []
+  toolApprovals: {}
+  contextStores: []
+  plugins: []
+  tools: []

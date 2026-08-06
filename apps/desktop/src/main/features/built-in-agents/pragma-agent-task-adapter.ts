@@ -4,29 +4,29 @@ import { mkdir, readFile, rename, writeFile } from "node:fs/promises";
 
 import { encodePragmaPathSegment, withFileLock } from "@pragma/core";
 import {
-  type DefaultAgentTask,
-  type DefaultAgentTaskPort,
-  type DefaultAgentTaskSummary,
-  type DefaultAgentTaskWorkItem,
-} from "@pragma/default-agent";
+  type PragmaAgentTask,
+  type PragmaAgentTaskPort,
+  type PragmaAgentTaskSummary,
+  type PragmaAgentTaskWorkItem,
+} from "@pragma/built-in-agents";
 
 import type { Mission } from "../../../shared/contracts/index.ts";
 import type { MissionCreator } from "../missions/mission-creator.ts";
 import type { MissionRunner } from "../missions/mission-runner.ts";
 import type { MissionStore } from "../missions/mission-store.ts";
 
-export function createDesktopDefaultAgentTaskPort(options: {
+export function createDesktopPragmaAgentTaskPort(options: {
   readonly missions: MissionStore;
   readonly runner: MissionRunner;
   readonly creator: MissionCreator;
   readonly stateRoot: string;
-}): DefaultAgentTaskPort {
+}): PragmaAgentTaskPort {
   const operationPath = (id: string) =>
     join(options.stateRoot, "operations", `${encodePragmaPathSegment(id)}.task.json`);
   return {
     async list() {
       return await Promise.all(
-        (await options.missions.list()).map(async (summary): Promise<DefaultAgentTaskSummary> => {
+        (await options.missions.list()).map(async (summary): Promise<PragmaAgentTaskSummary> => {
           const mission = await options.missions.get(summary.id);
           return {
             id: mission.id,
@@ -71,15 +71,13 @@ export function createDesktopDefaultAgentTaskPort(options: {
       );
     },
     async listWorkItems(id) {
-      return (await options.runner.getWork(id)).records.map(
-        (record): DefaultAgentTaskWorkItem => ({
-          id: record.recordId,
-          kind: record.kind,
-          status: record.status,
-          label: record.title,
-          details: record,
-        }),
-      );
+      return (await options.runner.getWork(id)).records.map((record): PragmaAgentTaskWorkItem => ({
+        id: record.recordId,
+        kind: record.kind,
+        status: record.status,
+        label: record.title,
+        details: record,
+      }));
     },
     async interrupt(id) {
       return toTask(await options.runner.interrupt(id));
@@ -87,7 +85,7 @@ export function createDesktopDefaultAgentTaskPort(options: {
   };
 }
 
-function toTask(mission: Mission): DefaultAgentTask {
+function toTask(mission: Mission): PragmaAgentTask {
   return {
     id: mission.id,
     title: mission.title,

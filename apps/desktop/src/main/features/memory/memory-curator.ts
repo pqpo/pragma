@@ -3,28 +3,27 @@ import { mkdir, readFile, readdir, rename, rm, stat, writeFile } from "node:fs/p
 import { basename, dirname, join } from "node:path";
 
 import {
-  ContextSystem,
   PragmaPaths,
   withFileLock,
   createPragmaLogger,
-  defineExpert,
   type PragmaLoggerProvider,
   type RuntimeModelSelection,
   type RuntimeResolver,
 } from "@pragma/core";
+import {
+  MEMORY_CURATOR_REF as BUILT_IN_MEMORY_CURATOR_REF,
+  builtInAgentFingerprint,
+  compileBuiltInAgent,
+  createBuiltInMemoryCurator,
+} from "@pragma/built-in-agents";
 import type { CompiledResource, InvocableResource } from "@pragma/interpreter";
 import {
-  EpisodicExtractionOutputSchema,
-  SemanticExtractionOutputSchema,
-  MEMORY_CURATOR_ID,
   MEMORY_CURATOR_PROMPT_VERSION,
   SEMANTIC_MEMORY_CURATOR_PROMPT_VERSION,
   KNOWLEDGE_MEMORY_CURATOR_PROMPT_VERSION,
   SKILL_MEMORY_CURATOR_PROMPT_VERSION,
   MEMORY_CURATOR_REF,
   DEFAULT_MEMORY_STORAGE_POLICY,
-  selectBoundedMemoryEvidence,
-  mergeMemoryEvidenceOmissionStats,
   type EpisodicMemoryExtractor,
   type KnowledgeMemoryExtractor,
   type SemanticMemoryExtractor,
@@ -32,8 +31,6 @@ import {
   type MemoryExtractorProfile,
   type MemoryExtractorProfileStore,
 } from "@pragma/memory";
-import { KnowledgeExtractionOutputSchema } from "@pragma/shared";
-import { SkillExtractionOutputSchema } from "@pragma/shared";
 
 import type { MissionRunner } from "../missions/mission-runner.ts";
 import { MissionStoreError, type MissionStore } from "../missions/mission-store.ts";
@@ -129,41 +126,47 @@ export function createDesktopMemoryCurator(options: {
     readonly loggerProvider?: PragmaLoggerProvider | undefined;
   }): Promise<CompiledResource<InvocableResource>> => {
     const runtime = await resolveRuntime(await options.profiles.get(), input.runtimes);
-    const expert = await defineExpert({
-      schemaVersion: "pragma.expert/v1",
-      id: MEMORY_CURATOR_ID,
-      name: "Memory Curator",
-      description: "Hidden system Expert that extracts structured long-term Memory.",
-      scope: "system-memory",
-      tags: ["system", "memory", "curator"],
-      instructions: CURATOR_INSTRUCTIONS,
+    return await compileBuiltInAgent({
+      ref: BUILT_IN_MEMORY_CURATOR_REF,
+      environmentId: "desktop",
+      definitionStateRoot: join(input.pragmaHome, "cache", "built-in-agents", "definitions"),
       workspace: input.workspace,
       pragmaHome: input.pragmaHome,
-      defaultRuntimeId: runtime.runtimeId,
+      runtimes: input.runtimes,
+      rootExecutionOverride: {
+        runtimeId: runtime.runtimeId,
+        ...(runtime.modelSelection === undefined ? {} : { modelSelection: runtime.modelSelection }),
+      },
       ...(runtime.modelSelection === undefined
         ? {}
-        : { models: { default: runtime.modelSelection } }),
-      contextSystem: new ContextSystem(),
-      tools: [],
+        : { defaultModelSelection: runtime.modelSelection }),
       loggerProvider: input.loggerProvider,
     });
-    const fingerprint = await createFingerprint(runtime.profile);
-    return {
-      ref: MEMORY_CURATOR_REF,
-      value: expert,
-      fingerprint,
-      projectFingerprint: fingerprint,
-      environmentFingerprint: {
-        environmentId: "desktop",
-        projectFingerprint: fingerprint,
-        value: fingerprint,
-        resources: [],
-        plugins: [],
-      },
-      rootRuntimeId: runtime.runtimeId,
-      dependencies: [],
-    };
   };
+
+  const curator = createBuiltInMemoryCurator({
+    profiles: options.profiles,
+    now,
+    execution: {
+      async run(input) {
+        const runtime = await resolveRuntime(input.profile);
+        const content = await runCuratorMission({
+          options,
+          runtime,
+          jobId: input.jobId,
+          title: input.title,
+          goal: input.prompt,
+          signal: input.signal,
+        });
+        return {
+          content,
+          runtimeId: runtime.runtimeId,
+          providerId: runtime.modelSelection?.model.providerId ?? "runtime-managed",
+          modelId: runtime.modelSelection?.model.modelId ?? "runtime-default",
+        };
+      },
+    },
+  });
 
   return {
     compile,
@@ -204,244 +207,11 @@ export function createDesktopMemoryCurator(options: {
     async fingerprint() {
       return await createFingerprint(await options.profiles.get());
     },
-    episodicExtractor: {
-      async extract(input, extractionOptions) {
-        const profile = await options.profiles.get();
-        const runtime = await resolveRuntime(profile);
-        const content = await runCuratorMission({
-          options,
-          runtime,
-          jobId: input.jobId,
-          title: `Memory extraction ${input.executionId.slice(0, 12)}`,
-          goal: renderExtractionPrompt(input),
-          signal: extractionOptions?.signal,
-        });
-        const output = EpisodicExtractionOutputSchema.parse(JSON.parse(extractJson(content)));
-        return {
-          output,
-          provenance: {
-            curatorRef: MEMORY_CURATOR_REF,
-            promptVersion: MEMORY_CURATOR_PROMPT_VERSION,
-            profileRevision: profile.revision,
-            runtimeId: runtime.runtimeId,
-            providerId: runtime.modelSelection?.model.providerId ?? "runtime-managed",
-            modelId: runtime.modelSelection?.model.modelId ?? "runtime-default",
-            extractedAt: now().toISOString(),
-          },
-        };
-      },
-    },
-    semanticExtractor: {
-      async extract(input, extractionOptions) {
-        const profile = await options.profiles.get();
-        const runtime = await resolveRuntime(profile);
-        const content = await runCuratorMission({
-          options,
-          runtime,
-          jobId: input.jobId,
-          title: `Semantic extraction ${input.executionId.slice(0, 12)}`,
-          goal: renderSemanticExtractionPrompt(input),
-          signal: extractionOptions?.signal,
-        });
-        const output = SemanticExtractionOutputSchema.parse(JSON.parse(extractJson(content)));
-        return {
-          output,
-          provenance: {
-            curatorRef: MEMORY_CURATOR_REF,
-            promptVersion: SEMANTIC_MEMORY_CURATOR_PROMPT_VERSION,
-            profileRevision: profile.revision,
-            runtimeId: runtime.runtimeId,
-            providerId: runtime.modelSelection?.model.providerId ?? "runtime-managed",
-            modelId: runtime.modelSelection?.model.modelId ?? "runtime-default",
-            extractedAt: now().toISOString(),
-          },
-        };
-      },
-    },
-    knowledgeExtractor: {
-      async extract(input, extractionOptions) {
-        const profile = await options.profiles.get();
-        const runtime = await resolveRuntime(profile);
-        const content = await runCuratorMission({
-          options,
-          runtime,
-          jobId: input.jobId,
-          title: `Knowledge extraction ${input.rootRef.id.slice(0, 12)}`,
-          goal: renderKnowledgeExtractionPrompt(input),
-          signal: extractionOptions?.signal,
-        });
-        const output = KnowledgeExtractionOutputSchema.parse(JSON.parse(extractJson(content)));
-        return {
-          output,
-          provenance: {
-            curatorRef: MEMORY_CURATOR_REF,
-            promptVersion: KNOWLEDGE_MEMORY_CURATOR_PROMPT_VERSION,
-            profileRevision: profile.revision,
-            runtimeId: runtime.runtimeId,
-            providerId: runtime.modelSelection?.model.providerId ?? "runtime-managed",
-            modelId: runtime.modelSelection?.model.modelId ?? "runtime-default",
-            extractedAt: now().toISOString(),
-          },
-        };
-      },
-    },
-    skillExtractor: {
-      async extract(input, extractionOptions) {
-        const profile = await options.profiles.get();
-        const runtime = await resolveRuntime(profile);
-        const content = await runCuratorMission({
-          options,
-          runtime,
-          jobId: input.jobId,
-          title: `Skill extraction ${input.rootRef.id.slice(0, 12)}`,
-          goal: renderSkillExtractionPrompt(input),
-          signal: extractionOptions?.signal,
-        });
-        const output = SkillExtractionOutputSchema.parse(JSON.parse(extractJson(content)));
-        return {
-          output,
-          provenance: {
-            curatorRef: MEMORY_CURATOR_REF,
-            promptVersion: SKILL_MEMORY_CURATOR_PROMPT_VERSION,
-            profileRevision: profile.revision,
-            runtimeId: runtime.runtimeId,
-            providerId: runtime.modelSelection?.model.providerId ?? "runtime-managed",
-            modelId: runtime.modelSelection?.model.modelId ?? "runtime-default",
-            extractedAt: now().toISOString(),
-          },
-        };
-      },
-    },
+    episodicExtractor: curator.episodicExtractor,
+    semanticExtractor: curator.semanticExtractor,
+    knowledgeExtractor: curator.knowledgeExtractor,
+    skillExtractor: curator.skillExtractor,
   };
-}
-
-const CURATOR_INSTRUCTIONS = [
-  "You are the hidden Pragma Memory Curator.",
-  "You have no tools and must not request additional context.",
-  "Extract only claims supported by the supplied Evidence ids.",
-  "A tool event with hidden input or output proves only that the call occurred; never infer hidden content from its name or status.",
-  "Return exactly one JSON object matching the requested schema, without Markdown fences or commentary.",
-  "Use the dominant language of the source task. Historical precedent is not current truth.",
-].join("\n");
-
-function renderExtractionPrompt(input: Parameters<EpisodicMemoryExtractor["extract"]>[0]): string {
-  return renderBoundedPrompt(input.evidence, input.omittedEvidence, (retained, omissions) =>
-    [
-      "Extract an Episodic Memory from this safe Evidence projection.",
-      "Return retain=false for low-value or insufficient evidence.",
-      "Every goal, summary, attempt, failure/recovery, and outcome must cite one or more supplied messageId values in evidenceRefs.",
-      "Output schema:",
-      '{"retain":true,"language":"zh-Hans","goal":{"text":"...","evidenceRefs":["..."]},"summary":{"text":"...","evidenceRefs":["..."]},"attempts":[{"description":"...","result":"...","evidenceRefs":["..."]}],"failuresAndRecoveries":[{"failure":"...","recovery":"...","evidenceRefs":["..."]}],"outcome":{"status":"succeeded|failed|cancelled|interrupted","summary":"...","evidenceRefs":["..."]},"valueScore":0.0}',
-      'or {"retain":false,"reason":"low-value|insufficient-evidence|sensitive"}.',
-      "Evidence:",
-      JSON.stringify(retained),
-      "Omitted Evidence statistics (no omitted content):",
-      JSON.stringify(omissions),
-    ].join("\n\n"),
-  );
-}
-
-function renderSemanticExtractionPrompt(
-  input: Parameters<SemanticMemoryExtractor["extract"]>[0],
-): string {
-  return renderBoundedPrompt(input.evidence, input.omittedEvidence, (retained, omissions) =>
-    [
-      "Extract current Semantic/Fact Memory from this safe Evidence projection.",
-      "Return retain=false when there is no stable, reusable fact. Do not turn historical outcomes into current truth.",
-      "Use only exact entries from allowedSubjectRefs and supplied messageId values. Never invent a subject id or Evidence id.",
-      "Use a namespaced predicate. normalizedValue must be a concise canonical value for deduplication.",
-      "Use conflictMode=exclusive only when the subject can have one current value for that predicate; otherwise use compatible.",
-      "When a direct user message unambiguously changes an existing exclusive fact, set replacementTarget to that current fact id and revision. Never replace a fact based only on assistant, tool, or summary text.",
-      "Confidence must be between 0 and 0.95. Only include reviewAt or expiresAt when Evidence explicitly supports that time.",
-      "Output schema:",
-      '{"retain":true,"facts":[{"statement":"...","subjectRefs":[{"type":"pragma.user","id":"..."}],"predicate":"user.preference.language","normalizedValue":"zh-Hans","conflictMode":"exclusive|compatible","confidence":0.0,"evidenceRefs":["..."],"replacementTarget":{"factId":"optional current fact id","expectedRevision":1},"reviewAt":"optional ISO time","expiresAt":"optional ISO time"}]}',
-      'or {"retain":false,"reason":"no-stable-fact|insufficient-evidence|sensitive"}.',
-      "Allowed subjects:",
-      JSON.stringify(input.allowedSubjectRefs),
-      "Current exclusive facts eligible for an explicit replacement:",
-      JSON.stringify(input.currentFacts),
-      "Evidence:",
-      JSON.stringify(retained),
-      "Omitted Evidence statistics (no omitted content):",
-      JSON.stringify(omissions),
-    ].join("\n\n"),
-  );
-}
-
-function renderKnowledgeExtractionPrompt(
-  input: Parameters<KnowledgeMemoryExtractor["extract"]>[0],
-): string {
-  const prompt = [
-    "Extract reusable Knowledge candidates from these already-curated Memory source revisions.",
-    "Candidates are proposals for human review, not automatically published instructions.",
-    "Each candidate must cite exact supplied sourceRefs and at least one Semantic source. It is eligible only when one cited Semantic source is verified or the cited Semantic sources collectively cover at least two distinct sourceExecutionIds.",
-    "Episodic sources are supplemental only. Use them to enrich steps, failures, and recoveries, never as independent authority or current truth.",
-    "normalizedKey must be a stable lowercase root-scoped deduplication key using only letters, numbers, dot, underscore, colon, slash, or hyphen.",
-    "Keep guidance concrete and reusable. Do not invent facts, identifiers, permissions, or provenance.",
-    "Output schema:",
-    '{"retain":true,"candidates":[{"content":{"title":"...","summary":"...","guidance":["..."],"normalizedKey":"workflow.example"},"sourceRefs":[{"kind":"episodic|semantic","id":"...","revision":1}]}]}',
-    'or {"retain":false,"reason":"no-reusable-knowledge|insufficient-sources|sensitive"}.',
-    "Root:",
-    JSON.stringify(input.rootRef),
-    "Sources:",
-    JSON.stringify(input.sources),
-  ].join("\n\n");
-  if (Buffer.byteLength(prompt) > DEFAULT_MEMORY_STORAGE_POLICY.extractionPromptMaxBytes) {
-    throw new Error("memory_curator_prompt_metadata_too_large");
-  }
-  return prompt;
-}
-
-function renderSkillExtractionPrompt(
-  input: Parameters<SkillMemoryExtractor["extract"]>[0],
-): string {
-  const prompt = [
-    "Extract at most three complete, reusable Skill candidates from these curated Memory sources.",
-    "A Skill is a coherent executable workflow, not a fact, isolated tip, command fragment, or one-off success. Merge related steps into one Skill and return retain=false when the pattern is fragmentary.",
-    "Every candidate must cite at least three distinct high-value Episodic ids across at least two conversations; at least two must have succeeded or recovered successfully. Semantic sources may support but never satisfy this threshold.",
-    "Generate SKILL.md plus optional references/*.md. Scripts are optional and must be dependency-free Node 22 ESM under scripts/*.mjs with node:test coverage under tests/*.test.mjs.",
-    "For each candidate create at least three source replay expectations and one clearly non-applicable boundary case.",
-    "Compare only existingTargets. Use revise only for one clear match, ambiguous for two or more plausible matches, otherwise create. Never invent a binding id.",
-    "Output schema:",
-    '{"retain":true,"candidates":[{"content":{"normalizedKey":"workflow.example","applicability":["..."],"failureModes":["..."],"recoverySteps":["..."],"package":{"name":"...","description":"...","files":[{"path":"SKILL.md","content":"---\\nname: ...\\ndescription: ...\\n---\\n..."}]},"replayCases":[{"objective":"...","requiredBehaviors":["..."],"forbiddenBehaviors":[]}],"boundaryCase":{"objective":"...","requiredBehaviors":["recognize non-applicability"],"forbiddenBehaviors":["force the workflow"]}},"sourceRefs":[{"kind":"episodic","id":"...","revision":1}],"route":{"type":"create|revise|ambiguous","bindingId":"for revise","bindingIds":["for ambiguous"]}}]}',
-    'or {"retain":false,"reason":"no-reusable-skill|insufficient-independent-sources|fragmentary-pattern|sensitive"}.',
-    "Root:",
-    JSON.stringify(input.rootRef),
-    "Existing Memory Skills:",
-    JSON.stringify(input.existingTargets),
-    "Sources:",
-    JSON.stringify(input.sources),
-  ].join("\n\n");
-  if (Buffer.byteLength(prompt) > DEFAULT_MEMORY_STORAGE_POLICY.extractionPromptMaxBytes) {
-    throw new Error("memory_curator_prompt_metadata_too_large");
-  }
-  return prompt;
-}
-
-function renderBoundedPrompt(
-  evidence: Parameters<EpisodicMemoryExtractor["extract"]>[0]["evidence"],
-  persistentOmissions: Parameters<EpisodicMemoryExtractor["extract"]>[0]["omittedEvidence"],
-  render: (
-    retained: readonly import("@pragma/shared").MemoryEvidenceEnvelope[],
-    omissions: Parameters<EpisodicMemoryExtractor["extract"]>[0]["omittedEvidence"],
-  ) => string,
-): string {
-  let evidenceBudget = DEFAULT_MEMORY_STORAGE_POLICY.extractionPromptMaxBytes;
-  for (;;) {
-    const selected = selectBoundedMemoryEvidence(evidence, {
-      maxRecords: DEFAULT_MEMORY_STORAGE_POLICY.evidenceMaxRecordsPerExecution,
-      maxBytes: evidenceBudget,
-    });
-    const prompt = render(
-      selected.retained,
-      mergeMemoryEvidenceOmissionStats(persistentOmissions, selected.omittedStats),
-    );
-    const overflow =
-      Buffer.byteLength(prompt) - DEFAULT_MEMORY_STORAGE_POLICY.extractionPromptMaxBytes;
-    if (overflow <= 0) return prompt;
-    if (evidenceBudget === 0) throw new Error("memory_curator_prompt_metadata_too_large");
-    evidenceBudget = Math.max(0, evidenceBudget - overflow - 512);
-  }
 }
 
 async function runCuratorMission(input: {
@@ -551,18 +321,15 @@ async function waitForMission(
   throw new Error("memory_curator_timeout");
 }
 
-function extractJson(content: string): string {
-  const trimmed = content.trim();
-  if (!trimmed.startsWith("```")) return trimmed;
-  return trimmed.replace(/^```(?:json)?\s*/i, "").replace(/\s*```$/, "");
-}
-
 async function createFingerprint(profile: MemoryExtractorProfile): Promise<string> {
   return createHash("sha256")
     .update(
       JSON.stringify({
         episodicCurator: MEMORY_CURATOR_PROMPT_VERSION,
         semanticCurator: SEMANTIC_MEMORY_CURATOR_PROMPT_VERSION,
+        knowledgeCurator: KNOWLEDGE_MEMORY_CURATOR_PROMPT_VERSION,
+        skillCurator: SKILL_MEMORY_CURATOR_PROMPT_VERSION,
+        definition: builtInAgentFingerprint(BUILT_IN_MEMORY_CURATOR_REF),
         profile,
       }),
     )

@@ -1,0 +1,15 @@
+apiVersion: pragma/v3
+kind: Expert
+metadata:
+  id: 0000000000sk1eva
+  name: Skill Evaluation Agent
+  description: Hidden system Expert that evaluates Skill Capability candidates.
+  tags: [builtin, system, skill, evaluation]
+spec:
+  scope: system-skill-evaluation
+  instructions: Perform only the requested isolated Skill replay or judgment. Never request tools or external context. Return exactly the requested output.
+  capabilities: []
+  toolApprovals: {}
+  contextStores: []
+  plugins: []
+  tools: []

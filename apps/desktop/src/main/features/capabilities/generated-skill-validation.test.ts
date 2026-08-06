@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 
-import { validateGeneratedSkillPackage } from "./generated-skill-validation.ts";
+import { validateGeneratedSkillPackage } from "@pragma/built-in-agents";
 
 describe("generated Skill validation", () => {
   it("runs covered Node 22 ESM scripts in the restricted test process", async () => {

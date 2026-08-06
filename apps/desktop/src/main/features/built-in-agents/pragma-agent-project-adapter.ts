@@ -20,24 +20,24 @@ import {
   type PragmaResource,
 } from "@pragma/interpreter/ast";
 import {
-  DefaultAgentChangeSetSchema,
-  DefaultAgentEvaluationDraftRunResultSchema,
-  DefaultAgentEvaluationDraftSchema,
-  DefaultAgentEvaluationDraftSummarySchema,
-  DefaultAgentExpertOptionCatalogSchema,
-  DefaultAgentFlowDraftSchema,
-  DefaultAgentPrepareResultSchema,
-  DefaultAgentProjectCommitSchema,
-  type DefaultAgentDslProjectPort,
-  type DefaultAgentEvaluationDraft,
-  type DefaultAgentEvaluationDraftDiagnostic,
-  type DefaultAgentEvaluationDraftOperation,
-  type DefaultAgentExpertOptionCatalog,
-  type DefaultAgentFlowDraft,
-  type DefaultAgentFlowDraftDiagnostic,
-  type DefaultAgentFlowDraftOperation,
-  type DefaultAgentPrepareResult,
-} from "@pragma/default-agent";
+  PragmaAgentChangeSetSchema,
+  PragmaAgentEvaluationDraftRunResultSchema,
+  PragmaAgentEvaluationDraftSchema,
+  PragmaAgentEvaluationDraftSummarySchema,
+  PragmaAgentExpertOptionCatalogSchema,
+  PragmaAgentFlowDraftSchema,
+  PragmaAgentPrepareResultSchema,
+  PragmaAgentProjectCommitSchema,
+  type PragmaAgentDslProjectPort,
+  type PragmaAgentEvaluationDraft,
+  type PragmaAgentEvaluationDraftDiagnostic,
+  type PragmaAgentEvaluationDraftOperation,
+  type PragmaAgentExpertOptionCatalog,
+  type PragmaAgentFlowDraft,
+  type PragmaAgentFlowDraftDiagnostic,
+  type PragmaAgentFlowDraftOperation,
+  type PragmaAgentPrepareResult,
+} from "@pragma/built-in-agents";
 import { z } from "zod";
 
 import type { Capability } from "../../../shared/contracts/index.ts";
@@ -52,16 +52,16 @@ import { getRuntimeAvailability } from "../runtimes/runtime-availability.ts";
 import type { RuntimeEnvironmentService } from "../runtimes/runtime-environment-service.ts";
 
 const CandidateRecordSchema = z.object({
-  changeSet: DefaultAgentChangeSetSchema,
+  changeSet: PragmaAgentChangeSetSchema,
   resources: z.array(PragmaResourceSchema),
 });
 
-export function createDesktopDefaultAgentProjectPort(options: {
+export function createDesktopPragmaAgentProjectPort(options: {
   readonly project: PragmaProjectStore;
   readonly stateRoot: string;
   readonly capabilities: CapabilityStore;
   readonly runtimes: RuntimeEnvironmentService;
-}): DefaultAgentDslProjectPort {
+}): PragmaAgentDslProjectPort {
   const candidatePath = (id: string) =>
     join(options.stateRoot, "change-sets", `${encodePragmaPathSegment(id)}.json`);
   const operationPath = (id: string) =>
@@ -74,7 +74,7 @@ export function createDesktopDefaultAgentProjectPort(options: {
   const prepareResources = async (input: {
     readonly expectedProjectRevision: number;
     readonly authoredResources: readonly PragmaResource[];
-  }): Promise<DefaultAgentPrepareResult> => {
+  }): Promise<PragmaAgentPrepareResult> => {
     const snapshot = await options.project.get();
     if (snapshot.revision !== input.expectedProjectRevision) {
       return invalidPrepare(
@@ -100,7 +100,7 @@ export function createDesktopDefaultAgentProjectPort(options: {
           ),
     );
     if (actionDiagnostics.length > 0) {
-      return DefaultAgentPrepareResultSchema.parse({
+      return PragmaAgentPrepareResultSchema.parse({
         status: "invalid",
         diagnostics: actionDiagnostics,
       });
@@ -132,10 +132,10 @@ export function createDesktopDefaultAgentProjectPort(options: {
         upserts: resources,
       });
       if (diagnostics.some((diagnostic) => diagnostic.severity === "error")) {
-        return DefaultAgentPrepareResultSchema.parse({ status: "invalid", diagnostics });
+        return PragmaAgentPrepareResultSchema.parse({ status: "invalid", diagnostics });
       }
       const existing = new Set(snapshot.resources.map(canonicalPragmaResourceRef));
-      const changeSet = DefaultAgentChangeSetSchema.parse({
+      const changeSet = PragmaAgentChangeSetSchema.parse({
         changeSetId: randomUUID(),
         projectRevision: snapshot.revision,
         diagnostics,
@@ -147,9 +147,9 @@ export function createDesktopDefaultAgentProjectPort(options: {
         createdAt: new Date().toISOString(),
       });
       await writeJson(candidatePath(changeSet.changeSetId), { changeSet, resources });
-      return DefaultAgentPrepareResultSchema.parse({ status: "prepared", changeSet });
+      return PragmaAgentPrepareResultSchema.parse({ status: "prepared", changeSet });
     } catch (error) {
-      return DefaultAgentPrepareResultSchema.parse({
+      return PragmaAgentPrepareResultSchema.parse({
         status: "invalid",
         diagnostics: diagnosticsFromError(error),
       });
@@ -159,10 +159,10 @@ export function createDesktopDefaultAgentProjectPort(options: {
   const prepareSources = async (input: {
     readonly expectedProjectRevision: number;
     readonly sources: readonly string[];
-  }): Promise<DefaultAgentPrepareResult> => {
-    const parsed = parseDefaultAgentSources(input.sources);
+  }): Promise<PragmaAgentPrepareResult> => {
+    const parsed = parsePragmaAgentSources(input.sources);
     if (parsed.diagnostics.length > 0) {
-      return DefaultAgentPrepareResultSchema.parse({
+      return PragmaAgentPrepareResultSchema.parse({
         status: "invalid",
         diagnostics: parsed.diagnostics,
       });
@@ -180,10 +180,10 @@ export function createDesktopDefaultAgentProjectPort(options: {
   };
 
   const withCurrentEvaluationDraftDiagnostics = async (
-    draft: DefaultAgentEvaluationDraft,
-  ): Promise<DefaultAgentEvaluationDraft> => {
+    draft: PragmaAgentEvaluationDraft,
+  ): Promise<PragmaAgentEvaluationDraft> => {
     const snapshot = await options.project.get();
-    const diagnostics: DefaultAgentEvaluationDraftDiagnostic[] = [];
+    const diagnostics: PragmaAgentEvaluationDraftDiagnostic[] = [];
     if (draft.resource.spec.method.cases.length === 0) {
       diagnostics.push({
         severity: "incomplete",
@@ -213,11 +213,11 @@ export function createDesktopDefaultAgentProjectPort(options: {
         path: ["resource", "spec", "target", "ref"],
       });
     }
-    return DefaultAgentEvaluationDraftSchema.parse({ ...draft, diagnostics });
+    return PragmaAgentEvaluationDraftSchema.parse({ ...draft, diagnostics });
   };
 
   const resolveEvaluationFlow = async (
-    draft: DefaultAgentEvaluationDraft,
+    draft: PragmaAgentEvaluationDraft,
   ): Promise<PragmaFlowResource> => {
     const flow = (await options.project.get()).resources.find(
       (resource): resource is PragmaFlowResource =>
@@ -232,7 +232,7 @@ export function createDesktopDefaultAgentProjectPort(options: {
     return flow;
   };
 
-  const runEvaluationDraftSuite = async (draft: DefaultAgentEvaluationDraft) => {
+  const runEvaluationDraftSuite = async (draft: PragmaAgentEvaluationDraft) => {
     const evaluation = materializeEvaluationDraft(draft);
     return runPragmaEvaluation(await resolveEvaluationFlow(draft), evaluation);
   };
@@ -370,7 +370,7 @@ export function createDesktopDefaultAgentProjectPort(options: {
       }
       const now = new Date().toISOString();
       const draftId = randomUUID();
-      let resource: DefaultAgentEvaluationDraft["resource"];
+      let resource: PragmaAgentEvaluationDraft["resource"];
       let sourceEvaluationRef: string | undefined;
       if (input.mode === "create") {
         resource = {
@@ -472,7 +472,7 @@ export function createDesktopDefaultAgentProjectPort(options: {
       }
       const suite = await runEvaluationDraftSuite(draft);
       const requestedCases = suite.cases.filter((testCase) => requested.has(testCase.id));
-      return DefaultAgentEvaluationDraftRunResultSchema.parse({
+      return PragmaAgentEvaluationDraftRunResultSchema.parse({
         draft: summarizeEvaluationDraft(draft),
         requestedCases,
         suite: {
@@ -522,7 +522,7 @@ export function createDesktopDefaultAgentProjectPort(options: {
         );
       }
       if (draft.diagnostics.some((diagnostic) => diagnostic.severity !== "warning")) {
-        return DefaultAgentPrepareResultSchema.parse({
+        return PragmaAgentPrepareResultSchema.parse({
           status: "invalid",
           diagnostics: draft.diagnostics.map((diagnostic) => ({
             severity: diagnostic.severity === "warning" ? "warning" : "error",
@@ -532,9 +532,9 @@ export function createDesktopDefaultAgentProjectPort(options: {
           })),
         });
       }
-      const additional = parseDefaultAgentSources(input.additionalSources ?? [], 1);
+      const additional = parsePragmaAgentSources(input.additionalSources ?? [], 1);
       if (additional.diagnostics.length > 0) {
-        return DefaultAgentPrepareResultSchema.parse({
+        return PragmaAgentPrepareResultSchema.parse({
           status: "invalid",
           diagnostics: additional.diagnostics,
         });
@@ -562,7 +562,7 @@ export function createDesktopDefaultAgentProjectPort(options: {
       const path = operationPath(input.operationId);
       return await withFileLock(`${path}.lock`, async () => {
         const completed = await readJson(path);
-        if (completed !== undefined) return DefaultAgentProjectCommitSchema.parse(completed);
+        if (completed !== undefined) return PragmaAgentProjectCommitSchema.parse(completed);
         const candidate = await readCandidate(candidatePath(input.changeSetId));
         if (candidate.changeSet.diagnostics.some((diagnostic) => diagnostic.severity === "error")) {
           throw new Error("The prepared DSL change-set contains validation errors.");
@@ -579,7 +579,7 @@ export function createDesktopDefaultAgentProjectPort(options: {
           baseRevision: candidate.changeSet.projectRevision,
           upserts: candidate.resources,
         });
-        const result = DefaultAgentProjectCommitSchema.parse({
+        const result = PragmaAgentProjectCommitSchema.parse({
           projectId: published.projectId,
           projectRevision: published.revision,
           changedRefs: candidate.changeSet.changes.map((change) => change.ref),
@@ -592,7 +592,7 @@ export function createDesktopDefaultAgentProjectPort(options: {
 }
 
 interface DesktopExpertCatalog {
-  readonly options: DefaultAgentExpertOptionCatalog;
+  readonly options: PragmaAgentExpertOptionCatalog;
   readonly resources: ReadonlyMap<string, PragmaResource>;
   readonly availableModels: ReadonlySet<string>;
   readonly readyCapabilityIds: ReadonlySet<string>;
@@ -648,7 +648,7 @@ async function buildExpertCatalog(options: {
     };
   });
   return {
-    options: DefaultAgentExpertOptionCatalogSchema.parse({
+    options: PragmaAgentExpertOptionCatalogSchema.parse({
       runtimeModels,
       capabilities: capabilityOptions,
     }),
@@ -754,7 +754,7 @@ function runtimeModelIdentity(runtimeId: string, providerId: string, modelId: st
   return JSON.stringify([runtimeId, providerId, modelId]);
 }
 
-function parseDefaultAgentResource(source: string): PragmaResource {
+function parsePragmaAgentResource(source: string): PragmaResource {
   const resource = PragmaResourceSchema.parse(parsePragmaYaml(source));
   if (
     resource.kind !== "Expert" &&
@@ -770,7 +770,7 @@ function parseDefaultAgentResource(source: string): PragmaResource {
   return resource;
 }
 
-function parseDefaultAgentSources(
+function parsePragmaAgentSources(
   sources: readonly string[],
   sourceIndexOffset = 0,
 ): {
@@ -781,7 +781,7 @@ function parseDefaultAgentSources(
   const diagnostics: ReturnType<typeof diagnosticsFromError> = [];
   sources.forEach((source, index) => {
     try {
-      resources.push(parseDefaultAgentResource(source));
+      resources.push(parsePragmaAgentResource(source));
     } catch (error) {
       diagnostics.push(...diagnosticsFromError(error, `source:${sourceIndexOffset + index}`));
     }
@@ -789,8 +789,8 @@ function parseDefaultAgentSources(
   return { resources, diagnostics };
 }
 
-function invalidPrepare(code: string, message: string): DefaultAgentPrepareResult {
-  return DefaultAgentPrepareResultSchema.parse({
+function invalidPrepare(code: string, message: string): PragmaAgentPrepareResult {
+  return PragmaAgentPrepareResultSchema.parse({
     status: "invalid",
     diagnostics: [{ severity: "error", code, message, path: [] }],
   });
@@ -817,7 +817,7 @@ function diagnosticsFromError(error: unknown, source?: string) {
   ];
 }
 
-function materializeDraft(draft: DefaultAgentFlowDraft) {
+function materializeDraft(draft: PragmaAgentFlowDraft) {
   return {
     ...draft.resource,
     spec: {
@@ -830,12 +830,12 @@ function materializeDraft(draft: DefaultAgentFlowDraft) {
   };
 }
 
-function materializeEvaluationDraft(draft: DefaultAgentEvaluationDraft): PragmaEvaluationResource {
+function materializeEvaluationDraft(draft: PragmaAgentEvaluationDraft): PragmaEvaluationResource {
   return PragmaEvaluationResourceSchema.parse(draft.resource);
 }
 
-function summarizeEvaluationDraft(draft: DefaultAgentEvaluationDraft) {
-  return DefaultAgentEvaluationDraftSummarySchema.parse({
+function summarizeEvaluationDraft(draft: PragmaAgentEvaluationDraft) {
+  return PragmaAgentEvaluationDraftSummarySchema.parse({
     draftId: draft.draftId,
     baseProjectRevision: draft.baseProjectRevision,
     draftRevision: draft.draftRevision,
@@ -852,10 +852,10 @@ function summarizeEvaluationDraft(draft: DefaultAgentEvaluationDraft) {
 }
 
 function evaluationDraftDiagnostics(
-  draft: DefaultAgentEvaluationDraft,
-): DefaultAgentPrepareResult | undefined {
+  draft: PragmaAgentEvaluationDraft,
+): PragmaAgentPrepareResult | undefined {
   if (draft.diagnostics.every((diagnostic) => diagnostic.severity === "warning")) return undefined;
-  return DefaultAgentPrepareResultSchema.parse({
+  return PragmaAgentPrepareResultSchema.parse({
     status: "invalid",
     diagnostics: draft.diagnostics.map((diagnostic) => ({
       severity: diagnostic.severity === "warning" ? "warning" : "error",
@@ -866,7 +866,7 @@ function evaluationDraftDiagnostics(
   });
 }
 
-function invalidEvaluationRun(suite: PragmaFlowRunDrySuiteResult): DefaultAgentPrepareResult {
+function invalidEvaluationRun(suite: PragmaFlowRunDrySuiteResult): PragmaAgentPrepareResult {
   const diagnostics = [
     ...suite.cases
       .filter((testCase) => !testCase.passed)
@@ -891,13 +891,13 @@ function invalidEvaluationRun(suite: PragmaFlowRunDrySuiteResult): DefaultAgentP
           },
         ]),
   ];
-  return DefaultAgentPrepareResultSchema.parse({ status: "invalid", diagnostics });
+  return PragmaAgentPrepareResultSchema.parse({ status: "invalid", diagnostics });
 }
 
 async function withProjectDraftDiagnostics(
   project: PragmaProjectStore,
-  draft: DefaultAgentFlowDraft,
-): Promise<DefaultAgentFlowDraft> {
+  draft: PragmaAgentFlowDraft,
+): Promise<PragmaAgentFlowDraft> {
   const resources =
     draft.baseProjectRevision === 0
       ? []
@@ -906,12 +906,12 @@ async function withProjectDraftDiagnostics(
 }
 
 function withDraftDiagnostics(
-  draft: DefaultAgentFlowDraft,
+  draft: PragmaAgentFlowDraft,
   resources: readonly PragmaResource[] = [],
-): DefaultAgentFlowDraft {
-  const parsed = DefaultAgentFlowDraftSchema.parse(draft);
+): PragmaAgentFlowDraft {
+  const parsed = PragmaAgentFlowDraftSchema.parse(draft);
   const resource = materializeDraft(parsed);
-  const diagnostics: DefaultAgentFlowDraftDiagnostic[] = [];
+  const diagnostics: PragmaAgentFlowDraftDiagnostic[] = [];
   const stepCount = Object.keys(resource.spec.graph.steps).length;
   if (stepCount === 0) {
     diagnostics.push({
@@ -986,12 +986,12 @@ function withDraftDiagnostics(
           JSON.stringify(candidate.path) === JSON.stringify(diagnostic.path),
       ) === index,
   );
-  return DefaultAgentFlowDraftSchema.parse({ ...parsed, diagnostics: unique });
+  return PragmaAgentFlowDraftSchema.parse({ ...parsed, diagnostics: unique });
 }
 
 function applyDraftOperation(
-  resource: DefaultAgentFlowDraft["resource"],
-  operation: DefaultAgentFlowDraftOperation,
+  resource: PragmaAgentFlowDraft["resource"],
+  operation: PragmaAgentFlowDraftOperation,
   baseProjectRevision: number,
 ): number {
   const graph = resource.spec.graph;
@@ -1033,8 +1033,8 @@ function applyDraftOperation(
 }
 
 function applyEvaluationDraftOperation(
-  resource: DefaultAgentEvaluationDraft["resource"],
-  operation: DefaultAgentEvaluationDraftOperation,
+  resource: PragmaAgentEvaluationDraft["resource"],
+  operation: PragmaAgentEvaluationDraftOperation,
   baseProjectRevision: number,
 ): number {
   switch (operation.type) {
@@ -1057,16 +1057,16 @@ function applyEvaluationDraftOperation(
   return baseProjectRevision;
 }
 
-async function readFlowDraft(path: string): Promise<DefaultAgentFlowDraft> {
+async function readFlowDraft(path: string): Promise<PragmaAgentFlowDraft> {
   const value = await readJson(path);
   if (value === undefined) throw new Error("Flow draft not found.");
-  return DefaultAgentFlowDraftSchema.parse(value);
+  return PragmaAgentFlowDraftSchema.parse(value);
 }
 
-async function readEvaluationDraft(path: string): Promise<DefaultAgentEvaluationDraft> {
+async function readEvaluationDraft(path: string): Promise<PragmaAgentEvaluationDraft> {
   const value = await readJson(path);
   if (value === undefined) throw new Error("Evaluation draft not found.");
-  return DefaultAgentEvaluationDraftSchema.parse(value);
+  return PragmaAgentEvaluationDraftSchema.parse(value);
 }
 
 async function readCandidate(path: string): Promise<z.infer<typeof CandidateRecordSchema>> {

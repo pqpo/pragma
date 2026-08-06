@@ -4,20 +4,47 @@ import { dirname, join, relative } from "node:path";
 import { fileURLToPath } from "node:url";
 
 import { Client, StreamableHTTPClientTransport } from "@modelcontextprotocol/client";
-import { createPragmaLogger, registerExpertToolsMcpSession, type Expert } from "@pragma/core";
+import {
+  InMemoryContextStore,
+  createPragmaLogger,
+  createStaticRuntimeResolver,
+  registerExpertToolsMcpSession,
+  type Expert,
+} from "@pragma/core";
 import { loadPragmaProject, parsePragmaYaml } from "@pragma/interpreter";
 import { PragmaCapabilityResourceSchema, PragmaResourceSchema } from "@pragma/interpreter/ast";
+import { MEMORY_CURATOR_REF as MEMORY_PLANE_CURATOR_REF } from "@pragma/memory";
 import { describe, expect, it } from "vitest";
 
-import { BUILT_IN_PRAGMA_FILES } from "../src/builtin.generated.ts";
-import { builtInPragmaResource, materializeBuiltInDefaultAgent } from "../src/builtin.ts";
-import { DefaultAgentFlowDraftSchema } from "../src/contracts.ts";
-import { createDefaultAgentTools } from "../src/tools.ts";
+import { BUILT_IN_AGENT_FILES } from "../src/builtin.generated.ts";
+import {
+  BUILT_IN_AGENT_REFS,
+  BUILT_IN_PRAGMA_REF,
+  MEMORY_CURATOR_REF,
+  SKILL_EVALUATION_EXPERT_REF,
+  SKILL_REVISION_EXPERT_REF,
+  STORE_REVISION_EXPERT_REF,
+  STORE_REVISION_TARGET_BINDING_REF,
+  builtInAgentFingerprint,
+  builtInAgentResource,
+  compileBuiltInAgent,
+  materializeBuiltInAgentBundle,
+} from "../src/builtin.ts";
+import { PragmaAgentFlowDraftSchema } from "../src/contracts.ts";
+import { createPragmaAgentTools } from "../src/tools.ts";
 
 describe("built-in Pragma Agent DSL", () => {
+  it("defines all five built-in Agents as canonical DSL Experts", () => {
+    expect(BUILT_IN_AGENT_REFS).toHaveLength(5);
+    expect(BUILT_IN_AGENT_REFS.map((ref) => builtInAgentResource(ref).metadata.id)).toEqual(
+      BUILT_IN_AGENT_REFS.map((ref) => ref.slice("expert:".length)),
+    );
+    expect(BUILT_IN_AGENT_REFS).toContain(MEMORY_PLANE_CURATOR_REF);
+  });
+
   it("loads as a portable pragma/v3 project with the authoring Skill", async () => {
     const root = await mkdtemp(join(tmpdir(), "pragma-default-agent-builtin-"));
-    const entry = await materializeBuiltInDefaultAgent(root);
+    const entry = await materializeBuiltInAgentBundle(root);
     const project = await loadPragmaProject(entry, { rootDir: dirname(entry) });
 
     expect(await project.validate()).toEqual([]);
@@ -26,13 +53,22 @@ describe("built-in Pragma Agent DSL", () => {
         .listResources()
         .map((resource) => resource.kind)
         .toSorted(),
-    ).toEqual(["Capability", "Capability", "Expert"]);
+    ).toEqual([
+      "Capability",
+      "Capability",
+      "ContextStore",
+      "Expert",
+      "Expert",
+      "Expert",
+      "Expert",
+      "Expert",
+    ]);
 
     const unavailable = async (): Promise<never> => {
       throw new Error("This compile-only test does not execute Pragma tools.");
     };
     let updatedOperationCount = 0;
-    const tools = createDefaultAgentTools({
+    const tools = createPragmaAgentTools({
       project: {
         list: unavailable,
         listExpertOptions: unavailable,
@@ -106,6 +142,40 @@ describe("built-in Pragma Agent DSL", () => {
     expect(compiled.value.instructions).toContain("identify yourself as Pragma");
     expect(compiled.value.instructions).toContain("default general-purpose Agent");
     expect(compiled.value.instructions).toContain("not the limit of your role");
+
+    for (const ref of [
+      MEMORY_CURATOR_REF,
+      STORE_REVISION_EXPERT_REF,
+      SKILL_REVISION_EXPERT_REF,
+      SKILL_EVALUATION_EXPERT_REF,
+    ]) {
+      const hidden = await project.compile<Expert>(ref, {
+        workspace: root,
+        environmentId: "test",
+        adapterHost: {
+          environmentId: "test",
+          projectRoot: dirname(entry),
+          async resolveBinding(bindingRef) {
+            return bindingRef === STORE_REVISION_TARGET_BINDING_REF
+              ? {
+                  ref: bindingRef,
+                  revision: "1",
+                  fingerprint: "b".repeat(64),
+                  value: { store: new InMemoryContextStore() },
+                }
+              : undefined;
+          },
+          async resolveArtifact(source) {
+            throw new Error(`Unexpected artifact: ${JSON.stringify(source)}`);
+          },
+          async resolveSecret() {
+            return undefined;
+          },
+        },
+      });
+      expect(hidden.value.id).toBe(ref.slice("expert:".length));
+      expect(hidden.value.tools ?? []).toEqual([]);
+    }
 
     const registration = await registerExpertToolsMcpSession({
       agent: compiled.value,
@@ -186,12 +256,12 @@ describe("built-in Pragma Agent DSL", () => {
         ]),
       ),
     );
-    expect(actual).toEqual(BUILT_IN_PRAGMA_FILES);
+    expect(actual).toEqual(BUILT_IN_AGENT_FILES);
   });
 
   it("teaches the default Agent the Automation field and Flow input limits", () => {
     const reference =
-      BUILT_IN_PRAGMA_FILES["skills/author-pragma-dsl/references/automation.md"] ?? "";
+      BUILT_IN_AGENT_FILES["skills/author-pragma-dsl/references/automation.md"] ?? "";
 
     expect(reference).toContain(
       "`metadata.id`: host-allocated 16-character lowercase Crockford Base32.",
@@ -205,12 +275,11 @@ describe("built-in Pragma Agent DSL", () => {
   });
 
   it("teaches the default Agent complete Expert mounts and Runtime reference selection", () => {
-    const skill = BUILT_IN_PRAGMA_FILES["skills/author-pragma-dsl/SKILL.md"] ?? "";
+    const skill = BUILT_IN_AGENT_FILES["skills/author-pragma-dsl/SKILL.md"] ?? "";
     const expertReference =
-      BUILT_IN_PRAGMA_FILES["skills/author-pragma-dsl/references/expert.md"] ?? "";
+      BUILT_IN_AGENT_FILES["skills/author-pragma-dsl/references/expert.md"] ?? "";
     const resourceReference =
-      BUILT_IN_PRAGMA_FILES["skills/author-pragma-dsl/references/resources-and-references.md"] ??
-      "";
+      BUILT_IN_AGENT_FILES["skills/author-pragma-dsl/references/resources-and-references.md"] ?? "";
 
     expect(skill).toContain("Its `sources` input is");
     expect(skill).toContain("always an array with one complete YAML document per item");
@@ -225,8 +294,8 @@ describe("built-in Pragma Agent DSL", () => {
   });
 
   it("teaches compact Flow draft updates with native operation arrays", () => {
-    const skill = BUILT_IN_PRAGMA_FILES["skills/author-pragma-dsl/SKILL.md"] ?? "";
-    const reference = BUILT_IN_PRAGMA_FILES["skills/author-pragma-dsl/references/flow.md"] ?? "";
+    const skill = BUILT_IN_AGENT_FILES["skills/author-pragma-dsl/SKILL.md"] ?? "";
+    const reference = BUILT_IN_AGENT_FILES["skills/author-pragma-dsl/references/flow.md"] ?? "";
 
     expect(skill).toContain("Pass `operations` as a native JSON array");
     expect(skill).toContain("string parsing is only a recovery path");
@@ -236,8 +305,8 @@ describe("built-in Pragma Agent DSL", () => {
   });
 
   it("teaches incremental Run Dry authoring with bounded explicit batches", () => {
-    const skill = BUILT_IN_PRAGMA_FILES["skills/author-pragma-dsl/SKILL.md"] ?? "";
-    const reference = BUILT_IN_PRAGMA_FILES["skills/author-pragma-dsl/references/run-dry.md"] ?? "";
+    const skill = BUILT_IN_AGENT_FILES["skills/author-pragma-dsl/SKILL.md"] ?? "";
+    const reference = BUILT_IN_AGENT_FILES["skills/author-pragma-dsl/references/run-dry.md"] ?? "";
 
     expect(skill).toContain("generate and upsert exactly one case");
     expect(skill).toContain("ask whether the user wants to create a test set and run it");
@@ -260,7 +329,7 @@ describe("built-in Pragma Agent DSL", () => {
 
   it("materializes an overridden built-in Expert while preserving its bundled dependencies", async () => {
     const root = await mkdtemp(join(tmpdir(), "pragma-default-agent-override-"));
-    const resource = builtInPragmaResource();
+    const resource = builtInAgentResource(BUILT_IN_PRAGMA_REF);
     resource.metadata.name = "My Pragma";
     resource.spec.instructions = "Use the customized built-in instructions.";
     const optionalCapability = PragmaCapabilityResourceSchema.parse({
@@ -278,7 +347,7 @@ describe("built-in Pragma Agent DSL", () => {
         config: { key: "desktop_optional" },
       },
     });
-    const entry = await materializeBuiltInDefaultAgent(root, resource, [optionalCapability]);
+    const entry = await materializeBuiltInAgentBundle(root, resource, [optionalCapability]);
     const project = await loadPragmaProject(entry, { rootDir: dirname(entry) });
     const stored = project
       .listResources()
@@ -296,15 +365,77 @@ describe("built-in Pragma Agent DSL", () => {
     expect(await project.validate()).toEqual([]);
   });
 
+  it("isolates each Agent fingerprint from unrelated Expert customizations", () => {
+    const customizedPragma = builtInAgentResource(BUILT_IN_PRAGMA_REF);
+    customizedPragma.spec.instructions = "Customized Pragma instructions.";
+
+    expect(builtInAgentFingerprint(BUILT_IN_PRAGMA_REF, customizedPragma)).not.toBe(
+      builtInAgentFingerprint(BUILT_IN_PRAGMA_REF),
+    );
+    expect(builtInAgentFingerprint(MEMORY_CURATOR_REF, customizedPragma)).toBe(
+      builtInAgentFingerprint(MEMORY_CURATOR_REF),
+    );
+  });
+
+  it("compiles every hidden Agent from its isolated dependency closure", async () => {
+    const root = await mkdtemp(join(tmpdir(), "pragma-built-in-agent-isolated-"));
+    const runtimes = createStaticRuntimeResolver({
+      defaultRuntimeId: "test-runtime",
+      runtimes: [
+        {
+          descriptor: { id: "test-runtime", kind: "test", displayName: "Test Runtime" },
+          canUse: () => ({ usable: true }),
+        },
+      ],
+    });
+
+    for (const ref of [
+      MEMORY_CURATOR_REF,
+      STORE_REVISION_EXPERT_REF,
+      SKILL_REVISION_EXPERT_REF,
+      SKILL_EVALUATION_EXPERT_REF,
+    ]) {
+      const compiled = await compileBuiltInAgent({
+        ref,
+        environmentId: "test-host",
+        definitionStateRoot: join(root, "definitions"),
+        workspace: root,
+        pragmaHome: root,
+        runtimes,
+        adapterHost: {
+          environmentId: "ignored-external-id",
+          projectRoot: root,
+          async resolveBinding(bindingRef) {
+            return bindingRef === STORE_REVISION_TARGET_BINDING_REF
+              ? {
+                  ref: bindingRef,
+                  revision: "1",
+                  fingerprint: "c".repeat(64),
+                  value: { store: new InMemoryContextStore() },
+                }
+              : undefined;
+          },
+          async resolveArtifact(source) {
+            throw new Error(`Unexpected artifact: ${JSON.stringify(source)}`);
+          },
+          async resolveSecret() {
+            return undefined;
+          },
+        },
+      });
+      expect(compiled.value.id).toBe(ref.slice("expert:".length));
+    }
+  });
+
   it("reuses a completed immutable materialization across concurrent callers", async () => {
     const root = await mkdtemp(join(tmpdir(), "pragma-default-agent-cache-"));
     const [first, second] = await Promise.all([
-      materializeBuiltInDefaultAgent(root),
-      materializeBuiltInDefaultAgent(root),
+      materializeBuiltInAgentBundle(root),
+      materializeBuiltInAgentBundle(root),
     ]);
     expect(first).toBe(second);
     const before = await stat(first);
-    const third = await materializeBuiltInDefaultAgent(root);
+    const third = await materializeBuiltInAgentBundle(root);
     expect(third).toBe(first);
     expect((await stat(third)).mtimeMs).toBe(before.mtimeMs);
     await expect(readFile(join(dirname(first), ".complete"), "utf8")).resolves.toMatch(
@@ -370,7 +501,7 @@ function normalizeLineEndings(source: string): string {
 }
 
 function flowDraft() {
-  return DefaultAgentFlowDraftSchema.parse({
+  return PragmaAgentFlowDraftSchema.parse({
     draftId: "4fc96ef9-1825-447d-a17f-d820f6fd4855",
     baseProjectRevision: 0,
     draftRevision: 1,
