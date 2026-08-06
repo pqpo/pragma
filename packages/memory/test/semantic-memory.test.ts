@@ -523,7 +523,42 @@ describe("Semantic Memory", () => {
     const history = await module.store.history(initial.id);
     expect(history.map((revision) => revision.revision)).toEqual([4, 3, 2, 1]);
     expect(history.at(-1)?.statement).toBe("The user prefers concise Chinese answers.");
-    expect(onProjectionChanged).toHaveBeenCalledTimes(4);
+    expect(onProjectionChanged).toHaveBeenCalledTimes(3);
+    module.close();
+  });
+
+  it("backs off failed projection notifications without dropping or misclassifying them", async () => {
+    let now = new Date("2026-08-03T18:00:01.000Z");
+    const onProjectionChanged = vi
+      .fn<() => Promise<void>>()
+      .mockRejectedValueOnce(new Error("knowledge_sink_unavailable"))
+      .mockResolvedValue(undefined);
+    const module = await createSemanticMemoryModule({
+      pragmaHome: await temporaryRoot(),
+      extractor: fakeExtractor(),
+      onProjectionChanged,
+      now: () => now,
+    });
+    await module.registerExecutionSubjects({
+      executionId: "execution-notification-retry",
+      subjectRefs: [ref("pragma.user", "local-user")],
+    });
+    await module.consume(
+      executionEvidence("execution-notification-retry", "Use concise Chinese answers."),
+    );
+
+    await expect(module.runBackgroundOnce?.()).rejects.toThrow("knowledge_sink_unavailable");
+    expect(onProjectionChanged).toHaveBeenCalledTimes(1);
+    expect(await module.store.listExtractionJobs()).toMatchObject([{ status: "completed" }]);
+    expect(await module.store.readProjectionNotification()).toBeDefined();
+
+    await expect(module.runBackgroundOnce?.()).rejects.toThrow("knowledge_sink_unavailable");
+    expect(onProjectionChanged).toHaveBeenCalledTimes(1);
+
+    now = new Date(now.getTime() + 2_000);
+    await module.runBackgroundOnce?.();
+    expect(onProjectionChanged).toHaveBeenCalledTimes(2);
+    expect(await module.store.readProjectionNotification()).toBeUndefined();
     module.close();
   });
 
@@ -623,7 +658,7 @@ describe("Semantic Memory", () => {
     expect(await module.store.get(initial.id)).toBeUndefined();
     expect(await module.store.history(initial.id)).toEqual([]);
     expect(await module.store.getEvidence(evidence[0]!.messageId)).toBeUndefined();
-    expect(onProjectionChanged).toHaveBeenCalledTimes(3);
+    expect(onProjectionChanged).toHaveBeenCalledTimes(1);
     module.close();
 
     const database = new DatabaseSync(dataPath);
@@ -668,12 +703,12 @@ describe("Semantic Memory", () => {
         "facts.sqlite",
       ),
     );
-    database.exec("PRAGMA user_version = 5");
+    database.exec("PRAGMA user_version = 6");
     database.close();
 
     await expect(
       createSemanticMemoryModule({ pragmaHome: root, extractor: fakeExtractor() }),
-    ).rejects.toThrow("unsupported-state-version:pragma.memory-semantic-store/v5");
+    ).rejects.toThrow("unsupported-state-version:pragma.memory-semantic-store/v6");
   });
 
   it("upgrades historical semantic jobs through the registered migration and keeps a backup", async () => {

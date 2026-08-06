@@ -1,4 +1,4 @@
-import { mkdtemp, rm } from "node:fs/promises";
+import { mkdtemp, rm, stat, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
@@ -18,6 +18,63 @@ afterEach(async () => {
 });
 
 describe("Memory knowledge promotion", () => {
+  it("migrates a v1 pending candidate to the bounded always-on template", async () => {
+    const directory = await mkdtemp(join(tmpdir(), "pragma-memory-candidate-migration-"));
+    directories.push(directory);
+    const statePath = join(directory, "promotion");
+    const promotion = createMemoryKnowledgePromotionService({
+      statePath,
+      contextStores: createContextStoreStore({ storesPath: join(directory, "stores") }),
+      revisions: {
+        submit: vi.fn(),
+        scheduleProcessing: vi.fn(),
+      } as unknown as ContextStoreRevisionService,
+      mountStore: vi.fn(),
+      expertExists: vi.fn(async () => true),
+    });
+    await promotion.routeLearning({
+      expertRefs: ["expert:0000000000000001"],
+      sourceDigest: "0".repeat(64),
+      proposals: [
+        {
+          title: "Migration",
+          summary: "Preserve reviewed knowledge.",
+          guidance: ["Use an adjacent migration."],
+          normalizedKey: "candidate.migration",
+        },
+      ],
+    });
+    const [current] = await promotion.list();
+    const path = join(statePath, "candidates", `${current!.id}.json`);
+    await writeFile(
+      path,
+      JSON.stringify({
+        ...current,
+        schemaVersion: "pragma.memory-knowledge-initialization-candidate/v1",
+        files: current!.files.map((file) =>
+          file.id === "overview.md"
+            ? { ...file, metadata: { ...file.metadata, trigger: "model_decision" } }
+            : file,
+        ),
+      }),
+    );
+
+    const [migrated] = await promotion.list();
+    expect(migrated).toMatchObject({
+      schemaVersion: "pragma.memory-knowledge-initialization-candidate/v2",
+      files: expect.arrayContaining([
+        expect.objectContaining({
+          id: "overview.md",
+          metadata: expect.objectContaining({ trigger: "always_on" }),
+        }),
+      ]),
+    });
+    expect(migrated!.files.find((file) => file.id === "guide.md")!.content).toContain(
+      "Memory-derived Knowledge",
+    );
+    await expect(stat(`${path}.v1.backup`)).resolves.toBeDefined();
+  });
+
   it("initializes one structured Store per Expert, then submits revisions instead of writing", async () => {
     const directory = await mkdtemp(join(tmpdir(), "pragma-memory-promotion-"));
     directories.push(directory);
@@ -200,6 +257,7 @@ describe("Memory knowledge promotion", () => {
           ref: { kind: "episodic", id: "one", revision: 1 },
           rootRef: { type: "pragma.expert-team", id: "team" },
           producerRefs: [{ type: "pragma.expert", id: "0000000000000004" }],
+          sourceExecutionIds: ["execution-one"],
           title: "One",
           body: "One",
           observedAt: "2026-01-01T00:00:00.000Z",
@@ -211,6 +269,7 @@ describe("Memory knowledge promotion", () => {
           ref: { kind: "semantic", id: "two", revision: 1 },
           rootRef: { type: "pragma.expert-team", id: "team" },
           producerRefs: [{ type: "pragma.expert", id: "0000000000000005" }],
+          sourceExecutionIds: ["execution-two"],
           title: "Two",
           body: "Two",
           observedAt: "2026-01-01T00:00:00.000Z",

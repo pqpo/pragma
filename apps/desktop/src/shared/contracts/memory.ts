@@ -252,7 +252,7 @@ export const ProgressiveKnowledgeStoreFilesSchema = ContextStoreSnapshotFileSche
     }
     for (const [id, limit, trigger] of [
       ["guide.md", 2_048, "always_on"],
-      ["overview.md", 6_144, "model_decision"],
+      ["overview.md", 3_072, "always_on"],
       ["index.md", 8_192, "model_decision"],
     ] as const) {
       const file = byId.get(id);
@@ -285,7 +285,7 @@ export const ProgressiveKnowledgeStoreFilesSchema = ContextStoreSnapshotFileSche
 
 export const MemoryKnowledgeInitializationCandidateSchema = z
   .object({
-    schemaVersion: z.literal("pragma.memory-knowledge-initialization-candidate/v1"),
+    schemaVersion: z.literal("pragma.memory-knowledge-initialization-candidate/v2"),
     id: z.string().uuid(),
     revision: z.number().int().positive(),
     expertRef: z.string().regex(/^expert:[0-9a-hjkmnp-tv-z]{16}$/u),

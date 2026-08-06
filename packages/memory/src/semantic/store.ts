@@ -135,7 +135,12 @@ export interface SemanticMemoryStore {
   completePreviouslyApplied(job: SemanticExtractionJob, now: Date): Promise<void>;
   completeRetained(input: SemanticFactMaterialization): Promise<readonly SemanticFact[]>;
   readProjectionNotification(): Promise<
-    { readonly id: string; readonly rootRef: MemorySubjectRef } | undefined
+    | {
+        readonly id: string;
+        readonly rootRef: MemorySubjectRef;
+        readonly learningEligible: boolean;
+      }
+    | undefined
   >;
   acknowledgeProjectionNotification(id: string): Promise<void>;
   completeRejected(
@@ -180,6 +185,7 @@ export interface SemanticMemoryStore {
   search(query: string, limit: number): Promise<readonly SemanticFact[]>;
   get(id: string): Promise<SemanticFact | undefined>;
   history(id: string): Promise<readonly SemanticFact[]>;
+  sourceExecutionIds(id: string): Promise<readonly string[]>;
   listForRecall(scope: MemoryRecallScope, now: Date): Promise<readonly SemanticFact[]>;
   searchForRecall(
     scope: MemoryRecallScope,
@@ -244,7 +250,7 @@ export async function createSemanticMemoryStore(
           database: data,
           databasePath: dataPath,
           family: "pragma.memory-semantic-store",
-          targetVersion: 4,
+          targetVersion: 5,
           migrations: SEMANTIC_DATA_STORAGE_MIGRATIONS,
         });
       }
@@ -338,7 +344,12 @@ export async function createSemanticMemoryStore(
       const mutable = new Set([next.id]);
       recomputeConflicts(data, mutable, input.now);
       next = readRequiredFact(data, next.id);
-      enqueueFactProjectionNotifications(data, next, input.now);
+      enqueueFactProjectionNotifications(
+        data,
+        next,
+        input.now,
+        (action === "revise" || action === "verify") && next.status === "active",
+      );
       const event = SemanticGovernanceEventSchema.parse({
         schemaVersion: "pragma.memory-semantic-governance-event/v1",
         id: randomUUID(),
@@ -773,8 +784,8 @@ export async function createSemanticMemoryStore(
           if (effectiveTouched.size > 0) {
             data
               .prepare(
-                `INSERT OR IGNORE INTO projection_notifications(id, root_ref_json, created_at)
-                 VALUES (?, ?, ?)`,
+                `INSERT OR IGNORE INTO projection_notifications(id, root_ref_json, created_at, learning_eligible)
+                 VALUES (?, ?, ?, 1)`,
               )
               .run(
                 `${input.job.id}:${input.job.inputWatermark}`,
@@ -802,12 +813,18 @@ export async function createSemanticMemoryStore(
     async readProjectionNotification() {
       const row = data
         .prepare(
-          "SELECT id, root_ref_json AS rootRefJson FROM projection_notifications ORDER BY created_at, id LIMIT 1",
+          "SELECT id, root_ref_json AS rootRefJson, learning_eligible AS learningEligible FROM projection_notifications ORDER BY created_at, id LIMIT 1",
         )
-        .get() as { readonly id: string; readonly rootRefJson: string } | undefined;
+        .get() as
+        | { readonly id: string; readonly rootRefJson: string; readonly learningEligible: number }
+        | undefined;
       return row === undefined
         ? undefined
-        : { id: row.id, rootRef: MemorySubjectRefSchema.parse(JSON.parse(row.rootRefJson)) };
+        : {
+            id: row.id,
+            rootRef: MemorySubjectRefSchema.parse(JSON.parse(row.rootRefJson)),
+            learningEligible: row.learningEligible === 1,
+          };
     },
 
     async acknowledgeProjectionNotification(id) {
@@ -1016,6 +1033,19 @@ export async function createSemanticMemoryStore(
           )
           .all(id),
       );
+    },
+
+    async sourceExecutionIds(id) {
+      const rows = data
+        .prepare(
+          `SELECT DISTINCT json_extract(e.envelope_json, '$.correlationId') AS executionId
+           FROM current_facts f, json_each(f.record_json, '$.evidenceRefs') cited
+           JOIN evidence e ON e.message_id = cited.value
+           WHERE f.id = ? AND json_extract(e.envelope_json, '$.correlationId') IS NOT NULL
+           ORDER BY executionId LIMIT 100`,
+        )
+        .all(id) as unknown as readonly { readonly executionId: string }[];
+      return rows.map((row) => row.executionId);
     },
 
     async listForRecall(scope, now) {
@@ -1337,16 +1367,18 @@ function enqueueFactProjectionNotifications(
   database: DatabaseSync,
   fact: SemanticFact,
   now: Date,
+  learningEligible = false,
 ): void {
   const insert = database.prepare(
-    `INSERT OR IGNORE INTO projection_notifications(id, root_ref_json, created_at)
-     VALUES (?, ?, ?)`,
+    `INSERT OR IGNORE INTO projection_notifications(id, root_ref_json, created_at, learning_eligible)
+     VALUES (?, ?, ?, ?)`,
   );
   for (const rootRef of fact.rootRefs) {
     insert.run(
       `fact:${fact.id}:${fact.revision}:${subjectKey([rootRef])}`,
       JSON.stringify(rootRef),
       now.toISOString(),
+      learningEligible ? 1 : 0,
     );
   }
 }
@@ -1375,7 +1407,7 @@ function conversationKey(ref: MemorySubjectRef): string {
 
 function initializeData(database: DatabaseSync): void {
   const version = readDatabaseVersion(database);
-  if (version > 4) {
+  if (version > 5) {
     database.close();
     throw new Error(`unsupported-state-version:pragma.memory-semantic-store/v${version}`);
   }
@@ -1450,13 +1482,14 @@ function initializeData(database: DatabaseSync): void {
     CREATE TABLE IF NOT EXISTS projection_notifications (
       id TEXT PRIMARY KEY,
       root_ref_json TEXT NOT NULL,
-      created_at TEXT NOT NULL
+      created_at TEXT NOT NULL,
+      learning_eligible INTEGER NOT NULL CHECK (learning_eligible IN (0, 1))
     );
   `);
-  if (version !== 0 && version !== 4) {
+  if (version !== 0 && version !== 5) {
     throw new Error(`missing-adjacent-migration:pragma.memory-semantic-store/v${version}`);
   }
-  database.exec("PRAGMA user_version = 4;");
+  database.exec("PRAGMA user_version = 5;");
 }
 
 function initializeState(database: DatabaseSync): void {

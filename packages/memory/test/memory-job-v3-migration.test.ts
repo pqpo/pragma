@@ -51,7 +51,7 @@ describe("Memory extraction job v3 migration", () => {
       const migrated = new DatabaseSync(dataPath);
       expect(
         (migrated.prepare("PRAGMA user_version").get() as { user_version: number }).user_version,
-      ).toBe(4);
+      ).toBe(moduleId === "pragma.memory.semantic" ? 5 : 4);
       expect(
         migrated
           .prepare(
@@ -65,6 +65,13 @@ describe("Memory extraction job v3 migration", () => {
         (backup.prepare("PRAGMA user_version").get() as { user_version: number }).user_version,
       ).toBe(3);
       backup.close();
+      if (moduleId === "pragma.memory.semantic") {
+        const v4Backup = new DatabaseSync(`${dataPath}.v4.backup`);
+        expect(
+          (v4Backup.prepare("PRAGMA user_version").get() as { user_version: number }).user_version,
+        ).toBe(4);
+        v4Backup.close();
+      }
       migratedModule.close();
     },
   );

@@ -221,7 +221,7 @@ const STORE_REVISION_INSTRUCTIONS = [
   "The target-store Context is the only store you may inspect. It is read-only.",
   "Return exactly one pragma.context-store-change-set/v1 JSON object without Markdown fences.",
   "Never replace the store with one giant document.",
-  "Preserve progressive disclosure: guide.md is always_on and at most 2 KiB; overview.md is model_decision and at most 6 KiB; index.md and indexes/** are bounded navigation; detailed knowledge belongs in multiple items/** files.",
+  "Preserve progressive disclosure: guide.md is always_on and at most 2 KiB; overview.md is always_on and at most 3 KiB; index.md and indexes/** are bounded navigation; detailed knowledge belongs in multiple items/** files.",
   "Keep internal Markdown links accurate: overview.md links relevant items/** files, index.md links indexes/** shards, and each shard links its items/** files.",
   "Make the smallest coherent revision that satisfies the prompt. Preserve unrelated knowledge.",
 ].join("\n");

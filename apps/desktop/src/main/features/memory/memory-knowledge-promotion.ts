@@ -1,5 +1,6 @@
 import { createHash, randomUUID } from "node:crypto";
-import { mkdir, readFile, readdir, rename, rm, writeFile } from "node:fs/promises";
+import { constants } from "node:fs";
+import { copyFile, mkdir, readFile, readdir, rename, rm, writeFile } from "node:fs/promises";
 import { dirname, join } from "node:path";
 
 import { withFileLock } from "@pragma/context-filesystem";
@@ -135,10 +136,23 @@ export function createMemoryKnowledgePromotionService(options: {
       bindings,
     });
   };
-  const readCandidate = async (id: string) =>
-    MemoryKnowledgeInitializationCandidateSchema.parse(
-      JSON.parse(await readFile(candidatePath(id), "utf8")),
-    );
+  const readCandidate = async (id: string) => {
+    const path = candidatePath(id);
+    const raw = JSON.parse(await readFile(path, "utf8")) as Record<string, unknown>;
+    if (raw.schemaVersion === "pragma.memory-knowledge-initialization-candidate/v1") {
+      const migrated = MemoryKnowledgeInitializationCandidateSchema.parse({
+        ...raw,
+        schemaVersion: "pragma.memory-knowledge-initialization-candidate/v2",
+        files: migrateProgressiveFiles(raw.files),
+      });
+      await copyFile(path, `${path}.v1.backup`, constants.COPYFILE_EXCL).catch((error) => {
+        if ((error as NodeJS.ErrnoException).code !== "EEXIST") throw error;
+      });
+      await writeJsonAtomic(path, migrated);
+      return migrated;
+    }
+    return MemoryKnowledgeInitializationCandidateSchema.parse(raw);
+  };
   const writeCandidate = async (candidate: MemoryKnowledgeInitializationCandidate) => {
     await writeJsonAtomic(candidatePath(candidate.id), candidate);
   };
@@ -464,7 +478,7 @@ function createCandidate(
     left.id.localeCompare(right.id),
   );
   return MemoryKnowledgeInitializationCandidateSchema.parse({
-    schemaVersion: "pragma.memory-knowledge-initialization-candidate/v1",
+    schemaVersion: "pragma.memory-knowledge-initialization-candidate/v2",
     id: randomUUID(),
     revision: 1,
     expertRef,
@@ -509,10 +523,6 @@ function mergeCandidate(
 function buildProgressiveFiles(
   itemFiles: ContextStoreSnapshot["files"],
 ): ContextStoreSnapshot["files"] {
-  const overviewLines = itemFiles.map(
-    (file) =>
-      `- [${markdownLinkLabel(firstHeading(file.content))}](${file.id}) — ${file.metadata.description}`,
-  );
   const shardSize = 20;
   const shards: ContextStoreSnapshot["files"] = [];
   for (let offset = 0; offset < itemFiles.length; offset += shardSize) {
@@ -540,8 +550,16 @@ function buildProgressiveFiles(
   const files: ContextStoreSnapshot["files"] = [
     {
       id: "guide.md",
-      content:
-        "# Guide\n\nStart with overview.md. When this store is large or the topic is unknown, search it. Use index.md for navigation and read only the relevant items/** documents.\n",
+      content: [
+        "# Memory-derived Knowledge Guide",
+        "",
+        "This Store contains reusable knowledge distilled from Memory and approved by a human. It is generally more reliable than any single raw Memory, but current user instructions, system policy, and live state take precedence.",
+        "",
+        "Start with the always-on overview. Follow its links when the relevant item is clear. When the topic is unknown or this Store contains many files, use search_expert_context for this Store, then read only the relevant items/** documents. Use index.md for bounded navigation.",
+        "",
+        "When provenance, freshness, conflicts, or supporting Evidence matters, inspect the original Memory through the memory namespace when the Host provides it. Imported Knowledge may not have its original Memory locally; never guess missing provenance.",
+        "",
+      ].join("\n"),
       metadata: {
         description: "How to use this knowledge base.",
         trigger: "always_on",
@@ -550,10 +568,10 @@ function buildProgressiveFiles(
     },
     {
       id: "overview.md",
-      content: fitUtf8(["# Overview", "", ...overviewLines, ""], 6_144),
+      content: buildOverviewContent(itemFiles),
       metadata: {
         description: "Bounded knowledge overview.",
-        trigger: "model_decision",
+        trigger: "always_on",
         priority: "high",
       },
     },
@@ -580,6 +598,45 @@ function buildProgressiveFiles(
     ...itemFiles,
   ];
   return files;
+}
+
+function buildOverviewContent(itemFiles: ContextStoreSnapshot["files"]): string {
+  const lines = itemFiles.map(
+    (file) =>
+      `- [${markdownLinkLabel(firstHeading(file.content))}](${file.id}) — ${oneLine(file.metadata.description ?? "", 160)}`,
+  );
+  for (let retained = lines.length; retained >= 0; retained -= 1) {
+    const omitted = lines.length - retained;
+    const candidate = [
+      "# Overview",
+      "",
+      "Reusable guidance distilled from Memory. Read the relevant item before applying it.",
+      "",
+      ...lines.slice(0, retained),
+      ...(omitted === 0
+        ? []
+        : ["", `- ${omitted} more item(s) omitted. Search this Store or use index.md.`]),
+      "",
+    ].join("\n");
+    if (Buffer.byteLength(candidate, "utf8") <= 3_072) return candidate;
+  }
+  throw new Error("knowledge_overview_template_too_large");
+}
+
+function migrateProgressiveFiles(input: unknown): ContextStoreSnapshot["files"] {
+  const files = z.array(z.unknown()).parse(input) as ContextStoreSnapshot["files"];
+  const items = files.filter((file) => file.id.startsWith("items/"));
+  const template = buildProgressiveFiles(items);
+  return [
+    template.find((file) => file.id === "guide.md")!,
+    template.find((file) => file.id === "overview.md")!,
+    ...files.filter((file) => file.id !== "guide.md" && file.id !== "overview.md"),
+  ];
+}
+
+function oneLine(value: string, max: number): string {
+  const normalized = value.replace(/\s+/gu, " ").trim();
+  return normalized.length <= max ? normalized : `${normalized.slice(0, max - 1)}…`;
 }
 
 function renderRevisionPrompts(
@@ -625,6 +682,8 @@ function renderRevisionPrompt(
     `Memory learning revision part ${part} of ${total}.`,
     "Revise this Memory knowledge store using the newly learned reusable guidance below.",
     "Preserve unrelated items. Merge repeated normalizedKey entries, update overview/index pointers, and add or revise focused items/** documents.",
+    "Keep guide.md always_on and explain that this is human-reviewed Memory-derived Knowledge, current instructions and live state take precedence, large Stores should be searched, and original Memory should be checked for provenance or freshness when available.",
+    "Keep overview.md always_on and within 3 KiB; when not every item fits, state how many were omitted and direct the reader to search or index.md.",
     "Do not add Memory ids, Evidence ids, source references, or the revision prompt to the Store.",
     JSON.stringify(proposals),
   ].join("\n\n");
