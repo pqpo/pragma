@@ -29,18 +29,29 @@ export const settings = {
       "Used when Home starts a mission without a task-specific workspace.",
     chooseWorkspace: "Choose folder",
     restoreDefaultWorkspace: "Restore built-in default workspace",
-    revisionAgent: "Knowledge revision Agent",
+    revisionAgent: "Knowledge and Skill revision Agent",
     revisionAgentDescription:
-      "Choose the Runtime and model that prepares reviewable knowledge base changes.",
+      "Choose the shared Runtime and model that prepares reviewable knowledge-base and Skill changes.",
     revisionAgentInherit: "Inherit system default",
     revisionAgentPinned: "Pinned Runtime and model",
     revisionAgentRuntime: "Revision Runtime",
-    revisionAgentRuntimeDescription: "Runtime used only for knowledge base revision tasks.",
+    revisionAgentRuntimeDescription: "Runtime used for knowledge-base and Skill revision tasks.",
     revisionAgentModel: "Revision model",
-    revisionAgentModelDescription: "Model used to prepare structured knowledge base changes.",
+    revisionAgentModelDescription:
+      "Model used to prepare structured knowledge-base and Skill changes.",
     revisionAgentChooseModel: "Choose a model",
     revisionAgentSave: "Save revision model",
     revisionAgentSaveDescription: "New revision tasks will use this Runtime and model.",
+    evaluationAgent: "Skill Evaluation Agent",
+    evaluationAgentDescription:
+      "Choose the independent Runtime and model that runs replay and boundary evaluations before Skill review.",
+    evaluationAgentRuntime: "Evaluation Runtime",
+    evaluationAgentRuntimeDescription: "Runtime used only for memory-derived Skill evaluations.",
+    evaluationAgentModel: "Evaluation model",
+    evaluationAgentModelDescription:
+      "Model that judges applicability, correctness, recovery, and safety.",
+    evaluationAgentSave: "Save evaluation model",
+    evaluationAgentSaveDescription: "New Skill evaluations will use this Runtime and model.",
     saveError: "The general setting could not be saved.",
   },
   memory: {

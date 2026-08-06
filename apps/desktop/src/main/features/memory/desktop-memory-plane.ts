@@ -12,6 +12,8 @@ import {
   createEpisodicMemoryModule,
   createKnowledgeMemoryModule,
   createKnowledgeSourceReader,
+  createSkillMemoryModule,
+  createSkillSourceReader,
   createSemanticMemoryModule,
   createFileMemoryExtractionSettingsStore,
   createFileMemoryExtractorProfileStore,
@@ -30,6 +32,10 @@ import {
   type KnowledgeMemoryExtractor,
   type KnowledgeMemoryModule,
   type KnowledgeLearningSink,
+  type SkillLearningSink,
+  type SkillLearningTargetReader,
+  type SkillMemoryExtractor,
+  type SkillMemoryModule,
   type MemoryExtractorProfileStore,
   type MemoryExtractionSettingsStore,
   type SemanticMemoryExtractor,
@@ -67,6 +73,7 @@ export interface DesktopMemoryPlane {
   readonly semanticStore: SemanticMemoryStore;
   readonly episodicStore: EpisodicMemoryStore;
   readonly knowledgeLearningStore: KnowledgeMemoryModule["store"];
+  readonly skillLearningStore: SkillMemoryModule["store"];
   readonly activity: MemoryActivityStore;
   readonly contextStore: import("@pragma/core").ExpertAgentContextStore;
   isContextStoreViewAvailable(input: DesktopMemoryContextStoreViewInput): Promise<boolean>;
@@ -76,6 +83,7 @@ export interface DesktopMemoryPlane {
   setEpisodicExtractor(extractor: EpisodicMemoryExtractor | undefined): Promise<void>;
   setSemanticExtractor(extractor: SemanticMemoryExtractor | undefined): Promise<void>;
   setKnowledgeExtractor(extractor: KnowledgeMemoryExtractor | undefined): Promise<void>;
+  setSkillExtractor(extractor: SkillMemoryExtractor | undefined): Promise<void>;
   registerMemoryExecutionContext(input: {
     readonly executionId: string;
     readonly missionId: string;
@@ -113,7 +121,7 @@ export interface DesktopMemoryPlane {
   }): Promise<void>;
   wakeMemoryJobs(): Promise<void>;
   manageMemoryJob(input: {
-    readonly module: "episodic" | "semantic" | "knowledge";
+    readonly module: "episodic" | "semantic" | "knowledge" | "skill";
     readonly action: "expedite" | "retry" | "interrupt" | "delete";
     readonly id: string;
     readonly expectedRevision: number;
@@ -155,6 +163,8 @@ export async function createDesktopMemoryPlane(options: {
   readonly logger: PragmaLogger;
   readonly pollIntervalMs?: number | undefined;
   readonly knowledgeLearningSink?: KnowledgeLearningSink | undefined;
+  readonly skillLearningSink?: SkillLearningSink | undefined;
+  readonly skillLearningTargetReader?: SkillLearningTargetReader | undefined;
 }): Promise<DesktopMemoryPlane> {
   const canonical = await createFileCanonicalEventFeed({ pragmaHome: options.pragmaHome });
   const executionStore = createFileExecutionStore({
@@ -207,6 +217,24 @@ export async function createDesktopMemoryPlane(options: {
       } satisfies KnowledgeLearningSink),
   });
   knowledgeRef.current = knowledge;
+  const skill = await createSkillMemoryModule({
+    pragmaHome: options.pragmaHome,
+    sourceReader: createSkillSourceReader({ episodic: episodic.store, semantic: semantic.store }),
+    targetReader:
+      options.skillLearningTargetReader ??
+      ({
+        async listTargets() {
+          return [];
+        },
+      } satisfies SkillLearningTargetReader),
+    learningSink:
+      options.skillLearningSink ??
+      ({
+        async submit() {
+          throw new Error("skill_learning_sink_unavailable");
+        },
+      } satisfies SkillLearningSink),
+  });
   const subjectIdentities = createDesktopMemorySubjectIdentityStore({
     pragmaHome: options.pragmaHome,
   });
@@ -220,6 +248,7 @@ export async function createDesktopMemoryPlane(options: {
   registry.register(episodic);
   registry.register(knowledge);
   registry.register(semantic);
+  registry.register(skill);
   const contextStore = createFederatedMemoryContextStore(registry, {
     resolveRecallScope: async (context) => {
       const executionId = readExecutionRunScope(context).executionId;
@@ -295,6 +324,7 @@ export async function createDesktopMemoryPlane(options: {
       await Promise.all([
         episodic.store.maintain(maintenanceNow),
         knowledge.store.maintain(maintenanceNow),
+        skill.store.maintain(maintenanceNow),
         semantic.store.maintain(maintenanceNow),
       ]);
       const pipeline = await state.maintain(maintenanceNow);
@@ -374,15 +404,17 @@ export async function createDesktopMemoryPlane(options: {
       if (Date.now() - lastMaintenanceAtMs >= DEFAULT_MEMORY_STORAGE_POLICY.maintenanceIntervalMs) {
         await maintainStorage();
       }
-      const [episodicWork, knowledgeWork, semanticWork] = await Promise.all([
+      const [episodicWork, knowledgeWork, semanticWork, skillWork] = await Promise.all([
         episodic.store.inspect(),
         knowledge.store.inspect(),
         semantic.store.inspect(),
+        skill.store.inspect(),
       ]);
       const extractionIssues = [
         { moduleId: episodic.descriptor.id, work: episodicWork },
         { moduleId: knowledge.descriptor.id, work: knowledgeWork },
         { moduleId: semantic.descriptor.id, work: semanticWork },
+        { moduleId: skill.descriptor.id, work: skillWork },
       ].filter((item) => item.work.needsAttention > 0);
       reportExtractionIssues(extractionIssues);
       if (recovery.quarantined > 0) {
@@ -440,6 +472,7 @@ export async function createDesktopMemoryPlane(options: {
     semanticStore: semantic.store,
     episodicStore: episodic.store,
     knowledgeLearningStore: knowledge.store,
+    skillLearningStore: skill.store,
     activity,
     contextStore,
     async isContextStoreViewAvailable(input) {
@@ -466,6 +499,10 @@ export async function createDesktopMemoryPlane(options: {
     },
     async setKnowledgeExtractor(extractor) {
       await knowledge.setExtractor(extractor);
+      scheduler.wake();
+    },
+    async setSkillExtractor(extractor) {
+      await skill.setExtractor(extractor);
       scheduler.wake();
     },
     async registerMemoryExecutionContext(input) {
@@ -568,6 +605,7 @@ export async function createDesktopMemoryPlane(options: {
         episodic.store.wakeNeedsAttention(new Date(), "configuration"),
         knowledge.store.wakeNeedsAttention(new Date(), "configuration"),
         semantic.store.wakeNeedsAttention(new Date(), "configuration"),
+        skill.store.wakeNeedsAttention(new Date(), "configuration"),
       ]);
       scheduler.wake();
     },
@@ -582,7 +620,9 @@ export async function createDesktopMemoryPlane(options: {
           ? episodic.store
           : input.module === "semantic"
             ? semantic.store
-            : knowledge.store;
+            : input.module === "knowledge"
+              ? knowledge.store
+              : skill.store;
       if (input.action === "expedite") await store.expediteJob(command);
       else if (input.action === "retry") await store.retryJob(command);
       else if (input.action === "delete") await store.deleteJob(command);
@@ -590,7 +630,8 @@ export async function createDesktopMemoryPlane(options: {
         // Interrupt routes through the Module so the persisted transition and in-flight abort agree.
         if (input.module === "episodic") await episodic.interruptExtractionJob(command);
         else if (input.module === "semantic") await semantic.interruptExtractionJob(command);
-        else await knowledge.interruptExtractionJob(command);
+        else if (input.module === "knowledge") await knowledge.interruptExtractionJob(command);
+        else await skill.interruptExtractionJob(command);
       } else {
         const unsupported: never = input.action;
         throw new Error(`memory_extraction_job_action_unsupported:${String(unsupported)}`);
@@ -613,7 +654,8 @@ export async function createDesktopMemoryPlane(options: {
         if (
           module.descriptor.id !== episodic.descriptor.id &&
           module.descriptor.id !== semantic.descriptor.id &&
-          module.descriptor.id !== knowledge.descriptor.id
+          module.descriptor.id !== knowledge.descriptor.id &&
+          module.descriptor.id !== skill.descriptor.id
         ) {
           modules.push(diagnostic);
           continue;
@@ -651,17 +693,19 @@ export async function createDesktopMemoryPlane(options: {
           };
         } else {
           const diagnostic = await knowledge.store.inspect();
+          const selected =
+            module.descriptor.id === skill.descriptor.id ? await skill.store.inspect() : diagnostic;
           work = {
-            records: diagnostic.jobs,
-            pending: diagnostic.pending,
-            running: diagnostic.running,
-            needsAttention: diagnostic.needsAttention,
+            records: selected.jobs,
+            pending: selected.pending,
+            running: selected.running,
+            needsAttention: selected.needsAttention,
             rejected: 0,
             expired: 0,
             evidenceRecords: 0,
             evidenceBytes: 0,
             truncatedExecutions: 0,
-            lastErrorCode: diagnostic.lastErrorCode,
+            lastErrorCode: selected.lastErrorCode,
           };
         }
         modules.push({
@@ -719,6 +763,7 @@ export async function createDesktopMemoryPlane(options: {
       await scheduler.stop();
       episodic.close();
       knowledge.close();
+      skill.close();
       semantic.close();
       canonical.close();
     },

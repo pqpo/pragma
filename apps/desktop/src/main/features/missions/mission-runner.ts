@@ -384,7 +384,12 @@ export function createMissionRunner(options: {
         hostContextBindings,
         loggerProvider: options.loggerProvider?.withScope({ missionId: mission.id }),
         automaticHumanInteractionHandler: async (request) => {
-          if (mission.origin.type === "system-store-revision" && request.kind === "tool_approval") {
+          if (
+            ["system-store-revision", "system-skill-revision", "system-skill-evaluation"].includes(
+              mission.origin.type,
+            ) &&
+            request.kind === "tool_approval"
+          ) {
             return { kind: "tool_approval", approved: false, updatedInput: request.input };
           }
           return await automaticHumanInteractionHandlerForToolPermissionMode(toolPermissionMode)?.(

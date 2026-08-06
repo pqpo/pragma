@@ -26,6 +26,19 @@ import { createCapabilityCredentialStore } from "../features/capabilities/capabi
 import { installCapabilityHandlers } from "../features/capabilities/capability-ipc.ts";
 import { createCapabilityRevisionCoordinator } from "../features/capabilities/capability-revision-coordinator.ts";
 import { createCapabilityStore } from "../features/capabilities/capability-store.ts";
+import {
+  createDesktopSkillAgents,
+  createSkillEvaluationProfileStore,
+  SKILL_EVALUATION_EXPERT_REF,
+  SKILL_REVISION_EXPERT_REF,
+  type DesktopSkillAgents,
+} from "../features/capabilities/skill-agents.ts";
+import {
+  createSkillRevisionService,
+  type SkillRevisionEvaluator,
+  type SkillRevisionGenerator,
+} from "../features/capabilities/skill-revision-service.ts";
+import { installSkillLearningHandlers } from "../features/capabilities/skill-learning-ipc.ts";
 import { createCapabilityVerifier } from "../features/capabilities/capability-verifier.ts";
 import { installContextStoreHandlers } from "../features/context-stores/context-store-ipc.ts";
 import {
@@ -72,6 +85,11 @@ import {
   groupMemoryKnowledgeProposalsByExpert,
   type MemoryKnowledgePromotionService,
 } from "../features/memory/memory-knowledge-promotion.ts";
+import {
+  createMemorySkillPromotionService,
+  groupMemorySkillCandidatesByExpert,
+  type MemorySkillPromotionService,
+} from "../features/memory/memory-skill-promotion.ts";
 import { installModelProviderHandlers } from "../features/model-providers/model-provider-ipc.ts";
 import { createModelProviderStore } from "../features/model-providers/model-provider-store.ts";
 import { createPluginCredentialStore } from "../features/plugins/plugin-credential-store.ts";
@@ -194,7 +212,12 @@ export async function createDesktopApplicationContainer(
     storagePaths: pragmaPaths,
     loggerProvider,
     blueprintCache,
-    reservedResourceRefs: new Set([BUILT_IN_PRAGMA_REF, STORE_REVISION_EXPERT_REF]),
+    reservedResourceRefs: new Set([
+      BUILT_IN_PRAGMA_REF,
+      STORE_REVISION_EXPERT_REF,
+      SKILL_REVISION_EXPERT_REF,
+      SKILL_EVALUATION_EXPERT_REF,
+    ]),
   });
   const workflowLayouts = createWorkflowLayoutStore({ projectsPath });
   installWorkflowLayoutHandlers(workflowLayouts);
@@ -274,6 +297,7 @@ export async function createDesktopApplicationContainer(
   });
   installRuntimeHandlers(runtimes);
   const knowledgePromotionRef: { current?: MemoryKnowledgePromotionService } = {};
+  const skillPromotionRef: { current?: MemorySkillPromotionService } = {};
   const expertStore = createExpertDefinitionStore({
     project: pragmaProjectStore,
     systemExperts,
@@ -303,6 +327,7 @@ export async function createDesktopApplicationContainer(
     },
     onRemoved: async (expertRef) => {
       await knowledgePromotionRef.current?.clearExpertBinding(expertRef);
+      await skillPromotionRef.current?.clearExpertBinding(expertRef);
     },
   });
   const pluginStore = createPluginStore({
@@ -334,6 +359,9 @@ export async function createDesktopApplicationContainer(
       return definitions.some((expert) =>
         expert.capabilities.some((reference) => reference.capabilityId === capabilityId),
       );
+    },
+    onRemoved: async (capabilityId) => {
+      await skillPromotionRef.current?.clearCapabilityBinding(capabilityId);
     },
   });
   const capabilityRevisionCoordinator = createCapabilityRevisionCoordinator({
@@ -381,6 +409,34 @@ export async function createDesktopApplicationContainer(
       mainLogger.warn("desktop.context_store_revision_processing_failed", message, { error }),
   });
   storeRevisionsRef.current = storeRevisions;
+  const skillAgentsRef: { current?: DesktopSkillAgents } = {};
+  const skillEvaluationProfiles = createSkillEvaluationProfileStore(
+    join(pragmaPaths.stateRoot(), "skill-evaluation", "profile.json"),
+  );
+  const skillRevisionGenerator: SkillRevisionGenerator = {
+    async generate(input) {
+      if (skillAgentsRef.current === undefined) {
+        throw new Error("skill_revision_agent_unavailable");
+      }
+      return await skillAgentsRef.current.revisionGenerator.generate(input);
+    },
+  };
+  const skillRevisionEvaluator: SkillRevisionEvaluator = {
+    async evaluate(input) {
+      if (skillAgentsRef.current === undefined) {
+        throw new Error("skill_evaluation_agent_unavailable");
+      }
+      return await skillAgentsRef.current.revisionEvaluator.evaluate(input);
+    },
+  };
+  const skillRevisions = createSkillRevisionService({
+    statePath: join(pragmaPaths.stateRoot(), "skill-revisions"),
+    capabilities: capabilityStore,
+    generator: skillRevisionGenerator,
+    evaluator: skillRevisionEvaluator,
+    warn: (message, error) =>
+      mainLogger.warn("desktop.skill_revision_processing_failed", message, { error }),
+  });
   const knowledgePromotion = createMemoryKnowledgePromotionService({
     statePath: join(pragmaPaths.stateRoot(), "memory-knowledge-promotion"),
     contextStores,
@@ -432,6 +488,76 @@ export async function createDesktopApplicationContainer(
     },
   });
   knowledgePromotionRef.current = knowledgePromotion;
+  const skillPromotion = createMemorySkillPromotionService({
+    statePath: join(pragmaPaths.stateRoot(), "memory-skill-promotion"),
+    capabilities: capabilityStore,
+    revisions: skillRevisions,
+    evaluator: {
+      async evaluate(input) {
+        if (skillAgentsRef.current === undefined) {
+          throw new Error("skill_evaluation_agent_unavailable");
+        }
+        return await skillAgentsRef.current.evaluateCandidate(input);
+      },
+    },
+    expertExists: async (expertRef) =>
+      (await expertStore.list()).some((expert) => expert.ref === expertRef),
+    bindSkill: async (expertRef, capabilityId, revision) => {
+      const expert = await expertStore.get(expertRef);
+      if (
+        expert.capabilities.some(
+          (capability) => capability.kind === "skill" && capability.capabilityId === capabilityId,
+        )
+      ) {
+        return;
+      }
+      const capabilities = [
+        ...expert.capabilities,
+        { kind: "skill" as const, capabilityId, revision },
+      ];
+      if (expert.origin === "built-in") {
+        await expertStore.updateBuiltIn(expertRef, {
+          name: expert.name,
+          description: expert.description,
+          tags: expert.tags,
+          additionalInstructions: expert.additionalInstructions,
+          ...(expert.executionProfile.mode === "pinned"
+            ? { model: expert.executionProfile.model }
+            : {}),
+          capabilities,
+          toolApprovals: expert.toolApprovals,
+          plugins: expert.plugins,
+          contextStoreMounts: expert.contextStoreMounts,
+        });
+        return;
+      }
+      if (expert.executionProfile.mode !== "pinned") {
+        throw new Error("Project Expert has no pinned execution profile.");
+      }
+      await expertStore.update(expertRef, {
+        baseRevision: expert.revision,
+        name: expert.name,
+        description: expert.description,
+        tags: expert.tags,
+        scope: expert.scope,
+        instructions: expert.instructions,
+        model: expert.executionProfile.model,
+        capabilities,
+        toolApprovals: expert.toolApprovals,
+        plugins: expert.plugins,
+        contextStoreMounts: expert.contextStoreMounts,
+        resourceTools: expert.resourceTools,
+        opaqueCapabilities: expert.opaqueCapabilities,
+        opaqueContextStores: expert.opaqueContextStores,
+      });
+    },
+  });
+  skillPromotionRef.current = skillPromotion;
+  installSkillLearningHandlers({
+    promotion: skillPromotion,
+    revisions: skillRevisions,
+    evaluationProfiles: skillEvaluationProfiles,
+  });
   installContextStoreHandlers(contextStores, options.getWindow, storeRevisions);
   const memoryPlane = await createDesktopMemoryPlane({
     pragmaHome: pragmaPaths.root,
@@ -445,6 +571,20 @@ export async function createDesktopApplicationContainer(
             expertRefs: [expertRef],
             sourceDigest: input.sourceDigest,
             proposals,
+          });
+        }
+      },
+    },
+    skillLearningTargetReader: skillPromotion.targetReader,
+    skillLearningSink: {
+      async submit(input) {
+        const candidatesByExpert = groupMemorySkillCandidatesByExpert(input);
+        if (candidatesByExpert.size === 0) throw new Error("skill_producer_expert_missing");
+        for (const [expertRef, candidates] of candidatesByExpert) {
+          await skillPromotion.routeLearning({
+            expertRef,
+            sourceDigest: input.sourceDigest,
+            candidates,
           });
         }
       },
@@ -519,7 +659,7 @@ export async function createDesktopApplicationContainer(
       await memoryPlane.deleteExecutionState(executionIds);
     },
     onExecutionLinked: async ({ mission, executionId }) => {
-      if (mission.origin.type === "system-memory") return;
+      if (mission.origin.type !== "user") return;
       await memoryPlane.registerMemoryExecutionContext({
         executionId,
         missionId: mission.id,
@@ -545,7 +685,11 @@ export async function createDesktopApplicationContainer(
         ? await memoryCuratorRef.current?.fingerprint()
         : mission.executor.ref === STORE_REVISION_EXPERT_REF
           ? await storeRevisionAgentRef.current?.fingerprint(await storeRevisions.getProfile())
-          : systemExperts.fingerprint(mission.executor.ref),
+          : mission.executor.ref === SKILL_REVISION_EXPERT_REF
+            ? await skillAgentsRef.current?.fingerprint("revision")
+            : mission.executor.ref === SKILL_EVALUATION_EXPERT_REF
+              ? await skillAgentsRef.current?.fingerprint("evaluation")
+              : systemExperts.fingerprint(mission.executor.ref),
     assertExecutorReady: async (ref) => {
       if (await bundleService.isRefPending(ref)) {
         throw new Error(
@@ -575,6 +719,27 @@ export async function createDesktopApplicationContainer(
         return await storeRevisionAgentRef.current.compile({
           storeId: mission.origin.storeId,
           profile: await storeRevisions.getProfile(),
+          runtimes: scopedRuntimes,
+        });
+      }
+      if (mission.executor.ref === SKILL_REVISION_EXPERT_REF) {
+        if (
+          skillAgentsRef.current === undefined ||
+          mission.origin.type !== "system-skill-revision"
+        ) {
+          throw new Error("The Skill Revision Agent mission is invalid or unavailable.");
+        }
+        return await skillAgentsRef.current.compile({ kind: "revision", runtimes: scopedRuntimes });
+      }
+      if (mission.executor.ref === SKILL_EVALUATION_EXPERT_REF) {
+        if (
+          skillAgentsRef.current === undefined ||
+          mission.origin.type !== "system-skill-evaluation"
+        ) {
+          throw new Error("The Skill Evaluation Agent mission is invalid or unavailable.");
+        }
+        return await skillAgentsRef.current.compile({
+          kind: "evaluation",
           runtimes: scopedRuntimes,
         });
       }
@@ -663,10 +828,21 @@ export async function createDesktopApplicationContainer(
     pragmaHome: pragmaPaths.root,
     loggerProvider,
   });
+  skillAgentsRef.current = createDesktopSkillAgents({
+    revisionProfiles: storeRevisions,
+    evaluationProfiles: skillEvaluationProfiles,
+    missions: missionStore,
+    runner: missionRunner,
+    project: pragmaProjectStore,
+    runtimes,
+    pragmaHome: pragmaPaths.root,
+    loggerProvider,
+  });
   await Promise.all([
     memoryPlane.setEpisodicExtractor(memoryCurator.episodicExtractor),
     memoryPlane.setSemanticExtractor(memoryCurator.semanticExtractor),
     memoryPlane.setKnowledgeExtractor(memoryCurator.knowledgeExtractor),
+    memoryPlane.setSkillExtractor(memoryCurator.skillExtractor),
   ]);
   const unsubscribeTokenCounter = tokenCounter.subscribe(() => {
     void missionRunner.invalidateEstimatedContextWindows().catch((error: unknown) => {
@@ -826,6 +1002,13 @@ export async function createDesktopApplicationContainer(
           { error },
         );
       });
+      void skillPromotion.recover().catch((error: unknown) => {
+        mainLogger.warn(
+          "desktop.memory_skill_promotion_recovery_failed",
+          "An interrupted Memory Skill initialization could not be recovered.",
+          { error },
+        );
+      });
       void storeRevisionAgentRef.current?.recoverOrphans().catch((error: unknown) => {
         mainLogger.warn(
           "desktop.context_store_revision_orphan_cleanup_failed",
@@ -833,10 +1016,24 @@ export async function createDesktopApplicationContainer(
           { error },
         );
       });
+      void skillAgentsRef.current?.recoverOrphans().catch((error: unknown) => {
+        mainLogger.warn(
+          "desktop.skill_agent_orphan_cleanup_failed",
+          "Orphaned Skill Revision or Evaluation Agent Missions could not be cleaned up.",
+          { error },
+        );
+      });
       void storeRevisions.processPending().catch((error: unknown) => {
         mainLogger.warn(
           "desktop.context_store_revision_resume_failed",
           "Pending Context Store revisions could not be resumed.",
+          { error },
+        );
+      });
+      void skillRevisions.processPending().catch((error: unknown) => {
+        mainLogger.warn(
+          "desktop.skill_revision_resume_failed",
+          "Pending Skill revisions could not be resumed.",
           { error },
         );
       });

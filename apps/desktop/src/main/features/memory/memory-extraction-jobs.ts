@@ -1,5 +1,6 @@
 import type { EpisodicExtractionJob, SemanticExtractionJob } from "@pragma/memory";
 import type { KnowledgeExtractionJob } from "@pragma/shared";
+import type { SkillLearningJob } from "@pragma/shared";
 
 import {
   DESKTOP_MEMORY_EXTRACTION_PAGE_SIZE,
@@ -25,6 +26,11 @@ type PagedExtractionJob =
       readonly module: "knowledge";
       readonly lane: MemoryExtractionLane;
       readonly job: KnowledgeExtractionJob;
+    }
+  | {
+      readonly module: "skill";
+      readonly lane: MemoryExtractionLane;
+      readonly job: SkillLearningJob;
     };
 
 interface LoadedLanePage {
@@ -35,7 +41,10 @@ interface LoadedLanePage {
 }
 
 export async function listDesktopMemoryExtractionJobs(
-  plane: Pick<DesktopMemoryPlane, "episodicStore" | "semanticStore" | "knowledgeLearningStore">,
+  plane: Pick<
+    DesktopMemoryPlane,
+    "episodicStore" | "semanticStore" | "knowledgeLearningStore" | "skillLearningStore"
+  >,
   options: {
     readonly missions: Pick<MissionStore, "get" | "resolveExecutionTitles">;
     readonly project: Pick<PragmaProjectStore, "get">;
@@ -48,7 +57,7 @@ export async function listDesktopMemoryExtractionJobs(
   const jobs = loadedPages.flatMap((page) => page.jobs);
   const conversationJobs = jobs.filter(
     (entry): entry is Extract<PagedExtractionJob, { module: "episodic" | "semantic" }> =>
-      entry.module !== "knowledge",
+      entry.module === "episodic" || entry.module === "semantic",
   );
   const missionIds = [
     ...new Set(
@@ -63,7 +72,7 @@ export async function listDesktopMemoryExtractionJobs(
   const [missionResults, executionTitles, project] = await Promise.all([
     Promise.allSettled(missionIds.map(async (id) => await options.missions.get(id))),
     options.missions.resolveExecutionTitles(executionIds),
-    jobs.some((entry) => entry.module === "knowledge")
+    jobs.some((entry) => entry.module === "knowledge" || entry.module === "skill")
       ? options.project.get()
       : Promise.resolve(undefined),
   ]);
@@ -101,7 +110,8 @@ export async function listDesktopMemoryExtractionJobs(
 }
 
 async function loadLanePage(
-  plane: Pick<DesktopMemoryPlane, "episodicStore" | "semanticStore" | "knowledgeLearningStore">,
+  plane: Pick<DesktopMemoryPlane, "episodicStore" | "semanticStore" | "knowledgeLearningStore"> &
+    Partial<Pick<DesktopMemoryPlane, "skillLearningStore">>,
   lane: MemoryExtractionLane,
   request: ListDesktopMemoryExtractionJobs["pages"][MemoryExtractionLane],
 ): Promise<LoadedLanePage> {
@@ -110,7 +120,7 @@ async function loadLanePage(
       limit: DESKTOP_MEMORY_EXTRACTION_PAGE_SIZE,
       ...(cursor === undefined ? {} : { before: cursor }),
     };
-    const [episodic, semantic, knowledge] = await Promise.all([
+    const [episodic, semantic, knowledge, skill] = await Promise.all([
       plane.episodicStore.listExtractionJobsPage({
         ...common,
         statuses: conversationStatuses(lane),
@@ -126,15 +136,21 @@ async function loadLanePage(
         statuses: knowledgeStatuses(lane),
         sortKeyPrefix: "knowledge",
       }),
+      plane.skillLearningStore?.listJobsPage({
+        ...common,
+        statuses: knowledgeStatuses(lane),
+        sortKeyPrefix: "skill",
+      }) ?? Promise.resolve({ jobs: [], total: 0 }),
     ]);
     const jobs: PagedExtractionJob[] = [
       ...episodic.jobs.map((job) => ({ module: "episodic" as const, lane, job })),
       ...semantic.jobs.map((job) => ({ module: "semantic" as const, lane, job })),
       ...knowledge.jobs.map((job) => ({ module: "knowledge" as const, lane, job })),
+      ...skill.jobs.map((job) => ({ module: "skill" as const, lane, job })),
     ];
     return {
       jobs: jobs.toSorted(compareJobs).slice(0, DESKTOP_MEMORY_EXTRACTION_PAGE_SIZE),
-      totalTasks: episodic.total + semantic.total + knowledge.total,
+      totalTasks: episodic.total + semantic.total + knowledge.total + skill.total,
     };
   };
 
@@ -206,7 +222,7 @@ function toDesktopTask(
   resourceTitles: ReadonlyMap<string, string>,
 ): DesktopMemoryExtractionTask {
   const title =
-    entry.module === "knowledge"
+    entry.module === "knowledge" || entry.module === "skill"
       ? resourceTitles.get(entry.job.rootRef.id)
       : entry.job.conversationRef.type === "pragma.mission"
         ? missionTitles.get(entry.job.conversationRef.id)

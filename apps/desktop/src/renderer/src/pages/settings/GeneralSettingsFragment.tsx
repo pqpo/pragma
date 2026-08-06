@@ -8,6 +8,7 @@ import type {
   DesktopRuntimeAvailability,
   DesktopSettingsSnapshot,
   DesktopToolPermissionMode,
+  SkillEvaluationProfile,
 } from "../../../../shared/contracts/index.ts";
 import { localeDisplayNames, setDesktopLocale } from "../../i18n/index.ts";
 import { SelectMenu, type SelectMenuOption } from "../../components/SelectMenu.tsx";
@@ -26,9 +27,12 @@ export function GeneralSettingsFragment() {
   const { t } = useTranslation(["settings", "common"]);
   const [settings, setSettings] = useState<DesktopSettingsSnapshot>();
   const [revisionAgent, setRevisionAgent] = useState<ContextStoreRevisionProfile>();
+  const [evaluationAgent, setEvaluationAgent] = useState<SkillEvaluationProfile>();
   const [runtimes, setRuntimes] = useState<readonly DesktopRuntimeAvailability[]>([]);
   const [revisionRuntimeId, setRevisionRuntimeId] = useState("");
   const [revisionModelKey, setRevisionModelKey] = useState("");
+  const [evaluationRuntimeId, setEvaluationRuntimeId] = useState("");
+  const [evaluationModelKey, setEvaluationModelKey] = useState("");
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string>();
 
@@ -52,11 +56,13 @@ export function GeneralSettingsFragment() {
     let cancelled = false;
     void Promise.all([
       window.pragmaDesktop.getContextStoreRevisionProfile(),
+      window.pragmaDesktop.getSkillEvaluationProfile(),
       window.pragmaDesktop.getRuntimeAvailability(),
     ])
-      .then(([profile, availableRuntimes]) => {
+      .then(([profile, evaluationProfile, availableRuntimes]) => {
         if (cancelled) return;
         setRevisionAgent(profile);
+        setEvaluationAgent(evaluationProfile);
         setRuntimes(availableRuntimes);
         setRevisionRuntimeId(
           profile.model?.runtimeId ??
@@ -67,6 +73,16 @@ export function GeneralSettingsFragment() {
           profile.model === undefined
             ? ""
             : `${profile.model.providerId}\0${profile.model.modelId}`,
+        );
+        setEvaluationRuntimeId(
+          evaluationProfile.model?.runtimeId ??
+            availableRuntimes.find((runtime) => runtime.isDefault)?.id ??
+            "",
+        );
+        setEvaluationModelKey(
+          evaluationProfile.model === undefined
+            ? ""
+            : `${evaluationProfile.model.providerId}\0${evaluationProfile.model.modelId}`,
         );
       })
       .catch(() => {
@@ -161,6 +177,29 @@ export function GeneralSettingsFragment() {
   const workspace = settings?.defaultWorkspace ?? "";
   const workspaceName = workspace.split(/[\\/]/).at(-1);
   const selectedRevisionRuntime = runtimes.find((runtime) => runtime.id === revisionRuntimeId);
+  const selectedEvaluationRuntime = runtimes.find((runtime) => runtime.id === evaluationRuntimeId);
+
+  const updateEvaluationAgent = async (
+    mode: "inherit-default" | "pinned",
+    model?: { readonly runtimeId: string; readonly providerId: string; readonly modelId: string },
+  ) => {
+    if (evaluationAgent === undefined) return;
+    setSaving(true);
+    setError(undefined);
+    try {
+      setEvaluationAgent(
+        await window.pragmaDesktop.updateSkillEvaluationProfile({
+          expectedRevision: evaluationAgent.revision,
+          mode,
+          ...(model === undefined ? {} : { model }),
+        }),
+      );
+    } catch {
+      setError(t("general.saveError", { ns: "settings" }));
+    } finally {
+      setSaving(false);
+    }
+  };
 
   return (
     <SettingsScreenFrame
@@ -366,6 +405,105 @@ export function GeneralSettingsFragment() {
                 }}
               >
                 {t("general.revisionAgentSave", { ns: "settings" })}
+              </button>
+            </div>
+          </div>
+        )}
+        <div className="setting-row revision-agent-mode-setting">
+          <span className="setting-copy">
+            <strong>{t("general.evaluationAgent", { ns: "settings" })}</strong>
+            <span>{t("general.evaluationAgentDescription", { ns: "settings" })}</span>
+          </span>
+          <SelectMenu<"inherit-default" | "pinned">
+            ariaLabel={t("general.evaluationAgent", { ns: "settings" })}
+            className="settings-select revision-agent-settings-select"
+            value={evaluationAgent?.mode ?? "inherit-default"}
+            disabled={evaluationAgent === undefined || saving}
+            placement="bottom"
+            options={[
+              {
+                value: "inherit-default",
+                label: t("general.revisionAgentInherit", { ns: "settings" }),
+              },
+              { value: "pinned", label: t("general.revisionAgentPinned", { ns: "settings" }) },
+            ]}
+            onChange={(mode) => {
+              if (mode === "inherit-default") void updateEvaluationAgent(mode);
+              else
+                setEvaluationAgent((current) =>
+                  current === undefined ? current : { ...current, mode: "pinned" },
+                );
+            }}
+          />
+        </div>
+        {evaluationAgent?.mode !== "pinned" ? null : (
+          <div className="revision-agent-pinned-settings">
+            <div className="setting-row revision-agent-runtime-setting">
+              <span className="setting-copy">
+                <strong>{t("general.evaluationAgentRuntime", { ns: "settings" })}</strong>
+                <span>{t("general.evaluationAgentRuntimeDescription", { ns: "settings" })}</span>
+              </span>
+              <SelectMenu
+                ariaLabel={t("general.evaluationAgentRuntime", { ns: "settings" })}
+                className="settings-select revision-agent-settings-select"
+                value={evaluationRuntimeId}
+                disabled={saving}
+                placement="bottom"
+                options={runtimes
+                  .filter((runtime) => runtime.status === "available")
+                  .map((runtime) => ({ value: runtime.id, label: runtime.displayName }))}
+                onChange={(value) => {
+                  setEvaluationRuntimeId(value);
+                  setEvaluationModelKey("");
+                }}
+              />
+            </div>
+            <div className="setting-row revision-agent-model-setting">
+              <span className="setting-copy">
+                <strong>{t("general.evaluationAgentModel", { ns: "settings" })}</strong>
+                <span>{t("general.evaluationAgentModelDescription", { ns: "settings" })}</span>
+              </span>
+              <SelectMenu
+                ariaLabel={t("general.evaluationAgentModel", { ns: "settings" })}
+                className="settings-select revision-agent-settings-select"
+                value={evaluationModelKey}
+                disabled={saving || evaluationRuntimeId === ""}
+                emptyLabel={t("general.revisionAgentChooseModel", { ns: "settings" })}
+                placement="bottom"
+                options={[
+                  {
+                    value: "",
+                    label: t("general.revisionAgentChooseModel", { ns: "settings" }),
+                    disabled: true,
+                  },
+                  ...(selectedEvaluationRuntime?.models ?? []).map((model) => ({
+                    value: `${model.provider.id}\0${model.id}`,
+                    label: `${model.provider.displayName} · ${model.displayName}`,
+                  })),
+                ]}
+                onChange={setEvaluationModelKey}
+              />
+            </div>
+            <div className="setting-row revision-agent-save-setting">
+              <span className="setting-copy">
+                <strong>{t("general.evaluationAgentSave", { ns: "settings" })}</strong>
+                <span>{t("general.evaluationAgentSaveDescription", { ns: "settings" })}</span>
+              </span>
+              <button
+                className="secondary-button"
+                type="button"
+                disabled={saving || evaluationRuntimeId === "" || evaluationModelKey === ""}
+                onClick={() => {
+                  const [providerId, modelId] = evaluationModelKey.split("\0");
+                  if (providerId !== undefined && modelId !== undefined)
+                    void updateEvaluationAgent("pinned", {
+                      runtimeId: evaluationRuntimeId,
+                      providerId,
+                      modelId,
+                    });
+                }}
+              >
+                {t("general.evaluationAgentSave", { ns: "settings" })}
               </button>
             </div>
           </div>

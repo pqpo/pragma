@@ -113,7 +113,7 @@ export const DesktopMemoryPlaneStatusSchema = z.object({
 });
 
 export const DesktopMemoryExtractionTaskSchema = z.object({
-  module: z.enum(["episodic", "semantic", "knowledge"]),
+  module: z.enum(["episodic", "semantic", "knowledge", "skill"]),
   id: z.string().min(1),
   revision: z.number().int().positive(),
   lane: z.enum(["waiting", "attention", "running", "completed"]),
@@ -182,7 +182,7 @@ export const DesktopMemoryExtractionBoardSchema = z.object({
 
 export const ManageDesktopMemoryExtractionTaskSchema = z
   .object({
-    module: z.enum(["episodic", "semantic", "knowledge"]),
+    module: z.enum(["episodic", "semantic", "knowledge", "skill"]),
     action: z.enum(["expedite", "retry", "interrupt", "delete"]),
     id: z.string().min(1),
     expectedRevision: z.number().int().positive(),
