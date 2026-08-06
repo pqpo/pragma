@@ -116,6 +116,32 @@ describe("Episodic Memory", () => {
     module.close();
   });
 
+  it("keeps low-score episodes out of index while deep search can recall them", async () => {
+    let clock = new Date("2026-08-02T00:00:00.000Z");
+    const module = await createEpisodicMemoryModule({
+      pragmaHome: await temporaryRoot(),
+      extractor: fakeExtractor(undefined, 0),
+      now: () => clock,
+    });
+    await module.consume(executionEvidence("deep-archive-marker"));
+    await module.runBackgroundOnce?.();
+    expect(await module.store.list()).toHaveLength(1);
+    clock = new Date("2028-08-01T00:00:00.000Z");
+
+    const registry = new MemoryModuleRegistry();
+    registry.register(module);
+    const context = createFederatedMemoryContextStore(registry, {
+      resolveRecallScope: () => expertScope("expert-a"),
+    });
+    const index = await context.readContext({ id: "episodic/index.md" });
+    expect(index.ok && index.value.content).not.toContain("deep-archive-marker");
+    const search = await context.searchContext({ query: "deep-archive-marker" });
+    expect(search.ok && search.value.some((item) => item.id.startsWith("episodic/items/"))).toBe(
+      true,
+    );
+    module.close();
+  });
+
   it("isolates personal stores while combining the current Team or Flow store with the current Expert", async () => {
     const root = await temporaryRoot();
     const module = await createEpisodicMemoryModule({
@@ -566,6 +592,28 @@ describe("Episodic Memory", () => {
     ).rejects.toThrow();
     expect(await module.store.get(initial.id)).toBeDefined();
 
+    const dataPath = join(
+      new PragmaPaths({ pragmaHome: root }).memoryModuleDataRoot("pragma.memory.episodic"),
+      "episodes.sqlite",
+    );
+    const cleanupFixtureAt = "2026-08-03T12:01:45.000Z";
+    const cleanupFixture = new DatabaseSync(dataPath);
+    cleanupFixture
+      .prepare(
+        `INSERT OR REPLACE INTO memory_index(
+          memory_id, consumer_key, tier, score, recall_count, last_recalled_at, computed_at
+        ) VALUES (?, ?, 'archived', 0.1, 1, ?, ?)`,
+      )
+      .run(initial.id, "pragma.expert\0expert-a", cleanupFixtureAt, cleanupFixtureAt);
+    cleanupFixture
+      .prepare(
+        `INSERT OR REPLACE INTO revision_prune_audit(
+          memory_id, pruned_through_revision, pruned_count, pruned_at
+        ) VALUES (?, 1, 1, ?)`,
+      )
+      .run(initial.id, cleanupFixtureAt);
+    cleanupFixture.close();
+
     await module.store.forget({
       id: tightened.id,
       expectedRevision: tightened.revision,
@@ -584,20 +632,23 @@ describe("Episodic Memory", () => {
     expect(await module.store.list()).toEqual([]);
     module.close();
 
-    const database = new DatabaseSync(
-      join(
-        new PragmaPaths({ pragmaHome: root }).memoryModuleDataRoot("pragma.memory.episodic"),
-        "episodes.sqlite",
-      ),
-    );
+    const database = new DatabaseSync(dataPath);
     const tombstone = database
       .prepare("SELECT tombstone_json AS value FROM tombstones WHERE id = ?")
       .get(initial.id) as { readonly value: string };
     const governance = database
       .prepare("SELECT COUNT(*) AS count FROM governance_events WHERE episode_id = ?")
       .get(initial.id) as { readonly count: number };
+    const memoryIndex = database
+      .prepare("SELECT COUNT(*) AS count FROM memory_index WHERE memory_id = ?")
+      .get(initial.id) as { readonly count: number };
+    const pruneAudit = database
+      .prepare("SELECT COUNT(*) AS count FROM revision_prune_audit WHERE memory_id = ?")
+      .get(initial.id) as { readonly count: number };
     database.close();
     expect(governance.count).toBe(0);
+    expect(memoryIndex.count).toBe(0);
+    expect(pruneAudit.count).toBe(0);
     expect(tombstone.value).not.toMatch(
       /Repair|goal|summary|evidenceRefs|Keep this episode|User requested forgetting/,
     );
@@ -1043,6 +1094,7 @@ describe("Episodic Memory", () => {
 
 function fakeExtractor(
   forcedRef?: string,
+  valueScore = 0.9,
 ): EpisodicMemoryExtractor & { extract: ReturnType<typeof vi.fn> } {
   const extract = vi.fn(async (input: EpisodicExtractionInput) => {
     const ref = forcedRef ?? input.evidence.at(-1)!.messageId;
@@ -1055,7 +1107,7 @@ function fakeExtractor(
         attempts: [{ description: "实现 Episodic 模块", result: "成功", evidenceRefs: [ref] }],
         failuresAndRecoveries: [],
         outcome: { status: "succeeded" as const, summary: "实现完成", evidenceRefs: [ref] },
-        valueScore: 0.9,
+        valueScore,
       },
       provenance: {
         curatorRef: MEMORY_CURATOR_REF,

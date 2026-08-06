@@ -39,6 +39,7 @@ import {
   type MemoryEvidenceOmissionStats,
 } from "../storage/bounded-evidence.ts";
 import { DEFAULT_MEMORY_STORAGE_POLICY } from "../storage/memory-storage-policy.ts";
+import { hotEpisodes, recordMemoryRecall } from "../storage/memory-index.ts";
 import { EPISODIC_DATA_STORAGE_MIGRATIONS } from "../storage/migrations/episodic-data/index.ts";
 import { EPISODIC_JOB_STORAGE_MIGRATIONS } from "../storage/migrations/episodic-jobs/index.ts";
 import {
@@ -95,13 +96,18 @@ export interface EpisodicMemoryStore {
   get(id: string): Promise<EpisodicMemoryRecord | undefined>;
   history(id: string): Promise<readonly EpisodicMemoryRecord[]>;
   list(): Promise<readonly EpisodicMemoryRecord[]>;
-  listForRecall(scope: MemoryRecallScope): Promise<readonly EpisodicMemoryRecord[]>;
+  listForRecall(scope: MemoryRecallScope, now?: Date): Promise<readonly EpisodicMemoryRecord[]>;
   searchForRecall(
     scope: MemoryRecallScope,
     query: string,
     limit: number,
+    now?: Date,
   ): Promise<readonly EpisodicMemoryRecord[]>;
-  getForRecall(scope: MemoryRecallScope, id: string): Promise<EpisodicMemoryRecord | undefined>;
+  getForRecall(
+    scope: MemoryRecallScope,
+    id: string,
+    now?: Date,
+  ): Promise<EpisodicMemoryRecord | undefined>;
   getEvidenceForRecall(
     scope: MemoryRecallScope,
     messageId: string,
@@ -185,7 +191,7 @@ export async function createEpisodicMemoryStore(
           database: data,
           databasePath: dataPath,
           family: "pragma.memory-episodic-store",
-          targetVersion: 3,
+          targetVersion: 4,
           migrations: EPISODIC_DATA_STORAGE_MIGRATIONS,
         });
       }
@@ -459,20 +465,25 @@ export async function createEpisodicMemoryStore(
       );
     },
 
-    async listForRecall(scope) {
+    async listForRecall(scope, now = new Date()) {
       const access = recallPredicate("episodes", scope);
-      return readEpisodeRows(
-        data
-          .prepare(
-            `SELECT record_json AS recordJson FROM episodes
+      return hotEpisodes(
+        data,
+        readEpisodeRows(
+          data
+            .prepare(
+              `SELECT record_json AS recordJson FROM episodes
              WHERE status = 'active' AND ${access.sql}
              ORDER BY updated_at DESC, id`,
-          )
-          .all(...access.parameters),
+            )
+            .all(...access.parameters),
+        ),
+        scope,
+        now,
       );
     },
 
-    async searchForRecall(scope, query, limit) {
+    async searchForRecall(scope, query, limit, now = new Date()) {
       const normalizedLimit = Math.max(1, Math.min(100, Math.trunc(limit)));
       const escapedQuery = query
         .replaceAll("\\", "\\\\")
@@ -487,10 +498,12 @@ export async function createEpisodicMemoryStore(
            ORDER BY updated_at DESC, id LIMIT ?`,
         )
         .all(`%${escapedQuery}%`, ...access.parameters, normalizedLimit);
-      return readEpisodeRows(rows);
+      const records = readEpisodeRows(rows);
+      for (const record of records) recordMemoryRecall(data, record.id, scope, now);
+      return records;
     },
 
-    async getForRecall(scope, id) {
+    async getForRecall(scope, id, now = new Date()) {
       const access = recallPredicate("episodes", scope);
       const row = data
         .prepare(
@@ -498,9 +511,9 @@ export async function createEpisodicMemoryStore(
            WHERE id = ? AND status = 'active' AND ${access.sql}`,
         )
         .get(id, ...access.parameters) as { readonly recordJson: string } | undefined;
-      return row === undefined
-        ? undefined
-        : EpisodicMemoryRecordSchema.parse(JSON.parse(row.recordJson));
+      if (row === undefined) return undefined;
+      recordMemoryRecall(data, id, scope, now);
+      return EpisodicMemoryRecordSchema.parse(JSON.parse(row.recordJson));
     },
 
     async getEvidenceForRecall(scope, messageId) {
@@ -620,6 +633,8 @@ export async function createEpisodicMemoryStore(
         data.prepare("DELETE FROM episode_source_executions WHERE episode_id = ?").run(input.id);
         data.prepare("DELETE FROM episode_revisions WHERE episode_id = ?").run(input.id);
         data.prepare("DELETE FROM governance_events WHERE episode_id = ?").run(input.id);
+        data.prepare("DELETE FROM memory_index WHERE memory_id = ?").run(input.id);
+        data.prepare("DELETE FROM revision_prune_audit WHERE memory_id = ?").run(input.id);
         data.prepare("DELETE FROM episodes WHERE id = ?").run(input.id);
         data
           .prepare(
@@ -800,6 +815,7 @@ export async function createEpisodicMemoryStore(
 
     async maintain(now) {
       const result = maintainJobs(state, now);
+      maintainEpisodicData(data, now);
       const cutoff = now.getTime() - DEFAULT_MEMORY_STORAGE_POLICY.jobRecordRetentionMs;
       await Promise.all([
         ...EPISODIC_DATA_STORAGE_MIGRATIONS.map((step) =>
@@ -861,6 +877,104 @@ export async function createEpisodicMemoryStore(
   };
 }
 
+function maintainEpisodicData(database: DatabaseSync, now: Date): void {
+  const maxRevisions = DEFAULT_MEMORY_STORAGE_POLICY.memoryMaxFullRevisions;
+  const ids = database.prepare("SELECT id FROM episodes").all() as unknown as readonly {
+    readonly id: string;
+  }[];
+  for (const { id } of ids) {
+    const pruned = database
+      .prepare(
+        `SELECT COUNT(*) AS count, MAX(revision) AS throughRevision FROM episode_revisions
+         WHERE episode_id = ? AND revision NOT IN (
+           SELECT revision FROM episode_revisions WHERE episode_id = ? ORDER BY revision DESC LIMIT ?
+         )`,
+      )
+      .get(id, id, maxRevisions) as {
+      readonly count: number;
+      readonly throughRevision: number | null;
+    };
+    if (pruned.count > 0 && pruned.throughRevision !== null) {
+      database
+        .prepare(
+          `INSERT INTO revision_prune_audit(memory_id, pruned_through_revision, pruned_count, pruned_at)
+           VALUES (?, ?, ?, ?)
+           ON CONFLICT(memory_id) DO UPDATE SET
+             pruned_through_revision = MAX(revision_prune_audit.pruned_through_revision, excluded.pruned_through_revision),
+             pruned_count = revision_prune_audit.pruned_count + excluded.pruned_count,
+             pruned_at = excluded.pruned_at`,
+        )
+        .run(id, pruned.throughRevision, pruned.count, now.toISOString());
+    }
+    database
+      .prepare(
+        `DELETE FROM episode_revisions WHERE episode_id = ? AND revision NOT IN (
+          SELECT revision FROM episode_revisions WHERE episode_id = ? ORDER BY revision DESC LIMIT ?
+        )`,
+      )
+      .run(id, id, maxRevisions);
+  }
+  while (episodicOverLimit(database)) {
+    const row = database
+      .prepare(
+        `SELECT e.id, e.revision FROM episodes e
+         LEFT JOIN memory_index i ON i.memory_id = e.id
+         GROUP BY e.id
+         ORDER BY CASE WHEN SUM(CASE WHEN i.tier = 'hot' THEN 1 ELSE 0 END) > 0 THEN 1 ELSE 0 END,
+           COALESCE(MAX(i.score), 0), COALESCE(MAX(i.last_recalled_at), ''), e.updated_at, e.id
+         LIMIT 1`,
+      )
+      .get() as { readonly id: string; readonly revision: number } | undefined;
+    if (row === undefined) break;
+    database.exec("BEGIN IMMEDIATE;");
+    try {
+      database.prepare("DELETE FROM episode_evidence WHERE episode_id = ?").run(row.id);
+      database.prepare("DELETE FROM episode_source_executions WHERE episode_id = ?").run(row.id);
+      database.prepare("DELETE FROM episode_revisions WHERE episode_id = ?").run(row.id);
+      database.prepare("DELETE FROM governance_events WHERE episode_id = ?").run(row.id);
+      database.prepare("DELETE FROM memory_index WHERE memory_id = ?").run(row.id);
+      database.prepare("DELETE FROM episodes WHERE id = ?").run(row.id);
+      database
+        .prepare(
+          "INSERT OR REPLACE INTO tombstones(id, last_revision, forgotten_at, tombstone_json) VALUES (?, ?, ?, ?)",
+        )
+        .run(
+          row.id,
+          row.revision,
+          now.toISOString(),
+          JSON.stringify({
+            schemaVersion: "pragma.memory-tombstone/v1",
+            module: "episodic",
+            id: row.id,
+            lastRevision: row.revision,
+            forgottenAt: now.toISOString(),
+            reasonCode: "storage-capacity",
+          }),
+        );
+      database.exec("COMMIT;");
+    } catch (error) {
+      rollback(database);
+      throw error;
+    }
+  }
+}
+
+function episodicOverLimit(database: DatabaseSync): boolean {
+  const row = database
+    .prepare(
+      `SELECT COUNT(*) AS records,
+        COALESCE(SUM(length(CAST(record_json AS BLOB))), 0) +
+        COALESCE((SELECT SUM(length(CAST(record_json AS BLOB))) FROM episode_revisions), 0) +
+        COALESCE((SELECT SUM(length(CAST(envelope_json AS BLOB))) FROM episode_evidence), 0) AS bytes
+       FROM episodes`,
+    )
+    .get() as unknown as { readonly records: number; readonly bytes: number };
+  return (
+    row.records > DEFAULT_MEMORY_STORAGE_POLICY.episodicMaxRecords ||
+    row.bytes > DEFAULT_MEMORY_STORAGE_POLICY.episodicMaxLogicalBytes
+  );
+}
+
 export function episodicMemoryId(conversationRef: MemorySubjectRef): string {
   return `episode-${createHash("sha256").update(conversationKey(conversationRef)).digest("hex").slice(0, 24)}`;
 }
@@ -879,7 +993,7 @@ function uniqueStrings(values: readonly string[]): string[] {
 
 function initializeData(database: DatabaseSync): void {
   const version = readVersion(database);
-  if (version > 3) {
+  if (version > 4) {
     database.close();
     throw new Error(`unsupported-state-version:pragma.memory-episodic-store/v${version}`);
   }
@@ -930,11 +1044,30 @@ function initializeData(database: DatabaseSync): void {
       forgotten_at TEXT NOT NULL,
       tombstone_json TEXT NOT NULL
     );
+    CREATE TABLE IF NOT EXISTS memory_index (
+      memory_id TEXT NOT NULL,
+      consumer_key TEXT NOT NULL,
+      tier TEXT NOT NULL CHECK (tier IN ('hot', 'archived')),
+      score REAL NOT NULL,
+      recall_count INTEGER NOT NULL DEFAULT 0,
+      last_recalled_at TEXT,
+      computed_at TEXT NOT NULL,
+      PRIMARY KEY (memory_id, consumer_key),
+      FOREIGN KEY (memory_id) REFERENCES episodes(id) ON DELETE CASCADE
+    );
+    CREATE INDEX IF NOT EXISTS memory_index_consumer_tier_score
+      ON memory_index(consumer_key, tier, score DESC, memory_id);
+    CREATE TABLE IF NOT EXISTS revision_prune_audit (
+      memory_id TEXT PRIMARY KEY,
+      pruned_through_revision INTEGER NOT NULL,
+      pruned_count INTEGER NOT NULL,
+      pruned_at TEXT NOT NULL
+    );
   `);
-  if (version !== 0 && version !== 3) {
+  if (version !== 0 && version !== 4) {
     throw new Error(`missing-adjacent-migration:pragma.memory-episodic-store/v${version}`);
   }
-  database.exec("PRAGMA user_version = 3;");
+  database.exec("PRAGMA user_version = 4;");
 }
 
 function initializeState(database: DatabaseSync): void {

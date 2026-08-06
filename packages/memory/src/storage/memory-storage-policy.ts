@@ -1,5 +1,5 @@
 export interface MemoryStoragePolicy {
-  readonly schemaVersion: "pragma.memory-storage-policy/v1";
+  readonly schemaVersion: "pragma.memory-storage-policy/v2";
   readonly canonicalFeedRetentionMs: number;
   readonly canonicalFeedTargetBytes: number;
   readonly evidenceMaxRecordsPerExecution: number;
@@ -16,13 +16,18 @@ export interface MemoryStoragePolicy {
   readonly curatorOrphanGraceMs: number;
   readonly curatorRegistryMaxEntries: number;
   readonly atomicTempRetentionMs: number;
+  readonly episodicMaxRecords: number;
+  readonly semanticMaxRecords: number;
+  readonly episodicMaxLogicalBytes: number;
+  readonly semanticMaxLogicalBytes: number;
+  readonly memoryMaxFullRevisions: number;
 }
 
 const DAY_MS = 24 * 60 * 60 * 1_000;
 const MIB = 1_024 * 1_024;
 
 export const DEFAULT_MEMORY_STORAGE_POLICY: MemoryStoragePolicy = Object.freeze({
-  schemaVersion: "pragma.memory-storage-policy/v1",
+  schemaVersion: "pragma.memory-storage-policy/v2",
   canonicalFeedRetentionMs: 30 * DAY_MS,
   canonicalFeedTargetBytes: 512 * MIB,
   evidenceMaxRecordsPerExecution: 2_000,
@@ -39,4 +44,9 @@ export const DEFAULT_MEMORY_STORAGE_POLICY: MemoryStoragePolicy = Object.freeze(
   curatorOrphanGraceMs: DAY_MS,
   curatorRegistryMaxEntries: 1_000,
   atomicTempRetentionMs: DAY_MS,
+  episodicMaxRecords: 10_000,
+  semanticMaxRecords: 20_000,
+  episodicMaxLogicalBytes: 512 * MIB,
+  semanticMaxLogicalBytes: 512 * MIB,
+  memoryMaxFullRevisions: 100,
 });
