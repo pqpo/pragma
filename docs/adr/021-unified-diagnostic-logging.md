@@ -74,7 +74,7 @@ The cross-process record is a Zod schema owned by `@pragma/shared`. Every record
 
 Component and event names are open namespaced strings, not closed enums. Examples are
 `desktop.main`, `interpreter.compiler`, `core.execution`, `core.runtime`,
-`runtime.codex`, and `plugin.repo-manager`.
+`runtime.codex`, and `plugin.example`.
 
 ### 4. Propagate correlation explicitly
 

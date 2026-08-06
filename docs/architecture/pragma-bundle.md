@@ -58,7 +58,7 @@ const binder: PragmaBundleBindingHost = {
 
 const selected = {
   "req-1234": "local-runtime:codex",
-  "req-5678": "local-plugin:memory",
+  "req-5678": "local-plugin:example",
 };
 const binding = await project.bindEnvironment(root, binder, selected);
 const prepared = await project.prepareCompile(root, compileHost, binding.overlay);

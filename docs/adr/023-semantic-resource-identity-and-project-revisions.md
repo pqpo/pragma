@@ -28,7 +28,7 @@ pinned revision.
   pinned; new Missions see the current head.
 - “Create new version” and “copy as new object” are not product operations.
 - Plugins, Runtime adapters, tool adapters, Context policies, and other independently shipped
-  extensions retain explicit versions such as `plugin:pragma.memory@1.0.0` and
+  extensions retain explicit versions such as `plugin:example@1.0.0` and
   `pragma.tool.call@v1`.
 - Reserved and built-in semantic IDs follow the same Crockford Base32 grammar as Host-allocated
   IDs. Their canonical refs are runtime-Schema-validated where declared and covered at the first

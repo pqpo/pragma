@@ -8,7 +8,7 @@ export const DesktopPluginRefSchema = z
   .trim()
   .regex(
     /^plugin:[A-Za-z0-9][A-Za-z0-9._-]*@[A-Za-z0-9][A-Za-z0-9.+_-]*$/,
-    "Expected an exact plugin reference such as plugin:memory@1.0.0.",
+    "Expected an exact plugin reference such as plugin:example@1.0.0.",
   );
 
 export const DesktopPluginConfigurationPropertySchema = z

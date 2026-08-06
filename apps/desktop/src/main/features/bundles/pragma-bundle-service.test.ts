@@ -44,7 +44,7 @@ describe("PragmaBundleService", () => {
         id: "req-memory",
         kind: "plugin",
         resourceRef: "expert:1xddvess309a6gme",
-        name: "plugin:memory@1.0.0",
+        name: "plugin:example@1.0.0",
         message: "Install memory.",
       },
       {
@@ -507,7 +507,7 @@ describe("PragmaBundleService", () => {
     const sourceExpert = expert("Write verified release notes.");
     sourceExpert.spec.plugins = [
       {
-        ref: "plugin:memory@1.0.0",
+        ref: "plugin:example@1.0.0",
         config: {
           literalResourceRef: "runtime-profile:zdkgs0fde4xt00vr",
           nested: { zdkgs0fde4xt00vr: "expert:1xddvess309a6gme" },

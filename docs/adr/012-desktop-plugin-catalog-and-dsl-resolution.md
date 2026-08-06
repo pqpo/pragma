@@ -48,12 +48,11 @@ The `pragma/v2` Expert DSL references plugins without local paths:
 
 ```yaml
 plugins:
-  - ref: plugin:memory@0.0.0
+  - ref: plugin:example@1.0.0
     config:
-      task:
-        enabled: true
+      enabled: true
     secretBindings:
-      apiToken: binding:plugin-secret-memory-api
+      apiToken: binding:plugin-secret-example-api
 ```
 
 `@pragma/interpreter` does not discover or install plugins. The compile host must supply a plugin

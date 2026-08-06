@@ -1,6 +1,6 @@
 # Memory Plane 落地计划
 
-- Status: Active plan
+- Status: Required phases completed; optional extension planned
 - Last updated: 2026-08-06
 - Decisions: [ADR 031](../adr/031-extensible-memory-plane.md)、[ADR 032](../adr/032-durable-canonical-event-feed.md)、[ADR 033](../adr/033-layered-episodic-memory.md)、[ADR 034](../adr/034-conservative-semantic-memory.md)、[ADR 035](../adr/035-agent-driven-memory-recall-and-governance.md)、[ADR 036](../adr/036-memory-storage-retention-and-recovery.md)、[ADR 037](../adr/037-mission-board-context-store.md)、[ADR 038](../adr/038-reviewed-knowledge-memory-and-bundle-sharing.md)、[ADR 039](../adr/039-promoted-knowledge-stores-and-agent-revision.md)
 
@@ -53,7 +53,7 @@ Memory type；经批准的 Knowledge 升级为“工作室 → 知识库”的�
 | 5    | Completed | Mission Board：持久通用白板、私有 Context 与跨专家协作       |
 | 6    | Completed | Knowledge 升级至 Studio Store 与通用 Agent 修订闭环          |
 | 7    | Completed | Skill Memory Candidate、Evaluation 与 Capability 升级        |
-| 8    | Planned   | 旧 plugin owner-scoped 导入、compiler cutover 与删除         |
+| 8    | Completed | 旧 plugin hard cut 与删除，不导入历史记忆                    |
 | 9    | Planned   | 可选：CodeGraph 独立 Module 扩展验收                         |
 
 状态只使用 `Planned`、`In progress`、`Blocked`、`Completed`。
@@ -124,7 +124,7 @@ Desktop 提供设置入口。
 - 设置页提供 Global capture/recall/learning 与 Plane health；
 - Expert、ExpertTeam、Flow 编辑页提供继承/收紧策略；
 - 不需要环境变量，不再对 legacy Memory plugin 做运行时二选一冲突判断；
-- 旧 plugin 仅作为阶段 8 的历史数据迁移源，不能继续定义新架构。
+- 旧 plugin 已在阶段 8 直接删除，不读取或导入其历史数据。
 
 ### 持久路径
 
@@ -157,8 +157,8 @@ Desktop 提供设置入口。
   `pragma.memory-dead-letter/v1`
 - Migration: 新 Store 从 v1 开始；Execution transaction 保持 v9；未改写既有状态
 - Verification: `pnpm lint`、`pnpm typecheck`、Core/Memory/Desktop tests、`pnpm build`
-- Known limitations: 尚无生产 Episodic/Semantic Module、Memory 管理中心、分享导出、
-  Feed retention/replication 与 legacy importer；这些不能算作阶段 1 已提供的产品能力
+- Known limitations: 阶段 1 完成时尚无生产 Episodic/Semantic Module、Memory 管理中心、分享导出与
+  Feed retention/replication；这些不能算作阶段 1 已提供的产品能力
 
 ## 阶段 2：Episodic Memory
 
@@ -284,8 +284,7 @@ Evidence 使用 Expert、ExpertTeam、Flow 等运行归属，允许经治理绑�
   Interpreter compiler 或 Episodic Store
 - Verification: Memory/Shared/Desktop typecheck、Memory tests、Desktop Memory/Mission integration tests；
   完整 `pnpm check` 与 `pnpm build`
-- Known limitations: 尚无 Repository subject、跨设备账户合并、分享导出或
-  legacy Fact importer
+- Known limitations: 尚无 Repository subject、跨设备账户合并或分享导出
 
 ## 阶段 4：Agent 驱动召回、完整治理 UI 与可见性
 
@@ -330,7 +329,7 @@ Expert/principal scope、binding/visibility、预算、审计和生命周期。�
   与召回统计
 - Verification: Memory/Core/Desktop typecheck，Memory 与 Desktop tests，
   `packages/memory/test/memory-job-v3-migration.test.ts`，仓库 `pnpm check`、`pnpm build`
-- Known limitations: 不提供跨设备账户合并、分享扩权审批、Knowledge/Skill/CodeGraph、legacy importer；
+- Known limitations: 不提供跨设备账户合并、分享扩权审批、Knowledge/Skill/CodeGraph；
   不计划增加 Host prompt retrieval planner
 
 ## 已完成的跨阶段存储治理
@@ -381,7 +380,7 @@ Memory 的前置条件；已提交变化可以作为后续提炼的可选 Eviden
 - Core 只消费 Host 注入的通用 Context binding 与 overflow target，不依赖 Mission Board 或文件系统实现；
 - 提供不含正文的 mutation observation hook，Host 可据此发布 content-safe Canonical Event 或 Evidence；
   后续 adapter 必须保持或收紧原 visibility，不把私有正文暴露给其他 Agent；
-- 阶段 8 将旧 Task Memory 按 owner 显式导入 Mission Board 或归档 Evidence；阶段 5 不维持 dual-write。
+- 旧 Task Memory 不导入 Mission Board 或 Evidence；阶段 5 不维持 dual-write。
 
 ### 退出门槛
 
@@ -505,24 +504,26 @@ Context binding + generic Store Revision Agent
 - Verification: Shared/Memory/Evaluation/Desktop strict typecheck，来源门槛、三次回放与边界失败、Node ESM
   沙箱、Extraction board 与设置页回归测试；全仓 `pnpm check` 与 `pnpm build` 是本阶段最终合入门。
 
-## 阶段 8：旧插件导入与切换
+## 阶段 8：旧插件 hard cut
 
-### 映射
+### 已完成范围
 
-| Legacy      | New plane                             |
-| ----------- | ------------------------------------- |
-| Task Memory | Mission Board 导入或 archive Evidence |
-| Experience  | Episodic import candidate             |
-| Fact        | Semantic import candidate             |
-| Skill card  | Skill Memory Candidate                |
+- Status: Completed
+- 删除 `@pragma/plugin-memory` 与 `@pragma/plugin-repo-manager` 的源码、manifest、测试、workspace 依赖和
+  Desktop 内置分发产物；仓库当前不附带内置 Expert plugin；
+- 不读取、导入、迁移或自动删除 `~/.pragma/memories/` 中的旧 Task、Experience、Fact、Skill 数据；
+- 删除旧 direct-write Memory tools、重复 Context projection 与并行 Skill Store，不保留兼容 adapter、
+  feature flag 或迁移期分支；
+- 保留通用 plugin DSL、Interpreter resolver、Desktop catalog 和用户 ZIP plugin 能力。旧 Project/Expert
+  对已删除 plugin 的精确引用按既有缺失依赖诊断 fail closed；
+- 通用 DSL Schema 没有变化，因此不升级 compiler version，也不伪造协议迁移；
+- Desktop 内置 plugin 打包在仓库没有 `plugins/` 目录时仍生成空资源，保证开发与发布构建可重复。
 
-### 要求
+### Verification
 
-- owner 首次显式导入，先检查、备份，再 journaled import；
-- 稳定 message id/provenance/owner mapping，可安全重试；
-- 不启动扫描 `~/.pragma/memories/` 全树；
-- `plugin:memory` 退出合法 DSL 时同步 compiler version、真实 fixture、相邻 migration 与 Host transaction；
-- 完成支持窗口后删除 `@pragma/plugin-memory`、旧 direct-write tools、重复 Context 和并行 Skill Store。
+- 锁文件和 workspace graph 不再包含两个已删除 package；
+- 当前代码和示例不再把旧 plugin id 当作内置能力；
+- `pnpm check`、`pnpm build` 与 Desktop 空 plugin 打包通过。
 
 ## 阶段 9（可选）：CodeGraph Module
 
