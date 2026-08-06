@@ -291,7 +291,7 @@ export function PragmaResourceDetailFragment(props: {
 
   return (
     <StudioScreenFrame
-      className={isTeam ? "pragma-resource-detail is-team-detail" : "pragma-resource-detail"}
+      className="pragma-resource-detail"
       labelledBy={headingId}
       header={
         <button className="back-link" type="button" onClick={props.onBack}>

@@ -20394,11 +20394,6 @@ textarea:focus-visible,
   outline: 0;
 }
 
-/* Expert Team detail: keep the app canvas quiet while the resource itself reads as a white workspace. */
-.pragma-resource-detail.is-team-detail {
-  background: var(--ui-surface);
-}
-
 .pragma-resource-detail .studio-screen-body {
   padding-right: 4px;
 }
