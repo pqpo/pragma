@@ -3,7 +3,6 @@ import {
   ArrowCounterClockwise,
   BookOpenText,
   CaretRight,
-  Cpu,
   Database,
   Info,
   Folder,
@@ -98,9 +97,6 @@ export function ExpertDirectoryFragment(props: {
       <div className="expert-grid" role="list" aria-label={t("availableExperts")}>
         {matchingExperts.map(({ expert, copy }) => {
           const ExpertIcon = expert.icon;
-          const modelName =
-            expert.model?.modelId ?? t(isBuiltInExpert(expert) ? "systemDefault" : "notConfigured");
-          const capabilityCount = expert.skills + expert.tools + expert.mcpServers;
           return (
             <article
               className="expert-card-shell"
@@ -124,6 +120,10 @@ export function ExpertDirectoryFragment(props: {
                   <CaretRight className="expert-card-action" size={18} aria-hidden="true" />
                 </span>
                 <span className="expert-card-description">{copy.description}</span>
+                <span className="expert-card-scope">
+                  <small>{t("scope")}</small>
+                  <span>{copy.scope}</span>
+                </span>
                 {expert.tags.length > 0 ? (
                   <span className="expert-card-tags" aria-label={t("tags")}>
                     {expert.tags.slice(0, 3).map((tag) => (
@@ -132,40 +132,6 @@ export function ExpertDirectoryFragment(props: {
                     {expert.tags.length > 3 ? <em>+{expert.tags.length - 3}</em> : null}
                   </span>
                 ) : null}
-                <span className="expert-card-scope">
-                  <small>{t("scope")}</small>
-                  <span>{copy.scope}</span>
-                </span>
-                <span className="expert-card-metrics">
-                  <span className="expert-card-metric">
-                    <Cpu size={17} aria-hidden="true" />
-                    <span>
-                      <small>{t("model")}</small>
-                      <strong>{modelName}</strong>
-                    </span>
-                  </span>
-                  <span className="expert-card-metric">
-                    <Wrench size={17} aria-hidden="true" />
-                    <span>
-                      <small>{t("capabilities")}</small>
-                      <strong>{capabilityCount}</strong>
-                    </span>
-                  </span>
-                  <span className="expert-card-metric">
-                    <Database size={17} aria-hidden="true" />
-                    <span>
-                      <small>{t("contextStoresLower")}</small>
-                      <strong>{expert.contextStoreMounts.length}</strong>
-                    </span>
-                  </span>
-                  <span className="expert-card-metric">
-                    <PuzzlePiece size={17} aria-hidden="true" />
-                    <span>
-                      <small>{t("plugins")}</small>
-                      <strong>{expert.plugins.length}</strong>
-                    </span>
-                  </span>
-                </span>
               </button>
             </article>
           );

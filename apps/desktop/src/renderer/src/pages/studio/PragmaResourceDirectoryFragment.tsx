@@ -6,7 +6,6 @@ import {
   ArrowLeft,
   CaretRight,
   CaretDown,
-  Gauge,
   GitBranch,
   MagnifyingGlass,
   PencilSimple,
@@ -269,37 +268,6 @@ export function PragmaResourceDirectoryFragment(props: {
                   <span className="expert-team-card-description">
                     {resource.metadata.description}
                   </span>
-                  {resource.metadata.tags.length > 0 ? (
-                    <span className="expert-team-card-tags" aria-label={t("tags")}>
-                      {resource.metadata.tags.slice(0, 3).map((tag) => (
-                        <em key={tag}>{tag}</em>
-                      ))}
-                    </span>
-                  ) : null}
-                  <span className="expert-team-card-stats">
-                    <span>
-                      <UserCircle size={17} aria-hidden="true" />
-                      <small>{t("coordinator")}</small>
-                      <strong>
-                        {teamExpertName(props.project, resource.spec.coordinator.ref)}
-                      </strong>
-                    </span>
-                    <span>
-                      <UsersThree size={17} aria-hidden="true" />
-                      <small>{t("members")}</small>
-                      <strong>{t("membersCount", { count: memberRefs.length })}</strong>
-                    </span>
-                    <span>
-                      <Gauge size={17} aria-hidden="true" />
-                      <small>{t("maxConcurrency")}</small>
-                      <strong>{resource.spec.delegation.maxConcurrency}</strong>
-                    </span>
-                    <span>
-                      <Gauge size={17} aria-hidden="true" />
-                      <small>{t("maxDelegationDepth")}</small>
-                      <strong>{resource.spec.delegation.maxDepth}</strong>
-                    </span>
-                  </span>
                   <span className="expert-team-card-members">
                     <small>{t("teamMembersDescription")}</small>
                     <span>
@@ -311,6 +279,13 @@ export function PragmaResourceDirectoryFragment(props: {
                       ) : null}
                     </span>
                   </span>
+                  {resource.metadata.tags.length > 0 ? (
+                    <span className="expert-team-card-tags" aria-label={t("tags")}>
+                      {resource.metadata.tags.slice(0, 3).map((tag) => (
+                        <em key={tag}>{tag}</em>
+                      ))}
+                    </span>
+                  ) : null}
                 </button>
               </article>
             );

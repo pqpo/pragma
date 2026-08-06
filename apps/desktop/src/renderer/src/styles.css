@@ -6483,7 +6483,6 @@ html.is-resizing-sidebar * {
   display: flex;
   width: 100%;
   min-width: 0;
-  min-height: 288px;
   flex-direction: column;
   gap: 12px;
   padding: 16px;
@@ -6637,7 +6636,6 @@ html.is-resizing-sidebar * {
   min-height: 54px;
   align-content: start;
   gap: 5px;
-  margin-top: auto;
   padding: 10px;
   border-radius: var(--ui-radius-md);
   background: var(--surface-soft);
@@ -6659,62 +6657,6 @@ html.is-resizing-sidebar * {
   overflow-wrap: anywhere;
   -webkit-box-orient: vertical;
   -webkit-line-clamp: 2;
-}
-
-.expert-card-metrics,
-.expert-team-card-stats {
-  display: grid;
-  grid-template-columns: repeat(2, minmax(0, 1fr));
-  gap: 10px 12px;
-  padding-top: 12px;
-  border-top: 1px solid var(--border);
-}
-
-.expert-card-metric,
-.expert-team-card-stats > span {
-  display: grid;
-  min-width: 0;
-  grid-template-columns: auto minmax(0, 1fr);
-  align-items: start;
-  column-gap: 8px;
-  color: var(--green-dark);
-}
-
-.expert-card-metric > span,
-.expert-team-card-stats > span > :is(small, strong) {
-  grid-column: 2;
-  min-width: 0;
-}
-
-.expert-card-metric > span {
-  display: grid;
-  gap: 3px;
-}
-
-.expert-card-metric small,
-.expert-team-card-stats small {
-  color: var(--muted);
-  font-size: 11px;
-  line-height: 1.35;
-}
-
-.expert-card-metric strong,
-.expert-team-card-stats strong {
-  overflow: hidden;
-  color: var(--text);
-  font-size: 12px;
-  font-weight: 500;
-  line-height: 1.4;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
-.expert-team-card {
-  min-height: 300px;
-}
-
-.expert-team-card-stats {
-  margin-top: auto;
 }
 
 .expert-team-card-members {
@@ -6747,20 +6689,11 @@ html.is-resizing-sidebar * {
   .expert-grid {
     grid-template-columns: minmax(0, 1fr);
   }
-
-  .expert-card,
-  .expert-team-card {
-    min-height: 0;
-  }
 }
 
 @container pragma-resource-directory (max-width: 480px) {
   .expert-team-grid {
     grid-template-columns: minmax(0, 1fr);
-  }
-
-  .expert-team-card {
-    min-height: 0;
   }
 }
 

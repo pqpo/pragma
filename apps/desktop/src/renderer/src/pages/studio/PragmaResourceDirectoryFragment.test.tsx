@@ -127,7 +127,7 @@ describe("expert team editor", () => {
         id: "cccvf3nab91n2wja",
         name: "Quality team",
         description: "Coordinates quality work",
-        tags: [],
+        tags: ["quality"],
       },
       spec: {
         coordinator: { ref: "expert:0000000000000001" },
@@ -173,7 +173,7 @@ describe("PragmaResourceDirectoryFragment", () => {
         id: "cccvf3nab91n2wja",
         name: "Quality team",
         description: "Coordinates quality work",
-        tags: [],
+        tags: ["quality"],
       },
       spec: {
         coordinator: { ref: "expert:0000000000000001" },
@@ -200,8 +200,13 @@ describe("PragmaResourceDirectoryFragment", () => {
 
     expect(html).toContain("Quality team");
     expect(html).toContain('class="expert-team-card"');
-    expect(html).toContain("Coordinator");
-    expect(html).toContain("Max concurrency");
+    expect(html).toContain("Experts available to this coordinator during delegation.");
+    expect(html).not.toContain("expert-team-card-stats");
+    expect(html).not.toContain("Coordinator");
+    expect(html).not.toContain("Max concurrency");
+    expect(html.indexOf('class="expert-team-card-members"')).toBeLessThan(
+      html.indexOf('class="expert-team-card-tags"'),
+    );
     expect(html).not.toContain("Edit expert team");
     expect(html).not.toContain("Validate &amp; publish");
     expect(html).toContain('placeholder="Search expert teams"');

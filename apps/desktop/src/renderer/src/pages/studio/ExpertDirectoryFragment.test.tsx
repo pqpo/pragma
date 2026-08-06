@@ -151,6 +151,11 @@ describe("ExpertDirectoryFragment", () => {
     expect(html).toContain('placeholder="Search experts"');
     expect(html).not.toContain("All experts");
     expect(html).not.toContain("directory-filter");
+    expect(html).not.toContain("expert-card-metrics");
+    expect(html).not.toContain("Model");
+    expect(html.indexOf('class="expert-card-scope"')).toBeLessThan(
+      html.indexOf('class="expert-card-tags"'),
+    );
   });
 });
 
