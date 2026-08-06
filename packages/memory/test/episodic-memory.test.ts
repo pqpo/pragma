@@ -92,6 +92,27 @@ describe("Episodic Memory", () => {
     module.close();
   });
 
+  it("escapes episode goals used as Markdown link labels", async () => {
+    const goal = "Click](https://example.com)[Episode";
+    const module = await createEpisodicMemoryModule({
+      pragmaHome: await temporaryRoot(),
+      extractor: fakeExtractor(undefined, 0.9, goal),
+    });
+    await module.consume(executionEvidence("markdown-link-label"));
+    await module.runBackgroundOnce?.();
+
+    const [episode] = await module.store.list();
+    const registry = new MemoryModuleRegistry();
+    registry.register(module);
+    const context = scopedContext(registry, expertScope("expert-a"));
+    const expectedLink = `[Click\\](https://example.com)\\[Episode](episodic/items/${episode!.id}.md)`;
+    for (const id of ["episodic/summary.md", "episodic/index.md"]) {
+      const item = await context.readContext({ id });
+      expect(item.ok && item.value.content).toContain(expectedLink);
+    }
+    module.close();
+  });
+
   it("fails closed when recall is disabled for the current asset", async () => {
     const registry = new MemoryModuleRegistry();
     const module = await createEpisodicMemoryModule({ pragmaHome: await temporaryRoot() });
@@ -1116,6 +1137,7 @@ describe("Episodic Memory", () => {
 function fakeExtractor(
   forcedRef?: string,
   valueScore = 0.9,
+  goalText = "完成记忆架构实现",
 ): EpisodicMemoryExtractor & { extract: ReturnType<typeof vi.fn> } {
   const extract = vi.fn(async (input: EpisodicExtractionInput) => {
     const ref = forcedRef ?? input.evidence.at(-1)!.messageId;
@@ -1123,7 +1145,7 @@ function fakeExtractor(
       output: {
         retain: true as const,
         language: "zh-Hans",
-        goal: { text: "完成记忆架构实现", evidenceRefs: [ref] },
+        goal: { text: goalText, evidenceRefs: [ref] },
         summary: { text: `实现并验证了分层记忆 ${input.executionId}。`, evidenceRefs: [ref] },
         attempts: [{ description: "实现 Episodic 模块", result: "成功", evidenceRefs: [ref] }],
         failuresAndRecoveries: [],

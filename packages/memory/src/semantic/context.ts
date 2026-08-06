@@ -6,6 +6,7 @@ import {
 import type { MemoryEvidenceEnvelope, SemanticFact } from "@pragma/shared";
 
 import type { SemanticMemoryStore } from "./store.ts";
+import { escapeMarkdownLinkLabel } from "../context/markdown.ts";
 import type { MemoryRecallScope } from "../pipeline/memory-module.ts";
 import { trimUtf8ToByteLimit } from "../storage/utf8.ts";
 
@@ -153,7 +154,8 @@ function renderIndexLine(fact: SemanticFact): string {
     fact.conflictsWith.length === 0 ? undefined : `conflicts:${fact.conflictsWith.length}`,
     fact.reviewAt === undefined ? undefined : `review:${fact.reviewAt}`,
   ].filter((value): value is string => value !== undefined);
-  return `- [${oneLine(fact.statement, 180)}](semantic/items/${fact.id}.md) — confidence ${fact.confidence.toFixed(2)}${flags.length === 0 ? "" : ` | ${flags.join(", ")}`}`;
+  const label = escapeMarkdownLinkLabel(oneLine(fact.statement, 180));
+  return `- [${label}](semantic/items/${fact.id}.md) — confidence ${fact.confidence.toFixed(2)}${flags.length === 0 ? "" : ` | ${flags.join(", ")}`}`;
 }
 
 function renderFact(fact: SemanticFact): string {
