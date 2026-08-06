@@ -7,6 +7,7 @@ import type { MemoryEvidenceEnvelope } from "@pragma/shared";
 
 import type { EpisodicMemoryRecord } from "./schema.ts";
 import type { EpisodicMemoryStore } from "./store.ts";
+import { escapeMarkdownLinkLabel } from "../context/markdown.ts";
 import type { MemoryRecallScope } from "../pipeline/memory-module.ts";
 import { trimUtf8ToByteLimit } from "../storage/utf8.ts";
 
@@ -154,7 +155,7 @@ function renderSummary(
         ? ["- No episodes are available in this scope."]
         : recent.map(
             (episode) =>
-              `- [${oneLine(episode.goal.text, 60)}](episodic/items/${episode.id}.md) — ${viewLabel(episode, scope)} — ${episode.updatedAt} — ${episode.outcome.status}`,
+              `- [${escapeMarkdownLinkLabel(oneLine(episode.goal.text, 60))}](episodic/items/${episode.id}.md) — ${viewLabel(episode, scope)} — ${episode.updatedAt} — ${episode.outcome.status}`,
           )),
       "",
     ],
@@ -251,7 +252,7 @@ function renderIndexGroup(
           .toSorted(compareEpisode)
           .map(
             (episode) =>
-              `- [${oneLine(episode.goal.text, 120)}](episodic/items/${episode.id}.md) — ${label} | ${episode.updatedAt} | ${episode.outcome.status} | value ${episode.valueScore.toFixed(2)} | ${oneLine(episode.summary.text, 180)}`,
+              `- [${escapeMarkdownLinkLabel(oneLine(episode.goal.text, 120))}](episodic/items/${episode.id}.md) — ${label} | ${episode.updatedAt} | ${episode.outcome.status} | value ${episode.valueScore.toFixed(2)} | ${oneLine(episode.summary.text, 180)}`,
           )),
     "",
   ];

@@ -80,6 +80,31 @@ describe("Semantic Memory", () => {
     module.close();
   });
 
+  it("escapes fact statements used as Markdown link labels", async () => {
+    const statement = "Click](https://example.com)[Fact";
+    const module = await createSemanticMemoryModule({
+      pragmaHome: await temporaryRoot(),
+      extractor: fakeExtractor(() => ({ statement })),
+    });
+    await module.registerExecutionSubjects({
+      executionId: "markdown-link-label",
+      subjectRefs: [ref("pragma.user", "local-user")],
+    });
+    await module.consume(executionEvidence("markdown-link-label", "Remember this fact."));
+    await module.runBackgroundOnce?.();
+
+    const [fact] = await module.store.list();
+    const registry = new MemoryModuleRegistry();
+    registry.register(module);
+    const context = scopedContext(registry, expertScope("expert-a"));
+    const expectedLink = `[Click\\](https://example.com)\\[Fact](semantic/items/${fact!.id}.md)`;
+    for (const id of ["semantic/summary.md", "semantic/index.md"]) {
+      const item = await context.readContext({ id });
+      expect(item.ok && item.value.content).toContain(expectedLink);
+    }
+    module.close();
+  });
+
   it("merges equivalent observations and preserves exclusive conflicts symmetrically", async () => {
     const now = new Date("2026-08-03T18:00:01.000Z");
     const extractor = fakeExtractor((input) => {
