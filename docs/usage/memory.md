@@ -57,9 +57,9 @@ Knowledge Store promotion/revision 与 Skill promotion/revision 闭环：
 - 生成脚本仅允许 Node 22 ESM，并在无网络、无子进程、无 Worker、无 native addon、只能访问临时技能包
   目录的 Permission Model 子进程中执行 `node:test` 覆盖。
 
-当前已实现独立的内置 Mission Board；尚未实现跨设备同步和 legacy 导入。CodeGraph
-Module 是最后的可选扩展，不作为 Memory 重构完成条件。旧 `@pragma/plugin-memory` 中的 Task Memory
-只属于迁移源，不是新版后续 Memory 阶段的完成实现。
+当前已实现独立的内置 Mission Board；尚未实现跨设备同步。CodeGraph Module 是最后的可选扩展，
+不作为 Memory 重构完成条件。旧插件与其 Task/Experience/Fact/Skill 数据已经 hard cut，不属于新版
+Memory Plane，也不会被读取或导入。
 
 Episodic 与 Semantic 的 data Store 当前为 user version 4，job Store 为 version 3。data v3→v4 增加
 binding-scoped hot/archive 索引与召回统计；相邻 v2→v3 迁移将提炼生命周期
@@ -194,11 +194,11 @@ Expert、ExpertTeam 与 Flow；Repository 等其他 subject 等有稳定 registr
 分享路径复用 Studio Context Store 的现有 Bundle authority，不导出私有 Memory Evidence、Curator prompt
 或本机路径。旧 `pragma.memory.knowledge@v1` extension 不再接受。
 
-## Legacy plugin
+## Legacy hard cut
 
-仓库中的 `@pragma/plugin-memory` 暂时只承担旧数据来源和兼容迁移窗口。新架构不再通过它启用 Plane，
-也不继续扩展旧 Task/Experience/Fact/Skill 文件 Store。阶段 8 会提供 owner-scoped、带备份和 journal 的
-导入，然后升级受影响的 DSL compiler 并删除旧插件。
+仓库不再提供旧 Memory plugin，也不保留 direct-write Memory tools、兼容 adapter 或导入器。
+`~/.pragma/memories/` 中已有数据不会被扫描、读取、迁移或自动删除；需要保留时应由用户自行归档。
+通用 plugin DSL 仍然存在，但引用已删除 plugin 的 Project/Expert 会按缺失依赖 fail closed。
 
 ## 当前持久路径
 

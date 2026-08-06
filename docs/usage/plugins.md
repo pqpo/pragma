@@ -374,11 +374,6 @@ Desktop 将每个插件版本的默认配置独立保存到
 `process.env`。Codex、Claude Code 和 PI Bash 命令均使用该 Session 快照。两个贡献者对同一环境变量
 声明不同值时，Session 创建会 fail-closed。
 
-Repo Manager 只负责 Git CLI 检查、Session 级认证和 Git 环境初始化，不提供 repository 元数据，
-也不读取任何隐藏的 repository 清单协议。repository 引用由知识库或其他 Context Provider 提供。
-其 Session 配置会覆盖当前 checkout 中的 credential helper 和 HTTP authorization header；SSH 未配置
-`knownHosts` 时使用 Session 临时 `known_hosts` 文件和 `accept-new`，不会修改用户的 Git/SSH 配置。
-
 插件是受信代码：`permissions` 是强制声明的审计信息，不是沙箱，也不会限制恶意插件。导入和激活用户插件等同于信任其在 Desktop Node 进程执行任意代码。
 
 ## Pragma DSL
@@ -387,46 +382,22 @@ Expert 通过精确版本引用宿主已经安装的插件。普通覆盖保存�
 
 ```yaml
 plugins:
-  - ref: plugin:repo-manager@0.0.0
+  - ref: plugin:example@1.0.0
     config:
-      auth:
-        strategy: token
+      enabled: true
     secretBindings:
-      auth.token: binding:plugin-secret-repo-manager
+      apiToken: binding:plugin-secret-example-api
 ```
 
 Desktop 按 manifest 默认值、Desktop 默认值、Expert 覆盖的顺序合并配置。配置必须使用 manifest 声明的字段，点分属性在 YAML 中写成嵌套对象。插件包、Desktop 默认值、Expert 覆盖和凭据修订都会写入 environment fingerprint。
 
-## 内置与示例能力
+## 仓库内置能力
 
-当前仓库有一个记忆插件和一个插件示例：
+当前仓库不附带内置 Expert plugin。Desktop 仍支持导入经过校验的用户 ZIP plugin，Core 和 Interpreter
+也继续提供通用 plugin SPI、精确版本引用和解析接口。
 
-```text
-plugins/memory
-plugins/repo-manager
-```
-
-`@pragma/plugin-memory`：
-
-- 入口是一个 memory plugin，内部注册 `task-memory`、`experience-memory`、`fact-memory` 和 `skill-memory` 四个子模块。
-- `Expert` 不会默认加载 memory plugin；需要记忆能力时，宿主必须通过 `plugins: [{ entry: memoryPlugin }]` 显式注入。
-- `task-memory` 负责在插件内部维护 `Task Memory` store，并通过插件注入 task memory 工具。
-- `experience-memory` 负责记录历史经历、操作过程和带证据的执行总结，并注入 experience memory 工具。
-- `fact-memory` 负责维护稳定事实、置信度、冲突和失效信息，并注入 fact memory 工具。
-- `task-memory`、`experience-memory` 和 `fact-memory` 默认都会持久化到用户目录 `~/.pragma/memories/` 下，接口仍然保持可替换，也支持通过程序化 `hostBindings` 注入自定义 store 或 `storeFactory`。
-- 统一的 `memory` namespace 审计上下文暴露 `summary.md`、`skills/*.md`、`tasks/**`；默认所有产物都写到 `~/.pragma/memories/<agentId>/`，其中 skill card 写到 `<agentId>/skill-memory/skills/`。
-- `skill-memory` 使用 stream / task / session hooks 生成任务总结、execution 总结和技能卡；`MemorySystem` 再把 task / fact / skill / experience 的摘要统一装配到 `memory` namespace 下的 `summary.md` 供 always-on 透出和后续检索使用。
-- memory plugin 默认包含一条 promotion pipeline：`task -> experience -> fact/skill`。
-
-如果要启用记忆能力，建议先读 [Memory System 使用指南](./memory.md)。
-
-`repo-manager`：
-
-- 在 Agent runtime session 创建前检查 Git CLI，并准备隔离的 Git 配置和认证环境。
-- 在 session 销毁后清理临时凭据与配置。
-- 不修改宿主 `process.env`、用户 `~/.gitconfig` 或 `~/.ssh`；不同 Expert 并发时使用独立的
-  Runtime Session 环境和临时认证文件。
-- 不读取或暴露仓库参考信息；仓库知识由知识库等独立上下文来源提供。
+Memory 是由 `@pragma/memory` 与 Desktop Host 装配的内置 Plane，不通过 Expert plugin 启用。详见
+[Memory 使用指南](./memory.md)。
 
 ## 插件设计建议
 
@@ -435,5 +406,5 @@ plugins/repo-manager
 - 插件提供工具时必须明确 `inputSchema`。
 - 文件、网络、删除、shell 等敏感操作应提供 tool approval。
 - Hooks 用于横切能力，例如审计、可选插件扩展、策略检查，不要把核心业务流程藏进 hook。
-- 插件应明确长期数据和会话数据的落盘边界；当前 memory plugin 默认使用用户目录 `~/.pragma/memories/`，而不是 workspace。
+- 插件应明确长期数据和会话数据的落盘边界，不得把宿主权威状态混入 Agent workspace。
 - 插件加载失败必须阻断正常 Agent 创建；诊断调用可显式使用 collect 策略读取 `pluginLoadIssues`。

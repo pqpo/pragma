@@ -2011,7 +2011,7 @@ describe("Pragma YAML DSL", () => {
       ...expert,
       spec: {
         ...expert.spec,
-        plugins: [{ ref: "plugin:memory@1.0.0" }, { ref: "plugin:memory@2.0.0" }],
+        plugins: [{ ref: "plugin:example@1.0.0" }, { ref: "plugin:example@2.0.0" }],
       },
     });
     expect(result.success).toBe(false);
@@ -2019,7 +2019,7 @@ describe("Pragma YAML DSL", () => {
       expect(result.error.issues).toEqual(
         expect.arrayContaining([
           expect.objectContaining({
-            message: "An Expert can activate only one version of plugin memory.",
+            message: "An Expert can activate only one version of plugin example.",
           }),
         ]),
       );

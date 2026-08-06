@@ -28,7 +28,10 @@ const legacyExecutionSourceTokens = [
 ];
 
 async function listFiles(directory: string): Promise<string[]> {
-  const entries = await readdir(directory, { withFileTypes: true });
+  const entries = await readdir(directory, { withFileTypes: true }).catch((error: unknown) => {
+    if ((error as NodeJS.ErrnoException).code === "ENOENT") return [];
+    throw error;
+  });
   const files: string[] = [];
   for (const entry of entries) {
     const path = resolve(directory, entry.name);
@@ -45,6 +48,12 @@ async function listFiles(directory: string): Promise<string[]> {
 }
 
 describe("legacy execution API guard", () => {
+  it("treats absent optional roots as empty", async () => {
+    await expect(listFiles(resolve(repositoryRoot, ".missing-legacy-guard-root"))).resolves.toEqual(
+      [],
+    );
+  });
+
   it("keeps removed APIs, runtime names, and source paths out of the repository", async () => {
     const files = [
       ...(

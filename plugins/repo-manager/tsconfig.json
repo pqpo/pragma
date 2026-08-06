@@ -1,7 +1,0 @@
-{
-  "extends": "@pragma/tsconfig/node.json",
-  "compilerOptions": {
-    "outDir": "dist"
-  },
-  "include": ["src", "test"]
-}

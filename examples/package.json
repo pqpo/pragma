@@ -28,8 +28,6 @@
     "@pragma/core": "workspace:*",
     "@pragma/context-filesystem": "workspace:*",
     "@pragma/interpreter": "workspace:*",
-    "@pragma/plugin-repo-manager": "workspace:*",
-    "@pragma/plugin-memory": "workspace:*",
     "@pragma/runtime-claude-code": "workspace:*",
     "@pragma/runtime-codex": "workspace:*",
     "@pragma/runtime-pi": "workspace:*",

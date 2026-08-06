@@ -5,7 +5,7 @@ import type { DesktopPlugin } from "../../../../shared/contracts/index.ts";
 import { PluginDetailFragment, PluginDirectoryFragment } from "./PluginDirectoryFragment.tsx";
 
 const plugin: DesktopPlugin = {
-  ref: "plugin:memory@1.2.3",
+  ref: "plugin:example@1.2.3",
   origin: "built_in",
   manifest: {
     schemaVersion: "pragma.plugin/v2",

@@ -324,7 +324,7 @@ export const PragmaExpertResourceSchema = z
           .array(
             z
               .object({
-                ref: versionedExtensionRefSchema(["plugin"], "plugin:pragma.memory@1.0.0"),
+                ref: versionedExtensionRefSchema(["plugin"], "plugin:example@1.0.0"),
                 config: z.record(z.string(), z.unknown()).optional(),
                 secretBindings: z.record(z.string(), PragmaBindingRefSchema).optional(),
               })
@@ -978,7 +978,7 @@ export const PragmaEnvironmentFingerprintSchema = z
         z
           .object({
             expertRef: PragmaExpertRefSchema,
-            ref: versionedExtensionRefSchema(["plugin"], "plugin:pragma.memory@1.0.0"),
+            ref: versionedExtensionRefSchema(["plugin"], "plugin:example@1.0.0"),
             packageFingerprint: z.string().regex(/^[a-f0-9]{64}$/),
             verificationFingerprint: z.string().regex(/^[a-f0-9]{64}$/),
           })

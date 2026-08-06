@@ -85,7 +85,7 @@ describe("ExpertPluginPicker", () => {
     expect(
       restorePluginReferenceDefaults(
         {
-          ref: "plugin:memory@1.0.0",
+          ref: "plugin:example@1.0.0",
           config: { mode: "custom", nested: { limit: 7 } },
           secretBindings: {
             token: "binding:plugin-token",
@@ -95,7 +95,7 @@ describe("ExpertPluginPicker", () => {
         { "binding:existing": "keep" },
       ),
     ).toEqual({
-      reference: { ref: "plugin:memory@1.0.0" },
+      reference: { ref: "plugin:example@1.0.0" },
       secretMutations: {
         "binding:existing": "keep",
         "binding:plugin-token": null,

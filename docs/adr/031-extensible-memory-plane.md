@@ -239,19 +239,13 @@ memory-*     -> @pragma/memory -> @pragma/core -> @pragma/shared
 `@pragma/memory` 不依赖 Desktop、Server、Interpreter、Runtime adapter 或 Expert plugin。需要模型推理、
 Evaluation、权限或远端存储时，由 Host 注入窄端口。
 
-## Migration from `@pragma/plugin-memory`
+## Legacy plugin cutover
 
-迁移按落地计划分阶段执行。旧四类数据的映射是：
+阶段 8 最终采用 hard cut，而不是历史数据导入：删除旧 Memory plugin、direct-write tools、重复 Context
+projection 和并行 Skill authority，不读取或迁移 `~/.pragma/memories/`。旧数据也不会被应用自动删除。
 
-| 旧类型            | 新归宿                                                       |
-| ----------------- | ------------------------------------------------------------ |
-| Task Memory       | 可选 Mission Board 导入或归档 Evidence，不是默认 Memory type |
-| Experience Memory | Episodic import candidate                                    |
-| Fact Memory       | Semantic/Fact import candidate，重新校验冲突与时效           |
-| Skill Memory card | Skill Memory Candidate，不能直接成为 Capability              |
-
-在 owner 首次显式导入时执行带备份、journal 和诊断的迁移；不在启动时全盘扫描。最终切换删除
-`@pragma/plugin-memory`、旧工具和并行 Skill authority，并按仓库规则升级受影响的 Interpreter compiler。
+通用 plugin DSL 和 resolver 没有改变，因此无需升级 Interpreter compiler。旧 Project/Expert 对已删除
+plugin 的精确引用通过现有缺失依赖诊断 fail closed，不增加兼容 adapter 或迁移期分支。
 
 ## Consequences
 

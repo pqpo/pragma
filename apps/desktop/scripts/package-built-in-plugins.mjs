@@ -12,7 +12,11 @@ const outputRoot = join(desktopRoot, ".plugin-bundles", "plugins");
 await rm(outputRoot, { recursive: true, force: true });
 await mkdir(outputRoot, { recursive: true });
 
-const pluginDirectories = (await readdir(pluginsRoot, { withFileTypes: true }))
+const pluginEntries = await readdir(pluginsRoot, { withFileTypes: true }).catch((error) => {
+  if (error?.code === "ENOENT") return [];
+  throw error;
+});
+const pluginDirectories = pluginEntries
   .filter((entry) => entry.isDirectory())
   .map((entry) => join(pluginsRoot, entry.name));
 

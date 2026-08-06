@@ -1,6 +1,7 @@
 # Pragma 当前架构概览与演进判断
 
-> 基线：2026-07-20 当前仓库实现。本文面向架构评审，描述已经存在的系统，而不是早期愿景；不展开类和函数级细节。
+> 基线：2026-07-20 当前仓库实现；Memory Plane 状态更新于 2026-08-06。本文面向架构评审，描述已经
+> 存在的系统，而不是早期愿景；不展开类和函数级细节。
 
 ## 结论先行
 
@@ -43,8 +44,8 @@ Pragma 已经形成一个质量较好的**本地 Agent 执行内核**：Expert�
             │                           │
             ▼                           ▼
 ┌─────────────────────────┐   ┌─────────────────────────────┐
-│ @pragma/runtime-*       │   │ plugins/*                   │
-│ PI / Codex / Claude / Qoder│ │ Memory / Repo Manager       │
+│ @pragma/runtime-*       │   │ user plugins                │
+│ PI / Codex / Claude / Qoder│ │ trusted Expert extensions  │
 └───────────┬─────────────┘   └─────────────────────────────┘
             │
             ▼
@@ -65,7 +66,7 @@ Pragma 已经形成一个质量较好的**本地 Agent 执行内核**：Expert�
 | Context            | ContextSystem 支持多 Store、元数据、检索、写入与装配                                 | 能力完整，但实现体量已经过大                       |
 | Desktop            | 已实现 Expert、Capability、Context Store、Model Provider、Mission 的本地管理         | 已是本地控制台，不再只是占位壳                     |
 | Capability Library | 本地能力不可变 revision、凭据独立加密、工具快照和显式 allowlist                      | 是良好的供应链和变更治理基础                       |
-| Memory             | Task / Experience / Fact / Skill 和 Evidence / Distillation 已有实现                 | 功能已落地，但 Core 与 Plugin 的所有权不一致       |
+| Memory             | Host 内置 Plane、Episodic/Semantic、Knowledge/Skill promotion 已落地                 | 必做重构完成；CodeGraph 是可选扩展                 |
 
 ### 尚未落地或仅为骨架
 
@@ -202,14 +203,12 @@ Desktop 的 `RuntimeEnvironmentService` 每次解析都读取版本化 Store，�
 之后创建的 Context；已有 Context 和 Runtime Session 保持原 binding。默认 Runtime 是安装级显式配置，
 Expert 未指定 Runtime 时由 Resolver 读取，而不是在 Expert 或 DSL 中推断 Codex。
 
-### P2：Memory Plane 前六阶段已落地，Skill 与 legacy 切换仍待完成
+### Memory Plane 必做重构已完成
 
-**状态：ADR 031–039 已接受；Canonical Feed、Module SPI、策略、Episodic、Semantic、Mission Board 与
-Knowledge Store promotion/revision 闭环已实现。**
+**状态：ADR 031–039 已接受；阶段 1–8 已完成，CodeGraph 保持可选。**
 
-ADR 002 曾把 Memory System 定义为 Core 抽象，但当前 `MemorySystem`、Memory record、Evidence Store 和 Distillation SPI 都在 `@pragma/plugin-memory`。ADR 003 又只完成了部分实现，代码已经同时包含 direct-write memory 与 evidence distillation。两份旧 ADR 现已被 ADR 031 替代。
-
-结果是第三方 Memory backend 要么依赖具体 `plugin-memory`，要么重新定义 SPI；Agent 面向的默认工具面也没有稳定结论。
+ADR 002/003 的 Agent plugin、direct-write Memory 和并行 Skill authority 已由 ADR 031 取代并删除。
+历史 Task/Experience/Fact/Skill 文件数据不读取、不导入，也不由应用自动删除。
 
 ADR 031 已替代 ADR 002/003，并由 `docs/architecture/memory-plane-implementation-plan.md` 固化分阶段
 实施顺序。目标边界为：
@@ -223,13 +222,13 @@ ADR 031 已替代 ADR 002/003，并由 `docs/architecture/memory-plane-implement
   托管 Context Store，并与 Memory/Evidence 解耦；
 - 通用 Store Revision Agent 加载目标 Store 与 revision prompt，生成 change set，用户批准后才激活新
   Store revision；Skill Candidate 评测后升级为现有 Capability；
-- `plugin-memory` 在完成历史数据导入和调用方迁移后删除。
+- 旧 Memory plugin 与 Repo Manager plugin 已 hard cut，仓库不再附带内置 Expert plugin。
 
 当前已能形成按资产隔离的历史 Episode、带冲突/时效的 Semantic Fact，并将用户批准的结构化 Knowledge
 初始化为每个 Expert 唯一的 Studio Context Store。后续 Memory 变化只提交 Store 修订任务，由独立 Agent
 生成 change set，用户批准后以 CAS 原子激活。旧 Published Knowledge 与 Bundle extension 已 hard cut，旧
-目录不迁移、不读取。Skill Candidate 与 legacy owner-scoped 导入仍未完成，旧插件只作为后续迁移数据源
-保留。CodeGraph 是最后的可选扩展验收，不作为 Memory 重构或 legacy 切换的前置条件。
+目录不迁移、不读取。Skill Candidate、Evaluation、Capability promotion/revision 和旧插件 hard cut 均已
+完成。CodeGraph 是最后的可选扩展验收，不作为 Memory 重构完成的前置条件。
 
 ### P2：Desktop Main Process 正在变成第二个业务内核
 
@@ -342,7 +341,7 @@ PI Adapter 的模型目录来自 Desktop 注册的 Model Provider；Codex、Clau
 - Desktop Expert 映射：`apps/desktop/src/main/desktop-expert-factory.ts`
 - Server 当前入口：`apps/server/src/app.ts`
 - Worker 当前入口：`apps/worker/src/index.ts`
-- Memory 实现：`plugins/memory/src/memory-system/`
+- Memory 实现：`packages/memory/src/`
 - 相关决策：`docs/adr/031-extensible-memory-plane.md`、`docs/architecture/memory-plane-implementation-plan.md`、`004-desktop-capability-library.md`、`005-execution-owned-runtime-storage.md`、`006-runtime-session-ownership-and-leases.md`
 
 ## 总体评价
