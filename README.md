@@ -18,10 +18,6 @@ Pragma is an open platform for creating, running, and sharing AI-native ways of 
 
 It does not try to replace Gemini, Claude Code, Codex, PI, Qoder CLI, or the next great agent. Pragma makes them work together.
 
-<p align="center">
-  <img src="./docs/images/pragma_agent_en.png" alt="Pragma Agent" width="800" />
-</p>
-
 ## Why Pragma?
 
 Great AI work rarely happens inside one chat window. An experienced AI user knows how to:
@@ -35,6 +31,22 @@ Great AI work rarely happens inside one chat window. An experienced AI user know
 Today, that knowledge mostly lives in people's heads and scattered conversations. Switching tools means copying prompts, retelling the story, moving artifacts, and losing lessons.
 
 Pragma turns that invisible craft into an explicit, executable, and shareable way of working.
+
+## Pragma's three core assets
+
+<p align="center">
+  <img src="./docs/images/pragma_agent_en.png" alt="Pragma Agent" width="800" />
+</p>
+
+Pragma is built around three long-term assets created through the way people use AI:
+
+1. **AI working methods.** Experts, ExpertTeams, and Flows can be composed freely. Each task can choose its own combination of Agent harness, model, tools, permissions, and context, turning an effective way of working into an explicit, reusable, versionable, and shareable system.
+2. **Private knowledge.** Pragma models all context as `ContextStore`, with adapters for file systems, relational databases, vector databases, memory systems, and other sources. Message events from different tasks, harnesses, and models enter one Memory Pipeline. Each memory target can use its own extensible extraction logic: episodic and semantic memory are supported today, while programming tasks can add code-graph memory by extending the refinement layer above the pipeline. Dynamic memory can then be distilled into a stable knowledge base or reusable Skill.
+3. **Private evaluation sets.** An AI system cannot be improved reliably without measurement. Private evaluation sets capture the tasks, expectations, and regression signals that matter to a team. Any change to a working method, context source, harness, or model can affect system-level quality, making the evaluation set a durable asset for comparing versions and guiding iteration.
+
+These assets compound: working methods produce evidence, memory turns evidence into knowledge, and evaluation sets reveal whether a change actually improves the system.
+
+Pragma is open by design. A working method can be saved as a `.pragma` file and shared with others. Desktop can import it, while another system can load it through the Pragma SDK's `@pragma/interpreter` and compile it into its own runtime with `@pragma/core`.
 
 ## What makes Pragma different
 
@@ -72,6 +84,8 @@ Pragma treats memory as a special form of context, not as a separate black box. 
 - **Experience:** what happened, including successful and failed paths;
 - **Facts:** durable knowledge, constraints, and preferences backed by evidence;
 - **Skills:** reusable approaches, anti-patterns, and recovery playbooks.
+
+Message events from every task, harness, and model enter a common Memory Pipeline. Different memory targets can attach different refinement logic, so episodic, semantic, and future code-graph memories can evolve independently. A policy can then distill dynamic memory into a stable knowledge base or reusable Skill.
 
 The result is more than conversation history. A completed mission can improve how the next mission is understood and executed.
 

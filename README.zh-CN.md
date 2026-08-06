@@ -18,10 +18,6 @@ Pragma 是一个用于创造、运行和分享 AI-native 工作方式的开放�
 
 Pragma 不试图替代 Gemini、Claude Code、Codex、PI、Qoder CLI，也不试图替代下一个优秀的 Agent。Pragma 让它们协同工作。
 
-<p align="center">
-  <img src="./docs/images/pragma_agent_cn.png" alt="Pragma Agent 中文介绍" width="800" />
-</p>
-
 ## 为什么需要 Pragma？
 
 真正高质量的 AI 工作，很少只发生在一个对话窗口里。有经验的 AI 使用者知道如何：
@@ -35,6 +31,22 @@ Pragma 不试图替代 Gemini、Claude Code、Codex、PI、Qoder CLI，也不试
 今天，这些知识大多存在于个人头脑和零散对话中。每次切换工具，都要重新复制 Prompt、复述背景、搬运产物，并不断丢失经验。
 
 Pragma 把这种不可见的个人技巧，变成显式、可执行、可分享的工作方式。
+
+## Pragma 的三项核心资产
+
+<p align="center">
+  <img src="./docs/images/pragma_agent_cn.png" alt="Pragma Agent 中文介绍" width="800" />
+</p>
+
+Pragma 围绕用户使用 AI 时逐步沉淀的三类长期资产展开：
+
+1. **AI 工作方式。** Expert、ExpertTeam 与 Flow 可以自由组合。不同任务可以选择不同的 Agent Harness、大模型、工具、权限与上下文，让有效的方法变成显式、可复用、可版本化、可分享的系统。
+2. **私有知识。** Pragma 将所有上下文抽象为 `ContextStore`，可对接文件系统、关系型数据库、向量数据库、记忆系统等任意数据源。不同任务、Harness 与模型产生的消息事件会进入统一的 Memory Pipeline。不同记忆目标可以使用各自可扩展的提炼逻辑：当前支持 episodic memory 与 semantic memory，编程任务还可以通过扩展 Pipeline 之上的提炼层加入 code-graph memory。动态记忆还可以按策略蒸馏为稳定的知识库或可复用 Skill。
+3. **私有评估集。** 判断 AI 系统质量离不开测评。私有评估集记录团队真正关心的任务、预期与回归信号；工作方式、上下文来源、Harness 或模型的任何改动都可能影响整体系统性能，因此评估集是比较版本、控制回归和持续改进的长期资产。
+
+三类资产会相互增强：工作方式产生执行证据，记忆把证据沉淀为知识，评估集验证改动是否真正提升系统质量。
+
+Pragma 从设计上就是开放系统。AI 工作方式可以保存为 `.pragma` 文件并分享给他人；Desktop 可以直接导入，其他系统也可以通过 Pragma SDK 中的 `@pragma/interpreter` 加载，再使用 `@pragma/core` 编译并接入自己的运行环境。
 
 ## Pragma 的差异化
 
@@ -72,6 +84,8 @@ Pragma 把 Memory 看成一种特殊 Context，而不是独立的黑盒系统。
 - **Experience**：发生过什么，包括成功路径与失败路径；
 - **Fact**：有证据支持、值得长期保留的知识、约束与偏好；
 - **Skill**：可复用的方法、反模式与恢复手册。
+
+不同任务、Harness 与模型产生的消息事件都会进入统一的 Memory Pipeline。不同记忆目标可以挂载不同的提炼逻辑，因此 episodic、semantic 以及未来的 code-graph memory 可以独立演进；再通过策略将动态记忆蒸馏为稳定知识库或可复用 Skill。
 
 最终保留下来的不只是对话历史。一次完成的 Mission，可以改善下一次 Mission 被理解和执行的方式。
 
