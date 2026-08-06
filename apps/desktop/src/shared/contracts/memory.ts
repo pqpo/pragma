@@ -75,7 +75,7 @@ export const DesktopMemoryPlaneStatusSchema = z.object({
   modules: z.array(MemoryModuleDiagnosticSchema),
   storagePolicy: z
     .object({
-      schemaVersion: z.literal("pragma.memory-storage-policy/v1"),
+      schemaVersion: z.literal("pragma.memory-storage-policy/v2"),
       canonicalFeedRetentionDays: z.literal(30),
       canonicalFeedTargetBytes: z.literal(512 * 1_024 * 1_024),
       evidenceMaxRecordsPerExecution: z.literal(2_000),
@@ -87,6 +87,11 @@ export const DesktopMemoryPlaneStatusSchema = z.object({
       deadLetterRetentionDays: z.literal(30),
       deadLetterMaxEntries: z.literal(10_000),
       deadLetterMaxBytes: z.literal(64 * 1_024 * 1_024),
+      episodicMaxRecords: z.literal(10_000),
+      semanticMaxRecords: z.literal(20_000),
+      episodicMaxLogicalBytes: z.literal(512 * 1_024 * 1_024),
+      semanticMaxLogicalBytes: z.literal(512 * 1_024 * 1_024),
+      memoryMaxFullRevisions: z.literal(100),
     })
     .optional(),
   maintenance: z

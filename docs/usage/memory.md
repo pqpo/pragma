@@ -24,8 +24,8 @@ Knowledge Store promotion/revision 闭环：
 - 独立 Expert 只能看到自己的 Episode；Team/Flow 内 Expert 看到当前 Team/Flow Episode 与自己的个人
   Episode，不会混入其他专家或其他团队资产；
 - 模型通过 `memory/episodic/items/**` 按需读取详情，需要核验时再读取精确 Evidence 引用。
-- 独立 Semantic Module 会提炼当前事实、偏好和约束；相同事实合并 Evidence，矛盾事实并存并标记，
-  不会因为新事实置信度较高而自动覆盖；
+- 独立 Semantic Module 会提炼当前事实、偏好和约束；相同事实合并 Evidence。主体直接表达的独占事实
+  变化会使用原 Fact id 创建新 revision，其他来源的矛盾事实仍并存并标记，不会仅凭置信度覆盖；
 - Semantic 默认召回排除过期、失效和 superseded 投影，验证、更正和失效通过 revision CAS 保存历史；
 - Semantic subject 只来自可验证 allowlist：安装级 local User、Pragma Project、根资产和 producer Expert。
   当前不发现 Repository subject，普通 Agent 任务不依赖代码仓库。
@@ -50,7 +50,8 @@ Knowledge Store promotion/revision 闭环：
 Module 是最后的可选扩展，不作为 Memory 重构完成条件。旧 `@pragma/plugin-memory` 中的 Task Memory
 只属于迁移源，不是新版后续 Memory 阶段的完成实现。
 
-Episodic 与 Semantic 的 data/job Store 当前为 user version 3。相邻 v2→v3 迁移将提炼生命周期
+Episodic 与 Semantic 的 data Store 当前为 user version 4，job Store 为 version 3。data v3→v4 增加
+binding-scoped hot/archive 索引与召回统计；相邻 v2→v3 迁移将提炼生命周期
 升级为 conversation、source Execution 和 input-watermark 模型，并对升级前数据创建备份；未来
 版本仍 fail closed。
 
@@ -72,8 +73,11 @@ Promoted Knowledge 由 Studio Context Store 以 `guide → overview/summary → 
 Context。
 
 guide 最多 2KB，overview 最多 4KB，其中 Semantic Fact 使用主要空间，Episodic 只显示最近三条。
-Summary/Index 使用内部链接指向详情；内容较多或目标未知时先 Search，再 Read 精确 Item。普通搜索不会返回
-Evidence；模型必须从详情中的链接精确读取证据。Memory 是只读 Context，直接 add/edit/delete 会被拒绝。
+Summary/Index 只展示按价值、新近度和实际召回选出的 hot 记录，并使用内部链接指向详情；archived
+记录不进入 summary/index/overview，但仍可通过 Search 或已知 id 的 Read 深度召回。List 只列入口，
+不枚举全部详情。内容较多或目标未知时先 Search，再 Read 精确 Item。普通搜索不会返回 Evidence；模型必须
+从详情中的链接精确读取证据。Memory 是只读 Context，直接 add/edit/delete 会被拒绝；Episodic 是历史先例，
+不代表当前事实。
 
 这套分层结构就是召回协议：Agent 读取 overview 后自行判断是否继续搜索或加载详情。Host 只执行 scope、
 权限、预算和审计，不理解 prompt 的相关性，也不会在 Agent 不知情时附加检索结果。跨 Module search 使用
@@ -124,7 +128,9 @@ Memory 持续捕获，但不会无限积累原始上下文：
 - 隐藏 Memory Curator Mission 正常结束立即删除；崩溃遗留通过专用 registry 定向恢复，不扫描所有
   Mission。
 
-这些值来自 `pragma.memory-storage-policy/v1` 固定策略，设置页只读展示，当前不提供用户自定义。
+这些值来自 `pragma.memory-storage-policy/v2` 固定策略，设置页只读展示，当前不提供用户自定义。Episodic
+最多 10,000 条或 512 MiB，Semantic 最多 20,000 条或 512 MiB，每条最多保留最近 100 个完整 revision；
+超限时先裁剪最低分 archived 内容并留下 content-free tombstone。
 
 ### Expert、ExpertTeam、Flow
 

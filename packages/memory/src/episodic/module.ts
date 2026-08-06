@@ -92,7 +92,7 @@ export async function createEpisodicMemoryModule(
       },
     ],
     createContextProvider(scope) {
-      return createEpisodicMemoryContextProvider(store, scope);
+      return createEpisodicMemoryContextProvider(store, scope, now);
     },
     async consume(envelopes) {
       await store.ingest(envelopes);

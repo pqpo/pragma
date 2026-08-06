@@ -26,6 +26,13 @@ export const SemanticFactCandidateSchema = z
     conflictMode: z.enum(["exclusive", "compatible"]),
     confidence: z.number().min(0).max(0.95),
     evidenceRefs: z.array(z.string().min(1)).min(1).max(100),
+    replacementTarget: z
+      .object({
+        factId: z.string().min(1),
+        expectedRevision: z.number().int().positive(),
+      })
+      .strict()
+      .optional(),
     reviewAt: z.string().datetime().optional(),
     expiresAt: z.string().datetime().optional(),
   })
@@ -33,10 +40,29 @@ export const SemanticFactCandidateSchema = z
 
 export const SemanticExtractionInputSchema = z
   .object({
-    schemaVersion: z.literal("pragma.memory-semantic-extraction-input/v2"),
+    schemaVersion: z.literal("pragma.memory-semantic-extraction-input/v3"),
     jobId: z.string().min(1),
     executionId: z.string().min(1),
     allowedSubjectRefs: z.array(MemorySubjectRefSchema).min(1).max(200),
+    currentFacts: z
+      .array(
+        z
+          .object({
+            id: z.string().min(1),
+            revision: z.number().int().positive(),
+            statement: z.string().trim().min(1).max(4_000),
+            subjectRefs: z.array(MemorySubjectRefSchema).min(1).max(20),
+            predicate: z
+              .string()
+              .regex(/^[a-z][a-z0-9]*(?:[.-][a-z0-9]+)+$/)
+              .max(200),
+            normalizedValue: z.string().trim().min(1).max(2_000),
+            conflictMode: z.literal("exclusive"),
+            observedAt: z.string().datetime(),
+          })
+          .strict(),
+      )
+      .max(100),
     evidence: z.array(MemoryEvidenceEnvelopeSchema).min(1).max(2_000),
     omittedEvidence: MemoryEvidenceOmissionStatsSchema,
   })

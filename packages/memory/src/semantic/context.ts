@@ -7,6 +7,7 @@ import type { MemoryEvidenceEnvelope, SemanticFact } from "@pragma/shared";
 
 import type { SemanticMemoryStore } from "./store.ts";
 import type { MemoryRecallScope } from "../pipeline/memory-module.ts";
+import { trimUtf8ToByteLimit } from "../storage/utf8.ts";
 
 const SUMMARY_MAX_BYTES = 4_096;
 
@@ -30,7 +31,7 @@ export function createSemanticMemoryContextProvider(
       },
       {
         id: "index.md",
-        content: renderIndex(facts),
+        content: trimUtf8ToByteLimit(renderIndex(facts), 4_096),
         metadata: metadata(
           "Searchable Semantic Memory index. Read details before relying on a fact.",
           "model_decision",

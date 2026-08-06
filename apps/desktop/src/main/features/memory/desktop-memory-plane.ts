@@ -182,9 +182,15 @@ export async function createDesktopMemoryPlane(options: {
     pragmaHome: options.pragmaHome,
     extractionSettings,
   });
+  const knowledgeRef: { current?: KnowledgeMemoryModule } = {};
   const semantic = await createSemanticMemoryModule({
     pragmaHome: options.pragmaHome,
     extractionSettings,
+    async onProjectionChanged({ rootRef }) {
+      const current = knowledgeRef.current;
+      if (current === undefined) throw new Error("knowledge_memory_module_not_ready");
+      await current.scheduleRoot(rootRef);
+    },
   });
   const knowledge = await createKnowledgeMemoryModule({
     pragmaHome: options.pragmaHome,
@@ -200,6 +206,7 @@ export async function createDesktopMemoryPlane(options: {
         },
       } satisfies KnowledgeLearningSink),
   });
+  knowledgeRef.current = knowledge;
   const subjectIdentities = createDesktopMemorySubjectIdentityStore({
     pragmaHome: options.pragmaHome,
   });
@@ -754,5 +761,10 @@ function desktopStoragePolicy(): Readonly<Record<string, string | number>> {
     deadLetterRetentionDays: 30,
     deadLetterMaxEntries: DEFAULT_MEMORY_STORAGE_POLICY.deadLetterMaxEntries,
     deadLetterMaxBytes: DEFAULT_MEMORY_STORAGE_POLICY.deadLetterMaxBytes,
+    episodicMaxRecords: DEFAULT_MEMORY_STORAGE_POLICY.episodicMaxRecords,
+    semanticMaxRecords: DEFAULT_MEMORY_STORAGE_POLICY.semanticMaxRecords,
+    episodicMaxLogicalBytes: DEFAULT_MEMORY_STORAGE_POLICY.episodicMaxLogicalBytes,
+    semanticMaxLogicalBytes: DEFAULT_MEMORY_STORAGE_POLICY.semanticMaxLogicalBytes,
+    memoryMaxFullRevisions: DEFAULT_MEMORY_STORAGE_POLICY.memoryMaxFullRevisions,
   };
 }

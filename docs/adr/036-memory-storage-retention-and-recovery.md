@@ -26,6 +26,14 @@ Memory uses one versioned, Host-owned storage policy. It is currently fixed and 
   Content-free omission counts remain visible to the curator and diagnostics.
 - Episodic Memory stores only Evidence cited by the retained Episode. Semantic Memory already stores
   only Evidence cited by a retained Fact.
+- Long-term Memory uses a binding-scoped hot/archive index. Episodic scoring combines value, a
+  90-day update half-life, and a 60-day recall half-life; Semantic scoring combines confidence,
+  verification, a 180-day update half-life, a 90-day recall half-life, and conflict/review penalties.
+  Hot indexes are capped at 200 Episodes and 500 Facts per consumer before their byte budget applies.
+- The Episodic Store is capped at 10,000 records or 512 MiB logical content; Semantic is capped at
+  20,000 records or 512 MiB. Each Memory keeps at most 100 full revisions. Maintenance removes the
+  lowest-scoring archived content first, then low-scoring hot content if necessary, and retains a
+  content-free tombstone so replay cannot recreate the removed identity.
 - Automatic transient retries are bounded. Configuration failures and exhausted transient failures
   enter `needs_attention`; application startup does not wake them. A matching configuration change or
   an explicit CAS-protected user retry may wake them.

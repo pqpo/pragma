@@ -318,15 +318,16 @@ Expert/principal scope、binding/visibility、预算、审计和生命周期。�
 - Status: Completed
 - Protocols: `pragma.memory-episodic/v3`、`pragma.memory-extraction-job/v3`、
   `pragma.memory-semantic-job/v3`、`pragma.memory-episodic-extraction-input/v2`、
-  `pragma.memory-semantic-extraction-input/v2`、`pragma.memory-capture-activity/v1`、
+  `pragma.memory-semantic-extraction-input/v3`、`pragma.memory-capture-activity/v1`、
   `pragma.memory-recall-activity/v1`、`pragma.memory-execution-context/v1`、
   `pragma.memory-tombstone/v1`；Semantic 内容协议保持 `pragma.memory-semantic/v1`
 - Storage: 每个 Execution 的 activity 位于 `state/memory/executions/<executionId>/activity.sqlite`；
-  Episodic 与 Semantic data/job store 均为 user version 3
+  Episodic 与 Semantic data store 为 user version 4，job store 为 user version 3
 - Migration: Episodic data v1→v2 完成 binding 转换，Semantic data v1→v2 增加 tombstone；
   data/job store 的 v2→v3 将单 Execution 身份升级为 conversation、source Execution 与 input-watermark
   生命周期，并将历史非法 `needs_attention` 任务恢复为可重试 pending；相邻迁移使用历史
-  fixture、升级前备份且对未来版本 fail closed
+  fixture、升级前备份且对未来版本 fail closed；data v3→v4 增加 binding-scoped hot/archive INDEX
+  与召回统计
 - Verification: Memory/Core/Desktop typecheck，Memory 与 Desktop tests，
   `packages/memory/test/memory-job-v3-migration.test.ts`，仓库 `pnpm check`、`pnpm build`
 - Known limitations: 不提供跨设备账户合并、分享扩权审批、Knowledge/Skill/CodeGraph、legacy importer；

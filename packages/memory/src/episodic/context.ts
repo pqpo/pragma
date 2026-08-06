@@ -8,15 +8,17 @@ import type { MemoryEvidenceEnvelope } from "@pragma/shared";
 import type { EpisodicMemoryRecord } from "./schema.ts";
 import type { EpisodicMemoryStore } from "./store.ts";
 import type { MemoryRecallScope } from "../pipeline/memory-module.ts";
+import { trimUtf8ToByteLimit } from "../storage/utf8.ts";
 
 const SUMMARY_MAX_BYTES = 1_024;
 
 export function createEpisodicMemoryContextProvider(
   store: EpisodicMemoryStore,
   scope: MemoryRecallScope,
+  now: () => Date = () => new Date(),
 ): ExpertAgentContextStore {
   const rootStore = async (): Promise<StaticContextStore> => {
-    const episodes = await store.listForRecall(scope);
+    const episodes = await store.listForRecall(scope, now());
     const seeds: ExpertAgentContextItemSeed[] = [
       {
         id: "summary.md",
@@ -29,7 +31,7 @@ export function createEpisodicMemoryContextProvider(
       },
       {
         id: "index.md",
-        content: renderIndex(episodes, scope),
+        content: trimUtf8ToByteLimit(renderIndex(episodes, scope), 4_096),
         metadata: metadata(
           "Searchable Episodic Memory index. Read an item for the full historical precedent.",
           "model_decision",
@@ -48,7 +50,7 @@ export function createEpisodicMemoryContextProvider(
       }
       const episodeId = readPathId(input.id, "items/");
       if (episodeId !== undefined) {
-        const episode = await store.getForRecall(scope, episodeId);
+        const episode = await store.getForRecall(scope, episodeId, now());
         return await new StaticContextStore(
           episode === undefined ? [] : [episodeSeed(episode, scope)],
         ).readContext(input);
@@ -68,7 +70,7 @@ export function createEpisodicMemoryContextProvider(
       if (!rootResult.ok) return rootResult;
       const remaining = Math.max(0, (input.maxResults ?? 20) - rootResult.value.length);
       if (remaining === 0) return rootResult;
-      const episodes = await store.searchForRecall(scope, input.query, remaining);
+      const episodes = await store.searchForRecall(scope, input.query, remaining, now());
       const detailResult = await new StaticContextStore(
         episodes.map((episode) => episodeSeed(episode, scope)),
       ).searchContext({ ...input, maxResults: remaining });
