@@ -4,6 +4,7 @@ import { extname, join, relative, resolve, sep } from "node:path";
 
 import { unzipSync } from "fflate";
 import { z } from "zod";
+import { SkillPackageSchema, type SkillPackage } from "@pragma/shared";
 import {
   createCodeServiceMcpServer,
   createHttpServiceMcpServer,
@@ -15,6 +16,7 @@ import {
 
 import {
   CapabilityDefinitionSchema,
+  CapabilityIdSchema,
   CapabilityHealthSchema,
   CapabilityManifestSchema,
   CapabilitySchema,
@@ -78,6 +80,8 @@ export interface CapabilityStore {
   skillFilesPath(id: string, revision: number): Promise<string>;
   importSkill(input: ImportSkillCapability): Promise<Capability>;
   updateSkill(input: UpdateSkillCapability): Promise<Capability>;
+  createGeneratedSkill(input: { readonly package: SkillPackage; readonly id?: string }): Promise<Capability>;
+  updateGeneratedSkill(input: { readonly id: string; readonly package: SkillPackage }): Promise<Capability>;
   create(input: CreateCapability): Promise<Capability>;
   update(input: UpdateCapability): Promise<Capability>;
   retry(id: string): Promise<Capability>;
@@ -123,6 +127,7 @@ export function createCapabilityStore(options: {
   readonly mcpToolRegistryPool?: McpToolRegistryPool | undefined;
   readonly verify: CapabilityVerifier;
   readonly isReferenced: (capabilityId: string) => Promise<boolean>;
+  readonly onRemoved?: ((capabilityId: string) => Promise<void>) | undefined;
 }): CapabilityStore {
   let revisionPublisher: CapabilityRevisionPublisher | undefined;
   const capabilityPath = (id: string) => join(options.capabilitiesPath, id);
@@ -456,6 +461,48 @@ export function createCapabilityStore(options: {
         throw error;
       }
     },
+    async createGeneratedSkill(rawInput) {
+      const input = SkillPackageSchema.parse(rawInput.package);
+      const id = rawInput.id === undefined ? randomUUID() : CapabilityIdSchema.parse(rawInput.id);
+      const timestamp = new Date().toISOString();
+      const targetPath = capabilityPath(id);
+      const temporaryPath = join(options.capabilitiesPath, `.${id}.${randomUUID()}.tmp`);
+      const payloadPath = join(temporaryPath, "revisions", "000001", "payload");
+      await mkdir(payloadPath, { recursive: true, mode: 0o700 });
+      try {
+        await writeGeneratedSkillPayload(input, payloadPath);
+        const definition = CapabilityDefinitionSchema.parse({
+          kind: "skill",
+          name: input.name,
+          description: input.description,
+          entryPath: "SKILL.md",
+          contentHash: await hashDirectory(payloadPath),
+        });
+        const manifest = CapabilityManifestSchema.parse({
+          schemaVersion: "pragma.capability/v2",
+          id,
+          runtimeKey: createRuntimeKey(input.name, id),
+          name: input.name,
+          kind: "skill",
+          latestRevision: 1,
+          createdAt: timestamp,
+          updatedAt: timestamp,
+        });
+        await writeJson(join(temporaryPath, "revisions", "000001", "definition.json"), definition);
+        await writeJson(join(temporaryPath, "capability.json"), manifest);
+        await writeJson(join(temporaryPath, "health.json"), {
+          revision: 1,
+          status: "ready",
+          checkedAt: timestamp,
+        });
+        await mkdir(options.capabilitiesPath, { recursive: true, mode: 0o700 });
+        await rename(temporaryPath, targetPath);
+        return await readCapability(id);
+      } catch (error) {
+        await rm(temporaryPath, { recursive: true, force: true });
+        throw error;
+      }
+    },
     async updateSkill(rawInput) {
       const input = UpdateSkillCapabilitySchema.parse(rawInput);
       const current = await readCapability(input.id);
@@ -491,6 +538,50 @@ export function createCapabilityStore(options: {
           status: "ready",
           checkedAt: timestamp,
         });
+        const candidate = CapabilitySchema.parse({ manifest, definition, health });
+        await writeJson(join(temporaryPath, "definition.json"), definition);
+        return await publishRevision({
+          current,
+          candidate,
+          commit: async () => {
+            await rename(temporaryPath, revisionPath(input.id, revision));
+            await writeJson(healthPath(input.id), health);
+            await writeJson(manifestPath(input.id), manifest);
+            return await readCapability(input.id);
+          },
+        });
+      } catch (error) {
+        await rm(temporaryPath, { recursive: true, force: true });
+        throw error;
+      }
+    },
+    async updateGeneratedSkill(rawInput) {
+      const input = { id: CapabilityIdSchema.parse(rawInput.id), package: SkillPackageSchema.parse(rawInput.package) };
+      const current = await readCapability(input.id);
+      if (current.definition.kind !== "skill") {
+        throw new CapabilityStoreError("config_invalid", "Only Skill capabilities can be updated here.");
+      }
+      const revision = current.manifest.latestRevision + 1;
+      const revisionsPath = join(capabilityPath(input.id), "revisions");
+      const temporaryPath = join(revisionsPath, `.${revisionDirectory(revision)}.${randomUUID()}.tmp`);
+      const payloadPath = join(temporaryPath, "payload");
+      await mkdir(payloadPath, { recursive: true, mode: 0o700 });
+      try {
+        await writeGeneratedSkillPayload(input.package, payloadPath);
+        const definition = CapabilityDefinitionSchema.parse({
+          ...current.definition,
+          name: input.package.name,
+          description: input.package.description,
+          contentHash: await hashDirectory(payloadPath),
+        });
+        const timestamp = new Date().toISOString();
+        const manifest = CapabilityManifestSchema.parse({
+          ...current.manifest,
+          name: input.package.name,
+          latestRevision: revision,
+          updatedAt: timestamp,
+        });
+        const health = CapabilityHealthSchema.parse({ revision, status: "ready", checkedAt: timestamp });
         const candidate = CapabilitySchema.parse({ manifest, definition, health });
         await writeJson(join(temporaryPath, "definition.json"), definition);
         return await publishRevision({
@@ -817,6 +908,7 @@ export function createCapabilityStore(options: {
       }
       await rm(capabilityPath(id), { recursive: true, force: true });
       await options.credentials.removeCapability(id);
+      await options.onRemoved?.(id);
     },
     setRevisionPublisher(publisher) {
       revisionPublisher = publisher;
@@ -947,6 +1039,18 @@ async function importSkillPayload(sourcePath: string, targetPath: string): Promi
     throw new CapabilityStoreError("import_invalid", "Select a Skill directory or ZIP archive.");
   }
   await copySkillDirectory(sourcePath, targetPath, { files: 0, bytes: 0 });
+}
+
+async function writeGeneratedSkillPayload(input: SkillPackage, targetPath: string): Promise<void> {
+  const parsed = SkillPackageSchema.parse(input);
+  for (const file of parsed.files) {
+    const target = resolve(targetPath, ...file.path.split("/"));
+    if (!isPathInside(targetPath, target)) {
+      throw new CapabilityStoreError("import_invalid", "The generated Skill contains an unsafe path.");
+    }
+    await mkdir(resolve(target, ".."), { recursive: true, mode: 0o700 });
+    await writeFile(target, file.content, { mode: 0o600 });
+  }
 }
 
 async function copySkillDirectory(

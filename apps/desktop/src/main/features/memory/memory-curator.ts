@@ -20,6 +20,7 @@ import {
   MEMORY_CURATOR_PROMPT_VERSION,
   SEMANTIC_MEMORY_CURATOR_PROMPT_VERSION,
   KNOWLEDGE_MEMORY_CURATOR_PROMPT_VERSION,
+  SKILL_MEMORY_CURATOR_PROMPT_VERSION,
   MEMORY_CURATOR_REF,
   DEFAULT_MEMORY_STORAGE_POLICY,
   selectBoundedMemoryEvidence,
@@ -27,10 +28,12 @@ import {
   type EpisodicMemoryExtractor,
   type KnowledgeMemoryExtractor,
   type SemanticMemoryExtractor,
+  type SkillMemoryExtractor,
   type MemoryExtractorProfile,
   type MemoryExtractorProfileStore,
 } from "@pragma/memory";
 import { KnowledgeExtractionOutputSchema } from "@pragma/shared";
+import { SkillExtractionOutputSchema } from "@pragma/shared";
 
 import type { MissionRunner } from "../missions/mission-runner.ts";
 import { MissionStoreError, type MissionStore } from "../missions/mission-store.ts";
@@ -54,6 +57,7 @@ export interface DesktopMemoryCurator {
   readonly episodicExtractor: EpisodicMemoryExtractor;
   readonly semanticExtractor: SemanticMemoryExtractor;
   readonly knowledgeExtractor: KnowledgeMemoryExtractor;
+  readonly skillExtractor: SkillMemoryExtractor;
   compile(input: {
     readonly runtimes: RuntimeResolver;
     readonly workspace: string;
@@ -281,6 +285,33 @@ export function createDesktopMemoryCurator(options: {
         };
       },
     },
+    skillExtractor: {
+      async extract(input, extractionOptions) {
+        const profile = await options.profiles.get();
+        const runtime = await resolveRuntime(profile);
+        const content = await runCuratorMission({
+          options,
+          runtime,
+          jobId: input.jobId,
+          title: `Skill extraction ${input.rootRef.id.slice(0, 12)}`,
+          goal: renderSkillExtractionPrompt(input),
+          signal: extractionOptions?.signal,
+        });
+        const output = SkillExtractionOutputSchema.parse(JSON.parse(extractJson(content)));
+        return {
+          output,
+          provenance: {
+            curatorRef: MEMORY_CURATOR_REF,
+            promptVersion: SKILL_MEMORY_CURATOR_PROMPT_VERSION,
+            profileRevision: profile.revision,
+            runtimeId: runtime.runtimeId,
+            providerId: runtime.modelSelection?.model.providerId ?? "runtime-managed",
+            modelId: runtime.modelSelection?.model.modelId ?? "runtime-default",
+            extractedAt: now().toISOString(),
+          },
+        };
+      },
+    },
   };
 }
 
@@ -353,6 +384,29 @@ function renderKnowledgeExtractionPrompt(
     JSON.stringify(input.rootRef),
     "Sources:",
     JSON.stringify(input.sources),
+  ].join("\n\n");
+  if (Buffer.byteLength(prompt) > DEFAULT_MEMORY_STORAGE_POLICY.extractionPromptMaxBytes) {
+    throw new Error("memory_curator_prompt_metadata_too_large");
+  }
+  return prompt;
+}
+
+function renderSkillExtractionPrompt(
+  input: Parameters<SkillMemoryExtractor["extract"]>[0],
+): string {
+  const prompt = [
+    "Extract at most three complete, reusable Skill candidates from these curated Memory sources.",
+    "A Skill is a coherent executable workflow, not a fact, isolated tip, command fragment, or one-off success. Merge related steps into one Skill and return retain=false when the pattern is fragmentary.",
+    "Every candidate must cite at least three distinct high-value Episodic ids across at least two conversations; at least two must have succeeded or recovered successfully. Semantic sources may support but never satisfy this threshold.",
+    "Generate SKILL.md plus optional references/*.md. Scripts are optional and must be dependency-free Node 22 ESM under scripts/*.mjs with node:test coverage under tests/*.test.mjs.",
+    "For each candidate create at least three source replay expectations and one clearly non-applicable boundary case.",
+    "Compare only existingTargets. Use revise only for one clear match, ambiguous for two or more plausible matches, otherwise create. Never invent a binding id.",
+    "Output schema:",
+    '{"retain":true,"candidates":[{"content":{"normalizedKey":"workflow.example","applicability":["..."],"failureModes":["..."],"recoverySteps":["..."],"package":{"name":"...","description":"...","files":[{"path":"SKILL.md","content":"---\\nname: ...\\ndescription: ...\\n---\\n..."}]},"replayCases":[{"objective":"...","requiredBehaviors":["..."],"forbiddenBehaviors":[]}],"boundaryCase":{"objective":"...","requiredBehaviors":["recognize non-applicability"],"forbiddenBehaviors":["force the workflow"]}},"sourceRefs":[{"kind":"episodic","id":"...","revision":1}],"route":{"type":"create|revise|ambiguous","bindingId":"for revise","bindingIds":["for ambiguous"]}}]}',
+    'or {"retain":false,"reason":"no-reusable-skill|insufficient-independent-sources|fragmentary-pattern|sensitive"}.',
+    "Root:", JSON.stringify(input.rootRef),
+    "Existing Memory Skills:", JSON.stringify(input.existingTargets),
+    "Sources:", JSON.stringify(input.sources),
   ].join("\n\n");
   if (Buffer.byteLength(prompt) > DEFAULT_MEMORY_STORAGE_POLICY.extractionPromptMaxBytes) {
     throw new Error("memory_curator_prompt_metadata_too_large");

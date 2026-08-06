@@ -17,6 +17,7 @@ import type {
   SkillDocument,
   SkillFileContent,
   SkillFileEntry,
+  SkillRevisionJob,
 } from "../../../../shared/contracts/index.ts";
 import { errorMessage } from "../../lib/errors.ts";
 import { MarkdownContent } from "../../components/MarkdownContent.tsx";
@@ -257,96 +258,99 @@ export function CapabilityDetailFragment(props: {
       </div>
 
       {definition.kind === "skill" ? (
-        <section className="skill-document" aria-label={t("skillContent")}>
-          <nav className="skill-content-tabs" aria-label={t("skillContent")}>
-            <button
-              className={skillTab === "document" ? "is-active" : ""}
-              type="button"
-              aria-pressed={skillTab === "document"}
-              onClick={() => setSkillTab("document")}
-            >
-              SKILL.md
-            </button>
-            <button
-              className={skillTab === "files" ? "is-active" : ""}
-              type="button"
-              aria-pressed={skillTab === "files"}
-              onClick={() => {
-                setSkillTab("files");
-                const firstPath = selectedSkillFile ?? skillFiles[0]?.path;
-                if (firstPath !== undefined && skillFileContent?.path !== firstPath) {
-                  void selectSkillFile(firstPath);
-                }
-              }}
-            >
-              {t("files")} <span>{skillFiles.length}</span>
-            </button>
-          </nav>
-          {skillTab === "document" ? (
-            <>
-              <header>
-                <div>
-                  <h2>SKILL.md</h2>
-                  <p>{t("skillDocumentation")}</p>
-                </div>
-                <button
-                  className="secondary-button"
-                  type="button"
-                  aria-pressed={documentSourceVisible}
-                  onClick={() => setDocumentSourceVisible((visible) => !visible)}
-                >
-                  {documentSourceVisible ? t("viewRendered") : t("viewSource")}
-                </button>
-              </header>
-              {skillDocument === null ? (
-                <p className="capability-empty">{t("loadingSkill")}</p>
-              ) : documentSourceVisible ? (
-                <pre className="skill-document-source">{skillDocument.content}</pre>
-              ) : (
-                <article className="skill-markdown">
-                  <MarkdownContent source={skillMarkdownBody(skillDocument.content)} />
-                </article>
-              )}
-            </>
-          ) : (
-            <div className="skill-file-browser">
-              <aside aria-label={t("skillFiles")}>
-                {skillFiles.map((file) => (
+        <>
+          <section className="skill-document" aria-label={t("skillContent")}>
+            <nav className="skill-content-tabs" aria-label={t("skillContent")}>
+              <button
+                className={skillTab === "document" ? "is-active" : ""}
+                type="button"
+                aria-pressed={skillTab === "document"}
+                onClick={() => setSkillTab("document")}
+              >
+                SKILL.md
+              </button>
+              <button
+                className={skillTab === "files" ? "is-active" : ""}
+                type="button"
+                aria-pressed={skillTab === "files"}
+                onClick={() => {
+                  setSkillTab("files");
+                  const firstPath = selectedSkillFile ?? skillFiles[0]?.path;
+                  if (firstPath !== undefined && skillFileContent?.path !== firstPath) {
+                    void selectSkillFile(firstPath);
+                  }
+                }}
+              >
+                {t("files")} <span>{skillFiles.length}</span>
+              </button>
+            </nav>
+            {skillTab === "document" ? (
+              <>
+                <header>
+                  <div>
+                    <h2>SKILL.md</h2>
+                    <p>{t("skillDocumentation")}</p>
+                  </div>
                   <button
-                    key={file.path}
-                    className={selectedSkillFile === file.path ? "is-active" : ""}
+                    className="secondary-button"
                     type="button"
-                    aria-pressed={selectedSkillFile === file.path}
-                    onClick={() => void selectSkillFile(file.path)}
+                    aria-pressed={documentSourceVisible}
+                    onClick={() => setDocumentSourceVisible((visible) => !visible)}
                   >
-                    <span>{file.path}</span>
-                    <small>{formatFileSize(file.size)}</small>
+                    {documentSourceVisible ? t("viewRendered") : t("viewSource")}
                   </button>
-                ))}
-                {skillFiles.length === 0 ? <p>{t("noSkillFiles")}</p> : null}
-              </aside>
-              <section aria-live="polite">
-                {selectedSkillFile === null || skillFileContent === null ? (
-                  <p className="capability-empty">
-                    {selectedSkillFile === null ? t("selectSkillFile") : t("loadingSkillFile")}
-                  </p>
+                </header>
+                {skillDocument === null ? (
+                  <p className="capability-empty">{t("loadingSkill")}</p>
+                ) : documentSourceVisible ? (
+                  <pre className="skill-document-source">{skillDocument.content}</pre>
                 ) : (
-                  <>
-                    <header>
-                      <h2>{skillFileContent.path}</h2>
-                      <span>{formatFileSize(skillFileContent.size)}</span>
-                    </header>
-                    {skillFileContent.content === null ? (
-                      <p className="capability-empty">{t("binaryFilePreviewUnavailable")}</p>
-                    ) : (
-                      <pre className="skill-file-content">{skillFileContent.content}</pre>
-                    )}
-                  </>
+                  <article className="skill-markdown">
+                    <MarkdownContent source={skillMarkdownBody(skillDocument.content)} />
+                  </article>
                 )}
-              </section>
-            </div>
-          )}
-        </section>
+              </>
+            ) : (
+              <div className="skill-file-browser">
+                <aside aria-label={t("skillFiles")}>
+                  {skillFiles.map((file) => (
+                    <button
+                      key={file.path}
+                      className={selectedSkillFile === file.path ? "is-active" : ""}
+                      type="button"
+                      aria-pressed={selectedSkillFile === file.path}
+                      onClick={() => void selectSkillFile(file.path)}
+                    >
+                      <span>{file.path}</span>
+                      <small>{formatFileSize(file.size)}</small>
+                    </button>
+                  ))}
+                  {skillFiles.length === 0 ? <p>{t("noSkillFiles")}</p> : null}
+                </aside>
+                <section aria-live="polite">
+                  {selectedSkillFile === null || skillFileContent === null ? (
+                    <p className="capability-empty">
+                      {selectedSkillFile === null ? t("selectSkillFile") : t("loadingSkillFile")}
+                    </p>
+                  ) : (
+                    <>
+                      <header>
+                        <h2>{skillFileContent.path}</h2>
+                        <span>{formatFileSize(skillFileContent.size)}</span>
+                      </header>
+                      {skillFileContent.content === null ? (
+                        <p className="capability-empty">{t("binaryFilePreviewUnavailable")}</p>
+                      ) : (
+                        <pre className="skill-file-content">{skillFileContent.content}</pre>
+                      )}
+                    </>
+                  )}
+                </section>
+              </div>
+            )}
+          </section>
+          <SkillRevisionPanel capabilityId={capability.manifest.id} />
+        </>
       ) : (
         <section className="capability-tool-workspace" aria-label={t("capabilityToolsPanel")}>
           <div className="capability-tool-detail">
@@ -412,6 +416,226 @@ export function CapabilityDetailFragment(props: {
       )}
     </StudioScreenFrame>
   );
+}
+
+function SkillRevisionPanel(props: { readonly capabilityId: string }) {
+  const { t } = useTranslation("studio");
+  const [prompt, setPrompt] = useState("");
+  const [jobs, setJobs] = useState<readonly SkillRevisionJob[]>([]);
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState<string>();
+  const load = async () =>
+    setJobs(await window.pragmaDesktop.listSkillRevisions({ capabilityId: props.capabilityId }));
+  useEffect(() => {
+    let cancelled = false;
+    void window.pragmaDesktop
+      .listSkillRevisions({ capabilityId: props.capabilityId })
+      .then((records) => {
+        if (!cancelled) setJobs(records);
+      })
+      .catch((cause: unknown) => {
+        if (!cancelled) setError(errorMessage(cause));
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [props.capabilityId]);
+  useEffect(() => {
+    if (!jobs.some((job) => ["pending", "running", "evaluating", "applying"].includes(job.state))) return;
+    const timer = setInterval(() => {
+      void window.pragmaDesktop
+        .listSkillRevisions({ capabilityId: props.capabilityId })
+        .then(setJobs)
+        .catch((cause: unknown) => setError(errorMessage(cause)));
+    }, 2_000);
+    return () => clearInterval(timer);
+  }, [jobs, props.capabilityId]);
+  const action = async (operation: () => Promise<unknown>) => {
+    setBusy(true);
+    setError(undefined);
+    try {
+      await operation();
+      await load();
+    } catch (cause) {
+      setError(errorMessage(cause));
+    } finally {
+      setBusy(false);
+    }
+  };
+  return (
+    <section className="skill-document" aria-labelledby="skill-revisions-heading">
+      <header>
+        <div>
+          <h2 id="skill-revisions-heading">{t("skillRevisions")}</h2>
+          <p>{t("skillRevisionsDescription")}</p>
+        </div>
+      </header>
+      <label className="capability-form-field">
+        {t("skillRevisionPrompt")}
+        <textarea
+          value={prompt}
+          maxLength={50_000}
+          placeholder={t("skillRevisionPromptPlaceholder")}
+          onChange={(event) => setPrompt(event.target.value)}
+        />
+      </label>
+      <div className="memory-actions memory-candidate-actions">
+        <button
+          className="primary-button"
+          type="button"
+          disabled={busy || prompt.trim() === ""}
+          onClick={() =>
+            void action(async () => {
+              await window.pragmaDesktop.submitSkillRevision({
+                schemaVersion: "pragma.skill-revision-request/v1",
+                capabilityId: props.capabilityId,
+                prompt,
+                source: "user",
+                sourceRefs: [],
+              });
+              setPrompt("");
+            })
+          }
+        >
+          {t("submitSkillRevision")}
+        </button>
+      </div>
+      {error === undefined ? null : (
+        <p className="form-error" role="alert">
+          {error}
+        </p>
+      )}
+      {jobs.length === 0 ? (
+        <p className="capability-empty">{t("noSkillRevisions")}</p>
+      ) : (
+        jobs.map((job) => (
+          <details
+            className="memory-candidate-file"
+            key={job.id}
+            open={job.state === "pending_review" || job.state === "needs_attention"}
+          >
+            <summary>
+              <span>
+                {job.request.source === "memory-learning"
+                  ? t("memorySkillRevision")
+                  : job.request.prompt.slice(0, 80)}
+              </span>
+              <small>
+                {job.state} · r{job.revision}
+              </small>
+            </summary>
+            {job.changeSet === undefined ? null : (
+              <div>
+                <p>{job.changeSet.summary}</p>
+                {job.changeSet.operations.map((operation, index) => (
+                  <pre
+                    className="skill-file-content"
+                    key={`${operation.operation}:${operation.path}:${index}`}
+                  >
+                    {formatSkillOperation(operation)}
+                  </pre>
+                ))}
+              </div>
+            )}
+            {job.evaluation === undefined ? null : (
+              <p>
+                {job.evaluation.passed ? t("skillEvaluationPassed") : t("skillEvaluationFailed")}
+              </p>
+            )}
+            {job.error === undefined ? null : (
+              <p className="form-error">
+                {job.error.code}: {job.error.message}
+              </p>
+            )}
+            <div className="memory-actions memory-candidate-actions">
+              {job.state === "pending_review" ? (
+                <>
+                  <button
+                    className="primary-button"
+                    type="button"
+                    disabled={busy}
+                    onClick={() =>
+                      void action(
+                        async () =>
+                          await window.pragmaDesktop.approveSkillRevision({
+                            jobId: job.id,
+                            expectedRevision: job.revision,
+                          }),
+                      )
+                    }
+                  >
+                    {t("approveSkillRevision")}
+                  </button>
+                  <button
+                    className="danger-button is-danger"
+                    type="button"
+                    disabled={busy}
+                    onClick={() =>
+                      void action(
+                        async () =>
+                          await window.pragmaDesktop.rejectSkillRevision({
+                            jobId: job.id,
+                            expectedRevision: job.revision,
+                          }),
+                      )
+                    }
+                  >
+                    {t("rejectSkillRevision")}
+                  </button>
+                </>
+              ) : null}
+              {job.state === "needs_attention" ? (
+                <button
+                  className="secondary-button"
+                  type="button"
+                  disabled={busy}
+                  onClick={() =>
+                    void action(
+                      async () =>
+                        await window.pragmaDesktop.retrySkillRevision({
+                          jobId: job.id,
+                          expectedRevision: job.revision,
+                        }),
+                    )
+                  }
+                >
+                  {t("retrySkillRevision")}
+                </button>
+              ) : null}
+              {!["running", "evaluating", "applying"].includes(job.state) ? (
+                <button
+                  className="secondary-button"
+                  type="button"
+                  disabled={busy}
+                  onClick={() =>
+                    void action(
+                      async () =>
+                        await window.pragmaDesktop.deleteSkillRevision({
+                          jobId: job.id,
+                          expectedRevision: job.revision,
+                        }),
+                    )
+                  }
+                >
+                  {t("deleteSkillRevision")}
+                </button>
+              ) : null}
+            </div>
+          </details>
+        ))
+      )}
+    </section>
+  );
+}
+
+function formatSkillOperation(
+  operation: NonNullable<SkillRevisionJob["changeSet"]>["operations"][number],
+): string {
+  if (operation.operation === "upsert")
+    return `${operation.operation} ${operation.path}\n\n${operation.content}`;
+  if (operation.operation === "rename")
+    return `${operation.operation} ${operation.path} → ${operation.nextPath}`;
+  return `${operation.operation} ${operation.path}`;
 }
 
 export function formatFileSize(size: number): string {

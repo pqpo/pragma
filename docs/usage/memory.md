@@ -9,8 +9,8 @@ Pragma 的新 Memory Plane 是 Desktop 内置能力，随应用启动，不需�
 
 ## 当前已经可用的能力
 
-当前已完成 Memory Plane 基础设施、策略、Episodic Memory、Semantic Memory、治理管理中心，以及
-Knowledge Store promotion/revision 闭环：
+当前已完成 Memory Plane 基础设施、策略、Episodic Memory、Semantic Memory、治理管理中心、
+Knowledge Store promotion/revision 与 Skill promotion/revision 闭环：
 
 - Execution 语义事件通过持久 Canonical Event Feed 交给 Memory Plane；
 - Memory Evidence 自动记录 root Expert/ExpertTeam/Flow 与实际 producer Expert；
@@ -45,8 +45,19 @@ Knowledge Store promotion/revision 闭环：
 - Store 使用 `guide → overview → index/indexes → items` 渐进披露，不保存 Evidence、sourceRefs 或提炼提示词；
 - 分享与导入只使用普通 Context Store Bundle 路径。旧 Published Knowledge API/UI 与
   `pragma.memory.knowledge@v1` extension 已删除，旧目录不迁移、不读取。
+- Skill learning 只在同一 producer Expert 至少出现 3 条高价值独立 Episode、覆盖 2 个 conversation，且
+  至少 2 条成功或成功恢复后运行；Memory Curator 仍必须确认它是完整、通用、可维护的工作流，而不是
+  片段或一次性提示；
+- 相似目标只匹配该 Expert 先前由 Memory 创建并绑定的 Skill；无匹配生成新建 Candidate，唯一匹配提交
+  修订任务，多匹配时在 Memory 页面暂停并要求用户选择；
+- 新 Skill Candidate 必须通过至少 3 次来源回放、1 次边界用例、静态检查与脚本测试，随后在 Memory 页面
+  人工批准才会创建普通 Skill Capability 并绑定 Expert；
+- 已有 Skill 由共用 Revision Agent 产生文件 diff，在独立 Evaluation Agent 评测通过后，仍需用户在
+  “工作室 → 能力 → Skill 详情 → 技能修订”批准才发布新 revision；Memory 不直接改写 Skill；
+- 生成脚本仅允许 Node 22 ESM，并在无网络、无子进程、无 Worker、无 native addon、只能访问临时技能包
+  目录的 Permission Model 子进程中执行 `node:test` 覆盖。
 
-当前已实现独立的内置 Mission Board；尚未实现 Skill Candidate、跨设备同步和 legacy 导入。CodeGraph
+当前已实现独立的内置 Mission Board；尚未实现跨设备同步和 legacy 导入。CodeGraph
 Module 是最后的可选扩展，不作为 Memory 重构完成条件。旧 `@pragma/plugin-memory` 中的 Task Memory
 只属于迁移源，不是新版后续 Memory 阶段的完成实现。
 
@@ -102,6 +113,11 @@ Semantic 是当前信念投影，也不是无条件真值。详情会展示 conf
 - Health：Plane 状态、Feed logical/file bytes、安全 checkpoint、blocked bytes、Module Evidence 和
   dead letter 数量；
 - Extraction model：继承系统默认模型，或固定 Memory Curator 使用的 Runtime 和模型。
+
+设置 → General：
+
+- Knowledge and Skill revision Agent：Knowledge Store 和 Skill 修订共用的 Runtime/model profile；
+- Skill Evaluation Agent：独立执行 Skill replay/boundary judge 的 Runtime/model profile。
 
 默认 capture、recall 开启，learning 为 local candidates。
 
@@ -199,9 +215,14 @@ Expert、ExpertTeam 与 Flow；Repository 等其他 subject 等有稳定 registr
 ~/.pragma/data/memory/modules/<semantic>/facts.sqlite # Semantic projection, revisions and audit
 ~/.pragma/state/memory/modules/<semantic>/jobs.sqlite # Semantic Evidence, subjects and durable jobs
 ~/.pragma/data/memory/modules/<knowledge-learning>/knowledge.sqlite # Knowledge learning jobs；无 published authority
+~/.pragma/data/memory/modules/<skill-learning>/skill-learning.sqlite # Skill learning jobs；无 published authority
 ~/.pragma/data/context-stores/<storeId>/                 # promoted Knowledge 内容与 revision history
 ~/.pragma/state/context-store-revisions/                 # 修订任务、Agent profile 与隐藏 Mission registry
 ~/.pragma/state/memory-knowledge-promotion/              # 初始化 Candidate 与 content-free Expert binding
+~/.pragma/state/memory-skill-promotion/                  # Skill Candidate、content-free Expert binding 与 promotion journal
+~/.pragma/state/skill-revisions/                         # Skill 修订任务与 change set
+~/.pragma/state/skill-evaluation/profile.json             # 独立 Skill Evaluation Agent profile
+~/.pragma/state/skill-agents/missions.json                # 隐藏 Skill Agent Mission 定向恢复 registry
 ~/.pragma/state/memory/executions/<executionId>/activity.sqlite # capture/recall metadata audit
 ~/.pragma/state/memory/cleanup-journal/     # Mission/Execution transient cleanup journal
 ~/.pragma/state/memory/curator-missions.json # 有界隐藏 Curator Mission registry

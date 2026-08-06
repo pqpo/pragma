@@ -1,7 +1,7 @@
 # Memory Plane 落地计划
 
 - Status: Active plan
-- Last updated: 2026-08-05
+- Last updated: 2026-08-06
 - Decisions: [ADR 031](../adr/031-extensible-memory-plane.md)、[ADR 032](../adr/032-durable-canonical-event-feed.md)、[ADR 033](../adr/033-layered-episodic-memory.md)、[ADR 034](../adr/034-conservative-semantic-memory.md)、[ADR 035](../adr/035-agent-driven-memory-recall-and-governance.md)、[ADR 036](../adr/036-memory-storage-retention-and-recovery.md)、[ADR 037](../adr/037-mission-board-context-store.md)、[ADR 038](../adr/038-reviewed-knowledge-memory-and-bundle-sharing.md)、[ADR 039](../adr/039-promoted-knowledge-stores-and-agent-revision.md)
 
 ## 最终链路
@@ -52,7 +52,7 @@ Memory type；经批准的 Knowledge 升级为“工作室 → 知识库”的�
 | 4    | Completed | Agent 驱动召回、完整 binding 治理、管理中心与 Mission 可见性 |
 | 5    | Completed | Mission Board：持久通用白板、私有 Context 与跨专家协作       |
 | 6    | Completed | Knowledge 升级至 Studio Store 与通用 Agent 修订闭环          |
-| 7    | Planned   | Skill Memory Candidate、Evaluation 与 Capability 升级        |
+| 7    | Completed | Skill Memory Candidate、Evaluation 与 Capability 升级        |
 | 8    | Planned   | 旧 plugin owner-scoped 导入、compiler cutover 与删除         |
 | 9    | Planned   | 可选：CodeGraph 独立 Module 扩展验收                         |
 
@@ -474,6 +474,36 @@ Context binding + generic Store Revision Agent
 - `@pragma/evaluation` replay/run-dry/evaluator 端口；
 - draft、evaluating、approved、rejected、promoted 状态与审计；
 - promoted 后引用 Capability id/revision，不保留平行永久 Skill 内容 authority。
+
+### 已完成范围
+
+- Status: Completed
+- Threshold: 只有同一 producer Expert 的至少 3 条独立高价值 Episode（`valueScore >= 0.85`）、覆盖至少
+  2 个 conversation，且其中至少 2 条成功或成功恢复时才允许形成 Candidate；提炼器仍可因模式片段化、
+  敏感或不具通用性拒绝，单次偶然解法不会生成 Skill；
+- Module: 独立静态 `pragma.memory.skill-learning@1.0.0` Module 消费 Execution terminal Evidence，拥有
+  自己的 checkpoint、SQLite job、重试、诊断和提炼输入上限；它只读取精确 Episodic/Semantic
+  来源快照，不写其他 Module Store，也不提供可召回投影；
+- Routing: 相似目标只在该 producer Expert 过去由 Memory 创建并绑定的 Skill 中匹配；无相似目标时生成
+  初始化 Candidate，一个明确目标时提交 Skill revision，多目标歧义时暂停并由用户选择修订对象或创建新
+  Skill；ExpertTeam/Flow 按实际 producer Expert 路由；
+- Evaluation: `@pragma/evaluation` 提供 3 条以上来源回放与至少 1 条边界用例的 subject/judge 端口；所有
+  case 断言、静态校验和脚本测试均通过后才进入 `pending_review`。生成脚本只允许 Node 22 ESM、受控
+  built-in/相对 import 和 `node:test` 覆盖，并在 Node Permission Model 子进程中禁止网络、子进程、Worker、
+  native addon 与沙箱外文件访问；
+- Authority: 新 Skill 必须在 Memory 页面经用户批准，随后通过普通 Capability revision publisher 创建并
+  原子绑定 Expert；已有 Skill 只能向通用 Skill Revision Agent 提交提示词，由 Agent 产生文件 change set，
+  独立评测通过且用户在 Studio 批准后才以 revision/content-hash CAS 发布；旧 revision 可审计，Memory 不
+  保存第二份长期 Skill authority；
+- Product: Memory 页面提供目标消歧、包文件编辑、评测断言、重试、拒绝与批准；Studio Skill 详情提供用户
+  和 Memory 来源的修订任务、diff、评测、批准/拒绝/重试/删除；General Settings 的 Store/Skill Revision
+  Agent 共用既有 profile，Skill Evaluation Agent 使用单独 profile；系统 Mission 不进入用户 Mission、
+  Memory、Board、workspace 或工具审批路径；
+- Recovery: Candidate、Memory→Skill binding、promotion journal、revision job 与 Evaluation profile 均由
+  Host 持久化；promotion journal 可定向重放，revision 基线冲突会 supersede 并创建新任务，不改写已批准
+  的旧 change set；删除 Expert/Capability 会清除对应 content-free binding；
+- Verification: Shared/Memory/Evaluation/Desktop strict typecheck，来源门槛、三次回放与边界失败、Node ESM
+  沙箱、Extraction board 与设置页回归测试；全仓 `pnpm check` 与 `pnpm build` 是本阶段最终合入门。
 
 ## 阶段 8：旧插件导入与切换
 

@@ -13,6 +13,7 @@ import { pluginsApi } from "./api/plugins.ts";
 import { projectsApi } from "./api/projects.ts";
 import { runtimesApi } from "./api/runtimes.ts";
 import { settingsApi } from "./api/settings.ts";
+import { skillLearningApi } from "./api/skill-learning.ts";
 import { systemApi } from "./api/system.ts";
 import { usageApi } from "./api/usage.ts";
 import { workspacesApi } from "./api/workspaces.ts";
@@ -20,6 +21,7 @@ import { workspacesApi } from "./api/workspaces.ts";
 const api = {
   ...systemApi,
   ...settingsApi,
+  ...skillLearningApi,
   ...memoryApi,
   ...workspacesApi,
   ...modelProvidersApi,

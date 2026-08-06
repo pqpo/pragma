@@ -6,6 +6,27 @@ export const memory = {
   facts: "Facts",
   knowledge: "Knowledge",
   candidates: "Candidates",
+  skillCandidates: "Skill candidates",
+  noSkillCandidates: "No memory-derived Skill candidates are awaiting action.",
+  skillCandidate: "Skill candidate",
+  selectSkillCandidate: "Select a Skill candidate to inspect its package, evaluation, and target.",
+  skillName: "Skill name",
+  skillDescription: "Skill description",
+  chooseSkillTarget: "Choose a Skill target",
+  chooseSkillTargetDescription:
+    "Several similar Skills exist for this Expert. Choose one to revise or create a distinct Skill.",
+  reviseExistingSkill: "Revise {{name}}",
+  createNewSkill: "Create a new Skill",
+  skillPackageFiles: "Skill package",
+  skillEvaluation: "Replay evaluation",
+  skillEvaluationPassed: "All source replays, boundary checks, and static checks passed.",
+  skillEvaluationFailed:
+    "The Skill is not ready for review. Inspect the failed assertions and retry after correction.",
+  passed: "passed",
+  failed: "failed",
+  saveAndReevaluate: "Save and re-evaluate",
+  approveSkill: "Approve and create Skill",
+  retrySkillEvaluation: "Retry evaluation",
   noCandidates: "No knowledge-store initialization candidates are awaiting review.",
   selectCandidate:
     "Select an initialization candidate, then preview or edit its file tree before creating the store.",
@@ -43,6 +64,7 @@ export const memory = {
     episodic: "Episodic memory",
     semantic: "Fact memory",
     knowledge: "Knowledge memory",
+    skill: "Skill learning",
   },
   emptyExtractionLane: "No tasks in this state.",
   extractionPagination: "{{lane}} pagination",
@@ -126,6 +148,7 @@ export const memory = {
   moduleNames: {
     episodic: "Episodic memory",
     knowledgeLearning: "Knowledge learning",
+    skillLearning: "Skill learning",
     semantic: "Semantic memory",
   },
   moduleStatuses: {

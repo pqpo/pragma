@@ -1175,4 +1175,19 @@ export const studio = {
   bundleKeepEditing: "Keep editing",
   bundleDiscardDraft: "Discard setup",
   done: "Done",
+  skillRevisions: "Skill revisions",
+  skillRevisionsDescription:
+    "Ask the revision Agent to prepare a diff. Nothing is published until you approve a passing revision.",
+  skillRevisionPrompt: "Revision request",
+  skillRevisionPromptPlaceholder:
+    "Describe the reusable behavior, correction, or boundary this Skill should incorporate…",
+  submitSkillRevision: "Prepare revision",
+  noSkillRevisions: "No Skill revision tasks yet.",
+  memorySkillRevision: "Memory-suggested Skill revision",
+  skillEvaluationPassed: "Replay evaluation passed.",
+  skillEvaluationFailed: "Replay evaluation failed.",
+  approveSkillRevision: "Approve and publish",
+  rejectSkillRevision: "Reject",
+  retrySkillRevision: "Retry",
+  deleteSkillRevision: "Delete task",
 } as const;

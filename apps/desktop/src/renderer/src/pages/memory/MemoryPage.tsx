@@ -23,11 +23,13 @@ import type {
   DesktopMemoryPlaneStatus,
   ListDesktopMemoryExtractionJobs,
   MemoryKnowledgeInitializationCandidate,
+  MemorySkillCandidate,
 } from "../../../../shared/contracts/index.ts";
 import { ConfirmationDialog, Dialog } from "../../components/Dialog.tsx";
 import { errorMessage } from "../../lib/errors.ts";
 
-type MemoryView = "all" | "episodic" | "semantic" | "candidates" | "extractions" | "health";
+type MemoryView =
+  "all" | "episodic" | "semantic" | "candidates" | "skillCandidates" | "extractions" | "health";
 const MEMORY_EXTRACTION_LANES = ["waiting", "attention", "running", "completed"] as const;
 type MemoryExtractionLane = (typeof MEMORY_EXTRACTION_LANES)[number];
 type MemoryExtractionPageCursor = NonNullable<
@@ -52,6 +54,7 @@ export function MemoryPage() {
   const [candidates, setCandidates] = useState<readonly MemoryKnowledgeInitializationCandidate[]>(
     [],
   );
+  const [skillCandidates, setSkillCandidates] = useState<readonly MemorySkillCandidate[]>([]);
   const [reason, setReason] = useState("");
   const [dialog, setDialog] = useState<"revise" | "forget">();
   const [revisionDraft, setRevisionDraft] = useState("");
@@ -71,23 +74,27 @@ export function MemoryPage() {
       const requestVersion = (extractionRequestVersion.current += 1);
       if (!silent && !hasLoaded.current) setLoading(true);
       try {
-        const [records, status, extractionJobs, candidateRecords] = await Promise.all([
-          view === "extractions" || view === "candidates"
-            ? Promise.resolve([])
-            : window.pragmaDesktop.listMemoryItems({
-                module: view === "health" ? "all" : view,
-                status: "all",
-                query,
-                limit: 200,
-              }),
-          window.pragmaDesktop.getMemoryPlaneStatus(),
-          view === "extractions"
-            ? window.pragmaDesktop.listMemoryExtractionJobs({ pages: extractionPages })
-            : Promise.resolve(undefined),
-          view === "candidates"
-            ? window.pragmaDesktop.listMemoryKnowledgeInitializations({ state: "pending_review" })
-            : Promise.resolve([]),
-        ]);
+        const [records, status, extractionJobs, candidateRecords, skillCandidateRecords] =
+          await Promise.all([
+            view === "extractions" || view === "candidates" || view === "skillCandidates"
+              ? Promise.resolve([])
+              : window.pragmaDesktop.listMemoryItems({
+                  module: view === "health" ? "all" : view,
+                  status: "all",
+                  query,
+                  limit: 200,
+                }),
+            window.pragmaDesktop.getMemoryPlaneStatus(),
+            view === "extractions"
+              ? window.pragmaDesktop.listMemoryExtractionJobs({ pages: extractionPages })
+              : Promise.resolve(undefined),
+            view === "candidates"
+              ? window.pragmaDesktop.listMemoryKnowledgeInitializations({ state: "pending_review" })
+              : Promise.resolve([]),
+            view === "skillCandidates"
+              ? window.pragmaDesktop.listMemorySkillCandidates()
+              : Promise.resolve([]),
+          ]);
         setItems(records);
         setHealth(status);
         if (extractionJobs !== undefined && requestVersion === extractionRequestVersion.current) {
@@ -109,10 +116,13 @@ export function MemoryPage() {
           }
         }
         setCandidates(candidateRecords);
+        setSkillCandidates(skillCandidateRecords);
         const selectableIds =
           view === "candidates"
             ? candidateRecords.map((candidate) => candidate.id)
-            : records.map(key);
+            : view === "skillCandidates"
+              ? skillCandidateRecords.map((candidate) => candidate.id)
+              : records.map(key);
         setSelectedId((current) =>
           current !== undefined && selectableIds.includes(current)
             ? current
@@ -151,6 +161,12 @@ export function MemoryPage() {
       cancelled = true;
       if (timer !== undefined) clearTimeout(timer);
     };
+  }, [reload, view]);
+
+  useEffect(() => {
+    if (view !== "skillCandidates") return;
+    const timer = setInterval(() => void reload(true), 2_000);
+    return () => clearInterval(timer);
   }, [reload, view]);
 
   const selected = useMemo(
@@ -238,19 +254,27 @@ export function MemoryPage() {
       </header>
 
       <nav className="memory-tabs" aria-label={t("title")}>
-        {(["all", "episodic", "semantic", "candidates", "extractions", "health"] as const).map(
-          (id) => (
-            <button
-              key={id}
-              type="button"
-              className={view === id ? "is-active" : undefined}
-              aria-current={view === id ? "page" : undefined}
-              onClick={() => setView(id)}
-            >
-              {t(id === "episodic" ? "episodes" : id === "semantic" ? "facts" : id)}
-            </button>
-          ),
-        )}
+        {(
+          [
+            "all",
+            "episodic",
+            "semantic",
+            "candidates",
+            "skillCandidates",
+            "extractions",
+            "health",
+          ] as const
+        ).map((id) => (
+          <button
+            key={id}
+            type="button"
+            className={view === id ? "is-active" : undefined}
+            aria-current={view === id ? "page" : undefined}
+            onClick={() => setView(id)}
+          >
+            {t(id === "episodic" ? "episodes" : id === "semantic" ? "facts" : id)}
+          </button>
+        ))}
       </nav>
 
       {error !== undefined ? (
@@ -270,6 +294,15 @@ export function MemoryPage() {
           onRefresh={() => void reload(true)}
           onAction={manageExtraction}
           onPageChange={changeExtractionPage}
+        />
+      ) : view === "skillCandidates" ? (
+        <MemorySkillCandidates
+          candidates={skillCandidates}
+          selectedId={selectedId}
+          busy={actionBusy}
+          onSelect={setSelectedId}
+          onChange={setSkillCandidates}
+          onAction={async (operation) => await run(operation, "knowledge-initialization")}
         />
       ) : view === "candidates" ? (
         <div className="memory-browser">
@@ -1112,16 +1145,272 @@ function formatHealthBytes(bytes: number): string {
   return `${(bytes / (1_024 * 1_024)).toFixed(1)} MiB`;
 }
 
+function MemorySkillCandidates(props: {
+  readonly candidates: readonly MemorySkillCandidate[];
+  readonly selectedId?: string | undefined;
+  readonly busy: boolean;
+  readonly onSelect: (id: string) => void;
+  readonly onChange: (candidates: readonly MemorySkillCandidate[]) => void;
+  readonly onAction: (operation: () => Promise<unknown>) => Promise<boolean>;
+}) {
+  const { t } = useTranslation("memory");
+  const candidate = props.candidates.find((item) => item.id === props.selectedId);
+  const replace = (next: MemorySkillCandidate) =>
+    props.onChange(props.candidates.map((item) => (item.id === next.id ? next : item)));
+  const runAndReplace = async (operation: () => Promise<MemorySkillCandidate>) => {
+    let next: MemorySkillCandidate | undefined;
+    const ok = await props.onAction(async () => {
+      next = await operation();
+    });
+    if (ok && next !== undefined) replace(next);
+  };
+  const patchPackage = (change: Partial<MemorySkillCandidate["package"]>) => {
+    if (candidate === undefined) return;
+    replace({ ...candidate, package: { ...candidate.package, ...change } });
+  };
+  return (
+    <div className="memory-browser">
+      <aside className="memory-list">
+        {props.candidates.length === 0 ? <p>{t("noSkillCandidates")}</p> : null}
+        {props.candidates.map((item) => (
+          <button
+            key={item.id}
+            type="button"
+            className={
+              props.selectedId === item.id ? "memory-list-item is-active" : "memory-list-item"
+            }
+            onClick={() => props.onSelect(item.id)}
+          >
+            <span>{t("skillCandidate")}</span>
+            <strong>{item.package.name}</strong>
+            <small>
+              {item.state} · {t("revision", { revision: item.revision })}
+            </small>
+          </button>
+        ))}
+      </aside>
+      <main className="memory-detail">
+        {candidate === undefined ? (
+          <p>{t("selectSkillCandidate")}</p>
+        ) : (
+          <>
+            <header className="memory-candidate-header">
+              <div className="memory-candidate-meta">
+                <span className={`memory-status is-${candidate.state}`}>{candidate.state}</span>
+                <small title={candidate.expertRef}>{candidate.expertRef}</small>
+              </div>
+              <label className="memory-candidate-field is-name">
+                <span>{t("skillName")}</span>
+                <input
+                  value={candidate.package.name}
+                  maxLength={120}
+                  onChange={(event) => patchPackage({ name: event.target.value })}
+                />
+              </label>
+              <label className="memory-candidate-field">
+                <span>{t("skillDescription")}</span>
+                <textarea
+                  value={candidate.package.description}
+                  maxLength={500}
+                  onChange={(event) => patchPackage({ description: event.target.value })}
+                />
+              </label>
+            </header>
+            {candidate.state === "needs_target" ? (
+              <section>
+                <h3>{t("chooseSkillTarget")}</h3>
+                <p className="memory-note">{t("chooseSkillTargetDescription")}</p>
+                <div className="memory-actions memory-candidate-actions">
+                  {candidate.route.type === "needs_target"
+                    ? candidate.route.options.map((option) => (
+                        <button
+                          key={option.bindingId}
+                          className="secondary-button"
+                          type="button"
+                          disabled={props.busy}
+                          onClick={() =>
+                            void runAndReplace(
+                              async () =>
+                                await window.pragmaDesktop.resolveMemorySkillTarget({
+                                  id: candidate.id,
+                                  expectedRevision: candidate.revision,
+                                  target: { type: "revise", bindingId: option.bindingId },
+                                }),
+                            )
+                          }
+                        >
+                          {t("reviseExistingSkill", { name: option.name })}
+                        </button>
+                      ))
+                    : null}
+                  <button
+                    className="secondary-button"
+                    type="button"
+                    disabled={props.busy}
+                    onClick={() =>
+                      void runAndReplace(
+                        async () =>
+                          await window.pragmaDesktop.resolveMemorySkillTarget({
+                            id: candidate.id,
+                            expectedRevision: candidate.revision,
+                            target: { type: "create" },
+                          }),
+                      )
+                    }
+                  >
+                    {t("createNewSkill")}
+                  </button>
+                </div>
+              </section>
+            ) : (
+              <section className="memory-candidate-files">
+                <h3>{t("skillPackageFiles")}</h3>
+                {candidate.package.files.map((file) => (
+                  <details
+                    className="memory-candidate-file"
+                    key={file.path}
+                    open={file.path === "SKILL.md"}
+                  >
+                    <summary>
+                      <span>{file.path}</span>
+                    </summary>
+                    <textarea
+                      value={file.content}
+                      aria-label={file.path}
+                      onChange={(event) =>
+                        patchPackage({
+                          files: candidate.package.files.map((entry) =>
+                            entry.path === file.path
+                              ? { ...entry, content: event.target.value }
+                              : entry,
+                          ),
+                        })
+                      }
+                    />
+                  </details>
+                ))}
+              </section>
+            )}
+            {candidate.evaluation === undefined ? null : (
+              <section>
+                <h3>{t("skillEvaluation")}</h3>
+                <p className="memory-note">
+                  {t(
+                    candidate.evaluation.passed ? "skillEvaluationPassed" : "skillEvaluationFailed",
+                  )}
+                </p>
+                {candidate.evaluation.cases.map((testCase) => (
+                  <details className="memory-candidate-file" key={testCase.id}>
+                    <summary>
+                      <span>
+                        {testCase.kind}: {testCase.id}
+                      </span>
+                      <small>{testCase.passed ? t("passed") : t("failed")}</small>
+                    </summary>
+                    <ul>
+                      {testCase.assertions.map((assertion, index) => (
+                        <li key={`${assertion.dimension}:${index}`}>
+                          {assertion.dimension}: {assertion.message}
+                        </li>
+                      ))}
+                    </ul>
+                  </details>
+                ))}
+              </section>
+            )}
+            <div className="memory-actions memory-candidate-actions">
+              {candidate.state === "pending_review" ? (
+                <>
+                  <button
+                    className="secondary-button"
+                    type="button"
+                    disabled={props.busy}
+                    onClick={() =>
+                      void runAndReplace(
+                        async () =>
+                          await window.pragmaDesktop.updateMemorySkillCandidate({
+                            id: candidate.id,
+                            expectedRevision: candidate.revision,
+                            package: candidate.package,
+                          }),
+                      )
+                    }
+                  >
+                    {t("saveAndReevaluate")}
+                  </button>
+                  <button
+                    className="primary-button"
+                    type="button"
+                    disabled={props.busy}
+                    onClick={() =>
+                      void runAndReplace(
+                        async () =>
+                          await window.pragmaDesktop.approveMemorySkillCandidate({
+                            id: candidate.id,
+                            expectedRevision: candidate.revision,
+                          }),
+                      )
+                    }
+                  >
+                    {t("approveSkill")}
+                  </button>
+                </>
+              ) : null}
+              {candidate.state === "needs_attention" ? (
+                <button
+                  className="secondary-button"
+                  type="button"
+                  disabled={props.busy}
+                  onClick={() =>
+                    void runAndReplace(
+                      async () =>
+                        await window.pragmaDesktop.retryMemorySkillCandidate({
+                          id: candidate.id,
+                          expectedRevision: candidate.revision,
+                        }),
+                    )
+                  }
+                >
+                  {t("retrySkillEvaluation")}
+                </button>
+              ) : null}
+              {["pending_review", "needs_attention", "needs_target"].includes(candidate.state) ? (
+                <button
+                  className="danger-button is-danger"
+                  type="button"
+                  disabled={props.busy}
+                  onClick={() =>
+                    void runAndReplace(
+                      async () =>
+                        await window.pragmaDesktop.rejectMemorySkillCandidate({
+                          id: candidate.id,
+                          expectedRevision: candidate.revision,
+                        }),
+                    )
+                  }
+                >
+                  {t("reject")}
+                </button>
+              ) : null}
+            </div>
+          </>
+        )}
+      </main>
+    </div>
+  );
+}
+
 function formatHealthPercent(percent: number): string {
   return `${percent.toFixed(1)}%`;
 }
 
 function memoryModuleNameKey(
   moduleId: string,
-): "episodic" | "knowledgeLearning" | "semantic" | undefined {
+): "episodic" | "knowledgeLearning" | "semantic" | "skillLearning" | undefined {
   if (moduleId === "pragma.memory.episodic") return "episodic";
   if (moduleId === "pragma.memory.knowledge-learning") return "knowledgeLearning";
   if (moduleId === "pragma.memory.semantic") return "semantic";
+  if (moduleId === "pragma.memory.skill-learning") return "skillLearning";
   return undefined;
 }
 
