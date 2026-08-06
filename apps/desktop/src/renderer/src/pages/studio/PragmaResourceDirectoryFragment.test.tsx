@@ -8,7 +8,10 @@ import {
   type PragmaFlowResource,
   type PragmaExpertResource,
 } from "@pragma/interpreter/ast";
-import type { PragmaProjectSnapshot } from "../../../../shared/contracts/index.ts";
+import type {
+  DesktopRuntimeAvailability,
+  PragmaProjectSnapshot,
+} from "../../../../shared/contracts/index.ts";
 import { i18n } from "../../i18n/index.ts";
 
 import {
@@ -294,7 +297,40 @@ describe("PragmaResourceDetailFragment", () => {
 
   it("shows Team details with edit and delete actions", () => {
     const experts = [expert(1), expert(2)];
-    const studioExperts = [studioExpert(1), studioExpert(2)];
+    const studioExperts = [
+      {
+        ...studioExpert(1),
+        model: {
+          runtimeId: "pi",
+          providerId: "ad0aa84a-2057-4074-b138-408099ecac0a",
+          modelId: "deepseek-v3",
+        },
+      },
+      studioExpert(2),
+    ];
+    const runtimes = [
+      {
+        id: "pi",
+        revision: 1,
+        origin: "built-in",
+        adapter: { id: "pi", version: "1.0.0" },
+        isDefault: true,
+        kind: "built-in",
+        displayName: "Built-in Runtime",
+        status: "available",
+        models: [
+          {
+            id: "deepseek-v3",
+            displayName: "DeepSeek V3",
+            provider: {
+              kind: "registered",
+              id: "ad0aa84a-2057-4074-b138-408099ecac0a",
+              displayName: "DeepSeek",
+            },
+          },
+        ],
+      },
+    ] satisfies readonly DesktopRuntimeAvailability[];
     const team = PragmaExpertTeamResourceSchema.parse({
       apiVersion: "pragma/v3",
       kind: "ExpertTeam",
@@ -324,6 +360,7 @@ describe("PragmaResourceDetailFragment", () => {
         resource={team}
         project={project}
         experts={studioExperts}
+        runtimes={runtimes}
         onOpenExpert={() => undefined}
         onBack={() => undefined}
         onEdit={() => undefined}
@@ -338,7 +375,8 @@ describe("PragmaResourceDetailFragment", () => {
     expect(html).toContain("Team experts");
     expect(html).toContain("Specialist description 1");
     expect(html).toContain("Runtime");
-    expect(html).toContain("openai · gpt-5");
+    expect(html).toContain("DeepSeek V3");
+    expect(html).not.toContain("ad0aa84a-2057-4074-b138-408099ecac0a");
     expect(html).toContain("View expert details");
     expect(html.match(/class="team-expert-link"/g)).toHaveLength(2);
     expect(html).not.toContain("expert:0000000000000001");

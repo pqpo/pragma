@@ -503,6 +503,14 @@ function TeamDetail(props: {
     const runtime = props.runtimes.find((candidate) => candidate.id === runtimeId);
     const modelId = record?.model?.modelId ?? runtimeConfig?.model;
     const providerId = record?.model?.providerId ?? runtimeConfig?.providerId;
+    const runtimeModel =
+      modelId === undefined
+        ? undefined
+        : (runtime?.models?.find(
+            (model) =>
+              model.id === modelId &&
+              (providerId === undefined || model.provider.id === providerId),
+          ) ?? runtime?.models?.find((model) => model.id === modelId));
 
     return {
       ref,
@@ -514,11 +522,7 @@ function TeamDetail(props: {
       runtimeName:
         runtime === undefined ? (runtimeId ?? t("notConfigured")) : runtimeDisplayName(t, runtime),
       modelName:
-        modelId === undefined
-          ? t("runtimeDefault")
-          : providerId === undefined
-            ? modelId
-            : `${providerId} · ${modelId}`,
+        modelId === undefined ? t("runtimeDefault") : (runtimeModel?.displayName ?? modelId),
       capabilitySummary:
         record === undefined
           ? undefined
