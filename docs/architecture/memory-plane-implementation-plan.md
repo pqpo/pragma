@@ -100,7 +100,7 @@ Desktop 提供设置入口。
 #### 4. Federated ContextStore 最小实现
 
 - 稳定 `memory` namespace；
-- `catalog.md` 暴露 Module 与健康；
+- `guide.md` 与事实优先的 `overview.md` 提供有界模型入口；Module 健康只在治理 UI 展示；
 - `list/read/search` 按 prefix 路由；
 - `add/edit/delete` 返回 `permission_denied`；
 - 不把各 Module 数据复制进统一物理 Store。
@@ -172,7 +172,7 @@ Desktop 提供设置入口。
 
 - 每个可召回 Module 强制声明 projection/learning purpose 与四层 Context manifest；
 - `memory/guide.md` 常驻记忆使用规则，最大 2KB；
-- `memory/overview.md` 在 6KB 内公平合成所有已绑定类型的摘要与热点索引；
+- `memory/overview.md` 在 4KB 内事实优先合成：Semantic 使用主要空间，Episodic 只保留最近三条；
 - 每种类型保留 `<type>/summary.md`、`<type>/index.md`、`<type>/items/**`、
   `<type>/evidence/**`；
 - `listContext` 只列目录入口，不展开全部详情；普通 search 不返回 Evidence，Evidence 只能通过详情中的

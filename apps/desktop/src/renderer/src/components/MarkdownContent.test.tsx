@@ -32,4 +32,16 @@ describe("MarkdownContent", () => {
     expect(html).not.toContain("<script>");
     expect(html).not.toContain("alert(&#x27;unsafe&#x27;)");
   });
+
+  it("renders internal context links only when a navigation handler is provided", () => {
+    const source = "[Fact](semantic/items/fact-a.md)";
+    const plain = renderToStaticMarkup(<MarkdownContent source={source} />);
+    const interactive = renderToStaticMarkup(
+      <MarkdownContent source={source} onInternalLink={() => undefined} />,
+    );
+
+    expect(plain).toContain("<span>Fact</span>");
+    expect(plain).not.toContain("href=");
+    expect(interactive).toContain('href="semantic/items/fact-a.md"');
+  });
 });

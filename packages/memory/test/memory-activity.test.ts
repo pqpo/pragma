@@ -61,9 +61,9 @@ describe("Memory activity", () => {
     await context.listContext({ context: runContext });
     const search = await context.searchContext({ query, maxResults: 3, context: runContext });
     expect(search.ok && search.value.map((match) => match.id.split("/")[0])).toEqual([
-      "overview.md",
       "first",
       "second",
+      "first",
     ]);
     await context.readContext({ id: "guide.md", context: runContext });
 

@@ -414,8 +414,9 @@ function formatContextAccessRulesSection(): string {
   return [
     "Context access rules:",
     "- Context ids are Context System identifiers, not local filesystem paths.",
-    "- Use list_expert_context like a directory listing to discover context ids and descriptions.",
-    "- Use search_expert_context to discover context by path or content, and read_expert_context when you know the context id.",
+    "- Use list_expert_context like a paginated directory listing to discover context ids and descriptions. Continue with its nextCursor when present.",
+    "- Use search_expert_context to discover context by path or content, refine broad queries when results are omitted, and use read_expert_context when you know the context id.",
+    "- Search snippets may be truncated. Read the referenced context in byte ranges with start/offset when complete content is needed.",
     "- Always-on context must remain available. If its complete text is missing or uncertain, use read_expert_context to reload the relevant context id before relying on a summary or paraphrase.",
     '- Use add_expert_context, edit_expert_context, and delete_expert_context to write Context System content. Use edit_expert_context mode="replace" for full content or metadata replacement, and mode="search_replace" for exact text search/replace.',
     "- Do not use shell commands, local filesystem APIs, or runtime file tools to bypass the Context System for these context ids.",

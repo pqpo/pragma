@@ -12,6 +12,9 @@
 
 > ADR 039 已替代本 ADR 中“published Knowledge 继续作为 Memory type 和 Memory Module authority”的
 > 决策。Episodic、Semantic、Memory Evidence、Module SPI 与可选 CodeGraph 边界不受影响。
+> 当前联邦召回只向模型暴露 projection Module；Knowledge Learning 是不可召回的后台管线，Module health
+> 只在治理 UI 展示，早期设计中的 `catalog.md`、`memory/knowledge/**` 与 `skill-candidates/**` 不属于当前
+> 模型 Context。
 
 ## Context
 

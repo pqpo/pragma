@@ -7,33 +7,51 @@ import { useTranslation } from "react-i18next";
 export function MarkdownContent(props: {
   readonly source: string;
   readonly codeBlockControls?: boolean | undefined;
+  readonly onInternalLink?: ((id: string) => void) | undefined;
 }) {
   const tokens = useMemo(() => marked.lexer(props.source, { gfm: true }), [props.source]);
-  return <>{renderMarkdownTokens(tokens, props.codeBlockControls === true)}</>;
+  return (
+    <>{renderMarkdownTokens(tokens, props.codeBlockControls === true, props.onInternalLink)}</>
+  );
 }
 
-function renderMarkdownTokens(tokens: readonly Token[], codeBlockControls: boolean): ReactNode[] {
-  return tokens.map((token, index) => renderMarkdownToken(token, index, codeBlockControls));
+function renderMarkdownTokens(
+  tokens: readonly Token[],
+  codeBlockControls: boolean,
+  onInternalLink: ((id: string) => void) | undefined,
+): ReactNode[] {
+  return tokens.map((token, index) =>
+    renderMarkdownToken(token, index, codeBlockControls, onInternalLink),
+  );
 }
 
-function renderMarkdownToken(token: Token, key: Key, codeBlockControls: boolean): ReactNode {
+function renderMarkdownToken(
+  token: Token,
+  key: Key,
+  codeBlockControls: boolean,
+  onInternalLink: ((id: string) => void) | undefined,
+): ReactNode {
   switch (token.type) {
     case "heading": {
       const heading = token as Tokens.Heading;
       return createElement(
         `h${Math.min(6, Math.max(1, heading.depth))}`,
         { key },
-        renderMarkdownTokens(heading.tokens, codeBlockControls),
+        renderMarkdownTokens(heading.tokens, codeBlockControls, onInternalLink),
       );
     }
     case "paragraph": {
       const paragraph = token as Tokens.Paragraph;
-      return <p key={key}>{renderMarkdownTokens(paragraph.tokens, codeBlockControls)}</p>;
+      return (
+        <p key={key}>{renderMarkdownTokens(paragraph.tokens, codeBlockControls, onInternalLink)}</p>
+      );
     }
     case "text": {
       const text = token as Tokens.Text;
       return text.tokens ? (
-        <Fragment key={key}>{renderMarkdownTokens(text.tokens, codeBlockControls)}</Fragment>
+        <Fragment key={key}>
+          {renderMarkdownTokens(text.tokens, codeBlockControls, onInternalLink)}
+        </Fragment>
       ) : (
         <Fragment key={key}>{text.text}</Fragment>
       );
@@ -42,15 +60,27 @@ function renderMarkdownToken(token: Token, key: Key, codeBlockControls: boolean)
       return <Fragment key={key}>{(token as Tokens.Escape).text}</Fragment>;
     case "strong": {
       const strong = token as Tokens.Strong;
-      return <strong key={key}>{renderMarkdownTokens(strong.tokens, codeBlockControls)}</strong>;
+      return (
+        <strong key={key}>
+          {renderMarkdownTokens(strong.tokens, codeBlockControls, onInternalLink)}
+        </strong>
+      );
     }
     case "em": {
       const emphasis = token as Tokens.Em;
-      return <em key={key}>{renderMarkdownTokens(emphasis.tokens, codeBlockControls)}</em>;
+      return (
+        <em key={key}>
+          {renderMarkdownTokens(emphasis.tokens, codeBlockControls, onInternalLink)}
+        </em>
+      );
     }
     case "del": {
       const deleted = token as Tokens.Del;
-      return <del key={key}>{renderMarkdownTokens(deleted.tokens, codeBlockControls)}</del>;
+      return (
+        <del key={key}>
+          {renderMarkdownTokens(deleted.tokens, codeBlockControls, onInternalLink)}
+        </del>
+      );
     }
     case "codespan":
       return <code key={key}>{(token as Tokens.Codespan).text}</code>;
@@ -69,7 +99,9 @@ function renderMarkdownToken(token: Token, key: Key, codeBlockControls: boolean)
     case "blockquote": {
       const quote = token as Tokens.Blockquote;
       return (
-        <blockquote key={key}>{renderMarkdownTokens(quote.tokens, codeBlockControls)}</blockquote>
+        <blockquote key={key}>
+          {renderMarkdownTokens(quote.tokens, codeBlockControls, onInternalLink)}
+        </blockquote>
       );
     }
     case "list": {
@@ -77,7 +109,7 @@ function renderMarkdownToken(token: Token, key: Key, codeBlockControls: boolean)
       const children = list.items.map((item, index) => (
         <li key={index}>
           {item.task ? <input type="checkbox" checked={item.checked === true} readOnly /> : null}
-          {renderMarkdownTokens(item.tokens, codeBlockControls)}
+          {renderMarkdownTokens(item.tokens, codeBlockControls, onInternalLink)}
         </li>
       ));
       return createElement(
@@ -94,7 +126,7 @@ function renderMarkdownToken(token: Token, key: Key, codeBlockControls: boolean)
             <tr>
               {table.header.map((cell, index) => (
                 <th key={index} style={{ textAlign: cell.align ?? undefined }}>
-                  {renderMarkdownTokens(cell.tokens, codeBlockControls)}
+                  {renderMarkdownTokens(cell.tokens, codeBlockControls, onInternalLink)}
                 </th>
               ))}
             </tr>
@@ -104,7 +136,7 @@ function renderMarkdownToken(token: Token, key: Key, codeBlockControls: boolean)
               <tr key={rowIndex}>
                 {row.map((cell, cellIndex) => (
                   <td key={cellIndex} style={{ textAlign: cell.align ?? undefined }}>
-                    {renderMarkdownTokens(cell.tokens, codeBlockControls)}
+                    {renderMarkdownTokens(cell.tokens, codeBlockControls, onInternalLink)}
                   </td>
                 ))}
               </tr>
@@ -115,13 +147,24 @@ function renderMarkdownToken(token: Token, key: Key, codeBlockControls: boolean)
     }
     case "link": {
       const link = token as Tokens.Link;
-      const children = renderMarkdownTokens(link.tokens, codeBlockControls);
+      const children = renderMarkdownTokens(link.tokens, codeBlockControls, onInternalLink);
       return isExternalLink(link.href) ? (
         <a key={key} href={link.href} target="_blank" rel="noreferrer">
           {children}
         </a>
-      ) : (
+      ) : onInternalLink === undefined ? (
         <span key={key}>{children}</span>
+      ) : (
+        <a
+          key={key}
+          href={link.href}
+          onClick={(event) => {
+            event.preventDefault();
+            onInternalLink(link.href);
+          }}
+        >
+          {children}
+        </a>
       );
     }
     case "image":
@@ -145,7 +188,7 @@ function renderMarkdownToken(token: Token, key: Key, codeBlockControls: boolean)
     default:
       return "tokens" in token && Array.isArray(token.tokens) ? (
         <Fragment key={key}>
-          {renderMarkdownTokens(token.tokens as Token[], codeBlockControls)}
+          {renderMarkdownTokens(token.tokens as Token[], codeBlockControls, onInternalLink)}
         </Fragment>
       ) : null;
   }

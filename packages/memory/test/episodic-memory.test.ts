@@ -64,7 +64,6 @@ describe("Episodic Memory", () => {
     });
     const listed = await context.listContext({});
     expect(listed.ok && listed.value.map((item) => item.id)).toEqual([
-      "catalog.md",
       "episodic/index.md",
       "episodic/summary.md",
       "guide.md",
@@ -74,6 +73,10 @@ describe("Episodic Memory", () => {
     expect(overview.ok && overview.value.content).toContain("Episodic Memory Summary");
     const detail = await context.readContext({ id: `episodic/items/${episodes[0]!.id}.md` });
     expect(detail.ok && detail.value.content).toContain("## Evidence");
+    expect(overview.ok && overview.value.content).toContain(
+      `(episodic/items/${episodes[0]!.id}.md)`,
+    );
+    expect(detail.ok && detail.value.content).toContain("(episodic/evidence/");
     expect(readEvidence).not.toHaveBeenCalled();
     expect(getEvidence).not.toHaveBeenCalled();
     await expect(
@@ -113,6 +116,24 @@ describe("Episodic Memory", () => {
       ok: false,
       error: { code: "permission_denied" },
     });
+    module.close();
+  });
+
+  it("keeps only the three most recent Episodes in the bounded summary", async () => {
+    const module = await createEpisodicMemoryModule({
+      pragmaHome: await temporaryRoot(),
+      extractor: fakeExtractor(),
+    });
+    for (const executionId of ["episode-one", "episode-two", "episode-three", "episode-four"]) {
+      await module.consume(executionEvidence(executionId));
+      await module.runBackgroundOnce?.();
+    }
+    const registry = new MemoryModuleRegistry();
+    registry.register(module);
+    const context = scopedContext(registry, expertScope("expert-a"));
+    const summary = await context.readContext({ id: "episodic/summary.md" });
+
+    expect(summary.ok && summary.value.content.match(/episodic\/items\//gu)?.length).toBe(3);
     module.close();
   });
 
@@ -203,8 +224,8 @@ describe("Episodic Memory", () => {
     const teamIndex = await teamA.readContext({ id: "episodic/index.md" });
     expect(teamIndex.ok && teamIndex.value.content).toMatch(/team-a[\s\S]*personal-a/);
     expect(teamIndex.ok && teamIndex.value.content).not.toMatch(/personal-b|flow-a/);
-    expect(teamIndex.ok && teamIndex.value.content).toContain("[current-asset]");
-    expect(teamIndex.ok && teamIndex.value.content).toContain("[personal]");
+    expect(teamIndex.ok && teamIndex.value.content).toContain("— current-asset");
+    expect(teamIndex.ok && teamIndex.value.content).toContain("— personal");
 
     const foreign = byExecution.get("personal-b")!;
     await expect(

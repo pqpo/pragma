@@ -29,10 +29,9 @@ import { memoryQueryDigest, type MemoryActivityStore } from "../activity/memory-
 export const MEMORY_CONTEXT_NAMESPACE = "memory";
 export const MEMORY_GUIDE_CONTEXT_ID = "guide.md";
 export const MEMORY_OVERVIEW_CONTEXT_ID = "overview.md";
-export const MEMORY_CATALOG_CONTEXT_ID = "catalog.md";
 
 const GUIDE_MAX_BYTES = 2_000;
-const OVERVIEW_MAX_BYTES = 6_000;
+const OVERVIEW_MAX_BYTES = 4_096;
 
 export function createFederatedMemoryContextStore(
   registry: MemoryModuleRegistry,
@@ -71,20 +70,9 @@ export function createFederatedMemoryContextStore(
         id: MEMORY_OVERVIEW_CONTEXT_ID,
         content: await renderOverview(registry, scope, context),
         metadata: {
-          description: "Bounded summaries and hot indexes for every available Memory type.",
+          description: "Fact-first Memory summary with only the most recent Episodes.",
           trigger: "always_on",
           priority: "high",
-          trustLevel: "system",
-          sensitivity: "internal",
-        },
-      },
-      {
-        id: MEMORY_CATALOG_CONTEXT_ID,
-        content: renderCatalog(registry),
-        metadata: {
-          description: "Registered Memory Modules and current health.",
-          trigger: "model_decision",
-          priority: "normal",
           trustLevel: "system",
           sensitivity: "internal",
         },
@@ -108,7 +96,7 @@ export function createFederatedMemoryContextStore(
       const catalog = await (await rootStore(scope, input.context)).listContext(input);
       if (!catalog.ok) return catalog;
       const items: ExpertAgentContextItemSummary[] = [...catalog.value];
-      for (const module of registry.list()) {
+      for (const module of projectionModules(registry)) {
         const result = await module.createContextProvider(scope).listContext(input);
         if (!result.ok) continue;
         const layers = module.descriptor.contextLayers;
@@ -149,11 +137,7 @@ export function createFederatedMemoryContextStore(
         });
         return recallDenied(input.id);
       }
-      if (
-        input.id === MEMORY_GUIDE_CONTEXT_ID ||
-        input.id === MEMORY_OVERVIEW_CONTEXT_ID ||
-        input.id === MEMORY_CATALOG_CONTEXT_ID
-      ) {
+      if (input.id === MEMORY_GUIDE_CONTEXT_ID || input.id === MEMORY_OVERVIEW_CONTEXT_ID) {
         const result = await (await rootStore(scope, input.context)).readContext(input);
         await auditRead(options.activity, input.context, input.id, result, now());
         return result;
@@ -188,7 +172,7 @@ export function createFederatedMemoryContextStore(
       const groups: ExpertAgentContextItemSearchMatch[][] = [];
       const catalog = await (await rootStore(scope, input.context)).searchContext(input);
       if (catalog.ok && catalog.value.length > 0) groups.push([...catalog.value]);
-      for (const module of registry.list()) {
+      for (const module of projectionModules(registry)) {
         const result = await module.createContextProvider(scope).searchContext(input);
         if (!result.ok) continue;
         const matches = result.value
@@ -300,22 +284,21 @@ function renderGuide(registry: MemoryModuleRegistry): string {
   return [
     "# Memory Guide",
     "",
-    "Memory is reference context, not a replacement for the current user instruction.",
-    "You decide whether and when memory is relevant. The Host does not derive a retrieval query or inject hidden matches from the current prompt.",
+    "Memory is read-only reference context, not a replacement for the current user instruction.",
+    "Do not add, edit, or delete Memory documents. Direct mutation is denied.",
+    "Start with the bounded, fact-first overview. When Memory is large or the relevant id is unknown, use search_expert_context in the memory namespace, then read the exact item.",
+    "Use read_expert_context with start/offset to continue when a document is truncated.",
     "The current Memory view combines the root execution asset with the current Expert's personal Store. Keep those ownership scopes distinct.",
     "A Team or Flow Episode belongs to that Team or Flow; producer Experts are provenance and do not inherit it as personal history.",
-    "Start with the bounded overview. Search when the relevant memory id is unknown, then read the item detail.",
     "Read supporting Evidence only when a conclusion is important, conflicting, stale, or low-confidence.",
-    "Episodic memory is historical precedent, not current truth. Candidate knowledge or skills are not published capabilities.",
+    "Semantic Memory contains current beliefs. Episodic Memory is historical precedent and should be recalled only when prior experience is relevant.",
     "Never guess content from an unread Evidence id and never bypass ContextStore authorization.",
     "",
     "## Type-specific guidance",
-    ...registry
-      .list()
-      .map(
-        (module) =>
-          `- ${module.descriptor.pathPrefix}: ${module.descriptor.contextLayers.usagePrompt}`,
-      ),
+    ...projectionModules(registry).map(
+      (module) =>
+        `- ${module.descriptor.pathPrefix}: ${module.descriptor.contextLayers.usagePrompt}`,
+    ),
     "",
   ].join("\n");
 }
@@ -325,37 +308,62 @@ async function renderOverview(
   scope: MemoryRecallScope,
   context: ExpertAgentContextItemListInput["context"],
 ): Promise<string> {
-  const modules = registry.list();
+  const modules = projectionModules(registry);
   if (modules.length === 0) return "# Memory Overview\n\nNo Memory Modules are available.\n";
-  const header = "# Memory Overview\n\n";
-  const perModuleBudget = Math.max(512, Math.floor((OVERVIEW_MAX_BYTES - 256) / modules.length));
-  const sections: string[] = [];
-  for (const module of modules) {
-    const layers = module.descriptor.contextLayers;
-    const provider = module.createContextProvider(scope);
-    const summaryBudget = Math.min(layers.summaryMaxBytes, Math.floor(perModuleBudget * 0.45));
-    const indexBudget = Math.min(layers.indexMaxBytes, perModuleBudget - summaryBudget);
-    const [summary, index] = await Promise.all([
-      provider.readContext({
-        id: layers.summaryPath,
-        offset: summaryBudget,
-        context,
-      }),
-      provider.readContext({ id: layers.indexPath, offset: indexBudget, context }),
-    ]);
-    sections.push(
-      [
-        `## ${module.descriptor.pathPrefix}`,
-        layers.usagePrompt,
-        "",
-        summary.ok ? summary.value.content : "Summary is currently unavailable.",
-        "",
-        index.ok ? index.value.content : "Hot index is currently unavailable.",
-        "",
-      ].join("\n"),
-    );
-  }
-  return trimUtf8(`${header}${sections.join("\n")}`, OVERVIEW_MAX_BYTES);
+  const header = [
+    "# Memory Overview",
+    "",
+    "Current facts take priority. Search Memory when older experience or additional detail is relevant.",
+    "",
+  ].join("\n");
+  const semantic = modules.find((module) => module.descriptor.pathPrefix === "semantic");
+  const secondary = modules.filter((module) => module !== semantic);
+  const available = Math.max(512, OVERVIEW_MAX_BYTES - Buffer.byteLength(header, "utf8"));
+  const secondaryBudget = semantic === undefined ? available : Math.floor(available * 0.25);
+  const secondaryShare = Math.max(256, Math.floor(secondaryBudget / Math.max(1, secondary.length)));
+  const secondarySections = await Promise.all(
+    secondary.map(
+      async (module) => await readOverviewSummary(module, scope, context, secondaryShare),
+    ),
+  );
+  const usedSecondary = Buffer.byteLength(secondarySections.filter(Boolean).join("\n"), "utf8");
+  const semanticSection =
+    semantic === undefined
+      ? ""
+      : await readOverviewSummary(
+          semantic,
+          scope,
+          context,
+          Math.max(512, available - usedSecondary),
+        );
+  return trimUtf8(
+    `${header}${[semanticSection, ...secondarySections].filter(Boolean).join("\n")}`,
+    OVERVIEW_MAX_BYTES,
+  );
+}
+
+async function readOverviewSummary(
+  module: ReturnType<MemoryModuleRegistry["list"]>[number],
+  scope: MemoryRecallScope,
+  context: ExpertAgentContextItemListInput["context"],
+  budget: number,
+): Promise<string> {
+  const layers = module.descriptor.contextLayers;
+  const result = await module.createContextProvider(scope).readContext({
+    id: layers.summaryPath,
+    offset: Math.min(layers.summaryMaxBytes, budget),
+    context,
+  });
+  if (!result.ok) return "";
+  const content = result.value.contentRange.truncated
+    ? completeLines(result.value.content)
+    : result.value.content;
+  return `${content.trimEnd()}\n`;
+}
+
+function completeLines(value: string): string {
+  const end = value.lastIndexOf("\n");
+  return end < 0 ? `${value.trimEnd()}…\n` : value.slice(0, end + 1);
 }
 
 function resolveRoute(registry: MemoryModuleRegistry, id: string) {
@@ -363,7 +371,9 @@ function resolveRoute(registry: MemoryModuleRegistry, id: string) {
   if (separator <= 0 || separator === id.length - 1) return undefined;
   const prefix = id.slice(0, separator);
   const module = registry.resolvePrefix(prefix);
-  return module === undefined ? undefined : { module, localId: id.slice(separator + 1) };
+  return module === undefined || module.descriptor.purpose !== "projection"
+    ? undefined
+    : { module, localId: id.slice(separator + 1) };
 }
 
 function mapReadResult(
@@ -380,22 +390,8 @@ function denied<T>(operation: string, id: string): ExpertAgentContextResult<T> {
   });
 }
 
-function renderCatalog(registry: MemoryModuleRegistry): string {
-  const modules = registry.list();
-  return [
-    "# Memory Modules",
-    "",
-    ...(modules.length === 0
-      ? ["No Memory Modules are registered."]
-      : modules.map((module) => {
-          const diagnostic = registry.diagnostic(module.descriptor.id);
-          const health = diagnostic?.status ?? "healthy";
-          const cursor = diagnostic?.cursor?.sequence ?? 0;
-          const lag = diagnostic?.lag ?? 0;
-          return `- ${module.descriptor.id}@${module.descriptor.version} — ${module.descriptor.pathPrefix}/ — ${module.descriptor.storageModel} — ${health} — cursor ${cursor}, lag ${lag}`;
-        })),
-    "",
-  ].join("\n");
+function projectionModules(registry: MemoryModuleRegistry) {
+  return registry.list().filter((module) => module.descriptor.purpose === "projection");
 }
 
 function trimUtf8(value: string, maxBytes: number): string {

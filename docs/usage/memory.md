@@ -61,7 +61,7 @@ Memory 不会把全部记录塞进模型上下文：
 
 ```text
 memory/guide.md                         # 常驻使用规则
-memory/overview.md                      # 预算内的各类型摘要与热点索引
+memory/overview.md                      # 事实优先摘要；情景只保留最近三条
 memory/<type>/summary.md                # 类型摘要
 memory/<type>/index.md                  # 可分段读取的完整索引
 memory/<type>/items/<id>.md             # 按需详情
@@ -72,10 +72,12 @@ Promoted Knowledge 由 Studio Context Store 以 `guide → overview/summary → 
 保持有界，大型索引分页或分片，不能把全部内容合并成巨型文档。初始化 Candidate 不进入任何可召回
 Context。
 
-guide 最多 2KB，overview 最多 6KB。INDEX 只展示按价值、新近度和实际召回选出的 hot 记录；archived
+guide 最多 2KB，overview 最多 4KB，其中 Semantic Fact 使用主要空间，Episodic 只显示最近三条。
+Summary/Index 只展示按价值、新近度和实际召回选出的 hot 记录，并使用内部链接指向详情；archived
 记录不进入 summary/index/overview，但仍可通过 Search 或已知 id 的 Read 深度召回。List 只列入口，
-不枚举全部详情。普通搜索不会返回 Evidence；模型必须先找到详情中的稳定引用，再精确
-读取证据。Episodic 是历史先例，不代表当前事实。
+不枚举全部详情。内容较多或目标未知时先 Search，再 Read 精确 Item。普通搜索不会返回 Evidence；模型必须
+从详情中的链接精确读取证据。Memory 是只读 Context，直接 add/edit/delete 会被拒绝；Episodic 是历史先例，
+不代表当前事实。
 
 这套分层结构就是召回协议：Agent 读取 overview 后自行判断是否继续搜索或加载详情。Host 只执行 scope、
 权限、预算和审计，不理解 prompt 的相关性，也不会在 Agent 不知情时附加检索结果。跨 Module search 使用
