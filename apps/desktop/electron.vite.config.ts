@@ -22,6 +22,9 @@ export default defineConfig({
         exclude: workspaceDependencies,
       },
       rollupOptions: {
+        // ws treats these native accelerators as optional and catches a missing
+        // require at runtime. Keep that fallback intact when Vite bundles ws.
+        external: ["bufferutil", "utf-8-validate"],
         input: {
           index: fileURLToPath(new URL("./src/main/index.ts", import.meta.url)),
           "code-service-worker": fileURLToPath(
