@@ -91,6 +91,14 @@ import {
   UpdateContextStoreRevisionProfileSchema,
 } from "./context-store-revisions.ts";
 import {
+  ExpertMemoryContextStoreContentSchema,
+  ExpertMemoryContextStoreDescriptorSchema,
+  ExpertMemoryContextStoreEntrySchema,
+  ExpertMemoryContextStoreSearchMatchSchema,
+  GetExpertMemoryContextStoreSchema,
+  ListExpertMemoryContextStoreEntriesSchema,
+  ReadExpertMemoryContextStoreEntrySchema,
+  SearchExpertMemoryContextStoreSchema,
   GetMissionContextStoreSchema,
   ListMissionContextStoreEntriesSchema,
   MissionContextStoreContentSchema,
@@ -374,6 +382,22 @@ export type MissionContextStoreDescriptor = z.infer<typeof MissionContextStoreDe
 export type MissionContextStoreEntry = z.infer<typeof MissionContextStoreEntrySchema>;
 export type MissionContextStoreContent = z.infer<typeof MissionContextStoreContentSchema>;
 export type MissionContextStoreSearchMatch = z.infer<typeof MissionContextStoreSearchMatchSchema>;
+export type GetExpertMemoryContextStore = z.infer<typeof GetExpertMemoryContextStoreSchema>;
+export type ListExpertMemoryContextStoreEntries = z.infer<
+  typeof ListExpertMemoryContextStoreEntriesSchema
+>;
+export type ReadExpertMemoryContextStoreEntry = z.infer<
+  typeof ReadExpertMemoryContextStoreEntrySchema
+>;
+export type SearchExpertMemoryContextStore = z.infer<typeof SearchExpertMemoryContextStoreSchema>;
+export type ExpertMemoryContextStoreDescriptor = z.infer<
+  typeof ExpertMemoryContextStoreDescriptorSchema
+>;
+export type ExpertMemoryContextStoreEntry = z.infer<typeof ExpertMemoryContextStoreEntrySchema>;
+export type ExpertMemoryContextStoreContent = z.infer<typeof ExpertMemoryContextStoreContentSchema>;
+export type ExpertMemoryContextStoreSearchMatch = z.infer<
+  typeof ExpertMemoryContextStoreSearchMatchSchema
+>;
 export type DesktopPluginManifest = z.infer<typeof DesktopPluginManifestSchema>;
 export type DesktopPlugin = z.infer<typeof DesktopPluginSchema>;
 export type PluginZipInspection = z.infer<typeof PluginZipInspectionSchema>;

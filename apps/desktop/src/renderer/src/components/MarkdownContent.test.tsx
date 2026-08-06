@@ -42,6 +42,8 @@ describe("MarkdownContent", () => {
 
     expect(plain).toContain("<span>Fact</span>");
     expect(plain).not.toContain("href=");
-    expect(interactive).toContain('href="semantic/items/fact-a.md"');
+    expect(interactive).toContain(
+      'class="markdown-content-link" href="semantic/items/fact-a.md"',
+    );
   });
 });

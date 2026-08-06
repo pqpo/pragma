@@ -250,6 +250,7 @@ describe("DesktopMemoryPlane", () => {
     };
 
     await expect(plane.isContextStoreViewAvailable(input)).resolves.toBe(true);
+    await expect(plane.hasContextStoreViewContent(input)).resolves.toBe(false);
     const global = await plane.policies.getGlobal();
     await plane.policies.updateGlobal({
       expectedRevision: global.revision,

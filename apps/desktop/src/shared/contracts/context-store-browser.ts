@@ -1,4 +1,5 @@
 import { z } from "zod";
+import { PragmaExpertRefSchema } from "@pragma/interpreter/ast";
 
 import { ContextStoreContentMetadataSchema } from "./context-stores.ts";
 import { MissionIdSchema } from "./mission-base.ts";
@@ -38,6 +39,24 @@ export const MissionContextStoreDescriptorSchema = z.object({
   scopes: z.array(MissionContextStoreScopeSchema).min(1).max(500),
 });
 
+export const ExpertMemoryContextStoreDescriptorSchema = z.object({
+  schemaVersion: z.literal("pragma.desktop-expert-memory-context-store/v1"),
+  expertRef: PragmaExpertRefSchema,
+  storeId: z.literal("memory"),
+  namespace: z.literal("memory"),
+  name: z.string().trim().min(1).max(200),
+  readOnly: z.literal(true),
+  searchable: z.literal(true),
+  hasMemory: z.boolean(),
+  root: z.object({
+    type: z.literal("pragma.expert"),
+    id: z.string().trim().min(1).max(200),
+    name: z.string().trim().min(1).max(200),
+  }),
+  defaultScopeId: MissionContextStoreScopeIdSchema,
+  scopes: z.array(MissionContextStoreScopeSchema).min(1).max(1),
+});
+
 const MissionContextStoreTargetShape = {
   missionId: MissionIdSchema,
   storeId: MissionContextStoreIdSchema,
@@ -49,7 +68,20 @@ export const GetMissionContextStoreSchema = z.object({
   storeId: MissionContextStoreIdSchema,
 });
 
+export const GetExpertMemoryContextStoreSchema = z.object({
+  expertRef: PragmaExpertRefSchema,
+});
+
 export const ListMissionContextStoreEntriesSchema = z.object(MissionContextStoreTargetShape);
+
+const ExpertMemoryContextStoreTargetShape = {
+  expertRef: PragmaExpertRefSchema,
+  scopeId: MissionContextStoreScopeIdSchema,
+};
+
+export const ListExpertMemoryContextStoreEntriesSchema = z.object(
+  ExpertMemoryContextStoreTargetShape,
+);
 
 export const MissionContextStoreEntrySchema = z.object({
   id: z.string().trim().min(1).max(2_000),
@@ -61,6 +93,13 @@ export const MissionContextStoreEntrySchema = z.object({
 
 export const ReadMissionContextStoreEntrySchema = z.object({
   ...MissionContextStoreTargetShape,
+  id: z.string().trim().min(1).max(2_000),
+  start: z.number().int().nonnegative().default(0),
+  maxBytes: z.number().int().positive().max(64_000).default(64_000),
+});
+
+export const ReadExpertMemoryContextStoreEntrySchema = z.object({
+  ...ExpertMemoryContextStoreTargetShape,
   id: z.string().trim().min(1).max(2_000),
   start: z.number().int().nonnegative().default(0),
   maxBytes: z.number().int().positive().max(64_000).default(64_000),
@@ -89,6 +128,13 @@ export const SearchMissionContextStoreSchema = z.object({
   contextLines: z.number().int().nonnegative().max(2).default(2),
 });
 
+export const SearchExpertMemoryContextStoreSchema = z.object({
+  ...ExpertMemoryContextStoreTargetShape,
+  query: z.string().trim().min(1).max(1_000),
+  maxResults: z.number().int().positive().max(50).default(50),
+  contextLines: z.number().int().nonnegative().max(2).default(2),
+});
+
 export const MissionContextStoreSearchMatchSchema = z.object({
   id: z.string().trim().min(1).max(2_000),
   matchType: z.enum(["path", "content"]).optional(),
@@ -97,3 +143,7 @@ export const MissionContextStoreSearchMatchSchema = z.object({
   before: z.array(z.string().max(10_000)).max(2).optional(),
   after: z.array(z.string().max(10_000)).max(2).optional(),
 });
+
+export const ExpertMemoryContextStoreEntrySchema = MissionContextStoreEntrySchema;
+export const ExpertMemoryContextStoreContentSchema = MissionContextStoreContentSchema;
+export const ExpertMemoryContextStoreSearchMatchSchema = MissionContextStoreSearchMatchSchema;

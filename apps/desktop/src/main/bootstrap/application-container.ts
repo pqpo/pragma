@@ -80,6 +80,8 @@ import {
   createDesktopMemoryCurator,
   type DesktopMemoryCurator,
 } from "../features/memory/memory-curator.ts";
+import { installExpertMemoryContextStoreBrowserHandlers } from "../features/memory/expert-memory-context-store-browser-ipc.ts";
+import { createExpertMemoryContextStoreBrowserService } from "../features/memory/expert-memory-context-store-browser.ts";
 import { installMemoryPolicyHandlers } from "../features/memory/memory-policy-ipc.ts";
 import {
   createMemoryKnowledgePromotionService,
@@ -936,6 +938,13 @@ export async function createDesktopApplicationContainer(
     systemExperts,
     knowledgePromotion,
   });
+  installExpertMemoryContextStoreBrowserHandlers(
+    createExpertMemoryContextStoreBrowserService({
+      project: pragmaProjectStore,
+      systemExperts,
+      memory: memoryPlane,
+    }),
+  );
   installModelProviderHandlers(modelProviderStore, {
     isProviderReferenced: async (providerId) =>
       (await pragmaProjectStore.get()).resources.some(

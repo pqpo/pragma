@@ -1,7 +1,13 @@
 import { User } from "@phosphor-icons/react";
 import { renderToStaticMarkup } from "react-dom/server";
 import { afterEach, describe, expect, it } from "vitest";
+import { PragmaExpertResourceSchema } from "@pragma/interpreter/ast";
 
+import type {
+  Capability,
+  ContextStore,
+  DesktopPlugin,
+} from "../../../../shared/contracts/index.ts";
 import { i18n } from "../../i18n/index.ts";
 import { ExpertDetailFragment, ExpertDirectoryFragment } from "./ExpertDirectoryFragment.tsx";
 import { ExpertEditorFragment } from "./ExpertEditorFragment.tsx";
@@ -31,11 +37,183 @@ const expert: ExpertRecord = {
   icon: User,
 };
 
+const contextStore: ContextStore = {
+  schemaVersion: "pragma.context-store/v4",
+  contentRevision: 1,
+  snapshotHash: "0".repeat(64),
+  id: "00000000-0000-4000-8000-000000000001",
+  name: "Product Docs",
+  description: "Context store details should not be shown here.",
+  type: "file",
+  status: "ready",
+  source: { origin: "created" },
+  createdAt: "2026-07-27T00:00:00.000Z",
+  updatedAt: "2026-07-27T00:00:00.000Z",
+};
+
+const skillCapability: Capability = {
+  manifest: {
+    schemaVersion: "pragma.capability/v2",
+    id: "00000000-0000-4000-8000-000000000002",
+    runtimeKey: "writing_skill",
+    name: "Writing Skill",
+    kind: "skill",
+    latestRevision: 1,
+    createdAt: "2026-07-27T00:00:00.000Z",
+    updatedAt: "2026-07-27T00:00:00.000Z",
+  },
+  health: {
+    revision: 1,
+    status: "ready",
+    checkedAt: "2026-07-27T00:00:00.000Z",
+  },
+  definition: {
+    kind: "skill",
+    name: "Writing Skill",
+    description: "Skill instructions should not be shown here.",
+    entryPath: "SKILL.md",
+    contentHash: "a".repeat(64),
+  },
+};
+
+const toolCapability: Capability = {
+  manifest: {
+    schemaVersion: "pragma.capability/v2",
+    id: "00000000-0000-4000-8000-000000000003",
+    runtimeKey: "research_tools",
+    name: "Tools Service",
+    kind: "mcp_server",
+    latestRevision: 1,
+    createdAt: "2026-07-27T00:00:00.000Z",
+    updatedAt: "2026-07-27T00:00:00.000Z",
+  },
+  health: {
+    revision: 1,
+    status: "ready",
+    checkedAt: "2026-07-27T00:00:00.000Z",
+  },
+  definition: {
+    kind: "mcp_server",
+    name: "Tools Service",
+    description: "Tool service details should not be shown here.",
+    connection: { transport: "streamable-http", url: "https://example.test/mcp" },
+    timeoutMs: 30_000,
+    tools: [
+      { name: "search_docs", description: "Search documents", schemaHash: "b".repeat(64) },
+      { name: "save_note", description: "Save a note", schemaHash: "c".repeat(64) },
+    ],
+  },
+};
+
+const plugin: DesktopPlugin = {
+  ref: "plugin:research@1.0.0",
+  origin: "user",
+  manifest: {
+    schemaVersion: "pragma.plugin/v2",
+    id: "research",
+    name: "Research Plugin",
+    description: "Plugin details should not be shown here.",
+    version: "1.0.0",
+    tags: [],
+    runtime: { type: "expert-agent-plugin", entry: "./index.js", trust: "trusted-host" },
+    capabilities: [],
+    configuration: {},
+    permissions: { filesystem: [], shell: [], network: [], environment: [] },
+  },
+  contentHash: "d".repeat(64),
+  status: "ready",
+  defaultConfig: {},
+  configuredSecrets: [],
+  createdAt: "2026-07-27T00:00:00.000Z",
+  updatedAt: "2026-07-27T00:00:00.000Z",
+};
+
+const resources = [
+  PragmaExpertResourceSchema.parse({
+    apiVersion: "pragma/v3",
+    kind: "Expert",
+    metadata: {
+      id: "1h2j3k4m5n6p7q8r",
+      name: "Research Expert",
+      description: "Resource description one.",
+      tags: [],
+    },
+    spec: { scope: "Research", instructions: "Research." },
+  }),
+  PragmaExpertResourceSchema.parse({
+    apiVersion: "pragma/v3",
+    kind: "Expert",
+    metadata: {
+      id: "2h3j4k5m6n7p8q9r",
+      name: "Release Expert",
+      description: "Resource description two.",
+      tags: [],
+    },
+    spec: { scope: "Release", instructions: "Release." },
+  }),
+];
+
 afterEach(async () => {
   await i18n.changeLanguage("en");
 });
 
 describe("ExpertDetailFragment", () => {
+  it("renders selected capability titles as plain comma-separated text", () => {
+    const html = renderToStaticMarkup(
+      <ExpertDetailFragment
+        expert={{
+          ...expert,
+          contextStoreMounts: [{ storeId: contextStore.id, enabled: true, priority: 0 }],
+          capabilities: [
+            { kind: "skill", capabilityId: skillCapability.manifest.id, revision: 1 },
+            {
+              kind: "tools",
+              capabilityId: toolCapability.manifest.id,
+              revision: 1,
+              toolNames: ["search_docs", "save_note"],
+            },
+          ],
+          resourceTools: [
+            { adapter: "pragma.tool.call@v1", target: { ref: "expert:1h2j3k4m5n6p7q8r" } },
+            { adapter: "pragma.tool.call@v1", target: { ref: "expert:2h3j4k5m6n7p8q9r" } },
+          ],
+          plugins: [{ ref: plugin.ref }],
+        }}
+        contextStores={[contextStore]}
+        capabilities={[skillCapability, toolCapability]}
+        plugins={[plugin]}
+        resources={resources}
+        runtimes={[]}
+        onBack={() => undefined}
+        onEdit={() => undefined}
+        onOpenContextStore={() => undefined}
+        onTryInSession={() => undefined}
+        onDelete={async () => undefined}
+        onReset={async () => undefined}
+      />,
+    );
+
+    expect(html).toContain("Research Expert、Release Expert");
+    expect(html).toContain("Product Docs");
+    expect(html).toContain("Writing Skill");
+    expect(html).toContain("search_docs、save_note");
+    expect(html).toContain("Research Plugin");
+    expect(html.match(/expert-capability-detail-selection-text/g)).toHaveLength(4);
+    expect(html).not.toContain("Context store details should not be shown here.");
+    expect(html).not.toContain("Skill instructions should not be shown here.");
+    expect(html).not.toContain("Tool service details should not be shown here.");
+    expect(html).not.toContain("Context stores");
+    expect(html).not.toContain("As tools");
+    expect(html).not.toContain("Callable expert resources");
+    expect(html).not.toContain("Guidance");
+    expect(html).not.toContain("Enabled instructions");
+    expect(html).not.toContain("Actions");
+    expect(html).not.toContain("Enabled tools");
+    expect(html).not.toContain("expert-capability-detail-list");
+    expect(html).not.toContain("<ul");
+    expect(html).not.toContain("<li");
+  });
+
   it("uses compact metadata and bounded content previews", () => {
     const html = renderToStaticMarkup(
       <ExpertDetailFragment
@@ -56,8 +234,10 @@ describe("ExpertDetailFragment", () => {
 
     expect(html).not.toContain("ID: test_expert");
     expect(html).toContain("Scope");
-    expect(html).toContain("Callable expert resources");
-    expect(html).not.toContain("Let this expert call other Pragma resources when a task needs them.");
+    expect(html).not.toContain(
+      "Let this expert call other Pragma resources when a task needs them.",
+    );
+    expect(html).not.toContain("Callable expert resources");
     expect(html).not.toContain("Availability");
     expect(html).toContain('aria-expanded="false"');
     expect(html).toContain("Show more");

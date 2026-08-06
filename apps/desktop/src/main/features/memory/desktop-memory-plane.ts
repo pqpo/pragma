@@ -77,6 +77,7 @@ export interface DesktopMemoryPlane {
   readonly activity: MemoryActivityStore;
   readonly contextStore: import("@pragma/core").ExpertAgentContextStore;
   isContextStoreViewAvailable(input: DesktopMemoryContextStoreViewInput): Promise<boolean>;
+  hasContextStoreViewContent(input: DesktopMemoryContextStoreViewInput): Promise<boolean>;
   createContextStoreView(
     input: DesktopMemoryContextStoreViewInput,
   ): Promise<import("@pragma/core").ExpertAgentContextStore>;
@@ -477,6 +478,15 @@ export async function createDesktopMemoryPlane(options: {
     contextStore,
     async isContextStoreViewAvailable(input) {
       return (await resolveContextStoreViewScope(input)).available;
+    },
+    async hasContextStoreViewContent(input) {
+      const resolved = await resolveContextStoreViewScope(input);
+      if (!resolved.available) return false;
+      const [episodes, facts] = await Promise.all([
+        episodic.store.listForRecall(resolved.scope),
+        semantic.store.listForRecall(resolved.scope, new Date()),
+      ]);
+      return episodes.length > 0 || facts.length > 0;
     },
     async createContextStoreView(input) {
       const resolved = await resolveContextStoreViewScope(input);

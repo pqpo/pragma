@@ -19,8 +19,22 @@ import type {
 import { errorMessage } from "../lib/errors.ts";
 import { MarkdownContent } from "./MarkdownContent.tsx";
 
+export type ContextStoreBrowserDescriptor = Pick<
+  MissionContextStoreDescriptor,
+  | "storeId"
+  | "namespace"
+  | "name"
+  | "readOnly"
+  | "searchable"
+  | "root"
+  | "defaultScopeId"
+  | "scopes"
+> & {
+  readonly hasMemory?: boolean | undefined;
+};
+
 export interface ContextStoreBrowserSource {
-  readonly getDescriptor: () => Promise<MissionContextStoreDescriptor>;
+  readonly getDescriptor: () => Promise<ContextStoreBrowserDescriptor>;
   readonly list: (scopeId: string) => Promise<readonly MissionContextStoreEntry[]>;
   readonly read: (
     scopeId: string,
@@ -35,7 +49,7 @@ export interface ContextStoreBrowserSource {
 
 export function ContextStoreBrowser(props: { readonly source: ContextStoreBrowserSource }) {
   const { t } = useTranslation("missions");
-  const [descriptor, setDescriptor] = useState<MissionContextStoreDescriptor>();
+  const [descriptor, setDescriptor] = useState<ContextStoreBrowserDescriptor>();
   const [scopeId, setScopeId] = useState("");
   const [entries, setEntries] = useState<readonly MissionContextStoreEntry[]>([]);
   const [discovered, setDiscovered] = useState<readonly MissionContextStoreEntry[]>([]);

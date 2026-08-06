@@ -16,7 +16,7 @@ import {
   Wrench,
   type Icon,
 } from "@phosphor-icons/react";
-import { useState, type ReactNode } from "react";
+import { useEffect, useMemo, useState, type ReactNode } from "react";
 import { useTranslation } from "react-i18next";
 import { canonicalPragmaResourceRef, type PragmaResource } from "@pragma/interpreter/ast";
 
@@ -28,6 +28,10 @@ import type {
 } from "../../../../shared/contracts/index.ts";
 import { StudioScreenFrame } from "./StudioScreenFrame.tsx";
 import { StudioConfirmationDialog } from "./StudioDialog.tsx";
+import {
+  MemoryStoreBrowser,
+  type ContextStoreBrowserSource,
+} from "../../components/MemoryStoreBrowser.tsx";
 import { isBuiltInExpert, type ExpertRecord } from "./studio-model.ts";
 import { errorMessage } from "../../lib/errors.ts";
 import { runtimeDisplayName } from "../../lib/runtime-display.ts";
@@ -151,32 +155,14 @@ export function ExpertDirectoryFragment(props: {
         ) : null}
       </div>
       <p className="directory-count">{t("expertCount", { count: matchingExperts.length })}</p>
-  </StudioScreenFrame>
+    </StudioScreenFrame>
   );
-}
-
-function resourceKindLabel(
-  resource: PragmaResource,
-  translate: (key: string) => string,
-): string {
-  switch (resource.kind) {
-    case "Expert":
-      return translate("expert");
-    case "ExpertTeam":
-      return translate("expertTeam");
-    case "Flow":
-      return translate("flow");
-  }
-  return resource.kind;
 }
 
 function ExpertCapabilityDetailRow(props: {
   readonly icon: Icon;
-  readonly eyebrow: string;
   readonly title: string;
-  readonly description: string;
   readonly selected: ReactNode;
-  readonly count: string;
 }) {
   const CapabilityIcon = props.icon;
   return (
@@ -185,12 +171,9 @@ function ExpertCapabilityDetailRow(props: {
         <CapabilityIcon size={19} />
       </span>
       <div className="expert-capability-detail-copy">
-        <small>{props.eyebrow}</small>
         <h3>{props.title}</h3>
-        <p>{props.description}</p>
         <div className="expert-capability-detail-selection">{props.selected}</div>
       </div>
-      <span className="expert-capability-detail-count">{props.count}</span>
     </article>
   );
 }
@@ -224,6 +207,8 @@ export function ExpertDetailFragment(props: {
   const [deleteError, setDeleteError] = useState<string | null>(null);
   const [resetConfirmOpen, setResetConfirmOpen] = useState(false);
   const [resetting, setResetting] = useState(false);
+  const [memoryStoreOpen, setMemoryStoreOpen] = useState(false);
+  const [memoryStoreHasContent, setMemoryStoreHasContent] = useState(false);
   const hasLongInstructions = props.expert.instructions.trim().length > INSTRUCTIONS_PREVIEW_LENGTH;
   const displayedInstructions =
     hasLongInstructions && !instructionsExpanded
@@ -241,19 +226,7 @@ export function ExpertDetailFragment(props: {
     const resource = props.resources.find(
       (candidate) => canonicalPragmaResourceRef(candidate) === binding.target?.ref,
     );
-    return {
-      label: resource?.metadata.name ?? binding.target?.ref ?? t("notConfigured"),
-      description: resource === undefined ? undefined : resourceKindLabel(resource, t),
-    };
-  });
-  const selectedStores = props.expert.contextStoreMounts.flatMap((mount) => {
-    const store = props.contextStores.find((candidate) => candidate.id === mount.storeId);
-    return [
-      {
-        label: store?.name ?? mount.storeId,
-        description: store?.description || t("knowledgeBase"),
-      },
-    ];
+    return resource?.metadata.name ?? binding.target?.ref ?? t("notConfigured");
   });
   const selectedSkills = props.expert.capabilities
     .filter((reference) => reference.kind === "skill")
@@ -261,48 +234,65 @@ export function ExpertDetailFragment(props: {
       const capability = props.capabilities.find(
         (candidate) => candidate.manifest.id === reference.capabilityId,
       );
-      return {
-        label: capability?.manifest.name ?? reference.capabilityId,
-        description:
-          capability?.definition.kind === "skill"
-            ? capability.definition.description
-            : t("skill"),
-      };
+      return capability?.manifest.name ?? reference.capabilityId;
     });
   const selectedToolReferences = props.expert.capabilities.filter(
     (reference): reference is Extract<ExpertRecord["capabilities"][number], { kind: "tools" }> =>
       reference.kind === "tools",
   );
-  const selectedTools = selectedToolReferences.flatMap((reference) => {
-    const capability = props.capabilities.find(
-      (candidate) => candidate.manifest.id === reference.capabilityId,
-    );
-    const serviceName = capability?.manifest.name ?? reference.capabilityId;
-    return reference.toolNames.map((toolName) => ({
-      label: toolName,
-      description: serviceName,
-    }));
-  });
-  const selectedPlugins = props.expert.plugins.map((reference) => ({
-    label:
+  const selectedTools = selectedToolReferences.flatMap((reference) => reference.toolNames);
+  const selectedPlugins = props.expert.plugins.map(
+    (reference) =>
       props.plugins.find((plugin) => plugin.ref === reference.ref)?.manifest.name ?? reference.ref,
-    description: t("plugins"),
-  }));
-  const selectionList = (
-    items: readonly { readonly label: string; readonly description: string | undefined }[],
-  ): ReactNode =>
+  );
+  const selectionList = (items: readonly string[]): ReactNode =>
     items.length === 0 ? (
       <span className="expert-capability-detail-empty">{t("noneSelected")}</span>
     ) : (
-      <ul className="expert-capability-detail-list">
-        {items.map((item, index) => (
-          <li key={`${item.label}-${index}`}>
-            <strong>{item.label}</strong>
-            {item.description ? <small>{item.description}</small> : null}
-          </li>
-        ))}
-      </ul>
+      <span className="expert-capability-detail-selection-text">{items.join("、")}</span>
     );
+  const memoryStoreSource = useMemo<ContextStoreBrowserSource | undefined>(() => {
+    if (props.expert.ref === undefined) return undefined;
+    const target = { expertRef: props.expert.ref } as const;
+    return {
+      getDescriptor: async () => await window.pragmaDesktop.getExpertMemoryContextStore(target),
+      list: async (scopeId) =>
+        await window.pragmaDesktop.listExpertMemoryContextStoreEntries({ ...target, scopeId }),
+      read: async (scopeId, id, start) =>
+        await window.pragmaDesktop.readExpertMemoryContextStoreEntry({
+          ...target,
+          scopeId,
+          id,
+          start,
+          maxBytes: 64_000,
+        }),
+      search: async (scopeId, query) =>
+        await window.pragmaDesktop.searchExpertMemoryContextStore({
+          ...target,
+          scopeId,
+          query,
+          maxResults: 50,
+          contextLines: 2,
+        }),
+    };
+  }, [props.expert.ref]);
+  useEffect(() => {
+    let cancelled = false;
+    setMemoryStoreHasContent(false);
+    setMemoryStoreOpen(false);
+    if (memoryStoreSource === undefined) return;
+    void memoryStoreSource
+      .getDescriptor()
+      .then((descriptor) => {
+        if (!cancelled) setMemoryStoreHasContent(descriptor.hasMemory === true);
+      })
+      .catch(() => {
+        if (!cancelled) setMemoryStoreHasContent(false);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [memoryStoreSource]);
   const remove = async () => {
     setDeleting(true);
     setDeleteError(null);
@@ -328,6 +318,21 @@ export function ExpertDetailFragment(props: {
       setResetting(false);
     }
   };
+  if (memoryStoreOpen && memoryStoreSource !== undefined) {
+    return (
+      <StudioScreenFrame
+        className="expert-detail expert-memory-store-detail"
+        header={
+          <button className="back-link" type="button" onClick={() => setMemoryStoreOpen(false)}>
+            <ArrowLeft size={18} aria-hidden="true" />
+            {t("backToContext")}
+          </button>
+        }
+      >
+        <MemoryStoreBrowser className="expert-memory-store-page" source={memoryStoreSource} />
+      </StudioScreenFrame>
+    );
+  }
   return (
     <StudioScreenFrame
       className="expert-detail"
@@ -431,9 +436,7 @@ export function ExpertDetailFragment(props: {
                 </button>
               ) : null}
             </header>
-            <p id="expert-instructions-content">
-              {displayedInstructions || t("noInstructions")}
-            </p>
+            <p id="expert-instructions-content">{displayedInstructions || t("noInstructions")}</p>
           </section>
           {isBuiltInExpert(props.expert) ? (
             <section className="instructions-preview" aria-labelledby="expert-additional-heading">
@@ -452,43 +455,23 @@ export function ExpertDetailFragment(props: {
           <div className="expert-capability-detail-grid">
             <ExpertCapabilityDetailRow
               icon={Network}
-              eyebrow={t("asTools")}
               title={t("expertsTeamsFlows")}
-              description={t("resourcesDetailDescription")}
               selected={selectionList(selectedResources)}
-              count={t("selectedCount", { count: selectedResources.length })}
-            />
-            <ExpertCapabilityDetailRow
-              icon={Database}
-              eyebrow={t("knowledge")}
-              title={t("contextStores")}
-              description={t("contextStoresDetailDescription")}
-              selected={selectionList(selectedStores)}
-              count={t("selectedCount", { count: selectedStores.length })}
             />
             <ExpertCapabilityDetailRow
               icon={BookOpenText}
-              eyebrow={t("guidance")}
               title={t("skills")}
-              description={t("skillsDetailDescription")}
               selected={selectionList(selectedSkills)}
-              count={t("selectedCount", { count: selectedSkills.length })}
             />
             <ExpertCapabilityDetailRow
               icon={Wrench}
-              eyebrow={t("actions")}
               title={t("tools")}
-              description={t("toolsDetailDescription")}
               selected={selectionList(selectedTools)}
-              count={t("selectedCount", { count: selectedTools.length })}
             />
             <ExpertCapabilityDetailRow
               icon={PuzzlePiece}
-              eyebrow={t("plugins")}
               title={t("plugins")}
-              description={t("pluginsDetailDescription")}
               selected={selectionList(selectedPlugins)}
-              count={t("selectedCount", { count: selectedPlugins.length })}
             />
           </div>
         </section>
@@ -500,7 +483,7 @@ export function ExpertDetailFragment(props: {
             <p>{t("contextDescription")}</p>
           </div>
         </header>
-        {props.expert.contextStoreMounts.length === 0 ? (
+        {props.expert.contextStoreMounts.length === 0 && !memoryStoreHasContent ? (
           <p className="expert-context-empty">{t("noContext")}</p>
         ) : (
           <div className="expert-context-list">
@@ -532,6 +515,23 @@ export function ExpertDetailFragment(props: {
                 </button>
               );
             })}
+            {memoryStoreSource !== undefined && memoryStoreHasContent ? (
+              <button
+                className="expert-context-link"
+                type="button"
+                onClick={() => setMemoryStoreOpen(true)}
+              >
+                <span className="store-icon">
+                  <Database size={20} />
+                </span>
+                <span>
+                  <strong>{t("memoryStore")}</strong>
+                  <small>{t("readOnly")}</small>
+                </span>
+                <em>{t("browseMemoryStore")}</em>
+                <CaretRight size={17} aria-hidden="true" />
+              </button>
+            ) : null}
           </div>
         )}
       </section>

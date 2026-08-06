@@ -149,6 +149,14 @@ import type {
   ListMemoryKnowledgeInitializationCandidates,
   MemoryKnowledgeInitializationCandidateRef,
   UpdateMemoryKnowledgeInitializationCandidate,
+  GetExpertMemoryContextStore,
+  ListExpertMemoryContextStoreEntries,
+  ReadExpertMemoryContextStoreEntry,
+  SearchExpertMemoryContextStore,
+  ExpertMemoryContextStoreDescriptor,
+  ExpertMemoryContextStoreEntry,
+  ExpertMemoryContextStoreContent,
+  ExpertMemoryContextStoreSearchMatch,
   GetMissionContextStore,
   ListMissionContextStoreEntries,
   ReadMissionContextStoreEntry,
@@ -243,6 +251,18 @@ export interface PragmaDesktopAPI {
   searchMissionContextStore: (
     input: SearchMissionContextStore,
   ) => Promise<MissionContextStoreSearchMatch[]>;
+  getExpertMemoryContextStore: (
+    input: GetExpertMemoryContextStore,
+  ) => Promise<ExpertMemoryContextStoreDescriptor>;
+  listExpertMemoryContextStoreEntries: (
+    input: ListExpertMemoryContextStoreEntries,
+  ) => Promise<ExpertMemoryContextStoreEntry[]>;
+  readExpertMemoryContextStoreEntry: (
+    input: ReadExpertMemoryContextStoreEntry,
+  ) => Promise<ExpertMemoryContextStoreContent>;
+  searchExpertMemoryContextStore: (
+    input: SearchExpertMemoryContextStore,
+  ) => Promise<ExpertMemoryContextStoreSearchMatch[]>;
   pickWorkspace: () => Promise<PickWorkspaceResult>;
   validateWorkspace: (path: string) => Promise<ValidateWorkspaceResult>;
   getModelProviderSettings: () => Promise<ModelProviderSettingsSnapshot>;

@@ -33,6 +33,16 @@ import {
   UpdateMemoryKnowledgeInitializationCandidateSchema,
 } from "../../shared/contracts/memory.ts";
 import { ContextStoreSchema } from "../../shared/contracts/context-stores.ts";
+import {
+  ExpertMemoryContextStoreContentSchema,
+  ExpertMemoryContextStoreDescriptorSchema,
+  ExpertMemoryContextStoreEntrySchema,
+  ExpertMemoryContextStoreSearchMatchSchema,
+  GetExpertMemoryContextStoreSchema,
+  ListExpertMemoryContextStoreEntriesSchema,
+  ReadExpertMemoryContextStoreEntrySchema,
+  SearchExpertMemoryContextStoreSchema,
+} from "../../shared/contracts/context-store-browser.ts";
 
 export const memoryApi = {
   getGlobalMemoryPolicy: async () =>
@@ -179,6 +189,34 @@ export const memoryApi = {
     DesktopMissionMemoryActivitySchema.parse(
       await ipcRenderer.invoke("memory-mission:activity", { missionId }),
     ),
+  getExpertMemoryContextStore: async (input) =>
+    ExpertMemoryContextStoreDescriptorSchema.parse(
+      await ipcRenderer.invoke(
+        "expert-memory-context-stores:get",
+        GetExpertMemoryContextStoreSchema.parse(input),
+      ),
+    ),
+  listExpertMemoryContextStoreEntries: async (input) =>
+    ExpertMemoryContextStoreEntrySchema.array().parse(
+      await ipcRenderer.invoke(
+        "expert-memory-context-stores:list",
+        ListExpertMemoryContextStoreEntriesSchema.parse(input),
+      ),
+    ),
+  readExpertMemoryContextStoreEntry: async (input) =>
+    ExpertMemoryContextStoreContentSchema.parse(
+      await ipcRenderer.invoke(
+        "expert-memory-context-stores:read",
+        ReadExpertMemoryContextStoreEntrySchema.parse(input),
+      ),
+    ),
+  searchExpertMemoryContextStore: async (input) =>
+    ExpertMemoryContextStoreSearchMatchSchema.array().parse(
+      await ipcRenderer.invoke(
+        "expert-memory-context-stores:search",
+        SearchExpertMemoryContextStoreSchema.parse(input),
+      ),
+    ),
 } satisfies Pick<
   PragmaDesktopAPI,
   | "getGlobalMemoryPolicy"
@@ -206,4 +244,8 @@ export const memoryApi = {
   | "rejectMemoryKnowledgeInitialization"
   | "createMemoryKnowledgeStore"
   | "getMissionMemoryActivity"
+  | "getExpertMemoryContextStore"
+  | "listExpertMemoryContextStoreEntries"
+  | "readExpertMemoryContextStoreEntry"
+  | "searchExpertMemoryContextStore"
 >;

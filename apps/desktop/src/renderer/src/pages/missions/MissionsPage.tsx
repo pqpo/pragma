@@ -14,7 +14,6 @@ import {
 import { flushSync } from "react-dom";
 
 import {
-  ArrowLeft,
   ArrowCounterClockwise,
   CaretDown,
   CheckCircle,
@@ -67,9 +66,9 @@ import { ToolPermissionSelect } from "../../components/ToolPermissionSelect.tsx"
 import { MissionModelOverrideControls } from "../../components/MissionModelOverrideControls.tsx";
 import { MarkdownContent } from "../../components/MarkdownContent.tsx";
 import {
-  ContextStoreBrowser,
+  MemoryStoreBrowser,
   type ContextStoreBrowserSource,
-} from "../../components/ContextStoreBrowser.tsx";
+} from "../../components/MemoryStoreBrowser.tsx";
 import { SidebarResizeHandle } from "../../components/SidebarResizeHandle.tsx";
 import {
   SIDEBAR_WIDTH_PREFERENCES,
@@ -2242,17 +2241,12 @@ export function MissionDetailFragment(props: {
         ) : tab === "memory" ? (
           <div className="mission-memory-shell">
             {memoryView === "store" ? (
-              <div className="mission-memory-store">
-                <button
-                  type="button"
-                  className="mission-memory-back"
-                  onClick={() => setMemoryView("activity")}
-                >
-                  <ArrowLeft size={16} aria-hidden="true" />
-                  {t("backToMemoryActivity")}
-                </button>
-                <ContextStoreBrowser source={memoryStoreSource} />
-              </div>
+              <MemoryStoreBrowser
+                className="mission-memory-store"
+                source={memoryStoreSource}
+                onBack={() => setMemoryView("activity")}
+                backLabel={t("backToMemoryActivity")}
+              />
             ) : (
               <MissionMemoryActivity
                 activity={memoryActivity}

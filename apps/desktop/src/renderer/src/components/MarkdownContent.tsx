@@ -149,7 +149,13 @@ function renderMarkdownToken(
       const link = token as Tokens.Link;
       const children = renderMarkdownTokens(link.tokens, codeBlockControls, onInternalLink);
       return isExternalLink(link.href) ? (
-        <a key={key} href={link.href} target="_blank" rel="noreferrer">
+        <a
+          key={key}
+          className="markdown-content-link"
+          href={link.href}
+          target="_blank"
+          rel="noreferrer"
+        >
           {children}
         </a>
       ) : onInternalLink === undefined ? (
@@ -157,6 +163,7 @@ function renderMarkdownToken(
       ) : (
         <a
           key={key}
+          className="markdown-content-link"
           href={link.href}
           onClick={(event) => {
             event.preventDefault();
