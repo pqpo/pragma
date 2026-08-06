@@ -89,16 +89,7 @@ Pragma 是开放编排层，不是封闭的 Agent 世界。Runtime Adapter 用�
 
 ## 示例：一次编码任务，组合六位 AI 专家
 
-```mermaid
-flowchart LR
-  brief["产品想法"] --> ui["Gemini<br/>UI 设计"]
-  ui --> requirements["Claude Code + Claude Opus 5<br/>需求讨论"]
-  requirements --> architecture["Codex + GPT-5.6 Sol<br/>技术方案"]
-  architecture --> implementation["Codex + GPT-5.6 Terra<br/>代码实现与测试"]
-  implementation --> review["Claude Code + DeepSeek V4 Pro<br/>独立 Code Review"]
-  review --> verify["Codex<br/>复核问题并修复"]
-  verify --> learn["可复用上下文<br/>事实、经验与技能"]
-```
+![Pragma desktop app running](./docs/images/pragma_flow_cn.png)
 
 这并不是简单地依次调用几个模型：
 
@@ -112,24 +103,6 @@ flowchart LR
 整套方法——角色、路由、上下文、交接、评审闸门和完成标准——都可以被版本化、评测、改进与分享。
 
 ## 理念架构
-
-```mermaid
-flowchart TB
-  method["AI-native 工作方式<br/>可移植 Pragma DSL"]
-  orchestration["可组合 Mission 编排<br/>Expert · ExpertTeam · 子 Flow · 人工确认"]
-  context["渐进式上下文<br/>意图 · 知识 · 决策 · 产物 · 记忆"]
-  execution["可插拔执行能力<br/>任意模型 × 任意 Agent Harness"]
-  hosts["开放 Host<br/>Pragma Desktop · 自有 Agent 系统 · 云端或企业平台"]
-
-  method -->|解释与编译| orchestration
-  context <--> orchestration
-  orchestration --> execution
-  execution --> context
-  hosts --> method
-  hosts --> orchestration
-```
-
-这套架构遵循五个理念：
 
 - **工作方式与执行环境分离**：只描述一次方法，再为它绑定当下最合适的 Runtime。
 - **一切皆可组合**：Expert、ExpertTeam 与 Flow 都可以成为更大系统中的步骤或 Tool。
@@ -166,7 +139,7 @@ pnpm --filter @pragma/desktop run prepare:electron
 pnpm --filter @pragma/desktop dev
 ```
 
-![Pragma 桌面应用运行截图](./docs/assets/desktop-home.png)
+![Pragma 桌面应用运行截图](./docs/images/pragma_desktop_cn.png)
 
 Desktop 是启动 Mission、选择 Workspace，并使用本地或已连接 Runtime 的最简单入口。
 

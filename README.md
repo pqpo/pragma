@@ -89,16 +89,7 @@ As better models and agent products appear, they can join the system without inv
 
 ## Example: one coding mission, six specialists
 
-```mermaid
-flowchart LR
-  brief["Product idea"] --> ui["Gemini<br/>UI design"]
-  ui --> requirements["Claude Code + Claude Opus 5<br/>requirements discussion"]
-  requirements --> architecture["Codex + GPT-5.6 Sol<br/>technical design"]
-  architecture --> implementation["Codex + GPT-5.6 Terra<br/>implementation and tests"]
-  implementation --> review["Claude Code + DeepSeek V4 Pro<br/>independent code review"]
-  review --> verify["Codex<br/>verify findings and fix"]
-  verify --> learn["Reusable context<br/>facts, experience, and skills"]
-```
+![Pragma desktop app running](./docs/images/pragma_flow_en.png)
 
 This is not merely a chain of model calls:
 
@@ -112,24 +103,6 @@ This is not merely a chain of model calls:
 The entire method—roles, routing, context, handoffs, review gates, and definition of done—can be versioned, evaluated, improved, and shared.
 
 ## Conceptual architecture
-
-```mermaid
-flowchart TB
-  method["AI-native way of working<br/>Portable Pragma DSL"]
-  orchestration["Composable Mission orchestration<br/>Expert · ExpertTeam · nested Flow · Human checkpoints"]
-  context["Progressive context<br/>Intent · knowledge · decisions · artifacts · memory"]
-  execution["Pluggable execution<br/>Any model × any agent harness"]
-  hosts["Open hosts<br/>Pragma Desktop · your agent system · cloud or enterprise platform"]
-
-  method -->|Interpreter + compiler| orchestration
-  context <--> orchestration
-  orchestration --> execution
-  execution --> context
-  hosts --> method
-  hosts --> orchestration
-```
-
-The architecture follows five ideas:
 
 - **Method and execution are separate:** describe the work once, then bind it to the best available runtimes.
 - **Everything is composable:** Experts, Teams, and Flows can become steps or tools inside larger systems.
@@ -166,7 +139,7 @@ pnpm --filter @pragma/desktop run prepare:electron
 pnpm --filter @pragma/desktop dev
 ```
 
-![Pragma desktop app running](./docs/assets/desktop-home.png)
+![Pragma desktop app running](./docs/images/pragma_desktop_en.png)
 
 Desktop is the simplest way to start a mission, choose a workspace, and use local or connected runtimes.
 
