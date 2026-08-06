@@ -264,7 +264,19 @@ function sources(): readonly KnowledgeSourceSnapshot[] {
 
 function digestSources(sourceRevisions: readonly KnowledgeSourceSnapshot[]): string {
   const keys = sourceRevisions
-    .map((source) => `${source.ref.kind}\0${source.ref.id}\0${source.ref.revision}`)
+    .map((source) =>
+      JSON.stringify({
+        kind: source.ref.kind,
+        id: source.ref.id,
+        title: source.title,
+        body: source.body,
+        observedAt: source.observedAt,
+        verified: source.verified,
+        valueScore: source.valueScore,
+        visibility: source.visibility,
+        sensitivity: source.sensitivity,
+      }),
+    )
     .toSorted();
   return createHash("sha256")
     .update(["knowledge-sources", ...keys].join("\0"))

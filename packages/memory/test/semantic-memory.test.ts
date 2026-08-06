@@ -117,11 +117,101 @@ describe("Semantic Memory", () => {
     expect(light.status).toBe("active");
     expect(dark.updatedAt).toBe(now.toISOString());
     expect(light.updatedAt).toBe(now.toISOString());
+    let pendingConflictNotifications = 0;
+    for (;;) {
+      const notification = await module.store.readProjectionNotification();
+      if (notification === undefined) break;
+      pendingConflictNotifications += 1;
+      await module.store.acknowledgeProjectionNotification(notification.id);
+    }
+    expect(pendingConflictNotifications).toBe(2);
     expect(
       (await module.store.listExtractionJobs()).every(
         (job) => job.completedAt === now.toISOString(),
       ),
     ).toBe(true);
+    module.close();
+  });
+
+  it("revises an exclusive fact in place when direct user Evidence authoritatively changes it", async () => {
+    const onProjectionChanged = vi.fn(async () => undefined);
+    const extractor = fakeExtractor((input) => {
+      const previous = input.currentFacts[0];
+      return evidenceText(input).includes("name is b")
+        ? {
+            statement: "The user's name is b.",
+            normalizedValue: "b",
+            predicate: "user.identity.name",
+            ...(previous === undefined
+              ? {}
+              : {
+                  replacementTarget: {
+                    factId: previous.id,
+                    expectedRevision: previous.revision,
+                  },
+                }),
+          }
+        : {
+            statement: "The user's name is a.",
+            normalizedValue: "a",
+            predicate: "user.identity.name",
+          };
+    });
+    const module = await createSemanticMemoryModule({
+      pragmaHome: await temporaryRoot(),
+      extractor,
+      onProjectionChanged,
+    });
+    for (const [executionId, text] of [
+      ["name-a", "My name is a."],
+      ["name-b", "My name is b."],
+    ] as const) {
+      await module.registerExecutionSubjects({
+        executionId,
+        subjectRefs: [ref("pragma.user", "local-user")],
+      });
+      await module.consume(executionEvidence(executionId, text));
+      await module.runBackgroundOnce?.();
+    }
+
+    const [fact] = await module.store.list();
+    expect(await module.store.list()).toHaveLength(1);
+    expect(fact).toMatchObject({ revision: 2, normalizedValue: "b", conflictsWith: [] });
+    expect((await module.store.history(fact!.id)).map((item) => item.normalizedValue)).toEqual([
+      "b",
+      "a",
+    ]);
+    expect(onProjectionChanged).toHaveBeenCalledTimes(2);
+    module.close();
+  });
+
+  it("omits low-score facts from index while retaining deep search recall", async () => {
+    const now = new Date("2028-08-03T18:00:01.000Z");
+    const module = await createSemanticMemoryModule({
+      pragmaHome: await temporaryRoot(),
+      now: () => now,
+      extractor: fakeExtractor(() => ({
+        statement: "The user's archived marker is cobalt-archive.",
+        normalizedValue: "cobalt-archive",
+        confidence: 0.1,
+      })),
+    });
+    await module.registerExecutionSubjects({
+      executionId: "archived-fact",
+      subjectRefs: [ref("pragma.user", "local-user")],
+    });
+    await module.consume(executionEvidence("archived-fact", "Remember cobalt-archive."));
+    await module.runBackgroundOnce?.();
+
+    const registry = new MemoryModuleRegistry();
+    registry.register(module);
+    const context = scopedContext(registry, expertScope("expert-a"));
+    const index = await context.readContext({ id: "semantic/index.md" });
+    expect(index.ok && index.value.content).not.toContain("cobalt-archive");
+    const search = await context.searchContext({ query: "cobalt-archive" });
+    expect(search.ok && search.value.some((item) => item.id.includes("semantic/items/"))).toBe(
+      true,
+    );
     module.close();
   });
 
@@ -352,9 +442,11 @@ describe("Semantic Memory", () => {
   });
 
   it("keeps immutable revision history for correction, verification, and invalidation", async () => {
+    const onProjectionChanged = vi.fn(async () => undefined);
     const module = await createSemanticMemoryModule({
       pragmaHome: await temporaryRoot(),
       extractor: fakeExtractor(),
+      onProjectionChanged,
     });
     await module.registerExecutionSubjects({
       executionId: "execution-governance",
@@ -375,6 +467,7 @@ describe("Semantic Memory", () => {
       },
       now: new Date("2026-08-03T13:00:00.000Z"),
     });
+    await module.runBackgroundOnce?.();
     await expect(
       module.store.verify({
         id: initial.id,
@@ -391,6 +484,7 @@ describe("Semantic Memory", () => {
       reason: "The user explicitly confirmed this preference.",
       now: new Date("2026-08-03T13:01:00.000Z"),
     });
+    await module.runBackgroundOnce?.();
     expect(verified.confidence).toBe(1);
     const invalidated = await module.store.invalidate({
       id: verified.id,
@@ -399,18 +493,22 @@ describe("Semantic Memory", () => {
       reason: "The preference is no longer valid.",
       now: new Date("2026-08-03T13:02:00.000Z"),
     });
+    await module.runBackgroundOnce?.();
     expect(invalidated.status).toBe("invalidated");
     const history = await module.store.history(initial.id);
     expect(history.map((revision) => revision.revision)).toEqual([4, 3, 2, 1]);
     expect(history.at(-1)?.statement).toBe("The user prefers concise Chinese answers.");
+    expect(onProjectionChanged).toHaveBeenCalledTimes(4);
     module.close();
   });
 
   it("enforces restricted principals and purges forgotten fact content and Evidence", async () => {
     const root = await temporaryRoot();
+    const onProjectionChanged = vi.fn(async () => undefined);
     const module = await createSemanticMemoryModule({
       pragmaHome: root,
       extractor: fakeExtractor(),
+      onProjectionChanged,
     });
     await module.registerExecutionSubjects({
       executionId: "execution-private-fact",
@@ -451,6 +549,7 @@ describe("Semantic Memory", () => {
       })),
       now: new Date("2026-08-03T13:00:00.000Z"),
     });
+    await module.runBackgroundOnce?.();
     await expect(
       module.store.tightenAccess({
         id: tightened.id,
@@ -466,6 +565,28 @@ describe("Semantic Memory", () => {
       }),
     ).rejects.toThrow("memory_permission_expansion_denied");
 
+    const dataPath = join(
+      new PragmaPaths({ pragmaHome: root }).memoryModuleDataRoot("pragma.memory.semantic"),
+      "facts.sqlite",
+    );
+    const cleanupFixtureAt = "2026-08-03T13:01:45.000Z";
+    const cleanupFixture = new DatabaseSync(dataPath);
+    cleanupFixture
+      .prepare(
+        `INSERT OR REPLACE INTO memory_index(
+          memory_id, consumer_key, tier, score, recall_count, last_recalled_at, computed_at
+        ) VALUES (?, ?, 'archived', 0.1, 1, ?, ?)`,
+      )
+      .run(initial.id, "pragma.expert\0expert-a", cleanupFixtureAt, cleanupFixtureAt);
+    cleanupFixture
+      .prepare(
+        `INSERT OR REPLACE INTO revision_prune_audit(
+          memory_id, pruned_through_revision, pruned_count, pruned_at
+        ) VALUES (?, 1, 1, ?)`,
+      )
+      .run(initial.id, cleanupFixtureAt);
+    cleanupFixture.close();
+
     await module.store.forget({
       id: tightened.id,
       expectedRevision: tightened.revision,
@@ -473,25 +594,30 @@ describe("Semantic Memory", () => {
       reason: "User requested forgetting.",
       now: new Date("2026-08-03T13:02:00.000Z"),
     });
+    await module.runBackgroundOnce?.();
     expect(await module.store.get(initial.id)).toBeUndefined();
     expect(await module.store.history(initial.id)).toEqual([]);
     expect(await module.store.getEvidence(evidence[0]!.messageId)).toBeUndefined();
+    expect(onProjectionChanged).toHaveBeenCalledTimes(3);
     module.close();
 
-    const database = new DatabaseSync(
-      join(
-        new PragmaPaths({ pragmaHome: root }).memoryModuleDataRoot("pragma.memory.semantic"),
-        "facts.sqlite",
-      ),
-    );
+    const database = new DatabaseSync(dataPath);
     const tombstone = database
       .prepare("SELECT tombstone_json AS value FROM tombstones WHERE id = ?")
       .get(initial.id) as { readonly value: string };
     const governance = database
       .prepare("SELECT COUNT(*) AS count FROM governance_events WHERE fact_id = ?")
       .get(initial.id) as { readonly count: number };
+    const memoryIndex = database
+      .prepare("SELECT COUNT(*) AS count FROM memory_index WHERE memory_id = ?")
+      .get(initial.id) as { readonly count: number };
+    const pruneAudit = database
+      .prepare("SELECT COUNT(*) AS count FROM revision_prune_audit WHERE memory_id = ?")
+      .get(initial.id) as { readonly count: number };
     database.close();
     expect(governance.count).toBe(0);
+    expect(memoryIndex.count).toBe(0);
+    expect(pruneAudit.count).toBe(0);
     expect(tombstone.value).not.toMatch(
       /concise Chinese|statement|normalizedValue|evidenceRefs|Disable recall|User requested forgetting/,
     );
@@ -517,12 +643,12 @@ describe("Semantic Memory", () => {
         "facts.sqlite",
       ),
     );
-    database.exec("PRAGMA user_version = 4");
+    database.exec("PRAGMA user_version = 5");
     database.close();
 
     await expect(
       createSemanticMemoryModule({ pragmaHome: root, extractor: fakeExtractor() }),
-    ).rejects.toThrow("unsupported-state-version:pragma.memory-semantic-store/v4");
+    ).rejects.toThrow("unsupported-state-version:pragma.memory-semantic-store/v5");
   });
 
   it("upgrades historical semantic jobs through the registered migration and keeps a backup", async () => {
@@ -617,6 +743,9 @@ function fakeExtractor(
   customize: (input: SemanticExtractionInput) => Partial<{
     statement: string;
     normalizedValue: string;
+    predicate: string;
+    confidence: number;
+    replacementTarget: { readonly factId: string; readonly expectedRevision: number };
     subjectRefs: readonly MemorySubjectRef[];
     evidenceRefs: readonly string[];
     expiresAt: string;

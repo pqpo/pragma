@@ -27,6 +27,7 @@ export {
 export interface KnowledgeMemoryModule extends MemoryModule {
   readonly store: KnowledgeLearningStore;
   setExtractor(extractor: KnowledgeMemoryExtractor | undefined): Promise<void>;
+  scheduleRoot(rootRef: MemorySubjectRef): Promise<void>;
   interruptExtractionJob(input: {
     readonly id: string;
     readonly expectedRevision: number;
@@ -55,6 +56,22 @@ export async function createKnowledgeMemoryModule(options: {
   const now = options.now ?? (() => new Date());
   let extractor = options.extractor;
   const running = new Map<string, AbortController>();
+
+  const scheduleRoot = async (rootRef: MemorySubjectRef): Promise<void> => {
+    const sources = boundSources(
+      await options.sourceReader.listEligibleSources({
+        rootRef,
+        limit: MAX_SOURCE_REVISIONS,
+        now: now(),
+      }),
+    );
+    if (sources.length === 0) return;
+    await store.schedule({
+      rootRef,
+      sourceDigest: digest("knowledge-sources", ...sources.map(sourceDigestKey).toSorted()),
+      now: now(),
+    });
+  };
 
   return {
     descriptor: {
@@ -116,7 +133,7 @@ export async function createKnowledgeMemoryModule(options: {
         }
         const sourceDigest = digest(
           "knowledge-sources",
-          ...sources.map((source) => sourceKey(source)).toSorted(),
+          ...sources.map(sourceDigestKey).toSorted(),
         );
         if (job.sourceDigest !== sourceDigest) {
           await store.schedule({ rootRef: job.rootRef, sourceDigest, now: now() });
@@ -160,6 +177,7 @@ export async function createKnowledgeMemoryModule(options: {
     async setExtractor(next) {
       extractor = next;
     },
+    scheduleRoot,
     async interruptExtractionJob(input) {
       const interrupted = await store.interruptJob(input);
       running.get(interrupted.id)?.abort();
@@ -245,8 +263,24 @@ export function knowledgeSourceSelectionEligible(
   );
 }
 
+/** Distinguishes exact source revisions when validating extractor references. */
 function sourceKey(source: KnowledgeSourceSnapshot): string {
   return `${source.ref.kind}\0${source.ref.id}\0${source.ref.revision}`;
+}
+
+/** Detects effective source-content changes while ignoring revision-only churn. */
+function sourceDigestKey(source: KnowledgeSourceSnapshot): string {
+  return JSON.stringify({
+    kind: source.ref.kind,
+    id: source.ref.id,
+    title: source.title,
+    body: source.body,
+    observedAt: source.observedAt,
+    verified: source.verified,
+    valueScore: source.valueScore,
+    visibility: source.visibility,
+    sensitivity: source.sensitivity,
+  });
 }
 
 function refKey(ref: MemorySubjectRef): string {

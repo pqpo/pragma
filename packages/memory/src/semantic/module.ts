@@ -47,6 +47,8 @@ export async function createSemanticMemoryModule(
     readonly pragmaHome?: string | undefined;
     readonly extractor?: SemanticMemoryExtractor | undefined;
     readonly extractionSettings?: Pick<MemoryExtractionSettingsStore, "get"> | undefined;
+    readonly onProjectionChanged?:
+      ((input: { readonly rootRef: MemorySubjectRef }) => Promise<void>) | undefined;
     readonly now?: (() => Date) | undefined;
   } = {},
 ): Promise<SemanticMemoryModule> {
@@ -54,6 +56,12 @@ export async function createSemanticMemoryModule(
   const now = options.now ?? (() => new Date());
   let extractor = options.extractor;
   const running = new Map<string, AbortController>();
+  const drainProjectionNotification = async (): Promise<void> => {
+    const notification = await store.readProjectionNotification();
+    if (notification === undefined) return;
+    await options.onProjectionChanged?.({ rootRef: notification.rootRef });
+    await store.acknowledgeProjectionNotification(notification.id);
+  };
 
   return {
     descriptor: {
@@ -97,6 +105,7 @@ export async function createSemanticMemoryModule(
       return {};
     },
     async runBackgroundOnce() {
+      await drainProjectionNotification();
       if (extractor === undefined) return;
       const job = await store.claimDueJob(now());
       if (job === undefined) return;
@@ -141,11 +150,33 @@ export async function createSemanticMemoryModule(
           attribution.rootRef,
           ...attribution.producerRefs,
         ]);
+        const allowedSubjectKeys = new Set(allowedSubjectRefs.map(refKey));
+        const factsBeforeExtraction = await store.list();
+        const currentFacts = boundCurrentFacts(
+          factsBeforeExtraction
+            .filter(
+              (fact) =>
+                fact.status === "active" &&
+                fact.conflictMode === "exclusive" &&
+                fact.subjectRefs.every((ref) => allowedSubjectKeys.has(refKey(ref))),
+            )
+            .map((fact) => ({
+              id: fact.id,
+              revision: fact.revision,
+              statement: fact.statement,
+              subjectRefs: fact.subjectRefs,
+              predicate: fact.predicate,
+              normalizedValue: fact.normalizedValue,
+              conflictMode: fact.conflictMode,
+              observedAt: fact.observedAt,
+            })),
+        );
         const input = SemanticExtractionInputSchema.parse({
-          schemaVersion: "pragma.memory-semantic-extraction-input/v2",
+          schemaVersion: "pragma.memory-semantic-extraction-input/v3",
           jobId: job.id,
           executionId: job.executionId,
           allowedSubjectRefs,
+          currentFacts,
           evidence,
           omittedEvidence,
         });
@@ -170,6 +201,7 @@ export async function createSemanticMemoryModule(
           extractor: extracted.provenance,
           now: now(),
         });
+        await drainProjectionNotification();
       } catch (error) {
         await store.fail({
           job,
@@ -214,6 +246,16 @@ export async function createSemanticMemoryModule(
       store.close();
     },
   };
+}
+
+function boundCurrentFacts<T>(facts: readonly T[]): readonly T[] {
+  const selected: T[] = [];
+  for (const fact of facts.slice(0, 100)) {
+    const next = [...selected, fact];
+    if (Buffer.byteLength(JSON.stringify(next)) > 24_000) break;
+    selected.push(fact);
+  }
+  return selected;
 }
 
 function conversationKey(ref: MemorySubjectRef): string {

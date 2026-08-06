@@ -25,6 +25,9 @@ ExpertSession、Runtime ownership 和 Usage 统计。
 
 启动时只预加载最多 2KB guide 和 6KB overview。各 Module 获得最小公平配额；超预算只截断热点索引。
 `listContext` 不枚举所有详情，普通搜索不返回 Evidence，模型根据详情中的精确引用按需核验 Evidence。
+INDEX 只包含当前 binding 的 hot Episode，并受 4 KiB 硬预算约束。低价值、长期未更新或未召回的 Episode
+进入 archived 层，不再出现在 summary/index/overview，但仍可通过 literal Search 或精确 item Read 深度
+召回；成功 Search/Read 会参与下一次热点评分。
 
 Episodic Module 是该协议的首个生产实现。feed consumer 只聚合封闭的安全 Evidence v2 并持久入队，
 随后推进 checkpoint；Module 后台 worker 独立调用 Host 注入的 extractor。一个根 Execution 对应一个

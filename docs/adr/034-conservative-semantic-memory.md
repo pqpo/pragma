@@ -23,9 +23,16 @@ Subject 使用 allowlist：Desktop 为每个普通 Mission Execution 幂等登�
 Project；根 Expert/ExpertTeam/Flow 与 producer Expert 来自 Evidence attribution。Curator 只能选择这组
 引用。Repository subject 暂不发现或登记。
 
-同 subject、predicate、normalizedValue 的观察合并 Evidence；同 subject/predicate 且声明 exclusive 的
-不同值双向标记 `conflictsWith`。冲突事实并存，更高置信度不会自动 supersede 另一条事实。失效、过期和
-superseded 投影不进入默认 recall，冲突事实则全部暴露并要求核验 Evidence。
+同 subject、predicate、normalizedValue 的观察合并 Evidence。对同 subject/predicate 的 exclusive
+事实，Curator 可以引用当前 Fact id/revision 声明 replacement；Host 只有在新 Evidence 包含直接 user
+消息、subject/predicate 完全一致、值确实变化且 revision CAS 成功时，才使用原 Fact id 创建下一
+revision。替换后的当前 revision 只引用新值 Evidence，并清除旧验证状态；旧值保留在历史 revision。
+不满足权威条件的不同值仍双向标记 `conflictsWith`，不能只凭更高置信度覆盖。失效、过期和 superseded
+投影不进入默认 recall，冲突事实全部暴露并要求核验 Evidence。
+
+Semantic Context 的热点 INDEX 与深度召回分离。`summary.md`、`index.md` 和 federated overview 只使用
+当前 binding 的 hot Fact；literal Search 和精确 item Read 仍可访问 archived Fact，并在成功命中后更新
+该 binding 的召回时间。List 只枚举分层入口，不枚举 Fact 详情。
 
 治理 mutation 使用 revision CAS。同一 fact id 的更正、验证和失效都生成新的不可变 revision、保留旧
 快照并写原子审计；更正不会改写 subject、visibility、sensitivity 或 binding。新事实默认只允许根资产
@@ -38,6 +45,7 @@ Mission，也不升级 Core Execution 协议。
 ## Consequences
 
 - Semantic 与 Episodic 可独立失败、重试、诊断和演进；
+- 用户直接表达的独占事实变化可以收敛为一个稳定 identity，同时保留完整可审计历史；
 - 当前事实具有可解释冲突和完整 revision history，不以自动覆盖换取表面简洁；
 - local User 是安装级身份，跨设备账户合并必须由后续显式迁移解决；
 - Repository subject、主动排序和管理中心 UI 继续属于后续阶段；

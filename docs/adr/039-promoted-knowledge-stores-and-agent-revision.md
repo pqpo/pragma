@@ -75,6 +75,11 @@ Store。
 只提交包含已提炼变化的 revision prompt。Store Revision Agent 读取当前 Store，决定需要修改哪些
 `summary/index/items` 文件并产生提案。用户批准后更新当前 Store revision。
 
+Semantic Fact 原位替换完成后必须重新按当前 source revisions 计算 digest 并持久调度 Knowledge learning；
+已有 Store binding 继续走通用 revision request，而不是创建第二个初始化 Candidate。修订 Agent 必须按
+稳定 normalized key 修改或删除旧值，不能把 replacement 当成一条无关知识追加。Evidence-only 合并且有效
+语义未变化时不创建重复修订任务。
+
 匹配不唯一时必须由用户选择目标 Store；不得依靠标题相似度自动改写多个知识库。Store 修订完成后仍不
 保留对原 Memory 或 Evidence 的读取依赖。
 

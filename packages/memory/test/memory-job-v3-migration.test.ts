@@ -20,6 +20,58 @@ describe("Memory extraction job v3 migration", () => {
   it.each([
     {
       moduleId: "pragma.memory.episodic",
+      file: "episodes.sqlite",
+      open: createEpisodicMemoryModule,
+    },
+    {
+      moduleId: "pragma.memory.semantic",
+      file: "facts.sqlite",
+      open: createSemanticMemoryModule,
+    },
+  ] as const)(
+    "upgrades $moduleId data v3 with a backed-up hot/archive index",
+    async ({ moduleId, file, open }) => {
+      const root = await temporaryRoot();
+      const initial = await open({ pragmaHome: root });
+      initial.close();
+      const dataPath = join(
+        new PragmaPaths({ pragmaHome: root }).memoryModuleDataRoot(moduleId),
+        file,
+      );
+      const historical = new DatabaseSync(dataPath);
+      historical.exec(`
+      DROP TABLE memory_index;
+      DROP TABLE revision_prune_audit;
+      ${moduleId === "pragma.memory.semantic" ? "DROP TABLE projection_notifications;" : ""}
+      PRAGMA user_version = 3;
+    `);
+      historical.close();
+
+      const migratedModule = await open({ pragmaHome: root });
+      const migrated = new DatabaseSync(dataPath);
+      expect(
+        (migrated.prepare("PRAGMA user_version").get() as { user_version: number }).user_version,
+      ).toBe(4);
+      expect(
+        migrated
+          .prepare(
+            "SELECT 1 AS found FROM sqlite_master WHERE type='table' AND name='memory_index'",
+          )
+          .get(),
+      ).toEqual({ found: 1 });
+      migrated.close();
+      const backup = new DatabaseSync(`${dataPath}.v3.backup`);
+      expect(
+        (backup.prepare("PRAGMA user_version").get() as { user_version: number }).user_version,
+      ).toBe(3);
+      backup.close();
+      migratedModule.close();
+    },
+  );
+
+  it.each([
+    {
+      moduleId: "pragma.memory.episodic",
       count: 6,
       fixtureKey: "episodic",
       open: createEpisodicMemoryModule,

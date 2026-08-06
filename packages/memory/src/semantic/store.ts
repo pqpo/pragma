@@ -6,6 +6,7 @@ import { DatabaseSync } from "node:sqlite";
 import { PragmaPaths, withFileLock } from "@pragma/core";
 import {
   MemoryEvidenceEnvelopeSchema,
+  MemorySubjectRefSchema,
   SemanticFactSchema,
   type MemoryEvidenceEnvelope,
   type MemoryRevisionBinding,
@@ -47,6 +48,7 @@ import {
   type MemoryEvidenceOmissionStats,
 } from "../storage/bounded-evidence.ts";
 import { DEFAULT_MEMORY_STORAGE_POLICY } from "../storage/memory-storage-policy.ts";
+import { hotFacts, recordMemoryRecall } from "../storage/memory-index.ts";
 import { SEMANTIC_DATA_STORAGE_MIGRATIONS } from "../storage/migrations/semantic-data/index.ts";
 import { SEMANTIC_JOB_STORAGE_MIGRATIONS } from "../storage/migrations/semantic-jobs/index.ts";
 import {
@@ -132,6 +134,10 @@ export interface SemanticMemoryStore {
   hasAppliedJob(job: SemanticExtractionJob): Promise<boolean>;
   completePreviouslyApplied(job: SemanticExtractionJob, now: Date): Promise<void>;
   completeRetained(input: SemanticFactMaterialization): Promise<readonly SemanticFact[]>;
+  readProjectionNotification(): Promise<
+    { readonly id: string; readonly rootRef: MemorySubjectRef } | undefined
+  >;
+  acknowledgeProjectionNotification(id: string): Promise<void>;
   completeRejected(
     job: SemanticExtractionJob,
     reason: SemanticRejectionReason,
@@ -238,7 +244,7 @@ export async function createSemanticMemoryStore(
           database: data,
           databasePath: dataPath,
           family: "pragma.memory-semantic-store",
-          targetVersion: 3,
+          targetVersion: 4,
           migrations: SEMANTIC_DATA_STORAGE_MIGRATIONS,
         });
       }
@@ -332,6 +338,7 @@ export async function createSemanticMemoryStore(
       const mutable = new Set([next.id]);
       recomputeConflicts(data, mutable, input.now);
       next = readRequiredFact(data, next.id);
+      enqueueFactProjectionNotifications(data, next, input.now);
       const event = SemanticGovernanceEventSchema.parse({
         schemaVersion: "pragma.memory-semantic-governance-event/v1",
         id: randomUUID(),
@@ -649,6 +656,7 @@ export async function createSemanticMemoryStore(
       if (!isCurrentRunningJob(state, input.job)) return [];
       const evidenceById = new Map(input.evidence.map((item) => [item.messageId, item]));
       const touched = new Set<string>();
+      const effectiveTouched = new Set<string>();
       data.exec("BEGIN IMMEDIATE;");
       try {
         if (
@@ -660,12 +668,19 @@ export async function createSemanticMemoryStore(
         } else {
           for (const candidate of input.candidates) {
             const subjects = uniqueRefs(candidate.subjectRefs);
-            let existing = findEquivalentFact(data, subjects, candidate);
             const cited = candidate.evidenceRefs.map((id) => {
               const envelope = evidenceById.get(id);
               if (envelope === undefined) throw new Error(`semantic_evidence_ref_invalid:${id}`);
               return envelope;
             });
+            const replacement = resolveAuthoritativeReplacement(data, candidate, subjects, cited);
+            let existing = replacement ?? findEquivalentFact(data, subjects, candidate);
+            const effectiveChange =
+              existing === undefined ||
+              replacement !== undefined ||
+              existing.statement !== candidate.statement ||
+              existing.predicate !== candidate.predicate ||
+              existing.normalizedValue !== candidate.normalizedValue;
             const observedAt = cited
               .map((item) => item.occurredAt)
               .toSorted()
@@ -688,18 +703,33 @@ export async function createSemanticMemoryStore(
               predicate: candidate.predicate,
               normalizedValue: candidate.normalizedValue,
               conflictMode: candidate.conflictMode,
-              confidence: Math.max(existing?.confidence ?? 0, candidate.confidence),
+              confidence:
+                replacement === undefined
+                  ? Math.max(existing?.confidence ?? 0, candidate.confidence)
+                  : candidate.confidence,
               observedAt:
-                existing === undefined
+                existing === undefined || replacement !== undefined
                   ? observedAt
                   : [existing.observedAt, observedAt].toSorted()[0],
-              ...(existing?.verifiedAt === undefined ? {} : { verifiedAt: existing.verifiedAt }),
-              ...optionalTime("reviewAt", earliestTime(existing?.reviewAt, candidate.reviewAt)),
-              ...optionalTime("expiresAt", earliestTime(existing?.expiresAt, candidate.expiresAt)),
-              evidenceRefs: uniqueStrings([
-                ...(existing?.evidenceRefs ?? []),
-                ...candidate.evidenceRefs,
-              ]),
+              ...(replacement === undefined && existing?.verifiedAt !== undefined
+                ? { verifiedAt: existing.verifiedAt }
+                : {}),
+              ...optionalTime(
+                "reviewAt",
+                replacement === undefined
+                  ? earliestTime(existing?.reviewAt, candidate.reviewAt)
+                  : candidate.reviewAt,
+              ),
+              ...optionalTime(
+                "expiresAt",
+                replacement === undefined
+                  ? earliestTime(existing?.expiresAt, candidate.expiresAt)
+                  : candidate.expiresAt,
+              ),
+              evidenceRefs:
+                replacement === undefined
+                  ? uniqueStrings([...(existing?.evidenceRefs ?? []), ...candidate.evidenceRefs])
+                  : uniqueStrings(candidate.evidenceRefs),
               conflictsWith: existing?.conflictsWith ?? [],
               supersedes:
                 priorRevision === undefined
@@ -717,6 +747,7 @@ export async function createSemanticMemoryStore(
             });
             persistFactRevision(data, record);
             touched.add(record.id);
+            if (effectiveChange) effectiveTouched.add(record.id);
             for (const envelope of cited) {
               data
                 .prepare(
@@ -739,6 +770,18 @@ export async function createSemanticMemoryStore(
               input.job.terminalMessageId,
               input.now.toISOString(),
             );
+          if (effectiveTouched.size > 0) {
+            data
+              .prepare(
+                `INSERT OR IGNORE INTO projection_notifications(id, root_ref_json, created_at)
+                 VALUES (?, ?, ?)`,
+              )
+              .run(
+                `${input.job.id}:${input.job.inputWatermark}`,
+                JSON.stringify(input.rootRef),
+                input.now.toISOString(),
+              );
+          }
           data.exec("COMMIT;");
         }
       } catch (error) {
@@ -754,6 +797,21 @@ export async function createSemanticMemoryStore(
         throw error;
       }
       return [...touched].map((id) => readRequiredFact(data, id));
+    },
+
+    async readProjectionNotification() {
+      const row = data
+        .prepare(
+          "SELECT id, root_ref_json AS rootRefJson FROM projection_notifications ORDER BY created_at, id LIMIT 1",
+        )
+        .get() as { readonly id: string; readonly rootRefJson: string } | undefined;
+      return row === undefined
+        ? undefined
+        : { id: row.id, rootRef: MemorySubjectRefSchema.parse(JSON.parse(row.rootRefJson)) };
+    },
+
+    async acknowledgeProjectionNotification(id) {
+      data.prepare("DELETE FROM projection_notifications WHERE id = ?").run(id);
     },
 
     async completeRejected(job, reason, now) {
@@ -915,6 +973,7 @@ export async function createSemanticMemoryStore(
 
     async maintain(now) {
       const result = maintainJobs(state, now);
+      maintainSemanticData(data, now);
       const cutoff = now.getTime() - DEFAULT_MEMORY_STORAGE_POLICY.jobRecordRetentionMs;
       await Promise.all([
         ...SEMANTIC_DATA_STORAGE_MIGRATIONS.map((step) =>
@@ -961,19 +1020,26 @@ export async function createSemanticMemoryStore(
 
     async listForRecall(scope, now) {
       const access = recallPredicate("current_facts", scope, now);
-      return readFactRows(
-        data
-          .prepare(
-            `SELECT record_json AS recordJson FROM current_facts WHERE ${access.sql}
+      return hotFacts(
+        data,
+        readFactRows(
+          data
+            .prepare(
+              `SELECT record_json AS recordJson FROM current_facts WHERE ${access.sql}
              ORDER BY json_extract(record_json, '$.verifiedAt') IS NOT NULL DESC,
                json_extract(record_json, '$.confidence') DESC, updated_at DESC, id`,
-          )
-          .all(...access.parameters),
+            )
+            .all(...access.parameters),
+        ),
+        scope,
+        now,
       );
     },
 
     async searchForRecall(scope, query, limit, now) {
-      return searchFacts(data, scope, query, limit, now);
+      const records = searchFacts(data, scope, query, limit, now);
+      for (const record of records) recordMemoryRecall(data, record.id, scope, now);
+      return records;
     },
 
     async getForRecall(scope, id, now) {
@@ -983,7 +1049,9 @@ export async function createSemanticMemoryStore(
           `SELECT record_json AS recordJson FROM current_facts WHERE id = ? AND ${access.sql}`,
         )
         .get(id, ...access.parameters) as { readonly recordJson: string } | undefined;
-      return row === undefined ? undefined : SemanticFactSchema.parse(JSON.parse(row.recordJson));
+      if (row === undefined) return undefined;
+      recordMemoryRecall(data, id, scope, now);
+      return SemanticFactSchema.parse(JSON.parse(row.recordJson));
     },
 
     async getEvidenceForRecall(scope, messageId, now) {
@@ -1011,7 +1079,7 @@ export async function createSemanticMemoryStore(
     },
 
     async revise(input) {
-      return governanceMutation("revise", input, (current) => {
+      const record = governanceMutation("revise", input, (current) => {
         const timestamp = input.now.toISOString();
         return SemanticFactSchema.parse({
           ...current,
@@ -1021,10 +1089,11 @@ export async function createSemanticMemoryStore(
           updatedAt: timestamp,
         });
       });
+      return record;
     },
 
     async verify(input) {
-      return governanceMutation("verify", input, (current) => ({
+      const record = governanceMutation("verify", input, (current) => ({
         ...current,
         revision: current.revision + 1,
         confidence: 1,
@@ -1032,10 +1101,11 @@ export async function createSemanticMemoryStore(
         supersedes: appendRevisionRef(current.supersedes, current.id, current.revision),
         updatedAt: input.now.toISOString(),
       }));
+      return record;
     },
 
     async invalidate(input) {
-      return governanceMutation("invalidate", input, (current) => ({
+      const record = governanceMutation("invalidate", input, (current) => ({
         ...current,
         revision: current.revision + 1,
         status: "invalidated",
@@ -1043,6 +1113,7 @@ export async function createSemanticMemoryStore(
         supersedes: appendRevisionRef(current.supersedes, current.id, current.revision),
         updatedAt: input.now.toISOString(),
       }));
+      return record;
     },
 
     async tightenAccess(input) {
@@ -1070,9 +1141,12 @@ export async function createSemanticMemoryStore(
         if (current.revision !== input.expectedRevision) {
           throw revisionConflict(input.expectedRevision, current.revision);
         }
+        enqueueFactProjectionNotifications(data, current, input.now);
         data.prepare("DELETE FROM fact_evidence WHERE fact_id = ?").run(input.id);
         data.prepare("DELETE FROM fact_revisions WHERE fact_id = ?").run(input.id);
         data.prepare("DELETE FROM governance_events WHERE fact_id = ?").run(input.id);
+        data.prepare("DELETE FROM memory_index WHERE memory_id = ?").run(input.id);
+        data.prepare("DELETE FROM revision_prune_audit WHERE memory_id = ?").run(input.id);
         data.prepare("DELETE FROM current_facts WHERE id = ?").run(input.id);
         data
           .prepare(
@@ -1153,6 +1227,130 @@ export async function createSemanticMemoryStore(
   };
 }
 
+function maintainSemanticData(database: DatabaseSync, now: Date): void {
+  const maxRevisions = DEFAULT_MEMORY_STORAGE_POLICY.memoryMaxFullRevisions;
+  const ids = database.prepare("SELECT id FROM current_facts").all() as unknown as readonly {
+    readonly id: string;
+  }[];
+  for (const { id } of ids) {
+    const pruned = database
+      .prepare(
+        `SELECT COUNT(*) AS count, MAX(revision) AS throughRevision FROM fact_revisions
+         WHERE fact_id = ? AND revision NOT IN (
+           SELECT revision FROM fact_revisions WHERE fact_id = ? ORDER BY revision DESC LIMIT ?
+         )`,
+      )
+      .get(id, id, maxRevisions) as {
+      readonly count: number;
+      readonly throughRevision: number | null;
+    };
+    if (pruned.count > 0 && pruned.throughRevision !== null) {
+      database
+        .prepare(
+          `INSERT INTO revision_prune_audit(memory_id, pruned_through_revision, pruned_count, pruned_at)
+           VALUES (?, ?, ?, ?)
+           ON CONFLICT(memory_id) DO UPDATE SET
+             pruned_through_revision = MAX(revision_prune_audit.pruned_through_revision, excluded.pruned_through_revision),
+             pruned_count = revision_prune_audit.pruned_count + excluded.pruned_count,
+             pruned_at = excluded.pruned_at`,
+        )
+        .run(id, pruned.throughRevision, pruned.count, now.toISOString());
+    }
+    database
+      .prepare(
+        `DELETE FROM fact_revisions WHERE fact_id = ? AND revision NOT IN (
+          SELECT revision FROM fact_revisions WHERE fact_id = ? ORDER BY revision DESC LIMIT ?
+        )`,
+      )
+      .run(id, id, maxRevisions);
+  }
+  const removed = new Set<string>();
+  while (semanticOverLimit(database)) {
+    const row = database
+      .prepare(
+        `SELECT f.id, f.revision FROM current_facts f
+         LEFT JOIN memory_index i ON i.memory_id = f.id
+         GROUP BY f.id
+         ORDER BY CASE WHEN SUM(CASE WHEN i.tier = 'hot' THEN 1 ELSE 0 END) > 0 THEN 1 ELSE 0 END,
+           COALESCE(MAX(i.score), 0), COALESCE(MAX(i.last_recalled_at), ''), f.updated_at, f.id
+         LIMIT 1`,
+      )
+      .get() as { readonly id: string; readonly revision: number } | undefined;
+    if (row === undefined) break;
+    database.exec("BEGIN IMMEDIATE;");
+    try {
+      enqueueFactProjectionNotifications(database, readRequiredFact(database, row.id), now);
+      database.prepare("DELETE FROM fact_evidence WHERE fact_id = ?").run(row.id);
+      database.prepare("DELETE FROM fact_revisions WHERE fact_id = ?").run(row.id);
+      database.prepare("DELETE FROM governance_events WHERE fact_id = ?").run(row.id);
+      database.prepare("DELETE FROM memory_index WHERE memory_id = ?").run(row.id);
+      database.prepare("DELETE FROM current_facts WHERE id = ?").run(row.id);
+      database
+        .prepare(
+          "INSERT OR REPLACE INTO tombstones(id, last_revision, forgotten_at, tombstone_json) VALUES (?, ?, ?, ?)",
+        )
+        .run(
+          row.id,
+          row.revision,
+          now.toISOString(),
+          JSON.stringify({
+            schemaVersion: "pragma.memory-tombstone/v1",
+            module: "semantic",
+            id: row.id,
+            lastRevision: row.revision,
+            forgottenAt: now.toISOString(),
+            reasonCode: "storage-capacity",
+          }),
+        );
+      database
+        .prepare(
+          "DELETE FROM evidence WHERE message_id NOT IN (SELECT evidence_id FROM fact_evidence)",
+        )
+        .run();
+      database.exec("COMMIT;");
+      removed.add(row.id);
+    } catch (error) {
+      rollback(database);
+      throw error;
+    }
+  }
+  if (removed.size > 0) recomputeConflicts(database, new Set(), now);
+}
+
+function semanticOverLimit(database: DatabaseSync): boolean {
+  const row = database
+    .prepare(
+      `SELECT COUNT(*) AS records,
+        COALESCE(SUM(length(CAST(record_json AS BLOB))), 0) +
+        COALESCE((SELECT SUM(length(CAST(record_json AS BLOB))) FROM fact_revisions), 0) +
+        COALESCE((SELECT SUM(length(CAST(envelope_json AS BLOB))) FROM evidence), 0) AS bytes
+       FROM current_facts`,
+    )
+    .get() as unknown as { readonly records: number; readonly bytes: number };
+  return (
+    row.records > DEFAULT_MEMORY_STORAGE_POLICY.semanticMaxRecords ||
+    row.bytes > DEFAULT_MEMORY_STORAGE_POLICY.semanticMaxLogicalBytes
+  );
+}
+
+function enqueueFactProjectionNotifications(
+  database: DatabaseSync,
+  fact: SemanticFact,
+  now: Date,
+): void {
+  const insert = database.prepare(
+    `INSERT OR IGNORE INTO projection_notifications(id, root_ref_json, created_at)
+     VALUES (?, ?, ?)`,
+  );
+  for (const rootRef of fact.rootRefs) {
+    insert.run(
+      `fact:${fact.id}:${fact.revision}:${subjectKey([rootRef])}`,
+      JSON.stringify(rootRef),
+      now.toISOString(),
+    );
+  }
+}
+
 export function semanticFactId(jobId: string, candidate: SemanticFactCandidate): string {
   return `fact-${createHash("sha256")
     .update(
@@ -1177,7 +1375,7 @@ function conversationKey(ref: MemorySubjectRef): string {
 
 function initializeData(database: DatabaseSync): void {
   const version = readDatabaseVersion(database);
-  if (version > 3) {
+  if (version > 4) {
     database.close();
     throw new Error(`unsupported-state-version:pragma.memory-semantic-store/v${version}`);
   }
@@ -1230,11 +1428,35 @@ function initializeData(database: DatabaseSync): void {
       forgotten_at TEXT NOT NULL,
       tombstone_json TEXT NOT NULL
     );
+    CREATE TABLE IF NOT EXISTS memory_index (
+      memory_id TEXT NOT NULL,
+      consumer_key TEXT NOT NULL,
+      tier TEXT NOT NULL CHECK (tier IN ('hot', 'archived')),
+      score REAL NOT NULL,
+      recall_count INTEGER NOT NULL DEFAULT 0,
+      last_recalled_at TEXT,
+      computed_at TEXT NOT NULL,
+      PRIMARY KEY (memory_id, consumer_key),
+      FOREIGN KEY (memory_id) REFERENCES current_facts(id) ON DELETE CASCADE
+    );
+    CREATE INDEX IF NOT EXISTS memory_index_consumer_tier_score
+      ON memory_index(consumer_key, tier, score DESC, memory_id);
+    CREATE TABLE IF NOT EXISTS revision_prune_audit (
+      memory_id TEXT PRIMARY KEY,
+      pruned_through_revision INTEGER NOT NULL,
+      pruned_count INTEGER NOT NULL,
+      pruned_at TEXT NOT NULL
+    );
+    CREATE TABLE IF NOT EXISTS projection_notifications (
+      id TEXT PRIMARY KEY,
+      root_ref_json TEXT NOT NULL,
+      created_at TEXT NOT NULL
+    );
   `);
-  if (version !== 0 && version !== 3) {
+  if (version !== 0 && version !== 4) {
     throw new Error(`missing-adjacent-migration:pragma.memory-semantic-store/v${version}`);
   }
-  database.exec("PRAGMA user_version = 3;");
+  database.exec("PRAGMA user_version = 4;");
 }
 
 function initializeState(database: DatabaseSync): void {
@@ -1691,6 +1913,37 @@ function findEquivalentFact(
   ).find((fact) => subjectKey(fact.subjectRefs) === subjectKey(subjects));
 }
 
+function resolveAuthoritativeReplacement(
+  database: DatabaseSync,
+  candidate: SemanticFactCandidate,
+  subjects: readonly MemorySubjectRef[],
+  cited: readonly MemoryEvidenceEnvelope[],
+): SemanticFact | undefined {
+  const target = candidate.replacementTarget;
+  if (target === undefined) return undefined;
+  const current = readRequiredFact(database, target.factId);
+  if (current.revision !== target.expectedRevision) {
+    throw revisionConflict(target.expectedRevision, current.revision);
+  }
+  if (
+    current.status !== "active" ||
+    current.conflictMode !== "exclusive" ||
+    candidate.conflictMode !== "exclusive" ||
+    current.predicate !== candidate.predicate ||
+    current.normalizedValue === candidate.normalizedValue ||
+    subjectKey(current.subjectRefs) !== subjectKey(subjects)
+  ) {
+    throw new Error("semantic_replacement_target_invalid");
+  }
+  const hasDirectUserEvidence = cited.some((envelope) => {
+    if (envelope.schemaRef !== "pragma.memory.execution-message/v2") return false;
+    const payload = envelope.payload as { readonly message?: { readonly role?: unknown } };
+    return payload.message?.role === "user";
+  });
+  if (!hasDirectUserEvidence) throw new Error("semantic_replacement_not_authoritative");
+  return current;
+}
+
 function assertNoDuplicate(database: DatabaseSync, fact: SemanticFact): void {
   const duplicate = findEquivalentFact(database, fact.subjectRefs, fact);
   if (
@@ -1730,19 +1983,20 @@ function recomputeConflicts(database: DatabaseSync, mutable: ReadonlySet<string>
     const conflictsWith = [...desired.get(fact.id)!].toSorted();
     if (sameStrings(fact.conflictsWith, conflictsWith)) continue;
     if (mutable.has(fact.id)) {
-      replaceCurrentRevision(database, SemanticFactSchema.parse({ ...fact, conflictsWith }));
+      const updated = SemanticFactSchema.parse({ ...fact, conflictsWith });
+      replaceCurrentRevision(database, updated);
+      enqueueFactProjectionNotifications(database, updated, now);
       continue;
     }
-    persistFactRevision(
-      database,
-      SemanticFactSchema.parse({
-        ...fact,
-        revision: fact.revision + 1,
-        conflictsWith,
-        supersedes: appendRevisionRef(fact.supersedes, fact.id, fact.revision),
-        updatedAt: now.toISOString(),
-      }),
-    );
+    const updated = SemanticFactSchema.parse({
+      ...fact,
+      revision: fact.revision + 1,
+      conflictsWith,
+      supersedes: appendRevisionRef(fact.supersedes, fact.id, fact.revision),
+      updatedAt: now.toISOString(),
+    });
+    persistFactRevision(database, updated);
+    enqueueFactProjectionNotifications(database, updated, now);
   }
 }
 
