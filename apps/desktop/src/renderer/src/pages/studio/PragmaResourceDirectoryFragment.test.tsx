@@ -131,7 +131,12 @@ describe("expert team editor", () => {
       },
       spec: {
         coordinator: { ref: "expert:0000000000000001" },
-        members: [{ ref: "expert:0000000000000002" }],
+        members: [
+          { ref: "expert:0000000000000002" },
+          { ref: "expert:0000000000000003" },
+          { ref: "expert:0000000000000004" },
+          { ref: "expert:0000000000000005" },
+        ],
         instructions,
         delegation: {},
       },
@@ -177,7 +182,12 @@ describe("PragmaResourceDirectoryFragment", () => {
       },
       spec: {
         coordinator: { ref: "expert:0000000000000001" },
-        members: [{ ref: "expert:0000000000000002" }],
+        members: [
+          { ref: "expert:0000000000000002" },
+          { ref: "expert:0000000000000003" },
+          { ref: "expert:0000000000000004" },
+          { ref: "expert:0000000000000005" },
+        ],
         delegation: {},
       },
     });
@@ -200,10 +210,12 @@ describe("PragmaResourceDirectoryFragment", () => {
 
     expect(html).toContain("Quality team");
     expect(html).toContain('class="expert-team-card"');
-    expect(html).toContain("Experts available to this coordinator during delegation.");
+    expect(html).toContain("Expert members");
+    expect(html).toContain("+2");
     expect(html).not.toContain("expert-team-card-stats");
     expect(html).not.toContain("Coordinator");
     expect(html).not.toContain("Max concurrency");
+    expect(html).not.toContain(">Configured</em>");
     expect(html.indexOf('class="expert-team-card-members"')).toBeLessThan(
       html.indexOf('class="expert-team-card-tags"'),
     );

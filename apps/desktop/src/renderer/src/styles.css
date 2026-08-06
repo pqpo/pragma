@@ -6618,6 +6618,11 @@ html.is-resizing-sidebar * {
   gap: 7px;
 }
 
+.expert-team-card-members > span {
+  max-height: 53px;
+  overflow: hidden;
+}
+
 .expert-card-tags em,
 .expert-team-card-tags em,
 .expert-team-card-members em {
@@ -6668,7 +6673,11 @@ html.is-resizing-sidebar * {
 }
 
 .expert-team-card-members em {
+  max-width: calc(50% - 4px);
+  overflow: hidden;
   background: var(--surface);
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 @container expert-directory (max-width: 720px) {

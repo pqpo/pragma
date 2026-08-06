@@ -153,8 +153,47 @@ describe("ExpertDirectoryFragment", () => {
     expect(html).not.toContain("directory-filter");
     expect(html).not.toContain("expert-card-metrics");
     expect(html).not.toContain("Model");
+    expect(html).not.toContain('class="expert-source-chip"');
     expect(html.indexOf('class="expert-card-scope"')).toBeLessThan(
       html.indexOf('class="expert-card-tags"'),
+    );
+  });
+
+  it("keeps the built-in chip only for built-in experts", () => {
+    const html = renderToStaticMarkup(
+      <ExpertDirectoryFragment
+        experts={[{ ...expert, origin: "built-in", readOnly: true, model: null }]}
+        onCreate={() => undefined}
+        onOpen={() => undefined}
+      />,
+    );
+
+    expect(html).toContain('class="expert-source-chip"');
+    expect(html).toContain("Built-in");
+  });
+
+  it("keeps the built-in Pragma expert first", () => {
+    const html = renderToStaticMarkup(
+      <ExpertDirectoryFragment
+        experts={[
+          expert,
+          {
+            ...expert,
+            ref: "expert:0000000000pragma",
+            id: "0000000000pragma",
+            name: "Pragma",
+            origin: "built-in",
+            readOnly: true,
+            model: null,
+          },
+        ]}
+        onCreate={() => undefined}
+        onOpen={() => undefined}
+      />,
+    );
+
+    expect(html.indexOf("expert:0000000000pragma")).toBeLessThan(
+      html.indexOf("expert:test_expert"),
     );
   });
 });

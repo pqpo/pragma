@@ -31,7 +31,10 @@ import { StudioConfirmationDialog } from "./StudioDialog.tsx";
 import { isBuiltInExpert, type ExpertRecord } from "./studio-model.ts";
 import { errorMessage } from "../../lib/errors.ts";
 import { runtimeDisplayName } from "../../lib/runtime-display.ts";
-import { localizeSystemExpertCopy } from "../../lib/system-expert-copy.ts";
+import {
+  BUILT_IN_PRAGMA_EXPERT_REF,
+  localizeSystemExpertCopy,
+} from "../../lib/system-expert-copy.ts";
 
 const DESCRIPTION_PREVIEW_LENGTH = 200;
 const INSTRUCTIONS_PREVIEW_LENGTH = 420;
@@ -62,6 +65,11 @@ export function ExpertDirectoryFragment(props: {
       `${copy.name} ${copy.description} ${expert.tags.join(" ")}`
         .toLowerCase()
         .includes(query.trim().toLowerCase()),
+    )
+    .toSorted(
+      (left, right) =>
+        Number(right.expert.ref === BUILT_IN_PRAGMA_EXPERT_REF) -
+        Number(left.expert.ref === BUILT_IN_PRAGMA_EXPERT_REF),
     );
 
   return (
@@ -111,9 +119,9 @@ export function ExpertDirectoryFragment(props: {
                   <span className="expert-card-identity">
                     <span className="expert-card-title-row">
                       <strong>{copy.name}</strong>
-                      <em className="expert-source-chip">
-                        {t(isBuiltInExpert(expert) ? "builtIn" : "custom")}
-                      </em>
+                      {isBuiltInExpert(expert) ? (
+                        <em className="expert-source-chip">{t("builtIn")}</em>
+                      ) : null}
                     </span>
                     <code>{expert.ref ?? `expert:${expert.id}`}</code>
                   </span>

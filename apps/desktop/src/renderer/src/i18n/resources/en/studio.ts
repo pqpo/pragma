@@ -178,6 +178,7 @@ export const studio = {
   editExpertTeam: "Edit expert team",
   teamDetails: "Team details",
   teamExperts: "Team experts",
+  teamMembersLabel: "Expert members",
   teamMembersDescription: "Experts available to this coordinator during delegation.",
   viewExpertDetails: "View expert details",
   membersCount_one: "{{count}} member",

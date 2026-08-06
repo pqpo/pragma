@@ -259,7 +259,6 @@ export function PragmaResourceDirectoryFragment(props: {
                     <span className="expert-team-card-identity">
                       <span className="expert-team-card-title-row">
                         <strong>{resource.metadata.name}</strong>
-                        <em>{t("configured")}</em>
                       </span>
                       <code>{canonicalPragmaResourceRef(resource)}</code>
                     </span>
@@ -269,7 +268,7 @@ export function PragmaResourceDirectoryFragment(props: {
                     {resource.metadata.description}
                   </span>
                   <span className="expert-team-card-members">
-                    <small>{t("teamMembersDescription")}</small>
+                    <small>{t("teamMembersLabel")}</small>
                     <span>
                       {visibleMemberNames.map((name, index) => (
                         <em key={`${memberRefs[index] ?? name}-${name}`}>{name}</em>

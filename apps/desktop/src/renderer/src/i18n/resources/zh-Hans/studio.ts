@@ -169,6 +169,7 @@ export const studio = {
   editExpertTeam: "编辑专家团队",
   teamDetails: "团队详情",
   teamExperts: "团队专家",
+  teamMembersLabel: "专家成员",
   teamMembersDescription: "协调者在委派任务时可使用的专家。",
   viewExpertDetails: "查看专家详情",
   membersCount_one: "{{count}} 位成员",
