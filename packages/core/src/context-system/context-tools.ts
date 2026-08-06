@@ -52,6 +52,7 @@ export interface ExpertAgentDefaultTool {
 export interface CreateContextToolsOptions {
   readonly getContext?: (() => ExpertAgentRunContext | undefined) | undefined;
   readonly readByteBudget?: number | undefined;
+  readonly resultByteBudget?: number | undefined;
   readonly mutationApprovalFor?: ((namespace: string) => "none" | "required") | undefined;
 }
 
@@ -85,20 +86,40 @@ export function createContextTools(
     {
       name: "list_expert_context",
       label: "List expert context",
-      description: "List Expert context by context id, description, and trigger.",
-      inputSchema: objectSchema({}),
-      call: async (_args, _signal, context) => {
+      description:
+        "List Expert context by id, description, and trigger. Continue with nextCursor when the result is paginated.",
+      inputSchema: objectSchema({
+        cursor: stringSchema("Opaque cursor returned by a previous list_expert_context call."),
+        limit: integerSchema("Maximum items to return. Defaults to 20 and is capped at 50."),
+      }),
+      call: async (args, _signal, context) => {
         const result = await contextOperations.listContext(readRunContext(options, context));
 
         if (!result.ok) {
           return errorResult(result.error);
         }
 
+        const page = paginateContextIndex(
+          result.value,
+          readOptionalStringParam(args, "cursor"),
+          normalizeListLimit(readOptionalNumberParam(args, "limit")),
+          normalizeResultByteBudget(options),
+        );
+        if (!page.ok) return errorResult(page.error);
+
         return {
-          text: formatContextIndex(result.value),
+          text: formatContextIndexPage(page.value),
           details: {
-            context: result.value.items,
-            issues: result.value.issues,
+            context: page.value.items,
+            issues: page.value.issues,
+            page: {
+              total: page.value.total,
+              returned: page.value.items.length,
+              hasMore: page.value.nextCursor !== undefined,
+              skippedOversized: page.value.skippedOversized,
+              omittedIssues: page.value.omittedIssues,
+              ...(page.value.nextCursor === undefined ? {} : { nextCursor: page.value.nextCursor }),
+            },
           },
         };
       },
@@ -119,11 +140,12 @@ export function createContextTools(
       call: async (args, _signal, context) => {
         const id = readStringParam(args, "id");
         const requestedOffset = readOptionalNumberParam(args, "offset");
+        const offset = normalizeToolReadOffset(requestedOffset, options);
         const result = await contextOperations.readContext({
           namespace: readStringParam(args, "namespace"),
           id,
           start: readOptionalNumberParam(args, "start"),
-          offset: normalizeToolReadOffset(requestedOffset, options),
+          offset,
           context: readRunContext(options, context),
         });
 
@@ -131,10 +153,11 @@ export function createContextTools(
           return errorResult(result.error);
         }
 
+        const bounded = boundReadContext(result.value, offset);
         return {
-          text: formatContext(result.value),
+          text: formatContext(bounded),
           details: {
-            context: result.value,
+            context: bounded,
           },
         };
       },
@@ -175,10 +198,12 @@ export function createContextTools(
           return errorResult(result.error);
         }
 
+        const bounded = boundSearchMatches(result.value, normalizeResultByteBudget(options));
         return {
-          text: formatContextSearchMatches(result.value),
+          text: bounded.text,
           details: {
-            matches: result.value,
+            matches: bounded.matches,
+            truncated: bounded.truncated,
           },
         };
       },
@@ -615,6 +640,14 @@ function normalizeToolReadOffset(
   return Math.min(Math.max(1, Math.trunc(requestedOffset)), budget);
 }
 
+function normalizeResultByteBudget(options: CreateContextToolsOptions): number {
+  return Math.max(1_024, Math.trunc(options.resultByteBudget ?? 8_000));
+}
+
+function normalizeListLimit(value: number | undefined): number {
+  return Math.min(50, Math.max(1, Math.trunc(value ?? 20)));
+}
+
 function readMetadataParams(params: unknown): Partial<ExpertAgentContextItemMetadata> {
   const description = readOptionalStringParam(params, "description");
   const trigger = readOptionalTriggerParam(params);
@@ -723,20 +756,205 @@ function formatContextSummaries(context: readonly ExpertAgentContextItemSummary[
   return context.map(formatContextSummary).join("\n");
 }
 
-function formatContextIndex(index: ContextIndex): string {
-  const summaries = formatContextSummaries(index.items);
+interface ContextIndexPage {
+  readonly items: readonly ExpertAgentContextItemSummary[];
+  readonly issues: ContextIndex["issues"];
+  readonly total: number;
+  readonly byteBudget: number;
+  readonly skippedOversized: number;
+  readonly omittedIssues: number;
+  readonly nextCursor?: string | undefined;
+}
 
-  if (index.issues.length === 0) {
-    return summaries;
+type ContextListCursor = readonly [version: 1, offset: number];
+
+function paginateContextIndex(
+  index: ContextIndex,
+  encodedCursor: string | undefined,
+  limit: number,
+  byteBudget: number,
+): ExpertAgentContextResult<ContextIndexPage> {
+  const cursor = decodeContextListCursor(encodedCursor);
+  if (!cursor.ok) return cursor;
+  const sorted = [...index.items].sort(compareContextSummary);
+  const startOffset = Math.min(cursor.value?.[1] ?? 0, sorted.length);
+  const selected: ExpertAgentContextItemSummary[] = [];
+  let usedBytes = 0;
+  let consumed = 0;
+  let skippedOversized = 0;
+  const reservedBytes = 512;
+  const maximumItemBytes = Math.max(256, byteBudget - reservedBytes);
+  for (const item of sorted.slice(startOffset)) {
+    if (consumed >= limit) break;
+    const available = Math.max(256, byteBudget - usedBytes - reservedBytes);
+    const bounded = boundContextSummary(item, available);
+    const blockBytes = Buffer.byteLength(formatContextSummary(bounded), "utf8") + 1;
+    if (blockBytes > available) {
+      const maximumBounded = boundContextSummary(item, maximumItemBytes);
+      if (Buffer.byteLength(formatContextSummary(maximumBounded), "utf8") + 1 <= maximumItemBytes) {
+        break;
+      }
+      consumed += 1;
+      skippedOversized += 1;
+      continue;
+    }
+    selected.push(bounded);
+    usedBytes += blockBytes;
+    consumed += 1;
   }
+  const nextOffset = startOffset + consumed;
+  const hasMore = nextOffset < sorted.length;
+  const boundedIssues = boundContextIssues(index.issues, 384);
+  return {
+    ok: true,
+    value: {
+      items: selected,
+      issues: boundedIssues.issues,
+      total: sorted.length,
+      byteBudget,
+      skippedOversized,
+      omittedIssues: boundedIssues.omitted,
+      ...(hasMore ? { nextCursor: encodeContextListCursor([1, nextOffset]) } : {}),
+    },
+  };
+}
 
-  return [
+function formatContextIndexPage(page: ContextIndexPage): string {
+  const summaries = formatContextSummaries(page.items);
+  const pageLines = [
+    `Showing ${page.items.length} of ${page.total} Expert context items.`,
     summaries,
-    "Context store issues:",
-    ...index.issues.map(
-      (issue) => `- ${issue.namespace}: ${issue.error.code}: ${issue.error.message}`,
-    ),
-  ].join("\n");
+    ...(page.nextCursor === undefined
+      ? []
+      : [
+          `More items are available. Call list_expert_context again with cursor=${JSON.stringify(page.nextCursor)}.`,
+        ]),
+    ...(page.skippedOversized === 0
+      ? []
+      : [
+          `${page.skippedOversized} context item(s) were skipped because their identifiers exceed the result budget.`,
+        ]),
+  ];
+
+  const output =
+    page.issues.length === 0
+      ? pageLines.join("\n")
+      : [
+          ...pageLines,
+          "Context store issues:",
+          ...page.issues.map(
+            (issue) => `- ${issue.namespace}: ${issue.error.code}: ${issue.error.message}`,
+          ),
+          ...(page.omittedIssues === 0
+            ? []
+            : [`- ${page.omittedIssues} additional issue(s) omitted.`]),
+        ].join("\n");
+  return truncateUtf8(output, page.byteBudget, "");
+}
+
+function encodeContextListCursor(cursor: ContextListCursor): string {
+  return Buffer.from(JSON.stringify(cursor), "utf8").toString("base64url");
+}
+
+function decodeContextListCursor(
+  cursor: string | undefined,
+): ExpertAgentContextResult<ContextListCursor | undefined> {
+  if (cursor === undefined) return { ok: true, value: undefined };
+  try {
+    const value: unknown = JSON.parse(Buffer.from(cursor, "base64url").toString("utf8"));
+    if (
+      !Array.isArray(value) ||
+      value.length !== 2 ||
+      value[0] !== 1 ||
+      typeof value[1] !== "number" ||
+      !Number.isSafeInteger(value[1]) ||
+      value[1] < 0
+    ) {
+      throw new Error("invalid cursor shape");
+    }
+    return { ok: true, value: [1, value[1]] };
+  } catch {
+    return {
+      ok: false,
+      error: { code: "invalid_input", message: "Context list cursor is invalid." },
+    };
+  }
+}
+
+function compareContextSummary(
+  left: ExpertAgentContextItemSummary,
+  right: ExpertAgentContextItemSummary,
+): number {
+  const priority =
+    contextPriorityRank(left.metadata.priority) - contextPriorityRank(right.metadata.priority);
+  if (priority !== 0) return priority;
+  const namespace = (left.namespace ?? "").localeCompare(right.namespace ?? "");
+  return namespace !== 0 ? namespace : left.id.localeCompare(right.id);
+}
+
+function contextPriorityRank(priority: ContextPriority): number {
+  return { critical: 0, high: 1, normal: 2, low: 3 }[priority];
+}
+
+function boundContextIssues(
+  issues: ContextIndex["issues"],
+  byteBudget: number,
+): { readonly issues: ContextIndex["issues"]; readonly omitted: number } {
+  const included: Array<ContextIndex["issues"][number]> = [];
+  let usedBytes = 0;
+  for (const issue of issues) {
+    const bounded = {
+      namespace: truncateUtf8(issue.namespace, 128),
+      operation: issue.operation,
+      error: {
+        code: issue.error.code,
+        message: truncateUtf8(issue.error.message, 256),
+      },
+    };
+    const issueBytes = Buffer.byteLength(
+      `${bounded.namespace}:${bounded.error.code}:${bounded.error.message}`,
+      "utf8",
+    );
+    if (included.length > 0 && usedBytes + issueBytes > byteBudget) break;
+    included.push(bounded);
+    usedBytes += issueBytes;
+  }
+  return { issues: included, omitted: issues.length - included.length };
+}
+
+function boundContextSummary(
+  item: ExpertAgentContextItemSummary,
+  byteBudget: number,
+): ExpertAgentContextItemSummary {
+  const description = item.metadata.description;
+  const metadata: ExpertAgentContextItemMetadata = {
+    trigger: item.metadata.trigger,
+    priority: item.metadata.priority,
+    ...(item.metadata.trustLevel === undefined ? {} : { trustLevel: item.metadata.trustLevel }),
+    ...(item.metadata.sensitivity === undefined ? {} : { sensitivity: item.metadata.sensitivity }),
+  };
+  const withoutDescription: ExpertAgentContextItemSummary = {
+    ...(item.namespace === undefined ? {} : { namespace: item.namespace }),
+    id: item.id,
+    metadata,
+    ...(item.sizeBytes === undefined ? {} : { sizeBytes: item.sizeBytes }),
+  };
+  if (description === undefined) return withoutDescription;
+  const withDescription = {
+    ...withoutDescription,
+    metadata: { ...metadata, description },
+  };
+  if (Buffer.byteLength(formatContextSummary(withDescription), "utf8") <= byteBudget) {
+    return withDescription;
+  }
+  const fixedBytes = Buffer.byteLength(formatContextSummary(withoutDescription), "utf8");
+  return {
+    ...withoutDescription,
+    metadata: {
+      ...metadata,
+      description: truncateUtf8(description, Math.max(16, byteBudget - fixedBytes - 18)),
+    },
+  };
 }
 
 function formatContextSummary(context: ExpertAgentContextItemSummary): string {
@@ -801,6 +1019,43 @@ function formatContentRange(context: ExpertAgentContextItem): readonly string[] 
   ];
 }
 
+function boundReadContext(
+  context: ExpertAgentContextItem,
+  byteBudget: number,
+): ExpertAgentContextItem {
+  const contentBytes = Buffer.byteLength(context.content, "utf8");
+  if (contentBytes <= byteBudget) return context;
+  const content = truncateUtf8(context.content, byteBudget, "");
+  const includedBytes = Buffer.byteLength(content, "utf8");
+  const requestedStartOffset = context.contentRange?.requestedStartOffset ?? 0;
+  const startOffset = context.contentRange?.startOffset ?? requestedStartOffset;
+  const endOffset = startOffset + includedBytes;
+  const startLine = context.contentRange?.startLine;
+  return {
+    ...context,
+    content,
+    contentRange: {
+      requestedStartOffset,
+      startOffset,
+      endOffset,
+      nextStartOffset: endOffset,
+      truncated: true,
+      sizeBytes: context.contentRange?.sizeBytes ?? Math.max(contentBytes, endOffset + 1),
+      maxBytes: byteBudget,
+      ...(startLine === undefined
+        ? {}
+        : { startLine, endLine: startLine + countNewlines(content) }),
+      ...(context.contentRange?.totalLines === undefined
+        ? {}
+        : { totalLines: context.contentRange.totalLines }),
+    },
+  };
+}
+
+function countNewlines(value: string): number {
+  return value.split("\n").length - 1;
+}
+
 function formatContextSearchMatches(matches: readonly ExpertAgentContextItemSearchMatch[]): string {
   if (matches.length === 0) {
     return "No Expert context matches found.";
@@ -814,6 +1069,89 @@ function formatContextSearchMatches(matches: readonly ExpertAgentContextItemSear
     "",
     groups.map(formatContextSearchMatchGroup).join("\n\n---\n\n"),
   ].join("\n");
+}
+
+function boundSearchMatches(
+  matches: readonly ExpertAgentContextItemSearchMatch[],
+  byteBudget: number,
+): {
+  readonly text: string;
+  readonly matches: readonly ExpertAgentContextItemSearchMatch[];
+  readonly truncated: boolean;
+} {
+  if (matches.length === 0) {
+    return { text: "No Expert context matches found.", matches: [], truncated: false };
+  }
+  const included: ExpertAgentContextItemSearchMatch[] = [];
+  let snippetTruncated = false;
+  const contentBudget = Math.max(256, byteBudget - 512);
+  for (const match of matches) {
+    const bounded = boundSearchMatch(match);
+    const candidate = [...included, bounded.match];
+    if (
+      included.length > 0 &&
+      Buffer.byteLength(formatContextSearchMatches(candidate), "utf8") > contentBudget
+    ) {
+      break;
+    }
+    included.push(bounded.match);
+    snippetTruncated ||= bounded.truncated;
+    if (Buffer.byteLength(formatContextSearchMatches(included), "utf8") >= contentBudget) break;
+  }
+  const omitted = included.length < matches.length;
+  const notices = [
+    ...(snippetTruncated
+      ? [
+          "Search snippets were truncated. Use read_expert_context with the shown namespace and id to read the source document.",
+        ]
+      : []),
+    ...(omitted
+      ? ["Additional matches were omitted. Refine the query or reduce contextLines."]
+      : []),
+  ];
+  const text = [formatContextSearchMatches(included), ...notices].join("\n\n");
+  return {
+    text: truncateUtf8(text, byteBudget, ""),
+    matches: included,
+    truncated: snippetTruncated || omitted,
+  };
+}
+
+function boundSearchMatch(match: ExpertAgentContextItemSearchMatch): {
+  readonly match: ExpertAgentContextItemSearchMatch;
+  readonly truncated: boolean;
+} {
+  const id = truncateUtf8(match.id, 1_024);
+  const namespace = match.namespace === undefined ? undefined : truncateUtf8(match.namespace, 256);
+  const line = truncateUtf8(match.line, 768);
+  const before = match.before?.map((value) => truncateUtf8(value, 256));
+  const after = match.after?.map((value) => truncateUtf8(value, 256));
+  const truncated =
+    id !== match.id ||
+    namespace !== match.namespace ||
+    line !== match.line ||
+    before?.some((value, index) => value !== match.before?.[index]) === true ||
+    after?.some((value, index) => value !== match.after?.[index]) === true;
+  return {
+    match: {
+      ...match,
+      id,
+      ...(namespace === undefined ? {} : { namespace }),
+      line,
+      ...(before === undefined ? {} : { before }),
+      ...(after === undefined ? {} : { after }),
+    },
+    truncated,
+  };
+}
+
+function truncateUtf8(value: string, maxBytes: number, suffix = "…"): string {
+  const buffer = Buffer.from(value, "utf8");
+  if (buffer.byteLength <= maxBytes) return value;
+  const suffixBytes = Buffer.byteLength(suffix, "utf8");
+  let end = Math.max(0, maxBytes - suffixBytes);
+  while (end > 0 && (buffer[end] ?? 0) >= 0x80 && (buffer[end] ?? 0) < 0xc0) end -= 1;
+  return `${buffer.subarray(0, end).toString("utf8")}${suffix}`;
 }
 
 interface ContextSearchMatchGroup {

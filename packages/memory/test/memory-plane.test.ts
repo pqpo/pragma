@@ -3,7 +3,12 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { DatabaseSync } from "node:sqlite";
 
-import { createFileCanonicalEventFeed, createFileExecutionStore, PragmaPaths } from "@pragma/core";
+import {
+  createFileCanonicalEventFeed,
+  createFileExecutionStore,
+  PragmaPaths,
+  StaticContextStore,
+} from "@pragma/core";
 import {
   CanonicalEventEnvelopeSchema,
   MemoryEvidenceEnvelopeSchema,
@@ -28,6 +33,42 @@ import {
 import { createProbeMemoryModule } from "../src/testing/index.ts";
 
 describe("Memory Plane phase one", () => {
+  it("keeps a useful fragment when a module summary is one oversized line", async () => {
+    const registry = new MemoryModuleRegistry();
+    const probe = createProbeMemoryModule({ id: "pragma.memory.single-line", prefix: "single-line" });
+    registry.register({
+      ...probe,
+      descriptor: {
+        ...probe.descriptor,
+        contextLayers: { ...probe.descriptor.contextLayers, summaryMaxBytes: 16 },
+      },
+      createContextProvider: () =>
+        new StaticContextStore([
+          {
+            id: "summary.md",
+            content: "single-line-summary-that-exceeds-the-budget",
+            metadata: { trigger: "model_decision", priority: "normal" },
+          },
+          {
+            id: "index.md",
+            content: "# Index\n",
+            metadata: { trigger: "model_decision", priority: "low" },
+          },
+        ]),
+    });
+    const context = createFederatedMemoryContextStore(registry, {
+      resolveRecallScope: () => ({
+        rootRef: { type: "pragma.expert", id: "expert" },
+        expertRef: { type: "pragma.expert", id: "expert" },
+      }),
+    });
+
+    await expect(context.readContext({ id: "overview.md" })).resolves.toMatchObject({
+      ok: true,
+      value: { content: expect.stringMatching(/single-line-.*…/) },
+    });
+  });
+
   it("adapts canonical events, isolates modules, and exposes Probe through Context", async () => {
     const home = await mkdtemp(join(tmpdir(), "pragma-memory-plane-"));
     const canonical = await createFileCanonicalEventFeed({ pragmaHome: home });
@@ -158,8 +199,8 @@ describe("Memory Plane phase one", () => {
       probe.ok && probe.value.content.split("\n").filter((line) => line.startsWith("- ")),
     ).toHaveLength(1);
     await expect(context.readContext({ id: "catalog.md" })).resolves.toMatchObject({
-      ok: true,
-      value: { content: expect.stringContaining("pragma.memory.failing-probe") },
+      ok: false,
+      error: { code: "context_not_found" },
     });
     await expect(context.addContext({ id: "manual.md", content: "no" })).resolves.toMatchObject({
       ok: false,

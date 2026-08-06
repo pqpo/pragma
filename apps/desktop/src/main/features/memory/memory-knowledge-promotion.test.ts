@@ -66,6 +66,14 @@ describe("Memory knowledge promotion", () => {
         }),
       ]),
     });
+    const item = candidate!.files.find((file) => file.id.startsWith("items/"))!;
+    const overview = candidate!.files.find((file) => file.id === "overview.md")!;
+    const indexPart = candidate!.files.find((file) => file.id.startsWith("indexes/"))!;
+    expect(overview.content).toContain(`](${item.id})`);
+    expect(indexPart.content).toContain(`](${item.id})`);
+    expect(candidate!.files.find((file) => file.id === "index.md")!.content).toContain(
+      `](${indexPart.id})`,
+    );
 
     const store = await promotion.createStore({
       id: candidate!.id,

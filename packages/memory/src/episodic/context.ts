@@ -9,6 +9,8 @@ import type { EpisodicMemoryRecord } from "./schema.ts";
 import type { EpisodicMemoryStore } from "./store.ts";
 import type { MemoryRecallScope } from "../pipeline/memory-module.ts";
 
+const SUMMARY_MAX_BYTES = 1_024;
+
 export function createEpisodicMemoryContextProvider(
   store: EpisodicMemoryStore,
   scope: MemoryRecallScope,
@@ -20,9 +22,9 @@ export function createEpisodicMemoryContextProvider(
         id: "summary.md",
         content: renderSummary(episodes, scope),
         metadata: metadata(
-          "Current Episodic Memory coverage and recent outcomes.",
+          "The three most recent historical Episodes. Recall more only when prior experience matters.",
           "model_decision",
-          "high",
+          "normal",
         ),
       },
       {
@@ -31,7 +33,7 @@ export function createEpisodicMemoryContextProvider(
         metadata: metadata(
           "Searchable Episodic Memory index. Read an item for the full historical precedent.",
           "model_decision",
-          "normal",
+          "low",
         ),
       },
     ];
@@ -136,22 +138,26 @@ function renderSummary(
   const active = episodes.filter((episode) => episode.status === "active");
   const succeeded = active.filter((episode) => episode.outcome.status === "succeeded").length;
   const failed = active.filter((episode) => episode.outcome.status === "failed").length;
-  const groups = groupEpisodes(active, scope);
-  return [
-    "# Episodic Memory Summary",
-    "",
-    "Episodic Memory records historical precedent. It does not establish current truth.",
-    "",
-    `- Active episodes: ${active.length}`,
-    `- Successful outcomes: ${succeeded}`,
-    `- Failed outcomes: ${failed}`,
-    "",
-    ...renderSummaryGroup("Current asset experience", groups.currentAsset),
-    ...(sameRef(scope.rootRef, scope.expertRef)
-      ? []
-      : renderSummaryGroup("Current expert personal experience", groups.personal)),
-    "",
-  ].join("\n");
+  const recent = active.toSorted(compareEpisodeRecency).slice(0, 3);
+  return fitLines(
+    [
+      "# Episodic Memory Summary",
+      "",
+      "Historical precedent only; search when prior experience is relevant.",
+      "",
+      `- Active: ${active.length}; succeeded: ${succeeded}; failed: ${failed}`,
+      "",
+      "## Three most recent",
+      ...(recent.length === 0
+        ? ["- No episodes are available in this scope."]
+        : recent.map(
+            (episode) =>
+              `- [${oneLine(episode.goal.text, 60)}](episodic/items/${episode.id}.md) — ${viewLabel(episode, scope)} — ${episode.updatedAt} — ${episode.outcome.status}`,
+          )),
+      "",
+    ],
+    SUMMARY_MAX_BYTES,
+  );
 }
 
 function renderIndex(episodes: readonly EpisodicMemoryRecord[], scope: MemoryRecallScope): string {
@@ -194,7 +200,7 @@ function renderEpisode(episode: EpisodicMemoryRecord, scope: MemoryRecallScope):
     ...bullets(
       episode.attempts.map(
         (attempt) =>
-          `${attempt.description}${attempt.result === undefined ? "" : ` — ${attempt.result}`} [${attempt.evidenceRefs.join(", ")}]`,
+          `${attempt.description}${attempt.result === undefined ? "" : ` — ${attempt.result}`}`,
       ),
       "No material attempts were extracted.",
     ),
@@ -203,16 +209,18 @@ function renderEpisode(episode: EpisodicMemoryRecord, scope: MemoryRecallScope):
     ...bullets(
       episode.failuresAndRecoveries.map(
         (item) =>
-          `${item.failure}${item.recovery === undefined ? "" : ` Recovery: ${item.recovery}`} [${item.evidenceRefs.join(", ")}]`,
+          `${item.failure}${item.recovery === undefined ? "" : ` Recovery: ${item.recovery}`}`,
       ),
       "No material failure or recovery was extracted.",
     ),
     "",
     "## Outcome",
-    `${episode.outcome.summary} [${episode.outcome.evidenceRefs.join(", ")}]`,
+    episode.outcome.summary,
     "",
     "## Evidence",
-    ...episode.evidenceRefs.map((id) => `- evidence/${id}.md`),
+    ...episode.evidenceRefs.map(
+      (id) => `- [Evidence ${oneLine(id, 80)}](episodic/evidence/${id}.md)`,
+    ),
     "",
     "Evidence is a separate verification layer. Read it only when the conclusion needs checking.",
     "",
@@ -228,25 +236,6 @@ function groupEpisodes(episodes: readonly EpisodicMemoryRecord[], scope: MemoryR
   };
 }
 
-function renderSummaryGroup(
-  title: string,
-  episodes: readonly EpisodicMemoryRecord[],
-): readonly string[] {
-  return [
-    `## ${title}`,
-    ...(episodes.length === 0
-      ? ["- No episodes are available in this scope."]
-      : episodes
-          .toSorted(compareEpisode)
-          .slice(0, 5)
-          .map(
-            (episode) =>
-              `- ${episode.id} — ${episode.outcome.status} — ${oneLine(episode.summary.text, 180)}`,
-          )),
-    "",
-  ];
-}
-
 function renderIndexGroup(
   title: string,
   episodes: readonly EpisodicMemoryRecord[],
@@ -260,7 +249,7 @@ function renderIndexGroup(
           .toSorted(compareEpisode)
           .map(
             (episode) =>
-              `- [${label}] ${episode.id} | ${episode.updatedAt} | ${episode.language} | ${episode.outcome.status} | value ${episode.valueScore.toFixed(2)} | ${oneLine(episode.summary.text, 220)}`,
+              `- [${oneLine(episode.goal.text, 120)}](episodic/items/${episode.id}.md) — ${label} | ${episode.updatedAt} | ${episode.outcome.status} | value ${episode.valueScore.toFixed(2)} | ${oneLine(episode.summary.text, 180)}`,
           )),
     "",
   ];
@@ -319,6 +308,10 @@ function compareEpisode(left: EpisodicMemoryRecord, right: EpisodicMemoryRecord)
   return right.valueScore - left.valueScore || right.updatedAt.localeCompare(left.updatedAt);
 }
 
+function compareEpisodeRecency(left: EpisodicMemoryRecord, right: EpisodicMemoryRecord): number {
+  return right.updatedAt.localeCompare(left.updatedAt) || left.id.localeCompare(right.id);
+}
+
 function oneLine(value: string, max: number): string {
   const normalized = value.replace(/\s+/g, " ").trim();
   return normalized.length <= max ? normalized : `${normalized.slice(0, max - 1)}…`;
@@ -326,4 +319,14 @@ function oneLine(value: string, max: number): string {
 
 function bullets(values: readonly string[], empty: string): readonly string[] {
   return values.length === 0 ? [`- ${empty}`] : values.map((value) => `- ${value}`);
+}
+
+function fitLines(lines: readonly string[], maxBytes: number): string {
+  const accepted: string[] = [];
+  for (const line of lines) {
+    const next = [...accepted, line].join("\n");
+    if (Buffer.byteLength(next, "utf8") > maxBytes) break;
+    accepted.push(line);
+  }
+  return `${accepted.join("\n").trimEnd()}\n`;
 }

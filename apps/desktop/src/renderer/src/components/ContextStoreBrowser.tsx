@@ -86,6 +86,14 @@ export function ContextStoreBrowser(props: { readonly source: ContextStoreBrowse
     },
     [props.source, scopeId],
   );
+  const followInternalLink = useCallback(
+    (href: string) => {
+      const id = normalizeInternalContextId(href);
+      if (id === undefined) return;
+      void readEntry(id);
+    },
+    [readEntry],
+  );
 
   useEffect(() => {
     let cancelled = false;
@@ -339,7 +347,11 @@ export function ContextStoreBrowser(props: { readonly source: ContextStoreBrowse
                   </div>
                 </header>
                 <div className="context-browser-markdown">
-                  <MarkdownContent source={content} codeBlockControls />
+                  <MarkdownContent
+                    source={content}
+                    codeBlockControls
+                    onInternalLink={followInternalLink}
+                  />
                   {lastChunk?.contentRange.truncated ? (
                     <button
                       type="button"
@@ -410,7 +422,7 @@ export function buildTreeRows(entries: readonly MissionContextStoreEntry[]): rea
 }
 
 function compareEntries(left: MissionContextStoreEntry, right: MissionContextStoreEntry): number {
-  const rootOrder = ["guide.md", "overview.md", "catalog.md"];
+  const rootOrder = ["guide.md", "overview.md"];
   const leftRoot = rootOrder.indexOf(left.id);
   const rightRoot = rootOrder.indexOf(right.id);
   if (leftRoot >= 0 || rightRoot >= 0) {
@@ -423,6 +435,22 @@ function compareEntries(left: MissionContextStoreEntry, right: MissionContextSto
 
 function uniqueEntries(entries: readonly MissionContextStoreEntry[]): MissionContextStoreEntry[] {
   return [...new Map(entries.map((entry) => [entry.id, entry])).values()];
+}
+
+export function normalizeInternalContextId(href: string): string | undefined {
+  const id = href.trim();
+  if (
+    id.length === 0 ||
+    id.length > 2_000 ||
+    id.startsWith("/") ||
+    id.includes("\\") ||
+    id.includes(":") ||
+    id.includes("#") ||
+    id.split("/").some((part) => part === "" || part === "." || part === "..")
+  ) {
+    return undefined;
+  }
+  return id;
 }
 
 function formatBytes(bytes: number): string {

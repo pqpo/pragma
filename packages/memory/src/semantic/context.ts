@@ -8,6 +8,8 @@ import type { MemoryEvidenceEnvelope, SemanticFact } from "@pragma/shared";
 import type { SemanticMemoryStore } from "./store.ts";
 import type { MemoryRecallScope } from "../pipeline/memory-module.ts";
 
+const SUMMARY_MAX_BYTES = 4_096;
+
 export function createSemanticMemoryContextProvider(
   store: SemanticMemoryStore,
   scope: MemoryRecallScope,
@@ -112,20 +114,23 @@ function renderSummary(facts: readonly SemanticFact[], now: Date): string {
   const dueForReview = facts.filter(
     (fact) => fact.reviewAt !== undefined && fact.reviewAt <= now.toISOString(),
   ).length;
-  return [
-    "# Semantic Memory Summary",
-    "",
-    "Semantic Memory describes current beliefs. Conflicts and review dates are evidence to inspect, not instructions to hide.",
-    "",
-    `- Effective facts: ${facts.length}`,
-    `- Verified facts: ${verified}`,
-    `- Facts with conflicts: ${conflicting}`,
-    `- Due for review: ${dueForReview}`,
-    "",
-    ...facts.slice(0, 6).map(renderIndexLine),
-    ...(facts.length === 0 ? ["- No effective facts are available in this scope."] : []),
-    "",
-  ].join("\n");
+  return fitLines(
+    [
+      "# Semantic Memory Summary",
+      "",
+      "Semantic Memory describes current beliefs. Conflicts and review dates are evidence to inspect, not instructions to hide.",
+      "",
+      `- Effective facts: ${facts.length}`,
+      `- Verified facts: ${verified}`,
+      `- Facts with conflicts: ${conflicting}`,
+      `- Due for review: ${dueForReview}`,
+      "",
+      ...facts.map(renderIndexLine),
+      ...(facts.length === 0 ? ["- No effective facts are available in this scope."] : []),
+      "",
+    ],
+    SUMMARY_MAX_BYTES,
+  );
 }
 
 function renderIndex(facts: readonly SemanticFact[]): string {
@@ -147,7 +152,7 @@ function renderIndexLine(fact: SemanticFact): string {
     fact.conflictsWith.length === 0 ? undefined : `conflicts:${fact.conflictsWith.length}`,
     fact.reviewAt === undefined ? undefined : `review:${fact.reviewAt}`,
   ].filter((value): value is string => value !== undefined);
-  return `- ${fact.id} | confidence ${fact.confidence.toFixed(2)}${flags.length === 0 ? "" : ` | ${flags.join(", ")}`} | ${oneLine(fact.statement, 240)}`;
+  return `- [${oneLine(fact.statement, 180)}](semantic/items/${fact.id}.md) — confidence ${fact.confidence.toFixed(2)}${flags.length === 0 ? "" : ` | ${flags.join(", ")}`}`;
 }
 
 function renderFact(fact: SemanticFact): string {
@@ -163,13 +168,17 @@ function renderFact(fact: SemanticFact): string {
     `- Verified: ${fact.verifiedAt ?? "no"}`,
     `- Review: ${fact.reviewAt ?? "not scheduled"}`,
     `- Expires: ${fact.expiresAt ?? "not scheduled"}`,
-    `- Conflicts: ${fact.conflictsWith.join(", ") || "none"}`,
+    `- Conflicts: ${
+      fact.conflictsWith.length === 0
+        ? "none"
+        : fact.conflictsWith.map((id) => `[${oneLine(id, 80)}](semantic/items/${id}.md)`).join(", ")
+    }`,
     "",
     "## Statement",
     fact.statement,
     "",
     "## Evidence",
-    ...fact.evidenceRefs.map((id) => `- evidence/${id}.md`),
+    ...fact.evidenceRefs.map((id) => `- [Evidence ${oneLine(id, 80)}](semantic/evidence/${id}.md)`),
     "",
     ...(fact.conflictsWith.length === 0
       ? []
@@ -220,4 +229,14 @@ function refLabel(ref: { readonly type: string; readonly id: string }): string {
 function oneLine(value: string, max: number): string {
   const normalized = value.replace(/\s+/g, " ").trim();
   return normalized.length <= max ? normalized : `${normalized.slice(0, max - 1)}…`;
+}
+
+function fitLines(lines: readonly string[], maxBytes: number): string {
+  const accepted: string[] = [];
+  for (const line of lines) {
+    const next = [...accepted, line].join("\n");
+    if (Buffer.byteLength(next, "utf8") > maxBytes) break;
+    accepted.push(line);
+  }
+  return `${accepted.join("\n").trimEnd()}\n`;
 }

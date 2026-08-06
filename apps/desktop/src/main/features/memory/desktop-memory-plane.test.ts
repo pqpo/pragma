@@ -40,6 +40,27 @@ describe("DesktopMemoryPlane", () => {
       delivery: { pending: 0, quarantined: 0 },
       modules: [],
     });
+    const view = await plane.createContextStoreView({
+      rootRef: { type: "pragma.expert", id: "7k2m9q4v8np6r3dt" },
+      expertRef: { type: "pragma.expert", id: "7k2m9q4v8np6r3dt" },
+      projectId: "pragma",
+    });
+    const guide = await view.readContext({ id: "guide.md" });
+    expect(guide.ok && guide.value.content).toContain("read-only");
+    expect(guide.ok && guide.value.content).toContain("search_expert_context");
+    expect(guide.ok && guide.value.content).not.toContain("knowledge-learning");
+    const overview = await view.readContext({ id: "overview.md" });
+    expect(overview.ok).toBe(true);
+    if (overview.ok) {
+      expect(overview.value.content.indexOf("Semantic Memory Summary")).toBeLessThan(
+        overview.value.content.indexOf("Episodic Memory Summary"),
+      );
+      expect(Buffer.byteLength(overview.value.content, "utf8")).toBeLessThanOrEqual(4_096);
+    }
+    const listed = await view.listContext({});
+    expect(
+      listed.ok && listed.value.some((item) => item.id.startsWith("knowledge-learning/")),
+    ).toBe(false);
     plane.start();
     await expect(plane.getStatus()).resolves.toMatchObject({ state: "running" });
     await plane.stop();

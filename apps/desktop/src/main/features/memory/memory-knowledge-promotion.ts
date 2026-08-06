@@ -510,7 +510,8 @@ function buildProgressiveFiles(
   itemFiles: ContextStoreSnapshot["files"],
 ): ContextStoreSnapshot["files"] {
   const overviewLines = itemFiles.map(
-    (file) => `- ${firstHeading(file.content)}: ${file.metadata.description}`,
+    (file) =>
+      `- [${markdownLinkLabel(firstHeading(file.content))}](${file.id}) — ${file.metadata.description}`,
   );
   const shardSize = 20;
   const shards: ContextStoreSnapshot["files"] = [];
@@ -524,7 +525,7 @@ function buildProgressiveFiles(
           "",
           ...itemFiles
             .slice(offset, offset + shardSize)
-            .map((file) => `- ${file.id} — ${firstHeading(file.content)}`),
+            .map((file) => `- [${markdownLinkLabel(firstHeading(file.content))}](${file.id})`),
           "",
         ],
         8_192,
@@ -540,7 +541,7 @@ function buildProgressiveFiles(
     {
       id: "guide.md",
       content:
-        "# Guide\n\nStart with overview.md, then use index.md to locate an items/** document. Read detail files only when relevant.\n",
+        "# Guide\n\nStart with overview.md. When this store is large or the topic is unknown, search it. Use index.md for navigation and read only the relevant items/** documents.\n",
       metadata: {
         description: "How to use this knowledge base.",
         trigger: "always_on",
@@ -559,7 +560,14 @@ function buildProgressiveFiles(
     {
       id: "index.md",
       content: fitUtf8(
-        ["# Index", "", ...shards.map((file) => `- ${file.id} — ${file.metadata.description}`), ""],
+        [
+          "# Index",
+          "",
+          ...shards.map(
+            (file) => `- [${markdownLinkLabel(file.metadata.description ?? file.id)}](${file.id})`,
+          ),
+          "",
+        ],
         8_192,
       ),
       metadata: {
@@ -642,6 +650,10 @@ function revisionPartDigest(sourceDigest: string, index: number, total: number):
 
 function firstHeading(content: string): string {
   return content.match(/^#\s+(.+)$/mu)?.[1]?.trim() ?? "Knowledge item";
+}
+
+function markdownLinkLabel(value: string): string {
+  return value.replaceAll("\\", "\\\\").replaceAll("[", "\\[").replaceAll("]", "\\]");
 }
 
 function fitUtf8(lines: readonly string[], maxBytes: number): string {

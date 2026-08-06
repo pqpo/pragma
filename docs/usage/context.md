@@ -41,6 +41,11 @@ priority: normal
 `search_expert_context` 按路径或正文搜索；知道 ID 后使用 `read_expert_context` 读取正文。
 `ContextSystem` 只为 `model_decision` context 注入 ID 和 description 索引。
 
+`list_expert_context` 默认每页 20 条，可通过 `limit` 调整到最多 50 条；返回 `nextCursor` 时使用该
+`cursor` 继续下一页。Search 结果受数量和字节预算约束，结果被省略时应缩小 query；搜索片段被截断时，
+使用结果中的 namespace 与 ID 调用 `read_expert_context`。Read 默认按 8KB 分段，返回
+`nextStartOffset` 时用它作为下一次 `start` 继续读取。
+
 - `trigger` 回答“怎么加载”
 - `priority` 支持 `critical`、`high`、`normal`、`low`；高优先级先装配，预算不足时最后截断
 

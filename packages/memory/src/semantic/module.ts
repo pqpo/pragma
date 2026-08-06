@@ -69,7 +69,7 @@ export async function createSemanticMemoryModule(
         indexPath: "index.md",
         itemsPrefix: "items/",
         evidencePrefix: "evidence/",
-        summaryMaxBytes: 2_048,
+        summaryMaxBytes: 4_096,
         indexMaxBytes: 4_096,
       },
     },

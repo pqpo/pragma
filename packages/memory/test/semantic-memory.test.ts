@@ -61,7 +61,6 @@ describe("Semantic Memory", () => {
     const context = scopedContext(registry, expertScope("expert-a"));
     const listed = await context.listContext({});
     expect(listed.ok && listed.value.map((item) => item.id)).toEqual([
-      "catalog.md",
       "guide.md",
       "overview.md",
       "semantic/index.md",
@@ -71,6 +70,7 @@ describe("Semantic Memory", () => {
     expect(detail.ok && detail.value.content).toContain(
       "The user prefers concise Chinese answers.",
     );
+    expect(detail.ok && detail.value.content).toContain("(semantic/evidence/");
     const evidenceDetail = await context.readContext({
       id: `semantic/evidence/${evidence[0]!.messageId}.md`,
     });

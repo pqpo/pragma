@@ -64,7 +64,7 @@ export async function createEpisodicMemoryModule(
         indexPath: "index.md",
         itemsPrefix: "items/",
         evidencePrefix: "evidence/",
-        summaryMaxBytes: 2_048,
+        summaryMaxBytes: 1_024,
         indexMaxBytes: 4_096,
       },
     },
