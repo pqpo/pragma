@@ -18,6 +18,10 @@ Pragma 是一个用于创造、运行和分享 AI-native 工作方式的开放�
 
 Pragma 不试图替代 Gemini、Claude Code、Codex、PI、Qoder CLI，也不试图替代下一个优秀的 Agent。Pragma 让它们协同工作。
 
+<p align="center">
+  <img src="./docs/images/pragma_agent_cn.png" alt="Pragma Agent 中文介绍" width="800" />
+</p>
+
 ## 为什么需要 Pragma？
 
 真正高质量的 AI 工作，很少只发生在一个对话窗口里。有经验的 AI 使用者知道如何：
@@ -136,6 +140,18 @@ flowchart TB
 ## 使用 Pragma
 
 ### 从 Desktop 开始
+
+#### 从 Release 下载
+
+你可以从 [Releases](https://github.com/pqpo/pragma/releases) 页面下载最新的 Desktop 应用。
+
+> **macOS 用户请注意：** Release 中的应用没有经过代码签名。安装后需要执行以下命令以移除隔离属性：
+>
+> ```bash
+> sudo xattr -r -d com.apple.quarantine /Applications/Pragma.app
+> ```
+
+#### 从源码编译
 
 环境要求：
 

@@ -18,6 +18,10 @@ Pragma is an open platform for creating, running, and sharing AI-native ways of 
 
 It does not try to replace Gemini, Claude Code, Codex, PI, Qoder CLI, or the next great agent. Pragma makes them work together.
 
+<p align="center">
+  <img src="./docs/images/pragma_agent_en.png" alt="Pragma Agent" width="800" />
+</p>
+
 ## Why Pragma?
 
 Great AI work rarely happens inside one chat window. An experienced AI user knows how to:
@@ -136,6 +140,18 @@ The architecture follows five ideas:
 ## Use Pragma
 
 ### Start with Desktop
+
+#### Download from Releases
+
+You can download the latest Desktop app from the [Releases](https://github.com/pqpo/pragma/releases) page.
+
+> **Note for macOS users:** The app downloaded from Releases is not code-signed. After installation, you need to run the following command to remove the quarantine attribute:
+>
+> ```bash
+> sudo xattr -r -d com.apple.quarantine /Applications/Pragma.app
+> ```
+
+#### Build from Source
 
 Requirements:
 
