@@ -7,6 +7,7 @@ import {
   ContextStoreCreatorDrawer,
   ContextStoreDetailFragment,
   ContextStoreDirectoryFragment,
+  ExpertContextMountDrawer,
   moveEntryTargetId,
   rebaseEntryId,
 } from "./ContextStoreFragment.tsx";
@@ -51,6 +52,34 @@ describe("knowledge base UI", () => {
     expect(html).toContain('class="knowledge-revision-count">2</span>');
     expect(html).not.toContain("Context note");
     expect(html).not.toContain("/Users/");
+  });
+
+  it("keeps mount options compact and exposes selection state without per-file loading copy", () => {
+    const html = renderToStaticMarkup(
+      <ExpertContextMountDrawer
+        expertName="CR expert"
+        stores={[store]}
+        mounts={[{ storeId: store.id, enabled: true, priority: 0 }]}
+        onClose={() => undefined}
+        onSave={async () => undefined}
+        onCreateStore={async () => store}
+        onInspectImport={async (sourcePath) => ({
+          sourcePath,
+          markdownFiles: 1,
+          ignoredFiles: 0,
+          totalBytes: 10,
+        })}
+        onStoreCreated={() => undefined}
+        onPickFolder={async () => undefined}
+      />,
+    );
+
+    expect(html).toContain('class="directory-search mount-search"');
+    expect(html).toContain('aria-pressed="true"');
+    expect(html).toContain('class="create-inline-store"');
+    expect(html).not.toContain("每个 Markdown 文件可分别配置加载方式。");
+    expect(html).not.toContain("Loading behavior is configured for each Markdown file.");
+    expect(html).not.toContain("mount-trigger-summary");
   });
 
   it("explains managed storage before configuration", () => {

@@ -1690,6 +1690,7 @@ export function ExpertContextMountDrawer(props: {
                   <button
                     type="button"
                     className="mount-store-toggle"
+                    aria-pressed={mount !== undefined}
                     onClick={() => toggleMount(store.id)}
                   >
                     <span className="store-icon">
@@ -1699,13 +1700,10 @@ export function ExpertContextMountDrawer(props: {
                       <strong>{store.name}</strong>
                       <small>Markdown</small>
                     </span>
-                    <span className="mount-checkbox" aria-label={mount ? "Mounted" : "Not mounted"}>
+                    <span className="mount-checkbox" aria-hidden="true">
                       {mount ? <Check size={15} /> : null}
                     </span>
                   </button>
-                  {mount ? (
-                    <p className="mount-trigger-summary">{t("fileMetadataLoading")}</p>
-                  ) : null}
                 </div>
               );
             })}

@@ -405,7 +405,6 @@ export const studio = {
   markdownFileCount_other: "{{count}} 個 Markdown 檔案",
   addKnowledgeBase: "加入知識庫",
   chooseKnowledgeForExpert: "選擇 {{expert}} 在執行時可以使用的知識。",
-  fileMetadataLoading: "每個 Markdown 檔案可分別設定載入方式。",
   saveMountedKnowledge: "儲存 {{count}} 個掛載",
   plugins: "外掛程式",
   createExpert: "建立專家",

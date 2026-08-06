@@ -5074,7 +5074,6 @@ html.is-resizing-sidebar * {
   justify-content: flex-end;
   gap: 12px;
   padding: 19px 34px;
-  border-top: 1px solid var(--border);
   background: var(--background);
 }
 
@@ -5157,17 +5156,19 @@ html.is-resizing-sidebar * {
 
 .mount-search {
   width: 100%;
-  margin: 0 0 18px;
+  margin: 0 0 24px;
 }
 
 .mount-store-list {
   display: grid;
-  border-top: 1px solid var(--border);
+  gap: 6px;
 }
 
 .mount-store-row {
-  padding: 9px 0;
-  border-bottom: 1px solid var(--border);
+  padding: 8px 12px;
+  border: 0;
+  border-radius: 12px;
+  background: transparent;
 }
 
 .mount-store-toggle {
@@ -5210,13 +5211,6 @@ html.is-resizing-sidebar * {
   white-space: nowrap;
 }
 
-.mount-trigger-summary {
-  margin: 7px 0 4px 55px;
-  color: var(--muted);
-  font-size: 11px;
-  line-height: 1.45;
-}
-
 .mount-empty {
   padding: 24px 0;
   color: var(--muted);
@@ -5229,11 +5223,10 @@ html.is-resizing-sidebar * {
   width: 100%;
   align-items: center;
   gap: 12px;
-  margin-top: 22px;
-  padding: 17px 0;
+  margin-top: 18px;
+  padding: 16px 12px;
   border: 0;
-  border-top: 1px solid var(--border);
-  border-bottom: 1px solid var(--border);
+  border-radius: 12px;
   background: transparent;
   color: var(--green-dark);
   cursor: pointer;
@@ -15304,12 +15297,16 @@ textarea:focus-visible,
 }
 
 .directory-search,
-.mission-search,
-.mount-search {
+.mission-search {
   border-color: transparent;
   border-radius: var(--radius-control);
   background: #fff;
   box-shadow: 0 1px 2px rgb(20 31 25 / 4%);
+}
+
+.context-mount-drawer .mount-search {
+  border-color: var(--border-strong);
+  background: #fff;
 }
 
 .directory-search:focus-within,
@@ -15365,28 +15362,42 @@ textarea:focus-visible,
 
 .store-type-options > button,
 .trigger-options > label,
-.mount-store-row,
-.create-inline-store,
 .capability-upload {
   border-color: var(--border);
   border-radius: 12px;
   background: var(--surface-soft);
 }
 
+.context-mount-drawer .mount-store-row,
+.context-mount-drawer .create-inline-store {
+  border: 0;
+  border-radius: 12px;
+  background: transparent;
+}
+
 .store-type-options > button:hover,
 .trigger-options > label:hover,
-.mount-store-row:hover,
-.create-inline-store:hover {
+.capability-upload:hover {
   border-color: rgb(88 121 104 / 24%);
   background: #fff;
 }
 
+.context-mount-drawer .mount-store-row:hover,
+.context-mount-drawer .create-inline-store:hover {
+  background: var(--surface-soft);
+}
+
 .store-type-options > button.is-selected,
-.trigger-options > label.is-selected,
-.mount-store-row.is-selected {
+.trigger-options > label.is-selected {
   border-color: var(--green);
   background: var(--green-soft);
-  box-shadow: 0 0 0 3px var(--focus-ring);
+  box-shadow: none;
+}
+
+.context-mount-drawer .mount-store-row.is-selected {
+  border: 0;
+  background: var(--green-soft);
+  box-shadow: none;
 }
 
 .missions-page {

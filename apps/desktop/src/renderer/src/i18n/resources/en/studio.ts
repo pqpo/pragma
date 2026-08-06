@@ -425,7 +425,6 @@ export const studio = {
   markdownFileCount_other: "{{count}} Markdown files",
   addKnowledgeBase: "Add knowledge base",
   chooseKnowledgeForExpert: "Choose what {{expert}} can know at runtime.",
-  fileMetadataLoading: "Loading behavior is configured for each Markdown file.",
   saveMountedKnowledge: "Save {{count}} mounted",
   plugins: "Plugins",
   createExpert: "Create expert",
