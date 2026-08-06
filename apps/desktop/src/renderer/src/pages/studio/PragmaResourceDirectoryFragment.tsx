@@ -5,6 +5,7 @@ import { useTranslation } from "react-i18next";
 import {
   ArrowLeft,
   CaretRight,
+  CaretDown,
   GitBranch,
   MagnifyingGlass,
   PencilSimple,
@@ -16,6 +17,7 @@ import {
 } from "@phosphor-icons/react";
 import {
   PragmaExpertTeamResourceSchema,
+  PragmaRuntimeProfileConfigSchema,
   PragmaResourceKindSchema,
   canonicalPragmaResourceRef,
   parsePragmaReference,
@@ -30,6 +32,7 @@ import {
 } from "@pragma/shared";
 import {
   DesktopMutationErrorSchema,
+  type DesktopRuntimeAvailability,
   type PragmaProjectSnapshot,
 } from "../../../../shared/contracts/index.ts";
 
@@ -39,6 +42,8 @@ import { AssetMemoryPolicySection } from "../settings/AssetMemoryPolicySection.t
 import { StudioScreenFrame } from "./StudioScreenFrame.tsx";
 import { desktopApi } from "./studio-model.ts";
 import { StudioConfirmationDialog } from "./StudioDialog.tsx";
+import type { ExpertRecord } from "./studio-model.ts";
+import { runtimeDisplayName } from "../../lib/runtime-display.ts";
 
 export type ResourceKind = "team" | "flow";
 type TeamExpertPickerKind = "coordinator" | "members";
@@ -62,6 +67,10 @@ type FlowHumanPrompt = NonNullable<
 
 function expertRef(expert: PragmaExpertResource): string {
   return `expert:${expert.metadata.id}`;
+}
+
+function expertRecordRef(expert: ExpertRecord): string {
+  return expert.ref ?? `expert:${expert.id}`;
 }
 
 function normalized(value: string): string {
@@ -253,6 +262,9 @@ export function PragmaResourceDirectoryFragment(props: {
 export function PragmaResourceDetailFragment(props: {
   readonly resource: PragmaExpertTeamResource | PragmaFlowResource;
   readonly project: PragmaProjectSnapshot;
+  readonly experts?: readonly ExpertRecord[] | undefined;
+  readonly runtimes?: readonly DesktopRuntimeAvailability[] | undefined;
+  readonly onOpenExpert?: ((expert: ExpertRecord) => void) | undefined;
   readonly onBack: () => void;
   readonly onEdit: () => void;
   readonly onDelete: () => Promise<void>;
@@ -279,7 +291,7 @@ export function PragmaResourceDetailFragment(props: {
 
   return (
     <StudioScreenFrame
-      className="pragma-resource-detail"
+      className={isTeam ? "pragma-resource-detail is-team-detail" : "pragma-resource-detail"}
       labelledBy={headingId}
       header={
         <button className="back-link" type="button" onClick={props.onBack}>
@@ -327,7 +339,13 @@ export function PragmaResourceDetailFragment(props: {
         </p>
       ) : null}
       {isTeam ? (
-        <TeamDetail resource={props.resource} project={props.project} />
+        <TeamDetail
+          resource={props.resource}
+          project={props.project}
+          experts={props.experts ?? []}
+          runtimes={props.runtimes ?? []}
+          onOpenExpert={props.onOpenExpert}
+        />
       ) : (
         <FlowDetail resource={props.resource} project={props.project} />
       )}
@@ -352,71 +370,210 @@ export function PragmaResourceDetailFragment(props: {
 function TeamDetail(props: {
   readonly resource: PragmaExpertTeamResource;
   readonly project: PragmaProjectSnapshot;
+  readonly experts: readonly ExpertRecord[];
+  readonly runtimes: readonly DesktopRuntimeAvailability[];
+  readonly onOpenExpert?: ((expert: ExpertRecord) => void) | undefined;
 }) {
   const { t } = useTranslation("studio");
-  const experts = props.project.resources.filter(
+  const expertResources = props.project.resources.filter(
     (resource): resource is PragmaExpertResource => resource.kind === "Expert",
   );
-  const expertName = (ref: string): string =>
-    experts.find((expert) => expertRef(expert) === ref)?.metadata.name ?? ref;
-  const uniqueMembers = [
+  const uniqueMemberRefs = [
     props.resource.spec.coordinator.ref,
     ...props.resource.spec.members.map((member) => member.ref),
   ].filter((ref, index, refs) => refs.indexOf(ref) === index);
+  const coordinatorRef = props.resource.spec.coordinator.ref;
+  const buildExpert = (ref: string): TeamExpertDisplay => {
+    const resourceExpert = expertResources.find((expert) => expertRef(expert) === ref);
+    const record = props.experts.find((expert) => expertRecordRef(expert) === ref);
+    const runtimeRef = resourceExpert?.spec.runtime?.ref;
+    const runtimeResource = runtimeRef
+      ? props.project.resources.find(
+          (resource) =>
+            resource.kind === "RuntimeProfile" &&
+            canonicalPragmaResourceRef(resource) === runtimeRef,
+        )
+      : undefined;
+    const runtimeConfig =
+      runtimeResource?.kind === "RuntimeProfile"
+        ? PragmaRuntimeProfileConfigSchema.safeParse(runtimeResource.spec.config).data
+        : undefined;
+    const runtimeId = record?.model?.runtimeId ?? runtimeConfig?.runtimeId;
+    const runtime = props.runtimes.find((candidate) => candidate.id === runtimeId);
+    const modelId = record?.model?.modelId ?? runtimeConfig?.model;
+    const providerId = record?.model?.providerId ?? runtimeConfig?.providerId;
+
+    return {
+      ref,
+      record,
+      name: record?.name ?? resourceExpert?.metadata.name ?? ref,
+      description:
+        record?.description ?? resourceExpert?.metadata.description ?? t("noDescription"),
+      scope: record?.scope ?? resourceExpert?.spec.scope ?? "",
+      runtimeName:
+        runtime === undefined ? (runtimeId ?? t("notConfigured")) : runtimeDisplayName(t, runtime),
+      modelName:
+        modelId === undefined
+          ? t("runtimeDefault")
+          : providerId === undefined
+            ? modelId
+            : `${providerId} · ${modelId}`,
+      capabilitySummary:
+        record === undefined
+          ? undefined
+          : `${record.skills} ${t("skills")} · ${record.tools} ${t("tools")}`,
+    };
+  };
+  const coordinator = buildExpert(coordinatorRef);
+  const members = uniqueMemberRefs
+    .filter((ref) => ref !== coordinatorRef)
+    .map((ref) => buildExpert(ref));
 
   return (
-    <>
-      <section className="expert-scope" aria-labelledby="team-overview-heading">
-        <h2 id="team-overview-heading">{t("overview")}</h2>
-        <dl className="pragma-resource-detail-list">
-          <div>
-            <dt>{t("resourceId")}</dt>
-            <dd>{canonicalPragmaResourceRef(props.resource)}</dd>
-          </div>
-          <div>
-            <dt>{t("coordinator")}</dt>
-            <dd>{expertName(props.resource.spec.coordinator.ref)}</dd>
-          </div>
-          <div>
-            <dt>{t("members")}</dt>
-            <dd>{t("membersCount", { count: uniqueMembers.length })}</dd>
-          </div>
-        </dl>
-      </section>
-      <section className="instructions-preview" aria-labelledby="team-instructions-heading">
-        <h2 id="team-instructions-heading">{t("teamInstructions")}</h2>
-        <p>{props.resource.spec.instructions?.trim() || t("noInstructions")}</p>
-      </section>
-      <section className="expert-capabilities" aria-label={t("teamDetails")}>
+    <div className="team-detail-content">
+      <div className="team-summary-bar" aria-label={t("teamDetails")}>
         <div>
-          <h2>{t("maxConcurrency")}</h2>
-          <p>{props.resource.spec.delegation.maxConcurrency}</p>
+          <UsersThree size={20} aria-hidden="true" />
+          <span>{t("members")}</span>
+          <strong>{t("membersCount", { count: uniqueMemberRefs.length })}</strong>
         </div>
         <div>
-          <h2>{t("maxDelegationDepth")}</h2>
-          <p>{props.resource.spec.delegation.maxDepth}</p>
+          <span>{t("maxConcurrency")}</span>
+          <strong>{props.resource.spec.delegation.maxConcurrency}</strong>
         </div>
-      </section>
-      <section className="expert-context-section" aria-labelledby="team-members-heading">
-        <header>
+        <div>
+          <span>{t("maxDelegationDepth")}</span>
+          <strong>{props.resource.spec.delegation.maxDepth}</strong>
+        </div>
+      </div>
+
+      <section className="team-roster-section" aria-labelledby="team-members-heading">
+        <header className="team-roster-heading">
           <div>
-            <h2 id="team-members-heading">{t("members")}</h2>
+            <h2 id="team-members-heading">{t("teamExperts")}</h2>
             <p>{t("teamMembersDescription")}</p>
           </div>
+          <div className="team-roster-legend" aria-label={t("teamDetails")}>
+            <span className="is-coordinator">
+              <UserCircle size={17} aria-hidden="true" /> {t("coordinator")}
+            </span>
+            <span>
+              <UserCircle size={17} aria-hidden="true" /> {t("members")}
+            </span>
+          </div>
         </header>
-        <div className="expert-context-list">
-          {uniqueMembers.map((ref) => (
-            <article key={ref}>
-              <UserCircle size={20} aria-hidden="true" />
-              <div>
-                <strong>{expertName(ref)}</strong>
-                <span>{ref}</span>
-              </div>
-            </article>
-          ))}
-        </div>
+        <TeamExpertCard expert={coordinator} role="coordinator" onOpenExpert={props.onOpenExpert} />
+        {members.length > 0 ? (
+          <div className="team-member-grid">
+            {members.map((member) => (
+              <TeamExpertCard
+                key={member.ref}
+                expert={member}
+                role="member"
+                onOpenExpert={props.onOpenExpert}
+              />
+            ))}
+          </div>
+        ) : null}
       </section>
-    </>
+
+      <details className="team-instructions-disclosure" open>
+        <summary>
+          <span>
+            <strong>{t("teamInstructions")}</strong>
+            <small>{t("teamInstructionsHint")}</small>
+          </span>
+          <span className="team-instructions-toggle">
+            <span className="team-instructions-toggle-open">{t("showLess")}</span>
+            <span className="team-instructions-toggle-closed">{t("showMore")}</span>
+            <CaretDown size={18} aria-hidden="true" />
+          </span>
+        </summary>
+        <p>{props.resource.spec.instructions?.trim() || t("noInstructions")}</p>
+      </details>
+    </div>
+  );
+}
+
+type TeamExpertDisplay = {
+  readonly ref: string;
+  readonly record: ExpertRecord | undefined;
+  readonly name: string;
+  readonly description: string;
+  readonly scope: string;
+  readonly runtimeName: string;
+  readonly modelName: string;
+  readonly capabilitySummary: string | undefined;
+};
+
+function TeamExpertCard(props: {
+  readonly expert: TeamExpertDisplay;
+  readonly role: "coordinator" | "member";
+  readonly onOpenExpert?: ((expert: ExpertRecord) => void) | undefined;
+}) {
+  const { t } = useTranslation("studio");
+  const openExpert = () => {
+    if (props.expert.record !== undefined && props.onOpenExpert !== undefined) {
+      props.onOpenExpert(props.expert.record);
+    }
+  };
+  const canOpen = props.expert.record !== undefined && props.onOpenExpert !== undefined;
+  return (
+    <article
+      className={
+        props.role === "coordinator" ? "team-expert-card is-coordinator" : "team-expert-card"
+      }
+    >
+      <div className="team-expert-card-main">
+        <div className="team-expert-card-heading">
+          {props.role === "coordinator" ? (
+            <span className="team-role-mark">
+              <UserCircle size={18} aria-hidden="true" />
+              {t("coordinator")}
+            </span>
+          ) : null}
+          {canOpen ? (
+            <button className="team-expert-link" type="button" onClick={openExpert}>
+              {props.expert.name}
+              <CaretRight size={18} aria-hidden="true" />
+            </button>
+          ) : (
+            <strong className="team-expert-name">{props.expert.name}</strong>
+          )}
+        </div>
+        <p className="team-expert-description">{props.expert.description}</p>
+        {props.expert.scope ? (
+          <p className="team-expert-scope">
+            <span>{t("scope")}</span>
+            {props.expert.scope}
+          </p>
+        ) : null}
+      </div>
+      <div className="team-expert-card-side">
+        <dl className="team-expert-meta">
+          <div>
+            <dt>{t("runtime")}</dt>
+            <dd>{props.expert.runtimeName}</dd>
+          </div>
+          <div>
+            <dt>{t("model")}</dt>
+            <dd>{props.expert.modelName}</dd>
+          </div>
+        </dl>
+        {props.expert.capabilitySummary ? (
+          <p className="team-expert-capabilities">
+            <span>{t("capabilities")}</span>
+            {props.expert.capabilitySummary}
+          </p>
+        ) : null}
+        {canOpen ? (
+          <button className="team-expert-open" type="button" onClick={openExpert}>
+            {t("viewExpertDetails")}
+            <CaretRight size={17} aria-hidden="true" />
+          </button>
+        ) : null}
+      </div>
+    </article>
   );
 }
 

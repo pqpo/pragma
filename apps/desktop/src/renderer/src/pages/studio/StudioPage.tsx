@@ -105,6 +105,10 @@ export function StudioPage(props: {
   const [project, setProject] = useState<PragmaProjectSnapshot | null>(null);
   const [automations, setAutomations] = useState<readonly AutomationSummary[]>([]);
   const [selectedResourceRef, setSelectedResourceRef] = useState<string | null>(null);
+  const [expertDetailReturn, setExpertDetailReturn] = useState<{
+    readonly resourceRef: string;
+    readonly view: "teams" | "flows";
+  } | null>(null);
   const [resourceEditor, setResourceEditor] = useState<{
     readonly kind: ResourceKind;
     readonly mode: ResourceEditorMode;
@@ -200,6 +204,7 @@ export function StudioPage(props: {
     };
   }, []);
   const openExpertDirectory = () => {
+    setExpertDetailReturn(null);
     setActiveView("experts");
     setScreen("directory");
   };
@@ -304,6 +309,7 @@ export function StudioPage(props: {
       current.filter((expert) => (expert.ref ?? `expert:${expert.id}`) !== ref),
     );
     setSelectedExpert(null);
+    setExpertDetailReturn(null);
     setScreen("directory");
   };
   const createContextStore = async (input: CreateContextStore): Promise<ContextStore> => {
@@ -443,6 +449,7 @@ export function StudioPage(props: {
     kind === "team" ? "teams" : "flows";
 
   const openResourceDetail = (resource: PragmaExpertTeamResource | PragmaFlowResource) => {
+    setExpertDetailReturn(null);
     setActiveView(resource.kind === "ExpertTeam" ? "teams" : "flows");
     setSelectedResourceRef(canonicalPragmaResourceRef(resource));
     setResourceEditor(null);
@@ -617,6 +624,7 @@ export function StudioPage(props: {
               type="button"
               aria-current={isActive ? "page" : undefined}
               onClick={() => {
+                setExpertDetailReturn(null);
                 setActiveView(section.id);
                 setScreen("directory");
                 setContextDrawerOpen(false);
@@ -653,7 +661,18 @@ export function StudioPage(props: {
           <ExpertDetailFragment
             expert={selectedExpert}
             contextStores={contextStores}
-            onBack={openExpertDirectory}
+            backLabel={expertDetailReturn !== null ? t("backTeamDetail") : undefined}
+            onBack={() => {
+              if (expertDetailReturn !== null) {
+                const returnTarget = expertDetailReturn;
+                setExpertDetailReturn(null);
+                setActiveView(returnTarget.view);
+                setSelectedResourceRef(returnTarget.resourceRef);
+                setScreen("resource-detail");
+                return;
+              }
+              openExpertDirectory();
+            }}
             onEdit={() => openCreate(selectedExpert)}
             onConfigureContext={() => setContextDrawerOpen(true)}
             onTryInSession={() => props.onTryExpert(selectedExpert)}
@@ -685,6 +704,7 @@ export function StudioPage(props: {
             experts={experts}
             onCreate={() => openCreate()}
             onOpen={(expert) => {
+              setExpertDetailReturn(null);
               setSelectedExpert(expert);
               setScreen("expert-detail");
             }}
@@ -841,7 +861,21 @@ export function StudioPage(props: {
           <PragmaResourceDetailFragment
             resource={selectedResource}
             project={project}
-            onBack={() => setScreen("directory")}
+            experts={experts}
+            runtimes={runtimes}
+            onOpenExpert={(expert) => {
+              setExpertDetailReturn({
+                resourceRef: canonicalPragmaResourceRef(selectedResource),
+                view: selectedResource.kind === "ExpertTeam" ? "teams" : "flows",
+              });
+              setActiveView("experts");
+              setSelectedExpert(expert);
+              setScreen("expert-detail");
+            }}
+            onBack={() => {
+              setExpertDetailReturn(null);
+              setScreen("directory");
+            }}
             onEdit={() => openResourceEdit(selectedResource)}
             onDelete={deleteSelectedResource}
           />

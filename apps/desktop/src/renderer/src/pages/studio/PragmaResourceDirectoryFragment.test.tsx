@@ -1,5 +1,6 @@
 import { renderToStaticMarkup } from "react-dom/server";
 import { afterEach, describe, expect, it } from "vitest";
+import { User } from "@phosphor-icons/react";
 
 import {
   PragmaExpertResourceSchema,
@@ -19,6 +20,7 @@ import {
   TeamEditor,
 } from "./PragmaResourceDirectoryFragment.tsx";
 import { createEmptyFlow } from "./flow-editor/flow-model.ts";
+import type { ExpertRecord } from "./studio-model.ts";
 
 afterEach(async () => {
   await i18n.changeLanguage("en");
@@ -37,6 +39,34 @@ function expert(index: number): PragmaExpertResource {
     },
     spec: { scope: "general", instructions: "General expert." },
   });
+}
+
+function studioExpert(index: number): ExpertRecord {
+  const id = String(index).padStart(16, "0");
+  return {
+    id,
+    ref: `expert:${id}`,
+    name: `Expert ${String(index).padStart(3, "0")}`,
+    description: `Specialist description ${index}`,
+    tags: [],
+    scope: "general",
+    instructions: "General expert.",
+    additionalInstructions: "",
+    origin: "project",
+    readOnly: false,
+    customized: false,
+    model: { runtimeId: "codex", providerId: "openai", modelId: "gpt-5" },
+    capabilities: [],
+    toolApprovals: {},
+    skills: index,
+    tools: index + 1,
+    mcpServers: 0,
+    contextStoreMounts: [],
+    resourceTools: [],
+    plugins: [],
+    usesApproval: false,
+    icon: User,
+  };
 }
 
 describe("expert team editor", () => {
@@ -262,6 +292,7 @@ describe("PragmaResourceDetailFragment", () => {
 
   it("shows Team details with edit and delete actions", () => {
     const experts = [expert(1), expert(2)];
+    const studioExperts = [studioExpert(1), studioExpert(2)];
     const team = PragmaExpertTeamResourceSchema.parse({
       apiVersion: "pragma/v3",
       kind: "ExpertTeam",
@@ -290,6 +321,8 @@ describe("PragmaResourceDetailFragment", () => {
       <PragmaResourceDetailFragment
         resource={team}
         project={project}
+        experts={studioExperts}
+        onOpenExpert={() => undefined}
         onBack={() => undefined}
         onEdit={() => undefined}
         onDelete={async () => undefined}
@@ -300,6 +333,14 @@ describe("PragmaResourceDetailFragment", () => {
     expect(html).toContain("Edit expert team");
     expect(html).toContain("Quality team");
     expect(html).toContain("Expert 001");
+    expect(html).toContain("Team experts");
+    expect(html).toContain("Specialist description 1");
+    expect(html).toContain("Runtime");
+    expect(html).toContain("openai · gpt-5");
+    expect(html).toContain("View expert details");
+    expect(html.match(/class="team-expert-link"/g)).toHaveLength(2);
+    expect(html).not.toContain("expert:0000000000000001");
+    expect(html).not.toContain("expert:0000000000000002");
     expect(html).toContain("2 members");
     expect(html).toContain("Delete");
   });

@@ -52,6 +52,32 @@ final result: passed
 
 ---
 
+# Expert Team detail redesign QA
+
+- Source visual truth: `/Users/linminqiu/.codex/generated_images/019fd758-727b-7323-abd6-a9a89012d2d5/exec-a9429985-31f5-424d-a68e-46d13e25c525.png`
+- Selected direction: image 3 layout with image 2's light-gray application canvas.
+- State: Studio → Expert Teams → team detail, with a white detail surface inside the light-gray Studio canvas.
+
+## Fidelity review
+
+- The former overview/capability card stack is replaced with one compact summary strip, a coordinator feature row, and a responsive three-column expert grid.
+- The coordinator is first, has a green accent and role badge; the legend distinguishes coordinator and members.
+- Expert IDs are omitted. Each resolved expert shows name, description, scope, Runtime, model, and capability counts.
+- Team instructions are placed at the end in a native disclosure that supports expand/collapse.
+- Existing Phosphor icons and the application's green/gray tokens are reused; no new gradients, decorative imagery, or hand-drawn icons were introduced.
+
+## Interaction and runtime checks
+
+- Expert names and “View expert details” actions open the existing Expert detail screen.
+- The contextual back action returns to the originating team detail and restores the team view.
+- Component render regression checks: 18 targeted Studio tests passed, including hidden IDs, expert metadata, role marker, and detail links.
+- Desktop lint, typecheck, production Electron build, main-bundle verification, and preload verification passed.
+- A live screenshot capture was not available from this Electron-only workspace session; the implementation was checked through rendered markup, source comparison, and the production bundle.
+
+final result: passed
+
+---
+
 # Expert Studio design QA
 
 ## Comparison targets

@@ -130,6 +130,7 @@ export function ExpertDirectoryFragment(props: {
 export function ExpertDetailFragment(props: {
   readonly expert: ExpertRecord;
   readonly contextStores: readonly ContextStore[];
+  readonly backLabel?: string | undefined;
   readonly onBack: () => void;
   readonly onEdit: () => void;
   readonly onConfigureContext: () => void;
@@ -188,7 +189,7 @@ export function ExpertDetailFragment(props: {
       header={
         <button className="back-link" type="button" onClick={props.onBack}>
           <ArrowLeft size={18} aria-hidden="true" />
-          {t("backExperts")}
+          {props.backLabel ?? t("backExperts")}
         </button>
       }
     >
