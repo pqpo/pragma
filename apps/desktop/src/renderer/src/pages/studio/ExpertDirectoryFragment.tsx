@@ -1,27 +1,37 @@
 import {
   ArrowLeft,
   ArrowCounterClockwise,
+  BookOpenText,
   CaretRight,
   Cpu,
   Database,
   Info,
   Folder,
   MagnifyingGlass,
+  Network,
   PencilSimple,
   PuzzlePiece,
   Play,
   Plus,
   Trash,
   Wrench,
+  type Icon,
 } from "@phosphor-icons/react";
-import { useState } from "react";
+import { useState, type ReactNode } from "react";
 import { useTranslation } from "react-i18next";
+import { canonicalPragmaResourceRef, type PragmaResource } from "@pragma/interpreter/ast";
 
-import type { ContextStore } from "../../../../shared/contracts/index.ts";
+import type {
+  Capability,
+  ContextStore,
+  DesktopPlugin,
+  DesktopRuntimeAvailability,
+} from "../../../../shared/contracts/index.ts";
 import { StudioScreenFrame } from "./StudioScreenFrame.tsx";
 import { StudioConfirmationDialog } from "./StudioDialog.tsx";
 import { isBuiltInExpert, type ExpertRecord } from "./studio-model.ts";
 import { errorMessage } from "../../lib/errors.ts";
+import { runtimeDisplayName } from "../../lib/runtime-display.ts";
 import { localizeSystemExpertCopy } from "../../lib/system-expert-copy.ts";
 
 const DESCRIPTION_PREVIEW_LENGTH = 200;
@@ -167,17 +177,61 @@ export function ExpertDirectoryFragment(props: {
         ) : null}
       </div>
       <p className="directory-count">{t("expertCount", { count: matchingExperts.length })}</p>
-    </StudioScreenFrame>
+  </StudioScreenFrame>
+  );
+}
+
+function resourceKindLabel(
+  resource: PragmaResource,
+  translate: (key: string) => string,
+): string {
+  switch (resource.kind) {
+    case "Expert":
+      return translate("expert");
+    case "ExpertTeam":
+      return translate("expertTeam");
+    case "Flow":
+      return translate("flow");
+  }
+  return resource.kind;
+}
+
+function ExpertCapabilityDetailRow(props: {
+  readonly icon: Icon;
+  readonly eyebrow: string;
+  readonly title: string;
+  readonly description: string;
+  readonly selected: ReactNode;
+  readonly count: string;
+}) {
+  const CapabilityIcon = props.icon;
+  return (
+    <article className="expert-capability-detail-row">
+      <span className="expert-capability-detail-icon" aria-hidden="true">
+        <CapabilityIcon size={19} />
+      </span>
+      <div className="expert-capability-detail-copy">
+        <small>{props.eyebrow}</small>
+        <h3>{props.title}</h3>
+        <p>{props.description}</p>
+        <div className="expert-capability-detail-selection">{props.selected}</div>
+      </div>
+      <span className="expert-capability-detail-count">{props.count}</span>
+    </article>
   );
 }
 
 export function ExpertDetailFragment(props: {
   readonly expert: ExpertRecord;
   readonly contextStores: readonly ContextStore[];
+  readonly capabilities: readonly Capability[];
+  readonly plugins: readonly DesktopPlugin[];
+  readonly resources: readonly PragmaResource[];
+  readonly runtimes: readonly DesktopRuntimeAvailability[];
   readonly backLabel?: string | undefined;
   readonly onBack: () => void;
   readonly onEdit: () => void;
-  readonly onConfigureContext: () => void;
+  readonly onOpenContextStore: (store: ContextStore) => void;
   readonly onTryInSession: () => void;
   readonly onDelete: () => Promise<void>;
   readonly onReset: () => Promise<void>;
@@ -201,6 +255,80 @@ export function ExpertDetailFragment(props: {
     hasLongInstructions && !instructionsExpanded
       ? truncateText(props.expert.instructions, INSTRUCTIONS_PREVIEW_LENGTH)
       : props.expert.instructions.trim();
+  const runtime = props.runtimes.find((item) => item.id === props.expert.model?.runtimeId);
+  const runtimeName =
+    runtime === undefined
+      ? t(isBuiltInExpert(props.expert) ? "systemDefault" : "notConfigured")
+      : runtimeDisplayName(tCommon, runtime);
+  const modelName =
+    props.expert.model?.modelId ??
+    t(isBuiltInExpert(props.expert) ? "systemDefault" : "notConfigured");
+  const selectedResources = props.expert.resourceTools.map((binding) => {
+    const resource = props.resources.find(
+      (candidate) => canonicalPragmaResourceRef(candidate) === binding.target?.ref,
+    );
+    return {
+      label: resource?.metadata.name ?? binding.target?.ref ?? t("notConfigured"),
+      description: resource === undefined ? undefined : resourceKindLabel(resource, t),
+    };
+  });
+  const selectedStores = props.expert.contextStoreMounts.flatMap((mount) => {
+    const store = props.contextStores.find((candidate) => candidate.id === mount.storeId);
+    return [
+      {
+        label: store?.name ?? mount.storeId,
+        description: store?.description || t("knowledgeBase"),
+      },
+    ];
+  });
+  const selectedSkills = props.expert.capabilities
+    .filter((reference) => reference.kind === "skill")
+    .map((reference) => {
+      const capability = props.capabilities.find(
+        (candidate) => candidate.manifest.id === reference.capabilityId,
+      );
+      return {
+        label: capability?.manifest.name ?? reference.capabilityId,
+        description:
+          capability?.definition.kind === "skill"
+            ? capability.definition.description
+            : t("skill"),
+      };
+    });
+  const selectedToolReferences = props.expert.capabilities.filter(
+    (reference): reference is Extract<ExpertRecord["capabilities"][number], { kind: "tools" }> =>
+      reference.kind === "tools",
+  );
+  const selectedTools = selectedToolReferences.flatMap((reference) => {
+    const capability = props.capabilities.find(
+      (candidate) => candidate.manifest.id === reference.capabilityId,
+    );
+    const serviceName = capability?.manifest.name ?? reference.capabilityId;
+    return reference.toolNames.map((toolName) => ({
+      label: toolName,
+      description: serviceName,
+    }));
+  });
+  const selectedPlugins = props.expert.plugins.map((reference) => ({
+    label:
+      props.plugins.find((plugin) => plugin.ref === reference.ref)?.manifest.name ?? reference.ref,
+    description: t("plugins"),
+  }));
+  const selectionList = (
+    items: readonly { readonly label: string; readonly description: string | undefined }[],
+  ): ReactNode =>
+    items.length === 0 ? (
+      <span className="expert-capability-detail-empty">{t("noneSelected")}</span>
+    ) : (
+      <ul className="expert-capability-detail-list">
+        {items.map((item, index) => (
+          <li key={`${item.label}-${index}`}>
+            <strong>{item.label}</strong>
+            {item.description ? <small>{item.description}</small> : null}
+          </li>
+        ))}
+      </ul>
+    );
   const remove = async () => {
     setDeleting(true);
     setDeleteError(null);
@@ -294,61 +422,109 @@ export function ExpertDetailFragment(props: {
           {deleteError}
         </p>
       ) : null}
-      <section className="expert-scope" aria-labelledby="expert-scope-heading">
-        <h2 id="expert-scope-heading">{t("scope")}</h2>
-        <p>{copy.scope}</p>
+      <section className="expert-runtime-summary" aria-label={t("runtime")}>
+        <div>
+          <small>{t("runtime")}</small>
+          <strong>{runtimeName}</strong>
+        </div>
+        <div>
+          <small>{t("model")}</small>
+          <strong>{modelName}</strong>
+        </div>
       </section>
-      <section className="instructions-preview">
-        <h2>
-          {isBuiltInExpert(props.expert) ? t("builtInFoundationInstructions") : t("instructions")}
-        </h2>
-        <p>{displayedInstructions || t("noInstructions")}</p>
-        {hasLongInstructions ? (
-          <button
-            className="text-button instructions-toggle"
-            type="button"
-            aria-expanded={instructionsExpanded}
-            onClick={() => setInstructionsExpanded((expanded) => !expanded)}
-          >
-            {instructionsExpanded ? t("showLess") : t("showMore")}
-          </button>
-        ) : null}
-      </section>
-      {isBuiltInExpert(props.expert) ? (
-        <section className="instructions-preview">
-          <h2>{t("additionalInstructions")}</h2>
-          <p>{props.expert.additionalInstructions.trim() || t("noAdditionalInstructions")}</p>
+      <div className="expert-detail-content">
+        <div className="expert-detail-reading-column">
+          <section className="expert-scope" aria-labelledby="expert-scope-heading">
+            <h2 id="expert-scope-heading">{t("scope")}</h2>
+            <p>{copy.scope}</p>
+          </section>
+          <section className="instructions-preview" aria-labelledby="expert-instructions-heading">
+            <header className="expert-detail-section-heading">
+              <h2 id="expert-instructions-heading">
+                {isBuiltInExpert(props.expert)
+                  ? t("builtInFoundationInstructions")
+                  : t("instructions")}
+              </h2>
+              {hasLongInstructions ? (
+                <button
+                  className="text-button instructions-toggle"
+                  type="button"
+                  aria-expanded={instructionsExpanded}
+                  aria-controls="expert-instructions-content"
+                  onClick={() => setInstructionsExpanded((expanded) => !expanded)}
+                >
+                  {instructionsExpanded ? t("showLess") : t("showMore")}
+                </button>
+              ) : null}
+            </header>
+            <p id="expert-instructions-content">
+              {displayedInstructions || t("noInstructions")}
+            </p>
+          </section>
+          {isBuiltInExpert(props.expert) ? (
+            <section className="instructions-preview" aria-labelledby="expert-additional-heading">
+              <h2 id="expert-additional-heading">{t("additionalInstructions")}</h2>
+              <p>{props.expert.additionalInstructions.trim() || t("noAdditionalInstructions")}</p>
+            </section>
+          ) : null}
+        </div>
+        <section className="expert-capabilities" aria-labelledby="expert-capabilities-heading">
+          <header className="expert-detail-section-heading">
+            <div>
+              <h2 id="expert-capabilities-heading">{t("capabilities")}</h2>
+              <p>{t("capabilityDetailsDescription")}</p>
+            </div>
+          </header>
+          <div className="expert-capability-detail-grid">
+            <ExpertCapabilityDetailRow
+              icon={Network}
+              eyebrow={t("asTools")}
+              title={t("expertsTeamsFlows")}
+              description={t("resourcesDetailDescription")}
+              selected={selectionList(selectedResources)}
+              count={t("selectedCount", { count: selectedResources.length })}
+            />
+            <ExpertCapabilityDetailRow
+              icon={Database}
+              eyebrow={t("knowledge")}
+              title={t("contextStores")}
+              description={t("contextStoresDetailDescription")}
+              selected={selectionList(selectedStores)}
+              count={t("selectedCount", { count: selectedStores.length })}
+            />
+            <ExpertCapabilityDetailRow
+              icon={BookOpenText}
+              eyebrow={t("guidance")}
+              title={t("skills")}
+              description={t("skillsDetailDescription")}
+              selected={selectionList(selectedSkills)}
+              count={t("selectedCount", { count: selectedSkills.length })}
+            />
+            <ExpertCapabilityDetailRow
+              icon={Wrench}
+              eyebrow={t("actions")}
+              title={t("tools")}
+              description={t("toolsDetailDescription")}
+              selected={selectionList(selectedTools)}
+              count={t("selectedCount", { count: selectedTools.length })}
+            />
+            <ExpertCapabilityDetailRow
+              icon={PuzzlePiece}
+              eyebrow={t("plugins")}
+              title={t("plugins")}
+              description={t("pluginsDetailDescription")}
+              selected={selectionList(selectedPlugins)}
+              count={t("selectedCount", { count: selectedPlugins.length })}
+            />
+          </div>
         </section>
-      ) : null}
-      <section className="expert-capabilities" aria-label={t("expertCapabilities")}>
-        <div>
-          <h2>{t("model")}</h2>
-          <p>
-            {props.expert.model?.modelId ??
-              t(isBuiltInExpert(props.expert) ? "systemDefault" : "notConfigured")}
-          </p>
-        </div>
-        <div>
-          <h2>{t("capabilities")}</h2>
-          <p>
-            {props.expert.skills} skills <span>•</span> {props.expert.tools} tools <span>•</span>{" "}
-            {props.expert.mcpServers} MCP server{props.expert.mcpServers === 1 ? "" : "s"}{" "}
-            <span>•</span> {props.expert.plugins.length} plugin
-            {props.expert.plugins.length === 1 ? "" : "s"}
-          </p>
-        </div>
-      </section>
+      </div>
       <section className="expert-context-section" aria-labelledby="expert-context-heading">
         <header>
           <div>
             <h2 id="expert-context-heading">{t("context")}</h2>
             <p>{t("contextDescription")}</p>
           </div>
-          {!props.expert.readOnly || isBuiltInExpert(props.expert) ? (
-            <button className="secondary-button" type="button" onClick={props.onConfigureContext}>
-              <Plus size={16} /> {t("configureContext")}
-            </button>
-          ) : null}
         </header>
         {props.expert.contextStoreMounts.length === 0 ? (
           <p className="expert-context-empty">{t("noContext")}</p>
@@ -360,7 +536,12 @@ export function ExpertDetailFragment(props: {
               const StoreIcon = Folder;
               const loadingBehavior = "From Markdown metadata";
               return (
-                <div key={mount.storeId}>
+                <button
+                  className="expert-context-link"
+                  key={mount.storeId}
+                  type="button"
+                  onClick={() => props.onOpenContextStore(store)}
+                >
                   <span className="store-icon">
                     <StoreIcon size={20} />
                   </span>
@@ -373,7 +554,8 @@ export function ExpertDetailFragment(props: {
                     <i className="is-ready" />
                     {mount.enabled ? t("enabled") : t("disabled")}
                   </span>
-                </div>
+                  <CaretRight size={17} aria-hidden="true" />
+                </button>
               );
             })}
           </div>

@@ -94,6 +94,9 @@ export function StudioPage(props: {
   const [runtimes, setRuntimes] = useState<readonly DesktopRuntimeAvailability[]>([]);
   const [contextStores, setContextStores] = useState<readonly ContextStore[]>([]);
   const [selectedContextStoreId, setSelectedContextStoreId] = useState<string | null>(null);
+  const [contextStoreDetailReturn, setContextStoreDetailReturn] = useState<
+    "expert-detail" | null
+  >(null);
   const [revisionStoreFilter, setRevisionStoreFilter] = useState<string | undefined>();
   const [revisionTaskCount, setRevisionTaskCount] = useState(0);
   const [capabilities, setCapabilities] = useState<readonly Capability[]>([]);
@@ -625,6 +628,7 @@ export function StudioPage(props: {
               aria-current={isActive ? "page" : undefined}
               onClick={() => {
                 setExpertDetailReturn(null);
+                setContextStoreDetailReturn(null);
                 setActiveView(section.id);
                 setScreen("directory");
                 setContextDrawerOpen(false);
@@ -661,6 +665,10 @@ export function StudioPage(props: {
           <ExpertDetailFragment
             expert={selectedExpert}
             contextStores={contextStores}
+            capabilities={capabilities}
+            plugins={plugins}
+            resources={project?.resources ?? []}
+            runtimes={runtimes}
             backLabel={expertDetailReturn !== null ? t("backTeamDetail") : undefined}
             onBack={() => {
               if (expertDetailReturn !== null) {
@@ -674,7 +682,12 @@ export function StudioPage(props: {
               openExpertDirectory();
             }}
             onEdit={() => openCreate(selectedExpert)}
-            onConfigureContext={() => setContextDrawerOpen(true)}
+            onOpenContextStore={(store) => {
+              setSelectedContextStoreId(store.id);
+              setContextStoreDetailReturn("expert-detail");
+              setActiveView("context-stores");
+              setScreen("context-store-detail");
+            }}
             onTryInSession={() => props.onTryExpert(selectedExpert)}
             onDelete={deleteSelectedExpert}
             onReset={resetSelectedExpert}
@@ -705,6 +718,7 @@ export function StudioPage(props: {
             onCreate={() => openCreate()}
             onOpen={(expert) => {
               setExpertDetailReturn(null);
+              setContextStoreDetailReturn(null);
               setSelectedExpert(expert);
               setScreen("expert-detail");
             }}
@@ -723,6 +737,7 @@ export function StudioPage(props: {
             }}
             onOpen={(store) => {
               setSelectedContextStoreId(store.id);
+              setContextStoreDetailReturn(null);
               setScreen("context-store-detail");
             }}
           />
@@ -741,7 +756,15 @@ export function StudioPage(props: {
         {screen === "context-store-detail" && selectedContextStore !== null ? (
           <ContextStoreDetailFragment
             store={selectedContextStore}
-            onBack={() => setScreen("directory")}
+            onBack={() => {
+              if (contextStoreDetailReturn === "expert-detail") {
+                setContextStoreDetailReturn(null);
+                setActiveView("experts");
+                setScreen("expert-detail");
+                return;
+              }
+              setScreen("directory");
+            }}
             onOpenRevisions={() => {
               setRevisionStoreFilter(selectedContextStore.id);
               setScreen("context-store-revisions");

@@ -41,9 +41,13 @@ describe("ExpertDetailFragment", () => {
       <ExpertDetailFragment
         expert={expert}
         contextStores={[]}
+        capabilities={[]}
+        plugins={[]}
+        resources={[]}
+        runtimes={[]}
         onBack={() => undefined}
         onEdit={() => undefined}
-        onConfigureContext={() => undefined}
+        onOpenContextStore={() => undefined}
         onTryInSession={() => undefined}
         onDelete={async () => undefined}
         onReset={async () => undefined}
@@ -52,6 +56,8 @@ describe("ExpertDetailFragment", () => {
 
     expect(html).not.toContain("ID: test_expert");
     expect(html).toContain("Scope");
+    expect(html).toContain("Callable expert resources");
+    expect(html).not.toContain("Let this expert call other Pragma resources when a task needs them.");
     expect(html).not.toContain("Availability");
     expect(html).toContain('aria-expanded="false"');
     expect(html).toContain("Show more");
@@ -73,9 +79,13 @@ describe("ExpertDetailFragment", () => {
           model: null,
         }}
         contextStores={[]}
+        capabilities={[]}
+        plugins={[]}
+        resources={[]}
+        runtimes={[]}
         onBack={() => undefined}
         onEdit={() => undefined}
-        onConfigureContext={() => undefined}
+        onOpenContextStore={() => undefined}
         onTryInSession={() => undefined}
         onDelete={async () => undefined}
         onReset={async () => undefined}
@@ -86,7 +96,7 @@ describe("ExpertDetailFragment", () => {
     expect(html).toContain("Customize");
     expect(html).not.toContain("Use as template");
     expect(html).toContain("Reset to default");
-    expect(html).toContain("Configure knowledge");
+    expect(html).not.toContain("Configure knowledge");
     expect(html).toContain("Try in session");
   });
 
@@ -107,9 +117,13 @@ describe("ExpertDetailFragment", () => {
           model: null,
         }}
         contextStores={[]}
+        capabilities={[]}
+        plugins={[]}
+        resources={[]}
+        runtimes={[]}
         onBack={() => undefined}
         onEdit={() => undefined}
-        onConfigureContext={() => undefined}
+        onOpenContextStore={() => undefined}
         onTryInSession={() => undefined}
         onDelete={async () => undefined}
         onReset={async () => undefined}
