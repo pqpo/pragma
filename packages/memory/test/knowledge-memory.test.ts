@@ -1,7 +1,10 @@
 import { createHash } from "node:crypto";
-import { mkdtemp, rm } from "node:fs/promises";
+import { mkdir, mkdtemp, rm, stat } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { DatabaseSync } from "node:sqlite";
+
+import { PragmaPaths } from "@pragma/core";
 
 import type {
   KnowledgeExtractionCandidate,
@@ -20,6 +23,7 @@ import {
 const roots: string[] = [];
 const now = new Date("2026-08-05T08:00:00.000Z");
 const sourceDigest = "a".repeat(64);
+const due = new Date(now.getTime() + 6 * 60 * 60_000);
 
 afterEach(async () => {
   await Promise.all(
@@ -28,6 +32,92 @@ afterEach(async () => {
 });
 
 describe("Knowledge learning jobs", () => {
+  it("upgrades v1 jobs with debounce timestamps and preserves a backup", async () => {
+    const root = await temporaryRoot();
+    const dataRoot = new PragmaPaths({ pragmaHome: root }).memoryModuleDataRoot(
+      "pragma.memory.knowledge-learning",
+    );
+    await mkdir(dataRoot, { recursive: true });
+    const databasePath = join(dataRoot, "knowledge.sqlite");
+    const legacy = {
+      schemaVersion: "pragma.memory-knowledge-job/v1",
+      id: "legacy-job",
+      revision: 1,
+      rootRef: ref("pragma.expert", "expert-a"),
+      sourceDigest,
+      status: "pending",
+      attempts: 0,
+      createdAt: now.toISOString(),
+      updatedAt: now.toISOString(),
+    };
+    const database = new DatabaseSync(databasePath);
+    database.exec(`
+      CREATE TABLE schema_meta(version INTEGER NOT NULL);
+      INSERT INTO schema_meta(version) VALUES (1);
+      CREATE TABLE jobs(
+        id TEXT PRIMARY KEY, root_key TEXT NOT NULL, source_digest TEXT NOT NULL,
+        status TEXT NOT NULL, retry_at TEXT, lease_until TEXT, job_json TEXT NOT NULL,
+        UNIQUE(root_key, source_digest)
+      );
+    `);
+    database
+      .prepare("INSERT INTO jobs VALUES (?, ?, ?, 'pending', NULL, NULL, ?)")
+      .run(legacy.id, "pragma.expert\0expert-a", sourceDigest, JSON.stringify(legacy));
+    database.close();
+
+    const store = await createKnowledgeLearningStore({ pragmaHome: root });
+    expect(await store.listJobs()).toEqual([
+      expect.objectContaining({
+        schemaVersion: "pragma.memory-knowledge-job/v2",
+        firstFactAt: now.toISOString(),
+        deadlineAt: "2026-08-06T08:00:00.000Z",
+      }),
+    ]);
+    await expect(stat(`${databasePath}.v1.backup`)).resolves.toBeDefined();
+    store.close();
+  });
+
+  it("debounces Fact changes for six quiet hours and caps the batch at twenty-four hours", async () => {
+    const store = await temporaryStore();
+    const first = await store.schedule({
+      rootRef: ref("pragma.expert", "expert-a"),
+      sourceDigest: "1".repeat(64),
+      now,
+    });
+    expect(first).toMatchObject({
+      eligibleAt: "2026-08-05T14:00:00.000Z",
+      deadlineAt: "2026-08-06T08:00:00.000Z",
+    });
+
+    const second = await store.schedule({
+      rootRef: ref("pragma.expert", "expert-a"),
+      sourceDigest: "2".repeat(64),
+      now: new Date("2026-08-05T13:00:00.000Z"),
+    });
+    expect(second).toMatchObject({
+      id: first!.id,
+      eligibleAt: "2026-08-05T19:00:00.000Z",
+      deadlineAt: "2026-08-06T08:00:00.000Z",
+    });
+
+    const capped = await store.schedule({
+      rootRef: ref("pragma.expert", "expert-a"),
+      sourceDigest: "3".repeat(64),
+      now: new Date("2026-08-06T07:00:00.000Z"),
+    });
+    expect(capped).toMatchObject({
+      id: first!.id,
+      eligibleAt: "2026-08-06T08:00:00.000Z",
+      deadlineAt: "2026-08-06T08:00:00.000Z",
+    });
+    expect(await store.claimDueJob(new Date("2026-08-06T07:59:59.999Z"))).toBeUndefined();
+    expect(await store.claimDueJob(new Date("2026-08-06T08:00:00.000Z"))).toMatchObject({
+      sourceDigest: "3".repeat(64),
+      status: "running",
+    });
+    store.close();
+  });
+
   it("deduplicates a source digest and records retained or rejected completion", async () => {
     const store = await temporaryStore();
     const scheduled = await store.schedule({
@@ -45,7 +135,7 @@ describe("Knowledge learning jobs", () => {
       }),
     ).toBeUndefined();
 
-    const claimed = await store.claimDueJob(now);
+    const claimed = await store.claimDueJob(due);
     expect(await store.isClaimCurrent(claimed!)).toBe(true);
     await store.completeLearned(claimed!, now);
     expect(await store.listJobs()).toEqual([
@@ -123,7 +213,7 @@ describe("Knowledge learning jobs", () => {
   it("reclaims expired leases and ignores completion from a stale claim", async () => {
     const store = await temporaryStore();
     const first = await claimedJob(store);
-    const reclaimed = await store.claimDueJob(new Date(now.getTime() + 6 * 60_000));
+    const reclaimed = await store.claimDueJob(new Date(due.getTime() + 6 * 60_000));
 
     expect(reclaimed).toMatchObject({
       id: first.id,
@@ -181,7 +271,7 @@ describe("Knowledge learning jobs", () => {
     await module.store.schedule({
       rootRef: ref("pragma.expert", "expert-a"),
       sourceDigest: digestSources(sourceRevisions),
-      now,
+      now: new Date(now.getTime() - 6 * 60 * 60_000),
     });
 
     await module.runBackgroundOnce?.();
@@ -199,15 +289,19 @@ describe("Knowledge learning jobs", () => {
     module.close();
   });
 
-  it("requires corroboration, a verified fact, or a high-value episode", () => {
+  it("requires a verified Semantic source or Semantic support from two executions", () => {
     const [episode, semantic] = sources();
-    expect(knowledgeSourceSelectionEligible([{ ...episode!, valueScore: 0.84 }])).toBe(false);
-    expect(knowledgeSourceSelectionEligible([episode!])).toBe(true);
+    expect(knowledgeSourceSelectionEligible([episode!])).toBe(false);
     expect(knowledgeSourceSelectionEligible([semantic!])).toBe(true);
     expect(
       knowledgeSourceSelectionEligible([
-        { ...episode!, valueScore: 0.1 },
-        { ...semantic!, verified: false },
+        { ...semantic!, verified: false, sourceExecutionIds: ["execution-a"] },
+        {
+          ...semantic!,
+          ref: { ...semantic!.ref, id: "fact-b" },
+          verified: false,
+          sourceExecutionIds: ["execution-b"],
+        },
       ]),
     ).toBe(true);
   });
@@ -219,7 +313,7 @@ async function claimedJob(store: KnowledgeLearningStore): Promise<KnowledgeExtra
     sourceDigest,
     now,
   });
-  return (await store.claimDueJob(now))!;
+  return (await store.claimDueJob(due))!;
 }
 
 function extractionCandidate(): KnowledgeExtractionCandidate {
@@ -240,6 +334,7 @@ function sources(): readonly KnowledgeSourceSnapshot[] {
       ref: { kind: "episodic", id: "episode-a", revision: 2 },
       rootRef: ref("pragma.expert", "expert-a"),
       producerRefs: [ref("pragma.expert", "expert-a")],
+      sourceExecutionIds: ["execution-a"],
       title: "Migration recovery",
       body: "An interrupted schema migration recovered from its journal.",
       observedAt: "2026-08-04T08:00:00.000Z",
@@ -252,6 +347,7 @@ function sources(): readonly KnowledgeSourceSnapshot[] {
       ref: { kind: "semantic", id: "fact-a", revision: 1 },
       rootRef: ref("pragma.expert", "expert-a"),
       producerRefs: [ref("pragma.expert", "expert-a")],
+      sourceExecutionIds: ["execution-b"],
       title: "Migration policy",
       body: "Every persistent schema upgrade requires an adjacent migration.",
       observedAt: "2026-08-04T09:00:00.000Z",
@@ -268,6 +364,8 @@ function digestSources(sourceRevisions: readonly KnowledgeSourceSnapshot[]): str
       JSON.stringify({
         kind: source.ref.kind,
         id: source.ref.id,
+        producerRefs: source.producerRefs,
+        sourceExecutionIds: source.sourceExecutionIds,
         title: source.title,
         body: source.body,
         observedAt: source.observedAt,

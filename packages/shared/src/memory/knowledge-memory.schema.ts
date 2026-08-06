@@ -6,9 +6,9 @@ import {
   MemoryVisibilityPolicySchema,
 } from "./memory-plane.schema.ts";
 
-export const KNOWLEDGE_JOB_SCHEMA_VERSION = "pragma.memory-knowledge-job/v1" as const;
+export const KNOWLEDGE_JOB_SCHEMA_VERSION = "pragma.memory-knowledge-job/v2" as const;
 export const KNOWLEDGE_EXTRACTION_INPUT_SCHEMA_VERSION =
-  "pragma.memory-knowledge-extraction-input/v1" as const;
+  "pragma.memory-knowledge-extraction-input/v2" as const;
 
 export const KnowledgeSourceRevisionRefSchema = z
   .object({
@@ -50,6 +50,7 @@ export const KnowledgeSourceSnapshotSchema = z
     ref: KnowledgeSourceRevisionRefSchema,
     rootRef: MemorySubjectRefSchema,
     producerRefs: z.array(MemorySubjectRefSchema).max(100),
+    sourceExecutionIds: z.array(z.string().min(1)).max(100),
     title: z.string().trim().min(1).max(500),
     body: z.string().trim().min(1).max(16_000),
     observedAt: z.string().datetime(),
@@ -98,6 +99,10 @@ export const KnowledgeExtractionJobSchema = z
     revision: z.number().int().positive(),
     rootRef: MemorySubjectRefSchema,
     sourceDigest: z.string().regex(/^[a-f0-9]{64}$/),
+    firstFactAt: z.string().datetime(),
+    lastFactAt: z.string().datetime(),
+    eligibleAt: z.string().datetime(),
+    deadlineAt: z.string().datetime(),
     status: z.enum(["pending", "running", "needs_attention", "completed"]),
     attempts: z.number().int().nonnegative(),
     retryAt: z.string().datetime().optional(),

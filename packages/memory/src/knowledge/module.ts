@@ -6,7 +6,6 @@ import {
   KnowledgeExtractionOutputSchema,
   type KnowledgeExtractionCandidate,
   type KnowledgeSourceSnapshot,
-  type MemoryEvidenceEnvelope,
   type MemorySubjectRef,
 } from "@pragma/shared";
 
@@ -91,28 +90,11 @@ export async function createKnowledgeMemoryModule(options: {
         indexMaxBytes: 4_096,
       },
     },
-    subscriptions: [
-      {
-        topic: "execution.execution.terminal",
-        schemaRefs: ["pragma.memory.execution-terminal/v2"],
-      },
-    ],
+    subscriptions: [],
     createContextProvider() {
       return new StaticContextStore();
     },
-    async consume(envelopes) {
-      for (const [rootKey, group] of groupTerminalSignals(envelopes)) {
-        const rootRef = group[0]!.attribution!.rootRef;
-        await store.schedule({
-          rootRef,
-          sourceDigest: digest(
-            "terminal-signal",
-            rootKey,
-            ...group.map((envelope) => envelope.messageId).toSorted(),
-          ),
-          now: now(),
-        });
-      }
+    async consume() {
       return {};
     },
     async runBackgroundOnce() {
@@ -129,19 +111,19 @@ export async function createKnowledgeMemoryModule(options: {
         });
         const sources = boundSources(available);
         if (sources.length === 0) {
-          throw new Error("knowledge_sources_not_ready");
+          await store.completeRejected(job, now());
+          return;
         }
         const sourceDigest = digest(
           "knowledge-sources",
           ...sources.map(sourceDigestKey).toSorted(),
         );
         if (job.sourceDigest !== sourceDigest) {
-          await store.schedule({ rootRef: job.rootRef, sourceDigest, now: now() });
           await store.completeRejected(job, now());
           return;
         }
         const input = KnowledgeExtractionInputSchema.parse({
-          schemaVersion: "pragma.memory-knowledge-extraction-input/v1",
+          schemaVersion: "pragma.memory-knowledge-extraction-input/v2",
           jobId: job.id,
           rootRef: job.rootRef,
           sources,
@@ -187,27 +169,6 @@ export async function createKnowledgeMemoryModule(options: {
       store.close();
     },
   };
-}
-
-function groupTerminalSignals(
-  envelopes: readonly MemoryEvidenceEnvelope[],
-): ReadonlyMap<string, readonly MemoryEvidenceEnvelope[]> {
-  const groups = new Map<string, MemoryEvidenceEnvelope[]>();
-  for (const envelope of envelopes) {
-    const root = envelope.attribution?.rootRef;
-    if (
-      envelope.topic !== "execution.execution.terminal" ||
-      root === undefined ||
-      !["pragma.expert", "pragma.expert-team", "pragma.flow"].includes(root.type)
-    ) {
-      continue;
-    }
-    const key = refKey(root);
-    const group = groups.get(key) ?? [];
-    group.push(envelope);
-    groups.set(key, group);
-  }
-  return groups;
 }
 
 function boundSources(
@@ -256,10 +217,10 @@ function assertEligibleCandidates(
 export function knowledgeSourceSelectionEligible(
   sources: readonly KnowledgeSourceSnapshot[],
 ): boolean {
+  const semantic = sources.filter((source) => source.ref.kind === "semantic");
   return (
-    sources.length >= 2 ||
-    sources.some((source) => source.ref.kind === "semantic" && source.verified) ||
-    sources.some((source) => source.ref.kind === "episodic" && (source.valueScore ?? 0) >= 0.85)
+    semantic.some((source) => source.verified) ||
+    new Set(semantic.flatMap((source) => source.sourceExecutionIds)).size >= 2
   );
 }
 
@@ -273,6 +234,8 @@ function sourceDigestKey(source: KnowledgeSourceSnapshot): string {
   return JSON.stringify({
     kind: source.ref.kind,
     id: source.ref.id,
+    producerRefs: source.producerRefs,
+    sourceExecutionIds: source.sourceExecutionIds,
     title: source.title,
     body: source.body,
     observedAt: source.observedAt,
@@ -281,10 +244,6 @@ function sourceDigestKey(source: KnowledgeSourceSnapshot): string {
     visibility: source.visibility,
     sensitivity: source.sensitivity,
   });
-}
-
-function refKey(ref: MemorySubjectRef): string {
-  return `${ref.type}\0${ref.id}`;
 }
 
 function digest(...parts: readonly string[]): string {

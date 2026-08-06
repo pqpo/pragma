@@ -16,11 +16,15 @@ import {
   type MemoryJobPage,
   type MemoryJobPageInput,
 } from "../pipeline/memory-job-page.ts";
-import { assertFreshSqliteDatabase } from "../storage/sqlite-migration-backup.ts";
+import {
+  assertFreshSqliteDatabase,
+  ensureSqliteMigrationBackup,
+} from "../storage/sqlite-migration-backup.ts";
 
 const MODULE_ID = "pragma.memory.knowledge-learning";
 const LEASE_MS = 5 * 60_000;
 const MAX_TRANSIENT_ATTEMPTS = 3;
+const MAX_DEBOUNCE_MS = 24 * 60 * 60_000;
 
 export interface KnowledgeLearningStoreDiagnostic {
   readonly jobs: number;
@@ -87,7 +91,7 @@ export async function createKnowledgeLearningStore(
   const database = new DatabaseSync(databasePath);
   try {
     await withFileLock(`${databasePath}.migration.lock`, async () => {
-      assertFreshOrCurrent(database);
+      await assertFreshOrCurrent(database, databasePath);
       initialize(database);
     });
   } catch (error) {
@@ -123,14 +127,55 @@ export async function createKnowledgeLearningStore(
         .get(rootKey, sourceDigest);
       if (existing !== undefined) return undefined;
       const timestamp = input.now.toISOString();
+      const open = database
+        .prepare(
+          "SELECT job_json FROM jobs WHERE root_key=? AND status='pending' ORDER BY rowid DESC LIMIT 1",
+        )
+        .get(rootKey) as { readonly job_json: string } | undefined;
+      if (open !== undefined) {
+        const current = parseJob(open.job_json);
+        const deadline = Date.parse(current.deadlineAt);
+        const eligibleAt = new Date(
+          Math.min(input.now.getTime() + DEFAULT_MEMORY_STORAGE_POLICY.extractionIdleMs, deadline),
+        ).toISOString();
+        const next = KnowledgeExtractionJobSchema.parse({
+          ...current,
+          revision: current.revision + 1,
+          sourceDigest,
+          lastFactAt: timestamp,
+          eligibleAt,
+          retryAt: eligibleAt,
+          updatedAt: timestamp,
+        });
+        database.exec("BEGIN IMMEDIATE;");
+        try {
+          database
+            .prepare("UPDATE jobs SET source_digest=? WHERE id=?")
+            .run(sourceDigest, current.id);
+          writeJob(next);
+          database.exec("COMMIT;");
+        } catch (error) {
+          database.exec("ROLLBACK;");
+          throw error;
+        }
+        return next;
+      }
+      const eligibleAt = new Date(
+        input.now.getTime() + DEFAULT_MEMORY_STORAGE_POLICY.extractionIdleMs,
+      ).toISOString();
       const job = KnowledgeExtractionJobSchema.parse({
-        schemaVersion: "pragma.memory-knowledge-job/v1",
+        schemaVersion: "pragma.memory-knowledge-job/v2",
         id: stableId("knowledge-job", rootKey, sourceDigest),
         revision: 1,
         rootRef: input.rootRef,
         sourceDigest,
+        firstFactAt: timestamp,
+        lastFactAt: timestamp,
+        eligibleAt,
+        deadlineAt: new Date(input.now.getTime() + MAX_DEBOUNCE_MS).toISOString(),
         status: "pending",
         attempts: 0,
+        retryAt: eligibleAt,
         createdAt: timestamp,
         updatedAt: timestamp,
       });
@@ -220,7 +265,10 @@ export async function createKnowledgeLearningStore(
       const interrupted = KnowledgeExtractionJobSchema.parse({
         ...resetPendingJob(job, input.now),
         retryAt: new Date(
-          input.now.getTime() + DEFAULT_MEMORY_STORAGE_POLICY.extractionIdleMs,
+          Math.min(
+            input.now.getTime() + DEFAULT_MEMORY_STORAGE_POLICY.extractionIdleMs,
+            Date.parse(job.deadlineAt),
+          ),
         ).toISOString(),
       });
       writeJob(interrupted);
@@ -300,7 +348,7 @@ export async function createKnowledgeLearningStore(
 function initialize(database: DatabaseSync): void {
   database.exec(`
     CREATE TABLE IF NOT EXISTS schema_meta(version INTEGER NOT NULL);
-    INSERT INTO schema_meta(version) SELECT 1 WHERE NOT EXISTS (SELECT 1 FROM schema_meta);
+    INSERT INTO schema_meta(version) SELECT 2 WHERE NOT EXISTS (SELECT 1 FROM schema_meta);
     CREATE TABLE IF NOT EXISTS jobs(
       id TEXT PRIMARY KEY, root_key TEXT NOT NULL, source_digest TEXT NOT NULL,
       status TEXT NOT NULL, retry_at TEXT, lease_until TEXT, job_json TEXT NOT NULL,
@@ -309,7 +357,7 @@ function initialize(database: DatabaseSync): void {
   `);
 }
 
-function assertFreshOrCurrent(database: DatabaseSync): void {
+async function assertFreshOrCurrent(database: DatabaseSync, databasePath: string): Promise<void> {
   const row = database
     .prepare("SELECT name FROM sqlite_master WHERE type='table' AND name='schema_meta'")
     .get();
@@ -319,8 +367,43 @@ function assertFreshOrCurrent(database: DatabaseSync): void {
   }
   const version = database.prepare("SELECT version FROM schema_meta LIMIT 1").get() as
     { version: number } | undefined;
-  if (version?.version !== 1) {
+  if (version?.version === 1) {
+    await ensureSqliteMigrationBackup(database, databasePath, 1);
+    migrateV1ToV2(database);
+    return;
+  }
+  if (version?.version !== 2) {
     throw new Error("Unsupported pragma.memory-knowledge-learning-store version.");
+  }
+}
+
+function migrateV1ToV2(database: DatabaseSync): void {
+  const rows = database.prepare("SELECT id, job_json FROM jobs").all() as unknown as readonly {
+    readonly id: string;
+    readonly job_json: string;
+  }[];
+  database.exec("BEGIN IMMEDIATE;");
+  try {
+    const update = database.prepare("UPDATE jobs SET retry_at=?, job_json=? WHERE id=?");
+    for (const row of rows) {
+      const legacy = JSON.parse(row.job_json) as Record<string, unknown>;
+      const createdAt = String(legacy.createdAt);
+      const retryAt = typeof legacy.retryAt === "string" ? legacy.retryAt : createdAt;
+      const migrated = KnowledgeExtractionJobSchema.parse({
+        ...legacy,
+        schemaVersion: "pragma.memory-knowledge-job/v2",
+        firstFactAt: createdAt,
+        lastFactAt: String(legacy.updatedAt ?? createdAt),
+        eligibleAt: retryAt,
+        deadlineAt: new Date(Date.parse(createdAt) + MAX_DEBOUNCE_MS).toISOString(),
+      });
+      update.run(migrated.retryAt ?? null, JSON.stringify(migrated), row.id);
+    }
+    database.prepare("UPDATE schema_meta SET version=2").run();
+    database.exec("COMMIT;");
+  } catch (error) {
+    database.exec("ROLLBACK;");
+    throw error;
   }
 }
 

@@ -374,7 +374,8 @@ function renderKnowledgeExtractionPrompt(
   const prompt = [
     "Extract reusable Knowledge candidates from these already-curated Memory source revisions.",
     "Candidates are proposals for human review, not automatically published instructions.",
-    "Each candidate must cite exact supplied sourceRefs. It is eligible only with two distinct source revisions, one verified Semantic source, or one Episodic source with valueScore at least 0.85.",
+    "Each candidate must cite exact supplied sourceRefs and at least one Semantic source. It is eligible only when one cited Semantic source is verified or the cited Semantic sources collectively cover at least two distinct sourceExecutionIds.",
+    "Episodic sources are supplemental only. Use them to enrich steps, failures, and recoveries, never as independent authority or current truth.",
     "normalizedKey must be a stable lowercase root-scoped deduplication key using only letters, numbers, dot, underscore, colon, slash, or hyphen.",
     "Keep guidance concrete and reusable. Do not invent facts, identifiers, permissions, or provenance.",
     "Output schema:",
@@ -404,9 +405,12 @@ function renderSkillExtractionPrompt(
     "Output schema:",
     '{"retain":true,"candidates":[{"content":{"normalizedKey":"workflow.example","applicability":["..."],"failureModes":["..."],"recoverySteps":["..."],"package":{"name":"...","description":"...","files":[{"path":"SKILL.md","content":"---\\nname: ...\\ndescription: ...\\n---\\n..."}]},"replayCases":[{"objective":"...","requiredBehaviors":["..."],"forbiddenBehaviors":[]}],"boundaryCase":{"objective":"...","requiredBehaviors":["recognize non-applicability"],"forbiddenBehaviors":["force the workflow"]}},"sourceRefs":[{"kind":"episodic","id":"...","revision":1}],"route":{"type":"create|revise|ambiguous","bindingId":"for revise","bindingIds":["for ambiguous"]}}]}',
     'or {"retain":false,"reason":"no-reusable-skill|insufficient-independent-sources|fragmentary-pattern|sensitive"}.',
-    "Root:", JSON.stringify(input.rootRef),
-    "Existing Memory Skills:", JSON.stringify(input.existingTargets),
-    "Sources:", JSON.stringify(input.sources),
+    "Root:",
+    JSON.stringify(input.rootRef),
+    "Existing Memory Skills:",
+    JSON.stringify(input.existingTargets),
+    "Sources:",
+    JSON.stringify(input.sources),
   ].join("\n\n");
   if (Buffer.byteLength(prompt) > DEFAULT_MEMORY_STORAGE_POLICY.extractionPromptMaxBytes) {
     throw new Error("memory_curator_prompt_metadata_too_large");

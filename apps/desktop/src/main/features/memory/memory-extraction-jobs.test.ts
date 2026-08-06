@@ -207,11 +207,15 @@ function semanticJob(index: number, updatedAt: string): SemanticExtractionJob {
 
 function knowledgeJob(index: number, updatedAt: string): KnowledgeExtractionJob {
   return {
-    schemaVersion: "pragma.memory-knowledge-job/v1",
+    schemaVersion: "pragma.memory-knowledge-job/v2",
     id: `knowledge-${String(index).padStart(2, "0")}`,
     revision: 1,
     rootRef: { type: "pragma.context-store", id: "resource-1" },
     sourceDigest: "a".repeat(64),
+    firstFactAt: updatedAt,
+    lastFactAt: updatedAt,
+    eligibleAt: updatedAt,
+    deadlineAt: updatedAt,
     status: "completed",
     attempts: 0,
     createdAt: updatedAt,

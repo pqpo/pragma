@@ -56,11 +56,28 @@ export async function createSemanticMemoryModule(
   const now = options.now ?? (() => new Date());
   let extractor = options.extractor;
   const running = new Map<string, AbortController>();
+  let projectionNotificationAttempts = 0;
+  let projectionNotificationRetryAt = 0;
+  let projectionNotificationError: unknown;
   const drainProjectionNotification = async (): Promise<void> => {
+    if (now().getTime() < projectionNotificationRetryAt) throw projectionNotificationError;
     const notification = await store.readProjectionNotification();
     if (notification === undefined) return;
-    await options.onProjectionChanged?.({ rootRef: notification.rootRef });
-    await store.acknowledgeProjectionNotification(notification.id);
+    try {
+      if (notification.learningEligible) {
+        await options.onProjectionChanged?.({ rootRef: notification.rootRef });
+      }
+      await store.acknowledgeProjectionNotification(notification.id);
+      projectionNotificationAttempts = 0;
+      projectionNotificationRetryAt = 0;
+      projectionNotificationError = undefined;
+    } catch (error) {
+      projectionNotificationAttempts += 1;
+      projectionNotificationRetryAt =
+        now().getTime() + Math.min(2 ** projectionNotificationAttempts * 1_000, 5 * 60_000);
+      projectionNotificationError = error;
+      throw error;
+    }
   };
 
   return {
@@ -111,6 +128,7 @@ export async function createSemanticMemoryModule(
       if (job === undefined) return;
       const key = conversationKey(job.conversationRef);
       const controller = new AbortController();
+      let shouldDrainProjectionNotification = false;
       running.set(key, controller);
       try {
         if (await store.hasAppliedJob(job)) {
@@ -201,7 +219,7 @@ export async function createSemanticMemoryModule(
           extractor: extracted.provenance,
           now: now(),
         });
-        await drainProjectionNotification();
+        shouldDrainProjectionNotification = true;
       } catch (error) {
         await store.fail({
           job,
@@ -212,6 +230,7 @@ export async function createSemanticMemoryModule(
       } finally {
         if (running.get(key) === controller) running.delete(key);
       }
+      if (shouldDrainProjectionNotification) await drainProjectionNotification();
     },
     async setExtractor(next) {
       extractor = next;
