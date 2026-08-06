@@ -1,7 +1,0 @@
-apiVersion: pragma/v3
-kind: Bundle
-imports:
-  - ./capabilities/1h2j3k4m5n6p7q8r.pragma.yaml
-  - ./capabilities/2h3j4k5m6n7p8q9r.pragma.yaml
-  - ./experts/0000000000pragma.pragma.yaml
-resources: []

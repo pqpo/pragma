@@ -5,7 +5,7 @@ import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
 
 import type { MissionExecutor, PragmaProjectSnapshot } from "../../../shared/contracts/index.ts";
-import { createDesktopDefaultAgentTaskPort } from "../default-agent/default-agent-task-adapter.ts";
+import { createDesktopPragmaAgentTaskPort } from "../built-in-agents/pragma-agent-task-adapter.ts";
 import { createMissionCreator } from "./mission-creator.ts";
 import type { MissionExecutorCatalog } from "./mission-executor-catalog.ts";
 import type { MissionRunner } from "./mission-runner.ts";
@@ -90,7 +90,7 @@ describe("MissionCreator", () => {
     const runner = {
       run: async (id: string) => await missions.get(id),
     } as unknown as MissionRunner;
-    const tasks = createDesktopDefaultAgentTaskPort({
+    const tasks = createDesktopPragmaAgentTaskPort({
       missions,
       runner,
       creator,

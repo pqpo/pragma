@@ -3,26 +3,25 @@ import { mkdir, readFile, readdir, rename, rm, writeFile } from "node:fs/promise
 import { dirname, join } from "node:path";
 
 import { withFileLock } from "@pragma/context-filesystem";
+import {
+  assertProgressiveKnowledgeStructure,
+  attachContextStoreBaseContent,
+} from "@pragma/built-in-agents";
 
 import {
   ContextStoreChangeSetSchema,
   ContextStoreRevisionJobSchema,
   ContextStoreRevisionProfileSchema,
   ContextStoreRevisionRequestSchema,
-  ProgressiveKnowledgeStoreFilesSchema,
   UpdateContextStoreRevisionProfileSchema,
   type ContextStoreChangeSet,
   type ContextStoreRevisionJob,
   type ContextStoreRevisionProfile,
   type ContextStoreRevisionRequest,
-  type ContextStoreSnapshot,
   type ListContextStoreRevisionJobs,
   type UpdateContextStoreRevisionProfile,
 } from "../../../shared/contracts/index.ts";
 import { ContextStoreStoreError, type ContextStoreStore } from "./context-store-store.ts";
-
-export const STORE_REVISION_EXPERT_ID = "0000000000st0rev";
-export const STORE_REVISION_EXPERT_REF = `expert:${STORE_REVISION_EXPERT_ID}` as const;
 
 export interface ContextStoreRevisionGenerator {
   generate(input: {
@@ -56,55 +55,6 @@ export class ContextStoreRevisionServiceError extends Error {
     super(message);
     this.name = "ContextStoreRevisionServiceError";
   }
-}
-
-function assertProgressiveStructurePreserved(
-  base: ContextStoreSnapshot,
-  changeSet: ContextStoreChangeSet,
-): void {
-  const baseIds = new Set(base.files.map((file) => file.id));
-  if (
-    !baseIds.has("guide.md") ||
-    !baseIds.has("overview.md") ||
-    !baseIds.has("index.md") ||
-    !base.files.some((file) => file.id.startsWith("items/"))
-  ) {
-    return;
-  }
-  const projected = new Map(base.files.map((file) => [file.id, file]));
-  for (const operation of changeSet.operations) {
-    if (operation.operation === "delete") {
-      projected.delete(operation.id);
-    } else if (operation.operation === "rename") {
-      const current = projected.get(operation.id);
-      if (current !== undefined) {
-        projected.delete(operation.id);
-        projected.set(operation.nextId, { ...current, id: operation.nextId });
-      }
-    } else {
-      projected.set(operation.id, {
-        id: operation.id,
-        content: operation.content,
-        metadata: operation.metadata,
-      });
-    }
-  }
-  ProgressiveKnowledgeStoreFilesSchema.parse([...projected.values()]);
-}
-
-function attachBaseContent(
-  base: ContextStoreSnapshot,
-  changeSet: ContextStoreChangeSet,
-): ContextStoreChangeSet {
-  const files = new Map(base.files.map((file) => [file.id, file]));
-  return ContextStoreChangeSetSchema.parse({
-    ...changeSet,
-    operations: changeSet.operations.map((operation) => {
-      if (operation.operation === "rename") return operation;
-      const previous = files.get(operation.id);
-      return { ...operation, previousContent: previous?.content };
-    }),
-  });
 }
 
 export function createContextStoreRevisionService(options: {
@@ -239,7 +189,7 @@ export function createContextStoreRevisionService(options: {
           applying.request.storeId,
           changeSet.baseRevision,
         );
-        assertProgressiveStructurePreserved(base, changeSet);
+        assertProgressiveKnowledgeStructure(base, changeSet);
         await options.contextStores.applyChangeSet(changeSet, "store-revision-agent", applying.id);
         return await mutateJob(applying.id, applying.revision, (job) => ({
           ...job,
@@ -394,7 +344,7 @@ export function createContextStoreRevisionService(options: {
               applying.request.storeId,
               changeSet.baseRevision,
             );
-            assertProgressiveStructurePreserved(base, changeSet);
+            assertProgressiveKnowledgeStructure(base, changeSet);
             const current = await options.contextStores.getSnapshot(applying.request.storeId);
             if (
               current.revision === changeSet.baseRevision &&
@@ -463,7 +413,7 @@ export function createContextStoreRevisionService(options: {
               api.getProfile(),
               options.contextStores.getSnapshot(running.request.storeId),
             ]);
-            const changeSet = attachBaseContent(
+            const changeSet = attachContextStoreBaseContent(
               snapshot,
               ContextStoreChangeSetSchema.parse(
                 await options.generator.generate({
@@ -481,7 +431,7 @@ export function createContextStoreRevisionService(options: {
             ) {
               throw new Error("Revision Agent returned a changeset for the wrong store snapshot.");
             }
-            assertProgressiveStructurePreserved(snapshot, changeSet);
+            assertProgressiveKnowledgeStructure(snapshot, changeSet);
             await mutateJob(running.id, running.revision, (job) => ({
               ...job,
               revision: job.revision + 1,

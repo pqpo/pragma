@@ -4,7 +4,7 @@ import { join } from "node:path";
 
 import { afterEach, describe, expect, it } from "vitest";
 
-import { BUILT_IN_PRAGMA_REF } from "@pragma/default-agent";
+import { BUILT_IN_AGENT_REFS, BUILT_IN_PRAGMA_REF } from "@pragma/built-in-agents";
 
 import { createDesktopSystemExpertRegistry } from "./system-expert-registry.ts";
 
@@ -46,6 +46,31 @@ describe("DesktopSystemExpertRegistry", () => {
     expect(registry.isReservedRef(BUILT_IN_PRAGMA_REF)).toBe(true);
     expect(registry.isReservedId("0000000000pragma")).toBe(true);
     expect(registry.fingerprint(BUILT_IN_PRAGMA_REF)).toMatch(/^[a-f0-9]{64}$/);
+  });
+
+  it("reserves the four managed Agent identities without exposing customization surfaces", async () => {
+    const registry = createDesktopSystemExpertRegistry();
+    const managedRefs = BUILT_IN_AGENT_REFS.filter((ref) => ref !== BUILT_IN_PRAGMA_REF);
+
+    expect(managedRefs).toHaveLength(4);
+    for (const ref of managedRefs) {
+      expect(registry.isReservedRef(ref)).toBe(true);
+      expect(registry.isReservedId(ref.slice("expert:".length))).toBe(true);
+      expect(registry.get(ref)).toBeUndefined();
+      expect(registry.getExecutor(ref)).toBeUndefined();
+      await expect(
+        registry.update(ref, {
+          name: "Managed",
+          description: "Managed system Agent.",
+          tags: [],
+          additionalInstructions: "",
+          capabilities: [],
+          toolApprovals: {},
+          plugins: [],
+          contextStoreMounts: [],
+        }),
+      ).rejects.toThrow("Built-in Expert not found");
+    }
   });
 
   it("persists an editable override and resets to the shipped definition", async () => {

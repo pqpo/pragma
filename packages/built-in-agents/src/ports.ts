@@ -1,22 +1,22 @@
 import type {
-  DefaultAgentChangeSet,
-  DefaultAgentEvaluationDraft,
-  DefaultAgentEvaluationDraftOperation,
-  DefaultAgentEvaluationDraftRunResult,
-  DefaultAgentFlowDraft,
-  DefaultAgentFlowDraftOperation,
-  DefaultAgentDslDocument,
-  DefaultAgentExpertOptionCatalog,
-  DefaultAgentProjectCommit,
-  DefaultAgentPrepareResult,
-  DefaultAgentResourceSummary,
-  DefaultAgentTask,
-  DefaultAgentTaskSummary,
-  DefaultAgentTaskWorkItem,
-  DefaultAgentAutomationSummary,
+  PragmaAgentChangeSet,
+  PragmaAgentEvaluationDraft,
+  PragmaAgentEvaluationDraftOperation,
+  PragmaAgentEvaluationDraftRunResult,
+  PragmaAgentFlowDraft,
+  PragmaAgentFlowDraftOperation,
+  PragmaAgentDslDocument,
+  PragmaAgentExpertOptionCatalog,
+  PragmaAgentProjectCommit,
+  PragmaAgentPrepareResult,
+  PragmaAgentResourceSummary,
+  PragmaAgentTask,
+  PragmaAgentTaskSummary,
+  PragmaAgentTaskWorkItem,
+  PragmaAgentAutomationSummary,
 } from "./contracts.ts";
 
-export interface DefaultAgentDslProjectPort {
+export interface PragmaAgentDslProjectPort {
   allocateResourceIds(
     requests: readonly {
       readonly key: string;
@@ -33,92 +33,92 @@ export interface DefaultAgentDslProjectPort {
   ): Promise<readonly { readonly key: string; readonly id: string; readonly ref: string }[]>;
   list(): Promise<{
     readonly projectRevision: number;
-    readonly resources: DefaultAgentResourceSummary[];
+    readonly resources: PragmaAgentResourceSummary[];
   }>;
-  listExpertOptions(): Promise<DefaultAgentExpertOptionCatalog>;
-  read(ref: string): Promise<DefaultAgentDslDocument>;
+  listExpertOptions(): Promise<PragmaAgentExpertOptionCatalog>;
+  read(ref: string): Promise<PragmaAgentDslDocument>;
   prepare(input: {
     readonly expectedProjectRevision: number;
     readonly sources: readonly string[];
-  }): Promise<DefaultAgentPrepareResult>;
+  }): Promise<PragmaAgentPrepareResult>;
   createFlowDraft(input: {
     readonly expectedProjectRevision: number;
-    readonly metadata: DefaultAgentFlowDraft["resource"]["metadata"];
-    readonly input?: DefaultAgentFlowDraft["resource"]["spec"]["input"] | undefined;
-    readonly output?: DefaultAgentFlowDraft["resource"]["spec"]["output"] | undefined;
-    readonly limits?: DefaultAgentFlowDraft["resource"]["spec"]["limits"] | undefined;
-  }): Promise<DefaultAgentFlowDraft>;
-  getFlowDraft(draftId: string): Promise<DefaultAgentFlowDraft>;
+    readonly metadata: PragmaAgentFlowDraft["resource"]["metadata"];
+    readonly input?: PragmaAgentFlowDraft["resource"]["spec"]["input"] | undefined;
+    readonly output?: PragmaAgentFlowDraft["resource"]["spec"]["output"] | undefined;
+    readonly limits?: PragmaAgentFlowDraft["resource"]["spec"]["limits"] | undefined;
+  }): Promise<PragmaAgentFlowDraft>;
+  getFlowDraft(draftId: string): Promise<PragmaAgentFlowDraft>;
   updateFlowDraft(input: {
     readonly draftId: string;
     readonly expectedDraftRevision: number;
-    readonly operations: readonly DefaultAgentFlowDraftOperation[];
-  }): Promise<DefaultAgentFlowDraft>;
-  validateFlowDraft(draftId: string): Promise<DefaultAgentFlowDraft>;
+    readonly operations: readonly PragmaAgentFlowDraftOperation[];
+  }): Promise<PragmaAgentFlowDraft>;
+  validateFlowDraft(draftId: string): Promise<PragmaAgentFlowDraft>;
   createEvaluationDraft(
     input:
       | {
           readonly mode: "create";
           readonly expectedProjectRevision: number;
-          readonly metadata: DefaultAgentEvaluationDraft["resource"]["metadata"];
-          readonly targetRef: DefaultAgentEvaluationDraft["resource"]["spec"]["target"]["ref"];
+          readonly metadata: PragmaAgentEvaluationDraft["resource"]["metadata"];
+          readonly targetRef: PragmaAgentEvaluationDraft["resource"]["spec"]["target"]["ref"];
         }
       | {
           readonly mode: "edit";
           readonly expectedProjectRevision: number;
           readonly evaluationRef: string;
         },
-  ): Promise<DefaultAgentEvaluationDraft>;
-  getEvaluationDraft(draftId: string): Promise<DefaultAgentEvaluationDraft>;
+  ): Promise<PragmaAgentEvaluationDraft>;
+  getEvaluationDraft(draftId: string): Promise<PragmaAgentEvaluationDraft>;
   updateEvaluationDraft(input: {
     readonly draftId: string;
     readonly expectedDraftRevision: number;
-    readonly operations: readonly DefaultAgentEvaluationDraftOperation[];
-  }): Promise<DefaultAgentEvaluationDraft>;
+    readonly operations: readonly PragmaAgentEvaluationDraftOperation[];
+  }): Promise<PragmaAgentEvaluationDraft>;
   runEvaluationDraft(input: {
     readonly draftId: string;
     readonly caseIds: readonly string[];
-  }): Promise<DefaultAgentEvaluationDraftRunResult>;
+  }): Promise<PragmaAgentEvaluationDraftRunResult>;
   prepareEvaluationDraft(input: {
     readonly draftId: string;
     readonly expectedDraftRevision: number;
-  }): Promise<DefaultAgentPrepareResult>;
+  }): Promise<PragmaAgentPrepareResult>;
   discardEvaluationDraft(draftId: string): Promise<void>;
   prepareFlowDraft(input: {
     readonly draftId: string;
     readonly expectedDraftRevision: number;
     readonly additionalSources?: readonly string[] | undefined;
-  }): Promise<DefaultAgentPrepareResult>;
+  }): Promise<PragmaAgentPrepareResult>;
   discardFlowDraft(draftId: string): Promise<void>;
-  getChangeSet(changeSetId: string): Promise<DefaultAgentChangeSet>;
+  getChangeSet(changeSetId: string): Promise<PragmaAgentChangeSet>;
   commit(input: {
     readonly changeSetId: string;
     readonly operationId: string;
-  }): Promise<DefaultAgentProjectCommit>;
+  }): Promise<PragmaAgentProjectCommit>;
 }
 
-export interface DefaultAgentTaskPort {
-  list(): Promise<readonly DefaultAgentTaskSummary[]>;
-  get(id: string): Promise<DefaultAgentTask>;
+export interface PragmaAgentTaskPort {
+  list(): Promise<readonly PragmaAgentTaskSummary[]>;
+  get(id: string): Promise<PragmaAgentTask>;
   submit(input: {
     readonly goal: string;
     readonly executorRef: string;
     readonly workspaceId: string;
     readonly operationId: string;
-  }): Promise<DefaultAgentTask>;
+  }): Promise<PragmaAgentTask>;
   sendMessage(input: {
     readonly id: string;
     readonly content: string;
     readonly operationId: string;
-  }): Promise<DefaultAgentTask>;
-  listWorkItems(id: string): Promise<readonly DefaultAgentTaskWorkItem[]>;
-  interrupt(id: string): Promise<DefaultAgentTask>;
+  }): Promise<PragmaAgentTask>;
+  listWorkItems(id: string): Promise<readonly PragmaAgentTaskWorkItem[]>;
+  interrupt(id: string): Promise<PragmaAgentTask>;
 }
 
-export interface DefaultAgentAutomationPort {
+export interface PragmaAgentAutomationPort {
   list(): Promise<{
     readonly projectRevision: number;
-    readonly automations: readonly DefaultAgentAutomationSummary[];
+    readonly automations: readonly PragmaAgentAutomationSummary[];
   }>;
   save(input: {
     readonly expectedProjectRevision: number;
@@ -126,7 +126,7 @@ export interface DefaultAgentAutomationPort {
     readonly workspaceId: string;
     readonly toolPermissionMode: "request-approval" | "auto-approve" | "full-access";
     readonly operationId: string;
-  }): Promise<DefaultAgentAutomationSummary>;
+  }): Promise<PragmaAgentAutomationSummary>;
   delete(input: {
     readonly expectedProjectRevision: number;
     readonly ref: string;
@@ -135,5 +135,5 @@ export interface DefaultAgentAutomationPort {
   resetSession(input: {
     readonly ref: string;
     readonly operationId: string;
-  }): Promise<DefaultAgentAutomationSummary>;
+  }): Promise<PragmaAgentAutomationSummary>;
 }

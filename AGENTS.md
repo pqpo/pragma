@@ -95,7 +95,7 @@ tsconfig.base.json
 @pragma/memory
 @pragma/interpreter
 @pragma/evaluation
-@pragma/default-agent
+@pragma/built-in-agents
 @pragma/runtime-pi
 @pragma/runtime-codex
 @pragma/runtime-claude-code
@@ -119,7 +119,7 @@ helpers
 lib
 ```
 
-新增 package 前，必须先明确它属于 `shared`、`client`、`server`、`core`、`interpreter`、`default-agent`、`runtime-*`、`plugins/*`、`examples`、`apps/*` 还是配置工具。
+新增 package 前，必须先明确它属于 `shared`、`client`、`server`、`core`、`interpreter`、`built-in-agents`、`runtime-*`、`plugins/*`、`examples`、`apps/*` 还是配置工具。
 
 ## 模块依赖规范
 
@@ -132,7 +132,7 @@ lib
 - `core` 是专家 Agent 的执行抽象和 Runtime Adapter 边界，只依赖 `shared` 和 core 内部模块，不依赖具体 runtime、`client` 或 `server`。
 - `evaluation` 是独立测评领域包，拥有 Evaluation 协议、Run Dry 执行器与结果模型；只依赖 `core`，不依赖 `interpreter` 或应用层。
 - `interpreter` 是 Pragma DSL 的语言实现，拥有 AST、解析、链接、校验、编译、扩展 registry 和 dump；可以依赖 `evaluation` 和 `core`，但 `core` 与 `evaluation` 不得反向依赖 `interpreter`。
-- `default-agent` 是内置通用 Agent `Pragma` 的可复用产品能力包，拥有 DSL、Skill、descriptor/compiler、宿主端口和 managed tools；应用负责系统专家注册、Mission 存储、任务和 Runtime 适配。
+- `built-in-agents` 是五个内置 Agent（Pragma、Memory Curator、Store Revision、Skill Revision、Skill Evaluation）的跨 Host 产品能力包。所有 Agent 均由静态 DSL 定义；包内拥有 descriptor/compiler、独立宿主端口、提示词、结构化输出解析、修订规则与纯状态机。Host 负责 Runtime 执行、权限、持久化、Mission 和 UI 适配，不要求五个 Agent 使用统一调用接口。
 - `memory` 是 Host 内置 Memory Plane，拥有 Evidence adapter、Module SPI、独立消费状态和联邦只读 Context；只依赖 `core` 与 `shared`，不得反向进入 Core。
 - `mission-board` 是 Host 可复用的 Mission-scoped 通用白板，只依赖 `core` Context 合约，不依赖文件系统、Memory 或应用。
 - `context-filesystem` 是显式 Node/Host 文件系统 adapter 出口；Mission Board 与 Memory 不得依赖它。
@@ -145,7 +145,7 @@ lib
 apps/web    -> client -> shared
 apps/server -> server -> core -> shared
 apps/worker -> server -> runtime-* -> core -> shared
-apps/desktop    -> default-agent -> interpreter -> core -> shared
+apps/desktop    -> built-in-agents -> interpreter -> core -> shared
 apps/desktop    -> interpreter -> evaluation -> core -> shared
 apps/desktop    -> runtime-* -> core -> shared
 apps/desktop    -> memory -> core -> shared
@@ -155,23 +155,23 @@ examples    -> runtime-* / plugin-* / core -> shared
 
 更具体地说：
 
-| 来源                     | 允许依赖                                                                                                                                           |
-| ------------------------ | -------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `apps/web`               | `@pragma/shared`、`@pragma/client`                                                                                                                 |
-| `apps/server`            | `@pragma/shared`、`@pragma/server`、`@pragma/core`                                                                                                 |
-| `apps/worker`            | `@pragma/shared`、`@pragma/server`、`@pragma/core`、具体 `@pragma/runtime-*`                                                                       |
-| `apps/desktop`           | `@pragma/shared`、`@pragma/core`、`@pragma/memory`、`@pragma/evaluation`、`@pragma/interpreter`、`@pragma/default-agent`、具体 `@pragma/runtime-*` |
-| `plugins/*`              | `@pragma/shared`、`@pragma/core`；不依赖 app、server、client 或具体 runtime                                                                        |
-| `examples`               | `@pragma/core`、具体 `@pragma/runtime-*`、具体 `@pragma/plugin-*`                                                                                  |
-| `packages/shared`        | 无内部 package 依赖；只允许运行时中立依赖                                                                                                          |
-| `packages/client`        | `@pragma/shared`                                                                                                                                   |
-| `packages/server`        | `@pragma/shared`；需要编排时可依赖 `@pragma/core`                                                                                                  |
-| `packages/core`          | `@pragma/shared`                                                                                                                                   |
-| `packages/memory`        | `@pragma/shared`、`@pragma/core`；不得依赖 app、server、client、interpreter 或具体 runtime                                                         |
-| `packages/interpreter`   | `@pragma/shared`、`@pragma/core`；AST 子入口只使用运行时中立依赖                                                                                   |
-| `packages/evaluation`    | `@pragma/core`；`/ast` 保持浏览器安全且不依赖 Interpreter                                                                                          |
-| `packages/default-agent` | `@pragma/shared`、`@pragma/core`、`@pragma/interpreter`；`/contracts` 保持浏览器安全                                                               |
-| `packages/runtime/*`     | `@pragma/shared`、`@pragma/core`、该 runtime 自己的 SDK                                                                                            |
+| 来源                       | 允许依赖                                                                                                                                             |
+| -------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `apps/web`                 | `@pragma/shared`、`@pragma/client`                                                                                                                   |
+| `apps/server`              | `@pragma/shared`、`@pragma/server`、`@pragma/core`                                                                                                   |
+| `apps/worker`              | `@pragma/shared`、`@pragma/server`、`@pragma/core`、具体 `@pragma/runtime-*`                                                                         |
+| `apps/desktop`             | `@pragma/shared`、`@pragma/core`、`@pragma/memory`、`@pragma/evaluation`、`@pragma/interpreter`、`@pragma/built-in-agents`、具体 `@pragma/runtime-*` |
+| `plugins/*`                | `@pragma/shared`、`@pragma/core`；不依赖 app、server、client 或具体 runtime                                                                          |
+| `examples`                 | `@pragma/core`、具体 `@pragma/runtime-*`、具体 `@pragma/plugin-*`                                                                                    |
+| `packages/shared`          | 无内部 package 依赖；只允许运行时中立依赖                                                                                                            |
+| `packages/client`          | `@pragma/shared`                                                                                                                                     |
+| `packages/server`          | `@pragma/shared`；需要编排时可依赖 `@pragma/core`                                                                                                    |
+| `packages/core`            | `@pragma/shared`                                                                                                                                     |
+| `packages/memory`          | `@pragma/shared`、`@pragma/core`；不得依赖 app、server、client、interpreter 或具体 runtime                                                           |
+| `packages/interpreter`     | `@pragma/shared`、`@pragma/core`；AST 子入口只使用运行时中立依赖                                                                                     |
+| `packages/evaluation`      | `@pragma/core`；`/ast` 保持浏览器安全且不依赖 Interpreter                                                                                            |
+| `packages/built-in-agents` | `@pragma/shared`、`@pragma/core`、`@pragma/interpreter`、`@pragma/evaluation`、`@pragma/memory`；`/contracts` 保持浏览器安全                         |
+| `packages/runtime/*`       | `@pragma/shared`、`@pragma/core`、该 runtime 自己的 SDK                                                                                              |
 
 明确禁止：
 
@@ -209,10 +209,10 @@ plugin-* -> server
 plugin-* -> client
 plugin-* -> runtime-*
 memory -> plugin-*
-default-agent -> app
-default-agent -> server
-default-agent -> client
-default-agent -> runtime-*
+built-in-agents -> app
+built-in-agents -> server
+built-in-agents -> client
+built-in-agents -> runtime-*
 ```
 
 这里的 `core` 指专家 Agent 的执行抽象、Invocation、Runtime Adapter 合约和公共运行协议。DSL AST、Manifest 解析和对象编译属于 `@pragma/interpreter`。具体 runtime 实现放在独立 `@pragma/runtime-*` 包，由 Server/Worker/Desktop 等应用入口按需装配；不要让 `core` 依赖 `interpreter`、具体 runtime、`client`、Web 或 Server 应用层。
@@ -522,9 +522,10 @@ Pragma Worker Ready
 
 边界要求：
 
-- main 可以依赖 Desktop 允许的 Core、Interpreter、Default Agent 和具体 Runtime。
+- main 可以依赖 Desktop 允许的 Core、Interpreter、Built-in Agents 和具体 Runtime。
 - preload、renderer 和跨层 shared 代码只允许依赖 `@pragma/shared` 与浏览器安全的
-  `@pragma/interpreter/ast`，不得导入 Interpreter 主入口或其他 Node-only `@pragma/*` package。
+  `@pragma/interpreter/ast`、`@pragma/evaluation/ast`、`@pragma/built-in-agents/contracts`，不得导入
+  Interpreter 或 Built-in Agents 主入口及其他 Node-only `@pragma/*` package。
 - preload 使用的 workspace TypeScript 必须在构建阶段完成转换；生产产物必须自包含，运行时只允许外部加载
   Electron 和 Node 内置模块，不得直接加载仓库 `.ts` 文件。
 - Electron main 必须在构建阶段编译所有直接依赖的 workspace package。`electron.vite.config.ts` 的
@@ -733,20 +734,21 @@ Expert API 设计要求：
 
 禁止依赖 `@pragma/interpreter`、具体 Runtime Adapter、Desktop UI、Server 应用层、数据库实现或 Client SDK。
 
-### `packages/default-agent`
+### `packages/built-in-agents`
 
 职责：
 
-- 保存内置通用 Agent `Pragma` 的 `pragma/v3` DSL 和 `author-pragma-dsl` Skill。
-- 定义项目 DSL 与 Mission 的宿主端口，并将其包装成 Core managed tools；这些只是默认 Agent 的部分能力。
-- 导出供 Desktop 或未来 Web 适配的运行时中立项目/任务契约。
+- 保存五个内置 Agent 的 `pragma/v3` DSL，以及 Pragma 的 `author-pragma-dsl` Skill。
+- 分别导出 Pragma、Memory Curator、Store Revision、Skill Revision 和 Skill Evaluation 的宿主端口；调用方式允许彼此独立。
+- 拥有跨 Host 可复用的提示词、结构化输出解析、Memory 提炼、Store/Skill 修订规则、Skill 验证和纯状态机。
+- 导出供 Desktop 或未来 Host 适配的运行时中立契约。
 - 不拥有独立 ExpertSession、聊天历史或审批投影；宿主统一复用 Mission/Execution 链路。
 
 边界要求：
 
-- 主入口 `@pragma/default-agent` 是 Node-only，可以依赖 `@pragma/core` 和 `@pragma/interpreter`。
-- `@pragma/default-agent/contracts` 必须保持浏览器安全，只依赖运行时中立 schema。
-- Pragma 是默认存在的通用 Agent，用户无需先创建 Expert 即可直接完成普通工作；专业 Expert、ExpertTeam 和 Flow 是可选执行器。
+- 主入口 `@pragma/built-in-agents` 是 Node-only，可以依赖 `@pragma/core` 和 `@pragma/interpreter`。
+- `@pragma/built-in-agents/contracts` 必须保持浏览器安全，只依赖运行时中立 schema。
+- Pragma 是默认存在且可交互的通用 Agent；另外四个系统 Agent 为隐藏、不可定制的托管能力。
 - Pragma 修改 Expert、ExpertTeam 和 Flow 时只通过 DSL 能力；应用层实现持久化与任务端口。
 - Desktop 将 Pragma 注册为只读系统专家；Home 只负责创建全新 Mission，不维护独立 Chat。
 - Home 为 Expert/ExpertTeam Mission 提供可选的模型与思考深度覆盖，并随 Mission 持久化；Home

@@ -1,5 +1,5 @@
 {
-  "name": "@pragma/default-agent",
+  "name": "@pragma/built-in-agents",
   "version": "0.0.0",
   "private": true,
   "type": "module",
@@ -24,6 +24,7 @@
     "@pragma/core": "workspace:*",
     "@pragma/evaluation": "workspace:*",
     "@pragma/interpreter": "workspace:*",
+    "@pragma/memory": "workspace:*",
     "@pragma/shared": "workspace:*",
     "zod": "latest"
   },

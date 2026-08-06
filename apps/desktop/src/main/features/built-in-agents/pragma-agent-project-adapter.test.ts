@@ -12,17 +12,17 @@ import {
 
 import type { Capability } from "../../../shared/contracts/index.ts";
 import { createPragmaProjectStore } from "../projects/pragma-project-store.ts";
-import { createDesktopDefaultAgentProjectPort } from "./default-agent-project-adapter.ts";
+import { createDesktopPragmaAgentProjectPort } from "./pragma-agent-project-adapter.ts";
 import { createExpertDefinitionStore } from "../experts/expert-definition-store.ts";
 import { createDesktopSystemExpertRegistry } from "../experts/system-expert-registry.ts";
 import type { CapabilityStore } from "../capabilities/capability-store.ts";
 import type { RuntimeEnvironmentService } from "../runtimes/runtime-environment-service.ts";
 
-describe("Desktop DefaultAgent DSL project adapter", () => {
+describe("Desktop PragmaAgent DSL project adapter", () => {
   it("creates and updates the same exact ref through immutable project revisions", async () => {
     const root = await mkdtemp(join(tmpdir(), "pragma-default-agent-project-"));
     const project = createPragmaProjectStore({ projectsPath: join(root, "projects") });
-    const adapter = createDesktopDefaultAgentProjectPort(
+    const adapter = createDesktopPragmaAgentProjectPort(
       adapterOptions(project, join(root, "state")),
     );
     const runtimeRef = (await adapter.listExpertOptions()).runtimeModels[0]!.runtimeProfileRef;
@@ -61,7 +61,7 @@ describe("Desktop DefaultAgent DSL project adapter", () => {
   it("replays a committed operation idempotently", async () => {
     const root = await mkdtemp(join(tmpdir(), "pragma-default-agent-idempotent-"));
     const project = createPragmaProjectStore({ projectsPath: join(root, "projects") });
-    const adapter = createDesktopDefaultAgentProjectPort(
+    const adapter = createDesktopPragmaAgentProjectPort(
       adapterOptions(project, join(root, "state")),
     );
     const runtimeRef = (await adapter.listExpertOptions()).runtimeModels[0]!.runtimeProfileRef;
@@ -83,7 +83,7 @@ describe("Desktop DefaultAgent DSL project adapter", () => {
   it("exposes only available models and ready capabilities through the portable port", async () => {
     const root = await mkdtemp(join(tmpdir(), "pragma-default-agent-options-"));
     const project = createPragmaProjectStore({ projectsPath: join(root, "projects") });
-    const adapter = createDesktopDefaultAgentProjectPort(
+    const adapter = createDesktopPragmaAgentProjectPort(
       adapterOptions(project, join(root, "state"), [
         capability("00000000-0000-4000-8000-000000000001", "ready"),
         capability("00000000-0000-4000-8000-000000000002", "needs_attention"),
@@ -131,7 +131,7 @@ describe("Desktop DefaultAgent DSL project adapter", () => {
       },
     });
     await project.publish({ expectedRevision: 0, resources: [runtime] });
-    const adapter = createDesktopDefaultAgentProjectPort(
+    const adapter = createDesktopPragmaAgentProjectPort(
       adapterOptions(project, join(root, "state")),
     );
     const runtimeRef = "runtime-profile:2h3j4k5m6n7p8q9r";
@@ -155,7 +155,7 @@ describe("Desktop DefaultAgent DSL project adapter", () => {
   it("creates a 16-character Expert that Desktop can list and open, and rejects 17", async () => {
     const root = await mkdtemp(join(tmpdir(), "pragma-default-agent-expert-id-"));
     const project = createPragmaProjectStore({ projectsPath: join(root, "projects") });
-    const adapter = createDesktopDefaultAgentProjectPort(
+    const adapter = createDesktopPragmaAgentProjectPort(
       adapterOptions(project, join(root, "state")),
     );
     const experts = createExpertDefinitionStore({
@@ -191,7 +191,7 @@ describe("Desktop DefaultAgent DSL project adapter", () => {
   it("prepares a Flow and its later test set in independent commits", async () => {
     const root = await mkdtemp(join(tmpdir(), "pragma-default-agent-flow-draft-"));
     const project = createPragmaProjectStore({ projectsPath: join(root, "projects") });
-    const adapter = createDesktopDefaultAgentProjectPort(
+    const adapter = createDesktopPragmaAgentProjectPort(
       adapterOptions(project, join(root, "state"), [emptyDescriptionMcpCapability()]),
     );
     const description = "发布审批：验证非空 description";
@@ -409,7 +409,7 @@ describe("Desktop DefaultAgent DSL project adapter", () => {
       },
     });
     await project.publish({ expectedRevision: 0, resources: [child] });
-    const adapter = createDesktopDefaultAgentProjectPort(
+    const adapter = createDesktopPragmaAgentProjectPort(
       adapterOptions(project, join(root, "state")),
     );
     const created = await adapter.createFlowDraft({
@@ -461,7 +461,7 @@ describe("Desktop DefaultAgent DSL project adapter", () => {
     const flow = approvalRouteFlow();
     expect(await project.validateChanges({ baseRevision: 0, upserts: [flow] })).toEqual([]);
     await project.publish({ expectedRevision: 0, resources: [flow] });
-    const adapter = createDesktopDefaultAgentProjectPort(
+    const adapter = createDesktopPragmaAgentProjectPort(
       adapterOptions(project, join(root, "state")),
     );
     const evaluation = await adapter.createEvaluationDraft({
@@ -564,7 +564,7 @@ describe("Desktop DefaultAgent DSL project adapter", () => {
   it("requires an Evaluation draft to target a committed Flow", async () => {
     const root = await mkdtemp(join(tmpdir(), "pragma-default-agent-evaluation-target-"));
     const project = createPragmaProjectStore({ projectsPath: join(root, "projects") });
-    const adapter = createDesktopDefaultAgentProjectPort(
+    const adapter = createDesktopPragmaAgentProjectPort(
       adapterOptions(project, join(root, "state")),
     );
     const evaluation = await adapter.createEvaluationDraft({
@@ -604,7 +604,7 @@ describe("Desktop DefaultAgent DSL project adapter", () => {
   it("rejects Evaluation YAML through the generic prepare path", async () => {
     const root = await mkdtemp(join(tmpdir(), "pragma-default-agent-evaluation-generic-"));
     const project = createPragmaProjectStore({ projectsPath: join(root, "projects") });
-    const adapter = createDesktopDefaultAgentProjectPort(
+    const adapter = createDesktopPragmaAgentProjectPort(
       adapterOptions(project, join(root, "state")),
     );
 
@@ -622,7 +622,7 @@ describe("Desktop DefaultAgent DSL project adapter", () => {
   it("returns structured prepare diagnostics for malformed YAML", async () => {
     const root = await mkdtemp(join(tmpdir(), "pragma-default-agent-invalid-yaml-"));
     const project = createPragmaProjectStore({ projectsPath: join(root, "projects") });
-    const adapter = createDesktopDefaultAgentProjectPort(
+    const adapter = createDesktopPragmaAgentProjectPort(
       adapterOptions(project, join(root, "state")),
     );
     await expect(
@@ -636,7 +636,7 @@ describe("Desktop DefaultAgent DSL project adapter", () => {
   it("rejects over-limit Automation fields during prepare", async () => {
     const root = await mkdtemp(join(tmpdir(), "pragma-default-agent-automation-limit-"));
     const project = createPragmaProjectStore({ projectsPath: join(root, "projects") });
-    const adapter = createDesktopDefaultAgentProjectPort(
+    const adapter = createDesktopPragmaAgentProjectPort(
       adapterOptions(project, join(root, "state")),
     );
 
@@ -659,7 +659,7 @@ describe("Desktop DefaultAgent DSL project adapter", () => {
 });
 
 function requirePrepared<
-  T extends Awaited<ReturnType<ReturnType<typeof createDesktopDefaultAgentProjectPort>["prepare"]>>,
+  T extends Awaited<ReturnType<ReturnType<typeof createDesktopPragmaAgentProjectPort>["prepare"]>>,
 >(result: T) {
   if (result.status !== "prepared") {
     throw new Error(`Expected prepared change-set: ${JSON.stringify(result.diagnostics)}`);

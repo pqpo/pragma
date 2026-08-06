@@ -13,9 +13,9 @@ const commonRestrictedPatterns = [
 ];
 
 const desktopBrowserSafePragmaRestriction = {
-  regex: "^@pragma/(?!shared$|interpreter/ast$|evaluation/ast$).+",
+  regex: "^@pragma/(?!shared$|interpreter/ast$|evaluation/ast$|built-in-agents/contracts$).+",
   message:
-    "Desktop preload, renderer, and shared code may only import @pragma/shared, @pragma/interpreter/ast, or @pragma/evaluation/ast.",
+    "Desktop preload, renderer, and shared code may only import browser-safe @pragma/shared, @pragma/interpreter/ast, @pragma/evaluation/ast, or @pragma/built-in-agents/contracts.",
 };
 
 const config = tseslint.config(
@@ -204,6 +204,62 @@ const config = tseslint.config(
               group: ["node:*", "next", "next/*"],
               message:
                 "Desktop shared types must be safe for all layers (main, preload, renderer).",
+            },
+          ],
+        },
+      ],
+    },
+  },
+  {
+    files: ["packages/built-in-agents/**/*.{js,mjs,ts,tsx}"],
+    languageOptions: {
+      globals: {
+        ...globals.node,
+        ...globals.es2023,
+      },
+    },
+    rules: {
+      "no-restricted-imports": [
+        "error",
+        {
+          paths: ["@pragma/client", "@pragma/server", "@prisma/client", "react", "next"],
+          patterns: [
+            ...commonRestrictedPatterns,
+            {
+              group: ["@pragma/runtime-*", "@pragma/server-*", "apps/*", "next/*"],
+              message:
+                "Built-in Agents must remain portable and cannot depend on applications, Server, Web UI, or concrete Runtime adapters.",
+            },
+          ],
+        },
+      ],
+    },
+  },
+  {
+    files: [
+      "packages/built-in-agents/src/contracts.ts",
+      "packages/built-in-agents/src/revision-contracts.ts",
+    ],
+    rules: {
+      "no-restricted-imports": [
+        "error",
+        {
+          paths: [
+            "@pragma/client",
+            "@pragma/server",
+            "@pragma/core",
+            "@pragma/interpreter",
+            "@pragma/evaluation",
+            "@pragma/memory",
+            "@prisma/client",
+            "react",
+            "next",
+          ],
+          patterns: [
+            ...commonRestrictedPatterns,
+            {
+              group: ["@pragma/runtime-*", "@pragma/server-*", "node:*", "next/*"],
+              message: "Built-in Agent contracts must remain browser-safe.",
             },
           ],
         },
