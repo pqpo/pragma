@@ -10,5 +10,6 @@ describe("StudioPage", () => {
     expect(html).toContain('class="studio-navigation"');
     expect(html).toContain('aria-label="Resize navigation"');
     expect(html).toContain('role="separator"');
+    expect(html).not.toContain("<span>Revision tasks</span><em>");
   });
 });

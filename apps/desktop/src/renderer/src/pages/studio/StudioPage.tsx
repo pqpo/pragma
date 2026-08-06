@@ -77,6 +77,7 @@ export function StudioPage(props: {
     | "directory"
     | "expert-detail"
     | "context-store-detail"
+    | "context-store-revisions"
     | "capability-detail"
     | "plugin-detail"
     | "resource-detail"
@@ -594,23 +595,21 @@ export function StudioPage(props: {
           const count =
             section.id === "context-stores"
               ? contextStores.length
-              : section.id === "context-store-revisions"
-                ? revisionTaskCount
-                : section.id === "experts"
-                  ? experts.length
-                  : section.id === "teams"
-                    ? (project?.resources.filter((resource) => resource.kind === "ExpertTeam")
-                        .length ?? 0)
-                    : section.id === "flows"
-                      ? (project?.resources.filter((resource) => resource.kind === "Flow").length ??
-                        0)
-                      : section.id === "integrations"
-                        ? automations.length
-                        : section.id === "capabilities"
-                          ? capabilities.length
-                          : section.id === "plugins"
-                            ? plugins.length
-                            : 0;
+              : section.id === "experts"
+                ? experts.length
+                : section.id === "teams"
+                  ? (project?.resources.filter((resource) => resource.kind === "ExpertTeam")
+                      .length ?? 0)
+                  : section.id === "flows"
+                    ? (project?.resources.filter((resource) => resource.kind === "Flow").length ??
+                      0)
+                    : section.id === "integrations"
+                      ? automations.length
+                      : section.id === "capabilities"
+                        ? capabilities.length
+                        : section.id === "plugins"
+                          ? plugins.length
+                          : 0;
           return (
             <button
               key={section.id}
@@ -619,7 +618,6 @@ export function StudioPage(props: {
               aria-current={isActive ? "page" : undefined}
               onClick={() => {
                 setActiveView(section.id);
-                if (section.id === "context-store-revisions") setRevisionStoreFilter(undefined);
                 setScreen("directory");
                 setContextDrawerOpen(false);
                 setResourceEditor(null);
@@ -698,17 +696,26 @@ export function StudioPage(props: {
             onCreate={createContextStore}
             onInspectImport={inspectContextStoreImport}
             onPickFolder={pickContextStoreFolder}
+            revisionTaskCount={revisionTaskCount}
+            onOpenRevisions={() => {
+              setRevisionStoreFilter(undefined);
+              setScreen("context-store-revisions");
+            }}
             onOpen={(store) => {
               setSelectedContextStoreId(store.id);
               setScreen("context-store-detail");
             }}
           />
         ) : null}
-        {screen === "directory" && activeView === "context-store-revisions" ? (
+        {screen === "context-store-revisions" && activeView === "context-stores" ? (
           <ContextStoreRevisionFragment
             stores={contextStores}
             initialStoreId={revisionStoreFilter}
             onCountChanged={setRevisionTaskCount}
+            onBack={() => {
+              setRevisionStoreFilter(undefined);
+              setScreen("directory");
+            }}
           />
         ) : null}
         {screen === "context-store-detail" && selectedContextStore !== null ? (
@@ -717,8 +724,22 @@ export function StudioPage(props: {
             onBack={() => setScreen("directory")}
             onOpenRevisions={() => {
               setRevisionStoreFilter(selectedContextStore.id);
-              setActiveView("context-store-revisions");
-              setScreen("directory");
+              setScreen("context-store-revisions");
+            }}
+            onSubmitRevision={async (prompt) => {
+              const api = desktopApi();
+              if (api === undefined) throw new Error("Desktop bridge is unavailable.");
+              await api.submitContextStoreRevision({
+                schemaVersion: "pragma.context-store-revision-request/v1",
+                storeId: selectedContextStore.id,
+                prompt,
+                source: "user",
+              });
+            }}
+            onRevisionSubmitted={() => {
+              setRevisionStoreFilter(selectedContextStore.id);
+              setRevisionTaskCount((count) => count + 1);
+              setScreen("context-store-revisions");
             }}
             onListEntries={listContextStoreEntries}
             onGetContent={getContextStoreContent}

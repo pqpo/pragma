@@ -30,6 +30,8 @@ describe("knowledge base UI", () => {
     const html = renderToStaticMarkup(
       <ContextStoreDirectoryFragment
         stores={[store]}
+        revisionTaskCount={2}
+        onOpenRevisions={() => undefined}
         onCreate={async () => store}
         onInspectImport={async (sourcePath) => ({
           sourcePath,
@@ -45,6 +47,8 @@ describe("knowledge base UI", () => {
     expect(html).toContain("Knowledge bases");
     expect(html).toContain("Markdown");
     expect(html).toContain("Copied into Pragma");
+    expect(html).toContain("Revision tasks");
+    expect(html).toContain('class="knowledge-revision-count">2</span>');
     expect(html).not.toContain("Context note");
     expect(html).not.toContain("/Users/");
   });
@@ -77,6 +81,8 @@ describe("knowledge base UI", () => {
         store={store}
         onBack={() => undefined}
         onOpenRevisions={() => undefined}
+        onSubmitRevision={async () => undefined}
+        onRevisionSubmitted={() => undefined}
         onDelete={async () => undefined}
         onListEntries={async () => []}
         onGetContent={async () => {
@@ -100,8 +106,8 @@ describe("knowledge base UI", () => {
     expect(html).toContain("Loading settings");
     expect(html).toContain("Select a Markdown file");
     expect(html).toContain('class="knowledge-base-editor-actions"');
-    expect(html).toContain('class="secondary-button" type="button"');
-    expect(html).toContain("View revision tasks");
+    expect(html).toContain("Revision history");
+    expect(html).toContain("Submit revision");
     expect(html).toContain('aria-label="Resize file list"');
     expect(html).toContain('aria-valuemin="180"');
     expect(html).toContain('aria-valuemax="360"');

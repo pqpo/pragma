@@ -141,6 +141,7 @@ export const ContextStoreSnapshotSchema = z
 const ContextStoreUpsertOperationSchema = z.object({
   operation: z.literal("upsert"),
   id: ManagedFileIdSchema,
+  previousContent: z.string().max(1_000_000).optional(),
   content: z.string().max(1_000_000),
   metadata: z.lazy(() => ContextStoreContentMetadataSchema),
 });
@@ -148,6 +149,7 @@ const ContextStoreUpsertOperationSchema = z.object({
 const ContextStoreDeleteOperationSchema = z.object({
   operation: z.literal("delete"),
   id: StoredMarkdownFileIdSchema,
+  previousContent: z.string().max(1_000_000).optional(),
 });
 
 const ContextStoreRenameOperationSchema = z.object({

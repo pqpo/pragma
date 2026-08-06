@@ -6481,121 +6481,55 @@ html.is-resizing-sidebar * {
 }
 
 .revision-task-heading {
+  align-items: flex-end;
+  gap: 32px;
   padding-right: 48px;
 }
 
+.revision-task-heading-copy {
+  display: grid;
+  min-width: 0;
+  flex: 1;
+  gap: 22px;
+}
+
+.revision-task-heading-copy > div {
+  display: flex;
+  align-items: flex-end;
+  justify-content: space-between;
+  gap: 24px;
+}
+
+.revision-task-heading-copy > div > div {
+  display: grid;
+  min-width: 0;
+  gap: 6px;
+}
+
 .revision-task-count {
-  display: inline-grid;
-  min-width: 30px;
-  height: 30px;
-  place-items: center;
-  padding: 0 9px;
-  border-radius: var(--ui-radius-round);
-  background: var(--ui-surface-subtle);
+  flex: 0 0 auto;
   color: var(--ui-text-secondary);
   font-size: 12px;
-  font-weight: 600;
+  line-height: 1.5;
+  white-space: nowrap;
 }
 
 .revision-task-content {
   display: grid;
-  gap: 24px;
   min-width: 0;
-}
-
-.revision-task-composer {
-  display: grid;
-  gap: 22px;
-  padding: 22px;
-  border: 1px solid var(--ui-line);
-  border-radius: var(--ui-radius-lg);
-  background: var(--ui-surface);
-  box-shadow: var(--ui-shadow-composer);
-}
-
-.revision-task-composer-heading {
-  display: flex;
-  align-items: flex-start;
-  gap: 12px;
-  color: var(--ui-accent-strong);
-}
-
-.revision-task-composer-heading > div {
-  display: grid;
-  gap: 4px;
-}
-
-.revision-task-composer-heading h2 {
-  color: var(--ui-text);
-  font-size: 16px;
-  font-weight: 650;
-  line-height: 1.35;
-}
-
-.revision-task-composer-heading p {
-  color: var(--ui-text-secondary);
-  font-size: 12px;
-  line-height: 1.5;
-}
-
-.revision-task-fields {
-  display: grid;
-  grid-template-columns: minmax(190px, 0.55fr) minmax(280px, 1.45fr) auto;
-  align-items: end;
-  gap: 16px;
-}
-
-.revision-task-field {
-  display: grid;
-  min-width: 0;
-  gap: 8px;
-}
-
-.revision-task-field > span {
-  color: var(--ui-text-secondary);
-  font-size: 12px;
-  font-weight: 600;
 }
 
 .revision-task-select {
-  width: 100%;
+  width: min(220px, 28vw);
   min-width: 0;
-  border: 1px solid var(--ui-line-strong);
-  border-radius: var(--ui-radius-md);
-  background: var(--ui-surface);
 }
 
 .revision-task-select .ui-select-trigger {
-  min-height: 42px;
-  padding: 0 12px;
-}
-
-.revision-task-prompt-field textarea {
-  width: 100%;
-  min-height: 80px;
-  max-height: 220px;
-  resize: vertical;
-  padding: 11px 12px;
-  border: 1px solid var(--ui-line-strong);
-  border-radius: var(--ui-radius-md);
+  min-height: 36px;
+  padding: 0 10px;
+  border-color: var(--ui-line);
   background: var(--ui-surface);
-  color: var(--ui-text);
-  font: inherit;
-  font-size: 13px;
-  line-height: 1.5;
-}
-
-.revision-task-prompt-field textarea::placeholder {
-  color: var(--ui-text-disabled);
-}
-
-.revision-task-prompt-field textarea:focus-visible {
-  border-color: var(--ui-accent);
-}
-
-.revision-task-submit {
-  min-height: 42px;
-  padding: 0 16px;
+  font-size: 12px;
 }
 
 .revision-task-empty {
@@ -6622,20 +6556,77 @@ html.is-resizing-sidebar * {
   line-height: 1.55;
 }
 
+.revision-task-table {
+  min-width: 0;
+}
+
+.revision-task-list-header {
+  display: grid;
+  min-width: 0;
+  grid-template-columns:
+    minmax(300px, 1fr) minmax(112px, 0.24fr) minmax(136px, 0.26fr)
+    minmax(220px, auto);
+  column-gap: 24px;
+}
+
+.revision-task-list-header {
+  min-height: 42px;
+  align-items: center;
+  padding: 0 16px;
+  color: var(--ui-text-secondary);
+  font-size: 11px;
+  font-weight: 600;
+}
+
+.revision-task-list-header span:last-child {
+  text-align: right;
+}
+
 .revision-task-list {
   display: grid;
   min-width: 0;
-  border-top: 1px solid var(--ui-line);
+  gap: 4px;
 }
 
 .revision-task-row {
   display: grid;
   min-width: 0;
-  grid-template-columns: minmax(220px, 1.15fr) minmax(220px, 1fr) auto;
-  align-items: start;
-  gap: 24px;
-  padding: 22px 0;
-  border-bottom: 1px solid var(--ui-line);
+  grid-template-columns: minmax(0, 1fr) minmax(220px, auto);
+  align-items: center;
+  column-gap: 24px;
+  padding: 6px 10px 6px 16px;
+  border-radius: var(--ui-radius-md);
+  transition: background-color 120ms ease;
+}
+
+.revision-task-row:hover {
+  background: var(--ui-surface-subtle);
+}
+
+.revision-task-open {
+  display: grid;
+  min-width: 0;
+  min-height: 64px;
+  grid-template-columns: minmax(300px, 1fr) minmax(112px, 0.24fr) minmax(136px, 0.26fr);
+  align-items: center;
+  column-gap: 24px;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  color: inherit;
+  cursor: pointer;
+  font: inherit;
+  text-align: left;
+}
+
+.revision-task-open:disabled {
+  cursor: default;
+}
+
+.revision-task-open:focus-visible {
+  border-radius: var(--ui-radius-sm);
+  outline: 2px solid var(--ui-focus);
+  outline-offset: 2px;
 }
 
 .revision-task-summary,
@@ -6643,23 +6634,28 @@ html.is-resizing-sidebar * {
   display: grid;
   min-width: 0;
   justify-items: start;
-  gap: 8px;
+  gap: 5px;
 }
 
 .revision-task-summary strong {
+  display: -webkit-box;
+  overflow: hidden;
   color: var(--ui-text);
-  font-size: 14px;
-  font-weight: 650;
+  font-size: 13px;
+  font-weight: 620;
+  line-height: 1.5;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 2;
 }
 
 .revision-task-summary small {
-  display: -webkit-box;
+  max-width: 100%;
   overflow: hidden;
   color: var(--ui-text-secondary);
-  font-size: 12px;
-  line-height: 1.55;
-  -webkit-box-orient: vertical;
-  -webkit-line-clamp: 3;
+  font-size: 11px;
+  line-height: 1.45;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .revision-task-state {
@@ -6672,6 +6668,13 @@ html.is-resizing-sidebar * {
   color: var(--ui-text-secondary);
   font-size: 11px;
   font-weight: 600;
+}
+
+.revision-task-updated {
+  color: var(--ui-text-secondary);
+  font-size: 12px;
+  line-height: 1.5;
+  white-space: nowrap;
 }
 
 .revision-task-state:is(.is-pending_review, .is-applying, .is-running) {
@@ -6689,43 +6692,359 @@ html.is-resizing-sidebar * {
   color: #966016;
 }
 
-.revision-task-changes {
-  width: 100%;
-  color: var(--ui-text-secondary);
-  font-size: 12px;
-}
-
-.revision-task-changes summary {
-  cursor: pointer;
-  line-height: 1.5;
-}
-
-.revision-task-changes ul {
-  display: grid;
-  gap: 8px;
-  margin: 10px 0 0;
-  padding-left: 18px;
-}
-
-.revision-task-changes pre {
-  max-height: 180px;
-  margin-top: 6px;
-  overflow: auto;
-  padding: 10px;
-  border-radius: var(--ui-radius-md);
-  background: var(--ui-surface-subtle);
-  white-space: pre-wrap;
-}
-
 .revision-task-actions {
   display: flex;
+  min-width: 0;
   flex-wrap: wrap;
   justify-content: flex-end;
-  gap: 8px;
+  gap: 6px;
 }
 
 .revision-task-actions button {
   white-space: nowrap;
+}
+
+.revision-task-actions .primary-button,
+.revision-task-actions .secondary-button {
+  min-height: 34px;
+  padding: 0 10px;
+  font-size: 12px;
+}
+
+.revision-task-view {
+  display: inline-flex;
+  min-height: 34px;
+  align-items: center;
+  gap: 5px;
+  padding: 0 8px;
+  border: 0;
+  border-radius: var(--ui-radius-sm);
+  background: transparent;
+  color: var(--ui-accent-strong);
+  cursor: pointer;
+  font: inherit;
+  font-size: 12px;
+  font-weight: 600;
+}
+
+.revision-task-view:hover {
+  background: var(--ui-selection);
+}
+
+.revision-task-view:focus-visible {
+  outline: 2px solid var(--ui-focus);
+  outline-offset: 2px;
+}
+
+.revision-task-delete {
+  display: inline-grid;
+  width: 34px;
+  height: 34px;
+  place-items: center;
+  padding: 0;
+  border: 0;
+  border-radius: var(--ui-radius-md);
+  background: transparent;
+  color: var(--ui-text-secondary);
+  cursor: pointer;
+}
+
+.revision-task-delete:hover:not(:disabled) {
+  background: rgb(196 64 64 / 8%);
+  color: var(--ui-danger);
+}
+
+.revision-task-delete:focus-visible {
+  outline: 2px solid var(--ui-focus);
+  outline-offset: 2px;
+}
+
+.revision-task-delete:disabled {
+  cursor: default;
+  opacity: 0.5;
+}
+
+/* Knowledge-base revision diff */
+.context-store-revision-detail {
+  container-name: context-store-revision-detail;
+  container-type: inline-size;
+}
+
+.context-store-revision-detail .studio-screen-body {
+  padding: 0 48px 48px 0;
+}
+
+.revision-diff-heading {
+  display: grid;
+  gap: 22px;
+  padding-right: 48px;
+}
+
+.revision-diff-title-row {
+  display: flex;
+  align-items: flex-end;
+  justify-content: space-between;
+  gap: 32px;
+}
+
+.revision-diff-title-row > div:first-child {
+  display: grid;
+  min-width: 0;
+  gap: 6px;
+}
+
+.revision-diff-title-row h1 {
+  color: var(--ui-text);
+  font-size: 30px;
+  font-weight: 700;
+  letter-spacing: -0.03em;
+  line-height: 1.15;
+}
+
+.revision-diff-title-row p {
+  max-width: 720px;
+  overflow: hidden;
+  color: var(--ui-text-secondary);
+  font-size: 13px;
+  line-height: 1.55;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.revision-diff-actions {
+  display: flex;
+  flex: 0 0 auto;
+  align-items: center;
+  gap: 8px;
+}
+
+.revision-diff-content {
+  display: grid;
+  min-width: 0;
+  gap: 18px;
+}
+
+.revision-diff-summary {
+  display: grid;
+  gap: 4px;
+}
+
+.revision-diff-summary strong {
+  color: var(--ui-text);
+  font-size: 13px;
+  font-weight: 620;
+  line-height: 1.5;
+}
+
+.revision-diff-summary span {
+  color: var(--ui-text-secondary);
+  font-size: 11px;
+  line-height: 1.5;
+}
+
+.revision-diff-workspace {
+  display: grid;
+  min-width: 0;
+  min-height: 500px;
+  grid-template-columns: 244px minmax(0, 1fr);
+  overflow: hidden;
+  border: 1px solid var(--ui-line);
+  border-radius: var(--ui-radius-lg);
+  background: var(--ui-surface);
+}
+
+.revision-diff-files {
+  min-width: 0;
+  border-right: 1px solid var(--ui-line);
+  background: var(--ui-surface-subtle);
+}
+
+.revision-diff-files > div {
+  min-height: 44px;
+  padding: 14px 14px 8px;
+  color: var(--ui-text-secondary);
+  font-size: 11px;
+  font-weight: 600;
+}
+
+.revision-diff-files nav {
+  display: grid;
+  gap: 2px;
+  padding: 4px 8px 12px;
+}
+
+.revision-diff-files button {
+  display: grid;
+  min-width: 0;
+  grid-template-columns: auto minmax(0, 1fr);
+  align-items: center;
+  gap: 9px;
+  padding: 9px 10px;
+  border: 0;
+  border-radius: var(--ui-radius-sm);
+  background: transparent;
+  color: var(--ui-text-secondary);
+  cursor: pointer;
+  font: inherit;
+  text-align: left;
+}
+
+.revision-diff-files button:hover,
+.revision-diff-files button.is-active {
+  background: var(--ui-surface);
+  color: var(--ui-text);
+}
+
+.revision-diff-files button.is-active {
+  box-shadow: inset 2px 0 var(--ui-accent);
+}
+
+.revision-diff-files button:focus-visible {
+  outline: 2px solid var(--ui-focus);
+  outline-offset: 1px;
+}
+
+.revision-diff-files button span {
+  display: grid;
+  min-width: 0;
+  gap: 2px;
+}
+
+.revision-diff-files button strong,
+.revision-diff-files button small {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.revision-diff-files button strong {
+  font-size: 12px;
+  font-weight: 600;
+}
+
+.revision-diff-files button small {
+  color: var(--ui-text-secondary);
+  font-size: 10px;
+}
+
+.revision-diff-view {
+  min-width: 0;
+  overflow: auto;
+  background: var(--ui-surface);
+}
+
+.revision-diff-view > header {
+  display: flex;
+  min-height: 46px;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+  padding: 0 14px;
+  border-bottom: 1px solid var(--ui-line);
+}
+
+.revision-diff-view > header > div {
+  display: flex;
+  min-width: 0;
+  align-items: center;
+  gap: 8px;
+}
+
+.revision-diff-view > header strong {
+  overflow: hidden;
+  color: var(--ui-text);
+  font-size: 12px;
+  font-weight: 600;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.revision-diff-stats {
+  display: inline-flex;
+  gap: 8px;
+  font-size: 11px;
+  font-style: normal;
+}
+
+.revision-diff-stats b {
+  color: #277449;
+}
+
+.revision-diff-stats i {
+  color: var(--ui-danger);
+  font-style: normal;
+  font-weight: 650;
+}
+
+.revision-diff-code {
+  min-width: 640px;
+  padding: 8px 0 18px;
+  color: var(--ui-text);
+  font-family: "SFMono-Regular", Consolas, "Liberation Mono", monospace;
+  font-size: 12px;
+  line-height: 1.6;
+}
+
+.revision-diff-line {
+  display: grid;
+  min-height: 24px;
+  grid-template-columns: 46px 46px 24px minmax(0, 1fr);
+  align-items: start;
+}
+
+.revision-diff-line.is-addition {
+  background: rgb(46 139 87 / 9%);
+}
+
+.revision-diff-line.is-deletion {
+  background: rgb(196 64 64 / 8%);
+}
+
+.revision-diff-line > span {
+  color: var(--ui-text-disabled);
+  text-align: right;
+  user-select: none;
+}
+
+.revision-diff-line > span:nth-child(2) {
+  padding-right: 8px;
+}
+
+.revision-diff-line > b {
+  color: var(--ui-text-secondary);
+  font-weight: 500;
+  text-align: center;
+  user-select: none;
+}
+
+.revision-diff-line.is-addition > b {
+  color: #277449;
+}
+
+.revision-diff-line.is-deletion > b {
+  color: var(--ui-danger);
+}
+
+.revision-diff-line code {
+  padding-right: 18px;
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+
+.revision-rename-preview,
+.revision-diff-unavailable {
+  display: flex;
+  min-height: 300px;
+  align-items: center;
+  justify-content: center;
+  gap: 14px;
+  padding: 40px;
+  color: var(--ui-text-secondary);
+  font-size: 13px;
+}
+
+.revision-rename-preview strong {
+  color: var(--ui-text);
 }
 
 /* The knowledge revision Agent is a device-level preference, not page-local state. */
@@ -6742,23 +7061,97 @@ html.is-resizing-sidebar * {
   border-top: 1px solid var(--ui-line);
 }
 
-@container context-store-revisions (max-width: 900px) {
-  .revision-task-fields {
-    grid-template-columns: minmax(180px, 0.65fr) minmax(240px, 1.35fr);
-  }
+.knowledge-directory-actions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
 
-  .revision-task-submit {
-    grid-column: 2;
-    justify-self: end;
+.knowledge-revision-count {
+  display: inline-grid;
+  min-width: 20px;
+  height: 20px;
+  place-items: center;
+  margin-left: 2px;
+  padding: 0 6px;
+  border-radius: var(--ui-radius-round);
+  background: var(--ui-selection);
+  color: var(--ui-accent-strong);
+  font-size: 10px;
+  font-weight: 700;
+}
+
+.knowledge-revision-dialog {
+  width: min(560px, 100%);
+}
+
+.knowledge-revision-dialog form,
+.knowledge-revision-dialog label {
+  display: grid;
+  gap: 9px;
+}
+
+.knowledge-revision-dialog label > span {
+  color: var(--ui-text);
+  font-size: 13px;
+  font-weight: 600;
+}
+
+.knowledge-revision-dialog textarea {
+  width: 100%;
+  min-height: 148px;
+  max-height: 320px;
+  resize: vertical;
+  padding: 12px 13px;
+  border: 1px solid var(--ui-line-strong);
+  border-radius: var(--ui-radius-md);
+  background: var(--ui-surface);
+  color: var(--ui-text);
+  font: inherit;
+  font-size: 13px;
+  line-height: 1.6;
+}
+
+.knowledge-revision-dialog textarea::placeholder {
+  color: var(--ui-text-disabled);
+}
+
+.knowledge-revision-dialog-meta {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 16px;
+  color: var(--ui-text-secondary);
+}
+
+.knowledge-revision-dialog-meta small {
+  max-width: 390px;
+  font-size: 11px;
+  line-height: 1.5;
+}
+
+.knowledge-revision-dialog-meta .field-character-count {
+  flex: 0 0 auto;
+  margin-top: 0;
+}
+
+@container context-store-revisions (max-width: 900px) {
+  .revision-task-list-header,
+  .revision-task-open {
+    grid-template-columns: minmax(260px, 1fr) 112px 136px;
   }
 
   .revision-task-row {
-    grid-template-columns: minmax(190px, 0.8fr) minmax(260px, 1.2fr);
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .revision-task-list-header span:last-child {
+    display: none;
   }
 
   .revision-task-actions {
-    grid-column: 1 / -1;
     justify-content: flex-start;
+    padding: 0 0 8px;
   }
 }
 
@@ -6768,14 +7161,94 @@ html.is-resizing-sidebar * {
     padding-right: 24px;
   }
 
-  .revision-task-fields,
+  .revision-task-heading {
+    align-items: stretch;
+    flex-direction: column;
+    gap: 16px;
+  }
+
+  .revision-task-heading-copy > div {
+    align-items: flex-start;
+  }
+
+  .revision-task-select {
+    width: min(220px, 100%);
+  }
+
+  .revision-task-list-header {
+    display: none;
+  }
+
   .revision-task-row {
+    gap: 0;
+    padding: 8px 10px 8px 12px;
+  }
+
+  .revision-task-open {
+    min-height: 74px;
+    grid-template-columns: minmax(0, 1fr) auto;
+    gap: 8px 16px;
+  }
+
+  .revision-task-summary {
+    grid-column: 1 / -1;
+  }
+
+  .revision-task-result {
+    justify-self: start;
+  }
+
+  .revision-task-actions {
+    padding-bottom: 2px;
+  }
+}
+
+@container context-store-revision-detail (max-width: 900px) {
+  .revision-diff-workspace {
+    grid-template-columns: 210px minmax(0, 1fr);
+  }
+}
+
+@container context-store-revision-detail (max-width: 700px) {
+  .context-store-revision-detail .studio-screen-body,
+  .revision-diff-heading {
+    padding-right: 24px;
+  }
+
+  .revision-diff-title-row {
+    align-items: flex-start;
+    flex-direction: column;
+    gap: 16px;
+  }
+
+  .revision-diff-title-row p {
+    white-space: normal;
+  }
+
+  .revision-diff-actions {
+    flex-wrap: wrap;
+  }
+
+  .revision-diff-workspace {
     grid-template-columns: minmax(0, 1fr);
   }
 
-  .revision-task-submit {
-    grid-column: 1;
-    width: 100%;
+  .revision-diff-files {
+    border-right: 0;
+    border-bottom: 1px solid var(--ui-line);
+  }
+
+  .revision-diff-files nav {
+    display: flex;
+    overflow-x: auto;
+  }
+
+  .revision-diff-files button {
+    min-width: 190px;
+  }
+
+  .revision-diff-files button.is-active {
+    box-shadow: inset 0 -2px var(--ui-accent);
   }
 }
 
@@ -10709,7 +11182,12 @@ html.is-resizing-sidebar * {
     gap: 16px;
   }
 
-  .context-store-directory .expert-directory-heading .primary-button {
+  .context-store-directory .knowledge-directory-actions {
+    align-items: stretch;
+    flex-direction: column-reverse;
+  }
+
+  .context-store-directory .knowledge-directory-actions > button {
     align-self: flex-start;
   }
 

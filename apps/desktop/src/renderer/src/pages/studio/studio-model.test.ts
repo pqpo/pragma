@@ -77,7 +77,7 @@ describe("isBuiltInExpert", () => {
 });
 
 describe("studioSections", () => {
-  it("does not duplicate the top-level Evaluations destination", () => {
+  it("keeps secondary workflows out of top-level Studio navigation", () => {
     expect(studioSections.map((section) => section.id)).toEqual([
       "experts",
       "teams",
@@ -86,7 +86,6 @@ describe("studioSections", () => {
       "capabilities",
       "plugins",
       "context-stores",
-      "context-store-revisions",
     ]);
   });
 });

@@ -152,6 +152,245 @@ final result: passed
 
 ---
 
+# Knowledge Base Revision Workflow Design QA
+
+- Source visual truth:
+  `/var/folders/7y/x39kntq56gvcfdymbtjb36280000gn/T/codex-clipboard-e9bc02e3-93bb-4b05-aa1d-e98421b70720.png`
+- Implementation screenshots: `design-qa/context-store-directory-revision-entry.png`,
+  `design-qa/context-store-submit-revision-dialog.png`, and
+  `design-qa/context-store-revision-list.png`
+- Responsive evidence: `design-qa/context-store-revision-list-1280.png`
+- Combined comparison: `design-qa/context-store-revision-comparison.png`
+- Viewport: 2048 × 1098 CSS pixels at DPR 1; responsive verification at 1280 × 800
+- Density normalization:
+  - Source: 2612 × 1400 pixels, normalized to 1024 × 549 for the comparison board.
+  - Implementation: 2048 × 1098 pixels, normalized to 1024 × 549 for the comparison board.
+- State: knowledge base directory with revision entry, knowledge base detail with submission dialog,
+  and the filtered revision activity page immediately after a successful submission.
+
+**Findings**
+
+- No actionable P0, P1, or P2 visual or interaction issues remain.
+- Fonts and typography preserve the existing Desktop system stack, compact 12–14px interface text,
+  16px dialog title, and 30px page-heading hierarchy without introducing a new type style.
+- Spacing and layout rhythm preserve the two-rail application shell, existing 48px content inset,
+  table density, control heights, radii, and divider rhythm. The revision page now reads as a child
+  of Knowledge bases through the retained active navigation state and explicit back action.
+- Colors and visual tokens reuse the current graphite, sage selection, surface, border, semantic
+  status, focus, radius, and shadow tokens. The dialog backdrop and disabled state retain accessible
+  contrast.
+- Image and asset fidelity: no new raster content is needed. The existing Pragma logo is preserved
+  and all interface icons use the installed Phosphor library; no handwritten SVG, CSS drawing,
+  placeholder image, or generated asset was introduced.
+- Copy and content accurately separate responsibilities: the directory links to all revision
+  activity, the detail page submits a store-scoped request, and the secondary page only tracks,
+  reviews, retries, or deletes tasks. English, Simplified Chinese, and Traditional Chinese are kept
+  in parity.
+
+**Full-view comparison evidence**
+
+- The source and the three implementation states were opened together in
+  `design-qa/context-store-revision-comparison.png`.
+- The implementation deliberately removes the old standalone navigation destination and page-level
+  composer. The knowledge directory now owns the task-history entry point, while the knowledge
+  detail owns the submission action and modal.
+- The task activity page preserves the source visual language and status/action density while adding
+  a clear parent breadcrumb and a focused knowledge-base filter.
+
+**Focused region comparison evidence**
+
+- The modal screenshot is the focused comparison for the former inline composer: it preserves the
+  request field, validation, maximum length, and primary action while adding store context and the
+  explicit review-before-apply promise.
+- The directory screenshot verifies that the task entry and active-count badge remain adjacent to
+  the knowledge-base creation action without creating another navigation row.
+
+**Interactions and diagnostics**
+
+- Verified Studio → Knowledge bases, Knowledge bases → Revision tasks, knowledge row → detail,
+  Submit revision → dialog, empty-request disabled state, request entry, successful submit, and
+  automatic redirect to the current store's filtered revision activity.
+- Verified pending, running, and pending-review status presentation plus approve and reject actions
+  with realistic mock tasks.
+- At 1280 × 800, the document remained exactly 1280px wide with no horizontal overflow; task actions
+  wrap below the status content without hiding controls.
+- Browser console contained no warnings or errors in the verified states.
+- Desktop node/web typechecks and lint passed. The focused renderer tests passed 11/11, and the
+  complete Desktop suite passed 679/679 after the obsolete top-level-navigation expectation was
+  updated.
+
+**Comparison history**
+
+1. Pass 1 compared the source against the directory, modal, and revision-list states. No actionable
+   P0/P1/P2 issue was found; the hierarchy change is intentional and directly follows the requested
+   workflow.
+2. Responsive pass at 1280 × 800 confirmed the toolbar, rows, status pills, and task actions remain
+   visible without page-level overflow.
+
+**Follow-up Polish**
+
+- P3: a future task-detail route could deep-link directly to a newly submitted job once the product
+  needs shareable task URLs. The current filtered-list redirect keeps this change within the
+  existing in-app navigation model.
+
+final result: passed
+
+---
+
+## Revision list refinement pass — 2026-08-06
+
+- Source visual truth:
+  `/var/folders/7y/x39kntq56gvcfdymbtjb36280000gn/T/codex-clipboard-04d07b4d-c813-4109-b34a-4ce5960e7552.png`
+- Implementation screenshot: `design-qa/context-store-revision-list-refined-1688.png`
+- Responsive evidence: `design-qa/context-store-revision-list-refined-1280.png`
+- Detail-entry evidence: `design-qa/context-store-detail-revision-entry-refined.png`
+- Combined full-view comparison: `design-qa/context-store-revision-list-refined-comparison.png`
+- Viewport and density: source and implementation are both 1688 × 896 CSS/pixel output at DPR 1;
+  no density normalization was required. Responsive verification used 1280 × 800.
+- State: two revision tasks filtered to `00pragma`, including running and pending-review states;
+  the detail-entry capture shows both Revision history and Submit revision actions.
+
+**Findings**
+
+- No actionable P0, P1, or P2 issues remain after the refinement pass.
+- Fonts and typography: the implementation keeps the existing Desktop system stack and removes the
+  oversized explanatory card. Page heading, metadata, column labels, body copy, and status labels use
+  a clear 30/13/12/11px hierarchy with stable two-line truncation for long requests.
+- Spacing and layout rhythm: the filter is now a compact 36px control in the title row. A fixed
+  four-column grid aligns request, status, update time, and actions; row dividers and 18px vertical
+  padding produce a consistent scan rhythm. At 1280px the actions move to a deliberate second row
+  rather than colliding with time or status.
+- Colors and visual tokens: all surfaces, borders, sage status fills, semantic buttons, hover states,
+  and focus treatment use existing Desktop tokens. No additional palette or decorative treatment was
+  introduced.
+- Image and asset fidelity: the screen needs no content imagery. The Pragma logo is unchanged and all
+  new controls use installed Phosphor icons; there are no custom SVGs, CSS illustrations, emoji, or
+  placeholder assets.
+- Copy and content: task rows lead with the actual revision request instead of repeating the knowledge
+  base name. The knowledge base remains secondary metadata, timestamps are localized, and the detail
+  page distinguishes Revision history from the primary Submit revision action in all three locales.
+
+**Full-view comparison evidence**
+
+- `design-qa/context-store-revision-list-refined-comparison.png` places the supplied current screen and
+  the rendered replacement at the same 1688 × 896 size.
+- The replacement removes the large filter card, converts the loose three-region rows into one aligned
+  table, reduces above-the-fold dead space, and keeps review actions attached to the correct task.
+
+**Focused region comparison evidence**
+
+- `design-qa/context-store-detail-revision-entry-refined.png` verifies the newly requested direct list
+  entry next to Submit revision. The two actions have distinct secondary/primary hierarchy and remain
+  separate from the destructive delete action.
+- No additional crop was needed for the table because its labels, status pills, timestamps, and action
+  controls are legible at the equal-size full-view comparison.
+
+**Interactions and diagnostics**
+
+- Verified Knowledge bases → Revision tasks opens the unfiltered list with “All knowledge bases”.
+- Verified knowledge-base detail → Revision history opens the current-store filtered list without
+  submitting a task.
+- Verified Submit revision still opens the submission dialog independently.
+- Verified 1688 × 896 and 1280 × 800 layouts; no persistent control is clipped or hidden.
+- Browser console contained no errors in the verified directory, detail, dialog, and list states.
+- Desktop node/web typechecks, focused lint, and focused renderer tests passed.
+- Three unrelated runtime/mission tests that timed out during the parallel full-suite run were rerun
+  in isolation and passed 36/36.
+
+**Comparison history**
+
+1. The supplied screen showed a P2 alignment and hierarchy problem: an oversized filter card consumed
+   the first content row, task fields did not share column baselines, and actions floated independently.
+2. The implementation removed the card, introduced the four-column task grid, localized timestamps,
+   and added responsive action placement.
+3. The equal-size post-fix comparison and the 1280px pass found no remaining actionable P0/P1/P2
+   difference.
+
+**Follow-up Polish**
+
+- None required for this scope.
+
+final result: passed
+
+---
+
+## Quiet revision list and Diff review pass — 2026-08-06
+
+- Source visual truth: `design-qa/context-store-revision-list-refined-1688.png`
+- Implementation list: `design-qa/context-store-revision-list-quiet.png`
+- Diff detail: `design-qa/context-store-revision-diff.png`
+- Responsive Diff evidence: `design-qa/context-store-revision-diff-1280.png`
+- Combined full-view comparison: `design-qa/context-store-revision-list-quiet-comparison.png`
+- Viewport and density: source and implementation list are both 1688 × 896 CSS/pixel output at
+  DPR 1; no density normalization was required. Diff responsiveness was verified at 1280 × 800.
+- State: two revision tasks, one awaiting review with a two-file change set and one still running;
+  Diff evidence includes a modified file and a newly added file.
+
+**Findings**
+
+- No actionable P0, P1, or P2 issues remain.
+- Fonts and typography: the quiet list keeps the established Desktop type scale and removes button
+  weight from the primary scan path. Diff content uses the system monospace stack with distinct line
+  numbers and readable 1.6 line height.
+- Spacing and layout rhythm: task rows no longer use separators. Whitespace, a 64px row target, and a
+  subtle hover surface provide grouping. The Diff view uses one bounded workspace with a single file
+  rail rather than nested cards.
+- Colors and visual tokens: the list remains neutral; only status and the View changes affordance use
+  sage. Diff additions and deletions use low-opacity semantic green/red fills with sufficient text
+  contrast and no decorative gradients.
+- Image and asset fidelity: no imagery is required. Existing Pragma branding is unchanged and all
+  file, add, edit, delete, and navigation controls use Phosphor icons.
+- Copy and content: the list now names the next action “View changes”. Review and rejection move into
+  the result page, where the request, result summary, base revision, changed files, line-level changes,
+  and approval controls appear together. English, Simplified Chinese, and Traditional Chinese remain
+  in parity.
+
+**Full-view comparison evidence**
+
+- `design-qa/context-store-revision-list-quiet-comparison.png` shows the previous divider-heavy list
+  above the replacement at the same viewport. The replacement removes the top rule, column rule, row
+  rules, inline change-set rule, and list-level approval buttons while preserving scan alignment.
+- The resulting page relies on whitespace and one explicit View changes entry, matching the requested
+  lower-noise direction.
+
+**Focused region comparison evidence**
+
+- `design-qa/context-store-revision-diff.png` verifies the new review state: changed-file navigation,
+  localized base metadata, line numbers, addition/deletion counts, and inline red/green Diff rows are
+  all visible without scrolling at 1688 × 896.
+- `design-qa/context-store-revision-diff-1280.png` verifies that the file rail, code pane, status, and
+  approval controls remain visible at the narrower breakpoint. Long file paths truncate only in the
+  rail; the selected path remains visible in the Diff header.
+
+**Interactions and diagnostics**
+
+- Verified Knowledge bases → Revision tasks → View changes.
+- Verified switching between an edited file and a newly added file updates the Diff and statistics.
+- Verified Approve and Reject are available only inside the review result for a pending-review task.
+- Verified running tasks remain non-navigable until a change set exists.
+- Browser console contained no errors in the list or both Diff file states.
+- Base file content is now captured authoritatively with the generated change set so future reviews
+  show real deletions and modifications; older tasks without captured base content fail visibly rather
+  than fabricating a Diff.
+
+**Comparison history**
+
+1. The previous implementation had a P2 density issue: five persistent horizontal dividers and
+   list-level approval controls made a two-task screen feel like a dense admin table.
+2. Removed persistent row dividers and inline result expansion, moved approval behind View changes,
+   and added a dedicated two-pane Diff review.
+3. Equal-size list comparison plus 1688px and 1280px Diff captures found no remaining actionable
+   P0/P1/P2 issue.
+
+**Follow-up Polish**
+
+- P3: when task URLs become shareable, preserve the selected file in the route so reviewers can link
+  directly to one changed document.
+
+final result: passed
+
+---
+
 # Home Expert Constellation Design QA
 
 - Source visual truth: `design-qa/home-constellation-reference.png`

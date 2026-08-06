@@ -3,6 +3,7 @@ import {
   ArrowClockwise,
   CaretRight,
   Check,
+  ClockCounterClockwise,
   Database,
   Eye,
   File,
@@ -10,7 +11,9 @@ import {
   FileText,
   Folder,
   FolderPlus,
+  ListBullets,
   MagnifyingGlass,
+  PaperPlaneTilt,
   PencilSimple,
   Plus,
   SpinnerGap,
@@ -37,6 +40,7 @@ import type {
   ExpertContextStoreMount,
 } from "../../../../shared/contracts/index.ts";
 import { CharacterCount } from "../../components/CharacterCount.tsx";
+import { Dialog } from "../../components/Dialog.tsx";
 import { MarkdownContent } from "../../components/MarkdownContent.tsx";
 import { SelectMenu } from "../../components/SelectMenu.tsx";
 import { SidebarResizeHandle } from "../../components/SidebarResizeHandle.tsx";
@@ -149,6 +153,8 @@ function entryOperationName(operation: EntryTextOperation, value = operation.val
 
 export function ContextStoreDirectoryFragment(props: {
   readonly stores: readonly ContextStore[];
+  readonly revisionTaskCount?: number | undefined;
+  readonly onOpenRevisions?: (() => void) | undefined;
   readonly onCreate: (input: CreateContextStore) => Promise<ContextStore>;
   readonly onInspectImport: (sourcePath: string) => Promise<ContextStoreImportInspection>;
   readonly onPickFolder: () => Promise<string | undefined>;
@@ -175,10 +181,21 @@ export function ContextStoreDirectoryFragment(props: {
             <h1 id="context-stores-heading">{t("knowledgeBases")}</h1>
             <p>{t("knowledgeBasesDescription")}</p>
           </div>
-          <button className="primary-button" type="button" onClick={() => setCreating(true)}>
-            <Plus size={17} aria-hidden="true" />
-            {t("createKnowledgeBase")}
-          </button>
+          <div className="knowledge-directory-actions">
+            {props.onOpenRevisions !== undefined ? (
+              <button className="secondary-button" type="button" onClick={props.onOpenRevisions}>
+                <ClockCounterClockwise size={17} aria-hidden="true" />
+                {t("viewAllStoreRevisions")}
+                {(props.revisionTaskCount ?? 0) > 0 ? (
+                  <span className="knowledge-revision-count">{props.revisionTaskCount}</span>
+                ) : null}
+              </button>
+            ) : null}
+            <button className="primary-button" type="button" onClick={() => setCreating(true)}>
+              <Plus size={17} aria-hidden="true" />
+              {t("createKnowledgeBase")}
+            </button>
+          </div>
         </header>
       }
     >
@@ -270,6 +287,8 @@ export function ContextStoreDetailFragment(props: {
   readonly store: ContextStore;
   readonly onBack: () => void;
   readonly onOpenRevisions?: (() => void) | undefined;
+  readonly onSubmitRevision?: ((prompt: string) => Promise<void>) | undefined;
+  readonly onRevisionSubmitted?: (() => void) | undefined;
   readonly onDelete: () => Promise<void>;
   readonly onListEntries: (storeId: string) => Promise<readonly ContextStoreEntry[]>;
   readonly onGetContent: (storeId: string, contentId: string) => Promise<ContextStoreContent>;
@@ -315,6 +334,10 @@ export function ContextStoreDetailFragment(props: {
   const [loading, setLoading] = useState(true);
   const [confirmOpen, setConfirmOpen] = useState(false);
   const [deleting, setDeleting] = useState(false);
+  const [revisionDialogOpen, setRevisionDialogOpen] = useState(false);
+  const [revisionPrompt, setRevisionPrompt] = useState("");
+  const [revisionSubmitting, setRevisionSubmitting] = useState(false);
+  const [revisionError, setRevisionError] = useState<string | null>(null);
   const [entryTextOperation, setEntryTextOperation] = useState<EntryTextOperation | null>(null);
   const [entryConfirmation, setEntryConfirmation] = useState<EntryConfirmation | null>(null);
   const [entryConfirmationBusy, setEntryConfirmationBusy] = useState(false);
@@ -719,6 +742,22 @@ export function ContextStoreDetailFragment(props: {
     }
   };
 
+  const submitRevision = async () => {
+    if (props.onSubmitRevision === undefined || revisionPrompt.trim() === "") return;
+    setRevisionSubmitting(true);
+    setRevisionError(null);
+    try {
+      await props.onSubmitRevision(revisionPrompt.trim());
+      setRevisionDialogOpen(false);
+      setRevisionPrompt("");
+      props.onRevisionSubmitted?.();
+    } catch (cause) {
+      setRevisionError(errorMessage(cause));
+    } finally {
+      setRevisionSubmitting(false);
+    }
+  };
+
   const entryNameIssueMessage = (issue: PragmaKnowledgeBaseEntryNameIssue): string => {
     switch (issue) {
       case "empty":
@@ -765,8 +804,21 @@ export function ContextStoreDetailFragment(props: {
           <div className="knowledge-base-editor-actions">
             {props.onOpenRevisions !== undefined ? (
               <button className="secondary-button" type="button" onClick={props.onOpenRevisions}>
-                <ArrowClockwise size={17} aria-hidden="true" />
+                <ListBullets size={17} aria-hidden="true" />
                 {t("viewStoreRevisions")}
+              </button>
+            ) : null}
+            {props.onSubmitRevision !== undefined ? (
+              <button
+                className="primary-button"
+                type="button"
+                onClick={() => {
+                  setRevisionError(null);
+                  setRevisionDialogOpen(true);
+                }}
+              >
+                <PaperPlaneTilt size={17} aria-hidden="true" />
+                {t("submitStoreRevision")}
               </button>
             ) : null}
             <button className="danger-button" type="button" onClick={() => setConfirmOpen(true)}>
@@ -1175,6 +1227,67 @@ export function ContextStoreDetailFragment(props: {
           onCancel={() => setEntryConfirmation(null)}
           onConfirm={() => void confirmEntryOperation()}
         />
+      ) : null}
+      {revisionDialogOpen ? (
+        <Dialog
+          title={t("submitStoreRevision")}
+          description={t("submitStoreRevisionDescription", { name: props.store.name })}
+          busy={revisionSubmitting}
+          onCancel={() => {
+            setRevisionDialogOpen(false);
+            setRevisionError(null);
+          }}
+          className="knowledge-revision-dialog"
+          footer={
+            <>
+              <button
+                className="secondary-button"
+                type="button"
+                disabled={revisionSubmitting}
+                onClick={() => setRevisionDialogOpen(false)}
+              >
+                {t("cancel")}
+              </button>
+              <button
+                className="primary-button"
+                type="submit"
+                form="knowledge-revision-form"
+                disabled={revisionSubmitting || revisionPrompt.trim() === ""}
+              >
+                {revisionSubmitting ? t("submittingRevision") : t("submitStoreRevision")}
+              </button>
+            </>
+          }
+        >
+          <form
+            id="knowledge-revision-form"
+            onSubmit={(event) => {
+              event.preventDefault();
+              void submitRevision();
+            }}
+          >
+            <label>
+              <span>{t("revisionPrompt")}</span>
+              <textarea
+                data-dialog-initial-focus
+                value={revisionPrompt}
+                maxLength={50_000}
+                disabled={revisionSubmitting}
+                placeholder={t("revisionPromptPlaceholder")}
+                onChange={(event) => setRevisionPrompt(event.target.value)}
+              />
+            </label>
+            <div className="knowledge-revision-dialog-meta">
+              <small>{t("revisionPromptHint")}</small>
+              <CharacterCount value={revisionPrompt} max={50_000} trim={false} />
+            </div>
+            {revisionError !== null ? (
+              <p className="form-error" role="alert">
+                {revisionError}
+              </p>
+            ) : null}
+          </form>
+        </Dialog>
       ) : null}
       {confirmOpen ? (
         <StudioConfirmationDialog

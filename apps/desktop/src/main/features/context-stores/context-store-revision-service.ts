@@ -92,6 +92,21 @@ function assertProgressiveStructurePreserved(
   ProgressiveKnowledgeStoreFilesSchema.parse([...projected.values()]);
 }
 
+function attachBaseContent(
+  base: ContextStoreSnapshot,
+  changeSet: ContextStoreChangeSet,
+): ContextStoreChangeSet {
+  const files = new Map(base.files.map((file) => [file.id, file]));
+  return ContextStoreChangeSetSchema.parse({
+    ...changeSet,
+    operations: changeSet.operations.map((operation) => {
+      if (operation.operation === "rename") return operation;
+      const previous = files.get(operation.id);
+      return { ...operation, previousContent: previous?.content };
+    }),
+  });
+}
+
 export function createContextStoreRevisionService(options: {
   readonly statePath: string;
   readonly contextStores: ContextStoreStore;
@@ -448,13 +463,16 @@ export function createContextStoreRevisionService(options: {
               api.getProfile(),
               options.contextStores.getSnapshot(running.request.storeId),
             ]);
-            const changeSet = ContextStoreChangeSetSchema.parse(
-              await options.generator.generate({
-                jobId: running.id,
-                request: running.request,
-                profile,
-                snapshot,
-              }),
+            const changeSet = attachBaseContent(
+              snapshot,
+              ContextStoreChangeSetSchema.parse(
+                await options.generator.generate({
+                  jobId: running.id,
+                  request: running.request,
+                  profile,
+                  snapshot,
+                }),
+              ),
             );
             if (
               changeSet.storeId !== running.request.storeId ||

@@ -1,7 +1,6 @@
 import type { Icon } from "@phosphor-icons/react";
 import {
   Database,
-  ClockCounterClockwise,
   GitBranch,
   PlugsConnected,
   PuzzlePiece,
@@ -21,14 +20,7 @@ export type ExpertModel = Extract<
   { readonly mode: "pinned" }
 >["model"];
 export type StudioView =
-  | "experts"
-  | "teams"
-  | "flows"
-  | "integrations"
-  | "capabilities"
-  | "plugins"
-  | "context-stores"
-  | "context-store-revisions";
+  "experts" | "teams" | "flows" | "integrations" | "capabilities" | "plugins" | "context-stores";
 
 export type ExpertRecord = {
   readonly ref?: string | undefined;
@@ -198,11 +190,6 @@ export const studioSections = [
   { id: "capabilities", labelKey: "capabilities", icon: Wrench },
   { id: "plugins", labelKey: "plugins", icon: PuzzlePiece },
   { id: "context-stores", labelKey: "contextStores", icon: Database },
-  {
-    id: "context-store-revisions",
-    labelKey: "contextStoreRevisions",
-    icon: ClockCounterClockwise,
-  },
 ] as const satisfies readonly {
   readonly id: StudioView;
   readonly labelKey: string;

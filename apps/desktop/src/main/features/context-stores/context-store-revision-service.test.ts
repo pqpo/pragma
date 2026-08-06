@@ -76,6 +76,33 @@ describe("context store revision service", () => {
     ]);
   });
 
+  it("preserves base file content for revision diff review", async () => {
+    const { contextStores, service, store } = await fixture();
+    await contextStores.createFile(store.id, "items/revised.md", "# Previous guidance\n");
+    const submitted = await service.submit({
+      schemaVersion: "pragma.context-store-revision-request/v1",
+      storeId: store.id,
+      prompt: "Update guidance",
+      source: "user",
+    });
+
+    await service.processPending();
+
+    await expect(service.get(submitted.id)).resolves.toMatchObject({
+      state: "pending_review",
+      changeSet: {
+        operations: [
+          {
+            operation: "upsert",
+            id: "items/revised.md",
+            previousContent: "# Previous guidance\n",
+            content: "# Update guidance\n",
+          },
+        ],
+      },
+    });
+  });
+
   it("supersedes stale approval and automatically requeues the original prompt", async () => {
     const { contextStores, service, store } = await fixture();
     const submitted = await service.submit({

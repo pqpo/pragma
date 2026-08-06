@@ -1,5 +1,17 @@
-import { ArrowClockwise, Check, ClockCounterClockwise, Trash, X } from "@phosphor-icons/react";
-import { useEffect, useState } from "react";
+import {
+  ArrowClockwise,
+  ArrowLeft,
+  ArrowRight,
+  Check,
+  ClockCounterClockwise,
+  FileText,
+  FunnelSimple,
+  PencilSimple,
+  Plus,
+  Trash,
+  X,
+} from "@phosphor-icons/react";
+import { useEffect, useMemo, useState } from "react";
 import { useTranslation } from "react-i18next";
 
 import type { ContextStore, ContextStoreRevisionJob } from "../../../../shared/contracts/index.ts";
@@ -8,26 +20,91 @@ import { errorMessage } from "../../lib/errors.ts";
 import { StudioScreenFrame } from "./StudioScreenFrame.tsx";
 import { desktopApi } from "./studio-model.ts";
 
+type RevisionOperation = NonNullable<ContextStoreRevisionJob["changeSet"]>["operations"][number];
+
+export interface RevisionDiffLine {
+  readonly kind: "context" | "addition" | "deletion";
+  readonly content: string;
+  readonly oldLine?: number | undefined;
+  readonly newLine?: number | undefined;
+}
+
+export function buildRevisionLineDiff(before: string, after: string): readonly RevisionDiffLine[] {
+  const previous = splitLines(before);
+  const next = splitLines(after);
+  if (previous.length > 400 || next.length > 400) return buildLargeLineDiff(previous, next);
+
+  const matrix = Array.from(
+    { length: previous.length + 1 },
+    () => new Uint32Array(next.length + 1),
+  );
+  for (let oldIndex = previous.length - 1; oldIndex >= 0; oldIndex -= 1) {
+    for (let newIndex = next.length - 1; newIndex >= 0; newIndex -= 1) {
+      matrix[oldIndex]![newIndex] =
+        previous[oldIndex] === next[newIndex]
+          ? matrix[oldIndex + 1]![newIndex + 1]! + 1
+          : Math.max(matrix[oldIndex + 1]![newIndex]!, matrix[oldIndex]![newIndex + 1]!);
+    }
+  }
+
+  const lines: RevisionDiffLine[] = [];
+  let oldIndex = 0;
+  let newIndex = 0;
+  while (oldIndex < previous.length || newIndex < next.length) {
+    if (
+      oldIndex < previous.length &&
+      newIndex < next.length &&
+      previous[oldIndex] === next[newIndex]
+    ) {
+      lines.push({
+        kind: "context",
+        content: previous[oldIndex]!,
+        oldLine: oldIndex + 1,
+        newLine: newIndex + 1,
+      });
+      oldIndex += 1;
+      newIndex += 1;
+    } else if (
+      oldIndex < previous.length &&
+      (newIndex === next.length ||
+        matrix[oldIndex + 1]![newIndex]! >= matrix[oldIndex]![newIndex + 1]!)
+    ) {
+      lines.push({ kind: "deletion", content: previous[oldIndex]!, oldLine: oldIndex + 1 });
+      oldIndex += 1;
+    } else {
+      lines.push({ kind: "addition", content: next[newIndex]!, newLine: newIndex + 1 });
+      newIndex += 1;
+    }
+  }
+  return lines;
+}
+
 export function ContextStoreRevisionFragment(props: {
   readonly stores: readonly ContextStore[];
   readonly initialStoreId?: string | undefined;
   readonly onCountChanged?: ((count: number) => void) | undefined;
+  readonly onBack: () => void;
 }) {
-  const { t } = useTranslation("studio");
+  const { t, i18n } = useTranslation("studio");
   const [storeId, setStoreId] = useState(props.initialStoreId ?? "");
   const [jobs, setJobs] = useState<readonly ContextStoreRevisionJob[]>([]);
+  const [selectedJobId, setSelectedJobId] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState<string | null>(null);
-  const [prompt, setPrompt] = useState("");
 
   const load = async () => {
     const api = desktopApi();
     if (api === undefined) return;
     try {
-      const next = await api.listContextStoreRevisions(storeId === "" ? {} : { storeId });
+      const [next, allJobs] = await Promise.all([
+        api.listContextStoreRevisions(storeId === "" ? {} : { storeId }),
+        storeId === "" ? undefined : api.listContextStoreRevisions(),
+      ]);
       setJobs(next);
       props.onCountChanged?.(
-        next.filter((job) => !["completed", "rejected", "superseded"].includes(job.state)).length,
+        (allJobs ?? next).filter(
+          (job) => !["completed", "rejected", "superseded"].includes(job.state),
+        ).length,
       );
       setError(null);
     } catch (caught) {
@@ -57,6 +134,7 @@ export function ContextStoreRevisionFragment(props: {
       else if (action === "reject") await api.rejectContextStoreRevision(input);
       else if (action === "retry") await api.retryContextStoreRevision(input);
       else await api.deleteContextStoreRevision(input);
+      if (action === "delete") setSelectedJobId(null);
       await load();
     } catch (caught) {
       setError(errorMessage(caught));
@@ -65,25 +143,21 @@ export function ContextStoreRevisionFragment(props: {
     }
   };
 
-  const submitRevision = async () => {
-    const api = desktopApi();
-    if (api === undefined || storeId === "" || prompt.trim() === "") return;
-    setBusy("submit");
-    try {
-      await api.submitContextStoreRevision({
-        schemaVersion: "pragma.context-store-revision-request/v1",
-        storeId,
-        prompt,
-        source: "user",
-      });
-      setPrompt("");
-      await load();
-    } catch (caught) {
-      setError(errorMessage(caught));
-    } finally {
-      setBusy(null);
-    }
-  };
+  const selectedJob = jobs.find((job) => job.id === selectedJobId);
+  if (selectedJob !== undefined && selectedJob.changeSet !== undefined) {
+    return (
+      <ContextStoreRevisionDiffFragment
+        job={{ ...selectedJob, changeSet: selectedJob.changeSet }}
+        store={props.stores.find((store) => store.id === selectedJob.request.storeId)}
+        busy={busy === selectedJob.id}
+        error={error}
+        onBack={() => setSelectedJobId(null)}
+        onApprove={() => void act(selectedJob, "approve")}
+        onReject={() => void act(selectedJob, "reject")}
+        onRetry={() => void act(selectedJob, "retry")}
+      />
+    );
+  }
 
   return (
     <StudioScreenFrame
@@ -91,152 +165,360 @@ export function ContextStoreRevisionFragment(props: {
       labelledBy="context-store-revisions-title"
       header={
         <header className="studio-heading revision-task-heading">
-          <div>
-            <h1 id="context-store-revisions-title">{t("contextStoreRevisions")}</h1>
-            <p>{t("contextStoreRevisionsDescription")}</p>
+          <div className="revision-task-heading-copy">
+            <button className="back-link" type="button" onClick={props.onBack}>
+              <ArrowLeft size={18} aria-hidden="true" />
+              {t("backKnowledgeBases")}
+            </button>
+            <div>
+              <div>
+                <h1 id="context-store-revisions-title">{t("contextStoreRevisions")}</h1>
+                <p>{t("contextStoreRevisionsDescription")}</p>
+              </div>
+              <span className="revision-task-count">
+                {t("revisionTaskCount", { count: jobs.length })}
+              </span>
+            </div>
           </div>
-          <span className="revision-task-count">{jobs.length}</span>
+          <SelectMenu
+            className="revision-task-select"
+            ariaLabel={t("revisionStoreFilter")}
+            value={storeId}
+            icon={<FunnelSimple size={15} aria-hidden="true" />}
+            align="end"
+            options={[
+              { value: "", label: t("allKnowledgeBases") },
+              ...props.stores.map((store) => ({ value: store.id, label: store.name })),
+            ]}
+            onChange={setStoreId}
+          />
         </header>
       }
     >
       <div className="revision-task-content">
-        <form
-          className="revision-task-composer"
-          onSubmit={(event) => {
-            event.preventDefault();
-            void submitRevision();
-          }}
-        >
-          <div className="revision-task-composer-heading">
-            <ClockCounterClockwise size={20} aria-hidden="true" />
-            <div>
-              <h2>{t("newRevisionTask")}</h2>
-              <p>{t("newRevisionTaskDescription")}</p>
-            </div>
-          </div>
-          <div className="revision-task-fields">
-            <label className="revision-task-field revision-task-store-field">
-              <span>{t("revisionStoreFilter")}</span>
-              <SelectMenu
-                className="revision-task-select"
-                ariaLabel={t("revisionStoreFilter")}
-                value={storeId}
-                options={[
-                  { value: "", label: t("allKnowledgeBases") },
-                  ...props.stores.map((store) => ({ value: store.id, label: store.name })),
-                ]}
-                onChange={setStoreId}
-              />
-            </label>
-            <label className="revision-task-field revision-task-prompt-field">
-              <span>{t("revisionPrompt")}</span>
-              <textarea
-                value={prompt}
-                maxLength={50_000}
-                placeholder={t("revisionPromptPlaceholder")}
-                onChange={(event) => setPrompt(event.target.value)}
-              />
-            </label>
-            <button
-              className="primary-button revision-task-submit"
-              type="submit"
-              disabled={storeId === "" || prompt.trim() === "" || busy === "submit"}
-            >
-              {t("submitRevisionTask")}
-            </button>
-          </div>
-        </form>
-
         {jobs.length === 0 ? (
           <div className="revision-task-empty">
             <ClockCounterClockwise size={28} aria-hidden="true" />
             <h3>{t("noStoreRevisionTasks")}</h3>
             <p>{t("noStoreRevisionTasksDescription")}</p>
           </div>
-        ) : null}
-        <div className="revision-task-list" role="list">
-          {jobs.map((job) => {
-            const store = props.stores.find((candidate) => candidate.id === job.request.storeId);
-            return (
-              <article className="revision-task-row" role="listitem" key={job.id}>
-                <div className="revision-task-summary">
-                  <strong>{store?.name ?? job.request.storeId}</strong>
-                  <small>{job.request.prompt}</small>
-                </div>
-                <div className="revision-task-result">
-                  <span className={`revision-task-state is-${job.state}`}>
-                    {t(`revisionState.${job.state}`)}
-                  </span>
-                  {job.changeSet !== undefined ? (
-                    <details className="revision-task-changes">
-                      <summary>{job.changeSet.summary}</summary>
-                      <ul>
-                        {job.changeSet.operations.map((operation, index) => (
-                          <li key={`${operation.operation}:${operation.id}:${index}`}>
-                            {operation.operation} · {operation.id}
-                            {operation.operation === "rename" ? ` → ${operation.nextId}` : null}
-                            {operation.operation === "upsert" ? (
-                              <pre>{operation.content}</pre>
-                            ) : null}
-                          </li>
-                        ))}
-                      </ul>
-                    </details>
-                  ) : null}
-                  {job.error !== undefined ? (
-                    <p className="form-error" role="alert">
-                      {job.error.message}
-                    </p>
-                  ) : null}
-                </div>
-                <div className="revision-task-actions">
-                  {job.state === "pending_review" ? (
-                    <>
-                      <button
-                        className="primary-button"
-                        type="button"
-                        disabled={busy === job.id}
-                        onClick={() => void act(job, "approve")}
-                      >
-                        <Check size={16} /> {t("approveRevision")}
-                      </button>
-                      <button
-                        className="secondary-button"
-                        type="button"
-                        disabled={busy === job.id}
-                        onClick={() => void act(job, "reject")}
-                      >
-                        <X size={16} /> {t("rejectRevision")}
-                      </button>
-                    </>
-                  ) : null}
-                  {job.state === "needs_attention" || job.state === "rejected" ? (
+        ) : (
+          <div className="revision-task-table">
+            <div className="revision-task-list-header" aria-hidden="true">
+              <span>{t("revisionTaskColumn")}</span>
+              <span>{t("status")}</span>
+              <span>{t("revisionUpdatedAt")}</span>
+              <span>{t("actions")}</span>
+            </div>
+            <div className="revision-task-list" role="list">
+              {jobs.map((job) => {
+                const store = props.stores.find(
+                  (candidate) => candidate.id === job.request.storeId,
+                );
+                const hasChanges = job.changeSet !== undefined;
+                return (
+                  <article className="revision-task-row" role="listitem" key={job.id}>
                     <button
-                      className="secondary-button"
+                      className="revision-task-open"
                       type="button"
-                      disabled={busy === job.id}
-                      onClick={() => void act(job, "retry")}
+                      disabled={!hasChanges}
+                      aria-label={hasChanges ? t("viewRevisionChanges") : undefined}
+                      onClick={() => hasChanges && setSelectedJobId(job.id)}
                     >
-                      <ArrowClockwise size={16} /> {t("retryRevision")}
+                      <span className="revision-task-summary">
+                        <strong>{job.request.prompt}</strong>
+                        <small>{store?.name ?? job.request.storeId}</small>
+                      </span>
+                      <span className="revision-task-result">
+                        <span className={`revision-task-state is-${job.state}`}>
+                          {t(`revisionState.${job.state}`)}
+                        </span>
+                        {job.error !== undefined ? (
+                          <span className="form-error" role="alert">
+                            {job.error.message}
+                          </span>
+                        ) : null}
+                      </span>
+                      <time className="revision-task-updated" dateTime={job.updatedAt}>
+                        {formatRevisionTimestamp(job.updatedAt, i18n.language)}
+                      </time>
                     </button>
-                  ) : null}
-                  {["completed", "rejected", "superseded"].includes(job.state) ? (
-                    <button
-                      className="danger-button"
-                      type="button"
-                      disabled={busy === job.id}
-                      onClick={() => void act(job, "delete")}
-                    >
-                      <Trash size={16} /> {t("deleteRevisionTask")}
-                    </button>
-                  ) : null}
-                </div>
-              </article>
-            );
-          })}
-        </div>
+                    <div className="revision-task-actions">
+                      {hasChanges ? (
+                        <button
+                          className="revision-task-view"
+                          type="button"
+                          onClick={() => setSelectedJobId(job.id)}
+                        >
+                          {t("viewRevisionChanges")}
+                          <ArrowRight size={14} aria-hidden="true" />
+                        </button>
+                      ) : null}
+                      {job.state === "needs_attention" || job.state === "rejected" ? (
+                        <button
+                          className="secondary-button"
+                          type="button"
+                          disabled={busy === job.id}
+                          onClick={() => void act(job, "retry")}
+                        >
+                          <ArrowClockwise size={15} /> {t("retryRevision")}
+                        </button>
+                      ) : null}
+                      {["completed", "rejected", "superseded"].includes(job.state) ? (
+                        <button
+                          className="revision-task-delete"
+                          type="button"
+                          aria-label={t("deleteRevisionTask")}
+                          title={t("deleteRevisionTask")}
+                          disabled={busy === job.id}
+                          onClick={() => void act(job, "delete")}
+                        >
+                          <Trash size={15} aria-hidden="true" />
+                        </button>
+                      ) : null}
+                    </div>
+                  </article>
+                );
+              })}
+            </div>
+          </div>
+        )}
         {error !== null ? <p className="form-error">{error}</p> : null}
       </div>
     </StudioScreenFrame>
   );
+}
+
+export function ContextStoreRevisionDiffFragment(props: {
+  readonly job: ContextStoreRevisionJob & {
+    readonly changeSet: NonNullable<ContextStoreRevisionJob["changeSet"]>;
+  };
+  readonly store?: ContextStore | undefined;
+  readonly busy: boolean;
+  readonly error: string | null;
+  readonly onBack: () => void;
+  readonly onApprove: () => void;
+  readonly onReject: () => void;
+  readonly onRetry: () => void;
+}) {
+  const { t, i18n } = useTranslation("studio");
+  const [selectedOperationIndex, setSelectedOperationIndex] = useState(0);
+  const operation =
+    props.job.changeSet.operations[selectedOperationIndex] ?? props.job.changeSet.operations[0]!;
+  const diff = useMemo(() => operationDiff(operation), [operation]);
+  const additions = diff.filter((line) => line.kind === "addition").length;
+  const deletions = diff.filter((line) => line.kind === "deletion").length;
+
+  return (
+    <StudioScreenFrame
+      className="context-store-revision-detail"
+      labelledBy="context-store-revision-detail-title"
+      header={
+        <header className="revision-diff-heading">
+          <button className="back-link" type="button" onClick={props.onBack}>
+            <ArrowLeft size={18} aria-hidden="true" />
+            {t("backRevisionTasks")}
+          </button>
+          <div className="revision-diff-title-row">
+            <div>
+              <h1 id="context-store-revision-detail-title">{t("revisionResult")}</h1>
+              <p>{props.job.request.prompt}</p>
+            </div>
+            <div className="revision-diff-actions">
+              <span className={`revision-task-state is-${props.job.state}`}>
+                {t(`revisionState.${props.job.state}`)}
+              </span>
+              {props.job.state === "pending_review" ? (
+                <>
+                  <button
+                    className="primary-button"
+                    type="button"
+                    disabled={props.busy}
+                    onClick={props.onApprove}
+                  >
+                    <Check size={15} aria-hidden="true" />
+                    {t("approveRevision")}
+                  </button>
+                  <button
+                    className="secondary-button"
+                    type="button"
+                    disabled={props.busy}
+                    onClick={props.onReject}
+                  >
+                    <X size={15} aria-hidden="true" />
+                    {t("rejectRevision")}
+                  </button>
+                </>
+              ) : null}
+              {props.job.state === "needs_attention" || props.job.state === "rejected" ? (
+                <button
+                  className="secondary-button"
+                  type="button"
+                  disabled={props.busy}
+                  onClick={props.onRetry}
+                >
+                  <ArrowClockwise size={15} aria-hidden="true" />
+                  {t("retryRevision")}
+                </button>
+              ) : null}
+            </div>
+          </div>
+        </header>
+      }
+    >
+      <div className="revision-diff-content">
+        <div className="revision-diff-summary">
+          <strong>{props.job.changeSet.summary}</strong>
+          <span>
+            {props.store?.name ?? props.job.request.storeId} ·{" "}
+            {t("baseRevision", { count: props.job.changeSet.baseRevision })} ·{" "}
+            {formatRevisionTimestamp(props.job.updatedAt, i18n.language)}
+          </span>
+        </div>
+        <div className="revision-diff-workspace">
+          <aside
+            className="revision-diff-files"
+            aria-label={t("filesChanged", { count: props.job.changeSet.operations.length })}
+          >
+            <div>
+              <span>{t("filesChanged", { count: props.job.changeSet.operations.length })}</span>
+            </div>
+            <nav>
+              {props.job.changeSet.operations.map((candidate, index) => (
+                <button
+                  className={selectedOperationIndex === index ? "is-active" : undefined}
+                  type="button"
+                  key={`${candidate.operation}:${candidate.id}:${index}`}
+                  onClick={() => setSelectedOperationIndex(index)}
+                >
+                  {operationIcon(candidate)}
+                  <span>
+                    <strong>{operationPath(candidate)}</strong>
+                    <small>{t(`revisionOperation.${candidate.operation}`)}</small>
+                  </span>
+                </button>
+              ))}
+            </nav>
+          </aside>
+          <section className="revision-diff-view" aria-label={t("revisionDiff")}>
+            <header>
+              <div>
+                <FileText size={16} aria-hidden="true" />
+                <strong>{operationPath(operation)}</strong>
+              </div>
+              {operation.operation === "rename" ? null : (
+                <span className="revision-diff-stats">
+                  <b>+{additions}</b>
+                  <i>−{deletions}</i>
+                </span>
+              )}
+            </header>
+            {operation.operation === "rename" ? (
+              <div className="revision-rename-preview">
+                <span>{operation.id}</span>
+                <ArrowRight size={18} aria-hidden="true" />
+                <strong>{operation.nextId}</strong>
+              </div>
+            ) : operation.operation === "delete" && operation.previousContent === undefined ? (
+              <div className="revision-diff-unavailable">
+                <p>{t("revisionDiffUnavailable")}</p>
+              </div>
+            ) : (
+              <div className="revision-diff-code" role="table">
+                {diff.map((line, index) => (
+                  <div
+                    className={`revision-diff-line is-${line.kind}`}
+                    role="row"
+                    key={`${line.kind}:${index}`}
+                  >
+                    <span role="cell">{line.oldLine ?? ""}</span>
+                    <span role="cell">{line.newLine ?? ""}</span>
+                    <b aria-hidden="true">
+                      {line.kind === "addition" ? "+" : line.kind === "deletion" ? "−" : ""}
+                    </b>
+                    <code role="cell">{line.content || " "}</code>
+                  </div>
+                ))}
+              </div>
+            )}
+          </section>
+        </div>
+        {props.error !== null ? <p className="form-error">{props.error}</p> : null}
+      </div>
+    </StudioScreenFrame>
+  );
+}
+
+function operationDiff(operation: RevisionOperation): readonly RevisionDiffLine[] {
+  if (operation.operation === "rename") return [];
+  if (operation.operation === "delete") {
+    return buildRevisionLineDiff(operation.previousContent ?? "", "");
+  }
+  return buildRevisionLineDiff(operation.previousContent ?? "", operation.content);
+}
+
+function operationPath(operation: RevisionOperation): string {
+  return operation.operation === "rename" ? operation.nextId : operation.id;
+}
+
+function operationIcon(operation: RevisionOperation) {
+  if (operation.operation === "delete") return <Trash size={15} aria-hidden="true" />;
+  if (operation.operation === "rename") return <PencilSimple size={15} aria-hidden="true" />;
+  if (operation.previousContent === undefined) return <Plus size={15} aria-hidden="true" />;
+  return <FileText size={15} aria-hidden="true" />;
+}
+
+function splitLines(value: string): readonly string[] {
+  return value === "" ? [] : value.replace(/\r\n?/gu, "\n").split("\n");
+}
+
+function buildLargeLineDiff(
+  previous: readonly string[],
+  next: readonly string[],
+): readonly RevisionDiffLine[] {
+  let prefix = 0;
+  while (prefix < previous.length && prefix < next.length && previous[prefix] === next[prefix]) {
+    prefix += 1;
+  }
+  let suffix = 0;
+  while (
+    suffix < previous.length - prefix &&
+    suffix < next.length - prefix &&
+    previous[previous.length - suffix - 1] === next[next.length - suffix - 1]
+  ) {
+    suffix += 1;
+  }
+  return [
+    ...previous.slice(0, prefix).map((content, index) => ({
+      kind: "context" as const,
+      content,
+      oldLine: index + 1,
+      newLine: index + 1,
+    })),
+    ...previous.slice(prefix, previous.length - suffix).map((content, index) => ({
+      kind: "deletion" as const,
+      content,
+      oldLine: prefix + index + 1,
+    })),
+    ...next.slice(prefix, next.length - suffix).map((content, index) => ({
+      kind: "addition" as const,
+      content,
+      newLine: prefix + index + 1,
+    })),
+    ...previous.slice(previous.length - suffix).map((content, index) => ({
+      kind: "context" as const,
+      content,
+      oldLine: previous.length - suffix + index + 1,
+      newLine: next.length - suffix + index + 1,
+    })),
+  ];
+}
+
+function formatRevisionTimestamp(value: string, locale: string): string {
+  return new Intl.DateTimeFormat(locale, {
+    month: "short",
+    day: "numeric",
+    hour: "2-digit",
+    minute: "2-digit",
+  }).format(new Date(value));
 }
