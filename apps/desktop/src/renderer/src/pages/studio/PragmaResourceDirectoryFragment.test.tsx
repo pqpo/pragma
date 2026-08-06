@@ -196,7 +196,9 @@ describe("PragmaResourceDirectoryFragment", () => {
     );
 
     expect(html).toContain("Quality team");
-    expect(html).toContain('class="studio-asset-row pragma-resource-row"');
+    expect(html).toContain('class="expert-team-card"');
+    expect(html).toContain("Coordinator");
+    expect(html).toContain("Max concurrency");
     expect(html).not.toContain("Edit expert team");
     expect(html).not.toContain("Validate &amp; publish");
     expect(html).toContain('placeholder="Search expert teams"');

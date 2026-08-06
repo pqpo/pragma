@@ -930,6 +930,7 @@ export const studio = {
   pluginOrigin: "Plugin origin",
   origin: "Origin",
   builtIn: "Built-in",
+  custom: "Custom",
   imported: "Imported",
   ready: "Ready",
   needsAttention: "Needs attention",

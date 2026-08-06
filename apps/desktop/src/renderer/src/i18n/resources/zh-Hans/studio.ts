@@ -892,6 +892,7 @@ export const studio = {
   pluginOrigin: "插件来源",
   origin: "来源",
   builtIn: "内置",
+  custom: "自定义",
   imported: "已导入",
   ready: "就绪",
   needsAttention: "需要处理",

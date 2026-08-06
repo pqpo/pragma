@@ -6470,6 +6470,314 @@ html.is-resizing-sidebar * {
   }
 }
 
+/* Expert and Expert team directories use object cards so the useful runtime
+ * metadata is visible before the user opens a detail view. */
+.expert-grid,
+.expert-team-grid {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 12px;
+  padding: 4px 4px 0 0;
+}
+
+.expert-card-shell,
+.expert-team-card-shell {
+  min-width: 0;
+}
+
+.expert-card,
+.expert-team-card {
+  display: flex;
+  width: 100%;
+  min-width: 0;
+  min-height: 288px;
+  flex-direction: column;
+  gap: 12px;
+  padding: 16px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-card);
+  background: var(--surface);
+  color: var(--text);
+  cursor: pointer;
+  font: inherit;
+  text-align: left;
+  transition:
+    border-color 120ms ease,
+    background 120ms ease;
+}
+
+.expert-card:hover,
+.expert-card:focus-visible,
+.expert-team-card:hover,
+.expert-team-card:focus-visible {
+  border-color: rgb(88 121 104 / 36%);
+  outline: 0;
+  background: #fbfdfb;
+}
+
+.expert-card:focus-visible,
+.expert-team-card:focus-visible {
+  box-shadow: 0 0 0 3px var(--focus-ring);
+}
+
+.expert-card-header,
+.expert-team-card-header {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 12px;
+  min-width: 0;
+}
+
+.expert-card-icon,
+.expert-team-card-icon {
+  display: grid;
+  width: 48px;
+  height: 48px;
+  flex: 0 0 48px;
+  place-items: center;
+  border-radius: var(--ui-radius-lg);
+  background: var(--green-soft);
+  color: var(--green-dark);
+}
+
+.expert-card-identity,
+.expert-team-card-identity {
+  display: grid;
+  min-width: 0;
+  gap: 5px;
+}
+
+.expert-card-title-row,
+.expert-team-card-title-row {
+  display: flex;
+  min-width: 0;
+  align-items: center;
+  gap: 8px;
+}
+
+.expert-card-title-row strong,
+.expert-team-card-title-row strong {
+  min-width: 0;
+  overflow: hidden;
+  color: var(--text);
+  font-size: 16px;
+  font-weight: 600;
+  line-height: 1.35;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.expert-source-chip,
+.expert-team-card-title-row em {
+  flex: 0 0 auto;
+  padding: 3px 7px;
+  border: 1px solid var(--border);
+  border-radius: var(--ui-radius-sm);
+  background: var(--surface-soft);
+  color: var(--muted);
+  font-size: 10px;
+  font-style: normal;
+  font-weight: 500;
+  line-height: 1.3;
+}
+
+.expert-team-card-title-row em {
+  border-color: rgb(88 121 104 / 22%);
+  background: var(--green-soft);
+  color: var(--green-dark);
+}
+
+.expert-card-identity code,
+.expert-team-card-identity code {
+  display: block;
+  overflow: hidden;
+  color: var(--faint);
+  font-family: "SFMono-Regular", Consolas, "Liberation Mono", monospace;
+  font-size: 10px;
+  line-height: 1.4;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.expert-card-action,
+.expert-team-card-action {
+  color: var(--faint);
+}
+
+.expert-card-description,
+.expert-team-card-description {
+  display: -webkit-box;
+  min-height: 42px;
+  overflow: hidden;
+  color: var(--muted);
+  font-size: 13px;
+  line-height: 1.6;
+  overflow-wrap: anywhere;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 2;
+}
+
+.expert-card-tags,
+.expert-team-card-tags,
+.expert-team-card-members > span {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 7px;
+}
+
+.expert-card-tags em,
+.expert-team-card-tags em,
+.expert-team-card-members em {
+  padding: 4px 8px;
+  border: 1px solid var(--border);
+  border-radius: var(--ui-radius-sm);
+  background: var(--surface-soft);
+  color: var(--muted);
+  font-size: 11px;
+  font-style: normal;
+  line-height: 1.35;
+}
+
+.expert-card-scope {
+  display: grid;
+  min-height: 54px;
+  align-content: start;
+  gap: 5px;
+  margin-top: auto;
+  padding: 10px;
+  border-radius: var(--ui-radius-md);
+  background: var(--surface-soft);
+}
+
+.expert-card-scope small,
+.expert-team-card-members > small {
+  color: var(--muted);
+  font-size: 11px;
+  line-height: 1.35;
+}
+
+.expert-card-scope > span {
+  display: -webkit-box;
+  overflow: hidden;
+  color: var(--text-secondary);
+  font-size: 12px;
+  line-height: 1.5;
+  overflow-wrap: anywhere;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 2;
+}
+
+.expert-card-metrics,
+.expert-team-card-stats {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 10px 12px;
+  padding-top: 12px;
+  border-top: 1px solid var(--border);
+}
+
+.expert-card-metric,
+.expert-team-card-stats > span {
+  display: grid;
+  min-width: 0;
+  grid-template-columns: auto minmax(0, 1fr);
+  align-items: start;
+  column-gap: 8px;
+  color: var(--green-dark);
+}
+
+.expert-card-metric > span,
+.expert-team-card-stats > span > :is(small, strong) {
+  grid-column: 2;
+  min-width: 0;
+}
+
+.expert-card-metric > span {
+  display: grid;
+  gap: 3px;
+}
+
+.expert-card-metric small,
+.expert-team-card-stats small {
+  color: var(--muted);
+  font-size: 11px;
+  line-height: 1.35;
+}
+
+.expert-card-metric strong,
+.expert-team-card-stats strong {
+  overflow: hidden;
+  color: var(--text);
+  font-size: 12px;
+  font-weight: 500;
+  line-height: 1.4;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.expert-team-card {
+  min-height: 300px;
+}
+
+.expert-team-card-stats {
+  margin-top: auto;
+}
+
+.expert-team-card-members {
+  display: grid;
+  gap: 6px;
+  padding: 10px;
+  border-radius: var(--ui-radius-md);
+  background: var(--surface-soft);
+}
+
+.expert-team-card-members em {
+  background: var(--surface);
+}
+
+@container expert-directory (max-width: 720px) {
+  .expert-grid {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: 12px;
+  }
+}
+
+@container pragma-resource-directory (max-width: 720px) {
+  .expert-team-grid {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: 12px;
+  }
+}
+
+@container expert-directory (max-width: 480px) {
+  .expert-grid {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .expert-card,
+  .expert-team-card {
+    min-height: 0;
+  }
+}
+
+@container pragma-resource-directory (max-width: 480px) {
+  .expert-team-grid {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .expert-team-card {
+    min-height: 0;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .expert-card,
+  .expert-team-card {
+    transition: none;
+  }
+}
+
 /* Knowledge-base revision tasks */
 .context-store-revisions {
   container-name: context-store-revisions;

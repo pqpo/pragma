@@ -6,6 +6,7 @@ import {
   ArrowLeft,
   CaretRight,
   CaretDown,
+  Gauge,
   GitBranch,
   MagnifyingGlass,
   PencilSimple,
@@ -153,6 +154,22 @@ export function matchesResourceDirectoryQuery(
   );
 }
 
+function uniqueTeamMemberRefs(resource: PragmaExpertTeamResource): readonly string[] {
+  return [
+    resource.spec.coordinator.ref,
+    ...resource.spec.members.map((member) => member.ref),
+  ].filter((ref, index, refs) => refs.indexOf(ref) === index);
+}
+
+function teamExpertName(project: PragmaProjectSnapshot, ref: string): string {
+  return (
+    project.resources.find(
+      (resource): resource is PragmaExpertResource =>
+        resource.kind === "Expert" && expertRef(resource) === ref,
+    )?.metadata.name ?? ref
+  );
+}
+
 export function PragmaResourceDirectoryFragment(props: {
   readonly kind: ResourceKind;
   readonly project: PragmaProjectSnapshot;
@@ -217,34 +234,118 @@ export function PragmaResourceDirectoryFragment(props: {
         </label>
       </div>
 
-      <div className="studio-asset-rows">
-        {matchingResources.map((resource) => (
-          <button
-            className="studio-asset-row pragma-resource-row"
-            type="button"
-            key={canonicalPragmaResourceRef(resource)}
-            onClick={() => props.onOpen(resource)}
-          >
-            <span className="studio-asset-icon" aria-hidden="true">
-              <Icon size={24} />
-            </span>
-            <span className="studio-asset-copy">
-              <strong>{resource.metadata.name}</strong>
-              <span>{resource.metadata.description}</span>
-            </span>
-            <CaretRight size={17} aria-hidden="true" />
-          </button>
-        ))}
-        {matchingResources.length === 0 ? (
-          <p className="studio-empty-copy">
-            {query.trim()
-              ? t("noMatchesFound")
-              : t("noResourcesYet", {
-                  kind: props.kind === "team" ? t("expertTeam") : t("flow"),
-                })}
-          </p>
-        ) : null}
-      </div>
+      {props.kind === "team" ? (
+        <div className="expert-team-grid" role="list" aria-label={t("teams")}>
+          {matchingResources.map((resource) => {
+            if (resource.kind !== "ExpertTeam") return null;
+            const memberRefs = uniqueTeamMemberRefs(resource);
+            const visibleMemberNames = memberRefs
+              .slice(0, 3)
+              .map((ref) => teamExpertName(props.project, ref));
+            return (
+              <article
+                className="expert-team-card-shell"
+                key={canonicalPragmaResourceRef(resource)}
+                role="listitem"
+              >
+                <button
+                  className="expert-team-card"
+                  type="button"
+                  onClick={() => props.onOpen(resource)}
+                >
+                  <span className="expert-team-card-header">
+                    <span className="expert-team-card-icon" aria-hidden="true">
+                      <UsersThree size={25} />
+                    </span>
+                    <span className="expert-team-card-identity">
+                      <span className="expert-team-card-title-row">
+                        <strong>{resource.metadata.name}</strong>
+                        <em>{t("configured")}</em>
+                      </span>
+                      <code>{canonicalPragmaResourceRef(resource)}</code>
+                    </span>
+                    <CaretRight className="expert-team-card-action" size={18} aria-hidden="true" />
+                  </span>
+                  <span className="expert-team-card-description">
+                    {resource.metadata.description}
+                  </span>
+                  {resource.metadata.tags.length > 0 ? (
+                    <span className="expert-team-card-tags" aria-label={t("tags")}>
+                      {resource.metadata.tags.slice(0, 3).map((tag) => (
+                        <em key={tag}>{tag}</em>
+                      ))}
+                    </span>
+                  ) : null}
+                  <span className="expert-team-card-stats">
+                    <span>
+                      <UserCircle size={17} aria-hidden="true" />
+                      <small>{t("coordinator")}</small>
+                      <strong>
+                        {teamExpertName(props.project, resource.spec.coordinator.ref)}
+                      </strong>
+                    </span>
+                    <span>
+                      <UsersThree size={17} aria-hidden="true" />
+                      <small>{t("members")}</small>
+                      <strong>{t("membersCount", { count: memberRefs.length })}</strong>
+                    </span>
+                    <span>
+                      <Gauge size={17} aria-hidden="true" />
+                      <small>{t("maxConcurrency")}</small>
+                      <strong>{resource.spec.delegation.maxConcurrency}</strong>
+                    </span>
+                    <span>
+                      <Gauge size={17} aria-hidden="true" />
+                      <small>{t("maxDelegationDepth")}</small>
+                      <strong>{resource.spec.delegation.maxDepth}</strong>
+                    </span>
+                  </span>
+                  <span className="expert-team-card-members">
+                    <small>{t("teamMembersDescription")}</small>
+                    <span>
+                      {visibleMemberNames.map((name, index) => (
+                        <em key={`${memberRefs[index] ?? name}-${name}`}>{name}</em>
+                      ))}
+                      {memberRefs.length > visibleMemberNames.length ? (
+                        <em>+{memberRefs.length - visibleMemberNames.length}</em>
+                      ) : null}
+                    </span>
+                  </span>
+                </button>
+              </article>
+            );
+          })}
+        </div>
+      ) : (
+        <div className="studio-asset-rows">
+          {matchingResources.map((resource) => (
+            <button
+              className="studio-asset-row pragma-resource-row"
+              type="button"
+              key={canonicalPragmaResourceRef(resource)}
+              onClick={() => props.onOpen(resource)}
+            >
+              <span className="studio-asset-icon" aria-hidden="true">
+                <Icon size={24} />
+              </span>
+              <span className="studio-asset-copy">
+                <strong>{resource.metadata.name}</strong>
+                <span>{resource.metadata.description}</span>
+              </span>
+              <CaretRight size={17} aria-hidden="true" />
+            </button>
+          ))}
+        </div>
+      )}
+      {matchingResources.length === 0 ? (
+        <p className="studio-empty-copy">
+          {query.trim()
+            ? t("noMatchesFound")
+            : t("noResourcesYet", {
+                kind: props.kind === "team" ? t("expertTeam") : t("flow"),
+              })}
+        </p>
+      ) : null}
       <p className="directory-count">
         {props.kind === "team"
           ? t("expertTeamCount", { count: matchingResources.length })

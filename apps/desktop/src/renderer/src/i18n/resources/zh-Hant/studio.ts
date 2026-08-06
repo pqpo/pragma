@@ -893,6 +893,7 @@ export const studio = {
   pluginOrigin: "外掛程式來源",
   origin: "來源",
   builtIn: "內建",
+  custom: "自訂",
   imported: "已匯入",
   ready: "就緒",
   needsAttention: "需要處理",

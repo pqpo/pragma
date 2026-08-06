@@ -2,13 +2,17 @@ import {
   ArrowLeft,
   ArrowCounterClockwise,
   CaretRight,
+  Cpu,
+  Database,
   Info,
   Folder,
   MagnifyingGlass,
   PencilSimple,
+  PuzzlePiece,
   Play,
   Plus,
   Trash,
+  Wrench,
 } from "@phosphor-icons/react";
 import { useState } from "react";
 import { useTranslation } from "react-i18next";
@@ -81,39 +85,79 @@ export function ExpertDirectoryFragment(props: {
         </label>
       </div>
 
-      <div className="expert-table" role="list" aria-label={t("availableExperts")}>
-        <div className="expert-table-heading" aria-hidden="true">
-          <span className="expert-column-name">{t("expert")}</span>
-          <span className="expert-column-tags">{t("tags")}</span>
-          <span className="expert-column-scope">{t("scope")}</span>
-          <span className="expert-column-action" />
-        </div>
+      <div className="expert-grid" role="list" aria-label={t("availableExperts")}>
         {matchingExperts.map(({ expert, copy }) => {
           const ExpertIcon = expert.icon;
+          const modelName =
+            expert.model?.modelId ?? t(isBuiltInExpert(expert) ? "systemDefault" : "notConfigured");
+          const capabilityCount = expert.skills + expert.tools + expert.mcpServers;
           return (
-            <button
-              className="expert-list-row"
-              type="button"
+            <article
+              className="expert-card-shell"
               key={expert.ref ?? `expert:${expert.id}`}
-              onClick={() => props.onOpen(expert)}
+              role="listitem"
             >
-              <span className="expert-list-name expert-column-name">
-                <span className="studio-asset-icon" aria-hidden="true">
-                  <ExpertIcon size={24} weight="regular" />
+              <button className="expert-card" type="button" onClick={() => props.onOpen(expert)}>
+                <span className="expert-card-header">
+                  <span className="expert-card-icon" aria-hidden="true">
+                    <ExpertIcon size={25} weight="regular" />
+                  </span>
+                  <span className="expert-card-identity">
+                    <span className="expert-card-title-row">
+                      <strong>{copy.name}</strong>
+                      <em className="expert-source-chip">
+                        {t(isBuiltInExpert(expert) ? "builtIn" : "custom")}
+                      </em>
+                    </span>
+                    <code>{expert.ref ?? `expert:${expert.id}`}</code>
+                  </span>
+                  <CaretRight className="expert-card-action" size={18} aria-hidden="true" />
                 </span>
-                <span>
-                  <strong>{copy.name}</strong>
-                  <small>{copy.description}</small>
+                <span className="expert-card-description">{copy.description}</span>
+                {expert.tags.length > 0 ? (
+                  <span className="expert-card-tags" aria-label={t("tags")}>
+                    {expert.tags.slice(0, 3).map((tag) => (
+                      <em key={tag}>{tag}</em>
+                    ))}
+                    {expert.tags.length > 3 ? <em>+{expert.tags.length - 3}</em> : null}
+                  </span>
+                ) : null}
+                <span className="expert-card-scope">
+                  <small>{t("scope")}</small>
+                  <span>{copy.scope}</span>
                 </span>
-              </span>
-              <span className="expert-tag-list expert-column-tags">
-                {expert.tags.slice(0, 2).map((tag) => (
-                  <em key={tag}>{tag}</em>
-                ))}
-              </span>
-              <span className="expert-list-scope expert-column-scope">{copy.scope}</span>
-              <CaretRight className="expert-column-action" size={19} aria-hidden="true" />
-            </button>
+                <span className="expert-card-metrics">
+                  <span className="expert-card-metric">
+                    <Cpu size={17} aria-hidden="true" />
+                    <span>
+                      <small>{t("model")}</small>
+                      <strong>{modelName}</strong>
+                    </span>
+                  </span>
+                  <span className="expert-card-metric">
+                    <Wrench size={17} aria-hidden="true" />
+                    <span>
+                      <small>{t("capabilities")}</small>
+                      <strong>{capabilityCount}</strong>
+                    </span>
+                  </span>
+                  <span className="expert-card-metric">
+                    <Database size={17} aria-hidden="true" />
+                    <span>
+                      <small>{t("contextStoresLower")}</small>
+                      <strong>{expert.contextStoreMounts.length}</strong>
+                    </span>
+                  </span>
+                  <span className="expert-card-metric">
+                    <PuzzlePiece size={17} aria-hidden="true" />
+                    <span>
+                      <small>{t("plugins")}</small>
+                      <strong>{expert.plugins.length}</strong>
+                    </span>
+                  </span>
+                </span>
+              </button>
+            </article>
           );
         })}
         {matchingExperts.length === 0 ? (
