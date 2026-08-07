@@ -90,6 +90,56 @@ describe("Runtime Session process environment", () => {
       /Conflicting process environment variable PRAGMA_TEST_CONFLICT/,
     );
   });
+
+  it("persists a native session ID observed before a failed turn", async () => {
+    const root = await temporaryRoot();
+    const agent = await expert(root, "failed-turn-session-id", "token");
+    const nativeSessionId = "11111111-2222-4333-8444-555555555555";
+    const runtime = defineRuntimeDriver<{ readonly sessionId: string }, Record<string, never>>({
+      descriptor: {
+        id: "failed-turn-session-id-runtime",
+        kind: "failed-turn-session-id-runtime",
+        displayName: "Failed turn Session ID Runtime",
+      },
+      createSession: () => ({}),
+      async startTurn(_session, turn) {
+        turn.stream.writeNative({ sessionId: nativeSessionId });
+        throw new Error("native turn failed after initialization");
+      },
+      mapEvent(event) {
+        return { events: [], runtimeSessionId: event.sessionId };
+      },
+    });
+    const systemSessionId = "failed-turn-session-id-system";
+    const session = await openRuntimeSession(runtime, {
+      agent,
+      owner: {
+        type: "expert-session",
+        ownerId: "failed-turn-session-id-owner",
+        contextId: "failed-turn-session-id-context",
+      },
+      pragmaHome: root,
+      systemSessionId,
+    });
+
+    const submission = session.submit({ query: "fail", execution: {} });
+    await expect(submission.result).rejects.toThrow("native turn failed after initialization");
+    expect(session.info().runtimeSession).toEqual({
+      type: "failed-turn-session-id-runtime",
+      id: nativeSessionId,
+    });
+    await expect(
+      readRuntimeSessionRecord(
+        new PragmaPaths({ pragmaHome: root }),
+        "failed-turn-session-id-owner",
+        systemSessionId,
+      ),
+    ).resolves.toMatchObject({
+      runtimeSessionRef: { type: "failed-turn-session-id-runtime", id: nativeSessionId },
+    });
+
+    await session.close();
+  });
 });
 
 describe("Runtime Session context window", () => {

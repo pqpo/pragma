@@ -47,7 +47,9 @@ or replace their source through the tool call itself.
   exists. Live parameter schemas are supplied by the MCP server so compatible server-side parameter
   evolution does not strand an Expert.
 - Failed MCP verification may be saved as `needs_attention`, but unavailable capabilities cannot be newly selected.
-- HTTP services do not open a port per service. PI consumes managed tools directly; Codex and Claude Code receive them through the process-shared loopback Execution MCP Gateway defined by ADR 008.
+- HTTP services do not open a port per service. PI consumes managed tools directly; Codex,
+  Claude Code, Qoder CLI, and Antigravity CLI receive them through the process-shared loopback
+  Execution MCP Gateway defined by ADR 008.
 - Code Services use the same managed-tool and Execution MCP Gateway path, publish both MCP input and
   output schemas, and return validated structured content.
 - `pragma.expert/v1` Desktop definitions are not read through a compatibility adapter.

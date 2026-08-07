@@ -18,8 +18,8 @@ Pragma 本地存储 v3 是 breaking change。Desktop 首次启动时只会把原
 
 ## 迁移原则
 
-1. 迁移前完全退出 Pragma 桌面应用，并确认没有 Pragma Worker、Codex、Claude Code 或迁移程序正在
-   写入源目录。
+1. 迁移前完全退出 Pragma 桌面应用，并确认没有 Pragma Worker、Codex、Claude Code、Qoder CLI、
+   Antigravity CLI 或迁移程序正在写入源目录。
 2. 旧目录是只读证据。迁移程序不得修改、删除、移动或在其中创建文件。
 3. 先在目标目录同级创建 staging，完成结构、引用和逐字节校验后，才允许通过 `rename` 原子切换。
 4. 不向已经承载新业务数据的 v3 目录自动合并。目标不是空 v3 存储时必须停止并报告冲突。
@@ -194,12 +194,13 @@ YAML、JSONL 和用户文件执行全局字符串替换。
 - apps/desktop/src/main/storage-bootstrap.ts
 - apps/desktop/src/main/pragma-project-store.ts
 - packages/runtime/codex/src/codex-home.ts
+- packages/runtime/antigravity/src/managed-home.ts
 - packages/core/src/execution/execution-store.ts
 - apps/desktop/src/main/mission-store.ts
 
 安全约束：
-1. 先确认 Pragma 桌面应用、Worker 以及由 Pragma 启动的 Codex/Claude Code 进程均已停止；不能可靠确认时
-   停止并让我处理。不要 kill 不属于 Pragma 的进程。
+1. 先确认 Pragma 桌面应用、Worker 以及由 Pragma 启动的 Codex、Claude Code、Qoder CLI、Antigravity
+   CLI 进程均已停止；不能可靠确认时停止并让我处理。不要 kill 不属于 Pragma 的进程。
 2. resolve 两个路径并验证它们不同。拒绝空路径、根目录、HOME、本仓库根目录及任何父子路径重叠。
 3. LEGACY_PRAGMA_HOME 全程只读：不得 rename、delete、chmod、写 marker 或创建临时文件。
 4. 若 TARGET_PRAGMA_HOME 的 data/ 已有 Mission、Project 或 plugin 等新业务数据，或根目录

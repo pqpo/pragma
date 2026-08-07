@@ -5,7 +5,7 @@ Runtime adapters must treat model usage emitted during a single runtime turn as 
 ## Rule
 
 - Single turn usage is the latest final usage snapshot for that turn.
-- Do not sum multiple usage-bearing events from the same Claude Code or Codex turn.
+- Do not sum multiple usage-bearing events from the same Runtime turn.
 - Runtime driver retry attempts are separate turns; the driver may add usage across attempts.
 - Session fallback readers should prefer per-turn usage over thread/session cumulative usage.
 - Every usage value declares whether it is `reported`, `derived`, `estimated`, or legacy `unknown`.
@@ -72,6 +72,26 @@ not use context-window occupancy as cumulative Mission usage.
 `Query.getUsageInfo()` is an account credit/quota snapshot. It is diagnostic account state, not
 per-turn token usage or dollar cost.
 
+## Antigravity CLI
+
+Antigravity CLI 1.1.8 introduced a terminal `result` event for `--output-format stream-json` and
+added `cache_read_tokens` to the result usage object. Pragma requires 1.1.11 or newer: 1.1.10 fixed
+`--model` and `--effort` in headless runs, while 1.1.11 is the validated private-HOME customization
+layout baseline.
+
+The terminal result is the current print-mode turn snapshot. The adapter maps explicit
+`input_tokens`, `output_tokens`, `thinking_tokens`, `cache_read_tokens`, and optional
+`cache_write_tokens` into the mutually exclusive Pragma categories and never sums step updates
+with the terminal result. The separately reported `thinking_tokens` count is added to Pragma
+output. For compatibility shapes, a direct output total wins over the
+`thinking_output_tokens`/`response_output_tokens` components so they are not counted twice.
+When `total_tokens` is present, it is also used to determine whether `input_tokens` already includes
+`cache_read_tokens`; the cache category is never counted twice.
+
+When a successful result omits usage or reports an all-zero snapshot, the adapter calls Core's
+`RuntimeTokenCounter` for the managed turn input and final output and marks the result as
+`estimated`. It must not implement a Runtime-local character/token heuristic.
+
 ## Context-window occupancy
 
 Context-window occupancy is a separate runtime concern from billing usage. It is always scoped to
@@ -90,6 +110,9 @@ ExpertSession, or delegated-agent usage totals.
   as `reported`. If that control request is unavailable, the adapter estimates the active managed
   prompt and message state with a deterministic ASCII/non-ASCII heuristic and marks the result as
   `estimated`; the fallback is an occupancy signal, not a billing-grade token count.
+- Antigravity CLI does not currently expose a contractual context-window denominator in its
+  print-mode stream. The adapter therefore leaves context-window occupancy absent; billing usage
+  and compaction events must not be repurposed as an occupancy estimate.
 - Immediately after compaction, a runtime may know the denominator while the new numerator is not
   yet available. In that case `usedTokens` and `percent` are `null`; callers must not substitute
   cumulative billing usage.

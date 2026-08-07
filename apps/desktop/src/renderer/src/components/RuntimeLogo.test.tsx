@@ -9,6 +9,7 @@ describe("RuntimeLogo", () => {
     { id: "codex", kind: "codex-local" },
     { id: "claude-code", kind: "claude-code-local" },
     { id: "qodercli", kind: "qodercli-local" },
+    { id: "antigravity", kind: "antigravity-local" },
   ])("uses an available brand asset for $id", (runtime) => {
     const html = renderToStaticMarkup(<RuntimeLogo runtime={runtime} />);
 

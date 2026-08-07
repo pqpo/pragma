@@ -30,6 +30,7 @@ describe("RuntimeEnvironmentStore", () => {
       "codex",
       "claude-code",
       "qodercli",
+      "antigravity",
     ]);
 
     const original = (await store.getRevision("pi"))!;
@@ -73,10 +74,14 @@ describe("RuntimeEnvironmentStore", () => {
       "codex",
       "claude-code",
       "qodercli",
+      "antigravity",
     ]);
     expect((await reconciled.getRevision("codex"))?.definition.displayName).toBe("Codex Custom");
     expect((await reconciled.getRevision("qodercli"))?.definition.adapter.id).toBe(
       "pragma.runtime.qodercli",
+    );
+    expect((await reconciled.getRevision("antigravity"))?.definition.adapter.id).toBe(
+      "pragma.runtime.antigravity",
     );
   });
 

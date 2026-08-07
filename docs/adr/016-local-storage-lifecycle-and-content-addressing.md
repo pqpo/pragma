@@ -55,6 +55,12 @@ at startup. Qoder remains responsible for command installation and atomic `curre
 Pragma removes completed `download-*` archives and stale `.tmp-*` staging directories after Runtime
 use while respecting a live command lock.
 
+Every Antigravity CLI Runtime Session owns a complete private `HOME`. Its `.gemini/config` custom
+agent, hook, MCP and Skill files and `.gemini/antigravity-cli` settings, logs, caches and native
+conversation state remain inside the Runtime Session directory. Pragma does not copy or link the
+host `.gemini` tree. Authentication may resolve through the operating-system keyring or explicit
+Host-provided authentication environment, but native configuration and session files are not shared.
+
 Default limits are 4 GiB soft and 6 GiB hard globally, 1 GiB for rebuildable cache, and 512 MiB or 90
 days for Execution archives. Persistent data is never silently evicted. At the hard limit Pragma
 allows completion, deletion, export, and GC, but rejects new executions, project publications, and
@@ -74,6 +80,8 @@ a process or machine failure without orphaning the legacy backup.
   projected without a Pragma-owned full cache snapshot.
 - Qoder authentication, project state, logs, and native session data remain private while new
   sessions reuse downloaded external commands. Legacy active sessions keep their existing layout.
+- Antigravity configuration, skills, hooks, logs, and native conversations are private to one
+  Runtime Session; stopping the `agy` process does not delete them.
 - Trash retention is bounded without introducing a settings surface; an unfinished deletion journal
   remains recoverable even when completed entries are pruned.
 - Keeping all Missions and all revisions can still consume the configured persistent capacity; the

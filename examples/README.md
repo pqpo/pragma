@@ -78,9 +78,9 @@ Usage 随 Execution 持久化。`turn.usage` 读取单轮汇总，`session.getUs
 模型输出并非确定性结果；这个检查验证的是调用链与多轮上下文，不代表对任意事实问题的
 答案都准确。业务准确性应为具体 Expert 准备固定输入、期望标准和自动化评测。
 
-## 2. 本地 Runtime：Codex 与 Claude Code TUI 聊天
+## 2. 本地 Runtime：Codex、Claude Code 与 Antigravity CLI TUI 聊天
 
-两个示例分别验证已安装并已登录的 Codex CLI 和 Claude Code CLI。启动后会依次：
+三个示例分别验证已安装并已登录的 Codex CLI、Claude Code CLI 和 Antigravity CLI。启动后会依次：
 
 1. 通过 Runtime 的 `canUse()` 检查 CLI 是否可用；
 2. 通过 `listModels()` 探测当前环境支持的模型；
@@ -91,9 +91,11 @@ Usage 随 Execution 持久化。`turn.usage` 读取单轮汇总，`session.getUs
 ```bash
 pnpm --filter @pragma/examples example:runtime-codex
 pnpm --filter @pragma/examples example:runtime-claude-code
+pnpm --filter @pragma/examples example:runtime-antigravity
 ```
 
-这两个本地 Runtime 使用各自 CLI 已有的认证和模型配置，不读取 `PRAGMA_MODEL_*`。
+这些本地 Runtime 使用各自 CLI 已有的认证和模型配置，不读取 `PRAGMA_MODEL_*`。Antigravity 示例要求
+`agy >= 1.1.11`，首次 OAuth 登录需先在外部终端运行交互式 `agy`；非标准安装可设置 `AGY_PATH`。
 Context Store 同时准备了 `always_on`、`model_decision`、`manual` 三类内容。进入聊天后可依次输入：
 
 ```text
@@ -106,7 +108,7 @@ Context Store 同时准备了 `always_on`、`model_decision`、`manual` 三类�
 预加载；后两类验证中，流式输出应出现 `list_expert_context` 或 `read_expert_context` 等
 上下文工具调用。测试上下文只存在于当前 example 进程的内存中，不会写入 workspace。
 
-两个 Runtime TUI 与 Getting Started 共用同一套交互层，也支持 `Thinking`、工具调用与工具输出增量、
+三个 Runtime TUI 与 Getting Started 共用同一套交互层，也支持 `Thinking`、工具调用与工具输出增量、
 `askUserQuestion`、`/exit`、`Ctrl+C` 和滚动历史。模型与思考深度仍在进入全屏 TUI 前选择。
 
 ## 3. Context、MCP、Skills、Plugin 与 Tool 审批

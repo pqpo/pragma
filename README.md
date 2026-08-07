@@ -16,7 +16,7 @@
 
 Pragma is an open platform for creating, running, and sharing AI-native ways of working. One mission can combine different models, agent harnesses, experts, tools, and human decisions—while its context and accumulated experience continue to flow with the work.
 
-It does not try to replace Gemini, Claude Code, Codex, PI, Qoder CLI, or the next great agent. Pragma makes them work together.
+It does not try to replace Gemini, Claude Code, Codex, PI, Qoder CLI, Antigravity CLI, or the next great agent. Pragma makes them work together.
 
 ## Why Pragma?
 

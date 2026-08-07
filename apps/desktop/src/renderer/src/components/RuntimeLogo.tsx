@@ -3,6 +3,7 @@ import openaiIcon from "@lobehub/icons-static-svg/icons/openai.svg";
 import { TerminalWindow } from "@phosphor-icons/react";
 
 import type { DesktopRuntimeAvailability } from "../../../shared/contracts/index.ts";
+import antigravityIcon from "../assets/antigravity.png";
 import pragmaIcon from "../assets/pragma-icon.png";
 import qoderIcon from "../assets/qoder.svg";
 
@@ -50,6 +51,13 @@ function runtimeBrandLogo(runtime: RuntimeLogoIdentity): string | undefined {
     runtime.adapter?.id === "pragma.runtime.claude-code"
   ) {
     return claudeIcon;
+  }
+  if (
+    runtime.id === "antigravity" ||
+    runtime.kind === "antigravity-local" ||
+    runtime.adapter?.id === "pragma.runtime.antigravity"
+  ) {
+    return antigravityIcon;
   }
   if (
     runtime.id === "qodercli" ||

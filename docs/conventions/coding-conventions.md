@@ -51,4 +51,4 @@
 ## Runtime Adapters
 
 - Runtime usage events are snapshots unless explicitly documented as deltas.
-- Follow [Runtime Usage Accounting](./runtime-usage-accounting.md) when parsing Claude Code, Codex, or local transcript/session usage.
+- Follow [Runtime Usage Accounting](./runtime-usage-accounting.md) when parsing Claude Code, Codex, Qoder CLI, Antigravity CLI, or local transcript/session usage.

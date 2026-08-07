@@ -7,6 +7,10 @@ import type {
   RuntimeTokenCounter,
   McpToolRegistryPool,
 } from "@pragma/core";
+import {
+  createAntigravityRuntime,
+  type AntigravityRuntimePermissionMode,
+} from "@pragma/runtime-antigravity";
 import { createClaudeCodeRuntime } from "@pragma/runtime-claude-code";
 import {
   createCodexRuntime,
@@ -54,8 +58,7 @@ export function createRuntimeEnvironmentService(options: {
   readonly factories: readonly RuntimeEnvironmentAdapterFactory[];
   readonly logger?: Pick<PragmaLogger, "info" | "warn"> | undefined;
   readonly getToolPermissionMode?:
-    | (() => DesktopToolPermissionMode | Promise<DesktopToolPermissionMode>)
-    | undefined;
+    (() => DesktopToolPermissionMode | Promise<DesktopToolPermissionMode>) | undefined;
 }): RuntimeEnvironmentService {
   const MATERIALIZED_ADAPTER_CACHE_LIMIT = 64;
   const factories = new Map<string, RuntimeEnvironmentAdapterFactory>();
@@ -265,8 +268,7 @@ function environmentElapsedMs(startedAt: number): number {
 export interface CreateBuiltInRuntimeFactoriesOptions {
   readonly modelProviders: ModelProviderStore;
   readonly getToolPermissionMode?:
-    | (() => DesktopToolPermissionMode | Promise<DesktopToolPermissionMode>)
-    | undefined;
+    (() => DesktopToolPermissionMode | Promise<DesktopToolPermissionMode>) | undefined;
   readonly getRuntimeProcessEnvironment?: (() => Promise<NodeJS.ProcessEnv>) | undefined;
   readonly onModelCatalogUpdated?: ((runtimeId: string) => void) | undefined;
   readonly tokenCounter?: RuntimeTokenCounter | undefined;
@@ -334,6 +336,29 @@ export function createBuiltInRuntimeFactories(
       },
     },
     {
+      id: "pragma.runtime.antigravity",
+      version: "v1",
+      create: async (environment, context) => {
+        assertEmptyRuntimeConfig(environment);
+        const [permissionMode, env] = await Promise.all([
+          context?.toolPermissionMode ?? getToolPermissionMode(),
+          getRuntimeProcessEnvironment(),
+        ]);
+        return createAntigravityRuntime({
+          descriptor: { id: environment.id, displayName: environment.displayName },
+          ...(onModelCatalogUpdated === undefined
+            ? {}
+            : { onModelCatalogUpdated: () => onModelCatalogUpdated(environment.id) }),
+          permissionMode: antigravityRuntimePermissionForMode(permissionMode),
+          env,
+          tokenCounter: options.tokenCounter,
+          ...(options.mcpToolRegistryPool === undefined
+            ? {}
+            : { mcpToolRegistryPool: options.mcpToolRegistryPool }),
+        });
+      },
+    },
+    {
       id: "pragma.runtime.qodercli",
       version: "v1",
       create: async (environment, context) => {
@@ -391,6 +416,12 @@ export function qoderRuntimePermissionForMode(
     : mode === "auto-approve"
       ? "auto"
       : "bypassPermissions";
+}
+
+export function antigravityRuntimePermissionForMode(
+  mode: DesktopToolPermissionMode,
+): AntigravityRuntimePermissionMode {
+  return mode;
 }
 
 function factoryRef(id: string, version: string): string {
