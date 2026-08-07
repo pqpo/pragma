@@ -1,3 +1,5 @@
+import { createHash } from "node:crypto";
+
 import { describe, expect, it, vi } from "vitest";
 
 import {
@@ -9,6 +11,121 @@ import {
 } from "../src/index.ts";
 
 describe("Expert context tools", () => {
+  it("returns an add receipt without echoing persisted context content", async () => {
+    const sentinel = "这是用于验证写入回执不回显正文的长中文标记。".repeat(32);
+    const addContext = vi.fn(async (input: { readonly content: string }) => ({
+      ok: true as const,
+      value: {
+        namespace: "mission-board",
+        id: "handoffs/example.md",
+        metadata: { trigger: "manual" as const, priority: "high" as const },
+        content: `${input.content}\n持久化后附加的内容。`,
+        revision: "store-revision-with-metadata",
+        etag: "store-etag",
+        sizeBytes: 1,
+      },
+    }));
+    const unsupported = vi.fn(async () => {
+      throw new Error("not used");
+    });
+    const operations: ExpertAgentContextItemOperations = {
+      listContext: unsupported,
+      readContext: unsupported,
+      searchContext: unsupported,
+      addContext,
+      editContext: unsupported,
+      deleteContext: unsupported,
+    };
+    const tool = createContextTools(operations).find(
+      (candidate) => candidate.name === "add_expert_context",
+    )!;
+    const input = {
+      namespace: "mission-board",
+      id: "handoffs/example.md",
+      content: sentinel,
+      description: "写入回执测试",
+      trigger: "manual",
+      priority: "high",
+    };
+
+    const result = await tool.call(input, undefined);
+    const persistedContent = `${sentinel}\n持久化后附加的内容。`;
+    const receipt = (
+      result.details as {
+        readonly context: {
+          readonly status: string;
+          readonly namespace: string;
+          readonly id: string;
+          readonly revision?: string | undefined;
+          readonly etag?: string | undefined;
+          readonly sizeBytes: number;
+          readonly sha256: string;
+          readonly content?: unknown;
+        };
+      }
+    ).context;
+
+    expect(addContext).toHaveBeenCalledWith({
+      namespace: input.namespace,
+      id: input.id,
+      content: sentinel,
+      metadata: {
+        description: input.description,
+        trigger: input.trigger,
+        priority: input.priority,
+      },
+      context: expect.any(Object),
+    });
+    expect(receipt).toEqual({
+      status: "created",
+      namespace: "mission-board",
+      id: "handoffs/example.md",
+      revision: "store-revision-with-metadata",
+      etag: "store-etag",
+      sizeBytes: Buffer.byteLength(persistedContent, "utf8"),
+      sha256: createHash("sha256").update(persistedContent, "utf8").digest("hex"),
+    });
+    expect(receipt).not.toHaveProperty("content");
+    expect(result.text).toBe(
+      `Added context: mission-board/handoffs/example.md; sizeBytes=${Buffer.byteLength(persistedContent, "utf8")}`,
+    );
+    expect(result.text).not.toContain(sentinel);
+    expect(JSON.stringify(result.details)).not.toContain(sentinel);
+    expect(JSON.stringify(result.details)).not.toContain("持久化后附加的内容。");
+  });
+
+  it("does not compute a receipt on add failure", async () => {
+    const addContext = vi.fn(async () => ({
+      ok: false as const,
+      error: { code: "store_error" as const, message: "Store unavailable" },
+    }));
+    const unsupported = vi.fn(async () => {
+      throw new Error("not used");
+    });
+    const operations: ExpertAgentContextItemOperations = {
+      listContext: unsupported,
+      readContext: unsupported,
+      searchContext: unsupported,
+      addContext,
+      editContext: unsupported,
+      deleteContext: unsupported,
+    };
+    const tool = createContextTools(operations).find(
+      (candidate) => candidate.name === "add_expert_context",
+    )!;
+
+    const result = await tool.call(
+      { namespace: "mission-board", id: "handoffs/example.md", content: "正文不应进入失败回执" },
+      undefined,
+    );
+
+    expect(result).toMatchObject({
+      isError: true,
+      details: { error: { code: "store_error", message: "Store unavailable" } },
+    });
+    expect(result.details).not.toHaveProperty("context");
+  });
+
   it("overlays the active submission identity onto a reused Runtime context", async () => {
     const listContext = vi.fn(async () => ({
       ok: true as const,
@@ -144,10 +261,7 @@ describe("Expert context tools", () => {
     expect(firstDetails.page.skippedOversized).toBe(1);
     expect(first.text).toContain("More items are available");
 
-    const second = await tool.call(
-      { cursor: firstDetails.page.nextCursor, limit: 1 },
-      undefined,
-    );
+    const second = await tool.call({ cursor: firstDetails.page.nextCursor, limit: 1 }, undefined);
     expect(
       (second.details as { readonly context: readonly { readonly id: string }[] }).context.map(
         (item) => item.id,

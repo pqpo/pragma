@@ -46,6 +46,14 @@ priority: normal
 使用结果中的 namespace 与 ID 调用 `read_expert_context`。Read 默认按 8KB 分段，返回
 `nextStartOffset` 时用它作为下一次 `start` 继续读取。
 
+`add_expert_context` 成功后返回的是写入回执，不会回显完整正文。回执包含创建状态、namespace、ID、可用时的
+`revision` 和 `etag`，以及持久化后正文的 UTF-8 `sizeBytes` 与 `sha256`。需要核验正文时，使用
+`read_expert_context(namespace, id, start, offset)` 按需读取。`sha256` 是正文 UTF-8 字节的 SHA-256；
+`revision` 则是 Store 提供的版本/并发控制标识，可能包含 metadata 或采用其他生成策略，二者不能互相替代。
+
+> **兼容性说明**：此前 `add_expert_context` 的 `details.context` 返回完整正文；自本版本起仅返回回执。
+> 依赖旧格式的客户端应改用 `read_expert_context(namespace, id)` 获取正文。
+
 - `trigger` 回答“怎么加载”
 - `priority` 支持 `critical`、`high`、`normal`、`low`；高优先级先装配，预算不足时最后截断
 

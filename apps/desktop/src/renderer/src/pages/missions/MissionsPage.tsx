@@ -1048,6 +1048,8 @@ export function MissionDetailFragment(props: {
   const clientOperationRef = useRef<MissionClientOperationState>({ kind: "idle" });
   const autoRestoreExecutionRef = useRef<string | null>(null);
   const followLatestRef = useRef(true);
+  const chatScrollTopRef = useRef(0);
+  const chatScrollMissionIdRef = useRef(props.mission.id);
   const memoryStoreSource = useMemo<ContextStoreBrowserSource>(() => {
     const target = { missionId: props.mission.id, storeId: "memory" } as const;
     return {
@@ -1856,6 +1858,25 @@ export function MissionDetailFragment(props: {
     interactions.length,
   ]);
 
+  useLayoutEffect(() => {
+    if (tab !== "chat") return;
+    const element = scrollRef.current;
+    if (element === null) return;
+    if (chatScrollMissionIdRef.current !== props.mission.id) {
+      chatScrollMissionIdRef.current = props.mission.id;
+      chatScrollTopRef.current = 0;
+    }
+    element.scrollTop = chatScrollTopRef.current;
+  }, [props.mission.id, tab]);
+
+  const changeTab = (nextTab: "chat" | "work" | "memory"): void => {
+    if (tab === "chat") {
+      const element = scrollRef.current;
+      if (element !== null) chatScrollTopRef.current = element.scrollTop;
+    }
+    setTab(nextTab);
+  };
+
   return (
     <section className="mission-detail">
       <header className="mission-detail-header">
@@ -1941,7 +1962,7 @@ export function MissionDetailFragment(props: {
           type="button"
           role="tab"
           aria-selected={tab === "chat"}
-          onClick={() => setTab("chat")}
+          onClick={() => changeTab("chat")}
         >
           {isTeam ? t("teamChannel", { ns: "missions" }) : t("chat", { ns: "missions" })}
         </button>
@@ -1950,7 +1971,7 @@ export function MissionDetailFragment(props: {
           type="button"
           role="tab"
           aria-selected={tab === "work"}
-          onClick={() => setTab("work")}
+          onClick={() => changeTab("work")}
         >
           {t("work", { ns: "missions" })}
         </button>
@@ -1959,7 +1980,7 @@ export function MissionDetailFragment(props: {
           type="button"
           role="tab"
           aria-selected={tab === "memory"}
-          onClick={() => setTab("memory")}
+          onClick={() => changeTab("memory")}
         >
           {t("memory", { ns: "missions" })}
         </button>
@@ -1983,6 +2004,7 @@ export function MissionDetailFragment(props: {
               ref={scrollRef}
               onScroll={(event) => {
                 const element = event.currentTarget;
+                chatScrollTopRef.current = element.scrollTop;
                 const nearBottom =
                   element.scrollHeight - element.scrollTop - element.clientHeight < 72;
                 followLatestRef.current = nearBottom;

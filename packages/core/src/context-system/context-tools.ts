@@ -1,3 +1,5 @@
+import { createHash } from "node:crypto";
+
 import type {
   ContextTrigger,
   ContextPriority,
@@ -229,10 +231,13 @@ export function createContextTools(
         ["namespace", "id", "content"],
       ),
       call: async (args, _signal, context) => {
+        const namespace = readStringParam(args, "namespace");
+        const id = readStringParam(args, "id");
+        const content = readStringParam(args, "content");
         const result = await contextOperations.addContext({
-          namespace: readStringParam(args, "namespace"),
-          id: readStringParam(args, "id"),
-          content: readStringParam(args, "content"),
+          namespace,
+          id,
+          content,
           metadata: readMetadataParams(args),
           context: readRunContext(options, context),
         });
@@ -241,10 +246,11 @@ export function createContextTools(
           return errorResult(result.error);
         }
 
+        const receipt = createContextWriteReceipt(result.value, namespace);
         return {
-          text: `Added context: ${result.value.namespace}/${result.value.id}`,
+          text: `Added context: ${receipt.namespace}/${receipt.id}; sizeBytes=${receipt.sizeBytes}`,
           details: {
-            context: result.value,
+            context: receipt,
           },
         };
       },
@@ -365,6 +371,36 @@ export function createContextTools(
       },
     },
   ];
+}
+
+interface ContextWriteReceipt {
+  readonly status: "created";
+  readonly namespace: string;
+  readonly id: string;
+  readonly revision?: string | undefined;
+  readonly etag?: string | undefined;
+  readonly sizeBytes: number;
+  readonly sha256: string;
+}
+
+function createContextWriteReceipt(
+  context: ExpertAgentContextItem,
+  requestedNamespace: string,
+): ContextWriteReceipt {
+  const content = context.content;
+  if (typeof content !== "string") {
+    throw new Error("createContextWriteReceipt: content must be a string");
+  }
+
+  return {
+    status: "created",
+    namespace: context.namespace ?? requestedNamespace,
+    id: context.id,
+    ...(context.revision === undefined ? {} : { revision: context.revision }),
+    ...(context.etag === undefined ? {} : { etag: context.etag }),
+    sizeBytes: Buffer.byteLength(content, "utf8"),
+    sha256: createHash("sha256").update(content, "utf8").digest("hex"),
+  };
 }
 
 function requiresMutationApproval(input: unknown, options: CreateContextToolsOptions): boolean {
