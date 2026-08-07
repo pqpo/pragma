@@ -1076,6 +1076,17 @@ class ManagedRuntimeSession<TNativeEvent, TNativeSession, TPrepared> {
           );
           return result;
         } catch (error) {
+          // Native runtimes may discover their resumable session identity before
+          // reporting a terminal failure. Persist that observation before this
+          // turn rejects, otherwise the next process cannot resume the native
+          // conversation that actually received the startup message and prompt.
+          const observedRuntimeSessionId = controller.getRuntimeSessionId();
+          if (observedRuntimeSessionId !== undefined) {
+            await this.options.updateRuntimeSessionId(
+              observedRuntimeSessionId,
+              "runtimeSessionId.changed",
+            );
+          }
           usage = mergeUsage(usage, controller.getUsage());
           controller.updateUsage(usage);
           observeUsage(usage);

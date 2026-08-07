@@ -99,6 +99,7 @@ tsconfig.base.json
 @pragma/runtime-codex
 @pragma/runtime-claude-code
 @pragma/runtime-qodercli
+@pragma/runtime-antigravity
 @pragma/desktop
 @pragma/examples
 @pragma/eslint-config
@@ -198,6 +199,14 @@ runtime-qodercli -> runtime-claude-code
 runtime-pi -> runtime-qodercli
 runtime-codex -> runtime-qodercli
 runtime-claude-code -> runtime-qodercli
+runtime-antigravity -> runtime-pi
+runtime-antigravity -> runtime-codex
+runtime-antigravity -> runtime-claude-code
+runtime-antigravity -> runtime-qodercli
+runtime-pi -> runtime-antigravity
+runtime-codex -> runtime-antigravity
+runtime-claude-code -> runtime-antigravity
+runtime-qodercli -> runtime-antigravity
 server -> client
 server -> web
 core -> web
@@ -309,7 +318,7 @@ Server 与 Agent 的关系：
 - 新 Runtime 必须测试 Runtime 上报优先级和统一 Token 估算 fallback。代码评审发现新的 Runtime
   本地 Token 估算器时，按架构边界违规处理。
 - Server/Worker 可以调用 Core；Core 不应该反向调用 Server 应用层。
-- 本地 Claude Code、Codex、Qoder CLI、自研执行环境属于 Runtime Adapter 的实现目标，由 Desktop App 承载本地连接、授权和执行桥接，不改变 Server 调度 Agent 的依赖方向。
+- 本地 Claude Code、Codex、Qoder CLI、Antigravity CLI、自研执行环境属于 Runtime Adapter 的实现目标，由 Desktop App 承载本地连接、授权和执行桥接，不改变 Server 调度 Agent 的依赖方向。
 
 本地存储边界：
 
@@ -338,6 +347,11 @@ Server 与 Agent 的关系：
   `~/.pragma/cache/runtimes/qodercli/external-commands/`；认证、Project、日志和 Session 状态继续私有。
   已有 Session 的本地 `external-commands` 目录不得在启动时扫描、迁移或替换；Pragma 只清理共享缓存中
   已完成的 `download-*` 与无活动锁保护的过期 `.tmp-*`。
+- Antigravity CLI 每个 Runtime Session 使用完整私有 `HOME`，其 `~/.gemini/config/`、
+  `~/.gemini/antigravity-cli/`、自定义 Agent、settings、hooks、MCP 配置、Skills、日志和 native Session
+  状态均不得与宿主或其他 Context 共享。认证只允许复用操作系统安全钥匙串或显式注入的受支持认证环境；
+  不复制宿主 `~/.gemini`。PreToolUse relay 凭据只能写入 Session 私有 hook 文件，不得暴露给 agy
+  进程环境及其子 shell。
 - Runtime 进程停止不等于持久数据删除。Mission 删除必须按 owner 图级联移动 ExpertSession、
   Execution、Runtime Session 和 ownership claim 到带 journal 的回收站。
 - 外部 ID 目录段统一通过 `@pragma/core` 的 `PragmaPaths` 编码和解析，具体 Runtime 或插件 loader 不自行拼接管理路径。
@@ -376,7 +390,7 @@ Cloud Server / Worker
 → Desktop App
 → Local Permission Guard
 → Local Agent Adapter
-→ Claude Code / Codex / Qoder CLI / 自研本地 Agent
+→ Claude Code / Codex / Qoder CLI / Antigravity CLI / 自研本地 Agent
 ```
 
 云端职责：
@@ -393,7 +407,7 @@ Desktop App 职责：
 
 - 负责用户登录、设备绑定、本地工作区选择。
 - 主动连接云端，避免云端直接访问用户机器或要求本机暴露公网端口。
-- 注册本机可用 Runtime 能力，例如 Claude Code、Codex、Qoder CLI、自研本地 Agent。
+- 注册本机可用 Runtime 能力，例如 Claude Code、Codex、Qoder CLI、Antigravity CLI、自研本地 Agent。
 - 承载本地权限闸门，包括文件读取、文件写入、shell、网络、secrets、git 操作。
 - 调用本地 Agent，并把过程事件流式回传云端。
 - 在需要时展示本地确认 UI，例如执行 shell、修改文件、读取敏感目录。
@@ -604,7 +618,7 @@ createDatabaseClient()
 - ExpertAgent 公共实现，包括上下文系统、AGENTS.md 加载、subAgent 声明和系统提示词组装。
 - RuntimeAdapter 与 RuntimeAgentSession 核心接口。
 - RuntimeResolver、不可变 Runtime Environment binding、运行事件、会话、取消、错误等公共运行协议。
-- 未来本地 Claude Code、Codex、Qoder CLI、自研执行环境通过独立 Runtime Adapter 包对接。
+- 未来本地 Claude Code、Codex、Qoder CLI、Antigravity CLI、自研执行环境通过独立 Runtime Adapter 包对接。
 
 当前保留：
 
@@ -852,6 +866,11 @@ pnpm --filter @pragma/desktop dev
 使用内置 Qoder CLI Runtime 前，主机必须已安装可直接执行的 `qodercli`。可先运行
 `qodercli --version` 验证；认证可复用本机已完成的 Qoder CLI 登录状态，或通过
 `QODER_PERSONAL_ACCESS_TOKEN` 提供 PAT。非标准安装路径使用 `QODERCLI_PATH` 指向原生可执行文件。
+
+使用内置 Antigravity CLI Runtime 前，主机必须安装可直接执行的 `agy` 1.1.11 或更高版本；可先运行
+`agy --version` 验证。认证复用操作系统安全钥匙串中的 Antigravity CLI 登录状态，首次登录应在 Pragma
+外部交互执行 `agy`；非标准安装路径使用 `AGY_PATH` 指向原生 `agy`/`agy.exe`，不要指向 Windows
+`.cmd` shim。Runtime 不读取或复制宿主 `~/.gemini` 配置。
 
 > **Electron 42 注意事项：** 从 Electron 42 开始，`postinstall` 不再自动下载 Electron 二进制文件，改为首次运行 Electron CLI 时才下载。Desktop 的 `predev` 会通过 `prepare:electron` 调用 `install-electron`，避免新成员首次 `dev` 时遇到缺失二进制的错误。
 

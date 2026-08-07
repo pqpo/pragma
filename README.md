@@ -26,7 +26,7 @@
 
 Pragma is a code-public desktop application for orchestrating multiple agent harnesses, models, tools, context sources, and human decisions into reusable AI workflows.
 
-A Mission can move from one specialist to another without losing its decisions, artifacts, or accumulated experience. Pragma does not replace Claude Code, Codex, PI, Qoder CLI, or the next great agent—it makes them work together.
+A Mission can move from one specialist to another without losing its decisions, artifacts, or accumulated experience. Pragma does not replace Claude Code, Codex, PI, Qoder CLI, Antigravity CLI, or the next great agent—it makes them work together.
 
 The more you use Pragma, the more it compounds. Events from different tasks, harnesses, and models become cross-harness dynamic memory; useful experience and facts can then be promoted automatically, under policy and review controls, into a stable knowledge base or reusable Skills.
 

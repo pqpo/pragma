@@ -31,6 +31,7 @@ export const DEFAULT_RUNTIME_ENVIRONMENTS: readonly RuntimeEnvironmentDefinition
   environment("codex", "Codex", "pragma.runtime.codex"),
   environment("claude-code", "Claude Code", "pragma.runtime.claude-code"),
   environment("qodercli", "Qoder CLI", "pragma.runtime.qodercli"),
+  environment("antigravity", "Antigravity CLI", "pragma.runtime.antigravity"),
 ];
 
 export interface RuntimeEnvironmentHead {

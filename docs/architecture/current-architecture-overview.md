@@ -1,6 +1,6 @@
 # Pragma 当前架构概览与演进判断
 
-> 基线：2026-07-20 当前仓库实现；Memory Plane 状态更新于 2026-08-06。本文面向架构评审，描述已经
+> 基线：2026-08-07 当前仓库实现。本文面向架构评审，描述已经
 > 存在的系统，而不是早期愿景；不展开类和函数级细节。
 
 ## 结论先行
@@ -45,7 +45,8 @@ Pragma 已经形成一个质量较好的**本地 Agent 执行内核**：Expert�
             ▼                           ▼
 ┌─────────────────────────┐   ┌─────────────────────────────┐
 │ @pragma/runtime-*       │   │ user plugins                │
-│ PI / Codex / Claude / Qoder│ │ trusted Expert extensions  │
+│ PI / Codex / Claude Code│   │ trusted Expert extensions  │
+│ Qoder / Antigravity     │   │                             │
 └───────────┬─────────────┘   └─────────────────────────────┘
             │
             ▼
@@ -60,7 +61,7 @@ Pragma 已经形成一个质量较好的**本地 Agent 执行内核**：Expert�
 | 多专家协作         | 普通 Expert launcher 与 `defineExpertTeam()` 共用子 Invocation 委派机制              | 局部 subagent 与团队治理边界清晰                   |
 | Flow               | Task、HumanTask、Expert、Team、子 Flow 共用 Invocation Tree                          | 顶层对象收敛合理，恢复语义已有测试                 |
 | Execution          | Execution、Invocation、Canonical Event、Output 投影、ExpertSession 均有持久化 schema | 领域骨架完整；文件存储仍不适合直接上云             |
-| Runtime            | PI、Codex、Claude Code、Qoder CLI 分包实现统一 Runtime Driver                        | 是目前最成熟、最值得保留的扩展边界                 |
+| Runtime            | PI、Codex、Claude Code、Qoder CLI、Antigravity CLI 分包实现统一 Runtime Driver       | 是目前最成熟、最值得保留的扩展边界                 |
 | Session 所有权     | ExpertSession / FlowExecution 显式拥有 Runtime Session，并有 claim、lease 和恢复校验 | 对避免 Session 串用和 TOCTOU 很重要，设计合理      |
 | Plugin             | 插件可贡献 MCP、Skill、Model、Tool、Approval 和生命周期 Hook                         | 扩展面丰富，但 SPI 与具体能力边界还可收敛          |
 | Context            | ContextSystem 支持多 Store、元数据、检索、写入与装配                                 | 能力完整，但实现体量已经过大                       |
@@ -85,7 +86,7 @@ Pragma 已经形成一个质量较好的**本地 Agent 执行内核**：Expert�
 
 ### 1. Core 不依赖具体 Runtime
 
-`@pragma/runtime-pi`、`@pragma/runtime-codex`、`@pragma/runtime-claude-code`、`@pragma/runtime-qodercli` 独立依赖 `@pragma/core`，Core 不反向依赖具体 Runtime。这使 Worker、Desktop 或未来云端执行器可以按部署环境装配 Runtime。
+`@pragma/runtime-pi`、`@pragma/runtime-codex`、`@pragma/runtime-claude-code`、`@pragma/runtime-qodercli`、`@pragma/runtime-antigravity` 独立依赖 `@pragma/core`，Core 不反向依赖具体 Runtime。这使 Worker、Desktop 或未来云端执行器可以按部署环境装配 Runtime。
 
 建议继续保持 Runtime 包彼此隔离，不引入跨 Runtime 的共享实现包；真正通用的契约或纯逻辑应回到 Core 或 Shared。
 
@@ -116,6 +117,8 @@ ESLint 已约束 Web、Desktop Renderer、Shared、Core、Runtime 和 Plugin 的
 架构文档把 Desktop 定义为文件、Shell、Git、网络和 Secret 的本地权限边界，但当前没有统一的 `LocalPermissionGuard`。更危险的是：
 
 - Claude Code Runtime 默认 `permissionMode = "bypassPermissions"`。
+- Antigravity Runtime 默认使用 `request-review`、终端 sandbox 和 fail-closed `PreToolUse` relay；这只闭合
+  该 Adapter 的 native tool 路径，不等价于跨 Runtime 的统一 Local Permission Guard。
 - Electron `BrowserWindow` 设置了 `sandbox: false`。
 - Desktop 还没有把 workspace scope、runtime native tool 和用户确认串成一个强制执行链。
 
@@ -249,7 +252,7 @@ Desktop 将 Runtime environment 保存为独立的 Adapter binding：`runtimeId`
 获取显示名称、模型、Provider 和思考深度，不按已知 Runtime ID 分支。一个损坏或未知 Factory 的环境
 只会报告自身不可用，不影响其他环境和 Desktop 启动。
 
-PI Adapter 的模型目录来自 Desktop 注册的 Model Provider；Codex、Claude Code 和 Qoder CLI Adapter 使用各自的
+PI Adapter 的模型目录来自 Desktop 注册的 Model Provider；Codex、Claude Code、Qoder CLI 和 Antigravity CLI Adapter 使用各自的
 原生模型发现能力。模型身份统一为 `providerId + modelId`，思考深度必须属于所选模型声明的集合。PI
 还会把声明集合与自身真实支持的思考深度取交集。RuntimeProfile 不再承载 Provider credential；凭据只
 由具体 Runtime Factory/Adapter 在运行时解析。
@@ -336,6 +339,7 @@ PI Adapter 的模型目录来自 Desktop 注册的 Model Provider；Codex、Clau
 - Runtime Session ownership：`packages/core/src/runtime/session-record.ts`
 - Shared Execution schema：`packages/shared/src/execution/execution.schema.ts`
 - Claude Code 默认权限：`packages/runtime/claude-code/src/adapter.ts`
+- Antigravity 私有 HOME、权限 Hook 与 stream-json：`packages/runtime/antigravity/src/`
 - Desktop composition root：`apps/desktop/src/main/index.ts`
 - Desktop Expert/Capability schema：`apps/desktop/src/shared/desktop-api.ts`
 - Desktop Expert 映射：`apps/desktop/src/main/desktop-expert-factory.ts`

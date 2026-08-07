@@ -6,15 +6,15 @@ Accepted
 
 ## Context
 
-PI runs inside the Pragma Node.js process and can call managed tools directly. Codex app-server and
-Claude Code and Qoder CLI run as child processes, so Pragma must expose default, managed, and upstream MCP tools
+PI runs inside the Pragma Node.js process and can call managed tools directly. Codex app-server,
+Claude Code, Qoder CLI, and Antigravity CLI run as child processes, so Pragma must expose default, managed, and upstream MCP tools
 through a transport those processes can consume. Opening one loopback HTTP server per Runtime Session
 provided isolation but multiplied listeners, ports, and cleanup responsibilities as concurrency grew.
 
 ## Decision
 
 Each Pragma Node.js process owns one lazy loopback Execution MCP Gateway. The first Codex, Claude
-Code, or Qoder CLI Runtime Session registration starts a listener on an operating-system-assigned port bound to
+Code, Qoder CLI, or Antigravity CLI Runtime Session registration starts a listener on an operating-system-assigned port bound to
 `127.0.0.1`. The last registration disposal closes the listener; a later registration starts it again.
 
 Every Runtime Session keeps an independent MCP server, transport, tool set, context, approval handler,
@@ -23,10 +23,12 @@ and execution state behind the shared listener. The Gateway routes
 derived from external or system Session IDs, are not logged, and are revoked when the registration is
 disposed. Unknown and revoked routes return 404.
 
-Runtime Session identity remains separate from endpoint authorization. Codex, Claude Code, and Qoder CLI use the
-stable, short MCP configuration key `pragma`; a restored Session receives a new endpoint token and
-may receive a new listener port. Exposed tool names are deterministically bounded so the fully
-qualified `mcp__pragma__<tool>` name stays within the Runtime limit. PI does not use the Gateway.
+Runtime Session identity remains separate from endpoint authorization. Codex, Claude Code, and Qoder CLI use the stable,
+short MCP configuration key `pragma`. Antigravity CLI is intentionally different: it uses a Session-scoped
+`pragma<16-hex-namespace>` key so a repository customization cannot shadow the managed Agent, MCP, or Hook entry.
+A restored Session receives a new endpoint token and may receive a new listener port. Exposed tool names are deterministically
+bounded so the fully qualified `mcp__pragma__<tool>` or `mcp__pragma<namespace>__<tool>` name stays within the Runtime limit.
+PI does not use the Gateway.
 
 ADR 028 defines the shared semantic layer above these transports. Core resolves and invokes one
 execution tool set; PI projects it to native tools, while this Gateway projects it to MCP. The
@@ -34,7 +36,7 @@ Gateway does not independently implement Agent tool policy, approval, hooks, or 
 
 ## Consequences
 
-- Concurrent Codex, Claude Code, and Qoder CLI Sessions share one HTTP listener without sharing tools or state.
+- Concurrent Codex, Claude Code, Qoder CLI, and Antigravity CLI Sessions share one HTTP listener without sharing tools or state.
 - `PragmaApp` does not need a new process-lifecycle or `dispose()` API.
 - Session cleanup must always dispose its registration, including partial Runtime initialization.
 - The Gateway serializes start, registration, unregistration, and idle shutdown to avoid lifecycle races.
