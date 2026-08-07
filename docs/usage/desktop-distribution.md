@@ -4,19 +4,9 @@ Pragma 使用 `electron-vite` 编译应用代码，使用 `electron-builder` 生
 `pnpm build` 只做可验证的代码构建；发行包通过 `@pragma/desktop` package 的 `dist:*` 或
 `release:desktop` 命令显式生成。
 
-当前发行流程不使用 GitHub Actions：构建、校验、Tag、GitHub Draft Release、产物上传和发布均由维护者在本地完成。
-
-## 图标资源
-
-图标位于 `apps/desktop/build/`：
-
-```text
-icon-mac.png          macOS 图标，1024×1024
-icon-windows.png      Windows 图标，1024×1024
-```
-
-macOS 和 Windows 使用独立 PNG。electron-builder 会据此生成目标平台图标格式。修改图标后，需要检查
-16、24、32、48、256 和 1024 像素下的显示效果。
+当前 `0.2.0` Release 只发布 macOS Apple Silicon 和 macOS Intel 两个版本，不使用 GitHub Actions：构建、校验、
+Tag、GitHub Draft Release、产物上传和发布均由维护者在本地完成。Windows 打包脚本仍保留供开发验证，但不属于
+本次 Release。
 
 ## 环境
 
@@ -50,8 +40,8 @@ pnpm --filter @pragma/desktop run dist:mac:arm64
 输出：
 
 ```text
-apps/desktop/dist/Pragma-0.1.10-mac-arm64.dmg
-apps/desktop/dist/Pragma-0.1.10-mac-arm64.zip
+apps/desktop/dist/Pragma-0.2.0-mac-arm64.dmg
+apps/desktop/dist/Pragma-0.2.0-mac-arm64.zip
 ```
 
 ### macOS Intel
@@ -65,96 +55,71 @@ pnpm --filter @pragma/desktop run dist:mac:x64
 输出：
 
 ```text
-apps/desktop/dist/Pragma-0.1.10-mac-x64.dmg
-apps/desktop/dist/Pragma-0.1.10-mac-x64.zip
+apps/desktop/dist/Pragma-0.2.0-mac-x64.dmg
+apps/desktop/dist/Pragma-0.2.0-mac-x64.zip
 ```
 
-### Windows x64
-
-必须在 Windows 环境执行：
-
-```bash
-pnpm --filter @pragma/desktop run dist:win:x64
-```
-
-输出：
-
-```text
-apps/desktop/dist/Pragma-0.1.10-win-x64.exe
-```
+Windows 的 `dist:win:x64` 命令仍可用于单独验证 Windows 安装包，但 `release:desktop` 不会收集或发布 Windows 产物。
 
 ## 本地 GitHub Release
 
-`apps/desktop/scripts/release-desktop.mjs` 将跨平台打包和 GitHub Release 串起来。它不会覆盖已有
+`apps/desktop/scripts/release-desktop.mjs` 将两个 macOS 架构的打包和 GitHub Release 串起来。它不会覆盖已有
 Tag 或 Release；构建产物暂存于被 Git 忽略的 `release-assets/v<version>/`。
 
 ### 1. 准备版本
 
-修改 `apps/desktop/package.json` 的 `version`，例如 `0.1.10`，并将版本修改提交到目标分支：
+当前桌面版本为 `0.2.0`，Tag 按仓库既有习惯使用 `v0.2.0`。发布前运行：
 
 ```bash
 pnpm lint
 pnpm typecheck
 pnpm test
 pnpm build
-git add apps/desktop/package.json
-git commit -m "chore: release v0.1.10"
-```
-
-发布前先登录 GitHub CLI：
-
-```bash
 gh auth login
 ```
 
-### 2. 在原生平台打包并暂存
+### 2. 打包并暂存两个 macOS 架构
 
-在 macOS Apple Silicon、macOS Intel 和 Windows x64 环境分别执行对应命令：
+在 macOS 环境执行：
 
 ```bash
 pnpm --filter @pragma/desktop run release:desktop -- \
-  --version 0.1.10 \
+  --version 0.2.0 \
   --platform mac-arm64
 ```
 
 ```bash
 pnpm --filter @pragma/desktop run release:desktop -- \
-  --version 0.1.10 \
+  --version 0.2.0 \
   --platform mac-x64
 ```
 
-```bash
-pnpm --filter @pragma/desktop run release:desktop -- \
-  --version 0.1.10 \
-  --platform win-x64
-```
-
-如果三个构建环境不是同一台机器，将 `release-assets/v0.1.10/` 目录中的产物汇总到发布机器的
-同一路径。脚本会检查产物名称、非空文件和平台匹配；全部五个产物到齐后生成 `SHA256SUMS.txt`。
+脚本会将四个安装包复制到 `release-assets/v0.2.0/`，检查文件名称和大小，并在全部产物到齐后生成
+`SHA256SUMS.txt`。
 
 ### 3. 创建 Tag、Release 并上传产物
 
-在包含全部产物、且工作区没有未提交修改的 checkout 中执行：
+在包含全部四个产物、且工作区没有未提交修改的 checkout 中执行：
 
 ```bash
 pnpm --filter @pragma/desktop run release:desktop -- \
-  --version 0.1.10 \
+  --version 0.2.0 \
   --publish
 ```
 
 该命令依次执行：
 
-- 验证 package version、质量检查、完整产物和 SHA-256 校验和。
-- 创建并推送 annotated Tag `v0.1.10`。
+- 验证 package version、质量检查、完整 macOS 产物和 SHA-256 校验和。
+- 创建并推送 annotated Tag `v0.2.0`。
 - 创建 GitHub Draft Pre-release。
-- 上传五个安装包和 `SHA256SUMS.txt`。
+- 上传四个 macOS 安装包和 `SHA256SUMS.txt`。
 - 校验远端资产后公开 Release。
 
-默认创建 Pre-release；需要稳定版本时使用：
+默认创建 Pre-release；需要稳定版本时追加 `--stable`：
 
 ```bash
 pnpm --filter @pragma/desktop run release:desktop -- \
-  --version 0.1.10 \
+  --version 0.2.0 \
   --publish \
   --stable
 ```
@@ -165,45 +130,40 @@ pnpm --filter @pragma/desktop run release:desktop -- \
 
 ### Release 产物
 
-每个版本必须包含：
+`v0.2.0` Release 必须包含：
 
 ```text
-Pragma-0.1.10-mac-arm64.dmg
-Pragma-0.1.10-mac-arm64.zip
-Pragma-0.1.10-mac-x64.dmg
-Pragma-0.1.10-mac-x64.zip
-Pragma-0.1.10-win-x64.exe
+Pragma-0.2.0-mac-arm64.dmg
+Pragma-0.2.0-mac-arm64.zip
+Pragma-0.2.0-mac-x64.dmg
+Pragma-0.2.0-mac-x64.zip
 SHA256SUMS.txt
 ```
 
-本地脚本只负责 GitHub Release 上传，不再自动镜像到阿里云 OSS。若未来仍需 OSS 镜像，应使用独立的、受控的
+本地脚本只负责 GitHub Release 上传，不自动镜像到阿里云 OSS。若未来仍需 OSS 镜像，应使用独立的、受控的
 短期凭证流程；不得在仓库或脚本中保存长期 AccessKey。
 
 ## 未签名安装提示
 
 当前产物没有系统代码签名：
 
-- macOS Gatekeeper 会阻止常规双击启动。用户需要在系统设置的“隐私与安全性”中选择仍要打开。
-- Windows 可能显示“未知发布者”或 Microsoft Defender SmartScreen 提示。
+- macOS Gatekeeper 可能阻止常规双击启动。用户需要在系统设置的“隐私与安全性”中选择仍要打开。
 - SHA-256 校验只能验证下载完整性，不能替代代码签名。
 
-当前 ZIP 只是人工分发产物，不用于自动更新。接入 macOS 签名、公证和 Windows 签名后，才会开始实现
-`electron-updater` 和稳定 Release。
+当前 ZIP 只是人工分发产物，不用于自动更新。接入 macOS 签名、公证后，才会开始实现 `electron-updater` 和稳定 Release。
 
 ## 发布后验证
 
-在对应真实系统检查：
+在 Apple Silicon macOS 和 Intel macOS 上分别检查：
 
 - 下载文件的 SHA-256 与 `SHA256SUMS.txt` 一致。
 - 安装包架构与文件名一致。
-- 应用名称、窗口标题和快捷方式均为 `Pragma`。
+- 应用名称和窗口标题均为 `Pragma`。
 - 主窗口正常打开，preload Bridge 正常注入，renderer 没有白屏。
 - 内置插件可以加载。
-- Windows 可以正常卸载。
 
 相关资料：
 
 - [Pragma 桌面发行方案](../architecture/desktop-release-and-online-update.md)
 - [electron-builder architecture](https://www.electron.build/docs/architecture/)
 - [electron-builder macOS](https://www.electron.build/docs/mac/)
-- [electron-builder NSIS](https://www.electron.build/nsis.html)

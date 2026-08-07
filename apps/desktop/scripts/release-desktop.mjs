@@ -32,14 +32,6 @@ const platformDefinitions = new Map([
       artifactExtensions: ["dmg", "zip"],
     },
   ],
-  [
-    "win-x64",
-    {
-      hostPlatform: "win32",
-      script: "dist:win:x64",
-      artifactExtensions: ["exe"],
-    },
-  ],
 ]);
 
 function printUsage() {
@@ -50,10 +42,9 @@ function printUsage() {
 Platforms:
   mac-arm64    Build macOS Apple Silicon DMG and ZIP (run on macOS)
   mac-x64      Build macOS Intel DMG and ZIP (run on macOS)
-  win-x64      Build Windows x64 NSIS installer (run on Windows)
 
 Options:
-  --version <version>       Version without the leading v, for example 0.1.10
+  --version <version>       Version without the leading v, for example 0.2.0
   --platform <platform>     Build and stage a platform; may be repeated
   --stage-dir <directory>   Staging directory (default: release-assets/v<version>)
   --publish                  Create the tag and GitHub Release after validating all assets
@@ -62,8 +53,8 @@ Options:
   --skip-checks              Skip pnpm check (use only after an explicit local verification)
   --help                     Show this help
 
-Build on each native platform, transfer the same staging directory if necessary, then run
-the command with --publish from the checkout that has all five release assets.
+Build both macOS architectures, then run the command with --publish from the checkout that
+has all four macOS release assets.
 `);
 }
 
