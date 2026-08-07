@@ -17,7 +17,7 @@ jobs:
   verify:
     name: Verify release source
     runs-on: ubuntu-24.04
-    timeout-minutes: 15
+    timeout-minutes: 20
     outputs:
       version: ${{ steps.app-version.outputs.version }}
 
@@ -75,7 +75,7 @@ jobs:
       - name: Test
         env:
           PRAGMA_LOG_LEVEL: error
-        run: pnpm exec turbo run test --output-logs=errors-only
+        run: pnpm exec turbo run test --concurrency=1 --output-logs=errors-only
 
       - name: Build
         run: pnpm build

@@ -525,7 +525,15 @@ async function directoryBytes(root: string, seenInodes?: Set<string>): Promise<n
     if (entry.isSymbolicLink()) continue;
     if (entry.isDirectory()) bytes += await directoryBytes(path, seenInodes);
     else if (entry.isFile()) {
-      const metadata = await stat(path);
+      let metadata;
+      try {
+        metadata = await stat(path);
+      } catch (error) {
+        // Storage is inspected while lock cleanup and other maintenance can
+        // remove files that were present in the directory listing.
+        if (errorCode(error) === "ENOENT") continue;
+        throw error;
+      }
       const inode = `${metadata.dev}:${metadata.ino}`;
       if (seenInodes?.has(inode) === true) continue;
       seenInodes?.add(inode);
