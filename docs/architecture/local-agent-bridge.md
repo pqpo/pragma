@@ -6,7 +6,7 @@
 
 本地 Agent 的入口是 Desktop App，不是 `apps/local-runner`。
 
-Desktop App 负责连接云端、注册本地能力、承载本地权限闸门，并调用本机 Claude Code、Codex、Qoder CLI 或自研 Agent。云端 Server/Worker 负责调度、治理、审计和 Trace。
+Desktop App 负责连接云端、注册本地能力、承载本地权限闸门，并调用本机 Claude Code、Codex、Qoder CLI、Antigravity CLI 或自研 Agent。云端 Server/Worker 负责调度、治理、审计和 Trace。
 
 ## 架构链路
 
@@ -26,6 +26,7 @@ Desktop App
 ├── Claude Code Adapter
 ├── Codex Adapter
 ├── Qoder CLI Adapter
+├── Antigravity CLI Adapter
 └── Self-hosted Agent Adapter
 ```
 
@@ -48,7 +49,7 @@ Desktop App
 - 本地工作区选择。
 - 主动连接云端 Runtime Gateway。
 - 注册本机 Runtime 能力。
-- 调用本机 Claude Code、Codex、Qoder CLI 或自研 Agent。
+- 调用本机 Claude Code、Codex、Qoder CLI、Antigravity CLI 或自研 Agent。
 - 拦截文件、shell、git、网络和 secrets 访问。
 - 在敏感操作前展示本地确认 UI。
 - 回传日志、增量输出、tool call、diff、artifact 和最终结果。
@@ -63,6 +64,7 @@ Desktop App
 Claude Code
 Codex
 Qoder CLI
+Antigravity CLI
 Self-hosted Agent
 企业内部 Agent
 ```
@@ -133,12 +135,16 @@ apps/
   desktop/
 
 packages/
-  agent/
-    agent-core/
-    agent-runtime/
-    local-agent-bridge/
+  core/
+    src/local-agent-bridge/
   server/
-    runtime-gateway/
+    src/runtime-gateway/
+  runtime/
+    antigravity/
+    claude-code/
+    codex/
+    pi/
+    qodercli/
 ```
 
 说明：
@@ -184,7 +190,7 @@ apps/web -> packages/core
 2. Phase 2：实现云端 Runtime Gateway 和云端沙箱 Runtime。
 3. Phase 3：定义 Local Agent Bridge 协议和设备注册模型。
 4. Phase 4：实现 Desktop App 的连接、设备绑定、能力注册和权限闸门。
-5. Phase 5：接入 Claude Code / Codex 本地 Runtime Adapter。
+5. Phase 5：接入 Claude Code / Codex / Qoder CLI / Antigravity CLI 本地 Runtime Adapter。
 
 ## 当前桌面端基础架构
 
@@ -194,6 +200,9 @@ apps/web -> packages/core
 - preload：通过窄的类型化 IPC API 暴露桌面能力，Renderer 不直接访问 Node API。
 - renderer：React/Vite 控制台，用于展示设备会话、Runtime Gateway 配置、工作区范围和本地 Runtime 能力占位。
 
-当前实现刻意不包含云端连接、设备绑定、自动更新、daemon 管理或具体 Claude Code / Codex 调用。下一步应先补 `packages/core/src/local-agent-bridge` 协议模块，再让 Desktop App 依赖该协议注册能力并连接 Runtime Gateway。
+当前实现已经装配 PI、Claude Code、Codex、Qoder CLI 和 Antigravity CLI 本地 Runtime，但仍刻意不包含云端连接、设备绑定、自动更新或 daemon 管理。下一步应先补 `packages/core/src/local-agent-bridge` 协议模块，再让 Desktop App 依赖该协议注册能力并连接 Runtime Gateway。
+
+Antigravity 的系统提示词、startup messages、MCP、Skill、权限 Hook 和私有 HOME 适配见
+[`antigravity-cli-runtime.md`](./antigravity-cli-runtime.md)。
 
 Desktop Studio 已增加本机 Capability Library。Skill、MCP Server 与 HTTP Service 在 Desktop 中版本化保存，Expert 只引用固定 revision 和明确的 tool 白名单。HTTP Service 由 `@pragma/core` 的 in-process MCP adapter 转换为标准 MCP tools；Capability Library 不改变云端 Runtime Gateway 与 Desktop 主动连接的依赖方向。

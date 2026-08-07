@@ -5,8 +5,8 @@
 
 ## Context
 
-Pragma has four Runtime adapters with two delivery mechanisms. PI runs in the Host process and
-accepts native `ToolDefinition` objects. Codex, Claude Code, and Qoder CLI run in child processes
+Pragma has five Runtime adapters with two delivery mechanisms. PI runs in the Host process and
+accepts native `ToolDefinition` objects. Codex, Claude Code, Qoder CLI, and Antigravity CLI run in child processes
 and discover the same execution tools through the process-shared Execution MCP Gateway from ADR 008.
 
 The delivery mechanisms are necessarily different, but their implementation had also duplicated
@@ -26,7 +26,7 @@ event emission, and normalized results.
 Runtime adapters only project that semantic set:
 
 - PI converts each resolved tool to a native PI `ToolDefinition`.
-- Codex, Claude Code, and Qoder CLI register the resolved tools on the Execution MCP Gateway.
+- Codex, Claude Code, Qoder CLI, and Antigravity CLI register the resolved tools on the Execution MCP Gateway.
 
 The Gateway remains a transport boundary, not a second tool semantics implementation. Its
 runtime-permission prompt remains Gateway-specific because it mediates child-process permission
@@ -65,7 +65,7 @@ documents do not emit the paint milestone.
 ## Consequences
 
 - Compiler live checks and Runtime startup can reuse one authenticated upstream connection.
-- Four Runtime adapters share tool policy and invocation semantics without pretending that their
+- Five Runtime adapters share tool policy and invocation semantics without pretending that their
   delivery transports are identical.
 - A lease may expose a different server ID, tool subset, or approval policy while sharing the same
   physical connection.

@@ -2,12 +2,16 @@ import { defineRuntimeDriver } from "@pragma/core";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
 const mocks = vi.hoisted(() => ({
+  createAntigravityRuntime: vi.fn(),
   createClaudeCodeRuntime: vi.fn(),
   createCodexRuntime: vi.fn(),
   createPiRuntime: vi.fn(),
   createQoderCliRuntime: vi.fn(),
 }));
 
+vi.mock("@pragma/runtime-antigravity", () => ({
+  createAntigravityRuntime: mocks.createAntigravityRuntime,
+}));
 vi.mock("@pragma/runtime-claude-code", () => ({
   createClaudeCodeRuntime: mocks.createClaudeCodeRuntime,
 }));
@@ -26,6 +30,7 @@ import { createBuiltInRuntimeFactories } from "./runtime-environment-service.ts"
 
 describe("built-in Runtime factory environment injection", () => {
   beforeEach(() => {
+    mocks.createAntigravityRuntime.mockReset().mockReturnValue(runtimeAdapter("antigravity"));
     mocks.createCodexRuntime.mockReset().mockReturnValue(runtimeAdapter("codex"));
     mocks.createClaudeCodeRuntime.mockReset().mockReturnValue(runtimeAdapter("claude-code"));
     mocks.createQoderCliRuntime.mockReset().mockReturnValue(runtimeAdapter("qodercli"));
@@ -48,6 +53,7 @@ describe("built-in Runtime factory environment injection", () => {
         ["codex", "pragma.runtime.codex"],
         ["claude-code", "pragma.runtime.claude-code"],
         ["qodercli", "pragma.runtime.qodercli"],
+        ["antigravity", "pragma.runtime.antigravity"],
         ["pi", "pragma.runtime.pi"],
       ].map(async ([runtimeId, adapterId]) => {
         const factory = factories.find((candidate) => candidate.id === adapterId)!;
@@ -64,9 +70,12 @@ describe("built-in Runtime factory environment injection", () => {
     expect(mocks.createQoderCliRuntime).toHaveBeenCalledWith(
       expect.objectContaining({ env: environment }),
     );
+    expect(mocks.createAntigravityRuntime).toHaveBeenCalledWith(
+      expect.objectContaining({ env: environment }),
+    );
     expect(mocks.createPiRuntime).toHaveBeenCalledOnce();
     expect(mocks.createPiRuntime.mock.calls[0]?.[0]).not.toHaveProperty("env");
-    expect(getRuntimeProcessEnvironment).toHaveBeenCalledTimes(3);
+    expect(getRuntimeProcessEnvironment).toHaveBeenCalledTimes(4);
   });
 });
 

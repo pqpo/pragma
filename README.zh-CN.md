@@ -19,7 +19,7 @@
 
 Pragma 是一个代码公开的多 Agent 编排桌面应用，用来把不同的 Agent Harness、模型、工具、上下文来源和人工决策组织成可复用的 AI 工作流。
 
-一项 Mission 可以在不同专家之间持续推进，同时保留已经形成的决策、产物和经验。Pragma 不替代 Claude Code、Codex、PI、Qoder CLI 或下一个优秀的 Agent，而是让它们协同工作。
+一项 Mission 可以在不同专家之间持续推进，同时保留已经形成的决策、产物和经验。Pragma 不替代 Claude Code、Codex、PI、Qoder CLI、Antigravity CLI 或下一个优秀的 Agent，而是让它们协同工作。
 
 Pragma 用得越多，沉淀得越多。不同任务、Harness 与模型产生的事件会形成跨 Harness 的动态记忆；其中有价值的经验与事实，可以在策略和审阅机制控制下自动升级为稳定的知识库或可复用 Skill。
 

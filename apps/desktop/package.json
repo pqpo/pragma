@@ -39,6 +39,7 @@
     "@pragma/interpreter": "workspace:*",
     "@pragma/memory": "workspace:*",
     "@pragma/mission-board": "workspace:*",
+    "@pragma/runtime-antigravity": "workspace:*",
     "@pragma/runtime-claude-code": "workspace:*",
     "@pragma/runtime-codex": "workspace:*",
     "@pragma/runtime-pi": "workspace:*",

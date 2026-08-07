@@ -371,8 +371,9 @@ Desktop 将每个插件版本的默认配置独立保存到
 
 `beforeSessionCreate` 可以返回声明式 `processEnvironment` 补丁。Core 为每个 Runtime Session
 从 Runtime Adapter 的基础环境创建独立快照，合并插件补丁后再启动 Runtime 子进程；插件不得修改
-`process.env`。Codex、Claude Code 和 PI Bash 命令均使用该 Session 快照。两个贡献者对同一环境变量
-声明不同值时，Session 创建会 fail-closed。
+`process.env`。Codex、Claude Code、Qoder CLI、Antigravity CLI 和 PI Bash 命令均使用该 Session
+快照。两个贡献者对同一环境变量声明不同值时，Session 创建会 fail-closed；Antigravity 随后还会在
+该快照上重定向 Session 私有 HOME，并移除会突破受管配置边界的供应商目录 override。
 
 插件是受信代码：`permissions` 是强制声明的审计信息，不是沙箱，也不会限制恶意插件。导入和激活用户插件等同于信任其在 Desktop Node 进程执行任意代码。
 

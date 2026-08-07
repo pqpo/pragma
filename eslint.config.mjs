@@ -526,6 +526,32 @@ const config = tseslint.config(
     },
   },
   {
+    files: ["packages/runtime/antigravity/**/*.{ts,tsx}"],
+    rules: {
+      "no-restricted-imports": [
+        "error",
+        {
+          paths: ["@pragma/client", "@pragma/server", "react"],
+          patterns: [
+            ...commonRestrictedPatterns,
+            {
+              group: [
+                "@pragma/runtime-*",
+                "@pragma/server-*",
+                "@pragma/ui-*",
+                "@pragma/playbook-canvas",
+                "next",
+                "next/*",
+              ],
+              message:
+                "Antigravity runtime packages must not depend on other runtimes or app layers.",
+            },
+          ],
+        },
+      ],
+    },
+  },
+  {
     files: ["plugins/**/*.{ts,tsx}"],
     rules: {
       "no-restricted-imports": [
