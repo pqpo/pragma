@@ -78,7 +78,6 @@ turbo.json
 eslint.config.mjs
 prettier.config.mjs
 tsconfig.base.json
-.github/workflows/ci.yml
 ```
 
 ## Package 命名
@@ -880,15 +879,9 @@ pnpm check
 
 `pnpm check` 只包含 lint、typecheck、test；CI 还会额外执行 build。
 
-## CI 规范
+## 质量检查与本地发行
 
-GitHub Actions 配置在：
-
-```text
-.github/workflows/ci.yml
-```
-
-Pull Request 和主分支 push 时执行：
+当前仓库不使用 GitHub Actions workflow。Pull Request、合并和桌面发行前由协作者在本地执行：
 
 ```bash
 pnpm install --frozen-lockfile
@@ -898,7 +891,10 @@ pnpm test
 pnpm build
 ```
 
-CI 必须在以下情况失败：
+桌面版本使用 `apps/desktop` 的 `release:desktop` 脚本完成原生打包、Tag、GitHub Release 和产物上传；
+详细流程见 `docs/usage/desktop-distribution.md`。
+
+质量检查必须在以下情况失败：
 
 - TypeScript 报错。
 - ESLint 报错。

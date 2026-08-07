@@ -22,6 +22,7 @@
     "dist:mac:x64": "pnpm run build && electron-builder --mac --x64 --publish never",
     "dist:win": "pnpm run build && electron-builder --win --x64 --publish never",
     "dist:win:x64": "pnpm run build && electron-builder --win --x64 --publish never",
+    "release:desktop": "node ./scripts/release-desktop.mjs",
     "lint": "eslint .",
     "typecheck": "pnpm run typecheck:node && pnpm run typecheck:web",
     "typecheck:node": "tsc --noEmit -p tsconfig.node.json",

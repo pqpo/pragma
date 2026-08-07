@@ -2,15 +2,15 @@
 
 > 状态：Phase 1 已实现
 >
-> 基线：2026-07-30
+> 基线：2026-08-07
 >
-> 当前范围：未签名的 macOS、Windows 安装包、GitHub Pre-release 和 macOS OSS 镜像
+> 当前范围：本地构建、未签名的 macOS/Windows 安装包、本地创建并上传 GitHub Release
 
-本文记录 Pragma 桌面应用发行能力的背景、当前实现、发布 Process 和后续 Plan。产品名称统一为
+本文记录 Pragma 桌面应用发行能力的背景、当前实现、发布流程和后续计划。产品名称统一为
 `Pragma`；`desktop` 只表示应用类型、仓库目录和 workspace package，不属于产品名称。
 
 面向维护者的本地命令见
-[Pragma 桌面安装包](../usage/desktop-distribution.md)。
+[Pragma 桌面安装包与本地发行](../usage/desktop-distribution.md)。
 
 ## 背景
 
@@ -18,29 +18,27 @@ Pragma 已经使用一套完整的 Electron 构建链：
 
 - pnpm workspace 与 Turborepo 管理 monorepo。
 - Electron 43 运行桌面应用。
-- electron-vite 5 和 Vite 7 编译 main、preload、renderer。
-- electron-builder 26 生成安装包。
+- electron-vite 编译 main、preload、renderer。
+- electron-builder 生成安装包。
 - main 入口为 `apps/desktop/src/main/index.ts`。
 - preload 入口为 `apps/desktop/src/preload/index.ts`。
 - renderer 是位于 `apps/desktop/src/renderer` 的 React 应用。
 - preload Bridge、IPC Schema 和结构化日志继续沿用现有实现。
 
-在 Phase 1 之前，仓库虽然已有本地 `electron-builder` 配置，但版本仍为 `0.0.0`，应用身份尚未冻结，
-也没有 Tag 驱动的 GitHub Release workflow。
-
-签名和在线更新会显著增加账户、证书、Secrets、平台验证和客户端状态管理成本。为了先获得真实可安装、
-可验证的跨平台产物，Phase 1 有意只实现未签名 Pre-release：
+发行流程不依赖仓库内的自动化工作流。维护者在本地完成质量检查和原生平台打包，再用 GitHub CLI
+创建 Tag、Draft Release、上传资产并公开版本：
 
 ```text
 source
-  → pnpm quality checks
+  → pnpm check
   → electron-vite build
   → electron-builder
-  → per-platform Actions artifacts
-  → checksum validation
+  → release-assets/v<version>/
+  → SHA256SUMS.txt
+  → annotated Git tag
   → GitHub Draft Release
-  → Alibaba Cloud OSS macOS mirror
-  → GitHub Pre-release
+  → GitHub CLI asset upload
+  → GitHub Pre-release or stable Release
 ```
 
 ## 当前发行契约
@@ -50,9 +48,9 @@ source
 ```text
 productName: Pragma
 appId: com.pqpo.pragma
-version: 0.1.0
-tag: v0.1.0
-release title: Pragma v0.1.0
+version: 0.1.10
+tag: v0.1.10
+release title: Pragma v0.1.10
 ```
 
 `appId` 会参与 macOS Bundle Identifier 和 Windows 安装身份。首个公开安装包发布后，不应在没有迁移
@@ -60,39 +58,24 @@ release title: Pragma v0.1.0
 
 ### 平台和产物
 
-| 平台    | Runner           | 架构                | 产物     |
-| ------- | ---------------- | ------------------- | -------- |
-| macOS   | `macos-15`       | Apple Silicon arm64 | DMG、ZIP |
-| macOS   | `macos-15-intel` | Intel x64           | DMG、ZIP |
-| Windows | `windows-2025`   | x64                 | NSIS EXE |
+| 平台    | 构建环境 | 架构                | 产物     |
+| ------- | -------- | ------------------- | -------- |
+| macOS   | macOS    | Apple Silicon arm64 | DMG、ZIP |
+| macOS   | macOS    | Intel x64           | DMG、ZIP |
+| Windows | Windows  | x64                 | NSIS EXE |
 
-版本 `0.1.0` 的 Release 必须包含：
+版本 `0.1.10` 的 Release 必须包含：
 
 ```text
-Pragma-0.1.0-mac-arm64.dmg
-Pragma-0.1.0-mac-arm64.zip
-Pragma-0.1.0-mac-x64.dmg
-Pragma-0.1.0-mac-x64.zip
-Pragma-0.1.0-win-x64.exe
+Pragma-0.1.10-mac-arm64.dmg
+Pragma-0.1.10-mac-arm64.zip
+Pragma-0.1.10-mac-x64.dmg
+Pragma-0.1.10-mac-x64.zip
+Pragma-0.1.10-win-x64.exe
 SHA256SUMS.txt
 ```
 
-Release 汇总 Job 会检查五个安装包都存在且非空，并拒绝额外的 DMG、ZIP 或 EXE。只有三个平台 Job
-全部成功后，才会公开 Pre-release。
-
-### OSS 镜像
-
-Tag 发布还会将下列 macOS DMG 镜像到阿里云 OSS 的版本化路径
-`desktop/<tag>/`：
-
-```text
-Pragma-0.1.0-mac-arm64.dmg
-Pragma-0.1.0-mac-x64.dmg
-SHA256SUMS-mac.txt
-```
-
-macOS ZIP 和 Windows EXE 不上传 OSS，继续只通过 GitHub Release 分发。`SHA256SUMS-mac.txt` 只覆盖
-两个 macOS DMG；GitHub Release 中的 `SHA256SUMS.txt` 继续覆盖全部五个安装包。
+本地发布脚本只接受这五个安装包和一个校验清单，发现缺失、空文件或额外条目时拒绝发布。
 
 ### 明确排除
 
@@ -105,7 +88,10 @@ Phase 1 不包含：
 - `latest-mac.yml`、`latest.yml` 或 blockmap 发布。
 - 更新 IPC、更新状态机或 Settings 更新 UI。
 - Linux 安装包。
-- Mac App Store、Microsoft Store 或自建更新服务。
+- Mac App Store、Microsoft Store 或自动 OSS 镜像。
+
+如果未来需要 OSS 镜像，应增加独立的本地上传步骤或受控发布工具，并继续使用短期凭证；GitHub Release
+资产仍是版本的权威分发来源。
 
 ## 实现位置
 
@@ -117,10 +103,34 @@ Phase 1 不包含：
 dist:mac:arm64
 dist:mac:x64
 dist:win:x64
+release:desktop
 ```
 
-三个命令都先执行现有 `build`，因此保留内置插件打包和 preload bundle 验证。命令显式传递
-`--publish never`，防止各平台构建进程自行创建不完整 Release。
+三个 `dist:*` 命令都会先执行现有 `build`，因此保留内置插件打包和 preload bundle 验证。命令显式传递
+`--publish never`，防止 electron-builder 自行创建不完整 Release。
+
+`release:desktop` 位于 `apps/desktop/scripts/release-desktop.mjs`，职责是：
+
+- 检查 `--version` 与 `apps/desktop/package.json` 一致。
+- 按原生平台调用对应 `dist:*` 命令，并将严格命名的资产复制到被忽略的 staging 目录。
+- 汇总全部五个资产并生成确定性 `SHA256SUMS.txt`。
+- 仅在显式传入 `--publish` 时检查干净工作区、创建不可覆盖的 annotated Tag 并推送。
+- 创建 Draft Release、上传资产、校验远端资产，最后公开 Release。
+- 默认发布 Pre-release；`--stable` 才发布稳定 Release。
+
+构建平台可以多次调用脚本；发布机器必须先汇总全部平台资产：
+
+```bash
+pnpm --filter @pragma/desktop run release:desktop -- \
+  --version 0.1.10 \
+  --platform mac-arm64
+```
+
+```bash
+pnpm --filter @pragma/desktop run release:desktop -- \
+  --version 0.1.10 \
+  --publish
+```
 
 ### electron-builder
 
@@ -134,31 +144,16 @@ dist:win:x64
 - NSIS 允许用户选择安装目录，并创建桌面和开始菜单快捷方式。
 - macOS 使用 `identity: null` 和 `hardenedRuntime: false`，明确当前是未签名构建。
 
-显式关闭 macOS 签名可以避免开发机 Keychain 或 runner 环境意外改变产物。后续接入 Developer ID 时，
-需要在同一改动中移除这两个 Phase 1 设置并恢复 Hardened Runtime。
+显式关闭 macOS 签名可以避免开发机 Keychain 意外改变产物。后续接入 Developer ID 时，需要在同一改动中
+移除这两个 Phase 1 设置并恢复 Hardened Runtime。
 
-### GitHub Actions
+### GitHub Release
 
-`.github/workflows/desktop-release.yml` 支持：
+本地发布使用维护者自己的 GitHub CLI 登录态，不把 `GITHUB_TOKEN`、证书或私钥写入仓库。脚本先创建 Draft，
+再上传资产，最后才公开 Release；上传失败时 Draft 保留，避免公开不完整版本。
 
-- `workflow_dispatch`：构建并保留 Actions artifacts，不发布 Release。
-- `v*` Tag push：验证、构建、镜像 macOS 资产到 OSS 并发布 Pre-release。
-
-workflow 权限默认为 `contents: read`，只有最终 Release Job 使用 `contents: write`。发布使用 GitHub
-自动提供的短期 `GITHUB_TOKEN`。Release Job 绑定 `desktop-release` Environment，通过 GitHub OIDC
-换取 30 分钟有效的阿里云 STS 凭证；仓库不保存个人 Token 或阿里云长期 AccessKey。
-
-Release Environment 必须提供以下非敏感 Variables：
-
-```text
-ALIYUN_OIDC_PROVIDER_ARN
-ALIYUN_RELEASE_ROLE_ARN
-ALIYUN_OSS_BUCKET
-ALIYUN_OSS_REGION
-```
-
-阿里云 RAM 角色只能列出目标 Bucket 的 `desktop/` 前缀，并对该前缀执行上传、读取校验、列举分片和
-中止未完成分片；不得获得对象删除、Bucket 管理或 ACL 修改权限。
+GitHub Release 是不可覆盖的版本边界：已存在的本地 Tag、远程 Tag 或 Release 都会令脚本 fail closed，修复
+必须使用新的 SemVer。
 
 ## Release Process
 
@@ -174,55 +169,58 @@ pnpm test
 pnpm build
 ```
 
-版本修改、发行配置和 Release Notes 应通过普通 Pull Request 合入 `main`。
+将版本修改、发行配置和 Release Notes 提交到目标 commit。发布脚本要求工作区没有未提交的 tracked change。
 
-### 2. 可选的手动构建
+### 2. 原生平台构建和汇总
 
-在 GitHub Actions 中手动运行 `Desktop Release`：
+macOS arm64、macOS x64 和 Windows x64 必须分别在对应系统构建。脚本默认把资产写入：
 
-1. 完成完整质量检查。
-2. 在三个原生 runner 上构建安装包。
-3. 将安装包保存为保留七天的 Actions artifacts。
-4. 不创建 Tag 或 GitHub Release。
-
-此步骤适合在创建正式版本 Tag 前验证构建环境。
-
-### 3. 创建版本 Tag
-
-在已经合入 `main` 的版本 commit 上创建带注释 Tag：
-
-```bash
-git tag -a v0.1.0 -m "Pragma v0.1.0"
-git push origin v0.1.0
+```text
+release-assets/v0.1.10/
 ```
 
-workflow 会在下载依赖前后执行完整验证，并在打包前确认：
+不同机器之间只传递该 staging 目录中的发行资产；不要把 `apps/desktop/dist`、node_modules 或运行时私有
+配置作为 Release 资产。全部资产汇总后，脚本生成 `SHA256SUMS.txt` 并拒绝额外文件。
 
-- Tag 满足 `vX.Y.Z`。
-- 去除 `v` 后与 `apps/desktop/package.json` 的 version 完全一致。
-- Tag 指向的 commit 属于 `origin/main` 历史。
+### 3. 创建 Tag 和 Release
 
-### 4. 构建与汇总
+先登录 GitHub CLI：
 
-三个原生 runner 独立执行 frozen-lockfile 安装和目标平台打包。安装包先上传为 Actions artifacts，
-而不是直接写入 GitHub Releases。
+```bash
+gh auth login
+```
 
-最终 Release Job：
+在含有全部资产的干净 checkout 中执行：
 
-1. 下载并合并三个 Actions artifacts。
-2. 检查五个预期安装包。
-3. 生成 `SHA256SUMS.txt`。
-4. 为两个 macOS DMG 生成 `SHA256SUMS-mac.txt`。
-5. 创建 Draft Release，并向 GitHub 上传全部跨平台产物。
-6. 通过 GitHub OIDC 换取阿里云短期 STS 凭证。
-7. 只向 OSS 的 `desktop/<tag>/` 上传两个 macOS DMG 和 macOS 校验清单。
-8. 逐个读取 OSS Object metadata，确认远端大小与本地文件一致。
-9. 将 Draft 发布为 Pre-release。
+```bash
+pnpm --filter @pragma/desktop run release:desktop -- \
+  --version 0.1.10 \
+  --publish \
+  --notes-file release-notes.md
+```
 
-如果同 Tag 已经存在公开 Release，workflow 会失败且不会覆盖。失败运行留下的 Draft 可以由同 Tag
-重新运行补齐；GitHub 资产上传使用 `--clobber` 只作用于尚未公开的 Draft。OSS 使用版本化路径，重试
-只会补齐或覆盖当前尚未公开版本的同名 DMG。OSS 上传或校验失败时，GitHub Release 保持 Draft，
-不会公开一个缺少镜像的版本。
+没有 `--notes-file` 时，GitHub CLI 使用自动生成的 Release Notes。`--stable` 可将默认 Pre-release 改为稳定
+Release。
+
+脚本的远程步骤严格按以下顺序执行：
+
+1. 检查 GitHub CLI 登录态、远程地址、Tag 和 Release 均可创建。
+2. 创建并推送 `v0.1.10` annotated Tag。
+3. 创建 `Pragma v0.1.10` Draft Release。
+4. 上传五个安装包和 `SHA256SUMS.txt`。
+5. 读取远端资产清单并确认 Release 已非 Draft。
+
+### 4. 失败恢复
+
+如果 Tag 已推送但 Release 创建失败，不要删除或重建同名 Tag；先修复本地认证或网络问题，再按 GitHub CLI
+的 Release 状态继续处理。若 Draft 已创建但上传失败，Draft 会保留，可使用以下命令补传并公开：
+
+```bash
+gh release upload v0.1.10 release-assets/v0.1.10/* --clobber
+gh release edit v0.1.10 --draft=false
+```
+
+发布后的版本不可覆盖；任何修复都应提升版本号。
 
 ### 5. 安装验证
 
@@ -237,11 +235,9 @@ workflow 会在下载依赖前后执行完整验证，并在打包前确认：
 - 下载文件的 SHA-256 与 `SHA256SUMS.txt` 一致。
 - 安装包架构与文件名一致。
 - 应用、窗口标题和快捷方式显示 `Pragma`。
-- 主窗口可以启动。
-- preload Bridge 正常注入。
-- renderer 不出现白屏。
+- 主窗口可以启动，preload Bridge 正常注入，renderer 不出现白屏。
 - 内置插件可以加载。
-- 用户可以完成卸载。
+- Windows 可以正常卸载。
 
 未签名包会触发系统安全提示：
 
@@ -254,7 +250,7 @@ workflow 会在下载依赖前后执行完整验证，并在打包前确认：
 
 ### Phase 2：安装包稳定性
 
-- 使用 `hdiutil`、`unzip` 和 Windows 安装器静默模式补充 CI 结构验证。
+- 使用 `hdiutil`、`unzip` 和 Windows 安装器静默模式补充本地结构验证。
 - 在真实 Intel、Apple Silicon 和 Windows 机器完成回归矩阵。
 - 验证 Runtime 原生可选依赖随目标架构正确进入安装包。
 - 评估 macOS Universal 合并；在原生依赖验证通过前保留双架构包。
@@ -263,7 +259,7 @@ workflow 会在下载依赖前后执行完整验证，并在打包前确认：
 
 - macOS 接入 Developer ID Application、Hardened Runtime、公证和 stapling。
 - Windows 根据实际主体资格选择 Authenticode 证书或 Microsoft Artifact Signing。
-- Secrets 只保存在 GitHub Environment 或受控签名服务。
+- Secrets 只保存在本地受控密钥链或受控签名服务。
 - 签名 Release 缺少证书时 fail closed。
 - 完成签名后再将发行状态从 Pre-release 调整为稳定 Release。
 
@@ -278,13 +274,10 @@ workflow 会在下载依赖前后执行完整验证，并在打包前确认：
 
 ## 安全与维护规则
 
-- 不提交 Token、证书、私钥、密码、临时 Keychain 或 Azure 凭据。
-- 不创建或提交阿里云长期 AccessKey；GitHub Actions 只通过受限 OIDC 角色取得短期 STS 凭证。
-- Pull Request workflow 不获得 Release 写权限。
-- 平台 Job 不直接发布 Release，防止出现单平台半成品。
-- OSS 上传使用显式 DMG allowlist，不使用包含 ZIP 和 Windows 产物的目录递归同步。
-- OIDC Action 固定到完整 commit；`ossutil` 固定版本并在执行前校验官方 SHA-256。
-- 已公开版本不可覆盖；修复必须提升 SemVer。
+- 不提交 Token、证书、私钥、临时 Keychain 或密码。
+- 不在本地发布脚本中写入长期云服务凭据。
+- 发布者必须在发布前检查 Tag 指向的 commit、版本字段和全部资产。
+- 不覆盖已存在的 Tag、Release 或公开资产；修复必须提升 SemVer。
 - 校验和用于验证下载完整性，但不能替代平台代码签名。
 - 仓库为私有时，Release 也只对授权用户可见；公开下载前需要先确认仓库可见性和许可证表述。
 - 当前许可证属于仓库自己的 source-available 条款，对外材料不应把它误称为 OSI 认证的开源许可证。
@@ -294,20 +287,17 @@ workflow 会在下载依赖前后执行完整验证，并在打包前确认：
 Phase 1 完成需要同时满足：
 
 - 产品名称在运行时和安装包中统一为 `Pragma`。
-- `v0.1.0` 可以触发完整质量检查。
-- 三个原生 runner 可以生成五个安装包。
-- 任一平台失败时不发布 Pre-release。
-- Pre-release 包含五个安装包和 `SHA256SUMS.txt`。
-- OSS 版本路径只包含两个 macOS DMG 和 `SHA256SUMS-mac.txt`，不包含 ZIP 或 Windows EXE。
-- OSS 上传与 metadata 校验成功后才公开 GitHub Pre-release。
+- 三个原生平台命令可以生成五个安装包。
+- 本地发布脚本可以创建唯一 Tag、Draft Release、完整资产和 `SHA256SUMS.txt`。
+- 任一资产缺失、非空校验失败、Tag/Release 已存在或远端上传校验失败时不公开 Release。
+- 发布后的 GitHub Release 包含五个安装包和 `SHA256SUMS.txt`。
 - 安装包不包含自动更新实现或签名凭据。
-- 文档与 package scripts、electron-builder 和 workflow 保持一致。
+- 文档与 package scripts、electron-builder 和本地发布脚本保持一致。
 
 ## 参考资料
 
+- [Pragma 桌面安装包与本地发行](../usage/desktop-distribution.md)
 - [electron-builder Architecture](https://www.electron.build/docs/architecture/)
 - [electron-builder macOS](https://www.electron.build/docs/mac/)
 - [electron-builder NSIS](https://www.electron.build/nsis.html)
-- [electron-builder GitHub Actions](https://www.electron.build/docs/features/github-actions/)
-- [GitHub-hosted runners](https://docs.github.com/en/actions/reference/runners/github-hosted-runners)
-- [GitHub automatic token authentication](https://docs.github.com/en/actions/security-for-github-actions/security-guides/automatic-token-authentication)
+- [GitHub CLI release create](https://cli.github.com/manual/gh_release_create)
