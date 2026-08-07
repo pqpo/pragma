@@ -13,12 +13,14 @@
 
 > **Turn the way you work with AI into a reusable asset.**
 
-Pragma is a source-available Desktop app and TypeScript platform for turning multiple agent harnesses, models, tools, context sources, and human decisions into reusable AI workflows.
+Pragma is a code-public desktop application for orchestrating multiple agent harnesses, models, tools, context sources, and human decisions into reusable AI workflows.
 
 A Mission can move from one specialist to another without losing its decisions, artifacts, or accumulated experience. Pragma does not replace Claude Code, Codex, PI, Qoder CLI, or the next great agent—it makes them work together.
 
+The more you use Pragma, the more it compounds. Events from different tasks, harnesses, and models become cross-harness dynamic memory; useful experience and facts can then be promoted automatically, under policy and review controls, into a stable knowledge base or reusable Skills.
+
 <p align="center">
-  <a href="https://github.com/pqpo/pragma/releases"><strong>Download v0.2 Preview</strong></a>
+  <a href="https://github.com/pqpo/pragma/releases"><strong>Download the latest preview</strong></a>
   · <a href="#quick-start"><strong>Quick start</strong></a>
   · <a href="./docs/usage/README.md"><strong>Documentation</strong></a>
   · <a href="./examples/README.md"><strong>Examples</strong></a>
@@ -27,7 +29,7 @@ A Mission can move from one specialist to another without losing its decisions, 
 ![Pragma Desktop running a multi-expert mission](./docs/images/pragma_desktop_en.png)
 
 > [!IMPORTANT]
-> Pragma is currently a preview. The v0.2 Desktop release provides unsigned builds for macOS Apple Silicon and Intel. See [Current status](#current-status) before adopting it for critical work.
+> Pragma is currently a preview. The latest Desktop release provides unsigned builds for macOS Apple Silicon and Intel. See [Current status](#current-status) before adopting it for critical work.
 
 ## Quick start
 
@@ -37,7 +39,8 @@ Download the package for your Mac from [GitHub Releases](https://github.com/pqpo
 
 1. Open **Settings** and connect a model provider or an installed local runtime.
 2. Choose the workspace Pragma is allowed to use.
-3. Create a task and describe the expert, team, or workflow you want to run.
+3. Talk with Pragma to create your own Expert, ExpertTeam, or Flow.
+4. Start a task with the result and use it as much as you like. As Missions accumulate, cross-harness memory turns repeated experience into stable knowledge and reusable Skills.
 
 The current app is not code-signed. If macOS blocks the first launch, open **System Settings → Privacy & Security** and choose **Open Anyway**. The [Desktop distribution guide](./docs/usage/desktop-distribution.md) explains the release contents, checksums, and limitations.
 
@@ -79,7 +82,7 @@ Compose Experts, ExpertTeams, Flows, subflows, tools, and human checkpoints. Eac
 
 ### Private knowledge
 
-Pragma treats context as a Host-owned `ContextStore` instead of trapping it inside one chat product. Desktop combines Mission-scoped working context with evidence-backed episodic and semantic memory, and can promote reviewed results into stable knowledge or reusable Skills.
+Pragma treats context as a Host-owned `ContextStore` instead of trapping it inside one chat product. Events from different tasks, harnesses, and models enter a shared Memory Pipeline and become evidence-backed episodic and semantic memory. As that dynamic memory accumulates, background work can automatically start a policy-controlled promotion workflow that turns it into stable knowledge or reusable Skills; authoritative changes are activated only after the required review.
 
 The ContextStore contract is extensible. This repository currently includes in-memory, JSON, filesystem, Mission Board, and Memory-backed implementations; other databases or retrieval systems can be added through Host adapters.
 
@@ -126,7 +129,7 @@ Embed the execution model into another Host with `@pragma/core`, or load portabl
 
 ## Current status
 
-| Area                    | v0.2 status                                                                                               |
+| Area                    | Current status                                                                                            |
 | ----------------------- | --------------------------------------------------------------------------------------------------------- |
 | Project maturity        | Preview; breaking changes are still possible                                                              |
 | Desktop release         | macOS Apple Silicon and Intel; unsigned                                                                   |

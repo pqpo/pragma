@@ -13,12 +13,14 @@
 
 > **把你的 AI 工作方式，沉淀成可以复用的资产。**
 
-Pragma 是一个源码可用的桌面应用与 TypeScript 平台，用来把多个 Agent Harness、模型、工具、上下文来源和人工决策组织成可复用的 AI 工作流。
+Pragma 是一个代码公开的多 Agent 编排桌面应用，用来把不同的 Agent Harness、模型、工具、上下文来源和人工决策组织成可复用的 AI 工作流。
 
 一项 Mission 可以在不同专家之间持续推进，同时保留已经形成的决策、产物和经验。Pragma 不替代 Claude Code、Codex、PI、Qoder CLI 或下一个优秀的 Agent，而是让它们协同工作。
 
+Pragma 用得越多，沉淀得越多。不同任务、Harness 与模型产生的事件会形成跨 Harness 的动态记忆；其中有价值的经验与事实，可以在策略和审阅机制控制下自动升级为稳定的知识库或可复用 Skill。
+
 <p align="center">
-  <a href="https://github.com/pqpo/pragma/releases"><strong>下载 v0.2 预览版</strong></a>
+  <a href="https://github.com/pqpo/pragma/releases"><strong>下载最新预览版</strong></a>
   · <a href="#快速开始"><strong>快速开始</strong></a>
   · <a href="./docs/usage/README.md"><strong>使用文档</strong></a>
   · <a href="./examples/README.md"><strong>示例</strong></a>
@@ -27,7 +29,7 @@ Pragma 是一个源码可用的桌面应用与 TypeScript 平台，用来把多�
 ![Pragma Desktop 正在运行一项多专家 Mission](./docs/images/pragma_desktop_cn.png)
 
 > [!IMPORTANT]
-> Pragma 当前仍处于预览阶段。v0.2 Desktop Release 提供未签名的 macOS Apple Silicon 与 Intel 安装包。将其用于关键工作前，请先阅读[当前状态](#当前状态)。
+> Pragma 当前仍处于预览阶段。最新 Desktop Release 提供未签名的 macOS Apple Silicon 与 Intel 安装包。将其用于关键工作前，请先阅读[当前状态](#当前状态)。
 
 ## 快速开始
 
@@ -37,7 +39,8 @@ Pragma 是一个源码可用的桌面应用与 TypeScript 平台，用来把多�
 
 1. 打开**设置**，连接模型提供商或本机已经安装的 Runtime。
 2. 选择允许 Pragma 使用的 Workspace。
-3. 新建任务，描述你希望运行的专家、团队或工作流。
+3. 与 Pragma 对话，创建属于自己的 Expert、ExpertTeam 或 Flow。
+4. 使用刚刚创建的专家、专家团或 Flow 开始任务，然后尽情使用。随着 Mission 不断积累，跨 Harness 动态记忆会把反复出现的经验沉淀为稳定知识与可复用 Skill。
 
 当前应用尚未进行代码签名。如果 macOS 阻止首次启动，请打开**系统设置 → 隐私与安全性**并选择**仍要打开**。[桌面发行说明](./docs/usage/desktop-distribution.md)记录了发行产物、校验和与当前限制。
 
@@ -79,7 +82,7 @@ pnpm --filter @pragma/examples example:runtime-claude-code
 
 ### 私有知识
 
-Pragma 将上下文抽象为 Host 管理的 `ContextStore`，避免知识被困在单个对话产品里。Desktop 将 Mission 级工作上下文与有证据支持的 episodic、semantic memory 结合，并能把经过审阅的结果沉淀为稳定知识或可复用 Skill。
+Pragma 将上下文抽象为 Host 管理的 `ContextStore`，避免知识被困在单个对话产品里。不同任务、Harness 与模型产生的事件会进入统一的 Memory Pipeline，形成有证据支持的 episodic 与 semantic memory。随着动态记忆持续积累，后台任务可以按策略自动发起升级流程，将其整理为稳定知识或可复用 Skill；涉及权威知识变更时，仍需经过必要审阅后才能激活。
 
 ContextStore 合约可以扩展。当前仓库提供 In-memory、JSON、文件系统、Mission Board 和 Memory-backed 实现；其他数据库或检索系统可以由 Host Adapter 接入。
 
@@ -126,7 +129,7 @@ Pragma DSL 使用版本化 YAML 描述 Expert、ExpertTeam、Flow、Capability�
 
 ## 当前状态
 
-| 领域                    | v0.2 状态                                                                       |
+| 领域                    | 当前状态                                                                        |
 | ----------------------- | ------------------------------------------------------------------------------- |
 | 项目成熟度              | Preview，仍可能发生 Breaking Change                                             |
 | Desktop Release         | macOS Apple Silicon 与 Intel，未签名                                            |
