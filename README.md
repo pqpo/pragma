@@ -30,7 +30,9 @@ A Mission can move from one specialist to another without losing its decisions, 
 
 The more you use Pragma, the more it compounds. Events from different tasks, harnesses, and models become cross-harness dynamic memory; useful experience and facts can then be promoted automatically, under policy and review controls, into a stable knowledge base or reusable Skills.
 
-![Pragma Desktop running a multi-expert mission](./docs/images/pragma_desktop_en.png)
+<p align="center">
+  <img src="./docs/images/pragma_desktop_en.png" alt="Pragma Desktop running a multi-expert mission" width="800" />
+</p>
 
 > [!IMPORTANT]
 > Pragma is currently a preview. The latest Desktop release provides unsigned builds for macOS Apple Silicon and Intel. See [Current status](#current-status) before adopting it for critical work.
@@ -123,7 +125,9 @@ Expert tools = Expert + ExpertTeam + Flow
 
 ## Example: an AI-native delivery mission
 
-![An example collaborative delivery workflow](./docs/images/pragma_flow_en.png)
+<p align="center">
+  <img src="./docs/images/pragma_flow_en.png" alt="An example collaborative delivery workflow" width="800" />
+</p>
 
 In this example configuration, UI design, requirements, architecture, implementation, and independent review use different specialists. Accepted decisions and artifacts flow between stages, and useful facts, experience, and Skills remain available to the next Mission.
 

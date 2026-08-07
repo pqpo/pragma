@@ -30,7 +30,10 @@ Pragma 用得越多，沉淀得越多。不同任务、Harness 与模型产生�
   · <a href="./examples/README.md"><strong>示例</strong></a>
 </p>
 
-![Pragma Desktop 正在运行一项多专家 Mission](./docs/images/pragma_desktop_cn.png)
+<p align="center">
+  <img src="./docs/images/pragma_desktop_cn.png" alt="Pragma Desktop 正在运行一项多专家 Mission" width="800" />
+</p>
+
 
 > [!IMPORTANT]
 > Pragma 当前仍处于预览阶段。最新 Desktop Release 提供未签名的 macOS Apple Silicon 与 Intel 安装包。将其用于关键工作前，请先阅读[当前状态](#当前状态)。
@@ -123,7 +126,9 @@ Expert Tool = Expert + ExpertTeam + Flow
 
 ## 示例：一项 AI-native 研发 Mission
 
-![AI 协作研发工作流示例](./docs/images/pragma_flow_cn.png)
+<p align="center">
+  <img src="./docs/images/pragma_flow_cn.png" alt="AI 协作研发工作流示例" width="800" />
+</p>
 
 在这套示例配置中，UI 设计、需求讨论、技术架构、实现与独立审查分别使用不同的专家。已经确认的决策和产物会在阶段之间持续传递，有价值的事实、经验与 Skill 则可以继续服务下一项 Mission。
 
