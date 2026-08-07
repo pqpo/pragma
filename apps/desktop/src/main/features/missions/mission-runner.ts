@@ -1034,6 +1034,7 @@ export function createMissionRunner(options: {
     const inputMessageId = recoverable
       ? mission.execution!.inputMessageId
       : mission.initialMessageId;
+    const promptAttachments = recoverable ? [] : await options.missions.getAttachments(mission.id);
     phaseStartedAt = performance.now();
     const turn =
       recoveredTurn ??
@@ -1048,6 +1049,7 @@ export function createMissionRunner(options: {
           : mission.goal,
         {
           requestId: recoverable ? randomUUID() : inputMessageId,
+          ...(promptAttachments.length === 0 ? {} : { attachments: promptAttachments }),
         },
       ));
     logMissionPhase(logger, mission.id, "expert_session_prompt", phaseStartedAt, acceptedAt);

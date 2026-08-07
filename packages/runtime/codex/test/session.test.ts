@@ -240,6 +240,15 @@ describe("Codex turn completion", () => {
       isRetry: false,
       rawQuery: "hello",
       prompt: "hello",
+      attachments: [
+        {
+          id: "00000000-0000-4000-8000-000000000001",
+          kind: "image",
+          name: "screen.png",
+          path: "/work/screen.png",
+          mimeType: "image/png",
+        },
+      ],
       startupMessages: [{ role: "user", content: "always-on context" }],
       signal: new AbortController().signal,
       source: {
@@ -264,6 +273,7 @@ describe("Codex turn completion", () => {
         input: [
           { type: "text", text: "always-on context", text_elements: [] },
           { type: "text", text: "hello", text_elements: [] },
+          { type: "localImage", path: "/work/screen.png" },
         ],
       }),
     );
@@ -328,6 +338,7 @@ describe("Codex turn completion", () => {
       isRetry: false,
       rawQuery: "hello",
       prompt: "hello",
+      attachments: [],
       startupMessages: [],
       signal: new AbortController().signal,
       source: {
@@ -372,6 +383,7 @@ describe("Codex turn completion", () => {
         isRetry: false,
         rawQuery: "hello",
         prompt: "hello",
+        attachments: [],
         startupMessages: [],
         signal: new AbortController().signal,
         source: {
@@ -428,6 +440,7 @@ describe("Codex turn completion", () => {
       isRetry: false,
       rawQuery: "hello",
       prompt: "hello",
+      attachments: [],
       startupMessages: [],
       signal: new AbortController().signal,
       source: {

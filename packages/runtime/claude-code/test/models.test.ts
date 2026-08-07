@@ -31,7 +31,12 @@ describe("Claude Code model discovery cache", () => {
     const second = createClaudeCodeModelDiscovery(discoveryOptions(executablePath));
 
     await expect(first()).resolves.toEqual(
-      expect.arrayContaining([expect.objectContaining({ id: "claude-sonnet-4-6" })]),
+      expect.arrayContaining([
+        expect.objectContaining({
+          id: "claude-sonnet-4-6",
+          inputModalities: ["text", "image"],
+        }),
+      ]),
     );
     await expect(second()).resolves.toEqual(
       expect.arrayContaining([expect.objectContaining({ id: "claude-sonnet-4-6" })]),
@@ -60,6 +65,27 @@ describe("Claude Code model discovery cache", () => {
 
     await expect(first).resolves.toHaveLength(11);
     await expect(second).resolves.toHaveLength(11);
+  });
+
+  it("treats an unknown Anthropic-compatible model mapping as text-only", async () => {
+    mocks.runRuntimeCommand.mockResolvedValue(commandResult(helpOutput("low, medium")));
+    const discovery = createClaudeCodeModelDiscovery({
+      executablePath: `/claude/mapped-${crypto.randomUUID()}`,
+      env: {
+        CLAUDE_CONFIG_DIR: `/missing/claude-config-${crypto.randomUUID()}`,
+        ANTHROPIC_BASE_URL: "https://compatible.example.com",
+        ANTHROPIC_MODEL: "third-party-model",
+        ANTHROPIC_DEFAULT_SONNET_MODEL: "third-party-model",
+      },
+    });
+
+    await expect(discovery()).resolves.toEqual([
+      expect.objectContaining({
+        id: "sonnet",
+        default: true,
+        inputModalities: ["text"],
+      }),
+    ]);
   });
 
   it("returns stale models immediately, refreshes them, and notifies the host", async () => {

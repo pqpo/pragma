@@ -1,5 +1,9 @@
 import type { AgentSession } from "@earendil-works/pi-coding-agent";
 import type { RuntimeTurnContext } from "@pragma/core";
+import { randomUUID } from "node:crypto";
+import { rm, writeFile } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import { describe, expect, it, vi } from "vitest";
 
 import {
@@ -28,13 +32,80 @@ describe("PI startup messages", () => {
 
     expect(native.session.prompt).toHaveBeenCalledWith("always-on context\n\nuser prompt");
   });
+
+  it("passes image blocks only when the selected model supports vision", async () => {
+    const path = join(tmpdir(), `pragma-pi-image-${randomUUID()}.png`);
+    await writeFile(path, "image-bytes");
+    try {
+      const native = createNativeSession(["text", "image"]);
+      const turn = createTurn(
+        [],
+        [
+          {
+            id: "00000000-0000-4000-8000-000000000001",
+            kind: "image",
+            name: "screen.png",
+            path,
+            mimeType: "image/png",
+          },
+        ],
+      );
+
+      await startPiTurn(native, turn);
+
+      expect(native.session.prompt).toHaveBeenCalledWith("user prompt", {
+        images: [
+          {
+            type: "image",
+            data: Buffer.from("image-bytes").toString("base64"),
+            mimeType: "image/png",
+          },
+        ],
+      });
+    } finally {
+      await rm(path, { force: true });
+    }
+  });
+
+  it("does not pass image blocks when the selected model is text-only", async () => {
+    const path = join(tmpdir(), `pragma-pi-image-${randomUUID()}.png`);
+    await writeFile(path, "image-bytes");
+    try {
+      const native = createNativeSession(["text"]);
+      const turn = createTurn(
+        [],
+        [
+          {
+            id: "00000000-0000-4000-8000-000000000001",
+            kind: "image",
+            name: "screen.png",
+            path,
+            mimeType: "image/png",
+          },
+        ],
+      );
+
+      await startPiTurn(native, turn);
+
+      expect(native.session.prompt).toHaveBeenCalledWith("user prompt");
+    } finally {
+      await rm(path, { force: true });
+    }
+  });
 });
 
-function createNativeSession() {
+function createNativeSession(input?: ("text" | "image")[]) {
   const messages: unknown[] = [];
   const session = {
     messages,
-    model: undefined,
+    model:
+      input === undefined
+        ? undefined
+        : {
+            provider: "test",
+            id: "vision-model",
+            input,
+          },
     prompt: vi.fn(async () => {
       messages.push({
         role: "assistant",
@@ -68,6 +139,7 @@ function createNativeSession() {
 
 function createTurn(
   startupMessages: RuntimeTurnContext<PiNativeEvent>["startupMessages"],
+  attachments: RuntimeTurnContext<PiNativeEvent>["attachments"] = [],
 ): RuntimeTurnContext<PiNativeEvent> {
   return {
     runId: "run-1",
@@ -75,6 +147,7 @@ function createTurn(
     isRetry: false,
     rawQuery: "user prompt",
     prompt: "user prompt",
+    attachments,
     startupMessages,
     signal: new AbortController().signal,
     source: { kind: "runtime", runId: "run-1", path: [] },

@@ -1,6 +1,11 @@
 import { randomUUID } from "node:crypto";
 
-import { RuntimeSessionRefSchema, type AgentMessage, type AgentMessageUsage } from "@pragma/shared";
+import {
+  RuntimeSessionRefSchema,
+  type AgentMessage,
+  type AgentMessageUsage,
+  type ExpertPromptAttachment,
+} from "@pragma/shared";
 
 import type { Expert } from "../agent/expert-agent.ts";
 import type { ExpertAgentContext, ExpertAgentStartupMessage } from "../agent/context-manager.ts";
@@ -142,6 +147,7 @@ export interface RuntimeTurnContext<TNativeEvent> {
   readonly isRetry: boolean;
   readonly rawQuery: string;
   readonly prompt: string;
+  readonly attachments: readonly ExpertPromptAttachment[];
   readonly startupMessages: readonly ExpertAgentStartupMessage[];
   readonly modelSelection?: RuntimeModelSelection | undefined;
   readonly output?: RuntimeOutputSchema | undefined;
@@ -1020,6 +1026,14 @@ class ManagedRuntimeSession<TNativeEvent, TNativeSession, TPrepared> {
     observeUsage: (usage: AgentMessageUsage | undefined) => void,
   ): Promise<RuntimeRunResult<TOutput>> {
     const startupMessages = this.takeStartupMessages();
+    const attachmentPlan = await resolveRuntimeAttachmentPlan({
+      attachments: submission.attachments ?? [],
+      listModels: this.options.driver.listModels,
+      logger: this.options.logger,
+      modelSelection: submission.modelSelection,
+      query: submission.query,
+      runtimeId: this.options.descriptor.id,
+    });
     const maxAttempts =
       submission.output === undefined
         ? 1
@@ -1033,7 +1047,7 @@ class ManagedRuntimeSession<TNativeEvent, TNativeSession, TPrepared> {
     for (let attempt = 1; attempt <= maxAttempts; attempt++) {
       const prompt =
         attempt === 1
-          ? createInitialRuntimePrompt(submission.query, submission.output)
+          ? createInitialRuntimePrompt(attachmentPlan.query, submission.output)
           : createRuntimeOutputRetryPrompt(parseResult);
       const contextWindow = await this.refreshContextWindow(false);
       const attemptStartupMessages =
@@ -1060,8 +1074,9 @@ class ManagedRuntimeSession<TNativeEvent, TNativeSession, TPrepared> {
             runId,
             attempt,
             isRetry: attempt > 1,
-            rawQuery: submission.query,
+            rawQuery: attachmentPlan.query,
             prompt,
+            attachments: attempt === 1 ? attachmentPlan.nativeAttachments : [],
             startupMessages: attemptStartupMessages,
             modelSelection: submission.modelSelection,
             output: submission.output,
@@ -1241,6 +1256,87 @@ class ManagedRuntimeSession<TNativeEvent, TNativeSession, TPrepared> {
       this.startupMessagesReinjectionPending = true;
     }
   }
+}
+
+interface RuntimeAttachmentPlan {
+  readonly query: string;
+  readonly nativeAttachments: readonly ExpertPromptAttachment[];
+}
+
+async function resolveRuntimeAttachmentPlan(options: {
+  readonly attachments: readonly ExpertPromptAttachment[];
+  readonly listModels: RuntimeDriver<unknown, unknown>["listModels"];
+  readonly logger: PragmaLogger;
+  readonly modelSelection?: RuntimeModelSelection | undefined;
+  readonly query: string;
+  readonly runtimeId: string;
+}): Promise<RuntimeAttachmentPlan> {
+  const images = options.attachments.filter((attachment) => attachment.kind === "image");
+  if (images.length === 0) {
+    return { query: options.query, nativeAttachments: options.attachments };
+  }
+
+  let selectedModel: RuntimeModel | undefined;
+  let reason = "model-capability-unavailable";
+  if (options.listModels !== undefined) {
+    try {
+      const models = await options.listModels();
+      selectedModel = resolveSelectedRuntimeModel(models, options.modelSelection);
+      reason =
+        selectedModel === undefined ? "selected-model-unavailable" : "selected-model-is-text-only";
+    } catch {
+      reason = "model-catalog-unavailable";
+    }
+  }
+
+  if (selectedModel?.inputModalities?.includes("image") === true) {
+    return { query: options.query, nativeAttachments: options.attachments };
+  }
+
+  options.logger.warn(
+    "runtime.image_input_degraded",
+    "Native image input was unavailable; the Runtime will continue with local image paths in text context.",
+    {
+      runtimeId: options.runtimeId,
+      providerId: options.modelSelection?.model.providerId ?? selectedModel?.provider.id,
+      modelId: options.modelSelection?.model.modelId ?? selectedModel?.id,
+      imageCount: images.length,
+      reason,
+    },
+  );
+  return {
+    query: ensureImagePathContext(options.query, images),
+    nativeAttachments: options.attachments.filter((attachment) => attachment.kind !== "image"),
+  };
+}
+
+function resolveSelectedRuntimeModel(
+  models: readonly RuntimeModel[],
+  selection: RuntimeModelSelection | undefined,
+): RuntimeModel | undefined {
+  if (selection === undefined) return models.find((model) => model.default === true);
+  return models.find(
+    (model) =>
+      model.id === selection.model.modelId && model.provider.id === selection.model.providerId,
+  );
+}
+
+function ensureImagePathContext(query: string, images: readonly ExpertPromptAttachment[]): string {
+  const missing = images.filter((image) => !query.includes(image.path));
+  if (missing.length === 0) return query;
+  const references = missing.map((image) => {
+    const name = escapePromptLine(image.name);
+    const path = escapePromptLine(image.path);
+    const mime = image.mimeType === undefined ? "" : ` (${escapePromptLine(image.mimeType)})`;
+    return `- ${name}${mime}: ${path}`;
+  });
+  return [query.trimEnd(), "# Images available as local paths", ...references]
+    .filter((part) => part !== "")
+    .join("\n\n");
+}
+
+function escapePromptLine(value: string): string {
+  return value.replace(/[\r\n]+/g, " ").trim();
 }
 
 function logRuntimePhase(

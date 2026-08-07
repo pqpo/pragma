@@ -85,6 +85,7 @@ export const DesktopRuntimeModelSchema = z.object({
     displayName: z.string().trim().min(1).max(200),
   }),
   default: z.boolean().optional(),
+  inputModalities: z.array(z.string().trim().min(1).max(100)).optional(),
   thinking: RuntimeModelThinkingSchema.optional(),
 });
 

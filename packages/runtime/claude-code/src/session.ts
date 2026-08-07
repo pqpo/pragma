@@ -1,4 +1,9 @@
-import { AgentMessageUsageSchema, type AgentMessage, type AgentMessageUsage } from "@pragma/shared";
+import {
+  AgentMessageUsageSchema,
+  type AgentMessage,
+  type AgentMessageUsage,
+  type ExpertPromptAttachment,
+} from "@pragma/shared";
 import { spawn as nodeSpawn, type ChildProcessWithoutNullStreams } from "node:child_process";
 import { randomUUID } from "node:crypto";
 import { readFile, readdir, stat, mkdir, writeFile } from "node:fs/promises";
@@ -206,6 +211,7 @@ export async function startClaudeCodeTurn(
       humanInteractionHandler: session.humanInteractionHandler,
       logger: session.logger,
       promptParts: [...turn.startupMessages.map((message) => message.content), turn.prompt],
+      attachments: turn.attachments,
       runId: turn.runId,
       source: {
         kind: "agent",
@@ -403,6 +409,7 @@ export async function compactClaudeCodeContextWindow(
     humanInteractionHandler: session.humanInteractionHandler,
     logger: session.logger,
     promptParts: ["/compact"],
+    attachments: [],
     runId,
     source: {
       kind: "agent",
@@ -488,6 +495,7 @@ async function runClaudeCodeProcess({
   humanInteractionHandler,
   logger,
   promptParts,
+  attachments,
   runId,
   source,
   emitRuntimeEvent,
@@ -503,6 +511,7 @@ async function runClaudeCodeProcess({
   readonly humanInteractionHandler?: ExpertAgentHumanInteractionHandler | undefined;
   readonly logger: PragmaLogger;
   readonly promptParts: readonly string[];
+  readonly attachments: readonly ExpertPromptAttachment[];
   readonly runId: string;
   readonly source: RuntimeStreamEvent["source"];
   readonly emitRuntimeEvent: (event: RuntimeStreamEventInput) => void;
@@ -518,6 +527,7 @@ async function runClaudeCodeProcess({
   ) => void;
   readonly onProcessClosed: (process: ChildProcessWithoutNullStreams) => void;
 }): Promise<ClaudeProcessRunResult> {
+  const userInput = await createClaudeCodeUserInput(promptParts, attachments);
   const child = (spawn ?? defaultSpawn)(executablePath, args, { cwd, env });
   let exited = false;
   const exitPromise = new Promise<{
@@ -554,7 +564,7 @@ async function runClaudeCodeProcess({
     logger.debug("runtime.claude_stderr", "Claude Code stderr", { chunk });
   });
 
-  child.stdin.write(`${JSON.stringify(createClaudeCodeUserInput(promptParts))}\n`);
+  child.stdin.write(`${JSON.stringify(userInput)}\n`);
 
   const lines = createInterface({
     input: child.stdout,
@@ -962,19 +972,49 @@ function defaultSpawn(
   });
 }
 
-function createClaudeCodeUserInput(promptParts: readonly string[]): Record<string, unknown> {
+export async function createClaudeCodeUserInput(
+  promptParts: readonly string[],
+  attachments: readonly ExpertPromptAttachment[],
+): Promise<Record<string, unknown>> {
+  const imageBlocks = await Promise.all(
+    attachments
+      .filter((attachment) => attachment.kind === "image")
+      .map(async (attachment) => ({
+        type: "image",
+        source: {
+          type: "base64",
+          media_type: requireClaudeImageMimeType(attachment.mimeType),
+          data: (await readFile(attachment.path)).toString("base64"),
+        },
+      })),
+  );
   return {
     type: "user",
     message: {
       role: "user",
-      content: promptParts
-        .filter((part) => part.trim() !== "")
-        .map((part) => ({
-          type: "text",
-          text: part,
-        })),
+      content: [
+        ...promptParts
+          .filter((part) => part.trim() !== "")
+          .map((part) => ({
+            type: "text",
+            text: part,
+          })),
+        ...imageBlocks,
+      ],
     },
   };
+}
+
+function requireClaudeImageMimeType(mimeType: string | undefined): string {
+  if (
+    mimeType === "image/jpeg" ||
+    mimeType === "image/png" ||
+    mimeType === "image/gif" ||
+    mimeType === "image/webp"
+  ) {
+    return mimeType;
+  }
+  throw new Error(`Claude Code does not support image attachment type: ${mimeType ?? "unknown"}.`);
 }
 
 function mapClaudeStreamEvent(

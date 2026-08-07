@@ -53,6 +53,7 @@ describe("Antigravity model discovery", () => {
       id: "Gemini 3.5 Flash (High)",
       displayName: "Gemini 3.5 Flash (High)",
       default: true,
+      inputModalities: ["text"],
       provider: { id: "antigravity", kind: "runtime-managed", displayName: "Antigravity" },
     });
     expect(models[1]?.thinking).toBeUndefined();

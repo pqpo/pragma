@@ -56,6 +56,7 @@ interface FakeRuntimeStats {
   executionIds: string[];
   sessionModelSelections: Array<RuntimeModelSelection | undefined>;
   turnModelSelections: Array<RuntimeModelSelection | undefined>;
+  turnAttachmentPaths: string[][];
   sessionContexts: RuntimeDriverSessionContext[];
 }
 
@@ -68,6 +69,7 @@ function createFakeRuntimeStats(): FakeRuntimeStats {
     executionIds: [],
     sessionModelSelections: [],
     turnModelSelections: [],
+    turnAttachmentPaths: [],
     sessionContexts: [],
   };
 }
@@ -110,6 +112,7 @@ function createFakeRuntime(options: FakeRuntimeOptions = {}) {
     readSession: (session) => ({ runtimeSessionId: session.id }),
     async startTurn(session, turn) {
       stats?.turnModelSelections.push(turn.modelSelection);
+      stats?.turnAttachmentPaths.push(turn.attachments.map((attachment) => attachment.path));
       const executionId = session.context.request.executionContext?.executionId;
       if (stats !== undefined && executionId !== undefined) stats.executionIds.push(executionId);
       if (options.delayMs !== undefined) {
@@ -1355,7 +1358,15 @@ describe("ExpertSession", () => {
   });
 
   it("lets a standalone Expert delegate through an explicitly injected launcher", async () => {
-    const { home, app } = await fixture();
+    const home = await mkdtemp(join(tmpdir(), "pragma-attachment-delegation-"));
+    const stats = createFakeRuntimeStats();
+    const app = createPragma({
+      pragmaHome: home,
+      runtimes: createStaticRuntimeResolver({
+        runtimes: [createFakeRuntime({ stats })],
+        defaultRuntimeId: "fake",
+      }),
+    });
     const member = await defineExpert({
       id: "member",
       name: "Member",
@@ -1380,9 +1391,24 @@ describe("ExpertSession", () => {
     });
 
     const session = await app.experts.createSession(lead);
-    const turn = await session.prompt("coordinate", { requestId: "standalone-delegation" });
+    const attachmentPath = join(home, "context.md");
+    const turn = await session.prompt("coordinate", {
+      requestId: "standalone-delegation",
+      attachments: [
+        {
+          id: "00000000-0000-4000-8000-000000000001",
+          kind: "file",
+          name: "context.md",
+          path: attachmentPath,
+        },
+      ],
+    });
 
-    await expect(turn.result).resolves.toBe("lead:member:subtask");
+    const result = await turn.result;
+    expect(result).toContain(`lead:member:# Files mentioned by the user:`);
+    expect(result).toContain(`## context.md: ${attachmentPath}`);
+    expect(result).toContain("# My request\nsubtask");
+    expect(stats.turnAttachmentPaths).toEqual([[attachmentPath], [attachmentPath]]);
     const tree = await turn.getTree();
     expect(tree.invocation.definition.kind).toBe("expert");
     expect(tree.children).toHaveLength(1);

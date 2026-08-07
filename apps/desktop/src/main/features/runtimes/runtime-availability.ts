@@ -45,18 +45,23 @@ export async function getRuntimeAvailability(
           let modelDiscoveryError: string | undefined;
           if (availability.usable && adapter.listModels !== undefined) {
             try {
-              models = (await adapter.listModels()).map(({ thinking, ...model }) => ({
-                ...model,
-                provider: { ...model.provider },
-                ...(thinking === undefined
-                  ? {}
-                  : {
-                      thinking: {
-                        ...thinking,
-                        supportedLevels: thinking.supportedLevels.map((level) => ({ ...level })),
-                      },
-                    }),
-              }));
+              models = (await adapter.listModels()).map(
+                ({ inputModalities, thinking, ...model }) => ({
+                  ...model,
+                  provider: { ...model.provider },
+                  ...(inputModalities === undefined
+                    ? {}
+                    : { inputModalities: [...inputModalities] }),
+                  ...(thinking === undefined
+                    ? {}
+                    : {
+                        thinking: {
+                          ...thinking,
+                          supportedLevels: thinking.supportedLevels.map((level) => ({ ...level })),
+                        },
+                      }),
+                }),
+              );
             } catch (error) {
               modelDiscoveryError = errorMessage(error);
             }

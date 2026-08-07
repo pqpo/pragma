@@ -28,6 +28,8 @@ import {
   RespondMissionHumanInteractionSchema,
   SendMissionMessageSchema,
   UpdateMissionOptionsSchema,
+  PickMissionAttachmentsResultSchema,
+  PickMissionAttachmentsSchema,
 } from "../../shared/contracts/missions.ts";
 import type { PragmaDesktopAPI } from "../../shared/contracts/api.ts";
 import {
@@ -107,6 +109,13 @@ export const missionsApi = {
   createMission: async (input) =>
     MissionSchema.parse(
       await ipcRenderer.invoke("missions:create", CreateMissionSchema.parse(input)),
+    ),
+  pickMissionAttachments: async (input) =>
+    PickMissionAttachmentsResultSchema.parse(
+      await ipcRenderer.invoke(
+        "missions:attachments:pick",
+        PickMissionAttachmentsSchema.parse(input),
+      ),
     ),
   updateMissionOptions: async (input) =>
     MissionSchema.parse(
@@ -195,6 +204,7 @@ export const missionsApi = {
   | "searchMissionContextStore"
   | "subscribeMissionUpdates"
   | "createMission"
+  | "pickMissionAttachments"
   | "updateMissionOptions"
   | "runMission"
   | "sendMissionMessage"

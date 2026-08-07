@@ -25,6 +25,7 @@ describe("PI Runtime contract", () => {
           id: "provider-id",
           displayName: "Provider",
         },
+        inputModalities: ["text"],
         thinking: {
           supportedLevels: [{ value: "off", label: "Off" }],
         },

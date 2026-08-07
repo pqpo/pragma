@@ -20070,7 +20070,7 @@ textarea:focus-visible,
 }
 
 .home-mission-create .mission-goal-composer {
-  grid-template-rows: auto minmax(0, 1fr) auto;
+  grid-template-rows: auto auto minmax(0, 1fr) auto;
   min-height: 360px;
   margin-top: 32px;
   overflow: visible;
@@ -20078,6 +20078,157 @@ textarea:focus-visible,
   border-radius: var(--ui-radius-lg);
   background: var(--ui-surface);
   box-shadow: var(--ui-shadow-composer);
+}
+
+.mission-composer-context-row {
+  position: relative;
+  z-index: 8;
+  display: grid;
+  min-width: 0;
+  grid-template-columns: 48px minmax(0, 1fr);
+  border-bottom: 1px solid var(--ui-line);
+}
+
+.mission-composer-context-row .mission-workspace-picker {
+  min-width: 0;
+  border-bottom: 0;
+}
+
+.mission-composer-context-row .mission-workspace-trigger {
+  border-radius: 0 var(--ui-radius-lg) 0 0;
+}
+
+.mission-attachment-picker {
+  position: relative;
+  z-index: 12;
+  border-right: 1px solid var(--ui-line);
+}
+
+.mission-attachment-picker.is-open {
+  z-index: 50;
+}
+
+.mission-attachment-trigger {
+  display: grid;
+  width: 100%;
+  min-height: 48px;
+  place-items: center;
+  padding: 0;
+  border: 0;
+  border-radius: var(--ui-radius-lg) 0 0 0;
+  outline: 0;
+  background: transparent;
+  color: var(--ui-text-secondary);
+  cursor: pointer;
+}
+
+.mission-attachment-trigger:hover,
+.mission-attachment-trigger:focus-visible,
+.mission-attachment-picker.is-open .mission-attachment-trigger {
+  background: var(--ui-surface-subtle);
+  color: var(--ui-text);
+}
+
+.mission-attachment-trigger:focus-visible {
+  box-shadow: inset 0 0 0 2px var(--ui-focus);
+}
+
+.mission-attachment-trigger:disabled {
+  color: var(--ui-text-disabled);
+  cursor: not-allowed;
+}
+
+.mission-attachment-menu {
+  position: absolute;
+  z-index: 50;
+  top: calc(100% + 8px);
+  left: 0;
+  display: grid;
+  width: 190px;
+  padding: 4px;
+  border: 1px solid var(--ui-line-strong);
+  border-radius: var(--ui-radius-lg);
+  background: var(--ui-surface);
+  box-shadow: var(--ui-shadow-overlay);
+}
+
+.mission-attachment-menu > button {
+  display: grid;
+  grid-template-columns: 20px minmax(0, 1fr);
+  align-items: center;
+  gap: 9px;
+  padding: 9px 10px;
+  border: 0;
+  border-radius: var(--ui-radius-md);
+  outline: 0;
+  background: transparent;
+  color: var(--ui-text);
+  cursor: pointer;
+  font-size: 13px;
+  text-align: left;
+}
+
+.mission-attachment-menu > button:hover,
+.mission-attachment-menu > button:focus-visible {
+  background: var(--ui-surface-subtle);
+}
+
+.mission-attachment-list {
+  display: flex;
+  min-height: 0;
+  max-height: 82px;
+  flex-wrap: wrap;
+  align-content: flex-start;
+  gap: 6px;
+  overflow: auto;
+  padding: 10px 16px 2px;
+}
+
+.mission-attachment-list.is-empty {
+  height: 0;
+  padding: 0;
+  overflow: hidden;
+}
+
+.mission-attachment-chip {
+  display: inline-flex;
+  min-width: 0;
+  max-width: 260px;
+  height: 30px;
+  align-items: center;
+  gap: 6px;
+  padding: 0 5px 0 9px;
+  border: 1px solid var(--ui-line);
+  border-radius: 999px;
+  background: var(--ui-surface-subtle);
+  color: var(--ui-text-secondary);
+  font-size: 12px;
+}
+
+.mission-attachment-chip > span {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.mission-attachment-chip > button {
+  display: grid;
+  width: 22px;
+  height: 22px;
+  flex: 0 0 auto;
+  place-items: center;
+  padding: 0;
+  border: 0;
+  border-radius: 50%;
+  background: transparent;
+  color: inherit;
+  cursor: pointer;
+}
+
+.mission-attachment-chip > button:hover,
+.mission-attachment-chip > button:focus-visible {
+  background: var(--ui-surface-raised);
+  color: var(--ui-text);
 }
 
 .home-mission-create .mission-goal-composer:focus-within {

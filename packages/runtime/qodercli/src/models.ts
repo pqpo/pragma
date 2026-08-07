@@ -128,6 +128,7 @@ export function mapQoderModel(model: ModelInfo): RuntimeModel {
     id: model.value,
     displayName: model.displayName,
     provider: { kind: "runtime-managed", id: "qoder", displayName: "Qoder" },
+    inputModalities: ["text"],
     ...(model.isDefault === true ? { default: true } : {}),
     ...(levels.length === 0
       ? {}

@@ -54,11 +54,16 @@ export interface CodexRuntimeMessage {
   readonly details?: unknown;
 }
 
-export type CodexUserInput = {
-  readonly type: "text";
-  readonly text: string;
-  readonly text_elements: readonly [];
-};
+export type CodexUserInput =
+  | {
+      readonly type: "text";
+      readonly text: string;
+      readonly text_elements: readonly [];
+    }
+  | {
+      readonly type: "localImage";
+      readonly path: string;
+    };
 
 export interface CodexTokenUsage {
   readonly inputTokens: number;

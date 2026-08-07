@@ -34,6 +34,7 @@ describe("Qoder model mapping", () => {
     ).toMatchObject({
       id: "performance",
       default: true,
+      inputModalities: ["text"],
       provider: { id: "qoder", kind: "runtime-managed" },
       thinking: {
         defaultLevel: "high",

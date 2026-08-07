@@ -9,7 +9,7 @@ vi.mock("@pragma/core/runtime/process-probe", () => ({
   runRuntimeCommand: mocks.runRuntimeCommand,
 }));
 
-import { createCodexModelDiscovery } from "../src/models.ts";
+import { createCodexModelDiscovery, parseCodexModels } from "../src/models.ts";
 
 describe("Codex model discovery cache", () => {
   beforeEach(() => {
@@ -23,12 +23,32 @@ describe("Codex model discovery cache", () => {
     const first = createCodexModelDiscovery({ executablePath });
     const second = createCodexModelDiscovery({ executablePath });
 
-    await expect(first()).resolves.toMatchObject([{ id: "gpt-first" }]);
+    await expect(first()).resolves.toMatchObject([
+      { id: "gpt-first", inputModalities: ["text", "image"] },
+    ]);
     await expect(second()).resolves.toMatchObject([{ id: "gpt-first" }]);
     expect(mocks.runRuntimeCommand).toHaveBeenCalledTimes(1);
     expect(mocks.runRuntimeCommand).toHaveBeenCalledWith(
       expect.objectContaining({ args: ["debug", "models", "--bundled"] }),
     );
+  });
+
+  it("preserves text-only model modality metadata for graceful image degradation", () => {
+    expect(
+      parseCodexModels(
+        JSON.stringify({
+          models: [
+            {
+              slug: "gpt-text",
+              display_name: "GPT Text",
+              input_modalities: ["text"],
+              priority: 1,
+              visibility: "list",
+            },
+          ],
+        }),
+      ),
+    ).toMatchObject([{ id: "gpt-text", inputModalities: ["text"] }]);
   });
 
   it("coalesces concurrent catalog loads", async () => {

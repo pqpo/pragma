@@ -3,6 +3,7 @@ import type { ContextAssemblerOptions } from "../agent/context-manager.ts";
 import type {
   AgentMessage,
   AgentMessageUsage,
+  ExpertPromptAttachment,
   RuntimeContextWindowMeasurement,
   RuntimeContextWindowUsage,
   RuntimeSessionRef as SharedRuntimeSessionRef,
@@ -69,11 +70,15 @@ export interface RuntimeModelProvider {
   readonly displayName: string;
 }
 
+export type RuntimeInputModality = "text" | "image" | (string & {});
+
 export interface RuntimeModel {
   readonly id: string;
   readonly displayName: string;
   readonly provider: RuntimeModelProvider;
   readonly default?: boolean | undefined;
+  /** Omit only when the Runtime cannot determine the model's accepted input types. */
+  readonly inputModalities?: readonly RuntimeInputModality[] | undefined;
   readonly thinking?: RuntimeModelThinking | undefined;
 }
 
@@ -152,6 +157,7 @@ export interface RuntimeSubmitRequest<TOutput = string> {
   readonly runId?: string | undefined;
   readonly modelSelection?: RuntimeModelSelection | undefined;
   readonly query: string;
+  readonly attachments?: readonly ExpertPromptAttachment[] | undefined;
   readonly output?: RuntimeOutputSchema<TOutput> | undefined;
   readonly outputRetryLimit?: number | undefined;
   readonly execution: {

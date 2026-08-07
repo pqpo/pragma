@@ -1,6 +1,7 @@
 import {
   HumanInteractionRequestSchema,
   HumanInteractionResponseSchema,
+  ExpertPromptAttachmentSchema,
   MissionExecutorRefSchema,
   MissionExecutorSchema,
   RuntimeContextWindowUsageSchema,
@@ -251,7 +252,13 @@ export const CreateMissionSchema = z.object({
     ref: MissionExecutorRefSchema,
   }),
   input: z.discriminatedUnion("kind", [
-    z.object({ kind: z.literal("prompt"), value: z.string().trim().min(1).max(100_000) }).strict(),
+    z
+      .object({
+        kind: z.literal("prompt"),
+        value: z.string().trim().min(1).max(100_000),
+        attachments: z.array(ExpertPromptAttachmentSchema).max(20).default([]),
+      })
+      .strict(),
     z
       .object({
         kind: z.literal("flow"),
@@ -262,6 +269,33 @@ export const CreateMissionSchema = z.object({
   toolPermissionMode: DesktopToolPermissionModeSchema.optional(),
   modelOverride: MissionModelOverrideSchema.optional(),
 });
+
+export const PickMissionAttachmentsSchema = z.object({
+  kind: z.enum(["image", "file", "directory"]),
+});
+
+export const PickMissionAttachmentsResultSchema = z.object({
+  attachments: z.array(ExpertPromptAttachmentSchema).max(20),
+});
+
+export const MissionAttachmentsManifestSchema = z
+  .object({
+    schemaVersion: z.literal("pragma.mission-attachments/v1"),
+    attachments: z.array(ExpertPromptAttachmentSchema).max(20),
+  })
+  .superRefine((manifest, context) => {
+    const ids = new Set<string>();
+    for (const [index, attachment] of manifest.attachments.entries()) {
+      if (ids.has(attachment.id)) {
+        context.addIssue({
+          code: "custom",
+          path: ["attachments", index, "id"],
+          message: "Mission attachment ids must be unique.",
+        });
+      }
+      ids.add(attachment.id);
+    }
+  });
 
 export const UpdateMissionOptionsSchema = z.object({
   id: MissionIdSchema,

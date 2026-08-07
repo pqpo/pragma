@@ -47,12 +47,9 @@ export function normalizePiRuntimeModels(models: readonly RuntimeModel[]): reado
       Object.hasOwn(THINKING_LEVEL_LABELS, level.value),
     );
     if (supportedLevels.length === 0) {
-      return {
-        id: model.id,
-        displayName: model.displayName,
-        provider: model.provider,
-        ...(model.default === undefined ? {} : { default: model.default }),
-      };
+      const { thinking, ...modelWithoutThinking } = model;
+      void thinking;
+      return modelWithoutThinking;
     }
     const defaultLevel = model.thinking.defaultLevel;
     return {
@@ -156,6 +153,7 @@ export function createPiModelProviderConverter(): RuntimeModelProviderConverter<
               id: provider.id,
               displayName: provider.displayName,
             },
+            inputModalities: [...model.input],
             ...(levels.length === 0
               ? {}
               : {
