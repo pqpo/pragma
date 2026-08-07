@@ -1,4 +1,14 @@
-# Pragma
+<p align="center">
+  <img src="docs/images/pragma_launcher.jpg" width="88" alt="launher">
+</p>
+
+<h1 align="center">Pragma</h1>
+
+<p align="center">
+  English | <a href="./README.zh-CN.md">简体中文</a>
+</p>
+
+<p align="center">Turn the way you work with AI into a reusable asset.</p>
 
 <p align="center">
   <a href="https://github.com/pqpo/pragma/releases"><img alt="Latest preview release" src="https://img.shields.io/github/v/release/pqpo/pragma?include_prereleases&label=preview" /></a>
@@ -8,23 +18,17 @@
 </p>
 
 <p align="center">
-  English | <a href="./README.zh-CN.md">简体中文</a>
+  <a href="https://github.com/pqpo/pragma/releases"><strong>Download</strong></a>
+  · <a href="#quick-start"><strong>Quick start</strong></a>
+  · <a href="./docs/usage/README.md"><strong>Document</strong></a>
+  · <a href="./examples/README.md"><strong>Examples</strong></a>
 </p>
-
-> **Turn the way you work with AI into a reusable asset.**
 
 Pragma is a code-public desktop application for orchestrating multiple agent harnesses, models, tools, context sources, and human decisions into reusable AI workflows.
 
 A Mission can move from one specialist to another without losing its decisions, artifacts, or accumulated experience. Pragma does not replace Claude Code, Codex, PI, Qoder CLI, or the next great agent—it makes them work together.
 
 The more you use Pragma, the more it compounds. Events from different tasks, harnesses, and models become cross-harness dynamic memory; useful experience and facts can then be promoted automatically, under policy and review controls, into a stable knowledge base or reusable Skills.
-
-<p align="center">
-  <a href="https://github.com/pqpo/pragma/releases"><strong>Download the latest preview</strong></a>
-  · <a href="#quick-start"><strong>Quick start</strong></a>
-  · <a href="./docs/usage/README.md"><strong>Documentation</strong></a>
-  · <a href="./examples/README.md"><strong>Examples</strong></a>
-</p>
 
 ![Pragma Desktop running a multi-expert mission](./docs/images/pragma_desktop_en.png)
 
@@ -42,7 +46,19 @@ Download the package for your Mac from [GitHub Releases](https://github.com/pqpo
 3. Talk with Pragma to create your own Expert, ExpertTeam, or Flow.
 4. Start a task with the result and use it as much as you like. As Missions accumulate, cross-harness memory turns repeated experience into stable knowledge and reusable Skills.
 
-The current app is not code-signed. If macOS blocks the first launch, open **System Settings → Privacy & Security** and choose **Open Anyway**. The [Desktop distribution guide](./docs/usage/desktop-distribution.md) explains the release contents, checksums, and limitations.
+The current app is not code-signed. To open a Desktop release, use this order:
+
+1. Try opening **Pragma** normally.
+2. If macOS blocks it, open **System Settings → Privacy & Security** and choose **Open Anyway**.
+3. Only if it still cannot open, and you have verified that the package came from the official release, clear the app's quarantine attribute:
+
+```bash
+sudo xattr -r -d com.apple.quarantine /Applications/Pragma.app
+```
+
+You do not need to change the global **Allow apps downloaded from** setting for this unsigned release.
+
+The [Desktop distribution guide](./docs/usage/desktop-distribution.md) explains the release contents, checksums, and limitations.
 
 ### Build Desktop from source
 

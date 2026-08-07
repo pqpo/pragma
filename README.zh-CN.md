@@ -1,4 +1,14 @@
-# Pragma
+<p align="center">
+  <img src="docs/images/pragma_launcher.jpg" width="88" alt="launcher">
+</p>
+
+<h1 align="center">Pragma</h1>
+
+<p align="center">
+  <a href="./README.md">English</a> | 简体中文
+</p>
+
+<p align="center">把你的 AI 工作方式，沉淀成可以复用的资产。</p>
 
 <p align="center">
   <a href="https://github.com/pqpo/pragma/releases"><img alt="最新预览版本" src="https://img.shields.io/github/v/release/pqpo/pragma?include_prereleases&label=preview" /></a>
@@ -7,12 +17,6 @@
   <a href="./LICENSE"><img alt="许可证：源码可用" src="https://img.shields.io/badge/license-source--available-2563EB" /></a>
 </p>
 
-<p align="center">
-  <a href="./README.md">English</a> | 简体中文
-</p>
-
-> **把你的 AI 工作方式，沉淀成可以复用的资产。**
-
 Pragma 是一个代码公开的多 Agent 编排桌面应用，用来把不同的 Agent Harness、模型、工具、上下文来源和人工决策组织成可复用的 AI 工作流。
 
 一项 Mission 可以在不同专家之间持续推进，同时保留已经形成的决策、产物和经验。Pragma 不替代 Claude Code、Codex、PI、Qoder CLI 或下一个优秀的 Agent，而是让它们协同工作。
@@ -20,9 +24,9 @@ Pragma 是一个代码公开的多 Agent 编排桌面应用，用来把不同的
 Pragma 用得越多，沉淀得越多。不同任务、Harness 与模型产生的事件会形成跨 Harness 的动态记忆；其中有价值的经验与事实，可以在策略和审阅机制控制下自动升级为稳定的知识库或可复用 Skill。
 
 <p align="center">
-  <a href="https://github.com/pqpo/pragma/releases"><strong>下载最新预览版</strong></a>
+  <a href="https://github.com/pqpo/pragma/releases"><strong>下载</strong></a>
   · <a href="#快速开始"><strong>快速开始</strong></a>
-  · <a href="./docs/usage/README.md"><strong>使用文档</strong></a>
+  · <a href="./docs/usage/README.md"><strong>文档</strong></a>
   · <a href="./examples/README.md"><strong>示例</strong></a>
 </p>
 
@@ -42,7 +46,19 @@ Pragma 用得越多，沉淀得越多。不同任务、Harness 与模型产生�
 3. 与 Pragma 对话，创建属于自己的 Expert、ExpertTeam 或 Flow。
 4. 使用刚刚创建的专家、专家团或 Flow 开始任务，然后尽情使用。随着 Mission 不断积累，跨 Harness 动态记忆会把反复出现的经验沉淀为稳定知识与可复用 Skill。
 
-当前应用尚未进行代码签名。如果 macOS 阻止首次启动，请打开**系统设置 → 隐私与安全性**并选择**仍要打开**。[桌面发行说明](./docs/usage/desktop-distribution.md)记录了发行产物、校验和与当前限制。
+当前应用尚未进行代码签名。启动 Desktop Release 时，请按以下顺序操作：
+
+1. 先正常打开 **Pragma**。
+2. 如果 macOS 阻止打开，请进入**系统设置 → 隐私与安全性**并选择**仍要打开**。
+3. 仅在仍无法启动，且已确认安装包来自官方 Release 时，才清除应用的隔离属性：
+
+```bash
+sudo xattr -r -d com.apple.quarantine /Applications/Pragma.app
+```
+
+对于这个未签名的 Release，无需修改系统全局的“允许从以下位置下载的 App”设置。
+
+[桌面发行说明](./docs/usage/desktop-distribution.md)记录了发行产物、校验和与当前限制。
 
 ### 从源码运行 Desktop
 
