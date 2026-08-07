@@ -17,6 +17,7 @@ jobs:
   verify:
     name: Verify release source
     runs-on: ubuntu-24.04
+    timeout-minutes: 15
     outputs:
       version: ${{ steps.app-version.outputs.version }}
 
@@ -72,7 +73,9 @@ jobs:
         run: pnpm typecheck
 
       - name: Test
-        run: pnpm test
+        env:
+          PRAGMA_LOG_LEVEL: error
+        run: pnpm exec turbo run test --output-logs=errors-only
 
       - name: Build
         run: pnpm build
