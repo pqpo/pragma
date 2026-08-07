@@ -1,11 +1,10 @@
 # Pragma
 
 <p align="center">
-  <img alt="Node.js &gt;= 22" src="https://img.shields.io/badge/Node.js-%3E%3D22-339933?logo=node.js&logoColor=white" />
-  <img alt="TypeScript" src="https://img.shields.io/badge/TypeScript-strict-3178C6?logo=typescript&logoColor=white" />
-  <img alt="pnpm" src="https://img.shields.io/badge/pnpm-10.12.1-F69220?logo=pnpm&logoColor=white" />
-  <img alt="ESM" src="https://img.shields.io/badge/modules-ESM-4B5563" />
-  <img alt="Tests" src="https://img.shields.io/badge/tests-Vitest-6E9F18?logo=vitest&logoColor=white" />
+  <a href="https://github.com/pqpo/pragma/releases"><img alt="最新预览版本" src="https://img.shields.io/github/v/release/pqpo/pragma?include_prereleases&label=preview" /></a>
+  <img alt="项目状态：预览版" src="https://img.shields.io/badge/status-preview-F59E0B" />
+  <img alt="桌面平台：macOS" src="https://img.shields.io/badge/desktop-macOS-111827?logo=apple" />
+  <a href="./LICENSE"><img alt="许可证：源码可用" src="https://img.shields.io/badge/license-source--available-2563EB" /></a>
 </p>
 
 <p align="center">
@@ -14,286 +13,150 @@
 
 > **把你的 AI 工作方式，沉淀成可以复用的资产。**
 
-Pragma 是一个用于创造、运行和分享 AI-native 工作方式的开放平台。一项 Mission 可以组合不同的模型、Agent Harness、专家、工具与人工决策，同时让上下文和积累的经验持续跟随工作流动。
+Pragma 是一个源码可用的桌面应用与 TypeScript 平台，用来把多个 Agent Harness、模型、工具、上下文来源和人工决策组织成可复用的 AI 工作流。
 
-Pragma 不试图替代 Gemini、Claude Code、Codex、PI、Qoder CLI，也不试图替代下一个优秀的 Agent。Pragma 让它们协同工作。
-
-## 为什么需要 Pragma？
-
-真正高质量的 AI 工作，很少只发生在一个对话窗口里。有经验的 AI 使用者知道如何：
-
-- 为每类任务选择合适的模型与 Harness；
-- 在切换 Agent 时保留已经形成的决策和约束；
-- 在正确的时机引入正确的上下文；
-- 让代码实现与独立审查彼此隔离；
-- 把成功路径和失败经验变成下一次更好的方法。
-
-今天，这些知识大多存在于个人头脑和零散对话中。每次切换工具，都要重新复制 Prompt、复述背景、搬运产物，并不断丢失经验。
-
-Pragma 把这种不可见的个人技巧，变成显式、可执行、可分享的工作方式。
-
-## Pragma 的三项核心资产
+一项 Mission 可以在不同专家之间持续推进，同时保留已经形成的决策、产物和经验。Pragma 不替代 Claude Code、Codex、PI、Qoder CLI 或下一个优秀的 Agent，而是让它们协同工作。
 
 <p align="center">
-  <img src="./docs/images/pragma_agent_cn.png" alt="Pragma Agent 中文介绍" width="800" />
+  <a href="https://github.com/pqpo/pragma/releases"><strong>下载 v0.2 预览版</strong></a>
+  · <a href="#快速开始"><strong>快速开始</strong></a>
+  · <a href="./docs/usage/README.md"><strong>使用文档</strong></a>
+  · <a href="./examples/README.md"><strong>示例</strong></a>
 </p>
 
-Pragma 围绕用户使用 AI 时逐步沉淀的三类长期资产展开：
+![Pragma Desktop 正在运行一项多专家 Mission](./docs/images/pragma_desktop_cn.png)
 
-1. **AI 工作方式。** Expert、ExpertTeam 与 Flow 可以自由组合。不同任务可以选择不同的 Agent Harness、大模型、工具、权限与上下文，让有效的方法变成显式、可复用、可版本化、可分享的系统。
-2. **私有知识。** Pragma 将所有上下文抽象为 `ContextStore`，可对接文件系统、关系型数据库、向量数据库、记忆系统等任意数据源。不同任务、Harness 与模型产生的消息事件会进入统一的 Memory Pipeline。不同记忆目标可以使用各自可扩展的提炼逻辑：当前支持 episodic memory 与 semantic memory，编程任务还可以通过扩展 Pipeline 之上的提炼层加入 code-graph memory。动态记忆还可以按策略蒸馏为稳定的知识库或可复用 Skill。
-3. **私有评估集。** 判断 AI 系统质量离不开测评。私有评估集记录团队真正关心的任务、预期与回归信号；工作方式、上下文来源、Harness 或模型的任何改动都可能影响整体系统性能，因此评估集是比较版本、控制回归和持续改进的长期资产。
+> [!IMPORTANT]
+> Pragma 当前仍处于预览阶段。v0.2 Desktop Release 提供未签名的 macOS Apple Silicon 与 Intel 安装包。将其用于关键工作前，请先阅读[当前状态](#当前状态)。
 
-三类资产会相互增强：工作方式产生执行证据，记忆把证据沉淀为知识，评估集验证改动是否真正提升系统质量。
+## 快速开始
 
-Pragma 从设计上就是开放系统。AI 工作方式可以保存为 `.pragma` 文件并分享给他人；Desktop 可以直接导入，其他系统也可以通过 Pragma SDK 中的 `@pragma/interpreter` 加载，再使用 `@pragma/core` 编译并接入自己的运行环境。
+### 运行 Pragma Desktop
 
-## Pragma 的差异化
+从 [GitHub Releases](https://github.com/pqpo/pragma/releases) 下载适合当前 Mac 的安装包，安装后：
 
-### 每一步都选择最合适的模型 × Harness
+1. 打开**设置**，连接模型提供商或本机已经安装的 Runtime。
+2. 选择允许 Pragma 使用的 Workspace。
+3. 新建任务，描述你希望运行的专家、团队或工作流。
 
-模型不等于完整的 Agent。同一个模型运行在普通对话、Coding Harness、浏览器 Agent 或专业系统中，会展现出完全不同的能力。
+当前应用尚未进行代码签名。如果 macOS 阻止首次启动，请打开**系统设置 → 隐私与安全性**并选择**仍要打开**。[桌面发行说明](./docs/usage/desktop-distribution.md)记录了发行产物、校验和与当前限制。
 
-Pragma 把 **模型、Harness、工具、权限与上下文** 的组合视为真正的执行能力。不同 Expert 和 Flow 步骤可以使用不同组合，而不必把整套工作方式锁定在某一个厂商的执行环境里。
+### 从源码运行 Desktop
 
-### 一项 Mission，共享一套渐进式上下文
+环境要求：Node.js 22 或更高版本，pnpm 10.12.1。
 
-上下文应该随着工作逐步生长，而不是每次切换工具都从头开始。Pragma 把需求、决策、知识、产物、评审意见与任务状态组织成统一的渐进式上下文，让每个阶段都能在前序成果上继续工作。
+```bash
+git clone https://github.com/pqpo/pragma.git
+cd pragma
+pnpm install --frozen-lockfile
+pnpm --filter @pragma/desktop dev
+```
 
-这并不意味着把全部历史无差别地发送给每个 Agent。稳定约束可以始终可用，相关知识可以按需加载，大型产物可以通过引用传递。每个 Expert 只在需要的时候获得真正需要的信息。
+### 体验 SDK 与 Runtime Adapter
 
-这才是跨 Harness 的上下文传递：不是假装把一个产品的私有 Session 搬进另一个产品，而是让工作的真实含义持续向前流动。
+仓库提供的是可以直接运行的完整示例，而不是省略关键装配的 API 片段：
 
-### Expert 可以组合成可审计的 AI-native 系统
+```bash
+# ContextStore 操作，不需要模型凭证
+pnpm --filter @pragma/examples example:context
 
-Pragma 的基础单元可以在每个层级复用：
+# 使用本机已安装且已登录的 Agent CLI
+pnpm --filter @pragma/examples example:runtime-codex
+pnpm --filter @pragma/examples example:runtime-claude-code
+```
+
+[示例指南](./examples/README.md)还包括 Expert Session、委派、ExpertTeam、Flow、人工评审闸门、MCP、Skill、Plugin、Memory、恢复与可移植 Bundle。
+
+## Pragma 沉淀的三类资产
+
+<p align="center">
+  <img src="./docs/images/pragma_agent_cn.png" alt="Pragma 相互增强的三类资产：工作流、私有知识与私有评估集" width="800" />
+</p>
+
+### AI 工作方式
+
+自由组合 Expert、ExpertTeam、Flow、子 Flow、工具与人工确认。每个步骤都可以绑定适合当前任务的模型、Agent Harness、权限与上下文。最终形成的工作方式可以被版本化、评测、导出和分享。
+
+### 私有知识
+
+Pragma 将上下文抽象为 Host 管理的 `ContextStore`，避免知识被困在单个对话产品里。Desktop 将 Mission 级工作上下文与有证据支持的 episodic、semantic memory 结合，并能把经过审阅的结果沉淀为稳定知识或可复用 Skill。
+
+ContextStore 合约可以扩展。当前仓库提供 In-memory、JSON、文件系统、Mission Board 和 Memory-backed 实现；其他数据库或检索系统可以由 Host Adapter 接入。
+
+### 私有评估集
+
+可复用的工作流需要回归信号。Evaluation 记录真正重要的任务和预期，使 Prompt、Flow、模型、Runtime 或上下文来源发生变化时，可以在系统层验证效果，而不是只判断一次演示是否成功。
+
+三类资产会相互增强：工作流产生证据，Memory 把证据沉淀为知识，Evaluation 判断下一次修订是否真的更好。
+
+## 为什么使用 Pragma
+
+- **每一步选择最合适的模型 × Harness。** 同一个模型位于 Coding Agent、浏览器 Agent 或领域工具中时，是不同的执行能力。Pragma 可以路由任务，而不把整套工作流锁定到一个厂商。
+- **上下文贯穿整项 Mission。** 需求、决策、产物、评审意见和任务状态通过值或受控引用向后传递。每个 Expert 获得真正需要的上下文，不必重放全部对话。
+- **自由组合，同时保留治理。** Expert、ExpertTeam 与 Flow 都可以成为步骤或受治理的工具。嵌套任务仍处于同一 Execution 中，交接、输出、审批、用量、取消和恢复形成统一审计链。
+- **由人保持控制。** Flow 可以暂停并等待澄清、审批或评审；Desktop 管理本地 Workspace 访问和权限决策。
+- **让工作方式跨系统移动。** `.pragma` Bundle 可以携带可移植 DSL 与选定的项目资产。Desktop 可以直接导入；其他 Host 可以通过 `@pragma/interpreter` 加载，并使用 `@pragma/core` 运行编译后的对象。
 
 ```text
 Flow        = Expert + ExpertTeam + 子 Flow + 人工确认
 Expert Tool = Expert + ExpertTeam + Flow
 ```
 
-一个 Flow 可以把某个步骤交给专业 Expert，把另一个步骤交给协作型 ExpertTeam，还可以把一整套子 Flow 当作步骤复用。一个 Expert 也可以把其他 Expert、ExpertTeam 或 Flow 暴露为受治理的 Tool，并自主判断何时调用。
+## 示例：一项 AI-native 研发 Mission
 
-这种组合不会产生一组彼此割裂的 Agent Session。Compiler 会校验完整依赖图并拒绝循环依赖；所有嵌套工作都保留在同一个 Execution 中，交接、输出、工具调用、人工审批、用量、取消与恢复共同形成一条完整审计链。
+![AI 协作研发工作流示例](./docs/images/pragma_flow_cn.png)
 
-### 记忆，是值得长期保留的特殊上下文
+在这套示例配置中，UI 设计、需求讨论、技术架构、实现与独立审查分别使用不同的专家。已经确认的决策和产物会在阶段之间持续传递，有价值的事实、经验与 Skill 则可以继续服务下一项 Mission。
 
-Pragma 把 Memory 看成一种特殊 Context，而不是独立的黑盒系统。执行过程中产生的证据，可以从短期任务状态逐步演化为：
+图中的模型与 Runtime 名称只是示例。路由属于 Host Binding，可复用的工作方式并不会与这些特定提供商绑定。
 
-- **Experience**：发生过什么，包括成功路径与失败路径；
-- **Fact**：有证据支持、值得长期保留的知识、约束与偏好；
-- **Skill**：可复用的方法、反模式与恢复手册。
+## 选择使用方式
 
-不同任务、Harness 与模型产生的消息事件都会进入统一的 Memory Pipeline。不同记忆目标可以挂载不同的提炼逻辑，因此 episodic、semantic 以及未来的 code-graph memory 可以独立演进；再通过策略将动态记忆蒸馏为稳定知识库或可复用 Skill。
+### Desktop
 
-最终保留下来的不只是对话历史。一次完成的 Mission，可以改善下一次 Mission 被理解和执行的方式。
+使用 Desktop 配置模型提供商与本地 Runtime，在 Studio 中创建 Expert 和 Flow，运行 Mission，检查 Context 与 Memory，管理 Evaluation，以及导入或导出 `.pragma` Bundle。
 
-### 工作方式可以跨系统移植
+### Pragma DSL
 
-AI-native 工作方式不只是一组 Prompt。它还描述谁来完成任务、使用哪个模型与 Harness、提供什么上下文、阶段之间如何交接、哪里需要人工确认，以及如何验证最终结果。
+Pragma DSL 使用版本化 YAML 描述 Expert、ExpertTeam、Flow、Capability、ContextStore、RuntimeProfile、Automation 与 Evaluation。Interpreter 负责解析、链接、校验、迁移、编译和重新生成定义。可以从[可移植 Bundle 示例](./examples/projects/bundle-transfer/pragma.yaml)和 [DSL 架构说明](./docs/architecture/pragma-yaml-dsl.md)开始。
 
-Pragma 使用可移植 DSL 表达这套方法。解释器（Interpreter）与编译器（Compiler）可以解析、校验、链接、编译并重新生成定义。它既可以运行在 Pragma Desktop，也可以嵌入你自己的 Agent 系统，或者连接未来的新 Host，而不必围绕某个封闭执行引擎重新编写整套方法。
+### TypeScript Packages
 
-### 可以接入任何 Agent 系统
+使用 `@pragma/core` 将执行模型嵌入其他 Host，或使用 `@pragma/interpreter` 加载可移植定义与 Bundle。可运行的集成示例位于 [`examples/src`](./examples/src/README.md)；[Bundle 迁移说明](./docs/architecture/desktop-bundle-transfer.md)解释了 Host Binding 与可移植边界。
 
-Pragma 是开放编排层，不是封闭的 Agent 世界。Runtime Adapter 用来连接专业 Harness，Model Provider 用来连接商业模型、模型网关与本地模型，Plugin 用来连接工具和领域能力，而 Host 始终拥有 UI、存储、权限与部署方式的控制权。
+## 当前状态
 
-当更好的模型和 Agent 产品出现时，它们可以直接加入系统，而不需要废弃已经沉淀的工作方式。
+| 领域                    | v0.2 状态                                                                       |
+| ----------------------- | ------------------------------------------------------------------------------- |
+| 项目成熟度              | Preview，仍可能发生 Breaking Change                                             |
+| Desktop Release         | macOS Apple Silicon 与 Intel，未签名                                            |
+| Windows / Linux Desktop | 当前公开 Release 不提供                                                         |
+| Runtime Adapter         | 已实现 Claude Code、Codex、PI 与 Qoder CLI Package                              |
+| 组合能力                | Expert、ExpertTeam、Flow、子 Flow 与 HumanTask                                  |
+| Context                 | Host 合约，以及 In-memory、JSON、文件系统、Mission Board 与 Memory-backed Store |
+| Memory                  | Evidence Pipeline、Episodic 与 Semantic Module；知识和 Skill 提炼仍是预览能力   |
+| Evaluation              | 版本化 Evaluation 与 Flow Run Dry 执行                                          |
+| 可移植性                | `.pragma` Bundle 导入、导出、校验、Binding 与编译                               |
+| 发行能力                | 尚无代码签名与自动更新                                                          |
 
-## 示例：一次编码任务，组合六位 AI 专家
+实现边界详见[当前架构概览](./docs/architecture/current-architecture-overview.md)。
 
-![Pragma desktop app running](./docs/images/pragma_flow_cn.png)
+## 文档
 
-这并不是简单地依次调用几个模型：
-
-1. UI 产物和设计理由成为需求讨论的上下文。
-2. 已确认需求、待决问题和仓库约束继续流入技术方案阶段。
-3. 实现 Expert 获得批准后的方案、相关文件与验收标准，而不是几段对话的有损复制。
-4. Code Review 从独立视角开始，并返回结构化评审意见。
-5. Codex 逐条对照仓库复核，只修复真实问题，并验证最终结果。
-6. 稳定事实、有价值的经验和可复用方法成为下一项 Mission 的上下文。
-
-整套方法——角色、路由、上下文、交接、评审闸门和完成标准——都可以被版本化、评测、改进与分享。
-
-## 理念架构
-
-- **工作方式与执行环境分离**：只描述一次方法，再为它绑定当下最合适的 Runtime。
-- **一切皆可组合**：Expert、ExpertTeam 与 Flow 都可以成为更大系统中的步骤或 Tool。
-- **上下文持续流动**：知识和结果可以跨越单个模型、Session 与 Harness。
-- **复杂度渐进增加**：从一个 Expert 开始，再逐步扩展到 ExpertTeam、Flow、人工审批、评测与记忆。
-- **Host 保持控制权**：Pragma 可以驱动自己的 Desktop，也可以成为其他 Agent 产品的一部分。
-
-## 使用 Pragma
-
-### 从 Desktop 开始
-
-#### 从 Release 下载
-
-你可以从 [Releases](https://github.com/pqpo/pragma/releases) 页面下载最新的 Desktop 应用。
-
-> **macOS 用户请注意：** Release 中的应用没有经过代码签名。安装后需要执行以下命令以移除隔离属性：
->
-> ```bash
-> sudo xattr -r -d com.apple.quarantine /Applications/Pragma.app
-> ```
-
-#### 从源码编译
-
-环境要求：
-
-```text
-Node.js >= 22
-pnpm 10.12.1
-```
-
-```bash
-pnpm install
-pnpm --filter @pragma/desktop run prepare:electron
-pnpm --filter @pragma/desktop dev
-```
-
-![Pragma 桌面应用运行截图](./docs/images/pragma_desktop_cn.png)
-
-Desktop 是启动 Mission、选择 Workspace，并使用本地或已连接 Runtime 的最简单入口。
-
-Studio 可以把任意 Expert、ExpertTeam 或 Flow 导出为可移植的 `.pragma` Bundle。导出文件会以规范化 DSL 包含它的可复用依赖图，并可选择携带 Capability、Plugin、知识库和 Flow 视觉布局；Secret、本地 Session、Mission 与机器相关路径始终留在本机。另一台 Desktop 可以直接导入，你自己的 Agent 系统也可以把导出的文件直接交给 `@pragma/interpreter`，无需解包或依赖 Desktop 代码，再将其中的根资源编译成可运行的 `@pragma/core` 对象。
-
-### 使用 Pragma DSL 描述可复用 AI-native 系统
-
-下面的片段展示了两个方向的组合。Expert 可以把 Expert、ExpertTeam 或 Flow 作为 Tool：
-
-```yaml
-apiVersion: pragma/v3
-kind: Expert
-metadata:
-  id: 0tyw4e02pw3d8vjt
-  name: Delivery Orchestrator
-  description: Coordinates a complete delivery mission.
-spec:
-  scope: Own delivery quality from design through final verification.
-  instructions: Choose the appropriate specialist or governed workflow for each task.
-  tools:
-    - adapter: pragma.tool.call@v1
-      target: { ref: expert:3sfd30h5017wd17d }
-      tool: { name: ask_reviewer, description: Ask the independent reviewer. }
-    - adapter: pragma.tool.call@v1
-      target: { ref: team:vyv9pwwzaksth2dd }
-      tool: { name: ask_delivery_team, description: Ask the delivery team. }
-    - adapter: pragma.tool.call@v1
-      target: { ref: flow:ffdfk2cczgqjda7q }
-      tool: { name: run_quality_gate, description: Run the quality-gate Flow. }
-```
-
-Flow 则可以把 Expert、ExpertTeam 和子 Flow 组合成显式、可审计的执行步骤：
-
-```yaml
-apiVersion: pragma/v3
-kind: Flow
-metadata:
-  id: t9ne4d8njvvxv2ea
-  name: AI-native Delivery
-  description: Coordinates planning, team review, and a reusable quality gate.
-spec:
-  input:
-    schema:
-      type: object
-      properties: { brief: { type: string } }
-      required: [brief]
-      additionalProperties: false
-  graph:
-    start: coordinate
-    steps:
-      coordinate:
-        expert: { ref: expert:0tyw4e02pw3d8vjt }
-        prompt:
-          segments:
-            - { text: "Plan this delivery: " }
-            - { variable: { source: flow-input, path: [brief] } }
-      team_review:
-        team: { ref: team:vyv9pwwzaksth2dd }
-        prompt: { segments: [{ text: "Review the delivery plan and implementation." }] }
-      quality_gate:
-        flow: { ref: flow:ffdfk2cczgqjda7q }
-        input: { brief: "$flow.input.brief" }
-    transitions:
-      coordinate: team_review
-      team_review: quality_gate
-      quality_gate: { end: true }
-```
-
-同一种语言可以描述 Expert、ExpertTeam、Flow、Capability、Context、Runtime Profile 与 Evaluation。定义可以跟随项目保存、从编译后的对象重新生成、在 Git 中评审、从 Desktop 导出，并在不同 Host 之间移动。
-
-### 在自己的 Agent 系统中加载并运行 Desktop Bundle
-
-Desktop 导出的 `.pragma` 文件实现了由 Interpreter 定义的 `pragma.bundle/v1` 协议。自有 Host 可以直接加载这个归档文件，选择其中一个导出根资源，使用自己的 Runtime 与 Host binding 解析该根资源的依赖闭包，再通过 `@pragma/core` 运行编译后的对象：
-
-```ts
-import { createPragma, type Flow } from "@pragma/core";
-import { loadPragmaProject } from "@pragma/interpreter";
-
-const project = await loadPragmaProject({
-  kind: "bundle",
-  source: { kind: "file", path: "./ai-native-delivery.pragma" },
-});
-
-try {
-  // 一个 Bundle 可以导出多个根资源；本例运行其中的 Flow 根资源。
-  const root = project.bundle?.manifest.roots.find((ref) => ref.startsWith("flow:"));
-  if (root === undefined) throw new Error("Bundle 中没有导出的 Flow 根资源。");
-
-  const prepared = await project.prepareCompile<Flow>(root, {
-    workspace: process.cwd(),
-    runtimes: myRuntimeResolver,
-  });
-  if (prepared.status !== "ready") {
-    // `needs_binding` 会列出集成方在编译前必须提供的 Runtime、Capability、
-    // Secret 或其他 Host requirement。
-    throw new Error(`Bundle 根资源暂不可运行：${JSON.stringify(prepared, null, 2)}`);
-  }
-
-  const app = createPragma({ runtimes: myRuntimeResolver });
-  const execution = await app.flows.start(prepared.compiled.value, {
-    input: { brief: "Build and verify the next product release." },
-  });
-
-  const output = await execution.subscribeOutput({ scope: { kind: "all" } });
-  const streaming = (async () => {
-    try {
-      for await (const item of output) {
-        process.stdout.write(item.delta ?? String(item.value ?? ""));
-      }
-    } finally {
-      await output.close();
-    }
-  })();
-
-  const result = await execution.result;
-  await streaming;
-
-  console.log("Final result:", result);
-
-  // 同一个 Execution 提供完整审计事件。
-  const audit = await execution.listEvents({ scope: { kind: "all" }, limit: 1_000 });
-  console.log("Audit events:", audit.items.length);
-} finally {
-  // Bundle Project 使用由 Interpreter 管理的临时解包目录。
-  await project.dispose();
-}
-```
-
-整个过程不需要经过 Desktop 的导入功能：Interpreter 会校验归档和 Lock，解析所选根资源的导出依赖图，再将其编译成可运行的 Core 对象。如果 `prepareCompile()` 返回 `needs_binding`，你的 Host 可以先通过 Interpreter 的 binding API 满足报告出的 Bundle requirements，再进行编译。`scope: { kind: "all" }` 会同时获得根 Flow 及其嵌套 Expert、ExpertTeam 与子 Flow 的流式输出。你的 Agent 系统仍然掌控 Runtime 选择、权限、持久化、产品体验和基础设施，同时复用在 Desktop 中构建的系统。
-
-## 进一步了解
-
-- [产品定位与差异化](./docs/strategy/pragma-positioning-and-competitive-differentiation.md)
 - [使用指南](./docs/usage/README.md)
-- [上下文](./docs/usage/context.md)
-- [记忆](./docs/usage/memory.md)
-- [Desktop 可移植 Bundle](./docs/architecture/desktop-bundle-transfer.md)
+- [Expert 与 Session](./docs/usage/agents.md)
+- [Flow 与常用范式](./docs/usage/flows.md)
+- [Context](./docs/usage/context.md)
+- [Memory](./docs/usage/memory.md)
+- [Plugin](./docs/usage/plugins.md)
+- [可移植 Desktop Bundle](./docs/architecture/desktop-bundle-transfer.md)
 - [Agent 架构](./docs/architecture/agent-core-architecture.md)
-- [参与贡献](./CONTRIBUTING.md)
+- [产品定位与差异化](./docs/strategy/pragma-positioning-and-competitive-differentiation.md)
 
-## License
+## 参与贡献与获得支持
 
-Pragma 使用 [Pragma Source Available License 1.0](./LICENSE)。Pragma 名称、Logo 和官方身份的使用方式由[商标政策](./TRADEMARKS.md)管理。
+提交 Pull Request 前请阅读[贡献指南](./CONTRIBUTING.md)。可复现 Bug 和功能提案请提交到 [GitHub Issues](https://github.com/pqpo/pragma/issues)；报告安全漏洞时请遵循[安全策略](./SECURITY.md)。
+
+## 许可证
+
+Pragma 使用 [Pragma Source Available License 1.0](./LICENSE)。这是自定义的源码可用许可证，不是 OSI 批准的开源许可证。完整条款以许可证正文为准；其中，面向第三方提供托管服务或进行商业嵌入需要事先取得书面授权。Pragma 名称、Logo 与官方视觉标识还受到[商标政策](./TRADEMARKS.md)约束。
