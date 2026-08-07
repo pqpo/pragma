@@ -7,6 +7,7 @@ import {
   PragmaExpertTeamResourceSchema,
   type PragmaFlowResource,
   type PragmaExpertResource,
+  type PragmaExpertTeamResource,
 } from "@pragma/interpreter/ast";
 import type {
   DesktopRuntimeAvailability,
@@ -360,7 +361,31 @@ describe("PragmaResourceDetailFragment", () => {
       spec: {
         coordinator: { ref: "expert:0000000000000001" },
         members: [{ ref: "expert:0000000000000002" }],
-        instructions: "Check evidence.",
+        instructions: `# Evidence review
+
+**Verify** evidence before declaring work complete.
+
+> *Important note:* keep evidence traceable.
+
+- [x] Read evidence
+- Summarize findings
+
+Use \`team:quality\` for the handoff.
+
+| Check | Status |
+| --- | --- |
+| Evidence | Complete |
+
+[Open evidence](https://example.com)
+
+![evidence diagram](https://example.com/evidence.png)
+
+\`\`\`ts
+const complete = true;
+\`\`\`
+
+<script>window.alert("unsafe")</script>
+<img src=x onerror="window.alert('unsafe-image')">`,
         delegation: { maxConcurrency: 2, maxDepth: 5 },
       },
     });
@@ -400,6 +425,67 @@ describe("PragmaResourceDetailFragment", () => {
     expect(html).not.toContain("expert:0000000000000002");
     expect(html).toContain("2 members");
     expect(html).toContain("Delete");
+    expect(html).toContain("<h1>Evidence review</h1>");
+    expect(html).toContain("<strong>Verify</strong>");
+    expect(html).toContain("<blockquote");
+    expect(html).toContain("<em>Important note:</em>");
+    expect(html).toContain('type="checkbox"');
+    expect(html).toContain("<code>team:quality</code>");
+    expect(html).toContain("<table>");
+    expect(html).toContain("<thead>");
+    expect(html).toContain("<tbody>");
+    expect(html).toContain("<th>Check</th>");
+    expect(html).toContain("<td>Complete</td>");
+    expect(html).toContain('href="https://example.com" target="_blank" rel="noreferrer"');
+    expect(html).toContain('class="markdown-image-placeholder"');
+    expect(html).toContain("[Image: evidence diagram]");
+    expect(html).toContain('<code class="language-ts">const complete = true;</code>');
+    expect(html).not.toContain("<script");
+    expect(html).not.toContain("<img");
+    expect(html).not.toContain("src=");
+    expect(html).not.toContain("onerror");
+    expect(html).not.toContain('window.alert("unsafe")');
+    expect(html).not.toContain("unsafe-image");
+
+    const teamWithoutInstructions = PragmaExpertTeamResourceSchema.parse({
+      ...team,
+      spec: { ...team.spec, instructions: undefined },
+    });
+    const emptyInstructionsHtml = renderToStaticMarkup(
+      <PragmaResourceDetailFragment
+        resource={teamWithoutInstructions}
+        project={{ ...project, resources: [...experts, teamWithoutInstructions] }}
+        experts={studioExperts}
+        runtimes={runtimes}
+        onOpenExpert={() => undefined}
+        onBack={() => undefined}
+        onEdit={() => undefined}
+        onDelete={async () => undefined}
+      />,
+    );
+
+    expect(emptyInstructionsHtml).toContain("No instructions provided.");
+    expect(emptyInstructionsHtml).not.toContain("team-instructions-markdown");
+
+    const whitespaceTeam = {
+      ...team,
+      spec: { ...team.spec, instructions: "   \n  " },
+    } as unknown as PragmaExpertTeamResource;
+    const whitespaceInstructionsHtml = renderToStaticMarkup(
+      <PragmaResourceDetailFragment
+        resource={whitespaceTeam}
+        project={{ ...project, resources: [...experts, whitespaceTeam] }}
+        experts={studioExperts}
+        runtimes={runtimes}
+        onOpenExpert={() => undefined}
+        onBack={() => undefined}
+        onEdit={() => undefined}
+        onDelete={async () => undefined}
+      />,
+    );
+
+    expect(whitespaceInstructionsHtml).toContain("No instructions provided.");
+    expect(whitespaceInstructionsHtml).not.toContain("team-instructions-markdown");
   });
 
   it("shows Flow details before opening the Flow editor", () => {

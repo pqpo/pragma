@@ -37,6 +37,7 @@ import {
 } from "../../../../shared/contracts/index.ts";
 
 import { CharacterCount } from "../../components/CharacterCount.tsx";
+import { MarkdownContent } from "../../components/MarkdownContent.tsx";
 import { errorMessage } from "../../lib/errors.ts";
 import { AssetMemoryPolicySection } from "../settings/AssetMemoryPolicySection.tsx";
 import { StudioScreenFrame } from "./StudioScreenFrame.tsx";
@@ -507,6 +508,7 @@ function TeamDetail(props: {
   const members = uniqueMemberRefs
     .filter((ref) => ref !== coordinatorRef)
     .map((ref) => buildExpert(ref));
+  const instructions = props.resource.spec.instructions?.trim();
 
   return (
     <div className="team-detail-content">
@@ -568,7 +570,13 @@ function TeamDetail(props: {
             <CaretDown size={18} aria-hidden="true" />
           </span>
         </summary>
-        <p>{props.resource.spec.instructions?.trim() || t("noInstructions")}</p>
+        {instructions ? (
+          <div className="team-instructions-markdown">
+            <MarkdownContent source={instructions} />
+          </div>
+        ) : (
+          <p className="team-instructions-empty">{t("noInstructions")}</p>
+        )}
       </details>
     </div>
   );
