@@ -82,18 +82,35 @@ export class ExecutionWorkHistoryReader {
   async listRecords(input: {
     readonly executionIds: readonly string[];
     readonly rootSessionId?: string | undefined;
-  }): Promise<readonly ExecutionWorkRecord[]> {
+  }, preloadedData?: Map<
+    string,
+    {
+      readonly events: readonly import("@pragma/shared").ExecutionEvent[];
+      readonly invocations: readonly Invocation[];
+    }
+  >): Promise<readonly ExecutionWorkRecord[]> {
     const records = new Map<string, MutableWorkRecord>();
     const recordByInvocationId = new Map<string, string>();
     const runtimeRecordBySessionId = new Map<string, string>();
 
     for (const executionId of input.executionIds) {
-      const [execution, invocations, agents, events] = await Promise.all([
-        this.store.get(executionId),
-        this.store.listInvocations(executionId),
-        this.store.listAgents(executionId),
-        this.store.readEvents(executionId),
-      ]);
+      const preloaded = preloadedData?.get(executionId);
+      const [execution, invocations, agents, events] = preloaded
+        ? await Promise.all([
+            this.store.get(executionId),
+            Promise.resolve(preloaded.invocations),
+            this.store.listAgents(executionId),
+            Promise.resolve(preloaded.events),
+          ])
+        : await Promise.all([
+            this.store.get(executionId),
+            this.store.listInvocations(executionId),
+            this.store.listAgents(executionId),
+            this.store.readEvents(executionId),
+          ]);
+      if (preloadedData !== undefined && !preloadedData.has(executionId)) {
+        preloadedData.set(executionId, { events, invocations });
+      }
       if (execution === undefined) continue;
       const rootInvocation = invocations.find(
         (invocation) => invocation.invocationId === execution.rootInvocationId,
@@ -265,18 +282,40 @@ export class ExecutionWorkHistoryReader {
       .toSorted((left, right) => left.createdAt.localeCompare(right.createdAt));
   }
 
-  async readOutput(input: {
-    readonly executionIds: readonly string[];
-    readonly record: ExecutionWorkRecord;
-  }): Promise<readonly AgentMessageRecord[]> {
+  async readOutput(
+    input: {
+      readonly executionIds: readonly string[];
+      readonly record: ExecutionWorkRecord;
+    },
+    preloadedData?: Map<
+      string,
+      {
+        readonly events: readonly import("@pragma/shared").ExecutionEvent[];
+        readonly invocations: readonly Invocation[];
+      }
+    >,
+  ): Promise<readonly AgentMessageRecord[]> {
     const invocationIds = new Set(input.record.tasks.map((task) => task.invocationId));
     const records: AgentMessageRecord[] = [];
     for (const executionId of input.executionIds) {
-      for (const event of await this.store.readEvents(executionId)) {
+      const preloaded = preloadedData?.get(executionId);
+      const [events, invocations] = preloaded
+        ? [preloaded.events, preloaded.invocations]
+        : await Promise.all([
+            this.store.readEvents(executionId),
+            this.store.listInvocations(executionId),
+          ]);
+      if (preloadedData !== undefined && !preloadedData.has(executionId)) {
+        preloadedData.set(executionId, { events, invocations });
+      }
+      const invocationMap = new Map(
+        invocations.map((invocation) => [invocation.invocationId, invocation]),
+      );
+      for (const event of events) {
         if (event.type !== "invocation.message.appended") continue;
         const parsed = InvocationMessageAppendedEventSchema.safeParse(event);
         if (!parsed.success) continue;
-        const invocation = await this.store.getInvocation(executionId, event.invocationId);
+        const invocation = invocationMap.get(event.invocationId);
         if (invocation === undefined) continue;
         const source = parsed.data.data.source;
         const matches =
@@ -311,6 +350,31 @@ export class ExecutionWorkHistoryReader {
           )
         : time;
     });
+  }
+
+  async readRecordsAndOutput(input: {
+    readonly executionIds: readonly string[];
+    readonly rootSessionId?: string | undefined;
+    readonly targetRecordId: string;
+  }): Promise<{
+    readonly records: readonly ExecutionWorkRecord[];
+    readonly output: readonly AgentMessageRecord[];
+  }> {
+    const preloadedData = new Map<
+      string,
+      {
+        readonly events: readonly import("@pragma/shared").ExecutionEvent[];
+        readonly invocations: readonly Invocation[];
+      }
+    >();
+    const records = await this.listRecords(
+      { executionIds: input.executionIds, rootSessionId: input.rootSessionId },
+      preloadedData,
+    );
+    const record = records.find((candidate) => candidate.recordId === input.targetRecordId);
+    if (record === undefined) throw new Error(`Mission work record not found: ${input.targetRecordId}`);
+    const output = await this.readOutput({ executionIds: input.executionIds, record }, preloadedData);
+    return { records, output };
   }
 }
 
