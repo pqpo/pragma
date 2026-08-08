@@ -1,7 +1,8 @@
-import { chmod, mkdir, mkdtemp, writeFile } from "node:fs/promises";
+import { mkdtemp } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
+import * as coreModule from "@pragma/core";
 import { defineRuntimeDriver } from "@pragma/core";
 import { describe, expect, it, vi } from "vitest";
 
@@ -237,23 +238,17 @@ describe("Antigravity CLI tool permission mapping", () => {
 
 describe("built-in Runtime process environments", () => {
   it("injects one recovered environment into CLI availability probes and skips it for PI", async () => {
-    const root = await mkdtemp(join(tmpdir(), "pragma-runtime-factory-path-"));
-    const binDirectory = join(root, "bin");
-    await mkdir(binDirectory);
-    await Promise.all(
-      ["codex", "claude", "qodercli", "agy"].map(async (name) => {
-        const executable = join(binDirectory, name);
-        await writeFile(
-          executable,
-          `#!/bin/sh\nprintf '${name === "agy" ? "1.1.11" : "fake-runtime 1.0"}\\n'\n`,
-        );
-        await chmod(executable, 0o755);
-      }),
-    );
+    const probeSpy = vi.spyOn(coreModule, "runRuntimeCommand").mockResolvedValue({
+      exitCode: 0,
+      signal: null,
+      stdout: "1.1.11\n",
+      stderr: "",
+    });
+
     const environment = Object.freeze({
       ...process.env,
-      HOME: root,
-      PATH: binDirectory,
+      PATH: "/mock/bin",
+      MOCK_ENV_TEST: "true",
     });
     const getRuntimeProcessEnvironment = vi.fn(async () => environment);
     const factories = createBuiltInRuntimeFactories({
@@ -282,10 +277,16 @@ describe("built-in Runtime process environments", () => {
       expect.objectContaining({ usable: true }),
     ]);
     expect(getRuntimeProcessEnvironment).toHaveBeenCalledTimes(4);
+    expect(probeSpy).toHaveBeenCalled();
+    for (const call of probeSpy.mock.calls) {
+      expect(call[0].env).toMatchObject({ MOCK_ENV_TEST: "true" });
+    }
 
     const piFactory = factories.find((candidate) => candidate.id === "pragma.runtime.pi")!;
     await piFactory.create(definition("pi", "PI", "pragma.runtime.pi"));
     expect(getRuntimeProcessEnvironment).toHaveBeenCalledTimes(4);
+
+    probeSpy.mockRestore();
   });
 });
 

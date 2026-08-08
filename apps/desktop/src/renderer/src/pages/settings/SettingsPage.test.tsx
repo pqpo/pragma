@@ -55,7 +55,8 @@ describe("SettingsPage", () => {
 
     expect(html).toContain('aria-selected="true"');
     expect(html).toContain("Runtime Environments");
-    expect(html).toContain("Checking runtime availability");
+    expect(html).toContain("Built-in Runtime");
+    expect(html).toContain("Antigravity CLI");
   });
 
   it("exposes the built-in memory plane as a first-class settings section", () => {

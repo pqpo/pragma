@@ -1,4 +1,5 @@
 import type { DesktopRendererLog } from "./logging.ts";
+import type { GetDesktopRuntimeAvailabilityOptions } from "./runtime.ts";
 import type {
   DesktopRuntimeAvailability,
   DesktopBridgeSnapshot,
@@ -436,5 +437,7 @@ export interface PragmaDesktopAPI {
   previewCodeService: (input: PreviewCodeServiceRequest) => Promise<PreviewCodeServiceResult>;
   deleteCapability: (id: string) => Promise<CapabilityDeleteResult>;
   pickSkillSource: () => Promise<PickWorkspaceResult>;
-  getRuntimeAvailability: () => Promise<DesktopRuntimeAvailability[]>;
+  getRuntimeAvailability: (
+    options?: GetDesktopRuntimeAvailabilityOptions,
+  ) => Promise<DesktopRuntimeAvailability[]>;
 }

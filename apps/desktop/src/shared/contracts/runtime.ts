@@ -105,6 +105,15 @@ export const DesktopRuntimeAvailabilitySchema = z.object({
   modelDiscoveryError: z.string().optional(),
 });
 
+export const GetDesktopRuntimeAvailabilityOptionsSchema = z.object({
+  runtimeId: DesktopRuntimeIdSchema.optional(),
+  forceRefresh: z.boolean().optional(),
+});
+
+export type GetDesktopRuntimeAvailabilityOptions = z.infer<
+  typeof GetDesktopRuntimeAvailabilityOptionsSchema
+>;
+
 export const DesktopBridgeStartupSchema = z.discriminatedUnion("status", [
   z.object({ status: z.literal("ready") }).strict(),
   z

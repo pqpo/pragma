@@ -988,6 +988,7 @@ export function MissionDetailFragment(props: {
   const [workspaceAvailable, setWorkspaceAvailable] = useState<boolean | null>(null);
   const [chat, setChat] = useState<MissionChatSnapshot | null>(null);
   const [workRecords, setWorkRecords] = useState<readonly MissionWorkRecord[]>([]);
+  const [workLoading, setWorkLoading] = useState(false);
   const [workConversation, setWorkConversation] = useState<MissionWorkConversationSnapshot | null>(
     null,
   );
@@ -1419,60 +1420,95 @@ export function MissionDetailFragment(props: {
     const api = desktopApi();
     if (api === undefined || tab !== "work" || props.mission.execution === undefined) {
       setWorkRecords([]);
-      setWorkConversation(null);
       return;
     }
     let cancelled = false;
-    let timer: ReturnType<typeof setTimeout> | undefined;
+    let refreshing = false;
+    let dirty = false;
+
     const refresh = async () => {
+      if (refreshing) {
+        dirty = true;
+        return;
+      }
+      refreshing = true;
+      setWorkLoading(true);
       try {
-        const snapshot = await api.getMissionWork(props.mission.id);
-        if (cancelled) return;
-        setWorkError(null);
-        setWorkRecords(snapshot.records);
-        if (selectedWorkKey !== null) {
-          setWorkConversationLoading(true);
-          const conversation = await api.getMissionWorkConversation({
-            id: props.mission.id,
-            recordId: selectedWorkKey,
-            limit: 100,
-          });
-          if (!cancelled) {
-            setWorkConversation((current) =>
-              current === null || current.recordId !== conversation.recordId
-                ? conversation
-                : {
-                    ...conversation,
-                    entries: uniqueChatEntries([...current.entries, ...conversation.entries]),
-                    nextBeforeCursor: current.nextBeforeCursor,
-                  },
-            );
-          }
-        }
+        do {
+          dirty = false;
+          const snapshot = await api.getMissionWork(props.mission.id);
+          if (cancelled) return;
+          setWorkError(null);
+          setWorkRecords(snapshot.records);
+        } while (dirty && !cancelled);
       } catch (loadError) {
         if (!cancelled) {
           console.error("Failed to refresh Mission work history.", loadError);
           setWorkError(errorMessage(loadError));
         }
       } finally {
-        if (!cancelled) setWorkConversationLoading(false);
+        if (!cancelled) setWorkLoading(false);
+        refreshing = false;
       }
     };
+
     const scheduleRefresh = () => {
-      if (timer !== undefined) return;
-      timer = setTimeout(() => {
-        timer = undefined;
-        void refresh();
-      }, 50);
+      void refresh();
     };
+
     const unsubscribe = api.subscribeMissionWork(props.mission.id, scheduleRefresh);
     void refresh();
     return () => {
       cancelled = true;
-      if (timer !== undefined) clearTimeout(timer);
       unsubscribe();
     };
-  }, [props.mission.id, props.mission.execution?.id, selectedWorkKey, tab, workRefreshRevision]);
+  }, [props.mission.id, props.mission.execution?.id, tab, workRefreshRevision]);
+
+  useEffect(() => {
+    const api = desktopApi();
+    if (
+      api === undefined ||
+      tab !== "work" ||
+      props.mission.execution === undefined ||
+      selectedWorkKey === null
+    ) {
+      setWorkConversation(null);
+      return;
+    }
+    let cancelled = false;
+    setWorkConversationLoading(true);
+    api
+      .getMissionWorkConversation({
+        id: props.mission.id,
+        recordId: selectedWorkKey,
+        limit: 100,
+      })
+      .then((conversation) => {
+        if (!cancelled) {
+          setWorkConversation((current) =>
+            current === null || current.recordId !== conversation.recordId
+              ? conversation
+              : {
+                  ...conversation,
+                  entries: uniqueChatEntries([...current.entries, ...conversation.entries]),
+                  nextBeforeCursor: current.nextBeforeCursor,
+                },
+          );
+        }
+      })
+      .catch((loadError) => {
+        if (!cancelled) {
+          console.error("Failed to load Mission work conversation.", loadError);
+        }
+      })
+      .finally(() => {
+        if (!cancelled) setWorkConversationLoading(false);
+      });
+
+    return () => {
+      cancelled = true;
+    };
+  }, [props.mission.id, selectedWorkKey, tab, workRefreshRevision]);
 
   useEffect(() => {
     const api = desktopApi();
@@ -2290,6 +2326,12 @@ export function MissionDetailFragment(props: {
             >
               {t("actions.retry", { ns: "common" })}
             </button>
+          </div>
+        ) : workLoading && workRecords.length === 0 ? (
+          <div className="mission-work-empty">
+            <SpinnerGap size={31} className="is-spinning" aria-hidden="true" />
+            <h2>{t("loadingWorkHistory", { ns: "missions", defaultValue: "正在加载工作纪录..." })}</h2>
+            <p>{t("loadingWorkHistoryDescription", { ns: "missions", defaultValue: "如果包含多个 Agent 或大量事件，可能需要稍等片刻" })}</p>
           </div>
         ) : workRecords.length === 0 ? (
           <div className="mission-work-empty">

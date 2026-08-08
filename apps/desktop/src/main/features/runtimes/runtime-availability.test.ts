@@ -107,6 +107,51 @@ describe("getRuntimeAvailability", () => {
       }),
     ]);
   });
+
+  it("limits probe concurrency and respects forceRefresh options", async () => {
+    const pragmaHome = await mkdtemp(join(tmpdir(), "pragma-runtime-availability-concurrency-"));
+    const definitions = [
+      definition("pi", "Pi"),
+      definition("r2", "R2"),
+      definition("r3", "R3"),
+      definition("r4", "R4"),
+    ];
+    const store = createRuntimeEnvironmentStore({ pragmaHome, builtIns: definitions });
+
+    let activeProbes = 0;
+    let maxObservedConcurrency = 0;
+    const receivedOptions: Record<string, unknown>[] = [];
+
+    const runtimes = createRuntimeEnvironmentService({
+      store,
+      factories: [
+        {
+          id: "test.runtime",
+          version: "v1",
+          create: (env) =>
+            defineRuntimeDriver({
+              descriptor: { id: env.id, kind: "test", displayName: env.displayName },
+              canUse: async (opts?: Record<string, unknown>) => {
+                if (opts) receivedOptions.push(opts);
+                activeProbes++;
+                maxObservedConcurrency = Math.max(maxObservedConcurrency, activeProbes);
+                await new Promise((resolve) => setTimeout(resolve, 20));
+                activeProbes--;
+                return { usable: true, details: { version: "1.0.0" } };
+              },
+              createSession: () => ({}),
+              startTurn: () => ({ outputText: "" }),
+              mapEvent: () => ({ events: [] }),
+            }),
+        },
+      ],
+    });
+
+    const availability = await getRuntimeAvailability(runtimes, { forceRefresh: true });
+    expect(availability).toHaveLength(4);
+    expect(maxObservedConcurrency).toBeLessThanOrEqual(2);
+    expect(receivedOptions).toContainEqual({ forceRefresh: true });
+  });
 });
 
 function definition(id: string, displayName: string) {

@@ -97,4 +97,18 @@ describe("Runtime Environment settings", () => {
     expect(html).not.toContain("pragma.runtime.pi");
     expect(html).not.toMatch(/>pi</u);
   });
+
+  it("renders probing state in badge area when isProbing is true and badge button when false", () => {
+    const probingHtml = renderToStaticMarkup(
+      <RuntimeCard runtime={runtime} isProbing={true} onOpen={() => undefined} />,
+    );
+    expect(probingHtml).toContain('class="status-badge is-probing"');
+    expect(probingHtml).toContain('class="status-dot runtime-spin"');
+
+    const readyHtml = renderToStaticMarkup(
+      <RuntimeCard runtime={runtime} isProbing={false} onOpen={() => undefined} />,
+    );
+    expect(readyHtml).toContain('class="status-badge-button is-ready"');
+    expect(readyHtml).toContain('class="badge-hover-action"');
+  });
 });
