@@ -4,9 +4,8 @@ Pragma 使用 `electron-vite` 编译应用代码，使用 `electron-builder` 生
 `pnpm build` 只做可验证的代码构建；发行包通过 `@pragma/desktop` package 的 `dist:*` 或
 `release:desktop` 命令显式生成。
 
-当前 `0.2.1` Release 只发布 macOS Apple Silicon 和 macOS Intel 两个版本，不使用 GitHub Actions：构建、校验、
-Tag、GitHub Draft Release、产物上传和发布均由维护者在本地完成。Windows 打包脚本仍保留供开发验证，但不属于
-本次 Release。
+Release 只发布 macOS Apple Silicon 和 macOS Intel 两个版本，不使用 GitHub Actions：构建、校验、Tag、GitHub
+Draft Release、产物上传和发布均由维护者在本地完成。Windows 打包脚本仍保留供开发验证，但不属于 Release。
 
 ## 环境
 
@@ -40,8 +39,8 @@ pnpm --filter @pragma/desktop run dist:mac:arm64
 输出：
 
 ```text
-apps/desktop/dist/Pragma-0.2.1-mac-arm64.dmg
-apps/desktop/dist/Pragma-0.2.1-mac-arm64.zip
+apps/desktop/dist/Pragma-<version>-mac-arm64.dmg
+apps/desktop/dist/Pragma-<version>-mac-arm64.zip
 ```
 
 ### macOS Intel
@@ -55,8 +54,8 @@ pnpm --filter @pragma/desktop run dist:mac:x64
 输出：
 
 ```text
-apps/desktop/dist/Pragma-0.2.1-mac-x64.dmg
-apps/desktop/dist/Pragma-0.2.1-mac-x64.zip
+apps/desktop/dist/Pragma-<version>-mac-x64.dmg
+apps/desktop/dist/Pragma-<version>-mac-x64.zip
 ```
 
 Windows 的 `dist:win:x64` 命令仍可用于单独验证 Windows 安装包，但 `release:desktop` 不会收集或发布 Windows 产物。
@@ -68,9 +67,12 @@ Tag 或 Release；构建产物暂存于被 Git 忽略的 `release-assets/v<versi
 
 ### 1. 准备版本
 
-当前桌面版本为 `0.2.1`，Tag 按仓库既有习惯使用 `v0.2.1`。发布前运行：
+桌面版本以 `apps/desktop/package.json` 为唯一来源，发布脚本按仓库既有习惯生成 `v<version>` Tag。发布前从
+package.json 读取版本并运行：
 
 ```bash
+VERSION="$(node -p "require('./apps/desktop/package.json').version")"
+printf 'Release version: %s\n' "$VERSION"
 pnpm lint
 pnpm typecheck
 pnpm test
@@ -83,18 +85,20 @@ gh auth login
 在 macOS 环境执行：
 
 ```bash
+VERSION="$(node -p "require('./apps/desktop/package.json').version")"
 pnpm --filter @pragma/desktop run release:desktop -- \
-  --version 0.2.1 \
+  --version "$VERSION" \
   --platform mac-arm64
 ```
 
 ```bash
+VERSION="$(node -p "require('./apps/desktop/package.json').version")"
 pnpm --filter @pragma/desktop run release:desktop -- \
-  --version 0.2.1 \
+  --version "$VERSION" \
   --platform mac-x64
 ```
 
-脚本会将四个安装包复制到 `release-assets/v0.2.1/`，检查文件名称和大小，并在全部产物到齐后生成
+脚本会将四个安装包复制到 `release-assets/v<version>/`，检查文件名称和大小，并在全部产物到齐后生成
 `SHA256SUMS.txt`。
 
 ### 3. 创建 Tag、Release 并上传产物
@@ -102,15 +106,16 @@ pnpm --filter @pragma/desktop run release:desktop -- \
 在包含全部四个产物、且工作区没有未提交修改的 checkout 中执行：
 
 ```bash
+VERSION="$(node -p "require('./apps/desktop/package.json').version")"
 pnpm --filter @pragma/desktop run release:desktop -- \
-  --version 0.2.1 \
+  --version "$VERSION" \
   --publish
 ```
 
 该命令依次执行：
 
 - 验证 package version、质量检查、完整 macOS 产物和 SHA-256 校验和。
-- 创建并推送 annotated Tag `v0.2.1`。
+- 创建并推送 annotated Tag `v<version>`。
 - 创建 GitHub Draft Pre-release。
 - 上传四个 macOS 安装包和 `SHA256SUMS.txt`。
 - 校验远端资产后公开 Release。
@@ -118,8 +123,9 @@ pnpm --filter @pragma/desktop run release:desktop -- \
 默认创建 Pre-release；需要稳定版本时追加 `--stable`：
 
 ```bash
+VERSION="$(node -p "require('./apps/desktop/package.json').version")"
 pnpm --filter @pragma/desktop run release:desktop -- \
-  --version 0.2.1 \
+  --version "$VERSION" \
   --publish \
   --stable
 ```
@@ -130,13 +136,13 @@ pnpm --filter @pragma/desktop run release:desktop -- \
 
 ### Release 产物
 
-`v0.2.1` Release 必须包含：
+每个 Release 必须包含：
 
 ```text
-Pragma-0.2.1-mac-arm64.dmg
-Pragma-0.2.1-mac-arm64.zip
-Pragma-0.2.1-mac-x64.dmg
-Pragma-0.2.1-mac-x64.zip
+Pragma-<version>-mac-arm64.dmg
+Pragma-<version>-mac-arm64.zip
+Pragma-<version>-mac-x64.dmg
+Pragma-<version>-mac-x64.zip
 SHA256SUMS.txt
 ```
 
