@@ -215,6 +215,6 @@ export interface RuntimeAgentSession {
 
 export interface RuntimeAdapter {
   readonly descriptor: RuntimeAdapterDescriptor;
-  readonly canUse: () => Promise<RuntimeCanUseResult> | RuntimeCanUseResult;
+  readonly canUse: (options?: Record<string, unknown>) => Promise<RuntimeCanUseResult> | RuntimeCanUseResult;
   readonly listModels?: (() => Promise<readonly RuntimeModel[]>) | undefined;
 }

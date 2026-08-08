@@ -25,6 +25,10 @@ export class BoundedLruCache<K, V> {
     return this;
   }
 
+  delete(key: K): boolean {
+    return this.#entries.delete(key);
+  }
+
   get size(): number {
     return this.#entries.size;
   }

@@ -107,9 +107,22 @@ export function runRuntimeCommand(options: RuntimeCommandOptions): Promise<Runti
       cwd: options.cwd,
       env: options.env,
     });
+    let forceKillTimer: NodeJS.Timeout | undefined;
     const timeout = setTimeout(() => {
       finish(() => {
-        child.kill("SIGTERM");
+        try {
+          child.kill("SIGTERM");
+        } catch {
+          // Ignore process signaling errors
+        }
+        forceKillTimer = setTimeout(() => {
+          try {
+            child.kill("SIGKILL");
+          } catch {
+            // Ignore process signaling errors
+          }
+        }, 1_000);
+        forceKillTimer.unref();
         reject(new Error(`Probe timed out after ${options.timeoutMs}ms.`));
       });
     }, options.timeoutMs);
@@ -143,6 +156,9 @@ export function runRuntimeCommand(options: RuntimeCommandOptions): Promise<Runti
 
       settled = true;
       clearTimeout(timeout);
+      if (forceKillTimer !== undefined) {
+        clearTimeout(forceKillTimer);
+      }
       callback();
     }
   });

@@ -25,6 +25,7 @@ export interface ClaudeCodeRuntimeAvailabilityOptions {
   readonly env?: NodeJS.ProcessEnv | undefined;
   readonly timeoutMs?: number | undefined;
   readonly spawn?: ClaudeCodeRuntimeSpawn | undefined;
+  readonly forceRefresh?: boolean | undefined;
 }
 
 export async function canUseClaudeCodeRuntime(
@@ -39,13 +40,16 @@ export async function canUseClaudeCodeRuntime(
           sourcePath: options.executablePath ?? "claude",
         };
   const cacheKey = availabilityCacheKey(command, options);
-  const cached = availabilityCache.get(cacheKey);
-
-  if (cached !== undefined) {
-    if (cached.expiresAt <= Date.now()) {
-      void refreshAvailability(cacheKey, command, options).catch(() => undefined);
+  if (options.forceRefresh) {
+    availabilityCache.delete(cacheKey);
+  } else {
+    const cached = availabilityCache.get(cacheKey);
+    if (cached !== undefined) {
+      if (cached.expiresAt <= Date.now()) {
+        void refreshAvailability(cacheKey, command, options).catch(() => undefined);
+      }
+      return cached.result;
     }
-    return cached.result;
   }
 
   return await refreshAvailability(cacheKey, command, options);
@@ -83,10 +87,14 @@ function refreshAvailability(
           : { launcherExecutablePath: command.executablePath }),
       },
     };
-    availabilityCache.set(cacheKey, {
-      expiresAt: Date.now() + AVAILABILITY_TTL_MS,
-      result: normalized,
-    });
+    if (normalized.usable) {
+      availabilityCache.set(cacheKey, {
+        expiresAt: Date.now() + AVAILABILITY_TTL_MS,
+        result: normalized,
+      });
+    } else {
+      availabilityCache.delete(cacheKey);
+    }
     return normalized;
   });
   availabilityRefreshes.set(cacheKey, refresh);

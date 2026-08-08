@@ -99,6 +99,29 @@ describe("Antigravity Runtime availability", () => {
     expect(parseAntigravityVersion("Antigravity CLI v1.1.11+build.2")).toBe("1.1.11");
     expect(parseAntigravityVersion("unknown")).toBeUndefined();
   });
+
+  it("does not cache failed probe results and bypasses cache when forceRefresh is requested", async () => {
+    const executablePath = `/opt/agy-${randomUUID()}`;
+    mocks.runRuntimeCommand.mockRejectedValueOnce(new Error("Probe timed out after 5000ms."));
+    const failedResult = await canUseAntigravityRuntime({ executablePath });
+    expect(failedResult).toMatchObject({ usable: false });
+
+    // A subsequent call should attempt a fresh probe because failed results are not cached
+    mocks.runRuntimeCommand.mockResolvedValueOnce(commandResult("1.1.11\n"));
+    const retriedResult = await canUseAntigravityRuntime({ executablePath });
+    expect(retriedResult).toMatchObject({ usable: true });
+
+    // With usable: true, it should now be cached
+    const cachedResult = await canUseAntigravityRuntime({ executablePath });
+    expect(cachedResult).toMatchObject({ usable: true });
+    // runRuntimeCommand was called 2 times in total (1st failed, 2nd succeeded, 3rd cached)
+    expect(mocks.runRuntimeCommand).toHaveBeenCalledTimes(2);
+
+    // forceRefresh should force a 3rd call
+    mocks.runRuntimeCommand.mockResolvedValueOnce(commandResult("1.1.11\n"));
+    await canUseAntigravityRuntime({ executablePath, forceRefresh: true });
+    expect(mocks.runRuntimeCommand).toHaveBeenCalledTimes(3);
+  });
 });
 
 function commandResult(stdout: string) {

@@ -181,7 +181,7 @@ export interface RuntimeCloseContext {
 
 export interface RuntimeDriver<TNativeEvent, TNativeSession, TPrepared = RuntimePreparedContext> {
   readonly descriptor: RuntimeAdapterDescriptor;
-  readonly canUse?: (() => Promise<RuntimeCanUseResult> | RuntimeCanUseResult) | undefined;
+  readonly canUse?: ((options?: Record<string, unknown>) => Promise<RuntimeCanUseResult> | RuntimeCanUseResult) | undefined;
   readonly listModels?: (() => Promise<readonly RuntimeModel[]>) | undefined;
   readonly defaultOutputParser?: RuntimeOutputParser | undefined;
   readonly outputRetryLimit?: number | undefined;
@@ -282,7 +282,8 @@ export function defineRuntimeDriver<
   };
   const runtime: RuntimeAdapter = {
     descriptor,
-    canUse: async () => (await driver.canUse?.()) ?? { usable: true },
+    canUse: async (options?: Record<string, unknown>) =>
+      (await (driver.canUse as ((opts?: Record<string, unknown>) => Promise<RuntimeCanUseResult> | RuntimeCanUseResult) | undefined)?.(options)) ?? { usable: true },
     ...(driver.listModels === undefined ? {} : { listModels: driver.listModels }),
   };
   registerRuntimeSessionFactory(

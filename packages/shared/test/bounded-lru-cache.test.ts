@@ -20,4 +20,12 @@ describe("BoundedLruCache", () => {
     expect(cache.get("third")).toBe(3);
     expect(cache.size).toBe(2);
   });
+
+  it("deletes entries by key", () => {
+    const cache = new BoundedLruCache<string, number>(2);
+    cache.set("a", 1);
+    expect(cache.delete("a")).toBe(true);
+    expect(cache.get("a")).toBeUndefined();
+    expect(cache.delete("a")).toBe(false);
+  });
 });

@@ -10,12 +10,16 @@ const cache = new BoundedLruCache<string, { expiresAt: number; result: RuntimeCa
 const refreshes = new Map<string, Promise<RuntimeCanUseResult>>();
 
 export async function canUseQoderCliRuntime(
-  options: QoderCliRuntimeAdapterOptions = {},
+  options: QoderCliRuntimeAdapterOptions & { readonly forceRefresh?: boolean } = {},
 ): Promise<RuntimeCanUseResult> {
   const executablePath = resolveQoderCliExecutablePath(options);
   const key = `${executablePath}\0${options.env?.["PATH"] ?? ""}`;
-  const cached = cache.get(key);
-  if (cached !== undefined && cached.expiresAt > Date.now()) return cached.result;
+  if (options.forceRefresh) {
+    cache.delete(key);
+  } else {
+    const cached = cache.get(key);
+    if (cached !== undefined && cached.expiresAt > Date.now()) return cached.result;
+  }
   const active = refreshes.get(key);
   if (active !== undefined) return await active;
 
@@ -30,7 +34,11 @@ export async function canUseQoderCliRuntime(
       ...result,
       details: { ...result.details, executablePath },
     };
-    cache.set(key, { expiresAt: Date.now() + CACHE_TTL_MS, result: normalized });
+    if (normalized.usable) {
+      cache.set(key, { expiresAt: Date.now() + CACHE_TTL_MS, result: normalized });
+    } else {
+      cache.delete(key);
+    }
     return normalized;
   });
   refreshes.set(key, refresh);

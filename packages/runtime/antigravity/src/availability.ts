@@ -17,7 +17,7 @@ const spawnIds = new WeakMap<RuntimeCommandSpawn, number>();
 let nextSpawnId = 1;
 
 export async function canUseAntigravityRuntime(
-  options: AntigravityRuntimeAdapterOptions = {},
+  options: AntigravityRuntimeAdapterOptions & { readonly forceRefresh?: boolean } = {},
 ): Promise<RuntimeCanUseResult> {
   const executablePath = resolveAntigravityExecutablePath(options);
   const key = [
@@ -25,13 +25,21 @@ export async function canUseAntigravityRuntime(
     options.env?.["PATH"] ?? "",
     options.spawn === undefined ? "native" : `custom:${spawnId(options.spawn)}`,
   ].join("\0");
-  const cached = cache.get(key);
-  if (cached !== undefined && cached.expiresAt > Date.now()) return cached.result;
+  if (options.forceRefresh) {
+    cache.delete(key);
+  } else {
+    const cached = cache.get(key);
+    if (cached !== undefined && cached.expiresAt > Date.now()) return cached.result;
+  }
   const active = refreshes.get(key);
   if (active !== undefined) return await active;
 
   const refresh = probeAntigravityVersion(executablePath, options).then((result) => {
-    cache.set(key, { expiresAt: Date.now() + CACHE_TTL_MS, result });
+    if (result.usable) {
+      cache.set(key, { expiresAt: Date.now() + CACHE_TTL_MS, result });
+    } else {
+      cache.delete(key);
+    }
     return result;
   });
   refreshes.set(key, refresh);
