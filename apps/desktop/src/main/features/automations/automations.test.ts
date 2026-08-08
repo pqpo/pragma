@@ -3,7 +3,6 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import { PragmaPaths } from "@pragma/core";
 import { PragmaAutomationResourceSchema } from "@pragma/interpreter/ast";
 
-import type { AutomationBinding } from "../../../shared/contracts/index.ts";
 import { previewScheduleOccurrences } from "./automation-schedule.ts";
 import { automationMissionInput, createAutomationService } from "./automation-service.ts";
 import type { AutomationStore } from "./automation-store.ts";
