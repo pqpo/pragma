@@ -44,7 +44,7 @@ Platforms:
   mac-x64      Build macOS Intel DMG and ZIP (run on macOS)
 
 Options:
-  --version <version>       Version without the leading v, for example 0.2.0
+  --version <version>       Version without the leading v, for example 0.2.1
   --platform <platform>     Build and stage a platform; may be repeated
   --stage-dir <directory>   Staging directory (default: release-assets/v<version>)
   --publish                  Create the tag and GitHub Release after validating all assets

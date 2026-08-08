@@ -33,9 +33,9 @@ source
   → pnpm check
   → electron-vite build
   → electron-builder --mac --arm64 / --mac --x64
-  → release-assets/v0.2.0/
+  → release-assets/v0.2.1/
   → SHA256SUMS.txt
-  → annotated Git tag v0.2.0
+  → annotated Git tag v0.2.1
   → GitHub Draft Release
   → GitHub CLI asset upload
   → GitHub Pre-release or stable Release
@@ -48,9 +48,9 @@ source
 ```text
 productName: Pragma
 appId: com.pqpo.pragma
-version: 0.2.0
-tag: v0.2.0
-release title: Pragma v0.2.0
+version: 0.2.1
+tag: v0.2.1
+release title: Pragma v0.2.1
 ```
 
 `appId` 会参与 macOS Bundle Identifier。首个公开安装包发布后，不应在没有迁移方案的情况下修改。
@@ -62,19 +62,19 @@ release title: Pragma v0.2.0
 | macOS | macOS    | Apple Silicon arm64 | DMG、ZIP |
 | macOS | macOS    | Intel x64           | DMG、ZIP |
 
-版本 `0.2.0` 的 Release 必须包含：
+版本 `0.2.1` 的 Release 必须包含：
 
 ```text
-Pragma-0.2.0-mac-arm64.dmg
-Pragma-0.2.0-mac-arm64.zip
-Pragma-0.2.0-mac-x64.dmg
-Pragma-0.2.0-mac-x64.zip
+Pragma-0.2.1-mac-arm64.dmg
+Pragma-0.2.1-mac-arm64.zip
+Pragma-0.2.1-mac-x64.dmg
+Pragma-0.2.1-mac-x64.zip
 SHA256SUMS.txt
 ```
 
 本地发布脚本只接受这四个安装包和一个校验清单，发现缺失、空文件或额外条目时拒绝发布。
 
-Windows 的 `dist:win:x64` 脚本仍可用于开发验证，但不属于 `v0.2.0` Release 契约。
+Windows 的 `dist:win:x64` 脚本仍可用于开发验证，但不属于 `v0.2.1` Release 契约。
 
 ### 明确排除
 
@@ -112,7 +112,7 @@ release:desktop
 - 检查 `--version` 与 `apps/desktop/package.json` 一致。
 - 只允许 `mac-arm64` 和 `mac-x64` 两个 Release 平台，并将严格命名的资产复制到被忽略的 staging 目录。
 - 汇总全部四个资产并生成确定性 `SHA256SUMS.txt`。
-- 仅在显式传入 `--publish` 时检查干净工作区、创建不可覆盖的 `v0.2.0` annotated Tag 并推送。
+- 仅在显式传入 `--publish` 时检查干净工作区、创建不可覆盖的 `v0.2.1` annotated Tag 并推送。
 - 创建 Draft Release、上传资产、校验远端资产，最后公开 Release。
 - 默认发布 Pre-release；`--stable` 才发布稳定 Release。
 
@@ -120,13 +120,13 @@ release:desktop
 
 ```bash
 pnpm --filter @pragma/desktop run release:desktop -- \
-  --version 0.2.0 \
+  --version 0.2.1 \
   --platform mac-arm64
 ```
 
 ```bash
 pnpm --filter @pragma/desktop run release:desktop -- \
-  --version 0.2.0 \
+  --version 0.2.1 \
   --platform mac-x64
 ```
 
@@ -155,7 +155,7 @@ GitHub Release 是不可覆盖的版本边界：已存在的本地 Tag、远程 
 
 ### 1. 准备版本
 
-当前桌面版本为 `0.2.0`。发布前运行：
+当前桌面版本为 `0.2.1`。发布前运行：
 
 ```bash
 pnpm install --frozen-lockfile
@@ -173,7 +173,7 @@ gh auth login
 在 macOS 环境分别执行 `mac-arm64` 和 `mac-x64`。脚本默认把资产写入：
 
 ```text
-release-assets/v0.2.0/
+release-assets/v0.2.1/
 ```
 
 全部四个资产汇总后，脚本生成 `SHA256SUMS.txt` 并拒绝额外文件。不要把 `apps/desktop/dist`、node_modules
@@ -185,7 +185,7 @@ release-assets/v0.2.0/
 
 ```bash
 pnpm --filter @pragma/desktop run release:desktop -- \
-  --version 0.2.0 \
+  --version 0.2.1 \
   --publish \
   --notes-file release-notes.md
 ```
@@ -195,9 +195,9 @@ Release。
 
 脚本的远程步骤严格按以下顺序执行：
 
-1. 检查 GitHub CLI 登录态、远程地址、`v0.2.0` Tag 和 Release 均可创建。
-2. 创建并推送 `v0.2.0` annotated Tag。
-3. 创建 `Pragma v0.2.0` Draft Release。
+1. 检查 GitHub CLI 登录态、远程地址、`v0.2.1` Tag 和 Release 均可创建。
+2. 创建并推送 `v0.2.1` annotated Tag。
+3. 创建 `Pragma v0.2.1` Draft Release。
 4. 上传四个 macOS 安装包和 `SHA256SUMS.txt`。
 5. 读取远端资产清单并确认 Release 已非 Draft。
 
@@ -207,8 +207,8 @@ Release。
 的 Release 状态继续处理。若 Draft 已创建但上传失败，Draft 会保留，可使用以下命令补传并公开：
 
 ```bash
-gh release upload v0.2.0 release-assets/v0.2.0/* --clobber
-gh release edit v0.2.0 --draft=false
+gh release upload v0.2.1 release-assets/v0.2.1/* --clobber
+gh release edit v0.2.1 --draft=false
 ```
 
 发布后的版本不可覆盖；任何修复都应提升版本号。
@@ -262,7 +262,7 @@ gh release edit v0.2.0 --draft=false
 
 ## 完成定义
 
-本次 `0.2.0` Release 完成需要同时满足：
+本次 `0.2.1` Release 完成需要同时满足：
 
 - 产品名称在运行时和安装包中统一为 `Pragma`。
 - 两个 macOS 架构命令可以生成四个安装包。
