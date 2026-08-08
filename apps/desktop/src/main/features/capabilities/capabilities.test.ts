@@ -12,7 +12,7 @@ afterEach(async () => {
   await Promise.all(directories.splice(0).map((directory) => rm(directory, { recursive: true })));
 });
 
-describe("capability credential store", () => {
+describe("Capability Credential Store", () => {
   it("encrypts, rotates, and removes capability credentials", async () => {
     const directory = await mkdtemp(join(tmpdir(), "pragma-capability-secrets-"));
     directories.push(directory);

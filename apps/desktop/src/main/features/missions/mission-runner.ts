@@ -824,6 +824,7 @@ export function createMissionRunner(options: {
         if (item.source.parentSessionId !== undefined && sessionId !== undefined) {
           const recordId = `runtime-agent:${sessionId}`;
           const byRecord = liveWorkOutputs.get(missionId) ?? new Map();
+          const isNewRecord = !byRecord.has(recordId);
           const output =
             byRecord.get(recordId) ??
             ({
@@ -840,8 +841,12 @@ export function createMissionRunner(options: {
               resolveExecutorName,
             });
           }
+          if (isNewRecord || item.channel === "agent") {
+            invalidateWork(missionId);
+          }
+        } else if (item.channel === "agent") {
+          invalidateWork(missionId);
         }
-        invalidateWork(missionId);
       },
       resolveExecutorName,
     );
@@ -1609,6 +1614,7 @@ export function createMissionRunner(options: {
   };
 
   const getWorkSnapshot = async (id: string): Promise<MissionWorkSnapshot> => {
+    const t0 = performance.now();
     const mission = await options.missions.get(id);
     const executionIds = await readMissionExecutionIds(mission);
     const records = await workHistory.listRecords({
@@ -1617,6 +1623,12 @@ export function createMissionRunner(options: {
         ? {}
         : { rootSessionId: mission.execution.sessionId }),
     });
+    const t1 = performance.now();
+    logger.info(
+      "mission.get_work_snapshot",
+      `Loaded Mission work snapshot for ${id} in ${(t1 - t0).toFixed(1)}ms.`,
+      { missionId: id, executionCount: executionIds.length, recordCount: records.length, elapsedMs: t1 - t0 },
+    );
     const names = await getExecutorNamesOrFallback(mission, "work");
     const runtimeAgentOrdinals = createRuntimeAgentOrdinals(records);
     return {
@@ -1672,20 +1684,32 @@ export function createMissionRunner(options: {
   const getWorkConversation = async (
     input: GetMissionWorkConversation,
   ): Promise<MissionWorkConversationSnapshot> => {
+    const t0 = performance.now();
     const mission = await options.missions.get(input.id);
     const executionIds = await readMissionExecutionIds(mission);
-    const records = await workHistory.listRecords({
+    const { records, output: rawOutput } = await workHistory.readRecordsAndOutput({
       executionIds,
       ...(mission.execution?.sessionId === undefined
         ? {}
         : { rootSessionId: mission.execution.sessionId }),
+      targetRecordId: input.recordId,
     });
+    const t1 = performance.now();
+    logger.info(
+      "mission.get_work_conversation",
+      `Loaded Mission work conversation for ${input.id}:${input.recordId} in ${(t1 - t0).toFixed(1)}ms.`,
+      {
+        missionId: input.id,
+        recordId: input.recordId,
+        executionCount: executionIds.length,
+        outputRecordCount: rawOutput.length,
+        elapsedMs: t1 - t0,
+      },
+    );
     const record = records.find((candidate) => candidate.recordId === input.recordId);
     if (record === undefined) throw new Error(`Mission work record not found: ${input.recordId}`);
     const taskInputEntries = workTaskInputEntries(record);
-    const durableEntries = messageRecordsToChatEntries(
-      await workHistory.readOutput({ executionIds, record }),
-    );
+    const durableEntries = messageRecordsToChatEntries(rawOutput);
     const liveEntries = liveWorkOutputs.get(mission.id)?.get(record.recordId)?.entries ?? [];
     const liveExecutionIds = new Set(liveEntries.flatMap((entry) => entry.executionId ?? []));
     const byId = new Map<string, MissionChatEntry>();

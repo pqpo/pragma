@@ -20,7 +20,7 @@ afterEach(async () => {
   );
 });
 
-describe("plugin credential store", () => {
+describe("Plugin Credential Store", () => {
   it("preserves concurrent mutations from independent store instances", async () => {
     const directory = await mkdtemp(join(tmpdir(), "pragma-plugin-credentials-"));
     directories.push(directory);
