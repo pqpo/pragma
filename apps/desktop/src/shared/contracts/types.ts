@@ -130,6 +130,7 @@ import {
   MissionHumanInteractionSchema,
   MissionLifecycleStatusSchema,
   MissionModelOptionsSchema,
+  MissionAttachmentsManifestSchema,
   MissionSchema,
   MissionSummarySchema,
   MissionTimelineRecordSchema,
@@ -140,6 +141,8 @@ import {
   MissionWorkSnapshotSchema,
   MissionWorkTaskSchema,
   MissionWorkUpdateSchema,
+  PickMissionAttachmentsResultSchema,
+  PickMissionAttachmentsSchema,
   RespondMissionHumanInteractionSchema,
   SendMissionMessageSchema,
   UpdateMissionOptionsSchema,
@@ -447,6 +450,9 @@ export type PreviewAutomationSchedule = z.infer<typeof PreviewAutomationSchedule
 export type AutomationSchedulePreview = z.infer<typeof AutomationSchedulePreviewSchema>;
 export type AutomationAdapterOption = z.infer<typeof AutomationAdapterOptionSchema>;
 export type MissionModelOptions = z.infer<typeof MissionModelOptionsSchema>;
+export type MissionAttachmentsManifest = z.infer<typeof MissionAttachmentsManifestSchema>;
+export type PickMissionAttachments = z.infer<typeof PickMissionAttachmentsSchema>;
+export type PickMissionAttachmentsResult = z.infer<typeof PickMissionAttachmentsResultSchema>;
 export type MissionLifecycleStatus = z.infer<typeof MissionLifecycleStatusSchema>;
 export type CreateMission = z.infer<typeof CreateMissionSchema>;
 export type UpdateMissionOptions = z.infer<typeof UpdateMissionOptionsSchema>;

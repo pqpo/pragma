@@ -273,10 +273,11 @@ function toModelSelection(override: MissionModelOverride): RuntimeModelSelection
 }
 
 function cloneRuntimeModel(model: RuntimeModel): DesktopRuntimeModel {
-  const { thinking, ...rest } = model;
+  const { inputModalities, thinking, ...rest } = model;
   return {
     ...rest,
     provider: { ...model.provider },
+    ...(inputModalities === undefined ? {} : { inputModalities: [...inputModalities] }),
     ...(thinking === undefined
       ? {}
       : {

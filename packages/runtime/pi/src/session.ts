@@ -10,8 +10,15 @@ import {
   getLastAssistantUsage,
   sessionEntryToContextMessages,
 } from "@earendil-works/pi-coding-agent";
+import type { ImageContent } from "@earendil-works/pi-ai";
 import { randomUUID } from "node:crypto";
-import { AgentMessageUsageSchema, type AgentMessage, type AgentMessageUsage } from "@pragma/shared";
+import { readFile } from "node:fs/promises";
+import {
+  AgentMessageUsageSchema,
+  type AgentMessage,
+  type AgentMessageUsage,
+  type ExpertPromptAttachment,
+} from "@pragma/shared";
 import type {
   Expert,
   ExpertAgentStartupMessage,
@@ -165,9 +172,14 @@ export async function startPiTurn(
       nativeSession.session.setThinkingLevel(thinkingLevel);
     }
     await compactPiContextBeforePrompt(nativeSession);
-    await nativeSession.session.prompt(
-      [...turn.startupMessages.map((message) => message.content), turn.prompt].join("\n\n"),
+    const images = nativeSession.session.model?.input.includes("image")
+      ? await createPiImageInputs(turn.attachments)
+      : [];
+    const prompt = [...turn.startupMessages.map((message) => message.content), turn.prompt].join(
+      "\n\n",
     );
+    if (images.length === 0) await nativeSession.session.prompt(prompt);
+    else await nativeSession.session.prompt(prompt, { images });
     assertAssistantTurnCompleted(
       nativeSession.session.messages.slice(nativeSession.messageCountBeforeRun),
     );
@@ -181,6 +193,20 @@ export async function startPiTurn(
   return {
     runtimeSessionId: nativeSession.session.sessionId,
   };
+}
+
+async function createPiImageInputs(
+  attachments: readonly ExpertPromptAttachment[],
+): Promise<ImageContent[]> {
+  return await Promise.all(
+    attachments
+      .filter((attachment) => attachment.kind === "image")
+      .map(async (attachment) => ({
+        type: "image" as const,
+        data: (await readFile(attachment.path)).toString("base64"),
+        mimeType: attachment.mimeType ?? "application/octet-stream",
+      })),
+  );
 }
 
 export function mapPiAgentEvent(

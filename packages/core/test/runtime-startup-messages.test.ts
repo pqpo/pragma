@@ -4,6 +4,7 @@ import { join } from "node:path";
 
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { z } from "zod";
+import type { ExpertPromptAttachment } from "@pragma/shared";
 
 import {
   ContextSystem,
@@ -28,6 +29,37 @@ afterEach(async () => {
 });
 
 describe("Runtime always-on startup messages", () => {
+  it("keeps native images for vision models and degrades text-only models to path context", async () => {
+    const image: ExpertPromptAttachment = {
+      id: "00000000-0000-4000-8000-000000000001",
+      kind: "image",
+      name: "screen.png",
+      path: "/tmp/screen.png",
+      mimeType: "image/png",
+    };
+    const vision = await createFixture(["text", "image"]);
+    const textOnly = await createFixture(["text"]);
+    const unavailableCatalog = await createFixture(undefined, true);
+    try {
+      await submit(vision.session, "inspect", [image]);
+      await submit(textOnly.session, "inspect", [image]);
+      await submit(unavailableCatalog.session, "inspect", [image]);
+
+      expect(vision.stats.turns[0]?.attachments).toEqual([image]);
+      expect(vision.stats.turns[0]?.rawQuery).toBe("inspect");
+      expect(textOnly.stats.turns[0]?.attachments).toEqual([]);
+      expect(textOnly.stats.turns[0]?.rawQuery).toContain("/tmp/screen.png");
+      expect(unavailableCatalog.stats.turns[0]?.attachments).toEqual([]);
+      expect(unavailableCatalog.stats.turns[0]?.rawQuery).toContain("/tmp/screen.png");
+    } finally {
+      await Promise.all([
+        vision.session.close(),
+        textOnly.session.close(),
+        unavailableCatalog.session.close(),
+      ]);
+    }
+  });
+
   it("injects once and rearms only after completed automatic or manual compaction", async () => {
     const fixture = await createFixture();
     try {
@@ -173,12 +205,14 @@ interface TestNativeSession {
   pendingStartupMessages: readonly ExpertAgentStartupMessage[];
 }
 
-async function createFixture() {
+async function createFixture(inputModalities?: readonly string[], modelCatalogUnavailable = false) {
   const root = await mkdtemp(join(tmpdir(), "pragma-runtime-startup-"));
   roots.push(root);
   const stats = {
     turns: [] as Array<{
       readonly attempt: number;
+      readonly attachments: readonly ExpertPromptAttachment[];
+      readonly rawQuery: string;
       readonly startupMessages: readonly ExpertAgentStartupMessage[];
     }>,
     compact: vi.fn(),
@@ -212,6 +246,25 @@ async function createFixture() {
   });
   const runtime = defineRuntimeDriver<TestNativeEvent, TestNativeSession>({
     descriptor: { id: "startup-runtime", kind: "startup-runtime", displayName: "Startup" },
+    ...(modelCatalogUnavailable
+      ? {
+          listModels: async () => {
+            throw new Error("model catalog unavailable");
+          },
+        }
+      : inputModalities === undefined
+        ? {}
+        : {
+            listModels: async () => [
+              {
+                id: "test-model",
+                displayName: "Test model",
+                provider: { kind: "runtime-managed" as const, id: "test", displayName: "Test" },
+                default: true,
+                inputModalities,
+              },
+            ],
+          }),
     createSession(context) {
       return { context, pendingStartupMessages: context.agentContext.startupMessages };
     },
@@ -221,7 +274,12 @@ async function createFixture() {
       return messages;
     },
     async startTurn(session, turn) {
-      stats.turns.push({ attempt: turn.attempt, startupMessages: turn.startupMessages });
+      stats.turns.push({
+        attempt: turn.attempt,
+        attachments: turn.attachments,
+        rawQuery: turn.rawQuery,
+        startupMessages: turn.startupMessages,
+      });
       if (
         turn.rawQuery === "auto-compact" ||
         (turn.rawQuery === "retry-after-compaction" && turn.attempt === 1)
@@ -280,8 +338,9 @@ function writeCompactionEvent(turn: RuntimeTurnContext<TestNativeEvent>, stage: 
 async function submit(
   session: Awaited<ReturnType<typeof createFixture>>["session"],
   query: string,
+  attachments: readonly ExpertPromptAttachment[] = [],
 ) {
-  const submission = session.submit({ query, execution: {} });
+  const submission = session.submit({ query, attachments, execution: {} });
   const eventsPromise = collectEvents(submission.events);
   await submission.result;
   return { events: await eventsPromise };

@@ -1,4 +1,9 @@
-import { AgentMessageUsageSchema, type AgentMessage, type AgentMessageUsage } from "@pragma/shared";
+import {
+  AgentMessageUsageSchema,
+  type AgentMessage,
+  type AgentMessageUsage,
+  type ExpertPromptAttachment,
+} from "@pragma/shared";
 import { randomUUID } from "node:crypto";
 import { readFile, readdir, stat } from "node:fs/promises";
 import { join } from "node:path";
@@ -201,9 +206,9 @@ export async function startCodexTurn(
       threadId: session.state.threadId,
       model: turn.modelSelection?.model.modelId,
       thinkingLevel: turn.modelSelection?.thinkingLevel,
-      input: createTextInputList(
-        ...turn.startupMessages.map((message) => message.content),
-        turn.prompt,
+      input: createCodexInputList(
+        [...turn.startupMessages.map((message) => message.content), turn.prompt],
+        turn.attachments,
       ),
     });
     onAcknowledged?.();
@@ -1249,6 +1254,18 @@ function createTextInputList(...texts: readonly string[]): readonly CodexUserInp
     text,
     text_elements: [],
   }));
+}
+
+function createCodexInputList(
+  texts: readonly string[],
+  attachments: readonly ExpertPromptAttachment[],
+): readonly CodexUserInput[] {
+  return [
+    ...createTextInputList(...texts),
+    ...attachments
+      .filter((attachment) => attachment.kind === "image")
+      .map((attachment) => ({ type: "localImage" as const, path: attachment.path })),
+  ];
 }
 
 function readFailureMessage(params: Record<string, unknown>): string {

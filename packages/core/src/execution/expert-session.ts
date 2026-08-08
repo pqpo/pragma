@@ -3,6 +3,7 @@ import { randomUUID } from "node:crypto";
 import type {
   AgentInstance,
   AgentMessageUsage,
+  ExpertPromptAttachment,
   ExecutionCursor,
   ExecutionRecord,
   ExpertMessageHistory,
@@ -14,7 +15,11 @@ import type {
   PromptRequest,
   RuntimeContextRecord,
 } from "@pragma/shared";
-import { ExpertMessageHistorySchema, InvocationOutputSchema } from "@pragma/shared";
+import {
+  ExpertMessageHistorySchema,
+  ExpertPromptAttachmentSchema,
+  InvocationOutputSchema,
+} from "@pragma/shared";
 import { isFinalExecutionStatus as isFinal } from "@pragma/shared";
 
 import type { ExpertDefinition } from "../agent/expert-team.ts";
@@ -42,6 +47,7 @@ import {
   runExpertInvocation,
 } from "./expert-runner.ts";
 import { unwrapInvocationOutput } from "./context-output-service.ts";
+import { createExpertPromptInput, readExpertPromptInput } from "./expert-prompt.ts";
 import type { HostContextBindings } from "../context-system/host-context-bindings.ts";
 import { RuntimeSessionPool } from "./runtime-session-pool.ts";
 import type { ExecutionStore } from "./execution-store.ts";
@@ -92,6 +98,7 @@ export interface PromptOptions {
   readonly requestId?: string | undefined;
   readonly mode?: PromptMode | undefined;
   readonly modelSelection?: RuntimeModelSelection | undefined;
+  readonly attachments?: readonly ExpertPromptAttachment[] | undefined;
 }
 
 export interface ExpertTurn extends MutableExecution {
@@ -532,6 +539,9 @@ class ExpertSessionImpl implements ExpertSession {
       if (options.modelSelection !== undefined) {
         throw new Error("A steer request cannot change the active Runtime model selection.");
       }
+      if ((options.attachments?.length ?? 0) > 0) {
+        throw new Error("A steer request cannot add prompt attachments.");
+      }
       return await this.steer(content, requestId);
     }
 
@@ -540,6 +550,11 @@ class ExpertSessionImpl implements ExpertSession {
     const session = await this.getState();
     const rootContextId = session.rootContextId;
     const modelSelection = options.modelSelection;
+    const attachments = ExpertPromptAttachmentSchema.array()
+      .max(20)
+      .parse(options.attachments ?? []);
+    const storedInput =
+      attachments.length === 0 ? content : createExpertPromptInput(content, attachments);
     const definitionKind = isExpertTeam(this.expert) ? "expert-team" : "expert";
     const execution: ExecutionRecord = {
       schemaVersion: "pragma.execution/v9",
@@ -549,7 +564,7 @@ class ExpertSessionImpl implements ExpertSession {
       definition: { id: this.expert.id, kind: definitionKind },
       rootInvocationId: id,
       status: "queued",
-      input: content,
+      input: storedInput,
       state: {},
       lastAppliedSequence: 0,
       createdAt: now,
@@ -576,7 +591,7 @@ class ExpertSessionImpl implements ExpertSession {
         executorId: isExpertTeam(this.expert) ? this.expert.coordinator.id : this.expert.id,
         contextId: rootContextId,
         status: "queued",
-        input: content,
+        input: storedInput,
         createdAt: now,
         updatedAt: now,
       },
@@ -1104,6 +1119,11 @@ class ExpertSessionImpl implements ExpertSession {
     const rootContextId = session.rootContextId;
     const rootContext = session.contexts[rootContextId];
     if (rootContext === undefined) throw new Error("ExpertSession root Context is missing.");
+    const rootInvocation = await this.dependencies.executions.getInvocation(
+      prompt.executionId,
+      prompt.executionId,
+    );
+    const promptInput = readExpertPromptInput(rootInvocation?.input, prompt.content);
     const controller = new ExecutionController(
       prompt.executionId,
       this.dependencies.executions,
@@ -1129,6 +1149,7 @@ class ExpertSessionImpl implements ExpertSession {
             this.recoveredExecutionId === prompt.executionId
               ? recoveryPrompt(prompt.content)
               : prompt.content,
+          attachments: promptInput.attachments,
           owner: { type: "expert-session", ownerId: this.sessionId },
           context: rootContext,
           controller,

@@ -1,6 +1,8 @@
+import { randomUUID } from "node:crypto";
+import { stat } from "node:fs/promises";
 import { basename } from "node:path";
 
-import { ipcMain, type BrowserWindow } from "electron";
+import { dialog, ipcMain, type BrowserWindow, type OpenDialogOptions } from "electron";
 
 import {
   CreateMissionSchema,
@@ -12,6 +14,8 @@ import {
   MissionCreationDefaultsSchema,
   MissionExecutorOptionSchema,
   MissionModelOptionsRequestSchema,
+  PickMissionAttachmentsResultSchema,
+  PickMissionAttachmentsSchema,
   MissionIdSchema,
   RespondMissionHumanInteractionSchema,
   SendMissionMessageSchema,
@@ -122,11 +126,50 @@ export function installMissionHandlers(options: {
     );
   });
   ipcMain.handle("missions:create-defaults:get", getCreationDefaults);
+  ipcMain.handle("missions:attachments:pick", async (_event, input: unknown) => {
+    const parsed = PickMissionAttachmentsSchema.parse(input);
+    const dialogOptions = attachmentDialogOptions(parsed.kind);
+    const window = options.getWindow();
+    const result =
+      window === null
+        ? await dialog.showOpenDialog(dialogOptions)
+        : await dialog.showOpenDialog(window, dialogOptions);
+    if (result.canceled) {
+      return PickMissionAttachmentsResultSchema.parse({ attachments: [] });
+    }
+    const attachments = await Promise.all(
+      result.filePaths.map(async (path) => {
+        const metadata = await stat(path);
+        if (parsed.kind === "directory" && !metadata.isDirectory()) {
+          throw new Error(`Selected attachment is not a directory: ${path}`);
+        }
+        if (parsed.kind !== "directory" && !metadata.isFile()) {
+          throw new Error(`Selected attachment is not a file: ${path}`);
+        }
+        const mimeType = parsed.kind === "image" ? imageMimeType(path) : undefined;
+        if (parsed.kind === "image" && metadata.size > MAX_IMAGE_ATTACHMENT_BYTES) {
+          throw new Error(`Image attachments must be 20 MiB or smaller: ${basename(path)}`);
+        }
+        return {
+          id: randomUUID(),
+          kind: parsed.kind,
+          name: basename(path),
+          path,
+          ...(mimeType === undefined ? {} : { mimeType }),
+          ...(metadata.isFile() ? { size: metadata.size } : {}),
+        };
+      }),
+    );
+    return PickMissionAttachmentsResultSchema.parse({ attachments });
+  });
   ipcMain.handle("missions:create", async (_event, input: unknown) => {
     const parsed = CreateMissionSchema.parse(input);
     const mission = await options.creator.create({
       workspace: parsed.workspace,
       missionInput: parsed.input,
+      ...(parsed.input.kind === "prompt" && parsed.input.attachments.length > 0
+        ? { attachments: parsed.input.attachments }
+        : {}),
       executorRef: parsed.executor.ref,
       ...(parsed.modelOverride === undefined ? {} : { modelOverride: parsed.modelOverride }),
       ...(parsed.toolPermissionMode === undefined
@@ -261,4 +304,42 @@ export function installMissionHandlers(options: {
       .then(() => options.getWindow()?.webContents.send("missions:work:updated", update))
       .catch(() => undefined);
   });
+}
+
+const MAX_IMAGE_ATTACHMENT_BYTES = 20 * 1024 * 1024;
+
+function attachmentDialogOptions(kind: "image" | "file" | "directory"): OpenDialogOptions {
+  if (kind === "directory") {
+    return { properties: ["openDirectory", "multiSelections"] };
+  }
+  return {
+    properties: ["openFile", "multiSelections"],
+    ...(kind === "image"
+      ? {
+          filters: [
+            {
+              name: "Images",
+              extensions: ["png", "jpg", "jpeg", "gif", "webp"],
+            },
+          ],
+        }
+      : {}),
+  };
+}
+
+function imageMimeType(path: string): "image/gif" | "image/jpeg" | "image/png" | "image/webp" {
+  const extension = path.split(".").at(-1)?.toLowerCase();
+  switch (extension) {
+    case "gif":
+      return "image/gif";
+    case "jpg":
+    case "jpeg":
+      return "image/jpeg";
+    case "png":
+      return "image/png";
+    case "webp":
+      return "image/webp";
+    default:
+      throw new Error(`Unsupported image attachment type: ${basename(path)}`);
+  }
 }

@@ -8,6 +8,7 @@ import {
   type AgentMessage,
   type AgentMessageUsage,
   type ExpertAgentStreamEvent,
+  type ExpertPromptAttachment,
   type Invocation,
   type InvocationOutput,
   type RuntimeContextRecord,
@@ -79,6 +80,7 @@ import { RuntimeMessageAccumulator } from "./runtime-message-accumulator.ts";
 import { requireInvocationContextOrigin } from "./runtime-context-record.ts";
 import { RuntimeSessionPool, type RuntimeSessionIdentity } from "./runtime-session-pool.ts";
 import { ContextOutputService, unwrapInvocationOutput } from "./context-output-service.ts";
+import { formatExpertPromptWithAttachments } from "./expert-prompt.ts";
 
 export type RuntimeContextSnapshot = SharedRuntimeContextSnapshot;
 
@@ -604,6 +606,7 @@ export interface RunExpertInvocationOptions {
   readonly agentId?: string | undefined;
   readonly expert: ExpertDefinition;
   readonly prompt: string;
+  readonly attachments?: readonly ExpertPromptAttachment[] | undefined;
   readonly owner:
     | { readonly type: "expert-session"; readonly ownerId: string }
     | { readonly type: "flow-execution"; readonly ownerId: string };
@@ -690,9 +693,13 @@ export async function runExpertInvocation(options: RunExpertInvocationOptions): 
       },
     ],
   });
+  const formattedPrompt = formatExpertPromptWithAttachments(
+    options.prompt,
+    options.attachments ?? [],
+  );
   await appendUserMessage(
     options,
-    options.prompt,
+    formattedPrompt,
     `invocation-user-message:${options.invocationId}`,
   );
   const invocationSignal = options.controller.signalForInvocation(
@@ -805,7 +812,7 @@ export async function runExpertInvocation(options: RunExpertInvocationOptions): 
   });
   throwIfAborted(invocationSignal, options.invocationId);
 
-  let query = options.prompt;
+  let query = formattedPrompt;
   let continuation = 0;
   let invocationUsage = invocation.usage;
   try {
@@ -815,6 +822,7 @@ export async function runExpertInvocation(options: RunExpertInvocationOptions): 
         invocation,
         session,
         query,
+        attachments: continuation === 0 ? (options.attachments ?? []) : [],
         runId:
           continuation === 0
             ? (options.runtimeRunId ?? options.invocationId)
@@ -982,6 +990,7 @@ async function executeAgentJob(
     agentId: job.agent.agentId,
     expert: job.expert,
     prompt: job.prompt,
+    attachments: parent.attachments,
     owner: parent.owner,
     context,
     controller: parent.controller,
@@ -1246,6 +1255,7 @@ async function invokeResourceFromExpert(
           parentInvocationId: options.invocationId,
           expert: target,
           prompt: readResourcePrompt(request.input),
+          attachments: options.attachments,
           owner: options.owner,
           context: contextResolution.context,
           controller: options.controller,
@@ -1316,6 +1326,7 @@ async function submitRuntimeTurn(options: {
   readonly invocation: Invocation;
   readonly session: RuntimeAgentSession;
   readonly query: string;
+  readonly attachments: readonly ExpertPromptAttachment[];
   readonly runId: string;
   readonly executionContext: ReturnType<typeof createExecutionContext>;
   readonly humanInteractionHandler: (
@@ -1334,6 +1345,7 @@ async function submitRuntimeTurn(options: {
   const handle = options.session.submit({
     runId: options.runId,
     query: options.query,
+    ...(options.attachments.length === 0 ? {} : { attachments: options.attachments }),
     ...(options.modelSelection === undefined ? {} : { modelSelection: options.modelSelection }),
     ...(options.output === undefined ? {} : { output: options.output }),
     ...(options.outputRetryLimit === undefined

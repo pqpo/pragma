@@ -1,6 +1,7 @@
 import { basename } from "node:path";
 
 import { canonicalPragmaResourceRef, type PragmaFlowResource } from "@pragma/interpreter/ast";
+import type { ExpertPromptAttachment } from "@pragma/shared";
 import { z } from "zod";
 
 import type {
@@ -22,6 +23,7 @@ export interface MissionCreator {
       | { readonly kind: "flow"; readonly value: Readonly<Record<string, unknown>> }
       | { readonly kind: "auto"; readonly value: string };
     readonly executorRef: string;
+    readonly attachments?: readonly ExpertPromptAttachment[] | undefined;
     readonly toolPermissionMode?: DesktopToolPermissionMode | undefined;
     readonly modelOverride?: MissionModelOverride | undefined;
   }): Promise<Mission>;
@@ -32,8 +34,7 @@ export function createMissionCreator(options: {
   readonly project: PragmaProjectStore;
   readonly executors: MissionExecutorCatalog;
   readonly getDefaultToolPermissionMode: () =>
-    | DesktopToolPermissionMode
-    | Promise<DesktopToolPermissionMode>;
+    DesktopToolPermissionMode | Promise<DesktopToolPermissionMode>;
   readonly assertExecutorReady?: ((ref: string) => void | Promise<void>) | undefined;
 }): MissionCreator {
   return {
@@ -67,6 +68,9 @@ export function createMissionCreator(options: {
       if (executor.kind !== "flow" && missionInput.kind !== "prompt") {
         throw new Error("Expert and team missions require a prompt.");
       }
+      if (executor.kind === "flow" && (input.attachments?.length ?? 0) > 0) {
+        throw new Error("Flow missions do not support prompt attachments.");
+      }
       if (input.modelOverride !== undefined) {
         await options.executors.validateModelOverride(executor.ref, input.modelOverride, project);
       }
@@ -90,6 +94,7 @@ export function createMissionCreator(options: {
         ...(flowInput === undefined ? {} : { flowInput }),
         project: { id: project.projectId, revision: project.revision },
         executor,
+        ...(input.attachments === undefined ? {} : { attachments: input.attachments }),
         ...(input.modelOverride === undefined ? {} : { modelOverride: input.modelOverride }),
         toolPermissionMode:
           input.toolPermissionMode ?? (await options.getDefaultToolPermissionMode()),

@@ -76,6 +76,8 @@ import type {
   AutomationAdapterOption,
   MissionModelOptions,
   CreateMission,
+  PickMissionAttachments,
+  PickMissionAttachmentsResult,
   UpdateMissionOptions,
   MissionWorkSnapshot,
   GetMissionWorkConversation,
@@ -226,20 +228,39 @@ export interface PragmaDesktopAPI {
   createMemoryKnowledgeStore: (
     input: MemoryKnowledgeInitializationCandidateRef,
   ) => Promise<ContextStore>;
-  listMemorySkillCandidates: (input?: { readonly state?: MemorySkillCandidate["state"] }) => Promise<MemorySkillCandidate[]>;
+  listMemorySkillCandidates: (input?: {
+    readonly state?: MemorySkillCandidate["state"];
+  }) => Promise<MemorySkillCandidate[]>;
   updateMemorySkillCandidate: (input: UpdateMemorySkillCandidate) => Promise<MemorySkillCandidate>;
   resolveMemorySkillTarget: (input: ResolveMemorySkillTarget) => Promise<MemorySkillCandidate>;
   rejectMemorySkillCandidate: (input: MemorySkillCandidateRef) => Promise<MemorySkillCandidate>;
   approveMemorySkillCandidate: (input: MemorySkillCandidateRef) => Promise<MemorySkillCandidate>;
   retryMemorySkillCandidate: (input: MemorySkillCandidateRef) => Promise<MemorySkillCandidate>;
   submitSkillRevision: (input: SkillRevisionRequest) => Promise<SkillRevisionJob>;
-  listSkillRevisions: (input?: { readonly capabilityId?: string; readonly state?: SkillRevisionJob["state"] }) => Promise<SkillRevisionJob[]>;
-  approveSkillRevision: (input: { readonly jobId: string; readonly expectedRevision: number }) => Promise<SkillRevisionJob>;
-  rejectSkillRevision: (input: { readonly jobId: string; readonly expectedRevision: number }) => Promise<SkillRevisionJob>;
-  retrySkillRevision: (input: { readonly jobId: string; readonly expectedRevision: number }) => Promise<SkillRevisionJob>;
-  deleteSkillRevision: (input: { readonly jobId: string; readonly expectedRevision: number }) => Promise<void>;
+  listSkillRevisions: (input?: {
+    readonly capabilityId?: string;
+    readonly state?: SkillRevisionJob["state"];
+  }) => Promise<SkillRevisionJob[]>;
+  approveSkillRevision: (input: {
+    readonly jobId: string;
+    readonly expectedRevision: number;
+  }) => Promise<SkillRevisionJob>;
+  rejectSkillRevision: (input: {
+    readonly jobId: string;
+    readonly expectedRevision: number;
+  }) => Promise<SkillRevisionJob>;
+  retrySkillRevision: (input: {
+    readonly jobId: string;
+    readonly expectedRevision: number;
+  }) => Promise<SkillRevisionJob>;
+  deleteSkillRevision: (input: {
+    readonly jobId: string;
+    readonly expectedRevision: number;
+  }) => Promise<void>;
   getSkillEvaluationProfile: () => Promise<SkillEvaluationProfile>;
-  updateSkillEvaluationProfile: (input: UpdateSkillEvaluationProfile) => Promise<SkillEvaluationProfile>;
+  updateSkillEvaluationProfile: (
+    input: UpdateSkillEvaluationProfile,
+  ) => Promise<SkillEvaluationProfile>;
   getMissionMemoryActivity: (missionId: string) => Promise<DesktopMissionMemoryActivity>;
   getMissionContextStore: (input: GetMissionContextStore) => Promise<MissionContextStoreDescriptor>;
   listMissionContextStoreEntries: (
@@ -379,6 +400,7 @@ export interface PragmaDesktopAPI {
   getMission: (id: string) => Promise<Mission>;
   subscribeMissionUpdates: (listener: (update: MissionUpdate) => void) => () => void;
   createMission: (input: CreateMission) => Promise<Mission>;
+  pickMissionAttachments: (input: PickMissionAttachments) => Promise<PickMissionAttachmentsResult>;
   updateMissionOptions: (input: UpdateMissionOptions) => Promise<Mission>;
   runMission: (id: string) => Promise<Mission>;
   sendMissionMessage: (input: SendMissionMessage) => Promise<Mission>;

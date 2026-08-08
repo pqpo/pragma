@@ -1,4 +1,4 @@
-import { appendFile, mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
+import { appendFile, mkdir, mkdtemp, readFile, realpath, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
@@ -66,6 +66,81 @@ describe("mission store", () => {
     expect(await readFile(join(root, "missions", created.id, "messages.jsonl"), "utf8")).toContain(
       '"kind":"user"',
     );
+    await expect(store.getAttachments(created.id)).resolves.toEqual([]);
+  });
+
+  it("materializes images inside the Mission while keeping file and directory references", async () => {
+    const root = await temporaryRoot();
+    const sourceDir = join(root, "source");
+    const folder = join(sourceDir, "fixtures");
+    const image = join(sourceDir, "screen.png");
+    const file = join(sourceDir, "requirements.md");
+    await mkdir(folder, { recursive: true });
+    await writeFile(image, "image-bytes");
+    await writeFile(file, "requirements");
+    const store = createMissionStore({ missionsPath: join(root, "missions") });
+
+    const mission = await store.create({
+      workspace: { path: join(root, "workspace"), basename: "workspace" },
+      goal: "Review the attached context",
+      project: { id: "studio", revision: 1 },
+      executor: missionExecutorSnapshot(expertFixture()),
+      attachments: [
+        {
+          id: "00000000-0000-4000-8000-000000000001",
+          kind: "image",
+          name: "screen.png",
+          path: image,
+          mimeType: "image/png",
+        },
+        {
+          id: "00000000-0000-4000-8000-000000000002",
+          kind: "file",
+          name: "requirements.md",
+          path: file,
+        },
+        {
+          id: "00000000-0000-4000-8000-000000000003",
+          kind: "directory",
+          name: "fixtures",
+          path: folder,
+        },
+      ],
+    });
+
+    const stored = await store.getAttachments(mission.id);
+    expect(stored).toHaveLength(3);
+    expect(stored[0]).toMatchObject({ kind: "image", mimeType: "image/png" });
+    expect(stored[0]?.path).toBe(
+      join(root, "missions", mission.id, "attachments", "images", `${stored[0]?.id}.png`),
+    );
+    await expect(readFile(stored[0]!.path, "utf8")).resolves.toBe("image-bytes");
+    expect(stored[1]).toMatchObject({ kind: "file", path: await realpath(file), size: 12 });
+    expect(stored[2]).toEqual({
+      id: "00000000-0000-4000-8000-000000000003",
+      kind: "directory",
+      name: "fixtures",
+      path: await realpath(folder),
+    });
+    expect(
+      JSON.parse(await readFile(join(root, "missions", mission.id, "attachments.json"), "utf8")),
+    ).toMatchObject({ schemaVersion: "pragma.mission-attachments/v1" });
+  });
+
+  it("fails closed when the attachment manifest is corrupted", async () => {
+    const root = await temporaryRoot();
+    const store = createMissionStore({ missionsPath: join(root, "missions") });
+    const mission = await store.create({
+      workspace: { path: join(root, "workspace"), basename: "workspace" },
+      goal: "Review the attached context",
+      project: { id: "studio", revision: 1 },
+      executor: missionExecutorSnapshot(expertFixture()),
+    });
+    await writeFile(join(root, "missions", mission.id, "attachments.json"), "{not-json");
+
+    await expect(store.getAttachments(mission.id)).rejects.toMatchObject({
+      code: "config_invalid",
+    });
   });
 
   it("resolves legacy execution-scoped jobs to their Mission titles", async () => {

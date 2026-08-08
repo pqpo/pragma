@@ -133,6 +133,7 @@ export function parseAntigravityModels(output: string): readonly RuntimeModel[] 
         id: "antigravity",
         displayName: "Antigravity",
       },
+      inputModalities: ["text"],
       ...(selectedByMarker || selectedBySuffix || isDefaultModelLine(fields)
         ? { default: true }
         : {}),

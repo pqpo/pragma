@@ -1,4 +1,4 @@
-import { mkdtemp, readFile, rm } from "node:fs/promises";
+import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
@@ -7,6 +7,7 @@ import type { RuntimeEventMappingContext } from "@pragma/core";
 
 import {
   consumeClaudeCodeStartupMessages,
+  createClaudeCodeUserInput,
   mapClaudeCodeNativeEvent,
   normalizeClaudeToolRuntimeEvents,
   readAssistantMessageEvent,
@@ -29,6 +30,48 @@ describe("Claude Code startup messages", () => {
     ]);
     expect(consumeClaudeCodeStartupMessages(session)).toEqual([]);
     expect(session.messages).toEqual([]);
+  });
+});
+
+describe("Claude Code multimodal input", () => {
+  it("encodes image attachments as stream-json image blocks", async () => {
+    const directory = await mkdtemp(join(tmpdir(), "pragma-claude-image-"));
+    const path = join(directory, "screen.png");
+    await writeFile(path, "image-bytes");
+    try {
+      await expect(
+        createClaudeCodeUserInput(
+          ["inspect this image"],
+          [
+            {
+              id: "00000000-0000-4000-8000-000000000001",
+              kind: "image",
+              name: "screen.png",
+              path,
+              mimeType: "image/png",
+            },
+          ],
+        ),
+      ).resolves.toEqual({
+        type: "user",
+        message: {
+          role: "user",
+          content: [
+            { type: "text", text: "inspect this image" },
+            {
+              type: "image",
+              source: {
+                type: "base64",
+                media_type: "image/png",
+                data: Buffer.from("image-bytes").toString("base64"),
+              },
+            },
+          ],
+        },
+      });
+    } finally {
+      await rm(directory, { recursive: true, force: true });
+    }
   });
 });
 

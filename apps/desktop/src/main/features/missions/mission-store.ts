@@ -1,8 +1,10 @@
 import { randomUUID } from "node:crypto";
 import {
   mkdir,
+  copyFile,
   open,
   readFile,
+  realpath,
   readdir,
   rename,
   rm,
@@ -10,9 +12,10 @@ import {
   truncate,
   writeFile,
 } from "node:fs/promises";
-import { dirname, join } from "node:path";
+import { basename, dirname, extname, join } from "node:path";
 
 import { withFileLock } from "@pragma/core";
+import type { ExpertPromptAttachment } from "@pragma/shared";
 import {
   formatPragmaYaml,
   migrateLegacyPragmaResourceRef,
@@ -28,6 +31,7 @@ import {
   MissionV5Schema,
   MissionV6Schema,
   MissionTimelineRecordSchema,
+  MissionAttachmentsManifestSchema,
   MissionChatEntrySchema,
   MissionUserMessageSchema,
   type Mission,
@@ -37,6 +41,7 @@ import {
   type MissionTimelineRecord,
   type MissionChatEntry,
   type MissionUserMessage,
+  type MissionAttachmentsManifest,
   type DesktopToolPermissionMode,
 } from "../../../shared/contracts/index.ts";
 import {
@@ -64,6 +69,7 @@ export interface MissionStore {
   list(): Promise<MissionSummary[]>;
   resolveExecutionTitles(executionIds: readonly string[]): Promise<ReadonlyMap<string, string>>;
   get(id: string): Promise<Mission>;
+  getAttachments(id: string): Promise<readonly ExpertPromptAttachment[]>;
   create(input: {
     readonly id?: string | undefined;
     readonly workspace: { readonly path: string; readonly basename: string };
@@ -72,6 +78,7 @@ export interface MissionStore {
     readonly flowInput?: Readonly<Record<string, unknown>> | undefined;
     readonly project: { readonly id: string; readonly revision: number };
     readonly executor: MissionExecutor;
+    readonly attachments?: readonly ExpertPromptAttachment[] | undefined;
     readonly toolPermissionMode?: DesktopToolPermissionMode | undefined;
     readonly modelOverride?: MissionModelOverride | undefined;
     readonly origin?: Mission["origin"] | undefined;
@@ -151,6 +158,7 @@ export function createMissionStore(options: { readonly missionsPath: string }): 
   const missionPath = (id: string) => join(options.missionsPath, id);
   const manifestPath = (id: string) => join(missionPath(id), "mission.yaml");
   const messagesPath = (id: string) => join(missionPath(id), "messages.jsonl");
+  const attachmentsPath = (id: string) => join(missionPath(id), "attachments.json");
   const transactionPath = (id: string) => join(missionPath(id), ".messages.transaction.json");
   const v7MigrationTransactionPath = (id: string) =>
     join(missionPath(id), ".v6-to-v7.transaction.json");
@@ -506,6 +514,22 @@ export function createMissionStore(options: { readonly missionsPath: string }): 
     async get(id) {
       return await readMission(MissionIdSchema.parse(id));
     },
+    async getAttachments(id) {
+      const parsedId = MissionIdSchema.parse(id);
+      return await withMissionLock(parsedId, async () => {
+        await readMissionUnlocked(parsedId);
+        try {
+          const value = await readJsonIfExists(attachmentsPath(parsedId));
+          if (value === undefined) return [];
+          return MissionAttachmentsManifestSchema.parse(value).attachments;
+        } catch (error) {
+          throw new MissionStoreError(
+            "config_invalid",
+            `Mission ${parsedId} has an invalid attachment manifest: ${error instanceof Error ? error.message : String(error)}`,
+          );
+        }
+      });
+    },
     async create(input) {
       const id = MissionIdSchema.parse(input.id ?? randomUUID());
       const initialMessageId = randomUUID();
@@ -540,9 +564,19 @@ export function createMissionStore(options: { readonly missionsPath: string }): 
       const temporaryPath = join(options.missionsPath, `.${id}.${randomUUID()}.tmp`);
       await mkdir(temporaryPath, { recursive: true, mode: 0o700 });
       try {
+        const attachments = await materializeMissionAttachments({
+          attachments: input.attachments ?? [],
+          temporaryMissionPath: temporaryPath,
+          targetMissionPath: targetPath,
+        });
         await writeFile(join(temporaryPath, "mission.yaml"), formatPragmaYaml(mission), {
           mode: 0o600,
         });
+        await writeFile(
+          join(temporaryPath, "attachments.json"),
+          `${JSON.stringify(attachments, null, 2)}\n`,
+          { mode: 0o600 },
+        );
         await writeFile(
           join(temporaryPath, "messages.jsonl"),
           `${JSON.stringify(firstMessage)}\n`,
@@ -680,6 +714,86 @@ export function createMissionStore(options: { readonly missionsPath: string }): 
       });
     },
   };
+}
+
+const MAX_IMAGE_ATTACHMENT_BYTES = 20 * 1024 * 1024;
+
+async function materializeMissionAttachments(options: {
+  readonly attachments: readonly ExpertPromptAttachment[];
+  readonly temporaryMissionPath: string;
+  readonly targetMissionPath: string;
+}): Promise<MissionAttachmentsManifest> {
+  const input = MissionAttachmentsManifestSchema.parse({
+    schemaVersion: "pragma.mission-attachments/v1",
+    attachments: options.attachments,
+  });
+  const attachments = await Promise.all(
+    input.attachments.map(async (attachment): Promise<ExpertPromptAttachment> => {
+      const sourcePath = await realpath(attachment.path);
+      const metadata = await stat(sourcePath);
+      if (attachment.kind === "directory") {
+        if (!metadata.isDirectory()) {
+          throw new Error(`Mission attachment is not a directory: ${sourcePath}`);
+        }
+        return {
+          id: attachment.id,
+          kind: attachment.kind,
+          name: basename(sourcePath),
+          path: sourcePath,
+        };
+      }
+      if (!metadata.isFile()) {
+        throw new Error(`Mission attachment is not a file: ${sourcePath}`);
+      }
+      if (attachment.kind === "file") {
+        return {
+          id: attachment.id,
+          kind: attachment.kind,
+          name: basename(sourcePath),
+          path: sourcePath,
+          size: metadata.size,
+        };
+      }
+      if (metadata.size > MAX_IMAGE_ATTACHMENT_BYTES) {
+        throw new Error(`Image attachments must be 20 MiB or smaller: ${basename(sourcePath)}`);
+      }
+      const mimeType = missionImageMimeType(sourcePath);
+      const relativePath = join("attachments", "images", `${attachment.id}${extname(sourcePath)}`);
+      const temporaryPath = join(options.temporaryMissionPath, relativePath);
+      await mkdir(dirname(temporaryPath), { recursive: true, mode: 0o700 });
+      await copyFile(sourcePath, temporaryPath);
+      return {
+        id: attachment.id,
+        kind: attachment.kind,
+        name: basename(sourcePath),
+        path: join(options.targetMissionPath, relativePath),
+        mimeType,
+        size: metadata.size,
+      };
+    }),
+  );
+  return MissionAttachmentsManifestSchema.parse({
+    schemaVersion: "pragma.mission-attachments/v1",
+    attachments,
+  });
+}
+
+function missionImageMimeType(
+  path: string,
+): "image/gif" | "image/jpeg" | "image/png" | "image/webp" {
+  switch (extname(path).toLowerCase()) {
+    case ".gif":
+      return "image/gif";
+    case ".jpg":
+    case ".jpeg":
+      return "image/jpeg";
+    case ".png":
+      return "image/png";
+    case ".webp":
+      return "image/webp";
+    default:
+      throw new Error(`Unsupported image attachment type: ${basename(path)}`);
+  }
 }
 
 function toMissionSummary(mission: Mission): MissionSummary {

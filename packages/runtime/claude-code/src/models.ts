@@ -263,6 +263,9 @@ function buildClaudeMappedModels(
           id: "anthropic-compatible",
           displayName: "Anthropic-compatible",
         },
+        // A mapped endpoint may target a text-only model. Treat it as text-only
+        // until its provider exposes authoritative modality metadata.
+        inputModalities: ["text"],
         ...(isDefault ? { default: true } : {}),
         ...(thinking === undefined ? {} : { thinking }),
       } satisfies RuntimeModel,
@@ -294,6 +297,7 @@ export function buildClaudeModels(effortLevels: readonly string[]): readonly Run
       id: definition.id,
       displayName: definition.displayName,
       provider: { kind: "runtime-managed", id: "anthropic", displayName: "Anthropic" },
+      inputModalities: ["text", "image"],
       ...(definition.default === true ? { default: true } : {}),
       ...(thinking === undefined ? {} : { thinking }),
     } satisfies RuntimeModel;
@@ -356,12 +360,10 @@ function buildThinkingConfig(
 ): RuntimeModel["thinking"] | undefined {
   const levels = effortLevels
     .filter((value) => allowedLevels === undefined || allowedLevels.has(value))
-    .map(
-      (value): RuntimeThinkingLevel => ({
-        value,
-        label: THINKING_LEVEL_LABELS[value] ?? toDisplayLabel(value),
-      }),
-    );
+    .map((value): RuntimeThinkingLevel => ({
+      value,
+      label: THINKING_LEVEL_LABELS[value] ?? toDisplayLabel(value),
+    }));
   if (levels.length === 0) {
     return undefined;
   }

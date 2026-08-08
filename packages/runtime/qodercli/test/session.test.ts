@@ -118,6 +118,7 @@ function createTurn(
     isRetry: false,
     rawQuery: "user prompt",
     prompt: "user prompt",
+    attachments: [],
     startupMessages,
     signal: new AbortController().signal,
     source: { kind: "runtime", runId: "run-1", path: [] },

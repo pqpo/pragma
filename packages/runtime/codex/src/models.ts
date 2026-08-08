@@ -12,6 +12,7 @@ interface CodexDebugModelsResponse {
 interface CodexDebugModel {
   readonly slug?: string | undefined;
   readonly display_name?: string | undefined;
+  readonly input_modalities?: readonly string[] | undefined;
   readonly default_reasoning_level?: string | undefined;
   readonly supported_reasoning_levels?:
     | readonly {
@@ -199,6 +200,7 @@ export function parseCodexModels(output: string): readonly RuntimeModel[] {
       displayName: model.display_name?.trim() || model.slug,
       provider: { kind: "runtime-managed", id: "openai", displayName: "OpenAI" },
       ...(model === defaultModel ? { default: true } : {}),
+      inputModalities: normalizeInputModalities(model.input_modalities),
       ...(levels.length === 0
         ? {}
         : {
@@ -209,6 +211,17 @@ export function parseCodexModels(output: string): readonly RuntimeModel[] {
           }),
     } satisfies RuntimeModel;
   });
+}
+
+function normalizeInputModalities(input: readonly string[] | undefined): readonly string[] {
+  const normalized = [
+    ...new Set(
+      (input ?? ["text", "image"])
+        .map((value) => value.trim().toLowerCase())
+        .filter((value) => value !== ""),
+    ),
+  ];
+  return normalized.length === 0 ? ["text"] : normalized;
 }
 
 export function assertCodexModelSelection(

@@ -17,15 +17,19 @@ import {
   Check,
   Eye,
   EyeSlash,
+  File as FileIcon,
   FolderOpen,
   GearSix,
   GitBranch,
+  ImageSquare,
   MagnifyingGlass,
+  Plus,
   Star,
   User,
   UsersThree,
   X,
 } from "@phosphor-icons/react";
+import type { ExpertPromptAttachment, ExpertPromptAttachmentKind } from "@pragma/shared";
 import { useTranslation } from "react-i18next";
 
 import type {
@@ -60,6 +64,7 @@ export function HomePage(props: {
   const [executorRef, setExecutorRef] = useState(props.initialExecutorRef ?? "");
   const [defaultExecutorRef, setDefaultExecutorRef] = useState("");
   const [goal, setGoal] = useState("");
+  const [attachments, setAttachments] = useState<readonly ExpertPromptAttachment[]>([]);
   const [flowInput, setFlowInput] = useState<Readonly<Record<string, unknown>>>({});
   const [toolPermissionMode, setToolPermissionMode] =
     useState<DesktopToolPermissionMode>("request-approval");
@@ -299,6 +304,7 @@ export function HomePage(props: {
     const next = executors.find((executor) => executor.ref === ref);
     workspaceAssociationRequestRef.current = ref;
     setExecutorRef(ref);
+    if (next?.kind === "flow") setAttachments([]);
     const associatedWorkspace = next?.preference.lastWorkspace;
     if (associatedWorkspace === undefined) return;
     void window.pragmaDesktop
@@ -313,6 +319,27 @@ export function HomePage(props: {
         void clearExecutorWorkspaceAssociation(ref, setExecutors);
       })
       .catch(() => undefined);
+  };
+
+  const pickAttachments = async (kind: ExpertPromptAttachmentKind) => {
+    if (selectedExecutor?.kind === "flow") return;
+    try {
+      const result = await window.pragmaDesktop.pickMissionAttachments({ kind });
+      setAttachments((current) => {
+        const known = new Set(current.map((attachment) => `${attachment.kind}:${attachment.path}`));
+        const additions = result.attachments.filter(
+          (attachment) => !known.has(`${attachment.kind}:${attachment.path}`),
+        );
+        if (current.length + additions.length > 20) {
+          setError(t("attachmentLimit"));
+          return current;
+        }
+        if (additions.length > 0) setError(null);
+        return [...current, ...additions];
+      });
+    } catch (pickError) {
+      setError(errorMessage(pickError));
+    }
   };
 
   const updateExecutorPreference = async (
@@ -387,7 +414,7 @@ export function HomePage(props: {
                   ? flowInput
                   : { goal: goal.trim(), workspace: workspace.path },
               }
-            : { kind: "prompt", value: goal.trim() },
+            : { kind: "prompt", value: goal.trim(), attachments: [...attachments] },
         toolPermissionMode,
         ...(modelOverride === undefined ? {} : { modelOverride }),
       });
@@ -405,6 +432,7 @@ export function HomePage(props: {
         ...(persistedModelOverride === undefined ? {} : { modelOverride: persistedModelOverride }),
       });
       setGoal("");
+      setAttachments([]);
       setFlowInput(clearedFlowInput);
       await props.onCreated(mission);
     } catch (submitError) {
@@ -427,15 +455,59 @@ export function HomePage(props: {
             if (!event.currentTarget.contains(event.relatedTarget)) setComposerFocused(false);
           }}
         >
-          <WorkspacePicker
-            defaultWorkspace={defaultWorkspace}
-            recentWorkspaces={recentWorkspaces}
-            selection={workspaceOverride}
-            defaultSelected={workspaceOverride === undefined}
-            onChoose={() => void pickWorkspace()}
-            onSelect={setWorkspaceOverride}
-            onUseDefault={() => setWorkspaceOverride(undefined)}
-          />
+          <div className="mission-composer-context-row">
+            <MissionAttachmentPicker
+              disabled={saving || selectedExecutor?.kind === "flow"}
+              onPick={pickAttachments}
+            />
+            <WorkspacePicker
+              defaultWorkspace={defaultWorkspace}
+              recentWorkspaces={recentWorkspaces}
+              selection={workspaceOverride}
+              defaultSelected={workspaceOverride === undefined}
+              onChoose={() => void pickWorkspace()}
+              onSelect={setWorkspaceOverride}
+              onUseDefault={() => setWorkspaceOverride(undefined)}
+            />
+          </div>
+          <div
+            className={
+              attachments.length === 0
+                ? "mission-attachment-list is-empty"
+                : "mission-attachment-list"
+            }
+            aria-label={attachments.length === 0 ? undefined : t("attachedContext")}
+          >
+            {attachments.map((attachment) => {
+              const AttachmentIcon =
+                attachment.kind === "image"
+                  ? ImageSquare
+                  : attachment.kind === "directory"
+                    ? FolderOpen
+                    : FileIcon;
+              return (
+                <span
+                  className="mission-attachment-chip"
+                  key={attachment.id}
+                  title={attachment.path}
+                >
+                  <AttachmentIcon size={16} aria-hidden="true" />
+                  <span>{attachment.name}</span>
+                  <button
+                    type="button"
+                    aria-label={t("removeAttachment", { name: attachment.name })}
+                    onClick={() =>
+                      setAttachments((current) =>
+                        current.filter((candidate) => candidate.id !== attachment.id),
+                      )
+                    }
+                  >
+                    <X size={13} aria-hidden="true" />
+                  </button>
+                </span>
+              );
+            })}
+          </div>
           {flowInputSchema === undefined ? (
             <div className="mission-goal-field">
               <textarea
@@ -529,6 +601,58 @@ export function HomePage(props: {
       <ExpertConstellation focused={composerFocused} submitting={saving} />
       {appVersion !== undefined ? <p className="home-app-version">v{appVersion}</p> : null}
     </section>
+  );
+}
+
+function MissionAttachmentPicker(props: {
+  readonly disabled: boolean;
+  readonly onPick: (kind: ExpertPromptAttachmentKind) => void | Promise<void>;
+}) {
+  const { t } = useTranslation("missions");
+  const [open, setOpen] = useState(false);
+  const rootRef = useRef<HTMLDivElement | null>(null);
+  const close = useCallback(() => setOpen(false), []);
+  useDismissableMenu(open, rootRef, close);
+
+  const choose = (kind: ExpertPromptAttachmentKind) => {
+    setOpen(false);
+    void props.onPick(kind);
+  };
+
+  return (
+    <div
+      className={open ? "mission-attachment-picker is-open" : "mission-attachment-picker"}
+      ref={rootRef}
+    >
+      <button
+        className="mission-attachment-trigger"
+        type="button"
+        aria-label={t("addAttachment")}
+        aria-expanded={open}
+        aria-haspopup="menu"
+        title={props.disabled ? t("attachmentUnavailableForFlow") : t("addAttachment")}
+        disabled={props.disabled}
+        onClick={() => setOpen((current) => !current)}
+      >
+        <Plus size={20} aria-hidden="true" />
+      </button>
+      {open ? (
+        <div className="mission-attachment-menu" role="menu" aria-label={t("addAttachment")}>
+          <button type="button" role="menuitem" onClick={() => choose("image")}>
+            <ImageSquare size={18} aria-hidden="true" />
+            <span>{t("attachImage")}</span>
+          </button>
+          <button type="button" role="menuitem" onClick={() => choose("file")}>
+            <FileIcon size={18} aria-hidden="true" />
+            <span>{t("attachFile")}</span>
+          </button>
+          <button type="button" role="menuitem" onClick={() => choose("directory")}>
+            <FolderOpen size={18} aria-hidden="true" />
+            <span>{t("attachFolder")}</span>
+          </button>
+        </div>
+      ) : null}
+    </div>
   );
 }
 
