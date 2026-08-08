@@ -1,0 +1,366 @@
+name: Desktop Release
+
+on:
+  workflow_dispatch:
+  push:
+    tags:
+      - "v*"
+
+concurrency:
+  group: desktop-release-${{ github.ref }}
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+
+jobs:
+  verify:
+    name: Verify release source
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    outputs:
+      version: ${{ steps.app-version.outputs.version }}
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Setup pnpm
+        uses: pnpm/action-setup@v4
+        with:
+          version: 10.12.1
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22.19.0
+          cache: pnpm
+
+      - name: Read application version
+        id: app-version
+        shell: bash
+        run: |
+          version="$(node -p "require('./apps/desktop/package.json').version")"
+          echo "version=${version}" >> "${GITHUB_OUTPUT}"
+
+      - name: Validate release tag
+        if: github.ref_type == 'tag'
+        shell: bash
+        run: |
+          version="${{ steps.app-version.outputs.version }}"
+          if [[ ! "${GITHUB_REF_NAME}" =~ ^v[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+            echo "::error::Release tag must match vX.Y.Z."
+            exit 1
+          fi
+          if [[ "${GITHUB_REF_NAME}" != "v${version}" ]]; then
+            echo "::error::Tag ${GITHUB_REF_NAME} does not match desktop version ${version}."
+            exit 1
+          fi
+          if ! git merge-base --is-ancestor "${GITHUB_SHA}" origin/main; then
+            echo "::error::Release tag must point to a commit contained in origin/main."
+            exit 1
+          fi
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Lint
+        run: pnpm lint
+
+      - name: Typecheck
+        run: pnpm typecheck
+
+      - name: Test
+        env:
+          PRAGMA_LOG_LEVEL: error
+          CI: "true"
+        run: pnpm test:core
+
+      - name: Build
+        run: pnpm build
+
+  package:
+    name: Package ${{ matrix.artifact }}
+    needs: verify
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - artifact: mac-arm64
+            os: macos-15
+            script: dist:mac:arm64
+          - artifact: mac-x64
+            os: macos-15-intel
+            script: dist:mac:x64
+          - artifact: win-x64
+            os: windows-2025
+            script: dist:win:x64
+    runs-on: ${{ matrix.os }}
+    env:
+      CSC_IDENTITY_AUTO_DISCOVERY: "false"
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup pnpm
+        uses: pnpm/action-setup@v4
+        with:
+          version: 10.12.1
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22.19.0
+          cache: pnpm
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Build installer
+        run: pnpm --filter @pragma/desktop run ${{ matrix.script }}
+
+      - name: Upload installers
+        uses: actions/upload-artifact@v4
+        with:
+          name: pragma-${{ needs.verify.outputs.version }}-${{ matrix.artifact }}
+          path: |
+            apps/desktop/dist/*.dmg
+            apps/desktop/dist/*.zip
+            apps/desktop/dist/*.exe
+          if-no-files-found: error
+          retention-days: 7
+
+  release:
+    name: Publish GitHub Pre-release
+    if: github.ref_type == 'tag'
+    needs:
+      - verify
+      - package
+    runs-on: ubuntu-24.04
+    environment: desktop-release
+    permissions:
+      contents: write
+      id-token: write
+
+    steps:
+      - name: Download installers
+        uses: actions/download-artifact@v4
+        with:
+          pattern: pragma-${{ needs.verify.outputs.version }}-*
+          path: release-assets
+          merge-multiple: true
+
+      - name: Validate installers and generate checksums
+        shell: bash
+        run: |
+          version="${{ needs.verify.outputs.version }}"
+          expected=(
+            "Pragma-${version}-mac-arm64.dmg"
+            "Pragma-${version}-mac-arm64.zip"
+            "Pragma-${version}-mac-x64.dmg"
+            "Pragma-${version}-mac-x64.zip"
+            "Pragma-${version}-win-x64.exe"
+          )
+
+          for file in "${expected[@]}"; do
+            if [[ ! -s "release-assets/${file}" ]]; then
+              echo "::error::Missing or empty release asset: ${file}"
+              exit 1
+            fi
+          done
+
+          asset_count="$(
+            find release-assets -maxdepth 1 -type f \
+              \( -name '*.dmg' -o -name '*.zip' -o -name '*.exe' \) |
+              wc -l |
+              tr -d ' '
+          )"
+          if [[ "${asset_count}" != "5" ]]; then
+            echo "::error::Expected 5 installers, found ${asset_count}."
+            exit 1
+          fi
+
+          (
+            cd release-assets
+            sha256sum "${expected[@]}" > SHA256SUMS.txt
+          )
+
+      - name: Validate Alibaba Cloud release configuration
+        env:
+          ALIYUN_OIDC_PROVIDER_ARN: ${{ vars.ALIYUN_OIDC_PROVIDER_ARN }}
+          ALIYUN_RELEASE_ROLE_ARN: ${{ vars.ALIYUN_RELEASE_ROLE_ARN }}
+          ALIYUN_OSS_BUCKET: ${{ vars.ALIYUN_OSS_BUCKET }}
+          ALIYUN_OSS_REGION: ${{ vars.ALIYUN_OSS_REGION }}
+        shell: bash
+        run: |
+          required=(
+            ALIYUN_OIDC_PROVIDER_ARN
+            ALIYUN_RELEASE_ROLE_ARN
+            ALIYUN_OSS_BUCKET
+            ALIYUN_OSS_REGION
+          )
+
+          for name in "${required[@]}"; do
+            if [[ -z "${!name}" ]]; then
+              echo "::error::Missing desktop-release environment variable: ${name}"
+              exit 1
+            fi
+          done
+
+          if [[ ! "${ALIYUN_OIDC_PROVIDER_ARN}" =~ ^acs:ram::[0-9]+:oidc-provider/[A-Za-z0-9._-]+$ ]]; then
+            echo "::error::ALIYUN_OIDC_PROVIDER_ARN is not a valid RAM OIDC provider ARN."
+            exit 1
+          fi
+          if [[ ! "${ALIYUN_RELEASE_ROLE_ARN}" =~ ^acs:ram::[0-9]+:role/[A-Za-z0-9._-]+$ ]]; then
+            echo "::error::ALIYUN_RELEASE_ROLE_ARN is not a valid RAM role ARN."
+            exit 1
+          fi
+          if [[ ! "${ALIYUN_OSS_BUCKET}" =~ ^[a-z0-9][a-z0-9-]{1,61}[a-z0-9]$ ]]; then
+            echo "::error::ALIYUN_OSS_BUCKET is not a valid OSS bucket name."
+            exit 1
+          fi
+          if [[ ! "${ALIYUN_OSS_REGION}" =~ ^[a-z0-9-]+$ ]]; then
+            echo "::error::ALIYUN_OSS_REGION is not a valid OSS region id."
+            exit 1
+          fi
+
+      - name: Prepare macOS OSS assets
+        shell: bash
+        run: |
+          version="${{ needs.verify.outputs.version }}"
+          mac_assets=(
+            "Pragma-${version}-mac-arm64.dmg"
+            "Pragma-${version}-mac-x64.dmg"
+          )
+
+          mkdir -p oss-assets
+          for file in "${mac_assets[@]}"; do
+            install -m 0644 "release-assets/${file}" "oss-assets/${file}"
+          done
+          (
+            cd release-assets
+            sha256sum "${mac_assets[@]}"
+          ) > oss-assets/SHA256SUMS-mac.txt
+
+      - name: Install ossutil
+        shell: bash
+        run: |
+          version="2.3.0"
+          archive="ossutil-${version}-linux-amd64.zip"
+          archive_path="${RUNNER_TEMP}/${archive}"
+          download_url="https://gosspublic.alicdn.com/ossutil/v2/${version}/${archive}"
+          expected_sha256="3ae4d9fc85a7a6e9f5654d1599766f1a3a42a3692870887b5ae9338d582ef65a"
+
+          curl --fail --location --retry 3 --show-error \
+            --output "${archive_path}" \
+            "${download_url}"
+          printf '%s  %s\n' "${expected_sha256}" "${archive_path}" | sha256sum --check --strict
+          unzip -q "${archive_path}" -d "${RUNNER_TEMP}"
+          install -m 0755 \
+            "${RUNNER_TEMP}/ossutil-${version}-linux-amd64/ossutil" \
+            "${RUNNER_TEMP}/ossutil"
+          echo "${RUNNER_TEMP}" >> "${GITHUB_PATH}"
+          "${RUNNER_TEMP}/ossutil" version
+
+      - name: Prepare release notes
+        shell: bash
+        run: |
+          printf '%s\n' \
+            '> [!WARNING]' \
+            '> This is an unsigned preview release. macOS Gatekeeper and Windows SmartScreen may show security warnings during installation.' \
+            '' \
+            'Included packages:' \
+            '- macOS Apple Silicon: DMG and ZIP' \
+            '- macOS Intel: DMG and ZIP' \
+            '- Windows x64: NSIS installer' \
+            '' \
+            'Automatic updates are not included in this release.' \
+            > release-notes.md
+
+      - name: Create or resume draft release and upload assets
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+        shell: bash
+        run: |
+          tag="${GITHUB_REF_NAME}"
+          release_matches="$(
+            gh api --paginate --slurp "repos/${GH_REPO}/releases?per_page=100" |
+              jq -c --arg tag "${tag}" '[.[][] | select(.tag_name == $tag)]'
+          )"
+          release_count="$(jq -r 'length' <<< "${release_matches}")"
+
+          if [[ "${release_count}" == "1" ]]; then
+            is_draft="$(
+              jq -er \
+                '.[0].draft | if type == "boolean" then . else error("release draft field is not boolean") end' \
+                <<< "${release_matches}"
+            )"
+            if [[ "${is_draft}" != "true" ]]; then
+              echo "::error::Release ${tag} is already published and will not be overwritten."
+              exit 1
+            fi
+          elif [[ "${release_count}" == "0" ]]; then
+            gh release create "${tag}" \
+              --verify-tag \
+              --title "Pragma ${tag}" \
+              --notes-file release-notes.md \
+              --generate-notes \
+              --draft \
+              --prerelease
+          else
+            echo "::error::Expected at most one release for ${tag}, found ${release_count}."
+            exit 1
+          fi
+
+          gh release upload "${tag}" release-assets/* --clobber
+
+      - name: Authenticate to Alibaba Cloud with GitHub OIDC
+        id: aliyun-credentials
+        uses: aliyun/configure-aliyun-credentials-action@1e5248c8d5d93a8781ac344a68e19a43341e79e6 # v1.1.0
+        with:
+          oidc-provider-arn: ${{ vars.ALIYUN_OIDC_PROVIDER_ARN }}
+          role-to-assume: ${{ vars.ALIYUN_RELEASE_ROLE_ARN }}
+          role-session-name: pragma-release-${{ github.run_id }}
+          role-session-expiration: 1800
+          audience: github-actions
+
+      - name: Upload macOS assets to Alibaba Cloud OSS
+        env:
+          OSS_ACCESS_KEY_ID: ${{ steps.aliyun-credentials.outputs.aliyun-access-key-id }}
+          OSS_ACCESS_KEY_SECRET: ${{ steps.aliyun-credentials.outputs.aliyun-access-key-secret }}
+          OSS_SESSION_TOKEN: ${{ steps.aliyun-credentials.outputs.aliyun-security-token }}
+          ALIYUN_OSS_BUCKET: ${{ vars.ALIYUN_OSS_BUCKET }}
+          ALIYUN_OSS_REGION: ${{ vars.ALIYUN_OSS_REGION }}
+        shell: bash
+        run: |
+          version="${{ needs.verify.outputs.version }}"
+          prefix="desktop/${GITHUB_REF_NAME}"
+          endpoint="https://oss-${ALIYUN_OSS_REGION}.aliyuncs.com"
+          oss_assets=(
+            "Pragma-${version}-mac-arm64.dmg"
+            "Pragma-${version}-mac-x64.dmg"
+            "SHA256SUMS-mac.txt"
+          )
+
+          for file in "${oss_assets[@]}"; do
+            ossutil cp \
+              "oss-assets/${file}" \
+              "oss://${ALIYUN_OSS_BUCKET}/${prefix}/${file}" \
+              --cache-control "public,max-age=31536000,immutable" \
+              --content-disposition attachment \
+              --endpoint "${endpoint}" \
+              --force \
+              --region "${ALIYUN_OSS_REGION}"
+          done
+
+      - name: Publish GitHub Pre-release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+        shell: bash
+        run: |
+          gh release edit "${GITHUB_REF_NAME}" --draft=false --prerelease --latest=false

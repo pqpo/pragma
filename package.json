@@ -28,8 +28,10 @@
     "build": "turbo run build",
     "lint": "turbo run lint",
     "typecheck": "turbo run typecheck",
-    "test": "turbo run test",
-    "check": "pnpm lint && pnpm typecheck && pnpm test",
+    "test": "turbo run test:core",
+    "test:core": "turbo run test:core",
+    "test:all": "turbo run test",
+    "check": "pnpm lint && pnpm typecheck && pnpm test:core",
     "clean": "turbo run clean && rm -rf node_modules"
   },
   "devDependencies": {

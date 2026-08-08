@@ -28,6 +28,7 @@
     "typecheck:node": "tsc --noEmit -p tsconfig.node.json",
     "typecheck:web": "tsc --noEmit -p tsconfig.web.json",
     "test": "vitest run --passWithNoTests",
+    "test:core": "vitest run --passWithNoTests src/main/bootstrap/application-identity.test.ts src/main/bootstrap/startup-sequence.test.ts",
     "clean": "rm -rf out dist .plugin-bundles"
   },
   "dependencies": {

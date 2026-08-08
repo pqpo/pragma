@@ -1,13 +1,42 @@
-# Pragma 桌面安装包与本地发行
+# Pragma 桌面安装包与 Release 发行
 
 Pragma 使用 `electron-vite` 编译应用代码，使用 `electron-builder` 生成安装包。根命令
-`pnpm build` 只做可验证的代码构建；发行包通过 `@pragma/desktop` package 的 `dist:*` 或
-`release:desktop` 命令显式生成。
+`pnpm build` 只做可验证的代码构建；发行包通过 GitHub Actions 工作流或 `@pragma/desktop` package 的 `dist:*` / `release:desktop` 命令生成。
 
-Release 只发布 macOS Apple Silicon 和 macOS Intel 两个版本，不使用 GitHub Actions：构建、校验、Tag、GitHub
-Draft Release、产物上传和发布均由维护者在本地完成。Windows 打包脚本仍保留供开发验证，但不属于 Release。
+系统支持两种发行方式：**默认使用 GitHub Actions 自动打包与发布**；仅在特殊调试或明确要求使用本地打包时，才使用**本地脚本打包**。
+
+## 1. 默认方式：GitHub Actions 自动 Release（推荐）
+
+GitHub Actions 自动化流水线位于 [.github/workflows/desktop-release.yml](file:///Users/linminqiu/Workspace/expert-mesh/.github/workflows/desktop-release.yml)。
+
+### 触发条件
+
+在带有合规格式 `vX.Y.Z` 的 Git Tag 被推送至 GitHub 且对应 Commit 包含在 `main` 分支时触发：
+
+```bash
+# 1. 确保在 main 分支更新了 apps/desktop/package.json 中的版本号（例如 0.2.2）
+git checkout main
+git pull
+
+# 2. 创建并推送匹配的 Tag
+git tag v0.2.2
+git push origin v0.2.2
+```
+
+### 执行流程
+
+1. **源码与契约验证 (`verify`)**：自动校验 Tag 格式与 `package.json` 版本一致性，运行类型检查、规范检查与核心测试 (`pnpm test:core`)。
+2. **多平台构建 (`package`)**：在独立的 GitHub Runner 上分别打出 `mac-arm64` (DMG, ZIP)、`mac-x64` (DMG, ZIP) 和 `win-x64` (EXE)。
+3. **GitHub Release 发布 (`release`)**：计算 SHA-256 校验和，自动创建 GitHub Pre-release / Draft，上传产物资产并发布。
+
+---
+
+## 2. 备选方式：本地脚本打包与发布
+
+仅在离线网络限制、需要在本地构建临时调试包或明确指定使用本地打包时使用。
 
 ## 环境
+
 
 安装锁定依赖：
 

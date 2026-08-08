@@ -21,6 +21,10 @@
       "dependsOn": ["^test"],
       "outputs": ["coverage/**"]
     },
+    "test:core": {
+      "dependsOn": ["^test:core"],
+      "outputs": ["coverage/**"]
+    },
     "clean": {
       "cache": false
     }

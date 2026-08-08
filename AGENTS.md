@@ -963,8 +963,15 @@ printf 'import "@pragma/server";\n' \
 4. 需要跨 package 调用时，先在被依赖 package 的 `src/index.ts` 中导出公共 API。
 5. 使用 `@pragma/*` package import。
 6. 补充或调整类型、schema、最小测试或文档。
-7. 运行 `pnpm lint`、`pnpm typecheck`、`pnpm test`。
+7. 运行 `pnpm lint`、`pnpm typecheck`、`pnpm test:core`（或单模块测试）。
 8. 如果改动影响构建或应用入口，运行 `pnpm build`。
+
+## 自动化测试与单测治理规范
+
+- **分级测试机制**：CI、Release 及默认构建流程统一使用 `pnpm test:core`（核心快速测试），全量验证耗时必须控制在几十秒以内。
+- **`test:core` 边界**：仅允许包含核心协议/契约（`@pragma/shared`）、核心架构与领域模型（`@pragma/core`）、DSL 编译解析（`@pragma/interpreter`）及最小 Bootstrapping 断言。严禁将大文件 I/O 模拟、带长时间 setTimeout/sleep 的异步流程或全量状态机集成测试放入 `test:core`。
+- **谨慎运行全量测试**：日常开发与常规 CI 禁止无脑运行全量测试（`pnpm test:all`）。开发者在本地开发或调试时，原则上只跑自己改动到的模块单测（例如 `pnpm --filter @pragma/core test` 或直接执行具体 `*.test.ts` 文件）。
+- **单测只加不删的治理原则**：禁止“单测只加不删”。当重构、废弃旧功能或发现冗余、重叠的断言时，必须同步清理或合并对应单测。发现已经弃用且没有长期价值的测试代码，应直接删除，避免测试代码无限膨胀与耗时堆积。
 
 ## 修改代码时的注意事项
 

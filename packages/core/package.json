@@ -22,6 +22,7 @@
     "lint": "eslint src test",
     "typecheck": "tsc --noEmit",
     "test": "vitest run --passWithNoTests",
+    "test:core": "vitest run --passWithNoTests test/resource-id.test.ts test/pragma-paths.test.ts test/token-counter.test.ts test/plugin-manifest.test.ts test/context-binding-metadata.test.ts",
     "clean": "rm -rf dist"
   },
   "devDependencies": {

@@ -2,15 +2,14 @@
 
 > 状态：Phase 1 已实现
 >
-> 基线：2026-08-07
+> 基线：2026-08-08
 >
-> 当前范围：本地构建、未签名的 macOS 双架构安装包、本地创建并上传 GitHub Release
+> 当前范围：GitHub Actions 自动构建与发布（首选）、本地构建与手动发布（备选）
 
 本文记录 Pragma 桌面应用发行能力的背景、当前实现、发布流程和后续计划。产品名称统一为
 `Pragma`；`desktop` 只表示应用类型、仓库目录和 workspace package，不属于产品名称。
 
-面向维护者的本地命令见
-[Pragma 桌面安装包与本地发行](../usage/desktop-distribution.md)。
+详细发行指南与常用命令见 [Pragma 桌面安装包与 Release 发行](../usage/desktop-distribution.md)。
 
 ## 背景
 
@@ -25,20 +24,29 @@ Pragma 已经使用一套完整的 Electron 构建链：
 - renderer 是位于 `apps/desktop/src/renderer` 的 React 应用。
 - preload Bridge、IPC Schema 和结构化日志继续沿用现有实现。
 
-发行流程不依赖仓库内的自动化工作流。维护者在本地完成质量检查和两个 macOS 架构的打包，再用 GitHub CLI
-创建 Tag、Draft Release、上传资产并公开版本：
+系统提供**双轨发行链路**：标准发布默认使用 **GitHub Actions 自动化工作流**；备选发布保留**本地脚本打包流程**。
+
+### 1. 标准 GitHub Actions 发行链路（默认首选）
+
+```text
+Git Tag push (vX.Y.Z)
+  → GitHub Actions trigger (.github/workflows/desktop-release.yml)
+  → verify (tag check, pnpm test:core, build)
+  → matrix package (mac-arm64, mac-x64, win-x64)
+  → SHA256SUMS.txt & Release asset validation
+  → GitHub Draft Pre-release
+  → GitHub Asset Upload & Release Publish
+```
+
+### 2. 备选本地发行链路（仅在明确需要本地打包时使用）
 
 ```text
 source
   → pnpm check
-  → electron-vite build
-  → electron-builder --mac --arm64 / --mac --x64
-  → release-assets/v<version>/
-  → SHA256SUMS.txt
+  → release-desktop.mjs (--platform mac-arm64 / mac-x64)
+  → release-assets/v<version>/ & SHA256SUMS.txt
   → annotated Git tag v<version>
-  → GitHub Draft Release
-  → GitHub CLI asset upload
-  → GitHub Pre-release or stable Release
+  → GitHub CLI asset upload & publish
 ```
 
 ## 当前发行契约
