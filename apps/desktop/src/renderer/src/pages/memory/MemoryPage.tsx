@@ -55,6 +55,7 @@ export function MemoryPage() {
     [],
   );
   const [skillCandidates, setSkillCandidates] = useState<readonly MemorySkillCandidate[]>([]);
+  const [expertNames, setExpertNames] = useState<Readonly<Record<string, string>>>({});
   const [reason, setReason] = useState("");
   const [dialog, setDialog] = useState<"revise" | "forget">();
   const [revisionDraft, setRevisionDraft] = useState("");
@@ -74,7 +75,7 @@ export function MemoryPage() {
       const requestVersion = (extractionRequestVersion.current += 1);
       if (!silent && !hasLoaded.current) setLoading(true);
       try {
-        const [records, status, extractionJobs, candidateRecords, skillCandidateRecords] =
+        const [records, status, extractionJobs, candidateRecords, skillCandidateRecords, experts] =
           await Promise.all([
             view === "extractions" || view === "candidates" || view === "skillCandidates"
               ? Promise.resolve([])
@@ -93,6 +94,9 @@ export function MemoryPage() {
               : Promise.resolve([]),
             view === "skillCandidates"
               ? window.pragmaDesktop.listMemorySkillCandidates()
+              : Promise.resolve([]),
+            view === "candidates" || view === "skillCandidates"
+              ? window.pragmaDesktop.listExperts()
               : Promise.resolve([]),
           ]);
         setItems(records);
@@ -117,6 +121,9 @@ export function MemoryPage() {
         }
         setCandidates(candidateRecords);
         setSkillCandidates(skillCandidateRecords);
+        if (view === "candidates" || view === "skillCandidates") {
+          setExpertNames(Object.fromEntries(experts.map((expert) => [expert.ref, expert.name])));
+        }
         const selectableIds =
           view === "candidates"
             ? candidateRecords.map((candidate) => candidate.id)
@@ -298,6 +305,7 @@ export function MemoryPage() {
       ) : view === "skillCandidates" ? (
         <MemorySkillCandidates
           candidates={skillCandidates}
+          expertNames={expertNames}
           selectedId={selectedId}
           busy={actionBusy}
           onSelect={setSelectedId}
@@ -321,6 +329,12 @@ export function MemoryPage() {
               >
                 <span>{t("candidates")}</span>
                 <strong>{candidate.name}</strong>
+                <small
+                  className="memory-candidate-expert"
+                  title={formatMemoryCandidateExpert(candidate.expertRef, expertNames)}
+                >
+                  {formatMemoryCandidateExpert(candidate.expertRef, expertNames)}
+                </small>
                 <small>{t("revision", { revision: candidate.revision })}</small>
               </button>
             ))}
@@ -334,7 +348,9 @@ export function MemoryPage() {
                   <header className="memory-candidate-header">
                     <div className="memory-candidate-meta">
                       <span className="memory-status is-pending_review">pending_review</span>
-                      <small title={candidate.expertRef}>{candidate.expertRef}</small>
+                      <small title={formatMemoryCandidateExpert(candidate.expertRef, expertNames)}>
+                        {formatMemoryCandidateExpert(candidate.expertRef, expertNames)}
+                      </small>
                     </div>
                     <label className="memory-candidate-field is-name">
                       <span>{t("candidateName")}</span>
@@ -1147,6 +1163,7 @@ function formatHealthBytes(bytes: number): string {
 
 function MemorySkillCandidates(props: {
   readonly candidates: readonly MemorySkillCandidate[];
+  readonly expertNames: Readonly<Record<string, string>>;
   readonly selectedId?: string | undefined;
   readonly busy: boolean;
   readonly onSelect: (id: string) => void;
@@ -1183,6 +1200,12 @@ function MemorySkillCandidates(props: {
           >
             <span>{t("skillCandidate")}</span>
             <strong>{item.package.name}</strong>
+            <small
+              className="memory-candidate-expert"
+              title={formatMemoryCandidateExpert(item.expertRef, props.expertNames)}
+            >
+              {formatMemoryCandidateExpert(item.expertRef, props.expertNames)}
+            </small>
             <small>
               {item.state} · {t("revision", { revision: item.revision })}
             </small>
@@ -1197,7 +1220,9 @@ function MemorySkillCandidates(props: {
             <header className="memory-candidate-header">
               <div className="memory-candidate-meta">
                 <span className={`memory-status is-${candidate.state}`}>{candidate.state}</span>
-                <small title={candidate.expertRef}>{candidate.expertRef}</small>
+                <small title={formatMemoryCandidateExpert(candidate.expertRef, props.expertNames)}>
+                  {formatMemoryCandidateExpert(candidate.expertRef, props.expertNames)}
+                </small>
               </div>
               <label className="memory-candidate-field is-name">
                 <span>{t("skillName")}</span>
@@ -1478,4 +1503,13 @@ export function formatMemorySubjectRefs(
       })
       .join(", ") || "—"
   );
+}
+
+export function formatMemoryCandidateExpert(
+  expertRef: string,
+  names: Readonly<Record<string, string>>,
+): string {
+  const name = names[expertRef];
+  if (name === undefined) return expertRef;
+  return `${name} (${expertRef.replace(/^expert:/u, "")})`;
 }

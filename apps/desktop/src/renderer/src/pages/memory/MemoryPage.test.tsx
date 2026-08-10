@@ -9,6 +9,7 @@ import {
   MemoryHealth,
   MemoryPage,
   canRunMemoryAction,
+  formatMemoryCandidateExpert,
   formatMemorySubjectRefs,
   memoryExtractionPollDelay,
 } from "./MemoryPage.tsx";
@@ -18,6 +19,15 @@ afterEach(async () => {
 });
 
 describe("MemoryPage", () => {
+  it("formats candidate experts with the expert name and id", () => {
+    expect(
+      formatMemoryCandidateExpert("expert:r5pjstt2yftkg8dx", {
+        "expert:r5pjstt2yftkg8dx": "Release reviewer",
+      }),
+    ).toBe("Release reviewer (r5pjstt2yftkg8dx)");
+    expect(formatMemoryCandidateExpert("expert:missing", {})).toBe("expert:missing");
+  });
+
   it("shows human-readable subject names while preserving canonical memory references", () => {
     expect(
       formatMemorySubjectRefs(
