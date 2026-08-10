@@ -214,10 +214,13 @@ describe("ExpertDetailFragment", () => {
     expect(html).not.toContain("<li");
   });
 
-  it("uses compact metadata and bounded content previews", () => {
+  it("uses compact metadata and renders full Markdown instructions last", () => {
     const html = renderToStaticMarkup(
       <ExpertDetailFragment
-        expert={expert}
+        expert={{
+          ...expert,
+          instructions: "## Workflow\n\n- Inspect the input\n- **Verify** the result",
+        }}
         contextStores={[]}
         capabilities={[]}
         plugins={[]}
@@ -239,10 +242,21 @@ describe("ExpertDetailFragment", () => {
     );
     expect(html).not.toContain("Callable expert resources");
     expect(html).not.toContain("Availability");
-    expect(html).toContain('aria-expanded="false"');
-    expect(html).toContain("Show more");
     expect(html).not.toContain("d".repeat(201));
-    expect(html).not.toContain("i".repeat(421));
+    expect(html).toContain('<div class="expert-instructions-markdown markdown-preview">');
+    expect(html).toContain("<h2>Workflow</h2>");
+    expect(html).toContain("<li>Inspect the input</li>");
+    expect(html).toContain("<strong>Verify</strong>");
+    expect(html.indexOf('id="expert-scope-heading"')).toBeLessThan(
+      html.indexOf('id="expert-capabilities-heading"'),
+    );
+    expect(html.indexOf('id="expert-capabilities-heading"')).toBeLessThan(
+      html.indexOf('id="expert-context-heading"'),
+    );
+    expect(html.indexOf('id="expert-context-heading"')).toBeLessThan(
+      html.indexOf('id="expert-instructions-heading"'),
+    );
+    expect(html).toContain('<h2 id="expert-context-heading">Knowledge base</h2>');
     expect(html).toMatch(/studio-screen-header.*Back to Experts.*studio-screen-body.*Test Expert/s);
     expect(html).toContain("Delete expert");
     expect(html).not.toContain("Create new version");

@@ -32,6 +32,7 @@ import {
   MemoryStoreBrowser,
   type ContextStoreBrowserSource,
 } from "../../components/MemoryStoreBrowser.tsx";
+import { MarkdownContent } from "../../components/MarkdownContent.tsx";
 import { isBuiltInExpert, type ExpertRecord } from "./studio-model.ts";
 import { errorMessage } from "../../lib/errors.ts";
 import { runtimeDisplayName } from "../../lib/runtime-display.ts";
@@ -41,7 +42,6 @@ import {
 } from "../../lib/system-expert-copy.ts";
 
 const DESCRIPTION_PREVIEW_LENGTH = 200;
-const INSTRUCTIONS_PREVIEW_LENGTH = 420;
 
 function truncateText(value: string, maximumLength: number): string {
   const normalized = value.trim();
@@ -201,7 +201,6 @@ export function ExpertDetailFragment(props: {
     description: tCommon("builtInExperts.pragma.description"),
     scope: tCommon("builtInExperts.pragma.scope"),
   });
-  const [instructionsExpanded, setInstructionsExpanded] = useState(false);
   const [confirmOpen, setConfirmOpen] = useState(false);
   const [deleting, setDeleting] = useState(false);
   const [deleteError, setDeleteError] = useState<string | null>(null);
@@ -209,11 +208,8 @@ export function ExpertDetailFragment(props: {
   const [resetting, setResetting] = useState(false);
   const [memoryStoreOpen, setMemoryStoreOpen] = useState(false);
   const [memoryStoreHasContent, setMemoryStoreHasContent] = useState(false);
-  const hasLongInstructions = props.expert.instructions.trim().length > INSTRUCTIONS_PREVIEW_LENGTH;
-  const displayedInstructions =
-    hasLongInstructions && !instructionsExpanded
-      ? truncateText(props.expert.instructions, INSTRUCTIONS_PREVIEW_LENGTH)
-      : props.expert.instructions.trim();
+  const instructions = props.expert.instructions.trim();
+  const additionalInstructions = props.expert.additionalInstructions.trim();
   const runtime = props.runtimes.find((item) => item.id === props.expert.model?.runtimeId);
   const runtimeName =
     runtime === undefined
@@ -412,39 +408,10 @@ export function ExpertDetailFragment(props: {
         </div>
       </section>
       <div className="expert-detail-content">
-        <div className="expert-detail-reading-column">
-          <section className="expert-scope" aria-labelledby="expert-scope-heading">
-            <h2 id="expert-scope-heading">{t("scope")}</h2>
-            <p>{copy.scope}</p>
-          </section>
-          <section className="instructions-preview" aria-labelledby="expert-instructions-heading">
-            <header className="expert-detail-section-heading">
-              <h2 id="expert-instructions-heading">
-                {isBuiltInExpert(props.expert)
-                  ? t("builtInFoundationInstructions")
-                  : t("instructions")}
-              </h2>
-              {hasLongInstructions ? (
-                <button
-                  className="text-button instructions-toggle"
-                  type="button"
-                  aria-expanded={instructionsExpanded}
-                  aria-controls="expert-instructions-content"
-                  onClick={() => setInstructionsExpanded((expanded) => !expanded)}
-                >
-                  {instructionsExpanded ? t("showLess") : t("showMore")}
-                </button>
-              ) : null}
-            </header>
-            <p id="expert-instructions-content">{displayedInstructions || t("noInstructions")}</p>
-          </section>
-          {isBuiltInExpert(props.expert) ? (
-            <section className="instructions-preview" aria-labelledby="expert-additional-heading">
-              <h2 id="expert-additional-heading">{t("additionalInstructions")}</h2>
-              <p>{props.expert.additionalInstructions.trim() || t("noAdditionalInstructions")}</p>
-            </section>
-          ) : null}
-        </div>
+        <section className="expert-scope" aria-labelledby="expert-scope-heading">
+          <h2 id="expert-scope-heading">{t("scope")}</h2>
+          <p>{copy.scope}</p>
+        </section>
         <section className="expert-capabilities" aria-labelledby="expert-capabilities-heading">
           <header className="expert-detail-section-heading">
             <div>
@@ -475,66 +442,90 @@ export function ExpertDetailFragment(props: {
             />
           </div>
         </section>
-      </div>
-      <section className="expert-context-section" aria-labelledby="expert-context-heading">
-        <header>
-          <div>
-            <h2 id="expert-context-heading">{t("context")}</h2>
-            <p>{t("contextDescription")}</p>
-          </div>
-        </header>
-        {props.expert.contextStoreMounts.length === 0 && !memoryStoreHasContent ? (
-          <p className="expert-context-empty">{t("noContext")}</p>
-        ) : (
-          <div className="expert-context-list">
-            {props.expert.contextStoreMounts.map((mount) => {
-              const store = props.contextStores.find((item) => item.id === mount.storeId);
-              if (!store) return null;
-              const StoreIcon = Folder;
-              const loadingBehavior = "From Markdown metadata";
-              return (
+        <section className="expert-context-section" aria-labelledby="expert-context-heading">
+          <header>
+            <div>
+              <h2 id="expert-context-heading">{t("knowledgeBase")}</h2>
+              <p>{t("contextDescription")}</p>
+            </div>
+          </header>
+          {props.expert.contextStoreMounts.length === 0 && !memoryStoreHasContent ? (
+            <p className="expert-context-empty">{t("noContext")}</p>
+          ) : (
+            <div className="expert-context-list">
+              {props.expert.contextStoreMounts.map((mount) => {
+                const store = props.contextStores.find((item) => item.id === mount.storeId);
+                if (!store) return null;
+                const StoreIcon = Folder;
+                const loadingBehavior = "From Markdown metadata";
+                return (
+                  <button
+                    className="expert-context-link"
+                    key={mount.storeId}
+                    type="button"
+                    onClick={() => props.onOpenContextStore(store)}
+                  >
+                    <span className="store-icon">
+                      <StoreIcon size={20} />
+                    </span>
+                    <span>
+                      <strong>{store.name}</strong>
+                      <small>{t("knowledgeBase")}</small>
+                    </span>
+                    <em>{loadingBehavior}</em>
+                    <span className="store-status">
+                      <i className="is-ready" />
+                      {mount.enabled ? t("enabled") : t("disabled")}
+                    </span>
+                    <CaretRight size={17} aria-hidden="true" />
+                  </button>
+                );
+              })}
+              {memoryStoreSource !== undefined && memoryStoreHasContent ? (
                 <button
                   className="expert-context-link"
-                  key={mount.storeId}
                   type="button"
-                  onClick={() => props.onOpenContextStore(store)}
+                  onClick={() => setMemoryStoreOpen(true)}
                 >
                   <span className="store-icon">
-                    <StoreIcon size={20} />
+                    <Database size={20} />
                   </span>
                   <span>
-                    <strong>{store.name}</strong>
-                    <small>{t("knowledgeBase")}</small>
+                    <strong>{t("memoryStore")}</strong>
+                    <small>{t("readOnly")}</small>
                   </span>
-                  <em>{loadingBehavior}</em>
-                  <span className="store-status">
-                    <i className="is-ready" />
-                    {mount.enabled ? t("enabled") : t("disabled")}
-                  </span>
+                  <em>{t("browseMemoryStore")}</em>
                   <CaretRight size={17} aria-hidden="true" />
                 </button>
-              );
-            })}
-            {memoryStoreSource !== undefined && memoryStoreHasContent ? (
-              <button
-                className="expert-context-link"
-                type="button"
-                onClick={() => setMemoryStoreOpen(true)}
-              >
-                <span className="store-icon">
-                  <Database size={20} />
-                </span>
-                <span>
-                  <strong>{t("memoryStore")}</strong>
-                  <small>{t("readOnly")}</small>
-                </span>
-                <em>{t("browseMemoryStore")}</em>
-                <CaretRight size={17} aria-hidden="true" />
-              </button>
-            ) : null}
-          </div>
-        )}
-      </section>
+              ) : null}
+            </div>
+          )}
+        </section>
+        <section className="instructions-preview" aria-labelledby="expert-instructions-heading">
+          <h2 id="expert-instructions-heading">
+            {isBuiltInExpert(props.expert) ? t("builtInFoundationInstructions") : t("instructions")}
+          </h2>
+          {instructions ? (
+            <div className="expert-instructions-markdown markdown-preview">
+              <MarkdownContent source={instructions} />
+            </div>
+          ) : (
+            <p className="expert-instructions-empty">{t("noInstructions")}</p>
+          )}
+        </section>
+        {isBuiltInExpert(props.expert) ? (
+          <section className="instructions-preview" aria-labelledby="expert-additional-heading">
+            <h2 id="expert-additional-heading">{t("additionalInstructions")}</h2>
+            {additionalInstructions ? (
+              <div className="expert-instructions-markdown markdown-preview">
+                <MarkdownContent source={additionalInstructions} />
+              </div>
+            ) : (
+              <p className="expert-instructions-empty">{t("noAdditionalInstructions")}</p>
+            )}
+          </section>
+        ) : null}
+      </div>
       {props.expert.usesApproval ? (
         <p className="approval-note">
           <Info size={19} aria-hidden="true" /> {t("approvalNote")}
