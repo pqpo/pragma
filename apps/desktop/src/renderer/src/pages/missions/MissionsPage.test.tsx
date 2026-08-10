@@ -469,7 +469,11 @@ describe("MissionDetailFragment", () => {
     const html = renderToStaticMarkup(<MissionDetailFragment mission={missionFixture("expert")} />);
 
     expect(html).toContain(">Chat<");
+    expect(html).toContain(">Work<");
+    expect(html).toContain(">Board<");
     expect(html).toContain(">Memory<");
+    expect(html.indexOf(">Work<")).toBeLessThan(html.indexOf(">Board<"));
+    expect(html.indexOf(">Board<")).toBeLessThan(html.indexOf(">Memory<"));
     expect(html).toContain("mission-chat-scroll");
     expect(html).toContain("mission-chat-footer");
     expect(html).toContain("mission-chat-composer");

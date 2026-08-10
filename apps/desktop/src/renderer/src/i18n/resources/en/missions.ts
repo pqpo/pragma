@@ -145,6 +145,7 @@ export const missions = {
   markCompleteNamed: "Mark {{title}} complete",
   reopen: "Reopen",
   work: "Work",
+  missionBoard: "Board",
   memory: "Memory",
   memoryViews: "Memory views",
   memoryStore: "Store",
@@ -153,6 +154,14 @@ export const missions = {
   contextStoreLoading: "Loading ContextStore…",
   contextStoreUnavailable: "ContextStore is unavailable",
   contextStoreRefresh: "Refresh ContextStore",
+  missionBoardRoot: "Mission: {{name}}",
+  missionBoardSharedScope:
+    "Shared Mission Board content available to every expert in this mission.",
+  missionBoardSearch: "Search the Mission Board",
+  missionBoardSelectEntry: "Select a Mission Board item to preview it.",
+  missionBoardPreviewUnsupported: "Preview not supported",
+  missionBoardPreviewUnsupportedDescription:
+    "This file type is listed on the Mission Board, but only text and images can be previewed for now.",
   contextStoreRoot: "Root: {{name}}",
   contextStoreViewingAs: "View as",
   contextStoreScopeFormula: "Root memory + {{expert}} personal memory",

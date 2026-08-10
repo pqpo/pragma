@@ -1,5 +1,15 @@
-import type { ExpertAgentContextStore } from "@pragma/core";
+import type { BigIntStats } from "node:fs";
+import { mkdir, readFile, realpath, stat } from "node:fs/promises";
+import { extname, isAbsolute, join, relative, resolve, sep } from "node:path";
+
+import { StaticContextStore, type ExpertAgentContextStore } from "@pragma/core";
+import { FileSystemContextStore } from "@pragma/context-filesystem";
 import { MemoryRecallScopeSchema } from "@pragma/memory";
+import {
+  MISSION_BOARD_GUIDE,
+  MISSION_BOARD_GUIDE_ID,
+  MISSION_BOARD_SHARED_NAMESPACE,
+} from "@pragma/mission-board";
 import { canonicalPragmaResourceRef, type PragmaResource } from "@pragma/interpreter/ast";
 
 import {
@@ -25,6 +35,31 @@ import type { MissionRunner } from "./mission-runner.ts";
 import type { MissionStore } from "./mission-store.ts";
 
 const MEMORY_STORE_ID = "memory";
+const MISSION_BOARD_STORE_ID = MISSION_BOARD_SHARED_NAMESPACE;
+const MISSION_BOARD_SCOPE_ID = "mission-board:shared";
+const MAX_IMAGE_PREVIEW_BYTES = 5_000_000;
+const BOARD_ALL_FILE_PATTERNS = ["*", "**/*"] as const;
+const BOARD_TEXT_EXTENSIONS = [
+  ".md",
+  ".txt",
+  ".json",
+  ".yaml",
+  ".yml",
+  ".csv",
+  ".tsv",
+  ".log",
+  ".xml",
+  ".html",
+  ".css",
+  ".js",
+  ".jsx",
+  ".ts",
+  ".tsx",
+] as const;
+const BOARD_TEXT_FILE_PATTERNS = BOARD_TEXT_EXTENSIONS.flatMap((extension) => [
+  `*${extension}`,
+  `**/*${extension}`,
+]);
 
 type ScopeRole = MissionContextStoreScope["role"];
 
@@ -57,8 +92,8 @@ export function createMissionContextStoreBrowserService(options: {
   readonly memory: DesktopMemoryPlane;
   readonly runner: Pick<MissionRunner, "getWork">;
 }): MissionContextStoreBrowserService {
-  const catalog = async (input: GetMissionContextStore) => {
-    assertMemoryStore(input.storeId);
+  const memoryCatalog = async (input: GetMissionContextStore) => {
+    assertSupportedStore(input.storeId);
     const mission = await userMission(options.missions, input.missionId);
     const { candidates, participated } = await collectScopeCandidates(mission, options);
     const rootRef = missionRootRef(mission);
@@ -82,11 +117,11 @@ export function createMissionContextStoreBrowserService(options: {
     return { mission, rootRef, scopes, defaultScope };
   };
 
-  const open = async (
+  const openMemory = async (
     input:
       ListMissionContextStoreEntries | ReadMissionContextStoreEntry | SearchMissionContextStore,
   ): Promise<ExpertAgentContextStore> => {
-    assertMemoryStore(input.storeId);
+    if (input.storeId !== MEMORY_STORE_ID) throw codedError("context_store_not_found");
     const mission = await userMission(options.missions, input.missionId);
     const { candidates } = await collectScopeCandidates(mission, options);
     const scope = candidates.find((candidate) => `expert:${candidate.expertId}` === input.scopeId);
@@ -100,7 +135,34 @@ export function createMissionContextStoreBrowserService(options: {
 
   return {
     async get(input) {
-      const resolved = await catalog(input);
+      assertSupportedStore(input.storeId);
+      if (input.storeId === MISSION_BOARD_STORE_ID) {
+        const mission = await userMission(options.missions, input.missionId);
+        const rootRef = missionRootRef(mission);
+        return MissionContextStoreDescriptorSchema.parse({
+          schemaVersion: "pragma.desktop-mission-context-store/v1",
+          missionId: mission.id,
+          storeId: MISSION_BOARD_STORE_ID,
+          namespace: MISSION_BOARD_SHARED_NAMESPACE,
+          name: "Mission Board",
+          readOnly: true,
+          searchable: true,
+          root: { ...rootRef, name: mission.title },
+          defaultScopeId: MISSION_BOARD_SCOPE_ID,
+          scopes: [
+            {
+              id: MISSION_BOARD_SCOPE_ID,
+              expertId: rootRef.id,
+              name: mission.title,
+              role: "root",
+              participation: "participated",
+              availability: "available",
+            },
+          ],
+        });
+      }
+
+      const resolved = await memoryCatalog(input);
       return MissionContextStoreDescriptorSchema.parse({
         schemaVersion: "pragma.desktop-mission-context-store/v1",
         missionId: resolved.mission.id,
@@ -119,13 +181,31 @@ export function createMissionContextStoreBrowserService(options: {
     },
 
     async list(input) {
-      const result = await (await open(input)).listContext({});
+      if (input.storeId === MISSION_BOARD_STORE_ID) {
+        assertMissionBoardScope(input.scopeId);
+        const mission = await userMission(options.missions, input.missionId);
+        const result = await (await openBoardStore(options.missions, mission)).listContext({});
+        return MissionContextStoreEntrySchema.array().parse([
+          boardGuideEntry(),
+          ...unwrap(result)
+            .filter((entry) => entry.id !== MISSION_BOARD_GUIDE_ID)
+            .map(withBoardPreview),
+        ]);
+      }
+      const result = await (await openMemory(input)).listContext({});
       return MissionContextStoreEntrySchema.array().parse(unwrap(result));
     },
 
     async read(input) {
+      if (input.storeId === MISSION_BOARD_STORE_ID) {
+        assertMissionBoardScope(input.scopeId);
+        const mission = await userMission(options.missions, input.missionId);
+        return MissionContextStoreContentSchema.parse(
+          await readBoardEntry(options.missions, mission, input),
+        );
+      }
       const result = await (
-        await open(input)
+        await openMemory(input)
       ).readContext({
         id: input.id,
         start: input.start,
@@ -135,7 +215,14 @@ export function createMissionContextStoreBrowserService(options: {
     },
 
     async search(input) {
-      const store = await open(input);
+      if (input.storeId === MISSION_BOARD_STORE_ID) {
+        assertMissionBoardScope(input.scopeId);
+        const mission = await userMission(options.missions, input.missionId);
+        return MissionContextStoreSearchMatchSchema.array().parse(
+          await searchBoard(options.missions, mission, input),
+        );
+      }
+      const store = await openMemory(input);
       const searchInput = {
         query: input.query,
         maxResults: input.maxResults,
@@ -157,6 +244,261 @@ export function createMissionContextStoreBrowserService(options: {
       return MissionContextStoreSearchMatchSchema.array().parse(unique);
     },
   };
+}
+
+async function openBoardStore(
+  missions: MissionStore,
+  mission: Mission,
+): Promise<FileSystemContextStore> {
+  await mkdir(boardRoot(missions, mission.id), { recursive: true });
+  return new FileSystemContextStore({
+    rootDir: boardRoot(missions, mission.id),
+    include: BOARD_ALL_FILE_PATTERNS,
+  });
+}
+
+function boardGuideStore(): StaticContextStore {
+  return new StaticContextStore([
+    {
+      id: MISSION_BOARD_GUIDE_ID,
+      content: MISSION_BOARD_GUIDE,
+      metadata: {
+        description: "Mission Board usage guide and whiteboard conventions.",
+        trigger: "always_on",
+        priority: "critical",
+        trustLevel: "system",
+        sensitivity: "internal",
+      },
+    },
+  ]);
+}
+
+function boardGuideEntry(): MissionContextStoreEntry {
+  return {
+    id: MISSION_BOARD_GUIDE_ID,
+    metadata: {
+      description: "Mission Board usage guide and whiteboard conventions.",
+      trigger: "always_on",
+      priority: "critical",
+      trustLevel: "system",
+      sensitivity: "internal",
+    },
+    sizeBytes: Buffer.byteLength(MISSION_BOARD_GUIDE, "utf8"),
+    mediaType: "text/markdown",
+    previewKind: "text",
+  };
+}
+
+function withBoardPreview(entry: MissionContextStoreEntry): MissionContextStoreEntry {
+  return { ...entry, ...boardPreview(entry.id) };
+}
+
+function boardPreview(id: string): {
+  readonly mediaType: string;
+  readonly previewKind: "text" | "image" | "unsupported";
+} {
+  const extension = extname(id).toLowerCase();
+  const textMediaTypes: Readonly<Record<string, string>> = {
+    ".md": "text/markdown",
+    ".txt": "text/plain",
+    ".json": "application/json",
+    ".yaml": "application/yaml",
+    ".yml": "application/yaml",
+    ".csv": "text/csv",
+    ".tsv": "text/tab-separated-values",
+    ".log": "text/plain",
+    ".xml": "application/xml",
+    ".html": "text/html",
+    ".css": "text/css",
+    ".js": "text/javascript",
+    ".jsx": "text/javascript",
+    ".ts": "text/typescript",
+    ".tsx": "text/typescript",
+  };
+  const imageMediaTypes: Readonly<Record<string, string>> = {
+    ".png": "image/png",
+    ".jpg": "image/jpeg",
+    ".jpeg": "image/jpeg",
+    ".gif": "image/gif",
+    ".webp": "image/webp",
+    ".avif": "image/avif",
+    ".bmp": "image/bmp",
+  };
+  const textMediaType = textMediaTypes[extension];
+  if (textMediaType !== undefined) return { mediaType: textMediaType, previewKind: "text" };
+  const imageMediaType = imageMediaTypes[extension];
+  if (imageMediaType !== undefined) return { mediaType: imageMediaType, previewKind: "image" };
+  return { mediaType: "application/octet-stream", previewKind: "unsupported" };
+}
+
+async function readBoardEntry(
+  missions: MissionStore,
+  mission: Mission,
+  input: ReadMissionContextStoreEntry,
+): Promise<MissionContextStoreContent> {
+  if (input.id === MISSION_BOARD_GUIDE_ID) {
+    const result = await boardGuideStore().readContext({
+      id: input.id,
+      start: input.start,
+      offset: input.maxBytes,
+    });
+    return { ...unwrap(result), ...boardPreview(input.id), contentEncoding: "utf8" };
+  }
+
+  const preview = boardPreview(input.id);
+  if (preview.previewKind === "text") {
+    const result = await (
+      await openBoardStore(missions, mission)
+    ).readContext({
+      id: input.id,
+      start: input.start,
+      offset: input.maxBytes,
+    });
+    return { ...unwrap(result), ...preview, contentEncoding: "utf8" };
+  }
+  if (preview.previewKind === "unsupported") {
+    const summary = await boardEntrySummary(missions, mission, input.id);
+    return {
+      ...summary,
+      ...preview,
+      content: "",
+      contentEncoding: "utf8",
+      contentRange: {
+        requestedStartOffset: 0,
+        startOffset: 0,
+        endOffset: 0,
+        nextStartOffset: 0,
+        truncated: false,
+        ...(summary.sizeBytes === undefined ? {} : { sizeBytes: summary.sizeBytes }),
+      },
+    };
+  }
+  if (input.start !== 0) throw codedError("invalid_input", "Image previews must start at byte 0.");
+  // An image must cross IPC as one valid payload. maxBytes only bounds chunked text reads.
+  const { filePath, fileStats } = await statBoardEntry(missions, mission, input.id);
+  if (Number(fileStats.size) > MAX_IMAGE_PREVIEW_BYTES) {
+    throw codedError("preview_too_large", "This image is too large to preview.");
+  }
+  const content = await readFile(filePath);
+  if (content.byteLength > MAX_IMAGE_PREVIEW_BYTES) {
+    throw codedError("preview_too_large", "This image is too large to preview.");
+  }
+  const sizeBytes = content.byteLength;
+  const revision = `${fileStats.mtimeNs}:${fileStats.size}`;
+  return {
+    id: input.id,
+    metadata: { trigger: "manual", priority: "normal" },
+    revision,
+    etag: revision,
+    sizeBytes,
+    ...preview,
+    content: content.toString("base64"),
+    contentEncoding: "base64",
+    contentRange: {
+      requestedStartOffset: 0,
+      startOffset: 0,
+      endOffset: sizeBytes,
+      nextStartOffset: sizeBytes,
+      truncated: false,
+      sizeBytes,
+      maxBytes: MAX_IMAGE_PREVIEW_BYTES,
+    },
+  };
+}
+
+async function boardEntrySummary(
+  missions: MissionStore,
+  mission: Mission,
+  id: string,
+): Promise<MissionContextStoreEntry> {
+  const { fileStats } = await statBoardEntry(missions, mission, id);
+  const revision = `${fileStats.mtimeNs}:${fileStats.size}`;
+  return {
+    id,
+    metadata: { trigger: "manual", priority: "normal" },
+    revision,
+    etag: revision,
+    sizeBytes: Number(fileStats.size),
+  };
+}
+
+async function statBoardEntry(
+  missions: MissionStore,
+  mission: Mission,
+  id: string,
+): Promise<{
+  readonly filePath: string;
+  readonly fileStats: BigIntStats;
+}> {
+  try {
+    const filePath = await resolveBoardEntryPath(boardRoot(missions, mission.id), id);
+    const fileStats = await stat(filePath, { bigint: true });
+    if (!fileStats.isFile()) throw codedError("context_not_found", `Context not found: ${id}`);
+    return { filePath, fileStats };
+  } catch (cause) {
+    if (isNodeErrorCode(cause, "ENOENT")) {
+      throw codedError("context_not_found", `Context not found: ${id}`);
+    }
+    throw cause;
+  }
+}
+
+async function searchBoard(
+  missions: MissionStore,
+  mission: Mission,
+  input: SearchMissionContextStore,
+): Promise<readonly MissionContextStoreSearchMatch[]> {
+  const rootDir = boardRoot(missions, mission.id);
+  await mkdir(rootDir, { recursive: true });
+  const textStore = new FileSystemContextStore({ rootDir, include: BOARD_TEXT_FILE_PATTERNS });
+  const allFilesStore = new FileSystemContextStore({ rootDir, include: BOARD_ALL_FILE_PATTERNS });
+  const searchInput = {
+    query: input.query,
+    maxResults: input.maxResults,
+    contextLines: input.contextLines,
+  };
+  const [guide, content, paths] = await Promise.all([
+    boardGuideStore().searchContext(searchInput),
+    textStore.searchContext(searchInput),
+    allFilesStore.searchContext({ ...searchInput, scope: "path" }),
+  ]);
+  return MissionContextStoreSearchMatchSchema.array().parse(
+    [
+      ...new Map(
+        [...unwrap(guide), ...unwrap(content), ...unwrap(paths)].map((match) => [
+          `${match.id}\0${match.matchType ?? "content"}\0${match.lineNumber ?? 0}\0${match.line}`,
+          match,
+        ]),
+      ).values(),
+    ].slice(0, input.maxResults),
+  );
+}
+
+function boardRoot(missions: MissionStore, missionId: string): string {
+  const missionRoot = missions.storagePath?.(missionId);
+  if (missionRoot === undefined) throw codedError("context_store_unavailable");
+  return join(missionRoot, "board", "shared");
+}
+
+async function resolveBoardEntryPath(rootDir: string, id: string): Promise<string> {
+  if (
+    id.trim() !== id ||
+    id.length === 0 ||
+    id.includes("\\") ||
+    isAbsolute(id) ||
+    id.split("/").some((segment) => segment === "" || segment === "." || segment === "..")
+  ) {
+    throw codedError("invalid_input", `Invalid Mission Board item id: ${id}`);
+  }
+  const [canonicalRoot, canonicalFile] = await Promise.all([
+    realpath(rootDir),
+    realpath(resolve(rootDir, id)),
+  ]);
+  const nested = relative(canonicalRoot, canonicalFile);
+  if (nested === "" || nested.startsWith("..") || nested.startsWith(sep)) {
+    throw codedError("permission_denied", `Mission Board item is outside the shared board: ${id}`);
+  }
+  return canonicalFile;
 }
 
 async function collectScopeCandidates(
@@ -318,8 +660,14 @@ async function userMission(missions: MissionStore, missionId: string): Promise<M
   return mission;
 }
 
-function assertMemoryStore(storeId: string): void {
-  if (storeId !== MEMORY_STORE_ID) throw codedError("context_store_not_found");
+function assertSupportedStore(storeId: string): void {
+  if (storeId !== MEMORY_STORE_ID && storeId !== MISSION_BOARD_STORE_ID) {
+    throw codedError("context_store_not_found");
+  }
+}
+
+function assertMissionBoardScope(scopeId: string): void {
+  if (scopeId !== MISSION_BOARD_SCOPE_ID) throw codedError("context_store_scope_not_found");
 }
 
 function unwrap<T>(result: import("@pragma/core").ExpertAgentContextResult<T>): T {
@@ -331,6 +679,15 @@ function codedError(code: string, message = code): Error {
   const error = new Error(message);
   Object.assign(error, { code });
   return error;
+}
+
+function isNodeErrorCode(error: unknown, code: string): boolean {
+  return (
+    typeof error === "object" &&
+    error !== null &&
+    "code" in error &&
+    (error as { readonly code?: unknown }).code === code
+  );
 }
 
 function roleRank(role: ScopeRole): number {

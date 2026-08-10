@@ -89,6 +89,8 @@ export const MissionContextStoreEntrySchema = z.object({
   revision: z.string().max(500).optional(),
   etag: z.string().max(500).optional(),
   sizeBytes: z.number().int().nonnegative().optional(),
+  mediaType: z.string().trim().min(1).max(200).optional(),
+  previewKind: z.enum(["text", "image", "unsupported"]).optional(),
 });
 
 export const ReadMissionContextStoreEntrySchema = z.object({
@@ -106,7 +108,8 @@ export const ReadExpertMemoryContextStoreEntrySchema = z.object({
 });
 
 export const MissionContextStoreContentSchema = MissionContextStoreEntrySchema.extend({
-  content: z.string().max(64_000),
+  content: z.string().max(8_000_000),
+  contentEncoding: z.enum(["utf8", "base64"]).optional(),
   contentRange: z.object({
     requestedStartOffset: z.number().int().nonnegative(),
     startOffset: z.number().int().nonnegative(),
