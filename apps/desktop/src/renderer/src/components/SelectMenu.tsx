@@ -20,6 +20,7 @@ export type SelectMenuOption<Value extends string = string> = {
 };
 
 type MenuPlacement = "top" | "bottom";
+const OPTION_MARQUEE_HOVER_DELAY_MS = 400;
 
 export function SelectMenu<Value extends string>(props: {
   readonly ariaLabel: string;
@@ -355,9 +356,8 @@ function OverflowingOptionLabel(props: {
 
   useEffect(() => {
     if (!props.visible || !overflowing || !props.hovered) return;
-    setPlaying(false);
-    const frame = requestAnimationFrame(() => setPlaying(true));
-    return () => cancelAnimationFrame(frame);
+    const timeout = window.setTimeout(() => setPlaying(true), OPTION_MARQUEE_HOVER_DELAY_MS);
+    return () => window.clearTimeout(timeout);
   }, [overflowing, props.hovered, props.visible]);
 
   const style:
