@@ -46,6 +46,7 @@ import { MarkdownContent } from "../../components/MarkdownContent.tsx";
 import { SelectMenu } from "../../components/SelectMenu.tsx";
 import { errorMessage } from "../../lib/errors.ts";
 import { AssetMemoryPolicySection } from "../settings/AssetMemoryPolicySection.tsx";
+import { ContextStorePickerDialog } from "./ContextStorePickerDialog.tsx";
 import { StudioScreenFrame } from "./StudioScreenFrame.tsx";
 import { desktopApi } from "./studio-model.ts";
 import { StudioConfirmationDialog } from "./StudioDialog.tsx";
@@ -1122,7 +1123,7 @@ function TeamContextStoreEditor(props: {
   readonly onChange: (selections: readonly TeamKnowledgeSelection[]) => void;
 }) {
   const { t } = useTranslation("studio");
-  const [query, setQuery] = useState("");
+  const [pickerOpen, setPickerOpen] = useState(false);
   const participantIds = props.participantRefs.map((ref) => ref.slice("expert:".length));
   const participantSet = useMemo(() => new Set(participantIds), [participantIds.join("\0")]);
   useEffect(() => {
@@ -1140,9 +1141,6 @@ function TeamContextStoreEditor(props: {
     if (JSON.stringify(next) !== JSON.stringify(props.selections)) props.onChange(next);
   }, [participantSet, props.onChange, props.selections]);
 
-  const visibleStores = props.stores.filter((store) =>
-    normalized(`${store.name} ${store.description}`).includes(normalized(query)),
-  );
   const updateVisibility = (storeId: string, visibility: PragmaExpertTeamContextVisibility) => {
     props.onChange(
       props.selections.map((selection) =>
@@ -1158,40 +1156,21 @@ function TeamContextStoreEditor(props: {
           <h3 id="team-context-editor-heading">{t("teamKnowledgeBases")}</h3>
           <p>{t("teamKnowledgeBasesDescription")}</p>
         </div>
+        <div className="team-context-editor-actions">
+          <span>{t("selectedCount", { count: props.selections.length })}</span>
+          <button
+            className="secondary-button"
+            type="button"
+            aria-haspopup="dialog"
+            onClick={() => setPickerOpen(true)}
+          >
+            {props.selections.length > 0 ? t("editSelection") : t("choose")}
+          </button>
+        </div>
       </header>
-      <label className="team-context-search">
-        <MagnifyingGlass size={17} aria-hidden="true" />
-        <span className="sr-only">{t("searchKnowledgeBases")}</span>
-        <input
-          value={query}
-          onChange={(event) => setQuery(event.target.value)}
-          placeholder={t("searchKnowledgeBases")}
-        />
-      </label>
-      <div className="team-context-picker-list">
-        {visibleStores.map((store) => {
-          const selected = props.selections.some((selection) => selection.storeId === store.id);
-          return (
-            <label key={store.id}>
-              <input
-                type="checkbox"
-                checked={selected}
-                onChange={(event) =>
-                  props.onChange(
-                    event.target.checked
-                      ? [...props.selections, { storeId: store.id, visibility: { mode: "all" } }]
-                      : props.selections.filter((selection) => selection.storeId !== store.id),
-                  )
-                }
-              />
-              <span>
-                <strong>{store.name}</strong>
-                <small>{store.description || t("knowledgeBase")}</small>
-              </span>
-            </label>
-          );
-        })}
-      </div>
+      {props.selections.length === 0 ? (
+        <p className="team-context-empty">{t("noneSelected")}</p>
+      ) : null}
       {props.selections.map((selection) => {
         const store = props.stores.find((candidate) => candidate.id === selection.storeId);
         if (store === undefined) return null;
@@ -1256,6 +1235,29 @@ function TeamContextStoreEditor(props: {
           </article>
         );
       })}
+      {pickerOpen ? (
+        <ContextStorePickerDialog
+          stores={props.stores}
+          selectedStoreIds={props.selections.map((selection) => selection.storeId)}
+          description={t("teamKnowledgeBasesDescription")}
+          footerHint={t("teamKnowledgeSelectionImmediate")}
+          onSelectedStoreIdsChange={(storeIds) => {
+            const currentSelections = new Map(
+              props.selections.map((selection) => [selection.storeId, selection]),
+            );
+            props.onChange(
+              storeIds.map(
+                (storeId) =>
+                  currentSelections.get(storeId) ?? {
+                    storeId,
+                    visibility: { mode: "all" },
+                  },
+              ),
+            );
+          }}
+          onClose={() => setPickerOpen(false)}
+        />
+      ) : null}
     </section>
   );
 }

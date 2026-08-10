@@ -75,7 +75,7 @@ function studioExpert(index: number): ExpertRecord {
 }
 
 describe("expert team editor", () => {
-  it("keeps large expert collections behind two compact picker triggers", () => {
+  it("keeps large expert and knowledge collections behind compact picker triggers", () => {
     const project = {
       schemaVersion: "pragma.project-snapshot/v3",
       projectId: "test-project",
@@ -93,11 +93,49 @@ describe("expert team editor", () => {
       />,
     );
 
-    expect(html.match(/aria-haspopup="dialog"/g)).toHaveLength(2);
+    expect(html.match(/aria-haspopup="dialog"/g)).toHaveLength(3);
     expect(html).not.toContain("Expert 099");
     expect(html).not.toContain("<fieldset");
     expect(html).not.toContain('role="dialog"');
     expect(html).toContain('class="secondary-button"');
+  });
+
+  it("keeps unselected knowledge bases out of the team form until the picker opens", () => {
+    const project = {
+      schemaVersion: "pragma.project-snapshot/v3",
+      projectId: "test-project",
+      revision: 0,
+      resources: [],
+      diagnostics: [],
+    } satisfies PragmaProjectSnapshot;
+    const contextStore: ContextStore = {
+      schemaVersion: "pragma.context-store/v4",
+      id: "00000000-0000-4000-8000-000000000001",
+      name: "Quality handbook",
+      description: "Shared review guidance.",
+      type: "file",
+      status: "ready",
+      source: { origin: "created" },
+      contentRevision: 1,
+      snapshotHash: "0".repeat(64),
+      createdAt: "2026-08-10T00:00:00.000Z",
+      updatedAt: "2026-08-10T00:00:00.000Z",
+    };
+
+    const html = renderToStaticMarkup(
+      <TeamEditor
+        project={project}
+        contextStores={[contextStore]}
+        error={null}
+        onCancel={() => undefined}
+        onSave={async () => undefined}
+      />,
+    );
+
+    expect(html).toContain("Team knowledge bases");
+    expect(html).toContain('aria-haspopup="dialog"');
+    expect(html).not.toContain("Quality handbook");
+    expect(html).not.toContain('placeholder="Search context stores"');
   });
 
   it("limits the default list and searches names, ids, descriptions, and tags", () => {

@@ -5,6 +5,7 @@ import { useTranslation } from "react-i18next";
 
 import type { Capability, ContextStore } from "../../../../shared/contracts/index.ts";
 import { SelectMenu } from "../../components/SelectMenu.tsx";
+import { ContextStorePickerDialog } from "./ContextStorePickerDialog.tsx";
 import type { ExpertDraft } from "./studio-model.ts";
 
 type PickerKind = "resources" | "context-stores" | "skills" | "tools";
@@ -178,7 +179,7 @@ export function ExpertCapabilityPicker(props: {
   };
 
   useEffect(() => {
-    if (activePicker === null) return;
+    if (activePicker === null || activePicker === "context-stores") return;
     const previousOverflow = document.body.style.overflow;
     document.body.style.overflow = "hidden";
     const closeOnEscape = (event: KeyboardEvent) => {
@@ -362,7 +363,26 @@ export function ExpertCapabilityPicker(props: {
         </div>
       </section>
 
-      {activePicker !== null ? (
+      {activePicker === "context-stores" ? (
+        <ContextStorePickerDialog
+          stores={props.contextStores}
+          selectedStoreIds={props.contextStoreMounts.map((mount) => mount.storeId)}
+          description={pickerCopy["context-stores"].description}
+          footerHint={t("changesImmediate")}
+          onSelectedStoreIdsChange={(storeIds) => {
+            const currentMounts = new Map(
+              props.contextStoreMounts.map((mount) => [mount.storeId, mount]),
+            );
+            props.onContextStoreMountsChange(
+              storeIds.map((storeId, priority) => ({
+                ...(currentMounts.get(storeId) ?? { storeId, enabled: true }),
+                priority,
+              })),
+            );
+          }}
+          onClose={closePicker}
+        />
+      ) : activePicker !== null ? (
         <div
           className="expert-picker-backdrop"
           role="presentation"
@@ -416,14 +436,6 @@ export function ExpertCapabilityPicker(props: {
                   query={search}
                   selected={props.resourceTools}
                   onChange={props.onResourceToolsChange}
-                />
-              ) : null}
-              {activePicker === "context-stores" ? (
-                <ContextStoreResults
-                  stores={props.contextStores}
-                  query={search}
-                  selected={props.contextStoreMounts}
-                  onChange={props.onContextStoreMountsChange}
                 />
               ) : null}
               {activePicker === "skills" ? (
@@ -529,48 +541,6 @@ function ResourceResults(props: {
                     ? t("expert")
                     : t("flow")}{" "}
               </small>
-            </span>
-          </label>
-        );
-      })}
-    </div>
-  );
-}
-
-function ContextStoreResults(props: {
-  readonly stores: readonly ContextStore[];
-  readonly query: string;
-  readonly selected: ExpertDraft["contextStoreMounts"];
-  readonly onChange: (value: ExpertDraft["contextStoreMounts"]) => void;
-}) {
-  const { t } = useTranslation("studio");
-  const visible = props.stores.filter((store) =>
-    includesQuery(props.query, store.name, store.description, "Markdown knowledge base"),
-  );
-  if (visible.length === 0)
-    return <EmptyResults hasQuery={Boolean(props.query.trim())} label={t("contextStoresLower")} />;
-  return (
-    <div className="expert-picker-list">
-      {visible.map((store) => {
-        const mounted = props.selected.some((mount) => mount.storeId === store.id);
-        return (
-          <label className="expert-picker-row" key={store.id}>
-            <input
-              type="checkbox"
-              checked={mounted}
-              onChange={() => {
-                const next = mounted
-                  ? props.selected.filter((mount) => mount.storeId !== store.id)
-                  : [
-                      ...props.selected,
-                      { storeId: store.id, enabled: true, priority: props.selected.length },
-                    ];
-                props.onChange(next.map((mount, priority) => ({ ...mount, priority })));
-              }}
-            />
-            <span>
-              <strong>{store.name}</strong>
-              <small>{store.description || t("knowledgeBase")}</small>
             </span>
           </label>
         );

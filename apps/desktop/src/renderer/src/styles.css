@@ -21022,36 +21022,42 @@ textarea:focus-visible,
   margin: 0;
 }
 
-.team-context-search {
+.team-context-editor > header {
   display: flex;
+  align-items: start;
+  justify-content: space-between;
+  gap: 18px;
+}
+
+.team-context-editor-actions {
+  display: flex;
+  flex: 0 0 auto;
   align-items: center;
-  gap: 8px;
+  gap: 12px;
 }
 
-.team-context-search input {
-  flex: 1;
+.team-context-editor-actions > span,
+.team-context-empty {
+  color: var(--muted);
+  font-size: 11px;
 }
 
-.team-context-picker-list,
 .team-context-expert-list {
   display: grid;
   gap: 8px;
 }
 
-.team-context-picker-list > label,
 .team-context-expert-list > label {
   display: flex;
   align-items: center;
   gap: 10px;
 }
 
-.team-context-picker-list span,
 .team-context-selection > div:first-child {
   display: grid;
   gap: 2px;
 }
 
-.team-context-picker-list small,
 .team-context-selection small {
   color: var(--text-secondary);
 }
