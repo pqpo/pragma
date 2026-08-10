@@ -68,6 +68,7 @@ describe("MissionModelOverrideControls", () => {
     expect(html).toContain(">High</span>");
     expect(html).toContain("Default model");
     expect(html).toContain("Default thinking depth");
+    expect(html).toContain("ui-overflow-marquee");
     expect(html).not.toContain("runtimeId");
     expect(html).not.toContain("<select");
   });

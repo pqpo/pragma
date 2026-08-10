@@ -33,6 +33,7 @@ export function SelectMenu<Value extends string>(props: {
   readonly placement?: "auto" | MenuPlacement | undefined;
   readonly portal?: boolean | undefined;
   readonly align?: "start" | "end" | undefined;
+  readonly animateOverflowingOptions?: boolean | undefined;
   readonly searchable?: boolean | undefined;
   readonly searchPlaceholder?: string | undefined;
   readonly title?: string | undefined;
@@ -253,7 +254,11 @@ export function SelectMenu<Value extends string>(props: {
             onKeyDown={(event) => handleOptionKeyDown(event, index)}
           >
             <span className="ui-select-option-copy">
-              <span>{option.label}</span>
+              {props.animateOverflowingOptions ? (
+                <OverflowingOptionLabel label={option.label} visible={open} />
+              ) : (
+                <span>{option.label}</span>
+              )}
               {option.description ? <small>{option.description}</small> : null}
             </span>
             <Check className="ui-select-option-check" size={14} weight="bold" aria-hidden="true" />
@@ -290,6 +295,55 @@ export function SelectMenu<Value extends string>(props: {
         ? menu
         : createPortal(menu, document.body)}
     </div>
+  );
+}
+
+function OverflowingOptionLabel(props: { readonly label: string; readonly visible: boolean }) {
+  const viewportRef = useRef<HTMLSpanElement>(null);
+  const contentRef = useRef<HTMLSpanElement>(null);
+  const [overflowDistance, setOverflowDistance] = useState(0);
+
+  useLayoutEffect(() => {
+    if (!props.visible) {
+      setOverflowDistance(0);
+      return;
+    }
+
+    const viewport = viewportRef.current;
+    const content = contentRef.current;
+    if (viewport === null || content === null) return;
+
+    const measure = () => {
+      setOverflowDistance(Math.max(0, content.scrollWidth - viewport.clientWidth));
+    };
+    measure();
+
+    if (typeof ResizeObserver === "undefined") return;
+    const observer = new ResizeObserver(measure);
+    observer.observe(viewport);
+    observer.observe(content);
+    return () => observer.disconnect();
+  }, [props.label, props.visible]);
+
+  const overflowing = overflowDistance > 1;
+  const style:
+    | (CSSProperties & Record<"--ui-marquee-distance" | "--ui-marquee-duration", string>)
+    | undefined = overflowing
+    ? {
+        "--ui-marquee-distance": `${overflowDistance}px`,
+        "--ui-marquee-duration": `${Math.max(4, overflowDistance / 28 + 2.5)}s`,
+      }
+    : undefined;
+
+  return (
+    <span
+      className={`ui-overflow-marquee${overflowing ? " is-overflowing" : ""}`}
+      ref={viewportRef}
+      style={style}
+      title={props.label}
+    >
+      <span ref={contentRef}>{props.label}</span>
+    </span>
   );
 }
 

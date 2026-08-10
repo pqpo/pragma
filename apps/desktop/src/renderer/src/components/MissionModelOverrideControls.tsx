@@ -61,6 +61,7 @@ export function MissionModelOverrideControls(props: {
         className="mission-compact-select mission-model-select"
         disabled={props.loading || props.disabled}
         icon={<Robot size={16} aria-hidden="true" />}
+        animateOverflowingOptions
         options={modelOptions}
         value={valueKey}
         onChange={(nextValue) => {
