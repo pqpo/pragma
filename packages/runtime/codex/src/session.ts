@@ -414,7 +414,10 @@ function annotateCodexCompaction(
       ...(failed ? { errorMessage: readFailureMessage(item) } : {}),
     };
   }
-  if (notification.method === "thread/compacted" && session.pendingCompaction !== undefined) {
+  if (
+    (notification.method === "thread/compacted" || notification.method === "turn/completed") &&
+    session.pendingCompaction !== undefined
+  ) {
     const pending = session.pendingCompaction;
     session.pendingCompaction = undefined;
     return {

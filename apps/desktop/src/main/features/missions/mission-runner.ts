@@ -2313,7 +2313,11 @@ async function readMissionChatHistory(
     let activityEntries;
     try {
       histories = await view.getMessageHistory({ scope: { kind: "all" } });
-      activityEntries = await readHistoricalRuntimeActivityEntries(view, turn.sequence);
+      activityEntries = await readHistoricalRuntimeActivityEntries(
+        view,
+        turn.sequence,
+        state.rootInvocationId,
+      );
     } catch {
       const projection = await missions.readExecutionProjection(missionId, turn.executionId);
       if (projection !== undefined) {
@@ -2363,6 +2367,7 @@ async function readMissionChatHistory(
 async function readHistoricalRuntimeActivityEntries(
   view: StoredExecutionView,
   timelineSequence: number,
+  rootInvocationId: string,
 ): Promise<MissionChatEntry[]> {
   const events: Array<{
     readonly event: ExpertAgentStreamEvent;
@@ -2390,6 +2395,12 @@ async function readHistoricalRuntimeActivityEntries(
   for (const record of events) {
     const { event } = record;
     if (event.type === "progress") {
+      if (
+        record.invocationId !== rootInvocationId ||
+        !isRootMissionRuntimeSource(event.source)
+      ) {
+        continue;
+      }
       const data = readRuntimeContextCompactionProgressData(event.payload.data);
       if (data === undefined || !isRuntimeContextCompactionStage(event.payload.stage)) continue;
       const id = `context:${view.executionId}:${data.operationId}`;
@@ -2707,8 +2718,22 @@ function elapsedMissionMs(startedAt: number): number {
   return Math.round((performance.now() - startedAt) * 100) / 100;
 }
 
+export function isRootMissionRuntimeOutput(
+  item: Pick<ExecutionOutputItem, "parentInvocationId" | "source">,
+): boolean {
+  return item.parentInvocationId === undefined && isRootMissionRuntimeSource(item.source);
+}
+
+function isRootMissionRuntimeSource(
+  source: Pick<ExecutionOutputItem["source"], "parentSessionId">,
+): boolean {
+  return source.parentSessionId === undefined;
+}
+
 function isTerminalContextCompactionOutput(item: ExecutionOutputItem): boolean {
-  if (item.channel !== "progress") return false;
+  if (item.channel !== "progress" || !isRootMissionRuntimeOutput(item)) {
+    return false;
+  }
   const stage = asRecord(item.value)["stage"];
   return (
     stage === RUNTIME_CONTEXT_COMPACTION_STAGES.completed ||
@@ -2790,6 +2815,7 @@ function consumeLiveChatOutput(
     return [{ type: "entry.upsert", entry }];
   }
   if (item.channel === "progress") {
+    if (!isRootMissionRuntimeOutput(item)) return [];
     const payload = asRecord(item.value);
     const stage = payload["stage"];
     if (!isRuntimeContextCompactionStage(stage)) return [];
