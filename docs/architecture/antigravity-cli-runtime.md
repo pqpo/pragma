@@ -7,7 +7,9 @@
 
 - Runtime id 为 `antigravity`，kind 为 `antigravity-local`，最低支持 `agy 1.1.11`。
 - Adapter 只依赖 `@pragma/core`、`@pragma/shared` 与运行时中立依赖，不依赖其他 Runtime。
-- 每个 Runtime Session 使用独立、可 checkpoint 的 HOME；不扫描、复制或修改宿主 `~/.gemini`。
+- 认证使用双模式：ADC 使用 Session 私有 HOME；交互式 OAuth 使用显式 `host-keyring` 兼容模式。
+- 两种模式都不由 Pragma 向宿主 `~/.gemini` 复制或物化配置；兼容模式由 agy 原生读取宿主 settings、
+  全局 customization，并使用宿主 native conversation 存储，Pragma 自己的配置仍保持 Session 私有。
 - 系统提示词通过 Markdown custom agent 注入；startup messages 只在 fresh conversation 的首轮注入。
 - Pragma 工具通过私有 HTTP MCP session 暴露；native tool 权限通过 fail-closed `PreToolUse` Hook
   回接 Core human interaction。
@@ -18,19 +20,23 @@
 
 `stream-json`、`init` / `step_update` / `result`、`tool_info`、`subagent_info` 和 usage 是 1.1.8
 引入的协议。1.1.10 修复了 `--model` 与 `--effort` 在 headless `-p` 中被忽略的问题；1.1.11 是当前
-global customization 路径与私有 HOME 的已验证基线，因此 Adapter 拒绝更早版本。开发时使用官方
-macOS x64 `agy 1.1.11` 验证了版本探测、参数面、配置发现、私有
-HOME 写入位置和未登录错误路径；当前开发机没有 Antigravity 登录态，因此真实模型成功响应仍由
-协议 fixture 覆盖，而不是宣称完成了账号侧在线调用。
+global customization 路径与认证行为的已验证基线，因此 Adapter 拒绝更早版本。开发时使用官方
+macOS x64 `agy 1.1.11` 验证了版本探测、参数面、配置发现、私有 HOME、宿主钥匙串登录、managed
+workspace Agent 发现和真实 `stream-json` 成功响应。
 
 可执行文件解析顺序为：显式 `executablePath`、`AGY_PATH`、`PATH`、官方用户安装目录，最后回退到
 `agy`/`agy.exe` 交给进程错误处理。Windows 必须指向原生 `.exe`，不接受无法直接 spawn 的 `.cmd`
 shim。版本探测与模型目录刷新都有有界缓存，并按 executable、environment 与 spawn implementation
 隔离。
 
-## Session 私有 HOME
+## 认证模式与 Session 布局
 
-每个 owned Runtime Session 在自己的持久目录中生成：
+Desktop 使用 `auto` 策略：`AGY_ADC_AUTH=true` 时选择 `isolated-environment`，否则选择
+`host-keyring`。前者适合官方 ADC；后者用于用户已通过交互式 `agy` 完成的 OAuth 登录。agy 1.1.11
+会在 `HOME` 被替换后跳过宿主系统钥匙串，因此 OAuth 模式必须保留真实 `HOME`/`USERPROFILE`。这是
+供应商 CLI 的认证约束，不是网络 fallback。
+
+`isolated-environment` 在 owned Runtime Session 中生成完整私有 HOME：
 
 ```text
 <runtime-session>/
@@ -49,20 +55,38 @@ shim。版本探测与模型目录刷新都有有界缓存，并按 executable�
 └── tmp/
 ```
 
-启动环境强制重定向 `HOME`、`USERPROFILE`、XDG 目录、Windows AppData 与临时目录，并移除宿主的
+`host-keyring` 不写宿主配置，而是在同一个 Runtime Session 中生成官方 workspace customization：
+
+```text
+<runtime-session>/
+├── managed-customizations/
+│   └── .agents/
+│       ├── agents/pragma-<expert-id>-<session-hash>/agent.md
+│       ├── hooks.json
+│       ├── mcp_config.json
+│       └── skills/pragma-<session-hash>-<skill>/SKILL.md
+├── hooks/pragma-pre-tool-use.mjs
+├── logs/turn-<run-id>.log
+└── tmp/
+```
+
+隔离模式强制重定向 `HOME`、`USERPROFILE`、XDG 目录、Windows AppData 与临时目录，并移除宿主的
 `AGY_APP_DATA_DIR`、`ANTIGRAVITY_HOME`、Gemini config override、Google log override、Antigravity
 conversation/project/sidecar 状态及旧的 Pragma Hook secret 变量。
 显式认证环境变量与其他业务环境保持透传。`AGY_CLI_DISABLE_AUTO_UPDATE=true`，避免一个受管 Session
-在执行中改写宿主安装。OAuth 登录态由 Antigravity 使用操作系统安全钥匙串管理；首次登录应在 Pragma
-外运行交互式 `agy`，Adapter 不复制凭据文件。
+在执行中改写宿主安装。
 
-同一策略也用于 `agy models`，但模型发现使用一次性临时 HOME，结束后立即删除，避免目录发现污染
-Runtime Session 或宿主配置。
+`host-keyring` 保留宿主 HOME/XDG/AppData，只移除可能串扰 Session 的 Antigravity sidecar、conversation、
+project、config override 和旧 Pragma secret 变量；临时目录和 Pragma turn 日志仍定向到 Runtime Session。
+agy 会按原生语义读取宿主 settings、全局 customization，并把 native conversation 保存在宿主目录。
+Pragma 只按当前拥有的 conversation ID 定向恢复，不扫描宿主 conversation 树；Mission 删除也不会删除
+agy 拥有的宿主 native conversation。首次 OAuth 登录仍在 Pragma 外运行交互式 `agy`，Adapter 不读取、
+复制或导出钥匙串凭据。模型发现同样保留宿主 HOME 和认证配置，但使用隔离 cwd/tmp 并移除 Session 变量。
 
 ## 系统提示词与 startup messages
 
-Antigravity 没有等价的 `--system-prompt` 参数。Adapter 在私有
-`~/.gemini/config/agents/pragma-<expert-id>-<session-hash>/agent.md` 写入一个 main custom agent：
+Antigravity 没有等价的 `--system-prompt` 参数。Adapter 在私有 HOME 的 global customization 或
+`host-keyring` 的 Session `managed-customizations/.agents/agents/` 中写入一个 main custom agent：
 
 ```markdown
 ---
@@ -96,7 +120,7 @@ user message，不把边界帧当作权威历史格式。
 ## MCP
 
 Adapter 从 Core 的 process-shared `McpToolRegistryPool` 获取连接，再为当前 Expert/Execution 注册独立
-MCP session。私有 `~/.gemini/config/mcp_config.json` 只写一个 Session-scoped
+MCP session。受管 global/workspace `mcp_config.json` 只写一个 Session-scoped
 `pragma<session-hash>` remote server：
 
 ```json
@@ -109,7 +133,8 @@ MCP session。私有 `~/.gemini/config/mcp_config.json` 只写一个 Session-sco
 }
 ```
 
-该不透明 namespace 只暴露当前 Expert allowlist 投影后的工具，且私有 HOME 不会继承宿主个人 MCP 配置。
+该不透明 namespace 只暴露当前 Expert allowlist 投影后的工具。私有 HOME 不继承宿主个人 MCP 配置；
+`host-keyring` 会按 agy 原生规则同时加载宿主全局配置，因此属于显式兼容性取舍。
 custom agent 的 `inheritMcp: true` 让上述受管 server 进入该 Agent。Antigravity 仍会按其原生语义发现
 workspace 内显式提交的 `.agents`、`.agent`、`_agents` 或 `_agent` customization；这些根可以在 Pragma
 `PreToolUse` relay 之前启动任意 shell Hook、stdio MCP 或第三方 Plugin，不能被名称 namespace 或同一个
@@ -123,8 +148,9 @@ registration、registry lease 与权限 relay；任一释放失败会聚合上�
 
 ## Skills
 
-Core 已解析的每个 local Skill 都复制到官方 global customization 路径
-`~/.gemini/config/skills/pragma-<session-hash>-<normalized-name>/`。复制规则为：
+Core 已解析的每个 local Skill 都复制到受管 customization 的
+`skills/pragma-<session-hash>-<normalized-name>/`。该根在隔离模式位于私有 HOME，在兼容模式位于 Session
+额外 workspace。复制规则为：
 
 - 复制整个 Skill 目录并解引用已选择的链接，保留 `scripts/`、`references/`、`resources/` 与其他文件；
 - 排除任何 `node_modules` 子树；
@@ -147,7 +173,7 @@ Desktop 的三种权限模式映射为：
 | auto-approve     | `proceed-in-sandbox` | 开启             | 禁止             | `--sandbox`                      |
 | full-access      | `always-proceed`     | 关闭             | 允许             | `--dangerously-skip-permissions` |
 
-`~/.gemini/config/hooks.json` 以 Session-scoped 名称注册匹配全部 native tools 的 `PreToolUse` command Hook。Hook runner 与本机
+受管 `hooks.json` 以 Session-scoped 名称注册匹配全部 native tools 的 `PreToolUse` command Hook。Hook runner 与本机
 loopback relay 使用每 Session 随机 bearer；URL 和 bearer 只写入权限为 `0600` 的私有脚本，不放入 agy
 进程环境，避免被 Agent 的 shell 子进程读取。
 
@@ -176,6 +202,7 @@ agy
   --disable-slash-commands
   --print-timeout 24h
   --add-dir <workspace>
+  [--add-dir <session-managed-customizations>]
   --agent <managed-agent>
   --log-file <private-turn-log>
   --mode accept-edits

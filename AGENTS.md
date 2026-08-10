@@ -347,11 +347,13 @@ Server 与 Agent 的关系：
   `~/.pragma/cache/runtimes/qodercli/external-commands/`；认证、Project、日志和 Session 状态继续私有。
   已有 Session 的本地 `external-commands` 目录不得在启动时扫描、迁移或替换；Pragma 只清理共享缓存中
   已完成的 `download-*` 与无活动锁保护的过期 `.tmp-*`。
-- Antigravity CLI 每个 Runtime Session 使用完整私有 `HOME`，其 `~/.gemini/config/`、
-  `~/.gemini/antigravity-cli/`、自定义 Agent、settings、hooks、MCP 配置、Skills、日志和 native Session
-  状态均不得与宿主或其他 Context 共享。认证只允许复用操作系统安全钥匙串或显式注入的受支持认证环境；
-  不复制宿主 `~/.gemini`。PreToolUse relay 凭据只能写入 Session 私有 hook 文件，不得暴露给 agy
-  进程环境及其子 shell。
+- Antigravity CLI 认证使用显式双模式：启用官方 `AGY_ADC_AUTH` 时使用完整私有 `HOME`；使用交互式
+  OAuth 时允许 `host-keyring` 兼容模式保留宿主 `HOME`，因为 agy 1.1.11 在替换 `HOME` 后不会读取操作系统
+  钥匙串。兼容模式不得由 Pragma 向宿主 `~/.gemini` 复制或物化配置；Pragma Agent、Hook、MCP 与 Skills 必须物化到
+  Runtime Session 私有的额外 `.agents` workspace，并使用唯一 namespace。兼容模式会按 agy 原生语义共享
+  宿主 settings、全局 customization 与 native Session 存储，必须在架构文档和诊断中明确披露；恢复只能按
+  已拥有的 conversation ID 定向读取，不得扫描宿主 Session 树。PreToolUse relay 凭据只能写入 Session
+  私有 hook 文件，不得暴露给 agy 进程环境及其子 shell。
 - Runtime 进程停止不等于持久数据删除。Mission 删除必须按 owner 图级联移动 ExpertSession、
   Execution、Runtime Session 和 ownership claim 到带 journal 的回收站。
 - 外部 ID 目录段统一通过 `@pragma/core` 的 `PragmaPaths` 编码和解析，具体 Runtime 或插件 loader 不自行拼接管理路径。

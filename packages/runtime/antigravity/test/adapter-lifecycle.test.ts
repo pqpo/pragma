@@ -81,6 +81,9 @@ describe("Antigravity Runtime adapter lifecycle", () => {
       mcpToolRegistryPool,
     });
     const driver = runtimeMocks.driver as RuntimeDriver<unknown, AntigravityNativeSession>;
+    expect(driver.resolvePersistence?.(createSessionContext(sessionDir))).toMatchObject({
+      metadata: { format: "antigravity-managed-session" },
+    });
     const readContext = {
       agent: createSessionContext(sessionDir).agent,
       runContext: {},
@@ -167,6 +170,37 @@ describe("Antigravity Runtime adapter lifecycle", () => {
     expect(closeRelay).toHaveBeenCalledTimes(1);
   });
 
+  it("materializes host-keyring customizations without replacing the host HOME", async () => {
+    const root = await mkdtemp(join(tmpdir(), "pragma-agy-host-keyring-adapter-"));
+    temporaryDirectories.push(root);
+    const sessionDir = join(root, "session");
+    const hostHome = join(root, "host-home");
+    await mkdir(hostHome, { recursive: true });
+    createAntigravityRuntime({
+      executablePath: "/opt/agy",
+      canUse: () => ({ usable: true }),
+      listModels: async () => [],
+      authenticationMode: "host-keyring",
+    });
+    const driver = runtimeMocks.driver as RuntimeDriver<unknown, AntigravityNativeSession>;
+    const session = await driver.createSession(
+      createSessionContext(sessionDir, undefined, "/workspace/project", { HOME: hostHome }),
+    );
+
+    expect(session.env["HOME"]).toBe(hostHome);
+    expect(session.managedHome.authenticationMode).toBe("host-keyring");
+    expect(session.managedHome.customizationWorkspace).toBe(
+      join(sessionDir, "managed-customizations"),
+    );
+    await expect(
+      readFile(
+        join(session.managedHome.configDir, "agents", session.managedHome.agentName, "agent.md"),
+        "utf8",
+      ),
+    ).resolves.toContain("system prompt");
+    await driver.closeSession?.(session, closeContext());
+  });
+
   it("rejects workspace customizations before allocating MCP or spawning agy", async () => {
     const sessionDir = await mkdtemp(join(tmpdir(), "pragma-agy-unsafe-workspace-session-"));
     const workspace = await mkdtemp(join(tmpdir(), "pragma-agy-unsafe-workspace-"));
@@ -195,6 +229,7 @@ function createSessionContext(
   sessionDir: string,
   restoredRuntimeSessionId?: string,
   workspace = "/workspace/project",
+  processEnvironment: NodeJS.ProcessEnv = { API_KEY: "preserved" },
 ): RuntimeDriverSessionContext {
   const agent = {
     id: "expert-1",
@@ -229,7 +264,7 @@ function createSessionContext(
       systemSessionDir: sessionDir,
       runtimeSessionDir: () => sessionDir,
     },
-    processEnvironment: { API_KEY: "preserved" },
+    processEnvironment,
     agentContext: {
       systemPrompt: "system prompt",
       startupMessages: [{ role: "user", content: "always-on context" }],

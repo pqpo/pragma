@@ -6,10 +6,13 @@ import type { Expert } from "@pragma/core";
 import { afterEach, describe, expect, it } from "vitest";
 
 import {
+  createHostKeyringAntigravityEnvironment,
   createManagedAntigravityIdentity,
   createManagedAntigravityEnvironment,
   managedAgentName,
   prepareManagedAntigravityHome,
+  resolveAntigravityAuthenticationMode,
+  resolveAntigravityHostHome,
 } from "../src/managed-home.ts";
 
 const temporaryDirectories: string[] = [];
@@ -23,6 +26,111 @@ afterEach(async () => {
 });
 
 describe("managed Antigravity HOME", () => {
+  it("uses a Session customization workspace while preserving host HOME for keyring OAuth", async () => {
+    const root = await temporaryRoot();
+    const hostHome = join(root, "host-home");
+    const sessionDir = join(root, "session");
+    await mkdir(hostHome, { recursive: true });
+    const managed = await prepareManagedAntigravityHome({
+      agent: createExpert(root),
+      sessionDir,
+      systemPrompt: "host-keyring system",
+      mcpServerUrl: "http://127.0.0.1/host-keyring/mcp",
+      hookRelay: relay(),
+      permissionMode: "request-approval",
+      authenticationMode: "host-keyring",
+      processEnvironment: {
+        HOME: hostHome,
+        XDG_CONFIG_HOME: join(hostHome, ".config"),
+        ANTIGRAVITY_CONVERSATION_ID: "stale-host-session",
+        PRAGMA_AGY_HOOK_AUTHORIZATION: "stale-secret",
+      },
+      platform: "linux",
+    });
+
+    expect(managed).toMatchObject({
+      authenticationMode: "host-keyring",
+      homeDir: hostHome,
+      configDir: join(sessionDir, "managed-customizations", ".agents"),
+      customizationWorkspace: join(sessionDir, "managed-customizations"),
+    });
+    expect(managed.env).toMatchObject({
+      HOME: hostHome,
+      XDG_CONFIG_HOME: join(hostHome, ".config"),
+      TMPDIR: join(sessionDir, "tmp"),
+    });
+    expect(managed.env["ANTIGRAVITY_CONVERSATION_ID"]).toBeUndefined();
+    expect(managed.env["PRAGMA_AGY_HOOK_AUTHORIZATION"]).toBeUndefined();
+    await expect(
+      stat(join(hostHome, ".gemini", "antigravity-cli", "settings.json")),
+    ).rejects.toMatchObject({ code: "ENOENT" });
+    await expect(readJson(join(managed.configDir, "mcp_config.json"))).resolves.toEqual({
+      mcpServers: {
+        [managed.mcpServerName]: { serverUrl: "http://127.0.0.1/host-keyring/mcp" },
+      },
+    });
+    await expect(
+      readFile(join(managed.configDir, "agents", managed.agentName, "agent.md"), "utf8"),
+    ).resolves.toContain("host-keyring system");
+    await expect(readJson(join(managed.configDir, "hooks.json"))).resolves.toHaveProperty(
+      managed.hookName,
+    );
+  });
+
+  it("auto-selects private HOME only when the official ADC switch is enabled", () => {
+    expect(resolveAntigravityAuthenticationMode("auto", { HOME: "/host" }, "linux")).toBe(
+      "host-keyring",
+    );
+    expect(
+      resolveAntigravityAuthenticationMode(
+        "auto",
+        { HOME: "/host", AGY_ADC_AUTH: "true" },
+        "linux",
+      ),
+    ).toBe("isolated-environment");
+    expect(
+      resolveAntigravityAuthenticationMode(
+        "auto",
+        { HOME: "/host", AGY_ADC_AUTH: "false" },
+        "linux",
+      ),
+    ).toBe("host-keyring");
+  });
+
+  it("resolves Windows host HOME case-insensitively and rejects missing host identity", () => {
+    expect(resolveAntigravityHostHome({ UserProfile: "C:\\Users\\Pragma" }, "win32")).toBe(
+      "C:\\Users\\Pragma",
+    );
+    expect(
+      resolveAntigravityHostHome({ HomeDrive: "C:", HomePath: "\\Users\\Pragma" }, "win32"),
+    ).toBe("C:\\Users\\Pragma");
+    expect(() => resolveAntigravityHostHome({}, "linux")).toThrow(/host HOME\/USERPROFILE/i);
+    expect(() =>
+      resolveAntigravityHostHome({ HomeDrive: "C:", HomePath: "Users\\Pragma" }, "win32"),
+    ).toThrow(/absolute host HOME\/USERPROFILE/i);
+    const env = createHostKeyringAntigravityEnvironment({
+      base: {
+        Home: "C:\\Users\\Pragma",
+        UserProfile: "C:\\Users\\Pragma",
+        Agy_Adc_Auth: "true",
+        Antigravity_Conversation_Id: "stale",
+        API_KEY: "preserved",
+      },
+      tmpDir: "C:\\Pragma\\tmp",
+      platform: "win32",
+    });
+    expect(env).toMatchObject({
+      Home: "C:\\Users\\Pragma",
+      UserProfile: "C:\\Users\\Pragma",
+      API_KEY: "preserved",
+      TMP: "C:\\Pragma\\tmp",
+    });
+    expect(
+      Object.keys(env).some((key) => key.toLowerCase() === "antigravity_conversation_id"),
+    ).toBe(false);
+    expect(Object.keys(env).some((key) => key.toLowerCase() === "agy_adc_auth")).toBe(false);
+  });
+
   it("materializes the exact system prompt, MCP bridge, approval hook, and complete skills", async () => {
     const root = await temporaryRoot();
     const skillRoot = join(root, "source-skill");

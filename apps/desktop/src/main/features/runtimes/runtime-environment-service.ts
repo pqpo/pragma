@@ -350,6 +350,7 @@ export function createBuiltInRuntimeFactories(
             ? {}
             : { onModelCatalogUpdated: () => onModelCatalogUpdated(environment.id) }),
           permissionMode: antigravityRuntimePermissionForMode(permissionMode),
+          authenticationMode: "auto",
           env,
           tokenCounter: options.tokenCounter,
           ...(options.mcpToolRegistryPool === undefined

@@ -85,7 +85,7 @@ export function createAntigravityRuntime(
             "session.destroyed",
             "files.changed",
           ],
-          metadata: { format: "antigravity-private-home" },
+          metadata: { format: "antigravity-managed-session" },
         };
       },
       async createSession(ctx): Promise<AntigravityDriverSession> {
@@ -140,6 +140,7 @@ export function createAntigravityRuntime(
             mcpServerUrl: expertToolsMcpRegistration.url,
             hookRelay,
             permissionMode,
+            authenticationMode: options.authenticationMode,
             processEnvironment: ctx.processEnvironment,
             nodeExecutablePath: options.hookNodeExecutablePath,
           });
@@ -151,6 +152,7 @@ export function createAntigravityRuntime(
               systemPromptCharacters: ctx.agentContext.systemPrompt.length,
               skillCount: managedHome.skills.length,
               toolCount: mcpToolRegistryLease.registry.tools.length,
+              authenticationMode: managedHome.authenticationMode,
               mcpOpenedConnections: mcpToolRegistryLease.stats.openedConnections,
               mcpReusedConnections: mcpToolRegistryLease.stats.reusedConnections,
               mcpCoalescedConnections: mcpToolRegistryLease.stats.coalescedConnections,
