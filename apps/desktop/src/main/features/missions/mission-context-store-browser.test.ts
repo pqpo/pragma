@@ -87,7 +87,7 @@ describe("MissionContextStoreBrowserService", () => {
         getAdditionalResources: () => [],
       } as unknown as DesktopSystemExpertRegistry,
       memory: {
-        isContextStoreViewAvailable: vi.fn(async () => true),
+        getContextStoreViewStatus: vi.fn(async () => "available" as const),
         createContextStoreView: vi.fn(async () => new StaticContextStore()),
       } as unknown as DesktopMemoryPlane,
       runner: {
@@ -186,8 +186,8 @@ describe("MissionContextStoreBrowserService", () => {
     }
   });
 
-  it("exposes exact per-Expert scopes while preserving the Team root", async () => {
-    const isContextStoreViewAvailable = vi.fn(async () => true);
+  it("separates the Team root from each Expert's personal Memory scope", async () => {
+    const getContextStoreViewStatus = vi.fn(async () => "available" as const);
     const createContextStoreView = vi.fn(
       async () =>
         new StaticContextStore([
@@ -213,7 +213,7 @@ describe("MissionContextStoreBrowserService", () => {
         getAdditionalResources: () => [],
       } as unknown as DesktopSystemExpertRegistry,
       memory: {
-        isContextStoreViewAvailable,
+        getContextStoreViewStatus,
         createContextStoreView,
       } as unknown as DesktopMemoryPlane,
       runner: {
@@ -240,8 +240,15 @@ describe("MissionContextStoreBrowserService", () => {
     });
 
     const descriptor = await service.get({ missionId: mission.id, storeId: "memory" });
-    expect(descriptor.defaultScopeId).toBe(`expert:${writer.metadata.id}`);
+    expect(descriptor.schemaVersion).toBe("pragma.desktop-mission-context-store/v2");
+    expect(descriptor.defaultScopeId).toBe(`team:${team.metadata.id}`);
     expect(descriptor.scopes).toEqual([
+      expect.objectContaining({
+        id: `team:${team.metadata.id}`,
+        expertId: team.metadata.id,
+        role: "root",
+        availability: "available",
+      }),
       expect.objectContaining({ expertId: writer.metadata.id, role: "coordinator" }),
       expect.objectContaining({
         expertId: reviewer.metadata.id,
@@ -249,21 +256,35 @@ describe("MissionContextStoreBrowserService", () => {
         participation: "participated",
       }),
     ]);
-    expect(isContextStoreViewAvailable).toHaveBeenCalledTimes(2);
+    expect(getContextStoreViewStatus).toHaveBeenCalledTimes(3);
     expect(createContextStoreView).not.toHaveBeenCalled();
 
-    isContextStoreViewAvailable.mockClear();
+    getContextStoreViewStatus.mockClear();
+    await service.list({
+      missionId: mission.id,
+      storeId: "memory",
+      scopeId: `team:${team.metadata.id}`,
+    });
+    expect(createContextStoreView).toHaveBeenLastCalledWith({
+      rootRef: { type: "pragma.expert-team", id: team.metadata.id },
+      projectId: mission.project.id,
+    });
+
     await service.list({
       missionId: mission.id,
       storeId: "memory",
       scopeId: `expert:${reviewer.metadata.id}`,
     });
     expect(createContextStoreView).toHaveBeenLastCalledWith({
-      rootRef: { type: "pragma.expert-team", id: team.metadata.id },
+      rootRef: { type: "pragma.expert", id: reviewer.metadata.id },
       expertRef: { type: "pragma.expert", id: reviewer.metadata.id },
       projectId: mission.project.id,
+      policyScope: {
+        rootRef: { type: "pragma.expert-team", id: team.metadata.id },
+        producerRefs: [{ type: "pragma.expert", id: reviewer.metadata.id }],
+      },
     });
-    expect(isContextStoreViewAvailable).not.toHaveBeenCalled();
+    expect(getContextStoreViewStatus).not.toHaveBeenCalled();
   });
 
   it("rejects a renderer-provided Expert outside the Mission catalog", async () => {
@@ -277,7 +298,7 @@ describe("MissionContextStoreBrowserService", () => {
         getAdditionalResources: () => [],
       } as unknown as DesktopSystemExpertRegistry,
       memory: {
-        isContextStoreViewAvailable: vi.fn(async () => true),
+        getContextStoreViewStatus: vi.fn(async () => "available" as const),
         createContextStoreView: vi.fn(async () => new StaticContextStore()),
       } as unknown as DesktopMemoryPlane,
       runner: {
@@ -305,7 +326,7 @@ describe("MissionContextStoreBrowserService", () => {
         getAdditionalResources: () => [],
       } as unknown as DesktopSystemExpertRegistry,
       memory: {
-        isContextStoreViewAvailable: vi.fn(async () => true),
+        getContextStoreViewStatus: vi.fn(async () => "available" as const),
         createContextStoreView: vi.fn(async () => new StaticContextStore()),
       } as unknown as DesktopMemoryPlane,
       runner: {
@@ -335,7 +356,7 @@ describe("MissionContextStoreBrowserService", () => {
         getAdditionalResources: () => [],
       } as unknown as DesktopSystemExpertRegistry,
       memory: {
-        isContextStoreViewAvailable: vi.fn(async () => true),
+        getContextStoreViewStatus: vi.fn(async () => "available" as const),
         createContextStoreView: vi.fn(async () => new StaticContextStore()),
       } as unknown as DesktopMemoryPlane,
       runner: {

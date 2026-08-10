@@ -63,7 +63,15 @@ export interface DesktopMemoryContextStoreViewInput {
   readonly rootRef: MemoryRecallScope["rootRef"];
   readonly expertRef?: MemoryRecallScope["expertRef"] | undefined;
   readonly projectId: string;
+  readonly policyScope?:
+    | {
+        readonly rootRef: MemoryRecallScope["rootRef"];
+        readonly producerRefs?: readonly NonNullable<MemoryRecallScope["expertRef"]>[] | undefined;
+      }
+    | undefined;
 }
+
+export type DesktopMemoryContextStoreViewStatus = "available" | "empty" | "recall_disabled";
 
 export interface DesktopMemoryPlane {
   readonly executionStore: FileExecutionStore;
@@ -76,8 +84,9 @@ export interface DesktopMemoryPlane {
   readonly skillLearningStore: SkillMemoryModule["store"];
   readonly activity: MemoryActivityStore;
   readonly contextStore: import("@pragma/core").ExpertAgentContextStore;
-  isContextStoreViewAvailable(input: DesktopMemoryContextStoreViewInput): Promise<boolean>;
-  hasContextStoreViewContent(input: DesktopMemoryContextStoreViewInput): Promise<boolean>;
+  getContextStoreViewStatus(
+    input: DesktopMemoryContextStoreViewInput,
+  ): Promise<DesktopMemoryContextStoreViewStatus>;
   createContextStoreView(
     input: DesktopMemoryContextStoreViewInput,
   ): Promise<import("@pragma/core").ExpertAgentContextStore>;
@@ -457,9 +466,13 @@ export async function createDesktopMemoryPlane(options: {
       expertRef: input.expertRef,
       principalRefs: [localUser, { type: "pragma.project", id: input.projectId }],
     });
+    const policyRootRef = input.policyScope?.rootRef ?? scope.rootRef;
+    const producerRefs =
+      input.policyScope?.producerRefs ??
+      (scope.expertRef === undefined ? undefined : [scope.expertRef]);
     const policy = await policies.resolveAt({
-      rootRef: scope.rootRef,
-      ...(scope.expertRef === undefined ? {} : { producerRefs: [scope.expertRef] }),
+      rootRef: policyRootRef,
+      ...(producerRefs === undefined ? {} : { producerRefs }),
       occurredAt: new Date().toISOString(),
     });
     return { scope, available: policy.recall };
@@ -476,17 +489,14 @@ export async function createDesktopMemoryPlane(options: {
     skillLearningStore: skill.store,
     activity,
     contextStore,
-    async isContextStoreViewAvailable(input) {
-      return (await resolveContextStoreViewScope(input)).available;
-    },
-    async hasContextStoreViewContent(input) {
+    async getContextStoreViewStatus(input) {
       const resolved = await resolveContextStoreViewScope(input);
-      if (!resolved.available) return false;
+      if (!resolved.available) return "recall_disabled";
       const [episodes, facts] = await Promise.all([
         episodic.store.listForRecall(resolved.scope),
         semantic.store.listForRecall(resolved.scope, new Date()),
       ]);
-      return episodes.length > 0 || facts.length > 0;
+      return episodes.length > 0 || facts.length > 0 ? "available" : "empty";
     },
     async createContextStoreView(input) {
       const resolved = await resolveContextStoreViewScope(input);

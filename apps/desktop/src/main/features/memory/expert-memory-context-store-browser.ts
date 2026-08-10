@@ -74,12 +74,10 @@ export function createExpertMemoryContextStoreBrowserService(options: {
         expertRef: { type: "pragma.expert", id: expert.metadata.id },
         projectId: options.project.projectId,
       } as const;
-      const available = await options.memory.isContextStoreViewAvailable(viewInput);
-      const hasMemory = available
-        ? await options.memory.hasContextStoreViewContent(viewInput)
-        : false;
+      const status = await options.memory.getContextStoreViewStatus(viewInput);
+      const hasMemory = status === "available";
       return ExpertMemoryContextStoreDescriptorSchema.parse({
-        schemaVersion: "pragma.desktop-expert-memory-context-store/v1",
+        schemaVersion: "pragma.desktop-expert-memory-context-store/v2",
         expertRef: input.expertRef,
         storeId: MEMORY_STORE_ID,
         namespace: MEMORY_STORE_ID,
@@ -100,7 +98,7 @@ export function createExpertMemoryContextStoreBrowserService(options: {
             name: expert.metadata.name,
             role: "root",
             participation: "available",
-            availability: available ? "available" : "recall_disabled",
+            availability: status,
           },
         ],
       });

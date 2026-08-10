@@ -140,7 +140,7 @@ export function ContextStoreBrowser(props: {
     setChunks([]);
     setMatches([]);
     setQuery("");
-    if (scope?.availability === "recall_disabled") {
+    if (scope !== undefined && !isMemoryScopeSelectable(scope)) {
       setLoading(false);
       return;
     }
@@ -210,6 +210,7 @@ export function ContextStoreBrowser(props: {
   const content = chunks.map((chunk) => chunk.content).join("");
   const lastChunk = chunks.at(-1);
   const previewKind = selected === undefined ? undefined : entryPreviewKind(selected);
+  const scopeDescriptionKey = memoryScopeDescriptionKey(descriptor, selectedScope);
 
   if (loading && descriptor === undefined) {
     return (
@@ -239,14 +240,19 @@ export function ContextStoreBrowser(props: {
               {t("contextStoreViewingAs")}
               <select value={scopeId} onChange={(event) => setScopeId(event.target.value)}>
                 {descriptor.scopes.map((scope) => (
-                  <option key={scope.id} value={scope.id}>
+                  <option
+                    key={scope.id}
+                    value={scope.id}
+                    disabled={!isMemoryScopeSelectable(scope)}
+                  >
                     {scope.name} · {t(`contextStoreRole.${scope.role}`)} ·{" "}
-                    {t(`contextStoreParticipation.${scope.participation}`)}
+                    {t(`contextStoreParticipation.${scope.participation}`)} ·{" "}
+                    {t(`contextStoreAvailability.${scope.availability}`)}
                   </option>
                 ))}
               </select>
             </label>
-            <small>{t("contextStoreScopeFormula", { expert: selectedScope?.name ?? "" })}</small>
+            <small>{t(scopeDescriptionKey, { expert: selectedScope?.name ?? "" })}</small>
           </>
         )}
         <button
@@ -265,6 +271,18 @@ export function ContextStoreBrowser(props: {
           <WarningCircle size={28} weight="thin" aria-hidden="true" />
           <strong>{t("contextStoreRecallDisabled")}</strong>
           <span>{t("contextStoreRecallDisabledDescription")}</span>
+        </div>
+      ) : selectedScope?.availability === "empty" ? (
+        <div className="context-browser-state">
+          <FileText size={28} weight="thin" aria-hidden="true" />
+          <strong>{t("contextStoreEmpty")}</strong>
+          <span>
+            {descriptor.root.type === "pragma.expert-team" && selectedScope.role === "root"
+              ? t("contextStoreTeamEmptyDescription")
+              : t("contextStoreExpertEmptyDescription", {
+                  expert: selectedScope.name,
+                })}
+          </span>
         </div>
       ) : (
         <div className="context-browser-workspace">
@@ -424,6 +442,26 @@ export function ContextStoreBrowser(props: {
       )}
     </div>
   );
+}
+
+export function memoryScopeDescriptionKey(
+  descriptor: ContextStoreBrowserDescriptor | undefined,
+  scope: MissionContextStoreDescriptor["scopes"][number] | undefined,
+):
+  | "contextStoreTeamScopeDescription"
+  | "contextStoreExpertScopeDescription"
+  | "contextStoreFlowScopeDescription" {
+  if (descriptor?.root.type === "pragma.expert-team" && scope?.role === "root") {
+    return "contextStoreTeamScopeDescription";
+  }
+  if (descriptor?.root.type === "pragma.flow") return "contextStoreFlowScopeDescription";
+  return "contextStoreExpertScopeDescription";
+}
+
+export function isMemoryScopeSelectable(
+  scope: MissionContextStoreDescriptor["scopes"][number],
+): boolean {
+  return scope.availability === "available";
 }
 
 function ContextEntryIcon(props: { readonly entry: MissionContextStoreEntry }) {

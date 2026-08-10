@@ -2,7 +2,9 @@ import { describe, expect, it } from "vitest";
 
 import {
   MissionContextStoreContentSchema,
+  MissionContextStoreDescriptorSchema,
   MissionContextStoreEntrySchema,
+  TeamMemoryContextStoreDescriptorSchema,
   ReadMissionContextStoreEntrySchema,
   SearchMissionContextStoreSchema,
 } from "./context-store-browser.ts";
@@ -64,5 +66,50 @@ describe("mission ContextStore browser contracts", () => {
       SearchMissionContextStoreSchema.safeParse({ ...target, query: "failure", maxResults: 51 })
         .success,
     ).toBe(false);
+  });
+
+  it("represents empty multi-scope Team Memory browsers in the v2 IPC contract", () => {
+    const scopes = [
+      {
+        id: "team:vyv9pwwzaksth2dd",
+        expertId: "vyv9pwwzaksth2dd",
+        name: "Editorial Team",
+        role: "root" as const,
+        participation: "available" as const,
+        availability: "empty" as const,
+      },
+      {
+        id: "expert:1xddvess309a6gme",
+        expertId: "1xddvess309a6gme",
+        name: "Writer",
+        role: "coordinator" as const,
+        participation: "available" as const,
+        availability: "available" as const,
+      },
+    ];
+    expect(
+      TeamMemoryContextStoreDescriptorSchema.parse({
+        schemaVersion: "pragma.desktop-team-memory-context-store/v2",
+        teamRef: "team:vyv9pwwzaksth2dd",
+        storeId: "memory",
+        namespace: "memory",
+        name: "Memory ContextStore",
+        readOnly: true,
+        searchable: true,
+        hasMemory: true,
+        root: {
+          type: "pragma.expert-team",
+          id: "vyv9pwwzaksth2dd",
+          name: "Editorial Team",
+        },
+        defaultScopeId: scopes[0]!.id,
+        scopes,
+      }).scopes,
+    ).toHaveLength(2);
+    expect(
+      MissionContextStoreDescriptorSchema.shape.schemaVersion.parse(
+        "pragma.desktop-mission-context-store/v2",
+      ),
+    ).toBe("pragma.desktop-mission-context-store/v2");
   });
 });

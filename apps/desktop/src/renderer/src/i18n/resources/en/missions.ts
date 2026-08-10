@@ -170,11 +170,16 @@ export const missions = {
     "This file type is listed on the Mission Board, but only text and images can be previewed for now.",
   contextStoreRoot: "Root: {{name}}",
   contextStoreViewingAs: "View as",
-  contextStoreScopeFormula: "Root memory + {{expert}} personal memory",
+  contextStoreTeamScopeDescription: "Team memory only; no member's personal memory is included.",
+  contextStoreExpertScopeDescription: "{{expert}} personal memory only.",
+  contextStoreFlowScopeDescription: "Flow memory + {{expert}} personal memory.",
   contextStoreRecallDisabled: "Memory recall is disabled",
   contextStoreRecallDisabledDescription:
     "The current Memory policy does not allow this expert scope to read the store.",
-  contextStoreSearch: "Search this expert's store",
+  contextStoreEmpty: "No memory yet",
+  contextStoreTeamEmptyDescription: "This expert team has no team memory to preview yet.",
+  contextStoreExpertEmptyDescription: "{{expert}} has no personal memory to preview yet.",
+  contextStoreSearch: "Search the current memory store",
   contextStoreNoMatches: "No matching context found.",
   contextStoreAlwaysOn: "always on",
   contextStoreLine: "Line {{line}}",
@@ -182,7 +187,7 @@ export const missions = {
   contextStoreSelectEntry: "Select a context file to preview it.",
   contextStoreLoadMore: "Load more",
   contextStoreRole: {
-    root: "root expert",
+    root: "root resource",
     coordinator: "coordinator",
     member: "team member",
     "flow-step": "flow expert",
@@ -192,6 +197,11 @@ export const missions = {
   contextStoreParticipation: {
     participated: "participated",
     available: "available",
+  },
+  contextStoreAvailability: {
+    available: "has memory",
+    empty: "no memory",
+    recall_disabled: "recall disabled",
   },
   contextStorePriority: {
     critical: "critical",

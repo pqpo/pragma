@@ -163,10 +163,15 @@ export const missions = {
     "此檔案已收錄在 Mission Board 中，但目前僅支援預覽文字和圖片類型。",
   contextStoreRoot: "根資源：{{name}}",
   contextStoreViewingAs: "檢視視角",
-  contextStoreScopeFormula: "根資源記憶 + {{expert}} 的個人記憶",
+  contextStoreTeamScopeDescription: "僅專家團記憶，不包含任何成員的個人記憶。",
+  contextStoreExpertScopeDescription: "僅 {{expert}} 的個人記憶。",
+  contextStoreFlowScopeDescription: "流程記憶 + {{expert}} 的個人記憶。",
   contextStoreRecallDisabled: "記憶召回已關閉",
   contextStoreRecallDisabledDescription: "目前 Memory 策略不允許這個專家視角讀取 Store。",
-  contextStoreSearch: "搜尋此專家的 Store",
+  contextStoreEmpty: "暫無記憶",
+  contextStoreTeamEmptyDescription: "這個專家團尚無可預覽的團隊記憶。",
+  contextStoreExpertEmptyDescription: "{{expert}} 尚無可預覽的個人記憶。",
+  contextStoreSearch: "搜尋目前記憶 Store",
   contextStoreNoMatches: "找不到相符的上下文。",
   contextStoreAlwaysOn: "常駐",
   contextStoreLine: "第 {{line}} 行",
@@ -174,7 +179,7 @@ export const missions = {
   contextStoreSelectEntry: "請選擇一個上下文檔案進行預覽。",
   contextStoreLoadMore: "載入更多",
   contextStoreRole: {
-    root: "根專家",
+    root: "根資源",
     coordinator: "協調者",
     member: "團隊成員",
     "flow-step": "流程專家",
@@ -184,6 +189,11 @@ export const missions = {
   contextStoreParticipation: {
     participated: "參與過",
     available: "可用",
+  },
+  contextStoreAvailability: {
+    available: "有記憶",
+    empty: "無記憶",
+    recall_disabled: "召回已關閉",
   },
   contextStorePriority: {
     critical: "關鍵",

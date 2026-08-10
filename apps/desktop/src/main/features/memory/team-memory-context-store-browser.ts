@@ -1,6 +1,9 @@
 import type { ExpertAgentContextStore } from "@pragma/core";
-import { canonicalPragmaResourceRef, type PragmaExpertTeamResource } from "@pragma/interpreter/ast";
-import { MemoryRecallScopeSchema } from "@pragma/memory";
+import {
+  canonicalPragmaResourceRef,
+  type PragmaExpertResource,
+  type PragmaExpertTeamResource,
+} from "@pragma/interpreter/ast";
 
 import {
   TeamMemoryContextStoreContentSchema,
@@ -18,6 +21,11 @@ import {
 } from "../../../shared/contracts/index.ts";
 import type { PragmaProjectStore } from "../projects/pragma-project-store.ts";
 import type { DesktopMemoryPlane } from "./desktop-memory-plane.ts";
+import {
+  defineTeamMemoryScopes,
+  inspectTeamMemoryScopes,
+  type TeamMemoryScopeDefinition,
+} from "./team-memory-scope-catalog.ts";
 
 const MEMORY_STORE_ID = "memory";
 
@@ -34,23 +42,48 @@ export function createTeamMemoryContextStoreBrowserService(options: {
   readonly project: PragmaProjectStore;
   readonly memory: DesktopMemoryPlane;
 }): TeamMemoryContextStoreBrowserService {
-  const resolveTeam = async (teamRef: string): Promise<PragmaExpertTeamResource> => {
+  const resolveTeamScopes = async (
+    teamRef: string,
+  ): Promise<{
+    readonly team: PragmaExpertTeamResource;
+    readonly definition: TeamMemoryScopeDefinition;
+  }> => {
     const project = await options.project.get();
     const team = project.resources.find(
       (resource): resource is PragmaExpertTeamResource =>
         resource.kind === "ExpertTeam" && canonicalPragmaResourceRef(resource) === teamRef,
     );
     if (team === undefined) throw codedError("team_not_found");
-    return team;
+    const expertsByRef = new Map(
+      project.resources
+        .filter((resource): resource is PragmaExpertResource => resource.kind === "Expert")
+        .map((resource) => [canonicalPragmaResourceRef(resource), resource]),
+    );
+    const expertScopes = [
+      { ref: team.spec.coordinator.ref, role: "coordinator" as const },
+      ...team.spec.members.map((member) => ({ ref: member.ref, role: "member" as const })),
+    ].map(({ ref, role }) => {
+      const expert = expertsByRef.get(ref);
+      if (expert === undefined)
+        throw codedError("team_expert_not_found", `Expert not found: ${ref}`);
+      return {
+        expertId: expert.metadata.id,
+        name: expert.metadata.name,
+        role,
+        participation: "available" as const,
+      };
+    });
+    return {
+      team,
+      definition: defineTeamMemoryScopes({
+        teamId: team.metadata.id,
+        teamName: team.metadata.name,
+        teamParticipation: "available",
+        experts: expertScopes,
+        projectId: options.project.projectId,
+      }),
+    };
   };
-
-  const viewInput = (team: PragmaExpertTeamResource) => ({
-    rootRef: MemoryRecallScopeSchema.shape.rootRef.parse({
-      type: "pragma.expert-team",
-      id: team.metadata.id,
-    }),
-    projectId: options.project.projectId,
-  });
 
   const open = async (
     input:
@@ -58,45 +91,32 @@ export function createTeamMemoryContextStoreBrowserService(options: {
       | ReadTeamMemoryContextStoreEntry
       | SearchTeamMemoryContextStore,
   ): Promise<ExpertAgentContextStore> => {
-    const team = await resolveTeam(input.teamRef);
-    if (input.scopeId !== `team:${team.metadata.id}`) {
-      throw codedError("context_store_scope_not_found");
-    }
-    return await options.memory.createContextStoreView(viewInput(team));
+    const { definition } = await resolveTeamScopes(input.teamRef);
+    const view = definition.views.get(input.scopeId);
+    if (view === undefined) throw codedError("context_store_scope_not_found");
+    return await options.memory.createContextStoreView(view);
   };
 
   return {
     async get(input) {
-      const team = await resolveTeam(input.teamRef);
-      const scopeId = `team:${team.metadata.id}`;
-      const target = viewInput(team);
-      const available = await options.memory.isContextStoreViewAvailable(target);
-      const hasMemory = available ? await options.memory.hasContextStoreViewContent(target) : false;
+      const { team, definition } = await resolveTeamScopes(input.teamRef);
+      const catalog = await inspectTeamMemoryScopes(definition, options.memory);
       return TeamMemoryContextStoreDescriptorSchema.parse({
-        schemaVersion: "pragma.desktop-team-memory-context-store/v1",
+        schemaVersion: "pragma.desktop-team-memory-context-store/v2",
         teamRef: input.teamRef,
         storeId: MEMORY_STORE_ID,
         namespace: MEMORY_STORE_ID,
         name: "Memory ContextStore",
         readOnly: true,
         searchable: true,
-        hasMemory,
+        hasMemory: catalog.hasMemory,
         root: {
           type: "pragma.expert-team",
           id: team.metadata.id,
           name: team.metadata.name,
         },
-        defaultScopeId: scopeId,
-        scopes: [
-          {
-            id: scopeId,
-            expertId: team.metadata.id,
-            name: team.metadata.name,
-            role: "root",
-            participation: "available",
-            availability: available ? "available" : "recall_disabled",
-          },
-        ],
+        defaultScopeId: catalog.defaultScopeId,
+        scopes: catalog.scopes,
       });
     },
 

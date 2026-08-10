@@ -19,11 +19,11 @@ export const MissionContextStoreScopeSchema = z.object({
   name: z.string().trim().min(1).max(200),
   role: z.enum(["root", "coordinator", "member", "flow-step", "delegated", "observed"]),
   participation: z.enum(["participated", "available"]),
-  availability: z.enum(["available", "recall_disabled"]),
+  availability: z.enum(["available", "empty", "recall_disabled"]),
 });
 
 export const MissionContextStoreDescriptorSchema = z.object({
-  schemaVersion: z.literal("pragma.desktop-mission-context-store/v1"),
+  schemaVersion: z.literal("pragma.desktop-mission-context-store/v2"),
   missionId: MissionIdSchema,
   storeId: MissionContextStoreIdSchema,
   namespace: z.string().trim().min(1).max(100),
@@ -40,7 +40,7 @@ export const MissionContextStoreDescriptorSchema = z.object({
 });
 
 export const ExpertMemoryContextStoreDescriptorSchema = z.object({
-  schemaVersion: z.literal("pragma.desktop-expert-memory-context-store/v1"),
+  schemaVersion: z.literal("pragma.desktop-expert-memory-context-store/v2"),
   expertRef: PragmaExpertRefSchema,
   storeId: z.literal("memory"),
   namespace: z.literal("memory"),
@@ -58,7 +58,7 @@ export const ExpertMemoryContextStoreDescriptorSchema = z.object({
 });
 
 export const TeamMemoryContextStoreDescriptorSchema = z.object({
-  schemaVersion: z.literal("pragma.desktop-team-memory-context-store/v1"),
+  schemaVersion: z.literal("pragma.desktop-team-memory-context-store/v2"),
   teamRef: PragmaExpertTeamRefSchema,
   storeId: z.literal("memory"),
   namespace: z.literal("memory"),
@@ -72,7 +72,7 @@ export const TeamMemoryContextStoreDescriptorSchema = z.object({
     name: z.string().trim().min(1).max(200),
   }),
   defaultScopeId: MissionContextStoreScopeIdSchema,
-  scopes: z.array(MissionContextStoreScopeSchema).min(1).max(1),
+  scopes: z.array(MissionContextStoreScopeSchema).min(1).max(500),
 });
 
 const MissionContextStoreTargetShape = {
