@@ -42,6 +42,7 @@ export const MissionLifecycleStatusSchema = z.enum(["active", "completed"]);
 export const MissionUserMessageSchema = z.object({
   id: z.string().uuid(),
   content: z.string().min(1).max(100_000),
+  attachments: z.array(ExpertPromptAttachmentSchema).max(20).optional(),
   createdAt: z.string().datetime(),
 });
 
@@ -278,6 +279,16 @@ export const PickMissionAttachmentsResultSchema = z.object({
   attachments: z.array(ExpertPromptAttachmentSchema).max(20),
 });
 
+export const StageMissionClipboardImageSchema = z.object({
+  name: z.string().trim().min(1).max(255),
+  mimeType: z.enum(["image/gif", "image/jpeg", "image/png", "image/webp"]),
+  data: z
+    .string()
+    .min(1)
+    .max(28_000_000)
+    .regex(/^[A-Za-z0-9+/]*={0,2}$/u),
+});
+
 export const MissionAttachmentsManifestSchema = z
   .object({
     schemaVersion: z.literal("pragma.mission-attachments/v1"),
@@ -348,6 +359,7 @@ export const SendMissionMessageSchema = z.object({
   id: MissionIdSchema,
   content: z.string().trim().min(1).max(100_000),
   requestId: z.string().uuid(),
+  attachments: z.array(ExpertPromptAttachmentSchema).max(20).default([]),
 });
 export const MissionHumanInteractionSchema = z.object({
   interactionId: z.string().min(1),

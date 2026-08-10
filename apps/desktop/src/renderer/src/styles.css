@@ -20481,6 +20481,21 @@ textarea:focus-visible,
   z-index: 50;
 }
 
+.mission-attachment-picker.is-compact {
+  border-right: 0;
+}
+
+.mission-attachment-picker.is-compact .mission-attachment-trigger {
+  width: 34px;
+  min-height: 34px;
+  border-radius: 9px;
+}
+
+.mission-attachment-picker.is-compact .mission-attachment-menu {
+  top: auto;
+  bottom: calc(100% + 8px);
+}
+
 .mission-attachment-trigger {
   display: grid;
   width: 100%;
@@ -20561,6 +20576,10 @@ textarea:focus-visible,
   height: 0;
   padding: 0;
   overflow: hidden;
+}
+
+.mission-chat-composer > .mission-attachment-list {
+  padding: 4px 16px 6px;
 }
 
 .mission-attachment-chip {

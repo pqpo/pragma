@@ -38,7 +38,11 @@ import {
   X,
 } from "@phosphor-icons/react";
 import { useTranslation } from "react-i18next";
-import type { ExpertPromptAttachment, HumanInteractionResponse } from "@pragma/shared";
+import type {
+  ExpertPromptAttachment,
+  ExpertPromptAttachmentKind,
+  HumanInteractionResponse,
+} from "@pragma/shared";
 
 import { ConfirmationDialog } from "../../components/Dialog.tsx";
 import {
@@ -66,6 +70,10 @@ import { formatMissionDateTime, formatMissionTime } from "../../lib/mission-time
 import { runtimeDisplayName, type RuntimeDisplayIdentity } from "../../lib/runtime-display.ts";
 import { formatTokens } from "../../lib/usage-format.ts";
 import { ToolPermissionSelect } from "../../components/ToolPermissionSelect.tsx";
+import {
+  MissionAttachmentList,
+  MissionAttachmentPicker,
+} from "../../components/MissionAttachments.tsx";
 import { MissionModelOverrideControls } from "../../components/MissionModelOverrideControls.tsx";
 import { MarkdownContent } from "../../components/MarkdownContent.tsx";
 import { MemoryStoreBrowser } from "../../components/MemoryStoreBrowser.tsx";
@@ -83,6 +91,11 @@ import {
   readMissionDraft,
   writeMissionDraft,
 } from "../../lib/mission-draft.ts";
+import {
+  clipboardImageFile,
+  mergeMissionAttachments,
+  stageClipboardImage,
+} from "../../lib/mission-attachments.ts";
 import {
   readPinnedMissionIds,
   readLastOpenedMissionId,
@@ -438,7 +451,7 @@ export function MissionsPage(props: {
             onEditExpert={props.onEditExpert}
             error={error}
             onDismissError={() => setError(null)}
-            onSend={async (content, requestId) => {
+            onSend={async (content, requestId, attachments) => {
               const api = desktopApi();
               if (api === undefined) return;
               try {
@@ -447,6 +460,7 @@ export function MissionsPage(props: {
                     id: selectedMission.id,
                     content,
                     requestId,
+                    attachments: [...attachments],
                   }),
                 );
                 setError(null);
@@ -1040,6 +1054,7 @@ interface LocalMissionUserMessage {
   readonly id: string;
   readonly content: string;
   readonly createdAt: string;
+  readonly attachments: readonly ExpertPromptAttachment[];
   readonly status: "pending" | "failed";
 }
 
@@ -1108,7 +1123,11 @@ export function MissionDetailFragment(props: {
   readonly onDismissError?: (() => void) | undefined;
   readonly onRun?: () => void | Promise<void>;
   readonly onInterrupt?: () => void | Promise<void>;
-  readonly onSend?: (content: string, requestId: string) => void | Promise<void>;
+  readonly onSend?: (
+    content: string,
+    requestId: string,
+    attachments: readonly ExpertPromptAttachment[],
+  ) => void | Promise<void>;
   readonly onOptionsChange?:
     | ((options: {
         readonly toolPermissionMode: DesktopToolPermissionMode;
@@ -1145,6 +1164,7 @@ export function MissionDetailFragment(props: {
         )
       : "",
   );
+  const [attachments, setAttachments] = useState<readonly ExpertPromptAttachment[]>([]);
   const [optimisticMessages, setOptimisticMessages] = useState<LocalMissionUserMessage[]>([]);
   const [contextOperations, setContextOperations] = useState<LocalMissionContextOperation[]>([]);
   const [awaitingRequestId, setAwaitingRequestId] = useState<string | null>(null);
@@ -1290,6 +1310,7 @@ export function MissionDetailFragment(props: {
         : "",
     );
     setOptimisticMessages([]);
+    setAttachments([]);
     setContextOperations([]);
     setAwaitingRequestId(null);
     setOptionsError(null);
@@ -1318,6 +1339,7 @@ export function MissionDetailFragment(props: {
   useEffect(() => {
     if (props.mission.lifecycleStatus !== "completed") return;
     setDraft("");
+    setAttachments([]);
     writeMissionDraft(
       typeof window === "undefined" ? undefined : window.localStorage,
       props.mission.id,
@@ -1723,14 +1745,16 @@ export function MissionDetailFragment(props: {
       id: requestId,
       content,
       createdAt: new Date().toISOString(),
+      attachments: [...attachments],
       status: "pending",
     };
     setDraft("");
+    setAttachments([]);
     setOptimisticMessages((current) => [...current, optimistic]);
     setAwaitingRequestId(requestId);
     followLatestRef.current = true;
     try {
-      await props.onSend?.(content, requestId);
+      await props.onSend?.(content, requestId, optimistic.attachments);
     } catch {
       const api = desktopApi();
       const snapshot =
@@ -1750,6 +1774,38 @@ export function MissionDetailFragment(props: {
     } finally {
       finishClientOperation(operationToken);
       requestAnimationFrame(() => textareaRef.current?.focus());
+    }
+  };
+
+  const addAttachments = (additions: readonly ExpertPromptAttachment[]) => {
+    setAttachments((current) => {
+      const next = mergeMissionAttachments(current, additions);
+      if (next === undefined) {
+        setOptionsError(t("attachmentLimit", { ns: "missions" }));
+        return current;
+      }
+      if (next.length > current.length) setOptionsError(null);
+      return next;
+    });
+  };
+
+  const pickAttachments = async (kind: ExpertPromptAttachmentKind) => {
+    if (isFlow) return;
+    try {
+      addAttachments((await window.pragmaDesktop.pickMissionAttachments({ kind })).attachments);
+    } catch (pickError) {
+      setOptionsError(errorMessage(pickError));
+    }
+  };
+
+  const pasteImage = async (file: File) => {
+    try {
+      const result = await stageClipboardImage(file, (input) =>
+        window.pragmaDesktop.stageMissionClipboardImage(input),
+      );
+      addAttachments(result.attachments);
+    } catch (pasteError) {
+      setOptionsError(errorMessage(pasteError));
     }
   };
 
@@ -2250,6 +2306,7 @@ export function MissionDetailFragment(props: {
                   return block.item.type === "local" ? (
                     <LocalMissionUserMessageView
                       message={block.item.entry}
+                      missionId={props.mission.id}
                       key={block.item.entry.id}
                     />
                   ) : block.item.type === "context-operation" ? (
@@ -2393,6 +2450,20 @@ export function MissionDetailFragment(props: {
                         compactingContext ? "mission-context-compaction-status" : undefined
                       }
                       onChange={(event) => setDraft(event.target.value)}
+                      onPaste={(event) => {
+                        const file = clipboardImageFile(event.clipboardData);
+                        if (
+                          file === undefined ||
+                          isFlow ||
+                          clientOperationBusy ||
+                          compactingContext ||
+                          executionActive ||
+                          props.mission.lifecycleStatus === "completed"
+                        )
+                          return;
+                        event.preventDefault();
+                        void pasteImage(file);
+                      }}
                       onKeyDown={(event) => {
                         if (shouldSubmitComposerOnEnter(event.nativeEvent)) {
                           event.preventDefault();
@@ -2400,8 +2471,27 @@ export function MissionDetailFragment(props: {
                         }
                       }}
                     />
+                    <MissionAttachmentList
+                      attachments={attachments}
+                      onRemove={(id) =>
+                        setAttachments((current) =>
+                          current.filter((attachment) => attachment.id !== id),
+                        )
+                      }
+                    />
                     <div className="mission-chat-composer-toolbar">
                       <div className="mission-chat-options" aria-label={t("missionOptions")}>
+                        <MissionAttachmentPicker
+                          compact
+                          disabled={
+                            isFlow ||
+                            clientOperationBusy ||
+                            compactingContext ||
+                            executionActive ||
+                            props.mission.lifecycleStatus === "completed"
+                          }
+                          onPick={pickAttachments}
+                        />
                         {!isFlow ? (
                           <MissionModelOverrideControls
                             models={models}
@@ -3053,7 +3143,10 @@ export function unavailableMcpToolName(error: string): string | undefined {
   return /MCP tool ([A-Za-z0-9_-]+) is not currently available\./.exec(error)?.[1];
 }
 
-function LocalMissionUserMessageView(props: { readonly message: LocalMissionUserMessage }) {
+function LocalMissionUserMessageView(props: {
+  readonly message: LocalMissionUserMessage;
+  readonly missionId: string;
+}) {
   const { t } = useTranslation("missions");
   return (
     <div
@@ -3064,6 +3157,10 @@ function LocalMissionUserMessageView(props: { readonly message: LocalMissionUser
       }
     >
       <div>
+        <MissionMessageAttachments
+          attachments={props.message.attachments}
+          missionId={props.missionId}
+        />
         <MissionMessageContent source={props.message.content} />
         {props.message.status === "failed" ? <small>{t("messageSendFailed")}</small> : null}
       </div>

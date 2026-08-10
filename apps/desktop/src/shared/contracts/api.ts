@@ -81,6 +81,7 @@ import type {
   CreateMission,
   PickMissionAttachments,
   PickMissionAttachmentsResult,
+  StageMissionClipboardImage,
   UpdateMissionOptions,
   MissionWorkSnapshot,
   GetMissionWorkConversation,
@@ -426,6 +427,9 @@ export interface PragmaDesktopAPI {
   subscribeMissionUpdates: (listener: (update: MissionUpdate) => void) => () => void;
   createMission: (input: CreateMission) => Promise<Mission>;
   pickMissionAttachments: (input: PickMissionAttachments) => Promise<PickMissionAttachmentsResult>;
+  stageMissionClipboardImage: (
+    input: StageMissionClipboardImage,
+  ) => Promise<PickMissionAttachmentsResult>;
   updateMissionOptions: (input: UpdateMissionOptions) => Promise<Mission>;
   runMission: (id: string) => Promise<Mission>;
   sendMissionMessage: (input: SendMissionMessage) => Promise<Mission>;

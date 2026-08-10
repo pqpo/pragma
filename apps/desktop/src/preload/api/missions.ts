@@ -30,6 +30,7 @@ import {
   UpdateMissionOptionsSchema,
   PickMissionAttachmentsResultSchema,
   PickMissionAttachmentsSchema,
+  StageMissionClipboardImageSchema,
 } from "../../shared/contracts/missions.ts";
 import type { PragmaDesktopAPI } from "../../shared/contracts/api.ts";
 import {
@@ -115,6 +116,13 @@ export const missionsApi = {
       await ipcRenderer.invoke(
         "missions:attachments:pick",
         PickMissionAttachmentsSchema.parse(input),
+      ),
+    ),
+  stageMissionClipboardImage: async (input) =>
+    PickMissionAttachmentsResultSchema.parse(
+      await ipcRenderer.invoke(
+        "missions:attachments:stage-clipboard-image",
+        StageMissionClipboardImageSchema.parse(input),
       ),
     ),
   updateMissionOptions: async (input) =>
@@ -205,6 +213,7 @@ export const missionsApi = {
   | "subscribeMissionUpdates"
   | "createMission"
   | "pickMissionAttachments"
+  | "stageMissionClipboardImage"
   | "updateMissionOptions"
   | "runMission"
   | "sendMissionMessage"

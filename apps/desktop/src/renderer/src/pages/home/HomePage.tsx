@@ -17,13 +17,10 @@ import {
   Check,
   Eye,
   EyeSlash,
-  File as FileIcon,
   FolderOpen,
   GearSix,
   GitBranch,
-  ImageSquare,
   MagnifyingGlass,
-  Plus,
   Star,
   User,
   UsersThree,
@@ -41,12 +38,21 @@ import type {
   MissionModelOverride,
 } from "../../../../shared/contracts/index.ts";
 import { ToolPermissionSelect } from "../../components/ToolPermissionSelect.tsx";
+import {
+  MissionAttachmentList,
+  MissionAttachmentPicker,
+} from "../../components/MissionAttachments.tsx";
 import { MissionModelOverrideControls } from "../../components/MissionModelOverrideControls.tsx";
 import { SelectMenu } from "../../components/SelectMenu.tsx";
 import { WorkspacePicker, type WorkspaceSelection } from "../../components/WorkspacePicker.tsx";
 import { shouldSubmitComposerOnEnter } from "../../lib/composer-keyboard.ts";
 import { errorMessage } from "../../lib/errors.ts";
 import { readHomeDraft, writeHomeDraft } from "../../lib/home-draft.ts";
+import {
+  clipboardImageFile,
+  mergeMissionAttachments,
+  stageClipboardImage,
+} from "../../lib/mission-attachments.ts";
 import { localizeSystemExpertCopy } from "../../lib/system-expert-copy.ts";
 import { ExpertConstellation } from "./ExpertConstellation.tsx";
 import { SchemaInputForm, createSchemaInputValue, isSchemaInputValid } from "./SchemaInputForm.tsx";
@@ -326,19 +332,36 @@ export function HomePage(props: {
     try {
       const result = await window.pragmaDesktop.pickMissionAttachments({ kind });
       setAttachments((current) => {
-        const known = new Set(current.map((attachment) => `${attachment.kind}:${attachment.path}`));
-        const additions = result.attachments.filter(
-          (attachment) => !known.has(`${attachment.kind}:${attachment.path}`),
-        );
-        if (current.length + additions.length > 20) {
+        const next = mergeMissionAttachments(current, result.attachments);
+        if (next === undefined) {
           setError(t("attachmentLimit"));
           return current;
         }
-        if (additions.length > 0) setError(null);
-        return [...current, ...additions];
+        if (next.length > current.length) setError(null);
+        return next;
       });
     } catch (pickError) {
       setError(errorMessage(pickError));
+    }
+  };
+
+  const pasteImage = async (file: File) => {
+    if (selectedExecutor?.kind === "flow" || saving) return;
+    try {
+      const result = await stageClipboardImage(file, (input) =>
+        window.pragmaDesktop.stageMissionClipboardImage(input),
+      );
+      setAttachments((current) => {
+        const next = mergeMissionAttachments(current, result.attachments);
+        if (next === undefined) {
+          setError(t("attachmentLimit"));
+          return current;
+        }
+        setError(null);
+        return next;
+      });
+    } catch (pasteError) {
+      setError(errorMessage(pasteError));
     }
   };
 
@@ -470,44 +493,12 @@ export function HomePage(props: {
               onUseDefault={() => setWorkspaceOverride(undefined)}
             />
           </div>
-          <div
-            className={
-              attachments.length === 0
-                ? "mission-attachment-list is-empty"
-                : "mission-attachment-list"
+          <MissionAttachmentList
+            attachments={attachments}
+            onRemove={(id) =>
+              setAttachments((current) => current.filter((attachment) => attachment.id !== id))
             }
-            aria-label={attachments.length === 0 ? undefined : t("attachedContext")}
-          >
-            {attachments.map((attachment) => {
-              const AttachmentIcon =
-                attachment.kind === "image"
-                  ? ImageSquare
-                  : attachment.kind === "directory"
-                    ? FolderOpen
-                    : FileIcon;
-              return (
-                <span
-                  className="mission-attachment-chip"
-                  key={attachment.id}
-                  title={attachment.path}
-                >
-                  <AttachmentIcon size={16} aria-hidden="true" />
-                  <span>{attachment.name}</span>
-                  <button
-                    type="button"
-                    aria-label={t("removeAttachment", { name: attachment.name })}
-                    onClick={() =>
-                      setAttachments((current) =>
-                        current.filter((candidate) => candidate.id !== attachment.id),
-                      )
-                    }
-                  >
-                    <X size={13} aria-hidden="true" />
-                  </button>
-                </span>
-              );
-            })}
-          </div>
+          />
           {flowInputSchema === undefined ? (
             <div className="mission-goal-field">
               <textarea
@@ -515,6 +506,12 @@ export function HomePage(props: {
                 aria-label={t("goalPlaceholder")}
                 value={goal}
                 onChange={(event) => setGoal(event.target.value)}
+                onPaste={(event) => {
+                  const file = clipboardImageFile(event.clipboardData);
+                  if (file === undefined || selectedExecutor?.kind === "flow" || saving) return;
+                  event.preventDefault();
+                  void pasteImage(file);
+                }}
                 onKeyDown={(event) => {
                   if (shouldSubmitComposerOnEnter(event.nativeEvent)) {
                     event.preventDefault();
@@ -601,58 +598,6 @@ export function HomePage(props: {
       <ExpertConstellation focused={composerFocused} submitting={saving} />
       {appVersion !== undefined ? <p className="home-app-version">v{appVersion}</p> : null}
     </section>
-  );
-}
-
-function MissionAttachmentPicker(props: {
-  readonly disabled: boolean;
-  readonly onPick: (kind: ExpertPromptAttachmentKind) => void | Promise<void>;
-}) {
-  const { t } = useTranslation("missions");
-  const [open, setOpen] = useState(false);
-  const rootRef = useRef<HTMLDivElement | null>(null);
-  const close = useCallback(() => setOpen(false), []);
-  useDismissableMenu(open, rootRef, close);
-
-  const choose = (kind: ExpertPromptAttachmentKind) => {
-    setOpen(false);
-    void props.onPick(kind);
-  };
-
-  return (
-    <div
-      className={open ? "mission-attachment-picker is-open" : "mission-attachment-picker"}
-      ref={rootRef}
-    >
-      <button
-        className="mission-attachment-trigger"
-        type="button"
-        aria-label={t("addAttachment")}
-        aria-expanded={open}
-        aria-haspopup="menu"
-        title={props.disabled ? t("attachmentUnavailableForFlow") : t("addAttachment")}
-        disabled={props.disabled}
-        onClick={() => setOpen((current) => !current)}
-      >
-        <Plus size={20} aria-hidden="true" />
-      </button>
-      {open ? (
-        <div className="mission-attachment-menu" role="menu" aria-label={t("addAttachment")}>
-          <button type="button" role="menuitem" onClick={() => choose("image")}>
-            <ImageSquare size={18} aria-hidden="true" />
-            <span>{t("attachImage")}</span>
-          </button>
-          <button type="button" role="menuitem" onClick={() => choose("file")}>
-            <FileIcon size={18} aria-hidden="true" />
-            <span>{t("attachFile")}</span>
-          </button>
-          <button type="button" role="menuitem" onClick={() => choose("directory")}>
-            <FolderOpen size={18} aria-hidden="true" />
-            <span>{t("attachFolder")}</span>
-          </button>
-        </div>
-      ) : null}
-    </div>
   );
 }
 

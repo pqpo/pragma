@@ -912,6 +912,7 @@ export async function createDesktopApplicationContainer(
       }
     },
     defaultExecutorRef: BUILT_IN_PRAGMA_REF,
+    temporaryRoot: pragmaPaths.temporaryRoot(),
     onMissionLifecycleChange: async ({ missionId, state }) => {
       await memoryPlane.setMemoryConversationState({ missionId, state });
     },

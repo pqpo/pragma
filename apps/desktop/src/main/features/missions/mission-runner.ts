@@ -57,6 +57,7 @@ import type {
   HumanInteractionRequest,
   HumanInteractionResponse,
   ExpertAgentStreamEvent,
+  ExpertPromptAttachment,
   RuntimeContextRecord,
   RuntimeEnvironmentBinding,
 } from "@pragma/shared";
@@ -112,6 +113,7 @@ export interface MissionRunner {
     readonly id: string;
     readonly content: string;
     readonly requestId: string;
+    readonly attachments?: readonly ExpertPromptAttachment[] | undefined;
   }): Promise<Mission>;
   getChat(input: MissionChatQuery): Promise<MissionChatSnapshot>;
   compactContext(id: string): Promise<MissionContextCompactionResult>;
@@ -1091,6 +1093,7 @@ export function createMissionRunner(options: {
     readonly id: string;
     readonly content: string;
     readonly requestId: string;
+    readonly attachments?: readonly ExpertPromptAttachment[] | undefined;
   }): Promise<Mission> => {
     const acceptedAt = performance.now();
     logger.info("mission.message_accepted", "Mission request accepted", {
@@ -1217,14 +1220,20 @@ export function createMissionRunner(options: {
     if (compiled !== undefined) {
       rememberSessionCompilation(mission.id, desiredCompilationIdentity, compiled);
     }
+    const promptAttachments = await options.missions.addAttachments(
+      mission.id,
+      input.attachments ?? [],
+    );
     await options.missions.appendUserMessage(mission.id, {
       id: input.requestId,
       content: input.content,
+      ...(promptAttachments.length === 0 ? {} : { attachments: [...promptAttachments] }),
       createdAt: new Date().toISOString(),
     });
     phaseStartedAt = performance.now();
     const turn = await session.prompt(input.content, {
       requestId: input.requestId,
+      ...(promptAttachments.length === 0 ? {} : { attachments: promptAttachments }),
       ...(promptModelSelection === undefined ? {} : { modelSelection: promptModelSelection }),
     });
     logMissionPhase(logger, mission.id, "expert_session_prompt", phaseStartedAt, acceptedAt);
@@ -1508,10 +1517,7 @@ export function createMissionRunner(options: {
 
   const getChatSnapshot = async (input: MissionChatQuery): Promise<MissionChatSnapshot> => {
     const mission = await options.missions.get(input.id);
-    const [timeline, missionAttachments] = await Promise.all([
-      options.missions.readTimelinePage(mission.id, input),
-      options.missions.getAttachments(mission.id),
-    ]);
+    const timeline = await options.missions.readTimelinePage(mission.id, input);
     const capturedLive = liveChats.get(mission.id);
     const entries = await readMissionChatHistory(
       timeline.turns,
@@ -1539,16 +1545,12 @@ export function createMissionRunner(options: {
     const revision = chatRevisions.get(mission.id) ?? 0;
     const resolveExecutorName = createMissionExecutorNameResolver(mission, names);
     const namedEntries = entries.map((entry) => {
-      const withAttachments =
-        entry.kind === "user" && entry.id === mission.initialMessageId
-          ? { ...entry, attachments: [...missionAttachments] }
-          : entry;
-      if (withAttachments.executorName !== undefined || withAttachments.executorId === undefined) {
-        return withAttachments;
+      if (entry.executorName !== undefined || entry.executorId === undefined) {
+        return entry;
       }
       return {
-        ...withAttachments,
-        executorName: resolveExecutorName(withAttachments.executorId) ?? withAttachments.executorId,
+        ...entry,
+        executorName: resolveExecutorName(entry.executorId) ?? entry.executorId,
       };
     });
     return {
@@ -2283,6 +2285,7 @@ async function readMissionChatHistory(
       timelineSequence: turn.sequence,
       kind: "user",
       content: turn.message.content,
+      ...(turn.message.attachments === undefined ? {} : { attachments: turn.message.attachments }),
       createdAt: turn.message.createdAt,
       ...(turn.executionId === undefined ? {} : { executionId: turn.executionId }),
     });
@@ -2395,10 +2398,7 @@ async function readHistoricalRuntimeActivityEntries(
   for (const record of events) {
     const { event } = record;
     if (event.type === "progress") {
-      if (
-        record.invocationId !== rootInvocationId ||
-        !isRootMissionRuntimeSource(event.source)
-      ) {
+      if (record.invocationId !== rootInvocationId || !isRootMissionRuntimeSource(event.source)) {
         continue;
       }
       const data = readRuntimeContextCompactionProgressData(event.payload.data);

@@ -153,6 +153,7 @@ import {
   MissionWorkUpdateSchema,
   PickMissionAttachmentsResultSchema,
   PickMissionAttachmentsSchema,
+  StageMissionClipboardImageSchema,
   RespondMissionHumanInteractionSchema,
   SendMissionMessageSchema,
   UpdateMissionOptionsSchema,
@@ -481,6 +482,7 @@ export type MissionModelOptions = z.infer<typeof MissionModelOptionsSchema>;
 export type MissionAttachmentsManifest = z.infer<typeof MissionAttachmentsManifestSchema>;
 export type PickMissionAttachments = z.infer<typeof PickMissionAttachmentsSchema>;
 export type PickMissionAttachmentsResult = z.infer<typeof PickMissionAttachmentsResultSchema>;
+export type StageMissionClipboardImage = z.infer<typeof StageMissionClipboardImageSchema>;
 export type MissionLifecycleStatus = z.infer<typeof MissionLifecycleStatusSchema>;
 export type CreateMission = z.infer<typeof CreateMissionSchema>;
 export type UpdateMissionOptions = z.infer<typeof UpdateMissionOptionsSchema>;

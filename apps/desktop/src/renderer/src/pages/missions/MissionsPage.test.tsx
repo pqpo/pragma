@@ -124,6 +124,13 @@ describe("MissionsPage", () => {
     expect(html).not.toContain("No missions need input");
   });
 
+  it("offers the shared attachment picker in the Mission chat composer", () => {
+    const html = renderToStaticMarkup(<MissionDetailFragment mission={missionFixture("expert")} />);
+
+    expect(html).toContain('aria-label="Add context"');
+    expect(html).toContain("mission-attachment-picker is-compact");
+  });
+
   it("shows thinking immediately while the first Mission message starts", () => {
     const mission = missionFixture("expert");
     const html = renderToStaticMarkup(

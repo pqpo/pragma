@@ -19,6 +19,8 @@ import {
   MissionModelOptionsSchema,
   MissionSchema,
   MissionUpdateSchema,
+  SendMissionMessageSchema,
+  StageMissionClipboardImageSchema,
   PragmaProjectChangesSchema,
   RuntimeEnvironmentCatalogSchema,
   DesktopBridgeSnapshotSchema,
@@ -761,6 +763,38 @@ describe("capability delete contracts", () => {
 });
 
 describe("mission contracts", () => {
+  it("accepts attachments on follow-up messages and validates pasted images", () => {
+    const attachment = {
+      id: "00000000-0000-4000-8000-000000000002",
+      kind: "image" as const,
+      name: "pasted-image.png",
+      path: "/tmp/pasted-image.png",
+      mimeType: "image/png",
+    };
+    expect(
+      SendMissionMessageSchema.parse({
+        id: "00000000-0000-4000-8000-000000000001",
+        content: "Review this image.",
+        requestId: "00000000-0000-4000-8000-000000000003",
+        attachments: [attachment],
+      }).attachments,
+    ).toEqual([attachment]);
+    expect(
+      StageMissionClipboardImageSchema.safeParse({
+        name: "pasted-image.png",
+        mimeType: "image/png",
+        data: "aW1hZ2U=",
+      }).success,
+    ).toBe(true);
+    expect(
+      StageMissionClipboardImageSchema.safeParse({
+        name: "pasted-image.bmp",
+        mimeType: "image/bmp",
+        data: "not base64!",
+      }).success,
+    ).toBe(false);
+  });
+
   it("accepts versioned expert, team, and flow resource references", () => {
     const input = {
       workspace: "/workspace/repo",

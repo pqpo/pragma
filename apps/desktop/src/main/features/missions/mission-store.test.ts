@@ -125,6 +125,54 @@ describe("mission store", () => {
     expect(
       JSON.parse(await readFile(join(root, "missions", mission.id, "attachments.json"), "utf8")),
     ).toMatchObject({ schemaVersion: "pragma.mission-attachments/v1" });
+    const initialTurn = (await store.readTimelinePage(mission.id, { limit: 10 })).turns[0];
+    expect(initialTurn?.message.attachments).toEqual(stored);
+  });
+
+  it("materializes follow-up attachments on their own timeline message", async () => {
+    const root = await temporaryRoot();
+    const firstImage = join(root, "first.png");
+    const followupImage = join(root, "followup.png");
+    await writeFile(firstImage, "first-image");
+    await writeFile(followupImage, "followup-image");
+    const store = createMissionStore({ missionsPath: join(root, "missions") });
+    const mission = await store.create({
+      workspace: { path: join(root, "workspace"), basename: "workspace" },
+      goal: "Review the first image",
+      project: { id: "studio", revision: 1 },
+      executor: missionExecutorSnapshot(expertFixture()),
+      attachments: [
+        {
+          id: "00000000-0000-4000-8000-000000000001",
+          kind: "image",
+          name: "first.png",
+          path: firstImage,
+          mimeType: "image/png",
+        },
+      ],
+    });
+
+    const added = await store.addAttachments(mission.id, [
+      {
+        id: "00000000-0000-4000-8000-000000000002",
+        kind: "image",
+        name: "pasted-image.png",
+        path: followupImage,
+        mimeType: "image/png",
+      },
+    ]);
+    await store.appendUserMessage(mission.id, {
+      id: "00000000-0000-4000-8000-000000000003",
+      content: "Now review this image.",
+      attachments: [...added],
+      createdAt: "2026-08-10T00:00:00.000Z",
+    });
+
+    const turns = (await store.readTimelinePage(mission.id, { limit: 10 })).turns;
+    expect(turns[0]?.message.attachments?.map(({ name }) => name)).toEqual(["first.png"]);
+    expect(turns[1]?.message.attachments?.map(({ name }) => name)).toEqual(["pasted-image.png"]);
+    await expect(readFile(added[0]!.path, "utf8")).resolves.toBe("followup-image");
+    await expect(store.getAttachments(mission.id)).resolves.toHaveLength(2);
   });
 
   it("fails closed when the attachment manifest is corrupted", async () => {

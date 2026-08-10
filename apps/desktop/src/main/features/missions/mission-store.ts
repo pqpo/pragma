@@ -70,6 +70,10 @@ export interface MissionStore {
   resolveExecutionTitles(executionIds: readonly string[]): Promise<ReadonlyMap<string, string>>;
   get(id: string): Promise<Mission>;
   getAttachments(id: string): Promise<readonly ExpertPromptAttachment[]>;
+  addAttachments(
+    id: string,
+    attachments: readonly ExpertPromptAttachment[],
+  ): Promise<readonly ExpertPromptAttachment[]>;
   create(input: {
     readonly id?: string | undefined;
     readonly workspace: { readonly path: string; readonly basename: string };
@@ -530,6 +534,48 @@ export function createMissionStore(options: { readonly missionsPath: string }): 
         }
       });
     },
+    async addAttachments(id, attachments) {
+      const parsedId = MissionIdSchema.parse(id);
+      if (attachments.length === 0) return [];
+      return await withMissionLock(parsedId, async () => {
+        await recoverMessageTransaction(parsedId);
+        await readMissionUnlocked(parsedId);
+        const current = MissionAttachmentsManifestSchema.parse(
+          (await readJsonIfExists(attachmentsPath(parsedId))) ?? {
+            schemaVersion: "pragma.mission-attachments/v1",
+            attachments: [],
+          },
+        ).attachments;
+        const inputIds = new Set(attachments.map((attachment) => attachment.id));
+        if (inputIds.size !== attachments.length) {
+          throw new Error("Mission attachment ids must be unique.");
+        }
+        if (current.some((attachment) => inputIds.has(attachment.id))) {
+          throw new Error("Mission attachment ids must be unique.");
+        }
+        if (current.length + attachments.length > 20) {
+          throw new Error("A mission can include up to 20 attachments.");
+        }
+        const added = await materializeAdditionalMissionAttachments({
+          attachments,
+          targetMissionPath: missionPath(parsedId),
+        });
+        try {
+          await writeJsonAtomically(attachmentsPath(parsedId), {
+            schemaVersion: "pragma.mission-attachments/v1",
+            attachments: [...current, ...added],
+          });
+          return added;
+        } catch (error) {
+          await Promise.all(
+            added
+              .filter((attachment) => attachment.kind === "image")
+              .map(async (attachment) => await rm(attachment.path, { force: true })),
+          );
+          throw error;
+        }
+      });
+    },
     async create(input) {
       const id = MissionIdSchema.parse(input.id ?? randomUUID());
       const initialMessageId = randomUUID();
@@ -569,6 +615,10 @@ export function createMissionStore(options: { readonly missionsPath: string }): 
           temporaryMissionPath: temporaryPath,
           targetMissionPath: targetPath,
         });
+        const firstMessageWithAttachments = MissionTimelineRecordSchema.parse({
+          ...firstMessage,
+          ...(attachments.attachments.length === 0 ? {} : { attachments: attachments.attachments }),
+        });
         await writeFile(join(temporaryPath, "mission.yaml"), formatPragmaYaml(mission), {
           mode: 0o600,
         });
@@ -579,7 +629,7 @@ export function createMissionStore(options: { readonly missionsPath: string }): 
         );
         await writeFile(
           join(temporaryPath, "messages.jsonl"),
-          `${JSON.stringify(firstMessage)}\n`,
+          `${JSON.stringify(firstMessageWithAttachments)}\n`,
           {
             mode: 0o600,
           },
@@ -749,7 +799,7 @@ async function materializeMissionAttachments(options: {
         return {
           id: attachment.id,
           kind: attachment.kind,
-          name: basename(sourcePath),
+          name: attachment.name,
           path: sourcePath,
           size: metadata.size,
         };
@@ -765,7 +815,7 @@ async function materializeMissionAttachments(options: {
       return {
         id: attachment.id,
         kind: attachment.kind,
-        name: basename(sourcePath),
+        name: attachment.name,
         path: join(options.targetMissionPath, relativePath),
         mimeType,
         size: metadata.size,
@@ -776,6 +826,38 @@ async function materializeMissionAttachments(options: {
     schemaVersion: "pragma.mission-attachments/v1",
     attachments,
   });
+}
+
+async function materializeAdditionalMissionAttachments(options: {
+  readonly attachments: readonly ExpertPromptAttachment[];
+  readonly targetMissionPath: string;
+}): Promise<readonly ExpertPromptAttachment[]> {
+  const temporaryMissionPath = join(options.targetMissionPath, `.attachments-${randomUUID()}.tmp`);
+  await mkdir(temporaryMissionPath, { recursive: true, mode: 0o700 });
+  try {
+    const materialized = await materializeMissionAttachments({
+      attachments: options.attachments,
+      temporaryMissionPath,
+      targetMissionPath: options.targetMissionPath,
+    });
+    const images = materialized.attachments.filter((attachment) => attachment.kind === "image");
+    if (images.length > 0) {
+      const targetImagesPath = join(options.targetMissionPath, "attachments", "images");
+      await mkdir(targetImagesPath, { recursive: true, mode: 0o700 });
+      for (const attachment of images) {
+        const source = join(
+          temporaryMissionPath,
+          "attachments",
+          "images",
+          basename(attachment.path),
+        );
+        await rename(source, attachment.path);
+      }
+    }
+    return materialized.attachments;
+  } finally {
+    await rm(temporaryMissionPath, { recursive: true, force: true });
+  }
 }
 
 function missionImageMimeType(
@@ -822,6 +904,7 @@ function foldTimeline(records: readonly MissionTimelineRecord[]): MissionTimelin
         message: {
           id: record.id,
           content: record.content,
+          ...(record.attachments === undefined ? {} : { attachments: record.attachments }),
           createdAt: record.createdAt,
         },
       };

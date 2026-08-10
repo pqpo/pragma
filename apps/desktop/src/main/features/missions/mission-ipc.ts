@@ -1,6 +1,6 @@
 import { randomUUID } from "node:crypto";
-import { stat } from "node:fs/promises";
-import { basename } from "node:path";
+import { mkdir, rm, stat, writeFile } from "node:fs/promises";
+import { basename, join } from "node:path";
 
 import { dialog, ipcMain, type BrowserWindow, type OpenDialogOptions } from "electron";
 
@@ -16,6 +16,7 @@ import {
   MissionModelOptionsRequestSchema,
   PickMissionAttachmentsResultSchema,
   PickMissionAttachmentsSchema,
+  StageMissionClipboardImageSchema,
   MissionIdSchema,
   RespondMissionHumanInteractionSchema,
   SendMissionMessageSchema,
@@ -49,6 +50,7 @@ export function installMissionHandlers(options: {
   readonly getRecentWorkspaces: () => readonly string[] | Promise<readonly string[]>;
   readonly recordWorkspaceUsage: (path: string) => void | Promise<void>;
   readonly defaultExecutorRef: string;
+  readonly temporaryRoot: string;
   readonly onMissionLifecycleChange?:
     | ((input: {
         readonly missionId: string;
@@ -57,6 +59,17 @@ export function installMissionHandlers(options: {
     | undefined;
 }): void {
   installMissionAttachmentProtocol(options.missions);
+  const stagedClipboardImages = new Set<string>();
+  const cleanupStagedClipboardImages = async (
+    attachments: readonly { readonly path: string }[],
+  ): Promise<void> => {
+    await Promise.all(
+      attachments.map(async ({ path }) => {
+        if (!stagedClipboardImages.delete(path)) return;
+        await rm(path, { force: true });
+      }),
+    );
+  };
   const getCreationDefaults = async () => {
     const workspace = await options.getDefaultWorkspace();
     const recentWorkspaces = await availableRecentWorkspaces(
@@ -164,20 +177,54 @@ export function installMissionHandlers(options: {
     );
     return PickMissionAttachmentsResultSchema.parse({ attachments });
   });
+  ipcMain.handle("missions:attachments:stage-clipboard-image", async (_event, input: unknown) => {
+    const parsed = StageMissionClipboardImageSchema.parse(input);
+    const data = Buffer.from(parsed.data, "base64");
+    if (data.byteLength === 0 || data.byteLength > MAX_IMAGE_ATTACHMENT_BYTES) {
+      throw new Error("Pasted images must be 20 MiB or smaller.");
+    }
+    if (!matchesImageSignature(data, parsed.mimeType)) {
+      throw new Error("Pasted image data does not match its image type.");
+    }
+    const extension = imageExtension(parsed.mimeType);
+    const stagingRoot = join(options.temporaryRoot, "mission-clipboard-images");
+    const path = join(stagingRoot, `${randomUUID()}${extension}`);
+    await mkdir(stagingRoot, { recursive: true, mode: 0o700 });
+    await writeFile(path, data, { mode: 0o600 });
+    stagedClipboardImages.add(path);
+    return PickMissionAttachmentsResultSchema.parse({
+      attachments: [
+        {
+          id: randomUUID(),
+          kind: "image",
+          name: parsed.name,
+          path,
+          mimeType: parsed.mimeType,
+          size: data.byteLength,
+        },
+      ],
+    });
+  });
   ipcMain.handle("missions:create", async (_event, input: unknown) => {
     const parsed = CreateMissionSchema.parse(input);
-    const mission = await options.creator.create({
-      workspace: parsed.workspace,
-      missionInput: parsed.input,
-      ...(parsed.input.kind === "prompt" && parsed.input.attachments.length > 0
-        ? { attachments: parsed.input.attachments }
-        : {}),
-      executorRef: parsed.executor.ref,
-      ...(parsed.modelOverride === undefined ? {} : { modelOverride: parsed.modelOverride }),
-      ...(parsed.toolPermissionMode === undefined
-        ? {}
-        : { toolPermissionMode: parsed.toolPermissionMode }),
-    });
+    const mission = await options.creator
+      .create({
+        workspace: parsed.workspace,
+        missionInput: parsed.input,
+        ...(parsed.input.kind === "prompt" && parsed.input.attachments.length > 0
+          ? { attachments: parsed.input.attachments }
+          : {}),
+        executorRef: parsed.executor.ref,
+        ...(parsed.modelOverride === undefined ? {} : { modelOverride: parsed.modelOverride }),
+        ...(parsed.toolPermissionMode === undefined
+          ? {}
+          : { toolPermissionMode: parsed.toolPermissionMode }),
+      })
+      .finally(async () => {
+        if (parsed.input.kind === "prompt") {
+          await cleanupStagedClipboardImages(parsed.input.attachments);
+        }
+      });
     await Promise.all([
       options.recordWorkspaceUsage(parsed.workspace),
       options.homeExecutors.recordUsage(parsed.executor.ref, parsed.workspace),
@@ -207,7 +254,9 @@ export function installMissionHandlers(options: {
     runDesktopMutation(async () => {
       const parsed = SendMissionMessageSchema.parse(input);
       await assertUserMission(parsed.id);
-      const mission = await options.runner.sendMessage(parsed);
+      const mission = await options.runner
+        .sendMessage(parsed)
+        .finally(async () => await cleanupStagedClipboardImages(parsed.attachments));
       publishMission(mission);
       return mission;
     }),
@@ -327,6 +376,40 @@ function attachmentDialogOptions(kind: "image" | "file" | "directory"): OpenDial
         }
       : {}),
   };
+}
+
+function imageExtension(mimeType: "image/gif" | "image/jpeg" | "image/png" | "image/webp") {
+  switch (mimeType) {
+    case "image/gif":
+      return ".gif";
+    case "image/jpeg":
+      return ".jpg";
+    case "image/png":
+      return ".png";
+    case "image/webp":
+      return ".webp";
+  }
+}
+
+function matchesImageSignature(
+  data: Buffer,
+  mimeType: "image/gif" | "image/jpeg" | "image/png" | "image/webp",
+): boolean {
+  switch (mimeType) {
+    case "image/gif":
+      return data.subarray(0, 4).toString("ascii") === "GIF8";
+    case "image/jpeg":
+      return data[0] === 0xff && data[1] === 0xd8 && data[2] === 0xff;
+    case "image/png":
+      return data
+        .subarray(0, 8)
+        .equals(Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]));
+    case "image/webp":
+      return (
+        data.subarray(0, 4).toString("ascii") === "RIFF" &&
+        data.subarray(8, 12).toString("ascii") === "WEBP"
+      );
+  }
 }
 
 function imageMimeType(path: string): "image/gif" | "image/jpeg" | "image/png" | "image/webp" {
