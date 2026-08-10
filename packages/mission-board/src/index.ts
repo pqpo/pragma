@@ -83,14 +83,14 @@ export async function createMissionBoard(
         namespace: MISSION_BOARD_SHARED_NAMESPACE,
         store: shared,
         required: true,
-        mutationApproval: "none",
+        mutationApproval: "always_on_required",
         overflowTarget: true,
       },
       {
         namespace: MISSION_BOARD_PRIVATE_NAMESPACE,
         store: privateStore,
         required: true,
-        mutationApproval: "none",
+        mutationApproval: "always_on_required",
       },
     ],
   };

@@ -110,7 +110,11 @@ export interface ExpertAgentContextStoreRegistrationInput {
   readonly overflowTarget?: boolean | undefined;
 }
 
-export type ContextMutationApproval = "none" | "required";
+/**
+ * `always_on_required` keeps ordinary mutations unblocked while requiring approval whenever an
+ * add or full replacement explicitly requests the `always_on` trigger.
+ */
+export type ContextMutationApproval = "none" | "required" | "always_on_required";
 
 export interface ExpertAgentContextStoreRegistration {
   readonly namespace: string;

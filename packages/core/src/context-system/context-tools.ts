@@ -2,6 +2,7 @@ import { createHash } from "node:crypto";
 
 import type {
   ContextTrigger,
+  ContextMutationApproval,
   ContextPriority,
   ContextIndex,
   ExpertAgentContextItem,
@@ -55,7 +56,7 @@ export interface CreateContextToolsOptions {
   readonly getContext?: (() => ExpertAgentRunContext | undefined) | undefined;
   readonly readByteBudget?: number | undefined;
   readonly resultByteBudget?: number | undefined;
-  readonly mutationApprovalFor?: ((namespace: string) => "none" | "required") | undefined;
+  readonly mutationApprovalFor?: ((namespace: string) => ContextMutationApproval) | undefined;
 }
 
 export interface ExpertAgentContextItemOperations {
@@ -217,7 +218,7 @@ export function createContextTools(
       approval: {
         mode: "required",
         reason: "Writing Expert context requires explicit approval.",
-        when: (request) => requiresMutationApproval(request.input, options),
+        when: (request) => requiresMutationApproval("add", request.input, options),
       },
       inputSchema: objectSchema(
         {
@@ -263,7 +264,7 @@ export function createContextTools(
       approval: {
         mode: "required",
         reason: "Writing Expert context requires explicit approval.",
-        when: (request) => requiresMutationApproval(request.input, options),
+        when: (request) => requiresMutationApproval("edit", request.input, options),
       },
       inputSchema: objectSchema(
         {
@@ -339,7 +340,7 @@ export function createContextTools(
       approval: {
         mode: "required",
         reason: "Deleting Expert context requires explicit approval.",
-        when: (request) => requiresMutationApproval(request.input, options),
+        when: (request) => requiresMutationApproval("delete", request.input, options),
       },
       inputSchema: objectSchema(
         {
@@ -403,12 +404,24 @@ function createContextWriteReceipt(
   };
 }
 
-function requiresMutationApproval(input: unknown, options: CreateContextToolsOptions): boolean {
+function requiresMutationApproval(
+  operation: "add" | "edit" | "delete",
+  input: unknown,
+  options: CreateContextToolsOptions,
+): boolean {
   if (!isRecord(input) || typeof input.namespace !== "string") {
     return true;
   }
 
-  return (options.mutationApprovalFor?.(input.namespace) ?? "required") === "required";
+  const approval = options.mutationApprovalFor?.(input.namespace) ?? "required";
+  if (approval === "required") return true;
+  if (approval === "none") return false;
+
+  if (operation === "add") return input.trigger === "always_on";
+  if (operation === "edit") {
+    return input.mode === "replace" && input.trigger === "always_on";
+  }
+  return false;
 }
 
 function createAskUserQuestionTool(): ExpertAgentDefaultTool {
@@ -599,7 +612,8 @@ function triggerSchema(): unknown {
   return {
     type: "string",
     enum: ["always_on", "model_decision", "manual"],
-    description: "Context trigger. Defaults to manual when omitted.",
+    description:
+      "Context trigger. Defaults to manual when omitted. always_on preloads the complete body into every applicable Expert context; model_decision exposes only its id and description for optional loading.",
   };
 }
 

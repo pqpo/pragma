@@ -8,20 +8,95 @@ import {
 } from "../src/index.ts";
 
 describe("Host Context binding metadata", () => {
-  it("selects mutation approval by namespace and keeps unknown namespaces protected", async () => {
+  it("supports always-on-only mutation approval and keeps unknown namespaces protected", async () => {
     const tools = createContextTools({} as ExpertAgentContextItemOperations, {
-      mutationApprovalFor: (namespace) => (namespace === "mission-board" ? "none" : "required"),
+      mutationApprovalFor: (namespace) => {
+        if (namespace === "mission-board") return "always_on_required";
+        if (namespace === "scratch") return "none";
+        return "required";
+      },
     });
     const add = tools.find((tool) => tool.name === "add_expert_context");
-    expect(add?.approval?.when).toBeDefined();
-    const request = (namespace: string) => ({
+    const edit = tools.find((tool) => tool.name === "edit_expert_context");
+    const remove = tools.find((tool) => tool.name === "delete_expert_context");
+    const request = (toolName: string, input: unknown) => ({
       kind: "tool_approval" as const,
-      toolName: "add_expert_context",
-      input: { namespace, id: "plan.md", content: "plan" },
+      toolName,
+      input,
     });
-    expect(await add!.approval!.when!(request("mission-board"))).toBe(false);
-    expect(await add!.approval!.when!(request("memory"))).toBe(true);
-    expect(await add!.approval!.when!({ ...request("memory"), input: null })).toBe(true);
+
+    expect(
+      await add!.approval!.when!(
+        request("add_expert_context", {
+          namespace: "mission-board",
+          id: "plan.md",
+          content: "plan",
+        }),
+      ),
+    ).toBe(false);
+    expect(
+      await add!.approval!.when!(
+        request("add_expert_context", {
+          namespace: "mission-board",
+          id: "plan.md",
+          content: "plan",
+          trigger: "model_decision",
+        }),
+      ),
+    ).toBe(false);
+    expect(
+      await add!.approval!.when!(
+        request("add_expert_context", {
+          namespace: "mission-board",
+          id: "policy.md",
+          content: "policy",
+          trigger: "always_on",
+        }),
+      ),
+    ).toBe(true);
+    expect(
+      await edit!.approval!.when!(
+        request("edit_expert_context", {
+          namespace: "mission-board",
+          id: "plan.md",
+          mode: "replace",
+          content: "plan",
+          trigger: "always_on",
+        }),
+      ),
+    ).toBe(true);
+    expect(
+      await edit!.approval!.when!(
+        request("edit_expert_context", {
+          namespace: "mission-board",
+          id: "plan.md",
+          mode: "search_replace",
+          search: "old",
+          replace: "new",
+        }),
+      ),
+    ).toBe(false);
+    expect(
+      await remove!.approval!.when!(
+        request("delete_expert_context", { namespace: "mission-board", id: "plan.md" }),
+      ),
+    ).toBe(false);
+    expect(
+      await add!.approval!.when!(
+        request("add_expert_context", {
+          namespace: "scratch",
+          id: "note.md",
+          content: "note",
+          trigger: "always_on",
+        }),
+      ),
+    ).toBe(false);
+    expect(
+      await add!.approval!.when!(
+        request("add_expert_context", { namespace: "memory", id: "fact.md", content: "fact" }),
+      ),
+    ).toBe(true);
+    expect(await add!.approval!.when!(request("add_expert_context", null))).toBe(true);
   });
 
   it("allows exactly one generic overflow target", () => {

@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 import { ContextSystem, InMemoryContextStore, withExecutionRunScope } from "@pragma/core";
 
 import {
+  MISSION_BOARD_GUIDE,
   MISSION_BOARD_GUIDE_ID,
   MISSION_BOARD_PRIVATE_NAMESPACE,
   MISSION_BOARD_SHARED_NAMESPACE,
@@ -25,6 +26,18 @@ describe("Mission Board", () => {
         mutations.push(event);
       },
     });
+    expect(
+      board.bindings.map(({ namespace, mutationApproval }) => ({ namespace, mutationApproval })),
+    ).toEqual([
+      {
+        namespace: MISSION_BOARD_SHARED_NAMESPACE,
+        mutationApproval: "always_on_required",
+      },
+      {
+        namespace: MISSION_BOARD_PRIVATE_NAMESPACE,
+        mutationApproval: "always_on_required",
+      },
+    ]);
     const system = new ContextSystem();
     for (const binding of board.bindings) expect(system.register(binding).ok).toBe(true);
 
@@ -33,6 +46,7 @@ describe("Mission Board", () => {
       id: MISSION_BOARD_GUIDE_ID,
     });
     expect(guide.ok && guide.value.metadata.trigger).toBe("always_on");
+    expect(MISSION_BOARD_GUIDE).toContain("promotion requires explicit human approval");
     const guideEdit = await system.edit({
       namespace: MISSION_BOARD_SHARED_NAMESPACE,
       id: MISSION_BOARD_GUIDE_ID,
@@ -46,6 +60,7 @@ describe("Mission Board", () => {
       content: "shared",
     });
     expect(shared.ok).toBe(true);
+    expect(shared.ok && shared.value.metadata.trigger).toBe("manual");
     const context = withExecutionRunScope(undefined, { contextId: "context-a" });
     const added = await system.add({
       namespace: MISSION_BOARD_PRIVATE_NAMESPACE,
