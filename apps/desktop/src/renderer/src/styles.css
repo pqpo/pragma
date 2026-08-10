@@ -16516,9 +16516,18 @@ textarea:focus-visible,
 }
 
 .mission-board-shell {
+  display: grid;
   height: 100%;
   min-height: 0;
+  grid-template-rows: minmax(0, 1fr);
+  overflow: hidden;
   padding-top: 8px;
+}
+
+.mission-board-shell > .context-browser {
+  height: 100%;
+  min-height: 0;
+  overflow: hidden;
 }
 
 .mission-memory-store {
