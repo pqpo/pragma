@@ -92,21 +92,67 @@ import {
   writeLastOpenedMissionId,
 } from "../../lib/mission-preference.ts";
 
+export interface MissionsPageMemoryState {
+  readonly missions: readonly MissionSummary[];
+  readonly selectedMission: Mission | null;
+  readonly selectedMissionId: string | null;
+}
+
+interface MissionsPageInitialState extends MissionsPageMemoryState {
+  readonly hasResolvedInitialLoad: boolean;
+}
+
+export function resolveMissionsPageInitialState(input: {
+  readonly initialMission?: Mission | undefined;
+  readonly memoryState?: MissionsPageMemoryState | undefined;
+}): MissionsPageInitialState {
+  const cachedMissions = input.memoryState?.missions ?? [];
+  if (input.initialMission !== undefined) {
+    return {
+      missions: upsertMissionSummary(cachedMissions, missionToSummary(input.initialMission)),
+      selectedMission: input.initialMission,
+      selectedMissionId: input.initialMission.id,
+      hasResolvedInitialLoad: true,
+    };
+  }
+  if (input.memoryState !== undefined) {
+    return { ...input.memoryState, hasResolvedInitialLoad: true };
+  }
+  return {
+    missions: [],
+    selectedMission: null,
+    selectedMissionId: null,
+    hasResolvedInitialLoad: false,
+  };
+}
+
 export function MissionsPage(props: {
   readonly initialMission?: Mission | undefined;
+  readonly initialMemoryState?: MissionsPageMemoryState | undefined;
   readonly autoRunInitialMission?: boolean | undefined;
   readonly onCreate: () => void;
+  readonly onMemoryStateChange?: ((state: MissionsPageMemoryState) => void) | undefined;
   readonly onConfigureModels?: (() => void) | undefined;
   readonly onEditExpert?: ((expertRef?: string | undefined) => void) | undefined;
 }) {
   const { t } = useTranslation(["missions", "common"]);
+  const initialStateRef = useRef<MissionsPageInitialState>(
+    resolveMissionsPageInitialState({
+      initialMission: props.initialMission,
+      memoryState: props.initialMemoryState,
+    }),
+  );
+  const initialState = initialStateRef.current;
   const [railWidth, setRailWidth] = usePersistentSidebarWidth(SIDEBAR_WIDTH_PREFERENCES.missions);
-  const [missions, setMissions] = useState<readonly MissionSummary[]>([]);
+  const [missions, setMissions] = useState<readonly MissionSummary[]>(initialState.missions);
   const [selectedMission, setSelectedMission] = useState<Mission | null>(
-    props.initialMission ?? null,
+    initialState.selectedMission,
   );
   const [selectedMissionId, setSelectedMissionId] = useState<string | null>(
-    props.initialMission?.id ?? null,
+    initialState.selectedMissionId,
+  );
+  const [hasResolvedInitialLoad, setHasResolvedInitialLoad] = useState(
+    initialState.hasResolvedInitialLoad,
   );
   const [pinnedMissionIds, setPinnedMissionIds] = useState<readonly string[]>(() =>
     readPinnedMissionIds(typeof window === "undefined" ? undefined : window.localStorage),
@@ -127,9 +173,11 @@ export function MissionsPage(props: {
         }
       : null,
   );
-  const selectedMissionIdRef = useRef<string | null>(props.initialMission?.id ?? null);
+  const selectedMissionIdRef = useRef<string | null>(initialState.selectedMissionId);
   const initialRunStartedRef = useRef(false);
+  const hadInitialMemoryStateRef = useRef(props.initialMemoryState !== undefined);
   const removedMissionIdsRef = useRef(new Set<string>());
+  const missionUpdatesDuringRefreshRef = useRef(new Map<string, Mission | null>());
 
   const replaceMission = useCallback((updated: Mission) => {
     if (
@@ -159,23 +207,38 @@ export function MissionsPage(props: {
     });
   }, []);
 
-  const openMission = useCallback((id: string) => {
+  const openMission = useCallback(async (id: string, options?: { readonly silent?: boolean }) => {
     selectedMissionIdRef.current = id;
     setSelectedMissionId(id);
-    setSelectedMission(null);
-    setError(null);
+    setSelectedMission((current) => (current?.id === id ? current : null));
+    if (!options?.silent) setError(null);
     writeLastOpenedMissionId(typeof window === "undefined" ? undefined : window.localStorage, id);
     const api = desktopApi();
     if (api === undefined) return;
-    void api
-      .getMission(id)
-      .then((mission) => {
-        if (selectedMissionIdRef.current === id) setSelectedMission(mission);
-      })
-      .catch((loadError: unknown) => {
-        if (selectedMissionIdRef.current === id) setError(errorMessage(loadError));
-      });
+    try {
+      const mission = await api.getMission(id);
+      if (selectedMissionIdRef.current === id) {
+        setSelectedMission((current) =>
+          current === null || mission.updatedAt >= current.updatedAt ? mission : current,
+        );
+      }
+    } catch (loadError) {
+      if (selectedMissionIdRef.current === id && !options?.silent) {
+        setError(errorMessage(loadError));
+      }
+    }
   }, []);
+
+  useEffect(() => {
+    if (!hasResolvedInitialLoad) return;
+    props.onMemoryStateChange?.({ missions, selectedMission, selectedMissionId });
+  }, [
+    hasResolvedInitialLoad,
+    missions,
+    props.onMemoryStateChange,
+    selectedMission,
+    selectedMissionId,
+  ]);
 
   useEffect(() => {
     const api = desktopApi();
@@ -183,6 +246,7 @@ export function MissionsPage(props: {
     return api.subscribeMissionUpdates((update) => {
       if (update.kind === "upsert") {
         if (update.mission.origin.type !== "user") {
+          missionUpdatesDuringRefreshRef.current.set(update.mission.id, null);
           setMissions((current) => current.filter((mission) => mission.id !== update.mission.id));
           if (selectedMissionIdRef.current === update.mission.id) {
             selectedMissionIdRef.current = null;
@@ -192,6 +256,7 @@ export function MissionsPage(props: {
           return;
         }
         if (removedMissionIdsRef.current.has(update.mission.id)) return;
+        missionUpdatesDuringRefreshRef.current.set(update.mission.id, update.mission);
         replaceMission(update.mission);
         return;
       }
@@ -200,6 +265,7 @@ export function MissionsPage(props: {
         update.missionId,
         "",
       );
+      missionUpdatesDuringRefreshRef.current.set(update.missionId, null);
       removedMissionIdsRef.current.add(update.missionId);
       setMissions((current) => current.filter((mission) => mission.id !== update.missionId));
       if (selectedMissionIdRef.current === update.missionId) {
@@ -245,15 +311,21 @@ export function MissionsPage(props: {
     const api = desktopApi();
     if (api === undefined) return;
     let cancelled = false;
-    void api
-      .listMissions()
-      .then((storedMissions) => {
+    const refreshFromStore = async () => {
+      try {
+        missionUpdatesDuringRefreshRef.current.clear();
+        const storedMissions = await api.listMissions();
         if (cancelled) return;
-        setMissions((current) =>
-          storedMissions
-            .filter((mission) => !removedMissionIdsRef.current.has(mission.id))
-            .reduce((merged, mission) => upsertMissionSummary(merged, mission), [...current]),
+        const refreshedMissions = [...missionUpdatesDuringRefreshRef.current.values()].reduce(
+          (current, updated) =>
+            updated === null ? current : upsertMissionSummary(current, missionToSummary(updated)),
+          storedMissions.filter(
+            (mission) =>
+              !removedMissionIdsRef.current.has(mission.id) &&
+              missionUpdatesDuringRefreshRef.current.get(mission.id) !== null,
+          ),
         );
+        setMissions(refreshedMissions);
         pruneMissionDrafts(
           typeof window === "undefined" ? undefined : window.localStorage,
           new Set(
@@ -262,22 +334,36 @@ export function MissionsPage(props: {
               .map((mission) => mission.id),
           ),
         );
-        if (selectedMissionIdRef.current !== null) return;
-        const lastOpenedId = readLastOpenedMissionId(
-          typeof window === "undefined" ? undefined : window.localStorage,
-        );
-        const preferredId = selectPreferredMissionId(storedMissions, lastOpenedId);
-        if (preferredId !== null) openMission(preferredId);
-        else {
+        let missionId = selectedMissionIdRef.current;
+        if (missionId !== null && !refreshedMissions.some((mission) => mission.id === missionId)) {
+          selectedMissionIdRef.current = null;
+          setSelectedMissionId(null);
+          setSelectedMission(null);
+          missionId = null;
+        }
+        if (missionId === null) {
+          const lastOpenedId = readLastOpenedMissionId(
+            typeof window === "undefined" ? undefined : window.localStorage,
+          );
+          missionId = selectPreferredMissionId(refreshedMissions, lastOpenedId);
+        }
+        if (missionId !== null) {
+          await openMission(missionId, { silent: hadInitialMemoryStateRef.current });
+        } else {
           writeLastOpenedMissionId(
             typeof window === "undefined" ? undefined : window.localStorage,
             null,
           );
         }
-      })
-      .catch((loadError: unknown) => {
-        if (!cancelled) setError(errorMessage(loadError));
-      });
+        if (!cancelled) setHasResolvedInitialLoad(true);
+      } catch (loadError) {
+        if (!cancelled && !hadInitialMemoryStateRef.current) {
+          setHasResolvedInitialLoad(true);
+          setError(errorMessage(loadError));
+        }
+      }
+    };
+    void refreshFromStore();
     return () => {
       cancelled = true;
     };
@@ -292,6 +378,9 @@ export function MissionsPage(props: {
       ),
     );
   }, [missions, search]);
+  if (!hasResolvedInitialLoad) {
+    return <MissionsPageSkeleton label={t("loading", { ns: "missions" })} railWidth={railWidth} />;
+  }
   return (
     <section
       className="missions-page"
@@ -487,6 +576,51 @@ export function MissionsPage(props: {
           }}
         />
       ) : null}
+    </section>
+  );
+}
+
+export function MissionsPageSkeleton(props: {
+  readonly label: string;
+  readonly railWidth: number;
+}) {
+  return (
+    <section
+      className="missions-page mission-page-skeleton"
+      style={{ "--sidebar-width": `${props.railWidth}px` } as CSSProperties}
+      role="status"
+      aria-label={props.label}
+      aria-live="polite"
+    >
+      <aside className="mission-skeleton-rail" aria-hidden="true">
+        <span className="mission-skeleton-block mission-skeleton-title" />
+        <span className="mission-skeleton-block mission-skeleton-button" />
+        <span className="mission-skeleton-block mission-skeleton-search" />
+        {[0, 1].map((group) => (
+          <div className="mission-skeleton-group" key={group}>
+            <span className="mission-skeleton-block mission-skeleton-label" />
+            <span className="mission-skeleton-block mission-skeleton-row" />
+            <span className="mission-skeleton-block mission-skeleton-row is-short" />
+          </div>
+        ))}
+      </aside>
+      <div className="mission-skeleton-main" aria-hidden="true">
+        <header>
+          <span className="mission-skeleton-block mission-skeleton-heading" />
+          <span className="mission-skeleton-block mission-skeleton-meta" />
+        </header>
+        <div className="mission-skeleton-tabs">
+          <span className="mission-skeleton-block" />
+          <span className="mission-skeleton-block" />
+          <span className="mission-skeleton-block" />
+        </div>
+        <div className="mission-skeleton-body">
+          <span className="mission-skeleton-block mission-skeleton-message" />
+          <span className="mission-skeleton-block mission-skeleton-message is-wide" />
+          <span className="mission-skeleton-block mission-skeleton-message is-short" />
+        </div>
+        <span className="mission-skeleton-block mission-skeleton-composer" />
+      </div>
     </section>
   );
 }

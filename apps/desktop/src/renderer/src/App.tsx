@@ -9,7 +9,7 @@ import {
   usePersistentSidebarWidth,
 } from "./lib/sidebar-width-preference.ts";
 import { SettingsPage, type SettingsView } from "./pages/settings/SettingsPage.tsx";
-import { MissionsPage } from "./pages/missions/MissionsPage.tsx";
+import { MissionsPage, type MissionsPageMemoryState } from "./pages/missions/MissionsPage.tsx";
 import { StudioPage } from "./pages/studio/StudioPage.tsx";
 import { EvaluationsPage } from "./pages/evaluations/EvaluationsPage.tsx";
 import { HomePage } from "./pages/home/HomePage.tsx";
@@ -26,6 +26,7 @@ export function App() {
   const [sidebarWidth, setSidebarWidth] = usePersistentSidebarWidth(SIDEBAR_WIDTH_PREFERENCES.main);
   const [missionExecutorRef, setMissionExecutorRef] = useState<string>();
   const [missionToOpen, setMissionToOpen] = useState<Mission>();
+  const [missionsMemoryState, setMissionsMemoryState] = useState<MissionsPageMemoryState>();
   const [studioExpertRef, setStudioExpertRef] = useState<string>();
   const [settingsView, setSettingsView] = useState<SettingsView>("general");
 
@@ -85,7 +86,9 @@ export function App() {
       ) : activeView === "missions" ? (
         <MissionsPage
           initialMission={missionToOpen}
+          initialMemoryState={missionsMemoryState}
           autoRunInitialMission={missionToOpen !== undefined}
+          onMemoryStateChange={setMissionsMemoryState}
           onConfigureModels={openModelSettings}
           onEditExpert={(expertRef) => {
             setStudioExpertRef(expertRef);

@@ -3,6 +3,7 @@ export const missions = {
   newMission: "新增任務",
   start: "開始任務",
   search: "搜尋任務",
+  loading: "正在載入任務…",
   empty: "暫無任務",
   workspace: "工作區",
   executor: "執行者",

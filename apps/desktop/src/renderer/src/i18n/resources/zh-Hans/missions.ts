@@ -3,6 +3,7 @@ export const missions = {
   newMission: "新建任务",
   start: "开始任务",
   search: "搜索任务",
+  loading: "正在加载任务…",
   empty: "暂无任务",
   workspace: "工作区",
   executor: "执行者",

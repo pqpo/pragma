@@ -3,6 +3,7 @@ export const missions = {
   newMission: "New mission",
   start: "Start a mission",
   search: "Search missions",
+  loading: "Loading missions…",
   empty: "No missions",
   workspace: "Workspace",
   executor: "Executor",

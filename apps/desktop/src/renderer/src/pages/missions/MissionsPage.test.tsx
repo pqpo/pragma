@@ -24,8 +24,10 @@ import {
   MissionToolCallBlock,
   MissionWorkDrawer,
   MissionsPage,
+  MissionsPageSkeleton,
   missionWorkInputSenderName,
   missionWorkRecordTitle,
+  resolveMissionsPageInitialState,
   resolveMissionRailGroups,
   resolveMissionSearchCollapsed,
   releaseMissionClientOperation,
@@ -36,6 +38,61 @@ import {
 } from "./MissionsPage.tsx";
 
 describe("MissionsPage", () => {
+  it("shows a shimmer skeleton only when no in-memory snapshot is available", () => {
+    const firstLoad = renderToStaticMarkup(<MissionsPage onCreate={() => undefined} />);
+    const revisit = renderToStaticMarkup(
+      <MissionsPage
+        initialMemoryState={{ missions: [], selectedMission: null, selectedMissionId: null }}
+        onCreate={() => undefined}
+      />,
+    );
+
+    expect(firstLoad).toContain("mission-page-skeleton");
+    expect(firstLoad).toContain('role="status"');
+    expect(firstLoad).not.toContain("Mission not found");
+    expect(revisit).not.toContain("mission-page-skeleton");
+    expect(revisit).toContain("Mission not found");
+  });
+
+  it("restores the cached Mission and lets a newly created Mission take precedence", () => {
+    const cached = missionFixture("expert");
+    const created = { ...missionFixture("team"), id: "created-mission", title: "Created Mission" };
+    const memoryState = {
+      missions: [
+        missionSummaryFixture({
+          id: cached.id,
+          title: cached.title,
+          updatedAt: cached.updatedAt,
+        }),
+      ],
+      selectedMission: cached,
+      selectedMissionId: cached.id,
+    };
+
+    expect(resolveMissionsPageInitialState({ memoryState })).toMatchObject({
+      selectedMission: cached,
+      selectedMissionId: cached.id,
+      hasResolvedInitialLoad: true,
+    });
+    expect(resolveMissionsPageInitialState({ memoryState, initialMission: created })).toMatchObject(
+      {
+        selectedMission: created,
+        selectedMissionId: "created-mission",
+        hasResolvedInitialLoad: true,
+      },
+    );
+  });
+
+  it("renders an accessible loading surface without visible placeholder copy", () => {
+    const html = renderToStaticMarkup(
+      <MissionsPageSkeleton label="Loading missions" railWidth={300} />,
+    );
+
+    expect(html).toContain('aria-label="Loading missions"');
+    expect(html).toContain("mission-skeleton-composer");
+    expect(html).not.toContain(">Loading missions<");
+  });
+
   it("does not let a stale initial usage query overwrite a newer streaming update", () => {
     const live = applyMissionUsageHintRevision(
       { revision: -1, totalTokens: 0 },
@@ -53,7 +110,12 @@ describe("MissionsPage", () => {
   });
 
   it("keeps creation outside the missions surface", () => {
-    const html = renderToStaticMarkup(<MissionsPage onCreate={() => undefined} />);
+    const html = renderToStaticMarkup(
+      <MissionsPage
+        initialMemoryState={{ missions: [], selectedMission: null, selectedMissionId: null }}
+        onCreate={() => undefined}
+      />,
+    );
 
     expect(html).toContain("New mission");
     expect(html).toContain('aria-label="Resize navigation"');
