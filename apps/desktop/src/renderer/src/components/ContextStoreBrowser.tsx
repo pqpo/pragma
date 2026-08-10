@@ -1,8 +1,10 @@
 import {
   ArrowClockwise,
   CaretRight,
+  File,
   FileText,
   Folder,
+  ImageSquare,
   MagnifyingGlass,
   SpinnerGap,
   WarningCircle,
@@ -47,8 +49,12 @@ export interface ContextStoreBrowserSource {
   ) => Promise<readonly MissionContextStoreSearchMatch[]>;
 }
 
-export function ContextStoreBrowser(props: { readonly source: ContextStoreBrowserSource }) {
+export function ContextStoreBrowser(props: {
+  readonly source: ContextStoreBrowserSource;
+  readonly variant?: "memory" | "mission-board" | undefined;
+}) {
   const { t } = useTranslation("missions");
+  const variant = props.variant ?? "memory";
   const [descriptor, setDescriptor] = useState<ContextStoreBrowserDescriptor>();
   const [scopeId, setScopeId] = useState("");
   const [entries, setEntries] = useState<readonly MissionContextStoreEntry[]>([]);
@@ -80,16 +86,7 @@ export function ContextStoreBrowser(props: { readonly source: ContextStoreBrowse
         setDiscovered((current) =>
           current.some((entry) => entry.id === content.id)
             ? current
-            : [
-                ...current,
-                {
-                  id: content.id,
-                  metadata: content.metadata,
-                  ...(content.revision === undefined ? {} : { revision: content.revision }),
-                  ...(content.etag === undefined ? {} : { etag: content.etag }),
-                  ...(content.sizeBytes === undefined ? {} : { sizeBytes: content.sizeBytes }),
-                },
-              ],
+            : [...current, summaryFromContent(content)],
         );
         setError(undefined);
       } catch (cause) {
@@ -212,6 +209,7 @@ export function ContextStoreBrowser(props: { readonly source: ContextStoreBrowse
   const selected = chunks[0];
   const content = chunks.map((chunk) => chunk.content).join("");
   const lastChunk = chunks.at(-1);
+  const previewKind = selected === undefined ? undefined : entryPreviewKind(selected);
 
   if (loading && descriptor === undefined) {
     return (
@@ -228,19 +226,29 @@ export function ContextStoreBrowser(props: { readonly source: ContextStoreBrowse
   return (
     <div className="context-browser">
       <div className="context-browser-scope-bar">
-        <span>{t("contextStoreRoot", { name: descriptor.root.name })}</span>
-        <label>
-          {t("contextStoreViewingAs")}
-          <select value={scopeId} onChange={(event) => setScopeId(event.target.value)}>
-            {descriptor.scopes.map((scope) => (
-              <option key={scope.id} value={scope.id}>
-                {scope.name} · {t(`contextStoreRole.${scope.role}`)} ·{" "}
-                {t(`contextStoreParticipation.${scope.participation}`)}
-              </option>
-            ))}
-          </select>
-        </label>
-        <small>{t("contextStoreScopeFormula", { expert: selectedScope?.name ?? "" })}</small>
+        <span>
+          {variant === "mission-board"
+            ? t("missionBoardRoot", { name: descriptor.root.name })
+            : t("contextStoreRoot", { name: descriptor.root.name })}
+        </span>
+        {variant === "mission-board" ? (
+          <small className="context-browser-board-scope">{t("missionBoardSharedScope")}</small>
+        ) : (
+          <>
+            <label>
+              {t("contextStoreViewingAs")}
+              <select value={scopeId} onChange={(event) => setScopeId(event.target.value)}>
+                {descriptor.scopes.map((scope) => (
+                  <option key={scope.id} value={scope.id}>
+                    {scope.name} · {t(`contextStoreRole.${scope.role}`)} ·{" "}
+                    {t(`contextStoreParticipation.${scope.participation}`)}
+                  </option>
+                ))}
+              </select>
+            </label>
+            <small>{t("contextStoreScopeFormula", { expert: selectedScope?.name ?? "" })}</small>
+          </>
+        )}
         <button
           type="button"
           className="context-browser-refresh"
@@ -263,11 +271,15 @@ export function ContextStoreBrowser(props: { readonly source: ContextStoreBrowse
           <aside className="context-browser-tree-panel">
             <label className="context-browser-search">
               <MagnifyingGlass size={16} aria-hidden="true" />
-              <span className="sr-only">{t("contextStoreSearch")}</span>
+              <span className="sr-only">
+                {variant === "mission-board" ? t("missionBoardSearch") : t("contextStoreSearch")}
+              </span>
               <input
                 type="search"
                 value={query}
-                placeholder={t("contextStoreSearch")}
+                placeholder={
+                  variant === "mission-board" ? t("missionBoardSearch") : t("contextStoreSearch")
+                }
                 onChange={(event) => setQuery(event.target.value)}
               />
               {searching ? <SpinnerGap className="spin" size={15} aria-hidden="true" /> : null}
@@ -299,7 +311,7 @@ export function ContextStoreBrowser(props: { readonly source: ContextStoreBrowse
                       style={{ paddingInlineStart: 26 + row.depth * 16 }}
                       onClick={() => void readEntry(row.entry.id)}
                     >
-                      <FileText size={16} aria-hidden="true" />
+                      <ContextEntryIcon entry={row.entry} />
                       <span>{row.name}</span>
                       {row.entry.metadata.trigger === "always_on" ? (
                         <small>{t("contextStoreAlwaysOn")}</small>
@@ -339,7 +351,11 @@ export function ContextStoreBrowser(props: { readonly source: ContextStoreBrowse
                   <FileText size={30} />
                 )}
                 <p>
-                  {contentLoading ? t("contextStoreLoadingEntry") : t("contextStoreSelectEntry")}
+                  {contentLoading
+                    ? t("contextStoreLoadingEntry")
+                    : variant === "mission-board"
+                      ? t("missionBoardSelectEntry")
+                      : t("contextStoreSelectEntry")}
                 </p>
               </div>
             ) : (
@@ -347,7 +363,9 @@ export function ContextStoreBrowser(props: { readonly source: ContextStoreBrowse
                 <header className="context-browser-preview-header">
                   <div>
                     <strong>{selected.id}</strong>
-                    <span>{selected.metadata.description}</span>
+                    {selected.metadata.description === undefined ? null : (
+                      <span>{selected.metadata.description}</span>
+                    )}
                   </div>
                   <div className="context-browser-metadata">
                     <span>{triggerLabel(selected.metadata.trigger, t)}</span>
@@ -358,27 +376,47 @@ export function ContextStoreBrowser(props: { readonly source: ContextStoreBrowse
                     {selected.sizeBytes === undefined ? null : (
                       <span>{formatBytes(selected.sizeBytes)}</span>
                     )}
+                    {selected.mediaType === undefined ? null : <span>{selected.mediaType}</span>}
                   </div>
                 </header>
-                <div className="context-browser-markdown">
-                  <MarkdownContent
-                    source={content}
-                    codeBlockControls
-                    onInternalLink={followInternalLink}
-                  />
-                  {lastChunk?.contentRange.truncated ? (
-                    <button
-                      type="button"
-                      className="context-browser-load-more"
-                      disabled={contentLoading}
-                      onClick={() =>
-                        void readEntry(selected.id, lastChunk.contentRange.nextStartOffset)
-                      }
-                    >
-                      {contentLoading ? t("contextStoreLoadingEntry") : t("contextStoreLoadMore")}
-                    </button>
-                  ) : null}
-                </div>
+                {previewKind === "image" && selected.contentEncoding === "base64" ? (
+                  <div className="context-browser-image-preview">
+                    <img
+                      src={`data:${selected.mediaType ?? "application/octet-stream"};base64,${content}`}
+                      alt={selected.id}
+                    />
+                  </div>
+                ) : previewKind === "unsupported" ? (
+                  <div className="context-browser-preview-empty">
+                    <File size={30} aria-hidden="true" />
+                    <strong>{t("missionBoardPreviewUnsupported")}</strong>
+                    <p>{t("missionBoardPreviewUnsupportedDescription")}</p>
+                  </div>
+                ) : (
+                  <div className="context-browser-markdown">
+                    {isMarkdownEntry(selected) ? (
+                      <MarkdownContent
+                        source={content}
+                        codeBlockControls
+                        onInternalLink={followInternalLink}
+                      />
+                    ) : (
+                      <pre className="context-browser-plain-text">{content}</pre>
+                    )}
+                    {lastChunk?.contentRange.truncated ? (
+                      <button
+                        type="button"
+                        className="context-browser-load-more"
+                        disabled={contentLoading}
+                        onClick={() =>
+                          void readEntry(selected.id, lastChunk.contentRange.nextStartOffset)
+                        }
+                      >
+                        {contentLoading ? t("contextStoreLoadingEntry") : t("contextStoreLoadMore")}
+                      </button>
+                    ) : null}
+                  </div>
+                )}
               </>
             )}
           </main>
@@ -386,6 +424,39 @@ export function ContextStoreBrowser(props: { readonly source: ContextStoreBrowse
       )}
     </div>
   );
+}
+
+function ContextEntryIcon(props: { readonly entry: MissionContextStoreEntry }) {
+  const kind = entryPreviewKind(props.entry);
+  return kind === "image" ? (
+    <ImageSquare size={16} aria-hidden="true" />
+  ) : kind === "text" ? (
+    <FileText size={16} aria-hidden="true" />
+  ) : (
+    <File size={16} aria-hidden="true" />
+  );
+}
+
+export function entryPreviewKind(
+  entry: Pick<MissionContextStoreEntry, "id" | "previewKind">,
+): "text" | "image" | "unsupported" {
+  return entry.previewKind ?? "text";
+}
+
+export function summaryFromContent(content: MissionContextStoreContent): MissionContextStoreEntry {
+  return {
+    id: content.id,
+    metadata: content.metadata,
+    ...(content.revision === undefined ? {} : { revision: content.revision }),
+    ...(content.etag === undefined ? {} : { etag: content.etag }),
+    ...(content.sizeBytes === undefined ? {} : { sizeBytes: content.sizeBytes }),
+    ...(content.mediaType === undefined ? {} : { mediaType: content.mediaType }),
+    ...(content.previewKind === undefined ? {} : { previewKind: content.previewKind }),
+  };
+}
+
+function isMarkdownEntry(entry: Pick<MissionContextStoreContent, "id" | "mediaType">): boolean {
+  return entry.mediaType === "text/markdown" || entry.id.toLowerCase().endsWith(".md");
 }
 
 function ContextBrowserError(props: { readonly message: string; readonly compact?: boolean }) {
@@ -437,8 +508,8 @@ export function buildTreeRows(entries: readonly MissionContextStoreEntry[]): rea
 
 function compareEntries(left: MissionContextStoreEntry, right: MissionContextStoreEntry): number {
   const rootOrder = ["guide.md", "overview.md"];
-  const leftRoot = rootOrder.indexOf(left.id);
-  const rightRoot = rootOrder.indexOf(right.id);
+  const leftRoot = rootOrder.indexOf(left.id.toLowerCase());
+  const rightRoot = rootOrder.indexOf(right.id.toLowerCase());
   if (leftRoot >= 0 || rightRoot >= 0) {
     if (leftRoot < 0) return 1;
     if (rightRoot < 0) return -1;

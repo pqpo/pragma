@@ -65,10 +65,11 @@ import { formatTokens } from "../../lib/usage-format.ts";
 import { ToolPermissionSelect } from "../../components/ToolPermissionSelect.tsx";
 import { MissionModelOverrideControls } from "../../components/MissionModelOverrideControls.tsx";
 import { MarkdownContent } from "../../components/MarkdownContent.tsx";
+import { MemoryStoreBrowser } from "../../components/MemoryStoreBrowser.tsx";
 import {
-  MemoryStoreBrowser,
+  ContextStoreBrowser,
   type ContextStoreBrowserSource,
-} from "../../components/MemoryStoreBrowser.tsx";
+} from "../../components/ContextStoreBrowser.tsx";
 import { SidebarResizeHandle } from "../../components/SidebarResizeHandle.tsx";
 import {
   SIDEBAR_WIDTH_PREFERENCES,
@@ -983,7 +984,7 @@ export function MissionDetailFragment(props: {
   readonly onEditExpert?: ((expertRef?: string | undefined) => void) | undefined;
 }) {
   const { t } = useTranslation(["missions", "common"]);
-  const [tab, setTab] = useState<"chat" | "work" | "memory">("chat");
+  const [tab, setTab] = useState<"chat" | "work" | "board" | "memory">("chat");
   const [memoryView, setMemoryView] = useState<MissionMemoryView>(DEFAULT_MISSION_MEMORY_VIEW);
   const [workspaceAvailable, setWorkspaceAvailable] = useState<boolean | null>(null);
   const [chat, setChat] = useState<MissionChatSnapshot | null>(null);
@@ -1053,6 +1054,30 @@ export function MissionDetailFragment(props: {
   const chatScrollMissionIdRef = useRef(props.mission.id);
   const memoryStoreSource = useMemo<ContextStoreBrowserSource>(() => {
     const target = { missionId: props.mission.id, storeId: "memory" } as const;
+    return {
+      getDescriptor: async () => await window.pragmaDesktop.getMissionContextStore(target),
+      list: async (scopeId) =>
+        await window.pragmaDesktop.listMissionContextStoreEntries({ ...target, scopeId }),
+      read: async (scopeId, id, start) =>
+        await window.pragmaDesktop.readMissionContextStoreEntry({
+          ...target,
+          scopeId,
+          id,
+          start,
+          maxBytes: 64_000,
+        }),
+      search: async (scopeId, query) =>
+        await window.pragmaDesktop.searchMissionContextStore({
+          ...target,
+          scopeId,
+          query,
+          maxResults: 50,
+          contextLines: 2,
+        }),
+    };
+  }, [props.mission.id]);
+  const missionBoardSource = useMemo<ContextStoreBrowserSource>(() => {
+    const target = { missionId: props.mission.id, storeId: "mission-board" } as const;
     return {
       getDescriptor: async () => await window.pragmaDesktop.getMissionContextStore(target),
       list: async (scopeId) =>
@@ -1905,7 +1930,7 @@ export function MissionDetailFragment(props: {
     element.scrollTop = chatScrollTopRef.current;
   }, [props.mission.id, tab]);
 
-  const changeTab = (nextTab: "chat" | "work" | "memory"): void => {
+  const changeTab = (nextTab: "chat" | "work" | "board" | "memory"): void => {
     if (tab === "chat") {
       const element = scrollRef.current;
       if (element !== null) chatScrollTopRef.current = element.scrollTop;
@@ -2010,6 +2035,15 @@ export function MissionDetailFragment(props: {
           onClick={() => changeTab("work")}
         >
           {t("work", { ns: "missions" })}
+        </button>
+        <button
+          className={tab === "board" ? "is-active" : ""}
+          type="button"
+          role="tab"
+          aria-selected={tab === "board"}
+          onClick={() => changeTab("board")}
+        >
+          {t("missionBoard", { ns: "missions" })}
         </button>
         <button
           className={tab === "memory" ? "is-active" : ""}
@@ -2296,6 +2330,10 @@ export function MissionDetailFragment(props: {
               )}
             </div>
           </div>
+        ) : tab === "board" ? (
+          <div className="mission-board-shell">
+            <ContextStoreBrowser source={missionBoardSource} variant="mission-board" />
+          </div>
         ) : tab === "memory" ? (
           <div className="mission-memory-shell">
             {memoryView === "store" ? (
@@ -2330,8 +2368,15 @@ export function MissionDetailFragment(props: {
         ) : workLoading && workRecords.length === 0 ? (
           <div className="mission-work-empty">
             <SpinnerGap size={31} className="is-spinning" aria-hidden="true" />
-            <h2>{t("loadingWorkHistory", { ns: "missions", defaultValue: "正在加载工作纪录..." })}</h2>
-            <p>{t("loadingWorkHistoryDescription", { ns: "missions", defaultValue: "如果包含多个 Agent 或大量事件，可能需要稍等片刻" })}</p>
+            <h2>
+              {t("loadingWorkHistory", { ns: "missions", defaultValue: "正在加载工作纪录..." })}
+            </h2>
+            <p>
+              {t("loadingWorkHistoryDescription", {
+                ns: "missions",
+                defaultValue: "如果包含多个 Agent 或大量事件，可能需要稍等片刻",
+              })}
+            </p>
           </div>
         ) : workRecords.length === 0 ? (
           <div className="mission-work-empty">

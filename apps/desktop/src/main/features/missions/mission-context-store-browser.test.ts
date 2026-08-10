@@ -1,3 +1,7 @@
+import { mkdir, mkdtemp, rm, truncate, writeFile } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+
 import { StaticContextStore } from "@pragma/core";
 import type { PragmaExpertResource, PragmaExpertTeamResource } from "@pragma/interpreter/ast";
 import { describe, expect, it, vi } from "vitest";
@@ -51,6 +55,136 @@ const mission = MissionSchema.parse({
 });
 
 describe("MissionContextStoreBrowserService", () => {
+  it("browses shared Mission Board text, images, and unsupported files", async () => {
+    const directory = await mkdtemp(join(tmpdir(), "pragma-mission-board-browser-"));
+    const missionRoot = join(directory, mission.id);
+    const boardRoot = join(missionRoot, "board", "shared");
+    await mkdir(join(boardRoot, "notes"), { recursive: true });
+    await Promise.all([
+      writeFile(join(boardRoot, "notes", "plan.md"), "# Plan\nShip the board browser."),
+      writeFile(
+        join(boardRoot, "preview.png"),
+        Buffer.from(
+          "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+A8AAQUBAScY42YAAAAASUVORK5CYII=",
+          "base64",
+        ),
+      ),
+      writeFile(join(boardRoot, "archive.pdf"), "%PDF-1.4"),
+      writeFile(join(boardRoot, "oversized.png"), ""),
+    ]);
+    await truncate(join(boardRoot, "oversized.png"), 5_000_001);
+    const service = createMissionContextStoreBrowserService({
+      missions: {
+        get: vi.fn(async () => mission),
+        storagePath: () => missionRoot,
+      } as unknown as MissionStore,
+      project: {
+        openRevision: vi.fn(async () => ({ listResources: () => [writer, reviewer, team] })),
+      } as unknown as PragmaProjectStore,
+      systemExperts: {
+        getResource: () => undefined,
+        getAdditionalResources: () => [],
+      } as unknown as DesktopSystemExpertRegistry,
+      memory: {
+        isContextStoreViewAvailable: vi.fn(async () => true),
+        createContextStoreView: vi.fn(async () => new StaticContextStore()),
+      } as unknown as DesktopMemoryPlane,
+      runner: {
+        getWork: vi.fn(async () => ({ missionId: mission.id, revision: 0, records: [] })),
+      } as unknown as Pick<MissionRunner, "getWork">,
+    });
+
+    try {
+      const descriptor = await service.get({
+        missionId: mission.id,
+        storeId: "mission-board",
+      });
+      expect(descriptor.defaultScopeId).toBe("mission-board:shared");
+      expect(descriptor.scopes).toHaveLength(1);
+
+      const entries = await service.list({
+        missionId: mission.id,
+        storeId: "mission-board",
+        scopeId: descriptor.defaultScopeId,
+      });
+      expect(entries).toEqual(
+        expect.arrayContaining([
+          expect.objectContaining({ id: "GUIDE.md", previewKind: "text" }),
+          expect.objectContaining({ id: "notes/plan.md", previewKind: "text" }),
+          expect.objectContaining({
+            id: "preview.png",
+            previewKind: "image",
+            mediaType: "image/png",
+          }),
+          expect.objectContaining({ id: "archive.pdf", previewKind: "unsupported" }),
+        ]),
+      );
+
+      const text = await service.read({
+        missionId: mission.id,
+        storeId: "mission-board",
+        scopeId: descriptor.defaultScopeId,
+        id: "notes/plan.md",
+        start: 0,
+        maxBytes: 64_000,
+      });
+      expect(text).toMatchObject({
+        content: "# Plan\nShip the board browser.",
+        previewKind: "text",
+      });
+
+      const image = await service.read({
+        missionId: mission.id,
+        storeId: "mission-board",
+        scopeId: descriptor.defaultScopeId,
+        id: "preview.png",
+        start: 0,
+        maxBytes: 64_000,
+      });
+      expect(image).toMatchObject({
+        previewKind: "image",
+        mediaType: "image/png",
+        contentEncoding: "base64",
+      });
+      expect(Buffer.from(image.content, "base64").subarray(1, 4).toString("ascii")).toBe("PNG");
+
+      await expect(
+        service.read({
+          missionId: mission.id,
+          storeId: "mission-board",
+          scopeId: descriptor.defaultScopeId,
+          id: "oversized.png",
+          start: 0,
+          maxBytes: 64_000,
+        }),
+      ).rejects.toMatchObject({ code: "preview_too_large" });
+
+      const unsupported = await service.read({
+        missionId: mission.id,
+        storeId: "mission-board",
+        scopeId: descriptor.defaultScopeId,
+        id: "archive.pdf",
+        start: 0,
+        maxBytes: 64_000,
+      });
+      expect(unsupported).toMatchObject({ previewKind: "unsupported", content: "" });
+
+      const matches = await service.search({
+        missionId: mission.id,
+        storeId: "mission-board",
+        scopeId: descriptor.defaultScopeId,
+        query: "Ship",
+        maxResults: 50,
+        contextLines: 2,
+      });
+      expect(matches).toEqual(
+        expect.arrayContaining([expect.objectContaining({ id: "notes/plan.md" })]),
+      );
+    } finally {
+      await rm(directory, { recursive: true, force: true });
+    }
+  });
+
   it("exposes exact per-Expert scopes while preserving the Team root", async () => {
     const isContextStoreViewAvailable = vi.fn(async () => true);
     const createContextStoreView = vi.fn(

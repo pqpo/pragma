@@ -2468,7 +2468,9 @@ html.is-resizing-sidebar * {
   font-size: 11px;
   font-weight: 670;
   cursor: pointer;
-  transition: background-color 0.15s ease, color 0.15s ease;
+  transition:
+    background-color 0.15s ease,
+    color 0.15s ease;
 }
 
 .status-badge-button.is-ready {
@@ -16524,6 +16526,12 @@ textarea:focus-visible,
   min-height: 0;
 }
 
+.mission-board-shell {
+  height: 100%;
+  min-height: 0;
+  padding-top: 8px;
+}
+
 .mission-memory-store {
   display: grid;
   height: 100%;
@@ -16600,6 +16608,10 @@ textarea:focus-visible,
   align-items: center;
   gap: 8px;
   white-space: nowrap;
+}
+
+.context-browser-board-scope {
+  grid-column: 2 / 4;
 }
 
 .context-browser-scope-bar select {
@@ -16810,6 +16822,34 @@ textarea:focus-visible,
 
 .context-browser-markdown > :first-child {
   margin-top: 0;
+}
+
+.context-browser-plain-text {
+  margin: 0;
+  color: var(--text);
+  font-family: var(--font-mono);
+  font-size: 12px;
+  line-height: 1.65;
+  overflow-wrap: anywhere;
+  white-space: pre-wrap;
+}
+
+.context-browser-image-preview {
+  display: grid;
+  min-height: 0;
+  place-items: center;
+  padding: 24px;
+  overflow: auto;
+  background: var(--surface-soft);
+}
+
+.context-browser-image-preview img {
+  display: block;
+  max-width: 100%;
+  max-height: 100%;
+  object-fit: contain;
+  border-radius: 6px;
+  box-shadow: 0 8px 28px rgb(35 48 40 / 12%);
 }
 
 .context-browser-load-more {
@@ -18280,6 +18320,10 @@ textarea:focus-visible,
   .context-browser-scope-bar > span,
   .context-browser-scope-bar > label {
     grid-column: 1 / -1;
+  }
+
+  .context-browser-board-scope {
+    grid-column: 1;
   }
 
   .context-browser-workspace {
