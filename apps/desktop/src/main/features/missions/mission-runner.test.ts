@@ -2715,6 +2715,7 @@ function expertTeamFixture(): PragmaExpertTeamResource {
     spec: {
       coordinator: { ref: "expert:1xddvess309a6gme" },
       members: [{ ref: "expert:3sfd30h5017wd17d" }],
+      contextStores: [],
       delegation: {
         allow: { "1xddvess309a6gme": ["3sfd30h5017wd17d"], "3sfd30h5017wd17d": [] },
         maxConcurrency: 2,

@@ -3638,6 +3638,19 @@ describe("Expert delegation declarations", () => {
       instructions,
       coordinator: lead,
       members: [member],
+      contextStores: [
+        {
+          namespace: "team_knowledge",
+          store: new StaticContextStore([
+            {
+              id: "HANDBOOK.md",
+              content: "Private team handbook.",
+              metadata: { trigger: "always_on" },
+            },
+          ]),
+          visibility: { mode: "whitelist", expertIds: ["member"] },
+        },
+      ],
       delegation: {},
     });
 
@@ -3674,6 +3687,15 @@ describe("Expert delegation declarations", () => {
       expect(context.agentContext.systemPrompt).toContain(
         "use read_expert_context to reload the relevant context id",
       );
+      if (context.agent.id === "member") {
+        expect(context.agentContext.startupMessages[0]?.content).toContain(
+          "Private team handbook.",
+        );
+      } else {
+        expect(context.agentContext.startupMessages[0]?.content).not.toContain(
+          "Private team handbook.",
+        );
+      }
     }
 
     stats.sessionContexts.length = 0;
@@ -3687,6 +3709,9 @@ describe("Expert delegation declarations", () => {
     );
     expect(stats.sessionContexts[0]?.agentContext.startupMessages[0]?.content).not.toContain(
       instructions,
+    );
+    expect(stats.sessionContexts[0]?.agentContext.startupMessages[0]?.content).not.toContain(
+      "Private team handbook.",
     );
   });
 

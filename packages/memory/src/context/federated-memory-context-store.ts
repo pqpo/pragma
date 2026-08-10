@@ -57,7 +57,7 @@ export function createFederatedMemoryContextStore(
     new StaticContextStore([
       {
         id: MEMORY_GUIDE_CONTEXT_ID,
-        content: trimUtf8(renderGuide(registry), GUIDE_MAX_BYTES),
+        content: trimUtf8(renderGuide(registry, scope), GUIDE_MAX_BYTES),
         metadata: {
           description: "Always-on rules for selecting, searching, reading, and verifying Memory.",
           trigger: "always_on",
@@ -280,7 +280,7 @@ function recallDenied<T>(id: string): ExpertAgentContextResult<T> {
   return error("permission_denied", `Memory recall is disabled for this context: ${id}`, { id });
 }
 
-function renderGuide(registry: MemoryModuleRegistry): string {
+function renderGuide(registry: MemoryModuleRegistry, scope: MemoryRecallScope): string {
   return [
     "# Memory Guide",
     "",
@@ -288,7 +288,9 @@ function renderGuide(registry: MemoryModuleRegistry): string {
     "Do not add, edit, or delete Memory documents. Direct mutation is denied.",
     "Start with the bounded, fact-first overview. When Memory is large or the relevant id is unknown, use search_expert_context in the memory namespace, then read the exact item.",
     "Use read_expert_context with start/offset to continue when a document is truncated.",
-    "The current Memory view combines the root execution asset with the current Expert's personal Store. Keep those ownership scopes distinct.",
+    scope.expertRef === undefined
+      ? "The current Memory view contains only the root execution asset Store; no Expert personal Store is included."
+      : "The current Memory view combines the root execution asset with the current Expert's personal Store. Keep those ownership scopes distinct.",
     "A Team or Flow Episode belongs to that Team or Flow; producer Experts are provenance and do not inherit it as personal history.",
     "Read supporting Evidence only when a conclusion is important, conflicting, stale, or low-confidence.",
     "Semantic Memory contains current beliefs. Episodic Memory is historical precedent and should be recalled only when prior experience is relevant.",

@@ -2065,7 +2065,10 @@ function recallPredicate(
   scope: MemoryRecallScope,
   now: Date,
 ): { readonly sql: string; readonly parameters: readonly string[] } {
-  const refs = uniqueRefs([scope.rootRef, scope.expertRef]);
+  const refs = uniqueRefs([
+    scope.rootRef,
+    ...(scope.expertRef === undefined ? [] : [scope.expertRef]),
+  ]);
   const clauses = refs.map(
     () =>
       `EXISTS (
@@ -2075,7 +2078,11 @@ function recallPredicate(
           AND json_extract(binding.value, '$.recall') = 'allow'
       )`,
   );
-  const principals = uniqueRefs([scope.rootRef, scope.expertRef, ...(scope.principalRefs ?? [])]);
+  const principals = uniqueRefs([
+    scope.rootRef,
+    ...(scope.expertRef === undefined ? [] : [scope.expertRef]),
+    ...(scope.principalRefs ?? []),
+  ]);
   const principalClauses = principals.map(
     () =>
       `(json_extract(principal.value, '$.type') = ?

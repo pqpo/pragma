@@ -11,6 +11,8 @@ import {
   PublishPragmaProjectSchema,
   RunPragmaEvaluationSchema,
   UpsertPragmaResourceSchema,
+  UpsertPragmaExpertTeamSchema,
+  DesktopPragmaContextStoreBindingSchema,
   ValidatePragmaResourceSchema,
   ValidatePragmaYamlSchema,
 } from "../../shared/contracts/projects.ts";
@@ -33,6 +35,14 @@ export const projectsApi = {
   upsertPragmaResource: async (input) =>
     PragmaProjectSnapshotSchema.parse(
       await invokeMutation("pragma-project:upsert", UpsertPragmaResourceSchema.parse(input)),
+    ),
+  upsertPragmaExpertTeam: async (input) =>
+    PragmaProjectSnapshotSchema.parse(
+      await invokeMutation("pragma-project:upsert-team", UpsertPragmaExpertTeamSchema.parse(input)),
+    ),
+  listPragmaContextStoreBindings: async () =>
+    DesktopPragmaContextStoreBindingSchema.array().parse(
+      await invokeMutation("pragma-project:context-store-bindings"),
     ),
   applyPragmaProjectChanges: async (input) =>
     PragmaProjectSnapshotSchema.parse(
@@ -87,6 +97,8 @@ export const projectsApi = {
   | "allocatePragmaResourceId"
   | "publishPragmaProject"
   | "upsertPragmaResource"
+  | "upsertPragmaExpertTeam"
+  | "listPragmaContextStoreBindings"
   | "applyPragmaProjectChanges"
   | "deletePragmaResource"
   | "validatePragmaYaml"

@@ -18,6 +18,7 @@ import {
   PragmaExpertMetadataSchema,
   PragmaExpertRefSchema,
   PragmaExpertResourceSchema,
+  PragmaExpertTeamResourceSchema,
   PragmaExpertTeamInstructionsSchema,
   PragmaExpertTeamMetadataSchema,
   PragmaAutomationResourceSchema,
@@ -567,7 +568,7 @@ describe("Pragma YAML DSL", () => {
     });
     const dumped = await project.dump(compiled.value, { split: "by-resource" });
     expect(dumped.files.get("flows/t9ne4d8njvvxv2ea.pragma.yaml")).toContain("kind: Flow");
-    expect(dumped.files.get("pragma.lock.yaml")).toContain("compilerVersion: pragma.dsl/v4");
+    expect(dumped.files.get("pragma.lock.yaml")).toContain("compilerVersion: pragma.dsl/v5");
     const single = await project.dump(compiled.value, { split: "single" });
     await writeFile(join(root, "single.yaml"), single.files.get("pragma.yaml")!);
     expect((await loadPragmaProject(join(root, "single.yaml"))).listResources()).toHaveLength(1);
@@ -695,6 +696,72 @@ describe("Pragma YAML DSL", () => {
     expect(dumped.files.get("teams/vyv9pwwzaksth2dd.pragma.yaml")).toContain(
       `instructions: ${instructions}`,
     );
+  });
+
+  it("defaults Team ContextStore visibility to all and rejects empty or unknown visibility", () => {
+    const base = {
+      apiVersion: "pragma/v3",
+      kind: "ExpertTeam",
+      metadata: {
+        id: "vyv9pwwzaksth2dd",
+        name: "Delivery",
+        description: "Coordinates delivery",
+        tags: [],
+      },
+      spec: {
+        coordinator: { ref: "expert:mrvsehytqfmb814x" },
+        members: [{ ref: "expert:3sfd30h5017wd17d" }],
+        instructions: "Coordinate delivery.",
+        delegation: {},
+      },
+    } as const;
+    const defaultVisibility = PragmaExpertTeamResourceSchema.parse({
+      ...base,
+      spec: {
+        ...base.spec,
+        contextStores: [
+          {
+            ref: "context-store:01h8j2k3m4n5p6q7",
+            namespace: "delivery_docs",
+          },
+        ],
+      },
+    });
+    expect(defaultVisibility.spec.contextStores[0]?.visibility).toEqual({ mode: "all" });
+
+    expect(
+      PragmaExpertTeamResourceSchema.safeParse({
+        ...base,
+        spec: {
+          ...base.spec,
+          contextStores: [
+            {
+              ref: "context-store:01h8j2k3m4n5p6q7",
+              namespace: "delivery_docs",
+              visibility: {
+                mode: "blacklist",
+                expertIds: ["mrvsehytqfmb814x", "3sfd30h5017wd17d"],
+              },
+            },
+          ],
+        },
+      }).success,
+    ).toBe(false);
+    expect(
+      PragmaExpertTeamResourceSchema.safeParse({
+        ...base,
+        spec: {
+          ...base.spec,
+          contextStores: [
+            {
+              ref: "context-store:01h8j2k3m4n5p6q7",
+              namespace: "delivery_docs",
+              visibility: { mode: "whitelist", expertIds: ["0000000000000001"] },
+            },
+          ],
+        },
+      }).success,
+    ).toBe(false);
   });
 
   it("enforces an optional content-addressed lock", async () => {
@@ -869,7 +936,7 @@ describe("Pragma YAML DSL", () => {
 
     expect(migrated).toMatchObject({
       sourceCompilerVersion: "pragma.dsl/v2",
-      targetCompilerVersion: "pragma.dsl/v4",
+      targetCompilerVersion: "pragma.dsl/v5",
       migrated: true,
     });
     expect(migrated.resources).toEqual([
@@ -892,9 +959,32 @@ describe("Pragma YAML DSL", () => {
 
     expect(migrated).toMatchObject({
       sourceCompilerVersion: "pragma.dsl/v3",
-      targetCompilerVersion: "pragma.dsl/v4",
+      targetCompilerVersion: "pragma.dsl/v5",
       migrated: true,
       resources: [expect.objectContaining({ kind: "Expert" })],
+    });
+  });
+
+  it("upgrades a compiler v4 ExpertTeam fixture with an empty ContextStore list", async () => {
+    const fixture = join(import.meta.dirname, "fixtures", "compiler-v4-expert-team");
+    const migrated = migratePragmaCompilerProjectToCurrent({
+      files: new Map([
+        ["pragma.yaml", await readFile(join(fixture, "pragma.yaml"), "utf8")],
+        ["pragma.lock.yaml", await readFile(join(fixture, "pragma.lock.yaml"), "utf8")],
+      ]),
+      revisionCompilerVersion: "pragma.dsl/v4",
+    });
+
+    expect(migrated).toMatchObject({
+      sourceCompilerVersion: "pragma.dsl/v4",
+      targetCompilerVersion: "pragma.dsl/v5",
+      migrated: true,
+      resources: [
+        expect.objectContaining({
+          kind: "ExpertTeam",
+          spec: expect.objectContaining({ contextStores: [] }),
+        }),
+      ],
     });
   });
 

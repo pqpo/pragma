@@ -1604,29 +1604,51 @@ function withTeamDelegationTools(
     ],
     enumerable: true,
   });
-  if (team?.instructions !== undefined) {
-    const namespace = `expert-team:${team.id}`;
+  const teamContextStores = (team?.contextStores ?? []).filter((binding) =>
+    binding.visibility.mode === "all"
+      ? true
+      : binding.visibility.mode === "whitelist"
+        ? binding.visibility.expertIds.includes(expert.id)
+        : !binding.visibility.expertIds.includes(expert.id),
+  );
+  if (team?.instructions !== undefined || teamContextStores.length > 0) {
+    const instructionNamespace = `expert-team:${team?.id ?? "unknown"}`;
     const contextSystem = expert.contextSystem.extend({
-      stores: [
-        [
-          namespace,
-          new StaticContextStore([
-            {
-              id: "TEAM.md",
-              content: team.instructions,
-              metadata: {
-                description: `Shared instructions for ExpertTeam ${team.name}.`,
-                trigger: "always_on",
-                priority: "critical",
-                trustLevel: "user",
-                sensitivity: "internal",
-              },
-            },
-          ]),
-        ],
+      roots: [
+        ...(team?.instructions === undefined ? [] : [{ namespace: instructionNamespace }]),
+        ...teamContextStores.map((binding) => ({ namespace: binding.namespace })),
       ],
-      roots: [{ namespace }],
+      ...(team?.instructions === undefined
+        ? {}
+        : {
+            stores: [
+              [
+                instructionNamespace,
+                new StaticContextStore([
+                  {
+                    id: "TEAM.md",
+                    content: team.instructions,
+                    metadata: {
+                      description: `Shared instructions for ExpertTeam ${team.name}.`,
+                      trigger: "always_on" as const,
+                      priority: "critical" as const,
+                      trustLevel: "user" as const,
+                      sensitivity: "internal" as const,
+                    },
+                  },
+                ]),
+              ] as const,
+            ],
+          }),
     });
+    for (const binding of teamContextStores) {
+      const registered = contextSystem.register({
+        namespace: binding.namespace,
+        store: binding.store,
+        required: binding.required,
+      });
+      if (!registered.ok) throw new TypeError(registered.error.message);
+    }
     Object.defineProperty(clone, "contextSystem", {
       value: contextSystem,
       enumerable: true,

@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState, type ReactNode } from "react";
+import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import type { TFunction } from "i18next";
 import { useTranslation } from "react-i18next";
 
@@ -7,6 +7,8 @@ import {
   CaretRight,
   CaretDown,
   GitBranch,
+  Folder,
+  Database,
   MagnifyingGlass,
   PencilSimple,
   Plus,
@@ -23,6 +25,7 @@ import {
   parsePragmaReference,
   type PragmaExpertResource,
   type PragmaExpertTeamResource,
+  type PragmaExpertTeamContextVisibility,
   type PragmaFlowResource,
 } from "@pragma/interpreter/ast";
 import {
@@ -34,10 +37,13 @@ import {
   DesktopMutationErrorSchema,
   type DesktopRuntimeAvailability,
   type PragmaProjectSnapshot,
+  type ContextStore,
+  type DesktopPragmaContextStoreBinding,
 } from "../../../../shared/contracts/index.ts";
 
 import { CharacterCount } from "../../components/CharacterCount.tsx";
 import { MarkdownContent } from "../../components/MarkdownContent.tsx";
+import { SelectMenu } from "../../components/SelectMenu.tsx";
 import { errorMessage } from "../../lib/errors.ts";
 import { AssetMemoryPolicySection } from "../settings/AssetMemoryPolicySection.tsx";
 import { StudioScreenFrame } from "./StudioScreenFrame.tsx";
@@ -45,10 +51,18 @@ import { desktopApi } from "./studio-model.ts";
 import { StudioConfirmationDialog } from "./StudioDialog.tsx";
 import type { ExpertRecord } from "./studio-model.ts";
 import { runtimeDisplayName } from "../../lib/runtime-display.ts";
+import {
+  MemoryStoreBrowser,
+  type ContextStoreBrowserSource,
+} from "../../components/MemoryStoreBrowser.tsx";
 
 export type ResourceKind = "team" | "flow";
 type TeamExpertPickerKind = "coordinator" | "members";
 export type ResourceEditorMode = "create" | "edit";
+export interface TeamKnowledgeSelection {
+  readonly storeId: string;
+  readonly visibility: PragmaExpertTeamContextVisibility;
+}
 
 const TEAM_EXPERT_RESULT_LIMIT = 8;
 const DELETE_REFERENCE_LIMIT = 2;
@@ -340,6 +354,9 @@ export function PragmaResourceDetailFragment(props: {
   readonly project: PragmaProjectSnapshot;
   readonly experts?: readonly ExpertRecord[] | undefined;
   readonly runtimes?: readonly DesktopRuntimeAvailability[] | undefined;
+  readonly contextStores?: readonly ContextStore[] | undefined;
+  readonly contextStoreBindings?: readonly DesktopPragmaContextStoreBinding[] | undefined;
+  readonly onOpenContextStore?: ((store: ContextStore) => void) | undefined;
   readonly onOpenExpert?: ((expert: ExpertRecord) => void) | undefined;
   readonly onBack: () => void;
   readonly onEdit: () => void;
@@ -349,9 +366,53 @@ export function PragmaResourceDetailFragment(props: {
   const [confirmOpen, setConfirmOpen] = useState(false);
   const [deleting, setDeleting] = useState(false);
   const [deleteError, setDeleteError] = useState<string | null>(null);
+  const [memoryStoreOpen, setMemoryStoreOpen] = useState(false);
+  const [memoryStoreHasContent, setMemoryStoreHasContent] = useState(false);
   const isTeam = props.resource.kind === "ExpertTeam";
   const headingId = isTeam ? "team-detail-name" : "flow-detail-name";
   const Icon = isTeam ? UsersThree : GitBranch;
+  const teamMemorySource = useMemo<ContextStoreBrowserSource | undefined>(() => {
+    if (!isTeam) return undefined;
+    const target = { teamRef: canonicalPragmaResourceRef(props.resource) as `team:${string}` };
+    return {
+      getDescriptor: async () => await window.pragmaDesktop.getTeamMemoryContextStore(target),
+      list: async (scopeId) =>
+        await window.pragmaDesktop.listTeamMemoryContextStoreEntries({ ...target, scopeId }),
+      read: async (scopeId, id, start) =>
+        await window.pragmaDesktop.readTeamMemoryContextStoreEntry({
+          ...target,
+          scopeId,
+          id,
+          start,
+          maxBytes: 64_000,
+        }),
+      search: async (scopeId, query) =>
+        await window.pragmaDesktop.searchTeamMemoryContextStore({
+          ...target,
+          scopeId,
+          query,
+          maxResults: 50,
+          contextLines: 2,
+        }),
+    };
+  }, [isTeam, props.resource]);
+  useEffect(() => {
+    let cancelled = false;
+    setMemoryStoreHasContent(false);
+    setMemoryStoreOpen(false);
+    if (teamMemorySource === undefined) return;
+    void teamMemorySource
+      .getDescriptor()
+      .then((descriptor) => {
+        if (!cancelled) setMemoryStoreHasContent(descriptor.hasMemory === true);
+      })
+      .catch(() => {
+        if (!cancelled) setMemoryStoreHasContent(false);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [teamMemorySource]);
   const remove = async () => {
     setDeleting(true);
     setDeleteError(null);
@@ -365,6 +426,21 @@ export function PragmaResourceDetailFragment(props: {
     }
   };
 
+  if (memoryStoreOpen && teamMemorySource !== undefined) {
+    return (
+      <StudioScreenFrame
+        className="pragma-resource-detail expert-memory-store-detail"
+        header={
+          <button className="back-link" type="button" onClick={() => setMemoryStoreOpen(false)}>
+            <ArrowLeft size={18} aria-hidden="true" />
+            {t("backToContext")}
+          </button>
+        }
+      >
+        <MemoryStoreBrowser className="expert-memory-store-page" source={teamMemorySource} />
+      </StudioScreenFrame>
+    );
+  }
   return (
     <StudioScreenFrame
       className="pragma-resource-detail"
@@ -420,6 +496,11 @@ export function PragmaResourceDetailFragment(props: {
           project={props.project}
           experts={props.experts ?? []}
           runtimes={props.runtimes ?? []}
+          contextStores={props.contextStores ?? []}
+          contextStoreBindings={props.contextStoreBindings ?? []}
+          memoryStoreHasContent={memoryStoreHasContent}
+          onOpenMemoryStore={() => setMemoryStoreOpen(true)}
+          onOpenContextStore={props.onOpenContextStore}
           onOpenExpert={props.onOpenExpert}
         />
       ) : (
@@ -448,6 +529,11 @@ function TeamDetail(props: {
   readonly project: PragmaProjectSnapshot;
   readonly experts: readonly ExpertRecord[];
   readonly runtimes: readonly DesktopRuntimeAvailability[];
+  readonly contextStores: readonly ContextStore[];
+  readonly contextStoreBindings: readonly DesktopPragmaContextStoreBinding[];
+  readonly memoryStoreHasContent: boolean;
+  readonly onOpenMemoryStore: () => void;
+  readonly onOpenContextStore?: ((store: ContextStore) => void) | undefined;
   readonly onOpenExpert?: ((expert: ExpertRecord) => void) | undefined;
 }) {
   const { t } = useTranslation("studio");
@@ -509,6 +595,13 @@ function TeamDetail(props: {
     .filter((ref) => ref !== coordinatorRef)
     .map((ref) => buildExpert(ref));
   const instructions = props.resource.spec.instructions?.trim();
+  const teamContextStores = props.resource.spec.contextStores.flatMap((binding) => {
+    const desktopBinding = props.contextStoreBindings.find(
+      (candidate) => candidate.resourceRef === binding.ref,
+    );
+    const store = props.contextStores.find((candidate) => candidate.id === desktopBinding?.storeId);
+    return store === undefined ? [] : [{ binding, store }];
+  });
 
   return (
     <div className="team-detail-content">
@@ -556,6 +649,61 @@ function TeamDetail(props: {
             ))}
           </div>
         ) : null}
+      </section>
+
+      <section
+        className="expert-context-section team-context-section"
+        aria-labelledby="team-context-heading"
+      >
+        <header>
+          <div>
+            <h2 id="team-context-heading">{t("context")}</h2>
+            <p>{t("teamContextDescription")}</p>
+          </div>
+        </header>
+        {teamContextStores.length === 0 && !props.memoryStoreHasContent ? (
+          <p className="expert-context-empty">{t("noContext")}</p>
+        ) : (
+          <div className="expert-context-list">
+            {teamContextStores.map(({ binding, store }) => (
+              <button
+                className="expert-context-link"
+                key={binding.ref}
+                type="button"
+                onClick={() => props.onOpenContextStore?.(store)}
+              >
+                <span className="store-icon">
+                  <Folder size={20} />
+                </span>
+                <span>
+                  <strong>{store.name}</strong>
+                  <small>{t("knowledgeBase")}</small>
+                </span>
+                <em>
+                  {teamVisibilitySummary(binding.visibility, props.resource, props.project, t)}
+                </em>
+                <CaretRight size={17} aria-hidden="true" />
+              </button>
+            ))}
+            {props.memoryStoreHasContent ? (
+              <button
+                className="expert-context-link"
+                type="button"
+                onClick={props.onOpenMemoryStore}
+              >
+                <span className="store-icon">
+                  <Database size={20} />
+                </span>
+                <span>
+                  <strong>{t("memoryStore")}</strong>
+                  <small>{t("readOnly")}</small>
+                </span>
+                <em>{t("browseMemoryStore")}</em>
+                <CaretRight size={17} aria-hidden="true" />
+              </button>
+            ) : null}
+          </div>
+        )}
       </section>
 
       <details className="team-instructions-disclosure" open>
@@ -664,6 +812,19 @@ function TeamExpertCard(props: {
   );
 }
 
+function teamVisibilitySummary(
+  visibility: PragmaExpertTeamContextVisibility,
+  team: PragmaExpertTeamResource,
+  project: PragmaProjectSnapshot,
+  t: TFunction<"studio">,
+): string {
+  if (visibility.mode === "all") return t("teamKnowledgeVisibilityAll");
+  const names = visibility.expertIds.map((id) => teamExpertName(project, `expert:${id}`));
+  return visibility.mode === "blacklist"
+    ? t("teamKnowledgeVisibilityExcept", { names: names.join("、") })
+    : t("teamKnowledgeVisibilityOnly", { names: names.join("、") });
+}
+
 function FlowDetail(props: {
   readonly resource: PragmaFlowResource;
   readonly project: PragmaProjectSnapshot;
@@ -757,6 +918,8 @@ function promptSummary(prompt: FlowHumanPrompt): string {
 
 export function TeamEditor(props: {
   readonly project: PragmaProjectSnapshot;
+  readonly contextStores?: readonly ContextStore[] | undefined;
+  readonly contextStoreBindings?: readonly DesktopPragmaContextStoreBinding[] | undefined;
   readonly baseRevision?: number | undefined;
   readonly mode?: ResourceEditorMode | undefined;
   readonly newResourceId?: string | undefined;
@@ -765,6 +928,7 @@ export function TeamEditor(props: {
   readonly onCancel: () => void;
   readonly onSave: (
     resource: PragmaExpertTeamResource,
+    contextStores: readonly TeamKnowledgeSelection[],
     expectedRevision: number,
     requiredUnchangedRefs: readonly string[],
   ) => Promise<void>;
@@ -788,11 +952,59 @@ export function TeamEditor(props: {
     props.initial?.spec.delegation.maxConcurrency ?? 4,
   );
   const [maxDepth, setMaxDepth] = useState(props.initial?.spec.delegation.maxDepth ?? 3);
+  const initialTeamContextStores = useMemo(
+    () =>
+      props.initial?.spec.contextStores.flatMap((binding) => {
+        const desktopBinding = props.contextStoreBindings?.find(
+          (candidate) => candidate.resourceRef === binding.ref,
+        );
+        return desktopBinding === undefined
+          ? []
+          : [{ storeId: desktopBinding.storeId, visibility: binding.visibility }];
+      }) ?? [],
+    [props.contextStoreBindings, props.initial],
+  );
+  const [teamContextStores, setTeamContextStores] =
+    useState<readonly TeamKnowledgeSelection[]>(initialTeamContextStores);
+  const hydratedInitialStoreIds = useRef(
+    new Set(initialTeamContextStores.map((selection) => selection.storeId)),
+  );
+  useEffect(() => {
+    const additions = initialTeamContextStores.filter(
+      (selection) => !hydratedInitialStoreIds.current.has(selection.storeId),
+    );
+    if (additions.length === 0) return;
+    for (const selection of additions) hydratedInitialStoreIds.current.add(selection.storeId);
+    setTeamContextStores((current) => {
+      const selected = new Set(current.map((selection) => selection.storeId));
+      return [...current, ...additions.filter((selection) => !selected.has(selection.storeId))];
+    });
+  }, [initialTeamContextStores]);
+  const preservedContextStores =
+    props.initial?.spec.contextStores.filter(
+      (binding) =>
+        !props.contextStoreBindings?.some((candidate) => candidate.resourceRef === binding.ref),
+    ) ?? [];
   const [validationError, setValidationError] = useState<string | null>(null);
   const [expectedRevision] = useState(props.baseRevision ?? props.project.revision);
 
   const submit = () => {
     try {
+      const participantIds = [coordinator, ...members]
+        .filter(Boolean)
+        .map((ref) => ref.slice("expert:".length));
+      for (const selection of teamContextStores) {
+        const selectedIds =
+          selection.visibility.mode === "all" ? [] : selection.visibility.expertIds;
+        const visible = participantIds.filter((id) =>
+          selection.visibility.mode === "all"
+            ? true
+            : selection.visibility.mode === "whitelist"
+              ? selectedIds.includes(id)
+              : !selectedIds.includes(id),
+        );
+        if (visible.length === 0) throw new Error(t("teamKnowledgeVisibleRequired"));
+      }
       const resource = PragmaExpertTeamResourceSchema.parse({
         apiVersion: "pragma/v3",
         kind: "ExpertTeam",
@@ -801,6 +1013,7 @@ export function TeamEditor(props: {
           coordinator: { ref: coordinator },
           members: members.map((ref) => ({ ref })),
           ...(instructions.trim() === "" ? {} : { instructions }),
+          contextStores: preservedContextStores,
           delegation: {
             maxConcurrency,
             maxDepth,
@@ -811,7 +1024,7 @@ export function TeamEditor(props: {
         },
       });
       setValidationError(null);
-      void props.onSave(resource, expectedRevision, []);
+      void props.onSave(resource, teamContextStores, expectedRevision, []);
     } catch (validationFailure) {
       setValidationError(errorMessage(validationFailure));
     }
@@ -840,6 +1053,13 @@ export function TeamEditor(props: {
           setMembers((current) => current.filter((memberRef) => memberRef !== ref));
         }}
         onMembersChange={setMembers}
+      />
+      <TeamContextStoreEditor
+        stores={props.contextStores ?? []}
+        experts={experts}
+        participantRefs={[coordinator, ...members].filter(Boolean)}
+        selections={teamContextStores}
+        onChange={setTeamContextStores}
       />
       <label>
         {t("teamInstructions")}
@@ -891,6 +1111,152 @@ export function TeamEditor(props: {
         />
       ) : null}
     </ResourceEditor>
+  );
+}
+
+function TeamContextStoreEditor(props: {
+  readonly stores: readonly ContextStore[];
+  readonly experts: readonly PragmaExpertResource[];
+  readonly participantRefs: readonly string[];
+  readonly selections: readonly TeamKnowledgeSelection[];
+  readonly onChange: (selections: readonly TeamKnowledgeSelection[]) => void;
+}) {
+  const { t } = useTranslation("studio");
+  const [query, setQuery] = useState("");
+  const participantIds = props.participantRefs.map((ref) => ref.slice("expert:".length));
+  const participantSet = useMemo(() => new Set(participantIds), [participantIds.join("\0")]);
+  useEffect(() => {
+    const next = props.selections.map((selection) =>
+      selection.visibility.mode === "all"
+        ? selection
+        : {
+            ...selection,
+            visibility: {
+              ...selection.visibility,
+              expertIds: selection.visibility.expertIds.filter((id) => participantSet.has(id)),
+            },
+          },
+    );
+    if (JSON.stringify(next) !== JSON.stringify(props.selections)) props.onChange(next);
+  }, [participantSet, props.onChange, props.selections]);
+
+  const visibleStores = props.stores.filter((store) =>
+    normalized(`${store.name} ${store.description}`).includes(normalized(query)),
+  );
+  const updateVisibility = (storeId: string, visibility: PragmaExpertTeamContextVisibility) => {
+    props.onChange(
+      props.selections.map((selection) =>
+        selection.storeId === storeId ? { ...selection, visibility } : selection,
+      ),
+    );
+  };
+
+  return (
+    <section className="team-context-editor" aria-labelledby="team-context-editor-heading">
+      <header>
+        <div>
+          <h3 id="team-context-editor-heading">{t("teamKnowledgeBases")}</h3>
+          <p>{t("teamKnowledgeBasesDescription")}</p>
+        </div>
+      </header>
+      <label className="team-context-search">
+        <MagnifyingGlass size={17} aria-hidden="true" />
+        <span className="sr-only">{t("searchKnowledgeBases")}</span>
+        <input
+          value={query}
+          onChange={(event) => setQuery(event.target.value)}
+          placeholder={t("searchKnowledgeBases")}
+        />
+      </label>
+      <div className="team-context-picker-list">
+        {visibleStores.map((store) => {
+          const selected = props.selections.some((selection) => selection.storeId === store.id);
+          return (
+            <label key={store.id}>
+              <input
+                type="checkbox"
+                checked={selected}
+                onChange={(event) =>
+                  props.onChange(
+                    event.target.checked
+                      ? [...props.selections, { storeId: store.id, visibility: { mode: "all" } }]
+                      : props.selections.filter((selection) => selection.storeId !== store.id),
+                  )
+                }
+              />
+              <span>
+                <strong>{store.name}</strong>
+                <small>{store.description || t("knowledgeBase")}</small>
+              </span>
+            </label>
+          );
+        })}
+      </div>
+      {props.selections.map((selection) => {
+        const store = props.stores.find((candidate) => candidate.id === selection.storeId);
+        if (store === undefined) return null;
+        const selectedIds =
+          selection.visibility.mode === "all" ? [] : selection.visibility.expertIds;
+        return (
+          <article className="team-context-selection" key={selection.storeId}>
+            <div>
+              <strong>{store.name}</strong>
+              <small>{t("teamKnowledgeVisibility")}</small>
+            </div>
+            <SelectMenu<"all" | "blacklist" | "whitelist">
+              ariaLabel={t("teamKnowledgeVisibility")}
+              className="form-select team-context-visibility-select"
+              value={selection.visibility.mode}
+              options={[
+                { value: "all", label: t("teamKnowledgeVisibilityAll") },
+                { value: "blacklist", label: t("teamKnowledgeVisibilityBlacklist") },
+                { value: "whitelist", label: t("teamKnowledgeVisibilityWhitelist") },
+              ]}
+              onChange={(mode) => {
+                updateVisibility(
+                  selection.storeId,
+                  mode === "all"
+                    ? { mode }
+                    : {
+                        mode,
+                        expertIds:
+                          mode === "whitelist" && participantIds[0] !== undefined
+                            ? [participantIds[0]]
+                            : [],
+                      },
+                );
+              }}
+            />
+            {selection.visibility.mode === "all" ? null : (
+              <div className="team-context-expert-list">
+                {props.participantRefs.map((ref) => {
+                  const id = ref.slice("expert:".length);
+                  const expert = props.experts.find((candidate) => candidate.metadata.id === id);
+                  const checked = selectedIds.includes(id);
+                  return (
+                    <label key={id}>
+                      <input
+                        type="checkbox"
+                        checked={checked}
+                        onChange={(event) =>
+                          updateVisibility(selection.storeId, {
+                            mode: selection.visibility.mode,
+                            expertIds: event.target.checked
+                              ? [...selectedIds, id]
+                              : selectedIds.filter((candidate) => candidate !== id),
+                          })
+                        }
+                      />
+                      <span>{expert?.metadata.name ?? id}</span>
+                    </label>
+                  );
+                })}
+              </div>
+            )}
+          </article>
+        );
+      })}
+    </section>
   );
 }
 

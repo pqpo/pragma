@@ -171,7 +171,7 @@ function renderIndex(episodes: readonly EpisodicMemoryRecord[], scope: MemoryRec
     "Search this index when looking for prior attempts, failures, recoveries, or outcomes.",
     "",
     ...renderIndexGroup("Current asset experience", groups.currentAsset, "current-asset"),
-    ...(sameRef(scope.rootRef, scope.expertRef)
+    ...(scope.expertRef === undefined || sameRef(scope.rootRef, scope.expertRef)
       ? []
       : renderIndexGroup("Current expert personal experience", groups.personal, "personal")),
     "",
@@ -231,11 +231,13 @@ function renderEpisode(episode: EpisodicMemoryRecord, scope: MemoryRecallScope):
 }
 
 function groupEpisodes(episodes: readonly EpisodicMemoryRecord[], scope: MemoryRecallScope) {
+  const expertRef = scope.expertRef;
   return {
     currentAsset: episodes.filter((episode) => hasRef(episode.rootRefs, scope.rootRef)),
-    personal: sameRef(scope.rootRef, scope.expertRef)
-      ? []
-      : episodes.filter((episode) => hasRef(episode.rootRefs, scope.expertRef)),
+    personal:
+      expertRef === undefined || sameRef(scope.rootRef, expertRef)
+        ? []
+        : episodes.filter((episode) => hasRef(episode.rootRefs, expertRef)),
   };
 }
 

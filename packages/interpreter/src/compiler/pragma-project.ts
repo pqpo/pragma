@@ -1755,6 +1755,16 @@ class PragmaProjectImpl implements PragmaProject {
               [expertId, (await resolveRuntime(runtimeRef)).runtimeId] as const,
           ),
         );
+        const contextStores = await Promise.all(
+          indexed.resource.spec.contextStores.map(async (binding) => ({
+            namespace: binding.namespace,
+            required: binding.required,
+            visibility: binding.visibility,
+            store: (
+              await resolveDeclarative<PragmaContextStoreContribution>(binding.ref, "ContextStore")
+            ).contribution.store,
+          })),
+        );
         value = defineExpertTeam({
           id: indexed.resource.metadata.id,
           name: indexed.resource.metadata.name,
@@ -1762,6 +1772,7 @@ class PragmaProjectImpl implements PragmaProject {
           instructions: indexed.resource.spec.instructions,
           coordinator,
           members: members as Expert[],
+          contextStores,
           delegation: {
             allow: indexed.resource.spec.delegation.allow,
             maxConcurrency: indexed.resource.spec.delegation.maxConcurrency,
@@ -3065,6 +3076,10 @@ function resourceDependencyEntries(resource: PragmaResource): ResourceDependency
       ...resource.spec.members.map((member, index) => ({
         ref: member.ref,
         path: ["spec", "members", index, "ref"],
+      })),
+      ...resource.spec.contextStores.map((binding, index) => ({
+        ref: binding.ref,
+        path: ["spec", "contextStores", index, "ref"],
       })),
       ...Object.entries(resource.spec.delegation.runtimes).map(([expertId, ref]) => ({
         ref,

@@ -2468,7 +2468,9 @@ html.is-resizing-sidebar * {
   font-size: 11px;
   font-weight: 670;
   cursor: pointer;
-  transition: background-color 0.15s ease, color 0.15s ease;
+  transition:
+    background-color 0.15s ease,
+    color 0.15s ease;
 }
 
 .status-badge-button.is-ready {
@@ -20895,6 +20897,81 @@ textarea:focus-visible,
   display: grid;
   gap: 28px;
   padding: 8px 0 42px;
+}
+
+.team-context-editor,
+.team-context-selection {
+  display: grid;
+  gap: 12px;
+}
+
+.team-context-editor {
+  padding: 18px;
+  border: 1px solid var(--border);
+  border-radius: 14px;
+}
+
+.team-context-editor h3,
+.team-context-editor p {
+  margin: 0;
+}
+
+.team-context-search {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.team-context-search input {
+  flex: 1;
+}
+
+.team-context-picker-list,
+.team-context-expert-list {
+  display: grid;
+  gap: 8px;
+}
+
+.team-context-picker-list > label,
+.team-context-expert-list > label {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.team-context-picker-list span,
+.team-context-selection > div:first-child {
+  display: grid;
+  gap: 2px;
+}
+
+.team-context-picker-list small,
+.team-context-selection small {
+  color: var(--text-secondary);
+}
+
+.team-context-selection {
+  padding: 14px;
+  border: 1px solid var(--border);
+  border-radius: 12px;
+}
+
+.team-context-section .expert-context-list {
+  display: grid;
+  gap: 10px;
+}
+
+.team-context-section .expert-context-link {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr) minmax(140px, auto) auto;
+  align-items: center;
+  gap: 12px;
+  width: 100%;
+  text-align: left;
+}
+
+.team-context-section .expert-context-link > span:nth-child(2) {
+  display: grid;
 }
 
 .team-summary-bar {

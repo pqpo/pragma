@@ -248,6 +248,23 @@ describe("Episodic Memory", () => {
     expect(teamIndex.ok && teamIndex.value.content).toContain("— current-asset");
     expect(teamIndex.ok && teamIndex.value.content).toContain("— personal");
 
+    const teamOnly = scopedContext(registry, {
+      rootRef: ref("pragma.expert-team", "team-t"),
+    });
+    const teamOnlyIndex = await teamOnly.readContext({ id: "episodic/index.md" });
+    expect(teamOnlyIndex.ok && teamOnlyIndex.value.content).toContain("team-a");
+    expect(teamOnlyIndex.ok && teamOnlyIndex.value.content).not.toMatch(
+      /personal-a|personal-b|flow-a/,
+    );
+    expect(teamOnlyIndex.ok && teamOnlyIndex.value.content).not.toContain("— personal");
+    const teamOnlyGuide = await teamOnly.readContext({ id: "guide.md" });
+    expect(teamOnlyGuide.ok && teamOnlyGuide.value.content).toContain(
+      "no Expert personal Store is included",
+    );
+    expect(teamOnlyGuide.ok && teamOnlyGuide.value.content).not.toContain(
+      "combines the root execution asset with the current Expert's personal Store",
+    );
+
     const foreign = byExecution.get("personal-b")!;
     await expect(
       teamA.readContext({ id: `episodic/items/${foreign.id}.md` }),

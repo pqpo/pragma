@@ -941,6 +941,7 @@ function expertTeam(): PragmaExpertTeamResource {
     spec: {
       coordinator: { ref: "expert:1xddvess309a6gme" },
       members: [{ ref: "expert:1xddvess309a6gme" }],
+      contextStores: [],
       delegation: {
         maxConcurrency: 2,
         maxDepth: 2,

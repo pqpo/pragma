@@ -59,7 +59,7 @@ export function migratePragmaCompilerV3Project(input: {
   const expected = indexed
     .map(({ resource, source }) => ({
       ref: canonicalPragmaResourceRef(resource),
-      contentHash: sha256(stableStringify(resource)),
+      contentHash: sha256(stableStringify(withoutV5TeamFields(resource))),
       source,
     }))
     .toSorted((left, right) => left.ref.localeCompare(right.ref));
@@ -93,6 +93,13 @@ export function migratePragmaCompilerV3Project(input: {
     resources: indexed.map(({ resource }) => resource),
     artifacts: new Map([...input.files].filter(([path]) => !managed.has(path))),
   };
+}
+
+function withoutV5TeamFields(resource: PragmaResource): unknown {
+  if (resource.kind !== "ExpertTeam") return resource;
+  const historical = structuredClone(resource) as Record<string, unknown>;
+  if (isRecord(historical["spec"])) delete historical["spec"]["contextStores"];
+  return historical;
 }
 
 function firstIssue(error: unknown): string {

@@ -5,6 +5,9 @@ import {
   PragmaProjectChangeSetSchema,
   PragmaResourceRefSchema,
   PragmaResourceSchema,
+  PragmaExpertTeamResourceSchema,
+  PragmaExpertTeamContextVisibilitySchema,
+  PragmaContextStoreRefSchema,
 } from "@pragma/interpreter/ast";
 import { PragmaEvaluationResourceSchema } from "@pragma/evaluation/ast";
 import { z } from "zod";
@@ -34,6 +37,29 @@ export const UpsertPragmaResourceSchema = z.object({
   resource: PragmaResourceSchema,
   requiredUnchangedRefs: z.array(PragmaResourceRefSchema).default([]),
 });
+
+export const DesktopPragmaContextStoreBindingSchema = z
+  .object({
+    storeId: z.string().trim().min(1).max(200),
+    resourceRef: PragmaContextStoreRefSchema,
+  })
+  .strict();
+
+export const UpsertPragmaExpertTeamSchema = z
+  .object({
+    baseRevision: z.number().int().nonnegative(),
+    resource: PragmaExpertTeamResourceSchema,
+    contextStores: z.array(
+      z
+        .object({
+          storeId: z.string().trim().min(1).max(200),
+          visibility: PragmaExpertTeamContextVisibilitySchema,
+        })
+        .strict(),
+    ),
+    requiredUnchangedRefs: z.array(PragmaResourceRefSchema).default([]),
+  })
+  .strict();
 
 export const AllocatePragmaResourceIdResultSchema = z.object({
   id: PragmaExpertIdSchema,

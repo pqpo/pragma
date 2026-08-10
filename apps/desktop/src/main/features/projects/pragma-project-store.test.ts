@@ -342,7 +342,7 @@ describe("PragmaProjectStore", () => {
     expect(compilerViews).toHaveLength(1);
     await expect(
       readFile(join(directory, ".cache", "views", compilerViews[0]!, "pragma.lock.yaml"), "utf8"),
-    ).resolves.toContain("compilerVersion: pragma.dsl/v4");
+    ).resolves.toContain("compilerVersion: pragma.dsl/v5");
     expect((await readdir(directory)).some((name) => name.startsWith("studio.v4-backup-"))).toBe(
       false,
     );
@@ -424,7 +424,7 @@ describe("PragmaProjectStore", () => {
     expect(migrated).toMatchObject({ revision: 1 });
     expect(await readFile(projectManifestPath, "utf8")).toContain("pragma.desktop-project/v4");
     expect(await projectRevisionFile(directory, 1, "pragma.lock.yaml")).toContain(
-      "compilerVersion: pragma.dsl/v4",
+      "compilerVersion: pragma.dsl/v5",
     );
   });
 
@@ -1601,6 +1601,7 @@ function exampleTeam(id = "reviewers"): PragmaExpertTeamResource {
     spec: {
       coordinator: { ref: "expert:1xddvess309a6gme" },
       members: [{ ref: "expert:1xddvess309a6gme" }],
+      contextStores: [],
       delegation: {
         maxConcurrency: 2,
         maxDepth: 2,

@@ -457,6 +457,12 @@ describe("Semantic Memory", () => {
       /team-a[\s\S]*personal-a|personal-a[\s\S]*team-a/,
     );
     expect(index.ok && index.value.content).not.toContain("personal-b");
+    const teamOnly = scopedContext(registry, {
+      rootRef: { type: "pragma.expert-team", id: "team-a" },
+    });
+    const teamOnlyIndex = await teamOnly.readContext({ id: "semantic/index.md" });
+    expect(teamOnlyIndex.ok && teamOnlyIndex.value.content).toContain("team-a");
+    expect(teamOnlyIndex.ok && teamOnlyIndex.value.content).not.toMatch(/personal-a|personal-b/);
     const foreign = (await module.store.list()).find(
       (fact) => fact.normalizedValue === "personal-b",
     )!;

@@ -2,6 +2,10 @@ import { ipcMain } from "electron";
 import { generatePragmaResourceId } from "@pragma/core";
 import { runPragmaEvaluation } from "@pragma/interpreter";
 import { parsePragmaReference } from "@pragma/interpreter/ast";
+import {
+  PragmaExpertTeamResourceSchema,
+  canonicalPragmaResourceRef,
+} from "@pragma/interpreter/ast";
 
 import {
   DeletePragmaResourceSchema,
@@ -9,16 +13,24 @@ import {
   PublishPragmaProjectSchema,
   RunPragmaEvaluationSchema,
   UpsertPragmaResourceSchema,
+  UpsertPragmaExpertTeamSchema,
+  DesktopPragmaContextStoreBindingSchema,
   ValidatePragmaResourceSchema,
   ValidatePragmaYamlSchema,
 } from "../../../shared/contracts/index.ts";
 import type { PragmaProjectStore } from "./pragma-project-store.ts";
 import type { DesktopUsageStore } from "../usage/usage-store.ts";
 import { runDesktopMutation } from "../../platform/ipc/desktop-mutation-result.ts";
+import type { ContextStoreStore } from "../context-stores/context-store-store.ts";
+import {
+  classifyDesktopContextResource,
+  resolveDesktopContextResource,
+} from "../../platform/bindings/desktop-bound-resource-policy.ts";
 
 export function installPragmaProjectHandlers(
   store: PragmaProjectStore,
   usage: DesktopUsageStore,
+  contextStores: ContextStoreStore,
 ): void {
   ipcMain.handle("pragma-project:get", () => runDesktopMutation(async () => await store.get()));
   ipcMain.handle("pragma-project:allocate-id", () =>
@@ -36,6 +48,74 @@ export function installPragmaProjectHandlers(
   );
   ipcMain.handle("pragma-project:upsert", (_event, input: unknown) =>
     runDesktopMutation(async () => await store.upsert(UpsertPragmaResourceSchema.parse(input))),
+  );
+  ipcMain.handle("pragma-project:context-store-bindings", () =>
+    runDesktopMutation(async () => {
+      const snapshot = await store.get();
+      return DesktopPragmaContextStoreBindingSchema.array().parse(
+        snapshot.resources.flatMap((resource) => {
+          const storeId = classifyDesktopContextResource(resource);
+          return storeId === undefined
+            ? []
+            : [{ storeId, resourceRef: canonicalPragmaResourceRef(resource) }];
+        }),
+      );
+    }),
+  );
+  ipcMain.handle("pragma-project:upsert-team", (_event, input: unknown) =>
+    runDesktopMutation(async () => {
+      const request = UpsertPragmaExpertTeamSchema.parse(input);
+      const snapshot = await store.get();
+      const existing = snapshot.resources.find(
+        (resource) =>
+          resource.kind === "ExpertTeam" && resource.metadata.id === request.resource.metadata.id,
+      );
+      const seen = new Set<string>();
+      const resolved = [];
+      for (const selection of request.contextStores) {
+        if (seen.has(selection.storeId)) {
+          throw new Error(`Knowledge base is selected more than once: ${selection.storeId}`);
+        }
+        seen.add(selection.storeId);
+        await contextStores.resolve(selection.storeId);
+        const currentRef =
+          existing?.kind === "ExpertTeam"
+            ? existing.spec.contextStores.find((binding) => {
+                const resource = snapshot.resources.find(
+                  (candidate) => canonicalPragmaResourceRef(candidate) === binding.ref,
+                );
+                return classifyDesktopContextResource(resource) === selection.storeId;
+              })?.ref
+            : undefined;
+        const resource = resolveDesktopContextResource({
+          storeId: selection.storeId,
+          resources: snapshot.resources,
+          currentRef,
+        });
+        resolved.push({ selection, resource });
+      }
+      const team = PragmaExpertTeamResourceSchema.parse({
+        ...request.resource,
+        spec: {
+          ...request.resource.spec,
+          contextStores: [
+            ...request.resource.spec.contextStores,
+            ...resolved.map(({ selection, resource }) => ({
+              ref: canonicalPragmaResourceRef(resource),
+              namespace: `team_${request.resource.metadata.id}_${resource.metadata.id}`,
+              required: true,
+              visibility: selection.visibility,
+            })),
+          ],
+        },
+      });
+      return await store.apply({
+        baseRevision: request.baseRevision,
+        upserts: [...resolved.map(({ resource }) => resource), team],
+        removals: [],
+        requiredUnchangedRefs: request.requiredUnchangedRefs,
+      });
+    }),
   );
   ipcMain.handle("pragma-project:apply-changes", (_event, input: unknown) =>
     runDesktopMutation(async () => {

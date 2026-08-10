@@ -45,7 +45,7 @@ export const MemoryRecallScopeSchema = z.object({
   rootRef: MemorySubjectRefSchema.extend({
     type: z.enum(["pragma.expert", "pragma.expert-team", "pragma.flow"]),
   }),
-  expertRef: MemorySubjectRefSchema.extend({ type: z.literal("pragma.expert") }),
+  expertRef: MemorySubjectRefSchema.extend({ type: z.literal("pragma.expert") }).optional(),
   principalRefs: z.array(MemorySubjectRefSchema).optional(),
 });
 
