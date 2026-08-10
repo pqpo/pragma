@@ -18439,6 +18439,74 @@ textarea:focus-visible,
   background: var(--green-soft);
 }
 
+.mission-message-attachments {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(160px, 240px));
+  gap: 8px;
+  margin-bottom: 8px;
+}
+
+.mission-image-attachment {
+  min-width: 0;
+  margin: 0;
+}
+
+.mission-image-attachment img {
+  display: block;
+  width: 100%;
+  aspect-ratio: 4 / 3;
+  border: 1px solid var(--ui-line);
+  border-radius: var(--ui-radius-md);
+  background: var(--ui-surface-subtle);
+  object-fit: contain;
+}
+
+.mission-image-attachment figcaption {
+  overflow: hidden;
+  margin-top: 4px;
+  color: var(--ui-text-secondary);
+  font-size: 12px;
+  line-height: 1.45;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.mission-attachment-label {
+  display: flex;
+  min-width: 0;
+  align-items: center;
+  gap: 8px;
+  padding: 8px;
+  border-radius: var(--ui-radius-md);
+  background: var(--ui-surface-subtle);
+  color: var(--ui-text-secondary);
+}
+
+.mission-attachment-label > span {
+  min-width: 0;
+}
+
+.mission-attachment-label strong,
+.mission-attachment-label small {
+  display: block;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.mission-attachment-label strong {
+  color: var(--ui-text);
+  font-size: 13px;
+  font-weight: 500;
+  line-height: 1.4;
+}
+
+.mission-attachment-label small {
+  margin-top: 2px;
+  font-size: 11px;
+  line-height: 1.35;
+}
+
 .mission-message-sender {
   display: block;
   margin-bottom: 5px;

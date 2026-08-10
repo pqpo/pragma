@@ -960,6 +960,42 @@ describe("Mission tool call grouping", () => {
 describe("Mission Expert output labels", () => {
   const createdAt = "2026-07-21T00:00:00.000Z";
 
+  it("renders Mission image previews and file attachment labels", () => {
+    const html = renderToStaticMarkup(
+      <MissionChatEntryView
+        missionId="00000000-0000-4000-8000-000000000001"
+        entry={{
+          id: "message",
+          kind: "user",
+          content: "Summarize these inputs.",
+          attachments: [
+            {
+              id: "00000000-0000-4000-8000-000000000002",
+              kind: "image",
+              name: "screen.png",
+              path: "/mission/attachments/images/screen.png",
+              mimeType: "image/png",
+            },
+            {
+              id: "00000000-0000-4000-8000-000000000003",
+              kind: "file",
+              name: "notes.txt",
+              path: "/workspace/notes.txt",
+            },
+          ],
+          createdAt,
+        }}
+      />,
+    );
+
+    expect(html).toContain(
+      "pragma-mission-attachment://preview/00000000-0000-4000-8000-000000000001/00000000-0000-4000-8000-000000000002",
+    );
+    expect(html).toContain("screen.png");
+    expect(html).toContain("notes.txt");
+    expect(html).toContain("mission-attachment-label");
+  });
+
   it("shows the friendly Expert name on answers, thinking, and tool groups", () => {
     const answer = renderToStaticMarkup(
       <MissionChatEntryView

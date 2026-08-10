@@ -64,6 +64,12 @@ export const missions = {
   removeAttachment: "移除 {{name}}",
   attachmentLimit: "每個任務最多可新增 20 個附件。",
   attachmentUnavailableForFlow: "附件目前支援專家和專家團隊。",
+  attachmentPreviewAlt: "{{name}} 的預覽",
+  attachmentKind: {
+    image: "圖片",
+    file: "檔案",
+    directory: "資料夾",
+  },
   flowInput: "流程輸入",
   flowInputDescription: "請填寫此工作流程要求的結構化欄位。",
   flowInputEmpty: "此工作流程不需要輸入欄位。",

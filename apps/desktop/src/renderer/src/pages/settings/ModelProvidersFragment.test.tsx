@@ -1,7 +1,11 @@
 import { renderToStaticMarkup } from "react-dom/server";
 import { describe, expect, it } from "vitest";
 
-import { ProviderEditor, supportedThinkingLevels } from "./ModelProvidersFragment.tsx";
+import {
+  ProviderEditor,
+  reconcileDiscoveredModelInputs,
+  supportedThinkingLevels,
+} from "./ModelProvidersFragment.tsx";
 
 describe("ProviderEditor", () => {
   it("renders configured models as removable cards in a responsive grid", () => {
@@ -36,6 +40,23 @@ describe("ProviderEditor", () => {
         thinking: { supportedLevels: ["off", "medium", "xhigh", "max"] },
       }),
     ).toEqual(["off", "medium", "xhigh", "max"]);
+  });
+
+  it("refreshes discovered image input unless the user explicitly overrode it", () => {
+    const discovered = {
+      ...model("qwen3.7-plus"),
+      input: ["text", "image"] as ("text" | "image")[],
+      capabilitiesSource: "provider" as const,
+    };
+    expect(reconcileDiscoveredModelInputs([model("qwen3.7-plus")], [discovered])).toEqual([
+      expect.objectContaining({ input: ["text", "image"], capabilitiesSource: "provider" }),
+    ]);
+    expect(
+      reconcileDiscoveredModelInputs(
+        [{ ...model("qwen3.7-plus"), inputOverride: ["text"] }],
+        [discovered],
+      ),
+    ).toEqual([expect.objectContaining({ input: ["text"], inputOverride: ["text"] })]);
   });
 });
 

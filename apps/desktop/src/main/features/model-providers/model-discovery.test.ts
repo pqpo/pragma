@@ -62,6 +62,28 @@ describe("model discovery", () => {
     expect(failure).toMatchObject({ ok: false, source: "manual", models: [] });
   });
 
+  it("uses the Qwen capability catalog for Bailian model IDs", async () => {
+    const result = await discoverProviderModels({
+      presetId: "qwen",
+      protocol: "openai-completions",
+      baseUrl: "https://dashscope.aliyuncs.com/compatible-mode/v1",
+      apiKey: "secret",
+      fetchImpl: vi
+        .fn<typeof fetch>()
+        .mockResolvedValue(
+          new Response(JSON.stringify({ data: [{ id: "qwen3.7-plus" }] }), { status: 200 }),
+        ),
+    });
+
+    expect(result.models).toEqual([
+      expect.objectContaining({
+        id: "qwen3.7-plus",
+        input: ["text", "image"],
+        capabilitiesSource: "provider",
+      }),
+    ]);
+  });
+
   it("rejects non-loopback HTTP endpoints before sending credentials", async () => {
     const fetchImpl = vi.fn<typeof fetch>();
 

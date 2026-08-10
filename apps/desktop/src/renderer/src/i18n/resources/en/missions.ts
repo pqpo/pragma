@@ -68,6 +68,12 @@ export const missions = {
   removeAttachment: "Remove {{name}}",
   attachmentLimit: "A mission can include up to 20 attachments.",
   attachmentUnavailableForFlow: "Attachments are available for experts and teams.",
+  attachmentPreviewAlt: "Preview of {{name}}",
+  attachmentKind: {
+    image: "Image",
+    file: "File",
+    directory: "Folder",
+  },
   flowInput: "Flow input",
   flowInputDescription: "Complete the fields required by this workflow.",
   flowInputEmpty: "This workflow does not require any input fields.",

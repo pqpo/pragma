@@ -18,9 +18,11 @@ import {
   CaretDown,
   CheckCircle,
   Database,
+  File,
   Folder,
   GitBranch,
   MagnifyingGlass,
+  ImageSquare,
   PaperPlaneTilt,
   Plus,
   Play,
@@ -36,7 +38,7 @@ import {
   X,
 } from "@phosphor-icons/react";
 import { useTranslation } from "react-i18next";
-import type { HumanInteractionResponse } from "@pragma/shared";
+import type { ExpertPromptAttachment, HumanInteractionResponse } from "@pragma/shared";
 
 import { ConfirmationDialog } from "../../components/Dialog.tsx";
 import {
@@ -55,6 +57,7 @@ import {
   type DesktopToolPermissionMode,
   type MissionModelOverride,
   type PragmaDesktopAPI,
+  missionAttachmentPreviewUrl,
 } from "../../../../shared/contracts/index.ts";
 import { errorMessage } from "../../lib/errors.ts";
 import { i18n } from "../../i18n/index.ts";
@@ -2128,6 +2131,7 @@ export function MissionDetailFragment(props: {
                     <MissionChatEntryView
                       entry={block.item.entry}
                       key={block.item.entry.id}
+                      missionId={props.mission.id}
                       paintExecutionId={block.item.entry.executionId ?? chat?.execution?.id}
                       showExecutorLabel
                     />
@@ -2989,6 +2993,7 @@ function MissionThinkingPlaceholder(props: { readonly executorName: string }) {
 
 export const MissionChatEntryView = memo(function MissionChatEntryView(props: {
   readonly entry: MissionChatEntry;
+  readonly missionId?: string | undefined;
   readonly userLabel?: string | undefined;
   readonly paintExecutionId?: string | undefined;
   readonly showExecutorLabel?: boolean | undefined;
@@ -3000,6 +3005,10 @@ export const MissionChatEntryView = memo(function MissionChatEntryView(props: {
           {props.userLabel === undefined ? null : (
             <small className="mission-message-sender">{props.userLabel}</small>
           )}
+          <MissionMessageAttachments
+            attachments={props.entry.attachments ?? []}
+            missionId={props.missionId}
+          />
           <MissionMessageContent source={props.entry.content} />
         </div>
       </div>
@@ -3030,6 +3039,67 @@ export const MissionChatEntryView = memo(function MissionChatEntryView(props: {
     </div>
   );
 });
+
+function MissionMessageAttachments(props: {
+  readonly attachments: readonly ExpertPromptAttachment[];
+  readonly missionId?: string | undefined;
+}) {
+  if (props.attachments.length === 0) return null;
+  return (
+    <div className="mission-message-attachments">
+      {props.attachments.map((attachment) =>
+        attachment.kind === "image" && props.missionId !== undefined ? (
+          <MissionImageAttachment
+            attachment={attachment}
+            key={attachment.id}
+            missionId={props.missionId}
+          />
+        ) : (
+          <MissionAttachmentLabel attachment={attachment} key={attachment.id} />
+        ),
+      )}
+    </div>
+  );
+}
+
+function MissionImageAttachment(props: {
+  readonly attachment: ExpertPromptAttachment;
+  readonly missionId: string;
+}) {
+  const { t } = useTranslation("missions");
+  const [failed, setFailed] = useState(false);
+  if (failed) return <MissionAttachmentLabel attachment={props.attachment} />;
+  return (
+    <figure className="mission-image-attachment">
+      <img
+        alt={t("attachmentPreviewAlt", { name: props.attachment.name })}
+        loading="lazy"
+        src={missionAttachmentPreviewUrl(props.missionId, props.attachment.id)}
+        onError={() => setFailed(true)}
+      />
+      <figcaption>{props.attachment.name}</figcaption>
+    </figure>
+  );
+}
+
+function MissionAttachmentLabel(props: { readonly attachment: ExpertPromptAttachment }) {
+  const { t } = useTranslation("missions");
+  const Icon =
+    props.attachment.kind === "image"
+      ? ImageSquare
+      : props.attachment.kind === "directory"
+        ? Folder
+        : File;
+  return (
+    <span className="mission-attachment-label">
+      <Icon size={16} aria-hidden="true" />
+      <span>
+        <strong>{props.attachment.name}</strong>
+        <small>{t(`attachmentKind.${props.attachment.kind}`)}</small>
+      </span>
+    </span>
+  );
+}
 
 function MissionExecutorLabel(props: { readonly entry: MissionChatEntry }) {
   const label = missionChatEntryExecutorLabel(props.entry);

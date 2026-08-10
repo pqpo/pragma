@@ -126,11 +126,14 @@ export function ProviderEditor(props: {
         ...(draft.apiKey.trim() === "" ? {} : { apiKey: draft.apiKey }),
         ...(draft.id === undefined ? {} : { providerId: draft.id }),
       });
-      const merged = mergeModels(draft.models, result.models);
+      const refreshedModels = reconcileDiscoveredModelInputs(draft.models, result.models);
+      const merged = mergeModels(refreshedModels, result.models);
       setAvailableModels(merged);
       setDiscoveryMessage(result.message);
       if (draft.models.length === 0 && result.models.length > 0) {
         setDraft({ ...draft, models: result.models.slice(0, 3) });
+      } else if (refreshedModels !== draft.models) {
+        setDraft({ ...draft, models: refreshedModels });
       }
       setStep(3);
     } catch (discoveryError) {
@@ -546,6 +549,14 @@ function ModelCapabilityEditor(props: {
       ...props.model,
       thinking: adjustable ? { supportedLevels: ["off", "high"], defaultLevel: "high" } : undefined,
     });
+  const setImageInput = (enabled: boolean) => {
+    const input: ModelProviderModel["input"] = enabled ? ["text", "image"] : ["text"];
+    props.onChange({
+      ...props.model,
+      input,
+      inputOverride: input,
+    });
+  };
   return (
     <div className="selected-model-row">
       <div className="model-identity">
@@ -553,6 +564,14 @@ function ModelCapabilityEditor(props: {
         <small>{props.model.id}</small>
       </div>
       <div className="model-capability-controls">
+        <label className="compact-check">
+          <input
+            type="checkbox"
+            checked={props.model.input.includes("image")}
+            onChange={(event) => setImageInput(event.target.checked)}
+          />
+          {t("models.imageInput")}
+        </label>
         <label className="compact-check">
           <input
             type="checkbox"
@@ -960,6 +979,33 @@ function mergeModels(
   const map = new Map(discovered.map((model) => [model.id, model]));
   for (const model of current) map.set(model.id, model);
   return [...map.values()];
+}
+
+export function reconcileDiscoveredModelInputs(
+  current: readonly ModelProviderModel[],
+  discovered: readonly ModelProviderModel[],
+): readonly ModelProviderModel[] {
+  const discoveredById = new Map(discovered.map((model) => [model.id, model]));
+  let changed = false;
+  const reconciled = current.map((model) => {
+    const fresh = discoveredById.get(model.id);
+    if (fresh === undefined) return model;
+    const input = model.inputOverride ?? fresh.input;
+    if (
+      model.capabilitiesSource === fresh.capabilitiesSource &&
+      input.length === model.input.length &&
+      input.every((modality, index) => modality === model.input[index])
+    ) {
+      return model;
+    }
+    changed = true;
+    return {
+      ...model,
+      input: [...input],
+      capabilitiesSource: fresh.capabilitiesSource,
+    };
+  });
+  return changed ? reconciled : current;
 }
 export function supportedThinkingLevels(
   model: ModelProviderModel,

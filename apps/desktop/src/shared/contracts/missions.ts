@@ -368,6 +368,7 @@ export const MissionChatEntrySchema = z.discriminatedUnion("kind", [
   MissionChatEntryBaseSchema.extend({
     kind: z.literal("user"),
     content: z.string().max(200_000),
+    attachments: z.array(ExpertPromptAttachmentSchema).max(20).optional(),
   }),
   MissionChatEntryBaseSchema.extend({
     kind: z.literal("assistant"),
@@ -408,6 +409,12 @@ export const MissionChatEntrySchema = z.discriminatedUnion("kind", [
     error: z.string().max(10_000).optional(),
   }),
 ]);
+
+export const MISSION_ATTACHMENT_PREVIEW_SCHEME = "pragma-mission-attachment";
+
+export function missionAttachmentPreviewUrl(missionId: string, attachmentId: string): string {
+  return `${MISSION_ATTACHMENT_PREVIEW_SCHEME}://preview/${encodeURIComponent(missionId)}/${encodeURIComponent(attachmentId)}`;
+}
 
 export const MissionWorkConversationSnapshotSchema = z.object({
   missionId: MissionIdSchema,

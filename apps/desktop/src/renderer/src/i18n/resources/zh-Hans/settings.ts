@@ -167,6 +167,7 @@ export const settings = {
     searchModels: "搜索模型 ID",
     manualModelPlaceholder: "手动输入模型 ID",
     selectedModels: "已选模型（{{count}}）",
+    imageInput: "图片输入",
     reasoning: "深度思考",
     adjustableThinking: "可调节思考深度",
     fixedThinking: "思考深度由模型自行控制。",
