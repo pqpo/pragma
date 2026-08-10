@@ -17270,6 +17270,13 @@ textarea:focus-visible,
   font-size: 12px;
 }
 
+.memory-list-item .memory-candidate-expert {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
 .memory-detail > header h2,
 .memory-detail > header p {
   margin: 8px 0 0;
