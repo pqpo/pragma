@@ -11,6 +11,8 @@ import type {
 
 export type AntigravityRuntimePermissionMode = "request-approval" | "auto-approve" | "full-access";
 
+export type AntigravityAuthenticationMode = "auto" | "isolated-environment" | "host-keyring";
+
 export type AntigravityRuntimeSpawn = RuntimeCommandSpawn;
 
 export interface AntigravityRuntimeAdapterOptions {
@@ -22,6 +24,12 @@ export interface AntigravityRuntimeAdapterOptions {
   readonly listModels?: (() => Promise<readonly RuntimeModel[]>) | undefined;
   readonly onModelCatalogUpdated?: (() => void) | undefined;
   readonly permissionMode?: AntigravityRuntimePermissionMode | undefined;
+  /**
+   * `host-keyring` preserves the real user HOME so agy can reuse its OS-keyring
+   * OAuth profile. `isolated-environment` keeps a private HOME and therefore
+   * requires an explicit supported authentication environment such as ADC.
+   */
+  readonly authenticationMode?: AntigravityAuthenticationMode | undefined;
   readonly spawn?: AntigravityRuntimeSpawn | undefined;
   readonly canUse?: (() => Promise<RuntimeCanUseResult> | RuntimeCanUseResult) | undefined;
   readonly outputRetryLimit?: number | undefined;

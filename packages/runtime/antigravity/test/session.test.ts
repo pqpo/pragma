@@ -39,6 +39,7 @@ describe("Antigravity CLI invocation", () => {
         sessionId: conversation1,
         modelName: "gemini-3.1-pro",
         thinkingLevel: "high",
+        customizationWorkspace: "/state/managed-customizations",
       }),
     ).toEqual([
       "--output-format",
@@ -48,6 +49,8 @@ describe("Antigravity CLI invocation", () => {
       "24h",
       "--add-dir",
       "/workspace/project",
+      "--add-dir",
+      "/state/managed-customizations",
       "--agent",
       "pragma-review",
       "--log-file",
@@ -914,6 +917,7 @@ function createSession(
       error: vi.fn(),
     } as unknown as AntigravityNativeSession["logger"],
     managedHome: {
+      authenticationMode: "isolated-environment",
       homeDir,
       appDataDir: join(homeDir, ".gemini", "antigravity-cli"),
       configDir: join(homeDir, ".gemini", "config"),

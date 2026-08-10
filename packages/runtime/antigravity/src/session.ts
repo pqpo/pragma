@@ -218,6 +218,7 @@ export async function startAntigravityTurn(
         sessionId: session.sessionId,
         modelName,
         thinkingLevel,
+        customizationWorkspace: session.managedHome.customizationWorkspace,
       }),
       cwd: session.agent.workspace,
       env: session.env,
@@ -339,6 +340,7 @@ export function createAntigravityArgs(options: {
   readonly sessionId?: string | undefined;
   readonly modelName?: string | undefined;
   readonly thinkingLevel?: string | undefined;
+  readonly customizationWorkspace?: string | undefined;
 }): readonly string[] {
   const sessionArgs =
     options.sessionId === undefined || options.sessionId === ""
@@ -352,6 +354,9 @@ export function createAntigravityArgs(options: {
     PRINT_TIMEOUT,
     "--add-dir",
     options.workspace,
+    ...(options.customizationWorkspace === undefined
+      ? []
+      : ["--add-dir", options.customizationWorkspace]),
     "--agent",
     options.agentName,
     "--log-file",

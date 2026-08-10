@@ -21,7 +21,7 @@ import {
   deleteEnvironmentValue,
 } from "./environment-variables.ts";
 import type { AntigravityHookRelay } from "./permission-hooks.ts";
-import type { AntigravityRuntimePermissionMode } from "./types.ts";
+import type { AntigravityAuthenticationMode, AntigravityRuntimePermissionMode } from "./types.ts";
 
 const FRONTMATTER_DELIMITER = "---";
 const NON_ALPHANUMERIC = /[^a-z0-9]+/g;
@@ -37,9 +37,11 @@ export interface ManagedAntigravityIdentity {
 }
 
 export interface ManagedAntigravityHome {
+  readonly authenticationMode: Exclude<AntigravityAuthenticationMode, "auto">;
   readonly homeDir: string;
   readonly appDataDir: string;
   readonly configDir: string;
+  readonly customizationWorkspace?: string | undefined;
   readonly agentName: string;
   readonly mcpServerName: string;
   readonly hookName: string;
@@ -55,15 +57,31 @@ export async function prepareManagedAntigravityHome(options: {
   readonly mcpServerUrl: string;
   readonly hookRelay: AntigravityHookRelay;
   readonly permissionMode: AntigravityRuntimePermissionMode;
+  readonly authenticationMode?: AntigravityAuthenticationMode | undefined;
   readonly processEnvironment: Readonly<NodeJS.ProcessEnv>;
   readonly nodeExecutablePath?: string | undefined;
   readonly platform?: NodeJS.Platform | undefined;
 }): Promise<ManagedAntigravityHome> {
   const platform = options.platform ?? process.platform;
-  const homeDir = join(options.sessionDir, "home");
+  const authenticationMode = resolveAntigravityAuthenticationMode(
+    options.authenticationMode ?? "isolated-environment",
+    options.processEnvironment,
+    platform,
+  );
+  const homeDir =
+    authenticationMode === "host-keyring"
+      ? resolveAntigravityHostHome(options.processEnvironment, platform)
+      : join(options.sessionDir, "home");
   const geminiDir = join(homeDir, ".gemini");
   const appDataDir = join(geminiDir, "antigravity-cli");
-  const configDir = join(geminiDir, "config");
+  const customizationWorkspace =
+    authenticationMode === "host-keyring"
+      ? join(options.sessionDir, "managed-customizations")
+      : undefined;
+  const configDir =
+    customizationWorkspace === undefined
+      ? join(geminiDir, "config")
+      : join(customizationWorkspace, ".agents");
   const logDir = join(options.sessionDir, "logs");
   const tmpDir = join(options.sessionDir, "tmp");
   const hookDir = join(options.sessionDir, "hooks");
@@ -72,7 +90,14 @@ export async function prepareManagedAntigravityHome(options: {
   const identity = createManagedAntigravityIdentity(options.agent.id, options.sessionDir);
   const managedAgentDir = join(agentsDir, identity.agentName);
 
-  for (const directory of [homeDir, appDataDir, configDir, logDir, tmpDir, hookDir]) {
+  if (customizationWorkspace !== undefined) {
+    await rm(customizationWorkspace, { recursive: true, force: true });
+  }
+  const managedDirectories =
+    customizationWorkspace === undefined
+      ? [homeDir, appDataDir, configDir, logDir, tmpDir, hookDir]
+      : [customizationWorkspace, configDir, logDir, tmpDir, hookDir];
+  for (const directory of managedDirectories) {
     await mkdir(directory, { recursive: true, mode: 0o700 });
     await chmod(directory, 0o700).catch(() => undefined);
   }
@@ -86,10 +111,14 @@ export async function prepareManagedAntigravityHome(options: {
 
   const skills = await materializeAntigravitySkills(options.agent, skillsDir, identity.namespace);
   await Promise.all([
-    writePrivateJson(
-      join(appDataDir, "settings.json"),
-      managedSettings(options.permissionMode, identity.mcpServerName),
-    ),
+    ...(authenticationMode === "isolated-environment"
+      ? [
+          writePrivateJson(
+            join(appDataDir, "settings.json"),
+            managedSettings(options.permissionMode, identity.mcpServerName),
+          ),
+        ]
+      : []),
     writePrivateJson(join(configDir, "mcp_config.json"), {
       mcpServers: {
         [identity.mcpServerName]: {
@@ -117,17 +146,26 @@ export async function prepareManagedAntigravityHome(options: {
       ),
     ),
   ]);
-  const env = createManagedAntigravityEnvironment({
-    base: options.processEnvironment,
-    homeDir,
-    tmpDir,
-    platform,
-  });
+  const env =
+    authenticationMode === "host-keyring"
+      ? createHostKeyringAntigravityEnvironment({
+          base: options.processEnvironment,
+          tmpDir,
+          platform,
+        })
+      : createManagedAntigravityEnvironment({
+          base: options.processEnvironment,
+          homeDir,
+          tmpDir,
+          platform,
+        });
 
   return {
+    authenticationMode,
     homeDir,
     appDataDir,
     configDir,
+    customizationWorkspace,
     agentName: identity.agentName,
     mcpServerName: identity.mcpServerName,
     hookName: identity.hookName,
@@ -135,6 +173,74 @@ export async function prepareManagedAntigravityHome(options: {
     env,
     skills,
   };
+}
+
+export function resolveAntigravityAuthenticationMode(
+  requested: AntigravityAuthenticationMode,
+  environment: Readonly<NodeJS.ProcessEnv>,
+  platform: NodeJS.Platform = process.platform,
+): Exclude<AntigravityAuthenticationMode, "auto"> {
+  if (requested !== "auto") return requested;
+  const adc = readEnvironmentValue(environment, "AGY_ADC_AUTH", platform)?.trim().toLowerCase();
+  return adc === "1" || adc === "true" || adc === "yes" || adc === "on"
+    ? "isolated-environment"
+    : "host-keyring";
+}
+
+export function resolveAntigravityHostHome(
+  environment: Readonly<NodeJS.ProcessEnv>,
+  platform: NodeJS.Platform = process.platform,
+): string {
+  const direct =
+    platform === "win32"
+      ? (readEnvironmentValue(environment, "USERPROFILE", platform) ??
+        readEnvironmentValue(environment, "HOME", platform))
+      : readEnvironmentValue(environment, "HOME", platform);
+  const windowsParts =
+    platform === "win32"
+      ? `${readEnvironmentValue(environment, "HOMEDRIVE", platform) ?? ""}${readEnvironmentValue(environment, "HOMEPATH", platform) ?? ""}`
+      : "";
+  const candidate = (direct ?? windowsParts).trim();
+  const environmentPath = platform === "win32" ? win32 : posix;
+  if (candidate === "" || !environmentPath.isAbsolute(candidate)) {
+    throw new Error(
+      "Antigravity host-keyring authentication requires an absolute host HOME/USERPROFILE in the Runtime process environment.",
+    );
+  }
+  return environmentPath.resolve(candidate);
+}
+
+export function createHostKeyringAntigravityEnvironment(options: {
+  readonly base: Readonly<NodeJS.ProcessEnv>;
+  readonly tmpDir: string;
+  readonly platform?: NodeJS.Platform | undefined;
+}): NodeJS.ProcessEnv {
+  const platform = options.platform ?? process.platform;
+  const env: NodeJS.ProcessEnv = { ...options.base };
+  for (const key of [
+    "AGY_ADC_AUTH",
+    "AGY_APP_DATA_DIR",
+    "ANTIGRAVITY_HOME",
+    "ANTIGRAVITY_AGENTAPI_EXE",
+    "ANTIGRAVITY_CONVERSATION_ID",
+    "ANTIGRAVITY_CSRF_TOKEN",
+    "ANTIGRAVITY_EXECUTABLE_DATA_DIR",
+    "ANTIGRAVITY_LS_ADDRESS",
+    "ANTIGRAVITY_PROJECT_ID",
+    "ANTIGRAVITY_SIDECAR_UI_TOKEN",
+    "ANTIGRAVITY_SIDECAR_WEB_PORT",
+    "GEMINI_CLI_HOME",
+    "GEMINI_CONFIG_DIR",
+    "GOOGLE_LOG_DIR",
+    "GOOGLE_STATUS_DIR",
+    "PRAGMA_AGY_HOOK_URL",
+    "PRAGMA_AGY_HOOK_AUTHORIZATION",
+    "ELECTRON_RUN_AS_NODE",
+  ]) {
+    deleteEnvironmentValue(env, key, platform);
+  }
+  applyCommonAntigravityEnvironment({ env, tmpDir: options.tmpDir, platform });
+  return env;
 }
 
 export function createManagedAntigravityEnvironment(options: {
@@ -193,6 +299,16 @@ export function createManagedAntigravityEnvironment(options: {
     env["LOCALAPPDATA"] = environmentPath.join(options.homeDir, "AppData", "Local");
   }
   return env;
+}
+
+function readEnvironmentValue(
+  environment: Readonly<NodeJS.ProcessEnv>,
+  name: string,
+  platform: NodeJS.Platform,
+): string | undefined {
+  if (platform !== "win32") return environment[name];
+  const matched = Object.keys(environment).find((key) => key.toLowerCase() === name.toLowerCase());
+  return matched === undefined ? undefined : environment[matched];
 }
 
 export function createManagedAntigravityIdentity(
