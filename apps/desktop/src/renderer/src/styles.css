@@ -15656,8 +15656,8 @@ textarea:focus-visible,
 }
 
 .mission-rail-group.is-completed {
-  margin-top: 22px;
-  padding-top: 14px;
+  margin-top: 6px;
+  padding-top: 8px;
   border-top: 1px solid rgb(88 121 104 / 12%);
 }
 
@@ -15672,13 +15672,13 @@ textarea:focus-visible,
 
 .mission-rail-load-more {
   display: flex;
-  width: 100%;
-  min-height: 30px;
+  width: fit-content;
+  min-height: 24px;
   align-items: center;
   justify-content: center;
-  gap: 5px;
-  margin-top: 5px;
-  padding: 0 8px;
+  gap: 4px;
+  margin: 1px auto 0;
+  padding: 0 7px;
   border: 0;
   border-radius: 7px;
   background: transparent;
