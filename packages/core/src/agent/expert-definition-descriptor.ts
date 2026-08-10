@@ -31,6 +31,11 @@ function describeDefinition(definition: ExpertDefinition, ancestors: Set<string>
           defaultRuntimeId: member.defaultRuntimeId,
         }))
         .sort((left, right) => left.id.localeCompare(right.id)),
+      contextStores: definition.contextStores.map((binding) => ({
+        namespace: binding.namespace,
+        required: binding.required,
+        visibility: binding.visibility,
+      })),
       delegation: {
         allow: [...definition.delegation.allow.entries()]
           .sort(([left], [right]) => left.localeCompare(right))

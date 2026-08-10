@@ -10,6 +10,7 @@ import {
   type PragmaExpertTeamResource,
 } from "@pragma/interpreter/ast";
 import type {
+  ContextStore,
   DesktopRuntimeAvailability,
   PragmaProjectSnapshot,
 } from "../../../../shared/contracts/index.ts";
@@ -386,9 +387,32 @@ const complete = true;
 
 <script>window.alert("unsafe")</script>
 <img src=x onerror="window.alert('unsafe-image')">`,
+        contextStores: [
+          {
+            ref: "context-store:01h8j2k3m4n5p6q7",
+            namespace: "quality_docs",
+            visibility: {
+              mode: "blacklist",
+              expertIds: ["0000000000000002"],
+            },
+          },
+        ],
         delegation: { maxConcurrency: 2, maxDepth: 5 },
       },
     });
+    const contextStore: ContextStore = {
+      schemaVersion: "pragma.context-store/v4",
+      id: "00000000-0000-4000-8000-000000000001",
+      name: "Quality handbook",
+      description: "Shared review guidance.",
+      type: "file",
+      status: "ready",
+      source: { origin: "created" },
+      contentRevision: 1,
+      snapshotHash: "0".repeat(64),
+      createdAt: "2026-08-10T00:00:00.000Z",
+      updatedAt: "2026-08-10T00:00:00.000Z",
+    };
     const project = {
       schemaVersion: "pragma.project-snapshot/v3",
       projectId: "test-project",
@@ -403,6 +427,13 @@ const complete = true;
         project={project}
         experts={studioExperts}
         runtimes={runtimes}
+        contextStores={[contextStore]}
+        contextStoreBindings={[
+          {
+            storeId: contextStore.id,
+            resourceRef: "context-store:01h8j2k3m4n5p6q7",
+          },
+        ]}
         onOpenExpert={() => undefined}
         onBack={() => undefined}
         onEdit={() => undefined}
@@ -425,6 +456,9 @@ const complete = true;
     expect(html).not.toContain("expert:0000000000000002");
     expect(html).toContain("2 members");
     expect(html).toContain("Delete");
+    expect(html).toContain("Quality handbook");
+    expect(html).toContain("Everyone except Expert 002");
+    expect(html.indexOf("Quality handbook")).toBeLessThan(html.indexOf("Team instructions"));
     expect(html).toContain("<h1>Evidence review</h1>");
     expect(html).toContain("<strong>Verify</strong>");
     expect(html).toContain("<blockquote");

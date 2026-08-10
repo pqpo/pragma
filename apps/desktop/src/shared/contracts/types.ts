@@ -11,6 +11,8 @@ import {
   PublishPragmaProjectSchema,
   RunPragmaEvaluationSchema,
   UpsertPragmaResourceSchema,
+  UpsertPragmaExpertTeamSchema,
+  DesktopPragmaContextStoreBindingSchema,
   ValidatePragmaResourceSchema,
 } from "./projects.ts";
 import {
@@ -99,6 +101,14 @@ import {
   ListExpertMemoryContextStoreEntriesSchema,
   ReadExpertMemoryContextStoreEntrySchema,
   SearchExpertMemoryContextStoreSchema,
+  GetTeamMemoryContextStoreSchema,
+  ListTeamMemoryContextStoreEntriesSchema,
+  ReadTeamMemoryContextStoreEntrySchema,
+  SearchTeamMemoryContextStoreSchema,
+  TeamMemoryContextStoreDescriptorSchema,
+  TeamMemoryContextStoreEntrySchema,
+  TeamMemoryContextStoreContentSchema,
+  TeamMemoryContextStoreSearchMatchSchema,
   GetMissionContextStoreSchema,
   ListMissionContextStoreEntriesSchema,
   MissionContextStoreContentSchema,
@@ -401,6 +411,20 @@ export type ExpertMemoryContextStoreContent = z.infer<typeof ExpertMemoryContext
 export type ExpertMemoryContextStoreSearchMatch = z.infer<
   typeof ExpertMemoryContextStoreSearchMatchSchema
 >;
+export type GetTeamMemoryContextStore = z.infer<typeof GetTeamMemoryContextStoreSchema>;
+export type ListTeamMemoryContextStoreEntries = z.infer<
+  typeof ListTeamMemoryContextStoreEntriesSchema
+>;
+export type ReadTeamMemoryContextStoreEntry = z.infer<typeof ReadTeamMemoryContextStoreEntrySchema>;
+export type SearchTeamMemoryContextStore = z.infer<typeof SearchTeamMemoryContextStoreSchema>;
+export type TeamMemoryContextStoreDescriptor = z.infer<
+  typeof TeamMemoryContextStoreDescriptorSchema
+>;
+export type TeamMemoryContextStoreEntry = z.infer<typeof TeamMemoryContextStoreEntrySchema>;
+export type TeamMemoryContextStoreContent = z.infer<typeof TeamMemoryContextStoreContentSchema>;
+export type TeamMemoryContextStoreSearchMatch = z.infer<
+  typeof TeamMemoryContextStoreSearchMatchSchema
+>;
 export type DesktopPluginManifest = z.infer<typeof DesktopPluginManifestSchema>;
 export type DesktopPlugin = z.infer<typeof DesktopPluginSchema>;
 export type PluginZipInspection = z.infer<typeof PluginZipInspectionSchema>;
@@ -417,6 +441,10 @@ export type UpdateBuiltInExpertDefinition = z.infer<typeof UpdateBuiltInExpertDe
 export type PragmaProjectSnapshot = z.infer<typeof PragmaProjectSnapshotSchema>;
 export type PublishPragmaProject = z.infer<typeof PublishPragmaProjectSchema>;
 export type UpsertPragmaResource = z.infer<typeof UpsertPragmaResourceSchema>;
+export type UpsertPragmaExpertTeam = z.infer<typeof UpsertPragmaExpertTeamSchema>;
+export type DesktopPragmaContextStoreBinding = z.infer<
+  typeof DesktopPragmaContextStoreBindingSchema
+>;
 export type AllocatePragmaResourceIdResult = z.infer<typeof AllocatePragmaResourceIdResultSchema>;
 export type PragmaProjectChanges = z.infer<typeof PragmaProjectChangesSchema>;
 export type PragmaProjectChangesValidationResult = z.infer<

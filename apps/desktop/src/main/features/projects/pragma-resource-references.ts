@@ -38,6 +38,7 @@ export function referencedPragmaResourceRefs(
     if (resource.kind === "ExpertTeam") {
       refs.add(resource.spec.coordinator.ref);
       for (const member of resource.spec.members) refs.add(member.ref);
+      for (const context of resource.spec.contextStores) refs.add(context.ref);
       for (const runtime of Object.values(resource.spec.delegation.runtimes)) refs.add(runtime);
       continue;
     }

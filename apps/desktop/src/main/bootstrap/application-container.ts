@@ -82,6 +82,8 @@ import {
 } from "../features/memory/memory-curator.ts";
 import { installExpertMemoryContextStoreBrowserHandlers } from "../features/memory/expert-memory-context-store-browser-ipc.ts";
 import { createExpertMemoryContextStoreBrowserService } from "../features/memory/expert-memory-context-store-browser.ts";
+import { installTeamMemoryContextStoreBrowserHandlers } from "../features/memory/team-memory-context-store-browser-ipc.ts";
+import { createTeamMemoryContextStoreBrowserService } from "../features/memory/team-memory-context-store-browser.ts";
 import { installMemoryPolicyHandlers } from "../features/memory/memory-policy-ipc.ts";
 import {
   createMemoryKnowledgePromotionService,
@@ -619,7 +621,7 @@ export async function createDesktopApplicationContainer(
     },
   });
   installExpertDefinitionHandlers(expertStore, usageStore);
-  installPragmaProjectHandlers(pragmaProjectStore, usageStore);
+  installPragmaProjectHandlers(pragmaProjectStore, usageStore, contextStores);
   const initialSettings = await desktopSettings.getSnapshot(options.getPreferredSystemLanguages());
   await mkdir(initialSettings.defaultWorkspace, { recursive: true, mode: 0o700 }).catch(
     (error: unknown) => {
@@ -942,6 +944,12 @@ export async function createDesktopApplicationContainer(
     createExpertMemoryContextStoreBrowserService({
       project: pragmaProjectStore,
       systemExperts,
+      memory: memoryPlane,
+    }),
+  );
+  installTeamMemoryContextStoreBrowserHandlers(
+    createTeamMemoryContextStoreBrowserService({
+      project: pragmaProjectStore,
       memory: memoryPlane,
     }),
   );

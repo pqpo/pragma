@@ -50,6 +50,8 @@ import type {
   PragmaProjectSnapshot,
   PublishPragmaProject,
   UpsertPragmaResource,
+  UpsertPragmaExpertTeam,
+  DesktopPragmaContextStoreBinding,
   AllocatePragmaResourceIdResult,
   PragmaProjectChanges,
   PragmaProjectChangesValidationResult,
@@ -160,6 +162,14 @@ import type {
   ExpertMemoryContextStoreEntry,
   ExpertMemoryContextStoreContent,
   ExpertMemoryContextStoreSearchMatch,
+  GetTeamMemoryContextStore,
+  ListTeamMemoryContextStoreEntries,
+  ReadTeamMemoryContextStoreEntry,
+  SearchTeamMemoryContextStore,
+  TeamMemoryContextStoreDescriptor,
+  TeamMemoryContextStoreEntry,
+  TeamMemoryContextStoreContent,
+  TeamMemoryContextStoreSearchMatch,
   GetMissionContextStore,
   ListMissionContextStoreEntries,
   ReadMissionContextStoreEntry,
@@ -285,6 +295,18 @@ export interface PragmaDesktopAPI {
   searchExpertMemoryContextStore: (
     input: SearchExpertMemoryContextStore,
   ) => Promise<ExpertMemoryContextStoreSearchMatch[]>;
+  getTeamMemoryContextStore: (
+    input: GetTeamMemoryContextStore,
+  ) => Promise<TeamMemoryContextStoreDescriptor>;
+  listTeamMemoryContextStoreEntries: (
+    input: ListTeamMemoryContextStoreEntries,
+  ) => Promise<TeamMemoryContextStoreEntry[]>;
+  readTeamMemoryContextStoreEntry: (
+    input: ReadTeamMemoryContextStoreEntry,
+  ) => Promise<TeamMemoryContextStoreContent>;
+  searchTeamMemoryContextStore: (
+    input: SearchTeamMemoryContextStore,
+  ) => Promise<TeamMemoryContextStoreSearchMatch[]>;
   pickWorkspace: () => Promise<PickWorkspaceResult>;
   validateWorkspace: (path: string) => Promise<ValidateWorkspaceResult>;
   getModelProviderSettings: () => Promise<ModelProviderSettingsSnapshot>;
@@ -354,6 +376,8 @@ export interface PragmaDesktopAPI {
   allocatePragmaResourceId: () => Promise<AllocatePragmaResourceIdResult>;
   publishPragmaProject: (input: PublishPragmaProject) => Promise<PragmaProjectSnapshot>;
   upsertPragmaResource: (input: UpsertPragmaResource) => Promise<PragmaProjectSnapshot>;
+  upsertPragmaExpertTeam: (input: UpsertPragmaExpertTeam) => Promise<PragmaProjectSnapshot>;
+  listPragmaContextStoreBindings: () => Promise<DesktopPragmaContextStoreBinding[]>;
   applyPragmaProjectChanges: (input: PragmaProjectChanges) => Promise<PragmaProjectSnapshot>;
   deletePragmaResource: (input: DeletePragmaResource) => Promise<PragmaProjectSnapshot>;
   validatePragmaYaml: (source: string) => Promise<PragmaYamlValidationResult>;

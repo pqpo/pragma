@@ -1,4 +1,5 @@
 import type { Expert } from "./expert-agent.ts";
+import type { ExpertAgentContextStore } from "../context-system/context-system.ts";
 import { normalizeRuntimeByExpert, type RuntimeByExpert } from "./agent-launcher.ts";
 import {
   freshContextIdResolver,
@@ -22,7 +23,20 @@ export interface DefineExpertTeamOptions {
   readonly instructions?: string | undefined;
   readonly coordinator: Expert;
   readonly members: readonly Expert[];
+  readonly contextStores?: readonly ExpertTeamContextStoreBinding[] | undefined;
   readonly delegation: ExpertTeamDelegationOptions;
+}
+
+export type ExpertTeamContextVisibility =
+  | { readonly mode: "all" }
+  | { readonly mode: "blacklist"; readonly expertIds: readonly string[] }
+  | { readonly mode: "whitelist"; readonly expertIds: readonly string[] };
+
+export interface ExpertTeamContextStoreBinding {
+  readonly namespace: string;
+  readonly store: ExpertAgentContextStore;
+  readonly required?: boolean | undefined;
+  readonly visibility: ExpertTeamContextVisibility;
 }
 
 export interface ExpertTeam {
@@ -33,6 +47,7 @@ export interface ExpertTeam {
   readonly instructions?: string | undefined;
   readonly coordinator: Expert;
   readonly members: readonly Expert[];
+  readonly contextStores: readonly ExpertTeamContextStoreBinding[];
   readonly delegation: {
     readonly allow: ReadonlyMap<string, ReadonlySet<string>>;
     readonly maxConcurrency: number;
@@ -50,6 +65,46 @@ export function defineExpertTeam(options: DefineExpertTeamOptions): ExpertTeam {
   }
 
   const known = new Set(ids);
+  const contextNamespaces = new Set<string>();
+  const contextStores = (options.contextStores ?? []).map((binding) => {
+    const namespace = readNonEmpty(binding.namespace, "contextStores.namespace");
+    if (contextNamespaces.has(namespace)) {
+      throw new Error(
+        `ExpertTeam ${options.id} contains duplicate Context namespace: ${namespace}`,
+      );
+    }
+    contextNamespaces.add(namespace);
+    const selected = binding.visibility.mode === "all" ? [] : [...binding.visibility.expertIds];
+    if (new Set(selected).size !== selected.length) {
+      throw new Error(`ExpertTeam ${options.id} Context visibility contains duplicate Expert ids.`);
+    }
+    for (const expertId of selected) {
+      if (!known.has(expertId)) {
+        throw new Error(
+          `ExpertTeam ${options.id} Context visibility references unknown Expert: ${expertId}`,
+        );
+      }
+    }
+    const visible = ids.filter((expertId) =>
+      binding.visibility.mode === "all"
+        ? true
+        : binding.visibility.mode === "whitelist"
+          ? selected.includes(expertId)
+          : !selected.includes(expertId),
+    );
+    if (visible.length === 0) {
+      throw new Error(`ExpertTeam ${options.id} Context store must be visible to an Expert.`);
+    }
+    return Object.freeze({
+      ...binding,
+      namespace,
+      required: binding.required ?? true,
+      visibility:
+        binding.visibility.mode === "all"
+          ? Object.freeze({ mode: "all" as const })
+          : Object.freeze({ ...binding.visibility, expertIds: Object.freeze(selected) }),
+    });
+  });
   const allow = new Map<string, ReadonlySet<string>>();
   const configuredAllow = options.delegation.allow ?? {
     [options.coordinator.id]: options.members.map((expert) => expert.id),
@@ -95,6 +150,7 @@ export function defineExpertTeam(options: DefineExpertTeamOptions): ExpertTeam {
       : { instructions: readNonEmpty(options.instructions, "instructions") }),
     coordinator: options.coordinator,
     members: Object.freeze([...options.members]),
+    contextStores: Object.freeze(contextStores),
     delegation: Object.freeze({
       allow,
       maxConcurrency,

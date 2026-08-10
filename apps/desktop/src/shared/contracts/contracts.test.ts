@@ -170,9 +170,9 @@ describe("runtime settings contracts", () => {
         status: "ready",
       },
       interpreter: {
-        writeVersion: "pragma.dsl/v4",
-        directReadVersions: ["pragma.dsl/v4"],
-        upgradeFromVersions: ["pragma.dsl/v2", "pragma.dsl/v3"],
+        writeVersion: "pragma.dsl/v5",
+        directReadVersions: ["pragma.dsl/v5"],
+        upgradeFromVersions: ["pragma.dsl/v2", "pragma.dsl/v3", "pragma.dsl/v4"],
       },
       gateway: {
         schemaVersion: 1,
@@ -217,8 +217,8 @@ describe("runtime settings contracts", () => {
       DesktopBridgeSnapshotSchema.safeParse({
         ...snapshot,
         interpreter: {
-          writeVersion: "pragma.dsl/v4",
-          directReadVersions: ["pragma.dsl/v4"],
+          writeVersion: "pragma.dsl/v5",
+          directReadVersions: ["pragma.dsl/v5"],
           upgradeFromVersions: [],
         },
       }).success,

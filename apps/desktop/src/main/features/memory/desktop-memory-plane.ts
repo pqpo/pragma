@@ -61,7 +61,7 @@ export type DesktopMemoryMutationResult =
 
 export interface DesktopMemoryContextStoreViewInput {
   readonly rootRef: MemoryRecallScope["rootRef"];
-  readonly expertRef: MemoryRecallScope["expertRef"];
+  readonly expertRef?: MemoryRecallScope["expertRef"] | undefined;
   readonly projectId: string;
 }
 
@@ -459,7 +459,7 @@ export async function createDesktopMemoryPlane(options: {
     });
     const policy = await policies.resolveAt({
       rootRef: scope.rootRef,
-      producerRefs: [scope.expertRef],
+      ...(scope.expertRef === undefined ? {} : { producerRefs: [scope.expertRef] }),
       occurredAt: new Date().toISOString(),
     });
     return { scope, available: policy.recall };
@@ -491,7 +491,7 @@ export async function createDesktopMemoryPlane(options: {
     async createContextStoreView(input) {
       const resolved = await resolveContextStoreViewScope(input);
       if (!resolved.available) {
-        const error = new Error("Memory recall is disabled for this Expert scope.");
+        const error = new Error("Memory recall is disabled for this resource scope.");
         Object.assign(error, { code: "memory_recall_disabled" });
         throw error;
       }
@@ -788,6 +788,7 @@ export async function resolveDesktopMemoryRecallScope(
 ): Promise<MemoryRecallScope | undefined> {
   const source = context?.source;
   const currentExpertId = context?.attributes?.[EXECUTION_CURRENT_EXPERT_ID_ATTR];
+  if (currentExpertId === undefined) return undefined;
   const scope = MemoryRecallScopeSchema.safeParse({
     rootRef: { type: source?.type, id: source?.id },
     expertRef: { type: "pragma.expert", id: currentExpertId },
@@ -796,7 +797,7 @@ export async function resolveDesktopMemoryRecallScope(
   if (!scope.success) return undefined;
   const policy = await policies.resolveAt({
     rootRef: scope.data.rootRef,
-    producerRefs: [scope.data.expertRef],
+    ...(scope.data.expertRef === undefined ? {} : { producerRefs: [scope.data.expertRef] }),
     occurredAt: now.toISOString(),
   });
   return policy.recall ? scope.data : undefined;

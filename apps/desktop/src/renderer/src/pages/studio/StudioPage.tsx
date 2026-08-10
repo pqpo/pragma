@@ -20,6 +20,7 @@ import type {
   DesktopPlugin,
   AutomationSummary,
   PragmaProjectSnapshot,
+  DesktopPragmaContextStoreBinding,
 } from "../../../../shared/contracts/index.ts";
 import { ContextStoreSchema } from "../../../../shared/contracts/index.ts";
 import { errorMessage } from "../../lib/errors.ts";
@@ -43,6 +44,7 @@ import {
   TeamEditor,
   type ResourceEditorMode,
   type ResourceKind,
+  type TeamKnowledgeSelection,
 } from "./PragmaResourceDirectoryFragment.tsx";
 import { PluginDetailFragment, PluginDirectoryFragment } from "./PluginDirectoryFragment.tsx";
 import { AutomationDirectoryFragment } from "./AutomationDirectoryFragment.tsx";
@@ -93,9 +95,12 @@ export function StudioPage(props: {
   }>({ mode: "create", baseRevision: 0 });
   const [runtimes, setRuntimes] = useState<readonly DesktopRuntimeAvailability[]>([]);
   const [contextStores, setContextStores] = useState<readonly ContextStore[]>([]);
+  const [contextStoreBindings, setContextStoreBindings] = useState<
+    readonly DesktopPragmaContextStoreBinding[]
+  >([]);
   const [selectedContextStoreId, setSelectedContextStoreId] = useState<string | null>(null);
   const [contextStoreDetailReturn, setContextStoreDetailReturn] = useState<
-    "expert-detail" | null
+    "expert-detail" | "team-detail" | null
   >(null);
   const [revisionStoreFilter, setRevisionStoreFilter] = useState<string | undefined>();
   const [revisionTaskCount, setRevisionTaskCount] = useState(0);
@@ -161,6 +166,14 @@ export function StudioPage(props: {
       .listContextStores()
       .then((stores) => {
         if (!cancelled) setContextStores(stores);
+      })
+      .catch((loadError: unknown) => {
+        if (!cancelled) setExpertError(errorMessage(loadError));
+      });
+    void api
+      .listPragmaContextStoreBindings()
+      .then((bindings) => {
+        if (!cancelled) setContextStoreBindings(bindings);
       })
       .catch((loadError: unknown) => {
         if (!cancelled) setExpertError(errorMessage(loadError));
@@ -489,32 +502,6 @@ export function StudioPage(props: {
     setScreen("resource-detail");
   };
 
-  const savePragmaResource = async (
-    resource: PragmaResource,
-    expectedRevision: number,
-    requiredUnchangedRefs: readonly string[],
-  ): Promise<boolean> => {
-    const api = desktopApi();
-    if (api === undefined) return false;
-    try {
-      const snapshot = await api.upsertPragmaResource({
-        baseRevision: expectedRevision,
-        resource,
-        requiredUnchangedRefs: [...requiredUnchangedRefs],
-      });
-      setProject(snapshot);
-      setSelectedResourceRef(canonicalPragmaResourceRef(resource));
-      setResourceEditor(null);
-      resourceSaveCompletedRef.current = true;
-      setExpertError(null);
-      setScreen("resource-detail");
-      return true;
-    } catch (saveError) {
-      setExpertError(errorMessage(saveError));
-      return false;
-    }
-  };
-
   const saveFlowResource = async (
     resource: PragmaFlowResource,
     supportingResources: readonly PragmaResource[],
@@ -531,6 +518,36 @@ export function StudioPage(props: {
         requiredUnchangedRefs: [...requiredUnchangedRefs],
       });
       setProject(snapshot);
+      setSelectedResourceRef(canonicalPragmaResourceRef(resource));
+      setResourceEditor(null);
+      resourceSaveCompletedRef.current = true;
+      setExpertError(null);
+      setScreen("resource-detail");
+      return true;
+    } catch (saveError) {
+      setExpertError(errorMessage(saveError));
+      return false;
+    }
+  };
+
+  const saveTeamResource = async (
+    resource: PragmaExpertTeamResource,
+    teamContextStores: readonly TeamKnowledgeSelection[],
+    expectedRevision: number,
+    requiredUnchangedRefs: readonly string[],
+  ): Promise<boolean> => {
+    const api = desktopApi();
+    if (api === undefined) return false;
+    try {
+      const snapshot = await api.upsertPragmaExpertTeam({
+        baseRevision: expectedRevision,
+        resource,
+        contextStores: [...teamContextStores],
+        requiredUnchangedRefs: [...requiredUnchangedRefs],
+      });
+      const bindings = await api.listPragmaContextStoreBindings();
+      setProject(snapshot);
+      setContextStoreBindings(bindings);
       setSelectedResourceRef(canonicalPragmaResourceRef(resource));
       setResourceEditor(null);
       resourceSaveCompletedRef.current = true;
@@ -567,20 +584,29 @@ export function StudioPage(props: {
   const refreshBundleData = async () => {
     const api = desktopApi();
     if (api === undefined) return;
-    const [nextProject, summaries, nextCapabilities, nextStores, nextPlugins, nextRuntimes] =
-      await Promise.all([
-        api.getPragmaProject(),
-        api.listExperts(),
-        api.listCapabilities(),
-        api.listContextStores(),
-        api.listPlugins(),
-        api.getRuntimeAvailability(),
-      ]);
+    const [
+      nextProject,
+      summaries,
+      nextCapabilities,
+      nextStores,
+      nextBindings,
+      nextPlugins,
+      nextRuntimes,
+    ] = await Promise.all([
+      api.getPragmaProject(),
+      api.listExperts(),
+      api.listCapabilities(),
+      api.listContextStores(),
+      api.listPragmaContextStoreBindings(),
+      api.listPlugins(),
+      api.getRuntimeAvailability(),
+    ]);
     const definitions = await Promise.all(summaries.map((summary) => api.getExpert(summary.ref)));
     setProject(nextProject);
     setExperts(definitions.map(toExpertRecord));
     setCapabilities(nextCapabilities);
     setContextStores(nextStores);
+    setContextStoreBindings(nextBindings);
     setPlugins(nextPlugins);
     setRuntimes(nextRuntimes);
   };
@@ -763,6 +789,12 @@ export function StudioPage(props: {
                 setScreen("expert-detail");
                 return;
               }
+              if (contextStoreDetailReturn === "team-detail") {
+                setContextStoreDetailReturn(null);
+                setActiveView("teams");
+                setScreen("resource-detail");
+                return;
+              }
               setScreen("directory");
             }}
             onOpenRevisions={() => {
@@ -886,6 +918,14 @@ export function StudioPage(props: {
             project={project}
             experts={experts}
             runtimes={runtimes}
+            contextStores={contextStores}
+            contextStoreBindings={contextStoreBindings}
+            onOpenContextStore={(store) => {
+              setSelectedContextStoreId(store.id);
+              setContextStoreDetailReturn("team-detail");
+              setActiveView("context-stores");
+              setScreen("context-store-detail");
+            }}
             onOpenExpert={(expert) => {
               setExpertDetailReturn({
                 resourceRef: canonicalPragmaResourceRef(selectedResource),
@@ -907,14 +947,26 @@ export function StudioPage(props: {
           resourceEditor.kind === "team" ? (
             <TeamEditor
               project={project}
+              contextStores={contextStores}
+              contextStoreBindings={contextStoreBindings}
               baseRevision={project.revision}
               mode={resourceEditor.mode}
               newResourceId={resourceEditor.newResourceId}
               initial={selectedResource?.kind === "ExpertTeam" ? selectedResource : undefined}
               error={expertError}
               onCancel={closeResourceEditor}
-              onSave={async (resource, expectedRevision, requiredUnchangedRefs) => {
-                await savePragmaResource(resource, expectedRevision, requiredUnchangedRefs);
+              onSave={async (
+                resource,
+                teamContextStores,
+                expectedRevision,
+                requiredUnchangedRefs,
+              ) => {
+                await saveTeamResource(
+                  resource,
+                  teamContextStores,
+                  expectedRevision,
+                  requiredUnchangedRefs,
+                );
               }}
             />
           ) : (

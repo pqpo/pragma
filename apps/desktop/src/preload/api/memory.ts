@@ -42,6 +42,14 @@ import {
   ListExpertMemoryContextStoreEntriesSchema,
   ReadExpertMemoryContextStoreEntrySchema,
   SearchExpertMemoryContextStoreSchema,
+  GetTeamMemoryContextStoreSchema,
+  ListTeamMemoryContextStoreEntriesSchema,
+  ReadTeamMemoryContextStoreEntrySchema,
+  SearchTeamMemoryContextStoreSchema,
+  TeamMemoryContextStoreDescriptorSchema,
+  TeamMemoryContextStoreEntrySchema,
+  TeamMemoryContextStoreContentSchema,
+  TeamMemoryContextStoreSearchMatchSchema,
 } from "../../shared/contracts/context-store-browser.ts";
 
 export const memoryApi = {
@@ -217,6 +225,34 @@ export const memoryApi = {
         SearchExpertMemoryContextStoreSchema.parse(input),
       ),
     ),
+  getTeamMemoryContextStore: async (input) =>
+    TeamMemoryContextStoreDescriptorSchema.parse(
+      await ipcRenderer.invoke(
+        "team-memory-context-stores:get",
+        GetTeamMemoryContextStoreSchema.parse(input),
+      ),
+    ),
+  listTeamMemoryContextStoreEntries: async (input) =>
+    TeamMemoryContextStoreEntrySchema.array().parse(
+      await ipcRenderer.invoke(
+        "team-memory-context-stores:list",
+        ListTeamMemoryContextStoreEntriesSchema.parse(input),
+      ),
+    ),
+  readTeamMemoryContextStoreEntry: async (input) =>
+    TeamMemoryContextStoreContentSchema.parse(
+      await ipcRenderer.invoke(
+        "team-memory-context-stores:read",
+        ReadTeamMemoryContextStoreEntrySchema.parse(input),
+      ),
+    ),
+  searchTeamMemoryContextStore: async (input) =>
+    TeamMemoryContextStoreSearchMatchSchema.array().parse(
+      await ipcRenderer.invoke(
+        "team-memory-context-stores:search",
+        SearchTeamMemoryContextStoreSchema.parse(input),
+      ),
+    ),
 } satisfies Pick<
   PragmaDesktopAPI,
   | "getGlobalMemoryPolicy"
@@ -248,4 +284,8 @@ export const memoryApi = {
   | "listExpertMemoryContextStoreEntries"
   | "readExpertMemoryContextStoreEntry"
   | "searchExpertMemoryContextStore"
+  | "getTeamMemoryContextStore"
+  | "listTeamMemoryContextStoreEntries"
+  | "readTeamMemoryContextStoreEntry"
+  | "searchTeamMemoryContextStore"
 >;

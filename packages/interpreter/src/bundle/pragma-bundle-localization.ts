@@ -228,6 +228,15 @@ function rewriteResourceIdentity(
   } else if (rewritten.kind === "ExpertTeam") {
     rewritten.spec.coordinator.ref = rewriteRef(rewritten.spec.coordinator.ref);
     for (const member of rewritten.spec.members) member.ref = rewriteRef(member.ref);
+    for (const contextStore of rewritten.spec.contextStores) {
+      contextStore.ref = rewriteRef(contextStore.ref);
+      if (contextStore.visibility.mode !== "all") {
+        contextStore.visibility.expertIds = contextStore.visibility.expertIds.map((expertId) => {
+          const targetExpert = refMap.get(`expert:${expertId}` as PragmaResourceRef);
+          return targetExpert?.slice("expert:".length) ?? expertId;
+        });
+      }
+    }
     if (rewritten.spec.delegation.allow !== undefined) {
       rewritten.spec.delegation.allow = Object.fromEntries(
         Object.entries(rewritten.spec.delegation.allow).map(([expertId, members]) => {

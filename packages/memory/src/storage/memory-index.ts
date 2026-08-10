@@ -50,7 +50,10 @@ export function recordMemoryRecall(
   scope: MemoryRecallScope,
   now: Date,
 ): void {
-  for (const ref of uniqueRefs([scope.rootRef, scope.expertRef])) {
+  for (const ref of uniqueRefs([
+    scope.rootRef,
+    ...(scope.expertRef === undefined ? [] : [scope.expertRef]),
+  ])) {
     const key = refKey(ref);
     database
       .prepare(
@@ -82,7 +85,10 @@ function selectHot<
   score: (record: T, state: IndexState) => number,
 ): T[] {
   const selected = new Map<string, { readonly record: T; readonly score: number }>();
-  for (const ref of uniqueRefs([scope.rootRef, scope.expertRef])) {
+  for (const ref of uniqueRefs([
+    scope.rootRef,
+    ...(scope.expertRef === undefined ? [] : [scope.expertRef]),
+  ])) {
     const key = refKey(ref);
     const ranked = records
       .filter((record) =>

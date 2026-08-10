@@ -85,9 +85,11 @@ export const PragmaExpertRefSchema = semanticRefSchema(
     context.addIssue({ ...issue, path: ["id", ...issue.path] });
   }
 });
+export const PragmaExpertTeamRefSchema = semanticRefSchema(["team"], "team:7k2m9q4v8np6r3dt");
 export const PragmaInvocableResourceRefSchema = z.union([
   PragmaExpertRefSchema,
-  semanticRefSchema(["team", "flow"], "team:7k2m9q4v8np6r3dt"),
+  PragmaExpertTeamRefSchema,
+  semanticRefSchema(["flow"], "flow:7k2m9q4v8np6r3dt"),
 ]);
 export const PragmaAutomationRefSchema = semanticRefSchema(
   ["automation"],
@@ -351,6 +353,36 @@ export const PragmaExpertResourceSchema = z
     });
   });
 
+export const PragmaExpertTeamContextVisibilitySchema = z.discriminatedUnion("mode", [
+  z.object({ mode: z.literal("all") }).strict(),
+  z
+    .object({
+      mode: z.literal("blacklist"),
+      expertIds: z.array(PragmaExpertIdSchema),
+    })
+    .strict(),
+  z
+    .object({
+      mode: z.literal("whitelist"),
+      expertIds: z.array(PragmaExpertIdSchema).min(1),
+    })
+    .strict(),
+]);
+
+export const PragmaExpertTeamContextStoreBindingSchema = z
+  .object({
+    ref: PragmaContextStoreRefSchema,
+    namespace: z
+      .string()
+      .trim()
+      .min(1)
+      .max(100)
+      .regex(/^[A-Za-z0-9][A-Za-z0-9_-]*$/),
+    required: z.boolean().default(true),
+    visibility: PragmaExpertTeamContextVisibilitySchema.default({ mode: "all" }),
+  })
+  .strict();
+
 export const PragmaExpertTeamResourceSchema = z
   .object({
     apiVersion: PragmaApiVersionSchema,
@@ -361,6 +393,7 @@ export const PragmaExpertTeamResourceSchema = z
         coordinator: z.object({ ref: PragmaExpertRefSchema }).strict(),
         members: z.array(z.object({ ref: PragmaExpertRefSchema }).strict()).min(1),
         instructions: PragmaExpertTeamInstructionsSchema.optional(),
+        contextStores: z.array(PragmaExpertTeamContextStoreBindingSchema).default([]),
         delegation: z
           .object({
             allow: z.record(PragmaExpertIdSchema, z.array(PragmaExpertIdSchema)).optional(),
@@ -376,7 +409,64 @@ export const PragmaExpertTeamResourceSchema = z
       })
       .strict(),
   })
-  .strict();
+  .strict()
+  .superRefine((team, context) => {
+    const participantIds = [
+      team.spec.coordinator.ref.slice("expert:".length),
+      ...team.spec.members.map((member) => member.ref.slice("expert:".length)),
+    ];
+    const participants = new Set(participantIds);
+    const refs = new Set<string>();
+    const namespaces = new Set<string>();
+    team.spec.contextStores.forEach((binding, bindingIndex) => {
+      if (refs.has(binding.ref)) {
+        context.addIssue({
+          code: "custom",
+          message: `ExpertTeam context store is mounted more than once: ${binding.ref}.`,
+          path: ["spec", "contextStores", bindingIndex, "ref"],
+        });
+      }
+      refs.add(binding.ref);
+      if (namespaces.has(binding.namespace)) {
+        context.addIssue({
+          code: "custom",
+          message: `ExpertTeam context namespace is duplicated: ${binding.namespace}.`,
+          path: ["spec", "contextStores", bindingIndex, "namespace"],
+        });
+      }
+      namespaces.add(binding.namespace);
+      if (binding.visibility.mode === "all") return;
+      const selected = new Set<string>();
+      binding.visibility.expertIds.forEach((expertId, expertIndex) => {
+        if (!participants.has(expertId)) {
+          context.addIssue({
+            code: "custom",
+            message: `ExpertTeam context visibility references an unknown Expert: ${expertId}.`,
+            path: ["spec", "contextStores", bindingIndex, "visibility", "expertIds", expertIndex],
+          });
+        }
+        if (selected.has(expertId)) {
+          context.addIssue({
+            code: "custom",
+            message: `ExpertTeam context visibility contains a duplicate Expert: ${expertId}.`,
+            path: ["spec", "contextStores", bindingIndex, "visibility", "expertIds", expertIndex],
+          });
+        }
+        selected.add(expertId);
+      });
+      const visibleCount =
+        binding.visibility.mode === "whitelist"
+          ? participantIds.filter((id) => selected.has(id)).length
+          : participantIds.filter((id) => !selected.has(id)).length;
+      if (visibleCount === 0) {
+        context.addIssue({
+          code: "custom",
+          message: "An ExpertTeam context store must be visible to at least one participant.",
+          path: ["spec", "contextStores", bindingIndex, "visibility"],
+        });
+      }
+    });
+  });
 
 export const PragmaFlowTargetSchema = z.union([
   PragmaFlowNodeIdSchema,
@@ -994,6 +1084,9 @@ export type PragmaInvocableResourceRef = z.infer<typeof PragmaInvocableResourceR
 export type PragmaBindingRef = z.infer<typeof PragmaBindingRefSchema>;
 export type PragmaArtifactSource = z.infer<typeof PragmaArtifactSourceSchema>;
 export type PragmaExpertResource = z.infer<typeof PragmaExpertResourceSchema>;
+export type PragmaExpertTeamContextVisibility = z.infer<
+  typeof PragmaExpertTeamContextVisibilitySchema
+>;
 export type PragmaExpertTeamResource = z.infer<typeof PragmaExpertTeamResourceSchema>;
 export type PragmaFlowResource = z.infer<typeof PragmaFlowResourceSchema>;
 export type PragmaAutomationResource = z.infer<typeof PragmaAutomationResourceSchema>;

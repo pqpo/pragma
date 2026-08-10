@@ -1541,7 +1541,7 @@ function recallPredicate(
   tableAlias: "episodes" | "p",
   scope: MemoryRecallScope,
 ): { readonly sql: string; readonly parameters: readonly string[] } {
-  const refs = [scope.rootRef, scope.expertRef].filter(
+  const refs = [scope.rootRef, ...(scope.expertRef === undefined ? [] : [scope.expertRef])].filter(
     (ref, index, all) =>
       all.findIndex((candidate) => candidate.type === ref.type && candidate.id === ref.id) ===
       index,
@@ -1555,7 +1555,11 @@ function recallPredicate(
           AND json_extract(binding.value, '$.recall') = 'allow'
       )`,
   );
-  const principals = uniqueRefs([scope.rootRef, scope.expertRef, ...(scope.principalRefs ?? [])]);
+  const principals = uniqueRefs([
+    scope.rootRef,
+    ...(scope.expertRef === undefined ? [] : [scope.expertRef]),
+    ...(scope.principalRefs ?? []),
+  ]);
   const principalClauses = principals.map(
     () =>
       `(json_extract(principal.value, '$.type') = ?

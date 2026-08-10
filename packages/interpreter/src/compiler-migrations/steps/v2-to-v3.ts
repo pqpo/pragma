@@ -11,7 +11,7 @@ import { PragmaCompilerMigrationError } from "../types.ts";
 
 interface ParsedCompilerV2Resource {
   readonly source: string;
-  readonly historical: PragmaResource | Record<string, unknown>;
+  readonly historical: unknown;
   readonly current: PragmaResource;
 }
 
@@ -176,7 +176,7 @@ function parseCompilerV2Resource(value: unknown, source: string): ParsedCompiler
       { cause: current.error },
     );
   }
-  const normalizedHistorical =
+  const normalizedHistorical: unknown =
     current.data.kind === "Flow" &&
     isRecord(historical) &&
     isRecord(historical["spec"]) &&
@@ -185,8 +185,15 @@ function parseCompilerV2Resource(value: unknown, source: string): ParsedCompiler
           ...current.data,
           spec: { ...current.data.spec, runDry: historical["spec"]["runDry"] },
         }
-      : current.data;
+      : withoutV5TeamFields(current.data);
   return { source, historical: normalizedHistorical, current: current.data };
+}
+
+function withoutV5TeamFields(resource: PragmaResource): unknown {
+  if (resource.kind !== "ExpertTeam") return resource;
+  const historical = structuredClone(resource) as Record<string, unknown>;
+  if (isRecord(historical["spec"])) delete historical["spec"]["contextStores"];
+  return historical;
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {
