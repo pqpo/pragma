@@ -89,29 +89,40 @@ describe("Antigravity model discovery", () => {
     ]);
   });
 
-  it("discovers inside a disposable private HOME and removes it afterwards", async () => {
+  it("inherits the authenticated host profile while isolating temporary discovery files", async () => {
     let discoveryHome = "";
     mocks.runRuntimeCommand.mockImplementation(async (options) => {
       discoveryHome = options.cwd as string;
       expect(options.args).toEqual(["models"]);
       expect(options.env).toMatchObject({
-        HOME: discoveryHome,
-        USERPROFILE: discoveryHome,
+        HOME: "/host/home",
+        USERPROFILE: "/host/profile",
         TMPDIR: `${discoveryHome}/tmp`,
         AGY_CLI_DISABLE_AUTO_UPDATE: "true",
+        NO_COLOR: "1",
         EXPLICIT_AUTH: "kept",
+        AGY_APP_DATA_DIR: "/host/agy",
+        ANTIGRAVITY_HOME: "/host/antigravity",
+        GEMINI_CLI_HOME: "/host/gemini-cli",
+        GEMINI_CONFIG_DIR: "/host/gemini",
       });
-      expect(options.env["AGY_APP_DATA_DIR"]).toBeUndefined();
-      expect(options.env["GEMINI_CONFIG_DIR"]).toBeUndefined();
+      expect(options.env["ANTIGRAVITY_CONVERSATION_ID"]).toBeUndefined();
+      expect(options.env["PRAGMA_AGY_HOOK_AUTHORIZATION"]).toBeUndefined();
       return { exitCode: 0, signal: null, stdout: MODEL_OUTPUT, stderr: "" };
     });
 
     const models = await createAntigravityModelDiscovery({
       executablePath: `/opt/agy-${randomUUID()}`,
       env: {
+        HOME: "/host/home",
+        USERPROFILE: "/host/profile",
         EXPLICIT_AUTH: "kept",
         AGY_APP_DATA_DIR: "/host/agy",
+        ANTIGRAVITY_HOME: "/host/antigravity",
+        GEMINI_CLI_HOME: "/host/gemini-cli",
         GEMINI_CONFIG_DIR: "/host/gemini",
+        ANTIGRAVITY_CONVERSATION_ID: "stale-conversation",
+        PRAGMA_AGY_HOOK_AUTHORIZATION: "secret",
       },
     })();
 

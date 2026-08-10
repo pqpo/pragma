@@ -16,6 +16,10 @@ import { basename, dirname, isAbsolute, join, posix, resolve, win32 } from "node
 
 import type { Expert } from "@pragma/core";
 
+import {
+  applyCommonAntigravityEnvironment,
+  deleteEnvironmentValue,
+} from "./environment-variables.ts";
 import type { AntigravityHookRelay } from "./permission-hooks.ts";
 import type { AntigravityRuntimePermissionMode } from "./types.ts";
 
@@ -163,12 +167,6 @@ export function createManagedAntigravityEnvironment(options: {
     "XDG_CACHE_HOME",
     "XDG_DATA_HOME",
     "XDG_STATE_HOME",
-    "XDG_RUNTIME_DIR",
-    "TMPDIR",
-    "TMP",
-    "TEMP",
-    "AGY_CLI_DISABLE_AUTO_UPDATE",
-    "NO_COLOR",
     "PRAGMA_AGY_HOOK_URL",
     "PRAGMA_AGY_HOOK_AUTHORIZATION",
     "ELECTRON_RUN_AS_NODE",
@@ -186,12 +184,7 @@ export function createManagedAntigravityEnvironment(options: {
   env["XDG_CACHE_HOME"] = environmentPath.join(options.homeDir, ".cache");
   env["XDG_DATA_HOME"] = environmentPath.join(options.homeDir, ".local", "share");
   env["XDG_STATE_HOME"] = environmentPath.join(options.homeDir, ".local", "state");
-  env["XDG_RUNTIME_DIR"] = options.tmpDir;
-  env["TMPDIR"] = options.tmpDir;
-  env["TMP"] = options.tmpDir;
-  env["TEMP"] = options.tmpDir;
-  env["AGY_CLI_DISABLE_AUTO_UPDATE"] = "true";
-  env["NO_COLOR"] = "1";
+  applyCommonAntigravityEnvironment({ env, tmpDir: options.tmpDir, platform });
   if (platform === "win32") {
     const root = environmentPath.parse(options.homeDir).root;
     env["HOMEDRIVE"] = root.replace(/[\\/]$/, "");
@@ -567,18 +560,4 @@ function isReplaceError(error: unknown): boolean {
     "code" in error &&
     (error.code === "EEXIST" || error.code === "EPERM")
   );
-}
-
-function deleteEnvironmentValue(
-  env: NodeJS.ProcessEnv,
-  key: string,
-  platform: NodeJS.Platform,
-): void {
-  if (platform !== "win32") {
-    delete env[key];
-    return;
-  }
-  for (const candidate of Object.keys(env)) {
-    if (candidate.toLowerCase() === key.toLowerCase()) delete env[candidate];
-  }
 }

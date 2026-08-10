@@ -5,8 +5,11 @@ import { join } from "node:path";
 
 import { runRuntimeCommand, type RuntimeCommandSpawn, type RuntimeModel } from "@pragma/core";
 
+import {
+  applyCommonAntigravityEnvironment,
+  deleteEnvironmentValue,
+} from "./environment-variables.ts";
 import { resolveAntigravityExecutablePath } from "./executable.ts";
-import { createManagedAntigravityEnvironment } from "./managed-home.ts";
 import type { AntigravityRuntimeAdapterOptions } from "./types.ts";
 
 const MODEL_CATALOG_TTL_MS = 10 * 60_000;
@@ -65,9 +68,8 @@ export function createAntigravityModelDiscovery(
           executablePath,
           args: ["models"],
           cwd: discoveryHome,
-          env: createManagedAntigravityEnvironment({
+          env: createAntigravityModelDiscoveryEnvironment({
             base: { ...process.env, ...(options.env ?? {}) },
-            homeDir: discoveryHome,
             tmpDir: discoveryTmp,
           }),
           timeoutMs: 20_000,
@@ -89,6 +91,41 @@ export function createAntigravityModelDiscovery(
       }
     }
   };
+}
+
+function createAntigravityModelDiscoveryEnvironment(options: {
+  readonly base: Readonly<NodeJS.ProcessEnv>;
+  readonly tmpDir: string;
+  readonly platform?: NodeJS.Platform | undefined;
+}): NodeJS.ProcessEnv {
+  const platform = options.platform ?? process.platform;
+  const env: NodeJS.ProcessEnv = { ...options.base };
+
+  // Model discovery must see the host's HOME/config paths because agy resolves
+  // the signed-in account and onboarding/project selection from that profile.
+  // Only discard volatile variables belonging to an already-running
+  // Antigravity session; inheriting those could attach discovery to an IDE or
+  // Runtime sidecar. Runtime execution still uses its fully private HOME.
+  for (const key of [
+    "ANTIGRAVITY_AGENTAPI_EXE",
+    "ANTIGRAVITY_CONVERSATION_ID",
+    "ANTIGRAVITY_CSRF_TOKEN",
+    "ANTIGRAVITY_EXECUTABLE_DATA_DIR",
+    "ANTIGRAVITY_LS_ADDRESS",
+    "ANTIGRAVITY_PROJECT_ID",
+    "ANTIGRAVITY_SIDECAR_UI_TOKEN",
+    "ANTIGRAVITY_SIDECAR_WEB_PORT",
+    "GOOGLE_LOG_DIR",
+    "GOOGLE_STATUS_DIR",
+    "PRAGMA_AGY_HOOK_URL",
+    "PRAGMA_AGY_HOOK_AUTHORIZATION",
+    "ELECTRON_RUN_AS_NODE",
+  ]) {
+    deleteEnvironmentValue(env, key, platform);
+  }
+
+  applyCommonAntigravityEnvironment({ env, tmpDir: options.tmpDir, platform });
+  return env;
 }
 
 export function parseAntigravityModels(output: string): readonly RuntimeModel[] {
