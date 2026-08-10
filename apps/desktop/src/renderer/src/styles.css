@@ -546,16 +546,16 @@ html.is-resizing-sidebar * {
   width: max-content;
   overflow: visible;
   text-overflow: clip;
-  animation: ui-overflow-marquee var(--ui-marquee-duration) ease-in-out infinite alternate;
+  animation: ui-overflow-marquee var(--ui-marquee-duration) linear infinite alternate;
 }
 
 @keyframes ui-overflow-marquee {
   0%,
-  14% {
+  4% {
     transform: translateX(0);
   }
 
-  86%,
+  96%,
   100% {
     transform: translateX(calc(-1 * var(--ui-marquee-distance)));
   }

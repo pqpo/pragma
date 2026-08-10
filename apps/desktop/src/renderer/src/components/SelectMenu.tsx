@@ -331,7 +331,7 @@ function OverflowingOptionLabel(props: { readonly label: string; readonly visibl
     | undefined = overflowing
     ? {
         "--ui-marquee-distance": `${overflowDistance}px`,
-        "--ui-marquee-duration": `${Math.max(4, overflowDistance / 28 + 2.5)}s`,
+        "--ui-marquee-duration": `${Math.max(3.2, overflowDistance / 36 + 1.8)}s`,
       }
     : undefined;
 
