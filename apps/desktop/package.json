@@ -32,7 +32,7 @@
     "clean": "rm -rf out dist .plugin-bundles"
   },
   "dependencies": {
-    "@dagrejs/dagre": "^3.0.0",
+    "@dagrejs/dagre": "^3.1.0",
     "@lobehub/icons-static-svg": "1.94.0",
     "@phosphor-icons/react": "latest",
     "@pragma/core": "workspace:*",
@@ -52,7 +52,7 @@
     "croner": "^10.0.1",
     "fflate": "^0.8.2",
     "i18next": "^26.3.6",
-    "marked": "18.0.7",
+    "marked": "18.0.9",
     "react": "latest",
     "react-dom": "latest",
     "react-i18next": "^17.0.11",
