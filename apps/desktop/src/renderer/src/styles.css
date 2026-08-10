@@ -536,39 +536,27 @@ html.is-resizing-sidebar * {
   white-space: nowrap;
 }
 
-:is(
-    .ui-select-option[aria-selected="true"],
-    .ui-select-option:hover,
-    .ui-select-option:focus-visible
-  )
-  .ui-overflow-marquee.is-overflowing
-  > span {
+.ui-overflow-marquee.is-overflowing.is-playing > span {
   width: max-content;
   overflow: visible;
   text-overflow: clip;
-  animation: ui-overflow-marquee var(--ui-marquee-duration) linear infinite alternate;
+  animation: ui-overflow-marquee var(--ui-marquee-duration) linear 1;
 }
 
 @keyframes ui-overflow-marquee {
   0%,
-  4% {
+  2% {
     transform: translateX(0);
   }
 
-  96%,
+  62%,
   100% {
     transform: translateX(calc(-1 * var(--ui-marquee-distance)));
   }
 }
 
 @media (prefers-reduced-motion: reduce) {
-  :is(
-      .ui-select-option[aria-selected="true"],
-      .ui-select-option:hover,
-      .ui-select-option:focus-visible
-    )
-    .ui-overflow-marquee.is-overflowing
-    > span {
+  .ui-overflow-marquee.is-overflowing.is-playing > span {
     width: auto;
     overflow: hidden;
     text-overflow: ellipsis;

@@ -50,6 +50,7 @@ export function SelectMenu<Value extends string>(props: {
   const [open, setOpen] = useState(false);
   const [query, setQuery] = useState("");
   const [activeIndex, setActiveIndex] = useState(0);
+  const [hoveredIndex, setHoveredIndex] = useState(-1);
   const [menuPlacement, setMenuPlacement] = useState<MenuPlacement>("bottom");
   const [menuStyle, setMenuStyle] = useState<CSSProperties>({});
   const visibleOptions = useMemo(() => {
@@ -130,6 +131,7 @@ export function SelectMenu<Value extends string>(props: {
   const openMenu = (preferredValue = props.value) => {
     if (props.disabled) return;
     setQuery("");
+    setHoveredIndex(-1);
     const preferredIndex = props.options.findIndex((option) => option.value === preferredValue);
     setActiveIndex(
       optionAvailable(props.options, preferredIndex)
@@ -142,6 +144,7 @@ export function SelectMenu<Value extends string>(props: {
   const closeMenu = (restoreFocus: boolean) => {
     setOpen(false);
     setQuery("");
+    setHoveredIndex(-1);
     if (restoreFocus) requestAnimationFrame(() => triggerRef.current?.focus());
   };
 
@@ -251,11 +254,19 @@ export function SelectMenu<Value extends string>(props: {
             tabIndex={index === activeIndex ? 0 : -1}
             onClick={() => choose(option)}
             onFocus={() => setActiveIndex(index)}
+            onMouseEnter={() => setHoveredIndex(index)}
+            onMouseLeave={() => setHoveredIndex(-1)}
             onKeyDown={(event) => handleOptionKeyDown(event, index)}
           >
             <span className="ui-select-option-copy">
               {props.animateOverflowingOptions ? (
-                <OverflowingOptionLabel label={option.label} visible={open} />
+                <OverflowingOptionLabel
+                  active={index === activeIndex}
+                  hovered={index === hoveredIndex}
+                  label={option.label}
+                  selected={option.value === props.value}
+                  visible={open}
+                />
               ) : (
                 <span>{option.label}</span>
               )}
@@ -298,10 +309,17 @@ export function SelectMenu<Value extends string>(props: {
   );
 }
 
-function OverflowingOptionLabel(props: { readonly label: string; readonly visible: boolean }) {
+function OverflowingOptionLabel(props: {
+  readonly active: boolean;
+  readonly hovered: boolean;
+  readonly label: string;
+  readonly selected: boolean;
+  readonly visible: boolean;
+}) {
   const viewportRef = useRef<HTMLSpanElement>(null);
   const contentRef = useRef<HTMLSpanElement>(null);
   const [overflowDistance, setOverflowDistance] = useState(0);
+  const [playing, setPlaying] = useState(false);
 
   useLayoutEffect(() => {
     if (!props.visible) {
@@ -326,23 +344,41 @@ function OverflowingOptionLabel(props: { readonly label: string; readonly visibl
   }, [props.label, props.visible]);
 
   const overflowing = overflowDistance > 1;
+
+  useEffect(() => {
+    if (!props.visible || !overflowing) {
+      setPlaying(false);
+      return;
+    }
+    if (props.selected || props.active) setPlaying(true);
+  }, [overflowing, props.active, props.selected, props.visible]);
+
+  useEffect(() => {
+    if (!props.visible || !overflowing || !props.hovered) return;
+    setPlaying(false);
+    const frame = requestAnimationFrame(() => setPlaying(true));
+    return () => cancelAnimationFrame(frame);
+  }, [overflowing, props.hovered, props.visible]);
+
   const style:
     | (CSSProperties & Record<"--ui-marquee-distance" | "--ui-marquee-duration", string>)
     | undefined = overflowing
     ? {
         "--ui-marquee-distance": `${overflowDistance}px`,
-        "--ui-marquee-duration": `${Math.max(3.2, overflowDistance / 36 + 1.8)}s`,
+        "--ui-marquee-duration": `${Math.max(2.4, overflowDistance / 80 + 1.8)}s`,
       }
     : undefined;
 
   return (
     <span
-      className={`ui-overflow-marquee${overflowing ? " is-overflowing" : ""}`}
+      className={`ui-overflow-marquee${overflowing ? " is-overflowing" : ""}${playing ? " is-playing" : ""}`}
       ref={viewportRef}
       style={style}
       title={props.label}
     >
-      <span ref={contentRef}>{props.label}</span>
+      <span ref={contentRef} onAnimationEnd={() => setPlaying(false)}>
+        {props.label}
+      </span>
     </span>
   );
 }
