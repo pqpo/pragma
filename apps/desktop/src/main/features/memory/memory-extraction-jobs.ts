@@ -11,6 +11,7 @@ import {
 } from "../../../shared/contracts/index.ts";
 import type { MissionStore } from "../missions/mission-store.ts";
 import type { PragmaProjectStore } from "../projects/pragma-project-store.ts";
+import { classifyDesktopMemoryProblem } from "../../../shared/memory-problem.ts";
 import type { DesktopMemoryPlane } from "./desktop-memory-plane.ts";
 
 const MEMORY_EXTRACTION_LANES = ["waiting", "attention", "running", "completed"] as const;
@@ -233,8 +234,13 @@ function toDesktopTask(
     revision: entry.job.revision,
     lane: entry.lane,
     ...(title === undefined ? {} : { title }),
+    ...(entry.job.status === "completed" && entry.job.completion !== undefined
+      ? { completion: entry.job.completion }
+      : {}),
     ...(entry.job.status === "needs_attention" && entry.job.lastErrorCode !== undefined
-      ? { lastErrorCode: entry.job.lastErrorCode }
+      ? {
+          problem: classifyDesktopMemoryProblem(entry.job.lastErrorCode, entry.job.failureClass),
+        }
       : {}),
     updatedAt: entry.job.updatedAt,
   };

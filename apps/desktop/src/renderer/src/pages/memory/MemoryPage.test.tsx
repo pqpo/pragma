@@ -192,7 +192,10 @@ describe("MemoryPage", () => {
                   revision: 3,
                   lane: "attention",
                   title: "Pragma",
-                  lastErrorCode: "knowledge_candidate_capacity_exceeded",
+                  problem: {
+                    kind: "capacity",
+                    technicalCode: "knowledge_candidate_capacity_exceeded",
+                  },
                   updatedAt: "2026-08-05T01:00:00.000Z",
                 },
               ],
@@ -220,12 +223,59 @@ describe("MemoryPage", () => {
     expect(html).toContain("Prepare the release");
     expect(html).toContain("Episodic memory");
     expect(html).toContain("Knowledge memory");
+    expect(html).toContain("Candidate capacity is full");
+    expect(html).toContain("Technical details");
     expect(html).toContain("knowledge_candidate_capacity_exceeded");
+    expect(html.indexOf("<details")).toBeLessThan(
+      html.indexOf("knowledge_candidate_capacity_exceeded"),
+    );
     expect(html).toContain("Extract now");
     expect(html).toContain("Retry extraction");
-    expect(html).toContain("Delete");
+    expect(html).toContain("Review candidates");
+    expect(html).toContain("Abandon this extraction");
     expect(html).not.toContain("internal-job-a");
     expect(html).not.toContain("Evidence records");
+  });
+
+  it("presents rejected completed extraction as a neutral result without recovery actions", async () => {
+    await i18n.changeLanguage("zh-Hans");
+    const html = renderToStaticMarkup(
+      <MemoryExtractionJobs
+        board={{
+          lanes: {
+            waiting: { tasks: [], pageIndex: 0, pageCount: 1, totalTasks: 0 },
+            attention: { tasks: [], pageIndex: 0, pageCount: 1, totalTasks: 0 },
+            running: { tasks: [], pageIndex: 0, pageCount: 1, totalTasks: 0 },
+            completed: {
+              tasks: [
+                {
+                  module: "skill",
+                  id: "skill-job",
+                  revision: 5,
+                  lane: "completed",
+                  title: "研发专家团",
+                  completion: "rejected",
+                  updatedAt: "2026-08-05T00:00:03.000Z",
+                },
+              ],
+              pageIndex: 0,
+              pageCount: 1,
+              totalTasks: 1,
+            },
+          },
+        }}
+        loading={false}
+        onRefresh={() => undefined}
+        onAction={async () => undefined}
+        onPageChange={() => undefined}
+      />,
+    );
+
+    expect(html).toContain("研发专家团");
+    expect(html).toContain("本次未生成");
+    expect(html).not.toContain("skill_source_threshold_not_met");
+    expect(html).not.toContain("重新提炼");
+    expect(html).not.toContain(">删除<");
   });
 
   it("shows extraction failures without requiring the Health tab", async () => {
@@ -286,7 +336,9 @@ describe("MemoryPage", () => {
 
     expect(html).toContain('role="alert"');
     expect(html).toContain("记忆提取需要处理");
-    expect(html).toContain("memory_curator_failed");
+    expect(html).toContain('aria-label="关闭提示"');
+    expect(html).toContain('class="memory-alert-close"');
+    expect(html).not.toContain("memory_curator_failed");
   });
 
   it("does not hide a concurrent delivery failure behind extraction wording", async () => {
@@ -347,7 +399,7 @@ describe("MemoryPage", () => {
 
     expect(html).toContain("记忆系统异常");
     expect(html).not.toContain("记忆提取需要处理");
-    expect(html).toContain("canonical_event_handoff_quarantined");
-    expect(html).toContain("memory_curator_failed");
+    expect(html).not.toContain("canonical_event_handoff_quarantined");
+    expect(html).not.toContain("memory_curator_failed");
   });
 });

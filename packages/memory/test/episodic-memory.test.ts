@@ -843,6 +843,7 @@ describe("Episodic Memory", () => {
       needsAttention: 1,
       lastErrorCode: "extractor_evidence_ref_invalid",
     });
+    expect(diagnostic.evidenceRecords).toBeGreaterThan(0);
     expect(await module.store.list()).toEqual([]);
 
     const database = new DatabaseSync(

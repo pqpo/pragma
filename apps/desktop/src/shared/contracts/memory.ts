@@ -112,15 +112,48 @@ export const DesktopMemoryPlaneStatusSchema = z.object({
     }),
 });
 
-export const DesktopMemoryExtractionTaskSchema = z.object({
-  module: z.enum(["episodic", "semantic", "knowledge", "skill"]),
-  id: z.string().min(1),
-  revision: z.number().int().positive(),
-  lane: z.enum(["waiting", "attention", "running", "completed"]),
-  title: z.string().trim().min(1).max(200).optional(),
-  lastErrorCode: z.string().min(1).optional(),
-  updatedAt: z.string().datetime(),
-});
+export const DesktopMemoryProblemSchema = z
+  .object({
+    kind: z.enum([
+      "configuration",
+      "capacity",
+      "dependency",
+      "invalid_output",
+      "runtime",
+      "internal",
+      "unknown",
+    ]),
+    technicalCode: z.string().min(1),
+  })
+  .strict();
+
+export const DesktopMemoryExtractionTaskSchema = z
+  .object({
+    module: z.enum(["episodic", "semantic", "knowledge", "skill"]),
+    id: z.string().min(1),
+    revision: z.number().int().positive(),
+    lane: z.enum(["waiting", "attention", "running", "completed"]),
+    title: z.string().trim().min(1).max(200).optional(),
+    completion: z.enum(["retained", "rejected"]).optional(),
+    problem: DesktopMemoryProblemSchema.optional(),
+    updatedAt: z.string().datetime(),
+  })
+  .superRefine((task, context) => {
+    if (task.completion !== undefined && task.lane !== "completed") {
+      context.addIssue({
+        code: "custom",
+        path: ["completion"],
+        message: "Only completed extraction tasks may declare a completion result.",
+      });
+    }
+    if (task.problem !== undefined && task.lane !== "attention") {
+      context.addIssue({
+        code: "custom",
+        path: ["problem"],
+        message: "Only extraction tasks needing attention may declare a problem.",
+      });
+    }
+  });
 
 export const DESKTOP_MEMORY_EXTRACTION_PAGE_SIZE = 10;
 

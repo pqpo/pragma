@@ -1,5 +1,5 @@
 import { createHash } from "node:crypto";
-import { mkdir, mkdtemp, rm, stat } from "node:fs/promises";
+import { mkdir, mkdtemp, readFile, rm, stat } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { DatabaseSync } from "node:sqlite";
@@ -75,6 +75,94 @@ describe("Knowledge learning jobs", () => {
     ]);
     await expect(stat(`${databasePath}.v1.backup`)).resolves.toBeDefined();
     store.close();
+    const migrated = new DatabaseSync(databasePath);
+    expect(
+      (migrated.prepare("SELECT version FROM schema_meta").get() as { version: number }).version,
+    ).toBe(3);
+    migrated.close();
+  });
+
+  it("requeues historical candidate validation failures in the v2 to v3 migration", async () => {
+    const root = await temporaryRoot();
+    const databasePath = await writeKnowledgeV2Store(root);
+
+    const store = await createKnowledgeLearningStore({ pragmaHome: root });
+    const jobs = await store.listJobs();
+    for (const id of ["source-ref-job", "threshold-job", "duplicate-job"]) {
+      expect(jobs.find((job) => job.id === id)).toMatchObject({
+        status: "pending",
+        attempts: 0,
+      });
+      expect(jobs.find((job) => job.id === id)).not.toHaveProperty("lastErrorCode");
+      expect(jobs.find((job) => job.id === id)).not.toHaveProperty("failureClass");
+    }
+    expect(jobs.find((job) => job.id === "configuration-job")).toMatchObject({
+      status: "needs_attention",
+      lastErrorCode: "memory_extractor_profile_invalid",
+      failureClass: "configuration",
+    });
+    store.close();
+
+    await expect(stat(`${databasePath}.v2.backup`)).resolves.toBeDefined();
+  });
+
+  it("opens current v3 storage without rewriting jobs", async () => {
+    const root = await temporaryRoot();
+    const store = await createKnowledgeLearningStore({ pragmaHome: root });
+    const scheduled = await store.schedule({
+      rootRef: ref("pragma.expert", "expert-a"),
+      sourceDigest,
+      now,
+    });
+    store.close();
+
+    const reopened = await createKnowledgeLearningStore({ pragmaHome: root });
+    expect(await reopened.listJobs()).toEqual([scheduled]);
+    reopened.close();
+  });
+
+  it("rolls back and replays the v2 to v3 migration", async () => {
+    const root = await temporaryRoot();
+    const databasePath = await writeKnowledgeV2Store(root);
+    const database = new DatabaseSync(databasePath);
+    database.exec(`
+      CREATE TRIGGER abort_candidate_migration
+      BEFORE UPDATE OF status ON jobs
+      WHEN NEW.id = 'source-ref-job'
+      BEGIN
+        SELECT RAISE(ABORT, 'simulated knowledge migration interruption');
+      END;
+    `);
+    database.close();
+
+    await expect(createKnowledgeLearningStore({ pragmaHome: root })).rejects.toThrow(
+      "simulated knowledge migration interruption",
+    );
+    const interrupted = new DatabaseSync(databasePath);
+    expect(
+      (interrupted.prepare("SELECT version FROM schema_meta").get() as { version: number }).version,
+    ).toBe(2);
+    interrupted.exec("DROP TRIGGER abort_candidate_migration;");
+    interrupted.close();
+
+    const recovered = await createKnowledgeLearningStore({ pragmaHome: root });
+    expect((await recovered.listJobs()).find((job) => job.id === "source-ref-job")).toMatchObject({
+      status: "pending",
+      attempts: 0,
+    });
+    recovered.close();
+  });
+
+  it("rejects a future knowledge learning storage version", async () => {
+    const root = await temporaryRoot();
+    const databasePath = await writeKnowledgeV2Store(root);
+    const database = new DatabaseSync(databasePath);
+    database.prepare("UPDATE schema_meta SET version=4").run();
+    database.close();
+
+    await expect(createKnowledgeLearningStore({ pragmaHome: root })).rejects.toThrow(
+      "Unsupported pragma.memory-knowledge-learning-store version.",
+    );
   });
 
   it("debounces Fact changes for six quiet hours and caps the batch at twenty-four hours", async () => {
@@ -289,6 +377,55 @@ describe("Knowledge learning jobs", () => {
     module.close();
   });
 
+  it("filters invalid, below-threshold, and duplicate candidates while retaining valid siblings", async () => {
+    const sourceRevisions = sources();
+    const valid = extractionCandidate();
+    const invalidRef = {
+      ...extractionCandidate(),
+      content: { ...valid.content, normalizedKey: "invalid.reference" },
+      sourceRefs: [{ kind: "semantic" as const, id: "missing", revision: 1 }],
+    };
+    const belowThreshold = {
+      ...extractionCandidate(),
+      content: { ...valid.content, normalizedKey: "insufficient.sources" },
+      sourceRefs: [sourceRevisions[0]!.ref],
+    };
+    const duplicate = {
+      ...extractionCandidate(),
+      content: { ...valid.content, title: "Duplicate should be ignored" },
+    };
+    const submit = vi.fn(async () => undefined);
+    const module = await createExtractionModule(
+      [invalidRef, belowThreshold, valid, duplicate],
+      submit,
+    );
+
+    await module.runBackgroundOnce?.();
+
+    expect(submit).toHaveBeenCalledWith(expect.objectContaining({ candidates: [valid] }));
+    expect(await module.store.listJobs()).toEqual([
+      expect.objectContaining({ status: "completed", completion: "retained" }),
+    ]);
+    module.close();
+  });
+
+  it("completes as rejected when every extracted candidate is ineligible", async () => {
+    const invalid = {
+      ...extractionCandidate(),
+      sourceRefs: [{ kind: "semantic" as const, id: "missing", revision: 1 }],
+    };
+    const submit = vi.fn(async () => undefined);
+    const module = await createExtractionModule([invalid], submit);
+
+    await module.runBackgroundOnce?.();
+
+    expect(submit).not.toHaveBeenCalled();
+    expect(await module.store.listJobs()).toEqual([
+      expect.objectContaining({ status: "completed", completion: "rejected" }),
+    ]);
+    module.close();
+  });
+
   it("requires a verified Semantic source or Semantic support from two executions", () => {
     const [episode, semantic] = sources();
     expect(knowledgeSourceSelectionEligible([episode!])).toBe(false);
@@ -393,4 +530,70 @@ async function temporaryRoot(): Promise<string> {
 
 async function temporaryStore(): Promise<KnowledgeLearningStore> {
   return await createKnowledgeLearningStore({ pragmaHome: await temporaryRoot() });
+}
+
+async function createExtractionModule(
+  candidates: readonly KnowledgeExtractionCandidate[],
+  submit: Parameters<typeof createKnowledgeMemoryModule>[0]["learningSink"]["submit"],
+) {
+  const sourceRevisions = sources();
+  const module = await createKnowledgeMemoryModule({
+    pragmaHome: await temporaryRoot(),
+    sourceReader: { listEligibleSources: async () => sourceRevisions },
+    extractor: {
+      extract: async () => ({
+        output: { retain: true as const, candidates: [...candidates] },
+        provenance: {
+          curatorRef: "pragma.memory.curator",
+          promptVersion: "knowledge-curator/v1",
+          profileRevision: 1,
+          runtimeId: "runtime-a",
+          providerId: "provider-a",
+          modelId: "model-a",
+          extractedAt: now.toISOString(),
+        },
+      }),
+    },
+    learningSink: { submit },
+    now: () => now,
+  });
+  await module.store.schedule({
+    rootRef: ref("pragma.expert", "expert-a"),
+    sourceDigest: digestSources(sourceRevisions),
+    now: new Date(now.getTime() - 6 * 60 * 60_000),
+  });
+  return module;
+}
+
+async function writeKnowledgeV2Store(root: string): Promise<string> {
+  const dataRoot = new PragmaPaths({ pragmaHome: root }).memoryModuleDataRoot(
+    "pragma.memory.knowledge-learning",
+  );
+  await mkdir(dataRoot, { recursive: true });
+  const databasePath = join(dataRoot, "knowledge.sqlite");
+  const fixture = JSON.parse(
+    await readFile(new URL("./fixtures/knowledge-learning-store-v2.json", import.meta.url), "utf8"),
+  ) as { readonly jobs: readonly KnowledgeExtractionJob[] };
+  const database = new DatabaseSync(databasePath);
+  database.exec(`
+    CREATE TABLE schema_meta(version INTEGER NOT NULL);
+    INSERT INTO schema_meta(version) VALUES (2);
+    CREATE TABLE jobs(
+      id TEXT PRIMARY KEY, root_key TEXT NOT NULL, source_digest TEXT NOT NULL,
+      status TEXT NOT NULL, retry_at TEXT, lease_until TEXT, job_json TEXT NOT NULL,
+      UNIQUE(root_key, source_digest)
+    );
+  `);
+  const insert = database.prepare("INSERT INTO jobs VALUES (?, ?, ?, ?, NULL, NULL, ?)");
+  for (const job of fixture.jobs) {
+    insert.run(
+      job.id,
+      `${job.rootRef.type}\0${job.rootRef.id}`,
+      job.sourceDigest,
+      job.status,
+      JSON.stringify(job),
+    );
+  }
+  database.close();
+  return databasePath;
 }

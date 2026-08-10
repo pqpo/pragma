@@ -63,6 +63,10 @@ export const memory = {
     knowledge: "知識記憶",
     skill: "技能提煉",
   },
+  extractionCompletions: {
+    retained: "已產生",
+    rejected: "本次未產生",
+  },
   emptyExtractionLane: "目前狀態暫無任務。",
   extractionPagination: "{{lane}}分頁",
   previousPage: "上一頁",
@@ -72,11 +76,46 @@ export const memory = {
   unknownAsset: "已刪除的資產",
   extractNow: "立即提煉",
   retryExtraction: "重新提煉",
+  configureExtraction: "檢查提煉設定",
+  reviewCandidates: "處理候選",
   interruptExtraction: "中斷提煉",
-  deleteExtraction: "刪除",
-  deleteExtractionTitle: "刪除提煉任務？",
-  deleteExtractionDescription: "刪除「{{title}}」及其待提煉資料？已經產生的記憶會繼續保留。",
-  deletingExtraction: "正在刪除…",
+  abandonExtraction: "放棄本次提煉",
+  abandonExtractionTitle: "放棄本次提煉？",
+  abandonExtractionDescription:
+    "放棄「{{title}}」並清除為本次提煉保留的證據？已經產生的記憶會繼續保留。",
+  abandoningExtraction: "正在放棄…",
+  technicalDetails: "技術詳情",
+  copyDiagnostics: "複製診斷資訊",
+  extractionProblems: {
+    configuration: {
+      title: "提煉設定需要處理",
+      description: "目前的提煉模型或服務商設定不可用或無效。",
+    },
+    capacity: {
+      title: "候選容量已滿",
+      description: "請先處理現有候選，釋放容量後再重新提煉。",
+    },
+    dependency: {
+      title: "正在等待執行上下文",
+      description: "缺少的上下文恢復後，系統會自動繼續處理。",
+    },
+    invalid_output: {
+      title: "提煉結果無法驗證",
+      description: "模型回傳了無效結構或來源引用；相關證據已保留。",
+    },
+    runtime: {
+      title: "提煉服務未能完成",
+      description: "模型、服務商、網路或逾時問題中斷了本次提煉。",
+    },
+    internal: {
+      title: "記憶提煉遇到內部問題",
+      description: "為保護來源完整性和已保留資料，任務已停止。",
+    },
+    unknown: {
+      title: "記憶提煉需要處理",
+      description: "任務未能完成，證據已保留，可用於診斷和重試。",
+    },
+  },
   health: "健康狀態",
   search: "搜尋記憶",
   empty: "目前檢視沒有符合的記憶。",
@@ -114,7 +153,9 @@ export const memory = {
   saving: "正在儲存…",
   loading: "正在載入記憶…",
   loadError: "無法載入記憶。",
+  loadEvidenceError: "無法載入記憶證據。",
   actionError: "無法儲存記憶變更。",
+  extractionActionError: "無法更新提煉任務。",
   healthStates: {
     running: "記憶系統運作正常",
     stopped: "記憶系統已停止",
@@ -154,9 +195,10 @@ export const memory = {
   },
   extractionDegraded: "記憶提取需要處理",
   extractionDegradedDescription:
-    "{{count}} 個提取任務未能產生記憶；已擷取的證據仍保留，可在修復設定後重試。",
+    "{{count}} 個提煉任務需要處理；已擷取的證據仍保留，可在問題解決後重試。",
+  viewExtractionTasks: "查看提煉任務",
+  closeAlert: "關閉提示",
   memoryDegraded: "記憶系統異常",
   memoryDegradedDescription: "記憶流水線未正常運作，請在健康狀態中檢查受影響的模組或投遞階段。",
-  lastExtractionError: "最近提取錯誤：{{code}}",
   permissionNote: "本階段只能維持或縮小權限。",
 } satisfies DesktopTranslationResource["memory"];

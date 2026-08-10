@@ -137,11 +137,15 @@ export async function createKnowledgeMemoryModule(options: {
           await store.completeRejected(job, now());
           return;
         }
-        assertEligibleCandidates(output.candidates, sources);
+        const candidates = eligibleCandidates(output.candidates, sources);
+        if (candidates.length === 0) {
+          await store.completeRejected(job, now());
+          return;
+        }
         await options.learningSink.submit({
           rootRef: job.rootRef,
           sourceDigest,
-          candidates: output.candidates,
+          candidates,
           sources,
         });
         await store.completeLearned(job, now());
@@ -188,30 +192,27 @@ function boundSources(
   return selected;
 }
 
-function assertEligibleCandidates(
+function eligibleCandidates(
   candidates: readonly KnowledgeExtractionCandidate[],
   sources: readonly KnowledgeSourceSnapshot[],
-): void {
+): readonly KnowledgeExtractionCandidate[] {
   const available = new Map(sources.map((source) => [sourceKey(source), source]));
   const normalizedKeys = new Set<string>();
+  const eligible: KnowledgeExtractionCandidate[] = [];
   for (const candidate of candidates) {
-    if (normalizedKeys.has(candidate.content.normalizedKey)) {
-      throw new Error("knowledge_normalized_key_duplicate");
-    }
-    normalizedKeys.add(candidate.content.normalizedKey);
-    const selected = [
-      ...new Map(
-        candidate.sourceRefs.map((ref) => {
-          const source = available.get(`${ref.kind}\0${ref.id}\0${ref.revision}`);
-          if (source === undefined) throw new Error("knowledge_source_ref_invalid");
-          return [sourceKey(source), source] as const;
-        }),
-      ).values(),
+    const selected = candidate.sourceRefs.map((ref) =>
+      available.get(`${ref.kind}\0${ref.id}\0${ref.revision}`),
+    );
+    if (selected.some((source) => source === undefined)) continue;
+    const uniqueSources = [
+      ...new Map(selected.map((source) => [sourceKey(source!), source!] as const)).values(),
     ];
-    if (!knowledgeSourceSelectionEligible(selected)) {
-      throw new Error("knowledge_source_threshold_not_met");
-    }
+    if (!knowledgeSourceSelectionEligible(uniqueSources)) continue;
+    if (normalizedKeys.has(candidate.content.normalizedKey)) continue;
+    normalizedKeys.add(candidate.content.normalizedKey);
+    eligible.push(candidate);
   }
+  return eligible;
 }
 
 export function knowledgeSourceSelectionEligible(

@@ -12,6 +12,7 @@ import {
   StopCircle,
   Trash,
   WarningCircle,
+  X,
 } from "@phosphor-icons/react";
 import { useTranslation } from "react-i18next";
 
@@ -25,8 +26,8 @@ import type {
   MemoryKnowledgeInitializationCandidate,
   MemorySkillCandidate,
 } from "../../../../shared/contracts/index.ts";
+import { classifyDesktopMemoryProblem } from "../../../../shared/memory-problem.ts";
 import { ConfirmationDialog, Dialog } from "../../components/Dialog.tsx";
-import { errorMessage } from "../../lib/errors.ts";
 
 type MemoryView =
   "all" | "episodic" | "semantic" | "candidates" | "skillCandidates" | "extractions" | "health";
@@ -42,7 +43,7 @@ const INITIAL_MEMORY_EXTRACTION_PAGES: ListDesktopMemoryExtractionJobs["pages"] 
   completed: { pageIndex: 0 },
 };
 
-export function MemoryPage() {
+export function MemoryPage(props: { readonly onConfigureExtraction?: () => void } = {}) {
   const { t } = useTranslation("memory");
   const [view, setView] = useState<MemoryView>("all");
   const [query, setQuery] = useState("");
@@ -139,15 +140,15 @@ export function MemoryPage() {
         );
         setError(undefined);
         return extractionJobs;
-      } catch (loadError) {
-        setError(errorMessage(loadError));
+      } catch {
+        setError(t("loadError"));
         return undefined;
       } finally {
         hasLoaded.current = true;
         setLoading(false);
       }
     },
-    [extractionPages, query, view],
+    [extractionPages, query, t, view],
   );
 
   useEffect(() => {
@@ -193,8 +194,8 @@ export function MemoryPage() {
       setEvidence(undefined);
       await reload();
       return true;
-    } catch (actionError) {
-      setError(errorMessage(actionError));
+    } catch {
+      setError(t("actionError"));
       return false;
     } finally {
       setActionBusy(false);
@@ -216,8 +217,8 @@ export function MemoryPage() {
         expectedRevision: task.revision,
       });
       await reload(true);
-    } catch (actionError) {
-      setError(errorMessage(actionError));
+    } catch {
+      setError(t("extractionActionError"));
     } finally {
       setBusyExtractionTask(undefined);
     }
@@ -289,7 +290,7 @@ export function MemoryPage() {
           <WarningCircle size={18} aria-hidden="true" /> {error}
         </div>
       ) : null}
-      <MemoryDegradedAlert health={health} />
+      <MemoryDegradedAlert health={health} onViewTasks={() => setView("extractions")} />
 
       {view === "health" ? (
         <MemoryHealth health={health} />
@@ -301,6 +302,10 @@ export function MemoryPage() {
           onRefresh={() => void reload(true)}
           onAction={manageExtraction}
           onPageChange={changeExtractionPage}
+          onConfigureExtraction={props.onConfigureExtraction}
+          onReviewCandidates={(module) =>
+            setView(module === "skill" ? "skillCandidates" : "candidates")
+          }
         />
       ) : view === "skillCandidates" ? (
         <MemorySkillCandidates
@@ -569,7 +574,9 @@ export function MemoryPage() {
                               evidenceId,
                             })
                             .then(setEvidence)
-                            .catch((value: unknown) => setError(errorMessage(value)))
+                            .catch(() => {
+                              setError(t("loadEvidenceError"));
+                            })
                         }
                       >
                         {evidenceId}
@@ -852,6 +859,9 @@ export function MemoryExtractionJobs(props: {
     action: "expedite" | "retry" | "interrupt" | "delete",
   ) => Promise<void>;
   readonly onPageChange: (lane: MemoryExtractionLane, pageIndex: number) => void;
+  readonly onConfigureExtraction?: (() => void) | undefined;
+  readonly onReviewCandidates?:
+    ((module: DesktopMemoryExtractionTask["module"]) => void) | undefined;
 }) {
   const { t } = useTranslation("memory");
   const [pendingDelete, setPendingDelete] = useState<DesktopMemoryExtractionTask>();
@@ -899,17 +909,33 @@ export function MemoryExtractionJobs(props: {
                   {page.tasks.map((task) => {
                     const taskKey = `${task.module}:${task.id}`;
                     const busy = props.busyTask === taskKey;
+                    const problem = task.problem;
                     return (
                       <article className="memory-extraction-task" key={taskKey}>
                         <strong>
                           {task.title ??
                             t(task.module === "knowledge" ? "unknownAsset" : "unknownMission")}
                         </strong>
-                        <span className={`memory-extraction-type is-${task.module}`}>
-                          {t(`extractionTaskTypes.${task.module}`)}
-                        </span>
-                        {lane === "attention" && task.lastErrorCode !== undefined ? (
-                          <code className="memory-extraction-error">{task.lastErrorCode}</code>
+                        <div className="memory-extraction-task-statuses">
+                          <span className={`memory-extraction-type is-${task.module}`}>
+                            {t(`extractionTaskTypes.${task.module}`)}
+                          </span>
+                          {lane === "completed" && task.completion !== undefined ? (
+                            <span className="memory-extraction-completion">
+                              {t(`extractionCompletions.${task.completion}`)}
+                            </span>
+                          ) : null}
+                        </div>
+                        {lane === "attention" && problem !== undefined ? (
+                          <section className={`memory-extraction-problem is-${problem.kind}`}>
+                            <strong>{t(`extractionProblems.${problem.kind}.title`)}</strong>
+                            <p>{t(`extractionProblems.${problem.kind}.description`)}</p>
+                            <MemoryTechnicalDetails
+                              code={problem.technicalCode}
+                              module={task.module}
+                              updatedAt={task.updatedAt}
+                            />
+                          </section>
                         ) : null}
                         {lane !== "completed" ? (
                           <footer>
@@ -925,22 +951,74 @@ export function MemoryExtractionJobs(props: {
                             ) : null}
                             {lane === "attention" ? (
                               <>
-                                <button
-                                  className="is-primary"
-                                  type="button"
-                                  disabled={busy}
-                                  onClick={() => void props.onAction(task, "retry")}
-                                >
-                                  <ArrowCounterClockwise size={16} aria-hidden="true" />
-                                  {t("retryExtraction")}
-                                </button>
+                                {problem?.kind === "configuration" ? (
+                                  <button
+                                    className="is-primary"
+                                    type="button"
+                                    disabled={busy || props.onConfigureExtraction === undefined}
+                                    onClick={props.onConfigureExtraction}
+                                  >
+                                    {t("configureExtraction")}
+                                  </button>
+                                ) : problem?.kind === "capacity" ? (
+                                  <button
+                                    className="is-primary"
+                                    type="button"
+                                    disabled={busy || props.onReviewCandidates === undefined}
+                                    onClick={() => props.onReviewCandidates?.(task.module)}
+                                  >
+                                    {t("reviewCandidates")}
+                                  </button>
+                                ) : problem?.kind === "dependency" ? (
+                                  <button
+                                    className="is-primary"
+                                    type="button"
+                                    disabled={busy}
+                                    onClick={props.onRefresh}
+                                  >
+                                    <ArrowClockwise size={16} aria-hidden="true" /> {t("refresh")}
+                                  </button>
+                                ) : (
+                                  <button
+                                    className="is-primary"
+                                    type="button"
+                                    disabled={busy}
+                                    onClick={() => void props.onAction(task, "retry")}
+                                  >
+                                    <ArrowCounterClockwise size={16} aria-hidden="true" />
+                                    {t("retryExtraction")}
+                                  </button>
+                                )}
+                                {problem?.kind === "configuration" ||
+                                problem?.kind === "capacity" ? (
+                                  <button
+                                    className="is-secondary"
+                                    type="button"
+                                    disabled={busy}
+                                    onClick={() => void props.onAction(task, "retry")}
+                                  >
+                                    <ArrowCounterClockwise size={16} aria-hidden="true" />
+                                    {t("retryExtraction")}
+                                  </button>
+                                ) : null}
+                                {problem?.kind === "invalid_output" &&
+                                props.onConfigureExtraction !== undefined ? (
+                                  <button
+                                    className="is-secondary"
+                                    type="button"
+                                    disabled={busy}
+                                    onClick={props.onConfigureExtraction}
+                                  >
+                                    {t("configureExtraction")}
+                                  </button>
+                                ) : null}
                                 <button
                                   className="is-danger"
                                   type="button"
                                   disabled={busy}
                                   onClick={() => setPendingDelete(task)}
                                 >
-                                  <Trash size={16} aria-hidden="true" /> {t("deleteExtraction")}
+                                  <Trash size={16} aria-hidden="true" /> {t("abandonExtraction")}
                                 </button>
                               </>
                             ) : null}
@@ -997,15 +1075,15 @@ export function MemoryExtractionJobs(props: {
       ) : null}
       {pendingDelete === undefined ? null : (
         <ConfirmationDialog
-          title={t("deleteExtractionTitle")}
-          description={t("deleteExtractionDescription", {
+          title={t("abandonExtractionTitle")}
+          description={t("abandonExtractionDescription", {
             title:
               pendingDelete.title ??
               t(pendingDelete.module === "knowledge" ? "unknownAsset" : "unknownMission"),
           })}
           cancelLabel={t("cancel")}
-          confirmLabel={t("deleteExtraction")}
-          busyLabel={t("deletingExtraction")}
+          confirmLabel={t("abandonExtraction")}
+          busyLabel={t("abandoningExtraction")}
           busy={props.busyTask === `${pendingDelete.module}:${pendingDelete.id}`}
           tone="danger"
           onCancel={() => setPendingDelete(undefined)}
@@ -1015,6 +1093,28 @@ export function MemoryExtractionJobs(props: {
         />
       )}
     </section>
+  );
+}
+
+function MemoryTechnicalDetails(props: {
+  readonly code: string;
+  readonly module: string;
+  readonly updatedAt?: string | undefined;
+}) {
+  const { t } = useTranslation("memory");
+  const diagnostic = [
+    `module=${props.module}`,
+    `code=${props.code}`,
+    ...(props.updatedAt === undefined ? [] : [`updatedAt=${props.updatedAt}`]),
+  ].join("\n");
+  return (
+    <details className="memory-technical-details">
+      <summary>{t("technicalDetails")}</summary>
+      <code>{props.code}</code>
+      <button type="button" onClick={() => void window.navigator.clipboard.writeText(diagnostic)}>
+        {t("copyDiagnostics")}
+      </button>
+    </details>
   );
 }
 
@@ -1032,6 +1132,10 @@ export function MemoryHealth(props: { readonly health?: DesktopMemoryPlaneStatus
       : props.health.state === "stopped"
         ? StopCircle
         : WarningCircle;
+  const globalProblem =
+    props.health.lastError === undefined
+      ? undefined
+      : classifyDesktopMemoryProblem(props.health.lastError.code);
   return (
     <section className={`memory-health is-${props.health.state}`} aria-label={t("health")}>
       <header className="memory-health-overview">
@@ -1046,6 +1150,16 @@ export function MemoryHealth(props: { readonly health?: DesktopMemoryPlaneStatus
                 modules: props.health.modules.length,
               })}
             </span>
+            {globalProblem === undefined ? null : (
+              <span className="memory-module-problem">
+                <small>{t(`extractionProblems.${globalProblem.kind}.title`)}</small>
+                <MemoryTechnicalDetails
+                  code={globalProblem.technicalCode}
+                  module="memory-plane"
+                  updatedAt={props.health.lastError?.occurredAt}
+                />
+              </span>
+            )}
           </div>
         </div>
         <dl className="memory-health-overview-metrics">
@@ -1112,6 +1226,10 @@ export function MemoryHealth(props: { readonly health?: DesktopMemoryPlaneStatus
               <tbody>
                 {props.health.modules.map((module) => {
                   const nameKey = memoryModuleNameKey(module.moduleId);
+                  const problem =
+                    module.lastErrorCode === undefined
+                      ? undefined
+                      : classifyDesktopMemoryProblem(module.lastErrorCode);
                   return (
                     <tr key={module.moduleId}>
                       <th scope="row">
@@ -1125,8 +1243,14 @@ export function MemoryHealth(props: { readonly health?: DesktopMemoryPlaneStatus
                           <small>
                             {module.moduleId}@{module.moduleVersion}
                           </small>
-                          {module.lastErrorCode === undefined ? null : (
-                            <code>{module.lastErrorCode}</code>
+                          {problem === undefined ? null : (
+                            <span className="memory-module-problem">
+                              <small>{t(`extractionProblems.${problem.kind}.title`)}</small>
+                              <MemoryTechnicalDetails
+                                code={problem.technicalCode}
+                                module={module.moduleId}
+                              />
+                            </span>
                           )}
                         </span>
                       </th>
@@ -1441,41 +1565,63 @@ function memoryModuleNameKey(
 
 export function MemoryDegradedAlert(props: {
   readonly health?: DesktopMemoryPlaneStatus | undefined;
+  readonly onViewTasks?: (() => void) | undefined;
 }) {
   const { t } = useTranslation("memory");
+  const signature = memoryDegradedAlertSignature(props.health);
+  const [dismissedSignature, setDismissedSignature] = useState<string>();
   if (props.health?.state !== "degraded") return null;
+  if (dismissedSignature === signature) return null;
   const attention = props.health.modules.reduce(
     (total, module) => total + (module.work?.needsAttention ?? 0),
     0,
-  );
-  const codes = [
-    props.health.lastError?.code,
-    ...props.health.modules.map((module) => module.lastErrorCode),
-  ].filter(
-    (code, index, values): code is string => code !== undefined && values.indexOf(code) === index,
   );
   const extractionOnly =
     attention > 0 &&
     !props.health.modules.some((module) => module.status === "unavailable") &&
     !isNonExtractionPipelineError(props.health.lastError?.code);
   return (
-    <div className="memory-error" role="alert">
+    <div className="memory-error is-dismissible" role="alert">
       <WarningCircle size={20} aria-hidden="true" />
-      <span>
+      <span className="memory-degraded-copy">
         <strong>{t(extractionOnly ? "extractionDegraded" : "memoryDegraded")}</strong>
         <br />
         {extractionOnly
           ? t("extractionDegradedDescription", { count: attention })
           : t("memoryDegradedDescription")}
-        {codes.length === 0 ? null : (
-          <>
-            <br />
-            <code>{t("lastExtractionError", { code: codes.join(", ") })}</code>
-          </>
-        )}
       </span>
+      {extractionOnly && props.onViewTasks !== undefined ? (
+        <button className="memory-alert-action" type="button" onClick={props.onViewTasks}>
+          {t("viewExtractionTasks")}
+        </button>
+      ) : null}
+      <button
+        className="memory-alert-close"
+        type="button"
+        aria-label={t("closeAlert")}
+        title={t("closeAlert")}
+        onClick={() => setDismissedSignature(signature)}
+      >
+        <X size={16} aria-hidden="true" />
+      </button>
     </div>
   );
+}
+
+function memoryDegradedAlertSignature(
+  health: DesktopMemoryPlaneStatus | undefined,
+): string | undefined {
+  if (health?.state !== "degraded") return undefined;
+  return JSON.stringify({
+    state: health.state,
+    lastError: health.lastError?.code,
+    modules: health.modules.map((module) => ({
+      id: module.moduleId,
+      status: module.status,
+      attention: module.work?.needsAttention ?? 0,
+      error: module.lastErrorCode,
+    })),
+  });
 }
 
 function isNonExtractionPipelineError(code: string | undefined): boolean {

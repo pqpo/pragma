@@ -348,7 +348,7 @@ export async function createKnowledgeLearningStore(
 function initialize(database: DatabaseSync): void {
   database.exec(`
     CREATE TABLE IF NOT EXISTS schema_meta(version INTEGER NOT NULL);
-    INSERT INTO schema_meta(version) SELECT 2 WHERE NOT EXISTS (SELECT 1 FROM schema_meta);
+    INSERT INTO schema_meta(version) SELECT 3 WHERE NOT EXISTS (SELECT 1 FROM schema_meta);
     CREATE TABLE IF NOT EXISTS jobs(
       id TEXT PRIMARY KEY, root_key TEXT NOT NULL, source_digest TEXT NOT NULL,
       status TEXT NOT NULL, retry_at TEXT, lease_until TEXT, job_json TEXT NOT NULL,
@@ -367,14 +367,13 @@ async function assertFreshOrCurrent(database: DatabaseSync, databasePath: string
   }
   const version = database.prepare("SELECT version FROM schema_meta LIMIT 1").get() as
     { version: number } | undefined;
-  if (version?.version === 1) {
-    await ensureSqliteMigrationBackup(database, databasePath, 1);
-    migrateV1ToV2(database);
-    return;
-  }
-  if (version?.version !== 2) {
+  if (version?.version !== 1 && version?.version !== 2 && version?.version !== 3) {
     throw new Error("Unsupported pragma.memory-knowledge-learning-store version.");
   }
+  if (version.version === 3) return;
+  await ensureSqliteMigrationBackup(database, databasePath, version.version);
+  if (version.version === 1) migrateV1ToV2(database);
+  migrateV2ToV3(database);
 }
 
 function migrateV1ToV2(database: DatabaseSync): void {
@@ -400,6 +399,52 @@ function migrateV1ToV2(database: DatabaseSync): void {
       update.run(migrated.retryAt ?? null, JSON.stringify(migrated), row.id);
     }
     database.prepare("UPDATE schema_meta SET version=2").run();
+    database.exec("COMMIT;");
+  } catch (error) {
+    database.exec("ROLLBACK;");
+    throw error;
+  }
+}
+
+const REQUEUEABLE_CANDIDATE_ERROR_CODES = new Set([
+  "knowledge_normalized_key_duplicate",
+  "knowledge_source_ref_invalid",
+  "knowledge_source_threshold_not_met",
+]);
+
+function migrateV2ToV3(database: DatabaseSync): void {
+  const rows = database.prepare("SELECT id, job_json FROM jobs").all() as unknown as readonly {
+    readonly id: string;
+    readonly job_json: string;
+  }[];
+  database.exec("BEGIN IMMEDIATE;");
+  try {
+    const update = database.prepare(
+      "UPDATE jobs SET status=?, retry_at=?, lease_until=NULL, job_json=? WHERE id=?",
+    );
+    for (const row of rows) {
+      const job = KnowledgeExtractionJobSchema.parse(JSON.parse(row.job_json));
+      if (
+        job.status !== "needs_attention" ||
+        job.lastErrorCode === undefined ||
+        !REQUEUEABLE_CANDIDATE_ERROR_CODES.has(job.lastErrorCode)
+      ) {
+        continue;
+      }
+      const migrated = KnowledgeExtractionJobSchema.parse({
+        ...job,
+        revision: job.revision + 1,
+        status: "pending",
+        attempts: 0,
+        retryAt: job.updatedAt,
+        leaseUntil: undefined,
+        lastErrorCode: undefined,
+        failureClass: undefined,
+        completion: undefined,
+      });
+      update.run(migrated.status, migrated.retryAt ?? null, JSON.stringify(migrated), migrated.id);
+    }
+    database.prepare("UPDATE schema_meta SET version=3").run();
     database.exec("COMMIT;");
   } catch (error) {
     database.exec("ROLLBACK;");

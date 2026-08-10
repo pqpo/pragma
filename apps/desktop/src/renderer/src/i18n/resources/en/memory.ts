@@ -66,6 +66,10 @@ export const memory = {
     knowledge: "Knowledge memory",
     skill: "Skill learning",
   },
+  extractionCompletions: {
+    retained: "Generated",
+    rejected: "Nothing generated this time",
+  },
   emptyExtractionLane: "No tasks in this state.",
   extractionPagination: "{{lane}} pagination",
   previousPage: "Previous",
@@ -75,12 +79,47 @@ export const memory = {
   unknownAsset: "Deleted asset",
   extractNow: "Extract now",
   retryExtraction: "Retry extraction",
+  configureExtraction: "Check extraction settings",
+  reviewCandidates: "Review candidates",
   interruptExtraction: "Interrupt",
-  deleteExtraction: "Delete",
-  deleteExtractionTitle: "Delete extraction task?",
-  deleteExtractionDescription:
-    "Delete “{{title}}” and its pending extraction data? Memories already created will remain.",
-  deletingExtraction: "Deleting…",
+  abandonExtraction: "Abandon this extraction",
+  abandonExtractionTitle: "Abandon this extraction?",
+  abandonExtractionDescription:
+    "Discard “{{title}}” and its retained extraction evidence? Memories already created will remain.",
+  abandoningExtraction: "Abandoning…",
+  technicalDetails: "Technical details",
+  copyDiagnostics: "Copy diagnostics",
+  extractionProblems: {
+    configuration: {
+      title: "Extraction settings need attention",
+      description: "The configured extraction model or provider is unavailable or invalid.",
+    },
+    capacity: {
+      title: "Candidate capacity is full",
+      description: "Review existing candidates to free capacity before retrying.",
+    },
+    dependency: {
+      title: "Waiting for execution context",
+      description: "The system will continue automatically when the missing context is restored.",
+    },
+    invalid_output: {
+      title: "The extraction result could not be verified",
+      description:
+        "The model returned invalid structure or source references. Evidence was retained.",
+    },
+    runtime: {
+      title: "The extraction service did not complete",
+      description: "A model, provider, network, or timeout failure interrupted extraction.",
+    },
+    internal: {
+      title: "Memory extraction encountered an internal problem",
+      description: "The task was stopped to protect provenance and retained data.",
+    },
+    unknown: {
+      title: "Memory extraction needs attention",
+      description: "The task could not complete. Evidence was retained for diagnosis and retry.",
+    },
+  },
   health: "Health",
   search: "Search memory",
   empty: "No memories match this view.",
@@ -118,7 +157,9 @@ export const memory = {
   saving: "Saving…",
   loading: "Loading memory…",
   loadError: "Memory could not be loaded.",
+  loadEvidenceError: "Memory evidence could not be loaded.",
   actionError: "The memory change could not be saved.",
+  extractionActionError: "The extraction task could not be updated.",
   healthStates: {
     running: "Memory is running normally",
     stopped: "Memory is stopped",
@@ -159,9 +200,10 @@ export const memory = {
   extractionDegraded: "Memory extraction needs attention",
   extractionDegradedDescription:
     "{{count}} extraction job(s) could not produce memory. Captured evidence remains available for retry.",
+  viewExtractionTasks: "View extraction tasks",
+  closeAlert: "Dismiss alert",
   memoryDegraded: "Memory is degraded",
   memoryDegradedDescription:
     "The memory pipeline is not operating normally. Check Health for the affected module or delivery stage.",
-  lastExtractionError: "Latest extraction error: {{code}}",
   permissionNote: "Permissions can only be kept or tightened in this phase.",
 };

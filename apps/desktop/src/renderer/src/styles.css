@@ -17418,6 +17418,43 @@ textarea:focus-visible,
   color: #8d382f;
 }
 
+.memory-error.is-dismissible {
+  position: relative;
+  padding-right: 44px;
+}
+
+.memory-error .memory-degraded-copy {
+  flex: 1;
+}
+
+.memory-error .memory-alert-action {
+  flex: 0 0 auto;
+  padding: 6px 10px;
+  border: 1px solid currentcolor;
+  border-radius: 7px;
+  background: transparent;
+  color: inherit;
+}
+
+.memory-error .memory-alert-close {
+  position: absolute;
+  top: 7px;
+  right: 7px;
+  display: grid;
+  width: 28px;
+  height: 28px;
+  padding: 0;
+  place-items: center;
+  border: 0;
+  border-radius: 6px;
+  background: transparent;
+  color: inherit;
+}
+
+.memory-error .memory-alert-close:hover {
+  background: rgb(141 56 47 / 10%);
+}
+
 .memory-browser {
   display: grid;
   min-height: 0;
@@ -18137,14 +18174,9 @@ textarea:focus-visible,
   white-space: nowrap;
 }
 
-.memory-health-module-table tbody th code {
-  max-width: 240px;
-  overflow: hidden;
-  color: var(--ui-danger);
-  font-size: 0.65rem;
-  font-weight: 500;
-  text-overflow: ellipsis;
-  white-space: nowrap;
+.memory-module-problem {
+  display: grid;
+  gap: 3px;
 }
 
 .memory-health-module-table td {
@@ -18391,15 +18423,67 @@ textarea:focus-visible,
   color: #76508a;
 }
 
-.memory-extraction-error {
+.memory-extraction-task-statuses {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.memory-extraction-completion {
+  color: var(--ui-text-secondary);
+  font-size: 12px;
+  font-weight: 500;
+  line-height: 1.45;
+}
+
+.memory-extraction-problem {
   width: 100%;
-  padding: 7px 8px;
+  padding: 9px 10px;
   border-radius: 7px;
   background: #fff1ee;
   color: #9a3f35;
+}
+
+.memory-extraction-problem > strong {
+  display: block;
+  font-size: 0.78rem;
+}
+
+.memory-extraction-problem > p {
+  margin: 3px 0 0;
   font-size: 0.72rem;
+  line-height: 1.45;
+}
+
+.memory-technical-details {
+  margin-top: 5px;
+  color: var(--muted);
+  font-size: 0.68rem;
+  font-weight: 450;
+}
+
+.memory-technical-details summary {
+  width: fit-content;
+  cursor: pointer;
+}
+
+.memory-technical-details code {
+  display: block;
+  margin-top: 5px;
+  color: var(--ui-danger);
   overflow-wrap: anywhere;
   white-space: normal;
+}
+
+.memory-technical-details button {
+  margin-top: 5px;
+  padding: 3px 6px;
+  border: 1px solid var(--border);
+  border-radius: 5px;
+  background: var(--surface);
+  color: var(--muted);
+  font-size: 0.66rem;
 }
 
 .memory-extraction-task footer {

@@ -1,5 +1,5 @@
 import type { EpisodicExtractionJob, SemanticExtractionJob } from "@pragma/memory";
-import type { KnowledgeExtractionJob } from "@pragma/shared";
+import type { KnowledgeExtractionJob, SkillLearningJob } from "@pragma/shared";
 import { describe, expect, it, vi } from "vitest";
 
 import type { ListDesktopMemoryExtractionJobs } from "../../../shared/contracts/index.ts";
@@ -167,6 +167,89 @@ describe("listDesktopMemoryExtractionJobs", () => {
       "Release mission",
       "Knowledge source",
     ]);
+  });
+
+  it("exposes a completed Skill rejection without an error code", async () => {
+    const completed = <T>(jobs: readonly T[]) =>
+      vi.fn(async (input: { readonly statuses: readonly string[] }) =>
+        input.statuses.includes("completed")
+          ? { jobs, total: jobs.length }
+          : { jobs: [] as readonly T[], total: 0 },
+      );
+    const emptyPage = completed([]);
+    const skill: SkillLearningJob = {
+      schemaVersion: "pragma.memory-skill-job/v1",
+      id: "skill-job",
+      revision: 5,
+      rootRef: { type: "pragma.expert", id: "resource-1" },
+      sourceDigest: "a".repeat(64),
+      status: "completed",
+      attempts: 3,
+      completion: "rejected",
+      createdAt: "2026-08-05T00:00:00.000Z",
+      updatedAt: "2026-08-05T00:00:03.000Z",
+    };
+
+    const board = await listDesktopMemoryExtractionJobs(
+      {
+        episodicStore: { listExtractionJobsPage: emptyPage },
+        semanticStore: { listExtractionJobsPage: emptyPage },
+        knowledgeLearningStore: { listJobsPage: emptyPage },
+        skillLearningStore: { listJobsPage: completed([skill]) },
+      } as unknown as Parameters<typeof listDesktopMemoryExtractionJobs>[0],
+      {
+        ...emptyTitleOptions(),
+        project: {
+          get: vi.fn(async () => ({
+            resources: [{ metadata: { id: "resource-1", name: "Research team" } }],
+          })),
+        },
+      } as unknown as Parameters<typeof listDesktopMemoryExtractionJobs>[1],
+      FIRST_PAGES,
+    );
+
+    expect(board.lanes.completed.tasks).toEqual([
+      expect.objectContaining({
+        module: "skill",
+        title: "Research team",
+        completion: "rejected",
+      }),
+    ]);
+    expect(board.lanes.completed.tasks[0]).not.toHaveProperty("lastErrorCode");
+  });
+
+  it("exposes a classified problem instead of a user-facing error code", async () => {
+    const failed: KnowledgeExtractionJob = {
+      ...knowledgeJob(1, "2026-08-05T00:00:01.000Z"),
+      status: "needs_attention",
+      attempts: 3,
+      lastErrorCode: "extractor_evidence_ref_invalid",
+      failureClass: "transient-exhausted",
+    };
+    const attention = vi.fn(async (input: { readonly statuses: readonly string[] }) =>
+      input.statuses.includes("needs_attention")
+        ? { jobs: [failed], total: 1 }
+        : { jobs: [], total: 0 },
+    );
+    const emptyPage = vi.fn(async () => ({ jobs: [], total: 0 }));
+
+    const board = await listDesktopMemoryExtractionJobs(
+      {
+        episodicStore: { listExtractionJobsPage: emptyPage },
+        semanticStore: { listExtractionJobsPage: emptyPage },
+        knowledgeLearningStore: { listJobsPage: attention },
+      } as unknown as Parameters<typeof listDesktopMemoryExtractionJobs>[0],
+      emptyTitleOptions(),
+      FIRST_PAGES,
+    );
+
+    expect(board.lanes.attention.tasks[0]).toMatchObject({
+      problem: {
+        kind: "invalid_output",
+        technicalCode: "extractor_evidence_ref_invalid",
+      },
+    });
+    expect(board.lanes.attention.tasks[0]).not.toHaveProperty("lastErrorCode");
   });
 });
 
