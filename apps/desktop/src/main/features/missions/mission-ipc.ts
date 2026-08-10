@@ -33,6 +33,7 @@ import { publishMissionUpdate } from "./mission-update-publisher.ts";
 import { availableRecentWorkspaces } from "../workspaces/workspace-history-store.ts";
 import { validateWorkspace } from "../workspaces/workspace-scope.ts";
 import type { HomeExecutorCatalog } from "./home-executor-catalog.ts";
+import { installMissionAttachmentProtocol } from "./mission-attachment-protocol.ts";
 
 export function installMissionHandlers(options: {
   readonly missions: MissionStore;
@@ -55,6 +56,7 @@ export function installMissionHandlers(options: {
       }) => Promise<void>)
     | undefined;
 }): void {
+  installMissionAttachmentProtocol(options.missions);
   const getCreationDefaults = async () => {
     const workspace = await options.getDefaultWorkspace();
     const recentWorkspaces = await availableRecentWorkspaces(

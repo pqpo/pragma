@@ -175,6 +175,7 @@ export const settings = {
     searchModels: "Search model IDs",
     manualModelPlaceholder: "Enter a model ID manually",
     selectedModels: "Selected models ({{count}})",
+    imageInput: "Image input",
     reasoning: "Reasoning",
     adjustableThinking: "Adjustable depth",
     fixedThinking: "The model controls its own reasoning depth.",

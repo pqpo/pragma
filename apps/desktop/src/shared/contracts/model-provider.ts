@@ -21,6 +21,15 @@ export const ModelCompatibilityProfileDescriptorSchema = z.object({
 
 export const ModelProviderModelSchema = ProviderModelDefinitionSchema.extend({
   capabilitiesSource: z.enum(["preset", "provider", "manual"]),
+  inputOverride: ProviderModelDefinitionSchema.shape.input.optional(),
+}).superRefine((model, context) => {
+  if (model.inputOverride !== undefined && !model.inputOverride.includes("text")) {
+    context.addIssue({
+      code: "custom",
+      path: ["inputOverride"],
+      message: "Model input overrides must retain text input.",
+    });
+  }
 });
 
 export const ModelProviderVerificationSchema = z.object({

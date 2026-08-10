@@ -6,6 +6,7 @@ export interface ModelProviderPreset {
   readonly id: string;
   readonly name: string;
   readonly category: ModelProviderPresetCategory;
+  readonly capabilityCatalogId?: string | undefined;
   readonly protocol: ModelProvider["protocol"];
   readonly baseUrl: string;
   readonly requiresApiKey: boolean;
@@ -105,15 +106,18 @@ export const MODEL_PROVIDER_PRESETS = [
     true,
     true,
   ),
-  preset(
-    "qwen",
-    "Qwen / Bailian",
-    "gateway",
-    "openai-completions",
-    "https://dashscope.aliyuncs.com/compatible-mode/v1",
-    true,
-    true,
-  ),
+  {
+    ...preset(
+      "qwen",
+      "Qwen / Bailian",
+      "gateway",
+      "openai-completions",
+      "https://dashscope.aliyuncs.com/compatible-mode/v1",
+      true,
+      true,
+    ),
+    capabilityCatalogId: "qwen-token-plan-cn",
+  },
   preset(
     "moonshotai",
     "Moonshot / Kimi",

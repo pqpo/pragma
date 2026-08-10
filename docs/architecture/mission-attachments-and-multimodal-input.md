@@ -76,6 +76,11 @@ type ExpertPromptAttachment = {
 - 未识别或损坏的附件 manifest 会 fail closed，并报告 `config_invalid`。
 - 删除 Mission 时，Mission-owned 图片随 owner 图一起删除。
 
+Mission 聊天快照会在读取时把该 manifest 投影到首条用户消息的可选 `attachments` 字段，供详情页展示；
+投影不写回 `pragma.mission-message/v1`。图片缩略图通过只读
+`pragma-mission-attachment://` 协议按 Mission ID 与附件 ID 加载，主进程会重新校验 manifest、文件类型和
+Mission-owned 图片目录边界，Renderer 不能把任意本地路径转换成可读取 URL。
+
 ### Expert Core
 
 `PromptRequest` 继续保存纯文本，不升级 `pragma.expert-session/v5`。有附件时，既有 `ExecutionRecord.input` 和根 `Invocation.input` 的 `unknown` 插槽保存 `ExpertPromptInput`；没有附件时仍保存原来的字符串。这使旧数据保持原义，同时让崩溃恢复可以从 Invocation 重新取得附件。
@@ -113,6 +118,11 @@ Claude Code 的第三方映射端点在没有权威模态元数据时按 text-on
 
 此降级只处理输入模态能力。认证失败、网络失败或模型已经开始执行工具后的运行错误仍按真实错误报告，不自动重放整轮请求，避免重复副作用。
 
+Desktop 的模型发现将 Provider 模型 ID 与 Runtime 目录中的权威能力元数据合并。Qwen/Bailian 使用
+`qwen-token-plan-cn` 作为仅用于能力发现的目录别名，实际 Runtime provider identity 与 Qwen compatibility
+profile 不变。模型编辑器允许用户通过 `inputOverride` 显式开启或关闭图片输入；再次发现只刷新没有显式
+覆盖的输入模态。
+
 ## 安全与资源限制
 
 - 图片格式限 PNG、JPEG、GIF、WebP。
@@ -126,4 +136,4 @@ Claude Code 的第三方映射端点在没有权威模态元数据时按 text-on
 
 - 为 Mission 后续消息增加附件时，应新增带版本的消息附件协议和相邻迁移，不能直接修改 `pragma.mission-message/v1`。
 - 若需要离线、跨设备或云端 Mission，应把文件/目录引用升级为显式 artifact 上传协议；当前绝对路径语义只适用于 Desktop 本机 Runtime。
-- UI 后续可直接消费已标准化的 `inputModalities`，在发送前展示“原生视觉”或“路径上下文”提示。
+- UI 后续可消费已标准化的 `inputModalities`，在发送前展示“原生视觉”或“路径上下文”提示。

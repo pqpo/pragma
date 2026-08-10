@@ -24,6 +24,7 @@ export async function discoverProviderModels(options: {
   readonly fetchImpl?: typeof fetch;
 }): Promise<ModelDiscoveryResult> {
   const preset = findModelProviderPreset(options.presetId);
+  const capabilityCatalogId = preset?.capabilityCatalogId ?? options.presetId;
   const baseUrl = normalizeModelProviderBaseUrl(options.baseUrl);
   const activeDrivers =
     options.fetchImpl === undefined
@@ -31,7 +32,7 @@ export async function discoverProviderModels(options: {
       : createBuiltInModelProviderDriverRegistry({ fetch: options.fetchImpl });
   const result = await discoverModelProviderModels({
     request: {
-      catalogId: options.presetId,
+      catalogId: capabilityCatalogId,
       api: options.protocol,
       baseUrl,
       apiKey: options.apiKey,
@@ -40,21 +41,15 @@ export async function discoverProviderModels(options: {
     drivers: activeDrivers,
     directory,
   });
-  const suggestedIds = new Set(directory.listModels(options.presetId).map((model) => model.id));
+  const suggestedIds = new Set(directory.listModels(capabilityCatalogId).map((model) => model.id));
   return {
     ...result,
     source: result.source === "catalog" ? "preset" : result.source,
-    models: result.models.map(
-      (model): ModelProviderModel => ({
-        ...model,
-        capabilitiesSource:
-          result.source === "catalog"
-            ? "preset"
-            : suggestedIds.has(model.id)
-              ? "provider"
-              : "manual",
-      }),
-    ),
+    models: result.models.map((model): ModelProviderModel => ({
+      ...model,
+      capabilitiesSource:
+        result.source === "catalog" ? "preset" : suggestedIds.has(model.id) ? "provider" : "manual",
+    })),
   };
 }
 

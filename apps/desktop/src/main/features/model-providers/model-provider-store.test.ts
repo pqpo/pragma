@@ -118,6 +118,32 @@ describe("model provider store", () => {
     expect((await store.resolveProvider(created.id)).credentialFingerprint).not.toBe(before);
   });
 
+  it("persists image input overrides while exposing only the effective runtime modalities", async () => {
+    const { store } = await createStore();
+    const visionModel = {
+      ...model("qwen3.7-plus", "Qwen 3.7 Plus", true, "openai-completions"),
+      input: ["text", "image"] as ("text" | "image")[],
+      inputOverride: ["text", "image"] as ("text" | "image")[],
+    };
+    const provider = await store.create({
+      presetId: "qwen",
+      name: "Qwen / Bailian",
+      protocol: "openai-completions",
+      baseUrl: "https://dashscope.aliyuncs.com/compatible-mode/v1",
+      apiKey: "secret",
+      requiresApiKey: true,
+      models: [visionModel],
+    });
+
+    expect(provider.models[0]).toMatchObject({
+      input: ["text", "image"],
+      inputOverride: ["text", "image"],
+    });
+    const runtimeModel = (await store.resolveProvider(provider.id)).models[0];
+    expect(runtimeModel).toMatchObject({ input: ["text", "image"] });
+    expect(runtimeModel).not.toHaveProperty("inputOverride");
+  });
+
   it("rejects duplicate model IDs and plaintext fallback when encryption is unavailable", async () => {
     const { configPath, store } = await createStore();
 
@@ -313,7 +339,6 @@ describe("model provider store", () => {
       }),
     ]);
   });
-
 });
 
 function model(

@@ -1508,7 +1508,10 @@ export function createMissionRunner(options: {
 
   const getChatSnapshot = async (input: MissionChatQuery): Promise<MissionChatSnapshot> => {
     const mission = await options.missions.get(input.id);
-    const timeline = await options.missions.readTimelinePage(mission.id, input);
+    const [timeline, missionAttachments] = await Promise.all([
+      options.missions.readTimelinePage(mission.id, input),
+      options.missions.getAttachments(mission.id),
+    ]);
     const capturedLive = liveChats.get(mission.id);
     const entries = await readMissionChatHistory(
       timeline.turns,
@@ -1536,10 +1539,16 @@ export function createMissionRunner(options: {
     const revision = chatRevisions.get(mission.id) ?? 0;
     const resolveExecutorName = createMissionExecutorNameResolver(mission, names);
     const namedEntries = entries.map((entry) => {
-      if (entry.executorName !== undefined || entry.executorId === undefined) return entry;
+      const withAttachments =
+        entry.kind === "user" && entry.id === mission.initialMessageId
+          ? { ...entry, attachments: [...missionAttachments] }
+          : entry;
+      if (withAttachments.executorName !== undefined || withAttachments.executorId === undefined) {
+        return withAttachments;
+      }
       return {
-        ...entry,
-        executorName: resolveExecutorName(entry.executorId) ?? entry.executorId,
+        ...withAttachments,
+        executorName: resolveExecutorName(withAttachments.executorId) ?? withAttachments.executorId,
       };
     });
     return {
@@ -1627,7 +1636,12 @@ export function createMissionRunner(options: {
     logger.info(
       "mission.get_work_snapshot",
       `Loaded Mission work snapshot for ${id} in ${(t1 - t0).toFixed(1)}ms.`,
-      { missionId: id, executionCount: executionIds.length, recordCount: records.length, elapsedMs: t1 - t0 },
+      {
+        missionId: id,
+        executionCount: executionIds.length,
+        recordCount: records.length,
+        elapsedMs: t1 - t0,
+      },
     );
     const names = await getExecutorNamesOrFallback(mission, "work");
     const runtimeAgentOrdinals = createRuntimeAgentOrdinals(records);

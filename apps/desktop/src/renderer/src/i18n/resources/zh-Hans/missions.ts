@@ -64,6 +64,12 @@ export const missions = {
   removeAttachment: "移除 {{name}}",
   attachmentLimit: "每个任务最多可添加 20 个附件。",
   attachmentUnavailableForFlow: "附件目前支持专家和专家团队。",
+  attachmentPreviewAlt: "{{name}} 的预览",
+  attachmentKind: {
+    image: "图片",
+    file: "文件",
+    directory: "文件夹",
+  },
   flowInput: "流程输入",
   flowInputDescription: "请填写此工作流要求的结构化字段。",
   flowInputEmpty: "此工作流不需要输入字段。",

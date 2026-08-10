@@ -12,8 +12,10 @@ import { createDesktopWindowManager } from "../platform/window/desktop-window.ts
 import { configureDesktopApplicationIdentity } from "./application-identity.ts";
 import { createDesktopApplicationContainer } from "./application-container.ts";
 import { startDesktopWindowWithServices } from "./startup-sequence.ts";
+import { registerMissionAttachmentScheme } from "../features/missions/mission-attachment-protocol.ts";
 
 export function startDesktopApplication(): void {
+  registerMissionAttachmentScheme();
   configureDesktopApplicationIdentity(app);
   const paths = new PragmaPaths();
   const logging = createDesktopLogging(paths);

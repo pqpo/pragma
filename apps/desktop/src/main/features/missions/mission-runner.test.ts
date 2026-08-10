@@ -105,6 +105,69 @@ describe("MissionRunner", { timeout: 15_000 }, () => {
     expect(session.compactRootContext).toHaveBeenCalledOnce();
   });
 
+  it("projects initial Mission attachments onto the durable user chat entry", async () => {
+    const root = await mkdtemp(join(tmpdir(), "pragma-mission-chat-attachments-"));
+    temporaryPaths.push(root);
+    const sourceImage = join(root, "screen.png");
+    await writeFile(sourceImage, "image-bytes");
+    const project = createPragmaProjectStore({ projectsPath: join(root, "projects") });
+    const snapshot = await project.publish({
+      expectedRevision: 0,
+      resources: [runtimeFixture(), expertFixture()],
+    });
+    const missions = createMissionStore({ missionsPath: join(root, "missions") });
+    const mission = await missions.create({
+      workspace: { path: root, basename: "workspace" },
+      goal: "Summarize the image",
+      project: { id: snapshot.projectId, revision: snapshot.revision },
+      executor: missionExecutorSnapshot(
+        snapshot.resources.find((resource) => resource.kind === "Expert")!,
+      ),
+      attachments: [
+        {
+          id: "00000000-0000-4000-8000-000000000002",
+          kind: "image",
+          name: "screen.png",
+          path: sourceImage,
+          mimeType: "image/png",
+        },
+      ],
+    });
+    const runtime = defineRuntimeDriver<never, { id: string }>({
+      descriptor: { id: "fake", kind: "fake", displayName: "Fake" },
+      createSession: () => ({ id: "runtime" }),
+      readSession: (session) => ({ runtimeSessionId: session.id }),
+      startTurn: () => ({ outputText: "done", runtimeSessionId: "runtime" }),
+      mapEvent: () => ({ events: [] }),
+    });
+    const runner = createMissionRunner({
+      missions,
+      project,
+      capabilityStore: {} as CapabilityStore,
+      capabilityCredentials: {} as CapabilityCredentialStore,
+      capabilitiesPath: join(root, "capabilities"),
+      pragmaHome: join(root, "state"),
+      runtimes: createStaticRuntimeResolver({ runtimes: [runtime], defaultRuntimeId: "fake" }),
+    });
+
+    const chat = await runner.getChat({ id: mission.id, limit: 50 });
+    expect(chat.entries).toEqual([
+      expect.objectContaining({
+        id: mission.initialMessageId,
+        kind: "user",
+        content: "Summarize the image",
+        attachments: [
+          expect.objectContaining({
+            id: "00000000-0000-4000-8000-000000000002",
+            kind: "image",
+            name: "screen.png",
+            mimeType: "image/png",
+          }),
+        ],
+      }),
+    ]);
+  });
+
   it("skips compilation for a follow-up on the live Mission Session", async () => {
     const root = await mkdtemp(join(tmpdir(), "pragma-mission-followup-fast-path-"));
     temporaryPaths.push(root);
