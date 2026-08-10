@@ -107,6 +107,11 @@ export function runRuntimeCommand(options: RuntimeCommandOptions): Promise<Runti
       cwd: options.cwd,
       env: options.env,
     });
+    // Runtime probes are non-interactive. Closing stdin is materially
+    // different from leaving Node's default pipe open: some CLIs wait for EOF
+    // before running a subcommand when they are launched without a TTY.
+    child.stdin.on("error", () => undefined);
+    child.stdin.end();
     let forceKillTimer: NodeJS.Timeout | undefined;
     const timeout = setTimeout(() => {
       finish(() => {
