@@ -29,8 +29,7 @@ const expertResource: PragmaExpertResource = {
 
 describe("ExpertMemoryContextStoreBrowserService", () => {
   it("exposes the selected Expert's read-only memory view", async () => {
-    const isContextStoreViewAvailable = vi.fn(async () => true);
-    const hasContextStoreViewContent = vi.fn(async () => true);
+    const getContextStoreViewStatus = vi.fn(async () => "available" as const);
     const createContextStoreView = vi.fn(
       async () =>
         new StaticContextStore([
@@ -50,8 +49,7 @@ describe("ExpertMemoryContextStoreBrowserService", () => {
         getResource: vi.fn(() => undefined),
       } as unknown as Pick<DesktopSystemExpertRegistry, "getResource">,
       memory: {
-        isContextStoreViewAvailable,
-        hasContextStoreViewContent,
+        getContextStoreViewStatus,
         createContextStoreView,
       } as unknown as DesktopMemoryPlane,
     });
@@ -72,12 +70,7 @@ describe("ExpertMemoryContextStoreBrowserService", () => {
         },
       ],
     });
-    expect(isContextStoreViewAvailable).toHaveBeenCalledWith({
-      rootRef: { type: "pragma.expert", id: expertResource.metadata.id },
-      expertRef: { type: "pragma.expert", id: expertResource.metadata.id },
-      projectId: "pragma",
-    });
-    expect(hasContextStoreViewContent).toHaveBeenCalledWith({
+    expect(getContextStoreViewStatus).toHaveBeenCalledWith({
       rootRef: { type: "pragma.expert", id: expertResource.metadata.id },
       expertRef: { type: "pragma.expert", id: expertResource.metadata.id },
       projectId: "pragma",
@@ -104,8 +97,7 @@ describe("ExpertMemoryContextStoreBrowserService", () => {
         getResource: vi.fn(() => undefined),
       } as unknown as Pick<DesktopSystemExpertRegistry, "getResource">,
       memory: {
-        isContextStoreViewAvailable: vi.fn(async () => true),
-        hasContextStoreViewContent: vi.fn(async () => false),
+        getContextStoreViewStatus: vi.fn(async () => "empty" as const),
         createContextStoreView: vi.fn(async () => new StaticContextStore()),
       } as unknown as DesktopMemoryPlane,
     });

@@ -4,6 +4,8 @@ import type { MissionContextStoreEntry } from "../../../shared/contracts/index.t
 import {
   buildTreeRows,
   entryPreviewKind,
+  isMemoryScopeSelectable,
+  memoryScopeDescriptionKey,
   normalizeInternalContextId,
   summaryFromContent,
 } from "./ContextStoreBrowser.tsx";
@@ -70,5 +72,50 @@ describe("ContextStoreBrowser tree", () => {
       mediaType: "image/png",
       previewKind: "image",
     });
+  });
+
+  it("describes Team and Expert scopes as separate Memory stores", () => {
+    const teamDescriptor = {
+      storeId: "memory",
+      namespace: "memory",
+      name: "Memory ContextStore",
+      readOnly: true,
+      searchable: true,
+      root: { type: "pragma.expert-team" as const, id: "team-a", name: "Team A" },
+      defaultScopeId: "team:team-a",
+      scopes: [
+        {
+          id: "team:team-a",
+          expertId: "team-a",
+          name: "Team A",
+          role: "root" as const,
+          participation: "available" as const,
+          availability: "empty" as const,
+        },
+        {
+          id: "expert:expert-a",
+          expertId: "expert-a",
+          name: "Expert A",
+          role: "member" as const,
+          participation: "available" as const,
+          availability: "available" as const,
+        },
+      ],
+    };
+
+    expect(memoryScopeDescriptionKey(teamDescriptor, teamDescriptor.scopes[0])).toBe(
+      "contextStoreTeamScopeDescription",
+    );
+    expect(memoryScopeDescriptionKey(teamDescriptor, teamDescriptor.scopes[1])).toBe(
+      "contextStoreExpertScopeDescription",
+    );
+    expect(isMemoryScopeSelectable(teamDescriptor.scopes[0]!)).toBe(false);
+    expect(isMemoryScopeSelectable(teamDescriptor.scopes[1]!)).toBe(true);
+    expect(
+      isMemoryScopeSelectable({
+        ...teamDescriptor.scopes[1]!,
+        availability: "recall_disabled",
+      }),
+    ).toBe(false);
   });
 });

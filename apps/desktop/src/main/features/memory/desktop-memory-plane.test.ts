@@ -237,26 +237,31 @@ describe("DesktopMemoryPlane", () => {
     await plane.stop();
   });
 
-  it("checks ContextStore view availability without constructing a view", async () => {
+  it("checks a personal data scope against the combined Team and Expert policy", async () => {
     const pragmaHome = await temporaryRoot("pragma-desktop-memory-context-view-");
     const plane = await createDesktopMemoryPlane({
       pragmaHome,
       logger: createPragmaLogger(undefined, { component: "desktop.memory-test" }),
     });
     const input = {
-      rootRef: { type: "pragma.expert-team" as const, id: "vyv9pwwzaksth2dd" },
+      rootRef: { type: "pragma.expert" as const, id: "1xddvess309a6gme" },
       expertRef: { type: "pragma.expert" as const, id: "1xddvess309a6gme" },
       projectId: "pragma",
+      policyScope: {
+        rootRef: { type: "pragma.expert-team" as const, id: "vyv9pwwzaksth2dd" },
+        producerRefs: [{ type: "pragma.expert" as const, id: "1xddvess309a6gme" }],
+      },
     };
 
-    await expect(plane.isContextStoreViewAvailable(input)).resolves.toBe(true);
-    await expect(plane.hasContextStoreViewContent(input)).resolves.toBe(false);
-    const global = await plane.policies.getGlobal();
-    await plane.policies.updateGlobal({
-      expectedRevision: global.revision,
-      policy: { capture: "enabled", recall: "disabled", learning: "local-candidates" },
+    await expect(plane.getContextStoreViewStatus(input)).resolves.toBe("empty");
+    const teamRef = { type: "pragma.expert-team" as const, id: "vyv9pwwzaksth2dd" };
+    const team = await plane.policies.getOverride(teamRef);
+    await plane.policies.updateOverride({
+      targetRef: teamRef,
+      expectedRevision: team.revision,
+      policy: { capture: "inherit", recall: "disabled", learning: "inherit" },
     });
-    await expect(plane.isContextStoreViewAvailable(input)).resolves.toBe(false);
+    await expect(plane.getContextStoreViewStatus(input)).resolves.toBe("recall_disabled");
     await expect(plane.createContextStoreView(input)).rejects.toMatchObject({
       code: "memory_recall_disabled",
     });

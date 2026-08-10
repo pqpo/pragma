@@ -30,6 +30,10 @@ import {
 } from "../../../shared/contracts/index.ts";
 import type { DesktopSystemExpertRegistry } from "../experts/system-expert-registry.ts";
 import type { DesktopMemoryPlane } from "../memory/desktop-memory-plane.ts";
+import {
+  defineTeamMemoryScopes,
+  inspectTeamMemoryScopes,
+} from "../memory/team-memory-scope-catalog.ts";
 import type { PragmaProjectStore } from "../projects/pragma-project-store.ts";
 import type { MissionRunner } from "./mission-runner.ts";
 import type { MissionStore } from "./mission-store.ts";
@@ -92,11 +96,35 @@ export function createMissionContextStoreBrowserService(options: {
   readonly memory: DesktopMemoryPlane;
   readonly runner: Pick<MissionRunner, "getWork">;
 }): MissionContextStoreBrowserService {
+  const resolveMemoryScopes = async (mission: Mission) => {
+    const { candidates, participated } = await collectScopeCandidates(mission, options);
+    const rootRef = missionRootRef(mission);
+    const teamDefinition =
+      rootRef.type === "pragma.expert-team"
+        ? defineTeamMemoryScopes({
+            teamId: rootRef.id,
+            teamName: mission.executor.name,
+            teamParticipation: "participated",
+            experts: candidates.map((candidate) => ({
+              ...candidate,
+              role: teamExpertScopeRole(candidate.role),
+              participation: participated.has(candidate.expertId) ? "participated" : "available",
+            })),
+            projectId: mission.project.id,
+          })
+        : undefined;
+    return { candidates, participated, rootRef, teamDefinition };
+  };
+
   const memoryCatalog = async (input: GetMissionContextStore) => {
     assertSupportedStore(input.storeId);
     const mission = await userMission(options.missions, input.missionId);
-    const { candidates, participated } = await collectScopeCandidates(mission, options);
-    const rootRef = missionRootRef(mission);
+    const { candidates, participated, rootRef, teamDefinition } =
+      await resolveMemoryScopes(mission);
+    if (teamDefinition !== undefined) {
+      const catalog = await inspectTeamMemoryScopes(teamDefinition, options.memory);
+      return { mission, rootRef, scopes: catalog.scopes, defaultScopeId: catalog.defaultScopeId };
+    }
     const scopes = await Promise.all(
       candidates.map(async (candidate) => ({
         id: `expert:${candidate.expertId}`,
@@ -114,7 +142,7 @@ export function createMissionContextStoreBrowserService(options: {
     const defaultScope =
       scopes.find((scope) => scope.role === "root" || scope.role === "coordinator") ?? scopes[0];
     if (defaultScope === undefined) throw codedError("context_store_scope_unavailable");
-    return { mission, rootRef, scopes, defaultScope };
+    return { mission, rootRef, scopes, defaultScopeId: defaultScope.id };
   };
 
   const openMemory = async (
@@ -123,11 +151,16 @@ export function createMissionContextStoreBrowserService(options: {
   ): Promise<ExpertAgentContextStore> => {
     if (input.storeId !== MEMORY_STORE_ID) throw codedError("context_store_not_found");
     const mission = await userMission(options.missions, input.missionId);
-    const { candidates } = await collectScopeCandidates(mission, options);
+    const { candidates, rootRef, teamDefinition } = await resolveMemoryScopes(mission);
+    if (teamDefinition !== undefined) {
+      const view = teamDefinition.views.get(input.scopeId);
+      if (view === undefined) throw codedError("context_store_scope_not_found");
+      return await options.memory.createContextStoreView(view);
+    }
     const scope = candidates.find((candidate) => `expert:${candidate.expertId}` === input.scopeId);
     if (scope === undefined) throw codedError("context_store_scope_not_found");
     return await options.memory.createContextStoreView({
-      rootRef: missionRootRef(mission),
+      rootRef,
       expertRef: { type: "pragma.expert", id: scope.expertId },
       projectId: mission.project.id,
     });
@@ -140,7 +173,7 @@ export function createMissionContextStoreBrowserService(options: {
         const mission = await userMission(options.missions, input.missionId);
         const rootRef = missionRootRef(mission);
         return MissionContextStoreDescriptorSchema.parse({
-          schemaVersion: "pragma.desktop-mission-context-store/v1",
+          schemaVersion: "pragma.desktop-mission-context-store/v2",
           missionId: mission.id,
           storeId: MISSION_BOARD_STORE_ID,
           namespace: MISSION_BOARD_SHARED_NAMESPACE,
@@ -164,7 +197,7 @@ export function createMissionContextStoreBrowserService(options: {
 
       const resolved = await memoryCatalog(input);
       return MissionContextStoreDescriptorSchema.parse({
-        schemaVersion: "pragma.desktop-mission-context-store/v1",
+        schemaVersion: "pragma.desktop-mission-context-store/v2",
         missionId: resolved.mission.id,
         storeId: MEMORY_STORE_ID,
         namespace: "memory",
@@ -175,7 +208,7 @@ export function createMissionContextStoreBrowserService(options: {
           ...resolved.rootRef,
           name: resolved.mission.executor.name,
         },
-        defaultScopeId: resolved.defaultScope.id,
+        defaultScopeId: resolved.defaultScopeId,
         scopes: resolved.scopes,
       });
     },
@@ -645,13 +678,13 @@ async function scopeAvailability(
     readonly expertId: string;
     readonly projectId: string;
   },
-): Promise<"available" | "recall_disabled"> {
-  const available = await memory.isContextStoreViewAvailable({
+): Promise<MissionContextStoreScope["availability"]> {
+  const view = {
     rootRef: input.rootRef,
     expertRef: { type: "pragma.expert", id: input.expertId },
     projectId: input.projectId,
-  });
-  return available ? "available" : "recall_disabled";
+  } as const;
+  return await memory.getContextStoreViewStatus(view);
 }
 
 async function userMission(missions: MissionStore, missionId: string): Promise<Mission> {
@@ -692,4 +725,14 @@ function isNodeErrorCode(error: unknown, code: string): boolean {
 
 function roleRank(role: ScopeRole): number {
   return SCOPE_ROLE_RANK[role];
+}
+
+function teamExpertScopeRole(role: ScopeRole): Exclude<ScopeRole, "root"> {
+  if (role === "root") {
+    throw codedError(
+      "invalid_team_scope_role",
+      "The root role is not valid for an Expert inside a Team Memory catalog.",
+    );
+  }
+  return role;
 }

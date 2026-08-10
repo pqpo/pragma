@@ -16622,6 +16622,10 @@ textarea:focus-visible,
   font: inherit;
 }
 
+.context-browser-scope-bar select option:disabled {
+  color: var(--muted);
+}
+
 .context-browser-workspace {
   display: grid;
   min-width: 0;
