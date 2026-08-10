@@ -33,6 +33,55 @@ describe("PI startup messages", () => {
     expect(native.session.prompt).toHaveBeenCalledWith("always-on context\n\nuser prompt");
   });
 
+  it("fails an unfinished compaction when the turn ends", async () => {
+    const native = createNativeSession();
+    native.pendingCompactionOperationId = "compact-orphaned";
+    native.pendingCompactionTrigger = "auto";
+    const turn = createTurn([]);
+
+    await startPiTurn(native, turn);
+
+    expect(turn.stream.write).toHaveBeenCalledWith({
+      runId: "run-1",
+      source: { kind: "runtime", runId: "run-1", path: [] },
+      type: "progress",
+      payload: {
+        stage: "context.compaction.failed",
+        data: {
+          operationId: "compact-orphaned",
+          trigger: "auto",
+          runtimeId: "cloud-pi-agent",
+          errorMessage: "PI Runtime turn ended before context compaction completed.",
+        },
+      },
+    });
+    expect(native.pendingCompactionOperationId).toBeUndefined();
+    expect(native.pendingCompactionTrigger).toBeUndefined();
+  });
+
+  it("cleans up an unfinished compaction when publishing its failure throws", async () => {
+    const native = createNativeSession();
+    const unsubscribe = vi.fn();
+    vi.mocked(native.session.subscribe).mockReturnValue(unsubscribe);
+    native.pendingCompactionOperationId = "compact-orphaned";
+    native.pendingCompactionTrigger = "auto";
+    const turn = createTurn([]);
+    vi.mocked(turn.stream.write).mockImplementation(() => {
+      throw new Error("stream unavailable");
+    });
+
+    await expect(startPiTurn(native, turn)).rejects.toThrow("stream unavailable");
+
+    expect(native.pendingCompactionOperationId).toBeUndefined();
+    expect(native.pendingCompactionTrigger).toBeUndefined();
+    expect(native.streamState).toEqual({
+      runId: undefined,
+      source: undefined,
+      emitter: undefined,
+    });
+    expect(unsubscribe).toHaveBeenCalledOnce();
+  });
+
   it("passes image blocks only when the selected model supports vision", async () => {
     const path = join(tmpdir(), `pragma-pi-image-${randomUUID()}.png`);
     await writeFile(path, "image-bytes");

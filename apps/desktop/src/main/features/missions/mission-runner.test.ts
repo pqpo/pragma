@@ -38,7 +38,11 @@ import {
 } from "../../../shared/contracts/index.ts";
 import type { CapabilityCredentialStore } from "../capabilities/capability-credential-store.ts";
 import type { CapabilityStore } from "../capabilities/capability-store.ts";
-import { compactExpertSessionContext, createMissionRunner } from "./mission-runner.ts";
+import {
+  compactExpertSessionContext,
+  createMissionRunner,
+  isRootMissionRuntimeOutput,
+} from "./mission-runner.ts";
 import { createMissionStore } from "./mission-store.ts";
 import { createPragmaProjectStore } from "../projects/pragma-project-store.ts";
 import type { DesktopUsageStore } from "../usage/usage-store.ts";
@@ -91,6 +95,29 @@ afterEach(async () => {
 });
 
 describe("MissionRunner", { timeout: 15_000 }, () => {
+  it("projects context compaction only from the root coordinator Runtime", () => {
+    const rootSource = { kind: "runtime" as const, runId: "root-run", path: [] };
+
+    expect(isRootMissionRuntimeOutput({ source: rootSource })).toBe(true);
+    expect(
+      isRootMissionRuntimeOutput({
+        parentInvocationId: "coordinator-invocation",
+        source: rootSource,
+      }),
+    ).toBe(false);
+    expect(
+      isRootMissionRuntimeOutput({
+        source: {
+          kind: "agent",
+          runId: "runtime-child-run",
+          sessionId: "runtime-child-session",
+          parentSessionId: "root-session",
+          path: [],
+        },
+      }),
+    ).toBe(false);
+  });
+
   it("treats a restored Runtime with no compactable history as a normal no-op", async () => {
     const session = {
       canCompactRootContext: vi.fn(async () => undefined),
@@ -1721,6 +1748,24 @@ describe("MissionRunner", { timeout: 15_000 }, () => {
         },
       },
     });
+    await store.appendEvent(executionId, "nested-invocation", "runtime.event", {
+      schemaVersion: "pragma.stream/v1",
+      eventId: "nested-invocation-compaction-started",
+      sequence: 108,
+      runId: "nested-invocation-run",
+      parentRunId: "root-run",
+      emittedAt: new Date(childConversationStartedAt + 7).toISOString(),
+      source: compactionSource,
+      type: "progress",
+      payload: {
+        stage: "context.compaction.started",
+        data: {
+          operationId: "nested-invocation-compact",
+          trigger: "auto",
+          runtimeId: "codex-local",
+        },
+      },
+    });
     await store.appendEvent(executionId, executionId, "runtime.event", {
       schemaVersion: "pragma.stream/v1",
       eventId: "compaction-completed",
@@ -1733,6 +1778,24 @@ describe("MissionRunner", { timeout: 15_000 }, () => {
         stage: "context.compaction.completed",
         data: {
           operationId: "compact-1",
+          trigger: "auto",
+          runtimeId: "codex-local",
+        },
+      },
+    });
+    await store.appendEvent(executionId, executionId, "runtime.event", {
+      schemaVersion: "pragma.stream/v1",
+      eventId: "child-compaction-started",
+      sequence: 107,
+      runId: "child-turn",
+      parentRunId: "root-run",
+      emittedAt: new Date(childConversationStartedAt + 6).toISOString(),
+      source: childSource,
+      type: "progress",
+      payload: {
+        stage: "context.compaction.started",
+        data: {
+          operationId: "child-compact",
           trigger: "auto",
           runtimeId: "codex-local",
         },
@@ -1761,6 +1824,14 @@ describe("MissionRunner", { timeout: 15_000 }, () => {
         }),
       ]),
     });
+    expect((await runner.getChat({ id: mission.id, limit: 50 })).entries).not.toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          kind: "context_operation",
+          operationId: expect.stringMatching(/^(child|nested-invocation)-compact$/),
+        }),
+      ]),
+    );
   });
 
   it("keeps an existing Mission on its original Runtime and ignores changed Expert defaults", async () => {

@@ -293,7 +293,7 @@ describe("Codex turn completion", () => {
     );
   });
 
-  it("preserves the compaction trigger when thread completion is the only terminal event", async () => {
+  it("completes pending compaction when turn completion is the only terminal event", async () => {
     const notificationBus = createCodexNotificationBus();
     const writeNative = vi.fn();
     const client = {
@@ -308,10 +308,6 @@ describe("Codex turn completion", () => {
               trigger: "manual",
             },
           },
-        });
-        notificationBus.publish({
-          method: "thread/compacted",
-          params: { threadId: "thread-1" },
         });
         notificationBus.publish({
           method: "item/completed",

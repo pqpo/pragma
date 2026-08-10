@@ -68,6 +68,7 @@ export interface PiNativeSession {
   messageCountBeforeRun: number;
   pendingStartupMessages: readonly ExpertAgentStartupMessage[];
   pendingCompactionOperationId?: string | undefined;
+  pendingCompactionTrigger?: RuntimeContextCompactionTrigger | undefined;
   compactionTriggerOverride?: RuntimeContextCompactionTrigger | undefined;
 }
 
@@ -138,8 +139,13 @@ export async function startPiTurn(
   }
 
   const unsubscribe = nativeSession.session.subscribe((event) => {
+    const trigger =
+      event.type === "compaction_start" || event.type === "compaction_end"
+        ? (nativeSession.compactionTriggerOverride ?? mapPiCompactionTrigger(event.reason))
+        : undefined;
     if (event.type === "compaction_start") {
       nativeSession.pendingCompactionOperationId = randomUUID();
+      nativeSession.pendingCompactionTrigger = trigger ?? "unknown";
     }
     const operationId =
       event.type === "compaction_start" || event.type === "compaction_end"
@@ -151,12 +157,12 @@ export async function startPiTurn(
       ...(event.type !== "compaction_start" && event.type !== "compaction_end"
         ? {}
         : {
-            trigger:
-              nativeSession.compactionTriggerOverride ?? mapPiCompactionTrigger(event.reason),
+            trigger,
           }),
     });
     if (event.type === "compaction_end") {
       nativeSession.pendingCompactionOperationId = undefined;
+      nativeSession.pendingCompactionTrigger = undefined;
     }
   });
 
@@ -184,10 +190,33 @@ export async function startPiTurn(
       nativeSession.session.messages.slice(nativeSession.messageCountBeforeRun),
     );
   } finally {
-    unsubscribe();
-    nativeSession.streamState.runId = undefined;
-    nativeSession.streamState.source = undefined;
-    nativeSession.streamState.emitter = undefined;
+    const incompleteCompactionId = nativeSession.pendingCompactionOperationId;
+    try {
+      if (incompleteCompactionId !== undefined) {
+        const trigger = nativeSession.pendingCompactionTrigger ?? "unknown";
+        nativeSession.pendingCompactionOperationId = undefined;
+        nativeSession.pendingCompactionTrigger = undefined;
+        turn.stream.write({
+          runId: turn.runId,
+          source: turn.source,
+          type: "progress",
+          payload: {
+            stage: RUNTIME_CONTEXT_COMPACTION_STAGES.failed,
+            data: {
+              operationId: incompleteCompactionId,
+              trigger,
+              runtimeId: "cloud-pi-agent",
+              errorMessage: "PI Runtime turn ended before context compaction completed.",
+            },
+          },
+        });
+      }
+    } finally {
+      unsubscribe();
+      nativeSession.streamState.runId = undefined;
+      nativeSession.streamState.source = undefined;
+      nativeSession.streamState.emitter = undefined;
+    }
   }
 
   return {
