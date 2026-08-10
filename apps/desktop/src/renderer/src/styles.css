@@ -21867,14 +21867,16 @@ textarea:focus-visible,
   padding: 16px 0 0;
 }
 
-.expert-detail .expert-context-list {
+.expert-detail .expert-context-list,
+.team-context-section .expert-context-list {
   display: grid;
   gap: 3px;
   margin-top: 16px;
   border: 0;
 }
 
-.expert-detail .expert-context-link {
+.expert-detail .expert-context-link,
+.team-context-section .expert-context-link {
   display: grid;
   width: 100%;
   grid-template-columns: auto minmax(0, 1fr) auto auto auto;
@@ -21892,22 +21894,27 @@ textarea:focus-visible,
 }
 
 .expert-detail .expert-context-link:hover,
-.expert-detail .expert-context-link:focus-visible {
+.expert-detail .expert-context-link:focus-visible,
+.team-context-section .expert-context-link:hover,
+.team-context-section .expert-context-link:focus-visible {
   background: var(--surface-soft);
   outline: 0;
 }
 
-.expert-detail .expert-context-link:focus-visible {
+.expert-detail .expert-context-link:focus-visible,
+.team-context-section .expert-context-link:focus-visible {
   box-shadow: 0 0 0 3px var(--focus-ring);
 }
 
-.expert-detail .expert-context-link > span:nth-child(2) {
+.expert-detail .expert-context-link > span:nth-child(2),
+.team-context-section .expert-context-link > span:nth-child(2) {
   display: grid;
   min-width: 0;
   gap: 3px;
 }
 
-.expert-detail .expert-context-link strong {
+.expert-detail .expert-context-link strong,
+.team-context-section .expert-context-link strong {
   overflow: hidden;
   color: var(--text);
   font-size: 13px;
@@ -21916,18 +21923,26 @@ textarea:focus-visible,
 }
 
 .expert-detail .expert-context-link small,
-.expert-detail .expert-context-link em {
+.expert-detail .expert-context-link em,
+.team-context-section .expert-context-link small,
+.team-context-section .expert-context-link em {
   color: var(--muted);
   font-size: 11px;
   font-style: normal;
 }
 
-.expert-detail .expert-context-link > em {
+.expert-detail .expert-context-link > em,
+.team-context-section .expert-context-link > em {
   white-space: nowrap;
 }
 
-.expert-detail .expert-context-link > svg {
+.expert-detail .expert-context-link > svg,
+.team-context-section .expert-context-link > svg {
   color: var(--faint);
+}
+
+.team-context-section .expert-context-link {
+  grid-template-columns: auto minmax(0, 1fr) minmax(140px, auto) auto;
 }
 
 .expert-memory-store-page {
