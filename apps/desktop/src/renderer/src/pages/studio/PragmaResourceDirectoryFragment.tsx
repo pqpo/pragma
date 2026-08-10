@@ -571,7 +571,7 @@ function TeamDetail(props: {
           </span>
         </summary>
         {instructions ? (
-          <div className="team-instructions-markdown">
+          <div className="team-instructions-markdown markdown-preview">
             <MarkdownContent source={instructions} />
           </div>
         ) : (
