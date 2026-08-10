@@ -52,6 +52,11 @@ export function App() {
     setActiveView("settings");
   };
 
+  const openMemorySettings = () => {
+    setSettingsView("memory");
+    setActiveView("settings");
+  };
+
   return (
     <main
       className={sidebarCollapsed ? "desktop-shell is-sidebar-collapsed" : "desktop-shell"}
@@ -114,7 +119,7 @@ export function App() {
       ) : activeView === "usage" ? (
         <UsagePage />
       ) : activeView === "memory" ? (
-        <MemoryPage />
+        <MemoryPage onConfigureExtraction={openMemorySettings} />
       ) : (
         <SettingsPage initialView={settingsView} />
       )}

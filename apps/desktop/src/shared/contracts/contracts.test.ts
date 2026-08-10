@@ -34,6 +34,7 @@ import {
   DesktopGlobalMemoryPolicySnapshotSchema,
   DesktopAssetMemoryPolicySnapshotSchema,
   DesktopMemoryPlaneStatusSchema,
+  DesktopMemoryExtractionTaskSchema,
   DesktopMemoryItemSchema,
   UpdateDesktopAssetMemoryPolicySchema,
 } from "./index.ts";
@@ -141,6 +142,43 @@ describe("desktop memory contracts", () => {
       delivery: { pending: 1, quarantined: 0 },
       modules: [],
     });
+  });
+
+  it("keeps extraction completion and problem details in their matching lanes", () => {
+    const base = {
+      module: "episodic" as const,
+      id: "job-a",
+      revision: 1,
+      updatedAt: "2026-08-05T08:00:00.000Z",
+    };
+    expect(
+      DesktopMemoryExtractionTaskSchema.safeParse({
+        ...base,
+        lane: "completed",
+        completion: "rejected",
+      }).success,
+    ).toBe(true);
+    expect(
+      DesktopMemoryExtractionTaskSchema.safeParse({
+        ...base,
+        lane: "attention",
+        problem: { kind: "invalid_output", technicalCode: "extractor_output_invalid" },
+      }).success,
+    ).toBe(true);
+    expect(
+      DesktopMemoryExtractionTaskSchema.safeParse({
+        ...base,
+        lane: "waiting",
+        completion: "rejected",
+      }).success,
+    ).toBe(false);
+    expect(
+      DesktopMemoryExtractionTaskSchema.safeParse({
+        ...base,
+        lane: "running",
+        problem: { kind: "runtime", technicalCode: "memory_curator_timeout" },
+      }).success,
+    ).toBe(false);
   });
 });
 

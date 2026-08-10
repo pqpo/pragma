@@ -1,0 +1,52 @@
+{
+  "jobs": [
+    {
+      "schemaVersion": "pragma.memory-skill-job/v1",
+      "id": "threshold-job",
+      "revision": 4,
+      "rootRef": {
+        "type": "pragma.expert",
+        "id": "expert-a"
+      },
+      "sourceDigest": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      "status": "needs_attention",
+      "attempts": 3,
+      "lastErrorCode": "skill_source_threshold_not_met",
+      "failureClass": "transient-exhausted",
+      "createdAt": "2026-08-05T08:00:00.000Z",
+      "updatedAt": "2026-08-05T08:00:03.000Z"
+    },
+    {
+      "schemaVersion": "pragma.memory-skill-job/v1",
+      "id": "configuration-job",
+      "revision": 2,
+      "rootRef": {
+        "type": "pragma.expert",
+        "id": "expert-b"
+      },
+      "sourceDigest": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+      "status": "needs_attention",
+      "attempts": 1,
+      "lastErrorCode": "memory_extractor_profile_invalid",
+      "failureClass": "configuration",
+      "createdAt": "2026-08-05T08:00:00.000Z",
+      "updatedAt": "2026-08-05T08:00:01.000Z"
+    },
+    {
+      "schemaVersion": "pragma.memory-skill-job/v1",
+      "id": "target-binding-job",
+      "revision": 2,
+      "rootRef": {
+        "type": "pragma.expert",
+        "id": "expert-c"
+      },
+      "sourceDigest": "cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc",
+      "status": "needs_attention",
+      "attempts": 3,
+      "lastErrorCode": "skill_target_binding_invalid",
+      "failureClass": "transient-exhausted",
+      "createdAt": "2026-08-05T08:00:00.000Z",
+      "updatedAt": "2026-08-05T08:00:02.000Z"
+    }
+  ]
+}

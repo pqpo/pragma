@@ -103,6 +103,7 @@ export async function createSkillMemoryModule(options: {
       if (job === undefined) return;
       const controller = new AbortController();
       running.set(job.id, controller);
+      let retained = false;
       try {
         const available = await options.sourceReader.listEligibleSources({
           rootRef: job.rootRef,
@@ -139,15 +140,17 @@ export async function createSkillMemoryModule(options: {
           const result = await extractor.extract(input, { signal: controller.signal });
           const output = SkillExtractionOutputSchema.parse(result.output);
           if (!output.retain) continue;
-          assertEligibleCandidates(output.candidates, input.sources, existingTargets);
+          const candidates = eligibleCandidates(output.candidates, input.sources, existingTargets);
+          if (candidates.length === 0) continue;
           await options.learningSink.submit({
             rootRef: job.rootRef,
             sourceDigest,
-            candidates: output.candidates,
+            candidates,
             sources: input.sources,
           });
+          retained = true;
         }
-        await store.complete(job, "retained", now());
+        await store.complete(job, retained ? "retained" : "rejected", now());
       } catch (error) {
         await store.fail({
           job,
@@ -200,37 +203,33 @@ export function skillSourceThresholdMet(sources: readonly SkillSourceSnapshot[])
   return episodes.length >= 3 && conversations.size >= 2 && successful.length >= 2;
 }
 
-function assertEligibleCandidates(
+function eligibleCandidates(
   candidates: readonly SkillExtractionCandidate[],
   sources: readonly SkillSourceSnapshot[],
   targets: readonly ExistingMemorySkillTarget[],
-): void {
+): readonly SkillExtractionCandidate[] {
   const available = new Map(sources.map((source) => [sourceKey(source), source]));
   const targetIds = new Set(targets.map((target) => target.bindingId));
-  const keys = new Set<string>();
-  for (const candidate of candidates) {
-    if (keys.has(candidate.content.normalizedKey))
-      throw new Error("skill_normalized_key_duplicate");
-    keys.add(candidate.content.normalizedKey);
+  const normalizedKeys = new Set<string>();
+  return candidates.filter((candidate) => {
     const selected = candidate.sourceRefs.map((ref) =>
       available.get(`${ref.kind}\0${ref.id}\0${ref.revision}`),
     );
-    if (
-      selected.some((source) => source === undefined) ||
-      !skillSourceThresholdMet(
-        selected.filter((source): source is SkillSourceSnapshot => source !== undefined),
-      )
-    )
-      throw new Error("skill_source_threshold_not_met");
+    if (!selected.every((source): source is SkillSourceSnapshot => source !== undefined)) {
+      return false;
+    }
+    if (!skillSourceThresholdMet(selected)) return false;
     const bindingIds =
       candidate.route.type === "revise"
         ? [candidate.route.bindingId]
         : candidate.route.type === "ambiguous"
           ? candidate.route.bindingIds
           : [];
-    if (bindingIds.some((id) => !targetIds.has(id)))
-      throw new Error("skill_target_binding_invalid");
-  }
+    if (bindingIds.some((id) => !targetIds.has(id))) return false;
+    if (normalizedKeys.has(candidate.content.normalizedKey)) return false;
+    normalizedKeys.add(candidate.content.normalizedKey);
+    return true;
+  });
 }
 
 function groupTerminalSignals(

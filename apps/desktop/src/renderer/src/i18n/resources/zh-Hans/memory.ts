@@ -63,6 +63,10 @@ export const memory = {
     knowledge: "知识记忆",
     skill: "技能提炼",
   },
+  extractionCompletions: {
+    retained: "已生成",
+    rejected: "本次未生成",
+  },
   emptyExtractionLane: "当前状态暂无任务。",
   extractionPagination: "{{lane}}分页",
   previousPage: "上一页",
@@ -72,11 +76,46 @@ export const memory = {
   unknownAsset: "已删除的资产",
   extractNow: "立即提炼",
   retryExtraction: "重新提炼",
+  configureExtraction: "检查提炼设置",
+  reviewCandidates: "处理候选",
   interruptExtraction: "中断提炼",
-  deleteExtraction: "删除",
-  deleteExtractionTitle: "删除提炼任务？",
-  deleteExtractionDescription: "删除“{{title}}”及其待提炼数据？已经生成的记忆会继续保留。",
-  deletingExtraction: "正在删除…",
+  abandonExtraction: "放弃本次提炼",
+  abandonExtractionTitle: "放弃本次提炼？",
+  abandonExtractionDescription:
+    "放弃“{{title}}”并清除为本次提炼保留的证据？已经生成的记忆会继续保留。",
+  abandoningExtraction: "正在放弃…",
+  technicalDetails: "技术详情",
+  copyDiagnostics: "复制诊断信息",
+  extractionProblems: {
+    configuration: {
+      title: "提炼设置需要处理",
+      description: "当前提炼模型或服务商配置不可用或无效。",
+    },
+    capacity: {
+      title: "候选容量已满",
+      description: "请先处理已有候选，释放容量后再重新提炼。",
+    },
+    dependency: {
+      title: "正在等待执行上下文",
+      description: "缺失的上下文恢复后，系统会自动继续处理。",
+    },
+    invalid_output: {
+      title: "提炼结果无法验证",
+      description: "模型返回了无效结构或来源引用；相关证据已保留。",
+    },
+    runtime: {
+      title: "提炼服务未能完成",
+      description: "模型、服务商、网络或超时问题中断了本次提炼。",
+    },
+    internal: {
+      title: "记忆提炼遇到内部问题",
+      description: "为保护来源完整性和已保留数据，任务已停止。",
+    },
+    unknown: {
+      title: "记忆提炼需要处理",
+      description: "任务未能完成，证据已保留，可用于诊断和重试。",
+    },
+  },
   health: "健康状态",
   search: "搜索记忆",
   empty: "当前视图没有匹配的记忆。",
@@ -114,7 +153,9 @@ export const memory = {
   saving: "正在保存…",
   loading: "正在加载记忆…",
   loadError: "无法加载记忆。",
+  loadEvidenceError: "无法加载记忆证据。",
   actionError: "无法保存记忆变更。",
+  extractionActionError: "无法更新提炼任务。",
   healthStates: {
     running: "记忆系统运行正常",
     stopped: "记忆系统已停止",
@@ -154,9 +195,10 @@ export const memory = {
   },
   extractionDegraded: "记忆提取需要处理",
   extractionDegradedDescription:
-    "{{count}} 个提取任务未能生成记忆；已捕获的证据仍保留，可在修复配置后重试。",
+    "{{count}} 个提炼任务需要处理；已捕获的证据仍保留，可在问题解决后重试。",
+  viewExtractionTasks: "查看提炼任务",
+  closeAlert: "关闭提示",
   memoryDegraded: "记忆系统异常",
   memoryDegradedDescription: "记忆流水线未正常工作，请在健康状态中检查受影响的模块或投递阶段。",
-  lastExtractionError: "最近提取错误：{{code}}",
   permissionNote: "本阶段只能保持或收紧权限。",
 } satisfies DesktopTranslationResource["memory"];

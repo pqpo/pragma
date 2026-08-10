@@ -1,0 +1,72 @@
+{
+  "jobs": [
+    {
+      "schemaVersion": "pragma.memory-knowledge-job/v2",
+      "id": "source-ref-job",
+      "revision": 2,
+      "rootRef": { "type": "pragma.expert", "id": "expert-a" },
+      "sourceDigest": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      "firstFactAt": "2026-08-05T08:00:00.000Z",
+      "lastFactAt": "2026-08-05T08:00:01.000Z",
+      "eligibleAt": "2026-08-05T08:00:00.000Z",
+      "deadlineAt": "2026-08-06T08:00:00.000Z",
+      "status": "needs_attention",
+      "attempts": 3,
+      "lastErrorCode": "knowledge_source_ref_invalid",
+      "failureClass": "transient-exhausted",
+      "createdAt": "2026-08-05T08:00:00.000Z",
+      "updatedAt": "2026-08-05T08:00:03.000Z"
+    },
+    {
+      "schemaVersion": "pragma.memory-knowledge-job/v2",
+      "id": "threshold-job",
+      "revision": 4,
+      "rootRef": { "type": "pragma.expert", "id": "expert-b" },
+      "sourceDigest": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+      "firstFactAt": "2026-08-05T08:00:00.000Z",
+      "lastFactAt": "2026-08-05T08:00:01.000Z",
+      "eligibleAt": "2026-08-05T08:00:00.000Z",
+      "deadlineAt": "2026-08-06T08:00:00.000Z",
+      "status": "needs_attention",
+      "attempts": 3,
+      "lastErrorCode": "knowledge_source_threshold_not_met",
+      "failureClass": "transient-exhausted",
+      "createdAt": "2026-08-05T08:00:00.000Z",
+      "updatedAt": "2026-08-05T08:00:04.000Z"
+    },
+    {
+      "schemaVersion": "pragma.memory-knowledge-job/v2",
+      "id": "duplicate-job",
+      "revision": 1,
+      "rootRef": { "type": "pragma.expert", "id": "expert-c" },
+      "sourceDigest": "cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc",
+      "firstFactAt": "2026-08-05T08:00:00.000Z",
+      "lastFactAt": "2026-08-05T08:00:01.000Z",
+      "eligibleAt": "2026-08-05T08:00:00.000Z",
+      "deadlineAt": "2026-08-06T08:00:00.000Z",
+      "status": "needs_attention",
+      "attempts": 3,
+      "lastErrorCode": "knowledge_normalized_key_duplicate",
+      "failureClass": "transient-exhausted",
+      "createdAt": "2026-08-05T08:00:00.000Z",
+      "updatedAt": "2026-08-05T08:00:05.000Z"
+    },
+    {
+      "schemaVersion": "pragma.memory-knowledge-job/v2",
+      "id": "configuration-job",
+      "revision": 2,
+      "rootRef": { "type": "pragma.expert", "id": "expert-d" },
+      "sourceDigest": "dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd",
+      "firstFactAt": "2026-08-05T08:00:00.000Z",
+      "lastFactAt": "2026-08-05T08:00:01.000Z",
+      "eligibleAt": "2026-08-05T08:00:00.000Z",
+      "deadlineAt": "2026-08-06T08:00:00.000Z",
+      "status": "needs_attention",
+      "attempts": 1,
+      "lastErrorCode": "memory_extractor_profile_invalid",
+      "failureClass": "configuration",
+      "createdAt": "2026-08-05T08:00:00.000Z",
+      "updatedAt": "2026-08-05T08:00:02.000Z"
+    }
+  ]
+}

@@ -250,6 +250,7 @@ import {
   ReviewDesktopMemoryItemSchema,
   DesktopMissionMemoryActivitySchema,
   GetDesktopMissionMemoryActivitySchema,
+  DesktopMemoryProblemSchema,
   DesktopMemoryExtractionTaskSchema,
   DesktopMemoryExtractionBoardSchema,
   ListDesktopMemoryExtractionJobsSchema,
@@ -326,6 +327,7 @@ export type TightenDesktopMemoryAccess = z.infer<typeof TightenDesktopMemoryAcce
 export type ReviewDesktopMemoryItem = z.infer<typeof ReviewDesktopMemoryItemSchema>;
 export type DesktopMissionMemoryActivity = z.infer<typeof DesktopMissionMemoryActivitySchema>;
 export type GetDesktopMissionMemoryActivity = z.infer<typeof GetDesktopMissionMemoryActivitySchema>;
+export type DesktopMemoryProblem = z.infer<typeof DesktopMemoryProblemSchema>;
 export type DesktopMemoryExtractionTask = z.infer<typeof DesktopMemoryExtractionTaskSchema>;
 export type DesktopMemoryExtractionBoard = z.infer<typeof DesktopMemoryExtractionBoardSchema>;
 export type ListDesktopMemoryExtractionJobs = z.infer<typeof ListDesktopMemoryExtractionJobsSchema>;
