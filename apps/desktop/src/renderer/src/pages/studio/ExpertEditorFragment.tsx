@@ -9,6 +9,7 @@ import {
 } from "@pragma/shared";
 
 import { SelectMenu } from "../../components/SelectMenu.tsx";
+import { ExpertAvatar } from "../../components/ExpertAvatar.tsx";
 import { errorMessage } from "../../lib/errors.ts";
 import { runtimeDisplayName } from "../../lib/runtime-display.ts";
 import {
@@ -29,6 +30,7 @@ import {
 } from "./studio-model.ts";
 import { ExpertCapabilityPicker } from "./ExpertCapabilityPicker.tsx";
 import { ExpertPluginPicker } from "./ExpertPluginPicker.tsx";
+import { ExpertAvatarPicker } from "./ExpertAvatarPicker.tsx";
 import { StudioScreenFrame } from "./StudioScreenFrame.tsx";
 import { AssetMemoryPolicySection } from "../settings/AssetMemoryPolicySection.tsx";
 
@@ -51,6 +53,7 @@ export function ExpertEditorFragment(props: {
   const [step, setStep] = useState<CreateStep>("identity");
   const [error, setError] = useState<string | null>(null);
   const [saving, setSaving] = useState(false);
+  const [avatarPickerOpen, setAvatarPickerOpen] = useState(false);
   const [selectedRuntime, setSelectedRuntime] = useState(props.initialValue.model?.runtimeId ?? "");
   const isEditing = props.mode === "edit";
   const isBuiltIn = isBuiltInExpert(props.initialValue);
@@ -269,9 +272,15 @@ export function ExpertEditorFragment(props: {
             {step === "identity" ? (
               <>
                 <div className="creator-preview">
-                  <span className="studio-asset-icon">
-                    <User size={24} />
-                  </span>
+                  <button
+                    className="creator-avatar-button"
+                    type="button"
+                    aria-label={t("chooseAvatar", { ns: "studio" })}
+                    title={t("chooseAvatar", { ns: "studio" })}
+                    onClick={() => setAvatarPickerOpen(true)}
+                  >
+                    <ExpertAvatar avatarId={draft.avatarId} size="md" />
+                  </button>
                   <div>
                     <strong>{draft.name || t("expertName", { ns: "studio" })}</strong>
                     <p>{draft.description || t("conciseDescription", { ns: "studio" })}</p>
@@ -669,6 +678,16 @@ export function ExpertEditorFragment(props: {
           </footer>
         </form>
       </div>
+      {avatarPickerOpen ? (
+        <ExpertAvatarPicker
+          value={draft.avatarId}
+          onCancel={() => setAvatarPickerOpen(false)}
+          onChange={(avatarId) => {
+            setDraft({ ...draft, avatarId });
+            setAvatarPickerOpen(false);
+          }}
+        />
+      ) : null}
     </StudioScreenFrame>
   );
 }

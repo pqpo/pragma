@@ -212,7 +212,7 @@ describe("ExpertDetailFragment", () => {
     expect(html).not.toContain("Enabled tools");
     expect(html).not.toContain("expert-capability-detail-list");
     expect(html).not.toContain("<ul");
-    expect(html).not.toContain("<li");
+    expect(html).not.toContain("<li>");
   });
 
   it("uses compact metadata and renders full Markdown instructions last", () => {
@@ -415,6 +415,9 @@ describe("ExpertEditorFragment", () => {
     expect(html).not.toContain("test_expert");
     expect(html).toContain("Back to expert details");
     expect(html).not.toContain("Update this reusable expert declaration.");
+    expect(html).toContain('class="creator-avatar-button"');
+    expect(html).toContain('aria-label="Choose avatar"');
+    expect(html).not.toContain('class="expert-avatar-field"');
     expect(html).toMatch(/<button[^>]*aria-current="step"[^>]*>/);
     expect(html).not.toMatch(/<button[^>]*disabled=""[^>]*aria-current="step"/);
   });

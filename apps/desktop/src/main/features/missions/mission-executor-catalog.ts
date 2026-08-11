@@ -10,6 +10,7 @@ import {
 
 import {
   isMissionExecutorResource,
+  expertTeamCoordinatorAvatarId,
   missionExecutorRef,
   missionExecutorSnapshot,
   MissionExecutorOptionSchema,
@@ -137,7 +138,7 @@ export function createMissionExecutorCatalog(options: {
       const snapshot = await options.project.get();
       const projectOptions = snapshot.resources
         .filter(isMissionExecutorResource)
-        .map(projectExecutorOption);
+        .map((resource) => projectExecutorOption(resource, snapshot.resources));
       return [...options.systemExperts.listExecutors(), ...projectOptions].toSorted((left, right) =>
         left.name.localeCompare(right.name),
       );
@@ -293,13 +294,18 @@ function projectExecutor(resource: PragmaInvocableResource): MissionExecutor {
   return MissionExecutorSchema.parse(missionExecutorSnapshot(resource));
 }
 
-function projectExecutorOption(resource: PragmaInvocableResource): MissionExecutorOption {
+function projectExecutorOption(
+  resource: PragmaInvocableResource,
+  resources: readonly PragmaResource[],
+): MissionExecutorOption {
   return MissionExecutorOptionSchema.parse({
     ...projectExecutor(resource),
     description: resource.metadata.description,
-    ...(resource.kind === "Expert" || resource.kind === "ExpertTeam"
+    ...(resource.kind === "Expert"
       ? { avatarId: resource.metadata.avatarId }
-      : {}),
+      : resource.kind === "ExpertTeam"
+        ? { avatarId: expertTeamCoordinatorAvatarId(resource, resources) }
+        : {}),
     origin: "project",
     readOnly: false,
     customized: false,

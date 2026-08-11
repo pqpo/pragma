@@ -43,6 +43,7 @@ import {
   MissionAttachmentPicker,
 } from "../../components/MissionAttachments.tsx";
 import { MissionModelOverrideControls } from "../../components/MissionModelOverrideControls.tsx";
+import { ExpertAvatar } from "../../components/ExpertAvatar.tsx";
 import { SelectMenu } from "../../components/SelectMenu.tsx";
 import { WorkspacePicker, type WorkspaceSelection } from "../../components/WorkspacePicker.tsx";
 import { shouldSubmitComposerOnEnter } from "../../lib/composer-keyboard.ts";
@@ -770,7 +771,11 @@ function MissionExecutorPicker(props: {
             setOpen((current) => !current);
           }}
         >
-          <SelectedIcon size={17} aria-hidden="true" />
+          {selected !== undefined && selected.kind !== "flow" ? (
+            <ExpertAvatar avatarId={selected.avatarId} team={selected.kind === "team"} size="xs" />
+          ) : (
+            <SelectedIcon size={17} aria-hidden="true" />
+          )}
           <span>{selectedCopy?.name ?? t("chooseResource")}</span>
           <CaretDown size={14} aria-hidden="true" />
         </button>
@@ -880,7 +885,15 @@ function MissionExecutorPicker(props: {
                       }}
                     >
                       <span className="mission-executor-option-icon">
-                        <Icon size={18} aria-hidden="true" />
+                        {executor.kind === "flow" ? (
+                          <Icon size={18} aria-hidden="true" />
+                        ) : (
+                          <ExpertAvatar
+                            avatarId={executor.avatarId}
+                            team={executor.kind === "team"}
+                            size="xs"
+                          />
+                        )}
                       </span>
                       <span className="mission-executor-option-copy">
                         <strong>{copy.name}</strong>
@@ -1025,7 +1038,15 @@ function MissionExecutorPicker(props: {
                   <div className="mission-executor-option" key={executor.ref}>
                     <div className="mission-executor-option-main">
                       <span className="mission-executor-option-icon">
-                        <Icon size={18} aria-hidden="true" />
+                        {executor.kind === "flow" ? (
+                          <Icon size={18} aria-hidden="true" />
+                        ) : (
+                          <ExpertAvatar
+                            avatarId={executor.avatarId}
+                            team={executor.kind === "team"}
+                            size="xs"
+                          />
+                        )}
                       </span>
                       <span className="mission-executor-option-copy">
                         <strong>{copy.name}</strong>

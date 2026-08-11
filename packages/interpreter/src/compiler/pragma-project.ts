@@ -311,9 +311,11 @@ interface PragmaProvenance {
   readonly root: IndexedResource;
 }
 
+const PRAGMA_PROJECT_BLUEPRINT_SCHEMA_VERSION = "pragma.project-blueprint/v2";
+
 const PragmaProjectBlueprintSchema = z
   .object({
-    schemaVersion: z.literal("pragma.project-blueprint/v1"),
+    schemaVersion: z.literal(PRAGMA_PROJECT_BLUEPRINT_SCHEMA_VERSION),
     compilerVersion: z.literal(PRAGMA_COMPILER_WRITE_VERSION),
     sourceIdentity: z.string().min(1),
     entry: z.string().min(1),
@@ -501,6 +503,7 @@ async function loadPragmaYamlProject(
       ? undefined
       : sha256(
           stableStringify({
+            blueprintSchemaVersion: PRAGMA_PROJECT_BLUEPRINT_SCHEMA_VERSION,
             compilerVersion: PRAGMA_COMPILER_WRITE_VERSION,
             sourceIdentity,
             entry: relative(rootDir, canonicalEntry),
@@ -660,7 +663,7 @@ function createProjectBlueprint(
     return value;
   };
   return PragmaProjectBlueprintSchema.parse({
-    schemaVersion: "pragma.project-blueprint/v1",
+    schemaVersion: PRAGMA_PROJECT_BLUEPRINT_SCHEMA_VERSION,
     compilerVersion: PRAGMA_COMPILER_WRITE_VERSION,
     sourceIdentity,
     entry: relativeSource(entryFile),

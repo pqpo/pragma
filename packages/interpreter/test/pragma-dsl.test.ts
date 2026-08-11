@@ -764,6 +764,27 @@ describe("Pragma YAML DSL", () => {
     ).toBe(false);
   });
 
+  it("keeps the pragma/v4 ExpertTeam avatar field readable", () => {
+    const parsed = PragmaExpertTeamResourceSchema.parse({
+      apiVersion: "pragma/v4",
+      kind: "ExpertTeam",
+      metadata: {
+        id: "vyv9pwwzaksth2dd",
+        avatarId: "pragma.avatar.team.default",
+        name: "Delivery",
+        description: "Coordinates delivery",
+        tags: [],
+      },
+      spec: {
+        coordinator: { ref: "expert:mrvsehytqfmb814x" },
+        members: [{ ref: "expert:3sfd30h5017wd17d" }],
+        delegation: {},
+      },
+    });
+
+    expect(parsed.metadata.avatarId).toBe("pragma.avatar.team.default");
+  });
+
   it("enforces an optional content-addressed lock", async () => {
     const root = await mkdtemp(join(tmpdir(), "pragma-dsl-lock-"));
     const entry = join(root, "pragma.yaml");

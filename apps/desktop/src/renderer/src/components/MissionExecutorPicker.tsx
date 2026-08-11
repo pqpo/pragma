@@ -12,6 +12,7 @@ import { useTranslation } from "react-i18next";
 import type { MissionExecutorOption } from "../../../shared/contracts/index.ts";
 import { localizeSystemExpertCopy } from "../lib/system-expert-copy.ts";
 import { Dialog } from "./Dialog.tsx";
+import { ExpertAvatar } from "./ExpertAvatar.tsx";
 
 type ExecutorKindFilter = "all" | MissionExecutorOption["kind"];
 
@@ -68,7 +69,11 @@ export function MissionExecutorPicker(props: {
         aria-describedby={props.describedBy}
         onClick={() => setOpen(true)}
       >
-        <SelectedIcon size={18} aria-hidden="true" />
+        {selected !== undefined && selected.kind !== "flow" ? (
+          <ExpertAvatar avatarId={selected.avatarId} team={selected.kind === "team"} size="xs" />
+        ) : (
+          <SelectedIcon size={18} aria-hidden="true" />
+        )}
         <span>
           <strong>{selectedCopy?.name ?? t("chooseResource")}</strong>
           <small>
@@ -140,7 +145,15 @@ export function MissionExecutorPicker(props: {
                   }}
                 >
                   <span className="mission-executor-dialog-icon">
-                    <Icon size={18} aria-hidden="true" />
+                    {executor.kind === "flow" ? (
+                      <Icon size={18} aria-hidden="true" />
+                    ) : (
+                      <ExpertAvatar
+                        avatarId={executor.avatarId}
+                        team={executor.kind === "team"}
+                        size="xs"
+                      />
+                    )}
                   </span>
                   <span>
                     <strong>{copy.name}</strong>

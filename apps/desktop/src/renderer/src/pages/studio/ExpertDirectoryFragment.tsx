@@ -33,6 +33,7 @@ import {
   type ContextStoreBrowserSource,
 } from "../../components/MemoryStoreBrowser.tsx";
 import { MarkdownContent } from "../../components/MarkdownContent.tsx";
+import { ExpertAvatar } from "../../components/ExpertAvatar.tsx";
 import { isBuiltInExpert, type ExpertRecord } from "./studio-model.ts";
 import { errorMessage } from "../../lib/errors.ts";
 import { runtimeDisplayName } from "../../lib/runtime-display.ts";
@@ -108,7 +109,6 @@ export function ExpertDirectoryFragment(props: {
 
       <div className="expert-grid" role="list" aria-label={t("availableExperts")}>
         {matchingExperts.map(({ expert, copy }) => {
-          const ExpertIcon = expert.icon;
           return (
             <article
               className="expert-card-shell"
@@ -118,7 +118,7 @@ export function ExpertDirectoryFragment(props: {
               <button className="expert-card" type="button" onClick={() => props.onOpen(expert)}>
                 <span className="expert-card-header">
                   <span className="expert-card-icon" aria-hidden="true">
-                    <ExpertIcon size={25} weight="regular" />
+                    <ExpertAvatar avatarId={expert.avatarId} size="md" />
                   </span>
                   <span className="expert-card-identity">
                     <span className="expert-card-title-row">
@@ -195,7 +195,6 @@ export function ExpertDetailFragment(props: {
 }) {
   const { t } = useTranslation("studio");
   const { t: tCommon } = useTranslation("common");
-  const ExpertIcon = props.expert.icon;
   const copy = localizeSystemExpertCopy(props.expert, {
     name: tCommon("builtInExperts.pragma.name"),
     description: tCommon("builtInExperts.pragma.description"),
@@ -341,9 +340,7 @@ export function ExpertDetailFragment(props: {
       }
     >
       <header className="expert-detail-header">
-        <span className="expert-avatar" aria-hidden="true">
-          <ExpertIcon size={42} weight="regular" />
-        </span>
+        <ExpertAvatar avatarId={props.expert.avatarId} size="lg" />
         <div className="expert-detail-title">
           <div>
             <h1 id="expert-name">{copy.name}</h1>

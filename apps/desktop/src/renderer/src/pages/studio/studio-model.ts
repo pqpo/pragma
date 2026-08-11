@@ -14,7 +14,7 @@ import type {
   ExpertDefinition,
   UpdateExpertDefinition,
 } from "../../../../shared/contracts/index.ts";
-import { DEFAULT_PRAGMA_EXPERT_AVATAR_ID } from "@pragma/shared";
+import { randomPragmaExpertAvatarId } from "@pragma/shared";
 
 export type ExpertModel = Extract<
   ExpertDefinition["executionProfile"],
@@ -56,10 +56,10 @@ export type ExpertDraft = Omit<ExpertRecord, "icon" | "model"> & {
   readonly pluginSecretMutations: Readonly<Record<string, string | null>>;
 };
 
-export const emptyDraft = (): ExpertDraft => ({
+export const emptyDraft = (random: () => number = Math.random): ExpertDraft => ({
   id: "",
   name: "",
-  avatarId: DEFAULT_PRAGMA_EXPERT_AVATAR_ID,
+  avatarId: randomPragmaExpertAvatarId(random),
   description: "",
   tags: [],
   scope: "",
