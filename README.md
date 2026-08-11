@@ -33,6 +33,12 @@ The more you use Pragma, the more it compounds. Events from different tasks, har
 <p align="center">
   <img src="./docs/images/pragma_desktop_en.png" alt="Pragma Desktop running a multi-expert mission" width="800" />
 </p>
+<p align="center">
+  <img src="./docs/images/pragma_expert.png" alt="Pragma Desktop running a multi-expert mission" width="800" />
+</p>
+<p align="center">
+  <img src="./docs/images/pragma_team.png" alt="Pragma Desktop running a multi-expert mission" width="800" />
+</p>
 
 > [!IMPORTANT]
 > Pragma is currently a preview. The latest Desktop release provides unsigned builds for macOS Apple Silicon and Intel. See [Current status](#current-status) before adopting it for critical work.
