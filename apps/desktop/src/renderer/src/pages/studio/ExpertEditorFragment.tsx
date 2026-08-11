@@ -9,7 +9,7 @@ import {
 } from "@pragma/shared";
 
 import { SelectMenu } from "../../components/SelectMenu.tsx";
-import { ExpertAvatar } from "../../components/ExpertAvatar.tsx";
+import { ProfiledExpertAvatar } from "../../components/ProfiledExpertAvatar.tsx";
 import { errorMessage } from "../../lib/errors.ts";
 import { runtimeDisplayName } from "../../lib/runtime-display.ts";
 import {
@@ -279,7 +279,7 @@ export function ExpertEditorFragment(props: {
                     title={t("chooseAvatar", { ns: "studio" })}
                     onClick={() => setAvatarPickerOpen(true)}
                   >
-                    <ExpertAvatar avatarId={draft.avatarId} size="md" />
+                    <ProfiledExpertAvatar avatarId={draft.avatarId} size="md" />
                   </button>
                   <div>
                     <strong>{draft.name || t("expertName", { ns: "studio" })}</strong>

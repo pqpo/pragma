@@ -3,7 +3,8 @@ import { resolvePragmaAvatarId } from "@pragma/shared";
 import { useTranslation } from "react-i18next";
 
 import { Dialog } from "../../components/Dialog.tsx";
-import { EXPERT_AVATAR_OPTIONS, ExpertAvatar } from "../../components/ExpertAvatar.tsx";
+import { EXPERT_AVATAR_OPTIONS } from "../../components/ExpertAvatar.tsx";
+import { ProfiledExpertAvatar } from "../../components/ProfiledExpertAvatar.tsx";
 
 export function ExpertAvatarPicker(props: {
   readonly value: string;
@@ -28,11 +29,11 @@ export function ExpertAvatarPicker(props: {
               type="button"
               role="option"
               aria-selected={selected}
-              aria-label={t("avatarOption", { number: option.number })}
+              aria-label={t("avatarOption", { name: option.name })}
               key={option.id}
               onClick={() => props.onChange(option.id)}
             >
-              <ExpertAvatar avatarId={option.id} size="md" />
+              <ProfiledExpertAvatar avatarId={option.id} size="picker" />
               {selected ? <Check size={15} weight="bold" aria-hidden="true" /> : null}
             </button>
           );

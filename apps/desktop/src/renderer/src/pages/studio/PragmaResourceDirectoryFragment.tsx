@@ -44,6 +44,7 @@ import {
 
 import { CharacterCount } from "../../components/CharacterCount.tsx";
 import { ExpertAvatar } from "../../components/ExpertAvatar.tsx";
+import { ProfiledExpertAvatar } from "../../components/ProfiledExpertAvatar.tsx";
 import { MarkdownContent } from "../../components/MarkdownContent.tsx";
 import { SelectMenu } from "../../components/SelectMenu.tsx";
 import { errorMessage } from "../../lib/errors.ts";
@@ -461,7 +462,7 @@ export function PragmaResourceDetailFragment(props: {
     >
       <header className="expert-detail-header pragma-resource-detail-header">
         {isTeam ? (
-          <ExpertAvatar
+          <ProfiledExpertAvatar
             avatarId={expertTeamCoordinatorAvatarId(props.resource, props.project.resources)}
             team
             size="lg"
@@ -778,7 +779,7 @@ function TeamExpertCard(props: {
     >
       <div className="team-expert-card-main">
         <div className="team-expert-card-heading">
-          <ExpertAvatar avatarId={props.expert.avatarId} size="sm" />
+          <ProfiledExpertAvatar avatarId={props.expert.avatarId} size="sm" />
           {props.role === "coordinator" ? (
             <span className="team-role-mark">
               <UserCircle size={18} aria-hidden="true" />

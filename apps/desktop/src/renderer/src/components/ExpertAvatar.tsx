@@ -1,5 +1,5 @@
 import {
-  BUILT_IN_PRAGMA_EXPERT_AVATAR_IDS,
+  BUILT_IN_PRAGMA_EXPERT_AVATAR_PROFILES,
   FALLBACK_PRAGMA_EXPERT_AVATAR_ID,
   resolvePragmaAvatarId,
   type PragmaAvatarOwnerKind,
@@ -63,11 +63,13 @@ const avatarSources = [
   avatar27,
 ] as const;
 
-export const EXPERT_AVATAR_OPTIONS = BUILT_IN_PRAGMA_EXPERT_AVATAR_IDS.map((id, index) => ({
-  id,
-  source: avatarSources[index]!,
-  number: index + 1,
-}));
+export const EXPERT_AVATAR_OPTIONS = BUILT_IN_PRAGMA_EXPERT_AVATAR_PROFILES.map(
+  (profile, index) => ({
+    ...profile,
+    id: profile.avatarId,
+    source: avatarSources[index]!,
+  }),
+);
 
 const sourceById = new Map(EXPERT_AVATAR_OPTIONS.map(({ id, source }) => [id, source]));
 
@@ -82,7 +84,7 @@ export function expertAvatarSource(
 export function ExpertAvatar(props: {
   readonly avatarId: unknown;
   readonly team?: boolean | undefined;
-  readonly size?: "xs" | "sm" | "md" | "lg" | undefined;
+  readonly size?: "xs" | "sm" | "md" | "picker" | "lg" | undefined;
   readonly className?: string | undefined;
 }) {
   const classes = [

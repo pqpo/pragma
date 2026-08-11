@@ -2,11 +2,13 @@ import { describe, expect, it } from "vitest";
 
 import {
   BUILT_IN_PRAGMA_EXPERT_AVATAR_IDS,
+  BUILT_IN_PRAGMA_EXPERT_AVATAR_PROFILES,
   DEFAULT_PRAGMA_EXPERT_AVATAR_ID,
   DEFAULT_PRAGMA_EXPERT_TEAM_AVATAR_ID,
   FALLBACK_PRAGMA_EXPERT_AVATAR_ID,
   PragmaAvatarIdSchema,
   randomPragmaExpertAvatarId,
+  resolvePragmaExpertAvatarProfile,
   resolvePragmaAvatarId,
 } from "../src/index.ts";
 
@@ -58,5 +60,22 @@ describe("Pragma avatar IDs", () => {
     expect(randomPragmaExpertAvatarId(() => 10 / 27)).toBe("pragma.avatar.expert.11");
     expect(randomPragmaExpertAvatarId(() => 0.999_999)).toBe("pragma.avatar.expert.27");
     expect(() => randomPragmaExpertAvatarId(() => 1)).toThrow(RangeError);
+  });
+
+  it("publishes one stable fictional persona for every built-in avatar ID", () => {
+    expect(BUILT_IN_PRAGMA_EXPERT_AVATAR_PROFILES).toHaveLength(27);
+    expect(BUILT_IN_PRAGMA_EXPERT_AVATAR_PROFILES.map(({ avatarId }) => avatarId)).toEqual(
+      BUILT_IN_PRAGMA_EXPERT_AVATAR_IDS,
+    );
+    expect(resolvePragmaExpertAvatarProfile("pragma.avatar.expert.01")).toEqual({
+      avatarId: "pragma.avatar.expert.01",
+      name: "Zara",
+      gender: "woman",
+      personality: ["analytical", "calm", "perceptive"],
+    });
+    expect(resolvePragmaExpertAvatarProfile("unknown").avatarId).toBe(
+      FALLBACK_PRAGMA_EXPERT_AVATAR_ID,
+    );
+    expect(new Set(BUILT_IN_PRAGMA_EXPERT_AVATAR_PROFILES.map(({ name }) => name)).size).toBe(27);
   });
 });

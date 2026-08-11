@@ -107,6 +107,13 @@ describe("Desktop PragmaAgent DSL project adapter", () => {
         toolNames: [],
       }),
     ]);
+    expect(options.avatars).toHaveLength(27);
+    expect(options.avatars[0]).toEqual({
+      avatarId: "pragma.avatar.expert.01",
+      name: "Zara",
+      gender: "woman",
+      personality: ["analytical", "calm", "perceptive"],
+    });
   });
 
   it("reuses an existing compatible project RuntimeProfile without creating a duplicate", async () => {

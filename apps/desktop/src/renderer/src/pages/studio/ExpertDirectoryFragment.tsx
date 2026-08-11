@@ -33,7 +33,7 @@ import {
   type ContextStoreBrowserSource,
 } from "../../components/MemoryStoreBrowser.tsx";
 import { MarkdownContent } from "../../components/MarkdownContent.tsx";
-import { ExpertAvatar } from "../../components/ExpertAvatar.tsx";
+import { ProfiledExpertAvatar } from "../../components/ProfiledExpertAvatar.tsx";
 import { isBuiltInExpert, type ExpertRecord } from "./studio-model.ts";
 import { errorMessage } from "../../lib/errors.ts";
 import { runtimeDisplayName } from "../../lib/runtime-display.ts";
@@ -118,7 +118,7 @@ export function ExpertDirectoryFragment(props: {
               <button className="expert-card" type="button" onClick={() => props.onOpen(expert)}>
                 <span className="expert-card-header">
                   <span className="expert-card-icon" aria-hidden="true">
-                    <ExpertAvatar avatarId={expert.avatarId} size="md" />
+                    <ProfiledExpertAvatar avatarId={expert.avatarId} size="md" />
                   </span>
                   <span className="expert-card-identity">
                     <span className="expert-card-title-row">
@@ -340,7 +340,7 @@ export function ExpertDetailFragment(props: {
       }
     >
       <header className="expert-detail-header">
-        <ExpertAvatar avatarId={props.expert.avatarId} size="lg" />
+        <ProfiledExpertAvatar avatarId={props.expert.avatarId} size="lg" />
         <div className="expert-detail-title">
           <div>
             <h1 id="expert-name">{copy.name}</h1>

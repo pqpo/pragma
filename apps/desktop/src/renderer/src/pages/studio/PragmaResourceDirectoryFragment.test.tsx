@@ -483,6 +483,7 @@ const complete = true;
     expect(html).toContain("Back to teams");
     expect(html).toContain("Edit expert team");
     expect(html).toContain("Quality team");
+    expect(html.match(/data-avatar-profile="pragma.avatar.expert.11"/g)).toHaveLength(3);
     expect(html).toContain("Expert 001");
     expect(html).toContain("Team experts");
     expect(html).toContain("Specialist description 1");

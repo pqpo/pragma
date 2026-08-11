@@ -346,6 +346,7 @@ describe("ExpertDirectoryFragment", () => {
     expect(html).toContain('placeholder="Search experts"');
     expect(html).not.toContain("All experts");
     expect(html).not.toContain("directory-filter");
+    expect(html).toContain('data-avatar-profile="pragma.avatar.expert.11"');
     expect(html).not.toContain("expert-card-metrics");
     expect(html).not.toContain("Model");
     expect(html).not.toContain('class="expert-source-chip"');
@@ -417,6 +418,7 @@ describe("ExpertEditorFragment", () => {
     expect(html).not.toContain("Update this reusable expert declaration.");
     expect(html).toContain('class="creator-avatar-button"');
     expect(html).toContain('aria-label="Choose avatar"');
+    expect(html).toContain('data-avatar-profile="pragma.avatar.expert.11"');
     expect(html).not.toContain('class="expert-avatar-field"');
     expect(html).toMatch(/<button[^>]*aria-current="step"[^>]*>/);
     expect(html).not.toMatch(/<button[^>]*disabled=""[^>]*aria-current="step"/);

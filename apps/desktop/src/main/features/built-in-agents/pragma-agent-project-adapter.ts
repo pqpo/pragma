@@ -38,6 +38,7 @@ import {
   type PragmaAgentFlowDraftOperation,
   type PragmaAgentPrepareResult,
 } from "@pragma/built-in-agents";
+import { BUILT_IN_PRAGMA_EXPERT_AVATAR_PROFILES } from "@pragma/shared";
 import { z } from "zod";
 
 import type { Capability } from "../../../shared/contracts/index.ts";
@@ -651,6 +652,7 @@ async function buildExpertCatalog(options: {
     options: PragmaAgentExpertOptionCatalogSchema.parse({
       runtimeModels,
       capabilities: capabilityOptions,
+      avatars: BUILT_IN_PRAGMA_EXPERT_AVATAR_PROFILES,
     }),
     resources,
     availableModels: new Set(

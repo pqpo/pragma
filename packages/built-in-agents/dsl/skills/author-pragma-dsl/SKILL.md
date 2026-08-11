@@ -16,8 +16,11 @@ source of truth and use only the Pragma DSL tools to inspect, validate, and save
    ones in the same change-set. A Host Runtime or Capability option that is not yet a project
    resource cannot be read and is the only exception.
 3. Before creating or changing an Expert, call `list_expert_options`. Confirm a listed Runtime
-   model, recommend only listed capabilities that match the user's intent, and ask whether to use
-   the recommendation, customize it, or enable no capabilities. Reuse an existing project
+   model, recommend only listed capabilities that match the user's intent, and select only a listed
+   avatar persona. When the user has not specified an avatar, either recommend the persona whose
+   traits best match the Expert's role or present a concise choice of relevant personas. Preserve an
+   existing avatar when editing unless the user asks to change it. Ask whether to use the
+   recommendation, customize it, or enable no capabilities. Reuse an existing project
    RuntimeProfile when its Runtime, provider, model, and thinking level match the selection;
    otherwise use the option's `runtimeProfileRef`. Never author a duplicate RuntimeProfile.
 4. Read the relevant reference file below before drafting YAML.
@@ -72,6 +75,8 @@ Before preparing or saving, enforce the Automation metadata and prompt limits do
 ## References
 
 - Expert resources: read [references/expert.md](references/expert.md).
+- Expert avatar personas: read [references/avatars.md](references/avatars.md) before selecting or
+  changing an Expert avatar.
 - ExpertTeam resources: read [references/expert-team.md](references/expert-team.md).
 - Flow resources: read [references/flow.md](references/flow.md).
 - Flow run dry cases: read [references/run-dry.md](references/run-dry.md).

@@ -43,5 +43,7 @@ spec:
   unique within the Expert. It is not derived from the ContextStore ID, binding, or `config.key`.
   Preserve the namespace when editing an existing mount. Use `contextStores: []` when none apply.
 - Put behavioral rules in `scope` and `instructions`; never put credentials or machine paths in DSL.
-- `avatarId` is a portable system-avatar identifier. Never use a path, URL, or embedded image.
+- `avatarId` is a portable system-avatar identifier. Select an exact `avatars[].avatarId` returned
+  by `list_expert_options`; never use a path, URL, or embedded image. Read
+  [avatars.md](avatars.md) for the stable persona catalog and selection rules.
 - Expose another resource as a tool only through a named, versioned tool adapter.

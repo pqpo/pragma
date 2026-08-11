@@ -6082,6 +6082,12 @@ html.is-resizing-sidebar * {
   border-radius: 10px;
 }
 
+.pragma-avatar-picker {
+  width: 56px;
+  height: 56px;
+  border-radius: 11px;
+}
+
 .pragma-avatar-lg {
   width: 87px;
   height: 87px;
@@ -6102,6 +6108,67 @@ html.is-resizing-sidebar * {
   letter-spacing: 0.01em;
   line-height: 1;
   text-align: center;
+}
+
+.expert-avatar-profile {
+  position: relative;
+  display: inline-grid;
+  flex: 0 0 auto;
+  place-items: center;
+}
+
+.expert-avatar-profile-card {
+  position: fixed;
+  z-index: 220;
+  top: 0;
+  left: 0;
+  display: grid;
+  visibility: hidden;
+  width: min(240px, calc(100vw - 24px));
+  gap: 7px;
+  padding: 12px 14px;
+  border: 1px solid var(--ui-line-strong);
+  border-radius: var(--ui-radius-lg);
+  background: var(--ui-surface);
+  box-shadow: var(--ui-shadow-overlay);
+  color: var(--ui-text);
+  opacity: 0;
+  pointer-events: none;
+  text-align: left;
+  transform: translateY(-3px);
+  transition:
+    opacity 120ms ease,
+    transform 120ms ease;
+}
+
+.expert-avatar-profile-card.is-positioned {
+  visibility: visible;
+  opacity: 1;
+  transform: translateY(0);
+}
+
+.expert-avatar-profile-card strong {
+  font-size: 14px;
+  font-weight: 720;
+  line-height: 1.25;
+}
+
+.expert-avatar-profile-card > span {
+  display: grid;
+  gap: 2px;
+  min-width: 180px;
+  font-size: 12px;
+  font-weight: 520;
+  line-height: 1.4;
+  white-space: normal;
+}
+
+.expert-avatar-profile-card small {
+  color: var(--ui-text-secondary);
+  font-size: 10px;
+  font-weight: 650;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
 }
 
 .pragma-avatar-xs .pragma-avatar-team-badge {
@@ -6397,13 +6464,17 @@ html.is-resizing-sidebar * {
 
 .expert-avatar-picker-grid {
   display: grid;
-  grid-template-columns: repeat(9, minmax(0, 1fr));
+  grid-template-columns: repeat(auto-fit, minmax(68px, 1fr));
   gap: 10px;
 }
 
 .expert-avatar-option {
   position: relative;
   display: grid;
+  width: 68px;
+  height: 68px;
+  place-items: center;
+  justify-self: center;
   padding: 4px;
   border: 2px solid transparent;
   border-radius: 13px;
@@ -6430,12 +6501,6 @@ html.is-resizing-sidebar * {
   border-radius: 999px;
   background: var(--green-dark);
   color: #fff;
-}
-
-@media (max-width: 620px) {
-  .expert-avatar-picker-grid {
-    grid-template-columns: repeat(6, minmax(0, 1fr));
-  }
 }
 
 .creator-preview div {
