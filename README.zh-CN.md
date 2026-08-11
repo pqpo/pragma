@@ -33,6 +33,12 @@ Pragma 用得越多，沉淀得越多。不同任务、Harness 与模型产生�
 <p align="center">
   <img src="./docs/images/pragma_desktop_cn.png" alt="Pragma Desktop 正在运行一项多专家 Mission" width="800" />
 </p>
+<p align="center">
+  <img src="./docs/images/pragma_expert.png" alt="Pragma Desktop running a multi-expert mission" width="800" />
+</p>
+<p align="center">
+  <img src="./docs/images/pragma_team.png" alt="Pragma Desktop running a multi-expert mission" width="800" />
+</p>
 
 
 > [!IMPORTANT]
