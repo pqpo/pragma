@@ -3,6 +3,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 
 import { PragmaPaths } from "@pragma/core";
+import { resolvePragmaAvatarId } from "@pragma/shared";
 import {
   canonicalPragmaResourceRef,
   type PragmaCapabilityResource,
@@ -129,12 +130,51 @@ describe("PragmaBundleService", () => {
     expect(first.projectFingerprint).toBe(second.projectFingerprint);
     expect(Object.keys(archive)).toContain("bundle.json");
     expect(Object.keys(archive)).toContain("project/pragma.yaml");
-    expect(strFromU8(archive["project/pragma.yaml"]!)).toContain("apiVersion: pragma/v3");
+    expect(strFromU8(archive["project/pragma.yaml"]!)).toContain("apiVersion: pragma/v4");
     await expect(fixture.service.inspect(firstPath)).resolves.toMatchObject({
       bundleFingerprint: first.bundleFingerprint,
       root: { ref: "expert:1xddvess309a6gme", name: "Writer" },
       resources: 2,
     });
+  });
+
+  it("shares only the avatar ID and preserves an unknown ID while resolving the default", async () => {
+    const requestedAvatarId = "pragma.avatar.expert.future-reviewer";
+    const source = await createFixture("avatar-source", { avatarId: requestedAvatarId });
+    const path = join(source.root, "avatar.pragma");
+    const exported = await source.service.exportTo(exportInput(source.projectRevision), path);
+    const archive = unzipSync(new Uint8Array(await readFile(path)));
+    const projectSource = strFromU8(archive["project/pragma.yaml"]!);
+
+    expect(projectSource).toContain(`avatarId: ${requestedAvatarId}`);
+    expect(Object.keys(archive).some((entry) => entry.startsWith("assets/avatar"))).toBe(false);
+
+    const target = await createFixture("avatar-target", {
+      expertId: "3sfd30h5017wd17d",
+      runtimeResourceId: "4sfd30h5017wd17d",
+    });
+    const inspection = await target.service.inspect(path);
+    const installation = await target.service.startImport({
+      ...importInput(
+        path,
+        exported.bundleFingerprint,
+        exported.projectFingerprint,
+        inspection.projectRevision,
+      ),
+      conflicts: inspection.conflicts.map((conflict) => ({
+        resourceRef: conflict.ref,
+        action: "copy" as const,
+      })),
+    });
+    const imported = (await target.project.get()).resources.find(
+      (resource): resource is PragmaExpertResource =>
+        resource.kind === "Expert" && canonicalPragmaResourceRef(resource) === installation.rootRef,
+    );
+
+    expect(imported?.metadata.avatarId).toBe(requestedAvatarId);
+    expect(resolvePragmaAvatarId("expert", imported?.metadata.avatarId)).toBe(
+      "pragma.avatar.expert.default",
+    );
   });
 
   it("inspects one explicitly selected root from a multi-root Interpreter Bundle", async () => {
@@ -776,6 +816,7 @@ async function createFixture(
     readonly runtimeId?: string;
     readonly expertId?: string;
     readonly runtimeResourceId?: string;
+    readonly avatarId?: string;
     readonly runtimes?: DesktopRuntimeAvailability[];
   } = {},
 ) {
@@ -795,6 +836,7 @@ async function createFixture(
         overrides.instructions ?? "Write verified release notes.",
         overrides.expertId,
         overrides.runtimeResourceId,
+        overrides.avatarId,
       ),
       runtime(overrides.runtimeId ?? "codex", overrides.runtimeResourceId),
     ],
@@ -870,12 +912,14 @@ function expert(
   instructions: string,
   id = "1xddvess309a6gme",
   runtimeResourceId = "zdkgs0fde4xt00vr",
+  avatarId = "pragma.avatar.expert.default",
 ): PragmaExpertResource {
   return {
-    apiVersion: "pragma/v3",
+    apiVersion: "pragma/v4",
     kind: "Expert",
     metadata: {
       id,
+      avatarId,
       name: "Writer",
       description: "Writes release notes",
       tags: [],
@@ -895,7 +939,7 @@ function expert(
 
 function runtime(runtimeId: string, resourceId = "zdkgs0fde4xt00vr"): PragmaRuntimeProfileResource {
   return {
-    apiVersion: "pragma/v3",
+    apiVersion: "pragma/v4",
     kind: "RuntimeProfile",
     metadata: {
       id: resourceId,
@@ -912,7 +956,7 @@ function runtime(runtimeId: string, resourceId = "zdkgs0fde4xt00vr"): PragmaRunt
 
 function portableCapability(): PragmaCapabilityResource {
   return {
-    apiVersion: "pragma/v3",
+    apiVersion: "pragma/v4",
     kind: "Capability",
     metadata: {
       id: "nv27faxmxpqnxwqr",
@@ -930,10 +974,11 @@ function portableCapability(): PragmaCapabilityResource {
 
 function expertTeam(): PragmaExpertTeamResource {
   return {
-    apiVersion: "pragma/v3",
+    apiVersion: "pragma/v4",
     kind: "ExpertTeam",
     metadata: {
       id: "p8cbn3cg2avyksn4",
+      avatarId: "pragma.avatar.team.default",
       name: "Reviewers",
       description: "Coordinates review work.",
       tags: [],
@@ -954,7 +999,7 @@ function expertTeam(): PragmaExpertTeamResource {
 
 function flowCalling(expertRef: string): PragmaFlowResource {
   return {
-    apiVersion: "pragma/v3",
+    apiVersion: "pragma/v4",
     kind: "Flow",
     metadata: {
       id: "qj3t30sa520dvfvj",

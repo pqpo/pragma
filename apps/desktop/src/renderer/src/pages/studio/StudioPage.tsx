@@ -266,6 +266,7 @@ export function StudioPage(props: {
       const definition = isBuiltInExpert(expert)
         ? await api.updateBuiltInExpert(expert.ref!, {
             name: expert.name,
+            avatarId: expert.avatarId,
             description: expert.description,
             tags: [...expert.tags],
             additionalInstructions: expert.additionalInstructions,

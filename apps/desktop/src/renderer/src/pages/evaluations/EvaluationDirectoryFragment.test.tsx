@@ -52,7 +52,7 @@ describe("EvaluationDirectoryFragment", () => {
         flow,
         secondFlow,
         {
-          apiVersion: "pragma/v3",
+          apiVersion: "pragma/v4",
           kind: "Evaluation",
           metadata: {
             id: "7h8j9k0m1n2p3q4r",

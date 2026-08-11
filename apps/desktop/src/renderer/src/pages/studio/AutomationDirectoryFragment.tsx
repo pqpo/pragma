@@ -62,13 +62,7 @@ type EditorState = {
 };
 
 type AutomationField =
-  | "name"
-  | "description"
-  | "executor"
-  | "prompt"
-  | "flowInput"
-  | "trigger"
-  | "workspace";
+  "name" | "description" | "executor" | "prompt" | "flowInput" | "trigger" | "workspace";
 
 export function createNewAutomationEditor(
   id: string,
@@ -171,8 +165,7 @@ export function AutomationDirectoryFragment(props: {
     );
     const routeInput = automation.resource.spec.route.input;
     const window = value["window"] as
-      | { readonly startsAt?: string; readonly endsAt?: string }
-      | undefined;
+      { readonly startsAt?: string; readonly endsAt?: string } | undefined;
     setEditor({
       originalRef: automation.ref,
       id: automation.resource.metadata.id,
@@ -239,7 +232,7 @@ export function AutomationDirectoryFragment(props: {
       await api.saveAutomation({
         expectedProjectRevision: props.project.revision,
         resource: {
-          apiVersion: "pragma/v3",
+          apiVersion: "pragma/v4",
           kind: "Automation",
           metadata: {
             id: editor.id,

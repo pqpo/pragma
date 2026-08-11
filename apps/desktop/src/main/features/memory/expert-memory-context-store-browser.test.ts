@@ -8,10 +8,11 @@ import type { PragmaProjectStore } from "../projects/pragma-project-store.ts";
 import { createExpertMemoryContextStoreBrowserService } from "./expert-memory-context-store-browser.ts";
 
 const expertResource: PragmaExpertResource = {
-  apiVersion: "pragma/v3",
+  apiVersion: "pragma/v4",
   kind: "Expert",
   metadata: {
     id: "1xddvess309a6gme",
+    avatarId: "pragma.avatar.expert.default",
     name: "Writer",
     description: "Writer",
     tags: [],

@@ -2,6 +2,10 @@ import { derivePragmaResourceId } from "@pragma/core";
 import { describe, expect, it } from "vitest";
 
 import {
+  DEFAULT_PRAGMA_EXPERT_AVATAR_ID,
+  DEFAULT_PRAGMA_EXPERT_TEAM_AVATAR_ID,
+} from "@pragma/shared";
+import {
   CURRENT_PRAGMA_DSL_API_VERSION,
   PragmaDslMigrationError,
   formatPragmaYaml,
@@ -48,7 +52,8 @@ describe("Pragma DSL project migrations", () => {
       (resource) => resource.kind === "Expert" && resource.metadata.id === writerId,
     );
     expect(writer).toMatchObject({
-      apiVersion: "pragma/v3",
+      apiVersion: "pragma/v4",
+      metadata: { avatarId: DEFAULT_PRAGMA_EXPERT_AVATAR_ID },
       spec: {
         runtime: { ref: `runtime-profile:${runtimeId}` },
         capabilities: [{ ref: `capability:${capabilityId}` }],
@@ -57,7 +62,7 @@ describe("Pragma DSL project migrations", () => {
     });
     const team = result.resources.find((resource) => resource.kind === "ExpertTeam");
     expect(team).toMatchObject({
-      metadata: { id: teamId },
+      metadata: { id: teamId, avatarId: DEFAULT_PRAGMA_EXPERT_TEAM_AVATAR_ID },
       spec: {
         coordinator: { ref: `expert:${writerId}` },
         members: [{ ref: `expert:${reviewerId}` }],
@@ -86,27 +91,53 @@ describe("Pragma DSL project migrations", () => {
     expect(result.identityMigrations).toHaveLength(8);
   });
 
+  it("migrates a real v3 Expert and ExpertTeam to distinct default avatar IDs", () => {
+    const files = v3ProjectFiles();
+    const original = new Map(files);
+
+    const result = migratePragmaDslProjectToCurrent({ projectId: "studio", files });
+
+    expect(result).toMatchObject({
+      sourceApiVersion: "pragma/v3",
+      targetApiVersion: "pragma/v4",
+      migrated: true,
+      resources: [
+        expect.objectContaining({
+          apiVersion: "pragma/v4",
+          kind: "Expert",
+          metadata: expect.objectContaining({ avatarId: DEFAULT_PRAGMA_EXPERT_AVATAR_ID }),
+        }),
+        expect.objectContaining({
+          apiVersion: "pragma/v4",
+          kind: "ExpertTeam",
+          metadata: expect.objectContaining({ avatarId: DEFAULT_PRAGMA_EXPERT_TEAM_AVATAR_ID }),
+        }),
+      ],
+    });
+    expect(files).toEqual(original);
+  });
+
   it("returns a validated no-op for a current project", () => {
     const resource = currentCapability();
     const files = new Map([
       [
         "pragma.yaml",
         formatPragmaYaml({
-          apiVersion: "pragma/v3",
+          apiVersion: "pragma/v4",
           kind: "Bundle",
           imports: ["./capabilities/repo.pragma.yaml"],
           resources: [],
         }),
       ],
       ["capabilities/repo.pragma.yaml", formatPragmaYaml(resource)],
-      ["pragma.lock.yaml", "apiVersion: pragma/v3\nkind: Lock\n"],
+      ["pragma.lock.yaml", "apiVersion: pragma/v4\nkind: Lock\n"],
       ["README.md", "hello\n"],
     ]);
 
-    expect(inspectPragmaProjectApiVersion(files)).toBe("pragma/v3");
+    expect(inspectPragmaProjectApiVersion(files)).toBe("pragma/v4");
     expect(migratePragmaDslProjectToCurrent({ projectId: "studio", files })).toMatchObject({
-      sourceApiVersion: "pragma/v3",
-      targetApiVersion: "pragma/v3",
+      sourceApiVersion: "pragma/v4",
+      targetApiVersion: "pragma/v4",
       migrated: false,
       resources: [resource],
       identityMigrations: [],
@@ -123,7 +154,7 @@ describe("Pragma DSL project migrations", () => {
     );
 
     const future = new Map([
-      ["pragma.yaml", "apiVersion: pragma/v4\nkind: Bundle\nimports: []\nresources: []\n"],
+      ["pragma.yaml", "apiVersion: pragma/v5\nkind: Bundle\nimports: []\nresources: []\n"],
     ]);
     expect(() => migratePragmaDslProjectToCurrent({ projectId: "studio", files: future })).toThrow(
       expect.objectContaining<Partial<PragmaDslMigrationError>>({
@@ -210,6 +241,61 @@ function v2ProjectFiles(): Map<string, string> {
     ),
     ["pragma.lock.yaml", "apiVersion: pragma/v2\nkind: Lock\n"],
     ["skills/release/SKILL.md", "# Release\n"],
+  ]);
+}
+
+function v3ProjectFiles(): Map<string, string> {
+  const expert = {
+    apiVersion: "pragma/v3",
+    kind: "Expert",
+    metadata: {
+      id: "1xddvess309a6gme",
+      name: "Historical Expert",
+      description: "Written by pragma/v3.",
+      tags: [],
+    },
+    spec: {
+      scope: "Coordinate delivery.",
+      instructions: "Delegate deliberately.",
+      capabilities: [],
+      toolApprovals: {},
+      contextStores: [],
+      plugins: [],
+      tools: [],
+    },
+  };
+  const team = {
+    apiVersion: "pragma/v3",
+    kind: "ExpertTeam",
+    metadata: {
+      id: "vyv9pwwzaksth2dd",
+      name: "Historical Team",
+      description: "Written by pragma/v3.",
+      tags: [],
+    },
+    spec: {
+      coordinator: { ref: "expert:1xddvess309a6gme" },
+      members: [{ ref: "expert:1xddvess309a6gme" }],
+      contextStores: [],
+      delegation: {
+        maxConcurrency: 4,
+        maxDepth: 3,
+        context: "context-policy:pragma.fresh@v1",
+        runtimes: {},
+      },
+    },
+  };
+  return new Map([
+    [
+      "pragma.yaml",
+      formatPragmaYaml({
+        apiVersion: "pragma/v3",
+        kind: "Bundle",
+        imports: [],
+        resources: [expert, team],
+      }),
+    ],
+    ["pragma.lock.yaml", "apiVersion: pragma/v3\nkind: Lock\n"],
   ]);
 }
 
@@ -353,7 +439,7 @@ function v2Resources(): LegacyResourceFixture[] {
 
 function currentCapability() {
   return {
-    apiVersion: "pragma/v3" as const,
+    apiVersion: "pragma/v4" as const,
     kind: "Capability" as const,
     metadata: {
       id: "1h2j3k4m5n6p7q8r",

@@ -1,5 +1,8 @@
 import {
+  DEFAULT_PRAGMA_EXPERT_AVATAR_ID,
+  DEFAULT_PRAGMA_EXPERT_TEAM_AVATAR_ID,
   PRAGMA_TEXT_LIMITS,
+  PragmaAvatarIdSchema,
   RuntimeModelSelectionSchema,
   pragmaUnicodeLength,
 } from "@pragma/shared";
@@ -11,7 +14,7 @@ import { z } from "zod";
 
 import { PragmaObjectJsonSchemaSchema } from "./tool-capability.schema.ts";
 
-export const CURRENT_PRAGMA_DSL_API_VERSION = "pragma/v3" as const;
+export const CURRENT_PRAGMA_DSL_API_VERSION = "pragma/v4" as const;
 export const PragmaApiVersionSchema = z.literal(CURRENT_PRAGMA_DSL_API_VERSION);
 
 export const PragmaResourceKindSchema = z.enum([
@@ -178,8 +181,13 @@ export const PragmaExpertMetadataSchema = metadataSchema(
     .array(requiredUnicodeText(PRAGMA_TEXT_LIMITS.expert.tag))
     .max(PRAGMA_TEXT_LIMITS.expert.tags)
     .default([]),
-).extend({ id: PragmaExpertIdSchema });
-export const PragmaExpertTeamMetadataSchema = metadataSchema(PRAGMA_TEXT_LIMITS.expertTeam);
+).extend({
+  id: PragmaExpertIdSchema,
+  avatarId: PragmaAvatarIdSchema.default(DEFAULT_PRAGMA_EXPERT_AVATAR_ID),
+});
+export const PragmaExpertTeamMetadataSchema = metadataSchema(PRAGMA_TEXT_LIMITS.expertTeam).extend({
+  avatarId: PragmaAvatarIdSchema.default(DEFAULT_PRAGMA_EXPERT_TEAM_AVATAR_ID),
+});
 export const PragmaFlowMetadataSchema = metadataSchema(PRAGMA_TEXT_LIMITS.flow);
 export const PragmaAutomationMetadataSchema = metadataSchema(PRAGMA_TEXT_LIMITS.automation);
 export const PragmaCapabilityMetadataSchema = metadataSchema(PRAGMA_TEXT_LIMITS.capability);

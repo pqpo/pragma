@@ -345,12 +345,12 @@ describe("portable .pragma bundles", () => {
     await writeFile(
       entry,
       formatPragmaYaml({
-        apiVersion: "pragma/v3",
+        apiVersion: "pragma/v4",
         kind: "Bundle",
         resources: [
           runtimeResource(),
           {
-            apiVersion: "pragma/v3",
+            apiVersion: "pragma/v4",
             kind: "ContextStore",
             metadata: {
               id: "w01fppfxrn31gf7v",
@@ -392,7 +392,7 @@ async function createProject(withCapability = false): Promise<{ root: string; en
   const resources: unknown[] = [runtimeResource()];
   if (withCapability) {
     resources.push({
-      apiVersion: "pragma/v3",
+      apiVersion: "pragma/v4",
       kind: "Capability",
       metadata: {
         id: "j35188zs37g69g0n",
@@ -408,13 +408,13 @@ async function createProject(withCapability = false): Promise<{ root: string; en
     });
   }
   resources.push(expertResource(withCapability));
-  await writeFile(entry, formatPragmaYaml({ apiVersion: "pragma/v3", kind: "Bundle", resources }));
+  await writeFile(entry, formatPragmaYaml({ apiVersion: "pragma/v4", kind: "Bundle", resources }));
   return { root, entry };
 }
 
 function runtimeResource() {
   return {
-    apiVersion: "pragma/v3" as const,
+    apiVersion: "pragma/v4" as const,
     kind: "RuntimeProfile" as const,
     metadata: {
       id: "knr7p5b7qc55wv92",
@@ -428,7 +428,7 @@ function runtimeResource() {
 
 function expertResource(withCapability: boolean) {
   return {
-    apiVersion: "pragma/v3",
+    apiVersion: "pragma/v4",
     kind: "Expert",
     metadata: {
       id: "1xddvess309a6gme",

@@ -1896,7 +1896,7 @@ class PragmaProjectImpl implements PragmaProject {
     const mode = options.split ?? "preserve";
     if (mode === "single") {
       const bundle = PragmaBundleSchema.parse({
-        apiVersion: "pragma/v3",
+        apiVersion: "pragma/v4",
         kind: "Bundle",
         resources: this.listResources(),
       });
@@ -1912,7 +1912,7 @@ class PragmaProjectImpl implements PragmaProject {
     files.set(
       "pragma.yaml",
       stringify({
-        apiVersion: "pragma/v3",
+        apiVersion: "pragma/v4",
         kind: "Bundle",
         imports: imports.sort(),
         resources: [],
@@ -1948,7 +1948,7 @@ class PragmaProjectImpl implements PragmaProject {
     const portable = portableizeBundleResources(selected, this.options.resourceAdapters);
     const files = new Map<string, Uint8Array>();
     const projectBundle = PragmaBundleSchema.parse({
-      apiVersion: "pragma/v3",
+      apiVersion: "pragma/v4",
       kind: "Bundle",
       resources: portable.resources,
     });
@@ -1974,7 +1974,7 @@ class PragmaProjectImpl implements PragmaProject {
       }),
     );
     const lock = PragmaLockSchema.parse({
-      apiVersion: "pragma/v3",
+      apiVersion: "pragma/v4",
       kind: "Lock",
       compilerVersion: PRAGMA_COMPILER_WRITE_VERSION,
       projectFingerprint,
@@ -2073,7 +2073,7 @@ class PragmaProjectImpl implements PragmaProject {
       .map(([source, contentHash]) => ({ source, contentHash }))
       .toSorted((left, right) => left.source.localeCompare(right.source));
     return {
-      apiVersion: "pragma/v3",
+      apiVersion: "pragma/v4",
       kind: "Lock",
       compilerVersion: PRAGMA_COMPILER_WRITE_VERSION,
       projectFingerprint: sha256(

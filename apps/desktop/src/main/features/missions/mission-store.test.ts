@@ -769,10 +769,11 @@ async function temporaryRoot(): Promise<string> {
 
 function expertFixture(): PragmaExpertResource {
   return {
-    apiVersion: "pragma/v3",
+    apiVersion: "pragma/v4",
     kind: "Expert",
     metadata: {
       id: "v2vt1v01vzz6j24q",
+      avatarId: "pragma.avatar.expert.default",
       name: "Product Designer",
       description: "Designs product experiences.",
       tags: ["design"],

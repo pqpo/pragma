@@ -6,6 +6,7 @@ import {
   PragmaToolBindingSchema,
 } from "@pragma/interpreter/ast";
 import { z } from "zod";
+import { DEFAULT_PRAGMA_EXPERT_AVATAR_ID, PragmaAvatarIdSchema } from "@pragma/shared";
 
 import {
   ExpertAdditionalInstructionsSchema,
@@ -26,6 +27,7 @@ export const ExpertDefinitionSchema = z.object({
   schemaVersion: z.literal("pragma.desktop-expert-view/v1"),
   ref: PragmaExpertRefSchema,
   id: PragmaExpertIdSchema,
+  avatarId: PragmaAvatarIdSchema.default(DEFAULT_PRAGMA_EXPERT_AVATAR_ID),
   name: PragmaExpertResourceSchema.shape.metadata.shape.name,
   description: PragmaExpertResourceSchema.shape.metadata.shape.description,
   tags: PragmaExpertResourceSchema.shape.metadata.shape.tags,
@@ -53,6 +55,7 @@ export const ExpertSummarySchema = ExpertDefinitionSchema.pick({
   schemaVersion: true,
   ref: true,
   id: true,
+  avatarId: true,
   name: true,
   description: true,
   tags: true,
@@ -81,6 +84,7 @@ export const CreateExpertDefinitionSchema = ExpertDefinitionSchema.omit({
 })
   .extend({
     baseRevision: z.number().int().nonnegative(),
+    avatarId: PragmaAvatarIdSchema.optional(),
     requiredUnchangedRefs: z.array(PragmaResourceRefSchema).default([]),
     instructions: ExpertInstructionsSchema,
     model: ExpertModelConfigSchema,
@@ -98,10 +102,12 @@ export const UpdateExpertDefinitionSchema = CreateExpertDefinitionSchema.omit({
 })
   .extend({
     baseRevision: z.number().int().positive(),
+    avatarId: PragmaAvatarIdSchema.optional(),
   })
   .strict();
 
 export const UpdateBuiltInExpertDefinitionSchema = CreateExpertDefinitionSchema.pick({
+  avatarId: true,
   name: true,
   description: true,
   tags: true,
@@ -112,6 +118,7 @@ export const UpdateBuiltInExpertDefinitionSchema = CreateExpertDefinitionSchema.
   contextStoreMounts: true,
 })
   .extend({
+    avatarId: PragmaAvatarIdSchema.optional(),
     additionalInstructions: ExpertAdditionalInstructionsSchema,
     model: ExpertModelConfigSchema.optional(),
     capabilities: ExpertDefinitionSchema.shape.capabilities,

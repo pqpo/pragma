@@ -34,7 +34,7 @@ afterEach(async () => {
 function expert(index: number): PragmaExpertResource {
   const id = String(index).padStart(16, "0");
   return PragmaExpertResourceSchema.parse({
-    apiVersion: "pragma/v3",
+    apiVersion: "pragma/v4",
     kind: "Expert",
     metadata: {
       id,
@@ -51,6 +51,7 @@ function studioExpert(index: number): ExpertRecord {
   return {
     id,
     ref: `expert:${id}`,
+    avatarId: "pragma.avatar.expert.default",
     name: `Expert ${String(index).padStart(3, "0")}`,
     description: `Specialist description ${index}`,
     tags: [],
@@ -161,7 +162,7 @@ describe("expert team editor", () => {
     const experts = [expert(1), expert(2)];
     const instructions = "Verify evidence before declaring work complete.";
     const initial = PragmaExpertTeamResourceSchema.parse({
-      apiVersion: "pragma/v3",
+      apiVersion: "pragma/v4",
       kind: "ExpertTeam",
       metadata: {
         id: "cccvf3nab91n2wja",
@@ -212,7 +213,7 @@ describe("expert team editor", () => {
 describe("PragmaResourceDirectoryFragment", () => {
   it("opens Team resources through a detail-first directory row", () => {
     const initial = PragmaExpertTeamResourceSchema.parse({
-      apiVersion: "pragma/v3",
+      apiVersion: "pragma/v4",
       kind: "ExpertTeam",
       metadata: {
         id: "cccvf3nab91n2wja",
@@ -389,7 +390,7 @@ describe("PragmaResourceDetailFragment", () => {
       },
     ] satisfies readonly DesktopRuntimeAvailability[];
     const team = PragmaExpertTeamResourceSchema.parse({
-      apiVersion: "pragma/v3",
+      apiVersion: "pragma/v4",
       kind: "ExpertTeam",
       metadata: {
         id: "cccvf3nab91n2wja",

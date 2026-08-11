@@ -119,6 +119,7 @@ describe("resolveExpertCapabilities", () => {
       schemaVersion: "pragma.desktop-expert-view/v1",
       ref: "expert:3sfd30h5017wd17d",
       id: "reviewer",
+      avatarId: "pragma.avatar.expert.default",
       name: "Reviewer",
       description: "Reviews work.",
       tags: [],

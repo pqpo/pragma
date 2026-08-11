@@ -3,7 +3,7 @@
 Use a Flow for explicit, inspectable control flow.
 
 ```yaml
-apiVersion: pragma/v3
+apiVersion: pragma/v4
 kind: Flow
 metadata:
   id: 8h9j0k1m2n3p4q5r

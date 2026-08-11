@@ -14,6 +14,7 @@ import type {
   ExpertDefinition,
   UpdateExpertDefinition,
 } from "../../../../shared/contracts/index.ts";
+import { DEFAULT_PRAGMA_EXPERT_AVATAR_ID } from "@pragma/shared";
 
 export type ExpertModel = Extract<
   ExpertDefinition["executionProfile"],
@@ -26,6 +27,7 @@ export type ExpertRecord = {
   readonly ref?: string | undefined;
   readonly id: string;
   readonly name: string;
+  readonly avatarId: string;
   readonly description: string;
   readonly tags: readonly string[];
   readonly scope: string;
@@ -57,6 +59,7 @@ export type ExpertDraft = Omit<ExpertRecord, "icon" | "model"> & {
 export const emptyDraft = (): ExpertDraft => ({
   id: "",
   name: "",
+  avatarId: DEFAULT_PRAGMA_EXPERT_AVATAR_ID,
   description: "",
   tags: [],
   scope: "",
@@ -84,6 +87,7 @@ export function toExpertRecord(definition: ExpertDefinition): ExpertRecord {
     id: definition.id,
     ref: definition.ref,
     name: definition.name,
+    avatarId: definition.avatarId,
     description: definition.description,
     tags: definition.tags,
     scope: definition.scope,
@@ -134,6 +138,7 @@ export function toPersistedInput(expert: ExpertRecord): UpdateExpertDefinition {
   return {
     baseRevision: existing.revision,
     name: expert.name,
+    avatarId: expert.avatarId,
     description: expert.description,
     tags: [...expert.tags],
     scope: expert.scope,
@@ -163,6 +168,7 @@ export function toCreateExpertInput(
     baseRevision: input.baseRevision,
     requiredUnchangedRefs: [...(input.requiredUnchangedRefs ?? [])],
     name: expert.name,
+    avatarId: expert.avatarId,
     description: expert.description,
     tags: [...expert.tags],
     scope: expert.scope,

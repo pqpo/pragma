@@ -6,6 +6,7 @@ import {
   type PragmaRuntimeProfileResource,
 } from "@pragma/interpreter/ast";
 import { generatePragmaResourceId } from "@pragma/core";
+import { DEFAULT_PRAGMA_EXPERT_AVATAR_ID } from "@pragma/shared";
 
 import {
   CreateExpertDefinitionSchema,
@@ -59,7 +60,7 @@ export class ExpertDefinitionStoreError extends Error {
   }
 }
 
-type ExpertDefinitionWrite = Omit<CreateExpertDefinition, "baseRevision" | "requiredUnchangedRefs">;
+type ExpertDefinitionWrite = Omit<UpdateExpertDefinition, "baseRevision">;
 
 /**
  * Form projection used by the current Desktop expert editor. Persistence is exclusively the
@@ -306,10 +307,12 @@ function definitionToResources(
   }));
   const contextResources = contextSelections.map(({ resource }) => resource);
   const expert = PragmaExpertResourceSchema.parse({
-    apiVersion: "pragma/v3",
+    apiVersion: "pragma/v4",
     kind: "Expert",
     metadata: {
       id: expertId,
+      avatarId:
+        definition.avatarId ?? current?.metadata.avatarId ?? DEFAULT_PRAGMA_EXPERT_AVATAR_ID,
       name: definition.name,
       description: definition.description,
       tags: definition.tags,
@@ -445,6 +448,7 @@ export function pragmaExpertResourceToDesktopDefinition(
     schemaVersion: "pragma.desktop-expert-view/v1",
     ref: canonicalPragmaResourceRef(resource),
     id: resource.metadata.id,
+    avatarId: resource.metadata.avatarId,
     name: resource.metadata.name,
     description: resource.metadata.description,
     tags: resource.metadata.tags,

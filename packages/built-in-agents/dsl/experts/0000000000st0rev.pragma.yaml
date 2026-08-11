@@ -1,7 +1,8 @@
-apiVersion: pragma/v3
+apiVersion: pragma/v4
 kind: Expert
 metadata:
   id: 0000000000st0rev
+  avatarId: pragma.avatar.expert.default
   name: Store Revision Agent
   description: Hidden system Expert that proposes structured Context Store revisions.
   tags: [builtin, system, context-store, revision]

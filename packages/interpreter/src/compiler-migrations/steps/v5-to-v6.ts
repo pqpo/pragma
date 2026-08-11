@@ -1,18 +1,22 @@
 import { canonicalPragmaResourceRef, type PragmaResource } from "../../ast/index.ts";
 import { parsePragmaYaml } from "../../compiler/pragma-project.ts";
 import { sha256, stableStringify } from "../../compiler/compiler-hash.ts";
-import { PragmaV3LockSchema, PragmaV3SemanticResourceSchema } from "../../migrations/schemas/v3.ts";
+import {
+  PragmaV3BundleSchema,
+  PragmaV3LockSchema,
+  PragmaV3SemanticResourceSchema,
+} from "../../migrations/schemas/v3.ts";
 import { migratePragmaV3ResourceToCurrent } from "../../migrations/steps/v3-to-v4.ts";
 import { PragmaCompilerMigrationError } from "../types.ts";
 
-interface ParsedV4Resource {
+interface ParsedCompilerV5Resource {
   readonly source: string;
-  readonly historical: Record<string, unknown>;
+  readonly historical: unknown;
   readonly current: PragmaResource;
 }
 
-/** Upgrades the last compiler whose ExpertTeam shape did not contain contextStores. */
-export function migratePragmaCompilerV4Project(input: {
+/** Upgrades compiler v5's pragma/v3 sources to pragma/v4 avatar metadata. */
+export function migratePragmaCompilerV5Project(input: {
   readonly files: ReadonlyMap<string, string>;
   readonly revisionCompilerVersion: string;
 }): {
@@ -23,12 +27,21 @@ export function migratePragmaCompilerV4Project(input: {
   if (lockSource === undefined) {
     throw new PragmaCompilerMigrationError(
       "lock_missing",
-      "Compiler v4 project revision is missing pragma.lock.yaml.",
+      "Compiler v5 project revision is missing pragma.lock.yaml.",
     );
   }
-  const lock = PragmaV3LockSchema.parse(parsePragmaYaml(lockSource));
+  let lock;
+  try {
+    lock = PragmaV3LockSchema.parse(parsePragmaYaml(lockSource));
+  } catch (error) {
+    throw new PragmaCompilerMigrationError(
+      "invalid_legacy_project",
+      "Compiler v5 project revision has an invalid pragma.lock.yaml.",
+      { cause: error },
+    );
+  }
   if (
-    input.revisionCompilerVersion !== "pragma.dsl/v4" ||
+    input.revisionCompilerVersion !== "pragma.dsl/v5" ||
     lock.compilerVersion !== input.revisionCompilerVersion
   ) {
     throw new PragmaCompilerMigrationError(
@@ -69,7 +82,7 @@ export function migratePragmaCompilerV4Project(input: {
   if (mismatches.length > 0 || fingerprint !== lock.projectFingerprint) {
     throw new PragmaCompilerMigrationError(
       "lock_mismatch",
-      `Compiler v4 project revision does not match its lock: ${mismatches.join(", ") || "project fingerprint"}.`,
+      `Compiler v5 project revision does not match its lock: ${mismatches.join(", ") || "project fingerprint"}.`,
     );
   }
   const managed = new Set([
@@ -83,41 +96,39 @@ export function migratePragmaCompilerV4Project(input: {
   };
 }
 
-function extractResources(files: ReadonlyMap<string, string>): readonly ParsedV4Resource[] {
-  const result: ParsedV4Resource[] = [];
+function extractResources(files: ReadonlyMap<string, string>): readonly ParsedCompilerV5Resource[] {
+  const result: ParsedCompilerV5Resource[] = [];
   for (const [source, contents] of files) {
     if (source !== "pragma.yaml" && !source.endsWith(".pragma.yaml")) continue;
     const value = parsePragmaYaml(contents);
     if (isRecord(value) && value["kind"] === "Bundle") {
-      const resources = value["resources"];
-      if (!Array.isArray(resources)) throw invalid(source);
-      for (const resource of resources) result.push(parseResource(resource, source));
+      const bundle = PragmaV3BundleSchema.safeParse(value);
+      if (!bundle.success) throw invalid(source, bundle.error);
+      for (const resource of bundle.data.resources) {
+        result.push({
+          source,
+          historical: resource,
+          current: migratePragmaV3ResourceToCurrent(resource),
+        });
+      }
     } else if (isRecord(value) && typeof value["kind"] === "string" && value["kind"] !== "Lock") {
-      result.push(parseResource(value, source));
+      const resource = PragmaV3SemanticResourceSchema.safeParse(value);
+      if (!resource.success) throw invalid(source, resource.error);
+      result.push({
+        source,
+        historical: resource.data,
+        current: migratePragmaV3ResourceToCurrent(resource.data),
+      });
     }
   }
   return result;
 }
 
-function parseResource(value: unknown, source: string): ParsedV4Resource {
-  const historical = PragmaV3SemanticResourceSchema.safeParse(value);
-  if (!historical.success) throw invalid(source, historical.error);
-  try {
-    return {
-      source,
-      historical: historical.data,
-      current: migratePragmaV3ResourceToCurrent(historical.data),
-    };
-  } catch (error) {
-    throw invalid(source, error);
-  }
-}
-
-function invalid(source: string, cause?: unknown): PragmaCompilerMigrationError {
+function invalid(source: string, cause: unknown): PragmaCompilerMigrationError {
   return new PragmaCompilerMigrationError(
     "invalid_legacy_project",
-    `Compiler v4 resource cannot be upgraded to pragma.dsl/v5: ${source}.`,
-    cause === undefined ? undefined : { cause },
+    `Compiler v5 resource cannot be upgraded to pragma.dsl/v6: ${source}.`,
+    { cause },
   );
 }
 

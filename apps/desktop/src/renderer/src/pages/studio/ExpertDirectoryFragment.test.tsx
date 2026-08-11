@@ -15,6 +15,7 @@ import type { ExpertRecord } from "./studio-model.ts";
 
 const expert: ExpertRecord = {
   id: "test_expert",
+  avatarId: "pragma.avatar.expert.default",
   name: "Test Expert",
   description: "d".repeat(240),
   tags: ["test"],
@@ -130,7 +131,7 @@ const plugin: DesktopPlugin = {
 
 const resources = [
   PragmaExpertResourceSchema.parse({
-    apiVersion: "pragma/v3",
+    apiVersion: "pragma/v4",
     kind: "Expert",
     metadata: {
       id: "1h2j3k4m5n6p7q8r",
@@ -141,7 +142,7 @@ const resources = [
     spec: { scope: "Research", instructions: "Research." },
   }),
   PragmaExpertResourceSchema.parse({
-    apiVersion: "pragma/v3",
+    apiVersion: "pragma/v4",
     kind: "Expert",
     metadata: {
       id: "2h3j4k5m6n7p8q9r",

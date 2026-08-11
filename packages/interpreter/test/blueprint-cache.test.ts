@@ -23,7 +23,7 @@ describe("Pragma project Blueprint cache", () => {
     const entry = join(root, "pragma.yaml");
     await writeFile(
       entry,
-      ["apiVersion: pragma/v3", "kind: Bundle", "imports: []", "resources: []", ""].join("\n"),
+      ["apiVersion: pragma/v4", "kind: Bundle", "imports: []", "resources: []", ""].join("\n"),
     );
     const write = vi.fn(async () => undefined);
     const store: PragmaBlueprintCacheStore = {
@@ -53,7 +53,7 @@ describe("Pragma project Blueprint cache", () => {
     const entry = join(root, "pragma.yaml");
     await writeFile(
       entry,
-      ["apiVersion: pragma/v3", "kind: Bundle", "imports: []", "resources: []", ""].join("\n"),
+      ["apiVersion: pragma/v4", "kind: Bundle", "imports: []", "resources: []", ""].join("\n"),
     );
     const values = new Map<string, Uint8Array>();
     const store: PragmaBlueprintCacheStore = {

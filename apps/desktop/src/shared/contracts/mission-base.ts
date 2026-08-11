@@ -5,6 +5,11 @@ import {
 } from "@pragma/shared";
 import { PragmaObjectJsonSchemaSchema } from "@pragma/interpreter/ast";
 import { z } from "zod";
+import {
+  DEFAULT_PRAGMA_EXPERT_AVATAR_ID,
+  DEFAULT_PRAGMA_EXPERT_TEAM_AVATAR_ID,
+  PragmaAvatarIdSchema,
+} from "@pragma/shared";
 
 import { ExpertModelConfigSchema } from "./capabilities.ts";
 import { ExpertRefSchema } from "./experts.ts";
@@ -30,8 +35,14 @@ const MissionExecutorOptionBaseSchema = z.object({
 });
 
 export const MissionExecutorOptionSchema = z.discriminatedUnion("kind", [
-  MissionExecutorOptionBaseSchema.extend({ kind: z.literal("expert") }),
-  MissionExecutorOptionBaseSchema.extend({ kind: z.literal("team") }),
+  MissionExecutorOptionBaseSchema.extend({
+    kind: z.literal("expert"),
+    avatarId: PragmaAvatarIdSchema.default(DEFAULT_PRAGMA_EXPERT_AVATAR_ID),
+  }),
+  MissionExecutorOptionBaseSchema.extend({
+    kind: z.literal("team"),
+    avatarId: PragmaAvatarIdSchema.default(DEFAULT_PRAGMA_EXPERT_TEAM_AVATAR_ID),
+  }),
   MissionExecutorOptionBaseSchema.extend({
     kind: z.literal("flow"),
     inputSchema: PragmaObjectJsonSchemaSchema.optional(),

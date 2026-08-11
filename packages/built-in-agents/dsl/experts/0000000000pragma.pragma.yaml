@@ -1,7 +1,8 @@
-apiVersion: pragma/v3
+apiVersion: pragma/v4
 kind: Expert
 metadata:
   id: 0000000000pragma
+  avatarId: pragma.avatar.expert.default
   name: Pragma
   description: The app's built-in general-purpose Agent for everyday work and expert orchestration.
   tags: [builtin, pragma, default-agent]

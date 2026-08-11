@@ -85,6 +85,7 @@ describe("DesktopSystemExpertRegistry", () => {
     const contextStoreId = "22222222-2222-4222-8222-222222222222";
 
     const customized = await registry.update(BUILT_IN_PRAGMA_REF, {
+      avatarId: "pragma.avatar.expert.reviewer",
       name: "My Pragma",
       description: "A customized built-in Pragma Agent.",
       tags: ["builtin", "customized"],
@@ -103,6 +104,7 @@ describe("DesktopSystemExpertRegistry", () => {
 
     expect(customized).toMatchObject({
       name: "My Pragma",
+      avatarId: "pragma.avatar.expert.reviewer",
       customized: true,
       revision: 2,
       scope: original.scope,
@@ -144,6 +146,7 @@ describe("DesktopSystemExpertRegistry", () => {
     await reloaded.initialize();
     expect(reloaded.get(BUILT_IN_PRAGMA_REF)).toMatchObject({
       name: "My Pragma",
+      avatarId: "pragma.avatar.expert.reviewer",
       customized: true,
       additionalInstructions: "Prefer concise plans and confirm destructive operations.",
     });
@@ -151,6 +154,7 @@ describe("DesktopSystemExpertRegistry", () => {
     const reset = await reloaded.reset(BUILT_IN_PRAGMA_REF);
     expect(reset).toMatchObject({
       name: original.name,
+      avatarId: "pragma.avatar.expert.default",
       instructions: original.instructions,
       additionalInstructions: "",
       customized: false,

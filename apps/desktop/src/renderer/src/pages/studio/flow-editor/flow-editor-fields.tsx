@@ -526,7 +526,7 @@ function targetRuntimeProfileRef(
 export function flowRuntimeProfile(runtime: DesktopRuntimeAvailability) {
   const displayName = canonicalRuntimeDisplayName(runtime);
   return PragmaRuntimeProfileResourceSchema.parse({
-    apiVersion: "pragma/v3",
+    apiVersion: "pragma/v4",
     kind: "RuntimeProfile",
     metadata: {
       id: stableRuntimeKey(runtime.id),

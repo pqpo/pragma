@@ -1,4 +1,4 @@
-apiVersion: pragma/v3
+apiVersion: pragma/v4
 kind: Bundle
 imports:
   - ./capabilities/1h2j3k4m5n6p7q8r.pragma.yaml

@@ -42,7 +42,7 @@ describe("built-in Pragma Agent DSL", () => {
     expect(BUILT_IN_AGENT_REFS).toContain(MEMORY_PLANE_CURATOR_REF);
   });
 
-  it("loads as a portable pragma/v3 project with the authoring Skill", async () => {
+  it("loads as a portable pragma/v4 project with the authoring Skill", async () => {
     const root = await mkdtemp(join(tmpdir(), "pragma-default-agent-builtin-"));
     const entry = await materializeBuiltInAgentBundle(root);
     const project = await loadPragmaProject(entry, { rootDir: dirname(entry) });
@@ -333,7 +333,7 @@ describe("built-in Pragma Agent DSL", () => {
     resource.metadata.name = "My Pragma";
     resource.spec.instructions = "Use the customized built-in instructions.";
     const optionalCapability = PragmaCapabilityResourceSchema.parse({
-      apiVersion: "pragma/v3",
+      apiVersion: "pragma/v4",
       kind: "Capability",
       metadata: {
         id: "fdabjmg2tasep93t",
@@ -506,7 +506,7 @@ function flowDraft() {
     baseProjectRevision: 0,
     draftRevision: 1,
     resource: {
-      apiVersion: "pragma/v3",
+      apiVersion: "pragma/v4",
       kind: "Flow",
       metadata: {
         id: "8h9j0k1m2n3p4q5r",

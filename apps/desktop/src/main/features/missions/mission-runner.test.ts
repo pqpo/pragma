@@ -2777,10 +2777,11 @@ describe("MissionRunner", { timeout: 15_000 }, () => {
 
 function expertFixture(): PragmaExpertResource {
   return {
-    apiVersion: "pragma/v3",
+    apiVersion: "pragma/v4",
     kind: "Expert",
     metadata: {
       id: "1xddvess309a6gme",
+      avatarId: "pragma.avatar.expert.default",
       name: "Writer",
       description: "Writes concise answers",
       tags: [],
@@ -2824,6 +2825,7 @@ function reviewerFixture(): PragmaExpertResource {
     ...expertFixture(),
     metadata: {
       id: "3sfd30h5017wd17d",
+      avatarId: "pragma.avatar.expert.default",
       name: "Reviewer",
       description: "Reviews proposed work",
       tags: [],
@@ -2838,10 +2840,11 @@ function reviewerFixture(): PragmaExpertResource {
 
 function expertTeamFixture(): PragmaExpertTeamResource {
   return {
-    apiVersion: "pragma/v3",
+    apiVersion: "pragma/v4",
     kind: "ExpertTeam",
     metadata: {
       id: "vyv9pwwzaksth2dd",
+      avatarId: "pragma.avatar.team.default",
       name: "Editorial Team",
       description: "Coordinates writing and review",
       tags: [],
@@ -2863,7 +2866,7 @@ function expertTeamFixture(): PragmaExpertTeamResource {
 
 function expertFlowFixture(): PragmaFlowResource {
   return {
-    apiVersion: "pragma/v3",
+    apiVersion: "pragma/v4",
     kind: "Flow",
     metadata: {
       id: "ffdfk2cczgqjda7q",
@@ -2890,7 +2893,7 @@ function expertFlowFixture(): PragmaFlowResource {
 
 function runtimeFixture(runtimeId = "fake"): PragmaRuntimeProfileResource {
   return {
-    apiVersion: "pragma/v3",
+    apiVersion: "pragma/v4",
     kind: "RuntimeProfile",
     metadata: {
       id: "rdzgnq05qfqcpqcm",
@@ -2907,7 +2910,7 @@ function runtimeFixture(runtimeId = "fake"): PragmaRuntimeProfileResource {
 
 function approvalFlowFixture(): PragmaFlowResource {
   return {
-    apiVersion: "pragma/v3",
+    apiVersion: "pragma/v4",
     kind: "Flow",
     metadata: {
       id: "t9ne4d8njvvxv2ea",

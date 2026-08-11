@@ -1,4 +1,5 @@
 export * from "./agent-message.schema.ts";
+export * from "./avatar.ts";
 export * from "./bounded-lru-cache.ts";
 export * from "./control-flow-graph.ts";
 export * from "./context/context-metadata.schema.ts";

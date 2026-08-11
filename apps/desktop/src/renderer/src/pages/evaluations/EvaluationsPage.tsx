@@ -13,7 +13,7 @@ export function createFlowRunDryEvaluation(
   flow: PragmaFlowResource,
 ): PragmaEvaluationResource {
   return {
-    apiVersion: "pragma/v3",
+    apiVersion: "pragma/v4",
     kind: "Evaluation",
     metadata: {
       id: resourceId,

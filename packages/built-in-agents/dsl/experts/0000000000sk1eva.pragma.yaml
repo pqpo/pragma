@@ -1,7 +1,8 @@
-apiVersion: pragma/v3
+apiVersion: pragma/v4
 kind: Expert
 metadata:
   id: 0000000000sk1eva
+  avatarId: pragma.avatar.expert.default
   name: Skill Evaluation Agent
   description: Hidden system Expert that evaluates Skill Capability candidates.
   tags: [builtin, system, skill, evaluation]

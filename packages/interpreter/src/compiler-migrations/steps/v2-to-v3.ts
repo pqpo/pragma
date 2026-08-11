@@ -1,11 +1,8 @@
-import {
-  PragmaLockSchema,
-  PragmaResourceSchema,
-  canonicalPragmaResourceRef,
-  type PragmaResource,
-} from "../../ast/index.ts";
+import { canonicalPragmaResourceRef, type PragmaResource } from "../../ast/index.ts";
 import { parsePragmaYaml } from "../../compiler/pragma-project.ts";
 import { sha256, stableStringify } from "../../compiler/compiler-hash.ts";
+import { PragmaV3LockSchema } from "../../migrations/schemas/v3.ts";
+import { migratePragmaV3ResourceToCurrent } from "../../migrations/steps/v3-to-v4.ts";
 import { PragmaCompilerV2FlowRunDrySuiteSchema } from "../schemas/v2.ts";
 import { PragmaCompilerMigrationError } from "../types.ts";
 
@@ -31,7 +28,7 @@ export function migratePragmaCompilerV2Project(input: {
   }
   let lock;
   try {
-    lock = PragmaLockSchema.parse(parsePragmaYaml(lockSource));
+    lock = PragmaV3LockSchema.parse(parsePragmaYaml(lockSource));
   } catch (error) {
     throw new PragmaCompilerMigrationError(
       "invalid_legacy_project",
@@ -168,30 +165,45 @@ function parseCompilerV2Resource(value: unknown, source: string): ParsedCompiler
     }
     if (isRecord(candidate) && isRecord(candidate["spec"])) delete candidate["spec"]["runDry"];
   }
-  const current = PragmaResourceSchema.safeParse(candidate);
-  if (!current.success) {
+  let current: PragmaResource;
+  try {
+    current = migratePragmaV3ResourceToCurrent(candidate);
+  } catch (error) {
     throw new PragmaCompilerMigrationError(
       "invalid_legacy_project",
       `Compiler v2 resource cannot be upgraded: ${source}.`,
-      { cause: current.error },
+      { cause: error },
     );
   }
+  const downgraded = downgradeCurrentResourceToV3(current);
   const normalizedHistorical: unknown =
-    current.data.kind === "Flow" &&
+    current.kind === "Flow" &&
     isRecord(historical) &&
     isRecord(historical["spec"]) &&
     "runDry" in historical["spec"]
       ? {
-          ...current.data,
-          spec: { ...current.data.spec, runDry: historical["spec"]["runDry"] },
+          ...downgraded,
+          spec: { ...(downgraded["spec"] as object), runDry: historical["spec"]["runDry"] },
         }
-      : withoutV5TeamFields(current.data);
-  return { source, historical: normalizedHistorical, current: current.data };
+      : withoutV5TeamFields(downgraded);
+  return { source, historical: normalizedHistorical, current };
 }
 
-function withoutV5TeamFields(resource: PragmaResource): unknown {
-  if (resource.kind !== "ExpertTeam") return resource;
+function downgradeCurrentResourceToV3(resource: PragmaResource): Record<string, unknown> {
   const historical = structuredClone(resource) as Record<string, unknown>;
+  historical["apiVersion"] = "pragma/v3";
+  if (
+    (historical["kind"] === "Expert" || historical["kind"] === "ExpertTeam") &&
+    isRecord(historical["metadata"])
+  ) {
+    delete historical["metadata"]["avatarId"];
+  }
+  return historical;
+}
+
+function withoutV5TeamFields(resource: Record<string, unknown>): unknown {
+  if (resource["kind"] !== "ExpertTeam") return resource;
+  const historical = structuredClone(resource);
   if (isRecord(historical["spec"])) delete historical["spec"]["contextStores"];
   return historical;
 }

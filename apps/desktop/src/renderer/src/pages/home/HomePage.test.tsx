@@ -118,6 +118,7 @@ describe("mission executor search", () => {
       name: `Expert ${index}`,
       description: index % 2 === 0 ? "Release work" : "Other work",
       kind: "expert" as const,
+      avatarId: "pragma.avatar.expert.default",
       origin: "project" as const,
       readOnly: false,
       customized: false,
