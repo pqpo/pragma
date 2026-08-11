@@ -48,9 +48,7 @@ const CODEX_LOCAL_RUNTIME_DESCRIPTOR = {
     executionLocations: ["local"],
     supportsAbort: true,
     supportsMcp: true,
-    supportsModelDiscovery: true,
     supportsStreaming: true,
-    supportsThinkingLevel: true,
     supportsContextCompactionEvents: true,
   },
 };

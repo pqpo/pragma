@@ -43,9 +43,7 @@ const QODER_DESCRIPTOR = {
     executionLocations: ["local"],
     supportsAbort: true,
     supportsMcp: true,
-    supportsModelDiscovery: true,
     supportsStreaming: true,
-    supportsThinkingLevel: true,
     supportsContextCompactionEvents: true,
   },
 };

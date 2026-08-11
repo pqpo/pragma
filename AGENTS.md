@@ -874,6 +874,10 @@ pnpm --filter @pragma/desktop dev
 外部交互执行 `agy`；非标准安装路径使用 `AGY_PATH` 指向原生 `agy`/`agy.exe`，不要指向 Windows
 `.cmd` shim。Runtime 不读取或复制宿主 `~/.gemini` 配置。
 
+新增 Runtime 或提升既有 Runtime capability 前，必须逐项完成
+[`docs/conventions/runtime-adapter-integration-checklist.md`](docs/conventions/runtime-adapter-integration-checklist.md)，
+并为每项保留代码、自动测试和真实 Runtime smoke 证据；配置落盘或 mock 成功不能单独证明 capability 可用。
+
 > **Electron 42 注意事项：** 从 Electron 42 开始，`postinstall` 不再自动下载 Electron 二进制文件，改为首次运行 Electron CLI 时才下载。Desktop 的 `predev` 会通过 `prepare:electron` 调用 `install-electron`，避免新成员首次 `dev` 时遇到缺失二进制的错误。
 
 启动 Worker：

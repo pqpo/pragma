@@ -114,6 +114,22 @@ describe("Runtime always-on startup messages", () => {
     }
   });
 
+  it("retries consumed startup context after a fresh native failure without a Session identity", async () => {
+    const fixture = await createFixture();
+    try {
+      const failed = fixture.session.submit({ query: "fresh-failure", execution: {} });
+      const events = collectEvents(failed.events);
+      await expect(failed.result).rejects.toThrow("failed before native Session allocation");
+      await events;
+
+      await submit(fixture.session, "retry-after-fresh-failure");
+      await submit(fixture.session, "steady-after-retry");
+      expect(fixture.stats.turns.map((turn) => turn.startupMessages.length)).toEqual([1, 1, 0]);
+    } finally {
+      await fixture.session.close();
+    }
+  });
+
   it("skips oversized reinjection at the 50 percent gate and emits a diagnostic", async () => {
     const fixture = await createFixture();
     try {
@@ -291,6 +307,9 @@ async function createFixture(inputModalities?: readonly string[], modelCatalogUn
       }
       if (turn.rawQuery === "failed-compaction") {
         writeCompactionEvent(turn, RUNTIME_CONTEXT_COMPACTION_STAGES.failed);
+      }
+      if (turn.rawQuery === "fresh-failure") {
+        throw new Error("failed before native Session allocation");
       }
       return {
         outputText:

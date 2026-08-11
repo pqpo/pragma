@@ -1,0 +1,7 @@
+{"event":"init","init":{"conversation_id":"11111111-2222-4333-8444-555555555552","model":"gemini-3.1-pro"}}
+{"event":"step_update","step_update":{"conversation_id":"11111111-2222-4333-8444-555555555552","step_index":1,"state":"ACTIVE","step_type":"agent_response","text_delta":"你好，"}}
+{"event":"step_update","step_update":{"conversation_id":"11111111-2222-4333-8444-555555555552","step_index":1,"state":"DONE","step_type":"agent_response","text_delta":"streamed response"}}
+{"event":"step_update","step_update":{"conversation_id":"11111111-2222-4333-8444-555555555552","step_index":2,"state":"ACTIVE","step_type":"tool_use","tool_info":{"name":"list_dir","parameters":{"DirectoryPath":"/workspace/project"}}}}
+{"event":"step_update","step_update":{"conversation_id":"11111111-2222-4333-8444-555555555552","step_index":2,"state":"DONE","step_type":"tool_use","tool_info":{"name":"list_dir","output":"src\npackage.json"}}}
+{"event":"step_update","step_update":{"conversation_id":"11111111-2222-4333-8444-555555555552","step_index":3,"state":"DONE","step_type":"error_message","content":"A recoverable tool error occurred."}}
+{"event":"result","result":{"conversation_id":"11111111-2222-4333-8444-555555555552","status":"SUCCESS","response":"你好，streamed response","usage":{"input_tokens":8,"output_tokens":5,"total_tokens":13}}}

@@ -1,6 +1,6 @@
 import { chmod, lstat, mkdir, mkdtemp, readFile, rm, stat, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { dirname, join } from "node:path";
 
 import type { Expert } from "@pragma/core";
 import { afterEach, describe, expect, it } from "vitest";
@@ -64,17 +64,33 @@ describe("managed Antigravity HOME", () => {
     await expect(
       stat(join(hostHome, ".gemini", "antigravity-cli", "settings.json")),
     ).rejects.toMatchObject({ code: "ENOENT" });
-    await expect(readJson(join(managed.configDir, "mcp_config.json"))).resolves.toEqual({
+    await expect(readJson(join(managed.pluginDir, "mcp_config.json"))).resolves.toEqual({
       mcpServers: {
         [managed.mcpServerName]: { serverUrl: "http://127.0.0.1/host-keyring/mcp" },
       },
     });
     await expect(
-      readFile(join(managed.configDir, "agents", managed.agentName, "agent.md"), "utf8"),
+      readFile(join(managed.pluginDir, "agents", managed.agentName, "agent.md"), "utf8"),
     ).resolves.toContain("host-keyring system");
     await expect(readJson(join(managed.configDir, "hooks.json"))).resolves.toHaveProperty(
       managed.hookName,
     );
+
+    const nativeAgent = join(managed.pluginDir, "agents", "native-created", "agent.md");
+    await mkdir(join(managed.pluginDir, "agents", "native-created"), { recursive: true });
+    await writeFile(nativeAgent, "native state\n");
+    await prepareManagedAntigravityHome({
+      agent: createExpert(root),
+      sessionDir,
+      systemPrompt: "updated host-keyring system",
+      mcpServerUrl: "http://127.0.0.1/host-keyring/mcp-2",
+      hookRelay: relay(),
+      permissionMode: "request-approval",
+      authenticationMode: "host-keyring",
+      processEnvironment: { HOME: hostHome },
+      platform: "linux",
+    });
+    await expect(readFile(nativeAgent, "utf8")).resolves.toBe("native state\n");
   });
 
   it("auto-selects private HOME only when the official ADC switch is enabled", () => {
@@ -191,7 +207,18 @@ describe("managed Antigravity HOME", () => {
     expect(managed.env["PRAGMA_AGY_HOOK_AUTHORIZATION"]).toBeUndefined();
     expect(managed.env["ELECTRON_RUN_AS_NODE"]).toBeUndefined();
 
-    await expect(readJson(join(managed.configDir, "mcp_config.json"))).resolves.toEqual({
+    await expect(readJson(join(managed.configDir, "plugins.json"))).resolves.toEqual({
+      entries: [
+        {
+          path: join(managed.configDir, "plugins"),
+          include_only: [`^${managed.pluginName}$`],
+        },
+      ],
+    });
+    await expect(readJson(join(managed.pluginDir, "plugin.json"))).resolves.toEqual({
+      name: managed.pluginName,
+    });
+    await expect(readJson(join(managed.pluginDir, "mcp_config.json"))).resolves.toEqual({
       mcpServers: {
         [managed.mcpServerName]: {
           serverUrl: "http://127.0.0.1:43127/sessions/token/mcp",
@@ -229,22 +256,26 @@ describe("managed Antigravity HOME", () => {
     });
 
     const agentFile = await readFile(
-      join(managed.configDir, "agents", managed.agentName, "agent.md"),
+      join(managed.pluginDir, "agents", managed.agentName, "agent.md"),
       "utf8",
     );
     expect(agentFile).toContain(`name: "${managed.agentName}"`);
     expect(agentFile).toContain(
-      "mainAgent: true\nsubagent: false\nhidden: false\ninheritMcp: true\ncommandExecutionPolicy: off",
+      `mainAgent: true\nsubagent: false\nhidden: false\ninheritMcp: true\nmcpServers:\n  - "${managed.mcpServerName}"\ncommandExecutionPolicy: off`,
     );
-    expect(agentFile).toContain(`skills:\n  - "skills/${managed.skills[0]}"`);
+    expect(agentFile).not.toContain("skills:");
     expect(agentFile.slice(agentFile.indexOf("---\n", 4) + 4)).toBe(
       `# System Prompt\n\n${systemPrompt}\n`,
     );
+    const systemRule = await readFile(join(managed.pluginDir, "rules", "pragma-system.md"), "utf8");
+    expect(systemRule).toMatch(/^---\ntrigger: always_on\n---/);
+    expect(systemRule).toContain(systemPrompt);
+    expect(systemRule).toContain(`- \`${managed.skills[0]}\``);
     const hookScript = await readFile(join(sessionDir, "hooks", "pragma-pre-tool-use.mjs"), "utf8");
     expect(hookScript).toContain('const url = "http://127.0.0.1:43128/pre-tool-use";');
     expect(hookScript).toContain('const authorization = "Bearer secret";');
 
-    const copiedSkill = join(managed.configDir, "skills", managed.skills[0]!);
+    const copiedSkill = join(managed.pluginDir, "skills", managed.skills[0]!);
     await expect(readFile(join(copiedSkill, "SKILL.md"), "utf8")).resolves.toBe(
       `---\nname: "${managed.skills[0]}"\ndescription: "Review the repository"\n---\n# Review\n\nUse the reference.\n`,
     );
@@ -255,7 +286,8 @@ describe("managed Antigravity HOME", () => {
     expect((await lstat(copiedSkill)).isSymbolicLink()).toBe(false);
 
     if (process.platform !== "win32") {
-      expect((await stat(join(managed.configDir, "mcp_config.json"))).mode & 0o777).toBe(0o600);
+      expect((await stat(join(managed.pluginDir, "mcp_config.json"))).mode & 0o777).toBe(0o600);
+      expect((await stat(join(managed.configDir, "plugins.json"))).mode & 0o777).toBe(0o600);
       expect((await stat(join(sessionDir, "hooks", "pragma-pre-tool-use.mjs"))).mode & 0o777).toBe(
         0o600,
       );
@@ -295,7 +327,7 @@ describe("managed Antigravity HOME", () => {
         allowNonWorkspaceAccess,
       });
       const agentFile = await readFile(
-        join(managed.configDir, "agents", managed.agentName, "agent.md"),
+        join(managed.pluginDir, "agents", managed.agentName, "agent.md"),
         "utf8",
       );
       expect(agentFile).toContain(
@@ -329,12 +361,31 @@ describe("managed Antigravity HOME", () => {
       processEnvironment: {},
     });
     await expect(
-      readFile(join(first.configDir, "skills", first.skills[0]!, "SKILL.md"), "utf8"),
+      readFile(join(first.pluginDir, "skills", first.skills[0]!, "SKILL.md"), "utf8"),
     ).resolves.toContain(`name: "${first.skills[0]}"\ndescription: Existing description`);
-    await writeFile(join(first.configDir, "skills", "stale.txt"), "stale");
-    const nativeAgent = join(first.configDir, "agents", "native-created-subagent", "agent.md");
-    await mkdir(join(first.configDir, "agents", "native-created-subagent"), { recursive: true });
+    await writeFile(join(first.pluginDir, "skills", "stale.txt"), "stale");
+    const nativeAgent = join(first.pluginDir, "agents", "native-created-subagent", "agent.md");
+    await mkdir(join(first.pluginDir, "agents", "native-created-subagent"), { recursive: true });
     await writeFile(nativeAgent, "native conversation state\n");
+    const nativeLegacySkill = join(first.configDir, "skills", "native-skill", "SKILL.md");
+    const managedLegacySkill = join(first.configDir, "skills", first.skills[0]!, "SKILL.md");
+    await Promise.all([
+      mkdir(join(first.configDir, "skills", "native-skill"), { recursive: true }),
+      mkdir(dirname(managedLegacySkill), { recursive: true }),
+    ]);
+    await Promise.all([
+      writeFile(nativeLegacySkill, "native skill\n"),
+      writeFile(managedLegacySkill, "stale managed skill\n"),
+      writeFile(
+        join(first.configDir, "mcp_config.json"),
+        JSON.stringify({
+          mcpServers: {
+            [first.mcpServerName]: { serverUrl: "http://127.0.0.1/stale" },
+            native: { command: "native-server" },
+          },
+        }),
+      ),
+    ]);
 
     const second = await prepareManagedAntigravityHome({
       agent: createExpert(root),
@@ -350,10 +401,15 @@ describe("managed Antigravity HOME", () => {
     expect(second.agentName).toBe(first.agentName);
     expect(second.mcpServerName).toBe(first.mcpServerName);
     await expect(readFile(nativeAgent, "utf8")).resolves.toBe("native conversation state\n");
-    await expect(stat(join(second.configDir, "skills", "stale.txt"))).rejects.toMatchObject({
+    await expect(readFile(nativeLegacySkill, "utf8")).resolves.toBe("native skill\n");
+    await expect(stat(managedLegacySkill)).rejects.toMatchObject({ code: "ENOENT" });
+    await expect(readJson(join(second.configDir, "mcp_config.json"))).resolves.toEqual({
+      mcpServers: { native: { command: "native-server" } },
+    });
+    await expect(stat(join(second.pluginDir, "skills", "stale.txt"))).rejects.toMatchObject({
       code: "ENOENT",
     });
-    await expect(readFile(join(second.configDir, "mcp_config.json"), "utf8")).resolves.toContain(
+    await expect(readFile(join(second.pluginDir, "mcp_config.json"), "utf8")).resolves.toContain(
       "http://127.0.0.1/second",
     );
   });
@@ -390,6 +446,23 @@ describe("managed Antigravity HOME", () => {
     ).toBe(false);
     expect(Object.keys(env).some((key) => key.toLowerCase() === "google_log_dir")).toBe(false);
     expect(Object.keys(env).some((key) => key.toLowerCase() === "gemini_config_dir")).toBe(false);
+  });
+
+  it("fails closed for Windows hook paths that cmd.exe would expand", async () => {
+    const root = await temporaryRoot();
+    await expect(
+      prepareManagedAntigravityHome({
+        agent: createExpert(root),
+        sessionDir: join(root, "session"),
+        systemPrompt: "system",
+        mcpServerUrl: "http://127.0.0.1/mcp",
+        hookRelay: relay(),
+        permissionMode: "request-approval",
+        processEnvironment: {},
+        nodeExecutablePath: "C:\\Tools\\%TEMP%\\node.exe",
+        platform: "win32",
+      }),
+    ).rejects.toThrow(/cannot safely materialize a Windows command hook/i);
   });
 
   it("produces stable and filesystem-safe custom-agent names", () => {
@@ -453,7 +526,7 @@ describe("managed Antigravity HOME", () => {
     ]);
     expect(managed.skills.every((name) => name.length <= 64)).toBe(true);
     await expect(
-      readFile(join(managed.configDir, "skills", managed.skills[1]!, "SKILL.md"), "utf8"),
+      readFile(join(managed.pluginDir, "skills", managed.skills[1]!, "SKILL.md"), "utf8"),
     ).resolves.toContain(`name: "${prefix}${"a".repeat(available - 2)}-2"`);
   });
 });
