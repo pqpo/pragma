@@ -36,9 +36,59 @@ const AUTO_APPROVABLE_WORKSPACE_TOOLS = new Set([
   "move_file",
   "multi_replace_file_content",
   "rename_file",
+  "edit_file",
   "replace_file_content",
+  "write_to_file",
   "write_file",
 ]);
+interface FileToolPathSchema {
+  readonly requiredPathGroups: readonly (readonly string[])[];
+  readonly optionalPathFields?: readonly string[] | undefined;
+}
+
+// agy 1.1.11 exposes file paths in stable, top-level tool arguments. Keep this
+// table explicit: recursively guessing from arbitrary key names can both miss a
+// new destination field and mistake source/content text for a path.
+const FILE_TOOL_PATH_SCHEMAS: Readonly<Record<string, FileToolPathSchema>> = {
+  view_file: { requiredPathGroups: [["AbsolutePath"]] },
+  list_dir: { requiredPathGroups: [["DirectoryPath"]] },
+  grep_search: { requiredPathGroups: [], optionalPathFields: ["SearchPath"] },
+  find_by_name: {
+    requiredPathGroups: [],
+    optionalPathFields: ["SearchPath", "SearchDirectory"],
+  },
+  list_permissions: {
+    requiredPathGroups: [],
+    optionalPathFields: ["AbsolutePath", "Target"],
+  },
+  code_search: { requiredPathGroups: [], optionalPathFields: ["SearchPath"] },
+  read_file: { requiredPathGroups: [["AbsolutePath", "TargetFile", "Target"]] },
+  get_file_info: { requiredPathGroups: [["AbsolutePath"]] },
+  list_directory: { requiredPathGroups: [["DirectoryPath"]] },
+  create_directory: { requiredPathGroups: [["DirectoryPath", "TargetDirectory"]] },
+  create_file: { requiredPathGroups: [["TargetFile"]] },
+  delete_file: { requiredPathGroups: [["TargetFile", "AbsolutePath"]] },
+  move_file: {
+    requiredPathGroups: [
+      ["SourceFile", "SourcePath", "Source", "srcAbsolutePathUri"],
+      ["DestinationFile", "DestinationPath", "Destination", "dstAbsolutePathUri"],
+    ],
+  },
+  rename_file: {
+    requiredPathGroups: [
+      ["SourceFile", "SourcePath", "Source", "srcAbsolutePathUri"],
+      ["DestinationFile", "DestinationPath", "Destination", "dstAbsolutePathUri"],
+    ],
+  },
+  edit_file: { requiredPathGroups: [["TargetFile"]] },
+  multi_replace_file_content: { requiredPathGroups: [["TargetFile"]] },
+  replace_file_content: { requiredPathGroups: [["TargetFile"]] },
+  write_to_file: { requiredPathGroups: [["TargetFile"]] },
+  write_file: { requiredPathGroups: [["TargetFile"]] },
+};
+const PATH_FIELD_NAME =
+  /(?:path|file|folder|directory|cwd|target|source|destination|root|uri|location)$/i;
+const SAFE_MCP_TOOL_NAME = /^[a-z0-9][a-z0-9_.-]*$/i;
 const TERMINAL_TOOL_NAME = /(?:^|_)(?:command|exec|execute|run|shell|terminal)(?:_|$)/i;
 
 const AgyPreToolUseSchema = z
@@ -75,10 +125,19 @@ export interface AntigravityHookRelay {
 
 export async function createAntigravityHookRelay(options: {
   readonly workspace: string;
+  readonly allowedWorkspacePaths?: readonly string[] | undefined;
+  readonly managedSkillReadRoots?: readonly string[] | undefined;
   readonly mcpServerName: string;
   readonly permissionMode: AntigravityRuntimePermissionMode;
   readonly getHumanInteractionHandler: () => ExpertAgentHumanInteractionHandler | undefined;
   readonly toolRuntimeState: ExpertToolRuntimeState;
+  readonly onDecision?:
+    | ((event: {
+        readonly toolName: string;
+        readonly decision: AntigravityHookDecision["decision"];
+        readonly permissionOverrides?: readonly string[] | undefined;
+      }) => void)
+    | undefined;
 }): Promise<AntigravityHookRelay> {
   const token = randomBytes(32).toString("base64url");
   const authorization = `Bearer ${token}`;
@@ -89,10 +148,13 @@ export async function createAntigravityHookRelay(options: {
       response,
       authorization,
       workspace: resolve(options.workspace),
+      allowedWorkspacePaths: options.allowedWorkspacePaths,
+      managedSkillReadRoots: options.managedSkillReadRoots,
       mcpServerName: options.mcpServerName,
       permissionMode: options.permissionMode,
       getHumanInteractionHandler: options.getHumanInteractionHandler,
       toolRuntimeState: options.toolRuntimeState,
+      onDecision: options.onDecision,
       isClosing: () => closing,
     });
   });
@@ -125,6 +187,8 @@ export async function createAntigravityHookRelay(options: {
 export async function decideAntigravityToolUse(options: {
   readonly input: AgyPreToolUseInput;
   readonly workspace: string;
+  readonly allowedWorkspacePaths?: readonly string[] | undefined;
+  readonly managedSkillReadRoots?: readonly string[] | undefined;
   readonly mcpServerName: string;
   readonly permissionMode: AntigravityRuntimePermissionMode;
   readonly humanInteractionHandler?: ExpertAgentHumanInteractionHandler | undefined;
@@ -134,15 +198,16 @@ export async function decideAntigravityToolUse(options: {
   const args = options.input.toolCall.args ?? {};
   const workspaceError = await validateWorkspacePaths(
     options.input.workspacePaths,
-    options.workspace,
+    options.allowedWorkspacePaths ?? [options.workspace],
   );
   if (workspaceError !== undefined) {
     return { decision: "deny", reason: workspaceError };
   }
   if (isPragmaMcpTool(toolName, args, options.mcpServerName)) {
+    const managedToolName = readMcpToolName(args);
     return {
       decision: "allow",
-      permissionOverrides: [`mcp(${options.mcpServerName}/*)`],
+      permissionOverrides: [`mcp(${options.mcpServerName}/${managedToolName})`],
     };
   }
   if (isAskQuestionTool(toolName)) {
@@ -172,22 +237,41 @@ export async function decideAntigravityToolUse(options: {
         reason: `Antigravity auto-approve mode only permits managed MCP tools and known workspace file tools; ${toolName} requires request-approval or full-access.`,
       };
     }
-    const outsidePath = await findOutsideWorkspacePath(args, options.workspace);
-    return outsidePath === undefined
+    const pathError = await validateKnownFileToolPaths(
+      toolName,
+      args,
+      options.workspace,
+      READ_ONLY_TOOLS.has(toolName) ? options.managedSkillReadRoots : undefined,
+    );
+    return pathError === undefined
       ? { decision: "allow" }
       : {
           decision: "deny",
-          reason: `Antigravity auto-approve mode blocked a path outside the workspace: ${outsidePath}.`,
+          reason: `Antigravity auto-approve mode blocked unsafe workspace file arguments: ${pathError}.`,
         };
   }
   if (READ_ONLY_TOOLS.has(toolName)) {
-    const outsidePath = await findOutsideWorkspacePath(args, options.workspace);
-    return outsidePath === undefined
+    const pathError = await validateKnownFileToolPaths(
+      toolName,
+      args,
+      options.workspace,
+      options.managedSkillReadRoots,
+    );
+    return pathError === undefined
       ? { decision: "allow" }
       : {
           decision: "deny",
-          reason: `Antigravity read access is outside the managed workspace: ${outsidePath}.`,
+          reason: `Antigravity read access has unsafe workspace file arguments: ${pathError}.`,
         };
+  }
+  if (AUTO_APPROVABLE_WORKSPACE_TOOLS.has(toolName)) {
+    const pathError = await validateKnownFileToolPaths(toolName, args, options.workspace);
+    if (pathError !== undefined) {
+      return {
+        decision: "deny",
+        reason: `Antigravity file access has unsafe workspace file arguments: ${pathError}.`,
+      };
+    }
   }
   if (options.humanInteractionHandler === undefined) {
     return {
@@ -230,6 +314,19 @@ export async function decideAntigravityToolUse(options: {
           "Antigravity PreToolUse hooks cannot reproduce the Pragma-edited tool input with a safe shallow overwrite. The original call was denied.",
       };
     }
+    if (AUTO_APPROVABLE_WORKSPACE_TOOLS.has(toolName)) {
+      const pathError = await validateKnownFileToolPaths(
+        toolName,
+        response.updatedInput,
+        options.workspace,
+      );
+      if (pathError !== undefined) {
+        return {
+          decision: "deny",
+          reason: `Antigravity edited file access has unsafe workspace file arguments: ${pathError}.`,
+        };
+      }
+    }
     return { decision: "allow", overwrite };
   }
   return { decision: "allow" };
@@ -252,10 +349,19 @@ async function handleHookRequest(options: {
   readonly response: ServerResponse;
   readonly authorization: string;
   readonly workspace: string;
+  readonly allowedWorkspacePaths?: readonly string[] | undefined;
+  readonly managedSkillReadRoots?: readonly string[] | undefined;
   readonly mcpServerName: string;
   readonly permissionMode: AntigravityRuntimePermissionMode;
   readonly getHumanInteractionHandler: () => ExpertAgentHumanInteractionHandler | undefined;
   readonly toolRuntimeState: ExpertToolRuntimeState;
+  readonly onDecision?:
+    | ((event: {
+        readonly toolName: string;
+        readonly decision: AntigravityHookDecision["decision"];
+        readonly permissionOverrides?: readonly string[] | undefined;
+      }) => void)
+    | undefined;
   readonly isClosing: () => boolean;
 }): Promise<void> {
   const { request, response } = options;
@@ -276,10 +382,17 @@ async function handleHookRequest(options: {
     const decision = await decideAntigravityToolUse({
       input,
       workspace: options.workspace,
+      allowedWorkspacePaths: options.allowedWorkspacePaths,
+      managedSkillReadRoots: options.managedSkillReadRoots,
       mcpServerName: options.mcpServerName,
       permissionMode: options.permissionMode,
       humanInteractionHandler: options.getHumanInteractionHandler(),
       toolRuntimeState: options.toolRuntimeState,
+    });
+    options.onDecision?.({
+      toolName: input.toolCall.name,
+      decision: decision.decision,
+      permissionOverrides: decision.permissionOverrides,
     });
     response.writeHead(200, { "content-type": "application/json" });
     response.end(JSON.stringify(decision));
@@ -388,65 +501,111 @@ function readQuestionOptions(value: unknown): ExpertAgentUserQuestion["options"]
 
 async function validateWorkspacePaths(
   paths: readonly string[],
-  expectedWorkspace: string,
+  allowedWorkspacePaths: readonly string[],
 ): Promise<string | undefined> {
-  const expected = await canonicalizePathForContainment(expectedWorkspace);
-  const normalized = await Promise.all(
-    paths.map(async (path) => ({
+  const allowedIdentities = new Set(
+    await Promise.all(
+      allowedWorkspacePaths.map(async (path) =>
+        pathIdentity(await canonicalizePathForContainment(path)),
+      ),
+    ),
+  );
+  const normalized: { readonly reported: string; readonly identity: string }[] = [];
+  for (const rawPath of paths) {
+    const path = fileUriToPath(rawPath);
+    if (path === undefined || isNonFileUri(rawPath) || !isAbsolute(path)) {
+      return `Antigravity hook reported an invalid workspace path: ${rawPath}.`;
+    }
+    normalized.push({
       reported: resolve(path),
       identity: pathIdentity(await canonicalizePathForContainment(path)),
-    })),
-  );
-  const expectedIdentity = pathIdentity(expected);
-  if (!normalized.some((path) => path.identity === expectedIdentity)) {
-    return "Antigravity hook workspace identity did not match the managed Runtime workspace.";
+    });
   }
-  const unexpected = normalized.find((path) => path.identity !== expectedIdentity)?.reported;
+  const unexpected = normalized.find((path) => !allowedIdentities.has(path.identity))?.reported;
   return unexpected === undefined
     ? undefined
     : `Antigravity hook reported an unexpected additional workspace: ${unexpected}.`;
 }
 
-async function findOutsideWorkspacePath(
+async function validateKnownFileToolPaths(
+  toolName: string,
   value: unknown,
   workspace: string,
+  additionalReadRoots: readonly string[] = [],
 ): Promise<string | undefined> {
-  const candidates = collectPathCandidates(value);
-  const expected = await canonicalizePathForContainment(workspace);
+  const schema = FILE_TOOL_PATH_SCHEMAS[toolName];
+  if (schema === undefined) return `${toolName} has no agy 1.1.11 file argument schema`;
+  const record = asRecord(value);
+  if (record === undefined) return `${toolName} did not provide an object argument`;
+  const recognizedFields = new Set([
+    ...schema.requiredPathGroups.flat(),
+    ...(schema.optionalPathFields ?? []),
+  ]);
+  const unrecognizedPathField = findUnrecognizedPathField(record, recognizedFields);
+  if (unrecognizedPathField !== undefined) {
+    return `${toolName} reported an unrecognized path field: ${unrecognizedPathField}`;
+  }
+  for (const group of schema.requiredPathGroups) {
+    if (!group.some((field) => Object.hasOwn(record, field))) {
+      return `${toolName} did not provide required path field ${group.join("/")}`;
+    }
+  }
+  const candidates: string[] = [];
+  for (const field of recognizedFields) {
+    if (!Object.hasOwn(record, field)) continue;
+    const candidate = record[field];
+    if (typeof candidate !== "string" || candidate.trim() === "") {
+      return `${toolName} reported an invalid ${field} path`;
+    }
+    candidates.push(candidate);
+  }
+  const expectedRoots = await Promise.all(
+    [workspace, ...additionalReadRoots].map(canonicalizePathForContainment),
+  );
   for (const rawCandidate of candidates) {
     const candidate = fileUriToPath(rawCandidate);
-    if (candidate === undefined) return rawCandidate;
-    if (isNonFileUri(rawCandidate)) continue;
+    if (candidate === undefined || isNonFileUri(rawCandidate)) return rawCandidate;
     const reportedTarget = isAbsolute(candidate)
       ? resolve(candidate)
       : resolve(workspace, candidate);
     const target = await canonicalizePathForContainment(reportedTarget);
-    const difference = relative(expected, target);
-    if (
-      difference === ".." ||
-      difference.startsWith(`..${process.platform === "win32" ? "\\" : "/"}`) ||
-      isAbsolute(difference)
-    ) {
+    if (!expectedRoots.some((root) => isPathContained(root, target))) {
       return reportedTarget;
     }
   }
   return undefined;
 }
 
-function collectPathCandidates(value: unknown, parentKey = "", depth = 0): string[] {
-  if (depth > 6) return [];
-  if (typeof value === "string") {
-    return /(?:path|file|folder|directory|cwd|target|source|destination|root|uri)/i.test(parentKey)
-      ? [value]
-      : [];
-  }
+function findUnrecognizedPathField(
+  value: unknown,
+  recognizedTopLevelFields: ReadonlySet<string>,
+  depth = 0,
+): string | undefined {
+  if (depth > 6) return "nested argument beyond the supported schema depth";
   if (Array.isArray(value)) {
-    return value.flatMap((entry) => collectPathCandidates(entry, parentKey, depth + 1));
+    for (const entry of value) {
+      const found = findUnrecognizedPathField(entry, recognizedTopLevelFields, depth + 1);
+      if (found !== undefined) return found;
+    }
+    return undefined;
   }
   const record = asRecord(value);
-  if (record === undefined) return [];
-  return Object.entries(record).flatMap(([key, entry]) =>
-    collectPathCandidates(entry, key, depth + 1),
+  if (record === undefined) return undefined;
+  for (const [key, entry] of Object.entries(record)) {
+    const recognized = depth === 0 && recognizedTopLevelFields.has(key);
+    if (PATH_FIELD_NAME.test(key) && !recognized) return key;
+    const nested = findUnrecognizedPathField(entry, recognizedTopLevelFields, depth + 1);
+    if (nested !== undefined) return nested;
+  }
+  return undefined;
+}
+
+function isPathContained(root: string, target: string): boolean {
+  const difference = relative(root, target);
+  return !(
+    difference === ".." ||
+    difference.startsWith(`..${process.platform === "win32" ? "\\" : "/"}`) ||
+    isAbsolute(difference)
   );
 }
 
@@ -502,34 +661,29 @@ function isMissingPathError(error: unknown): boolean {
 }
 
 function isPragmaMcpTool(toolName: string, args: unknown, mcpServerName: string): boolean {
-  if (
-    toolName.startsWith(`mcp__${mcpServerName}__`) ||
-    toolName.startsWith(`mcp_${mcpServerName}_`)
-  ) {
-    return true;
-  }
   const record = asRecord(args);
-  if (/^call_mcp_tool$/i.test(toolName)) {
-    return (
-      readString(
-        record?.["ServerName"] ??
-          record?.["serverName"] ??
-          record?.["server_name"] ??
-          record?.["server"],
-      ) === mcpServerName
-    );
-  }
-  return (
-    /^mcp$/i.test(toolName) &&
-    readString(record?.["server"] ?? record?.["serverName"] ?? record?.["server_name"]) ===
-      mcpServerName
+  if (!/^(?:call_mcp_tool|McpTool|mcp)$/i.test(toolName)) return false;
+  const serverName = readString(
+    record?.["ServerName"] ??
+      record?.["serverName"] ??
+      record?.["server_name"] ??
+      record?.["server"],
   );
+  return serverName === mcpServerName && readMcpToolName(args) !== undefined;
+}
+
+function readMcpToolName(args: unknown): string | undefined {
+  const record = asRecord(args);
+  const explicit = readString(
+    record?.["ToolName"] ?? record?.["toolName"] ?? record?.["tool_name"] ?? record?.["tool"],
+  );
+  return explicit !== undefined && SAFE_MCP_TOOL_NAME.test(explicit) ? explicit : undefined;
 }
 
 function isUnmanagedMcpTool(toolName: string, args: unknown, mcpServerName: string): boolean {
   if (isPragmaMcpTool(toolName, args, mcpServerName)) return false;
   if (toolName.startsWith("mcp__") || toolName.startsWith("mcp_")) return true;
-  if (!/^(?:call_mcp_tool|mcp)$/i.test(toolName)) return false;
+  if (!/^(?:call_mcp_tool|McpTool|mcp)$/i.test(toolName)) return false;
   const record = asRecord(args);
   return (
     readString(

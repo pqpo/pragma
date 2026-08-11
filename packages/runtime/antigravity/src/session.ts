@@ -131,6 +131,8 @@ interface StreamState {
   resultError?: string | undefined;
   terminalSeen: boolean;
   plainTextOutput: boolean;
+  latestAssistantResponseKey?: string | undefined;
+  assistantResponseCompleted: boolean;
 }
 
 export function createAntigravityNativeSession(options: {
@@ -199,7 +201,10 @@ export async function startAntigravityTurn(
       timestamp: timestamp + turn.startupMessages.length,
     },
   );
-  const prompt = formatAntigravityPrompt(turn.startupMessages, turn.prompt);
+  const prompt = formatAntigravityPrompt(
+    turn.startupMessages,
+    expandAntigravitySkillInvocation(session, turn.rawQuery, turn.prompt),
+  );
   const logPath = join(session.managedHome.logDir, `turn-${safePathSegment(turn.runId)}.log`);
   const transcriptCheckpoints = await captureAntigravityTranscriptCheckpoints(
     session.managedHome.homeDir,
@@ -212,7 +217,6 @@ export async function startAntigravityTurn(
       args: createAntigravityArgs({
         prompt,
         workspace: session.agent.workspace,
-        agentName: session.managedHome.agentName,
         logPath,
         permissionMode: session.permissionMode,
         sessionId: session.sessionId,
@@ -252,20 +256,56 @@ export async function startAntigravityTurn(
       },
     });
     if (run.sessionId !== undefined) session.sessionId = run.sessionId;
-    const usage =
-      run.usage !== undefined && hasNonZeroUsage(run.usage)
-        ? run.usage
-        : estimateAntigravityTurnUsage(session, messagesBeforeTurn, prompt, run.outputText);
+    const reportedUsage = run.usage !== undefined && hasNonZeroUsage(run.usage);
+    const usage = reportedUsage
+      ? run.usage
+      : estimateAntigravityTurnUsage(session, messagesBeforeTurn, prompt, run.outputText);
     session.messages.push(createAssistantMessage(run.outputText, usage, modelName));
     return {
       outputText: run.outputText,
-      usage,
+      // Reported usage has already been emitted as a native usage event. Returning
+      // it again makes Core merge and double-count the same observation.
+      ...(reportedUsage ? {} : { usage }),
       runtimeSessionId: session.sessionId,
     };
   } finally {
     session.toolRuntimeState.runId = undefined;
     session.toolRuntimeState.source = undefined;
   }
+}
+
+export function expandAntigravitySkillInvocation(
+  session: Pick<AntigravityNativeSession, "agent" | "managedHome">,
+  rawQuery: string,
+  prompt: string,
+): string {
+  const invocation = /^\/([a-z0-9][a-z0-9-]*)(?=\s|$)/i.exec(
+    readExplicitSkillInvocationSource(rawQuery),
+  );
+  if (invocation === null) return prompt;
+  const requestedName = invocation[1]?.toLowerCase();
+  const sourceSkills = (session.agent.skills?.skills ?? []).filter(
+    (skill) => skill.path !== undefined,
+  );
+  const sourceIndex = sourceSkills.findIndex(
+    (skill) => skill.name.trim().toLowerCase() === requestedName,
+  );
+  const registeredName = session.managedHome.skills[sourceIndex];
+  if (sourceIndex < 0 || registeredName === undefined) return prompt;
+  return `/${registeredName}\n\n${prompt}`;
+}
+
+function readExplicitSkillInvocationSource(rawQuery: string): string {
+  if (
+    !/^(?:# Images mentioned by the user:|# Files mentioned by the user:|# Directories mentioned by the user:)/.test(
+      rawQuery,
+    )
+  ) {
+    return rawQuery;
+  }
+  const marker = "\n\n# My request\n";
+  const markerIndex = rawQuery.indexOf(marker);
+  return markerIndex < 0 ? rawQuery : rawQuery.slice(markerIndex + marker.length);
 }
 
 export function mapAntigravityEvent(
@@ -334,7 +374,6 @@ export function mapAntigravityEvent(
 export function createAntigravityArgs(options: {
   readonly prompt: string;
   readonly workspace: string;
-  readonly agentName: string;
   readonly logPath: string;
   readonly permissionMode: AntigravityRuntimePermissionMode;
   readonly sessionId?: string | undefined;
@@ -349,7 +388,6 @@ export function createAntigravityArgs(options: {
   return [
     "--output-format",
     "stream-json",
-    "--disable-slash-commands",
     "--print-timeout",
     PRINT_TIMEOUT,
     "--add-dir",
@@ -357,14 +395,16 @@ export function createAntigravityArgs(options: {
     ...(options.customizationWorkspace === undefined
       ? []
       : ["--add-dir", options.customizationWorkspace]),
-    "--agent",
-    options.agentName,
     "--log-file",
     options.logPath,
     "--mode",
     "accept-edits",
-    ...(options.permissionMode === "auto-approve" ? ["--sandbox"] : []),
-    ...(options.permissionMode === "full-access" ? ["--dangerously-skip-permissions"] : []),
+    ...(options.permissionMode === "full-access" ? [] : ["--sandbox"]),
+    // agy 1.1.11 performs a second non-interactive confirmation after an
+    // allowing PreToolUse decision for MCP tools. Bypass that native prompt;
+    // the Session-private fail-closed Hook remains the authoritative gate for
+    // every tool in all permission modes.
+    "--dangerously-skip-permissions",
     ...sessionArgs,
     ...(options.modelName === undefined ? [] : ["--model", options.modelName]),
     ...(options.thinkingLevel === undefined ? [] : ["--effort", options.thinkingLevel]),
@@ -404,8 +444,11 @@ export function cancelAntigravityTurn(session: AntigravityNativeSession): void {
 }
 
 export async function closeAntigravitySession(session: AntigravityNativeSession): Promise<void> {
-  cancelAntigravityTurn(session);
-  await session.activeExitPromise?.catch(() => undefined);
+  const process = session.activeProcess;
+  const exitPromise = session.activeExitPromise;
+  const hasExited = session.activeHasExited;
+  if (process === undefined || exitPromise === undefined || hasExited === undefined) return;
+  await terminateAntigravityProcess({ process, exitPromise, hasExited, logger: session.logger });
 }
 
 export function collectAntigravityUsage(
@@ -482,6 +525,7 @@ async function runAntigravityProcess(options: {
     outputText: "",
     terminalSeen: false,
     plainTextOutput: false,
+    assistantResponseCompleted: false,
   };
   const abort = (): void => {
     void terminateAntigravityProcess({
@@ -547,7 +591,8 @@ async function runAntigravityProcess(options: {
         priorSessionId: options.fallback.priorSessionId,
         transcriptCheckpoints: options.fallback.transcriptCheckpoints,
       });
-      outputText ||= recovered ?? "";
+      outputText =
+        recovered ?? (state.plainTextOutput || state.assistantResponseCompleted ? outputText : "");
       options.logger.warn(
         "runtime.antigravity_terminal_result_missing",
         "Antigravity CLI exited without a terminal result event; using degraded recovery",
@@ -673,11 +718,27 @@ function normalizeStepUpdate(
     });
   }
 
-  const isThoughtStep = /(?:reason|thought|analysis)/i.test(stepType);
-  const isAssistantResponseStep =
-    /(?:planner_response|model.?response|assistant|final.?response|answer|notify_user|finish)/i.test(
-      stepType,
-    );
+  const normalizedStepType = normalizeStepType(stepType);
+  const isThoughtStep = isThoughtStepType(normalizedStepType);
+  const isAssistantResponseStep = isAssistantResponseStepType(normalizedStepType);
+  if (isAssistantResponseStep && key !== state.latestAssistantResponseKey) {
+    state.latestAssistantResponseKey = key;
+    state.assistantResponseCompleted = false;
+  }
+  if (normalizedStepType === "error_message") {
+    events.push({
+      kind: "progress",
+      stage: "antigravity.error_message",
+      data: sanitizeProgressData({
+        index,
+        status,
+        stepType,
+        message:
+          readText(step["error"] ?? step["message"] ?? step["content"] ?? step["text"]) ??
+          "Antigravity reported a recoverable step error.",
+      }),
+    });
+  }
   const textDelta = readText(step["text_delta"] ?? step["textDelta"]);
   if (textDelta !== undefined) {
     if (isThoughtStep) {
@@ -727,6 +788,9 @@ function normalizeStepUpdate(
       events.push({ kind: "message-delta", text: delta });
     }
   }
+  if (isAssistantResponseStep && status !== undefined) {
+    state.assistantResponseCompleted = isSuccessfulTerminalStatus(status);
+  }
   if (events.length === 0) {
     events.push({
       kind: "progress",
@@ -735,6 +799,39 @@ function normalizeStepUpdate(
     });
   }
   return events;
+}
+
+function normalizeStepType(stepType: string): string {
+  return stepType
+    .trim()
+    .toLowerCase()
+    .replace(/[\s-]+/g, "_");
+}
+
+function isThoughtStepType(stepType: string): boolean {
+  return (
+    stepType === "reason" ||
+    stepType === "reasoning" ||
+    stepType.includes("thought") ||
+    stepType === "analysis"
+  );
+}
+
+function isAssistantResponseStepType(stepType: string): boolean {
+  switch (stepType) {
+    case "agent_response":
+    case "planner_response":
+    case "model_response":
+    case "assistant":
+    case "assistant_response":
+    case "final_response":
+    case "answer":
+    case "notify_user":
+    case "finish":
+      return true;
+    default:
+      return false;
+  }
 }
 
 function normalizeResult(
@@ -822,10 +919,18 @@ function normalizeToolStep(
       id,
       name: snapshot.name,
       output: sanitizedOutput,
-      failed: isFailureStatus(status) || toolInfo["is_error"] === true,
+      failed:
+        isFailureStatus(status) ||
+        toolInfo["is_error"] === true ||
+        hasNonEmptyToolError(toolInfo["error"]),
     });
   }
   return events;
+}
+
+function hasNonEmptyToolError(value: unknown): boolean {
+  if (value === undefined || value === null || value === false) return false;
+  return printableValue(sanitizeProgressData(value)).trim() !== "";
 }
 
 function normalizeCompaction(
@@ -1423,26 +1528,40 @@ async function terminateAntigravityProcess(options: {
   if (options.hasExited()) return;
   options.process.stdin.end();
   options.process.kill("SIGTERM");
-  let timeout: ReturnType<typeof setTimeout> | undefined;
-  const exited = await Promise.race([
-    options.exitPromise.then(
-      () => true,
-      () => true,
-    ),
-    new Promise<false>((resolveTimeout) => {
-      timeout = setTimeout(() => resolveTimeout(false), PROCESS_TERMINATION_GRACE_MS);
-    }),
-  ]).finally(() => {
-    if (timeout !== undefined) clearTimeout(timeout);
-  });
+  const exited = await waitForAntigravityExit(options.exitPromise, PROCESS_TERMINATION_GRACE_MS);
   if (!exited && !options.hasExited()) {
     options.logger.warn(
       "runtime.antigravity_force_kill",
       "Antigravity CLI did not stop after SIGTERM; sending SIGKILL",
     );
     options.process.kill("SIGKILL");
-    await options.exitPromise.catch(() => undefined);
+    const killed = await waitForAntigravityExit(options.exitPromise, PROCESS_TERMINATION_GRACE_MS);
+    if (!killed && !options.hasExited()) {
+      options.logger.error(
+        "runtime.antigravity_process_did_not_exit",
+        "Antigravity CLI did not report exit after SIGKILL; continuing bounded Session cleanup",
+        new Error("Antigravity CLI remained alive after SIGKILL."),
+      );
+    }
   }
+}
+
+async function waitForAntigravityExit(
+  exitPromise: Promise<ProcessExit>,
+  timeoutMs: number,
+): Promise<boolean> {
+  let timeout: ReturnType<typeof setTimeout> | undefined;
+  return await Promise.race([
+    exitPromise.then(
+      () => true,
+      () => true,
+    ),
+    new Promise<false>((resolveTimeout) => {
+      timeout = setTimeout(() => resolveTimeout(false), timeoutMs);
+    }),
+  ]).finally(() => {
+    if (timeout !== undefined) clearTimeout(timeout);
+  });
 }
 
 function defaultSpawn(
@@ -1471,6 +1590,7 @@ function createStreamState(): StreamState {
     outputText: "",
     terminalSeen: false,
     plainTextOutput: false,
+    assistantResponseCompleted: false,
   };
 }
 
@@ -1571,7 +1691,7 @@ function redactSensitiveText(value: string): string {
 }
 
 function isTerminalStatus(status: string | undefined): boolean {
-  return /^(?:complete|completed|success|succeeded|done|failed|error|cancelled|canceled)$/i.test(
+  return /^(?:complete|completed|success|succeeded|done|failed|error|cancelled|canceled|rejected|denied|blocked|aborted)$/i.test(
     status ?? "",
   );
 }
@@ -1581,7 +1701,9 @@ function isSuccessfulTerminalStatus(status: string): boolean {
 }
 
 function isFailureStatus(status: string | undefined): boolean {
-  return /^(?:failed|error|cancelled|canceled)$/i.test(status ?? "");
+  return /^(?:failed|error|cancelled|canceled|rejected|denied|blocked|aborted)$/i.test(
+    status ?? "",
+  );
 }
 
 function normalizeCompactionTrigger(

@@ -1,6 +1,9 @@
+import type { ChildProcessWithoutNullStreams } from "node:child_process";
+import { EventEmitter } from "node:events";
 import { mkdir, mkdtemp, readFile, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { PassThrough } from "node:stream";
 
 import type {
   DefineRuntimeDriverOptions,
@@ -98,13 +101,10 @@ describe("Antigravity Runtime adapter lifecycle", () => {
     expect(driver.consumeStartupMessages?.(fresh, readContext)).toEqual([]);
     expect(fresh.env["HOME"]).toBe(join(sessionDir, "home"));
     await expect(
-      readFile(
-        join(fresh.managedHome.configDir, "agents", fresh.managedHome.agentName, "agent.md"),
-        "utf8",
-      ),
-    ).resolves.toContain("# System Prompt\n\nsystem prompt\n");
+      readFile(join(fresh.managedHome.pluginDir, "rules", "pragma-system.md"), "utf8"),
+    ).resolves.toContain("# Pragma Runtime System Instructions\n\nsystem prompt\n");
     await expect(
-      readFile(join(fresh.managedHome.configDir, "mcp_config.json"), "utf8"),
+      readFile(join(fresh.managedHome.pluginDir, "mcp_config.json"), "utf8"),
     ).resolves.toContain("http://127.0.0.1:43127/private/mcp");
     await driver.closeSession?.(fresh, closeContext());
 
@@ -170,6 +170,74 @@ describe("Antigravity Runtime adapter lifecycle", () => {
     expect(closeRelay).toHaveBeenCalledTimes(1);
   });
 
+  it("keeps Hook and MCP control resources alive until the native process exits", async () => {
+    const sessionDir = await mkdtemp(join(tmpdir(), "pragma-agy-close-order-"));
+    temporaryDirectories.push(sessionDir);
+    const release = vi.fn(async () => undefined);
+    createAntigravityRuntime({
+      executablePath: "/opt/agy",
+      canUse: () => ({ usable: true }),
+      listModels: async () => [],
+      mcpToolRegistryPool: {
+        acquire: vi.fn(async () => ({
+          registry: { tools: [] },
+          stats: { openedConnections: 0, reusedConnections: 0, coalescedConnections: 0 },
+          release,
+        })),
+        close: vi.fn(async () => undefined),
+      },
+    });
+    const driver = runtimeMocks.driver as RuntimeDriver<unknown, AntigravityNativeSession>;
+    const session = await driver.createSession(createSessionContext(sessionDir));
+    const dispose = runtimeMocks.registrationDisposals.at(-1)!;
+    let resolveRegistrationDispose!: () => void;
+    dispose.mockImplementationOnce(
+      async () =>
+        await new Promise<void>((resolve) => {
+          resolveRegistrationDispose = resolve;
+        }),
+    );
+    const sessionResources = session as typeof session & {
+      hookRelay: { close: () => Promise<void> };
+    };
+    const originalCloseRelay = sessionResources.hookRelay.close;
+    const closeRelay = vi.fn(async () => await originalCloseRelay());
+    sessionResources.hookRelay.close = closeRelay;
+
+    let exited = false;
+    let resolveExit!: (value: { code: number; signal: null }) => void;
+    const child = new EventEmitter() as EventEmitter & {
+      stdin: PassThrough;
+      kill: ReturnType<typeof vi.fn>;
+    };
+    child.stdin = new PassThrough();
+    child.kill = vi.fn(() => true);
+    session.activeProcess = child as unknown as ChildProcessWithoutNullStreams;
+    session.activeExitPromise = new Promise((resolve) => {
+      resolveExit = resolve;
+    });
+    session.activeHasExited = () => exited;
+
+    const closing = driver.closeSession!(session, closeContext());
+    await new Promise((resolve) => setImmediate(resolve));
+    expect(child.kill).toHaveBeenCalledWith("SIGTERM");
+    expect(dispose).not.toHaveBeenCalled();
+    expect(release).not.toHaveBeenCalled();
+    expect(closeRelay).not.toHaveBeenCalled();
+
+    exited = true;
+    resolveExit({ code: 0, signal: null });
+    await new Promise((resolve) => setImmediate(resolve));
+    expect(dispose).toHaveBeenCalledOnce();
+    expect(release).not.toHaveBeenCalled();
+    expect(closeRelay).not.toHaveBeenCalled();
+
+    resolveRegistrationDispose();
+    await closing;
+    expect(release).toHaveBeenCalledOnce();
+    expect(closeRelay).toHaveBeenCalledOnce();
+  });
+
   it("materializes host-keyring customizations without replacing the host HOME", async () => {
     const root = await mkdtemp(join(tmpdir(), "pragma-agy-host-keyring-adapter-"));
     temporaryDirectories.push(root);
@@ -194,7 +262,7 @@ describe("Antigravity Runtime adapter lifecycle", () => {
     );
     await expect(
       readFile(
-        join(session.managedHome.configDir, "agents", session.managedHome.agentName, "agent.md"),
+        join(session.managedHome.pluginDir, "agents", session.managedHome.agentName, "agent.md"),
         "utf8",
       ),
     ).resolves.toContain("system prompt");

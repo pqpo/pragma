@@ -1,6 +1,6 @@
 import type { ChildProcessWithoutNullStreams } from "node:child_process";
 import { EventEmitter } from "node:events";
-import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { PassThrough } from "node:stream";
@@ -13,6 +13,7 @@ import {
   consumeAntigravityStartupMessages,
   createAntigravityArgs,
   createAntigravityNativeSession,
+  expandAntigravitySkillInvocation,
   formatAntigravityPrompt,
   normalizeAntigravityStreamRecord,
   readAntigravityConversationIdFromLog,
@@ -33,7 +34,6 @@ describe("Antigravity CLI invocation", () => {
       createAntigravityArgs({
         prompt: "do work",
         workspace: "/workspace/project",
-        agentName: "pragma-review",
         logPath: "/state/logs/turn.log",
         permissionMode: "request-approval",
         sessionId: conversation1,
@@ -44,19 +44,18 @@ describe("Antigravity CLI invocation", () => {
     ).toEqual([
       "--output-format",
       "stream-json",
-      "--disable-slash-commands",
       "--print-timeout",
       "24h",
       "--add-dir",
       "/workspace/project",
       "--add-dir",
       "/state/managed-customizations",
-      "--agent",
-      "pragma-review",
       "--log-file",
       "/state/logs/turn.log",
       "--mode",
       "accept-edits",
+      "--sandbox",
+      "--dangerously-skip-permissions",
       "--conversation",
       conversation1,
       "--model",
@@ -72,10 +71,9 @@ describe("Antigravity CLI invocation", () => {
     const common = {
       prompt: "prompt",
       workspace: "/workspace/project",
-      agentName: "pragma-agent",
       logPath: "/tmp/log",
     } as const;
-    expect(createAntigravityArgs({ ...common, permissionMode: "request-approval" })).not.toContain(
+    expect(createAntigravityArgs({ ...common, permissionMode: "request-approval" })).toContain(
       "--sandbox",
     );
     expect(createAntigravityArgs({ ...common, permissionMode: "auto-approve" })).toContain(
@@ -86,6 +84,7 @@ describe("Antigravity CLI invocation", () => {
     );
     for (const permissionMode of ["request-approval", "auto-approve", "full-access"] as const) {
       const args = createAntigravityArgs({ ...common, permissionMode });
+      expect(args).toContain("--dangerously-skip-permissions");
       expect(args).not.toContain("--cwd");
       expect(args).not.toContain("--app_data_dir");
     }
@@ -96,7 +95,6 @@ describe("Antigravity CLI invocation", () => {
       createAntigravityArgs({
         prompt: "do work",
         workspace: "/workspace/project",
-        agentName: "pragma-review",
         logPath: "/state/logs/turn.log",
         permissionMode: "request-approval",
         sessionId: "../../other-session",
@@ -105,6 +103,50 @@ describe("Antigravity CLI invocation", () => {
     expect(
       readAntigravityConversationIdFromLog("conversation=../../other-session"),
     ).toBeUndefined();
+  });
+
+  it("rewrites only an explicit leading Pragma Skill invocation", () => {
+    const session = {
+      agent: {
+        skills: {
+          skills: [
+            {
+              type: "local",
+              name: "review-code",
+              description: "Review code",
+              path: "/skills/review/SKILL.md",
+            },
+          ],
+        },
+      },
+      managedHome: { skills: ["pragma-session-review-code"] },
+    } as unknown as Pick<AntigravityNativeSession, "agent" | "managedHome">;
+
+    expect(
+      expandAntigravitySkillInvocation(
+        session,
+        "/review-code inspect this change",
+        "# My request\n/review-code inspect this change",
+      ),
+    ).toBe("/pragma-session-review-code\n\n# My request\n/review-code inspect this change");
+    expect(
+      expandAntigravitySkillInvocation(
+        session,
+        "please apply review-code",
+        "please apply review-code",
+      ),
+    ).toBe("please apply review-code");
+
+    for (const heading of [
+      "# Images mentioned by the user:\n## image.png: /workspace/image.png",
+      "# Files mentioned by the user:\n## notes.md: /workspace/notes.md",
+      "# Directories mentioned by the user:\n## src: /workspace/src",
+    ]) {
+      const attachmentQuery = `${heading}\n\n# My request\n/review-code inspect this change`;
+      expect(expandAntigravitySkillInvocation(session, attachmentQuery, attachmentQuery)).toBe(
+        `/pragma-session-review-code\n\n${attachmentQuery}`,
+      );
+    }
   });
 });
 
@@ -148,6 +190,155 @@ describe("Antigravity startup messages", () => {
 });
 
 describe("Antigravity stream-json process", () => {
+  it.each([
+    ["REJECTED", { error: "User denied access" }],
+    ["DONE", { error: "Tool execution failed" }],
+  ] as const)("closes a %s tool lifecycle as failed", (status, terminal) => {
+    expect(
+      normalizeAntigravityStreamRecord({
+        event: "step_update",
+        step_update: {
+          step_id: `tool-${status}`,
+          step_type: "tool_use",
+          status,
+          tool_info: {
+            id: `tool-${status}`,
+            name: "write_file",
+            parameters: { TargetFile: "/workspace/project/out.ts" },
+            ...terminal,
+          },
+        },
+      }),
+    ).toEqual([
+      {
+        kind: "tool-started",
+        id: `tool-${status}`,
+        name: "write_file",
+        input: { TargetFile: "/workspace/project/out.ts" },
+      },
+      {
+        kind: "tool-delta",
+        id: `tool-${status}`,
+        name: "write_file",
+        delta: terminal.error,
+      },
+      {
+        kind: "tool-completed",
+        id: `tool-${status}`,
+        name: "write_file",
+        output: terminal.error,
+        failed: true,
+      },
+    ]);
+  });
+
+  it("keeps a DONE tool with an explicit null error successful", () => {
+    expect(
+      normalizeAntigravityStreamRecord({
+        event: "step_update",
+        step_update: {
+          step_id: "tool-success",
+          step_type: "tool_use",
+          status: "DONE",
+          tool_info: {
+            id: "tool-success",
+            name: "write_to_file",
+            parameters: { TargetFile: "/workspace/project/out.ts" },
+            output: "created",
+            error: null,
+          },
+        },
+      }),
+    ).toContainEqual({
+      kind: "tool-completed",
+      id: "tool-success",
+      name: "write_to_file",
+      output: "created",
+      failed: false,
+    });
+  });
+
+  it("streams agy 1.1.11 agent_response deltas before the terminal result without duplication", async () => {
+    const fixture = await readAgyFixture("agy-1.1.11-agent-response.ndjson");
+    const session = createSession(createStreamSpawn(fixture));
+    const nativeEvents: AntigravityNativeEvent[] = [];
+
+    await expect(
+      startAntigravityTurn(
+        session,
+        createTurn({ writeNative: (event) => nativeEvents.push(event) }),
+      ),
+    ).resolves.toMatchObject({ outputText: "你好，streamed response" });
+
+    expect(nativeEvents.filter((event) => event.kind === "message-delta")).toEqual([
+      { kind: "message-delta", text: "你好，" },
+      { kind: "message-delta", text: "streamed response" },
+    ]);
+    expect(nativeEvents.filter((event) => event.kind === "message-completed")).toEqual([
+      { kind: "message-completed", text: "你好，streamed response" },
+    ]);
+    expect(nativeEvents).toEqual(
+      expect.arrayContaining([
+        {
+          kind: "tool-started",
+          id: "agy-tool:2:tool_use",
+          name: "list_dir",
+          input: { DirectoryPath: "/workspace/project" },
+        },
+        {
+          kind: "tool-delta",
+          id: "agy-tool:2:tool_use",
+          name: "list_dir",
+          delta: "src\npackage.json",
+        },
+        {
+          kind: "tool-completed",
+          id: "agy-tool:2:tool_use",
+          name: "list_dir",
+          output: "src\npackage.json",
+          failed: false,
+        },
+      ]),
+    );
+    expect(nativeEvents).toContainEqual(
+      expect.objectContaining({ kind: "progress", stage: "antigravity.error_message" }),
+    );
+    expect(nativeEvents.findIndex((event) => event.kind === "message-delta")).toBeLessThan(
+      nativeEvents.findIndex((event) => event.kind === "message-completed"),
+    );
+  });
+
+  it("decodes NDJSON when a UTF-8 code point is split across stdout chunks", async () => {
+    const source = Buffer.from(
+      [
+        JSON.stringify({
+          event: "step_update",
+          step_update: {
+            conversation_id: conversation2,
+            step_type: "agent_response",
+            status: "DONE",
+            text_delta: "你好",
+          },
+        }),
+        JSON.stringify({
+          event: "result",
+          result: { conversation_id: conversation2, status: "SUCCESS", response: "你好" },
+        }),
+        "",
+      ].join("\n"),
+    );
+    const splitAt = source.indexOf(Buffer.from("你")) + 1;
+    const events: AntigravityNativeEvent[] = [];
+    const session = createSession(
+      createChunkedRawStreamSpawn([source.subarray(0, splitAt), source.subarray(splitAt)]),
+    );
+
+    await expect(
+      startAntigravityTurn(session, createTurn({ writeNative: (event) => events.push(event) })),
+    ).resolves.toMatchObject({ outputText: "你好" });
+    expect(events).toContainEqual({ kind: "message-delta", text: "你好" });
+  });
+
   it("streams messages, thinking, tools, subagents, compaction, session identity, and reported usage", async () => {
     const spawn = createStreamSpawn([
       {
@@ -270,14 +461,18 @@ describe("Antigravity stream-json process", () => {
     expect(result).toMatchObject({
       outputText: "Hello",
       runtimeSessionId: conversation2,
-      usage: {
+    });
+    expect(result.usage).toBeUndefined();
+    expect(nativeEvents).toContainEqual({
+      kind: "usage",
+      usage: expect.objectContaining({
         measurement: "reported",
         input: 10,
         output: 5,
         cacheRead: 4,
         cacheWrite: 0,
         totalTokens: 19,
-      },
+      }),
     });
     expect(spawn).toHaveBeenCalledWith(
       "/opt/agy",
@@ -358,6 +553,7 @@ describe("Antigravity stream-json process", () => {
         step_update: {
           step_id: "answer",
           step_type: "model_response",
+          status: "DONE",
           content: "Recovered answer",
         },
       },
@@ -374,6 +570,88 @@ describe("Antigravity stream-json process", () => {
       expect.any(String),
       expect.objectContaining({ recovered: true }),
     );
+  });
+
+  it("does not treat an ACTIVE response after an earlier DONE response as settled", async () => {
+    const session = createSession(
+      createStreamSpawn([
+        { type: "init", conversation_id: conversation4 },
+        {
+          type: "step_update",
+          step_update: {
+            step_index: 0,
+            step_type: "agent_response",
+            status: "DONE",
+            text_delta: "Earlier response",
+          },
+        },
+        {
+          type: "step_update",
+          step_update: {
+            step_index: 2,
+            step_type: "agent_response",
+            status: "ACTIVE",
+            text_delta: "Partial final response",
+          },
+        },
+      ]),
+    );
+
+    await expect(startAntigravityTurn(session, createTurn())).rejects.toMatchObject({
+      code: "ANTIGRAVITY_PROTOCOL_ERROR",
+    });
+  });
+
+  it("prefers a settled transcript over a partial ACTIVE response when result is missing", async () => {
+    const root = await mkdtemp(join(tmpdir(), "pragma-agy-partial-recovery-"));
+    const homeDir = join(root, "home");
+    const logDir = join(root, "logs");
+    const transcript = join(
+      homeDir,
+      ".gemini",
+      "antigravity",
+      "brain",
+      conversation4,
+      ".system_generated",
+      "logs",
+      "transcript.jsonl",
+    );
+    await mkdir(dirname(transcript), { recursive: true });
+    await mkdir(logDir, { recursive: true });
+    try {
+      const spawn = createRawStreamSpawn(
+        `${JSON.stringify({
+          event: "step_update",
+          step_update: {
+            conversation_id: conversation4,
+            step_type: "agent_response",
+            status: "ACTIVE",
+            text_delta: "Hel",
+          },
+        })}\n`,
+        "",
+        async () => {
+          await writeFile(
+            transcript,
+            [
+              JSON.stringify({ type: "USER_INPUT", content: "current request" }),
+              JSON.stringify({
+                type: "PLANNER_RESPONSE",
+                source: "MODEL",
+                status: "DONE",
+                content: "Hello",
+              }),
+            ].join("\n"),
+          );
+        },
+      );
+      const session = createSession(spawn, undefined, { homeDir, logDir });
+      await expect(startAntigravityTurn(session, createTurn())).resolves.toMatchObject({
+        outputText: "Hello",
+      });
+    } finally {
+      await rm(root, { recursive: true, force: true });
+    }
   });
 
   it("retains an initialized native conversation when the turn later fails", async () => {
@@ -447,7 +725,6 @@ describe("Antigravity stream-json process", () => {
         createAntigravityArgs({
           prompt: "next",
           workspace: "/workspace/project",
-          agentName: "pragma-review",
           logPath: join(logDir, "next.log"),
           permissionMode: "request-approval",
           sessionId: session.sessionId,
@@ -924,6 +1201,8 @@ function createSession(
       agentName: "pragma-review",
       mcpServerName: "pragma0123456789abcdef",
       hookName: "pragma-permission-gate-0123456789abcdef",
+      pluginName: "pragma-0123456789abcdef",
+      pluginDir: join(homeDir, ".gemini", "config", "plugins", "pragma-0123456789abcdef"),
       logDir,
       env: { PRIVATE_HOME: "true" },
       skills: [],
@@ -935,6 +1214,14 @@ function createSession(
     tokenCounter: { countText },
     sessionId: options.sessionId,
   });
+}
+
+async function readAgyFixture(name: string): Promise<readonly unknown[]> {
+  const source = await readFile(new URL(`./fixtures/${name}`, import.meta.url), "utf8");
+  return source
+    .split(/\r?\n/u)
+    .filter((line) => line.trim() !== "")
+    .map((line) => JSON.parse(line) as unknown);
 }
 
 function createTurn(
@@ -995,6 +1282,28 @@ function createRawStreamSpawn(
           child.emit("error", error);
         },
       );
+    });
+    return child as unknown as ChildProcessWithoutNullStreams;
+  });
+}
+
+function createChunkedRawStreamSpawn(chunks: readonly Buffer[]) {
+  return vi.fn(() => {
+    const child = new EventEmitter() as EventEmitter & {
+      stdin: PassThrough;
+      stdout: PassThrough;
+      stderr: PassThrough;
+      kill: ReturnType<typeof vi.fn>;
+    };
+    child.stdin = new PassThrough();
+    child.stdout = new PassThrough();
+    child.stderr = new PassThrough();
+    child.kill = vi.fn(() => true);
+    queueMicrotask(() => {
+      for (const chunk of chunks) child.stdout.write(chunk);
+      child.stdout.end();
+      child.stderr.end();
+      child.emit("exit", 0, null);
     });
     return child as unknown as ChildProcessWithoutNullStreams;
   });

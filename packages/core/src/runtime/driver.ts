@@ -723,6 +723,7 @@ class ManagedRuntimeSession<TNativeEvent, TNativeSession, TPrepared> {
   private contextWindowCalibrated = false;
   private initialStartupMessagesConsumed = false;
   private startupMessagesReinjectionPending = false;
+  private startupMessagesRetryPending: readonly ExpertAgentStartupMessage[] | undefined;
 
   constructor(
     private readonly options: {
@@ -1102,6 +1103,11 @@ class ManagedRuntimeSession<TNativeEvent, TNativeSession, TPrepared> {
               observedRuntimeSessionId,
               "runtimeSessionId.changed",
             );
+          } else if (this.info().runtimeSession.id === "" && attemptStartupMessages.length > 0) {
+            // A fresh native process that failed before allocating a resumable
+            // identity did not establish a durable recipient for startup context.
+            // Preserve the exact consumed messages for the next submission.
+            this.startupMessagesRetryPending = attemptStartupMessages;
           }
           usage = mergeUsage(usage, controller.getUsage());
           controller.updateUsage(usage);
@@ -1157,6 +1163,12 @@ class ManagedRuntimeSession<TNativeEvent, TNativeSession, TPrepared> {
     readonly kind: "initial" | "reinjection";
     readonly messages: readonly ExpertAgentStartupMessage[];
   } {
+    if (this.startupMessagesRetryPending !== undefined) {
+      const messages = this.startupMessagesRetryPending;
+      this.startupMessagesRetryPending = undefined;
+      this.startupMessagesReinjectionPending = false;
+      return { kind: "initial", messages };
+    }
     if (!this.initialStartupMessagesConsumed) {
       this.initialStartupMessagesConsumed = true;
       const messages =

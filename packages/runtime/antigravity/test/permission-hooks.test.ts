@@ -21,6 +21,41 @@ function decideAntigravityToolUse(
 }
 
 describe("Antigravity PreToolUse permission bridge", () => {
+  it("accepts absolute and file URI identities for the Expert and managed customization roots", async () => {
+    const managedCustomizations = "/runtime/session/managed-customizations";
+    for (const workspacePaths of [
+      ["file:///workspace/project"],
+      [managedCustomizations],
+      ["file:///workspace/project", "file:///runtime/session/managed-customizations"],
+    ]) {
+      await expect(
+        decideAntigravityToolUse({
+          input: input("view_file", { AbsolutePath: "/workspace/project/file.ts" }, workspacePaths),
+          workspace,
+          allowedWorkspacePaths: [workspace, managedCustomizations],
+          permissionMode: "full-access",
+          toolRuntimeState: {},
+        }),
+      ).resolves.toEqual({ decision: "allow" });
+    }
+  });
+
+  it("rejects relative and non-file workspace identities", async () => {
+    for (const reported of ["workspace/project", "https://example.com/workspace"]) {
+      await expect(
+        decideAntigravityToolUse({
+          input: input("view_file", { AbsolutePath: "/workspace/project/file.ts" }, [reported]),
+          workspace,
+          permissionMode: "full-access",
+          toolRuntimeState: {},
+        }),
+      ).resolves.toMatchObject({
+        decision: "deny",
+        reason: expect.stringContaining("invalid workspace path"),
+      });
+    }
+  });
+
   it("fails closed when the CLI reports another workspace", async () => {
     await expect(
       decideAntigravityToolUse({
@@ -46,18 +81,30 @@ describe("Antigravity PreToolUse permission bridge", () => {
         permissionMode: "request-approval",
         toolRuntimeState: {},
       }),
-    ).resolves.toEqual({
-      decision: "allow",
-      permissionOverrides: [`mcp(${mcpServerName}/*)`],
-    });
+    ).resolves.toMatchObject({ decision: "deny" });
     await expect(
       decideAntigravityToolUse({
-        input: input("mcp", { server: mcpServerName }),
+        input: input("mcp", { server: mcpServerName, tool: "list_expert_context" }),
         workspace,
         permissionMode: "request-approval",
         toolRuntimeState: {},
       }),
     ).resolves.toMatchObject({ decision: "allow" });
+    await expect(
+      decideAntigravityToolUse({
+        input: input("McpTool", {
+          server_name: mcpServerName,
+          tool_name: "list_expert_context",
+          arguments: {},
+        }),
+        workspace,
+        permissionMode: "request-approval",
+        toolRuntimeState: {},
+      }),
+    ).resolves.toMatchObject({
+      decision: "allow",
+      permissionOverrides: [`mcp(${mcpServerName}/list_expert_context)`],
+    });
     await expect(
       decideAntigravityToolUse({
         input: input("call_mcp_tool", {
@@ -70,6 +117,31 @@ describe("Antigravity PreToolUse permission bridge", () => {
         toolRuntimeState: {},
       }),
     ).resolves.toMatchObject({ decision: "allow" });
+
+    for (const spoofed of [
+      `mcp__${mcpServerName}__suffix__list_expert_context`,
+      `mcp_${mcpServerName}_suffix_list_expert_context`,
+    ]) {
+      await expect(
+        decideAntigravityToolUse({
+          input: input(spoofed, {}),
+          workspace,
+          permissionMode: "auto-approve",
+          toolRuntimeState: {},
+        }),
+      ).resolves.toMatchObject({ decision: "deny" });
+    }
+    await expect(
+      decideAntigravityToolUse({
+        input: input("call_mcp_tool", {
+          ServerName: mcpServerName,
+          ToolName: "list_expert_context/*)",
+        }),
+        workspace,
+        permissionMode: "auto-approve",
+        toolRuntimeState: {},
+      }),
+    ).resolves.toMatchObject({ decision: "deny" });
 
     await expect(
       decideAntigravityToolUse({
@@ -110,8 +182,46 @@ describe("Antigravity PreToolUse permission bridge", () => {
       }),
     ).resolves.toMatchObject({
       decision: "deny",
-      reason: expect.stringContaining("outside the managed workspace"),
+      reason: expect.stringContaining("unsafe workspace file arguments"),
     });
+  });
+
+  it("allows only read tools inside the Session-managed Skill root", async () => {
+    const managedSkillRoot =
+      "/runtime/session/managed-customizations/.agents/plugins/pragma-test/skills";
+    await expect(
+      decideAntigravityToolUse({
+        input: input("view_file", {
+          AbsolutePath: `${managedSkillRoot}/review/SKILL.md`,
+        }),
+        workspace,
+        managedSkillReadRoots: [managedSkillRoot],
+        permissionMode: "auto-approve",
+        toolRuntimeState: {},
+      }),
+    ).resolves.toEqual({ decision: "allow" });
+    await expect(
+      decideAntigravityToolUse({
+        input: input("view_file", {
+          AbsolutePath: "/runtime/session/managed-customizations/.agents/hooks.json",
+        }),
+        workspace,
+        managedSkillReadRoots: [managedSkillRoot],
+        permissionMode: "auto-approve",
+        toolRuntimeState: {},
+      }),
+    ).resolves.toMatchObject({ decision: "deny" });
+    await expect(
+      decideAntigravityToolUse({
+        input: input("write_file", {
+          TargetFile: `${managedSkillRoot}/review/SKILL.md`,
+        }),
+        workspace,
+        managedSkillReadRoots: [managedSkillRoot],
+        permissionMode: "auto-approve",
+        toolRuntimeState: {},
+      }),
+    ).resolves.toMatchObject({ decision: "deny" });
   });
 
   it("rejects relative traversal and paths that escape through a workspace symlink", async () => {
@@ -146,6 +256,24 @@ describe("Antigravity PreToolUse permission bridge", () => {
           toolRuntimeState: {},
         }),
       ).resolves.toMatchObject({ decision: "deny" });
+      const approve = vi.fn<ExpertAgentHumanInteractionHandler>().mockResolvedValue({
+        kind: "tool_approval",
+        approved: true,
+      });
+      await expect(
+        decideAntigravityToolUse({
+          input: input(
+            "write_file",
+            { TargetFile: join(managedWorkspace, "escape", "generated.ts") },
+            [managedWorkspace],
+          ),
+          workspace: managedWorkspace,
+          permissionMode: "request-approval",
+          humanInteractionHandler: approve,
+          toolRuntimeState: {},
+        }),
+      ).resolves.toMatchObject({ decision: "deny" });
+      expect(approve).not.toHaveBeenCalled();
     } finally {
       await rm(root, { recursive: true, force: true });
     }
@@ -324,6 +452,151 @@ describe("Antigravity PreToolUse permission bridge", () => {
       decision: "deny",
       reason: expect.stringContaining("safe shallow overwrite"),
     });
+  });
+
+  it("contains request-approved file mutations before and after user edits", async () => {
+    const approve = vi.fn<ExpertAgentHumanInteractionHandler>().mockResolvedValue({
+      kind: "tool_approval",
+      approved: true,
+    });
+    await expect(
+      decideAntigravityToolUse({
+        input: input("write_file", { TargetFile: "/etc/outside.ts", CodeContent: "x" }),
+        workspace,
+        permissionMode: "request-approval",
+        humanInteractionHandler: approve,
+        toolRuntimeState: {},
+      }),
+    ).resolves.toMatchObject({ decision: "deny", reason: expect.stringContaining("unsafe") });
+    expect(approve).not.toHaveBeenCalled();
+
+    const editOutside = vi.fn<ExpertAgentHumanInteractionHandler>().mockResolvedValue({
+      kind: "tool_approval",
+      approved: true,
+      updatedInput: { TargetFile: "/etc/edited.ts", CodeContent: "x" },
+    });
+    await expect(
+      decideAntigravityToolUse({
+        input: input("write_file", {
+          TargetFile: "/workspace/project/original.ts",
+          CodeContent: "x",
+        }),
+        workspace,
+        permissionMode: "request-approval",
+        humanInteractionHandler: editOutside,
+        toolRuntimeState: {},
+      }),
+    ).resolves.toMatchObject({ decision: "deny", reason: expect.stringContaining("edited") });
+
+    const editInside = vi.fn<ExpertAgentHumanInteractionHandler>().mockResolvedValue({
+      kind: "tool_approval",
+      approved: true,
+      updatedInput: {
+        TargetFile: "/workspace/project/edited.ts",
+        CodeContent: "updated",
+      },
+    });
+    await expect(
+      decideAntigravityToolUse({
+        input: input("write_file", {
+          TargetFile: "/workspace/project/original.ts",
+          CodeContent: "x",
+        }),
+        workspace,
+        permissionMode: "request-approval",
+        humanInteractionHandler: editInside,
+        toolRuntimeState: {},
+      }),
+    ).resolves.toEqual({
+      decision: "allow",
+      overwrite: {
+        TargetFile: "/workspace/project/edited.ts",
+        CodeContent: "updated",
+      },
+    });
+  });
+
+  it("fails closed when required file paths are missing or use a non-file URI", async () => {
+    for (const args of [{ CodeContent: "x" }, { TargetFile: "https://example.com/out.ts" }]) {
+      await expect(
+        decideAntigravityToolUse({
+          input: input("write_file", args),
+          workspace,
+          permissionMode: "auto-approve",
+          toolRuntimeState: {},
+        }),
+      ).resolves.toMatchObject({ decision: "deny" });
+    }
+    await expect(
+      decideAntigravityToolUse({
+        input: input("view_file", {}),
+        workspace,
+        permissionMode: "request-approval",
+        toolRuntimeState: {},
+      }),
+    ).resolves.toMatchObject({ decision: "deny" });
+  });
+
+  it.each([
+    ["view_file", { AbsolutePath: `${workspace}/file.ts` }],
+    ["list_dir", { DirectoryPath: workspace }],
+    ["grep_search", { Query: "needle", SearchPath: workspace }],
+    ["find_by_name", { Pattern: "*.ts", SearchDirectory: workspace }],
+    ["list_permissions", {}],
+    ["code_search", { Query: "symbol" }],
+    ["read_file", { Target: `${workspace}/file.ts` }],
+    ["get_file_info", { AbsolutePath: `${workspace}/file.ts` }],
+    ["list_directory", { DirectoryPath: workspace }],
+    ["create_directory", { TargetDirectory: `${workspace}/generated` }],
+    ["create_file", { TargetFile: `${workspace}/created.ts`, CodeContent: "x" }],
+    ["delete_file", { AbsolutePath: `${workspace}/obsolete.ts` }],
+    [
+      "move_file",
+      { SourceFile: `${workspace}/before.ts`, DestinationFile: `${workspace}/after.ts` },
+    ],
+    [
+      "multi_replace_file_content",
+      {
+        TargetFile: `${workspace}/file.ts`,
+        ReplacementChunks: [{ TargetContent: "/etc is content", ReplacementContent: "updated" }],
+      },
+    ],
+    [
+      "rename_file",
+      { SourcePath: `${workspace}/before.ts`, DestinationPath: `${workspace}/after.ts` },
+    ],
+    ["edit_file", { TargetFile: `${workspace}/file.ts`, SourceCode: "https://example.com" }],
+    [
+      "replace_file_content",
+      { TargetFile: `${workspace}/file.ts`, TargetContent: "/outside-looking text" },
+    ],
+    ["write_to_file", { TargetFile: `${workspace}/written.ts`, CodeContent: "x" }],
+    ["write_file", { TargetFile: `${workspace}/written.ts`, fileContent: "x" }],
+  ] as const)("validates the explicit agy 1.1.11 %s path schema", async (toolName, args) => {
+    await expect(
+      decideAntigravityToolUse({
+        input: input(toolName, args),
+        workspace,
+        permissionMode: "auto-approve",
+        toolRuntimeState: {},
+      }),
+    ).resolves.toEqual({ decision: "allow" });
+  });
+
+  it("fails closed when a known multi-path tool reports a drifted path field", async () => {
+    for (const args of [
+      { Source: `${workspace}/before.ts`, NewLocation: "/etc/after.ts" },
+      { SourceFile: `${workspace}/before.ts`, DestinationFile: "/etc/after.ts" },
+    ]) {
+      await expect(
+        decideAntigravityToolUse({
+          input: input("move_file", args),
+          workspace,
+          permissionMode: "auto-approve",
+          toolRuntimeState: {},
+        }),
+      ).resolves.toMatchObject({ decision: "deny" });
+    }
   });
 
   it("converts Antigravity question tools to Core questions and returns the answer to the agent", async () => {

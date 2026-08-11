@@ -45,6 +45,8 @@ export interface ManagedAntigravityHome {
   readonly agentName: string;
   readonly mcpServerName: string;
   readonly hookName: string;
+  readonly pluginName: string;
+  readonly pluginDir: string;
   readonly logDir: string;
   readonly env: NodeJS.ProcessEnv;
   readonly skills: readonly string[];
@@ -85,14 +87,14 @@ export async function prepareManagedAntigravityHome(options: {
   const logDir = join(options.sessionDir, "logs");
   const tmpDir = join(options.sessionDir, "tmp");
   const hookDir = join(options.sessionDir, "hooks");
-  const skillsDir = join(configDir, "skills");
-  const agentsDir = join(configDir, "agents");
   const identity = createManagedAntigravityIdentity(options.agent.id, options.sessionDir);
-  const managedAgentDir = join(agentsDir, identity.agentName);
+  const pluginName = `pragma-${identity.namespace}`;
+  const pluginsDir = join(configDir, "plugins");
+  const pluginDir = join(pluginsDir, pluginName);
+  const skillsDir = join(pluginDir, "skills");
+  const rulesDir = join(pluginDir, "rules");
+  const managedAgentDir = join(pluginDir, "agents", identity.agentName);
 
-  if (customizationWorkspace !== undefined) {
-    await rm(customizationWorkspace, { recursive: true, force: true });
-  }
   const managedDirectories =
     customizationWorkspace === undefined
       ? [homeDir, appDataDir, configDir, logDir, tmpDir, hookDir]
@@ -101,10 +103,20 @@ export async function prepareManagedAntigravityHome(options: {
     await mkdir(directory, { recursive: true, mode: 0o700 });
     await chmod(directory, 0o700).catch(() => undefined);
   }
-  // Replace only Pragma's own entry. Antigravity can persist dynamically
-  // defined subagents beside it as part of the native conversation state.
+  // Replace only Pragma-owned entries. Antigravity can persist dynamically
+  // defined subagents beside the managed Agent as native conversation state.
   await rm(managedAgentDir, { recursive: true, force: true });
+  await rm(skillsDir, { recursive: true, force: true });
+  await rm(rulesDir, { recursive: true, force: true });
+  await rm(join(pluginDir, "plugin.json"), { force: true });
+  await rm(join(pluginDir, "mcp_config.json"), { force: true });
+  // Remove layouts written by the earlier, ineffective top-level integration
+  // without clearing unrelated native customization state.
+  await removeLegacyManagedMcpConfig(join(configDir, "mcp_config.json"), identity.mcpServerName);
+  await rm(join(configDir, "agents", identity.agentName), { recursive: true, force: true });
+  await removeLegacyManagedSkills(join(configDir, "skills"), identity.namespace);
   await mkdir(managedAgentDir, { recursive: true, mode: 0o700 });
+  await mkdir(pluginDir, { recursive: true, mode: 0o700 });
 
   const hookScriptPath = join(hookDir, "pragma-pre-tool-use.mjs");
   await writePrivateFile(hookScriptPath, createHookRunnerSource(options.hookRelay));
@@ -119,13 +131,28 @@ export async function prepareManagedAntigravityHome(options: {
           ),
         ]
       : []),
-    writePrivateJson(join(configDir, "mcp_config.json"), {
+    writePrivateJson(join(configDir, "plugins.json"), {
+      entries: [
+        {
+          path: pluginsDir,
+          include_only: [`^${pluginName}$`],
+        },
+      ],
+    }),
+    writePrivateJson(join(pluginDir, "plugin.json"), {
+      name: pluginName,
+    }),
+    writePrivateJson(join(pluginDir, "mcp_config.json"), {
       mcpServers: {
         [identity.mcpServerName]: {
           serverUrl: options.mcpServerUrl,
         },
       },
     }),
+    writePrivateFile(
+      join(rulesDir, "pragma-system.md"),
+      managedSystemRuleMarkdown(options.systemPrompt, skills),
+    ),
     writePrivateJson(
       join(configDir, "hooks.json"),
       managedHooksConfig(
@@ -140,9 +167,9 @@ export async function prepareManagedAntigravityHome(options: {
       managedAgentMarkdown(
         options.agent,
         identity.agentName,
+        identity.mcpServerName,
         options.systemPrompt,
         options.permissionMode,
-        skills,
       ),
     ),
   ]);
@@ -169,10 +196,58 @@ export async function prepareManagedAntigravityHome(options: {
     agentName: identity.agentName,
     mcpServerName: identity.mcpServerName,
     hookName: identity.hookName,
+    pluginName,
+    pluginDir,
     logDir,
     env,
     skills,
   };
+}
+
+async function removeLegacyManagedSkills(skillsDir: string, namespace: string): Promise<void> {
+  const entries = await readdir(skillsDir, { withFileTypes: true }).catch((error: unknown) => {
+    if (isMissingPathError(error)) return [];
+    throw error;
+  });
+  const managedPrefix = `pragma-${namespace}-`;
+  await Promise.all(
+    entries
+      .filter((entry) => entry.name.startsWith(managedPrefix))
+      .map(
+        async (entry) => await rm(join(skillsDir, entry.name), { recursive: true, force: true }),
+      ),
+  );
+}
+
+async function removeLegacyManagedMcpConfig(path: string, mcpServerName: string): Promise<void> {
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(await readFile(path, "utf8")) as unknown;
+  } catch (error) {
+    if (isMissingPathError(error)) return;
+    throw new Error("Antigravity legacy managed MCP config is malformed.", { cause: error });
+  }
+  if (parsed === null || typeof parsed !== "object" || Array.isArray(parsed)) return;
+  const config = parsed as Record<string, unknown>;
+  const servers = config["mcpServers"];
+  if (servers === null || typeof servers !== "object" || Array.isArray(servers)) return;
+  const serverRecord = servers as Record<string, unknown>;
+  if (!(mcpServerName in serverRecord)) return;
+  delete serverRecord[mcpServerName];
+  if (Object.keys(serverRecord).length === 0 && Object.keys(config).length === 1) {
+    await rm(path, { force: true });
+    return;
+  }
+  await writePrivateJson(path, config);
+}
+
+function isMissingPathError(error: unknown): boolean {
+  return (
+    error !== null &&
+    typeof error === "object" &&
+    "code" in error &&
+    (error.code === "ENOENT" || error.code === "ENOTDIR")
+  );
 }
 
 export function resolveAntigravityAuthenticationMode(
@@ -387,6 +462,10 @@ function managedHooksConfig(
   platform: NodeJS.Platform,
   hookName: string,
 ): Record<string, unknown> {
+  if (platform === "win32") {
+    assertSafeWindowsHookCommandPath(nodeExecutablePath);
+    assertSafeWindowsHookCommandPath(hookScriptPath);
+  }
   const runner = `${quoteCommandArgument(nodeExecutablePath, platform)} ${quoteCommandArgument(
     hookScriptPath,
     platform,
@@ -413,12 +492,20 @@ function managedHooksConfig(
   };
 }
 
+function assertSafeWindowsHookCommandPath(value: string): void {
+  if (/[%!\r\n]/.test(value)) {
+    throw new Error(
+      "Antigravity cannot safely materialize a Windows command hook under a path containing %, !, or a newline.",
+    );
+  }
+}
+
 function managedAgentMarkdown(
   agent: Expert,
   agentName: string,
+  mcpServerName: string,
   systemPrompt: string,
   permissionMode: AntigravityRuntimePermissionMode,
-  skills: readonly string[],
 ): string {
   const frontmatter = [
     FRONTMATTER_DELIMITER,
@@ -428,13 +515,35 @@ function managedAgentMarkdown(
     "subagent: false",
     "hidden: false",
     "inheritMcp: true",
+    "mcpServers:",
+    `  - ${quoteYamlString(mcpServerName)}`,
     `commandExecutionPolicy: ${commandExecutionPolicy(permissionMode)}`,
-    ...(skills.length === 0
-      ? []
-      : ["skills:", ...skills.map((skill) => `  - ${quoteYamlString(`skills/${skill}`)}`)]),
     FRONTMATTER_DELIMITER,
   ];
   return [...frontmatter, "# System Prompt", "", systemPrompt, ""].join("\n");
+}
+
+function managedSystemRuleMarkdown(systemPrompt: string, skills: readonly string[]): string {
+  return [
+    FRONTMATTER_DELIMITER,
+    "trigger: always_on",
+    FRONTMATTER_DELIMITER,
+    "",
+    "# Pragma Runtime System Instructions",
+    "",
+    systemPrompt,
+    ...(skills.length === 0
+      ? []
+      : [
+          "",
+          "# Managed Skills",
+          "",
+          "The following Session-namespaced Skills are available through explicit slash-command invocation:",
+          "",
+          ...skills.map((skill) => `- \`${skill}\``),
+        ]),
+    "",
+  ].join("\n");
 }
 
 function commandExecutionPolicy(
