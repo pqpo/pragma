@@ -185,13 +185,13 @@ describe("Mission executor model options", () => {
     const catalog = createMissionExecutorCatalog({ project, systemExperts, runtimes });
     const resources = [
       {
-        apiVersion: "pragma/v3",
+        apiVersion: "pragma/v4",
         kind: "RuntimeProfile",
         metadata: { id: "2v60qnte9072fwk7", name: "Pinned" },
         spec: { config: { runtimeId: "pinned-runtime" } },
       },
       {
-        apiVersion: "pragma/v3",
+        apiVersion: "pragma/v4",
         kind: "Expert",
         metadata: { id: "kgtpajmnv08n7zah", name: "Worker" },
         spec: { runtime: { ref: "runtime-profile:2v60qnte9072fwk7" } },

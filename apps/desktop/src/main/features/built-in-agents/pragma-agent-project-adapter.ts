@@ -297,7 +297,7 @@ export function createDesktopPragmaAgentProjectPort(options: {
           baseProjectRevision: snapshot.revision,
           draftRevision: 0,
           resource: {
-            apiVersion: "pragma/v3",
+            apiVersion: "pragma/v4",
             kind: "Flow",
             metadata: input.metadata,
             spec: {
@@ -374,7 +374,7 @@ export function createDesktopPragmaAgentProjectPort(options: {
       let sourceEvaluationRef: string | undefined;
       if (input.mode === "create") {
         resource = {
-          apiVersion: "pragma/v3",
+          apiVersion: "pragma/v4",
           kind: "Evaluation",
           metadata: input.metadata,
           spec: {

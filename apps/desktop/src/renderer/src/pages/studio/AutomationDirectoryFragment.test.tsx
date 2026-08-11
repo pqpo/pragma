@@ -17,7 +17,7 @@ import {
 const automation: AutomationSummary = {
   ref: "automation:hrxn3mv2e991j2rj",
   resource: {
-    apiVersion: "pragma/v3",
+    apiVersion: "pragma/v4",
     kind: "Automation",
     metadata: {
       id: "hrxn3mv2e991j2rj",
@@ -173,6 +173,7 @@ describe("AutomationDirectoryFragment", () => {
     };
     const executor = {
       kind: "expert" as const,
+      avatarId: "pragma.avatar.expert.default",
       ref: "expert:3sfd30h5017wd17d",
       name: "Reviewer",
       version: "1.0.0",

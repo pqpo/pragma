@@ -200,7 +200,7 @@ export const PragmaAgentEvaluationDraftDiagnosticSchema = z.object({
 
 const PragmaAgentEvaluationDraftResourceSchema = z
   .object({
-    apiVersion: z.literal("pragma/v3"),
+    apiVersion: z.literal("pragma/v4"),
     kind: z.literal("Evaluation"),
     metadata: PragmaEvaluationMetadataSchema,
     spec: z

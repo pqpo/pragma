@@ -8,7 +8,7 @@ import { FlowRunDryFragment } from "./FlowRunDryFragment.tsx";
 describe("FlowRunDryFragment", () => {
   it("renders persisted cases and transition coverage in a dedicated developer screen", () => {
     const flow = PragmaFlowResourceSchema.parse({
-      apiVersion: "pragma/v3",
+      apiVersion: "pragma/v4",
       kind: "Flow",
       metadata: {
         id: "8h9j0k1m2n3p4q5r",
@@ -37,7 +37,7 @@ describe("FlowRunDryFragment", () => {
       },
     });
     const evaluation = PragmaEvaluationResourceSchema.parse({
-      apiVersion: "pragma/v3",
+      apiVersion: "pragma/v4",
       kind: "Evaluation",
       metadata: {
         id: "7h8j9k0m1n2p3q4r",

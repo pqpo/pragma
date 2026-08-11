@@ -3,10 +3,11 @@
 Use an Expert for one conversational agent with a bounded scope.
 
 ```yaml
-apiVersion: pragma/v3
+apiVersion: pragma/v4
 kind: Expert
 metadata:
   id: 1h2j3k4m5n6p7q8r
+  avatarId: pragma.avatar.expert.default
   name: Release Writer
   description: Produces concise release notes from verified changes.
   tags: [writing]
@@ -29,7 +30,7 @@ spec:
 ```
 
 - Use only exact Capability, ContextStore, RuntimeProfile, plugin, Expert, Team, and Flow refs.
-- `name`, `id`, `description`, `scope`, `instructions`, and `runtime` are required. The host
+- `name`, `id`, `avatarId`, `description`, `scope`, `instructions`, and `runtime` are required. The host
   allocates `id`; never invent or change it.
 - Text limits use Unicode characters after trimming: name 50, description 500, scope 1,000, and
   instructions 5,000. Each tag is at most 20 characters and an Expert has at most 10 tags.
@@ -42,4 +43,5 @@ spec:
   unique within the Expert. It is not derived from the ContextStore ID, binding, or `config.key`.
   Preserve the namespace when editing an existing mount. Use `contextStores: []` when none apply.
 - Put behavioral rules in `scope` and `instructions`; never put credentials or machine paths in DSL.
+- `avatarId` is a portable system-avatar identifier. Never use a path, URL, or embedded image.
 - Expose another resource as a tool only through a named, versioned tool adapter.

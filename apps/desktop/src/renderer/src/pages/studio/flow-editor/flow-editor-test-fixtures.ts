@@ -3,7 +3,7 @@ import type { PragmaFlowResource, PragmaResource } from "@pragma/interpreter/ast
 export function runtimeResources(): PragmaResource[] {
   return [
     {
-      apiVersion: "pragma/v3",
+      apiVersion: "pragma/v4",
       kind: "RuntimeProfile",
       metadata: {
         id: "rdzgnq05qfqcpqcm",
@@ -21,10 +21,11 @@ export function runtimeResources(): PragmaResource[] {
       },
     },
     {
-      apiVersion: "pragma/v3",
+      apiVersion: "pragma/v4",
       kind: "Expert",
       metadata: {
         id: "1xddvess309a6gme",
+        avatarId: "pragma.avatar.expert.default",
         name: "Writer",
         description: "Writes.",
         tags: [],
@@ -45,7 +46,7 @@ export function runtimeResources(): PragmaResource[] {
 
 export function flowFixture(): PragmaFlowResource {
   return {
-    apiVersion: "pragma/v3",
+    apiVersion: "pragma/v4",
     kind: "Flow",
     metadata: {
       id: "qj3t30sa520dvfvj",

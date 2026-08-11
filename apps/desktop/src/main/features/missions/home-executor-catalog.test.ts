@@ -1,4 +1,8 @@
 import { describe, expect, it } from "vitest";
+import {
+  DEFAULT_PRAGMA_EXPERT_AVATAR_ID,
+  DEFAULT_PRAGMA_EXPERT_TEAM_AVATAR_ID,
+} from "@pragma/shared";
 
 import type {
   MissionExecutorOption,
@@ -20,7 +24,7 @@ describe("Home executor catalog", () => {
       revision: 1,
       resources: [
         {
-          apiVersion: "pragma/v3",
+          apiVersion: "pragma/v4",
           kind: "Expert",
           metadata: {
             id: "0000000000000001",
@@ -31,7 +35,7 @@ describe("Home executor catalog", () => {
           spec: {},
         },
         {
-          apiVersion: "pragma/v3",
+          apiVersion: "pragma/v4",
           kind: "ExpertTeam",
           metadata: {
             id: "0000000000000002",
@@ -190,13 +194,19 @@ function option(
   name: string,
   kind: MissionExecutorOption["kind"],
 ): MissionExecutorOption {
-  return {
+  const base = {
     ref,
     name,
     description: name,
-    kind,
     origin: "project",
     readOnly: false,
     customized: false,
-  };
+  } as const;
+  if (kind === "expert") {
+    return { ...base, kind, avatarId: DEFAULT_PRAGMA_EXPERT_AVATAR_ID };
+  }
+  if (kind === "team") {
+    return { ...base, kind, avatarId: DEFAULT_PRAGMA_EXPERT_TEAM_AVATAR_ID };
+  }
+  return { ...base, kind };
 }

@@ -656,7 +656,7 @@ async function withStagedProject<T>(
     await writeFile(
       join(root, "pragma.yaml"),
       formatPragmaYaml({
-        apiVersion: "pragma/v3",
+        apiVersion: "pragma/v4",
         kind: "Bundle",
         imports: imports.toSorted(),
         resources: [],
@@ -694,7 +694,7 @@ function canonicalProjectFiles(project: PragmaProject): ReadonlyMap<string, stri
   files.set(
     "pragma.yaml",
     formatPragmaYaml({
-      apiVersion: "pragma/v3",
+      apiVersion: "pragma/v4",
       kind: "Bundle",
       imports: imports.toSorted(),
       resources: [],

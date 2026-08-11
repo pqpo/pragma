@@ -101,6 +101,7 @@ export function createDesktopSystemExpertRegistry(options?: {
       ...defaultResource,
       metadata: {
         ...defaultResource.metadata,
+        avatarId: customization.avatarId ?? defaultResource.metadata.avatarId,
         name: customization.name,
         description: customization.description,
         tags: customization.tags,
@@ -144,6 +145,7 @@ export function createDesktopSystemExpertRegistry(options?: {
       schemaVersion: "pragma.desktop-expert-view/v1",
       ref: BUILT_IN_PRAGMA_REF,
       id: resource.metadata.id,
+      avatarId: resource.metadata.avatarId,
       name: resource.metadata.name,
       description: resource.metadata.description,
       tags: resource.metadata.tags,
@@ -240,6 +242,7 @@ export function createDesktopSystemExpertRegistry(options?: {
         kind: "expert",
         ref: current.ref,
         name: current.name,
+        avatarId: current.avatarId,
       });
     },
     listExecutors: () => {
@@ -249,6 +252,7 @@ export function createDesktopSystemExpertRegistry(options?: {
           kind: "expert",
           ref: current.ref,
           name: current.name,
+          avatarId: current.avatarId,
           description: current.description,
           origin: current.origin,
           readOnly: current.readOnly,

@@ -1,7 +1,8 @@
-apiVersion: pragma/v3
+apiVersion: pragma/v4
 kind: Expert
 metadata:
   id: 0000000000mem0ry
+  avatarId: pragma.avatar.expert.default
   name: Memory Curator
   description: Hidden system Expert that extracts structured long-term Memory.
   tags: [builtin, system, memory, curator]

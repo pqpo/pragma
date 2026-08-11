@@ -26,7 +26,7 @@ export interface FlowValidationIssue {
 
 export function createEmptyFlow(id = "0000000000000000"): PragmaFlowResource {
   return {
-    apiVersion: "pragma/v3",
+    apiVersion: "pragma/v4",
     kind: "Flow",
     metadata: {
       id,

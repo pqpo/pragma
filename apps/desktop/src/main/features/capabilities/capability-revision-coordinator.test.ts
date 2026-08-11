@@ -252,9 +252,15 @@ function capability(revision: number, tools: string[]): Capability {
 
 function expert(id: string, capabilityRef: string, tools: string[]): PragmaResource {
   return {
-    apiVersion: "pragma/v3",
+    apiVersion: "pragma/v4",
     kind: "Expert",
-    metadata: { id, name: id, description: "Expert", tags: [] },
+    metadata: {
+      id,
+      avatarId: "pragma.avatar.expert.default",
+      name: id,
+      description: "Expert",
+      tags: [],
+    },
     spec: {
       scope: "all",
       instructions: "Use tools",

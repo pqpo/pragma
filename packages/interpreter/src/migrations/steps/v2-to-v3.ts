@@ -1,8 +1,9 @@
 import { derivePragmaResourceId } from "@pragma/core";
 
-import { PragmaResourceSchema, type PragmaResource } from "../../ast/pragma-dsl.schema.ts";
+import type { PragmaResource } from "../../ast/pragma-dsl.schema.ts";
 import { normalizePragmaResourceName } from "../../ast/resource-identity.ts";
 import { PragmaV2SemanticResourceSchema } from "../schemas/v2.ts";
+import { PragmaV3SemanticResourceSchema } from "../schemas/v3.ts";
 import {
   PragmaDslMigrationError,
   type PragmaDslMigrationStep,
@@ -76,7 +77,7 @@ export const pragmaDslV2ToV3Step = {
       rewriteLegacySemanticRefs(copy, identities);
       rewriteLegacyExpertIdMaps(copy, identities);
       removeLegacyFlowStepVersions(copy);
-      const parsed = PragmaResourceSchema.safeParse(copy);
+      const parsed = PragmaV3SemanticResourceSchema.safeParse(copy);
       if (!parsed.success) {
         throw new PragmaDslMigrationError(
           "invalid_migrated_project",

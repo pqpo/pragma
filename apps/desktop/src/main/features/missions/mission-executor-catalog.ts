@@ -297,6 +297,9 @@ function projectExecutorOption(resource: PragmaInvocableResource): MissionExecut
   return MissionExecutorOptionSchema.parse({
     ...projectExecutor(resource),
     description: resource.metadata.description,
+    ...(resource.kind === "Expert" || resource.kind === "ExpertTeam"
+      ? { avatarId: resource.metadata.avatarId }
+      : {}),
     origin: "project",
     readOnly: false,
     customized: false,

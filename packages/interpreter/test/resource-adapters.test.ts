@@ -74,7 +74,7 @@ describe("Pragma resource adapters", () => {
     await writeFile(join(outside, "entry.md"), "outside");
     await symlink(outside, join(artifact, "linked"), "junction");
     const resource: PragmaCapabilityResource = {
-      apiVersion: "pragma/v3",
+      apiVersion: "pragma/v4",
       kind: "Capability",
       metadata: {
         id: "j35188zs37g69g0n",
@@ -99,7 +99,7 @@ describe("Pragma resource adapters", () => {
   it("requires a binding resolver to return the requested binding ref", async () => {
     const registry = createDefaultPragmaResourceAdapterRegistry();
     const resource = {
-      apiVersion: "pragma/v3",
+      apiVersion: "pragma/v4",
       kind: "RuntimeProfile",
       metadata: {
         id: "qvt4k49db1vzrtfc",
@@ -132,7 +132,7 @@ describe("Pragma resource adapters", () => {
   it("keeps Runtime model identity separate from provider credentials", async () => {
     const registry = createDefaultPragmaResourceAdapterRegistry();
     const resource = {
-      apiVersion: "pragma/v3",
+      apiVersion: "pragma/v4",
       kind: "RuntimeProfile",
       metadata: {
         id: "qvt4k49db1vzrtfc",
@@ -166,7 +166,7 @@ describe("Pragma resource adapters", () => {
     await writeFile(
       join(root, "pragma.yaml"),
       formatPragmaYaml({
-        apiVersion: "pragma/v3",
+        apiVersion: "pragma/v4",
         kind: "ContextStore",
         metadata: {
           id: "w01fppfxrn31gf7v",
@@ -197,7 +197,7 @@ describe("Pragma resource adapters", () => {
       },
     });
     const resource: PragmaCapabilityResource = {
-      apiVersion: "pragma/v3",
+      apiVersion: "pragma/v4",
       kind: "Capability",
       metadata: {
         id: "jqys6d6fybxga4wb",
@@ -229,7 +229,7 @@ describe("Pragma resource adapters", () => {
       },
     });
     const resource: PragmaCapabilityResource = {
-      apiVersion: "pragma/v3",
+      apiVersion: "pragma/v4",
       kind: "Capability",
       metadata: {
         id: "sccvsbpxdrsxh7px",
@@ -253,7 +253,7 @@ describe("Pragma resource adapters", () => {
 
 function codeResource(source: PragmaArtifactSource): PragmaCapabilityResource {
   return {
-    apiVersion: "pragma/v3",
+    apiVersion: "pragma/v4",
     kind: "Capability",
     metadata: {
       id: "ygypdtr7bfev740a",

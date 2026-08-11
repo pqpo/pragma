@@ -1,7 +1,8 @@
-apiVersion: pragma/v3
+apiVersion: pragma/v4
 kind: Expert
 metadata:
   id: 0000000000sk1rev
+  avatarId: pragma.avatar.expert.default
   name: Skill Revision Agent
   description: Hidden system Expert that proposes Skill Capability revisions.
   tags: [builtin, system, skill, revision]

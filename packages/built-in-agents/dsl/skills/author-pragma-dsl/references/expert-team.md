@@ -3,10 +3,11 @@
 Use an ExpertTeam when one coordinator delegates to an allowlisted set of Experts.
 
 ```yaml
-apiVersion: pragma/v3
+apiVersion: pragma/v4
 kind: ExpertTeam
 metadata:
   id: 4h5j6k7m8n9p0q1r
+  avatarId: pragma.avatar.team.default
   name: Delivery Team
   description: Coordinates implementation and review.
   tags: [delivery]
@@ -36,6 +37,7 @@ spec:
 ```
 
 - The coordinator and every member must already exist or be included in the same change-set.
+- `avatarId` is a portable system-avatar identifier. Never use a path, URL, or embedded image.
 - Text limits use Unicode characters after trimming: name 50, description 500, and optional team
   instructions 5,000.
 - `instructions` is optional. When present, it is loaded into the coordinator and every delegated

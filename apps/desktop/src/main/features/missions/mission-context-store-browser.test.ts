@@ -17,10 +17,11 @@ import { createMissionContextStoreBrowserService } from "./mission-context-store
 const writer = expert("1xddvess309a6gme", "Writer");
 const reviewer = expert("3sfd30h5017wd17d", "Reviewer");
 const team: PragmaExpertTeamResource = {
-  apiVersion: "pragma/v3",
+  apiVersion: "pragma/v4",
   kind: "ExpertTeam",
   metadata: {
     id: "vyv9pwwzaksth2dd",
+    avatarId: "pragma.avatar.team.default",
     name: "Editorial Team",
     description: "Coordinates editorial work",
     tags: [],
@@ -376,9 +377,15 @@ function teamRef(): `team:${string}` {
 
 function expert(id: string, name: string): PragmaExpertResource {
   return {
-    apiVersion: "pragma/v3",
+    apiVersion: "pragma/v4",
     kind: "Expert",
-    metadata: { id, name, description: name, tags: [] },
+    metadata: {
+      id,
+      avatarId: "pragma.avatar.expert.default",
+      name,
+      description: name,
+      tags: [],
+    },
     spec: {
       scope: name,
       instructions: `${name} instructions`,

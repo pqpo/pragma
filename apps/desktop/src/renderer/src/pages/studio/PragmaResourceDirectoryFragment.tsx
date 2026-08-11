@@ -1007,9 +1007,15 @@ export function TeamEditor(props: {
         if (visible.length === 0) throw new Error(t("teamKnowledgeVisibleRequired"));
       }
       const resource = PragmaExpertTeamResourceSchema.parse({
-        apiVersion: "pragma/v3",
+        apiVersion: "pragma/v4",
         kind: "ExpertTeam",
-        metadata: { id, name, description, tags: props.initial?.metadata.tags ?? [] },
+        metadata: {
+          id,
+          avatarId: props.initial?.metadata.avatarId,
+          name,
+          description,
+          tags: props.initial?.metadata.tags ?? [],
+        },
         spec: {
           coordinator: { ref: coordinator },
           members: members.map((ref) => ({ ref })),

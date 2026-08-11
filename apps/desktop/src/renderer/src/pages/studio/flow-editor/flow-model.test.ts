@@ -140,7 +140,7 @@ describe("Flow editor model", () => {
 
 function flowFixture(): PragmaFlowResource {
   return {
-    apiVersion: "pragma/v3",
+    apiVersion: "pragma/v4",
     kind: "Flow",
     metadata: {
       id: "t9ne4d8njvvxv2ea",

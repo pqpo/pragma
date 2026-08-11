@@ -112,7 +112,7 @@ describe("Automation Service", () => {
 
   it("maps schema-less Flow prompts through the normal Mission goal input", () => {
     const resource = PragmaAutomationResourceSchema.parse({
-      apiVersion: "pragma/v3",
+      apiVersion: "pragma/v4",
       kind: "Automation",
       metadata: {
         id: "m9a8n9nxvvyb4j01",

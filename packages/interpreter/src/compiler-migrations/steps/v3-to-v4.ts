@@ -1,12 +1,13 @@
-import {
-  PragmaBundleSchema,
-  PragmaLockSchema,
-  PragmaResourceSchema,
-  canonicalPragmaResourceRef,
-  type PragmaResource,
-} from "../../ast/index.ts";
+import { canonicalPragmaResourceRef, type PragmaResource } from "../../ast/index.ts";
 import { parsePragmaYaml } from "../../compiler/pragma-project.ts";
 import { sha256, stableStringify } from "../../compiler/compiler-hash.ts";
+import {
+  PragmaV3BundleSchema,
+  PragmaV3LockSchema,
+  PragmaV3SemanticResourceSchema,
+  type PragmaV3SemanticResource,
+} from "../../migrations/schemas/v3.ts";
+import { migratePragmaV3ResourceToCurrent } from "../../migrations/steps/v3-to-v4.ts";
 import { PragmaCompilerMigrationError } from "../types.ts";
 
 export function migratePragmaCompilerV3Project(input: {
@@ -23,7 +24,7 @@ export function migratePragmaCompilerV3Project(input: {
       "Compiler v3 project revision is missing pragma.lock.yaml.",
     );
   }
-  const lock = PragmaLockSchema.parse(parsePragmaYaml(lockSource));
+  const lock = PragmaV3LockSchema.parse(parsePragmaYaml(lockSource));
   if (
     input.revisionCompilerVersion !== "pragma.dsl/v3" ||
     lock.compilerVersion !== input.revisionCompilerVersion
@@ -34,17 +35,32 @@ export function migratePragmaCompilerV3Project(input: {
     );
   }
 
-  const indexed: { readonly resource: PragmaResource; readonly source: string }[] = [];
+  const indexed: {
+    readonly historical: PragmaV3SemanticResource;
+    readonly resource: PragmaResource;
+    readonly source: string;
+  }[] = [];
   const managed = new Set(["pragma.yaml", "pragma.lock.yaml"]);
   for (const [source, contents] of input.files) {
     if (source !== "pragma.yaml" && !source.endsWith(".pragma.yaml")) continue;
     const value = parsePragmaYaml(contents);
     try {
       if (isRecord(value) && value["kind"] === "Bundle") {
-        const bundle = PragmaBundleSchema.parse(value);
-        for (const resource of bundle.resources) indexed.push({ resource, source });
+        const bundle = PragmaV3BundleSchema.parse(value);
+        for (const historical of bundle.resources) {
+          indexed.push({
+            historical,
+            resource: migratePragmaV3ResourceToCurrent(historical),
+            source,
+          });
+        }
       } else if (isRecord(value) && typeof value["kind"] === "string" && value["kind"] !== "Lock") {
-        indexed.push({ resource: PragmaResourceSchema.parse(value), source });
+        const historical = PragmaV3SemanticResourceSchema.parse(value);
+        indexed.push({
+          historical,
+          resource: migratePragmaV3ResourceToCurrent(historical),
+          source,
+        });
       }
       managed.add(source);
     } catch (error) {
@@ -57,9 +73,9 @@ export function migratePragmaCompilerV3Project(input: {
   }
 
   const expected = indexed
-    .map(({ resource, source }) => ({
+    .map(({ historical, resource, source }) => ({
       ref: canonicalPragmaResourceRef(resource),
-      contentHash: sha256(stableStringify(withoutV5TeamFields(resource))),
+      contentHash: sha256(stableStringify(historical)),
       source,
     }))
     .toSorted((left, right) => left.ref.localeCompare(right.ref));
@@ -95,15 +111,11 @@ export function migratePragmaCompilerV3Project(input: {
   };
 }
 
-function withoutV5TeamFields(resource: PragmaResource): unknown {
-  if (resource.kind !== "ExpertTeam") return resource;
-  const historical = structuredClone(resource) as Record<string, unknown>;
-  if (isRecord(historical["spec"])) delete historical["spec"]["contextStores"];
-  return historical;
-}
-
 function firstIssue(error: unknown): string {
-  if (!isRecord(error) || !Array.isArray(error["issues"])) return "The resource is invalid.";
+  if (!isRecord(error)) return "The resource is invalid.";
+  if (!Array.isArray(error["issues"])) {
+    return "cause" in error ? firstIssue(error["cause"]) : "The resource is invalid.";
+  }
   const issue = error["issues"][0];
   if (!isRecord(issue)) return "The resource is invalid.";
   const path = Array.isArray(issue["path"]) ? issue["path"].join(".") : "resource";

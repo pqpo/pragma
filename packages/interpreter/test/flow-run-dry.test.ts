@@ -41,9 +41,7 @@ describe("Pragma Flow Evaluation integration", () => {
       spec: { ...evaluation.spec, target: { ref: "flow:9h0j1k2m3n4p5q6r" } },
     } as PragmaEvaluationResource;
 
-    expect(() => runPragmaEvaluation(flow, wrongTarget)).toThrow(
-      "targets flow:9h0j1k2m3n4p5q6r",
-    );
+    expect(() => runPragmaEvaluation(flow, wrongTarget)).toThrow("targets flow:9h0j1k2m3n4p5q6r");
   });
 
   it("uses the original Flow input for expectInput and a separate rendered expectPrompt", () => {
@@ -133,7 +131,7 @@ function reviewFixture(): {
   readonly evaluation: PragmaEvaluationResource;
 } {
   const flow = PragmaFlowResourceSchema.parse({
-    apiVersion: "pragma/v3",
+    apiVersion: "pragma/v4",
     kind: "Flow",
     metadata: {
       id: "8h9j0k1m2n3p4q5r",
@@ -221,7 +219,7 @@ function reviewFixture(): {
   });
   const input = { goal: "Ship" };
   const evaluation = PragmaEvaluationResourceSchema.parse({
-    apiVersion: "pragma/v3",
+    apiVersion: "pragma/v4",
     kind: "Evaluation",
     metadata: {
       id: "7h8j9k0m1n2p3q4r",
