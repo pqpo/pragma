@@ -15,6 +15,7 @@ import {
   PragmaFlowRunDryCaseSchema,
   PragmaFlowRunDrySuiteResultSchema,
 } from "@pragma/evaluation/ast";
+import { PragmaExpertAvatarProfileSchema } from "@pragma/shared";
 import { z } from "zod";
 
 export * from "./revision-contracts.ts";
@@ -63,6 +64,7 @@ export const PragmaAgentCapabilityOptionSchema = z.object({
 export const PragmaAgentExpertOptionCatalogSchema = z.object({
   runtimeModels: z.array(PragmaAgentRuntimeModelOptionSchema),
   capabilities: z.array(PragmaAgentCapabilityOptionSchema),
+  avatars: z.array(PragmaExpertAvatarProfileSchema),
 });
 
 export const PragmaAgentDslChangeSchema = z.object({ source: z.string().min(1).max(2_000_000) });

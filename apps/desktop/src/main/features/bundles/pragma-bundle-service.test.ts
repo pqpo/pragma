@@ -173,7 +173,7 @@ describe("PragmaBundleService", () => {
 
     expect(imported?.metadata.avatarId).toBe(requestedAvatarId);
     expect(resolvePragmaAvatarId("expert", imported?.metadata.avatarId)).toBe(
-      "pragma.avatar.expert.default",
+      "pragma.avatar.expert.11",
     );
   });
 

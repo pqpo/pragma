@@ -90,4 +90,79 @@ describe("Pragma project Blueprint cache", () => {
     expect(secondObservations).toEqual([expect.objectContaining({ tier: "host", hit: true })]);
     expect(secondObservations[0]!.durationMs).toBeLessThan(200);
   }, 15_000);
+
+  it("rebuilds a legacy Blueprint cache that can hide resources rejected by an old parser", async () => {
+    const root = await mkdtemp(join(tmpdir(), "pragma-blueprint-version-"));
+    roots.push(root);
+    const entry = join(root, "pragma.yaml");
+    await writeFile(
+      entry,
+      [
+        "apiVersion: pragma/v4",
+        "kind: Bundle",
+        "imports: []",
+        "resources:",
+        "  - apiVersion: pragma/v4",
+        "    kind: ExpertTeam",
+        "    metadata:",
+        "      id: vyv9pwwzaksth2dd",
+        "      avatarId: pragma.avatar.team.default",
+        "      name: Delivery",
+        "      description: Coordinates delivery",
+        "      tags: []",
+        "    spec:",
+        "      coordinator: { ref: expert:mrvsehytqfmb814x }",
+        "      members: [{ ref: expert:3sfd30h5017wd17d }]",
+        "      delegation: {}",
+        "",
+      ].join("\n"),
+    );
+    const remove = vi.fn<NonNullable<PragmaBlueprintCacheStore["remove"]>>(async () => undefined);
+    const write = vi.fn<PragmaBlueprintCacheStore["write"]>(async () => undefined);
+    const store: PragmaBlueprintCacheStore = {
+      read: async () =>
+        new TextEncoder().encode(
+          JSON.stringify({
+            schemaVersion: "pragma.project-blueprint/v1",
+            compilerVersion: "pragma.dsl/v6",
+            sourceIdentity: "immutable-versioned-revision",
+            entry: "pragma.yaml",
+            resources: [],
+            artifacts: [],
+            diagnostics: [
+              {
+                severity: "error",
+                code: "schema.invalid",
+                message: 'Unrecognized key: "avatarId"',
+              },
+            ],
+          }),
+        ),
+      write,
+      remove,
+    };
+    const compiler = await import("../src/compiler/pragma-project.ts");
+
+    const project = await compiler.loadPragmaProject(entry, {
+      rootDir: root,
+      sourceIdentity: "immutable-versioned-revision",
+      blueprintCache: store,
+    });
+
+    expect(project.listResources()).toEqual([
+      expect.objectContaining({
+        kind: "ExpertTeam",
+        metadata: expect.objectContaining({ id: "vyv9pwwzaksth2dd" }),
+      }),
+    ]);
+    expect(remove).toHaveBeenCalledOnce();
+    await vi.waitFor(() => expect(write).toHaveBeenCalledOnce());
+    const encoded = write.mock.calls[0]?.[1];
+    expect(encoded).toBeInstanceOf(Uint8Array);
+    expect(JSON.parse(new TextDecoder().decode(encoded))).toMatchObject({
+      schemaVersion: "pragma.project-blueprint/v2",
+      resources: [{ resource: { kind: "ExpertTeam" } }],
+      diagnostics: [],
+    });
+  });
 });

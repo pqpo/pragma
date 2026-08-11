@@ -6046,6 +6046,140 @@ html.is-resizing-sidebar * {
   color: #56665b;
 }
 
+.pragma-avatar {
+  position: relative;
+  display: inline-grid;
+  flex: 0 0 auto;
+  place-items: center;
+  border-radius: 12px;
+  vertical-align: middle;
+}
+
+.pragma-avatar img {
+  display: block;
+  width: 100%;
+  height: 100%;
+  border: 1px solid #dce2dd;
+  border-radius: inherit;
+  object-fit: cover;
+}
+
+.pragma-avatar-xs {
+  width: 24px;
+  height: 24px;
+  border-radius: 6px;
+}
+
+.pragma-avatar-sm {
+  width: 36px;
+  height: 36px;
+  border-radius: 8px;
+}
+
+.pragma-avatar-md {
+  width: 48px;
+  height: 48px;
+  border-radius: 10px;
+}
+
+.pragma-avatar-picker {
+  width: 56px;
+  height: 56px;
+  border-radius: 11px;
+}
+
+.pragma-avatar-lg {
+  width: 87px;
+  height: 87px;
+}
+
+.pragma-avatar-team-badge {
+  position: absolute;
+  right: -3px;
+  bottom: -3px;
+  min-width: 24px;
+  padding: 2px 4px;
+  border: 2px solid var(--surface);
+  border-radius: 999px;
+  background: var(--green-dark);
+  color: #fff;
+  font-size: 9px;
+  font-weight: 760;
+  letter-spacing: 0.01em;
+  line-height: 1;
+  text-align: center;
+}
+
+.expert-avatar-profile {
+  position: relative;
+  display: inline-grid;
+  flex: 0 0 auto;
+  place-items: center;
+}
+
+.expert-avatar-profile-card {
+  position: fixed;
+  z-index: 220;
+  top: 0;
+  left: 0;
+  display: grid;
+  visibility: hidden;
+  width: min(240px, calc(100vw - 24px));
+  gap: 7px;
+  padding: 12px 14px;
+  border: 1px solid var(--ui-line-strong);
+  border-radius: var(--ui-radius-lg);
+  background: var(--ui-surface);
+  box-shadow: var(--ui-shadow-overlay);
+  color: var(--ui-text);
+  opacity: 0;
+  pointer-events: none;
+  text-align: left;
+  transform: translateY(-3px);
+  transition:
+    opacity 120ms ease,
+    transform 120ms ease;
+}
+
+.expert-avatar-profile-card.is-positioned {
+  visibility: visible;
+  opacity: 1;
+  transform: translateY(0);
+}
+
+.expert-avatar-profile-card strong {
+  font-size: 14px;
+  font-weight: 720;
+  line-height: 1.25;
+}
+
+.expert-avatar-profile-card > span {
+  display: grid;
+  gap: 2px;
+  min-width: 180px;
+  font-size: 12px;
+  font-weight: 520;
+  line-height: 1.4;
+  white-space: normal;
+}
+
+.expert-avatar-profile-card small {
+  color: var(--ui-text-secondary);
+  font-size: 10px;
+  font-weight: 650;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+}
+
+.pragma-avatar-xs .pragma-avatar-team-badge {
+  right: -6px;
+  bottom: -5px;
+  min-width: 19px;
+  padding: 1px 2px;
+  border-width: 1px;
+  font-size: 7px;
+}
+
 .expert-detail-title {
   min-width: 0;
 }
@@ -6303,6 +6437,70 @@ html.is-resizing-sidebar * {
   flex: 0 0 54px;
   width: 54px;
   height: 54px;
+}
+
+.creator-avatar-button {
+  display: inline-grid;
+  flex: 0 0 auto;
+  padding: 0;
+  border: 0;
+  border-radius: 14px;
+  background: transparent;
+  cursor: pointer;
+}
+
+.creator-avatar-button:hover {
+  box-shadow: 0 0 0 3px rgb(88 121 104 / 18%);
+}
+
+.creator-avatar-button:focus-visible {
+  outline: 3px solid rgb(88 121 104 / 45%);
+  outline-offset: 3px;
+}
+
+.expert-avatar-picker-dialog {
+  width: min(620px, calc(100vw - 32px));
+}
+
+.expert-avatar-picker-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(68px, 1fr));
+  gap: 10px;
+}
+
+.expert-avatar-option {
+  position: relative;
+  display: grid;
+  width: 68px;
+  height: 68px;
+  place-items: center;
+  justify-self: center;
+  padding: 4px;
+  border: 2px solid transparent;
+  border-radius: 13px;
+  background: transparent;
+  cursor: pointer;
+}
+
+.expert-avatar-option:hover,
+.expert-avatar-option:focus-visible {
+  border-color: rgb(88 121 104 / 45%);
+  outline: 0;
+}
+
+.expert-avatar-option.is-selected {
+  border-color: var(--green-dark);
+  background: var(--green-soft);
+}
+
+.expert-avatar-option > svg {
+  position: absolute;
+  right: 0;
+  bottom: 0;
+  padding: 3px;
+  border-radius: 999px;
+  background: var(--green-dark);
+  color: #fff;
 }
 
 .creator-preview div {

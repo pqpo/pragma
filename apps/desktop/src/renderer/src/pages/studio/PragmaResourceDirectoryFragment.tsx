@@ -35,6 +35,7 @@ import {
 } from "@pragma/shared";
 import {
   DesktopMutationErrorSchema,
+  expertTeamCoordinatorAvatarId,
   type DesktopRuntimeAvailability,
   type PragmaProjectSnapshot,
   type ContextStore,
@@ -42,6 +43,8 @@ import {
 } from "../../../../shared/contracts/index.ts";
 
 import { CharacterCount } from "../../components/CharacterCount.tsx";
+import { ExpertAvatar } from "../../components/ExpertAvatar.tsx";
+import { ProfiledExpertAvatar } from "../../components/ProfiledExpertAvatar.tsx";
 import { MarkdownContent } from "../../components/MarkdownContent.tsx";
 import { SelectMenu } from "../../components/SelectMenu.tsx";
 import { errorMessage } from "../../lib/errors.ts";
@@ -270,7 +273,11 @@ export function PragmaResourceDirectoryFragment(props: {
                 >
                   <span className="expert-team-card-header">
                     <span className="expert-team-card-icon" aria-hidden="true">
-                      <UsersThree size={25} />
+                      <ExpertAvatar
+                        avatarId={expertTeamCoordinatorAvatarId(resource, props.project.resources)}
+                        team
+                        size="md"
+                      />
                     </span>
                     <span className="expert-team-card-identity">
                       <span className="expert-team-card-title-row">
@@ -454,9 +461,17 @@ export function PragmaResourceDetailFragment(props: {
       }
     >
       <header className="expert-detail-header pragma-resource-detail-header">
-        <span className="expert-avatar" aria-hidden="true">
-          <Icon size={42} />
-        </span>
+        {isTeam ? (
+          <ProfiledExpertAvatar
+            avatarId={expertTeamCoordinatorAvatarId(props.resource, props.project.resources)}
+            team
+            size="lg"
+          />
+        ) : (
+          <span className="expert-avatar" aria-hidden="true">
+            <Icon size={42} />
+          </span>
+        )}
         <div className="expert-detail-title">
           <div>
             <h1 id={headingId}>{props.resource.metadata.name}</h1>
@@ -577,6 +592,7 @@ function TeamDetail(props: {
     return {
       ref,
       record,
+      avatarId: record?.avatarId ?? resourceExpert?.metadata.avatarId,
       name: record?.name ?? resourceExpert?.metadata.name ?? ref,
       description:
         record?.description ?? resourceExpert?.metadata.description ?? t("noDescription"),
@@ -734,6 +750,7 @@ function TeamDetail(props: {
 type TeamExpertDisplay = {
   readonly ref: string;
   readonly record: ExpertRecord | undefined;
+  readonly avatarId: string | undefined;
   readonly name: string;
   readonly description: string;
   readonly scope: string;
@@ -762,6 +779,7 @@ function TeamExpertCard(props: {
     >
       <div className="team-expert-card-main">
         <div className="team-expert-card-heading">
+          <ProfiledExpertAvatar avatarId={props.expert.avatarId} size="sm" />
           {props.role === "coordinator" ? (
             <span className="team-role-mark">
               <UserCircle size={18} aria-hidden="true" />
@@ -1011,7 +1029,6 @@ export function TeamEditor(props: {
         kind: "ExpertTeam",
         metadata: {
           id,
-          avatarId: props.initial?.metadata.avatarId,
           name,
           description,
           tags: props.initial?.metadata.tags ?? [],

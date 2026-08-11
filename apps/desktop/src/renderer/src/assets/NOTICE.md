@@ -23,3 +23,12 @@ the corresponding Runtime integration.
 
 Google Antigravity and its logo are trademarks of Google LLC. The asset is used only to identify
 the corresponding Runtime integration.
+
+## Expert avatars
+
+- Files: `expert-avatars/expert-01.jpg` through `expert-avatars/expert-27.jpg`
+- Source: three avatar sheets supplied by the Pragma project owner
+- Processing: deterministic 3 × 3 slicing into 416 × 416 built-in UI assets
+
+These illustrations are bundled only as selectable Pragma Expert avatars. They are not uploadable
+user content and are referenced by stable system avatar IDs.

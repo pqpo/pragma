@@ -2,12 +2,25 @@ import { describe, expect, it } from "vitest";
 
 import type { ExpertDefinition } from "../../../../shared/contracts/index.ts";
 import {
+  emptyDraft,
   isBuiltInExpert,
   studioSections,
   toCreateExpertInput,
   toExpertRecord,
   toPersistedInput,
 } from "./studio-model.ts";
+
+describe("emptyDraft", () => {
+  it("assigns one stable built-in avatar when a draft is created", () => {
+    let calls = 0;
+    const draft = emptyDraft(() => {
+      calls += 1;
+      return 10 / 27;
+    });
+    expect(draft.avatarId).toBe("pragma.avatar.expert.11");
+    expect(calls).toBe(1);
+  });
+});
 
 const persistedExpert: ExpertDefinition = {
   schemaVersion: "pragma.desktop-expert-view/v1",

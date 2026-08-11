@@ -37,7 +37,8 @@ spec:
 ```
 
 - The coordinator and every member must already exist or be included in the same change-set.
-- `avatarId` is a portable system-avatar identifier. Never use a path, URL, or embedded image.
+- `avatarId` remains part of the `pragma/v4` portable resource protocol. Desktop displays the
+  coordinator's current Expert avatar and adds the Team badge in the UI.
 - Text limits use Unicode characters after trimming: name 50, description 500, and optional team
   instructions 5,000.
 - `instructions` is optional. When present, it is loaded into the coordinator and every delegated

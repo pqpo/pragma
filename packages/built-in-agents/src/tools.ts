@@ -250,7 +250,7 @@ export function createPragmaAgentTools(options: {
     ),
     tool(
       "list_expert_options",
-      "List host-provided Runtime models and ready capabilities that can be assigned to an Expert.",
+      "List host-provided Runtime models, ready capabilities, and named avatar personas that can be assigned to an Expert.",
       {},
       async () => ok(await options.project.listExpertOptions()),
     ),

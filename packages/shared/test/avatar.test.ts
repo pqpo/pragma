@@ -1,16 +1,21 @@
 import { describe, expect, it } from "vitest";
 
 import {
+  BUILT_IN_PRAGMA_EXPERT_AVATAR_IDS,
+  BUILT_IN_PRAGMA_EXPERT_AVATAR_PROFILES,
   DEFAULT_PRAGMA_EXPERT_AVATAR_ID,
   DEFAULT_PRAGMA_EXPERT_TEAM_AVATAR_ID,
+  FALLBACK_PRAGMA_EXPERT_AVATAR_ID,
   PragmaAvatarIdSchema,
+  randomPragmaExpertAvatarId,
+  resolvePragmaExpertAvatarProfile,
   resolvePragmaAvatarId,
 } from "../src/index.ts";
 
 describe("Pragma avatar IDs", () => {
   const catalog = {
-    expert: [DEFAULT_PRAGMA_EXPERT_AVATAR_ID, "pragma.avatar.expert.reviewer"],
-    team: [DEFAULT_PRAGMA_EXPERT_TEAM_AVATAR_ID, "pragma.avatar.team.research"],
+    expert: ["pragma.avatar.expert.01", "pragma.avatar.expert.reviewer"],
+    team: ["pragma.avatar.expert.01", "pragma.avatar.expert.reviewer"],
   } as const;
 
   it("accepts portable system avatar IDs", () => {
@@ -26,21 +31,51 @@ describe("Pragma avatar IDs", () => {
     expect(resolvePragmaAvatarId("expert", "pragma.avatar.expert.reviewer", catalog)).toBe(
       "pragma.avatar.expert.reviewer",
     );
-    expect(resolvePragmaAvatarId("team", "pragma.avatar.team.research", catalog)).toBe(
-      "pragma.avatar.team.research",
+    expect(resolvePragmaAvatarId("team", "pragma.avatar.expert.reviewer", catalog)).toBe(
+      "pragma.avatar.expert.reviewer",
     );
   });
 
-  it("falls back by owner kind without rewriting the requested ID", () => {
+  it("resolves the compatibility alias and unknown IDs to the designed fallback", () => {
     const requestedId = "pragma.avatar.future.shared";
-    expect(resolvePragmaAvatarId("expert", requestedId, catalog)).toBe(
-      DEFAULT_PRAGMA_EXPERT_AVATAR_ID,
+    expect(resolvePragmaAvatarId("expert", DEFAULT_PRAGMA_EXPERT_AVATAR_ID)).toBe(
+      FALLBACK_PRAGMA_EXPERT_AVATAR_ID,
     );
-    expect(resolvePragmaAvatarId("team", requestedId, catalog)).toBe(
-      DEFAULT_PRAGMA_EXPERT_TEAM_AVATAR_ID,
+    expect(resolvePragmaAvatarId("team", DEFAULT_PRAGMA_EXPERT_TEAM_AVATAR_ID)).toBe(
+      FALLBACK_PRAGMA_EXPERT_AVATAR_ID,
     );
+    expect(resolvePragmaAvatarId("expert", requestedId)).toBe(FALLBACK_PRAGMA_EXPERT_AVATAR_ID);
+    expect(resolvePragmaAvatarId("team", requestedId)).toBe(FALLBACK_PRAGMA_EXPERT_AVATAR_ID);
     expect(resolvePragmaAvatarId("expert", "pragma.avatar.team.research", catalog)).toBe(
-      DEFAULT_PRAGMA_EXPERT_AVATAR_ID,
+      FALLBACK_PRAGMA_EXPERT_AVATAR_ID,
     );
+  });
+
+  it("publishes all 27 IDs in row-major order and supports deterministic random selection", () => {
+    expect(BUILT_IN_PRAGMA_EXPERT_AVATAR_IDS).toHaveLength(27);
+    expect(BUILT_IN_PRAGMA_EXPERT_AVATAR_IDS[0]).toBe("pragma.avatar.expert.01");
+    expect(BUILT_IN_PRAGMA_EXPERT_AVATAR_IDS[10]).toBe(FALLBACK_PRAGMA_EXPERT_AVATAR_ID);
+    expect(BUILT_IN_PRAGMA_EXPERT_AVATAR_IDS[26]).toBe("pragma.avatar.expert.27");
+    expect(randomPragmaExpertAvatarId(() => 0)).toBe("pragma.avatar.expert.01");
+    expect(randomPragmaExpertAvatarId(() => 10 / 27)).toBe("pragma.avatar.expert.11");
+    expect(randomPragmaExpertAvatarId(() => 0.999_999)).toBe("pragma.avatar.expert.27");
+    expect(() => randomPragmaExpertAvatarId(() => 1)).toThrow(RangeError);
+  });
+
+  it("publishes one stable fictional persona for every built-in avatar ID", () => {
+    expect(BUILT_IN_PRAGMA_EXPERT_AVATAR_PROFILES).toHaveLength(27);
+    expect(BUILT_IN_PRAGMA_EXPERT_AVATAR_PROFILES.map(({ avatarId }) => avatarId)).toEqual(
+      BUILT_IN_PRAGMA_EXPERT_AVATAR_IDS,
+    );
+    expect(resolvePragmaExpertAvatarProfile("pragma.avatar.expert.01")).toEqual({
+      avatarId: "pragma.avatar.expert.01",
+      name: "Zara",
+      gender: "woman",
+      personality: ["analytical", "calm", "perceptive"],
+    });
+    expect(resolvePragmaExpertAvatarProfile("unknown").avatarId).toBe(
+      FALLBACK_PRAGMA_EXPERT_AVATAR_ID,
+    );
+    expect(new Set(BUILT_IN_PRAGMA_EXPERT_AVATAR_PROFILES.map(({ name }) => name)).size).toBe(27);
   });
 });
