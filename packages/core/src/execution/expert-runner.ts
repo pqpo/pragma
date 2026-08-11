@@ -1046,6 +1046,7 @@ function createExecutionContext(
         expert,
         prompt: request.prompt,
         runtime: childRuntime,
+        modelSelection: expert.models?.default,
         owner: options.owner,
         resolver: delegation.contextId,
         source:

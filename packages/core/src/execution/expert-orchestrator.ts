@@ -12,6 +12,7 @@ import {
 
 import type { Expert } from "../agent/expert-agent.ts";
 import { fingerprintExpertExecutionDefinition } from "../agent/expert-definition-descriptor.ts";
+import type { RuntimeModelSelection } from "../runtime/runtime-adapter.ts";
 import type { ExecutionStore } from "./execution-store.ts";
 import { ExecutionVersionConflictError } from "./execution-store.ts";
 import { getExecutionLiveBus } from "./execution-live-bus.ts";
@@ -97,6 +98,7 @@ export class ExpertOrchestrator {
     readonly expert: Expert;
     readonly prompt: string;
     readonly runtime: RuntimeEnvironmentBinding;
+    readonly modelSelection?: RuntimeModelSelection | undefined;
     readonly owner: RuntimeContextOwner;
     readonly resolver: ContextIdResolver;
     readonly source: ContextIdResolutionSource;
@@ -135,6 +137,7 @@ export class ExpertOrchestrator {
         ownerContextId: request.ownerContextId,
         expert: { id: request.expert.id },
         runtime: request.runtime,
+        modelSelection: request.modelSelection,
         resolver: request.resolver,
         freshContextId,
       });

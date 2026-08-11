@@ -1585,6 +1585,12 @@ describe("ExpertSession", () => {
       tags: [],
       scope: "test",
       workspace: home,
+      models: {
+        default: {
+          model: { providerId: "member-provider", modelId: "member-model" },
+          thinkingLevel: "high",
+        },
+      },
     });
     const lead = await defineExpert({
       id: "lead",
@@ -1609,6 +1615,12 @@ describe("ExpertSession", () => {
     ).resolves.toBe("lead:member:subtask");
     expect(statsA.createSessionCalls).toBe(1);
     expect(statsB.createSessionCalls).toBe(1);
+    const memberModelSelection = {
+      model: { providerId: "member-provider", modelId: "member-model" },
+      thinkingLevel: "high",
+    };
+    expect(statsB.sessionModelSelections).toEqual([memberModelSelection]);
+    expect(statsB.turnModelSelections).toEqual([memberModelSelection]);
     await session.close();
   });
 
