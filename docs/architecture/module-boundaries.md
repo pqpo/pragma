@@ -18,19 +18,19 @@ examples    -> runtime-* / plugin-* / core -> shared
 
 ## Layers
 
-| Layer             | Responsibility                                                                                        |
-| ----------------- | ----------------------------------------------------------------------------------------------------- |
-| `shared`          | Runtime-neutral contracts, domain types, and pure utilities                                           |
-| `client`          | Browser/client SDKs and client-safe API access                                                        |
-| `server`          | Node-only control plane and infrastructure boundaries                                                 |
-| `core`            | Expert Agent execution abstractions and Runtime Adapter contracts                                     |
-| `evaluation`      | Independent Evaluation contracts, Run Dry execution, assertions, and coverage                         |
-| `interpreter`     | Pragma DSL AST, parser, validator, compiler, registries, and semantic dump                            |
-| `built-in-agents` | Five DSL-defined built-in Agents, their independent host ports, portable product logic, and contracts |
-| `runtime-*`       | Concrete Runtime Adapter implementations                                                              |
-| `plugins/*`       | Expert extensions built on the core plugin API                                                        |
-| `apps`            | Composition and process entry points, including future Desktop App local bridge                       |
-| `examples`        | Runnable demonstrations that may compose core, plugins, and concrete runtimes                         |
+| Layer             | Responsibility                                                                                       |
+| ----------------- | ---------------------------------------------------------------------------------------------------- |
+| `shared`          | Runtime-neutral contracts, domain types, and pure utilities                                          |
+| `client`          | Browser/client SDKs and client-safe API access                                                       |
+| `server`          | Node-only control plane and infrastructure boundaries                                                |
+| `core`            | Expert Agent execution abstractions and Runtime Adapter contracts                                    |
+| `evaluation`      | Independent Run Dry and Agent Judge dataset contracts, assertions, sampling, and results             |
+| `interpreter`     | Pragma DSL AST, parser, validator, compiler, registries, and semantic dump                           |
+| `built-in-agents` | Six DSL-defined built-in Agents, their independent host ports, portable product logic, and contracts |
+| `runtime-*`       | Concrete Runtime Adapter implementations                                                             |
+| `plugins/*`       | Expert extensions built on the core plugin API                                                       |
+| `apps`            | Composition and process entry points, including future Desktop App local bridge                      |
+| `examples`        | Runnable demonstrations that may compose core, plugins, and concrete runtimes                        |
 
 ## Dependency Matrix
 
@@ -95,8 +95,9 @@ runtime packages depend on `@pragma/core` and are assembled by application entry
 Worker. The default runtime selection is an application-layer decision; Desktop currently registers
 PI, Codex, Claude Code, Qoder CLI, and Antigravity CLI runtimes and uses PI by default.
 
-`@pragma/built-in-agents` owns the five portable DSL-defined Agents: the general-purpose Pragma
-Agent plus the hidden Memory Curator, Store Revision, Skill Revision, and Skill Evaluation Agents.
+`@pragma/built-in-agents` owns the six portable DSL-defined Agents: the general-purpose Pragma
+Agent plus the hidden Memory Curator, Store Revision, Skill Revision, Skill Evaluation, and
+Evaluation Judge Agents.
 It also owns their independent application-neutral host ports and reusable product logic.
 It does not depend on Desktop, Electron, Web, Server, database code, or a concrete Runtime Adapter.
 Applications compose the package with their own DSL project persistence and task implementations;

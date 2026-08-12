@@ -191,6 +191,12 @@ export const MissionOriginSchema = z.discriminatedUnion("type", [
     jobId: z.string().min(1),
     phase: z.enum(["subject", "judge"]),
   }),
+  z.object({
+    type: z.literal("system-evaluation"),
+    runId: z.string().uuid(),
+    caseId: z.string().min(1).max(100),
+    phase: z.enum(["subject", "judge"]),
+  }),
 ]);
 
 export const MissionV6Schema = MissionBaseSchema.extend({

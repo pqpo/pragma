@@ -20,6 +20,7 @@ import { BUILT_IN_AGENT_FILES } from "../src/builtin.generated.ts";
 import {
   BUILT_IN_AGENT_REFS,
   BUILT_IN_PRAGMA_REF,
+  EVALUATION_JUDGE_EXPERT_REF,
   MEMORY_CURATOR_REF,
   SKILL_EVALUATION_EXPERT_REF,
   SKILL_REVISION_EXPERT_REF,
@@ -34,8 +35,8 @@ import { PragmaAgentFlowDraftSchema } from "../src/contracts.ts";
 import { createPragmaAgentTools } from "../src/tools.ts";
 
 describe("built-in Pragma Agent DSL", () => {
-  it("defines all five built-in Agents as canonical DSL Experts", () => {
-    expect(BUILT_IN_AGENT_REFS).toHaveLength(5);
+  it("defines all six built-in Agents as canonical DSL Experts", () => {
+    expect(BUILT_IN_AGENT_REFS).toHaveLength(6);
     expect(BUILT_IN_AGENT_REFS.map((ref) => builtInAgentResource(ref).metadata.id)).toEqual(
       BUILT_IN_AGENT_REFS.map((ref) => ref.slice("expert:".length)),
     );
@@ -57,6 +58,7 @@ describe("built-in Pragma Agent DSL", () => {
       "Capability",
       "Capability",
       "ContextStore",
+      "Expert",
       "Expert",
       "Expert",
       "Expert",
@@ -148,6 +150,7 @@ describe("built-in Pragma Agent DSL", () => {
       STORE_REVISION_EXPERT_REF,
       SKILL_REVISION_EXPERT_REF,
       SKILL_EVALUATION_EXPERT_REF,
+      EVALUATION_JUDGE_EXPERT_REF,
     ]) {
       const hidden = await project.compile<Expert>(ref, {
         workspace: root,
@@ -394,6 +397,7 @@ describe("built-in Pragma Agent DSL", () => {
       STORE_REVISION_EXPERT_REF,
       SKILL_REVISION_EXPERT_REF,
       SKILL_EVALUATION_EXPERT_REF,
+      EVALUATION_JUDGE_EXPERT_REF,
     ]) {
       const compiled = await compileBuiltInAgent({
         ref,

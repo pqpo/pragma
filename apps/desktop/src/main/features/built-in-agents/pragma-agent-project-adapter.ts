@@ -3,8 +3,8 @@ import { mkdir, readFile, rename, rm, writeFile } from "node:fs/promises";
 import { dirname, join } from "node:path";
 
 import {
-  PragmaEvaluationResourceSchema,
-  type PragmaEvaluationResource,
+  PragmaFlowRunDryEvaluationResourceSchema,
+  type PragmaFlowRunDryEvaluationResource,
   type PragmaFlowRunDrySuiteResult,
 } from "@pragma/evaluation/ast";
 import { encodePragmaPathSegment, generatePragmaResourceId, withFileLock } from "@pragma/core";
@@ -387,10 +387,14 @@ export function createDesktopPragmaAgentProjectPort(options: {
         const source = snapshot.resources.find(
           (candidate) => canonicalPragmaResourceRef(candidate) === input.evaluationRef,
         );
-        if (source?.kind !== "Evaluation") {
+        if (
+          source?.kind !== "Evaluation" ||
+          !("target" in source.spec) ||
+          source.spec.method.type !== "flow-run-dry"
+        ) {
           throw new Error(`Evaluation not found: ${input.evaluationRef}`);
         }
-        resource = structuredClone(PragmaEvaluationResourceSchema.parse(source));
+        resource = structuredClone(PragmaFlowRunDryEvaluationResourceSchema.parse(source));
         sourceEvaluationRef = input.evaluationRef;
       }
       const draft = await withCurrentEvaluationDraftDiagnostics({
@@ -832,8 +836,10 @@ function materializeDraft(draft: PragmaAgentFlowDraft) {
   };
 }
 
-function materializeEvaluationDraft(draft: PragmaAgentEvaluationDraft): PragmaEvaluationResource {
-  return PragmaEvaluationResourceSchema.parse(draft.resource);
+function materializeEvaluationDraft(
+  draft: PragmaAgentEvaluationDraft,
+): PragmaFlowRunDryEvaluationResource {
+  return PragmaFlowRunDryEvaluationResourceSchema.parse(draft.resource);
 }
 
 function summarizeEvaluationDraft(draft: PragmaAgentEvaluationDraft) {

@@ -27,6 +27,7 @@ import {
   PragmaFlowMetadataSchema,
   PragmaFlowPromptSchema,
   PragmaFlowResourceSchema,
+  PragmaResourceSchema,
   PragmaSemanticResourceIdSchema,
   formatPragmaYaml,
   loadPragmaProject,
@@ -35,6 +36,47 @@ import {
 } from "../src/index.ts";
 
 describe("Pragma YAML DSL", () => {
+  it("parses agent-judge Evaluations through the top-level resource schema", () => {
+    const resource = {
+      apiVersion: "pragma/v4",
+      kind: "Evaluation",
+      metadata: {
+        id: "7h8j9k0m1n2p3q4r",
+        name: "Tool calling",
+        description: "Agent tool-use dataset.",
+        tags: ["evaluation"],
+      },
+      spec: {
+        method: {
+          type: "agent-judge",
+          group: "Agent tool calling",
+          execution: { mode: "mock" },
+          cases: [
+            {
+              id: "lookup",
+              name: "Lookup",
+              prompt: "Look up the customer.",
+              criteria: [{ id: "correct", description: "Returns the correct customer." }],
+              assertions: { outputContains: [], outputNotContains: [], tools: [] },
+              mocks: [],
+            },
+          ],
+        },
+      },
+    } as const;
+
+    expect(PragmaResourceSchema.parse(resource)).toMatchObject({
+      kind: "Evaluation",
+      spec: { method: { type: "agent-judge" } },
+    });
+    expect(
+      PragmaResourceSchema.safeParse({
+        ...resource,
+        spec: { method: { ...resource.spec.method, type: "unknown-evaluation" } },
+      }).success,
+    ).toBe(false);
+  });
+
   it("validates schedule Automations and forces Flow events into new Missions", () => {
     const resource = {
       apiVersion: "pragma/v4",
@@ -568,7 +610,7 @@ describe("Pragma YAML DSL", () => {
     });
     const dumped = await project.dump(compiled.value, { split: "by-resource" });
     expect(dumped.files.get("flows/t9ne4d8njvvxv2ea.pragma.yaml")).toContain("kind: Flow");
-    expect(dumped.files.get("pragma.lock.yaml")).toContain("compilerVersion: pragma.dsl/v6");
+    expect(dumped.files.get("pragma.lock.yaml")).toContain("compilerVersion: pragma.dsl/v7");
     const single = await project.dump(compiled.value, { split: "single" });
     await writeFile(join(root, "single.yaml"), single.files.get("pragma.yaml")!);
     expect((await loadPragmaProject(join(root, "single.yaml"))).listResources()).toHaveLength(1);
@@ -957,7 +999,7 @@ describe("Pragma YAML DSL", () => {
 
     expect(migrated).toMatchObject({
       sourceCompilerVersion: "pragma.dsl/v2",
-      targetCompilerVersion: "pragma.dsl/v6",
+      targetCompilerVersion: "pragma.dsl/v7",
       migrated: true,
     });
     expect(migrated.resources).toEqual([
@@ -980,7 +1022,7 @@ describe("Pragma YAML DSL", () => {
 
     expect(migrated).toMatchObject({
       sourceCompilerVersion: "pragma.dsl/v3",
-      targetCompilerVersion: "pragma.dsl/v6",
+      targetCompilerVersion: "pragma.dsl/v7",
       migrated: true,
       resources: [expect.objectContaining({ kind: "Expert" })],
     });
@@ -998,7 +1040,7 @@ describe("Pragma YAML DSL", () => {
 
     expect(migrated).toMatchObject({
       sourceCompilerVersion: "pragma.dsl/v4",
-      targetCompilerVersion: "pragma.dsl/v6",
+      targetCompilerVersion: "pragma.dsl/v7",
       migrated: true,
       resources: [
         expect.objectContaining({
@@ -1021,13 +1063,38 @@ describe("Pragma YAML DSL", () => {
 
     expect(migrated).toMatchObject({
       sourceCompilerVersion: "pragma.dsl/v5",
-      targetCompilerVersion: "pragma.dsl/v6",
+      targetCompilerVersion: "pragma.dsl/v7",
       migrated: true,
       resources: [
         expect.objectContaining({
           apiVersion: "pragma/v4",
           kind: "Expert",
           metadata: expect.objectContaining({ avatarId: "pragma.avatar.expert.default" }),
+        }),
+      ],
+    });
+  });
+
+  it("upgrades a compiler v6 flow-run-dry Evaluation fixture to v7", async () => {
+    const fixture = join(import.meta.dirname, "fixtures", "compiler-v6-flow-run-dry-evaluation");
+    const migrated = migratePragmaCompilerProjectToCurrent({
+      files: new Map([
+        ["pragma.yaml", await readFile(join(fixture, "pragma.yaml"), "utf8")],
+        ["pragma.lock.yaml", await readFile(join(fixture, "pragma.lock.yaml"), "utf8")],
+      ]),
+      revisionCompilerVersion: "pragma.dsl/v6",
+    });
+
+    expect(migrated).toMatchObject({
+      sourceCompilerVersion: "pragma.dsl/v6",
+      targetCompilerVersion: "pragma.dsl/v7",
+      migrated: true,
+      resources: [
+        expect.objectContaining({
+          kind: "Evaluation",
+          spec: expect.objectContaining({
+            method: expect.objectContaining({ type: "flow-run-dry" }),
+          }),
         }),
       ],
     });

@@ -213,6 +213,12 @@ independently verifies rendered Expert, Team, and Human prompts. Desktop invokes
 its validated preload/IPC bridge. Suite success requires passing assertions and complete coverage
 of every declared transition, loop-repeat, and loop-limit outcome.
 
+Agent Judge datasets are also portable `Evaluation` resources, but do not bind a target. They group
+Expert and ExpertTeam cases by measured capability, declare Mock or Live execution, deterministic
+output/tool assertions, optional tool fixtures, and criterion rubrics for the hidden Evaluation
+Judge Agent. Desktop selects a target and a seeded random subset when it creates a persistent run;
+one queue slot covers both the subject and Judge phases of a case.
+
 Context reuse policies are versioned extension references such as
 `context-policy:pragma.fresh@v1`; runtime overrides are exact RuntimeProfile references. Runtime
 routing precedence is step override, scoped per-Expert mapping, inherited nested-Flow override,
@@ -276,7 +282,7 @@ implements source persistence and local binding adapters. Missions pin an exact 
 revision. A Mission v3 directory keeps bounded identity and lifecycle metadata in `mission.yaml`
 and appends user turns plus Execution references to `messages.jsonl`; assistant, thinking, and tool
 history is projected from the canonical Execution event log. The built-in general-purpose Pragma
-The five built-in Agent definitions and the DSL-authoring Skill live in `packages/built-in-agents/dsl`; applications install
+The six built-in Agent definitions and the DSL-authoring Skill live in `packages/built-in-agents/dsl`; applications install
 the package with explicit project and task ports rather than maintaining a second hard-coded runtime
 implementation. Desktop registers that bundle as a read-only System Expert; Home creates a fresh
 Mission using it by default, and all streaming output uses the normal Mission chat projection.

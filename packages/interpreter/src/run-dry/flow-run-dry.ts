@@ -1,7 +1,7 @@
 import {
-  PragmaEvaluationResourceSchema,
+  PragmaFlowRunDryEvaluationResourceSchema,
   runFlowRunDryEvaluation,
-  type PragmaEvaluationResource,
+  type PragmaFlowRunDryEvaluationResource,
   type PragmaFlowRunDrySuiteResult,
 } from "@pragma/evaluation";
 
@@ -15,10 +15,10 @@ import { evaluatePragmaFlowValue, renderPragmaFlowPrompt } from "../runtime/flow
 
 export function runPragmaEvaluation(
   rawFlow: PragmaFlowResource,
-  rawEvaluation: PragmaEvaluationResource,
+  rawEvaluation: PragmaFlowRunDryEvaluationResource,
 ): PragmaFlowRunDrySuiteResult {
   const flow = PragmaFlowResourceSchema.parse(rawFlow);
-  const evaluation = PragmaEvaluationResourceSchema.parse(rawEvaluation);
+  const evaluation = PragmaFlowRunDryEvaluationResourceSchema.parse(rawEvaluation);
   const targetRef = `flow:${flow.metadata.id}`;
   if (evaluation.spec.target.ref !== targetRef) {
     throw new Error(

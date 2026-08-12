@@ -251,6 +251,8 @@ export function createMissionRunner(options: {
   readonly onExecutionTerminal?:
     | ((input: { readonly mission: Mission; readonly executionId: string }) => Promise<void>)
     | undefined;
+  readonly adapterHostForMission?:
+    ((mission: Mission, defaultHost: PragmaAdapterHost) => PragmaAdapterHost) | undefined;
 }): MissionRunner {
   const logger = createPragmaLogger(options.loggerProvider, {
     component: "desktop.mission-runner",
@@ -576,7 +578,11 @@ export function createMissionRunner(options: {
       workspace: mission.workspace.path,
       pragmaHome: options.pragmaHome,
       environmentId: "desktop",
-      adapterHost: createDesktopAdapterHost(options, mission.workspace.path),
+      adapterHost:
+        options.adapterHostForMission?.(
+          mission,
+          createDesktopAdapterHost(options, mission.workspace.path),
+        ) ?? createDesktopAdapterHost(options, mission.workspace.path),
       runtimes,
       resolveExternalInvocable: async (ref) => {
         const compiled = await options.compileSystemExecutor?.({

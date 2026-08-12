@@ -5,6 +5,7 @@ imports:
   - ./capabilities/2h3j4k5m6n7p8q9r.pragma.yaml
   - ./context-stores/0000000000st0ctx.pragma.yaml
   - ./experts/0000000000mem0ry.pragma.yaml
+  - ./experts/00000000000j0dg3.pragma.yaml
   - ./experts/0000000000pragma.pragma.yaml
   - ./experts/0000000000sk1eva.pragma.yaml
   - ./experts/0000000000sk1rev.pragma.yaml

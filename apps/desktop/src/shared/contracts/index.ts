@@ -7,6 +7,7 @@ export * from "./context-stores.ts";
 export * from "./context-store-revisions.ts";
 export * from "./context-store-browser.ts";
 export * from "./experts.ts";
+export * from "./evaluations.ts";
 export * from "./logging.ts";
 export * from "./memory.ts";
 export * from "./mission-base.ts";

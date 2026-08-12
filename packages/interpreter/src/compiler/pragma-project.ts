@@ -3133,6 +3133,7 @@ function resourceDependencyEntries(resource: PragmaResource): ResourceDependency
     ];
   }
   if (resource.kind === "Evaluation") {
+    if (!("target" in resource.spec) || resource.spec.method.type !== "flow-run-dry") return [];
     return [
       {
         ref: resource.spec.target.ref,

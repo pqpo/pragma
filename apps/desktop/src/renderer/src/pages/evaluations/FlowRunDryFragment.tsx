@@ -10,9 +10,9 @@ import {
   XCircle,
 } from "@phosphor-icons/react";
 import {
-  PragmaEvaluationResourceSchema,
+  PragmaFlowRunDryEvaluationResourceSchema,
   PragmaFlowRunDrySuiteSchema,
-  type PragmaEvaluationResource,
+  type PragmaFlowRunDryEvaluationResource,
   type PragmaFlowRunDryCase,
   type PragmaFlowRunDrySuite,
   type PragmaFlowRunDrySuiteResult,
@@ -37,11 +37,13 @@ interface RunDryCaseDraft {
 }
 
 export function FlowRunDryFragment(props: {
-  readonly evaluation: PragmaEvaluationResource;
+  readonly evaluation: PragmaFlowRunDryEvaluationResource;
   readonly flows: readonly PragmaFlowResource[];
   readonly onBack: () => void;
-  readonly onSave: (evaluation: PragmaEvaluationResource) => Promise<void>;
-  readonly onRun: (evaluation: PragmaEvaluationResource) => Promise<PragmaFlowRunDrySuiteResult>;
+  readonly onSave: (evaluation: PragmaFlowRunDryEvaluationResource) => Promise<void>;
+  readonly onRun: (
+    evaluation: PragmaFlowRunDryEvaluationResource,
+  ) => Promise<PragmaFlowRunDrySuiteResult>;
 }) {
   const { t } = useTranslation("studio");
   const [drafts, setDrafts] = useState<readonly RunDryCaseDraft[]>(
@@ -89,8 +91,8 @@ export function FlowRunDryFragment(props: {
     const cases = drafts.map(draftToCase);
     return PragmaFlowRunDrySuiteSchema.parse({ cases });
   };
-  const materializeEvaluation = (): PragmaEvaluationResource =>
-    PragmaEvaluationResourceSchema.parse({
+  const materializeEvaluation = (): PragmaFlowRunDryEvaluationResource =>
+    PragmaFlowRunDryEvaluationResourceSchema.parse({
       ...props.evaluation,
       metadata: {
         ...props.evaluation.metadata,

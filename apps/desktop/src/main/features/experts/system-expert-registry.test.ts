@@ -48,11 +48,11 @@ describe("DesktopSystemExpertRegistry", () => {
     expect(registry.fingerprint(BUILT_IN_PRAGMA_REF)).toMatch(/^[a-f0-9]{64}$/);
   });
 
-  it("reserves the four managed Agent identities without exposing customization surfaces", async () => {
+  it("reserves the five managed Agent identities without exposing customization surfaces", async () => {
     const registry = createDesktopSystemExpertRegistry();
     const managedRefs = BUILT_IN_AGENT_REFS.filter((ref) => ref !== BUILT_IN_PRAGMA_REF);
 
-    expect(managedRefs).toHaveLength(4);
+    expect(managedRefs).toHaveLength(5);
     for (const ref of managedRefs) {
       expect(registry.isReservedRef(ref)).toBe(true);
       expect(registry.isReservedId(ref.slice("expert:".length))).toBe(true);
