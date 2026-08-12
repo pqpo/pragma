@@ -54,6 +54,20 @@ export const settings = {
     evaluationAgentSaveDescription: "New Skill evaluations will use this Runtime and model.",
     saveError: "The general setting could not be saved.",
   },
+  evaluations: {
+    navigation: "Evaluations",
+    title: "Evaluations",
+    description: "Configure the model and queue capacity shared by all Agent Judge evaluations.",
+    judgeModel: "Judge model",
+    judgeModelDescription:
+      "Independently determines whether each case satisfies its evaluation criteria.",
+    inheritDefault: "Use default runtime model",
+    concurrency: "Global concurrency",
+    concurrencyDescription: "Limit the number of test cases running at once, from 1 to 16.",
+    slotTitle: "How a concurrency slot is counted",
+    slotDescription:
+      "One slot covers both the subject run and Judge run for a case. Changes apply to the queue immediately.",
+  },
   memory: {
     navigation: "Memory",
     title: "Memory",

@@ -59,6 +59,15 @@ describe("SettingsPage", () => {
     expect(html).toContain("Antigravity CLI");
   });
 
+  it("keeps Agent Judge model and queue concurrency in a dedicated evaluation section", () => {
+    const html = renderToStaticMarkup(<SettingsPage initialView="evaluations" />);
+
+    expect(html).toContain('id="evaluations-panel"');
+    expect(html).toContain("Judge model");
+    expect(html).toContain("Global concurrency");
+    expect(html).toContain("How a concurrency slot is counted");
+  });
+
   it("exposes the built-in memory plane as a first-class settings section", () => {
     const html = renderToStaticMarkup(<SettingsPage initialView="memory" />);
 

@@ -9562,6 +9562,542 @@ html.is-resizing-sidebar * {
   background: var(--green);
 }
 
+/* Evaluation workspace: keep the three tasks visually consistent and action-led. */
+.evaluations-page:not(:has(.evaluation-directory)) {
+  grid-template-rows: 56px minmax(0, 1fr);
+  padding: 0 58px 0 0;
+  background: var(--background);
+}
+
+.evaluations-page:not(:has(.evaluation-directory)) .agent-evaluation-tabs {
+  gap: 18px;
+  padding: 0 0 0 48px;
+  background: transparent;
+}
+
+.evaluations-page:not(:has(.evaluation-directory)) .agent-evaluation-tabs button {
+  min-height: 56px;
+  padding: 0 2px;
+  font-size: 13px;
+  font-weight: 500;
+}
+
+.agent-evaluation-page-section {
+  width: min(1120px, 100%);
+  margin: 0 auto;
+  padding: 48px 0 64px 48px;
+}
+
+.agent-evaluation-section-heading {
+  padding-bottom: 24px;
+  border-bottom: 1px solid var(--ui-line);
+}
+
+.agent-evaluation-section-heading h1 {
+  font-size: 28px;
+  font-weight: 650;
+  letter-spacing: -0.03em;
+}
+
+.agent-evaluation-section-heading p {
+  max-width: 620px;
+  margin: 8px 0 0;
+  font-size: 13px;
+  line-height: 1.65;
+}
+
+.agent-evaluation-section-heading .primary-button {
+  min-height: 40px;
+  padding: 0 15px;
+}
+
+.agent-evaluation-dataset-grid {
+  grid-template-columns: repeat(auto-fill, minmax(280px, 1fr));
+  gap: 16px;
+  margin-top: 24px;
+}
+
+.agent-evaluation-dataset-grid article,
+.agent-evaluation-run-detail {
+  border-color: var(--ui-line);
+  border-radius: var(--ui-radius-lg);
+  padding: 20px;
+  background: var(--ui-surface);
+}
+
+.agent-evaluation-dataset-grid article {
+  min-height: 168px;
+}
+
+.agent-evaluation-dataset-grid article p {
+  color: var(--ui-text-secondary);
+  font-size: 12px;
+  line-height: 1.6;
+}
+
+.agent-evaluation-dataset-grid article footer {
+  margin-top: 20px;
+  padding-top: 12px;
+  border-top: 1px solid var(--ui-line);
+}
+
+.agent-evaluation-empty-state {
+  display: grid;
+  min-height: 320px;
+  place-content: center;
+  justify-items: center;
+  margin-top: 24px;
+  padding: 48px 24px;
+  border: 1px dashed var(--ui-line-strong);
+  border-radius: var(--ui-radius-lg);
+  background: var(--ui-surface-subtle);
+  text-align: center;
+}
+
+.agent-evaluation-empty-state h2,
+.agent-evaluation-empty-state p {
+  margin: 0;
+}
+
+.agent-evaluation-empty-state h2 {
+  margin-top: 14px;
+  font-size: 16px;
+  font-weight: 600;
+}
+
+.agent-evaluation-empty-state p {
+  max-width: 460px;
+  margin-top: 7px;
+  color: var(--ui-text-secondary);
+  font-size: 12px;
+  line-height: 1.6;
+}
+
+.agent-evaluation-empty-state .secondary-button {
+  margin-top: 20px;
+}
+
+.agent-evaluation-empty-icon,
+.evaluation-target-empty-icon {
+  display: grid;
+  width: 46px;
+  height: 46px;
+  place-items: center;
+  border-radius: 13px;
+  background: var(--green-soft);
+  color: var(--green-dark);
+}
+
+.agent-evaluation-queue-layout:has(.agent-evaluation-empty-state.is-queue) {
+  grid-template-columns: 1fr;
+}
+
+.agent-evaluation-queue-layout:has(.agent-evaluation-empty-state.is-queue)
+  .agent-evaluation-run-list {
+  display: none;
+}
+
+.agent-evaluation-dataset-dialog.ui-dialog {
+  width: min(980px, calc(100vw - 48px));
+  height: min(820px, calc(100vh - 48px));
+  max-height: calc(100vh - 48px);
+}
+
+.agent-evaluation-dataset-dialog .ui-dialog-header {
+  padding-bottom: 14px;
+  border-bottom: 1px solid var(--ui-line);
+}
+
+.agent-evaluation-dataset-dialog .ui-dialog-body {
+  display: grid;
+  grid-template-rows: auto minmax(0, 1fr);
+  padding: 0;
+}
+
+.agent-evaluation-editor-tabs {
+  position: sticky;
+  z-index: 2;
+  top: 0;
+  display: flex;
+  gap: 4px;
+  padding: 12px 24px 0;
+  border-bottom: 1px solid var(--ui-line);
+  background: var(--ui-surface);
+}
+
+.agent-evaluation-editor-tabs button {
+  display: inline-flex;
+  min-height: 42px;
+  align-items: center;
+  gap: 7px;
+  padding: 0 12px;
+  border: 0;
+  border-bottom: 2px solid transparent;
+  background: transparent;
+  color: var(--ui-text-secondary);
+  cursor: pointer;
+  font: inherit;
+  font-size: 13px;
+}
+
+.agent-evaluation-editor-tabs button.is-active {
+  border-bottom-color: var(--ui-accent);
+  color: var(--ui-text);
+  font-weight: 600;
+}
+
+.agent-evaluation-dataset-dialog [role="tabpanel"] {
+  min-height: 0;
+}
+
+.agent-evaluation-dataset-form {
+  display: grid;
+  gap: 18px;
+  padding: 22px 24px 32px;
+}
+
+.agent-evaluation-form-section {
+  display: grid;
+  gap: 18px;
+  padding: 20px;
+  border: 1px solid var(--ui-line);
+  border-radius: var(--ui-radius-lg);
+  background: var(--ui-surface);
+}
+
+.agent-evaluation-form-section > header {
+  display: grid;
+  gap: 4px;
+}
+
+.agent-evaluation-form-section > header strong {
+  font-size: 14px;
+  font-weight: 600;
+}
+
+.agent-evaluation-form-section > header span {
+  color: var(--ui-text-secondary);
+  font-size: 12px;
+}
+
+.agent-evaluation-form-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 16px;
+}
+
+.agent-evaluation-form-grid label,
+.agent-evaluation-criteria-list {
+  display: grid;
+  min-width: 0;
+  gap: 7px;
+}
+
+.agent-evaluation-form-grid label > span,
+.agent-evaluation-criteria-list > strong,
+.agent-evaluation-yaml-editor label > span {
+  color: var(--ui-text-secondary);
+  font-size: 12px;
+  font-weight: 550;
+}
+
+.agent-evaluation-form-grid label.is-wide {
+  grid-column: 1 / -1;
+}
+
+.agent-evaluation-form-grid input,
+.agent-evaluation-form-grid textarea,
+.agent-evaluation-criteria-list input {
+  width: 100%;
+  min-width: 0;
+  border: 1px solid var(--ui-line-strong);
+  border-radius: var(--ui-radius-md);
+  padding: 9px 11px;
+  background: var(--ui-surface);
+  color: var(--ui-text);
+  font: inherit;
+  font-size: 13px;
+}
+
+.agent-evaluation-form-grid input {
+  min-height: 40px;
+}
+
+.agent-evaluation-form-grid textarea {
+  resize: vertical;
+  line-height: 1.55;
+}
+
+.agent-evaluation-form-grid :is(input, textarea):focus,
+.agent-evaluation-criteria-list input:focus {
+  border-color: var(--ui-accent);
+  outline: 0;
+  box-shadow: 0 0 0 3px var(--ui-focus);
+}
+
+.agent-evaluation-form-grid [aria-invalid="true"],
+.agent-evaluation-criteria-list [aria-invalid="true"] {
+  border-color: var(--ui-danger);
+}
+
+.agent-evaluation-case-stack {
+  display: grid;
+  gap: 14px;
+}
+
+.agent-evaluation-case-card {
+  display: grid;
+  gap: 18px;
+  padding: 18px;
+  border: 1px solid var(--ui-line);
+  border-radius: var(--ui-radius-lg);
+  background: var(--ui-surface-subtle);
+}
+
+.agent-evaluation-case-card > header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+}
+
+.agent-evaluation-case-card > header > span {
+  font-size: 12px;
+  font-weight: 650;
+}
+
+.agent-evaluation-case-card > header button,
+.agent-evaluation-criteria-list > div > button {
+  display: grid;
+  width: 30px;
+  height: 30px;
+  place-items: center;
+  padding: 0;
+  border: 0;
+  border-radius: 7px;
+  background: transparent;
+  color: var(--ui-text-secondary);
+  cursor: pointer;
+}
+
+.agent-evaluation-case-card > header button:hover,
+.agent-evaluation-criteria-list > div > button:hover {
+  background: #fff2ee;
+  color: var(--ui-danger);
+}
+
+.agent-evaluation-criteria-list > div {
+  display: grid;
+  grid-template-columns: 150px minmax(0, 1fr) 30px;
+  gap: 8px;
+}
+
+.agent-evaluation-criteria-list > div:not(:has(button)) {
+  grid-template-columns: 150px minmax(0, 1fr);
+}
+
+.agent-evaluation-criteria-list > .text-button {
+  justify-self: start;
+}
+
+.agent-evaluation-assertions {
+  border-top: 1px solid var(--ui-line);
+  padding-top: 14px;
+}
+
+.agent-evaluation-assertions summary {
+  cursor: pointer;
+  font-size: 12px;
+  font-weight: 600;
+}
+
+.agent-evaluation-assertions > div {
+  margin-top: 14px;
+}
+
+.agent-evaluation-assertions > small {
+  display: block;
+  margin-top: 10px;
+  color: var(--ui-text-secondary);
+  line-height: 1.5;
+}
+
+.agent-evaluation-add-case {
+  justify-self: start;
+}
+
+.agent-evaluation-yaml-import {
+  display: grid;
+  grid-template-columns: minmax(230px, 0.42fr) minmax(0, 1fr);
+  gap: 20px;
+  padding: 22px 24px 32px;
+}
+
+.agent-evaluation-yaml-guide {
+  align-self: start;
+  padding: 18px;
+  border-radius: var(--ui-radius-lg);
+  background: var(--ui-surface-subtle);
+}
+
+.agent-evaluation-yaml-guide h3 {
+  margin: 0;
+  font-size: 14px;
+}
+
+.agent-evaluation-yaml-guide p,
+.agent-evaluation-yaml-guide li {
+  color: var(--ui-text-secondary);
+  font-size: 12px;
+  line-height: 1.6;
+}
+
+.agent-evaluation-yaml-guide ul {
+  padding-left: 18px;
+}
+
+.agent-evaluation-yaml-guide details {
+  margin-top: 14px;
+}
+
+.agent-evaluation-yaml-guide summary {
+  cursor: pointer;
+  color: var(--ui-accent-strong);
+  font-size: 12px;
+  font-weight: 600;
+}
+
+.agent-evaluation-yaml-guide pre {
+  max-height: 280px;
+  overflow: auto;
+  margin: 12px 0 0;
+  padding: 12px;
+  border-radius: var(--ui-radius-md);
+  background: #202521;
+  color: #e7eee9;
+  font-size: 10px;
+  line-height: 1.55;
+  white-space: pre;
+}
+
+.agent-evaluation-yaml-editor {
+  margin: 0;
+  padding: 0;
+  border: 0;
+  background: transparent;
+}
+
+.agent-evaluation-yaml-editor textarea {
+  min-height: 500px;
+}
+
+.agent-evaluation-file-picker {
+  display: inline-flex !important;
+  min-height: 40px;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  border: 1px dashed var(--ui-line-strong);
+  border-radius: var(--ui-radius-md);
+  background: var(--ui-surface-subtle);
+  color: var(--ui-accent-strong);
+  cursor: pointer;
+  font-size: 12px;
+  font-weight: 600;
+}
+
+.agent-evaluation-file-picker:hover {
+  border-color: var(--ui-accent);
+  background: var(--green-soft);
+}
+
+.agent-evaluation-file-picker input {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  overflow: hidden;
+  clip: rect(0 0 0 0);
+}
+
+.evaluation-settings-list {
+  display: grid;
+}
+
+.evaluation-settings-list .setting-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 32px;
+}
+
+.evaluation-settings-select {
+  width: min(420px, 48%);
+}
+
+.evaluation-concurrency-select {
+  width: 104px;
+}
+
+.evaluation-settings-note {
+  margin-top: 18px;
+  padding: 16px 18px;
+  border-radius: var(--ui-radius-lg);
+  background: var(--ui-surface-subtle);
+}
+
+.evaluation-settings-note strong {
+  font-size: 13px;
+  font-weight: 600;
+}
+
+.evaluation-settings-note p {
+  margin: 5px 0 0;
+  color: var(--ui-text-secondary);
+  font-size: 12px;
+  line-height: 1.6;
+}
+
+.evaluation-target-empty.is-inline {
+  width: min(560px, 100%);
+  min-height: 300px;
+  margin: 42px auto 0;
+  border: 1px solid var(--ui-line);
+  border-radius: var(--ui-radius-lg);
+  background: var(--ui-surface);
+  box-shadow: var(--shadow-soft);
+}
+
+.evaluation-target-empty.is-inline > small {
+  max-width: 420px;
+  margin-top: 9px;
+  color: var(--ui-text-secondary);
+  font-size: 12px;
+}
+
+.evaluation-target-empty-icon {
+  margin-bottom: 14px;
+}
+
+@media (max-width: 900px) {
+  .agent-evaluation-yaml-import,
+  .agent-evaluation-form-grid {
+    grid-template-columns: 1fr;
+  }
+
+  .agent-evaluation-form-grid label.is-wide {
+    grid-column: auto;
+  }
+
+  .evaluation-settings-list .setting-row {
+    align-items: stretch;
+    flex-direction: column;
+    gap: 14px;
+  }
+
+  .evaluation-settings-select {
+    width: 100%;
+  }
+}
+
 @media (max-width: 820px) {
   .agent-evaluation-queue-layout {
     grid-template-columns: 1fr;
