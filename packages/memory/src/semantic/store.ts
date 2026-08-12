@@ -9,6 +9,8 @@ import {
   MemorySubjectRefSchema,
   SemanticFactSchema,
   type MemoryEvidenceEnvelope,
+  type MemoryExtractionFailureAttempt,
+  type MemoryExtractionFailureDiagnostic,
   type MemoryRevisionBinding,
   type MemorySubjectRef,
   type MemoryVisibilityPolicy,
@@ -39,6 +41,12 @@ import {
   type MemoryJobPage,
   type MemoryJobPageInput,
 } from "../pipeline/memory-job-page.ts";
+import {
+  deleteExtractionFailureAttempts,
+  initializeExtractionFailureAttempts,
+  insertExtractionFailureAttempt,
+  listExtractionFailureAttempts,
+} from "../pipeline/extraction-failure-store.ts";
 import type { MemoryRecallScope } from "../pipeline/memory-module.ts";
 import {
   EMPTY_MEMORY_EVIDENCE_OMISSION_STATS,
@@ -150,7 +158,8 @@ export interface SemanticMemoryStore {
   ): Promise<void>;
   fail(input: {
     readonly job: SemanticExtractionJob;
-    readonly errorCode: string;
+    readonly diagnostic: MemoryExtractionFailureDiagnostic;
+    readonly stack?: string | undefined;
     readonly now: Date;
     readonly retry: "transient" | "configuration";
   }): Promise<void>;
@@ -176,6 +185,7 @@ export interface SemanticMemoryStore {
     readonly now: Date;
   }): Promise<void>;
   listExtractionJobs(): Promise<readonly SemanticExtractionJob[]>;
+  listFailureAttempts(jobId: string): Promise<readonly MemoryExtractionFailureAttempt[]>;
   listExtractionJobsPage(
     input: MemoryJobPageInput<SemanticExtractionJob["status"]>,
   ): Promise<MemoryJobPage<SemanticExtractionJob>>;
@@ -264,7 +274,7 @@ export async function createSemanticMemoryStore(
           database: state,
           databasePath: statePath,
           family: "pragma.memory-semantic-jobs",
-          targetVersion: 3,
+          targetVersion: 4,
           migrations: SEMANTIC_JOB_STORAGE_MIGRATIONS,
         });
       }
@@ -414,7 +424,7 @@ export async function createSemanticMemoryStore(
                 ).toISOString();
           writeJob(
             SemanticExtractionJobSchema.parse({
-              schemaVersion: "pragma.memory-semantic-job/v3",
+              schemaVersion: "pragma.memory-semantic-job/v4",
               id: existing?.id ?? semanticJobId(conversationRef),
               revision: (existing?.revision ?? 0) + 1,
               conversationRef,
@@ -851,26 +861,41 @@ export async function createSemanticMemoryStore(
       if (!isCurrentRunningJob(state, input.job)) return;
       const needsAttention = input.retry === "configuration" || input.job.attempts >= 3;
       const delay = input.job.attempts <= 1 ? 60_000 : 5 * 60_000;
-      writeJob(
-        SemanticExtractionJobSchema.parse({
-          ...input.job,
-          revision: input.job.revision + 1,
-          status: needsAttention ? "needs_attention" : "pending",
-          leaseUntil: undefined,
-          ...(needsAttention
-            ? { retryAt: undefined }
-            : { retryAt: new Date(input.now.getTime() + delay).toISOString() }),
-          lastErrorCode: input.errorCode,
-          ...(needsAttention
-            ? {
-                failureClass:
-                  input.retry === "configuration" ? "configuration" : "transient-exhausted",
-                attentionSince: input.job.attentionSince ?? input.now.toISOString(),
-              }
-            : {}),
-          updatedAt: input.now.toISOString(),
-        }),
-      );
+      const failed = SemanticExtractionJobSchema.parse({
+        ...input.job,
+        revision: input.job.revision + 1,
+        status: needsAttention ? "needs_attention" : "pending",
+        leaseUntil: undefined,
+        ...(needsAttention
+          ? { retryAt: undefined }
+          : { retryAt: new Date(input.now.getTime() + delay).toISOString() }),
+        lastErrorCode: input.diagnostic.code,
+        lastErrorMessage: input.diagnostic.message,
+        lastFailure: input.diagnostic,
+        ...(needsAttention
+          ? {
+              failureClass:
+                input.retry === "configuration" ? "configuration" : "transient-exhausted",
+              attentionSince: input.job.attentionSince ?? input.now.toISOString(),
+            }
+          : {}),
+        updatedAt: input.now.toISOString(),
+      });
+      state.exec("BEGIN IMMEDIATE;");
+      try {
+        insertExtractionFailureAttempt(state, {
+          jobId: input.job.id,
+          jobRevision: input.job.revision,
+          attempt: input.job.attempts,
+          diagnostic: input.diagnostic,
+          ...(input.stack === undefined ? {} : { stack: input.stack }),
+        });
+        writeJob(failed);
+        state.exec("COMMIT;");
+      } catch (error) {
+        rollback(state);
+        throw error;
+      }
     },
 
     async wakeNeedsAttention(now, reason = "configuration") {
@@ -895,6 +920,8 @@ export async function createSemanticMemoryStore(
                 ? job.eligibleAt
                 : now.toISOString(),
             lastErrorCode: undefined,
+            lastErrorMessage: undefined,
+            lastFailure: undefined,
             failureClass: undefined,
             attentionSince: undefined,
             updatedAt: now.toISOString(),
@@ -924,6 +951,8 @@ export async function createSemanticMemoryStore(
               ? job.eligibleAt
               : input.now.toISOString(),
           lastErrorCode: undefined,
+          lastErrorMessage: undefined,
+          lastFailure: undefined,
           failureClass: undefined,
           attentionSince: undefined,
           updatedAt: input.now.toISOString(),
@@ -964,6 +993,8 @@ export async function createSemanticMemoryStore(
         retryAt: eligibleAt,
         leaseUntil: undefined,
         lastErrorCode: undefined,
+        lastErrorMessage: undefined,
+        lastFailure: undefined,
         failureClass: undefined,
         attentionSince: undefined,
         updatedAt: timestamp,
@@ -980,6 +1011,10 @@ export async function createSemanticMemoryStore(
 
     async listExtractionJobs() {
       return readJobRows(state);
+    },
+
+    async listFailureAttempts(jobId) {
+      return listExtractionFailureAttempts(state, jobId);
     },
 
     async listExtractionJobsPage(input) {
@@ -1493,7 +1528,7 @@ function initializeData(database: DatabaseSync): void {
 }
 
 function initializeState(database: DatabaseSync): void {
-  assertVersion(database, "pragma.memory-semantic-jobs", 3);
+  assertVersion(database, "pragma.memory-semantic-jobs", 4);
   const version = readDatabaseVersion(database);
   database.exec(`
     PRAGMA journal_mode = WAL;
@@ -1536,10 +1571,11 @@ function initializeState(database: DatabaseSync): void {
       deleted_at TEXT NOT NULL
     );
   `);
-  if (version !== 0 && version !== 3) {
+  initializeExtractionFailureAttempts(database);
+  if (version !== 0 && version !== 4) {
     throw new Error(`missing-adjacent-migration:pragma.memory-semantic-jobs/v${version}`);
   }
-  database.exec("PRAGMA user_version = 3;");
+  database.exec("PRAGMA user_version = 4;");
 }
 
 function assertVersion(database: DatabaseSync, family: string, current: number): void {
@@ -1601,6 +1637,7 @@ function bindExecutionConversationJob(
     return;
   }
   const existing = readJobByConversation(database, input.conversationRef);
+  deleteExtractionFailureAttempts(database, job.id);
   database.prepare("DELETE FROM jobs WHERE id = ?").run(job.id);
   database
     .prepare("DELETE FROM conversation_activity WHERE conversation_key = ?")
@@ -1772,6 +1809,7 @@ function maintainJobs(
         ["completed", "expired"].includes(job.status) &&
         timestamp - Date.parse(terminalAt) >= retention
       ) {
+        deleteExtractionFailureAttempts(database, job.id);
         database.prepare("DELETE FROM jobs WHERE id = ?").run(job.id);
         const deleteStats = database.prepare("DELETE FROM capture_stats WHERE execution_id = ?");
         const deleteSubjects = database.prepare(
@@ -1811,6 +1849,7 @@ function deleteExecutionState(
     );
     for (const job of readJobRows(database)) {
       if (!job.sourceExecutionIds.some((executionId) => targets.has(executionId))) continue;
+      deleteExtractionFailureAttempts(database, job.id);
       deleteJob.run(job.id);
       deleteActivity.run(conversationKey(job.conversationRef));
     }
@@ -1853,6 +1892,7 @@ function deleteExtractionJobState(
 ): void {
   database.exec("BEGIN IMMEDIATE;");
   try {
+    deleteExtractionFailureAttempts(database, job.id);
     database.prepare("DELETE FROM jobs WHERE id = ?").run(job.id);
     database
       .prepare("DELETE FROM conversation_activity WHERE conversation_key = ?")

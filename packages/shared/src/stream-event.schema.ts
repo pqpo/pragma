@@ -55,6 +55,9 @@ export const ExpertAgentRunFailedEventSchema = ExpertAgentStreamEventBaseSchema.
     message: z.string().min(1),
     code: z.string().min(1).optional(),
     retryable: z.boolean().optional(),
+    httpStatus: z.number().int().min(100).max(599).optional(),
+    requestId: z.string().min(1).max(500).optional(),
+    endpoint: z.string().min(1).max(2_048).optional(),
   }),
 });
 

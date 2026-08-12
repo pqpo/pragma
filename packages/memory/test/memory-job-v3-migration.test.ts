@@ -79,6 +79,90 @@ describe("Memory extraction job v3 migration", () => {
   it.each([
     {
       moduleId: "pragma.memory.episodic",
+      schemaVersion: "pragma.memory-extraction-job/v3",
+      currentSchemaVersion: "pragma.memory-extraction-job/v4",
+      open: createEpisodicMemoryModule,
+    },
+    {
+      moduleId: "pragma.memory.semantic",
+      schemaVersion: "pragma.memory-semantic-job/v3",
+      currentSchemaVersion: "pragma.memory-semantic-job/v4",
+      open: createSemanticMemoryModule,
+    },
+  ] as const)(
+    "upgrades adjacent $moduleId v3 diagnostics storage without changing job semantics",
+    async ({ moduleId, schemaVersion, currentSchemaVersion, open }) => {
+      const root = await temporaryRoot();
+      const statePath = join(
+        new PragmaPaths({ pragmaHome: root }).memoryModuleStateRoot(moduleId),
+        "jobs.sqlite",
+      );
+      await mkdir(join(statePath, ".."), { recursive: true });
+      const database = new DatabaseSync(statePath);
+      database.exec(`
+        CREATE TABLE jobs (
+          id TEXT PRIMARY KEY,
+          execution_id TEXT NOT NULL UNIQUE,
+          terminal_message_id TEXT NOT NULL UNIQUE,
+          status TEXT NOT NULL,
+          retry_at TEXT,
+          lease_until TEXT,
+          job_json TEXT NOT NULL
+        );
+        PRAGMA user_version = 3;
+      `);
+      const job = {
+        schemaVersion,
+        id: `${moduleId}-v3-job`,
+        revision: 4,
+        conversationRef: { type: "pragma.execution", id: "v3-execution" },
+        sourceExecutionIds: ["v3-execution"],
+        sourceUpdatedAt: "2026-08-01T00:00:00.000Z",
+        inputWatermark: "v3-terminal",
+        executionId: "v3-execution",
+        terminalMessageId: "v3-terminal",
+        status: "needs_attention",
+        attempts: 3,
+        totalAttempts: 3,
+        lastErrorCode: "skill_extraction_failed",
+        failureClass: "transient-exhausted",
+        attentionSince: "2026-08-01T00:00:00.000Z",
+        updatedAt: "2026-08-01T00:00:00.000Z",
+      };
+      database
+        .prepare("INSERT INTO jobs VALUES (?, ?, ?, ?, NULL, NULL, ?)")
+        .run(job.id, job.executionId, job.terminalMessageId, job.status, JSON.stringify(job));
+      database.close();
+
+      const module = await open({ pragmaHome: root });
+      expect(await module.store.listExtractionJobs()).toEqual([
+        expect.objectContaining({
+          schemaVersion: currentSchemaVersion,
+          id: job.id,
+          revision: job.revision,
+          lastErrorCode: job.lastErrorCode,
+        }),
+      ]);
+      const migrated = new DatabaseSync(statePath);
+      expect(
+        migrated
+          .prepare(
+            "SELECT 1 AS found FROM sqlite_master WHERE type='table' AND name='job_failure_attempts'",
+          )
+          .get(),
+      ).toEqual({ found: 1 });
+      expect(
+        (migrated.prepare("PRAGMA user_version").get() as { user_version: number }).user_version,
+      ).toBe(4);
+      migrated.close();
+      await expect(readFile(`${statePath}.v3.backup`)).resolves.toBeDefined();
+      module.close();
+    },
+  );
+
+  it.each([
+    {
+      moduleId: "pragma.memory.episodic",
       count: 6,
       fixtureKey: "episodic",
       open: createEpisodicMemoryModule,
@@ -151,7 +235,7 @@ describe("Memory extraction job v3 migration", () => {
       const migrated = new DatabaseSync(statePath);
       expect(
         (migrated.prepare("PRAGMA user_version").get() as { user_version: number }).user_version,
-      ).toBe(3);
+      ).toBe(4);
       migrated.close();
       const backup = new DatabaseSync(`${statePath}.v1.backup`);
       expect(

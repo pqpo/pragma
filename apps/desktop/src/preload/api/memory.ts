@@ -1,4 +1,4 @@
-import { ipcRenderer } from "electron";
+import { ipcRenderer, type IpcRendererEvent } from "electron";
 
 import type { PragmaDesktopAPI } from "../../shared/contracts/api.ts";
 import {
@@ -27,12 +27,18 @@ import {
   DesktopMemoryExtractionBoardSchema,
   ListDesktopMemoryExtractionJobsSchema,
   ManageDesktopMemoryExtractionTaskSchema,
+  DesktopMemoryExtractionTaskRefSchema,
+  DesktopMemoryExtractionTaskDetailSchema,
+  DesktopMemoryExtractionActiveTaskListSchema,
+  DesktopMemoryExtractionRunRefSchema,
+  DesktopMemoryExtractionRunChatUpdateSchema,
   MemoryKnowledgeInitializationCandidateSchema,
   ListMemoryKnowledgeInitializationCandidatesSchema,
   MemoryKnowledgeInitializationCandidateRefSchema,
   UpdateMemoryKnowledgeInitializationCandidateSchema,
 } from "../../shared/contracts/memory.ts";
 import { ContextStoreSchema } from "../../shared/contracts/context-stores.ts";
+import { MissionChatSnapshotSchema } from "../../shared/contracts/missions.ts";
 import {
   ExpertMemoryContextStoreContentSchema,
   ExpertMemoryContextStoreDescriptorSchema,
@@ -92,6 +98,31 @@ export const memoryApi = {
       "memory-extraction-jobs:manage",
       ManageDesktopMemoryExtractionTaskSchema.parse(input),
     );
+  },
+  listActiveMemoryExtractionTasks: async () =>
+    DesktopMemoryExtractionActiveTaskListSchema.parse(
+      await ipcRenderer.invoke("memory-extraction-active-tasks:list"),
+    ),
+  getMemoryExtractionTaskDetail: async (input) =>
+    DesktopMemoryExtractionTaskDetailSchema.parse(
+      await ipcRenderer.invoke(
+        "memory-extraction-task-detail:get",
+        DesktopMemoryExtractionTaskRefSchema.parse(input),
+      ),
+    ),
+  getMemoryExtractionRunChat: async (input) =>
+    MissionChatSnapshotSchema.parse(
+      await ipcRenderer.invoke(
+        "memory-extraction-run-chat:get",
+        DesktopMemoryExtractionRunRefSchema.parse(input),
+      ),
+    ),
+  subscribeMemoryExtractionRunChat: (listener) => {
+    const handler = (_event: IpcRendererEvent, value: unknown) => {
+      listener(DesktopMemoryExtractionRunChatUpdateSchema.parse(value));
+    };
+    ipcRenderer.on("memory-extraction-run-chat:updated", handler);
+    return () => ipcRenderer.removeListener("memory-extraction-run-chat:updated", handler);
   },
   getMemoryExtractorProfile: async () =>
     DesktopMemoryExtractorProfileSchema.parse(
@@ -262,6 +293,10 @@ export const memoryApi = {
   | "getMemoryPlaneStatus"
   | "listMemoryExtractionJobs"
   | "manageMemoryExtractionTask"
+  | "listActiveMemoryExtractionTasks"
+  | "getMemoryExtractionTaskDetail"
+  | "getMemoryExtractionRunChat"
+  | "subscribeMemoryExtractionRunChat"
   | "getMemoryExtractorProfile"
   | "updateMemoryExtractorProfile"
   | "getMemoryExtractionSettings"

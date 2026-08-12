@@ -8,11 +8,16 @@ import {
   type DesktopMemoryExtractionBoard,
   type DesktopMemoryExtractionTask,
   type ListDesktopMemoryExtractionJobs,
+  DesktopMemoryExtractionTaskDetailSchema,
+  DesktopMemoryExtractionActiveTaskListSchema,
+  type DesktopMemoryExtractionTaskDetail,
+  type DesktopMemoryExtractionTaskRef,
 } from "../../../shared/contracts/index.ts";
 import type { MissionStore } from "../missions/mission-store.ts";
 import type { PragmaProjectStore } from "../projects/pragma-project-store.ts";
 import { classifyDesktopMemoryProblem } from "../../../shared/memory-problem.ts";
 import type { DesktopMemoryPlane } from "./desktop-memory-plane.ts";
+import type { DesktopMemoryCurator } from "./memory-curator.ts";
 
 const MEMORY_EXTRACTION_LANES = ["waiting", "attention", "running", "completed"] as const;
 type MemoryExtractionLane = (typeof MEMORY_EXTRACTION_LANES)[number];
@@ -41,21 +46,89 @@ interface LoadedLanePage {
   readonly totalTasks: number;
 }
 
+interface ExtractionTaskTitleOptions {
+  readonly missions: Pick<MissionStore, "get" | "resolveExecutionTitles">;
+  readonly project: Pick<PragmaProjectStore, "get">;
+}
+
 export async function listDesktopMemoryExtractionJobs(
   plane: Pick<
     DesktopMemoryPlane,
     "episodicStore" | "semanticStore" | "knowledgeLearningStore" | "skillLearningStore"
   >,
-  options: {
-    readonly missions: Pick<MissionStore, "get" | "resolveExecutionTitles">;
-    readonly project: Pick<PragmaProjectStore, "get">;
-  },
+  options: ExtractionTaskTitleOptions,
   input: ListDesktopMemoryExtractionJobs,
 ): Promise<DesktopMemoryExtractionBoard> {
   const loadedPages = await Promise.all(
     MEMORY_EXTRACTION_LANES.map(async (lane) => loadLanePage(plane, lane, input.pages[lane])),
   );
   const jobs = loadedPages.flatMap((page) => page.jobs);
+  const { missionTitles, executionTitles, resourceTitles } = await loadTaskTitles(jobs, options);
+
+  return DesktopMemoryExtractionBoardSchema.parse({
+    lanes: Object.fromEntries(
+      MEMORY_EXTRACTION_LANES.map((lane, index) => {
+        const page = loadedPages[index]!;
+        const tasks = page.jobs.map((entry) =>
+          toDesktopTask(entry, missionTitles, executionTitles, resourceTitles),
+        );
+        return [
+          lane,
+          {
+            tasks,
+            pageIndex: page.pageIndex,
+            pageCount: page.pageCount,
+            totalTasks: page.totalTasks,
+            ...((page.pageIndex + 1) * DESKTOP_MEMORY_EXTRACTION_PAGE_SIZE < page.totalTasks &&
+            tasks.at(-1) !== undefined
+              ? { nextCursor: taskCursor(tasks.at(-1)!) }
+              : {}),
+          },
+        ];
+      }),
+    ),
+  });
+}
+
+export async function listDesktopMemoryExtractionActiveTasks(
+  plane: Pick<
+    DesktopMemoryPlane,
+    "episodicStore" | "semanticStore" | "knowledgeLearningStore" | "skillLearningStore"
+  >,
+  options: ExtractionTaskTitleOptions,
+): Promise<readonly DesktopMemoryExtractionTask[]> {
+  const [episodic, semantic, knowledge, skill] = await Promise.all([
+    plane.episodicStore.listExtractionJobs(),
+    plane.semanticStore.listExtractionJobs(),
+    plane.knowledgeLearningStore.listJobs(),
+    plane.skillLearningStore.listJobs(),
+  ]);
+  const jobs: PagedExtractionJob[] = [
+    ...episodic
+      .filter((job) => job.status !== "expired")
+      .map((job) => ({ module: "episodic" as const, lane: laneForStatus(job.status), job })),
+    ...semantic
+      .filter((job) => job.status !== "expired")
+      .map((job) => ({ module: "semantic" as const, lane: laneForStatus(job.status), job })),
+    ...knowledge.map((job) => ({
+      module: "knowledge" as const,
+      lane: laneForStatus(job.status),
+      job,
+    })),
+    ...skill.map((job) => ({ module: "skill" as const, lane: laneForStatus(job.status), job })),
+  ]
+    .filter((entry) => entry.lane !== "completed")
+    .toSorted(compareJobs);
+  const { missionTitles, executionTitles, resourceTitles } = await loadTaskTitles(jobs, options);
+  return DesktopMemoryExtractionActiveTaskListSchema.parse(
+    jobs.map((entry) => toDesktopTask(entry, missionTitles, executionTitles, resourceTitles)),
+  );
+}
+
+async function loadTaskTitles(
+  jobs: readonly PagedExtractionJob[],
+  options: ExtractionTaskTitleOptions,
+) {
   const conversationJobs = jobs.filter(
     (entry): entry is Extract<PagedExtractionJob, { module: "episodic" | "semantic" }> =>
       entry.module === "episodic" || entry.module === "semantic",
@@ -84,30 +157,89 @@ export async function listDesktopMemoryExtractionJobs(
   const resourceTitles = new Map(
     project?.resources.map((resource) => [resource.metadata.id, resource.metadata.name]) ?? [],
   );
+  return { missionTitles, executionTitles, resourceTitles };
+}
 
-  return DesktopMemoryExtractionBoardSchema.parse({
-    lanes: Object.fromEntries(
-      MEMORY_EXTRACTION_LANES.map((lane, index) => {
-        const page = loadedPages[index]!;
-        const tasks = page.jobs.map((entry) =>
-          toDesktopTask(entry, missionTitles, executionTitles, resourceTitles),
-        );
-        return [
-          lane,
-          {
-            tasks,
-            pageIndex: page.pageIndex,
-            pageCount: page.pageCount,
-            totalTasks: page.totalTasks,
-            ...((page.pageIndex + 1) * DESKTOP_MEMORY_EXTRACTION_PAGE_SIZE < page.totalTasks &&
-            tasks.at(-1) !== undefined
-              ? { nextCursor: taskCursor(tasks.at(-1)!) }
-              : {}),
-          },
-        ];
-      }),
-    ),
+export async function getDesktopMemoryExtractionTaskDetail(
+  plane: Pick<
+    DesktopMemoryPlane,
+    "episodicStore" | "semanticStore" | "knowledgeLearningStore" | "skillLearningStore"
+  >,
+  options: {
+    readonly missions: Pick<MissionStore, "get" | "resolveExecutionTitles">;
+    readonly project: Pick<PragmaProjectStore, "get">;
+    readonly curator: Pick<DesktopMemoryCurator, "listRuns">;
+  },
+  input: DesktopMemoryExtractionTaskRef,
+): Promise<DesktopMemoryExtractionTaskDetail> {
+  const jobs =
+    input.module === "episodic"
+      ? await plane.episodicStore.listExtractionJobs()
+      : input.module === "semantic"
+        ? await plane.semanticStore.listExtractionJobs()
+        : input.module === "knowledge"
+          ? await plane.knowledgeLearningStore.listJobs()
+          : await plane.skillLearningStore.listJobs();
+  const job = jobs.find((candidate) => candidate.id === input.id);
+  if (job === undefined) throw new Error("memory_extraction_job_not_found");
+
+  const entry = {
+    module: input.module,
+    lane: laneForStatus(job.status),
+    job,
+  } as PagedExtractionJob;
+  const missionTitles = new Map<string, string>();
+  const executionTitles = new Map<string, string>();
+  const resourceTitles = new Map<string, string>();
+  if (entry.module === "episodic" || entry.module === "semantic") {
+    if (entry.job.conversationRef.type === "pragma.mission") {
+      const mission = await options.missions
+        .get(entry.job.conversationRef.id)
+        .catch(() => undefined);
+      if (mission !== undefined) missionTitles.set(mission.id, mission.title);
+    } else {
+      const titles = await options.missions.resolveExecutionTitles([entry.job.conversationRef.id]);
+      for (const [id, title] of titles) executionTitles.set(id, title);
+    }
+  } else {
+    const project = await options.project.get();
+    for (const resource of project.resources) {
+      resourceTitles.set(resource.metadata.id, resource.metadata.name);
+    }
+  }
+  const [attempts, runs] = await Promise.all([
+    input.module === "episodic"
+      ? plane.episodicStore.listFailureAttempts(input.id)
+      : input.module === "semantic"
+        ? plane.semanticStore.listFailureAttempts(input.id)
+        : input.module === "knowledge"
+          ? plane.knowledgeLearningStore.listFailureAttempts(input.id)
+          : plane.skillLearningStore.listFailureAttempts(input.id),
+    options.curator.listRuns({ module: input.module, jobId: input.id }),
+  ]);
+  return DesktopMemoryExtractionTaskDetailSchema.parse({
+    task: toDesktopTask(entry, missionTitles, executionTitles, resourceTitles),
+    ...(job.lastErrorMessage === undefined ? {} : { lastErrorMessage: job.lastErrorMessage }),
+    ...(job.lastFailure === undefined ? {} : { lastFailure: job.lastFailure }),
+    attempts,
+    runs,
   });
+}
+
+function laneForStatus(status: PagedExtractionJob["job"]["status"]): MemoryExtractionLane {
+  switch (status) {
+    case "waiting_idle":
+    case "pending":
+      return "waiting";
+    case "needs_attention":
+      return "attention";
+    case "running":
+      return "running";
+    case "completed":
+      return "completed";
+    default:
+      throw new Error(`memory_extraction_job_status_invalid:${String(status)}`);
+  }
 }
 
 async function loadLanePage(

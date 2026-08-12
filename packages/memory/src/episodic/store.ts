@@ -6,6 +6,8 @@ import { DatabaseSync } from "node:sqlite";
 import { PragmaPaths, withFileLock } from "@pragma/core";
 import {
   MemoryEvidenceEnvelopeSchema,
+  type MemoryExtractionFailureAttempt,
+  type MemoryExtractionFailureDiagnostic,
   type MemoryEvidenceEnvelope,
   type MemorySubjectRef,
 } from "@pragma/shared";
@@ -30,6 +32,12 @@ import {
   type MemoryJobPage,
   type MemoryJobPageInput,
 } from "../pipeline/memory-job-page.ts";
+import {
+  deleteExtractionFailureAttempts,
+  initializeExtractionFailureAttempts,
+  insertExtractionFailureAttempt,
+  listExtractionFailureAttempts,
+} from "../pipeline/extraction-failure-store.ts";
 import type { MemoryRecallScope } from "../pipeline/memory-module.ts";
 import {
   EMPTY_MEMORY_EVIDENCE_OMISSION_STATS,
@@ -134,7 +142,8 @@ export interface EpisodicMemoryStore {
   ): Promise<void>;
   fail(input: {
     readonly job: EpisodicExtractionJob;
-    readonly errorCode: string;
+    readonly diagnostic: MemoryExtractionFailureDiagnostic;
+    readonly stack?: string | undefined;
     readonly now: Date;
     readonly retry: "transient" | "configuration";
   }): Promise<void>;
@@ -160,6 +169,7 @@ export interface EpisodicMemoryStore {
     readonly now: Date;
   }): Promise<void>;
   listExtractionJobs(): Promise<readonly EpisodicExtractionJob[]>;
+  listFailureAttempts(jobId: string): Promise<readonly MemoryExtractionFailureAttempt[]>;
   listExtractionJobsPage(
     input: MemoryJobPageInput<EpisodicExtractionJob["status"]>,
   ): Promise<MemoryJobPage<EpisodicExtractionJob>>;
@@ -205,7 +215,7 @@ export async function createEpisodicMemoryStore(
           database: state,
           databasePath: statePath,
           family: "pragma.memory-episodic-jobs",
-          targetVersion: 3,
+          targetVersion: 4,
           migrations: EPISODIC_JOB_STORAGE_MIGRATIONS,
         });
       }
@@ -288,7 +298,7 @@ export async function createEpisodicMemoryStore(
                 ).toISOString();
           writeJob(
             EpisodicExtractionJobSchema.parse({
-              schemaVersion: "pragma.memory-extraction-job/v3",
+              schemaVersion: "pragma.memory-extraction-job/v4",
               id: existing?.id ?? extractionJobId(conversationRef),
               revision: (existing?.revision ?? 0) + 1,
               conversationRef,
@@ -676,26 +686,41 @@ export async function createEpisodicMemoryStore(
       const attempts = input.job.attempts;
       const needsAttention = input.retry === "configuration" || attempts >= 3;
       const delay = attempts <= 1 ? 60_000 : attempts === 2 ? 5 * 60_000 : 15 * 60_000;
-      writeJob(
-        EpisodicExtractionJobSchema.parse({
-          ...input.job,
-          revision: input.job.revision + 1,
-          status: needsAttention ? "needs_attention" : "pending",
-          leaseUntil: undefined,
-          ...(needsAttention
-            ? { retryAt: undefined }
-            : { retryAt: new Date(input.now.getTime() + delay).toISOString() }),
-          lastErrorCode: input.errorCode,
-          ...(needsAttention
-            ? {
-                failureClass:
-                  input.retry === "configuration" ? "configuration" : "transient-exhausted",
-                attentionSince: input.job.attentionSince ?? input.now.toISOString(),
-              }
-            : {}),
-          updatedAt: input.now.toISOString(),
-        }),
-      );
+      const failed = EpisodicExtractionJobSchema.parse({
+        ...input.job,
+        revision: input.job.revision + 1,
+        status: needsAttention ? "needs_attention" : "pending",
+        leaseUntil: undefined,
+        ...(needsAttention
+          ? { retryAt: undefined }
+          : { retryAt: new Date(input.now.getTime() + delay).toISOString() }),
+        lastErrorCode: input.diagnostic.code,
+        lastErrorMessage: input.diagnostic.message,
+        lastFailure: input.diagnostic,
+        ...(needsAttention
+          ? {
+              failureClass:
+                input.retry === "configuration" ? "configuration" : "transient-exhausted",
+              attentionSince: input.job.attentionSince ?? input.now.toISOString(),
+            }
+          : {}),
+        updatedAt: input.now.toISOString(),
+      });
+      state.exec("BEGIN IMMEDIATE;");
+      try {
+        insertExtractionFailureAttempt(state, {
+          jobId: input.job.id,
+          jobRevision: input.job.revision,
+          attempt: input.job.attempts,
+          diagnostic: input.diagnostic,
+          ...(input.stack === undefined ? {} : { stack: input.stack }),
+        });
+        writeJob(failed);
+        state.exec("COMMIT;");
+      } catch (error) {
+        rollback(state);
+        throw error;
+      }
     },
 
     async wakeNeedsAttention(now, reason = "configuration") {
@@ -720,6 +745,8 @@ export async function createEpisodicMemoryStore(
                 ? job.eligibleAt
                 : now.toISOString(),
             lastErrorCode: undefined,
+            lastErrorMessage: undefined,
+            lastFailure: undefined,
             failureClass: undefined,
             attentionSince: undefined,
             updatedAt: now.toISOString(),
@@ -749,6 +776,8 @@ export async function createEpisodicMemoryStore(
               ? job.eligibleAt
               : input.now.toISOString(),
           lastErrorCode: undefined,
+          lastErrorMessage: undefined,
+          lastFailure: undefined,
           failureClass: undefined,
           attentionSince: undefined,
           updatedAt: input.now.toISOString(),
@@ -789,6 +818,8 @@ export async function createEpisodicMemoryStore(
         retryAt: eligibleAt,
         leaseUntil: undefined,
         lastErrorCode: undefined,
+        lastErrorMessage: undefined,
+        lastFailure: undefined,
         failureClass: undefined,
         attentionSince: undefined,
         updatedAt: timestamp,
@@ -805,6 +836,10 @@ export async function createEpisodicMemoryStore(
 
     async listExtractionJobs() {
       return readJobRows(state);
+    },
+
+    async listFailureAttempts(jobId) {
+      return listExtractionFailureAttempts(state, jobId);
     },
 
     async listExtractionJobsPage(input) {
@@ -1071,7 +1106,7 @@ function initializeData(database: DatabaseSync): void {
 }
 
 function initializeState(database: DatabaseSync): void {
-  assertVersion(database, "pragma.memory-episodic-jobs", 3);
+  assertVersion(database, "pragma.memory-episodic-jobs", 4);
   const version = readVersion(database);
   database.exec(`
     PRAGMA journal_mode = WAL;
@@ -1109,10 +1144,11 @@ function initializeState(database: DatabaseSync): void {
       deleted_at TEXT NOT NULL
     );
   `);
-  if (version !== 0 && version !== 3) {
+  initializeExtractionFailureAttempts(database);
+  if (version !== 0 && version !== 4) {
     throw new Error(`missing-adjacent-migration:pragma.memory-episodic-jobs/v${version}`);
   }
-  database.exec("PRAGMA user_version = 3;");
+  database.exec("PRAGMA user_version = 4;");
 }
 
 function assertVersion(database: DatabaseSync, family: string, current: number): void {
@@ -1174,6 +1210,7 @@ function bindExecutionConversationJob(
     return;
   }
   const existing = readJobByConversation(database, input.conversationRef);
+  deleteExtractionFailureAttempts(database, job.id);
   database.prepare("DELETE FROM jobs WHERE id = ?").run(job.id);
   database
     .prepare("DELETE FROM conversation_activity WHERE conversation_key = ?")
@@ -1342,6 +1379,7 @@ function maintainJobs(
         ["completed", "expired"].includes(job.status) &&
         timestamp - Date.parse(terminalAt) >= retention
       ) {
+        deleteExtractionFailureAttempts(database, job.id);
         database.prepare("DELETE FROM jobs WHERE id = ?").run(job.id);
         const deleteStats = database.prepare("DELETE FROM capture_stats WHERE execution_id = ?");
         for (const executionId of job.sourceExecutionIds) deleteStats.run(executionId);
@@ -1375,6 +1413,7 @@ function deleteExecutionState(
     );
     for (const job of readJobRows(database)) {
       if (!job.sourceExecutionIds.some((executionId) => targets.has(executionId))) continue;
+      deleteExtractionFailureAttempts(database, job.id);
       deleteJob.run(job.id);
       deleteActivity.run(conversationKey(job.conversationRef));
     }
@@ -1415,6 +1454,7 @@ function deleteExtractionJobState(
 ): void {
   database.exec("BEGIN IMMEDIATE;");
   try {
+    deleteExtractionFailureAttempts(database, job.id);
     database.prepare("DELETE FROM jobs WHERE id = ?").run(job.id);
     database
       .prepare("DELETE FROM conversation_activity WHERE conversation_key = ?")

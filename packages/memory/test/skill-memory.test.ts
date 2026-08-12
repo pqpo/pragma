@@ -192,7 +192,7 @@ describe("Skill learning store v3 migration", () => {
     const migrated = new DatabaseSync(databasePath);
     expect(
       (migrated.prepare("SELECT version FROM schema_meta").get() as { version: number }).version,
-    ).toBe(3);
+    ).toBe(4);
     migrated.close();
     await expect(stat(`${databasePath}.v1.backup`)).resolves.toBeDefined();
   });
@@ -274,7 +274,7 @@ describe("Skill learning store v3 migration", () => {
     const root = await temporaryRoot();
     const databasePath = await writeLegacyStore(root);
     const database = new DatabaseSync(databasePath);
-    database.prepare("UPDATE schema_meta SET version=4").run();
+    database.prepare("UPDATE schema_meta SET version=5").run();
     database.close();
 
     await expect(createSkillLearningStore({ pragmaHome: root })).rejects.toThrow(

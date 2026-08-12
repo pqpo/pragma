@@ -1,4 +1,8 @@
-import type { MemoryEvidenceEnvelope, MemorySubjectRef } from "@pragma/shared";
+import type {
+  MemoryEvidenceEnvelope,
+  MemoryExtractionFailurePhase,
+  MemorySubjectRef,
+} from "@pragma/shared";
 
 import { createEpisodicMemoryContextProvider } from "./context.ts";
 import {
@@ -8,7 +12,10 @@ import {
   type EpisodicMemoryExtractor,
 } from "./schema.ts";
 import { createEpisodicMemoryStore, episodicMemoryId, type EpisodicMemoryStore } from "./store.ts";
-import { extractionErrorCode } from "../pipeline/extraction-error-code.ts";
+import {
+  extractionErrorCode,
+  extractionFailureDiagnostic,
+} from "../pipeline/extraction-error-code.ts";
 import {
   selectMemoryExtractionEvidence,
   type MemoryExtractionSettingsStore,
@@ -105,6 +112,8 @@ export async function createEpisodicMemoryModule(
       const key = conversationKey(job.conversationRef);
       const controller = new AbortController();
       running.set(key, controller);
+      const startedAt = now();
+      let phase: MemoryExtractionFailurePhase = "source_read";
       try {
         const capturedEvidence = await store.readEvidenceForJob(job);
         const allowToolAssisted =
@@ -150,8 +159,10 @@ export async function createEpisodicMemoryModule(
         });
         if (!(await store.isClaimCurrent(job))) return;
         controller.signal.throwIfAborted();
+        phase = "curator_run";
         const extracted = await extractor.extract(input, { signal: controller.signal });
         controller.signal.throwIfAborted();
+        phase = "validation";
         const output = EpisodicExtractionOutputSchema.parse(extracted.output);
         if (!output.retain) {
           await store.completeRejected(job, output.reason, now());
@@ -198,10 +209,15 @@ export async function createEpisodicMemoryModule(
         });
         await store.completeRetained({ job, record, evidence, now: completedAt });
       } catch (error) {
+        const failure = extractionFailureDiagnostic(error, "episodic_extraction", {
+          phase,
+          startedAt,
+          now: now(),
+        });
         await store.fail({
           job,
-          errorCode: extractionErrorCode(error, "episodic_extraction"),
-          now: now(),
+          ...failure,
+          now: new Date(failure.diagnostic.failedAt),
           retry: isConfigurationError(error) ? "configuration" : "transient",
         });
       } finally {

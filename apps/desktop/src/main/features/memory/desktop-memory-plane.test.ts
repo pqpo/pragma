@@ -140,7 +140,13 @@ describe("DesktopMemoryPlane", () => {
     if (job === undefined) throw new Error("Expected an episodic extraction job.");
     await plane.episodicStore.fail({
       job,
-      errorCode: "memory_curator_failed",
+      diagnostic: {
+        schemaVersion: "pragma.memory-extraction-failure/v1",
+        code: "memory_curator_failed",
+        message: "Memory Curator failed.",
+        phase: "curator_run",
+        failedAt: due.toISOString(),
+      },
       now: due,
       retry: "configuration",
     });

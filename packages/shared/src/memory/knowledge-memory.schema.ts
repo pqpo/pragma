@@ -1,4 +1,5 @@
 import { z } from "zod";
+import { MemoryExtractionFailureDiagnosticSchema } from "./extraction-failure.schema.ts";
 
 import {
   MemorySensitivitySchema,
@@ -6,7 +7,7 @@ import {
   MemoryVisibilityPolicySchema,
 } from "./memory-plane.schema.ts";
 
-export const KNOWLEDGE_JOB_SCHEMA_VERSION = "pragma.memory-knowledge-job/v2" as const;
+export const KNOWLEDGE_JOB_SCHEMA_VERSION = "pragma.memory-knowledge-job/v3" as const;
 export const KNOWLEDGE_EXTRACTION_INPUT_SCHEMA_VERSION =
   "pragma.memory-knowledge-extraction-input/v2" as const;
 
@@ -108,6 +109,8 @@ export const KnowledgeExtractionJobSchema = z
     retryAt: z.string().datetime().optional(),
     leaseUntil: z.string().datetime().optional(),
     lastErrorCode: z.string().min(1).optional(),
+    lastErrorMessage: z.string().min(1).max(4_096).optional(),
+    lastFailure: MemoryExtractionFailureDiagnosticSchema.optional(),
     failureClass: z.enum(["configuration", "transient-exhausted", "capacity"]).optional(),
     completion: z.enum(["retained", "rejected"]).optional(),
     createdAt: z.string().datetime(),

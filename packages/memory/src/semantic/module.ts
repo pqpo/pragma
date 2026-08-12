@@ -1,4 +1,8 @@
-import type { MemoryEvidenceEnvelope, MemorySubjectRef } from "@pragma/shared";
+import type {
+  MemoryEvidenceEnvelope,
+  MemoryExtractionFailurePhase,
+  MemorySubjectRef,
+} from "@pragma/shared";
 
 import { createSemanticMemoryContextProvider } from "./context.ts";
 import {
@@ -8,7 +12,10 @@ import {
   type SemanticMemoryExtractor,
 } from "./schema.ts";
 import { createSemanticMemoryStore, type SemanticMemoryStore } from "./store.ts";
-import { extractionErrorCode } from "../pipeline/extraction-error-code.ts";
+import {
+  extractionErrorCode,
+  extractionFailureDiagnostic,
+} from "../pipeline/extraction-error-code.ts";
 import {
   selectMemoryExtractionEvidence,
   type MemoryExtractionSettingsStore,
@@ -130,6 +137,8 @@ export async function createSemanticMemoryModule(
       const controller = new AbortController();
       let shouldDrainProjectionNotification = false;
       running.set(key, controller);
+      const startedAt = now();
+      let phase: MemoryExtractionFailurePhase = "source_read";
       try {
         if (await store.hasAppliedJob(job)) {
           await store.completePreviouslyApplied(job, now());
@@ -200,8 +209,10 @@ export async function createSemanticMemoryModule(
         });
         if (!(await store.isClaimCurrent(job))) return;
         controller.signal.throwIfAborted();
+        phase = "curator_run";
         const extracted = await extractor.extract(input, { signal: controller.signal });
         controller.signal.throwIfAborted();
+        phase = "validation";
         const output = SemanticExtractionOutputSchema.parse(extracted.output);
         if (!output.retain) {
           await store.completeRejected(job, output.reason, now());
@@ -221,10 +232,15 @@ export async function createSemanticMemoryModule(
         });
         shouldDrainProjectionNotification = true;
       } catch (error) {
+        const failure = extractionFailureDiagnostic(error, "semantic_extraction", {
+          phase,
+          startedAt,
+          now: now(),
+        });
         await store.fail({
           job,
-          errorCode: extractionErrorCode(error, "semantic_extraction"),
-          now: now(),
+          ...failure,
+          now: new Date(failure.diagnostic.failedAt),
           retry: isConfigurationError(error) ? "configuration" : "transient",
         });
       } finally {

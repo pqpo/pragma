@@ -940,6 +940,8 @@ export async function createDesktopApplicationContainer(
     project: pragmaProjectStore,
     systemExperts,
     knowledgePromotion,
+    curator: memoryCurator,
+    getWindow: options.getWindow,
   });
   installExpertMemoryContextStoreBrowserHandlers(
     createExpertMemoryContextStoreBrowserService({

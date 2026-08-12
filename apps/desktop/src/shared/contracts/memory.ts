@@ -8,10 +8,13 @@ import {
   MemoryVisibilityPolicySchema,
   MemorySensitivitySchema,
   MemoryEvidenceEnvelopeSchema,
+  MemoryExtractionFailureAttemptSchema,
+  MemoryExtractionFailureDiagnosticSchema,
   SemanticFactSchema,
 } from "@pragma/shared";
 import { z } from "zod";
 import { ContextStoreIdSchema, ContextStoreSnapshotFileSchema } from "./context-stores.ts";
+import { MissionChatSnapshotSchema, MissionChatUpdateSchema } from "./missions.ts";
 
 export const DesktopMemoryPolicyTargetSchema = MemorySubjectRefSchema.refine(
   (target) =>
@@ -213,12 +216,62 @@ export const DesktopMemoryExtractionBoardSchema = z.object({
     .strict(),
 });
 
+export const DesktopMemoryExtractionActiveTaskListSchema = z
+  .array(DesktopMemoryExtractionTaskSchema)
+  .max(1_000);
+
 export const ManageDesktopMemoryExtractionTaskSchema = z
   .object({
     module: z.enum(["episodic", "semantic", "knowledge", "skill"]),
     action: z.enum(["expedite", "retry", "interrupt", "delete"]),
     id: z.string().min(1),
     expectedRevision: z.number().int().positive(),
+  })
+  .strict();
+
+export const DesktopMemoryExtractionTaskRefSchema = z
+  .object({
+    module: DesktopMemoryExtractionTaskSchema.shape.module,
+    id: z.string().min(1),
+  })
+  .strict();
+
+export const DesktopMemoryExtractionRunSchema = z
+  .object({
+    schemaVersion: z.literal("pragma.desktop-memory-extraction-run/v1"),
+    runId: z.string().uuid(),
+    missionId: z.string().uuid(),
+    module: DesktopMemoryExtractionTaskSchema.shape.module,
+    jobId: z.string().min(1),
+    status: z.enum(["running", "succeeded", "failed", "cancelled"]),
+    startedAt: z.string().datetime(),
+    finishedAt: z.string().datetime().optional(),
+    runtimeId: z.string().min(1),
+    providerId: z.string().min(1).optional(),
+    modelId: z.string().min(1).optional(),
+    failure: MemoryExtractionFailureDiagnosticSchema.optional(),
+    chat: MissionChatSnapshotSchema.optional(),
+  })
+  .strict();
+
+export const DesktopMemoryExtractionTaskDetailSchema = z
+  .object({
+    task: DesktopMemoryExtractionTaskSchema,
+    lastErrorMessage: z.string().min(1).max(4_096).optional(),
+    lastFailure: MemoryExtractionFailureDiagnosticSchema.optional(),
+    attempts: z.array(MemoryExtractionFailureAttemptSchema).max(20),
+    runs: z.array(DesktopMemoryExtractionRunSchema).max(20),
+  })
+  .strict();
+
+export const DesktopMemoryExtractionRunRefSchema = z.object({ runId: z.string().uuid() }).strict();
+
+export const DesktopMemoryExtractionRunChatUpdateSchema = z
+  .object({
+    module: DesktopMemoryExtractionTaskSchema.shape.module,
+    jobId: z.string().min(1),
+    runId: z.string().uuid(),
+    update: MissionChatUpdateSchema,
   })
   .strict();
 

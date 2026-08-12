@@ -23,10 +23,12 @@ import {
 } from "@pragma/shared";
 
 import { extractStructuredJson } from "./structured-output.ts";
+import type { ZodType } from "zod";
 
 export interface MemoryCuratorExecutionPort {
   run(input: {
     readonly jobId: string;
+    readonly module: "episodic" | "semantic" | "knowledge" | "skill";
     readonly title: string;
     readonly prompt: string;
     readonly profile: MemoryExtractorProfile;
@@ -71,14 +73,17 @@ export function createBuiltInMemoryCurator(options: {
         const profile = await options.profiles.get();
         const execution = await options.execution.run({
           jobId: input.jobId,
+          module: "episodic",
           title: `Memory extraction ${input.executionId.slice(0, 12)}`,
           prompt: renderEpisodicExtractionPrompt(input),
           profile,
           signal: extractionOptions?.signal,
         });
         return {
-          output: EpisodicExtractionOutputSchema.parse(
-            JSON.parse(extractStructuredJson(execution.content)),
+          output: parseCuratorOutput(
+            execution,
+            EpisodicExtractionOutputSchema,
+            "episodic_extraction_output_invalid",
           ),
           provenance: provenance(profile, execution, MEMORY_CURATOR_PROMPT_VERSION),
         };
@@ -89,14 +94,17 @@ export function createBuiltInMemoryCurator(options: {
         const profile = await options.profiles.get();
         const execution = await options.execution.run({
           jobId: input.jobId,
+          module: "semantic",
           title: `Semantic extraction ${input.executionId.slice(0, 12)}`,
           prompt: renderSemanticExtractionPrompt(input),
           profile,
           signal: extractionOptions?.signal,
         });
         return {
-          output: SemanticExtractionOutputSchema.parse(
-            JSON.parse(extractStructuredJson(execution.content)),
+          output: parseCuratorOutput(
+            execution,
+            SemanticExtractionOutputSchema,
+            "semantic_extraction_output_invalid",
           ),
           provenance: provenance(profile, execution, SEMANTIC_MEMORY_CURATOR_PROMPT_VERSION),
         };
@@ -107,14 +115,17 @@ export function createBuiltInMemoryCurator(options: {
         const profile = await options.profiles.get();
         const execution = await options.execution.run({
           jobId: input.jobId,
+          module: "knowledge",
           title: `Knowledge extraction ${input.rootRef.id.slice(0, 12)}`,
           prompt: renderKnowledgeExtractionPrompt(input),
           profile,
           signal: extractionOptions?.signal,
         });
         return {
-          output: KnowledgeExtractionOutputSchema.parse(
-            JSON.parse(extractStructuredJson(execution.content)),
+          output: parseCuratorOutput(
+            execution,
+            KnowledgeExtractionOutputSchema,
+            "knowledge_extraction_output_invalid",
           ),
           provenance: provenance(profile, execution, KNOWLEDGE_MEMORY_CURATOR_PROMPT_VERSION),
         };
@@ -125,20 +136,54 @@ export function createBuiltInMemoryCurator(options: {
         const profile = await options.profiles.get();
         const execution = await options.execution.run({
           jobId: input.jobId,
+          module: "skill",
           title: `Skill extraction ${input.rootRef.id.slice(0, 12)}`,
           prompt: renderSkillExtractionPrompt(input),
           profile,
           signal: extractionOptions?.signal,
         });
         return {
-          output: SkillExtractionOutputSchema.parse(
-            JSON.parse(extractStructuredJson(execution.content)),
+          output: parseCuratorOutput(
+            execution,
+            SkillExtractionOutputSchema,
+            "skill_extraction_output_invalid",
           ),
           provenance: provenance(profile, execution, SKILL_MEMORY_CURATOR_PROMPT_VERSION),
         };
       },
     },
   };
+}
+
+function parseCuratorOutput<T>(
+  execution: Awaited<ReturnType<MemoryCuratorExecutionPort["run"]>>,
+  schema: ZodType<T>,
+  code: string,
+): T {
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(extractStructuredJson(execution.content));
+  } catch (cause) {
+    throw Object.assign(new Error(code, { cause }), {
+      code,
+      retryable: true,
+      runtimeId: execution.runtimeId,
+      providerId: execution.providerId,
+      modelId: execution.modelId,
+    });
+  }
+  try {
+    return schema.parse(parsed);
+  } catch (error) {
+    if (typeof error === "object" && error !== null) {
+      Object.assign(error, {
+        runtimeId: execution.runtimeId,
+        providerId: execution.providerId,
+        modelId: execution.modelId,
+      });
+    }
+    throw error;
+  }
 }
 
 export function renderEpisodicExtractionPrompt(

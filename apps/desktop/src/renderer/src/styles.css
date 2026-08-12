@@ -17836,6 +17836,111 @@ textarea:focus-visible,
   color: var(--green-dark);
 }
 
+.memory-task-details {
+  display: grid;
+  min-height: 560px;
+  grid-template-columns: minmax(260px, 32%) minmax(0, 1fr);
+  overflow: hidden;
+  border: 1px solid var(--border);
+  border-radius: 14px;
+  background: var(--surface);
+}
+
+.memory-task-details-list,
+.memory-task-details-stream {
+  min-width: 0;
+  overflow: auto;
+  padding: 18px;
+}
+
+.memory-task-details-list {
+  border-right: 1px solid var(--border);
+}
+
+.memory-task-details-list header h2,
+.memory-task-details-header h2 {
+  margin: 0;
+}
+
+.memory-task-details-list header p,
+.memory-task-details-header p {
+  margin: 6px 0 16px;
+  color: var(--muted);
+}
+
+.memory-task-detail-item {
+  display: grid;
+  width: 100%;
+  gap: 5px;
+  margin-top: 6px;
+  padding: 12px;
+  border: 0;
+  border-radius: 9px;
+  background: transparent;
+  color: inherit;
+  text-align: left;
+}
+
+.memory-task-detail-item:hover,
+.memory-task-detail-item.is-active {
+  background: var(--surface-subtle, #f4f7f5);
+}
+
+.memory-task-detail-item span,
+.memory-task-detail-item small {
+  color: var(--muted);
+  font-size: 12px;
+}
+
+.memory-task-details-header {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 16px;
+}
+
+.memory-task-run-select {
+  display: grid;
+  min-width: 180px;
+  gap: 5px;
+  color: var(--muted);
+  font-size: 12px;
+}
+
+.memory-task-failure {
+  margin: 8px 0 16px;
+  padding: 14px;
+  border: 1px solid #e7bbb4;
+  border-radius: 10px;
+  background: #fff5f3;
+  color: #71342e;
+}
+
+.memory-task-failure p {
+  margin: 6px 0 12px;
+  overflow-wrap: anywhere;
+}
+
+.memory-task-failure dl {
+  display: grid;
+  grid-template-columns: max-content minmax(0, 1fr);
+  gap: 5px 12px;
+  margin: 0;
+  font-size: 12px;
+}
+
+.memory-task-failure dd {
+  margin: 0;
+  overflow-wrap: anywhere;
+}
+
+.memory-task-message-stream {
+  display: grid;
+  gap: 12px;
+  min-height: 300px;
+  padding-bottom: 24px;
+}
+
 .memory-error {
   display: flex;
   align-items: center;
@@ -18976,8 +19081,15 @@ textarea:focus-visible,
     width: auto;
   }
 
-  .memory-browser {
+  .memory-browser,
+  .memory-task-details {
     grid-template-columns: 1fr;
+  }
+
+  .memory-task-details-list {
+    max-height: 240px;
+    border-right: 0;
+    border-bottom: 1px solid var(--border);
   }
 
   .memory-list {

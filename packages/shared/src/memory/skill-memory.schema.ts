@@ -1,4 +1,5 @@
 import { z } from "zod";
+import { MemoryExtractionFailureDiagnosticSchema } from "./extraction-failure.schema.ts";
 
 import {
   MemorySensitivitySchema,
@@ -6,7 +7,7 @@ import {
   MemoryVisibilityPolicySchema,
 } from "./memory-plane.schema.ts";
 
-export const SKILL_LEARNING_JOB_SCHEMA_VERSION = "pragma.memory-skill-job/v1" as const;
+export const SKILL_LEARNING_JOB_SCHEMA_VERSION = "pragma.memory-skill-job/v2" as const;
 export const SKILL_EXTRACTION_INPUT_SCHEMA_VERSION =
   "pragma.memory-skill-extraction-input/v1" as const;
 
@@ -65,7 +66,9 @@ export const SkillPackageFileSchema = z
         (path) =>
           !path.startsWith("/") &&
           !path.includes("\\") &&
-          path.split("/").every((segment) => segment.length > 0 && segment !== "." && segment !== ".."),
+          path
+            .split("/")
+            .every((segment) => segment.length > 0 && segment !== "." && segment !== ".."),
         "Skill package paths must be safe relative paths.",
       ),
     content: z.string().max(128 * 1_024),
@@ -82,7 +85,11 @@ export const SkillPackageSchema = z
   .superRefine((value, context) => {
     const paths = new Set(value.files.map((file) => file.path));
     if (paths.size !== value.files.length) {
-      context.addIssue({ code: "custom", path: ["files"], message: "Skill file paths must be unique." });
+      context.addIssue({
+        code: "custom",
+        path: ["files"],
+        message: "Skill file paths must be unique.",
+      });
     }
     if (!paths.has("SKILL.md")) {
       context.addIssue({ code: "custom", path: ["files"], message: "SKILL.md is required." });
@@ -97,7 +104,8 @@ export const SkillPackageSchema = z
         context.addIssue({
           code: "custom",
           path: ["files", value.files.indexOf(file), "path"],
-          message: "Generated Skill files must be SKILL.md or live under references/, scripts/, or tests/.",
+          message:
+            "Generated Skill files must be SKILL.md or live under references/, scripts/, or tests/.",
         });
       }
       if (
@@ -202,6 +210,8 @@ export const SkillLearningJobSchema = z
     retryAt: z.string().datetime().optional(),
     leaseUntil: z.string().datetime().optional(),
     lastErrorCode: z.string().min(1).optional(),
+    lastErrorMessage: z.string().min(1).max(4_096).optional(),
+    lastFailure: MemoryExtractionFailureDiagnosticSchema.optional(),
     failureClass: z.enum(["configuration", "transient-exhausted", "capacity"]).optional(),
     completion: z.enum(["retained", "rejected"]).optional(),
     createdAt: z.string().datetime(),

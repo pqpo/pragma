@@ -7,6 +7,8 @@ import { PragmaPaths, withFileLock } from "@pragma/core";
 import {
   KnowledgeExtractionJobSchema,
   type KnowledgeExtractionJob,
+  type MemoryExtractionFailureAttempt,
+  type MemoryExtractionFailureDiagnostic,
   type MemorySubjectRef,
 } from "@pragma/shared";
 
@@ -16,6 +18,12 @@ import {
   type MemoryJobPage,
   type MemoryJobPageInput,
 } from "../pipeline/memory-job-page.ts";
+import {
+  deleteExtractionFailureAttempts,
+  initializeExtractionFailureAttempts,
+  insertExtractionFailureAttempt,
+  listExtractionFailureAttempts,
+} from "../pipeline/extraction-failure-store.ts";
 import {
   assertFreshSqliteDatabase,
   ensureSqliteMigrationBackup,
@@ -47,7 +55,8 @@ export interface KnowledgeLearningStore {
   completeLearned(job: KnowledgeExtractionJob, now: Date): Promise<void>;
   fail(input: {
     readonly job: KnowledgeExtractionJob;
-    readonly errorCode: string;
+    readonly diagnostic: MemoryExtractionFailureDiagnostic;
+    readonly stack?: string | undefined;
     readonly retry: "configuration" | "transient" | "capacity";
     readonly now: Date;
   }): Promise<void>;
@@ -69,6 +78,7 @@ export interface KnowledgeLearningStore {
   deleteJob(input: { readonly id: string; readonly expectedRevision: number }): Promise<void>;
   wakeNeedsAttention(now: Date, reason?: "configuration" | "manual"): Promise<void>;
   listJobs(): Promise<readonly KnowledgeExtractionJob[]>;
+  listFailureAttempts(jobId: string): Promise<readonly MemoryExtractionFailureAttempt[]>;
   listJobsPage(
     input: MemoryJobPageInput<KnowledgeExtractionJob["status"]>,
   ): Promise<MemoryJobPage<KnowledgeExtractionJob>>;
@@ -164,7 +174,7 @@ export async function createKnowledgeLearningStore(
         input.now.getTime() + DEFAULT_MEMORY_STORAGE_POLICY.extractionIdleMs,
       ).toISOString();
       const job = KnowledgeExtractionJobSchema.parse({
-        schemaVersion: "pragma.memory-knowledge-job/v2",
+        schemaVersion: "pragma.memory-knowledge-job/v3",
         id: stableId("knowledge-job", rootKey, sourceDigest),
         revision: 1,
         rootRef: input.rootRef,
@@ -221,26 +231,41 @@ export async function createKnowledgeLearningStore(
       if (current?.revision !== input.job.revision || current.status !== "running") return;
       const needsAttention =
         input.retry !== "transient" || input.job.attempts >= MAX_TRANSIENT_ATTEMPTS;
-      writeJob(
-        KnowledgeExtractionJobSchema.parse({
-          ...input.job,
-          revision: input.job.revision + 1,
-          status: needsAttention ? "needs_attention" : "pending",
-          retryAt: needsAttention
-            ? undefined
-            : new Date(input.now.getTime() + 2 ** input.job.attempts * 1_000).toISOString(),
-          leaseUntil: undefined,
-          lastErrorCode: input.errorCode,
-          failureClass: needsAttention
-            ? input.retry === "capacity"
-              ? "capacity"
-              : input.retry === "configuration"
-                ? "configuration"
-                : "transient-exhausted"
-            : undefined,
-          updatedAt: input.now.toISOString(),
-        }),
-      );
+      const failed = KnowledgeExtractionJobSchema.parse({
+        ...input.job,
+        revision: input.job.revision + 1,
+        status: needsAttention ? "needs_attention" : "pending",
+        retryAt: needsAttention
+          ? undefined
+          : new Date(input.now.getTime() + 2 ** input.job.attempts * 1_000).toISOString(),
+        leaseUntil: undefined,
+        lastErrorCode: input.diagnostic.code,
+        lastErrorMessage: input.diagnostic.message,
+        lastFailure: input.diagnostic,
+        failureClass: needsAttention
+          ? input.retry === "capacity"
+            ? "capacity"
+            : input.retry === "configuration"
+              ? "configuration"
+              : "transient-exhausted"
+          : undefined,
+        updatedAt: input.now.toISOString(),
+      });
+      database.exec("BEGIN IMMEDIATE;");
+      try {
+        insertExtractionFailureAttempt(database, {
+          jobId: input.job.id,
+          jobRevision: input.job.revision,
+          attempt: input.job.attempts,
+          diagnostic: input.diagnostic,
+          ...(input.stack === undefined ? {} : { stack: input.stack }),
+        });
+        writeJob(failed);
+        database.exec("COMMIT;");
+      } catch (error) {
+        database.exec("ROLLBACK;");
+        throw error;
+      }
     },
     async retryJob(input) {
       const job = readJob(database, input.id);
@@ -277,7 +302,15 @@ export async function createKnowledgeLearningStore(
     async deleteJob(input) {
       const job = readJob(database, input.id);
       assertManageableJob(job, input.expectedRevision, ["needs_attention"]);
-      database.prepare("DELETE FROM jobs WHERE id=?").run(job.id);
+      database.exec("BEGIN IMMEDIATE;");
+      try {
+        deleteExtractionFailureAttempts(database, job.id);
+        database.prepare("DELETE FROM jobs WHERE id=?").run(job.id);
+        database.exec("COMMIT;");
+      } catch (error) {
+        database.exec("ROLLBACK;");
+        throw error;
+      }
     },
     async wakeNeedsAttention(now, reason = "configuration") {
       const rows = database
@@ -296,6 +329,9 @@ export async function createKnowledgeLearningStore(
         }[]
       ).map((row) => parseJob(row.job_json));
     },
+    async listFailureAttempts(jobId) {
+      return listExtractionFailureAttempts(database, jobId);
+    },
     async listJobsPage(input) {
       return queryMemoryJobPage(database, input, parseJob);
     },
@@ -311,7 +347,10 @@ export async function createKnowledgeLearningStore(
       const remove = database.prepare("DELETE FROM jobs WHERE id=?");
       database.exec("BEGIN IMMEDIATE;");
       try {
-        for (const row of expired) remove.run(row.id);
+        for (const row of expired) {
+          deleteExtractionFailureAttempts(database, row.id);
+          remove.run(row.id);
+        }
         database.exec("COMMIT;");
       } catch (error) {
         database.exec("ROLLBACK;");
@@ -348,13 +387,14 @@ export async function createKnowledgeLearningStore(
 function initialize(database: DatabaseSync): void {
   database.exec(`
     CREATE TABLE IF NOT EXISTS schema_meta(version INTEGER NOT NULL);
-    INSERT INTO schema_meta(version) SELECT 3 WHERE NOT EXISTS (SELECT 1 FROM schema_meta);
+    INSERT INTO schema_meta(version) SELECT 4 WHERE NOT EXISTS (SELECT 1 FROM schema_meta);
     CREATE TABLE IF NOT EXISTS jobs(
       id TEXT PRIMARY KEY, root_key TEXT NOT NULL, source_digest TEXT NOT NULL,
       status TEXT NOT NULL, retry_at TEXT, lease_until TEXT, job_json TEXT NOT NULL,
       UNIQUE(root_key, source_digest)
     );
   `);
+  initializeExtractionFailureAttempts(database);
 }
 
 async function assertFreshOrCurrent(database: DatabaseSync, databasePath: string): Promise<void> {
@@ -367,13 +407,19 @@ async function assertFreshOrCurrent(database: DatabaseSync, databasePath: string
   }
   const version = database.prepare("SELECT version FROM schema_meta LIMIT 1").get() as
     { version: number } | undefined;
-  if (version?.version !== 1 && version?.version !== 2 && version?.version !== 3) {
+  if (
+    version?.version !== 1 &&
+    version?.version !== 2 &&
+    version?.version !== 3 &&
+    version?.version !== 4
+  ) {
     throw new Error("Unsupported pragma.memory-knowledge-learning-store version.");
   }
-  if (version.version === 3) return;
+  if (version.version === 4) return;
   await ensureSqliteMigrationBackup(database, databasePath, version.version);
   if (version.version === 1) migrateV1ToV2(database);
-  migrateV2ToV3(database);
+  if (version.version <= 2) migrateV2ToV3(database);
+  migrateV3ToV4(database);
 }
 
 function migrateV1ToV2(database: DatabaseSync): void {
@@ -390,7 +436,7 @@ function migrateV1ToV2(database: DatabaseSync): void {
       const retryAt = typeof legacy.retryAt === "string" ? legacy.retryAt : createdAt;
       const migrated = KnowledgeExtractionJobSchema.parse({
         ...legacy,
-        schemaVersion: "pragma.memory-knowledge-job/v2",
+        schemaVersion: "pragma.memory-knowledge-job/v3",
         firstFactAt: createdAt,
         lastFactAt: String(legacy.updatedAt ?? createdAt),
         eligibleAt: retryAt,
@@ -423,25 +469,26 @@ function migrateV2ToV3(database: DatabaseSync): void {
       "UPDATE jobs SET status=?, retry_at=?, lease_until=NULL, job_json=? WHERE id=?",
     );
     for (const row of rows) {
-      const job = KnowledgeExtractionJobSchema.parse(JSON.parse(row.job_json));
-      if (
+      const job = upgradeKnowledgeJob(JSON.parse(row.job_json));
+      const migrated = !(
         job.status !== "needs_attention" ||
         job.lastErrorCode === undefined ||
         !REQUEUEABLE_CANDIDATE_ERROR_CODES.has(job.lastErrorCode)
-      ) {
-        continue;
-      }
-      const migrated = KnowledgeExtractionJobSchema.parse({
-        ...job,
-        revision: job.revision + 1,
-        status: "pending",
-        attempts: 0,
-        retryAt: job.updatedAt,
-        leaseUntil: undefined,
-        lastErrorCode: undefined,
-        failureClass: undefined,
-        completion: undefined,
-      });
+      )
+        ? KnowledgeExtractionJobSchema.parse({
+            ...job,
+            revision: job.revision + 1,
+            status: "pending",
+            attempts: 0,
+            retryAt: job.updatedAt,
+            leaseUntil: undefined,
+            lastErrorCode: undefined,
+            lastErrorMessage: undefined,
+            lastFailure: undefined,
+            failureClass: undefined,
+            completion: undefined,
+          })
+        : job;
       update.run(migrated.status, migrated.retryAt ?? null, JSON.stringify(migrated), migrated.id);
     }
     database.prepare("UPDATE schema_meta SET version=3").run();
@@ -450,6 +497,34 @@ function migrateV2ToV3(database: DatabaseSync): void {
     database.exec("ROLLBACK;");
     throw error;
   }
+}
+
+function migrateV3ToV4(database: DatabaseSync): void {
+  const rows = database.prepare("SELECT id, job_json FROM jobs").all() as unknown as readonly {
+    readonly id: string;
+    readonly job_json: string;
+  }[];
+  database.exec("BEGIN IMMEDIATE;");
+  try {
+    initializeExtractionFailureAttempts(database);
+    const update = database.prepare("UPDATE jobs SET job_json=? WHERE id=?");
+    for (const row of rows) {
+      update.run(JSON.stringify(upgradeKnowledgeJob(JSON.parse(row.job_json))), row.id);
+    }
+    database.prepare("UPDATE schema_meta SET version=4").run();
+    database.exec("COMMIT;");
+  } catch (error) {
+    database.exec("ROLLBACK;");
+    throw error;
+  }
+}
+
+function upgradeKnowledgeJob(value: unknown): KnowledgeExtractionJob {
+  if (typeof value !== "object" || value === null) throw new Error("knowledge_job_state_invalid");
+  return KnowledgeExtractionJobSchema.parse({
+    ...(value as Record<string, unknown>),
+    schemaVersion: "pragma.memory-knowledge-job/v3",
+  });
 }
 
 function parseJob(json: string): KnowledgeExtractionJob {
@@ -491,6 +566,8 @@ function resetPendingJob(job: KnowledgeExtractionJob, now: Date): KnowledgeExtra
     retryAt: undefined,
     leaseUntil: undefined,
     lastErrorCode: undefined,
+    lastErrorMessage: undefined,
+    lastFailure: undefined,
     failureClass: undefined,
     updatedAt: now.toISOString(),
   });
