@@ -128,6 +128,18 @@ export interface MissionRunner {
     readonly attachments?: readonly ExpertPromptAttachment[] | undefined;
   }): Promise<Mission>;
   getChat(input: MissionChatQuery): Promise<MissionChatSnapshot>;
+  getTerminalRuntimeFailure(id: string): Promise<
+    | {
+        readonly message: string;
+        readonly code?: string | undefined;
+        readonly retryable?: boolean | undefined;
+        readonly httpStatus?: number | undefined;
+        readonly requestId?: string | undefined;
+        readonly endpoint?: string | undefined;
+        readonly failedAt: string;
+      }
+    | undefined
+  >;
   compactContext(id: string): Promise<MissionContextCompactionResult>;
   getRuntimeBinding(id: string): Promise<RuntimeEnvironmentBinding | undefined>;
   subscribeChat(listener: (notification: MissionChatNotification) => void): () => void;
@@ -1879,6 +1891,42 @@ export function createMissionRunner(options: {
     },
     async getChat(input) {
       return await getChatSnapshot(input);
+    },
+    async getTerminalRuntimeFailure(id) {
+      const mission = await options.missions.get(id);
+      if (mission.execution === undefined) return undefined;
+      const events = await readAllExecutionEvents(
+        new StoredExecutionView(mission.execution.id, executionStore),
+      ).catch(() => []);
+      for (const item of events.toReversed()) {
+        if (item.type !== "runtime.event") continue;
+        const parsed = ExpertAgentStreamEventSchema.safeParse(item.data);
+        if (
+          !parsed.success ||
+          parsed.data.type !== "run.failed" ||
+          !isRootMissionRuntimeSource(parsed.data.source)
+        ) {
+          continue;
+        }
+        return {
+          message: parsed.data.payload.message,
+          ...(parsed.data.payload.code === undefined ? {} : { code: parsed.data.payload.code }),
+          ...(parsed.data.payload.retryable === undefined
+            ? {}
+            : { retryable: parsed.data.payload.retryable }),
+          ...(parsed.data.payload.httpStatus === undefined
+            ? {}
+            : { httpStatus: parsed.data.payload.httpStatus }),
+          ...(parsed.data.payload.requestId === undefined
+            ? {}
+            : { requestId: parsed.data.payload.requestId }),
+          ...(parsed.data.payload.endpoint === undefined
+            ? {}
+            : { endpoint: parsed.data.payload.endpoint }),
+          failedAt: parsed.data.emittedAt,
+        };
+      }
+      return undefined;
     },
     async compactContext(id) {
       const pending = pendingOperations.get(id);

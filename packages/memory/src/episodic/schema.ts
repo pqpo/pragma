@@ -4,13 +4,14 @@ import {
   MemorySubjectRefSchema,
   MemoryRevisionBindingSchema,
   MemoryVisibilityPolicySchema,
+  MemoryExtractionFailureDiagnosticSchema,
 } from "@pragma/shared";
 import { z } from "zod";
 
 import { MemoryEvidenceOmissionStatsSchema } from "../storage/bounded-evidence.ts";
 
 export const EPISODIC_MEMORY_SCHEMA_VERSION = "pragma.memory-episodic/v3" as const;
-export const EPISODIC_JOB_SCHEMA_VERSION = "pragma.memory-extraction-job/v3" as const;
+export const EPISODIC_JOB_SCHEMA_VERSION = "pragma.memory-extraction-job/v4" as const;
 
 const EvidenceRefsSchema = z.array(z.string().min(1)).min(1).max(100);
 
@@ -125,6 +126,8 @@ export const EpisodicExtractionJobSchema = z.object({
   eligibleAt: z.string().datetime().optional(),
   leaseUntil: z.string().datetime().optional(),
   lastErrorCode: z.string().min(1).optional(),
+  lastErrorMessage: z.string().min(1).max(4_096).optional(),
+  lastFailure: MemoryExtractionFailureDiagnosticSchema.optional(),
   failureClass: z.enum(["configuration", "transient-exhausted"]).optional(),
   attentionSince: z.string().datetime().optional(),
   completedAt: z.string().datetime().optional(),

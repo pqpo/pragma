@@ -254,8 +254,14 @@ import {
   DesktopMemoryProblemSchema,
   DesktopMemoryExtractionTaskSchema,
   DesktopMemoryExtractionBoardSchema,
+  DesktopMemoryExtractionActiveTaskListSchema,
   ListDesktopMemoryExtractionJobsSchema,
   ManageDesktopMemoryExtractionTaskSchema,
+  DesktopMemoryExtractionTaskRefSchema,
+  DesktopMemoryExtractionRunSchema,
+  DesktopMemoryExtractionTaskDetailSchema,
+  DesktopMemoryExtractionRunRefSchema,
+  DesktopMemoryExtractionRunChatUpdateSchema,
   MemoryKnowledgeInitializationCandidateSchema,
   ListMemoryKnowledgeInitializationCandidatesSchema,
   MemoryKnowledgeInitializationCandidateRefSchema,
@@ -331,9 +337,21 @@ export type GetDesktopMissionMemoryActivity = z.infer<typeof GetDesktopMissionMe
 export type DesktopMemoryProblem = z.infer<typeof DesktopMemoryProblemSchema>;
 export type DesktopMemoryExtractionTask = z.infer<typeof DesktopMemoryExtractionTaskSchema>;
 export type DesktopMemoryExtractionBoard = z.infer<typeof DesktopMemoryExtractionBoardSchema>;
+export type DesktopMemoryExtractionActiveTaskList = z.infer<
+  typeof DesktopMemoryExtractionActiveTaskListSchema
+>;
 export type ListDesktopMemoryExtractionJobs = z.infer<typeof ListDesktopMemoryExtractionJobsSchema>;
 export type ManageDesktopMemoryExtractionTask = z.infer<
   typeof ManageDesktopMemoryExtractionTaskSchema
+>;
+export type DesktopMemoryExtractionTaskRef = z.infer<typeof DesktopMemoryExtractionTaskRefSchema>;
+export type DesktopMemoryExtractionRun = z.infer<typeof DesktopMemoryExtractionRunSchema>;
+export type DesktopMemoryExtractionTaskDetail = z.infer<
+  typeof DesktopMemoryExtractionTaskDetailSchema
+>;
+export type DesktopMemoryExtractionRunRef = z.infer<typeof DesktopMemoryExtractionRunRefSchema>;
+export type DesktopMemoryExtractionRunChatUpdate = z.infer<
+  typeof DesktopMemoryExtractionRunChatUpdateSchema
 >;
 export type MemoryKnowledgeInitializationCandidate = z.infer<
   typeof MemoryKnowledgeInitializationCandidateSchema

@@ -20,17 +20,28 @@ import type {
   DesktopMemoryEvidence,
   DesktopMemoryExtractionBoard,
   DesktopMemoryExtractionTask,
+  DesktopMemoryExtractionTaskDetail,
   DesktopMemoryItem,
   DesktopMemoryPlaneStatus,
   ListDesktopMemoryExtractionJobs,
+  MissionChatSnapshot,
   MemoryKnowledgeInitializationCandidate,
   MemorySkillCandidate,
 } from "../../../../shared/contracts/index.ts";
 import { classifyDesktopMemoryProblem } from "../../../../shared/memory-problem.ts";
 import { ConfirmationDialog, Dialog } from "../../components/Dialog.tsx";
+import { SelectMenu } from "../../components/SelectMenu.tsx";
+import { applyMissionChatPatches, MissionChatEntryView } from "../missions/MissionsPage.tsx";
 
 type MemoryView =
-  "all" | "episodic" | "semantic" | "candidates" | "skillCandidates" | "extractions" | "health";
+  | "all"
+  | "episodic"
+  | "semantic"
+  | "candidates"
+  | "skillCandidates"
+  | "extractions"
+  | "health"
+  | "taskDetails";
 const MEMORY_EXTRACTION_LANES = ["waiting", "attention", "running", "completed"] as const;
 type MemoryExtractionLane = (typeof MEMORY_EXTRACTION_LANES)[number];
 type MemoryExtractionPageCursor = NonNullable<
@@ -51,6 +62,9 @@ export function MemoryPage(props: { readonly onConfigureExtraction?: () => void 
   const [selectedId, setSelectedId] = useState<string>();
   const [health, setHealth] = useState<DesktopMemoryPlaneStatus>();
   const [extractionBoard, setExtractionBoard] = useState<DesktopMemoryExtractionBoard>();
+  const [activeExtractionTasks, setActiveExtractionTasks] = useState<
+    readonly DesktopMemoryExtractionTask[]
+  >([]);
   const [evidence, setEvidence] = useState<DesktopMemoryEvidence>();
   const [candidates, setCandidates] = useState<readonly MemoryKnowledgeInitializationCandidate[]>(
     [],
@@ -76,30 +90,43 @@ export function MemoryPage(props: { readonly onConfigureExtraction?: () => void 
       const requestVersion = (extractionRequestVersion.current += 1);
       if (!silent && !hasLoaded.current) setLoading(true);
       try {
-        const [records, status, extractionJobs, candidateRecords, skillCandidateRecords, experts] =
-          await Promise.all([
-            view === "extractions" || view === "candidates" || view === "skillCandidates"
-              ? Promise.resolve([])
-              : window.pragmaDesktop.listMemoryItems({
-                  module: view === "health" ? "all" : view,
-                  status: "all",
-                  query,
-                  limit: 200,
-                }),
-            window.pragmaDesktop.getMemoryPlaneStatus(),
-            view === "extractions"
-              ? window.pragmaDesktop.listMemoryExtractionJobs({ pages: extractionPages })
-              : Promise.resolve(undefined),
-            view === "candidates"
-              ? window.pragmaDesktop.listMemoryKnowledgeInitializations({ state: "pending_review" })
-              : Promise.resolve([]),
-            view === "skillCandidates"
-              ? window.pragmaDesktop.listMemorySkillCandidates()
-              : Promise.resolve([]),
-            view === "candidates" || view === "skillCandidates"
-              ? window.pragmaDesktop.listExperts()
-              : Promise.resolve([]),
-          ]);
+        const [
+          records,
+          status,
+          extractionJobs,
+          activeTasks,
+          candidateRecords,
+          skillCandidateRecords,
+          experts,
+        ] = await Promise.all([
+          view === "extractions" ||
+          view === "taskDetails" ||
+          view === "candidates" ||
+          view === "skillCandidates"
+            ? Promise.resolve([])
+            : window.pragmaDesktop.listMemoryItems({
+                module: view === "health" ? "all" : view,
+                status: "all",
+                query,
+                limit: 200,
+              }),
+          window.pragmaDesktop.getMemoryPlaneStatus(),
+          view === "extractions"
+            ? window.pragmaDesktop.listMemoryExtractionJobs({ pages: extractionPages })
+            : Promise.resolve(undefined),
+          view === "taskDetails"
+            ? window.pragmaDesktop.listActiveMemoryExtractionTasks()
+            : Promise.resolve([]),
+          view === "candidates"
+            ? window.pragmaDesktop.listMemoryKnowledgeInitializations({ state: "pending_review" })
+            : Promise.resolve([]),
+          view === "skillCandidates"
+            ? window.pragmaDesktop.listMemorySkillCandidates()
+            : Promise.resolve([]),
+          view === "candidates" || view === "skillCandidates"
+            ? window.pragmaDesktop.listExperts()
+            : Promise.resolve([]),
+        ]);
         setItems(records);
         setHealth(status);
         if (extractionJobs !== undefined && requestVersion === extractionRequestVersion.current) {
@@ -119,6 +146,9 @@ export function MemoryPage(props: { readonly onConfigureExtraction?: () => void 
               return next;
             });
           }
+        }
+        if (view === "taskDetails" && requestVersion === extractionRequestVersion.current) {
+          setActiveExtractionTasks(activeTasks);
         }
         setCandidates(candidateRecords);
         setSkillCandidates(skillCandidateRecords);
@@ -157,12 +187,17 @@ export function MemoryPage(props: { readonly onConfigureExtraction?: () => void 
   }, [reload]);
 
   useEffect(() => {
-    if (view !== "extractions") return;
+    if (view !== "extractions" && view !== "taskDetails") return;
     let cancelled = false;
     let timer: ReturnType<typeof setTimeout> | undefined;
     const poll = async () => {
       const board = await reload(true);
-      if (!cancelled) timer = setTimeout(() => void poll(), memoryExtractionPollDelay(board));
+      if (!cancelled) {
+        timer = setTimeout(
+          () => void poll(),
+          view === "taskDetails" ? 2_000 : memoryExtractionPollDelay(board),
+        );
+      }
     };
     timer = setTimeout(() => void poll(), 2_000);
     return () => {
@@ -271,6 +306,7 @@ export function MemoryPage(props: { readonly onConfigureExtraction?: () => void 
             "skillCandidates",
             "extractions",
             "health",
+            "taskDetails",
           ] as const
         ).map((id) => (
           <button
@@ -294,6 +330,8 @@ export function MemoryPage(props: { readonly onConfigureExtraction?: () => void 
 
       {view === "health" ? (
         <MemoryHealth health={health} />
+      ) : view === "taskDetails" ? (
+        <MemoryExtractionTaskDetails tasks={activeExtractionTasks} />
       ) : view === "extractions" ? (
         <MemoryExtractionJobs
           board={extractionBoard}
@@ -1115,6 +1153,218 @@ function MemoryTechnicalDetails(props: {
         {t("copyDiagnostics")}
       </button>
     </details>
+  );
+}
+
+function MemoryExtractionTaskDetails(props: {
+  readonly tasks: readonly DesktopMemoryExtractionTask[];
+}) {
+  const { t } = useTranslation("memory");
+  const tasks = props.tasks;
+  const [selectedKey, setSelectedKey] = useState<string>();
+  const [detail, setDetail] = useState<DesktopMemoryExtractionTaskDetail>();
+  const [selectedRunId, setSelectedRunId] = useState<string>();
+  const [chat, setChat] = useState<MissionChatSnapshot>();
+  const [loadError, setLoadError] = useState(false);
+  const detailRequestVersion = useRef(0);
+  const detailLoadingKey = useRef<string | undefined>(undefined);
+  const selected = tasks.find((task) => `${task.module}:${task.id}` === selectedKey) ?? tasks[0];
+
+  useEffect(() => {
+    if (selected === undefined) {
+      setSelectedKey(undefined);
+      setDetail(undefined);
+      setChat(undefined);
+      return;
+    }
+    setSelectedKey(`${selected.module}:${selected.id}`);
+  }, [selected?.id, selected?.module]);
+
+  const loadDetail = useCallback(async () => {
+    if (selected === undefined) return;
+    const taskKey = `${selected.module}:${selected.id}`;
+    if (detailLoadingKey.current === taskKey) return;
+    detailLoadingKey.current = taskKey;
+    const requestVersion = (detailRequestVersion.current += 1);
+    try {
+      const next = await window.pragmaDesktop.getMemoryExtractionTaskDetail({
+        module: selected.module,
+        id: selected.id,
+      });
+      if (requestVersion !== detailRequestVersion.current) return;
+      setDetail(next);
+      setSelectedRunId((current) =>
+        current !== undefined && next.runs.some((run) => run.runId === current)
+          ? current
+          : next.runs[0]?.runId,
+      );
+      setLoadError(false);
+    } catch {
+      if (requestVersion === detailRequestVersion.current) setLoadError(true);
+    } finally {
+      if (detailLoadingKey.current === taskKey) detailLoadingKey.current = undefined;
+    }
+  }, [selected?.id, selected?.module]);
+
+  useEffect(() => {
+    void loadDetail();
+    const timer = setInterval(() => void loadDetail(), 2_000);
+    return () => {
+      detailRequestVersion.current += 1;
+      detailLoadingKey.current = undefined;
+      clearInterval(timer);
+    };
+  }, [loadDetail]);
+
+  const loadChat = useCallback(async () => {
+    if (selectedRunId === undefined) {
+      setChat(undefined);
+      return;
+    }
+    try {
+      setChat(await window.pragmaDesktop.getMemoryExtractionRunChat({ runId: selectedRunId }));
+    } catch {
+      setChat(detail?.runs.find((run) => run.runId === selectedRunId)?.chat);
+    }
+  }, [detail?.runs, selectedRunId]);
+
+  useEffect(() => {
+    void loadChat();
+  }, [loadChat]);
+
+  useEffect(
+    () =>
+      window.pragmaDesktop.subscribeMemoryExtractionRunChat((event) => {
+        if (event.runId !== selectedRunId) return;
+        if (event.update.kind === "invalidate") {
+          void loadChat();
+          return;
+        }
+        const update = event.update;
+        setChat((current) => {
+          if (current === undefined || current.missionId !== update.missionId) return current;
+          if (update.revision <= current.revision) return current;
+          return applyMissionChatPatches(current, update.patches, update.revision) ?? current;
+        });
+      }),
+    [loadChat, selectedRunId],
+  );
+
+  const selectedRun = detail?.runs.find((run) => run.runId === selectedRunId);
+  return (
+    <section className="memory-task-details" aria-label={t("taskDetails")}>
+      <aside className="memory-task-details-list">
+        <header>
+          <h2>{t("taskDetails")}</h2>
+          <p>{t("taskDetailsDescription")}</p>
+        </header>
+        {tasks.length === 0 ? <p className="memory-note">{t("noActiveExtractionTasks")}</p> : null}
+        {tasks.map((task) => {
+          const taskKey = `${task.module}:${task.id}`;
+          return (
+            <button
+              type="button"
+              key={taskKey}
+              className={
+                taskKey === `${selected?.module}:${selected?.id}`
+                  ? "memory-task-detail-item is-active"
+                  : "memory-task-detail-item"
+              }
+              onClick={() => setSelectedKey(taskKey)}
+            >
+              <span>{t(`extractionTaskTypes.${task.module}`)}</span>
+              <strong>{task.title ?? task.id}</strong>
+              <small>{t(`extractionLanes.${task.lane}`)}</small>
+              <small>{new Date(task.updatedAt).toLocaleString()}</small>
+            </button>
+          );
+        })}
+      </aside>
+      <main className="memory-task-details-stream">
+        {selected === undefined ? (
+          <p>{t("selectExtractionTask")}</p>
+        ) : loadError ? (
+          <p className="memory-error" role="alert">
+            {t("taskDetailsLoadError")}
+          </p>
+        ) : detail === undefined ? (
+          <p>{t("loading")}</p>
+        ) : (
+          <>
+            <header className="memory-task-details-header">
+              <div>
+                <span className={`memory-extraction-type is-${detail.task.module}`}>
+                  {t(`extractionTaskTypes.${detail.task.module}`)}
+                </span>
+                <h2>{detail.task.title ?? detail.task.id}</h2>
+                <p>{t("readOnlyTaskMessages")}</p>
+              </div>
+              {detail.runs.length > 1 ? (
+                <div className="memory-task-run-select">
+                  <span>{t("extractionAttempt")}</span>
+                  <SelectMenu
+                    ariaLabel={t("extractionAttempt")}
+                    className="form-select"
+                    value={selectedRunId ?? detail.runs[0]!.runId}
+                    onChange={setSelectedRunId}
+                    options={detail.runs.map((run, index) => ({
+                      value: run.runId,
+                      label: t("extractionAttemptOption", {
+                        attempt: detail.runs.length - index,
+                        status: run.status,
+                      }),
+                    }))}
+                  />
+                </div>
+              ) : null}
+            </header>
+            {detail.lastFailure === undefined ? null : (
+              <section className="memory-task-failure" role="status">
+                <strong>{detail.lastFailure.code}</strong>
+                <p>{detail.lastFailure.message}</p>
+                <dl>
+                  <dt>{t("failurePhase")}</dt>
+                  <dd>{detail.lastFailure.phase}</dd>
+                  <dt>HTTP</dt>
+                  <dd>{detail.lastFailure.transport?.httpStatus ?? "—"}</dd>
+                  <dt>{t("duration")}</dt>
+                  <dd>
+                    {detail.lastFailure.durationMs === undefined
+                      ? "—"
+                      : `${detail.lastFailure.durationMs} ms`}
+                  </dd>
+                  <dt>{t("runtimeTarget")}</dt>
+                  <dd>
+                    {[detail.lastFailure.runtime?.runtimeId, detail.lastFailure.runtime?.modelId]
+                      .filter(Boolean)
+                      .join(" / ") || "—"}
+                  </dd>
+                </dl>
+              </section>
+            )}
+            <section className="memory-task-message-stream" aria-live="polite">
+              {selectedRun === undefined ? (
+                <p className="memory-note">{t("noExtractionMessages")}</p>
+              ) : chat === undefined ? (
+                <p>{t("loadingMessages")}</p>
+              ) : chat.entries.length === 0 ? (
+                <p className="memory-note">{t("noExtractionMessages")}</p>
+              ) : (
+                chat.entries.map((entry) => (
+                  <MissionChatEntryView
+                    entry={entry}
+                    key={entry.id}
+                    missionId={chat.missionId}
+                    paintExecutionId={entry.executionId ?? chat.execution?.id}
+                    showExecutorLabel
+                  />
+                ))
+              )}
+            </section>
+          </>
+        )}
+      </main>
+    </section>
   );
 }
 

@@ -6,13 +6,14 @@ import {
   SkillExtractionOutputSchema,
   type ExistingMemorySkillTarget,
   type MemoryEvidenceEnvelope,
+  type MemoryExtractionFailurePhase,
   type MemorySubjectRef,
   type SkillExtractionCandidate,
   type SkillSourceSnapshot,
 } from "@pragma/shared";
 
 import type { MemoryModule } from "../pipeline/memory-module.ts";
-import { extractionErrorCode } from "../pipeline/extraction-error-code.ts";
+import { extractionFailureDiagnostic } from "../pipeline/extraction-error-code.ts";
 import { DEFAULT_MEMORY_STORAGE_POLICY } from "../storage/memory-storage-policy.ts";
 import type { SkillMemoryExtractor } from "./schema.ts";
 import type { SkillSourceReader } from "./source-reader.ts";
@@ -104,6 +105,8 @@ export async function createSkillMemoryModule(options: {
       const controller = new AbortController();
       running.set(job.id, controller);
       let retained = false;
+      const startedAt = now();
+      let phase: MemoryExtractionFailurePhase = "source_read";
       try {
         const available = await options.sourceReader.listEligibleSources({
           rootRef: job.rootRef,
@@ -127,6 +130,7 @@ export async function createSkillMemoryModule(options: {
           return;
         }
         for (const expertRef of expertRefs) {
+          phase = "target_read";
           const existingTargets = await options.targetReader.listTargets({ expertRef });
           const input = SkillExtractionInputSchema.parse({
             schemaVersion: "pragma.memory-skill-extraction-input/v1",
@@ -137,11 +141,14 @@ export async function createSkillMemoryModule(options: {
           });
           if (!(await store.isClaimCurrent(job))) return;
           controller.signal.throwIfAborted();
+          phase = "curator_run";
           const result = await extractor.extract(input, { signal: controller.signal });
+          phase = "validation";
           const output = SkillExtractionOutputSchema.parse(result.output);
           if (!output.retain) continue;
           const candidates = eligibleCandidates(output.candidates, input.sources, existingTargets);
           if (candidates.length === 0) continue;
+          phase = "promotion";
           await options.learningSink.submit({
             rootRef: job.rootRef,
             sourceDigest,
@@ -152,11 +159,16 @@ export async function createSkillMemoryModule(options: {
         }
         await store.complete(job, retained ? "retained" : "rejected", now());
       } catch (error) {
+        const failure = extractionFailureDiagnostic(error, "skill_extraction", {
+          phase,
+          startedAt,
+          now: now(),
+        });
         await store.fail({
           job,
-          errorCode: extractionErrorCode(error, "skill_extraction"),
+          ...failure,
           retry: isConfigurationError(error) ? "configuration" : "transient",
-          now: now(),
+          now: new Date(failure.diagnostic.failedAt),
         });
       } finally {
         if (running.get(job.id) === controller) running.delete(job.id);

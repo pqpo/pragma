@@ -1,4 +1,4 @@
-import { ipcMain } from "electron";
+import { ipcMain, type BrowserWindow } from "electron";
 
 import {
   DesktopAssetMemoryPolicySnapshotSchema,
@@ -26,6 +26,11 @@ import {
   GetDesktopMissionMemoryActivitySchema,
   ListDesktopMemoryExtractionJobsSchema,
   ManageDesktopMemoryExtractionTaskSchema,
+  DesktopMemoryExtractionTaskRefSchema,
+  DesktopMemoryExtractionTaskDetailSchema,
+  DesktopMemoryExtractionActiveTaskListSchema,
+  DesktopMemoryExtractionRunRefSchema,
+  MissionChatSnapshotSchema,
   MemoryKnowledgeInitializationCandidateSchema,
   ListMemoryKnowledgeInitializationCandidatesSchema,
   MemoryKnowledgeInitializationCandidateRefSchema,
@@ -37,7 +42,12 @@ import type { MissionStore } from "../missions/mission-store.ts";
 import type { PragmaProjectStore } from "../projects/pragma-project-store.ts";
 import type { DesktopSystemExpertRegistry } from "../experts/system-expert-registry.ts";
 import type { MemoryKnowledgePromotionService } from "./memory-knowledge-promotion.ts";
-import { listDesktopMemoryExtractionJobs } from "./memory-extraction-jobs.ts";
+import {
+  getDesktopMemoryExtractionTaskDetail,
+  listDesktopMemoryExtractionActiveTasks,
+  listDesktopMemoryExtractionJobs,
+} from "./memory-extraction-jobs.ts";
+import type { DesktopMemoryCurator } from "./memory-curator.ts";
 import {
   loadMemorySubjectNameIndex,
   selectMemorySubjectNames,
@@ -52,6 +62,8 @@ export function installMemoryPolicyHandlers(
     readonly project: PragmaProjectStore;
     readonly systemExperts: Pick<DesktopSystemExpertRegistry, "list">;
     readonly knowledgePromotion: MemoryKnowledgePromotionService;
+    readonly curator: DesktopMemoryCurator;
+    readonly getWindow: () => BrowserWindow | null;
   },
 ): void {
   const loadSubjectNameIndex = (): Promise<MemorySubjectNameIndex> =>
@@ -109,6 +121,30 @@ export function installMemoryPolicyHandlers(
   });
   ipcMain.handle("memory-extraction-jobs:manage", async (_event, input: unknown) => {
     await plane.manageMemoryJob(ManageDesktopMemoryExtractionTaskSchema.parse(input));
+  });
+  ipcMain.handle("memory-extraction-active-tasks:list", async () =>
+    DesktopMemoryExtractionActiveTaskListSchema.parse(
+      await listDesktopMemoryExtractionActiveTasks(plane, options),
+    ),
+  );
+  ipcMain.handle("memory-extraction-task-detail:get", async (_event, input: unknown) => {
+    return DesktopMemoryExtractionTaskDetailSchema.parse(
+      await getDesktopMemoryExtractionTaskDetail(
+        plane,
+        options,
+        DesktopMemoryExtractionTaskRefSchema.parse(input),
+      ),
+    );
+  });
+  ipcMain.handle("memory-extraction-run-chat:get", async (_event, input: unknown) => {
+    const chat = await options.curator.getRunChat(
+      DesktopMemoryExtractionRunRefSchema.parse(input).runId,
+    );
+    if (chat === undefined) throw new Error("memory_extraction_run_not_found");
+    return MissionChatSnapshotSchema.parse(chat);
+  });
+  options.curator.subscribeRunChat((update) => {
+    options.getWindow()?.webContents.send("memory-extraction-run-chat:updated", update);
   });
   ipcMain.handle("memory-extractor-profile:get", async () =>
     DesktopMemoryExtractorProfileSchema.parse(await plane.extractorProfiles.get()),

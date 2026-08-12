@@ -150,8 +150,13 @@ import type {
   ReviewDesktopMemoryItem,
   DesktopMissionMemoryActivity,
   DesktopMemoryExtractionBoard,
+  DesktopMemoryExtractionActiveTaskList,
   ListDesktopMemoryExtractionJobs,
   ManageDesktopMemoryExtractionTask,
+  DesktopMemoryExtractionTaskRef,
+  DesktopMemoryExtractionTaskDetail,
+  DesktopMemoryExtractionRunRef,
+  DesktopMemoryExtractionRunChatUpdate,
   MemoryKnowledgeInitializationCandidate,
   ListMemoryKnowledgeInitializationCandidates,
   MemoryKnowledgeInitializationCandidateRef,
@@ -211,7 +216,17 @@ export interface PragmaDesktopAPI {
   listMemoryExtractionJobs: (
     input: ListDesktopMemoryExtractionJobs,
   ) => Promise<DesktopMemoryExtractionBoard>;
+  listActiveMemoryExtractionTasks: () => Promise<DesktopMemoryExtractionActiveTaskList>;
   manageMemoryExtractionTask: (input: ManageDesktopMemoryExtractionTask) => Promise<void>;
+  getMemoryExtractionTaskDetail: (
+    input: DesktopMemoryExtractionTaskRef,
+  ) => Promise<DesktopMemoryExtractionTaskDetail>;
+  getMemoryExtractionRunChat: (
+    input: DesktopMemoryExtractionRunRef,
+  ) => Promise<MissionChatSnapshot>;
+  subscribeMemoryExtractionRunChat: (
+    listener: (update: DesktopMemoryExtractionRunChatUpdate) => void,
+  ) => () => void;
   getMemoryExtractorProfile: () => Promise<DesktopMemoryExtractorProfile>;
   updateMemoryExtractorProfile: (
     input: UpdateDesktopMemoryExtractorProfile,

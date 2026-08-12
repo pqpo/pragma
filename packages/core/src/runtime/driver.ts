@@ -921,6 +921,15 @@ class ManagedRuntimeSession<TNativeEvent, TNativeSession, TPrepared> {
                 ...(errorMetadata.retryable === undefined
                   ? {}
                   : { retryable: errorMetadata.retryable }),
+                ...(errorMetadata.httpStatus === undefined
+                  ? {}
+                  : { httpStatus: errorMetadata.httpStatus }),
+                ...(errorMetadata.requestId === undefined
+                  ? {}
+                  : { requestId: errorMetadata.requestId }),
+                ...(errorMetadata.endpoint === undefined
+                  ? {}
+                  : { endpoint: errorMetadata.endpoint }),
               },
         });
         await dispatchExpertAgentHook(this.options.agent.hooks, "afterTaskSubmit", {
@@ -1518,14 +1527,48 @@ function throwIfRuntimeCleanupFailed(errors: readonly unknown[]): void {
 function readRuntimeErrorMetadata(error: unknown): {
   readonly code?: string | undefined;
   readonly retryable?: boolean | undefined;
+  readonly httpStatus?: number | undefined;
+  readonly requestId?: string | undefined;
+  readonly endpoint?: string | undefined;
 } {
   if (typeof error !== "object" || error === null) {
     return {};
   }
 
-  const record = error as { readonly code?: unknown; readonly retryable?: unknown };
+  const record = error as {
+    readonly code?: unknown;
+    readonly retryable?: unknown;
+    readonly httpStatus?: unknown;
+    readonly statusCode?: unknown;
+    readonly status?: unknown;
+    readonly requestId?: unknown;
+    readonly endpoint?: unknown;
+  };
+  const status = [record.httpStatus, record.statusCode, record.status].find(
+    (value): value is number =>
+      typeof value === "number" && Number.isInteger(value) && value >= 100 && value <= 599,
+  );
   return {
     ...(typeof record.code === "string" && record.code.trim() !== "" ? { code: record.code } : {}),
     ...(typeof record.retryable === "boolean" ? { retryable: record.retryable } : {}),
+    ...(status === undefined ? {} : { httpStatus: status }),
+    ...(typeof record.requestId === "string" && record.requestId.trim() !== ""
+      ? { requestId: record.requestId.trim().slice(0, 500) }
+      : {}),
+    ...sanitizeRuntimeEndpoint(record.endpoint),
   };
+}
+
+function sanitizeRuntimeEndpoint(value: unknown): { readonly endpoint?: string | undefined } {
+  if (typeof value !== "string" || value.trim() === "") return {};
+  try {
+    const endpoint = new URL(value);
+    endpoint.username = "";
+    endpoint.password = "";
+    endpoint.search = "";
+    endpoint.hash = "";
+    return { endpoint: endpoint.toString().slice(0, 2_048) };
+  } catch {
+    return {};
+  }
 }

@@ -6,12 +6,13 @@ import {
   KnowledgeExtractionOutputSchema,
   type KnowledgeExtractionCandidate,
   type KnowledgeSourceSnapshot,
+  type MemoryExtractionFailurePhase,
   type MemorySubjectRef,
 } from "@pragma/shared";
 
 import type { KnowledgeMemoryExtractor, KnowledgeSourceReader } from "./schema.ts";
 import { createKnowledgeLearningStore, type KnowledgeLearningStore } from "./store.ts";
-import { extractionErrorCode } from "../pipeline/extraction-error-code.ts";
+import { extractionFailureDiagnostic } from "../pipeline/extraction-error-code.ts";
 import type { MemoryModule } from "../pipeline/memory-module.ts";
 import { DEFAULT_MEMORY_STORAGE_POLICY } from "../storage/memory-storage-policy.ts";
 
@@ -103,6 +104,8 @@ export async function createKnowledgeMemoryModule(options: {
       if (job === undefined) return;
       const controller = new AbortController();
       running.set(job.id, controller);
+      const startedAt = now();
+      let phase: MemoryExtractionFailurePhase = "source_read";
       try {
         const available = await options.sourceReader.listEligibleSources({
           rootRef: job.rootRef,
@@ -130,8 +133,10 @@ export async function createKnowledgeMemoryModule(options: {
         });
         if (!(await store.isClaimCurrent(job))) return;
         controller.signal.throwIfAborted();
+        phase = "curator_run";
         const result = await extractor.extract(input, { signal: controller.signal });
         controller.signal.throwIfAborted();
+        phase = "validation";
         const output = KnowledgeExtractionOutputSchema.parse(result.output);
         if (!output.retain) {
           await store.completeRejected(job, now());
@@ -142,6 +147,7 @@ export async function createKnowledgeMemoryModule(options: {
           await store.completeRejected(job, now());
           return;
         }
+        phase = "promotion";
         await options.learningSink.submit({
           rootRef: job.rootRef,
           sourceDigest,
@@ -150,11 +156,16 @@ export async function createKnowledgeMemoryModule(options: {
         });
         await store.completeLearned(job, now());
       } catch (error) {
+        const failure = extractionFailureDiagnostic(error, "knowledge_extraction", {
+          phase,
+          startedAt,
+          now: now(),
+        });
         await store.fail({
           job,
-          errorCode: extractionErrorCode(error, "knowledge_extraction"),
+          ...failure,
           retry: isConfigurationError(error) ? "configuration" : "transient",
-          now: now(),
+          now: new Date(failure.diagnostic.failedAt),
         });
       } finally {
         if (running.get(job.id) === controller) running.delete(job.id);

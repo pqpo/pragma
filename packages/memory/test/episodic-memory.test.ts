@@ -11,6 +11,15 @@ import {
 } from "@pragma/shared";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
+const failureDiagnostic = (code: string) =>
+  ({
+    schemaVersion: "pragma.memory-extraction-failure/v1",
+    code,
+    message: code,
+    phase: "storage",
+    failedAt: "2026-08-01T00:00:00.000Z",
+  }) as const;
+
 import {
   createEpisodicMemoryModule,
   createFederatedMemoryContextStore,
@@ -446,17 +455,23 @@ describe("Episodic Memory", () => {
     const reclaimed = await module.store.claimDueJob(now);
     await module.store.fail({
       job: reclaimed!,
-      errorCode: "memory_extractor_profile_invalid",
+      diagnostic: failureDiagnostic("memory_extractor_profile_invalid"),
       retry: "configuration",
       now,
     });
     const [attention] = await module.store.listExtractionJobs();
+    expect(attention).toMatchObject({
+      lastErrorMessage: "memory_extractor_profile_invalid",
+      lastFailure: { code: "memory_extractor_profile_invalid" },
+    });
+    expect(await module.store.listFailureAttempts(attention!.id)).toHaveLength(1);
     await module.store.deleteJob({
       id: attention!.id,
       expectedRevision: attention!.revision,
       now,
     });
     expect(await module.store.listExtractionJobs()).toEqual([]);
+    expect(await module.store.listFailureAttempts(attention!.id)).toEqual([]);
     expect(await module.store.readEvidence("managed-execution")).toEqual([]);
     module.close();
   });
@@ -955,7 +970,7 @@ describe("Episodic Memory", () => {
     expect(job).toBeDefined();
     await module.store.fail({
       job: job!,
-      errorCode: "memory_extractor_profile_invalid",
+      diagnostic: failureDiagnostic("memory_extractor_profile_invalid"),
       now: new Date("2026-08-01T00:00:04.000Z"),
       retry: "configuration",
     });
@@ -987,7 +1002,7 @@ describe("Episodic Memory", () => {
     await module.store.deleteExecutionState(["deleted-execution"]);
     await module.store.fail({
       job: claimed!,
-      errorCode: "late_extractor_failure",
+      diagnostic: failureDiagnostic("late_extractor_failure"),
       now: new Date("2026-08-04T00:01:00.000Z"),
       retry: "transient",
     });
@@ -1048,7 +1063,7 @@ describe("Episodic Memory", () => {
     const module = await createEpisodicMemoryModule({ pragmaHome: root });
     await expect(module.store.listExtractionJobs()).resolves.toEqual([
       expect.objectContaining({
-        schemaVersion: "pragma.memory-extraction-job/v3",
+        schemaVersion: "pragma.memory-extraction-job/v4",
         id: "legacy-job",
         revision: 2,
         totalAttempts: 3,
@@ -1065,10 +1080,10 @@ describe("Episodic Memory", () => {
     module.close();
 
     const future = new DatabaseSync(join(stateRoot, "jobs.sqlite"));
-    future.exec("PRAGMA user_version = 4;");
+    future.exec("PRAGMA user_version = 5;");
     future.close();
     await expect(createEpisodicMemoryModule({ pragmaHome: root })).rejects.toThrow(
-      "unsupported-state-version:pragma.memory-episodic-jobs/v4",
+      "unsupported-state-version:pragma.memory-episodic-jobs/v5",
     );
   });
 
@@ -1145,7 +1160,7 @@ describe("Episodic Memory", () => {
 
     const recovered = await createEpisodicMemoryModule({ pragmaHome: root });
     expect((await recovered.store.listExtractionJobs())[0]).toMatchObject({
-      schemaVersion: "pragma.memory-extraction-job/v3",
+      schemaVersion: "pragma.memory-extraction-job/v4",
       id: malformed.id,
     });
     recovered.close();

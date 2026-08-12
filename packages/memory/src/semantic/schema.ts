@@ -1,5 +1,6 @@
 import {
   MemoryEvidenceEnvelopeSchema,
+  MemoryExtractionFailureDiagnosticSchema,
   MemorySubjectRefSchema,
   SemanticFactExtractorProvenanceSchema,
   SemanticFactSchema,
@@ -8,7 +9,7 @@ import { z } from "zod";
 
 import { MemoryEvidenceOmissionStatsSchema } from "../storage/bounded-evidence.ts";
 
-export const SEMANTIC_JOB_SCHEMA_VERSION = "pragma.memory-semantic-job/v3" as const;
+export const SEMANTIC_JOB_SCHEMA_VERSION = "pragma.memory-semantic-job/v4" as const;
 export const SEMANTIC_SUBJECT_CONTEXT_SCHEMA_VERSION =
   "pragma.memory-semantic-execution-subject-context/v1" as const;
 export const SEMANTIC_GOVERNANCE_EVENT_SCHEMA_VERSION =
@@ -108,6 +109,8 @@ export const SemanticExtractionJobSchema = z
     eligibleAt: z.string().datetime().optional(),
     leaseUntil: z.string().datetime().optional(),
     lastErrorCode: z.string().min(1).optional(),
+    lastErrorMessage: z.string().min(1).max(4_096).optional(),
+    lastFailure: MemoryExtractionFailureDiagnosticSchema.optional(),
     failureClass: z.enum(["configuration", "transient-exhausted"]).optional(),
     attentionSince: z.string().datetime().optional(),
     completedAt: z.string().datetime().optional(),

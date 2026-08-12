@@ -6,6 +6,8 @@ import { DatabaseSync } from "node:sqlite";
 import { PragmaPaths, withFileLock } from "@pragma/core";
 import {
   SkillLearningJobSchema,
+  type MemoryExtractionFailureAttempt,
+  type MemoryExtractionFailureDiagnostic,
   type MemorySubjectRef,
   type SkillLearningJob,
 } from "@pragma/shared";
@@ -15,6 +17,12 @@ import {
   type MemoryJobPage,
   type MemoryJobPageInput,
 } from "../pipeline/memory-job-page.ts";
+import {
+  deleteExtractionFailureAttempts,
+  initializeExtractionFailureAttempts,
+  insertExtractionFailureAttempt,
+  listExtractionFailureAttempts,
+} from "../pipeline/extraction-failure-store.ts";
 import { DEFAULT_MEMORY_STORAGE_POLICY } from "../storage/memory-storage-policy.ts";
 import {
   assertFreshSqliteDatabase,
@@ -35,7 +43,8 @@ export interface SkillLearningStore {
   complete(job: SkillLearningJob, completion: "retained" | "rejected", now: Date): Promise<void>;
   fail(input: {
     readonly job: SkillLearningJob;
-    readonly errorCode: string;
+    readonly diagnostic: MemoryExtractionFailureDiagnostic;
+    readonly stack?: string | undefined;
     readonly retry: "configuration" | "transient" | "capacity";
     readonly now: Date;
   }): Promise<void>;
@@ -57,6 +66,7 @@ export interface SkillLearningStore {
   deleteJob(input: { readonly id: string; readonly expectedRevision: number }): Promise<void>;
   wakeNeedsAttention(now: Date, reason?: "configuration" | "manual"): Promise<void>;
   listJobs(): Promise<readonly SkillLearningJob[]>;
+  listFailureAttempts(jobId: string): Promise<readonly MemoryExtractionFailureAttempt[]>;
   listJobsPage(
     input: MemoryJobPageInput<SkillLearningJob["status"]>,
   ): Promise<MemoryJobPage<SkillLearningJob>>;
@@ -131,6 +141,8 @@ export async function createSkillLearningStore(
       retryAt: undefined,
       leaseUntil: undefined,
       lastErrorCode: undefined,
+      lastErrorMessage: undefined,
+      lastFailure: undefined,
       failureClass: undefined,
       updatedAt: now.toISOString(),
     });
@@ -148,7 +160,7 @@ export async function createSkillLearningStore(
         return undefined;
       const timestamp = input.now.toISOString();
       const job = SkillLearningJobSchema.parse({
-        schemaVersion: "pragma.memory-skill-job/v1",
+        schemaVersion: "pragma.memory-skill-job/v2",
         id: stableId("skill-job", rootKey, input.sourceDigest),
         revision: 1,
         rootRef: input.rootRef,
@@ -206,26 +218,41 @@ export async function createSkillLearningStore(
       const current = read(input.job.id);
       if (current?.revision !== input.job.revision || current.status !== "running") return;
       const attention = input.retry !== "transient" || input.job.attempts >= 3;
-      write(
-        SkillLearningJobSchema.parse({
-          ...input.job,
-          revision: input.job.revision + 1,
-          status: attention ? "needs_attention" : "pending",
-          retryAt: attention
-            ? undefined
-            : new Date(input.now.getTime() + 2 ** input.job.attempts * 1_000).toISOString(),
-          leaseUntil: undefined,
-          lastErrorCode: input.errorCode,
-          failureClass: attention
-            ? input.retry === "capacity"
-              ? "capacity"
-              : input.retry === "configuration"
-                ? "configuration"
-                : "transient-exhausted"
-            : undefined,
-          updatedAt: input.now.toISOString(),
-        }),
-      );
+      const failed = SkillLearningJobSchema.parse({
+        ...input.job,
+        revision: input.job.revision + 1,
+        status: attention ? "needs_attention" : "pending",
+        retryAt: attention
+          ? undefined
+          : new Date(input.now.getTime() + 2 ** input.job.attempts * 1_000).toISOString(),
+        leaseUntil: undefined,
+        lastErrorCode: input.diagnostic.code,
+        lastErrorMessage: input.diagnostic.message,
+        lastFailure: input.diagnostic,
+        failureClass: attention
+          ? input.retry === "capacity"
+            ? "capacity"
+            : input.retry === "configuration"
+              ? "configuration"
+              : "transient-exhausted"
+          : undefined,
+        updatedAt: input.now.toISOString(),
+      });
+      database.exec("BEGIN IMMEDIATE;");
+      try {
+        insertExtractionFailureAttempt(database, {
+          jobId: input.job.id,
+          jobRevision: input.job.revision,
+          attempt: input.job.attempts,
+          diagnostic: input.diagnostic,
+          ...(input.stack === undefined ? {} : { stack: input.stack }),
+        });
+        write(failed);
+        database.exec("COMMIT;");
+      } catch (error) {
+        database.exec("ROLLBACK;");
+        throw error;
+      }
     },
     async retryJob(input) {
       write(
@@ -259,7 +286,15 @@ export async function createSkillLearningStore(
     },
     async deleteJob(input) {
       const job = assertManaged(read(input.id), input.expectedRevision, ["needs_attention"]);
-      database.prepare("DELETE FROM jobs WHERE id=?").run(job.id);
+      database.exec("BEGIN IMMEDIATE;");
+      try {
+        deleteExtractionFailureAttempts(database, job.id);
+        database.prepare("DELETE FROM jobs WHERE id=?").run(job.id);
+        database.exec("COMMIT;");
+      } catch (error) {
+        database.exec("ROLLBACK;");
+        throw error;
+      }
     },
     async wakeNeedsAttention(now, reason = "configuration") {
       const rows = database
@@ -277,6 +312,9 @@ export async function createSkillLearningStore(
         }[]
       ).map((row) => parse(row.job_json));
     },
+    async listFailureAttempts(jobId) {
+      return listExtractionFailureAttempts(database, jobId);
+    },
     async listJobsPage(input) {
       return queryMemoryJobPage(database, input, parse);
     },
@@ -289,7 +327,10 @@ export async function createSkillLearningStore(
       const remove = database.prepare("DELETE FROM jobs WHERE id=?");
       database.exec("BEGIN IMMEDIATE;");
       try {
-        for (const row of expired) remove.run(row.id);
+        for (const row of expired) {
+          deleteExtractionFailureAttempts(database, row.id);
+          remove.run(row.id);
+        }
         database.exec("COMMIT;");
       } catch (error) {
         database.exec("ROLLBACK;");
@@ -325,13 +366,14 @@ export async function createSkillLearningStore(
 function initialize(database: DatabaseSync): void {
   database.exec(`
     CREATE TABLE IF NOT EXISTS schema_meta(version INTEGER NOT NULL);
-    INSERT INTO schema_meta(version) SELECT 3 WHERE NOT EXISTS (SELECT 1 FROM schema_meta);
+    INSERT INTO schema_meta(version) SELECT 4 WHERE NOT EXISTS (SELECT 1 FROM schema_meta);
     CREATE TABLE IF NOT EXISTS jobs(
       id TEXT PRIMARY KEY, root_key TEXT NOT NULL, source_digest TEXT NOT NULL,
       status TEXT NOT NULL, retry_at TEXT, lease_until TEXT, job_json TEXT NOT NULL,
       UNIQUE(root_key, source_digest)
     );
   `);
+  initializeExtractionFailureAttempts(database);
 }
 
 async function assertFreshOrCurrent(database: DatabaseSync, databasePath: string): Promise<void> {
@@ -344,13 +386,19 @@ async function assertFreshOrCurrent(database: DatabaseSync, databasePath: string
   }
   const version = database.prepare("SELECT version FROM schema_meta LIMIT 1").get() as
     { readonly version: number } | undefined;
-  if (version?.version !== 1 && version?.version !== 2 && version?.version !== 3) {
+  if (
+    version?.version !== 1 &&
+    version?.version !== 2 &&
+    version?.version !== 3 &&
+    version?.version !== 4
+  ) {
     throw new Error("Unsupported pragma.memory-skill-learning-store version.");
   }
-  if (version.version === 3) return;
+  if (version.version === 4) return;
   await ensureSqliteMigrationBackup(database, databasePath, version.version);
   if (version.version === 1) migrateV1ToV2(database);
-  migrateV2ToV3(database);
+  if (version.version <= 2) migrateV2ToV3(database);
+  migrateV3ToV4(database);
 }
 
 function migrateV1ToV2(database: DatabaseSync): void {
@@ -364,12 +412,14 @@ function migrateV1ToV2(database: DatabaseSync): void {
       "UPDATE jobs SET status=?, retry_at=NULL, lease_until=NULL, job_json=? WHERE id=?",
     );
     for (const row of rows) {
-      const job = SkillLearningJobSchema.parse(JSON.parse(row.job_json));
+      const legacy = JSON.parse(row.job_json) as Record<string, unknown>;
       if (
-        job.status !== "needs_attention" ||
-        job.lastErrorCode !== "skill_source_threshold_not_met"
-      )
+        legacy.status !== "needs_attention" ||
+        legacy.lastErrorCode !== "skill_source_threshold_not_met"
+      ) {
         continue;
+      }
+      const job = upgradeSkillJob(legacy);
       const migrated = SkillLearningJobSchema.parse({
         ...job,
         revision: job.revision + 1,
@@ -378,6 +428,8 @@ function migrateV1ToV2(database: DatabaseSync): void {
         retryAt: undefined,
         leaseUntil: undefined,
         lastErrorCode: undefined,
+        lastErrorMessage: undefined,
+        lastFailure: undefined,
         failureClass: undefined,
       });
       update.run(migrated.status, JSON.stringify(migrated), migrated.id);
@@ -406,13 +458,15 @@ function migrateV2ToV3(database: DatabaseSync): void {
       "UPDATE jobs SET status=?, retry_at=?, lease_until=NULL, job_json=? WHERE id=?",
     );
     for (const row of rows) {
-      const job = SkillLearningJobSchema.parse(JSON.parse(row.job_json));
+      const legacy = JSON.parse(row.job_json) as Record<string, unknown>;
       if (
-        job.status !== "needs_attention" ||
-        job.lastErrorCode === undefined ||
-        !REQUEUEABLE_CANDIDATE_ERROR_CODES.has(job.lastErrorCode)
-      )
+        legacy.status !== "needs_attention" ||
+        typeof legacy.lastErrorCode !== "string" ||
+        !REQUEUEABLE_CANDIDATE_ERROR_CODES.has(legacy.lastErrorCode)
+      ) {
         continue;
+      }
+      const job = upgradeSkillJob(legacy);
       const migrated = SkillLearningJobSchema.parse({
         ...job,
         revision: job.revision + 1,
@@ -421,6 +475,8 @@ function migrateV2ToV3(database: DatabaseSync): void {
         retryAt: job.updatedAt,
         leaseUntil: undefined,
         lastErrorCode: undefined,
+        lastErrorMessage: undefined,
+        lastFailure: undefined,
         failureClass: undefined,
         completion: undefined,
       });
@@ -432,6 +488,35 @@ function migrateV2ToV3(database: DatabaseSync): void {
     database.exec("ROLLBACK;");
     throw error;
   }
+}
+
+function migrateV3ToV4(database: DatabaseSync): void {
+  const rows = database.prepare("SELECT id, job_json FROM jobs").all() as unknown as readonly {
+    readonly id: string;
+    readonly job_json: string;
+  }[];
+  database.exec("BEGIN IMMEDIATE;");
+  try {
+    initializeExtractionFailureAttempts(database);
+    const update = database.prepare("UPDATE jobs SET job_json=? WHERE id=?");
+    for (const row of rows) {
+      const migrated = upgradeSkillJob(JSON.parse(row.job_json));
+      update.run(JSON.stringify(migrated), row.id);
+    }
+    database.prepare("UPDATE schema_meta SET version=4").run();
+    database.exec("COMMIT;");
+  } catch (error) {
+    database.exec("ROLLBACK;");
+    throw error;
+  }
+}
+
+function upgradeSkillJob(value: unknown): SkillLearningJob {
+  if (typeof value !== "object" || value === null) throw new Error("skill_job_state_invalid");
+  return SkillLearningJobSchema.parse({
+    ...(value as Record<string, unknown>),
+    schemaVersion: "pragma.memory-skill-job/v2",
+  });
 }
 
 function refKey(ref: MemorySubjectRef): string {

@@ -31,11 +31,21 @@ import {
   type MemoryExtractorProfile,
   type MemoryExtractorProfileStore,
 } from "@pragma/memory";
+import type { MemoryExtractionFailureDiagnostic } from "@pragma/shared";
 
 import type { MissionRunner } from "../missions/mission-runner.ts";
 import { MissionStoreError, type MissionStore } from "../missions/mission-store.ts";
 import type { PragmaProjectStore } from "../projects/pragma-project-store.ts";
 import { z } from "zod";
+import type {
+  DesktopMemoryExtractionRun,
+  DesktopMemoryExtractionRunChatUpdate,
+  MissionChatSnapshot,
+} from "../../../shared/contracts/index.ts";
+import {
+  createMemoryExtractionRunArchive,
+  type MemoryExtractionRunArchive,
+} from "./memory-extraction-run-archive.ts";
 
 const CuratorMissionRegistrySchema = z.object({
   schemaVersion: z.literal("pragma.memory-curator-mission-registry/v1"),
@@ -63,6 +73,12 @@ export interface DesktopMemoryCurator {
   }): Promise<CompiledResource<InvocableResource>>;
   fingerprint(): Promise<string>;
   recoverOrphans(): Promise<number>;
+  listRuns(input: {
+    readonly module: DesktopMemoryExtractionRun["module"];
+    readonly jobId: string;
+  }): Promise<readonly DesktopMemoryExtractionRun[]>;
+  getRunChat(runId: string): Promise<MissionChatSnapshot | undefined>;
+  subscribeRunChat(listener: (update: DesktopMemoryExtractionRunChatUpdate) => void): () => void;
 }
 
 export function createDesktopMemoryCurator(options: {
@@ -80,6 +96,23 @@ export function createDesktopMemoryCurator(options: {
     component: "desktop.memory-curator",
   });
   const now = options.now ?? (() => new Date());
+  const runArchive = createMemoryExtractionRunArchive(options.pragmaHome, {
+    onMaintenanceError(error) {
+      logger.warn(
+        "desktop.memory_curator_run_archive_maintenance_failed",
+        "Memory Curator run archive maintenance could not be completed.",
+        { error },
+      );
+    },
+  });
+  const activeRuns = new Map<string, DesktopMemoryExtractionRun>();
+  const runChatListeners = new Set<(update: DesktopMemoryExtractionRunChatUpdate) => void>();
+  options.runner.subscribeChat(({ update }) => {
+    const run = activeRuns.get(update.missionId);
+    if (run === undefined) return;
+    const wrapped = { module: run.module, jobId: run.jobId, runId: run.runId, update };
+    for (const listener of runChatListeners) listener(wrapped);
+  });
 
   const resolveRuntime = async (
     profile: MemoryExtractorProfile,
@@ -154,9 +187,12 @@ export function createDesktopMemoryCurator(options: {
           options,
           runtime,
           jobId: input.jobId,
+          module: input.module,
           title: input.title,
           goal: input.prompt,
           signal: input.signal,
+          runArchive,
+          activeRuns,
         });
         return {
           content,
@@ -170,6 +206,30 @@ export function createDesktopMemoryCurator(options: {
 
   return {
     compile,
+    async listRuns(input) {
+      const archived = await runArchive.listForJob(input);
+      const active = [...activeRuns.values()].filter(
+        (run) => run.module === input.module && run.jobId === input.jobId,
+      );
+      return [...active, ...archived]
+        .filter(
+          (run, index, all) =>
+            all.findIndex((candidate) => candidate.runId === run.runId) === index,
+        )
+        .toSorted((left, right) => right.startedAt.localeCompare(left.startedAt))
+        .slice(0, 20);
+    },
+    async getRunChat(runId) {
+      const active = [...activeRuns.values()].find((run) => run.runId === runId);
+      if (active !== undefined) {
+        return await options.runner.getChat({ id: active.missionId, limit: 100 });
+      }
+      return (await runArchive.get(runId))?.chat;
+    },
+    subscribeRunChat(listener) {
+      runChatListeners.add(listener);
+      return () => runChatListeners.delete(listener);
+    },
     async recoverOrphans() {
       await removeStaleCuratorTemps(options.pragmaHome);
       const entries = await readCuratorMissionRegistry(options.pragmaHome);
@@ -224,9 +284,12 @@ async function runCuratorMission(input: {
     readonly modelSelection?: RuntimeModelSelection | undefined;
   };
   readonly jobId: string;
+  readonly module: "episodic" | "semantic" | "knowledge" | "skill";
   readonly title: string;
   readonly goal: string;
   readonly signal?: AbortSignal | undefined;
+  readonly runArchive: MemoryExtractionRunArchive;
+  readonly activeRuns: Map<string, DesktopMemoryExtractionRun>;
 }): Promise<string> {
   input.signal?.throwIfAborted();
   const project = await input.options.project.ensurePublished();
@@ -257,18 +320,56 @@ async function runCuratorMission(input: {
   const logger = createPragmaLogger(input.options.loggerProvider, {
     component: "desktop.memory-curator",
   });
-  await registerCuratorMission(pragmaHome, mission.id, input.jobId);
+  const runId = randomUUID();
+  const startedAt = new Date().toISOString();
+  const activeRun: DesktopMemoryExtractionRun = {
+    schemaVersion: "pragma.desktop-memory-extraction-run/v1",
+    runId,
+    missionId: mission.id,
+    module: input.module,
+    jobId: input.jobId,
+    status: "running",
+    startedAt,
+    runtimeId: input.runtime.runtimeId,
+    ...(input.runtime.modelSelection === undefined
+      ? {}
+      : {
+          providerId: input.runtime.modelSelection.model.providerId,
+          modelId: input.runtime.modelSelection.model.modelId,
+        }),
+  };
+  input.activeRuns.set(mission.id, activeRun);
+  let failure: MemoryExtractionFailureDiagnostic | undefined;
+  let finalStatus: DesktopMemoryExtractionRun["status"] = "failed";
   const interrupt = (): void => {
     void input.options.runner.interrupt(mission.id).catch(() => undefined);
   };
   input.signal?.addEventListener("abort", interrupt, { once: true });
   try {
+    await registerCuratorMission(pragmaHome, mission.id, input.jobId);
     input.signal?.throwIfAborted();
     await input.options.runner.run(mission.id);
     await waitForMission(input.options.missions, mission.id, input.signal);
     const finished = await input.options.missions.get(mission.id);
     if (finished.execution?.status !== "succeeded") {
-      throw new Error(`memory_curator_failed:${finished.execution?.error ?? "unknown"}`);
+      const runtimeFailure = await input.options.runner.getTerminalRuntimeFailure(mission.id);
+      const message =
+        runtimeFailure?.message ?? finished.execution?.error ?? "Memory Curator failed.";
+      const error = Object.assign(new Error(message), {
+        code: runtimeFailure?.code ?? "memory_curator_failed",
+        retryable: runtimeFailure?.retryable ?? true,
+        runtimeId: input.runtime.runtimeId,
+        providerId: input.runtime.modelSelection?.model.providerId,
+        modelId: input.runtime.modelSelection?.model.modelId,
+        ...(runtimeFailure?.httpStatus === undefined
+          ? {}
+          : { httpStatus: runtimeFailure.httpStatus }),
+        ...(runtimeFailure?.requestId === undefined ? {} : { requestId: runtimeFailure.requestId }),
+        ...(runtimeFailure?.endpoint === undefined ? {} : { endpoint: runtimeFailure.endpoint }),
+      });
+      failure = curatorFailureDiagnostic(error, activeRun, startedAt);
+      finalStatus = finished.execution?.status === "cancelled" ? "cancelled" : "failed";
+      throw error;
     }
     const chat = await input.options.runner.getChat({ id: mission.id, limit: 100 });
     const content = chat.entries
@@ -276,9 +377,33 @@ async function runCuratorMission(input: {
       .map((entry) => entry.content)
       .at(-1);
     if (content === undefined) throw new Error("memory_curator_output_missing");
+    finalStatus = "succeeded";
     return content;
+  } catch (error) {
+    failure ??= curatorFailureDiagnostic(error, activeRun, startedAt);
+    if (input.signal?.aborted === true) finalStatus = "cancelled";
+    throw error;
   } finally {
     input.signal?.removeEventListener("abort", interrupt);
+    const [chat] = await Promise.all([
+      input.options.runner.getChat({ id: mission.id, limit: 100 }).catch(() => undefined),
+    ]);
+    await input.runArchive
+      .save({
+        ...activeRun,
+        status: finalStatus,
+        finishedAt: new Date().toISOString(),
+        ...(failure === undefined ? {} : { failure }),
+        ...(chat === undefined ? {} : { chat }),
+      })
+      .catch((error: unknown) => {
+        logger.warn(
+          "desktop.memory_curator_run_archive_failed",
+          "A completed Memory Curator transcript could not be archived.",
+          { error, missionId: mission.id, runId },
+        );
+      });
+    input.activeRuns.delete(mission.id);
     if (await cleanupCuratorMission(input.options.runner, mission.id)) {
       await unregisterCuratorMission(pragmaHome, mission.id).catch((error: unknown) => {
         logger.warn(
@@ -289,6 +414,47 @@ async function runCuratorMission(input: {
       });
     }
   }
+}
+
+function curatorFailureDiagnostic(
+  error: unknown,
+  run: DesktopMemoryExtractionRun,
+  startedAt: string,
+): MemoryExtractionFailureDiagnostic {
+  const record =
+    typeof error === "object" && error !== null ? (error as Record<string, unknown>) : {};
+  const message = error instanceof Error ? error.message : String(error);
+  return {
+    schemaVersion: "pragma.memory-extraction-failure/v1",
+    code: typeof record.code === "string" ? record.code : "memory_curator_failed",
+    message: redactCuratorDiagnosticText(message).slice(0, 4_096),
+    ...(typeof record.retryable === "boolean" ? { retryable: record.retryable } : {}),
+    phase: "curator_run",
+    failedAt: new Date().toISOString(),
+    startedAt,
+    durationMs: Math.max(0, Date.now() - Date.parse(startedAt)),
+    runtime: {
+      runtimeId: run.runtimeId,
+      ...(run.providerId === undefined ? {} : { providerId: run.providerId }),
+      ...(run.modelId === undefined ? {} : { modelId: run.modelId }),
+      ...(typeof record.endpoint === "string" ? { endpoint: record.endpoint } : {}),
+    },
+    ...(typeof record.httpStatus === "number" || typeof record.requestId === "string"
+      ? {
+          transport: {
+            ...(typeof record.httpStatus === "number" ? { httpStatus: record.httpStatus } : {}),
+            ...(typeof record.requestId === "string" ? { requestId: record.requestId } : {}),
+          },
+        }
+      : {}),
+  };
+}
+
+function redactCuratorDiagnosticText(value: string): string {
+  return value
+    .replace(/\bBearer\s+[A-Za-z0-9._~+/-]+=*/giu, "Bearer [REDACTED]")
+    .replace(/\b(api[_-]?key|token|secret|password)=([^\s&]+)/giu, "$1=[REDACTED]")
+    .replace(/([?&](?:api[_-]?key|token|secret|password)=)[^\s&#]+/giu, "$1[REDACTED]");
 }
 
 async function waitForMission(

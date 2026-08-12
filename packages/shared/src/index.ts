@@ -9,6 +9,7 @@ export * from "./model-provider.schema.ts";
 export * from "./pragma-text-limits.ts";
 export * from "./mission/mission-executor.schema.ts";
 export * from "./memory/memory-plane.schema.ts";
+export * from "./memory/extraction-failure.schema.ts";
 export * from "./memory/knowledge-memory.schema.ts";
 export * from "./memory/semantic-memory.schema.ts";
 export * from "./memory/skill-memory.schema.ts";

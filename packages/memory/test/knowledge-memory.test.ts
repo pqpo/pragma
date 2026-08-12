@@ -14,6 +14,15 @@ import type {
 } from "@pragma/shared";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
+const failureDiagnostic = (code: string) =>
+  ({
+    schemaVersion: "pragma.memory-extraction-failure/v1",
+    code,
+    message: code,
+    phase: "storage",
+    failedAt: "2026-08-01T00:00:00.000Z",
+  }) as const;
+
 import { createKnowledgeMemoryModule, knowledgeSourceSelectionEligible } from "../src/index.ts";
 import {
   createKnowledgeLearningStore,
@@ -68,7 +77,7 @@ describe("Knowledge learning jobs", () => {
     const store = await createKnowledgeLearningStore({ pragmaHome: root });
     expect(await store.listJobs()).toEqual([
       expect.objectContaining({
-        schemaVersion: "pragma.memory-knowledge-job/v2",
+        schemaVersion: "pragma.memory-knowledge-job/v3",
         firstFactAt: now.toISOString(),
         deadlineAt: "2026-08-06T08:00:00.000Z",
       }),
@@ -78,7 +87,7 @@ describe("Knowledge learning jobs", () => {
     const migrated = new DatabaseSync(databasePath);
     expect(
       (migrated.prepare("SELECT version FROM schema_meta").get() as { version: number }).version,
-    ).toBe(3);
+    ).toBe(4);
     migrated.close();
   });
 
@@ -157,7 +166,7 @@ describe("Knowledge learning jobs", () => {
     const root = await temporaryRoot();
     const databasePath = await writeKnowledgeV2Store(root);
     const database = new DatabaseSync(databasePath);
-    database.prepare("UPDATE schema_meta SET version=4").run();
+    database.prepare("UPDATE schema_meta SET version=5").run();
     database.close();
 
     await expect(createKnowledgeLearningStore({ pragmaHome: root })).rejects.toThrow(
@@ -260,11 +269,21 @@ describe("Knowledge learning jobs", () => {
     const reclaimed = await store.claimDueJob(now);
     await store.fail({
       job: reclaimed!,
-      errorCode: "memory_extractor_profile_invalid",
+      diagnostic: failureDiagnostic("memory_extractor_profile_invalid"),
       retry: "configuration",
       now,
     });
     const [attention] = await store.listJobs();
+    expect(attention).toMatchObject({
+      lastErrorMessage: "memory_extractor_profile_invalid",
+      lastFailure: { code: "memory_extractor_profile_invalid", phase: "storage" },
+    });
+    expect(await store.listFailureAttempts(attention!.id)).toEqual([
+      expect.objectContaining({
+        jobId: attention!.id,
+        diagnostic: expect.objectContaining({ code: "memory_extractor_profile_invalid" }),
+      }),
+    ]);
     expect(await store.inspect()).toMatchObject({
       needsAttention: 1,
       lastErrorCode: "memory_extractor_profile_invalid",
@@ -274,7 +293,7 @@ describe("Knowledge learning jobs", () => {
     const rerun = await store.claimDueJob(now);
     await store.fail({
       job: rerun!,
-      errorCode: "memory_extractor_profile_invalid",
+      diagnostic: failureDiagnostic("memory_extractor_profile_invalid"),
       retry: "configuration",
       now,
     });
@@ -287,7 +306,7 @@ describe("Knowledge learning jobs", () => {
     const finalRun = await store.claimDueJob(now);
     await store.fail({
       job: finalRun!,
-      errorCode: "memory_capacity_exceeded",
+      diagnostic: failureDiagnostic("memory_capacity_exceeded"),
       retry: "capacity",
       now,
     });
@@ -295,6 +314,7 @@ describe("Knowledge learning jobs", () => {
     expect(deletable?.revision).toBeGreaterThan(wakeable!.revision);
     await store.deleteJob({ id: deletable!.id, expectedRevision: deletable!.revision });
     expect(await store.listJobs()).toEqual([]);
+    expect(await store.listFailureAttempts(deletable!.id)).toEqual([]);
     store.close();
   });
 

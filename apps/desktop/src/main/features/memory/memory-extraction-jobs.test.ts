@@ -3,7 +3,11 @@ import type { KnowledgeExtractionJob, SkillLearningJob } from "@pragma/shared";
 import { describe, expect, it, vi } from "vitest";
 
 import type { ListDesktopMemoryExtractionJobs } from "../../../shared/contracts/index.ts";
-import { listDesktopMemoryExtractionJobs } from "./memory-extraction-jobs.ts";
+import {
+  getDesktopMemoryExtractionTaskDetail,
+  listDesktopMemoryExtractionActiveTasks,
+  listDesktopMemoryExtractionJobs,
+} from "./memory-extraction-jobs.ts";
 
 const FIRST_PAGES: ListDesktopMemoryExtractionJobs = {
   pages: {
@@ -178,7 +182,7 @@ describe("listDesktopMemoryExtractionJobs", () => {
       );
     const emptyPage = completed([]);
     const skill: SkillLearningJob = {
-      schemaVersion: "pragma.memory-skill-job/v1",
+      schemaVersion: "pragma.memory-skill-job/v2",
       id: "skill-job",
       revision: 5,
       rootRef: { type: "pragma.expert", id: "resource-1" },
@@ -251,6 +255,88 @@ describe("listDesktopMemoryExtractionJobs", () => {
     });
     expect(board.lanes.attention.tasks[0]).not.toHaveProperty("lastErrorCode");
   });
+
+  it("returns the actionable failure history and read-only run records for a task", async () => {
+    const diagnostic = {
+      schemaVersion: "pragma.memory-extraction-failure/v1" as const,
+      code: "rate_limit_exceeded",
+      message: "429 rate limit exceeded",
+      phase: "curator_run" as const,
+      failedAt: "2026-08-05T00:00:03.000Z",
+      durationMs: 30_000,
+      runtime: { runtimeId: "runtime-a", providerId: "provider-a", modelId: "model-a" },
+      transport: { httpStatus: 429 },
+    };
+    const skill: SkillLearningJob = {
+      schemaVersion: "pragma.memory-skill-job/v2",
+      id: "skill-job",
+      revision: 4,
+      rootRef: { type: "pragma.expert", id: "resource-1" },
+      sourceDigest: "a".repeat(64),
+      status: "needs_attention",
+      attempts: 3,
+      lastErrorCode: diagnostic.code,
+      lastErrorMessage: diagnostic.message,
+      lastFailure: diagnostic,
+      failureClass: "transient-exhausted",
+      createdAt: "2026-08-05T00:00:00.000Z",
+      updatedAt: "2026-08-05T00:00:03.000Z",
+    };
+    const failureAttempt = {
+      schemaVersion: "pragma.memory-extraction-failure-attempt/v1" as const,
+      id: "attempt-1",
+      jobId: skill.id,
+      jobRevision: 3,
+      attempt: 3,
+      diagnostic,
+    };
+
+    const detail = await getDesktopMemoryExtractionTaskDetail(
+      {
+        skillLearningStore: {
+          listJobs: vi.fn(async () => [skill]),
+          listFailureAttempts: vi.fn(async () => [failureAttempt]),
+        },
+      } as unknown as Parameters<typeof getDesktopMemoryExtractionTaskDetail>[0],
+      {
+        missions: emptyTitleOptions().missions,
+        project: {
+          get: vi.fn(async () => ({
+            resources: [{ metadata: { id: "resource-1", name: "Research team" } }],
+          })),
+        },
+        curator: { listRuns: vi.fn(async () => []) },
+      } as unknown as Parameters<typeof getDesktopMemoryExtractionTaskDetail>[1],
+      { module: "skill", id: skill.id },
+    );
+
+    expect(detail).toMatchObject({
+      task: { module: "skill", lane: "attention", title: "Research team" },
+      lastErrorMessage: "429 rate limit exceeded",
+      lastFailure: { transport: { httpStatus: 429 } },
+      attempts: [{ diagnostic: { code: "rate_limit_exceeded" } }],
+      runs: [],
+    });
+  });
+
+  it("lists every active task without inheriting the board page size", async () => {
+    const active = Array.from({ length: 12 }, (_, index) => ({
+      ...episodicJob(index, new Date(Date.UTC(2026, 7, 5, 0, 0, index)).toISOString()),
+      status: "running" as const,
+    }));
+    const tasks = await listDesktopMemoryExtractionActiveTasks(
+      {
+        episodicStore: { listExtractionJobs: vi.fn(async () => active) },
+        semanticStore: { listExtractionJobs: vi.fn(async () => []) },
+        knowledgeLearningStore: { listJobs: vi.fn(async () => []) },
+        skillLearningStore: { listJobs: vi.fn(async () => []) },
+      } as unknown as Parameters<typeof listDesktopMemoryExtractionActiveTasks>[0],
+      emptyTitleOptions(),
+    );
+
+    expect(tasks).toHaveLength(12);
+    expect(tasks.every((task) => task.lane === "running")).toBe(true);
+  });
 });
 
 function emptyTitleOptions(): Parameters<typeof listDesktopMemoryExtractionJobs>[1] {
@@ -265,7 +351,7 @@ function emptyTitleOptions(): Parameters<typeof listDesktopMemoryExtractionJobs>
 
 function episodicJob(index: number, updatedAt: string): EpisodicExtractionJob {
   return {
-    schemaVersion: "pragma.memory-extraction-job/v3",
+    schemaVersion: "pragma.memory-extraction-job/v4",
     id: `job-${String(index).padStart(2, "0")}`,
     revision: 1,
     conversationRef: { type: "pragma.mission", id: "mission-1" },
@@ -284,13 +370,13 @@ function episodicJob(index: number, updatedAt: string): EpisodicExtractionJob {
 function semanticJob(index: number, updatedAt: string): SemanticExtractionJob {
   return {
     ...episodicJob(index, updatedAt),
-    schemaVersion: "pragma.memory-semantic-job/v3",
+    schemaVersion: "pragma.memory-semantic-job/v4",
   };
 }
 
 function knowledgeJob(index: number, updatedAt: string): KnowledgeExtractionJob {
   return {
-    schemaVersion: "pragma.memory-knowledge-job/v2",
+    schemaVersion: "pragma.memory-knowledge-job/v3",
     id: `knowledge-${String(index).padStart(2, "0")}`,
     revision: 1,
     rootRef: { type: "pragma.context-store", id: "resource-1" },

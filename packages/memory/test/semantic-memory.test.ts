@@ -11,6 +11,15 @@ import {
 } from "@pragma/shared";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
+const failureDiagnostic = (code: string) =>
+  ({
+    schemaVersion: "pragma.memory-extraction-failure/v1",
+    code,
+    message: code,
+    phase: "storage",
+    failedAt: "2026-08-01T00:00:00.000Z",
+  }) as const;
+
 import {
   MemoryModuleRegistry,
   MEMORY_CURATOR_REF,
@@ -353,17 +362,23 @@ describe("Semantic Memory", () => {
     const reclaimed = await module.store.claimDueJob(now);
     await module.store.fail({
       job: reclaimed!,
-      errorCode: "memory_extractor_profile_invalid",
+      diagnostic: failureDiagnostic("memory_extractor_profile_invalid"),
       retry: "configuration",
       now,
     });
     const [attention] = await module.store.listExtractionJobs();
+    expect(attention).toMatchObject({
+      lastErrorMessage: "memory_extractor_profile_invalid",
+      lastFailure: { code: "memory_extractor_profile_invalid" },
+    });
+    expect(await module.store.listFailureAttempts(attention!.id)).toHaveLength(1);
     await module.store.deleteJob({
       id: attention!.id,
       expectedRevision: attention!.revision,
       now,
     });
     expect(await module.store.listExtractionJobs()).toEqual([]);
+    expect(await module.store.listFailureAttempts(attention!.id)).toEqual([]);
     expect(await module.store.getSubjectContext(executionId)).toBeUndefined();
     expect(await module.store.readEvidence(executionId)).toEqual([]);
     module.close();
@@ -764,7 +779,7 @@ describe("Semantic Memory", () => {
     const module = await createSemanticMemoryModule({ pragmaHome: root });
     await expect(module.store.listExtractionJobs()).resolves.toEqual([
       expect.objectContaining({
-        schemaVersion: "pragma.memory-semantic-job/v3",
+        schemaVersion: "pragma.memory-semantic-job/v4",
         id: legacy.id,
         revision: 2,
         totalAttempts: 3,
