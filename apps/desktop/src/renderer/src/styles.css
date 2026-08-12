@@ -19164,6 +19164,21 @@ textarea:focus-visible,
   margin: 0;
 }
 
+.mission-image-attachment > button {
+  display: block;
+  width: 100%;
+  padding: 0;
+  border: 0;
+  border-radius: var(--ui-radius-md);
+  outline: 0;
+  background: transparent;
+  cursor: zoom-in;
+}
+
+.mission-image-attachment > button:focus-visible {
+  box-shadow: 0 0 0 3px var(--ui-focus);
+}
+
 .mission-image-attachment img {
   display: block;
   width: 100%;
@@ -21086,6 +21101,13 @@ textarea:focus-visible,
   padding: 10px 16px 2px;
 }
 
+.mission-attachment-list.has-images {
+  max-height: 270px;
+  gap: 10px;
+  padding-top: 12px;
+  padding-bottom: 8px;
+}
+
 .mission-attachment-list.is-empty {
   height: 0;
   padding: 0;
@@ -21094,6 +21116,107 @@ textarea:focus-visible,
 
 .mission-chat-composer > .mission-attachment-list {
   padding: 4px 16px 6px;
+}
+
+.mission-chat-composer > .mission-attachment-list.has-images {
+  padding-top: 8px;
+}
+
+.mission-attachment-image-card {
+  position: relative;
+  display: grid;
+  width: 112px;
+  flex: 0 0 112px;
+  align-content: start;
+  gap: 4px;
+  margin: 0;
+}
+
+.mission-attachment-thumbnail {
+  display: grid;
+  width: 96px;
+  height: 96px;
+  place-items: center;
+  padding: 0;
+  overflow: hidden;
+  border: 1px solid var(--ui-line-strong);
+  border-radius: var(--ui-radius-md);
+  outline: 0;
+  background: var(--ui-surface-subtle);
+  color: var(--ui-text-secondary);
+  cursor: zoom-in;
+}
+
+.mission-attachment-thumbnail:hover,
+.mission-attachment-thumbnail:focus-visible {
+  border-color: var(--green);
+  box-shadow: 0 0 0 3px var(--ui-focus);
+}
+
+.mission-attachment-thumbnail img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+}
+
+.mission-attachment-image-card figcaption {
+  width: 96px;
+  overflow: hidden;
+  color: var(--ui-text-secondary);
+  font-size: 11px;
+  line-height: 1.35;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.mission-attachment-image-remove {
+  position: absolute;
+  top: 5px;
+  right: 11px;
+  display: grid;
+  width: 22px;
+  height: 22px;
+  place-items: center;
+  padding: 0;
+  border: 1px solid rgb(255 255 255 / 75%);
+  border-radius: 50%;
+  background: rgb(25 31 28 / 72%);
+  color: #fff;
+  cursor: pointer;
+}
+
+.mission-attachment-model-error {
+  display: flex;
+  width: 106px;
+  align-items: flex-start;
+  gap: 3px;
+  color: var(--danger, #b42318);
+  font-size: 10px;
+  line-height: 1.35;
+}
+
+.mission-attachment-model-error svg {
+  flex: 0 0 auto;
+  margin-top: 1px;
+}
+
+.mission-original-image-dialog {
+  width: min(94vw, 1120px);
+  max-height: calc(100vh - 32px);
+}
+
+.mission-original-image-dialog .ui-dialog-body {
+  display: grid;
+  min-height: 180px;
+  place-items: center;
+  padding: 0 24px 20px;
+}
+
+.mission-original-image {
+  display: block;
+  max-width: 90vw;
+  max-height: 72vh;
+  object-fit: contain;
 }
 
 .mission-attachment-chip {

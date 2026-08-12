@@ -10,6 +10,13 @@ export const ExpertPromptAttachmentSchema = z
     path: z.string().trim().min(1).max(4_096),
     mimeType: z.string().trim().min(1).max(255).optional(),
     size: z.number().int().nonnegative().optional(),
+    optimized: z
+      .object({
+        path: z.string().trim().min(1).max(4_096),
+        mimeType: z.string().trim().min(1).max(255),
+        size: z.number().int().nonnegative(),
+      })
+      .optional(),
   })
   .superRefine((attachment, context) => {
     if (attachment.kind === "image" && attachment.mimeType === undefined) {
@@ -17,6 +24,13 @@ export const ExpertPromptAttachmentSchema = z
         code: "custom",
         path: ["mimeType"],
         message: "Image attachments require a MIME type.",
+      });
+    }
+    if (attachment.kind !== "image" && attachment.optimized !== undefined) {
+      context.addIssue({
+        code: "custom",
+        path: ["optimized"],
+        message: "Only image attachments can include an optimized rendition.",
       });
     }
   });

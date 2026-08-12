@@ -36,6 +36,12 @@ describe("Runtime always-on startup messages", () => {
       name: "screen.png",
       path: "/tmp/screen.png",
       mimeType: "image/png",
+      size: 2_000_000,
+      optimized: {
+        path: "/tmp/screen.optimized.webp",
+        mimeType: "image/webp",
+        size: 200_000,
+      },
     };
     const vision = await createFixture(["text", "image"]);
     const textOnly = await createFixture(["text"]);
@@ -45,8 +51,17 @@ describe("Runtime always-on startup messages", () => {
       await submit(textOnly.session, "inspect", [image]);
       await submit(unavailableCatalog.session, "inspect", [image]);
 
-      expect(vision.stats.turns[0]?.attachments).toEqual([image]);
-      expect(vision.stats.turns[0]?.rawQuery).toBe("inspect");
+      expect(vision.stats.turns[0]?.attachments).toEqual([
+        {
+          id: image.id,
+          kind: "image",
+          name: image.name,
+          path: "/tmp/screen.optimized.webp",
+          mimeType: "image/webp",
+          size: 200_000,
+        },
+      ]);
+      expect(vision.stats.turns[0]?.rawQuery).toContain("/tmp/screen.png");
       expect(textOnly.stats.turns[0]?.attachments).toEqual([]);
       expect(textOnly.stats.turns[0]?.rawQuery).toContain("/tmp/screen.png");
       expect(unavailableCatalog.stats.turns[0]?.attachments).toEqual([]);

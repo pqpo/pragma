@@ -51,7 +51,9 @@ import { errorMessage } from "../../lib/errors.ts";
 import { readHomeDraft, writeHomeDraft } from "../../lib/home-draft.ts";
 import {
   clipboardImageFile,
+  mergeMissionAttachmentPreviews,
   mergeMissionAttachments,
+  missionImageSupport,
   stageClipboardImage,
 } from "../../lib/mission-attachments.ts";
 import { localizeSystemExpertCopy } from "../../lib/system-expert-copy.ts";
@@ -72,6 +74,9 @@ export function HomePage(props: {
   const [defaultExecutorRef, setDefaultExecutorRef] = useState("");
   const [goal, setGoal] = useState("");
   const [attachments, setAttachments] = useState<readonly ExpertPromptAttachment[]>([]);
+  const [attachmentPreviews, setAttachmentPreviews] = useState<Readonly<Record<string, string>>>(
+    {},
+  );
   const [flowInput, setFlowInput] = useState<Readonly<Record<string, unknown>>>({});
   const [toolPermissionMode, setToolPermissionMode] =
     useState<DesktopToolPermissionMode>("request-approval");
@@ -91,6 +96,22 @@ export function HomePage(props: {
   const inputExecutorRef = useRef(props.initialExecutorRef ?? "");
   const pendingModelOverrideRef = useRef<MissionModelOverride | undefined>(undefined);
   const workspaceAssociationRequestRef = useRef(props.initialExecutorRef ?? "");
+  const attachmentIdsRef = useRef<readonly string[]>([]);
+
+  useEffect(() => {
+    attachmentIdsRef.current = attachments.map((attachment) => attachment.id);
+  }, [attachments]);
+
+  useEffect(
+    () => () => {
+      if (attachmentIdsRef.current.length > 0) {
+        void window.pragmaDesktop.discardMissionAttachmentDrafts({
+          attachmentIds: [...attachmentIdsRef.current],
+        });
+      }
+    },
+    [],
+  );
 
   useEffect(() => {
     let cancelled = false;
@@ -182,6 +203,8 @@ export function HomePage(props: {
   }, [props.initialExecutorRef]);
 
   const selectedExecutor = executors.find((executor) => executor.ref === executorRef);
+  const imageUnsupported =
+    missionImageSupport(models, modelOverride, defaultModelSelection) === "unsupported";
   const hasValidExecutor = selectedExecutor !== undefined;
   const flowInputSchema =
     selectedExecutor?.kind === "flow" ? selectedExecutor.inputSchema : undefined;
@@ -311,7 +334,7 @@ export function HomePage(props: {
     const next = executors.find((executor) => executor.ref === ref);
     workspaceAssociationRequestRef.current = ref;
     setExecutorRef(ref);
-    if (next?.kind === "flow") setAttachments([]);
+    if (next?.kind === "flow") clearAttachmentDrafts();
     const associatedWorkspace = next?.preference.lastWorkspace;
     if (associatedWorkspace === undefined) return;
     void window.pragmaDesktop
@@ -328,19 +351,46 @@ export function HomePage(props: {
       .catch(() => undefined);
   };
 
+  const clearAttachmentDrafts = () => {
+    const ids = attachments.map((attachment) => attachment.id);
+    if (ids.length > 0) {
+      void window.pragmaDesktop.discardMissionAttachmentDrafts({ attachmentIds: ids });
+    }
+    attachmentIdsRef.current = [];
+    setAttachments([]);
+    setAttachmentPreviews({});
+  };
+
+  const addAttachmentResult = (result: Awaited<ReturnType<typeof stageClipboardImage>>) => {
+    setAttachments((current) => {
+      const next = mergeMissionAttachments(current, result.attachments);
+      if (next === undefined) {
+        setError(t("attachmentLimit"));
+        void window.pragmaDesktop.discardMissionAttachmentDrafts({
+          attachmentIds: result.attachments.map((attachment) => attachment.id),
+        });
+        return current;
+      }
+      const acceptedIds = new Set(next.map((attachment) => attachment.id));
+      const rejectedIds = result.attachments
+        .filter((attachment) => !acceptedIds.has(attachment.id))
+        .map((attachment) => attachment.id);
+      if (rejectedIds.length > 0) {
+        void window.pragmaDesktop.discardMissionAttachmentDrafts({ attachmentIds: rejectedIds });
+      }
+      if (next.length > current.length) {
+        setAttachmentPreviews((previews) => mergeMissionAttachmentPreviews(previews, result, next));
+        setError(null);
+      }
+      return next;
+    });
+  };
+
   const pickAttachments = async (kind: ExpertPromptAttachmentKind) => {
     if (selectedExecutor?.kind === "flow") return;
     try {
       const result = await window.pragmaDesktop.pickMissionAttachments({ kind });
-      setAttachments((current) => {
-        const next = mergeMissionAttachments(current, result.attachments);
-        if (next === undefined) {
-          setError(t("attachmentLimit"));
-          return current;
-        }
-        if (next.length > current.length) setError(null);
-        return next;
-      });
+      addAttachmentResult(result);
     } catch (pickError) {
       setError(errorMessage(pickError));
     }
@@ -352,15 +402,7 @@ export function HomePage(props: {
       const result = await stageClipboardImage(file, (input) =>
         window.pragmaDesktop.stageMissionClipboardImage(input),
       );
-      setAttachments((current) => {
-        const next = mergeMissionAttachments(current, result.attachments);
-        if (next === undefined) {
-          setError(t("attachmentLimit"));
-          return current;
-        }
-        setError(null);
-        return next;
-      });
+      addAttachmentResult(result);
     } catch (pasteError) {
       setError(errorMessage(pasteError));
     }
@@ -456,7 +498,9 @@ export function HomePage(props: {
         ...(persistedModelOverride === undefined ? {} : { modelOverride: persistedModelOverride }),
       });
       setGoal("");
+      attachmentIdsRef.current = [];
       setAttachments([]);
+      setAttachmentPreviews({});
       setFlowInput(clearedFlowInput);
       await props.onCreated(mission);
     } catch (submitError) {
@@ -496,9 +540,17 @@ export function HomePage(props: {
           </div>
           <MissionAttachmentList
             attachments={attachments}
-            onRemove={(id) =>
-              setAttachments((current) => current.filter((attachment) => attachment.id !== id))
-            }
+            previews={attachmentPreviews}
+            imageUnsupported={imageUnsupported}
+            onRemove={(id) => {
+              void window.pragmaDesktop.discardMissionAttachmentDrafts({ attachmentIds: [id] });
+              setAttachments((current) => current.filter((attachment) => attachment.id !== id));
+              setAttachmentPreviews((current) => {
+                const next = { ...current };
+                delete next[id];
+                return next;
+              });
+            }}
           />
           {flowInputSchema === undefined ? (
             <div className="mission-goal-field">

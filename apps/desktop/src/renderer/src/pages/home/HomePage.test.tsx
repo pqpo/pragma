@@ -2,6 +2,7 @@ import { renderToStaticMarkup } from "react-dom/server";
 import { describe, expect, it } from "vitest";
 
 import { MissionModelOverrideControls } from "../../components/MissionModelOverrideControls.tsx";
+import { MissionAttachmentList } from "../../components/MissionAttachments.tsx";
 import { ToolPermissionSelect } from "../../components/ToolPermissionSelect.tsx";
 import {
   filterMissionExecutors,
@@ -38,6 +39,31 @@ describe("ExpertConstellation", () => {
 });
 
 describe("MissionModelOverrideControls", () => {
+  it("renders clickable image thumbnails with a non-blocking model error", () => {
+    const html = renderToStaticMarkup(
+      <MissionAttachmentList
+        attachments={[
+          {
+            id: "00000000-0000-4000-8000-000000000001",
+            kind: "image",
+            name: "screen.png",
+            path: "/tmp/screen.png",
+            mimeType: "image/png",
+          },
+        ]}
+        previews={{
+          "00000000-0000-4000-8000-000000000001": "data:image/webp;base64,aW1hZ2U=",
+        }}
+        imageUnsupported
+        onRemove={() => undefined}
+      />,
+    );
+
+    expect(html).toContain('aria-label="View original screen.png"');
+    expect(html).toContain("mission-attachment-thumbnail");
+    expect(html).toContain("This model does not support images");
+  });
+
   it("shows generic defaults before discovery without exposing the Runtime", () => {
     const html = renderToStaticMarkup(
       <MissionModelOverrideControls

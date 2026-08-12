@@ -74,9 +74,11 @@ describe("mission store", () => {
     const sourceDir = join(root, "source");
     const folder = join(sourceDir, "fixtures");
     const image = join(sourceDir, "screen.png");
+    const optimizedImage = join(sourceDir, "screen.optimized.webp");
     const file = join(sourceDir, "requirements.md");
     await mkdir(folder, { recursive: true });
     await writeFile(image, "image-bytes");
+    await writeFile(optimizedImage, "optimized-image-bytes");
     await writeFile(file, "requirements");
     const store = createMissionStore({ missionsPath: join(root, "missions") });
 
@@ -92,6 +94,11 @@ describe("mission store", () => {
           name: "screen.png",
           path: image,
           mimeType: "image/png",
+          optimized: {
+            path: optimizedImage,
+            mimeType: "image/webp",
+            size: 21,
+          },
         },
         {
           id: "00000000-0000-4000-8000-000000000002",
@@ -115,6 +122,20 @@ describe("mission store", () => {
       join(root, "missions", mission.id, "attachments", "images", `${stored[0]?.id}.png`),
     );
     await expect(readFile(stored[0]!.path, "utf8")).resolves.toBe("image-bytes");
+    expect(stored[0]?.optimized?.path).toBe(
+      join(
+        root,
+        "missions",
+        mission.id,
+        "attachments",
+        "images",
+        "optimized",
+        `${stored[0]?.id}.webp`,
+      ),
+    );
+    await expect(readFile(stored[0]!.optimized!.path, "utf8")).resolves.toBe(
+      "optimized-image-bytes",
+    );
     expect(stored[1]).toMatchObject({ kind: "file", path: await realpath(file), size: 12 });
     expect(stored[2]).toEqual({
       id: "00000000-0000-4000-8000-000000000003",
