@@ -195,6 +195,78 @@ describe("MissionRunner", { timeout: 15_000 }, () => {
     ]);
   });
 
+  it("marks system Mission chat and work notifications as internal", async () => {
+    const root = await mkdtemp(join(tmpdir(), "pragma-system-mission-notifications-"));
+    temporaryPaths.push(root);
+    const project = createPragmaProjectStore({ projectsPath: join(root, "projects") });
+    const snapshot = await project.publish({
+      expectedRevision: 0,
+      resources: [runtimeFixture(), expertFixture()],
+    });
+    const missions = createMissionStore({ missionsPath: join(root, "missions") });
+    const mission = await missions.create({
+      workspace: { path: root, basename: "workspace" },
+      goal: "Run an internal Mission",
+      project: { id: snapshot.projectId, revision: snapshot.revision },
+      executor: missionExecutorSnapshot(
+        snapshot.resources.find((resource) => resource.kind === "Expert")!,
+      ),
+      origin: { type: "system-memory", jobId: "memory-job" },
+    });
+    const runtime = defineRuntimeDriver<never, { id: string }>({
+      descriptor: { id: "fake", kind: "fake", displayName: "Fake" },
+      createSession: () => ({ id: "runtime" }),
+      readSession: (session) => ({ runtimeSessionId: session.id }),
+      startTurn(_session, turn) {
+        turn.stream.write({
+          runId: turn.runId,
+          source: turn.source,
+          type: "message.delta",
+          payload: {
+            role: "assistant",
+            contentType: "text",
+            delta: "internal output",
+          },
+        });
+        return { outputText: "internal output", runtimeSessionId: "runtime" };
+      },
+      mapEvent: () => ({ events: [] }),
+    });
+    const runner = createMissionRunner({
+      missions,
+      project,
+      capabilityStore: {} as CapabilityStore,
+      capabilityCredentials: {} as CapabilityCredentialStore,
+      capabilitiesPath: join(root, "capabilities"),
+      pragmaHome: join(root, "state"),
+      runtimes: createStaticRuntimeResolver({ runtimes: [runtime], defaultRuntimeId: "fake" }),
+    });
+    const chatNotifications = vi.fn();
+    const workNotifications = vi.fn();
+    const unsubscribeChat = runner.subscribeChat(chatNotifications);
+    const unsubscribeWork = runner.subscribeWork(workNotifications);
+
+    await runner.run(mission.id);
+    await vi.waitFor(
+      async () => expect((await missions.get(mission.id)).execution?.status).toBe("succeeded"),
+      { timeout: settlementTimeoutMs },
+    );
+
+    expect(chatNotifications).toHaveBeenCalled();
+    expect(
+      chatNotifications.mock.calls.some(([notification]) => notification.update.kind === "patch"),
+    ).toBe(true);
+    expect(
+      chatNotifications.mock.calls.every(([notification]) => notification.audience === "internal"),
+    ).toBe(true);
+    expect(workNotifications).toHaveBeenCalled();
+    expect(
+      workNotifications.mock.calls.every(([notification]) => notification.audience === "internal"),
+    ).toBe(true);
+    unsubscribeChat();
+    unsubscribeWork();
+  });
+
   it("skips compilation for a follow-up on the live Mission Session", async () => {
     const root = await mkdtemp(join(tmpdir(), "pragma-mission-followup-fast-path-"));
     temporaryPaths.push(root);
@@ -568,7 +640,7 @@ describe("MissionRunner", { timeout: 15_000 }, () => {
       });
     const runner = createRunner();
     const chatUpdates: MissionChatUpdate[] = [];
-    const unsubscribe = runner.subscribeChat((update) => chatUpdates.push(update));
+    const unsubscribe = runner.subscribeChat(({ update }) => chatUpdates.push(update));
 
     await runner.run(mission.id);
     await vi.waitFor(() => {
@@ -796,7 +868,7 @@ describe("MissionRunner", { timeout: 15_000 }, () => {
     );
     expect(updates).toHaveBeenCalled();
     const patchUpdates = updates.mock.calls
-      .map(([update]) => update)
+      .map(([notification]) => notification.update)
       .filter((update) => update.kind === "patch");
     expect(patchUpdates.length).toBeGreaterThanOrEqual("Checking constraints.".length + 1);
     expect(patchUpdates.flatMap((update) => update.patches)).toEqual(
@@ -900,7 +972,7 @@ describe("MissionRunner", { timeout: 15_000 }, () => {
       runtimes: createStaticRuntimeResolver({ runtimes: [runtime], defaultRuntimeId: "fake" }),
     });
     const updates: unknown[] = [];
-    const unsubscribe = runner.subscribeChat((update) => updates.push(update));
+    const unsubscribe = runner.subscribeChat(({ update }) => updates.push(update));
 
     await runner.run(mission.id);
     await outputWasWritten;
@@ -1135,7 +1207,7 @@ describe("MissionRunner", { timeout: 15_000 }, () => {
       runtimes: createStaticRuntimeResolver({ runtimes: [runtime], defaultRuntimeId: "fake" }),
     });
     const updates: MissionChatUpdate[] = [];
-    const unsubscribe = runner.subscribeChat((update) => updates.push(update));
+    const unsubscribe = runner.subscribeChat(({ update }) => updates.push(update));
 
     for (const mission of [expertMission, teamMission, flowMission]) {
       await runner.run(mission.id);

@@ -35,6 +35,10 @@ import { availableRecentWorkspaces } from "../workspaces/workspace-history-store
 import { validateWorkspace } from "../workspaces/workspace-scope.ts";
 import type { HomeExecutorCatalog } from "./home-executor-catalog.ts";
 import { installMissionAttachmentProtocol } from "./mission-attachment-protocol.ts";
+import {
+  forwardMissionChatNotification,
+  forwardMissionWorkNotification,
+} from "./mission-renderer-update-forwarder.ts";
 
 export function installMissionHandlers(options: {
   readonly missions: MissionStore;
@@ -342,18 +346,29 @@ export function installMissionHandlers(options: {
       publishRemoval(missionId);
     }),
   );
-  options.runner.subscribeChat((update) => {
-    void getUserMission(update.missionId)
-      .then((mission) => {
-        options.getWindow()?.webContents.send("missions:chat:updated", update);
-        if (update.kind === "invalidate") publishMission(mission);
-      })
-      .catch(() => undefined);
+  options.runner.subscribeChat((notification) => {
+    forwardMissionChatNotification({
+      notification,
+      getSender: () => options.getWindow()?.webContents ?? null,
+      refreshMissionSummary: async (missionId) => publishMission(await getUserMission(missionId)),
+      reportSummaryRefreshFailure: (error, missionId) => {
+        console.warn(
+          JSON.stringify({
+            level: "warn",
+            component: "desktop.missions",
+            event: "mission_renderer_summary_refresh_failed",
+            message: error instanceof Error ? error.message : String(error),
+            missionId,
+          }),
+        );
+      },
+    });
   });
-  options.runner.subscribeWork((update) => {
-    void getUserMission(update.missionId)
-      .then(() => options.getWindow()?.webContents.send("missions:work:updated", update))
-      .catch(() => undefined);
+  options.runner.subscribeWork((notification) => {
+    forwardMissionWorkNotification({
+      notification,
+      getSender: () => options.getWindow()?.webContents ?? null,
+    });
   });
 }
 
