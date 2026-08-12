@@ -181,7 +181,9 @@ export interface RuntimeCloseContext {
 
 export interface RuntimeDriver<TNativeEvent, TNativeSession, TPrepared = RuntimePreparedContext> {
   readonly descriptor: RuntimeAdapterDescriptor;
-  readonly canUse?: ((options?: Record<string, unknown>) => Promise<RuntimeCanUseResult> | RuntimeCanUseResult) | undefined;
+  readonly canUse?:
+    | ((options?: Record<string, unknown>) => Promise<RuntimeCanUseResult> | RuntimeCanUseResult)
+    | undefined;
   readonly listModels?: (() => Promise<readonly RuntimeModel[]>) | undefined;
   readonly defaultOutputParser?: RuntimeOutputParser | undefined;
   readonly outputRetryLimit?: number | undefined;
@@ -283,7 +285,11 @@ export function defineRuntimeDriver<
   const runtime: RuntimeAdapter = {
     descriptor,
     canUse: async (options?: Record<string, unknown>) =>
-      (await (driver.canUse as ((opts?: Record<string, unknown>) => Promise<RuntimeCanUseResult> | RuntimeCanUseResult) | undefined)?.(options)) ?? { usable: true },
+      (await (
+        driver.canUse as
+          | ((opts?: Record<string, unknown>) => Promise<RuntimeCanUseResult> | RuntimeCanUseResult)
+          | undefined
+      )?.(options)) ?? { usable: true },
     ...(driver.listModels === undefined ? {} : { listModels: driver.listModels }),
   };
   registerRuntimeSessionFactory(
@@ -1288,6 +1294,7 @@ async function resolveRuntimeAttachmentPlan(options: {
   if (images.length === 0) {
     return { query: options.query, nativeAttachments: options.attachments };
   }
+  const queryWithOriginalPaths = ensureImagePathContext(options.query, images);
 
   let selectedModel: RuntimeModel | undefined;
   let reason = "model-capability-unavailable";
@@ -1303,7 +1310,20 @@ async function resolveRuntimeAttachmentPlan(options: {
   }
 
   if (selectedModel?.inputModalities?.includes("image") === true) {
-    return { query: options.query, nativeAttachments: options.attachments };
+    return {
+      query: queryWithOriginalPaths,
+      nativeAttachments: options.attachments.map((attachment) => {
+        if (attachment.kind !== "image" || attachment.optimized === undefined) return attachment;
+        return {
+          id: attachment.id,
+          kind: attachment.kind,
+          name: attachment.name,
+          path: attachment.optimized.path,
+          mimeType: attachment.optimized.mimeType,
+          size: attachment.optimized.size,
+        };
+      }),
+    };
   }
 
   options.logger.warn(
@@ -1318,7 +1338,7 @@ async function resolveRuntimeAttachmentPlan(options: {
     },
   );
   return {
-    query: ensureImagePathContext(options.query, images),
+    query: queryWithOriginalPaths,
     nativeAttachments: options.attachments.filter((attachment) => attachment.kind !== "image"),
   };
 }

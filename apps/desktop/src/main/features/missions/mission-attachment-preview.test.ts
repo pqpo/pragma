@@ -25,6 +25,11 @@ describe("Mission attachment previews", () => {
         `pragma-mission-attachment://preview/${missionId}/${attachmentId}`,
       ),
     ).toEqual({ missionId, attachmentId });
+    expect(
+      parseMissionAttachmentPreviewUrl(
+        `pragma-mission-attachment://original/${missionId}/${attachmentId}`,
+      ),
+    ).toEqual({ missionId, attachmentId });
     expect(() =>
       parseMissionAttachmentPreviewUrl(
         `pragma-mission-attachment://other/${missionId}/${attachmentId}`,
@@ -57,8 +62,16 @@ describe("Mission attachment previews", () => {
     roots.push(root);
     const missionPath = join(root, missionId);
     const imagePath = join(missionPath, "attachments", "images", `${attachmentId}.png`);
-    await mkdir(join(missionPath, "attachments", "images"), { recursive: true });
+    const optimizedPath = join(
+      missionPath,
+      "attachments",
+      "images",
+      "optimized",
+      `${attachmentId}.webp`,
+    );
+    await mkdir(join(missionPath, "attachments", "images", "optimized"), { recursive: true });
     await writeFile(imagePath, "image-bytes");
+    await writeFile(optimizedPath, "optimized-bytes");
     const attachments: ExpertPromptAttachment[] = [
       {
         id: attachmentId,
@@ -66,6 +79,7 @@ describe("Mission attachment previews", () => {
         name: "screen.png",
         path: imagePath,
         mimeType: "image/png",
+        optimized: { path: optimizedPath, mimeType: "image/webp", size: 15 },
       },
     ];
     const store = {
@@ -74,16 +88,19 @@ describe("Mission attachment previews", () => {
     };
 
     await expect(resolveMissionAttachmentImage(store, missionId, attachmentId)).resolves.toEqual({
-      path: await realpath(imagePath),
-      mimeType: "image/png",
+      path: await realpath(optimizedPath),
+      mimeType: "image/webp",
     });
+    await expect(
+      resolveMissionAttachmentImage(store, missionId, attachmentId, "original"),
+    ).resolves.toEqual({ path: await realpath(imagePath), mimeType: "image/png" });
 
     const outsidePath = join(root, "outside.png");
     await writeFile(outsidePath, "outside");
     attachments[0] = { ...attachments[0]!, path: outsidePath };
-    await expect(resolveMissionAttachmentImage(store, missionId, attachmentId)).rejects.toThrow(
-      "escaped its owner directory",
-    );
+    await expect(
+      resolveMissionAttachmentImage(store, missionId, attachmentId, "original"),
+    ).rejects.toThrow("escaped its owner directory");
   });
 
   it("rejects non-image attachments and unknown identifiers", async () => {

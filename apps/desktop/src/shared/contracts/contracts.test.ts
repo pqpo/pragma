@@ -808,6 +808,11 @@ describe("mission contracts", () => {
       name: "pasted-image.png",
       path: "/tmp/pasted-image.png",
       mimeType: "image/png",
+      optimized: {
+        path: "/tmp/pasted-image.optimized.webp",
+        mimeType: "image/webp",
+        size: 120_000,
+      },
     };
     expect(
       SendMissionMessageSchema.parse({
@@ -829,6 +834,14 @@ describe("mission contracts", () => {
         name: "pasted-image.bmp",
         mimeType: "image/bmp",
         data: "not base64!",
+      }).success,
+    ).toBe(false);
+    expect(
+      SendMissionMessageSchema.safeParse({
+        id: "00000000-0000-4000-8000-000000000001",
+        content: "Review this file.",
+        requestId: "00000000-0000-4000-8000-000000000003",
+        attachments: [{ ...attachment, kind: "file", mimeType: undefined }],
       }).success,
     ).toBe(false);
   });

@@ -66,6 +66,12 @@ export const missions = {
   attachmentLimit: "每个任务最多可添加 20 个附件。",
   attachmentUnavailableForFlow: "附件目前支持专家和专家团队。",
   attachmentPreviewAlt: "{{name}} 的预览",
+  viewOriginalImage: "查看原图 {{name}}",
+  originalImageDescription: "原始图片",
+  originalImageAlt: "{{name}} 的原图",
+  originalImageUnavailable: "无法加载原始图片。",
+  closeImagePreview: "关闭预览",
+  imageUnsupportedByModel: "当前模型不支持图片，将仅提供原图路径。",
   attachmentKind: {
     image: "图片",
     file: "文件",

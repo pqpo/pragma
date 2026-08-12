@@ -44,7 +44,7 @@ import type {
   HumanInteractionResponse,
 } from "@pragma/shared";
 
-import { ConfirmationDialog } from "../../components/Dialog.tsx";
+import { ConfirmationDialog, Dialog } from "../../components/Dialog.tsx";
 import {
   type Mission,
   type MissionChatEntry,
@@ -60,7 +60,9 @@ import {
   type DesktopRuntimeModel,
   type DesktopToolPermissionMode,
   type MissionModelOverride,
+  type PickMissionAttachmentsResult,
   type PragmaDesktopAPI,
+  missionAttachmentOriginalUrl,
   missionAttachmentPreviewUrl,
 } from "../../../../shared/contracts/index.ts";
 import { errorMessage } from "../../lib/errors.ts";
@@ -93,7 +95,9 @@ import {
 } from "../../lib/mission-draft.ts";
 import {
   clipboardImageFile,
+  mergeMissionAttachmentPreviews,
   mergeMissionAttachments,
+  missionImageSupport,
   stageClipboardImage,
 } from "../../lib/mission-attachments.ts";
 import {
@@ -1165,6 +1169,9 @@ export function MissionDetailFragment(props: {
       : "",
   );
   const [attachments, setAttachments] = useState<readonly ExpertPromptAttachment[]>([]);
+  const [attachmentPreviews, setAttachmentPreviews] = useState<Readonly<Record<string, string>>>(
+    {},
+  );
   const [optimisticMessages, setOptimisticMessages] = useState<LocalMissionUserMessage[]>([]);
   const [contextOperations, setContextOperations] = useState<LocalMissionContextOperation[]>([]);
   const [awaitingRequestId, setAwaitingRequestId] = useState<string | null>(null);
@@ -1209,6 +1216,24 @@ export function MissionDetailFragment(props: {
   const followLatestRef = useRef(true);
   const chatScrollTopRef = useRef(0);
   const chatScrollMissionIdRef = useRef(props.mission.id);
+  const attachmentIdsRef = useRef<readonly string[]>([]);
+  const imageUnsupported =
+    missionImageSupport(models, modelOverride, defaultModelSelection) === "unsupported";
+
+  useEffect(() => {
+    attachmentIdsRef.current = attachments.map((attachment) => attachment.id);
+  }, [attachments]);
+
+  useEffect(
+    () => () => {
+      if (attachmentIdsRef.current.length > 0) {
+        void desktopApi()?.discardMissionAttachmentDrafts({
+          attachmentIds: [...attachmentIdsRef.current],
+        });
+      }
+    },
+    [],
+  );
   const memoryStoreSource = useMemo<ContextStoreBrowserSource>(() => {
     const target = { missionId: props.mission.id, storeId: "memory" } as const;
     return {
@@ -1300,6 +1325,12 @@ export function MissionDetailFragment(props: {
         : t("openStudioToEditExpert", { ns: "missions" });
 
   useEffect(() => {
+    if (attachmentIdsRef.current.length > 0) {
+      void desktopApi()?.discardMissionAttachmentDrafts({
+        attachmentIds: [...attachmentIdsRef.current],
+      });
+    }
+    attachmentIdsRef.current = [];
     draftMissionIdRef.current = null;
     setDraft(
       props.mission.lifecycleStatus === "active"
@@ -1311,6 +1342,7 @@ export function MissionDetailFragment(props: {
     );
     setOptimisticMessages([]);
     setAttachments([]);
+    setAttachmentPreviews({});
     setContextOperations([]);
     setAwaitingRequestId(null);
     setOptionsError(null);
@@ -1339,7 +1371,14 @@ export function MissionDetailFragment(props: {
   useEffect(() => {
     if (props.mission.lifecycleStatus !== "completed") return;
     setDraft("");
+    if (attachmentIdsRef.current.length > 0) {
+      void desktopApi()?.discardMissionAttachmentDrafts({
+        attachmentIds: [...attachmentIdsRef.current],
+      });
+    }
+    attachmentIdsRef.current = [];
     setAttachments([]);
+    setAttachmentPreviews({});
     writeMissionDraft(
       typeof window === "undefined" ? undefined : window.localStorage,
       props.mission.id,
@@ -1749,12 +1788,18 @@ export function MissionDetailFragment(props: {
       status: "pending",
     };
     setDraft("");
+    const sentAttachmentIds = attachments.map((attachment) => attachment.id);
+    const sentAttachmentPreviews = attachmentPreviews;
+    let discardSentDrafts = false;
+    attachmentIdsRef.current = [];
     setAttachments([]);
+    setAttachmentPreviews({});
     setOptimisticMessages((current) => [...current, optimistic]);
     setAwaitingRequestId(requestId);
     followLatestRef.current = true;
     try {
       await props.onSend?.(content, requestId, optimistic.attachments);
+      discardSentDrafts = true;
     } catch {
       const api = desktopApi();
       const snapshot =
@@ -1763,28 +1808,53 @@ export function MissionDetailFragment(props: {
           : await api.getMissionChat({ id: props.mission.id, limit: 50 }).catch(() => undefined);
       if (snapshot !== undefined) updateChat((current) => mergeLatestChatPage(current, snapshot));
       const persisted = snapshot?.entries.some((entry) => entry.id === requestId) ?? false;
+      discardSentDrafts = persisted;
       setOptimisticMessages((current) =>
         persisted
           ? current.filter((message) => message.id !== requestId)
-          : current.map((message) =>
-              message.id === requestId ? { ...message, status: "failed" } : message,
-            ),
+          : optimistic.attachments.length > 0
+            ? current.filter((message) => message.id !== requestId)
+            : current.map((message) =>
+                message.id === requestId ? { ...message, status: "failed" } : message,
+              ),
       );
+      if (!persisted && optimistic.attachments.length > 0) {
+        setDraft(content);
+        attachmentIdsRef.current = sentAttachmentIds;
+        setAttachments(optimistic.attachments);
+        setAttachmentPreviews(sentAttachmentPreviews);
+      }
       setAwaitingRequestId(null);
     } finally {
+      if (discardSentDrafts && sentAttachmentIds.length > 0) {
+        void desktopApi()?.discardMissionAttachmentDrafts({ attachmentIds: sentAttachmentIds });
+      }
       finishClientOperation(operationToken);
       requestAnimationFrame(() => textareaRef.current?.focus());
     }
   };
 
-  const addAttachments = (additions: readonly ExpertPromptAttachment[]) => {
+  const addAttachments = (result: PickMissionAttachmentsResult) => {
     setAttachments((current) => {
-      const next = mergeMissionAttachments(current, additions);
+      const next = mergeMissionAttachments(current, result.attachments);
       if (next === undefined) {
         setOptionsError(t("attachmentLimit", { ns: "missions" }));
+        void desktopApi()?.discardMissionAttachmentDrafts({
+          attachmentIds: result.attachments.map((attachment) => attachment.id),
+        });
         return current;
       }
-      if (next.length > current.length) setOptionsError(null);
+      const acceptedIds = new Set(next.map((attachment) => attachment.id));
+      const rejectedIds = result.attachments
+        .filter((attachment) => !acceptedIds.has(attachment.id))
+        .map((attachment) => attachment.id);
+      if (rejectedIds.length > 0) {
+        void desktopApi()?.discardMissionAttachmentDrafts({ attachmentIds: rejectedIds });
+      }
+      if (next.length > current.length) {
+        setAttachmentPreviews((previews) => mergeMissionAttachmentPreviews(previews, result, next));
+        setOptionsError(null);
+      }
       return next;
     });
   };
@@ -1792,7 +1862,7 @@ export function MissionDetailFragment(props: {
   const pickAttachments = async (kind: ExpertPromptAttachmentKind) => {
     if (isFlow) return;
     try {
-      addAttachments((await window.pragmaDesktop.pickMissionAttachments({ kind })).attachments);
+      addAttachments(await window.pragmaDesktop.pickMissionAttachments({ kind }));
     } catch (pickError) {
       setOptionsError(errorMessage(pickError));
     }
@@ -1803,7 +1873,7 @@ export function MissionDetailFragment(props: {
       const result = await stageClipboardImage(file, (input) =>
         window.pragmaDesktop.stageMissionClipboardImage(input),
       );
-      addAttachments(result.attachments);
+      addAttachments(result);
     } catch (pasteError) {
       setOptionsError(errorMessage(pasteError));
     }
@@ -2473,11 +2543,19 @@ export function MissionDetailFragment(props: {
                     />
                     <MissionAttachmentList
                       attachments={attachments}
-                      onRemove={(id) =>
+                      previews={attachmentPreviews}
+                      imageUnsupported={imageUnsupported}
+                      onRemove={(id) => {
+                        void desktopApi()?.discardMissionAttachmentDrafts({ attachmentIds: [id] });
                         setAttachments((current) =>
                           current.filter((attachment) => attachment.id !== id),
-                        )
-                      }
+                        );
+                        setAttachmentPreviews((current) => {
+                          const next = { ...current };
+                          delete next[id];
+                          return next;
+                        });
+                      }}
                     />
                     <div className="mission-chat-composer-toolbar">
                       <div className="mission-chat-options" aria-label={t("missionOptions")}>
@@ -3299,17 +3377,56 @@ function MissionImageAttachment(props: {
 }) {
   const { t } = useTranslation("missions");
   const [failed, setFailed] = useState(false);
+  const [open, setOpen] = useState(false);
+  const [originalFailed, setOriginalFailed] = useState(false);
   if (failed) return <MissionAttachmentLabel attachment={props.attachment} />;
   return (
-    <figure className="mission-image-attachment">
-      <img
-        alt={t("attachmentPreviewAlt", { name: props.attachment.name })}
-        loading="lazy"
-        src={missionAttachmentPreviewUrl(props.missionId, props.attachment.id)}
-        onError={() => setFailed(true)}
-      />
-      <figcaption>{props.attachment.name}</figcaption>
-    </figure>
+    <>
+      <figure className="mission-image-attachment">
+        <button
+          type="button"
+          aria-label={t("viewOriginalImage", { name: props.attachment.name })}
+          onClick={() => {
+            setOriginalFailed(false);
+            setOpen(true);
+          }}
+        >
+          <img
+            alt={t("attachmentPreviewAlt", { name: props.attachment.name })}
+            loading="lazy"
+            src={missionAttachmentPreviewUrl(props.missionId, props.attachment.id)}
+            onError={() => setFailed(true)}
+          />
+        </button>
+        <figcaption>{props.attachment.name}</figcaption>
+      </figure>
+      {open ? (
+        <Dialog
+          className="mission-original-image-dialog"
+          title={props.attachment.name}
+          description={t("originalImageDescription")}
+          onCancel={() => setOpen(false)}
+          footer={
+            <button className="secondary-button" type="button" onClick={() => setOpen(false)}>
+              {t("closeImagePreview")}
+            </button>
+          }
+        >
+          {originalFailed ? (
+            <p className="form-error" role="alert">
+              {t("originalImageUnavailable")}
+            </p>
+          ) : (
+            <img
+              className="mission-original-image"
+              src={missionAttachmentOriginalUrl(props.missionId, props.attachment.id)}
+              alt={t("originalImageAlt", { name: props.attachment.name })}
+              onError={() => setOriginalFailed(true)}
+            />
+          )}
+        </Dialog>
+      ) : null}
+    </>
   );
 }
 

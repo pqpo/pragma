@@ -277,6 +277,19 @@ export const PickMissionAttachmentsSchema = z.object({
 
 export const PickMissionAttachmentsResultSchema = z.object({
   attachments: z.array(ExpertPromptAttachmentSchema).max(20),
+  previews: z
+    .array(
+      z.object({
+        attachmentId: z.string().uuid(),
+        dataUrl: z.string().startsWith("data:image/").max(512_000),
+      }),
+    )
+    .max(20)
+    .default([]),
+});
+
+export const DiscardMissionAttachmentDraftsSchema = z.object({
+  attachmentIds: z.array(z.string().uuid()).max(20),
 });
 
 export const StageMissionClipboardImageSchema = z.object({
@@ -426,6 +439,14 @@ export const MISSION_ATTACHMENT_PREVIEW_SCHEME = "pragma-mission-attachment";
 
 export function missionAttachmentPreviewUrl(missionId: string, attachmentId: string): string {
   return `${MISSION_ATTACHMENT_PREVIEW_SCHEME}://preview/${encodeURIComponent(missionId)}/${encodeURIComponent(attachmentId)}`;
+}
+
+export function missionAttachmentOriginalUrl(missionId: string, attachmentId: string): string {
+  return `${MISSION_ATTACHMENT_PREVIEW_SCHEME}://original/${encodeURIComponent(missionId)}/${encodeURIComponent(attachmentId)}`;
+}
+
+export function missionAttachmentDraftOriginalUrl(attachmentId: string): string {
+  return `${MISSION_ATTACHMENT_PREVIEW_SCHEME}://draft-original/${encodeURIComponent(attachmentId)}`;
 }
 
 export const MissionWorkConversationSnapshotSchema = z.object({

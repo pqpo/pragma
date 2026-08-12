@@ -12,7 +12,7 @@ import {
   truncate,
   writeFile,
 } from "node:fs/promises";
-import { basename, dirname, extname, join } from "node:path";
+import { basename, dirname, extname, join, relative } from "node:path";
 
 import { withFileLock } from "@pragma/core";
 import type { ExpertPromptAttachment } from "@pragma/shared";
@@ -568,9 +568,16 @@ export function createMissionStore(options: { readonly missionsPath: string }): 
           return added;
         } catch (error) {
           await Promise.all(
-            added
-              .filter((attachment) => attachment.kind === "image")
-              .map(async (attachment) => await rm(attachment.path, { force: true })),
+            added.flatMap((attachment) =>
+              attachment.kind !== "image"
+                ? []
+                : [
+                    rm(attachment.path, { force: true }),
+                    ...(attachment.optimized === undefined
+                      ? []
+                      : [rm(attachment.optimized.path, { force: true })]),
+                  ],
+            ),
           );
           throw error;
         }
@@ -804,21 +811,37 @@ async function materializeMissionAttachments(options: {
           size: metadata.size,
         };
       }
-      if (metadata.size > MAX_IMAGE_ATTACHMENT_BYTES) {
+      if (metadata.size === 0 || metadata.size > MAX_IMAGE_ATTACHMENT_BYTES) {
         throw new Error(`Image attachments must be 20 MiB or smaller: ${basename(sourcePath)}`);
       }
       const mimeType = missionImageMimeType(sourcePath);
-      const relativePath = join("attachments", "images", `${attachment.id}${extname(sourcePath)}`);
-      const temporaryPath = join(options.temporaryMissionPath, relativePath);
+      if (mimeType !== attachment.mimeType) {
+        throw new Error(`Image attachment type does not match its path: ${basename(sourcePath)}`);
+      }
+      const originalRelativePath = join(
+        "attachments",
+        "images",
+        `${attachment.id}${imageExtension(mimeType)}`,
+      );
+      const temporaryPath = join(options.temporaryMissionPath, originalRelativePath);
       await mkdir(dirname(temporaryPath), { recursive: true, mode: 0o700 });
       await copyFile(sourcePath, temporaryPath);
+      const optimized =
+        attachment.optimized === undefined
+          ? undefined
+          : await materializeOptimizedImage({
+              attachment,
+              temporaryMissionPath: options.temporaryMissionPath,
+              targetMissionPath: options.targetMissionPath,
+            });
       return {
         id: attachment.id,
         kind: attachment.kind,
         name: attachment.name,
-        path: join(options.targetMissionPath, relativePath),
+        path: join(options.targetMissionPath, originalRelativePath),
         mimeType,
         size: metadata.size,
+        ...(optimized === undefined ? {} : { optimized }),
       };
     }),
   );
@@ -841,23 +864,57 @@ async function materializeAdditionalMissionAttachments(options: {
       targetMissionPath: options.targetMissionPath,
     });
     const images = materialized.attachments.filter((attachment) => attachment.kind === "image");
-    if (images.length > 0) {
-      const targetImagesPath = join(options.targetMissionPath, "attachments", "images");
-      await mkdir(targetImagesPath, { recursive: true, mode: 0o700 });
+    const movedPaths: string[] = [];
+    try {
       for (const attachment of images) {
-        const source = join(
-          temporaryMissionPath,
-          "attachments",
-          "images",
-          basename(attachment.path),
-        );
-        await rename(source, attachment.path);
+        for (const target of [attachment.path, attachment.optimized?.path]) {
+          if (target === undefined) continue;
+          const source = join(temporaryMissionPath, relative(options.targetMissionPath, target));
+          await mkdir(dirname(target), { recursive: true, mode: 0o700 });
+          await rename(source, target);
+          movedPaths.push(target);
+        }
       }
+    } catch (error) {
+      await Promise.all(movedPaths.map(async (path) => await rm(path, { force: true })));
+      throw error;
     }
     return materialized.attachments;
   } finally {
     await rm(temporaryMissionPath, { recursive: true, force: true });
   }
+}
+
+async function materializeOptimizedImage(options: {
+  readonly attachment: ExpertPromptAttachment;
+  readonly temporaryMissionPath: string;
+  readonly targetMissionPath: string;
+}): Promise<NonNullable<ExpertPromptAttachment["optimized"]>> {
+  const optimized = options.attachment.optimized;
+  if (optimized === undefined) throw new Error("Optimized image metadata is missing.");
+  const sourcePath = await realpath(optimized.path);
+  const metadata = await stat(sourcePath);
+  if (!metadata.isFile() || metadata.size === 0 || metadata.size > MAX_IMAGE_ATTACHMENT_BYTES) {
+    throw new Error(`Optimized image attachment is unavailable: ${basename(sourcePath)}`);
+  }
+  const mimeType = missionImageMimeType(sourcePath);
+  if (mimeType !== optimized.mimeType) {
+    throw new Error(`Optimized image type does not match its path: ${basename(sourcePath)}`);
+  }
+  const relativePath = join(
+    "attachments",
+    "images",
+    "optimized",
+    `${options.attachment.id}${imageExtension(mimeType)}`,
+  );
+  const temporaryPath = join(options.temporaryMissionPath, relativePath);
+  await mkdir(dirname(temporaryPath), { recursive: true, mode: 0o700 });
+  await copyFile(sourcePath, temporaryPath);
+  return {
+    path: join(options.targetMissionPath, relativePath),
+    mimeType,
+    size: metadata.size,
+  };
 }
 
 function missionImageMimeType(
@@ -875,6 +932,19 @@ function missionImageMimeType(
       return "image/webp";
     default:
       throw new Error(`Unsupported image attachment type: ${basename(path)}`);
+  }
+}
+
+function imageExtension(mimeType: "image/gif" | "image/jpeg" | "image/png" | "image/webp") {
+  switch (mimeType) {
+    case "image/gif":
+      return ".gif";
+    case "image/jpeg":
+      return ".jpg";
+    case "image/png":
+      return ".png";
+    case "image/webp":
+      return ".webp";
   }
 }
 

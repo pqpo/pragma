@@ -17,6 +17,7 @@ export async function resolveMissionAttachmentImage(
   },
   missionIdInput: string,
   attachmentId: string,
+  rendition: "preview" | "original" = "preview",
 ): Promise<{ readonly path: string; readonly mimeType: string }> {
   const missionId = MissionIdSchema.parse(missionIdInput);
   const attachment = (await missions.getAttachments(missionId)).find(
@@ -32,7 +33,14 @@ export async function resolveMissionAttachmentImage(
 
   const missionRoot = await realpath(missions.storagePath(missionId));
   const imageRoot = await realpath(resolve(missionRoot, "attachments", "images"));
-  const imagePath = await realpath(attachment.path);
+  const selected =
+    rendition === "preview" && attachment.optimized !== undefined
+      ? attachment.optimized
+      : { path: attachment.path, mimeType: attachment.mimeType };
+  if (!SUPPORTED_IMAGE_TYPES.has(selected.mimeType)) {
+    throw new Error("Mission image attachment type is unavailable.");
+  }
+  const imagePath = await realpath(selected.path);
   const relativePath = relative(imageRoot, imagePath);
   if (
     relativePath === "" ||
@@ -46,7 +54,7 @@ export async function resolveMissionAttachmentImage(
   if (!metadata.isFile() || metadata.size > MAX_IMAGE_ATTACHMENT_BYTES) {
     throw new Error("Mission image attachment is unavailable.");
   }
-  return { path: imagePath, mimeType: attachment.mimeType };
+  return { path: imagePath, mimeType: selected.mimeType };
 }
 
 export function parseMissionAttachmentPreviewUrl(url: string): {
@@ -56,7 +64,7 @@ export function parseMissionAttachmentPreviewUrl(url: string): {
   const parsed = new URL(url);
   if (
     parsed.protocol !== `${MISSION_ATTACHMENT_PREVIEW_SCHEME}:` ||
-    parsed.hostname !== "preview" ||
+    !["preview", "original"].includes(parsed.hostname) ||
     parsed.username !== "" ||
     parsed.password !== "" ||
     parsed.port !== "" ||

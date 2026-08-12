@@ -1,11 +1,12 @@
 import { randomUUID } from "node:crypto";
-import { mkdir, rm, stat, writeFile } from "node:fs/promises";
-import { basename, join } from "node:path";
+import { stat } from "node:fs/promises";
+import { basename } from "node:path";
 
 import { dialog, ipcMain, type BrowserWindow, type OpenDialogOptions } from "electron";
 
 import {
   CreateMissionSchema,
+  DiscardMissionAttachmentDraftsSchema,
   GetMissionChatSchema,
   GetMissionWorkConversationSchema,
   HomeExecutorPreferenceSchema,
@@ -22,6 +23,7 @@ import {
   SendMissionMessageSchema,
   UpdateMissionOptionsSchema,
   UpdateHomeExecutorPreferenceSchema,
+  type PickMissionAttachmentsResult,
   type DesktopToolPermissionMode,
 } from "../../../shared/contracts/index.ts";
 import type { MissionRunner } from "./mission-runner.ts";
@@ -35,6 +37,7 @@ import { availableRecentWorkspaces } from "../workspaces/workspace-history-store
 import { validateWorkspace } from "../workspaces/workspace-scope.ts";
 import type { HomeExecutorCatalog } from "./home-executor-catalog.ts";
 import { installMissionAttachmentProtocol } from "./mission-attachment-protocol.ts";
+import { createMissionImageDraftStore } from "./mission-image-drafts.ts";
 
 export function installMissionHandlers(options: {
   readonly missions: MissionStore;
@@ -58,18 +61,8 @@ export function installMissionHandlers(options: {
       }) => Promise<void>)
     | undefined;
 }): void {
-  installMissionAttachmentProtocol(options.missions);
-  const stagedClipboardImages = new Set<string>();
-  const cleanupStagedClipboardImages = async (
-    attachments: readonly { readonly path: string }[],
-  ): Promise<void> => {
-    await Promise.all(
-      attachments.map(async ({ path }) => {
-        if (!stagedClipboardImages.delete(path)) return;
-        await rm(path, { force: true });
-      }),
-    );
-  };
+  const imageDrafts = createMissionImageDraftStore({ temporaryRoot: options.temporaryRoot });
+  installMissionAttachmentProtocol(options.missions, imageDrafts);
   const getCreationDefaults = async () => {
     const workspace = await options.getDefaultWorkspace();
     const recentWorkspaces = await availableRecentWorkspaces(
@@ -152,8 +145,13 @@ export function installMissionHandlers(options: {
     if (result.canceled) {
       return PickMissionAttachmentsResultSchema.parse({ attachments: [] });
     }
-    const attachments = await Promise.all(
-      result.filePaths.map(async (path) => {
+    const results: PickMissionAttachmentsResult[] = [];
+    try {
+      for (const path of result.filePaths) {
+        if (parsed.kind === "image") {
+          results.push(await imageDrafts.stagePath(path));
+          continue;
+        }
         const metadata = await stat(path);
         if (parsed.kind === "directory" && !metadata.isDirectory()) {
           throw new Error(`Selected attachment is not a directory: ${path}`);
@@ -161,70 +159,55 @@ export function installMissionHandlers(options: {
         if (parsed.kind !== "directory" && !metadata.isFile()) {
           throw new Error(`Selected attachment is not a file: ${path}`);
         }
-        const mimeType = parsed.kind === "image" ? imageMimeType(path) : undefined;
-        if (parsed.kind === "image" && metadata.size > MAX_IMAGE_ATTACHMENT_BYTES) {
-          throw new Error(`Image attachments must be 20 MiB or smaller: ${basename(path)}`);
-        }
-        return {
-          id: randomUUID(),
-          kind: parsed.kind,
-          name: basename(path),
-          path,
-          ...(mimeType === undefined ? {} : { mimeType }),
-          ...(metadata.isFile() ? { size: metadata.size } : {}),
-        };
-      }),
-    );
-    return PickMissionAttachmentsResultSchema.parse({ attachments });
+        results.push({
+          attachments: [
+            {
+              id: randomUUID(),
+              kind: parsed.kind,
+              name: basename(path),
+              path,
+              ...(metadata.isFile() ? { size: metadata.size } : {}),
+            },
+          ],
+          previews: [],
+        });
+      }
+    } catch (error) {
+      await imageDrafts.discard(
+        results.flatMap((entry) => entry.attachments.map((attachment) => attachment.id)),
+      );
+      throw error;
+    }
+    return PickMissionAttachmentsResultSchema.parse({
+      attachments: results.flatMap((entry) => entry.attachments),
+      previews: results.flatMap((entry) => entry.previews),
+    });
   });
   ipcMain.handle("missions:attachments:stage-clipboard-image", async (_event, input: unknown) => {
     const parsed = StageMissionClipboardImageSchema.parse(input);
-    const data = Buffer.from(parsed.data, "base64");
-    if (data.byteLength === 0 || data.byteLength > MAX_IMAGE_ATTACHMENT_BYTES) {
-      throw new Error("Pasted images must be 20 MiB or smaller.");
-    }
-    if (!matchesImageSignature(data, parsed.mimeType)) {
-      throw new Error("Pasted image data does not match its image type.");
-    }
-    const extension = imageExtension(parsed.mimeType);
-    const stagingRoot = join(options.temporaryRoot, "mission-clipboard-images");
-    const path = join(stagingRoot, `${randomUUID()}${extension}`);
-    await mkdir(stagingRoot, { recursive: true, mode: 0o700 });
-    await writeFile(path, data, { mode: 0o600 });
-    stagedClipboardImages.add(path);
-    return PickMissionAttachmentsResultSchema.parse({
-      attachments: [
-        {
-          id: randomUUID(),
-          kind: "image",
-          name: parsed.name,
-          path,
-          mimeType: parsed.mimeType,
-          size: data.byteLength,
-        },
-      ],
-    });
+    return PickMissionAttachmentsResultSchema.parse(await imageDrafts.stageClipboard(parsed));
+  });
+  ipcMain.handle("missions:attachments:discard-drafts", async (_event, input: unknown) => {
+    const parsed = DiscardMissionAttachmentDraftsSchema.parse(input);
+    await imageDrafts.discard(parsed.attachmentIds);
   });
   ipcMain.handle("missions:create", async (_event, input: unknown) => {
     const parsed = CreateMissionSchema.parse(input);
-    const mission = await options.creator
-      .create({
-        workspace: parsed.workspace,
-        missionInput: parsed.input,
-        ...(parsed.input.kind === "prompt" && parsed.input.attachments.length > 0
-          ? { attachments: parsed.input.attachments }
-          : {}),
-        executorRef: parsed.executor.ref,
-        ...(parsed.modelOverride === undefined ? {} : { modelOverride: parsed.modelOverride }),
-        ...(parsed.toolPermissionMode === undefined
-          ? {}
-          : { toolPermissionMode: parsed.toolPermissionMode }),
-      })
-      .finally(async () => {
-        if (parsed.input.kind === "prompt") {
-          await cleanupStagedClipboardImages(parsed.input.attachments);
-        }
-      });
+    const mission = await options.creator.create({
+      workspace: parsed.workspace,
+      missionInput: parsed.input,
+      ...(parsed.input.kind === "prompt" && parsed.input.attachments.length > 0
+        ? { attachments: parsed.input.attachments }
+        : {}),
+      executorRef: parsed.executor.ref,
+      ...(parsed.modelOverride === undefined ? {} : { modelOverride: parsed.modelOverride }),
+      ...(parsed.toolPermissionMode === undefined
+        ? {}
+        : { toolPermissionMode: parsed.toolPermissionMode }),
+    });
+    if (parsed.input.kind === "prompt") {
+      await imageDrafts.discard(parsed.input.attachments.map((attachment) => attachment.id));
+    }
     await Promise.all([
       options.recordWorkspaceUsage(parsed.workspace),
       options.homeExecutors.recordUsage(parsed.executor.ref, parsed.workspace),
@@ -254,9 +237,8 @@ export function installMissionHandlers(options: {
     runDesktopMutation(async () => {
       const parsed = SendMissionMessageSchema.parse(input);
       await assertUserMission(parsed.id);
-      const mission = await options.runner
-        .sendMessage(parsed)
-        .finally(async () => await cleanupStagedClipboardImages(parsed.attachments));
+      const mission = await options.runner.sendMessage(parsed);
+      await imageDrafts.discard(parsed.attachments.map((attachment) => attachment.id));
       publishMission(mission);
       return mission;
     }),
@@ -357,8 +339,6 @@ export function installMissionHandlers(options: {
   });
 }
 
-const MAX_IMAGE_ATTACHMENT_BYTES = 20 * 1024 * 1024;
-
 function attachmentDialogOptions(kind: "image" | "file" | "directory"): OpenDialogOptions {
   if (kind === "directory") {
     return { properties: ["openDirectory", "multiSelections"] };
@@ -376,55 +356,4 @@ function attachmentDialogOptions(kind: "image" | "file" | "directory"): OpenDial
         }
       : {}),
   };
-}
-
-function imageExtension(mimeType: "image/gif" | "image/jpeg" | "image/png" | "image/webp") {
-  switch (mimeType) {
-    case "image/gif":
-      return ".gif";
-    case "image/jpeg":
-      return ".jpg";
-    case "image/png":
-      return ".png";
-    case "image/webp":
-      return ".webp";
-  }
-}
-
-function matchesImageSignature(
-  data: Buffer,
-  mimeType: "image/gif" | "image/jpeg" | "image/png" | "image/webp",
-): boolean {
-  switch (mimeType) {
-    case "image/gif":
-      return data.subarray(0, 4).toString("ascii") === "GIF8";
-    case "image/jpeg":
-      return data[0] === 0xff && data[1] === 0xd8 && data[2] === 0xff;
-    case "image/png":
-      return data
-        .subarray(0, 8)
-        .equals(Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]));
-    case "image/webp":
-      return (
-        data.subarray(0, 4).toString("ascii") === "RIFF" &&
-        data.subarray(8, 12).toString("ascii") === "WEBP"
-      );
-  }
-}
-
-function imageMimeType(path: string): "image/gif" | "image/jpeg" | "image/png" | "image/webp" {
-  const extension = path.split(".").at(-1)?.toLowerCase();
-  switch (extension) {
-    case "gif":
-      return "image/gif";
-    case "jpg":
-    case "jpeg":
-      return "image/jpeg";
-    case "png":
-      return "image/png";
-    case "webp":
-      return "image/webp";
-    default:
-      throw new Error(`Unsupported image attachment type: ${basename(path)}`);
-  }
 }
