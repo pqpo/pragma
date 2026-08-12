@@ -3,11 +3,7 @@ import { mkdir, readFile, rename, rm, writeFile } from "node:fs/promises";
 import { basename, dirname, join } from "node:path";
 
 import { withFileLock } from "@pragma/context-filesystem";
-import {
-  type PragmaLoggerProvider,
-  type RuntimeModelSelection,
-  type RuntimeResolver,
-} from "@pragma/core";
+import { type PragmaLoggerProvider, type RuntimeResolver } from "@pragma/core";
 import {
   STORE_REVISION_EXPERT_REF,
   STORE_REVISION_TARGET_BINDING_REF,
@@ -20,6 +16,7 @@ import type { CompiledResource, InvocableResource } from "@pragma/interpreter";
 import { z } from "zod";
 
 import type { ContextStoreRevisionProfile } from "../../../shared/contracts/index.ts";
+import { resolveSystemExpertRuntimeDefaults } from "../experts/system-expert-runtime.ts";
 import type { MissionRunner } from "../missions/mission-runner.ts";
 import { MissionStoreError, type MissionStore } from "../missions/mission-store.ts";
 import type { PragmaProjectStore } from "../projects/pragma-project-store.ts";
@@ -58,27 +55,16 @@ export function createDesktopStoreRevisionAgent(options: {
     profile: ContextStoreRevisionProfile,
     resolver: RuntimeResolver = options.runtimes,
   ) => {
-    const runtimeId =
-      profile.mode === "pinned" && profile.model !== undefined
-        ? profile.model.runtimeId
-        : await resolver.getDefaultRuntimeId();
-    const modelSelection: RuntimeModelSelection | undefined =
-      profile.mode === "pinned" && profile.model !== undefined
-        ? {
-            model: {
-              providerId: profile.model.providerId,
-              modelId: profile.model.modelId,
-            },
-            ...(profile.model.thinkingLevel === undefined
-              ? {}
-              : { thinkingLevel: profile.model.thinkingLevel }),
-          }
-        : undefined;
+    const defaults = await resolveSystemExpertRuntimeDefaults(
+      resolver,
+      profile.mode === "pinned" ? profile.model : undefined,
+      undefined,
+    );
     await resolver.bind({
-      runtimeId,
-      ...(modelSelection === undefined ? {} : { modelSelection }),
+      runtimeId: defaults.runtimeId,
+      ...(defaults.modelSelection === undefined ? {} : { modelSelection: defaults.modelSelection }),
     });
-    return { runtimeId, modelSelection };
+    return defaults;
   };
 
   const generator = createBuiltInStoreRevisionGenerator({

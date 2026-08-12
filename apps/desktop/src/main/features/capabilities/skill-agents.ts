@@ -2,11 +2,7 @@ import { createHash, randomUUID } from "node:crypto";
 import { mkdir, readFile, rename, rm, writeFile } from "node:fs/promises";
 import { basename, dirname, join } from "node:path";
 
-import {
-  type PragmaLoggerProvider,
-  type RuntimeModelSelection,
-  type RuntimeResolver,
-} from "@pragma/core";
+import { type PragmaLoggerProvider, type RuntimeResolver } from "@pragma/core";
 import {
   SKILL_EVALUATION_EXPERT_REF,
   SKILL_REVISION_EXPERT_REF,
@@ -28,6 +24,7 @@ import {
   type SkillEvaluationSnapshot,
   type UpdateSkillEvaluationProfile,
 } from "../../../shared/contracts/index.ts";
+import { resolveSystemExpertRuntimeDefaults } from "../experts/system-expert-runtime.ts";
 import type { MissionRunner } from "../missions/mission-runner.ts";
 import { MissionStoreError, type MissionStore } from "../missions/mission-store.ts";
 import type { PragmaProjectStore } from "../projects/pragma-project-store.ts";
@@ -120,21 +117,16 @@ export function createDesktopSkillAgents(options: {
       profile.schemaVersion === "pragma.context-store-revision-profile/v1"
         ? ContextStoreRevisionProfileSchema.parse(profile)
         : SkillEvaluationProfileSchema.parse(profile);
-    const runtimeId =
-      parsed.mode === "pinned" && parsed.model !== undefined
-        ? parsed.model.runtimeId
-        : await resolver.getDefaultRuntimeId();
-    const modelSelection: RuntimeModelSelection | undefined =
-      parsed.mode === "pinned" && parsed.model !== undefined
-        ? {
-            model: { providerId: parsed.model.providerId, modelId: parsed.model.modelId },
-            ...(parsed.model.thinkingLevel === undefined
-              ? {}
-              : { thinkingLevel: parsed.model.thinkingLevel }),
-          }
-        : undefined;
-    await resolver.bind({ runtimeId, ...(modelSelection === undefined ? {} : { modelSelection }) });
-    return { runtimeId, modelSelection };
+    const defaults = await resolveSystemExpertRuntimeDefaults(
+      resolver,
+      parsed.mode === "pinned" ? parsed.model : undefined,
+      undefined,
+    );
+    await resolver.bind({
+      runtimeId: defaults.runtimeId,
+      ...(defaults.modelSelection === undefined ? {} : { modelSelection: defaults.modelSelection }),
+    });
+    return defaults;
   };
 
   const run = async (input: {
