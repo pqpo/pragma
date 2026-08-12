@@ -13,6 +13,7 @@ import {
   scheduleTrigger,
   validateAutomationEditor,
 } from "./AutomationDirectoryFragment.tsx";
+import { AutomationDetailFragment } from "./AutomationDetailFragment.tsx";
 
 const automation: AutomationSummary = {
   ref: "automation:hrxn3mv2e991j2rj",
@@ -92,6 +93,67 @@ describe("AutomationDirectoryFragment", () => {
     expect(html).toContain("Connections");
     expect(html).toContain("Daily review");
     expect(html).toContain("expert:3sfd30h5017wd17d");
+  });
+
+  it("presents a read-only Automation detail before editing", () => {
+    const html = renderToStaticMarkup(
+      <AutomationDetailFragment
+        automation={automation}
+        executors={[
+          {
+            kind: "expert",
+            avatarId: "pragma.avatar.expert.default",
+            ref: "expert:3sfd30h5017wd17d",
+            name: "Reviewer",
+            description: "Reviews work",
+            origin: "project",
+            readOnly: false,
+            customized: false,
+          },
+        ]}
+        onBack={() => undefined}
+        onEdit={() => undefined}
+        onDelete={async () => undefined}
+      />,
+    );
+
+    expect(html).toContain("Daily review");
+    expect(html).toContain("Automation overview");
+    expect(html).toContain("Reviewer");
+    expect(html).toContain("Review the work.");
+    expect(html).toContain("Edit automation");
+  });
+
+  it("renders an unavailable adapter without crashing or offering the schedule editor", () => {
+    const unsupported: AutomationSummary = {
+      ...automation,
+      resource: {
+        ...automation.resource,
+        spec: {
+          ...automation.resource.spec,
+          adapter: "example.automation.webhook@v1",
+          config: { endpoint: "connection:webhook" },
+        },
+      },
+      status: "needs_attention",
+      nextRunAt: undefined,
+      diagnostic: "Adapter is not installed: example.automation.webhook@v1.",
+    };
+
+    const html = renderToStaticMarkup(
+      <AutomationDetailFragment
+        automation={unsupported}
+        executors={[]}
+        onBack={() => undefined}
+        onEdit={() => undefined}
+        onDelete={async () => undefined}
+      />,
+    );
+
+    expect(html).toContain("Connection configuration");
+    expect(html).toContain("example.automation.webhook@v1");
+    expect(html).toContain("connection:webhook");
+    expect(html).not.toContain("Edit automation");
   });
 
   it("validates and normalizes weekly schedule fields before calling Desktop APIs", () => {

@@ -139,6 +139,76 @@ describe("expert team editor", () => {
     expect(html).not.toContain('placeholder="Search context stores"');
   });
 
+  it("uses compact controls for a knowledge base blacklist", () => {
+    const experts = [expert(1), expert(2)];
+    const initial = PragmaExpertTeamResourceSchema.parse({
+      apiVersion: "pragma/v4",
+      kind: "ExpertTeam",
+      metadata: {
+        id: "cccvf3nab91n2wja",
+        name: "Quality team",
+        description: "Coordinates quality work",
+        tags: [],
+      },
+      spec: {
+        coordinator: { ref: "expert:0000000000000001" },
+        members: [{ ref: "expert:0000000000000002" }],
+        contextStores: [
+          {
+            ref: "context-store:01h8j2k3m4n5p6q7",
+            namespace: "quality_docs",
+            visibility: { mode: "blacklist", expertIds: ["0000000000000002"] },
+          },
+        ],
+        delegation: {},
+      },
+    });
+    const contextStore: ContextStore = {
+      schemaVersion: "pragma.context-store/v4",
+      id: "00000000-0000-4000-8000-000000000001",
+      name: "Quality handbook",
+      description: "Shared review guidance.",
+      type: "file",
+      status: "ready",
+      source: { origin: "created" },
+      contentRevision: 1,
+      snapshotHash: "0".repeat(64),
+      createdAt: "2026-08-10T00:00:00.000Z",
+      updatedAt: "2026-08-10T00:00:00.000Z",
+    };
+    const project = {
+      schemaVersion: "pragma.project-snapshot/v3",
+      projectId: "test-project",
+      revision: 0,
+      resources: [...experts, initial],
+      diagnostics: [],
+    } satisfies PragmaProjectSnapshot;
+
+    const html = renderToStaticMarkup(
+      <TeamEditor
+        project={project}
+        initial={initial}
+        mode="edit"
+        contextStores={[contextStore]}
+        contextStoreBindings={[
+          {
+            storeId: contextStore.id,
+            resourceRef: "context-store:01h8j2k3m4n5p6q7",
+          },
+        ]}
+        error={null}
+        onCancel={() => undefined}
+        onSave={async () => undefined}
+      />,
+    );
+
+    expect(html).toContain("Quality handbook");
+    expect(html.match(/class="team-context-expert-checkbox"/g)).toHaveLength(2);
+    expect(html).toContain('class="team-context-expert-checkbox" type="checkbox" checked=""');
+    expect(html).toContain("Expert 001");
+    expect(html).toContain("Expert 002");
+  });
+
   it("limits the default list and searches names, ids, descriptions, and tags", () => {
     const experts = Array.from({ length: 100 }, (_, index) => expert(index));
     const selectedRef = "expert:0000000000000099";

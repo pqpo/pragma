@@ -1238,6 +1238,7 @@ function TeamContextStoreEditor(props: {
                   return (
                     <label key={id}>
                       <input
+                        className="team-context-expert-checkbox"
                         type="checkbox"
                         checked={checked}
                         onChange={(event) =>

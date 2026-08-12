@@ -104,6 +104,18 @@ import type { PragmaProjectStore } from "../projects/pragma-project-store.ts";
 import type { PluginStore } from "../plugins/plugin-store.ts";
 import type { DesktopUsageStore } from "../usage/usage-store.ts";
 
+export type MissionSurfaceAudience = "user" | "internal";
+
+export interface MissionChatNotification {
+  readonly audience: MissionSurfaceAudience;
+  readonly update: MissionChatUpdate;
+}
+
+export interface MissionWorkNotification {
+  readonly audience: MissionSurfaceAudience;
+  readonly update: MissionWorkUpdate;
+}
+
 export interface MissionRunner {
   reconcileUsage(): Promise<void>;
   invalidateEstimatedContextWindows(): Promise<void>;
@@ -118,8 +130,8 @@ export interface MissionRunner {
   getChat(input: MissionChatQuery): Promise<MissionChatSnapshot>;
   compactContext(id: string): Promise<MissionContextCompactionResult>;
   getRuntimeBinding(id: string): Promise<RuntimeEnvironmentBinding | undefined>;
-  subscribeChat(listener: (update: MissionChatUpdate) => void): () => void;
-  subscribeWork(listener: (update: MissionWorkUpdate) => void): () => void;
+  subscribeChat(listener: (notification: MissionChatNotification) => void): () => void;
+  subscribeWork(listener: (notification: MissionWorkNotification) => void): () => void;
   interrupt(id: string): Promise<Mission>;
   getWork(id: string): Promise<MissionWorkSnapshot>;
   getWorkConversation(input: GetMissionWorkConversation): Promise<MissionWorkConversationSnapshot>;
@@ -171,6 +183,11 @@ type PendingMissionOperation =
 interface ActiveMissionExecution {
   readonly handle: MutableExecution & { readonly result: Promise<unknown> };
   readonly settlement: Promise<void>;
+  readonly audience: MissionSurfaceAudience;
+}
+
+function missionSurfaceAudience(mission: Pick<Mission, "origin">): MissionSurfaceAudience {
+  return mission.origin.type === "user" ? "user" : "internal";
 }
 
 export async function compactExpertSessionContext(
@@ -450,11 +467,11 @@ export function createMissionRunner(options: {
   const sessionCompilationIdentities = new Map<string, string>();
   const sessionDefinitionFingerprints = new Map<string, string>();
   const pendingOperations = new Map<string, PendingMissionOperation>();
-  const chatListeners = new Set<(update: MissionChatUpdate) => void>();
+  const chatListeners = new Set<(notification: MissionChatNotification) => void>();
   const chatRevisions = new Map<string, number>();
   const liveChats = new Map<string, LiveMissionChat>();
   const liveContextWindows = new Map<string, RuntimeContextWindowUsage>();
-  const workListeners = new Set<(update: MissionWorkUpdate) => void>();
+  const workListeners = new Set<(notification: MissionWorkNotification) => void>();
   const workRevisions = new Map<string, number>();
   const liveWorkOutputs = new Map<string, Map<string, LiveMissionChat>>();
   const executorNameCache = new Map<string, ReadonlyMap<string, string>>();
@@ -502,6 +519,7 @@ export function createMissionRunner(options: {
 
   const emitChatUpdate = (
     id: string,
+    audience: MissionSurfaceAudience,
     update:
       | { readonly kind: "patch"; readonly patches: readonly MissionChatPatch[] }
       | { readonly kind: "invalidate" },
@@ -514,7 +532,7 @@ export function createMissionRunner(options: {
         : { missionId: id, revision, kind: "invalidate" };
     for (const listener of chatListeners) {
       try {
-        listener(notification);
+        listener({ audience, update: notification });
       } catch (error) {
         logger.error(
           "mission.chat_listener_failed",
@@ -526,19 +544,24 @@ export function createMissionRunner(options: {
     }
   };
 
-  const emitChatPatches = (id: string, patches: readonly MissionChatPatch[]): void => {
-    if (patches.length > 0) emitChatUpdate(id, { kind: "patch", patches });
+  const emitChatPatches = (
+    id: string,
+    audience: MissionSurfaceAudience,
+    patches: readonly MissionChatPatch[],
+  ): void => {
+    if (patches.length > 0) emitChatUpdate(id, audience, { kind: "patch", patches });
   };
 
-  const invalidateChat = (id: string): void => emitChatUpdate(id, { kind: "invalidate" });
+  const invalidateChat = (id: string, audience: MissionSurfaceAudience): void =>
+    emitChatUpdate(id, audience, { kind: "invalidate" });
 
-  const invalidateWork = (id: string): void => {
+  const invalidateWork = (id: string, audience: MissionSurfaceAudience): void => {
     const revision = (workRevisions.get(id) ?? 0) + 1;
     workRevisions.set(id, revision);
     const update: MissionWorkUpdate = { missionId: id, revision };
     for (const listener of workListeners) {
       try {
-        listener(update);
+        listener({ audience, update });
       } catch (error) {
         logger.error(
           "mission.work_listener_failed",
@@ -550,7 +573,11 @@ export function createMissionRunner(options: {
     }
   };
 
-  const forgetActive = async (id: string, executionId: string): Promise<void> => {
+  const forgetActive = async (
+    id: string,
+    executionId: string,
+    audience: MissionSurfaceAudience,
+  ): Promise<void> => {
     if (active.get(id)?.handle.executionId === executionId) active.delete(id);
     const live = liveChats.get(id);
     if (live?.executionId === executionId) {
@@ -559,8 +586,8 @@ export function createMissionRunner(options: {
     }
     liveWorkOutputs.delete(id);
     liveContextWindows.delete(id);
-    invalidateChat(id);
-    invalidateWork(id);
+    invalidateChat(id, audience);
+    invalidateWork(id, audience);
   };
 
   const compileMissionExecutor = async (
@@ -784,6 +811,7 @@ export function createMissionRunner(options: {
     readonly onFinished?: (() => void | Promise<void>) | undefined;
   }): void => {
     const missionId = input.mission.id;
+    const audience = missionSurfaceAudience(input.mission);
     const resolveExecutorName = createMissionExecutorNameResolver(
       input.mission,
       input.executorNames,
@@ -792,7 +820,7 @@ export function createMissionRunner(options: {
     const live = observeMissionChat(
       input.handle,
       (patches) => {
-        emitChatPatches(missionId, patches);
+        emitChatPatches(missionId, audience, patches);
         if (
           !firstProjectionLogged &&
           input.acceptedAt !== undefined &&
@@ -810,7 +838,7 @@ export function createMissionRunner(options: {
           );
         }
       },
-      () => invalidateChat(missionId),
+      () => invalidateChat(missionId, audience),
       (item) => {
         if (item.channel === "telemetry" && item.parentInvocationId === undefined) {
           const payload = asRecord(item.value);
@@ -818,7 +846,9 @@ export function createMissionRunner(options: {
             const usage = RuntimeContextWindowUsageSchema.safeParse(payload["usage"]);
             if (usage.success) {
               liveContextWindows.set(missionId, usage.data);
-              emitChatPatches(missionId, [{ type: "context-window.update", usage: usage.data }]);
+              emitChatPatches(missionId, audience, [
+                { type: "context-window.update", usage: usage.data },
+              ]);
             }
           }
         }
@@ -844,10 +874,10 @@ export function createMissionRunner(options: {
             });
           }
           if (isNewRecord || item.channel === "agent") {
-            invalidateWork(missionId);
+            invalidateWork(missionId, audience);
           }
         } else if (item.channel === "agent") {
-          invalidateWork(missionId);
+          invalidateWork(missionId, audience);
         }
       },
       resolveExecutorName,
@@ -884,10 +914,10 @@ export function createMissionRunner(options: {
           });
         }
       })
-      .finally(async () => await forgetActive(missionId, input.handle.executionId));
-    active.set(missionId, { handle: input.handle, settlement });
-    invalidateChat(missionId);
-    invalidateWork(missionId);
+      .finally(async () => await forgetActive(missionId, input.handle.executionId, audience));
+    active.set(missionId, { handle: input.handle, settlement, audience });
+    invalidateChat(missionId, audience);
+    invalidateWork(missionId, audience);
     void settlement.catch((error: unknown) => {
       logger.error(
         "mission.execution_observer_failed",
@@ -1505,7 +1535,7 @@ export function createMissionRunner(options: {
     const compaction = await compactExpertSessionContext(session);
     if (compaction.outcome === "not_needed") return await notNeededResult();
     const { usage } = compaction;
-    invalidateChat(id);
+    invalidateChat(id, missionSurfaceAudience(mission));
     const state = await getContextWindowState(mission, usage);
     if (state === undefined || !state.supportsCompaction) {
       throw new Error(
@@ -1819,7 +1849,7 @@ export function createMissionRunner(options: {
   return {
     reconcileUsage,
     async invalidateEstimatedContextWindows() {
-      for (const mission of await options.missions.list()) invalidateChat(mission.id);
+      for (const mission of await options.missions.list()) invalidateChat(mission.id, "user");
     },
     async run(id) {
       const pending = pendingOperations.get(id);
@@ -1915,7 +1945,7 @@ export function createMissionRunner(options: {
           requestId: input.requestId,
         },
       );
-      invalidateChat(input.missionId);
+      invalidateChat(input.missionId, execution.audience);
     },
   };
 

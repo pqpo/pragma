@@ -1,4 +1,4 @@
-import { ArrowLeft, CaretDown, Check, Clock, Plus, Robot, Trash } from "@phosphor-icons/react";
+import { ArrowLeft, CaretDown, Check, Clock, Plus, Robot } from "@phosphor-icons/react";
 import { PragmaScheduleTriggerSchema } from "@pragma/interpreter/ast";
 import {
   PRAGMA_TEXT_LIMITS,
@@ -28,7 +28,7 @@ import {
   isSchemaInputValid,
 } from "../home/SchemaInputForm.tsx";
 import { StudioScreenFrame } from "./StudioScreenFrame.tsx";
-import { StudioConfirmationDialog } from "./StudioDialog.tsx";
+import { AutomationDetailFragment } from "./AutomationDetailFragment.tsx";
 import { desktopApi } from "./studio-model.ts";
 
 const WEEKDAYS = ["mon", "tue", "wed", "thu", "fri", "sat", "sun"] as const;
@@ -104,14 +104,13 @@ export function AutomationDirectoryFragment(props: {
   const { t } = useTranslation("studio");
   const { t: tMissions } = useTranslation("missions");
   const [tab, setTab] = useState<"automations" | "connections">("automations");
+  const [selectedAutomation, setSelectedAutomation] = useState<AutomationSummary | null>(null);
   const [editor, setEditor] = useState<EditorState | null>(null);
   const [executors, setExecutors] = useState<readonly MissionExecutorOption[]>([]);
   const [missionDefaults, setMissionDefaults] = useState<MissionCreationDefaults>();
   const [saving, setSaving] = useState(false);
   const [preview, setPreview] = useState<readonly string[]>([]);
   const [error, setError] = useState<string | null>(null);
-  const [deleteOpen, setDeleteOpen] = useState(false);
-  const [deleting, setDeleting] = useState(false);
   const [touchedFields, setTouchedFields] = useState<ReadonlySet<AutomationField>>(new Set());
   const [submitAttempted, setSubmitAttempted] = useState(false);
 
@@ -152,6 +151,10 @@ export function AutomationDirectoryFragment(props: {
     setError(null);
     setTouchedFields(new Set());
     setSubmitAttempted(false);
+  };
+
+  const closeEditor = () => {
+    setEditor(null);
   };
 
   const openExisting = (automation: AutomationSummary) => {
@@ -229,7 +232,7 @@ export function AutomationDirectoryFragment(props: {
         flow && structuredFlowInput
           ? { kind: "flow" as const, value: editor.flowInput }
           : { kind: "prompt" as const, value: editor.prompt.trim() };
-      await api.saveAutomation({
+      const saved = await api.saveAutomation({
         expectedProjectRevision: props.project.revision,
         resource: {
           apiVersion: "pragma/v4",
@@ -256,6 +259,7 @@ export function AutomationDirectoryFragment(props: {
         },
       });
       setEditor(null);
+      setSelectedAutomation(saved);
       await props.onChanged();
     } catch (saveError) {
       setError(errorMessage(saveError));
@@ -300,23 +304,15 @@ export function AutomationDirectoryFragment(props: {
     }
   };
 
-  const deleteAutomation = async () => {
-    if (editor?.originalRef === undefined || deleting) return;
-    setDeleting(true);
-    try {
-      await desktopApi()?.deleteAutomation({
-        expectedProjectRevision: props.project.revision,
-        ref: editor.originalRef,
-      });
-      setDeleteOpen(false);
-      setEditor(null);
-      await props.onChanged();
-    } catch (deleteError) {
-      setDeleteOpen(false);
-      setError(errorMessage(deleteError));
-    } finally {
-      setDeleting(false);
-    }
+  const deleteAutomation = async (automation: AutomationSummary) => {
+    const api = desktopApi();
+    if (api === undefined) throw new Error("Desktop bridge is unavailable.");
+    await api.deleteAutomation({
+      expectedProjectRevision: props.project.revision,
+      ref: automation.ref,
+    });
+    setSelectedAutomation(null);
+    await props.onChanged();
   };
 
   if (editor !== null) {
@@ -334,9 +330,11 @@ export function AutomationDirectoryFragment(props: {
           labelledBy="automation-editor-heading"
           header={
             <header className="automation-editor-heading">
-              <button className="back-link" type="button" onClick={() => setEditor(null)}>
+              <button className="back-link" type="button" onClick={closeEditor}>
                 <ArrowLeft size={17} aria-hidden="true" />
-                {t("backIntegrations")}
+                {editor.originalRef === undefined
+                  ? t("backIntegrations")
+                  : t("backAutomationDetail")}
               </button>
               <div>
                 <h1 id="automation-editor-heading">
@@ -757,13 +755,7 @@ export function AutomationDirectoryFragment(props: {
               ) : null}
             </div>
             <footer className="automation-form-actions">
-              {editor.originalRef !== undefined ? (
-                <button className="danger-button" type="button" onClick={() => setDeleteOpen(true)}>
-                  <Trash size={16} aria-hidden="true" />
-                  {t("deleteResourceAction")}
-                </button>
-              ) : null}
-              <button className="secondary-button" type="button" onClick={() => setEditor(null)}>
+              <button className="secondary-button" type="button" onClick={closeEditor}>
                 {t("cancel")}
               </button>
               <button className="primary-button" type="submit" disabled={saving}>
@@ -772,20 +764,28 @@ export function AutomationDirectoryFragment(props: {
             </footer>
           </form>
         </StudioScreenFrame>
-        {deleteOpen ? (
-          <StudioConfirmationDialog
-            title={t("deleteResourceAction")}
-            description={t("deleteAutomationConfirm")}
-            confirmLabel={t("deleteResourceAction")}
-            cancelLabel={t("cancel")}
-            busyLabel={t("saving")}
-            busy={deleting}
-            action="delete"
-            onCancel={() => setDeleteOpen(false)}
-            onConfirm={() => void deleteAutomation()}
-          />
-        ) : null}
       </>
+    );
+  }
+
+  const currentAutomation =
+    selectedAutomation === null
+      ? null
+      : (props.automations.find((automation) => automation.ref === selectedAutomation.ref) ??
+        selectedAutomation);
+
+  if (currentAutomation !== null) {
+    return (
+      <AutomationDetailFragment
+        automation={currentAutomation}
+        executors={executors}
+        onBack={() => {
+          setSelectedAutomation(null);
+          setError(null);
+        }}
+        onEdit={() => openExisting(currentAutomation)}
+        onDelete={async () => await deleteAutomation(currentAutomation)}
+      />
     );
   }
 
@@ -842,7 +842,7 @@ export function AutomationDirectoryFragment(props: {
                 className="studio-asset-row"
                 type="button"
                 key={automation.ref}
-                onClick={() => openExisting(automation)}
+                onClick={() => setSelectedAutomation(automation)}
               >
                 <span className="studio-asset-icon">
                   <Clock size={22} aria-hidden="true" />
