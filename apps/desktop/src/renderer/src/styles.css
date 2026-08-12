@@ -7249,6 +7249,8 @@ html.is-resizing-sidebar * {
 
 /* Knowledge-base revision tasks */
 .context-store-revisions {
+  --revision-task-actions-width: 168px;
+  --revision-task-content-columns: minmax(260px, 1.25fr) minmax(220px, 1fr) 92px;
   container-name: context-store-revisions;
   container-type: inline-size;
 }
@@ -7267,7 +7269,12 @@ html.is-resizing-sidebar * {
   display: grid;
   min-width: 0;
   flex: 1;
-  gap: 22px;
+  gap: 14px;
+}
+
+.revision-task-heading .back-link,
+.revision-diff-heading .back-link {
+  margin: 0;
 }
 
 .revision-task-heading-copy > div {
@@ -7340,9 +7347,7 @@ html.is-resizing-sidebar * {
 .revision-task-list-header {
   display: grid;
   min-width: 0;
-  grid-template-columns:
-    minmax(300px, 1fr) minmax(112px, 0.24fr) minmax(136px, 0.26fr)
-    minmax(220px, auto);
+  grid-template-columns: var(--revision-task-content-columns) var(--revision-task-actions-width);
   column-gap: 24px;
 }
 
@@ -7368,7 +7373,7 @@ html.is-resizing-sidebar * {
 .revision-task-row {
   display: grid;
   min-width: 0;
-  grid-template-columns: minmax(0, 1fr) minmax(220px, auto);
+  grid-template-columns: minmax(0, 1fr) var(--revision-task-actions-width);
   align-items: center;
   column-gap: 24px;
   padding: 6px 10px 6px 16px;
@@ -7384,7 +7389,7 @@ html.is-resizing-sidebar * {
   display: grid;
   min-width: 0;
   min-height: 64px;
-  grid-template-columns: minmax(300px, 1fr) minmax(112px, 0.24fr) minmax(136px, 0.26fr);
+  grid-template-columns: var(--revision-task-content-columns);
   align-items: center;
   column-gap: 24px;
   padding: 0;
@@ -7435,6 +7440,16 @@ html.is-resizing-sidebar * {
   white-space: nowrap;
 }
 
+.revision-task-result .form-error {
+  display: -webkit-box;
+  overflow: hidden;
+  max-width: 100%;
+  line-height: 1.45;
+  overflow-wrap: anywhere;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 2;
+}
+
 .revision-task-state {
   display: inline-flex;
   min-height: 26px;
@@ -7448,9 +7463,11 @@ html.is-resizing-sidebar * {
 }
 
 .revision-task-updated {
+  overflow: hidden;
   color: var(--ui-text-secondary);
   font-size: 12px;
   line-height: 1.5;
+  text-overflow: ellipsis;
   white-space: nowrap;
 }
 
@@ -7542,18 +7559,24 @@ html.is-resizing-sidebar * {
 }
 
 /* Knowledge-base revision diff */
+.studio-content:has(> .context-store-revision-detail) {
+  padding-bottom: 48px;
+}
+
 .context-store-revision-detail {
   container-name: context-store-revision-detail;
   container-type: inline-size;
 }
 
 .context-store-revision-detail .studio-screen-body {
-  padding: 0 48px 48px 0;
+  display: grid;
+  overflow: hidden;
+  padding: 0 48px 0 0;
 }
 
 .revision-diff-heading {
   display: grid;
-  gap: 22px;
+  gap: 14px;
   padding-right: 48px;
 }
 
@@ -7597,33 +7620,19 @@ html.is-resizing-sidebar * {
 
 .revision-diff-content {
   display: grid;
+  height: 100%;
   min-width: 0;
-  gap: 18px;
-}
-
-.revision-diff-summary {
-  display: grid;
-  gap: 4px;
-}
-
-.revision-diff-summary strong {
-  color: var(--ui-text);
-  font-size: 13px;
-  font-weight: 620;
-  line-height: 1.5;
-}
-
-.revision-diff-summary span {
-  color: var(--ui-text-secondary);
-  font-size: 11px;
-  line-height: 1.5;
+  min-height: 0;
+  overflow: hidden;
 }
 
 .revision-diff-workspace {
   display: grid;
+  height: 100%;
   min-width: 0;
-  min-height: 500px;
+  min-height: 0;
   grid-template-columns: 244px minmax(0, 1fr);
+  grid-template-rows: minmax(0, 1fr);
   overflow: hidden;
   border: 1px solid var(--ui-line);
   border-radius: var(--ui-radius-lg);
@@ -7631,12 +7640,16 @@ html.is-resizing-sidebar * {
 }
 
 .revision-diff-files {
+  display: grid;
   min-width: 0;
+  min-height: 0;
+  grid-template-rows: auto minmax(0, 1fr);
+  overflow: hidden;
   border-right: 1px solid var(--ui-line);
   background: var(--ui-surface-subtle);
 }
 
-.revision-diff-files > div {
+.revision-diff-files-heading {
   min-height: 44px;
   padding: 14px 14px 8px;
   color: var(--ui-text-secondary);
@@ -7646,8 +7659,22 @@ html.is-resizing-sidebar * {
 
 .revision-diff-files nav {
   display: grid;
+  min-height: 0;
+  align-content: start;
   gap: 2px;
+  overflow-y: auto;
+  overscroll-behavior: contain;
   padding: 4px 8px 12px;
+  scrollbar-gutter: stable;
+}
+
+.revision-diff-file-group-label {
+  margin: 8px 10px 4px;
+  padding-top: 12px;
+  border-top: 1px solid var(--ui-line);
+  color: var(--ui-text-secondary);
+  font-size: 10px;
+  font-weight: 600;
 }
 
 .revision-diff-files button {
@@ -7705,8 +7732,11 @@ html.is-resizing-sidebar * {
 }
 
 .revision-diff-view {
+  display: grid;
   min-width: 0;
-  overflow: auto;
+  min-height: 0;
+  grid-template-rows: auto minmax(0, 1fr);
+  overflow: hidden;
   background: var(--ui-surface);
 }
 
@@ -7720,11 +7750,18 @@ html.is-resizing-sidebar * {
   border-bottom: 1px solid var(--ui-line);
 }
 
-.revision-diff-view > header > div {
+.revision-diff-view-heading {
   display: flex;
   min-width: 0;
   align-items: center;
   gap: 8px;
+}
+
+.revision-diff-view-heading > span {
+  display: grid;
+  min-width: 0;
+  gap: 2px;
+  padding: 9px 0;
 }
 
 .revision-diff-view > header strong {
@@ -7734,6 +7771,34 @@ html.is-resizing-sidebar * {
   font-weight: 600;
   text-overflow: ellipsis;
   white-space: nowrap;
+}
+
+.revision-diff-view-heading small {
+  color: var(--ui-text-secondary);
+  font-size: 10px;
+  line-height: 1.45;
+}
+
+.revision-diff-scroll-area {
+  min-width: 0;
+  min-height: 0;
+  overflow: auto;
+  overscroll-behavior: contain;
+  scrollbar-gutter: stable;
+}
+
+.revision-review-document {
+  max-width: 840px;
+  padding: 28px 32px;
+  color: var(--ui-text);
+  font-size: 14px;
+  line-height: 1.8;
+}
+
+.revision-review-document p {
+  margin: 0;
+  white-space: pre-wrap;
+  word-break: break-word;
 }
 
 .revision-diff-stats {
@@ -7913,9 +7978,12 @@ html.is-resizing-sidebar * {
 }
 
 @container context-store-revisions (max-width: 900px) {
-  .revision-task-list-header,
-  .revision-task-open {
-    grid-template-columns: minmax(260px, 1fr) 112px 136px;
+  .context-store-revisions {
+    --revision-task-content-columns: minmax(240px, 1fr) minmax(180px, 0.8fr) 88px;
+  }
+
+  .revision-task-list-header {
+    grid-template-columns: var(--revision-task-content-columns);
   }
 
   .revision-task-row {
@@ -8008,9 +8076,11 @@ html.is-resizing-sidebar * {
 
   .revision-diff-workspace {
     grid-template-columns: minmax(0, 1fr);
+    grid-template-rows: auto minmax(0, 1fr);
   }
 
   .revision-diff-files {
+    grid-template-rows: auto auto;
     border-right: 0;
     border-bottom: 1px solid var(--ui-line);
   }
@@ -8018,6 +8088,7 @@ html.is-resizing-sidebar * {
   .revision-diff-files nav {
     display: flex;
     overflow-x: auto;
+    overflow-y: hidden;
   }
 
   .revision-diff-files button {

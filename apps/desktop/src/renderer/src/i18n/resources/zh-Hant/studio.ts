@@ -361,6 +361,15 @@ export const studio = {
   backRevisionTasks: "返回修訂任務",
   revisionResult: "修訂結果",
   revisionDiff: "修訂差異",
+  revisionReviewContents: "審核內容",
+  revisionRequestFile: "revision-request.md",
+  revisionRequestFileLabel: "修訂要求 · 唯讀",
+  revisionSummaryFile: "revision-summary.md",
+  revisionSummaryFileLabel: "變更摘要 · 唯讀",
+  revisionRequestDocumentDescription:
+    "記錄你提交的原始修訂要求，僅用於核對 Agent 是否理解正確，不會進入 Memory。",
+  revisionSummaryDocumentDescription:
+    "概括 Agent 為本次任務產生的變更方案，協助快速瞭解修改範圍，不會進入 Memory。",
   revisionDiffUnavailable: "這個較早的任務沒有保留變更前的檔案內容。",
   filesChanged: "變更 {{count}} 個檔案",
   baseRevision: "基於版本 {{count}}",

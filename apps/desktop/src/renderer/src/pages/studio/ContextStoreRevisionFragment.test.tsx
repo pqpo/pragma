@@ -41,7 +41,7 @@ describe("ContextStoreRevisionFragment", () => {
     expect(html).toContain("暂无修订任务");
   });
 
-  it("renders a reviewable line diff instead of an inline task summary", async () => {
+  it("renders review-only documents before the changed files", async () => {
     await i18n.changeLanguage("zh-Hans");
     const html = renderToStaticMarkup(
       <ContextStoreRevisionDiffFragment
@@ -86,10 +86,14 @@ describe("ContextStoreRevisionFragment", () => {
 
     expect(html).toContain("修订结果");
     expect(html).toContain("返回修订任务");
+    expect(html).toContain("revision-request.md");
+    expect(html).toContain("revision-summary.md");
+    expect(html.indexOf("revision-summary.md")).toBeLessThan(html.indexOf("revision-request.md"));
+    expect(html).toContain("不会进入 Memory");
+    expect(html).toContain("更新审批规范");
     expect(html).toContain("guide.md");
     expect(html).toContain("同意并应用");
-    expect(html).toContain("旧流程");
-    expect(html).toContain("新流程");
+    expect(html).toContain('class="revision-diff-scroll-area"');
   });
 
   it("builds stable line-level additions and deletions", () => {

@@ -21,6 +21,10 @@ import { StudioScreenFrame } from "./StudioScreenFrame.tsx";
 import { desktopApi } from "./studio-model.ts";
 
 type RevisionOperation = NonNullable<ContextStoreRevisionJob["changeSet"]>["operations"][number];
+type RevisionDiffSelection =
+  | { readonly kind: "request" }
+  | { readonly kind: "summary" }
+  | { readonly kind: "operation"; readonly index: number };
 
 export interface RevisionDiffLine {
   readonly kind: "context" | "addition" | "deletion";
@@ -226,20 +230,29 @@ export function ContextStoreRevisionFragment(props: {
                       onClick={() => hasChanges && setSelectedJobId(job.id)}
                     >
                       <span className="revision-task-summary">
-                        <strong>{job.request.prompt}</strong>
-                        <small>{store?.name ?? job.request.storeId}</small>
+                        <strong title={job.request.prompt}>{job.request.prompt}</strong>
+                        <small title={store?.name ?? job.request.storeId}>
+                          {store?.name ?? job.request.storeId}
+                        </small>
                       </span>
                       <span className="revision-task-result">
-                        <span className={`revision-task-state is-${job.state}`}>
+                        <span
+                          className={`revision-task-state is-${job.state}`}
+                          title={t(`revisionState.${job.state}`)}
+                        >
                           {t(`revisionState.${job.state}`)}
                         </span>
                         {job.error !== undefined ? (
-                          <span className="form-error" role="alert">
+                          <span className="form-error" role="alert" title={job.error.message}>
                             {job.error.message}
                           </span>
                         ) : null}
                       </span>
-                      <time className="revision-task-updated" dateTime={job.updatedAt}>
+                      <time
+                        className="revision-task-updated"
+                        dateTime={job.updatedAt}
+                        title={formatRevisionTimestamp(job.updatedAt, i18n.language)}
+                      >
                         {formatRevisionTimestamp(job.updatedAt, i18n.language)}
                       </time>
                     </button>
@@ -302,12 +315,23 @@ export function ContextStoreRevisionDiffFragment(props: {
   readonly onRetry: () => void;
 }) {
   const { t, i18n } = useTranslation("studio");
-  const [selectedOperationIndex, setSelectedOperationIndex] = useState(0);
+  const [selection, setSelection] = useState<RevisionDiffSelection>({ kind: "summary" });
   const operation =
-    props.job.changeSet.operations[selectedOperationIndex] ?? props.job.changeSet.operations[0]!;
-  const diff = useMemo(() => operationDiff(operation), [operation]);
+    selection.kind === "operation"
+      ? (props.job.changeSet.operations[selection.index] ?? props.job.changeSet.operations[0])
+      : undefined;
+  const diff = useMemo(
+    () => (operation === undefined ? [] : operationDiff(operation)),
+    [operation],
+  );
   const additions = diff.filter((line) => line.kind === "addition").length;
   const deletions = diff.filter((line) => line.kind === "deletion").length;
+  const revisionMetadata = `${props.store?.name ?? props.job.request.storeId} · ${t(
+    "baseRevision",
+    {
+      count: props.job.changeSet.baseRevision,
+    },
+  )} · ${formatRevisionTimestamp(props.job.updatedAt, i18n.language)}`;
 
   return (
     <StudioScreenFrame
@@ -322,7 +346,7 @@ export function ContextStoreRevisionDiffFragment(props: {
           <div className="revision-diff-title-row">
             <div>
               <h1 id="context-store-revision-detail-title">{t("revisionResult")}</h1>
-              <p>{props.job.request.prompt}</p>
+              <p>{revisionMetadata}</p>
             </div>
             <div className="revision-diff-actions">
               <span className={`revision-task-state is-${props.job.state}`}>
@@ -367,29 +391,47 @@ export function ContextStoreRevisionDiffFragment(props: {
       }
     >
       <div className="revision-diff-content">
-        <div className="revision-diff-summary">
-          <strong>{props.job.changeSet.summary}</strong>
-          <span>
-            {props.store?.name ?? props.job.request.storeId} ·{" "}
-            {t("baseRevision", { count: props.job.changeSet.baseRevision })} ·{" "}
-            {formatRevisionTimestamp(props.job.updatedAt, i18n.language)}
-          </span>
-        </div>
         <div className="revision-diff-workspace">
-          <aside
-            className="revision-diff-files"
-            aria-label={t("filesChanged", { count: props.job.changeSet.operations.length })}
-          >
-            <div>
-              <span>{t("filesChanged", { count: props.job.changeSet.operations.length })}</span>
+          <aside className="revision-diff-files" aria-label={t("revisionReviewContents")}>
+            <div className="revision-diff-files-heading">
+              <span>{t("revisionReviewContents")}</span>
             </div>
             <nav>
+              <button
+                className={selection.kind === "summary" ? "is-active" : undefined}
+                type="button"
+                onClick={() => setSelection({ kind: "summary" })}
+              >
+                <FileText size={17} aria-hidden="true" />
+                <span>
+                  <strong>{t("revisionSummaryFile")}</strong>
+                  <small>{t("revisionSummaryFileLabel")}</small>
+                </span>
+              </button>
+              <button
+                className={selection.kind === "request" ? "is-active" : undefined}
+                type="button"
+                onClick={() => setSelection({ kind: "request" })}
+              >
+                <FileText size={17} aria-hidden="true" />
+                <span>
+                  <strong>{t("revisionRequestFile")}</strong>
+                  <small>{t("revisionRequestFileLabel")}</small>
+                </span>
+              </button>
+              <div className="revision-diff-file-group-label">
+                {t("filesChanged", { count: props.job.changeSet.operations.length })}
+              </div>
               {props.job.changeSet.operations.map((candidate, index) => (
                 <button
-                  className={selectedOperationIndex === index ? "is-active" : undefined}
+                  className={
+                    selection.kind === "operation" && selection.index === index
+                      ? "is-active"
+                      : undefined
+                  }
                   type="button"
                   key={`${candidate.operation}:${candidate.id}:${index}`}
-                  onClick={() => setSelectedOperationIndex(index)}
+                  onClick={() => setSelection({ kind: "operation", index })}
                 >
                   {operationIcon(candidate)}
                   <span>
@@ -402,45 +444,70 @@ export function ContextStoreRevisionDiffFragment(props: {
           </aside>
           <section className="revision-diff-view" aria-label={t("revisionDiff")}>
             <header>
-              <div>
+              <div className="revision-diff-view-heading">
                 <FileText size={16} aria-hidden="true" />
-                <strong>{operationPath(operation)}</strong>
+                <span>
+                  <strong>
+                    {selection.kind === "request"
+                      ? t("revisionRequestFile")
+                      : selection.kind === "summary"
+                        ? t("revisionSummaryFile")
+                        : operation === undefined
+                          ? ""
+                          : operationPath(operation)}
+                  </strong>
+                  {selection.kind === "request" ? (
+                    <small>{t("revisionRequestDocumentDescription")}</small>
+                  ) : selection.kind === "summary" ? (
+                    <small>{t("revisionSummaryDocumentDescription")}</small>
+                  ) : null}
+                </span>
               </div>
-              {operation.operation === "rename" ? null : (
+              {operation === undefined || operation.operation === "rename" ? null : (
                 <span className="revision-diff-stats">
                   <b>+{additions}</b>
                   <i>−{deletions}</i>
                 </span>
               )}
             </header>
-            {operation.operation === "rename" ? (
-              <div className="revision-rename-preview">
-                <span>{operation.id}</span>
-                <ArrowRight size={18} aria-hidden="true" />
-                <strong>{operation.nextId}</strong>
-              </div>
-            ) : operation.operation === "delete" && operation.previousContent === undefined ? (
-              <div className="revision-diff-unavailable">
-                <p>{t("revisionDiffUnavailable")}</p>
-              </div>
-            ) : (
-              <div className="revision-diff-code" role="table">
-                {diff.map((line, index) => (
-                  <div
-                    className={`revision-diff-line is-${line.kind}`}
-                    role="row"
-                    key={`${line.kind}:${index}`}
-                  >
-                    <span role="cell">{line.oldLine ?? ""}</span>
-                    <span role="cell">{line.newLine ?? ""}</span>
-                    <b aria-hidden="true">
-                      {line.kind === "addition" ? "+" : line.kind === "deletion" ? "−" : ""}
-                    </b>
-                    <code role="cell">{line.content || " "}</code>
-                  </div>
-                ))}
-              </div>
-            )}
+            <div className="revision-diff-scroll-area">
+              {selection.kind === "request" ? (
+                <article className="revision-review-document">
+                  <p>{props.job.request.prompt}</p>
+                </article>
+              ) : selection.kind === "summary" ? (
+                <article className="revision-review-document">
+                  <p>{props.job.changeSet.summary}</p>
+                </article>
+              ) : operation === undefined ? null : operation.operation === "rename" ? (
+                <div className="revision-rename-preview">
+                  <span>{operation.id}</span>
+                  <ArrowRight size={18} aria-hidden="true" />
+                  <strong>{operation.nextId}</strong>
+                </div>
+              ) : operation.operation === "delete" && operation.previousContent === undefined ? (
+                <div className="revision-diff-unavailable">
+                  <p>{t("revisionDiffUnavailable")}</p>
+                </div>
+              ) : (
+                <div className="revision-diff-code" role="table">
+                  {diff.map((line, index) => (
+                    <div
+                      className={`revision-diff-line is-${line.kind}`}
+                      role="row"
+                      key={`${line.kind}:${index}`}
+                    >
+                      <span role="cell">{line.oldLine ?? ""}</span>
+                      <span role="cell">{line.newLine ?? ""}</span>
+                      <b aria-hidden="true">
+                        {line.kind === "addition" ? "+" : line.kind === "deletion" ? "−" : ""}
+                      </b>
+                      <code role="cell">{line.content || " "}</code>
+                    </div>
+                  ))}
+                </div>
+              )}
+            </div>
           </section>
         </div>
         {props.error !== null ? <p className="form-error">{props.error}</p> : null}

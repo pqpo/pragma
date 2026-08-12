@@ -361,6 +361,15 @@ export const studio = {
   backRevisionTasks: "返回修订任务",
   revisionResult: "修订结果",
   revisionDiff: "修订差异",
+  revisionReviewContents: "审核内容",
+  revisionRequestFile: "revision-request.md",
+  revisionRequestFileLabel: "修订要求 · 只读",
+  revisionSummaryFile: "revision-summary.md",
+  revisionSummaryFileLabel: "变更摘要 · 只读",
+  revisionRequestDocumentDescription:
+    "记录你提交的原始修订要求，仅用于核对 Agent 是否理解正确，不会进入 Memory。",
+  revisionSummaryDocumentDescription:
+    "概括 Agent 为本次任务生成的变更方案，帮助快速了解修改范围，不会进入 Memory。",
   revisionDiffUnavailable: "这个较早的任务没有保留变更前的文件内容。",
   filesChanged: "变更 {{count}} 个文件",
   baseRevision: "基于版本 {{count}}",
