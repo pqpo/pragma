@@ -49,6 +49,18 @@ export const settings = {
     evaluationAgentSaveDescription: "新的技能評測將使用此 Runtime 與模型。",
     saveError: "無法儲存一般設定。",
   },
+  evaluations: {
+    navigation: "評測",
+    title: "評測",
+    description: "設定所有 Agent Judge 評測共用的模型和佇列資源。",
+    judgeModel: "Judge 模型",
+    judgeModelDescription: "用於獨立判斷測試案例是否符合各項評測標準。",
+    inheritDefault: "使用預設 Runtime 模型",
+    concurrency: "全域並行數",
+    concurrencyDescription: "限制同時執行的測試案例數量，範圍為 1–16。",
+    slotTitle: "並行槽如何計算",
+    slotDescription: "一個並行槽涵蓋同一案例的受測執行與 Judge 執行；修改後會立即套用到佇列。",
+  },
   memory: {
     navigation: "記憶",
     title: "記憶",

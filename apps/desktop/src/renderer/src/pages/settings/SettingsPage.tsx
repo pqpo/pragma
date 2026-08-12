@@ -7,11 +7,12 @@ import {
   usePersistentSidebarWidth,
 } from "../../lib/sidebar-width-preference.ts";
 import { GeneralSettingsFragment } from "./GeneralSettingsFragment.tsx";
+import { EvaluationSettingsFragment } from "./EvaluationSettingsFragment.tsx";
 import { MemorySettingsFragment } from "./MemorySettingsFragment.tsx";
 import { ModelProvidersFragment } from "./ModelProvidersFragment.tsx";
 import { RuntimeEnvironmentsFragment } from "./RuntimeEnvironmentsFragment.tsx";
 
-export type SettingsView = "general" | "memory" | "models" | "runtimes";
+export type SettingsView = "general" | "memory" | "evaluations" | "models" | "runtimes";
 
 export function SettingsPage(props: { readonly initialView?: SettingsView } = {}) {
   const { t } = useTranslation("settings");
@@ -34,6 +35,17 @@ export function SettingsPage(props: { readonly initialView?: SettingsView } = {}
           onClick={() => setActiveView("general")}
         >
           {t("general.title")}
+        </button>
+        <button
+          className={
+            activeView === "evaluations" ? "settings-nav-item is-active" : "settings-nav-item"
+          }
+          type="button"
+          aria-selected={activeView === "evaluations"}
+          aria-controls="evaluations-panel"
+          onClick={() => setActiveView("evaluations")}
+        >
+          {t("evaluations.navigation")}
         </button>
         <button
           className={activeView === "memory" ? "settings-nav-item is-active" : "settings-nav-item"}
@@ -77,6 +89,8 @@ export function SettingsPage(props: { readonly initialView?: SettingsView } = {}
           <GeneralSettingsFragment />
         ) : activeView === "memory" ? (
           <MemorySettingsFragment />
+        ) : activeView === "evaluations" ? (
+          <EvaluationSettingsFragment />
         ) : activeView === "models" ? (
           <ModelProvidersFragment />
         ) : (

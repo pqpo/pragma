@@ -3,6 +3,7 @@ import { useTranslation } from "react-i18next";
 import type { TFunction } from "i18next";
 import {
   DotsThree,
+  Flask,
   GitBranch,
   MagnifyingGlass,
   Plus,
@@ -79,35 +80,41 @@ export function EvaluationDirectoryFragment(props: {
   const mountedRef = useRef(false);
   useEffect(() => activateEvaluationDirectory(mountedRef), []);
 
-  const { evaluations, experts, teams, flows, targets, defaultTargetId } = useMemo(() => {
-    const evaluations: PragmaFlowRunDryEvaluationResource[] = [];
-    const experts: PragmaExpertResource[] = [];
-    const teams: PragmaExpertTeamResource[] = [];
-    const flows: PragmaFlowResource[] = [];
-    const targets: EvaluationTarget[] = [];
-    for (const resource of props.project.resources) {
-      if (
-        resource.kind === "Evaluation" &&
-        "target" in resource.spec &&
-        resource.spec.method.type === "flow-run-dry"
-      ) {
-        evaluations.push(PragmaFlowRunDryEvaluationResourceSchema.parse(resource));
-        continue;
+  const { evaluations, agentDatasetCount, experts, teams, flows, targets, defaultTargetId } =
+    useMemo(() => {
+      const evaluations: PragmaFlowRunDryEvaluationResource[] = [];
+      const experts: PragmaExpertResource[] = [];
+      const teams: PragmaExpertTeamResource[] = [];
+      const flows: PragmaFlowResource[] = [];
+      const targets: EvaluationTarget[] = [];
+      let agentDatasetCount = 0;
+      for (const resource of props.project.resources) {
+        if (
+          resource.kind === "Evaluation" &&
+          "target" in resource.spec &&
+          resource.spec.method.type === "flow-run-dry"
+        ) {
+          evaluations.push(PragmaFlowRunDryEvaluationResourceSchema.parse(resource));
+          continue;
+        }
+        if (resource.kind === "Evaluation" && resource.spec.method.type === "agent-judge") {
+          agentDatasetCount += 1;
+          continue;
+        }
+        if (resource.kind === "Expert") experts.push(resource);
+        else if (resource.kind === "ExpertTeam") teams.push(resource);
+        else if (resource.kind === "Flow") flows.push(resource);
+        else continue;
+        targets.push(resource);
       }
-      if (resource.kind === "Expert") experts.push(resource);
-      else if (resource.kind === "ExpertTeam") teams.push(resource);
-      else if (resource.kind === "Flow") flows.push(resource);
-      else continue;
-      targets.push(resource);
-    }
-    const evaluatedFlowId = evaluations[0]?.spec.target.ref.replace(/^flow:/, "");
-    const defaultTargetId =
-      flows.find((flow) => flow.metadata.id === evaluatedFlowId)?.metadata.id ??
-      flows[0]?.metadata.id ??
-      targets[0]?.metadata.id ??
-      "";
-    return { evaluations, experts, teams, flows, targets, defaultTargetId };
-  }, [props.project.resources]);
+      const evaluatedFlowId = evaluations[0]?.spec.target.ref.replace(/^flow:/, "");
+      const defaultTargetId =
+        flows.find((flow) => flow.metadata.id === evaluatedFlowId)?.metadata.id ??
+        flows[0]?.metadata.id ??
+        targets[0]?.metadata.id ??
+        "";
+      return { evaluations, agentDatasetCount, experts, teams, flows, targets, defaultTargetId };
+    }, [props.project.resources]);
   const [selectedTargetId, setSelectedTargetId] = useState(defaultTargetId);
   const selectedTarget = targets.find((target) => target.metadata.id === selectedTargetId) ?? null;
 
@@ -306,7 +313,11 @@ export function EvaluationDirectoryFragment(props: {
                     onClick={createEvaluation}
                   >
                     <Plus size={17} aria-hidden="true" />
-                    {allocating ? t("creatingEvaluation") : t("newEvaluation")}
+                    {allocating
+                      ? t("creatingEvaluation")
+                      : selectedTarget.kind === "Flow"
+                        ? t("newEvaluation")
+                        : t("agentEvaluation.startNewRun")}
                   </button>
                 </header>
 
@@ -405,8 +416,18 @@ export function EvaluationDirectoryFragment(props: {
                   </section>
                 ) : (
                   <div className="evaluation-target-empty is-inline">
-                    <h2>{t("evaluationMethodUnavailable")}</h2>
-                    <p>{t("flowRunDryOnly")}</p>
+                    <span className="evaluation-target-empty-icon">
+                      <Flask size={24} aria-hidden="true" />
+                    </span>
+                    <h2>{t("llmJudge")}</h2>
+                    <p>{t("llmJudgeDescription")}</p>
+                    {agentDatasetCount === 0 ? (
+                      <small>{t("agentEvaluation.noDatasetsForRun")}</small>
+                    ) : (
+                      <button className="secondary-button" type="button" onClick={createEvaluation}>
+                        {t("agentEvaluation.startNewRun")}
+                      </button>
+                    )}
                   </div>
                 )}
               </>

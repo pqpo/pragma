@@ -49,6 +49,18 @@ export const settings = {
     evaluationAgentSaveDescription: "新的技能评测将使用此 Runtime 与模型。",
     saveError: "无法保存常规设置。",
   },
+  evaluations: {
+    navigation: "测评",
+    title: "测评",
+    description: "配置所有 Agent Judge 测评共用的模型和队列资源。",
+    judgeModel: "Judge 模型",
+    judgeModelDescription: "用于独立判断测试用例是否满足各项评测标准。",
+    inheritDefault: "使用默认 Runtime 模型",
+    concurrency: "全局并发数",
+    concurrencyDescription: "限制同时执行的测试用例数量，范围为 1–16。",
+    slotTitle: "并发槽如何计算",
+    slotDescription: "一个并发槽覆盖同一用例的被测执行与 Judge 执行；修改后会立即应用到队列。",
+  },
   memory: {
     navigation: "记忆",
     title: "记忆",
