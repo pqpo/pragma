@@ -24,6 +24,10 @@ export const automationsApi = {
   deleteAutomation: async (input) => {
     await ipcRenderer.invoke("automations:delete", DeleteAutomationSchema.parse(input));
   },
+  triggerAutomation: async (ref) =>
+    AutomationSummarySchema.parse(
+      await ipcRenderer.invoke("automations:trigger", AutomationActionSchema.parse({ ref })),
+    ),
   resetAutomationSession: async (ref) =>
     AutomationSummarySchema.parse(
       await ipcRenderer.invoke("automations:session:reset", AutomationActionSchema.parse({ ref })),
@@ -41,6 +45,7 @@ export const automationsApi = {
   | "listAutomations"
   | "saveAutomation"
   | "deleteAutomation"
+  | "triggerAutomation"
   | "resetAutomationSession"
   | "previewAutomationSchedule"
 >;

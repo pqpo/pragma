@@ -1,4 +1,4 @@
-import { createHash } from "node:crypto";
+import { createHash, randomUUID } from "node:crypto";
 
 import {
   createPragmaLogger,
@@ -50,6 +50,7 @@ export interface AutomationService {
   list(): Promise<AutomationSummary[]>;
   save(input: SaveAutomation): Promise<AutomationSummary>;
   delete(input: DeleteAutomation): Promise<void>;
+  trigger(ref: string): Promise<AutomationSummary>;
   resetSession(ref: string): Promise<AutomationSummary>;
   preview(input: PreviewAutomationSchedule): { readonly occurrences: readonly string[] };
 }
@@ -544,6 +545,27 @@ export function createAutomationService(options: {
         ],
       });
       options.onStorageTrashed?.();
+    },
+    async trigger(ref) {
+      if (!running) throw new Error("Automation service is not running.");
+      const resource = await findAutomation(ref);
+      if (resource === undefined) throw new Error(`Automation not found: ${ref}.`);
+      if (resource.spec.adapter !== SCHEDULE_ADAPTER) {
+        throw new Error(`Automation adapter is not installed: ${resource.spec.adapter}.`);
+      }
+      if (!resource.spec.enabled) throw new Error(`Automation is disabled: ${ref}.`);
+      const binding = await options.store.getBinding(ref);
+      if (binding === undefined) throw new Error(`Automation binding not found: ${ref}.`);
+      const triggeredAt = now().toISOString();
+      const eventId = `manual:${randomUUID()}`;
+      await enqueue(ref, binding.generation, {
+        eventId,
+        scheduledFor: triggeredAt,
+        missionId: deterministicUuid(`automation-mission:${eventId}`),
+        createdAt: triggeredAt,
+      });
+      void processQueue(ref);
+      return await summaryFor(resource);
     },
     async resetSession(ref) {
       const resource = await findAutomation(ref);

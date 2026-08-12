@@ -442,6 +442,7 @@ export interface PragmaDesktopAPI {
   listAutomations: () => Promise<AutomationSummary[]>;
   saveAutomation: (input: SaveAutomation) => Promise<AutomationSummary>;
   deleteAutomation: (input: DeleteAutomation) => Promise<void>;
+  triggerAutomation: (ref: string) => Promise<AutomationSummary>;
   resetAutomationSession: (ref: string) => Promise<AutomationSummary>;
   previewAutomationSchedule: (
     input: PreviewAutomationSchedule,

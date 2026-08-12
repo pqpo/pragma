@@ -84,6 +84,9 @@ export const studio = {
   connections: "Connections",
   newAutomation: "New automation",
   editAutomation: "Edit automation",
+  runAutomationNow: "Run now",
+  runningAutomation: "Starting…",
+  automationRunQueued: "The automation was queued to run now.",
   backIntegrations: "Back to Integrations",
   backAutomationDetail: "Back to automation details",
   automationOverview: "Automation overview",
@@ -128,6 +131,7 @@ export const studio = {
   previewNextRuns: "Preview next runs",
   executor: "Expert, Team, or Flow",
   automationExecutorEmptyDescription: "No executor selected",
+  automationExecutorUnavailable: "Executor unavailable",
   automationExecutorPickerDescription:
     "Search for the Expert, Expert Team, or Flow this automation should run.",
   selectExecutorFirst: "Choose an Expert, Expert Team, or Flow before configuring its input.",

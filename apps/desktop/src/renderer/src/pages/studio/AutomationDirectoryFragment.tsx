@@ -102,11 +102,13 @@ export function AutomationDirectoryFragment(props: {
   readonly onChanged: () => Promise<void>;
 }) {
   const { t } = useTranslation("studio");
+  const { t: tCommon } = useTranslation("common");
   const { t: tMissions } = useTranslation("missions");
   const [tab, setTab] = useState<"automations" | "connections">("automations");
   const [selectedAutomation, setSelectedAutomation] = useState<AutomationSummary | null>(null);
   const [editor, setEditor] = useState<EditorState | null>(null);
   const [executors, setExecutors] = useState<readonly MissionExecutorOption[]>([]);
+  const [executorCatalogLoaded, setExecutorCatalogLoaded] = useState(false);
   const [missionDefaults, setMissionDefaults] = useState<MissionCreationDefaults>();
   const [saving, setSaving] = useState(false);
   const [preview, setPreview] = useState<readonly string[]>([]);
@@ -126,6 +128,9 @@ export function AutomationDirectoryFragment(props: {
       })
       .catch((loadError: unknown) => {
         if (!cancelled) setError(errorMessage(loadError));
+      })
+      .finally(() => {
+        if (!cancelled) setExecutorCatalogLoaded(true);
       });
     return () => {
       cancelled = true;
@@ -192,10 +197,12 @@ export function AutomationDirectoryFragment(props: {
       workspace: automation.binding?.workspace.path ?? "",
       toolPermissionMode: automation.binding?.toolPermissionMode ?? "request-approval",
       triggerKind: value["kind"] as EditorState["triggerKind"],
-      onceAt: localDateTime(new Date(String(value["at"] ?? Date.now()))),
+      onceAt: localDateTime(new Date(value["at"] === undefined ? Date.now() : String(value["at"]))),
       intervalEvery: Number(value["every"] ?? 1),
       intervalUnit: (value["unit"] as EditorState["intervalUnit"]) ?? "hours",
-      anchorAt: localDateTime(new Date(String(value["anchorAt"] ?? Date.now()))),
+      anchorAt: localDateTime(
+        new Date(value["anchorAt"] === undefined ? Date.now() : String(value["anchorAt"])),
+      ),
       frequency: (value["frequency"] as EditorState["frequency"]) ?? "daily",
       time: String(value["time"] ?? "09:00"),
       weekdays: Array.isArray(value["weekdays"])
@@ -312,6 +319,14 @@ export function AutomationDirectoryFragment(props: {
       ref: automation.ref,
     });
     setSelectedAutomation(null);
+    await props.onChanged();
+  };
+
+  const triggerAutomation = async (automation: AutomationSummary) => {
+    const api = desktopApi();
+    if (api === undefined) throw new Error("Desktop bridge is unavailable.");
+    const triggered = await api.triggerAutomation(automation.ref);
+    setSelectedAutomation(triggered);
     await props.onChanged();
   };
 
@@ -784,6 +799,7 @@ export function AutomationDirectoryFragment(props: {
           setError(null);
         }}
         onEdit={() => openExisting(currentAutomation)}
+        onRun={async () => await triggerAutomation(currentAutomation)}
         onDelete={async () => await deleteAutomation(currentAutomation)}
       />
     );
@@ -850,8 +866,14 @@ export function AutomationDirectoryFragment(props: {
                 <span className="studio-asset-copy">
                   <strong>{automation.resource.metadata.name}</strong>
                   <span>
-                    {automation.resource.spec.route.executor.ref} ·{" "}
-                    {t(`automationStatus.${automation.status}`)}
+                    {resolveAutomationExecutorName(
+                      automation.resource.spec.route.executor.ref,
+                      executors,
+                    ) ??
+                      (executorCatalogLoaded
+                        ? t("automationExecutorUnavailable")
+                        : tCommon("actions.loading"))}{" "}
+                    · {t(`automationStatus.${automation.status}`)}
                   </span>
                 </span>
                 <span className={`automation-status is-${automation.status}`}>
@@ -890,6 +912,13 @@ export function AutomationDirectoryFragment(props: {
       ) : null}
     </StudioScreenFrame>
   );
+}
+
+export function resolveAutomationExecutorName(
+  executorRef: string,
+  executors: readonly MissionExecutorOption[],
+): string | undefined {
+  return executors.find((executor) => executor.ref === executorRef)?.name;
 }
 
 type FieldValidationError = "required" | "tooLong";

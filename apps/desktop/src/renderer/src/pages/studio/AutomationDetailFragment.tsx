@@ -1,4 +1,4 @@
-import { ArrowLeft, Clock, PencilSimple, Trash } from "@phosphor-icons/react";
+import { ArrowLeft, Clock, PencilSimple, Play, Trash } from "@phosphor-icons/react";
 import { PragmaScheduleAutomationConfigSchema } from "@pragma/interpreter/ast";
 import { useState, type ReactNode } from "react";
 import { useTranslation } from "react-i18next";
@@ -17,12 +17,15 @@ export function AutomationDetailFragment(props: {
   readonly executors: readonly MissionExecutorOption[];
   readonly onBack: () => void;
   readonly onEdit: () => void;
+  readonly onRun: () => Promise<void>;
   readonly onDelete: () => Promise<void>;
 }) {
   const { t, i18n } = useTranslation("studio");
   const [deleteOpen, setDeleteOpen] = useState(false);
   const [deleting, setDeleting] = useState(false);
+  const [running, setRunning] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [runNotice, setRunNotice] = useState<string | null>(null);
   const { automation } = props;
   const scheduleConfig = PragmaScheduleAutomationConfigSchema.safeParse(
     automation.resource.spec.config,
@@ -36,6 +39,23 @@ export function AutomationDetailFragment(props: {
     (candidate) => candidate.ref === automation.resource.spec.route.executor.ref,
   );
   const locale = i18n.resolvedLanguage ?? i18n.language;
+  const canRun =
+    trigger !== undefined && automation.binding !== undefined && automation.resource.spec.enabled;
+
+  const runNow = async () => {
+    if (!canRun || running) return;
+    setRunning(true);
+    setError(null);
+    setRunNotice(null);
+    try {
+      await props.onRun();
+      setRunNotice(t("automationRunQueued"));
+    } catch (cause) {
+      setError(errorMessage(cause));
+    } finally {
+      setRunning(false);
+    }
+  };
 
   const remove = async () => {
     setDeleting(true);
@@ -78,10 +98,21 @@ export function AutomationDetailFragment(props: {
           </div>
           <div className="detail-actions">
             {trigger === undefined ? null : (
-              <button className="primary-button" type="button" onClick={props.onEdit}>
-                <PencilSimple size={17} aria-hidden="true" />
-                {t("editAutomation")}
-              </button>
+              <>
+                <button
+                  className="primary-button"
+                  type="button"
+                  disabled={!canRun || running}
+                  onClick={() => void runNow()}
+                >
+                  <Play size={17} aria-hidden="true" />
+                  {running ? t("runningAutomation") : t("runAutomationNow")}
+                </button>
+                <button className="secondary-button" type="button" onClick={props.onEdit}>
+                  <PencilSimple size={17} aria-hidden="true" />
+                  {t("editAutomation")}
+                </button>
+              </>
             )}
             <button className="danger-button" type="button" onClick={() => setDeleteOpen(true)}>
               <Trash size={17} aria-hidden="true" />
@@ -93,6 +124,11 @@ export function AutomationDetailFragment(props: {
         {error ? (
           <p className="form-error" role="alert">
             {error}
+          </p>
+        ) : null}
+        {runNotice ? (
+          <p className="automation-detail-run-notice" role="status">
+            {runNotice}
           </p>
         ) : null}
         {automation.diagnostic ? (

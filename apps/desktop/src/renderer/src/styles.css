@@ -3555,15 +3555,25 @@ html.is-resizing-sidebar * {
   white-space: pre-wrap;
 }
 
-.automation-detail-diagnostic {
+.automation-detail-diagnostic,
+.automation-detail-run-notice {
   margin: 0 0 20px;
   padding: 12px 14px;
-  border: 1px solid #e9c980;
   border-radius: var(--ui-radius-md);
-  background: #fff8e8;
-  color: #765313;
   font-size: 13px;
   line-height: 1.5;
+}
+
+.automation-detail-diagnostic {
+  border: 1px solid #e9c980;
+  background: #fff8e8;
+  color: #765313;
+}
+
+.automation-detail-run-notice {
+  border: 1px solid var(--ui-line);
+  background: var(--ui-selection);
+  color: var(--ui-accent-strong);
 }
 
 .automation-detail-empty-copy {

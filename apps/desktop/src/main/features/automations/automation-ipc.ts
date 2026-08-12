@@ -24,6 +24,10 @@ export function installAutomationHandlers(service: AutomationService): void {
   ipcMain.handle("automations:delete", async (_event, input: unknown) => {
     await service.delete(DeleteAutomationSchema.parse(input));
   });
+  ipcMain.handle("automations:trigger", async (_event, input: unknown) => {
+    const { ref } = AutomationActionSchema.parse(input);
+    return AutomationSummarySchema.parse(await service.trigger(ref));
+  });
   ipcMain.handle("automations:session:reset", async (_event, input: unknown) => {
     const { ref } = AutomationActionSchema.parse(input);
     return AutomationSummarySchema.parse(await service.resetSession(ref));

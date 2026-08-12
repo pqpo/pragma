@@ -10,6 +10,7 @@ import { workspaceSelectionFromPath } from "../../components/WorkspacePicker.tsx
 import {
   AutomationDirectoryFragment,
   createNewAutomationEditor,
+  resolveAutomationExecutorName,
   scheduleTrigger,
   validateAutomationEditor,
 } from "./AutomationDirectoryFragment.tsx";
@@ -92,7 +93,26 @@ describe("AutomationDirectoryFragment", () => {
     expect(html).toContain("Automations");
     expect(html).toContain("Connections");
     expect(html).toContain("Daily review");
-    expect(html).toContain("expert:3sfd30h5017wd17d");
+    expect(html).toContain("Loading…");
+    expect(html).not.toContain("expert:3sfd30h5017wd17d");
+  });
+
+  it("resolves an Automation executor ref to its user-facing name", () => {
+    expect(
+      resolveAutomationExecutorName("expert:3sfd30h5017wd17d", [
+        {
+          kind: "expert",
+          avatarId: "pragma.avatar.expert.default",
+          ref: "expert:3sfd30h5017wd17d",
+          name: "Reviewer",
+          description: "Reviews work",
+          origin: "project",
+          readOnly: false,
+          customized: false,
+        },
+      ]),
+    ).toBe("Reviewer");
+    expect(resolveAutomationExecutorName("team:ma2zkzkd0vss030m", [])).toBeUndefined();
   });
 
   it("presents a read-only Automation detail before editing", () => {
@@ -113,6 +133,7 @@ describe("AutomationDirectoryFragment", () => {
         ]}
         onBack={() => undefined}
         onEdit={() => undefined}
+        onRun={async () => undefined}
         onDelete={async () => undefined}
       />,
     );
@@ -121,6 +142,7 @@ describe("AutomationDirectoryFragment", () => {
     expect(html).toContain("Automation overview");
     expect(html).toContain("Reviewer");
     expect(html).toContain("Review the work.");
+    expect(html).toContain("Run now");
     expect(html).toContain("Edit automation");
   });
 
@@ -146,6 +168,7 @@ describe("AutomationDirectoryFragment", () => {
         executors={[]}
         onBack={() => undefined}
         onEdit={() => undefined}
+        onRun={async () => undefined}
         onDelete={async () => undefined}
       />,
     );
