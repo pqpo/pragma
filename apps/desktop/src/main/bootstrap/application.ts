@@ -11,15 +11,19 @@ import { createDesktopLogging } from "../platform/logging/desktop-logging.ts";
 import { createDesktopWindowManager } from "../platform/window/desktop-window.ts";
 import { configureDesktopApplicationIdentity } from "./application-identity.ts";
 import { createDesktopApplicationContainer } from "./application-container.ts";
+import { enforceDesktopSingleInstance } from "./single-instance.ts";
 import { startDesktopWindowWithServices } from "./startup-sequence.ts";
 import { registerMissionAttachmentScheme } from "../features/missions/mission-attachment-protocol.ts";
 
 export function startDesktopApplication(): void {
   registerMissionAttachmentScheme();
   configureDesktopApplicationIdentity(app);
+  let mainWindow = (): BrowserWindow | null => null;
+  if (!enforceDesktopSingleInstance(app, () => mainWindow())) return;
   const paths = new PragmaPaths();
   const logging = createDesktopLogging(paths);
   const windows = createDesktopWindowManager(logging.mainLogger);
+  mainWindow = windows.getWindow;
   let startupStatus: DesktopBridgeSnapshot["startup"] = { status: "ready" };
 
   ipcMain.handle("bridge:snapshot", () => createBridgeSnapshot(startupStatus));
