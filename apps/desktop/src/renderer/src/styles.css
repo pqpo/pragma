@@ -21787,6 +21787,23 @@ textarea:focus-visible,
   display: flex;
   align-items: center;
   gap: 10px;
+  min-width: 0;
+  cursor: pointer;
+}
+
+.pragma-resource-form .team-context-expert-checkbox {
+  flex: 0 0 17px;
+  width: 17px;
+  height: 17px;
+  min-height: 17px;
+  margin: 0;
+  padding: 0;
+  accent-color: var(--green);
+}
+
+.team-context-expert-list > label > span {
+  min-width: 0;
+  overflow-wrap: anywhere;
 }
 
 .team-context-selection > div:first-child {
