@@ -12,11 +12,13 @@ import {
 } from "@pragma/core";
 import {
   BUILT_IN_PRAGMA_REF,
+  EVALUATION_JUDGE_EXPERT_REF,
   SKILL_EVALUATION_EXPERT_REF,
   SKILL_REVISION_EXPERT_REF,
   STORE_REVISION_EXPERT_REF,
   STORE_REVISION_TARGET_CONTEXT_REF,
   compileBuiltInAgent,
+  builtInAgentFingerprint,
   createPragmaAgentTools,
 } from "@pragma/built-in-agents";
 import { MEMORY_CURATOR_REF } from "@pragma/memory";
@@ -57,6 +59,13 @@ import { createDesktopPragmaAgentAutomationPort } from "../features/built-in-age
 import { createDesktopPragmaAgentProjectPort } from "../features/built-in-agents/pragma-agent-project-adapter.ts";
 import { createDesktopPragmaAgentTaskPort } from "../features/built-in-agents/pragma-agent-task-adapter.ts";
 import { installExpertDefinitionHandlers } from "../features/experts/expert-definition-ipc.ts";
+import { installEvaluationHandlers } from "../features/evaluations/evaluation-ipc.ts";
+import {
+  createEvaluationMockAdapterRegistry,
+  createMissionAgentEvaluationExecutor,
+} from "../features/evaluations/evaluation-executor.ts";
+import { createEvaluationService } from "../features/evaluations/evaluation-service.ts";
+import { createEvaluationStore } from "../features/evaluations/evaluation-store.ts";
 import { createExpertDefinitionStore } from "../features/experts/expert-definition-store.ts";
 import { createDesktopSystemExpertRegistry } from "../features/experts/system-expert-registry.ts";
 import {
@@ -223,6 +232,7 @@ export async function createDesktopApplicationContainer(
       STORE_REVISION_EXPERT_REF,
       SKILL_REVISION_EXPERT_REF,
       SKILL_EVALUATION_EXPERT_REF,
+      EVALUATION_JUDGE_EXPERT_REF,
       STORE_REVISION_TARGET_CONTEXT_REF,
     ]),
   });
@@ -380,6 +390,8 @@ export async function createDesktopApplicationContainer(
       mainLogger.warn("desktop.capability_revision_recovery_failed", message, { error }),
   });
   capabilityStore.setRevisionPublisher(capabilityRevisionCoordinator);
+  const evaluationStore = createEvaluationStore(join(pragmaPaths.stateRoot(), "evaluations"));
+  const evaluationMocks = createEvaluationMockAdapterRegistry(capabilityStore);
   installCapabilityHandlers(capabilityStore, options.getWindow);
   const storeRevisionsRef: { current?: ContextStoreRevisionService } = {};
   const contextStores = createContextStoreStore({
@@ -660,6 +672,7 @@ export async function createDesktopApplicationContainer(
     runtimesForToolPermissionMode: (mode) => runtimes.forToolPermissionMode(mode),
     automaticHumanInteractionHandlerForToolPermissionMode: (mode) =>
       createAutomaticToolPermissionHandler(() => mode),
+    adapterHostForMission: (mission, fallback) => evaluationMocks.forMission(mission, fallback),
     assertStorageWriteAllowed: async () => await storageCapacityGuard.assertWriteAllowed(),
     onStorageTrashed: () => trashMaintenance.schedule("mission-storage-trashed"),
     onOwnerDeleting: async ({ executionIds }) => {
@@ -696,7 +709,9 @@ export async function createDesktopApplicationContainer(
             ? await skillAgentsRef.current?.fingerprint("revision")
             : mission.executor.ref === SKILL_EVALUATION_EXPERT_REF
               ? await skillAgentsRef.current?.fingerprint("evaluation")
-              : systemExperts.fingerprint(mission.executor.ref),
+              : mission.executor.ref === EVALUATION_JUDGE_EXPERT_REF
+                ? builtInAgentFingerprint(EVALUATION_JUDGE_EXPERT_REF)
+                : systemExperts.fingerprint(mission.executor.ref),
     assertExecutorReady: async (ref) => {
       if (await bundleService.isRefPending(ref)) {
         throw new Error(
@@ -748,6 +763,36 @@ export async function createDesktopApplicationContainer(
         return await skillAgentsRef.current.compile({
           kind: "evaluation",
           runtimes: scopedRuntimes,
+        });
+      }
+      if (mission.executor.ref === EVALUATION_JUDGE_EXPERT_REF) {
+        if (mission.origin.type !== "system-evaluation" || mission.origin.phase !== "judge") {
+          throw new Error("The Evaluation Judge Agent mission is invalid.");
+        }
+        const settings = await evaluationStore.getSettings();
+        const configuredModel = settings.judge.mode === "pinned" ? settings.judge.model : undefined;
+        const defaults = await resolveSystemExpertRuntimeDefaults(
+          scopedRuntimes,
+          configuredModel,
+          mission.modelOverride,
+        );
+        return await compileBuiltInAgent({
+          ref: EVALUATION_JUDGE_EXPERT_REF,
+          environmentId: "desktop-evaluation",
+          definitionStateRoot: join(defaultAgentStateRoot, "definitions"),
+          workspace: mission.workspace.path,
+          pragmaHome: pragmaPaths.root,
+          runtimes: withRuntimeDefaults(scopedRuntimes, defaults),
+          loggerProvider,
+          rootExecutionOverride: {
+            runtimeId: defaults.runtimeId,
+            ...(defaults.modelSelection === undefined
+              ? {}
+              : { modelSelection: defaults.modelSelection }),
+          },
+          ...(defaults.modelSelection === undefined
+            ? {}
+            : { defaultModelSelection: defaults.modelSelection }),
         });
       }
       if (mission.executor.ref !== BUILT_IN_PRAGMA_REF) return undefined;
@@ -847,6 +892,21 @@ export async function createDesktopApplicationContainer(
     pragmaHome: pragmaPaths.root,
     loggerProvider,
   });
+  const evaluationService = createEvaluationService({
+    store: evaluationStore,
+    project: pragmaProjectStore,
+    executor: createMissionAgentEvaluationExecutor({
+      missions: missionStore,
+      runner: missionRunner,
+      project: pragmaProjectStore,
+      store: evaluationStore,
+      mocks: evaluationMocks,
+      workspaceRoot: join(pragmaPaths.temporaryRoot(), "evaluations"),
+    }),
+    warn: (message, error) =>
+      mainLogger.warn("desktop.evaluation_queue_failed", message, { error }),
+  });
+  installEvaluationHandlers(evaluationService, pragmaProjectStore);
   await Promise.all([
     memoryPlane.setEpisodicExtractor(memoryCurator.episodicExtractor),
     memoryPlane.setSemanticExtractor(memoryCurator.semanticExtractor),
@@ -1006,6 +1066,13 @@ export async function createDesktopApplicationContainer(
           { error },
         );
       });
+      void evaluationService.start().catch((error: unknown) => {
+        mainLogger.warn(
+          "desktop.evaluation_start_failed",
+          "The evaluation queue could not be initialized.",
+          { error },
+        );
+      });
       void tokenCounter.load().catch((error: unknown) => {
         mainLogger.warn(
           "desktop.tokenizer_warmup_failed",
@@ -1065,6 +1132,7 @@ export async function createDesktopApplicationContainer(
       memoryPlane.start();
     },
     dispose: () => {
+      evaluationService.dispose();
       unsubscribeUsageUpdates();
       unsubscribeTokenCounter();
       automationService.stop();

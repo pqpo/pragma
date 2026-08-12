@@ -1,5 +1,14 @@
 import { z } from "zod";
 import { PragmaFlowRunDrySuiteResultSchema } from "@pragma/evaluation/ast";
+export type {
+  AgentEvaluationRun,
+  AgentEvaluationRunRef,
+  CreateAgentEvaluationRun,
+  EvaluationQueueSettings,
+  ImportAgentEvaluationDatasetYaml,
+  RetryAgentEvaluationTask,
+  UpdateEvaluationQueueSettings,
+} from "./evaluations.ts";
 
 import {
   AllocatePragmaResourceIdResultSchema,

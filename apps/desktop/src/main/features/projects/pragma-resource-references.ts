@@ -56,7 +56,9 @@ export function referencedPragmaResourceRefs(
       continue;
     }
     if (resource.kind === "Evaluation") {
-      refs.add(resource.spec.target.ref);
+      if ("target" in resource.spec && resource.spec.method.type === "flow-run-dry") {
+        refs.add(resource.spec.target.ref);
+      }
     }
   }
 

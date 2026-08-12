@@ -10,7 +10,10 @@ import {
   User,
   UsersThree,
 } from "@phosphor-icons/react";
-import type { PragmaEvaluationResource } from "@pragma/evaluation/ast";
+import {
+  PragmaFlowRunDryEvaluationResourceSchema,
+  type PragmaFlowRunDryEvaluationResource,
+} from "@pragma/evaluation/ast";
 import {
   type PragmaExpertResource,
   type PragmaExpertTeamResource,
@@ -41,9 +44,9 @@ export function activateEvaluationDirectory(mounted: { current: boolean }): () =
 }
 
 export function evaluationsForTarget(
-  evaluations: readonly PragmaEvaluationResource[],
+  evaluations: readonly PragmaFlowRunDryEvaluationResource[],
   target: EvaluationTarget | null,
-): readonly PragmaEvaluationResource[] {
+): readonly PragmaFlowRunDryEvaluationResource[] {
   if (target?.kind !== "Flow") return [];
   const targetRef = `flow:${target.metadata.id}`;
   return evaluations.filter((evaluation) => evaluation.spec.target.ref === targetRef);
@@ -51,9 +54,11 @@ export function evaluationsForTarget(
 
 export function EvaluationDirectoryFragment(props: {
   readonly project: PragmaProjectSnapshot;
-  readonly onOpen: (evaluation: PragmaEvaluationResource) => void;
+  readonly onOpen: (evaluation: PragmaFlowRunDryEvaluationResource) => void;
   readonly onCreate: (resourceId: string, flow: PragmaFlowResource) => void;
-  readonly onDelete: (evaluation: PragmaEvaluationResource) => Promise<void>;
+  readonly onCreateAgentEvaluation?:
+    ((target: PragmaExpertResource | PragmaExpertTeamResource) => void) | undefined;
+  readonly onDelete: (evaluation: PragmaFlowRunDryEvaluationResource) => Promise<void>;
   readonly onSelectTarget?: ((target: EvaluationTarget) => void) | undefined;
   readonly detail?: ReactNode | undefined;
   readonly detailLabelledBy?: string | undefined;
@@ -66,21 +71,27 @@ export function EvaluationDirectoryFragment(props: {
   const [allocating, setAllocating] = useState(false);
   const [deleting, setDeleting] = useState(false);
   const [openMenuId, setOpenMenuId] = useState<string | null>(null);
-  const [pendingDelete, setPendingDelete] = useState<PragmaEvaluationResource | null>(null);
+  const [pendingDelete, setPendingDelete] = useState<PragmaFlowRunDryEvaluationResource | null>(
+    null,
+  );
   const [search, setSearch] = useState("");
   const [expandedKinds, setExpandedKinds] = useState<ReadonlySet<EvaluationTargetKind>>(new Set());
   const mountedRef = useRef(false);
   useEffect(() => activateEvaluationDirectory(mountedRef), []);
 
   const { evaluations, experts, teams, flows, targets, defaultTargetId } = useMemo(() => {
-    const evaluations: PragmaEvaluationResource[] = [];
+    const evaluations: PragmaFlowRunDryEvaluationResource[] = [];
     const experts: PragmaExpertResource[] = [];
     const teams: PragmaExpertTeamResource[] = [];
     const flows: PragmaFlowResource[] = [];
     const targets: EvaluationTarget[] = [];
     for (const resource of props.project.resources) {
-      if (resource.kind === "Evaluation") {
-        evaluations.push(resource);
+      if (
+        resource.kind === "Evaluation" &&
+        "target" in resource.spec &&
+        resource.spec.method.type === "flow-run-dry"
+      ) {
+        evaluations.push(PragmaFlowRunDryEvaluationResourceSchema.parse(resource));
         continue;
       }
       if (resource.kind === "Expert") experts.push(resource);
@@ -133,6 +144,10 @@ export function EvaluationDirectoryFragment(props: {
   const normalizedSearch = search.trim().toLocaleLowerCase(i18n.language);
 
   const createEvaluation = () => {
+    if (selectedTarget?.kind === "Expert" || selectedTarget?.kind === "ExpertTeam") {
+      props.onCreateAgentEvaluation?.(selectedTarget);
+      return;
+    }
     const api = desktopApi();
     if (api === undefined || selectedTarget?.kind !== "Flow" || allocating) return;
     setAllocating(true);
@@ -281,14 +296,13 @@ export function EvaluationDirectoryFragment(props: {
                     <p>
                       {selectedTarget.kind === "Flow"
                         ? t("flowRunDryDescription")
-                        : t("unsupportedEvaluationTargetDescription")}
+                        : t("llmJudgeDescription")}
                     </p>
                   </div>
                   <button
                     className="primary-button"
                     type="button"
-                    disabled={selectedTarget.kind !== "Flow" || allocating}
-                    title={selectedTarget.kind === "Flow" ? undefined : t("flowRunDryOnly")}
+                    disabled={allocating}
                     onClick={createEvaluation}
                   >
                     <Plus size={17} aria-hidden="true" />

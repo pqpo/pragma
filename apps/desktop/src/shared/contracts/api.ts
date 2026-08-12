@@ -185,6 +185,13 @@ import type {
   MissionContextStoreEntry,
   MissionContextStoreContent,
   MissionContextStoreSearchMatch,
+  AgentEvaluationRun,
+  AgentEvaluationRunRef,
+  CreateAgentEvaluationRun,
+  EvaluationQueueSettings,
+  ImportAgentEvaluationDatasetYaml,
+  RetryAgentEvaluationTask,
+  UpdateEvaluationQueueSettings,
 } from "./types.ts";
 import type {
   MemorySkillCandidate,
@@ -403,6 +410,18 @@ export interface PragmaDesktopAPI {
     input: PragmaProjectChanges,
   ) => Promise<PragmaProjectChangesValidationResult>;
   runPragmaEvaluation: (input: RunPragmaEvaluation) => Promise<PragmaFlowRunDrySuiteResult>;
+  getEvaluationQueueSettings: () => Promise<EvaluationQueueSettings>;
+  updateEvaluationQueueSettings: (
+    input: UpdateEvaluationQueueSettings,
+  ) => Promise<EvaluationQueueSettings>;
+  createAgentEvaluationRun: (input: CreateAgentEvaluationRun) => Promise<AgentEvaluationRun>;
+  listAgentEvaluationRuns: () => Promise<AgentEvaluationRun[]>;
+  getAgentEvaluationRun: (input: AgentEvaluationRunRef) => Promise<AgentEvaluationRun>;
+  cancelAgentEvaluationRun: (input: AgentEvaluationRunRef) => Promise<AgentEvaluationRun>;
+  retryAgentEvaluationTask: (input: RetryAgentEvaluationTask) => Promise<AgentEvaluationRun>;
+  importAgentEvaluationDatasetYaml: (
+    input: ImportAgentEvaluationDatasetYaml,
+  ) => Promise<PragmaProjectSnapshot>;
   getWorkflowLayout: (input: GetWorkflowLayout) => Promise<WorkflowLayout | null>;
   saveWorkflowLayout: (layout: WorkflowLayout) => Promise<WorkflowLayout>;
   deleteWorkflowLayout: (input: DeleteWorkflowLayout) => Promise<void>;

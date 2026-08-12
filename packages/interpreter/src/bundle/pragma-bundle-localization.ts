@@ -263,7 +263,9 @@ function rewriteResourceIdentity(
   } else if (rewritten.kind === "Automation") {
     rewritten.spec.route.executor.ref = rewriteRef(rewritten.spec.route.executor.ref);
   } else if (rewritten.kind === "Evaluation") {
-    rewritten.spec.target.ref = rewriteRef(rewritten.spec.target.ref);
+    if ("target" in rewritten.spec && rewritten.spec.method.type === "flow-run-dry") {
+      rewritten.spec.target.ref = rewriteRef(rewritten.spec.target.ref);
+    }
   }
   return PragmaResourceSchema.parse(rewritten);
 }

@@ -9,7 +9,7 @@ import {
   PragmaExpertTeamContextVisibilitySchema,
   PragmaContextStoreRefSchema,
 } from "@pragma/interpreter/ast";
-import { PragmaEvaluationResourceSchema } from "@pragma/evaluation/ast";
+import { PragmaFlowRunDryEvaluationResourceSchema } from "@pragma/evaluation/ast";
 import { z } from "zod";
 
 export const PragmaProjectSnapshotSchema = z.object({
@@ -93,6 +93,6 @@ export const PragmaYamlValidationResultSchema = z.object({
 
 export const RunPragmaEvaluationSchema = z
   .object({
-    evaluation: PragmaEvaluationResourceSchema,
+    evaluation: PragmaFlowRunDryEvaluationResourceSchema,
   })
   .strict();

@@ -129,7 +129,7 @@ lib
 - `core` 是专家 Agent 的执行抽象和 Runtime Adapter 边界，只依赖 `shared` 和 core 内部模块，不依赖具体 runtime、`client` 或 `server`。
 - `evaluation` 是独立测评领域包，拥有 Evaluation 协议、Run Dry 执行器与结果模型；只依赖 `core`，不依赖 `interpreter` 或应用层。
 - `interpreter` 是 Pragma DSL 的语言实现，拥有 AST、解析、链接、校验、编译、扩展 registry 和 dump；可以依赖 `evaluation` 和 `core`，但 `core` 与 `evaluation` 不得反向依赖 `interpreter`。
-- `built-in-agents` 是五个内置 Agent（Pragma、Memory Curator、Store Revision、Skill Revision、Skill Evaluation）的跨 Host 产品能力包。所有 Agent 均由静态 DSL 定义；包内拥有 descriptor/compiler、独立宿主端口、提示词、结构化输出解析、修订规则与纯状态机。Host 负责 Runtime 执行、权限、持久化、Mission 和 UI 适配，不要求五个 Agent 使用统一调用接口。
+- `built-in-agents` 是六个内置 Agent（Pragma、Memory Curator、Store Revision、Skill Revision、Skill Evaluation、Evaluation Judge）的跨 Host 产品能力包。所有 Agent 均由静态 DSL 定义；包内拥有 descriptor/compiler、独立宿主端口、提示词、结构化输出解析、修订规则与纯状态机。Host 负责 Runtime 执行、权限、持久化、Mission 和 UI 适配，不要求六个 Agent 使用统一调用接口。
 - `memory` 是 Host 内置 Memory Plane，拥有 Evidence adapter、Module SPI、独立消费状态和联邦只读 Context；只依赖 `core` 与 `shared`，不得反向进入 Core。
 - `mission-board` 是 Host 可复用的 Mission-scoped 通用白板，只依赖 `core` Context 合约，不依赖文件系统、Memory 或应用。
 - `context-filesystem` 是显式 Node/Host 文件系统 adapter 出口；Mission Board 与 Memory 不得依赖它。
@@ -750,7 +750,7 @@ Expert API 设计要求：
 
 职责：
 
-- 保存五个内置 Agent 的 `pragma/v3` DSL，以及 Pragma 的 `author-pragma-dsl` Skill。
+- 保存六个内置 Agent 的 `pragma/v4` DSL，以及 Pragma 的 `author-pragma-dsl` Skill。
 - 分别导出 Pragma、Memory Curator、Store Revision、Skill Revision 和 Skill Evaluation 的宿主端口；调用方式允许彼此独立。
 - 拥有跨 Host 可复用的提示词、结构化输出解析、Memory 提炼、Store/Skill 修订规则、Skill 验证和纯状态机。
 - 导出供 Desktop 或未来 Host 适配的运行时中立契约。

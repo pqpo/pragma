@@ -1,8 +1,8 @@
 import { describe, expect, it } from "vitest";
 
 import {
-  PragmaEvaluationResourceSchema,
-  type PragmaEvaluationResource,
+  PragmaFlowRunDryEvaluationResourceSchema,
+  type PragmaFlowRunDryEvaluationResource,
 } from "@pragma/evaluation/ast";
 
 import { PragmaFlowResourceSchema, type PragmaFlowResource } from "../src/ast/index.ts";
@@ -39,7 +39,7 @@ describe("Pragma Flow Evaluation integration", () => {
     const wrongTarget = {
       ...evaluation,
       spec: { ...evaluation.spec, target: { ref: "flow:9h0j1k2m3n4p5q6r" } },
-    } as PragmaEvaluationResource;
+    } as PragmaFlowRunDryEvaluationResource;
 
     expect(() => runPragmaEvaluation(flow, wrongTarget)).toThrow("targets flow:9h0j1k2m3n4p5q6r");
   });
@@ -100,7 +100,7 @@ describe("Pragma Flow Evaluation integration", () => {
     const { evaluation } = reviewFixture();
     const first = evaluation.spec.method.cases[0]!;
     expect(
-      PragmaEvaluationResourceSchema.safeParse({
+      PragmaFlowRunDryEvaluationResourceSchema.safeParse({
         ...evaluation,
         spec: {
           ...evaluation.spec,
@@ -112,7 +112,7 @@ describe("Pragma Flow Evaluation integration", () => {
       }).success,
     ).toBe(false);
     expect(
-      PragmaEvaluationResourceSchema.safeParse({
+      PragmaFlowRunDryEvaluationResourceSchema.safeParse({
         ...evaluation,
         spec: {
           ...evaluation.spec,
@@ -128,7 +128,7 @@ describe("Pragma Flow Evaluation integration", () => {
 
 function reviewFixture(): {
   readonly flow: PragmaFlowResource;
-  readonly evaluation: PragmaEvaluationResource;
+  readonly evaluation: PragmaFlowRunDryEvaluationResource;
 } {
   const flow = PragmaFlowResourceSchema.parse({
     apiVersion: "pragma/v4",
@@ -218,7 +218,7 @@ function reviewFixture(): {
     },
   });
   const input = { goal: "Ship" };
-  const evaluation = PragmaEvaluationResourceSchema.parse({
+  const evaluation = PragmaFlowRunDryEvaluationResourceSchema.parse({
     apiVersion: "pragma/v4",
     kind: "Evaluation",
     metadata: {
@@ -289,11 +289,11 @@ function reviewFixture(): {
 }
 
 function withFirstMock(
-  evaluation: PragmaEvaluationResource,
+  evaluation: PragmaFlowRunDryEvaluationResource,
   mock: Record<string, unknown>,
-): PragmaEvaluationResource {
+): PragmaFlowRunDryEvaluationResource {
   const first = evaluation.spec.method.cases[0]!;
-  return PragmaEvaluationResourceSchema.parse({
+  return PragmaFlowRunDryEvaluationResourceSchema.parse({
     ...evaluation,
     spec: {
       ...evaluation.spec,

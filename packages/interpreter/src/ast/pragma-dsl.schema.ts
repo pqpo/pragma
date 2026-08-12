@@ -982,7 +982,7 @@ export const PragmaDeclarativeResourceSchema = z.discriminatedUnion("kind", [
   PragmaRuntimeProfileResourceSchema,
 ]);
 
-export const PragmaResourceSchema = z.discriminatedUnion("kind", [
+export const PragmaResourceSchema = z.union([
   PragmaExpertResourceSchema,
   PragmaExpertTeamResourceSchema,
   PragmaFlowResourceSchema,

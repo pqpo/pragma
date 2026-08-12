@@ -1,6 +1,6 @@
 import { renderToStaticMarkup } from "react-dom/server";
 import { describe, expect, it } from "vitest";
-import { PragmaEvaluationResourceSchema } from "@pragma/evaluation/ast";
+import { PragmaFlowRunDryEvaluationResourceSchema } from "@pragma/evaluation/ast";
 import { PragmaFlowResourceSchema } from "@pragma/interpreter/ast";
 
 import { FlowRunDryFragment } from "./FlowRunDryFragment.tsx";
@@ -36,7 +36,7 @@ describe("FlowRunDryFragment", () => {
         },
       },
     });
-    const evaluation = PragmaEvaluationResourceSchema.parse({
+    const evaluation = PragmaFlowRunDryEvaluationResourceSchema.parse({
       apiVersion: "pragma/v4",
       kind: "Evaluation",
       metadata: {
