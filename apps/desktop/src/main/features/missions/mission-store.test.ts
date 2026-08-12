@@ -173,27 +173,120 @@ describe("mission store", () => {
       ],
     });
 
-    const added = await store.addAttachments(mission.id, [
-      {
-        id: "00000000-0000-4000-8000-000000000002",
-        kind: "image",
-        name: "pasted-image.png",
-        path: followupImage,
-        mimeType: "image/png",
-      },
-    ]);
-    await store.appendUserMessage(mission.id, {
+    const record = await store.appendUserMessage(mission.id, {
       id: "00000000-0000-4000-8000-000000000003",
       content: "Now review this image.",
-      attachments: [...added],
+      attachments: [
+        {
+          id: "00000000-0000-4000-8000-000000000002",
+          kind: "image",
+          name: "pasted-image.png",
+          path: followupImage,
+          mimeType: "image/png",
+        },
+      ],
       createdAt: "2026-08-10T00:00:00.000Z",
     });
+    expect(record.kind).toBe("user");
+    const added = record.kind === "user" ? (record.attachments ?? []) : [];
 
     const turns = (await store.readTimelinePage(mission.id, { limit: 10 })).turns;
     expect(turns[0]?.message.attachments?.map(({ name }) => name)).toEqual(["first.png"]);
     expect(turns[1]?.message.attachments?.map(({ name }) => name)).toEqual(["pasted-image.png"]);
     await expect(readFile(added[0]!.path, "utf8")).resolves.toBe("followup-image");
     await expect(store.getAttachments(mission.id)).resolves.toHaveLength(2);
+  });
+
+  it("recovers a follow-up whose attachment manifest persisted before its user message", async () => {
+    const root = await temporaryRoot();
+    const source = join(root, "followup.png");
+    await writeFile(source, "followup-image");
+    const store = createMissionStore({ missionsPath: join(root, "missions") });
+    const mission = await store.create({
+      workspace: { path: join(root, "workspace"), basename: "workspace" },
+      goal: "Review an image",
+      project: { id: "studio", revision: 1 },
+      executor: missionExecutorSnapshot(expertFixture()),
+    });
+    const missionDirectory = join(root, "missions", mission.id);
+    const messageId = "00000000-0000-4000-8000-000000000003";
+    const attachmentId = "00000000-0000-4000-8000-000000000002";
+    const storedPath = join(missionDirectory, "attachments", "images", `${attachmentId}.png`);
+    await mkdir(join(missionDirectory, "attachments", "images"), { recursive: true });
+    await writeFile(storedPath, "followup-image");
+    const storedAttachment = {
+      id: attachmentId,
+      kind: "image" as const,
+      name: "followup.png",
+      path: storedPath,
+      mimeType: "image/png" as const,
+      size: 14,
+    };
+    const baseAttachments = {
+      schemaVersion: "pragma.mission-attachments/v1" as const,
+      attachments: [],
+    };
+    const targetAttachments = {
+      schemaVersion: "pragma.mission-attachments/v1" as const,
+      attachments: [storedAttachment],
+    };
+    await writeFile(
+      join(missionDirectory, "attachments.json"),
+      `${JSON.stringify(targetAttachments, null, 2)}\n`,
+    );
+    await writeFile(
+      join(missionDirectory, ".user-message-attachments.transaction.json"),
+      `${JSON.stringify({
+        schemaVersion: "pragma.mission-user-message-attachments-transaction/v1",
+        baseAttachments,
+        targetAttachments,
+        record: {
+          schemaVersion: "pragma.mission-message/v1",
+          sequence: 2,
+          kind: "user",
+          id: messageId,
+          content: "Now review this image.",
+          attachments: [storedAttachment],
+          createdAt: "2026-08-10T00:00:00.000Z",
+        },
+        updatedAt: "2026-08-10T00:00:01.000Z",
+      })}\n`,
+    );
+
+    const recovered = await store.readTimelinePage(mission.id, { limit: 10 });
+
+    expect(recovered.turns[1]?.message).toMatchObject({
+      id: messageId,
+      attachments: [expect.objectContaining({ id: attachmentId, path: storedPath })],
+    });
+    await expect(store.getAttachments(mission.id)).resolves.toEqual([storedAttachment]);
+    await expect(
+      readFile(join(missionDirectory, ".user-message-attachments.transaction.json"), "utf8"),
+    ).rejects.toMatchObject({ code: "ENOENT" });
+    const duplicate = await store.appendUserMessage(mission.id, {
+      id: messageId,
+      content: "Now review this image.",
+      attachments: [
+        {
+          id: attachmentId,
+          kind: "image",
+          name: "followup.png",
+          path: source,
+          mimeType: "image/png",
+        },
+      ],
+      createdAt: "2026-08-10T00:00:00.000Z",
+    });
+    expect(duplicate).toMatchObject({
+      schemaVersion: "pragma.mission-message/v1",
+      sequence: 2,
+      kind: "user",
+      id: messageId,
+      attachments: [expect.objectContaining({ id: attachmentId })],
+    });
+    await expect(store.readTimelinePage(mission.id, { limit: 10 })).resolves.toMatchObject({
+      turns: [{}, {}],
+    });
   });
 
   it("fails closed when the attachment manifest is corrupted", async () => {

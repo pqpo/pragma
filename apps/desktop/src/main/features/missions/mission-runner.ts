@@ -1262,16 +1262,18 @@ export function createMissionRunner(options: {
     if (compiled !== undefined) {
       rememberSessionCompilation(mission.id, desiredCompilationIdentity, compiled);
     }
-    const promptAttachments = await options.missions.addAttachments(
-      mission.id,
-      input.attachments ?? [],
-    );
-    await options.missions.appendUserMessage(mission.id, {
+    const userMessage = await options.missions.appendUserMessage(mission.id, {
       id: input.requestId,
       content: input.content,
-      ...(promptAttachments.length === 0 ? {} : { attachments: [...promptAttachments] }),
+      ...((input.attachments?.length ?? 0) === 0
+        ? {}
+        : { attachments: [...(input.attachments ?? [])] }),
       createdAt: new Date().toISOString(),
     });
+    if (userMessage.kind !== "user") {
+      throw new Error("Mission user message persistence returned an invalid timeline record.");
+    }
+    const promptAttachments = userMessage.attachments ?? [];
     phaseStartedAt = performance.now();
     const turn = await session.prompt(input.content, {
       requestId: input.requestId,
