@@ -71,11 +71,10 @@ export const missions = {
   attachmentUnavailableForFlow: "Attachments are available for experts and teams.",
   attachmentPreviewAlt: "Preview of {{name}}",
   viewOriginalImage: "View original {{name}}",
-  originalImageDescription: "Original image",
   originalImageAlt: "Original {{name}}",
-  originalImageUnavailable: "The original image could not be loaded.",
   closeImagePreview: "Close preview",
-  imageUnsupportedByModel: "This model does not support images. Only the original path is provided.",
+  imageUnsupportedByModel:
+    "This model does not support images. Only the original path is provided.",
   attachmentKind: {
     image: "Image",
     file: "File",

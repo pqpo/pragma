@@ -2,7 +2,10 @@ import { renderToStaticMarkup } from "react-dom/server";
 import { describe, expect, it } from "vitest";
 
 import { MissionModelOverrideControls } from "../../components/MissionModelOverrideControls.tsx";
-import { MissionAttachmentList } from "../../components/MissionAttachments.tsx";
+import {
+  MissionAttachmentList,
+  MissionImagePreviewDialog,
+} from "../../components/MissionAttachments.tsx";
 import { ToolPermissionSelect } from "../../components/ToolPermissionSelect.tsx";
 import {
   filterMissionExecutors,
@@ -38,8 +41,8 @@ describe("ExpertConstellation", () => {
   });
 });
 
-describe("MissionModelOverrideControls", () => {
-  it("renders clickable image thumbnails with a non-blocking model error", () => {
+describe("MissionAttachmentList", () => {
+  it("renders one model warning below multiple clickable image thumbnails", () => {
     const html = renderToStaticMarkup(
       <MissionAttachmentList
         attachments={[
@@ -50,9 +53,17 @@ describe("MissionModelOverrideControls", () => {
             path: "/tmp/screen.png",
             mimeType: "image/png",
           },
+          {
+            id: "00000000-0000-4000-8000-000000000002",
+            kind: "image",
+            name: "diagram.png",
+            path: "/tmp/diagram.png",
+            mimeType: "image/png",
+          },
         ]}
         previews={{
           "00000000-0000-4000-8000-000000000001": "data:image/webp;base64,aW1hZ2U=",
+          "00000000-0000-4000-8000-000000000002": "data:image/webp;base64,aW1hZ2U=",
         }}
         imageUnsupported
         onRemove={() => undefined}
@@ -60,10 +71,33 @@ describe("MissionModelOverrideControls", () => {
     );
 
     expect(html).toContain('aria-label="View original screen.png"');
+    expect(html).toContain('aria-label="View original diagram.png"');
     expect(html).toContain("mission-attachment-thumbnail");
     expect(html).toContain("This model does not support images");
+    expect(html.match(/mission-attachment-model-error/g)).toHaveLength(1);
+    expect(html).toContain('</figure></div><div class="mission-attachment-model-error">');
   });
 
+  it("renders a chromeless image preview with only an icon close control", () => {
+    const html = renderToStaticMarkup(
+      <MissionImagePreviewDialog
+        name="screen.png"
+        src="data:image/webp;base64,aW1hZ2U="
+        onClose={() => undefined}
+      />,
+    );
+
+    expect(html).toContain("mission-original-image-backdrop");
+    expect(html).toContain("mission-original-image-close");
+    expect(html).toContain('aria-label="Close preview"');
+    expect(html).toContain("mission-original-image");
+    expect(html).not.toContain("ui-dialog-header");
+    expect(html).not.toContain("ui-dialog-footer");
+    expect(html).not.toContain("Original image</p>");
+  });
+});
+
+describe("MissionModelOverrideControls", () => {
   it("shows generic defaults before discovery without exposing the Runtime", () => {
     const html = renderToStaticMarkup(
       <MissionModelOverrideControls

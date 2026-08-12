@@ -67,9 +67,7 @@ export const missions = {
   attachmentUnavailableForFlow: "附件目前支援專家和專家團隊。",
   attachmentPreviewAlt: "{{name}} 的預覽",
   viewOriginalImage: "查看原圖 {{name}}",
-  originalImageDescription: "原始圖片",
   originalImageAlt: "{{name}} 的原圖",
-  originalImageUnavailable: "無法載入原始圖片。",
   closeImagePreview: "關閉預覽",
   imageUnsupportedByModel: "目前模型不支援圖片，將僅提供原圖路徑。",
   attachmentKind: {

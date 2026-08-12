@@ -129,6 +129,9 @@ describe("MissionsPage", () => {
 
     expect(html).toContain('aria-label="Add context"');
     expect(html).toContain("mission-attachment-picker is-compact");
+    expect(html.indexOf("mission-attachment-list is-empty")).toBeLessThan(
+      html.indexOf("<textarea"),
+    );
   });
 
   it("shows thinking immediately while the first Mission message starts", () => {

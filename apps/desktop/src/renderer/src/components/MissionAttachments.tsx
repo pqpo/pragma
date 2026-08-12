@@ -97,18 +97,15 @@ export function MissionAttachmentList(props: {
 }) {
   const { t } = useTranslation("missions");
   const [previewing, setPreviewing] = useState<ExpertPromptAttachment>();
-  const [previewFailed, setPreviewFailed] = useState(false);
-  const closePreview = () => {
-    setPreviewing(undefined);
-    setPreviewFailed(false);
-  };
+  const closePreview = () => setPreviewing(undefined);
+  const hasImages = props.attachments.some((attachment) => attachment.kind === "image");
   return (
     <>
       <div
         className={
           props.attachments.length === 0
             ? "mission-attachment-list is-empty"
-            : props.attachments.some((attachment) => attachment.kind === "image")
+            : hasImages
               ? "mission-attachment-list has-images"
               : "mission-attachment-list"
         }
@@ -124,7 +121,6 @@ export function MissionAttachmentList(props: {
                   type="button"
                   aria-label={t("viewOriginalImage", { name: attachment.name })}
                   onClick={() => {
-                    setPreviewFailed(false);
                     setPreviewing(attachment);
                   }}
                 >
@@ -143,12 +139,6 @@ export function MissionAttachmentList(props: {
                 >
                   <X size={13} aria-hidden="true" />
                 </button>
-                {props.imageUnsupported ? (
-                  <small className="mission-attachment-model-error">
-                    <WarningCircle size={13} aria-hidden="true" />
-                    {t("imageUnsupportedByModel")}
-                  </small>
-                ) : null}
               </figure>
             );
           }
@@ -168,34 +158,55 @@ export function MissionAttachmentList(props: {
           );
         })}
       </div>
+      {props.imageUnsupported && hasImages ? (
+        <div className="mission-attachment-model-error">
+          <WarningCircle size={16} aria-hidden="true" />
+          <span>{t("imageUnsupportedByModel")}</span>
+        </div>
+      ) : null}
       {previewing === undefined ? null : (
-        <Dialog
-          className="mission-original-image-dialog"
-          title={previewing.name}
-          description={t("originalImageDescription")}
-          onCancel={closePreview}
-          footer={
-            <button className="secondary-button" type="button" onClick={closePreview}>
-              {t("closeImagePreview")}
-            </button>
-          }
-        >
-          {previewFailed ? (
-            <p className="form-error" role="alert">
-              {t("originalImageUnavailable")}
-            </p>
-          ) : (
-            <img
-              className="mission-original-image"
-              src={
-                props.originalUrl?.(previewing) ?? missionAttachmentDraftOriginalUrl(previewing.id)
-              }
-              alt={t("originalImageAlt", { name: previewing.name })}
-              onError={() => setPreviewFailed(true)}
-            />
-          )}
-        </Dialog>
+        <MissionImagePreviewDialog
+          name={previewing.name}
+          src={props.originalUrl?.(previewing) ?? missionAttachmentDraftOriginalUrl(previewing.id)}
+          onClose={closePreview}
+        />
       )}
     </>
+  );
+}
+
+export function MissionImagePreviewDialog(props: {
+  readonly name: string;
+  readonly src: string;
+  readonly onClose: () => void;
+}) {
+  const { t } = useTranslation("missions");
+  const [failed, setFailed] = useState(false);
+  return (
+    <Dialog
+      backdropClassName="mission-original-image-backdrop"
+      className="mission-original-image-dialog"
+      title={t("originalImageAlt", { name: props.name })}
+      hideHeader
+      onCancel={props.onClose}
+    >
+      <button
+        className="mission-original-image-close"
+        type="button"
+        aria-label={t("closeImagePreview")}
+        data-dialog-initial-focus
+        onClick={props.onClose}
+      >
+        <X size={24} aria-hidden="true" />
+      </button>
+      {failed ? null : (
+        <img
+          className="mission-original-image"
+          src={props.src}
+          alt={t("originalImageAlt", { name: props.name })}
+          onError={() => setFailed(true)}
+        />
+      )}
+    </Dialog>
   );
 }

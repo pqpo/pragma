@@ -7,7 +7,9 @@ export function Dialog(props: {
   readonly children?: ReactNode | undefined;
   readonly footer?: ReactNode | undefined;
   readonly className?: string | undefined;
+  readonly backdropClassName?: string | undefined;
   readonly role?: "dialog" | "alertdialog" | undefined;
+  readonly hideHeader?: boolean | undefined;
   readonly busy?: boolean | undefined;
   readonly onCancel: () => void;
 }) {
@@ -34,7 +36,7 @@ export function Dialog(props: {
 
   const content = (
     <div
-      className="ui-dialog-backdrop"
+      className={["ui-dialog-backdrop", props.backdropClassName].filter(Boolean).join(" ")}
       role="presentation"
       onPointerDown={(event) => {
         if (event.target === event.currentTarget && !props.busy) props.onCancel();
@@ -45,8 +47,9 @@ export function Dialog(props: {
         ref={surfaceRef}
         role={props.role ?? "dialog"}
         aria-modal="true"
-        aria-labelledby={titleId}
-        aria-describedby={props.description ? descriptionId : undefined}
+        aria-label={props.hideHeader ? props.title : undefined}
+        aria-labelledby={props.hideHeader ? undefined : titleId}
+        aria-describedby={!props.hideHeader && props.description ? descriptionId : undefined}
         onKeyDown={(event) => {
           if (event.key === "Escape" && !props.busy) {
             event.preventDefault();
@@ -67,10 +70,12 @@ export function Dialog(props: {
           }
         }}
       >
-        <header className="ui-dialog-header">
-          <h2 id={titleId}>{props.title}</h2>
-          {props.description ? <p id={descriptionId}>{props.description}</p> : null}
-        </header>
+        {props.hideHeader ? null : (
+          <header className="ui-dialog-header">
+            <h2 id={titleId}>{props.title}</h2>
+            {props.description ? <p id={descriptionId}>{props.description}</p> : null}
+          </header>
+        )}
         {props.children ? <div className="ui-dialog-body">{props.children}</div> : null}
         {props.footer ? <footer className="ui-dialog-footer">{props.footer}</footer> : null}
       </section>

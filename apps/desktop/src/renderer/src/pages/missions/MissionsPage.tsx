@@ -44,7 +44,7 @@ import type {
   HumanInteractionResponse,
 } from "@pragma/shared";
 
-import { ConfirmationDialog, Dialog } from "../../components/Dialog.tsx";
+import { ConfirmationDialog } from "../../components/Dialog.tsx";
 import {
   type Mission,
   type MissionChatEntry,
@@ -75,6 +75,7 @@ import { ToolPermissionSelect } from "../../components/ToolPermissionSelect.tsx"
 import {
   MissionAttachmentList,
   MissionAttachmentPicker,
+  MissionImagePreviewDialog,
 } from "../../components/MissionAttachments.tsx";
 import { MissionModelOverrideControls } from "../../components/MissionModelOverrideControls.tsx";
 import { MarkdownContent } from "../../components/MarkdownContent.tsx";
@@ -2482,6 +2483,22 @@ export function MissionDetailFragment(props: {
                     executionActive={executionActive}
                   />
                   <div className="mission-chat-composer" aria-busy={clientOperationBusy}>
+                    <MissionAttachmentList
+                      attachments={attachments}
+                      previews={attachmentPreviews}
+                      imageUnsupported={imageUnsupported}
+                      onRemove={(id) => {
+                        void desktopApi()?.discardMissionAttachmentDrafts({ attachmentIds: [id] });
+                        setAttachments((current) =>
+                          current.filter((attachment) => attachment.id !== id),
+                        );
+                        setAttachmentPreviews((current) => {
+                          const next = { ...current };
+                          delete next[id];
+                          return next;
+                        });
+                      }}
+                    />
                     <textarea
                       ref={textareaRef}
                       rows={1}
@@ -2539,22 +2556,6 @@ export function MissionDetailFragment(props: {
                           event.preventDefault();
                           void send();
                         }
-                      }}
-                    />
-                    <MissionAttachmentList
-                      attachments={attachments}
-                      previews={attachmentPreviews}
-                      imageUnsupported={imageUnsupported}
-                      onRemove={(id) => {
-                        void desktopApi()?.discardMissionAttachmentDrafts({ attachmentIds: [id] });
-                        setAttachments((current) =>
-                          current.filter((attachment) => attachment.id !== id),
-                        );
-                        setAttachmentPreviews((current) => {
-                          const next = { ...current };
-                          delete next[id];
-                          return next;
-                        });
                       }}
                     />
                     <div className="mission-chat-composer-toolbar">
@@ -3378,7 +3379,6 @@ function MissionImageAttachment(props: {
   const { t } = useTranslation("missions");
   const [failed, setFailed] = useState(false);
   const [open, setOpen] = useState(false);
-  const [originalFailed, setOriginalFailed] = useState(false);
   if (failed) return <MissionAttachmentLabel attachment={props.attachment} />;
   return (
     <>
@@ -3386,10 +3386,7 @@ function MissionImageAttachment(props: {
         <button
           type="button"
           aria-label={t("viewOriginalImage", { name: props.attachment.name })}
-          onClick={() => {
-            setOriginalFailed(false);
-            setOpen(true);
-          }}
+          onClick={() => setOpen(true)}
         >
           <img
             alt={t("attachmentPreviewAlt", { name: props.attachment.name })}
@@ -3401,30 +3398,11 @@ function MissionImageAttachment(props: {
         <figcaption>{props.attachment.name}</figcaption>
       </figure>
       {open ? (
-        <Dialog
-          className="mission-original-image-dialog"
-          title={props.attachment.name}
-          description={t("originalImageDescription")}
-          onCancel={() => setOpen(false)}
-          footer={
-            <button className="secondary-button" type="button" onClick={() => setOpen(false)}>
-              {t("closeImagePreview")}
-            </button>
-          }
-        >
-          {originalFailed ? (
-            <p className="form-error" role="alert">
-              {t("originalImageUnavailable")}
-            </p>
-          ) : (
-            <img
-              className="mission-original-image"
-              src={missionAttachmentOriginalUrl(props.missionId, props.attachment.id)}
-              alt={t("originalImageAlt", { name: props.attachment.name })}
-              onError={() => setOriginalFailed(true)}
-            />
-          )}
-        </Dialog>
+        <MissionImagePreviewDialog
+          name={props.attachment.name}
+          src={missionAttachmentOriginalUrl(props.missionId, props.attachment.id)}
+          onClose={() => setOpen(false)}
+        />
       ) : null}
     </>
   );

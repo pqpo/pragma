@@ -19956,7 +19956,7 @@ textarea:focus-visible,
   min-height: 52px;
   max-height: 130px;
   resize: none;
-  padding: 16px 18px 8px;
+  padding: 18px 18px 8px;
   border: 0;
   outline: 0;
   background: transparent;
@@ -21586,6 +21586,10 @@ textarea:focus-visible,
   padding: 4px 16px 6px;
 }
 
+.mission-chat-composer > .mission-attachment-list.is-empty {
+  padding: 0;
+}
+
 .mission-chat-composer > .mission-attachment-list.has-images {
   padding-top: 8px;
 }
@@ -21655,12 +21659,12 @@ textarea:focus-visible,
 
 .mission-attachment-model-error {
   display: flex;
-  width: 106px;
   align-items: flex-start;
-  gap: 3px;
-  color: var(--danger, #b42318);
-  font-size: 10px;
-  line-height: 1.35;
+  gap: 4px;
+  padding: 0 16px 8px;
+  color: var(--ui-danger);
+  font-size: 12px;
+  line-height: 1.45;
 }
 
 .mission-attachment-model-error svg {
@@ -21668,23 +21672,70 @@ textarea:focus-visible,
   margin-top: 1px;
 }
 
+.mission-original-image-backdrop {
+  padding: 0;
+  backdrop-filter: blur(2px);
+}
+
 .mission-original-image-dialog {
-  width: min(94vw, 1120px);
-  max-height: calc(100vh - 32px);
+  position: relative;
+  display: grid;
+  width: 100%;
+  height: 100%;
+  max-height: none;
+  place-items: center;
+  overflow: hidden;
+  border: 0;
+  border-radius: 0;
+  background: transparent;
+  box-shadow: none;
+  pointer-events: none;
 }
 
 .mission-original-image-dialog .ui-dialog-body {
   display: grid;
-  min-height: 180px;
+  width: 100%;
+  height: 100%;
   place-items: center;
-  padding: 0 24px 20px;
+  overflow: hidden;
+  padding: 24px;
+  pointer-events: none;
+}
+
+.mission-original-image-close {
+  position: absolute;
+  z-index: 1;
+  top: 24px;
+  right: 24px;
+  display: grid;
+  width: 40px;
+  height: 40px;
+  place-items: center;
+  padding: 0;
+  border: 0;
+  border-radius: var(--ui-radius-round);
+  outline: 0;
+  background: rgb(29 33 31 / 64%);
+  color: var(--ui-surface);
+  cursor: pointer;
+  pointer-events: auto;
+}
+
+.mission-original-image-close:hover,
+.mission-original-image-close:focus-visible {
+  background: rgb(29 33 31 / 80%);
+}
+
+.mission-original-image-close:focus-visible {
+  box-shadow: 0 0 0 3px var(--ui-focus);
 }
 
 .mission-original-image {
   display: block;
-  max-width: 90vw;
-  max-height: 72vh;
+  max-width: calc(100vw - 144px);
+  max-height: calc(100vh - 144px);
   object-fit: contain;
+  pointer-events: auto;
 }
 
 .mission-attachment-chip {
