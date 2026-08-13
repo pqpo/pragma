@@ -1018,65 +1018,81 @@
   font-size: 13px;
 }
 
-.mission-work-list ol {
+.mission-work-grid {
+  position: relative;
   display: grid;
-  gap: 8px;
+  gap: 56px;
   margin: 22px 0 0;
-  padding: 0;
-  list-style: none;
+  padding: 10px 8px 24px;
 }
 
-.mission-work-list li {
-  margin-left: calc(var(--mission-work-depth) * 26px);
+.mission-work-grid-row {
+  position: relative;
+  z-index: 1;
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(168px, 208px));
+  justify-content: center;
+  gap: 18px;
 }
 
-.mission-work-list li > button {
+.mission-work-grid-item {
+  min-width: 0;
+}
+
+.mission-work-card {
+  position: relative;
   display: grid;
   width: 100%;
-  grid-template-columns: 10px minmax(0, 1fr) auto;
-  align-items: start;
-  gap: 12px;
-  padding: 14px 16px;
+  min-height: 142px;
+  place-items: center;
+  align-content: center;
+  gap: 8px;
+  padding: 20px 16px 16px;
   border: 1px solid var(--border);
-  border-radius: 12px;
+  border-radius: 16px;
   background: #fff;
   color: var(--text);
   cursor: pointer;
-  text-align: left;
+  text-align: center;
+  transition:
+    border-color 150ms ease,
+    box-shadow 150ms ease,
+    transform 150ms ease;
 }
 
-.mission-work-list li > button:hover,
-.mission-work-list li > button:focus-visible {
+.mission-work-card:hover,
+.mission-work-card:focus-visible {
   border-color: rgb(88 121 104 / 32%);
   outline: 0;
-  box-shadow: 0 0 0 3px var(--focus-ring);
+  box-shadow:
+    0 0 0 3px var(--focus-ring),
+    0 12px 28px rgb(34 57 44 / 9%);
+  transform: translateY(-2px);
 }
 
-.mission-work-list li > button > svg {
-  margin-top: 3px;
-  color: var(--faint);
-  transform: rotate(-90deg);
+.mission-work-card-avatar {
+  position: relative;
+  display: inline-grid;
+  place-items: center;
 }
 
-.mission-work-list li strong,
-.mission-work-list li small {
+.mission-work-card strong,
+.mission-work-card small {
   display: block;
-}
-
-.mission-work-list li small {
-  margin-top: 2px;
-  color: var(--muted);
-  font-size: 11px;
-  text-transform: capitalize;
-}
-
-.mission-work-list li p {
-  margin-top: 7px;
+  max-width: 100%;
   overflow: hidden;
-  color: var(--muted);
-  font-size: 12px;
   text-overflow: ellipsis;
   white-space: nowrap;
+}
+
+.mission-work-card strong {
+  font-size: 14px;
+  font-weight: 690;
+}
+
+.mission-work-card small {
+  color: var(--muted);
+  font-size: 11px;
 }
 
 .mission-work-status {
@@ -1085,6 +1101,51 @@
   margin-top: 6px;
   border-radius: 50%;
   background: #aeb4af;
+}
+
+.mission-work-card-avatar > .mission-work-status {
+  position: absolute;
+  right: -3px;
+  bottom: -3px;
+  width: 11px;
+  height: 11px;
+  margin: 0;
+  border: 2px solid #fff;
+}
+
+.mission-work-grid-connections {
+  position: absolute;
+  z-index: 0;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  overflow: visible;
+  pointer-events: none;
+}
+
+.mission-work-grid-connections marker path {
+  fill: #8fa197;
+}
+
+.mission-work-grid-connection {
+  fill: none;
+  stroke: #9aa9a1;
+  stroke-dasharray: 6 7;
+  stroke-linecap: round;
+  stroke-width: 1.5;
+  animation: mission-work-flow 1.1s linear infinite;
+}
+
+@keyframes mission-work-flow {
+  to {
+    stroke-dashoffset: -13;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .mission-work-grid-connection {
+    animation: none;
+  }
 }
 
 .mission-work-status.is-running,

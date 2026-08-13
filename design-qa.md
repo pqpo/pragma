@@ -910,3 +910,47 @@ No actionable P0, P1, or P2 issues remain. The visual differences from the sourc
 - P3: If completed-job volume grows substantially beyond the shown state, a compact grouping or progressive disclosure pattern could reduce scan length without bringing card borders back.
 
 final result: passed
+
+---
+
+# Mission Work Grid Design QA
+
+- Source visual truth path: user redesign brief from 2026-08-13, grounded in the pre-change Work tab implementation at `apps/desktop/src/renderer/src/pages/missions/MissionsPage.tsx` (`HEAD`). No separate mockup was supplied.
+- Implementation screenshot path: `/tmp/pragma-mission-work-grid-implementation.png`
+- Hover-state screenshot path: `/tmp/pragma-mission-work-grid-hover.png`
+- Viewport: 1280 × 768 CSS px, device scale factor 1.
+- Source pixels: specification-based target; no standalone raster source.
+- Implementation pixels: 1280 × 768, captured at 1× density.
+- State: five work records across three delegation levels; running, succeeded, queued, and waiting statuses represented.
+
+## Full-view comparison evidence
+
+The rendered Work view uses one compact card per expert, arranged in centered depth-based grid rows. Each card exposes the expert avatar, expert name, and current status. Animated dashed orthogonal arrows connect parent and child records in the correct direction. The overall typography, color, borders, radii, avatar assets, and spacing reuse the Desktop design system.
+
+## Focused region comparison evidence
+
+The hover-state capture verifies that the existing profiled-avatar tooltip opens over the selected avatar after the established delay and displays the existing name, gender, and personality fields. Computed browser styles verified `mission-work-flow` on connector paths, a `6px 7px` dash pattern, and an SVG arrow marker. The browser console contained no warnings or errors.
+
+## Findings
+
+- No actionable P0, P1, or P2 differences from the requested redesign.
+- Fonts and typography: existing Desktop font stack and hierarchy are preserved; expert names remain legible and truncate safely.
+- Spacing and layout rhythm: three depth rows fit within the inspected desktop viewport with balanced 56px connector lanes.
+- Colors and visual tokens: existing surface, border, focus ring, status, and muted-text tokens are reused.
+- Image quality and asset fidelity: existing expert avatar assets render at native component sizes; no placeholder or synthetic asset was introduced.
+- Copy and content: English, Simplified Chinese, and Traditional Chinese labels describe the expert collaboration network consistently.
+
+## Comparison history
+
+- Initial pass: the third delegation row was partially below the inspected viewport.
+- Fix: reduced card height from 154px to 142px, row gap from 72px to 56px, and bottom padding from 32px to 24px.
+- Post-fix evidence: `/tmp/pragma-mission-work-grid-implementation.png` shows all three levels without clipping.
+
+## Primary interactions tested
+
+- Avatar hover opens the existing expert profile tooltip.
+- Work cards expose accessible expert-name and status labels.
+- Connector paths render with arrowheads and active dash-flow animation.
+- Reduced-motion CSS disables the connector animation.
+
+final result: passed

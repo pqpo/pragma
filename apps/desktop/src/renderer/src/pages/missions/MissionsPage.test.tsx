@@ -24,6 +24,7 @@ import {
   MissionMemoryActivity,
   MissionThinkingEntry,
   MissionToolCallBlock,
+  MissionWorkGrid,
   MissionWorkDrawer,
   MissionsPage,
   MissionsPageSkeleton,
@@ -751,6 +752,55 @@ describe("Mission work record titles", () => {
     expect(
       missionWorkInputSenderName({ ...children[0]!, parentRecordId: "missing" }, children),
     ).toBe("Main agent");
+  });
+});
+
+describe("Mission work grid", () => {
+  it("renders one expert card per work record with profiled avatars and status", () => {
+    const createdAt = "2026-07-21T00:00:00.000Z";
+    const records: MissionWorkRecord[] = [
+      {
+        recordId: "root:coordinator",
+        kind: "root",
+        sessionId: "coordinator",
+        title: "Coordinator",
+        executorId: "coordinator",
+        avatarId: "pragma.avatar.expert.07",
+        origin: "core",
+        status: "running",
+        tasks: [],
+        summary: "Coordinate the mission",
+        createdAt,
+        updatedAt: createdAt,
+      },
+      {
+        recordId: "runtime-agent:researcher",
+        kind: "runtime-agent",
+        sessionId: "researcher",
+        parentRecordId: "root:coordinator",
+        title: "Researcher",
+        avatarId: "pragma.avatar.expert.08",
+        origin: "runtime",
+        status: "succeeded",
+        tasks: [],
+        summary: "Inspect the repository",
+        createdAt,
+        updatedAt: createdAt,
+      },
+    ];
+
+    const html = renderToStaticMarkup(
+      <MissionWorkGrid records={records} onSelect={() => undefined} />,
+    );
+
+    expect(html.match(/class="mission-work-card /g)).toHaveLength(2);
+    expect(html).toContain("Coordinator");
+    expect(html).toContain("Researcher");
+    expect(html).toContain('data-avatar-profile="pragma.avatar.expert.07"');
+    expect(html).toContain('data-avatar-profile="pragma.avatar.expert.08"');
+    expect(html).toContain("mission-work-grid-connections");
+    expect(html).toMatch(/class="mission-work-grid" role="list" aria-label="[^"]+"/u);
+    expect(html.match(/role="listitem"/g)).toHaveLength(2);
   });
 });
 
