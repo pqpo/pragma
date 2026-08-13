@@ -7,6 +7,7 @@ import type {
   MissionWorkRecord,
 } from "../../../../shared/contracts/index.ts";
 import { i18n } from "../../i18n/index.ts";
+import { expertAvatarSource } from "../../components/ExpertAvatar.tsx";
 import {
   applyMissionUsageHintRevision,
   applyMissionChatPatches,
@@ -796,6 +797,54 @@ describe("Mission chat patches", () => {
     ).toBeNull();
   });
 
+  it("keeps executor presentation metadata when a live upsert omits it", () => {
+    const snapshot: MissionChatSnapshot = {
+      missionId: "00000000-0000-4000-8000-000000000000",
+      revision: 1,
+      entries: [
+        {
+          id: "answer",
+          kind: "assistant",
+          executorId: "writer",
+          executorName: "Writer",
+          executorAvatarId: "pragma.avatar.expert.07",
+          content: "Drafting",
+          streaming: true,
+          createdAt: "2026-07-11T00:00:00.000Z",
+        },
+      ],
+      page: {},
+      pendingInteractions: [],
+    };
+
+    expect(
+      applyMissionChatPatches(
+        snapshot,
+        [
+          {
+            type: "entry.upsert",
+            entry: {
+              id: "answer",
+              kind: "assistant",
+              executorId: "writer",
+              content: "Draft complete.",
+              streaming: false,
+              createdAt: "2026-07-11T00:00:00.000Z",
+            },
+          },
+        ],
+        2,
+      ),
+    ).toMatchObject({
+      entries: [
+        {
+          executorName: "Writer",
+          executorAvatarId: "pragma.avatar.expert.07",
+        },
+      ],
+    });
+  });
+
   it("applies a live context-window patch without replacing chat entries", () => {
     const snapshot: MissionChatSnapshot = {
       missionId: "00000000-0000-4000-8000-000000000000",
@@ -1068,7 +1117,7 @@ describe("Mission Expert output labels", () => {
     expect(html).toContain("mission-attachment-label");
   });
 
-  it("shows the friendly Expert name on answers, thinking, and tool groups", () => {
+  it("shows the Expert name and avatar on output without repeating it on tool groups", () => {
     const answer = renderToStaticMarkup(
       <MissionChatEntryView
         entry={{
@@ -1076,6 +1125,7 @@ describe("Mission Expert output labels", () => {
           kind: "assistant",
           executorId: "writer",
           executorName: "Writer",
+          executorAvatarId: "pragma.avatar.expert.07",
           content: "Draft complete.",
           streaming: false,
           createdAt,
@@ -1090,6 +1140,7 @@ describe("Mission Expert output labels", () => {
           kind: "thinking",
           executorId: "researcher",
           executorName: "Researcher",
+          executorAvatarId: "pragma.avatar.expert.08",
           content: "Inspecting sources.",
           streaming: true,
           createdAt,
@@ -1122,16 +1173,43 @@ describe("Mission Expert output labels", () => {
             createdAt,
           },
         ]}
-        showExecutorLabel
       />,
     );
 
     expect(answer).toContain('data-mission-executor-id="writer"');
     expect(answer).toContain(">Writer<");
+    expect(answer).toContain(expertAvatarSource("pragma.avatar.expert.07"));
     expect(thinking).toContain('data-mission-executor-id="researcher"');
     expect(thinking).toContain(">Researcher<");
-    expect(tools).toContain('data-mission-executor-id="reviewer"');
-    expect(tools).toContain(">Reviewer<");
+    expect(thinking).toContain(expertAvatarSource("pragma.avatar.expert.08"));
+    expect(tools).not.toContain("data-mission-executor-id");
+    expect(tools).not.toContain("Reviewer");
+  });
+
+  it("keeps tool failure diagnostics expandable without announcing the raw error", () => {
+    const html = renderToStaticMarkup(
+      <MissionToolCallBlock
+        collapsed
+        entries={[
+          {
+            id: "tool-failed",
+            kind: "tool",
+            executorId: "reviewer",
+            executorName: "Reviewer",
+            toolCallId: "call-failed",
+            toolName: "bash",
+            status: "failed",
+            error: "Command exited with status 1.",
+            createdAt,
+          },
+        ]}
+      />,
+    );
+
+    expect(html).toContain("is-failed");
+    expect(html).toContain("Command exited with status 1.");
+    expect(html).not.toContain('role="alert"');
+    expect(html).not.toContain("Reviewer");
   });
 
   it("falls back to the Expert ID and keeps Work drawer output labels suppressed", () => {

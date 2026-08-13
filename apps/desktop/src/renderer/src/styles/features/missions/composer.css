@@ -279,7 +279,7 @@
 .mission-tool-static-row > span {
   overflow: hidden;
   color: var(--text);
-  font-weight: 650;
+  font-weight: 500;
   text-overflow: ellipsis;
   white-space: nowrap;
 }

@@ -4,6 +4,7 @@ import {
   ExpertPromptAttachmentSchema,
   MissionExecutorRefSchema,
   MissionExecutorSchema,
+  PragmaAvatarIdSchema,
   RuntimeContextWindowUsageSchema,
   type MissionExecutor,
 } from "@pragma/shared";
@@ -392,6 +393,7 @@ const MissionChatEntryBaseSchema = z.object({
   invocationId: z.string().min(1).optional(),
   executorId: z.string().min(1).optional(),
   executorName: z.string().min(1).optional(),
+  executorAvatarId: PragmaAvatarIdSchema.optional(),
   createdAt: z.string().datetime(),
 });
 

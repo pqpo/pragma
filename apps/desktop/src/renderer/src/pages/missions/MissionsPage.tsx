@@ -45,6 +45,7 @@ import type {
 } from "@pragma/shared";
 
 import { ConfirmationDialog } from "../../components/Dialog.tsx";
+import { ExpertAvatar } from "../../components/ExpertAvatar.tsx";
 import {
   type Mission,
   type MissionChatEntry,
@@ -2370,7 +2371,6 @@ export function MissionDetailFragment(props: {
                         collapsed={block.collapsed}
                         entries={block.entries}
                         key={`tools:${block.entries[0]!.id}`}
-                        showExecutorLabel
                       />
                     );
                   }
@@ -3334,7 +3334,7 @@ export const MissionChatEntryView = memo(function MissionChatEntryView(props: {
     );
   }
   if (props.entry.kind === "tool") {
-    return <MissionToolCallEntry entry={props.entry} showExecutorLabel={props.showExecutorLabel} />;
+    return <MissionToolCallEntry entry={props.entry} />;
   }
   if (props.entry.kind === "agent_activity") {
     return <MissionAgentActivityEntry entry={props.entry} />;
@@ -3436,7 +3436,8 @@ function MissionExecutorLabel(props: { readonly entry: MissionChatEntry }) {
       data-mission-executor-id={props.entry.executorId}
       title={props.entry.executorId}
     >
-      {label}
+      <ExpertAvatar avatarId={props.entry.executorAvatarId} size="xs" />
+      <span>{label}</span>
     </small>
   );
 }
@@ -3505,40 +3506,25 @@ export function MissionThinkingEntry(props: {
 export function MissionToolCallBlock(props: {
   readonly collapsed: boolean;
   readonly entries: readonly Extract<MissionChatEntry, { kind: "tool" }>[];
-  readonly showExecutorLabel?: boolean | undefined;
 }) {
   const { t } = useTranslation("missions");
   if (props.entries.length === 1) {
-    return (
-      <MissionToolCallEntry entry={props.entries[0]!} showExecutorLabel={props.showExecutorLabel} />
-    );
+    return <MissionToolCallEntry entry={props.entries[0]!} />;
   }
   if (!props.collapsed) {
     return (
       <div className="mission-tool-run">
         {props.entries.map((entry) => (
-          <MissionToolCallEntry
-            entry={entry}
-            key={entry.id}
-            showExecutorLabel={props.showExecutorLabel}
-          />
+          <MissionToolCallEntry entry={entry} key={entry.id} />
         ))}
       </div>
     );
   }
-  const showExecutorLabel =
-    props.showExecutorLabel === true &&
-    missionChatEntryExecutorLabel(props.entries[0]!) !== undefined;
   const status = toolGroupStatus(props.entries);
   return (
-    <details
-      className={`mission-chat-activity mission-tool-entry mission-tool-group is-${status}${
-        showExecutorLabel ? " has-executor" : ""
-      }`}
-    >
+    <details className={`mission-chat-activity mission-tool-entry mission-tool-group is-${status}`}>
       <summary>
         <Toolbox size={16} aria-hidden="true" />
-        {showExecutorLabel ? <MissionExecutorLabel entry={props.entries[0]!} /> : null}
         <span>{t("toolCalls", { count: props.entries.length })}</span>
         <small>{toolStatusLabel(status)}</small>
         <CaretDown size={14} aria-hidden="true" />
@@ -3554,14 +3540,9 @@ export function MissionToolCallBlock(props: {
 
 function MissionToolCallEntry(props: {
   readonly entry: Extract<MissionChatEntry, { kind: "tool" }>;
-  readonly showExecutorLabel?: boolean | undefined;
 }) {
   const { t } = useTranslation("missions");
-  const showExecutorLabel =
-    props.showExecutorLabel === true && missionChatEntryExecutorLabel(props.entry) !== undefined;
-  const className = `mission-chat-activity mission-tool-entry is-${props.entry.status}${
-    showExecutorLabel ? " has-executor" : ""
-  }`;
+  const className = `mission-chat-activity mission-tool-entry is-${props.entry.status}`;
   const hasDetails =
     props.entry.inputPreview !== undefined ||
     props.entry.outputPreview !== undefined ||
@@ -3569,7 +3550,6 @@ function MissionToolCallEntry(props: {
   const row = (
     <>
       <Toolbox size={16} aria-hidden="true" />
-      {showExecutorLabel ? <MissionExecutorLabel entry={props.entry} /> : null}
       <span>{props.entry.toolName}</span>
       <small>{toolStatusLabel(props.entry.status)}</small>
     </>
@@ -3601,7 +3581,7 @@ function MissionToolCallEntry(props: {
             <pre>{props.entry.outputPreview}</pre>
           </section>
         ) : null}
-        {props.entry.error !== undefined ? <p role="alert">{props.entry.error}</p> : null}
+        {props.entry.error !== undefined ? <p>{props.entry.error}</p> : null}
       </div>
     </details>
   );
@@ -4112,6 +4092,9 @@ export function applyMissionChatPatches(
             : {}),
           ...(patch.entry.executorName === undefined && existing.executorName !== undefined
             ? { executorName: existing.executorName }
+            : {}),
+          ...(patch.entry.executorAvatarId === undefined && existing.executorAvatarId !== undefined
+            ? { executorAvatarId: existing.executorAvatarId }
             : {}),
         };
       }

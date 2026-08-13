@@ -1047,13 +1047,19 @@
 }
 
 .mission-output-executor {
-  display: block;
+  display: flex;
+  min-width: 0;
+  align-items: center;
+  gap: 8px;
+  margin-bottom: 8px;
+  color: var(--ui-accent-strong);
+  font-size: 12px;
+  font-weight: 600;
+  line-height: 1.45;
+}
+
+.mission-output-executor > span:last-child {
   overflow: hidden;
-  margin-bottom: 5px;
-  color: var(--green-dark);
-  font-size: 11px;
-  font-weight: 700;
-  line-height: 1.35;
   text-overflow: ellipsis;
   white-space: nowrap;
 }

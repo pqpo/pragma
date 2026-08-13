@@ -1226,19 +1226,39 @@ describe("MissionRunner", { timeout: 15_000 }, () => {
 
     expect(expertOutputs).toEqual(
       expect.arrayContaining([
-        expect.objectContaining({ executorId: writer.metadata.id, executorName: "Writer" }),
-        expect.objectContaining({ executorId: reviewer.metadata.id, executorName: "Reviewer" }),
+        expect.objectContaining({
+          executorId: writer.metadata.id,
+          executorName: "Writer",
+          executorAvatarId: writer.metadata.avatarId,
+        }),
+        expect.objectContaining({
+          executorId: reviewer.metadata.id,
+          executorName: "Reviewer",
+          executorAvatarId: reviewer.metadata.avatarId,
+        }),
       ]),
     );
     expect(teamOutputs).toEqual(
       expect.arrayContaining([
-        expect.objectContaining({ executorId: writer.metadata.id, executorName: "Writer" }),
-        expect.objectContaining({ executorId: reviewer.metadata.id, executorName: "Reviewer" }),
+        expect.objectContaining({
+          executorId: writer.metadata.id,
+          executorName: "Writer",
+          executorAvatarId: writer.metadata.avatarId,
+        }),
+        expect.objectContaining({
+          executorId: reviewer.metadata.id,
+          executorName: "Reviewer",
+          executorAvatarId: reviewer.metadata.avatarId,
+        }),
       ]),
     );
     expect(flowOutputs).toEqual(
       expect.arrayContaining([
-        expect.objectContaining({ executorId: reviewer.metadata.id, executorName: "Reviewer" }),
+        expect.objectContaining({
+          executorId: reviewer.metadata.id,
+          executorName: "Reviewer",
+          executorAvatarId: reviewer.metadata.avatarId,
+        }),
       ]),
     );
     expect(
@@ -1250,8 +1270,16 @@ describe("MissionRunner", { timeout: 15_000 }, () => {
         .filter((entry) => entry.kind === "assistant"),
     ).toEqual(
       expect.arrayContaining([
-        expect.objectContaining({ executorId: writer.metadata.id, executorName: "Writer" }),
-        expect.objectContaining({ executorId: reviewer.metadata.id, executorName: "Reviewer" }),
+        expect.objectContaining({
+          executorId: writer.metadata.id,
+          executorName: "Writer",
+          executorAvatarId: writer.metadata.avatarId,
+        }),
+        expect.objectContaining({
+          executorId: reviewer.metadata.id,
+          executorName: "Reviewer",
+          executorAvatarId: reviewer.metadata.avatarId,
+        }),
       ]),
     );
     unsubscribe();

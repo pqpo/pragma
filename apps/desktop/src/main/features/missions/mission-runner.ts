@@ -225,6 +225,12 @@ interface LiveMissionChat {
 }
 
 type ExecutorNameResolver = (executorId: string) => string | undefined;
+type ExecutorAvatarIdResolver = (executorId: string) => string | undefined;
+
+interface ExecutorMetadata {
+  readonly names: ReadonlyMap<string, string>;
+  readonly avatarIds: ReadonlyMap<string, string>;
+}
 
 interface MissionExecutionContext {
   readonly app: ReturnType<typeof createPragma>;
@@ -488,39 +494,49 @@ export function createMissionRunner(options: {
   const workListeners = new Set<(notification: MissionWorkNotification) => void>();
   const workRevisions = new Map<string, number>();
   const liveWorkOutputs = new Map<string, Map<string, LiveMissionChat>>();
-  const executorNameCache = new Map<string, ReadonlyMap<string, string>>();
+  const executorMetadataCache = new Map<string, ExecutorMetadata>();
 
-  const readExecutorNames = async (
+  const readExecutorMetadata = async (
     mission: Pick<Mission, "project">,
-  ): Promise<ReadonlyMap<string, string>> => {
+  ): Promise<ExecutorMetadata> => {
     const project = await options.project.openRevision(mission.project.revision);
-    return new Map(
-      project.listResources().map((resource) => [resource.metadata.id, resource.metadata.name]),
-    );
+    const resources = project.listResources();
+    const avatarIds = new Map<string, string>();
+    for (const resource of resources) {
+      if (resource.kind === "Expert") {
+        avatarIds.set(resource.metadata.id, resource.metadata.avatarId);
+      }
+    }
+    return {
+      names: new Map(
+        resources.map((resource) => [resource.metadata.id, resource.metadata.name] as const),
+      ),
+      avatarIds,
+    };
   };
 
-  const getExecutorNames = async (
+  const getExecutorMetadata = async (
     mission: Pick<Mission, "project">,
-  ): Promise<ReadonlyMap<string, string>> => {
+  ): Promise<ExecutorMetadata> => {
     const projectKey = `${mission.project.id}:${mission.project.revision}`;
-    const existing = executorNameCache.get(projectKey);
+    const existing = executorMetadataCache.get(projectKey);
     if (existing !== undefined) return existing;
-    const names = await readExecutorNames(mission);
-    executorNameCache.set(projectKey, names);
-    return names;
+    const metadata = await readExecutorMetadata(mission);
+    executorMetadataCache.set(projectKey, metadata);
+    return metadata;
   };
 
-  const getExecutorNamesOrFallback = async (
+  const getExecutorMetadataOrFallback = async (
     mission: Mission,
     surface: "live" | "historical" | "work",
-  ): Promise<ReadonlyMap<string, string>> =>
-    await getExecutorNames(mission).catch((error: unknown) => {
+  ): Promise<ExecutorMetadata> =>
+    await getExecutorMetadata(mission).catch((error: unknown) => {
       logger.warn(
         "mission.executor_names_unavailable",
         `Mission ${mission.id} will use Expert IDs for ${surface} output labels.`,
         { error, missionId: mission.id },
       );
-      return new Map<string, string>();
+      return { names: new Map<string, string>(), avatarIds: new Map<string, string>() };
     });
 
   const trackOperation = (id: string, operation: PendingMissionOperation): void => {
@@ -824,7 +840,7 @@ export function createMissionRunner(options: {
     readonly startedAt: string;
     readonly inputMessageId: string;
     readonly sessionId?: string | undefined;
-    readonly executorNames: ReadonlyMap<string, string>;
+    readonly executorMetadata: ExecutorMetadata;
     readonly acceptedAt?: number | undefined;
     readonly onFinished?: (() => void | Promise<void>) | undefined;
   }): void => {
@@ -832,7 +848,10 @@ export function createMissionRunner(options: {
     const audience = missionSurfaceAudience(input.mission);
     const resolveExecutorName = createMissionExecutorNameResolver(
       input.mission,
-      input.executorNames,
+      input.executorMetadata.names,
+    );
+    const resolveExecutorAvatarId = createMissionExecutorAvatarIdResolver(
+      input.executorMetadata.avatarIds,
     );
     let firstProjectionLogged = false;
     const live = observeMissionChat(
@@ -889,6 +908,7 @@ export function createMissionRunner(options: {
             consumeLiveChatOutput(output, item, {
               includeNestedSource: true,
               resolveExecutorName,
+              resolveExecutorAvatarId,
             });
           }
           if (isNewRecord || item.channel === "agent") {
@@ -899,6 +919,7 @@ export function createMissionRunner(options: {
         }
       },
       resolveExecutorName,
+      resolveExecutorAvatarId,
     );
     liveChats.set(missionId, live);
     const settlement = observeExecution(
@@ -966,7 +987,7 @@ export function createMissionRunner(options: {
     const compiled = await compileMissionExecutor(mission, runtimes);
     const compiledIdentity = await compilationIdentity(mission);
     logMissionPhase(logger, mission.id, "default_agent_compile", phaseStartedAt, acceptedAt);
-    const executorNames = await getExecutorNamesOrFallback(mission, "live");
+    const executorMetadata = await getExecutorMetadataOrFallback(mission, "live");
     const modelSelection = toRuntimeModelSelection(mission.modelOverride);
     if (mission.modelOverride !== undefined && compiled !== undefined) {
       phaseStartedAt = performance.now();
@@ -1041,7 +1062,7 @@ export function createMissionRunner(options: {
       trackExecution({
         mission,
         handle,
-        executorNames,
+        executorMetadata,
         startedAt: executionStartedAt,
         inputMessageId,
         acceptedAt,
@@ -1127,7 +1148,7 @@ export function createMissionRunner(options: {
     trackExecution({
       mission,
       handle: turn,
-      executorNames,
+      executorMetadata,
       startedAt: executionStartedAt,
       inputMessageId,
       sessionId: session.sessionId,
@@ -1203,7 +1224,7 @@ export function createMissionRunner(options: {
       }
       compiledExpert = compiled.value;
     }
-    const executorNames = await getExecutorNamesOrFallback(mission, "live");
+    const executorMetadata = await getExecutorMetadataOrFallback(mission, "live");
     const rootExpert =
       compiledExpert === undefined
         ? undefined
@@ -1305,7 +1326,7 @@ export function createMissionRunner(options: {
     trackExecution({
       mission,
       handle: turn,
-      executorNames,
+      executorMetadata,
       startedAt,
       inputMessageId: input.requestId,
       sessionId: session.sessionId,
@@ -1577,7 +1598,7 @@ export function createMissionRunner(options: {
       capturedLive?.executionId,
     );
 
-    const names = await getExecutorNamesOrFallback(mission, "historical");
+    const executorMetadata = await getExecutorMetadataOrFallback(mission, "historical");
     const current = active.get(mission.id);
     const pendingInteractions = await listMissionPendingHumanInteractions(mission);
 
@@ -1593,20 +1614,26 @@ export function createMissionRunner(options: {
     const latestMission = await options.missions.get(mission.id);
     const contextWindow = await getContextWindowState(latestMission);
     const revision = chatRevisions.get(mission.id) ?? 0;
-    const resolveExecutorName = createMissionExecutorNameResolver(mission, names);
-    const namedEntries = entries.map((entry) => {
-      if (entry.executorName !== undefined || entry.executorId === undefined) {
-        return entry;
-      }
+    const resolveExecutorName = createMissionExecutorNameResolver(mission, executorMetadata.names);
+    const resolveExecutorAvatarId = createMissionExecutorAvatarIdResolver(
+      executorMetadata.avatarIds,
+    );
+    const presentedEntries = entries.map((entry) => {
+      if (entry.executorId === undefined) return entry;
+      const executorAvatarId = entry.executorAvatarId ?? resolveExecutorAvatarId(entry.executorId);
+      if (entry.executorName !== undefined && entry.executorAvatarId !== undefined) return entry;
       return {
         ...entry,
-        executorName: resolveExecutorName(entry.executorId) ?? entry.executorId,
+        ...(entry.executorName === undefined
+          ? { executorName: resolveExecutorName(entry.executorId) ?? entry.executorId }
+          : {}),
+        ...(executorAvatarId === undefined ? {} : { executorAvatarId }),
       };
     });
     return {
       missionId: mission.id,
       revision,
-      entries: namedEntries,
+      entries: presentedEntries,
       page: {
         ...(timeline.oldestSequence === undefined
           ? {}
@@ -1695,7 +1722,7 @@ export function createMissionRunner(options: {
         elapsedMs: t1 - t0,
       },
     );
-    const names = await getExecutorNamesOrFallback(mission, "work");
+    const { names } = await getExecutorMetadataOrFallback(mission, "work");
     const runtimeAgentOrdinals = createRuntimeAgentOrdinals(records);
     return {
       missionId: mission.id,
@@ -2707,12 +2734,19 @@ function createMissionExecutorNameResolver(
     names.get(executorId) ?? (executorId === rootExpertId ? mission.executor.name : undefined);
 }
 
+function createMissionExecutorAvatarIdResolver(
+  avatarIds: ReadonlyMap<string, string>,
+): ExecutorAvatarIdResolver {
+  return (executorId) => avatarIds.get(executorId);
+}
+
 function observeMissionChat(
   execution: MutableExecution & { readonly result: Promise<unknown> },
   onOutput: (patches: readonly MissionChatPatch[]) => void,
   onInvalidate: () => void,
   onItem: (item: ExecutionOutputItem) => void,
   resolveExecutorName: ExecutorNameResolver,
+  resolveExecutorAvatarId: ExecutorAvatarIdResolver,
 ): LiveMissionChat {
   const chat: LiveMissionChat = {
     executionId: execution.executionId,
@@ -2731,6 +2765,7 @@ function observeMissionChat(
           onItem(item);
           const patches = consumeLiveChatOutput(chat, item, {
             resolveExecutorName,
+            resolveExecutorAvatarId,
           });
           if (patches.length > 0) onOutput(patches);
           if (isTerminalContextCompactionOutput(item)) onInvalidate();
@@ -2833,15 +2868,19 @@ function consumeLiveChatOutput(
   options: {
     readonly includeNestedSource?: boolean;
     readonly resolveExecutorName?: ExecutorNameResolver;
+    readonly resolveExecutorAvatarId?: ExecutorAvatarIdResolver;
   } = {},
 ): MissionChatPatch[] {
   const executorName =
     item.executorId === undefined ? undefined : options.resolveExecutorName?.(item.executorId);
+  const executorAvatarId =
+    item.executorId === undefined ? undefined : options.resolveExecutorAvatarId?.(item.executorId);
   const base = {
     executionId: item.executionId,
     invocationId: item.invocationId,
     ...(item.executorId === undefined ? {} : { executorId: item.executorId }),
     ...(executorName === undefined ? {} : { executorName }),
+    ...(executorAvatarId === undefined ? {} : { executorAvatarId }),
     createdAt: item.occurredAt,
   };
   if (item.channel === "agent") {
