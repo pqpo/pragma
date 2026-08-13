@@ -1,3 +1,43 @@
+# Mission composer queue Design QA
+
+- Source visual truth: `/var/folders/7y/x39kntq56gvcfdymbtjb36280000gn/T/codex-clipboard-e1e28ae0-142b-44e9-9369-5fb20b2836b2.png`
+- Source pixels: 1615 × 370.
+- Implementation screenshot: unavailable in this session; the in-app Browser control surface was not callable for this Electron application.
+- Intended desktop state: an active Mission with one or more persisted queued messages and an empty composer.
+
+## Full-view and focused-region evidence
+
+The source image was opened at original resolution and used to measure the scoped composer treatment: queued content sits directly above a rounded white input, item actions sit at the right edge, and the bottom-right primary action is singular. The production implementation was verified through rendered component markup, CSS source, the Electron production bundle, and state-specific automated tests. A browser-rendered screenshot comparison could not be captured, so visual QA remains blocked rather than being inferred from code.
+
+## Required fidelity surfaces
+
+- Fonts and typography: existing Pragma application fonts and tokens are preserved. Queue labels use 13 px semibold text and the content preview uses 12 px muted text.
+- Spacing and layout rhythm: queue items are 48 px rows inside the same 22 px rounded composer shell; the queue and textarea are separated by one subtle divider.
+- Colors and visual tokens: the existing border, muted, green-soft, green-dark, focus-ring, and shadow tokens are reused.
+- Image quality and asset fidelity: no raster asset is required. All actions use the installed Phosphor icon library.
+- Copy and content: queue, steer, and remove/edit labels are localized in English, Simplified Chinese, and Traditional Chinese.
+
+## Interaction and runtime checks
+
+- New messages always submit as `enqueue`.
+- Queue items are hidden from the ordinary chat stream and rendered above the input.
+- Steer is shown only when the resolved Runtime reports `supportsSteer`, the current execution is interruptible, and the queued item has no attachments.
+- Removing a queued item persistently cancels its queued Execution and places its text back into the composer.
+- Empty composer during an active execution shows one interrupt button; non-empty composer shows one send button.
+- Core focused tests: queued steer, queued removal, and queue clear all passed.
+- Desktop full test suite: 131 files and 804 tests passed.
+- Monorepo build: 22/22 tasks passed, including self-contained main and preload verification.
+- Repository check: passed on the final tree.
+
+## Findings
+
+- [Blocked] A browser-rendered implementation screenshot and direct visual comparison are unavailable because the Electron in-app Browser control surface is not callable in this session.
+- No P0/P1 functional or state-consistency findings remain in automated coverage.
+
+final result: blocked
+
+---
+
 # Mission Memory Tab Design QA
 
 - Source visual truth: `/var/folders/7y/x39kntq56gvcfdymbtjb36280000gn/T/codex-clipboard-b5b1e664-b537-4cd4-8617-5168fc64d0cf.png`

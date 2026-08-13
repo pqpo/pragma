@@ -708,7 +708,7 @@ describe("MissionDetailFragment", () => {
     expect(html).not.toContain("mission-team-inspector");
   });
 
-  it("keeps steer and queue submission available while an execution is active", () => {
+  it("uses one interrupt-or-send action and exposes queued-message shortcuts", () => {
     const mission = missionFixture("expert");
     mission.execution = {
       id: "00000000-0000-4000-8000-000000000010",
@@ -717,12 +717,71 @@ describe("MissionDetailFragment", () => {
       status: "running",
       startedAt: "2026-07-11T00:00:01.000Z",
     };
-    const html = renderToStaticMarkup(<MissionDetailFragment mission={mission} />);
+    const chat: MissionChatSnapshot = {
+      missionId: mission.id,
+      revision: 1,
+      entries: [],
+      page: {},
+      pendingInteractions: [],
+      queue: {
+        state: "running",
+        pendingCount: 1,
+        supportsSteer: true,
+        items: [
+          {
+            requestId: "00000000-0000-4000-8000-000000000012",
+            content: "Adjust the implementation",
+            hasAttachments: false,
+          },
+        ],
+      },
+      execution: {
+        id: mission.execution.id,
+        status: "running",
+        interruptible: true,
+      },
+    };
+    const html = renderToStaticMarkup(
+      <MissionDetailFragment mission={mission} chatCache={new Map([[mission.id, chat]])} />,
+    );
 
     expect(html).toContain('aria-label="Interrupt execution"');
-    expect(html).toContain('aria-label="Send message"');
-    expect(html).toContain('aria-label="Message delivery mode"');
+    expect(html).not.toContain('aria-label="Send message"');
+    expect(html).not.toContain('aria-label="Message delivery mode"');
+    expect(html).toContain("mission-prompt-queue-item");
+    expect(html).toContain(">Steer<");
+    expect(html).toContain('aria-label="Remove from queue and edit"');
     expect(html).not.toContain("Execution running");
+  });
+
+  it("hides queued steer when the Runtime does not support it", () => {
+    const mission = missionFixture("expert");
+    const chat: MissionChatSnapshot = {
+      missionId: mission.id,
+      revision: 1,
+      entries: [],
+      page: {},
+      pendingInteractions: [],
+      queue: {
+        state: "running",
+        pendingCount: 1,
+        supportsSteer: false,
+        items: [
+          {
+            requestId: "00000000-0000-4000-8000-000000000012",
+            content: "Queued content",
+            hasAttachments: false,
+          },
+        ],
+      },
+    };
+    const html = renderToStaticMarkup(
+      <MissionDetailFragment mission={mission} chatCache={new Map([[mission.id, chat]])} />,
+    );
+
+    expect(html).toContain("mission-prompt-queue-item");
+    expect(html).not.toContain(">Steer<");
+    expect(html).toContain('aria-label="Remove from queue and edit"');
   });
 
   it("places dismissible errors above the composer", () => {

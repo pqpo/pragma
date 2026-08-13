@@ -21,6 +21,7 @@ import {
   MissionModelOptionsRequestSchema,
   MissionModelOptionsSchema,
   MissionMessageAcceptanceSchema,
+  MissionQueuePromptActionSchema,
   MissionSchema,
   MissionSummarySchema,
   MissionUpdateSchema,
@@ -143,6 +144,14 @@ export const missionsApi = {
     MissionMessageAcceptanceSchema.parse(
       await invokeMutation("missions:message:send", SendMissionMessageSchema.parse(input)),
     ),
+  steerQueuedMissionMessage: async (input) =>
+    MissionSchema.parse(
+      await invokeMutation("missions:queue:steer", MissionQueuePromptActionSchema.parse(input)),
+    ),
+  removeQueuedMissionMessage: async (input) =>
+    MissionSchema.parse(
+      await invokeMutation("missions:queue:remove", MissionQueuePromptActionSchema.parse(input)),
+    ),
   getMissionChat: async (input) =>
     MissionChatSnapshotSchema.parse(
       await ipcRenderer.invoke("missions:chat:get", GetMissionChatSchema.parse(input)),
@@ -230,6 +239,8 @@ export const missionsApi = {
   | "updateMissionOptions"
   | "runMission"
   | "sendMissionMessage"
+  | "steerQueuedMissionMessage"
+  | "removeQueuedMissionMessage"
   | "getMissionChat"
   | "compactMissionContext"
   | "subscribeMissionChat"

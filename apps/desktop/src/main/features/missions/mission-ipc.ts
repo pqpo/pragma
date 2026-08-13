@@ -15,6 +15,7 @@ import {
   MissionCreationDefaultsSchema,
   MissionExecutorOptionSchema,
   MissionModelOptionsRequestSchema,
+  MissionQueuePromptActionSchema,
   PickMissionAttachmentsResultSchema,
   PickMissionAttachmentsSchema,
   StageMissionClipboardImageSchema,
@@ -280,6 +281,24 @@ export function installMissionHandlers(options: {
       await imageDrafts.discard(parsed.attachments.map((attachment) => attachment.id));
       await publishMission(acceptance.mission);
       return acceptance;
+    }),
+  );
+  ipcMain.handle("missions:queue:steer", (_event, input: unknown) =>
+    runDesktopMutation(async () => {
+      const parsed = MissionQueuePromptActionSchema.parse(input);
+      await assertManagedMission(parsed.id);
+      const mission = await options.runner.steerQueuedMessage(parsed);
+      await publishMission(mission);
+      return mission;
+    }),
+  );
+  ipcMain.handle("missions:queue:remove", (_event, input: unknown) =>
+    runDesktopMutation(async () => {
+      const parsed = MissionQueuePromptActionSchema.parse(input);
+      await assertManagedMission(parsed.id);
+      const mission = await options.runner.removeQueuedMessage(parsed);
+      await publishMission(mission);
+      return mission;
     }),
   );
   ipcMain.handle("missions:chat:get", async (_event, input: unknown) => {

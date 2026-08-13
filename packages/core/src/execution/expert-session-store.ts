@@ -424,6 +424,7 @@ function deriveSessionEvents(
 ): readonly NewSessionEvent[] {
   const events: NewSessionEvent[] = [];
   const currentPromptIds = new Set(currentPrompts.map((prompt) => prompt.requestId));
+  const currentPromptsById = new Map(currentPrompts.map((prompt) => [prompt.requestId, prompt]));
   for (const prompt of nextPrompts) {
     if (currentPromptIds.has(prompt.requestId)) continue;
     events.push({
@@ -435,6 +436,16 @@ function deriveSessionEvents(
         content: prompt.content,
       },
       occurredAt: prompt.createdAt,
+    });
+  }
+  for (const prompt of nextPrompts) {
+    const currentPrompt = currentPromptsById.get(prompt.requestId);
+    if (currentPrompt?.status !== "queued" || prompt.status !== "cancelled") continue;
+    events.push({
+      eventId: `prompt-removed:${prompt.requestId}`,
+      type: "prompt.removed",
+      data: { requestId: prompt.requestId, executionId: prompt.executionId },
+      occurredAt: prompt.updatedAt,
     });
   }
   if (current.activeExecutionId !== next.activeExecutionId) {

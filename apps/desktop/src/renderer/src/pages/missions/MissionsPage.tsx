@@ -29,6 +29,7 @@ import {
   Plus,
   Play,
   PushPin,
+  ArrowBendUpLeft,
   StopCircle,
   SpinnerGap,
   TerminalWindow,
@@ -82,7 +83,6 @@ import {
   MissionImagePreviewDialog,
 } from "../../components/MissionAttachments.tsx";
 import { MissionModelOverrideControls } from "../../components/MissionModelOverrideControls.tsx";
-import { SelectMenu } from "../../components/SelectMenu.tsx";
 import { MarkdownContent } from "../../components/MarkdownContent.tsx";
 import { MemoryStoreBrowser } from "../../components/MemoryStoreBrowser.tsx";
 import {
@@ -1293,7 +1293,6 @@ export function MissionDetailFragment(props: {
         )
       : "",
   );
-  const [deliveryMode, setDeliveryMode] = useState<"enqueue" | "steer">("enqueue");
   const [deliveryNotice, setDeliveryNotice] = useState<string>();
   const [attachments, setAttachments] = useState<readonly ExpertPromptAttachment[]>([]);
   const [attachmentPreviews, setAttachmentPreviews] = useState<Readonly<Record<string, string>>>(
@@ -1947,11 +1946,10 @@ export function MissionDetailFragment(props: {
         content,
         requestId,
         optimistic.attachments,
-        deliveryMode,
+        "enqueue",
       );
-      setDeliveryMode("enqueue");
       setDeliveryNotice(
-        acceptance !== undefined && acceptance.effectiveMode !== deliveryMode
+        acceptance !== undefined && acceptance.effectiveMode !== "enqueue"
           ? t("steerQueued", { ns: "missions" })
           : undefined,
       );
@@ -2067,6 +2065,45 @@ export function MissionDetailFragment(props: {
       await props.onInterrupt?.();
     } finally {
       setInterrupting(false);
+    }
+  };
+
+  const refreshLatestChat = async (): Promise<void> => {
+    const api = desktopApi();
+    if (api === undefined) return;
+    const snapshot = await api.getMissionChat({ id: props.mission.id, limit: 50 });
+    updateChat((current) => mergeLatestChatPage(current, snapshot));
+  };
+
+  const steerQueuedMessage = async (requestId: string): Promise<void> => {
+    const api = desktopApi();
+    if (api === undefined || clientOperationBusy) return;
+    const token = beginClientOperation("sending");
+    if (token === undefined) return;
+    try {
+      await api.steerQueuedMissionMessage({ id: props.mission.id, requestId });
+      await refreshLatestChat();
+    } catch (steerError) {
+      setOptionsError(errorMessage(steerError));
+    } finally {
+      finishClientOperation(token);
+    }
+  };
+
+  const removeQueuedMessage = async (requestId: string, content: string): Promise<void> => {
+    const api = desktopApi();
+    if (api === undefined || clientOperationBusy) return;
+    const token = beginClientOperation("sending");
+    if (token === undefined) return;
+    try {
+      await api.removeQueuedMissionMessage({ id: props.mission.id, requestId });
+      setDraft(content);
+      await refreshLatestChat();
+      requestAnimationFrame(() => textareaRef.current?.focus());
+    } catch (removeError) {
+      setOptionsError(errorMessage(removeError));
+    } finally {
+      finishClientOperation(token);
     }
   };
 
@@ -2695,161 +2732,191 @@ export function MissionDetailFragment(props: {
                     missionId={props.mission.id}
                     executionActive={executionActive}
                   />
-                  <div className="mission-chat-composer" aria-busy={clientOperationBusy}>
-                    <MissionAttachmentList
-                      attachments={attachments}
-                      previews={attachmentPreviews}
-                      imageUnsupported={imageUnsupported}
-                      onRemove={(id) => {
-                        void desktopApi()?.discardMissionAttachmentDrafts({ attachmentIds: [id] });
-                        setAttachments((current) =>
-                          current.filter((attachment) => attachment.id !== id),
-                        );
-                        setAttachmentPreviews((current) => {
-                          const next = { ...current };
-                          delete next[id];
-                          return next;
-                        });
-                      }}
-                    />
-                    <textarea
-                      ref={textareaRef}
-                      rows={1}
-                      value={draft}
-                      disabled={
-                        isFlow ||
-                        clientOperationBusy ||
-                        compactingContext ||
-                        props.mission.lifecycleStatus === "completed"
-                      }
-                      placeholder={
-                        compactingContext
-                          ? t("contextCompactionInputDisabled", { ns: "missions" })
-                          : props.mission.lifecycleStatus === "completed"
-                            ? t("reopenToContinue", { ns: "missions" })
-                            : isFlow
-                              ? t("flowContinues", { ns: "missions" })
-                              : t("messageExecutor", {
-                                  ns: "missions",
-                                  name: props.mission.executor.name,
-                                })
-                      }
-                      aria-label={t("messageExecutor", {
-                        ns: "missions",
-                        name: props.mission.executor.name,
-                      })}
-                      aria-describedby={
-                        compactingContext ? "mission-context-compaction-status" : undefined
-                      }
-                      onChange={(event) => setDraft(event.target.value)}
-                      onPaste={(event) => {
-                        const file = clipboardImageFile(event.clipboardData);
-                        if (
-                          file === undefined ||
+                  <div className="mission-chat-composer-shell">
+                    {(chat?.queue?.items.length ?? 0) > 0 ? (
+                      <div
+                        className="mission-prompt-queue"
+                        aria-label={t("queuedMessages", { ns: "missions" })}
+                      >
+                        {chat?.queue?.items.map((item) => (
+                          <div className="mission-prompt-queue-item" key={item.requestId}>
+                            <span className="mission-prompt-queue-marker" aria-hidden="true">
+                              <ArrowBendUpLeft size={16} />
+                            </span>
+                            <strong>{t("queuedMessage", { ns: "missions" })}</strong>
+                            <span title={item.content}>{item.content}</span>
+                            <div className="mission-prompt-queue-actions">
+                              {chat.queue?.supportsSteer === true &&
+                              interruptible &&
+                              !item.hasAttachments ? (
+                                <button
+                                  className="mission-queue-steer"
+                                  type="button"
+                                  disabled={clientOperationBusy}
+                                  onClick={() => void steerQueuedMessage(item.requestId)}
+                                >
+                                  <ArrowBendUpLeft size={16} aria-hidden="true" />
+                                  {t("deliverySteer", { ns: "missions" })}
+                                </button>
+                              ) : null}
+                              <button
+                                className="mission-queue-remove"
+                                type="button"
+                                aria-label={t("removeQueuedMessage", { ns: "missions" })}
+                                title={t("removeQueuedMessage", { ns: "missions" })}
+                                disabled={clientOperationBusy}
+                                onClick={() =>
+                                  void removeQueuedMessage(item.requestId, item.content)
+                                }
+                              >
+                                <Trash size={17} aria-hidden="true" />
+                              </button>
+                            </div>
+                          </div>
+                        ))}
+                      </div>
+                    ) : null}
+                    <div className="mission-chat-composer" aria-busy={clientOperationBusy}>
+                      <MissionAttachmentList
+                        attachments={attachments}
+                        previews={attachmentPreviews}
+                        imageUnsupported={imageUnsupported}
+                        onRemove={(id) => {
+                          void desktopApi()?.discardMissionAttachmentDrafts({
+                            attachmentIds: [id],
+                          });
+                          setAttachments((current) =>
+                            current.filter((attachment) => attachment.id !== id),
+                          );
+                          setAttachmentPreviews((current) => {
+                            const next = { ...current };
+                            delete next[id];
+                            return next;
+                          });
+                        }}
+                      />
+                      <textarea
+                        ref={textareaRef}
+                        rows={1}
+                        value={draft}
+                        disabled={
                           isFlow ||
                           clientOperationBusy ||
                           compactingContext ||
                           props.mission.lifecycleStatus === "completed"
-                        )
-                          return;
-                        event.preventDefault();
-                        void pasteImage(file);
-                      }}
-                      onKeyDown={(event) => {
-                        if (shouldSubmitComposerOnEnter(event.nativeEvent)) {
-                          event.preventDefault();
-                          void send();
                         }
-                      }}
-                    />
-                    <div className="mission-chat-composer-toolbar">
-                      <div className="mission-chat-options" aria-label={t("missionOptions")}>
-                        <SelectMenu
-                          ariaLabel={t("deliveryMode", { ns: "missions" })}
-                          align="end"
-                          className="mission-delivery-mode-select"
-                          value={deliveryMode}
-                          disabled={isFlow || clientOperationBusy || compactingContext}
-                          options={[
-                            {
-                              value: "enqueue",
-                              label: t("deliveryEnqueue", { ns: "missions" }),
-                            },
-                            {
-                              value: "steer",
-                              label: t("deliverySteer", { ns: "missions" }),
-                            },
-                          ]}
-                          onChange={setDeliveryMode}
-                        />
-                        <MissionAttachmentPicker
-                          compact
-                          disabled={
+                        placeholder={
+                          compactingContext
+                            ? t("contextCompactionInputDisabled", { ns: "missions" })
+                            : props.mission.lifecycleStatus === "completed"
+                              ? t("reopenToContinue", { ns: "missions" })
+                              : isFlow
+                                ? t("flowContinues", { ns: "missions" })
+                                : t("messageExecutor", {
+                                    ns: "missions",
+                                    name: props.mission.executor.name,
+                                  })
+                        }
+                        aria-label={t("messageExecutor", {
+                          ns: "missions",
+                          name: props.mission.executor.name,
+                        })}
+                        aria-describedby={
+                          compactingContext ? "mission-context-compaction-status" : undefined
+                        }
+                        onChange={(event) => setDraft(event.target.value)}
+                        onPaste={(event) => {
+                          const file = clipboardImageFile(event.clipboardData);
+                          if (
+                            file === undefined ||
                             isFlow ||
                             clientOperationBusy ||
                             compactingContext ||
                             props.mission.lifecycleStatus === "completed"
+                          )
+                            return;
+                          event.preventDefault();
+                          void pasteImage(file);
+                        }}
+                        onKeyDown={(event) => {
+                          if (shouldSubmitComposerOnEnter(event.nativeEvent)) {
+                            event.preventDefault();
+                            void send();
                           }
-                          onPick={pickAttachments}
-                        />
-                        {!isFlow ? (
-                          <MissionModelOverrideControls
-                            models={models}
-                            loading={modelsLoading}
-                            disabled={controlsDisabled}
-                            value={modelOverride}
-                            defaultValue={defaultModelSelection}
-                            onChange={(value) => void saveOptions(toolPermissionMode, value)}
-                          />
-                        ) : null}
-                        <ToolPermissionSelect
-                          value={toolPermissionMode}
-                          disabled={controlsDisabled}
-                          title={
-                            executionActive
-                              ? t("optionsAvailableNextTurn", { ns: "missions" })
-                              : t("permissionOverride", { ns: "missions" })
-                          }
-                          onChange={(value) => void saveOptions(value, modelOverride)}
-                        />
-                      </div>
-                      <div className="mission-chat-actions">
-                        {chat?.contextWindow === undefined ? null : (
-                          <ContextWindowControl
-                            state={chat.contextWindow}
-                            compacting={compactingContext}
-                            onCompact={() => void compactContext()}
-                          />
-                        )}
-                        {executionActive ? (
-                          <button
-                            className="is-interrupt"
-                            type="button"
-                            aria-label={t("interrupt", { ns: "missions" })}
-                            title={
-                              interruptible
-                                ? t("interrupt", { ns: "missions" })
-                                : t("resumeBeforeInterrupt", { ns: "missions" })
+                        }}
+                      />
+                      <div className="mission-chat-composer-toolbar">
+                        <div className="mission-chat-options" aria-label={t("missionOptions")}>
+                          <MissionAttachmentPicker
+                            compact
+                            disabled={
+                              isFlow ||
+                              clientOperationBusy ||
+                              compactingContext ||
+                              props.mission.lifecycleStatus === "completed"
                             }
-                            disabled={!interruptible || interrupting}
-                            onClick={() => void interrupt()}
-                          >
-                            <StopCircle size={19} weight="fill" aria-hidden="true" />
-                          </button>
-                        ) : null}
-                        <button
-                          type="button"
-                          aria-label={t("send", { ns: "missions" })}
-                          disabled={
-                            isFlow ||
-                            draft.trim() === "" ||
-                            clientOperationBusy ||
-                            props.mission.lifecycleStatus === "completed"
-                          }
-                          onClick={() => void send()}
-                        >
-                          <PaperPlaneTilt size={18} aria-hidden="true" />
-                        </button>
+                            onPick={pickAttachments}
+                          />
+                          {!isFlow ? (
+                            <MissionModelOverrideControls
+                              models={models}
+                              loading={modelsLoading}
+                              disabled={controlsDisabled}
+                              value={modelOverride}
+                              defaultValue={defaultModelSelection}
+                              onChange={(value) => void saveOptions(toolPermissionMode, value)}
+                            />
+                          ) : null}
+                          <ToolPermissionSelect
+                            value={toolPermissionMode}
+                            disabled={controlsDisabled}
+                            title={
+                              executionActive
+                                ? t("optionsAvailableNextTurn", { ns: "missions" })
+                                : t("permissionOverride", { ns: "missions" })
+                            }
+                            onChange={(value) => void saveOptions(value, modelOverride)}
+                          />
+                        </div>
+                        <div className="mission-chat-actions">
+                          {chat?.contextWindow === undefined ? null : (
+                            <ContextWindowControl
+                              state={chat.contextWindow}
+                              compacting={compactingContext}
+                              onCompact={() => void compactContext()}
+                            />
+                          )}
+                          {draft.trim() === "" && executionActive ? (
+                            <button
+                              className="is-interrupt"
+                              type="button"
+                              aria-label={t("interrupt", { ns: "missions" })}
+                              title={
+                                interruptible
+                                  ? t("interrupt", { ns: "missions" })
+                                  : t("resumeBeforeInterrupt", { ns: "missions" })
+                              }
+                              disabled={!interruptible || interrupting}
+                              onClick={() => void interrupt()}
+                            >
+                              <StopCircle size={19} weight="fill" aria-hidden="true" />
+                            </button>
+                          ) : (
+                            <button
+                              type="button"
+                              aria-label={t("send", { ns: "missions" })}
+                              disabled={
+                                isFlow ||
+                                draft.trim() === "" ||
+                                clientOperationBusy ||
+                                props.mission.lifecycleStatus === "completed"
+                              }
+                              onClick={() => void send()}
+                            >
+                              <PaperPlaneTilt size={18} aria-hidden="true" />
+                            </button>
+                          )}
+                        </div>
                       </div>
                     </div>
                   </div>
@@ -3708,6 +3775,9 @@ export const MissionChatEntryView = memo(function MissionChatEntryView(props: {
   readonly showExecutorLabel?: boolean | undefined;
 }) {
   if (props.entry.kind === "user") {
+    if (props.entry.delivery?.removed === true || props.entry.delivery?.status === "queued") {
+      return null;
+    }
     return (
       <div className="mission-user-message">
         <div>

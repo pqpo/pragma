@@ -91,6 +91,7 @@ import type {
   MissionWorkUpdate,
   GetMissionChat,
   SendMissionMessage,
+  MissionQueuePromptAction,
   MissionHumanInteraction,
   MissionChatSnapshot,
   MissionContextCompactionResult,
@@ -471,6 +472,8 @@ export interface PragmaDesktopAPI {
   updateMissionOptions: (input: UpdateMissionOptions) => Promise<Mission>;
   runMission: (id: string) => Promise<Mission>;
   sendMissionMessage: (input: SendMissionMessage) => Promise<MissionMessageAcceptance>;
+  steerQueuedMissionMessage: (input: MissionQueuePromptAction) => Promise<Mission>;
+  removeQueuedMissionMessage: (input: MissionQueuePromptAction) => Promise<Mission>;
   getMissionChat: (input: GetMissionChat) => Promise<MissionChatSnapshot>;
   compactMissionContext: (id: string) => Promise<MissionContextCompactionResult>;
   subscribeMissionChat: (id: string, listener: (update: MissionChatUpdate) => void) => () => void;

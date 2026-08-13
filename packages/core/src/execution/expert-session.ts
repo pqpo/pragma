@@ -147,6 +147,8 @@ export interface ExpertSession {
   compactRootContext(): Promise<RuntimeContextWindowUsage | undefined>;
   getPromptQueue(): Promise<readonly PromptRequest[]>;
   getPromptQueueState(): Promise<PromptQueueState>;
+  steerQueuedPrompt(requestId: string): Promise<ExpertTurn>;
+  removeQueuedPrompt(requestId: string, reason?: string): Promise<void>;
   resumePromptQueue(): Promise<void>;
   cancelPromptQueue(reason?: string): Promise<void>;
 }
@@ -184,6 +186,7 @@ type SteerClaim =
       readonly execute: true;
       readonly executionId: string;
       readonly contextId: string;
+      readonly replacedExecutionId?: string | undefined;
     };
 
 interface ValidDefinitionMigration {
@@ -1059,6 +1062,56 @@ class ExpertSessionImpl implements ExpertSession {
     this.startProcessing();
   }
 
+  async steerQueuedPrompt(requestId: string): Promise<ExpertTurn> {
+    const prompt = (await this.getPromptQueue()).find(
+      (candidate) => candidate.requestId === requestId,
+    );
+    if (prompt?.mode !== "enqueue" || prompt.status !== "queued") {
+      throw new Error(`Queued prompt not found: ${requestId}`);
+    }
+    const invocation = await this.dependencies.executions.getInvocation(
+      prompt.executionId,
+      prompt.executionId,
+    );
+    if (readExpertPromptInput(invocation?.input, prompt.content).attachments.length > 0) {
+      throw new Error("A queued prompt with attachments cannot be steered.");
+    }
+    return await this.steer(prompt.content, requestId);
+  }
+
+  async removeQueuedPrompt(requestId: string, reason?: string): Promise<void> {
+    const cancellationReason = reason ?? "Removed from prompt queue.";
+    const now = new Date().toISOString();
+    const executionId = await this.dependencies.sessions.transact<string>(
+      this.sessionId,
+      ({ session, prompts }) => {
+        const prompt = prompts.find((candidate) => candidate.requestId === requestId);
+        if (prompt?.mode !== "enqueue" || prompt.status !== "queued") {
+          throw new Error(`Queued prompt not found: ${requestId}`);
+        }
+        return {
+          result: prompt.executionId,
+          session: {
+            ...session,
+            queuedRequestIds: session.queuedRequestIds.filter((id) => id !== requestId),
+            updatedAt: now,
+          },
+          prompts: prompts.map((candidate) =>
+            candidate.requestId === requestId
+              ? {
+                  ...candidate,
+                  status: "cancelled" as const,
+                  error: cancellationReason,
+                  updatedAt: now,
+                }
+              : candidate,
+          ),
+        };
+      },
+    );
+    await this.cancelPersistedExecution(executionId, cancellationReason);
+  }
+
   async cancelPromptQueue(reason?: string): Promise<void> {
     this.paused = true;
     const cancellationReason = reason ?? "Prompt queue cleared.";
@@ -1093,27 +1146,28 @@ class ExpertSessionImpl implements ExpertSession {
     });
     await this.controller?.cancel(cancellationReason);
     for (const prompt of pending) {
-      const execution = await this.dependencies.executions.get(prompt.executionId);
-      if (execution !== undefined && !isFinal(execution.status)) {
-        await this.dependencies.executions.update(prompt.executionId, {
-          status: "cancelled",
-          error: cancellationReason,
-        });
-        for (const invocation of await this.dependencies.executions.listInvocations(
-          prompt.executionId,
-        )) {
-          if (!isFinal(invocation.status)) {
-            await this.dependencies.executions.putInvocation(prompt.executionId, {
-              ...invocation,
-              status: "cancelled",
-              error: cancellationReason,
-              updatedAt: new Date().toISOString(),
-            });
-          }
-        }
-      }
+      await this.cancelPersistedExecution(prompt.executionId, cancellationReason);
     }
     this.paused = false;
+  }
+
+  private async cancelPersistedExecution(executionId: string, reason: string): Promise<void> {
+    const execution = await this.dependencies.executions.get(executionId);
+    if (execution === undefined || isFinal(execution.status)) return;
+    await this.dependencies.executions.update(executionId, {
+      status: "cancelled",
+      error: reason,
+    });
+    for (const invocation of await this.dependencies.executions.listInvocations(executionId)) {
+      if (!isFinal(invocation.status)) {
+        await this.dependencies.executions.putInvocation(executionId, {
+          ...invocation,
+          status: "cancelled",
+          error: reason,
+          updatedAt: new Date().toISOString(),
+        });
+      }
+    }
   }
 
   private async getRootContext(state?: ExpertSessionRecord): Promise<RuntimeContextRecord> {
@@ -1137,6 +1191,40 @@ class ExpertSessionImpl implements ExpertSession {
         }
         const duplicate = prompts.find((prompt) => prompt.requestId === requestId);
         if (duplicate !== undefined) {
+          if (
+            duplicate.content === content &&
+            duplicate.mode === "enqueue" &&
+            duplicate.status === "queued"
+          ) {
+            const contextId = session.rootContextId;
+            const executionId = session.activeExecutionId;
+            return {
+              result: {
+                execute: true as const,
+                executionId,
+                contextId,
+                replacedExecutionId: duplicate.executionId,
+              },
+              session: {
+                ...session,
+                queuedRequestIds: session.queuedRequestIds.filter((id) => id !== requestId),
+                updatedAt: now,
+              },
+              prompts: prompts.map((prompt) =>
+                prompt.requestId === requestId
+                  ? {
+                      ...prompt,
+                      mode: "steer" as const,
+                      executionId,
+                      targetExecutionId: executionId,
+                      status: "running" as const,
+                      error: undefined,
+                      updatedAt: now,
+                    }
+                  : prompt,
+              ),
+            };
+          }
           if (duplicate.content !== content || duplicate.mode !== "steer") {
             throw new Error(`Prompt idempotency conflict: ${requestId}`);
           }
@@ -1173,6 +1261,12 @@ class ExpertSessionImpl implements ExpertSession {
     );
     if (!claim.execute) return this.createTurn(claim.executionId, requestId, "steer", "steer");
     try {
+      if (claim.replacedExecutionId !== undefined) {
+        await this.cancelPersistedExecution(
+          claim.replacedExecutionId,
+          "Moved from the prompt queue to steer the active turn.",
+        );
+      }
       const current = await this.getState();
       if (this.controller !== controller || current.activeExecutionId !== claim.executionId) {
         throw new Error(`ExpertTurn changed before steer: ${claim.executionId}`);
@@ -1275,20 +1369,30 @@ class ExpertSessionImpl implements ExpertSession {
 
   private async runPrompt(prompt: PromptRequest): Promise<"succeeded" | "failed" | "cancelled"> {
     const now = new Date().toISOString();
-    await this.dependencies.sessions.transact(this.sessionId, ({ session, prompts }) => ({
-      result: undefined,
-      session: {
-        ...session,
-        activeExecutionId: prompt.executionId,
-        queuedRequestIds: session.queuedRequestIds.filter((id) => id !== prompt.requestId),
-        updatedAt: now,
+    const claimed = await this.dependencies.sessions.transact(
+      this.sessionId,
+      ({ session, prompts }) => {
+        const current = prompts.find((candidate) => candidate.requestId === prompt.requestId);
+        if (current?.mode !== "enqueue" || current.status !== "queued") {
+          return { result: false, session, prompts };
+        }
+        return {
+          result: true,
+          session: {
+            ...session,
+            activeExecutionId: prompt.executionId,
+            queuedRequestIds: session.queuedRequestIds.filter((id) => id !== prompt.requestId),
+            updatedAt: now,
+          },
+          prompts: prompts.map((candidate) =>
+            candidate.requestId === prompt.requestId
+              ? { ...candidate, status: "running" as const, updatedAt: now }
+              : candidate,
+          ),
+        };
       },
-      prompts: prompts.map((candidate) =>
-        candidate.requestId === prompt.requestId
-          ? { ...candidate, status: "running" as const, updatedAt: now }
-          : candidate,
-      ),
-    }));
+    );
+    if (!claimed) return "cancelled";
     await this.dependencies.executions.commit({
       commitId: randomUUID(),
       executionId: prompt.executionId,

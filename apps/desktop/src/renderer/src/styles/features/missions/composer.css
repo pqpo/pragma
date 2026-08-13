@@ -112,17 +112,119 @@
   margin-top: auto;
   padding: 0;
   border: 1px solid var(--border);
-  border-radius: var(--radius-card);
+  border-radius: 22px;
   background: #fff;
   color: var(--faint);
   box-shadow: var(--shadow-soft);
 }
 
-.mission-chat-composer:focus-within {
+.mission-chat-composer-shell {
+  border: 1px solid var(--border);
+  border-radius: 22px;
+  background: #fff;
+  box-shadow: var(--shadow-soft);
+}
+
+.mission-chat-composer-shell > .mission-chat-composer {
+  border: 0;
+  border-radius: 22px;
+  box-shadow: none;
+}
+
+.mission-chat-composer-shell:focus-within {
   border-color: var(--green);
   box-shadow:
     0 0 0 3px var(--focus-ring),
     var(--shadow-soft);
+}
+
+.mission-chat-composer-shell:focus-within > .mission-chat-composer {
+  box-shadow: none;
+}
+
+.mission-prompt-queue {
+  display: grid;
+  overflow: hidden;
+  border-bottom: 1px solid var(--border);
+  border-radius: 21px 21px 0 0;
+  background: #fcfdfc;
+}
+
+.mission-prompt-queue-item {
+  display: grid;
+  min-height: 48px;
+  grid-template-columns: auto auto minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 9px;
+  padding: 7px 10px 7px 15px;
+}
+
+.mission-prompt-queue-item + .mission-prompt-queue-item {
+  border-top: 1px solid rgb(88 121 104 / 10%);
+}
+
+.mission-prompt-queue-marker {
+  display: grid;
+  color: var(--faint);
+}
+
+.mission-prompt-queue-item > strong {
+  color: var(--text);
+  font-size: 13px;
+  font-weight: 650;
+  white-space: nowrap;
+}
+
+.mission-prompt-queue-item > span:nth-child(3) {
+  overflow: hidden;
+  color: var(--muted);
+  font-size: 12px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.mission-prompt-queue-actions {
+  display: flex;
+  align-items: center;
+  gap: 3px;
+}
+
+.mission-prompt-queue-actions > button {
+  display: inline-flex;
+  height: 32px;
+  align-items: center;
+  justify-content: center;
+  gap: 5px;
+  padding: 0 9px;
+  border: 0;
+  border-radius: 9px;
+  background: transparent;
+  color: var(--muted);
+  cursor: pointer;
+}
+
+.mission-prompt-queue-actions > button:hover:not(:disabled) {
+  background: var(--green-soft);
+  color: var(--green-dark);
+}
+
+.mission-prompt-queue-actions > button:disabled {
+  cursor: not-allowed;
+  opacity: 0.45;
+}
+
+.mission-prompt-queue-actions > .mission-queue-steer {
+  font-size: 12px;
+  font-weight: 600;
+}
+
+.mission-prompt-queue-actions > .mission-queue-remove {
+  width: 32px;
+  padding: 0;
+}
+
+.mission-chat-composer:focus-within {
+  border-color: var(--green);
 }
 
 .mission-chat-composer:has(textarea:disabled) {

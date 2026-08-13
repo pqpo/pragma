@@ -1683,6 +1683,70 @@ describe("ExpertSession", () => {
     await session.close();
   }, 15_000);
 
+  it("moves one queued prompt into the active turn as steer", async () => {
+    const home = await mkdtemp(join(tmpdir(), "pragma-queued-steer-"));
+    const stats = createFakeRuntimeStats();
+    const steers: string[] = [];
+    const app = createPragma({
+      pragmaHome: home,
+      runtimes: createStaticRuntimeResolver({
+        runtimes: [
+          createFakeRuntime({
+            delayMs: 250,
+            stats,
+            onSteer: () => steers.push("redirect"),
+          }),
+        ],
+        defaultRuntimeId: "fake",
+      }),
+    });
+    const expert = await defineExpert({
+      id: "queued-steer",
+      name: "Queued Steer",
+      description: "Queued Steer",
+      tags: [],
+      scope: "test",
+      workspace: home,
+    });
+    const session = await app.experts.createSession(expert);
+    const active = await session.prompt("active", { requestId: "active" });
+    const queued = await session.prompt("redirect", { requestId: "redirect" });
+    await vi.waitFor(async () =>
+      expect((await session.getState()).activeExecutionId).toBe(active.executionId),
+    );
+
+    const steered = await session.steerQueuedPrompt("redirect");
+
+    expect(steered).toMatchObject({ effectiveMode: "steer", executionId: active.executionId });
+    await expect(queued.result).rejects.toThrow("Moved from the prompt queue");
+    expect((await queued.getTree()).invocation.status).toBe("cancelled");
+    await active.result;
+    expect(steers).toEqual(["redirect"]);
+    expect(
+      (await session.getPromptQueue()).find((prompt) => prompt.requestId === "redirect"),
+    ).toMatchObject({ mode: "steer", status: "succeeded", executionId: active.executionId });
+    await session.close();
+  });
+
+  it("removes one queued prompt without interrupting the active turn", async () => {
+    const { app, expert } = await fixture(100);
+    const session = await app.experts.createSession(expert);
+    const active = await session.prompt("active", { requestId: "active" });
+    const queued = await session.prompt("edit me", { requestId: "edit-me" });
+
+    await session.removeQueuedPrompt("edit-me");
+
+    await expect(queued.result).rejects.toThrow("Removed from prompt queue");
+    expect((await queued.getTree()).invocation.status).toBe("cancelled");
+    expect(
+      (await session.listEvents({ limit: 1_000 })).items.find(
+        (event) => event.type === "prompt.removed",
+      ),
+    ).toMatchObject({ data: { requestId: "edit-me" } });
+    await expect(active.result).resolves.toBe("solo:active");
+    await session.close();
+  });
+
   it("clears the active turn and every queued prompt without closing the Session", async () => {
     const { app, expert } = await fixture(100);
     const session = await app.experts.createSession(expert);

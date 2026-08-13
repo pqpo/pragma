@@ -382,6 +382,10 @@ export function missionExecutorSnapshot(resource: PragmaInvocableResource): Miss
 }
 
 export const MissionActionSchema = z.object({ id: MissionIdSchema });
+export const MissionQueuePromptActionSchema = z.object({
+  id: MissionIdSchema,
+  requestId: z.string().uuid(),
+});
 export const GetMissionChatSchema = z.object({
   id: MissionIdSchema,
   beforeSequence: z.number().int().positive().optional(),
@@ -435,6 +439,7 @@ export const MissionChatEntrySchema = z.discriminatedUnion("kind", [
         effectiveMode: z.enum(["enqueue", "steer"]),
         status: z.enum(["queued", "running", "succeeded", "failed", "cancelled", "interrupted"]),
         fallbackReason: z.string().min(1).optional(),
+        removed: z.boolean().optional(),
       })
       .optional(),
   }),
@@ -543,11 +548,23 @@ export const MissionChatSnapshotSchema = z.object({
     nextBeforeSequence: z.number().int().positive().optional(),
   }),
   pendingInteractions: z.array(MissionHumanInteractionSchema),
-  queue: z.object({
-    state: z.enum(["idle", "running", "paused"]),
-    pendingCount: z.number().int().nonnegative(),
-    pausedAfterRequestId: z.string().min(1).optional(),
-  }).optional(),
+  queue: z
+    .object({
+      state: z.enum(["idle", "running", "paused"]),
+      pendingCount: z.number().int().nonnegative(),
+      supportsSteer: z.boolean().default(false),
+      items: z
+        .array(
+          z.object({
+            requestId: z.string().uuid(),
+            content: z.string().min(1).max(100_000),
+            hasAttachments: z.boolean(),
+          }),
+        )
+        .default([]),
+      pausedAfterRequestId: z.string().min(1).optional(),
+    })
+    .optional(),
   execution: MissionChatExecutionSchema.optional(),
   contextWindow: MissionContextWindowStateSchema.optional(),
   syncIssues: z.array(MissionChatSyncIssueSchema).max(3).optional(),

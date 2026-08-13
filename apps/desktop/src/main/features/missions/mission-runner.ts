@@ -172,6 +172,8 @@ export interface MissionRunner {
     readonly attachments?: readonly ExpertPromptAttachment[] | undefined;
     readonly mode?: "enqueue" | "steer" | undefined;
   }): Promise<MissionMessageAcceptance>;
+  steerQueuedMessage(input: { readonly id: string; readonly requestId: string }): Promise<Mission>;
+  removeQueuedMessage(input: { readonly id: string; readonly requestId: string }): Promise<Mission>;
   getChat(input: MissionChatQuery): Promise<MissionChatSnapshot>;
   getTerminalRuntimeFailure(id: string): Promise<
     | {
@@ -242,6 +244,8 @@ type PendingMissionOperation =
   | { readonly kind: "run"; readonly promise: Promise<Mission> }
   | { readonly kind: "options"; readonly promise: Promise<Mission> }
   | { readonly kind: "message"; readonly promise: Promise<MissionMessageAcceptance> }
+  | { readonly kind: "queue-steer"; readonly promise: Promise<Mission> }
+  | { readonly kind: "queue-remove"; readonly promise: Promise<Mission> }
   | { readonly kind: "resume"; readonly promise: Promise<Mission> }
   | { readonly kind: "compact"; readonly promise: Promise<MissionContextCompactionResult> }
   | { readonly kind: "interrupt"; readonly promise: Promise<Mission> }
@@ -1876,6 +1880,28 @@ export function createMissionRunner(options: {
       );
     }
     const promptByRequestId = new Map(promptQueue.map((prompt) => [prompt.requestId, prompt]));
+    const removedPromptIds = new Set(
+      sessionEvents.flatMap((event) => {
+        if (event.type !== "prompt.removed") return [];
+        const requestId = (event.data as { requestId?: unknown }).requestId;
+        return typeof requestId === "string" ? [requestId] : [];
+      }),
+    );
+    const queuedPrompts = promptQueue.filter(
+      (prompt) => prompt.mode === "enqueue" && prompt.status === "queued",
+    );
+    const presentedUserEntries = new Map(
+      presentedEntries.flatMap((entry) => (entry.kind === "user" ? [[entry.id, entry]] : [])),
+    );
+    let supportsSteer = false;
+    const rootContext = await readMissionRootContext(latestMission);
+    if (rootContext !== undefined) {
+      const { runtimes } = await executionContext(latestMission);
+      const resolved = await runtimes
+        .resolve({ binding: rootContext.runtime, modelSelection: rootContext.modelSelection })
+        .catch(() => undefined);
+      supportsSteer = resolved?.adapter.descriptor.capabilities?.supportsSteer === true;
+    }
     const steerFallbackByRequestId = new Map<string, string>();
     for (const event of sessionEvents) {
       if (event.type !== "prompt.steer-fallback") continue;
@@ -1895,6 +1921,7 @@ export function createMissionRunner(options: {
           requestedMode: fallbackReason === undefined ? prompt.mode : "steer",
           effectiveMode: prompt.mode,
           status: prompt.status,
+          ...(removedPromptIds.has(prompt.requestId) ? { removed: true } : {}),
           ...(fallbackReason === undefined ? {} : { fallbackReason }),
         },
       };
@@ -1915,7 +1942,16 @@ export function createMissionRunner(options: {
           : { nextBeforeSequence: timeline.nextBeforeSequence }),
       },
       pendingInteractions,
-      queue: queueState,
+      queue: {
+        ...queueState,
+        supportsSteer,
+        items: queuedPrompts.map((prompt) => ({
+          requestId: prompt.requestId,
+          content: prompt.content,
+          hasAttachments:
+            (presentedUserEntries.get(prompt.requestId)?.attachments?.length ?? 0) > 0,
+        })),
+      },
       ...(contextWindow === undefined ? {} : { contextWindow }),
       ...(uniqueSyncIssues.length === 0 ? {} : { syncIssues: uniqueSyncIssues }),
       ...(latestMission.execution === undefined
@@ -1982,6 +2018,52 @@ export function createMissionRunner(options: {
     await attachNextSessionTurn(id, missionSurfaceAudience(mission));
     invalidateChat(id, missionSurfaceAudience(mission));
     return await options.missions.get(id);
+  };
+
+  const openMissionSessionForQueueMutation = async (
+    id: string,
+  ): Promise<{
+    readonly mission: Mission;
+    readonly session: ExpertSession;
+  }> => {
+    const mission = await options.missions.get(id);
+    let session = sessions.get(id);
+    if (session !== undefined) return { mission, session };
+    const sessionId = mission.execution?.sessionId;
+    if (sessionId === undefined) throw new Error("This Mission has no prompt queue to change.");
+    const rootContext = await readMissionRootContext(mission);
+    const { app, runtimes: baseRuntimes } = await executionContext(mission);
+    const compiled = await compileMissionExecutor(
+      mission,
+      withMissionRuntimeBinding(baseRuntimes, rootContext),
+    );
+    if ("kind" in compiled.value && compiled.value.kind === "flow") {
+      throw new Error("Flow missions do not use a prompt queue.");
+    }
+    session = await resumeMissionSession(mission, compiled, app, sessionId);
+    sessions.set(id, session);
+    rememberSessionCompilation(id, await compilationIdentity(mission), compiled);
+    return { mission, session };
+  };
+
+  const steerQueuedMissionMessage = async (input: {
+    readonly id: string;
+    readonly requestId: string;
+  }): Promise<Mission> => {
+    const { mission, session } = await openMissionSessionForQueueMutation(input.id);
+    await session.steerQueuedPrompt(input.requestId);
+    invalidateChat(input.id, missionSurfaceAudience(mission));
+    return await options.missions.get(input.id);
+  };
+
+  const removeQueuedMissionMessage = async (input: {
+    readonly id: string;
+    readonly requestId: string;
+  }): Promise<Mission> => {
+    const { mission, session } = await openMissionSessionForQueueMutation(input.id);
+    await session.removeQueuedPrompt(input.requestId, "Removed from queue by user.");
+    invalidateChat(input.id, missionSurfaceAudience(mission));
+    return await options.missions.get(input.id);
   };
 
   const readMissionExecutionIds = async (mission: Mission): Promise<readonly string[]> => {
@@ -2231,6 +2313,18 @@ export function createMissionRunner(options: {
       const sending = sendMissionMessage(input);
       trackOperation(input.id, { kind: "message", promise: sending });
       return await sending;
+    },
+    async steerQueuedMessage(input) {
+      if (pendingOperations.has(input.id)) throw new MissionOperationError();
+      const steering = steerQueuedMissionMessage(input);
+      trackOperation(input.id, { kind: "queue-steer", promise: steering });
+      return await steering;
+    },
+    async removeQueuedMessage(input) {
+      if (pendingOperations.has(input.id)) throw new MissionOperationError();
+      const removing = removeQueuedMissionMessage(input);
+      trackOperation(input.id, { kind: "queue-remove", promise: removing });
+      return await removing;
     },
     async resumeQueue(id) {
       if (pendingOperations.has(id)) throw new MissionOperationError();
