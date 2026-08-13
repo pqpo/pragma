@@ -848,8 +848,8 @@
 .mission-human-composer {
   display: grid;
   box-sizing: border-box;
-  width: min(100%, 640px);
-  justify-self: start;
+  width: min(100%, var(--mission-composer-content-width, 680px));
+  justify-self: center;
   max-height: min(430px, 52vh);
   gap: 16px;
   overflow-y: auto;
@@ -941,12 +941,8 @@
 }
 
 .mission-human-interrupt {
-  color: var(--ui-danger);
-}
-
-.mission-human-interrupt:hover:not(:disabled) {
-  background: var(--ui-danger-subtle);
-  color: var(--ui-danger);
+  width: 36px;
+  height: 36px;
 }
 
 .mission-human-question-navigation > button:disabled,

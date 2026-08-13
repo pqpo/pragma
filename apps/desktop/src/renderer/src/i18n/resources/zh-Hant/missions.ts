@@ -315,7 +315,7 @@ export const missions = {
   optionalNotes: "選填備註",
   submitting: "提交中…",
   approveContinue: "核准並繼續",
-  confirmContinue: "確認並繼續",
+  confirmContinue: "確認",
   submitResponse: "提交回覆",
   executionFailed: "執行失敗。",
   mcpToolUnavailable:

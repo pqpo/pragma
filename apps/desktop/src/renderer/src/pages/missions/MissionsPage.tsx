@@ -4276,7 +4276,7 @@ function MissionHumanComposer(props: {
             disabled={!props.interruptible || props.interrupting}
             onClick={props.onInterrupt}
           >
-            <StopCircle size={17} weight="fill" aria-hidden="true" />
+            <StopCircle size={20} weight="fill" aria-hidden="true" />
           </button>
         </div>
       </header>

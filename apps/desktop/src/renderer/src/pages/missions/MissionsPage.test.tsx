@@ -235,7 +235,7 @@ describe("MissionsPage", () => {
     expect(html).toContain('aria-live="polite">1 / 2</span>');
     expect(html).toContain("Other answer");
     expect(html).toContain('placeholder="Tell the agent what you want instead"');
-    expect(composer).toContain("Confirm &amp; continue");
+    expect(composer).toContain("Confirm");
     expect(composer).toMatch(/class="primary-button"[^>]*disabled=""/);
     expect(composer.match(/class="primary-button"/g)).toHaveLength(1);
     expect(composer).not.toContain(">Back<");
@@ -249,19 +249,19 @@ describe("MissionsPage", () => {
         previous: "Previous question",
         next: "Next question",
         other: "Other answer",
-        confirm: "Confirm & continue",
+        confirm: "Confirm",
       },
       "zh-Hans": {
         previous: "上一题",
         next: "下一题",
         other: "其他回答",
-        confirm: "确认并继续",
+        confirm: "确认",
       },
       "zh-Hant": {
         previous: "上一題",
         next: "下一題",
         other: "其他回答",
-        confirm: "確認並繼續",
+        confirm: "確認",
       },
     };
 

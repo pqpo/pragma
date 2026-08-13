@@ -325,7 +325,7 @@ export const missions = {
   optionalNotes: "Optional notes",
   submitting: "Submitting…",
   approveContinue: "Approve & continue",
-  confirmContinue: "Confirm & continue",
+  confirmContinue: "Confirm",
   submitResponse: "Submit response",
   executionFailed: "Execution failed.",
   mcpToolUnavailable:
