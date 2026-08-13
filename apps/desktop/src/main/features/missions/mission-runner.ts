@@ -67,24 +67,25 @@ import {
   RuntimeContextWindowUsageSchema,
 } from "@pragma/shared";
 
-import type {
-  Mission,
-  MissionChatEntry,
-  MissionChatPatch,
-  MissionChatSnapshot,
-  MissionChatUpdate,
-  MissionChatQuery,
-  MissionContextCompactionResult,
-  MissionContextWindowState,
-  MissionHumanInteraction,
-  MissionModelOverride,
-  MissionWorkConversationSnapshot,
-  MissionWorkRecord,
-  MissionWorkSnapshot,
-  MissionWorkUpdate,
-  GetMissionWorkConversation,
-  DesktopToolPermissionMode,
-  UpdateMissionOptions,
+import {
+  isUserFacingMissionOrigin,
+  type Mission,
+  type MissionChatEntry,
+  type MissionChatPatch,
+  type MissionChatSnapshot,
+  type MissionChatUpdate,
+  type MissionChatQuery,
+  type MissionContextCompactionResult,
+  type MissionContextWindowState,
+  type MissionHumanInteraction,
+  type MissionModelOverride,
+  type MissionWorkConversationSnapshot,
+  type MissionWorkRecord,
+  type MissionWorkSnapshot,
+  type MissionWorkUpdate,
+  type GetMissionWorkConversation,
+  type DesktopToolPermissionMode,
+  type UpdateMissionOptions,
 } from "../../../shared/contracts/index.ts";
 import type { CapabilityCredentialStore } from "../capabilities/capability-credential-store.ts";
 import type { CapabilityStore } from "../capabilities/capability-store.ts";
@@ -199,7 +200,7 @@ interface ActiveMissionExecution {
 }
 
 function missionSurfaceAudience(mission: Pick<Mission, "origin">): MissionSurfaceAudience {
-  return mission.origin.type === "user" ? "user" : "internal";
+  return isUserFacingMissionOrigin(mission.origin) ? "user" : "internal";
 }
 
 export async function compactExpertSessionContext(
@@ -340,7 +341,7 @@ export function createMissionRunner(options: {
     }
   };
   const createExecutionContext = async (mission: Mission): Promise<MissionExecutionContext> => {
-    const systemMission = mission.origin.type !== "user";
+    const systemMission = !isUserFacingMissionOrigin(mission.origin);
     let toolPermissionMode = mission.toolPermissionMode;
     const runtimes: RuntimeResolver = {
       getDefaultRuntimeId: async () =>

@@ -13,6 +13,7 @@ import {
 import { canonicalPragmaResourceRef, type PragmaResource } from "@pragma/interpreter/ast";
 
 import {
+  isUserFacingMissionOrigin,
   MissionContextStoreContentSchema,
   MissionContextStoreDescriptorSchema,
   MissionContextStoreEntrySchema,
@@ -689,7 +690,7 @@ async function scopeAvailability(
 
 async function userMission(missions: MissionStore, missionId: string): Promise<Mission> {
   const mission = await missions.get(missionId);
-  if (mission.origin.type !== "user") throw codedError("mission_not_found");
+  if (!isUserFacingMissionOrigin(mission.origin)) throw codedError("mission_not_found");
   return mission;
 }
 

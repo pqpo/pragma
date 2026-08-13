@@ -22,6 +22,7 @@ import {
   createPragmaAgentTools,
 } from "@pragma/built-in-agents";
 import { MEMORY_CURATOR_REF } from "@pragma/memory";
+import { isUserFacingMissionOrigin } from "../../shared/contracts/index.ts";
 
 import { installAutomationHandlers } from "../features/automations/automation-ipc.ts";
 import { createAutomationService } from "../features/automations/automation-service.ts";
@@ -679,7 +680,7 @@ export async function createDesktopApplicationContainer(
       await memoryPlane.deleteExecutionState(executionIds);
     },
     onExecutionLinked: async ({ mission, executionId }) => {
-      if (mission.origin.type !== "user") return;
+      if (!isUserFacingMissionOrigin(mission.origin)) return;
       await memoryPlane.registerMemoryExecutionContext({
         executionId,
         missionId: mission.id,
@@ -687,14 +688,14 @@ export async function createDesktopApplicationContainer(
       });
     },
     onMissionActivity: async ({ mission }) => {
-      if (mission.origin.type !== "user") return;
+      if (!isUserFacingMissionOrigin(mission.origin)) return;
       await memoryPlane.setMemoryConversationState({
         missionId: mission.id,
         state: "active",
       });
     },
     onExecutionTerminal: async ({ mission }) => {
-      if (mission.origin.type !== "user") return;
+      if (!isUserFacingMissionOrigin(mission.origin)) return;
       await memoryPlane.setMemoryConversationState({
         missionId: mission.id,
         state: mission.lifecycleStatus === "completed" ? "completed" : "active",
@@ -956,6 +957,7 @@ export async function createDesktopApplicationContainer(
     project: pragmaProjectStore,
     getWindow: options.getWindow,
     runner: missionRunner,
+    getAutomationMissionSources: () => automationService.listMissionSources(),
     getDefaultToolPermissionMode: getToolPermissionMode,
     getDefaultWorkspace: async () =>
       (await desktopSettings.getSnapshot(options.getPreferredSystemLanguages())).defaultWorkspace,

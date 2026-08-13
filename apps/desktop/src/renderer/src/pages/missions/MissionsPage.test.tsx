@@ -119,10 +119,58 @@ describe("MissionsPage", () => {
     );
 
     expect(html).toContain("New mission");
+    expect(html).toContain('aria-label="Mission sources"');
+    expect(html).toMatch(/aria-selected="true"[^>]*>Tasks<\/button>/);
+    expect(html).toMatch(/aria-selected="false"[^>]*>Automation<\/button>/);
     expect(html).toContain('aria-label="Resize navigation"');
     expect(html).not.toContain("mission-create-selectors");
     expect(html).not.toContain("Needs input");
     expect(html).not.toContain("No missions need input");
+  });
+
+  it("shows only the selected Mission source in the rail", () => {
+    const task = missionSummaryFixture({
+      id: "task-mission",
+      title: "Manual review",
+      updatedAt: "2026-07-11T00:00:02.000Z",
+    });
+    const automation = missionSummaryFixture({
+      id: "automation-mission",
+      title: "Scheduled review",
+      source: {
+        type: "automation",
+        automationRef: "automation:m9a8n9nxvvyb4j01",
+      },
+      updatedAt: "2026-07-11T00:00:01.000Z",
+    });
+    const taskHtml = renderToStaticMarkup(
+      <MissionsPage
+        initialMemoryState={{
+          missions: [task, automation],
+          selectedMission: null,
+          selectedMissionId: null,
+          activeSource: "task",
+        }}
+        onCreate={() => undefined}
+      />,
+    );
+    const automationHtml = renderToStaticMarkup(
+      <MissionsPage
+        initialMemoryState={{
+          missions: [task, automation],
+          selectedMission: null,
+          selectedMissionId: null,
+          activeSource: "automation",
+        }}
+        onCreate={() => undefined}
+      />,
+    );
+
+    expect(taskHtml).toContain("Manual review");
+    expect(taskHtml).not.toContain("Scheduled review");
+    expect(automationHtml).toContain("Scheduled review");
+    expect(automationHtml).not.toContain("Manual review");
+    expect(automationHtml).toContain("mission-source-tabs is-automation");
   });
 
   it("offers the shared attachment picker in the Mission chat composer", () => {
@@ -1386,6 +1434,7 @@ function missionSummaryFixture(input: {
   readonly title: string;
   readonly lifecycleStatus?: MissionSummary["lifecycleStatus"] | undefined;
   readonly status?: NonNullable<MissionSummary["execution"]>["status"] | undefined;
+  readonly source?: MissionSummary["source"] | undefined;
   readonly updatedAt: string;
 }): MissionSummary {
   return {
@@ -1394,6 +1443,7 @@ function missionSummaryFixture(input: {
     workspace: { basename: "expert-mesh" },
     executor: { kind: "expert", name: "Product Designer" },
     ...(input.status === undefined ? {} : { execution: { status: input.status } }),
+    source: input.source ?? { type: "task" },
     lifecycleStatus: input.lifecycleStatus ?? "active",
     updatedAt: input.updatedAt,
   };

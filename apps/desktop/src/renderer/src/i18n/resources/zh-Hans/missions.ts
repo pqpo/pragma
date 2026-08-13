@@ -1,6 +1,11 @@
 export const missions = {
   title: "任务",
   newMission: "新建任务",
+  missionSources: "任务来源",
+  sourceTabs: {
+    task: "任务",
+    automation: "自动化",
+  },
   start: "开始任务",
   search: "搜索任务",
   loading: "正在加载任务…",
@@ -40,7 +45,9 @@ export const missions = {
   completed: "已完成",
   noWaitingInput: "暂无待输入的任务",
   noActive: "暂无进行中的任务",
+  noActiveAutomations: "暂无进行中的自动化任务",
   noCompleted: "暂无已完成的任务",
+  noCompletedAutomations: "暂无已完成的自动化任务",
   loadMoreMissions: "加载更多",
   pinMission: "置顶任务",
   unpinMission: "取消置顶",

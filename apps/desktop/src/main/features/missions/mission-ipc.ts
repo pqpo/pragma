@@ -23,6 +23,9 @@ import {
   SendMissionMessageSchema,
   UpdateMissionOptionsSchema,
   UpdateHomeExecutorPreferenceSchema,
+  isUserFacingMissionOrigin,
+  type Mission,
+  type MissionSummary,
   type PickMissionAttachmentsResult,
   type DesktopToolPermissionMode,
 } from "../../../shared/contracts/index.ts";
@@ -50,6 +53,7 @@ export function installMissionHandlers(options: {
   readonly homeExecutors: HomeExecutorCatalog;
   readonly project: PragmaProjectStore;
   readonly runner: MissionRunner;
+  readonly getAutomationMissionSources: () => Promise<ReadonlyMap<string, string>>;
   readonly getWindow: () => BrowserWindow | null;
   readonly getDefaultToolPermissionMode: () =>
     DesktopToolPermissionMode | Promise<DesktopToolPermissionMode>;
@@ -65,6 +69,8 @@ export function installMissionHandlers(options: {
       }) => Promise<void>)
     | undefined;
 }): void {
+  let legacyAutomationMissionSources: ReadonlyMap<string, string> = new Map();
+  let legacyAutomationMissionSourcesRequest: Promise<ReadonlyMap<string, string>> | undefined;
   const imageDrafts = createMissionImageDraftStore({ temporaryRoot: options.temporaryRoot });
   installMissionAttachmentProtocol(options.missions, imageDrafts);
   const getCreationDefaults = async () => {
@@ -81,11 +87,30 @@ export function installMissionHandlers(options: {
       toolPermissionMode: await options.getDefaultToolPermissionMode(),
     });
   };
-  const publishMission = (mission: Awaited<ReturnType<MissionStore["get"]>>): void => {
-    if (mission.origin.type !== "user") return;
+  const ensureLegacyAutomationMissionSources = async (): Promise<void> => {
+    legacyAutomationMissionSourcesRequest ??= options.getAutomationMissionSources();
+    try {
+      legacyAutomationMissionSources = await legacyAutomationMissionSourcesRequest;
+    } catch (error) {
+      legacyAutomationMissionSourcesRequest = undefined;
+      throw error;
+    }
+  };
+  const sourceForMission = (mission: Mission): MissionSummary["source"] => {
+    if (mission.origin.type === "automation") {
+      return { type: "automation", automationRef: mission.origin.automationRef };
+    }
+    const automationRef = legacyAutomationMissionSources.get(mission.id);
+    return automationRef === undefined ? { type: "task" } : { type: "automation", automationRef };
+  };
+  const publishMission = async (
+    mission: Awaited<ReturnType<MissionStore["get"]>>,
+  ): Promise<void> => {
+    if (!isUserFacingMissionOrigin(mission.origin)) return;
     publishMissionUpdate(() => options.getWindow()?.webContents ?? null, {
       kind: "upsert",
       mission,
+      source: sourceForMission(mission),
     });
   };
   const publishRemoval = (missionId: string): void => {
@@ -94,18 +119,28 @@ export function installMissionHandlers(options: {
       missionId,
     });
   };
-  const getUserMission = async (id: string) => {
+  const getManagedMission = async (id: string) => {
+    await ensureLegacyAutomationMissionSources();
     const mission = await options.missions.get(id);
-    if (mission.origin.type !== "user") throw new Error("mission_not_found");
+    if (!isUserFacingMissionOrigin(mission.origin)) throw new Error("mission_not_found");
     return mission;
   };
-  const assertUserMission = async (id: string): Promise<string> => {
-    await getUserMission(id);
+  const assertManagedMission = async (id: string): Promise<string> => {
+    await getManagedMission(id);
     return id;
   };
-  ipcMain.handle("missions:list", () => options.missions.list());
+  ipcMain.handle("missions:list", async () => {
+    await ensureLegacyAutomationMissionSources();
+    return (await options.missions.list()).map((mission) => {
+      if (mission.source.type === "automation") return mission;
+      const automationRef = legacyAutomationMissionSources.get(mission.id);
+      return automationRef === undefined
+        ? mission
+        : { ...mission, source: { type: "automation" as const, automationRef } };
+    });
+  });
   ipcMain.handle("missions:get", (_event, id: unknown) =>
-    getUserMission(MissionIdSchema.parse(id)),
+    getManagedMission(MissionIdSchema.parse(id)),
   );
   ipcMain.handle("missions:executors:list", async () =>
     MissionExecutorOptionSchema.array().parse(await options.executors.list()),
@@ -126,7 +161,7 @@ export function installMissionHandlers(options: {
   ipcMain.handle("missions:model-options:get", async (_event, input: unknown) => {
     const { executorRef, missionId } = MissionModelOptionsRequestSchema.parse(input);
     if (missionId === undefined) return await options.executors.getModelOptions(executorRef);
-    const mission = await getUserMission(missionId);
+    const mission = await getManagedMission(missionId);
     const [runtimeBinding, project] = await Promise.all([
       options.runner.getRuntimeBinding(missionId),
       options.project.openRevision(mission.project.revision),
@@ -216,88 +251,88 @@ export function installMissionHandlers(options: {
       options.recordWorkspaceUsage(parsed.workspace),
       options.homeExecutors.recordUsage(parsed.executor.ref, parsed.workspace),
     ]);
-    publishMission(mission);
+    await publishMission(mission);
     return mission;
   });
   ipcMain.handle("missions:run", (_event, input: unknown) =>
     runDesktopMutation(async () => {
       const mission = await options.runner.run(
-        await assertUserMission(MissionActionSchema.parse(input).id),
+        await assertManagedMission(MissionActionSchema.parse(input).id),
       );
-      publishMission(mission);
+      await publishMission(mission);
       return mission;
     }),
   );
   ipcMain.handle("missions:options:update", (_event, input: unknown) =>
     runDesktopMutation(async () => {
       const parsed = UpdateMissionOptionsSchema.parse(input);
-      await assertUserMission(parsed.id);
+      await assertManagedMission(parsed.id);
       const mission = await options.runner.updateOptions(parsed);
-      publishMission(mission);
+      await publishMission(mission);
       return mission;
     }),
   );
   ipcMain.handle("missions:message:send", (_event, input: unknown) =>
     runDesktopMutation(async () => {
       const parsed = SendMissionMessageSchema.parse(input);
-      await assertUserMission(parsed.id);
+      await assertManagedMission(parsed.id);
       const mission = await options.runner.sendMessage(parsed);
       await imageDrafts.discard(parsed.attachments.map((attachment) => attachment.id));
-      publishMission(mission);
+      await publishMission(mission);
       return mission;
     }),
   );
   ipcMain.handle("missions:chat:get", async (_event, input: unknown) => {
     const parsed = GetMissionChatSchema.parse(input);
-    await assertUserMission(parsed.id);
+    await assertManagedMission(parsed.id);
     return await options.runner.getChat(parsed);
   });
   ipcMain.handle("missions:context:compact", (_event, input: unknown) =>
     runDesktopMutation(
       async () =>
         await options.runner.compactContext(
-          await assertUserMission(MissionActionSchema.parse(input).id),
+          await assertManagedMission(MissionActionSchema.parse(input).id),
         ),
     ),
   );
   ipcMain.handle("missions:interrupt", (_event, input: unknown) =>
     runDesktopMutation(async () => {
       const mission = await options.runner.interrupt(
-        await assertUserMission(MissionActionSchema.parse(input).id),
+        await assertManagedMission(MissionActionSchema.parse(input).id),
       );
-      publishMission(mission);
+      await publishMission(mission);
       return mission;
     }),
   );
   ipcMain.handle(
     "missions:work:get",
     async (_event, input: unknown) =>
-      await options.runner.getWork(await assertUserMission(MissionActionSchema.parse(input).id)),
+      await options.runner.getWork(await assertManagedMission(MissionActionSchema.parse(input).id)),
   );
   ipcMain.handle("missions:work:conversation:get", async (_event, input: unknown) => {
     const parsed = GetMissionWorkConversationSchema.parse(input);
-    await assertUserMission(parsed.id);
+    await assertManagedMission(parsed.id);
     return await options.runner.getWorkConversation(parsed);
   });
   ipcMain.handle(
     "missions:human:list",
     async (_event, input: unknown) =>
       await options.runner.listHumanInteractions(
-        await assertUserMission(MissionActionSchema.parse(input).id),
+        await assertManagedMission(MissionActionSchema.parse(input).id),
       ),
   );
   ipcMain.handle("missions:human:respond", async (_event, input: unknown) => {
     return await runDesktopMutation(async () => {
       const parsed = RespondMissionHumanInteractionSchema.parse(input);
-      await assertUserMission(parsed.missionId);
+      await assertManagedMission(parsed.missionId);
       return await options.runner.respondToHumanInteraction(parsed);
     });
   });
   ipcMain.handle("missions:complete", async (_event, input: unknown) => {
-    const missionId = await assertUserMission(MissionActionSchema.parse(input).id);
+    const missionId = await assertManagedMission(MissionActionSchema.parse(input).id);
     const mission = await options.missions.markComplete(missionId);
     if (
-      mission.origin.type === "user" &&
+      isUserFacingMissionOrigin(mission.origin) &&
       !(
         mission.execution !== undefined &&
         ["queued", "running", "waiting"].includes(mission.execution.status)
@@ -308,22 +343,22 @@ export function installMissionHandlers(options: {
         state: "completed",
       });
     }
-    publishMission(mission);
+    await publishMission(mission);
     return mission;
   });
   ipcMain.handle("missions:reopen", async (_event, input: unknown) => {
-    const missionId = await assertUserMission(MissionActionSchema.parse(input).id);
+    const missionId = await assertManagedMission(MissionActionSchema.parse(input).id);
     const mission = await options.missions.reopen(missionId);
-    if (mission.origin.type === "user") {
+    if (isUserFacingMissionOrigin(mission.origin)) {
       await options.onMissionLifecycleChange?.({ missionId: mission.id, state: "active" });
     }
-    publishMission(mission);
+    await publishMission(mission);
     return mission;
   });
   ipcMain.handle("missions:delete", (_event, input: unknown) =>
     runDesktopMutation(async () => {
       const missionId = MissionActionSchema.parse(input).id;
-      await assertUserMission(missionId);
+      await assertManagedMission(missionId);
       await options.runner.delete(missionId);
       publishRemoval(missionId);
     }),
@@ -332,7 +367,8 @@ export function installMissionHandlers(options: {
     forwardMissionChatNotification({
       notification,
       getSender: () => options.getWindow()?.webContents ?? null,
-      refreshMissionSummary: async (missionId) => publishMission(await getUserMission(missionId)),
+      refreshMissionSummary: async (missionId) =>
+        await publishMission(await getManagedMission(missionId)),
       reportSummaryRefreshFailure: (error, missionId) => {
         console.warn(
           JSON.stringify({

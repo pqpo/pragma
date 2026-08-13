@@ -48,6 +48,7 @@ export interface AutomationService {
   stop(): void;
   listAdapters(): readonly AutomationAdapterOption[];
   list(): Promise<AutomationSummary[]>;
+  listMissionSources(): Promise<ReadonlyMap<string, string>>;
   save(input: SaveAutomation): Promise<AutomationSummary>;
   delete(input: DeleteAutomation): Promise<void>;
   trigger(ref: string): Promise<AutomationSummary>;
@@ -305,6 +306,7 @@ export function createAutomationService(options: {
       executorRef: resource.spec.route.executor.ref,
       missionInput: automationMissionInput(resource),
       toolPermissionMode: binding.toolPermissionMode,
+      origin: { type: "automation", automationRef: canonicalPragmaResourceRef(resource) },
       ...(binding.modelOverride === undefined ? {} : { modelOverride: binding.modelOverride }),
     });
   };
@@ -436,11 +438,57 @@ export function createAutomationService(options: {
     }));
   };
 
+  const backfillMissionSourcesForBinding = async (
+    ref: string,
+    binding: AutomationBinding,
+  ): Promise<ReadonlyMap<string, string>> => {
+    const state = await options.store.getState(ref, binding.generation);
+    const sources = new Map<string, string>();
+    if (state.missionId !== undefined) sources.set(state.missionId, ref);
+    for (const event of state.queue) sources.set(event.missionId, ref);
+    for (const run of state.runs) {
+      if (run.missionId !== undefined) sources.set(run.missionId, ref);
+    }
+    await Promise.all(
+      [...sources].map(async ([missionId, automationRef]) => {
+        try {
+          await options.missions.backfillAutomationOrigin(missionId, automationRef);
+        } catch (error) {
+          if (error instanceof MissionStoreError && error.code === "mission_not_found") return;
+          throw error;
+        }
+      }),
+    );
+    return sources;
+  };
+
+  const listMissionSources = async (): Promise<ReadonlyMap<string, string>> => {
+    const resources = (await options.project.get()).resources.filter(
+      (resource): resource is PragmaAutomationResource => resource.kind === "Automation",
+    );
+    const sources = new Map<string, string>();
+    await Promise.all(
+      resources.map(async (resource) => {
+        const ref = canonicalPragmaResourceRef(resource);
+        const binding = await options.store.getBinding(ref);
+        if (binding === undefined) return;
+        for (const [missionId, automationRef] of await backfillMissionSourcesForBinding(
+          ref,
+          binding,
+        )) {
+          sources.set(missionId, automationRef);
+        }
+      }),
+    );
+    return sources;
+  };
+
   return {
     async start() {
       if (running) return;
       running = true;
       try {
+        await listMissionSources();
         await reconcile();
       } catch (error) {
         running = false;
@@ -471,6 +519,9 @@ export function createAutomationService(options: {
       );
       return await Promise.all(resources.map(summaryFor));
     },
+    async listMissionSources() {
+      return await listMissionSources();
+    },
     async save(input) {
       const resource = PragmaAutomationResourceSchema.parse(input.resource);
       if (resource.spec.adapter !== SCHEDULE_ADAPTER) {
@@ -500,6 +551,9 @@ export function createAutomationService(options: {
               ? { modelOverride: undefined }
               : { modelOverride: input.binding.modelOverride }),
           });
+      if (rotateGeneration && previousBinding !== undefined) {
+        await backfillMissionSourcesForBinding(ref, previousBinding);
+      }
       const snapshot = await options.project.upsert({
         baseRevision: input.expectedProjectRevision,
         resource,
@@ -532,6 +586,8 @@ export function createAutomationService(options: {
     },
     async delete(input) {
       clearTimer(input.ref);
+      const binding = await options.store.getBinding(input.ref);
+      if (binding !== undefined) await backfillMissionSourcesForBinding(input.ref, binding);
       await options.project.remove({
         baseRevision: input.expectedProjectRevision,
         ref: input.ref,
@@ -572,6 +628,7 @@ export function createAutomationService(options: {
       if (resource === undefined) throw new Error(`Automation not found: ${ref}.`);
       const previous = await options.store.getBinding(ref);
       if (previous === undefined) throw new Error(`Automation binding not found: ${ref}.`);
+      await backfillMissionSourcesForBinding(ref, previous);
       const binding = createAutomationBinding({
         automationRef: ref,
         previous,
