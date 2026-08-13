@@ -20,6 +20,7 @@ export interface BoundedEvidenceSelection {
 export function selectBoundedMemoryEvidence(
   evidence: readonly MemoryEvidenceEnvelope[],
   limits: { readonly maxRecords: number; readonly maxBytes: number },
+  estimateBytes: (item: MemoryEvidenceEnvelope) => number = evidenceBytes,
 ): BoundedEvidenceSelection {
   const ordered = evidence.toSorted(compareChronological);
   const firstUserId = ordered.find(isUserMessage)?.messageId;
@@ -43,7 +44,7 @@ export function selectBoundedMemoryEvidence(
     )
     .map((item) => ({
       item,
-      bytes: evidenceBytes(item),
+      bytes: estimateBytes(item),
       priority: evidencePriority(item, { firstUserId, latestUserId, latestAssistantId }),
     }))
     .toSorted(

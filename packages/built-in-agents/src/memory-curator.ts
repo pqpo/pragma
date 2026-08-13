@@ -222,16 +222,19 @@ function parseCuratorOutput<T>(
 export function renderEpisodicExtractionPrompt(
   input: Parameters<EpisodicMemoryExtractor["extract"]>[0],
 ): string {
-  return renderBoundedPrompt(input.evidence, input.omittedEvidence, (retained, omissions) =>
+  return renderBoundedPrompt(input.evidence, input.omittedEvidence, (projection, omissions) =>
     [
       "Extract an Episodic Memory from this safe Evidence projection.",
       "Return retain=false for low-value or insufficient evidence.",
-      "Every goal, summary, attempt, failure/recovery, and outcome must cite one or more supplied messageId values in evidenceRefs.",
+      "Each Evidence id is the exact messageId to cite in evidenceRefs. Use no identifiers other than those ids.",
+      "Steward provenance identifies the responsible root agent/team and producing agents; it is context, not evidence content.",
       "Output schema:",
       '{"retain":true,"language":"zh-Hans","goal":{"text":"...","evidenceRefs":["..."]},"summary":{"text":"...","evidenceRefs":["..."]},"attempts":[{"description":"...","result":"...","evidenceRefs":["..."]}],"failuresAndRecoveries":[{"failure":"...","recovery":"...","evidenceRefs":["..."]}],"outcome":{"status":"succeeded|failed|cancelled|interrupted","summary":"...","evidenceRefs":["..."]},"valueScore":0.0}',
       'or {"retain":false,"reason":"low-value|insufficient-evidence|sensitive"}.',
-      "Evidence:",
-      JSON.stringify(retained),
+      "Steward directory (Evidence.steward is a zero-based index):",
+      JSON.stringify(projection.stewards),
+      "Evidence (chronological, compact):",
+      JSON.stringify(projection.evidence),
       "Omitted Evidence statistics (no omitted content):",
       JSON.stringify(omissions),
     ].join("\n\n"),
@@ -241,15 +244,16 @@ export function renderEpisodicExtractionPrompt(
 export function renderSemanticExtractionPrompt(
   input: Parameters<SemanticMemoryExtractor["extract"]>[0],
 ): string {
-  return renderBoundedPrompt(input.evidence, input.omittedEvidence, (retained, omissions) =>
+  return renderBoundedPrompt(input.evidence, input.omittedEvidence, (projection, omissions) =>
     [
       "Extract current Semantic/Fact Memory from this safe Evidence projection.",
       "Return retain=false when there is no stable, reusable fact. Do not turn historical outcomes into current truth.",
-      "Use only exact entries from allowedSubjectRefs and supplied messageId values. Never invent a subject id or Evidence id.",
+      "Use only exact entries from allowedSubjectRefs and Evidence ids. Never invent a subject id or Evidence id.",
       "Use a namespaced predicate. normalizedValue must be a concise canonical value for deduplication.",
       "Use conflictMode=exclusive only when the subject can have one current value for that predicate; otherwise use compatible.",
       "When a direct user message unambiguously changes an existing exclusive fact, set replacementTarget to that current fact id and revision. Never replace a fact based only on assistant, tool, or summary text.",
       "Confidence must be between 0 and 0.95. Only include reviewAt or expiresAt when Evidence explicitly supports that time.",
+      "Steward provenance identifies the responsible root agent/team and producing agents; it is context, not evidence content.",
       "Output schema:",
       '{"retain":true,"facts":[{"statement":"...","subjectRefs":[{"type":"pragma.user","id":"..."}],"predicate":"user.preference.language","normalizedValue":"zh-Hans","conflictMode":"exclusive|compatible","confidence":0.0,"evidenceRefs":["..."],"replacementTarget":{"factId":"optional current fact id","expectedRevision":1},"reviewAt":"optional ISO time","expiresAt":"optional ISO time"}]}',
       'or {"retain":false,"reason":"no-stable-fact|insufficient-evidence|sensitive"}.',
@@ -257,8 +261,10 @@ export function renderSemanticExtractionPrompt(
       JSON.stringify(input.allowedSubjectRefs),
       "Current exclusive facts eligible for an explicit replacement:",
       JSON.stringify(input.currentFacts),
-      "Evidence:",
-      JSON.stringify(retained),
+      "Steward directory (Evidence.steward is a zero-based index):",
+      JSON.stringify(projection.stewards),
+      "Evidence (chronological, compact):",
+      JSON.stringify(projection.evidence),
       "Omitted Evidence statistics (no omitted content):",
       JSON.stringify(omissions),
     ].join("\n\n"),
@@ -348,18 +354,23 @@ function renderBoundedPrompt(
   evidence: readonly MemoryEvidenceEnvelope[],
   persistentOmissions: Parameters<EpisodicMemoryExtractor["extract"]>[0]["omittedEvidence"],
   render: (
-    retained: readonly MemoryEvidenceEnvelope[],
+    projection: CompactMemoryEvidenceProjection,
     omissions: Parameters<EpisodicMemoryExtractor["extract"]>[0]["omittedEvidence"],
   ) => string,
 ): string {
   let evidenceBudget = DEFAULT_MEMORY_STORAGE_POLICY.extractionPromptMaxBytes;
   for (;;) {
-    const selected = selectBoundedMemoryEvidence(evidence, {
-      maxRecords: DEFAULT_MEMORY_STORAGE_POLICY.evidenceMaxRecordsPerExecution,
-      maxBytes: evidenceBudget,
-    });
+    const selected = selectBoundedMemoryEvidence(
+      evidence,
+      {
+        maxRecords: DEFAULT_MEMORY_STORAGE_POLICY.evidenceMaxRecordsPerExecution,
+        maxBytes: evidenceBudget,
+      },
+      estimateCompactMemoryEvidenceBytes,
+    );
+    const projection = compactMemoryEvidence(selected.retained);
     const prompt = render(
-      selected.retained,
+      projection,
       mergeMemoryEvidenceOmissionStats(persistentOmissions, selected.omittedStats),
     );
     const overflow =
@@ -368,6 +379,127 @@ function renderBoundedPrompt(
     if (evidenceBudget === 0) throw new Error("memory_curator_prompt_metadata_too_large");
     evidenceBudget = Math.max(0, evidenceBudget - overflow - 512);
   }
+}
+
+interface CompactMemoryEvidenceProjection {
+  readonly stewards: readonly CompactMemorySteward[];
+  readonly evidence: readonly CompactMemoryEvidence[];
+}
+
+interface CompactMemorySteward {
+  readonly root: string;
+  readonly producers: readonly string[];
+}
+
+interface CompactMemoryEvidence {
+  readonly id: string;
+  readonly at: string;
+  readonly kind: string;
+  readonly steward?: number | undefined;
+  readonly text?: string | undefined;
+  readonly tool?: string | undefined;
+  readonly phase?: string | undefined;
+  readonly status?: string | undefined;
+  readonly outcome?: string | undefined;
+  readonly artifact?:
+    | {
+        readonly kind: string;
+        readonly title?: string | undefined;
+        readonly uri?: string | undefined;
+      }
+    | undefined;
+}
+
+function compactMemoryEvidence(
+  evidence: readonly MemoryEvidenceEnvelope[],
+): CompactMemoryEvidenceProjection {
+  const stewards: CompactMemorySteward[] = [];
+  const stewardIndexes = new Map<string, number>();
+  const compact = evidence.map((item) => {
+    const steward = compactMemorySteward(item);
+    const stewardKey = steward === undefined ? undefined : JSON.stringify(steward);
+    let stewardIndex: number | undefined;
+    if (stewardKey !== undefined) {
+      stewardIndex = stewardIndexes.get(stewardKey);
+      if (stewardIndex === undefined) {
+        stewardIndex = stewards.length;
+        stewardIndexes.set(stewardKey, stewardIndex);
+        stewards.push(steward!);
+      }
+    }
+    return compactMemoryEvidenceRecord(item, stewardIndex);
+  });
+  return { stewards, evidence: compact };
+}
+
+function compactMemorySteward(item: MemoryEvidenceEnvelope): CompactMemorySteward | undefined {
+  if (item.attribution === undefined) return undefined;
+  return {
+    root: compactRef(item.attribution.rootRef),
+    producers: item.attribution.producerRefs.map(compactRef),
+  };
+}
+
+function compactMemoryEvidenceRecord(
+  item: MemoryEvidenceEnvelope,
+  steward: number | undefined,
+): CompactMemoryEvidence {
+  const base = {
+    id: item.messageId,
+    at: item.occurredAt,
+    ...(steward === undefined ? {} : { steward }),
+  };
+  const payload = record(item.payload);
+  const message = record(payload?.["message"]);
+  if (message !== undefined && typeof message["role"] === "string") {
+    return {
+      ...base,
+      kind: message["role"],
+      ...(typeof message["text"] === "string" ? { text: message["text"] } : {}),
+      ...(typeof message["toolName"] === "string" ? { tool: message["toolName"] } : {}),
+      ...(typeof message["status"] === "string" ? { status: message["status"] } : {}),
+      ...(message["stopReason"] !== "stop" && typeof message["stopReason"] === "string"
+        ? { status: message["stopReason"] }
+        : {}),
+    };
+  }
+  if (typeof payload?.["toolName"] === "string" && typeof payload["phase"] === "string") {
+    return {
+      ...base,
+      kind: "tool",
+      tool: payload["toolName"],
+      phase: payload["phase"],
+    };
+  }
+  if (typeof payload?.["outcome"] === "string") {
+    return { ...base, kind: "terminal", outcome: payload["outcome"] };
+  }
+  if (item.topic === "artifact.created" && typeof payload?.["kind"] === "string") {
+    return {
+      ...base,
+      kind: "artifact",
+      artifact: {
+        kind: payload["kind"],
+        ...(typeof payload["title"] === "string" ? { title: payload["title"] } : {}),
+        ...(typeof payload["uri"] === "string" ? { uri: payload["uri"] } : {}),
+      },
+    };
+  }
+  return { ...base, kind: item.topic };
+}
+
+function estimateCompactMemoryEvidenceBytes(item: MemoryEvidenceEnvelope): number {
+  return Buffer.byteLength(JSON.stringify(compactMemoryEvidence([item])));
+}
+
+function compactRef(ref: { readonly type: string; readonly id: string }): string {
+  return `${ref.type}:${ref.id}`;
+}
+
+function record(value: unknown): Record<string, unknown> | undefined {
+  return typeof value === "object" && value !== null
+    ? (value as Record<string, unknown>)
+    : undefined;
 }
 
 function enforcePromptLimit(prompt: string): string {
