@@ -1,3 +1,62 @@
+# Evaluation Secondary Navigation Design QA
+
+- Source visual truth:
+  `/Users/linminqiu/.codex/generated_images/019ff6a6-5aea-7931-b2f5-793bcb62a956/exec-62921af1-f544-4b26-9be0-2d9b96ca53f5.png`
+- Implementation screenshot: unavailable; the in-app browser rejected the local preview URL under
+  its URL security policy.
+- Combined comparison: unavailable because no compliant implementation screenshot could be
+  captured.
+- Intended comparison viewport: 1440 × 1024 CSS pixels at DPR 1, light theme.
+- Density normalization:
+  - Source: 1487 × 1058 pixels, intended to be normalized to the 1440 × 1024 CSS viewport.
+  - Implementation: unavailable.
+- State: Simplified Chinese Evaluations page with the Project Manager Expert selected, no Agent
+  Judge datasets, and no queued runs.
+
+**Findings**
+
+- [Blocked] The required browser-rendered implementation evidence is unavailable. The local Vite
+  preview started successfully, but the selected in-app browser refused navigation to the local
+  preview under its URL security policy. Browser guidance prohibits switching surfaces or using an
+  alternate route to bypass that decision.
+- Fonts and typography, spacing and layout rhythm, colors and tokens, image/icon fidelity, copy,
+  responsive wrapping, and the visible no-shadow empty state could not be compared against the
+  source image without the implementation capture.
+- Static implementation review confirms that the screen continues to use the existing
+  Inter/SF/PingFang stack, Pragma tokens, and Phosphor icons; this is not a substitute for visual
+  evidence and does not change the blocked result.
+
+**Interaction and code evidence**
+
+- Focused renderer tests verify that Experts and Expert Teams expose Start evaluation, Datasets,
+  and Queue actions while Flows keep only the existing Run Dry action.
+- Focused renderer tests verify explicit Back to target semantics for both secondary pages.
+- Desktop node/web typechecks and Desktop lint pass. Focused Evaluation tests pass 8/8.
+- The full Desktop suite passes 790/792 assertions. Two unrelated Runtime availability tests fail
+  because local Claude Code and Qoder CLI executables are unavailable and a built-in Runtime probe
+  resolves differently in this machine environment.
+
+**Comparison history**
+
+1. Started a local Vite harness using the real Evaluations components, styles, localization, and a
+   deterministic project fixture matching the source state.
+2. Attempted to open the preview in the selected Codex in-app browser at the required local preview
+   address.
+3. Navigation was rejected by browser URL policy before any DOM, screenshot, or console evidence
+   could be collected. No alternate browser or URL workaround was attempted.
+
+**Implementation checklist**
+
+- Capture the implemented Expert empty state at 1440 × 1024 when local preview navigation is
+  permitted.
+- Compare the source and implementation in one combined image, then fix any P0/P1/P2 differences.
+- Verify Datasets, Queue, Back to target, target switching, keyboard focus, and browser console
+  errors before changing the result to passed.
+
+final result: blocked
+
+---
+
 # Memory Health Design QA
 
 - Source visual truth: `design-qa/source-option-2.png`
@@ -628,3 +687,13 @@ final result: passed
 - None required for this change.
 
 final result: passed
+
+---
+
+# Current Design QA Gate
+
+- Current report: Evaluation Secondary Navigation Design QA at the top of this file.
+- The implementation screenshot and combined comparison remain unavailable because local preview
+  navigation was rejected by the selected in-app browser's URL security policy.
+
+final result: blocked
