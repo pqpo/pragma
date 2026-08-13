@@ -760,8 +760,14 @@ export async function runExpertInvocation(options: RunExpertInvocationOptions): 
     depth,
     runtime.descriptor.id,
   );
-  const humanInteractionHandler = async (request: ExpertAgentHumanRequest) =>
-    await options.controller.requestHumanInteraction(options.invocationId, request);
+  const humanInteractionHandler = async (request: ExpertAgentHumanRequest) => {
+    const resumeDelegation = options.delegationPermit?.suspend();
+    try {
+      return await options.controller.requestHumanInteraction(options.invocationId, request);
+    } finally {
+      await resumeDelegation?.();
+    }
+  };
   const invocationLoggerProvider = options.loggerProvider?.withScope({
     executionId: options.executionId,
     invocationId: options.invocationId,

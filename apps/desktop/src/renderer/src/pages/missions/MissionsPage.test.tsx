@@ -16,6 +16,7 @@ import {
   ContextWindowControl,
   DEFAULT_MISSION_MEMORY_VIEW,
   groupMissionConversationEntries,
+  mergeLatestChatPage,
   MissionContextOperationEntry,
   MissionChatEntryView,
   startMissionContextOperation,
@@ -806,6 +807,64 @@ describe("Mission work conversation", () => {
 });
 
 describe("Mission chat patches", () => {
+  it("preserves known history and interaction state when a refresh is degraded", () => {
+    const current: MissionChatSnapshot = {
+      missionId: "00000000-0000-4000-8000-000000000000",
+      revision: 1,
+      entries: [
+        {
+          id: "answer",
+          kind: "assistant",
+          content: "Previously loaded answer",
+          streaming: false,
+          createdAt: "2026-07-11T00:00:00.000Z",
+        },
+      ],
+      page: {},
+      pendingInteractions: [
+        {
+          interactionId: "question",
+          request: {
+            kind: "question",
+            questions: [
+              {
+                question: "Continue?",
+                header: "Continue",
+                kind: "single_choice",
+                options: [{ label: "Yes", description: "Continue." }],
+              },
+            ],
+          },
+        },
+      ],
+    };
+    const degraded: MissionChatSnapshot = {
+      missionId: current.missionId,
+      revision: 2,
+      entries: [],
+      page: {},
+      pendingInteractions: [],
+      syncIssues: [
+        {
+          code: "execution_state_unavailable",
+          section: "history",
+          retryable: true,
+        },
+        {
+          code: "execution_state_unavailable",
+          section: "pending_interactions",
+          retryable: true,
+        },
+      ],
+    };
+
+    expect(mergeLatestChatPage(current, degraded)).toMatchObject({
+      revision: 2,
+      entries: [{ id: "answer", content: "Previously loaded answer" }],
+      pendingInteractions: [{ interactionId: "question" }],
+    });
+  });
+
   it("applies streaming deltas without replacing the accumulated entry", () => {
     const snapshot: MissionChatSnapshot = {
       missionId: "00000000-0000-4000-8000-000000000000",

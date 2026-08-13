@@ -509,6 +509,12 @@ export const MissionContextCompactionResultSchema = z.object({
   contextWindow: MissionContextWindowStateSchema,
 });
 
+export const MissionChatSyncIssueSchema = z.object({
+  code: z.literal("execution_state_unavailable"),
+  section: z.enum(["history", "pending_interactions", "context_window"]),
+  retryable: z.literal(true),
+});
+
 export const MissionChatSnapshotSchema = z.object({
   missionId: MissionIdSchema,
   revision: z.number().int().nonnegative(),
@@ -521,6 +527,7 @@ export const MissionChatSnapshotSchema = z.object({
   pendingInteractions: z.array(MissionHumanInteractionSchema),
   execution: MissionChatExecutionSchema.optional(),
   contextWindow: MissionContextWindowStateSchema.optional(),
+  syncIssues: z.array(MissionChatSyncIssueSchema).max(3).optional(),
 });
 
 export const MissionChatPatchSchema = z.discriminatedUnion("type", [

@@ -256,6 +256,8 @@ export const missions = {
   chat: "對話",
   loadEarlier: "載入較早的訊息",
   loadingEarlier: "載入中…",
+  chatSyncUnavailable: "部分對話狀態暫時無法讀取，現有訊息已保留。",
+  retryChatSync: "重試",
   resumeToManage: "繼續此執行後進行管理",
   reopenToContinue: "重新開啟此任務以繼續對話",
   flowContinues: "流程輸入將繼續傳遞給工作流程步驟",

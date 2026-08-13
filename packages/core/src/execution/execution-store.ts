@@ -187,6 +187,14 @@ export function createFileExecutionStore(
   } = {},
 ): FileExecutionStore {
   const paths = new PragmaPaths(options);
+  const withExecutionLock = async <TValue>(
+    executionId: string,
+    operation: string,
+    action: () => Promise<TValue>,
+  ): Promise<TValue> =>
+    await withFileLock(paths.executionLock(executionId), action, {
+      operation: `execution.${operation}`,
+    });
 
   const store: FileExecutionStore = {
     async recoverPendingCanonicalEvents(input = {}) {
@@ -220,8 +228,11 @@ export function createFileExecutionStore(
           continue;
         }
         try {
-          const result = await withFileLock(paths.executionLock(executionId), async () =>
-            recoverCanonicalHandoffsForExecution(paths, executionId, options.canonicalEventFeed!),
+          const result = await withExecutionLock(
+            executionId,
+            "recover-canonical-events",
+            async () =>
+              recoverCanonicalHandoffsForExecution(paths, executionId, options.canonicalEventFeed!),
           );
           recovered += result.recovered;
           if (result.deliveryFailure !== undefined) {
@@ -254,13 +265,13 @@ export function createFileExecutionStore(
       };
     },
     async delete(executionId) {
-      await withFileLock(paths.executionLock(executionId), async () => {
+      await withExecutionLock(executionId, "delete", async () => {
         await rm(paths.executionRoot(executionId), { recursive: true, force: true });
         await rm(paths.executionArchive(executionId), { force: true });
       });
     },
     async archive(executionId) {
-      await withFileLock(paths.executionLock(executionId), async () => {
+      await withExecutionLock(executionId, "archive", async () => {
         await prepareExecution(paths, executionId, options.canonicalEventFeed);
         const state = await requireExecution(paths, executionId);
         if (!isTerminalExecutionStatus(state.status)) {
@@ -284,7 +295,7 @@ export function createFileExecutionStore(
     },
     async create(record, root) {
       void stableStringify({ record, root });
-      await withFileLock(paths.executionLock(record.executionId), async () => {
+      await withExecutionLock(record.executionId, "create", async () => {
         await prepareExecution(paths, record.executionId, options.canonicalEventFeed);
         if ((await readJsonIfExists(paths.executionState(record.executionId))) !== undefined) {
           throw new Error(`Execution already exists: ${record.executionId}`);
@@ -304,7 +315,7 @@ export function createFileExecutionStore(
     },
 
     async get(executionId) {
-      return await withFileLock(paths.executionLock(executionId), async () => {
+      return await withExecutionLock(executionId, "get", async () => {
         await prepareExecution(paths, executionId, options.canonicalEventFeed);
         const value = await readJsonIfExists(paths.executionState(executionId));
         if (value === undefined) return undefined;
@@ -326,7 +337,7 @@ export function createFileExecutionStore(
     async commit(request) {
       if (request.commitId.trim() === "") throw new Error("Execution commitId must not be empty.");
       const signature = commitSignature(request);
-      return await withFileLock(paths.executionLock(request.executionId), async () => {
+      return await withExecutionLock(request.executionId, "commit", async () => {
         await prepareExecution(paths, request.executionId, options.canonicalEventFeed);
         const commits = await readCommitRecords(paths, request.executionId);
         const duplicate = commits.find((commit) => commit.commitId === request.commitId);
@@ -441,7 +452,7 @@ export function createFileExecutionStore(
     },
 
     async claimRecovery(executionId, claimId, leaseMs) {
-      return await withFileLock(paths.executionLock(executionId), async () => {
+      return await withExecutionLock(executionId, "claim-recovery", async () => {
         await prepareExecution(paths, executionId, options.canonicalEventFeed);
         const current = await requireExecution(paths, executionId);
         const value = current.state[EXECUTION_RECOVERY_CLAIM_STATE_KEY];
@@ -477,7 +488,7 @@ export function createFileExecutionStore(
     },
 
     async getInvocation(executionId, invocationId) {
-      return await withFileLock(paths.executionLock(executionId), async () => {
+      return await withExecutionLock(executionId, "get-invocation", async () => {
         await prepareExecution(paths, executionId, options.canonicalEventFeed);
         return (await readInvocations(paths, executionId)).find(
           (invocation) => invocation.invocationId === invocationId,
@@ -486,28 +497,28 @@ export function createFileExecutionStore(
     },
 
     async listInvocations(executionId) {
-      return await withFileLock(paths.executionLock(executionId), async () => {
+      return await withExecutionLock(executionId, "list-invocations", async () => {
         await prepareExecution(paths, executionId, options.canonicalEventFeed);
         return await readInvocations(paths, executionId);
       });
     },
 
     async getAgent(executionId, agentId) {
-      return await withFileLock(paths.executionLock(executionId), async () => {
+      return await withExecutionLock(executionId, "get-agent", async () => {
         await prepareExecution(paths, executionId, options.canonicalEventFeed);
         return (await readAgents(paths, executionId)).find((agent) => agent.agentId === agentId);
       });
     },
 
     async listAgents(executionId) {
-      return await withFileLock(paths.executionLock(executionId), async () => {
+      return await withExecutionLock(executionId, "list-agents", async () => {
         await prepareExecution(paths, executionId, options.canonicalEventFeed);
         return await readAgents(paths, executionId);
       });
     },
 
     async getContext(executionId, contextId) {
-      return await withFileLock(paths.executionLock(executionId), async () => {
+      return await withExecutionLock(executionId, "get-context", async () => {
         await prepareExecution(paths, executionId, options.canonicalEventFeed);
         return (await readContexts(paths, executionId)).find(
           (context) => context.contextId === contextId,
@@ -516,7 +527,7 @@ export function createFileExecutionStore(
     },
 
     async listContexts(executionId) {
-      return await withFileLock(paths.executionLock(executionId), async () => {
+      return await withExecutionLock(executionId, "list-contexts", async () => {
         await prepareExecution(paths, executionId, options.canonicalEventFeed);
         return await readContexts(paths, executionId);
       });
@@ -531,7 +542,7 @@ export function createFileExecutionStore(
     },
 
     async getTree(executionId) {
-      return await withFileLock(paths.executionLock(executionId), async () => {
+      return await withExecutionLock(executionId, "get-tree", async () => {
         await prepareExecution(paths, executionId, options.canonicalEventFeed);
         const value = await readJsonIfExists(paths.executionState(executionId));
         if (value === undefined) return undefined;
@@ -552,7 +563,7 @@ export function createFileExecutionStore(
     },
 
     async readEvents(executionId, after) {
-      return await withFileLock(paths.executionLock(executionId), async () => {
+      return await withExecutionLock(executionId, "read-events", async () => {
         await prepareExecution(paths, executionId, options.canonicalEventFeed);
         return filterAfter(await readExecutionEvents(paths, executionId), executionId, after);
       });

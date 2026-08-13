@@ -971,6 +971,13 @@ describe("mission contracts", () => {
         ],
         page: { oldestSequence: 1, newestSequence: 1 },
         pendingInteractions: [],
+        syncIssues: [
+          {
+            code: "execution_state_unavailable",
+            section: "history",
+            retryable: true,
+          },
+        ],
         execution: {
           id: "00000000-0000-4000-8000-000000000010",
           status: "running",

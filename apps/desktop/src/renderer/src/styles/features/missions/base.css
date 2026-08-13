@@ -1309,6 +1309,10 @@
 }
 
 .mission-history-error {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 10px;
   max-width: 560px;
   margin-right: auto;
   margin-left: auto;
@@ -1319,6 +1323,17 @@
   color: #9d3f34;
   font-size: 12px;
   text-align: center;
+}
+
+.mission-history-error button {
+  flex: 0 0 auto;
+  border: 0;
+  background: transparent;
+  color: inherit;
+  font: inherit;
+  font-weight: 650;
+  text-decoration: underline;
+  cursor: pointer;
 }
 
 .mission-jump-latest {

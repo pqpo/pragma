@@ -120,46 +120,56 @@ export class StoredExecutionView implements ExecutionView {
     options: SubscribeOutputOptions = {},
   ): Promise<ExecutionOutputSubscription> {
     const source = getExecutionLiveBus(this.store).subscribe(this.executionId);
-    const state = await this.getState();
-    if (isTerminal(state.status)) await source.close();
-    const rootInvocationId = state.rootInvocationId;
-    const channels = options.channels === undefined ? undefined : new Set(options.channels);
-    return filterSubscription(
-      source,
-      (item) =>
-        matchesOutputScope(item, rootInvocationId, options.scope) &&
-        (channels?.has(item.channel) ?? true),
-    );
+    try {
+      const state = await this.getState();
+      if (isTerminal(state.status)) await source.close();
+      const rootInvocationId = state.rootInvocationId;
+      const channels = options.channels === undefined ? undefined : new Set(options.channels);
+      return filterSubscription(
+        source,
+        (item) =>
+          matchesOutputScope(item, rootInvocationId, options.scope) &&
+          (channels?.has(item.channel) ?? true),
+      );
+    } catch (error) {
+      await source.close();
+      throw error;
+    }
   }
 
   async subscribeEvents(
     options: { readonly scope?: InvocationScope } = {},
   ): Promise<ExecutionEventSubscription> {
     const source = getExecutionLiveBus(this.store).subscribeEvents(this.executionId);
-    const state = await this.getState();
-    if (isTerminal(state.status)) await source.close();
-    const invocations = await this.store.listInvocations(this.executionId);
-    const matchesByInvocationId = new Map(
-      invocations.map((invocation) => [
-        invocation.invocationId,
-        matchesInvocationScope(invocation, state.rootInvocationId, options.scope),
-      ]),
-    );
-    return filterEventSubscription(source, async (event) => {
-      const cached = matchesByInvocationId.get(event.invocationId);
-      if (cached !== undefined) return cached;
-      if (options.scope?.kind === "all") return true;
-      if (options.scope?.kind === "root") return event.invocationId === state.rootInvocationId;
-      if (options.scope?.kind === "invocation") {
-        return event.invocationId === options.scope.invocationId;
-      }
-      const invocation = await this.store.getInvocation(this.executionId, event.invocationId);
-      const matches =
-        invocation !== undefined &&
-        matchesInvocationScope(invocation, state.rootInvocationId, options.scope);
-      matchesByInvocationId.set(event.invocationId, matches);
-      return matches;
-    });
+    try {
+      const state = await this.getState();
+      if (isTerminal(state.status)) await source.close();
+      const invocations = await this.store.listInvocations(this.executionId);
+      const matchesByInvocationId = new Map(
+        invocations.map((invocation) => [
+          invocation.invocationId,
+          matchesInvocationScope(invocation, state.rootInvocationId, options.scope),
+        ]),
+      );
+      return filterEventSubscription(source, async (event) => {
+        const cached = matchesByInvocationId.get(event.invocationId);
+        if (cached !== undefined) return cached;
+        if (options.scope?.kind === "all") return true;
+        if (options.scope?.kind === "root") return event.invocationId === state.rootInvocationId;
+        if (options.scope?.kind === "invocation") {
+          return event.invocationId === options.scope.invocationId;
+        }
+        const invocation = await this.store.getInvocation(this.executionId, event.invocationId);
+        const matches =
+          invocation !== undefined &&
+          matchesInvocationScope(invocation, state.rootInvocationId, options.scope);
+        matchesByInvocationId.set(event.invocationId, matches);
+        return matches;
+      });
+    } catch (error) {
+      await source.close();
+      throw error;
+    }
   }
 
   async getMessageHistory(

@@ -14,6 +14,7 @@ import {
   readRuntimeSessionRecord,
   RuntimeContextCompactionNotNeededError,
   StoredExecutionView,
+  withFileLock,
   type ExpertSession,
   type RuntimeDriverSessionContext,
   type RuntimeContextWindowUsage,
@@ -854,6 +855,7 @@ describe("MissionRunner", { timeout: 15_000 }, () => {
     expect(interrupted.execution?.status).toBe("cancelled");
     expect(cancelTurn).toHaveBeenCalledTimes(1);
     const settledChat = await runner.getChat({ id: mission.id, limit: 50 });
+    expect(settledChat.syncIssues).toBeUndefined();
     expect(settledChat.execution?.interruptible).toBe(false);
     expect(settledChat.entries).toEqual(
       expect.arrayContaining([
@@ -2276,6 +2278,28 @@ describe("MissionRunner", { timeout: 15_000 }, () => {
         },
       ],
     }));
+    await executions.appendEvent(executionId, executionId, "invocation.message.appended", {
+      runId: "persisted-before-restart",
+      source: { kind: "agent", runId: "persisted-before-restart", path: [] },
+      message: {
+        role: "assistant",
+        content: [{ type: "text", text: "Choose the environment to continue." }],
+        api: "test",
+        provider: "test",
+        model: "test-model",
+        usage: {
+          measurement: "reported",
+          input: 0,
+          output: 0,
+          cacheRead: 0,
+          cacheWrite: 0,
+          totalTokens: 0,
+          cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0 },
+        },
+        stopReason: "toolUse",
+        timestamp: Date.parse(startedAt) + 1,
+      },
+    });
     await executions.appendEvent(
       executionId,
       executionId,
@@ -2324,6 +2348,15 @@ describe("MissionRunner", { timeout: 15_000 }, () => {
     const resumed = await runner.run(mission.id);
     expect(resumed.execution).toMatchObject({ id: executionId, status: "waiting", sessionId });
     expect(runtimeStarts).toBe(0);
+    await expect(runner.getChat({ id: mission.id, limit: 50 })).resolves.toMatchObject({
+      entries: [
+        expect.objectContaining({ kind: "user", content: mission.goal }),
+        expect.objectContaining({
+          kind: "assistant",
+          content: "Choose the environment to continue.",
+        }),
+      ],
+    });
     const interactions = await runner.listHumanInteractions(mission.id);
     expect(interactions).toEqual([
       expect.objectContaining({
@@ -2331,6 +2364,13 @@ describe("MissionRunner", { timeout: 15_000 }, () => {
         request: expect.objectContaining({ kind: "question" }),
       }),
     ]);
+    await expect(
+      withFileLock(
+        new PragmaPaths({ pragmaHome }).executionLock(executionId),
+        async () => "available",
+        { timeoutMs: 100, operation: "test.human-wait-read" },
+      ),
+    ).resolves.toBe("available");
 
     await runner.respondToHumanInteraction({
       missionId: mission.id,
