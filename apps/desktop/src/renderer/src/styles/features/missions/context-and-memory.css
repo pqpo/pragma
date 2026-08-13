@@ -848,8 +848,8 @@
 .mission-human-composer {
   display: grid;
   box-sizing: border-box;
-  width: min(100%, var(--mission-composer-content-width, 680px));
-  justify-self: center;
+  width: 100%;
+  justify-self: stretch;
   max-height: min(430px, 52vh);
   gap: 16px;
   overflow-y: auto;

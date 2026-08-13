@@ -103,8 +103,8 @@
   display: grid;
   grid-template-columns: minmax(0, 1fr);
   box-sizing: border-box;
-  width: min(100%, var(--mission-composer-content-width, 680px));
-  justify-self: center;
+  width: 100%;
+  justify-self: stretch;
   flex: 0 0 auto;
   min-height: 92px;
   align-items: stretch;
@@ -198,7 +198,6 @@
 
 .mission-chat-shell {
   display: grid;
-  --mission-composer-content-width: 680px;
   grid-template-rows: minmax(0, 1fr) auto;
   width: 100%;
   height: 100%;
