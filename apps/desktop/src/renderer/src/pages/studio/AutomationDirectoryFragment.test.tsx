@@ -144,6 +144,7 @@ describe("AutomationDirectoryFragment", () => {
     expect(html).toContain("Review the work.");
     expect(html).toContain("Run now");
     expect(html).toContain("Edit automation");
+    expect(html).toContain('class="automation-detail-column"');
   });
 
   it("renders an unavailable adapter without crashing or offering the schedule editor", () => {

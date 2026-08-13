@@ -148,140 +148,148 @@ export function AutomationDetailFragment(props: {
         </section>
 
         <div className="automation-detail-content">
-          <DetailSection
-            title={trigger === undefined ? t("connectionConfiguration") : t("schedulePolicy")}
-          >
-            <DetailList>
-              <DetailRow label={t("automationAdapter")}>
-                <code>{automation.resource.spec.adapter}</code>
-              </DetailRow>
-              {trigger === undefined ? null : (
-                <DetailRow label={t("triggerType")}>{triggerKindLabel(trigger.kind, t)}</DetailRow>
-              )}
-              {trigger?.kind === "once" ? (
-                <DetailRow label={t("runAt")}>{formatDateTime(trigger.at, locale)}</DetailRow>
-              ) : null}
-              {trigger?.kind === "interval" ? (
-                <>
-                  <DetailRow label={t("every")}>
-                    {trigger.every} {t(`scheduleUnit.${trigger.unit}`)}
-                  </DetailRow>
-                  <DetailRow label={t("anchorAt")}>
-                    {formatDateTime(trigger.anchorAt, locale)}
-                  </DetailRow>
-                </>
-              ) : null}
-              {trigger?.kind === "calendar" ? (
-                <>
-                  <DetailRow label={t("frequency")}>
-                    {t(`scheduleFrequency.${trigger.frequency}`)}
-                  </DetailRow>
-                  {trigger.frequency === "weekly" ? (
-                    <DetailRow label={t("weekdays")}>
-                      {(trigger.weekdays ?? [])
-                        .map((weekday) => t(`weekday.${weekday}`))
-                        .join(", ")}
-                    </DetailRow>
-                  ) : null}
-                  {trigger.frequency === "monthly" ? (
-                    <DetailRow label={t("dayOfMonth")}>{trigger.dayOfMonth}</DetailRow>
-                  ) : null}
-                  <DetailRow label={t("time")}>{trigger.time}</DetailRow>
-                </>
-              ) : null}
-              {trigger?.kind === "cron" ? (
-                <DetailRow label={t("scheduleCron")}>
-                  <code>{trigger.expression}</code>
-                </DetailRow>
-              ) : null}
-              {trigger?.kind === "calendar" || trigger?.kind === "cron" ? (
-                <DetailRow label={t("timezone")}>{trigger.timezone}</DetailRow>
-              ) : null}
-              {trigger !== undefined && trigger.kind !== "once" ? (
-                <>
-                  {trigger.window?.startsAt ? (
-                    <DetailRow label={t("activeFrom")}>
-                      {formatDateTime(trigger.window.startsAt, locale)}
-                    </DetailRow>
-                  ) : null}
-                  {trigger.window?.endsAt ? (
-                    <DetailRow label={t("activeUntil")}>
-                      {formatDateTime(trigger.window.endsAt, locale)}
-                    </DetailRow>
-                  ) : null}
-                </>
-              ) : null}
-            </DetailList>
-            {trigger === undefined ? (
-              <div className="automation-detail-input">
-                <small>{t("automationConfiguration")}</small>
-                <pre>{JSON.stringify(automation.resource.spec.config, null, 2)}</pre>
-              </div>
-            ) : null}
-          </DetailSection>
-
-          <DetailSection title={t("automationTarget")}>
-            <DetailList>
-              <DetailRow label={t("executor")}>
-                <strong>{executor?.name ?? automation.resource.spec.route.executor.ref}</strong>
-                {executor === undefined ? null : <code>{executor.ref}</code>}
-              </DetailRow>
-              <DetailRow label={t("sessionPolicy")}>
-                {automation.resource.spec.interaction.mode === "reuse-session"
-                  ? t("reuseMission")
-                  : t("newMissionEveryRun")}
-              </DetailRow>
-            </DetailList>
-            <div className="automation-detail-input">
-              <small>{routeInput.kind === "prompt" ? t("prompt") : t("flowInput")}</small>
-              {routeInput.kind === "prompt" ? (
-                <p>{routeInput.value}</p>
-              ) : (
-                <pre>{JSON.stringify(routeInput.value, null, 2)}</pre>
-              )}
-            </div>
-          </DetailSection>
-
-          <DetailSection title={t("executionEnvironment")}>
-            <DetailList>
-              <DetailRow label={t("workspace")}>
-                <code>{automation.binding?.workspace.path ?? t("notConfigured")}</code>
-              </DetailRow>
-              <DetailRow label={t("toolPermissions")}>
-                {permissionLabel(automation.binding?.toolPermissionMode, t)}
-              </DetailRow>
-              {automation.missionId ? (
-                <DetailRow label={t("continuityMission")}>
-                  <code>{automation.missionId}</code>
-                </DetailRow>
-              ) : null}
-            </DetailList>
-          </DetailSection>
-
-          <DetailSection title={t("lastRun")}>
-            {automation.lastRun === undefined ? (
-              <p className="automation-detail-empty-copy">{t("notRunYet")}</p>
-            ) : (
+          <div className="automation-detail-column">
+            <DetailSection
+              title={trigger === undefined ? t("connectionConfiguration") : t("schedulePolicy")}
+            >
               <DetailList>
-                <DetailRow label={t("status")}>
-                  {t(`automationRunStatus.${automation.lastRun.status}`)}
+                <DetailRow label={t("automationAdapter")}>
+                  <code>{automation.resource.spec.adapter}</code>
                 </DetailRow>
-                <DetailRow label={t("scheduledFor")}>
-                  {formatDateTime(automation.lastRun.scheduledFor, locale)}
-                </DetailRow>
-                {automation.lastRun.missionId ? (
-                  <DetailRow label={t("mission")}>
-                    <code>{automation.lastRun.missionId}</code>
+                {trigger === undefined ? null : (
+                  <DetailRow label={t("triggerType")}>
+                    {triggerKindLabel(trigger.kind, t)}
+                  </DetailRow>
+                )}
+                {trigger?.kind === "once" ? (
+                  <DetailRow label={t("runAt")}>{formatDateTime(trigger.at, locale)}</DetailRow>
+                ) : null}
+                {trigger?.kind === "interval" ? (
+                  <>
+                    <DetailRow label={t("every")}>
+                      {trigger.every} {t(`scheduleUnit.${trigger.unit}`)}
+                    </DetailRow>
+                    <DetailRow label={t("anchorAt")}>
+                      {formatDateTime(trigger.anchorAt, locale)}
+                    </DetailRow>
+                  </>
+                ) : null}
+                {trigger?.kind === "calendar" ? (
+                  <>
+                    <DetailRow label={t("frequency")}>
+                      {t(`scheduleFrequency.${trigger.frequency}`)}
+                    </DetailRow>
+                    {trigger.frequency === "weekly" ? (
+                      <DetailRow label={t("weekdays")}>
+                        {(trigger.weekdays ?? [])
+                          .map((weekday) => t(`weekday.${weekday}`))
+                          .join(", ")}
+                      </DetailRow>
+                    ) : null}
+                    {trigger.frequency === "monthly" ? (
+                      <DetailRow label={t("dayOfMonth")}>{trigger.dayOfMonth}</DetailRow>
+                    ) : null}
+                    <DetailRow label={t("time")}>{trigger.time}</DetailRow>
+                  </>
+                ) : null}
+                {trigger?.kind === "cron" ? (
+                  <DetailRow label={t("scheduleCron")}>
+                    <code>{trigger.expression}</code>
                   </DetailRow>
                 ) : null}
-                {automation.lastRun.error ? (
-                  <DetailRow label={t("error")}>
-                    <span className="automation-detail-run-error">{automation.lastRun.error}</span>
+                {trigger?.kind === "calendar" || trigger?.kind === "cron" ? (
+                  <DetailRow label={t("timezone")}>{trigger.timezone}</DetailRow>
+                ) : null}
+                {trigger !== undefined && trigger.kind !== "once" ? (
+                  <>
+                    {trigger.window?.startsAt ? (
+                      <DetailRow label={t("activeFrom")}>
+                        {formatDateTime(trigger.window.startsAt, locale)}
+                      </DetailRow>
+                    ) : null}
+                    {trigger.window?.endsAt ? (
+                      <DetailRow label={t("activeUntil")}>
+                        {formatDateTime(trigger.window.endsAt, locale)}
+                      </DetailRow>
+                    ) : null}
+                  </>
+                ) : null}
+              </DetailList>
+              {trigger === undefined ? (
+                <div className="automation-detail-input">
+                  <small>{t("automationConfiguration")}</small>
+                  <pre>{JSON.stringify(automation.resource.spec.config, null, 2)}</pre>
+                </div>
+              ) : null}
+            </DetailSection>
+
+            <DetailSection title={t("executionEnvironment")}>
+              <DetailList>
+                <DetailRow label={t("workspace")}>
+                  <code>{automation.binding?.workspace.path ?? t("notConfigured")}</code>
+                </DetailRow>
+                <DetailRow label={t("toolPermissions")}>
+                  {permissionLabel(automation.binding?.toolPermissionMode, t)}
+                </DetailRow>
+                {automation.missionId ? (
+                  <DetailRow label={t("continuityMission")}>
+                    <code>{automation.missionId}</code>
                   </DetailRow>
                 ) : null}
               </DetailList>
-            )}
-          </DetailSection>
+            </DetailSection>
+          </div>
+
+          <div className="automation-detail-column">
+            <DetailSection title={t("automationTarget")}>
+              <DetailList>
+                <DetailRow label={t("executor")}>
+                  <strong>{executor?.name ?? automation.resource.spec.route.executor.ref}</strong>
+                  {executor === undefined ? null : <code>{executor.ref}</code>}
+                </DetailRow>
+                <DetailRow label={t("sessionPolicy")}>
+                  {automation.resource.spec.interaction.mode === "reuse-session"
+                    ? t("reuseMission")
+                    : t("newMissionEveryRun")}
+                </DetailRow>
+              </DetailList>
+              <div className="automation-detail-input">
+                <small>{routeInput.kind === "prompt" ? t("prompt") : t("flowInput")}</small>
+                {routeInput.kind === "prompt" ? (
+                  <p>{routeInput.value}</p>
+                ) : (
+                  <pre>{JSON.stringify(routeInput.value, null, 2)}</pre>
+                )}
+              </div>
+            </DetailSection>
+
+            <DetailSection title={t("lastRun")}>
+              {automation.lastRun === undefined ? (
+                <p className="automation-detail-empty-copy">{t("notRunYet")}</p>
+              ) : (
+                <DetailList>
+                  <DetailRow label={t("status")}>
+                    {t(`automationRunStatus.${automation.lastRun.status}`)}
+                  </DetailRow>
+                  <DetailRow label={t("scheduledFor")}>
+                    {formatDateTime(automation.lastRun.scheduledFor, locale)}
+                  </DetailRow>
+                  {automation.lastRun.missionId ? (
+                    <DetailRow label={t("mission")}>
+                      <code>{automation.lastRun.missionId}</code>
+                    </DetailRow>
+                  ) : null}
+                  {automation.lastRun.error ? (
+                    <DetailRow label={t("error")}>
+                      <span className="automation-detail-run-error">
+                        {automation.lastRun.error}
+                      </span>
+                    </DetailRow>
+                  ) : null}
+                </DetailList>
+              )}
+            </DetailSection>
+          </div>
         </div>
       </StudioScreenFrame>
 
