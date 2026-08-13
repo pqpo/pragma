@@ -47,6 +47,9 @@ jobs:
       - name: Install dependencies
         run: pnpm install --frozen-lockfile
 
+      - name: Verify Runtime feature checklist
+        run: pnpm runtime:features:check
+
       - name: Lint
         run: pnpm lint
 
@@ -61,4 +64,3 @@ jobs:
 
       - name: Build
         run: pnpm build
-

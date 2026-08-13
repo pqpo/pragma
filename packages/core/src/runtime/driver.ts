@@ -77,9 +77,20 @@ import type {
   RuntimeSubmitHandle,
   RuntimeSubmitRequest,
   RuntimeTaskSubmission,
+  RuntimeDriverDescriptor,
 } from "./runtime-adapter.ts";
 import type { RuntimeStreamEvent } from "./stream-events.ts";
 import { registerRuntimeSessionFactory } from "./session-factory.ts";
+import {
+  RUNTIME_FEATURE_CATALOG,
+  deriveRuntimeAdapterCapabilities,
+  isRuntimeFeatureEnabled,
+  snapshotRuntimeFeatures,
+  validateRuntimeFeatures,
+  type RuntimeFeatureName,
+  type RuntimeFeatureSet,
+} from "./features.ts";
+import { RuntimeResourceScope, type RuntimeResourceRegistrar } from "./resource-scope.ts";
 import type {
   ExpertAgentHumanInteractionHandler,
   ExpertToolExecutionContext,
@@ -113,13 +124,7 @@ export interface RuntimePrepareContext {
   readonly processEnvironment: Readonly<NodeJS.ProcessEnv>;
 }
 
-export interface RuntimePreparedContext {
-  readonly metadata?: Record<string, unknown> | undefined;
-}
-
-export interface RuntimeDriverSessionContext<
-  TPrepared = RuntimePreparedContext,
-> extends RuntimePrepareContext {
+export interface RuntimeFeatureSessionPrepareContext extends RuntimePrepareContext {
   readonly agentContext: ExpertAgentContext;
   readonly lifecycle: AgentLifecycle<ExpertAgentRunContext | undefined>;
   readonly persistence: {
@@ -127,8 +132,21 @@ export interface RuntimeDriverSessionContext<
     readonly restoredRuntimeSessionId?: string | undefined;
     readonly checkpoint: (trigger: RuntimeCheckpointTrigger) => Promise<void>;
   };
-  readonly prepared: TPrepared;
+  readonly resources: RuntimeResourceRegistrar;
+  readonly preparedFeatures: Readonly<Partial<Record<RuntimeFeatureName, unknown>>>;
   readonly sessionInfo: RuntimeSessionInfo;
+}
+
+export type RuntimeDriverSessionContext = RuntimeFeatureSessionPrepareContext;
+
+export function readRuntimePreparedFeature<T>(
+  context: Pick<RuntimeFeatureSessionPrepareContext, "preparedFeatures">,
+  feature: RuntimeFeatureName,
+): T {
+  if (!(feature in context.preparedFeatures)) {
+    throw new Error(`Runtime feature ${feature} did not produce Session preparation data.`);
+  }
+  return context.preparedFeatures[feature] as T;
 }
 
 export interface RuntimeSessionReadContext {
@@ -154,6 +172,24 @@ export interface RuntimeTurnContext<TNativeEvent> {
   readonly signal: AbortSignal;
   readonly source: RuntimeStreamEvent["source"];
   readonly stream: RuntimeStreamWriter<TNativeEvent>;
+  readonly preparedFeatures: Readonly<Partial<Record<RuntimeFeatureName, unknown>>>;
+}
+
+export interface RuntimeFeatureTurnPrepareContext {
+  readonly feature: RuntimeFeatureName;
+  readonly agent: Expert;
+  readonly runContext: ExpertAgentRunContext;
+  readonly sessionInfo: RuntimeSessionInfo;
+  readonly runId: string;
+  readonly query: string;
+  readonly attachments: readonly ExpertPromptAttachment[];
+  readonly modelSelection?: RuntimeModelSelection | undefined;
+  readonly output?: RuntimeOutputSchema | undefined;
+  readonly signal: AbortSignal;
+  readonly logger: PragmaLogger;
+  readonly resources: RuntimeResourceRegistrar;
+  readonly sessionFeatures: Readonly<Partial<Record<RuntimeFeatureName, unknown>>>;
+  readonly preparedFeatures: Readonly<Partial<Record<RuntimeFeatureName, unknown>>>;
 }
 
 export interface RuntimeTurnResult {
@@ -179,8 +215,9 @@ export interface RuntimeCloseContext {
   readonly logger: PragmaLogger;
 }
 
-export interface RuntimeDriver<TNativeEvent, TNativeSession, TPrepared = RuntimePreparedContext> {
-  readonly descriptor: RuntimeAdapterDescriptor;
+export interface RuntimeDriver<TNativeEvent, TNativeSession> {
+  readonly descriptor: RuntimeDriverDescriptor;
+  readonly features: RuntimeFeatureSet;
   readonly canUse?:
     | ((options?: Record<string, unknown>) => Promise<RuntimeCanUseResult> | RuntimeCanUseResult)
     | undefined;
@@ -189,15 +226,11 @@ export interface RuntimeDriver<TNativeEvent, TNativeSession, TPrepared = Runtime
   readonly outputRetryLimit?: number | undefined;
   readonly resolvePersistence?:
     ((context: RuntimePrepareContext) => RuntimeSessionPersistenceSpec | undefined) | undefined;
-  readonly prepare?:
-    ((context: RuntimePrepareContext) => Promise<TPrepared> | TPrepared) | undefined;
   readonly createSession: (
-    context: RuntimeDriverSessionContext<TPrepared>,
+    context: RuntimeDriverSessionContext,
   ) => Promise<TNativeSession> | TNativeSession;
   readonly restoreSession?:
-    | ((
-        context: RuntimeDriverSessionContext<TPrepared>,
-      ) => Promise<TNativeSession> | TNativeSession)
+    | ((context: RuntimeDriverSessionContext) => Promise<TNativeSession> | TNativeSession)
     | undefined;
   readonly listMessages?:
     | ((session: TNativeSession, context: RuntimeSessionReadContext) => readonly AgentMessage[])
@@ -253,14 +286,81 @@ export interface RuntimeDriver<TNativeEvent, TNativeSession, TPrepared = Runtime
     ((session: TNativeSession, context: RuntimeCloseContext) => Promise<void> | void) | undefined;
 }
 
+type RuntimeDriverFeatureMethodContract<
+  TNativeEvent,
+  TNativeSession,
+  TFeatures extends RuntimeFeatureSet,
+> = RuntimeFeatureSet extends TFeatures
+  ? object
+  : RequireRuntimeFeatureMethod<TNativeEvent, TNativeSession, TFeatures, "availability", "canUse"> &
+      RequireRuntimeFeatureMethod<
+        TNativeEvent,
+        TNativeSession,
+        TFeatures,
+        "modelDiscovery",
+        "listModels"
+      > &
+      RequireRuntimeFeatureMethod<
+        TNativeEvent,
+        TNativeSession,
+        TFeatures,
+        "contextWindow",
+        "readContextWindow"
+      > &
+      RequireRuntimeManualCompactionMethod<TNativeEvent, TNativeSession, TFeatures> &
+      RequireRuntimeFeatureMethod<
+        TNativeEvent,
+        TNativeSession,
+        TFeatures,
+        "cancellation",
+        "cancelTurn"
+      > &
+      RequireRuntimeFeatureMethod<
+        TNativeEvent,
+        TNativeSession,
+        TFeatures,
+        "steering",
+        "steerTurn"
+      > &
+      RequireRuntimeFeatureMethod<TNativeEvent, TNativeSession, TFeatures, "close", "closeSession">;
+
+type RequireRuntimeFeatureMethod<
+  TNativeEvent,
+  TNativeSession,
+  TFeatures extends RuntimeFeatureSet,
+  TFeature extends RuntimeFeatureName,
+  TMethod extends keyof RuntimeDriver<TNativeEvent, TNativeSession>,
+> = TFeatures[TFeature]["status"] extends "supported" | "degraded"
+  ? Required<Pick<RuntimeDriver<TNativeEvent, TNativeSession>, TMethod>>
+  : object;
+
+type RequireRuntimeManualCompactionMethod<
+  TNativeEvent,
+  TNativeSession,
+  TFeatures extends RuntimeFeatureSet,
+> = TFeatures["compaction"]["status"] extends "supported" | "degraded"
+  ? TFeatures["compaction"] extends {
+      readonly compactionModes?: infer TModes;
+    }
+    ? "manual" extends ArrayElement<TModes>
+      ? Required<Pick<RuntimeDriver<TNativeEvent, TNativeSession>, "compactContext">>
+      : object
+    : object
+  : object;
+
+type ArrayElement<TValue> = TValue extends readonly (infer TElement)[] ? TElement : never;
+
 export function defineRuntimeDriver<
   TNativeEvent,
   TNativeSession,
-  TPrepared = RuntimePreparedContext,
+  const TFeatures extends RuntimeFeatureSet = RuntimeFeatureSet,
 >(
-  driver: RuntimeDriver<TNativeEvent, TNativeSession, TPrepared>,
+  driver: RuntimeDriver<TNativeEvent, TNativeSession> & {
+    readonly features: TFeatures;
+  } & RuntimeDriverFeatureMethodContract<TNativeEvent, TNativeSession, TFeatures>,
   options: DefineRuntimeDriverOptions = {},
 ): RuntimeAdapter {
+  validateRuntimeFeatures(driver.features);
   const createPersistenceProvider = (): RuntimeSessionPersistenceProvider =>
     options.persistenceProvider ??
     (options.sessionRestoreHandler === undefined && options.sessionSyncCallback === undefined
@@ -270,20 +370,14 @@ export function defineRuntimeDriver<
           syncCallback: options.sessionSyncCallback,
         }));
 
-  const descriptor: RuntimeAdapterDescriptor = {
+  const descriptor: RuntimeAdapterDescriptor = Object.freeze({
     ...driver.descriptor,
-    capabilities: {
-      ...driver.descriptor.capabilities,
-      supportsResume: true,
-      supportsSteer: driver.steerTurn !== undefined,
-      supportsCancel: driver.cancelTurn !== undefined,
-      supportsClose: true,
-      supportsContextWindowInspection: driver.readContextWindow !== undefined,
-      supportsManualCompaction: driver.compactContext !== undefined,
-    },
-  };
+    capabilities: deriveRuntimeAdapterCapabilities(driver.features, driver.descriptor.capabilities),
+  });
+  assertRuntimeFeatureMethodContracts(driver, descriptor);
   const runtime: RuntimeAdapter = {
     descriptor,
+    features: snapshotRuntimeFeatures(driver.features),
     canUse: async (options?: Record<string, unknown>) =>
       (await (
         driver.canUse as
@@ -297,6 +391,7 @@ export function defineRuntimeDriver<
     async (request) =>
       await createManagedRuntimeSession(
         driver,
+        descriptor,
         request,
         createPersistenceProvider(),
         options.createProcessEnvironment,
@@ -305,19 +400,19 @@ export function defineRuntimeDriver<
   return runtime;
 }
 
-async function createManagedRuntimeSession<TNativeEvent, TNativeSession, TPrepared>(
-  driver: RuntimeDriver<TNativeEvent, TNativeSession, TPrepared>,
+async function createManagedRuntimeSession<TNativeEvent, TNativeSession>(
+  driver: RuntimeDriver<TNativeEvent, TNativeSession>,
+  descriptor: RuntimeAdapterDescriptor,
   request: RuntimeDriverSessionRequest,
   persistenceProvider: RuntimeSessionPersistenceProvider,
   createProcessEnvironment: (() => NodeJS.ProcessEnv) | undefined,
-): Promise<ManagedRuntimeSession<TNativeEvent, TNativeSession, TPrepared>> {
+): Promise<ManagedRuntimeSession<TNativeEvent, TNativeSession>> {
   const executionBindings = new RuntimeExecutionBindings({
     humanInteractionHandler: request.humanInteractionHandler,
     executionContext: request.executionContext,
   });
   request = executionBindings.bindRequest(request);
   const agent = request.agent;
-  const descriptor = driver.descriptor;
   const systemSessionId = request.systemSessionId ?? randomUUID();
   const runContext = createExpertAgentRunContext(request.context);
   const logger = createPragmaLogger(request.loggerProvider ?? agent.loggerProvider, {
@@ -340,6 +435,7 @@ async function createManagedRuntimeSession<TNativeEvent, TNativeSession, TPrepar
   }
   const pragmaPaths = new PragmaPaths({ pragmaHome: request.pragmaHome ?? agent.pragmaHome });
   const paths = createRuntimePaths(pragmaPaths, request.owner.ownerId, systemSessionId, descriptor);
+  const resources = new RuntimeResourceScope(`runtime-session:${systemSessionId}`);
   const baseProcessEnvironment = freezeProcessEnvironment(
     createProcessEnvironment?.() ?? process.env,
   );
@@ -390,7 +486,7 @@ async function createManagedRuntimeSession<TNativeEvent, TNativeSession, TPrepar
   let restoredRuntimeSessionId: string | undefined;
   let lifecycle: AgentLifecycle<ExpertAgentRunContext | undefined> | undefined;
   let nativeSession: TNativeSession | undefined;
-  let managedSession: ManagedRuntimeSession<TNativeEvent, TNativeSession, TPrepared> | undefined;
+  let managedSession: ManagedRuntimeSession<TNativeEvent, TNativeSession> | undefined;
 
   try {
     if (persistenceSpec?.sessionDir !== undefined) {
@@ -431,11 +527,8 @@ async function createManagedRuntimeSession<TNativeEvent, TNativeSession, TPrepar
     logRuntimePhase(logger, "runtime.persistence_restore", phaseStartedAt, sessionStartedAt);
 
     phaseStartedAt = performance.now();
-    const [prepared, agentContext] = await Promise.all([
-      Promise.resolve(driver.prepare?.(prepareContext)).then((value) => value ?? ({} as TPrepared)),
-      agent.buildContext(runContext, request.contextAssembly),
-    ]);
-    logRuntimePhase(logger, "runtime.prepare_and_context", phaseStartedAt, sessionStartedAt, {
+    const agentContext = await agent.buildContext(runContext, request.contextAssembly);
+    logRuntimePhase(logger, "runtime.context_prepared", phaseStartedAt, sessionStartedAt, {
       systemPromptCharacters: agentContext.systemPrompt.length,
       startupMessageCount: agentContext.startupMessages.length,
       toolCount: agent.tools?.length ?? 0,
@@ -497,6 +590,9 @@ async function createManagedRuntimeSession<TNativeEvent, TNativeSession, TPrepar
             cleanupErrors.push(error);
           });
         }
+        await resources.dispose().catch((error: unknown) => {
+          cleanupErrors.push(error);
+        });
         await checkpoint("session.destroyed").catch((error: unknown) => {
           cleanupErrors.push(error);
         });
@@ -532,7 +628,7 @@ async function createManagedRuntimeSession<TNativeEvent, TNativeSession, TPrepar
       },
     });
 
-    const sessionContext: RuntimeDriverSessionContext<TPrepared> = {
+    const featureContext: Omit<RuntimeFeatureSessionPrepareContext, "preparedFeatures"> = {
       ...prepareContext,
       agentContext,
       lifecycle,
@@ -541,14 +637,20 @@ async function createManagedRuntimeSession<TNativeEvent, TNativeSession, TPrepar
         restoredRuntimeSessionId,
         checkpoint,
       },
-      prepared,
+      resources,
       sessionInfo: readSessionInfo(),
+    };
+    const preparedFeatures = await prepareRuntimeSessionFeatures(driver, featureContext);
+    const sessionContext: RuntimeDriverSessionContext = {
+      ...featureContext,
+      preparedFeatures,
     };
     phaseStartedAt = performance.now();
     nativeSession =
       request.runtimeSession === undefined
         ? await driver.createSession(sessionContext)
         : await (driver.restoreSession ?? driver.createSession)(sessionContext);
+    resources.transfer();
     logRuntimePhase(logger, "runtime.native_session_create", phaseStartedAt, sessionStartedAt);
     const snapshot = driver.readSession?.(nativeSession, { agent, runContext });
     currentRuntimeSessionId = snapshot?.runtimeSessionId ?? currentRuntimeSessionId;
@@ -568,6 +670,7 @@ async function createManagedRuntimeSession<TNativeEvent, TNativeSession, TPrepar
       lifecycle,
       logger,
       runContext,
+      preparedFeatures,
       startupMessages: agentContext.startupMessages,
       systemSessionId,
       outputRetryLimit: driver.outputRetryLimit,
@@ -636,6 +739,7 @@ async function createManagedRuntimeSession<TNativeEvent, TNativeSession, TPrepar
     if (lifecycle !== undefined) {
       await lifecycle.close().catch(() => undefined);
     } else {
+      await resources.dispose().catch(() => undefined);
       await dispatchExpertAgentHook(agent.hooks, "afterSessionDestroy", {
         agent,
         session: {
@@ -653,6 +757,109 @@ async function createManagedRuntimeSession<TNativeEvent, TNativeSession, TPrepar
       }).catch(() => undefined);
     }
     throw error;
+  }
+}
+
+async function prepareRuntimeSessionFeatures<TNativeEvent, TNativeSession>(
+  driver: RuntimeDriver<TNativeEvent, TNativeSession>,
+  context: Omit<RuntimeFeatureSessionPrepareContext, "preparedFeatures">,
+): Promise<Readonly<Partial<Record<RuntimeFeatureName, unknown>>>> {
+  const prepared: Partial<Record<RuntimeFeatureName, unknown>> = {};
+  for (const catalogEntry of RUNTIME_FEATURE_CATALOG) {
+    if (catalogEntry.lifecycle !== "session") continue;
+    const declaration = driver.features[catalogEntry.name];
+    const startedAt = performance.now();
+    if (isRuntimeFeatureEnabled(declaration) && declaration.prepareSession !== undefined) {
+      const value = await declaration.prepareSession({
+        ...context,
+        preparedFeatures: Object.freeze({ ...prepared }),
+      });
+      if (value !== undefined) prepared[catalogEntry.name] = value;
+    }
+    context.logger.debug(
+      "runtime.feature_session_phase",
+      `Runtime Session feature phase completed: ${catalogEntry.name}`,
+      {
+        feature: catalogEntry.name,
+        status: declaration.status,
+        hookExecuted:
+          isRuntimeFeatureEnabled(declaration) && declaration.prepareSession !== undefined,
+        durationMs: elapsedRuntimeMs(startedAt),
+      },
+    );
+  }
+  return Object.freeze({ ...prepared });
+}
+
+async function prepareRuntimeTurnFeatures<TNativeEvent, TNativeSession>(
+  context: Omit<RuntimeFeatureTurnPrepareContext, "feature" | "preparedFeatures"> & {
+    readonly driver: RuntimeDriver<TNativeEvent, TNativeSession>;
+  },
+): Promise<Readonly<Partial<Record<RuntimeFeatureName, unknown>>>> {
+  const prepared: Partial<Record<RuntimeFeatureName, unknown>> = {};
+  const { driver, ...baseContext } = context;
+  for (const catalogEntry of RUNTIME_FEATURE_CATALOG) {
+    if (catalogEntry.lifecycle !== "turn") continue;
+    const declaration = driver.features[catalogEntry.name];
+    const startedAt = performance.now();
+    if (isRuntimeFeatureEnabled(declaration) && declaration.prepareTurn !== undefined) {
+      const value = await declaration.prepareTurn({
+        ...baseContext,
+        feature: catalogEntry.name,
+        preparedFeatures: Object.freeze({ ...prepared }),
+      });
+      if (value !== undefined) prepared[catalogEntry.name] = value;
+    }
+    context.logger.debug(
+      "runtime.feature_turn_phase",
+      `Runtime turn feature phase completed: ${catalogEntry.name}`,
+      {
+        feature: catalogEntry.name,
+        status: declaration.status,
+        hookExecuted: isRuntimeFeatureEnabled(declaration) && declaration.prepareTurn !== undefined,
+        durationMs: elapsedRuntimeMs(startedAt),
+      },
+    );
+  }
+  return Object.freeze({ ...prepared });
+}
+
+function assertRuntimeFeatureMethodContracts<TNativeEvent, TNativeSession>(
+  driver: RuntimeDriver<TNativeEvent, TNativeSession>,
+  descriptor: RuntimeAdapterDescriptor,
+): void {
+  const contracts: readonly [
+    RuntimeFeatureName,
+    string,
+    unknown,
+    ((feature: RuntimeFeatureSet[RuntimeFeatureName]) => boolean)?,
+  ][] = [
+    ["availability", "canUse", driver.canUse],
+    ["modelDiscovery", "listModels", driver.listModels],
+    ["contextWindow", "readContextWindow", driver.readContextWindow],
+    [
+      "compaction",
+      "compactContext",
+      driver.compactContext,
+      (feature) => feature.compactionModes?.includes("manual") === true,
+    ],
+    ["cancellation", "cancelTurn", driver.cancelTurn],
+    ["steering", "steerTurn", driver.steerTurn],
+    ["close", "closeSession", driver.closeSession],
+  ];
+  for (const [featureName, methodName, method, applies = isRuntimeFeatureEnabled] of contracts) {
+    const feature = driver.features[featureName];
+    const enabled = isRuntimeFeatureEnabled(feature) && applies(feature);
+    if (enabled && method === undefined) {
+      throw new Error(
+        `Runtime ${descriptor.id} declares ${featureName} as ${feature.status} but does not implement ${methodName}().`,
+      );
+    }
+    if (!enabled && method !== undefined) {
+      throw new Error(
+        `Runtime ${descriptor.id} implements ${methodName}() while feature ${featureName} is not enabled.`,
+      );
+    }
   }
 }
 
@@ -699,8 +906,8 @@ function assertRequestedRuntimeSessionMatches(
   );
 }
 
-async function assertRuntimeCanUse<TNativeEvent, TNativeSession, TPrepared>(
-  driver: RuntimeDriver<TNativeEvent, TNativeSession, TPrepared>,
+async function assertRuntimeCanUse<TNativeEvent, TNativeSession>(
+  driver: RuntimeDriver<TNativeEvent, TNativeSession>,
   descriptor: RuntimeAdapterDescriptor,
 ): Promise<void> {
   const availability = (await driver.canUse?.()) ?? { usable: true };
@@ -723,7 +930,7 @@ function createRuntimeUnavailableMessage(
     : `Runtime is not available: ${descriptor.displayName} (${descriptor.id}). ${reason}`;
 }
 
-class ManagedRuntimeSession<TNativeEvent, TNativeSession, TPrepared> {
+class ManagedRuntimeSession<TNativeEvent, TNativeSession> {
   private watcher: RuntimeSessionWatcher | undefined;
   private activeRunId: string | undefined;
   private contextWindowCalibrated = false;
@@ -734,12 +941,13 @@ class ManagedRuntimeSession<TNativeEvent, TNativeSession, TPrepared> {
   constructor(
     private readonly options: {
       readonly agent: Expert;
-      readonly driver: RuntimeDriver<TNativeEvent, TNativeSession, TPrepared>;
+      readonly driver: RuntimeDriver<TNativeEvent, TNativeSession>;
       readonly nativeSession: TNativeSession;
       readonly descriptor: RuntimeAdapterDescriptor;
       readonly lifecycle: AgentLifecycle<ExpertAgentRunContext | undefined>;
       readonly logger: PragmaLogger;
       readonly runContext: ExpertAgentRunContext;
+      readonly preparedFeatures: Readonly<Partial<Record<RuntimeFeatureName, unknown>>>;
       readonly startupMessages: readonly ExpertAgentStartupMessage[];
       readonly systemSessionId: string;
       readonly outputRetryLimit?: number | undefined;
@@ -1042,6 +1250,43 @@ class ManagedRuntimeSession<TNativeEvent, TNativeSession, TPrepared> {
     controller: ReturnType<typeof createRuntimeStreamController<TNativeEvent>>,
     observeUsage: (usage: AgentMessageUsage | undefined) => void,
   ): Promise<RuntimeRunResult<TOutput>> {
+    const resources = new RuntimeResourceScope(`runtime-turn:${runId}`);
+    const outcome = await this.executeSubmissionInScope(
+      runId,
+      submission,
+      signal,
+      controller,
+      observeUsage,
+      resources,
+    ).then(
+      (result) => ({ ok: true as const, result }),
+      (error: unknown) => ({ ok: false as const, error }),
+    );
+    const cleanupError = await resources.dispose().then(
+      () => undefined,
+      (error: unknown) => error,
+    );
+    if (!outcome.ok) {
+      if (cleanupError !== undefined) {
+        throw new AggregateError(
+          [outcome.error, cleanupError],
+          `Runtime turn ${runId} and resource cleanup failed.`,
+        );
+      }
+      throw outcome.error;
+    }
+    if (cleanupError !== undefined) throw cleanupError;
+    return outcome.result;
+  }
+
+  private async executeSubmissionInScope<TOutput>(
+    runId: string,
+    submission: RuntimeSubmitRequest<TOutput>,
+    signal: AgentRunExecutionContext["signal"],
+    controller: ReturnType<typeof createRuntimeStreamController<TNativeEvent>>,
+    observeUsage: (usage: AgentMessageUsage | undefined) => void,
+    resources: RuntimeResourceScope,
+  ): Promise<RuntimeRunResult<TOutput>> {
     const startupMessages = this.takeStartupMessages();
     const attachmentPlan = await resolveRuntimeAttachmentPlan({
       attachments: submission.attachments ?? [],
@@ -1051,6 +1296,22 @@ class ManagedRuntimeSession<TNativeEvent, TNativeSession, TPrepared> {
       query: submission.query,
       runtimeId: this.options.descriptor.id,
     });
+    const preparedFeatures = await prepareRuntimeTurnFeatures({
+      driver: this.options.driver,
+      agent: this.options.agent,
+      runContext: this.options.runContext,
+      sessionInfo: this.info(),
+      runId,
+      query: attachmentPlan.query,
+      attachments: attachmentPlan.nativeAttachments,
+      modelSelection: submission.modelSelection,
+      output: submission.output,
+      signal,
+      logger: this.options.logger,
+      resources,
+      sessionFeatures: this.options.preparedFeatures,
+    });
+    resources.transfer();
     const maxAttempts =
       submission.output === undefined
         ? 1
@@ -1100,6 +1361,7 @@ class ManagedRuntimeSession<TNativeEvent, TNativeSession, TPrepared> {
             signal,
             source: controller.source,
             stream: controller.writer,
+            preparedFeatures,
           });
           this.options.logger.info(
             "runtime.model_request_finished",

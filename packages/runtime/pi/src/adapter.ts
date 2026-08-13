@@ -10,8 +10,6 @@ import type {
   ToolDefinition,
 } from "@earendil-works/pi-coding-agent";
 import type {
-  McpToolRegistry,
-  McpToolRegistryLease,
   PragmaLogger,
   ResolvedModelProvider,
   RuntimeAdapter,
@@ -20,7 +18,9 @@ import type {
 } from "@pragma/core";
 import {
   createMcpToolRegistryPool,
+  defineRuntimeFeatures,
   defineRuntimeDriver,
+  runtimeFeature,
   type RuntimeSessionPersistenceSpec,
 } from "@pragma/core";
 
@@ -58,16 +58,13 @@ const CLOUD_PI_RUNTIME_DESCRIPTOR = {
   capabilities: {
     targets: ["agent"],
     executionLocations: ["cloud"],
-    supportsAbort: true,
-    supportsMcp: true,
-    supportsStreaming: true,
-    supportsContextCompactionEvents: true,
   },
 };
 
-interface PiDriverSession extends PiNativeSession {
-  readonly mcpToolRegistryLease: McpToolRegistryLease;
-}
+const PI_EVIDENCE_PENDING =
+  "Implemented in the adapter; an executed Runtime probe evidence bundle is not recorded yet.";
+
+type PiDriverSession = PiNativeSession;
 
 export function createPiRuntime(options: CloudPiRuntimeAdapterOptions = {}): RuntimeAdapter {
   const modelProviderConverter = createPiModelProviderConverter();
@@ -81,10 +78,46 @@ export function createPiRuntime(options: CloudPiRuntimeAdapterOptions = {}): Run
       ...options.descriptor?.capabilities,
     },
   };
+  const implemented = () => runtimeFeature.degraded(PI_EVIDENCE_PENDING);
+  const features = defineRuntimeFeatures({
+    availability: implemented(),
+    authentication: implemented(),
+    modelDiscovery: implemented(),
+    modelSelection: implemented(),
+    thinking: implemented(),
+    freshSession: implemented(),
+    resume: implemented(),
+    systemPrompt: implemented(),
+    startupMessages: implemented(),
+    textStreaming: implemented(),
+    reasoningStreaming: implemented(),
+    nativeToolLifecycle: implemented(),
+    mcp: implemented(),
+    permissions: implemented(),
+    userInteraction: implemented(),
+    skills: implemented(),
+    attachmentImage: implemented(),
+    attachmentFile: implemented(),
+    attachmentDirectory: implemented(),
+    usage: implemented(),
+    contextWindow: implemented(),
+    compaction: runtimeFeature.degraded(PI_EVIDENCE_PENDING, {
+      compactionModes: ["manual", "events"],
+    }),
+    cancellation: implemented(),
+    steering: implemented(),
+    close: implemented(),
+    cleanup: implemented(),
+  });
 
   return defineRuntimeDriver(
     {
       descriptor,
+      features,
+      canUse: () => ({
+        usable: true,
+        details: { executionMode: "in-process" },
+      }),
       listModels: async () =>
         normalizePiRuntimeModels(
           (await options.modelProviders?.listProviders())?.flatMap((provider) =>
@@ -115,12 +148,6 @@ export function createPiRuntime(options: CloudPiRuntimeAdapterOptions = {}): Run
         const sessionStartedAt = performance.now();
         const selectedModel = ctx.request.modelSelection?.model;
         const selectedProviderId = selectedModel?.providerId;
-        const registeredProviderPromise =
-          selectedProviderId === undefined
-            ? Promise.resolve(undefined)
-            : timedPiPhase(ctx.logger, "model_provider_resolve", sessionStartedAt, async () =>
-                options.modelProviders?.resolveProvider(selectedProviderId),
-              );
         const cwd = ctx.workspace;
         const settingsManager = SettingsManager.create(cwd);
         const compactionKeepRecentTokens = settingsManager.getCompactionKeepRecentTokens();
@@ -136,68 +163,41 @@ export function createPiRuntime(options: CloudPiRuntimeAdapterOptions = {}): Run
           sessionStartedAt,
           async () => await loader.reload(),
         );
-        const mcpRegistryPromise = timedPiPhase(
-          ctx.logger,
-          "mcp_tool_registry",
-          sessionStartedAt,
-          async () => await mcpToolRegistries.acquire(ctx.agent.mcp),
-        );
-        const sessionManagerPromise = timedPiPhase(
-          ctx.logger,
-          "session_manager",
-          sessionStartedAt,
-          async () =>
-            await createPiSessionManager(
-              cwd,
-              ctx.persistence.spec?.sessionDir ?? ctx.paths.runtimeSessionDir("pi"),
-              ctx.request.runtimeSession?.id,
+        const [registeredProvider, , mcpToolRegistryLease, piSessionManagerResult] =
+          await Promise.all([
+            selectedProviderId === undefined
+              ? Promise.resolve(undefined)
+              : timedPiPhase(ctx.logger, "model_provider_resolve", sessionStartedAt, async () =>
+                  options.modelProviders?.resolveProvider(selectedProviderId),
+                ),
+            resourceReloadPromise,
+            timedPiPhase(
+              ctx.logger,
+              "mcp_tool_registry",
+              sessionStartedAt,
+              async () =>
+                await ctx.resources.acquire(
+                  "pi.mcp-registry",
+                  async () => await mcpToolRegistries.acquire(ctx.agent.mcp),
+                  async (lease) => await lease.release(),
+                ),
             ),
-        );
-        let registeredProvider: Awaited<typeof registeredProviderPromise>;
-        try {
-          registeredProvider = await registeredProviderPromise;
-        } catch (error) {
-          const preparation = await Promise.allSettled([
-            resourceReloadPromise,
-            mcpRegistryPromise,
-            sessionManagerPromise,
+            timedPiPhase(
+              ctx.logger,
+              "session_manager",
+              sessionStartedAt,
+              async () =>
+                await createPiSessionManager(
+                  cwd,
+                  ctx.persistence.spec?.sessionDir ?? ctx.paths.runtimeSessionDir("pi"),
+                  ctx.request.runtimeSession?.id,
+                ),
+            ),
           ]);
-          const lease = preparation[1];
-          if (lease?.status === "fulfilled") {
-            const cleanupError = await piRegistryCleanupError(lease.value);
-            if (cleanupError !== undefined) {
-              throw new AggregateError(
-                [error, cleanupError],
-                "Model provider resolution and cleanup failed.",
-                { cause: error },
-              );
-            }
-          }
-          throw error;
-        }
         if (selectedProviderId !== undefined && registeredProvider === undefined) {
-          const providerError = new Error(
-            `Model provider is not registered: ${selectedProviderId}`,
-          );
-          const preparation = await Promise.allSettled([
-            resourceReloadPromise,
-            mcpRegistryPromise,
-            sessionManagerPromise,
-          ]);
-          const lease = preparation[1];
-          if (lease?.status === "fulfilled") {
-            const cleanupError = await piRegistryCleanupError(lease.value);
-            if (cleanupError !== undefined) {
-              throw new AggregateError(
-                [providerError, cleanupError],
-                "Model provider validation and cleanup failed.",
-                { cause: providerError },
-              );
-            }
-          }
-          throw providerError;
+          throw new Error(`Model provider is not registered: ${selectedProviderId}`);
         }
-        const modelRuntimePromise = timedPiPhase(
+        const modelRuntimeResult = await timedPiPhase(
           ctx.logger,
           "model_runtime",
           sessionStartedAt,
@@ -208,35 +208,6 @@ export function createPiRuntime(options: CloudPiRuntimeAdapterOptions = {}): Run
                 : [modelProviderConverter.convertProvider(registeredProvider)],
             ),
         );
-        let modelRuntimeResult: Awaited<ReturnType<typeof createPiModelRuntime>>;
-        let mcpToolRegistryLease: McpToolRegistryLease;
-        let mcpToolRegistry: McpToolRegistry;
-        let piSessionManagerResult: Awaited<ReturnType<typeof createPiSessionManager>>;
-        try {
-          const preparation = await Promise.all([
-            modelRuntimePromise,
-            mcpRegistryPromise,
-            sessionManagerPromise,
-            resourceReloadPromise,
-          ]);
-          modelRuntimeResult = preparation[0];
-          mcpToolRegistryLease = preparation[1];
-          mcpToolRegistry = mcpToolRegistryLease.registry;
-          piSessionManagerResult = preparation[2];
-        } catch (error) {
-          const lease = await Promise.allSettled([mcpRegistryPromise]);
-          if (lease[0]?.status === "fulfilled") {
-            const cleanupError = await piRegistryCleanupError(lease[0].value);
-            if (cleanupError !== undefined) {
-              throw new AggregateError(
-                [error, cleanupError],
-                "Runtime preparation and cleanup failed.",
-                { cause: error },
-              );
-            }
-          }
-          throw error;
-        }
         let session: AgentSession | undefined;
         try {
           const { modelRegistry, modelRuntime } = modelRuntimeResult;
@@ -245,7 +216,7 @@ export function createPiRuntime(options: CloudPiRuntimeAdapterOptions = {}): Run
           const resolvedTools = createResolvedPiTools({
             agent: ctx.agent,
             cwd,
-            mcpTools: mcpToolRegistry.tools,
+            mcpTools: mcpToolRegistryLease.registry.tools,
             parentSystemPrompt: ctx.agentContext.systemPrompt,
             streamState,
             lifecycle: ctx.lifecycle,
@@ -305,39 +276,24 @@ export function createPiRuntime(options: CloudPiRuntimeAdapterOptions = {}): Run
             mcpCoalescedConnections: mcpToolRegistryLease.stats.coalescedConnections,
           });
 
-          return {
-            ...createPiNativeSession({
-              agent: ctx.agent,
-              session,
-              streamState,
-              models: {
-                defaultModel: selectedModel,
-                modelRegistry,
-                modelRuntime,
-              },
-              compactionKeepRecentTokens,
-              startupMessages: piSessionManagerResult.resumedExistingSession
-                ? []
-                : ctx.agentContext.startupMessages,
-              tokenCounter: options.tokenCounter,
-              tokenModelIdentity: piTokenModelIdentity(registeredProvider, selectedModel),
-            }),
-            mcpToolRegistryLease,
-          };
+          return createPiNativeSession({
+            agent: ctx.agent,
+            session,
+            streamState,
+            models: {
+              defaultModel: selectedModel,
+              modelRegistry,
+              modelRuntime,
+            },
+            compactionKeepRecentTokens,
+            startupMessages: piSessionManagerResult.resumedExistingSession
+              ? []
+              : ctx.agentContext.startupMessages,
+            tokenCounter: options.tokenCounter,
+            tokenModelIdentity: piTokenModelIdentity(registeredProvider, selectedModel),
+          });
         } catch (error) {
-          const cleanupErrors = (
-            await Promise.allSettled([
-              Promise.resolve().then(() => session?.dispose()),
-              mcpToolRegistryLease.release(),
-            ])
-          ).flatMap((result) => (result.status === "rejected" ? [result.reason as unknown] : []));
-          if (cleanupErrors.length > 0) {
-            throw new AggregateError(
-              [error, ...cleanupErrors],
-              "Runtime initialization and cleanup failed.",
-              { cause: error },
-            );
-          }
+          session?.dispose();
           throw error;
         }
       },
@@ -378,7 +334,6 @@ export function createPiRuntime(options: CloudPiRuntimeAdapterOptions = {}): Run
       },
       async closeSession(session) {
         session.session.dispose();
-        await session.mcpToolRegistryLease.release();
       },
     },
     {
@@ -432,11 +387,6 @@ function logPiPhase(
 
 function piElapsedMs(startedAt: number): number {
   return Math.round((performance.now() - startedAt) * 100) / 100;
-}
-
-async function piRegistryCleanupError(lease: McpToolRegistryLease): Promise<unknown | undefined> {
-  const [result] = await Promise.allSettled([lease.release()]);
-  return result?.status === "rejected" ? result.reason : undefined;
 }
 
 export function createPiSessionBashTool(options: {

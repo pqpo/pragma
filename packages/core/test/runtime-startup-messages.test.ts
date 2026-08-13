@@ -20,6 +20,7 @@ import {
   type RuntimeDriverSessionContext,
   type RuntimeTurnContext,
 } from "../src/index.ts";
+import { createRuntimeTestFeatures } from "../src/testing/index.ts";
 import { openRuntimeSession } from "../src/runtime/session-factory.ts";
 
 const roots: string[] = [];
@@ -276,6 +277,16 @@ async function createFixture(inputModalities?: readonly string[], modelCatalogUn
     contextSystem,
   });
   const runtime = defineRuntimeDriver<TestNativeEvent, TestNativeSession>({
+    features: createRuntimeTestFeatures({
+      enabled: [
+        "contextWindow",
+        "compaction",
+        ...(modelCatalogUnavailable || inputModalities !== undefined
+          ? ["modelDiscovery" as const]
+          : []),
+      ],
+      compactionModes: ["manual", "events"],
+    }),
     descriptor: { id: "startup-runtime", kind: "startup-runtime", displayName: "Startup" },
     ...(modelCatalogUnavailable
       ? {

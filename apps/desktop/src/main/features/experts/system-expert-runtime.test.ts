@@ -1,4 +1,5 @@
-import { createStaticRuntimeResolver, defineRuntimeDriver } from "@pragma/core";
+import { createStaticRuntimeResolver } from "@pragma/core";
+import { defineRuntimeTestDriver } from "@pragma/core/testing";
 import { describe, expect, it } from "vitest";
 
 import {
@@ -50,7 +51,7 @@ describe("system Expert Runtime defaults", () => {
 });
 
 function runtime(id: string, kind: string) {
-  return defineRuntimeDriver({
+  return defineRuntimeTestDriver({
     descriptor: { id, kind, displayName: id },
     canUse: () => ({ usable: true }),
     listModels: async () => [

@@ -29,8 +29,11 @@ import {
   createRuntimeContextWindowUsage,
   createUsageFromTokenCounts,
   defaultRuntimeTokenCounter,
+  BoundedRuntimeOutputBuffer,
   hasNonZeroUsage,
   readFirstTokenCount,
+  RuntimeProcessSupervisor,
+  terminateRuntimeProcess,
 } from "@pragma/core";
 
 import type { ManagedClaudeCodeConfig } from "./claude-config.ts";
@@ -529,18 +532,9 @@ async function runClaudeCodeProcess({
 }): Promise<ClaudeProcessRunResult> {
   const userInput = await createClaudeCodeUserInput(promptParts, attachments);
   const child = (spawn ?? defaultSpawn)(executablePath, args, { cwd, env });
-  let exited = false;
-  const exitPromise = new Promise<{
-    readonly code: number | null;
-    readonly signal: NodeJS.Signals | null;
-  }>((resolve, reject) => {
-    child.once("error", reject);
-    child.once("exit", (code, signal) => {
-      exited = true;
-      resolve({ code, signal });
-    });
-  });
-  onProcessStarted(child, exitPromise, () => exited);
+  const supervisor = new RuntimeProcessSupervisor(child);
+  const exitPromise = supervisor.exit;
+  onProcessStarted(child, exitPromise, supervisor.hasExited);
 
   let outputText = "";
   let usage: AgentMessageUsage | undefined;
@@ -548,7 +542,7 @@ async function runClaudeCodeProcess({
   let latestAssistantUsage: AgentMessageUsage | undefined;
   let latestAssistantModel: string | undefined;
   let contextWindowUsage: RuntimeContextWindowUsage | undefined;
-  let stderrTail = "";
+  const stderrTail = new BoundedRuntimeOutputBuffer(STDERR_TAIL_LIMIT);
   let finalResultSeen = false;
   let hasSeenPartialTextDelta = false;
   let hasSeenPartialThinkingDelta = false;
@@ -560,7 +554,7 @@ async function runClaudeCodeProcess({
 
   child.stderr.setEncoding("utf8");
   child.stderr.on("data", (chunk: string) => {
-    stderrTail = `${stderrTail}${chunk}`.slice(-STDERR_TAIL_LIMIT);
+    stderrTail.append(chunk);
     logger.debug("runtime.claude_stderr", "Claude Code stderr", { chunk });
   });
 
@@ -662,7 +656,7 @@ async function runClaudeCodeProcess({
         if (event["is_error"] === true) {
           throw createClaudeCodeRuntimeError(
             resultText ?? "Claude Code returned an error result.",
-            stderrTail,
+            stderrTail.text(),
           );
         }
       }
@@ -677,10 +671,10 @@ async function runClaudeCodeProcess({
     await terminateClaudeCodeProcess({
       process: child,
       exitPromise,
-      hasExited: () => exited,
+      hasExited: supervisor.hasExited,
       logger,
     });
-    throw normalizeClaudeCodeProcessError(error, stderrTail);
+    throw normalizeClaudeCodeProcessError(error, stderrTail.text());
   } finally {
     closeClaudeCodeInput(child);
     onProcessClosed(child);
@@ -689,12 +683,15 @@ async function runClaudeCodeProcess({
   if (exit.code !== 0) {
     throw createClaudeCodeRuntimeError(
       `Claude Code exited with code ${exit.code ?? "null"}${exit.signal === null ? "" : ` and signal ${exit.signal}`}.`,
-      stderrTail,
+      stderrTail.text(),
     );
   }
 
   if (!finalResultSeen && outputText.trim() === "") {
-    throw createClaudeCodeRuntimeError("Claude Code completed without a result.", stderrTail);
+    throw createClaudeCodeRuntimeError(
+      "Claude Code completed without a result.",
+      stderrTail.text(),
+    );
   }
 
   return {
@@ -775,38 +772,18 @@ async function terminateClaudeCodeProcess({
   readonly hasExited: () => boolean;
   readonly logger: PragmaLogger;
 }): Promise<void> {
-  if (hasExited()) {
-    return;
-  }
-
-  process.kill("SIGTERM");
-  if (await waitForClaudeCodeExit(exitPromise)) {
-    return;
-  }
-
-  logger.warn(
-    "runtime.claude_force_kill",
-    "Claude Code did not exit after SIGTERM; sending SIGKILL.",
-  );
-  process.kill("SIGKILL");
-  await waitForClaudeCodeExit(exitPromise);
-}
-
-async function waitForClaudeCodeExit(
-  exitPromise: Promise<{
-    readonly code: number | null;
-    readonly signal: NodeJS.Signals | null;
-  }>,
-): Promise<boolean> {
-  return await Promise.race([
-    exitPromise.then(
-      () => true,
-      () => true,
-    ),
-    new Promise<boolean>((resolve) => {
-      setTimeout(() => resolve(false), PROCESS_TERMINATION_GRACE_MS);
-    }),
-  ]);
+  await terminateRuntimeProcess({
+    process,
+    exit: exitPromise,
+    hasExited,
+    graceMs: PROCESS_TERMINATION_GRACE_MS,
+    onForceKill: () => {
+      logger.warn(
+        "runtime.claude_force_kill",
+        "Claude Code did not exit after SIGTERM; sending SIGKILL.",
+      );
+    },
+  });
 }
 
 function normalizeClaudeCodeProcessError(error: unknown, stderrTail: string): Error {

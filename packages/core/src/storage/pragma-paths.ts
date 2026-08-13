@@ -52,6 +52,10 @@ export class PragmaPaths {
     return join(this.archivesRoot(), "diagnostics");
   }
 
+  runtimeProbeArchivesRoot(): string {
+    return join(this.archivesRoot(), "runtime-probes");
+  }
+
   diagnosticApplicationRoot(application: string): string {
     if (!/^[a-z0-9]+(?:[.-][a-z0-9]+)*$/.test(application)) {
       throw new Error(`Invalid diagnostic application name: ${application}`);

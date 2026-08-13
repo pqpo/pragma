@@ -11,6 +11,7 @@ import {
   registerExpertToolsMcpSession,
   type Expert,
 } from "@pragma/core";
+import { createRuntimeTestFeatures } from "@pragma/core/testing";
 import { loadPragmaProject, parsePragmaYaml } from "@pragma/interpreter";
 import { PragmaCapabilityResourceSchema, PragmaResourceSchema } from "@pragma/interpreter/ast";
 import { MEMORY_CURATOR_REF as MEMORY_PLANE_CURATOR_REF } from "@pragma/memory";
@@ -386,6 +387,7 @@ describe("built-in Pragma Agent DSL", () => {
       defaultRuntimeId: "test-runtime",
       runtimes: [
         {
+          features: createRuntimeTestFeatures(),
           descriptor: { id: "test-runtime", kind: "test", displayName: "Test Runtime" },
           canUse: () => ({ usable: true }),
         },

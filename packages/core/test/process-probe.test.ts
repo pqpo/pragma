@@ -22,4 +22,16 @@ describe("Runtime process probe", () => {
       stderr: "",
     });
   });
+
+  it("reports a timeout after supervising process termination", async () => {
+    await expect(
+      runRuntimeCommand({
+        executablePath: process.execPath,
+        args: ["-e", "setInterval(() => undefined, 1_000)"],
+        cwd: process.cwd(),
+        env: { ...process.env },
+        timeoutMs: 20,
+      }),
+    ).rejects.toThrow("Probe timed out after 20ms.");
+  });
 });

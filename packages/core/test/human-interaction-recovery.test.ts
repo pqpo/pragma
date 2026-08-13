@@ -17,6 +17,7 @@ import {
   type ExpertAgentHumanResponse,
   type RuntimeDriverSessionContext,
 } from "../src/index.ts";
+import { createRuntimeTestFeatures } from "../src/testing/index.ts";
 
 const tempDirs: string[] = [];
 
@@ -282,6 +283,7 @@ function createRecoveryRuntime(request: ExpertAgentHumanRequest, onStart: () => 
   }
 
   return defineRuntimeDriver<never, RecoverySession>({
+    features: createRuntimeTestFeatures({ enabled: ["cancellation", "close"] }),
     descriptor: {
       id: "human-recovery",
       kind: "fake",

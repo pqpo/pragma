@@ -12,6 +12,7 @@ import type {
   RuntimeDriverSessionContext,
   RuntimeSessionReadContext,
 } from "@pragma/core";
+import { RuntimeResourceScope } from "@pragma/core";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
 import { createAntigravityRuntime } from "../src/adapter.ts";
@@ -92,7 +93,8 @@ describe("Antigravity Runtime adapter lifecycle", () => {
       runContext: {},
     } satisfies RuntimeSessionReadContext;
 
-    const fresh = await driver.createSession(createSessionContext(sessionDir));
+    const freshPrepared = await createPreparedSession(driver, createSessionContext(sessionDir));
+    const fresh = freshPrepared.session;
     expect(fresh.sessionId).toBe("");
     expect(fresh.pendingStartupMessages).toEqual([{ role: "user", content: "always-on context" }]);
     expect(driver.consumeStartupMessages?.(fresh, readContext)).toEqual([
@@ -106,15 +108,17 @@ describe("Antigravity Runtime adapter lifecycle", () => {
     await expect(
       readFile(join(fresh.managedHome.pluginDir, "mcp_config.json"), "utf8"),
     ).resolves.toContain("http://127.0.0.1:43127/private/mcp");
-    await driver.closeSession?.(fresh, closeContext());
+    await closePreparedSession(driver, freshPrepared);
 
-    const restored = await driver.createSession(
+    const restoredPrepared = await createPreparedSession(
+      driver,
       createSessionContext(sessionDir, restoredConversationId),
     );
+    const restored = restoredPrepared.session;
     expect(restored.sessionId).toBe(restoredConversationId);
     expect(restored.pendingStartupMessages).toEqual([]);
     expect(driver.consumeStartupMessages?.(restored, readContext)).toEqual([]);
-    await driver.closeSession?.(restored, closeContext());
+    await closePreparedSession(driver, restoredPrepared);
 
     expect(mcpToolRegistryPool.acquire).toHaveBeenCalledTimes(2);
     expect(runtimeMocks.registerExpertToolsMcpSession).toHaveBeenCalledTimes(2);
@@ -154,17 +158,15 @@ describe("Antigravity Runtime adapter lifecycle", () => {
       mcpToolRegistryPool,
     });
     const driver = runtimeMocks.driver as RuntimeDriver<unknown, AntigravityNativeSession>;
-    const session = await driver.createSession(createSessionContext(sessionDir));
-    const mutableSession = session as unknown as {
+    const prepared = await createPreparedSession(driver, createSessionContext(sessionDir));
+    const permissionPreparation = prepared.preparedFeatures["permissions"] as {
       hookRelay: { close: () => Promise<void> };
     };
-    const originalCloseRelay = mutableSession.hookRelay.close;
+    const originalCloseRelay = permissionPreparation.hookRelay.close;
     const closeRelay = vi.fn(async () => await originalCloseRelay());
-    mutableSession.hookRelay.close = closeRelay;
+    permissionPreparation.hookRelay.close = closeRelay;
 
-    await expect(driver.closeSession?.(session, closeContext())).rejects.toBeInstanceOf(
-      AggregateError,
-    );
+    await expect(closePreparedSession(driver, prepared)).rejects.toBeInstanceOf(AggregateError);
     expect(dispose).toHaveBeenCalledTimes(1);
     expect(release).toHaveBeenCalledTimes(1);
     expect(closeRelay).toHaveBeenCalledTimes(1);
@@ -188,7 +190,8 @@ describe("Antigravity Runtime adapter lifecycle", () => {
       },
     });
     const driver = runtimeMocks.driver as RuntimeDriver<unknown, AntigravityNativeSession>;
-    const session = await driver.createSession(createSessionContext(sessionDir));
+    const prepared = await createPreparedSession(driver, createSessionContext(sessionDir));
+    const session = prepared.session;
     const dispose = runtimeMocks.registrationDisposals.at(-1)!;
     let resolveRegistrationDispose!: () => void;
     dispose.mockImplementationOnce(
@@ -197,12 +200,12 @@ describe("Antigravity Runtime adapter lifecycle", () => {
           resolveRegistrationDispose = resolve;
         }),
     );
-    const sessionResources = session as typeof session & {
+    const permissionPreparation = prepared.preparedFeatures["permissions"] as {
       hookRelay: { close: () => Promise<void> };
     };
-    const originalCloseRelay = sessionResources.hookRelay.close;
+    const originalCloseRelay = permissionPreparation.hookRelay.close;
     const closeRelay = vi.fn(async () => await originalCloseRelay());
-    sessionResources.hookRelay.close = closeRelay;
+    permissionPreparation.hookRelay.close = closeRelay;
 
     let exited = false;
     let resolveExit!: (value: { code: number; signal: null }) => void;
@@ -218,7 +221,7 @@ describe("Antigravity Runtime adapter lifecycle", () => {
     });
     session.activeHasExited = () => exited;
 
-    const closing = driver.closeSession!(session, closeContext());
+    const closing = closePreparedSession(driver, prepared);
     await new Promise((resolve) => setImmediate(resolve));
     expect(child.kill).toHaveBeenCalledWith("SIGTERM");
     expect(dispose).not.toHaveBeenCalled();
@@ -230,7 +233,7 @@ describe("Antigravity Runtime adapter lifecycle", () => {
     await new Promise((resolve) => setImmediate(resolve));
     expect(dispose).toHaveBeenCalledOnce();
     expect(release).not.toHaveBeenCalled();
-    expect(closeRelay).not.toHaveBeenCalled();
+    expect(closeRelay).toHaveBeenCalledOnce();
 
     resolveRegistrationDispose();
     await closing;
@@ -251,9 +254,11 @@ describe("Antigravity Runtime adapter lifecycle", () => {
       authenticationMode: "host-keyring",
     });
     const driver = runtimeMocks.driver as RuntimeDriver<unknown, AntigravityNativeSession>;
-    const session = await driver.createSession(
+    const prepared = await createPreparedSession(
+      driver,
       createSessionContext(sessionDir, undefined, "/workspace/project", { HOME: hostHome }),
     );
+    const session = prepared.session;
 
     expect(session.env["HOME"]).toBe(hostHome);
     expect(session.managedHome.authenticationMode).toBe("host-keyring");
@@ -266,7 +271,7 @@ describe("Antigravity Runtime adapter lifecycle", () => {
         "utf8",
       ),
     ).resolves.toContain("system prompt");
-    await driver.closeSession?.(session, closeContext());
+    await closePreparedSession(driver, prepared);
   });
 
   it("rejects workspace customizations before allocating MCP or spawning agy", async () => {
@@ -287,7 +292,7 @@ describe("Antigravity Runtime adapter lifecycle", () => {
     const driver = runtimeMocks.driver as RuntimeDriver<unknown, AntigravityNativeSession>;
 
     await expect(
-      driver.createSession(createSessionContext(sessionDir, undefined, workspace)),
+      createPreparedSession(driver, createSessionContext(sessionDir, undefined, workspace)),
     ).rejects.toThrow(/workspace customization root/i);
     expect(mcpToolRegistryPool.acquire).not.toHaveBeenCalled();
   });
@@ -345,9 +350,77 @@ function createSessionContext(
       restoredRuntimeSessionId,
       checkpoint: vi.fn(async () => undefined),
     },
-    prepared: {},
+    resources: new RuntimeResourceScope("antigravity-adapter-test-placeholder"),
+    preparedFeatures: {},
     sessionInfo: {},
   } as unknown as RuntimeDriverSessionContext;
+}
+
+interface PreparedSession<TSession> {
+  readonly session: TSession;
+  readonly resources: RuntimeResourceScope;
+  readonly preparedFeatures: Readonly<Record<string, unknown>>;
+}
+
+async function createPreparedSession<TSession>(
+  driver: RuntimeDriver<unknown, TSession>,
+  baseContext: RuntimeDriverSessionContext,
+): Promise<PreparedSession<TSession>> {
+  const resources = new RuntimeResourceScope("antigravity-adapter-test");
+  const preparedFeatures: Record<string, unknown> = {};
+  try {
+    for (const featureName of ["mcp", "permissions", "skills"] as const) {
+      const prepare = driver.features[featureName].prepareSession;
+      if (prepare === undefined) continue;
+      const value = await prepare({
+        ...baseContext,
+        resources,
+        preparedFeatures: Object.freeze({ ...preparedFeatures }),
+      });
+      if (value !== undefined) preparedFeatures[featureName] = value;
+    }
+    const session = await driver.createSession({
+      ...baseContext,
+      resources,
+      preparedFeatures: Object.freeze({ ...preparedFeatures }),
+    });
+    resources.transfer();
+    return {
+      session,
+      resources,
+      preparedFeatures: Object.freeze({ ...preparedFeatures }),
+    };
+  } catch (error) {
+    try {
+      await resources.dispose();
+    } catch (cleanupError) {
+      throw new AggregateError(
+        [error, cleanupError],
+        "Antigravity test Session preparation and cleanup failed.",
+        { cause: cleanupError },
+      );
+    }
+    throw error;
+  }
+}
+
+async function closePreparedSession<TSession>(
+  driver: RuntimeDriver<unknown, TSession>,
+  prepared: PreparedSession<TSession>,
+): Promise<void> {
+  const errors: unknown[] = [];
+  await Promise.resolve(driver.closeSession?.(prepared.session, closeContext())).catch(
+    (error: unknown) => {
+      errors.push(error);
+    },
+  );
+  await prepared.resources.dispose().catch((error: unknown) => {
+    errors.push(error);
+  });
+  if (errors.length === 1) throw errors[0];
+  if (errors.length > 1) {
+    throw new AggregateError(errors, "Antigravity test Session cleanup failed.");
+  }
 }
 
 function closeContext() {

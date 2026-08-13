@@ -1,6 +1,6 @@
 import type {
   McpToolRegistryPool,
-  RuntimeAdapterDescriptor,
+  RuntimeDriverDescriptorOverride,
   RuntimeCanUseResult,
   RuntimeCommandSpawn,
   RuntimeModel,
@@ -16,7 +16,7 @@ export type AntigravityAuthenticationMode = "auto" | "isolated-environment" | "h
 export type AntigravityRuntimeSpawn = RuntimeCommandSpawn;
 
 export interface AntigravityRuntimeAdapterOptions {
-  readonly descriptor?: Partial<RuntimeAdapterDescriptor> | undefined;
+  readonly descriptor?: RuntimeDriverDescriptorOverride | undefined;
   readonly executablePath?: string | undefined;
   readonly env?: NodeJS.ProcessEnv | undefined;
   readonly defaultModelName?: string | undefined;

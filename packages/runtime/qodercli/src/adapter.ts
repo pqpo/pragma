@@ -4,12 +4,12 @@ import { join } from "node:path";
 import {
   createMcpToolRegistryPool,
   defaultRuntimeTokenCounter,
+  defineRuntimeFeatures,
   defineRuntimeDriver,
   registerExpertToolsMcpSession,
+  runtimeFeature,
   type ExpertToolsMcpSessionRegistration,
   type ExpertToolRuntimeState,
-  type McpToolRegistry,
-  type McpToolRegistryLease,
   type PragmaLogger,
   type RuntimeAdapter,
   type RuntimeSessionPersistenceSpec,
@@ -41,17 +41,13 @@ const QODER_DESCRIPTOR = {
   capabilities: {
     targets: ["agent"],
     executionLocations: ["local"],
-    supportsAbort: true,
-    supportsMcp: true,
-    supportsStreaming: true,
-    supportsContextCompactionEvents: true,
   },
 };
 
-interface QoderDriverSession extends QoderNativeSession {
-  readonly mcpToolRegistryLease: McpToolRegistryLease;
-  readonly expertToolsMcpRegistration: ExpertToolsMcpSessionRegistration;
-}
+const QODER_EVIDENCE_PENDING =
+  "Implemented in the adapter; an executed Runtime probe evidence bundle is not recorded yet.";
+
+type QoderDriverSession = QoderNativeSession;
 
 export function createQoderCliRuntime(options: QoderCliRuntimeAdapterOptions = {}): RuntimeAdapter {
   const mcpToolRegistries = options.mcpToolRegistryPool ?? createMcpToolRegistryPool();
@@ -65,10 +61,42 @@ export function createQoderCliRuntime(options: QoderCliRuntimeAdapterOptions = {
     },
   };
   const listModels = options.listModels ?? createQoderCliModelDiscovery(options);
+  const implemented = () => runtimeFeature.degraded(QODER_EVIDENCE_PENDING);
+  const features = defineRuntimeFeatures({
+    availability: implemented(),
+    authentication: implemented(),
+    modelDiscovery: implemented(),
+    modelSelection: implemented(),
+    thinking: implemented(),
+    freshSession: implemented(),
+    resume: implemented(),
+    systemPrompt: implemented(),
+    startupMessages: implemented(),
+    textStreaming: implemented(),
+    reasoningStreaming: implemented(),
+    nativeToolLifecycle: implemented(),
+    mcp: implemented(),
+    permissions: implemented(),
+    userInteraction: implemented(),
+    skills: implemented(),
+    attachmentImage: implemented(),
+    attachmentFile: implemented(),
+    attachmentDirectory: implemented(),
+    usage: implemented(),
+    contextWindow: implemented(),
+    compaction: runtimeFeature.degraded(QODER_EVIDENCE_PENDING, {
+      compactionModes: ["manual", "events"],
+    }),
+    cancellation: implemented(),
+    steering: runtimeFeature.unsupported("Qoder CLI SDK exposes no safe active-turn steering API."),
+    close: implemented(),
+    cleanup: implemented(),
+  });
 
   return defineRuntimeDriver(
     {
       descriptor,
+      features,
       canUse: options.canUse ?? (() => canUseQoderCliRuntime(options)),
       listModels,
       outputRetryLimit: options.outputRetryLimit,
@@ -113,99 +141,94 @@ export function createQoderCliRuntime(options: QoderCliRuntimeAdapterOptions = {
           ctx.logger,
           "mcp_tool_registry",
           sessionStartedAt,
-          async () => await mcpToolRegistries.acquire(ctx.agent.mcp),
+          async () =>
+            await ctx.resources.acquire(
+              "qodercli.mcp-registry",
+              async () => await mcpToolRegistries.acquire(ctx.agent.mcp),
+              async (lease) => await lease.release(),
+            ),
         );
-        let managedConfig: Awaited<ReturnType<typeof prepareManagedQoderConfig>>;
-        let plugin: Awaited<ReturnType<typeof materializeQoderSkillPlugin>>;
-        let mcpToolRegistry: McpToolRegistry | undefined;
-        let mcpToolRegistryLease: McpToolRegistryLease | undefined;
-        try {
-          const prepared = await Promise.all([configPromise, pluginPromise, registryLeasePromise]);
-          [managedConfig, plugin, mcpToolRegistryLease] = prepared;
-          mcpToolRegistry = mcpToolRegistryLease.registry;
-        } catch (error) {
-          const registry = await Promise.allSettled([registryLeasePromise]);
-          if (registry[0]?.status === "fulfilled") await registry[0].value.release();
-          throw error;
-        }
+        const [managedConfig, plugin, mcpToolRegistryLease] = await Promise.all([
+          configPromise,
+          pluginPromise,
+          registryLeasePromise,
+        ]);
+        const mcpToolRegistry = mcpToolRegistryLease.registry;
         const restoredRuntimeSessionId =
           ctx.persistence.restoredRuntimeSessionId ?? ctx.request.runtimeSession?.id ?? "";
         const toolRuntimeState: ExpertToolRuntimeState = {};
-        let expertToolsMcpRegistration: ExpertToolsMcpSessionRegistration | undefined;
 
-        try {
-          if (
-            restoredRuntimeSessionId !== "" &&
-            !(await timedQoderPhase(
-              ctx.logger,
-              "restore_session_lookup",
-              sessionStartedAt,
-              async () =>
-                await nativeSessionFileExists(
-                  join(managedConfig.configDir, "projects"),
-                  restoredRuntimeSessionId,
-                ),
-            ))
-          ) {
-            throw new Error(
-              `Qoder CLI runtime session file was not found: ${restoredRuntimeSessionId}.`,
-            );
-          }
-          expertToolsMcpRegistration = await timedQoderPhase(
+        if (
+          restoredRuntimeSessionId !== "" &&
+          !(await timedQoderPhase(
             ctx.logger,
-            "mcp_tool_registration",
+            "restore_session_lookup",
             sessionStartedAt,
             async () =>
-              await registerExpertToolsMcpSession({
-                agent: ctx.agent,
-                getContext: () => ctx.lifecycle.currentContext,
-                humanInteractionHandler: ctx.request.humanInteractionHandler,
-                logger: ctx.logger,
-                mcpTools: mcpToolRegistry.tools,
-                state: toolRuntimeState,
-                executionContext: ctx.request.executionContext,
-              }),
+              await nativeSessionFileExists(
+                join(managedConfig.configDir, "projects"),
+                restoredRuntimeSessionId,
+              ),
+          ))
+        ) {
+          throw new Error(
+            `Qoder CLI runtime session file was not found: ${restoredRuntimeSessionId}.`,
           );
-          ctx.logger.info("runtime.qodercli_session_ready", "Qoder Session preparation completed", {
-            elapsedMs: qoderElapsedMs(sessionStartedAt),
-            systemPromptCharacters: ctx.agentContext.systemPrompt.length,
-            toolCount: mcpToolRegistry.tools.length,
-            mcpOpenedConnections: mcpToolRegistryLease.stats.openedConnections,
-            mcpReusedConnections: mcpToolRegistryLease.stats.reusedConnections,
-            mcpCoalescedConnections: mcpToolRegistryLease.stats.coalescedConnections,
-          });
-          return {
-            agent: ctx.agent,
-            auth: resolveQoderAuth(options),
-            executablePath: resolveQoderCliExecutablePath(options),
-            env: { ...ctx.processEnvironment },
-            configDir: managedConfig.configDir,
-            externalCommandsCacheDir: managedConfig.externalCommandsCacheDir,
-            mcpServerUrl: expertToolsMcpRegistration.url,
-            plugin,
-            logger: ctx.logger,
-            humanInteractionHandler: ctx.request.humanInteractionHandler,
-            permissionMode: options.permissionMode ?? "default",
-            defaultModelName: ctx.request.modelSelection?.model.modelId ?? options.defaultModelName,
-            defaultThinkingLevel:
-              ctx.request.modelSelection?.thinkingLevel ?? options.defaultThinkingLevel,
-            contextWindowOverride: options.contextWindowTokens,
-            compactModelName: options.compactModelName,
-            systemPrompt: ctx.agentContext.systemPrompt,
-            toolRuntimeState,
-            tokenCounter: options.tokenCounter ?? defaultRuntimeTokenCounter,
-            messages: [],
-            toolNames: new Map(),
-            pendingStartupMessages:
-              restoredRuntimeSessionId === "" ? ctx.agentContext.startupMessages : [],
-            sessionId: restoredRuntimeSessionId,
-            mcpToolRegistryLease,
-            expertToolsMcpRegistration,
-          };
-        } catch (error) {
-          await disposeResources(expertToolsMcpRegistration, mcpToolRegistryLease);
-          throw error;
         }
+        const expertToolsMcpRegistration: ExpertToolsMcpSessionRegistration = await timedQoderPhase(
+          ctx.logger,
+          "mcp_tool_registration",
+          sessionStartedAt,
+          async () =>
+            await ctx.resources.acquire(
+              "qodercli.mcp-registration",
+              async () =>
+                await registerExpertToolsMcpSession({
+                  agent: ctx.agent,
+                  getContext: () => ctx.lifecycle.currentContext,
+                  humanInteractionHandler: ctx.request.humanInteractionHandler,
+                  logger: ctx.logger,
+                  mcpTools: mcpToolRegistry.tools,
+                  state: toolRuntimeState,
+                  executionContext: ctx.request.executionContext,
+                }),
+              async (registration) => await registration.dispose(),
+            ),
+        );
+        ctx.logger.info("runtime.qodercli_session_ready", "Qoder Session preparation completed", {
+          elapsedMs: qoderElapsedMs(sessionStartedAt),
+          systemPromptCharacters: ctx.agentContext.systemPrompt.length,
+          toolCount: mcpToolRegistry.tools.length,
+          mcpOpenedConnections: mcpToolRegistryLease.stats.openedConnections,
+          mcpReusedConnections: mcpToolRegistryLease.stats.reusedConnections,
+          mcpCoalescedConnections: mcpToolRegistryLease.stats.coalescedConnections,
+        });
+        return {
+          agent: ctx.agent,
+          auth: resolveQoderAuth(options),
+          executablePath: resolveQoderCliExecutablePath(options),
+          env: { ...ctx.processEnvironment },
+          configDir: managedConfig.configDir,
+          externalCommandsCacheDir: managedConfig.externalCommandsCacheDir,
+          mcpServerUrl: expertToolsMcpRegistration.url,
+          plugin,
+          logger: ctx.logger,
+          humanInteractionHandler: ctx.request.humanInteractionHandler,
+          permissionMode: options.permissionMode ?? "default",
+          defaultModelName: ctx.request.modelSelection?.model.modelId ?? options.defaultModelName,
+          defaultThinkingLevel:
+            ctx.request.modelSelection?.thinkingLevel ?? options.defaultThinkingLevel,
+          contextWindowOverride: options.contextWindowTokens,
+          compactModelName: options.compactModelName,
+          systemPrompt: ctx.agentContext.systemPrompt,
+          toolRuntimeState,
+          tokenCounter: options.tokenCounter ?? defaultRuntimeTokenCounter,
+          messages: [],
+          toolNames: new Map(),
+          pendingStartupMessages:
+            restoredRuntimeSessionId === "" ? ctx.agentContext.startupMessages : [],
+          sessionId: restoredRuntimeSessionId,
+        };
       },
       readSession(session) {
         return {
@@ -225,7 +248,6 @@ export function createQoderCliRuntime(options: QoderCliRuntimeAdapterOptions = {
       cancelTurn: cancelQoderTurn,
       async closeSession(session) {
         await closeQoderSession(session);
-        await disposeResources(session.expertToolsMcpRegistration, session.mcpToolRegistryLease);
       },
     },
     {
@@ -276,16 +298,4 @@ function assertProvider(providerId: string | undefined): void {
   if (providerId !== undefined && providerId !== "qoder") {
     throw new Error("Qoder CLI runtime only supports provider qoder.");
   }
-}
-
-async function disposeResources(
-  registration: ExpertToolsMcpSessionRegistration | undefined,
-  registryLease: McpToolRegistryLease | undefined,
-): Promise<void> {
-  const results = await Promise.allSettled([registration?.dispose(), registryLease?.release()]);
-  const errors = results.flatMap((result) =>
-    result.status === "rejected" ? [result.reason as unknown] : [],
-  );
-  if (errors.length === 1) throw errors[0];
-  if (errors.length > 1) throw new AggregateError(errors, "Qoder runtime cleanup failed.");
 }

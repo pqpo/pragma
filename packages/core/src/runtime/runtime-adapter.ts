@@ -18,6 +18,7 @@ import type {
   ExpertAgentHumanInteractionHandler,
   ExpertToolExecutionContext,
 } from "../tools/managed-tool.ts";
+import type { RuntimeFeatureSnapshotSet } from "./features.ts";
 
 export type RuntimeAdapterKind = "cloud-pi-agent" | (string & {});
 
@@ -38,6 +39,11 @@ export interface RuntimeAdapterCapabilities {
   readonly supportsContextCompactionEvents?: boolean | undefined;
 }
 
+export type RuntimeAdapterPlacementCapabilities = Pick<
+  RuntimeAdapterCapabilities,
+  "targets" | "executionLocations"
+>;
+
 export type RuntimeTarget = "expert" | "code" | "flow" | "operator" | (string & {});
 
 export interface RuntimeAdapterDescriptor {
@@ -46,6 +52,17 @@ export interface RuntimeAdapterDescriptor {
   readonly displayName: string;
   readonly capabilities?: RuntimeAdapterCapabilities | undefined;
 }
+
+/** Descriptor accepted from a concrete driver. Feature booleans are Core-derived. */
+export interface RuntimeDriverDescriptor extends Omit<RuntimeAdapterDescriptor, "capabilities"> {
+  readonly capabilities?: RuntimeAdapterPlacementCapabilities | undefined;
+}
+
+export type RuntimeDriverDescriptorOverride = Partial<
+  Omit<RuntimeDriverDescriptor, "capabilities">
+> & {
+  readonly capabilities?: RuntimeAdapterPlacementCapabilities | undefined;
+};
 
 export interface RuntimeCanUseResult {
   readonly usable: boolean;
@@ -215,6 +232,9 @@ export interface RuntimeAgentSession {
 
 export interface RuntimeAdapter {
   readonly descriptor: RuntimeAdapterDescriptor;
-  readonly canUse: (options?: Record<string, unknown>) => Promise<RuntimeCanUseResult> | RuntimeCanUseResult;
+  readonly features: RuntimeFeatureSnapshotSet;
+  readonly canUse: (
+    options?: Record<string, unknown>,
+  ) => Promise<RuntimeCanUseResult> | RuntimeCanUseResult;
   readonly listModels?: (() => Promise<readonly RuntimeModel[]>) | undefined;
 }

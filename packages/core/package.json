@@ -15,14 +15,24 @@
     "./runtime/runtime-adapter": {
       "types": "./src/runtime/runtime-adapter.ts",
       "default": "./src/runtime/runtime-adapter.ts"
+    },
+    "./testing": {
+      "types": "./src/testing/index.ts",
+      "default": "./src/testing/index.ts"
+    },
+    "./testing/vitest": {
+      "types": "./src/testing/vitest.ts",
+      "default": "./src/testing/vitest.ts"
     }
   },
   "scripts": {
     "build": "tsc -p tsconfig.build.json",
-    "lint": "eslint src test",
+    "lint": "eslint src test scripts",
     "typecheck": "tsc --noEmit",
     "test": "vitest run --passWithNoTests",
-    "test:core": "vitest run --passWithNoTests test/resource-id.test.ts test/pragma-paths.test.ts test/token-counter.test.ts test/plugin-manifest.test.ts test/context-binding-metadata.test.ts",
+    "test:core": "vitest run --passWithNoTests test/resource-id.test.ts test/pragma-paths.test.ts test/token-counter.test.ts test/plugin-manifest.test.ts test/context-binding-metadata.test.ts test/process-probe.test.ts test/process-supervisor.test.ts test/runtime-conformance.test.ts test/runtime-probe-evidence.test.ts test/runtime-resource-scope.test.ts",
+    "runtime:features:generate": "node ./scripts/generate-runtime-feature-checklist.mjs",
+    "runtime:features:check": "node ./scripts/generate-runtime-feature-checklist.mjs --check",
     "clean": "rm -rf dist"
   },
   "devDependencies": {

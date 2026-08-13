@@ -1,6 +1,6 @@
 import type {
   RuntimeCanUseResult,
-  RuntimeAdapterDescriptor,
+  RuntimeDriverDescriptorOverride,
   RuntimeCommandSpawn,
   RuntimeModel,
   RuntimeSessionRestoreHandler,
@@ -10,17 +10,12 @@ import type {
 } from "@pragma/core";
 
 export type ClaudeCodeRuntimePermissionMode =
-  | "default"
-  | "acceptEdits"
-  | "plan"
-  | "auto"
-  | "dontAsk"
-  | "bypassPermissions";
+  "default" | "acceptEdits" | "plan" | "auto" | "dontAsk" | "bypassPermissions";
 
 export type ClaudeCodeRuntimeSpawn = RuntimeCommandSpawn;
 
 export interface ClaudeCodeRuntimeAdapterOptions {
-  readonly descriptor?: Partial<RuntimeAdapterDescriptor> | undefined;
+  readonly descriptor?: RuntimeDriverDescriptorOverride | undefined;
   readonly executablePath?: string | undefined;
   readonly env?: NodeJS.ProcessEnv | undefined;
   readonly defaultModelName?: string | undefined;

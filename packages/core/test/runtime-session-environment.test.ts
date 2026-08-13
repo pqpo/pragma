@@ -14,6 +14,7 @@ import {
   type ExpertAgentPluginManifest,
   type RuntimeDriverSessionContext,
 } from "../src/index.ts";
+import { createRuntimeTestFeatures } from "../src/testing/index.ts";
 import { openRuntimeSession } from "../src/runtime/session-factory.ts";
 
 const roots: string[] = [];
@@ -96,6 +97,7 @@ describe("Runtime Session process environment", () => {
     const agent = await expert(root, "failed-turn-session-id", "token");
     const nativeSessionId = "11111111-2222-4333-8444-555555555555";
     const runtime = defineRuntimeDriver<{ readonly sessionId: string }, Record<string, never>>({
+      features: createRuntimeTestFeatures(),
       descriptor: {
         id: "failed-turn-session-id-runtime",
         kind: "failed-turn-session-id-runtime",
@@ -153,6 +155,7 @@ describe("Runtime Session context window", () => {
       }),
     );
     const runtime = defineRuntimeDriver<never, Record<string, never>>({
+      features: createRuntimeTestFeatures({ enabled: ["contextWindow"] }),
       descriptor: { id: "context-test", kind: "context-test", displayName: "Context Test" },
       createSession: () => ({}),
       startTurn: async (_session, turn) => {
@@ -207,6 +210,10 @@ describe("Runtime Session context window", () => {
     );
     const canCompact = vi.fn(() => true);
     const runtime = defineRuntimeDriver<never, Record<string, never>>({
+      features: createRuntimeTestFeatures({
+        enabled: ["contextWindow", "compaction"],
+        compactionModes: ["manual"],
+      }),
       descriptor: { id: "context-test", kind: "context-test", displayName: "Context Test" },
       createSession: () => ({}),
       startTurn: async () => ({ outputText: "done" }),
@@ -264,6 +271,7 @@ async function expert(root: string, id: string, token: string) {
 function fakeRuntime(captured: Readonly<NodeJS.ProcessEnv>[]) {
   return defineRuntimeDriver<never, { readonly context: RuntimeDriverSessionContext }>(
     {
+      features: createRuntimeTestFeatures(),
       descriptor: { id: "environment-test", kind: "environment-test", displayName: "Test" },
       createSession(context) {
         captured.push(context.processEnvironment);

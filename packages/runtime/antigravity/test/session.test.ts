@@ -1239,6 +1239,7 @@ function createTurn(
     prompt: "rendered user request",
     attachments: [],
     startupMessages: options.startupMessages ?? [],
+    preparedFeatures: {},
     signal: options.signal ?? new AbortController().signal,
     source: { kind: "runtime", runId: "run-1", path: [] },
     stream: {

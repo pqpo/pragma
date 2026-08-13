@@ -1,7 +1,12 @@
 import { mkdir, writeFile } from "node:fs/promises";
 import { resolve } from "node:path";
 
-import { createStaticRuntimeResolver, type Expert } from "@pragma/core";
+import {
+  createStaticRuntimeResolver,
+  defineRuntimeFeatures,
+  runtimeFeature,
+  type Expert,
+} from "@pragma/core";
 import {
   loadPragmaProject,
   type PragmaBindingRecord,
@@ -119,10 +124,39 @@ try {
 }
 
 function createExampleRuntimeResolver() {
+  const omitted = () => runtimeFeature.notApplicable("The bundle example does not execute turns.");
   return createStaticRuntimeResolver({
     defaultRuntimeId: "example-runtime",
     runtimes: [
       {
+        features: defineRuntimeFeatures({
+          availability: runtimeFeature.degraded("The example uses a local availability stub."),
+          authentication: omitted(),
+          modelDiscovery: omitted(),
+          modelSelection: omitted(),
+          thinking: omitted(),
+          freshSession: omitted(),
+          resume: omitted(),
+          systemPrompt: omitted(),
+          startupMessages: omitted(),
+          textStreaming: omitted(),
+          reasoningStreaming: omitted(),
+          nativeToolLifecycle: omitted(),
+          mcp: omitted(),
+          permissions: omitted(),
+          userInteraction: omitted(),
+          skills: omitted(),
+          attachmentImage: omitted(),
+          attachmentFile: omitted(),
+          attachmentDirectory: omitted(),
+          usage: omitted(),
+          contextWindow: omitted(),
+          compaction: omitted(),
+          cancellation: omitted(),
+          steering: omitted(),
+          close: omitted(),
+          cleanup: omitted(),
+        }),
         descriptor: {
           id: "example-runtime",
           kind: "example",

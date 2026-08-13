@@ -33,6 +33,9 @@ describe("PragmaPaths", () => {
     expect(paths.diagnosticFailureLog("desktop", "2026-07-26", bootId, 12)).toBe(
       join(bootRoot, "errors-0012.jsonl"),
     );
+    expect(paths.runtimeProbeArchivesRoot()).toBe(
+      join(paths.archivesRoot(), "runtime-probes"),
+    );
     expect(() => paths.diagnosticBootRoot("desktop", "../escape", bootId)).toThrow(
       "Invalid diagnostic archive date",
     );

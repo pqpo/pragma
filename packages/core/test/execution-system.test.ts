@@ -42,6 +42,7 @@ import {
   type RuntimeUsageObservation,
   type UsageSink,
 } from "../src/index.ts";
+import { createRuntimeTestFeatures } from "../src/testing/index.ts";
 
 interface FakeSession {
   readonly context: RuntimeDriverSessionContext;
@@ -91,6 +92,13 @@ interface FakeRuntimeOptions {
 function createFakeRuntime(options: FakeRuntimeOptions = {}) {
   const stats = options.stats;
   return defineRuntimeDriver<AgentMessageUsage, FakeSession>({
+    features: createRuntimeTestFeatures({
+      enabled: [
+        "cancellation",
+        "close",
+        ...(options.onSteer === undefined ? [] : (["steering"] as const)),
+      ],
+    }),
     descriptor: {
       id: options.runtimeId ?? "fake",
       kind: "fake",
@@ -221,6 +229,7 @@ function createOrchestrationRuntime(
     signalChildSessionOpening = resolve;
   });
   return defineRuntimeDriver<never, FakeSession>({
+    features: createRuntimeTestFeatures({ enabled: ["close"] }),
     descriptor: { id: `orchestration-${scenario}`, kind: "fake", displayName: "Orchestration" },
     createSession: async (context) => {
       if (scenario === "parent-failure" && context.agent.id !== "lead") {
@@ -699,6 +708,7 @@ describe("ExpertSession", () => {
     const board = new InMemoryContextStore();
     let createSessionCalls = 0;
     const runtime = defineRuntimeDriver<never, FakeSession>({
+      features: createRuntimeTestFeatures(),
       descriptor: { id: "handoff-reader", kind: "fake", displayName: "Handoff Reader" },
       createSession: (context) => {
         createSessionCalls += 1;

@@ -1,5 +1,8 @@
 import { describe, expect, it } from "vitest";
+import { describeRuntimeConformance } from "@pragma/core/testing/vitest";
 import { createCodexRuntime } from "../src/index.ts";
+
+describeRuntimeConformance("Codex", { createRuntime: createCodexRuntime });
 
 describe("Codex Runtime contract", () => {
   it("declares split Session lifecycle capabilities without unsafe steer", () => {

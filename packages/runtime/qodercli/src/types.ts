@@ -1,5 +1,5 @@
 import type {
-  RuntimeAdapterDescriptor,
+  RuntimeDriverDescriptorOverride,
   RuntimeCanUseResult,
   RuntimeModel,
   RuntimeSessionRestoreHandler,
@@ -16,7 +16,7 @@ export type QoderCliRuntimeAuth =
   | { readonly type: "access-token-env"; readonly envVar?: string | undefined };
 
 export interface QoderCliRuntimeAdapterOptions {
-  readonly descriptor?: Partial<RuntimeAdapterDescriptor> | undefined;
+  readonly descriptor?: RuntimeDriverDescriptorOverride | undefined;
   readonly executablePath?: string | undefined;
   readonly env?: NodeJS.ProcessEnv | undefined;
   readonly auth?: QoderCliRuntimeAuth | undefined;

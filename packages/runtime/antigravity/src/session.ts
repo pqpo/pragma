@@ -6,11 +6,14 @@ import { StringDecoder } from "node:string_decoder";
 
 import type { AgentAssistantMessage, AgentMessage, AgentMessageUsage } from "@pragma/shared";
 import {
+  BoundedRuntimeOutputBuffer,
   createUsageFromTokenCounts,
   defaultRuntimeTokenCounter,
   hasNonZeroUsage,
   readFirstTokenCount,
   RUNTIME_CONTEXT_COMPACTION_STAGES,
+  RuntimeProcessSupervisor,
+  terminateRuntimeProcess,
   type Expert,
   type ExpertAgentStartupMessage,
   type ExpertToolRuntimeState,
@@ -498,20 +501,14 @@ async function runAntigravityProcess(options: {
     cwd: options.cwd,
     env: options.env,
   });
-  let exited = false;
-  const exitPromise = new Promise<ProcessExit>((resolveExit, reject) => {
-    child.once("error", reject);
-    child.once("exit", (code, signal) => {
-      exited = true;
-      resolveExit({ code, signal });
-    });
-  });
-  options.onProcessStarted(child, exitPromise, () => exited);
+  const supervisor = new RuntimeProcessSupervisor(child);
+  const exitPromise = supervisor.exit;
+  options.onProcessStarted(child, exitPromise, supervisor.hasExited);
   child.stdin.end();
-  let stderrTail = "";
+  const stderrTail = new BoundedRuntimeOutputBuffer(STDERR_TAIL_LIMIT);
   child.stderr.setEncoding("utf8");
   child.stderr.on("data", (chunk: string) => {
-    stderrTail = `${stderrTail}${chunk}`.slice(-STDERR_TAIL_LIMIT);
+    stderrTail.append(chunk);
     options.logger.debug("runtime.antigravity_stderr", "Antigravity CLI emitted stderr", {
       characters: chunk.length,
     });
@@ -531,7 +528,7 @@ async function runAntigravityProcess(options: {
     void terminateAntigravityProcess({
       process: child,
       exitPromise,
-      hasExited: () => exited,
+      hasExited: supervisor.hasExited,
       logger: options.logger,
     });
   };
@@ -562,21 +559,21 @@ async function runAntigravityProcess(options: {
     if (options.signal.aborted) throw createAbortError();
     if (streamError !== undefined) throw streamError;
     if (state.resultError !== undefined) {
-      throw classifyAntigravityError(state.resultError, stderrTail, logTail);
+      throw classifyAntigravityError(state.resultError, stderrTail.text(), logTail);
     }
     if (exit.code !== 0) {
       throw classifyAntigravityError(
         `Antigravity CLI exited with code ${exit.code ?? "null"}${
           exit.signal === null ? "" : ` and signal ${exit.signal}`
         }.`,
-        stderrTail,
+        stderrTail.text(),
         logTail,
       );
     }
     if (!state.terminalSeen) {
       const degradedError = readDegradedAntigravityError(state.outputText, logTail);
       if (degradedError !== undefined) {
-        throw classifyAntigravityError(degradedError, stderrTail, logTail);
+        throw classifyAntigravityError(degradedError, stderrTail.text(), logTail);
       }
     }
 
@@ -1525,42 +1522,24 @@ async function terminateAntigravityProcess(options: {
   readonly hasExited: () => boolean;
   readonly logger: PragmaLogger;
 }): Promise<void> {
-  if (options.hasExited()) return;
-  options.process.stdin.end();
-  options.process.kill("SIGTERM");
-  const exited = await waitForAntigravityExit(options.exitPromise, PROCESS_TERMINATION_GRACE_MS);
-  if (!exited && !options.hasExited()) {
-    options.logger.warn(
-      "runtime.antigravity_force_kill",
-      "Antigravity CLI did not stop after SIGTERM; sending SIGKILL",
-    );
-    options.process.kill("SIGKILL");
-    const killed = await waitForAntigravityExit(options.exitPromise, PROCESS_TERMINATION_GRACE_MS);
-    if (!killed && !options.hasExited()) {
+  await terminateRuntimeProcess({
+    process: options.process,
+    exit: options.exitPromise,
+    hasExited: options.hasExited,
+    graceMs: PROCESS_TERMINATION_GRACE_MS,
+    onForceKill: () => {
+      options.logger.warn(
+        "runtime.antigravity_force_kill",
+        "Antigravity CLI did not stop after SIGTERM; sending SIGKILL",
+      );
+    },
+    onStuck: () => {
       options.logger.error(
         "runtime.antigravity_process_did_not_exit",
         "Antigravity CLI did not report exit after SIGKILL; continuing bounded Session cleanup",
         new Error("Antigravity CLI remained alive after SIGKILL."),
       );
-    }
-  }
-}
-
-async function waitForAntigravityExit(
-  exitPromise: Promise<ProcessExit>,
-  timeoutMs: number,
-): Promise<boolean> {
-  let timeout: ReturnType<typeof setTimeout> | undefined;
-  return await Promise.race([
-    exitPromise.then(
-      () => true,
-      () => true,
-    ),
-    new Promise<false>((resolveTimeout) => {
-      timeout = setTimeout(() => resolveTimeout(false), timeoutMs);
-    }),
-  ]).finally(() => {
-    if (timeout !== undefined) clearTimeout(timeout);
+    },
   });
 }
 

@@ -2,7 +2,7 @@ import { mkdtemp } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
-import { defineRuntimeDriver } from "@pragma/core";
+import { defineRuntimeTestDriver } from "@pragma/core/testing";
 import { describe, expect, it } from "vitest";
 
 import { getRuntimeAvailability } from "./runtime-availability.ts";
@@ -24,7 +24,7 @@ describe("getRuntimeAvailability", () => {
           id: "test.runtime",
           version: "v1",
           create: (environment) =>
-            defineRuntimeDriver({
+            defineRuntimeTestDriver({
               descriptor: {
                 id: environment.id,
                 kind: "test",
@@ -81,7 +81,7 @@ describe("getRuntimeAvailability", () => {
           id: "test.runtime",
           version: "v1",
           create: (environment) =>
-            defineRuntimeDriver({
+            defineRuntimeTestDriver({
               descriptor: {
                 id: environment.id,
                 kind: "cloud-pi-agent",
@@ -99,7 +99,7 @@ describe("getRuntimeAvailability", () => {
       ],
     });
 
-    await expect(getRuntimeAvailability(runtimes)).resolves.toEqual([
+    await expect(getRuntimeAvailability(runtimes, { forceRefresh: true })).resolves.toEqual([
       expect.objectContaining({
         id: "pi",
         displayName: "Built-in Runtime",
@@ -129,7 +129,7 @@ describe("getRuntimeAvailability", () => {
           id: "test.runtime",
           version: "v1",
           create: (env) =>
-            defineRuntimeDriver({
+            defineRuntimeTestDriver({
               descriptor: { id: env.id, kind: "test", displayName: env.displayName },
               canUse: async (opts?: Record<string, unknown>) => {
                 if (opts) receivedOptions.push(opts);

@@ -1,6 +1,6 @@
 import type {
   PragmaLogger,
-  RuntimeAdapterDescriptor,
+  RuntimeDriverDescriptorOverride,
   RuntimeSessionRestoreHandler,
   RuntimeSessionSyncCallback,
   RuntimeEventEmitter,
@@ -42,7 +42,7 @@ export interface PiModelProviderConfig {
 }
 
 export interface CloudPiRuntimeAdapterOptions {
-  readonly descriptor?: Partial<RuntimeAdapterDescriptor> | undefined;
+  readonly descriptor?: RuntimeDriverDescriptorOverride | undefined;
   readonly modelProviders?: ModelProviderRegistry | undefined;
   readonly outputParser?: <TOutput>(text: string) => TOutput;
   readonly outputRetryLimit?: number | undefined;

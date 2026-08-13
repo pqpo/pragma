@@ -16,6 +16,7 @@
     "example:runtime-codex": "tsx src/runtimes/codex/console-chat.ts",
     "example:runtime-claude-code": "tsx src/runtimes/claude-code/console-chat.ts",
     "example:runtime-antigravity": "tsx src/runtimes/antigravity/console-chat.ts",
+    "runtime:probe": "tsx src/runtimes/probe.ts",
     "example:skills": "tsx src/capabilities/skills.ts",
     "example:tool-approval": "tsx src/capabilities/tool-approval.ts",
     "build": "tsc -p tsconfig.build.json",
@@ -33,6 +34,7 @@
     "@pragma/runtime-claude-code": "workspace:*",
     "@pragma/runtime-codex": "workspace:*",
     "@pragma/runtime-pi": "workspace:*",
+    "@pragma/runtime-qodercli": "workspace:*",
     "cac": "^7.0.0",
     "dotenv": "latest",
     "zod": "latest"
