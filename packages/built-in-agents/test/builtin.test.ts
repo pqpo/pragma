@@ -23,6 +23,7 @@ import {
   BUILT_IN_PRAGMA_REF,
   EVALUATION_JUDGE_EXPERT_REF,
   MEMORY_CURATOR_REF,
+  MEMORY_CURATOR_SKILL_DRAFT_BINDING_REF,
   SKILL_EVALUATION_EXPERT_REF,
   SKILL_REVISION_EXPERT_REF,
   STORE_REVISION_EXPERT_REF,
@@ -56,6 +57,7 @@ describe("built-in Pragma Agent DSL", () => {
         .map((resource) => resource.kind)
         .toSorted(),
     ).toEqual([
+      "Capability",
       "Capability",
       "Capability",
       "ContextStore",
@@ -160,6 +162,14 @@ describe("built-in Pragma Agent DSL", () => {
           environmentId: "test",
           projectRoot: dirname(entry),
           async resolveBinding(bindingRef) {
+            if (bindingRef === MEMORY_CURATOR_SKILL_DRAFT_BINDING_REF) {
+              return {
+                ref: bindingRef,
+                revision: "1",
+                fingerprint: "c".repeat(64),
+                value: { contribution: { tools: [] } },
+              };
+            }
             return bindingRef === STORE_REVISION_TARGET_BINDING_REF
               ? {
                   ref: bindingRef,
@@ -180,6 +190,44 @@ describe("built-in Pragma Agent DSL", () => {
       expect(hidden.value.id).toBe(ref.slice("expert:".length));
       expect(hidden.value.tools ?? []).toEqual([]);
     }
+
+    const draftToolNames = ["begin_skill_draft", "put_skill_file", "submit_skill_draft"];
+    const memoryWithDraftTools = await project.compile<Expert>(MEMORY_CURATOR_REF, {
+      workspace: root,
+      environmentId: "test-skill",
+      adapterHost: {
+        environmentId: "test-skill",
+        projectRoot: dirname(entry),
+        async resolveBinding(bindingRef) {
+          if (bindingRef !== MEMORY_CURATOR_SKILL_DRAFT_BINDING_REF) return undefined;
+          return {
+            ref: bindingRef,
+            revision: "skill",
+            fingerprint: "d".repeat(64),
+            value: {
+              contribution: {
+                tools: draftToolNames.map((name) => ({
+                  name,
+                  description: name,
+                  inputSchema: { type: "object" },
+                  approval: { mode: "none" as const },
+                  async call() {
+                    return { text: "{}" };
+                  },
+                })),
+              },
+            },
+          };
+        },
+        async resolveArtifact(source) {
+          throw new Error(`Unexpected artifact: ${JSON.stringify(source)}`);
+        },
+        async resolveSecret() {
+          return undefined;
+        },
+      },
+    });
+    expect(memoryWithDraftTools.value.tools?.map((tool) => tool.name)).toEqual(draftToolNames);
 
     const registration = await registerExpertToolsMcpSession({
       agent: compiled.value,
@@ -365,7 +413,7 @@ describe("built-in Pragma Agent DSL", () => {
     );
     expect(
       project.listResources().filter((candidate) => candidate.kind === "Capability"),
-    ).toHaveLength(3);
+    ).toHaveLength(4);
     expect(await project.validate()).toEqual([]);
   });
 
@@ -412,6 +460,14 @@ describe("built-in Pragma Agent DSL", () => {
           environmentId: "ignored-external-id",
           projectRoot: root,
           async resolveBinding(bindingRef) {
+            if (bindingRef === MEMORY_CURATOR_SKILL_DRAFT_BINDING_REF) {
+              return {
+                ref: bindingRef,
+                revision: "1",
+                fingerprint: "d".repeat(64),
+                value: { contribution: { tools: [] } },
+              };
+            }
             return bindingRef === STORE_REVISION_TARGET_BINDING_REF
               ? {
                   ref: bindingRef,

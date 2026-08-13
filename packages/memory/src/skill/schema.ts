@@ -7,7 +7,7 @@ import {
   type SkillExtractorProvenance,
 } from "@pragma/shared";
 
-export const SKILL_MEMORY_CURATOR_PROMPT_VERSION = "skill-curator/v1" as const;
+export const SKILL_MEMORY_CURATOR_PROMPT_VERSION = "skill-curator/v2" as const;
 
 export * from "@pragma/shared";
 
@@ -15,7 +15,10 @@ export interface SkillMemoryExtractor {
   extract(
     input: SkillExtractionInput,
     options?: { readonly signal?: AbortSignal },
-  ): Promise<{ readonly output: SkillExtractionOutput; readonly provenance: SkillExtractorProvenance }>;
+  ): Promise<{
+    readonly output: SkillExtractionOutput;
+    readonly provenance: SkillExtractorProvenance;
+  }>;
 }
 
 export function parseSkillExtractionResult(input: {

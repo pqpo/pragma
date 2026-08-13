@@ -58,6 +58,7 @@ import type {
   HumanInteractionResponse,
   ExpertAgentStreamEvent,
   ExpertPromptAttachment,
+  AgentMessageUsage,
   RuntimeContextRecord,
   RuntimeEnvironmentBinding,
 } from "@pragma/shared";
@@ -137,6 +138,14 @@ export interface MissionRunner {
         readonly requestId?: string | undefined;
         readonly endpoint?: string | undefined;
         readonly failedAt: string;
+      }
+    | undefined
+  >;
+  getTerminalRuntimeOutputDiagnostic(id: string): Promise<
+    | {
+        readonly finishReason?: "stop" | "length" | "toolUse" | "error" | "aborted" | undefined;
+        readonly responseModel?: string | undefined;
+        readonly usage?: AgentMessageUsage | undefined;
       }
     | undefined
   >;
@@ -1962,6 +1971,37 @@ export function createMissionRunner(options: {
         };
       }
       return undefined;
+    },
+    async getTerminalRuntimeOutputDiagnostic(id) {
+      const mission = await options.missions.get(id);
+      if (mission.execution === undefined) return undefined;
+      const events = await readAllExecutionEvents(
+        new StoredExecutionView(mission.execution.id, executionStore),
+      ).catch(() => []);
+      let completedUsage: AgentMessageUsage | undefined;
+      for (const item of events.toReversed()) {
+        if (item.type !== "runtime.event") continue;
+        const parsed = ExpertAgentStreamEventSchema.safeParse(item.data);
+        if (!parsed.success || !isRootMissionRuntimeSource(parsed.data.source)) continue;
+        if (parsed.data.type === "run.completed" && completedUsage === undefined) {
+          completedUsage = parsed.data.payload.usage;
+          continue;
+        }
+        if (
+          parsed.data.type !== "message.completed" ||
+          parsed.data.payload.role !== "assistant" ||
+          parsed.data.payload.message?.role !== "assistant"
+        ) {
+          continue;
+        }
+        const message = parsed.data.payload.message;
+        return {
+          finishReason: message.stopReason,
+          ...(message.responseModel === undefined ? {} : { responseModel: message.responseModel }),
+          usage: message.usage ?? completedUsage,
+        };
+      }
+      return completedUsage === undefined ? undefined : { usage: completedUsage };
     },
     async compactContext(id) {
       const pending = pendingOperations.get(id);

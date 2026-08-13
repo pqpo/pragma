@@ -19,11 +19,15 @@ import {
 import {
   KnowledgeExtractionOutputSchema,
   SkillExtractionOutputSchema,
+  type AgentMessageUsage,
   type MemoryEvidenceEnvelope,
+  type MemoryExtractionOutputDiagnostic,
+  type SkillExtractionInput,
+  type SkillExtractionOutput,
 } from "@pragma/shared";
 
-import { extractStructuredJson } from "./structured-output.ts";
-import type { ZodType } from "zod";
+import { inspectStructuredJson } from "./structured-output.ts";
+import { z, type ZodType } from "zod";
 
 export interface MemoryCuratorExecutionPort {
   run(input: {
@@ -32,14 +36,31 @@ export interface MemoryCuratorExecutionPort {
     readonly title: string;
     readonly prompt: string;
     readonly profile: MemoryExtractorProfile;
+    readonly skillInput?: SkillExtractionInput | undefined;
     readonly signal?: AbortSignal | undefined;
   }): Promise<{
     readonly content: string;
     readonly runtimeId: string;
     readonly providerId: string;
     readonly modelId: string;
+    readonly responseModel?: string | undefined;
+    readonly finishReason?: "stop" | "length" | "toolUse" | "error" | "aborted" | undefined;
+    readonly usage?: AgentMessageUsage | undefined;
+    readonly skillOutput?: SkillExtractionOutput | undefined;
   }>;
 }
+
+const SkillExtractionRejectionSchema = z
+  .object({
+    retain: z.literal(false),
+    reason: z.enum([
+      "no-reusable-skill",
+      "insufficient-independent-sources",
+      "fragmentary-pattern",
+      "sensitive",
+    ]),
+  })
+  .strict();
 
 export interface BuiltInMemoryCurator {
   readonly episodicExtractor: EpisodicMemoryExtractor;
@@ -65,6 +86,7 @@ export function createBuiltInMemoryCurator(options: {
     runtimeId: execution.runtimeId,
     providerId: execution.providerId,
     modelId: execution.modelId,
+    ...(execution.responseModel === undefined ? {} : { responseModel: execution.responseModel }),
     extractedAt: now().toISOString(),
   });
   return {
@@ -140,14 +162,18 @@ export function createBuiltInMemoryCurator(options: {
           title: `Skill extraction ${input.rootRef.id.slice(0, 12)}`,
           prompt: renderSkillExtractionPrompt(input),
           profile,
+          skillInput: input,
           signal: extractionOptions?.signal,
         });
         return {
-          output: parseCuratorOutput(
-            execution,
-            SkillExtractionOutputSchema,
-            "skill_extraction_output_invalid",
-          ),
+          output:
+            execution.skillOutput === undefined
+              ? parseCuratorOutput(
+                  execution,
+                  SkillExtractionRejectionSchema,
+                  "skill_extraction_output_invalid",
+                )
+              : SkillExtractionOutputSchema.parse(execution.skillOutput),
           provenance: provenance(profile, execution, SKILL_MEMORY_CURATOR_PROMPT_VERSION),
         };
       },
@@ -160,9 +186,11 @@ function parseCuratorOutput<T>(
   schema: ZodType<T>,
   code: string,
 ): T {
+  const inspection = inspectStructuredJson(execution.content);
+  const diagnostic = curatorOutputDiagnostic(execution, inspection.closingBoundaryFound);
   let parsed: unknown;
   try {
-    parsed = JSON.parse(extractStructuredJson(execution.content));
+    parsed = JSON.parse(inspection.content);
   } catch (cause) {
     throw Object.assign(new Error(code, { cause }), {
       code,
@@ -170,6 +198,10 @@ function parseCuratorOutput<T>(
       runtimeId: execution.runtimeId,
       providerId: execution.providerId,
       modelId: execution.modelId,
+      outputDiagnostic: {
+        ...diagnostic,
+        ...(parsePosition(cause) === undefined ? {} : { parsePosition: parsePosition(cause) }),
+      },
     });
   }
   try {
@@ -180,6 +212,7 @@ function parseCuratorOutput<T>(
         runtimeId: execution.runtimeId,
         providerId: execution.providerId,
         modelId: execution.modelId,
+        outputDiagnostic: diagnostic,
       });
     }
     throw error;
@@ -265,9 +298,9 @@ export function renderSkillExtractionPrompt(
       "Generate SKILL.md plus optional references/*.md. Scripts are optional and must be dependency-free Node 22 ESM under scripts/*.mjs with node:test coverage under tests/*.test.mjs.",
       "For each candidate create at least three source replay expectations and one clearly non-applicable boundary case.",
       "Compare only existingTargets. Use revise only for one clear match, ambiguous for two or more plausible matches, otherwise create. Never invent a binding id.",
-      "Output schema:",
-      '{"retain":true,"candidates":[{"content":{"normalizedKey":"workflow.example","applicability":["..."],"failureModes":["..."],"recoverySteps":["..."],"package":{"name":"...","description":"...","files":[{"path":"SKILL.md","content":"---\\nname: ...\\ndescription: ...\\n---\\n..."}]},"replayCases":[{"objective":"...","requiredBehaviors":["..."],"forbiddenBehaviors":[]}],"boundaryCase":{"objective":"...","requiredBehaviors":["recognize non-applicability"],"forbiddenBehaviors":["force the workflow"]}},"sourceRefs":[{"kind":"episodic","id":"...","revision":1}],"route":{"type":"create|revise|ambiguous","bindingId":"for revise","bindingIds":["for ambiguous"]}}]}',
-      'or {"retain":false,"reason":"no-reusable-skill|insufficient-independent-sources|fragmentary-pattern|sensitive"}.',
+      "For every candidate, call begin_skill_draft with metadata, sourceRefs, and route; call put_skill_file once per file; then call submit_skill_draft. Repair validation errors in the same draft and resubmit. Never place Skill file contents in the final response.",
+      "After at least one draft is submitted successfully, finish with a brief acknowledgement. The Host uses the submitted drafts as the result.",
+      'If no reusable Skill exists, do not create a draft; return exactly {"retain":false,"reason":"no-reusable-skill|insufficient-independent-sources|fragmentary-pattern|sensitive"}.',
       "Root:",
       JSON.stringify(input.rootRef),
       "Existing Memory Skills:",
@@ -276,6 +309,39 @@ export function renderSkillExtractionPrompt(
       JSON.stringify(input.sources),
     ].join("\n\n"),
   );
+}
+
+function curatorOutputDiagnostic(
+  execution: Awaited<ReturnType<MemoryCuratorExecutionPort["run"]>>,
+  closingBoundaryFound: boolean,
+): MemoryExtractionOutputDiagnostic {
+  return {
+    responseBytes: Buffer.byteLength(execution.content),
+    responseCharacters: [...execution.content].length,
+    closingBoundaryFound,
+    ...(execution.finishReason === undefined ? {} : { finishReason: execution.finishReason }),
+    ...(execution.finishReason === undefined
+      ? {}
+      : { truncated: execution.finishReason === "length" }),
+    ...(execution.usage === undefined
+      ? {}
+      : {
+          usage: {
+            measurement: execution.usage.measurement,
+            inputTokens: execution.usage.input,
+            outputTokens: execution.usage.output,
+            totalTokens: execution.usage.totalTokens,
+          },
+        }),
+  };
+}
+
+function parsePosition(error: unknown): number | undefined {
+  if (!(error instanceof Error)) return undefined;
+  const match = /(?:position|at position)\s+(\d+)/iu.exec(error.message);
+  if (match?.[1] === undefined) return undefined;
+  const value = Number(match[1]);
+  return Number.isSafeInteger(value) && value >= 0 ? value : undefined;
 }
 
 function renderBoundedPrompt(

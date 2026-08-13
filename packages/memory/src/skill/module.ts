@@ -18,6 +18,7 @@ import { DEFAULT_MEMORY_STORAGE_POLICY } from "../storage/memory-storage-policy.
 import type { SkillMemoryExtractor } from "./schema.ts";
 import type { SkillSourceReader } from "./source-reader.ts";
 import { createSkillLearningStore, type SkillLearningStore } from "./store.ts";
+import { skillSourceThresholdMet, validateSkillExtractionCandidate } from "./validation.ts";
 
 const MAX_SOURCE_REVISIONS = 100;
 
@@ -188,57 +189,16 @@ export async function createSkillMemoryModule(options: {
   };
 }
 
-export function skillSourceThresholdMet(sources: readonly SkillSourceSnapshot[]): boolean {
-  const currentEpisodes = new Map<string, SkillSourceSnapshot>();
-  for (const source of sources) {
-    if (source.ref.kind !== "episodic") continue;
-    const current = currentEpisodes.get(source.ref.id);
-    if (current === undefined || source.ref.revision > current.ref.revision) {
-      currentEpisodes.set(source.ref.id, source);
-    }
-  }
-  const episodes = [...currentEpisodes.values()].filter(
-    (source) => (source.valueScore ?? 0) >= 0.85,
-  );
-  const conversations = new Set(
-    episodes
-      .map((source) =>
-        source.conversationRef === undefined
-          ? undefined
-          : `${source.conversationRef.type}\0${source.conversationRef.id}`,
-      )
-      .filter(Boolean),
-  );
-  const successful = episodes.filter(
-    (source) => source.outcome === "succeeded" || source.hasSuccessfulRecovery,
-  );
-  return episodes.length >= 3 && conversations.size >= 2 && successful.length >= 2;
-}
-
 function eligibleCandidates(
   candidates: readonly SkillExtractionCandidate[],
   sources: readonly SkillSourceSnapshot[],
   targets: readonly ExistingMemorySkillTarget[],
 ): readonly SkillExtractionCandidate[] {
-  const available = new Map(sources.map((source) => [sourceKey(source), source]));
-  const targetIds = new Set(targets.map((target) => target.bindingId));
   const normalizedKeys = new Set<string>();
   return candidates.filter((candidate) => {
-    const selected = candidate.sourceRefs.map((ref) =>
-      available.get(`${ref.kind}\0${ref.id}\0${ref.revision}`),
-    );
-    if (!selected.every((source): source is SkillSourceSnapshot => source !== undefined)) {
+    if (validateSkillExtractionCandidate(candidate, sources, targets, normalizedKeys).length > 0) {
       return false;
     }
-    if (!skillSourceThresholdMet(selected)) return false;
-    const bindingIds =
-      candidate.route.type === "revise"
-        ? [candidate.route.bindingId]
-        : candidate.route.type === "ambiguous"
-          ? candidate.route.bindingIds
-          : [];
-    if (bindingIds.some((id) => !targetIds.has(id))) return false;
-    if (normalizedKeys.has(candidate.content.normalizedKey)) return false;
     normalizedKeys.add(candidate.content.normalizedKey);
     return true;
   });

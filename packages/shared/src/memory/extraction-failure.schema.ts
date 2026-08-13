@@ -29,6 +29,26 @@ export const MemoryExtractionTransportDiagnosticSchema = z
   })
   .strict();
 
+export const MemoryExtractionOutputDiagnosticSchema = z
+  .object({
+    responseBytes: z.number().int().nonnegative(),
+    responseCharacters: z.number().int().nonnegative(),
+    parsePosition: z.number().int().nonnegative().optional(),
+    closingBoundaryFound: z.boolean(),
+    finishReason: z.enum(["stop", "length", "toolUse", "error", "aborted"]).optional(),
+    truncated: z.boolean().optional(),
+    usage: z
+      .object({
+        measurement: z.enum(["reported", "derived", "estimated", "unknown"]),
+        inputTokens: z.number().nonnegative(),
+        outputTokens: z.number().nonnegative(),
+        totalTokens: z.number().nonnegative(),
+      })
+      .strict()
+      .optional(),
+  })
+  .strict();
+
 export const MemoryExtractionFailureDiagnosticSchema = z
   .object({
     schemaVersion: z.literal(MEMORY_EXTRACTION_FAILURE_SCHEMA_VERSION),
@@ -41,6 +61,7 @@ export const MemoryExtractionFailureDiagnosticSchema = z
     retryable: z.boolean().optional(),
     runtime: MemoryExtractionRuntimeTargetSchema.optional(),
     transport: MemoryExtractionTransportDiagnosticSchema.optional(),
+    output: MemoryExtractionOutputDiagnosticSchema.optional(),
   })
   .strict();
 
@@ -57,6 +78,9 @@ export const MemoryExtractionFailureAttemptSchema = z
   .strict();
 
 export type MemoryExtractionFailurePhase = z.infer<typeof MemoryExtractionFailurePhaseSchema>;
+export type MemoryExtractionOutputDiagnostic = z.infer<
+  typeof MemoryExtractionOutputDiagnosticSchema
+>;
 export type MemoryExtractionFailureDiagnostic = z.infer<
   typeof MemoryExtractionFailureDiagnosticSchema
 >;

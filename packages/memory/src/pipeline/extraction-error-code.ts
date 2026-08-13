@@ -1,6 +1,7 @@
 import { ZodError } from "zod";
 import {
   MemoryExtractionFailureDiagnosticSchema,
+  MemoryExtractionOutputDiagnosticSchema,
   type MemoryExtractionFailureDiagnostic,
   type MemoryExtractionFailurePhase,
 } from "@pragma/shared";
@@ -51,6 +52,7 @@ export function extractionFailureDiagnostic(
   const runtimeId = readString(metadata.runtimeId);
   const providerId = readString(metadata.providerId);
   const modelId = readString(metadata.modelId);
+  const output = MemoryExtractionOutputDiagnosticSchema.safeParse(metadata.outputDiagnostic);
   const startedAt = metadata.startedAt instanceof Date ? metadata.startedAt : input.startedAt;
   const durationMs = readFiniteNumber(metadata.durationMs);
   const diagnostic = MemoryExtractionFailureDiagnosticSchema.parse({
@@ -86,6 +88,7 @@ export function extractionFailureDiagnostic(
               : { requestId: sanitizeDiagnosticText(requestId, 500) }),
           },
         }),
+    ...(output.success ? { output: output.data } : {}),
   });
   const stack = readString(metadata.stack);
   return {
