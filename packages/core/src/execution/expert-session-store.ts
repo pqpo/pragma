@@ -32,6 +32,12 @@ export interface EnqueuePromptTransaction {
   readonly execution: ExecutionRecord;
   readonly rootInvocation: Invocation;
   readonly prompt: PromptRequest;
+  readonly events?: readonly {
+    readonly eventId: string;
+    readonly type: string;
+    readonly data: unknown;
+    readonly occurredAt?: string | undefined;
+  }[];
 }
 
 export interface ExpertSessionStore {
@@ -57,6 +63,15 @@ export interface ExpertSessionStore {
   ): Promise<T>;
   listPrompts(sessionId: string): Promise<readonly PromptRequest[]>;
   listEvents(sessionId: string): Promise<readonly ExpertSessionEvent[]>;
+  appendEvent(
+    sessionId: string,
+    event: {
+      readonly eventId: string;
+      readonly type: string;
+      readonly data: unknown;
+      readonly occurredAt?: string | undefined;
+    },
+  ): Promise<void>;
   claimLease(sessionId: string, claimId: string, leaseMs: number): Promise<boolean>;
   releaseLease(sessionId: string, claimId: string): Promise<void>;
   delete(sessionId: string): Promise<void>;
@@ -127,24 +142,82 @@ export function createFileExpertSessionStore(options: {
           (await readJson(paths.expertSessionEvents(sessionId))) ?? [],
         );
         if (session.status === "closed") throw new Error(`ExpertSession is closed: ${sessionId}`);
-        const duplicate = prompts.find(
-          (candidate) => candidate.requestId === transaction.prompt.requestId,
-        );
-        if (duplicate !== undefined) {
-          if (
-            duplicate.content !== transaction.prompt.content ||
-            duplicate.mode !== transaction.prompt.mode
-          ) {
-            throw new Error(`Prompt idempotency conflict: ${transaction.prompt.requestId}`);
-          }
-          return duplicate.executionId;
-        }
         const rootContext = session.contexts[session.rootContextId]!;
         const prompt =
           transaction.prompt.modelSelection !== undefined ||
           rootContext.modelSelection === undefined
             ? transaction.prompt
             : { ...transaction.prompt, modelSelection: rootContext.modelSelection };
+        const duplicate = prompts.find((candidate) => candidate.requestId === prompt.requestId);
+        if (duplicate !== undefined) {
+          const replacesFailedSteer =
+            duplicate.content === prompt.content &&
+            duplicate.mode === "steer" &&
+            duplicate.status === "failed" &&
+            prompt.mode === "enqueue";
+          if (
+            !replacesFailedSteer &&
+            (duplicate.content !== prompt.content || duplicate.mode !== prompt.mode)
+          ) {
+            throw new Error(`Prompt idempotency conflict: ${prompt.requestId}`);
+          }
+          if (!replacesFailedSteer) {
+            return duplicate.executionId;
+          }
+          const nextSession = ExpertSessionRecordSchema.parse({
+            ...session,
+            ...(prompt.modelSelection === undefined
+              ? {}
+              : {
+                  contexts: {
+                    ...session.contexts,
+                    [session.rootContextId]: {
+                      ...rootContext,
+                      modelSelection: prompt.modelSelection,
+                      updatedAt: prompt.createdAt,
+                    },
+                  },
+                }),
+            queuedRequestIds: [...new Set([...session.queuedRequestIds, duplicate.requestId])],
+            executionIds: [
+              ...new Set([...session.executionIds, transaction.execution.executionId]),
+            ],
+            updatedAt: transaction.prompt.createdAt,
+          });
+          const nextPrompts = PromptRequestSchema.array().parse(
+            prompts.map((candidate) =>
+              candidate.requestId === duplicate.requestId
+                ? { ...prompt, createdAt: duplicate.createdAt }
+                : candidate,
+            ),
+          );
+          const journal = ExpertSessionTransactionJournalSchema.parse({
+            schemaVersion: "pragma.expert-session-transaction/v8",
+            session: nextSession,
+            prompts: nextPrompts,
+            events: materializeSessionEvents(sessionId, events, [
+              ...(transaction.events ?? []).map((event) => ({
+                ...event,
+                occurredAt: event.occurredAt ?? prompt.createdAt,
+              })),
+              {
+                eventId: `prompt-enqueued:${prompt.requestId}`,
+                type: "prompt.enqueued",
+                data: {
+                  requestId: prompt.requestId,
+                  executionId: prompt.executionId,
+                  content: prompt.content,
+                },
+                occurredAt: prompt.createdAt,
+              },
+            ]),
+            execution: transaction.execution,
+            rootInvocation: transaction.rootInvocation,
+          });
+          await writeJson(paths.expertSessionTransaction(sessionId), journal);
+          await applyTransaction(paths, options.executions, sessionId, journal);
+          return transaction.execution.executionId;
+        }
         const nextSession = ExpertSessionRecordSchema.parse({
           ...session,
           ...(prompt.modelSelection === undefined
@@ -169,6 +242,10 @@ export function createFileExpertSessionStore(options: {
           session: nextSession,
           prompts: nextPrompts,
           events: materializeSessionEvents(sessionId, events, [
+            ...(transaction.events ?? []).map((event) => ({
+              ...event,
+              occurredAt: event.occurredAt ?? prompt.createdAt,
+            })),
             {
               eventId: `prompt-enqueued:${prompt.requestId}`,
               type: "prompt.enqueued",
@@ -241,6 +318,35 @@ export function createFileExpertSessionStore(options: {
         return ExpertSessionEventSchema.array().parse(
           (await readJson(paths.expertSessionEvents(sessionId))) ?? [],
         );
+      });
+    },
+    async appendEvent(sessionId, event) {
+      await withFileLock(paths.expertSessionLock(sessionId), async () => {
+        await prepareExpertSession(paths, options.executions, sessionId);
+        const session = ExpertSessionRecordSchema.parse(
+          await requireJson(paths.expertSessionState(sessionId), sessionId),
+        );
+        const prompts = PromptRequestSchema.array().parse(
+          (await readJson(paths.expertSessionPrompts(sessionId))) ?? [],
+        );
+        const events = ExpertSessionEventSchema.array().parse(
+          (await readJson(paths.expertSessionEvents(sessionId))) ?? [],
+        );
+        const journal = ExpertSessionTransactionJournalSchema.parse({
+          schemaVersion: "pragma.expert-session-transaction/v8",
+          session,
+          prompts,
+          events: materializeSessionEvents(sessionId, events, [
+            {
+              eventId: event.eventId,
+              type: event.type,
+              data: event.data,
+              occurredAt: event.occurredAt ?? new Date().toISOString(),
+            },
+          ]),
+        });
+        await writeJson(paths.expertSessionTransaction(sessionId), journal);
+        await applyTransaction(paths, options.executions, sessionId, journal);
       });
     },
     async claimLease(sessionId, claimId, leaseMs) {

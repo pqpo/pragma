@@ -109,6 +109,7 @@ export class ExecutionController {
   >();
   private readonly invocationSignals = new Map<string, AbortController>();
   private readonly linkedInvocationSignals = new Map<string, AbortSignal>();
+  private readonly orchestrators = new Map<string, ExpertOrchestrator>();
   private readonly pendingInteractions = new Map<
     string,
     {
@@ -450,8 +451,13 @@ export class ExecutionController {
     contextId: string,
     request: { readonly requestId: string; readonly content: string; readonly targetRunId: string },
   ): Promise<void> {
+    if (this.orchestrators.get(contextId)?.wakeWait(contextId, request) === true) return;
     const submission = await this.waitForRuntimeSubmission(contextId);
     await submission.session.steer(request);
+  }
+
+  registerOrchestrator(contextId: string, orchestrator: ExpertOrchestrator): void {
+    this.orchestrators.set(contextId, orchestrator);
   }
 
   finish(): void {
@@ -461,6 +467,7 @@ export class ExecutionController {
     this.activeRuntimeSubmissions.clear();
     this.invocationSignals.clear();
     this.linkedInvocationSignals.clear();
+    this.orchestrators.clear();
     getExecutionLiveBus(this.store).complete(this.executionId);
   }
 
@@ -669,6 +676,7 @@ export async function runExpertInvocation(options: RunExpertInvocationOptions): 
   }
   if (orchestrator !== undefined && delegation !== undefined) {
     await orchestrator.registerExperts(delegation.experts);
+    options.controller.registerOrchestrator(options.context.contextId, orchestrator);
   }
 
   const invocation = await requireInvocation(
@@ -864,19 +872,28 @@ export async function runExpertInvocation(options: RunExpertInvocationOptions): 
             { invocationId: options.invocationId, type: "expert.children.waiting", data: {} },
           ],
         });
-        await orchestrator.waitForOwnedUnjoined(
+        const waitResult = await orchestrator.waitForOwnedUnjoined(
           options.invocationId,
           options.context.contextId,
           options.controller.signalForInvocation(options.invocationId),
           options.delegationPermit,
         );
         const result = await orchestrator.list(options.context.contextId);
-        query = [
-          "[Pragma orchestration continuation]",
-          "All attached Expert tasks are terminal. Synthesize their results into the final answer.",
-          "Do not spawn replacement tasks for work that is already complete.",
-          JSON.stringify(result, null, 2),
-        ].join("\n");
+        query =
+          waitResult.wakeReason === "steer" && waitResult.steer !== undefined
+            ? [
+                "[Pragma orchestration steer]",
+                "The user sent new guidance while you were waiting for attached Expert tasks.",
+                "The pending Expert tasks continue running. Handle the guidance now, then call wait_experts again when appropriate.",
+                `User guidance: ${waitResult.steer.content}`,
+                JSON.stringify(result, null, 2),
+              ].join("\n")
+            : [
+                "[Pragma orchestration continuation]",
+                "All attached Expert tasks are terminal. Synthesize their results into the final answer.",
+                "Do not spawn replacement tasks for work that is already complete.",
+                JSON.stringify(result, null, 2),
+              ].join("\n");
         continuation += 1;
         await options.store.commit({
           commitId: randomUUID(),
@@ -885,7 +902,10 @@ export async function runExpertInvocation(options: RunExpertInvocationOptions): 
           events: [
             {
               invocationId: options.invocationId,
-              type: "expert.children.completed",
+              type:
+                waitResult.wakeReason === "steer"
+                  ? "expert.children.wait-steered"
+                  : "expert.children.completed",
               data: result,
             },
           ],

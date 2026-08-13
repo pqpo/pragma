@@ -1,4 +1,10 @@
 export const missions = {
+  deliveryMode: "Message delivery mode",
+  deliveryEnqueue: "Queue",
+  deliverySteer: "Steer",
+  steerQueued: "Steer is unavailable; the message was queued instead",
+  queuePaused: "The queue paused after a failed message.",
+  resumeQueue: "Skip failure and continue",
   title: "Missions",
   newMission: "New mission",
   missionSources: "Mission sources",

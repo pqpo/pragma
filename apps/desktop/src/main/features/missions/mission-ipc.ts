@@ -276,10 +276,10 @@ export function installMissionHandlers(options: {
     runDesktopMutation(async () => {
       const parsed = SendMissionMessageSchema.parse(input);
       await assertManagedMission(parsed.id);
-      const mission = await options.runner.sendMessage(parsed);
+      const acceptance = await options.runner.sendMessage(parsed);
       await imageDrafts.discard(parsed.attachments.map((attachment) => attachment.id));
-      await publishMission(mission);
-      return mission;
+      await publishMission(acceptance.mission);
+      return acceptance;
     }),
   );
   ipcMain.handle("missions:chat:get", async (_event, input: unknown) => {
@@ -298,6 +298,15 @@ export function installMissionHandlers(options: {
   ipcMain.handle("missions:interrupt", (_event, input: unknown) =>
     runDesktopMutation(async () => {
       const mission = await options.runner.interrupt(
+        await assertManagedMission(MissionActionSchema.parse(input).id),
+      );
+      await publishMission(mission);
+      return mission;
+    }),
+  );
+  ipcMain.handle("missions:queue:resume", (_event, input: unknown) =>
+    runDesktopMutation(async () => {
+      const mission = await options.runner.resumeQueue(
         await assertManagedMission(MissionActionSchema.parse(input).id),
       );
       await publishMission(mission);

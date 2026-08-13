@@ -55,6 +55,7 @@ describe("Memory extraction run archive", () => {
         ],
         page: { oldestSequence: 1, newestSequence: 1 },
         pendingInteractions: [],
+        queue: { state: "idle", pendingCount: 0 },
       },
     });
 

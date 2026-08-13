@@ -66,6 +66,10 @@ export class ExpertOrchestrator {
   private readonly pumping = new Set<string>();
   private readonly activeJobs = new Map<string, Promise<void>>();
   private readonly joinedInvocationIds = new Set<string>();
+  private readonly steerWaiters = new Map<
+    string,
+    Set<(message: { readonly requestId: string; readonly content: string }) => boolean>
+  >();
 
   constructor(private readonly options: ExpertOrchestratorOptions) {
     this.semaphore = new DelegationSemaphore(options.maxConcurrency);
@@ -395,11 +399,13 @@ export class ExpertOrchestrator {
     readonly timedOut: boolean;
     readonly completed: readonly unknown[];
     readonly pendingInvocationIds: readonly string[];
+    readonly wakeReason?: "steer" | undefined;
+    readonly steer?: { readonly requestId: string; readonly content: string } | undefined;
   }> {
     await this.assertOwnedInvocations(ownerContextId, request.invocationIds);
     const resume = permit?.suspend();
     try {
-      const result = await this.waitForInvocations(request);
+      const result = await this.waitForInvocations(ownerContextId, request);
       for (const completed of result.completed) {
         this.joinedInvocationIds.add((completed as { invocationId: string }).invocationId);
       }
@@ -414,7 +420,12 @@ export class ExpertOrchestrator {
     ownerContextId: string,
     signal: AbortSignal,
     permit?: DelegationPermit,
-  ): Promise<readonly unknown[]> {
+  ): Promise<{
+    readonly completed: readonly unknown[];
+    readonly pendingInvocationIds: readonly string[];
+    readonly wakeReason?: "steer" | undefined;
+    readonly steer?: { readonly requestId: string; readonly content: string } | undefined;
+  }> {
     const agents = (await this.options.store.listAgents(this.options.executionId)).filter(
       (agent) => agent.ownerContextId === ownerContextId,
     );
@@ -428,13 +439,22 @@ export class ExpertOrchestrator {
       )
       .filter((invocation) => !this.joinedInvocationIds.has(invocation.invocationId))
       .map((invocation) => invocation.invocationId);
-    if (ids.length === 0) return [];
+    if (ids.length === 0) return { completed: [], pendingInvocationIds: [] };
     const result = await this.wait(
       ownerContextId,
       { invocationIds: ids, returnWhen: "all", signal },
       permit,
     );
-    return result.completed;
+    return result;
+  }
+
+  wakeWait(
+    ownerContextId: string,
+    message: { readonly requestId: string; readonly content: string },
+  ): boolean {
+    const waiters = this.steerWaiters.get(ownerContextId);
+    if (waiters === undefined || waiters.size === 0) return false;
+    return [...waiters].some((wake) => wake(message));
   }
 
   async hasOwnedUnjoined(ownerInvocationId: string, ownerContextId: string): Promise<boolean> {
@@ -675,16 +695,21 @@ export class ExpertOrchestrator {
     }
   }
 
-  private async waitForInvocations(request: {
-    readonly invocationIds: readonly string[];
-    readonly returnWhen?: "all" | "any" | undefined;
-    readonly timeoutMs?: number | undefined;
-    readonly signal?: AbortSignal | undefined;
-  }): Promise<{
+  private async waitForInvocations(
+    ownerContextId: string,
+    request: {
+      readonly invocationIds: readonly string[];
+      readonly returnWhen?: "all" | "any" | undefined;
+      readonly timeoutMs?: number | undefined;
+      readonly signal?: AbortSignal | undefined;
+    },
+  ): Promise<{
     readonly returnWhen: "all" | "any";
     readonly timedOut: boolean;
     readonly completed: readonly unknown[];
     readonly pendingInvocationIds: readonly string[];
+    readonly wakeReason?: "steer" | undefined;
+    readonly steer?: { readonly requestId: string; readonly content: string } | undefined;
   }> {
     const returnWhen = request.returnWhen ?? "all";
     const subscription = getExecutionLiveBus(this.options.store).subscribeEvents(
@@ -692,6 +717,20 @@ export class ExpertOrchestrator {
     );
     const iterator = subscription[Symbol.asyncIterator]();
     const deadline = request.timeoutMs === undefined ? undefined : Date.now() + request.timeoutMs;
+    let steering: { readonly requestId: string; readonly content: string } | undefined;
+    let resolveSteer: (() => void) | undefined;
+    const steerSignal = new Promise<void>((resolve) => {
+      resolveSteer = resolve;
+    });
+    const wake = (message: { readonly requestId: string; readonly content: string }) => {
+      if (steering !== undefined) return false;
+      steering = message;
+      resolveSteer?.();
+      return true;
+    };
+    const waiters = this.steerWaiters.get(ownerContextId) ?? new Set();
+    waiters.add(wake);
+    this.steerWaiters.set(ownerContextId, waiters);
     try {
       while (true) {
         if (request.signal?.aborted) throw new Error("wait_experts was cancelled.");
@@ -702,7 +741,9 @@ export class ExpertOrchestrator {
         const conditionMet =
           returnWhen === "all" ? completed.length === invocations.length : completed.length > 0;
         const timedOut = deadline !== undefined && Date.now() >= deadline;
-        if (conditionMet || timedOut) {
+        if (conditionMet || timedOut || steering !== undefined) {
+          waiters.delete(wake);
+          if (waiters.size === 0) this.steerWaiters.delete(ownerContextId);
           return {
             returnWhen,
             timedOut: !conditionMet && timedOut,
@@ -710,11 +751,14 @@ export class ExpertOrchestrator {
             pendingInvocationIds: invocations
               .filter((invocation) => !isTerminalExecutionStatus(invocation.status))
               .map((invocation) => invocation.invocationId),
+            ...(steering === undefined ? {} : { wakeReason: "steer" as const, steer: steering }),
           };
         }
-        await waitForEvent(iterator, deadline, request.signal);
+        await Promise.race([waitForEvent(iterator, deadline, request.signal), steerSignal]);
       }
     } finally {
+      waiters.delete(wake);
+      if (waiters.size === 0) this.steerWaiters.delete(ownerContextId);
       await subscription.close();
     }
   }

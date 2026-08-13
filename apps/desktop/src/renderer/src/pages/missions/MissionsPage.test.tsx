@@ -616,7 +616,7 @@ describe("MissionDetailFragment", () => {
     expect(html).not.toContain("mission-team-inspector");
   });
 
-  it("replaces the send action with an interrupt action while an execution is active", () => {
+  it("keeps steer and queue submission available while an execution is active", () => {
     const mission = missionFixture("expert");
     mission.execution = {
       id: "00000000-0000-4000-8000-000000000010",
@@ -628,7 +628,8 @@ describe("MissionDetailFragment", () => {
     const html = renderToStaticMarkup(<MissionDetailFragment mission={mission} />);
 
     expect(html).toContain('aria-label="Interrupt execution"');
-    expect(html).not.toContain('aria-label="Send message"');
+    expect(html).toContain('aria-label="Send message"');
+    expect(html).toContain('aria-label="Message delivery mode"');
     expect(html).not.toContain("Execution running");
   });
 

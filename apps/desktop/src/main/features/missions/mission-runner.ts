@@ -70,6 +70,8 @@ import {
   isFinalExecutionStatus,
   resolvePragmaAvatarId,
   RuntimeContextWindowUsageSchema,
+  type ExpertSessionEvent,
+  type PromptRequest,
 } from "@pragma/shared";
 
 import {
@@ -78,6 +80,7 @@ import {
   type MissionChatEntry,
   type MissionChatPatch,
   type MissionChatSnapshot,
+  type MissionMessageAcceptance,
   type MissionChatUpdate,
   type MissionChatQuery,
   type MissionContextCompactionResult,
@@ -110,6 +113,41 @@ import type { PragmaProjectStore } from "../projects/pragma-project-store.ts";
 import type { PluginStore } from "../plugins/plugin-store.ts";
 import type { DesktopUsageStore } from "../usage/usage-store.ts";
 
+function readPersistedPromptQueueState(
+  activeExecutionId: string | undefined,
+  prompts: readonly PromptRequest[],
+  events: readonly { readonly type: string; readonly data?: unknown }[],
+): {
+  readonly state: "idle" | "running" | "paused";
+  readonly pendingCount: number;
+  readonly pausedAfterRequestId?: string | undefined;
+} {
+  const pending = prompts.filter(
+    (prompt) =>
+      prompt.mode === "enqueue" && (prompt.status === "queued" || prompt.status === "running"),
+  );
+  const lastControl = [...events]
+    .reverse()
+    .find((event) =>
+      ["prompt.queue-paused", "prompt.queue-resumed", "prompt.queue-cleared"].includes(event.type),
+    );
+  const paused =
+    lastControl?.type === "prompt.queue-paused" &&
+    pending.some((prompt) => prompt.status === "queued");
+  const pausedRequestId = (lastControl?.data as { requestId?: unknown } | undefined)?.requestId;
+  return {
+    state: paused
+      ? "paused"
+      : activeExecutionId !== undefined || pending.length > 0
+        ? "running"
+        : "idle",
+    pendingCount: pending.length,
+    ...(paused && typeof pausedRequestId === "string"
+      ? { pausedAfterRequestId: pausedRequestId }
+      : {}),
+  };
+}
+
 export type MissionSurfaceAudience = "user" | "internal";
 
 export interface MissionChatNotification {
@@ -132,7 +170,8 @@ export interface MissionRunner {
     readonly content: string;
     readonly requestId: string;
     readonly attachments?: readonly ExpertPromptAttachment[] | undefined;
-  }): Promise<Mission>;
+    readonly mode?: "enqueue" | "steer" | undefined;
+  }): Promise<MissionMessageAcceptance>;
   getChat(input: MissionChatQuery): Promise<MissionChatSnapshot>;
   getTerminalRuntimeFailure(id: string): Promise<
     | {
@@ -159,6 +198,7 @@ export interface MissionRunner {
   subscribeChat(listener: (notification: MissionChatNotification) => void): () => void;
   subscribeWork(listener: (notification: MissionWorkNotification) => void): () => void;
   interrupt(id: string): Promise<Mission>;
+  resumeQueue(id: string): Promise<Mission>;
   getWork(id: string): Promise<MissionWorkSnapshot>;
   getWorkConversation(input: GetMissionWorkConversation): Promise<MissionWorkConversationSnapshot>;
   delete(id: string): Promise<void>;
@@ -201,7 +241,8 @@ async function collectMissionExecutionIds(
 type PendingMissionOperation =
   | { readonly kind: "run"; readonly promise: Promise<Mission> }
   | { readonly kind: "options"; readonly promise: Promise<Mission> }
-  | { readonly kind: "message"; readonly promise: Promise<Mission> }
+  | { readonly kind: "message"; readonly promise: Promise<MissionMessageAcceptance> }
+  | { readonly kind: "resume"; readonly promise: Promise<Mission> }
   | { readonly kind: "compact"; readonly promise: Promise<MissionContextCompactionResult> }
   | { readonly kind: "interrupt"; readonly promise: Promise<Mission> }
   | { readonly kind: "delete"; readonly promise: Promise<void> };
@@ -619,6 +660,73 @@ export function createMissionRunner(options: {
     }
   };
 
+  async function attachNextSessionTurn(
+    id: string,
+    audience: MissionSurfaceAudience,
+  ): Promise<void> {
+    const session = sessions.get(id);
+    if (session === undefined) return;
+    while (true) {
+      const [mission, state, queue] = await Promise.all([
+        options.missions.get(id),
+        session.getState(),
+        session.getPromptQueue(),
+      ]);
+      let nextPrompt = queue.find(
+        (prompt) =>
+          prompt.mode === "enqueue" &&
+          prompt.status === "running" &&
+          prompt.executionId === state.activeExecutionId,
+      );
+      if (nextPrompt === undefined && state.activeExecutionId === undefined) {
+        const queuedPrompt = queue.find((prompt) => prompt.status === "queued");
+        if (queuedPrompt !== undefined) {
+          const queueState = await session.getPromptQueueState();
+          if (queueState.state === "paused") break;
+        } else {
+          const projectedIndex = queue.findIndex(
+            (prompt) => prompt.executionId === mission.execution?.id,
+          );
+          if (projectedIndex >= 0) {
+            nextPrompt = queue
+              .slice(projectedIndex + 1)
+              .find((prompt) => prompt.mode === "enqueue" && isFinalExecutionStatus(prompt.status));
+          }
+        }
+      }
+      if (nextPrompt !== undefined) {
+        const turn = (await session.listTurns()).find(
+          (candidate) => candidate.executionId === nextPrompt.executionId,
+        );
+        if (turn !== undefined) {
+          const startedAt =
+            nextPrompt.status === "running" ? nextPrompt.updatedAt : nextPrompt.createdAt;
+          await options.missions.updateExecution(id, {
+            id: turn.executionId,
+            inputMessageId: nextPrompt.requestId,
+            sessionId: session.sessionId,
+            status: "running",
+            startedAt,
+          });
+          trackExecution({
+            mission,
+            handle: turn,
+            executorMetadata: await getExecutorMetadataOrFallback(mission, "live"),
+            startedAt,
+            inputMessageId: nextPrompt.requestId,
+            sessionId: session.sessionId,
+            onFinished: async () =>
+              await waitForExpertTurnSettlement(session, nextPrompt.requestId),
+          });
+        }
+        break;
+      }
+      if (!queue.some((prompt) => prompt.status === "queued")) break;
+      await new Promise<void>((resolve) => setTimeout(resolve, 25));
+    }
+    invalidateChat(id, audience);
+  }
+
   const forgetActive = async (
     id: string,
     executionId: string,
@@ -634,6 +742,7 @@ export function createMissionRunner(options: {
     liveContextWindows.delete(id);
     invalidateChat(id, audience);
     invalidateWork(id, audience);
+    await attachNextSessionTurn(id, audience);
   };
 
   const compileMissionExecutor = async (
@@ -1201,7 +1310,8 @@ export function createMissionRunner(options: {
     readonly content: string;
     readonly requestId: string;
     readonly attachments?: readonly ExpertPromptAttachment[] | undefined;
-  }): Promise<Mission> => {
+    readonly mode?: "enqueue" | "steer" | undefined;
+  }): Promise<MissionMessageAcceptance> => {
     const acceptedAt = performance.now();
     logger.info("mission.message_accepted", "Mission request accepted", {
       missionId: input.id,
@@ -1219,9 +1329,6 @@ export function createMissionRunner(options: {
     }
     if (mission.lifecycleStatus !== "active") {
       throw new Error("Reopen this mission before sending another message.");
-    }
-    if (active.has(mission.id)) {
-      throw new Error("Wait for the current expert turn before sending another message.");
     }
     await notifyMissionActivity(mission);
     const { app, runtimes: baseRuntimes } = await executionContext(mission);
@@ -1340,8 +1447,11 @@ export function createMissionRunner(options: {
     }
     const promptAttachments = userMessage.attachments ?? [];
     phaseStartedAt = performance.now();
+    const requestedMode = input.mode ?? "enqueue";
     const turn = await session.prompt(input.content, {
       requestId: input.requestId,
+      mode: requestedMode,
+      ...(requestedMode === "steer" ? { steerFallback: "enqueue" as const } : {}),
       ...(promptAttachments.length === 0 ? {} : { attachments: promptAttachments }),
       ...(promptModelSelection === undefined ? {} : { modelSelection: promptModelSelection }),
     });
@@ -1354,24 +1464,47 @@ export function createMissionRunner(options: {
       createdAt: startedAt,
     });
     await notifyExecutionLinked(mission, turn.executionId);
-    const running = await options.missions.updateExecution(mission.id, {
-      id: turn.executionId,
-      inputMessageId: input.requestId,
-      sessionId: session.sessionId,
-      status: "running",
-      startedAt,
-    });
-    trackExecution({
-      mission,
-      handle: turn,
-      executorMetadata,
-      startedAt,
-      inputMessageId: input.requestId,
-      sessionId: session.sessionId,
-      acceptedAt,
-      onFinished: async () => await waitForExpertTurnSettlement(session, turn.requestId),
-    });
-    return running;
+    if (turn.effectiveMode === "steer") {
+      invalidateChat(mission.id, missionSurfaceAudience(mission));
+      return {
+        mission: await options.missions.get(mission.id),
+        requestId: input.requestId,
+        requestedMode,
+        effectiveMode: "steer",
+      };
+    }
+    const hasCurrent = active.has(mission.id);
+    const queuePaused = (await session.getPromptQueueState()).state === "paused";
+    const running =
+      hasCurrent || queuePaused
+        ? await options.missions.get(mission.id)
+        : await options.missions.updateExecution(mission.id, {
+            id: turn.executionId,
+            inputMessageId: input.requestId,
+            sessionId: session.sessionId,
+            status: "running",
+            startedAt,
+          });
+    if (!hasCurrent && !queuePaused) {
+      trackExecution({
+        mission,
+        handle: turn,
+        executorMetadata,
+        startedAt,
+        inputMessageId: input.requestId,
+        sessionId: session.sessionId,
+        acceptedAt,
+        onFinished: async () => await waitForExpertTurnSettlement(session, turn.requestId),
+      });
+    }
+    invalidateChat(mission.id, missionSurfaceAudience(mission));
+    return {
+      mission: running,
+      requestId: input.requestId,
+      requestedMode,
+      effectiveMode: turn.effectiveMode,
+      ...(turn.fallbackReason === undefined ? {} : { fallbackReason: turn.fallbackReason }),
+    };
   };
 
   const updateMissionOptions = async (input: UpdateMissionOptions): Promise<Mission> => {
@@ -1704,10 +1837,72 @@ export function createMissionRunner(options: {
         executionId: latestMission.execution?.id,
       });
     }
+    const session = sessions.get(mission.id);
+    const persistedSession =
+      session === undefined && latestMission.execution?.sessionId !== undefined
+        ? await expertSessionStore.get(latestMission.execution.sessionId)
+        : undefined;
+    let promptQueue: readonly PromptRequest[] = [];
+    let queueState: {
+      readonly state: "idle" | "running" | "paused";
+      readonly pendingCount: number;
+      readonly pausedAfterRequestId?: string | undefined;
+    } = { state: "idle", pendingCount: 0 };
+    let sessionEvents: readonly (ExpertSessionEvent | ExecutionEvent)[] = [];
+    if (session !== undefined) {
+      [promptQueue, queueState, sessionEvents] = await Promise.all([
+        session.getPromptQueue(),
+        session.getPromptQueueState(),
+        (async () => {
+          const events = [];
+          let after: { readonly offset: number } | undefined;
+          do {
+            const page = await session.listEvents({ limit: 1_000, after });
+            events.push(...page.items);
+            after = page.nextCursor;
+          } while (after !== undefined);
+          return events;
+        })(),
+      ]);
+    } else if (persistedSession !== undefined) {
+      [promptQueue, sessionEvents] = await Promise.all([
+        expertSessionStore.listPrompts(persistedSession.sessionId),
+        expertSessionStore.listEvents(persistedSession.sessionId),
+      ]);
+      queueState = readPersistedPromptQueueState(
+        persistedSession.activeExecutionId,
+        promptQueue,
+        sessionEvents,
+      );
+    }
+    const promptByRequestId = new Map(promptQueue.map((prompt) => [prompt.requestId, prompt]));
+    const steerFallbackByRequestId = new Map<string, string>();
+    for (const event of sessionEvents) {
+      if (event.type !== "prompt.steer-fallback") continue;
+      const data = event.data as { requestId?: unknown; reason?: unknown };
+      if (typeof data.requestId === "string" && typeof data.reason === "string") {
+        steerFallbackByRequestId.set(data.requestId, data.reason);
+      }
+    }
+    const entriesWithDelivery = presentedEntries.map((entry) => {
+      if (entry.kind !== "user") return entry;
+      const prompt = promptByRequestId.get(entry.id);
+      if (prompt === undefined) return entry;
+      const fallbackReason = steerFallbackByRequestId.get(entry.id);
+      return {
+        ...entry,
+        delivery: {
+          requestedMode: fallbackReason === undefined ? prompt.mode : "steer",
+          effectiveMode: prompt.mode,
+          status: prompt.status,
+          ...(fallbackReason === undefined ? {} : { fallbackReason }),
+        },
+      };
+    });
     return {
       missionId: mission.id,
       revision,
-      entries: presentedEntries,
+      entries: entriesWithDelivery,
       page: {
         ...(timeline.oldestSequence === undefined
           ? {}
@@ -1720,6 +1915,7 @@ export function createMissionRunner(options: {
           : { nextBeforeSequence: timeline.nextBeforeSequence }),
       },
       pendingInteractions,
+      queue: queueState,
       ...(contextWindow === undefined ? {} : { contextWindow }),
       ...(uniqueSyncIssues.length === 0 ? {} : { syncIssues: uniqueSyncIssues }),
       ...(latestMission.execution === undefined
@@ -1741,6 +1937,13 @@ export function createMissionRunner(options: {
 
   const interruptMission = async (id: string): Promise<Mission> => {
     const mission = await options.missions.get(id);
+    const session = sessions.get(id);
+    if (session !== undefined) {
+      await session.cancelPromptQueue("Stopped and cleared by user.");
+      await active.get(id)?.settlement.catch(() => undefined);
+      invalidateChat(id, missionSurfaceAudience(mission));
+      return await options.missions.get(id);
+    }
     const current = active.get(id);
     if (current === undefined || current.handle.executionId !== mission.execution?.id) {
       if (
@@ -1753,6 +1956,31 @@ export function createMissionRunner(options: {
     }
     await current.handle.cancel("Interrupted by user.");
     await current.settlement;
+    return await options.missions.get(id);
+  };
+
+  const resumeMissionQueue = async (id: string): Promise<Mission> => {
+    const mission = await options.missions.get(id);
+    let session = sessions.get(id);
+    if (session === undefined) {
+      const sessionId = mission.execution?.sessionId;
+      if (sessionId === undefined) throw new Error("This Mission has no prompt queue to resume.");
+      const rootContext = await readMissionRootContext(mission);
+      const { app, runtimes: baseRuntimes } = await executionContext(mission);
+      const compiled = await compileMissionExecutor(
+        mission,
+        withMissionRuntimeBinding(baseRuntimes, rootContext),
+      );
+      if ("kind" in compiled.value && compiled.value.kind === "flow") {
+        throw new Error("Flow missions do not use a prompt queue.");
+      }
+      session = await resumeMissionSession(mission, compiled, app, sessionId);
+      sessions.set(id, session);
+      rememberSessionCompilation(id, await compilationIdentity(mission), compiled);
+    }
+    await session.resumePromptQueue();
+    await attachNextSessionTurn(id, missionSurfaceAudience(mission));
+    invalidateChat(id, missionSurfaceAudience(mission));
     return await options.missions.get(id);
   };
 
@@ -2003,6 +2231,12 @@ export function createMissionRunner(options: {
       const sending = sendMissionMessage(input);
       trackOperation(input.id, { kind: "message", promise: sending });
       return await sending;
+    },
+    async resumeQueue(id) {
+      if (pendingOperations.has(id)) throw new MissionOperationError();
+      const resuming = resumeMissionQueue(id);
+      trackOperation(id, { kind: "resume", promise: resuming });
+      return await resuming;
     },
     async getChat(input) {
       return await getChatSnapshot(input);

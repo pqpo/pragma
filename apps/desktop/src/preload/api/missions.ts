@@ -20,6 +20,7 @@ import {
   MissionHumanInteractionSchema,
   MissionModelOptionsRequestSchema,
   MissionModelOptionsSchema,
+  MissionMessageAcceptanceSchema,
   MissionSchema,
   MissionSummarySchema,
   MissionUpdateSchema,
@@ -139,7 +140,7 @@ export const missionsApi = {
   runMission: async (id) =>
     MissionSchema.parse(await invokeMutation("missions:run", MissionActionSchema.parse({ id }))),
   sendMissionMessage: async (input) =>
-    MissionSchema.parse(
+    MissionMessageAcceptanceSchema.parse(
       await invokeMutation("missions:message:send", SendMissionMessageSchema.parse(input)),
     ),
   getMissionChat: async (input) =>
@@ -162,6 +163,10 @@ export const missionsApi = {
   interruptMission: async (id) =>
     MissionSchema.parse(
       await invokeMutation("missions:interrupt", MissionActionSchema.parse({ id })),
+    ),
+  resumeMissionQueue: async (id) =>
+    MissionSchema.parse(
+      await invokeMutation("missions:queue:resume", MissionActionSchema.parse({ id })),
     ),
   getMissionWork: async (id) =>
     MissionWorkSnapshotSchema.parse(
@@ -229,6 +234,7 @@ export const missionsApi = {
   | "compactMissionContext"
   | "subscribeMissionChat"
   | "interruptMission"
+  | "resumeMissionQueue"
   | "getMissionWork"
   | "getMissionWorkConversation"
   | "subscribeMissionWork"

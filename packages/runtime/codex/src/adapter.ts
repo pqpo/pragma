@@ -27,6 +27,7 @@ import {
   mapCodexNotificationToRuntimeEvent,
   readCodexContextWindow,
   startCodexTurn,
+  steerCodexTurn,
   type CodexNativeSession,
   type CodexRuntimeSessionState,
 } from "./session.ts";
@@ -106,9 +107,7 @@ export function createCodexRuntime(options: CodexRuntimeAdapterOptions = {}): Ru
       compactionModes: ["manual", "events"],
     }),
     cancellation: implemented(),
-    steering: runtimeFeature.unsupported(
-      "Codex app-server exposes no safe active-turn steering API.",
-    ),
+    steering: implemented(),
     close: implemented(),
     cleanup: implemented(),
   });
@@ -357,6 +356,7 @@ export function createCodexRuntime(options: CodexRuntimeAdapterOptions = {}): Ru
       async collectUsage(session, ctx) {
         return await collectCodexUsage(session, ctx.startedAt, ctx.usage);
       },
+      steerTurn: steerCodexTurn,
       readContextWindow: readCodexContextWindow,
       compactContext: compactCodexContextWindow,
       async cancelTurn(session) {

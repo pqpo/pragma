@@ -63,11 +63,11 @@ export function createDesktopPragmaAgentTaskPort(options: {
     },
     async sendMessage(input) {
       return toTask(
-        await options.runner.sendMessage({
+        (await options.runner.sendMessage({
           id: input.id,
           content: input.content,
           requestId: deterministicUuid(input.operationId),
-        }),
+        })).mission,
       );
     },
     async listWorkItems(id) {

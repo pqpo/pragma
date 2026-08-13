@@ -173,6 +173,20 @@ export class CodexAppServerClient {
     await this.request("turn/interrupt", { threadId });
   }
 
+  async steerTurn(options: {
+    readonly threadId: string;
+    readonly expectedTurnId: string;
+    readonly requestId: string;
+    readonly input: readonly CodexUserInput[];
+  }): Promise<void> {
+    await this.request("turn/steer", {
+      threadId: options.threadId,
+      expectedTurnId: options.expectedTurnId,
+      clientUserMessageId: options.requestId,
+      input: options.input,
+    });
+  }
+
   async compactThread(threadId: string): Promise<void> {
     await this.request("thread/compact/start", { threadId });
   }

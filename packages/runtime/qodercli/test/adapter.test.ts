@@ -75,7 +75,7 @@ describe("Qoder CLI Runtime adapter", () => {
         supportsResume: true,
         supportsCancel: true,
         supportsClose: true,
-        supportsSteer: false,
+        supportsSteer: true,
       },
     });
   });

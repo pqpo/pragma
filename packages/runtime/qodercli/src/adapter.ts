@@ -28,6 +28,7 @@ import {
   listQoderMessages,
   mapQoderEvent,
   readQoderContextWindow,
+  steerQoderTurn,
   startQoderTurn,
   type QoderNativeSession,
 } from "./session.ts";
@@ -88,7 +89,7 @@ export function createQoderCliRuntime(options: QoderCliRuntimeAdapterOptions = {
       compactionModes: ["manual", "events"],
     }),
     cancellation: implemented(),
-    steering: runtimeFeature.unsupported("Qoder CLI SDK exposes no safe active-turn steering API."),
+    steering: implemented(),
     close: implemented(),
     cleanup: implemented(),
   });
@@ -246,6 +247,7 @@ export function createQoderCliRuntime(options: QoderCliRuntimeAdapterOptions = {
       readContextWindow: readQoderContextWindow,
       compactContext: compactQoderContextWindow,
       cancelTurn: cancelQoderTurn,
+      steerTurn: steerQoderTurn,
       async closeSession(session) {
         await closeQoderSession(session);
       },

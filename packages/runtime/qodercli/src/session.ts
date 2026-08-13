@@ -29,6 +29,7 @@ import {
   type SDKMessage,
   type SDKResultMessage,
   type SDKResultSuccess,
+  type SDKUserMessage,
 } from "@qoder-ai/qoder-agent-sdk";
 
 import { resolveQoderContextWindow } from "./models.ts";
@@ -278,6 +279,26 @@ export async function compactQoderContextWindow(
 
 export async function cancelQoderTurn(session: QoderNativeSession): Promise<void> {
   await session.activeQuery?.interrupt().catch(() => undefined);
+}
+
+export async function steerQoderTurn(
+  session: QoderNativeSession,
+  request: { readonly requestId: string; readonly content: string },
+): Promise<void> {
+  const query = session.activeQuery;
+  if (query === undefined) throw new Error("Qoder has no active Query to steer.");
+  const message: SDKUserMessage = {
+    type: "user",
+    message: { role: "user", content: [{ type: "text", text: request.content }] },
+    parent_tool_use_id: null,
+    priority: "now",
+    uuid: request.requestId,
+  };
+  await query.streamInput(
+    (async function* () {
+      yield message;
+    })(),
+  );
 }
 
 export async function closeQoderSession(session: QoderNativeSession): Promise<void> {

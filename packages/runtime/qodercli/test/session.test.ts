@@ -5,6 +5,7 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 import {
   consumeQoderStartupMessages,
   startQoderTurn,
+  steerQoderTurn,
   type QoderNativeEvent,
   type QoderNativeSession,
 } from "../src/session.ts";
@@ -77,6 +78,31 @@ describe("Qoder startup messages", () => {
 
     expect(consumeQoderStartupMessages(session)).toEqual([]);
     expect(session.messages).toEqual([]);
+  });
+
+  it("injects an immediate user message into the active query", async () => {
+    const session = createSession();
+    let injected: AsyncIterable<unknown> | undefined;
+    const streamInput = vi.fn(async (messages: AsyncIterable<unknown>) => {
+      injected = messages;
+    });
+    session.activeQuery = { streamInput } as unknown as QoderNativeSession["activeQuery"];
+
+    await steerQoderTurn(session, { requestId: "request-1", content: "new direction" });
+
+    expect(streamInput).toHaveBeenCalledOnce();
+    const messages = [];
+    if (injected === undefined) throw new Error("No steer input was injected.");
+    for await (const message of injected) messages.push(message);
+    expect(messages).toEqual([
+      {
+        type: "user",
+        message: { role: "user", content: [{ type: "text", text: "new direction" }] },
+        parent_tool_use_id: null,
+        priority: "now",
+        uuid: "request-1",
+      },
+    ]);
   });
 });
 

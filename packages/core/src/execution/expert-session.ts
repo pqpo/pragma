@@ -99,12 +99,22 @@ export interface PromptOptions {
   readonly mode?: PromptMode | undefined;
   readonly modelSelection?: RuntimeModelSelection | undefined;
   readonly attachments?: readonly ExpertPromptAttachment[] | undefined;
+  readonly steerFallback?: "enqueue" | undefined;
 }
 
 export interface ExpertTurn extends MutableExecution {
   readonly requestId: string;
+  readonly requestedMode: PromptMode;
+  readonly effectiveMode: PromptMode;
+  readonly fallbackReason?: string | undefined;
   readonly result: Promise<unknown>;
   readonly usage: Promise<AgentMessageUsage | undefined>;
+}
+
+export interface PromptQueueState {
+  readonly state: "idle" | "running" | "paused";
+  readonly pendingCount: number;
+  readonly pausedAfterRequestId?: string | undefined;
 }
 
 export class RuntimeContextCompactionNotNeededError extends Error {
@@ -136,6 +146,9 @@ export interface ExpertSession {
   canCompactRootContext(): Promise<boolean | undefined>;
   compactRootContext(): Promise<RuntimeContextWindowUsage | undefined>;
   getPromptQueue(): Promise<readonly PromptRequest[]>;
+  getPromptQueueState(): Promise<PromptQueueState>;
+  resumePromptQueue(): Promise<void>;
+  cancelPromptQueue(reason?: string): Promise<void>;
 }
 
 export interface SessionEventCursor {
@@ -537,14 +550,44 @@ class ExpertSessionImpl implements ExpertSession {
 
     if (mode === "steer") {
       if (options.modelSelection !== undefined) {
-        throw new Error("A steer request cannot change the active Runtime model selection.");
+        const error = new Error(
+          "A steer request cannot change the active Runtime model selection.",
+        );
+        if (options.steerFallback !== "enqueue") throw error;
+        return await this.fallbackToEnqueue(content, requestId, options, error);
       }
       if ((options.attachments?.length ?? 0) > 0) {
-        throw new Error("A steer request cannot add prompt attachments.");
+        const error = new Error("A steer request cannot add prompt attachments.");
+        if (options.steerFallback !== "enqueue") throw error;
+        return await this.fallbackToEnqueue(content, requestId, options, error);
       }
-      return await this.steer(content, requestId);
+      try {
+        return await this.steer(content, requestId);
+      } catch (error) {
+        if (options.steerFallback !== "enqueue") throw error;
+        return await this.fallbackToEnqueue(content, requestId, options, error);
+      }
     }
 
+    return await this.enqueue(content, requestId, options);
+  }
+
+  private async fallbackToEnqueue(
+    content: string,
+    requestId: string,
+    options: PromptOptions,
+    error: unknown,
+  ): Promise<ExpertTurn> {
+    const fallbackReason = readErrorMessage(error);
+    return await this.enqueue(content, requestId, options, fallbackReason);
+  }
+
+  private async enqueue(
+    content: string,
+    requestId: string,
+    options: PromptOptions,
+    fallbackReason?: string,
+  ): Promise<ExpertTurn> {
     const id = randomUUID();
     const now = new Date().toISOString();
     const session = await this.getState();
@@ -574,7 +617,7 @@ class ExpertSessionImpl implements ExpertSession {
       requestId,
       sessionId: this.sessionId,
       content,
-      mode,
+      mode: "enqueue",
       executionId: id,
       status: "queued",
       ...(modelSelection === undefined ? {} : { modelSelection }),
@@ -584,6 +627,18 @@ class ExpertSessionImpl implements ExpertSession {
     const executionId = await this.dependencies.sessions.enqueue({
       execution,
       prompt,
+      ...(fallbackReason === undefined
+        ? {}
+        : {
+            events: [
+              {
+                eventId: `prompt-steer-fallback:${requestId}`,
+                type: "prompt.steer-fallback",
+                data: { requestId, reason: fallbackReason },
+                occurredAt: now,
+              },
+            ],
+          }),
       rootInvocation: {
         invocationId: id,
         rootInvocationId: id,
@@ -596,9 +651,17 @@ class ExpertSessionImpl implements ExpertSession {
         updatedAt: now,
       },
     });
-    this.paused = false;
-    this.startProcessing();
-    return this.createTurn(executionId, requestId);
+    if ((await this.getPromptQueueState()).state !== "paused") {
+      this.paused = false;
+      this.startProcessing();
+    }
+    return this.createTurn(
+      executionId,
+      requestId,
+      options.mode ?? "enqueue",
+      "enqueue",
+      fallbackReason,
+    );
   }
 
   async abort(reason?: string): Promise<void> {
@@ -951,6 +1014,108 @@ class ExpertSessionImpl implements ExpertSession {
     return await this.dependencies.sessions.listPrompts(this.sessionId);
   }
 
+  async getPromptQueueState(): Promise<PromptQueueState> {
+    const [session, prompts, events] = await Promise.all([
+      this.getState(),
+      this.getPromptQueue(),
+      this.dependencies.sessions.listEvents(this.sessionId),
+    ]);
+    const pending = prompts.filter(
+      (prompt) =>
+        prompt.mode === "enqueue" && (prompt.status === "queued" || prompt.status === "running"),
+    );
+    const lastControl = [...events]
+      .reverse()
+      .find((event) =>
+        ["prompt.queue-paused", "prompt.queue-resumed", "prompt.queue-cleared"].includes(
+          event.type,
+        ),
+      );
+    const paused =
+      lastControl?.type === "prompt.queue-paused" &&
+      pending.some((prompt) => prompt.status === "queued");
+    const pausedRequestId = (lastControl?.data as { requestId?: unknown } | undefined)?.requestId;
+    return {
+      state: paused
+        ? "paused"
+        : session.activeExecutionId !== undefined || pending.length > 0
+          ? "running"
+          : "idle",
+      pendingCount: pending.length,
+      ...(paused && typeof pausedRequestId === "string"
+        ? { pausedAfterRequestId: pausedRequestId }
+        : {}),
+    };
+  }
+
+  async resumePromptQueue(): Promise<void> {
+    if ((await this.getPromptQueueState()).state !== "paused") return;
+    await this.dependencies.sessions.appendEvent(this.sessionId, {
+      eventId: `prompt-queue-resumed:${randomUUID()}`,
+      type: "prompt.queue-resumed",
+      data: {},
+    });
+    this.paused = false;
+    this.startProcessing();
+  }
+
+  async cancelPromptQueue(reason?: string): Promise<void> {
+    this.paused = true;
+    const cancellationReason = reason ?? "Prompt queue cleared.";
+    const pending = (await this.getPromptQueue()).filter(
+      (prompt) => prompt.status === "queued" || prompt.status === "running",
+    );
+    await this.dependencies.sessions.transact(this.sessionId, ({ session, prompts }) => ({
+      result: undefined,
+      session: {
+        ...session,
+        queuedRequestIds: [],
+        updatedAt: new Date().toISOString(),
+      },
+      prompts: prompts.map((prompt) =>
+        prompt.status === "queued" || prompt.status === "running"
+          ? {
+              ...prompt,
+              status: "cancelled" as const,
+              error: cancellationReason,
+              updatedAt: new Date().toISOString(),
+            }
+          : prompt,
+      ),
+    }));
+    await this.dependencies.sessions.appendEvent(this.sessionId, {
+      eventId: `prompt-queue-cleared:${randomUUID()}`,
+      type: "prompt.queue-cleared",
+      data: {
+        reason: cancellationReason,
+        requestIds: pending.map((prompt) => prompt.requestId),
+      },
+    });
+    await this.controller?.cancel(cancellationReason);
+    for (const prompt of pending) {
+      const execution = await this.dependencies.executions.get(prompt.executionId);
+      if (execution !== undefined && !isFinal(execution.status)) {
+        await this.dependencies.executions.update(prompt.executionId, {
+          status: "cancelled",
+          error: cancellationReason,
+        });
+        for (const invocation of await this.dependencies.executions.listInvocations(
+          prompt.executionId,
+        )) {
+          if (!isFinal(invocation.status)) {
+            await this.dependencies.executions.putInvocation(prompt.executionId, {
+              ...invocation,
+              status: "cancelled",
+              error: cancellationReason,
+              updatedAt: new Date().toISOString(),
+            });
+          }
+        }
+      }
+    }
+    this.paused = false;
+  }
+
   private async getRootContext(state?: ExpertSessionRecord): Promise<RuntimeContextRecord> {
     const session = state ?? (await this.getState());
     const context = session.contexts[session.rootContextId];
@@ -1006,7 +1171,7 @@ class ExpertSessionImpl implements ExpertSession {
         };
       },
     );
-    if (!claim.execute) return this.createTurn(claim.executionId, requestId);
+    if (!claim.execute) return this.createTurn(claim.executionId, requestId, "steer", "steer");
     try {
       const current = await this.getState();
       if (this.controller !== controller || current.activeExecutionId !== claim.executionId) {
@@ -1018,7 +1183,7 @@ class ExpertSessionImpl implements ExpertSession {
         targetRunId: claim.executionId,
       });
       await this.completeSteer(requestId, "succeeded");
-      return this.createTurn(claim.executionId, requestId);
+      return this.createTurn(claim.executionId, requestId, "steer", "steer");
     } catch (error) {
       await this.completeSteer(
         requestId,
@@ -1075,7 +1240,14 @@ class ExpertSessionImpl implements ExpertSession {
     if (this.paused || this.processing !== undefined) return;
     this.processing = this.processQueue().finally(() => {
       this.processing = undefined;
+      if (!this.paused) void this.restartProcessingIfQueued();
     });
+  }
+
+  private async restartProcessingIfQueued(): Promise<void> {
+    if ((await this.getPromptQueue()).some((prompt) => prompt.status === "queued")) {
+      this.startProcessing();
+    }
   }
 
   private async processQueue(): Promise<void> {
@@ -1083,11 +1255,25 @@ class ExpertSessionImpl implements ExpertSession {
       const prompts = await this.getPromptQueue();
       const next = prompts.find((prompt) => prompt.status === "queued");
       if (next === undefined) return;
-      await this.runPrompt(next).catch(() => undefined);
+      const status = await this.runPrompt(next).catch(() => "failed" as const);
+      if (status === "failed") {
+        const hasQueued = (await this.getPromptQueue()).some(
+          (prompt) => prompt.mode === "enqueue" && prompt.status === "queued",
+        );
+        if (hasQueued) {
+          this.paused = true;
+          await this.dependencies.sessions.appendEvent(this.sessionId, {
+            eventId: `prompt-queue-paused:${next.requestId}`,
+            type: "prompt.queue-paused",
+            data: { requestId: next.requestId, status },
+          });
+        }
+        return;
+      }
     }
   }
 
-  private async runPrompt(prompt: PromptRequest): Promise<void> {
+  private async runPrompt(prompt: PromptRequest): Promise<"succeeded" | "failed" | "cancelled"> {
     const now = new Date().toISOString();
     await this.dependencies.sessions.transact(this.sessionId, ({ session, prompts }) => ({
       result: undefined,
@@ -1225,6 +1411,7 @@ class ExpertSessionImpl implements ExpertSession {
       this.controller = undefined;
     }
     controller.finish();
+    return status;
   }
 
   private async persistRuntimeContext(context: RuntimeContextRecord): Promise<void> {
@@ -1263,7 +1450,13 @@ class ExpertSessionImpl implements ExpertSession {
     };
   }
 
-  private createTurn(executionId: string, requestId: string): ExpertTurn {
+  private createTurn(
+    executionId: string,
+    requestId: string,
+    requestedMode: PromptMode = "enqueue",
+    effectiveMode: PromptMode = requestedMode,
+    fallbackReason?: string,
+  ): ExpertTurn {
     const view = this.createExecutionView(executionId);
     const completion = waitForTerminalExecution(this.dependencies.executions, executionId);
     const result = completion.then(readExecutionResult);
@@ -1276,6 +1469,9 @@ class ExpertSessionImpl implements ExpertSession {
     void usage.catch(() => undefined);
     return Object.assign(view, {
       requestId,
+      requestedMode,
+      effectiveMode,
+      ...(fallbackReason === undefined ? {} : { fallbackReason }),
       result,
       usage,
       cancel: async (reason?: string) => {

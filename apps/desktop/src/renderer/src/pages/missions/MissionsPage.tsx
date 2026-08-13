@@ -80,6 +80,7 @@ import {
   MissionImagePreviewDialog,
 } from "../../components/MissionAttachments.tsx";
 import { MissionModelOverrideControls } from "../../components/MissionModelOverrideControls.tsx";
+import { SelectMenu } from "../../components/SelectMenu.tsx";
 import { MarkdownContent } from "../../components/MarkdownContent.tsx";
 import { MemoryStoreBrowser } from "../../components/MemoryStoreBrowser.tsx";
 import {
@@ -542,19 +543,20 @@ export function MissionsPage(props: {
             onEditExpert={props.onEditExpert}
             error={error}
             onDismissError={() => setError(null)}
-            onSend={async (content, requestId, attachments) => {
+            onSend={async (content, requestId, attachments, mode) => {
               const api = desktopApi();
               if (api === undefined) return;
               try {
-                replaceMission(
-                  await api.sendMissionMessage({
-                    id: selectedMission.id,
-                    content,
-                    requestId,
-                    attachments: [...attachments],
-                  }),
-                );
+                const acceptance = await api.sendMissionMessage({
+                  id: selectedMission.id,
+                  content,
+                  requestId,
+                  attachments: [...attachments],
+                  mode,
+                });
+                replaceMission(acceptance.mission);
                 setError(null);
+                return { effectiveMode: acceptance.effectiveMode };
               } catch (sendError) {
                 setError(errorMessage(sendError));
                 throw sendError;
@@ -1249,7 +1251,8 @@ export function MissionDetailFragment(props: {
     content: string,
     requestId: string,
     attachments: readonly ExpertPromptAttachment[],
-  ) => void | Promise<void>;
+    mode: "enqueue" | "steer",
+  ) => void | Promise<void | { readonly effectiveMode: "enqueue" | "steer" }>;
   readonly onOptionsChange?:
     | ((options: {
         readonly toolPermissionMode: DesktopToolPermissionMode;
@@ -1288,6 +1291,8 @@ export function MissionDetailFragment(props: {
         )
       : "",
   );
+  const [deliveryMode, setDeliveryMode] = useState<"enqueue" | "steer">("enqueue");
+  const [deliveryNotice, setDeliveryNotice] = useState<string>();
   const [attachments, setAttachments] = useState<readonly ExpertPromptAttachment[]>([]);
   const [attachmentPreviews, setAttachmentPreviews] = useState<Readonly<Record<string, string>>>(
     {},
@@ -1911,7 +1916,7 @@ export function MissionDetailFragment(props: {
 
   const send = async () => {
     const content = draft.trim();
-    if (content === "" || executionActive || isFlow) return;
+    if (content === "" || isFlow) return;
     const operationToken = beginClientOperation("sending");
     if (operationToken === undefined) return;
     const requestId = crypto.randomUUID();
@@ -1933,7 +1938,18 @@ export function MissionDetailFragment(props: {
     setAwaitingRequestId(requestId);
     followLatestRef.current = true;
     try {
-      await props.onSend?.(content, requestId, optimistic.attachments);
+      const acceptance = await props.onSend?.(
+        content,
+        requestId,
+        optimistic.attachments,
+        deliveryMode,
+      );
+      setDeliveryMode("enqueue");
+      setDeliveryNotice(
+        acceptance !== undefined && acceptance.effectiveMode !== deliveryMode
+          ? t("steerQueued", { ns: "missions" })
+          : undefined,
+      );
       discardSentDrafts = true;
     } catch {
       const api = desktopApi();
@@ -2589,6 +2605,23 @@ export function MissionDetailFragment(props: {
                   {t("contextCompactionInputDisabled", { ns: "missions" })}
                 </small>
               ) : null}
+              {deliveryNotice === undefined ? null : (
+                <small className="mission-chat-footer-tip" role="status">
+                  {deliveryNotice}
+                </small>
+              )}
+              {chat?.queue?.state === "paused" ? (
+                <small className="mission-chat-footer-tip" role="status">
+                  <span>{t("queuePaused", { ns: "missions" })}</span>{" "}
+                  <button
+                    className="text-button"
+                    type="button"
+                    onClick={() => void desktopApi()?.resumeMissionQueue(props.mission.id)}
+                  >
+                    {t("resumeQueue", { ns: "missions" })}
+                  </button>
+                </small>
+              ) : null}
               {modelResetRequired ? (
                 <small className="mission-chat-footer-tip mission-model-reset-note" role="status">
                   <span>{t("modelConfigurationResetRequired", { ns: "missions" })}</span>
@@ -2651,27 +2684,19 @@ export function MissionDetailFragment(props: {
                         isFlow ||
                         clientOperationBusy ||
                         compactingContext ||
-                        executionActive ||
                         props.mission.lifecycleStatus === "completed"
                       }
                       placeholder={
                         compactingContext
                           ? t("contextCompactionInputDisabled", { ns: "missions" })
-                          : executionActive
-                            ? interruptible
-                              ? t("executorWorking", {
+                          : props.mission.lifecycleStatus === "completed"
+                            ? t("reopenToContinue", { ns: "missions" })
+                            : isFlow
+                              ? t("flowContinues", { ns: "missions" })
+                              : t("messageExecutor", {
                                   ns: "missions",
                                   name: props.mission.executor.name,
                                 })
-                              : t("resumeToManage", { ns: "missions" })
-                            : props.mission.lifecycleStatus === "completed"
-                              ? t("reopenToContinue", { ns: "missions" })
-                              : isFlow
-                                ? t("flowContinues", { ns: "missions" })
-                                : t("messageExecutor", {
-                                    ns: "missions",
-                                    name: props.mission.executor.name,
-                                  })
                       }
                       aria-label={t("messageExecutor", {
                         ns: "missions",
@@ -2688,7 +2713,6 @@ export function MissionDetailFragment(props: {
                           isFlow ||
                           clientOperationBusy ||
                           compactingContext ||
-                          executionActive ||
                           props.mission.lifecycleStatus === "completed"
                         )
                           return;
@@ -2704,13 +2728,30 @@ export function MissionDetailFragment(props: {
                     />
                     <div className="mission-chat-composer-toolbar">
                       <div className="mission-chat-options" aria-label={t("missionOptions")}>
+                        <SelectMenu
+                          ariaLabel={t("deliveryMode", { ns: "missions" })}
+                          align="end"
+                          className="mission-delivery-mode-select"
+                          value={deliveryMode}
+                          disabled={isFlow || clientOperationBusy || compactingContext}
+                          options={[
+                            {
+                              value: "enqueue",
+                              label: t("deliveryEnqueue", { ns: "missions" }),
+                            },
+                            {
+                              value: "steer",
+                              label: t("deliverySteer", { ns: "missions" }),
+                            },
+                          ]}
+                          onChange={setDeliveryMode}
+                        />
                         <MissionAttachmentPicker
                           compact
                           disabled={
                             isFlow ||
                             clientOperationBusy ||
                             compactingContext ||
-                            executionActive ||
                             props.mission.lifecycleStatus === "completed"
                           }
                           onPick={pickAttachments}
@@ -2759,21 +2800,20 @@ export function MissionDetailFragment(props: {
                           >
                             <StopCircle size={19} weight="fill" aria-hidden="true" />
                           </button>
-                        ) : (
-                          <button
-                            type="button"
-                            aria-label={t("send", { ns: "missions" })}
-                            disabled={
-                              isFlow ||
-                              draft.trim() === "" ||
-                              clientOperationBusy ||
-                              props.mission.lifecycleStatus === "completed"
-                            }
-                            onClick={() => void send()}
-                          >
-                            <PaperPlaneTilt size={18} aria-hidden="true" />
-                          </button>
-                        )}
+                        ) : null}
+                        <button
+                          type="button"
+                          aria-label={t("send", { ns: "missions" })}
+                          disabled={
+                            isFlow ||
+                            draft.trim() === "" ||
+                            clientOperationBusy ||
+                            props.mission.lifecycleStatus === "completed"
+                          }
+                          onClick={() => void send()}
+                        >
+                          <PaperPlaneTilt size={18} aria-hidden="true" />
+                        </button>
                       </div>
                     </div>
                   </div>

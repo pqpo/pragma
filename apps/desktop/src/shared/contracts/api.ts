@@ -64,6 +64,7 @@ import type {
   GetWorkflowLayout,
   DeleteWorkflowLayout,
   Mission,
+  MissionMessageAcceptance,
   MissionSummary,
   MissionUpdate,
   MissionExecutorOption,
@@ -469,11 +470,12 @@ export interface PragmaDesktopAPI {
   discardMissionAttachmentDrafts: (input: DiscardMissionAttachmentDrafts) => Promise<void>;
   updateMissionOptions: (input: UpdateMissionOptions) => Promise<Mission>;
   runMission: (id: string) => Promise<Mission>;
-  sendMissionMessage: (input: SendMissionMessage) => Promise<Mission>;
+  sendMissionMessage: (input: SendMissionMessage) => Promise<MissionMessageAcceptance>;
   getMissionChat: (input: GetMissionChat) => Promise<MissionChatSnapshot>;
   compactMissionContext: (id: string) => Promise<MissionContextCompactionResult>;
   subscribeMissionChat: (id: string, listener: (update: MissionChatUpdate) => void) => () => void;
   interruptMission: (id: string) => Promise<Mission>;
+  resumeMissionQueue: (id: string) => Promise<Mission>;
   getMissionWork: (id: string) => Promise<MissionWorkSnapshot>;
   getMissionWorkConversation: (
     input: GetMissionWorkConversation,

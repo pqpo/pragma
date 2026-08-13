@@ -10,10 +10,30 @@ import {
   parseCodexContextWindowUsage,
   readCodexContextWindow,
   startCodexTurn,
+  steerCodexTurn,
   type CodexNativeSession,
 } from "../src/session.ts";
 
 describe("Codex context window", () => {
+  it("steers the currently active app-server turn", async () => {
+    const client = { steerTurn: vi.fn(async () => undefined) } as unknown as CodexAppServerClient;
+    const session = createCodexNativeSession({
+      client,
+      notificationBus: createCodexNotificationBus(),
+      state: { threadId: "thread-1" },
+    });
+    session.activeTurnId = "turn-1";
+
+    await steerCodexTurn(session, { requestId: "request-1", content: "new direction" });
+
+    expect(client.steerTurn).toHaveBeenCalledWith({
+      threadId: "thread-1",
+      expectedTurnId: "turn-1",
+      requestId: "request-1",
+      input: [{ type: "text", text: "new direction", text_elements: [] }],
+    });
+  });
+
   it("reads active context from the latest turn instead of cumulative thread usage", () => {
     expect(
       parseCodexContextWindowUsage({

@@ -2,7 +2,7 @@ import { mkdtemp, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import { z } from "zod";
 
 import {
@@ -58,6 +58,7 @@ interface FakeRuntimeStats {
   sessionModelSelections: Array<RuntimeModelSelection | undefined>;
   turnModelSelections: Array<RuntimeModelSelection | undefined>;
   turnAttachmentPaths: string[][];
+  waitSteers: string[];
   sessionContexts: RuntimeDriverSessionContext[];
 }
 
@@ -71,6 +72,7 @@ function createFakeRuntimeStats(): FakeRuntimeStats {
     sessionModelSelections: [],
     turnModelSelections: [],
     turnAttachmentPaths: [],
+    waitSteers: [],
     sessionContexts: [],
   };
 }
@@ -81,6 +83,7 @@ interface FakeRuntimeOptions {
   readonly concurrentToolNames?: readonly string[];
   readonly concurrentToolNamesByAgent?: Readonly<Record<string, readonly string[]>>;
   readonly delayMs?: number;
+  readonly delayMsByAgent?: Readonly<Record<string, number>>;
   readonly delegationTargets?: Readonly<Record<string, string>>;
   readonly failQuery?: string;
   readonly onSteer?: () => void;
@@ -123,8 +126,9 @@ function createFakeRuntime(options: FakeRuntimeOptions = {}) {
       stats?.turnAttachmentPaths.push(turn.attachments.map((attachment) => attachment.path));
       const executionId = session.context.request.executionContext?.executionId;
       if (stats !== undefined && executionId !== undefined) stats.executionIds.push(executionId);
-      if (options.delayMs !== undefined) {
-        await new Promise<void>((resolve) => setTimeout(resolve, options.delayMs));
+      const delayMs = options.delayMsByAgent?.[session.context.agent.id] ?? options.delayMs;
+      if (delayMs !== undefined) {
+        await new Promise<void>((resolve) => setTimeout(resolve, delayMs));
       }
       if (turn.rawQuery === options.failQuery) {
         if (options.usage !== undefined) turn.stream.writeNative(options.usage);
@@ -155,7 +159,7 @@ function createFakeRuntime(options: FakeRuntimeOptions = {}) {
         spawn !== undefined &&
         wait !== undefined &&
         delegationTarget !== undefined &&
-        !turn.rawQuery.startsWith("[Pragma orchestration continuation]")
+        !turn.rawQuery.startsWith("[Pragma orchestration")
       ) {
         const spawned = await spawn.call(
           {
@@ -169,6 +173,8 @@ function createFakeRuntime(options: FakeRuntimeOptions = {}) {
         const waited = await wait.call({ invocationIds: [invocationId] }, turn.signal, {
           execution: session.context.request.executionContext,
         });
+        const waitSteer = (waited.details as { steer?: { content?: unknown } }).steer?.content;
+        if (stats !== undefined && typeof waitSteer === "string") stats.waitSteers.push(waitSteer);
         const completed = (waited.details as { completed: Array<{ output?: unknown }> }).completed;
         output = `${session.context.agent.id}:${String(completed[0]?.output)}`;
       }
@@ -1526,6 +1532,171 @@ describe("ExpertSession", () => {
     await session.close();
     await teamSession.close();
   }, 15_000);
+
+  it("pauses queued prompts after a failure and resumes from the next item", async () => {
+    const home = await mkdtemp(join(tmpdir(), "pragma-queue-pause-"));
+    const runtime = createFakeRuntime({ failQuery: "fail", delayMs: 10 });
+    const app = createPragma({
+      pragmaHome: home,
+      runtimes: createStaticRuntimeResolver({ runtimes: [runtime], defaultRuntimeId: "fake" }),
+    });
+    const expert = await defineExpert({
+      id: "queue-pause",
+      name: "Queue Pause",
+      description: "Queue Pause",
+      tags: [],
+      scope: "test",
+      workspace: home,
+    });
+    const session = await app.experts.createSession(expert);
+    const failed = await session.prompt("fail", { requestId: "fail" });
+    const next = await session.prompt("next", { requestId: "next" });
+    await expect(failed.result).rejects.toThrow("fake turn failed");
+    await vi.waitFor(async () =>
+      expect((await session.getPromptQueueState()).state).toBe("paused"),
+    );
+    expect(
+      (await session.getPromptQueue()).find((prompt) => prompt.requestId === "next")?.status,
+    ).toBe("queued");
+    await session.resumePromptQueue();
+    await expect(next.result).resolves.toBe("queue-pause:next");
+    expect(await session.getPromptQueueState()).toMatchObject({ state: "idle", pendingCount: 0 });
+    await session.close();
+  });
+
+  it("persists a steer downgrade and preserves attachments when enqueue is the fallback", async () => {
+    const { app, expert } = await fixture(25);
+    const session = await app.experts.createSession(expert);
+    const attachment = {
+      id: "00000000-0000-4000-8000-000000000001",
+      kind: "file" as const,
+      name: "notes.md",
+      path: "/workspace/notes.md",
+    };
+    const turn = await session.prompt("use these notes", {
+      requestId: "attachment-steer",
+      mode: "steer",
+      steerFallback: "enqueue",
+      attachments: [attachment],
+    });
+
+    expect(turn).toMatchObject({
+      requestedMode: "steer",
+      effectiveMode: "enqueue",
+      fallbackReason: "A steer request cannot add prompt attachments.",
+    });
+    await expect(turn.result).resolves.toContain("use these notes");
+    expect(
+      (await session.listEvents({ limit: 1_000 })).items.find(
+        (event) => event.type === "prompt.steer-fallback",
+      ),
+    ).toMatchObject({
+      data: {
+        requestId: "attachment-steer",
+        reason: "A steer request cannot add prompt attachments.",
+      },
+    });
+    await session.close();
+  });
+
+  it("atomically replaces a failed native steer with an enqueued prompt", async () => {
+    const { app, expert } = await fixture(100);
+    const session = await app.experts.createSession(expert);
+    const active = await session.prompt("active", { requestId: "active" });
+    await vi.waitFor(async () =>
+      expect((await session.getState()).activeExecutionId).toBe(active.executionId),
+    );
+
+    const fallback = await session.prompt("redirect", {
+      requestId: "native-steer-fallback",
+      mode: "steer",
+      steerFallback: "enqueue",
+    });
+
+    expect(fallback).toMatchObject({ requestedMode: "steer", effectiveMode: "enqueue" });
+    expect(
+      (await session.getPromptQueue()).filter(
+        (prompt) => prompt.requestId === "native-steer-fallback",
+      ),
+    ).toHaveLength(1);
+    await expect(active.result).resolves.toBe("solo:active");
+    await expect(fallback.result).resolves.toBe("solo:redirect");
+    expect(
+      (await session.listEvents({ limit: 1_000 })).items
+        .filter((event) => ["prompt.steer-fallback", "prompt.enqueued"].includes(event.type))
+        .map((event) => event.type),
+    ).toEqual(expect.arrayContaining(["prompt.steer-fallback", "prompt.enqueued"]));
+    await session.close();
+  });
+
+  it("wakes a coordinator waiting on children, delivers steer, and lets the child continue", async () => {
+    const home = await mkdtemp(join(tmpdir(), "pragma-wait-steer-"));
+    const stats = createFakeRuntimeStats();
+    const app = createPragma({
+      pragmaHome: home,
+      runtimes: createStaticRuntimeResolver({
+        runtimes: [createFakeRuntime({ delayMsByAgent: { member: 1_000 }, stats })],
+        defaultRuntimeId: "fake",
+      }),
+    });
+    const member = await defineExpert({
+      id: "member",
+      name: "Member",
+      description: "Member",
+      tags: [],
+      scope: "test",
+      workspace: home,
+    });
+    const lead = await defineExpert({
+      id: "lead",
+      name: "Lead",
+      description: "Lead",
+      tags: [],
+      scope: "test",
+      workspace: home,
+    });
+    const team = defineExpertTeam({
+      id: "wait-steer-team",
+      coordinator: lead,
+      members: [member],
+      delegation: { allow: { lead: ["member"], member: [] } },
+    });
+    const session = await app.experts.createSession(team);
+    const active = await session.prompt("coordinate", { requestId: "coordinate" });
+    await vi.waitFor(async () => {
+      const tree = await active.getTree();
+      expect(tree.children.some((child) => child.invocation.executorId === "member")).toBe(true);
+    });
+    const steered = await session.prompt("change priorities", {
+      requestId: "wait-steer",
+      mode: "steer",
+    });
+
+    expect(steered).toMatchObject({ requestedMode: "steer", effectiveMode: "steer" });
+    const result = await active.result;
+    await expect(steered.result).resolves.toBe(result);
+    expect(result).toContain("[Pragma orchestration continuation]");
+    expect(stats.waitSteers).toEqual(["change priorities"]);
+    const tree = await active.getTree();
+    expect(tree.children).toHaveLength(1);
+    expect(tree.children[0]?.invocation.status).toBe("succeeded");
+    await session.close();
+  }, 15_000);
+
+  it("clears the active turn and every queued prompt without closing the Session", async () => {
+    const { app, expert } = await fixture(100);
+    const session = await app.experts.createSession(expert);
+    const active = await session.prompt("active", { requestId: "active" });
+    const queued = await session.prompt("queued", { requestId: "queued" });
+    await session.cancelPromptQueue("stop all");
+    await expect(active.result).rejects.toThrow();
+    await expect(queued.result).rejects.toThrow();
+    expect((await queued.getTree()).invocation.status).toBe("cancelled");
+    expect(await session.getPromptQueueState()).toMatchObject({ state: "idle", pendingCount: 0 });
+    const later = await session.prompt("later", { requestId: "later" });
+    await expect(later.result).resolves.toBe("solo:later");
+    await session.close();
+  });
 
   it("gives each spawned team agent a fresh Execution-scoped context", async () => {
     const { home, app, stats } = await trackedFixture();

@@ -58,6 +58,7 @@ export interface CodexNativeSession {
   pendingStartupMessages: readonly ExpertAgentStartupMessage[];
   contextWindowUsage?: RuntimeContextWindowUsage | undefined;
   contextWindowRevision: number;
+  activeTurnId?: string | undefined;
   pendingCompaction?:
     | {
         readonly operationId: string;
@@ -202,7 +203,7 @@ export async function startCodexTurn(
   );
 
   try {
-    await session.client.startTurn({
+    const started = await session.client.startTurn({
       threadId: session.state.threadId,
       model: turn.modelSelection?.model.modelId,
       thinkingLevel: turn.modelSelection?.thinkingLevel,
@@ -211,9 +212,11 @@ export async function startCodexTurn(
         turn.attachments,
       ),
     });
+    session.activeTurnId = readTurnId(started) ?? turn.runId;
     onAcknowledged?.();
     await observer.completed;
   } finally {
+    session.activeTurnId = undefined;
     unsubscribe();
   }
 
@@ -234,6 +237,30 @@ export async function startCodexTurn(
     outputText,
     runtimeSessionId: session.state.threadId,
   };
+}
+
+export async function steerCodexTurn(
+  session: CodexNativeSession,
+  request: { readonly requestId: string; readonly content: string },
+): Promise<void> {
+  const activeTurnId = session.activeTurnId;
+  if (activeTurnId === undefined) throw new Error("Codex has no active native turn to steer.");
+  await session.client.steerTurn({
+    threadId: session.state.threadId,
+    expectedTurnId: activeTurnId,
+    requestId: request.requestId,
+    input: [{ type: "text", text: request.content, text_elements: [] }],
+  });
+}
+
+function readTurnId(value: unknown): string | undefined {
+  if (typeof value !== "object" || value === null) return undefined;
+  const record = value as Record<string, unknown>;
+  if (typeof record["turnId"] === "string") return record["turnId"];
+  const turn = record["turn"];
+  return typeof turn === "object" && turn !== null && typeof (turn as Record<string, unknown>)["id"] === "string"
+    ? ((turn as Record<string, unknown>)["id"] as string)
+    : undefined;
 }
 
 export function mapCodexNotificationToRuntimeEvent(

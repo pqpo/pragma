@@ -1,4 +1,10 @@
 export const missions = {
+  deliveryMode: "消息发送方式",
+  deliveryEnqueue: "排队",
+  deliverySteer: "引导",
+  steerQueued: "当前无法 Steer，消息已转为排队",
+  queuePaused: "队列已在失败消息后暂停。",
+  resumeQueue: "跳过失败项继续",
   title: "任务",
   newMission: "新建任务",
   missionSources: "任务来源",

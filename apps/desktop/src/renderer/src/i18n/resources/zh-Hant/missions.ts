@@ -1,4 +1,10 @@
 export const missions = {
+  deliveryMode: "訊息傳送方式",
+  deliveryEnqueue: "排隊",
+  deliverySteer: "引導",
+  steerQueued: "目前無法 Steer，訊息已轉為排隊",
+  queuePaused: "佇列已在失敗訊息後暫停。",
+  resumeQueue: "略過失敗項並繼續",
   title: "任務",
   newMission: "新增任務",
   missionSources: "任務來源",

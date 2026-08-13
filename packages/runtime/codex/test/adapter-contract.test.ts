@@ -5,13 +5,13 @@ import { createCodexRuntime } from "../src/index.ts";
 describeRuntimeConformance("Codex", { createRuntime: createCodexRuntime });
 
 describe("Codex Runtime contract", () => {
-  it("declares split Session lifecycle capabilities without unsafe steer", () => {
+  it("declares split Session lifecycle capabilities with native steer", () => {
     const runtime = createCodexRuntime();
     expect(runtime.descriptor.capabilities).toMatchObject({
       supportsResume: true,
       supportsCancel: true,
       supportsClose: true,
-      supportsSteer: false,
+      supportsSteer: true,
       supportsContextWindowInspection: true,
       supportsManualCompaction: true,
       supportsContextCompactionEvents: true,

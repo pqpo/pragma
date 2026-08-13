@@ -1524,6 +1524,82 @@ describe("MissionRunner", { timeout: 15_000 }, () => {
     );
   });
 
+  it("projects an already-finished queued turn after the preceding Mission observer settles", async () => {
+    const root = await mkdtemp(join(tmpdir(), "pragma-mission-fast-queued-turn-"));
+    temporaryPaths.push(root);
+    const project = createPragmaProjectStore({ projectsPath: join(root, "projects") });
+    const snapshot = await project.publish({
+      expectedRevision: 0,
+      resources: [runtimeFixture(), expertFixture()],
+    });
+    const missions = createMissionStore({ missionsPath: join(root, "missions") });
+    const mission = await missions.create({
+      workspace: { path: root, basename: "workspace" },
+      goal: "Wait for the queued follow-up",
+      project: { id: snapshot.projectId, revision: snapshot.revision },
+      executor: missionExecutorSnapshot(
+        snapshot.resources.find((resource) => resource.kind === "Expert")!,
+      ),
+    });
+    let finishFirstTurn = (): void => undefined;
+    const firstTurnCanFinish = new Promise<void>((resolve) => {
+      finishFirstTurn = resolve;
+    });
+    const runtime = defineRuntimeTestDriver<never, { id: string }>({
+      descriptor: { id: "fake", kind: "fake", displayName: "Fake" },
+      createSession: () => ({ id: "runtime" }),
+      restoreSession: () => ({ id: "runtime" }),
+      readSession: (session) => ({ runtimeSessionId: session.id }),
+      async startTurn(_session, turn) {
+        if (turn.rawQuery === mission.goal) await firstTurnCanFinish;
+        return { outputText: `answer:${turn.rawQuery}`, runtimeSessionId: "runtime" };
+      },
+      mapEvent: () => ({ events: [] }),
+      closeSession: () => undefined,
+    });
+    const originalUpdateExecution = missions.updateExecution.bind(missions);
+    vi.spyOn(missions, "updateExecution").mockImplementation(async (...args) => {
+      if (args[1].status === "succeeded" && args[1].inputMessageId === mission.initialMessageId) {
+        await new Promise<void>((resolve) => setTimeout(resolve, 100));
+      }
+      return await originalUpdateExecution(...args);
+    });
+    const runner = createMissionRunner({
+      missions,
+      project,
+      capabilityStore: {} as CapabilityStore,
+      capabilityCredentials: {} as CapabilityCredentialStore,
+      capabilitiesPath: join(root, "capabilities"),
+      pragmaHome: join(root, "state"),
+      runtimes: createStaticRuntimeResolver({ runtimes: [runtime], defaultRuntimeId: "fake" }),
+    });
+
+    await runner.run(mission.id);
+    const followupRequestId = "00000000-0000-4000-8000-000000000099";
+    await expect(
+      runner.sendMessage({
+        id: mission.id,
+        content: "Finish immediately",
+        requestId: followupRequestId,
+      }),
+    ).resolves.toMatchObject({ effectiveMode: "enqueue" });
+    finishFirstTurn();
+
+    await vi.waitFor(
+      async () =>
+        expect((await missions.get(mission.id)).execution).toMatchObject({
+          inputMessageId: followupRequestId,
+          status: "succeeded",
+        }),
+      { timeout: settlementTimeoutMs },
+    );
+    await expect(runner.getChat({ id: mission.id, limit: 50 })).resolves.toMatchObject({
+      entries: expect.arrayContaining([
+        expect.objectContaining({ kind: "assistant", content: "answer:Finish immediately" }),
+      ]),
+    });
+  });
+
   it("compiles and runs the resource pinned by a Mission", async () => {
     const root = await mkdtemp(join(tmpdir(), "pragma-mission-runner-"));
     temporaryPaths.push(root);

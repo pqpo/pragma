@@ -143,6 +143,7 @@ import {
   MissionChatEntrySchema,
   MissionChatPatchSchema,
   MissionChatSnapshotSchema,
+  MissionMessageAcceptanceSchema,
   MissionChatUpdateSchema,
   MissionContextCompactionResultSchema,
   MissionContextWindowStateSchema,
@@ -527,7 +528,8 @@ export type MissionWorkConversationSnapshot = z.infer<typeof MissionWorkConversa
 export type MissionWorkUpdate = z.infer<typeof MissionWorkUpdateSchema>;
 export type GetMissionChat = z.input<typeof GetMissionChatSchema>;
 export type MissionChatQuery = z.output<typeof GetMissionChatSchema>;
-export type SendMissionMessage = z.infer<typeof SendMissionMessageSchema>;
+export type SendMissionMessage = z.input<typeof SendMissionMessageSchema>;
+export type MissionMessageAcceptance = z.infer<typeof MissionMessageAcceptanceSchema>;
 export type MissionHumanInteraction = z.infer<typeof MissionHumanInteractionSchema>;
 export type MissionChatEntry = z.infer<typeof MissionChatEntrySchema>;
 export type MissionChatSnapshot = z.infer<typeof MissionChatSnapshotSchema>;
