@@ -9,7 +9,9 @@ import type {
 } from "@pragma/core";
 import {
   createMcpToolRegistryPool,
+  defineRuntimeFeatures,
   defineRuntimeDriver,
+  runtimeFeature,
   type PragmaLogger,
   type RuntimeSessionPersistenceSpec,
 } from "@pragma/core";
@@ -46,12 +48,11 @@ const CODEX_LOCAL_RUNTIME_DESCRIPTOR = {
   capabilities: {
     targets: ["agent"],
     executionLocations: ["local"],
-    supportsAbort: true,
-    supportsMcp: true,
-    supportsStreaming: true,
-    supportsContextCompactionEvents: true,
   },
 };
+
+const CODEX_EVIDENCE_PENDING =
+  "Implemented in the adapter; an executed Runtime probe evidence bundle is not recorded yet.";
 
 const DEFAULT_CODEX_CLIENT_INFO = {
   name: "pragma_codex_runtime",
@@ -61,8 +62,6 @@ const DEFAULT_CODEX_CLIENT_INFO = {
 
 interface CodexDriverSession extends CodexNativeSession {
   readonly logger: PragmaLogger;
-  readonly mcpToolRegistryLease: McpToolRegistryLease;
-  readonly expertToolsMcpRegistration: CodexExpertToolsMcpSessionRegistration;
 }
 
 export function createCodexRuntime(options: CodexRuntimeAdapterOptions = {}): RuntimeAdapter {
@@ -80,10 +79,44 @@ export function createCodexRuntime(options: CodexRuntimeAdapterOptions = {}): Ru
     },
   };
   const listModels = options.listModels ?? createCodexModelDiscovery(options);
+  const implemented = () => runtimeFeature.degraded(CODEX_EVIDENCE_PENDING);
+  const features = defineRuntimeFeatures({
+    availability: implemented(),
+    authentication: implemented(),
+    modelDiscovery: implemented(),
+    modelSelection: implemented(),
+    thinking: implemented(),
+    freshSession: implemented(),
+    resume: implemented(),
+    systemPrompt: implemented(),
+    startupMessages: implemented(),
+    textStreaming: implemented(),
+    reasoningStreaming: implemented(),
+    nativeToolLifecycle: implemented(),
+    mcp: implemented(),
+    permissions: implemented(),
+    userInteraction: implemented(),
+    skills: implemented(),
+    attachmentImage: implemented(),
+    attachmentFile: implemented(),
+    attachmentDirectory: implemented(),
+    usage: implemented(),
+    contextWindow: implemented(),
+    compaction: runtimeFeature.degraded(CODEX_EVIDENCE_PENDING, {
+      compactionModes: ["manual", "events"],
+    }),
+    cancellation: implemented(),
+    steering: runtimeFeature.unsupported(
+      "Codex app-server exposes no safe active-turn steering API.",
+    ),
+    close: implemented(),
+    cleanup: implemented(),
+  });
 
   return defineRuntimeDriver(
     {
       descriptor,
+      features,
       canUse: createCodexRuntimeCanUse(options),
       listModels,
       outputRetryLimit: options.outputRetryLimit,
@@ -140,7 +173,12 @@ export function createCodexRuntime(options: CodexRuntimeAdapterOptions = {}): Ru
           ctx.logger,
           "mcp_tool_registry",
           sessionStartedAt,
-          async () => await mcpToolRegistries.acquire(ctx.agent.mcp),
+          async () =>
+            await ctx.resources.acquire(
+              "codex.mcp-registry",
+              async () => await mcpToolRegistries.acquire(ctx.agent.mcp),
+              async (lease) => await lease.release(),
+            ),
         );
         let mcpToolRegistry: McpToolRegistry | undefined;
         let mcpToolRegistryLease: McpToolRegistryLease | undefined;
@@ -164,20 +202,28 @@ export function createCodexRuntime(options: CodexRuntimeAdapterOptions = {}): Ru
                   async () =>
                     await nativeSessionFileExists(join(codex.home, "sessions"), state.threadId),
                 ),
-            timedCodexPhase(ctx.logger, "mcp_tool_registration", sessionStartedAt, async () =>
-              registerCodexExpertToolsMcpSession({
-                agent: ctx.agent,
-                getContext: () => ctx.lifecycle.currentContext,
-                humanInteractionHandler: ctx.request.humanInteractionHandler,
-                logger: ctx.logger,
-                mcpTools: mcpToolRegistry!.tools,
-                state: toolRuntimeState,
-                executionContext: ctx.request.executionContext,
-              }),
+            timedCodexPhase(
+              ctx.logger,
+              "mcp_tool_registration",
+              sessionStartedAt,
+              async () =>
+                await ctx.resources.acquire(
+                  "codex.mcp-registration",
+                  async () =>
+                    await registerCodexExpertToolsMcpSession({
+                      agent: ctx.agent,
+                      getContext: () => ctx.lifecycle.currentContext,
+                      humanInteractionHandler: ctx.request.humanInteractionHandler,
+                      logger: ctx.logger,
+                      mcpTools: mcpToolRegistry!.tools,
+                      state: toolRuntimeState,
+                      executionContext: ctx.request.executionContext,
+                    }),
+                  async (registration) => await registration.dispose(),
+                ),
             ),
           ]);
           if (!restoreExists) {
-            await registration.dispose();
             throw new Error(`Codex runtime session file was not found: ${state.threadId}.`);
           }
           expertToolsMcpRegistration = registration;
@@ -257,24 +303,10 @@ export function createCodexRuntime(options: CodexRuntimeAdapterOptions = {}): Ru
                 : [],
             }),
             logger: ctx.logger,
-            mcpToolRegistryLease,
-            expertToolsMcpRegistration,
           };
         } catch (error) {
-          if (mcpToolRegistryLease === undefined) {
-            const registry = await Promise.allSettled([registryLeasePromise]);
-            if (registry[0]?.status === "fulfilled") {
-              mcpToolRegistryLease = registry[0].value;
-              mcpToolRegistry = registry[0].value.registry;
-            }
-          }
           try {
-            await disposeCodexRuntimeResources(
-              client,
-              expertToolsMcpRegistration,
-              mcpToolRegistryLease,
-              ctx.logger,
-            );
+            await client?.close();
           } catch (cleanupError) {
             throw new AggregateError(
               [error, cleanupError],
@@ -332,13 +364,8 @@ export function createCodexRuntime(options: CodexRuntimeAdapterOptions = {}): Ru
           await session.client.interruptTurn(session.state.threadId).catch(() => undefined);
         }
       },
-      async closeSession(session, ctx) {
-        await disposeCodexRuntimeResources(
-          session.client,
-          session.expertToolsMcpRegistration,
-          session.mcpToolRegistryLease,
-          ctx.logger,
-        );
+      async closeSession(session) {
+        await session.client.close();
       },
     },
     {
@@ -420,38 +447,6 @@ function createCodexRuntimeCanUse(
       ...(options.executablePath === undefined ? {} : { executablePath: options.executablePath }),
       ...(options.env === undefined ? {} : { env: options.env }),
     });
-}
-
-async function disposeCodexRuntimeResources(
-  client: CodexAppServerClient | undefined,
-  expertToolsMcpRegistration: CodexExpertToolsMcpSessionRegistration | undefined,
-  mcpToolRegistryLease: McpToolRegistryLease | undefined,
-  logger: PragmaLogger,
-): Promise<void> {
-  const results = await Promise.allSettled([
-    Promise.resolve().then(() => client?.close()),
-    expertToolsMcpRegistration?.dispose() ?? Promise.resolve(),
-    mcpToolRegistryLease?.release() ?? Promise.resolve(),
-  ]);
-  const errors = results.flatMap((result) =>
-    result.status === "rejected" ? [result.reason as unknown] : [],
-  );
-
-  if (errors.length === 0) {
-    return;
-  }
-
-  logger.error(
-    "runtime.codex_cleanup_failed",
-    "Codex runtime cleanup failed",
-    new AggregateError(errors),
-  );
-
-  if (errors.length === 1) {
-    throw errors[0];
-  }
-
-  throw new AggregateError(errors, "Codex runtime session cleanup failed.");
 }
 
 async function startOrResumeThread({

@@ -292,6 +292,9 @@ importers:
       '@pragma/runtime-pi':
         specifier: workspace:*
         version: link:../packages/runtime/pi
+      '@pragma/runtime-qodercli':
+        specifier: workspace:*
+        version: link:../packages/runtime/qodercli
       cac:
         specifier: ^7.0.0
         version: 7.0.0

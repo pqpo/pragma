@@ -1,5 +1,6 @@
 export { AgentMessageSchema, type AgentMessage, type AgentMessageUsage } from "@pragma/shared";
 export type { ExecutionEvent, ExecutionOutputItem } from "@pragma/shared";
+export { ExpertAgentStreamEventSchema } from "@pragma/shared";
 export {
   HumanInteractionRecordSchema,
   type HumanInteractionRecord,
@@ -60,8 +61,13 @@ export * from "./plugins/plugin-loader.ts";
 export * from "./runtime/agent-lifecycle.ts";
 export * from "./runtime/async-push-queue.ts";
 export * from "./runtime/driver.ts";
+export * from "./runtime/features.ts";
 export * from "./runtime/output.ts";
 export * from "./runtime/process-probe.ts";
+export * from "./runtime/process-supervisor.ts";
+export * from "./runtime/probe-evidence.ts";
+export * from "./runtime/resource-scope.ts";
+export * from "./runtime/conformance.ts";
 export * from "./runtime/run-context.ts";
 export * from "./runtime/runtime-adapter.ts";
 export * from "./runtime/runtime-event-emitter.ts";

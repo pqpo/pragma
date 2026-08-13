@@ -44,9 +44,20 @@ export function createExampleModelsConfig(env: NodeJS.ProcessEnv): IExpertAgentM
 }
 
 export function createExampleApp(pragmaHome?: string) {
-  const providerId = requiredEnv(process.env, "PRAGMA_MODEL_PROVIDER");
-  const modelId = requiredEnv(process.env, "PRAGMA_MODEL_NAME");
-  const api = parseModelApi(process.env["PRAGMA_MODEL_API"]) ?? "openai-completions";
+  const runtime = createExamplePiRuntime(process.env);
+  return createPragma({
+    ...(pragmaHome === undefined ? {} : { pragmaHome }),
+    runtimes: createStaticRuntimeResolver({
+      runtimes: [runtime],
+      defaultRuntimeId: runtime.descriptor.id,
+    }),
+  });
+}
+
+export function createExamplePiRuntime(env: NodeJS.ProcessEnv = process.env) {
+  const providerId = requiredEnv(env, "PRAGMA_MODEL_PROVIDER");
+  const modelId = requiredEnv(env, "PRAGMA_MODEL_NAME");
+  const api = parseModelApi(env["PRAGMA_MODEL_API"]) ?? "openai-completions";
   const provider: ModelProviderDefinition = {
     id: providerId,
     catalogId: providerId,
@@ -63,28 +74,21 @@ export function createExampleApp(pragmaHome?: string) {
         maxTokens: 16_384,
       },
     ],
-    baseUrl: requiredEnv(process.env, "PRAGMA_MODEL_BASE_API"),
+    baseUrl: requiredEnv(env, "PRAGMA_MODEL_BASE_API"),
     api,
   };
-  const runtime = createPiRuntime({
+  return createPiRuntime({
     modelProviders: {
       listProviders: async () => [provider],
       resolveProvider: async (id) => {
         if (id !== providerId) throw new Error(`Unknown example model provider: ${id}`);
         return {
           ...provider,
-          apiKey: requiredEnv(process.env, "PRAGMA_MODEL_API_KEY"),
+          apiKey: requiredEnv(env, "PRAGMA_MODEL_API_KEY"),
           credentialFingerprint: `example:${providerId}`,
         };
       },
     },
-  });
-  return createPragma({
-    ...(pragmaHome === undefined ? {} : { pragmaHome }),
-    runtimes: createStaticRuntimeResolver({
-      runtimes: [runtime],
-      defaultRuntimeId: runtime.descriptor.id,
-    }),
   });
 }
 

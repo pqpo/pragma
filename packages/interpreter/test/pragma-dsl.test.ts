@@ -10,6 +10,7 @@ import {
   type ExpertTeam,
   type Flow,
 } from "@pragma/core";
+import { createRuntimeTestFeatures } from "@pragma/core/testing";
 import { PRAGMA_TEXT_LIMITS } from "@pragma/shared";
 
 import {
@@ -1873,6 +1874,7 @@ describe("Pragma YAML DSL", () => {
       defaultRuntimeId: "codex",
       runtimes: [
         {
+          features: createRuntimeTestFeatures(),
           descriptor: { id: "codex", kind: "test", displayName: "Codex" },
           canUse: () => ({ usable: false, reason: "codex executable is missing" }),
         },
@@ -1920,6 +1922,7 @@ describe("Pragma YAML DSL", () => {
         defaultRuntimeId: "pi",
         runtimes: [
           {
+            features: createRuntimeTestFeatures(),
             descriptor: { id: "pi", kind: "test", displayName: "Pi" },
             canUse: () => ({ usable: true }),
           },
@@ -1953,6 +1956,7 @@ describe("Pragma YAML DSL", () => {
           defaultRuntimeId: "codex",
           runtimes: [
             {
+              features: createRuntimeTestFeatures({ enabled: ["modelDiscovery"] }),
               descriptor: { id: "codex", kind: "test", displayName: "Codex" },
               canUse: () => ({ usable: true, details: { version } }),
               listModels: async () => [
@@ -2084,6 +2088,7 @@ describe("Pragma YAML DSL", () => {
           defaultRuntimeId: "other",
           runtimes: [
             {
+              features: createRuntimeTestFeatures(),
               descriptor: { id: "other", kind: "test", displayName: "Other" },
               canUse: () => ({ usable: true }),
             },

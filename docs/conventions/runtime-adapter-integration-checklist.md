@@ -9,7 +9,8 @@ Runtime 中工作。
 每一项必须标记以下一种状态，不允许留空或仅写“待验证”：
 
 - **Supported**：已接通，具有代码位置、自动测试和真实 Runtime 验证证据。
-- **Degraded**：有明确降级行为，用户可观察，能力声明不夸大；同样需要自动测试和真实验证。
+- **Degraded**：有明确降级行为、证据尚未齐备或真实 Runtime 尚未复验；必须写明原因并有自动测试，
+  不能把已有实现当成 Supported。若声明某个降级行为已经可用，仍需附对应的真实验证。
 - **Unsupported**：供应商公开接口不支持或本 Adapter 尚未实现；必须 fail closed 或给出可操作诊断。
 - **N/A**：该 Runtime 的产品形态不适用，并说明原因。
 
@@ -17,6 +18,46 @@ Runtime 中工作。
 记录。配置文件存在、mock 进程成功和 capability 布尔值都不能单独作为 Supported 证据。MCP 必须完成一次
 真实工具发现与调用；streaming 必须在 terminal result 前观察到增量事件；Skill 必须实际影响一次模型行为或
 出现明确的发现日志。
+
+<!-- RUNTIME_FEATURE_CATALOG_GENERATED_START -->
+
+## 可执行特性目录（自动生成）
+
+下表直接由 `packages/core/src/runtime/features.ts` 的权威目录生成。新增、删除或重排特性后，
+`pnpm runtime:features:check` 会在文档未同步时失败。每个 Runtime 必须为每一行声明
+`supported`、`degraded(reason)`、`unsupported(reason)` 或 `notApplicable(reason)`。
+
+<!-- prettier-ignore -->
+| Feature slot | Core 生命周期阶段 | 验收结果 |
+| --- | --- | --- |
+| `availability` | Driver 注册/探测 | Runtime availability probing |
+| `authentication` | Driver 注册/探测 | Runtime authentication setup and validation |
+| `modelDiscovery` | Driver 注册/探测 | Model catalog discovery |
+| `modelSelection` | Turn 准备/清理 | Per-Session or per-turn model selection |
+| `thinking` | Turn 准备/清理 | Thinking or reasoning level selection |
+| `freshSession` | Session 准备/清理 | Fresh native Session creation |
+| `resume` | Session 准备/清理 | Native Session restoration |
+| `systemPrompt` | Session 准备/清理 | System prompt delivery |
+| `startupMessages` | Session 准备/清理 | Startup message delivery and reinjection |
+| `textStreaming` | Turn 准备/清理 | Ordered text streaming |
+| `reasoningStreaming` | Turn 准备/清理 | Ordered reasoning streaming |
+| `nativeToolLifecycle` | Turn 准备/清理 | Native tool start, update, and completion events |
+| `mcp` | Session 准备/清理 | MCP tool registration and execution |
+| `permissions` | Session 准备/清理 | Tool permission policy and approval |
+| `userInteraction` | Turn 准备/清理 | Durable human interaction |
+| `skills` | Session 准备/清理 | Skill materialization and invocation |
+| `attachmentImage` | Turn 准备/清理 | Image attachments |
+| `attachmentFile` | Turn 准备/清理 | File attachments |
+| `attachmentDirectory` | Turn 准备/清理 | Directory attachments |
+| `usage` | Turn 准备/清理 | Token usage observation |
+| `contextWindow` | Driver 注册/探测 | Context window inspection |
+| `compaction` | Session 准备/清理 | Context compaction and compaction events |
+| `cancellation` | Turn 准备/清理 | Active turn cancellation |
+| `steering` | Turn 准备/清理 | Active turn steering |
+| `close` | Session 准备/清理 | Native Session shutdown |
+| `cleanup` | Session 准备/清理 | Feature resource cleanup |
+
+<!-- RUNTIME_FEATURE_CATALOG_GENERATED_END -->
 
 ## 证据优先的 Harness 适配方法
 
@@ -203,21 +244,20 @@ Supported。提升 capability 时应把对应 smoke 作为同一改动的验收�
 
 ## Actions：缩短下一次 Runtime 适配周期
 
-以下 Action 是后续工程方向，不代表当前仓库已经具备。完成时必须提交实现、测试和使用文档，并在本表更新
-状态；不得仅因建了目录或脚本占位就关闭 Action。
+Action 状态以实现、测试和使用文档为准；目录或脚本占位不算完成。
 
-| Action               | 优先级 | 后续工作                                                                                                                                        | 完成标准                                                                                                          |
-| -------------------- | ------ | ----------------------------------------------------------------------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------- |
-| `RUNTIME-ACTION-001` | P0     | 建设版本化 Runtime Probe Harness，将 version/help/models、stream、tool、MCP、Skill、attachment、resume、compaction、cancel 拆成可单独运行的探针 | 一条本地命令可选择 Runtime 和探针，生成脱敏证据包；失败能指出协议、发现、权限或生命周期阶段                       |
-| `RUNTIME-ACTION-002` | P0     | 定义真实证据包格式和脱敏规则，按 Runtime/version/platform/auth mode 保存 argv 摘要、stdout NDJSON、stderr、诊断日志和预期断言                   | fixture 可由 parser 测试直接消费；路径、token、cookie、用户名和会话私密内容不可逆脱敏；保留协议字段形状           |
-| `RUNTIME-ACTION-003` | P0     | 为注入能力建立 Materialized/Discovered/Executed 三段断言和 silent-fallback 检测                                                                 | system prompt、Agent、MCP、Skill 与模型选择均能报告实际激活身份；配置存在但未加载时 smoke 必须失败                |
-| `RUNTIME-ACTION-004` | P1     | 抽取 Runtime 进程诊断基元：有界 stdout/stderr scanner、受管日志证据、terminal semantic-success classifier、取消与强杀升级                       | 至少两个 Runtime 复用；退出码 0 的空输出、内部 timeout、provider error 和缺失 terminal event 有稳定错误码         |
-| `RUNTIME-ACTION-005` | P1     | 为 customization/materialization 增加 ownership receipt 或 manifest，记录 Adapter 创建的文件、目录、registration、relay 和 lease                | prepare/close 可重复；只清理当前 Session 拥有的资源；预存文件、并发新增文件和部分失败均不被覆盖或误删             |
-| `RUNTIME-ACTION-006` | P1     | 把真实 smoke 拆成快速、单能力用例，并保留一个组合验收用例                                                                                       | 日常定位无需反复运行完整模型流程；组合用例仍覆盖 fresh/resume、长回答、native tool、managed MCP、Skill 和附件降级 |
-| `RUNTIME-ACTION-007` | P1     | 建立 Runtime 版本升级审计流程，对公开协议、help、模型目录、事件 fixture 和 customization 加载日志做差异比较                                     | 升级最低支持版本或检测到新版本时自动生成差异报告；未知事件和已移除 flag 不会静默进入正式能力声明                  |
-| `RUNTIME-ACTION-008` | P2     | 在适配调研模板中记录官方资料、真实 CLI 证据和外部实现的适用版本                                                                                 | 每个外部结论标注来源版本和“可借鉴/不可照搬”边界，不把旧版纯文本实现当作新版结构化协议基线                         |
-| `RUNTIME-ACTION-009` | P0     | 为 Runtime event 与 turn result 定义 observation ownership 测试，重点覆盖 usage、session id、output snapshot 和 compaction                      | 每个事实只有一个累计通道；完整 Driver 测试能发现双计、重复正文和 Session identity 覆盖                            |
-| `RUNTIME-ACTION-010` | P0     | 保存各版本真实 Hook/tool 参数 schema fixture，并生成文件工具路径字段、MCP dispatcher 与终态状态的 fail-closed contract tests                    | 供应商字段改名、缺失、非法 URI、namespace 前缀碰撞和审批后参数修改都不能绕过权限边界                              |
+| Action               | 状态     | 当前结果 / 后续工作                                                                                                    |
+| -------------------- | -------- | ---------------------------------------------------------------------------------------------------------------------- |
+| `RUNTIME-ACTION-001` | 已完成   | `pnpm runtime:probe <runtime> <probe>` 提供独立探针和组合 `full` 探针。                                                |
+| `RUNTIME-ACTION-002` | 已完成   | `pragma.runtime-probe-evidence/v1` 提供 Schema、脱敏、泄漏扫描和原子归档。                                             |
+| `RUNTIME-ACTION-003` | 部分完成 | MCP、Skills 已有 Materialized/Discovered/Executed 断言；其他注入能力仍应增加供应商原生 identity/silent-fallback 证据。 |
+| `RUNTIME-ACTION-004` | 已完成   | Core 提供有界输出、结构化退出和 TERM→KILL；Claude Code、Antigravity 复用，语义终态由各自 parser 与 conformance 校验。  |
+| `RUNTIME-ACTION-005` | 部分完成 | `RuntimeResourceScope` 已记录 lease/registration/relay receipt；文件 materialization manifest 仍按具体 Runtime 推进。  |
+| `RUNTIME-ACTION-006` | 已完成   | stream/tool/MCP/Skill/attachment/resume/compaction/cancel 可单跑，`full` 保留组合验收。                                |
+| `RUNTIME-ACTION-007` | 未完成   | 仍需建立跨 Runtime 版本的 help、模型目录、事件和 customization 差异审计。                                              |
+| `RUNTIME-ACTION-008` | 未完成   | 仍需统一适配调研模板和外部实现的版本/适用边界记录。                                                                    |
+| `RUNTIME-ACTION-009` | 已完成   | Conformance 检查 event identity/order、正文与工具终态、输出 marker、structured output 和 owner persistence。           |
+| `RUNTIME-ACTION-010` | 未完成   | 继续按 Runtime 保存 Hook/tool 参数 Schema fixture，并扩展文件路径与审批后参数的 fail-closed contract tests。           |
 
 下一 Runtime 的推荐顺序是：先完成 `001` 的最小探针和 `002` 的证据包，再写 Adapter；随后逐能力完成
 `003` 的行为断言，最后才进入 Desktop 组合验收。这样可以在第一轮就区分“协议不认识”“配置没发现”“权限

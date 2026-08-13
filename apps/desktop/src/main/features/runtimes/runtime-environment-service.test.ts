@@ -1,9 +1,8 @@
-import { mkdtemp } from "node:fs/promises";
+import { mkdtemp, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
-import * as coreModule from "@pragma/core";
-import { defineRuntimeDriver } from "@pragma/core";
+import { defineRuntimeTestDriver } from "@pragma/core/testing";
 import { describe, expect, it, vi } from "vitest";
 
 import type { DesktopToolPermissionMode } from "../../../shared/contracts/index.ts";
@@ -97,7 +96,7 @@ describe("RuntimeEnvironmentService", () => {
               };
             }[]
           | undefined;
-        return defineRuntimeDriver({
+        return defineRuntimeTestDriver({
           descriptor: {
             id: environment.id,
             kind: "test",
@@ -177,7 +176,7 @@ describe("RuntimeEnvironmentService", () => {
       create: async (environment) => {
         createCount += 1;
         if (createCount === 1) throw new Error("transient adapter failure");
-        return defineRuntimeDriver({
+        return defineRuntimeTestDriver({
           descriptor: {
             id: environment.id,
             kind: "test",
@@ -237,57 +236,63 @@ describe("Antigravity CLI tool permission mapping", () => {
 });
 
 describe("built-in Runtime process environments", () => {
-  it("injects one recovered environment into CLI availability probes and skips it for PI", async () => {
-    const probeSpy = vi.spyOn(coreModule, "runRuntimeCommand").mockResolvedValue({
-      exitCode: 0,
-      signal: null,
-      stdout: "1.1.11\n",
-      stderr: "",
-    });
+  it.runIf(process.platform !== "win32")(
+    "injects one recovered environment into CLI availability probes and skips it for PI",
+    async () => {
+      const executableDirectory = await mkdtemp(join(tmpdir(), "pragma-runtime-probes-"));
+      await Promise.all(
+        ["codex", "claude", "qodercli", "agy"].map(async (name) => {
+          await writeFile(
+            join(executableDirectory, name),
+            [
+              "#!/bin/sh",
+              '[ "$MOCK_ENV_TEST" = "true" ] || exit 42',
+              'printf "1.1.11\\n"',
+              "",
+            ].join("\n"),
+            { mode: 0o755 },
+          );
+        }),
+      );
 
-    const environment = Object.freeze({
-      ...process.env,
-      PATH: "/mock/bin",
-      MOCK_ENV_TEST: "true",
-    });
-    const getRuntimeProcessEnvironment = vi.fn(async () => environment);
-    const factories = createBuiltInRuntimeFactories({
-      modelProviders: {} as ModelProviderStore,
-      getRuntimeProcessEnvironment,
-    });
+      const environment = Object.freeze({
+        ...process.env,
+        PATH: executableDirectory,
+        MOCK_ENV_TEST: "true",
+      });
+      const getRuntimeProcessEnvironment = vi.fn(async () => environment);
+      const factories = createBuiltInRuntimeFactories({
+        modelProviders: {} as ModelProviderStore,
+        getRuntimeProcessEnvironment,
+      });
 
-    const cliAdapters = await Promise.all(
-      [
-        ["codex", "pragma.runtime.codex"],
-        ["claude-code", "pragma.runtime.claude-code"],
-        ["qodercli", "pragma.runtime.qodercli"],
-        ["antigravity", "pragma.runtime.antigravity"],
-      ].map(async ([id, adapterId]) => {
-        const factory = factories.find((candidate) => candidate.id === adapterId)!;
-        return await factory.create(definition(id!, id!, adapterId));
-      }),
-    );
+      const cliAdapters = await Promise.all(
+        [
+          ["codex", "pragma.runtime.codex"],
+          ["claude-code", "pragma.runtime.claude-code"],
+          ["qodercli", "pragma.runtime.qodercli"],
+          ["antigravity", "pragma.runtime.antigravity"],
+        ].map(async ([id, adapterId]) => {
+          const factory = factories.find((candidate) => candidate.id === adapterId)!;
+          return await factory.create(definition(id!, id!, adapterId));
+        }),
+      );
 
-    await expect(
-      Promise.all(cliAdapters.map(async (adapter) => await adapter.canUse())),
-    ).resolves.toEqual([
-      expect.objectContaining({ usable: true }),
-      expect.objectContaining({ usable: true }),
-      expect.objectContaining({ usable: true }),
-      expect.objectContaining({ usable: true }),
-    ]);
-    expect(getRuntimeProcessEnvironment).toHaveBeenCalledTimes(4);
-    expect(probeSpy).toHaveBeenCalled();
-    for (const call of probeSpy.mock.calls) {
-      expect(call[0].env).toMatchObject({ MOCK_ENV_TEST: "true" });
-    }
+      await expect(
+        Promise.all(cliAdapters.map(async (adapter) => await adapter.canUse())),
+      ).resolves.toEqual([
+        expect.objectContaining({ usable: true }),
+        expect.objectContaining({ usable: true }),
+        expect.objectContaining({ usable: true }),
+        expect.objectContaining({ usable: true }),
+      ]);
+      expect(getRuntimeProcessEnvironment).toHaveBeenCalledTimes(4);
 
-    const piFactory = factories.find((candidate) => candidate.id === "pragma.runtime.pi")!;
-    await piFactory.create(definition("pi", "PI", "pragma.runtime.pi"));
-    expect(getRuntimeProcessEnvironment).toHaveBeenCalledTimes(4);
-
-    probeSpy.mockRestore();
-  });
+      const piFactory = factories.find((candidate) => candidate.id === "pragma.runtime.pi")!;
+      await piFactory.create(definition("pi", "PI", "pragma.runtime.pi"));
+      expect(getRuntimeProcessEnvironment).toHaveBeenCalledTimes(4);
+    },
+  );
 });
 
 function factory(): RuntimeEnvironmentAdapterFactory {
@@ -295,7 +300,7 @@ function factory(): RuntimeEnvironmentAdapterFactory {
     id: "test.runtime",
     version: "v1",
     create: (environment) =>
-      defineRuntimeDriver({
+      defineRuntimeTestDriver({
         descriptor: { id: environment.id, kind: "test", displayName: environment.displayName },
         canUse: () => ({ usable: true }),
         listModels: async () => [

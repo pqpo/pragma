@@ -9,6 +9,7 @@ import type {
   RuntimeDriverSessionContext,
   RuntimeSessionReadContext,
 } from "@pragma/core";
+import { assertRuntimeConformance, RuntimeResourceScope } from "@pragma/core";
 import { describe, expect, it, vi } from "vitest";
 
 import { createQoderCliRuntime } from "../src/adapter.ts";
@@ -58,6 +59,7 @@ describe("Qoder CLI Runtime adapter", () => {
       canUse: () => ({ usable: true }),
       listModels: async () => [],
     });
+    expect(() => assertRuntimeConformance(adapter)).not.toThrow();
 
     expect(adapter.descriptor).toMatchObject({
       id: "qodercli-local",
@@ -177,7 +179,8 @@ function createSessionContext(
       restoredRuntimeSessionId,
       checkpoint: vi.fn(async () => undefined),
     },
-    prepared: {},
+    resources: new RuntimeResourceScope("qodercli-adapter-test"),
+    preparedFeatures: {},
     sessionInfo: {},
   } as unknown as RuntimeDriverSessionContext;
 }

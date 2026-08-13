@@ -2,12 +2,16 @@ import { join } from "node:path";
 
 import {
   createMcpToolRegistryPool,
+  defineRuntimeFeatures,
   defineRuntimeDriver,
   registerExpertToolsMcpSession,
+  readRuntimePreparedFeature,
+  runtimeFeature,
   type ExpertToolsMcpSessionRegistration,
   type ExpertToolRuntimeState,
   type McpToolRegistryLease,
   type RuntimeAdapter,
+  type RuntimeFeatureSessionPrepareContext,
   type RuntimeSessionPersistenceSpec,
 } from "@pragma/core";
 
@@ -42,18 +46,34 @@ const ANTIGRAVITY_DESCRIPTOR = {
   capabilities: {
     targets: ["agent"],
     executionLocations: ["local"],
-    supportsAbort: true,
-    supportsMcp: true,
-    supportsStreaming: true,
-    supportsContextCompactionEvents: true,
   },
 };
 
-interface AntigravityDriverSession extends AntigravityNativeSession {
+const ANTIGRAVITY_EVIDENCE_PENDING =
+  "Implemented in the adapter; an executed Runtime probe evidence bundle is not recorded yet.";
+
+interface AntigravityMcpPreparation {
   readonly mcpToolRegistryLease: McpToolRegistryLease;
   readonly expertToolsMcpRegistration: ExpertToolsMcpSessionRegistration;
+  readonly toolRuntimeState: ExpertToolRuntimeState;
+  readonly permissionMode: NonNullable<AntigravityRuntimeAdapterOptions["permissionMode"]>;
+  readonly sessionId: string;
+  readonly sessionDir: string;
+  readonly managedIdentity: ReturnType<typeof createManagedAntigravityIdentity>;
+  readonly authenticationMode: ReturnType<typeof resolveAntigravityAuthenticationMode>;
+  readonly customizationWorkspace?: string | undefined;
+  readonly managedConfigDir: string;
+}
+
+interface AntigravityPermissionPreparation {
   readonly hookRelay: AntigravityHookRelay;
 }
+
+interface AntigravitySkillsPreparation {
+  readonly managedHome: Awaited<ReturnType<typeof prepareManagedAntigravityHome>>;
+}
+
+type AntigravityDriverSession = AntigravityNativeSession;
 
 export function createAntigravityRuntime(
   options: AntigravityRuntimeAdapterOptions = {},
@@ -69,10 +89,168 @@ export function createAntigravityRuntime(
     },
   };
   const listModels = options.listModels ?? createAntigravityModelDiscovery(options);
+  const prepareMcp = async (
+    ctx: RuntimeFeatureSessionPrepareContext,
+  ): Promise<AntigravityMcpPreparation> => {
+    await assertAntigravityWorkspaceCustomizationsAreIsolated(ctx.workspace);
+    const permissionMode = options.permissionMode ?? "request-approval";
+    const sessionDir =
+      ctx.persistence.spec?.sessionDir ?? ctx.paths.runtimeSessionDir("antigravity");
+    const managedIdentity = createManagedAntigravityIdentity(ctx.agent.id, sessionDir);
+    const authenticationMode = resolveAntigravityAuthenticationMode(
+      options.authenticationMode ?? "isolated-environment",
+      ctx.processEnvironment,
+    );
+    const customizationWorkspace =
+      authenticationMode === "host-keyring"
+        ? join(sessionDir, "managed-customizations")
+        : undefined;
+    const managedConfigDir =
+      customizationWorkspace === undefined
+        ? join(sessionDir, "home", ".gemini", "config")
+        : join(customizationWorkspace, ".agents");
+    const restoredSessionId =
+      ctx.persistence.restoredRuntimeSessionId ?? ctx.request.runtimeSession?.id ?? "";
+    const sessionId =
+      restoredSessionId === "" ? "" : assertAntigravityConversationId(restoredSessionId);
+    const toolRuntimeState: ExpertToolRuntimeState = {};
+    const mcpToolRegistryLease = await ctx.resources.acquire(
+      "antigravity.mcp-registry",
+      async () => await mcpToolRegistries.acquire(ctx.agent.mcp),
+      async (lease) => await lease.release(),
+    );
+    const expertToolsMcpRegistration = await ctx.resources.acquire(
+      "antigravity.mcp-registration",
+      async () =>
+        await registerExpertToolsMcpSession({
+          agent: ctx.agent,
+          getContext: () => ctx.lifecycle.currentContext,
+          humanInteractionHandler: ctx.request.humanInteractionHandler,
+          logger: ctx.logger,
+          mcpTools: mcpToolRegistryLease.registry.tools,
+          state: toolRuntimeState,
+          executionContext: ctx.request.executionContext,
+        }),
+      async (registration) => await registration.dispose(),
+    );
+    return {
+      mcpToolRegistryLease,
+      expertToolsMcpRegistration,
+      toolRuntimeState,
+      permissionMode,
+      sessionId,
+      sessionDir,
+      managedIdentity,
+      authenticationMode,
+      ...(customizationWorkspace === undefined ? {} : { customizationWorkspace }),
+      managedConfigDir,
+    };
+  };
+  const preparePermissions = async (
+    ctx: RuntimeFeatureSessionPrepareContext,
+  ): Promise<AntigravityPermissionPreparation> => {
+    const mcp = readRuntimePreparedFeature<AntigravityMcpPreparation>(ctx, "mcp");
+    const hookRelay = await ctx.resources.acquire(
+      "antigravity.permission-relay",
+      async () =>
+        await createAntigravityHookRelay({
+          workspace: ctx.workspace,
+          allowedWorkspacePaths: [
+            ctx.workspace,
+            ...(mcp.customizationWorkspace === undefined ? [] : [mcp.customizationWorkspace]),
+          ],
+          managedSkillReadRoots: [
+            join(
+              mcp.managedConfigDir,
+              "plugins",
+              `pragma-${mcp.managedIdentity.namespace}`,
+              "skills",
+            ),
+          ],
+          mcpServerName: mcp.managedIdentity.mcpServerName,
+          permissionMode: mcp.permissionMode,
+          getHumanInteractionHandler: () => ctx.request.humanInteractionHandler,
+          toolRuntimeState: mcp.toolRuntimeState,
+          onDecision(event) {
+            ctx.logger.debug(
+              "runtime.antigravity_hook_decision",
+              "Antigravity PreToolUse hook decision completed",
+              event,
+            );
+          },
+        }),
+      async (relay) => await relay.close(),
+    );
+    return { hookRelay };
+  };
+  const prepareSkills = async (
+    ctx: RuntimeFeatureSessionPrepareContext,
+  ): Promise<AntigravitySkillsPreparation> => {
+    const mcp = readRuntimePreparedFeature<AntigravityMcpPreparation>(ctx, "mcp");
+    const permissions = readRuntimePreparedFeature<AntigravityPermissionPreparation>(
+      ctx,
+      "permissions",
+    );
+    return {
+      managedHome: await prepareManagedAntigravityHome({
+        agent: ctx.agent,
+        sessionDir: mcp.sessionDir,
+        systemPrompt: ctx.agentContext.systemPrompt,
+        mcpServerUrl: mcp.expertToolsMcpRegistration.url,
+        hookRelay: permissions.hookRelay,
+        permissionMode: mcp.permissionMode,
+        authenticationMode: mcp.authenticationMode,
+        processEnvironment: ctx.processEnvironment,
+        nodeExecutablePath: options.hookNodeExecutablePath,
+      }),
+    };
+  };
+  const implemented = () => runtimeFeature.degraded(ANTIGRAVITY_EVIDENCE_PENDING);
+  const features = defineRuntimeFeatures({
+    availability: implemented(),
+    authentication: implemented(),
+    modelDiscovery: implemented(),
+    modelSelection: implemented(),
+    thinking: implemented(),
+    freshSession: implemented(),
+    resume: implemented(),
+    systemPrompt: implemented(),
+    startupMessages: implemented(),
+    textStreaming: implemented(),
+    reasoningStreaming: implemented(),
+    nativeToolLifecycle: implemented(),
+    mcp: runtimeFeature.degraded(ANTIGRAVITY_EVIDENCE_PENDING, {
+      prepareSession: prepareMcp,
+    }),
+    permissions: runtimeFeature.degraded(ANTIGRAVITY_EVIDENCE_PENDING, {
+      prepareSession: preparePermissions,
+    }),
+    userInteraction: implemented(),
+    skills: runtimeFeature.degraded(ANTIGRAVITY_EVIDENCE_PENDING, {
+      prepareSession: prepareSkills,
+    }),
+    attachmentImage: runtimeFeature.degraded(
+      "The CLI receives image paths through prompt context because agy has no stable native image flag.",
+    ),
+    attachmentFile: implemented(),
+    attachmentDirectory: implemented(),
+    usage: implemented(),
+    contextWindow: runtimeFeature.unsupported(
+      "agy does not expose a stable context-window inspection endpoint.",
+    ),
+    compaction: runtimeFeature.degraded(ANTIGRAVITY_EVIDENCE_PENDING, {
+      compactionModes: ["events"],
+    }),
+    cancellation: implemented(),
+    steering: runtimeFeature.unsupported("agy exposes no safe active-turn steering API."),
+    close: implemented(),
+    cleanup: implemented(),
+  });
 
   return defineRuntimeDriver(
     {
       descriptor,
+      features,
       canUse: options.canUse ?? (() => canUseAntigravityRuntime(options)),
       listModels,
       outputRetryLimit: options.outputRetryLimit,
@@ -93,7 +271,6 @@ export function createAntigravityRuntime(
         };
       },
       async createSession(ctx): Promise<AntigravityDriverSession> {
-        await assertAntigravityWorkspaceCustomizationsAreIsolated(ctx.workspace);
         assertProvider(ctx.request.modelSelection?.model.providerId);
         const defaultModelName =
           ctx.request.modelSelection?.model.modelId ?? options.defaultModelName;
@@ -106,125 +283,39 @@ export function createAntigravityRuntime(
             defaultThinkingLevel,
           );
         }
-        const permissionMode = options.permissionMode ?? "request-approval";
-        const sessionDir =
-          ctx.persistence.spec?.sessionDir ?? ctx.paths.runtimeSessionDir("antigravity");
-        const managedIdentity = createManagedAntigravityIdentity(ctx.agent.id, sessionDir);
-        const authenticationMode = resolveAntigravityAuthenticationMode(
-          options.authenticationMode ?? "isolated-environment",
-          ctx.processEnvironment,
+        const mcp = readRuntimePreparedFeature<AntigravityMcpPreparation>(ctx, "mcp");
+        const skills = readRuntimePreparedFeature<AntigravitySkillsPreparation>(ctx, "skills");
+        const { managedHome } = skills;
+        ctx.logger.info(
+          "runtime.antigravity_session_ready",
+          "Antigravity CLI Session preparation completed",
+          {
+            restoring: mcp.sessionId !== "",
+            systemPromptCharacters: ctx.agentContext.systemPrompt.length,
+            skillCount: managedHome.skills.length,
+            toolCount: mcp.mcpToolRegistryLease.registry.tools.length,
+            authenticationMode: managedHome.authenticationMode,
+            mcpOpenedConnections: mcp.mcpToolRegistryLease.stats.openedConnections,
+            mcpReusedConnections: mcp.mcpToolRegistryLease.stats.reusedConnections,
+            mcpCoalescedConnections: mcp.mcpToolRegistryLease.stats.coalescedConnections,
+          },
         );
-        const customizationWorkspace =
-          authenticationMode === "host-keyring"
-            ? join(sessionDir, "managed-customizations")
-            : undefined;
-        const managedConfigDir =
-          customizationWorkspace === undefined
-            ? join(sessionDir, "home", ".gemini", "config")
-            : join(customizationWorkspace, ".agents");
-        const restoredSessionId =
-          ctx.persistence.restoredRuntimeSessionId ?? ctx.request.runtimeSession?.id ?? "";
-        const sessionId =
-          restoredSessionId === "" ? "" : assertAntigravityConversationId(restoredSessionId);
-        const toolRuntimeState: ExpertToolRuntimeState = {};
-        let mcpToolRegistryLease: McpToolRegistryLease | undefined;
-        let expertToolsMcpRegistration: ExpertToolsMcpSessionRegistration | undefined;
-        let hookRelay: AntigravityHookRelay | undefined;
-
-        try {
-          mcpToolRegistryLease = await mcpToolRegistries.acquire(ctx.agent.mcp);
-          expertToolsMcpRegistration = await registerExpertToolsMcpSession({
-            agent: ctx.agent,
-            getContext: () => ctx.lifecycle.currentContext,
-            humanInteractionHandler: ctx.request.humanInteractionHandler,
-            logger: ctx.logger,
-            mcpTools: mcpToolRegistryLease.registry.tools,
-            state: toolRuntimeState,
-            executionContext: ctx.request.executionContext,
-          });
-          hookRelay = await createAntigravityHookRelay({
-            workspace: ctx.workspace,
-            allowedWorkspacePaths: [
-              ctx.workspace,
-              ...(customizationWorkspace === undefined ? [] : [customizationWorkspace]),
-            ],
-            managedSkillReadRoots: [
-              join(managedConfigDir, "plugins", `pragma-${managedIdentity.namespace}`, "skills"),
-            ],
-            mcpServerName: managedIdentity.mcpServerName,
-            permissionMode,
-            getHumanInteractionHandler: () => ctx.request.humanInteractionHandler,
-            toolRuntimeState,
-            onDecision(event) {
-              ctx.logger.debug(
-                "runtime.antigravity_hook_decision",
-                "Antigravity PreToolUse hook decision completed",
-                event,
-              );
-            },
-          });
-          const managedHome = await prepareManagedAntigravityHome({
-            agent: ctx.agent,
-            sessionDir,
-            systemPrompt: ctx.agentContext.systemPrompt,
-            mcpServerUrl: expertToolsMcpRegistration.url,
-            hookRelay,
-            permissionMode,
-            authenticationMode,
-            processEnvironment: ctx.processEnvironment,
-            nodeExecutablePath: options.hookNodeExecutablePath,
-          });
-          ctx.logger.info(
-            "runtime.antigravity_session_ready",
-            "Antigravity CLI Session preparation completed",
-            {
-              restoring: sessionId !== "",
-              systemPromptCharacters: ctx.agentContext.systemPrompt.length,
-              skillCount: managedHome.skills.length,
-              toolCount: mcpToolRegistryLease.registry.tools.length,
-              authenticationMode: managedHome.authenticationMode,
-              mcpOpenedConnections: mcpToolRegistryLease.stats.openedConnections,
-              mcpReusedConnections: mcpToolRegistryLease.stats.reusedConnections,
-              mcpCoalescedConnections: mcpToolRegistryLease.stats.coalescedConnections,
-            },
-          );
-          return {
-            ...createAntigravityNativeSession({
-              agent: ctx.agent,
-              executablePath: resolveAntigravityExecutablePath(options),
-              env: managedHome.env,
-              logger: ctx.logger,
-              managedHome,
-              permissionMode,
-              defaultModelName,
-              defaultThinkingLevel,
-              spawn: options.spawn,
-              systemPrompt: ctx.agentContext.systemPrompt,
-              toolRuntimeState,
-              tokenCounter: options.tokenCounter,
-              startupMessages: sessionId === "" ? ctx.agentContext.startupMessages : [],
-              sessionId,
-            }),
-            mcpToolRegistryLease,
-            expertToolsMcpRegistration,
-            hookRelay,
-          };
-        } catch (error) {
-          try {
-            await disposeAntigravityResources(
-              expertToolsMcpRegistration,
-              mcpToolRegistryLease,
-              hookRelay,
-            );
-          } catch (cleanupError) {
-            throw new AggregateError(
-              [error, cleanupError],
-              "Antigravity CLI Runtime initialization and cleanup failed.",
-              { cause: cleanupError },
-            );
-          }
-          throw error;
-        }
+        return createAntigravityNativeSession({
+          agent: ctx.agent,
+          executablePath: resolveAntigravityExecutablePath(options),
+          env: managedHome.env,
+          logger: ctx.logger,
+          managedHome,
+          permissionMode: mcp.permissionMode,
+          defaultModelName,
+          defaultThinkingLevel,
+          spawn: options.spawn,
+          systemPrompt: ctx.agentContext.systemPrompt,
+          toolRuntimeState: mcp.toolRuntimeState,
+          tokenCounter: options.tokenCounter,
+          startupMessages: mcp.sessionId === "" ? ctx.agentContext.startupMessages : [],
+          sessionId: mcp.sessionId,
+        });
       },
       readSession(session) {
         return {
@@ -249,24 +340,7 @@ export function createAntigravityRuntime(
       },
       cancelTurn: cancelAntigravityTurn,
       async closeSession(session) {
-        const errors: unknown[] = [];
-        try {
-          await closeAntigravitySession(session);
-        } catch (error) {
-          errors.push(error);
-        }
-        try {
-          await disposeAntigravityResources(
-            session.expertToolsMcpRegistration,
-            session.mcpToolRegistryLease,
-            session.hookRelay,
-          );
-        } catch (error) {
-          errors.push(error);
-        }
-        if (errors.length > 0) {
-          throw new AggregateError(errors, "Antigravity CLI Runtime cleanup failed.");
-        }
+        await closeAntigravitySession(session);
       },
     },
     {
@@ -285,30 +359,5 @@ function assertProvider(providerId: string | undefined): void {
     throw new Error(
       `Antigravity CLI Runtime requires provider antigravity; received ${providerId}.`,
     );
-  }
-}
-
-async function disposeAntigravityResources(
-  registration: ExpertToolsMcpSessionRegistration | undefined,
-  lease: McpToolRegistryLease | undefined,
-  hookRelay: AntigravityHookRelay | undefined,
-): Promise<void> {
-  const errors: unknown[] = [];
-  try {
-    await registration?.dispose();
-  } catch (error) {
-    errors.push(error);
-  }
-  const results = await Promise.allSettled([
-    Promise.resolve().then(async () => await lease?.release()),
-    Promise.resolve().then(async () => await hookRelay?.close()),
-  ]);
-  errors.push(
-    ...results.flatMap((result) =>
-      result.status === "rejected" ? [result.reason as unknown] : [],
-    ),
-  );
-  if (errors.length > 0) {
-    throw new AggregateError(errors, "Antigravity CLI Runtime resources could not be released.");
   }
 }

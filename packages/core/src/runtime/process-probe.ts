@@ -1,6 +1,7 @@
 import { spawn as nodeSpawn, type ChildProcessWithoutNullStreams } from "node:child_process";
 
 import type { RuntimeCanUseResult } from "./runtime-adapter.ts";
+import { BoundedRuntimeOutputBuffer, RuntimeProcessSupervisor } from "./process-supervisor.ts";
 
 export type RuntimeCommandSpawn = (
   command: string,
@@ -100,59 +101,50 @@ export function runRuntimeCommand(options: RuntimeCommandOptions): Promise<Runti
   const spawn = options.spawn ?? defaultSpawn;
 
   return new Promise<RuntimeCommandResult>((resolve, reject) => {
-    let stdout = "";
-    let stderr = "";
+    const stdout = new BoundedRuntimeOutputBuffer(options.outputLimit ?? OUTPUT_LIMIT, "head");
+    const stderr = new BoundedRuntimeOutputBuffer(options.outputLimit ?? OUTPUT_LIMIT, "head");
     let settled = false;
+    let timedOut = false;
     const child = spawn(options.executablePath, options.args, {
       cwd: options.cwd,
       env: options.env,
     });
+    const supervisor = new RuntimeProcessSupervisor(child);
     // Runtime probes are non-interactive. Closing stdin is materially
     // different from leaving Node's default pipe open: some CLIs wait for EOF
     // before running a subcommand when they are launched without a TTY.
     child.stdin.on("error", () => undefined);
     child.stdin.end();
-    let forceKillTimer: NodeJS.Timeout | undefined;
     const timeout = setTimeout(() => {
-      finish(() => {
-        try {
-          child.kill("SIGTERM");
-        } catch {
-          // Ignore process signaling errors
-        }
-        forceKillTimer = setTimeout(() => {
-          try {
-            child.kill("SIGKILL");
-          } catch {
-            // Ignore process signaling errors
-          }
-        }, 1_000);
-        forceKillTimer.unref();
-        reject(new Error(`Probe timed out after ${options.timeoutMs}ms.`));
+      timedOut = true;
+      void supervisor.terminate().finally(() => {
+        finish(() => reject(new Error(`Probe timed out after ${options.timeoutMs}ms.`)));
       });
     }, options.timeoutMs);
+    timeout.unref();
 
     child.stdout.on("data", (chunk: Buffer | string) => {
-      stdout = appendLimited(stdout, chunk, options.outputLimit ?? OUTPUT_LIMIT);
+      stdout.append(chunk);
     });
     child.stderr.on("data", (chunk: Buffer | string) => {
-      stderr = appendLimited(stderr, chunk, options.outputLimit ?? OUTPUT_LIMIT);
+      stderr.append(chunk);
     });
-    child.on("error", (error) => {
-      finish(() => {
-        reject(error);
-      });
-    });
-    child.on("exit", (exitCode, signal) => {
-      finish(() => {
-        resolve({
-          exitCode,
-          signal,
-          stdout,
-          stderr,
+    void supervisor.exit.then(
+      ({ code, signal }) => {
+        if (timedOut) return;
+        finish(() => {
+          resolve({
+            exitCode: code,
+            signal,
+            stdout: stdout.text(),
+            stderr: stderr.text(),
+          });
         });
-      });
-    });
+      },
+      (error: unknown) => {
+        finish(() => reject(error));
+      },
+    );
 
     function finish(callback: () => void): void {
       if (settled) {
@@ -161,9 +153,6 @@ export function runRuntimeCommand(options: RuntimeCommandOptions): Promise<Runti
 
       settled = true;
       clearTimeout(timeout);
-      if (forceKillTimer !== undefined) {
-        clearTimeout(forceKillTimer);
-      }
       callback();
     }
   });
@@ -178,14 +167,6 @@ function defaultSpawn(
     cwd: options.cwd,
     env: options.env,
   });
-}
-
-function appendLimited(current: string, chunk: Buffer | string, outputLimit: number): string {
-  if (current.length >= outputLimit) {
-    return current;
-  }
-
-  return (current + String(chunk)).slice(0, outputLimit);
 }
 
 function readFirstOutputLine(output: string): string | undefined {

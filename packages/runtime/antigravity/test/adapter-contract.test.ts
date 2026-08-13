@@ -1,6 +1,9 @@
 import { describe, expect, it } from "vitest";
+import { describeRuntimeConformance } from "@pragma/core/testing/vitest";
 
 import { createAntigravityRuntime } from "../src/index.ts";
+
+describeRuntimeConformance("Antigravity", { createRuntime: createAntigravityRuntime });
 
 describe("Antigravity Runtime contract", () => {
   it("declares local agent, streaming, MCP, model, effort, resume, and lifecycle capabilities", () => {
@@ -8,7 +11,6 @@ describe("Antigravity Runtime contract", () => {
       listModels: async () => [],
       canUse: () => ({ usable: true }),
     });
-
     expect(runtime.descriptor).toMatchObject({
       id: "antigravity",
       kind: "antigravity-local",

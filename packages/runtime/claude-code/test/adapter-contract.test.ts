@@ -1,5 +1,8 @@
 import { describe, expect, it } from "vitest";
+import { describeRuntimeConformance } from "@pragma/core/testing/vitest";
 import { createClaudeCodeRuntime } from "../src/index.ts";
+
+describeRuntimeConformance("Claude Code", { createRuntime: createClaudeCodeRuntime });
 
 describe("Claude Code Runtime contract", () => {
   it("declares split Session lifecycle capabilities without unsafe steer", () => {

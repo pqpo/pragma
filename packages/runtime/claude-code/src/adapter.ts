@@ -10,9 +10,10 @@ import type {
 } from "@pragma/core";
 import {
   createMcpToolRegistryPool,
+  defineRuntimeFeatures,
   defineRuntimeDriver,
+  runtimeFeature,
   registerExpertToolsMcpSession,
-  type PragmaLogger,
   type RuntimeSessionPersistenceSpec,
   type ExpertToolRuntimeState,
 } from "@pragma/core";
@@ -44,18 +45,14 @@ const CLAUDE_CODE_LOCAL_RUNTIME_DESCRIPTOR = {
   capabilities: {
     targets: ["agent"],
     executionLocations: ["local"],
-    supportsAbort: true,
-    supportsMcp: true,
-    supportsStreaming: true,
-    supportsContextCompactionEvents: true,
   },
 };
+
+const CLAUDE_CODE_EVIDENCE_PENDING =
+  "Implemented in the adapter; an executed Runtime probe evidence bundle is not recorded yet.";
 const DEFAULT_CLAUDE_CODE_PERMISSION_MODE = "bypassPermissions" as const;
 
-interface ClaudeCodeDriverSession extends ClaudeCodeNativeSession {
-  readonly mcpToolRegistryLease: McpToolRegistryLease;
-  readonly expertToolsMcpRegistration: ExpertToolsMcpSessionRegistration;
-}
+type ClaudeCodeDriverSession = ClaudeCodeNativeSession;
 
 export function createClaudeCodeRuntime(
   options: ClaudeCodeRuntimeAdapterOptions = {},
@@ -78,10 +75,44 @@ export function createClaudeCodeRuntime(
     },
   };
   const listModels = options.listModels ?? createClaudeCodeModelDiscovery(options);
+  const implemented = () => runtimeFeature.degraded(CLAUDE_CODE_EVIDENCE_PENDING);
+  const features = defineRuntimeFeatures({
+    availability: implemented(),
+    authentication: implemented(),
+    modelDiscovery: implemented(),
+    modelSelection: implemented(),
+    thinking: implemented(),
+    freshSession: implemented(),
+    resume: implemented(),
+    systemPrompt: implemented(),
+    startupMessages: implemented(),
+    textStreaming: implemented(),
+    reasoningStreaming: implemented(),
+    nativeToolLifecycle: implemented(),
+    mcp: implemented(),
+    permissions: implemented(),
+    userInteraction: implemented(),
+    skills: implemented(),
+    attachmentImage: implemented(),
+    attachmentFile: implemented(),
+    attachmentDirectory: implemented(),
+    usage: implemented(),
+    contextWindow: implemented(),
+    compaction: runtimeFeature.degraded(CLAUDE_CODE_EVIDENCE_PENDING, {
+      compactionModes: ["manual", "events"],
+    }),
+    cancellation: implemented(),
+    steering: runtimeFeature.unsupported(
+      "Claude Code stream-json mode exposes no safe active-turn steering API.",
+    ),
+    close: implemented(),
+    cleanup: implemented(),
+  });
 
   return defineRuntimeDriver(
     {
       descriptor,
+      features,
       canUse: createClaudeCodeRuntimeCanUse(options),
       listModels,
       outputRetryLimit: options.outputRetryLimit,
@@ -127,106 +158,89 @@ export function createClaudeCodeRuntime(
             ctx.persistence.restoredRuntimeSessionId ?? ctx.request.runtimeSession?.id ?? "",
         };
         const toolRuntimeState: ExpertToolRuntimeState = {};
-        const compactionHookRelay = await createClaudeCompactionHookRelay();
-        let mcpToolRegistry: McpToolRegistry | undefined;
-        let mcpToolRegistryLease: McpToolRegistryLease | undefined;
-        let expertToolsMcpRegistration: ExpertToolsMcpSessionRegistration | undefined;
+        const compactionHookRelay = await ctx.resources.acquire(
+          "claude-code.compaction-relay",
+          createClaudeCompactionHookRelay,
+          async (relay) => await relay.close(),
+        );
 
-        try {
-          const pluginDir = await materializeClaudeCodePlugin({
-            agent: ctx.agent,
-            sessionDir,
-            compactionHook: {
-              url: compactionHookRelay.url,
-              authorization: compactionHookRelay.authorization,
-            },
-          });
-          mcpToolRegistryLease = await mcpToolRegistries.acquire(ctx.agent.mcp);
-          mcpToolRegistry = mcpToolRegistryLease.registry;
-          expertToolsMcpRegistration = await registerExpertToolsMcpSession({
-            agent: ctx.agent,
-            getContext: () => ctx.lifecycle.currentContext,
-            humanInteractionHandler: ctx.request.humanInteractionHandler,
-            logger: ctx.logger,
-            mcpTools: mcpToolRegistry.tools,
-            state: toolRuntimeState,
-            executionContext: ctx.request.executionContext,
-          });
-          const managedConfig = await prepareManagedClaudeCodeConfig({
-            sessionDir,
-            env: ctx.processEnvironment,
-            logger: ctx.logger,
-          });
-          if (state.sessionId !== "") {
-            const exists = await nativeSessionFileExists(
-              join(managedConfig.configDir, "projects"),
-              state.sessionId,
-            );
-            if (!exists) {
-              throw new Error(
-                `Claude Code runtime session file was not found: ${state.sessionId}.`,
-              );
-            }
-          }
-          ctx.logger.info(
-            "runtime.claude_code_session_ready",
-            "Claude Code Session preparation completed",
-            {
-              systemPromptCharacters: ctx.agentContext.systemPrompt.length,
-              toolCount: mcpToolRegistry.tools.length,
-              mcpOpenedConnections: mcpToolRegistryLease.stats.openedConnections,
-              mcpReusedConnections: mcpToolRegistryLease.stats.reusedConnections,
-              mcpCoalescedConnections: mcpToolRegistryLease.stats.coalescedConnections,
-            },
+        const pluginDir = await materializeClaudeCodePlugin({
+          agent: ctx.agent,
+          sessionDir,
+          compactionHook: {
+            url: compactionHookRelay.url,
+            authorization: compactionHookRelay.authorization,
+          },
+        });
+        const mcpToolRegistryLease: McpToolRegistryLease = await ctx.resources.acquire(
+          "claude-code.mcp-registry",
+          async () => await mcpToolRegistries.acquire(ctx.agent.mcp),
+          async (lease) => await lease.release(),
+        );
+        const mcpToolRegistry: McpToolRegistry = mcpToolRegistryLease.registry;
+        const expertToolsMcpRegistration: ExpertToolsMcpSessionRegistration =
+          await ctx.resources.acquire(
+            "claude-code.mcp-registration",
+            async () =>
+              await registerExpertToolsMcpSession({
+                agent: ctx.agent,
+                getContext: () => ctx.lifecycle.currentContext,
+                humanInteractionHandler: ctx.request.humanInteractionHandler,
+                logger: ctx.logger,
+                mcpTools: mcpToolRegistry.tools,
+                state: toolRuntimeState,
+                executionContext: ctx.request.executionContext,
+              }),
+            async (registration) => await registration.dispose(),
           );
-
-          return {
-            ...createClaudeCodeNativeSession({
-              agent: ctx.agent,
-              executablePath: command.executablePath,
-              launcherArgs: command.launcherArgs,
-              additionalArgs: options.additionalArgs ?? [],
-              defaultModelName,
-              defaultThinkingLevel,
-              env: ctx.processEnvironment,
-              humanInteractionHandler: ctx.request.humanInteractionHandler,
-              logger: ctx.logger,
-              managedConfig,
-              mcpServerUrl: expertToolsMcpRegistration.url,
-              permissionMode: options.permissionMode ?? DEFAULT_CLAUDE_CODE_PERMISSION_MODE,
-              pluginDir,
-              compactionHookRelay,
-              sessionDir,
-              spawn: options.spawn,
-              startupMessages: state.sessionId === "" ? ctx.agentContext.startupMessages : [],
-              state,
-              systemPrompt: ctx.agentContext.systemPrompt,
-              tokenCounter: options.tokenCounter,
-            }),
-            mcpToolRegistryLease,
-            expertToolsMcpRegistration,
-          };
-        } catch (error) {
-          const cleanup = await Promise.allSettled([
-            disposeClaudeRuntimeResources(
-              expertToolsMcpRegistration,
-              mcpToolRegistryLease,
-              ctx.logger,
-            ),
-            compactionHookRelay.close(),
-          ]);
-          const cleanupErrors = cleanup.flatMap((result) =>
-            result.status === "rejected" ? [result.reason as unknown] : [],
+        const managedConfig = await prepareManagedClaudeCodeConfig({
+          sessionDir,
+          env: ctx.processEnvironment,
+          logger: ctx.logger,
+        });
+        if (state.sessionId !== "") {
+          const exists = await nativeSessionFileExists(
+            join(managedConfig.configDir, "projects"),
+            state.sessionId,
           );
-          if (cleanupErrors.length > 0) {
-            throw new AggregateError(
-              [error, ...cleanupErrors],
-              "Claude Code runtime initialization and cleanup failed.",
-              { cause: error },
-            );
+          if (!exists) {
+            throw new Error(`Claude Code runtime session file was not found: ${state.sessionId}.`);
           }
-          throw error;
         }
+        ctx.logger.info(
+          "runtime.claude_code_session_ready",
+          "Claude Code Session preparation completed",
+          {
+            systemPromptCharacters: ctx.agentContext.systemPrompt.length,
+            toolCount: mcpToolRegistry.tools.length,
+            mcpOpenedConnections: mcpToolRegistryLease.stats.openedConnections,
+            mcpReusedConnections: mcpToolRegistryLease.stats.reusedConnections,
+            mcpCoalescedConnections: mcpToolRegistryLease.stats.coalescedConnections,
+          },
+        );
+
+        return createClaudeCodeNativeSession({
+          agent: ctx.agent,
+          executablePath: command.executablePath,
+          launcherArgs: command.launcherArgs,
+          additionalArgs: options.additionalArgs ?? [],
+          defaultModelName,
+          defaultThinkingLevel,
+          env: ctx.processEnvironment,
+          humanInteractionHandler: ctx.request.humanInteractionHandler,
+          logger: ctx.logger,
+          managedConfig,
+          mcpServerUrl: expertToolsMcpRegistration.url,
+          permissionMode: options.permissionMode ?? DEFAULT_CLAUDE_CODE_PERMISSION_MODE,
+          pluginDir,
+          compactionHookRelay,
+          sessionDir,
+          spawn: options.spawn,
+          startupMessages: state.sessionId === "" ? ctx.agentContext.startupMessages : [],
+          state,
+          systemPrompt: ctx.agentContext.systemPrompt,
+          tokenCounter: options.tokenCounter,
+        });
       },
       readSession(session) {
         return {
@@ -263,22 +277,8 @@ export function createClaudeCodeRuntime(
       cancelTurn(session) {
         cancelClaudeCodeTurn(session);
       },
-      async closeSession(session, ctx) {
+      closeSession(session) {
         cancelClaudeCodeTurn(session);
-        const cleanup = await Promise.allSettled([
-          disposeClaudeRuntimeResources(
-            session.expertToolsMcpRegistration,
-            session.mcpToolRegistryLease,
-            ctx.logger,
-          ),
-          session.compactionHookRelay.close(),
-        ]);
-        const errors = cleanup.flatMap((result) =>
-          result.status === "rejected" ? [result.reason as unknown] : [],
-        );
-        if (errors.length > 0) {
-          throw new AggregateError(errors, "Claude Code Runtime cleanup failed.");
-        }
       },
     },
     {
@@ -339,34 +339,4 @@ function createClaudeCodeRuntimeCanUse(
       ...(options.executablePath === undefined ? {} : { executablePath: options.executablePath }),
       ...(options.env === undefined ? {} : { env: options.env }),
     });
-}
-
-async function disposeClaudeRuntimeResources(
-  expertToolsMcpRegistration: ExpertToolsMcpSessionRegistration | undefined,
-  mcpToolRegistryLease: McpToolRegistryLease | undefined,
-  logger: PragmaLogger,
-): Promise<void> {
-  const results = await Promise.allSettled([
-    expertToolsMcpRegistration?.dispose() ?? Promise.resolve(),
-    mcpToolRegistryLease?.release() ?? Promise.resolve(),
-  ]);
-  const errors = results.flatMap((result) =>
-    result.status === "rejected" ? [result.reason as unknown] : [],
-  );
-
-  if (errors.length === 0) {
-    return;
-  }
-
-  logger.error(
-    "runtime.claude_cleanup_failed",
-    "Claude Code runtime cleanup failed",
-    new AggregateError(errors),
-  );
-
-  if (errors.length === 1) {
-    throw errors[0];
-  }
-
-  throw new AggregateError(errors, "Claude Code runtime session cleanup failed.");
 }

@@ -1,6 +1,6 @@
 import type {
   RuntimeCanUseResult,
-  RuntimeAdapterDescriptor,
+  RuntimeDriverDescriptorOverride,
   RuntimeCommandSpawn,
   RuntimeModel,
   RuntimeSessionRestoreHandler,
@@ -22,7 +22,7 @@ export interface CodexRuntimeClientInfo {
 export type CodexRuntimeSpawn = RuntimeCommandSpawn;
 
 export interface CodexRuntimeAdapterOptions {
-  readonly descriptor?: Partial<RuntimeAdapterDescriptor> | undefined;
+  readonly descriptor?: RuntimeDriverDescriptorOverride | undefined;
   readonly executablePath?: string | undefined;
   readonly appServerArgs?: readonly string[] | undefined;
   /**

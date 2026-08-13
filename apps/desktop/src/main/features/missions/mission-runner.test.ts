@@ -8,7 +8,6 @@ import {
   createStaticRuntimeResolver,
   createNoopLoggerProvider,
   defineExpert,
-  defineRuntimeDriver,
   fingerprintExpertExecutionDefinition,
   InMemoryContextStore,
   PragmaPaths,
@@ -21,6 +20,7 @@ import {
   type RuntimeModelSelection,
   type RuntimeResolver,
 } from "@pragma/core";
+import { defineRuntimeTestDriver } from "@pragma/core/testing";
 import type {
   PragmaExpertResource,
   PragmaExpertTeamResource,
@@ -160,7 +160,7 @@ describe("MissionRunner", { timeout: 15_000 }, () => {
         },
       ],
     });
-    const runtime = defineRuntimeDriver<never, { id: string }>({
+    const runtime = defineRuntimeTestDriver<never, { id: string }>({
       descriptor: { id: "fake", kind: "fake", displayName: "Fake" },
       createSession: () => ({ id: "runtime" }),
       readSession: (session) => ({ runtimeSessionId: session.id }),
@@ -213,7 +213,7 @@ describe("MissionRunner", { timeout: 15_000 }, () => {
       ),
       origin: { type: "system-memory", jobId: "memory-job" },
     });
-    const runtime = defineRuntimeDriver<never, { id: string }>({
+    const runtime = defineRuntimeTestDriver<never, { id: string }>({
       descriptor: { id: "fake", kind: "fake", displayName: "Fake" },
       createSession: () => ({ id: "runtime" }),
       readSession: (session) => ({ runtimeSessionId: session.id }),
@@ -285,7 +285,7 @@ describe("MissionRunner", { timeout: 15_000 }, () => {
         snapshot.resources.find((resource) => resource.kind === "Expert")!,
       ),
     });
-    const runtime = defineRuntimeDriver<never, { id: string }>({
+    const runtime = defineRuntimeTestDriver<never, { id: string }>({
       descriptor: { id: "fake", kind: "fake", displayName: "Fake" },
       createSession: () => ({ id: "runtime" }),
       readSession: (session) => ({ runtimeSessionId: session.id }),
@@ -359,7 +359,7 @@ describe("MissionRunner", { timeout: 15_000 }, () => {
       ),
     });
     const historicalBoardOutput: { id: string | undefined } = { id: undefined };
-    const runtime = defineRuntimeDriver<
+    const runtime = defineRuntimeTestDriver<
       never,
       { id: string; context: RuntimeDriverSessionContext }
     >({
@@ -533,7 +533,7 @@ describe("MissionRunner", { timeout: 15_000 }, () => {
       .spyOn(project, "openRevision")
       .mockRejectedValueOnce(new Error("usage attribution unavailable"));
     const onStorageTrashed = vi.fn();
-    const runtime = defineRuntimeDriver<never, { id: string }>({
+    const runtime = defineRuntimeTestDriver<never, { id: string }>({
       descriptor: { id: "fake", kind: "fake", displayName: "Fake" },
       createSession: () => ({ id: "runtime" }),
       restoreSession: () => ({ id: "runtime" }),
@@ -600,7 +600,7 @@ describe("MissionRunner", { timeout: 15_000 }, () => {
     const turnCanFinish = new Promise<void>((resolve) => {
       finishTurn = resolve;
     });
-    const runtime = defineRuntimeDriver<RuntimeContextWindowUsage, { id: string }>({
+    const runtime = defineRuntimeTestDriver<RuntimeContextWindowUsage, { id: string }>({
       descriptor: { id: "fake", kind: "fake", displayName: "Fake" },
       createSession: () => ({ id: "runtime" }),
       restoreSession: () => ({ id: "runtime" }),
@@ -753,7 +753,7 @@ describe("MissionRunner", { timeout: 15_000 }, () => {
       toolPermissionMode: "full-access",
     });
     const cancelTurn = vi.fn();
-    const runtime = defineRuntimeDriver<never, { id: string }>({
+    const runtime = defineRuntimeTestDriver<never, { id: string }>({
       descriptor: { id: "fake", kind: "fake", displayName: "Fake" },
       createSession: () => ({ id: "runtime" }),
       restoreSession: () => ({ id: "runtime" }),
@@ -919,7 +919,7 @@ describe("MissionRunner", { timeout: 15_000 }, () => {
       finishTurn = resolve;
     });
     const oversizedError = "validation failed: ".padEnd(12_000, "x");
-    const runtime = defineRuntimeDriver<never, { id: string }>({
+    const runtime = defineRuntimeTestDriver<never, { id: string }>({
       descriptor: { id: "fake", kind: "fake", displayName: "Fake" },
       createSession: () => ({ id: "runtime" }),
       readSession: (session) => ({ runtimeSessionId: session.id }),
@@ -1034,7 +1034,7 @@ describe("MissionRunner", { timeout: 15_000 }, () => {
     const turnCanFinish = new Promise<void>((resolve) => {
       finishTurn = resolve;
     });
-    const runtime = defineRuntimeDriver<never, { id: string }>({
+    const runtime = defineRuntimeTestDriver<never, { id: string }>({
       descriptor: { id: "fake", kind: "fake", displayName: "Fake" },
       createSession: () => ({ id: "runtime" }),
       readSession: (session) => ({ runtimeSessionId: session.id }),
@@ -1150,7 +1150,7 @@ describe("MissionRunner", { timeout: 15_000 }, () => {
     const expertMission = await missionFor(writer, "Delegate review");
     const teamMission = await missionFor(team, "Coordinate review");
     const flowMission = await missionFor(flow, "Run review flow");
-    const runtime = defineRuntimeDriver<
+    const runtime = defineRuntimeTestDriver<
       never,
       { context: RuntimeDriverSessionContext; id: string }
     >({
@@ -1356,7 +1356,7 @@ describe("MissionRunner", { timeout: 15_000 }, () => {
     const turnCanFinish = new Promise<void>((resolve) => {
       finishTurn = resolve;
     });
-    const runtime = defineRuntimeDriver<never, { id: string }>({
+    const runtime = defineRuntimeTestDriver<never, { id: string }>({
       descriptor: { id: "fake", kind: "codex-local", displayName: "Codex" },
       createSession: () => ({ id: "codex-thread" }),
       readSession: (session) => ({ runtimeSessionId: session.id }),
@@ -1486,7 +1486,7 @@ describe("MissionRunner", { timeout: 15_000 }, () => {
       };
     });
     const runtimeForMode = (toolPermissionMode: DesktopToolPermissionMode) =>
-      defineRuntimeDriver<
+      defineRuntimeTestDriver<
         never,
         {
           context: RuntimeDriverSessionContext;
@@ -1956,7 +1956,7 @@ describe("MissionRunner", { timeout: 15_000 }, () => {
       return { outputText: "pi", runtimeSessionId: "pi-session" };
     });
     const codexTurns = vi.fn(() => ({ outputText: "codex", runtimeSessionId: "codex-session" }));
-    const pi = defineRuntimeDriver<never, { id: string }>({
+    const pi = defineRuntimeTestDriver<never, { id: string }>({
       descriptor: { id: "pi", kind: "cloud-pi-agent", displayName: "PI" },
       listModels: async () => [
         {
@@ -1971,7 +1971,7 @@ describe("MissionRunner", { timeout: 15_000 }, () => {
       mapEvent: () => ({ events: [] }),
       closeSession: () => undefined,
     });
-    const codex = defineRuntimeDriver<never, { id: string }>({
+    const codex = defineRuntimeTestDriver<never, { id: string }>({
       descriptor: { id: "codex", kind: "codex-local", displayName: "Codex" },
       listModels: async () => [
         {
@@ -2128,7 +2128,7 @@ describe("MissionRunner", { timeout: 15_000 }, () => {
       ],
     };
     let runtimeStarts = 0;
-    const runtime = defineRuntimeDriver<never, { context: RuntimeDriverSessionContext }>({
+    const runtime = defineRuntimeTestDriver<never, { context: RuntimeDriverSessionContext }>({
       descriptor: { id: "fake", kind: "fake", displayName: "Fake" },
       createSession: (context) => ({ context }),
       readSession: () => ({ runtimeSessionId: "recovered-runtime-session" }),
@@ -2332,7 +2332,7 @@ describe("MissionRunner", { timeout: 15_000 }, () => {
       project: { id: snapshot.projectId, revision: snapshot.revision },
       executor: missionExecutorSnapshot(flow),
     });
-    const runtime = defineRuntimeDriver<never, { id: string }>({
+    const runtime = defineRuntimeTestDriver<never, { id: string }>({
       descriptor: { id: "fake", kind: "fake", displayName: "Fake" },
       createSession: () => ({ id: "runtime" }),
       restoreSession: () => ({ id: "runtime" }),
@@ -2447,7 +2447,7 @@ describe("MissionRunner", { timeout: 15_000 }, () => {
       project: { id: snapshot.projectId, revision: snapshot.revision },
       executor: missionExecutorSnapshot(expertResource),
     });
-    const runtime = defineRuntimeDriver<never, { id: string }>({
+    const runtime = defineRuntimeTestDriver<never, { id: string }>({
       descriptor: { id: "fake", kind: "fake", displayName: "Fake" },
       createSession: () => ({ id: "runtime" }),
       restoreSession: () => ({ id: "runtime" }),
@@ -2548,7 +2548,7 @@ describe("MissionRunner", { timeout: 15_000 }, () => {
       project: { id: snapshot.projectId, revision: snapshot.revision },
       executor: missionExecutorSnapshot(expertResource),
     });
-    const runtime = defineRuntimeDriver<never, { id: string }>({
+    const runtime = defineRuntimeTestDriver<never, { id: string }>({
       descriptor: { id: "fake", kind: "fake", displayName: "Fake" },
       createSession: () => ({ id: "runtime" }),
       restoreSession: () => ({ id: "runtime" }),
@@ -2694,7 +2694,7 @@ describe("MissionRunner", { timeout: 15_000 }, () => {
       project: { id: snapshot.projectId, revision: snapshot.revision },
       executor: missionExecutorSnapshot(expertResource),
     });
-    const runtime = defineRuntimeDriver<never, { id: string }>({
+    const runtime = defineRuntimeTestDriver<never, { id: string }>({
       descriptor: { id: "fake", kind: "fake", displayName: "Fake" },
       createSession: () => ({ id: "runtime" }),
       restoreSession: () => ({ id: "runtime" }),
@@ -2820,7 +2820,7 @@ describe("MissionRunner", { timeout: 15_000 }, () => {
         snapshot.resources.find((resource) => resource.kind === "Expert")!,
       ),
     });
-    const runtime = defineRuntimeDriver<never, { id: string }>({
+    const runtime = defineRuntimeTestDriver<never, { id: string }>({
       descriptor: { id: "fake", kind: "fake", displayName: "Fake" },
       createSession: () => ({ id: "runtime" }),
       restoreSession: () => ({ id: "runtime" }),

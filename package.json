@@ -31,7 +31,10 @@
     "test": "turbo run test:core",
     "test:core": "turbo run test:core",
     "test:all": "turbo run test",
-    "check": "pnpm lint && pnpm typecheck && pnpm test:core",
+    "runtime:probe": "pnpm --filter @pragma/examples runtime:probe --",
+    "runtime:features:generate": "node ./packages/core/scripts/generate-runtime-feature-checklist.mjs",
+    "runtime:features:check": "node ./packages/core/scripts/generate-runtime-feature-checklist.mjs --check",
+    "check": "pnpm runtime:features:check && pnpm lint && pnpm typecheck && pnpm test:core",
     "clean": "turbo run clean && rm -rf node_modules"
   },
   "devDependencies": {

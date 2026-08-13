@@ -1,5 +1,8 @@
 import { describe, expect, it } from "vitest";
+import { describeRuntimeConformance } from "@pragma/core/testing/vitest";
 import { createPiRuntime } from "../src/index.ts";
+
+describeRuntimeConformance("PI", { createRuntime: createPiRuntime });
 
 describe("PI Runtime contract", () => {
   it("declares split Session lifecycle capabilities with safe steer", () => {

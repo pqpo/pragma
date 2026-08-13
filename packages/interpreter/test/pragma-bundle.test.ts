@@ -3,6 +3,7 @@ import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 
 import { createStaticRuntimeResolver, type Expert } from "@pragma/core";
+import { createRuntimeTestFeatures } from "@pragma/core/testing";
 import { strToU8, zipSync } from "fflate";
 import { describe, expect, it } from "vitest";
 
@@ -454,6 +455,7 @@ function runtimeResolver() {
     defaultRuntimeId: "codex",
     runtimes: [
       {
+        features: createRuntimeTestFeatures(),
         descriptor: { id: "codex", kind: "test", displayName: "Codex" },
         canUse: () => ({ usable: true }),
       },
