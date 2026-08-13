@@ -1,0 +1,62 @@
+:root {
+  color: var(--ui-text);
+  background: var(--ui-canvas);
+  font-family:
+    Inter,
+    "SF Pro Text",
+    "SF Pro Display",
+    -apple-system,
+    BlinkMacSystemFont,
+    "Segoe UI",
+    "PingFang SC",
+    "Microsoft YaHei",
+    sans-serif;
+  font-synthesis: none;
+  text-rendering: optimizeLegibility;
+  color-scheme: light;
+  --ui-canvas: #f8f9fb;
+  --ui-rail: #f1f3f2;
+  --ui-surface: #ffffff;
+  --ui-surface-subtle: #f5f7f6;
+  --ui-selection: #e9f0ec;
+  --ui-text: #1d211f;
+  --ui-text-secondary: #67706a;
+  --ui-text-disabled: #919994;
+  --ui-line: #e4e8e5;
+  --ui-line-strong: #d8ded9;
+  --ui-accent: #587968;
+  --ui-accent-strong: #456454;
+  --ui-danger: #9d3f34;
+  --ui-danger-subtle: #fff8f7;
+  --ui-focus: rgb(88 121 104 / 20%);
+  --ui-radius-sm: 4px;
+  --ui-radius-md: 6px;
+  --ui-radius-lg: 10px;
+  --ui-radius-round: 999px;
+  --ui-shadow-composer: 0 8px 24px rgb(20 31 25 / 5%);
+  --ui-shadow-overlay: 0 16px 40px rgb(20 31 25 / 12%);
+  --background: var(--ui-canvas);
+  --sidebar: var(--ui-rail);
+  --surface: var(--ui-surface);
+  --surface-muted: var(--ui-selection);
+  --surface-soft: var(--ui-surface-subtle);
+  --border: var(--ui-line);
+  --border-strong: var(--ui-line-strong);
+  --text: var(--ui-text);
+  --muted: var(--ui-text-secondary);
+  --faint: var(--ui-text-disabled);
+  --green: var(--ui-accent);
+  --green-dark: var(--ui-accent-strong);
+  --lime: #97bd57;
+  --green-soft: var(--ui-selection);
+  --focus-ring: var(--ui-focus);
+  --shadow-soft: 0 1px 2px rgb(20 31 25 / 4%), 0 8px 24px rgb(20 31 25 / 5%);
+  --shadow-hover: 0 2px 5px rgb(20 31 25 / 6%), 0 12px 30px rgb(20 31 25 / 8%);
+  --shadow-panel: 0 18px 50px rgb(20 31 25 / 12%);
+  --radius-control: var(--ui-radius-md);
+  --radius-card: var(--ui-radius-lg);
+  --radius-large: var(--ui-radius-lg);
+  --page-content-gutter: 40px;
+  --page-content-gutter-compact: 24px;
+  --screen-title-content-gap: 24px;
+}

@@ -93,7 +93,6 @@ import {
   LogicInspector,
   StepInspector,
 } from "./flow-inspectors.tsx";
-import "@xyflow/react/dist/style.css";
 
 export const FLOW_ERROR_AUTO_DISMISS_MS = 5_000;
 

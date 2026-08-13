@@ -1,0 +1,636 @@
+.automation-directory .studio-screen-body {
+  padding-right: 4px;
+}
+
+.automation-status {
+  max-width: 210px;
+  padding: 6px 9px;
+  border-radius: 999px;
+  background: var(--surface-soft);
+  color: var(--muted);
+  font-size: 11px;
+  font-weight: 650;
+  white-space: nowrap;
+}
+
+.automation-status.is-needs_attention {
+  background: #fff3dd;
+  color: #855d17;
+}
+
+.automation-status.is-disabled,
+.automation-status.is-expired {
+  opacity: 0.75;
+}
+
+.automation-empty {
+  display: grid;
+  min-height: 250px;
+  place-items: center;
+  align-content: center;
+  gap: 8px;
+  border-radius: 0;
+  background: transparent;
+  color: var(--muted);
+  text-align: center;
+}
+
+.automation-empty h2,
+.connection-catalog h2 {
+  color: var(--text);
+  font-size: 15px;
+}
+
+.automation-form-section h2 {
+  color: var(--ui-text);
+  font-size: 16px;
+  font-weight: 600;
+  line-height: 1.4;
+}
+
+.automation-empty p {
+  max-width: 480px;
+}
+
+.automation-editor {
+  width: 100%;
+  margin: 0;
+}
+
+.automation-editor .studio-screen-body {
+  overflow: hidden;
+}
+
+.automation-editor-heading {
+  display: grid;
+  gap: 12px;
+  padding-bottom: 0;
+}
+
+.automation-editor-heading h1 {
+  font-size: 24px;
+  font-weight: 600;
+  line-height: 1.25;
+}
+
+.automation-editor-heading p {
+  margin-top: 4px;
+  color: var(--ui-text-secondary);
+  font-size: 14px;
+  font-weight: 400;
+  line-height: 1.5;
+}
+
+.automation-form {
+  display: grid;
+  height: 100%;
+  min-height: 0;
+  grid-template-rows: minmax(0, 1fr) auto;
+  gap: 0;
+  padding: 0;
+}
+
+.automation-form-content {
+  display: grid;
+  min-height: 0;
+  align-content: start;
+  gap: 32px;
+  overflow-x: hidden;
+  overflow-y: auto;
+  padding: 0 4px 32px 0;
+  scrollbar-gutter: stable;
+}
+
+.automation-form-section {
+  display: grid;
+  gap: 16px;
+  padding: 0;
+  border: 0;
+  border-radius: 0;
+  background: transparent;
+}
+
+.automation-field-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 16px;
+}
+
+.automation-field-grid.is-identity {
+  grid-template-columns: minmax(0, 5fr) minmax(0, 7fr);
+}
+
+.automation-field-grid.is-target {
+  grid-template-columns: minmax(0, 7fr) minmax(0, 5fr);
+}
+
+.automation-field-grid.is-target.has-flow .automation-executor-field {
+  grid-column: 1 / -1;
+}
+
+.automation-form label,
+.automation-select-field {
+  display: grid;
+  gap: 8px;
+  min-width: 0;
+  color: var(--ui-text);
+  font-size: 13px;
+  font-weight: 500;
+}
+
+.automation-form label small {
+  color: var(--ui-text-secondary);
+  font-weight: 400;
+}
+
+.automation-workspace-field {
+  display: grid;
+  gap: 8px;
+  min-width: 0;
+}
+
+.automation-field-label {
+  color: var(--ui-text);
+  font-size: 13px;
+  font-weight: 500;
+}
+
+.automation-field-meta,
+.automation-form label .automation-field-error {
+  display: flex;
+  min-height: 18px;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  color: var(--ui-text-disabled);
+  font-size: 12px;
+  font-weight: 400;
+}
+
+.automation-form label .automation-field-error,
+.automation-form .automation-field-error {
+  margin: 0;
+  color: var(--ui-danger);
+  font-size: 12px;
+  font-weight: 400;
+}
+
+.automation-target-empty {
+  margin: 0;
+  color: var(--ui-text-secondary);
+  font-size: 13px;
+  line-height: 1.5;
+}
+
+.automation-flow-input-form > header {
+  padding: 0;
+}
+
+.automation-flow-input-form .mission-schema-field {
+  gap: 8px;
+  padding: 0;
+  border: 0;
+  border-radius: 0;
+  background: transparent;
+}
+
+.automation-flow-input-form .mission-schema-field.is-disabled {
+  padding: 0;
+}
+
+.automation-workspace-picker {
+  border: 1px solid var(--ui-line-strong);
+  border-radius: var(--ui-radius-md);
+  background: var(--ui-surface);
+}
+
+.automation-workspace-picker.is-open,
+.automation-workspace-picker:has(.mission-workspace-trigger:focus-visible) {
+  border-color: var(--ui-accent);
+  box-shadow: 0 0 0 3px var(--ui-focus);
+}
+
+.automation-workspace-picker .mission-workspace-trigger {
+  min-height: 40px;
+  padding: 0 12px;
+  border-radius: var(--ui-radius-md);
+}
+
+.automation-workspace-picker .mission-workspace-trigger:focus-visible {
+  outline: 0;
+}
+
+.automation-workspace-picker .mission-workspace-menu {
+  left: 0;
+}
+
+.automation-weekday-field {
+  display: grid;
+  min-width: 0;
+  gap: 8px;
+}
+
+.automation-weekday-picker {
+  position: relative;
+  z-index: 8;
+}
+
+.automation-weekday-picker.is-open {
+  z-index: 45;
+}
+
+.automation-weekday-trigger {
+  display: grid;
+  width: 100%;
+  min-height: 40px;
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 10px;
+  padding: 0 12px;
+  border: 1px solid var(--ui-line-strong);
+  border-radius: var(--ui-radius-md);
+  outline: 0;
+  background: var(--ui-surface);
+  color: var(--ui-text);
+  cursor: pointer;
+  font: inherit;
+  font-weight: 500;
+  text-align: left;
+}
+
+.automation-weekday-trigger > span {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.automation-weekday-trigger:focus-visible,
+.automation-weekday-picker.is-open .automation-weekday-trigger {
+  border-color: var(--ui-accent);
+  box-shadow: 0 0 0 3px var(--ui-focus);
+}
+
+.automation-weekday-picker.is-open .automation-weekday-trigger > svg {
+  transform: rotate(180deg);
+}
+
+.automation-weekday-menu {
+  position: absolute;
+  z-index: 50;
+  top: calc(100% + 8px);
+  left: 0;
+  display: grid;
+  width: 100%;
+  min-width: 220px;
+  gap: 2px;
+  padding: 4px;
+  border: 1px solid var(--ui-line-strong);
+  border-radius: var(--ui-radius-lg);
+  background: var(--ui-surface);
+  box-shadow: var(--ui-shadow-overlay);
+}
+
+.automation-weekday-menu > button {
+  display: grid;
+  min-height: 34px;
+  grid-template-columns: minmax(0, 1fr) 18px;
+  align-items: center;
+  gap: 10px;
+  padding: 0 8px;
+  border: 0;
+  border-radius: var(--ui-radius-md);
+  outline: 0;
+  background: transparent;
+  color: var(--ui-text);
+  cursor: pointer;
+  font: inherit;
+  text-align: left;
+}
+
+.automation-weekday-menu > button:hover,
+.automation-weekday-menu > button:focus-visible {
+  outline: 0;
+  background: var(--ui-surface-subtle);
+}
+
+.automation-form input,
+.automation-form textarea {
+  width: 100%;
+  min-height: 40px;
+  padding: 0 12px;
+  border: 1px solid var(--ui-line-strong);
+  border-radius: var(--ui-radius-md);
+  outline: 0;
+  background: var(--ui-surface);
+  color: var(--ui-text);
+  font: inherit;
+  font-size: 13px;
+  font-weight: 500;
+}
+
+.automation-form textarea {
+  min-height: 120px;
+  padding-top: 10px;
+  padding-bottom: 10px;
+  resize: vertical;
+}
+
+.automation-form input:focus-visible,
+.automation-form textarea:focus-visible {
+  border-color: var(--ui-accent);
+  box-shadow: 0 0 0 3px var(--ui-focus);
+}
+
+.automation-form .automation-switch {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  color: var(--ui-text);
+  font-size: 13px;
+  font-weight: 500;
+}
+
+.automation-preview {
+  display: grid;
+  gap: 4px;
+  padding-left: 24px;
+  color: var(--ui-text-secondary);
+  font-size: 12px;
+}
+
+.automation-form-section > .secondary-button {
+  justify-self: start;
+}
+
+.automation-form-actions {
+  display: flex;
+  min-height: 64px;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 8px;
+  padding: 12px 4px 12px 0;
+  border-top: 1px solid var(--ui-line);
+  background: var(--ui-canvas);
+}
+
+.automation-form-actions .danger-button {
+  margin-right: auto;
+}
+
+.automation-detail .studio-screen-body {
+  overflow-x: hidden;
+  overflow-y: auto;
+  padding-right: 4px;
+}
+
+.automation-detail-header {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr) auto;
+  align-items: start;
+  gap: 18px;
+  padding: 4px 0 24px;
+}
+
+.automation-detail-icon {
+  display: grid;
+  width: 64px;
+  height: 64px;
+  place-items: center;
+  border-radius: var(--ui-radius-lg);
+  background: var(--green-soft);
+  color: var(--green-dark);
+}
+
+.automation-detail-title {
+  display: grid;
+  min-width: 0;
+  gap: 8px;
+}
+
+.automation-detail-title > div {
+  display: flex;
+  min-width: 0;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 10px;
+}
+
+.automation-detail-title h1 {
+  min-width: 0;
+  overflow-wrap: anywhere;
+  font-size: 28px;
+  font-weight: 700;
+  letter-spacing: -0.035em;
+  line-height: 1.2;
+}
+
+.automation-detail-title p {
+  max-width: 720px;
+  margin: 0;
+  color: var(--ui-text-secondary);
+  font-size: 14px;
+  line-height: 1.55;
+}
+
+.automation-detail-title code {
+  overflow-wrap: anywhere;
+  color: var(--ui-text-disabled);
+  font-size: 11px;
+}
+
+.automation-detail .detail-actions {
+  display: flex;
+  min-width: 0;
+  align-items: flex-start;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+  gap: 8px;
+}
+
+.automation-detail .detail-actions > button {
+  min-height: 38px;
+}
+
+.automation-detail-summary {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  margin-bottom: 28px;
+  border: 1px solid var(--ui-line);
+  border-radius: var(--ui-radius-lg);
+  background: var(--ui-surface);
+}
+
+.automation-detail-summary > div {
+  display: grid;
+  min-width: 0;
+  gap: 6px;
+  padding: 15px 18px;
+}
+
+.automation-detail-summary > div + div {
+  border-left: 1px solid var(--ui-line);
+}
+
+.automation-detail-summary small,
+.automation-detail-input small {
+  color: var(--ui-text-secondary);
+  font-size: 11px;
+  font-weight: 600;
+}
+
+.automation-detail-summary strong {
+  overflow: hidden;
+  color: var(--ui-text);
+  font-size: 13px;
+  font-weight: 600;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.automation-detail-content {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  align-items: start;
+  gap: 16px;
+  padding-bottom: 36px;
+}
+
+.automation-detail-section {
+  display: grid;
+  min-width: 0;
+  gap: 14px;
+  padding: 20px;
+  border: 1px solid var(--ui-line);
+  border-radius: var(--ui-radius-lg);
+  background: var(--ui-surface);
+}
+
+.automation-detail-section h2 {
+  color: var(--ui-text);
+  font-size: 16px;
+  font-weight: 650;
+}
+
+.automation-detail-list {
+  display: grid;
+  margin: 0;
+}
+
+.automation-detail-list > div {
+  display: grid;
+  grid-template-columns: minmax(100px, 0.4fr) minmax(0, 1fr);
+  gap: 16px;
+  padding: 10px 0;
+  border-bottom: 1px solid var(--ui-line);
+}
+
+.automation-detail-list > div:last-child {
+  border-bottom: 0;
+}
+
+.automation-detail-list dt {
+  color: var(--ui-text-secondary);
+  font-size: 12px;
+}
+
+.automation-detail-list dd {
+  display: grid;
+  min-width: 0;
+  justify-items: start;
+  gap: 4px;
+  margin: 0;
+  color: var(--ui-text);
+  font-size: 13px;
+  line-height: 1.5;
+  overflow-wrap: anywhere;
+}
+
+.automation-detail-list dd code {
+  max-width: 100%;
+  color: var(--ui-text-secondary);
+  font-size: 11px;
+  overflow-wrap: anywhere;
+}
+
+.automation-detail-input {
+  display: grid;
+  gap: 8px;
+  padding-top: 2px;
+}
+
+.automation-detail-input p,
+.automation-detail-input pre {
+  max-height: 260px;
+  overflow: auto;
+  margin: 0;
+  padding: 12px 14px;
+  border-radius: var(--ui-radius-md);
+  background: var(--ui-surface-subtle);
+  color: var(--ui-text);
+  font-size: 12px;
+  line-height: 1.6;
+  overflow-wrap: anywhere;
+  white-space: pre-wrap;
+}
+
+.automation-detail-diagnostic,
+.automation-detail-run-notice {
+  margin: 0 0 20px;
+  padding: 12px 14px;
+  border-radius: var(--ui-radius-md);
+  font-size: 13px;
+  line-height: 1.5;
+}
+
+.automation-detail-diagnostic {
+  border: 1px solid #e9c980;
+  background: #fff8e8;
+  color: #765313;
+}
+
+.automation-detail-run-notice {
+  border: 1px solid var(--ui-line);
+  background: var(--ui-selection);
+  color: var(--ui-accent-strong);
+}
+
+.automation-detail-empty-copy {
+  margin: 0;
+  color: var(--ui-text-secondary);
+  font-size: 13px;
+}
+
+.automation-detail-run-error {
+  color: var(--ui-danger);
+}
+
+@media (max-width: 1000px) {
+  .automation-detail-header {
+    grid-template-columns: auto minmax(0, 1fr);
+  }
+
+  .automation-detail .detail-actions {
+    grid-column: 1 / -1;
+    justify-content: flex-start;
+  }
+
+  .automation-detail-content {
+    grid-template-columns: 1fr;
+  }
+}
+
+@media (max-width: 1180px) {
+  .automation-field-grid,
+  .automation-field-grid.is-identity,
+  .automation-field-grid.is-target {
+    grid-template-columns: 1fr;
+  }
+
+  .automation-field-grid.is-target.has-flow .automation-executor-field {
+    grid-column: auto;
+  }
+}
+
+.automation-form :is(input, select, textarea):focus-visible {
+  outline: 0;
+}

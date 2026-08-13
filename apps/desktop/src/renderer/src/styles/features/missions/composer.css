@@ -1,0 +1,323 @@
+.mission-chat {
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+  min-height: 0;
+  overflow-y: auto;
+  padding-top: 30px;
+}
+
+.mission-message-attachments {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(160px, 240px));
+  gap: 8px;
+  margin-bottom: 8px;
+}
+
+.mission-image-attachment {
+  min-width: 0;
+  margin: 0;
+}
+
+.mission-image-attachment > button {
+  display: block;
+  width: 100%;
+  padding: 0;
+  border: 0;
+  border-radius: var(--ui-radius-md);
+  outline: 0;
+  background: transparent;
+  cursor: zoom-in;
+}
+
+.mission-image-attachment > button:focus-visible {
+  box-shadow: 0 0 0 3px var(--ui-focus);
+}
+
+.mission-image-attachment img {
+  display: block;
+  width: 100%;
+  aspect-ratio: 4 / 3;
+  border: 1px solid var(--ui-line);
+  border-radius: var(--ui-radius-md);
+  background: var(--ui-surface-subtle);
+  object-fit: contain;
+}
+
+.mission-image-attachment figcaption {
+  overflow: hidden;
+  margin-top: 4px;
+  color: var(--ui-text-secondary);
+  font-size: 12px;
+  line-height: 1.45;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.mission-attachment-label {
+  display: flex;
+  min-width: 0;
+  align-items: center;
+  gap: 8px;
+  padding: 8px;
+  border-radius: var(--ui-radius-md);
+  background: var(--ui-surface-subtle);
+  color: var(--ui-text-secondary);
+}
+
+.mission-attachment-label > span {
+  min-width: 0;
+}
+
+.mission-attachment-label strong,
+.mission-attachment-label small {
+  display: block;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.mission-attachment-label strong {
+  color: var(--ui-text);
+  font-size: 13px;
+  font-weight: 500;
+  line-height: 1.4;
+}
+
+.mission-attachment-label small {
+  margin-top: 2px;
+  font-size: 11px;
+  line-height: 1.35;
+}
+
+.mission-message-sender {
+  display: block;
+  margin-bottom: 5px;
+  color: var(--green-dark);
+  font-size: 10px;
+  font-weight: 700;
+  line-height: 1.3;
+}
+
+.mission-chat-composer {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr);
+  flex: 0 0 auto;
+  min-height: 92px;
+  align-items: stretch;
+  gap: 0;
+  margin-top: auto;
+  padding: 0;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-card);
+  background: #fff;
+  color: var(--faint);
+  box-shadow: var(--shadow-soft);
+}
+
+.mission-chat-composer:focus-within {
+  border-color: var(--green);
+  box-shadow:
+    0 0 0 3px var(--focus-ring),
+    var(--shadow-soft);
+}
+
+.mission-chat-composer:has(textarea:disabled) {
+  background: #f7f9f8;
+}
+
+.mission-chat-composer textarea {
+  width: 100%;
+  min-height: 52px;
+  max-height: 130px;
+  resize: none;
+  padding: 18px 18px 8px;
+  border: 0;
+  outline: 0;
+  background: transparent;
+  color: var(--text);
+  font: inherit;
+  line-height: 1.5;
+  overflow-y: auto;
+}
+
+.mission-chat-composer textarea:disabled {
+  cursor: not-allowed;
+  color: var(--muted);
+}
+
+.mission-chat-composer textarea:focus-visible {
+  outline: 0;
+  box-shadow: none;
+}
+
+.mission-chat-composer-toolbar {
+  display: flex;
+  min-width: 0;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 5px 8px 8px 10px;
+}
+
+.mission-chat-options {
+  display: flex;
+  min-width: 0;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 2px;
+}
+
+.mission-chat-actions {
+  position: relative;
+  display: flex;
+  flex: 0 0 auto;
+  align-items: center;
+  gap: 5px;
+}
+
+.mission-chat-actions > button {
+  display: grid;
+  width: 39px;
+  height: 39px;
+  place-items: center;
+  padding: 0;
+  border: 0;
+  border-radius: 10px;
+  background: var(--green);
+  color: #fff;
+  cursor: pointer;
+}
+
+.mission-chat-actions > button:disabled {
+  background: #cad1cc;
+}
+
+.mission-chat-shell {
+  display: grid;
+  grid-template-rows: minmax(0, 1fr) auto;
+  width: 100%;
+  height: 100%;
+  min-width: 0;
+  min-height: 0;
+  max-width: 100%;
+}
+
+.mission-chat-scroll {
+  position: relative;
+  min-width: 0;
+  min-height: 0;
+  max-width: 100%;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  scrollbar-gutter: stable;
+}
+
+.mission-chat-list {
+  min-width: 0;
+  max-width: 100%;
+  padding: 30px 0 24px;
+}
+
+.mission-chat-list > * + * {
+  margin-top: 22px;
+}
+
+.mission-chat-list > .mission-tool-entry,
+.mission-chat-list > .mission-tool-run,
+.mission-chat-list > .mission-tool-run + *,
+.mission-chat-list > .mission-tool-entry + * {
+  margin-top: 12px;
+}
+
+.mission-chat-footer {
+  position: relative;
+  z-index: 2;
+  display: grid;
+  gap: 7px;
+  padding-top: 10px;
+  background: var(--background);
+}
+
+.mission-chat-footer-tip {
+  overflow: hidden;
+  padding: 0 5px;
+  color: var(--muted);
+  font-size: 11px;
+  line-height: 1.35;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.mission-chat-activity {
+  width: 100%;
+  max-width: none;
+}
+
+.mission-chat-activity summary,
+.mission-tool-static-row {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr) auto auto;
+  min-height: 34px;
+  align-items: center;
+  gap: 8px;
+  padding: 4px 2px;
+  color: var(--muted);
+  font-size: 12px;
+}
+
+.mission-chat-activity summary {
+  cursor: pointer;
+  list-style: none;
+}
+
+.mission-chat-activity summary::-webkit-details-marker {
+  display: none;
+}
+
+.mission-chat-activity summary > span,
+.mission-tool-static-row > span {
+  overflow: hidden;
+  color: var(--text);
+  font-weight: 650;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.mission-chat-activity summary > small,
+.mission-tool-static-row > small {
+  color: var(--faint);
+  font-size: 11px;
+}
+
+.mission-chat-activity summary:focus-visible {
+  border-radius: 6px;
+  outline: 0;
+  box-shadow: 0 0 0 3px var(--focus-ring);
+}
+
+.mission-chat-activity[open] summary > svg:last-child {
+  transform: rotate(180deg);
+}
+
+.mission-chat-composer-toolbar > button.is-interrupt,
+.mission-chat-composer-toolbar > button.is-interrupt:disabled {
+  background: #a84a40;
+}
+
+.mission-chat-composer-toolbar > button.is-interrupt:disabled {
+  cursor: not-allowed;
+  opacity: 0.45;
+}
+
+.mission-chat-composer > .mission-attachment-list {
+  padding: 4px 16px 6px;
+}
+
+.mission-chat-composer > .mission-attachment-list.is-empty {
+  padding: 0;
+}
+
+.mission-chat-composer > .mission-attachment-list.has-images {
+  padding-top: 8px;
+}

@@ -11,7 +11,7 @@ import { setDesktopLocale } from "./i18n/index.ts";
 import { resolveDesktopStartup } from "./lib/desktop-startup.ts";
 import { serializeRendererError } from "./lib/renderer-log.ts";
 import type { PragmaDesktopAPI } from "../../shared/contracts/index.ts";
-import "./styles.css";
+import "./styles/index.css";
 
 const rootElement = document.getElementById("root");
 if (rootElement === null) {

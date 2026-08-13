@@ -41,7 +41,7 @@ Pragma 是长时间使用的 Agent 工作台，不是营销网站，也不是组
 
 ## 2. 当前基线与收敛目标
 
-截至 2026-07-31，`styles.css` 已超过 16,000 行，包含约 387 处圆角、1,000 余行边框声明、
+在分域拆分前，`styles.css` 曾超过 16,000 行，包含约 387 处圆角、1,000 余行边框声明、
 200 余处字重声明和 500 余个直接颜色字面量。字号集中在 10–13px，但同时存在大量零散尺寸；字重存在
 `520`、`590`、`650`、`680`、`730`、`740` 等过细分值。部分选择器在文件相距数千行的位置重复覆盖，
 例如按钮、Settings、Studio、Missions 和 provider/runtime card。
@@ -384,7 +384,7 @@ box-shadow: 0 16px 40px rgb(20 31 25 / 12%);
 
 ### 9.1 禁止追加式覆盖
 
-修改组件时，先找到它的权威规则并直接修改。禁止在 `styles.css` 末尾再次声明同一个选择器来“压过”
+修改组件时，先找到 `styles/` 下对应 owner 文件中的权威规则并直接修改。禁止在任意文件末尾再次声明同一个选择器来“压过”
 旧实现。一个基础选择器只能有一个权威定义；状态、媒体查询和父级布局差异可以单独声明。
 
 如果旧规则分散，优先在本次触及范围内合并并删除失效声明，不保留迁移期覆盖。
@@ -403,6 +403,18 @@ box-shadow: 0 16px 40px rgb(20 31 25 / 12%);
 - 不为单个页面创建 `--page-green-2`、`--card-radius-alt` 等局部视觉 token。
 - provider logo、runtime logo 和 chart series 可以保留局部品牌/数据色，但不得影响通用控件。
 - 一次改动不得引入新的字号、字重或圆角档位。
+
+### 9.4 样式文件所有权
+
+- Renderer 只由 `styles/index.css` 统一导入 CSS；组件和页面源码不得直接导入额外样式表。
+- `foundation/` 保存 token、基础元素和应用 Shell，`components/` 保存跨页面交互组件，`features/`
+  保存对应产品区域。规则放入渲染它的最浅公共 owner，不能为了方便复制到调用页面。
+- 同一个“at-rule 上下文 + selector”只能由一个文件拥有。Feature 可以用更具体的父级选择器修饰共享组件，
+  但不得依靠 feature 之间的导入顺序互相覆盖。
+- 响应式规则、容器查询、动画和 reduced-motion 规则跟随 owner；Portal 内容归 Overlay 或共享组件，
+  React Flow 覆盖保持 `.flow-canvas` 作用域。
+- 不得重新创建单体 `styles.css`、`legacy.css`、`overrides.css` 或迁移层。新增或重命名文件后必须同步
+  `styles/index.css`，并通过 `pnpm --filter @pragma/desktop verify:styles`。
 
 ## 10. 页面评审清单
 
