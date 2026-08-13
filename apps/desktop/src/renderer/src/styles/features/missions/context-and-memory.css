@@ -847,62 +847,109 @@
 
 .mission-human-composer {
   display: grid;
+  box-sizing: border-box;
+  width: min(100%, 640px);
+  justify-self: start;
   max-height: min(430px, 52vh);
-  gap: 12px;
+  gap: 16px;
   overflow-y: auto;
-  padding: 15px;
-  border: 1px solid #c9d9ce;
-  border-radius: var(--radius-card);
-  background: #fff;
-  box-shadow: var(--shadow-soft);
+  padding: 16px;
+  border: 1px solid var(--ui-line-strong);
+  border-radius: var(--ui-radius-lg);
+  background: var(--ui-surface);
 }
 
 .mission-human-composer > header {
   display: flex;
   align-items: flex-start;
   justify-content: space-between;
-  gap: 16px;
+  gap: 12px;
 }
 
-.mission-human-composer > header > div {
+.mission-human-heading {
   display: grid;
-  gap: 3px;
+  min-width: 0;
+  gap: 4px;
 }
 
-.mission-human-composer > header small,
-.mission-human-question > small {
-  color: var(--green-dark);
-  font-size: 10px;
-  font-weight: 700;
-  letter-spacing: 0.05em;
-  text-transform: uppercase;
+.mission-human-heading small {
+  color: var(--ui-text-secondary);
+  font-size: 11px;
+  font-weight: 500;
+  line-height: 1.35;
 }
 
-.mission-human-composer > header strong {
+.mission-human-heading strong {
   font-size: 14px;
+  font-weight: 500;
+  line-height: 1.45;
 }
 
-.mission-human-composer > header p {
-  color: var(--muted);
+.mission-human-heading p {
+  color: var(--ui-text-secondary);
   font-size: 12px;
+  line-height: 1.45;
+}
+
+.mission-human-header-actions,
+.mission-human-question-navigation {
+  display: flex;
+  flex: 0 0 auto;
+  align-items: center;
+}
+
+.mission-human-header-actions {
+  gap: 8px;
+}
+
+.mission-human-question-navigation {
+  gap: 4px;
+}
+
+.mission-human-question-navigation > span {
+  min-width: 40px;
+  color: var(--ui-text-secondary);
+  font-size: 12px;
+  font-weight: 500;
+  text-align: center;
+}
+
+.mission-human-question-navigation > button,
+.mission-human-interrupt {
+  display: grid;
+  width: 32px;
+  height: 32px;
+  place-items: center;
+  padding: 0;
+  border: 0;
+  border-radius: var(--ui-radius-md);
+  background: transparent;
+  color: var(--ui-text-secondary);
+  cursor: pointer;
+}
+
+.mission-human-question-navigation > button:hover:not(:disabled),
+.mission-human-interrupt:hover:not(:disabled) {
+  background: var(--ui-surface-subtle);
+  color: var(--ui-text);
+}
+
+.mission-human-question-navigation > button:focus-visible,
+.mission-human-interrupt:focus-visible {
+  outline: 0;
+  box-shadow: 0 0 0 3px var(--ui-focus);
 }
 
 .mission-human-interrupt {
-  display: inline-flex;
-  min-height: 32px;
-  flex: 0 0 auto;
-  align-items: center;
-  gap: 6px;
-  padding: 0 10px;
-  border: 1px solid #e3c2bd;
-  border-radius: 8px;
-  background: #fff7f5;
-  color: #9d3f34;
-  cursor: pointer;
-  font-size: 11px;
-  font-weight: 650;
+  color: var(--ui-danger);
 }
 
+.mission-human-interrupt:hover:not(:disabled) {
+  background: var(--ui-danger-subtle);
+  color: var(--ui-danger);
+}
+
+.mission-human-question-navigation > button:disabled,
 .mission-human-interrupt:disabled {
   cursor: not-allowed;
   opacity: 0.45;
@@ -910,68 +957,158 @@
 
 .mission-human-question {
   display: grid;
-  gap: 9px;
-}
-
-.mission-human-question > strong {
-  font-size: 13px;
+  width: 100%;
+  gap: 12px;
 }
 
 .mission-human-composer textarea {
-  min-height: 58px;
+  box-sizing: border-box;
+  width: 100%;
+  min-height: 96px;
   resize: vertical;
-  padding: 9px 10px;
-  border: 1px solid var(--border);
-  border-radius: 8px;
+  padding: 8px 12px;
+  border: 1px solid var(--ui-line-strong);
+  border-radius: var(--ui-radius-md);
+  background: var(--ui-surface);
   outline: 0;
-  color: var(--text);
+  color: var(--ui-text);
   font: inherit;
-  font-size: 12px;
+  font-size: 13px;
+  line-height: 1.5;
 }
 
-.mission-human-composer textarea:focus {
-  border-color: var(--green);
-  box-shadow: 0 0 0 2px var(--focus-ring);
+.mission-human-composer textarea:focus-visible {
+  border-color: var(--ui-accent);
+  box-shadow: 0 0 0 3px var(--ui-focus);
 }
 
 .mission-human-options {
   display: grid;
-  grid-template-columns: repeat(2, minmax(0, 1fr));
-  gap: 7px;
+  grid-template-columns: minmax(0, 1fr);
+  width: 100%;
+  gap: 4px;
 }
 
 .mission-human-options > button,
 .mission-human-options > label {
   display: grid;
-  gap: 3px;
-  padding: 9px 10px;
-  border: 1px solid var(--border);
-  border-radius: 8px;
-  background: #fff;
-  color: var(--text);
+  min-height: 44px;
+  gap: 8px;
+  padding: 8px 12px;
+  border: 1px solid var(--ui-line);
+  border-radius: var(--ui-radius-md);
+  background: var(--ui-surface);
+  color: var(--ui-text);
   cursor: pointer;
   text-align: left;
 }
 
-.mission-human-options > button.is-selected {
-  border-color: var(--green);
-  background: var(--green-soft);
-  box-shadow: 0 0 0 2px var(--focus-ring);
+.mission-human-options > button {
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: center;
+  font: inherit;
 }
 
-.mission-human-options small {
-  color: var(--muted);
-  font-size: 10px;
+.mission-human-options > button:not(.is-selected):hover,
+.mission-human-options > label:not(.is-selected):hover {
+  background: var(--ui-surface-subtle);
+}
+
+.mission-human-options > button.is-selected,
+.mission-human-options > label.is-selected {
+  border-color: var(--ui-accent);
+  background: var(--ui-selection);
+  color: var(--ui-accent-strong);
+}
+
+.mission-human-options > button:focus-visible {
+  outline: 0;
+  box-shadow: 0 0 0 3px var(--ui-focus);
+}
+
+.mission-human-option-copy {
+  display: grid;
+  min-width: 0;
+  gap: 2px;
+}
+
+.mission-human-option-copy strong {
+  font-size: 13px;
+  font-weight: 500;
+  line-height: 1.4;
+}
+
+.mission-human-option-copy small {
+  color: var(--ui-text-secondary);
+  font-size: 12px;
+  line-height: 1.4;
+}
+
+.mission-human-option-state {
+  color: var(--ui-accent);
 }
 
 .mission-human-options.is-multiple > label {
   grid-template-columns: auto minmax(0, 1fr);
-  align-items: start;
+  align-items: center;
 }
 
-.mission-human-options.is-multiple > label > span {
+.mission-human-options.is-multiple > label > input {
+  width: 16px;
+  height: 16px;
+  margin: 0;
+  accent-color: var(--ui-accent);
+}
+
+.mission-human-options > label:focus-within {
+  border-color: var(--ui-accent);
+  box-shadow: 0 0 0 3px var(--ui-focus);
+}
+
+.mission-human-options > label > input:focus-visible {
+  outline: 0;
+  box-shadow: none;
+}
+
+.mission-human-custom-answer {
   display: grid;
-  gap: 2px;
+  grid-template-columns: auto minmax(0, 1fr);
+  width: 100%;
+  min-height: 40px;
+  align-items: center;
+  gap: 8px;
+  padding: 0 12px;
+  border: 1px solid var(--ui-line-strong);
+  border-radius: var(--ui-radius-md);
+  background: var(--ui-surface);
+}
+
+.mission-human-custom-answer > span {
+  color: var(--ui-text-secondary);
+  font-size: 12px;
+  font-weight: 500;
+  white-space: nowrap;
+}
+
+.mission-human-custom-answer > input {
+  width: 100%;
+  min-width: 0;
+  border: 0;
+  outline: 0;
+  background: transparent;
+  color: var(--ui-text);
+  font: inherit;
+  font-size: 13px;
+}
+
+.mission-human-custom-answer:focus-within {
+  border-color: var(--ui-accent);
+  box-shadow: 0 0 0 3px var(--ui-focus);
+}
+
+.mission-human-custom-answer > input:focus-visible {
+  outline: 0;
+  box-shadow: none;
 }
 
 .mission-human-composer > footer {
@@ -981,20 +1118,21 @@
 }
 
 .mission-human-composer > footer > button {
-  min-height: 34px;
-  padding: 0 12px;
-  border: 1px solid var(--border);
-  border-radius: 8px;
-  background: #fff;
-  color: var(--text);
-  cursor: pointer;
-  font-weight: 620;
+  min-height: 36px;
 }
 
-.mission-human-composer > footer > button.primary-button {
-  border-color: var(--green);
-  background: var(--green);
-  color: #fff;
+.mission-human-composer > footer > .primary-button {
+  font-weight: 500;
+}
+
+.mission-human-composer > footer > button:not(.primary-button) {
+  padding: 0 12px;
+  border: 1px solid var(--ui-line-strong);
+  border-radius: var(--ui-radius-md);
+  background: var(--ui-surface);
+  color: var(--ui-text);
+  cursor: pointer;
+  font-weight: 500;
 }
 
 .mission-human-composer > footer > button:disabled {
@@ -1324,13 +1462,12 @@
   }
 }
 
-:is(.trigger-options > label, .expert-picker-row, .mission-human-options > label):focus-within {
+:is(.trigger-options > label, .expert-picker-row):focus-within {
   border-color: var(--green);
   box-shadow: 0 0 0 3px var(--focus-ring);
 }
 
-:is(.trigger-options > label, .expert-picker-row, .mission-human-options > label)
-  > input:focus-visible {
+:is(.trigger-options > label, .expert-picker-row) > input:focus-visible {
   outline: 0;
   box-shadow: none;
 }

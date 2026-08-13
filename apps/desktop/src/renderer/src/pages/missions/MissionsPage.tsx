@@ -16,6 +16,8 @@ import { flushSync } from "react-dom";
 import {
   ArrowCounterClockwise,
   CaretDown,
+  CaretLeft,
+  CaretRight,
   CheckCircle,
   Database,
   File,
@@ -1328,6 +1330,9 @@ export function MissionDetailFragment(props: {
   const [humanAnswers, setHumanAnswers] = useState<
     Record<string, Record<string, string | readonly string[]>>
   >({});
+  const [humanCustomAnswers, setHumanCustomAnswers] = useState<
+    Record<string, Record<string, string>>
+  >({});
   const isTeam = props.mission.executor.kind === "team";
   const isFlow = props.mission.executor.kind === "flow";
   const scrollRef = useRef<HTMLDivElement | null>(null);
@@ -2142,6 +2147,11 @@ export function MissionDetailFragment(props: {
         delete next[interaction.interactionId];
         return next;
       });
+      setHumanCustomAnswers((current) => {
+        const next = { ...current };
+        delete next[interaction.interactionId];
+        return next;
+      });
       await props.onHumanResponded?.();
     } finally {
       setResponding(false);
@@ -2634,6 +2644,7 @@ export function MissionDetailFragment(props: {
                 <MissionHumanComposer
                   interaction={interactions[0]}
                   answers={humanAnswers[interactions[0].interactionId] ?? {}}
+                  customAnswers={humanCustomAnswers[interactions[0].interactionId] ?? {}}
                   notes={humanNotes[interactions[0].interactionId] ?? ""}
                   questionIndex={humanQuestionIndex}
                   interactionPosition={{ current: 1, total: interactions.length }}
@@ -2641,9 +2652,34 @@ export function MissionDetailFragment(props: {
                   interruptible={interruptible}
                   interrupting={interrupting}
                   onQuestionIndex={setHumanQuestionIndex}
-                  onAnswer={(question, value) =>
-                    setHumanAnswer(setHumanAnswers, interactions[0]!.interactionId, question, value)
-                  }
+                  onAnswer={(question, value) => {
+                    setHumanAnswer(
+                      setHumanAnswers,
+                      interactions[0]!.interactionId,
+                      question,
+                      value,
+                    );
+                    setHumanCustomAnswer(
+                      setHumanCustomAnswers,
+                      interactions[0]!.interactionId,
+                      question,
+                      "",
+                    );
+                  }}
+                  onCustomAnswer={(question, value) => {
+                    setHumanAnswer(
+                      setHumanAnswers,
+                      interactions[0]!.interactionId,
+                      question,
+                      undefined,
+                    );
+                    setHumanCustomAnswer(
+                      setHumanCustomAnswers,
+                      interactions[0]!.interactionId,
+                      question,
+                      value,
+                    );
+                  }}
                   onNotes={(value) =>
                     setHumanNotes((current) => ({
                       ...current,
@@ -4053,11 +4089,14 @@ const MissionMessageContent = memo(function MissionMessageContent(props: {
   );
 });
 
-type MissionHumanQuestion = NonNullable<MissionHumanInteraction["request"]["questions"]>[number];
+export type MissionHumanQuestion = NonNullable<
+  MissionHumanInteraction["request"]["questions"]
+>[number];
 
 function MissionHumanComposer(props: {
   readonly interaction: MissionHumanInteraction;
   readonly answers: Readonly<Record<string, string | readonly string[]>>;
+  readonly customAnswers: Readonly<Record<string, string>>;
   readonly notes: string;
   readonly questionIndex: number;
   readonly interactionPosition: { readonly current: number; readonly total: number };
@@ -4066,45 +4105,96 @@ function MissionHumanComposer(props: {
   readonly interrupting: boolean;
   readonly onQuestionIndex: (index: number) => void;
   readonly onAnswer: (question: string, value: string | readonly string[]) => void;
+  readonly onCustomAnswer: (question: string, value: string) => void;
   readonly onNotes: (value: string) => void;
   readonly onRespond: (response: HumanInteractionResponse) => void;
   readonly onInterrupt: () => void;
 }) {
-  const { t } = useTranslation(["missions", "common"]);
+  const { t } = useTranslation("missions");
   const request = props.interaction.request;
   const questions = request.questions ?? [];
   const index = Math.min(props.questionIndex, Math.max(questions.length - 1, 0));
   const question = questions[index];
   const answer = question === undefined ? undefined : props.answers[question.question];
-  const answerValid = question === undefined ? true : humanAnswerValid(question, answer);
+  const customAnswer = question === undefined ? "" : (props.customAnswers[question.question] ?? "");
+  const allAnswersValid = hasValidMissionHumanAnswers(
+    questions,
+    props.answers,
+    props.customAnswers,
+  );
   const choiceOnly =
     questions.length > 0 && questions.every((candidate) => candidate.kind !== "text");
+  const heading =
+    question?.question ?? request.title ?? t("humanInputRequired", { ns: "missions" });
+  const helperText =
+    question === undefined
+      ? (request.prompt ?? t("humanReview", { ns: "missions" }))
+      : request.prompt === undefined || request.prompt === question.question
+        ? undefined
+        : request.prompt;
 
   return (
     <section className="mission-human-composer" aria-labelledby="mission-human-title">
       <header>
-        <div>
-          <small>
-            {t("userInputPosition", {
-              ns: "missions",
-              current: props.interactionPosition.current,
-              total: props.interactionPosition.total,
-            })}
-          </small>
-          <strong id="mission-human-title">
-            {request.title ?? t("humanInputRequired", { ns: "missions" })}
-          </strong>
-          <p>{request.prompt ?? t("humanReview", { ns: "missions" })}</p>
+        <div className="mission-human-heading">
+          {question === undefined ? (
+            <small>
+              {t("userInputPosition", {
+                ns: "missions",
+                current: props.interactionPosition.current,
+                total: props.interactionPosition.total,
+              })}
+            </small>
+          ) : (
+            <small>{question.header}</small>
+          )}
+          <strong id="mission-human-title">{heading}</strong>
+          {helperText === undefined ? null : <p>{helperText}</p>}
         </div>
-        <button
-          className="mission-human-interrupt"
-          type="button"
-          disabled={!props.interruptible || props.interrupting}
-          onClick={props.onInterrupt}
-        >
-          <StopCircle size={17} weight="fill" aria-hidden="true" />
-          {t("interrupt", { ns: "missions" })}
-        </button>
+        <div className="mission-human-header-actions">
+          {request.kind !== "approval" && question !== undefined && questions.length > 1 ? (
+            <div
+              className="mission-human-question-navigation"
+              aria-label={t("questionNavigation", { ns: "missions" })}
+            >
+              <button
+                type="button"
+                aria-label={t("previousQuestion", { ns: "missions" })}
+                title={t("previousQuestion", { ns: "missions" })}
+                disabled={index === 0 || props.responding}
+                onClick={() => props.onQuestionIndex(index - 1)}
+              >
+                <CaretLeft size={16} aria-hidden="true" />
+              </button>
+              <span aria-live="polite">
+                {t("questionProgress", {
+                  ns: "missions",
+                  current: index + 1,
+                  total: questions.length,
+                })}
+              </span>
+              <button
+                type="button"
+                aria-label={t("nextQuestion", { ns: "missions" })}
+                title={t("nextQuestion", { ns: "missions" })}
+                disabled={index === questions.length - 1 || props.responding}
+                onClick={() => props.onQuestionIndex(index + 1)}
+              >
+                <CaretRight size={16} aria-hidden="true" />
+              </button>
+            </div>
+          ) : null}
+          <button
+            className="mission-human-interrupt"
+            type="button"
+            aria-label={t("interrupt", { ns: "missions" })}
+            title={t("interrupt", { ns: "missions" })}
+            disabled={!props.interruptible || props.interrupting}
+            onClick={props.onInterrupt}
+          >
+            <StopCircle size={17} weight="fill" aria-hidden="true" />
+          </button>
+        </div>
       </header>
       {request.kind === "approval" ? (
         <>
@@ -4160,20 +4250,13 @@ function MissionHumanComposer(props: {
       ) : (
         <>
           <div className="mission-human-question">
-            {questions.length === 1 ? (
-              <small>{question.header}</small>
-            ) : (
-              <small>
-                {t("questionPosition", {
-                  ns: "missions",
-                  current: index + 1,
-                  total: questions.length,
-                  header: question.header,
-                })}
-              </small>
-            )}
-            <strong>{question.question}</strong>
-            <HumanQuestionInput question={question} answer={answer} onAnswer={props.onAnswer} />
+            <HumanQuestionInput
+              question={question}
+              answer={answer}
+              customAnswer={customAnswer}
+              onAnswer={(value) => props.onAnswer(question.question, value)}
+              onCustomAnswer={(value) => props.onCustomAnswer(question.question, value)}
+            />
           </div>
           {choiceOnly ? null : (
             <textarea
@@ -4184,38 +4267,20 @@ function MissionHumanComposer(props: {
           )}
           <footer>
             <button
+              className="primary-button"
               type="button"
-              disabled={index === 0 || props.responding}
-              onClick={() => props.onQuestionIndex(index - 1)}
+              disabled={!allAnswersValid || props.responding}
+              onClick={() =>
+                props.onRespond({
+                  answers: mergeMissionHumanAnswers(props.answers, props.customAnswers),
+                  notes: props.notes,
+                })
+              }
             >
-              {t("actions.back", { ns: "common" })}
+              {props.responding
+                ? t("submitting", { ns: "missions" })
+                : t("confirmContinue", { ns: "missions" })}
             </button>
-            {index < questions.length - 1 ? (
-              <button
-                className="primary-button"
-                type="button"
-                disabled={!answerValid || props.responding}
-                onClick={() => props.onQuestionIndex(index + 1)}
-              >
-                {t("actions.next", { ns: "common" })}
-              </button>
-            ) : (
-              <button
-                className="primary-button"
-                type="button"
-                disabled={!answerValid || props.responding}
-                onClick={() =>
-                  props.onRespond({
-                    answers: props.answers,
-                    notes: props.notes,
-                  })
-                }
-              >
-                {props.responding
-                  ? t("submitting", { ns: "missions" })
-                  : t("submitResponse", { ns: "missions" })}
-              </button>
-            )}
           </footer>
         </>
       )}
@@ -4226,67 +4291,147 @@ function MissionHumanComposer(props: {
 function HumanQuestionInput(props: {
   readonly question: MissionHumanQuestion;
   readonly answer: string | readonly string[] | undefined;
-  readonly onAnswer: (question: string, value: string | readonly string[]) => void;
+  readonly customAnswer: string;
+  readonly onAnswer: (value: string | readonly string[]) => void;
+  readonly onCustomAnswer: (value: string) => void;
 }) {
+  const { t } = useTranslation("missions");
   if (props.question.kind === "text") {
     return (
       <textarea
         value={typeof props.answer === "string" ? props.answer : ""}
-        onChange={(event) => props.onAnswer(props.question.question, event.target.value)}
+        onChange={(event) => props.onAnswer(event.target.value)}
+        aria-labelledby="mission-human-title"
         autoFocus
       />
     );
   }
   if (props.question.kind === "single_choice") {
     return (
-      <div className="mission-human-options">
-        {props.question.options.map((option) => (
-          <button
-            className={props.answer === option.label ? "is-selected" : ""}
-            type="button"
-            key={option.label}
-            onClick={() => props.onAnswer(props.question.question, option.label)}
-          >
-            <strong>{option.label}</strong>
-            {option.description === "" ? null : <small>{option.description}</small>}
-          </button>
-        ))}
-      </div>
+      <>
+        <div className="mission-human-options">
+          {props.question.options.map((option) => {
+            const selected = props.answer === option.label;
+            return (
+              <button
+                className={selected ? "is-selected" : ""}
+                type="button"
+                aria-pressed={selected}
+                key={option.label}
+                onClick={() => props.onAnswer(option.label)}
+              >
+                <span className="mission-human-option-copy">
+                  <strong>{option.label}</strong>
+                  {option.description === "" ? null : <small>{option.description}</small>}
+                </span>
+                {selected ? (
+                  <CheckCircle
+                    className="mission-human-option-state"
+                    size={18}
+                    weight="fill"
+                    aria-hidden="true"
+                  />
+                ) : null}
+              </button>
+            );
+          })}
+        </div>
+        <HumanCustomAnswerInput
+          value={props.customAnswer}
+          onChange={props.onCustomAnswer}
+          label={t("customAnswer")}
+          placeholder={t("customAnswerPlaceholder")}
+        />
+      </>
     );
   }
   const selected = Array.isArray(props.answer) ? props.answer : [];
   return (
-    <div className="mission-human-options is-multiple">
-      {props.question.options.map((option) => (
-        <label key={option.label}>
-          <input
-            type="checkbox"
-            checked={selected.includes(option.label)}
-            onChange={(event) =>
-              props.onAnswer(
-                props.question.question,
-                event.target.checked
-                  ? [...selected, option.label]
-                  : selected.filter((value) => value !== option.label),
-              )
-            }
-          />
-          <span>
-            <strong>{option.label}</strong>
-            {option.description === "" ? null : <small>{option.description}</small>}
-          </span>
-        </label>
-      ))}
-    </div>
+    <>
+      <div className="mission-human-options is-multiple">
+        {props.question.options.map((option) => {
+          const optionSelected = selected.includes(option.label);
+          return (
+            <label className={optionSelected ? "is-selected" : ""} key={option.label}>
+              <input
+                type="checkbox"
+                checked={optionSelected}
+                onChange={(event) =>
+                  props.onAnswer(
+                    event.target.checked
+                      ? [...selected, option.label]
+                      : selected.filter((value) => value !== option.label),
+                  )
+                }
+              />
+              <span className="mission-human-option-copy">
+                <strong>{option.label}</strong>
+                {option.description === "" ? null : <small>{option.description}</small>}
+              </span>
+            </label>
+          );
+        })}
+      </div>
+      <HumanCustomAnswerInput
+        value={props.customAnswer}
+        onChange={props.onCustomAnswer}
+        label={t("customAnswer")}
+        placeholder={t("customAnswerPlaceholder")}
+      />
+    </>
+  );
+}
+
+function HumanCustomAnswerInput(props: {
+  readonly value: string;
+  readonly onChange: (value: string) => void;
+  readonly label: string;
+  readonly placeholder: string;
+}) {
+  return (
+    <label className="mission-human-custom-answer">
+      <span>{props.label}</span>
+      <input
+        type="text"
+        value={props.value}
+        onChange={(event) => props.onChange(event.target.value)}
+        placeholder={props.placeholder}
+      />
+    </label>
   );
 }
 
 function humanAnswerValid(
   question: MissionHumanQuestion,
   answer: string | readonly string[] | undefined,
+  customAnswer: string | undefined,
 ): boolean {
+  if (question.kind !== "text" && customAnswer !== undefined && customAnswer.trim() !== "") {
+    return true;
+  }
   if (question.kind === "multiple_choice") return Array.isArray(answer) && answer.length > 0;
   return typeof answer === "string" && answer.trim() !== "";
+}
+
+export function hasValidMissionHumanAnswers(
+  questions: readonly MissionHumanQuestion[],
+  answers: Readonly<Record<string, string | readonly string[]>>,
+  customAnswers: Readonly<Record<string, string>>,
+): boolean {
+  return questions.every((question) =>
+    humanAnswerValid(question, answers[question.question], customAnswers[question.question]),
+  );
+}
+
+export function mergeMissionHumanAnswers(
+  answers: Readonly<Record<string, string | readonly string[]>>,
+  customAnswers: Readonly<Record<string, string>>,
+): Record<string, string | readonly string[]> {
+  const merged = { ...answers };
+  for (const [question, customAnswer] of Object.entries(customAnswers)) {
+    if (customAnswer.trim() !== "") merged[question] = customAnswer;
+  }
+  return merged;
 }
 
 function entryContentLength(entry: MissionChatEntry): number {
@@ -4692,12 +4837,34 @@ function setHumanAnswer(
   update: Dispatch<SetStateAction<Record<string, Record<string, string | readonly string[]>>>>,
   interactionId: string,
   question: string,
-  value: string | readonly string[],
+  value: string | readonly string[] | undefined,
 ): void {
-  update((current) => ({
-    ...current,
-    [interactionId]: { ...current[interactionId], [question]: value },
-  }));
+  update((current) => {
+    const answers = { ...current[interactionId] };
+    if (value === undefined) delete answers[question];
+    else answers[question] = value;
+    const next = { ...current };
+    if (Object.keys(answers).length === 0) delete next[interactionId];
+    else next[interactionId] = answers;
+    return next;
+  });
+}
+
+function setHumanCustomAnswer(
+  update: Dispatch<SetStateAction<Record<string, Record<string, string>>>>,
+  interactionId: string,
+  question: string,
+  value: string,
+): void {
+  update((current) => {
+    const answers = { ...current[interactionId] };
+    if (value === "") delete answers[question];
+    else answers[question] = value;
+    const next = { ...current };
+    if (Object.keys(answers).length === 0) delete next[interactionId];
+    else next[interactionId] = answers;
+    return next;
+  });
 }
 
 function desktopApi(): PragmaDesktopAPI | undefined {

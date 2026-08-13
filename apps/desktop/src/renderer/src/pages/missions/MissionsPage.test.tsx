@@ -16,6 +16,8 @@ import {
   ContextWindowControl,
   DEFAULT_MISSION_MEMORY_VIEW,
   groupMissionConversationEntries,
+  hasValidMissionHumanAnswers,
+  mergeMissionHumanAnswers,
   mergeLatestChatPage,
   MissionContextOperationEntry,
   MissionChatEntryView,
@@ -38,6 +40,7 @@ import {
   shouldShowMissionThinkingPlaceholder,
   unavailableMcpToolName,
   upsertMissionSummary,
+  type MissionHumanQuestion,
 } from "./MissionsPage.tsx";
 
 describe("MissionsPage", () => {
@@ -183,6 +186,93 @@ describe("MissionsPage", () => {
     expect(html.indexOf("mission-attachment-list is-empty")).toBeLessThan(
       html.indexOf("<textarea"),
     );
+  });
+
+  it("renders a compact, single-confirmation question flow", () => {
+    const mission = missionFixture("expert");
+    const chat: MissionChatSnapshot = {
+      missionId: mission.id,
+      revision: 1,
+      entries: [],
+      page: {},
+      pendingInteractions: [
+        {
+          interactionId: "question-flow",
+          request: {
+            kind: "question",
+            questions: [
+              {
+                header: "Direction",
+                question: "Which direction should we take?",
+                kind: "single_choice",
+                options: [
+                  { label: "Option one", description: "The first route." },
+                  { label: "Option two", description: "The second route." },
+                ],
+              },
+              {
+                header: "Audience",
+                question: "Who is this for?",
+                kind: "multiple_choice",
+                options: [{ label: "Designers", description: "Design teams." }],
+              },
+            ],
+          },
+        },
+      ],
+    };
+    const html = renderToStaticMarkup(
+      <MissionDetailFragment mission={mission} chatCache={new Map([[mission.id, chat]])} />,
+    );
+    const composerStart = html.indexOf('<section class="mission-human-composer"');
+    const composerEnd = html.indexOf("</section>", composerStart);
+    const composer = html.slice(composerStart, composerEnd);
+
+    expect(html).toContain('aria-label="Previous question"');
+    expect(html).toContain('aria-label="Next question"');
+    expect(html).toContain('aria-live="polite">1 / 2</span>');
+    expect(html).toContain("Other answer");
+    expect(html).toContain('placeholder="Tell the agent what you want instead"');
+    expect(composer).toContain("Confirm &amp; continue");
+    expect(composer).toMatch(/class="primary-button"[^>]*disabled=""/);
+    expect(composer.match(/class="primary-button"/g)).toHaveLength(1);
+    expect(composer).not.toContain(">Back<");
+    expect(composer).not.toContain(">Next<");
+    expect(composer.indexOf("Option one")).toBeLessThan(composer.indexOf("Option two"));
+  });
+
+  it("localizes question controls in every supported language", async () => {
+    const expected = {
+      en: {
+        previous: "Previous question",
+        next: "Next question",
+        other: "Other answer",
+        confirm: "Confirm & continue",
+      },
+      "zh-Hans": {
+        previous: "上一题",
+        next: "下一题",
+        other: "其他回答",
+        confirm: "确认并继续",
+      },
+      "zh-Hant": {
+        previous: "上一題",
+        next: "下一題",
+        other: "其他回答",
+        confirm: "確認並繼續",
+      },
+    };
+
+    for (const [locale, labels] of Object.entries(expected)) {
+      await i18n.changeLanguage(locale);
+      expect(i18n.t("previousQuestion", { ns: "missions" })).toBe(labels.previous);
+      expect(i18n.t("nextQuestion", { ns: "missions" })).toBe(labels.next);
+      expect(i18n.t("questionProgress", { ns: "missions", current: 2, total: 3 })).toBe("2 / 3");
+      expect(i18n.t("customAnswer", { ns: "missions" })).toBe(labels.other);
+      expect(i18n.t("confirmContinue", { ns: "missions" })).toBe(labels.confirm);
+    }
+
+    await i18n.changeLanguage("en");
   });
 
   it("shows thinking immediately while the first Mission message starts", () => {
@@ -1514,6 +1604,83 @@ describe("Mission thinking entry", () => {
     expect(html).toContain('aria-expanded="false"');
     expect(html).toContain('aria-label="Expand thinking"');
     expect(html).toContain(entry.content);
+  });
+});
+
+describe("Mission human answers", () => {
+  const questions = [
+    {
+      header: "Direction",
+      question: "Which direction should we take?",
+      kind: "single_choice",
+      options: [{ label: "Option one", description: "The first route." }],
+    },
+    {
+      header: "Audience",
+      question: "Who is this for?",
+      kind: "multiple_choice",
+      options: [{ label: "Designers", description: "Design teams." }],
+    },
+    {
+      header: "Details",
+      question: "What should the agent know?",
+      kind: "text",
+      options: [],
+    },
+  ] satisfies readonly MissionHumanQuestion[];
+
+  it("requires every question to have an option, custom answer, or text answer", () => {
+    expect(hasValidMissionHumanAnswers(questions, {}, {})).toBe(false);
+    expect(
+      hasValidMissionHumanAnswers(
+        questions,
+        {
+          "Who is this for?": ["Designers"],
+          "What should the agent know?": "Keep it compact.",
+        },
+        {},
+      ),
+    ).toBe(false);
+    expect(
+      hasValidMissionHumanAnswers(
+        questions,
+        {
+          "Who is this for?": ["Designers"],
+          "What should the agent know?": "Keep it compact.",
+        },
+        { "Which direction should we take?": "A different route." },
+      ),
+    ).toBe(true);
+    expect(
+      hasValidMissionHumanAnswers(
+        questions,
+        {
+          "Who is this for?": ["Designers"],
+          "What should the agent know?": "Keep it compact.",
+        },
+        { "Which direction should we take?": "   " },
+      ),
+    ).toBe(false);
+  });
+
+  it("submits custom answers in place of selected options without losing other questions", () => {
+    expect(
+      mergeMissionHumanAnswers(
+        {
+          "Which direction should we take?": "Option one",
+          "Who is this for?": ["Designers"],
+          "What should the agent know?": "Keep it compact.",
+        },
+        {
+          "Which direction should we take?": "A different route.",
+          "Who is this for?": "A broader audience.",
+        },
+      ),
+    ).toEqual({
+      "Which direction should we take?": "A different route.",
+      "Who is this for?": "A broader audience.",
+      "What should the agent know?": "Keep it compact.",
+    });
   });
 });
 
