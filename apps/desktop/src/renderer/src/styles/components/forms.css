@@ -449,6 +449,10 @@
   padding: 0 8px 0 10px;
 }
 
+.mission-model-menu-section.is-label-only {
+  grid-template-columns: minmax(0, 1fr) auto;
+}
+
 .mission-model-menu-section:hover,
 .mission-model-menu-section[aria-selected="true"],
 .mission-model-menu-option:hover,

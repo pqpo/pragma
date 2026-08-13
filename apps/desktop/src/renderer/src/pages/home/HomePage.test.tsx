@@ -124,7 +124,7 @@ describe("MissionModelOverrideControls", () => {
       />,
     );
 
-    expect(html).toContain("DeepSeek · DeepSeek Model · High");
+    expect(html).toContain("DeepSeek Model · High");
     expect(html).toContain("mission-model-control");
     expect(html).not.toContain("Default model");
     expect(html).not.toContain("Default thinking depth");
@@ -151,7 +151,7 @@ describe("MissionModelOverrideControls", () => {
       />,
     );
 
-    expect(html).toContain("OpenAI · GPT · Medium");
+    expect(html).toContain("GPT · Medium");
     expect(html).toContain('aria-haspopup="dialog"');
     expect(html).not.toContain("Default (");
     expect(html).not.toContain("<select");

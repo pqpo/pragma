@@ -40,10 +40,7 @@ export function MissionModelOverrideControls(props: {
   const effectiveThinkingLabel = thinkingLevels.find(
     (level) => level.value === effectiveThinkingLevel,
   )?.label;
-  const modelLabel =
-    effectiveModel === undefined
-      ? t("modelOverride")
-      : `${effectiveModel.provider.displayName} · ${effectiveModel.displayName}`;
+  const modelLabel = effectiveModel === undefined ? t("modelOverride") : effectiveModel.displayName;
   const thinkingLabel = effectiveThinkingLabel ?? t("thinkingDepth");
   const disabled = props.loading || props.disabled || props.models.length === 0;
 
@@ -74,7 +71,7 @@ export function MissionModelOverrideControls(props: {
         width: menuWidth,
         left: Math.max(
           viewportPadding,
-          Math.min(trigger.right - menuWidth, window.innerWidth - menuWidth - viewportPadding),
+          Math.min(trigger.left, window.innerWidth - menuWidth - viewportPadding),
         ),
         ...(openAbove
           ? { bottom: window.innerHeight - trigger.top + menuGap }
@@ -134,8 +131,7 @@ export function MissionModelOverrideControls(props: {
         <MenuSection
           active={activePanel === "thinking"}
           disabled={thinkingLevels.length === 0}
-          label={t("thinkingDepth")}
-          value={thinkingLabel}
+          label={thinkingLabel}
           onSelect={() => setActivePanel("thinking")}
         />
       </div>
@@ -158,7 +154,7 @@ export function MissionModelOverrideControls(props: {
                   key={modelOptionKey(model.provider.id, model.id)}
                   onClick={() => chooseModel(model)}
                 >
-                  <span>{`${model.provider.displayName} · ${model.displayName}`}</span>
+                  <span>{model.displayName}</span>
                   <Check size={15} weight="bold" aria-hidden="true" />
                 </button>
               );
@@ -213,12 +209,12 @@ function MenuSection(props: {
   readonly active: boolean;
   readonly disabled?: boolean | undefined;
   readonly label: string;
-  readonly value: string;
+  readonly value?: string | undefined;
   readonly onSelect: () => void;
 }) {
   return (
     <button
-      className="mission-model-menu-section"
+      className={`mission-model-menu-section${props.value === undefined ? " is-label-only" : ""}`}
       type="button"
       role="tab"
       aria-selected={props.active}
@@ -226,7 +222,9 @@ function MenuSection(props: {
       onClick={props.onSelect}
     >
       <span className="mission-model-menu-section-label">{props.label}</span>
-      <span className="mission-model-menu-section-value">{props.value}</span>
+      {props.value === undefined ? null : (
+        <span className="mission-model-menu-section-value">{props.value}</span>
+      )}
       <CaretRight size={15} aria-hidden="true" />
     </button>
   );
