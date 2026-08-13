@@ -1141,7 +1141,11 @@
 }
 
 .mission-work-list {
+  display: grid;
   height: 100%;
+  container-name: mission-work;
+  container-type: inline-size;
+  grid-template-rows: auto minmax(min-content, 1fr);
   overflow-y: auto;
   padding: 28px 0;
 }
@@ -1159,9 +1163,28 @@
 .mission-work-grid {
   position: relative;
   display: grid;
+  align-content: start;
   gap: 56px;
   margin: 22px 0 0;
   padding: 10px 8px 24px;
+}
+
+.mission-work-list.is-sparse .mission-work-grid {
+  width: 100%;
+  min-height: 260px;
+  align-self: center;
+  align-content: center;
+  justify-self: center;
+  margin-top: 12px;
+  padding-block: 28px;
+}
+
+.mission-work-list.is-single .mission-work-grid {
+  max-width: 360px;
+}
+
+.mission-work-list.is-pair .mission-work-grid {
+  max-width: 720px;
 }
 
 .mission-work-grid-row {
@@ -1175,6 +1198,15 @@
 
 .mission-work-grid-item {
   min-width: 0;
+}
+
+.mission-work-grid[data-density="single"] .mission-work-grid-row {
+  grid-template-columns: minmax(280px, 320px);
+}
+
+.mission-work-grid[data-density="pair"] .mission-work-grid-row {
+  grid-template-columns: repeat(2, minmax(240px, 280px));
+  gap: 96px;
 }
 
 .mission-work-card {
@@ -1198,6 +1230,15 @@
     transform 150ms ease;
 }
 
+.mission-work-grid[data-density="single"] .mission-work-card {
+  min-height: 188px;
+  padding: 24px 22px 20px;
+}
+
+.mission-work-grid[data-density="pair"] .mission-work-card {
+  min-height: 160px;
+}
+
 .mission-work-card:hover,
 .mission-work-card:focus-visible {
   border-color: rgb(88 121 104 / 32%);
@@ -1212,6 +1253,24 @@
   position: relative;
   display: inline-grid;
   place-items: center;
+}
+
+.mission-work-call-order {
+  position: absolute;
+  top: 13px;
+  left: 14px;
+  display: inline-grid;
+  min-width: 28px;
+  height: 22px;
+  place-items: center;
+  padding-inline: 6px;
+  border: 1px solid rgb(74 103 87 / 18%);
+  border-radius: 999px;
+  background: var(--surface-muted);
+  color: var(--green-dark);
+  font-size: 10px;
+  font-weight: 720;
+  letter-spacing: 0.03em;
 }
 
 .mission-work-card strong,
@@ -1231,6 +1290,19 @@
 .mission-work-card small {
   color: var(--muted);
   font-size: 11px;
+}
+
+.mission-work-card-summary {
+  display: -webkit-box;
+  max-width: 260px;
+  margin: 2px 0 0;
+  overflow: hidden;
+  color: var(--muted);
+  font-size: 12px;
+  line-height: 1.5;
+  overflow-wrap: anywhere;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 2;
 }
 
 .mission-work-status {
@@ -1262,15 +1334,16 @@
 }
 
 .mission-work-grid-connections marker path {
-  fill: #8fa197;
+  fill: #687d71;
 }
 
 .mission-work-grid-connection {
   fill: none;
-  stroke: #9aa9a1;
+  stroke: #82958a;
   stroke-dasharray: 6 7;
   stroke-linecap: round;
-  stroke-width: 1.5;
+  stroke-linejoin: round;
+  stroke-width: 1.7;
   animation: mission-work-flow 1.1s linear infinite;
 }
 
@@ -1281,7 +1354,8 @@
 }
 
 @media (prefers-reduced-motion: reduce) {
-  .mission-work-grid-connection {
+  .mission-work-grid-connection,
+  .mission-work-status.is-running::after {
     animation: none;
   }
 }
@@ -1289,6 +1363,28 @@
 .mission-work-status.is-running,
 .mission-work-status.is-waiting {
   background: #d49a45;
+}
+
+.mission-work-status.is-running::after {
+  position: absolute;
+  inset: -5px;
+  border: 1px solid rgb(212 154 69 / 64%);
+  border-radius: 50%;
+  animation: mission-work-status-breathe 1.6s ease-in-out infinite;
+  content: "";
+}
+
+@keyframes mission-work-status-breathe {
+  0%,
+  100% {
+    opacity: 0.18;
+    transform: scale(0.72);
+  }
+
+  50% {
+    opacity: 0.9;
+    transform: scale(1.12);
+  }
 }
 
 .mission-work-status.is-queued {
@@ -1303,6 +1399,21 @@
 .mission-work-status.is-cancelled,
 .mission-work-status.is-interrupted {
   background: #b65348;
+}
+
+@container mission-work (max-width: 680px) {
+  .mission-work-list.is-sparse .mission-work-grid {
+    min-height: 320px;
+  }
+
+  .mission-work-list.is-pair .mission-work-grid {
+    max-width: 320px;
+  }
+
+  .mission-work-grid[data-density="pair"] .mission-work-grid-row {
+    grid-template-columns: minmax(240px, 280px);
+    gap: 64px;
+  }
 }
 
 .mission-work-drawer-layer {

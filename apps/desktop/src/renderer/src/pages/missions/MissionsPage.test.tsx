@@ -31,6 +31,8 @@ import {
   MissionsPage,
   MissionsPageSkeleton,
   missionWorkInputSenderName,
+  missionWorkCallOrder,
+  missionWorkGridEdgePath,
   missionWorkRecordTitle,
   resolveMissionsPageInitialState,
   resolveMissionRailGroups,
@@ -890,8 +892,159 @@ describe("Mission work grid", () => {
     expect(html).toContain('data-avatar-profile="pragma.avatar.expert.07"');
     expect(html).toContain('data-avatar-profile="pragma.avatar.expert.08"');
     expect(html).toContain("mission-work-grid-connections");
-    expect(html).toMatch(/class="mission-work-grid" role="list" aria-label="[^"]+"/u);
+    expect(html).toContain('data-density="pair"');
+    expect(html).toContain("mission-work-call-order");
+    expect(html).toContain("#1");
+    expect(html).toContain("Call #1");
+    expect(html).toMatch(
+      /class="mission-work-grid" data-density="pair" role="list" aria-label="[^"]+"/u,
+    );
     expect(html.match(/role="listitem"/g)).toHaveLength(2);
+  });
+
+  it("uses a focused single-expert layout with a larger avatar and task summary", () => {
+    const createdAt = "2026-07-21T00:00:00.000Z";
+    const html = renderToStaticMarkup(
+      <MissionWorkGrid
+        records={[
+          {
+            recordId: "root:coordinator",
+            kind: "root",
+            sessionId: "coordinator",
+            title: "Coordinator",
+            avatarId: "pragma.avatar.expert.07",
+            origin: "core",
+            status: "running",
+            tasks: [],
+            summary: "Coordinate the mission and prepare the final handoff.",
+            createdAt,
+            updatedAt: createdAt,
+          },
+        ]}
+        onSelect={() => undefined}
+      />,
+    );
+
+    expect(html).toContain('class="mission-work-list is-single is-sparse"');
+    expect(html).toContain('data-density="single"');
+    expect(html).toContain("pragma-avatar-lg");
+    expect(html).toContain("mission-work-card-summary");
+    expect(html).toContain("Coordinate the mission and prepare the final handoff.");
+    expect(html).not.toContain("mission-work-call-order");
+  });
+
+  it("numbers non-root experts by their first call and uses stable record IDs for ties", () => {
+    const base = {
+      kind: "runtime-agent" as const,
+      sessionId: "session",
+      parentRecordId: "root",
+      title: "Expert",
+      origin: "runtime" as const,
+      status: "succeeded" as const,
+      tasks: [],
+      summary: "Done",
+      updatedAt: "2026-07-21T00:00:02.000Z",
+    };
+    const records: MissionWorkRecord[] = [
+      {
+        ...base,
+        recordId: "child:b",
+        createdAt: "2026-07-21T00:00:01.000Z",
+      },
+      {
+        ...base,
+        recordId: "root",
+        kind: "root",
+        parentRecordId: undefined,
+        createdAt: "2026-07-21T00:00:00.000Z",
+      },
+      {
+        ...base,
+        recordId: "child:a",
+        createdAt: "2026-07-21T00:00:01.000Z",
+      },
+      {
+        ...base,
+        recordId: "child:c",
+        createdAt: "2026-07-21T00:00:02.000Z",
+      },
+    ];
+
+    expect([...missionWorkCallOrder(records)]).toEqual([
+      ["child:a", 1],
+      ["child:b", 2],
+      ["child:c", 3],
+    ]);
+  });
+
+  it("keeps arrow heads outside the target card for vertical and horizontal layouts", () => {
+    const source = { top: 10, right: 110, bottom: 110, left: 10, width: 100, height: 100 };
+    const verticalTarget = {
+      top: 210,
+      right: 310,
+      bottom: 310,
+      left: 210,
+      width: 100,
+      height: 100,
+    };
+    const horizontalTarget = {
+      top: 10,
+      right: 310,
+      bottom: 110,
+      left: 210,
+      width: 100,
+      height: 100,
+    };
+
+    expect(
+      missionWorkGridEdgePath({
+        source,
+        target: verticalTarget,
+        surface: { left: 0, top: 0 },
+      }),
+    ).toBe("M 60 110 V 155 H 260 V 200");
+    expect(
+      missionWorkGridEdgePath({
+        source,
+        target: horizontalTarget,
+        surface: { left: 0, top: 0 },
+      }),
+    ).toBe("M 110 60 H 200");
+  });
+
+  it("uses one shared horizontal trunk for sibling branches", () => {
+    const source = { top: 10, right: 210, bottom: 110, left: 110, width: 100, height: 100 };
+    const leftTarget = {
+      top: 210,
+      right: 110,
+      bottom: 310,
+      left: 10,
+      width: 100,
+      height: 100,
+    };
+    const rightTarget = {
+      top: 210,
+      right: 310,
+      bottom: 310,
+      left: 210,
+      width: 100,
+      height: 100,
+    };
+
+    expect(
+      missionWorkGridEdgePath({
+        source,
+        target: leftTarget,
+        surface: { left: 0, top: 0 },
+      }),
+    ).toBe("M 160 110 V 155 H 60 V 200");
+    expect(
+      missionWorkGridEdgePath({
+        source,
+        target: rightTarget,
+        surface: { left: 0, top: 0 },
+      }),
+    ).toBe("M 160 110 V 155 H 260 V 200");
   });
 });
 

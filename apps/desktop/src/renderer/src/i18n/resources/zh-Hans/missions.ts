@@ -273,6 +273,7 @@ export const missions = {
   executionWork: "任务执行工作",
   executionMap: "专家协作网络",
   executionMapDescription: "查看每位专家如何参与并推进当前任务。",
+  workCallOrder: "第 {{number}} 个调用",
   workHistoryUnavailable: "无法读取工作记录",
   runtimeAgentFallbackName: "子代理 {{number}}",
   you: "你",

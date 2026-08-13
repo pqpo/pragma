@@ -52,6 +52,65 @@ final result: passed
 
 ---
 
+# Mission Work Grid Density and Call Order Design QA
+
+- Source visual truth path: `/tmp/codex-remote-attachments/019ffa47-9af9-7761-a21c-0185b818156a/7a9ddd45-9a81-48fb-8efe-e34cdc6f80ca/1-Photo-1.jpg`
+- Implementation screenshots: `/Users/linminqiu/.codex/visualizations/2026/08/13/019ffa47-9af9-7761-a21c-0185b818156a/mission-work-single.png`, `/Users/linminqiu/.codex/visualizations/2026/08/13/019ffa47-9af9-7761-a21c-0185b818156a/mission-work-pair.png`, `/Users/linminqiu/.codex/visualizations/2026/08/13/019ffa47-9af9-7761-a21c-0185b818156a/mission-work-pair-compact.png`, and `/Users/linminqiu/.codex/visualizations/2026/08/13/019ffa47-9af9-7761-a21c-0185b818156a/mission-work-network.png`
+- Hover-state screenshot: `/Users/linminqiu/.codex/visualizations/2026/08/13/019ffa47-9af9-7761-a21c-0185b818156a/mission-work-pair-hover.png`
+- Combined comparison: `/Users/linminqiu/.codex/visualizations/2026/08/13/019ffa47-9af9-7761-a21c-0185b818156a/mission-work-comparison.png`
+- Browser: Codex in-app browser.
+- Viewport: 1280 × 768 CSS px at device scale factor 1; compact content container: 604 CSS px.
+- Source pixels: 1280 × 960. Implementation pixels: 1280 × 768. The combined comparison keeps the source at native size and centers the implementation vertically without density scaling.
+- State: Simplified Chinese; single expert, parent-child pair, compact pair, and nine-record three-level network; running, succeeded, waiting, and queued statuses.
+
+## Full-view comparison evidence
+
+The nine-record implementation matches the source's one-to-five-to-three delegation composition while making direction and order explicit. Eight non-root cards display stable `#1` through `#8` first-call badges, and all eight parent-child paths end in visible arrowheads outside their target cards. Single and pair modes concentrate the cards near the visual center instead of stretching a sparse grid across the canvas.
+
+## Focused region comparison evidence
+
+- The single expert card measures 320 px wide, uses the large avatar treatment, and shows a two-line task summary with no page overflow.
+- The wide pair uses two 280 px cards connected horizontally from parent to child. At a 604 px content-container width the same pair stacks vertically, preserves the arrow direction, and introduces no document overflow.
+- Computed styles report `mission-work-flow` for connector paths and `mission-work-status-breathe` only for the running status. The waiting status reports no pseudo-element animation.
+- The existing avatar profile tooltip opens after hover and preserves its name, gender, and personality content.
+- Browser console inspection found no warnings or errors.
+
+## Required fidelity surfaces
+
+- Fonts and typography: existing Desktop font family, weights, status hierarchy, truncation, and summary line height are preserved; call-order badges remain secondary to expert names.
+- Spacing and layout rhythm: sparse modes use bounded 360/720 px surfaces; the full network keeps the existing 56 px delegation lanes and fits all three levels within the viewport.
+- Colors and visual tokens: existing surfaces, borders, green text, semantic statuses, and focus tokens remain; connector and arrow colors are darkened only enough to restore direction legibility.
+- Image quality and asset fidelity: existing built-in expert avatar assets and profile tooltip are reused without placeholders or generated replacements.
+- Copy and content: call-order accessibility copy is localized in English, Simplified Chinese, and Traditional Chinese; the number represents each non-root expert's first invocation.
+
+## Comparison history
+
+1. P2 — The initial compact-pair check depended on a viewport media query, but Desktop has a 1080 px minimum document width and the mission content rail may narrow independently.
+2. Fix — Replaced the viewport breakpoint with a named inline-size container query on the Work surface.
+3. Post-fix evidence — A 604 px content container stacks both cards vertically, produces a downward arrow path, and has no horizontal or vertical overflow at the 1280 × 768 browser viewport.
+4. User feedback — Offsetting sibling connector lanes created multiple parallel horizontal lines and weakened the shared delegation-tree structure.
+5. Fix — Removed sibling lane offsets. Connections between the same two depth rows now use one shared midpoint trunk and keep arrowheads on the individual target branches.
+6. Regression evidence — Left and right sibling paths both use the same `y=155` horizontal trunk while terminating 10 px before their respective target cards.
+
+## Primary interactions tested
+
+- Avatar hover opens the existing expert profile tooltip.
+- Wide and compact pair layouts preserve parent-to-child arrow direction.
+- All non-root cards expose call order in their accessible button labels.
+- Connector dash flow and running-status breathing are active; reduced-motion CSS disables both animations.
+
+## Findings
+
+No actionable P0, P1, or P2 differences remain for the requested density, call-order, arrow-direction, or running-status changes.
+
+## Follow-up polish
+
+None required.
+
+final result: passed
+
+---
+
 # Expert Team detail redesign QA
 
 - Source visual truth: `/Users/linminqiu/.codex/generated_images/019fd758-727b-7323-abd6-a9a89012d2d5/exec-a9429985-31f5-424d-a68e-46d13e25c525.png`

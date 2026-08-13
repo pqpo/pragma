@@ -2960,6 +2960,61 @@ interface MissionWorkGridEdge {
   readonly path: string;
 }
 
+interface MissionWorkGridRect {
+  readonly top: number;
+  readonly right: number;
+  readonly bottom: number;
+  readonly left: number;
+  readonly width: number;
+  readonly height: number;
+}
+
+export function missionWorkCallOrder(
+  records: readonly MissionWorkRecord[],
+): ReadonlyMap<string, number> {
+  const calledRecords = records
+    .filter((record) => record.parentRecordId !== undefined)
+    .toSorted((left, right) => {
+      const created = left.createdAt.localeCompare(right.createdAt);
+      return created === 0 ? left.recordId.localeCompare(right.recordId) : created;
+    });
+  return new Map(calledRecords.map((record, index) => [record.recordId, index + 1] as const));
+}
+
+export function missionWorkGridEdgePath(input: {
+  readonly source: MissionWorkGridRect;
+  readonly target: MissionWorkGridRect;
+  readonly surface: Pick<MissionWorkGridRect, "left" | "top">;
+  readonly arrowGap?: number | undefined;
+}): string {
+  const arrowGap = input.arrowGap ?? 10;
+  const sourceCenterX = input.source.left + input.source.width / 2 - input.surface.left;
+  const sourceCenterY = input.source.top + input.source.height / 2 - input.surface.top;
+  const targetCenterX = input.target.left + input.target.width / 2 - input.surface.left;
+
+  if (input.target.top >= input.source.bottom) {
+    const sourceY = input.source.bottom - input.surface.top;
+    const targetY = input.target.top - input.surface.top - arrowGap;
+    const middleY = sourceY + (targetY - sourceY) / 2;
+    return `M ${sourceCenterX} ${sourceY} V ${middleY} H ${targetCenterX} V ${targetY}`;
+  }
+  if (input.target.bottom <= input.source.top) {
+    const sourceY = input.source.top - input.surface.top;
+    const targetY = input.target.bottom - input.surface.top + arrowGap;
+    const middleY = sourceY + (targetY - sourceY) / 2;
+    return `M ${sourceCenterX} ${sourceY} V ${middleY} H ${targetCenterX} V ${targetY}`;
+  }
+
+  if (targetCenterX >= sourceCenterX) {
+    const sourceX = input.source.right - input.surface.left;
+    const targetX = input.target.left - input.surface.left - arrowGap;
+    return `M ${sourceX} ${sourceCenterY} H ${targetX}`;
+  }
+  const sourceX = input.source.left - input.surface.left;
+  const targetX = input.target.right - input.surface.left + arrowGap;
+  return `M ${sourceX} ${sourceCenterY} H ${targetX}`;
+}
+
 export function MissionWorkGrid(props: {
   readonly records: readonly MissionWorkRecord[];
   readonly onSelect: (recordId: string) => void;
@@ -2969,14 +3024,27 @@ export function MissionWorkGrid(props: {
   const cardRefs = useRef(new Map<string, HTMLButtonElement>());
   const [edges, setEdges] = useState<readonly MissionWorkGridEdge[]>([]);
   const markerId = `mission-work-arrow-${useId().replaceAll(":", "")}`;
+  const density =
+    props.records.length === 1 ? "single" : props.records.length === 2 ? "pair" : "network";
+  const callOrder = useMemo(() => missionWorkCallOrder(props.records), [props.records]);
   const levels = useMemo(() => {
+    const compareByCallOrder = (left: MissionWorkRecord, right: MissionWorkRecord) => {
+      if (left.parentRecordId === undefined && right.parentRecordId !== undefined) return -1;
+      if (right.parentRecordId === undefined && left.parentRecordId !== undefined) return 1;
+      return (callOrder.get(left.recordId) ?? 0) - (callOrder.get(right.recordId) ?? 0);
+    };
+    if (props.records.length <= 2) {
+      return [[0, props.records.toSorted(compareByCallOrder)] as const];
+    }
     const grouped = new Map<number, MissionWorkRecord[]>();
     for (const record of props.records) {
       const depth = workRecordDepth(record, props.records);
       grouped.set(depth, [...(grouped.get(depth) ?? []), record]);
     }
-    return [...grouped.entries()].toSorted(([left], [right]) => left - right);
-  }, [props.records]);
+    return [...grouped.entries()]
+      .toSorted(([left], [right]) => left - right)
+      .map(([depth, records]) => [depth, records.toSorted(compareByCallOrder)] as const);
+  }, [callOrder, props.records]);
 
   const updateEdges = useCallback(() => {
     const surface = surfaceRef.current;
@@ -2987,15 +3055,14 @@ export function MissionWorkGrid(props: {
       const source = cardRefs.current.get(record.parentRecordId)?.getBoundingClientRect();
       const target = cardRefs.current.get(record.recordId)?.getBoundingClientRect();
       if (source === undefined || target === undefined) return [];
-      const sourceX = source.left + source.width / 2 - surfaceRect.left;
-      const sourceY = source.bottom - surfaceRect.top;
-      const targetX = target.left + target.width / 2 - surfaceRect.left;
-      const targetY = target.top - surfaceRect.top;
-      const middleY = sourceY + (targetY - sourceY) / 2;
       return [
         {
           id: `${record.parentRecordId}:${record.recordId}`,
-          path: `M ${sourceX} ${sourceY} V ${middleY} H ${targetX} V ${targetY}`,
+          path: missionWorkGridEdgePath({
+            source,
+            target,
+            surface: surfaceRect,
+          }),
         },
       ];
     });
@@ -3012,13 +3079,14 @@ export function MissionWorkGrid(props: {
   }, [levels, updateEdges]);
 
   return (
-    <div className="mission-work-list">
+    <div className={`mission-work-list is-${density}${density === "network" ? "" : " is-sparse"}`}>
       <header>
         <h2>{t("executionMap")}</h2>
         <p>{t("executionMapDescription")}</p>
       </header>
       <div
         className="mission-work-grid"
+        data-density={density}
         ref={surfaceRef}
         role="list"
         aria-label={t("executionWork")}
@@ -3027,14 +3095,14 @@ export function MissionWorkGrid(props: {
           <defs>
             <marker
               id={markerId}
-              markerWidth="8"
-              markerHeight="8"
-              refX="7"
-              refY="4"
+              markerWidth="10"
+              markerHeight="10"
+              refX="8.5"
+              refY="5"
               orient="auto"
               markerUnits="strokeWidth"
             >
-              <path d="M 0 0 L 8 4 L 0 8 Z" />
+              <path d="M 0 0 L 10 5 L 0 10 Z" />
             </marker>
           </defs>
           {edges.map((edge) => (
@@ -3051,6 +3119,9 @@ export function MissionWorkGrid(props: {
           <div className="mission-work-grid-row" key={depth} data-depth={depth} role="presentation">
             {records.map((record) => {
               const title = missionWorkRecordTitle(record);
+              const order = callOrder.get(record.recordId);
+              const callOrderLabel =
+                order === undefined ? undefined : t("workCallOrder", { number: order });
               return (
                 <div className="mission-work-grid-item" key={record.recordId} role="listitem">
                   <button
@@ -3060,11 +3131,21 @@ export function MissionWorkGrid(props: {
                       else cardRefs.current.set(record.recordId, element);
                     }}
                     type="button"
-                    aria-label={`${title}, ${workStatusLabel(record.status)}`}
+                    aria-label={[title, workStatusLabel(record.status), callOrderLabel]
+                      .filter(Boolean)
+                      .join(", ")}
                     onClick={() => props.onSelect(record.recordId)}
                   >
+                    {order === undefined ? null : (
+                      <span className="mission-work-call-order" aria-hidden="true">
+                        #{order}
+                      </span>
+                    )}
                     <span className="mission-work-card-avatar">
-                      <ProfiledExpertAvatar avatarId={record.avatarId} size="md" />
+                      <ProfiledExpertAvatar
+                        avatarId={record.avatarId}
+                        size={density === "single" ? "lg" : "md"}
+                      />
                       <span
                         className={`mission-work-status is-${record.status}`}
                         aria-hidden="true"
@@ -3077,6 +3158,9 @@ export function MissionWorkGrid(props: {
                         ? ` · ${t("conversationTurns", { count: record.tasks.length })}`
                         : ""}
                     </small>
+                    {density === "single" ? (
+                      <p className="mission-work-card-summary">{record.summary}</p>
+                    ) : null}
                   </button>
                 </div>
               );
