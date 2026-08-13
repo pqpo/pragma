@@ -115,11 +115,17 @@ export interface MissionsPageMemoryState {
   readonly missions: readonly MissionSummary[];
   readonly selectedMission: Mission | null;
   readonly selectedMissionId: string | null;
+  readonly activeSource?: MissionListSource | undefined;
+  readonly selectedMissionIds?: Partial<Record<MissionListSource, string>> | undefined;
 }
 
 interface MissionsPageInitialState extends MissionsPageMemoryState {
   readonly hasResolvedInitialLoad: boolean;
+  readonly activeSource: MissionListSource;
+  readonly selectedMissionIds: Partial<Record<MissionListSource, string>>;
 }
+
+export type MissionListSource = "task" | "automation";
 
 export function resolveMissionsPageInitialState(input: {
   readonly initialMission?: Mission | undefined;
@@ -127,20 +133,34 @@ export function resolveMissionsPageInitialState(input: {
 }): MissionsPageInitialState {
   const cachedMissions = input.memoryState?.missions ?? [];
   if (input.initialMission !== undefined) {
+    const source = missionListSourceForMission(input.initialMission);
     return {
       missions: upsertMissionSummary(cachedMissions, missionToSummary(input.initialMission)),
       selectedMission: input.initialMission,
       selectedMissionId: input.initialMission.id,
+      activeSource: source,
+      selectedMissionIds: {
+        ...input.memoryState?.selectedMissionIds,
+        [source]: input.initialMission.id,
+      },
       hasResolvedInitialLoad: true,
     };
   }
   if (input.memoryState !== undefined) {
-    return { ...input.memoryState, hasResolvedInitialLoad: true };
+    const activeSource = input.memoryState.activeSource ?? "task";
+    return {
+      ...input.memoryState,
+      activeSource,
+      selectedMissionIds: input.memoryState.selectedMissionIds ?? {},
+      hasResolvedInitialLoad: true,
+    };
   }
   return {
     missions: [],
     selectedMission: null,
     selectedMissionId: null,
+    activeSource: "task",
+    selectedMissionIds: {},
     hasResolvedInitialLoad: false,
   };
 }
@@ -170,6 +190,7 @@ export function MissionsPage(props: {
   const [selectedMissionId, setSelectedMissionId] = useState<string | null>(
     initialState.selectedMissionId,
   );
+  const [activeSource, setActiveSource] = useState<MissionListSource>(initialState.activeSource);
   const [hasResolvedInitialLoad, setHasResolvedInitialLoad] = useState(
     initialState.hasResolvedInitialLoad,
   );
@@ -193,12 +214,21 @@ export function MissionsPage(props: {
       : null,
   );
   const selectedMissionIdRef = useRef<string | null>(initialState.selectedMissionId);
+  const activeSourceRef = useRef<MissionListSource>(initialState.activeSource);
+  const selectedMissionIdsRef = useRef<Partial<Record<MissionListSource, string>>>(
+    initialState.selectedMissionIds,
+  );
   const initialRunStartedRef = useRef(false);
   const hadInitialMemoryStateRef = useRef(props.initialMemoryState !== undefined);
   const removedMissionIdsRef = useRef(new Set<string>());
-  const missionUpdatesDuringRefreshRef = useRef(new Map<string, Mission | null>());
+  const missionUpdatesDuringRefreshRef = useRef(
+    new Map<
+      string,
+      { readonly mission: Mission; readonly source: MissionSummary["source"] } | null
+    >(),
+  );
 
-  const replaceMission = useCallback((updated: Mission) => {
+  const replaceMission = useCallback((updated: Mission, source?: MissionSummary["source"]) => {
     if (
       updated.execution !== undefined &&
       !["queued", "running", "waiting"].includes(updated.execution.status)
@@ -215,7 +245,10 @@ export function MissionsPage(props: {
     setSelectedMission((current) =>
       current?.id === updated.id && updated.updatedAt >= current.updatedAt ? updated : current,
     );
-    setMissions((current) => upsertMissionSummary(current, missionToSummary(updated)));
+    setMissions((current) => {
+      const knownSource = current.find((mission) => mission.id === updated.id)?.source;
+      return upsertMissionSummary(current, missionToSummary(updated, source ?? knownSource));
+    });
   }, []);
 
   const updatePinnedMissionIds = useCallback((update: (current: readonly string[]) => string[]) => {
@@ -226,32 +259,47 @@ export function MissionsPage(props: {
     });
   }, []);
 
-  const openMission = useCallback(async (id: string, options?: { readonly silent?: boolean }) => {
-    selectedMissionIdRef.current = id;
-    setSelectedMissionId(id);
-    setSelectedMission((current) => (current?.id === id ? current : null));
-    if (!options?.silent) setError(null);
-    writeLastOpenedMissionId(typeof window === "undefined" ? undefined : window.localStorage, id);
-    const api = desktopApi();
-    if (api === undefined) return;
-    try {
-      const mission = await api.getMission(id);
-      if (selectedMissionIdRef.current === id) {
-        setSelectedMission((current) =>
-          current === null || mission.updatedAt >= current.updatedAt ? mission : current,
-        );
+  const openMission = useCallback(
+    async (
+      id: string,
+      options?: { readonly silent?: boolean; readonly source?: MissionListSource },
+    ) => {
+      const source = options?.source ?? activeSourceRef.current;
+      selectedMissionIdsRef.current = { ...selectedMissionIdsRef.current, [source]: id };
+      selectedMissionIdRef.current = id;
+      setSelectedMissionId(id);
+      setSelectedMission((current) => (current?.id === id ? current : null));
+      if (!options?.silent) setError(null);
+      writeLastOpenedMissionId(typeof window === "undefined" ? undefined : window.localStorage, id);
+      const api = desktopApi();
+      if (api === undefined) return;
+      try {
+        const mission = await api.getMission(id);
+        if (selectedMissionIdRef.current === id) {
+          setSelectedMission((current) =>
+            current === null || mission.updatedAt >= current.updatedAt ? mission : current,
+          );
+        }
+      } catch (loadError) {
+        if (selectedMissionIdRef.current === id && !options?.silent) {
+          setError(errorMessage(loadError));
+        }
       }
-    } catch (loadError) {
-      if (selectedMissionIdRef.current === id && !options?.silent) {
-        setError(errorMessage(loadError));
-      }
-    }
-  }, []);
+    },
+    [],
+  );
 
   useEffect(() => {
     if (!hasResolvedInitialLoad) return;
-    props.onMemoryStateChange?.({ missions, selectedMission, selectedMissionId });
+    props.onMemoryStateChange?.({
+      missions,
+      selectedMission,
+      selectedMissionId,
+      activeSource,
+      selectedMissionIds: selectedMissionIdsRef.current,
+    });
   }, [
+    activeSource,
     hasResolvedInitialLoad,
     missions,
     props.onMemoryStateChange,
@@ -264,19 +312,12 @@ export function MissionsPage(props: {
     if (api === undefined) return;
     return api.subscribeMissionUpdates((update) => {
       if (update.kind === "upsert") {
-        if (update.mission.origin.type !== "user") {
-          missionUpdatesDuringRefreshRef.current.set(update.mission.id, null);
-          setMissions((current) => current.filter((mission) => mission.id !== update.mission.id));
-          if (selectedMissionIdRef.current === update.mission.id) {
-            selectedMissionIdRef.current = null;
-            setSelectedMissionId(null);
-            setSelectedMission(null);
-          }
-          return;
-        }
         if (removedMissionIdsRef.current.has(update.mission.id)) return;
-        missionUpdatesDuringRefreshRef.current.set(update.mission.id, update.mission);
-        replaceMission(update.mission);
+        missionUpdatesDuringRefreshRef.current.set(update.mission.id, {
+          mission: update.mission,
+          source: update.source,
+        });
+        replaceMission(update.mission, update.source);
         return;
       }
       writeMissionDraft(
@@ -337,7 +378,9 @@ export function MissionsPage(props: {
         if (cancelled) return;
         const refreshedMissions = [...missionUpdatesDuringRefreshRef.current.values()].reduce(
           (current, updated) =>
-            updated === null ? current : upsertMissionSummary(current, missionToSummary(updated)),
+            updated === null
+              ? current
+              : upsertMissionSummary(current, missionToSummary(updated.mission, updated.source)),
           storedMissions.filter(
             (mission) =>
               !removedMissionIdsRef.current.has(mission.id) &&
@@ -353,8 +396,11 @@ export function MissionsPage(props: {
               .map((mission) => mission.id),
           ),
         );
-        let missionId = selectedMissionIdRef.current;
-        if (missionId !== null && !refreshedMissions.some((mission) => mission.id === missionId)) {
+        const sourceMissions = refreshedMissions.filter(
+          (mission) => missionListSourceForSummary(mission) === activeSourceRef.current,
+        );
+        let missionId = selectedMissionIdsRef.current[activeSourceRef.current] ?? null;
+        if (missionId !== null && !sourceMissions.some((mission) => mission.id === missionId)) {
           selectedMissionIdRef.current = null;
           setSelectedMissionId(null);
           setSelectedMission(null);
@@ -364,10 +410,13 @@ export function MissionsPage(props: {
           const lastOpenedId = readLastOpenedMissionId(
             typeof window === "undefined" ? undefined : window.localStorage,
           );
-          missionId = selectPreferredMissionId(refreshedMissions, lastOpenedId);
+          missionId = selectPreferredMissionId(sourceMissions, lastOpenedId);
         }
         if (missionId !== null) {
-          await openMission(missionId, { silent: hadInitialMemoryStateRef.current });
+          await openMission(missionId, {
+            silent: hadInitialMemoryStateRef.current,
+            source: activeSourceRef.current,
+          });
         } else {
           writeLastOpenedMissionId(
             typeof window === "undefined" ? undefined : window.localStorage,
@@ -390,13 +439,41 @@ export function MissionsPage(props: {
 
   const visibleMissions = useMemo(() => {
     const query = search.trim().toLocaleLowerCase();
-    if (query === "") return missions;
-    return missions.filter((mission) =>
+    const sourceMissions = missions.filter(
+      (mission) => missionListSourceForSummary(mission) === activeSource,
+    );
+    if (query === "") return sourceMissions;
+    return sourceMissions.filter((mission) =>
       [mission.title, mission.workspace.basename, mission.executor.name].some((value) =>
         value.toLocaleLowerCase().includes(query),
       ),
     );
-  }, [missions, search]);
+  }, [activeSource, missions, search]);
+
+  const changeSource = useCallback(
+    (nextSource: MissionListSource) => {
+      if (nextSource === activeSourceRef.current) return;
+      activeSourceRef.current = nextSource;
+      setActiveSource(nextSource);
+      setError(null);
+      const sourceMissions = missions.filter(
+        (mission) => missionListSourceForSummary(mission) === nextSource,
+      );
+      const rememberedId = selectedMissionIdsRef.current[nextSource];
+      const missionId =
+        rememberedId !== undefined && sourceMissions.some((mission) => mission.id === rememberedId)
+          ? rememberedId
+          : sourceMissions[0]?.id;
+      if (missionId === undefined) {
+        selectedMissionIdRef.current = null;
+        setSelectedMissionId(null);
+        setSelectedMission(null);
+        return;
+      }
+      void openMission(missionId, { source: nextSource });
+    },
+    [missions, openMission],
+  );
   if (!hasResolvedInitialLoad) {
     return <MissionsPageSkeleton label={t("loading", { ns: "missions" })} railWidth={railWidth} />;
   }
@@ -407,13 +484,17 @@ export function MissionsPage(props: {
     >
       <MissionRail
         missions={visibleMissions}
+        source={activeSource}
         search={search}
         now={now}
         pinnedMissionIds={pinnedMissionIds}
         selectedMissionId={selectedMissionId}
         onSearch={setSearch}
+        onSourceChange={changeSource}
         onCreate={props.onCreate}
-        onOpen={(summary) => openMission(summary.id)}
+        onOpen={(summary) =>
+          openMission(summary.id, { source: missionListSourceForSummary(summary) })
+        }
         onTogglePin={(summary) =>
           updatePinnedMissionIds((current) => togglePinnedMissionId(current, summary.id))
         }
@@ -578,11 +659,13 @@ export function MissionsPage(props: {
                   selectedMissionIdRef.current = null;
                   setSelectedMissionId(null);
                   setSelectedMission(null);
-                  const fallback = storedMissions[0];
+                  const fallback = storedMissions.find(
+                    (mission) => missionListSourceForSummary(mission) === activeSourceRef.current,
+                  );
                   if (fallback === undefined) {
                     writeLastOpenedMissionId(window.localStorage, null);
                   } else {
-                    openMission(fallback.id);
+                    openMission(fallback.id, { source: activeSourceRef.current });
                   }
                 }
                 setDeleteCandidate(null);
@@ -615,6 +698,7 @@ export function MissionsPageSkeleton(props: {
       <aside className="mission-skeleton-rail" aria-hidden="true">
         <span className="mission-skeleton-block mission-skeleton-title" />
         <span className="mission-skeleton-block mission-skeleton-button" />
+        <span className="mission-skeleton-block mission-skeleton-source-tabs" />
         <span className="mission-skeleton-block mission-skeleton-search" />
         {[0, 1].map((group) => (
           <div className="mission-skeleton-group" key={group}>
@@ -647,11 +731,13 @@ export function MissionsPageSkeleton(props: {
 
 function MissionRail(props: {
   readonly missions: readonly MissionSummary[];
+  readonly source: MissionListSource;
   readonly search: string;
   readonly now: number;
   readonly pinnedMissionIds: readonly string[];
   readonly selectedMissionId: string | null;
   readonly onSearch: (value: string) => void;
+  readonly onSourceChange: (source: MissionListSource) => void;
   readonly onCreate: () => void;
   readonly onOpen: (mission: MissionSummary) => void;
   readonly onTogglePin: (mission: MissionSummary) => void;
@@ -750,6 +836,31 @@ function MissionRail(props: {
           <Plus size={18} aria-hidden="true" />
           {t("newMission")}
         </button>
+        <div
+          className={`mission-source-tabs is-${props.source}`}
+          role="tablist"
+          aria-label={t("missionSources")}
+        >
+          <span className="mission-source-indicator" aria-hidden="true" />
+          <button
+            type="button"
+            role="tab"
+            aria-selected={props.source === "task"}
+            className={props.source === "task" ? "is-active" : undefined}
+            onClick={() => props.onSourceChange("task")}
+          >
+            {t("sourceTabs.task")}
+          </button>
+          <button
+            type="button"
+            role="tab"
+            aria-selected={props.source === "automation"}
+            className={props.source === "automation" ? "is-active" : undefined}
+            onClick={() => props.onSourceChange("automation")}
+          >
+            {t("sourceTabs.automation")}
+          </button>
+        </div>
         <div className="mission-search-slot" aria-hidden={searchCollapsed ? "true" : undefined}>
           <label className="mission-search" ref={searchRef}>
             <MagnifyingGlass size={18} aria-hidden="true" />
@@ -782,7 +893,7 @@ function MissionRail(props: {
       ) : null}
       <MissionRailGroup
         label={t("active")}
-        emptyLabel={t("noActive")}
+        emptyLabel={t(props.source === "automation" ? "noActiveAutomations" : "noActive")}
         missions={missionGroups.active.visibleMissions}
         hiddenCount={missionGroups.active.hiddenCount}
         now={props.now}
@@ -796,7 +907,7 @@ function MissionRail(props: {
       />
       <MissionRailGroup
         label={t("completed")}
-        emptyLabel={t("noCompleted")}
+        emptyLabel={t(props.source === "automation" ? "noCompletedAutomations" : "noCompleted")}
         variant="completed"
         missions={missionGroups.completed.visibleMissions}
         hiddenCount={missionGroups.completed.hiddenCount}
@@ -4357,13 +4468,27 @@ export function missionStatusLabel(mission: Mission | MissionSummary, preparing 
   }
 }
 
-function missionToSummary(mission: Mission): MissionSummary {
+function missionListSourceForMission(mission: Mission): MissionListSource {
+  return mission.origin.type === "automation" ? "automation" : "task";
+}
+
+export function missionListSourceForSummary(mission: MissionSummary): MissionListSource {
+  return mission.source.type === "automation" ? "automation" : "task";
+}
+
+function missionToSummary(
+  mission: Mission,
+  source: MissionSummary["source"] = mission.origin.type === "automation"
+    ? { type: "automation", automationRef: mission.origin.automationRef }
+    : { type: "task" },
+): MissionSummary {
   return {
     id: mission.id,
     title: mission.title,
     workspace: { basename: mission.workspace.basename },
     executor: { kind: mission.executor.kind, name: mission.executor.name },
     ...(mission.execution === undefined ? {} : { execution: { status: mission.execution.status } }),
+    source,
     lifecycleStatus: mission.lifecycleStatus,
     updatedAt: mission.updatedAt,
   };

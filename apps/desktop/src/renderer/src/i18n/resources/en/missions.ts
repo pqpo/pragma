@@ -1,6 +1,11 @@
 export const missions = {
   title: "Missions",
   newMission: "New mission",
+  missionSources: "Mission sources",
+  sourceTabs: {
+    task: "Tasks",
+    automation: "Automation",
+  },
   start: "Start a mission",
   search: "Search missions",
   loading: "Loading missions…",
@@ -43,7 +48,9 @@ export const missions = {
   completed: "Completed",
   noWaitingInput: "No missions need input",
   noActive: "No active missions",
+  noActiveAutomations: "No active automation missions",
   noCompleted: "No completed missions",
+  noCompletedAutomations: "No completed automation missions",
   loadMoreMissions: "Load more",
   pinMission: "Pin mission",
   unpinMission: "Unpin mission",

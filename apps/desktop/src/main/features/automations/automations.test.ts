@@ -110,7 +110,7 @@ describe("Automation Service", () => {
     await expect(service.start()).rejects.toThrow("revision unavailable");
     await expect(service.start()).resolves.toBeUndefined();
 
-    expect(get).toHaveBeenCalledTimes(2);
+    expect(get).toHaveBeenCalledTimes(3);
     service.stop();
   });
 
@@ -149,6 +149,96 @@ describe("Automation Service", () => {
       kind: "auto",
       value: "Review the release.",
     });
+  });
+
+  it("persists recoverable legacy Automation Mission sources", async () => {
+    const now = "2026-07-23T08:00:00.000Z";
+    const resource = PragmaAutomationResourceSchema.parse({
+      apiVersion: "pragma/v4",
+      kind: "Automation",
+      metadata: {
+        id: "m9a8n9nxvvyb4j01",
+        name: "Legacy review",
+        description: "Migrates its existing Mission source",
+        tags: [],
+      },
+      spec: {
+        adapter: "pragma.automation.schedule@v1",
+        binding: "binding:desktop-automation",
+        config: {
+          trigger: { kind: "calendar", frequency: "daily", time: "09:00", timezone: "UTC" },
+        },
+        enabled: true,
+        route: {
+          executor: { ref: "expert:t9ne4d8njvvxv2ea" },
+          input: { kind: "prompt", value: "Review the release." },
+        },
+        interaction: { mode: "new-mission" },
+        delivery: { adapter: "pragma.automation.delivery.local@v1" },
+      },
+    });
+    const ref = "automation:m9a8n9nxvvyb4j01";
+    const binding = createAutomationBinding({
+      automationRef: ref,
+      rotateGeneration: true,
+      workspace: { path: "/tmp", basename: "tmp" },
+      toolPermissionMode: "request-approval",
+    });
+    const backfillAutomationOrigin = vi.fn<MissionStore["backfillAutomationOrigin"]>(
+      async () => ({}) as Awaited<ReturnType<MissionStore["backfillAutomationOrigin"]>>,
+    );
+    const service = createAutomationService({
+      paths: new PragmaPaths({ pragmaHome: "/tmp/pragma-automation-source-backfill-test" }),
+      project: {
+        get: vi.fn(async () => ({
+          schemaVersion: "pragma.project-snapshot/v3",
+          projectId: "studio",
+          revision: 1,
+          resources: [resource],
+          diagnostics: [],
+        })),
+      } as unknown as PragmaProjectStore,
+      store: {
+        getBinding: vi.fn(async () => binding),
+        getState: vi.fn(async () => ({
+          schemaVersion: "pragma.automation-state/v1",
+          automationRef: ref,
+          generation: binding.generation,
+          missionId: "7b143dfa-16d9-45dd-8275-839565ac691f",
+          queue: [
+            {
+              eventId: "queued-event",
+              scheduledFor: now,
+              missionId: "2ad8b3f3-76d5-42f7-aad0-072b9c89f430",
+              createdAt: now,
+            },
+          ],
+          runs: [
+            {
+              eventId: "legacy-event",
+              scheduledFor: now,
+              status: "dispatched",
+              missionId: "d8e672d1-2dc9-4f46-bcbe-e26417141396",
+              createdAt: now,
+              updatedAt: now,
+            },
+          ],
+          updatedAt: now,
+        })),
+      } as unknown as AutomationStore,
+      missions: { backfillAutomationOrigin } as unknown as MissionStore,
+      creator: {} as MissionCreator,
+      runner: {} as MissionRunner,
+    });
+
+    await expect(service.listMissionSources()).resolves.toEqual(
+      new Map([
+        ["7b143dfa-16d9-45dd-8275-839565ac691f", ref],
+        ["2ad8b3f3-76d5-42f7-aad0-072b9c89f430", ref],
+        ["d8e672d1-2dc9-4f46-bcbe-e26417141396", ref],
+      ]),
+    );
+    expect(backfillAutomationOrigin).toHaveBeenCalledTimes(3);
   });
 
   it("queues a manual trigger through the normal Automation event pipeline", async () => {

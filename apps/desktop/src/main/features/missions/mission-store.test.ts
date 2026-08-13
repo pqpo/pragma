@@ -349,7 +349,7 @@ describe("mission store", () => {
     expect(reopened.completedAt).toBeUndefined();
   });
 
-  it("keeps system Memory Missions out of the user Mission list", async () => {
+  it("lists user and Automation Missions while keeping system Memory Missions internal", async () => {
     const root = await temporaryRoot();
     const store = createMissionStore({ missionsPath: join(root, "missions") });
     const user = await store.create({
@@ -365,11 +365,55 @@ describe("mission store", () => {
       executor: missionExecutorSnapshot(expertFixture()),
       origin: { type: "system-memory", jobId: "memory-job" },
     });
+    const automation = await store.create({
+      workspace: { path: join(root, "workspace"), basename: "workspace" },
+      goal: "Scheduled review",
+      project: { id: "studio", revision: 1 },
+      executor: missionExecutorSnapshot(expertFixture()),
+      origin: { type: "automation", automationRef: "automation:m9a8n9nxvvyb4j01" },
+    });
 
-    await expect(store.list()).resolves.toEqual([expect.objectContaining({ id: user.id })]);
+    await expect(store.list()).resolves.toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          id: automation.id,
+          source: { type: "automation", automationRef: "automation:m9a8n9nxvvyb4j01" },
+        }),
+        expect.objectContaining({ id: user.id, source: { type: "task" } }),
+      ]),
+    );
     await expect(store.get(internal.id)).resolves.toMatchObject({
       origin: { type: "system-memory" },
     });
+  });
+
+  it("persists a recoverable legacy Automation origin without changing Mission recency", async () => {
+    const root = await temporaryRoot();
+    const store = createMissionStore({ missionsPath: join(root, "missions") });
+    const legacy = await store.create({
+      workspace: { path: join(root, "workspace"), basename: "workspace" },
+      goal: "Legacy scheduled review",
+      project: { id: "studio", revision: 1 },
+      executor: missionExecutorSnapshot(expertFixture()),
+    });
+
+    const migrated = await store.backfillAutomationOrigin(
+      legacy.id,
+      "automation:m9a8n9nxvvyb4j01",
+    );
+
+    expect(migrated).toMatchObject({
+      id: legacy.id,
+      origin: { type: "automation", automationRef: "automation:m9a8n9nxvvyb4j01" },
+      updatedAt: legacy.updatedAt,
+    });
+    await expect(store.list()).resolves.toEqual([
+      expect.objectContaining({
+        id: legacy.id,
+        source: { type: "automation", automationRef: "automation:m9a8n9nxvvyb4j01" },
+        updatedAt: legacy.updatedAt,
+      }),
+    ]);
   });
 
   it("limits rule-based titles derived from the Mission goal", async () => {

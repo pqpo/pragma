@@ -25,12 +25,14 @@ import { z } from "zod";
 
 import {
   MissionIdSchema,
+  MissionOriginSchema,
   MissionSchema,
   MissionV3Schema,
   MissionV4Schema,
   MissionV5Schema,
   MissionV6Schema,
   MissionTimelineRecordSchema,
+  isUserFacingMissionOrigin,
   MissionAttachmentsManifestSchema,
   MissionChatEntrySchema,
   MissionUserMessageSchema,
@@ -69,6 +71,7 @@ export interface MissionStore {
   list(): Promise<MissionSummary[]>;
   resolveExecutionTitles(executionIds: readonly string[]): Promise<ReadonlyMap<string, string>>;
   get(id: string): Promise<Mission>;
+  backfillAutomationOrigin(id: string, automationRef: string): Promise<Mission>;
   getAttachments(id: string): Promise<readonly ExpertPromptAttachment[]>;
   create(input: {
     readonly id?: string | undefined;
@@ -546,7 +549,7 @@ export function createMissionStore(options: { readonly missionsPath: string }): 
         );
         const missions = await Promise.all(directories.map((entry) => readMission(entry.name)));
         return missions
-          .filter((mission) => mission.origin.type === "user")
+          .filter((mission) => isUserFacingMissionOrigin(mission.origin))
           .map(toMissionSummary)
           .toSorted((left, right) => right.updatedAt.localeCompare(left.updatedAt));
       } catch (error) {
@@ -596,6 +599,33 @@ export function createMissionStore(options: { readonly missionsPath: string }): 
     },
     async get(id) {
       return await readMission(MissionIdSchema.parse(id));
+    },
+    async backfillAutomationOrigin(id, automationRef) {
+      const parsedId = MissionIdSchema.parse(id);
+      const parsedOrigin = MissionOriginSchema.parse({ type: "automation", automationRef });
+      if (parsedOrigin.type !== "automation") throw new Error("Invalid Automation origin.");
+      return await withMissionLock(parsedId, async () => {
+        await recoverPendingTransactions(parsedId);
+        const current = await readMissionUnlocked(parsedId);
+        if (current.origin.type === "automation") {
+          if (current.origin.automationRef !== parsedOrigin.automationRef) {
+            throw new MissionStoreError(
+              "config_invalid",
+              `Mission ${parsedId} is already owned by ${current.origin.automationRef}.`,
+            );
+          }
+          return current;
+        }
+        if (current.origin.type !== "user") {
+          throw new MissionStoreError(
+            "config_invalid",
+            `Mission ${parsedId} is not a user-facing legacy Automation Mission.`,
+          );
+        }
+        const updated = MissionSchema.parse({ ...current, origin: parsedOrigin });
+        await writeYamlAtomically(manifestPath(parsedId), updated);
+        return updated;
+      });
     },
     async getAttachments(id) {
       const parsedId = MissionIdSchema.parse(id);
@@ -1082,6 +1112,10 @@ function toMissionSummary(mission: Mission): MissionSummary {
     workspace: { basename: mission.workspace.basename },
     executor: { kind: mission.executor.kind, name: mission.executor.name },
     ...(mission.execution === undefined ? {} : { execution: { status: mission.execution.status } }),
+    source:
+      mission.origin.type === "automation"
+        ? { type: "automation", automationRef: mission.origin.automationRef }
+        : { type: "task" },
     lifecycleStatus: mission.lifecycleStatus,
     updatedAt: mission.updatedAt,
   };

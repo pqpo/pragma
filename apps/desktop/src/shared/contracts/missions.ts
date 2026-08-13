@@ -10,6 +10,7 @@ import {
 } from "@pragma/shared";
 import {
   canonicalPragmaResourceRef,
+  PragmaAutomationRefSchema,
   type PragmaInvocableResource,
   type PragmaResource,
 } from "@pragma/interpreter/ast";
@@ -174,6 +175,10 @@ export const MissionV5Schema = MissionBaseSchema.extend({
 export const MissionOriginSchema = z.discriminatedUnion("type", [
   z.object({ type: z.literal("user") }),
   z.object({
+    type: z.literal("automation"),
+    automationRef: PragmaAutomationRefSchema,
+  }),
+  z.object({
     type: z.literal("system-memory"),
     jobId: z.string().min(1),
   }),
@@ -239,6 +244,13 @@ export const MissionSummarySchema = z.object({
     name: z.string().trim().min(1).max(120),
   }),
   execution: z.object({ status: MissionExecutionStatusSchema }).optional(),
+  source: z.discriminatedUnion("type", [
+    z.object({ type: z.literal("task") }),
+    z.object({
+      type: z.literal("automation"),
+      automationRef: PragmaAutomationRefSchema,
+    }),
+  ]),
   lifecycleStatus: MissionLifecycleStatusSchema,
   updatedAt: z.string().datetime(),
 });
@@ -247,12 +259,17 @@ export const MissionUpdateSchema = z.discriminatedUnion("kind", [
   z.object({
     kind: z.literal("upsert"),
     mission: MissionSchema,
+    source: MissionSummarySchema.shape.source,
   }),
   z.object({
     kind: z.literal("remove"),
     missionId: MissionIdSchema,
   }),
 ]);
+
+export function isUserFacingMissionOrigin(origin: z.infer<typeof MissionOriginSchema>): boolean {
+  return origin.type === "user" || origin.type === "automation";
+}
 
 export const CreateMissionSchema = z.object({
   workspace: z.string().trim().min(1).max(2_000),

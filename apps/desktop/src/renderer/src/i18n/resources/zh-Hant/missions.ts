@@ -1,6 +1,11 @@
 export const missions = {
   title: "任務",
   newMission: "新增任務",
+  missionSources: "任務來源",
+  sourceTabs: {
+    task: "任務",
+    automation: "自動化",
+  },
   start: "開始任務",
   search: "搜尋任務",
   loading: "正在載入任務…",
@@ -40,7 +45,9 @@ export const missions = {
   completed: "已完成",
   noWaitingInput: "暫無待輸入的任務",
   noActive: "暫無進行中的任務",
+  noActiveAutomations: "暫無進行中的自動化任務",
   noCompleted: "暫無已完成的任務",
+  noCompletedAutomations: "暫無已完成的自動化任務",
   loadMoreMissions: "載入更多",
   pinMission: "置頂任務",
   unpinMission: "取消置頂",

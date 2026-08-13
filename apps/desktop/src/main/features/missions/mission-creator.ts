@@ -26,6 +26,7 @@ export interface MissionCreator {
     readonly attachments?: readonly ExpertPromptAttachment[] | undefined;
     readonly toolPermissionMode?: DesktopToolPermissionMode | undefined;
     readonly modelOverride?: MissionModelOverride | undefined;
+    readonly origin?: Mission["origin"] | undefined;
   }): Promise<Mission>;
 }
 
@@ -96,6 +97,7 @@ export function createMissionCreator(options: {
         executor,
         ...(input.attachments === undefined ? {} : { attachments: input.attachments }),
         ...(input.modelOverride === undefined ? {} : { modelOverride: input.modelOverride }),
+        ...(input.origin === undefined ? {} : { origin: input.origin }),
         toolPermissionMode:
           input.toolPermissionMode ?? (await options.getDefaultToolPermissionMode()),
       });
