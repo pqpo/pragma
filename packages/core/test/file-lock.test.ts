@@ -6,7 +6,7 @@ import { fileURLToPath } from "node:url";
 
 import { describe, expect, it } from "vitest";
 
-import { withFileLock } from "../src/storage/file-lock.ts";
+import { FileLockTimeoutError, withFileLock } from "../src/storage/file-lock.ts";
 
 describe("withFileLock", () => {
   it("serializes heavily contended lock directory creation and removal", async () => {
@@ -90,15 +90,23 @@ describe("withFileLock", () => {
     const holdFirst = new Promise<void>((resolve) => {
       releaseFirst = resolve;
     });
-    const first = withFileLock(lockDir, async () => {
-      markFirstEntered();
-      await holdFirst;
-    });
+    const first = withFileLock(
+      lockDir,
+      async () => {
+        markFirstEntered();
+        await holdFirst;
+      },
+      { operation: "execution.read-events" },
+    );
     await firstEntered;
 
-    await expect(withFileLock(lockDir, async () => undefined, { timeoutMs: 20 })).rejects.toThrow(
-      "in-process file lock",
-    );
+    const timeout = withFileLock(lockDir, async () => undefined, { timeoutMs: 20 });
+    await expect(timeout).rejects.toBeInstanceOf(FileLockTimeoutError);
+    await expect(timeout).rejects.toMatchObject({
+      code: "pragma_file_lock_timeout",
+      contention: "local",
+      operation: "execution.read-events",
+    });
     const next = withFileLock(lockDir, async () => "continued");
     releaseFirst();
 

@@ -3321,6 +3321,115 @@ describe("Expert lifecycle orchestration", () => {
     expect(result.stats.maxActive).toBeGreaterThanOrEqual(3);
   });
 
+  it("releases a delegated concurrency permit while an Expert waits for human input", async () => {
+    const home = await mkdtemp(join(tmpdir(), "pragma-human-wait-permit-"));
+    let markSecondStarted!: () => void;
+    const secondStarted = new Promise<void>((resolve) => {
+      markSecondStarted = resolve;
+    });
+    const runtime = defineRuntimeDriver<never, FakeSession>({
+      features: createRuntimeTestFeatures({ enabled: ["close"] }),
+      descriptor: { id: "human-wait-permit", kind: "fake", displayName: "Human wait" },
+      createSession: (context) => ({ context, id: `native-${context.systemSessionId}` }),
+      readSession: (session) => ({ runtimeSessionId: session.id }),
+      async startTurn(session, turn) {
+        const expertId = session.context.agent.id;
+        if (expertId === "member-a") {
+          const handler = session.context.request.humanInteractionHandler;
+          if (handler === undefined) throw new Error("Human interaction handler is missing.");
+          await handler({
+            kind: "user_question",
+            toolName: "askUserQuestion",
+            toolCallId: "member-a-question",
+            questions: [
+              {
+                question: "Continue?",
+                header: "Continue",
+                kind: "single_choice",
+                options: [{ label: "Yes", description: "Continue." }],
+              },
+            ],
+          });
+          return { outputText: "member-a:continued", runtimeSessionId: session.id };
+        }
+        if (expertId === "member-b") {
+          markSecondStarted();
+          return { outputText: "member-b:completed", runtimeSessionId: session.id };
+        }
+        if (turn.rawQuery.startsWith("[Pragma orchestration continuation]")) {
+          return { outputText: "lead:completed", runtimeSessionId: session.id };
+        }
+        const execution = session.context.request.executionContext;
+        const call = async (name: string, input: unknown) => {
+          const tool = session.context.agent.tools?.find((candidate) => candidate.name === name);
+          if (tool === undefined) throw new Error(`Missing orchestration tool: ${name}`);
+          const result = await tool.call(input, turn.signal, { execution });
+          if (result.isError === true) throw new Error(result.text);
+          return result.details as Record<string, unknown>;
+        };
+        const first = await call("spawn_expert", { expertId: "member-a", prompt: "first" });
+        const second = await call("spawn_expert", { expertId: "member-b", prompt: "second" });
+        await call("wait_experts", {
+          invocationIds: [first["invocationId"], second["invocationId"]],
+        });
+        return { outputText: "lead:waiting", runtimeSessionId: session.id };
+      },
+      mapEvent: () => ({ events: [] }),
+      closeSession: () => undefined,
+    });
+    const app = createPragma({
+      pragmaHome: home,
+      runtimes: createStaticRuntimeResolver({
+        runtimes: [runtime],
+        defaultRuntimeId: runtime.descriptor.id,
+      }),
+    });
+    const members = await Promise.all(
+      ["member-a", "member-b"].map(
+        async (id) =>
+          await defineExpert({
+            id,
+            name: id,
+            description: id,
+            tags: [],
+            scope: "test",
+            workspace: home,
+            pragmaHome: home,
+          }),
+      ),
+    );
+    const launcher = createAgentLauncher({ experts: members, maxConcurrency: 1, maxDepth: 1 });
+    const lead = await defineExpert({
+      id: "lead",
+      name: "Lead",
+      description: "Lead",
+      tags: [],
+      scope: "test",
+      workspace: home,
+      pragmaHome: home,
+      tools: launcher.tools,
+    });
+    const session = await app.experts.createSession(lead);
+    const turn = await session.prompt("coordinate", { requestId: "human-wait-permit" });
+    const request = await waitForHumanRequest(turn, 0);
+
+    await expect(
+      Promise.race([
+        secondStarted.then(() => "started"),
+        new Promise<string>((_, reject) =>
+          setTimeout(() => reject(new Error("Second Expert did not start.")), 1_000),
+        ),
+      ]),
+    ).resolves.toBe("started");
+    await turn.respondToHumanInteraction(
+      String((request.data as { interactionId?: unknown }).interactionId),
+      { kind: "user_question", answered: true, answers: { "Continue?": "Yes" } },
+      { requestId: "human-wait-response" },
+    );
+    await expect(turn.result).resolves.toBe("lead:waiting");
+    await session.close();
+  });
+
   it("never exceeds the configured child concurrency limit", async () => {
     const result = await runScenario("concurrency", ["member-a", "member-b", "member-c"]);
     expect(result.tree.children).toHaveLength(3);
@@ -3787,7 +3896,7 @@ function sessionRootContext(
 }
 
 async function waitForHumanRequest(
-  execution: FlowExecution,
+  execution: Pick<FlowExecution, "listEvents">,
   index: number,
 ): Promise<ExecutionEvent> {
   let requested: ExecutionEvent | undefined;

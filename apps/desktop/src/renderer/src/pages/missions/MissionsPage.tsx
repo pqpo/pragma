@@ -218,6 +218,7 @@ export function MissionsPage(props: {
   const selectedMissionIdsRef = useRef<Partial<Record<MissionListSource, string>>>(
     initialState.selectedMissionIds,
   );
+  const missionChatCacheRef = useRef(new Map<string, MissionChatSnapshot>());
   const initialRunStartedRef = useRef(false);
   const hadInitialMemoryStateRef = useRef(props.initialMemoryState !== undefined);
   const removedMissionIdsRef = useRef(new Set<string>());
@@ -528,7 +529,9 @@ export function MissionsPage(props: {
       <div className="mission-main">
         {selectedMission !== null ? (
           <MissionDetailFragment
+            key={selectedMission.id}
             mission={selectedMission}
+            chatCache={missionChatCacheRef.current}
             initialThinkingRequestId={
               initialRunRequest?.missionId === selectedMission.id
                 ? initialRunRequest.requestId
@@ -1235,6 +1238,7 @@ export const DEFAULT_MISSION_MEMORY_VIEW: MissionMemoryView = "activity";
 
 export function MissionDetailFragment(props: {
   readonly mission: Mission;
+  readonly chatCache?: Map<string, MissionChatSnapshot> | undefined;
   readonly initialThinkingRequestId?: string | undefined;
   readonly error?: string | null | undefined;
   readonly onDismissError?: (() => void) | undefined;
@@ -1260,7 +1264,9 @@ export function MissionDetailFragment(props: {
   const [tab, setTab] = useState<"chat" | "work" | "board" | "memory">("chat");
   const [memoryView, setMemoryView] = useState<MissionMemoryView>(DEFAULT_MISSION_MEMORY_VIEW);
   const [workspaceAvailable, setWorkspaceAvailable] = useState<boolean | null>(null);
-  const [chat, setChat] = useState<MissionChatSnapshot | null>(null);
+  const [chat, setChat] = useState<MissionChatSnapshot | null>(
+    () => props.chatCache?.get(props.mission.id) ?? null,
+  );
   const [workRecords, setWorkRecords] = useState<readonly MissionWorkRecord[]>([]);
   const [workLoading, setWorkLoading] = useState(false);
   const [workConversation, setWorkConversation] = useState<MissionWorkConversationSnapshot | null>(
@@ -1308,6 +1314,8 @@ export function MissionDetailFragment(props: {
   const [responding, setResponding] = useState(false);
   const [loadingEarlier, setLoadingEarlier] = useState(false);
   const [historyError, setHistoryError] = useState<string | null>(null);
+  const [chatSyncError, setChatSyncError] = useState<string | null>(null);
+  const [chatRefreshRevision, setChatRefreshRevision] = useState(0);
   const [humanQuestionIndex, setHumanQuestionIndex] = useState(0);
   const [showJumpToLatest, setShowJumpToLatest] = useState(false);
   const [humanNotes, setHumanNotes] = useState<Record<string, string>>({});
@@ -1396,11 +1404,17 @@ export function MissionDetailFragment(props: {
     };
   }, [props.mission.id]);
   const prependScrollHeightRef = useRef<number | null>(null);
-  const updateChat = useCallback((update: SetStateAction<MissionChatSnapshot | null>) => {
-    const next = typeof update === "function" ? update(chatRef.current) : update;
-    chatRef.current = next;
-    setChat(next);
-  }, []);
+  const updateChat = useCallback(
+    (update: SetStateAction<MissionChatSnapshot | null>) => {
+      const next = typeof update === "function" ? update(chatRef.current) : update;
+      chatRef.current = next;
+      if (next !== null && next.missionId === props.mission.id) {
+        props.chatCache?.set(props.mission.id, next);
+      }
+      setChat(next);
+    },
+    [props.chatCache, props.mission.id],
+  );
   const executionStatus = chat?.execution?.status ?? props.mission.execution?.status;
   const executionActive =
     executionStatus !== undefined && ["queued", "running", "waiting"].includes(executionStatus);
@@ -1568,8 +1582,9 @@ export function MissionDetailFragment(props: {
 
   useEffect(() => {
     const api = desktopApi();
-    updateChat(null);
+    updateChat(props.chatCache?.get(props.mission.id) ?? null);
     setHistoryError(null);
+    setChatSyncError(null);
     setHumanQuestionIndex(0);
     followLatestRef.current = true;
     setShowJumpToLatest(false);
@@ -1657,10 +1672,16 @@ export function MissionDetailFragment(props: {
           const merged = mergeLatestChatPage(chatRef.current, snapshot);
           const drained = drainPending(merged);
           updateChat(drained.snapshot);
+          setChatSyncError(
+            snapshot.syncIssues === undefined ? null : t("chatSyncUnavailable", { ns: "missions" }),
+          );
           if (drained.needsRefresh) refreshQueued = true;
         }
       } catch (loadError) {
-        if (!cancelled) console.error("Failed to refresh Mission chat.", loadError);
+        if (!cancelled) {
+          console.error("Failed to refresh Mission chat.", loadError);
+          setChatSyncError(errorMessage(loadError));
+        }
       } finally {
         refreshing = false;
         if (refreshQueued && !cancelled) {
@@ -1702,7 +1723,7 @@ export function MissionDetailFragment(props: {
       firstTokenPaintFramesRef.current.clear();
       unsubscribe();
     };
-  }, [props.mission.id, updateChat]);
+  }, [chatRefreshRevision, props.chatCache, props.mission.id, t, updateChat]);
 
   useLayoutEffect(() => {
     const api = desktopApi();
@@ -2470,6 +2491,17 @@ export function MissionDetailFragment(props: {
                       : t("loadEarlier", { ns: "missions" })}
                   </button>
                 ) : null}
+                {chatSyncError === null ? null : (
+                  <div className="mission-history-error" role="alert">
+                    <span>{chatSyncError}</span>
+                    <button
+                      type="button"
+                      onClick={() => setChatRefreshRevision((current) => current + 1)}
+                    >
+                      {t("retryChatSync", { ns: "missions" })}
+                    </button>
+                  </div>
+                )}
                 {historyError === null ? null : (
                   <p className="mission-history-error" role="alert">
                     {historyError}
@@ -4293,11 +4325,12 @@ function truncateChatStream(value: string, maxLength: number): string {
   return value.length <= maxLength ? value : `${value.slice(0, maxLength - 1).trimEnd()}…`;
 }
 
-function mergeLatestChatPage(
+export function mergeLatestChatPage(
   current: MissionChatSnapshot | null,
   latest: MissionChatSnapshot,
 ): MissionChatSnapshot {
-  if (current === null) return latest;
+  if (current === null || current.missionId !== latest.missionId) return latest;
+  const unavailableSections = new Set(latest.syncIssues?.map((issue) => issue.section) ?? []);
   const latestOldest = latest.page.oldestSequence;
   const retainedOlder =
     latestOldest === undefined
@@ -4305,7 +4338,21 @@ function mergeLatestChatPage(
       : current.entries.filter(
           (entry) => entry.timelineSequence !== undefined && entry.timelineSequence < latestOldest,
         );
-  return { ...latest, entries: uniqueChatEntries([...retainedOlder, ...latest.entries]) };
+  const retainedUnavailableHistory = unavailableSections.has("history") ? current.entries : [];
+  return {
+    ...latest,
+    entries: uniqueChatEntries([
+      ...retainedOlder,
+      ...retainedUnavailableHistory,
+      ...latest.entries,
+    ]),
+    pendingInteractions: unavailableSections.has("pending_interactions")
+      ? current.pendingInteractions
+      : latest.pendingInteractions,
+    ...(unavailableSections.has("context_window") && current.contextWindow !== undefined
+      ? { contextWindow: current.contextWindow }
+      : {}),
+  };
 }
 
 function prependChatPage(

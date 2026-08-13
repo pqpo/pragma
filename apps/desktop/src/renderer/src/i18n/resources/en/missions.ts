@@ -265,6 +265,9 @@ export const missions = {
   chat: "Chat",
   loadEarlier: "Load earlier messages",
   loadingEarlier: "Loading…",
+  chatSyncUnavailable:
+    "Some conversation state is temporarily unavailable. Existing messages are preserved.",
+  retryChatSync: "Retry",
   resumeToManage: "Resume this execution to manage it",
   reopenToContinue: "Reopen this mission to continue the conversation",
   flowContinues: "Flow input continues through workflow steps",

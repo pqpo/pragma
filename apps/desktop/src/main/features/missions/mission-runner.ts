@@ -24,6 +24,7 @@ import {
   readRuntimeContextCompactionProgressData,
   RUNTIME_CONTEXT_COMPACTION_STAGES,
   type AgentMessageRecord,
+  type ExecutionView,
   type ExecutionWorkRecord,
   type ExecutionOutputItem,
   type FileExecutionStore,
@@ -59,6 +60,7 @@ import type {
   ExpertAgentStreamEvent,
   ExpertPromptAttachment,
   AgentMessageUsage,
+  ExecutionEvent,
   RuntimeContextRecord,
   RuntimeEnvironmentBinding,
 } from "@pragma/shared";
@@ -231,6 +233,7 @@ interface LiveMissionChat {
   readonly executionId: string;
   readonly entries: MissionChatEntry[];
   close: () => Promise<void>;
+  readDurableEntries: (timelineSequence: number) => Promise<readonly MissionChatEntry[]>;
   sequence: number;
 }
 
@@ -499,6 +502,7 @@ export function createMissionRunner(options: {
   const pendingOperations = new Map<string, PendingMissionOperation>();
   const chatListeners = new Set<(notification: MissionChatNotification) => void>();
   const chatRevisions = new Map<string, number>();
+  const degradedChatSync = new Set<string>();
   const liveChats = new Map<string, LiveMissionChat>();
   const liveContextWindows = new Map<string, RuntimeContextWindowUsage>();
   const workListeners = new Set<(notification: MissionWorkNotification) => void>();
@@ -864,6 +868,15 @@ export function createMissionRunner(options: {
       input.executorMetadata.avatarIds,
     );
     let firstProjectionLogged = false;
+    const humanWaitingObserver = observeMissionHumanWaitingStatus({
+      missions: options.missions,
+      missionId,
+      execution: input.handle,
+      startedAt: input.startedAt,
+      inputMessageId: input.inputMessageId,
+      sessionId: input.sessionId,
+      logger,
+    });
     const live = observeMissionChat(
       input.handle,
       (patches) => {
@@ -886,6 +899,15 @@ export function createMissionRunner(options: {
         }
       },
       () => invalidateChat(missionId, audience),
+      humanWaitingObserver.onEvent,
+      humanWaitingObserver.resync,
+      (channel, error) => {
+        logger.warn(
+          "mission.chat_subscription_failed",
+          `Mission ${channel} subscription failed and will retry.`,
+          { error, missionId, executionId: input.handle.executionId, channel },
+        );
+      },
       (item) => {
         if (item.channel === "telemetry" && item.parentInvocationId === undefined) {
           const payload = asRecord(item.value);
@@ -911,6 +933,7 @@ export function createMissionRunner(options: {
               entries: [],
               sequence: 0,
               close: async () => undefined,
+              readDurableEntries: async () => [],
             } satisfies LiveMissionChat);
           byRecord.set(recordId, output);
           liveWorkOutputs.set(missionId, byRecord);
@@ -938,7 +961,10 @@ export function createMissionRunner(options: {
       input.handle,
       input.startedAt,
       input.inputMessageId,
-      input.onFinished ?? (() => undefined),
+      async () => {
+        await humanWaitingObserver.drain();
+        await input.onFinished?.();
+      },
       input.sessionId,
       logger,
       async () => {
@@ -1600,17 +1626,22 @@ export function createMissionRunner(options: {
     const mission = await options.missions.get(input.id);
     const timeline = await options.missions.readTimelinePage(mission.id, input);
     const capturedLive = liveChats.get(mission.id);
-    const entries = await readMissionChatHistory(
+    const history = await readMissionChatHistory(
       timeline.turns,
       executionStore,
       options.missions,
       mission.id,
-      capturedLive?.executionId,
+      capturedLive,
     );
+    const entries = history.entries;
+    const syncIssues = [...history.syncIssues];
 
     const executorMetadata = await getExecutorMetadataOrFallback(mission, "historical");
     const current = active.get(mission.id);
-    const pendingInteractions = await listMissionPendingHumanInteractions(mission);
+    const pendingInteractions = await listMissionPendingHumanInteractions(mission).catch(() => {
+      syncIssues.push(missionChatSyncIssue("pending_interactions"));
+      return [];
+    });
 
     // Keep using the projection captured before history was read. The execution may settle across
     // the awaits above; looking it up again would omit both durable history (which was skipped for
@@ -1622,13 +1653,20 @@ export function createMissionRunner(options: {
     // it again immediately before the revision so a snapshot cannot pair a stale `running` state
     // with the terminal invalidation revision.
     const latestMission = await options.missions.get(mission.id);
-    const contextWindow = await getContextWindowState(latestMission);
+    const contextWindow = await getContextWindowState(latestMission).catch(() => {
+      syncIssues.push(missionChatSyncIssue("context_window"));
+      return undefined;
+    });
     const revision = chatRevisions.get(mission.id) ?? 0;
     const resolveExecutorName = createMissionExecutorNameResolver(mission, executorMetadata.names);
     const resolveExecutorAvatarId = createMissionExecutorAvatarIdResolver(
       executorMetadata.avatarIds,
     );
-    const presentedEntries = entries.map((entry) => {
+    // Durable recovery entries are appended before the live projection. Keep the live value for
+    // stable IDs so richer streaming fields (for example the full tool error) win without
+    // duplicating the row.
+    const mergedEntries = [...new Map(entries.map((entry) => [entry.id, entry])).values()];
+    const presentedEntries = mergedEntries.map((entry) => {
       if (entry.executorId === undefined) return entry;
       const executorAvatarId = entry.executorAvatarId ?? resolveExecutorAvatarId(entry.executorId);
       if (entry.executorName !== undefined && entry.executorAvatarId !== undefined) return entry;
@@ -1640,6 +1678,30 @@ export function createMissionRunner(options: {
         ...(executorAvatarId === undefined ? {} : { executorAvatarId }),
       };
     });
+    const uniqueSyncIssues = [
+      ...new Map(syncIssues.map((issue) => [issue.section, issue])).values(),
+    ];
+    if (uniqueSyncIssues.length > 0) {
+      if (!degradedChatSync.has(mission.id)) {
+        logger.warn(
+          "mission.chat_sync_degraded",
+          "Mission chat is using partial state while Execution data is unavailable.",
+          {
+            missionId: mission.id,
+            executionId: latestMission.execution?.id,
+            code: "execution_state_unavailable",
+            retryable: true,
+            sections: uniqueSyncIssues.map((issue) => issue.section),
+          },
+        );
+      }
+      degradedChatSync.add(mission.id);
+    } else if (degradedChatSync.delete(mission.id)) {
+      logger.info("mission.chat_sync_recovered", "Mission chat state synchronization recovered.", {
+        missionId: mission.id,
+        executionId: latestMission.execution?.id,
+      });
+    }
     return {
       missionId: mission.id,
       revision,
@@ -1657,6 +1719,7 @@ export function createMissionRunner(options: {
       },
       pendingInteractions,
       ...(contextWindow === undefined ? {} : { contextWindow }),
+      ...(uniqueSyncIssues.length === 0 ? {} : { syncIssues: uniqueSyncIssues }),
       ...(latestMission.execution === undefined
         ? {}
         : {
@@ -2052,6 +2115,7 @@ export function createMissionRunner(options: {
       trackOperation(id, { kind: "delete", promise: deleting });
       await deleting;
       chatRevisions.delete(id);
+      degradedChatSync.delete(id);
       workRevisions.delete(id);
       liveWorkOutputs.delete(id);
       liveContextWindows.delete(id);
@@ -2286,8 +2350,6 @@ function observeExecution(
     readonly executionId: string;
     readonly result: Promise<unknown>;
     readonly getState: () => Promise<{ readonly status: string }>;
-    readonly listEvents: MutableExecution["listEvents"];
-    readonly getMessageHistory: MutableExecution["getMessageHistory"];
   },
   startedAt: string,
   inputMessageId: string,
@@ -2296,55 +2358,6 @@ function observeExecution(
   logger?: import("@pragma/core").PragmaLogger,
   onTerminal?: (() => void | Promise<void>) | undefined,
 ): Promise<void> {
-  let lastObservedStatus: string | undefined;
-  const probe = setInterval(() => {
-    void execution
-      .getState()
-      .then(async (state) => {
-        const waiting = state.status === "waiting" || (await hasPendingHumanInteraction(execution));
-        if (!waiting) {
-          const resumed = lastObservedStatus === "waiting" && state.status === "running";
-          lastObservedStatus = state.status;
-          if (resumed) {
-            await missions.updateExecution(
-              missionId,
-              {
-                id: execution.executionId,
-                inputMessageId,
-                ...(sessionId === undefined ? {} : { sessionId }),
-                status: "running",
-                startedAt,
-              },
-              {
-                executionId: execution.executionId,
-                statuses: ["queued", "running", "waiting"],
-              },
-            );
-          }
-          return;
-        }
-        if (lastObservedStatus === "waiting") return;
-        lastObservedStatus = "waiting";
-        await missions.updateExecution(
-          missionId,
-          {
-            id: execution.executionId,
-            inputMessageId,
-            ...(sessionId === undefined ? {} : { sessionId }),
-            status: "waiting",
-            startedAt,
-          },
-          {
-            executionId: execution.executionId,
-            statuses: ["queued", "running", "waiting"],
-          },
-        );
-      })
-      .catch(() => {
-        // The result observer below records terminal failures.
-      });
-  }, 500);
-  probe.unref();
   return (async () => {
     let status: "succeeded" | "failed" | "cancelled" = "succeeded";
     let failure: unknown;
@@ -2394,7 +2407,97 @@ function observeExecution(
         statuses: ["queued", "running", "waiting"],
       },
     );
-  })().finally(() => clearInterval(probe));
+  })();
+}
+
+function observeMissionHumanWaitingStatus(input: {
+  readonly missions: MissionStore;
+  readonly missionId: string;
+  readonly execution: MutableExecution;
+  readonly startedAt: string;
+  readonly inputMessageId: string;
+  readonly sessionId?: string | undefined;
+  readonly logger: PragmaLogger;
+}): {
+  readonly onEvent: (event: ExecutionEvent) => void;
+  readonly resync: () => Promise<void>;
+  readonly drain: () => Promise<void>;
+} {
+  const pending = new Set<string>();
+  let observedWaiting: boolean | undefined;
+  let updates = Promise.resolve();
+
+  const persistStatus = async (): Promise<void> => {
+    const waiting = pending.size > 0;
+    if (waiting === observedWaiting) return;
+    await input.missions.updateExecution(
+      input.missionId,
+      {
+        id: input.execution.executionId,
+        inputMessageId: input.inputMessageId,
+        ...(input.sessionId === undefined ? {} : { sessionId: input.sessionId }),
+        status: waiting ? "waiting" : "running",
+        startedAt: input.startedAt,
+      },
+      {
+        executionId: input.execution.executionId,
+        statuses: ["queued", "running", "waiting"],
+      },
+    );
+    observedWaiting = waiting;
+  };
+
+  const resync = async (): Promise<void> => {
+    try {
+      const interactions = await listPendingHumanInteractions(input.execution);
+      pending.clear();
+      for (const interaction of interactions) pending.add(interaction.interactionId);
+      observedWaiting = undefined;
+      await persistStatus();
+    } catch (error) {
+      input.logger.warn(
+        "mission.human_wait_status_seed_failed",
+        "Mission human-input waiting status could not be initialized.",
+        { error, missionId: input.missionId, executionId: input.execution.executionId },
+      );
+    }
+  };
+  const seed = resync();
+
+  const onEvent = (event: ExecutionEvent): void => {
+    if (event.type !== "human.requested" && event.type !== "human.responded") return;
+    updates = updates
+      .catch(() => undefined)
+      .then(async () => {
+        await seed;
+        const interactionId = String(
+          (event.data as { readonly interactionId?: unknown }).interactionId ?? "",
+        );
+        if (interactionId === "") return;
+        if (event.type === "human.requested") pending.add(interactionId);
+        else pending.delete(interactionId);
+        await persistStatus();
+      });
+    void updates.catch((error: unknown) => {
+      input.logger.warn(
+        "mission.human_wait_status_update_failed",
+        "Mission human-input waiting status could not be updated.",
+        { error, missionId: input.missionId, executionId: input.execution.executionId },
+      );
+    });
+  };
+
+  return {
+    onEvent,
+    resync: () => {
+      updates = updates.catch(() => undefined).then(resync);
+      return updates;
+    },
+    drain: async () => {
+      await seed;
+      await updates;
+    },
+  };
 }
 
 async function persistMissionExecutionProjection(
@@ -2416,11 +2519,14 @@ async function persistMissionExecutionProjection(
   }
   if (matched === undefined)
     throw new Error(`Mission timeline is missing Execution ${executionId}.`);
-  const entries = await readMissionChatHistory([matched], executionStore, missions, missionId);
+  const history = await readMissionChatHistory([matched], executionStore, missions, missionId);
+  if (history.syncIssues.length > 0) {
+    throw new Error(`Execution history could not be projected: ${executionId}.`);
+  }
   await missions.writeExecutionProjection(
     missionId,
     executionId,
-    entries.filter((entry) => entry.kind !== "user"),
+    history.entries.filter((entry) => entry.kind !== "user"),
   );
   await executionStore.archive(executionId);
 }
@@ -2430,9 +2536,13 @@ async function readMissionChatHistory(
   executionStore: ReturnType<typeof createFileExecutionStore>,
   missions: MissionStore,
   missionId: string,
-  activeExecutionId?: string,
-): Promise<MissionChatEntry[]> {
+  activeChat?: LiveMissionChat,
+): Promise<{
+  readonly entries: MissionChatEntry[];
+  readonly syncIssues: MissionChatSyncIssue[];
+}> {
   const entries: MissionChatEntry[] = [];
+  const syncIssues: MissionChatSyncIssue[] = [];
   for (const turn of turns) {
     entries.push({
       id: turn.message.id,
@@ -2443,7 +2553,16 @@ async function readMissionChatHistory(
       createdAt: turn.message.createdAt,
       ...(turn.executionId === undefined ? {} : { executionId: turn.executionId }),
     });
-    if (turn.executionId === undefined || turn.executionId === activeExecutionId) continue;
+    if (turn.executionId === undefined) continue;
+
+    if (turn.executionId === activeChat?.executionId) {
+      try {
+        entries.push(...(await activeChat.readDurableEntries(turn.sequence)));
+      } catch {
+        syncIssues.push(missionChatSyncIssue("history"));
+      }
+      continue;
+    }
 
     const view = new StoredExecutionView(turn.executionId, executionStore);
     const state = await view.getState().catch(() => undefined);
@@ -2453,6 +2572,7 @@ async function readMissionChatHistory(
         entries.push(...projection);
         continue;
       }
+      syncIssues.push(missionChatSyncIssue("history"));
       entries.push({
         id: `missing:${turn.executionId}`,
         timelineSequence: turn.sequence,
@@ -2464,8 +2584,6 @@ async function readMissionChatHistory(
       });
       continue;
     }
-    if (["queued", "running", "waiting"].includes(state.status)) continue;
-
     let histories;
     let activityEntries;
     try {
@@ -2481,6 +2599,7 @@ async function readMissionChatHistory(
         entries.push(...projection);
         continue;
       }
+      syncIssues.push(missionChatSyncIssue("history"));
       entries.push({
         id: `missing:${turn.executionId}`,
         timelineSequence: turn.sequence,
@@ -2504,9 +2623,13 @@ async function readMissionChatHistory(
         })),
         ...activityEntries,
       ].toSorted((left, right) => left.createdAt.localeCompare(right.createdAt)),
+      isFinalExecutionStatus(state.status),
     );
     entries.push(...richEntries);
-    if (!richEntries.some((entry) => entry.kind === "assistant")) {
+    if (
+      isFinalExecutionStatus(state.status) &&
+      !richEntries.some((entry) => entry.kind === "assistant")
+    ) {
       entries.push({
         id: `result:${turn.executionId}`,
         timelineSequence: turn.sequence,
@@ -2518,11 +2641,17 @@ async function readMissionChatHistory(
       });
     }
   }
-  return entries;
+  return { entries, syncIssues };
+}
+
+type MissionChatSyncIssue = NonNullable<MissionChatSnapshot["syncIssues"]>[number];
+
+function missionChatSyncIssue(section: MissionChatSyncIssue["section"]): MissionChatSyncIssue {
+  return { code: "execution_state_unavailable", section, retryable: true };
 }
 
 async function readHistoricalRuntimeActivityEntries(
-  view: StoredExecutionView,
+  view: Pick<ExecutionView, "executionId" | "listEvents">,
   timelineSequence: number,
   rootInvocationId: string,
 ): Promise<MissionChatEntry[]> {
@@ -2639,7 +2768,11 @@ function readErrorMessage(error: unknown): string {
   return error === undefined ? "" : String(error).trim();
 }
 
-function finalizeHistoricalChatEntries(entries: readonly MissionChatEntry[]): MissionChatEntry[] {
+function finalizeHistoricalChatEntries(
+  entries: readonly MissionChatEntry[],
+  executionTerminal = true,
+): MissionChatEntry[] {
+  if (!executionTerminal) return [...entries];
   return entries.map((entry) =>
     entry.kind === "tool" && entry.status === "running"
       ? {
@@ -2785,6 +2918,9 @@ function observeMissionChat(
   execution: MutableExecution & { readonly result: Promise<unknown> },
   onOutput: (patches: readonly MissionChatPatch[]) => void,
   onInvalidate: () => void,
+  onEvent: (event: ExecutionEvent) => void,
+  onEventResync: () => Promise<void>,
+  onSubscriptionError: (channel: "output" | "events", error: unknown) => void,
   onItem: (item: ExecutionOutputItem) => void,
   resolveExecutorName: ExecutorNameResolver,
   resolveExecutorAvatarId: ExecutorAvatarIdResolver,
@@ -2794,13 +2930,24 @@ function observeMissionChat(
     entries: [],
     sequence: 0,
     close: async () => undefined,
+    readDurableEntries: async () => [],
   };
   let closed = false;
-  const outputSubscription = execution.subscribeOutput({ scope: { kind: "all" } });
-  const eventSubscription = execution.subscribeEvents({ scope: { kind: "all" } });
-  const outputTask = outputSubscription
-    .then(async (subscription) => {
+  let durableEntries: Promise<readonly MissionChatEntry[]> | undefined;
+  chat.readDurableEntries = (timelineSequence) => {
+    durableEntries ??= readDurableMissionChatEntries(execution, timelineSequence).catch((error) => {
+      durableEntries = undefined;
+      throw error;
+    });
+    return durableEntries;
+  };
+  let outputSubscription: Awaited<ReturnType<MutableExecution["subscribeOutput"]>> | undefined;
+  let eventSubscription: Awaited<ReturnType<MutableExecution["subscribeEvents"]>> | undefined;
+  const outputTask = (async () => {
+    while (!closed) {
       try {
+        const subscription = await execution.subscribeOutput({ scope: { kind: "all" } });
+        outputSubscription = subscription;
         for await (const item of subscription) {
           if (closed) break;
           onItem(item);
@@ -2811,16 +2958,27 @@ function observeMissionChat(
           if (patches.length > 0) onOutput(patches);
           if (isTerminalContextCompactionOutput(item)) onInvalidate();
         }
+        return;
+      } catch (error) {
+        if (!closed) {
+          onSubscriptionError("output", error);
+          await missionSubscriptionRetryDelay();
+        }
       } finally {
-        await subscription.close();
+        await outputSubscription?.close();
+        outputSubscription = undefined;
       }
-    })
-    .catch(() => undefined);
-  const eventTask = eventSubscription
-    .then(async (subscription) => {
+    }
+  })();
+  const eventTask = (async () => {
+    while (!closed) {
       try {
+        const subscription = await execution.subscribeEvents({ scope: { kind: "all" } });
+        eventSubscription = subscription;
+        await onEventResync();
         for await (const event of subscription) {
           if (closed) break;
+          onEvent(event);
           if (
             event.type === "human.requested" ||
             event.type === "human.responded" ||
@@ -2829,23 +2987,53 @@ function observeMissionChat(
             onInvalidate();
           }
         }
+        return;
+      } catch (error) {
+        if (!closed) {
+          onSubscriptionError("events", error);
+          await missionSubscriptionRetryDelay();
+        }
       } finally {
-        await subscription.close();
+        await eventSubscription?.close();
+        eventSubscription = undefined;
       }
-    })
-    .catch(() => undefined);
+    }
+  })();
   chat.close = async () => {
     if (closed) return;
     closed = true;
-    const subscriptions = await Promise.allSettled([outputSubscription, eventSubscription]);
-    await Promise.allSettled(
-      subscriptions.flatMap((subscription) =>
-        subscription.status === "fulfilled" ? [subscription.value.close()] : [],
-      ),
-    );
+    await Promise.allSettled([outputSubscription?.close(), eventSubscription?.close()]);
     await Promise.allSettled([outputTask, eventTask]);
   };
   return chat;
+}
+
+async function readDurableMissionChatEntries(
+  execution: ExecutionView,
+  timelineSequence: number,
+): Promise<readonly MissionChatEntry[]> {
+  const state = await execution.getState();
+  const histories = await execution.getMessageHistory({ scope: { kind: "all" } });
+  const activityEntries = await readHistoricalRuntimeActivityEntries(
+    execution,
+    timelineSequence,
+    state.rootInvocationId,
+  );
+  return finalizeHistoricalChatEntries(
+    [
+      ...messageRecordsToChatEntries(
+        histories
+          .flatMap((history) => history.messages)
+          .filter((record) => record.source?.parentSessionId === undefined),
+      ).map((entry) => ({ ...entry, timelineSequence })),
+      ...activityEntries,
+    ].toSorted((left, right) => left.createdAt.localeCompare(right.createdAt)),
+    isFinalExecutionStatus(state.status),
+  );
+}
+
+async function missionSubscriptionRetryDelay(): Promise<void> {
+  await new Promise<void>((resolve) => setTimeout(resolve, 250));
 }
 
 function isVisibleTextProjectionPatch(patch: MissionChatPatch): boolean {

@@ -4,8 +4,15 @@ import { dirname, join } from "node:path";
 
 interface LocalLockWaiter {
   cancelled: boolean;
+  readonly operation?: string | undefined;
   timeout?: ReturnType<typeof setTimeout> | undefined;
   readonly grant: () => void;
+}
+
+interface LocalLockState {
+  acquiredAt: number;
+  operation?: string | undefined;
+  readonly waiters: LocalLockWaiter[];
 }
 
 interface FileLockOwner {
@@ -14,6 +21,37 @@ interface FileLockOwner {
   readonly processId: number;
   readonly processStartedAt: number;
   readonly acquiredAt: number;
+  readonly operation?: string | undefined;
+}
+
+export interface FileLockOptions {
+  readonly timeoutMs?: number | undefined;
+  readonly staleMs?: number | undefined;
+  readonly operation?: string | undefined;
+}
+
+export class FileLockTimeoutError extends Error {
+  readonly code = "pragma_file_lock_timeout";
+  readonly lockDir: string;
+  readonly contention: "local" | "active" | "possibly-orphaned";
+  readonly heldMs?: number | undefined;
+  readonly operation?: string | undefined;
+
+  constructor(
+    message: string,
+    lockDir: string,
+    contention: "local" | "active" | "possibly-orphaned",
+    heldMs?: number | undefined,
+    operation?: string | undefined,
+    options?: ErrorOptions,
+  ) {
+    super(message, options);
+    this.name = "FileLockTimeoutError";
+    this.lockDir = lockDir;
+    this.contention = contention;
+    this.heldMs = heldMs;
+    this.operation = operation;
+  }
 }
 
 type LockContention =
@@ -21,9 +59,7 @@ type LockContention =
   | {
       readonly kind: "possibly-orphaned";
       readonly reason:
-        | "missing-owner-metadata"
-        | "owner-process-exited"
-        | "owner-status-unavailable";
+        "missing-owner-metadata" | "owner-process-exited" | "owner-status-unavailable";
     };
 
 type LockGeneration =
@@ -33,16 +69,16 @@ type LockGeneration =
 const OWNER_FILE_NAME = "owner.json";
 const RECLAIM_DIRECTORY_NAME = ".reclaim";
 const CURRENT_PROCESS_STARTED_AT = Date.now() - Math.floor(process.uptime() * 1_000);
-const localLockWaiters = new Map<string, LocalLockWaiter[]>();
+const localLocks = new Map<string, LocalLockState>();
 
 export async function withFileLock<TValue>(
   lockDir: string,
   operation: () => Promise<TValue>,
-  options: { readonly timeoutMs?: number; readonly staleMs?: number } = {},
+  options: FileLockOptions = {},
 ): Promise<TValue> {
   const timeoutMs = options.timeoutMs ?? 10_000;
   const startedAt = Date.now();
-  const releaseLocalLock = await acquireLocalLock(lockDir, startedAt, timeoutMs);
+  const releaseLocalLock = await acquireLocalLock(lockDir, startedAt, timeoutMs, options.operation);
   try {
     return await withCrossProcessFileLock(lockDir, operation, options, startedAt);
   } finally {
@@ -53,7 +89,7 @@ export async function withFileLock<TValue>(
 async function withCrossProcessFileLock<TValue>(
   lockDir: string,
   operation: () => Promise<TValue>,
-  options: { readonly timeoutMs?: number; readonly staleMs?: number },
+  options: FileLockOptions,
   startedAt: number,
 ): Promise<TValue> {
   const timeoutMs = options.timeoutMs ?? 10_000;
@@ -98,6 +134,7 @@ async function withCrossProcessFileLock<TValue>(
     processId: process.pid,
     processStartedAt: CURRENT_PROCESS_STARTED_AT,
     acquiredAt: Date.now(),
+    ...(options.operation === undefined ? {} : { operation: options.operation }),
   };
   const ownerPath = join(lockDir, OWNER_FILE_NAME);
   let ownerFile: Awaited<ReturnType<typeof open>> | undefined;
@@ -141,26 +178,30 @@ async function acquireLocalLock(
   lockDir: string,
   startedAt: number,
   timeoutMs: number,
+  operation: string | undefined,
 ): Promise<() => void> {
-  const waiters = localLockWaiters.get(lockDir);
-  if (waiters === undefined) {
-    localLockWaiters.set(lockDir, []);
+  const state = localLocks.get(lockDir);
+  if (state === undefined) {
+    localLocks.set(lockDir, { acquiredAt: Date.now(), operation, waiters: [] });
   } else {
     const remainingMs = timeoutMs - (Date.now() - startedAt);
-    if (remainingMs <= 0) throw localLockTimeout(lockDir);
+    if (remainingMs <= 0) throw localLockTimeout(lockDir, state);
     await new Promise<void>((resolve, reject) => {
       const waiter: LocalLockWaiter = {
         cancelled: false,
+        operation,
         grant: () => {
           if (waiter.cancelled) return;
           if (waiter.timeout !== undefined) clearTimeout(waiter.timeout);
+          state.acquiredAt = Date.now();
+          state.operation = waiter.operation;
           resolve();
         },
       };
-      waiters.push(waiter);
+      state.waiters.push(waiter);
       waiter.timeout = setTimeout(() => {
         waiter.cancelled = true;
-        reject(localLockTimeout(lockDir));
+        reject(localLockTimeout(lockDir, state));
       }, remainingMs);
     });
   }
@@ -169,11 +210,11 @@ async function acquireLocalLock(
   return () => {
     if (released) return;
     released = true;
-    const queued = localLockWaiters.get(lockDir);
+    const current = localLocks.get(lockDir);
     while (true) {
-      const next = queued?.shift();
+      const next = current?.waiters.shift();
       if (next === undefined) {
-        localLockWaiters.delete(lockDir);
+        localLocks.delete(lockDir);
         return;
       }
       if (!next.cancelled) {
@@ -184,8 +225,16 @@ async function acquireLocalLock(
   };
 }
 
-function localLockTimeout(lockDir: string): Error {
-  return new Error(`Timed out waiting for Pragma in-process file lock: ${lockDir}`);
+function localLockTimeout(lockDir: string, state: LocalLockState): FileLockTimeoutError {
+  const heldMs = Math.max(0, Date.now() - state.acquiredAt);
+  const operation = state.operation;
+  return new FileLockTimeoutError(
+    `Timed out waiting for Pragma in-process file lock: ${lockDir} (held ${heldMs}ms${operation === undefined ? "" : ` by ${operation}`})`,
+    lockDir,
+    "local",
+    heldMs,
+    operation,
+  );
 }
 
 async function assessLock(
@@ -285,7 +334,8 @@ async function readLockOwner(ownerPath: string): Promise<FileLockOwner | undefin
       typeof candidate.processStartedAt !== "number" ||
       !Number.isFinite(candidate.processStartedAt) ||
       typeof candidate.acquiredAt !== "number" ||
-      !Number.isFinite(candidate.acquiredAt)
+      !Number.isFinite(candidate.acquiredAt) ||
+      (candidate.operation !== undefined && typeof candidate.operation !== "string")
     ) {
       return undefined;
     }
@@ -330,10 +380,19 @@ async function pathStaleness(
   }
 }
 
-function lockTimeout(lockDir: string, contention: LockContention, cause: unknown): Error {
+function lockTimeout(
+  lockDir: string,
+  contention: LockContention,
+  cause: unknown,
+): FileLockTimeoutError {
   if (contention.kind === "active") {
-    return new Error(
-      `Timed out waiting for active Pragma file lock: ${lockDir} (owner PID ${contention.owner.processId})`,
+    const heldMs = Math.max(0, Date.now() - contention.owner.acquiredAt);
+    return new FileLockTimeoutError(
+      `Timed out waiting for active Pragma file lock: ${lockDir} (owner PID ${contention.owner.processId}, held ${heldMs}ms${contention.owner.operation === undefined ? "" : ` by ${contention.owner.operation}`})`,
+      lockDir,
+      "active",
+      heldMs,
+      contention.owner.operation,
       { cause },
     );
   }
@@ -343,11 +402,13 @@ function lockTimeout(lockDir: string, contention: LockContention, cause: unknown
       : contention.reason === "owner-process-exited"
         ? "owner process no longer exists"
         : "owner process status could not be confirmed";
-  return new Error(
+  return new FileLockTimeoutError(
     `Timed out waiting for possibly orphaned Pragma file lock: ${lockDir} (${reason})`,
-    {
-      cause,
-    },
+    lockDir,
+    "possibly-orphaned",
+    undefined,
+    undefined,
+    { cause },
   );
 }
 
