@@ -274,7 +274,6 @@ export const missions = {
   noExecutionRecords: "暫無執行記錄",
   runToCreateExecution: "執行此任務以建立執行記錄。",
   executionWork: "任務執行工作",
-  executionMap: "專家協作網絡",
   executionMapDescription: "查看每位專家如何參與並推進目前任務。",
   workCallOrder: "第 {{number}} 個呼叫",
   workHistoryUnavailable: "無法讀取工作記錄",

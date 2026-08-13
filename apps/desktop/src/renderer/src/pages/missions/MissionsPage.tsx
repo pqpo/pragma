@@ -3147,10 +3147,7 @@ export function MissionWorkGrid(props: {
 
   return (
     <div className={`mission-work-list is-${density}${density === "network" ? "" : " is-sparse"}`}>
-      <header>
-        <h2>{t("executionMap")}</h2>
-        <p>{t("executionMapDescription")}</p>
-      </header>
+      <p className="mission-work-description">{t("executionMapDescription")}</p>
       <div
         className="mission-work-grid"
         data-density={density}
@@ -3162,14 +3159,14 @@ export function MissionWorkGrid(props: {
           <defs>
             <marker
               id={markerId}
-              markerWidth="10"
-              markerHeight="10"
-              refX="8.5"
-              refY="5"
+              markerWidth="9"
+              markerHeight="9"
+              refX="8"
+              refY="4.5"
               orient="auto"
-              markerUnits="strokeWidth"
+              markerUnits="userSpaceOnUse"
             >
-              <path d="M 0 0 L 10 5 L 0 10 Z" />
+              <path d="M 0 0 L 9 4.5 L 0 9 Z" />
             </marker>
           </defs>
           {edges.map((edge) => (

@@ -284,7 +284,6 @@ export const missions = {
   noExecutionRecords: "No execution records",
   runToCreateExecution: "Run this mission to create an execution.",
   executionWork: "Mission execution work",
-  executionMap: "Expert network",
   executionMapDescription: "Follow how each expert contributes to this mission.",
   workCallOrder: "Call #{{number}}",
   workHistoryUnavailable: "Work history is unavailable",

@@ -951,6 +951,10 @@ describe("Mission work grid", () => {
     expect(html).toContain('data-avatar-profile="pragma.avatar.expert.07"');
     expect(html).toContain('data-avatar-profile="pragma.avatar.expert.08"');
     expect(html).toContain("mission-work-grid-connections");
+    expect(html).toContain("mission-work-description");
+    expect(html).not.toContain("<h2");
+    expect(html).toContain('markerWidth="9"');
+    expect(html).toContain('markerUnits="userSpaceOnUse"');
     expect(html).toContain('data-density="pair"');
     expect(html).toContain("mission-work-call-order");
     expect(html).toContain("#1");

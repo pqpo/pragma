@@ -1801,6 +1801,12 @@ describe("MissionRunner", { timeout: 15_000 }, () => {
             executorId: "1xddvess309a6gme",
             avatarId: "pragma.avatar.expert.default",
             title: "Writer",
+            summary: "1xddvess309a6gme:Make it shorter",
+            tasks: expect.arrayContaining([
+              expect.objectContaining({
+                outputSummary: "1xddvess309a6gme:Make it shorter",
+              }),
+            ]),
           }),
         ],
       }),

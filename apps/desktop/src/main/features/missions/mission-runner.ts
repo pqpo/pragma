@@ -67,6 +67,7 @@ import type {
 import {
   BUILT_IN_PRAGMA_EXPERT_AVATAR_IDS,
   ExpertAgentStreamEventSchema,
+  InvocationOutputSchema,
   isFinalExecutionStatus,
   resolvePragmaAvatarId,
   RuntimeContextWindowUsageSchema,
@@ -2114,19 +2115,22 @@ export function createMissionRunner(options: {
       missionId: mission.id,
       revision: workRevisions.get(mission.id) ?? 0,
       records: records.map((record): MissionWorkRecord => {
-        const tasks = record.tasks.map((task) => ({
-          taskId: task.taskId,
-          executionId: task.executionId,
-          invocationId: task.invocationId,
-          runId: task.runId,
-          ...(task.sequence === undefined ? {} : { sequence: task.sequence }),
-          status: task.status,
-          inputSummary: formatValue(task.input, 500),
-          ...(task.output === undefined ? {} : { outputSummary: formatValue(task.output, 1_000) }),
-          ...(task.error === undefined ? {} : { error: formatValue(task.error, 10_000) }),
-          createdAt: task.createdAt,
-          updatedAt: task.updatedAt,
-        }));
+        const tasks = record.tasks.map((task) => {
+          const outputSummary = missionWorkOutputSummary(task.output, 1_000);
+          return {
+            taskId: task.taskId,
+            executionId: task.executionId,
+            invocationId: task.invocationId,
+            runId: task.runId,
+            ...(task.sequence === undefined ? {} : { sequence: task.sequence }),
+            status: task.status,
+            inputSummary: formatValue(task.input, 500),
+            ...(outputSummary === undefined ? {} : { outputSummary }),
+            ...(task.error === undefined ? {} : { error: formatValue(task.error, 10_000) }),
+            createdAt: task.createdAt,
+            updatedAt: task.updatedAt,
+          };
+        });
         const latest = tasks.at(-1);
         const resolvedName =
           record.displayName ??
@@ -3875,6 +3879,56 @@ function preview(value: unknown): string | undefined {
   if (value === undefined || value === null || value === "") return undefined;
   const formatted = formatValue(value, 801);
   return formatted === "" ? undefined : formatted;
+}
+
+function missionWorkOutputSummary(value: unknown, maxLength: number): string | undefined {
+  if (value === undefined) return undefined;
+  const output = InvocationOutputSchema.safeParse(value);
+  const summary = output.success
+    ? output.data.type === "inline"
+      ? readableSummary(output.data.value, new Set(), 0)
+      : output.data.summary.trim()
+    : readableSummary(value, new Set(), 0);
+  return summary === "" ? undefined : truncate(summary, maxLength);
+}
+
+function readableSummary(value: unknown, seen: Set<object>, depth: number): string {
+  if (depth > 8) return "";
+  if (typeof value === "string") return value.trim();
+  if (typeof value === "number" || typeof value === "boolean" || typeof value === "bigint") {
+    return String(value);
+  }
+  if (Array.isArray(value)) {
+    if (seen.has(value)) return "";
+    seen.add(value);
+    return value
+      .map((item) => readableSummary(item, seen, depth + 1))
+      .filter((item) => item !== "")
+      .join("\n");
+  }
+  if (typeof value !== "object" || value === null) return "";
+  if (seen.has(value)) return "";
+  seen.add(value);
+
+  const record = value as Record<string, unknown>;
+  for (const key of [
+    "summary",
+    "message",
+    "text",
+    "content",
+    "answer",
+    "result",
+    "output",
+    "value",
+  ]) {
+    const summary = readableSummary(record[key], seen, depth + 1);
+    if (summary !== "") return summary;
+  }
+  for (const item of Object.values(record)) {
+    const summary = readableSummary(item, seen, depth + 1);
+    if (summary !== "") return summary;
+  }
+  return "";
 }
 
 function truncate(value: string, maxLength: number): string {

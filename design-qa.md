@@ -92,6 +92,109 @@ final result: passed
 
 ---
 
+# Mission Work Network Spacing and Arrow Design QA
+
+- Source visual truth path: `/var/folders/7y/x39kntq56gvcfdymbtjb36280000gn/T/codex-clipboard-b90ca2f3-bae3-42a6-bc5e-20c4e14f1615.png`
+- Implementation screenshot path: `/Users/linminqiu/.codex/visualizations/2026/08/13/019ffa47-9af9-7761-a21c-0185b818156a/mission-network-spacing.png`
+- Focused implementation screenshot path: `/Users/linminqiu/.codex/visualizations/2026/08/13/019ffa47-9af9-7761-a21c-0185b818156a/mission-network-spacing-focused.png`
+- Combined comparison path: `/Users/linminqiu/.codex/visualizations/2026/08/13/019ffa47-9af9-7761-a21c-0185b818156a/mission-network-spacing-comparison.png`
+- Browser: Codex in-app browser.
+- Viewport: 1280 × 768 CSS px at device scale factor 1; focused narrow capture: 785 × 433 CSS px.
+- Source pixels: 1570 × 866 annotation crop. Implementation pixels: 1280 × 768. The combined artifact contains both in equal 1570 × 866 panels using `contain` normalization for the implementation; the source is a focused crop, so exact full-page alignment is not asserted.
+- State: Simplified Chinese, one root expert, five second-level experts, three third-level experts, all succeeded.
+
+## Full-view comparison evidence
+
+The implementation removes the “专家协作网络” heading and retains only `查看每位专家如何参与并推进当前任务。`. The description begins 8 px below the Work content boundary, matching `.mission-board-shell` top padding. The full nine-card network remains inside the 1280 × 768 viewport with no horizontal or vertical document overflow.
+
+## Focused region comparison evidence
+
+All eight connectors terminate with complete, visible arrowheads. Browser geometry inspection found 72 px between depth rows, versus the previous 56 px. Vertical paths stop 10 px before their target cards, while arrow markers now use fixed `9 × 9` user-space units instead of scaling with the 1.7 px connector stroke. The focused narrow capture confirms arrowheads remain legible when the content is clipped horizontally.
+
+## Required fidelity surfaces
+
+- Fonts and typography: the existing 13 px muted description style and card hierarchy are preserved; only the redundant heading is removed.
+- Spacing and layout rhythm: description top inset is 8 px, delegation row gap is 72 px, and card geometry remains 208 × 142 px in network mode.
+- Colors and visual tokens: connector, arrow, surface, border, status, and muted-text colors are unchanged.
+- Image quality and asset fidelity: existing expert avatar components are reused at their native sizes without generated or replacement assets.
+- Copy and content: only the requested description remains; English, Simplified Chinese, and Traditional Chinese descriptions remain localized, while the obsolete title keys are removed.
+
+## Findings
+
+No actionable P0, P1, or P2 issues remain. The two marked vertical connector lanes are visibly roomier, arrowheads are complete, and the recovered heading space prevents the larger gaps from causing viewport overflow.
+
+## Comparison history
+
+1. P2 — The source annotation showed crowded vertical connector lanes and arrowheads that appeared clipped against the following card.
+2. Fix — Increased depth-row spacing from 56 px to 72 px, changed arrow markers from stroke-relative 10-unit geometry to fixed 9 px geometry, and preserved a 10 px card clearance.
+3. P2 — The Work introduction consumed unnecessary vertical space and did not align with the Whiteboard Tab content inset.
+4. Fix — Removed the heading, retained only the description, and aligned its top inset to the Whiteboard Tab's 8 px padding.
+5. Post-fix evidence — Browser geometry reports row tops at 59.5, 273.5, and 487.5 px, eight visible connector paths, zero headings, and no viewport overflow.
+
+## Primary interactions tested
+
+- All expert cards remain clickable and retain their existing hover/focus treatment.
+- Connector flow animation remains active; reduced-motion behavior is unchanged.
+- Browser console errors and warnings were checked; none were present.
+
+## Follow-up polish
+
+None required.
+
+final result: passed
+
+---
+
+# Mission Work Summary Readability Design QA
+
+- Source visual truth path: `/var/folders/7y/x39kntq56gvcfdymbtjb36280000gn/T/codex-clipboard-df12aa42-7a6d-4f7d-a844-a949d8d5cede.png`
+- Implementation screenshot path: `/Users/linminqiu/.codex/visualizations/2026/08/13/019ffa47-9af9-7761-a21c-0185b818156a/mission-summary-readable.png`
+- Combined comparison path: `/Users/linminqiu/.codex/visualizations/2026/08/13/019ffa47-9af9-7761-a21c-0185b818156a/mission-summary-readable-comparison.png`
+- Browser: Codex in-app browser.
+- Viewport: 968 × 666 CSS px at device scale factor 1.
+- Source and implementation pixels: both 968 × 666; no density normalization required.
+- State: Simplified Chinese, one succeeded root expert, readable output summary visible.
+
+## Full-view comparison evidence
+
+The expert card retains the existing single-expert composition, avatar, name, succeeded status, border, radius, spacing, and centered alignment. The visible behavioral difference is limited to the requested output treatment: the source exposes the persisted invocation envelope as JSON, while the implementation displays only the extracted answer text.
+
+## Focused region comparison evidence
+
+The rendered `.mission-work-card-summary` contains `提问功能正常，我已经收到你的回答（测试一下）。从你提供的信息来看，任务可以继续推进。`. DOM inspection confirmed that neither `"type"` nor `"value"` appears in the visible card text. The text wraps naturally inside the existing 320 px card and remains within its two-line clamp. Browser console inspection found no warnings or errors.
+
+## Required fidelity surfaces
+
+- Fonts and typography: existing Desktop font family, summary size, weight, line height, and two-line truncation are unchanged.
+- Spacing and layout rhythm: the 320 px single-expert card and its internal avatar/name/status/summary rhythm are unchanged.
+- Colors and visual tokens: existing background, border, text, and succeeded-status tokens are preserved.
+- Image quality and asset fidelity: the existing expert avatar component is reused without replacement or modification.
+- Copy and content: protocol keys and escaped JSON syntax are removed; the human-readable invocation value is shown instead.
+
+## Findings
+
+No actionable P0, P1, or P2 issues remain. The output is readable and the fix introduces no unrelated visual changes.
+
+## Comparison history
+
+1. P1 — The source card displayed the complete `{ type: "inline", value: ... }` invocation envelope, exposing implementation details and escaped line breaks to the user.
+2. Fix — The Mission Work projection now parses the invocation output, unwraps inline values, uses context summaries, and extracts common human-readable fields from structured results.
+3. Post-fix evidence — The browser-rendered card contains only the answer text; the combined comparison shows the JSON envelope removed with the card layout preserved.
+
+## Primary interactions tested
+
+- Single-expert card renders the projected readable summary.
+- Existing card remains clickable.
+- Browser console errors and warnings were checked; none were present.
+
+## Follow-up polish
+
+None required.
+
+final result: passed
+
+---
+
 # Mission Work Grid Density and Call Order Design QA
 
 - Source visual truth path: `/tmp/codex-remote-attachments/019ffa47-9af9-7761-a21c-0185b818156a/7a9ddd45-9a81-48fb-8efe-e34cdc6f80ca/1-Photo-1.jpg`
@@ -118,7 +221,7 @@ The nine-record implementation matches the source's one-to-five-to-three delegat
 ## Required fidelity surfaces
 
 - Fonts and typography: existing Desktop font family, weights, status hierarchy, truncation, and summary line height are preserved; call-order badges remain secondary to expert names.
-- Spacing and layout rhythm: sparse modes use bounded 360/720 px surfaces; the full network keeps the existing 56 px delegation lanes and fits all three levels within the viewport.
+- Spacing and layout rhythm: sparse modes use bounded 360/720 px surfaces; the full network uses 72 px delegation lanes and fits all three levels within the viewport.
 - Colors and visual tokens: existing surfaces, borders, green text, semantic statuses, and focus tokens remain; connector and arrow colors are darkened only enough to restore direction legibility.
 - Image quality and asset fidelity: existing built-in expert avatar assets and profile tooltip are reused without placeholders or generated replacements.
 - Copy and content: call-order accessibility copy is localized in English, Simplified Chinese, and Traditional Chinese; the number represents each non-root expert's first invocation.
