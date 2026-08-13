@@ -9,6 +9,7 @@ import {
   createPragmaLogger,
   createStaticRuntimeResolver,
   registerExpertToolsMcpSession,
+  snapshotRuntimeFeatures,
   type Expert,
 } from "@pragma/core";
 import { createRuntimeTestFeatures } from "@pragma/core/testing";
@@ -435,7 +436,7 @@ describe("built-in Pragma Agent DSL", () => {
       defaultRuntimeId: "test-runtime",
       runtimes: [
         {
-          features: createRuntimeTestFeatures(),
+          features: snapshotRuntimeFeatures(createRuntimeTestFeatures()),
           descriptor: { id: "test-runtime", kind: "test", displayName: "Test Runtime" },
           canUse: () => ({ usable: true }),
         },
