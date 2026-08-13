@@ -4,7 +4,6 @@ import {
   deriveRuntimeAdapterCapabilities,
   isRuntimeFeatureEnabled,
   type RuntimeFeatureName,
-  type RuntimeFeatureSet,
 } from "./features.ts";
 import type { RuntimeProbeEvidence } from "./probe-evidence.ts";
 import { RuntimeProbeEvidenceSchema } from "./probe-evidence.ts";
@@ -75,7 +74,7 @@ export function inspectRuntimeDeclarationConformance(
     }
   }
   const expected = deriveRuntimeAdapterCapabilities(
-    runtime.features as RuntimeFeatureSet,
+    runtime.features,
     runtime.descriptor.capabilities,
   );
   for (const key of [

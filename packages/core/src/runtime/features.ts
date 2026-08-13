@@ -1,11 +1,11 @@
 import type {
-  RuntimeAdapterCapabilities,
-  RuntimeAdapterPlacementCapabilities,
-} from "./runtime-adapter.ts";
-import type {
   RuntimeFeatureSessionPrepareContext,
   RuntimeFeatureTurnPrepareContext,
 } from "./driver.ts";
+import type {
+  RuntimeAdapterCapabilities,
+  RuntimeAdapterPlacementCapabilities,
+} from "./runtime-adapter.ts";
 
 // RUNTIME_FEATURE_CATALOG_START
 export const RUNTIME_FEATURE_CATALOG = [
@@ -63,6 +63,14 @@ export type RuntimeFeatureLifecycle = (typeof RUNTIME_FEATURE_CATALOG)[number]["
 export type RuntimeFeatureEvidenceLevel = "materialized" | "discovered" | "executed";
 export type RuntimeCompactionMode = "manual" | "events";
 
+/**
+ * These integrations acquire or materialize Session-scoped resources across
+ * Harnesses. An enabled declaration must therefore participate in Core-owned
+ * preparation; a native status declaration is not sufficient evidence of an
+ * implementation.
+ */
+const CORE_PREPARED_FEATURES = new Set<RuntimeFeatureName>(["mcp", "permissions", "skills"]);
+
 export interface RuntimeFeatureEvidenceRef {
   readonly probe: string;
   readonly level: RuntimeFeatureEvidenceLevel;
@@ -96,20 +104,102 @@ export interface RuntimeFeatureNotApplicable extends RuntimeFeatureBase {
   readonly reason: string;
 }
 
-export type RuntimeFeatureStatus =
+export type RuntimeFeatureReadiness =
   | RuntimeFeatureSupported
   | RuntimeFeatureDegraded
   | RuntimeFeatureUnsupported
   | RuntimeFeatureNotApplicable;
 
-export interface RuntimeFeatureDeclarationHooks {
-  readonly prepareSession?:
-    ((context: RuntimeFeatureSessionPrepareContext) => Promise<unknown> | unknown) | undefined;
-  readonly prepareTurn?:
-    ((context: RuntimeFeatureTurnPrepareContext) => Promise<unknown> | unknown) | undefined;
+/** The public status persisted on a RuntimeAdapter. */
+export type RuntimeFeatureStatus = RuntimeFeatureReadiness;
+
+export type RuntimePreparationPhase = "session" | "turn";
+
+interface RuntimePreparationNodeBase<
+  TPhase extends RuntimePreparationPhase,
+  TOutput,
+  TNeeds extends RuntimePreparationNeeds,
+> {
+  readonly phase: TPhase;
+  readonly id?: string | undefined;
+  readonly needs?: TNeeds | undefined;
+  readonly prepare: TPhase extends "session"
+    ? (
+        context: RuntimeFeatureSessionPrepareContext,
+        needs: RuntimePreparationOutputs<TNeeds>,
+      ) => Promise<TOutput> | TOutput
+    : (
+        context: RuntimeFeatureTurnPrepareContext,
+        needs: RuntimePreparationOutputs<TNeeds>,
+      ) => Promise<TOutput> | TOutput;
 }
 
-export type RuntimeFeatureDeclaration = RuntimeFeatureStatus & RuntimeFeatureDeclarationHooks;
+export interface RuntimePreparationNode<
+  TPhase extends RuntimePreparationPhase,
+  TOutput,
+  TNeeds extends RuntimePreparationNeeds = RuntimePreparationNeeds,
+> extends RuntimePreparationNodeBase<TPhase, TOutput, TNeeds> {
+  readonly kind: "preparation";
+}
+
+export type RuntimePreparationNeeds = Readonly<Record<string, RuntimePreparationDependency>>;
+
+export type RuntimePreparationOutputs<TNeeds extends RuntimePreparationNeeds | undefined> =
+  TNeeds extends RuntimePreparationNeeds
+    ? { readonly [TName in keyof TNeeds]: RuntimePreparationOutput<TNeeds[TName]> }
+    : Record<never, never>;
+
+export type RuntimePreparationOutput<TNode> = TNode extends {
+  readonly prepare: (...args: never[]) => infer TOutput;
+}
+  ? Awaited<TOutput>
+  : never;
+
+export interface RuntimeNativeFeature<
+  TReadiness extends RuntimeFeatureReadiness = RuntimeFeatureReadiness,
+> extends RuntimeFeatureBase {
+  readonly kind: "native";
+  readonly readiness: TReadiness;
+}
+
+export interface RuntimeSessionFeature<
+  TOutput,
+  TNeeds extends RuntimePreparationNeeds = RuntimePreparationNeeds,
+> extends RuntimePreparationNodeBase<"session", TOutput, TNeeds> {
+  readonly kind: "feature";
+  readonly readiness: Extract<
+    RuntimeFeatureReadiness,
+    { readonly status: "supported" | "degraded" }
+  >;
+}
+
+export interface RuntimeTurnFeature<
+  TOutput,
+  TNeeds extends RuntimePreparationNeeds = RuntimePreparationNeeds,
+> extends RuntimePreparationNodeBase<"turn", TOutput, TNeeds> {
+  readonly kind: "feature";
+  readonly readiness: Extract<
+    RuntimeFeatureReadiness,
+    { readonly status: "supported" | "degraded" }
+  >;
+}
+
+export interface RuntimePreparationDependency {
+  readonly phase: RuntimePreparationPhase;
+  readonly id?: string | undefined;
+  readonly needs?: object | undefined;
+  readonly prepare: (...args: never[]) => unknown;
+}
+
+export interface RuntimeFeatureLifecycleDeclaration extends RuntimePreparationDependency {
+  readonly kind: "feature";
+  readonly readiness: Extract<
+    RuntimeFeatureReadiness,
+    { readonly status: "supported" | "degraded" }
+  >;
+}
+
+export type RuntimeFeatureDeclaration = RuntimeNativeFeature | RuntimeFeatureLifecycleDeclaration;
 
 export type RuntimeFeatureSet = {
   readonly [TName in RuntimeFeatureName]: RuntimeFeatureDeclaration;
@@ -119,16 +209,20 @@ export type RuntimeFeatureSnapshotSet = {
   readonly [TName in RuntimeFeatureName]: RuntimeFeatureStatus;
 };
 
-type RuntimeFeatureOptions = RuntimeFeatureBase & RuntimeFeatureDeclarationHooks;
+export type RuntimePreparedFeatureSet<TFeatures extends RuntimeFeatureSet> = Readonly<{
+  [TName in keyof TFeatures]: RuntimePreparationOutput<TFeatures[TName]>;
+}>;
+
+type RuntimeReadinessOptions = RuntimeFeatureBase;
 type EmptyRuntimeFeatureOptions = Record<never, never>;
 
 export const runtimeFeature = {
-  supported<const TOptions extends RuntimeFeatureOptions = EmptyRuntimeFeatureOptions>(
+  supported<const TOptions extends RuntimeReadinessOptions = EmptyRuntimeFeatureOptions>(
     options?: TOptions,
   ): RuntimeFeatureSupported & TOptions {
     return { status: "supported", ...(options ?? {}) } as RuntimeFeatureSupported & TOptions;
   },
-  degraded<const TOptions extends RuntimeFeatureOptions = EmptyRuntimeFeatureOptions>(
+  degraded<const TOptions extends RuntimeReadinessOptions = EmptyRuntimeFeatureOptions>(
     reason: string,
     options?: TOptions,
   ): RuntimeFeatureDegraded & TOptions {
@@ -143,6 +237,34 @@ export const runtimeFeature = {
   },
   notApplicable(reason: string): RuntimeFeatureNotApplicable {
     return { status: "notApplicable", reason: requireReason(reason) };
+  },
+  native<const TReadiness extends RuntimeFeatureReadiness>(
+    readiness: TReadiness,
+  ): RuntimeNativeFeature<TReadiness> {
+    return { kind: "native", readiness };
+  },
+  session<TOutput, const TNeeds extends RuntimePreparationNeeds = Record<never, never>>(
+    options: Omit<RuntimeSessionFeature<TOutput, TNeeds>, "kind" | "phase">,
+  ): RuntimeSessionFeature<TOutput, TNeeds> {
+    return { kind: "feature", phase: "session", ...options };
+  },
+  turn<TOutput, const TNeeds extends RuntimePreparationNeeds = Record<never, never>>(
+    options: Omit<RuntimeTurnFeature<TOutput, TNeeds>, "kind" | "phase">,
+  ): RuntimeTurnFeature<TOutput, TNeeds> {
+    return { kind: "feature", phase: "turn", ...options };
+  },
+};
+
+export const runtimeStep = {
+  session<TOutput, const TNeeds extends RuntimePreparationNeeds = Record<never, never>>(
+    options: Omit<RuntimePreparationNode<"session", TOutput, TNeeds>, "kind" | "phase">,
+  ): RuntimePreparationNode<"session", TOutput, TNeeds> {
+    return { kind: "preparation", phase: "session", ...options };
+  },
+  turn<TOutput, const TNeeds extends RuntimePreparationNeeds = Record<never, never>>(
+    options: Omit<RuntimePreparationNode<"turn", TOutput, TNeeds>, "kind" | "phase">,
+  ): RuntimePreparationNode<"turn", TOutput, TNeeds> {
+    return { kind: "preparation", phase: "turn", ...options };
   },
 };
 
@@ -168,37 +290,30 @@ export function validateRuntimeFeatures(features: RuntimeFeatureSet): void {
     if (feature === undefined) {
       throw new Error(`Runtime feature declaration is missing mandatory slot: ${name}`);
     }
+    const readiness = feature.readiness;
     if (
-      (feature.status === "degraded" ||
-        feature.status === "unsupported" ||
-        feature.status === "notApplicable") &&
-      feature.reason.trim() === ""
+      (readiness.status === "degraded" ||
+        readiness.status === "unsupported" ||
+        readiness.status === "notApplicable") &&
+      readiness.reason.trim() === ""
     ) {
       throw new Error(`Runtime feature ${name} requires a non-empty reason.`);
     }
-    if (
-      !isRuntimeFeatureEnabled(feature) &&
-      (feature.prepareSession !== undefined || feature.prepareTurn !== undefined)
-    ) {
-      throw new Error(`Disabled Runtime feature ${name} must not declare lifecycle hooks.`);
-    }
-    if (feature.prepareSession !== undefined && lifecycle !== "session") {
+    if (feature.kind === "native") continue;
+    if (feature.phase !== lifecycle) {
       throw new Error(
-        `Runtime feature ${name} has ${lifecycle} lifecycle and cannot declare prepareSession().`,
+        `Runtime feature ${name} has ${lifecycle} lifecycle and cannot declare a ${feature.phase} preparation.`,
       );
     }
-    if (feature.prepareTurn !== undefined && lifecycle !== "turn") {
-      throw new Error(
-        `Runtime feature ${name} has ${lifecycle} lifecycle and cannot declare prepareTurn().`,
-      );
+    if (!isRuntimeFeatureEnabled(readiness)) {
+      throw new Error(`Disabled Runtime feature ${name} must not declare a preparation.`);
     }
-    if (
-      feature.status === "supported" &&
-      (name === "mcp" || name === "permissions" || name === "skills") &&
-      feature.prepareSession === undefined
-    ) {
+  }
+  for (const name of CORE_PREPARED_FEATURES) {
+    const feature = features[name];
+    if (isRuntimeFeatureEnabled(feature) && feature.kind !== "feature") {
       throw new Error(
-        `Supported Runtime feature ${name} must participate in Core-owned Session preparation.`,
+        `Enabled Runtime feature ${name} must provide a Core-owned preparation implementation.`,
       );
     }
   }
@@ -207,39 +322,26 @@ export function validateRuntimeFeatures(features: RuntimeFeatureSet): void {
 export function snapshotRuntimeFeatures(features: RuntimeFeatureSet): RuntimeFeatureSnapshotSet {
   return Object.freeze(
     Object.fromEntries(
-      RUNTIME_FEATURE_CATALOG.map(({ name }) => {
-        const status = Object.fromEntries(
-          Object.entries(features[name])
-            .filter(([key]) => key !== "prepareSession" && key !== "prepareTurn")
-            .map(([key, value]) => [
-              key,
-              key === "evidence"
-                ? Object.freeze(
-                    (value as readonly RuntimeFeatureEvidenceRef[]).map((entry) =>
-                      Object.freeze({ ...entry }),
-                    ),
-                  )
-                : key === "compactionModes"
-                  ? Object.freeze([...(value as readonly RuntimeCompactionMode[])])
-                  : value,
-            ]),
-        ) as unknown as RuntimeFeatureStatus;
-        return [name, Object.freeze(status)];
-      }),
+      RUNTIME_FEATURE_CATALOG.map(({ name }) => [name, freezeReadiness(features[name].readiness)]),
     ) as RuntimeFeatureSnapshotSet,
   );
 }
 
-export function isRuntimeFeatureEnabled(feature: RuntimeFeatureStatus): boolean {
-  return feature.status === "supported" || feature.status === "degraded";
+export function isRuntimeFeatureEnabled(
+  feature: RuntimeFeatureStatus | RuntimeFeatureDeclaration,
+): boolean {
+  const readiness = "readiness" in feature ? feature.readiness : feature;
+  return readiness.status === "supported" || readiness.status === "degraded";
 }
 
 export function deriveRuntimeAdapterCapabilities(
-  features: RuntimeFeatureSet,
+  features: RuntimeFeatureSet | RuntimeFeatureSnapshotSet,
   placement: RuntimeAdapterPlacementCapabilities | undefined,
 ): RuntimeAdapterCapabilities {
   const compaction = features.compaction;
-  const compactionModes = new Set(compaction.compactionModes ?? []);
+  const compactionModes = new Set(
+    ("readiness" in compaction ? compaction.readiness : compaction).compactionModes ?? [],
+  );
   const targets =
     placement?.targets === undefined ? undefined : Object.freeze([...placement.targets]);
   const executionLocations =
@@ -265,6 +367,20 @@ export function deriveRuntimeAdapterCapabilities(
 
 export function runtimeFeatureLifecycle(name: RuntimeFeatureName): RuntimeFeatureLifecycle {
   return RUNTIME_FEATURE_CATALOG.find((feature) => feature.name === name)!.lifecycle;
+}
+
+function freezeReadiness(readiness: RuntimeFeatureReadiness): RuntimeFeatureStatus {
+  return Object.freeze({
+    ...readiness,
+    ...(readiness.evidence === undefined
+      ? {}
+      : {
+          evidence: Object.freeze(readiness.evidence.map((entry) => Object.freeze({ ...entry }))),
+        }),
+    ...(readiness.compactionModes === undefined
+      ? {}
+      : { compactionModes: Object.freeze([...readiness.compactionModes]) }),
+  });
 }
 
 function requireReason(reason: string): string {

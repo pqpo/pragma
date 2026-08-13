@@ -2,14 +2,12 @@ import { readdir } from "node:fs/promises";
 import { join } from "node:path";
 
 import {
+  createExpertToolsHttpMcpFeature,
   createMcpToolRegistryPool,
   defaultRuntimeTokenCounter,
   defineRuntimeFeatures,
   defineRuntimeDriver,
-  registerExpertToolsMcpSession,
   runtimeFeature,
-  type ExpertToolsMcpSessionRegistration,
-  type ExpertToolRuntimeState,
   type PragmaLogger,
   type RuntimeAdapter,
   type RuntimeSessionPersistenceSpec,
@@ -62,7 +60,27 @@ export function createQoderCliRuntime(options: QoderCliRuntimeAdapterOptions = {
     },
   };
   const listModels = options.listModels ?? createQoderCliModelDiscovery(options);
-  const implemented = () => runtimeFeature.degraded(QODER_EVIDENCE_PENDING);
+  const implemented = () => runtimeFeature.native(runtimeFeature.degraded(QODER_EVIDENCE_PENDING));
+  const mcp = createExpertToolsHttpMcpFeature({
+    readiness: runtimeFeature.degraded(QODER_EVIDENCE_PENDING),
+    pool: mcpToolRegistries,
+    resourcePrefix: "qodercli",
+  });
+  const skills = runtimeFeature.session({
+    id: "qodercli.skills",
+    readiness: runtimeFeature.degraded(QODER_EVIDENCE_PENDING),
+    async prepare(ctx) {
+      const sessionDir = ctx.persistence.spec?.sessionDir ?? ctx.paths.runtimeSessionDir("qodercli");
+      return await materializeQoderSkillPlugin(ctx.agent, sessionDir);
+    },
+  });
+  const permissions = runtimeFeature.session({
+    id: "qodercli.permissions",
+    readiness: runtimeFeature.degraded(QODER_EVIDENCE_PENDING),
+    prepare() {
+      return { mode: options.permissionMode ?? "default" };
+    },
+  });
   const features = defineRuntimeFeatures({
     availability: implemented(),
     authentication: implemented(),
@@ -76,18 +94,18 @@ export function createQoderCliRuntime(options: QoderCliRuntimeAdapterOptions = {
     textStreaming: implemented(),
     reasoningStreaming: implemented(),
     nativeToolLifecycle: implemented(),
-    mcp: implemented(),
-    permissions: implemented(),
+    mcp,
+    permissions,
     userInteraction: implemented(),
-    skills: implemented(),
+    skills,
     attachmentImage: implemented(),
     attachmentFile: implemented(),
     attachmentDirectory: implemented(),
     usage: implemented(),
     contextWindow: implemented(),
-    compaction: runtimeFeature.degraded(QODER_EVIDENCE_PENDING, {
-      compactionModes: ["manual", "events"],
-    }),
+    compaction: runtimeFeature.native(
+      runtimeFeature.degraded(QODER_EVIDENCE_PENDING, { compactionModes: ["manual", "events"] }),
+    ),
     cancellation: implemented(),
     steering: implemented(),
     close: implemented(),
@@ -132,32 +150,11 @@ export function createQoderCliRuntime(options: QoderCliRuntimeAdapterOptions = {
               logger: ctx.logger,
             }),
         );
-        const pluginPromise = timedQoderPhase(
-          ctx.logger,
-          "skill_plugin_materialization",
-          sessionStartedAt,
-          async () => await materializeQoderSkillPlugin(ctx.agent, sessionDir),
-        );
-        const registryLeasePromise = timedQoderPhase(
-          ctx.logger,
-          "mcp_tool_registry",
-          sessionStartedAt,
-          async () =>
-            await ctx.resources.acquire(
-              "qodercli.mcp-registry",
-              async () => await mcpToolRegistries.acquire(ctx.agent.mcp),
-              async (lease) => await lease.release(),
-            ),
-        );
-        const [managedConfig, plugin, mcpToolRegistryLease] = await Promise.all([
-          configPromise,
-          pluginPromise,
-          registryLeasePromise,
-        ]);
-        const mcpToolRegistry = mcpToolRegistryLease.registry;
+        const [managedConfig] = await Promise.all([configPromise]);
+        const mcp = ctx.features.mcp;
+        const plugin = ctx.features.skills;
         const restoredRuntimeSessionId =
           ctx.persistence.restoredRuntimeSessionId ?? ctx.request.runtimeSession?.id ?? "";
-        const toolRuntimeState: ExpertToolRuntimeState = {};
 
         if (
           restoredRuntimeSessionId !== "" &&
@@ -176,33 +173,13 @@ export function createQoderCliRuntime(options: QoderCliRuntimeAdapterOptions = {
             `Qoder CLI runtime session file was not found: ${restoredRuntimeSessionId}.`,
           );
         }
-        const expertToolsMcpRegistration: ExpertToolsMcpSessionRegistration = await timedQoderPhase(
-          ctx.logger,
-          "mcp_tool_registration",
-          sessionStartedAt,
-          async () =>
-            await ctx.resources.acquire(
-              "qodercli.mcp-registration",
-              async () =>
-                await registerExpertToolsMcpSession({
-                  agent: ctx.agent,
-                  getContext: () => ctx.lifecycle.currentContext,
-                  humanInteractionHandler: ctx.request.humanInteractionHandler,
-                  logger: ctx.logger,
-                  mcpTools: mcpToolRegistry.tools,
-                  state: toolRuntimeState,
-                  executionContext: ctx.request.executionContext,
-                }),
-              async (registration) => await registration.dispose(),
-            ),
-        );
         ctx.logger.info("runtime.qodercli_session_ready", "Qoder Session preparation completed", {
           elapsedMs: qoderElapsedMs(sessionStartedAt),
           systemPromptCharacters: ctx.agentContext.systemPrompt.length,
-          toolCount: mcpToolRegistry.tools.length,
-          mcpOpenedConnections: mcpToolRegistryLease.stats.openedConnections,
-          mcpReusedConnections: mcpToolRegistryLease.stats.reusedConnections,
-          mcpCoalescedConnections: mcpToolRegistryLease.stats.coalescedConnections,
+          toolCount: mcp.registry.tools.length,
+          mcpOpenedConnections: mcp.lease.stats.openedConnections,
+          mcpReusedConnections: mcp.lease.stats.reusedConnections,
+          mcpCoalescedConnections: mcp.lease.stats.coalescedConnections,
         });
         return {
           agent: ctx.agent,
@@ -211,18 +188,18 @@ export function createQoderCliRuntime(options: QoderCliRuntimeAdapterOptions = {
           env: { ...ctx.processEnvironment },
           configDir: managedConfig.configDir,
           externalCommandsCacheDir: managedConfig.externalCommandsCacheDir,
-          mcpServerUrl: expertToolsMcpRegistration.url,
+          mcpServerUrl: mcp.registration.url,
           plugin,
           logger: ctx.logger,
           humanInteractionHandler: ctx.request.humanInteractionHandler,
-          permissionMode: options.permissionMode ?? "default",
+          permissionMode: ctx.features.permissions.mode,
           defaultModelName: ctx.request.modelSelection?.model.modelId ?? options.defaultModelName,
           defaultThinkingLevel:
             ctx.request.modelSelection?.thinkingLevel ?? options.defaultThinkingLevel,
           contextWindowOverride: options.contextWindowTokens,
           compactModelName: options.compactModelName,
           systemPrompt: ctx.agentContext.systemPrompt,
-          toolRuntimeState,
+          toolRuntimeState: mcp.toolRuntimeState,
           tokenCounter: options.tokenCounter ?? defaultRuntimeTokenCounter,
           messages: [],
           toolNames: new Map(),

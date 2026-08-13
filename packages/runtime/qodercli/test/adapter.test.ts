@@ -180,7 +180,26 @@ function createSessionContext(
       checkpoint: vi.fn(async () => undefined),
     },
     resources: new RuntimeResourceScope("qodercli-adapter-test"),
-    preparedFeatures: {},
+    features: {
+      mcp: {
+        registry: { tools: [] },
+        lease: {
+          registry: { tools: [] },
+          stats: { openedConnections: 0, reusedConnections: 0, coalescedConnections: 0 },
+          release: vi.fn(async () => undefined),
+        },
+        registration: {
+          id: "registration",
+          name: "pragma",
+          url: "http://127.0.0.1:43127/private/mcp",
+          dispose: vi.fn(async () => undefined),
+        },
+        toolRuntimeState: {},
+      },
+      skills: { path: join(sessionDir, "plugin"), skills: [] },
+      permissions: { mode: "default" },
+    } as never,
+    steps: { get: () => undefined } as never,
     sessionInfo: {},
   } as unknown as RuntimeDriverSessionContext;
 }

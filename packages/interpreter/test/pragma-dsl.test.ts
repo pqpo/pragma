@@ -6,6 +6,7 @@ import { describe, expect, it, vi } from "vitest";
 import {
   createExpertAgentPluginPackageFingerprint,
   createStaticRuntimeResolver,
+  snapshotRuntimeFeatures,
   type Expert,
   type ExpertTeam,
   type Flow,
@@ -1874,7 +1875,7 @@ describe("Pragma YAML DSL", () => {
       defaultRuntimeId: "codex",
       runtimes: [
         {
-          features: createRuntimeTestFeatures(),
+          features: snapshotRuntimeFeatures(createRuntimeTestFeatures()),
           descriptor: { id: "codex", kind: "test", displayName: "Codex" },
           canUse: () => ({ usable: false, reason: "codex executable is missing" }),
         },
@@ -1922,7 +1923,7 @@ describe("Pragma YAML DSL", () => {
         defaultRuntimeId: "pi",
         runtimes: [
           {
-            features: createRuntimeTestFeatures(),
+            features: snapshotRuntimeFeatures(createRuntimeTestFeatures()),
             descriptor: { id: "pi", kind: "test", displayName: "Pi" },
             canUse: () => ({ usable: true }),
           },
@@ -1956,7 +1957,9 @@ describe("Pragma YAML DSL", () => {
           defaultRuntimeId: "codex",
           runtimes: [
             {
-              features: createRuntimeTestFeatures({ enabled: ["modelDiscovery"] }),
+              features: snapshotRuntimeFeatures(
+                createRuntimeTestFeatures({ enabled: ["modelDiscovery"] }),
+              ),
               descriptor: { id: "codex", kind: "test", displayName: "Codex" },
               canUse: () => ({ usable: true, details: { version } }),
               listModels: async () => [
@@ -2088,7 +2091,7 @@ describe("Pragma YAML DSL", () => {
           defaultRuntimeId: "other",
           runtimes: [
             {
-              features: createRuntimeTestFeatures(),
+              features: snapshotRuntimeFeatures(createRuntimeTestFeatures()),
               descriptor: { id: "other", kind: "test", displayName: "Other" },
               canUse: () => ({ usable: true }),
             },

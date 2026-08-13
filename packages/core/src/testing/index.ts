@@ -70,13 +70,22 @@ export function createRuntimeTestFeatures(
   const features = Object.fromEntries(
     RUNTIME_FEATURE_CATALOG.map(({ name }) => [
       name,
-      enabled.has(name)
-        ? runtimeFeature.degraded("Enabled by an in-memory Runtime test fixture.", {
-            ...(name === "compaction"
-              ? { compactionModes: options.compactionModes ?? ["manual"] }
-              : {}),
+      enabled.has(name) && (name === "mcp" || name === "permissions" || name === "skills")
+        ? runtimeFeature.session({
+            readiness: runtimeFeature.degraded("Enabled by an in-memory Runtime test fixture."),
+            prepare: () => undefined,
           })
-        : runtimeFeature.notApplicable("Not exercised by this Runtime test fixture."),
+        : enabled.has(name)
+        ? runtimeFeature.native(
+            runtimeFeature.degraded("Enabled by an in-memory Runtime test fixture.", {
+              ...(name === "compaction"
+                ? { compactionModes: options.compactionModes ?? ["manual"] }
+                : {}),
+            }),
+          )
+        : runtimeFeature.native(
+            runtimeFeature.notApplicable("Not exercised by this Runtime test fixture."),
+          ),
     ]),
   ) as RuntimeFeatureSet;
   return defineRuntimeFeatures({ ...features, ...options.overrides });

@@ -1,13 +1,9 @@
 import { readdir } from "node:fs/promises";
 import { join } from "node:path";
 
-import type {
-  McpToolRegistry,
-  McpToolRegistryLease,
-  RuntimeAdapter,
-  RuntimeCanUseResult,
-} from "@pragma/core";
+import type { RuntimeAdapter, RuntimeCanUseResult } from "@pragma/core";
 import {
+  createExpertToolsHttpMcpFeature,
   createMcpToolRegistryPool,
   defineRuntimeFeatures,
   defineRuntimeDriver,
@@ -36,11 +32,6 @@ import { assertCodexModelSelection, createCodexModelDiscovery } from "./models.t
 import { canUseCodexRuntime } from "./availability.ts";
 import { resolveCodexExecutablePath } from "./executable.ts";
 import { appendCodexExecutionMcpConfig } from "./execution-mcp-config.ts";
-import {
-  type CodexExpertToolRuntimeState,
-  type CodexExpertToolsMcpSessionRegistration,
-  registerCodexExpertToolsMcpSession,
-} from "./expert-tools-mcp-server.ts";
 
 const CODEX_LOCAL_RUNTIME_DESCRIPTOR = {
   id: "codex-local",
@@ -80,7 +71,37 @@ export function createCodexRuntime(options: CodexRuntimeAdapterOptions = {}): Ru
     },
   };
   const listModels = options.listModels ?? createCodexModelDiscovery(options);
-  const implemented = () => runtimeFeature.degraded(CODEX_EVIDENCE_PENDING);
+  const implemented = () => runtimeFeature.native(runtimeFeature.degraded(CODEX_EVIDENCE_PENDING));
+  const mcp = createExpertToolsHttpMcpFeature({
+    readiness: runtimeFeature.degraded(CODEX_EVIDENCE_PENDING),
+    pool: mcpToolRegistries,
+    resourcePrefix: "codex",
+  });
+  const skills = runtimeFeature.session({
+    id: "codex.managed-home",
+    readiness: runtimeFeature.degraded(CODEX_EVIDENCE_PENDING),
+    async prepare(ctx) {
+      const sessionDir = ctx.persistence.spec?.sessionDir ?? ctx.paths.runtimeSessionDir("codex");
+      return await prepareManagedCodexHome({
+        agent: ctx.agent,
+        sessionDir,
+        pragmaPaths: ctx.paths.pragma,
+        env: ctx.processEnvironment,
+        logger: ctx.logger,
+      });
+    },
+  });
+  const permissions = runtimeFeature.session({
+    id: "codex.permissions",
+    readiness: runtimeFeature.degraded(CODEX_EVIDENCE_PENDING),
+    prepare(ctx) {
+      return {
+        sandboxMode: options.sandboxMode,
+        approvalPolicy: options.approvalPolicy,
+        humanInteractionHandler: ctx.request.humanInteractionHandler,
+      };
+    },
+  });
   const features = defineRuntimeFeatures({
     availability: implemented(),
     authentication: implemented(),
@@ -94,18 +115,18 @@ export function createCodexRuntime(options: CodexRuntimeAdapterOptions = {}): Ru
     textStreaming: implemented(),
     reasoningStreaming: implemented(),
     nativeToolLifecycle: implemented(),
-    mcp: implemented(),
-    permissions: implemented(),
+    mcp,
+    permissions,
     userInteraction: implemented(),
-    skills: implemented(),
+    skills,
     attachmentImage: implemented(),
     attachmentFile: implemented(),
     attachmentDirectory: implemented(),
     usage: implemented(),
     contextWindow: implemented(),
-    compaction: runtimeFeature.degraded(CODEX_EVIDENCE_PENDING, {
-      compactionModes: ["manual", "events"],
-    }),
+    compaction: runtimeFeature.native(
+      runtimeFeature.degraded(CODEX_EVIDENCE_PENDING, { compactionModes: ["manual", "events"] }),
+    ),
     cancellation: implemented(),
     steering: implemented(),
     close: implemented(),
@@ -149,49 +170,17 @@ export function createCodexRuntime(options: CodexRuntimeAdapterOptions = {}): Ru
           assertCodexModelSelection(await listModels(), defaultModelName, defaultThinkingLevel);
         }
         const notificationBus = createCodexNotificationBus();
-        const toolRuntimeState: CodexExpertToolRuntimeState = {};
         const state: CodexRuntimeSessionState = {
           threadId:
             ctx.persistence.restoredRuntimeSessionId ?? ctx.request.runtimeSession?.id ?? "",
         };
-        const sessionDir = ctx.persistence.spec?.sessionDir ?? ctx.paths.runtimeSessionDir("codex");
-        const codexHomePromise = timedCodexPhase(
-          ctx.logger,
-          "managed_home",
-          sessionStartedAt,
-          async () =>
-            await prepareManagedCodexHome({
-              agent: ctx.agent,
-              sessionDir,
-              pragmaPaths: ctx.paths.pragma,
-              env: ctx.processEnvironment,
-              logger: ctx.logger,
-            }),
-        );
-        const registryLeasePromise = timedCodexPhase(
-          ctx.logger,
-          "mcp_tool_registry",
-          sessionStartedAt,
-          async () =>
-            await ctx.resources.acquire(
-              "codex.mcp-registry",
-              async () => await mcpToolRegistries.acquire(ctx.agent.mcp),
-              async (lease) => await lease.release(),
-            ),
-        );
-        let mcpToolRegistry: McpToolRegistry | undefined;
-        let mcpToolRegistryLease: McpToolRegistryLease | undefined;
-        let expertToolsMcpRegistration: CodexExpertToolsMcpSessionRegistration | undefined;
+        const codex = ctx.features.skills;
+        const mcp = ctx.features.mcp;
+        const permissions = ctx.features.permissions;
         let client: CodexAppServerClient | undefined;
 
         try {
-          const [codex, registryLease] = await Promise.all([
-            codexHomePromise,
-            registryLeasePromise,
-          ]);
-          mcpToolRegistryLease = registryLease;
-          mcpToolRegistry = registryLease.registry;
-          const [restoreExists, registration] = await Promise.all([
+          const [restoreExists] = await Promise.all([
             state.threadId === ""
               ? Promise.resolve(true)
               : timedCodexPhase(
@@ -201,31 +190,10 @@ export function createCodexRuntime(options: CodexRuntimeAdapterOptions = {}): Ru
                   async () =>
                     await nativeSessionFileExists(join(codex.home, "sessions"), state.threadId),
                 ),
-            timedCodexPhase(
-              ctx.logger,
-              "mcp_tool_registration",
-              sessionStartedAt,
-              async () =>
-                await ctx.resources.acquire(
-                  "codex.mcp-registration",
-                  async () =>
-                    await registerCodexExpertToolsMcpSession({
-                      agent: ctx.agent,
-                      getContext: () => ctx.lifecycle.currentContext,
-                      humanInteractionHandler: ctx.request.humanInteractionHandler,
-                      logger: ctx.logger,
-                      mcpTools: mcpToolRegistry!.tools,
-                      state: toolRuntimeState,
-                      executionContext: ctx.request.executionContext,
-                    }),
-                  async (registration) => await registration.dispose(),
-                ),
-            ),
           ]);
           if (!restoreExists) {
             throw new Error(`Codex runtime session file was not found: ${state.threadId}.`);
           }
-          expertToolsMcpRegistration = registration;
           ctx.logger.info(
             "runtime.codex_process_spawn_requested",
             "Codex app-server native process spawn requested",
@@ -236,7 +204,7 @@ export function createCodexRuntime(options: CodexRuntimeAdapterOptions = {}): Ru
             executablePath,
             args: appendCodexExecutionMcpConfig(
               options.appServerArgs ?? ["app-server", "--listen", "stdio://"],
-              expertToolsMcpRegistration,
+              mcp.registration,
             ),
             cwd: ctx.workspace,
             env: {
@@ -246,7 +214,7 @@ export function createCodexRuntime(options: CodexRuntimeAdapterOptions = {}): Ru
             },
             clientInfo: options.clientInfo ?? DEFAULT_CODEX_CLIENT_INFO,
             spawn: options.spawn,
-            humanInteractionHandler: ctx.request.humanInteractionHandler,
+            humanInteractionHandler: permissions.humanInteractionHandler,
             onNotification: (notification) => {
               ctx.logger.debug("runtime.codex_notification", "Codex app-server notification", {
                 method: notification.method,
@@ -274,18 +242,18 @@ export function createCodexRuntime(options: CodexRuntimeAdapterOptions = {}): Ru
                 model: defaultModelName,
                 thinkingLevel: defaultThinkingLevel,
                 developerInstructions: ctx.agentContext.systemPrompt,
-                sandboxMode: options.sandboxMode,
-                approvalPolicy: options.approvalPolicy,
+                sandboxMode: permissions.sandboxMode,
+                approvalPolicy: permissions.approvalPolicy,
               }),
           );
           state.threadId = threadStartResult.threadId;
           ctx.logger.info("runtime.codex_session_ready", "Codex Session preparation completed", {
             elapsedMs: codexElapsedMs(sessionStartedAt),
             systemPromptCharacters: ctx.agentContext.systemPrompt.length,
-            toolCount: mcpToolRegistry.tools.length,
-            mcpOpenedConnections: mcpToolRegistryLease.stats.openedConnections,
-            mcpReusedConnections: mcpToolRegistryLease.stats.reusedConnections,
-            mcpCoalescedConnections: mcpToolRegistryLease.stats.coalescedConnections,
+            toolCount: mcp.registry.tools.length,
+            mcpOpenedConnections: mcp.lease.stats.openedConnections,
+            mcpReusedConnections: mcp.lease.stats.reusedConnections,
+            mcpCoalescedConnections: mcp.lease.stats.coalescedConnections,
           });
 
           return {
