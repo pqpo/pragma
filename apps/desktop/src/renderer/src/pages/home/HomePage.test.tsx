@@ -98,7 +98,7 @@ describe("MissionAttachmentList", () => {
 });
 
 describe("MissionModelOverrideControls", () => {
-  it("shows generic defaults before discovery without exposing the Runtime", () => {
+  it("combines the selected model and thinking depth without exposing the Runtime", () => {
     const html = renderToStaticMarkup(
       <MissionModelOverrideControls
         models={[
@@ -124,16 +124,15 @@ describe("MissionModelOverrideControls", () => {
       />,
     );
 
-    expect(html).toContain("DeepSeek · DeepSeek Model");
-    expect(html).toContain(">High</span>");
-    expect(html).toContain("Default model");
-    expect(html).toContain("Default thinking depth");
-    expect(html).toContain("ui-overflow-marquee");
+    expect(html).toContain("DeepSeek · DeepSeek Model · High");
+    expect(html).toContain("mission-model-control");
+    expect(html).not.toContain("Default model");
+    expect(html).not.toContain("Default thinking depth");
     expect(html).not.toContain("runtimeId");
     expect(html).not.toContain("<select");
   });
 
-  it("replaces generic defaults with the asynchronously resolved values", () => {
+  it("uses resolved default values as the selected model and thinking depth", () => {
     const html = renderToStaticMarkup(
       <MissionModelOverrideControls
         models={[
@@ -152,9 +151,9 @@ describe("MissionModelOverrideControls", () => {
       />,
     );
 
-    expect(html).toContain("Default (OpenAI · GPT)");
-    expect(html).toContain("Default (Medium)");
-    expect(html).toContain('role="combobox"');
+    expect(html).toContain("OpenAI · GPT · Medium");
+    expect(html).toContain('aria-haspopup="dialog"');
+    expect(html).not.toContain("Default (");
     expect(html).not.toContain("<select");
   });
 
