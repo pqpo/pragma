@@ -1640,6 +1640,7 @@ describe("MissionRunner", { timeout: 15_000 }, () => {
             kind: "root",
             status: "succeeded",
             executorId: "1xddvess309a6gme",
+            avatarId: "pragma.avatar.expert.default",
             title: "Writer",
           }),
         ],
@@ -1762,6 +1763,7 @@ describe("MissionRunner", { timeout: 15_000 }, () => {
     expect(subagent).toMatchObject({
       kind: "runtime-agent",
       title: "Researcher",
+      avatarId: expect.stringMatching(/^pragma\.avatar\.expert\.\d{2}$/u),
       tasks: [
         expect.objectContaining({ runId: "child-turn" }),
         expect.objectContaining({ runId: "child-followup-turn" }),
@@ -1778,6 +1780,13 @@ describe("MissionRunner", { timeout: 15_000 }, () => {
       title: "Subagent 2",
       fallbackOrdinal: 2,
     });
+    const runtimeAgentAvatarIds = work.records
+      .filter((record) => record.kind === "runtime-agent")
+      .map((record) => record.avatarId);
+    expect(runtimeAgentAvatarIds).toHaveLength(3);
+    expect(runtimeAgentAvatarIds.every((avatarId) => avatarId !== undefined)).toBe(true);
+    expect(new Set(runtimeAgentAvatarIds)).toHaveProperty("size", 3);
+    expect(runtimeAgentAvatarIds).not.toContain("pragma.avatar.expert.11");
     expect(subagent).not.toHaveProperty("fallbackOrdinal");
 
     await store.appendEvent(executionId, executionId, "runtime.event", {

@@ -46,6 +46,7 @@ import type {
 
 import { ConfirmationDialog } from "../../components/Dialog.tsx";
 import { ExpertAvatar } from "../../components/ExpertAvatar.tsx";
+import { ProfiledExpertAvatar } from "../../components/ProfiledExpertAvatar.tsx";
 import {
   type Mission,
   type MissionChatEntry,
@@ -2703,51 +2704,13 @@ export function MissionDetailFragment(props: {
             </p>
           </div>
         ) : (
-          <div className="mission-work-list" aria-label={t("executionWork", { ns: "missions" })}>
-            <header>
-              <h2>{t("executionMap", { ns: "missions" })}</h2>
-              <p>{t("executionMapDescription", { ns: "missions" })}</p>
-            </header>
-            <ol>
-              {workRecords.map((record) => (
-                <li
-                  key={record.recordId}
-                  style={
-                    {
-                      "--mission-work-depth": workRecordDepth(record, workRecords),
-                    } as CSSProperties
-                  }
-                >
-                  <button
-                    type="button"
-                    onClick={() => {
-                      setWorkConversation(null);
-                      setSelectedWorkKey(record.recordId);
-                    }}
-                  >
-                    <span
-                      className={`mission-work-status is-${record.status}`}
-                      aria-hidden="true"
-                    />
-                    <div>
-                      <strong>{missionWorkRecordTitle(record)}</strong>
-                      <small>
-                        {record.kind} · {workStatusLabel(record.status)}
-                        {record.tasks.length > 1
-                          ? ` · ${t("conversationTurns", {
-                              ns: "missions",
-                              count: record.tasks.length,
-                            })}`
-                          : ""}
-                      </small>
-                      <p>{record.summary}</p>
-                    </div>
-                    <CaretDown size={16} aria-hidden="true" />
-                  </button>
-                </li>
-              ))}
-            </ol>
-          </div>
+          <MissionWorkGrid
+            records={workRecords}
+            onSelect={(recordId) => {
+              setWorkConversation(null);
+              setSelectedWorkKey(recordId);
+            }}
+          />
         )}
       </div>
       {selectedWorkRecord === undefined ? null : (
@@ -2770,6 +2733,139 @@ export function MissionDetailFragment(props: {
         />
       )}
     </section>
+  );
+}
+
+interface MissionWorkGridEdge {
+  readonly id: string;
+  readonly path: string;
+}
+
+export function MissionWorkGrid(props: {
+  readonly records: readonly MissionWorkRecord[];
+  readonly onSelect: (recordId: string) => void;
+}) {
+  const { t } = useTranslation("missions");
+  const surfaceRef = useRef<HTMLDivElement>(null);
+  const cardRefs = useRef(new Map<string, HTMLButtonElement>());
+  const [edges, setEdges] = useState<readonly MissionWorkGridEdge[]>([]);
+  const markerId = `mission-work-arrow-${useId().replaceAll(":", "")}`;
+  const levels = useMemo(() => {
+    const grouped = new Map<number, MissionWorkRecord[]>();
+    for (const record of props.records) {
+      const depth = workRecordDepth(record, props.records);
+      grouped.set(depth, [...(grouped.get(depth) ?? []), record]);
+    }
+    return [...grouped.entries()].toSorted(([left], [right]) => left - right);
+  }, [props.records]);
+
+  const updateEdges = useCallback(() => {
+    const surface = surfaceRef.current;
+    if (surface === null) return;
+    const surfaceRect = surface.getBoundingClientRect();
+    const nextEdges = props.records.flatMap((record): MissionWorkGridEdge[] => {
+      if (record.parentRecordId === undefined) return [];
+      const source = cardRefs.current.get(record.parentRecordId)?.getBoundingClientRect();
+      const target = cardRefs.current.get(record.recordId)?.getBoundingClientRect();
+      if (source === undefined || target === undefined) return [];
+      const sourceX = source.left + source.width / 2 - surfaceRect.left;
+      const sourceY = source.bottom - surfaceRect.top;
+      const targetX = target.left + target.width / 2 - surfaceRect.left;
+      const targetY = target.top - surfaceRect.top;
+      const middleY = sourceY + (targetY - sourceY) / 2;
+      return [
+        {
+          id: `${record.parentRecordId}:${record.recordId}`,
+          path: `M ${sourceX} ${sourceY} V ${middleY} H ${targetX} V ${targetY}`,
+        },
+      ];
+    });
+    setEdges(nextEdges);
+  }, [props.records]);
+
+  useLayoutEffect(() => {
+    updateEdges();
+    if (typeof ResizeObserver === "undefined") return;
+    const observer = new ResizeObserver(updateEdges);
+    if (surfaceRef.current !== null) observer.observe(surfaceRef.current);
+    for (const card of cardRefs.current.values()) observer.observe(card);
+    return () => observer.disconnect();
+  }, [levels, updateEdges]);
+
+  return (
+    <div className="mission-work-list">
+      <header>
+        <h2>{t("executionMap")}</h2>
+        <p>{t("executionMapDescription")}</p>
+      </header>
+      <div
+        className="mission-work-grid"
+        ref={surfaceRef}
+        role="list"
+        aria-label={t("executionWork")}
+      >
+        <svg className="mission-work-grid-connections" aria-hidden="true">
+          <defs>
+            <marker
+              id={markerId}
+              markerWidth="8"
+              markerHeight="8"
+              refX="7"
+              refY="4"
+              orient="auto"
+              markerUnits="strokeWidth"
+            >
+              <path d="M 0 0 L 8 4 L 0 8 Z" />
+            </marker>
+          </defs>
+          {edges.map((edge) => (
+            <path
+              key={edge.id}
+              className="mission-work-grid-connection"
+              d={edge.path}
+              markerEnd={`url(#${markerId})`}
+              vectorEffect="non-scaling-stroke"
+            />
+          ))}
+        </svg>
+        {levels.map(([depth, records]) => (
+          <div className="mission-work-grid-row" key={depth} data-depth={depth} role="presentation">
+            {records.map((record) => {
+              const title = missionWorkRecordTitle(record);
+              return (
+                <div className="mission-work-grid-item" key={record.recordId} role="listitem">
+                  <button
+                    className={`mission-work-card is-${record.status}`}
+                    ref={(element) => {
+                      if (element === null) cardRefs.current.delete(record.recordId);
+                      else cardRefs.current.set(record.recordId, element);
+                    }}
+                    type="button"
+                    aria-label={`${title}, ${workStatusLabel(record.status)}`}
+                    onClick={() => props.onSelect(record.recordId)}
+                  >
+                    <span className="mission-work-card-avatar">
+                      <ProfiledExpertAvatar avatarId={record.avatarId} size="md" />
+                      <span
+                        className={`mission-work-status is-${record.status}`}
+                        aria-hidden="true"
+                      />
+                    </span>
+                    <strong>{title}</strong>
+                    <small>
+                      {workStatusLabel(record.status)}
+                      {record.tasks.length > 1
+                        ? ` · ${t("conversationTurns", { count: record.tasks.length })}`
+                        : ""}
+                    </small>
+                  </button>
+                </div>
+              );
+            })}
+          </div>
+        ))}
+      </div>
+    </div>
   );
 }
 

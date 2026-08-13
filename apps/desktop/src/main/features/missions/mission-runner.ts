@@ -62,8 +62,10 @@ import type {
   RuntimeEnvironmentBinding,
 } from "@pragma/shared";
 import {
+  BUILT_IN_PRAGMA_EXPERT_AVATAR_IDS,
   ExpertAgentStreamEventSchema,
   isFinalExecutionStatus,
+  resolvePragmaAvatarId,
   RuntimeContextWindowUsageSchema,
 } from "@pragma/shared";
 
@@ -1722,8 +1724,9 @@ export function createMissionRunner(options: {
         elapsedMs: t1 - t0,
       },
     );
-    const { names } = await getExecutorMetadataOrFallback(mission, "work");
+    const { avatarIds, names } = await getExecutorMetadataOrFallback(mission, "work");
     const runtimeAgentOrdinals = createRuntimeAgentOrdinals(records);
+    const runtimeAgentAvatarIds = createRuntimeAgentAvatarIds(records, avatarIds.values());
     return {
       missionId: mission.id,
       revision: workRevisions.get(mission.id) ?? 0,
@@ -1755,6 +1758,9 @@ export function createMissionRunner(options: {
           (fallbackOrdinal === undefined ? undefined : `Subagent ${fallbackOrdinal}`) ??
           record.executorId ??
           record.kind;
+        const avatarId =
+          (record.executorId === undefined ? undefined : avatarIds.get(record.executorId)) ??
+          runtimeAgentAvatarIds.get(record.recordId);
         return {
           recordId: record.recordId,
           kind: record.kind,
@@ -1763,6 +1769,7 @@ export function createMissionRunner(options: {
           title,
           ...(fallbackOrdinal === undefined ? {} : { fallbackOrdinal }),
           ...(record.executorId === undefined ? {} : { executorId: record.executorId }),
+          ...(avatarId === undefined ? {} : { avatarId }),
           origin: record.origin,
           status: record.status,
           tasks,
@@ -2099,6 +2106,28 @@ function createRuntimeAgentOrdinals(
     ordinals.set(record.recordId, ordinal);
   }
   return ordinals;
+}
+
+function createRuntimeAgentAvatarIds(
+  records: readonly ExecutionWorkRecord[],
+  configuredAvatarIds: Iterable<string>,
+): ReadonlyMap<string, string> {
+  const reserved = new Set(
+    [...configuredAvatarIds].map((avatarId) => resolvePragmaAvatarId("expert", avatarId)),
+  );
+  const available = BUILT_IN_PRAGMA_EXPERT_AVATAR_IDS.filter((avatarId) => !reserved.has(avatarId));
+  const catalog = available.length > 0 ? available : BUILT_IN_PRAGMA_EXPERT_AVATAR_IDS;
+  const runtimeRecords = records
+    .filter((record) => record.kind === "runtime-agent")
+    .toSorted((left, right) => {
+      const created = left.createdAt.localeCompare(right.createdAt);
+      return created === 0 ? left.recordId.localeCompare(right.recordId) : created;
+    });
+  return new Map(
+    runtimeRecords.map(
+      (record, index) => [record.recordId, catalog[index % catalog.length]!] as const,
+    ),
+  );
 }
 
 export function createDesktopAdapterHost(
