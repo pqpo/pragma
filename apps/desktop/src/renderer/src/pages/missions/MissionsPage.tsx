@@ -3053,6 +3053,7 @@ export function missionWorkGridEdgePath(input: {
   readonly target: MissionWorkGridRect;
   readonly surface: Pick<MissionWorkGridRect, "left" | "top">;
   readonly arrowGap?: number | undefined;
+  readonly verticalTrunkY?: number | undefined;
 }): string {
   const arrowGap = input.arrowGap ?? 10;
   const sourceCenterX = input.source.left + input.source.width / 2 - input.surface.left;
@@ -3062,7 +3063,7 @@ export function missionWorkGridEdgePath(input: {
   if (input.target.top >= input.source.bottom) {
     const sourceY = input.source.bottom - input.surface.top;
     const targetY = input.target.top - input.surface.top - arrowGap;
-    const middleY = sourceY + (targetY - sourceY) / 2;
+    const middleY = input.verticalTrunkY ?? sourceY + (targetY - sourceY) / 2;
     return `M ${sourceCenterX} ${sourceY} V ${middleY} H ${targetCenterX} V ${targetY}`;
   }
   if (input.target.bottom <= input.source.top) {
@@ -3117,10 +3118,27 @@ export function MissionWorkGrid(props: {
     const surface = surfaceRef.current;
     if (surface === null) return;
     const surfaceRect = surface.getBoundingClientRect();
+    const cardRects = new Map(
+      [...cardRefs.current].map(([recordId, card]) => [recordId, card.getBoundingClientRect()]),
+    );
+    const verticalTrunks = new Map<string, number>();
+    for (const record of props.records) {
+      if (record.parentRecordId === undefined) continue;
+      const source = cardRects.get(record.parentRecordId);
+      const target = cardRects.get(record.recordId);
+      if (source === undefined || target === undefined || target.top < source.bottom) continue;
+      const sourceY = source.bottom - surfaceRect.top;
+      const targetY = target.top - surfaceRect.top - 10;
+      const candidate = sourceY + (targetY - sourceY) / 2;
+      verticalTrunks.set(
+        record.parentRecordId,
+        Math.min(verticalTrunks.get(record.parentRecordId) ?? candidate, candidate),
+      );
+    }
     const nextEdges = props.records.flatMap((record): MissionWorkGridEdge[] => {
       if (record.parentRecordId === undefined) return [];
-      const source = cardRefs.current.get(record.parentRecordId)?.getBoundingClientRect();
-      const target = cardRefs.current.get(record.recordId)?.getBoundingClientRect();
+      const source = cardRects.get(record.parentRecordId);
+      const target = cardRects.get(record.recordId);
       if (source === undefined || target === undefined) return [];
       return [
         {
@@ -3129,6 +3147,7 @@ export function MissionWorkGrid(props: {
             source,
             target,
             surface: surfaceRect,
+            verticalTrunkY: verticalTrunks.get(record.parentRecordId),
           }),
         },
       ];

@@ -1186,7 +1186,8 @@
   display: grid;
   grid-template-columns: repeat(auto-fit, minmax(168px, 208px));
   justify-content: center;
-  gap: 18px;
+  column-gap: 18px;
+  row-gap: 72px;
 }
 
 .mission-work-grid-item {

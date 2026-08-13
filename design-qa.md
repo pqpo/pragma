@@ -92,6 +92,58 @@ final result: passed
 
 ---
 
+# Mission Work Wrapped Sibling Spacing Correction QA
+
+- Source visual truth path: `/var/folders/7y/x39kntq56gvcfdymbtjb36280000gn/T/codex-clipboard-bf3497d3-36b2-4f68-8b70-cc861182a7aa.png`
+- Implementation screenshot path: `/Users/linminqiu/.codex/visualizations/2026/08/13/019ffa47-9af9-7761-a21c-0185b818156a/mission-network-wrapped-siblings-fixed.png`
+- Combined comparison path: `/Users/linminqiu/.codex/visualizations/2026/08/13/019ffa47-9af9-7761-a21c-0185b818156a/mission-network-wrapped-siblings-comparison.png`
+- Browser: Codex in-app browser.
+- Implementation viewport: 2160 × 1536 CSS px at device scale factor 1, with the Work surface constrained to 1000 CSS px to reproduce four columns. The focused implementation region is 1000 × 700 px.
+- Source pixels: 1920 × 1306 at device density 2. The combined artifact downsamples the source to 960 × 653 and normalizes the focused implementation region to 960 × 672.
+- State: Simplified Chinese; one root expert and eight direct sibling calls wrapping into two visual rows of four; one failed child and seven succeeded children.
+
+## Full-view comparison evidence
+
+The user's local capture confirms that the previous 72 px change applied only between logical depth groups. All eight child experts share the same logical depth and therefore wrap inside one `.mission-work-grid-row`; its old 18 px row gap remained visible between calls `#1–#4` and `#5–#8`. The corrected implementation gives both the root-to-child lane and the wrapped child-row lane 72 px of vertical clearance.
+
+## Focused region comparison evidence
+
+Browser geometry reports child-row tops at 273.5 and 487.5 px, first-row bottoms at 415.5 px, and therefore an exact 72 px wrapped-row gap. All eight root-child paths now use one shared horizontal trunk at `y=183`; the lower four paths extend vertically through the opaque upper cards instead of creating a second horizontal trunk through the first row. Arrowheads remain fixed at 9 px and fully visible.
+
+## Required fidelity surfaces
+
+- Fonts and typography: unchanged from the accepted Work network; no typography changes were needed.
+- Spacing and layout rhythm: logical depth gaps and implicit wrapped-row gaps now both use 72 px while retaining the existing 18 px column gap.
+- Colors and visual tokens: connector, arrow, card, status, and background colors are unchanged.
+- Image quality and asset fidelity: existing expert avatars remain unchanged.
+- Copy and content: the accepted single description remains unchanged; call order and status text are preserved.
+
+## Findings
+
+No actionable P0, P1, or P2 issues remain. The locally observed asymmetric vertical spacing and mid-row connector trunk are both corrected.
+
+## Comparison history
+
+1. P2 — The earlier QA fixture used three logical depths and therefore did not exercise eight same-depth siblings wrapping inside one Grid row.
+2. P2 — The outer Grid used 72 px between logical depths, but the inner auto-fit Grid retained an 18 px row gap, producing the asymmetric local result.
+3. Fix — Split the inner Grid spacing into an 18 px column gap and 72 px row gap.
+4. Fix — Compute one nearest shared trunk per parent so wrapped siblings do not add a horizontal connector through the preceding visual row.
+5. Post-fix evidence — Four-column browser reproduction measures 72 px between both visual child rows, one horizontal trunk for all eight edges, and no horizontal overflow or console warnings.
+
+## Primary interactions tested
+
+- All expert cards remain clickable.
+- Connector arrow and flow animation behavior remains intact.
+- Browser console errors and warnings were checked; none were present.
+
+## Follow-up polish
+
+None required.
+
+final result: passed
+
+---
+
 # Mission Work Network Spacing and Arrow Design QA
 
 - Source visual truth path: `/var/folders/7y/x39kntq56gvcfdymbtjb36280000gn/T/codex-clipboard-b90ca2f3-bae3-42a6-bc5e-20c4e14f1615.png`

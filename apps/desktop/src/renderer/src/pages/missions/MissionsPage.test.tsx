@@ -1109,6 +1109,27 @@ describe("Mission work grid", () => {
       }),
     ).toBe("M 160 110 V 155 H 260 V 200");
   });
+
+  it("keeps wrapped siblings on their parent's nearest shared trunk", () => {
+    const source = { top: 10, right: 210, bottom: 110, left: 110, width: 100, height: 100 };
+    const wrappedTarget = {
+      top: 382,
+      right: 310,
+      bottom: 482,
+      left: 210,
+      width: 100,
+      height: 100,
+    };
+
+    expect(
+      missionWorkGridEdgePath({
+        source,
+        target: wrappedTarget,
+        surface: { left: 0, top: 0 },
+        verticalTrunkY: 155,
+      }),
+    ).toBe("M 160 110 V 155 H 260 V 372");
+  });
 });
 
 describe("Mission work conversation", () => {
