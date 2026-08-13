@@ -1443,6 +1443,87 @@ describe("MissionRunner", { timeout: 15_000 }, () => {
     });
   });
 
+  it("deduplicates a persisted assistant message against its active live projection", async () => {
+    const root = await mkdtemp(join(tmpdir(), "pragma-mission-chat-live-durable-"));
+    temporaryPaths.push(root);
+    const project = createPragmaProjectStore({ projectsPath: join(root, "projects") });
+    const snapshot = await project.publish({
+      expectedRevision: 0,
+      resources: [runtimeFixture(), expertFixture()],
+    });
+    const missions = createMissionStore({ missionsPath: join(root, "missions") });
+    const mission = await missions.create({
+      workspace: { path: root, basename: "workspace" },
+      goal: "Return one answer",
+      project: { id: snapshot.projectId, revision: snapshot.revision },
+      executor: missionExecutorSnapshot(
+        snapshot.resources.find((resource) => resource.kind === "Expert")!,
+      ),
+    });
+    let releaseTurn = (): void => undefined;
+    const turnCanFinish = new Promise<void>((resolve) => {
+      releaseTurn = resolve;
+    });
+    const runtime = defineRuntimeTestDriver<never, { id: string }>({
+      descriptor: { id: "fake", kind: "fake", displayName: "Fake" },
+      createSession: () => ({ id: "runtime" }),
+      readSession: (session) => ({ runtimeSessionId: session.id }),
+      async startTurn(_session, turn) {
+        turn.stream.write({
+          runId: turn.runId,
+          source: turn.source,
+          type: "message.delta",
+          payload: { role: "assistant", contentType: "text", delta: "Only once" },
+        });
+        await turnCanFinish;
+        return { outputText: "Only once", runtimeSessionId: "runtime" };
+      },
+      mapEvent: () => ({ events: [] }),
+      closeSession: () => undefined,
+    });
+    const originalUpdateExecution = missions.updateExecution.bind(missions);
+    let terminalUpdateEntered = (): void => undefined;
+    const terminalUpdateStarted = new Promise<void>((resolve) => {
+      terminalUpdateEntered = resolve;
+    });
+    let releaseTerminalUpdate = (): void => undefined;
+    const terminalUpdateCanFinish = new Promise<void>((resolve) => {
+      releaseTerminalUpdate = resolve;
+    });
+    vi.spyOn(missions, "updateExecution").mockImplementation(async (...args) => {
+      if (args[1].status === "succeeded") {
+        terminalUpdateEntered();
+        await terminalUpdateCanFinish;
+      }
+      return await originalUpdateExecution(...args);
+    });
+    const runner = createMissionRunner({
+      missions,
+      project,
+      capabilityStore: {} as CapabilityStore,
+      capabilityCredentials: {} as CapabilityCredentialStore,
+      capabilitiesPath: join(root, "capabilities"),
+      pragmaHome: join(root, "state"),
+      runtimes: createStaticRuntimeResolver({ runtimes: [runtime], defaultRuntimeId: "fake" }),
+    });
+
+    await runner.run(mission.id);
+    releaseTurn();
+    await terminalUpdateStarted;
+    try {
+      const chat = await runner.getChat({ id: mission.id, limit: 50 });
+      expect(
+        chat.entries.filter((entry) => entry.kind === "assistant" && entry.content === "Only once"),
+      ).toHaveLength(1);
+    } finally {
+      releaseTerminalUpdate();
+    }
+    await vi.waitFor(
+      async () => expect((await missions.get(mission.id)).execution?.status).toBe("succeeded"),
+      { timeout: settlementTimeoutMs },
+    );
+  });
+
   it("compiles and runs the resource pinned by a Mission", async () => {
     const root = await mkdtemp(join(tmpdir(), "pragma-mission-runner-"));
     temporaryPaths.push(root);
@@ -2390,6 +2471,105 @@ describe("MissionRunner", { timeout: 15_000 }, () => {
     expect(await expertSessions.listPrompts(sessionId)).toHaveLength(1);
   });
 
+  it("retries durable human-wait synchronization after a transient read failure", async () => {
+    const root = await mkdtemp(join(tmpdir(), "pragma-mission-human-resync-"));
+    temporaryPaths.push(root);
+    const pragmaHome = join(root, "state");
+    const project = createPragmaProjectStore({ projectsPath: join(root, "projects") });
+    const snapshot = await project.publish({
+      expectedRevision: 0,
+      resources: [runtimeFixture(), expertFixture(), approvalAfterExpertFlowFixture()],
+    });
+    const flow = snapshot.resources.find((resource) => resource.kind === "Flow")!;
+    const missions = createMissionStore({ missionsPath: join(root, "missions") });
+    const mission = await missions.create({
+      workspace: { path: root, basename: "workspace" },
+      goal: "Prepare and request approval",
+      flowInput: {},
+      project: { id: snapshot.projectId, revision: snapshot.revision },
+      executor: missionExecutorSnapshot(flow),
+    });
+    let releasePreparation = (): void => undefined;
+    const preparationCanFinish = new Promise<void>((resolve) => {
+      releasePreparation = resolve;
+    });
+    const runtime = defineRuntimeTestDriver<never, { id: string }>({
+      descriptor: { id: "fake", kind: "fake", displayName: "Fake" },
+      createSession: () => ({ id: "runtime" }),
+      readSession: (session) => ({ runtimeSessionId: session.id }),
+      async startTurn() {
+        await preparationCanFinish;
+        return { outputText: "prepared", runtimeSessionId: "runtime" };
+      },
+      mapEvent: () => ({ events: [] }),
+      closeSession: () => undefined,
+    });
+    const executionStore = createFileExecutionStore({ pragmaHome });
+    const originalListEvents = StoredExecutionView.prototype.listEvents;
+    let initialSeedFinished = (): void => undefined;
+    const initialSeedComplete = new Promise<void>((resolve) => {
+      initialSeedFinished = resolve;
+    });
+    let listEventsCalls = 0;
+    vi.spyOn(StoredExecutionView.prototype, "listEvents").mockImplementation(async function (
+      this: StoredExecutionView,
+      options?: Parameters<StoredExecutionView["listEvents"]>[0],
+    ) {
+      listEventsCalls += 1;
+      if (listEventsCalls === 2) throw new Error("transient event-log read failure");
+      const page = await originalListEvents.call(this, options);
+      if (listEventsCalls === 1) initialSeedFinished();
+      return page;
+    });
+    const originalSubscribeEvents = StoredExecutionView.prototype.subscribeEvents;
+    let releaseEventSubscription = (): void => undefined;
+    const eventSubscriptionCanStart = new Promise<void>((resolve) => {
+      releaseEventSubscription = resolve;
+    });
+    vi.spyOn(StoredExecutionView.prototype, "subscribeEvents").mockImplementation(async function (
+      this: StoredExecutionView,
+      options?: Parameters<StoredExecutionView["subscribeEvents"]>[0],
+    ) {
+      await eventSubscriptionCanStart;
+      return await originalSubscribeEvents.call(this, options);
+    });
+    const runner = createMissionRunner({
+      missions,
+      project,
+      capabilityStore: {} as CapabilityStore,
+      capabilityCredentials: {} as CapabilityCredentialStore,
+      capabilitiesPath: join(root, "capabilities"),
+      pragmaHome,
+      executionStore,
+      runtimes: createStaticRuntimeResolver({ runtimes: [runtime], defaultRuntimeId: "fake" }),
+      loggerProvider: createNoopLoggerProvider(),
+    });
+
+    await runner.run(mission.id);
+    await initialSeedComplete;
+    releasePreparation();
+    await vi.waitFor(
+      async () => {
+        const executionId = (await missions.get(mission.id)).execution?.id;
+        expect(executionId).toBeDefined();
+        expect(
+          (await executionStore.readEvents(executionId!)).some(
+            (event) => event.type === "human.requested",
+          ),
+        ).toBe(true);
+      },
+      { timeout: settlementTimeoutMs },
+    );
+    expect((await missions.get(mission.id)).execution?.status).toBe("running");
+    releaseEventSubscription();
+
+    await vi.waitFor(
+      async () => expect((await missions.get(mission.id)).execution?.status).toBe("waiting"),
+      { timeout: settlementTimeoutMs },
+    );
+    expect(listEventsCalls).toBeGreaterThanOrEqual(3);
+  });
+
   it("round-trips a Flow human interaction with globally unique resource IDs", async () => {
     const root = await mkdtemp(join(tmpdir(), "pragma-mission-human-"));
     temporaryPaths.push(root);
@@ -3113,6 +3293,43 @@ function approvalFlowFixture(): PragmaFlowResource {
         },
         loops: {},
         transitions: { approve: { end: true } },
+      },
+    },
+  };
+}
+
+function approvalAfterExpertFlowFixture(): PragmaFlowResource {
+  return {
+    apiVersion: "pragma/v4",
+    kind: "Flow",
+    metadata: {
+      id: "3tshk7gb32ckdfj3",
+      name: "Prepared Review",
+      description: "Prepares work before requesting approval",
+      tags: [],
+    },
+    spec: {
+      limits: { maxNodeVisits: 10 },
+      graph: {
+        start: "prepare",
+        steps: {
+          prepare: {
+            expert: { ref: "expert:1xddvess309a6gme" },
+            prompt: { segments: [{ text: "Prepare the release" }] },
+          },
+          approve: {
+            human: {
+              selectionMode: "single",
+              prompt: { segments: [{ text: "Approve the prepared release?" }] },
+              options: [
+                { value: "ship", label: "Ship" },
+                { value: "hold", label: "Hold" },
+              ],
+            },
+          },
+        },
+        loops: {},
+        transitions: { prepare: "approve", approve: { end: true } },
       },
     },
   };

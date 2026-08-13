@@ -232,9 +232,9 @@ export async function compactExpertSessionContext(
 interface LiveMissionChat {
   readonly executionId: string;
   readonly entries: MissionChatEntry[];
+  readonly messageOrdinals: Map<string, number>;
   close: () => Promise<void>;
   readDurableEntries: (timelineSequence: number) => Promise<readonly MissionChatEntry[]>;
-  sequence: number;
 }
 
 type ExecutorNameResolver = (executorId: string) => string | undefined;
@@ -931,7 +931,7 @@ export function createMissionRunner(options: {
             ({
               executionId: item.executionId,
               entries: [],
-              sequence: 0,
+              messageOrdinals: new Map(),
               close: async () => undefined,
               readDurableEntries: async () => [],
             } satisfies LiveMissionChat);
@@ -2427,6 +2427,14 @@ function observeMissionHumanWaitingStatus(input: {
   let observedWaiting: boolean | undefined;
   let updates = Promise.resolve();
 
+  const enqueueUpdate = (update: () => Promise<void>): Promise<void> => {
+    const result = updates.then(update);
+    // Keep the serialization queue usable after a transient failure while preserving the rejected
+    // result for callers such as the event subscription retry loop.
+    updates = result.catch(() => undefined);
+    return result;
+  };
+
   const persistStatus = async (): Promise<void> => {
     const waiting = pending.size > 0;
     if (waiting === observedWaiting) return;
@@ -2460,25 +2468,23 @@ function observeMissionHumanWaitingStatus(input: {
         "Mission human-input waiting status could not be initialized.",
         { error, missionId: input.missionId, executionId: input.execution.executionId },
       );
+      throw error;
     }
   };
-  const seed = resync();
+  void enqueueUpdate(resync).catch(() => undefined);
 
   const onEvent = (event: ExecutionEvent): void => {
     if (event.type !== "human.requested" && event.type !== "human.responded") return;
-    updates = updates
-      .catch(() => undefined)
-      .then(async () => {
-        await seed;
-        const interactionId = String(
-          (event.data as { readonly interactionId?: unknown }).interactionId ?? "",
-        );
-        if (interactionId === "") return;
-        if (event.type === "human.requested") pending.add(interactionId);
-        else pending.delete(interactionId);
-        await persistStatus();
-      });
-    void updates.catch((error: unknown) => {
+    const update = enqueueUpdate(async () => {
+      const interactionId = String(
+        (event.data as { readonly interactionId?: unknown }).interactionId ?? "",
+      );
+      if (interactionId === "") return;
+      if (event.type === "human.requested") pending.add(interactionId);
+      else pending.delete(interactionId);
+      await persistStatus();
+    });
+    void update.catch((error: unknown) => {
       input.logger.warn(
         "mission.human_wait_status_update_failed",
         "Mission human-input waiting status could not be updated.",
@@ -2489,14 +2495,8 @@ function observeMissionHumanWaitingStatus(input: {
 
   return {
     onEvent,
-    resync: () => {
-      updates = updates.catch(() => undefined).then(resync);
-      return updates;
-    },
-    drain: async () => {
-      await seed;
-      await updates;
-    },
+    resync: () => enqueueUpdate(resync),
+    drain: async () => await updates,
   };
 }
 
@@ -2822,6 +2822,7 @@ function workTaskInputContent(input: unknown): string {
 
 function messageRecordsToChatEntries(records: readonly AgentMessageRecord[]): MissionChatEntry[] {
   const entries: MissionChatEntry[] = [];
+  const messageOrdinals = new Map<string, number>();
   for (const record of [...records].sort((left, right) => left.sequence - right.sequence)) {
     const base = {
       executionId: record.executionId,
@@ -2834,7 +2835,7 @@ function messageRecordsToChatEntries(records: readonly AgentMessageRecord[]): Mi
         if (content.type === "thinking" && content.thinking !== "") {
           entries.push({
             ...base,
-            id: `${record.executionId}:${record.invocationId}:${record.sequence}:${index}`,
+            id: durableMessageEntryId(record, "thinking", index, messageOrdinals),
             kind: "thinking",
             content: truncate(content.thinking, 200_000),
             streaming: false,
@@ -2842,7 +2843,7 @@ function messageRecordsToChatEntries(records: readonly AgentMessageRecord[]): Mi
         } else if (content.type === "text" && content.text !== "") {
           entries.push({
             ...base,
-            id: `${record.executionId}:${record.invocationId}:${record.sequence}:${index}`,
+            id: durableMessageEntryId(record, "assistant", index, messageOrdinals),
             kind: "assistant",
             content: truncate(content.text, 200_000),
             streaming: false,
@@ -2894,6 +2895,31 @@ function messageRecordsToChatEntries(records: readonly AgentMessageRecord[]): Mi
   return entries;
 }
 
+function durableMessageEntryId(
+  record: AgentMessageRecord,
+  kind: "assistant" | "thinking",
+  contentIndex: number,
+  ordinals: Map<string, number>,
+): string {
+  if (record.runId === undefined) {
+    return `${record.executionId}:${record.invocationId}:${record.sequence}:${contentIndex}`;
+  }
+  return nextMessageEntryId(record.executionId, record.invocationId, record.runId, kind, ordinals);
+}
+
+function nextMessageEntryId(
+  executionId: string,
+  invocationId: string,
+  runId: string,
+  kind: "assistant" | "thinking",
+  ordinals: Map<string, number>,
+): string {
+  const key = JSON.stringify([executionId, invocationId, runId, kind]);
+  const ordinal = ordinals.get(key) ?? 0;
+  ordinals.set(key, ordinal + 1);
+  return `message:${executionId}:${invocationId}:${runId}:${kind}:${ordinal}`;
+}
+
 function createMissionExecutorNameResolver(
   mission: Pick<Mission, "executor">,
   names: ReadonlyMap<string, string>,
@@ -2928,7 +2954,7 @@ function observeMissionChat(
   const chat: LiveMissionChat = {
     executionId: execution.executionId,
     entries: [],
-    sequence: 0,
+    messageOrdinals: new Map(),
     close: async () => undefined,
     readDurableEntries: async () => [],
   };
@@ -3220,7 +3246,13 @@ function consumeLiveChatOutput(
     } else {
       const entry = {
         ...base,
-        id: `${item.executionId}:${item.invocationId}:thinking:${chat.sequence++}`,
+        id: nextMessageEntryId(
+          item.executionId,
+          item.invocationId,
+          item.runId,
+          "thinking",
+          chat.messageOrdinals,
+        ),
         kind: "thinking" as const,
         content: truncate(content, 200_000),
         streaming: true,
@@ -3267,7 +3299,13 @@ function consumeLiveChatOutput(
     } else if (content !== "") {
       const entry = {
         ...base,
-        id: `${item.executionId}:${item.invocationId}:answer:${chat.sequence++}`,
+        id: nextMessageEntryId(
+          item.executionId,
+          item.invocationId,
+          item.runId,
+          "assistant",
+          chat.messageOrdinals,
+        ),
         kind: "assistant" as const,
         content: truncate(content, 200_000),
         streaming: item.delta !== undefined,
@@ -3364,7 +3402,13 @@ function consumeLiveChatOutput(
     ) {
       const entry = {
         ...base,
-        id: `${item.executionId}:${item.invocationId}:result:${chat.sequence++}`,
+        id: nextMessageEntryId(
+          item.executionId,
+          item.invocationId,
+          item.runId,
+          "assistant",
+          chat.messageOrdinals,
+        ),
         kind: "assistant" as const,
         content,
         streaming: false,
