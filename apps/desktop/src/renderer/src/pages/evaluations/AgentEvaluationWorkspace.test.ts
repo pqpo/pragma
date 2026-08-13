@@ -1,13 +1,48 @@
 import { PragmaAgentJudgeEvaluationResourceSchema } from "@pragma/evaluation/ast";
+import { createElement } from "react";
+import { renderToStaticMarkup } from "react-dom/server";
 import { describe, expect, it } from "vitest";
+import type { PragmaProjectSnapshot } from "../../../../shared/contracts/index.ts";
 
 import {
+  AgentEvaluationDatasets,
+  AgentEvaluationQueue,
   createDatasetCaseDraft,
   createDatasetCriterionDraft,
   createDatasetForm,
   datasetFormIsValid,
   datasetFromForm,
 } from "./AgentEvaluationWorkspace.tsx";
+
+const emptyProject = {
+  schemaVersion: "pragma.project-snapshot/v3",
+  projectId: "studio",
+  revision: 1,
+  diagnostics: [],
+  resources: [],
+} satisfies PragmaProjectSnapshot;
+
+describe("agent evaluation secondary pages", () => {
+  it("provides an explicit route back to the selected target", () => {
+    const datasetsHtml = renderToStaticMarkup(
+      createElement(AgentEvaluationDatasets, {
+        project: emptyProject,
+        onBack: () => undefined,
+        onProjectChange: () => undefined,
+      }),
+    );
+    const queueHtml = renderToStaticMarkup(
+      createElement(AgentEvaluationQueue, { onBack: () => undefined }),
+    );
+
+    expect(datasetsHtml).toContain("Back to target");
+    expect(datasetsHtml).toContain("autofocus");
+    expect(datasetsHtml).toContain('aria-labelledby="agent-evaluation-datasets-heading"');
+    expect(queueHtml).toContain("Back to target");
+    expect(queueHtml).toContain("autofocus");
+    expect(queueHtml).toContain('aria-labelledby="agent-evaluation-queue-heading"');
+  });
+});
 
 function completeForm() {
   const form = createDatasetForm();

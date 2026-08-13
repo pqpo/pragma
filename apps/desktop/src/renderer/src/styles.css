@@ -9371,35 +9371,16 @@ html.is-resizing-sidebar * {
 .evaluations-page {
   position: relative;
   display: grid;
-  grid-template-rows: auto minmax(0, 1fr);
+  grid-template-rows: minmax(0, 1fr);
   min-width: 0;
   min-height: 0;
   overflow: hidden;
-  padding: 50px clamp(38px, 6vw, 88px) 62px;
-  background: var(--ui-canvas);
+  padding: 0;
+  background: var(--background);
 }
 
-.agent-evaluation-tabs {
-  display: flex;
-  gap: 4px;
-  padding: 10px 18px 0;
-  border-bottom: 1px solid var(--border);
-  background: var(--surface);
-}
-
-.agent-evaluation-tabs button {
-  border: 0;
-  border-bottom: 2px solid transparent;
-  padding: 9px 14px;
-  color: var(--muted);
-  background: transparent;
-  cursor: pointer;
-}
-
-.agent-evaluation-tabs button.is-active {
-  border-bottom-color: var(--green);
-  color: var(--text);
-  font-weight: 650;
+.evaluations-page-loading {
+  padding: 48px;
 }
 
 .agent-evaluation-page-section,
@@ -9641,26 +9622,6 @@ html.is-resizing-sidebar * {
 .agent-evaluation-status.is-running-subject,
 .agent-evaluation-status.is-running-judge {
   background: var(--green);
-}
-
-/* Evaluation workspace: keep the three tasks visually consistent and action-led. */
-.evaluations-page:not(:has(.evaluation-directory)) {
-  grid-template-rows: 56px minmax(0, 1fr);
-  padding: 0 58px 0 0;
-  background: var(--background);
-}
-
-.evaluations-page:not(:has(.evaluation-directory)) .agent-evaluation-tabs {
-  gap: 18px;
-  padding: 0 0 0 48px;
-  background: transparent;
-}
-
-.evaluations-page:not(:has(.evaluation-directory)) .agent-evaluation-tabs button {
-  min-height: 56px;
-  padding: 0 2px;
-  font-size: 13px;
-  font-weight: 500;
 }
 
 .agent-evaluation-page-section {
@@ -10398,6 +10359,18 @@ html.is-resizing-sidebar * {
   min-height: 40px;
 }
 
+.evaluation-target-actions {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 8px;
+}
+
+.evaluation-target-actions .secondary-button {
+  min-height: 40px;
+  padding: 0 14px;
+}
+
 .evaluation-target-title {
   display: flex;
   min-width: 0;
@@ -10605,6 +10578,40 @@ html.is-resizing-sidebar * {
   margin-top: 20px;
   border: 0;
   background: transparent;
+  box-shadow: none;
+}
+
+.evaluation-directory-main > .agent-evaluation-page-section {
+  width: 100%;
+  height: 100%;
+  margin: 0;
+  padding: 0 0 40px;
+}
+
+.agent-evaluation-secondary-back {
+  display: inline-flex;
+  min-height: 32px;
+  align-items: center;
+  gap: 7px;
+  margin: 0 0 20px;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  color: var(--ui-text-secondary);
+  cursor: pointer;
+  font: inherit;
+  font-size: 12px;
+  font-weight: 550;
+}
+
+.agent-evaluation-secondary-back:hover {
+  color: var(--ui-accent-strong);
+}
+
+.agent-evaluation-secondary-back:focus-visible {
+  border-radius: var(--ui-radius-md);
+  outline: 0;
+  box-shadow: 0 0 0 3px var(--ui-focus);
 }
 
 .evaluation-target-empty h2,
@@ -10647,6 +10654,10 @@ html.is-resizing-sidebar * {
 
   .evaluation-target-heading {
     grid-template-columns: minmax(0, 1fr) auto;
+  }
+
+  .evaluation-target-actions {
+    flex-wrap: wrap;
   }
 
   .evaluation-directory-error {

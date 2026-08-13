@@ -1,4 +1,4 @@
-import { FileArrowUp, Flask, Plus, Trash, X } from "@phosphor-icons/react";
+import { ArrowLeft, FileArrowUp, Flask, Plus, Trash, X } from "@phosphor-icons/react";
 import { type KeyboardEvent, useEffect, useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
 import type { PragmaAgentJudgeEvaluationResource } from "@pragma/evaluation/ast";
@@ -126,6 +126,7 @@ export function AgentEvaluationRunSetup(props: {
 
 export function AgentEvaluationDatasets(props: {
   readonly project: PragmaProjectSnapshot;
+  readonly onBack: () => void;
   readonly onProjectChange: (project: PragmaProjectSnapshot) => void;
 }) {
   const { t } = useTranslation("studio");
@@ -194,10 +195,22 @@ export function AgentEvaluationDatasets(props: {
   };
 
   return (
-    <section className="agent-evaluation-page-section">
+    <section
+      className="agent-evaluation-page-section"
+      aria-labelledby="agent-evaluation-datasets-heading"
+    >
+      <button
+        className="agent-evaluation-secondary-back"
+        type="button"
+        autoFocus
+        onClick={props.onBack}
+      >
+        <ArrowLeft size={16} aria-hidden="true" />
+        {t("agentEvaluation.backToTarget")}
+      </button>
       <header className="agent-evaluation-section-heading">
         <div>
-          <h1>{t("agentEvaluation.datasets")}</h1>
+          <h1 id="agent-evaluation-datasets-heading">{t("agentEvaluation.datasets")}</h1>
           <p>{t("agentEvaluation.datasetsDescription")}</p>
         </div>
         <button
@@ -333,7 +346,7 @@ export function AgentEvaluationDatasets(props: {
   );
 }
 
-export function AgentEvaluationQueue() {
+export function AgentEvaluationQueue(props: { readonly onBack: () => void }) {
   const { t } = useTranslation("studio");
   const [runs, setRuns] = useState<AgentEvaluationRun[]>([]);
   const [error, setError] = useState<string | null>(null);
@@ -387,10 +400,22 @@ export function AgentEvaluationQueue() {
   };
 
   return (
-    <section className="agent-evaluation-page-section">
+    <section
+      className="agent-evaluation-page-section"
+      aria-labelledby="agent-evaluation-queue-heading"
+    >
+      <button
+        className="agent-evaluation-secondary-back"
+        type="button"
+        autoFocus
+        onClick={props.onBack}
+      >
+        <ArrowLeft size={16} aria-hidden="true" />
+        {t("agentEvaluation.backToTarget")}
+      </button>
       <header className="agent-evaluation-section-heading">
         <div>
-          <h1>{t("agentEvaluation.queue")}</h1>
+          <h1 id="agent-evaluation-queue-heading">{t("agentEvaluation.queue")}</h1>
           <p>{t("agentEvaluation.queueDescription")}</p>
         </div>
       </header>

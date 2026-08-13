@@ -1,9 +1,17 @@
+import { renderToStaticMarkup } from "react-dom/server";
 import { describe, expect, it } from "vitest";
 
 import { createEmptyFlow } from "../studio/flow-editor/flow-model.ts";
-import { createFlowRunDryEvaluation } from "./EvaluationsPage.tsx";
+import { createFlowRunDryEvaluation, EvaluationsPage } from "./EvaluationsPage.tsx";
 
 describe("EvaluationsPage", () => {
+  it("keeps the loading state inset after removing the page tabs", () => {
+    const html = renderToStaticMarkup(<EvaluationsPage />);
+
+    expect(html).toContain('class="studio-empty-copy evaluations-page-loading"');
+    expect(html).not.toContain('class="agent-evaluation-tabs"');
+  });
+
   it("creates a standalone Run Dry draft for the selected Flow", () => {
     const flow = {
       ...createEmptyFlow("8h9j0k1m2n3p4q5r"),

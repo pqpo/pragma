@@ -59,6 +59,10 @@ export function EvaluationDirectoryFragment(props: {
   readonly onCreate: (resourceId: string, flow: PragmaFlowResource) => void;
   readonly onCreateAgentEvaluation?:
     ((target: PragmaExpertResource | PragmaExpertTeamResource) => void) | undefined;
+  readonly onOpenDatasets?: (() => void) | undefined;
+  readonly onOpenQueue?: (() => void) | undefined;
+  readonly focusAction?: "datasets" | "queue" | null | undefined;
+  readonly onFocusActionHandled?: (() => void) | undefined;
   readonly onDelete: (evaluation: PragmaFlowRunDryEvaluationResource) => Promise<void>;
   readonly onSelectTarget?: ((target: EvaluationTarget) => void) | undefined;
   readonly detail?: ReactNode | undefined;
@@ -77,8 +81,18 @@ export function EvaluationDirectoryFragment(props: {
   );
   const [search, setSearch] = useState("");
   const [expandedKinds, setExpandedKinds] = useState<ReadonlySet<EvaluationTargetKind>>(new Set());
+  const datasetsButtonRef = useRef<HTMLButtonElement>(null);
+  const queueButtonRef = useRef<HTMLButtonElement>(null);
   const mountedRef = useRef(false);
   useEffect(() => activateEvaluationDirectory(mountedRef), []);
+  useEffect(() => {
+    if (props.detail !== undefined || props.focusAction == null) return;
+    const target =
+      props.focusAction === "datasets" ? datasetsButtonRef.current : queueButtonRef.current;
+    if (target === null) return;
+    target.focus();
+    props.onFocusActionHandled?.();
+  }, [props.detail, props.focusAction, props.onFocusActionHandled]);
 
   const { evaluations, agentDatasetCount, experts, teams, flows, targets, defaultTargetId } =
     useMemo(() => {
@@ -306,19 +320,41 @@ export function EvaluationDirectoryFragment(props: {
                         : t("llmJudgeDescription")}
                     </p>
                   </div>
-                  <button
-                    className="primary-button"
-                    type="button"
-                    disabled={allocating}
-                    onClick={createEvaluation}
-                  >
-                    <Plus size={17} aria-hidden="true" />
-                    {allocating
-                      ? t("creatingEvaluation")
-                      : selectedTarget.kind === "Flow"
-                        ? t("newEvaluation")
-                        : t("agentEvaluation.startNewRun")}
-                  </button>
+                  <div className="evaluation-target-actions">
+                    <button
+                      className="primary-button"
+                      type="button"
+                      disabled={allocating}
+                      onClick={createEvaluation}
+                    >
+                      <Plus size={17} aria-hidden="true" />
+                      {allocating
+                        ? t("creatingEvaluation")
+                        : selectedTarget.kind === "Flow"
+                          ? t("newEvaluation")
+                          : t("agentEvaluation.startNewRun")}
+                    </button>
+                    {selectedTarget.kind !== "Flow" && props.onOpenDatasets !== undefined ? (
+                      <button
+                        ref={datasetsButtonRef}
+                        className="secondary-button"
+                        type="button"
+                        onClick={props.onOpenDatasets}
+                      >
+                        {t("agentEvaluation.tabs.datasets")}
+                      </button>
+                    ) : null}
+                    {selectedTarget.kind !== "Flow" && props.onOpenQueue !== undefined ? (
+                      <button
+                        ref={queueButtonRef}
+                        className="secondary-button"
+                        type="button"
+                        onClick={props.onOpenQueue}
+                      >
+                        {t("agentEvaluation.tabs.queue")}
+                      </button>
+                    ) : null}
+                  </div>
                 </header>
 
                 {selectedTarget.kind === "Flow" ? (

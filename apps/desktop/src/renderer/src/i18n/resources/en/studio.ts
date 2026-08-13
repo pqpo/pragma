@@ -8,6 +8,7 @@ export const studio = {
     sections: "Evaluation sections",
     tabs: { targets: "Targets", datasets: "Datasets", queue: "Queue" },
     back: "Back",
+    backToTarget: "Back to target",
     newRun: "New evaluation",
     runDescription: "Choose a reusable dataset and randomly sample cases for this target.",
     noDatasetsForRun: "Create an Agent Judge dataset before starting an evaluation.",

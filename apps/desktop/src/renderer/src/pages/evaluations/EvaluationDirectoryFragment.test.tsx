@@ -1,5 +1,9 @@
 import { renderToStaticMarkup } from "react-dom/server";
 import { describe, expect, it } from "vitest";
+import {
+  PragmaExpertResourceSchema,
+  PragmaExpertTeamResourceSchema,
+} from "@pragma/interpreter/ast";
 import type { PragmaProjectSnapshot } from "../../../../shared/contracts/index.ts";
 
 import {
@@ -139,5 +143,94 @@ describe("EvaluationDirectoryFragment", () => {
     expect(detailHtml).toContain("Evaluation targets");
     expect(detailHtml).toContain("Evaluation detail");
     expect(detailHtml).not.toContain('id="evaluations-heading"');
+  });
+
+  it("shows dataset and queue entrances only for agent targets", () => {
+    const expert = PragmaExpertResourceSchema.parse({
+      apiVersion: "pragma/v4",
+      kind: "Expert",
+      metadata: {
+        id: "1h2j3k4m5n6p7q8r",
+        name: "Project manager",
+        description: "Coordinates delivery.",
+        tags: [],
+      },
+      spec: { scope: "general", instructions: "Coordinate the project." },
+    });
+    const team = PragmaExpertTeamResourceSchema.parse({
+      apiVersion: "pragma/v4",
+      kind: "ExpertTeam",
+      metadata: {
+        id: "2h3j4k5m6n7p8q9r",
+        name: "Delivery team",
+        description: "Coordinates specialists.",
+        tags: [],
+      },
+      spec: {
+        coordinator: { ref: `expert:${expert.metadata.id}` },
+        members: [{ ref: `expert:${expert.metadata.id}` }],
+        delegation: {},
+      },
+    });
+    const callbacks = {
+      onCreate: () => undefined,
+      onDelete: async () => undefined,
+      onOpen: () => undefined,
+      onOpenDatasets: () => undefined,
+      onOpenQueue: () => undefined,
+    };
+
+    const expertHtml = renderToStaticMarkup(
+      <EvaluationDirectoryFragment
+        {...callbacks}
+        project={{
+          schemaVersion: "pragma.project-snapshot/v3",
+          projectId: "studio",
+          revision: 1,
+          diagnostics: [],
+          resources: [expert, team],
+        }}
+      />,
+    );
+
+    expect(expertHtml).toContain("Start evaluation");
+    expect(expertHtml).toContain(">Datasets</button>");
+    expect(expertHtml).toContain(">Queue</button>");
+    expect(expertHtml).toContain('class="evaluation-target-actions"');
+
+    const teamHtml = renderToStaticMarkup(
+      <EvaluationDirectoryFragment
+        {...callbacks}
+        project={{
+          schemaVersion: "pragma.project-snapshot/v3",
+          projectId: "studio",
+          revision: 1,
+          diagnostics: [],
+          resources: [team],
+        }}
+      />,
+    );
+
+    expect(teamHtml).toContain("Start evaluation");
+    expect(teamHtml).toContain(">Datasets</button>");
+    expect(teamHtml).toContain(">Queue</button>");
+
+    const flow = createEmptyFlow("8h9j0k1m2n3p4q5r");
+    const flowHtml = renderToStaticMarkup(
+      <EvaluationDirectoryFragment
+        {...callbacks}
+        project={{
+          schemaVersion: "pragma.project-snapshot/v3",
+          projectId: "studio",
+          revision: 1,
+          diagnostics: [],
+          resources: [flow],
+        }}
+      />,
+    );
+
+    expect(flowHtml).toContain("New");
+    expect(flowHtml).not.toContain(">Datasets</button>");
+    expect(flowHtml).not.toContain(">Queue</button>");
   });
 });

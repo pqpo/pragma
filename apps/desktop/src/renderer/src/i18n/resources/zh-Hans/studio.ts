@@ -8,6 +8,7 @@ export const studio = {
     sections: "测评分类",
     tabs: { targets: "测评对象", datasets: "测评集", queue: "队列" },
     back: "返回",
+    backToTarget: "返回当前对象",
     newRun: "新建测评",
     runDescription: "选择可复用测评集，并为当前对象随机抽取测试用例。",
     noDatasetsForRun: "请先创建 Agent Judge 测评集。",

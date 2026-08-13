@@ -14,7 +14,7 @@ import {
   AgentEvaluationRunSetup,
 } from "./AgentEvaluationWorkspace.tsx";
 
-type EvaluationPageTab = "targets" | "datasets" | "queue";
+type EvaluationSecondaryView = "datasets" | "queue";
 
 export function createFlowRunDryEvaluation(
   resourceId: string,
@@ -54,7 +54,10 @@ export function EvaluationsPage() {
   const [runTarget, setRunTarget] = useState<
     PragmaExpertResource | PragmaExpertTeamResource | null
   >(null);
-  const [tab, setTab] = useState<EvaluationPageTab>("targets");
+  const [secondaryView, setSecondaryView] = useState<EvaluationSecondaryView | null>(null);
+  const [secondaryReturnFocus, setSecondaryReturnFocus] = useState<EvaluationSecondaryView | null>(
+    null,
+  );
   const [error, setError] = useState<string | null>(null);
 
   useEffect(() => {
@@ -98,41 +101,44 @@ export function EvaluationsPage() {
 
   return (
     <section className="evaluations-page" aria-busy={project === null && error === null}>
-      <nav
-        className="agent-evaluation-tabs"
-        aria-label={t("agentEvaluation.sections", { ns: "studio" })}
-      >
-        {(["targets", "datasets", "queue"] as const).map((item) => (
-          <button
-            key={item}
-            type="button"
-            className={tab === item ? "is-active" : ""}
-            onClick={() => {
-              setTab(item);
-              setDraft(null);
-              setRunTarget(null);
-            }}
-          >
-            {t(`agentEvaluation.tabs.${item}`, { ns: "studio" })}
-          </button>
-        ))}
-      </nav>
       {project === null && error === null ? (
-        <p className="studio-empty-copy">{t("actions.loading")}</p>
+        <p className="studio-empty-copy evaluations-page-loading">{t("actions.loading")}</p>
       ) : null}
-      {project !== null && tab === "targets" ? (
+      {project !== null ? (
         <EvaluationDirectoryFragment
           project={project}
-          onCreate={(resourceId, flow) => setDraft(createFlowRunDryEvaluation(resourceId, flow))}
-          onOpen={setDraft}
+          onCreate={(resourceId, flow) => {
+            setSecondaryView(null);
+            setDraft(createFlowRunDryEvaluation(resourceId, flow));
+          }}
+          onOpen={(evaluation) => {
+            setSecondaryView(null);
+            setDraft(evaluation);
+          }}
           onCreateAgentEvaluation={(target) => {
+            setSecondaryView(null);
             setDraft(null);
             setRunTarget(target);
           }}
           onSelectTarget={() => {
+            setSecondaryView(null);
             setDraft(null);
             setRunTarget(null);
           }}
+          onOpenDatasets={() => {
+            setDraft(null);
+            setRunTarget(null);
+            setSecondaryReturnFocus(null);
+            setSecondaryView("datasets");
+          }}
+          onOpenQueue={() => {
+            setDraft(null);
+            setRunTarget(null);
+            setSecondaryReturnFocus(null);
+            setSecondaryView("queue");
+          }}
+          focusAction={secondaryReturnFocus}
+          onFocusActionHandled={() => setSecondaryReturnFocus(null)}
           onDelete={async (evaluation) => {
             const api = typeof window === "undefined" ? undefined : window.pragmaDesktop;
             if (api === undefined) throw new Error("Desktop bridge is unavailable.");
@@ -143,14 +149,30 @@ export function EvaluationsPage() {
             setProject(snapshot);
           }}
           detail={
-            runTarget !== null ? (
+            secondaryView === "datasets" ? (
+              <AgentEvaluationDatasets
+                project={project}
+                onBack={() => {
+                  setSecondaryView(null);
+                  setSecondaryReturnFocus("datasets");
+                }}
+                onProjectChange={setProject}
+              />
+            ) : secondaryView === "queue" ? (
+              <AgentEvaluationQueue
+                onBack={() => {
+                  setSecondaryView(null);
+                  setSecondaryReturnFocus("queue");
+                }}
+              />
+            ) : runTarget !== null ? (
               <AgentEvaluationRunSetup
                 project={project}
                 target={runTarget}
                 onBack={() => setRunTarget(null)}
                 onCreated={() => {
                   setRunTarget(null);
-                  setTab("queue");
+                  setSecondaryView("queue");
                 }}
               />
             ) : draft === null ? undefined : (
@@ -171,18 +193,18 @@ export function EvaluationsPage() {
             )
           }
           detailLabelledBy={
-            runTarget !== null
-              ? "agent-evaluation-run-heading"
-              : draft === null
-                ? undefined
-                : "flow-run-dry-heading"
+            secondaryView === "datasets"
+              ? "agent-evaluation-datasets-heading"
+              : secondaryView === "queue"
+                ? "agent-evaluation-queue-heading"
+                : runTarget !== null
+                  ? "agent-evaluation-run-heading"
+                  : draft === null
+                    ? undefined
+                    : "flow-run-dry-heading"
           }
         />
       ) : null}
-      {project !== null && tab === "datasets" ? (
-        <AgentEvaluationDatasets project={project} onProjectChange={setProject} />
-      ) : null}
-      {tab === "queue" ? <AgentEvaluationQueue /> : null}
       {error !== null ? (
         <p className="form-error evaluations-page-error" role="alert">
           {error}
