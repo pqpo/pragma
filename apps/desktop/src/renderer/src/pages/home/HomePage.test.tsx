@@ -157,6 +157,25 @@ describe("MissionModelOverrideControls", () => {
     expect(html).not.toContain("<select");
   });
 
+  it("shows Default when the selected model has no resolved thinking depth", () => {
+    const html = renderToStaticMarkup(
+      <MissionModelOverrideControls
+        models={[
+          {
+            id: "deepseek-v4-pro",
+            displayName: "DeepSeek V4 Pro",
+            provider: { kind: "registered", id: "deepseek", displayName: "DeepSeek" },
+          },
+        ]}
+        value={{ providerId: "deepseek", modelId: "deepseek-v4-pro" }}
+        onChange={() => undefined}
+      />,
+    );
+
+    expect(html).toContain("DeepSeek V4 Pro · Default");
+    expect(html).not.toContain("DeepSeek V4 Pro · Thinking depth");
+  });
+
   it("uses the shared custom selector for tool permissions", () => {
     const html = renderToStaticMarkup(
       <ToolPermissionSelect value="request-approval" onChange={() => undefined} />,

@@ -41,7 +41,7 @@ export function MissionModelOverrideControls(props: {
     (level) => level.value === effectiveThinkingLevel,
   )?.label;
   const modelLabel = effectiveModel === undefined ? t("modelOverride") : effectiveModel.displayName;
-  const thinkingLabel = effectiveThinkingLabel ?? t("thinkingDepth");
+  const thinkingLabel = effectiveThinkingLabel ?? t("defaultExecutor");
   const disabled = props.loading || props.disabled || props.models.length === 0;
 
   useEffect(() => {
