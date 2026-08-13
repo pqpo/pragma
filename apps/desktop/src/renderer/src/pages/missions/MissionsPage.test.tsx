@@ -17,6 +17,7 @@ import {
   DEFAULT_MISSION_MEMORY_VIEW,
   groupMissionConversationEntries,
   hasValidMissionHumanAnswers,
+  hidePreparingQueuedChatEntries,
   mergeMissionHumanAnswers,
   mergeLatestChatPage,
   MissionContextOperationEntry,
@@ -46,6 +47,36 @@ import {
 } from "./MissionsPage.tsx";
 
 describe("MissionsPage", () => {
+  it("keeps a preparing queued message out of the conversation until delivery is known", () => {
+    const requestId = "00000000-0000-4000-8000-000000000012";
+    const entry = {
+      id: requestId,
+      kind: "user" as const,
+      content: "Adjust the implementation",
+      createdAt: "2026-07-11T00:00:02.000Z",
+    };
+
+    expect(hidePreparingQueuedChatEntries([entry], new Set([requestId]))).toEqual([]);
+    expect(hidePreparingQueuedChatEntries([entry], new Set())).toEqual([entry]);
+  });
+
+  it("releases a preparing queued message when it has started running", () => {
+    const requestId = "00000000-0000-4000-8000-000000000012";
+    const entry = {
+      id: requestId,
+      kind: "user" as const,
+      content: "Adjust the implementation",
+      createdAt: "2026-07-11T00:00:02.000Z",
+      delivery: {
+        requestedMode: "enqueue" as const,
+        effectiveMode: "enqueue" as const,
+        status: "running" as const,
+      },
+    };
+
+    expect(hidePreparingQueuedChatEntries([entry], new Set([requestId]))).toEqual([entry]);
+  });
+
   it("shows a shimmer skeleton only when no in-memory snapshot is available", () => {
     const firstLoad = renderToStaticMarkup(<MissionsPage onCreate={() => undefined} />);
     const revisit = renderToStaticMarkup(

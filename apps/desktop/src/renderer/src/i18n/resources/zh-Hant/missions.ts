@@ -5,6 +5,7 @@ export const missions = {
   steerQueued: "目前無法 Steer，訊息已轉為排隊",
   queuedMessages: "排隊訊息",
   queuedMessage: "排隊",
+  preparingQueuedSteer: "正在準備引導",
   removeQueuedMessage: "移出佇列並編輯",
   queuePaused: "佇列已在失敗訊息後暫停。",
   resumeQueue: "略過失敗項並繼續",

@@ -5,6 +5,7 @@ export const missions = {
   steerQueued: "Steer is unavailable; the message was queued instead",
   queuedMessages: "Queued messages",
   queuedMessage: "Queued",
+  preparingQueuedSteer: "Preparing steer",
   removeQueuedMessage: "Remove from queue and edit",
   queuePaused: "The queue paused after a failed message.",
   resumeQueue: "Skip failure and continue",

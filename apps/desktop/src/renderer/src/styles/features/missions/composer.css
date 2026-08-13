@@ -218,6 +218,15 @@
   font-weight: 600;
 }
 
+.mission-prompt-queue-actions > .mission-queue-steer.is-preparing {
+  width: 32px;
+  padding: 0;
+}
+
+.mission-prompt-queue-actions > .mission-queue-steer.is-preparing svg {
+  animation: mission-thinking-spin 900ms linear infinite;
+}
+
 .mission-prompt-queue-actions > .mission-queue-remove {
   width: 32px;
   padding: 0;
