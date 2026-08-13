@@ -1,0 +1,12 @@
+apiVersion: pragma/v4
+kind: Capability
+metadata:
+  id: 0000000000skdrft
+  name: Memory Curator Skill draft operations
+  description: Mission-scoped Host tools for staging and validating extracted Skill candidates.
+  tags: [builtin, system, memory, skill]
+spec:
+  adapter: pragma.capability.host@v1
+  binding: binding:pragma.memory-curator-skill-draft
+  config:
+    key: pragma.memory-curator-skill-draft

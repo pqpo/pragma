@@ -48,6 +48,20 @@ describe("extractionErrorCode", () => {
       endpoint: "https://user:pass@example.com/v1/responses?api_key=secret",
       statusCode: 429,
       requestId: "request-a",
+      outputDiagnostic: {
+        responseBytes: 9000,
+        responseCharacters: 8500,
+        parsePosition: 8514,
+        closingBoundaryFound: false,
+        finishReason: "length",
+        truncated: true,
+        usage: {
+          measurement: "reported",
+          inputTokens: 100,
+          outputTokens: 200,
+          totalTokens: 300,
+        },
+      },
     });
 
     const result = extractionFailureDiagnostic(error, "skill_extraction", {
@@ -69,6 +83,13 @@ describe("extractionErrorCode", () => {
         endpoint: "https://example.com/v1/responses",
       },
       transport: { httpStatus: 429, requestId: "request-a" },
+      output: {
+        responseBytes: 9000,
+        responseCharacters: 8500,
+        parsePosition: 8514,
+        closingBoundaryFound: false,
+        truncated: true,
+      },
     });
     expect(result.stack).toContain("429 rate limit exceeded");
     expect(JSON.stringify(result)).not.toContain("secret-value");

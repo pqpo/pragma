@@ -24,6 +24,7 @@ export * from "./skill/schema.ts";
 export * from "./skill/source-reader.ts";
 export * from "./skill/store.ts";
 export * from "./skill/module.ts";
+export * from "./skill/validation.ts";
 export * from "./curator.ts";
 export * from "./storage/memory-storage-policy.ts";
 export * from "./storage/bounded-evidence.ts";

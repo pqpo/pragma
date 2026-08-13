@@ -721,10 +721,11 @@ export async function createDesktopApplicationContainer(
     },
     compileSystemExecutor: async ({ mission, runtimes: scopedRuntimes }) => {
       if (mission.executor.ref === MEMORY_CURATOR_REF) {
-        if (memoryCuratorRef.current === undefined) {
+        if (memoryCuratorRef.current === undefined || mission.origin.type !== "system-memory") {
           throw new Error("The Memory Curator has not been initialized.");
         }
         return await memoryCuratorRef.current.compile({
+          missionId: mission.id,
           runtimes: scopedRuntimes,
           workspace: mission.workspace.path,
           pragmaHome: pragmaPaths.root,

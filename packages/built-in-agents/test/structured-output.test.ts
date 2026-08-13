@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 
-import { extractStructuredJson } from "../src/structured-output.ts";
+import { extractStructuredJson, inspectStructuredJson } from "../src/structured-output.ts";
 
 describe("extractStructuredJson", () => {
   it("keeps bare JSON unchanged", () => {
@@ -15,5 +15,12 @@ describe("extractStructuredJson", () => {
 
   it("extracts an inline structured span from surrounding text", () => {
     expect(extractStructuredJson('Result: [{"status":"ok"}] Thanks.')).toBe('[{"status":"ok"}]');
+  });
+
+  it("distinguishes a complete boundary from braces inside a truncated string", () => {
+    expect(inspectStructuredJson('{"content":"example } without a closing quote')).toEqual({
+      content: '{"content":"example } without a closing quote',
+      closingBoundaryFound: false,
+    });
   });
 });

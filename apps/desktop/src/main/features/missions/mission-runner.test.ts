@@ -1651,6 +1651,43 @@ describe("MissionRunner", { timeout: 15_000 }, () => {
     const store = createFileExecutionStore({ pragmaHome: join(root, "state") });
     const childConversationStartedAt = Date.now();
     const emittedAt = new Date(childConversationStartedAt).toISOString();
+    await store.appendEvent(executionId, executionId, "runtime.event", {
+      schemaVersion: "pragma.stream/v1",
+      eventId: "root-output-diagnostic",
+      sequence: 99,
+      runId: "root-run",
+      emittedAt,
+      source: { kind: "runtime", runId: "root-run", sessionId: "root-thread", path: [] },
+      type: "message.completed",
+      payload: {
+        role: "assistant",
+        contentType: "text",
+        message: {
+          role: "assistant",
+          content: [{ type: "text", text: "Root response" }],
+          api: "responses",
+          provider: "openai",
+          model: "requested-model",
+          responseModel: "served-model",
+          usage: {
+            measurement: "reported",
+            input: 11,
+            output: 22,
+            cacheRead: 0,
+            cacheWrite: 0,
+            totalTokens: 33,
+            cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0 },
+          },
+          stopReason: "length",
+          timestamp: childConversationStartedAt,
+        },
+      },
+    });
+    await expect(runner.getTerminalRuntimeOutputDiagnostic(mission.id)).resolves.toMatchObject({
+      finishReason: "length",
+      responseModel: "served-model",
+      usage: { input: 11, output: 22, totalTokens: 33 },
+    });
     const childSource = {
       kind: "agent" as const,
       runId: "child-turn",
