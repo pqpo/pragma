@@ -904,9 +904,9 @@ pnpm check
 
 `pnpm check` 只包含 lint、typecheck、test；CI 还会额外执行 build。
 
-## 质量检查与本地发行
+## 质量检查与桌面发行
 
-当前仓库不使用 GitHub Actions workflow。Pull Request、合并和桌面发行前由协作者在本地执行：
+当前仓库默认使用 GitHub Actions workflow 完成桌面发行。Pull Request、合并和桌面发行前由协作者在本地执行：
 
 ```bash
 pnpm install --frozen-lockfile
@@ -916,8 +916,9 @@ pnpm test
 pnpm build
 ```
 
-桌面版本使用 `apps/desktop` 的 `release:desktop` 脚本完成原生打包、Tag、GitHub Release 和产物上传；
-详细流程见 `docs/usage/desktop-distribution.md`。
+桌面版本默认通过 `.github/workflows/desktop-release.yml` 在推送符合版本格式的 Tag 后完成原生打包、Tag、GitHub
+Release 和产物上传。仅在离线网络限制、特殊调试或明确指定本地打包时，才使用 `apps/desktop` 的
+`release:desktop` 脚本。详细流程见 `docs/usage/desktop-distribution.md`。
 
 质量检查必须在以下情况失败：
 
