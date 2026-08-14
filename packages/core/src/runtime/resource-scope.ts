@@ -35,6 +35,7 @@ export interface RuntimeResourceRegistrar {
  */
 export class RuntimeResourceScope implements RuntimeResourceRegistrar {
   private readonly entries: RuntimeResourceEntry[] = [];
+  private sealed = false;
   private transferred = false;
   private disposal: Promise<void> | undefined;
 
@@ -81,9 +82,45 @@ export class RuntimeResourceScope implements RuntimeResourceRegistrar {
     return resource;
   }
 
-  /** Marks successful ownership transfer from preparation to the managed Session. */
-  transfer(): void {
+  /**
+   * Closes registration while retaining Core ownership for native Session
+   * creation. A sealed scope can still be disposed when that creation fails.
+   */
+  seal(): void {
     this.assertCanRegister();
+    this.sealed = true;
+  }
+
+  /**
+   * Attaches a sealed child preparation scope to this scope. Core uses this to
+   * preserve deterministic cleanup order when independent graph nodes run in
+   * parallel.
+   */
+  attach(scope: RuntimeResourceScope): void {
+    this.assertCanRegister();
+    if (!scope.sealed) {
+      throw new Error(`Runtime resource scope ${scope.label} must be sealed before attachment.`);
+    }
+    scope.transfer();
+    this.entries.push({
+      label: scope.label,
+      order: this.entries.length,
+      dispose: () => scope.dispose(),
+      state: "active",
+    });
+  }
+
+  /** Marks successful ownership transfer from preparation to its Core owner. */
+  transfer(): void {
+    if (!this.sealed) {
+      throw new Error(`Runtime resource scope ${this.label} must be sealed before transfer.`);
+    }
+    if (this.disposal !== undefined) {
+      throw new Error(`Runtime resource scope ${this.label} is closing.`);
+    }
+    if (this.transferred) {
+      throw new Error(`Runtime resource scope ${this.label} has transferred ownership.`);
+    }
     this.transferred = true;
   }
 
@@ -119,6 +156,9 @@ export class RuntimeResourceScope implements RuntimeResourceRegistrar {
     }
     if (this.transferred) {
       throw new Error(`Runtime resource scope ${this.label} has transferred ownership.`);
+    }
+    if (this.sealed) {
+      throw new Error(`Runtime resource scope ${this.label} is sealed.`);
     }
   }
 }

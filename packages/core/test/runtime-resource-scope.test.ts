@@ -16,6 +16,7 @@ describe("RuntimeResourceScope", () => {
     scope.adopt("second", 2, () => {
       order.push("second");
     });
+    scope.seal();
     scope.transfer();
 
     const firstDisposal = scope.dispose();
@@ -64,5 +65,21 @@ describe("RuntimeResourceScope", () => {
 
     await expect(pending).rejects.toThrow("is closing");
     expect(dispose).toHaveBeenCalledOnce();
+  });
+
+  it("rejects registration after sealing while retaining Core cleanup ownership", async () => {
+    const dispose = vi.fn();
+    const scope = new RuntimeResourceScope("sealed");
+    scope.adopt("prepared", {}, dispose);
+    scope.seal();
+
+    expect(() => scope.adopt("late", {}, dispose)).toThrow("is sealed");
+    await scope.dispose();
+    expect(dispose).toHaveBeenCalledOnce();
+  });
+
+  it("requires seal before ownership transfer", () => {
+    const scope = new RuntimeResourceScope("unsealed");
+    expect(() => scope.transfer()).toThrow("must be sealed before transfer");
   });
 });

@@ -42,12 +42,15 @@ function readCatalog(source) {
   }
   const entries = [
     ...block.matchAll(
-      /\{\s*"?name"?\s*:\s*"([^"]+)"\s*,\s*"?lifecycle"?\s*:\s*"([^"]+)"\s*,\s*"?description"?\s*:\s*"([^"]+)"\s*,?\s*\}/g,
+      /\{\s*"?name"?\s*:\s*"([^"]+)"\s*,\s*"?lifecycle"?\s*:\s*"([^"]+)"\s*,\s*"?enforcement"?\s*:\s*\{\s*"?kind"?\s*:\s*"([^"]+)"(?:\s*,\s*"?method"?\s*:\s*"([^"]+)")?(?:\s*,\s*"?when"?\s*:\s*"([^"]+)")?\s*\}\s*,\s*"?description"?\s*:\s*"([^"]+)"\s*,?\s*\}/g,
     ),
   ].map((match) => ({
     name: match[1],
     lifecycle: match[2],
-    description: match[3],
+    enforcement: match[3],
+    method: match[4],
+    when: match[5],
+    description: match[6],
   }));
   if (entries.length === 0) {
     throw new Error(`No Runtime features could be parsed from ${catalogPath}.`);
@@ -66,8 +69,8 @@ function renderCatalog(catalog) {
     turn: "Turn 准备/清理",
   };
   const rows = catalog.map(
-    ({ name, lifecycle, description }) =>
-      `| \`${name}\` | ${lifecycleLabels[lifecycle] ?? lifecycle} | ${description} |`,
+    ({ name, lifecycle, enforcement, method, when, description }) =>
+      `| \`${name}\` | ${lifecycleLabels[lifecycle] ?? lifecycle} | ${formatEnforcement(enforcement, method, when)} | ${description} |`,
   );
   return [
     startMarker,
@@ -82,12 +85,22 @@ function renderCatalog(catalog) {
     "`needs` 连接，不能把 Harness 内部目录、relay 或 tool assembly 塞进公开 catalog。",
     "",
     "<!-- prettier-ignore -->",
-    "| Feature slot | Core 生命周期阶段 | 验收结果 |",
-    "| --- | --- | --- |",
+    "| Feature slot | Core 生命周期阶段 | 强制方式 | 验收结果 |",
+    "| --- | --- | --- | --- |",
     ...rows,
     "",
     endMarker,
   ].join("\n");
+}
+
+function formatEnforcement(kind, method, when) {
+  if (kind === "implementation") return "Feature / Step 实现";
+  if (kind === "driver-method") {
+    return `Driver 方法 \`${method}\`${when === undefined ? "" : `（${when}）`}`;
+  }
+  if (kind === "conformance") return "Conformance 验收";
+  if (kind === "invariant") return "Core 不变量";
+  return kind;
 }
 
 function replaceGeneratedSection(source, generated) {

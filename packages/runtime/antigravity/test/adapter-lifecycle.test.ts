@@ -351,7 +351,6 @@ function createSessionContext(
       restoredRuntimeSessionId,
       checkpoint: vi.fn(async () => undefined),
     },
-    resources: new RuntimeResourceScope("antigravity-adapter-test-placeholder"),
     features: {} as never,
     steps: { get: () => undefined } as never,
     sessionInfo: {},
@@ -398,9 +397,9 @@ async function createPreparedSession<TSession>(
       { ...baseContext, resources },
       { mcp: featureOutputs.mcp, permissions: featureOutputs.permissions },
     );
+    resources.seal();
     const session = await driver.createSession({
       ...baseContext,
-      resources,
       features: Object.freeze({ ...featureOutputs }) as never,
       steps: { get: () => undefined } as never,
     });

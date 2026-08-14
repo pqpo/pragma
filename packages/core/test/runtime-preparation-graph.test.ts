@@ -2,10 +2,10 @@ import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
-import { describe, expect, it } from "vitest";
+import { describe, expect, expectTypeOf, it } from "vitest";
 
 import { defineExpert } from "../src/agent/expert-agent.ts";
-import { defineRuntimeDriver } from "../src/runtime/driver.ts";
+import { defineRuntimeDriver, type RuntimeNativeSessionContext } from "../src/runtime/driver.ts";
 import { defineRuntimeFeatures, runtimeFeature, runtimeStep } from "../src/runtime/features.ts";
 import { openRuntimeSession } from "../src/runtime/session-factory.ts";
 import { createRuntimeTestFeatures } from "../src/testing/index.ts";
@@ -61,6 +61,137 @@ describe("Runtime preparation graph", () => {
         "skills:http://127.0.0.1/mcp",
         "session:http://127.0.0.1/mcp:/tmp/skills",
       ]);
+    } finally {
+      await rm(root, { recursive: true, force: true });
+    }
+  });
+
+  it("seals preparation resources before native Session creation", async () => {
+    expectTypeOf<RuntimeNativeSessionContext>().not.toHaveProperty("resources");
+    let nativeContextHadResources = true;
+    const runtime = defineRuntimeDriver({
+      descriptor: { id: "sealed-native-context", kind: "test", displayName: "Sealed Native" },
+      features: createRuntimeTestFeatures(),
+      createSession(context) {
+        nativeContextHadResources = "resources" in context;
+        return {};
+      },
+      startTurn: () => ({ outputText: "ok" }),
+      mapEvent: () => ({ events: [] }),
+    });
+    const root = await mkdtemp(join(tmpdir(), "pragma-runtime-sealed-context-"));
+    const expert = await createExpert(root);
+
+    try {
+      const session = await openRuntimeSession(runtime, {
+        agent: expert,
+        owner: { type: "expert-session", ownerId: "owner", contextId: "context" },
+        pragmaHome: root,
+        systemSessionId: "runtime-sealed-context",
+      });
+      await session.close();
+      expect(nativeContextHadResources).toBe(false);
+    } finally {
+      await rm(root, { recursive: true, force: true });
+    }
+  });
+
+  it("runs independent Session preparation roots concurrently", async () => {
+    let started = 0;
+    let resolveBothStarted!: () => void;
+    const bothStarted = new Promise<void>((resolve) => {
+      resolveBothStarted = resolve;
+    });
+    const first = runtimeStep.session({
+      id: "fixture.concurrent-first",
+      async prepare() {
+        started += 1;
+        if (started === 2) resolveBothStarted();
+        await bothStarted;
+      },
+    });
+    const second = runtimeStep.session({
+      id: "fixture.concurrent-second",
+      async prepare() {
+        started += 1;
+        if (started === 2) resolveBothStarted();
+        await bothStarted;
+      },
+    });
+    const runtime = defineRuntimeDriver({
+      descriptor: { id: "concurrent-graph", kind: "test", displayName: "Concurrent Graph" },
+      features: createRuntimeTestFeatures(),
+      sessionSteps: [first, second],
+      createSession: () => ({}),
+      startTurn: () => ({ outputText: "ok" }),
+      mapEvent: () => ({ events: [] }),
+    });
+    const root = await mkdtemp(join(tmpdir(), "pragma-runtime-concurrent-graph-"));
+    const expert = await createExpert(root);
+
+    try {
+      const session = await openRuntimeSession(runtime, {
+        agent: expert,
+        owner: { type: "expert-session", ownerId: "owner", contextId: "context" },
+        pragmaHome: root,
+        systemSessionId: "runtime-concurrent-graph",
+      });
+      await session.close();
+      expect(started).toBe(2);
+    } finally {
+      await rm(root, { recursive: true, force: true });
+    }
+  }, 1_000);
+
+  it("rolls back successful parallel Session preparation branches when a sibling fails", async () => {
+    let released = false;
+    let resolveReady!: () => void;
+    const ready = new Promise<void>((resolve) => {
+      resolveReady = resolve;
+    });
+    const succeeds = runtimeStep.session({
+      id: "fixture.parallel-success",
+      async prepare(context) {
+        await context.resources.acquire(
+          "fixture.parallel-resource",
+          () => ({}),
+          () => {
+            released = true;
+          },
+        );
+        resolveReady();
+      },
+    });
+    const fails = runtimeStep.session({
+      id: "fixture.parallel-failure",
+      async prepare() {
+        await ready;
+        throw new Error("parallel preparation failed");
+      },
+    });
+    const runtime = defineRuntimeDriver({
+      descriptor: { id: "parallel-cleanup", kind: "test", displayName: "Parallel Cleanup" },
+      features: createRuntimeTestFeatures(),
+      sessionSteps: [succeeds, fails],
+      createSession: () => {
+        throw new Error("native Session creation must not run");
+      },
+      startTurn: () => ({ outputText: "ok" }),
+      mapEvent: () => ({ events: [] }),
+    });
+    const root = await mkdtemp(join(tmpdir(), "pragma-runtime-parallel-cleanup-"));
+    const expert = await createExpert(root);
+
+    try {
+      await expect(
+        openRuntimeSession(runtime, {
+          agent: expert,
+          owner: { type: "expert-session", ownerId: "owner", contextId: "context" },
+          pragmaHome: root,
+          systemSessionId: "runtime-parallel-cleanup",
+        }),
+      ).rejects.toThrow("parallel preparation failed");
+      expect(released).toBe(true);
     } finally {
       await rm(root, { recursive: true, force: true });
     }

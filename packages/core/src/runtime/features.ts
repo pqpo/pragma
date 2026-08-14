@@ -9,67 +9,186 @@ import type {
 
 // RUNTIME_FEATURE_CATALOG_START
 export const RUNTIME_FEATURE_CATALOG = [
-  { name: "availability", lifecycle: "driver", description: "Runtime availability probing" },
+  {
+    name: "availability",
+    lifecycle: "driver",
+    enforcement: { kind: "driver-method", method: "canUse" },
+    description: "Runtime availability probing",
+  },
   {
     name: "authentication",
     lifecycle: "driver",
+    enforcement: { kind: "conformance" },
     description: "Runtime authentication setup and validation",
   },
-  { name: "modelDiscovery", lifecycle: "driver", description: "Model catalog discovery" },
+  {
+    name: "modelDiscovery",
+    lifecycle: "driver",
+    enforcement: { kind: "driver-method", method: "listModels" },
+    description: "Model catalog discovery",
+  },
   {
     name: "modelSelection",
     lifecycle: "turn",
+    enforcement: { kind: "conformance" },
     description: "Per-Session or per-turn model selection",
   },
-  { name: "thinking", lifecycle: "turn", description: "Thinking or reasoning level selection" },
-  { name: "freshSession", lifecycle: "session", description: "Fresh native Session creation" },
-  { name: "resume", lifecycle: "session", description: "Native Session restoration" },
-  { name: "systemPrompt", lifecycle: "session", description: "System prompt delivery" },
+  {
+    name: "thinking",
+    lifecycle: "turn",
+    enforcement: { kind: "conformance" },
+    description: "Thinking or reasoning level selection",
+  },
+  {
+    name: "freshSession",
+    lifecycle: "session",
+    enforcement: { kind: "conformance" },
+    description: "Fresh native Session creation",
+  },
+  {
+    name: "resume",
+    lifecycle: "session",
+    enforcement: { kind: "conformance" },
+    description: "Native Session restoration",
+  },
+  {
+    name: "systemPrompt",
+    lifecycle: "session",
+    enforcement: { kind: "conformance" },
+    description: "System prompt delivery",
+  },
   {
     name: "startupMessages",
     lifecycle: "session",
+    enforcement: { kind: "conformance" },
     description: "Startup message delivery and reinjection",
   },
-  { name: "textStreaming", lifecycle: "turn", description: "Ordered text streaming" },
-  { name: "reasoningStreaming", lifecycle: "turn", description: "Ordered reasoning streaming" },
+  {
+    name: "textStreaming",
+    lifecycle: "turn",
+    enforcement: { kind: "conformance" },
+    description: "Ordered text streaming",
+  },
+  {
+    name: "reasoningStreaming",
+    lifecycle: "turn",
+    enforcement: { kind: "conformance" },
+    description: "Ordered reasoning streaming",
+  },
   {
     name: "nativeToolLifecycle",
     lifecycle: "turn",
+    enforcement: { kind: "conformance" },
     description: "Native tool start, update, and completion events",
   },
-  { name: "mcp", lifecycle: "session", description: "MCP tool registration and execution" },
-  { name: "permissions", lifecycle: "session", description: "Tool permission policy and approval" },
-  { name: "userInteraction", lifecycle: "turn", description: "Durable human interaction" },
-  { name: "skills", lifecycle: "session", description: "Skill materialization and invocation" },
-  { name: "attachmentImage", lifecycle: "turn", description: "Image attachments" },
-  { name: "attachmentFile", lifecycle: "turn", description: "File attachments" },
-  { name: "attachmentDirectory", lifecycle: "turn", description: "Directory attachments" },
-  { name: "usage", lifecycle: "turn", description: "Token usage observation" },
-  { name: "contextWindow", lifecycle: "driver", description: "Context window inspection" },
+  {
+    name: "mcp",
+    lifecycle: "session",
+    enforcement: { kind: "implementation" },
+    description: "MCP tool registration and execution",
+  },
+  {
+    name: "permissions",
+    lifecycle: "session",
+    enforcement: { kind: "implementation" },
+    description: "Tool permission policy and approval",
+  },
+  {
+    name: "userInteraction",
+    lifecycle: "turn",
+    enforcement: { kind: "conformance" },
+    description: "Durable human interaction",
+  },
+  {
+    name: "skills",
+    lifecycle: "session",
+    enforcement: { kind: "implementation" },
+    description: "Skill materialization and invocation",
+  },
+  {
+    name: "attachmentImage",
+    lifecycle: "turn",
+    enforcement: { kind: "conformance" },
+    description: "Image attachments",
+  },
+  {
+    name: "attachmentFile",
+    lifecycle: "turn",
+    enforcement: { kind: "conformance" },
+    description: "File attachments",
+  },
+  {
+    name: "attachmentDirectory",
+    lifecycle: "turn",
+    enforcement: { kind: "conformance" },
+    description: "Directory attachments",
+  },
+  {
+    name: "usage",
+    lifecycle: "turn",
+    enforcement: { kind: "conformance" },
+    description: "Token usage observation",
+  },
+  {
+    name: "contextWindow",
+    lifecycle: "driver",
+    enforcement: { kind: "driver-method", method: "readContextWindow" },
+    description: "Context window inspection",
+  },
   {
     name: "compaction",
     lifecycle: "session",
+    enforcement: { kind: "driver-method", method: "compactContext", when: "manual-compaction" },
     description: "Context compaction and compaction events",
   },
-  { name: "cancellation", lifecycle: "turn", description: "Active turn cancellation" },
-  { name: "steering", lifecycle: "turn", description: "Active turn steering" },
-  { name: "close", lifecycle: "session", description: "Native Session shutdown" },
-  { name: "cleanup", lifecycle: "session", description: "Feature resource cleanup" },
+  {
+    name: "cancellation",
+    lifecycle: "turn",
+    enforcement: { kind: "driver-method", method: "cancelTurn" },
+    description: "Active turn cancellation",
+  },
+  {
+    name: "steering",
+    lifecycle: "turn",
+    enforcement: { kind: "driver-method", method: "steerTurn" },
+    description: "Active turn steering",
+  },
+  {
+    name: "close",
+    lifecycle: "session",
+    enforcement: { kind: "driver-method", method: "closeSession" },
+    description: "Native Session shutdown",
+  },
+  {
+    name: "cleanup",
+    lifecycle: "session",
+    enforcement: { kind: "invariant" },
+    description: "Feature resource cleanup",
+  },
 ] as const;
 // RUNTIME_FEATURE_CATALOG_END
 
 export type RuntimeFeatureName = (typeof RUNTIME_FEATURE_CATALOG)[number]["name"];
 export type RuntimeFeatureLifecycle = (typeof RUNTIME_FEATURE_CATALOG)[number]["lifecycle"];
+export type RuntimeDriverMethodName =
+  | "canUse"
+  | "listModels"
+  | "readContextWindow"
+  | "compactContext"
+  | "cancelTurn"
+  | "steerTurn"
+  | "closeSession";
+export type RuntimeFeatureEnforcement =
+  | { readonly kind: "implementation" }
+  | {
+      readonly kind: "driver-method";
+      readonly method: RuntimeDriverMethodName;
+      readonly when?: "manual-compaction" | undefined;
+    }
+  | { readonly kind: "conformance" }
+  | { readonly kind: "invariant" };
 export type RuntimeFeatureEvidenceLevel = "materialized" | "discovered" | "executed";
 export type RuntimeCompactionMode = "manual" | "events";
-
-/**
- * These integrations acquire or materialize Session-scoped resources across
- * Harnesses. An enabled declaration must therefore participate in Core-owned
- * preparation; a native status declaration is not sufficient evidence of an
- * implementation.
- */
-const CORE_PREPARED_FEATURES = new Set<RuntimeFeatureName>(["mcp", "permissions", "skills"]);
 
 export interface RuntimeFeatureEvidenceRef {
   readonly probe: string;
@@ -139,7 +258,7 @@ export interface RuntimePreparationNode<
   TOutput,
   TNeeds extends RuntimePreparationNeeds = RuntimePreparationNeeds,
 > extends RuntimePreparationNodeBase<TPhase, TOutput, TNeeds> {
-  readonly kind: "preparation";
+  readonly kind: "preparation" | "feature";
 }
 
 export type RuntimePreparationNeeds = Readonly<Record<string, RuntimePreparationDependency>>;
@@ -309,9 +428,13 @@ export function validateRuntimeFeatures(features: RuntimeFeatureSet): void {
       throw new Error(`Disabled Runtime feature ${name} must not declare a preparation.`);
     }
   }
-  for (const name of CORE_PREPARED_FEATURES) {
+  for (const { name, enforcement } of RUNTIME_FEATURE_CATALOG) {
     const feature = features[name];
-    if (isRuntimeFeatureEnabled(feature) && feature.kind !== "feature") {
+    if (
+      enforcement.kind === "implementation" &&
+      isRuntimeFeatureEnabled(feature) &&
+      feature.kind !== "feature"
+    ) {
       throw new Error(
         `Enabled Runtime feature ${name} must provide a Core-owned preparation implementation.`,
       );

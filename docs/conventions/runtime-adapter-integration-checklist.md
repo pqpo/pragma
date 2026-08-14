@@ -31,34 +31,34 @@ Runtime 中工作。
 `needs` 连接，不能把 Harness 内部目录、relay 或 tool assembly 塞进公开 catalog。
 
 <!-- prettier-ignore -->
-| Feature slot | Core 生命周期阶段 | 验收结果 |
-| --- | --- | --- |
-| `availability` | Driver 注册/探测 | Runtime availability probing |
-| `authentication` | Driver 注册/探测 | Runtime authentication setup and validation |
-| `modelDiscovery` | Driver 注册/探测 | Model catalog discovery |
-| `modelSelection` | Turn 准备/清理 | Per-Session or per-turn model selection |
-| `thinking` | Turn 准备/清理 | Thinking or reasoning level selection |
-| `freshSession` | Session 准备/清理 | Fresh native Session creation |
-| `resume` | Session 准备/清理 | Native Session restoration |
-| `systemPrompt` | Session 准备/清理 | System prompt delivery |
-| `startupMessages` | Session 准备/清理 | Startup message delivery and reinjection |
-| `textStreaming` | Turn 准备/清理 | Ordered text streaming |
-| `reasoningStreaming` | Turn 准备/清理 | Ordered reasoning streaming |
-| `nativeToolLifecycle` | Turn 准备/清理 | Native tool start, update, and completion events |
-| `mcp` | Session 准备/清理 | MCP tool registration and execution |
-| `permissions` | Session 准备/清理 | Tool permission policy and approval |
-| `userInteraction` | Turn 准备/清理 | Durable human interaction |
-| `skills` | Session 准备/清理 | Skill materialization and invocation |
-| `attachmentImage` | Turn 准备/清理 | Image attachments |
-| `attachmentFile` | Turn 准备/清理 | File attachments |
-| `attachmentDirectory` | Turn 准备/清理 | Directory attachments |
-| `usage` | Turn 准备/清理 | Token usage observation |
-| `contextWindow` | Driver 注册/探测 | Context window inspection |
-| `compaction` | Session 准备/清理 | Context compaction and compaction events |
-| `cancellation` | Turn 准备/清理 | Active turn cancellation |
-| `steering` | Turn 准备/清理 | Active turn steering |
-| `close` | Session 准备/清理 | Native Session shutdown |
-| `cleanup` | Session 准备/清理 | Feature resource cleanup |
+| Feature slot | Core 生命周期阶段 | 强制方式 | 验收结果 |
+| --- | --- | --- | --- |
+| `availability` | Driver 注册/探测 | Driver 方法 `canUse` | Runtime availability probing |
+| `authentication` | Driver 注册/探测 | Conformance 验收 | Runtime authentication setup and validation |
+| `modelDiscovery` | Driver 注册/探测 | Driver 方法 `listModels` | Model catalog discovery |
+| `modelSelection` | Turn 准备/清理 | Conformance 验收 | Per-Session or per-turn model selection |
+| `thinking` | Turn 准备/清理 | Conformance 验收 | Thinking or reasoning level selection |
+| `freshSession` | Session 准备/清理 | Conformance 验收 | Fresh native Session creation |
+| `resume` | Session 准备/清理 | Conformance 验收 | Native Session restoration |
+| `systemPrompt` | Session 准备/清理 | Conformance 验收 | System prompt delivery |
+| `startupMessages` | Session 准备/清理 | Conformance 验收 | Startup message delivery and reinjection |
+| `textStreaming` | Turn 准备/清理 | Conformance 验收 | Ordered text streaming |
+| `reasoningStreaming` | Turn 准备/清理 | Conformance 验收 | Ordered reasoning streaming |
+| `nativeToolLifecycle` | Turn 准备/清理 | Conformance 验收 | Native tool start, update, and completion events |
+| `mcp` | Session 准备/清理 | Feature / Step 实现 | MCP tool registration and execution |
+| `permissions` | Session 准备/清理 | Feature / Step 实现 | Tool permission policy and approval |
+| `userInteraction` | Turn 准备/清理 | Conformance 验收 | Durable human interaction |
+| `skills` | Session 准备/清理 | Feature / Step 实现 | Skill materialization and invocation |
+| `attachmentImage` | Turn 准备/清理 | Conformance 验收 | Image attachments |
+| `attachmentFile` | Turn 准备/清理 | Conformance 验收 | File attachments |
+| `attachmentDirectory` | Turn 准备/清理 | Conformance 验收 | Directory attachments |
+| `usage` | Turn 准备/清理 | Conformance 验收 | Token usage observation |
+| `contextWindow` | Driver 注册/探测 | Driver 方法 `readContextWindow` | Context window inspection |
+| `compaction` | Session 准备/清理 | Driver 方法 `compactContext`（manual-compaction） | Context compaction and compaction events |
+| `cancellation` | Turn 准备/清理 | Driver 方法 `cancelTurn` | Active turn cancellation |
+| `steering` | Turn 准备/清理 | Driver 方法 `steerTurn` | Active turn steering |
+| `close` | Session 准备/清理 | Driver 方法 `closeSession` | Native Session shutdown |
+| `cleanup` | Session 准备/清理 | Core 不变量 | Feature resource cleanup |
 
 <!-- RUNTIME_FEATURE_CATALOG_GENERATED_END -->
 
