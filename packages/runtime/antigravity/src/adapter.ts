@@ -248,7 +248,9 @@ export function createAntigravityRuntime(
     attachmentDirectory: implemented(),
     usage: implemented(),
     contextWindow: runtimeFeature.native(
-      runtimeFeature.unsupported("agy does not expose a stable context-window inspection endpoint."),
+      runtimeFeature.unsupported(
+        "agy does not expose a stable context-window inspection endpoint.",
+      ),
     ),
     compaction: runtimeFeature.native(
       runtimeFeature.degraded(ANTIGRAVITY_EVIDENCE_PENDING, { compactionModes: ["events"] }),
@@ -360,10 +362,7 @@ export function createAntigravityRuntime(
     {
       sessionRestoreHandler: options.sessionRestoreHandler,
       sessionSyncCallback: options.sessionSyncCallback,
-      createProcessEnvironment: () => ({
-        ...process.env,
-        ...(options.env ?? {}),
-      }),
+      createProcessEnvironment: () => ({ ...(options.env ?? process.env) }),
     },
   );
 }

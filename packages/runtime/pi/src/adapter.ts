@@ -196,25 +196,24 @@ export function createPiRuntime(options: CloudPiRuntimeAdapterOptions = {}): Run
         const loader = ctx.features.skills;
         const mcp = ctx.features.mcp;
         const permissions = ctx.features.permissions;
-        const [registeredProvider, piSessionManagerResult] =
-          await Promise.all([
-            selectedProviderId === undefined
-              ? Promise.resolve(undefined)
-              : timedPiPhase(ctx.logger, "model_provider_resolve", sessionStartedAt, async () =>
-                  options.modelProviders?.resolveProvider(selectedProviderId),
-                ),
-            timedPiPhase(
-              ctx.logger,
-              "session_manager",
-              sessionStartedAt,
-              async () =>
-                await createPiSessionManager(
-                  cwd,
-                  ctx.persistence.spec?.sessionDir ?? ctx.paths.runtimeSessionDir("pi"),
-                  ctx.request.runtimeSession?.id,
-                ),
-            ),
-          ]);
+        const [registeredProvider, piSessionManagerResult] = await Promise.all([
+          selectedProviderId === undefined
+            ? Promise.resolve(undefined)
+            : timedPiPhase(ctx.logger, "model_provider_resolve", sessionStartedAt, async () =>
+                options.modelProviders?.resolveProvider(selectedProviderId),
+              ),
+          timedPiPhase(
+            ctx.logger,
+            "session_manager",
+            sessionStartedAt,
+            async () =>
+              await createPiSessionManager(
+                cwd,
+                ctx.persistence.spec?.sessionDir ?? ctx.paths.runtimeSessionDir("pi"),
+                ctx.request.runtimeSession?.id,
+              ),
+          ),
+        ]);
         if (selectedProviderId !== undefined && registeredProvider === undefined) {
           throw new Error(`Model provider is not registered: ${selectedProviderId}`);
         }
@@ -348,6 +347,7 @@ export function createPiRuntime(options: CloudPiRuntimeAdapterOptions = {}): Run
     {
       sessionRestoreHandler: options.sessionRestoreHandler,
       sessionSyncCallback: options.sessionSyncCallback,
+      createProcessEnvironment: () => ({ ...(options.env ?? process.env) }),
     },
   );
 }

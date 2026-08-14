@@ -70,7 +70,8 @@ export function createQoderCliRuntime(options: QoderCliRuntimeAdapterOptions = {
     id: "qodercli.skills",
     readiness: runtimeFeature.degraded(QODER_EVIDENCE_PENDING),
     async prepare(ctx) {
-      const sessionDir = ctx.persistence.spec?.sessionDir ?? ctx.paths.runtimeSessionDir("qodercli");
+      const sessionDir =
+        ctx.persistence.spec?.sessionDir ?? ctx.paths.runtimeSessionDir("qodercli");
       return await materializeQoderSkillPlugin(ctx.agent, sessionDir);
     },
   });
@@ -232,10 +233,7 @@ export function createQoderCliRuntime(options: QoderCliRuntimeAdapterOptions = {
     {
       sessionRestoreHandler: options.sessionRestoreHandler,
       sessionSyncCallback: options.sessionSyncCallback,
-      createProcessEnvironment: () => ({
-        ...process.env,
-        ...(options.env ?? {}),
-      }),
+      createProcessEnvironment: () => ({ ...(options.env ?? process.env) }),
     },
   );
 }

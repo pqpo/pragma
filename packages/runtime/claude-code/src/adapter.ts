@@ -279,10 +279,7 @@ export function createClaudeCodeRuntime(
     {
       sessionRestoreHandler: options.sessionRestoreHandler,
       sessionSyncCallback: options.sessionSyncCallback,
-      createProcessEnvironment: () => ({
-        ...filterClaudeRuntimeEnv(process.env),
-        ...(options.env ?? {}),
-      }),
+      createProcessEnvironment: () => filterClaudeRuntimeEnv(options.env ?? process.env),
     },
   );
 }

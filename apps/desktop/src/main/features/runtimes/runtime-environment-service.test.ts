@@ -237,7 +237,7 @@ describe("Antigravity CLI tool permission mapping", () => {
 
 describe("built-in Runtime process environments", () => {
   it.runIf(process.platform !== "win32")(
-    "injects one recovered environment into CLI availability probes and skips it for PI",
+    "injects one recovered environment into every built-in Runtime",
     async () => {
       const executableDirectory = await mkdtemp(join(tmpdir(), "pragma-runtime-probes-"));
       await Promise.all(
@@ -290,7 +290,7 @@ describe("built-in Runtime process environments", () => {
 
       const piFactory = factories.find((candidate) => candidate.id === "pragma.runtime.pi")!;
       await piFactory.create(definition("pi", "PI", "pragma.runtime.pi"));
-      expect(getRuntimeProcessEnvironment).toHaveBeenCalledTimes(4);
+      expect(getRuntimeProcessEnvironment).toHaveBeenCalledTimes(5);
     },
   );
 });

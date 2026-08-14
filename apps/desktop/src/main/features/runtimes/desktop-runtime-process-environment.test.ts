@@ -7,7 +7,7 @@ import { describe, expect, it, vi } from "vitest";
 import { createDesktopRuntimeProcessEnvironment } from "./desktop-runtime-process-environment.ts";
 
 describe("DesktopRuntimeProcessEnvironment", () => {
-  it("recovers PATH from the login shell once and reuses one immutable snapshot", async () => {
+  it("recovers a filtered toolchain environment from the login shell once", async () => {
     const root = await mkdtemp(join(tmpdir(), "pragma-runtime-path-"));
     const shellDirectory = join(root, "shell");
     const loginBin = join(root, "login-bin");
@@ -24,7 +24,7 @@ describe("DesktopRuntimeProcessEnvironment", () => {
     const shell = join(shellDirectory, "zsh");
     await writeFile(
       shell,
-      `#!/bin/sh\nprintf x >> '${invocationFile}'\nexport PATH='${loginBinLink}:${loginBin}:${loginBinLink}:${originalBin}'\nprintf 'shell startup noise\\n'\nexec /bin/sh -c "$2"\n`,
+      `#!/bin/sh\nprintf x >> '${invocationFile}'\nexport PATH='${loginBinLink}:${loginBin}:${loginBinLink}:${originalBin}'\nexport NVM_DIR='${root}/.nvm'\nexport PNPM_HOME='${root}/.pnpm'\nexport JAVA_HOME='${root}/.java'\nexport OPENAI_API_KEY='must-not-reach-runtime'\nprintf 'shell startup noise\\n'\nexec /bin/sh -c "$2"\n`,
     );
     await chmod(shell, 0o755);
     const logger = { info: vi.fn(), warn: vi.fn() };
@@ -37,15 +37,28 @@ describe("DesktopRuntimeProcessEnvironment", () => {
 
     await expect(readFile(invocationFile, "utf8")).rejects.toMatchObject({ code: "ENOENT" });
     service.warmUp();
-    const [first, second] = await Promise.all([service.get(), service.get()]);
+    const [first, second, snapshot] = await Promise.all([
+      service.get(),
+      service.get(),
+      service.getSnapshot(),
+    ]);
 
     expect(first).toBe(second);
     expect(Object.isFrozen(first)).toBe(true);
+    expect(snapshot.env).toBe(first);
+    expect(snapshot.shell).toBe(shell);
+    expect(snapshot.capturedAt).toEqual(expect.any(Number));
     const loginBinRealPath = await realpath(loginBin);
     expect(first["PATH"]?.split(delimiter)[0]).toBe(loginBinRealPath);
     expect(
       first["PATH"]?.split(delimiter).filter((entry) => entry === loginBinRealPath),
     ).toHaveLength(1);
+    expect(first).toMatchObject({
+      NVM_DIR: `${root}/.nvm`,
+      PNPM_HOME: `${root}/.pnpm`,
+      JAVA_HOME: `${root}/.java`,
+    });
+    expect(first["OPENAI_API_KEY"]).toBeUndefined();
     expect(logger.info).toHaveBeenCalledWith(
       "desktop.runtime_process_environment_ready",
       expect.any(String),
@@ -53,6 +66,29 @@ describe("DesktopRuntimeProcessEnvironment", () => {
     );
     expect(logger.warn).not.toHaveBeenCalled();
     await expect(readFile(invocationFile, "utf8")).resolves.toBe("x");
+  });
+
+  it("refreshes the in-memory shell snapshot without persisting it", async () => {
+    const root = await mkdtemp(join(tmpdir(), "pragma-runtime-environment-refresh-"));
+    const shell = join(root, "zsh");
+    const invocations = join(root, "invocations");
+    await writeFile(
+      shell,
+      `#!/bin/sh\nprintf x >> '${invocations}'\nexport PATH='/usr/bin:/bin'\nexec /bin/sh -c "$2"\n`,
+      { mode: 0o755 },
+    );
+    const service = createDesktopRuntimeProcessEnvironment({
+      logger: { info: vi.fn(), warn: vi.fn() },
+      env: { HOME: root, PATH: "/usr/bin:/bin", SHELL: shell },
+      homeDirectory: root,
+      platform: "linux",
+    });
+
+    const first = await service.getSnapshot();
+    const second = await service.refresh();
+
+    expect(second).not.toBe(first);
+    await expect(readFile(invocations, "utf8")).resolves.toBe("xx");
   });
 
   it("falls back to common and original directories for an unsupported shell", async () => {

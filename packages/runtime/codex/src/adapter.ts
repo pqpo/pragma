@@ -339,7 +339,7 @@ export function createCodexRuntime(options: CodexRuntimeAdapterOptions = {}): Ru
     {
       sessionRestoreHandler: options.sessionRestoreHandler,
       sessionSyncCallback: options.sessionSyncCallback,
-      createProcessEnvironment: () => ({ ...process.env, ...(options.env ?? {}) }),
+      createProcessEnvironment: () => ({ ...(options.env ?? process.env) }),
     },
   );
 }

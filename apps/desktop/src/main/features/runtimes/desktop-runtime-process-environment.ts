@@ -14,8 +14,20 @@ const DEFAULT_MAX_OUTPUT_BYTES = 64 * 1024;
 type RuntimeEnvironmentLogger = Pick<PragmaLogger, "info" | "warn">;
 
 export interface DesktopRuntimeProcessEnvironment {
+  readonly getSnapshot: () => Promise<ShellEnvironmentSnapshot>;
   readonly get: () => Promise<NodeJS.ProcessEnv>;
+  readonly refresh: () => Promise<ShellEnvironmentSnapshot>;
   readonly warmUp: () => void;
+}
+
+/**
+ * The in-memory, filtered process environment used to launch local Runtimes.
+ * It deliberately excludes credentials and other unrelated shell state.
+ */
+export interface ShellEnvironmentSnapshot {
+  readonly shell?: string | undefined;
+  readonly env: Readonly<NodeJS.ProcessEnv>;
+  readonly capturedAt: number;
 }
 
 export interface CreateDesktopRuntimeProcessEnvironmentOptions {
@@ -28,8 +40,8 @@ export interface CreateDesktopRuntimeProcessEnvironmentOptions {
   readonly maxOutputBytes?: number | undefined;
 }
 
-interface RuntimePathResolution {
-  readonly path: string | undefined;
+interface RuntimeEnvironmentResolution {
+  readonly environment: NodeJS.ProcessEnv;
   readonly source: "login-shell" | "fallback" | "original";
   readonly failureKind?: ShellPathFailureKind | undefined;
 }
@@ -41,11 +53,61 @@ interface ResolvedDesktopRuntimeProcessEnvironmentOptions extends CreateDesktopR
 }
 
 type ShellPathFailureKind =
-  | "invalid-output"
-  | "output-limit"
-  | "spawn-failed"
-  | "timeout"
-  | "unsupported-shell";
+  "invalid-output" | "output-limit" | "spawn-failed" | "timeout" | "unsupported-shell";
+
+const UNIX_RUNTIME_ENVIRONMENT_VARIABLES = new Set([
+  "HOME",
+  "LANG",
+  "LC_ALL",
+  "LC_CTYPE",
+  "LOGNAME",
+  "PATH",
+  "SHELL",
+  "TEMP",
+  "TMP",
+  "TMPDIR",
+  "USER",
+  // Common language and package-manager roots. Their corresponding binaries
+  // are normally added to PATH by the login shell.
+  "ASDF_DATA_DIR",
+  "BUN_INSTALL",
+  "CARGO_HOME",
+  "DENO_INSTALL",
+  "FNM_DIR",
+  "GOPATH",
+  "GOROOT",
+  "JAVA_HOME",
+  "MISE_DATA_DIR",
+  "NVM_DIR",
+  "PNPM_HOME",
+  "PYENV_ROOT",
+  "RBENV_ROOT",
+  "RUSTUP_HOME",
+  "VOLTA_HOME",
+]);
+
+const WINDOWS_RUNTIME_ENVIRONMENT_VARIABLES = new Set([
+  "APPDATA",
+  "COMSPEC",
+  "HOMEDRIVE",
+  "HOMEPATH",
+  "LOCALAPPDATA",
+  "PATH",
+  "PATHEXT",
+  "PROGRAMDATA",
+  "PROGRAMFILES",
+  "PROGRAMFILES(X86)",
+  "PROGRAMW6432",
+  "SHELL",
+  "SYSTEMDRIVE",
+  "SYSTEMROOT",
+  "TEMP",
+  "TMP",
+  "TMPDIR",
+  "USERDOMAIN",
+  "USERNAME",
+  "USERPROFILE",
+]);
 
 class ShellPathError extends Error {
   constructor(readonly kind: ShellPathFailureKind) {
@@ -59,34 +121,45 @@ export function createDesktopRuntimeProcessEnvironment(
   const sourceEnvironment = { ...(options.env ?? process.env) };
   const platform = options.platform ?? process.platform;
   const homeDirectory = options.homeDirectory ?? sourceEnvironment["HOME"] ?? homedir();
-  let environmentPromise: Promise<NodeJS.ProcessEnv> | undefined;
+  let snapshotPromise: Promise<ShellEnvironmentSnapshot> | undefined;
 
-  const get = (): Promise<NodeJS.ProcessEnv> => {
-    environmentPromise ??= resolveRuntimeProcessEnvironmentWithFallback({
+  const createSnapshot = (): Promise<ShellEnvironmentSnapshot> =>
+    resolveRuntimeProcessEnvironmentWithFallback({
       ...options,
       env: sourceEnvironment,
       platform,
       homeDirectory,
     });
-    return environmentPromise;
+  const getSnapshot = (): Promise<ShellEnvironmentSnapshot> => {
+    snapshotPromise ??= createSnapshot();
+    return snapshotPromise;
   };
+  const get = async (): Promise<NodeJS.ProcessEnv> => (await getSnapshot()).env;
 
   return {
+    getSnapshot,
     get,
+    refresh: () => {
+      const nextSnapshot = createSnapshot();
+      snapshotPromise = nextSnapshot;
+      return nextSnapshot;
+    },
     warmUp: () => {
-      void get();
+      void getSnapshot();
     },
   };
 }
 
 async function resolveRuntimeProcessEnvironmentWithFallback(
   options: ResolvedDesktopRuntimeProcessEnvironmentOptions,
-): Promise<NodeJS.ProcessEnv> {
+): Promise<ShellEnvironmentSnapshot> {
   const startedAt = performance.now();
   try {
     return await resolveRuntimeProcessEnvironment(options);
   } catch {
-    const environment = Object.freeze({ ...options.env });
+    const environment = Object.freeze(
+      filterRuntimeProcessEnvironment(options.env, options.platform),
+    );
     writeEnvironmentLog(options.logger, "warn", {
       event: "desktop.runtime_process_environment_emergency_fallback",
       message:
@@ -98,31 +171,31 @@ async function resolveRuntimeProcessEnvironmentWithFallback(
         failureKind: "unexpected-error",
       },
     });
-    return environment;
+    return { shell: options.env["SHELL"], env: environment, capturedAt: Date.now() };
   }
 }
 
 async function resolveRuntimeProcessEnvironment(
   options: ResolvedDesktopRuntimeProcessEnvironmentOptions,
-): Promise<NodeJS.ProcessEnv> {
+): Promise<ShellEnvironmentSnapshot> {
   const startedAt = performance.now();
   const originalEnvironment = options.env;
-  let resolution: RuntimePathResolution;
+  let resolution: RuntimeEnvironmentResolution;
 
   if (options.platform === "win32") {
-    resolution = { path: originalEnvironment["PATH"], source: "original" };
+    resolution = { environment: originalEnvironment, source: "original" };
   } else {
-    resolution = await resolvePosixRuntimePath(options);
+    resolution = await resolvePosixRuntimeEnvironment(options);
   }
 
-  const environment: NodeJS.ProcessEnv = { ...originalEnvironment };
-  if (resolution.path !== undefined) environment["PATH"] = resolution.path;
-  Object.freeze(environment);
+  const environment = Object.freeze(
+    filterRuntimeProcessEnvironment(resolution.environment, options.platform),
+  );
 
   const attributes = {
     source: resolution.source,
     durationMs: elapsedMs(startedAt),
-    pathDirectoryCount: resolution.path?.split(delimiter).filter(Boolean).length ?? 0,
+    pathDirectoryCount: environment["PATH"]?.split(delimiter).filter(Boolean).length ?? 0,
   };
   if (resolution.failureKind === undefined) {
     writeEnvironmentLog(options.logger, "info", {
@@ -138,16 +211,16 @@ async function resolveRuntimeProcessEnvironment(
     });
   }
 
-  return environment;
+  return { shell: options.env["SHELL"], env: environment, capturedAt: Date.now() };
 }
 
-async function resolvePosixRuntimePath(
+async function resolvePosixRuntimeEnvironment(
   options: ResolvedDesktopRuntimeProcessEnvironmentOptions,
-): Promise<RuntimePathResolution> {
-  let loginShellPath: string | undefined;
+): Promise<RuntimeEnvironmentResolution> {
+  let loginShellEnvironment: NodeJS.ProcessEnv | undefined;
   let failureKind: ShellPathFailureKind | undefined;
   try {
-    loginShellPath = await readLoginShellPath({
+    loginShellEnvironment = await readLoginShellEnvironment({
       shell: options.env["SHELL"],
       env: options.env,
       timeoutMs: options.shellTimeoutMs ?? DEFAULT_SHELL_TIMEOUT_MS,
@@ -159,36 +232,40 @@ async function resolvePosixRuntimePath(
   }
 
   const candidates = [
-    ...splitPath(loginShellPath),
+    ...splitPath(loginShellEnvironment?.["PATH"]),
     ...commonExecutableDirectories(options.platform, options.homeDirectory),
     ...splitPath(options.env["PATH"]),
   ];
   const directories = await normalizeExistingDirectories(candidates);
+  const environment = {
+    ...(loginShellEnvironment ?? options.env),
+    PATH: directories.length === 0 ? options.env["PATH"] : directories.join(delimiter),
+  };
   return {
-    path: directories.length === 0 ? options.env["PATH"] : directories.join(delimiter),
+    environment,
     source: failureKind === undefined ? "login-shell" : "fallback",
     ...(failureKind === undefined ? {} : { failureKind }),
   };
 }
 
-async function readLoginShellPath(options: {
+async function readLoginShellEnvironment(options: {
   readonly shell: string | undefined;
   readonly env: NodeJS.ProcessEnv;
   readonly timeoutMs: number;
   readonly forceKillDelayMs: number;
   readonly maxOutputBytes: number;
-}): Promise<string> {
+}): Promise<NodeJS.ProcessEnv> {
   const shell = options.shell;
   if (shell === undefined || !isAbsolute(shell) || !SUPPORTED_LOGIN_SHELLS.has(basename(shell))) {
     throw new ShellPathError("unsupported-shell");
   }
 
   const marker = randomBytes(16).toString("hex");
-  const startMarker = `__PRAGMA_PATH_START_${marker}__`;
-  const endMarker = `__PRAGMA_PATH_END_${marker}__`;
-  const command = `printf '%s\\n%s\\n%s\\n' '${startMarker}' "$PATH" '${endMarker}'`;
+  const startMarker = `__PRAGMA_ENV_START_${marker}__`;
+  const endMarker = `__PRAGMA_ENV_END_${marker}__`;
+  const command = `printf '%s\\0' '${startMarker}'; /usr/bin/env -0; printf '%s\\0' '${endMarker}'`;
 
-  return await new Promise<string>((resolve, reject) => {
+  return await new Promise<NodeJS.ProcessEnv>((resolve, reject) => {
     const child = spawn(shell, ["-ilc", command], {
       detached: true,
       env: options.env,
@@ -200,13 +277,16 @@ async function readLoginShellPath(options: {
     let settled = false;
     let forceKillTimer: NodeJS.Timeout | undefined;
 
-    const finish = (result: { readonly path?: string; readonly error?: ShellPathError }): void => {
+    const finish = (result: {
+      readonly environment?: NodeJS.ProcessEnv;
+      readonly error?: ShellPathError;
+    }): void => {
       if (settled) return;
       settled = true;
       clearTimeout(timeoutTimer);
       if (forceKillTimer !== undefined) clearTimeout(forceKillTimer);
       if (result.error !== undefined) reject(result.error);
-      else resolve(result.path ?? "");
+      else resolve(result.environment ?? {});
     };
     const terminate = (kind: ShellPathFailureKind): void => {
       if (failureKind !== undefined) return;
@@ -235,8 +315,12 @@ async function readLoginShellPath(options: {
         finish({ error: new ShellPathError(failureKind) });
         return;
       }
-      const path = parseMarkedPath(stdout, startMarker, endMarker);
-      finish(path === undefined ? { error: new ShellPathError("invalid-output") } : { path });
+      const environment = parseMarkedEnvironment(stdout, startMarker, endMarker);
+      finish(
+        environment === undefined
+          ? { error: new ShellPathError("invalid-output") }
+          : { environment },
+      );
     });
 
     const timeoutTimer = setTimeout(() => terminate("timeout"), options.timeoutMs);
@@ -244,18 +328,50 @@ async function readLoginShellPath(options: {
   });
 }
 
-function parseMarkedPath(
+function parseMarkedEnvironment(
   output: string,
   startMarker: string,
   endMarker: string,
-): string | undefined {
-  const start = output.lastIndexOf(`${startMarker}\n`);
+): NodeJS.ProcessEnv | undefined {
+  const start = output.lastIndexOf(`${startMarker}\0`);
   if (start < 0) return undefined;
   const valueStart = start + startMarker.length + 1;
-  const end = output.indexOf(`\n${endMarker}`, valueStart);
+  const end = output.indexOf(`${endMarker}\0`, valueStart);
   if (end < 0) return undefined;
-  const value = output.slice(valueStart, end);
-  return value === "" || value.includes("\0") || value.includes("\n") ? undefined : value;
+  const environment: NodeJS.ProcessEnv = {};
+  for (const entry of output.slice(valueStart, end).split("\0")) {
+    if (entry === "") continue;
+    const separator = entry.indexOf("=");
+    if (separator <= 0) return undefined;
+    environment[entry.slice(0, separator)] = entry.slice(separator + 1);
+  }
+  return environment;
+}
+
+/**
+ * Mirrors Codex's "core" shell environment policy: retain only variables
+ * required to identify the user, resolve executables, and locate supported
+ * toolchains. The snapshot is intentionally not a secret transport.
+ */
+export function filterRuntimeProcessEnvironment(
+  environment: NodeJS.ProcessEnv,
+  platform: NodeJS.Platform = process.platform,
+): NodeJS.ProcessEnv {
+  const allowed =
+    platform === "win32"
+      ? WINDOWS_RUNTIME_ENVIRONMENT_VARIABLES
+      : UNIX_RUNTIME_ENVIRONMENT_VARIABLES;
+  const filtered: NodeJS.ProcessEnv = {};
+  for (const [key, value] of Object.entries(environment)) {
+    const normalized = key.toUpperCase();
+    if (
+      value !== undefined &&
+      (allowed.has(normalized) || (platform !== "win32" && normalized.startsWith("LC_")))
+    ) {
+      filtered[key] = value;
+    }
+  }
+  return filtered;
 }
 
 async function normalizeExistingDirectories(candidates: readonly string[]): Promise<string[]> {
