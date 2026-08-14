@@ -147,6 +147,7 @@ export interface ExpertAgentStoredContextItemReadInput {
 }
 
 export interface ExpertAgentContextItemListInput {
+  readonly namespace?: string | undefined;
   readonly context?: ExpertAgentRunContext | undefined;
 }
 
@@ -450,7 +451,7 @@ export class ContextSystem {
   }
 
   async index(
-    context: ExpertAgentRunContext = {},
+    input: ExpertAgentContextItemListInput = {},
   ): Promise<ExpertAgentContextResult<ContextIndex>> {
     if (this.stores.size === 0) {
       return ok({ items: [], issues: [] });
@@ -458,9 +459,15 @@ export class ContextSystem {
 
     const summaries: ExpertAgentContextItemSummary[] = [];
     const issues: ContextStoreIssue[] = [];
+    const storesResult = this.getStoresForNamespace(input.namespace);
 
-    for (const [namespace, binding] of this.stores) {
-      const listResult = await binding.store.listContext({ context });
+    if (!storesResult.ok) {
+      return storesResult;
+    }
+
+    for (const [namespace, store] of storesResult.value) {
+      const binding = this.stores.get(namespace)!;
+      const listResult = await store.listContext({ context: input.context });
 
       if (!listResult.ok) {
         if (binding.required) {
@@ -686,7 +693,7 @@ export class ContextSystem {
     }
 
     const matches: ExpertAgentContextItemSearchMatch[] = [];
-    const storesResult = this.getSearchStores(normalizedInput.value.namespace);
+    const storesResult = this.getStoresForNamespace(normalizedInput.value.namespace);
 
     if (!storesResult.ok) {
       return storesResult;
@@ -754,7 +761,7 @@ export class ContextSystem {
     return ok(binding.store);
   }
 
-  private getSearchStores(
+  private getStoresForNamespace(
     namespace: string | undefined,
   ): ExpertAgentContextResult<readonly (readonly [string, ExpertAgentContextStore])[]> {
     if (namespace !== undefined) {

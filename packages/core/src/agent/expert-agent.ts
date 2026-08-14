@@ -13,6 +13,7 @@ import type {
   ExpertAgentContextItemSearchInput,
   ExpertAgentContextItemSearchMatch,
   ExpertAgentContextItemReadInput,
+  ExpertAgentContextItemListInput,
   ContextIndex,
 } from "../context-system/context-system.ts";
 import { createContextTools } from "../context-system/context-tools.ts";
@@ -313,9 +314,12 @@ export class Expert implements IExpertAgent {
   }
 
   async listContext(
-    context: ExpertAgentRunContext = createExpertAgentRunContext(),
+    input: ExpertAgentContextItemListInput = {},
   ): Promise<ExpertAgentContextResult<ContextIndex>> {
-    return await this.contextSystem.index(createExpertAgentRunContext(context));
+    return await this.contextSystem.index({
+      ...input,
+      context: createExpertAgentRunContext(input.context),
+    });
   }
 
   async readContext(

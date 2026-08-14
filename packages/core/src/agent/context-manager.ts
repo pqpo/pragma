@@ -104,7 +104,7 @@ export class ContextManager {
       12_000,
     );
     const preloadByteBudget = normalizeBudget(options.preloadByteBudget, 8_000);
-    const indexResult = await this.contextSystem.index(runContext);
+    const indexResult = await this.contextSystem.index({ context: runContext });
     if (!indexResult.ok) {
       throw new ContextAssemblyError(
         "context_preload_failed",
@@ -414,7 +414,7 @@ function formatContextAccessRulesSection(): string {
   return [
     "Context access rules:",
     "- Context ids are Context System identifiers, not local filesystem paths.",
-    "- Use list_expert_context like a paginated directory listing to discover context ids and descriptions. Continue with its nextCursor when present.",
+    "- Use list_expert_context like a paginated directory listing to discover context ids and descriptions. Pass namespace when you need to browse one known context namespace; continue with its nextCursor using the same namespace when present.",
     "- Use search_expert_context to discover context by path or content, refine broad queries when results are omitted, and use read_expert_context when you know the context id.",
     "- Search snippets may be truncated. Read the referenced context in byte ranges with start/offset when complete content is needed.",
     "- Always-on context must remain available. If its complete text is missing or uncertain, use read_expert_context to reload the relevant context id before relying on a summary or paraphrase.",

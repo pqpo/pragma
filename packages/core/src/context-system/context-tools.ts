@@ -60,9 +60,10 @@ export interface CreateContextToolsOptions {
 }
 
 export interface ExpertAgentContextItemOperations {
-  readonly listContext: (
-    context?: ExpertAgentRunContext,
-  ) => Promise<ExpertAgentContextResult<ContextIndex>>;
+  readonly listContext: (input?: {
+    readonly namespace?: string | undefined;
+    readonly context?: ExpertAgentRunContext | undefined;
+  }) => Promise<ExpertAgentContextResult<ContextIndex>>;
   readonly readContext: (
     input: ExpertAgentContextItemReadInput,
   ) => Promise<ExpertAgentContextResult<ExpertAgentContextItem>>;
@@ -90,13 +91,20 @@ export function createContextTools(
       name: "list_expert_context",
       label: "List expert context",
       description:
-        "List Expert context by id, description, and trigger. Continue with nextCursor when the result is paginated.",
+        "List Expert context by id, description, and trigger. Optionally restrict the listing to one context namespace. Continue with nextCursor using the same namespace when the result is paginated.",
       inputSchema: objectSchema({
+        namespace: stringSchema(
+          "Optional context namespace to list. Omit to list every namespace.",
+        ),
         cursor: stringSchema("Opaque cursor returned by a previous list_expert_context call."),
         limit: integerSchema("Maximum items to return. Defaults to 20 and is capped at 50."),
       }),
       call: async (args, _signal, context) => {
-        const result = await contextOperations.listContext(readRunContext(options, context));
+        const namespace = readOptionalStringParam(args, "namespace");
+        const result = await contextOperations.listContext({
+          ...(namespace === undefined ? {} : { namespace }),
+          context: readRunContext(options, context),
+        });
 
         if (!result.ok) {
           return errorResult(result.error);
@@ -107,6 +115,7 @@ export function createContextTools(
           readOptionalStringParam(args, "cursor"),
           normalizeListLimit(readOptionalNumberParam(args, "limit")),
           normalizeResultByteBudget(options),
+          namespace,
         );
         if (!page.ok) return errorResult(page.error);
 
@@ -816,16 +825,30 @@ interface ContextIndexPage {
   readonly nextCursor?: string | undefined;
 }
 
-type ContextListCursor = readonly [version: 1, offset: number];
+type ContextListCursor =
+  | readonly [version: 1, offset: number]
+  | readonly [version: 2, offset: number, namespace: string | null];
 
 function paginateContextIndex(
   index: ContextIndex,
   encodedCursor: string | undefined,
   limit: number,
   byteBudget: number,
+  namespace: string | undefined,
 ): ExpertAgentContextResult<ContextIndexPage> {
   const cursor = decodeContextListCursor(encodedCursor);
   if (!cursor.ok) return cursor;
+  const cursorNamespace = cursor.value?.length === 3 ? cursor.value[2] : null;
+  const requestedNamespace = namespace ?? null;
+  if (cursor.value !== undefined && cursorNamespace !== requestedNamespace) {
+    return {
+      ok: false,
+      error: {
+        code: "invalid_input",
+        message: "Context list cursor does not match the requested namespace.",
+      },
+    };
+  }
   const sorted = [...index.items].sort(compareContextSummary);
   const startOffset = Math.min(cursor.value?.[1] ?? 0, sorted.length);
   const selected: ExpertAgentContextItemSummary[] = [];
@@ -864,7 +887,9 @@ function paginateContextIndex(
       byteBudget,
       skippedOversized,
       omittedIssues: boundedIssues.omitted,
-      ...(hasMore ? { nextCursor: encodeContextListCursor([1, nextOffset]) } : {}),
+      ...(hasMore
+        ? { nextCursor: encodeContextListCursor([2, nextOffset, requestedNamespace]) }
+        : {}),
     },
   };
 }
@@ -914,15 +939,20 @@ function decodeContextListCursor(
     const value: unknown = JSON.parse(Buffer.from(cursor, "base64url").toString("utf8"));
     if (
       !Array.isArray(value) ||
-      value.length !== 2 ||
-      value[0] !== 1 ||
+      (value.length !== 2 && value.length !== 3) ||
+      (value[0] !== 1 && value[0] !== 2) ||
       typeof value[1] !== "number" ||
       !Number.isSafeInteger(value[1]) ||
-      value[1] < 0
+      value[1] < 0 ||
+      (value[0] === 1 && value.length !== 2) ||
+      (value[0] === 2 &&
+        (value.length !== 3 || (typeof value[2] !== "string" && value[2] !== null)))
     ) {
       throw new Error("invalid cursor shape");
     }
-    return { ok: true, value: [1, value[1]] };
+    return value[0] === 1
+      ? { ok: true, value: [1, value[1]] }
+      : { ok: true, value: [2, value[1], value[2] as string | null] };
   } catch {
     return {
       ok: false,

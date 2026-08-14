@@ -163,11 +163,13 @@ describe("Expert context tools", () => {
     });
 
     expect(listContext).toHaveBeenCalledWith({
-      source: { type: "expert-session", id: "session-1" },
-      attributes: {
-        [EXECUTION_ID_ATTR]: "execution-current",
-        [INVOCATION_ID_ATTR]: "invocation-current",
-        [EXECUTION_CURRENT_EXPERT_ID_ATTR]: "expert-a",
+      context: {
+        source: { type: "expert-session", id: "session-1" },
+        attributes: {
+          [EXECUTION_ID_ATTR]: "execution-current",
+          [INVOCATION_ID_ATTR]: "invocation-current",
+          [EXECUTION_CURRENT_EXPERT_ID_ATTR]: "expert-a",
+        },
       },
     });
   });
@@ -216,6 +218,61 @@ describe("Expert context tools", () => {
       isError: true,
       details: { error: { code: "invalid_input" } },
     });
+  });
+
+  it("lists a requested namespace and prevents cursors from crossing namespace filters", async () => {
+    const unsupported = vi.fn(async () => {
+      throw new Error("not used");
+    });
+    const listContext = vi.fn(async (input?: { readonly namespace?: string | undefined }) => ({
+      ok: true as const,
+      value: {
+        items:
+          input?.namespace === "memory"
+            ? ["a.md", "b.md", "c.md"].map((id) => ({
+                id,
+                namespace: "memory",
+                metadata: { trigger: "manual" as const, priority: "normal" as const },
+              }))
+            : [],
+        issues: [],
+      },
+    }));
+    const operations: ExpertAgentContextItemOperations = {
+      listContext,
+      readContext: unsupported,
+      searchContext: unsupported,
+      addContext: unsupported,
+      editContext: unsupported,
+      deleteContext: unsupported,
+    };
+    const tool = createContextTools(operations).find(
+      (candidate) => candidate.name === "list_expert_context",
+    )!;
+
+    const first = await tool.call({ namespace: "memory", limit: 2 }, undefined);
+    const details = first.details as { readonly page: { readonly nextCursor: string } };
+    expect(listContext).toHaveBeenCalledWith({ namespace: "memory", context: expect.any(Object) });
+    expect(first.text).toContain("Showing 2 of 3");
+
+    await expect(
+      tool.call({ cursor: details.page.nextCursor, limit: 2 }, undefined),
+    ).resolves.toMatchObject({
+      isError: true,
+      details: { error: { code: "invalid_input", message: expect.stringContaining("namespace") } },
+    });
+    await expect(
+      tool.call(
+        { namespace: "mission-board", cursor: details.page.nextCursor, limit: 2 },
+        undefined,
+      ),
+    ).resolves.toMatchObject({
+      isError: true,
+      details: { error: { code: "invalid_input", message: expect.stringContaining("namespace") } },
+    });
+    await expect(
+      tool.call({ namespace: "memory", cursor: details.page.nextCursor, limit: 2 }, undefined),
+    ).resolves.toMatchObject({ text: expect.stringContaining("Showing 1 of 3") });
   });
 
   it("advances pagination past context identifiers that cannot fit in the result budget", async () => {
