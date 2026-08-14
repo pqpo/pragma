@@ -5,7 +5,6 @@ import {
   defineRuntimeFeatures,
   defineRuntimeDriver,
   registerExpertToolsMcpSession,
-  readRuntimePreparedFeature,
   runtimeFeature,
   type ExpertToolsMcpSessionRegistration,
   type ExpertToolRuntimeState,
@@ -148,8 +147,8 @@ export function createAntigravityRuntime(
   };
   const preparePermissions = async (
     ctx: RuntimeFeatureSessionPrepareContext,
+    { mcp }: { readonly mcp: AntigravityMcpPreparation },
   ): Promise<AntigravityPermissionPreparation> => {
-    const mcp = readRuntimePreparedFeature<AntigravityMcpPreparation>(ctx, "mcp");
     const hookRelay = await ctx.resources.acquire(
       "antigravity.permission-relay",
       async () =>
@@ -185,12 +184,14 @@ export function createAntigravityRuntime(
   };
   const prepareSkills = async (
     ctx: RuntimeFeatureSessionPrepareContext,
+    {
+      mcp,
+      permissions,
+    }: {
+      readonly mcp: AntigravityMcpPreparation;
+      readonly permissions: AntigravityPermissionPreparation;
+    },
   ): Promise<AntigravitySkillsPreparation> => {
-    const mcp = readRuntimePreparedFeature<AntigravityMcpPreparation>(ctx, "mcp");
-    const permissions = readRuntimePreparedFeature<AntigravityPermissionPreparation>(
-      ctx,
-      "permissions",
-    );
     return {
       managedHome: await prepareManagedAntigravityHome({
         agent: ctx.agent,
@@ -205,7 +206,22 @@ export function createAntigravityRuntime(
       }),
     };
   };
-  const implemented = () => runtimeFeature.degraded(ANTIGRAVITY_EVIDENCE_PENDING);
+  const implemented = () =>
+    runtimeFeature.native(runtimeFeature.degraded(ANTIGRAVITY_EVIDENCE_PENDING));
+  const mcp = runtimeFeature.session({
+    readiness: runtimeFeature.degraded(ANTIGRAVITY_EVIDENCE_PENDING),
+    prepare: prepareMcp,
+  });
+  const permissions = runtimeFeature.session({
+    readiness: runtimeFeature.degraded(ANTIGRAVITY_EVIDENCE_PENDING),
+    needs: { mcp },
+    prepare: preparePermissions,
+  });
+  const skills = runtimeFeature.session({
+    readiness: runtimeFeature.degraded(ANTIGRAVITY_EVIDENCE_PENDING),
+    needs: { mcp, permissions },
+    prepare: prepareSkills,
+  });
   const features = defineRuntimeFeatures({
     availability: implemented(),
     authentication: implemented(),
@@ -219,30 +235,30 @@ export function createAntigravityRuntime(
     textStreaming: implemented(),
     reasoningStreaming: implemented(),
     nativeToolLifecycle: implemented(),
-    mcp: runtimeFeature.degraded(ANTIGRAVITY_EVIDENCE_PENDING, {
-      prepareSession: prepareMcp,
-    }),
-    permissions: runtimeFeature.degraded(ANTIGRAVITY_EVIDENCE_PENDING, {
-      prepareSession: preparePermissions,
-    }),
+    mcp,
+    permissions,
     userInteraction: implemented(),
-    skills: runtimeFeature.degraded(ANTIGRAVITY_EVIDENCE_PENDING, {
-      prepareSession: prepareSkills,
-    }),
-    attachmentImage: runtimeFeature.degraded(
-      "The CLI receives image paths through prompt context because agy has no stable native image flag.",
+    skills,
+    attachmentImage: runtimeFeature.native(
+      runtimeFeature.degraded(
+        "The CLI receives image paths through prompt context because agy has no stable native image flag.",
+      ),
     ),
     attachmentFile: implemented(),
     attachmentDirectory: implemented(),
     usage: implemented(),
-    contextWindow: runtimeFeature.unsupported(
-      "agy does not expose a stable context-window inspection endpoint.",
+    contextWindow: runtimeFeature.native(
+      runtimeFeature.unsupported(
+        "agy does not expose a stable context-window inspection endpoint.",
+      ),
     ),
-    compaction: runtimeFeature.degraded(ANTIGRAVITY_EVIDENCE_PENDING, {
-      compactionModes: ["events"],
-    }),
+    compaction: runtimeFeature.native(
+      runtimeFeature.degraded(ANTIGRAVITY_EVIDENCE_PENDING, { compactionModes: ["events"] }),
+    ),
     cancellation: implemented(),
-    steering: runtimeFeature.unsupported("agy exposes no safe active-turn steering API."),
+    steering: runtimeFeature.native(
+      runtimeFeature.unsupported("agy exposes no safe active-turn steering API."),
+    ),
     close: implemented(),
     cleanup: implemented(),
   });
@@ -283,8 +299,8 @@ export function createAntigravityRuntime(
             defaultThinkingLevel,
           );
         }
-        const mcp = readRuntimePreparedFeature<AntigravityMcpPreparation>(ctx, "mcp");
-        const skills = readRuntimePreparedFeature<AntigravitySkillsPreparation>(ctx, "skills");
+        const mcp = ctx.features.mcp;
+        const skills = ctx.features.skills;
         const { managedHome } = skills;
         ctx.logger.info(
           "runtime.antigravity_session_ready",
@@ -346,10 +362,7 @@ export function createAntigravityRuntime(
     {
       sessionRestoreHandler: options.sessionRestoreHandler,
       sessionSyncCallback: options.sessionSyncCallback,
-      createProcessEnvironment: () => ({
-        ...process.env,
-        ...(options.env ?? {}),
-      }),
+      createProcessEnvironment: () => ({ ...(options.env ?? process.env) }),
     },
   );
 }

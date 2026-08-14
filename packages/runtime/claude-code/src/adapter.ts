@@ -1,21 +1,14 @@
 import { readdir } from "node:fs/promises";
 import { join } from "node:path";
 
-import type {
-  McpToolRegistry,
-  McpToolRegistryLease,
-  RuntimeAdapter,
-  RuntimeCanUseResult,
-  ExpertToolsMcpSessionRegistration,
-} from "@pragma/core";
+import type { RuntimeAdapter, RuntimeCanUseResult } from "@pragma/core";
 import {
+  createExpertToolsHttpMcpFeature,
   createMcpToolRegistryPool,
   defineRuntimeFeatures,
   defineRuntimeDriver,
   runtimeFeature,
-  registerExpertToolsMcpSession,
   type RuntimeSessionPersistenceSpec,
-  type ExpertToolRuntimeState,
 } from "@pragma/core";
 import { prepareManagedClaudeCodeConfig } from "./claude-config.ts";
 import { canUseClaudeCodeRuntime } from "./availability.ts";
@@ -75,7 +68,39 @@ export function createClaudeCodeRuntime(
     },
   };
   const listModels = options.listModels ?? createClaudeCodeModelDiscovery(options);
-  const implemented = () => runtimeFeature.degraded(CLAUDE_CODE_EVIDENCE_PENDING);
+  const implemented = () =>
+    runtimeFeature.native(runtimeFeature.degraded(CLAUDE_CODE_EVIDENCE_PENDING));
+  const mcp = createExpertToolsHttpMcpFeature({
+    readiness: runtimeFeature.degraded(CLAUDE_CODE_EVIDENCE_PENDING),
+    pool: mcpToolRegistries,
+    resourcePrefix: "claude-code",
+  });
+  const skills = runtimeFeature.session({
+    id: "claude-code.skills",
+    readiness: runtimeFeature.degraded(CLAUDE_CODE_EVIDENCE_PENDING),
+    async prepare(ctx) {
+      const relay = await ctx.resources.acquire(
+        "claude-code.compaction-relay",
+        createClaudeCompactionHookRelay,
+        async (value) => await value.close(),
+      );
+      const sessionDir =
+        ctx.persistence.spec?.sessionDir ?? ctx.paths.runtimeSessionDir("claude-code");
+      const pluginDir = await materializeClaudeCodePlugin({
+        agent: ctx.agent,
+        sessionDir,
+        compactionHook: { url: relay.url, authorization: relay.authorization },
+      });
+      return { relay, pluginDir };
+    },
+  });
+  const permissions = runtimeFeature.session({
+    id: "claude-code.permissions",
+    readiness: runtimeFeature.degraded(CLAUDE_CODE_EVIDENCE_PENDING),
+    prepare() {
+      return { mode: options.permissionMode ?? DEFAULT_CLAUDE_CODE_PERMISSION_MODE };
+    },
+  });
   const features = defineRuntimeFeatures({
     availability: implemented(),
     authentication: implemented(),
@@ -89,21 +114,25 @@ export function createClaudeCodeRuntime(
     textStreaming: implemented(),
     reasoningStreaming: implemented(),
     nativeToolLifecycle: implemented(),
-    mcp: implemented(),
-    permissions: implemented(),
+    mcp,
+    permissions,
     userInteraction: implemented(),
-    skills: implemented(),
+    skills,
     attachmentImage: implemented(),
     attachmentFile: implemented(),
     attachmentDirectory: implemented(),
     usage: implemented(),
     contextWindow: implemented(),
-    compaction: runtimeFeature.degraded(CLAUDE_CODE_EVIDENCE_PENDING, {
-      compactionModes: ["manual", "events"],
-    }),
+    compaction: runtimeFeature.native(
+      runtimeFeature.degraded(CLAUDE_CODE_EVIDENCE_PENDING, {
+        compactionModes: ["manual", "events"],
+      }),
+    ),
     cancellation: implemented(),
-    steering: runtimeFeature.unsupported(
-      "Claude Code stream-json mode exposes no safe active-turn steering API.",
+    steering: runtimeFeature.native(
+      runtimeFeature.unsupported(
+        "Claude Code stream-json mode exposes no safe active-turn steering API.",
+      ),
     ),
     close: implemented(),
     cleanup: implemented(),
@@ -157,42 +186,8 @@ export function createClaudeCodeRuntime(
           sessionId:
             ctx.persistence.restoredRuntimeSessionId ?? ctx.request.runtimeSession?.id ?? "",
         };
-        const toolRuntimeState: ExpertToolRuntimeState = {};
-        const compactionHookRelay = await ctx.resources.acquire(
-          "claude-code.compaction-relay",
-          createClaudeCompactionHookRelay,
-          async (relay) => await relay.close(),
-        );
-
-        const pluginDir = await materializeClaudeCodePlugin({
-          agent: ctx.agent,
-          sessionDir,
-          compactionHook: {
-            url: compactionHookRelay.url,
-            authorization: compactionHookRelay.authorization,
-          },
-        });
-        const mcpToolRegistryLease: McpToolRegistryLease = await ctx.resources.acquire(
-          "claude-code.mcp-registry",
-          async () => await mcpToolRegistries.acquire(ctx.agent.mcp),
-          async (lease) => await lease.release(),
-        );
-        const mcpToolRegistry: McpToolRegistry = mcpToolRegistryLease.registry;
-        const expertToolsMcpRegistration: ExpertToolsMcpSessionRegistration =
-          await ctx.resources.acquire(
-            "claude-code.mcp-registration",
-            async () =>
-              await registerExpertToolsMcpSession({
-                agent: ctx.agent,
-                getContext: () => ctx.lifecycle.currentContext,
-                humanInteractionHandler: ctx.request.humanInteractionHandler,
-                logger: ctx.logger,
-                mcpTools: mcpToolRegistry.tools,
-                state: toolRuntimeState,
-                executionContext: ctx.request.executionContext,
-              }),
-            async (registration) => await registration.dispose(),
-          );
+        const mcp = ctx.features.mcp;
+        const skills = ctx.features.skills;
         const managedConfig = await prepareManagedClaudeCodeConfig({
           sessionDir,
           env: ctx.processEnvironment,
@@ -212,10 +207,10 @@ export function createClaudeCodeRuntime(
           "Claude Code Session preparation completed",
           {
             systemPromptCharacters: ctx.agentContext.systemPrompt.length,
-            toolCount: mcpToolRegistry.tools.length,
-            mcpOpenedConnections: mcpToolRegistryLease.stats.openedConnections,
-            mcpReusedConnections: mcpToolRegistryLease.stats.reusedConnections,
-            mcpCoalescedConnections: mcpToolRegistryLease.stats.coalescedConnections,
+            toolCount: mcp.registry.tools.length,
+            mcpOpenedConnections: mcp.lease.stats.openedConnections,
+            mcpReusedConnections: mcp.lease.stats.reusedConnections,
+            mcpCoalescedConnections: mcp.lease.stats.coalescedConnections,
           },
         );
 
@@ -230,10 +225,10 @@ export function createClaudeCodeRuntime(
           humanInteractionHandler: ctx.request.humanInteractionHandler,
           logger: ctx.logger,
           managedConfig,
-          mcpServerUrl: expertToolsMcpRegistration.url,
-          permissionMode: options.permissionMode ?? DEFAULT_CLAUDE_CODE_PERMISSION_MODE,
-          pluginDir,
-          compactionHookRelay,
+          mcpServerUrl: mcp.registration.url,
+          permissionMode: ctx.features.permissions.mode,
+          pluginDir: skills.pluginDir,
+          compactionHookRelay: skills.relay,
           sessionDir,
           spawn: options.spawn,
           startupMessages: state.sessionId === "" ? ctx.agentContext.startupMessages : [],
@@ -284,10 +279,7 @@ export function createClaudeCodeRuntime(
     {
       sessionRestoreHandler: options.sessionRestoreHandler,
       sessionSyncCallback: options.sessionSyncCallback,
-      createProcessEnvironment: () => ({
-        ...filterClaudeRuntimeEnv(process.env),
-        ...(options.env ?? {}),
-      }),
+      createProcessEnvironment: () => filterClaudeRuntimeEnv(options.env ?? process.env),
     },
   );
 }

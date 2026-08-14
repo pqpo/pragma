@@ -270,7 +270,8 @@ describe("Codex turn completion", () => {
         },
       ],
       startupMessages: [{ role: "user", content: "always-on context" }],
-      preparedFeatures: {},
+      features: {} as never,
+      steps: {} as never,
       signal: new AbortController().signal,
       source: {
         kind: "runtime",
@@ -357,7 +358,8 @@ describe("Codex turn completion", () => {
       prompt: "hello",
       attachments: [],
       startupMessages: [],
-      preparedFeatures: {},
+      features: {} as never,
+      steps: {} as never,
       signal: new AbortController().signal,
       source: {
         kind: "runtime",
@@ -403,7 +405,8 @@ describe("Codex turn completion", () => {
         prompt: "hello",
         attachments: [],
         startupMessages: [],
-        preparedFeatures: {},
+        features: {} as never,
+        steps: {} as never,
         signal: new AbortController().signal,
         source: {
           kind: "runtime",
@@ -461,7 +464,8 @@ describe("Codex turn completion", () => {
       prompt: "hello",
       attachments: [],
       startupMessages: [],
-      preparedFeatures: {},
+      features: {} as never,
+      steps: {} as never,
       signal: new AbortController().signal,
       source: {
         kind: "runtime",

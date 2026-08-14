@@ -43,6 +43,8 @@ export interface PiModelProviderConfig {
 
 export interface CloudPiRuntimeAdapterOptions {
   readonly descriptor?: RuntimeDriverDescriptorOverride | undefined;
+  /** The host-provided, filtered environment for Pragma-owned local tools. */
+  readonly env?: NodeJS.ProcessEnv | undefined;
   readonly modelProviders?: ModelProviderRegistry | undefined;
   readonly outputParser?: <TOutput>(text: string) => TOutput;
   readonly outputRetryLimit?: number | undefined;

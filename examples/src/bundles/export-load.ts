@@ -5,6 +5,7 @@ import {
   createStaticRuntimeResolver,
   defineRuntimeFeatures,
   runtimeFeature,
+  snapshotRuntimeFeatures,
   type Expert,
 } from "@pragma/core";
 import {
@@ -124,39 +125,46 @@ try {
 }
 
 function createExampleRuntimeResolver() {
-  const omitted = () => runtimeFeature.notApplicable("The bundle example does not execute turns.");
+  const omitted = () =>
+    runtimeFeature.native(
+      runtimeFeature.notApplicable("The bundle example does not execute turns."),
+    );
   return createStaticRuntimeResolver({
     defaultRuntimeId: "example-runtime",
     runtimes: [
       {
-        features: defineRuntimeFeatures({
-          availability: runtimeFeature.degraded("The example uses a local availability stub."),
-          authentication: omitted(),
-          modelDiscovery: omitted(),
-          modelSelection: omitted(),
-          thinking: omitted(),
-          freshSession: omitted(),
-          resume: omitted(),
-          systemPrompt: omitted(),
-          startupMessages: omitted(),
-          textStreaming: omitted(),
-          reasoningStreaming: omitted(),
-          nativeToolLifecycle: omitted(),
-          mcp: omitted(),
-          permissions: omitted(),
-          userInteraction: omitted(),
-          skills: omitted(),
-          attachmentImage: omitted(),
-          attachmentFile: omitted(),
-          attachmentDirectory: omitted(),
-          usage: omitted(),
-          contextWindow: omitted(),
-          compaction: omitted(),
-          cancellation: omitted(),
-          steering: omitted(),
-          close: omitted(),
-          cleanup: omitted(),
-        }),
+        features: snapshotRuntimeFeatures(
+          defineRuntimeFeatures({
+            availability: runtimeFeature.native(
+              runtimeFeature.degraded("The example uses a local availability stub."),
+            ),
+            authentication: omitted(),
+            modelDiscovery: omitted(),
+            modelSelection: omitted(),
+            thinking: omitted(),
+            freshSession: omitted(),
+            resume: omitted(),
+            systemPrompt: omitted(),
+            startupMessages: omitted(),
+            textStreaming: omitted(),
+            reasoningStreaming: omitted(),
+            nativeToolLifecycle: omitted(),
+            mcp: omitted(),
+            permissions: omitted(),
+            userInteraction: omitted(),
+            skills: omitted(),
+            attachmentImage: omitted(),
+            attachmentFile: omitted(),
+            attachmentDirectory: omitted(),
+            usage: omitted(),
+            contextWindow: omitted(),
+            compaction: omitted(),
+            cancellation: omitted(),
+            steering: omitted(),
+            close: omitted(),
+            cleanup: omitted(),
+          }),
+        ),
         descriptor: {
           id: "example-runtime",
           kind: "example",

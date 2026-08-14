@@ -88,6 +88,10 @@ import {
   snapshotRuntimeFeatures,
   validateRuntimeFeatures,
   type RuntimeFeatureName,
+  type RuntimePreparationPhase,
+  type RuntimePreparationNode,
+  type RuntimePreparationOutput,
+  type RuntimePreparedFeatureSet,
   type RuntimeFeatureSet,
 } from "./features.ts";
 import { RuntimeResourceScope, type RuntimeResourceRegistrar } from "./resource-scope.ts";
@@ -133,21 +137,38 @@ export interface RuntimeFeatureSessionPrepareContext extends RuntimePrepareConte
     readonly checkpoint: (trigger: RuntimeCheckpointTrigger) => Promise<void>;
   };
   readonly resources: RuntimeResourceRegistrar;
-  readonly preparedFeatures: Readonly<Partial<Record<RuntimeFeatureName, unknown>>>;
   readonly sessionInfo: RuntimeSessionInfo;
 }
 
-export type RuntimeDriverSessionContext = RuntimeFeatureSessionPrepareContext;
-
-export function readRuntimePreparedFeature<T>(
-  context: Pick<RuntimeFeatureSessionPrepareContext, "preparedFeatures">,
-  feature: RuntimeFeatureName,
-): T {
-  if (!(feature in context.preparedFeatures)) {
-    throw new Error(`Runtime feature ${feature} did not produce Session preparation data.`);
-  }
-  return context.preparedFeatures[feature] as T;
+export interface RuntimePreparedSteps<TPhase extends RuntimePreparationPhase> {
+  readonly get: <TNode extends RuntimePreparationNode<TPhase, unknown>>(
+    node: TNode,
+  ) => RuntimePreparationOutput<TNode>;
 }
+
+/**
+ * The sealed context exposed to provider-native Session creation. It deliberately
+ * omits the resource registrar: lifecycle resources may only be acquired by
+ * explicit Runtime Features or private preparation Steps.
+ */
+export interface RuntimeNativeSessionContext<
+  TFeatures extends RuntimeFeatureSet = RuntimeFeatureSet,
+> extends RuntimePrepareContext {
+  readonly agentContext: ExpertAgentContext;
+  readonly lifecycle: AgentLifecycle<ExpertAgentRunContext | undefined>;
+  readonly persistence: {
+    readonly spec?: RuntimeSessionPersistenceSpec | undefined;
+    readonly restoredRuntimeSessionId?: string | undefined;
+    readonly checkpoint: (trigger: RuntimeCheckpointTrigger) => Promise<void>;
+  };
+  readonly sessionInfo: RuntimeSessionInfo;
+  readonly features: RuntimePreparedFeatureSet<TFeatures>;
+  readonly steps: RuntimePreparedSteps<"session">;
+}
+
+/** @deprecated Use RuntimeNativeSessionContext. */
+export type RuntimeDriverSessionContext<TFeatures extends RuntimeFeatureSet = RuntimeFeatureSet> =
+  RuntimeNativeSessionContext<TFeatures>;
 
 export interface RuntimeSessionReadContext {
   readonly agent: Expert;
@@ -159,7 +180,10 @@ export interface RuntimeSessionSnapshot {
   readonly messages?: readonly AgentMessage[] | undefined;
 }
 
-export interface RuntimeTurnContext<TNativeEvent> {
+export interface RuntimeTurnContext<
+  TNativeEvent,
+  TFeatures extends RuntimeFeatureSet = RuntimeFeatureSet,
+> {
   readonly runId: string;
   readonly attempt: number;
   readonly isRetry: boolean;
@@ -172,11 +196,12 @@ export interface RuntimeTurnContext<TNativeEvent> {
   readonly signal: AbortSignal;
   readonly source: RuntimeStreamEvent["source"];
   readonly stream: RuntimeStreamWriter<TNativeEvent>;
-  readonly preparedFeatures: Readonly<Partial<Record<RuntimeFeatureName, unknown>>>;
+  readonly features: RuntimePreparedFeatureSet<TFeatures>;
+  readonly steps: RuntimePreparedSteps<"turn">;
 }
 
 export interface RuntimeFeatureTurnPrepareContext {
-  readonly feature: RuntimeFeatureName;
+  readonly feature?: RuntimeFeatureName | undefined;
   readonly agent: Expert;
   readonly runContext: ExpertAgentRunContext;
   readonly sessionInfo: RuntimeSessionInfo;
@@ -189,7 +214,6 @@ export interface RuntimeFeatureTurnPrepareContext {
   readonly logger: PragmaLogger;
   readonly resources: RuntimeResourceRegistrar;
   readonly sessionFeatures: Readonly<Partial<Record<RuntimeFeatureName, unknown>>>;
-  readonly preparedFeatures: Readonly<Partial<Record<RuntimeFeatureName, unknown>>>;
 }
 
 export interface RuntimeTurnResult {
@@ -215,9 +239,15 @@ export interface RuntimeCloseContext {
   readonly logger: PragmaLogger;
 }
 
-export interface RuntimeDriver<TNativeEvent, TNativeSession> {
+export interface RuntimeDriver<
+  TNativeEvent,
+  TNativeSession,
+  TFeatures extends RuntimeFeatureSet = RuntimeFeatureSet,
+> {
   readonly descriptor: RuntimeDriverDescriptor;
-  readonly features: RuntimeFeatureSet;
+  readonly features: TFeatures;
+  readonly sessionSteps?: readonly RuntimePreparationNode<"session", unknown>[] | undefined;
+  readonly turnSteps?: readonly RuntimePreparationNode<"turn", unknown>[] | undefined;
   readonly canUse?:
     | ((options?: Record<string, unknown>) => Promise<RuntimeCanUseResult> | RuntimeCanUseResult)
     | undefined;
@@ -227,10 +257,12 @@ export interface RuntimeDriver<TNativeEvent, TNativeSession> {
   readonly resolvePersistence?:
     ((context: RuntimePrepareContext) => RuntimeSessionPersistenceSpec | undefined) | undefined;
   readonly createSession: (
-    context: RuntimeDriverSessionContext,
+    context: RuntimeNativeSessionContext<TFeatures>,
   ) => Promise<TNativeSession> | TNativeSession;
   readonly restoreSession?:
-    | ((context: RuntimeDriverSessionContext) => Promise<TNativeSession> | TNativeSession)
+    | ((
+        context: RuntimeNativeSessionContext<TFeatures>,
+      ) => Promise<TNativeSession> | TNativeSession)
     | undefined;
   readonly listMessages?:
     | ((session: TNativeSession, context: RuntimeSessionReadContext) => readonly AgentMessage[])
@@ -246,7 +278,7 @@ export interface RuntimeDriver<TNativeEvent, TNativeSession> {
     | undefined;
   readonly startTurn: (
     session: TNativeSession,
-    turn: RuntimeTurnContext<TNativeEvent>,
+    turn: RuntimeTurnContext<TNativeEvent, TFeatures>,
   ) => Promise<RuntimeTurnResult> | RuntimeTurnResult;
   readonly mapEvent: (
     event: TNativeEvent,
@@ -330,7 +362,7 @@ type RequireRuntimeFeatureMethod<
   TFeatures extends RuntimeFeatureSet,
   TFeature extends RuntimeFeatureName,
   TMethod extends keyof RuntimeDriver<TNativeEvent, TNativeSession>,
-> = TFeatures[TFeature]["status"] extends "supported" | "degraded"
+> = TFeatures[TFeature]["readiness"]["status"] extends "supported" | "degraded"
   ? Required<Pick<RuntimeDriver<TNativeEvent, TNativeSession>, TMethod>>
   : object;
 
@@ -338,9 +370,9 @@ type RequireRuntimeManualCompactionMethod<
   TNativeEvent,
   TNativeSession,
   TFeatures extends RuntimeFeatureSet,
-> = TFeatures["compaction"]["status"] extends "supported" | "degraded"
+> = TFeatures["compaction"]["readiness"]["status"] extends "supported" | "degraded"
   ? TFeatures["compaction"] extends {
-      readonly compactionModes?: infer TModes;
+      readonly readiness: { readonly compactionModes?: infer TModes };
     }
     ? "manual" extends ArrayElement<TModes>
       ? Required<Pick<RuntimeDriver<TNativeEvent, TNativeSession>, "compactContext">>
@@ -355,7 +387,7 @@ export function defineRuntimeDriver<
   TNativeSession,
   const TFeatures extends RuntimeFeatureSet = RuntimeFeatureSet,
 >(
-  driver: RuntimeDriver<TNativeEvent, TNativeSession> & {
+  driver: RuntimeDriver<TNativeEvent, TNativeSession, TFeatures> & {
     readonly features: TFeatures;
   } & RuntimeDriverFeatureMethodContract<TNativeEvent, TNativeSession, TFeatures>,
   options: DefineRuntimeDriverOptions = {},
@@ -400,8 +432,12 @@ export function defineRuntimeDriver<
   return runtime;
 }
 
-async function createManagedRuntimeSession<TNativeEvent, TNativeSession>(
-  driver: RuntimeDriver<TNativeEvent, TNativeSession>,
+async function createManagedRuntimeSession<
+  TNativeEvent,
+  TNativeSession,
+  TFeatures extends RuntimeFeatureSet,
+>(
+  driver: RuntimeDriver<TNativeEvent, TNativeSession, TFeatures>,
   descriptor: RuntimeAdapterDescriptor,
   request: RuntimeDriverSessionRequest,
   persistenceProvider: RuntimeSessionPersistenceProvider,
@@ -455,7 +491,7 @@ async function createManagedRuntimeSession<TNativeEvent, TNativeSession>(
   const persistenceSpec = driver.resolvePersistence?.(prepareContext);
 
   let phaseStartedAt = performance.now();
-  await assertRuntimeCanUse(driver, descriptor);
+  await assertRuntimeCanUse(driver as RuntimeDriver<TNativeEvent, TNativeSession>, descriptor);
   logRuntimePhase(logger, "runtime.can_use", phaseStartedAt, sessionStartedAt);
   assertRequestedRuntimeSessionMatches(request.runtimeSession, descriptor);
 
@@ -628,7 +664,9 @@ async function createManagedRuntimeSession<TNativeEvent, TNativeSession>(
       },
     });
 
-    const featureContext: Omit<RuntimeFeatureSessionPrepareContext, "preparedFeatures"> = {
+    const featureContext: RuntimeFeatureSessionPrepareContext & {
+      readonly resources: RuntimeResourceScope;
+    } = {
       ...prepareContext,
       agentContext,
       lifecycle,
@@ -640,10 +678,14 @@ async function createManagedRuntimeSession<TNativeEvent, TNativeSession>(
       resources,
       sessionInfo: readSessionInfo(),
     };
-    const preparedFeatures = await prepareRuntimeSessionFeatures(driver, featureContext);
-    const sessionContext: RuntimeDriverSessionContext = {
-      ...featureContext,
-      preparedFeatures,
+    const prepared = await prepareRuntimeSessionFeatures(driver, featureContext);
+    resources.seal();
+    const { resources: _resources, ...nativeSessionBaseContext } = featureContext;
+    void _resources;
+    const sessionContext: RuntimeNativeSessionContext<TFeatures> = {
+      ...nativeSessionBaseContext,
+      features: prepared.features,
+      steps: prepared.steps,
     };
     phaseStartedAt = performance.now();
     nativeSession =
@@ -664,13 +706,13 @@ async function createManagedRuntimeSession<TNativeEvent, TNativeSession>(
 
     managedSession = new ManagedRuntimeSession({
       agent,
-      driver,
+      driver: driver as RuntimeDriver<TNativeEvent, TNativeSession>,
       nativeSession,
       descriptor,
       lifecycle,
       logger,
       runContext,
-      preparedFeatures,
+      sessionFeatureOutputs: prepared.features,
       startupMessages: agentContext.startupMessages,
       systemSessionId,
       outputRetryLimit: driver.outputRetryLimit,
@@ -760,104 +802,291 @@ async function createManagedRuntimeSession<TNativeEvent, TNativeSession>(
   }
 }
 
-async function prepareRuntimeSessionFeatures<TNativeEvent, TNativeSession>(
-  driver: RuntimeDriver<TNativeEvent, TNativeSession>,
-  context: Omit<RuntimeFeatureSessionPrepareContext, "preparedFeatures">,
-): Promise<Readonly<Partial<Record<RuntimeFeatureName, unknown>>>> {
-  const prepared: Partial<Record<RuntimeFeatureName, unknown>> = {};
-  for (const catalogEntry of RUNTIME_FEATURE_CATALOG) {
-    if (catalogEntry.lifecycle !== "session") continue;
-    const declaration = driver.features[catalogEntry.name];
-    const startedAt = performance.now();
-    if (isRuntimeFeatureEnabled(declaration) && declaration.prepareSession !== undefined) {
-      const value = await declaration.prepareSession({
-        ...context,
-        preparedFeatures: Object.freeze({ ...prepared }),
-      });
-      if (value !== undefined) prepared[catalogEntry.name] = value;
-    }
-    context.logger.debug(
-      "runtime.feature_session_phase",
-      `Runtime Session feature phase completed: ${catalogEntry.name}`,
-      {
-        feature: catalogEntry.name,
-        status: declaration.status,
-        hookExecuted:
-          isRuntimeFeatureEnabled(declaration) && declaration.prepareSession !== undefined,
-        durationMs: elapsedRuntimeMs(startedAt),
-      },
-    );
+async function prepareRuntimeSessionFeatures<
+  TNativeEvent,
+  TNativeSession,
+  TFeatures extends RuntimeFeatureSet,
+>(
+  driver: RuntimeDriver<TNativeEvent, TNativeSession, TFeatures>,
+  context: RuntimeFeatureSessionPrepareContext & { readonly resources: RuntimeResourceScope },
+): Promise<{
+  readonly features: RuntimePreparedFeatureSet<TFeatures>;
+  readonly steps: RuntimePreparedSteps<"session">;
+}> {
+  const featureByNode = new Map<object, RuntimeFeatureName>();
+  const roots: RuntimePreparationNode<"session", unknown>[] = [...(driver.sessionSteps ?? [])];
+
+  for (const { name, lifecycle } of RUNTIME_FEATURE_CATALOG) {
+    const feature = driver.features[name];
+    if (lifecycle !== "session" || feature.kind !== "feature") continue;
+    if (!isRuntimeFeatureEnabled(feature)) continue;
+    roots.push(feature as unknown as RuntimePreparationNode<"session", unknown>);
+    featureByNode.set(feature, name);
   }
-  return Object.freeze({ ...prepared });
+  const execution = await executeRuntimePreparationGraph({
+    phase: "session",
+    roots,
+    featureByNode,
+    resources: context.resources,
+    execute: async (node, resources, dependencies) => {
+      const featureName = featureByNode.get(node);
+      const startedAt = performance.now();
+      const value = await node.prepare({ ...context, resources }, dependencies);
+      context.logger.debug(
+        "runtime.feature_session_phase",
+        `Runtime Session preparation completed: ${featureName ?? node.id ?? "internal step"}`,
+        {
+          ...(featureName === undefined ? {} : { feature: featureName }),
+          durationMs: elapsedRuntimeMs(startedAt),
+        },
+      );
+      return value;
+    },
+  });
+  return {
+    features: readRuntimePreparedFeatures(execution.results, featureByNode),
+    steps: createRuntimePreparedSteps("session", execution.results),
+  };
 }
 
-async function prepareRuntimeTurnFeatures<TNativeEvent, TNativeSession>(
-  context: Omit<RuntimeFeatureTurnPrepareContext, "feature" | "preparedFeatures"> & {
-    readonly driver: RuntimeDriver<TNativeEvent, TNativeSession>;
+async function prepareRuntimeTurnFeatures<
+  TNativeEvent,
+  TNativeSession,
+  TFeatures extends RuntimeFeatureSet,
+>(
+  context: Omit<RuntimeFeatureTurnPrepareContext, "feature"> & {
+    readonly driver: RuntimeDriver<TNativeEvent, TNativeSession, TFeatures>;
+    readonly resources: RuntimeResourceScope;
   },
-): Promise<Readonly<Partial<Record<RuntimeFeatureName, unknown>>>> {
-  const prepared: Partial<Record<RuntimeFeatureName, unknown>> = {};
+): Promise<{
+  readonly features: RuntimePreparedFeatureSet<TFeatures>;
+  readonly steps: RuntimePreparedSteps<"turn">;
+}> {
+  const featureByNode = new Map<object, RuntimeFeatureName>();
   const { driver, ...baseContext } = context;
-  for (const catalogEntry of RUNTIME_FEATURE_CATALOG) {
-    if (catalogEntry.lifecycle !== "turn") continue;
-    const declaration = driver.features[catalogEntry.name];
-    const startedAt = performance.now();
-    if (isRuntimeFeatureEnabled(declaration) && declaration.prepareTurn !== undefined) {
-      const value = await declaration.prepareTurn({
-        ...baseContext,
-        feature: catalogEntry.name,
-        preparedFeatures: Object.freeze({ ...prepared }),
-      });
-      if (value !== undefined) prepared[catalogEntry.name] = value;
-    }
-    context.logger.debug(
-      "runtime.feature_turn_phase",
-      `Runtime turn feature phase completed: ${catalogEntry.name}`,
-      {
-        feature: catalogEntry.name,
-        status: declaration.status,
-        hookExecuted: isRuntimeFeatureEnabled(declaration) && declaration.prepareTurn !== undefined,
-        durationMs: elapsedRuntimeMs(startedAt),
-      },
-    );
+  const roots: RuntimePreparationNode<"turn", unknown>[] = [...(driver.turnSteps ?? [])];
+
+  for (const { name, lifecycle } of RUNTIME_FEATURE_CATALOG) {
+    const feature = driver.features[name];
+    if (lifecycle !== "turn" || feature.kind !== "feature") continue;
+    if (!isRuntimeFeatureEnabled(feature)) continue;
+    roots.push(feature as unknown as RuntimePreparationNode<"turn", unknown>);
+    featureByNode.set(feature, name);
   }
-  return Object.freeze({ ...prepared });
+  const execution = await executeRuntimePreparationGraph({
+    phase: "turn",
+    roots,
+    featureByNode,
+    resources: baseContext.resources,
+    execute: async (node, resources, dependencies) => {
+      const featureName = featureByNode.get(node);
+      const startedAt = performance.now();
+      const value = await node.prepare(
+        {
+          ...baseContext,
+          resources,
+          ...(featureName === undefined ? {} : { feature: featureName }),
+        },
+        dependencies,
+      );
+      baseContext.logger.debug(
+        "runtime.feature_turn_phase",
+        `Runtime turn preparation completed: ${featureName ?? node.id ?? "internal step"}`,
+        {
+          ...(featureName === undefined ? {} : { feature: featureName }),
+          durationMs: elapsedRuntimeMs(startedAt),
+        },
+      );
+      return value;
+    },
+  });
+  return {
+    features: readRuntimePreparedFeatures(execution.results, featureByNode),
+    steps: createRuntimePreparedSteps("turn", execution.results),
+  };
 }
 
-function assertRuntimeFeatureMethodContracts<TNativeEvent, TNativeSession>(
-  driver: RuntimeDriver<TNativeEvent, TNativeSession>,
+async function executeRuntimePreparationGraph<TPhase extends RuntimePreparationPhase>(options: {
+  readonly phase: TPhase;
+  readonly roots: readonly RuntimePreparationNode<TPhase, unknown>[];
+  readonly featureByNode: ReadonlyMap<object, RuntimeFeatureName>;
+  readonly resources: RuntimeResourceScope;
+  readonly execute: (
+    node: RuntimePreparationNode<TPhase, unknown>,
+    resources: RuntimeResourceScope,
+    dependencies: Readonly<Record<string, unknown>>,
+  ) => Promise<unknown> | unknown;
+}): Promise<{ readonly results: ReadonlyMap<object, unknown> }> {
+  const graph = validateRuntimePreparationGraph(options.phase, options.roots);
+  const results = new Map<object, unknown>();
+  const executions = new Map<object, Promise<unknown>>();
+  const scopes = new Map<object, RuntimeResourceScope>();
+  const labels = new Map(
+    graph.nodes.map((node, index) => [
+      node,
+      node.id ?? options.featureByNode.get(node) ?? `node-${index + 1}`,
+    ]),
+  );
+
+  const run = (node: RuntimePreparationNode<TPhase, unknown>): Promise<unknown> => {
+    const existing = executions.get(node);
+    if (existing !== undefined) return existing;
+    const scope = new RuntimeResourceScope(`${options.resources.label}:${labels.get(node)!}`);
+    scopes.set(node, scope);
+    const execution = (async () => {
+      const entries = await Promise.all(
+        Object.entries(node.needs ?? {}).map(
+          async ([name, dependency]) =>
+            [name, await run(dependency as RuntimePreparationNode<TPhase, unknown>)] as const,
+        ),
+      );
+      const value = await options.execute(node, scope, Object.freeze(Object.fromEntries(entries)));
+      scope.seal();
+      results.set(node, value);
+      return value;
+    })();
+    executions.set(node, execution);
+    return execution;
+  };
+
+  const settled = await Promise.allSettled(options.roots.map(run));
+  const failures = settled.flatMap((result) =>
+    result.status === "rejected" ? [result.reason] : [],
+  );
+  if (failures.length > 0) {
+    const cleanup = await Promise.allSettled([...scopes.values()].map((scope) => scope.dispose()));
+    const cleanupFailures = cleanup.flatMap((result) =>
+      result.status === "rejected" ? [result.reason] : [],
+    );
+    if (cleanupFailures.length > 0) {
+      throw new AggregateError(
+        [...failures, ...cleanupFailures],
+        `Runtime ${options.phase} preparation and resource cleanup failed.`,
+      );
+    }
+    throw failures[0];
+  }
+
+  for (const node of graph.nodes) {
+    options.resources.attach(scopes.get(node)!);
+  }
+  return { results };
+}
+
+function validateRuntimePreparationGraph<TPhase extends RuntimePreparationPhase>(
+  phase: TPhase,
+  roots: readonly RuntimePreparationNode<TPhase, unknown>[],
+): { readonly nodes: readonly RuntimePreparationNode<TPhase, unknown>[] } {
+  const states = new Map<object, "visiting" | "complete">();
+  const ids = new Map<string, object>();
+  const nodes: RuntimePreparationNode<TPhase, unknown>[] = [];
+  const phaseName = phase === "session" ? "Session" : "turn";
+
+  const visit = (candidate: unknown): void => {
+    if (!isRuntimePreparationNode(candidate)) {
+      throw new Error(`Runtime ${phaseName} preparation graph contains an invalid node.`);
+    }
+    const node = candidate as RuntimePreparationNode<TPhase, unknown>;
+    if (node.phase !== phase) {
+      throw new Error(
+        `Runtime ${phaseName} preparation node ${node.id ?? "unnamed node"} depends on a ${node.phase} node.`,
+      );
+    }
+    const state = states.get(node);
+    if (state === "visiting") {
+      throw new Error(
+        `Runtime ${phaseName} preparation dependency cycle at ${node.id ?? "unnamed node"}.`,
+      );
+    }
+    if (state === "complete") return;
+    if (node.id !== undefined) {
+      if (node.id.trim() === "") {
+        throw new Error(`Runtime ${phaseName} preparation node id must not be empty.`);
+      }
+      const existing = ids.get(node.id);
+      if (existing !== undefined && existing !== node) {
+        throw new Error(
+          `Runtime ${phaseName} preparation graph has duplicate node id: ${node.id}.`,
+        );
+      }
+      ids.set(node.id, node);
+    }
+    if (node.needs !== undefined && (node.needs === null || Array.isArray(node.needs))) {
+      throw new Error(
+        `Runtime ${phaseName} preparation node ${node.id ?? "unnamed node"} has invalid needs.`,
+      );
+    }
+    states.set(node, "visiting");
+    for (const dependency of Object.values(node.needs ?? {})) visit(dependency);
+    states.set(node, "complete");
+    nodes.push(node);
+  };
+
+  for (const root of roots) visit(root);
+  return { nodes };
+}
+
+function isRuntimePreparationNode(
+  candidate: unknown,
+): candidate is RuntimePreparationNode<RuntimePreparationPhase, unknown> {
+  if (candidate === null || typeof candidate !== "object") return false;
+  const node = candidate as Partial<RuntimePreparationNode<RuntimePreparationPhase, unknown>>;
+  return (
+    (node.kind === "feature" || node.kind === "preparation") &&
+    (node.phase === "session" || node.phase === "turn") &&
+    typeof node.prepare === "function"
+  );
+}
+
+function readRuntimePreparedFeatures<TFeatures extends RuntimeFeatureSet>(
+  results: ReadonlyMap<object, unknown>,
+  featureByNode: ReadonlyMap<object, RuntimeFeatureName>,
+): RuntimePreparedFeatureSet<TFeatures> {
+  const featureResults: Partial<Record<RuntimeFeatureName, unknown>> = {};
+  for (const [node, name] of featureByNode) featureResults[name] = results.get(node);
+  return Object.freeze(featureResults) as RuntimePreparedFeatureSet<TFeatures>;
+}
+
+function createRuntimePreparedSteps<TPhase extends RuntimePreparationPhase>(
+  phase: TPhase,
+  results: ReadonlyMap<object, unknown>,
+): RuntimePreparedSteps<TPhase> {
+  return Object.freeze({
+    get: <TNode extends RuntimePreparationNode<TPhase, unknown>>(node: TNode) => {
+      if (!results.has(node)) {
+        throw new Error(
+          `Runtime ${phase} preparation step ${node.id ?? "unnamed node"} was not run.`,
+        );
+      }
+      return results.get(node) as RuntimePreparationOutput<TNode>;
+    },
+  });
+}
+
+function assertRuntimeFeatureMethodContracts<
+  TNativeEvent,
+  TNativeSession,
+  TFeatures extends RuntimeFeatureSet,
+>(
+  driver: RuntimeDriver<TNativeEvent, TNativeSession, TFeatures>,
   descriptor: RuntimeAdapterDescriptor,
 ): void {
-  const contracts: readonly [
-    RuntimeFeatureName,
-    string,
-    unknown,
-    ((feature: RuntimeFeatureSet[RuntimeFeatureName]) => boolean)?,
-  ][] = [
-    ["availability", "canUse", driver.canUse],
-    ["modelDiscovery", "listModels", driver.listModels],
-    ["contextWindow", "readContextWindow", driver.readContextWindow],
-    [
-      "compaction",
-      "compactContext",
-      driver.compactContext,
-      (feature) => feature.compactionModes?.includes("manual") === true,
-    ],
-    ["cancellation", "cancelTurn", driver.cancelTurn],
-    ["steering", "steerTurn", driver.steerTurn],
-    ["close", "closeSession", driver.closeSession],
-  ];
-  for (const [featureName, methodName, method, applies = isRuntimeFeatureEnabled] of contracts) {
-    const feature = driver.features[featureName];
-    const enabled = isRuntimeFeatureEnabled(feature) && applies(feature);
+  for (const { name, enforcement } of RUNTIME_FEATURE_CATALOG) {
+    if (enforcement.kind !== "driver-method") continue;
+    const feature = driver.features[name];
+    const enabled =
+      isRuntimeFeatureEnabled(feature) &&
+      (("when" in enforcement ? enforcement.when : undefined) !== "manual-compaction" ||
+        feature.readiness.compactionModes?.includes("manual") === true);
+    const method = driver[enforcement.method];
     if (enabled && method === undefined) {
       throw new Error(
-        `Runtime ${descriptor.id} declares ${featureName} as ${feature.status} but does not implement ${methodName}().`,
+        `Runtime ${descriptor.id} declares ${name} as ${feature.readiness.status} but does not implement ${enforcement.method}().`,
       );
     }
     if (!enabled && method !== undefined) {
       throw new Error(
-        `Runtime ${descriptor.id} implements ${methodName}() while feature ${featureName} is not enabled.`,
+        `Runtime ${descriptor.id} implements ${enforcement.method}() while feature ${name} is not enabled.`,
       );
     }
   }
@@ -947,7 +1176,7 @@ class ManagedRuntimeSession<TNativeEvent, TNativeSession> {
       readonly lifecycle: AgentLifecycle<ExpertAgentRunContext | undefined>;
       readonly logger: PragmaLogger;
       readonly runContext: ExpertAgentRunContext;
-      readonly preparedFeatures: Readonly<Partial<Record<RuntimeFeatureName, unknown>>>;
+      readonly sessionFeatureOutputs: Readonly<Partial<Record<RuntimeFeatureName, unknown>>>;
       readonly startupMessages: readonly ExpertAgentStartupMessage[];
       readonly systemSessionId: string;
       readonly outputRetryLimit?: number | undefined;
@@ -1296,7 +1525,7 @@ class ManagedRuntimeSession<TNativeEvent, TNativeSession> {
       query: submission.query,
       runtimeId: this.options.descriptor.id,
     });
-    const preparedFeatures = await prepareRuntimeTurnFeatures({
+    const preparedTurn = await prepareRuntimeTurnFeatures({
       driver: this.options.driver,
       agent: this.options.agent,
       runContext: this.options.runContext,
@@ -1309,9 +1538,13 @@ class ManagedRuntimeSession<TNativeEvent, TNativeSession> {
       signal,
       logger: this.options.logger,
       resources,
-      sessionFeatures: this.options.preparedFeatures,
+      sessionFeatures: this.options.sessionFeatureOutputs,
     });
-    resources.transfer();
+    const featureOutputs = Object.freeze({
+      ...this.options.sessionFeatureOutputs,
+      ...preparedTurn.features,
+    }) as RuntimePreparedFeatureSet<RuntimeFeatureSet>;
+    resources.seal();
     const maxAttempts =
       submission.output === undefined
         ? 1
@@ -1361,7 +1594,8 @@ class ManagedRuntimeSession<TNativeEvent, TNativeSession> {
             signal,
             source: controller.source,
             stream: controller.writer,
-            preparedFeatures,
+            features: featureOutputs,
+            steps: preparedTurn.steps,
           });
           this.options.logger.info(
             "runtime.model_request_finished",

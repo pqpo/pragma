@@ -10,6 +10,7 @@ import type {
   McpToolRegistryPool,
   RuntimeDriver,
   RuntimeDriverSessionContext,
+  RuntimeFeatureSessionPrepareContext,
   RuntimeSessionReadContext,
 } from "@pragma/core";
 import { RuntimeResourceScope } from "@pragma/core";
@@ -159,7 +160,7 @@ describe("Antigravity Runtime adapter lifecycle", () => {
     });
     const driver = runtimeMocks.driver as RuntimeDriver<unknown, AntigravityNativeSession>;
     const prepared = await createPreparedSession(driver, createSessionContext(sessionDir));
-    const permissionPreparation = prepared.preparedFeatures["permissions"] as {
+    const permissionPreparation = prepared.featureOutputs["permissions"] as {
       hookRelay: { close: () => Promise<void> };
     };
     const originalCloseRelay = permissionPreparation.hookRelay.close;
@@ -200,7 +201,7 @@ describe("Antigravity Runtime adapter lifecycle", () => {
           resolveRegistrationDispose = resolve;
         }),
     );
-    const permissionPreparation = prepared.preparedFeatures["permissions"] as {
+    const permissionPreparation = prepared.featureOutputs["permissions"] as {
       hookRelay: { close: () => Promise<void> };
     };
     const originalCloseRelay = permissionPreparation.hookRelay.close;
@@ -350,8 +351,8 @@ function createSessionContext(
       restoredRuntimeSessionId,
       checkpoint: vi.fn(async () => undefined),
     },
-    resources: new RuntimeResourceScope("antigravity-adapter-test-placeholder"),
-    preparedFeatures: {},
+    features: {} as never,
+    steps: { get: () => undefined } as never,
     sessionInfo: {},
   } as unknown as RuntimeDriverSessionContext;
 }
@@ -359,7 +360,7 @@ function createSessionContext(
 interface PreparedSession<TSession> {
   readonly session: TSession;
   readonly resources: RuntimeResourceScope;
-  readonly preparedFeatures: Readonly<Record<string, unknown>>;
+  readonly featureOutputs: Readonly<Record<string, unknown>>;
 }
 
 async function createPreparedSession<TSession>(
@@ -367,28 +368,46 @@ async function createPreparedSession<TSession>(
   baseContext: RuntimeDriverSessionContext,
 ): Promise<PreparedSession<TSession>> {
   const resources = new RuntimeResourceScope("antigravity-adapter-test");
-  const preparedFeatures: Record<string, unknown> = {};
+  const featureOutputs: Record<string, unknown> = {};
   try {
-    for (const featureName of ["mcp", "permissions", "skills"] as const) {
-      const prepare = driver.features[featureName].prepareSession;
-      if (prepare === undefined) continue;
-      const value = await prepare({
-        ...baseContext,
-        resources,
-        preparedFeatures: Object.freeze({ ...preparedFeatures }),
-      });
-      if (value !== undefined) preparedFeatures[featureName] = value;
+    const mcp = driver.features.mcp;
+    const permissions = driver.features.permissions;
+    const skills = driver.features.skills;
+    if (mcp.kind !== "feature" || permissions.kind !== "feature" || skills.kind !== "feature") {
+      throw new Error("Antigravity test Runtime must expose Session Feature implementations.");
     }
+    const prepareMcp = mcp.prepare as unknown as (
+      context: RuntimeFeatureSessionPrepareContext,
+      needs: Record<never, never>,
+    ) => Promise<unknown> | unknown;
+    const preparePermissions = permissions.prepare as unknown as (
+      context: RuntimeFeatureSessionPrepareContext,
+      needs: { readonly mcp: unknown },
+    ) => Promise<unknown> | unknown;
+    const prepareSkills = skills.prepare as unknown as (
+      context: RuntimeFeatureSessionPrepareContext,
+      needs: { readonly mcp: unknown; readonly permissions: unknown },
+    ) => Promise<unknown> | unknown;
+    featureOutputs.mcp = await prepareMcp({ ...baseContext, resources }, {});
+    featureOutputs.permissions = await preparePermissions(
+      { ...baseContext, resources },
+      { mcp: featureOutputs.mcp },
+    );
+    featureOutputs.skills = await prepareSkills(
+      { ...baseContext, resources },
+      { mcp: featureOutputs.mcp, permissions: featureOutputs.permissions },
+    );
+    resources.seal();
     const session = await driver.createSession({
       ...baseContext,
-      resources,
-      preparedFeatures: Object.freeze({ ...preparedFeatures }),
+      features: Object.freeze({ ...featureOutputs }) as never,
+      steps: { get: () => undefined } as never,
     });
     resources.transfer();
     return {
       session,
       resources,
-      preparedFeatures: Object.freeze({ ...preparedFeatures }),
+      featureOutputs: Object.freeze({ ...featureOutputs }),
     };
   } catch (error) {
     try {

@@ -385,11 +385,13 @@ export function createBuiltInRuntimeFactories(
     {
       id: "pragma.runtime.pi",
       version: "v1",
-      create: (environment) => {
+      create: async (environment) => {
         assertEmptyRuntimeConfig(environment);
+        const env = await getRuntimeProcessEnvironment();
         return createPiRuntime({
           descriptor: { id: environment.id, displayName: BUILT_IN_RUNTIME_DISPLAY_NAME },
           modelProviders: options.modelProviders,
+          env,
           tokenCounter: options.tokenCounter,
           ...(options.mcpToolRegistryPool === undefined
             ? {}

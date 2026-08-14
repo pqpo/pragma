@@ -3,7 +3,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 
 import { ExpertAgentStreamEventSchema } from "@pragma/shared";
-import { describe, expect, it } from "vitest";
+import { describe, expect, expectTypeOf, it } from "vitest";
 
 import {
   assertRuntimeConformance,
@@ -11,6 +11,7 @@ import {
   inspectRuntimeProbeEvidenceConformance,
 } from "../src/runtime/conformance.ts";
 import { defineExpert } from "../src/agent/expert-agent.ts";
+import { defineRuntimeDriver } from "../src/runtime/driver.ts";
 import { defineRuntimeFeatures, runtimeFeature } from "../src/runtime/features.ts";
 import { createRuntimeProbeEvidence } from "../src/runtime/probe-evidence.ts";
 import { createRuntimeTestFeatures, defineRuntimeTestDriver } from "../src/testing/index.ts";
@@ -18,6 +19,27 @@ import type { RuntimeStreamEvent } from "../src/runtime/stream-events.ts";
 import { openRuntimeSession } from "../src/runtime/session-factory.ts";
 
 describe("Runtime conformance runner", () => {
+  it("preserves native readiness literals for Driver method contracts", () => {
+    const cancellation = runtimeFeature.native(runtimeFeature.degraded("Probe fixture."));
+
+    expectTypeOf(cancellation.readiness.status).toEqualTypeOf<"degraded">();
+
+    const features = defineRuntimeFeatures({
+      ...createRuntimeTestFeatures(),
+      cancellation,
+    });
+    expect(() => {
+      // @ts-expect-error A degraded cancellation declaration requires cancelTurn().
+      return defineRuntimeDriver({
+        descriptor: { id: "missing-cancel", kind: "test", displayName: "Missing cancel" },
+        features,
+        createSession: () => ({}),
+        startTurn: () => ({ outputText: "ok" }),
+        mapEvent: () => ({ events: [] }),
+      });
+    }).toThrow(/does not implement cancelTurn/);
+  });
+
   it("accepts ordered streaming and one complete MCP tool lifecycle", () => {
     const runtime = defineRuntimeTestDriver({
       features: createRuntimeTestFeatures({
@@ -201,49 +223,47 @@ describe("Runtime conformance runner", () => {
     ]);
   });
 
-  it("rejects Supported lifecycle features without a Core preparation hook", () => {
+  it("rejects Feature preparations outside their catalog lifecycle", () => {
     const base = createRuntimeTestFeatures();
     expect(() =>
       defineRuntimeFeatures({
         ...base,
-        mcp: runtimeFeature.supported({
-          evidence: [
-            { probe: "mcp", level: "materialized", source: "real-probe" },
-            { probe: "mcp", level: "discovered", source: "real-probe" },
-            { probe: "mcp", level: "executed", source: "real-probe" },
-          ],
+        availability: runtimeFeature.session({
+          readiness: runtimeFeature.degraded("Probe fixture."),
+          prepare: () => undefined,
         }),
       }),
-    ).toThrow(/Core-owned Session preparation/);
+    ).toThrow(/driver lifecycle.*session preparation/);
+    expect(() =>
+      defineRuntimeFeatures({
+        ...base,
+        mcp: runtimeFeature.turn({
+          readiness: runtimeFeature.degraded("MCP fixture."),
+          prepare: () => undefined,
+        }),
+      }),
+    ).toThrow(/session lifecycle.*turn preparation/);
   });
 
-  it("rejects feature hooks outside their catalog lifecycle", () => {
+  it("requires Core-owned implementations for enabled MCP, permissions, and Skills", () => {
     const base = createRuntimeTestFeatures();
     expect(() =>
       defineRuntimeFeatures({
         ...base,
-        availability: runtimeFeature.degraded("Probe fixture.", {
-          prepareSession: () => undefined,
-        }),
+        mcp: runtimeFeature.native(runtimeFeature.degraded("Incorrect fixture.")),
       }),
-    ).toThrow(/driver lifecycle.*prepareSession/);
-    expect(() =>
-      defineRuntimeFeatures({
-        ...base,
-        mcp: runtimeFeature.degraded("MCP fixture.", {
-          prepareTurn: () => undefined,
-        }),
-      }),
-    ).toThrow(/session lifecycle.*prepareTurn/);
+    ).toThrow(/mcp must provide a Core-owned preparation implementation/);
   });
 
   it("does not promote Supported from test-only execution evidence", () => {
     const runtime = defineRuntimeTestDriver({
       features: createRuntimeTestFeatures({
         overrides: {
-          textStreaming: runtimeFeature.supported({
-            evidence: [{ probe: "stream", level: "executed", source: "test" }],
-          }),
+          textStreaming: runtimeFeature.native(
+            runtimeFeature.supported({
+              evidence: [{ probe: "stream", level: "executed", source: "test" }],
+            }),
+          ),
         },
       }),
       descriptor: { id: "test-evidence", kind: "test", displayName: "Test Evidence" },

@@ -1,4 +1,4 @@
-import type { RuntimeModel, RuntimeResolver } from "@pragma/core";
+import { snapshotRuntimeFeatures, type RuntimeModel, type RuntimeResolver } from "@pragma/core";
 import { createRuntimeTestFeatures } from "@pragma/core/testing";
 import type { PragmaResource } from "@pragma/interpreter/ast";
 import { describe, expect, it } from "vitest";
@@ -112,7 +112,9 @@ describe("Mission executor model options", () => {
       },
     ];
     const runtime = (id: string, models: readonly RuntimeModel[]) => ({
-      features: createRuntimeTestFeatures({ enabled: ["availability", "modelDiscovery"] }),
+      features: snapshotRuntimeFeatures(
+        createRuntimeTestFeatures({ enabled: ["availability", "modelDiscovery"] }),
+      ),
       descriptor: { id, kind: "test", displayName: id },
       canUse: async () => ({ usable: true }),
       listModels: async () => models,
@@ -157,7 +159,9 @@ describe("Mission executor model options", () => {
   it("resolves model defaults from the Mission's pinned project resources", async () => {
     const boundRuntimeIds: string[] = [];
     const runtime = {
-      features: createRuntimeTestFeatures({ enabled: ["availability", "modelDiscovery"] }),
+      features: snapshotRuntimeFeatures(
+        createRuntimeTestFeatures({ enabled: ["availability", "modelDiscovery"] }),
+      ),
       descriptor: { id: "pinned-runtime", kind: "test", displayName: "Pinned Runtime" },
       canUse: async () => ({ usable: true }),
       listModels: async () => [],
@@ -226,7 +230,9 @@ function createCatalog(
     bind: async () => ({
       binding: { runtimeId: "pi", revision: 1, fingerprint: "a".repeat(64) },
       adapter: {
-        features: createRuntimeTestFeatures({ enabled: ["availability", "modelDiscovery"] }),
+        features: snapshotRuntimeFeatures(
+          createRuntimeTestFeatures({ enabled: ["availability", "modelDiscovery"] }),
+        ),
         descriptor: { id: "pi", kind: "cloud-pi-agent", displayName: "PI" },
         canUse: async () => ({ usable: true }),
         listModels,

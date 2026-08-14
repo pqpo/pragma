@@ -18,6 +18,7 @@ import type {
 } from "@pragma/core";
 import {
   createMcpToolRegistryPool,
+  createMcpRegistryFeature,
   defineRuntimeFeatures,
   defineRuntimeDriver,
   runtimeFeature,
@@ -78,7 +79,43 @@ export function createPiRuntime(options: CloudPiRuntimeAdapterOptions = {}): Run
       ...options.descriptor?.capabilities,
     },
   };
-  const implemented = () => runtimeFeature.degraded(PI_EVIDENCE_PENDING);
+  const implemented = () => runtimeFeature.native(runtimeFeature.degraded(PI_EVIDENCE_PENDING));
+  const mcp = createMcpRegistryFeature({
+    readiness: runtimeFeature.degraded(PI_EVIDENCE_PENDING),
+    pool: mcpToolRegistries,
+    resourcePrefix: "pi",
+  });
+  const skills = runtimeFeature.session({
+    id: "pi.resources",
+    readiness: runtimeFeature.degraded(PI_EVIDENCE_PENDING),
+    async prepare(ctx) {
+      const loader = createResourceLoader(ctx.agent, ctx.workspace, ctx.agentContext.systemPrompt);
+      await loader.reload();
+      return loader;
+    },
+  });
+  const permissions = runtimeFeature.session({
+    id: "pi.tool-assembly",
+    readiness: runtimeFeature.degraded(PI_EVIDENCE_PENDING),
+    needs: { mcp },
+    async prepare(ctx, { mcp: preparedMcp }) {
+      const streamState: PiRuntimeStreamState = { logger: ctx.logger };
+      return {
+        streamState,
+        resolvedTools: createResolvedPiTools({
+          agent: ctx.agent,
+          cwd: ctx.workspace,
+          mcpTools: preparedMcp.registry.tools,
+          parentSystemPrompt: ctx.agentContext.systemPrompt,
+          streamState,
+          lifecycle: ctx.lifecycle,
+          context: ctx.runContext,
+          executionContext: ctx.request.executionContext,
+          humanInteractionHandler: ctx.request.humanInteractionHandler,
+        }),
+      };
+    },
+  });
   const features = defineRuntimeFeatures({
     availability: implemented(),
     authentication: implemented(),
@@ -92,18 +129,18 @@ export function createPiRuntime(options: CloudPiRuntimeAdapterOptions = {}): Run
     textStreaming: implemented(),
     reasoningStreaming: implemented(),
     nativeToolLifecycle: implemented(),
-    mcp: implemented(),
-    permissions: implemented(),
+    mcp,
+    permissions,
     userInteraction: implemented(),
-    skills: implemented(),
+    skills,
     attachmentImage: implemented(),
     attachmentFile: implemented(),
     attachmentDirectory: implemented(),
     usage: implemented(),
     contextWindow: implemented(),
-    compaction: runtimeFeature.degraded(PI_EVIDENCE_PENDING, {
-      compactionModes: ["manual", "events"],
-    }),
+    compaction: runtimeFeature.native(
+      runtimeFeature.degraded(PI_EVIDENCE_PENDING, { compactionModes: ["manual", "events"] }),
+    ),
     cancellation: implemented(),
     steering: implemented(),
     close: implemented(),
@@ -156,44 +193,27 @@ export function createPiRuntime(options: CloudPiRuntimeAdapterOptions = {}): Run
             enabled: true,
           },
         });
-        const loader = createResourceLoader(ctx.agent, cwd, ctx.agentContext.systemPrompt);
-        const resourceReloadPromise = timedPiPhase(
-          ctx.logger,
-          "resource_loader_reload",
-          sessionStartedAt,
-          async () => await loader.reload(),
-        );
-        const [registeredProvider, , mcpToolRegistryLease, piSessionManagerResult] =
-          await Promise.all([
-            selectedProviderId === undefined
-              ? Promise.resolve(undefined)
-              : timedPiPhase(ctx.logger, "model_provider_resolve", sessionStartedAt, async () =>
-                  options.modelProviders?.resolveProvider(selectedProviderId),
-                ),
-            resourceReloadPromise,
-            timedPiPhase(
-              ctx.logger,
-              "mcp_tool_registry",
-              sessionStartedAt,
-              async () =>
-                await ctx.resources.acquire(
-                  "pi.mcp-registry",
-                  async () => await mcpToolRegistries.acquire(ctx.agent.mcp),
-                  async (lease) => await lease.release(),
-                ),
-            ),
-            timedPiPhase(
-              ctx.logger,
-              "session_manager",
-              sessionStartedAt,
-              async () =>
-                await createPiSessionManager(
-                  cwd,
-                  ctx.persistence.spec?.sessionDir ?? ctx.paths.runtimeSessionDir("pi"),
-                  ctx.request.runtimeSession?.id,
-                ),
-            ),
-          ]);
+        const loader = ctx.features.skills;
+        const mcp = ctx.features.mcp;
+        const permissions = ctx.features.permissions;
+        const [registeredProvider, piSessionManagerResult] = await Promise.all([
+          selectedProviderId === undefined
+            ? Promise.resolve(undefined)
+            : timedPiPhase(ctx.logger, "model_provider_resolve", sessionStartedAt, async () =>
+                options.modelProviders?.resolveProvider(selectedProviderId),
+              ),
+          timedPiPhase(
+            ctx.logger,
+            "session_manager",
+            sessionStartedAt,
+            async () =>
+              await createPiSessionManager(
+                cwd,
+                ctx.persistence.spec?.sessionDir ?? ctx.paths.runtimeSessionDir("pi"),
+                ctx.request.runtimeSession?.id,
+              ),
+          ),
+        ]);
         if (selectedProviderId !== undefined && registeredProvider === undefined) {
           throw new Error(`Model provider is not registered: ${selectedProviderId}`);
         }
@@ -211,20 +231,8 @@ export function createPiRuntime(options: CloudPiRuntimeAdapterOptions = {}): Run
         let session: AgentSession | undefined;
         try {
           const { modelRegistry, modelRuntime } = modelRuntimeResult;
-          const streamState: PiRuntimeStreamState = { logger: ctx.logger };
-          const toolsStartedAt = performance.now();
-          const resolvedTools = createResolvedPiTools({
-            agent: ctx.agent,
-            cwd,
-            mcpTools: mcpToolRegistryLease.registry.tools,
-            parentSystemPrompt: ctx.agentContext.systemPrompt,
-            streamState,
-            lifecycle: ctx.lifecycle,
-            context: ctx.runContext,
-            executionContext: ctx.request.executionContext,
-            humanInteractionHandler: ctx.request.humanInteractionHandler,
-          });
-          logPiPhase(ctx.logger, "tool_schema_build", toolsStartedAt, sessionStartedAt, {
+          const { streamState, resolvedTools } = permissions;
+          logPiPhase(ctx.logger, "tool_schema_build", sessionStartedAt, sessionStartedAt, {
             toolCount: resolvedTools.tools.length,
             systemPromptCharacters: ctx.agentContext.systemPrompt.length,
           });
@@ -271,9 +279,9 @@ export function createPiRuntime(options: CloudPiRuntimeAdapterOptions = {}): Run
             elapsedMs: piElapsedMs(sessionStartedAt),
             toolCount: sessionOptions.customTools?.length ?? 0,
             systemPromptCharacters: ctx.agentContext.systemPrompt.length,
-            mcpOpenedConnections: mcpToolRegistryLease.stats.openedConnections,
-            mcpReusedConnections: mcpToolRegistryLease.stats.reusedConnections,
-            mcpCoalescedConnections: mcpToolRegistryLease.stats.coalescedConnections,
+            mcpOpenedConnections: mcp.lease.stats.openedConnections,
+            mcpReusedConnections: mcp.lease.stats.reusedConnections,
+            mcpCoalescedConnections: mcp.lease.stats.coalescedConnections,
           });
 
           return createPiNativeSession({
@@ -339,6 +347,7 @@ export function createPiRuntime(options: CloudPiRuntimeAdapterOptions = {}): Run
     {
       sessionRestoreHandler: options.sessionRestoreHandler,
       sessionSyncCallback: options.sessionSyncCallback,
+      createProcessEnvironment: () => ({ ...(options.env ?? process.env) }),
     },
   );
 }

@@ -19,15 +19,21 @@ stream-json and SDK event semantics remain provider-specific.
 ## Decision
 
 Core owns one closed `RUNTIME_FEATURE_CATALOG`. Every concrete Runtime passes a complete
-`RuntimeFeatureSet` to `defineRuntimeDriver()` and declares each slot as `supported`, `degraded`,
-`unsupported` or `notApplicable`. Non-supported declarations carry a reason. Runtime capability
-booleans are projections of this declaration; driver descriptors only choose placement targets and
-execution locations.
+`RuntimeFeatureSet` to `defineRuntimeDriver()` and declares each slot with `native`, `session` or
+`turn` implementation form plus `supported`, `degraded`, `unsupported` or `notApplicable` readiness.
+Non-supported declarations carry a reason. Runtime capability booleans are projections of this
+declaration; driver descriptors only choose placement targets and execution locations.
 
-Driver-, Session- and turn-scoped features have explicit phases. Core executes enabled Session hooks
-in catalog order before native Session creation, executes enabled turn hooks before `startTurn()`, and
-passes immutable per-feature preparation results to the provider implementation. Antigravity is the
-reference implementation for MCP, permission relay and Skill preparation. Other Runtime packages
+Feature implementation is primary: an enabled Session or turn capability is a typed preparation
+object with `prepare()`, while readiness/evidence is metadata on that object. `runtimeFeature.native()`
+is explicit for provider-native behavior whose implementation is enforced by a Driver method or
+conformance observation; it cannot be confused with an omitted lifecycle implementation.
+
+Core resolves a typed preparation graph before native execution. Public Features and private
+`runtimeStep` objects are graph nodes; `needs` is an object of typed node references rather than a
+provider-specific global order. Core rejects cycles and cross-phase edges, prepares dependencies before
+consumers, and freezes public Feature outputs for `createSession()` / `startTurn()`. Antigravity is the
+reference implementation for a chained MCP, permission relay and Skill graph. Other Runtime packages
 adopt the same declaration and Core-owned resource scope without sharing provider protocol code.
 
 `RuntimeResourceScope` owns leases, registrations, relays and other acquired resources. It transfers
