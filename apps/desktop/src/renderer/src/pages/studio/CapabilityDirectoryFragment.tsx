@@ -142,12 +142,14 @@ export function CapabilityDirectoryFragment(props: {
       filter === "all" ||
       (filter === "skills" && capability.definition.kind === "skill") ||
       (filter === "tools" && capability.definition.kind !== "skill");
-    return (
-      typeMatches &&
-      `${capability.manifest.name} ${capability.definition.description}`
-        .toLowerCase()
-        .includes(normalizedQuery)
-    );
+    const searchable = [
+      capability.manifest.name,
+      capability.manifest.id,
+      capability.manifest.runtimeKey,
+      capability.definition.kind,
+      capability.definition.description,
+    ].join(" ");
+    return typeMatches && searchable.toLowerCase().includes(normalizedQuery);
   });
 
   const closeDrawer = () => {
@@ -489,6 +491,9 @@ export function CapabilityDirectoryFragment(props: {
             </button>
           ))}
         </div>
+        <span className="capability-results-count">
+          {t("showingMatching", { visible: matching.length, total: props.capabilities.length })}
+        </span>
       </div>
 
       <div className="capability-table" role="list">
@@ -508,7 +513,13 @@ export function CapabilityDirectoryFragment(props: {
             onChanged={props.onChanged}
           />
         ))}
-        {matching.length === 0 ? <p className="capability-empty">{t("noCapabilities")}</p> : null}
+        {matching.length === 0 ? (
+          <p className="capability-empty">
+            {normalizedQuery.length > 0 || filter !== "all"
+              ? t("noMatchesFound")
+              : t("noCapabilities")}
+          </p>
+        ) : null}
       </div>
 
       {mode ? (

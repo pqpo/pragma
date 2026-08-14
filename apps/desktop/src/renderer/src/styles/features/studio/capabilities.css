@@ -41,6 +41,14 @@
   max-width: 520px;
 }
 
+.capability-results-count {
+  margin-left: auto;
+  color: var(--muted);
+  font-size: 11px;
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+
 .capability-filters {
   display: flex;
   padding: 3px;

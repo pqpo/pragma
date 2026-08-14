@@ -1476,6 +1476,57 @@
   gap: 7px;
 }
 
+.expert-tool-results-toolbar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+  padding: 2px 2px 7px;
+  color: var(--muted);
+  font-size: 11px;
+}
+
+.expert-tool-results-toolbar button,
+.expert-tool-service-toggle,
+.expert-tool-service-select-all {
+  border: 0;
+  background: transparent;
+  cursor: pointer;
+}
+
+.expert-tool-results-toolbar button,
+.expert-tool-service-select-all {
+  color: var(--green-dark);
+  font-size: 11px;
+  font-weight: 680;
+}
+
+.expert-tool-results-toolbar button:hover,
+.expert-tool-service-select-all:hover {
+  text-decoration: underline;
+  text-underline-offset: 3px;
+}
+
+.expert-tool-load-more {
+  justify-self: center;
+  margin-top: 5px;
+  padding: 8px 12px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: #fff;
+  color: var(--green-dark);
+  cursor: pointer;
+  font-size: 11px;
+  font-weight: 680;
+}
+
+.expert-tool-load-more:hover,
+.expert-tool-load-more:focus-visible {
+  border-color: var(--green);
+  background: var(--green-soft);
+  outline: 0;
+}
+
 .expert-picker-row {
   display: grid;
   grid-template-columns: 18px minmax(0, 1fr);
@@ -1575,7 +1626,28 @@
   background: var(--surface-soft);
 }
 
-.expert-tool-service > header > div:first-child {
+.expert-tool-service-toggle {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr);
+  min-width: 0;
+  align-items: center;
+  gap: 8px;
+  padding: 0;
+  color: var(--text);
+  text-align: left;
+}
+
+.expert-tool-service-toggle > svg {
+  flex: 0 0 auto;
+  color: var(--muted);
+  transition: transform 140ms ease;
+}
+
+.expert-tool-service-toggle > svg:not(.is-expanded) {
+  transform: rotate(-90deg);
+}
+
+.expert-tool-service-toggle > span {
   display: grid;
   min-width: 0;
   gap: 3px;
@@ -1599,14 +1671,8 @@
   gap: 14px;
 }
 
-.expert-tool-service > header label {
-  display: flex;
-  align-items: center;
-  gap: 7px;
-  color: #4d5850;
-  cursor: pointer;
-  font-size: 11px;
-  font-weight: 600;
+.expert-tool-service-select-all:disabled {
+  cursor: not-allowed;
 }
 
 .expert-tool-service .expert-picker-list {

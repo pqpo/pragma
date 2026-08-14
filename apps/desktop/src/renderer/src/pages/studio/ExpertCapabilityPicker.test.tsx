@@ -2,7 +2,11 @@ import { renderToStaticMarkup } from "react-dom/server";
 import { describe, expect, it } from "vitest";
 
 import type { Capability } from "../../../../shared/contracts/index.ts";
-import { ExpertCapabilityPicker, matchingToolNames } from "./ExpertCapabilityPicker.tsx";
+import {
+  ExpertCapabilityPicker,
+  matchingToolNames,
+  updateToolSelection,
+} from "./ExpertCapabilityPicker.tsx";
 
 const toolCapability = {
   manifest: {
@@ -78,5 +82,53 @@ describe("ExpertCapabilityPicker", () => {
     expect(matchingToolNames(toolCapability, "tree")).toEqual(["getCodeWikiStructure"]);
     expect(matchingToolNames(toolCapability, "CodeWiki")).toHaveLength(5);
     expect(matchingToolNames(toolCapability, "calendar")).toEqual([]);
+  });
+
+  it("removes a single tool and its approval without restoring the old selection", () => {
+    const selection = updateToolSelection({
+      capability: toolCapability,
+      capabilityReferences: [
+        {
+          kind: "tools",
+          capabilityId: toolCapability.manifest.id,
+          revision: 1,
+          toolNames: ["searchCodeWiki", "getCodeWikiStructure"],
+        },
+      ],
+      toolApprovals: {
+        mcp_codewiki_searchCodeWiki: "ask",
+        mcp_codewiki_getCodeWikiStructure: "required",
+      },
+      toolNames: ["getCodeWikiStructure"],
+    });
+
+    expect(selection.capabilityReferences).toEqual([
+      {
+        kind: "tools",
+        capabilityId: toolCapability.manifest.id,
+        revision: 1,
+        toolNames: ["getCodeWikiStructure"],
+      },
+    ]);
+    expect(selection.toolApprovals).toEqual({ mcp_codewiki_getCodeWikiStructure: "required" });
+  });
+
+  it("clears a complete service selection", () => {
+    const selection = updateToolSelection({
+      capability: toolCapability,
+      capabilityReferences: [
+        {
+          kind: "tools",
+          capabilityId: toolCapability.manifest.id,
+          revision: 1,
+          toolNames: toolCapability.definition.tools.map((tool) => tool.name),
+        },
+      ],
+      toolApprovals: { mcp_codewiki_searchCodeWiki: "ask" },
+      toolNames: [],
+    });
+
+    expect(selection.capabilityReferences).toEqual([]);
+    expect(selection.toolApprovals).toEqual({});
   });
 });

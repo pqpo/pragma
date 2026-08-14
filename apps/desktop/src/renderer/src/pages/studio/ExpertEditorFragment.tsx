@@ -131,15 +131,15 @@ export function ExpertEditorFragment(props: {
     setDraft({ ...draft, tags: [...draft.tags, tag], tagInput: "" });
   };
   const setCapabilityReferences = (capabilities: ExpertDraft["capabilities"]) => {
-    setDraft({
-      ...draft,
+    setDraft((current) => ({
+      ...current,
       capabilities,
       skills: capabilities.filter((reference) => reference.kind === "skill").length,
       tools: capabilities
         .filter((reference) => reference.kind === "tools")
         .reduce((total, reference) => total + reference.toolNames.length, 0),
       mcpServers: capabilities.filter((reference) => reference.kind === "tools").length,
-    });
+    }));
   };
   const submit = async () => {
     setError(null);
@@ -591,12 +591,16 @@ export function ExpertEditorFragment(props: {
                   capabilityReferences={draft.capabilities}
                   toolApprovals={draft.toolApprovals}
                   allowResourceTools={!isBuiltIn}
-                  onResourceToolsChange={(resourceTools) => setDraft({ ...draft, resourceTools })}
+                  onResourceToolsChange={(resourceTools) =>
+                    setDraft((current) => ({ ...current, resourceTools }))
+                  }
                   onContextStoreMountsChange={(contextStoreMounts) =>
-                    setDraft({ ...draft, contextStoreMounts })
+                    setDraft((current) => ({ ...current, contextStoreMounts }))
                   }
                   onCapabilityReferencesChange={setCapabilityReferences}
-                  onToolApprovalsChange={(toolApprovals) => setDraft({ ...draft, toolApprovals })}
+                  onToolApprovalsChange={(toolApprovals) =>
+                    setDraft((current) => ({ ...current, toolApprovals }))
+                  }
                 />
                 <ExpertPluginPicker
                   plugins={props.plugins}

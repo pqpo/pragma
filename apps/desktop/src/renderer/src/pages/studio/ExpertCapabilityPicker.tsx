@@ -1,4 +1,12 @@
-import { BookOpenText, Database, MagnifyingGlass, Network, Wrench, X } from "@phosphor-icons/react";
+import {
+  BookOpenText,
+  CaretDown,
+  Database,
+  MagnifyingGlass,
+  Network,
+  Wrench,
+  X,
+} from "@phosphor-icons/react";
 import { useEffect, useMemo, useState } from "react";
 import type { PragmaResource } from "@pragma/interpreter/ast";
 import { useTranslation } from "react-i18next";
@@ -9,6 +17,7 @@ import { ContextStorePickerDialog } from "./ContextStorePickerDialog.tsx";
 import type { ExpertDraft } from "./studio-model.ts";
 
 type PickerKind = "resources" | "context-stores" | "skills" | "tools";
+const TOOL_SERVICE_PAGE_SIZE = 20;
 type InvocableResource = Extract<
   PragmaResource,
   { readonly kind: "Expert" | "ExpertTeam" | "Flow" }
@@ -77,6 +86,51 @@ export function matchingToolNames(capability: Capability, query: string): readon
       ? tools
       : tools.filter((tool) => includesQuery(query, tool.name, tool.description))
   ).map((tool) => tool.name);
+}
+
+export function updateToolSelection(input: {
+  readonly capability: Capability;
+  readonly capabilityReferences: ExpertDraft["capabilities"];
+  readonly toolApprovals: ExpertDraft["toolApprovals"];
+  readonly toolNames: readonly string[];
+}): {
+  readonly capabilityReferences: ExpertDraft["capabilities"];
+  readonly toolApprovals: ExpertDraft["toolApprovals"];
+} {
+  const existing = input.capabilityReferences.find(
+    (reference) =>
+      reference.kind === "tools" && reference.capabilityId === input.capability.manifest.id,
+  );
+  const capabilityReferences = input.capabilityReferences.filter(
+    (reference) => reference !== existing,
+  );
+  const removedNames = (existing?.kind === "tools" ? existing.toolNames : []).filter(
+    (name) => !input.toolNames.includes(name),
+  );
+  const removedKeys = new Set(
+    removedNames.map((name) => toolApprovalKey(input.capability.manifest.runtimeKey, name)),
+  );
+
+  return {
+    capabilityReferences:
+      input.toolNames.length === 0
+        ? capabilityReferences
+        : [
+            ...capabilityReferences,
+            {
+              kind: "tools",
+              capabilityId: input.capability.manifest.id,
+              revision:
+                existing?.kind === "tools"
+                  ? existing.revision
+                  : input.capability.manifest.latestRevision,
+              toolNames: [...input.toolNames],
+            },
+          ],
+    toolApprovals: Object.fromEntries(
+      Object.entries(input.toolApprovals).filter(([key]) => !removedKeys.has(key)),
+    ),
+  };
 }
 
 function SummaryNames(props: { readonly names: readonly string[] }) {
@@ -283,34 +337,14 @@ export function ExpertCapabilityPicker(props: {
           : selectedToolCount;
 
   const updateToolReference = (capability: Capability, toolNames: readonly string[]) => {
-    const existing = selectedToolReferences.find(
-      (reference) => reference.capabilityId === capability.manifest.id,
-    );
-    const without = props.capabilityReferences.filter((reference) => reference !== existing);
-    props.onCapabilityReferencesChange(
-      toolNames.length === 0
-        ? without
-        : [
-            ...without,
-            {
-              kind: "tools",
-              capabilityId: capability.manifest.id,
-              revision: existing?.revision ?? capability.manifest.latestRevision,
-              toolNames: [...toolNames],
-            },
-          ],
-    );
-    const removedNames = (existing?.toolNames ?? []).filter((name) => !toolNames.includes(name));
-    if (removedNames.length > 0) {
-      const removedKeys = new Set(
-        removedNames.map((name) => toolApprovalKey(capability.manifest.runtimeKey, name)),
-      );
-      props.onToolApprovalsChange(
-        Object.fromEntries(
-          Object.entries(props.toolApprovals).filter(([key]) => !removedKeys.has(key)),
-        ),
-      );
-    }
+    const next = updateToolSelection({
+      capability,
+      capabilityReferences: props.capabilityReferences,
+      toolApprovals: props.toolApprovals,
+      toolNames,
+    });
+    props.onCapabilityReferencesChange(next.capabilityReferences);
+    props.onToolApprovalsChange(next.toolApprovals);
   };
 
   return (
@@ -624,16 +658,50 @@ function ToolResults(props: {
   ) => void;
 }) {
   const { t } = useTranslation("studio");
-  const visible = props.capabilities.flatMap((capability) => {
+  const [expandedServices, setExpandedServices] = useState<ReadonlySet<string>>(() => new Set());
+  const [visibleLimit, setVisibleLimit] = useState(TOOL_SERVICE_PAGE_SIZE);
+  useEffect(() => {
+    setVisibleLimit(TOOL_SERVICE_PAGE_SIZE);
+  }, [props.query]);
+
+  const matchingServices = props.capabilities.flatMap((capability) => {
     const tools = getTools(capability);
     const matchingNames = matchingToolNames(capability, props.query);
     const visibleTools = tools.filter((tool) => matchingNames.includes(tool.name));
     return visibleTools.length > 0 ? [{ capability, tools, visibleTools }] : [];
   });
+  const visible = matchingServices.slice(0, visibleLimit);
   if (visible.length === 0)
     return <EmptyResults hasQuery={Boolean(props.query.trim())} label={t("toolsLower")} />;
+  const autoExpandSearchResults = props.query.trim().length > 0 && visible.length <= 8;
+  const allVisibleExpanded = visible.every(({ capability }) =>
+    expandedServices.has(capability.manifest.id),
+  );
+  const setAllVisibleExpanded = (expanded: boolean) => {
+    setExpandedServices((current) => {
+      const next = new Set(current);
+      for (const { capability } of visible) {
+        if (expanded) next.add(capability.manifest.id);
+        else next.delete(capability.manifest.id);
+      }
+      return next;
+    });
+  };
   return (
     <div className="expert-tool-results">
+      <div className="expert-tool-results-toolbar">
+        <span>
+          {t("showingToolServices", {
+            shown: visible.length,
+            total: matchingServices.length,
+          })}
+        </span>
+        {!autoExpandSearchResults ? (
+          <button type="button" onClick={() => setAllVisibleExpanded(!allVisibleExpanded)}>
+            {allVisibleExpanded ? t("collapseAllServices") : t("expandAllServices")}
+          </button>
+        ) : null}
+      </div>
       {visible.map(({ capability, tools, visibleTools }) => {
         const found = props.references.find(
           (reference) =>
@@ -644,93 +712,132 @@ function ToolResults(props: {
         const unavailable = capability.health.status !== "ready" && selected === undefined;
         const allSelected =
           tools.length > 0 && tools.every((tool) => selectedNames.includes(tool.name));
+        const isExpanded = autoExpandSearchResults || expandedServices.has(capability.manifest.id);
         return (
           <section
             className={`expert-tool-service${unavailable ? " is-disabled" : ""}`}
             key={capability.manifest.id}
           >
             <header>
+              <button
+                className="expert-tool-service-toggle"
+                type="button"
+                aria-expanded={isExpanded}
+                onClick={() =>
+                  setExpandedServices((current) => {
+                    const next = new Set(current);
+                    if (next.has(capability.manifest.id)) next.delete(capability.manifest.id);
+                    else next.add(capability.manifest.id);
+                    return next;
+                  })
+                }
+              >
+                <CaretDown
+                  className={isExpanded ? "is-expanded" : ""}
+                  size={16}
+                  aria-hidden="true"
+                />
+                <span>
+                  <strong>{capability.manifest.name}</strong>
+                  <small>
+                    {capability.definition.kind === "mcp_server"
+                      ? t("mcpServer")
+                      : capability.definition.kind === "http_service"
+                        ? t("httpService")
+                        : t("codeService")}{" "}
+                    ·{" "}
+                    {t("selectedOfTotal", { selected: selectedNames.length, total: tools.length })}
+                    {props.query.trim().length > 0
+                      ? ` · ${t("matchingTools", { count: visibleTools.length })}`
+                      : ""}
+                    {unavailable ? ` · ${t("needsAttention")}` : ""}
+                  </small>
+                </span>
+              </button>
               <div>
-                <strong>{capability.manifest.name}</strong>
-                <small>
-                  {capability.definition.kind === "mcp_server"
-                    ? t("mcpServer")
-                    : capability.definition.kind === "http_service"
-                      ? t("httpService")
-                      : t("codeService")}{" "}
-                  · {t("selectedOfTotal", { selected: selectedNames.length, total: tools.length })}
-                  {unavailable ? ` · ${t("needsAttention")}` : ""}
-                </small>
-              </div>
-              <div>
-                <label>
-                  <input
-                    type="checkbox"
-                    disabled={unavailable}
-                    checked={allSelected}
-                    onChange={() =>
-                      props.onUpdate(capability, allSelected ? [] : tools.map((tool) => tool.name))
-                    }
-                  />{" "}
-                  {t("selectAll")}
-                </label>
+                <button
+                  className="expert-tool-service-select-all"
+                  type="button"
+                  disabled={unavailable}
+                  aria-pressed={allSelected}
+                  onClick={() =>
+                    props.onUpdate(capability, allSelected ? [] : tools.map((tool) => tool.name))
+                  }
+                >
+                  {allSelected ? t("clearAll") : t("selectAll")}
+                </button>
               </div>
             </header>
-            <div className="expert-picker-list">
-              {visibleTools.map((tool) => {
-                const checked = selectedNames.includes(tool.name);
-                const approvalKey = toolApprovalKey(capability.manifest.runtimeKey, tool.name);
-                return (
-                  <div className="expert-picker-row expert-tool-row" key={tool.name}>
-                    <input
-                      type="checkbox"
-                      aria-label={t("selectExpertTool", { name: tool.name })}
-                      disabled={unavailable}
-                      checked={checked}
-                      onChange={() =>
-                        props.onUpdate(
-                          capability,
-                          checked
-                            ? selectedNames.filter((name) => name !== tool.name)
-                            : [...selectedNames, tool.name],
-                        )
-                      }
-                    />
-                    <span>
-                      <strong>{tool.name}</strong>
-                      <small>{tool.description ?? t("externalTool")}</small>
-                    </span>
-                    {checked ? (
-                      <div className="tool-approval-select">
-                        <span className="sr-only">{t("toolApprovalFor", { name: tool.name })}</span>
-                        <SelectMenu<"" | "none" | "ask" | "required">
-                          ariaLabel={t("toolApprovalFor", { name: tool.name })}
-                          className="form-select"
-                          value={props.toolApprovals[approvalKey] ?? ""}
-                          options={[
-                            { value: "", label: t("approvalDefault") },
-                            { value: "none", label: t("approvalNone") },
-                            { value: "ask", label: t("approvalAsk") },
-                            { value: "required", label: t("approvalRequired") },
-                          ]}
-                          onChange={(approval) =>
-                            props.onApprovalChange(
-                              approvalKey,
-                              approval === ""
-                                ? undefined
-                                : (approval as ExpertDraft["toolApprovals"][string]),
-                            )
-                          }
-                        />
-                      </div>
-                    ) : null}
-                  </div>
-                );
-              })}
-            </div>
+            {isExpanded ? (
+              <div className="expert-picker-list">
+                {visibleTools.map((tool) => {
+                  const checked = selectedNames.includes(tool.name);
+                  const approvalKey = toolApprovalKey(capability.manifest.runtimeKey, tool.name);
+                  return (
+                    <div className="expert-picker-row expert-tool-row" key={tool.name}>
+                      <input
+                        type="checkbox"
+                        aria-label={t("selectExpertTool", { name: tool.name })}
+                        disabled={unavailable}
+                        checked={checked}
+                        onChange={() =>
+                          props.onUpdate(
+                            capability,
+                            checked
+                              ? selectedNames.filter((name) => name !== tool.name)
+                              : [...selectedNames, tool.name],
+                          )
+                        }
+                      />
+                      <span>
+                        <strong>{tool.name}</strong>
+                        <small>{tool.description ?? t("externalTool")}</small>
+                      </span>
+                      {checked ? (
+                        <div className="tool-approval-select">
+                          <span className="sr-only">
+                            {t("toolApprovalFor", { name: tool.name })}
+                          </span>
+                          <SelectMenu<"" | "none" | "ask" | "required">
+                            ariaLabel={t("toolApprovalFor", { name: tool.name })}
+                            className="form-select"
+                            value={props.toolApprovals[approvalKey] ?? ""}
+                            options={[
+                              { value: "", label: t("approvalDefault") },
+                              { value: "none", label: t("approvalNone") },
+                              { value: "ask", label: t("approvalAsk") },
+                              { value: "required", label: t("approvalRequired") },
+                            ]}
+                            onChange={(approval) =>
+                              props.onApprovalChange(
+                                approvalKey,
+                                approval === ""
+                                  ? undefined
+                                  : (approval as ExpertDraft["toolApprovals"][string]),
+                              )
+                            }
+                          />
+                        </div>
+                      ) : null}
+                    </div>
+                  );
+                })}
+              </div>
+            ) : null}
           </section>
         );
       })}
+      {visible.length < matchingServices.length ? (
+        <button
+          className="expert-tool-load-more"
+          type="button"
+          onClick={() => setVisibleLimit((current) => current + TOOL_SERVICE_PAGE_SIZE)}
+        >
+          {t("loadMoreServices", {
+            count: Math.min(TOOL_SERVICE_PAGE_SIZE, matchingServices.length - visible.length),
+          })}
+        </button>
+      ) : null}
     </div>
   );
 }
