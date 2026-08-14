@@ -688,11 +688,19 @@ function CapabilityRow(props: {
   };
   return (
     <>
-      <div className="capability-row" role="listitem">
+      <div
+        className="capability-row"
+        role="listitem"
+        onClick={(event) => {
+          if (event.target instanceof Element && event.target.closest("[data-capability-row-action]")) {
+            return;
+          }
+          props.onOpen();
+        }}
+      >
         <button
           className="capability-name capability-open-button capability-column-name"
           type="button"
-          onClick={props.onOpen}
         >
           <span className="studio-asset-icon">
             <Icon size={22} />
@@ -717,6 +725,7 @@ function CapabilityRow(props: {
         </span>
         <span
           className="capability-row-actions capability-column-actions"
+          data-capability-row-action
           onBlur={(event) => {
             if (!event.currentTarget.contains(event.relatedTarget)) setMenuOpen(false);
           }}
@@ -749,7 +758,7 @@ function CapabilityRow(props: {
                   }}
                 >
                   <PencilSimple size={16} />
-                  {capability.definition.kind === "skill" ? t("updateSkill") : t("editCapability")}
+                  {capability.definition.kind === "skill" ? t("updateSkill") : t("edit")}
                 </button>
               ) : null}
               <button
@@ -762,7 +771,7 @@ function CapabilityRow(props: {
                   setError(null);
                 }}
               >
-                <Trash size={16} /> {t("deleteCapabilityAction")}
+                <Trash size={16} /> {t("delete")}
               </button>
             </div>
           ) : null}

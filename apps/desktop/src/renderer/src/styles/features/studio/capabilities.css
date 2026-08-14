@@ -90,6 +90,7 @@
   min-height: 84px;
   border-top: 1px solid var(--border);
   color: var(--muted);
+  cursor: pointer;
   font-size: 12px;
 }
 
@@ -174,6 +175,7 @@
   align-items: center;
   justify-content: flex-end;
   gap: 7px;
+  cursor: default;
 }
 
 .capability-row-actions button {
