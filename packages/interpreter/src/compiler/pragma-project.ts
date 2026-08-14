@@ -1755,14 +1755,20 @@ class PragmaProjectImpl implements PragmaProject {
           ),
         );
         const contextStores = await Promise.all(
-          indexed.resource.spec.contextStores.map(async (binding) => ({
-            namespace: binding.namespace,
-            required: binding.required,
-            visibility: binding.visibility,
-            store: (
+          indexed.resource.spec.contextStores.map(async (binding) => {
+            const contribution = (
               await resolveDeclarative<PragmaContextStoreContribution>(binding.ref, "ContextStore")
-            ).contribution.store,
-          })),
+            ).contribution;
+            return {
+              namespace: binding.namespace,
+              required: binding.required,
+              visibility: binding.visibility,
+              store: contribution.store,
+              ...(contribution.storeName === undefined
+                ? {}
+                : { storeName: contribution.storeName }),
+            };
+          }),
         );
         value = defineExpertTeam({
           id: indexed.resource.metadata.id,

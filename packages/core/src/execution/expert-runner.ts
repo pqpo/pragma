@@ -1672,6 +1672,7 @@ function withTeamDelegationTools(
       const registered = contextSystem.register({
         namespace: binding.namespace,
         store: binding.store,
+        ...(binding.storeName === undefined ? {} : { storeName: binding.storeName }),
         required: binding.required,
       });
       if (!registered.ok) throw new TypeError(registered.error.message);

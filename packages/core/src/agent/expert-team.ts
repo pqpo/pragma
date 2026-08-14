@@ -35,6 +35,7 @@ export type ExpertTeamContextVisibility =
 export interface ExpertTeamContextStoreBinding {
   readonly namespace: string;
   readonly store: ExpertAgentContextStore;
+  readonly storeName?: string | undefined;
   readonly required?: boolean | undefined;
   readonly visibility: ExpertTeamContextVisibility;
 }
