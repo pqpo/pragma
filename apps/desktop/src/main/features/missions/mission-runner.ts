@@ -2631,7 +2631,7 @@ export function createDesktopAdapterHost(
           ref,
           revision: context.revision,
           fingerprint: context.revision,
-          value: { store: context.store },
+          value: { store: context.store, storeName: context.name },
         };
       }
       return undefined;

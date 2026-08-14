@@ -116,4 +116,28 @@ describe("Host Context binding metadata", () => {
     expect(duplicate.ok ? undefined : duplicate.error.code).toBe("invalid_input");
     expect(system.overflowTargetNamespace).toBe("mission-board");
   });
+
+  it("indexes Store display metadata", async () => {
+    const system = new ContextSystem();
+    system.register({
+      namespace: "4jtrtegfka94yzgg",
+      storeName: "Memory · 00pragma",
+      store: new InMemoryContextStore({
+        context: [
+          {
+            id: "guide.md",
+            content: "Treat this as the preferred name.",
+          },
+        ],
+      }),
+    });
+
+    await expect(system.index()).resolves.toMatchObject({
+      ok: true,
+      value: {
+        stores: [{ namespace: "4jtrtegfka94yzgg", storeName: "Memory · 00pragma", itemCount: 1 }],
+        items: [{ id: "guide.md", revision: expect.any(String) }],
+      },
+    });
+  });
 });

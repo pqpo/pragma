@@ -69,6 +69,8 @@ export interface PragmaCapabilityContribution {
 
 export interface PragmaContextStoreContribution {
   readonly store: ExpertAgentContextStore;
+  /** Display-only Store name; it never participates in Context addressing. */
+  readonly storeName?: string | undefined;
 }
 
 export interface PragmaRuntimeProfileContribution {
@@ -390,6 +392,7 @@ const HostContextConfigSchema = z.object({ key: z.string().trim().min(1) }).stri
 const HostContextBindingSchema = z
   .object({
     store: z.custom<ExpertAgentContextStore>(isContextStore),
+    storeName: z.string().trim().min(1).max(200).optional(),
   })
   .strict();
 
@@ -634,13 +637,16 @@ function fileContextAdapter(): PragmaResourceAdapter<PragmaContextStoreResource>
     kind: "ContextStore",
     configSchema: FileContextConfigSchema,
     artifactSources: (config) => [FileContextConfigSchema.parse(config).source],
-    async verify({ config, host }) {
+    async verify({ config, host, resource }) {
       const parsed = FileContextConfigSchema.parse(config);
       const artifact = await verifiedArtifact(host, parsed.source);
       if (artifact.path === undefined) throw new Error("File context must materialize to a path.");
       return {
         fingerprint: artifact.contentHash,
-        contribution: { store: new FileSystemContextStore({ rootDir: artifact.path }) },
+        contribution: {
+          store: new FileSystemContextStore({ rootDir: artifact.path }),
+          storeName: resource.metadata.name,
+        },
       };
     },
   };
@@ -654,7 +660,7 @@ function staticContextAdapter(
     version: "v1",
     kind: "ContextStore",
     configSchema: StaticContextConfigSchema,
-    async verify({ config }) {
+    async verify({ config, resource }) {
       const parsed = StaticContextConfigSchema.parse(config);
       return {
         fingerprint: sha256(stableStringify(parsed)),
@@ -666,6 +672,7 @@ function staticContextAdapter(
               metadata: entry.metadata,
             })),
           ),
+          storeName: resource.metadata.name,
         },
       };
     },
@@ -680,10 +687,14 @@ function hostContextAdapter(): PragmaResourceAdapter<PragmaContextStoreResource>
     configSchema: HostContextConfigSchema,
     bindingSchema: HostContextBindingSchema,
     bindingRequired: true,
-    async verify({ binding }) {
+    async verify({ binding, resource }) {
+      const parsed = HostContextBindingSchema.parse(binding!.value);
       return {
         fingerprint: sha256(binding!.revision),
-        contribution: HostContextBindingSchema.parse(binding!.value),
+        contribution: {
+          store: parsed.store,
+          storeName: parsed.storeName ?? resource.metadata.name,
+        },
       };
     },
   };
@@ -868,6 +879,9 @@ export function createContextSystem(
       namespace: entry.namespace,
       required: entry.required,
       store: entry.contribution.store,
+      ...(entry.contribution.storeName === undefined
+        ? {}
+        : { storeName: entry.contribution.storeName }),
     });
     if (!result.ok) throw new Error(result.error.message);
   }

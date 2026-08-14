@@ -176,6 +176,7 @@ export interface ContextStoreStore {
   withRevisionLock<T>(storeId: string, operation: () => Promise<T>): Promise<T>;
   resolve(storeId: string): Promise<{
     readonly revision: string;
+    readonly name: string;
     readonly store: ExpertAgentContextStore;
   }>;
 }
@@ -1372,8 +1373,15 @@ export function createContextStoreStore(options: {
       const current = await readStore(storeId);
       return {
         revision: createHash("sha256")
-          .update(JSON.stringify({ id: current.id, schemaVersion: current.schemaVersion }))
+          .update(
+            JSON.stringify({
+              id: current.id,
+              schemaVersion: current.schemaVersion,
+              name: current.name,
+            }),
+          )
           .digest("hex"),
+        name: current.name,
         store: fileStore(storeId),
       };
     },

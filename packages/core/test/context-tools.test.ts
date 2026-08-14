@@ -275,6 +275,53 @@ describe("Expert context tools", () => {
     ).resolves.toMatchObject({ text: expect.stringContaining("Showing 1 of 3") });
   });
 
+  it("lists display metadata without changing Context addressing", async () => {
+    const unsupported = vi.fn(async () => {
+      throw new Error("not used");
+    });
+    const operations: ExpertAgentContextItemOperations = {
+      listContext: vi.fn(async () => ({
+        ok: true as const,
+        value: {
+          items: [
+            {
+              namespace: "4jtrtegfka94yzgg",
+              id: "guide.md",
+              metadata: { trigger: "manual" as const, priority: "normal" as const },
+              revision: "1723640000000000000:128",
+            },
+          ],
+          stores: [
+            {
+              namespace: "4jtrtegfka94yzgg",
+              storeName: "Memory · 00pragma",
+              itemCount: 16,
+            },
+          ],
+          issues: [],
+        },
+      })),
+      readContext: unsupported,
+      searchContext: unsupported,
+      addContext: unsupported,
+      editContext: unsupported,
+      deleteContext: unsupported,
+    };
+    const tool = createContextTools(operations).find(
+      (candidate) => candidate.name === "list_expert_context",
+    )!;
+
+    const result = await tool.call({}, undefined);
+
+    expect(result.text).toContain("storeName: Memory · 00pragma");
+    expect(result.text).toContain("itemCount: 16");
+    expect(result.text).toContain("revision: 1723640000000000000:128");
+    expect(result.details).toMatchObject({
+      context: [{ id: "guide.md" }],
+      stores: [{ namespace: "4jtrtegfka94yzgg", storeName: "Memory · 00pragma", itemCount: 16 }],
+    });
+  });
+
   it("advances pagination past context identifiers that cannot fit in the result budget", async () => {
     const unsupported = vi.fn(async () => {
       throw new Error("not used");

@@ -130,7 +130,10 @@ describe("PragmaBundleService", () => {
     expect(first.projectFingerprint).toBe(second.projectFingerprint);
     expect(Object.keys(archive)).toContain("bundle.json");
     expect(Object.keys(archive)).toContain("project/pragma.yaml");
-    expect(strFromU8(archive["project/pragma.yaml"]!)).toContain("apiVersion: pragma/v4");
+    expect(strFromU8(archive["project/pragma.yaml"]!)).toContain(
+      "- ./experts/1xddvess309a6gme.pragma.yaml",
+    );
+    expect(Object.keys(archive)).toContain("project/experts/1xddvess309a6gme.pragma.yaml");
     await expect(fixture.service.inspect(firstPath)).resolves.toMatchObject({
       bundleFingerprint: first.bundleFingerprint,
       root: { ref: "expert:1xddvess309a6gme", name: "Writer" },
@@ -144,7 +147,7 @@ describe("PragmaBundleService", () => {
     const path = join(source.root, "avatar.pragma");
     const exported = await source.service.exportTo(exportInput(source.projectRevision), path);
     const archive = unzipSync(new Uint8Array(await readFile(path)));
-    const projectSource = strFromU8(archive["project/pragma.yaml"]!);
+    const projectSource = strFromU8(archive["project/experts/1xddvess309a6gme.pragma.yaml"]!);
 
     expect(projectSource).toContain(`avatarId: ${requestedAvatarId}`);
     expect(Object.keys(archive).some((entry) => entry.startsWith("assets/avatar"))).toBe(false);

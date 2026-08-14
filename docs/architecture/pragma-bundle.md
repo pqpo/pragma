@@ -92,3 +92,20 @@ Host-owned:
 
 The bundle never makes the Host's storage identifier authoritative. The portable requirement is the
 contract; each Host decides how it satisfies that contract.
+
+## Exported project layout
+
+The Bundle entry file remains small. `project/pragma.yaml` contains only the Bundle metadata and
+relative `imports`; each selected resource is emitted separately below its resource-kind directory.
+For example:
+
+```text
+project/pragma.yaml
+project/experts/1h2j3k4m5n6p7q8r.pragma.yaml
+project/flows/3h4j5k6m7n8p9q0r.pragma.yaml
+project/runtime-profiles/7h8j9k0m1n2p3q4r.pragma.yaml
+project/pragma.lock.yaml
+```
+
+This keeps large Expert instructions and definitions out of the entry file while preserving a
+portable, directly loadable Pragma project.

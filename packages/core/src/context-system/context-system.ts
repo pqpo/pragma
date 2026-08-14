@@ -105,6 +105,8 @@ export interface ExpertAgentStoredContextItemReadResult extends ExpertAgentStore
 export interface ExpertAgentContextStoreRegistrationInput {
   readonly namespace: string;
   readonly store: ExpertAgentContextStore;
+  /** Display-only Store name; it never participates in Context addressing. */
+  readonly storeName?: string | undefined;
   readonly required?: boolean | undefined;
   readonly mutationApproval?: ContextMutationApproval | undefined;
   readonly overflowTarget?: boolean | undefined;
@@ -118,6 +120,7 @@ export type ContextMutationApproval = "none" | "required" | "always_on_required"
 
 export interface ExpertAgentContextStoreRegistration {
   readonly namespace: string;
+  readonly storeName?: string | undefined;
   readonly required: boolean;
   readonly mutationApproval: ContextMutationApproval;
   readonly overflowTarget: boolean;
@@ -305,9 +308,18 @@ export interface ContextStoreIssue {
   readonly error: ExpertAgentContextError;
 }
 
+/** Display-only metadata for one namespace in a Context index. */
+export interface ContextStoreIndexSummary {
+  readonly namespace: string;
+  readonly storeName?: string | undefined;
+  readonly itemCount?: number | undefined;
+}
+
 export interface ContextIndex {
   readonly items: readonly ExpertAgentContextItemSummary[];
   readonly issues: readonly ContextStoreIssue[];
+  /** Optional for source compatibility with custom Context index providers. */
+  readonly stores?: readonly ContextStoreIndexSummary[] | undefined;
 }
 
 export interface ExpertAgentContextStore {
@@ -346,6 +358,7 @@ export class ContextSystem {
     string,
     {
       readonly store: ExpertAgentContextStore;
+      readonly storeName?: string | undefined;
       readonly required: boolean;
       readonly mutationApproval: ContextMutationApproval;
       readonly overflowTarget: boolean;
@@ -414,6 +427,8 @@ export class ContextSystem {
     }
 
     const required = input.required ?? false;
+    const storeName = normalizeStoreName(input.storeName);
+    if (!storeName.ok) return storeName;
     const mutationApproval = input.mutationApproval ?? "required";
     const overflowTarget = input.overflowTarget ?? false;
 
@@ -426,12 +441,19 @@ export class ContextSystem {
 
     this.stores.set(namespaceResult.value, {
       store: input.store,
+      ...(storeName.value === undefined ? {} : { storeName: storeName.value }),
       required,
       mutationApproval,
       overflowTarget,
     });
 
-    return ok({ namespace: namespaceResult.value, required, mutationApproval, overflowTarget });
+    return ok({
+      namespace: namespaceResult.value,
+      ...(storeName.value === undefined ? {} : { storeName: storeName.value }),
+      required,
+      mutationApproval,
+      overflowTarget,
+    });
   }
 
   get overflowTargetNamespace(): string | undefined {
@@ -454,12 +476,13 @@ export class ContextSystem {
     input: ExpertAgentContextItemListInput = {},
   ): Promise<ExpertAgentContextResult<ContextIndex>> {
     if (this.stores.size === 0) {
-      return ok({ items: [], issues: [] });
+      return ok({ items: [], issues: [], stores: [] });
     }
 
     const summaries: ExpertAgentContextItemSummary[] = [];
     const issues: ContextStoreIssue[] = [];
     const storesResult = this.getStoresForNamespace(input.namespace);
+    const stores: ContextStoreIndexSummary[] = [];
 
     if (!storesResult.ok) {
       return storesResult;
@@ -475,13 +498,22 @@ export class ContextSystem {
         }
 
         issues.push({ namespace, operation: "list", error: listResult.error });
+        stores.push({
+          namespace,
+          ...(binding.storeName === undefined ? {} : { storeName: binding.storeName }),
+        });
         continue;
       }
 
       summaries.push(...listResult.value.map((item) => normalizeContextSummary(item, namespace)));
+      stores.push({
+        namespace,
+        ...(binding.storeName === undefined ? {} : { storeName: binding.storeName }),
+        itemCount: listResult.value.length,
+      });
     }
 
-    return ok({ items: sortContextSummaries(summaries), issues });
+    return ok({ items: sortContextSummaries(summaries), issues, stores });
   }
 
   selectContext(summaries: readonly ExpertAgentContextItemSummary[]): ContextAssemblySelection {
@@ -1089,6 +1121,16 @@ function normalizeNamespace(namespace: string | undefined): ExpertAgentContextRe
   }
 
   return ok(normalized);
+}
+
+function normalizeStoreName(
+  storeName: string | undefined,
+): ExpertAgentContextResult<string | undefined> {
+  if (storeName === undefined) return ok(undefined);
+  if (storeName.trim().length === 0) {
+    return error("invalid_input", "Context store name must be a non-empty string.");
+  }
+  return ok(storeName.trim());
 }
 
 function normalizeStoreEntries(
