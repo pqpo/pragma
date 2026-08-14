@@ -4,7 +4,7 @@ import { dirname, join } from "node:path";
 
 import { createStaticRuntimeResolver, snapshotRuntimeFeatures, type Expert } from "@pragma/core";
 import { createRuntimeTestFeatures } from "@pragma/core/testing";
-import { strToU8, zipSync } from "fflate";
+import { strFromU8, strToU8, zipSync } from "fflate";
 import { describe, expect, it } from "vitest";
 
 import {
@@ -37,6 +37,18 @@ describe("portable .pragma bundles", () => {
       roots: ["expert:1xddvess309a6gme"],
       project: { entry: "project/pragma.yaml" },
     });
+    const decoded = await decodePragmaBundle({ kind: "bytes", bytes: exported.bytes });
+    expect(strFromU8(decoded.files.get("project/pragma.yaml")!)).toContain(
+      "- ./experts/1xddvess309a6gme.pragma.yaml",
+    );
+    expect(strFromU8(decoded.files.get("project/pragma.yaml")!)).not.toContain("kind: Expert");
+    expect(strFromU8(decoded.files.get("project/pragma.yaml")!)).not.toContain("resources:");
+    expect(
+      strFromU8(decoded.files.get("project/experts/1xddvess309a6gme.pragma.yaml")!),
+    ).toContain("kind: Expert");
+    expect(
+      strFromU8(decoded.files.get("project/runtime-profiles/knr7p5b7qc55wv92.pragma.yaml")!),
+    ).toContain("kind: RuntimeProfile");
     expect(exported.manifest.requirements).toEqual(
       expect.arrayContaining([expect.objectContaining({ kind: "runtime" })]),
     );

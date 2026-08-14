@@ -110,10 +110,6 @@ import {
 
 const provenance = new WeakMap<object, PragmaProvenance>();
 const PRAGMA_BUNDLE_BINDING_PREFIX = "binding:pragma.bundle." as const;
-const PRAGMA_BUNDLE_RESERVED_PROJECT_PATHS = new Set([
-  "project/pragma.yaml",
-  "project/pragma.lock.yaml",
-]);
 
 export interface LoadPragmaProjectOptions {
   readonly rootDir?: string | undefined;
@@ -1950,24 +1946,35 @@ class PragmaProjectImpl implements PragmaProject {
     }
     const portable = portableizeBundleResources(selected, this.options.resourceAdapters);
     const files = new Map<string, Uint8Array>();
-    const projectBundle = PragmaBundleSchema.parse({
-      apiVersion: "pragma/v4",
-      kind: "Bundle",
-      resources: portable.resources,
-    });
+    const resourcePaths = portable.resources
+      .map((resource) => {
+        const path = `${pragmaResourceDirectory(resource)}/${pragmaResourceFileName(resource)}`;
+        files.set(`project/${path}`, new TextEncoder().encode(formatPragmaYaml(resource)));
+        return path;
+      })
+      .toSorted();
+    const projectBundle = {
+      apiVersion: "pragma/v4" as const,
+      kind: "Bundle" as const,
+      imports: resourcePaths.map((path) => `./${path}`),
+    };
+    PragmaBundleSchema.parse(projectBundle);
     files.set("project/pragma.yaml", new TextEncoder().encode(formatPragmaYaml(projectBundle)));
 
+    const generatedProjectPaths = new Set(files.keys());
+    generatedProjectPaths.add("project/pragma.lock.yaml");
     const artifacts = await collectSelectedBundleArtifacts(
       portable.resources,
       this.rootDir,
       this.options.resourceAdapters ?? createDefaultPragmaResourceAdapterRegistry(),
       files,
+      generatedProjectPaths,
     );
     const lockResources = portable.resources
       .map((resource) => ({
         ref: canonicalRef(resource),
         contentHash: sha256(stableStringify(resource)),
-        source: "pragma.yaml",
+        source: `${pragmaResourceDirectory(resource)}/${pragmaResourceFileName(resource)}`,
       }))
       .toSorted((left, right) => left.ref.localeCompare(right.ref));
     const projectFingerprint = sha256(
@@ -3473,6 +3480,7 @@ async function collectSelectedBundleArtifacts(
   projectRoot: string,
   adapters: PragmaResourceAdapterRegistry,
   files: Map<string, Uint8Array>,
+  reservedPaths: ReadonlySet<string>,
 ): Promise<readonly { readonly source: string; readonly contentHash: string }[]> {
   const artifacts = new Map<string, string>();
   for (const resource of resources) {
@@ -3481,7 +3489,13 @@ async function collectSelectedBundleArtifacts(
       if (source.type === "project") {
         const absolute = await assertPathInsideRoot(projectRoot, resolve(projectRoot, source.path));
         artifacts.set(source.path, await hashArtifactPath(absolute));
-        await collectArtifactFiles(absolute, source.path, projectRoot, files);
+        await collectArtifactFiles(
+          absolute,
+          source.path,
+          projectRoot,
+          files,
+          reservedPaths,
+        );
       } else {
         artifacts.set(source.uri, source.integrity.slice("sha256:".length));
       }
@@ -3497,12 +3511,13 @@ async function collectArtifactFiles(
   logicalPath: string,
   projectRoot: string,
   files: Map<string, Uint8Array>,
+  reservedPaths: ReadonlySet<string>,
 ): Promise<void> {
   const safePath = await assertPathInsideRoot(projectRoot, absolute);
   const info = await lstat(safePath);
   if (info.isFile()) {
     const bundlePath = `project/${logicalPath.replaceAll("\\", "/")}`;
-    if (PRAGMA_BUNDLE_RESERVED_PROJECT_PATHS.has(bundlePath)) {
+    if (reservedPaths.has(bundlePath)) {
       throw new PragmaDslError(
         `Project artifact collides with a generated bundle file: ${logicalPath}.`,
       );
@@ -3517,6 +3532,7 @@ async function collectArtifactFiles(
       `${logicalPath.replace(/\/$/, "")}/${child}`,
       projectRoot,
       files,
+      reservedPaths,
     );
   }
 }
