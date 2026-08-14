@@ -178,6 +178,33 @@ describe("Memory Curator Evidence prompts", () => {
 });
 
 describe("Memory Curator Skill drafts", () => {
+  it("exposes a single-object route schema and accepts a valid runtime tool call", async () => {
+    const session = createSkillDraftSession(skillInput());
+    const begin = session.tools.find((tool) => tool.name === "begin_skill_draft")!;
+    const routeSchema = (
+      begin.inputSchema as {
+        readonly properties?: { readonly route?: Record<string, unknown> };
+      }
+    ).properties?.route;
+
+    expect(routeSchema).toMatchObject({
+      type: "object",
+      properties: {
+        type: { type: "string", enum: ["create", "revise", "ambiguous"] },
+        bindingId: { type: "string", format: "uuid" },
+        bindingIds: { type: "array", minItems: 2, maxItems: 20 },
+      },
+      required: ["type"],
+      additionalProperties: false,
+      description: expect.stringContaining('{"type":"create"}'),
+    });
+    expect(routeSchema).not.toHaveProperty("oneOf");
+
+    await expect(begin.call(metadata(), undefined)).resolves.toMatchObject({
+      details: { ok: true, draftId: expect.any(String) },
+    });
+  });
+
   it("repairs an invalid first submission and preserves risky multiline content in one run", async () => {
     const run = vi.fn<MemoryCuratorExecutionPort["run"]>(async (request) => {
       const session = createSkillDraftSession(request.skillInput!);
@@ -293,6 +320,35 @@ Then run \`printf '%s\\n' "done"\`.
     expect(JSON.stringify((error as { outputDiagnostic: unknown }).outputDiagnostic)).not.toContain(
       secret,
     );
+  });
+
+  it("returns a structured failure when a Skill run ends without a draft or valid rejection", async () => {
+    const curator = createBuiltInMemoryCurator({
+      profiles: profiles(),
+      execution: {
+        async run() {
+          return {
+            content: "Draft submitted.",
+            runtimeId: "runtime-test",
+            providerId: "provider-test",
+            modelId: "model-test",
+          };
+        },
+      },
+    });
+
+    const error = await curator.skillExtractor.extract(skillInput()).then(
+      () => undefined,
+      (cause: unknown) => cause,
+    );
+
+    expect(error).toMatchObject({
+      code: "skill_extraction_output_invalid",
+      retryable: true,
+      runtimeId: "runtime-test",
+      providerId: "provider-test",
+      modelId: "model-test",
+    });
   });
 
   it("returns route feedback and bounds invalid submissions to three attempts", async () => {

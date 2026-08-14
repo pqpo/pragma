@@ -314,6 +314,13 @@ export const PragmaExpertResourceSchema = z
         toolApprovals: z
           .record(z.string().max(200), z.enum(["none", "ask", "required"]))
           .default({}),
+        toolPolicy: z
+          .object({
+            allowedTools: z.array(z.string().trim().min(1).max(200)).min(1).optional(),
+            deniedTools: z.array(z.string().trim().min(1).max(200)).min(1).optional(),
+          })
+          .strict()
+          .optional(),
         contextStores: z
           .array(
             z

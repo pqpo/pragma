@@ -18,6 +18,56 @@ const MAX_DRAFTS = 3;
 const MAX_SUBMIT_ATTEMPTS = 3;
 
 const CandidateContentSchema = SkillExtractionCandidateSchema.shape.content;
+const SkillDraftRouteInputSchema = z
+  .object({
+    type: z
+      .enum(["create", "revise", "ambiguous"])
+      .describe('Route kind: "create", "revise", or "ambiguous".'),
+    bindingId: z
+      .string()
+      .uuid()
+      .optional()
+      .describe('Required only for route.type="revise". Omit for every other route type.'),
+    bindingIds: z
+      .array(z.string().uuid())
+      .min(2)
+      .max(20)
+      .optional()
+      .describe('Required only for route.type="ambiguous". Omit for every other route type.'),
+  })
+  .strict()
+  .superRefine((route, context) => {
+    if (
+      route.type === "create" &&
+      (route.bindingId !== undefined || route.bindingIds !== undefined)
+    ) {
+      context.addIssue({
+        code: "custom",
+        message: 'route.type="create" must not include bindingId or bindingIds.',
+      });
+    }
+    if (
+      route.type === "revise" &&
+      (route.bindingId === undefined || route.bindingIds !== undefined)
+    ) {
+      context.addIssue({
+        code: "custom",
+        message: 'route.type="revise" requires bindingId and must not include bindingIds.',
+      });
+    }
+    if (
+      route.type === "ambiguous" &&
+      (route.bindingIds === undefined || route.bindingId !== undefined)
+    ) {
+      context.addIssue({
+        code: "custom",
+        message: 'route.type="ambiguous" requires bindingIds and must not include bindingId.',
+      });
+    }
+  })
+  .describe(
+    'An object selecting the Skill destination. Valid examples: {"type":"create"}; {"type":"revise","bindingId":"550e8400-e29b-41d4-a716-446655440000"}; {"type":"ambiguous","bindingIds":["550e8400-e29b-41d4-a716-446655440000","550e8400-e29b-41d4-a716-446655440001"]}.',
+  );
 const BeginSkillDraftInputSchema = z
   .object({
     content: z
@@ -37,7 +87,9 @@ const BeginSkillDraftInputSchema = z
       })
       .strict(),
     sourceRefs: SkillExtractionCandidateSchema.shape.sourceRefs,
-    route: SkillExtractionCandidateSchema.shape.route,
+    // Keep the runtime-visible schema a single object. The canonical candidate
+    // schema remains a discriminated union and is used again before persistence.
+    route: SkillDraftRouteInputSchema,
   })
   .strict();
 
@@ -89,7 +141,7 @@ export function createSkillDraftSession(input: SkillExtractionInput): SkillDraft
 
   const begin = managedTool(
     "begin_skill_draft",
-    "Begin one Skill candidate draft after validating its metadata, provenance, and route.",
+    'Begin one Skill candidate draft after validating its metadata, provenance, and route. route must be an object: {"type":"create"}; {"type":"revise","bindingId":"<existing UUID>"}; or {"type":"ambiguous","bindingIds":["<existing UUID>","<existing UUID>"]}.',
     BeginSkillDraftInputSchema,
     async (args) => {
       if (exhausted) return failure([repairBudgetError()], true);

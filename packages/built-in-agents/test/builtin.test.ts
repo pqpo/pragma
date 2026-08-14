@@ -228,6 +228,36 @@ describe("built-in Pragma Agent DSL", () => {
       },
     });
     expect(memoryWithDraftTools.value.tools?.map((tool) => tool.name)).toEqual(draftToolNames);
+    expect(memoryWithDraftTools.value.toolPolicy).toMatchObject({
+      deniedTools: ["askUserQuestion"],
+    });
+
+    const memoryRegistration = await registerExpertToolsMcpSession({
+      agent: memoryWithDraftTools.value,
+      getContext: () => undefined,
+      logger: createPragmaLogger(undefined, {
+        component: "runtime.adapter",
+        scope: { agentId: memoryWithDraftTools.value.id },
+      }),
+      state: {},
+    });
+    const memoryClient = new Client(
+      { name: "memory-curator-tool-policy-test", version: "1.0.0" },
+      { capabilities: {} },
+    );
+    try {
+      await memoryClient.connect(
+        new StreamableHTTPClientTransport(new URL(memoryRegistration.url)),
+      );
+      const catalog = await memoryClient.listTools();
+      expect(catalog.tools.map((tool) => tool.name)).toEqual(
+        expect.arrayContaining(draftToolNames),
+      );
+      expect(catalog.tools.map((tool) => tool.name)).not.toContain("askUserQuestion");
+    } finally {
+      await memoryClient.close().catch(() => undefined);
+      await memoryRegistration.dispose();
+    }
 
     const registration = await registerExpertToolsMcpSession({
       agent: compiled.value,

@@ -2254,6 +2254,19 @@ async function compileExpert(
     ...(host.pragmaHome === undefined ? {} : { pragmaHome: host.pragmaHome }),
     ...(host.loggerProvider === undefined ? {} : { loggerProvider: host.loggerProvider }),
     tools: [...tools, ...capabilityTools],
+    ...(resource.spec.toolPolicy === undefined
+      ? {}
+      : {
+          toolPolicy: {
+            mode: resource.spec.toolPolicy.allowedTools === undefined ? "all" : "allow",
+            ...(resource.spec.toolPolicy.allowedTools === undefined
+              ? {}
+              : { allowedTools: resource.spec.toolPolicy.allowedTools }),
+            ...(resource.spec.toolPolicy.deniedTools === undefined
+              ? {}
+              : { deniedTools: resource.spec.toolPolicy.deniedTools }),
+          },
+        }),
     skills: mergeSkills(skillConfigs),
     mcp: mergeMcp(mcpConfigs),
     ...(executionOverride?.modelSelection !== undefined

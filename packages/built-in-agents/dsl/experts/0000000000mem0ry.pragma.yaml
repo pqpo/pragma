@@ -24,6 +24,8 @@ spec:
     begin_skill_draft: none
     put_skill_file: none
     submit_skill_draft: none
+  toolPolicy:
+    deniedTools: [askUserQuestion]
   contextStores: []
   plugins: []
   tools: []

@@ -209,6 +209,8 @@ function parseCuratorOutput<T>(
   } catch (error) {
     if (typeof error === "object" && error !== null) {
       Object.assign(error, {
+        code,
+        retryable: true,
         runtimeId: execution.runtimeId,
         providerId: execution.providerId,
         modelId: execution.modelId,
@@ -303,7 +305,7 @@ export function renderSkillExtractionPrompt(
       "Every candidate must cite at least three distinct high-value Episodic ids across at least two conversations; at least two must have succeeded or recovered successfully. Semantic sources may support but never satisfy this threshold.",
       "Generate SKILL.md plus optional references/*.md. Scripts are optional and must be dependency-free Node 22 ESM under scripts/*.mjs with node:test coverage under tests/*.test.mjs.",
       "For each candidate create at least three source replay expectations and one clearly non-applicable boundary case.",
-      "Compare only existingTargets. Use revise only for one clear match, ambiguous for two or more plausible matches, otherwise create. Never invent a binding id.",
+      'Compare only existingTargets. Use revise only for one clear match, ambiguous for two or more plausible matches, otherwise create. Never invent a binding id. route is always an object: use {"type":"create"}; use {"type":"revise","bindingId":"an existing binding UUID"}; or use {"type":"ambiguous","bindingIds":["existing binding UUID 1","existing binding UUID 2"]}.',
       "For every candidate, call begin_skill_draft with metadata, sourceRefs, and route; call put_skill_file once per file; then call submit_skill_draft. Repair validation errors in the same draft and resubmit. Never place Skill file contents in the final response.",
       "After at least one draft is submitted successfully, finish with a brief acknowledgement. The Host uses the submitted drafts as the result.",
       'If no reusable Skill exists, do not create a draft; return exactly {"retain":false,"reason":"no-reusable-skill|insufficient-independent-sources|fragmentary-pattern|sensitive"}.',

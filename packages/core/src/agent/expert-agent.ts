@@ -43,6 +43,7 @@ import type {
 } from "../tools/managed-tool.ts";
 import { mergeExpertAgentToolApprovals } from "../tools/managed-tool.ts";
 import { PragmaPaths } from "../storage/pragma-paths.ts";
+import type { ToolPolicy } from "../tools/tool-resolver.ts";
 
 export type ExpertAgentSchemaVersion = "pragma.expert/v1" | undefined;
 
@@ -129,6 +130,8 @@ export interface IExpertAgent {
   readonly models?: IExpertAgentModelsConfig | undefined;
   readonly contextSystem: ContextSystem;
   readonly tools?: readonly ExpertAgentManagedTool<string, ExpertAgentToolCallResult>[] | undefined;
+  /** Execution-time policy applied to both default and managed tools. */
+  readonly toolPolicy?: ToolPolicy | undefined;
   readonly hooks?: ExpertAgentPluginHooks | undefined;
   readonly pluginLoadIssues?: readonly ExpertAgentPluginLoadIssue[] | undefined;
   readonly loggerProvider?: PragmaLoggerProvider | undefined;
@@ -175,6 +178,7 @@ export class Expert implements IExpertAgent {
   readonly workspace: string;
   readonly pragmaHome: string;
   readonly tools: readonly ExpertAgentManagedTool<string, ExpertAgentToolCallResult>[] | undefined;
+  readonly toolPolicy: ToolPolicy | undefined;
   readonly hooks: ExpertAgentPluginHooks | undefined;
   readonly pluginLoadIssues: readonly ExpertAgentPluginLoadIssue[] | undefined;
   readonly loggerProvider: PragmaLoggerProvider;
@@ -283,6 +287,7 @@ export class Expert implements IExpertAgent {
     this.workspace = options.workspace;
     this.pragmaHome = options.pragmaHome;
     this.tools = applyToolApprovals(resolved.tools, resolved.toolApprovals);
+    this.toolPolicy = options.toolPolicy;
     this.hooks = resolved.hooks;
     this.pluginLoadIssues = options.pluginLoadIssues;
     this.loggerProvider = loggerProvider;

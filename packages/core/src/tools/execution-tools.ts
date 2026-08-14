@@ -39,6 +39,7 @@ export function resolveExecutionTools(options: {
   const defaultTools = options.agent.createDefaultTools({ getContext: options.getContext });
   return resolveToolPolicy({
     context: options.context ?? options.getContext(),
+    policy: options.agent.toolPolicy,
     tools: [
       ...defaultTools.map((tool) => resolvedTool("default", fromDefaultTool(tool))),
       ...(options.agent.tools ?? []).map((tool) => resolvedTool("managed", fromManagedTool(tool))),
