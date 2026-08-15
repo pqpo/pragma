@@ -5,7 +5,7 @@ import { dirname } from "node:path";
 import { withFileLock } from "@pragma/core";
 import { z } from "zod";
 
-const RECENT_WORKSPACE_LIMIT = 5;
+const RECENT_WORKSPACE_LIMIT = 10;
 
 const WorkspaceHistorySchema = z.object({
   schemaVersion: z.literal(1),

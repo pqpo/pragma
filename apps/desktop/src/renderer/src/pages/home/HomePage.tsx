@@ -1211,7 +1211,7 @@ function MissionExecutorPicker(props: {
               aria-label={t("chooseMissionExecutor")}
             >
               <header>
-                <strong>{t("chooseMissionExecutor")}</strong>
+                <strong>{t("choose")}</strong>
                 <button
                   className="mission-executor-close-button"
                   type="button"
@@ -1366,7 +1366,7 @@ function MissionExecutorPicker(props: {
           >
             <header>
               <div>
-                <h2 id="mission-executor-manager-title">{t("manageMissionExecutors")}</h2>
+                <h2 id="mission-executor-manager-title">{t("manageExecutors")}</h2>
                 <p id="mission-executor-manager-description">
                   {t("executorManagementDescription")}
                 </p>

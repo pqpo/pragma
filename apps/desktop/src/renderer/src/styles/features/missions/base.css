@@ -864,17 +864,11 @@
   cursor: pointer;
 }
 
-.mission-row:hover .mission-row-actions,
-.mission-row:focus-within .mission-row-actions,
-.mission-row.is-active .mission-row-actions,
-.mission-row.is-pinned .mission-row-actions {
+.mission-row:hover .mission-row-actions {
   opacity: 1;
 }
 
-.mission-row:hover .mission-row-open,
-.mission-row:focus-within .mission-row-open,
-.mission-row.is-active .mission-row-open,
-.mission-row.is-pinned .mission-row-open {
+.mission-row:hover .mission-row-open {
   padding-right: 58px;
 }
 
@@ -954,9 +948,7 @@
   font-size: 11px;
 }
 
-.mission-rail-group.is-completed .mission-row:hover .mission-row-open,
-.mission-rail-group.is-completed .mission-row:focus-within .mission-row-open,
-.mission-rail-group.is-completed .mission-row.is-active .mission-row-open {
+.mission-rail-group.is-completed .mission-row:hover .mission-row-open {
   padding-right: 34px;
 }
 

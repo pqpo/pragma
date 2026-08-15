@@ -135,6 +135,7 @@ export const missions = {
   starting: "Starting…",
   startMission: "Start mission",
   chooseResource: "Choose an expert, team, or flow",
+  choose: "Choose",
   chooseMissionExecutor: "Choose mission executor",
   createFirst: "The built-in Pragma Agent is unavailable. Check the application configuration.",
   searchExecutors: "Search executors",

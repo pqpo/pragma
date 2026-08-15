@@ -585,7 +585,7 @@
   align-items: flex-start;
   justify-content: space-between;
   gap: 24px;
-  padding: 19px 20px 16px;
+  padding: 19px 20px 8px;
   border-bottom: 0;
 }
 
@@ -626,8 +626,8 @@
 }
 
 .mission-executor-manager-tools {
-  padding: 12px 16px 10px;
-  border-bottom: 1px solid var(--border);
+  padding: 8px 16px 4px;
+  border-bottom: 0;
 }
 
 .mission-executor-manager-tools .mission-executor-search {
@@ -644,7 +644,8 @@
   min-height: 0;
   max-height: none;
   flex: 1 1 auto;
-  padding: 9px 12px 13px;
+  align-content: start;
+  padding: 4px 12px 13px;
 }
 
 @media (max-width: 720px) {
@@ -1119,6 +1120,17 @@
   box-shadow: 0 0 0 3px var(--ui-focus);
 }
 
+.home-workspace-context .mission-executor-menu > .mission-executor-search {
+  margin-top: 5px;
+}
+
+.home-workspace-context .mission-executor-selection-options {
+  min-height: 0;
+  max-height: none;
+  flex: 1 1 auto;
+  align-content: start;
+}
+
 .home-mission-create .mission-executor-option {
   min-height: 64px;
   border: 0;
@@ -1163,7 +1175,7 @@
 
 .home-mission-create .mission-executor-option-copy strong {
   font-size: 13px;
-  font-weight: 500;
+  font-weight: 400;
 }
 
 .home-mission-create .mission-executor-option-copy > small {
@@ -1334,8 +1346,11 @@
   right: auto;
   bottom: auto;
   left: 50%;
+  display: flex;
   width: min(520px, calc(100vw - 48px));
-  max-height: min(640px, calc(100vh - 64px));
+  height: min(520px, calc(100vh - 64px));
+  max-height: min(520px, calc(100vh - 64px));
+  flex-direction: column;
   border-radius: 16px;
   box-shadow: 0 24px 70px rgb(26 28 25 / 18%);
   transform: translate(-50%, -50%);
@@ -1463,7 +1478,7 @@
   margin: 0;
   color: var(--ui-text);
   font-size: 13px;
-  font-weight: 600;
+  font-weight: 400;
 }
 
 .home-favorites-heading > div {
@@ -1567,7 +1582,7 @@
 
 .home-favorite-copy strong {
   font-size: 11px;
-  font-weight: 600;
+  font-weight: 400;
 }
 
 .home-favorite-copy small {
@@ -1597,8 +1612,8 @@
 .home-favorites-dialog {
   display: flex;
   width: min(640px, 100%);
-  height: min(700px, calc(100vh - 56px));
-  max-height: min(700px, calc(100vh - 56px));
+  height: min(620px, calc(100vh - 64px));
+  max-height: min(620px, calc(100vh - 64px));
   flex-direction: column;
   overflow: hidden;
   border: 1px solid #e2e0db;
@@ -1613,7 +1628,7 @@
   justify-content: space-between;
   gap: 24px;
   padding: 20px 22px 16px;
-  border-bottom: 1px solid #eceae6;
+  border-bottom: 0;
 }
 
 .home-favorites-dialog h2 {

@@ -79,7 +79,7 @@ export const HomeMissionExecutorOptionSchema = z.intersection(
 
 export const MissionCreationDefaultsSchema = z.object({
   workspace: MissionWorkspaceSchema,
-  recentWorkspaces: z.array(MissionWorkspaceSchema).max(5),
+  recentWorkspaces: z.array(MissionWorkspaceSchema).max(10),
   executorRef: ExpertRefSchema,
   toolPermissionMode: DesktopToolPermissionModeSchema,
 });

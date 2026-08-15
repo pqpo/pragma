@@ -574,12 +574,15 @@
   left: 0;
   display: grid;
   width: min(430px, calc(100vw - 96px));
+  max-height: min(480px, calc(100vh - 96px));
   gap: 0;
+  overflow-y: auto;
   padding: 4px;
   border: 1px solid var(--ui-line-strong);
   border-radius: var(--ui-radius-lg);
   background: var(--ui-surface);
   box-shadow: var(--ui-shadow-overlay);
+  overscroll-behavior: contain;
 }
 
 .mission-workspace-menu > button {

@@ -379,8 +379,8 @@ describe("mission model override contracts", () => {
 });
 
 describe("mission creation defaults contracts", () => {
-  it("carries at most five recent workspaces", () => {
-    const recentWorkspaces = Array.from({ length: 5 }, (_, index) => ({
+  it("carries at most ten recent workspaces", () => {
+    const recentWorkspaces = Array.from({ length: 10 }, (_, index) => ({
       path: `/workspace/recent-${index}`,
       basename: `recent-${index}`,
     }));
@@ -395,7 +395,7 @@ describe("mission creation defaults contracts", () => {
     expect(
       MissionCreationDefaultsSchema.safeParse({
         workspace: { path: "/workspace/default", basename: "default" },
-        recentWorkspaces: [...recentWorkspaces, { path: "/workspace/six", basename: "six" }],
+        recentWorkspaces: [...recentWorkspaces, { path: "/workspace/eleven", basename: "eleven" }],
         executorRef: "expert:2qgbztga4kz2qz51",
         toolPermissionMode: "request-approval",
       }).success,
