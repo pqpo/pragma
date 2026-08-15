@@ -53,6 +53,14 @@ export function evaluationsForTarget(
   return evaluations.filter((evaluation) => evaluation.spec.target.ref === targetRef);
 }
 
+export function defaultEvaluationTargetId(
+  experts: readonly PragmaExpertResource[],
+  teams: readonly PragmaExpertTeamResource[],
+  flows: readonly PragmaFlowResource[],
+): string {
+  return experts[0]?.metadata.id ?? teams[0]?.metadata.id ?? flows[0]?.metadata.id ?? "";
+}
+
 export function EvaluationDirectoryFragment(props: {
   readonly project: PragmaProjectSnapshot;
   readonly onOpen: (evaluation: PragmaFlowRunDryEvaluationResource) => void;
@@ -65,10 +73,13 @@ export function EvaluationDirectoryFragment(props: {
   readonly onFocusActionHandled?: (() => void) | undefined;
   readonly onDelete: (evaluation: PragmaFlowRunDryEvaluationResource) => Promise<void>;
   readonly onSelectTarget?: ((target: EvaluationTarget) => void) | undefined;
+  readonly selectedTargetId: string;
+  readonly onSelectedTargetIdChange: (targetId: string) => void;
   readonly detail?: ReactNode | undefined;
   readonly detailLabelledBy?: string | undefined;
 }) {
   const { t, i18n } = useTranslation("studio");
+  const { onSelectedTargetIdChange } = props;
   const [navigationWidth, setNavigationWidth] = usePersistentSidebarWidth(
     SIDEBAR_WIDTH_PREFERENCES.evaluations,
   );
@@ -121,20 +132,17 @@ export function EvaluationDirectoryFragment(props: {
         else continue;
         targets.push(resource);
       }
-      const evaluatedFlowId = evaluations[0]?.spec.target.ref.replace(/^flow:/, "");
-      const defaultTargetId =
-        flows.find((flow) => flow.metadata.id === evaluatedFlowId)?.metadata.id ??
-        flows[0]?.metadata.id ??
-        targets[0]?.metadata.id ??
-        "";
+      const defaultTargetId = defaultEvaluationTargetId(experts, teams, flows);
       return { evaluations, agentDatasetCount, experts, teams, flows, targets, defaultTargetId };
     }, [props.project.resources]);
-  const [selectedTargetId, setSelectedTargetId] = useState(defaultTargetId);
-  const selectedTarget = targets.find((target) => target.metadata.id === selectedTargetId) ?? null;
+  const selectedTarget =
+    targets.find((target) => target.metadata.id === props.selectedTargetId) ?? null;
 
   useEffect(() => {
-    if (selectedTarget === null && defaultTargetId !== "") setSelectedTargetId(defaultTargetId);
-  }, [defaultTargetId, selectedTarget]);
+    if (selectedTarget === null && defaultTargetId !== "") {
+      onSelectedTargetIdChange(defaultTargetId);
+    }
+  }, [defaultTargetId, onSelectedTargetIdChange, selectedTarget]);
 
   const targetEvaluations = evaluationsForTarget(evaluations, selectedTarget);
   const groups: readonly {
@@ -251,7 +259,7 @@ export function EvaluationDirectoryFragment(props: {
                       type="button"
                       key={`${resource.kind}:${resource.metadata.id}`}
                       onClick={() => {
-                        setSelectedTargetId(resource.metadata.id);
+                        onSelectedTargetIdChange(resource.metadata.id);
                         props.onSelectTarget?.(resource);
                       }}
                     >
@@ -359,7 +367,6 @@ export function EvaluationDirectoryFragment(props: {
 
                 {selectedTarget.kind === "Flow" ? (
                   <section className="evaluation-suite-list" aria-label={t("runDryEvaluations")}>
-                    <h3>{t("runDryEvaluations")}</h3>
                     {targetEvaluations.length > 0 ? (
                       <div className="evaluation-suite-table">
                         <div className="evaluation-suite-table-heading" aria-hidden="true">
@@ -437,7 +444,9 @@ export function EvaluationDirectoryFragment(props: {
                       </div>
                     ) : (
                       <div className="evaluation-target-empty is-inline">
-                        <h2>{t("noEvaluationsYet")}</h2>
+                        <span className="evaluation-target-empty-icon">
+                          <Flask size={24} aria-hidden="true" />
+                        </span>
                         <p>{t("noEvaluationsForFlow")}</p>
                         <button
                           className="secondary-button"
@@ -455,12 +464,12 @@ export function EvaluationDirectoryFragment(props: {
                     <span className="evaluation-target-empty-icon">
                       <Flask size={24} aria-hidden="true" />
                     </span>
-                    <h2>{t("llmJudge")}</h2>
                     <p>{t("llmJudgeDescription")}</p>
                     {agentDatasetCount === 0 ? (
                       <small>{t("agentEvaluation.noDatasetsForRun")}</small>
                     ) : (
                       <button className="secondary-button" type="button" onClick={createEvaluation}>
+                        <Plus size={17} aria-hidden="true" />
                         {t("agentEvaluation.startNewRun")}
                       </button>
                     )}

@@ -380,7 +380,7 @@
 }
 
 .agent-evaluation-section-heading h1 {
-  font-size: 28px;
+  font-size: 26px;
   font-weight: 650;
   letter-spacing: -0.03em;
 }
@@ -1079,7 +1079,7 @@
   overflow: hidden;
   margin: 0;
   color: var(--text);
-  font-size: 32px;
+  font-size: 30px;
   font-weight: 710;
   letter-spacing: -0.025em;
   text-overflow: ellipsis;
@@ -1106,17 +1106,12 @@
 }
 
 .evaluation-suite-list {
-  margin-top: 35px;
-}
-
-.evaluation-suite-list > h3 {
-  margin: 0 0 10px;
-  font-size: 13px;
-  font-weight: 700;
+  margin-top: 0;
 }
 
 .evaluation-suite-table {
   min-width: 420px;
+  margin-top: 35px;
 }
 
 .evaluation-suite-table-heading {
@@ -1271,7 +1266,7 @@
 
 .evaluation-target-empty.is-inline {
   min-height: 260px;
-  margin-top: 20px;
+  margin-top: 48px;
   border: 0;
   background: transparent;
   box-shadow: none;

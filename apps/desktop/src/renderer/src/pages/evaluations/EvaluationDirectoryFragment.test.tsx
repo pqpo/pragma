@@ -8,12 +8,31 @@ import type { PragmaProjectSnapshot } from "../../../../shared/contracts/index.t
 
 import {
   activateEvaluationDirectory,
+  defaultEvaluationTargetId,
   EvaluationDirectoryFragment,
   evaluationsForTarget,
 } from "./EvaluationDirectoryFragment.tsx";
 import { createEmptyFlow } from "../studio/flow-editor/flow-model.ts";
 
 describe("EvaluationDirectoryFragment", () => {
+  it("defaults to the first expert before teams and flows", () => {
+    const expert = PragmaExpertResourceSchema.parse({
+      apiVersion: "pragma/v4",
+      kind: "Expert",
+      metadata: {
+        id: "1h2j3k4m5n6p7q8r",
+        name: "First expert",
+        description: "The first selectable expert.",
+        tags: [],
+      },
+      spec: { scope: "general", instructions: "Help." },
+    });
+    const flow = createEmptyFlow("8h9j0k1m2n3p4q5r");
+
+    expect(defaultEvaluationTargetId([expert], [], [flow])).toBe(expert.metadata.id);
+    expect(defaultEvaluationTargetId([], [], [flow])).toBe(flow.metadata.id);
+  });
+
   it("remains active after React StrictMode replays its effect", () => {
     const mounted = { current: false };
 
@@ -90,6 +109,8 @@ describe("EvaluationDirectoryFragment", () => {
     const html = renderToStaticMarkup(
       <EvaluationDirectoryFragment
         project={project}
+        selectedTargetId={flow.metadata.id}
+        onSelectedTargetIdChange={() => undefined}
         onCreate={() => undefined}
         onDelete={async () => undefined}
         onOpen={() => undefined}
@@ -102,7 +123,7 @@ describe("EvaluationDirectoryFragment", () => {
     expect(html).toContain("Release Run Dry");
     expect(html).toContain("Evaluation targets");
     expect(html).toContain('aria-label="Resize navigation"');
-    expect(html).toContain("Run Dry cases");
+    expect(html).not.toContain("<h3>Run Dry cases</h3>");
     expect(html).toContain("Release flow");
     expect(html).toContain("Rollback flow");
     expect(html).toContain("1 case");
@@ -118,18 +139,24 @@ describe("EvaluationDirectoryFragment", () => {
     const emptyHtml = renderToStaticMarkup(
       <EvaluationDirectoryFragment
         project={{ ...project, resources: [flow] }}
+        selectedTargetId={flow.metadata.id}
+        onSelectedTargetIdChange={() => undefined}
         onCreate={() => undefined}
         onDelete={async () => undefined}
         onOpen={() => undefined}
       />,
     );
 
-    expect(emptyHtml).toContain("New Run Dry case");
+    expect(emptyHtml).toContain("New case");
+    expect(emptyHtml).toContain('class="evaluation-target-empty-icon"');
+    expect(emptyHtml).not.toContain("<h2>No evaluations yet.</h2>");
     expect(emptyHtml).not.toContain("Run all");
 
     const detailHtml = renderToStaticMarkup(
       <EvaluationDirectoryFragment
         project={project}
+        selectedTargetId={flow.metadata.id}
+        onSelectedTargetIdChange={() => undefined}
         detail={<h1 id="evaluation-detail-heading">Evaluation detail</h1>}
         detailLabelledBy="evaluation-detail-heading"
         onCreate={() => undefined}
@@ -183,6 +210,8 @@ describe("EvaluationDirectoryFragment", () => {
     const expertHtml = renderToStaticMarkup(
       <EvaluationDirectoryFragment
         {...callbacks}
+        selectedTargetId={expert.metadata.id}
+        onSelectedTargetIdChange={() => undefined}
         project={{
           schemaVersion: "pragma.project-snapshot/v3",
           projectId: "studio",
@@ -197,10 +226,13 @@ describe("EvaluationDirectoryFragment", () => {
     expect(expertHtml).toContain(">Datasets</button>");
     expect(expertHtml).toContain(">Queue</button>");
     expect(expertHtml).toContain('class="evaluation-target-actions"');
+    expect(expertHtml).not.toContain("Dataset + LLM-as-Judge");
 
     const teamHtml = renderToStaticMarkup(
       <EvaluationDirectoryFragment
         {...callbacks}
+        selectedTargetId={team.metadata.id}
+        onSelectedTargetIdChange={() => undefined}
         project={{
           schemaVersion: "pragma.project-snapshot/v3",
           projectId: "studio",
@@ -219,6 +251,8 @@ describe("EvaluationDirectoryFragment", () => {
     const flowHtml = renderToStaticMarkup(
       <EvaluationDirectoryFragment
         {...callbacks}
+        selectedTargetId={flow.metadata.id}
+        onSelectedTargetIdChange={() => undefined}
         project={{
           schemaVersion: "pragma.project-snapshot/v3",
           projectId: "studio",

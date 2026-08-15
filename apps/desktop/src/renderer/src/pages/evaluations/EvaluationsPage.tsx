@@ -47,9 +47,15 @@ export function createFlowRunDryEvaluation(
   };
 }
 
-export function EvaluationsPage() {
+export function EvaluationsPage(
+  props: {
+    readonly initialTargetId?: string | undefined;
+    readonly onTargetChange?: ((targetId: string) => void) | undefined;
+  } = {},
+) {
   const { t } = useTranslation("common");
   const [project, setProject] = useState<PragmaProjectSnapshot | null>(null);
+  const [selectedTargetId, setSelectedTargetId] = useState(props.initialTargetId ?? "");
   const [draft, setDraft] = useState<PragmaFlowRunDryEvaluationResource | null>(null);
   const [runTarget, setRunTarget] = useState<
     PragmaExpertResource | PragmaExpertTeamResource | null
@@ -59,6 +65,11 @@ export function EvaluationsPage() {
     null,
   );
   const [error, setError] = useState<string | null>(null);
+
+  const selectTargetId = (targetId: string) => {
+    setSelectedTargetId(targetId);
+    props.onTargetChange?.(targetId);
+  };
 
   useEffect(() => {
     const api = typeof window === "undefined" ? undefined : window.pragmaDesktop;
@@ -125,6 +136,8 @@ export function EvaluationsPage() {
             setDraft(null);
             setRunTarget(null);
           }}
+          selectedTargetId={selectedTargetId}
+          onSelectedTargetIdChange={selectTargetId}
           onOpenDatasets={() => {
             setDraft(null);
             setRunTarget(null);
