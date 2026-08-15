@@ -194,6 +194,7 @@ export function MissionsPage(props: {
   const [selectedMissionId, setSelectedMissionId] = useState<string | null>(
     initialState.selectedMissionId,
   );
+  const [loadingMissionId, setLoadingMissionId] = useState<string | null>(null);
   const [activeSource, setActiveSource] = useState<MissionListSource>(initialState.activeSource);
   const [hasResolvedInitialLoad, setHasResolvedInitialLoad] = useState(
     initialState.hasResolvedInitialLoad,
@@ -274,10 +275,14 @@ export function MissionsPage(props: {
       selectedMissionIdRef.current = id;
       setSelectedMissionId(id);
       setSelectedMission((current) => (current?.id === id ? current : null));
+      setLoadingMissionId(id);
       if (!options?.silent) setError(null);
       writeLastOpenedMissionId(typeof window === "undefined" ? undefined : window.localStorage, id);
       const api = desktopApi();
-      if (api === undefined) return;
+      if (api === undefined) {
+        setLoadingMissionId((current) => (current === id ? null : current));
+        return;
+      }
       try {
         const mission = await api.getMission(id);
         if (selectedMissionIdRef.current === id) {
@@ -289,6 +294,8 @@ export function MissionsPage(props: {
         if (selectedMissionIdRef.current === id && !options?.silent) {
           setError(errorMessage(loadError));
         }
+      } finally {
+        setLoadingMissionId((current) => (current === id ? null : current));
       }
     },
     [],
@@ -630,9 +637,11 @@ export function MissionsPage(props: {
               }
             }}
           />
+        ) : loadingMissionId !== null && loadingMissionId === selectedMissionId ? (
+          <MissionDetailSkeleton label={t("loading", { ns: "missions" })} />
         ) : (
           <div className="mission-empty-detail">
-            <h1>{t("notFound", { ns: "missions" })}</h1>
+            <h1>{t("empty", { ns: "missions" })}</h1>
             <p>{t("selectAnother", { ns: "missions" })}</p>
           </div>
         )}
@@ -734,6 +743,34 @@ export function MissionsPageSkeleton(props: {
         <span className="mission-skeleton-block mission-skeleton-composer" />
       </div>
     </section>
+  );
+}
+
+export function MissionDetailSkeleton(props: { readonly label: string }) {
+  return (
+    <div
+      className="mission-detail-loading"
+      role="status"
+      aria-label={props.label}
+      aria-live="polite"
+    >
+      <div className="mission-detail-loading-content" aria-hidden="true">
+        <header>
+          <span className="mission-skeleton-block mission-skeleton-meta" />
+        </header>
+        <div className="mission-skeleton-tabs">
+          <span className="mission-skeleton-block" />
+          <span className="mission-skeleton-block" />
+          <span className="mission-skeleton-block" />
+        </div>
+        <div className="mission-skeleton-body">
+          <span className="mission-skeleton-block mission-skeleton-message" />
+          <span className="mission-skeleton-block mission-skeleton-message is-wide" />
+          <span className="mission-skeleton-block mission-skeleton-message is-short" />
+        </div>
+        <span className="mission-skeleton-block mission-skeleton-composer" />
+      </div>
+    </div>
   );
 }
 
@@ -839,7 +876,6 @@ function MissionRail(props: {
           searchCollapsed ? "mission-rail-sticky is-search-collapsed" : "mission-rail-sticky"
         }
       >
-        <h1>{t("title")}</h1>
         <button className="mission-new-button" type="button" onClick={props.onCreate}>
           <Plus size={18} aria-hidden="true" />
           {t("newMission")}
@@ -1348,6 +1384,9 @@ export function MissionDetailFragment(props: {
   const [humanQuestionIndex, setHumanQuestionIndex] = useState(0);
   const [showJumpToLatest, setShowJumpToLatest] = useState(false);
   const [humanNotes, setHumanNotes] = useState<Record<string, string>>({});
+  const [humanQuestionNotes, setHumanQuestionNotes] = useState<
+    Record<string, Record<string, string>>
+  >({});
   const [humanAnswers, setHumanAnswers] = useState<
     Record<string, Record<string, string | readonly string[]>>
   >({});
@@ -2230,6 +2269,11 @@ export function MissionDetailFragment(props: {
         delete next[interaction.interactionId];
         return next;
       });
+      setHumanQuestionNotes((current) => {
+        const next = { ...current };
+        delete next[interaction.interactionId];
+        return next;
+      });
       setHumanAnswers((current) => {
         const next = { ...current };
         delete next[interaction.interactionId];
@@ -2496,122 +2540,124 @@ export function MissionDetailFragment(props: {
     setTab(nextTab);
   };
 
+  const missionStatusBar = (
+    <div className="mission-detail-status-bar" aria-label={props.mission.title}>
+      <p>
+        <span className="mission-ready-dot" aria-hidden="true" />
+        {missionStatusLabel(
+          props.mission,
+          clientOperation.kind === "sending" ||
+            (props.mission.execution === undefined && thinkingRequestId !== null),
+        )}
+        <span aria-hidden="true">·</span>
+        <Folder size={16} aria-hidden="true" />
+        {props.mission.workspace.basename}
+        {workspaceAvailable === false ? (
+          <strong>{t("workspaceUnavailableTitle", { ns: "missions" })}</strong>
+        ) : null}
+        <span aria-hidden="true">·</span>
+        {isTeam ? (
+          <UsersThree size={17} aria-hidden="true" />
+        ) : isFlow ? (
+          <GitBranch size={17} aria-hidden="true" />
+        ) : (
+          <User size={17} aria-hidden="true" />
+        )}
+        {props.mission.executor.name}
+        {runtimeIdentity === undefined ? null : (
+          <>
+            <span aria-hidden="true">·</span>
+            <TerminalWindow size={17} aria-hidden="true" />
+            {runtimeDisplayName(t, runtimeIdentity)}
+          </>
+        )}
+        <span aria-hidden="true">·</span>
+        <button
+          className="mission-lifecycle-status-action"
+          type="button"
+          disabled={clientOperationBusy}
+          onClick={() => void props.onLifecycleChange?.()}
+        >
+          {props.mission.lifecycleStatus === "active" ? (
+            <>
+              <CheckCircle size={16} aria-hidden="true" />
+              {t("markComplete", { ns: "missions" })}
+            </>
+          ) : (
+            <>
+              <ArrowCounterClockwise size={16} aria-hidden="true" />
+              {t("reopen", { ns: "missions" })}
+            </>
+          )}
+        </button>
+      </p>
+      {props.mission.lifecycleStatus === "active" &&
+      (props.mission.execution === undefined ||
+        (!executionActive && isFlow) ||
+        (executionActive && !interruptible)) ? (
+        <button
+          className="primary-button"
+          type="button"
+          disabled={clientOperationBusy}
+          onClick={() => void props.onRun?.()}
+        >
+          <Play size={17} />
+          {executionActive
+            ? t("resume", { ns: "missions" })
+            : props.mission.execution === undefined
+              ? t("run", { ns: "missions" })
+              : t("runAgain", { ns: "missions" })}
+        </button>
+      ) : null}
+    </div>
+  );
+
   return (
     <section className="mission-detail">
-      <header className="mission-detail-header">
-        <div>
-          <h1 title={props.mission.title}>{props.mission.title}</h1>
-          <p>
-            <span className="mission-ready-dot" aria-hidden="true" />
-            {missionStatusLabel(
-              props.mission,
-              clientOperation.kind === "sending" ||
-                (props.mission.execution === undefined && thinkingRequestId !== null),
-            )}
-            <span aria-hidden="true">·</span>
-            <Folder size={16} aria-hidden="true" />
-            {props.mission.workspace.basename}
-            {workspaceAvailable === false ? (
-              <strong>{t("workspaceUnavailableTitle", { ns: "missions" })}</strong>
-            ) : null}
-            <span aria-hidden="true">·</span>
-            {isTeam ? (
-              <UsersThree size={17} aria-hidden="true" />
-            ) : isFlow ? (
-              <GitBranch size={17} aria-hidden="true" />
-            ) : (
-              <User size={17} aria-hidden="true" />
-            )}
-            {props.mission.executor.name}
-            {runtimeIdentity === undefined ? null : (
-              <>
-                <span aria-hidden="true">·</span>
-                <TerminalWindow size={17} aria-hidden="true" />
-                {runtimeDisplayName(t, runtimeIdentity)}
-              </>
-            )}
-          </p>
-        </div>
-        <div className="mission-header-actions">
-          {props.mission.lifecycleStatus === "active" &&
-          (props.mission.execution === undefined ||
-            (!executionActive && isFlow) ||
-            (executionActive && !interruptible)) ? (
-            <button
-              className="primary-button"
-              type="button"
-              disabled={clientOperationBusy}
-              onClick={() => void props.onRun?.()}
-            >
-              <Play size={17} />
-              {executionActive
-                ? t("resume", { ns: "missions" })
-                : props.mission.execution === undefined
-                  ? t("run", { ns: "missions" })
-                  : t("runAgain", { ns: "missions" })}
-            </button>
-          ) : null}
+      <div className="mission-detail-topbar">
+        {missionStatusBar}
+        <div
+          className="mission-detail-tabs"
+          role="tablist"
+          aria-label={t("detailViews", { ns: "missions" })}
+        >
           <button
-            className="secondary-button"
+            className={tab === "chat" ? "is-active" : ""}
             type="button"
-            disabled={clientOperationBusy}
-            onClick={() => void props.onLifecycleChange?.()}
+            role="tab"
+            aria-selected={tab === "chat"}
+            onClick={() => changeTab("chat")}
           >
-            {props.mission.lifecycleStatus === "active" ? (
-              <>
-                <CheckCircle size={17} aria-hidden="true" />
-                {t("markComplete", { ns: "missions" })}
-              </>
-            ) : (
-              <>
-                <ArrowCounterClockwise size={17} aria-hidden="true" />
-                {t("reopen", { ns: "missions" })}
-              </>
-            )}
+            {isTeam ? t("teamChannel", { ns: "missions" }) : t("chat", { ns: "missions" })}
+          </button>
+          <button
+            className={tab === "work" ? "is-active" : ""}
+            type="button"
+            role="tab"
+            aria-selected={tab === "work"}
+            onClick={() => changeTab("work")}
+          >
+            {t("work", { ns: "missions" })}
+          </button>
+          <button
+            className={tab === "board" ? "is-active" : ""}
+            type="button"
+            role="tab"
+            aria-selected={tab === "board"}
+            onClick={() => changeTab("board")}
+          >
+            {t("missionBoard", { ns: "missions" })}
+          </button>
+          <button
+            className={tab === "memory" ? "is-active" : ""}
+            type="button"
+            role="tab"
+            aria-selected={tab === "memory"}
+            onClick={() => changeTab("memory")}
+          >
+            {t("memory", { ns: "missions" })}
           </button>
         </div>
-      </header>
-      <div
-        className="mission-detail-tabs"
-        role="tablist"
-        aria-label={t("detailViews", { ns: "missions" })}
-      >
-        <button
-          className={tab === "chat" ? "is-active" : ""}
-          type="button"
-          role="tab"
-          aria-selected={tab === "chat"}
-          onClick={() => changeTab("chat")}
-        >
-          {isTeam ? t("teamChannel", { ns: "missions" }) : t("chat", { ns: "missions" })}
-        </button>
-        <button
-          className={tab === "work" ? "is-active" : ""}
-          type="button"
-          role="tab"
-          aria-selected={tab === "work"}
-          onClick={() => changeTab("work")}
-        >
-          {t("work", { ns: "missions" })}
-        </button>
-        <button
-          className={tab === "board" ? "is-active" : ""}
-          type="button"
-          role="tab"
-          aria-selected={tab === "board"}
-          onClick={() => changeTab("board")}
-        >
-          {t("missionBoard", { ns: "missions" })}
-        </button>
-        <button
-          className={tab === "memory" ? "is-active" : ""}
-          type="button"
-          role="tab"
-          aria-selected={tab === "memory"}
-          onClick={() => changeTab("memory")}
-        >
-          {t("memory", { ns: "missions" })}
-        </button>
       </div>
       <div className="mission-detail-body">
         {tab !== "chat" && presentedError !== null && presentedError !== undefined ? (
@@ -2775,54 +2821,65 @@ export function MissionDetailFragment(props: {
                 </small>
               ) : null}
               {interactions[0] !== undefined ? (
-                <MissionHumanComposer
-                  interaction={interactions[0]}
-                  answers={humanAnswers[interactions[0].interactionId] ?? {}}
-                  customAnswers={humanCustomAnswers[interactions[0].interactionId] ?? {}}
-                  notes={humanNotes[interactions[0].interactionId] ?? ""}
-                  questionIndex={humanQuestionIndex}
-                  interactionPosition={{ current: 1, total: interactions.length }}
-                  responding={responding}
-                  interruptible={interruptible}
-                  interrupting={interrupting}
-                  onQuestionIndex={setHumanQuestionIndex}
-                  onAnswer={(question, value) => {
-                    setHumanAnswer(
-                      setHumanAnswers,
-                      interactions[0]!.interactionId,
-                      question,
-                      value,
-                    );
-                    setHumanCustomAnswer(
-                      setHumanCustomAnswers,
-                      interactions[0]!.interactionId,
-                      question,
-                      "",
-                    );
-                  }}
-                  onCustomAnswer={(question, value) => {
-                    setHumanAnswer(
-                      setHumanAnswers,
-                      interactions[0]!.interactionId,
-                      question,
-                      undefined,
-                    );
-                    setHumanCustomAnswer(
-                      setHumanCustomAnswers,
-                      interactions[0]!.interactionId,
-                      question,
-                      value,
-                    );
-                  }}
-                  onNotes={(value) =>
-                    setHumanNotes((current) => ({
-                      ...current,
-                      [interactions[0]!.interactionId]: value,
-                    }))
-                  }
-                  onRespond={(response) => void respond(interactions[0]!, response)}
-                  onInterrupt={() => void interrupt()}
-                />
+                <>
+                  <MissionHumanComposer
+                    interaction={interactions[0]}
+                    answers={humanAnswers[interactions[0].interactionId] ?? {}}
+                    customAnswers={humanCustomAnswers[interactions[0].interactionId] ?? {}}
+                    notes={humanNotes[interactions[0].interactionId] ?? ""}
+                    questionNotes={humanQuestionNotes[interactions[0].interactionId] ?? {}}
+                    questionIndex={humanQuestionIndex}
+                    interactionPosition={{ current: 1, total: interactions.length }}
+                    responding={responding}
+                    interruptible={interruptible}
+                    interrupting={interrupting}
+                    onQuestionIndex={setHumanQuestionIndex}
+                    onAnswer={(question, value) => {
+                      setHumanAnswer(
+                        setHumanAnswers,
+                        interactions[0]!.interactionId,
+                        question,
+                        value,
+                      );
+                      setHumanCustomAnswer(
+                        setHumanCustomAnswers,
+                        interactions[0]!.interactionId,
+                        question,
+                        "",
+                      );
+                    }}
+                    onCustomAnswer={(question, value) => {
+                      setHumanAnswer(
+                        setHumanAnswers,
+                        interactions[0]!.interactionId,
+                        question,
+                        undefined,
+                      );
+                      setHumanCustomAnswer(
+                        setHumanCustomAnswers,
+                        interactions[0]!.interactionId,
+                        question,
+                        value,
+                      );
+                    }}
+                    onNotes={(value) =>
+                      setHumanNotes((current) => ({
+                        ...current,
+                        [interactions[0]!.interactionId]: value,
+                      }))
+                    }
+                    onQuestionNote={(question, value) =>
+                      setHumanQuestionNote(
+                        setHumanQuestionNotes,
+                        interactions[0]!.interactionId,
+                        question,
+                        value,
+                      )
+                    }
+                    onRespond={(response) => void respond(interactions[0]!, response)}
+                    onInterrupt={() => void interrupt()}
+                  />
+                </>
               ) : (
                 <>
                   <MissionUsageHint
@@ -3011,12 +3068,14 @@ export function MissionDetailFragment(props: {
                               models={models}
                               loading={modelsLoading}
                               disabled={controlsDisabled}
+                              keepOpenWhenDisabled={optionsSaving}
                               value={modelOverride}
                               defaultValue={defaultModelSelection}
                               onChange={(value) => void saveOptions(toolPermissionMode, value)}
                             />
                           ) : null}
                           <ToolPermissionSelect
+                            detailed
                             value={toolPermissionMode}
                             disabled={controlsDisabled}
                             title={
@@ -4417,6 +4476,7 @@ function MissionHumanComposer(props: {
   readonly answers: Readonly<Record<string, string | readonly string[]>>;
   readonly customAnswers: Readonly<Record<string, string>>;
   readonly notes: string;
+  readonly questionNotes: Readonly<Record<string, string>>;
   readonly questionIndex: number;
   readonly interactionPosition: { readonly current: number; readonly total: number };
   readonly responding: boolean;
@@ -4426,23 +4486,27 @@ function MissionHumanComposer(props: {
   readonly onAnswer: (question: string, value: string | readonly string[]) => void;
   readonly onCustomAnswer: (question: string, value: string) => void;
   readonly onNotes: (value: string) => void;
+  readonly onQuestionNote: (question: string, value: string) => void;
   readonly onRespond: (response: HumanInteractionResponse) => void;
   readonly onInterrupt: () => void;
 }) {
   const { t } = useTranslation("missions");
+  const [visibleQuestionNotes, setVisibleQuestionNotes] = useState<ReadonlySet<string>>(
+    () => new Set(),
+  );
   const request = props.interaction.request;
   const questions = request.questions ?? [];
   const index = Math.min(props.questionIndex, Math.max(questions.length - 1, 0));
   const question = questions[index];
   const answer = question === undefined ? undefined : props.answers[question.question];
   const customAnswer = question === undefined ? "" : (props.customAnswers[question.question] ?? "");
-  const allAnswersValid = hasValidMissionHumanAnswers(
-    questions,
-    props.answers,
-    props.customAnswers,
-  );
-  const choiceOnly =
-    questions.length > 0 && questions.every((candidate) => candidate.kind !== "text");
+  const questionNote = question === undefined ? "" : (props.questionNotes[question.question] ?? "");
+  const questionNoteVisible =
+    question !== undefined && (visibleQuestionNotes.has(question.question) || questionNote !== "");
+  const isLastQuestion = index === questions.length - 1;
+  const currentAnswerValid =
+    question !== undefined &&
+    hasValidMissionHumanAnswer(question, props.answers, props.customAnswers);
   const heading =
     question?.question ?? request.title ?? t("humanInputRequired", { ns: "missions" });
   const helperText =
@@ -4577,28 +4641,48 @@ function MissionHumanComposer(props: {
               onCustomAnswer={(value) => props.onCustomAnswer(question.question, value)}
             />
           </div>
-          {choiceOnly ? null : (
+          {questionNoteVisible ? (
             <textarea
-              value={props.notes}
-              onChange={(event) => props.onNotes(event.target.value)}
+              value={questionNote}
+              onChange={(event) => props.onQuestionNote(question.question, event.target.value)}
               placeholder={t("optionalNotes", { ns: "missions" })}
             />
-          )}
+          ) : null}
           <footer>
+            {questionNoteVisible ? null : (
+              <button
+                className="mission-human-add-note"
+                type="button"
+                disabled={props.responding}
+                onClick={() =>
+                  setVisibleQuestionNotes((current) => new Set([...current, question.question]))
+                }
+              >
+                <Plus size={16} aria-hidden="true" />
+                {t("addNote", { ns: "missions" })}
+              </button>
+            )}
             <button
               className="primary-button"
               type="button"
-              disabled={!allAnswersValid || props.responding}
-              onClick={() =>
+              disabled={!currentAnswerValid || props.responding}
+              onClick={() => {
+                if (!isLastQuestion) {
+                  props.onQuestionIndex(index + 1);
+                  return;
+                }
+                const notes = formatMissionHumanQuestionNotes(questions, props.questionNotes);
                 props.onRespond({
                   answers: mergeMissionHumanAnswers(props.answers, props.customAnswers),
-                  notes: props.notes,
-                })
-              }
+                  ...(notes === "" ? {} : { notes }),
+                });
+              }}
             >
               {props.responding
                 ? t("submitting", { ns: "missions" })
-                : t("confirmContinue", { ns: "missions" })}
+                : isLastQuestion
+                  ? t("confirmContinue", { ns: "missions" })
+                  : t("nextQuestion", { ns: "missions" })}
             </button>
           </footer>
         </>
@@ -4738,8 +4822,16 @@ export function hasValidMissionHumanAnswers(
   customAnswers: Readonly<Record<string, string>>,
 ): boolean {
   return questions.every((question) =>
-    humanAnswerValid(question, answers[question.question], customAnswers[question.question]),
+    hasValidMissionHumanAnswer(question, answers, customAnswers),
   );
+}
+
+export function hasValidMissionHumanAnswer(
+  question: MissionHumanQuestion,
+  answers: Readonly<Record<string, string | readonly string[]>>,
+  customAnswers: Readonly<Record<string, string>>,
+): boolean {
+  return humanAnswerValid(question, answers[question.question], customAnswers[question.question]);
 }
 
 export function mergeMissionHumanAnswers(
@@ -4751,6 +4843,18 @@ export function mergeMissionHumanAnswers(
     if (customAnswer.trim() !== "") merged[question] = customAnswer;
   }
   return merged;
+}
+
+export function formatMissionHumanQuestionNotes(
+  questions: readonly MissionHumanQuestion[],
+  notes: Readonly<Record<string, string>>,
+): string {
+  return questions
+    .flatMap((question) => {
+      const note = notes[question.question]?.trim();
+      return note === undefined || note === "" ? [] : [`${question.question}\n${note}`];
+    })
+    .join("\n\n");
 }
 
 function entryContentLength(entry: MissionChatEntry): number {
@@ -5182,6 +5286,23 @@ function setHumanCustomAnswer(
     const next = { ...current };
     if (Object.keys(answers).length === 0) delete next[interactionId];
     else next[interactionId] = answers;
+    return next;
+  });
+}
+
+function setHumanQuestionNote(
+  update: Dispatch<SetStateAction<Record<string, Record<string, string>>>>,
+  interactionId: string,
+  question: string,
+  value: string,
+): void {
+  update((current) => {
+    const notes = { ...current[interactionId] };
+    if (value === "") delete notes[question];
+    else notes[question] = value;
+    const next = { ...current };
+    if (Object.keys(notes).length === 0) delete next[interactionId];
+    else next[interactionId] = notes;
     return next;
   });
 }

@@ -220,10 +220,13 @@
 
 .mission-executor-dialog {
   width: min(720px, 100%);
+  height: min(720px, calc(100vh - 48px));
+  grid-template-rows: auto minmax(0, 1fr) auto;
 }
 
 .mission-executor-dialog .ui-dialog-body {
   display: grid;
+  grid-template-rows: auto auto minmax(0, 1fr);
   gap: 12px;
 }
 

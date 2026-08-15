@@ -151,9 +151,8 @@ describe("MissionModelOverrideControls", () => {
       />,
     );
 
-    expect(html).toContain("GPT · Medium");
+    expect(html).toContain("GPT · Default (Medium)");
     expect(html).toContain('aria-haspopup="dialog"');
-    expect(html).not.toContain("Default (");
     expect(html).not.toContain("<select");
   });
 
@@ -176,14 +175,17 @@ describe("MissionModelOverrideControls", () => {
     expect(html).not.toContain("DeepSeek V4 Pro · Thinking depth");
   });
 
-  it("uses the shared custom selector for tool permissions", () => {
+  it("uses the shared custom selector for detailed tool permissions", () => {
     const html = renderToStaticMarkup(
-      <ToolPermissionSelect value="request-approval" onChange={() => undefined} />,
+      <ToolPermissionSelect detailed value="full-access" onChange={() => undefined} />,
     );
 
     expect(html).toContain('role="combobox"');
     expect(html).toContain('role="listbox"');
-    expect(html).toContain("Request approval");
+    expect(html).toContain("Full access");
+    expect(html).toContain("Allow actions anywhere on this device without approval.");
+    expect(html).toContain("tool-permission-menu");
+    expect(html).toContain("is-full-access");
     expect(html).not.toContain("<select");
   });
 });

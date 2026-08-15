@@ -240,6 +240,58 @@
   max-width: 120px;
 }
 
+.tool-permission-select.is-detailed.is-full-access .ui-select-trigger,
+.tool-permission-select.is-detailed.is-full-access .ui-select-trigger:hover,
+.tool-permission-select.is-detailed.is-full-access.is-open .ui-select-trigger {
+  color: var(--ui-warning);
+}
+
+.tool-permission-menu {
+  gap: 0;
+  max-width: min(360px, calc(100vw - 24px));
+  max-height: none;
+  padding: 4px;
+}
+
+.tool-permission-menu .ui-select-option.has-icon {
+  min-height: 52px;
+  grid-template-columns: 24px minmax(0, 1fr) 16px;
+  gap: 10px;
+  padding: 6px 8px;
+}
+
+.tool-permission-menu .ui-select-option-icon {
+  display: grid;
+  place-items: center;
+  color: var(--ui-text-secondary);
+}
+
+.tool-permission-menu .ui-select-option-copy {
+  gap: 1px;
+}
+
+.tool-permission-menu .ui-select-option-copy > small {
+  white-space: normal;
+}
+
+.tool-permission-menu .ui-select-option.is-full-access {
+  border-top: 1px solid var(--ui-line);
+  border-radius: 0;
+  color: var(--ui-warning);
+}
+
+.tool-permission-menu .ui-select-option.is-full-access .ui-select-option-icon,
+.tool-permission-menu .ui-select-option.is-full-access .ui-select-option-copy > small {
+  color: var(--ui-warning);
+}
+
+.tool-permission-menu .ui-select-option.is-full-access:hover,
+.tool-permission-menu .ui-select-option.is-full-access:focus-visible,
+.tool-permission-menu .ui-select-option.is-full-access[aria-selected="true"] {
+  background: transparent;
+  color: var(--ui-warning);
+}
+
 .toggle {
   position: relative;
   width: 48px;
@@ -407,23 +459,21 @@
   z-index: 80;
   display: grid;
   grid-template-columns: minmax(220px, 1fr) minmax(260px, 1.2fr);
-  overflow: hidden;
-  border: 1px solid var(--ui-line);
-  border-radius: 12px;
-  background: var(--ui-surface);
-  box-shadow: var(--shadow-hover);
+  align-items: end;
+  gap: 8px;
 }
 
 .mission-model-menu-sections,
 .mission-model-menu-options {
   display: grid;
+  min-width: 0;
   align-content: start;
   gap: 2px;
   padding: 6px;
-}
-
-.mission-model-menu-sections {
-  border-right: 1px solid var(--ui-line);
+  border: 1px solid var(--ui-line);
+  border-radius: 12px;
+  background: var(--ui-surface);
+  box-shadow: var(--shadow-hover);
 }
 
 .mission-model-menu-section,

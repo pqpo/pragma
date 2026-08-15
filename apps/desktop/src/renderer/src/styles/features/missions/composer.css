@@ -310,11 +310,11 @@
 .mission-chat-shell {
   display: grid;
   grid-template-rows: minmax(0, 1fr) auto;
-  width: 100%;
+  width: calc(100% + (var(--mission-detail-inline-padding) * 2));
   height: 100%;
   min-width: 0;
   min-height: 0;
-  max-width: 100%;
+  margin-inline: calc(var(--mission-detail-inline-padding) * -1);
 }
 
 .mission-chat-scroll {
@@ -330,7 +330,7 @@
 .mission-chat-list {
   min-width: 0;
   max-width: 100%;
-  padding: 30px 0 24px;
+  padding: 30px var(--mission-detail-inline-padding) 24px;
 }
 
 .mission-chat-list > * + * {
@@ -349,7 +349,7 @@
   z-index: 2;
   display: grid;
   gap: 7px;
-  padding-top: 10px;
+  padding: 10px var(--mission-detail-inline-padding) 0;
   background: var(--background);
 }
 

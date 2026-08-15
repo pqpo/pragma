@@ -605,6 +605,7 @@ export function HomePage(props: {
                 />
               ) : null}
               <ToolPermissionSelect
+                detailed
                 value={toolPermissionMode}
                 onChange={setToolPermissionMode}
                 disabled={saving}

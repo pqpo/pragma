@@ -11,6 +11,7 @@ export function MissionModelOverrideControls(props: {
   readonly models: readonly DesktopRuntimeModel[];
   readonly loading?: boolean | undefined;
   readonly disabled?: boolean | undefined;
+  readonly keepOpenWhenDisabled?: boolean | undefined;
   readonly value?: MissionModelOverride | undefined;
   readonly defaultValue?: MissionModelOverride | undefined;
   readonly onChange: (value: MissionModelOverride | undefined) => void;
@@ -33,15 +34,20 @@ export function MissionModelOverrideControls(props: {
   );
   const effectiveModel = selected ?? defaultModel;
   const thinkingLevels = effectiveModel?.thinking?.supportedLevels ?? [];
-  const effectiveThinkingLevel =
-    props.value?.thinkingLevel ??
-    effectiveModel?.thinking?.defaultLevel ??
-    props.defaultValue?.thinkingLevel;
-  const effectiveThinkingLabel = thinkingLevels.find(
-    (level) => level.value === effectiveThinkingLevel,
-  )?.label;
+  const defaultThinkingLevel =
+    (props.value === undefined ? props.defaultValue?.thinkingLevel : undefined) ??
+    effectiveModel?.thinking?.defaultLevel;
+  const effectiveThinkingLevel = props.value?.thinkingLevel ?? defaultThinkingLevel;
+  const effectiveThinkingLabel =
+    thinkingLevels.find((level) => level.value === effectiveThinkingLevel)?.label ??
+    effectiveThinkingLevel;
   const modelLabel = effectiveModel === undefined ? t("modelOverride") : effectiveModel.displayName;
-  const thinkingLabel = effectiveThinkingLabel ?? t("defaultExecutor");
+  const thinkingLabel =
+    props.value?.thinkingLevel === undefined
+      ? effectiveThinkingLabel === undefined
+        ? t("defaultExecutor")
+        : t("defaultValue", { value: effectiveThinkingLabel })
+      : effectiveThinkingLabel;
   const disabled = props.loading || props.disabled || props.models.length === 0;
 
   useEffect(() => {
@@ -55,8 +61,8 @@ export function MissionModelOverrideControls(props: {
   }, [open]);
 
   useEffect(() => {
-    if (disabled) setOpen(false);
-  }, [disabled]);
+    if (disabled && !props.keepOpenWhenDisabled) setOpen(false);
+  }, [disabled, props.keepOpenWhenDisabled]);
 
   useLayoutEffect(() => {
     if (!open) return;
@@ -66,16 +72,10 @@ export function MissionModelOverrideControls(props: {
       const viewportPadding = 12;
       const menuWidth = Math.min(536, window.innerWidth - viewportPadding * 2);
       const menuGap = 8;
-      const openAbove = window.innerHeight - trigger.bottom < 240 && trigger.top > 240;
       setMenuStyle({
         width: menuWidth,
-        left: Math.max(
-          viewportPadding,
-          Math.min(trigger.left, window.innerWidth - menuWidth - viewportPadding),
-        ),
-        ...(openAbove
-          ? { bottom: window.innerHeight - trigger.top + menuGap }
-          : { top: trigger.bottom + menuGap }),
+        left: Math.max(viewportPadding, trigger.left),
+        bottom: window.innerHeight - trigger.top + menuGap,
       });
     };
     positionMenu();
@@ -94,7 +94,6 @@ export function MissionModelOverrideControls(props: {
 
   const chooseModel = (model: DesktopRuntimeModel) => {
     props.onChange({ providerId: model.provider.id, modelId: model.id });
-    closeMenu();
   };
 
   const chooseThinkingLevel = (thinkingLevel: string) => {
@@ -104,7 +103,21 @@ export function MissionModelOverrideControls(props: {
       modelId: effectiveModel.id,
       thinkingLevel,
     });
-    closeMenu();
+  };
+
+  const chooseDefaultThinkingLevel = () => {
+    if (effectiveModel === undefined) return;
+    const usesDefaultModel =
+      props.defaultValue?.providerId === effectiveModel.provider.id &&
+      props.defaultValue.modelId === effectiveModel.id;
+    props.onChange(
+      usesDefaultModel
+        ? undefined
+        : {
+            providerId: effectiveModel.provider.id,
+            modelId: effectiveModel.id,
+          },
+    );
   };
 
   const menu = (
@@ -131,7 +144,8 @@ export function MissionModelOverrideControls(props: {
         <MenuSection
           active={activePanel === "thinking"}
           disabled={thinkingLevels.length === 0}
-          label={thinkingLabel}
+          label={t("thinkingDepth")}
+          value={thinkingLabel}
           onSelect={() => setActivePanel("thinking")}
         />
       </div>
@@ -140,26 +154,45 @@ export function MissionModelOverrideControls(props: {
         role="listbox"
         aria-label={t(activePanel === "model" ? "modelOverride" : "thinkingDepth")}
       >
-        {activePanel === "model"
-          ? props.models.map((model) => {
-              const selectedModel =
-                model.provider.id === effectiveModel?.provider.id &&
-                model.id === effectiveModel?.id;
-              return (
-                <button
-                  className="mission-model-menu-option"
-                  type="button"
-                  role="option"
-                  aria-selected={selectedModel}
-                  key={modelOptionKey(model.provider.id, model.id)}
-                  onClick={() => chooseModel(model)}
-                >
-                  <span>{model.displayName}</span>
-                  <Check size={15} weight="bold" aria-hidden="true" />
-                </button>
-              );
-            })
-          : thinkingLevels.map((level) => (
+        {activePanel === "model" ? (
+          props.models.map((model) => {
+            const selectedModel =
+              model.provider.id === effectiveModel?.provider.id && model.id === effectiveModel?.id;
+            return (
+              <button
+                className="mission-model-menu-option"
+                type="button"
+                role="option"
+                aria-selected={selectedModel}
+                key={modelOptionKey(model.provider.id, model.id)}
+                onClick={() => chooseModel(model)}
+              >
+                <span>{model.displayName}</span>
+                <Check size={15} weight="bold" aria-hidden="true" />
+              </button>
+            );
+          })
+        ) : (
+          <>
+            <button
+              className="mission-model-menu-option"
+              type="button"
+              role="option"
+              aria-selected={props.value?.thinkingLevel === undefined}
+              onClick={chooseDefaultThinkingLevel}
+            >
+              <span>
+                {defaultThinkingLevel === undefined
+                  ? t("defaultExecutor")
+                  : t("defaultValue", {
+                      value:
+                        thinkingLevels.find((level) => level.value === defaultThinkingLevel)
+                          ?.label ?? defaultThinkingLevel,
+                    })}
+              </span>
+              <Check size={15} weight="bold" aria-hidden="true" />
+            </button>
+            {thinkingLevels.map((level) => (
               <button
                 className="mission-model-menu-option"
                 type="button"
@@ -172,6 +205,8 @@ export function MissionModelOverrideControls(props: {
                 <Check size={15} weight="bold" aria-hidden="true" />
               </button>
             ))}
+          </>
+        )}
       </div>
     </div>
   );

@@ -127,7 +127,7 @@
 
 .mission-executor-dialog-results {
   display: grid;
-  max-height: min(400px, 48vh);
+  min-height: 0;
   overflow-y: auto;
 }
 

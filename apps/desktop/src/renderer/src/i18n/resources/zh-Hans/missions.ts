@@ -315,6 +315,7 @@ export const missions = {
   humanReview: "继续之前请检查当前执行。",
   customAnswer: "其他回答",
   customAnswerPlaceholder: "告诉 Agent 你希望怎样回答",
+  addNote: "添加备注",
   optionalNotes: "可选备注",
   submitting: "提交中…",
   approveContinue: "批准并继续",

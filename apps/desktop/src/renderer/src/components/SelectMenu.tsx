@@ -16,6 +16,8 @@ export type SelectMenuOption<Value extends string = string> = {
   readonly value: Value;
   readonly label: string;
   readonly description?: string | undefined;
+  readonly icon?: ReactNode | undefined;
+  readonly className?: string | undefined;
   readonly disabled?: boolean | undefined;
 };
 
@@ -28,6 +30,8 @@ export function SelectMenu<Value extends string>(props: {
   readonly disabled?: boolean | undefined;
   readonly emptyLabel?: string | undefined;
   readonly icon?: ReactNode | undefined;
+  readonly menuClassName?: string | undefined;
+  readonly menuMinWidth?: number | undefined;
   readonly onChange: (value: Value) => void;
   readonly overlayOwnerId?: string | undefined;
   readonly options: readonly SelectMenuOption<Value>[];
@@ -89,7 +93,8 @@ export function SelectMenu<Value extends string>(props: {
             ? "bottom"
             : "top"
           : preferred;
-      const width = Math.min(Math.max(trigger.width, 200), Math.max(200, window.innerWidth - 24));
+      const maxWidth = Math.max(200, window.innerWidth - 24);
+      const width = Math.min(Math.max(trigger.width, props.menuMinWidth ?? 200), maxWidth);
       const left =
         props.align === "end"
           ? Math.max(viewportPadding, trigger.right - width)
@@ -110,7 +115,7 @@ export function SelectMenu<Value extends string>(props: {
       window.removeEventListener("resize", positionMenu);
       window.removeEventListener("scroll", positionMenu, true);
     };
-  }, [open, props.align, props.placement]);
+  }, [open, props.align, props.menuMinWidth, props.placement]);
 
   useEffect(() => {
     if (!open) return;
@@ -207,7 +212,9 @@ export function SelectMenu<Value extends string>(props: {
 
   const menu = (
     <div
-      className={`ui-select-menu is-${menuPlacement}`}
+      className={["ui-select-menu", props.menuClassName, `is-${menuPlacement}`]
+        .filter(Boolean)
+        .join(" ")}
       id={listboxId}
       role="listbox"
       aria-label={props.ariaLabel}
@@ -243,7 +250,9 @@ export function SelectMenu<Value extends string>(props: {
       ) : (
         visibleOptions.map((option, index) => (
           <button
-            className="ui-select-option"
+            className={["ui-select-option", option.icon ? "has-icon" : "", option.className]
+              .filter(Boolean)
+              .join(" ")}
             type="button"
             role="option"
             aria-selected={option.value === props.value}
@@ -259,6 +268,7 @@ export function SelectMenu<Value extends string>(props: {
             onMouseLeave={() => setHoveredIndex(-1)}
             onKeyDown={(event) => handleOptionKeyDown(event, index)}
           >
+            {option.icon ? <span className="ui-select-option-icon">{option.icon}</span> : null}
             <span className="ui-select-option-copy">
               {props.animateOverflowingOptions ? (
                 <OverflowingOptionLabel

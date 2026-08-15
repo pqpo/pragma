@@ -325,6 +325,7 @@ export const missions = {
   humanReview: "Review the current execution before continuing.",
   customAnswer: "Other answer",
   customAnswerPlaceholder: "Tell the agent what you want instead",
+  addNote: "Add note",
   optionalNotes: "Optional notes",
   submitting: "Submitting…",
   approveContinue: "Approve & continue",

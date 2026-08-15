@@ -15,7 +15,9 @@ import {
   CONTEXT_POPOVER_CLOSE_DELAY_MS,
   ContextWindowControl,
   DEFAULT_MISSION_MEMORY_VIEW,
+  formatMissionHumanQuestionNotes,
   groupMissionConversationEntries,
+  hasValidMissionHumanAnswer,
   hasValidMissionHumanAnswers,
   hidePreparingQueuedChatEntries,
   mergeMissionHumanAnswers,
@@ -24,6 +26,7 @@ import {
   MissionChatEntryView,
   startMissionContextOperation,
   MissionDetailFragment,
+  MissionDetailSkeleton,
   MissionMemoryActivity,
   MissionThinkingEntry,
   MissionToolCallBlock,
@@ -132,6 +135,23 @@ describe("MissionsPage", () => {
     expect(html).not.toContain(">Loading missions<");
   });
 
+  it("renders the task-detail skeleton inside the existing mission surface", () => {
+    const html = renderToStaticMarkup(<MissionDetailSkeleton label="Loading mission" />);
+
+    expect(html).toContain('class="mission-detail-loading"');
+    expect(html).toContain('aria-label="Loading mission"');
+    expect(html).not.toContain("mission-skeleton-heading");
+    expect(html).toContain("mission-skeleton-meta");
+    expect(html).toContain("mission-skeleton-composer");
+    expect(html).not.toContain(">Loading mission<");
+  });
+
+  it("keeps the composer placeholder separate from the message placeholders", () => {
+    const html = renderToStaticMarkup(<MissionDetailSkeleton label="Loading mission" />);
+
+    expect(html).toMatch(/mission-skeleton-message is-short[^]*mission-skeleton-composer/);
+  });
+
   it("does not let a stale initial usage query overwrite a newer streaming update", () => {
     const live = applyMissionUsageHintRevision(
       { revision: -1, totalTokens: 0 },
@@ -157,13 +177,34 @@ describe("MissionsPage", () => {
     );
 
     expect(html).toContain("New mission");
+    expect(html).not.toContain("<h1>Missions</h1>");
     expect(html).toContain('aria-label="Mission sources"');
     expect(html).toMatch(/aria-selected="true"[^>]*>Tasks<\/button>/);
     expect(html).toMatch(/aria-selected="false"[^>]*>Automation<\/button>/);
     expect(html).toContain('aria-label="Resize navigation"');
     expect(html).not.toContain("mission-create-selectors");
+    expect(html).not.toContain("mission-detail-loading");
+    expect(html).toContain("No missions");
     expect(html).not.toContain("Needs input");
     expect(html).not.toContain("No missions need input");
+  });
+
+  it("shows the empty detail instead of a skeleton for an empty automation list", () => {
+    const html = renderToStaticMarkup(
+      <MissionsPage
+        initialMemoryState={{
+          missions: [],
+          selectedMission: null,
+          selectedMissionId: null,
+          activeSource: "automation",
+        }}
+        onCreate={() => undefined}
+      />,
+    );
+
+    expect(html).toMatch(/aria-selected="true"[^>]*>Automation<\/button>/);
+    expect(html).toContain("No missions");
+    expect(html).not.toContain("mission-detail-loading");
   });
 
   it("shows only the selected Mission source in the rail", () => {
@@ -221,7 +262,7 @@ describe("MissionsPage", () => {
     );
   });
 
-  it("renders a compact, single-confirmation question flow", () => {
+  it("renders a compact, stepwise question flow", () => {
     const mission = missionFixture("expert");
     const chat: MissionChatSnapshot = {
       missionId: mission.id,
@@ -266,11 +307,13 @@ describe("MissionsPage", () => {
     expect(html).toContain('aria-live="polite">1 / 2</span>');
     expect(html).toContain("Other answer");
     expect(html).toContain('placeholder="Tell the agent what you want instead"');
-    expect(composer).toContain("Confirm");
+    expect(composer).toContain("Add note");
+    expect(composer).not.toContain("<textarea");
+    expect(composer).toContain("Next question");
     expect(composer).toMatch(/class="primary-button"[^>]*disabled=""/);
     expect(composer.match(/class="primary-button"/g)).toHaveLength(1);
     expect(composer).not.toContain(">Back<");
-    expect(composer).not.toContain(">Next<");
+    expect(composer).not.toContain(">Confirm<");
     expect(composer.indexOf("Option one")).toBeLessThan(composer.indexOf("Option two"));
   });
 
@@ -280,18 +323,21 @@ describe("MissionsPage", () => {
         previous: "Previous question",
         next: "Next question",
         other: "Other answer",
+        addNote: "Add note",
         confirm: "Confirm",
       },
       "zh-Hans": {
         previous: "上一题",
         next: "下一题",
         other: "其他回答",
+        addNote: "添加备注",
         confirm: "确认",
       },
       "zh-Hant": {
         previous: "上一題",
         next: "下一題",
         other: "其他回答",
+        addNote: "新增備註",
         confirm: "確認",
       },
     };
@@ -302,6 +348,7 @@ describe("MissionsPage", () => {
       expect(i18n.t("nextQuestion", { ns: "missions" })).toBe(labels.next);
       expect(i18n.t("questionProgress", { ns: "missions", current: 2, total: 3 })).toBe("2 / 3");
       expect(i18n.t("customAnswer", { ns: "missions" })).toBe(labels.other);
+      expect(i18n.t("addNote", { ns: "missions" })).toBe(labels.addNote);
       expect(i18n.t("confirmContinue", { ns: "missions" })).toBe(labels.confirm);
     }
 
@@ -712,8 +759,16 @@ describe("MissionDetailFragment", () => {
   });
 
   it("uses the full detail width for a single expert", () => {
-    const html = renderToStaticMarkup(<MissionDetailFragment mission={missionFixture("expert")} />);
+    const mission = missionFixture("expert");
+    const html = renderToStaticMarkup(<MissionDetailFragment mission={mission} />);
 
+    expect(html).not.toContain(`<h1 title="${mission.title}">${mission.title}</h1>`);
+    expect(html).toContain(`aria-label="${mission.title}"`);
+    expect(html).not.toContain("mission-detail-header");
+    expect(html).toContain("mission-detail-topbar");
+    expect(html.indexOf("mission-detail-status-bar")).toBeLessThan(
+      html.indexOf("mission-detail-tabs"),
+    );
     expect(html).toContain(">Chat<");
     expect(html).toContain(">Work<");
     expect(html).toContain(">Board<");
@@ -1929,6 +1984,26 @@ describe("Mission human answers", () => {
         { "Which direction should we take?": "   " },
       ),
     ).toBe(false);
+  });
+
+  it("validates the active question independently before advancing", () => {
+    const answers = { "Which direction should we take?": "Option one" };
+
+    expect(hasValidMissionHumanAnswer(questions[0]!, answers, {})).toBe(true);
+    expect(hasValidMissionHumanAnswer(questions[1]!, answers, {})).toBe(false);
+    expect(hasValidMissionHumanAnswers(questions, answers, {})).toBe(false);
+  });
+
+  it("formats only the supplied notes in question order for the Agent", () => {
+    expect(
+      formatMissionHumanQuestionNotes(questions, {
+        "What should the agent know?": "Keep it compact.",
+        "Which direction should we take?": "Prioritize the first route.",
+        "Who is this for?": "   ",
+      }),
+    ).toBe(
+      "Which direction should we take?\nPrioritize the first route.\n\nWhat should the agent know?\nKeep it compact.",
+    );
   });
 
   it("submits custom answers in place of selected options without losing other questions", () => {

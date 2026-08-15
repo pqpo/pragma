@@ -1121,6 +1121,13 @@
   font-weight: 500;
 }
 
+.mission-human-composer > footer > .mission-human-add-note {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  margin-right: auto;
+}
+
 .mission-human-composer > footer > button:not(.primary-button) {
   padding: 0 12px;
   border: 1px solid var(--ui-line-strong);
@@ -1567,12 +1574,12 @@
   }
 }
 
-:is(.trigger-options > label, .expert-picker-row):focus-within {
+:is(.trigger-options > label, .expert-picker-row):has(input:focus-visible) {
   border-color: var(--green);
   box-shadow: 0 0 0 3px var(--focus-ring);
 }
 
-:is(.trigger-options > label, .expert-picker-row) > input:focus-visible {
+:is(.trigger-options > label, .expert-picker-row) input:focus-visible {
   outline: 0;
   box-shadow: none;
 }
