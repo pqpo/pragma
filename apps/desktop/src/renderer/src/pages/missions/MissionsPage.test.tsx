@@ -93,7 +93,7 @@ describe("MissionsPage", () => {
     expect(firstLoad).toContain('role="status"');
     expect(firstLoad).not.toContain("Mission not found");
     expect(revisit).not.toContain("mission-page-skeleton");
-    expect(revisit).toContain("Mission not found");
+    expect(revisit).toContain("No missions");
   });
 
   it("restores the cached Mission and lets a newly created Mission take precedence", () => {
