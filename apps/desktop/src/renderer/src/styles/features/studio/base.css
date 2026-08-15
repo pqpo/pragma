@@ -154,7 +154,7 @@
 }
 
 .studio-heading h1 {
-  font-size: 36px;
+  font-size: 34px;
   font-weight: 730;
   letter-spacing: -0.05em;
   line-height: 1.08;
@@ -234,7 +234,7 @@
 .studio-asset-icon {
   display: grid;
   width: 54px;
-  height: 64px;
+  height: 54px;
   place-items: center;
   border-radius: 9px;
   background: #f0f3ef;
@@ -1011,7 +1011,7 @@
 
   .studio-asset-icon {
     width: 48px;
-    height: 58px;
+    height: 48px;
   }
 
   .studio-asset-copy span {
@@ -1123,7 +1123,7 @@
 }
 
 .studio-heading h1 {
-  font-size: 32px;
+  font-size: 30px;
 }
 
 .studio-create-menu {

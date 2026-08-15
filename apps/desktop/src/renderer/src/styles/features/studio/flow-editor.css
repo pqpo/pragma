@@ -708,6 +708,56 @@
   line-height: 1.5;
 }
 
+.flow-inspector-field > .flow-resource-picker-trigger {
+  display: flex;
+  width: 100%;
+  min-height: 42px;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  padding: 8px 10px;
+  border: 1px solid var(--border);
+  color: var(--text);
+  cursor: pointer;
+  font: inherit;
+  text-align: left;
+}
+
+.flow-resource-picker-trigger > span {
+  display: grid;
+  min-width: 0;
+  gap: 2px;
+}
+
+.flow-resource-picker-trigger strong,
+.flow-resource-picker-trigger small {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.flow-resource-picker-trigger strong {
+  font-size: 11px;
+  font-weight: 620;
+}
+
+.flow-resource-picker-trigger small {
+  color: var(--muted);
+  font-size: 10px;
+}
+
+.flow-resource-picker-trigger > svg {
+  flex: 0 0 auto;
+  color: var(--muted);
+}
+
+.flow-inspector-field > .flow-resource-picker-trigger:hover,
+.flow-inspector-field > .flow-resource-picker-trigger:focus-visible {
+  border-color: var(--green);
+  outline: 0;
+  box-shadow: 0 0 0 3px var(--focus-ring);
+}
+
 .flow-inspector-field .is-invalid {
   border-color: #bd6559;
   box-shadow: 0 0 0 2px rgb(189 101 89 / 10%);

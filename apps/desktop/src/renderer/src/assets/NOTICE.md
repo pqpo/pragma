@@ -1,5 +1,15 @@
 # Third-party visual assets
 
+## Gloock
+
+- File: `fonts/Gloock-Regular.ttf`
+- Source: https://github.com/google/fonts/tree/main/ofl/gloock
+- Retrieved: 2026-08-15
+- SHA-256: `c3a67e0212f7da01764796ae721cb9bab3e122d142354f97cf9c63fb763e6d77`
+- License: SIL Open Font License 1.1
+
+Gloock is bundled as the Pragma wordmark typeface. Copyright 2022 The Gloock Project Authors.
+
 ## Qoder
 
 - File: `qoder.svg`

@@ -2,6 +2,7 @@ import {
   ArrowDown,
   ArrowUp,
   Brain,
+  CaretDown,
   CheckCircle,
   DiamondsFour,
   GitBranch,
@@ -21,12 +22,17 @@ import type {
 } from "@pragma/interpreter/ast";
 import type { Edge } from "@xyflow/react";
 import { PRAGMA_TEXT_LIMITS, truncatePragmaTrimmedUnicode } from "@pragma/shared";
+import { useState } from "react";
 import { useTranslation } from "react-i18next";
 import { stringify } from "yaml";
 
 import type { DesktopRuntimeAvailability } from "../../../../../shared/contracts/index.ts";
 import { AssetMemoryPolicySection } from "../../settings/AssetMemoryPolicySection.tsx";
 import { CharacterCount } from "../../../components/CharacterCount.tsx";
+import {
+  PragmaResourcePickerDialog,
+  type PragmaResourcePickerItem,
+} from "../../../components/PragmaResourcePickerDialog.tsx";
 import { SelectMenu } from "../../../components/SelectMenu.tsx";
 import { flowStepKind, flowStepTarget, type FlowStep } from "./flow-model.ts";
 import {
@@ -252,6 +258,7 @@ export function StepInspector(props: {
   readonly onDelete: () => void;
 }) {
   const { t } = useTranslation("studio");
+  const [resourcePickerOpen, setResourcePickerOpen] = useState(false);
   const step = props.flow.spec.graph.steps[props.stepId];
   if (step === undefined) return null;
   const kind = flowStepKind(step);
@@ -281,6 +288,30 @@ export function StepInspector(props: {
       const current = copy.spec.graph.steps[props.stepId];
       if (current !== undefined) mutator(current);
     });
+  const resourceKind = kind === "expert" || kind === "team" || kind === "flow" ? kind : undefined;
+  const selectableResources: readonly PragmaResourcePickerItem[] = [
+    ...(resourceKind !== undefined &&
+    target !== "" &&
+    !props.targets.some((item) => item.kind === resourceKind && item.ref === target)
+      ? [
+          {
+            ref: target,
+            name: target,
+            description: `${target} · unavailable`,
+            kind: resourceKind,
+          },
+        ]
+      : []),
+    ...props.targets
+      .filter((item) => item.kind === resourceKind)
+      .map((item) => ({
+        ref: item.ref,
+        name: item.label,
+        kind: item.kind,
+        searchTerms: [item.ref],
+      })),
+  ];
+  const selectedResource = selectableResources.find((item) => item.ref === target);
   return (
     <div className="flow-inspector-content">
       <header>
@@ -368,27 +399,38 @@ export function StepInspector(props: {
         </InspectorField>
       ) : (
         <InspectorField label="Resource">
-          <SelectMenu
-            ariaLabel="Resource"
-            className="form-select"
-            value={target}
-            searchable
-            options={[
-              { value: "", label: t("selectResource") },
-              ...(target !== "" &&
-              !props.targets.some((item) => item.kind === kind && item.ref === target)
-                ? [{ value: target, label: `${target} · unavailable` }]
-                : []),
-              ...props.targets
-                .filter((item) => item.kind === kind)
-                .map((item) => ({ value: item.ref, label: item.label })),
-            ]}
-            onChange={(resourceRef) =>
-              patchStep((current) => setStepReference(current, kind, resourceRef))
-            }
-          />
+          <button
+            className="form-select flow-resource-picker-trigger"
+            type="button"
+            aria-haspopup="dialog"
+            aria-expanded={resourcePickerOpen}
+            onClick={() => setResourcePickerOpen(true)}
+          >
+            <span>
+              <strong>{selectedResource?.name ?? t("selectResource")}</strong>
+              {selectedResource === undefined ? null : <small>{selectedResource.ref}</small>}
+            </span>
+            <CaretDown size={16} aria-hidden="true" />
+          </button>
         </InspectorField>
       )}
+      {resourcePickerOpen ? (
+        <PragmaResourcePickerDialog
+          title={t("selectResource")}
+          description={t("resourcesPickerDescription")}
+          items={selectableResources}
+          selectedRefs={target === "" ? [] : [target]}
+          selectionMode="single"
+          onSelectedRefsChange={(refs) =>
+            patchStep((current) => {
+              if (resourceKind !== undefined) {
+                setStepReference(current, resourceKind, refs[0] ?? "");
+              }
+            })
+          }
+          onClose={() => setResourcePickerOpen(false)}
+        />
+      ) : null}
       {kind === "expert" || kind === "team" ? (
         <>
           <PromptTemplateEditor

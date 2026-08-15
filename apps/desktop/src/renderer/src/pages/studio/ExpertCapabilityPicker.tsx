@@ -13,6 +13,10 @@ import { useTranslation } from "react-i18next";
 
 import type { Capability, ContextStore } from "../../../../shared/contracts/index.ts";
 import { SelectMenu } from "../../components/SelectMenu.tsx";
+import {
+  PragmaResourcePickerDialog,
+  type PragmaResourcePickerItem,
+} from "../../components/PragmaResourcePickerDialog.tsx";
 import { ContextStorePickerDialog } from "./ContextStorePickerDialog.tsx";
 import type { ExpertDraft } from "./studio-model.ts";
 
@@ -233,7 +237,8 @@ export function ExpertCapabilityPicker(props: {
   };
 
   useEffect(() => {
-    if (activePicker === null || activePicker === "context-stores") return;
+    if (activePicker === null || activePicker === "context-stores" || activePicker === "resources")
+      return;
     const previousOverflow = document.body.style.overflow;
     document.body.style.overflow = "hidden";
     const closeOnEscape = (event: KeyboardEvent) => {
@@ -261,6 +266,19 @@ export function ExpertCapabilityPicker(props: {
     return skill ? [skill.manifest.name] : [];
   });
   const selectedToolNames = selectedToolReferences.flatMap((reference) => reference.toolNames);
+  const resourcePickerItems: readonly PragmaResourcePickerItem[] = invocableResources.map(
+    (resource) => {
+      const details = resourceDetails(resource);
+      return {
+        ref: details.ref,
+        name: resource.metadata.name,
+        description: resource.metadata.description,
+        searchTerms: [resource.metadata.id, ...resource.metadata.tags],
+        kind: details.kind,
+        avatarId: "avatarId" in resource.metadata ? resource.metadata.avatarId : undefined,
+      };
+    },
+  );
 
   const summaries: readonly {
     readonly id: PickerKind;
@@ -388,7 +406,9 @@ export function ExpertCapabilityPicker(props: {
                 <footer>
                   <span>{t("availableCount", { count: summary.available })}</span>
                   <button type="button" onClick={() => openPicker(summary.id)}>
-                    {summary.selected > 0 ? t("editSelection") : t("choose")}
+                    {summary.id === "context-stores" || summary.selected === 0
+                      ? t("choose")
+                      : t("editSelection")}
                   </button>
                 </footer>
               </article>
@@ -397,7 +417,46 @@ export function ExpertCapabilityPicker(props: {
         </div>
       </section>
 
-      {activePicker === "context-stores" ? (
+      {activePicker === "resources" ? (
+        <PragmaResourcePickerDialog
+          title={pickerCopy.resources.title}
+          description={pickerCopy.resources.description}
+          items={resourcePickerItems}
+          selectedRefs={props.resourceTools.flatMap((binding) =>
+            binding.target === undefined ? [] : [binding.target.ref],
+          )}
+          selectionMode="multiple"
+          searchPlaceholder={pickerCopy.resources.searchPlaceholder}
+          onSelectedRefsChange={(refs) =>
+            props.onResourceToolsChange(
+              refs.flatMap((ref) => {
+                const existing = props.resourceTools.find((binding) => binding.target?.ref === ref);
+                if (existing !== undefined) return [existing];
+                const resource = invocableResources.find(
+                  (candidate) => resourceDetails(candidate).ref === ref,
+                );
+                if (resource === undefined) return [];
+                const details = resourceDetails(resource);
+                return [
+                  {
+                    adapter: "pragma.tool.call@v1",
+                    target: { ref },
+                    tool: {
+                      name: `call_${details.kind}_${resource.metadata.id}`.replace(
+                        /[^A-Za-z0-9_-]/g,
+                        "_",
+                      ),
+                      description: `Call ${resource.metadata.name}.`,
+                      approval: "ask",
+                    },
+                  },
+                ];
+              }),
+            )
+          }
+          onClose={closePicker}
+        />
+      ) : activePicker === "context-stores" ? (
         <ContextStorePickerDialog
           stores={props.contextStores}
           selectedStoreIds={props.contextStoreMounts.map((mount) => mount.storeId)}
@@ -464,14 +523,6 @@ export function ExpertCapabilityPicker(props: {
               ) : null}
             </div>
             <div className="expert-picker-results">
-              {activePicker === "resources" ? (
-                <ResourceResults
-                  resources={invocableResources}
-                  query={search}
-                  selected={props.resourceTools}
-                  onChange={props.onResourceToolsChange}
-                />
-              ) : null}
               {activePicker === "skills" ? (
                 <SkillResults
                   capabilities={skills}
@@ -517,68 +568,6 @@ function EmptyResults(props: { readonly hasQuery: boolean; readonly label: strin
         {props.hasQuery ? t("noMatchesFound") : t("noAvailable", { label: props.label })}
       </strong>
       <p>{props.hasQuery ? t("tryDifferentDescription") : t("addItemsStudio")}</p>
-    </div>
-  );
-}
-
-function ResourceResults(props: {
-  readonly resources: readonly InvocableResource[];
-  readonly query: string;
-  readonly selected: ExpertDraft["resourceTools"];
-  readonly onChange: (value: ExpertDraft["resourceTools"]) => void;
-}) {
-  const { t } = useTranslation("studio");
-  const visible = props.resources.filter((resource) => {
-    const details = resourceDetails(resource);
-    return includesQuery(props.query, resource.metadata.name, resource.metadata.id, details.label);
-  });
-  if (visible.length === 0)
-    return <EmptyResults hasQuery={Boolean(props.query.trim())} label={t("resources")} />;
-  return (
-    <div className="expert-picker-list">
-      {visible.map((resource) => {
-        const details = resourceDetails(resource);
-        const selected = props.selected.some((binding) => binding.target?.ref === details.ref);
-        return (
-          <label className="expert-picker-row" key={details.ref}>
-            <input
-              type="checkbox"
-              checked={selected}
-              onChange={(event) =>
-                props.onChange(
-                  event.target.checked
-                    ? [
-                        ...props.selected,
-                        {
-                          adapter: "pragma.tool.call@v1",
-                          target: { ref: details.ref },
-                          tool: {
-                            name: `call_${details.kind}_${resource.metadata.id}`.replace(
-                              /[^A-Za-z0-9_-]/g,
-                              "_",
-                            ),
-                            description: `Call ${resource.metadata.name}.`,
-                            approval: "ask",
-                          },
-                        },
-                      ]
-                    : props.selected.filter((binding) => binding.target?.ref !== details.ref),
-                )
-              }
-            />
-            <span>
-              <strong>{resource.metadata.name}</strong>
-              <small>
-                {details.kind === "team"
-                  ? t("expertTeam")
-                  : details.kind === "expert"
-                    ? t("expert")
-                    : t("flow")}{" "}
-              </small>
-            </span>
-          </label>
-        );
-      })}
     </div>
   );
 }
@@ -646,7 +635,7 @@ function SkillResults(props: {
   );
 }
 
-function ToolResults(props: {
+export function ToolResults(props: {
   readonly capabilities: readonly Capability[];
   readonly query: string;
   readonly references: ExpertDraft["capabilities"];
@@ -774,25 +763,32 @@ function ToolResults(props: {
                   const checked = selectedNames.includes(tool.name);
                   const approvalKey = toolApprovalKey(capability.manifest.runtimeKey, tool.name);
                   return (
-                    <div className="expert-picker-row expert-tool-row" key={tool.name}>
-                      <input
-                        type="checkbox"
-                        aria-label={t("selectExpertTool", { name: tool.name })}
-                        disabled={unavailable}
-                        checked={checked}
-                        onChange={() =>
-                          props.onUpdate(
-                            capability,
-                            checked
-                              ? selectedNames.filter((name) => name !== tool.name)
-                              : [...selectedNames, tool.name],
-                          )
-                        }
-                      />
-                      <span>
-                        <strong>{tool.name}</strong>
-                        <small>{tool.description ?? t("externalTool")}</small>
-                      </span>
+                    <div
+                      className={`expert-picker-row expert-tool-row${
+                        checked ? " is-selected" : ""
+                      }`}
+                      key={tool.name}
+                    >
+                      <label className="expert-tool-row-selection">
+                        <input
+                          type="checkbox"
+                          aria-label={t("selectExpertTool", { name: tool.name })}
+                          disabled={unavailable}
+                          checked={checked}
+                          onChange={() =>
+                            props.onUpdate(
+                              capability,
+                              checked
+                                ? selectedNames.filter((name) => name !== tool.name)
+                                : [...selectedNames, tool.name],
+                            )
+                          }
+                        />
+                        <span>
+                          <strong>{tool.name}</strong>
+                          <small>{tool.description ?? t("externalTool")}</small>
+                        </span>
+                      </label>
                       {checked ? (
                         <div className="tool-approval-select">
                           <span className="sr-only">
@@ -801,6 +797,7 @@ function ToolResults(props: {
                           <SelectMenu<"" | "none" | "ask" | "required">
                             ariaLabel={t("toolApprovalFor", { name: tool.name })}
                             className="form-select"
+                            overlayOwnerId="expert-capability-picker"
                             value={props.toolApprovals[approvalKey] ?? ""}
                             options={[
                               { value: "", label: t("approvalDefault") },

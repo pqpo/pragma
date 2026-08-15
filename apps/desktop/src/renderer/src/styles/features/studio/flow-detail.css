@@ -1,0 +1,315 @@
+/* Flow details favor a compact reading rhythm over a dashboard of equal-weight cards. */
+.flow-detail-content {
+  display: grid;
+  gap: 24px;
+  padding: 8px 0 48px;
+}
+
+.flow-detail-overview {
+  min-width: 0;
+  padding: 20px 0;
+  border: 1px solid var(--ui-line);
+  border-right: 0;
+  border-left: 0;
+  border-radius: 0;
+  background: transparent;
+}
+
+.flow-detail-steps {
+  min-width: 0;
+}
+
+.flow-detail-section-heading h2 {
+  color: var(--ui-text);
+  font-size: 16px;
+  font-weight: 600;
+  line-height: 1.4;
+}
+
+.flow-detail-section-heading p {
+  margin-top: 4px;
+  color: var(--ui-text-secondary);
+  font-size: 12px;
+  line-height: 1.5;
+}
+
+.flow-overview-facts {
+  display: grid;
+  grid-template-columns: minmax(0, 1.35fr) minmax(144px, 0.85fr) minmax(180px, 1fr);
+  margin-top: 16px;
+}
+
+.flow-overview-facts > div {
+  display: grid;
+  min-width: 0;
+  gap: 6px;
+  padding: 16px 24px 0;
+}
+
+.flow-overview-facts > div + div {
+  border-left: 1px solid var(--ui-line);
+}
+
+.flow-overview-facts > div:first-child {
+  padding-left: 0;
+}
+
+.flow-overview-facts dt,
+.flow-detail-summary-item > span,
+.flow-detail-step-responsibility > span {
+  color: var(--ui-text-secondary);
+  font-size: 11px;
+  font-weight: 500;
+  line-height: 1.35;
+}
+
+.flow-overview-facts dd {
+  display: flex;
+  min-width: 0;
+  align-items: center;
+  gap: 6px;
+  margin: 0;
+  color: var(--ui-text);
+  font-size: 13px;
+  font-weight: 500;
+  line-height: 1.45;
+}
+
+.flow-overview-facts dd > svg {
+  flex: 0 0 auto;
+  color: var(--ui-accent);
+}
+
+.flow-overview-facts code {
+  overflow: hidden;
+  color: var(--ui-text-secondary);
+  font-family: "SFMono-Regular", "Cascadia Code", Consolas, monospace;
+  font-size: 12px;
+  font-weight: 400;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.flow-detail-summary {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  padding: 16px 0;
+  border-bottom: 1px solid var(--ui-line);
+}
+
+.flow-detail-summary-item {
+  display: grid;
+  min-width: 0;
+  align-content: center;
+  gap: 4px;
+  min-height: 84px;
+  padding: 12px 24px;
+}
+
+.flow-detail-summary-item:first-child {
+  padding-left: 0;
+}
+
+.flow-detail-summary-item + .flow-detail-summary-item {
+  border-left: 1px solid var(--ui-line);
+}
+
+.flow-detail-summary-item strong {
+  overflow: hidden;
+  color: var(--ui-text);
+  font-size: 14px;
+  font-weight: 600;
+  line-height: 1.4;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.flow-detail-summary-item strong.is-ready {
+  color: var(--ui-accent-strong);
+}
+
+.flow-detail-summary-item strong.is-muted,
+.flow-detail-summary-item small {
+  color: var(--ui-text-secondary);
+  font-size: 12px;
+  font-weight: 400;
+  line-height: 1.4;
+}
+
+.flow-detail-steps {
+  padding-top: 0;
+}
+
+.flow-detail-step-list {
+  display: grid;
+  gap: 12px;
+  margin-top: 16px;
+}
+
+.flow-detail-step-row {
+  display: grid;
+  grid-template-columns: 32px 56px minmax(180px, 0.65fr) minmax(0, 1.65fr);
+  min-height: 148px;
+  align-items: center;
+  column-gap: 12px;
+  padding: 20px 24px;
+  border: 1px solid var(--ui-line);
+  border-radius: var(--ui-radius-lg);
+  background: var(--ui-surface);
+  color: inherit;
+  cursor: pointer;
+  font: inherit;
+  text-align: left;
+}
+
+.flow-detail-step-row.is-start {
+  border-top: 3px solid var(--ui-accent);
+  padding-top: 18px;
+}
+
+.flow-detail-step-row:enabled:hover {
+  border-color: var(--ui-line-strong);
+  background: var(--ui-surface-subtle);
+}
+
+.flow-detail-step-row:enabled:focus-visible {
+  outline: 0;
+  box-shadow: 0 0 0 3px var(--ui-focus);
+}
+
+.flow-detail-step-row:disabled {
+  cursor: default;
+}
+
+.flow-detail-step-order {
+  color: var(--ui-text-disabled);
+  font-family: "SFMono-Regular", "Cascadia Code", Consolas, monospace;
+  font-size: 11px;
+  font-weight: 500;
+}
+
+.flow-detail-step-icon {
+  display: grid;
+  width: 52px;
+  height: 52px;
+  place-items: center;
+  border-radius: var(--ui-radius-md);
+  background: var(--ui-surface-subtle);
+  color: var(--ui-accent-strong);
+}
+
+.flow-detail-step-icon > .pragma-avatar {
+  width: 48px;
+  height: 48px;
+}
+
+.flow-detail-step-name,
+.flow-detail-step-target {
+  display: grid;
+  min-width: 0;
+  gap: 3px;
+}
+
+.flow-detail-step-name > strong {
+  display: flex;
+  min-width: 0;
+  align-items: center;
+  gap: 8px;
+  color: var(--ui-text);
+  font-size: 14px;
+  font-weight: 500;
+  line-height: 1.45;
+}
+
+.flow-detail-step-name > strong > span {
+  flex: 0 0 auto;
+  padding: 2px 5px;
+  border-radius: var(--ui-radius-sm);
+  background: var(--ui-selection);
+  color: var(--ui-accent-strong);
+  font-size: 11px;
+  font-weight: 500;
+  line-height: 1.35;
+}
+
+.flow-detail-step-name > strong > em {
+  flex: 0 0 auto;
+  padding: 2px 6px;
+  border: 1px solid var(--ui-line-strong);
+  border-radius: var(--ui-radius-sm);
+  color: var(--ui-text-secondary);
+  font-size: 11px;
+  font-style: normal;
+  font-weight: 500;
+  line-height: 1.35;
+}
+
+.flow-detail-step-target {
+  padding-left: 20px;
+  border-left: 1px solid var(--ui-line);
+}
+
+.flow-detail-step-target > strong {
+  overflow: hidden;
+  color: var(--ui-text);
+  font-size: 13px;
+  font-weight: 500;
+  line-height: 1.45;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.flow-detail-step-description,
+.flow-detail-step-responsibility {
+  display: -webkit-box;
+  margin: 0;
+  overflow: hidden;
+  color: var(--ui-text-secondary);
+  font-size: 12px;
+  line-height: 1.5;
+  overflow-wrap: anywhere;
+  -webkit-box-orient: vertical;
+}
+
+.flow-detail-step-description {
+  -webkit-line-clamp: 1;
+}
+
+.flow-detail-step-responsibility {
+  -webkit-line-clamp: 2;
+}
+
+.flow-detail-step-responsibility > span {
+  margin-right: 8px;
+}
+
+@media (max-width: 820px) {
+  .flow-overview-facts,
+  .flow-detail-summary {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .flow-overview-facts > div:first-child,
+  .flow-detail-summary-item:first-child {
+    padding-left: 0;
+  }
+
+  .flow-overview-facts > div:nth-child(3),
+  .flow-detail-summary-item:nth-child(3) {
+    border-top: 1px solid var(--ui-line);
+    border-left: 0;
+    padding-left: 0;
+  }
+
+  .flow-detail-step-row {
+    grid-template-columns: 24px 52px minmax(0, 1fr);
+    gap: 10px;
+    padding: 16px;
+  }
+
+  .flow-detail-step-target {
+    grid-column: 3;
+    padding-left: 0;
+    border-left: 0;
+  }
+}

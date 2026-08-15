@@ -118,6 +118,26 @@
   color: inherit;
 }
 
+/* Team setup is a dense, single-purpose form rather than a page-level dashboard. */
+.team-resource-editor {
+  row-gap: 0;
+}
+
+.team-resource-editor .pragma-resource-editor-header {
+  gap: 8px !important;
+}
+
+.team-resource-editor .studio-screen-header > header,
+.team-resource-editor .studio-screen-body > footer {
+  padding: 16px 0;
+}
+
+.team-resource-editor .pragma-resource-form {
+  gap: 16px;
+  padding-top: 18px;
+  padding-bottom: 18px;
+}
+
 .team-instructions-input {
   min-height: 156px !important;
   line-height: 1.55;
@@ -511,7 +531,7 @@
 }
 
 .expert-detail-title h1 {
-  font-size: 31px;
+  font-size: 29px;
   font-weight: 730;
   letter-spacing: -0.045em;
   line-height: 1.14;
@@ -1354,16 +1374,24 @@
   backdrop-filter: blur(2px);
 }
 
+body > .ui-select-menu[data-ui-overlay-owner="expert-capability-picker"] {
+  z-index: 91;
+}
+
 .expert-picker-dialog {
   display: grid;
   grid-template-rows: auto auto auto minmax(0, 1fr) auto;
   width: min(760px, 100%);
-  max-height: min(760px, calc(100vh - 56px));
+  height: min(760px, calc(100vh - 56px));
   overflow: hidden;
   border: 1px solid rgb(255 255 255 / 50%);
   border-radius: 16px;
   background: #fff;
   box-shadow: var(--shadow-panel);
+}
+
+.expert-picker-dialog.has-resource-filters {
+  grid-template-rows: auto auto auto auto minmax(0, 1fr) auto;
 }
 
 .expert-picker-heading {
@@ -1433,15 +1461,15 @@
   box-shadow: 0 0 0 3px var(--focus-ring);
 }
 
-.creator-form .expert-picker-search > input,
-.pragma-resource-form .expert-picker-search > input {
+.expert-picker-search > input {
   width: 100%;
-  min-height: 39px;
-  padding: 0;
-  border: 0;
+  min-width: 0;
+  min-height: 0;
+  padding: 0 !important;
+  border: 0 !important;
   outline: 0;
-  background: transparent;
-  box-shadow: none;
+  background: transparent !important;
+  box-shadow: none !important;
   font-size: 13px;
 }
 
@@ -1449,6 +1477,43 @@
   width: 26px;
   height: 26px;
   border-radius: 6px;
+}
+
+.expert-picker-resource-filters {
+  display: flex;
+  gap: 8px;
+  overflow-x: auto;
+  padding: 0 24px;
+}
+
+.expert-picker-resource-filters > button {
+  min-height: 32px;
+  flex: 0 0 auto;
+  padding: 0 12px;
+  border: 1px solid var(--border);
+  border-radius: var(--ui-radius-md);
+  background: var(--surface);
+  color: var(--muted);
+  cursor: pointer;
+  font: inherit;
+  font-size: 11px;
+  font-weight: 600;
+}
+
+.expert-picker-resource-filters > button[aria-pressed="true"] {
+  border-color: rgb(88 121 104 / 35%);
+  background: var(--green-soft);
+  color: var(--green-dark);
+}
+
+.expert-picker-resource-filters > button:focus-visible,
+.expert-resource-option:focus-visible {
+  outline: 2px solid var(--green);
+  outline-offset: 2px;
+}
+
+.expert-picker-dialog.has-resource-filters .expert-picker-search {
+  margin-top: 12px;
 }
 
 .expert-picker-toolbar {
@@ -1464,7 +1529,7 @@
 }
 
 .expert-picker-results {
-  min-height: 260px;
+  min-height: 0;
   overflow: auto;
   padding: 12px 24px 18px;
   overscroll-behavior: contain;
@@ -1474,6 +1539,104 @@
 .expert-tool-results {
   display: grid;
   gap: 7px;
+}
+
+.expert-resource-options {
+  display: grid;
+  gap: 8px;
+}
+
+.expert-resource-option {
+  display: grid;
+  grid-template-columns: 42px minmax(0, 1fr) auto;
+  width: 100%;
+  min-width: 0;
+  min-height: 64px;
+  align-items: center;
+  gap: 12px;
+  padding: 10px 12px;
+  border: 1px solid var(--border);
+  border-radius: var(--ui-radius-lg);
+  background: var(--surface);
+  color: var(--text);
+  cursor: pointer;
+  font: inherit;
+  text-align: left;
+}
+
+.expert-resource-option:hover {
+  border-color: rgb(88 121 104 / 35%);
+  background: var(--surface-soft);
+}
+
+.expert-resource-option.is-selected {
+  border-color: rgb(88 121 104 / 42%);
+  background: var(--green-soft);
+}
+
+.expert-resource-option-visual {
+  display: grid;
+  width: 42px;
+  height: 42px;
+  place-items: center;
+  border-radius: var(--ui-radius-lg);
+  background: var(--green-soft);
+  color: var(--green-dark);
+}
+
+.expert-resource-option-visual > .pragma-avatar {
+  width: 42px;
+  height: 42px;
+}
+
+.expert-resource-option-copy {
+  display: grid;
+  min-width: 0;
+  gap: 4px;
+}
+
+.expert-resource-option-copy > strong,
+.expert-resource-option-copy > small {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.expert-resource-option-copy > strong {
+  font-size: 12px;
+  font-weight: 600;
+}
+
+.expert-resource-option-copy > small {
+  color: var(--muted);
+  font-size: 11px;
+  line-height: 1.35;
+}
+
+.expert-resource-option-meta {
+  display: grid;
+  grid-template-columns: auto 18px;
+  align-items: center;
+  gap: 8px;
+}
+
+.expert-resource-option-meta > span {
+  padding: 4px 8px;
+  border: 1px solid var(--border);
+  border-radius: var(--ui-radius-round);
+  color: var(--muted);
+  font-size: 10px;
+  font-weight: 600;
+  white-space: nowrap;
+}
+
+.expert-resource-option-meta > svg {
+  color: var(--green-dark);
+  visibility: hidden;
+}
+
+.expert-resource-option-meta > svg.is-visible {
+  visibility: visible;
 }
 
 .expert-tool-results-toolbar {
@@ -1548,6 +1711,7 @@
 
 .creator-form .expert-picker-row > input[type="checkbox"],
 .creator-form .expert-tool-service > header input[type="checkbox"],
+.creator-form .expert-tool-row-selection > input[type="checkbox"],
 .pragma-resource-form .expert-picker-row > input[type="checkbox"],
 .pragma-resource-form .expert-picker-row > input[type="radio"] {
   flex: 0 0 auto;
@@ -1686,7 +1850,30 @@
 }
 
 .expert-tool-service .expert-tool-row {
-  grid-template-columns: 18px minmax(0, 1fr) max-content;
+  grid-template-columns: minmax(0, 1fr) max-content;
+  min-height: 0;
+  padding: 0;
+}
+
+.expert-tool-row-selection {
+  display: grid;
+  grid-template-columns: 18px minmax(0, 1fr);
+  min-width: 0;
+  min-height: 58px;
+  align-items: start;
+  gap: 12px;
+  padding: 11px 12px;
+  cursor: pointer;
+}
+
+.expert-tool-service .expert-picker-row.is-selected {
+  border-color: transparent;
+  background: var(--green-soft);
+}
+
+.expert-tool-service .expert-picker-row:not(.is-selected):hover {
+  border-color: transparent;
+  background: var(--surface-muted);
 }
 
 .instructions-editor textarea[readonly],
@@ -1748,7 +1935,7 @@
 
   .expert-picker-dialog {
     width: 100%;
-    max-height: 92vh;
+    height: 92vh;
     border-radius: 16px 16px 0 0;
   }
 
@@ -1807,7 +1994,7 @@
 }
 
 .creator-heading h1 {
-  font-size: 24px;
+  font-size: 22px;
   font-weight: 600;
   letter-spacing: -0.02em;
 }
@@ -1869,86 +2056,6 @@
   display: grid;
   gap: 28px;
   padding: 8px 0 42px;
-}
-
-.team-context-editor,
-.team-context-selection {
-  display: grid;
-  gap: 12px;
-}
-
-.team-context-editor {
-  padding: 18px;
-  border: 1px solid var(--border);
-  border-radius: 14px;
-}
-
-.team-context-editor h3,
-.team-context-editor p {
-  margin: 0;
-}
-
-.team-context-editor > header {
-  display: flex;
-  align-items: start;
-  justify-content: space-between;
-  gap: 18px;
-}
-
-.team-context-editor-actions {
-  display: flex;
-  flex: 0 0 auto;
-  align-items: center;
-  gap: 12px;
-}
-
-.team-context-editor-actions > span,
-.team-context-empty {
-  color: var(--muted);
-  font-size: 11px;
-}
-
-.team-context-expert-list {
-  display: grid;
-  gap: 8px;
-}
-
-.team-context-expert-list > label {
-  display: flex;
-  align-items: center;
-  gap: 10px;
-  min-width: 0;
-  cursor: pointer;
-}
-
-.pragma-resource-form .team-context-expert-checkbox {
-  flex: 0 0 17px;
-  width: 17px;
-  height: 17px;
-  min-height: 17px;
-  margin: 0;
-  padding: 0;
-  accent-color: var(--green);
-}
-
-.team-context-expert-list > label > span {
-  min-width: 0;
-  overflow-wrap: anywhere;
-}
-
-.team-context-selection > div:first-child {
-  display: grid;
-  gap: 2px;
-}
-
-.team-context-selection small {
-  color: var(--muted);
-}
-
-.team-context-selection {
-  padding: 14px;
-  border: 1px solid var(--border);
-  border-radius: 12px;
 }
 
 .team-context-section .expert-context-list {

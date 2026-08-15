@@ -4,6 +4,8 @@ import { useTranslation } from "react-i18next";
 
 import type { ContextStore } from "../../../../shared/contracts/index.ts";
 
+const PAGE_SIZE = 20;
+
 function normalized(value: string): string {
   return value.trim().toLocaleLowerCase();
 }
@@ -18,10 +20,14 @@ export function ContextStorePickerDialog(props: {
 }) {
   const { t } = useTranslation("studio");
   const [query, setQuery] = useState("");
+  const [visibleLimit, setVisibleLimit] = useState(PAGE_SIZE);
   const selectedStoreIds = useMemo(() => new Set(props.selectedStoreIds), [props.selectedStoreIds]);
   const visibleStores = props.stores.filter((store) =>
     normalized(`${store.name} ${store.description}`).includes(normalized(query)),
   );
+  const shownStores = visibleStores.slice(0, visibleLimit);
+
+  useEffect(() => setVisibleLimit(PAGE_SIZE), [query]);
 
   useEffect(() => {
     const previousOverflow = document.body.style.overflow;
@@ -95,7 +101,7 @@ export function ContextStorePickerDialog(props: {
             </div>
           ) : (
             <div className="expert-picker-list">
-              {visibleStores.map((store) => {
+              {shownStores.map((store) => {
                 const selected = selectedStoreIds.has(store.id);
                 return (
                   <label
@@ -122,6 +128,15 @@ export function ContextStorePickerDialog(props: {
               })}
             </div>
           )}
+          {visibleStores.length > shownStores.length ? (
+            <button
+              className="expert-tool-load-more"
+              type="button"
+              onClick={() => setVisibleLimit((current) => current + PAGE_SIZE)}
+            >
+              {t("loadMoreResources", { count: visibleStores.length - shownStores.length })}
+            </button>
+          ) : null}
         </div>
         <footer className="expert-picker-actions">
           <span>{props.footerHint}</span>

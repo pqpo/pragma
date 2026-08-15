@@ -66,15 +66,23 @@ import {
   type StudioView,
 } from "./studio-model.ts";
 
+export interface StudioPageMemoryState {
+  readonly activeView: StudioView;
+}
+
 export function StudioPage(props: {
   readonly initialExpertRef?: string | undefined;
+  readonly initialMemoryState?: StudioPageMemoryState | undefined;
+  readonly onMemoryStateChange?: ((state: StudioPageMemoryState) => void) | undefined;
   readonly onTryExpert: (expert: ExpertRecord) => void;
 }) {
   const { t } = useTranslation("studio");
   const [navigationWidth, setNavigationWidth] = usePersistentSidebarWidth(
     SIDEBAR_WIDTH_PREFERENCES.studio,
   );
-  const [activeView, setActiveView] = useState<StudioView>("experts");
+  const [activeView, setActiveView] = useState<StudioView>(
+    props.initialMemoryState?.activeView ?? "experts",
+  );
   const [screen, setScreen] = useState<
     | "directory"
     | "expert-detail"
@@ -117,6 +125,10 @@ export function StudioPage(props: {
     readonly resourceRef: string;
     readonly view: "teams" | "flows";
   } | null>(null);
+  const [resourceDetailReturn, setResourceDetailReturn] = useState<{
+    readonly resourceRef: string;
+    readonly view: "teams" | "flows";
+  } | null>(null);
   const [resourceEditor, setResourceEditor] = useState<{
     readonly kind: ResourceKind;
     readonly mode: ResourceEditorMode;
@@ -125,6 +137,10 @@ export function StudioPage(props: {
   const [bundleMode, setBundleMode] = useState<"export" | "import" | null>(null);
   const openedInitialExpertRef = useRef<string | undefined>(undefined);
   const resourceSaveCompletedRef = useRef(false);
+
+  useEffect(() => {
+    props.onMemoryStateChange?.({ activeView });
+  }, [activeView, props.onMemoryStateChange]);
 
   useEffect(() => {
     const api = desktopApi();
@@ -467,6 +483,7 @@ export function StudioPage(props: {
 
   const openResourceDetail = (resource: PragmaExpertTeamResource | PragmaFlowResource) => {
     setExpertDetailReturn(null);
+    setResourceDetailReturn(null);
     setActiveView(resource.kind === "ExpertTeam" ? "teams" : "flows");
     setSelectedResourceRef(canonicalPragmaResourceRef(resource));
     setResourceEditor(null);
@@ -696,7 +713,11 @@ export function StudioPage(props: {
             plugins={plugins}
             resources={project?.resources ?? []}
             runtimes={runtimes}
-            backLabel={expertDetailReturn !== null ? t("backTeamDetail") : undefined}
+            backLabel={
+              expertDetailReturn === null
+                ? undefined
+                : t(expertDetailReturn.view === "teams" ? "backTeamDetail" : "backFlowDetail")
+            }
             onBack={() => {
               if (expertDetailReturn !== null) {
                 const returnTarget = expertDetailReturn;
@@ -921,6 +942,15 @@ export function StudioPage(props: {
             runtimes={runtimes}
             contextStores={contextStores}
             contextStoreBindings={contextStoreBindings}
+            onOpenResource={(resource) => {
+              setResourceDetailReturn({
+                resourceRef: canonicalPragmaResourceRef(selectedResource),
+                view: selectedResource.kind === "ExpertTeam" ? "teams" : "flows",
+              });
+              setActiveView(resource.kind === "ExpertTeam" ? "teams" : "flows");
+              setSelectedResourceRef(canonicalPragmaResourceRef(resource));
+              setScreen("resource-detail");
+            }}
             onOpenContextStore={(store) => {
               setSelectedContextStoreId(store.id);
               setContextStoreDetailReturn("team-detail");
@@ -938,6 +968,14 @@ export function StudioPage(props: {
             }}
             onBack={() => {
               setExpertDetailReturn(null);
+              if (resourceDetailReturn !== null) {
+                const returnTarget = resourceDetailReturn;
+                setResourceDetailReturn(null);
+                setActiveView(returnTarget.view);
+                setSelectedResourceRef(returnTarget.resourceRef);
+                setScreen("resource-detail");
+                return;
+              }
               setScreen("directory");
             }}
             onEdit={() => openResourceEdit(selectedResource)}

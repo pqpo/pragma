@@ -263,10 +263,10 @@
 }
 
 .desktop-shell.is-sidebar-collapsed .brand {
+  width: 22px;
   padding: 0;
 }
 
-.desktop-shell.is-sidebar-collapsed .brand-name,
 .desktop-shell.is-sidebar-collapsed .navigation-item span {
   display: none;
 }
@@ -287,24 +287,37 @@
 }
 
 .brand {
-  gap: 12px;
-  padding: 0 8px;
+  position: relative;
+  min-height: 22px;
+  gap: 0;
+  padding: 0 16px;
   -webkit-app-region: no-drag;
 }
 
 .brand-mark {
-  position: relative;
+  position: absolute;
   isolation: isolate;
-  width: 36px;
-  height: 36px;
+  top: 0;
+  left: 0;
+  width: 22px;
+  height: 22px;
   overflow: visible;
   border: 0;
   border-radius: var(--ui-radius-round);
   background: var(--ui-surface);
   box-shadow: none;
+  opacity: 0;
+  pointer-events: none;
+  transform: scale(0.82);
   transition:
     box-shadow 180ms ease,
+    opacity 140ms ease,
     transform 180ms ease;
+}
+
+.desktop-shell.is-sidebar-collapsed .brand-mark {
+  opacity: 1;
+  transform: scale(1);
 }
 
 .brand-mark::before {
@@ -358,9 +371,26 @@
 }
 
 .brand-name {
-  font-size: 24px;
-  font-weight: 700;
-  letter-spacing: -0.03em;
+  font-family: "Gloock", Georgia, serif;
+  font-size: 18px;
+  font-weight: 400;
+  letter-spacing: -0.04em;
+  line-height: 1.2;
+  max-inline-size: 160px;
+  overflow: hidden;
+  opacity: 1;
+  transform: translateX(0);
+  transition:
+    max-inline-size 180ms ease,
+    opacity 120ms ease 40ms,
+    transform 180ms ease;
+  white-space: nowrap;
+}
+
+.desktop-shell.is-sidebar-collapsed .brand-name {
+  max-inline-size: 0;
+  opacity: 0;
+  transform: translateX(-6px);
 }
 
 .sidebar-collapse-toggle {
@@ -374,7 +404,7 @@
 
 .navigation {
   gap: 4px;
-  margin-top: 24px;
+  margin-top: 12px;
 }
 
 .sidebar-footer {

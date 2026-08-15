@@ -10,9 +10,9 @@ export interface SidebarWidthPreference {
 export const SIDEBAR_WIDTH_PREFERENCES = {
   main: {
     storageKey: "pragma.desktop.sidebar.width.main",
-    defaultWidth: 240,
-    minWidth: 200,
-    maxWidth: 360,
+    defaultWidth: 150,
+    minWidth: 150,
+    maxWidth: 200,
   },
   missions: {
     storageKey: "pragma.desktop.sidebar.width.missions",

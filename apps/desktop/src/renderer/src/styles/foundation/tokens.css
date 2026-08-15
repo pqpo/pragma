@@ -1,3 +1,11 @@
+@font-face {
+  font-family: "Gloock";
+  src: url("../../assets/fonts/Gloock-Regular.ttf") format("truetype");
+  font-display: swap;
+  font-style: normal;
+  font-weight: 400;
+}
+
 :root {
   color: var(--ui-text);
   background: var(--ui-canvas);
@@ -28,6 +36,7 @@
   --ui-accent-strong: #456454;
   --ui-danger: #9d3f34;
   --ui-danger-subtle: #fff8f7;
+  --ui-warning: #d95f18;
   --ui-focus: rgb(88 121 104 / 20%);
   --ui-radius-sm: 4px;
   --ui-radius-md: 6px;

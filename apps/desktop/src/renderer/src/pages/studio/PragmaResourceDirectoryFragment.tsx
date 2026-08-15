@@ -4,18 +4,20 @@ import { useTranslation } from "react-i18next";
 
 import {
   ArrowLeft,
+  BracketsCurly,
   CaretRight,
   CaretDown,
+  CheckCircle,
   GitBranch,
   Folder,
   Database,
   MagnifyingGlass,
+  Play,
   PencilSimple,
   Plus,
   Trash,
   UserCircle,
   UsersThree,
-  X,
 } from "@phosphor-icons/react";
 import {
   PragmaExpertTeamResourceSchema,
@@ -44,9 +46,12 @@ import {
 
 import { CharacterCount } from "../../components/CharacterCount.tsx";
 import { ExpertAvatar } from "../../components/ExpertAvatar.tsx";
+import {
+  PragmaResourcePickerDialog,
+  type PragmaResourcePickerItem,
+} from "../../components/PragmaResourcePickerDialog.tsx";
 import { ProfiledExpertAvatar } from "../../components/ProfiledExpertAvatar.tsx";
 import { MarkdownContent } from "../../components/MarkdownContent.tsx";
-import { SelectMenu } from "../../components/SelectMenu.tsx";
 import { errorMessage } from "../../lib/errors.ts";
 import { AssetMemoryPolicySection } from "../settings/AssetMemoryPolicySection.tsx";
 import { ContextStorePickerDialog } from "./ContextStorePickerDialog.tsx";
@@ -68,7 +73,6 @@ export interface TeamKnowledgeSelection {
   readonly visibility: PragmaExpertTeamContextVisibility;
 }
 
-const TEAM_EXPERT_RESULT_LIMIT = 8;
 const DELETE_REFERENCE_LIMIT = 2;
 const DELETE_REFERENCE_KIND_KEYS = {
   expert: "deleteResourceKind.expert",
@@ -122,37 +126,6 @@ export function deletePragmaResourceErrorMessage(error: unknown, t: TFunction<"s
   return remaining > 0
     ? t("deleteResourceReferencedMore", { references, count: remaining })
     : t("deleteResourceReferenced", { references });
-}
-
-export function matchingTeamExperts(
-  experts: readonly PragmaExpertResource[],
-  query: string,
-  selectedRefs: ReadonlySet<string>,
-  excludedRef?: string | undefined,
-  limit = TEAM_EXPERT_RESULT_LIMIT,
-): readonly PragmaExpertResource[] {
-  const term = normalized(query);
-  return experts
-    .filter((expert) => {
-      const ref = expertRef(expert);
-      if (ref === excludedRef) return false;
-      return (
-        term.length === 0 ||
-        [
-          expert.metadata.name,
-          expert.metadata.id,
-          expert.metadata.description,
-          ...expert.metadata.tags,
-          ref,
-        ].some((value) => normalized(value).includes(term))
-      );
-    })
-    .toSorted((left, right) => {
-      const selectedOrder =
-        Number(selectedRefs.has(expertRef(right))) - Number(selectedRefs.has(expertRef(left)));
-      return selectedOrder || left.metadata.name.localeCompare(right.metadata.name);
-    })
-    .slice(0, limit);
 }
 
 export function matchesResourceDirectoryQuery(
@@ -366,6 +339,8 @@ export function PragmaResourceDetailFragment(props: {
   readonly contextStoreBindings?: readonly DesktopPragmaContextStoreBinding[] | undefined;
   readonly onOpenContextStore?: ((store: ContextStore) => void) | undefined;
   readonly onOpenExpert?: ((expert: ExpertRecord) => void) | undefined;
+  readonly onOpenResource?:
+    ((resource: PragmaExpertTeamResource | PragmaFlowResource) => void) | undefined;
   readonly onBack: () => void;
   readonly onEdit: () => void;
   readonly onDelete: () => Promise<void>;
@@ -520,7 +495,13 @@ export function PragmaResourceDetailFragment(props: {
           onOpenExpert={props.onOpenExpert}
         />
       ) : (
-        <FlowDetail resource={props.resource} project={props.project} />
+        <FlowDetail
+          resource={props.resource}
+          project={props.project}
+          experts={props.experts ?? []}
+          onOpenExpert={props.onOpenExpert}
+          onOpenResource={props.onOpenResource}
+        />
       )}
       {confirmOpen ? (
         <StudioConfirmationDialog
@@ -837,16 +818,19 @@ function teamVisibilitySummary(
   project: PragmaProjectSnapshot,
   t: TFunction<"studio">,
 ): string {
-  if (visibility.mode === "all") return t("teamKnowledgeVisibilityAll");
-  const names = visibility.expertIds.map((id) => teamExpertName(project, `expert:${id}`));
-  return visibility.mode === "blacklist"
-    ? t("teamKnowledgeVisibilityExcept", { names: names.join("、") })
-    : t("teamKnowledgeVisibilityOnly", { names: names.join("、") });
+  void visibility;
+  void team;
+  void project;
+  return t("teamKnowledgeVisibilityAll");
 }
 
 function FlowDetail(props: {
   readonly resource: PragmaFlowResource;
   readonly project: PragmaProjectSnapshot;
+  readonly experts: readonly ExpertRecord[];
+  readonly onOpenExpert?: ((expert: ExpertRecord) => void) | undefined;
+  readonly onOpenResource?:
+    ((resource: PragmaExpertTeamResource | PragmaFlowResource) => void) | undefined;
 }) {
   const { t } = useTranslation("studio");
   const steps = Object.entries(props.resource.spec.graph.steps);
@@ -855,17 +839,21 @@ function FlowDetail(props: {
   const startStep = props.resource.spec.graph.start;
 
   return (
-    <>
-      <section className="expert-scope" aria-labelledby="flow-overview-heading">
-        <h2 id="flow-overview-heading">{t("overview")}</h2>
-        <dl className="pragma-resource-detail-list">
+    <div className="flow-detail-content">
+      <section className="flow-detail-overview" aria-label={t("flowDetails")}>
+        <dl className="flow-overview-facts">
           <div>
             <dt>{t("resourceId")}</dt>
-            <dd>{canonicalPragmaResourceRef(props.resource)}</dd>
+            <dd>
+              <code>{canonicalPragmaResourceRef(props.resource)}</code>
+            </dd>
           </div>
           <div>
             <dt>{t("startStep")}</dt>
-            <dd>{startStep}</dd>
+            <dd>
+              <Play size={15} weight="fill" aria-hidden="true" />
+              {startStep}
+            </dd>
           </div>
           <div>
             <dt>{t("limits")}</dt>
@@ -873,59 +861,177 @@ function FlowDetail(props: {
           </div>
         </dl>
       </section>
-      <section className="expert-capabilities" aria-label={t("flowDetails")}>
-        <div>
-          <h2>{t("steps")}</h2>
-          <p>{t("stepsCount", { count: steps.length })}</p>
+      <section className="flow-detail-summary" aria-label={t("flowDetails")}>
+        <div className="flow-detail-summary-item">
+          <span>{t("steps")}</span>
+          <strong>{t("stepsCount", { count: steps.length })}</strong>
         </div>
-        <div>
-          <h2>{t("transitions")}</h2>
-          <p>
-            {t("transitionCount", { count: transitionCount })} <span>•</span>{" "}
-            {t("loopCount", { count: loops.length })}
-          </p>
+        <div className="flow-detail-summary-item">
+          <span>{t("transitions")}</span>
+          <strong>{t("transitionCount", { count: transitionCount })}</strong>
+          <small>{t("loopCount", { count: loops.length })}</small>
+        </div>
+        <div className="flow-detail-summary-item">
+          <span>{t("flowInputContract")}</span>
+          <strong className={props.resource.spec.input === undefined ? "is-muted" : "is-ready"}>
+            {props.resource.spec.input === undefined ? t("notConfigured") : t("configured")}
+          </strong>
+        </div>
+        <div className="flow-detail-summary-item">
+          <span>{t("flowOutputContract")}</span>
+          <strong className={props.resource.spec.output === undefined ? "is-muted" : "is-ready"}>
+            {props.resource.spec.output === undefined ? t("notConfigured") : t("configured")}
+          </strong>
         </div>
       </section>
-      <section className="expert-capabilities" aria-label={t("flowContracts")}>
-        <div>
-          <h2>{t("flowInputContract")}</h2>
-          <p>{props.resource.spec.input === undefined ? t("notConfigured") : t("configured")}</p>
-        </div>
-        <div>
-          <h2>{t("flowOutputContract")}</h2>
-          <p>{props.resource.spec.output === undefined ? t("notConfigured") : t("configured")}</p>
-        </div>
-      </section>
-      <section className="expert-context-section" aria-labelledby="flow-steps-heading">
-        <header>
+      <section className="flow-detail-steps" aria-labelledby="flow-steps-heading">
+        <header className="flow-detail-section-heading">
           <div>
             <h2 id="flow-steps-heading">{t("steps")}</h2>
             <p>{t("flowStepsDescription")}</p>
           </div>
         </header>
-        <div className="expert-context-list">
-          {steps.map(([stepId, step]) => (
-            <article key={stepId}>
-              <GitBranch size={20} aria-hidden="true" />
-              <div>
-                <strong>{stepId}</strong>
-                <span>{flowStepSummary(step)}</span>
-              </div>
-            </article>
-          ))}
+        <div className="flow-detail-step-list">
+          {steps.map(([stepId, step], index) => {
+            const target = flowStepTarget(step, props.project, props.experts, t);
+            const canOpen =
+              (target.expert !== undefined && props.onOpenExpert !== undefined) ||
+              (target.resource !== undefined && props.onOpenResource !== undefined);
+            return (
+              <button
+                className={`flow-detail-step-row${stepId === startStep ? " is-start" : ""}`}
+                disabled={!canOpen}
+                key={stepId}
+                onClick={() => {
+                  if (target.expert !== undefined) props.onOpenExpert?.(target.expert);
+                  else if (target.resource !== undefined) props.onOpenResource?.(target.resource);
+                }}
+                type="button"
+              >
+                <span className="flow-detail-step-order" aria-hidden="true">
+                  {String(index + 1).padStart(2, "0")}
+                </span>
+                <span className="flow-detail-step-icon" aria-hidden="true">
+                  {target.avatarId === undefined ? (
+                    target.kind === "human" ? (
+                      <UserCircle size={20} />
+                    ) : (
+                      <GitBranch size={20} />
+                    )
+                  ) : (
+                    <ExpertAvatar
+                      avatarId={target.avatarId}
+                      team={target.kind === "team"}
+                      size="md"
+                    />
+                  )}
+                </span>
+                <div className="flow-detail-step-name">
+                  <strong>
+                    {stepId}
+                    {stepId === startStep ? <span>{t("startStep")}</span> : null}
+                    <em>{target.kindLabel}</em>
+                  </strong>
+                </div>
+                <div className="flow-detail-step-target">
+                  <strong>{target.name}</strong>
+                  {target.description ? (
+                    <p className="flow-detail-step-description">{target.description}</p>
+                  ) : null}
+                  {target.responsibility ? (
+                    <p className="flow-detail-step-responsibility">
+                      <span>{t("scope")}</span>
+                      {target.responsibility}
+                    </p>
+                  ) : null}
+                </div>
+              </button>
+            );
+          })}
         </div>
       </section>
-    </>
+    </div>
   );
 }
 
-function flowStepSummary(step: PragmaFlowResource["spec"]["graph"]["steps"][string]): string {
-  if (step.expert !== undefined) return step.expert.ref;
-  if (step.team !== undefined) return step.team.ref;
-  if (step.flow !== undefined) return step.flow.ref;
-  if (step.action !== undefined) return step.action.ref;
-  if (step.human !== undefined) return promptSummary(step.human.prompt);
-  return "step";
+type FlowStepTarget = {
+  readonly kind: "expert" | "team" | "flow" | "action" | "human";
+  readonly kindLabel: string;
+  readonly name: string;
+  readonly avatarId?: string | undefined;
+  readonly description?: string | undefined;
+  readonly responsibility?: string | undefined;
+  readonly expert?: ExpertRecord | undefined;
+  readonly resource?: PragmaExpertTeamResource | PragmaFlowResource | undefined;
+};
+
+function flowStepTarget(
+  step: PragmaFlowResource["spec"]["graph"]["steps"][string],
+  project: PragmaProjectSnapshot,
+  experts: readonly ExpertRecord[],
+  t: TFunction<"studio">,
+): FlowStepTarget {
+  if (step.expert !== undefined) {
+    const resource = project.resources.find(
+      (candidate): candidate is PragmaExpertResource =>
+        candidate.kind === "Expert" && expertRef(candidate) === step.expert?.ref,
+    );
+    const record = experts.find((candidate) => expertRecordRef(candidate) === step.expert?.ref);
+    return {
+      kind: "expert",
+      kindLabel: t("expert"),
+      name: record?.name ?? resource?.metadata.name ?? t("unavailable"),
+      avatarId: record?.avatarId ?? resource?.metadata.avatarId,
+      description: record?.description ?? resource?.metadata.description,
+      responsibility: record?.scope ?? resource?.spec.scope,
+      expert: record,
+    };
+  }
+  if (step.team !== undefined) {
+    const resource = project.resources.find(
+      (candidate): candidate is PragmaExpertTeamResource =>
+        candidate.kind === "ExpertTeam" && canonicalPragmaResourceRef(candidate) === step.team?.ref,
+    );
+    return {
+      kind: "team",
+      kindLabel: t("expertTeam"),
+      name: resource?.metadata.name ?? t("unavailable"),
+      avatarId:
+        resource === undefined
+          ? undefined
+          : expertTeamCoordinatorAvatarId(resource, project.resources),
+      description: resource?.metadata.description,
+      responsibility: resource?.spec.instructions?.trim(),
+      resource,
+    };
+  }
+  if (step.flow !== undefined) {
+    const resource = project.resources.find(
+      (candidate): candidate is PragmaFlowResource =>
+        candidate.kind === "Flow" && canonicalPragmaResourceRef(candidate) === step.flow?.ref,
+    );
+    return {
+      kind: "flow",
+      kindLabel: t("flow"),
+      name: resource?.metadata.name ?? t("unavailable"),
+      description: resource?.metadata.description,
+    };
+  }
+  if (step.action !== undefined) {
+    return { kind: "action", kindLabel: t("action"), name: step.action.ref };
+  }
+  if (step.human !== undefined) {
+    return {
+      kind: "human",
+      kindLabel: t("human"),
+      name: promptSummary(step.human.prompt) || t("human"),
+    };
+  }
+  return {
+    kind: "human",
+    kindLabel: t("human"),
+    name: t("unavailable"),
+  };
 }
 
 function promptSummary(prompt: FlowHumanPrompt): string {
@@ -979,7 +1085,7 @@ export function TeamEditor(props: {
         );
         return desktopBinding === undefined
           ? []
-          : [{ storeId: desktopBinding.storeId, visibility: binding.visibility }];
+          : [{ storeId: desktopBinding.storeId, visibility: { mode: "all" as const } }];
       }) ?? [],
     [props.contextStoreBindings, props.initial],
   );
@@ -1000,30 +1106,17 @@ export function TeamEditor(props: {
     });
   }, [initialTeamContextStores]);
   const preservedContextStores =
-    props.initial?.spec.contextStores.filter(
-      (binding) =>
-        !props.contextStoreBindings?.some((candidate) => candidate.resourceRef === binding.ref),
-    ) ?? [];
+    props.initial?.spec.contextStores
+      .filter(
+        (binding) =>
+          !props.contextStoreBindings?.some((candidate) => candidate.resourceRef === binding.ref),
+      )
+      .map((binding) => ({ ...binding, visibility: { mode: "all" as const } })) ?? [];
   const [validationError, setValidationError] = useState<string | null>(null);
   const [expectedRevision] = useState(props.baseRevision ?? props.project.revision);
 
   const submit = () => {
     try {
-      const participantIds = [coordinator, ...members]
-        .filter(Boolean)
-        .map((ref) => ref.slice("expert:".length));
-      for (const selection of teamContextStores) {
-        const selectedIds =
-          selection.visibility.mode === "all" ? [] : selection.visibility.expertIds;
-        const visible = participantIds.filter((id) =>
-          selection.visibility.mode === "all"
-            ? true
-            : selection.visibility.mode === "whitelist"
-              ? selectedIds.includes(id)
-              : !selectedIds.includes(id),
-        );
-        if (visible.length === 0) throw new Error(t("teamKnowledgeVisibleRequired"));
-      }
       const resource = PragmaExpertTeamResourceSchema.parse({
         apiVersion: "pragma/v4",
         kind: "ExpertTeam",
@@ -1056,6 +1149,7 @@ export function TeamEditor(props: {
 
   return (
     <ResourceEditor
+      className="team-resource-editor"
       title={props.mode === "create" ? t("newExpertTeam") : t("editExpertTeam")}
       backLabel={props.mode === "create" ? t("backTeams") : t("backTeamDetail")}
       error={validationError ?? props.error}
@@ -1080,8 +1174,6 @@ export function TeamEditor(props: {
       />
       <TeamContextStoreEditor
         stores={props.contextStores ?? []}
-        experts={experts}
-        participantRefs={[coordinator, ...members].filter(Boolean)}
         selections={teamContextStores}
         onChange={setTeamContextStores}
       />
@@ -1140,131 +1232,52 @@ export function TeamEditor(props: {
 
 function TeamContextStoreEditor(props: {
   readonly stores: readonly ContextStore[];
-  readonly experts: readonly PragmaExpertResource[];
-  readonly participantRefs: readonly string[];
   readonly selections: readonly TeamKnowledgeSelection[];
   readonly onChange: (selections: readonly TeamKnowledgeSelection[]) => void;
 }) {
   const { t } = useTranslation("studio");
   const [pickerOpen, setPickerOpen] = useState(false);
-  const participantIds = props.participantRefs.map((ref) => ref.slice("expert:".length));
-  const participantSet = useMemo(() => new Set(participantIds), [participantIds.join("\0")]);
-  useEffect(() => {
-    const next = props.selections.map((selection) =>
-      selection.visibility.mode === "all"
-        ? selection
-        : {
-            ...selection,
-            visibility: {
-              ...selection.visibility,
-              expertIds: selection.visibility.expertIds.filter((id) => participantSet.has(id)),
-            },
-          },
-    );
-    if (JSON.stringify(next) !== JSON.stringify(props.selections)) props.onChange(next);
-  }, [participantSet, props.onChange, props.selections]);
-
-  const updateVisibility = (storeId: string, visibility: PragmaExpertTeamContextVisibility) => {
-    props.onChange(
-      props.selections.map((selection) =>
-        selection.storeId === storeId ? { ...selection, visibility } : selection,
-      ),
-    );
-  };
 
   return (
-    <section className="team-context-editor" aria-labelledby="team-context-editor-heading">
-      <header>
+    <section
+      className="team-expert-selector team-knowledge-selector"
+      aria-labelledby="team-knowledge-label"
+    >
+      <div className="team-expert-selector-heading">
         <div>
-          <h3 id="team-context-editor-heading">{t("teamKnowledgeBases")}</h3>
+          <h3 id="team-knowledge-label">{t("teamKnowledgeBases")}</h3>
           <p>{t("teamKnowledgeBasesDescription")}</p>
         </div>
-        <div className="team-context-editor-actions">
-          <span>{t("selectedCount", { count: props.selections.length })}</span>
-          <button
-            className="secondary-button"
-            type="button"
-            aria-haspopup="dialog"
-            onClick={() => setPickerOpen(true)}
-          >
-            {props.selections.length > 0 ? t("editSelection") : t("choose")}
-          </button>
-        </div>
-      </header>
-      {props.selections.length === 0 ? (
-        <p className="team-context-empty">{t("noneSelected")}</p>
-      ) : null}
-      {props.selections.map((selection) => {
-        const store = props.stores.find((candidate) => candidate.id === selection.storeId);
-        if (store === undefined) return null;
-        const selectedIds =
-          selection.visibility.mode === "all" ? [] : selection.visibility.expertIds;
-        return (
-          <article className="team-context-selection" key={selection.storeId}>
-            <div>
-              <strong>{store.name}</strong>
-              <small>{t("teamKnowledgeVisibility")}</small>
-            </div>
-            <SelectMenu<"all" | "blacklist" | "whitelist">
-              ariaLabel={t("teamKnowledgeVisibility")}
-              className="form-select team-context-visibility-select"
-              value={selection.visibility.mode}
-              options={[
-                { value: "all", label: t("teamKnowledgeVisibilityAll") },
-                { value: "blacklist", label: t("teamKnowledgeVisibilityBlacklist") },
-                { value: "whitelist", label: t("teamKnowledgeVisibilityWhitelist") },
-              ]}
-              onChange={(mode) => {
-                updateVisibility(
-                  selection.storeId,
-                  mode === "all"
-                    ? { mode }
-                    : {
-                        mode,
-                        expertIds:
-                          mode === "whitelist" && participantIds[0] !== undefined
-                            ? [participantIds[0]]
-                            : [],
-                      },
-                );
-              }}
-            />
-            {selection.visibility.mode === "all" ? null : (
-              <div className="team-context-expert-list">
-                {props.participantRefs.map((ref) => {
-                  const id = ref.slice("expert:".length);
-                  const expert = props.experts.find((candidate) => candidate.metadata.id === id);
-                  const checked = selectedIds.includes(id);
-                  return (
-                    <label key={id}>
-                      <input
-                        className="team-context-expert-checkbox"
-                        type="checkbox"
-                        checked={checked}
-                        onChange={(event) =>
-                          updateVisibility(selection.storeId, {
-                            mode: selection.visibility.mode,
-                            expertIds: event.target.checked
-                              ? [...selectedIds, id]
-                              : selectedIds.filter((candidate) => candidate !== id),
-                          })
-                        }
-                      />
-                      <span>{expert?.metadata.name ?? id}</span>
-                    </label>
-                  );
-                })}
-              </div>
-            )}
-          </article>
-        );
-      })}
+        <span>{t("selectedCount", { count: props.selections.length })}</span>
+      </div>
+      <button
+        className="team-expert-selector-trigger"
+        type="button"
+        aria-haspopup="dialog"
+        onClick={() => setPickerOpen(true)}
+      >
+        <span className="team-expert-selector-icon" aria-hidden="true">
+          <Folder size={21} />
+        </span>
+        <span className="team-expert-selector-value">
+          <strong>
+            {props.selections.length === 0
+              ? t("teamKnowledgeSelect")
+              : t("teamKnowledgeSelected", { count: props.selections.length })}
+          </strong>
+          <small>{teamKnowledgeStoreNames(props.selections, props.stores, t)}</small>
+        </span>
+        <span className="team-expert-selector-action">
+          {props.selections.length === 0 ? t("choose") : t("editSelection")}
+          <CaretRight size={16} aria-hidden="true" />
+        </span>
+      </button>
       {pickerOpen ? (
         <ContextStorePickerDialog
           stores={props.stores}
           selectedStoreIds={props.selections.map((selection) => selection.storeId)}
-          description={t("teamKnowledgeBasesDescription")}
-          footerHint={t("teamKnowledgeSelectionImmediate")}
+          description={t("teamKnowledgePickerDescription")}
+          footerHint={t("changesImmediate")}
           onSelectedStoreIdsChange={(storeIds) => {
             const currentSelections = new Map(
               props.selections.map((selection) => [selection.storeId, selection]),
@@ -1272,10 +1285,7 @@ function TeamContextStoreEditor(props: {
             props.onChange(
               storeIds.map(
                 (storeId) =>
-                  currentSelections.get(storeId) ?? {
-                    storeId,
-                    visibility: { mode: "all" },
-                  },
+                  currentSelections.get(storeId) ?? { storeId, visibility: { mode: "all" } },
               ),
             );
           }}
@@ -1284,6 +1294,21 @@ function TeamContextStoreEditor(props: {
       ) : null}
     </section>
   );
+}
+
+function teamKnowledgeStoreNames(
+  selections: readonly TeamKnowledgeSelection[],
+  stores: readonly ContextStore[],
+  t: TFunction<"studio">,
+): string {
+  const names = selections.flatMap((selection) => {
+    const store = stores.find((candidate) => candidate.id === selection.storeId);
+    return store === undefined ? [] : [store.name];
+  });
+  if (names.length === 0) return t("noneSelected");
+  return names.length > 3
+    ? `${names.slice(0, 3).join(" · ")} · ${t("moreCount", { count: names.length - 3 })}`
+    : names.join(" · ");
 }
 
 function TeamExpertSelectors(props: {
@@ -1295,57 +1320,25 @@ function TeamExpertSelectors(props: {
 }) {
   const { t } = useTranslation("studio");
   const [activePicker, setActivePicker] = useState<TeamExpertPickerKind | null>(null);
-  const [search, setSearch] = useState("");
   const coordinatorExpert = props.experts.find((expert) => expertRef(expert) === props.coordinator);
-  const selectedMemberRefs = useMemo(() => new Set(props.members), [props.members]);
   const selectedMemberExperts = props.members.flatMap((ref) => {
     const expert = props.experts.find((candidate) => expertRef(candidate) === ref);
     return expert === undefined ? [] : [expert];
   });
+  const pickerItems: readonly PragmaResourcePickerItem[] = props.experts.map((expert) => ({
+    ref: expertRef(expert),
+    name: expert.metadata.name,
+    description: expert.metadata.description,
+    searchTerms: [expert.metadata.id, ...expert.metadata.tags],
+    kind: "expert",
+    avatarId: expert.metadata.avatarId,
+  }));
 
   const closePicker = () => {
     setActivePicker(null);
-    setSearch("");
   };
 
-  useEffect(() => {
-    if (activePicker === null) return;
-    const previousOverflow = document.body.style.overflow;
-    document.body.style.overflow = "hidden";
-    const closeOnEscape = (event: KeyboardEvent) => {
-      if (event.key === "Escape") closePicker();
-    };
-    window.addEventListener("keydown", closeOnEscape);
-    return () => {
-      document.body.style.overflow = previousOverflow;
-      window.removeEventListener("keydown", closeOnEscape);
-    };
-  }, [activePicker]);
-
-  const selectedRefs =
-    activePicker === "coordinator"
-      ? new Set(props.coordinator ? [props.coordinator] : [])
-      : selectedMemberRefs;
-  const excludedRef = activePicker === "members" ? props.coordinator : undefined;
-  const visibleExperts =
-    activePicker === null
-      ? []
-      : matchingTeamExperts(props.experts, search, selectedRefs, excludedRef);
-  const matchingCount =
-    activePicker === null
-      ? 0
-      : matchingTeamExperts(
-          props.experts,
-          search,
-          selectedRefs,
-          excludedRef,
-          Number.MAX_SAFE_INTEGER,
-        ).length;
-  const activeSelectedCount =
-    activePicker === "coordinator" ? Number(Boolean(props.coordinator)) : props.members.length;
-
   const openPicker = (picker: TeamExpertPickerKind) => {
-    setSearch("");
     setActivePicker(picker);
   };
 
@@ -1427,140 +1420,38 @@ function TeamExpertSelectors(props: {
       </div>
 
       {activePicker !== null ? (
-        <div
-          className="expert-picker-backdrop"
-          role="presentation"
-          onMouseDown={(event) => {
-            if (event.target === event.currentTarget) closePicker();
+        <PragmaResourcePickerDialog
+          title={activePicker === "coordinator" ? t("chooseCoordinator") : t("chooseTeamMembers")}
+          description={
+            activePicker === "coordinator"
+              ? t("coordinatorPickerDescription")
+              : t("membersPickerDescription")
+          }
+          items={pickerItems}
+          selectedRefs={activePicker === "coordinator" ? [props.coordinator] : props.members}
+          selectionMode={activePicker === "coordinator" ? "single" : "multiple"}
+          excludedRefs={
+            activePicker === "members" && props.coordinator
+              ? new Set([props.coordinator])
+              : undefined
+          }
+          searchPlaceholder={t("searchTeamExpertsDescription")}
+          footerHint={
+            activePicker === "members" ? t("coordinatorIncluded") : t("selectionAppliedToTeam")
+          }
+          onSelectedRefsChange={(refs) => {
+            if (activePicker === "coordinator") props.onCoordinatorChange(refs[0] ?? "");
+            else props.onMembersChange(refs);
           }}
-        >
-          <aside
-            className="expert-picker-dialog team-expert-picker-dialog"
-            role="dialog"
-            aria-modal="true"
-            aria-labelledby="team-expert-picker-heading"
-          >
-            <header className="expert-picker-heading">
-              <div>
-                <small>{t("expertTeam")}</small>
-                <h2 id="team-expert-picker-heading">
-                  {activePicker === "coordinator" ? t("chooseCoordinator") : t("chooseTeamMembers")}
-                </h2>
-                <p>
-                  {activePicker === "coordinator"
-                    ? t("coordinatorPickerDescription")
-                    : t("membersPickerDescription")}
-                </p>
-              </div>
-              <button type="button" aria-label={t("closeExpertPicker")} onClick={closePicker}>
-                <X size={19} aria-hidden="true" />
-              </button>
-            </header>
-            <label className="expert-picker-search">
-              <MagnifyingGlass size={18} aria-hidden="true" />
-              <span className="sr-only">{t("searchExperts")}</span>
-              <input
-                autoFocus
-                value={search}
-                onChange={(event) => setSearch(event.target.value)}
-                placeholder={t("searchTeamExpertsDescription")}
-              />
-              {search ? (
-                <button type="button" aria-label={t("clearSearch")} onClick={() => setSearch("")}>
-                  <X size={16} aria-hidden="true" />
-                </button>
-              ) : null}
-            </label>
-            <div className="expert-picker-toolbar team-expert-picker-toolbar">
-              <span>{t("selectedCount", { count: activeSelectedCount })}</span>
-              <div>
-                <span>
-                  {t("showingMatching", {
-                    visible: visibleExperts.length,
-                    total: matchingCount,
-                  })}
-                </span>
-                {activeSelectedCount > 0 ? (
-                  <button
-                    type="button"
-                    onClick={() =>
-                      activePicker === "coordinator"
-                        ? props.onCoordinatorChange("")
-                        : props.onMembersChange([])
-                    }
-                  >
-                    {t("clearSelection")}
-                  </button>
-                ) : null}
-              </div>
-            </div>
-            <div className="expert-picker-results">
-              {visibleExperts.length > 0 ? (
-                <div className="expert-picker-list">
-                  {visibleExperts.map((expert) => {
-                    const ref = expertRef(expert);
-                    const selected = selectedRefs.has(ref);
-                    return (
-                      <label
-                        className={`expert-picker-row${selected ? " is-selected" : ""}`}
-                        key={ref}
-                      >
-                        <input
-                          type={activePicker === "coordinator" ? "radio" : "checkbox"}
-                          name={activePicker === "coordinator" ? "team-coordinator" : undefined}
-                          checked={selected}
-                          onChange={(event) => {
-                            if (activePicker === "coordinator") {
-                              props.onCoordinatorChange(ref);
-                              return;
-                            }
-                            props.onMembersChange(
-                              event.target.checked
-                                ? [...props.members, ref]
-                                : props.members.filter((memberRef) => memberRef !== ref),
-                            );
-                          }}
-                        />
-                        <span>
-                          <strong>{expert.metadata.name}</strong>
-                          <small>
-                            {expert.metadata.description || `expert:${expert.metadata.id}`}
-                          </small>
-                        </span>
-                      </label>
-                    );
-                  })}
-                </div>
-              ) : (
-                <div className="expert-picker-empty">
-                  <strong>{search.trim() ? t("noMatchesFound") : t("noExpertsAvailable")}</strong>
-                  <p>{search.trim() ? t("tryExpertSearch") : t("addExpertsFirst")}</p>
-                </div>
-              )}
-              {matchingCount > visibleExperts.length ? (
-                <p className="expert-plugin-result-hint">
-                  {t("moreExpertsHidden", { count: matchingCount - visibleExperts.length })}
-                </p>
-              ) : null}
-            </div>
-            <footer className="expert-picker-actions">
-              <span>
-                {activePicker === "members"
-                  ? t("coordinatorIncluded")
-                  : t("selectionAppliedToTeam")}
-              </span>
-              <button className="primary-button" type="button" onClick={closePicker}>
-                {t("common:actions.done")}
-              </button>
-            </footer>
-          </aside>
-        </div>
+          onClose={closePicker}
+        />
       ) : null}
     </>
   );
 }
 
 function ResourceEditor(props: {
+  readonly className?: string | undefined;
   readonly title: string;
   readonly backLabel: string;
   readonly error: string | null;
@@ -1572,7 +1463,7 @@ function ResourceEditor(props: {
   const { t } = useTranslation("studio");
   return (
     <StudioScreenFrame
-      className="pragma-resource-editor"
+      className={["pragma-resource-editor", props.className].filter(Boolean).join(" ")}
       labelledBy="resource-editor-heading"
       header={
         <header className="pragma-resource-editor-header">

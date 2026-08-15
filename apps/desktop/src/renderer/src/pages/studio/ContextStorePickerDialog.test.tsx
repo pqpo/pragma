@@ -43,4 +43,35 @@ describe("ContextStorePickerDialog", () => {
     expect(html).toContain("expert-picker-row is-selected");
     expect(html).toContain("1 selected");
   });
+
+  it("shows the first 20 knowledge bases before loading more", () => {
+    const stores = Array.from({ length: 21 }, (_, index) => ({
+      schemaVersion: "pragma.context-store/v4" as const,
+      id: `00000000-0000-4000-8000-${String(index).padStart(12, "0")}`,
+      name: `Knowledge ${index}`,
+      description: "Shared guidance.",
+      type: "file" as const,
+      status: "ready" as const,
+      source: { origin: "created" as const },
+      contentRevision: 1,
+      snapshotHash: "0".repeat(64),
+      createdAt: "2026-08-10T00:00:00.000Z",
+      updatedAt: "2026-08-10T00:00:00.000Z",
+    })) satisfies readonly ContextStore[];
+
+    const html = renderToStaticMarkup(
+      <ContextStorePickerDialog
+        stores={stores}
+        selectedStoreIds={[]}
+        description="Choose knowledge."
+        footerHint="Selections update the form."
+        onSelectedStoreIdsChange={() => undefined}
+        onClose={() => undefined}
+      />,
+    );
+
+    expect(html).toContain("Knowledge 19");
+    expect(html).not.toContain("Knowledge 20");
+    expect(html).toContain("expert-tool-load-more");
+  });
 });

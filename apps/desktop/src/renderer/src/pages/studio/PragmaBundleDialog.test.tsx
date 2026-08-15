@@ -10,6 +10,7 @@ import {
   filterBundleExportRoots,
   orderBundleExportRoots,
   PragmaBundleDialog,
+  visibleBundleExportRoots,
 } from "./PragmaBundleDialog.tsx";
 
 type ExportRoot = Extract<
@@ -37,9 +38,12 @@ describe("Bundle export root search", () => {
   const kindLabel = (kind: ExportRoot["kind"]): string =>
     kind === "Expert" ? "专家" : kind === "ExpertTeam" ? "专家团" : "Flow";
 
-  it("keeps the full result set available to the scrollable list", () => {
+  it("shows export objects in pages of twenty and keeps the rest available", () => {
     const initial = filterBundleExportRoots(roots, "", kindLabel);
     expect(initial).toHaveLength(50);
+    expect(visibleBundleExportRoots(initial, 1)).toHaveLength(20);
+    expect(visibleBundleExportRoots(initial, 2)).toHaveLength(40);
+    expect(visibleBundleExportRoots(initial, 3)).toHaveLength(50);
 
     const exact = filterBundleExportRoots(roots, "Resource 49", kindLabel);
     expect(exact).toHaveLength(1);
@@ -90,9 +94,10 @@ describe("Bundle export root search", () => {
       />,
     );
 
-    expect(html).toContain("Select an export object");
+    expect(html).toContain("Select export object");
     expect(html).toContain('class="primary-button" type="button" disabled=""');
-    expect(html).not.toContain("<strong>Resource 0</strong>");
+    expect(html).toContain("<strong>Resource 0</strong>");
+    expect(html).toContain("Configure bundle contents");
   });
 });
 

@@ -68,7 +68,7 @@
 }
 
 .automation-editor-heading h1 {
-  font-size: 24px;
+  font-size: 22px;
   font-weight: 600;
   line-height: 1.25;
 }
@@ -418,7 +418,7 @@
 .automation-detail-title h1 {
   min-width: 0;
   overflow-wrap: anywhere;
-  font-size: 28px;
+  font-size: 26px;
   font-weight: 700;
   letter-spacing: -0.035em;
   line-height: 1.2;

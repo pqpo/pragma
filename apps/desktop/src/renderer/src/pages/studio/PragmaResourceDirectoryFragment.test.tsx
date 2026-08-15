@@ -15,11 +15,11 @@ import type {
   PragmaProjectSnapshot,
 } from "../../../../shared/contracts/index.ts";
 import { i18n } from "../../i18n/index.ts";
+import { filterPragmaResourcePickerItems } from "../../components/PragmaResourcePickerDialog.tsx";
 
 import {
   deletePragmaResourceErrorMessage,
   matchesResourceDirectoryQuery,
-  matchingTeamExperts,
   PragmaResourceDetailFragment,
   PragmaResourceDirectoryFragment,
   TeamEditor,
@@ -139,7 +139,7 @@ describe("expert team editor", () => {
     expect(html).not.toContain('placeholder="Search context stores"');
   });
 
-  it("uses compact controls for a knowledge base blacklist", () => {
+  it("keeps team knowledge as one selector card", () => {
     const experts = [expert(1), expert(2)];
     const initial = PragmaExpertTeamResourceSchema.parse({
       apiVersion: "pragma/v4",
@@ -203,29 +203,32 @@ describe("expert team editor", () => {
     );
 
     expect(html).toContain("Quality handbook");
-    expect(html.match(/class="team-context-expert-checkbox"/g)).toHaveLength(2);
-    expect(html).toContain('class="team-context-expert-checkbox" type="checkbox" checked=""');
-    expect(html).toContain("Expert 001");
-    expect(html).toContain("Expert 002");
+    expect(html).toContain("1 knowledge base selected");
+    expect(html).toContain("team-knowledge-selector");
+    expect(html).not.toContain("team-context-editor");
+    expect(html).not.toContain("team-context-expert-checkbox");
   });
 
-  it("limits the default list and searches names, ids, descriptions, and tags", () => {
+  it("searches team experts by name, id, description, and tags without losing later pages", () => {
     const experts = Array.from({ length: 100 }, (_, index) => expert(index));
-    const selectedRef = "expert:0000000000000099";
+    const items = experts.map((item) => ({
+      ref: `expert:${item.metadata.id}`,
+      name: item.metadata.name,
+      description: item.metadata.description,
+      searchTerms: [item.metadata.id, ...item.metadata.tags],
+      kind: "expert" as const,
+    }));
 
-    expect(matchingTeamExperts(experts, "", new Set())).toHaveLength(8);
-    expect(matchingTeamExperts(experts, "", new Set([selectedRef]))[0]?.metadata.id).toBe(
-      "0000000000000099",
-    );
+    expect(filterPragmaResourcePickerItems(items, "", "all")).toHaveLength(100);
     expect(
-      matchingTeamExperts(experts, "0000000000000042", new Set()).map((item) => item.metadata.id),
-    ).toEqual(["0000000000000042"]);
+      filterPragmaResourcePickerItems(items, "0000000000000042", "expert").map((item) => item.ref),
+    ).toEqual(["expert:0000000000000042"]);
     expect(
-      matchingTeamExperts(experts, "description 42", new Set()).map((item) => item.metadata.id),
-    ).toEqual(["0000000000000042"]);
+      filterPragmaResourcePickerItems(items, "description 42", "expert").map((item) => item.ref),
+    ).toEqual(["expert:0000000000000042"]);
     expect(
-      matchingTeamExperts(experts, "needle", new Set()).map((item) => item.metadata.id),
-    ).toEqual(["0000000000000099"]);
+      filterPragmaResourcePickerItems(items, "needle", "expert").map((item) => item.ref),
+    ).toEqual(["expert:0000000000000099"]);
   });
 
   it("shows and preserves optional Team instructions", () => {
@@ -567,7 +570,7 @@ const complete = true;
     expect(html).toContain("2 members");
     expect(html).toContain("Delete");
     expect(html).toContain("Quality handbook");
-    expect(html).toContain("Everyone except Expert 002");
+    expect(html).toContain("All experts");
     expect(html.indexOf("Quality handbook")).toBeLessThan(html.indexOf("Team instructions"));
     expect(html).toContain("<h1>Evidence review</h1>");
     expect(html).toContain("<strong>Verify</strong>");
@@ -677,5 +680,70 @@ const complete = true;
     expect(html).toContain("1 step");
     expect(html).toContain("1 transition");
     expect(html).not.toContain("Flow editor");
+  });
+
+  it("renders linked Expert and Expert Team nodes with their names and avatars", () => {
+    const assignedExpert = expert(1);
+    const assignedTeam = PragmaExpertTeamResourceSchema.parse({
+      apiVersion: "pragma/v4",
+      kind: "ExpertTeam",
+      metadata: {
+        id: "cccvf3nab91n2wja",
+        name: "Quality team",
+        description: "Coordinates quality work.",
+        tags: [],
+      },
+      spec: {
+        coordinator: { ref: "expert:0000000000000001" },
+        members: [{ ref: "expert:0000000000000001" }],
+        contextStores: [],
+        delegation: {},
+      },
+    });
+    const flow: PragmaFlowResource = {
+      ...createEmptyFlow("ffdfk2cczgqjda7q"),
+      metadata: {
+        id: "ffdfk2cczgqjda7q",
+        name: "Review flow",
+        description: "Routes work to the appropriate collaborator.",
+        tags: [],
+      },
+      spec: {
+        limits: { maxNodeVisits: 20 },
+        graph: {
+          start: "review",
+          steps: {
+            review: { expert: { ref: "expert:0000000000000001" } },
+            coordinate: { team: { ref: "team:cccvf3nab91n2wja" } },
+          },
+          loops: {},
+          transitions: { review: { goto: "coordinate" }, coordinate: { end: true } },
+        },
+      },
+    };
+    const project = {
+      schemaVersion: "pragma.project-snapshot/v3",
+      projectId: "test-project",
+      revision: 0,
+      resources: [assignedExpert, assignedTeam, flow],
+      diagnostics: [],
+    } satisfies PragmaProjectSnapshot;
+
+    const html = renderToStaticMarkup(
+      <PragmaResourceDetailFragment
+        resource={flow}
+        project={project}
+        experts={[studioExpert(1)]}
+        onBack={() => undefined}
+        onEdit={() => undefined}
+        onDelete={async () => undefined}
+      />,
+    );
+
+    expect(html).toContain("Expert 001");
+    expect(html).toContain("Quality team");
+    expect(html).toContain("pragma-avatar");
+    expect(html).not.toContain("expert:0000000000000001");
+    expect(html).not.toContain("team:cccvf3nab91n2wja");
   });
 });

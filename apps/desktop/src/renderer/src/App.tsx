@@ -10,7 +10,7 @@ import {
 } from "./lib/sidebar-width-preference.ts";
 import { SettingsPage, type SettingsView } from "./pages/settings/SettingsPage.tsx";
 import { MissionsPage, type MissionsPageMemoryState } from "./pages/missions/MissionsPage.tsx";
-import { StudioPage } from "./pages/studio/StudioPage.tsx";
+import { StudioPage, type StudioPageMemoryState } from "./pages/studio/StudioPage.tsx";
 import { EvaluationsPage } from "./pages/evaluations/EvaluationsPage.tsx";
 import { HomePage } from "./pages/home/HomePage.tsx";
 import { UsagePage } from "./pages/usage/UsagePage.tsx";
@@ -28,6 +28,8 @@ export function App() {
   const [missionToOpen, setMissionToOpen] = useState<Mission>();
   const [missionsMemoryState, setMissionsMemoryState] = useState<MissionsPageMemoryState>();
   const [studioExpertRef, setStudioExpertRef] = useState<string>();
+  const [studioMemoryState, setStudioMemoryState] = useState<StudioPageMemoryState>();
+  const [evaluationTargetId, setEvaluationTargetId] = useState<string>();
   const [settingsView, setSettingsView] = useState<SettingsView>("general");
 
   const navigate = (view: AppView) => {
@@ -108,6 +110,8 @@ export function App() {
       ) : activeView === "studio" ? (
         <StudioPage
           initialExpertRef={studioExpertRef}
+          initialMemoryState={studioMemoryState}
+          onMemoryStateChange={setStudioMemoryState}
           onTryExpert={(expert) => {
             setMissionExecutorRef(`expert:${expert.id}`);
             setMissionToOpen(undefined);
@@ -115,7 +119,10 @@ export function App() {
           }}
         />
       ) : activeView === "evaluations" ? (
-        <EvaluationsPage />
+        <EvaluationsPage
+          initialTargetId={evaluationTargetId}
+          onTargetChange={setEvaluationTargetId}
+        />
       ) : activeView === "usage" ? (
         <UsagePage />
       ) : activeView === "memory" ? (

@@ -18,6 +18,10 @@
   margin: 0;
 }
 
+.memory-page-header h1 {
+  font-size: 26px;
+}
+
 .memory-page-header p {
   margin-top: 6px;
   color: var(--muted);

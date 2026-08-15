@@ -92,7 +92,7 @@ export function installPragmaProjectHandlers(
           resources: snapshot.resources,
           currentRef,
         });
-        resolved.push({ selection, resource });
+        resolved.push({ resource });
       }
       const team = PragmaExpertTeamResourceSchema.parse({
         ...request.resource,
@@ -100,11 +100,11 @@ export function installPragmaProjectHandlers(
           ...request.resource.spec,
           contextStores: [
             ...request.resource.spec.contextStores,
-            ...resolved.map(({ selection, resource }) => ({
+            ...resolved.map(({ resource }) => ({
               ref: canonicalPragmaResourceRef(resource),
               namespace: `team_${request.resource.metadata.id}_${resource.metadata.id}`,
               required: true,
-              visibility: selection.visibility,
+              visibility: { mode: "all" },
             })),
           ],
         },
