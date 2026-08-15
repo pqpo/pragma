@@ -14,6 +14,7 @@ import {
 import { flushSync } from "react-dom";
 
 import {
+  ArrowUp,
   ArrowCounterClockwise,
   CaretDown,
   CaretLeft,
@@ -25,7 +26,6 @@ import {
   GitBranch,
   MagnifyingGlass,
   ImageSquare,
-  PaperPlaneTilt,
   Plus,
   Play,
   PushPin,
@@ -3121,7 +3121,7 @@ export function MissionDetailFragment(props: {
                               }
                               onClick={() => void send()}
                             >
-                              <PaperPlaneTilt size={18} aria-hidden="true" />
+                              <ArrowUp size={19} weight="bold" aria-hidden="true" />
                             </button>
                           )}
                         </div>

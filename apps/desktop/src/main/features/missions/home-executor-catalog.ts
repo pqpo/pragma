@@ -52,8 +52,9 @@ export function createHomeExecutorCatalog(options: {
             favoriteWorkspace: {
               path: entry.favoriteWorkspace,
               basename: basename(entry.favoriteWorkspace),
-            },
-          }),
+          },
+        }),
+      ...(entry?.favoriteRank === undefined ? {} : { favoriteRank: entry.favoriteRank }),
       ...(entry?.lastWorkspace === undefined
         ? {}
         : {
@@ -115,6 +116,9 @@ export function createHomeExecutorCatalog(options: {
               ref: input.ref,
               favoriteScope: "global",
               hidden: false,
+              ...(input.favoriteRank === undefined
+                ? {}
+                : { favoriteRank: input.favoriteRank }),
               ...(input.clearLastWorkspace === true ? { clearLastWorkspace: true } : {}),
             }
           : input,

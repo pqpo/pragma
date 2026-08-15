@@ -55,6 +55,7 @@ export const HomeExecutorPreferenceSchema = z.object({
   favoriteScope: HomeExecutorFavoriteScopeSchema,
   hidden: z.boolean(),
   favoriteWorkspace: MissionWorkspaceSchema.optional(),
+  favoriteRank: z.number().int().nonnegative().max(4_999).optional(),
   lastWorkspace: MissionWorkspaceSchema.optional(),
   lastUsedAt: z.string().datetime().optional(),
 });
@@ -94,12 +95,14 @@ export const UpdateHomeExecutorPreferenceSchema = z
     favoriteScope: HomeExecutorFavoriteScopeSchema.optional(),
     hidden: z.boolean().optional(),
     favoriteWorkspace: z.string().trim().min(1).max(2_000).optional(),
+    favoriteRank: z.number().int().nonnegative().max(4_999).optional(),
     clearLastWorkspace: z.boolean().optional(),
   })
   .superRefine((input, context) => {
     if (
       input.favoriteScope === undefined &&
       input.hidden === undefined &&
+      input.favoriteRank === undefined &&
       input.clearLastWorkspace !== true
     ) {
       context.addIssue({

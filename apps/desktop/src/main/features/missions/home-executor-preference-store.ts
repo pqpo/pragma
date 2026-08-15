@@ -19,6 +19,7 @@ const HomeExecutorPreferenceEntryInputSchema = z
     favoriteScope: HomeExecutorFavoriteScopeSchema,
     hidden: z.boolean(),
     favoriteWorkspace: z.string().trim().min(1).max(2_000).optional(),
+    favoriteRank: z.number().int().nonnegative().max(4_999).optional(),
     lastWorkspace: z.string().trim().min(1).max(2_000).optional(),
     lastUsedAt: z.string().datetime().optional(),
   })
@@ -150,6 +151,7 @@ export function createHomeExecutorPreferenceStore(options: {
         ...(current?.favoriteWorkspace === undefined
           ? {}
           : { favoriteWorkspace: current.favoriteWorkspace }),
+        ...(current?.favoriteRank === undefined ? {} : { favoriteRank: current.favoriteRank }),
         lastWorkspace: normalizeWorkspace(input.workspace),
         lastUsedAt: input.usedAt ?? new Date().toISOString(),
       }));
@@ -183,6 +185,8 @@ export function createHomeExecutorPreferenceStore(options: {
           requestedFavoriteScope === "workspace"
             ? (requestedFavoriteWorkspace ?? current?.favoriteWorkspace)
             : undefined;
+        const favoriteRank =
+          requestedFavoriteScope === "none" ? undefined : (input.favoriteRank ?? current?.favoriteRank);
         if (requestedFavoriteScope === "workspace" && favoriteWorkspace === undefined) {
           throw new Error("A workspace favorite requires a favorite workspace.");
         }
@@ -191,6 +195,7 @@ export function createHomeExecutorPreferenceStore(options: {
           favoriteScope: requestedFavoriteScope,
           hidden: input.hidden ?? current?.hidden ?? false,
           ...(favoriteWorkspace === undefined ? {} : { favoriteWorkspace }),
+          ...(favoriteRank === undefined ? {} : { favoriteRank }),
           ...(lastWorkspace === undefined ? {} : { lastWorkspace }),
           ...(current?.lastUsedAt === undefined ? {} : { lastUsedAt: current.lastUsedAt }),
         };

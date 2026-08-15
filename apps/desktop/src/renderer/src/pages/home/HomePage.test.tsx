@@ -12,34 +12,15 @@ import {
   belongsToUiOverlayOwner,
   isHomeExecutorFavorite,
   missionModelOverrideAvailable,
+  previewFavoriteDragOrder,
+  preferredWorkspaceForExecutorSelection,
+  rankFavoriteHomeExecutors,
   rankHomeMissionExecutors,
   selectHomeMissionExecutors,
   uniqueWorkspaces,
   workspacePathsEqual,
 } from "./HomePage.tsx";
-import { ExpertConstellation } from "./ExpertConstellation.tsx";
 import { SchemaInputForm, createSchemaInputValue, isSchemaInputValid } from "./SchemaInputForm.tsx";
-
-describe("ExpertConstellation", () => {
-  it("renders the quiet ready state with discoverable expert nodes", () => {
-    const html = renderToStaticMarkup(<ExpertConstellation focused={false} submitting={false} />);
-
-    expect(html).toContain("Experts ready");
-    expect(html).toContain('aria-label="Repository analysis expert"');
-    expect(html).toContain('aria-label="Execution expert"');
-    expect(html).toContain('aria-label="Synthesis expert"');
-    expect(html).not.toContain("is-focused");
-    expect(html).not.toContain("is-submitting");
-  });
-
-  it("fades for composition and announces the submitting visual state", () => {
-    const html = renderToStaticMarkup(<ExpertConstellation focused={true} submitting={true} />);
-
-    expect(html).toContain("is-focused");
-    expect(html).toContain("is-submitting");
-    expect(html).toContain("Orchestrating experts…");
-  });
-});
 
 describe("MissionAttachmentList", () => {
   it("renders one model warning below multiple clickable image thumbnails", () => {
@@ -281,6 +262,64 @@ describe("mission executor search", () => {
     expect(isHomeExecutorFavorite(workspaceFavorite, "/work/favorite/")).toBe(true);
     expect(isHomeExecutorFavorite(workspaceFavorite, "/work/other")).toBe(false);
     expect(isHomeExecutorFavorite(globalFavorite, "/work/other")).toBe(true);
+  });
+
+  it("orders all favorite resource types by their saved Home rank", () => {
+    const favorites = rankFavoriteHomeExecutors([
+      {
+        ...executors[0]!,
+        name: "Second expert",
+        preference: { favoriteScope: "global", hidden: false, favoriteRank: 1 },
+      },
+      {
+        ...executors[1]!,
+        ref: "team:0000000000000001" as const,
+        kind: "team" as const,
+        name: "First team",
+        preference: { favoriteScope: "workspace", hidden: false, favoriteRank: 0 },
+      },
+      {
+        ...executors[2]!,
+        ref: "flow:0000000000000001" as const,
+        kind: "flow" as const,
+        name: "Unfavorited flow",
+        preference: { favoriteScope: "none", hidden: false },
+      },
+    ]);
+
+    expect(favorites.map((executor) => executor.name)).toEqual(["First team", "Second expert"]);
+  });
+
+  it("previews a favorite reorder before the pointer fully covers its target", () => {
+    expect(previewFavoriteDragOrder(["a", "b", "c", "d"], "a", "c", false)).toEqual([
+      "b",
+      "a",
+      "c",
+      "d",
+    ]);
+    expect(previewFavoriteDragOrder(["a", "b", "c", "d"], "a", "c", true)).toEqual([
+      "b",
+      "c",
+      "a",
+      "d",
+    ]);
+  });
+
+  it("uses the assigned favorite workspace ahead of a resource's most recent workspace", () => {
+    const executor = {
+      ...executors[0]!,
+      preference: {
+        favoriteScope: "workspace" as const,
+        hidden: false,
+        favoriteWorkspace: { path: "/work/favorite", basename: "favorite" },
+        lastWorkspace: { path: "/work/recent", basename: "recent" },
+      },
+    };
+
+    expect(preferredWorkspaceForExecutorSelection(executor)).toEqual({
+      path: "/work/favorite",
+      basename: "favorite",
+    });
   });
 
   it("compares equivalent workspace paths across picker and persisted representations", () => {

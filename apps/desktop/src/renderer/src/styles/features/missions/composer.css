@@ -292,12 +292,12 @@
 
 .mission-chat-actions > button {
   display: grid;
-  width: 39px;
-  height: 39px;
+  width: 36px;
+  height: 36px;
   place-items: center;
   padding: 0;
   border: 0;
-  border-radius: 10px;
+  border-radius: var(--ui-radius-round);
   background: var(--green);
   color: #fff;
   cursor: pointer;

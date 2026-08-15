@@ -15,11 +15,13 @@ import {
   CaretLeft,
   CaretRight,
   Check,
+  DotsSixVertical,
   Eye,
   EyeSlash,
   FolderOpen,
   GearSix,
   GitBranch,
+  Lightbulb,
   MagnifyingGlass,
   Star,
   User,
@@ -57,8 +59,17 @@ import {
   stageClipboardImage,
 } from "../../lib/mission-attachments.ts";
 import { localizeSystemExpertCopy } from "../../lib/system-expert-copy.ts";
-import { ExpertConstellation } from "./ExpertConstellation.tsx";
 import { SchemaInputForm, createSchemaInputValue, isSchemaInputValid } from "./SchemaInputForm.tsx";
+
+const HOME_TIP_KEYS = ["context", "favorite", "approval", "attachment"] as const;
+const HOME_GREETING_KEYS = ["context", "task", "collaboration", "focus"] as const;
+const HOME_GREETING_INDEX = Math.floor(Math.random() * HOME_GREETING_KEYS.length);
+
+function homeTimeGreetingKey(hour = new Date().getHours()): "morning" | "afternoon" | "evening" {
+  if (hour >= 5 && hour < 12) return "morning";
+  if (hour >= 12 && hour < 18) return "afternoon";
+  return "evening";
+}
 
 export function HomePage(props: {
   readonly initialExecutorRef?: string | undefined;
@@ -66,6 +77,7 @@ export function HomePage(props: {
   readonly onConfigureModels?: (() => void) | undefined;
 }) {
   const { t } = useTranslation("missions");
+  const timeGreeting = t(`homeTimeGreetings.${homeTimeGreetingKey()}`);
   const [executors, setExecutors] = useState<readonly HomeMissionExecutorOption[]>([]);
   const [defaultWorkspace, setDefaultWorkspace] = useState<WorkspaceSelection>();
   const [recentWorkspaces, setRecentWorkspaces] = useState<readonly WorkspaceSelection[]>([]);
@@ -85,13 +97,14 @@ export function HomePage(props: {
   const [modelOverride, setModelOverride] = useState<MissionModelOverride>();
   const [defaultModelSelection, setDefaultModelSelection] = useState<MissionModelOverride>();
   const [saving, setSaving] = useState(false);
-  const [composerFocused, setComposerFocused] = useState(false);
+  const [tipIndex, setTipIndex] = useState(() => Math.floor(Math.random() * HOME_TIP_KEYS.length));
   const [loaded, setLoaded] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [modelError, setModelError] = useState<string | null>(null);
   const [modelResetRequired, setModelResetRequired] = useState(false);
   const [persistenceReady, setPersistenceReady] = useState(false);
   const [appVersion, setAppVersion] = useState<string>();
+  const [executorManagerOpen, setExecutorManagerOpen] = useState(false);
   const modelRuntimeIdRef = useRef<string | undefined>(undefined);
   const inputExecutorRef = useRef(props.initialExecutorRef ?? "");
   const pendingModelOverrideRef = useRef<MissionModelOverride | undefined>(undefined);
@@ -201,6 +214,18 @@ export function HomePage(props: {
       cancelled = true;
     };
   }, [props.initialExecutorRef]);
+
+  useEffect(() => {
+    const timer = window.setInterval(() => {
+      setTipIndex((current) => {
+        if (HOME_TIP_KEYS.length < 2) return current;
+        let next = current;
+        while (next === current) next = Math.floor(Math.random() * HOME_TIP_KEYS.length);
+        return next;
+      });
+    }, 6_000);
+    return () => window.clearInterval(timer);
+  }, []);
 
   const selectedExecutor = executors.find((executor) => executor.ref === executorRef);
   const imageUnsupported =
@@ -335,7 +360,7 @@ export function HomePage(props: {
     workspaceAssociationRequestRef.current = ref;
     setExecutorRef(ref);
     if (next?.kind === "flow") clearAttachmentDrafts();
-    const associatedWorkspace = next?.preference.lastWorkspace;
+    const associatedWorkspace = preferredWorkspaceForExecutorSelection(next);
     if (associatedWorkspace === undefined) return;
     void window.pragmaDesktop
       .validateWorkspace(associatedWorkspace.path)
@@ -456,6 +481,38 @@ export function HomePage(props: {
     }
   };
 
+  const reorderFavorites = async (orderedRefs: readonly string[]): Promise<void> => {
+    const favorites = rankFavoriteHomeExecutors(executors);
+    const byRef = new Map(favorites.map((executor) => [executor.ref, executor]));
+    const reordered = orderedRefs
+      .map((ref) => byRef.get(ref))
+      .filter((executor): executor is HomeMissionExecutorOption => executor !== undefined);
+    if (
+      reordered.length !== favorites.length ||
+      reordered.every((executor, index) => executor.ref === favorites[index]?.ref)
+    )
+      return;
+    const rankByRef = new Map(reordered.map((executor, index) => [executor.ref, index]));
+
+    setExecutors((current) =>
+      current.map((executor) => {
+        const favoriteRank = rankByRef.get(executor.ref);
+        return favoriteRank === undefined
+          ? executor
+          : { ...executor, preference: { ...executor.preference, favoriteRank } };
+      }),
+    );
+    try {
+      await Promise.all(
+        reordered.map((executor, favoriteRank) =>
+          window.pragmaDesktop.updateHomeExecutorPreference({ ref: executor.ref, favoriteRank }),
+        ),
+      );
+    } catch (reorderError) {
+      setError(errorMessage(reorderError));
+    }
+  };
+
   const submit = async () => {
     const workspace = workspaceOverride ?? defaultWorkspace;
     if (
@@ -512,32 +569,45 @@ export function HomePage(props: {
   return (
     <section className="default-agent-home home-mission-create">
       <section className="mission-create" aria-labelledby="new-mission-title">
-        <header>
-          <h1 id="new-mission-title">{t("start")}</h1>
-          <p>{t("createDescription")}</p>
+        <header className="home-welcome">
+          <h1 id="new-mission-title">
+            {t(`homeGreetings.${HOME_GREETING_KEYS[HOME_GREETING_INDEX]}`, {
+              greeting: timeGreeting,
+            })}
+          </h1>
         </header>
-        <div
-          className="mission-goal-composer"
-          onFocusCapture={() => setComposerFocused(true)}
-          onBlurCapture={(event) => {
-            if (!event.currentTarget.contains(event.relatedTarget)) setComposerFocused(false);
-          }}
-        >
-          <div className="mission-composer-context-row">
-            <MissionAttachmentPicker
-              disabled={saving || selectedExecutor?.kind === "flow"}
-              onPick={pickAttachments}
-            />
-            <WorkspacePicker
-              defaultWorkspace={defaultWorkspace}
-              recentWorkspaces={recentWorkspaces}
-              selection={workspaceOverride}
-              defaultSelected={workspaceOverride === undefined}
-              onChoose={() => void pickWorkspace()}
-              onSelect={setWorkspaceOverride}
-              onUseDefault={() => setWorkspaceOverride(undefined)}
-            />
-          </div>
+        <div className="home-workspace-context">
+          <MissionExecutorPicker
+            executors={executors}
+            value={hasValidExecutor ? executorRef : ""}
+            defaultExecutorRef={defaultExecutorRef}
+            workspace={workspaceOverride ?? defaultWorkspace}
+            recentWorkspaces={recentWorkspaces}
+            onChange={selectExecutor}
+            onPreferenceChange={updateExecutorPreference}
+            onChooseFavoriteWorkspace={chooseFavoriteWorkspace}
+            managerOpen={executorManagerOpen}
+            onManagerOpenChange={setExecutorManagerOpen}
+          />
+          <WorkspacePicker
+            defaultWorkspace={defaultWorkspace}
+            recentWorkspaces={recentWorkspaces}
+            selection={workspaceOverride}
+            defaultSelected={workspaceOverride === undefined}
+            onChoose={() => void pickWorkspace()}
+            onSelect={setWorkspaceOverride}
+            onUseDefault={() => setWorkspaceOverride(undefined)}
+          />
+          <p className="home-inline-tip" aria-live="polite">
+            <Lightbulb size={15} weight="regular" aria-hidden="true" />
+            <span className="home-inline-tip-viewport">
+              <span className="home-inline-tip-copy" key={tipIndex}>
+                {t(`homeTips.${HOME_TIP_KEYS[tipIndex]}`)}
+              </span>
+            </span>
+          </p>
+        </div>
+        <div className="mission-goal-composer">
           <MissionAttachmentList
             attachments={attachments}
             previews={attachmentPreviews}
@@ -585,15 +655,10 @@ export function HomePage(props: {
           )}
           <footer>
             <div className="mission-prompt-tools" aria-label={t("missionOptions")}>
-              <MissionExecutorPicker
-                executors={executors}
-                value={hasValidExecutor ? executorRef : ""}
-                defaultExecutorRef={defaultExecutorRef}
-                workspace={workspaceOverride ?? defaultWorkspace}
-                recentWorkspaces={recentWorkspaces}
-                onChange={selectExecutor}
-                onPreferenceChange={updateExecutorPreference}
-                onChooseFavoriteWorkspace={chooseFavoriteWorkspace}
+              <MissionAttachmentPicker
+                disabled={saving || selectedExecutor?.kind === "flow"}
+                compact
+                onPick={pickAttachments}
               />
               {selectedExecutor?.kind === "expert" || selectedExecutor?.kind === "team" ? (
                 <MissionModelOverrideControls
@@ -631,6 +696,12 @@ export function HomePage(props: {
             </button>
           </footer>
         </div>
+        <HomeFavorites
+          executors={executors}
+          onSelect={selectExecutor}
+          onReorder={(orderedRefs) => void reorderFavorites(orderedRefs)}
+          onManage={() => setExecutorManagerOpen(true)}
+        />
         {loaded && executors.length === 0 ? (
           <p className="mission-form-note">{t("createFirst")}</p>
         ) : null}
@@ -649,10 +720,298 @@ export function HomePage(props: {
           </p>
         ) : null}
       </section>
-      <ExpertConstellation focused={composerFocused} submitting={saving} />
       {appVersion !== undefined ? <p className="home-app-version">v{appVersion}</p> : null}
     </section>
   );
+}
+
+function HomeFavorites(props: {
+  readonly executors: readonly HomeMissionExecutorOption[];
+  readonly onSelect: (ref: string) => void;
+  readonly onReorder: (orderedRefs: readonly string[]) => void;
+  readonly onManage: () => void;
+}) {
+  const { t } = useTranslation("missions");
+  const { t: tCommon } = useTranslation("common");
+  const [dialogOpen, setDialogOpen] = useState(false);
+  const [draggedRef, setDraggedRef] = useState<string>();
+  const [dragOrder, setDragOrder] = useState<readonly string[]>();
+  const dragOrderRef = useRef<readonly string[] | undefined>(undefined);
+  const dragInitialOrderRef = useRef<readonly string[] | undefined>(undefined);
+  const favoriteItemRefs = useRef(new Map<string, HTMLElement>());
+  const favoriteItemPositions = useRef(new Map<string, DOMRect>());
+  const favorites = rankFavoriteHomeExecutors(props.executors);
+  const favoritesByRef = new Map(favorites.map((executor) => [executor.ref, executor]));
+  const dialogFavorites =
+    dragOrder === undefined
+      ? favorites
+      : dragOrder
+          .map((ref) => favoritesByRef.get(ref))
+          .filter((executor): executor is HomeMissionExecutorOption => executor !== undefined);
+  const compactFavorites = favorites.length > 6 ? favorites.slice(0, 5) : favorites.slice(0, 6);
+  const pragmaCopy = {
+    name: tCommon("builtInExperts.pragma.name"),
+    description: tCommon("builtInExperts.pragma.description"),
+    scope: tCommon("builtInExperts.pragma.scope"),
+  };
+  const displayCopy = (executor: HomeMissionExecutorOption) =>
+    localizeSystemExpertCopy(executor, pragmaCopy);
+  const kindLabel = (executor: HomeMissionExecutorOption) =>
+    executor.kind === "expert"
+      ? t("expert")
+      : executor.kind === "team"
+        ? t("expertTeam")
+        : t("flow");
+
+  useEffect(() => {
+    if (!dialogOpen) return;
+    const closeOnEscape = (event: KeyboardEvent) => {
+      if (event.key === "Escape") setDialogOpen(false);
+    };
+    window.addEventListener("keydown", closeOnEscape);
+    return () => window.removeEventListener("keydown", closeOnEscape);
+  }, [dialogOpen]);
+
+  useLayoutEffect(() => {
+    if (!dialogOpen || draggedRef === undefined) {
+      favoriteItemPositions.current.clear();
+      return;
+    }
+    const previousPositions = favoriteItemPositions.current;
+    const nextPositions = new Map<string, DOMRect>();
+    const reduceMotion = window.matchMedia("(prefers-reduced-motion: reduce)").matches;
+    for (const [ref, item] of favoriteItemRefs.current) {
+      const nextPosition = item.getBoundingClientRect();
+      nextPositions.set(ref, nextPosition);
+      const previousPosition = previousPositions.get(ref);
+      const verticalDistance =
+        previousPosition?.top === undefined ? 0 : previousPosition.top - nextPosition.top;
+      if (verticalDistance !== 0 && !reduceMotion) {
+        item.animate(
+          [{ transform: `translateY(${verticalDistance}px)` }, { transform: "translateY(0)" }],
+          { duration: 220, easing: "cubic-bezier(0.22, 1, 0.36, 1)" },
+        );
+      }
+    }
+    favoriteItemPositions.current = nextPositions;
+  }, [dialogOpen, draggedRef, dragOrder]);
+
+  const clearDragPreview = () => {
+    setDraggedRef(undefined);
+    setDragOrder(undefined);
+    dragOrderRef.current = undefined;
+    dragInitialOrderRef.current = undefined;
+    favoriteItemPositions.current.clear();
+  };
+
+  const commitDragPreview = () => {
+    const orderedRefs = dragOrderRef.current;
+    const initialOrder = dragInitialOrderRef.current;
+    if (
+      orderedRefs === undefined ||
+      initialOrder === undefined ||
+      orderedRefs.every((ref, index) => ref === initialOrder[index])
+    ) {
+      clearDragPreview();
+      return;
+    }
+    props.onReorder(orderedRefs);
+    setDraggedRef(undefined);
+  };
+
+  useEffect(() => {
+    if (draggedRef === undefined) return;
+    const updatePreview = (event: PointerEvent) => {
+      const current = dragOrderRef.current ?? favorites.map((favorite) => favorite.ref);
+      const targetItems = [...favoriteItemRefs.current]
+        .filter(([ref]) => ref !== draggedRef)
+        .map(([, item]) => ({ bounds: item.getBoundingClientRect() }))
+        .toSorted((left, right) => left.bounds.top - right.bounds.top);
+      const insertionIndex = targetItems.findIndex(
+        ({ bounds }) => event.clientY <= bounds.top + bounds.height * 0.42,
+      );
+      const next = [...current.filter((ref) => ref !== draggedRef)];
+      next.splice(insertionIndex < 0 ? next.length : insertionIndex, 0, draggedRef);
+      if (next.every((ref, index) => ref === current[index])) return;
+      dragOrderRef.current = next;
+      setDragOrder(next);
+    };
+    window.addEventListener("pointermove", updatePreview);
+    window.addEventListener("pointerup", commitDragPreview, { once: true });
+    window.addEventListener("pointercancel", clearDragPreview, { once: true });
+    return () => {
+      window.removeEventListener("pointermove", updatePreview);
+      window.removeEventListener("pointerup", commitDragPreview);
+      window.removeEventListener("pointercancel", clearDragPreview);
+    };
+  }, [clearDragPreview, commitDragPreview, draggedRef, favorites]);
+
+  useEffect(() => {
+    if (draggedRef !== undefined || dragOrder === undefined) return;
+    const currentOrder = favorites.map((favorite) => favorite.ref);
+    if (!dragOrder.every((ref, index) => ref === currentOrder[index])) return;
+    const timer = window.setTimeout(() => {
+      setDragOrder(undefined);
+      dragOrderRef.current = undefined;
+      dragInitialOrderRef.current = undefined;
+    }, 220);
+    return () => window.clearTimeout(timer);
+  }, [dragOrder, draggedRef, favorites]);
+
+  if (favorites.length === 0) return null;
+
+  const renderFavorite = (executor: HomeMissionExecutorOption, draggable = false) => {
+    const Icon = executorIcon(executor);
+    const copy = displayCopy(executor);
+    const workspaceName =
+      executor.preference.favoriteScope === "workspace"
+        ? executor.preference.favoriteWorkspace?.basename
+        : undefined;
+    return (
+      <article
+        className={
+          draggedRef === executor.ref ? "home-favorite-item is-dragging" : "home-favorite-item"
+        }
+        key={executor.ref}
+        ref={(item) => {
+          if (item === null) favoriteItemRefs.current.delete(executor.ref);
+          else favoriteItemRefs.current.set(executor.ref, item);
+        }}
+      >
+        {draggable ? (
+          <button
+            className="home-favorite-drag"
+            type="button"
+            aria-label={t("homeFavoritesDialogDescription")}
+            onPointerDown={(event) => {
+              if (event.button !== 0) return;
+              event.preventDefault();
+              event.currentTarget.setPointerCapture(event.pointerId);
+              const initialOrder = favorites.map((favorite) => favorite.ref);
+              setDraggedRef(executor.ref);
+              dragOrderRef.current = initialOrder;
+              dragInitialOrderRef.current = initialOrder;
+              setDragOrder(initialOrder);
+            }}
+          >
+            <DotsSixVertical size={20} aria-hidden="true" />
+          </button>
+        ) : null}
+        <button
+          className="home-favorite-card"
+          type="button"
+          title={
+            workspaceName === undefined
+              ? copy.description
+              : t("favoriteSwitchWorkspace", { workspace: workspaceName })
+          }
+          onClick={() => {
+            props.onSelect(executor.ref);
+            setDialogOpen(false);
+          }}
+        >
+          <span className="home-favorite-avatar">
+            {executor.kind === "flow" ? (
+              <Icon size={draggable ? 26 : 24} aria-hidden="true" />
+            ) : (
+              <ExpertAvatar
+                avatarId={executor.avatarId}
+                team={executor.kind === "team"}
+                size="sm"
+              />
+            )}
+          </span>
+          <span className="home-favorite-copy">
+            <strong>{copy.name}</strong>
+            <small>{workspaceName ?? kindLabel(executor)}</small>
+          </span>
+        </button>
+      </article>
+    );
+  };
+
+  return (
+    <>
+      <section className="home-favorites" aria-labelledby="home-favorites-title">
+        <div className="home-favorites-heading">
+          <div>
+            <h2 id="home-favorites-title">{t("homeFavorites")}</h2>
+            <button
+              className="home-favorites-manage-button"
+              type="button"
+              aria-label={t("manageExecutors")}
+              title={t("manageExecutors")}
+              onClick={props.onManage}
+            >
+              <GearSix size={15} aria-hidden="true" />
+            </button>
+          </div>
+          <span>{t("homeFavoritesHint")}</span>
+        </div>
+        <div className="home-favorites-list">
+          {compactFavorites.map((executor) => renderFavorite(executor))}
+          {favorites.length > 6 ? (
+            <button
+              className="home-favorite-more"
+              type="button"
+              onClick={() => setDialogOpen(true)}
+            >
+              {t("homeFavoritesMore", { count: favorites.length - compactFavorites.length })}
+            </button>
+          ) : null}
+        </div>
+      </section>
+      {dialogOpen ? (
+        <div
+          className="home-favorites-backdrop"
+          role="presentation"
+          onMouseDown={(event) => {
+            if (event.target === event.currentTarget) setDialogOpen(false);
+          }}
+        >
+          <section
+            className="home-favorites-dialog"
+            role="dialog"
+            aria-modal="true"
+            aria-labelledby="home-favorites-dialog-title"
+          >
+            <header>
+              <div>
+                <h2 id="home-favorites-dialog-title">{t("homeFavorites")}</h2>
+                <p>{t("homeFavoritesDialogDescription")}</p>
+              </div>
+              <button
+                type="button"
+                aria-label={tCommon("actions.close")}
+                onClick={() => setDialogOpen(false)}
+              >
+                <X size={19} aria-hidden="true" />
+              </button>
+            </header>
+            <div className="home-favorites-dialog-list" role="list">
+              {dialogFavorites.map((executor) => renderFavorite(executor, true))}
+            </div>
+          </section>
+        </div>
+      ) : null}
+    </>
+  );
+}
+
+export function previewFavoriteDragOrder(
+  order: readonly string[],
+  sourceRef: string,
+  targetRef: string,
+  placeAfter: boolean,
+): readonly string[] {
+  if (sourceRef === targetRef) return order;
+  const sourceIndex = order.indexOf(sourceRef);
+  if (sourceIndex < 0 || !order.includes(targetRef)) return order;
+  const withoutSource = order.filter((ref) => ref !== sourceRef);
+  const targetIndex = withoutSource.indexOf(targetRef);
+  const next = [...withoutSource];
+  next.splice(targetIndex + (placeAfter ? 1 : 0), 0, sourceRef);
+  return next;
 }
 
 export function missionModelOverrideAvailable(
@@ -685,6 +1044,8 @@ function MissionExecutorPicker(props: {
     },
   ) => Promise<boolean>;
   readonly onChooseFavoriteWorkspace: (ref: string) => Promise<boolean>;
+  readonly managerOpen: boolean;
+  readonly onManagerOpenChange: Dispatch<SetStateAction<boolean>>;
 }) {
   const { t } = useTranslation("missions");
   const { t: tCommon } = useTranslation("common");
@@ -700,7 +1061,6 @@ function MissionExecutorPicker(props: {
     "all",
   );
   const [selectionTag, setSelectionTag] = useState("all");
-  const [managerOpen, setManagerOpen] = useState(false);
   const [managerSearch, setManagerSearch] = useState("");
   const [managerView, setManagerView] = useState<"favorites" | "all" | "hidden">("all");
   const [managerKind, setManagerKind] = useState<"all" | HomeMissionExecutorOption["kind"]>("all");
@@ -760,16 +1120,16 @@ function MissionExecutorPicker(props: {
   );
 
   const closeManager = useCallback(() => {
-    setManagerOpen(false);
+    props.onManagerOpenChange(false);
     setManagerSearch("");
     setManagerView("all");
     setManagerKind("all");
     setManagerTag("all");
     requestAnimationFrame(() => triggerRef.current?.focus());
-  }, []);
+  }, [props]);
 
   useEffect(() => {
-    if (!managerOpen) return;
+    if (!props.managerOpen) return;
     const handleManagerKeyDown = (event: KeyboardEvent) => {
       if (event.key === "Escape") {
         event.preventDefault();
@@ -802,7 +1162,7 @@ function MissionExecutorPicker(props: {
     };
     window.addEventListener("keydown", handleManagerKeyDown);
     return () => window.removeEventListener("keydown", handleManagerKeyDown);
-  }, [closeManager, managerOpen]);
+  }, [closeManager, props.managerOpen]);
 
   return (
     <>
@@ -833,149 +1193,161 @@ function MissionExecutorPicker(props: {
           <CaretDown size={14} aria-hidden="true" />
         </button>
         {open ? (
-          <div
-            className="mission-executor-menu"
-            role="dialog"
-            aria-modal="false"
-            aria-label={t("chooseMissionExecutor")}
-          >
-            <header>
-              <strong>{t("chooseMissionExecutor")}</strong>
-              <button
-                className="mission-executor-manage-button"
-                type="button"
-                onClick={() => {
-                  setOpen(false);
-                  setSearch("");
-                  setSelectionKind("all");
-                  setSelectionTag("all");
-                  setManagerOpen(true);
-                }}
-              >
-                <GearSix size={15} aria-hidden="true" />
-                {t("manageExecutors")}
-              </button>
-            </header>
-            <label className="mission-executor-search">
-              <MagnifyingGlass size={17} aria-hidden="true" />
-              <span className="sr-only">{t("searchExecutors")}</span>
-              <input
-                autoFocus
-                value={search}
-                onChange={(event) => setSearch(event.target.value)}
-                placeholder={t("searchExecutors")}
-              />
-            </label>
-            <div className="mission-executor-filters mission-executor-selection-filters">
-              <div>
-                <span className="sr-only">{t("filterExecutorKind")}</span>
-                <SelectMenu<"all" | HomeMissionExecutorOption["kind"]>
-                  ariaLabel={t("filterExecutorKind")}
-                  className="form-select"
-                  overlayOwnerId={overlayOwnerId}
-                  value={selectionKind}
-                  options={[
-                    { value: "all", label: t("allKinds") },
-                    { value: "expert", label: t("expert") },
-                    { value: "team", label: t("expertTeam") },
-                    { value: "flow", label: t("flow") },
-                  ]}
-                  onChange={setSelectionKind}
+          <>
+            <div
+              className="mission-executor-selection-backdrop"
+              role="presentation"
+              onMouseDown={() => {
+                setOpen(false);
+                setSearch("");
+                setSelectionKind("all");
+                setSelectionTag("all");
+              }}
+            />
+            <div
+              className="mission-executor-menu"
+              role="dialog"
+              aria-modal="false"
+              aria-label={t("chooseMissionExecutor")}
+            >
+              <header>
+                <strong>{t("chooseMissionExecutor")}</strong>
+                <button
+                  className="mission-executor-close-button"
+                  type="button"
+                  aria-label={tCommon("actions.close")}
+                  title={tCommon("actions.close")}
+                  onClick={() => {
+                    setOpen(false);
+                    setSearch("");
+                    setSelectionKind("all");
+                    setSelectionTag("all");
+                  }}
+                >
+                  <X size={17} aria-hidden="true" />
+                </button>
+              </header>
+              <label className="mission-executor-search">
+                <MagnifyingGlass size={17} aria-hidden="true" />
+                <span className="sr-only">{t("searchExecutors")}</span>
+                <input
+                  autoFocus
+                  value={search}
+                  onChange={(event) => setSearch(event.target.value)}
+                  placeholder={t("searchExecutors")}
                 />
-              </div>
-              {tags.length > 0 ? (
+              </label>
+              <div className="mission-executor-filters mission-executor-selection-filters">
                 <div>
-                  <span className="sr-only">{t("filterExecutorTag")}</span>
-                  <SelectMenu
-                    ariaLabel={t("filterExecutorTag")}
+                  <span className="sr-only">{t("filterExecutorKind")}</span>
+                  <SelectMenu<"all" | HomeMissionExecutorOption["kind"]>
+                    ariaLabel={t("filterExecutorKind")}
                     className="form-select"
                     overlayOwnerId={overlayOwnerId}
-                    value={selectionTag}
+                    value={selectionKind}
                     options={[
-                      { value: "all", label: t("allTags") },
-                      ...tags.map((candidate) => ({ value: candidate, label: candidate })),
+                      { value: "all", label: t("allKinds") },
+                      { value: "expert", label: t("expert") },
+                      { value: "team", label: t("expertTeam") },
+                      { value: "flow", label: t("flow") },
                     ]}
-                    onChange={setSelectionTag}
+                    onChange={setSelectionKind}
                   />
                 </div>
-              ) : null}
-            </div>
-            <div
-              className="mission-executor-options mission-executor-selection-options"
-              role="list"
-              aria-label={t("missionExecutors")}
-            >
-              {selectableExecutors.length === 0 ? (
-                <p className="mission-executor-empty">
-                  {t("noExecutors")}
-                  <span>{t("tryAnother")}</span>
-                </p>
-              ) : null}
-              {selectableExecutors.map((executor) => {
-                const Icon = executorIcon(executor);
-                const copy = displayCopy(executor);
-                const isSelected = executor.ref === props.value;
-                const isPinned = isHomeExecutorFavorite(executor, props.workspace?.path);
-                return (
-                  <div
-                    className={
-                      isSelected
-                        ? "mission-executor-option is-selection is-selected"
-                        : "mission-executor-option is-selection"
-                    }
-                    key={executor.ref}
-                  >
-                    <button
-                      type="button"
-                      aria-pressed={isSelected}
-                      className="mission-executor-option-main"
-                      onClick={() => {
-                        props.onChange(executor.ref);
-                        setOpen(false);
-                        setSearch("");
-                        setSelectionKind("all");
-                        setSelectionTag("all");
-                      }}
-                    >
-                      <span className="mission-executor-option-icon">
-                        {executor.kind === "flow" ? (
-                          <Icon size={18} aria-hidden="true" />
-                        ) : (
-                          <ExpertAvatar
-                            avatarId={executor.avatarId}
-                            team={executor.kind === "team"}
-                            size="xs"
-                          />
-                        )}
-                      </span>
-                      <span className="mission-executor-option-copy">
-                        <strong>{copy.name}</strong>
-                        <small>{copy.description}</small>
-                      </span>
-                      <span className="mission-executor-option-status">
-                        {isPinned ? (
-                          <Star
-                            className="mission-executor-pinned-star"
-                            size={15}
-                            weight="fill"
-                            aria-label={t("favoritePinned")}
-                          />
-                        ) : null}
-                        <Check
-                          className={isSelected ? "is-visible" : undefined}
-                          size={17}
-                          aria-hidden="true"
-                        />
-                      </span>
-                    </button>
+                {tags.length > 0 ? (
+                  <div>
+                    <span className="sr-only">{t("filterExecutorTag")}</span>
+                    <SelectMenu
+                      ariaLabel={t("filterExecutorTag")}
+                      className="form-select"
+                      overlayOwnerId={overlayOwnerId}
+                      value={selectionTag}
+                      options={[
+                        { value: "all", label: t("allTags") },
+                        ...tags.map((candidate) => ({ value: candidate, label: candidate })),
+                      ]}
+                      onChange={setSelectionTag}
+                    />
                   </div>
-                );
-              })}
+                ) : null}
+              </div>
+              <div
+                className="mission-executor-options mission-executor-selection-options"
+                role="list"
+                aria-label={t("missionExecutors")}
+              >
+                {selectableExecutors.length === 0 ? (
+                  <p className="mission-executor-empty">
+                    {t("noExecutors")}
+                    <span>{t("tryAnother")}</span>
+                  </p>
+                ) : null}
+                {selectableExecutors.map((executor) => {
+                  const Icon = executorIcon(executor);
+                  const copy = displayCopy(executor);
+                  const isSelected = executor.ref === props.value;
+                  const isPinned = isHomeExecutorFavorite(executor, props.workspace?.path);
+                  return (
+                    <div
+                      className={
+                        isSelected
+                          ? "mission-executor-option is-selection is-selected"
+                          : "mission-executor-option is-selection"
+                      }
+                      key={executor.ref}
+                    >
+                      <button
+                        type="button"
+                        aria-pressed={isSelected}
+                        className="mission-executor-option-main"
+                        onClick={() => {
+                          props.onChange(executor.ref);
+                          setOpen(false);
+                          setSearch("");
+                          setSelectionKind("all");
+                          setSelectionTag("all");
+                        }}
+                      >
+                        <span className="mission-executor-option-icon">
+                          {executor.kind === "flow" ? (
+                            <Icon size={22} aria-hidden="true" />
+                          ) : (
+                            <ExpertAvatar
+                              avatarId={executor.avatarId}
+                              team={executor.kind === "team"}
+                              size="sm"
+                            />
+                          )}
+                        </span>
+                        <span className="mission-executor-option-copy">
+                          <strong>{copy.name}</strong>
+                          <small>{copy.description}</small>
+                        </span>
+                        <span className="mission-executor-option-status">
+                          {isPinned ? (
+                            <Star
+                              className="mission-executor-pinned-star"
+                              size={15}
+                              weight="fill"
+                              aria-label={t("favoritePinned")}
+                            />
+                          ) : null}
+                          <Check
+                            className={isSelected ? "is-visible" : undefined}
+                            size={17}
+                            aria-hidden="true"
+                          />
+                        </span>
+                      </button>
+                    </div>
+                  );
+                })}
+              </div>
             </div>
-          </div>
+          </>
         ) : null}
       </div>
-      {managerOpen ? (
+      {props.managerOpen ? (
         <div
           className="mission-executor-manager-backdrop"
           role="presentation"
@@ -1092,12 +1464,12 @@ function MissionExecutorPicker(props: {
                     <div className="mission-executor-option-main">
                       <span className="mission-executor-option-icon">
                         {executor.kind === "flow" ? (
-                          <Icon size={18} aria-hidden="true" />
+                          <Icon size={22} aria-hidden="true" />
                         ) : (
                           <ExpertAvatar
                             avatarId={executor.avatarId}
                             team={executor.kind === "team"}
-                            size="xs"
+                            size="sm"
                           />
                         )}
                       </span>
@@ -1430,6 +1802,33 @@ export function rankHomeMissionExecutors(
       ? recentDifference
       : displayCopy(left).name.localeCompare(displayCopy(right).name);
   });
+}
+
+export function rankFavoriteHomeExecutors(
+  executors: readonly HomeMissionExecutorOption[],
+): readonly HomeMissionExecutorOption[] {
+  return executors
+    .filter(
+      (executor) => !executor.preference.hidden && executor.preference.favoriteScope !== "none",
+    )
+    .toSorted((left, right) => {
+      const rankDifference =
+        (left.preference.favoriteRank ?? Number.MAX_SAFE_INTEGER) -
+        (right.preference.favoriteRank ?? Number.MAX_SAFE_INTEGER);
+      if (rankDifference !== 0) return rankDifference;
+      const recentDifference =
+        Date.parse(right.preference.lastUsedAt ?? "1970-01-01T00:00:00.000Z") -
+        Date.parse(left.preference.lastUsedAt ?? "1970-01-01T00:00:00.000Z");
+      return recentDifference !== 0 ? recentDifference : left.name.localeCompare(right.name);
+    });
+}
+
+export function preferredWorkspaceForExecutorSelection(
+  executor: HomeMissionExecutorOption | undefined,
+): WorkspaceSelection | undefined {
+  return executor?.preference.favoriteScope === "workspace"
+    ? executor.preference.favoriteWorkspace
+    : executor?.preference.lastWorkspace;
 }
 
 export function isHomeExecutorFavorite(
