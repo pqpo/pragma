@@ -509,11 +509,13 @@ function createAskUserQuestionTool(): ExpertAgentDefaultTool {
         };
       }
 
+      const text =
+        response.answers === undefined
+          ? "User answered the question."
+          : JSON.stringify(response.answers, null, 2);
+      const notes = response.notes?.trim();
       return {
-        text:
-          response.answers === undefined
-            ? "User answered the question."
-            : JSON.stringify(response.answers, null, 2),
+        text: notes === undefined || notes === "" ? text : `${text}\n\nUser notes:\n${notes}`,
         details: response.answers,
       };
     },

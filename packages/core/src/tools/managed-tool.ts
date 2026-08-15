@@ -84,6 +84,7 @@ export interface ExpertAgentUserQuestionResponse {
   readonly answered: boolean;
   readonly reason?: string | undefined;
   readonly answers?: unknown;
+  readonly notes?: string | undefined;
 }
 
 export type ExpertAgentHumanRequest =
@@ -139,6 +140,7 @@ export const ExpertAgentUserQuestionResponseSchema = z.object({
   answered: z.boolean(),
   reason: z.string().optional(),
   answers: z.unknown().optional(),
+  notes: z.string().optional(),
 }) satisfies z.ZodType<ExpertAgentUserQuestionResponse>;
 
 export const ExpertAgentHumanResponseSchema = z.discriminatedUnion("kind", [

@@ -4075,7 +4075,14 @@ function toExpertHumanResponse(
       if (selected !== undefined) supplied[question.question] = selected;
     }
   }
-  return { kind: "user_question", answered: true, answers: supplied };
+  return {
+    kind: "user_question",
+    answered: true,
+    answers: supplied,
+    ...(response.notes === undefined || response.notes.trim() === ""
+      ? {}
+      : { notes: response.notes }),
+  };
 }
 
 async function waitForExpertTurnSettlement(

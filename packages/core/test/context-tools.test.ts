@@ -11,6 +11,49 @@ import {
 } from "../src/index.ts";
 
 describe("Expert context tools", () => {
+  it("includes aggregated user notes in askUserQuestion output", async () => {
+    const unsupported = vi.fn(async () => {
+      throw new Error("not used");
+    });
+    const operations: ExpertAgentContextItemOperations = {
+      listContext: unsupported,
+      readContext: unsupported,
+      searchContext: unsupported,
+      addContext: unsupported,
+      editContext: unsupported,
+      deleteContext: unsupported,
+    };
+    const tool = createContextTools(operations).find(
+      (candidate) => candidate.name === "askUserQuestion",
+    )!;
+
+    const result = await tool.call(
+      {
+        questions: [
+          {
+            question: "Which direction should we take?",
+            header: "Direction",
+            kind: "single_choice",
+            options: [{ label: "Option one", description: "The first route." }],
+          },
+        ],
+      },
+      undefined,
+      {
+        humanInteraction: async () => ({
+          kind: "user_question",
+          answered: true,
+          answers: { "Which direction should we take?": "Option one" },
+          notes: "Which direction should we take?\nPrioritize the first route.",
+        }),
+      },
+    );
+
+    expect(result.text).toBe(
+      '{\n  "Which direction should we take?": "Option one"\n}\n\nUser notes:\nWhich direction should we take?\nPrioritize the first route.',
+    );
+  });
+
   it("returns an add receipt without echoing persisted context content", async () => {
     const sentinel = "这是用于验证写入回执不回显正文的长中文标记。".repeat(32);
     const addContext = vi.fn(async (input: { readonly content: string }) => ({
