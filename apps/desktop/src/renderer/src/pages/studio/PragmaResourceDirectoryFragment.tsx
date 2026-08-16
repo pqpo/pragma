@@ -4,10 +4,8 @@ import { useTranslation } from "react-i18next";
 
 import {
   ArrowLeft,
-  BracketsCurly,
   CaretRight,
   CaretDown,
-  CheckCircle,
   GitBranch,
   Folder,
   Database,
