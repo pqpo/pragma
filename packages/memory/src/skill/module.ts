@@ -121,23 +121,29 @@ export async function createSkillMemoryModule(options: {
           await store.complete(job, "rejected", now());
           return;
         }
-        if (!skillSourceThresholdMet(sources)) {
-          await store.complete(job, "rejected", now());
-          return;
-        }
         const expertRefs = producerExpertRefs(job.rootRef, sources);
         if (expertRefs.length === 0) {
           await store.complete(job, "rejected", now());
           return;
         }
-        for (const expertRef of expertRefs) {
+        const eligibleExpertSources = expertRefs
+          .map((expertRef) => ({
+            expertRef,
+            sources: sourcesForExpert(sources, expertRef),
+          }))
+          .filter(({ sources: expertSources }) => skillSourceThresholdMet(expertSources));
+        if (eligibleExpertSources.length === 0) {
+          await store.complete(job, "rejected", now());
+          return;
+        }
+        for (const { expertRef, sources: expertSources } of eligibleExpertSources) {
           phase = "target_read";
           const existingTargets = await options.targetReader.listTargets({ expertRef });
           const input = SkillExtractionInputSchema.parse({
             schemaVersion: "pragma.memory-skill-extraction-input/v1",
             jobId: job.id,
             rootRef: job.rootRef,
-            sources: sourcesForExpert(sources, expertRef),
+            sources: expertSources,
             existingTargets,
           });
           if (!(await store.isClaimCurrent(job))) return;
@@ -223,16 +229,30 @@ function groupTerminalSignals(
 }
 
 function boundSources(sources: readonly SkillSourceSnapshot[]): readonly SkillSourceSnapshot[] {
-  const selected: SkillSourceSnapshot[] = [];
-  for (const source of sources.slice(0, MAX_SOURCE_REVISIONS)) {
-    if (
-      Buffer.byteLength(JSON.stringify([...selected, source])) >
-      DEFAULT_MEMORY_STORAGE_POLICY.extractionPromptMaxBytes
+  const candidates = sources
+    .map((source, index) => ({ source, index }))
+    .toSorted(
+      (left, right) =>
+        sourcePriority(left.source) - sourcePriority(right.source) || left.index - right.index,
     )
-      break;
-    selected.push(source);
+    .slice(0, MAX_SOURCE_REVISIONS);
+  const selected: Array<{ readonly source: SkillSourceSnapshot; readonly index: number }> = [];
+  for (const candidate of candidates) {
+    if (
+      Buffer.byteLength(
+        JSON.stringify([...selected.map((item) => item.source), candidate.source]),
+      ) > DEFAULT_MEMORY_STORAGE_POLICY.extractionPromptMaxBytes
+    )
+      continue;
+    selected.push(candidate);
   }
-  return selected;
+  return selected.toSorted((left, right) => left.index - right.index).map((item) => item.source);
+}
+
+function sourcePriority(source: SkillSourceSnapshot): number {
+  if (source.ref.kind === "episodic" && (source.valueScore ?? 0) >= 0.85) return 0;
+  if (source.ref.kind === "episodic") return 1;
+  return 2;
 }
 
 function producerExpertRefs(

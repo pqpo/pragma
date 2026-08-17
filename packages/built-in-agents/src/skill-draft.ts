@@ -1,7 +1,7 @@
 import { randomUUID } from "node:crypto";
 
 import type { ExpertAgentManagedTool, ExpertAgentToolCallResult } from "@pragma/core";
-import { validateSkillExtractionCandidate } from "@pragma/memory";
+import { inspectSkillSourceEligibility, validateSkillExtractionCandidate } from "@pragma/memory";
 import {
   SkillExtractionCandidateSchema,
   SkillPackageFileSchema,
@@ -15,6 +15,7 @@ import { z } from "zod";
 import { validateGeneratedSkillPackage } from "./skill-validation.ts";
 
 const MAX_DRAFTS = 3;
+const MAX_BEGIN_VALIDATION_ATTEMPTS = 3;
 const MAX_SUBMIT_ATTEMPTS = 3;
 
 const CandidateContentSchema = SkillExtractionCandidateSchema.shape.content;
@@ -120,13 +121,21 @@ export interface SkillDraftToolError {
 export interface SkillDraftSession {
   readonly tools: readonly ExpertAgentManagedTool<string, ExpertAgentToolCallResult>[];
   output(): SkillExtractionOutput | undefined;
+  beginRepairExhausted(): boolean;
   repairExhausted(): boolean;
 }
 
 export function createSkillDraftSession(input: SkillExtractionInput): SkillDraftSession {
   const drafts = new Map<string, SkillDraft>();
   const accepted: SkillExtractionCandidate[] = [];
+  const eligibility = inspectSkillSourceEligibility(input.sources);
+  const failedBeginFingerprints = new Set<string>();
+  let beginValidationAttempts = 0;
+  let beginExhausted = false;
   let exhausted = false;
+  let terminalOutput: SkillExtractionOutput | undefined = eligibility.eligible
+    ? undefined
+    : { retain: false, reason: "insufficient-independent-sources" };
   let toolQueue: Promise<void> = Promise.resolve();
   const enqueue = (
     operation: () => Promise<ExpertAgentToolCallResult>,
@@ -138,13 +147,35 @@ export function createSkillDraftSession(input: SkillExtractionInput): SkillDraft
     );
     return result;
   };
+  const recordBeginFailure = (
+    issues: readonly SkillDraftToolError[],
+    fingerprint?: string,
+  ): boolean => {
+    beginValidationAttempts += 1;
+    const repeated = fingerprint !== undefined && failedBeginFingerprints.has(fingerprint);
+    if (fingerprint !== undefined) failedBeginFingerprints.add(fingerprint);
+    const terminal =
+      !eligibility.eligible || repeated || beginValidationAttempts >= MAX_BEGIN_VALIDATION_ATTEMPTS;
+    if (terminal) {
+      beginExhausted = true;
+      terminalOutput = {
+        retain: false,
+        reason:
+          !eligibility.eligible || issues.some((issue) => issue.code === "source_threshold_not_met")
+            ? "insufficient-independent-sources"
+            : "no-reusable-skill",
+      };
+    }
+    return terminal;
+  };
 
   const begin = managedTool(
     "begin_skill_draft",
-    'Begin one Skill candidate draft after validating its metadata, provenance, and route. route must be an object: {"type":"create"}; {"type":"revise","bindingId":"<existing UUID>"}; or {"type":"ambiguous","bindingIds":["<existing UUID>","<existing UUID>"]}.',
+    'Begin one Skill candidate draft only after the host-computed source eligibility check passes. The candidate must cite at least three high-value Episodic sources across two conversations, including two successful or recovered outcomes. route must be an object: {"type":"create"}; {"type":"revise","bindingId":"<existing UUID>"}; or {"type":"ambiguous","bindingIds":["<existing UUID>","<existing UUID>"]}.',
     BeginSkillDraftInputSchema,
     async (args) => {
       if (exhausted) return failure([repairBudgetError()], true);
+      if (beginExhausted) return failure([beginBudgetError()], false, true);
       if (drafts.size >= MAX_DRAFTS) {
         return failure([
           {
@@ -155,7 +186,11 @@ export function createSkillDraftSession(input: SkillExtractionInput): SkillDraft
         ]);
       }
       const parsed = BeginSkillDraftInputSchema.safeParse(args);
-      if (!parsed.success) return failure(zodErrors(parsed.error));
+      if (!parsed.success) {
+        const errors = zodErrors(parsed.error);
+        const terminal = recordBeginFailure(errors);
+        return failure(terminal ? [...errors, beginBudgetError()] : errors, false, terminal);
+      }
       const probe = SkillExtractionCandidateSchema.parse({
         ...parsed.data,
         content: {
@@ -169,7 +204,10 @@ export function createSkillDraftSession(input: SkillExtractionInput): SkillDraft
         input.existingTargets,
         new Set(accepted.map((candidate) => candidate.content.normalizedKey)),
       );
-      if (issues.length > 0) return failure(issues);
+      if (issues.length > 0) {
+        const terminal = recordBeginFailure(issues, JSON.stringify(parsed.data));
+        return failure(terminal ? [...issues, beginBudgetError()] : issues, false, terminal);
+      }
       const draftId = randomUUID();
       drafts.set(draftId, {
         id: draftId,
@@ -283,7 +321,8 @@ export function createSkillDraftSession(input: SkillExtractionInput): SkillDraft
   return {
     tools: [begin, put, submit],
     output: () =>
-      accepted.length === 0 ? undefined : { retain: true as const, candidates: accepted },
+      accepted.length === 0 ? terminalOutput : { retain: true as const, candidates: accepted },
+    beginRepairExhausted: () => beginExhausted && eligibility.eligible && accepted.length === 0,
     repairExhausted: () => exhausted,
   };
 }
@@ -318,9 +357,15 @@ function success(value: unknown): ExpertAgentToolCallResult {
 function failure(
   errors: readonly SkillDraftToolError[],
   repairExhausted = false,
+  terminal = false,
 ): ExpertAgentToolCallResult {
-  const value = { ok: false as const, errors, ...(repairExhausted ? { repairExhausted } : {}) };
-  return { text: JSON.stringify(value), details: value };
+  const value = {
+    ok: false as const,
+    errors,
+    ...(repairExhausted ? { repairExhausted } : {}),
+    ...(terminal ? { terminal } : {}),
+  };
+  return { text: JSON.stringify(value), isError: terminal || repairExhausted, details: value };
 }
 
 function zodErrors(error: z.ZodError): readonly SkillDraftToolError[] {
@@ -379,5 +424,13 @@ function repairBudgetError(): SkillDraftToolError {
     path: "draftId",
     code: "skill_draft_repair_exhausted",
     message: `The Skill draft exhausted its ${MAX_SUBMIT_ATTEMPTS} submission attempts.`,
+  };
+}
+
+function beginBudgetError(): SkillDraftToolError {
+  return {
+    path: "sourceRefs",
+    code: "skill_draft_begin_repair_exhausted",
+    message: `The Skill draft begin validation exhausted its ${MAX_BEGIN_VALIDATION_ATTEMPTS} attempts or received a repeated invalid request.`,
   };
 }

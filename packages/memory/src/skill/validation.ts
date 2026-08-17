@@ -1,8 +1,20 @@
 import type {
   ExistingMemorySkillTarget,
   SkillExtractionCandidate,
+  SkillSourceRevisionRef,
   SkillSourceSnapshot,
 } from "@pragma/shared";
+
+export const SKILL_SOURCE_THRESHOLD_MESSAGE =
+  "The candidate must cite three high-value Episodic sources across two conversations, including two successful or recovered outcomes.";
+
+export interface SkillSourceEligibility {
+  readonly eligible: boolean;
+  readonly highValueEpisodicCount: number;
+  readonly conversationCount: number;
+  readonly successfulOrRecoveredCount: number;
+  readonly qualifyingSourceRefs: readonly SkillSourceRevisionRef[];
+}
 
 export interface SkillCandidateValidationIssue {
   readonly path: string;
@@ -15,7 +27,9 @@ export interface SkillCandidateValidationIssue {
   readonly message: string;
 }
 
-export function skillSourceThresholdMet(sources: readonly SkillSourceSnapshot[]): boolean {
+export function inspectSkillSourceEligibility(
+  sources: readonly SkillSourceSnapshot[],
+): SkillSourceEligibility {
   const currentEpisodes = new Map<string, SkillSourceSnapshot>();
   for (const source of sources) {
     if (source.ref.kind !== "episodic") continue;
@@ -39,7 +53,19 @@ export function skillSourceThresholdMet(sources: readonly SkillSourceSnapshot[])
   const successful = episodes.filter(
     (source) => source.outcome === "succeeded" || source.hasSuccessfulRecovery,
   );
-  return episodes.length >= 3 && conversations.size >= 2 && successful.length >= 2;
+  return {
+    eligible: episodes.length >= 3 && conversations.size >= 2 && successful.length >= 2,
+    highValueEpisodicCount: episodes.length,
+    conversationCount: conversations.size,
+    successfulOrRecoveredCount: successful.length,
+    qualifyingSourceRefs: episodes
+      .map((source) => source.ref)
+      .toSorted((left, right) => left.id.localeCompare(right.id) || left.revision - right.revision),
+  };
+}
+
+export function skillSourceThresholdMet(sources: readonly SkillSourceSnapshot[]): boolean {
+  return inspectSkillSourceEligibility(sources).eligible;
 }
 
 export function validateSkillExtractionCandidate(
@@ -64,8 +90,7 @@ export function validateSkillExtractionCandidate(
     issues.push({
       path: "sourceRefs",
       code: "source_threshold_not_met",
-      message:
-        "The candidate must cite three high-value Episodic sources across two conversations, including two successful or recovered outcomes.",
+      message: SKILL_SOURCE_THRESHOLD_MESSAGE,
     });
   }
 

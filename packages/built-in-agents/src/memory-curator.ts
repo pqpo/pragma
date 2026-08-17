@@ -7,6 +7,7 @@ import {
   SEMANTIC_MEMORY_CURATOR_PROMPT_VERSION,
   SKILL_MEMORY_CURATOR_PROMPT_VERSION,
   SemanticExtractionOutputSchema,
+  inspectSkillSourceEligibility,
   mergeMemoryEvidenceOmissionStats,
   selectBoundedMemoryEvidence,
   type EpisodicMemoryExtractor,
@@ -24,6 +25,7 @@ import {
   type MemoryExtractionOutputDiagnostic,
   type SkillExtractionInput,
   type SkillExtractionOutput,
+  type SkillSourceSnapshot,
 } from "@pragma/shared";
 
 import { inspectStructuredJson } from "./structured-output.ts";
@@ -298,11 +300,22 @@ export function renderKnowledgeExtractionPrompt(
 export function renderSkillExtractionPrompt(
   input: Parameters<SkillMemoryExtractor["extract"]>[0],
 ): string {
-  return enforcePromptLimit(
-    [
+  const render = (sources: readonly SkillSourceSnapshot[]): string => {
+    const eligibility = inspectSkillSourceEligibility(sources);
+    return [
       "Extract at most three complete, reusable Skill candidates from these curated Memory sources.",
       "A Skill is a coherent executable workflow, not a fact, isolated tip, command fragment, or one-off success. Merge related steps into one Skill and return retain=false when the pattern is fragmentary.",
       "Every candidate must cite at least three distinct high-value Episodic ids across at least two conversations; at least two must have succeeded or recovered successfully. Semantic sources may support but never satisfy this threshold.",
+      "Host-computed source eligibility is authoritative; do not try to satisfy an ineligible input by repeating the same draft request.",
+      "Source eligibility:",
+      JSON.stringify({
+        eligible: eligibility.eligible,
+        highValueEpisodicCount: eligibility.highValueEpisodicCount,
+        conversationCount: eligibility.conversationCount,
+        successfulOrRecoveredCount: eligibility.successfulOrRecoveredCount,
+        qualifyingSourceRefs: eligibility.qualifyingSourceRefs,
+      }),
+      'When eligible is false, do not call begin_skill_draft; return exactly {"retain":false,"reason":"insufficient-independent-sources"}.',
       "Generate SKILL.md plus optional references/*.md. Scripts are optional and must be dependency-free Node 22 ESM under scripts/*.mjs with node:test coverage under tests/*.test.mjs.",
       "For each candidate create at least three source replay expectations and one clearly non-applicable boundary case.",
       'Compare only existingTargets. Use revise only for one clear match, ambiguous for two or more plausible matches, otherwise create. Never invent a binding id. route is always an object: use {"type":"create"}; use {"type":"revise","bindingId":"an existing binding UUID"}; or use {"type":"ambiguous","bindingIds":["existing binding UUID 1","existing binding UUID 2"]}.',
@@ -314,9 +327,39 @@ export function renderSkillExtractionPrompt(
       "Existing Memory Skills:",
       JSON.stringify(input.existingTargets),
       "Sources:",
-      JSON.stringify(input.sources),
-    ].join("\n\n"),
-  );
+      JSON.stringify(sources),
+    ].join("\n\n");
+  };
+  const selected = selectSkillPromptSources(input, render);
+  return enforcePromptLimit(render(selected));
+}
+
+function selectSkillPromptSources(
+  input: Parameters<SkillMemoryExtractor["extract"]>[0],
+  render: (sources: readonly SkillSourceSnapshot[]) => string,
+): readonly SkillSourceSnapshot[] {
+  const candidates = input.sources
+    .map((source, index) => ({ source, index }))
+    .toSorted(
+      (left, right) =>
+        skillSourcePriority(left.source) - skillSourcePriority(right.source) ||
+        left.index - right.index,
+    );
+  const selected: Array<{ readonly source: SkillSourceSnapshot; readonly index: number }> = [];
+  for (const candidate of candidates) {
+    const next = [...selected.map((item) => item.source), candidate.source];
+    if (Buffer.byteLength(render(next)) > DEFAULT_MEMORY_STORAGE_POLICY.extractionPromptMaxBytes) {
+      continue;
+    }
+    selected.push(candidate);
+  }
+  return selected.toSorted((left, right) => left.index - right.index).map((item) => item.source);
+}
+
+function skillSourcePriority(source: SkillSourceSnapshot): number {
+  if (source.ref.kind === "episodic" && (source.valueScore ?? 0) >= 0.85) return 0;
+  if (source.ref.kind === "episodic") return 1;
+  return 2;
 }
 
 function curatorOutputDiagnostic(

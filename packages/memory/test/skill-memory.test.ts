@@ -48,6 +48,36 @@ describe("Skill learning extraction", () => {
     module.close();
   });
 
+  it("extracts only from producer Experts whose own evidence meets the threshold", async () => {
+    const sourceRevisions = [
+      episode("expert-a-one", "conversation-a", "succeeded", "expert-a"),
+      episode("expert-a-two", "conversation-a", "succeeded", "expert-a"),
+      episode("expert-a-three", "conversation-a", "succeeded", "expert-a"),
+      episode("expert-b-one", "conversation-b", "succeeded", "expert-b"),
+      episode("expert-b-two", "conversation-b", "succeeded", "expert-b"),
+      episode("expert-b-three", "conversation-c", "failed", "expert-b"),
+    ];
+    const extract = vi.fn<SkillMemoryExtractor["extract"]>(async (input) => {
+      expect(
+        input.sources.every((source) => source.producerRefs.some((ref) => ref.id === "expert-b")),
+      ).toBe(true);
+      return {
+        output: { retain: false, reason: "no-reusable-skill" },
+        provenance: provenance(),
+      };
+    });
+    const module = await createModule(sourceRevisions, { extract });
+
+    await schedule(module, sourceRevisions);
+    await module.runBackgroundOnce?.();
+
+    expect(extract).toHaveBeenCalledOnce();
+    expect(await module.store.listJobs()).toEqual([
+      expect.objectContaining({ status: "completed", completion: "rejected" }),
+    ]);
+    module.close();
+  });
+
   it("filters a candidate below the source threshold and completes without user attention", async () => {
     const sourceRevisions = sources();
     const submit = vi.fn(async () => undefined);
@@ -403,13 +433,14 @@ function episode(
   id: string,
   conversationId: string,
   outcome: SkillSourceSnapshot["outcome"],
+  expertId = "expert-a",
 ): SkillSourceSnapshot {
   return {
     ref: { kind: "episodic", id, revision: 1 },
-    rootRef: ref("pragma.expert", "expert-a"),
+    rootRef: ref("pragma.expert", expertId),
     conversationRef: ref("pragma.mission", conversationId),
     sourceExecutionIds: [`execution-${id}`],
-    producerRefs: [ref("pragma.expert", "expert-a")],
+    producerRefs: [ref("pragma.expert", expertId)],
     title: `Episode ${id}`,
     body: "A reusable multi-step workflow was completed.",
     outcome,
