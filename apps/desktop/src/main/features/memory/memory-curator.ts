@@ -438,6 +438,12 @@ async function runCuratorMission(input: {
       .at(-1);
     if (content === undefined) throw new Error("memory_curator_output_missing");
     const runtimeOutput = await input.options.runner.getTerminalRuntimeOutputDiagnostic(mission.id);
+    if (skillDraftSession?.beginRepairExhausted() === true) {
+      throw Object.assign(new Error("skill_draft_begin_repair_exhausted"), {
+        code: "skill_draft_begin_repair_exhausted",
+        retryable: true,
+      });
+    }
     if (skillDraftSession?.repairExhausted() === true) {
       throw Object.assign(new Error("skill_draft_repair_exhausted"), {
         code: "skill_draft_repair_exhausted",

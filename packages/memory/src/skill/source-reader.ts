@@ -1,4 +1,8 @@
-import { SkillSourceSnapshotSchema, type MemorySubjectRef, type SkillSourceSnapshot } from "@pragma/shared";
+import {
+  SkillSourceSnapshotSchema,
+  type MemorySubjectRef,
+  type SkillSourceSnapshot,
+} from "@pragma/shared";
 
 import type { EpisodicMemoryStore } from "../episodic/store.ts";
 import type { SemanticMemoryStore } from "../semantic/store.ts";
@@ -17,7 +21,10 @@ export function createSkillSourceReader(options: {
 }): SkillSourceReader {
   return {
     async listEligibleSources(input) {
-      const [episodes, facts] = await Promise.all([options.episodic.list(), options.semantic.list()]);
+      const [episodes, facts] = await Promise.all([
+        options.episodic.list(),
+        options.semantic.list(),
+      ]);
       const episodic = episodes
         .filter(
           (episode) =>
@@ -77,12 +84,17 @@ export function createSkillSourceReader(options: {
             sensitivity: fact.sensitivity,
           }),
         );
-      return [...episodic, ...semantic]
-        .toSorted(
-          (left, right) =>
-            right.observedAt.localeCompare(left.observedAt) || sourceKey(left).localeCompare(sourceKey(right)),
-        )
-        .slice(0, input.limit);
+      const sortByObservedAt = (left: SkillSourceSnapshot, right: SkillSourceSnapshot): number =>
+        right.observedAt.localeCompare(left.observedAt) ||
+        sourceKey(left).localeCompare(sourceKey(right));
+
+      // Episodic sources are the authority for the Skill evidence threshold.
+      // Keep them ahead of Semantic context before applying the shared limit so
+      // supporting facts cannot crowd out the evidence that makes extraction possible.
+      return [...episodic.toSorted(sortByObservedAt), ...semantic.toSorted(sortByObservedAt)].slice(
+        0,
+        input.limit,
+      );
     },
   };
 }

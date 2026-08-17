@@ -1,4 +1,8 @@
-import type { MemoryExtractorProfile, MemoryExtractorProfileStore } from "@pragma/memory";
+import {
+  DEFAULT_MEMORY_STORAGE_POLICY,
+  type MemoryExtractorProfile,
+  type MemoryExtractorProfileStore,
+} from "@pragma/memory";
 import {
   MemoryEvidenceEnvelopeSchema,
   type SkillExtractionInput,
@@ -9,6 +13,7 @@ import { describe, expect, it, vi } from "vitest";
 import {
   createBuiltInMemoryCurator,
   renderEpisodicExtractionPrompt,
+  renderSkillExtractionPrompt,
   type MemoryCuratorExecutionPort,
 } from "../src/memory-curator.ts";
 import { createSkillDraftSession } from "../src/skill-draft.ts";
@@ -178,6 +183,113 @@ describe("Memory Curator Evidence prompts", () => {
 });
 
 describe("Memory Curator Skill drafts", () => {
+  it("shows the host-computed source eligibility before asking for a draft", () => {
+    const eligiblePrompt = renderSkillExtractionPrompt(skillInput());
+    expect(eligiblePrompt).toContain('"eligible":true');
+    expect(eligiblePrompt).toContain('"highValueEpisodicCount":3');
+    expect(eligiblePrompt).toContain('"conversationCount":2');
+    expect(eligiblePrompt).toContain('"successfulOrRecoveredCount":2');
+
+    const ineligiblePrompt = renderSkillExtractionPrompt(ineligibleSkillInput());
+    expect(ineligiblePrompt).toContain('"eligible":false');
+    expect(ineligiblePrompt).toContain(
+      'return exactly {"retain":false,"reason":"insufficient-independent-sources"}',
+    );
+  });
+
+  it("returns an MCP-visible error and a clean rejection when evidence cannot meet the threshold", async () => {
+    const input = ineligibleSkillInput();
+    const session = createSkillDraftSession(input);
+    const begin = session.tools.find((tool) => tool.name === "begin_skill_draft")!;
+
+    expect(session.output()).toEqual({
+      retain: false,
+      reason: "insufficient-independent-sources",
+    });
+    const result = await begin.call(metadata(input), undefined);
+
+    expect(result).toMatchObject({
+      isError: true,
+      details: { ok: false, terminal: true },
+    });
+    expect(result.text).toContain("source_threshold_not_met");
+    expect(session.output()).toEqual({
+      retain: false,
+      reason: "insufficient-independent-sources",
+    });
+
+    const repeated = await begin.call(metadata(input), undefined);
+    expect(repeated).toMatchObject({
+      isError: true,
+      details: { ok: false, terminal: true },
+    });
+    expect(repeated.text).toContain("skill_draft_begin_repair_exhausted");
+  });
+
+  it("terminates a repeated invalid begin request instead of retrying it forever", async () => {
+    const session = createSkillDraftSession(skillInput());
+    const begin = session.tools.find((tool) => tool.name === "begin_skill_draft")!;
+    const request = {
+      ...metadata(),
+      route: { type: "revise" as const, bindingId: "00000000-0000-4000-8000-000000000099" },
+    };
+
+    const first = await begin.call(request, undefined);
+    expect(first).toMatchObject({ isError: false, details: { ok: false } });
+    expect(first.details).not.toHaveProperty("terminal", true);
+
+    const repeated = await begin.call(request, undefined);
+    expect(repeated).toMatchObject({
+      isError: true,
+      details: { ok: false, terminal: true },
+    });
+    expect(session.output()).toEqual({ retain: false, reason: "no-reusable-skill" });
+  });
+
+  it("keeps an already begun draft repairable after begin validation exhaustion", async () => {
+    const session = createSkillDraftSession(skillInput());
+    const begin = session.tools.find((tool) => tool.name === "begin_skill_draft")!;
+    const put = session.tools.find((tool) => tool.name === "put_skill_file")!;
+    const submit = session.tools.find((tool) => tool.name === "submit_skill_draft")!;
+    const begun = await begin.call(metadata(), undefined);
+    const draftId = (begun.details as { draftId: string }).draftId;
+    const invalidRequest = {
+      ...metadata(),
+      route: { type: "revise" as const, bindingId: "00000000-0000-4000-8000-000000000099" },
+    };
+
+    await begin.call(invalidRequest, undefined);
+    await begin.call(invalidRequest, undefined);
+    expect(session.beginRepairExhausted()).toBe(true);
+
+    await put.call(
+      {
+        draftId,
+        path: "SKILL.md",
+        content:
+          "---\nname: resilient-skill\ndescription: A reusable resilient workflow.\n---\n\n# Skill",
+      },
+      undefined,
+    );
+    const submitted = await submit.call({ draftId }, undefined);
+    expect(submitted).toMatchObject({ details: { ok: true } });
+    expect(submitted.isError).not.toBe(true);
+    expect(session.output()).toMatchObject({ retain: true });
+    expect(session.beginRepairExhausted()).toBe(false);
+  });
+
+  it("keeps the Skill prompt within its byte budget when source records are large", () => {
+    const input = skillInput();
+    const prompt = renderSkillExtractionPrompt({
+      ...input,
+      sources: input.sources.map((source) => ({ ...source, body: "x".repeat(24_000) })),
+    });
+
+    expect(Buffer.byteLength(prompt)).toBeLessThanOrEqual(
+      DEFAULT_MEMORY_STORAGE_POLICY.extractionPromptMaxBytes,
+    );
+  });
+
   it("exposes a single-object route schema and accepts a valid runtime tool call", async () => {
     const session = createSkillDraftSession(skillInput());
     const begin = session.tools.find((tool) => tool.name === "begin_skill_draft")!;
@@ -444,7 +556,7 @@ function skillInput(): SkillExtractionInput {
   };
 }
 
-function metadata() {
+function metadata(input: SkillExtractionInput = skillInput()) {
   return {
     content: {
       normalizedKey: "workflow.resilient",
@@ -463,8 +575,19 @@ function metadata() {
         forbiddenBehaviors: ["Force the workflow."],
       },
     },
-    sourceRefs: skillInput().sources.map((source) => source.ref),
+    sourceRefs: input.sources.map((source) => source.ref),
     route: { type: "create" as const },
+  };
+}
+
+function ineligibleSkillInput(): SkillExtractionInput {
+  const input = skillInput();
+  return {
+    ...input,
+    sources: input.sources.map((source) => ({
+      ...source,
+      conversationRef: { type: "pragma.mission", id: "mission-a" },
+    })),
   };
 }
 
