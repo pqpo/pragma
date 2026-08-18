@@ -1111,11 +1111,15 @@ export function TeamEditor(props: {
       )
       .map((binding) => ({ ...binding, visibility: { mode: "all" as const } })) ?? [];
   const [validationError, setValidationError] = useState<string | null>(null);
+  const [saving, setSaving] = useState(false);
   const [expectedRevision] = useState(props.baseRevision ?? props.project.revision);
 
-  const submit = () => {
+  const submit = async () => {
+    if (saving) return;
+
+    let resource: PragmaExpertTeamResource;
     try {
-      const resource = PragmaExpertTeamResourceSchema.parse({
+      resource = PragmaExpertTeamResourceSchema.parse({
         apiVersion: "pragma/v4",
         kind: "ExpertTeam",
         metadata: {
@@ -1138,10 +1142,19 @@ export function TeamEditor(props: {
           },
         },
       });
-      setValidationError(null);
-      void props.onSave(resource, teamContextStores, expectedRevision, []);
     } catch (validationFailure) {
       setValidationError(errorMessage(validationFailure));
+      return;
+    }
+
+    setValidationError(null);
+    setSaving(true);
+    try {
+      await props.onSave(resource, teamContextStores, expectedRevision, []);
+    } catch (saveFailure) {
+      setValidationError(errorMessage(saveFailure));
+    } finally {
+      setSaving(false);
     }
   };
 
@@ -1153,6 +1166,7 @@ export function TeamEditor(props: {
       error={validationError ?? props.error}
       onCancel={props.onCancel}
       onSave={submit}
+      saving={saving}
     >
       <MetadataFields
         name={name}
@@ -1455,8 +1469,8 @@ function ResourceEditor(props: {
   readonly error: string | null;
   readonly children: ReactNode;
   readonly onCancel: () => void;
-  readonly onSave: () => void;
-  readonly saveDisabled?: boolean | undefined;
+  readonly onSave: () => void | Promise<void>;
+  readonly saving?: boolean | undefined;
 }) {
   const { t } = useTranslation("studio");
   return (
@@ -1480,16 +1494,22 @@ function ResourceEditor(props: {
         </p>
       ) : null}
       <footer>
-        <button className="secondary-button" type="button" onClick={props.onCancel}>
+        <button
+          className="secondary-button"
+          type="button"
+          onClick={props.onCancel}
+          disabled={props.saving}
+        >
           {t("cancel")}
         </button>
         <button
-          className="studio-primary-action"
+          className="primary-button studio-primary-action"
           type="button"
           onClick={props.onSave}
-          disabled={props.saveDisabled}
+          disabled={props.saving}
+          aria-busy={props.saving || undefined}
         >
-          {t("validatePublish")}
+          {props.saving ? t("actions.saving", { ns: "common" }) : t("validatePublish")}
         </button>
       </footer>
     </StudioScreenFrame>

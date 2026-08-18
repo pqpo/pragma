@@ -99,6 +99,8 @@ describe("expert team editor", () => {
     expect(html).not.toContain("<fieldset");
     expect(html).not.toContain('role="dialog"');
     expect(html).toContain('class="secondary-button"');
+    expect(html).toContain('class="primary-button studio-primary-action"');
+    expect(html).toContain("Validate &amp; publish");
   });
 
   it("keeps unselected knowledge bases out of the team form until the picker opens", () => {
