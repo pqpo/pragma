@@ -397,6 +397,49 @@ describe("capability store", () => {
     expect(firstDefinition).not.toContain("top-secret");
   });
 
+  it("imports one Bundle capability identity with exact historical revisions idempotently", async () => {
+    const { store } = await createStore();
+    const logicalId = "00000000-0000-4000-8000-000000000190";
+    const revisionOne = { ...httpDefinition, description: "Revision one." };
+    const revisionTwo = { ...httpDefinition, description: "Revision two." };
+
+    const imported = await store.importBundleRevisions({
+      logicalId,
+      revisions: [
+        { revision: 2, definition: revisionTwo },
+        { revision: 1, definition: revisionOne },
+      ],
+    });
+    const reorderedRevisionTwo = {
+      tools: revisionTwo.tools,
+      timeoutMs: revisionTwo.timeoutMs,
+      auth: revisionTwo.auth,
+      baseUrl: revisionTwo.baseUrl,
+      description: revisionTwo.description,
+      name: revisionTwo.name,
+      kind: revisionTwo.kind,
+    };
+    const repeated = await store.importBundleRevisions({
+      logicalId,
+      revisions: [
+        { revision: 1, definition: revisionOne },
+        { revision: 2, definition: reorderedRevisionTwo },
+      ],
+    });
+
+    expect(repeated.manifest.id).toBe(imported.manifest.id);
+    expect(repeated.manifest.origin).toEqual({ kind: "pragma-bundle", logicalId });
+    expect((await store.get(imported.manifest.id, 1)).definition.description).toBe("Revision one.");
+    expect((await store.get(imported.manifest.id, 2)).definition.description).toBe("Revision two.");
+    await expect(store.list()).resolves.toHaveLength(1);
+    await expect(
+      store.importBundleRevisions({
+        logicalId,
+        revisions: [{ revision: 2, definition: { ...revisionTwo, description: "Conflict." } }],
+      }),
+    ).rejects.toMatchObject({ code: "bundle_identity_conflict" });
+  });
+
   it("blocks deletion while an Expert references the capability", async () => {
     const { store } = await createStore({ referenced: true });
     const capability = await store.create({ definition: httpDefinition, credentials: {} });

@@ -6,6 +6,7 @@ import {
   PreparePragmaBundleExportSchema,
   PragmaBundleInstallationActionSchema,
   ResolvePragmaBundleInstallationSchema,
+  RecheckPragmaBundleInstallationSchema,
   StartPragmaBundleImportSchema,
 } from "../../../shared/contracts/index.ts";
 import { runDesktopMutation } from "../../platform/ipc/desktop-mutation-result.ts";
@@ -55,6 +56,12 @@ export function installPragmaBundleHandlers(
     runDesktopMutation(() => service.startImport(StartPragmaBundleImportSchema.parse(input))),
   );
   ipcMain.handle("pragma-bundles:installations:list", () => service.listInstallations());
+  ipcMain.handle("pragma-bundles:installation:recheck", (_event, input: unknown) =>
+    runDesktopMutation(async () => {
+      const parsed = RecheckPragmaBundleInstallationSchema.parse(input);
+      return await service.recheckInstallation(parsed.installationId);
+    }),
+  );
   ipcMain.handle("pragma-bundles:installation:resolve", (_event, input: unknown) =>
     runDesktopMutation(() =>
       service.resolveInstallation(ResolvePragmaBundleInstallationSchema.parse(input)),

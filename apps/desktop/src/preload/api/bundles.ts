@@ -11,6 +11,7 @@ import {
   PragmaBundlePickResultSchema,
   PragmaBundleInstallationActionSchema,
   PragmaBundleInstallationSchema,
+  RecheckPragmaBundleInstallationSchema,
   ResolvePragmaBundleInstallationSchema,
   StartPragmaBundleImportSchema,
 } from "../../shared/contracts/index.ts";
@@ -59,6 +60,13 @@ export const bundlesApi = {
         ResolvePragmaBundleInstallationSchema.parse(input),
       ),
     ),
+  recheckPragmaBundleInstallation: async (input) =>
+    PragmaBundleInstallationSchema.parse(
+      await invokeMutation(
+        "pragma-bundles:installation:recheck",
+        RecheckPragmaBundleInstallationSchema.parse(input),
+      ),
+    ),
   discardPragmaBundleInstallation: async (input) => {
     await invokeMutation(
       "pragma-bundles:installation:discard",
@@ -74,6 +82,7 @@ export const bundlesApi = {
   | "inspectDroppedPragmaBundle"
   | "importPragmaBundle"
   | "listPragmaBundleInstallations"
+  | "recheckPragmaBundleInstallation"
   | "resolvePragmaBundleInstallation"
   | "discardPragmaBundleInstallation"
 >;

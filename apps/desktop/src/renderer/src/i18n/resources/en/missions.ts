@@ -46,6 +46,8 @@ export const missions = {
   hoursShort: "{{count}}h",
   daysShort: "{{count}}d",
   notFound: "Mission not found",
+  bundleSetupRequired:
+    "Bundle setup is incomplete for {{count}} dependency(ies): {{resources}}. Configure them before continuing.",
   selectAnother: "Select another mission or create a new one.",
   deleteTitle: "Delete this mission?",
   deleteMission: "Delete mission",
@@ -90,7 +92,8 @@ export const missions = {
   homeFavorites: "Favorites",
   homeFavoritesHint: "Your experts, teams, and flows",
   homeFavoritesMore: "More ({{count}})",
-  homeFavoritesDialogDescription: "Drag to reorder. Workspace favorites switch workspace when selected.",
+  homeFavoritesDialogDescription:
+    "Drag to reorder. Workspace favorites switch workspace when selected.",
   favoriteSwitchWorkspace: "Switch to {{workspace}} and start with this favorite",
   chooseWorkspace: "Choose mission workspace",
   useDefaultWorkspace: "Use default workspace",

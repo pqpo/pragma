@@ -203,11 +203,13 @@ export function createDesktopContextResource(input: {
 export function bindExistingDesktopContextResource(
   resource: PragmaContextStoreResource,
   storeId: string,
+  metadata?: { readonly name: string; readonly description: string },
 ): PragmaContextStoreResource {
   return PragmaContextStoreResourceSchema.parse({
     ...resource,
     metadata: {
       ...resource.metadata,
+      ...(metadata ?? {}),
       tags: unique([...resource.metadata.tags, "desktop-managed"]),
     },
     spec: {

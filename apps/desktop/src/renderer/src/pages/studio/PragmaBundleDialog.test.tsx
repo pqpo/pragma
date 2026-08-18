@@ -182,6 +182,7 @@ describe("Bundle import inspection", () => {
         },
       ],
       requirements: [],
+      readiness: [],
       sameContentInstallationIds: [],
     };
 

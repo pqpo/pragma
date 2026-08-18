@@ -1075,6 +1075,12 @@ export function StudioPage(props: {
           onRefreshRuntimes={refreshRuntimeAvailability}
           onClose={() => setBundleMode(null)}
           onChanged={refreshBundleData}
+          onOpenCapability={(capabilityId) => {
+            setBundleMode(null);
+            setActiveView("capabilities");
+            setSelectedCapabilityId(capabilityId);
+            setScreen("capability-detail");
+          }}
         />
       ) : null}
     </section>

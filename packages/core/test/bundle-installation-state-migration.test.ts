@@ -6,7 +6,7 @@ import { afterEach, describe, expect, it } from "vitest";
 
 import {
   applyAtomicStateMigration,
-  BundleInstallationsCatalogV3Schema,
+  BundleInstallationsCatalogV4Schema,
   bundleInstallationsMigrationChain,
   recoverAtomicStateMigration,
   StateVersionTooNewError,
@@ -29,46 +29,66 @@ describe("Bundle installation state migration", () => {
 
     expect(upgraded).toMatchObject({
       fromVersion: 1,
-      toVersion: 3,
+      toVersion: 4,
       migrated: true,
       value: {
-        schemaVersion: "pragma.bundle-installations/v3",
+        schemaVersion: "pragma.bundle-installations/v4",
         installations: [
           {
-            schemaVersion: "pragma.bundle-installation/v3",
+            schemaVersion: "pragma.bundle-installation/v4",
             bundleVersion: "pragma.desktop-bundle/v1",
             id: "00000000-0000-4000-8000-000000000001",
             rootName: "Writer",
             status: "needs_setup",
             conflictResolutions: [],
             resourceMappings: [],
+            readiness: [
+              {
+                id: "runtime:runtime-profile:zdkgs0fde4xt00vr",
+                kind: "runtime",
+                resourceRef: "runtime-profile:zdkgs0fde4xt00vr",
+                name: "Writer Runtime",
+                status: "action_required",
+                code: "legacy_pending",
+                action: "restore_or_replace",
+                message: "Choose a compatible Runtime.",
+              },
+            ],
           },
         ],
       },
     });
   });
 
-  it("applies the adjacent v2 to v3 migration without inventing a portable fingerprint", () => {
+  it("applies the adjacent v2 to v4 migration without inventing a portable fingerprint", () => {
     const upgraded = bundleInstallationsMigrationChain.upgrade(v2Catalog());
 
     expect(upgraded.fromVersion).toBe(2);
-    expect(upgraded.toVersion).toBe(3);
+    expect(upgraded.toVersion).toBe(4);
     expect(upgraded.migrated).toBe(true);
     expect(upgraded.value.installations[0]).toMatchObject({
-      schemaVersion: "pragma.bundle-installation/v3",
+      schemaVersion: "pragma.bundle-installation/v4",
       bundleVersion: "pragma.desktop-bundle/v1",
+      readiness: [
+        {
+          id: "runtime:runtime-profile:zdkgs0fde4xt00vr",
+          status: "action_required",
+          code: "legacy_pending",
+          action: "restore_or_replace",
+        },
+      ],
     });
     expect(upgraded.value.installations[0]).not.toHaveProperty("sourceProjectFingerprint");
   });
 
   it("treats current state as a no-op and rejects future state", () => {
-    const current = bundleInstallationsMigrationChain.upgrade(v3Catalog());
+    const current = bundleInstallationsMigrationChain.upgrade(v4Catalog());
 
     expect(current.migrated).toBe(false);
-    expect(current.value).toEqual(v3Catalog());
+    expect(current.value).toEqual(v4Catalog());
     expect(() =>
       bundleInstallationsMigrationChain.upgrade({
-        schemaVersion: "pragma.bundle-installations/v4",
+        schemaVersion: "pragma.bundle-installations/v5",
         installations: [],
       }),
     ).toThrow(StateVersionTooNewError);
@@ -79,9 +99,9 @@ describe("Bundle installation state migration", () => {
     temporaryRoots.push(root);
     const journalFile = join(root, "state-migration.json");
     const catalogFile = join(root, "installations.json");
-    const documents = { "installations.json": v3Catalog() };
+    const documents = { "installations.json": v4Catalog() };
     const validateDocuments = (value: Readonly<Record<string, unknown>>) => {
-      BundleInstallationsCatalogV3Schema.parse(value["installations.json"]);
+      BundleInstallationsCatalogV4Schema.parse(value["installations.json"]);
     };
 
     await writeFile(catalogFile, `${JSON.stringify(v1Catalog(), null, 2)}\n`);
@@ -90,7 +110,7 @@ describe("Bundle installation state migration", () => {
       journalFile,
       resource: { family: "pragma.bundle-installations", id: "desktop" },
       fromVersion: 1,
-      toVersion: 3,
+      toVersion: 4,
       documents,
       validateDocuments,
     });
@@ -101,7 +121,7 @@ describe("Bundle installation state migration", () => {
         schemaVersion: "pragma.state-migration/v1",
         resource: { family: "pragma.bundle-installations", id: "desktop" },
         fromVersion: 1,
-        toVersion: 3,
+        toVersion: 4,
         documents,
       })}\n`,
     );
@@ -114,7 +134,7 @@ describe("Bundle installation state migration", () => {
         validateDocuments,
       }),
     ).resolves.toBe(true);
-    await expect(readJson(catalogFile)).resolves.toEqual(v3Catalog());
+    await expect(readJson(catalogFile)).resolves.toEqual(v4Catalog());
     await expect(readFile(journalFile, "utf8")).rejects.toMatchObject({ code: "ENOENT" });
   });
 });
@@ -176,6 +196,33 @@ function v3Catalog() {
       ...installation,
       schemaVersion: "pragma.bundle-installation/v3",
       bundleVersion: "pragma.desktop-bundle/v1",
+    })),
+  };
+}
+
+function v4Catalog() {
+  const previous = v3Catalog();
+  return {
+    schemaVersion: "pragma.bundle-installations/v4",
+    installations: previous.installations.map((installation) => ({
+      ...installation,
+      schemaVersion: "pragma.bundle-installation/v4",
+      readiness: installation.pending.map((dependency) => ({
+        id: dependency.id,
+        kind: dependency.kind,
+        resourceRef: dependency.resourceRef,
+        name: dependency.name,
+        status: "action_required",
+        code: "legacy_pending",
+        action: "restore_or_replace",
+        message: dependency.message,
+      })),
+      pending: installation.pending.map((dependency) => ({
+        ...dependency,
+        status: "action_required",
+        code: "legacy_pending",
+        action: "restore_or_replace",
+      })),
     })),
   };
 }
