@@ -37,6 +37,7 @@ import {
 import {
   ExportPragmaBundleSchema,
   InspectPragmaBundleSchema,
+  PragmaBundleDependencyReadinessSchema,
   PragmaBundleExportPreviewSchema,
   PragmaBundleExportResultSchema,
   PragmaBundleImportInspectionSchema,
@@ -286,6 +287,7 @@ export type ExportPragmaBundle = z.infer<typeof ExportPragmaBundleSchema>;
 export type PragmaBundleExportResult = z.infer<typeof PragmaBundleExportResultSchema>;
 export type InspectPragmaBundle = z.infer<typeof InspectPragmaBundleSchema>;
 export type PragmaBundleImportInspection = z.infer<typeof PragmaBundleImportInspectionSchema>;
+export type PragmaBundleDependencyReadiness = z.infer<typeof PragmaBundleDependencyReadinessSchema>;
 export type PragmaBundlePickResult = z.infer<typeof PragmaBundlePickResultSchema>;
 export type StartPragmaBundleImport = z.infer<typeof StartPragmaBundleImportSchema>;
 export type PragmaBundleInstallation = z.infer<typeof PragmaBundleInstallationSchema>;

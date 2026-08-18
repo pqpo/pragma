@@ -439,6 +439,9 @@ export interface PragmaDesktopAPI {
   resolvePragmaBundleInstallation: (
     input: ResolvePragmaBundleInstallation,
   ) => Promise<PragmaBundleInstallation>;
+  recheckPragmaBundleInstallation: (
+    input: PragmaBundleInstallationAction,
+  ) => Promise<PragmaBundleInstallation>;
   discardPragmaBundleInstallation: (input: PragmaBundleInstallationAction) => Promise<void>;
   listAutomationAdapters: () => Promise<AutomationAdapterOption[]>;
   listAutomations: () => Promise<AutomationSummary[]>;

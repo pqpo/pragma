@@ -111,9 +111,7 @@ export const missionsApi = {
     return () => ipcRenderer.removeListener("missions:updated", handler);
   },
   createMission: async (input) =>
-    MissionSchema.parse(
-      await ipcRenderer.invoke("missions:create", CreateMissionSchema.parse(input)),
-    ),
+    MissionSchema.parse(await invokeMutation("missions:create", CreateMissionSchema.parse(input))),
   pickMissionAttachments: async (input) =>
     PickMissionAttachmentsResultSchema.parse(
       await ipcRenderer.invoke(

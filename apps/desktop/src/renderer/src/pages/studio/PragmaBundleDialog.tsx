@@ -18,14 +18,15 @@ import type {
   Capability,
   ContextStore,
   DesktopRuntimeAvailability,
+  PragmaBundleDependencyReadiness,
   PragmaBundleImportInspection,
   PragmaBundleInstallation,
   PragmaBundleModuleOptions,
   PragmaProjectSnapshot,
 } from "../../../../shared/contracts/index.ts";
+import { DesktopMutationErrorSchema } from "../../../../shared/contracts/mutation.ts";
 import { ExpertAvatar } from "../../components/ExpertAvatar.tsx";
 import { SelectMenu } from "../../components/SelectMenu.tsx";
-import { errorMessage } from "../../lib/errors.ts";
 import { desktopApi } from "./studio-model.ts";
 
 type BundleMode = "export" | "import";
@@ -115,6 +116,7 @@ export function PragmaBundleDialog(props: {
   readonly onRefreshRuntimes: () => Promise<readonly DesktopRuntimeAvailability[]>;
   readonly onClose: () => void;
   readonly onChanged: () => void | Promise<void>;
+  readonly onOpenCapability?: ((capabilityId: string) => void) | undefined;
 }) {
   return props.mode === "export" ? (
     <BundleExportDialog {...props} />
@@ -159,7 +161,11 @@ function BundleExportDialog(props: {
       if (!result.cancelled) setResultPath(result.path ?? null);
       if (!result.cancelled) setStep("result");
     } catch (cause) {
-      setError(errorMessage(cause));
+      setError(
+        bundleErrorMessage(cause, (key, options) =>
+          options === undefined ? t(key) : t(key, options),
+        ),
+      );
     } finally {
       setBusy(false);
     }
@@ -297,6 +303,7 @@ function BundleImportDialog(props: {
   readonly onRefreshRuntimes: () => Promise<readonly DesktopRuntimeAvailability[]>;
   readonly onClose: () => void;
   readonly onChanged: () => void | Promise<void>;
+  readonly onOpenCapability?: ((capabilityId: string) => void) | undefined;
 }) {
   const { t } = useTranslation("studio");
   const [step, setStep] = useState<ImportStep>("select");
@@ -315,6 +322,8 @@ function BundleImportDialog(props: {
   const [error, setError] = useState<string | null>(null);
   const [confirmClose, setConfirmClose] = useState(false);
   const dialogRef = useRef<HTMLElement | null>(null);
+  const displayError = (cause: unknown): string =>
+    bundleErrorMessage(cause, (key, options) => (options === undefined ? t(key) : t(key, options)));
 
   const requirements = useMemo(() => {
     const values =
@@ -402,7 +411,7 @@ function BundleImportDialog(props: {
       if (picked.cancelled || picked.path === undefined) return;
       await resetForInspection(await api.inspectPragmaBundle({ sourcePath: picked.path }));
     } catch (cause) {
-      setError(errorMessage(cause));
+      setError(displayError(cause));
     } finally {
       setBusy(false);
     }
@@ -420,7 +429,7 @@ function BundleImportDialog(props: {
     try {
       await resetForInspection(await api.inspectDroppedPragmaBundle(file));
     } catch (cause) {
-      setError(errorMessage(cause));
+      setError(displayError(cause));
     } finally {
       setBusy(false);
     }
@@ -432,7 +441,7 @@ function BundleImportDialog(props: {
       await props.onRefreshRuntimes();
       setError(null);
     } catch (cause) {
-      setError(errorMessage(cause));
+      setError(displayError(cause));
     } finally {
       setRefreshingRuntimes(false);
     }
@@ -491,7 +500,7 @@ function BundleImportDialog(props: {
         await api.inspectPragmaBundle({ sourcePath: inspection.sourcePath, rootRef }),
       );
     } catch (cause) {
-      setError(errorMessage(cause));
+      setError(displayError(cause));
     } finally {
       setBusy(false);
     }
@@ -604,7 +613,7 @@ function BundleImportDialog(props: {
       setStep("result");
       await props.onChanged();
     } catch (cause) {
-      setError(errorMessage(cause));
+      setError(displayError(cause));
     } finally {
       setBusy(false);
     }
@@ -790,7 +799,7 @@ function BundleImportDialog(props: {
               </p>
             ) : installation.status === "failed" ? (
               <p className="form-error" role="alert">
-                {installation.error ?? t("bundleImportFailed")}
+                {t("bundleImportFailed")}
               </p>
             ) : (
               <div className="pragma-bundle-warning" role="status">
@@ -798,11 +807,47 @@ function BundleImportDialog(props: {
                 <div>
                   <strong>{t("bundleSetupTitle")}</strong>
                   <p>{t("bundleSetupDescription")}</p>
-                  <ul>
-                    {installation.pending.map((item) => (
-                      <li key={item.id}>{item.name}</li>
-                    ))}
-                  </ul>
+                  <BundleReadinessList readiness={installationReadiness(installation)} />
+                  <div className="pragma-bundle-setup-actions">
+                    <button
+                      className="secondary-button"
+                      type="button"
+                      disabled={busy}
+                      onClick={() => {
+                        const api = desktopApi();
+                        if (api === undefined) return;
+                        setBusy(true);
+                        void api
+                          .recheckPragmaBundleInstallation({ installationId: installation.id })
+                          .then(async (next) => {
+                            setInstallation(next);
+                            await props.onChanged();
+                          })
+                          .catch((cause: unknown) => setError(displayError(cause)))
+                          .finally(() => setBusy(false));
+                      }}
+                    >
+                      <ArrowsClockwise size={16} />
+                      {t("bundleRecheck")}
+                    </button>
+                    {installationReadiness(installation)
+                      .filter(
+                        (item) =>
+                          item.status !== "ready" &&
+                          item.kind === "capability" &&
+                          item.targetId !== undefined,
+                      )
+                      .map((item) => (
+                        <button
+                          className="secondary-button"
+                          type="button"
+                          key={`configure:${item.id}`}
+                          onClick={() => props.onOpenCapability?.(item.targetId!)}
+                        >
+                          {t("bundleConfigureCapability", { name: item.name })}
+                        </button>
+                      ))}
+                  </div>
                 </div>
               </div>
             )}
@@ -1028,6 +1073,7 @@ function BundleFileStep(props: {
           <button type="button" onClick={props.onPick}>
             {t("bundleChooseAnother")}
           </button>
+          <BundleReadinessList readiness={props.inspection.readiness} />
         </div>
       ) : null}
     </div>
@@ -1378,8 +1424,65 @@ function BundleReview(props: {
           {t("bundleReviewDeferred", { count: deferred })}
         </p>
       ) : null}
+      <BundleReadinessList readiness={props.inspection.readiness} />
     </section>
   );
+}
+
+function BundleReadinessList(props: {
+  readonly readiness: readonly PragmaBundleDependencyReadiness[];
+}) {
+  const { t } = useTranslation("studio");
+  if (props.readiness.length === 0) return null;
+  return (
+    <section className="pragma-bundle-readiness" aria-label={t("bundlePreflightTitle")}>
+      <h4>{t("bundlePreflightTitle")}</h4>
+      <ul>
+        {props.readiness.map((item) => (
+          <li key={item.id} data-status={item.status}>
+            <span>
+              <strong>{item.name}</strong>
+              <small>{item.resourceRef}</small>
+            </span>
+            <span>
+              {t(`bundleStatus.${item.status}`)} · {t(`bundleAction.${item.action}`)}
+            </span>
+          </li>
+        ))}
+      </ul>
+    </section>
+  );
+}
+
+function installationReadiness(
+  installation: PragmaBundleInstallation,
+): readonly PragmaBundleDependencyReadiness[] {
+  if (installation.readiness.length > 0) return installation.readiness;
+  return installation.pending.map((item) => ({
+    id: item.id,
+    kind: item.kind,
+    resourceRef: item.resourceRef,
+    name: item.name,
+    status: item.status ?? "action_required",
+    code: item.code ?? "legacy_pending",
+    action: item.action ?? "restore_or_replace",
+    message: item.message,
+    ...(item.capabilityKind === undefined ? {} : { capabilityKind: item.capabilityKind }),
+    ...(item.targetId === undefined ? {} : { targetId: item.targetId }),
+  }));
+}
+
+function bundleErrorMessage(
+  error: unknown,
+  translate: (key: string, options?: Record<string, unknown>) => string,
+): string {
+  const parsed = DesktopMutationErrorSchema.safeParse(error);
+  if (!parsed.success) return translate("bundleGenericError");
+  if (parsed.data.code === "bundle_setup_required") return translate("bundleSetupDescription");
+  if (parsed.data.code === "bundle_identity_conflict") {
+    return translate("bundleIdentityConflict");
+  }
+  return translate("bundleGenericError");
 }
 
 function BundleExportSteps(props: { readonly step: ExportStep }) {

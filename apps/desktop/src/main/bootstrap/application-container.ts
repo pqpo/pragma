@@ -28,6 +28,7 @@ import { installAutomationHandlers } from "../features/automations/automation-ip
 import { createAutomationService } from "../features/automations/automation-service.ts";
 import { createAutomationStore } from "../features/automations/automation-store.ts";
 import { installPragmaBundleHandlers } from "../features/bundles/pragma-bundle-ipc.ts";
+import { BundleSetupRequiredError } from "../features/bundles/pragma-bundle-errors.ts";
 import { createPragmaBundleService } from "../features/bundles/pragma-bundle-service.ts";
 import { createCapabilityCredentialStore } from "../features/capabilities/capability-credential-store.ts";
 import { installCapabilityHandlers } from "../features/capabilities/capability-ipc.ts";
@@ -620,18 +621,25 @@ export async function createDesktopApplicationContainer(
     getRuntimes: async () => await getRuntimeAvailability(runtimes),
   });
   installPragmaBundleHandlers(bundleService, options.getWindow);
+  const assertBundleExecutorReady = async (
+    ref: string,
+    operation: "create_mission" | "run_mission",
+  ): Promise<void> => {
+    const dependencies = await bundleService.getReadinessForRef(ref);
+    if (dependencies.length === 0) return;
+    throw new BundleSetupRequiredError(
+      ref,
+      operation,
+      dependencies,
+      dependencies.find((dependency) => dependency.installationId !== undefined)?.installationId,
+    );
+  };
   const missionCreator = createMissionCreator({
     missions: missionStore,
     project: pragmaProjectStore,
     executors: missionExecutors,
     getDefaultToolPermissionMode: getToolPermissionMode,
-    assertExecutorReady: async (ref) => {
-      if (await bundleService.isRefPending(ref)) {
-        throw new Error(
-          "This imported Expert, Team, or Flow still has unresolved local dependencies. Complete bundle setup before creating a Mission.",
-        );
-      }
-    },
+    assertExecutorReady: async (ref) => await assertBundleExecutorReady(ref, "create_mission"),
   });
   installExpertDefinitionHandlers(expertStore, usageStore);
   installPragmaProjectHandlers(pragmaProjectStore, usageStore, contextStores);
@@ -713,13 +721,7 @@ export async function createDesktopApplicationContainer(
               : mission.executor.ref === EVALUATION_JUDGE_EXPERT_REF
                 ? builtInAgentFingerprint(EVALUATION_JUDGE_EXPERT_REF)
                 : systemExperts.fingerprint(mission.executor.ref),
-    assertExecutorReady: async (ref) => {
-      if (await bundleService.isRefPending(ref)) {
-        throw new Error(
-          "This imported Expert, Team, or Flow still has unresolved local dependencies. Complete bundle setup before running it.",
-        );
-      }
-    },
+    assertExecutorReady: async (ref) => await assertBundleExecutorReady(ref, "run_mission"),
     compileSystemExecutor: async ({ mission, runtimes: scopedRuntimes }) => {
       if (mission.executor.ref === MEMORY_CURATOR_REF) {
         if (memoryCuratorRef.current === undefined || mission.origin.type !== "system-memory") {

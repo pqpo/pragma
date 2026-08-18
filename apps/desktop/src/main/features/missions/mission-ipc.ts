@@ -231,30 +231,32 @@ export function installMissionHandlers(options: {
     const parsed = DiscardMissionAttachmentDraftsSchema.parse(input);
     await imageDrafts.discard(parsed.attachmentIds);
   });
-  ipcMain.handle("missions:create", async (_event, input: unknown) => {
-    const parsed = CreateMissionSchema.parse(input);
-    const mission = await options.creator.create({
-      workspace: parsed.workspace,
-      missionInput: parsed.input,
-      ...(parsed.input.kind === "prompt" && parsed.input.attachments.length > 0
-        ? { attachments: parsed.input.attachments }
-        : {}),
-      executorRef: parsed.executor.ref,
-      ...(parsed.modelOverride === undefined ? {} : { modelOverride: parsed.modelOverride }),
-      ...(parsed.toolPermissionMode === undefined
-        ? {}
-        : { toolPermissionMode: parsed.toolPermissionMode }),
-    });
-    if (parsed.input.kind === "prompt") {
-      await imageDrafts.discard(parsed.input.attachments.map((attachment) => attachment.id));
-    }
-    await Promise.all([
-      options.recordWorkspaceUsage(parsed.workspace),
-      options.homeExecutors.recordUsage(parsed.executor.ref, parsed.workspace),
-    ]);
-    await publishMission(mission);
-    return mission;
-  });
+  ipcMain.handle("missions:create", (_event, input: unknown) =>
+    runDesktopMutation(async () => {
+      const parsed = CreateMissionSchema.parse(input);
+      const mission = await options.creator.create({
+        workspace: parsed.workspace,
+        missionInput: parsed.input,
+        ...(parsed.input.kind === "prompt" && parsed.input.attachments.length > 0
+          ? { attachments: parsed.input.attachments }
+          : {}),
+        executorRef: parsed.executor.ref,
+        ...(parsed.modelOverride === undefined ? {} : { modelOverride: parsed.modelOverride }),
+        ...(parsed.toolPermissionMode === undefined
+          ? {}
+          : { toolPermissionMode: parsed.toolPermissionMode }),
+      });
+      if (parsed.input.kind === "prompt") {
+        await imageDrafts.discard(parsed.input.attachments.map((attachment) => attachment.id));
+      }
+      await Promise.all([
+        options.recordWorkspaceUsage(parsed.workspace),
+        options.homeExecutors.recordUsage(parsed.executor.ref, parsed.workspace),
+      ]);
+      await publishMission(mission);
+      return mission;
+    }),
+  );
   ipcMain.handle("missions:run", (_event, input: unknown) =>
     runDesktopMutation(async () => {
       const mission = await options.runner.run(

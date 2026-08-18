@@ -1,6 +1,6 @@
 import { createHash, randomUUID } from "node:crypto";
 import { lstat, mkdir, readFile, readdir, rename, rm, writeFile } from "node:fs/promises";
-import { extname, join, relative, resolve, sep } from "node:path";
+import { dirname, extname, join, relative, resolve, sep } from "node:path";
 
 import { unzipSync } from "fflate";
 import { z } from "zod";
@@ -79,9 +79,16 @@ export interface CapabilityStore {
   getSkillFile(input: GetSkillFile): Promise<SkillFileContent>;
   skillFilesPath(id: string, revision: number): Promise<string>;
   importSkill(input: ImportSkillCapability): Promise<Capability>;
+  importBundleRevisions(input: ImportBundleCapabilityRevisions): Promise<Capability>;
   updateSkill(input: UpdateSkillCapability): Promise<Capability>;
-  createGeneratedSkill(input: { readonly package: SkillPackage; readonly id?: string }): Promise<Capability>;
-  updateGeneratedSkill(input: { readonly id: string; readonly package: SkillPackage }): Promise<Capability>;
+  createGeneratedSkill(input: {
+    readonly package: SkillPackage;
+    readonly id?: string;
+  }): Promise<Capability>;
+  updateGeneratedSkill(input: {
+    readonly id: string;
+    readonly package: SkillPackage;
+  }): Promise<Capability>;
   create(input: CreateCapability): Promise<Capability>;
   update(input: UpdateCapability): Promise<Capability>;
   retry(id: string): Promise<Capability>;
@@ -102,6 +109,18 @@ export interface CapabilityRevisionPublishInput {
   readonly commit: () => Promise<Capability>;
 }
 
+export interface ImportBundleCapabilityRevision {
+  readonly revision: number;
+  readonly definition: CapabilityDefinition;
+  readonly payloadPath?: string | undefined;
+}
+
+export interface ImportBundleCapabilityRevisions {
+  readonly logicalId: string;
+  readonly revisions: readonly ImportBundleCapabilityRevision[];
+  readonly credentials?: Readonly<Record<string, string>> | undefined;
+}
+
 export interface CapabilityRevisionPublisher {
   publish(input: CapabilityRevisionPublishInput): Promise<Capability>;
 }
@@ -113,7 +132,8 @@ export class CapabilityStoreError extends Error {
       | "config_invalid"
       | "import_invalid"
       | "capability_referenced"
-      | "capability_incompatible",
+      | "capability_incompatible"
+      | "bundle_identity_conflict",
     message: string,
   ) {
     super(message);
@@ -282,6 +302,32 @@ export function createCapabilityStore(options: {
 
   const publishRevision = async (input: CapabilityRevisionPublishInput): Promise<Capability> =>
     revisionPublisher === undefined ? await input.commit() : await revisionPublisher.publish(input);
+
+  const bundleHealth = async (
+    definition: CapabilityDefinition,
+    id: string,
+    revision: number,
+  ): Promise<CapabilityHealth> => {
+    const checkedAt = new Date().toISOString();
+    if (definition.kind === "skill") {
+      return CapabilityHealthSchema.parse({ revision, status: "ready", checkedAt });
+    }
+    try {
+      const verified = await options.verify(validateDefinition(definition), id);
+      return CapabilityHealthSchema.parse({ ...verified.health, revision });
+    } catch {
+      return CapabilityHealthSchema.parse({
+        revision,
+        status: "needs_attention",
+        checkedAt,
+        diagnostic: {
+          code: "bundle_setup_required",
+          message: "Configure this capability before using the imported Bundle.",
+          retryable: true,
+        },
+      });
+    }
+  };
 
   return {
     async list() {
@@ -461,6 +507,190 @@ export function createCapabilityStore(options: {
         throw error;
       }
     },
+    async importBundleRevisions(rawInput) {
+      const logicalId = CapabilityIdSchema.parse(rawInput.logicalId);
+      const revisions = [...rawInput.revisions].toSorted(
+        (left, right) => left.revision - right.revision,
+      );
+      if (revisions.length === 0) {
+        throw new CapabilityStoreError(
+          "bundle_identity_conflict",
+          "The Bundle does not contain a capability revision.",
+        );
+      }
+      const seen = new Set<number>();
+      for (const revision of revisions) {
+        if (seen.has(revision.revision) || revision.revision < 1) {
+          throw new CapabilityStoreError(
+            "bundle_identity_conflict",
+            "The Bundle contains duplicate or invalid capability revisions.",
+          );
+        }
+        seen.add(revision.revision);
+        try {
+          CapabilityDefinitionSchema.parse(revision.definition);
+        } catch {
+          throw new CapabilityStoreError(
+            "bundle_identity_conflict",
+            "The Bundle contains an invalid capability revision.",
+          );
+        }
+      }
+      const kinds = new Set(revisions.map((revision) => revision.definition.kind));
+      if (kinds.size !== 1) {
+        throw new CapabilityStoreError(
+          "bundle_identity_conflict",
+          "One Bundle capability cannot change kind between revisions.",
+        );
+      }
+      const candidates = (await this.list()).filter(
+        (capability) => capability.manifest.origin?.logicalId === logicalId,
+      );
+      const existing = candidates[0];
+      if (candidates.length > 1) {
+        throw new CapabilityStoreError(
+          "bundle_identity_conflict",
+          "Multiple local capabilities claim the same Bundle identity.",
+        );
+      }
+      const credentials = rawInput.credentials ?? {};
+      if (existing !== undefined) {
+        if (existing.manifest.kind !== revisions[0]!.definition.kind) {
+          throw new CapabilityStoreError(
+            "bundle_identity_conflict",
+            "The imported capability conflicts with the existing Bundle identity.",
+          );
+        }
+        return await withFileLock(
+          join(capabilityPath(existing.manifest.id), ".bundle-import.lock"),
+          async () => {
+            const current = await readCapability(existing.manifest.id);
+            for (const revision of revisions) {
+              if (revision.revision > current.manifest.latestRevision) continue;
+              const local = await readCapability(existing.manifest.id, revision.revision);
+              if (stableStringify(local.definition) !== stableStringify(revision.definition)) {
+                throw new CapabilityStoreError(
+                  "bundle_identity_conflict",
+                  `Capability revision ${revision.revision} conflicts with the existing Bundle identity.`,
+                );
+              }
+            }
+            const additions = revisions.filter(
+              (revision) => revision.revision > current.manifest.latestRevision,
+            );
+            if (additions.length === 0) {
+              if (Object.keys(credentials).length > 0) {
+                await options.credentials.setMany(existing.manifest.id, credentials);
+              }
+              return await readCapability(existing.manifest.id);
+            }
+            if (additions[0]!.revision !== current.manifest.latestRevision + 1) {
+              throw new CapabilityStoreError(
+                "bundle_identity_conflict",
+                "The Bundle skipped a capability revision; import the complete revision history.",
+              );
+            }
+            for (let index = 1; index < additions.length; index += 1) {
+              if (additions[index]!.revision !== additions[index - 1]!.revision + 1) {
+                throw new CapabilityStoreError(
+                  "bundle_identity_conflict",
+                  "The Bundle contains a non-contiguous capability revision history.",
+                );
+              }
+            }
+            if (Object.keys(credentials).length > 0) {
+              await options.credentials.setMany(existing.manifest.id, credentials);
+            }
+            const createdPaths: string[] = [];
+            try {
+              for (const revision of additions) {
+                const path = await stageBundleCapabilityRevision(
+                  revisionPath(existing.manifest.id, revision.revision),
+                  revision,
+                );
+                createdPaths.push(path);
+              }
+              const latest = additions.at(-1)!;
+              const timestamp = new Date().toISOString();
+              const manifest = CapabilityManifestSchema.parse({
+                ...existing.manifest,
+                name: latest.definition.name,
+                kind: latest.definition.kind,
+                latestRevision: latest.revision,
+                updatedAt: timestamp,
+              });
+              const health = await bundleHealth(
+                latest.definition,
+                existing.manifest.id,
+                latest.revision,
+              );
+              await writeJson(healthPath(existing.manifest.id), health);
+              await writeJson(manifestPath(existing.manifest.id), manifest);
+              return await readCapability(existing.manifest.id);
+            } catch (error) {
+              await Promise.all(
+                createdPaths.map(async (path) => await rm(path, { recursive: true, force: true })),
+              );
+              throw error;
+            }
+          },
+        );
+      }
+
+      if (revisions[0]!.revision !== 1) {
+        throw new CapabilityStoreError(
+          "bundle_identity_conflict",
+          "The Bundle does not contain the first capability revision.",
+        );
+      }
+      for (let index = 1; index < revisions.length; index += 1) {
+        if (revisions[index]!.revision !== revisions[index - 1]!.revision + 1) {
+          throw new CapabilityStoreError(
+            "bundle_identity_conflict",
+            "The Bundle contains a non-contiguous capability revision history.",
+          );
+        }
+      }
+      const id = randomUUID();
+      const timestamp = new Date().toISOString();
+      const temporaryPath = join(options.capabilitiesPath, `.${id}.${randomUUID()}.tmp`);
+      try {
+        await mkdir(join(temporaryPath, "revisions"), { recursive: true, mode: 0o700 });
+        for (const revision of revisions) {
+          await stageBundleCapabilityRevision(
+            join(temporaryPath, "revisions", revisionDirectory(revision.revision)),
+            revision,
+          );
+        }
+        if (Object.keys(credentials).length > 0) {
+          await options.credentials.setMany(id, credentials);
+        }
+        const latest = revisions.at(-1)!;
+        const manifest = CapabilityManifestSchema.parse({
+          schemaVersion: "pragma.capability/v2",
+          id,
+          runtimeKey: createRuntimeKey(latest.definition.name, id),
+          name: latest.definition.name,
+          kind: latest.definition.kind,
+          latestRevision: latest.revision,
+          origin: { kind: "pragma-bundle", logicalId },
+          createdAt: timestamp,
+          updatedAt: timestamp,
+        });
+        const health = await bundleHealth(latest.definition, id, latest.revision);
+        await writeJson(join(temporaryPath, "capability.json"), manifest);
+        await writeJson(join(temporaryPath, "health.json"), health);
+        await mkdir(options.capabilitiesPath, { recursive: true, mode: 0o700 });
+        await rename(temporaryPath, capabilityPath(id));
+        return await readCapability(id);
+      } catch (error) {
+        await rm(temporaryPath, { recursive: true, force: true });
+        if (Object.keys(credentials).length > 0) {
+          await options.credentials.removeCapability(id).catch(() => undefined);
+        }
+        throw error;
+      }
+    },
     async createGeneratedSkill(rawInput) {
       const input = SkillPackageSchema.parse(rawInput.package);
       const id = rawInput.id === undefined ? randomUUID() : CapabilityIdSchema.parse(rawInput.id);
@@ -556,14 +786,23 @@ export function createCapabilityStore(options: {
       }
     },
     async updateGeneratedSkill(rawInput) {
-      const input = { id: CapabilityIdSchema.parse(rawInput.id), package: SkillPackageSchema.parse(rawInput.package) };
+      const input = {
+        id: CapabilityIdSchema.parse(rawInput.id),
+        package: SkillPackageSchema.parse(rawInput.package),
+      };
       const current = await readCapability(input.id);
       if (current.definition.kind !== "skill") {
-        throw new CapabilityStoreError("config_invalid", "Only Skill capabilities can be updated here.");
+        throw new CapabilityStoreError(
+          "config_invalid",
+          "Only Skill capabilities can be updated here.",
+        );
       }
       const revision = current.manifest.latestRevision + 1;
       const revisionsPath = join(capabilityPath(input.id), "revisions");
-      const temporaryPath = join(revisionsPath, `.${revisionDirectory(revision)}.${randomUUID()}.tmp`);
+      const temporaryPath = join(
+        revisionsPath,
+        `.${revisionDirectory(revision)}.${randomUUID()}.tmp`,
+      );
       const payloadPath = join(temporaryPath, "payload");
       await mkdir(payloadPath, { recursive: true, mode: 0o700 });
       try {
@@ -581,7 +820,11 @@ export function createCapabilityStore(options: {
           latestRevision: revision,
           updatedAt: timestamp,
         });
-        const health = CapabilityHealthSchema.parse({ revision, status: "ready", checkedAt: timestamp });
+        const health = CapabilityHealthSchema.parse({
+          revision,
+          status: "ready",
+          checkedAt: timestamp,
+        });
         const candidate = CapabilitySchema.parse({ manifest, definition, health });
         await writeJson(join(temporaryPath, "definition.json"), definition);
         return await publishRevision({
@@ -940,6 +1183,38 @@ function assertCodeServiceReady(
   );
 }
 
+async function stageBundleCapabilityRevision(
+  targetPath: string,
+  input: ImportBundleCapabilityRevision,
+): Promise<string> {
+  const temporaryPath = `${targetPath}.${randomUUID()}.tmp`;
+  try {
+    await mkdir(temporaryPath, { recursive: true, mode: 0o700 });
+    await writeJson(join(temporaryPath, "definition.json"), input.definition);
+    if (input.definition.kind === "skill") {
+      if (input.payloadPath === undefined) {
+        throw new CapabilityStoreError(
+          "bundle_identity_conflict",
+          "The Bundle is missing the files for a Skill revision.",
+        );
+      }
+      await importSkillPayload(input.payloadPath, join(temporaryPath, "payload"));
+      if ((await hashDirectory(join(temporaryPath, "payload"))) !== input.definition.contentHash) {
+        throw new CapabilityStoreError(
+          "bundle_identity_conflict",
+          "The Bundle Skill payload does not match its capability revision.",
+        );
+      }
+    }
+    await mkdir(dirname(targetPath), { recursive: true, mode: 0o700 });
+    await rename(temporaryPath, targetPath);
+    return targetPath;
+  } catch (error) {
+    await rm(temporaryPath, { recursive: true, force: true });
+    throw error;
+  }
+}
+
 function toCoreCodeService(
   definition: Extract<CapabilityDefinition, { readonly kind: "code_service" }>,
 ) {
@@ -1046,7 +1321,10 @@ async function writeGeneratedSkillPayload(input: SkillPackage, targetPath: strin
   for (const file of parsed.files) {
     const target = resolve(targetPath, ...file.path.split("/"));
     if (!isPathInside(targetPath, target)) {
-      throw new CapabilityStoreError("import_invalid", "The generated Skill contains an unsafe path.");
+      throw new CapabilityStoreError(
+        "import_invalid",
+        "The generated Skill contains an unsafe path.",
+      );
     }
     await mkdir(resolve(target, ".."), { recursive: true, mode: 0o700 });
     await writeFile(target, file.content, { mode: 0o600 });
@@ -1284,4 +1562,15 @@ function readToolOutput(value: unknown): unknown | undefined {
 function readStructuredOutput(value: unknown): Record<string, unknown> | undefined {
   if (!isRecord(value)) return undefined;
   return isRecord(value["structuredContent"]) ? value["structuredContent"] : undefined;
+}
+
+function stableStringify(value: unknown): string {
+  if (Array.isArray(value)) return `[${value.map(stableStringify).join(",")}]`;
+  if (value !== null && typeof value === "object") {
+    return `{${Object.entries(value as Record<string, unknown>)
+      .toSorted(([left], [right]) => left.localeCompare(right))
+      .map(([key, nested]) => `${JSON.stringify(key)}:${stableStringify(nested)}`)
+      .join(",")}}`;
+  }
+  return JSON.stringify(value);
 }

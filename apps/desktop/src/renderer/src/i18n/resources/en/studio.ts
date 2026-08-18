@@ -1311,6 +1311,28 @@ export const studio = {
   bundleSetupTitle: "Finish local setup",
   bundleSetupDescription:
     "The workflow is saved, but it cannot run until every required local dependency is ready.",
+  bundlePreflightTitle: "Dependency readiness",
+  bundleRecheck: "Check again",
+  bundleConfigureCapability: "Configure {{name}}",
+  bundleGenericError: "The Bundle operation could not be completed. Check the file and try again.",
+  bundleIdentityConflict:
+    "A capability revision conflicts with an existing Bundle identity. Choose another capability or import a complete history.",
+  bundleStatus: {
+    ready: "Ready",
+    missing: "Missing",
+    invalid: "Invalid",
+    action_required: "Action required",
+  },
+  bundleAction: {
+    none: "No action",
+    choose_runtime: "Choose a Runtime",
+    choose_capability: "Choose a capability",
+    configure_capability: "Configure the capability",
+    choose_knowledge_base: "Choose a knowledge base",
+    install_plugin: "Install the plugin",
+    enter_secret: "Enter the secret",
+    restore_or_replace: "Restore or replace",
+  },
   bundleChooseRuntime: "Runtime",
   bundleChooseCapability: "Choose capability",
   bundleChooseKnowledgeBase: "Choose knowledge base",
