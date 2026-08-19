@@ -3,7 +3,7 @@ import { afterEach, describe, expect, it } from "vitest";
 
 import type { ContextStore } from "../../../../shared/contracts/index.ts";
 import { i18n } from "../../i18n/index.ts";
-import { ContextStorePickerDialog } from "./ContextStorePickerDialog.tsx";
+import { ContextStorePickerDialog } from "../../components/ContextStorePickerDialog.tsx";
 
 afterEach(async () => {
   await i18n.changeLanguage("en");

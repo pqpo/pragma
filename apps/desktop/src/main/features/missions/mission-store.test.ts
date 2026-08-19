@@ -58,7 +58,8 @@ describe("mission store", () => {
       expect.objectContaining({ id: created.id, title: created.title }),
     ]);
     const manifest = await readFile(join(root, "missions", created.id, "mission.yaml"), "utf8");
-    expect(manifest).toContain("schemaVersion: pragma.mission/v7");
+    expect(manifest).toContain("schemaVersion: pragma.mission/v8");
+    expect(created.contextStoreIds).toEqual([]);
     expect(manifest).toContain("revision: 3");
     expect(manifest).toContain("toolPermissionMode: full-access");
     expect(manifest).toContain("modelOverride:");
@@ -67,6 +68,25 @@ describe("mission store", () => {
       '"kind":"user"',
     );
     await expect(store.getAttachments(created.id)).resolves.toEqual([]);
+  });
+
+  it("tracks Knowledge Store references without owning the Store lifecycle", async () => {
+    const root = await temporaryRoot();
+    const store = createMissionStore({ missionsPath: join(root, "missions") });
+    const contextStoreId = "10000000-0000-4000-8000-000000000001";
+    const created = await store.create({
+      workspace: { path: join(root, "workspace"), basename: "workspace" },
+      goal: "Use Mission Knowledge",
+      project: { id: "studio", revision: 1 },
+      executor: missionExecutorSnapshot(expertFixture()),
+      contextStoreIds: [contextStoreId],
+    });
+
+    await expect(store.isContextStoreReferenced(contextStoreId)).resolves.toBe(true);
+    await expect(store.updateContextStores(created.id, [])).resolves.toMatchObject({
+      contextStoreIds: [],
+    });
+    await expect(store.isContextStoreReferenced(contextStoreId)).resolves.toBe(false);
   });
 
   it("materializes images inside the Mission while keeping file and directory references", async () => {
@@ -397,10 +417,7 @@ describe("mission store", () => {
       executor: missionExecutorSnapshot(expertFixture()),
     });
 
-    const migrated = await store.backfillAutomationOrigin(
-      legacy.id,
-      "automation:m9a8n9nxvvyb4j01",
-    );
+    const migrated = await store.backfillAutomationOrigin(legacy.id, "automation:m9a8n9nxvvyb4j01");
 
     expect(migrated).toMatchObject({
       id: legacy.id,
@@ -810,7 +827,7 @@ describe("mission store", () => {
     const manifestPath = join(directory, "mission.yaml");
     await writeFile(
       manifestPath,
-      (await readFile(manifestPath, "utf8")).replace("pragma.mission/v7", "pragma.mission/v2"),
+      (await readFile(manifestPath, "utf8")).replace("pragma.mission/v8", "pragma.mission/v2"),
       "utf8",
     );
     await expect(store.get(created.id)).rejects.toMatchObject({ code: "unsupported_schema" });
@@ -839,10 +856,10 @@ describe("mission store", () => {
     await writeFile(manifestPath, formatPragmaYaml(legacy), "utf8");
 
     await expect(store.get(created.id)).resolves.toMatchObject({
-      schemaVersion: "pragma.mission/v7",
+      schemaVersion: "pragma.mission/v8",
       flowInput: { goal: "Legacy Flow goal", workspace },
     });
-    expect(await readFile(manifestPath, "utf8")).toContain("schemaVersion: pragma.mission/v7");
+    expect(await readFile(manifestPath, "utf8")).toContain("schemaVersion: pragma.mission/v8");
 
     const future = parsePragmaYaml(await readFile(manifestPath, "utf8")) as Record<string, unknown>;
     future["schemaVersion"] = "pragma.mission/v99";
@@ -866,7 +883,7 @@ describe("mission store", () => {
     await writeFile(manifestPath, formatPragmaYaml(legacy), "utf8");
 
     await expect(store.get(created.id)).resolves.toMatchObject({
-      schemaVersion: "pragma.mission/v7",
+      schemaVersion: "pragma.mission/v8",
       origin: { type: "user" },
     });
     expect(await readFile(manifestPath, "utf8")).toContain("type: user");
@@ -876,6 +893,78 @@ describe("mission store", () => {
         "utf8",
       ),
     ).toContain("schemaVersion: pragma.mission/v6");
+  });
+
+  it("migrates v7 Missions to empty Mission Knowledge references with a backup", async () => {
+    const root = await temporaryRoot();
+    const store = createMissionStore({ missionsPath: join(root, "missions") });
+    const { directory, id, source } = await installMissionV7Fixture(root);
+
+    await expect(store.get(id)).resolves.toMatchObject({
+      schemaVersion: "pragma.mission/v8",
+      contextStoreIds: [],
+    });
+    expect(
+      parsePragmaYaml(
+        await readFile(join(directory, "migration-backups", "mission.v7.yaml"), "utf8"),
+      ),
+    ).toEqual(parsePragmaYaml(source));
+  });
+
+  it("replays an interrupted v7-to-v8 migration journal", async () => {
+    const root = await temporaryRoot();
+    const store = createMissionStore({ missionsPath: join(root, "missions") });
+    const { directory, id, source } = await installMissionV7Fixture(root);
+    const target = {
+      ...(parsePragmaYaml(source) as Record<string, unknown>),
+      schemaVersion: "pragma.mission/v8",
+      contextStoreIds: [],
+    };
+    await writeFile(
+      join(directory, ".v7-to-v8.transaction.json"),
+      `${JSON.stringify({
+        schemaVersion: "pragma.mission-v8-migration/v1",
+        missionId: id,
+        target,
+      })}\n`,
+      "utf8",
+    );
+
+    await expect(store.get(id)).resolves.toMatchObject({
+      schemaVersion: "pragma.mission/v8",
+      contextStoreIds: [],
+    });
+    await expect(
+      readFile(join(directory, ".v7-to-v8.transaction.json"), "utf8"),
+    ).rejects.toMatchObject({ code: "ENOENT" });
+  });
+
+  it("preserves v6 when the adjacent v7 target fails historical validation", async () => {
+    const root = await temporaryRoot();
+    const store = createMissionStore({ missionsPath: join(root, "missions") });
+    const { directory, id, source } = await installMissionV7Fixture(root);
+    const malformedV6 = {
+      ...(parsePragmaYaml(source) as Record<string, unknown>),
+      schemaVersion: "pragma.mission/v6",
+      executor: {
+        kind: "flow",
+        ref: "flow:v2vt1v01vzz6j24q",
+        name: "Broken historical Flow",
+      },
+    };
+    await writeFile(join(directory, "mission.yaml"), formatPragmaYaml(malformedV6), "utf8");
+
+    await expect(store.get(id)).rejects.toMatchObject({ code: "config_invalid" });
+    expect(
+      (
+        parsePragmaYaml(await readFile(join(directory, "mission.yaml"), "utf8")) as {
+          schemaVersion: string;
+        }
+      ).schemaVersion,
+    ).toBe("pragma.mission/v6");
+    await expect(
+      readFile(join(directory, ".v6-to-v7.transaction.json"), "utf8"),
+    ).rejects.toMatchObject({ code: "ENOENT" });
   });
 
   it("replays an interrupted v6-to-v7 migration journal", async () => {
@@ -910,7 +999,7 @@ describe("mission store", () => {
     );
 
     await expect(store.get(created.id)).resolves.toMatchObject({
-      schemaVersion: "pragma.mission/v7",
+      schemaVersion: "pragma.mission/v8",
       id: created.id,
     });
     await expect(
@@ -947,4 +1036,17 @@ function expertFixture(): PragmaExpertResource {
       tools: [],
     },
   };
+}
+
+async function installMissionV7Fixture(root: string): Promise<{
+  readonly directory: string;
+  readonly id: string;
+  readonly source: string;
+}> {
+  const source = await readFile(new URL("./fixtures/mission-v7.yaml", import.meta.url), "utf8");
+  const manifest = parsePragmaYaml(source) as { readonly id: string };
+  const directory = join(root, "missions", manifest.id);
+  await mkdir(directory, { recursive: true });
+  await writeFile(join(directory, "mission.yaml"), source, "utf8");
+  return { directory, id: manifest.id, source };
 }

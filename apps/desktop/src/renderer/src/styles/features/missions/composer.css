@@ -282,6 +282,37 @@
   gap: 2px;
 }
 
+.mission-chat-options .mission-context-store-trigger {
+  display: inline-flex;
+  min-height: 34px;
+  align-items: center;
+  gap: 6px;
+  padding: 0 8px;
+  border: 0;
+  border-radius: 9px;
+  background: transparent;
+  color: var(--faint);
+  cursor: pointer;
+  font-size: 12px;
+}
+
+.mission-context-store-trigger:hover:not(:disabled) {
+  background: var(--surface-soft);
+  color: var(--text);
+}
+
+.mission-context-store-trigger strong {
+  display: grid;
+  min-width: 18px;
+  height: 18px;
+  place-items: center;
+  padding: 0 5px;
+  border-radius: var(--ui-radius-round);
+  background: var(--green-soft);
+  color: var(--green-dark);
+  font-size: 11px;
+}
+
 .mission-chat-actions {
   position: relative;
   display: flex;

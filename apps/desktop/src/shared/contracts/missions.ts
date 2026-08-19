@@ -21,6 +21,7 @@ import {
   MissionModelOverrideSchema,
   MissionWorkspaceSchema,
 } from "./mission-base.ts";
+import { ContextStoreIdSchema } from "./context-stores.ts";
 import { DesktopRuntimeIdSchema, DesktopRuntimeModelSchema } from "./runtime.ts";
 import { DesktopToolPermissionModeSchema } from "./settings.ts";
 
@@ -215,10 +216,49 @@ export const MissionV6Schema = MissionBaseSchema.extend({
   ]),
 });
 
-export const MissionSchema = MissionBaseSchema.extend({
+export const MissionV7Schema = MissionBaseSchema.extend({
   schemaVersion: z.literal("pragma.mission/v7"),
   flowInput: z.record(z.string(), z.unknown()).optional(),
   origin: MissionOriginSchema.default({ type: "user" }),
+}).superRefine((mission, context) => {
+  if (mission.executor.kind === "flow" && mission.flowInput === undefined) {
+    context.addIssue({
+      code: "custom",
+      message: "Flow missions require flowInput.",
+      path: ["flowInput"],
+    });
+  }
+  if (mission.executor.kind !== "flow" && mission.flowInput !== undefined) {
+    context.addIssue({
+      code: "custom",
+      message: "Only Flow missions may store flowInput.",
+      path: ["flowInput"],
+    });
+  }
+});
+
+const MissionContextStoreIdsSchema = z
+  .array(ContextStoreIdSchema)
+  .max(200)
+  .superRefine((storeIds, context) => {
+    const seen = new Set<string>();
+    for (const [index, storeId] of storeIds.entries()) {
+      if (seen.has(storeId)) {
+        context.addIssue({
+          code: "custom",
+          message: "Mission Knowledge Stores must be unique.",
+          path: [index],
+        });
+      }
+      seen.add(storeId);
+    }
+  });
+
+export const MissionSchema = MissionBaseSchema.extend({
+  schemaVersion: z.literal("pragma.mission/v8"),
+  flowInput: z.record(z.string(), z.unknown()).optional(),
+  origin: MissionOriginSchema.default({ type: "user" }),
+  contextStoreIds: MissionContextStoreIdsSchema,
 }).superRefine((mission, context) => {
   if (mission.executor.kind === "flow" && mission.flowInput === undefined) {
     context.addIssue({
@@ -274,6 +314,7 @@ export function isUserFacingMissionOrigin(origin: z.infer<typeof MissionOriginSc
 
 export const CreateMissionSchema = z.object({
   workspace: z.string().trim().min(1).max(2_000),
+  contextStoreIds: MissionContextStoreIdsSchema.default([]),
   executor: z.object({
     ref: MissionExecutorRefSchema,
   }),
@@ -350,6 +391,11 @@ export const UpdateMissionOptionsSchema = z.object({
   id: MissionIdSchema,
   toolPermissionMode: DesktopToolPermissionModeSchema,
   modelOverride: MissionModelOverrideSchema.nullable(),
+});
+
+export const UpdateMissionContextStoresSchema = z.object({
+  id: MissionIdSchema,
+  contextStoreIds: MissionContextStoreIdsSchema,
 });
 
 export function isMissionExecutorResource(

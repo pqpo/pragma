@@ -1,0 +1,21 @@
+id: 70000000-0000-4000-8000-000000000007
+title: Historical Mission v7
+goal: Verify the historical Mission manifest upgrade path.
+initialMessageId: 71000000-0000-4000-8000-000000000007
+toolPermissionMode: request-approval
+workspace:
+  path: /historical/workspace
+  basename: workspace
+project:
+  id: studio
+  revision: 1
+executor:
+  ref: expert:v2vt1v01vzz6j24q
+  name: Product Designer
+  kind: expert
+lifecycleStatus: active
+createdAt: 2026-01-02T03:04:05.000Z
+updatedAt: 2026-01-02T03:04:05.000Z
+schemaVersion: pragma.mission/v7
+origin:
+  type: user

@@ -357,4 +357,10 @@ export const missions = {
   statusCancelled: "已取消",
   statusReady: "就緒",
   statusPreparing: "準備中",
+  missionKnowledge: "知識庫",
+  missionKnowledgeSelected: "已選擇 {{count}} 個知識庫",
+  missionKnowledgePickerDescription: "選擇本次任務中所有 Agent 都可讀取的知識庫。",
+  missionKnowledgeCreateHint: "所選知識庫將在任務啟動時掛載。",
+  missionKnowledgeNextExecutionHint: "變更將在下一次任務執行時生效。",
+  missionKnowledgeQueuePending: "請先移除或完成排隊訊息，再變更任務知識庫。",
 } as const;

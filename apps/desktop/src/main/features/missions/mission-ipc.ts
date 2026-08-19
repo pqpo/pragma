@@ -23,6 +23,7 @@ import {
   RespondMissionHumanInteractionSchema,
   SendMissionMessageSchema,
   UpdateMissionOptionsSchema,
+  UpdateMissionContextStoresSchema,
   UpdateHomeExecutorPreferenceSchema,
   isUserFacingMissionOrigin,
   type Mission,
@@ -241,6 +242,7 @@ export function installMissionHandlers(options: {
           ? { attachments: parsed.input.attachments }
           : {}),
         executorRef: parsed.executor.ref,
+        contextStoreIds: parsed.contextStoreIds,
         ...(parsed.modelOverride === undefined ? {} : { modelOverride: parsed.modelOverride }),
         ...(parsed.toolPermissionMode === undefined
           ? {}
@@ -271,6 +273,15 @@ export function installMissionHandlers(options: {
       const parsed = UpdateMissionOptionsSchema.parse(input);
       await assertManagedMission(parsed.id);
       const mission = await options.runner.updateOptions(parsed);
+      await publishMission(mission);
+      return mission;
+    }),
+  );
+  ipcMain.handle("missions:context-stores:update", (_event, input: unknown) =>
+    runDesktopMutation(async () => {
+      const parsed = UpdateMissionContextStoresSchema.parse(input);
+      await assertManagedMission(parsed.id);
+      const mission = await options.runner.updateContextStores(parsed);
       await publishMission(mission);
       return mission;
     }),

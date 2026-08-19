@@ -52,7 +52,7 @@ import { ProfiledExpertAvatar } from "../../components/ProfiledExpertAvatar.tsx"
 import { MarkdownContent } from "../../components/MarkdownContent.tsx";
 import { errorMessage } from "../../lib/errors.ts";
 import { AssetMemoryPolicySection } from "../settings/AssetMemoryPolicySection.tsx";
-import { ContextStorePickerDialog } from "./ContextStorePickerDialog.tsx";
+import { ContextStorePickerDialog } from "../../components/ContextStorePickerDialog.tsx";
 import { StudioScreenFrame } from "./StudioScreenFrame.tsx";
 import { desktopApi } from "./studio-model.ts";
 import { StudioConfirmationDialog } from "./StudioDialog.tsx";

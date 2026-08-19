@@ -169,6 +169,7 @@ import {
   StageMissionClipboardImageSchema,
   RespondMissionHumanInteractionSchema,
   SendMissionMessageSchema,
+  UpdateMissionContextStoresSchema,
   UpdateMissionOptionsSchema,
 } from "./missions.ts";
 import {
@@ -521,6 +522,7 @@ export type StageMissionClipboardImage = z.infer<typeof StageMissionClipboardIma
 export type MissionLifecycleStatus = z.infer<typeof MissionLifecycleStatusSchema>;
 export type CreateMission = z.infer<typeof CreateMissionSchema>;
 export type UpdateMissionOptions = z.infer<typeof UpdateMissionOptionsSchema>;
+export type UpdateMissionContextStores = z.infer<typeof UpdateMissionContextStoresSchema>;
 export type MissionUserMessage = z.infer<typeof MissionUserMessageSchema>;
 export type MissionTimelineRecord = z.infer<typeof MissionTimelineRecordSchema>;
 export type MissionWorkTask = z.infer<typeof MissionWorkTaskSchema>;

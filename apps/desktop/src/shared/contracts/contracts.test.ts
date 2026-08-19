@@ -864,6 +864,16 @@ describe("mission contracts", () => {
       input: { kind: "prompt", value: "Review the repository" },
     };
     expect(CreateMissionSchema.safeParse(input).success).toBe(true);
+    const contextStoreId = "10000000-0000-4000-8000-000000000001";
+    expect(
+      CreateMissionSchema.parse({ ...input, contextStoreIds: [contextStoreId] }).contextStoreIds,
+    ).toEqual([contextStoreId]);
+    expect(
+      CreateMissionSchema.safeParse({
+        ...input,
+        contextStoreIds: [contextStoreId, contextStoreId],
+      }).success,
+    ).toBe(false);
     expect(
       CreateMissionSchema.parse({ ...input, toolPermissionMode: "full-access" }).toolPermissionMode,
     ).toBe("full-access");
@@ -896,7 +906,7 @@ describe("mission contracts", () => {
   it("pins a team executor to a project revision", () => {
     expect(
       MissionSchema.parse({
-        schemaVersion: "pragma.mission/v7",
+        schemaVersion: "pragma.mission/v8",
         id: "00000000-0000-4000-8000-000000000000",
         title: "Deliver the feature",
         goal: "Deliver the feature",
@@ -908,6 +918,7 @@ describe("mission contracts", () => {
           ref: "team:gmpsevbrb8danedb",
           name: "Delivery Team",
         },
+        contextStoreIds: [],
         lifecycleStatus: "active",
         createdAt: "2026-07-11T00:00:00.000Z",
         updatedAt: "2026-07-11T00:00:00.000Z",
@@ -917,7 +928,7 @@ describe("mission contracts", () => {
 
   it("drops the retired Desktop environment fingerprint from persisted Missions", () => {
     const parsed = MissionSchema.parse({
-      schemaVersion: "pragma.mission/v7",
+      schemaVersion: "pragma.mission/v8",
       id: "00000000-0000-4000-8000-000000000000",
       title: "Continue the mission",
       goal: "Continue the mission",
@@ -929,6 +940,7 @@ describe("mission contracts", () => {
         ref: "expert:1xddvess309a6gme",
         name: "Writer",
       },
+      contextStoreIds: [],
       execution: {
         id: "00000000-0000-4000-8000-000000000002",
         inputMessageId: "00000000-0000-4000-8000-000000000001",

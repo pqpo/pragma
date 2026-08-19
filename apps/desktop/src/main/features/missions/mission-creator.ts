@@ -11,6 +11,7 @@ import type {
 } from "../../../shared/contracts/index.ts";
 import type { MissionExecutorCatalog } from "./mission-executor-catalog.ts";
 import type { MissionStore } from "./mission-store.ts";
+import type { ContextStoreStore } from "../context-stores/context-store-store.ts";
 import type { PragmaProjectStore } from "../projects/pragma-project-store.ts";
 import { validateWorkspace } from "../workspaces/workspace-scope.ts";
 
@@ -27,6 +28,7 @@ export interface MissionCreator {
     readonly toolPermissionMode?: DesktopToolPermissionMode | undefined;
     readonly modelOverride?: MissionModelOverride | undefined;
     readonly origin?: Mission["origin"] | undefined;
+    readonly contextStoreIds?: readonly string[] | undefined;
   }): Promise<Mission>;
 }
 
@@ -34,6 +36,7 @@ export function createMissionCreator(options: {
   readonly missions: MissionStore;
   readonly project: PragmaProjectStore;
   readonly executors: MissionExecutorCatalog;
+  readonly contextStores?: ContextStoreStore | undefined;
   readonly getDefaultToolPermissionMode: () =>
     DesktopToolPermissionMode | Promise<DesktopToolPermissionMode>;
   readonly assertExecutorReady?: ((ref: string) => void | Promise<void>) | undefined;
@@ -75,6 +78,12 @@ export function createMissionCreator(options: {
       if (input.modelOverride !== undefined) {
         await options.executors.validateModelOverride(executor.ref, input.modelOverride, project);
       }
+      for (const storeId of input.contextStoreIds ?? []) {
+        if (options.contextStores === undefined) {
+          throw new Error(`Mission Knowledge Store is unavailable: ${storeId}`);
+        }
+        await options.contextStores.resolve(storeId);
+      }
 
       const validatedFlowInput =
         executor.kind === "flow" && missionInput.kind === "flow"
@@ -98,6 +107,7 @@ export function createMissionCreator(options: {
         ...(input.attachments === undefined ? {} : { attachments: input.attachments }),
         ...(input.modelOverride === undefined ? {} : { modelOverride: input.modelOverride }),
         ...(input.origin === undefined ? {} : { origin: input.origin }),
+        contextStoreIds: input.contextStoreIds ?? [],
         toolPermissionMode:
           input.toolPermissionMode ?? (await options.getDefaultToolPermissionMode()),
       });

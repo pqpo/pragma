@@ -357,4 +357,10 @@ export const missions = {
   statusCancelled: "已取消",
   statusReady: "就绪",
   statusPreparing: "准备中",
+  missionKnowledge: "知识库",
+  missionKnowledgeSelected: "已选择 {{count}} 个知识库",
+  missionKnowledgePickerDescription: "选择本次任务中所有 Agent 都可读取的知识库。",
+  missionKnowledgeCreateHint: "所选知识库将在任务启动时挂载。",
+  missionKnowledgeNextExecutionHint: "更改将在下一次任务执行时生效。",
+  missionKnowledgeQueuePending: "请先移除或完成排队消息，再更改任务知识库。",
 } as const;

@@ -2,7 +2,7 @@ import { MagnifyingGlass, X } from "@phosphor-icons/react";
 import { useEffect, useMemo, useState } from "react";
 import { useTranslation } from "react-i18next";
 
-import type { ContextStore } from "../../../../shared/contracts/index.ts";
+import type { ContextStore } from "../../../shared/contracts/index.ts";
 
 const PAGE_SIZE = 20;
 

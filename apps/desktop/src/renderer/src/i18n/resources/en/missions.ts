@@ -369,4 +369,13 @@ export const missions = {
   statusCancelled: "Cancelled",
   statusReady: "Ready",
   statusPreparing: "Preparing",
+  missionKnowledge: "Knowledge",
+  missionKnowledgeSelected: "{{count}} Knowledge Stores selected",
+  missionKnowledgePickerDescription:
+    "Choose the Knowledge Stores that every Agent in this Mission can read.",
+  missionKnowledgeCreateHint:
+    "The selected Knowledge Stores will be mounted when the Mission starts.",
+  missionKnowledgeNextExecutionHint: "Changes apply to the next Mission execution.",
+  missionKnowledgeQueuePending:
+    "Remove or finish queued messages before changing Mission Knowledge Stores.",
 } as const;

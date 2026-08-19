@@ -403,8 +403,10 @@ export async function createDesktopApplicationContainer(
       const definitions = await Promise.all(
         (await expertStore.list()).map((summary) => expertStore.get(summary.ref)),
       );
-      return definitions.some((expert) =>
-        expert.contextStoreMounts.some((mount) => mount.storeId === storeId),
+      return (
+        definitions.some((expert) =>
+          expert.contextStoreMounts.some((mount) => mount.storeId === storeId),
+        ) || (await missionStore.isContextStoreReferenced(storeId))
       );
     },
     onRemoved: async (storeId) => {
@@ -638,6 +640,7 @@ export async function createDesktopApplicationContainer(
     missions: missionStore,
     project: pragmaProjectStore,
     executors: missionExecutors,
+    contextStores,
     getDefaultToolPermissionMode: getToolPermissionMode,
     assertExecutorReady: async (ref) => await assertBundleExecutorReady(ref, "create_mission"),
   });

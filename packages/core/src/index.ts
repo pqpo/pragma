@@ -33,6 +33,7 @@ export * from "./context-system/file-system-context-store.ts";
 export * from "./context-system/in-memory-context-store.ts";
 export * from "./context-system/json-context-store.ts";
 export * from "./context-system/static-context-store.ts";
+export * from "./context-system/read-only-context-store.ts";
 export * from "./human-interaction/durable-human-interaction.ts";
 export * from "./logging/logger.ts";
 export * from "./model-provider/model-provider.ts";

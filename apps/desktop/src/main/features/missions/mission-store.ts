@@ -31,6 +31,7 @@ import {
   MissionV4Schema,
   MissionV5Schema,
   MissionV6Schema,
+  MissionV7Schema,
   MissionTimelineRecordSchema,
   isUserFacingMissionOrigin,
   MissionAttachmentsManifestSchema,
@@ -85,6 +86,7 @@ export interface MissionStore {
     readonly toolPermissionMode?: DesktopToolPermissionMode | undefined;
     readonly modelOverride?: MissionModelOverride | undefined;
     readonly origin?: Mission["origin"] | undefined;
+    readonly contextStoreIds?: readonly string[] | undefined;
   }): Promise<Mission>;
   updateOptions(
     id: string,
@@ -93,6 +95,8 @@ export interface MissionStore {
       readonly modelOverride?: MissionModelOverride | undefined;
     },
   ): Promise<Mission>;
+  updateContextStores(id: string, contextStoreIds: readonly string[]): Promise<Mission>;
+  isContextStoreReferenced(storeId: string): Promise<boolean>;
   updateExecution(
     id: string,
     execution: NonNullable<Mission["execution"]>,
@@ -164,6 +168,12 @@ type UserMessageAttachmentsTransaction = z.infer<typeof UserMessageAttachmentsTr
 const MissionV7MigrationTransactionSchema = z.object({
   schemaVersion: z.literal("pragma.mission-v7-migration/v1"),
   missionId: MissionIdSchema,
+  target: MissionV7Schema,
+});
+
+const MissionV8MigrationTransactionSchema = z.object({
+  schemaVersion: z.literal("pragma.mission-v8-migration/v1"),
+  missionId: MissionIdSchema,
   target: MissionSchema,
 });
 
@@ -181,6 +191,10 @@ export function createMissionStore(options: { readonly missionsPath: string }): 
     join(missionPath(id), ".v6-to-v7.transaction.json");
   const v6BackupPath = (id: string) =>
     join(missionPath(id), "migration-backups", "mission.v6.yaml");
+  const v8MigrationTransactionPath = (id: string) =>
+    join(missionPath(id), ".v7-to-v8.transaction.json");
+  const v7BackupPath = (id: string) =>
+    join(missionPath(id), "migration-backups", "mission.v7.yaml");
   const legacyProjectionPath = (id: string, executionId: string) =>
     join(missionPath(id), "execution-projections", `${executionId}.json`);
   const projectionPath = (id: string, executionId: string) =>
@@ -199,7 +213,9 @@ export function createMissionStore(options: { readonly missionsPath: string }): 
   const withMissionLock = async <T>(id: string, operation: () => Promise<T>): Promise<T> =>
     await withFileLock(lockPath(id), operation);
 
-  const recoverV7Migration = async (id: string): Promise<Mission | undefined> => {
+  const recoverV7Migration = async (
+    id: string,
+  ): Promise<z.infer<typeof MissionV7Schema> | undefined> => {
     const value = await readJsonIfExists(v7MigrationTransactionPath(id));
     if (value === undefined) return undefined;
     const transaction = MissionV7MigrationTransactionSchema.parse(value);
@@ -225,8 +241,8 @@ export function createMissionStore(options: { readonly missionsPath: string }): 
   const migrateV6ToV7 = async (
     id: string,
     legacy: z.infer<typeof MissionV6Schema>,
-  ): Promise<Mission> => {
-    const target = MissionSchema.parse({ ...legacy, schemaVersion: "pragma.mission/v7" });
+  ): Promise<z.infer<typeof MissionV7Schema>> => {
+    const target = MissionV7Schema.parse({ ...legacy, schemaVersion: "pragma.mission/v7" });
     await writeTextIfAbsent(v6BackupPath(id), formatPragmaYaml(legacy));
     await writeJsonAtomically(
       v7MigrationTransactionPath(id),
@@ -238,6 +254,52 @@ export function createMissionStore(options: { readonly missionsPath: string }): 
     );
     await writeYamlAtomically(manifestPath(id), target);
     await rm(v7MigrationTransactionPath(id), { force: true });
+    return target;
+  };
+
+  const recoverV8Migration = async (id: string): Promise<Mission | undefined> => {
+    const value = await readJsonIfExists(v8MigrationTransactionPath(id));
+    if (value === undefined) return undefined;
+    const transaction = MissionV8MigrationTransactionSchema.parse(value);
+    if (transaction.missionId !== id || transaction.target.id !== id) {
+      throw new MissionStoreError(
+        "config_invalid",
+        `Mission ${id} has a migration journal for a different Mission.`,
+      );
+    }
+    const persisted = parsePragmaYaml(await readFile(manifestPath(id), "utf8"));
+    const persistedVersion = readSchemaVersion(persisted);
+    if (persistedVersion !== "pragma.mission/v7" && persistedVersion !== "pragma.mission/v8") {
+      throw new MissionStoreError(
+        "unsupported_schema",
+        `Mission ${id} cannot replay its v7-to-v8 migration from ${String(persistedVersion)}.`,
+      );
+    }
+    await writeYamlAtomically(manifestPath(id), transaction.target);
+    await rm(v8MigrationTransactionPath(id), { force: true });
+    return transaction.target;
+  };
+
+  const migrateV7ToV8 = async (
+    id: string,
+    legacy: z.infer<typeof MissionV7Schema>,
+  ): Promise<Mission> => {
+    const target = MissionSchema.parse({
+      ...legacy,
+      schemaVersion: "pragma.mission/v8",
+      contextStoreIds: [],
+    });
+    await writeTextIfAbsent(v7BackupPath(id), formatPragmaYaml(legacy));
+    await writeJsonAtomically(
+      v8MigrationTransactionPath(id),
+      MissionV8MigrationTransactionSchema.parse({
+        schemaVersion: "pragma.mission-v8-migration/v1",
+        missionId: id,
+        target,
+      }),
+    );
+    await writeYamlAtomically(manifestPath(id), target);
+    await rm(v8MigrationTransactionPath(id), { force: true });
     return target;
   };
 
@@ -268,8 +330,10 @@ export function createMissionStore(options: { readonly missionsPath: string }): 
 
   const readMissionUnlocked = async (id: string): Promise<Mission> => {
     try {
-      const recovered = await recoverV7Migration(id);
-      const value = recovered ?? parsePragmaYaml(await readFile(manifestPath(id), "utf8"));
+      const recoveredV8 = await recoverV8Migration(id);
+      if (recoveredV8 !== undefined) return recoveredV8;
+      const recoveredV7 = await recoverV7Migration(id);
+      const value = recoveredV7 ?? parsePragmaYaml(await readFile(manifestPath(id), "utf8"));
       const schemaVersion = readSchemaVersion(value);
       let current = value;
       if (schemaVersion === "pragma.mission/v3") {
@@ -314,13 +378,16 @@ export function createMissionStore(options: { readonly missionsPath: string }): 
           origin: { type: "user" },
         });
         await writeYamlAtomically(manifestPath(id), migrated);
-        return await migrateV6ToV7(id, migrated);
+        return await migrateV7ToV8(id, await migrateV6ToV7(id, migrated));
       }
       if (versionAfterRefMigration === "pragma.mission/v6") {
         const legacy = MissionV6Schema.parse(current);
-        return await migrateV6ToV7(id, legacy);
+        return await migrateV7ToV8(id, await migrateV6ToV7(id, legacy));
       }
-      if (versionAfterRefMigration !== "pragma.mission/v7") {
+      if (versionAfterRefMigration === "pragma.mission/v7") {
+        return await migrateV7ToV8(id, MissionV7Schema.parse(current));
+      }
+      if (versionAfterRefMigration !== "pragma.mission/v8") {
         throw new MissionStoreError(
           "unsupported_schema",
           `Mission ${id} uses an unsupported schema. Remove the old Mission directory and create a new Mission.`,
@@ -648,7 +715,7 @@ export function createMissionStore(options: { readonly missionsPath: string }): 
       const timestamp = new Date().toISOString();
       const goal = input.goal.trim();
       const mission = MissionSchema.parse({
-        schemaVersion: "pragma.mission/v7",
+        schemaVersion: "pragma.mission/v8",
         id,
         title: input.title === undefined ? titleFromGoal(goal) : normalizeMissionTitle(input.title),
         goal,
@@ -660,6 +727,7 @@ export function createMissionStore(options: { readonly missionsPath: string }): 
         ...(input.flowInput === undefined ? {} : { flowInput: input.flowInput }),
         ...(input.modelOverride === undefined ? {} : { modelOverride: input.modelOverride }),
         origin: input.origin ?? { type: "user" },
+        contextStoreIds: input.contextStoreIds ?? [],
         lifecycleStatus: "active",
         createdAt: timestamp,
         updatedAt: timestamp,
@@ -728,6 +796,41 @@ export function createMissionStore(options: { readonly missionsPath: string }): 
         else next.modelOverride = input.modelOverride;
         return next;
       });
+    },
+    async updateContextStores(id, contextStoreIds) {
+      return await updateMission(MissionIdSchema.parse(id), (current, timestamp) => {
+        if (
+          current.execution !== undefined &&
+          ["queued", "running", "waiting"].includes(current.execution.status)
+        ) {
+          throw new MissionStoreError(
+            "mission_active",
+            "Wait for the current execution before changing Mission Knowledge Stores.",
+          );
+        }
+        return { ...current, contextStoreIds: [...contextStoreIds], updatedAt: timestamp };
+      });
+    },
+    async isContextStoreReferenced(storeId) {
+      let directories;
+      try {
+        directories = (await readdir(options.missionsPath, { withFileTypes: true })).filter(
+          (entry) => entry.isDirectory() && !entry.name.startsWith("."),
+        );
+      } catch (error) {
+        if (isNodeError(error, "ENOENT")) return false;
+        throw error;
+      }
+      for (const directory of directories) {
+        const mission = await readMission(directory.name);
+        if (
+          isUserFacingMissionOrigin(mission.origin) &&
+          mission.contextStoreIds.includes(storeId)
+        ) {
+          return true;
+        }
+      }
+      return false;
     },
     async updateExecution(id, execution, guard) {
       return await updateMission(MissionIdSchema.parse(id), (current, timestamp) => {

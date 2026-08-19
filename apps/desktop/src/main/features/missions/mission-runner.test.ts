@@ -43,10 +43,12 @@ import {
   compactExpertSessionContext,
   createMissionRunner,
   isRootMissionRuntimeOutput,
+  missionKnowledgeNamespace,
   toDesktopHumanRequest,
 } from "./mission-runner.ts";
 import { createMissionStore } from "./mission-store.ts";
 import { createPragmaProjectStore } from "../projects/pragma-project-store.ts";
+import { createContextStoreStore } from "../context-stores/context-store-store.ts";
 import type { DesktopUsageStore } from "../usage/usage-store.ts";
 
 const temporaryPaths: string[] = [];
@@ -361,6 +363,159 @@ describe("MissionRunner", { timeout: 15_000 }, () => {
     });
     expect(onMissionActivity).toHaveBeenCalledTimes(2);
     await vi.waitFor(() => expect(onExecutionTerminal).toHaveBeenCalledTimes(2));
+  });
+
+  it("mounts Mission Knowledge read-only and rebuilds cached bindings after an update", async () => {
+    const root = await mkdtemp(join(tmpdir(), "pragma-mission-knowledge-"));
+    temporaryPaths.push(root);
+    const pragmaHome = join(root, "state");
+    const project = createPragmaProjectStore({ projectsPath: join(root, "projects") });
+    const snapshot = await project.publish({
+      expectedRevision: 0,
+      resources: [runtimeFixture(), expertFixture()],
+    });
+    const contextStores = createContextStoreStore({ storesPath: join(root, "context-stores") });
+    const firstStore = await contextStores.create({
+      mode: "blank",
+      name: "Project A",
+      description: "Project A knowledge",
+    });
+    const secondStore = await contextStores.create({
+      mode: "blank",
+      name: "Project B",
+      description: "Project B knowledge",
+    });
+    await contextStores.createFile(firstStore.id, "project.md", "Project A context");
+    await contextStores.createFile(secondStore.id, "project.md", "Project B context");
+    const missions = createMissionStore({ missionsPath: join(root, "missions") });
+    const mission = await missions.create({
+      workspace: { path: root, basename: "workspace" },
+      goal: "Read Mission Knowledge",
+      project: { id: snapshot.projectId, revision: snapshot.revision },
+      executor: missionExecutorSnapshot(
+        snapshot.resources.find((resource) => resource.kind === "Expert")!,
+      ),
+      contextStoreIds: [firstStore.id],
+    });
+    const runtime = defineRuntimeTestDriver<never, { context: RuntimeDriverSessionContext }>({
+      descriptor: { id: "fake", kind: "fake", displayName: "Fake" },
+      createSession: (context) => ({ context }),
+      restoreSession: (context) => ({ context }),
+      readSession: () => ({ runtimeSessionId: "runtime" }),
+      async startTurn(session, turn) {
+        const tools = session.context.agent.createDefaultTools();
+        const read = tools.find((tool) => tool.name === "read_expert_context")!;
+        const add = tools.find((tool) => tool.name === "add_expert_context")!;
+        const storeId = turn.rawQuery === mission.goal ? firstStore.id : secondStore.id;
+        const namespace = missionKnowledgeNamespace(storeId);
+        const readResult = await read.call({ namespace, id: "project.md" }, turn.signal, {
+          execution: session.context.request.executionContext,
+        });
+        const addResult = await add.call(
+          { namespace, id: "blocked.md", content: "must not persist" },
+          turn.signal,
+          { execution: session.context.request.executionContext },
+        );
+        return {
+          outputText: `${readResult.text}|writeDenied=${String(addResult.isError)}`,
+          runtimeSessionId: "runtime",
+        };
+      },
+      mapEvent: () => ({ events: [] }),
+    });
+    const runner = createMissionRunner({
+      missions,
+      project,
+      contextStores,
+      capabilityStore: {} as CapabilityStore,
+      capabilityCredentials: {} as CapabilityCredentialStore,
+      capabilitiesPath: join(root, "capabilities"),
+      pragmaHome,
+      runtimes: createStaticRuntimeResolver({ runtimes: [runtime], defaultRuntimeId: "fake" }),
+      assertStorageWriteAllowed: async () => undefined,
+    });
+
+    await runner.run(mission.id);
+    await vi.waitFor(
+      async () => expect((await missions.get(mission.id)).execution?.status).toBe("succeeded"),
+      { timeout: settlementTimeoutMs },
+    );
+    const persistedMission = await missions.get(mission.id);
+    const sessionId = persistedMission.execution!.sessionId!;
+    const queuedRequestId = "00000000-0000-4000-8000-000000000096";
+    const expertSessions = createFileExpertSessionStore({
+      executions: createFileExecutionStore({ pragmaHome }),
+      pragmaHome,
+    });
+    await expertSessions.transact(sessionId, ({ session, prompts }) => ({
+      result: undefined,
+      session: {
+        ...session,
+        queuedRequestIds: [...session.queuedRequestIds, queuedRequestId],
+      },
+      prompts: [
+        ...prompts,
+        {
+          requestId: queuedRequestId,
+          sessionId,
+          content: "Keep this queued message",
+          mode: "enqueue" as const,
+          executionId: "00000000-0000-4000-8000-000000000095",
+          status: "queued" as const,
+          createdAt: new Date().toISOString(),
+          updatedAt: new Date().toISOString(),
+        },
+      ],
+    }));
+    await expect(
+      runner.updateContextStores({ id: mission.id, contextStoreIds: [secondStore.id] }),
+    ).rejects.toThrow("Remove or finish queued Mission messages");
+    await expect(expertSessions.listPrompts(sessionId)).resolves.toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ requestId: queuedRequestId, status: "queued" }),
+      ]),
+    );
+    await expertSessions.transact(sessionId, ({ session, prompts }) => ({
+      result: undefined,
+      session: {
+        ...session,
+        queuedRequestIds: session.queuedRequestIds.filter(
+          (requestId) => requestId !== queuedRequestId,
+        ),
+      },
+      prompts: prompts.filter((prompt) => prompt.requestId !== queuedRequestId),
+    }));
+    await runner.updateContextStores({ id: mission.id, contextStoreIds: [secondStore.id] });
+    await runner.sendMessage({
+      id: mission.id,
+      content: "Use Project B",
+      requestId: "00000000-0000-4000-8000-000000000097",
+    });
+    await vi.waitFor(
+      async () => expect((await missions.get(mission.id)).execution?.status).toBe("succeeded"),
+      { timeout: settlementTimeoutMs },
+    );
+
+    const chat = await runner.getChat({ id: mission.id, limit: 50 });
+    expect(chat.entries).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          kind: "assistant",
+          content: expect.stringContaining("Project A context"),
+        }),
+        expect.objectContaining({
+          kind: "assistant",
+          content: expect.stringContaining("Project B context"),
+        }),
+        expect.objectContaining({
+          kind: "assistant",
+          content: expect.stringContaining("writeDenied=true"),
+        }),
+      ]),
+    );
+    await expect(contextStores.getContent(secondStore.id, "blocked.md")).rejects.toMatchObject({
+      code: "content_not_found",
+    });
   });
 
   it("creates a successor Session when the live execution definition changes", async () => {

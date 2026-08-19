@@ -537,6 +537,19 @@ describe("MissionsPage", () => {
 });
 
 describe("MissionDetailFragment", () => {
+  it("shows the number of Mission Knowledge Stores without exposing their ids", () => {
+    const contextStoreId = "10000000-0000-4000-8000-000000000001";
+    const html = renderToStaticMarkup(
+      <MissionDetailFragment
+        mission={{ ...missionFixture("expert"), contextStoreIds: [contextStoreId] }}
+      />,
+    );
+
+    expect(html).toContain("Knowledge");
+    expect(html).toContain(">1</strong>");
+    expect(html).not.toContain(contextStoreId);
+  });
+
   it("keeps the composer loading until an active execution becomes interruptible", () => {
     expect(
       resolveMissionComposerAction({
@@ -2105,7 +2118,7 @@ describe("Mission human answers", () => {
 
 function missionFixture(kind: "expert" | "team"): Mission {
   return {
-    schemaVersion: "pragma.mission/v7",
+    schemaVersion: "pragma.mission/v8",
     origin: { type: "user" },
     id: "00000000-0000-4000-8000-000000000000",
     title: "Missions page design",
@@ -2114,6 +2127,7 @@ function missionFixture(kind: "expert" | "team"): Mission {
     toolPermissionMode: "request-approval",
     workspace: { path: "/workspace/expert-mesh", basename: "expert-mesh" },
     project: { id: "studio", revision: 1 },
+    contextStoreIds: [],
     executor: {
       kind,
       ref: kind === "expert" ? "expert:v2vt1v01vzz6j24q" : "team:gmpsevbrb8danedb",

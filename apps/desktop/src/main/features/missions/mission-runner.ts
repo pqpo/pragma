@@ -16,6 +16,7 @@ import {
   PragmaPaths,
   readRuntimeSessionContextWindowUsage,
   readRuntimeSessionRecord,
+  ReadOnlyContextStore,
   moveOwnedStorageToTrash,
   runtimeSessionDeletionSources,
   assertStorageWriteAllowed,
@@ -95,6 +96,7 @@ import {
   type GetMissionWorkConversation,
   type DesktopToolPermissionMode,
   type UpdateMissionOptions,
+  type UpdateMissionContextStores,
 } from "../../../shared/contracts/index.ts";
 import type { CapabilityCredentialStore } from "../capabilities/capability-credential-store.ts";
 import type { CapabilityStore } from "../capabilities/capability-store.ts";
@@ -166,6 +168,7 @@ export interface MissionRunner {
   invalidateEstimatedContextWindows(): Promise<void>;
   run(id: string): Promise<Mission>;
   updateOptions(input: UpdateMissionOptions): Promise<Mission>;
+  updateContextStores(input: UpdateMissionContextStores): Promise<Mission>;
   sendMessage(input: {
     readonly id: string;
     readonly content: string;
@@ -244,6 +247,7 @@ async function collectMissionExecutionIds(
 type PendingMissionOperation =
   | { readonly kind: "run"; readonly promise: Promise<Mission> }
   | { readonly kind: "options"; readonly promise: Promise<Mission> }
+  | { readonly kind: "context-stores"; readonly promise: Promise<Mission> }
   | { readonly kind: "message"; readonly promise: Promise<MissionMessageAcceptance> }
   | { readonly kind: "queue-steer"; readonly promise: Promise<Mission> }
   | { readonly kind: "queue-remove"; readonly promise: Promise<Mission> }
@@ -297,6 +301,10 @@ interface MissionExecutionContext {
   readonly app: ReturnType<typeof createPragma>;
   readonly runtimes: RuntimeResolver;
   readonly setToolPermissionMode: (mode: DesktopToolPermissionMode) => void;
+}
+
+export function missionKnowledgeNamespace(storeId: string): string {
+  return `mission-knowledge:${storeId}`;
 }
 
 const MISSION_CHAT_ERROR_MAX_LENGTH = 10_000;
@@ -388,6 +396,7 @@ export function createMissionRunner(options: {
     options.automaticHumanInteractionHandlerForToolPermissionMode?.(mode) ??
     options.automaticHumanInteractionHandler;
   const executionContexts = new Map<string, Promise<MissionExecutionContext>>();
+  const missionsRequiringSuccessorSession = new Set<string>();
   const executionContext = async (mission: Mission): Promise<MissionExecutionContext> => {
     const existing = executionContexts.get(mission.id);
     if (existing !== undefined) return await existing;
@@ -469,11 +478,35 @@ export function createMissionRunner(options: {
               required: false,
             },
           ];
+    const missionKnowledgeBindings: readonly ExpertAgentContextStoreRegistrationInput[] =
+      await Promise.all(
+        mission.contextStoreIds.map(async (storeId) => {
+          if (options.contextStores === undefined) {
+            throw new Error(`Mission Knowledge Store is unavailable: ${storeId}`);
+          }
+          const resolved = await options.contextStores.resolve(storeId);
+          return {
+            namespace: missionKnowledgeNamespace(storeId),
+            storeName: resolved.name,
+            store: new ReadOnlyContextStore(resolved.store),
+            required: true,
+            mutationApproval: "none" as const,
+          };
+        }),
+      );
     const hostContextBindings = [
       ...(systemMission ? [] : (options.hostContextStores ?? [])),
       ...legacyExecutionOutputBindings,
       ...board.bindings,
+      ...missionKnowledgeBindings,
     ];
+    const seenNamespaces = new Set<string>();
+    for (const binding of hostContextBindings) {
+      if (seenNamespaces.has(binding.namespace)) {
+        throw new Error(`Mission Context namespace already exists: ${binding.namespace}`);
+      }
+      seenNamespaces.add(binding.namespace);
+    }
     const context = {
       runtimes,
       app: createPragma({
@@ -1392,6 +1425,7 @@ export function createMissionRunner(options: {
       ? undefined
       : desiredModelSelection;
     let definitionChanged = false;
+    const contextStoresChanged = missionsRequiringSuccessorSession.delete(mission.id);
     if (compiledExpert !== undefined && session !== undefined) {
       const nextDefinitionFingerprint = fingerprintExpertExecutionDefinition(compiledExpert);
       const previousDefinitionFingerprint = sessionDefinitionFingerprints.get(mission.id);
@@ -1413,13 +1447,16 @@ export function createMissionRunner(options: {
       if (compiled === undefined) {
         throw new Error("Mission Session cache was unavailable without a compiled executor.");
       }
-      if (definitionChanged) {
+      if (definitionChanged || contextStoresChanged) {
         session = await createMissionExpertSession(compiled, app, { modelSelection });
         await interruptSupersededMissionSession(mission);
         logger.warn(
           "mission.session_successor_created",
-          `Created a successor ExpertSession for Mission ${mission.id} after its execution definition changed.`,
-          { sessionId: session.sessionId },
+          `Created a successor ExpertSession for Mission ${mission.id} after its execution context changed.`,
+          {
+            reason: definitionChanged ? "executor_definition_changed" : "context_stores_changed",
+            sessionId: session.sessionId,
+          },
         );
       } else {
         session = await openMissionExpertSession({
@@ -1543,6 +1580,48 @@ export function createMissionRunner(options: {
     if (sessions.has(mission.id)) {
       rememberSessionCompilation(mission.id, await compilationIdentity(updated), compiled);
     }
+    return updated;
+  };
+
+  const updateMissionContextStores = async (
+    input: UpdateMissionContextStores,
+  ): Promise<Mission> => {
+    const mission = await options.missions.get(input.id);
+    if (
+      active.has(mission.id) ||
+      (mission.execution !== undefined &&
+        ["queued", "running", "waiting"].includes(mission.execution.status))
+    ) {
+      throw new Error("Wait for the current execution before changing Mission Knowledge Stores.");
+    }
+    if (input.contextStoreIds.length > 0 && options.contextStores === undefined) {
+      throw new Error("Mission Knowledge Stores are unavailable.");
+    }
+    await Promise.all(
+      input.contextStoreIds.map(async (storeId) => await options.contextStores!.resolve(storeId)),
+    );
+    const sessionId = sessions.get(mission.id)?.sessionId ?? mission.execution?.sessionId;
+    if (sessionId !== undefined) {
+      const pendingPrompts = (await expertSessionStore.listPrompts(sessionId)).filter(
+        (prompt) =>
+          prompt.mode === "enqueue" && (prompt.status === "queued" || prompt.status === "running"),
+      );
+      if (pendingPrompts.length > 0) {
+        throw new Error(
+          "Remove or finish queued Mission messages before changing Mission Knowledge Stores.",
+        );
+      }
+    }
+    const updated = await options.missions.updateContextStores(mission.id, input.contextStoreIds);
+    const session = sessions.get(mission.id);
+    if (session !== undefined) {
+      await session.close("Mission Knowledge Stores changed.");
+      sessions.delete(mission.id);
+      missionsRequiringSuccessorSession.add(mission.id);
+    }
+    sessionCompilationIdentities.delete(mission.id);
+    sessionDefinitionFingerprints.delete(mission.id);
+    executionContexts.delete(mission.id);
     return updated;
   };
 
@@ -2308,6 +2387,14 @@ export function createMissionRunner(options: {
       }
       const updating = updateMissionOptions(input);
       trackOperation(input.id, { kind: "options", promise: updating });
+      return await updating;
+    },
+    async updateContextStores(input) {
+      if (pendingOperations.has(input.id)) {
+        throw new MissionOperationError();
+      }
+      const updating = updateMissionContextStores(input);
+      trackOperation(input.id, { kind: "context-stores", promise: updating });
       return await updating;
     },
     async sendMessage(input) {

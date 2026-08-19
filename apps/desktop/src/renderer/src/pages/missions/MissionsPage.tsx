@@ -53,6 +53,7 @@ import { ExpertAvatar } from "../../components/ExpertAvatar.tsx";
 import { ProfiledExpertAvatar } from "../../components/ProfiledExpertAvatar.tsx";
 import {
   type Mission,
+  type ContextStore,
   type MissionChatEntry,
   type MissionChatPatch,
   type MissionChatSnapshot,
@@ -92,6 +93,7 @@ import {
   type ContextStoreBrowserSource,
 } from "../../components/ContextStoreBrowser.tsx";
 import { SidebarResizeHandle } from "../../components/SidebarResizeHandle.tsx";
+import { ContextStorePickerDialog } from "../../components/ContextStorePickerDialog.tsx";
 import {
   SIDEBAR_WIDTH_PREFERENCES,
   usePersistentSidebarWidth,
@@ -620,6 +622,22 @@ export function MissionsPage(props: {
               } catch (optionsError) {
                 setError(errorMessage(optionsError));
                 throw optionsError;
+              }
+            }}
+            onContextStoresChange={async (contextStoreIds) => {
+              const api = desktopApi();
+              if (api === undefined) return;
+              try {
+                replaceMission(
+                  await api.updateMissionContextStores({
+                    id: selectedMission.id,
+                    contextStoreIds: [...contextStoreIds],
+                  }),
+                );
+                setError(null);
+              } catch (contextStoresError) {
+                setError(errorMessage(contextStoresError));
+                throw contextStoresError;
               }
             }}
             onLifecycleChange={async () => {
@@ -1345,6 +1363,8 @@ export function MissionDetailFragment(props: {
         readonly modelOverride?: MissionModelOverride | undefined;
       }) => void | Promise<void>)
     | undefined;
+  readonly onContextStoresChange?:
+    ((contextStoreIds: readonly string[]) => void | Promise<void>) | undefined;
   readonly onHumanResponded?: () => void | Promise<void>;
   readonly onLifecycleChange?: () => void | Promise<void>;
   readonly onConfigureModels?: (() => void) | undefined;
@@ -1404,6 +1424,12 @@ export function MissionDetailFragment(props: {
   const [modelOverride, setModelOverride] = useState<MissionModelOverride | undefined>(
     props.mission.modelOverride,
   );
+  const [contextStores, setContextStores] = useState<readonly ContextStore[]>([]);
+  const [contextStoreIds, setContextStoreIds] = useState<readonly string[]>(
+    props.mission.contextStoreIds,
+  );
+  const [contextStorePickerOpen, setContextStorePickerOpen] = useState(false);
+  const [contextStoresSaving, setContextStoresSaving] = useState(false);
   const [interrupting, setInterrupting] = useState(false);
   const [responding, setResponding] = useState(false);
   const [loadingEarlier, setLoadingEarlier] = useState(false);
@@ -1444,6 +1470,28 @@ export function MissionDetailFragment(props: {
   useEffect(() => {
     attachmentIdsRef.current = attachments.map((attachment) => attachment.id);
   }, [attachments]);
+
+  useEffect(() => {
+    if (!contextStorePickerOpen && !contextStoresSaving) {
+      setContextStoreIds(props.mission.contextStoreIds);
+    }
+  }, [contextStorePickerOpen, contextStoresSaving, props.mission.contextStoreIds]);
+
+  useEffect(() => {
+    let cancelled = false;
+    const listContextStores = desktopApi()?.listContextStores;
+    if (typeof listContextStores !== "function") return;
+    void listContextStores()
+      .then((stores) => {
+        if (!cancelled) setContextStores(stores);
+      })
+      .catch((loadError: unknown) => {
+        if (!cancelled) setOptionsError(errorMessage(loadError));
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [props.mission.id]);
 
   useEffect(
     () => () => {
@@ -3100,6 +3148,33 @@ export function MissionDetailFragment(props: {
                             }
                             onPick={pickAttachments}
                           />
+                          <button
+                            className="mission-context-store-trigger"
+                            type="button"
+                            disabled={
+                              controlsDisabled ||
+                              contextStoresSaving ||
+                              pendingQueuedMessages.length > 0
+                            }
+                            aria-label={t("missionKnowledge", { ns: "missions" })}
+                            title={
+                              pendingQueuedMessages.length > 0
+                                ? t("missionKnowledgeQueuePending", { ns: "missions" })
+                                : executionActive
+                                  ? t("optionsAvailableNextTurn", { ns: "missions" })
+                                  : t("missionKnowledgeSelected", {
+                                      ns: "missions",
+                                      count: contextStoreIds.length,
+                                    })
+                            }
+                            onClick={() => setContextStorePickerOpen(true)}
+                          >
+                            <Folder size={17} aria-hidden="true" />
+                            <span>{t("missionKnowledge", { ns: "missions" })}</span>
+                            {contextStoreIds.length === 0 ? null : (
+                              <strong>{contextStoreIds.length}</strong>
+                            )}
+                          </button>
                           {!isFlow ? (
                             <MissionModelOverrideControls
                               models={models}
@@ -3270,6 +3345,31 @@ export function MissionDetailFragment(props: {
           onClose={() => setSelectedWorkKey(null)}
         />
       )}
+      {contextStorePickerOpen ? (
+        <ContextStorePickerDialog
+          stores={contextStores}
+          selectedStoreIds={contextStoreIds}
+          description={t("missionKnowledgePickerDescription", { ns: "missions" })}
+          footerHint={t("missionKnowledgeNextExecutionHint", { ns: "missions" })}
+          onSelectedStoreIdsChange={setContextStoreIds}
+          onClose={() => {
+            const nextIds = [...contextStoreIds];
+            setContextStorePickerOpen(false);
+            if (
+              nextIds.length === props.mission.contextStoreIds.length &&
+              nextIds.every((storeId, index) => storeId === props.mission.contextStoreIds[index])
+            )
+              return;
+            setContextStoresSaving(true);
+            void Promise.resolve(props.onContextStoresChange?.(nextIds))
+              .catch((saveError: unknown) => {
+                setContextStoreIds(props.mission.contextStoreIds);
+                setOptionsError(errorMessage(saveError));
+              })
+              .finally(() => setContextStoresSaving(false));
+          }}
+        />
+      ) : null}
     </section>
   );
 }

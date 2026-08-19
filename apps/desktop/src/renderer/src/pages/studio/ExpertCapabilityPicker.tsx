@@ -17,7 +17,7 @@ import {
   PragmaResourcePickerDialog,
   type PragmaResourcePickerItem,
 } from "../../components/PragmaResourcePickerDialog.tsx";
-import { ContextStorePickerDialog } from "./ContextStorePickerDialog.tsx";
+import { ContextStorePickerDialog } from "../../components/ContextStorePickerDialog.tsx";
 import type { ExpertDraft } from "./studio-model.ts";
 
 type PickerKind = "resources" | "context-stores" | "skills" | "tools";

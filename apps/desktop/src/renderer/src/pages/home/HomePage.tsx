@@ -34,6 +34,7 @@ import { useTranslation } from "react-i18next";
 import type {
   DesktopRuntimeModel,
   DesktopToolPermissionMode,
+  ContextStore,
   HomeExecutorFavoriteScope,
   HomeMissionExecutorOption,
   Mission,
@@ -46,6 +47,7 @@ import {
 } from "../../components/MissionAttachments.tsx";
 import { MissionModelOverrideControls } from "../../components/MissionModelOverrideControls.tsx";
 import { ExpertAvatar } from "../../components/ExpertAvatar.tsx";
+import { ContextStorePickerDialog } from "../../components/ContextStorePickerDialog.tsx";
 import { SelectMenu } from "../../components/SelectMenu.tsx";
 import { WorkspacePicker, type WorkspaceSelection } from "../../components/WorkspacePicker.tsx";
 import { shouldSubmitComposerOnEnter } from "../../lib/composer-keyboard.ts";
@@ -87,6 +89,9 @@ export function HomePage(props: {
   const [defaultExecutorRef, setDefaultExecutorRef] = useState("");
   const [goal, setGoal] = useState("");
   const [attachments, setAttachments] = useState<readonly ExpertPromptAttachment[]>([]);
+  const [contextStores, setContextStores] = useState<readonly ContextStore[]>([]);
+  const [contextStoreIds, setContextStoreIds] = useState<readonly string[]>([]);
+  const [contextStorePickerOpen, setContextStorePickerOpen] = useState(false);
   const [attachmentPreviews, setAttachmentPreviews] = useState<Readonly<Record<string, string>>>(
     {},
   );
@@ -115,6 +120,22 @@ export function HomePage(props: {
   useEffect(() => {
     attachmentIdsRef.current = attachments.map((attachment) => attachment.id);
   }, [attachments]);
+
+  useEffect(() => {
+    let cancelled = false;
+    const listContextStores = window.pragmaDesktop.listContextStores;
+    if (typeof listContextStores !== "function") return;
+    void listContextStores()
+      .then((stores) => {
+        if (!cancelled) setContextStores(stores);
+      })
+      .catch((loadError: unknown) => {
+        if (!cancelled) setError(errorMessage(loadError));
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, []);
 
   useEffect(
     () => () => {
@@ -529,6 +550,7 @@ export function HomePage(props: {
     try {
       const mission = await window.pragmaDesktop.createMission({
         workspace: workspace.path,
+        contextStoreIds: [...contextStoreIds],
         executor: { ref: executorRef },
         input:
           selectedExecutor.kind === "flow"
@@ -559,6 +581,7 @@ export function HomePage(props: {
       attachmentIdsRef.current = [];
       setAttachments([]);
       setAttachmentPreviews({});
+      setContextStoreIds([]);
       setFlowInput(clearedFlowInput);
       await props.onCreated(mission);
     } catch (submitError) {
@@ -665,6 +688,18 @@ export function HomePage(props: {
                 compact
                 onPick={pickAttachments}
               />
+              <button
+                className="mission-context-store-trigger"
+                type="button"
+                disabled={saving}
+                aria-label={t("missionKnowledge")}
+                title={t("missionKnowledgeSelected", { count: contextStoreIds.length })}
+                onClick={() => setContextStorePickerOpen(true)}
+              >
+                <FolderOpen size={17} aria-hidden="true" />
+                <span>{t("missionKnowledge")}</span>
+                {contextStoreIds.length === 0 ? null : <strong>{contextStoreIds.length}</strong>}
+              </button>
               {selectedExecutor?.kind === "expert" || selectedExecutor?.kind === "team" ? (
                 <MissionModelOverrideControls
                   models={models}
@@ -726,6 +761,16 @@ export function HomePage(props: {
         ) : null}
       </section>
       {appVersion !== undefined ? <p className="home-app-version">v{appVersion}</p> : null}
+      {contextStorePickerOpen ? (
+        <ContextStorePickerDialog
+          stores={contextStores}
+          selectedStoreIds={contextStoreIds}
+          description={t("missionKnowledgePickerDescription")}
+          footerHint={t("missionKnowledgeCreateHint")}
+          onSelectedStoreIdsChange={setContextStoreIds}
+          onClose={() => setContextStorePickerOpen(false)}
+        />
+      ) : null}
     </section>
   );
 }
