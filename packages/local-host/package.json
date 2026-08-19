@@ -1,5 +1,5 @@
 {
-  "name": "@pragma/shared",
+  "name": "@pragma/local-host",
   "version": "0.0.0",
   "private": true,
   "type": "module",
@@ -7,10 +7,6 @@
     ".": {
       "types": "./src/index.ts",
       "default": "./src/index.ts"
-    },
-    "./integration": {
-      "types": "./src/integration/index.ts",
-      "default": "./src/integration/index.ts"
     }
   },
   "scripts": {
@@ -18,14 +14,14 @@
     "lint": "eslint src test vitest.config.ts",
     "typecheck": "tsc --noEmit",
     "test": "vitest run --passWithNoTests",
-    "test:core": "vitest run --passWithNoTests",
     "clean": "rm -rf dist"
   },
   "dependencies": {
-    "zod": "latest"
+    "@pragma/shared": "workspace:*"
   },
   "devDependencies": {
     "@pragma/tsconfig": "workspace:*",
+    "@types/node": "latest",
     "typescript": "latest",
     "vitest": "latest"
   }

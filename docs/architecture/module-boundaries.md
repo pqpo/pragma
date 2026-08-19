@@ -8,6 +8,8 @@ In the diagrams below, `A -> B` means `A` may depend on `B`.
 apps/web    -> client -> shared
 apps/server -> server -> core -> shared
 apps/worker -> server -> runtime-* -> core -> shared
+apps/cli    -> local-host -> shared/core/interpreter/evaluation/built-in-agents/memory/mission-board/context-filesystem
+apps/desktop main -> local-host
 apps/desktop    -> built-in-agents -> interpreter -> evaluation -> core -> shared
                        |-> memory -> core -> shared
 apps/desktop    -> interpreter -> evaluation -> core -> shared
@@ -28,30 +30,41 @@ examples    -> runtime-* / plugin-* / core -> shared
 | `interpreter`     | Pragma DSL AST, parser, validator, compiler, registries, and semantic dump                           |
 | `built-in-agents` | Six DSL-defined built-in Agents, their independent host ports, portable product logic, and contracts |
 | `runtime-*`       | Concrete Runtime Adapter implementations                                                             |
+| `local-host`      | Node-only device-local application services shared by Desktop Main and the CLI                       |
 | `plugins/*`       | Expert extensions built on the core plugin API                                                       |
 | `apps`            | Composition and process entry points, including future Desktop App local bridge                      |
 | `examples`        | Runnable demonstrations that may compose core, plugins, and concrete runtimes                        |
 
 ## Dependency Matrix
 
-| Source                     | Allowed dependencies                                                                                                                            |
-| -------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------- |
-| `apps/web`                 | `shared/*`, `client/*`                                                                                                                          |
-| `apps/server`              | `@pragma/shared`, `@pragma/server`, `@pragma/core`                                                                                              |
-| `apps/worker`              | `@pragma/shared`, `@pragma/server`, `@pragma/core`, concrete `@pragma/runtime-*` packages                                                       |
-| `apps/desktop`             | `@pragma/shared`, `@pragma/core`, `@pragma/evaluation`, `@pragma/interpreter`, `@pragma/built-in-agents`, concrete `@pragma/runtime-*` packages |
-| `plugins/*`                | `@pragma/shared`, `@pragma/core`; no app, server, client, or concrete runtime dependencies                                                      |
-| `examples`                 | `@pragma/core`, concrete `@pragma/runtime-*`, and concrete `@pragma/plugin-*` packages                                                          |
-| `packages/shared`          | Runtime-neutral dependencies only                                                                                                               |
-| `packages/client`          | `@pragma/shared`                                                                                                                                |
-| `packages/server`          | `@pragma/shared`; orchestration code may depend on `@pragma/core`                                                                               |
-| `packages/core`            | `@pragma/shared`                                                                                                                                |
-| `packages/evaluation`      | `@pragma/core`; its `/ast` export remains browser-safe and never depends on Interpreter                                                         |
-| `packages/interpreter`     | `@pragma/shared`, `@pragma/core`, `@pragma/evaluation`; its `/ast` export remains browser-safe                                                  |
-| `packages/built-in-agents` | `@pragma/shared`, `@pragma/core`, `@pragma/interpreter`, `@pragma/evaluation`, `@pragma/memory`; `/contracts` remains browser-safe              |
-| `packages/runtime/*`       | `@pragma/shared`, `@pragma/core`, and that runtime's own SDKs                                                                                   |
+| Source                     | Allowed dependencies                                                                                                                                                                                                                |
+| -------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `apps/web`                 | `shared/*`, `client/*`                                                                                                                                                                                                              |
+| `apps/server`              | `@pragma/shared`, `@pragma/server`, `@pragma/core`                                                                                                                                                                                  |
+| `apps/worker`              | `@pragma/shared`, `@pragma/server`, `@pragma/core`, concrete `@pragma/runtime-*` packages                                                                                                                                           |
+| `apps/cli`                 | `@pragma/local-host`, `@pragma/shared/integration`, concrete `@pragma/runtime-*` at its composition root                                                                                                                            |
+| `apps/desktop`             | `@pragma/shared`, `@pragma/core`, `@pragma/evaluation`, `@pragma/interpreter`, `@pragma/built-in-agents`, concrete `@pragma/runtime-*` packages                                                                                     |
+| `packages/local-host`      | `@pragma/shared`, `@pragma/core`, `@pragma/interpreter`, `@pragma/evaluation`, `@pragma/built-in-agents`, `@pragma/memory`, `@pragma/mission-board`, `@pragma/context-filesystem`; Node built-ins and runtime-neutral third parties |
+| `plugins/*`                | `@pragma/shared`, `@pragma/core`; no app, server, client, or concrete runtime dependencies                                                                                                                                          |
+| `examples`                 | `@pragma/core`, concrete `@pragma/runtime-*`, and concrete `@pragma/plugin-*` packages                                                                                                                                              |
+| `packages/shared`          | Runtime-neutral dependencies only                                                                                                                                                                                                   |
+| `packages/client`          | `@pragma/shared`                                                                                                                                                                                                                    |
+| `packages/server`          | `@pragma/shared`; orchestration code may depend on `@pragma/core`                                                                                                                                                                   |
+| `packages/core`            | `@pragma/shared`                                                                                                                                                                                                                    |
+| `packages/evaluation`      | `@pragma/core`; its `/ast` export remains browser-safe and never depends on Interpreter                                                                                                                                             |
+| `packages/interpreter`     | `@pragma/shared`, `@pragma/core`, `@pragma/evaluation`; its `/ast` export remains browser-safe                                                                                                                                      |
+| `packages/built-in-agents` | `@pragma/shared`, `@pragma/core`, `@pragma/interpreter`, `@pragma/evaluation`, `@pragma/memory`; `/contracts` remains browser-safe                                                                                                  |
+| `packages/runtime/*`       | `@pragma/shared`, `@pragma/core`, and that runtime's own SDKs                                                                                                                                                                       |
 
 Cross-package imports must use `@pragma/*` names, not relative paths.
+
+`@pragma/local-host` is a Node-only application layer, not a Runtime adapter or UI layer. It may not
+depend on any `apps/*`, Electron, React/Next, `@pragma/client`, `@pragma/server`, or
+`@pragma/runtime-*`. Runtime factories are injected by `apps/desktop` Main or `apps/cli` composition.
+`@pragma/shared`, Core, Interpreter, Evaluation, Built-in Agents, Memory, Mission Board,
+Context Filesystem, Runtime packages, Server, Client, plugins, and examples may not depend on
+`@pragma/local-host` or `@pragma/cli`. Desktop preload/renderer/shared code remains browser-safe and
+may consume `@pragma/shared/integration` but never Local Host.
 
 Expert Agents are cloud-first execution units scheduled by Server/Worker. Local Claude Code, Codex, Qoder CLI, Antigravity CLI, or self-hosted runtimes should be reached through the Desktop App local bridge. The Desktop App actively connects to the cloud Runtime Gateway, registers local capabilities, enforces local permissions, and invokes local Agent adapters. Do not add `apps/local-runner`; the product entry for local Agent bridging is `apps/desktop`.
 

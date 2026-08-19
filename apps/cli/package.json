@@ -1,31 +1,37 @@
 {
-  "name": "@pragma/shared",
+  "name": "@pragma/cli",
   "version": "0.0.0",
   "private": true,
   "type": "module",
+  "bin": {
+    "pragma": "./dist/pragma.js"
+  },
   "exports": {
     ".": {
       "types": "./src/index.ts",
       "default": "./src/index.ts"
-    },
-    "./integration": {
-      "types": "./src/integration/index.ts",
-      "default": "./src/integration/index.ts"
     }
+  },
+  "os": [
+    "darwin",
+    "win32"
+  ],
+  "engines": {
+    "node": ">=22"
   },
   "scripts": {
     "build": "tsc -p tsconfig.build.json",
     "lint": "eslint src test vitest.config.ts",
     "typecheck": "tsc --noEmit",
     "test": "vitest run --passWithNoTests",
-    "test:core": "vitest run --passWithNoTests",
     "clean": "rm -rf dist"
   },
   "dependencies": {
-    "zod": "latest"
+    "@pragma/local-host": "workspace:*"
   },
   "devDependencies": {
     "@pragma/tsconfig": "workspace:*",
+    "@types/node": "latest",
     "typescript": "latest",
     "vitest": "latest"
   }

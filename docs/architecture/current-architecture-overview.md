@@ -15,6 +15,25 @@ Pragma 已经形成一个质量较好的**本地 Agent 执行内核**：Expert�
 
 因此，下一阶段不宜继续横向增加更多 Runtime、插件或 UI 功能，应优先把“本地执行安全边界 + 云端控制面协议 + 生产级执行事件模型”做完整。
 
+## 已接受的 CLI 本机应用层边界
+
+`@pragma/local-host` 是 Desktop Main 与公共 npm CLI 共同使用的 Node-only application layer；它不
+依赖 Electron 或具体 Runtime。`apps/cli`（`@pragma/cli`，binary `pragma`）只负责 argv、TTY、
+text/json/jsonl 输出、信号和 composition，用户手动通过 npm 在 macOS 或 Windows 上安装，并使用现有
+Node.js >=22。Runtime factories 仅由 Desktop Main 或 CLI composition root 注入。
+
+```text
+apps/desktop Main ─┐
+                   ├─> @pragma/local-host ─> domain packages / Host ports
+apps/cli ──────────┘                              ▲
+                                                   └─ Runtime factories injected by each app
+```
+
+同一 Mission 的执行控制由持久 `MissionControllerLease` 和单调 fencing token 管理；非 owner 的
+`send`、`steer`、`respond`、`interrupt` 与 queue mutation 通过持久 `MissionCommandInbox` 投递。
+`steer` 保持严格 same-turn 语义，绝不降级为 queue/send。Shared integration wire schema 置于
+`@pragma/shared/integration`，保持浏览器安全，不能暴露 Electron 状态、Node 对象或 secret。
+
 ## 当前真实架构
 
 ```text
