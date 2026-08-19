@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 
 import { runDesktopMutation } from "./desktop-mutation-result.ts";
+import { BundleSetupRequiredError } from "../../features/bundles/pragma-bundle-errors.ts";
 import { MissionOperationError } from "../../features/missions/mission-operation-error.ts";
 import {
   PragmaProjectRevisionUnavailableError,
@@ -85,6 +86,35 @@ describe("runDesktopMutation", () => {
         code: "mission_operation_in_progress",
         message: "Wait for the current mission operation to finish.",
         diagnostics: [],
+      },
+    });
+  });
+
+  it("returns typed Bundle setup guidance without leaking runtime diagnostics", async () => {
+    const result = await runDesktopMutation(async () => {
+      throw new BundleSetupRequiredError("expert:1xddvess309a6gme", "create_mission", [
+        {
+          id: "capability:capability:1xddvess309a6gme",
+          kind: "capability",
+          resourceRef: "capability:1xddvess309a6gme",
+          name: "Search MCP",
+          status: "action_required",
+          code: "credential_missing",
+          action: "configure_capability",
+          message: "Complete capability setup before using this Bundle.",
+        },
+      ]);
+    });
+
+    expect(result).toMatchObject({
+      ok: false,
+      error: {
+        code: "bundle_setup_required",
+        bundleSetup: {
+          rootRef: "expert:1xddvess309a6gme",
+          operation: "create_mission",
+          dependencies: [expect.objectContaining({ action: "configure_capability" })],
+        },
       },
     });
   });

@@ -17,6 +17,7 @@ import { afterEach, describe, expect, it } from "vitest";
 
 import type { CapabilityStore } from "../capabilities/capability-store.ts";
 import type {
+  Capability,
   DesktopRuntimeAvailability,
   PragmaBundleInstallation,
 } from "../../../shared/contracts/index.ts";
@@ -24,7 +25,8 @@ import type { ContextStoreStore } from "../context-stores/context-store-store.ts
 import type { PluginStore } from "../plugins/plugin-store.ts";
 import { createPragmaProjectStore } from "../projects/pragma-project-store.ts";
 import { createWorkflowLayoutStore } from "../projects/workflow-layout-store.ts";
-import { mergePendingMetadata } from "./pragma-bundle-dependencies.ts";
+import { desktopCapabilityBindingRef } from "../../platform/bindings/desktop-binding-ref.ts";
+import { inspectBundleReadiness, mergePendingMetadata } from "./pragma-bundle-dependencies.ts";
 import { createPragmaBundleService } from "./pragma-bundle-service.ts";
 import { resolveBundleIdentities } from "./pragma-bundle-resources.ts";
 
@@ -87,7 +89,7 @@ describe("PragmaBundleService", () => {
     );
     await expect(fixture.service.listInstallations()).resolves.toEqual([]);
     expect(await readFile(fixture.paths.bundleInstallationsCatalog(), "utf8")).toContain(
-      "pragma.bundle-installations/v3",
+      "pragma.bundle-installations/v4",
     );
   });
 
@@ -99,7 +101,7 @@ describe("PragmaBundleService", () => {
     });
     const catalogPath = fixture.paths.bundleInstallationsCatalog();
     const futureCatalog = {
-      schemaVersion: "pragma.bundle-installations/v4",
+      schemaVersion: "pragma.bundle-installations/v5",
       installations: [],
     };
     await writeFile(catalogPath, `${JSON.stringify(futureCatalog)}\n`);
@@ -248,6 +250,113 @@ describe("PragmaBundleService", () => {
     const advisory = await target.service.inspect(secondPath);
     expect(advisory.sameContentInstallationIds).toEqual([installation.id]);
     expect(advisory.alreadyInstalledId).toBeUndefined();
+  });
+
+  it("keeps mission readiness checks read-only", async () => {
+    const source = await createFixture("read-only-source");
+    const path = join(source.root, "workflow.pragma");
+    const exported = await source.service.exportTo(exportInput(source.projectRevision), path);
+    const target = await createFixture("read-only-target", {
+      instructions: "Existing local expert.",
+    });
+    const inspection = await target.service.inspect(path);
+    const installation = await target.service.startImport({
+      ...importInput(
+        path,
+        exported.bundleFingerprint,
+        exported.projectFingerprint,
+        inspection.projectRevision,
+      ),
+      conflicts: inspection.conflicts.map((conflict) => ({
+        resourceRef: conflict.ref,
+        action: "copy" as const,
+      })),
+    });
+    const catalogPath = target.paths.bundleInstallationsCatalog();
+    const before = await readFile(catalogPath, "utf8");
+    const snapshot = await target.project.get();
+    await target.project.publish({
+      expectedRevision: snapshot.revision,
+      resources: [...snapshot.resources, flowCalling(installation.rootRef)],
+    });
+
+    await expect(target.service.getReadinessForRef(installation.rootRef)).resolves.toEqual([]);
+    await expect(readFile(catalogPath, "utf8")).resolves.toBe(before);
+  });
+
+  it("does not recheck a failed installation or delete its retry archive", async () => {
+    const source = await createFixture("failed-recheck-source");
+    const path = join(source.root, "workflow.pragma");
+    const exported = await source.service.exportTo(exportInput(source.projectRevision), path);
+    const target = await createFixture("failed-recheck-target", {
+      instructions: "Existing local expert.",
+    });
+    const inspection = await target.service.inspect(path);
+    const installation = await target.service.startImport({
+      ...importInput(
+        path,
+        exported.bundleFingerprint,
+        exported.projectFingerprint,
+        inspection.projectRevision,
+      ),
+      conflicts: inspection.conflicts.map((conflict) => ({
+        resourceRef: conflict.ref,
+        action: "copy" as const,
+      })),
+    });
+    const catalogPath = target.paths.bundleInstallationsCatalog();
+    const catalog = JSON.parse(await readFile(catalogPath, "utf8")) as {
+      installations: Record<string, unknown>[];
+    };
+    catalog.installations = catalog.installations.map((record) => ({
+      ...record,
+      status: "failed",
+      error: "Import failed.",
+    }));
+    await writeFile(catalogPath, `${JSON.stringify(catalog)}\n`);
+    const archivePath = target.paths.bundleInstallationArchive(installation.id);
+    await writeFile(archivePath, "retry archive");
+
+    await expect(target.service.recheckInstallation(installation.id)).rejects.toThrow(
+      "cannot be rechecked",
+    );
+    await expect(readFile(archivePath, "utf8")).resolves.toBe("retry archive");
+    await expect(target.service.listInstallations()).resolves.toEqual([
+      expect.objectContaining({ id: installation.id, status: "failed" }),
+    ]);
+  });
+
+  it("checks the health of the capability revision bound by the resource", async () => {
+    const capabilityId = "00000000-0000-4000-8000-000000000190";
+    const resource = portableCapability();
+    resource.spec.binding = desktopCapabilityBindingRef(capabilityId, 1);
+    const boundRevision = {
+      definition: { kind: "http_service" },
+      health: { revision: 1, status: "ready" },
+    } as unknown as Capability;
+    const latestRevision = {
+      definition: { kind: "http_service" },
+      health: {
+        revision: 2,
+        status: "needs_attention",
+        diagnostic: { code: "config_invalid", message: "Needs setup." },
+      },
+    } as unknown as Capability;
+    const capabilities = {
+      get: async (_id: string, revision?: number) =>
+        revision === 1 ? boundRevision : latestRevision,
+    } as unknown as CapabilityStore;
+
+    await expect(
+      inspectBundleReadiness([resource], {
+        capabilities,
+        contextStores: {} as ContextStoreStore,
+        plugins: {} as PluginStore,
+        runtimes: [],
+      }),
+    ).resolves.toMatchObject([
+      { kind: "capability", status: "ready", code: "ready", targetId: capabilityId },
+    ]);
   });
 
   it("rejects a bundle whose indexed project file was modified", async () => {

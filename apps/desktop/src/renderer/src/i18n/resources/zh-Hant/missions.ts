@@ -44,6 +44,7 @@ export const missions = {
   hoursShort: "{{count}}小時",
   daysShort: "{{count}}天",
   notFound: "找不到任務",
+  bundleSetupRequired: "Bundle 仍有 {{count}} 項依賴未完成設定：{{resources}}。請完成設定後繼續。",
   selectAnother: "請選擇其他任務或建立新任務。",
   deleteTitle: "刪除此任務？",
   deleteMission: "刪除任務",

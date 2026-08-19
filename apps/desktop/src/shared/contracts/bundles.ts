@@ -107,6 +107,40 @@ export const PragmaBundleDependencySummarySchema = z
   })
   .strict();
 
+export const PragmaBundleDependencyStatusSchema = z.enum([
+  "ready",
+  "missing",
+  "invalid",
+  "action_required",
+]);
+
+export const PragmaBundleDependencyActionSchema = z.enum([
+  "none",
+  "choose_runtime",
+  "choose_capability",
+  "configure_capability",
+  "choose_knowledge_base",
+  "install_plugin",
+  "enter_secret",
+  "restore_or_replace",
+]);
+
+export const PragmaBundleDependencyReadinessSchema = z
+  .object({
+    id: z.string().trim().min(1).max(500),
+    kind: z.enum(["runtime", "capability", "context-store", "plugin", "secret"]),
+    resourceRef: z.string().trim().min(1).max(500),
+    name: z.string().trim().min(1).max(200),
+    status: PragmaBundleDependencyStatusSchema,
+    code: z.string().trim().min(1).max(100),
+    action: PragmaBundleDependencyActionSchema,
+    message: z.string().trim().min(1).max(4_000),
+    installationId: z.string().uuid().optional(),
+    capabilityKind: z.enum(["skill", "mcp_server", "http_service", "code_service"]).optional(),
+    targetId: z.string().trim().min(1).max(200).optional(),
+  })
+  .strict();
+
 export const PragmaBundleImportInspectionSchema = z
   .object({
     sourcePath: z.string().trim().min(1).max(2_000),
@@ -163,6 +197,7 @@ export const PragmaBundleImportInspectionSchema = z
         })
         .strict(),
     ),
+    readiness: z.array(PragmaBundleDependencyReadinessSchema).default([]),
     sameContentInstallationIds: z.array(z.string().uuid()),
     alreadyInstalledId: z.string().uuid().optional(),
   })
@@ -226,12 +261,16 @@ export const PragmaBundlePendingDependencySchema = z
     name: z.string().trim().min(1).max(200),
     message: z.string().trim().min(1).max(4_000),
     capabilityKind: z.enum(["skill", "mcp_server", "http_service", "code_service"]).optional(),
+    status: PragmaBundleDependencyStatusSchema.optional(),
+    code: z.string().trim().min(1).max(100).optional(),
+    action: PragmaBundleDependencyActionSchema.optional(),
+    targetId: z.string().trim().min(1).max(200).optional(),
   })
   .strict();
 
 export const PragmaBundleInstallationSchema = z
   .object({
-    schemaVersion: z.literal("pragma.bundle-installation/v3"),
+    schemaVersion: z.literal("pragma.bundle-installation/v4"),
     bundleVersion: z.enum(["pragma.desktop-bundle/v1", "pragma.bundle/v1"]),
     sourceProjectFingerprint: z
       .string()
@@ -263,6 +302,7 @@ export const PragmaBundleInstallationSchema = z
       .default([]),
     status: z.enum(["installing", "needs_setup", "ready", "failed"]),
     pending: z.array(PragmaBundlePendingDependencySchema),
+    readiness: z.array(PragmaBundleDependencyReadinessSchema).default([]),
     error: z.string().max(10_000).optional(),
     createdAt: z.string().datetime(),
     updatedAt: z.string().datetime(),
@@ -285,3 +325,5 @@ export const PragmaBundleInstallationActionSchema = z
     installationId: z.string().uuid(),
   })
   .strict();
+
+export const RecheckPragmaBundleInstallationSchema = PragmaBundleInstallationActionSchema;

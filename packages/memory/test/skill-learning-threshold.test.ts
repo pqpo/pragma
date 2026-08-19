@@ -1,7 +1,7 @@
 import type { SkillSourceSnapshot } from "@pragma/shared";
 import { describe, expect, it } from "vitest";
 
-import { skillSourceThresholdMet } from "../src/index.ts";
+import { inspectSkillSourceEligibility, skillSourceThresholdMet } from "../src/index.ts";
 
 function episode(
   id: string,
@@ -28,6 +28,26 @@ function episode(
 }
 
 describe("Skill learning threshold", () => {
+  it("reports the evidence counts and qualifying refs used by the threshold", () => {
+    const eligibility = inspectSkillSourceEligibility([
+      episode("one", "conversation-a"),
+      episode("two", "conversation-a"),
+      episode("three", "conversation-b", "failed"),
+    ]);
+
+    expect(eligibility).toEqual({
+      eligible: true,
+      highValueEpisodicCount: 3,
+      conversationCount: 2,
+      successfulOrRecoveredCount: 2,
+      qualifyingSourceRefs: [
+        { kind: "episodic", id: "one", revision: 1 },
+        { kind: "episodic", id: "three", revision: 1 },
+        { kind: "episodic", id: "two", revision: 1 },
+      ],
+    });
+  });
+
   it("accepts three high-value episodes from two conversations with two successes", () => {
     expect(
       skillSourceThresholdMet([

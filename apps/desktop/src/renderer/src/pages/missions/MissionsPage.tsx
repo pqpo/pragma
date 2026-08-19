@@ -72,6 +72,7 @@ import {
   missionAttachmentPreviewUrl,
 } from "../../../../shared/contracts/index.ts";
 import { errorMessage } from "../../lib/errors.ts";
+import { localizedBundleMutationError } from "../../lib/bundle-errors.ts";
 import { i18n } from "../../i18n/index.ts";
 import { shouldSubmitComposerOnEnter } from "../../lib/composer-keyboard.ts";
 import { formatMissionDateTime, formatMissionTime } from "../../lib/mission-time.ts";
@@ -376,7 +377,11 @@ export function MissionsPage(props: {
       .then(replaceMission)
       .catch((runError: unknown) => {
         setInitialRunRequest(null);
-        setError(errorMessage(runError));
+        setError(
+          localizedBundleMutationError(runError, (key, options) =>
+            options === undefined ? t(key) : t(key, options),
+          ),
+        );
       });
   }, [props.autoRunInitialMission, props.initialMission?.id, replaceMission]);
 
@@ -579,7 +584,11 @@ export function MissionsPage(props: {
                 replaceMission(await api.runMission(selectedMission.id));
                 setError(null);
               } catch (runError) {
-                setError(errorMessage(runError));
+                setError(
+                  localizedBundleMutationError(runError, (key, options) =>
+                    options === undefined ? t(key) : t(key, options),
+                  ),
+                );
               }
             }}
             onInterrupt={async () => {

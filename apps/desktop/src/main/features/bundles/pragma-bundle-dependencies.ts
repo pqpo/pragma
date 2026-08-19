@@ -9,6 +9,7 @@ import {
 
 import type {
   DesktopRuntimeAvailability,
+  PragmaBundleDependencyReadiness,
   PragmaBundleInstallation,
 } from "../../../shared/contracts/index.ts";
 import {
@@ -135,56 +136,113 @@ export async function inspectPendingDependencies(
     readonly contextStores: ContextStoreStore;
     readonly plugins: PluginStore;
     readonly runtimes: readonly DesktopRuntimeAvailability[];
+    readonly checkContextContent?: boolean | undefined;
   },
 ): Promise<PragmaBundleInstallation["pending"]> {
-  const pending: PragmaBundleInstallation["pending"] = [];
+  return readinessToPending(await inspectBundleReadiness(resources, options));
+}
+
+export async function inspectBundleReadiness(
+  resources: readonly PragmaResource[],
+  options: {
+    readonly capabilities: CapabilityStore;
+    readonly contextStores: ContextStoreStore;
+    readonly plugins: PluginStore;
+    readonly runtimes: readonly DesktopRuntimeAvailability[];
+    readonly checkContextContent?: boolean | undefined;
+  },
+): Promise<PragmaBundleDependencyReadiness[]> {
+  const readiness: PragmaBundleDependencyReadiness[] = [];
   for (const resource of resources) {
     const ref = canonicalPragmaResourceRef(resource);
     if (resource.kind === "Capability") {
       const binding = parseDesktopCapabilityBindingRef(resource.spec.binding ?? "");
       if (binding === undefined) {
-        pending.push({
+        readiness.push({
           id: `capability:${ref}`,
           kind: "capability",
           resourceRef: ref,
           name: resource.metadata.name,
+          status: "missing",
+          code: "capability_missing",
+          action: "choose_capability",
           message: "Choose or install a compatible capability.",
         });
       } else {
         try {
           const capability = await options.capabilities.get(binding.id, binding.revision);
-          if (capability.health.status !== "ready") {
-            pending.push({
-              id: `capability:${ref}`,
-              kind: "capability",
-              resourceRef: ref,
-              name: resource.metadata.name,
-              message: capability.health.diagnostic?.message ?? "This capability needs attention.",
-              capabilityKind: capability.definition.kind,
-            });
-          }
-        } catch (error) {
-          pending.push({
+          const diagnosticCode = capability.health.diagnostic?.code;
+          const needsSetup = capability.health.status !== "ready";
+          const status = needsSetup ? capabilityStatus(diagnosticCode) : "ready";
+          readiness.push({
             id: `capability:${ref}`,
             kind: "capability",
             resourceRef: ref,
             name: resource.metadata.name,
-            message: error instanceof Error ? error.message : "Capability is unavailable.",
+            status,
+            code: needsSetup ? (diagnosticCode ?? "capability_needs_attention") : "ready",
+            action: needsSetup ? capabilityAction(diagnosticCode) : "none",
+            message: needsSetup
+              ? "Complete capability setup before using this Bundle."
+              : "Capability is ready.",
+            capabilityKind: capability.definition.kind,
+            targetId: binding.id,
+          });
+        } catch (error) {
+          const code = errorCode(error);
+          readiness.push({
+            id: `capability:${ref}`,
+            kind: "capability",
+            resourceRef: ref,
+            name: resource.metadata.name,
+            status: dependencyStatus(code),
+            code,
+            action: "choose_capability",
+            message: "Choose or restore the capability required by this Bundle.",
           });
         }
       }
     } else if (resource.kind === "ContextStore") {
       const id = parseDesktopContextBindingRef(resource.spec.binding ?? "");
-      try {
-        if (id === undefined) throw new Error("Choose a knowledge base.");
-        await options.contextStores.resolve(id);
-      } catch (error) {
-        pending.push({
+      if (id === undefined) {
+        readiness.push({
           id: `context-store:${ref}`,
           kind: "context-store",
           resourceRef: ref,
           name: resource.metadata.name,
-          message: error instanceof Error ? error.message : "Knowledge base is unavailable.",
+          status: "missing",
+          code: "context_store_missing",
+          action: "choose_knowledge_base",
+          message: "Choose or restore the knowledge base required by this Bundle.",
+        });
+        continue;
+      }
+      try {
+        await options.contextStores.resolve(id);
+        if (options.checkContextContent !== false) {
+          await options.contextStores.fingerprint(id);
+        }
+        readiness.push({
+          id: `context-store:${ref}`,
+          kind: "context-store",
+          resourceRef: ref,
+          name: resource.metadata.name,
+          status: "ready",
+          code: "ready",
+          action: "none",
+          message: "Knowledge base is ready.",
+          targetId: id,
+        });
+      } catch (error) {
+        readiness.push({
+          id: `context-store:${ref}`,
+          kind: "context-store",
+          resourceRef: ref,
+          name: resource.metadata.name,
+          status: dependencyStatus(errorCode(error)),
+          code: errorCode(error),
+          action: "choose_knowledge_base",
+          message: "Choose or restore the knowledge base required by this Bundle.",
         });
       }
     } else if (resource.kind === "RuntimeProfile") {
@@ -206,12 +264,27 @@ export async function inspectPendingDependencies(
         );
       });
       if (runtime === undefined) {
-        pending.push({
+        readiness.push({
           id: `runtime:${ref}`,
           kind: "runtime",
           resourceRef: ref,
           name: resource.metadata.name,
+          status: "missing",
+          code: "runtime_unavailable",
+          action: "choose_runtime",
           message: "Choose a compatible local Runtime and model.",
+        });
+      } else {
+        readiness.push({
+          id: `runtime:${ref}`,
+          kind: "runtime",
+          resourceRef: ref,
+          name: resource.metadata.name,
+          status: "ready",
+          code: "ready",
+          action: "none",
+          message: "Runtime is ready.",
+          targetId: runtime.id,
         });
       }
     } else if (resource.kind === "Expert") {
@@ -230,19 +303,74 @@ export async function inspectPendingDependencies(
               },
             ],
           }));
-        if (inspection.status !== "ready") {
-          pending.push({
-            id: `plugin:${binding.ref}`,
-            kind: "plugin",
-            resourceRef: ref,
-            name: binding.ref,
-            message: inspection.issues[0]?.message ?? "Plugin needs attention.",
-          });
-        }
+        const ready = inspection.status === "ready";
+        readiness.push({
+          id: `plugin:${binding.ref}`,
+          kind: "plugin",
+          resourceRef: ref,
+          name: binding.ref,
+          status: ready ? "ready" : "action_required",
+          code: ready ? "ready" : "plugin_needs_attention",
+          action: ready ? "none" : "install_plugin",
+          message: ready ? "Plugin is ready." : "Install or repair the required plugin.",
+        });
       }
     }
   }
-  return deduplicatePending(pending);
+  return deduplicateReadiness(readiness);
+}
+
+export function readinessToPending(
+  readiness: readonly PragmaBundleDependencyReadiness[],
+): PragmaBundleInstallation["pending"] {
+  return readiness
+    .filter((dependency) => dependency.status !== "ready")
+    .map((dependency) => ({
+      id: dependency.id,
+      kind: dependency.kind,
+      resourceRef: dependency.resourceRef,
+      name: dependency.name,
+      message: dependency.message,
+      ...(dependency.capabilityKind === undefined
+        ? {}
+        : { capabilityKind: dependency.capabilityKind }),
+      status: dependency.status,
+      code: dependency.code,
+      action: dependency.action,
+      ...(dependency.targetId === undefined ? {} : { targetId: dependency.targetId }),
+    }));
+}
+
+function capabilityAction(code: string | undefined): "configure_capability" | "restore_or_replace" {
+  if (code === undefined) return "configure_capability";
+  return /invalid|schema|malformed|executable|runtime|path|file|process|not_found|unavailable/i.test(
+    code,
+  )
+    ? "restore_or_replace"
+    : "configure_capability";
+}
+
+function capabilityStatus(
+  code: string | undefined,
+): "missing" | "invalid" | "action_required" | "ready" {
+  if (code === undefined) return "action_required";
+  if (/executable|runtime|path|file|process|not_found|unavailable/i.test(code)) return "missing";
+  if (/invalid|schema|malformed|unsupported/i.test(code)) return "invalid";
+  return "action_required";
+}
+
+function dependencyStatus(code: string): "missing" | "invalid" {
+  return /invalid|schema|malformed|config/i.test(code) ? "invalid" : "missing";
+}
+
+function errorCode(error: unknown): string {
+  if (typeof error === "object" && error !== null && "code" in error) {
+    const code = (error as { readonly code?: unknown }).code;
+    if (typeof code === "string" && /^[a-z0-9_.-]+$/i.test(code)) {
+      return code.slice(0, 100).toLowerCase();
+    }
+  }
+  return "dependency_unavailable";
 }
 
 export function pendingBinding(installationId: string, ref: string) {
@@ -312,6 +440,17 @@ function deduplicatePending(
 ): PragmaBundleInstallation["pending"] {
   const result = new Map<string, PragmaBundleInstallation["pending"][number]>();
   for (const dependency of pending) {
+    const key = `${dependency.kind}:${dependency.id}`;
+    if (!result.has(key)) result.set(key, dependency);
+  }
+  return [...result.values()];
+}
+
+function deduplicateReadiness(
+  readiness: readonly PragmaBundleDependencyReadiness[],
+): PragmaBundleDependencyReadiness[] {
+  const result = new Map<string, PragmaBundleDependencyReadiness>();
+  for (const dependency of readiness) {
     const key = `${dependency.kind}:${dependency.id}`;
     if (!result.has(key)) result.set(key, dependency);
   }

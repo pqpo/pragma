@@ -3,6 +3,7 @@ import {
   PragmaResourceRefSchema,
   PragmaSemanticResourceRefSchema,
 } from "@pragma/interpreter/ast";
+import { PragmaBundleDependencyReadinessSchema } from "./bundles.ts";
 import { z } from "zod";
 
 export const DesktopMutationConflictSchema = z
@@ -32,6 +33,15 @@ export const DesktopMutationReferencedResourceSchema = z
   })
   .strict();
 
+export const DesktopBundleSetupErrorSchema = z
+  .object({
+    rootRef: z.string().trim().min(1).max(500),
+    operation: z.enum(["create_mission", "run_mission"]),
+    installationId: z.string().uuid().optional(),
+    dependencies: z.array(PragmaBundleDependencyReadinessSchema),
+  })
+  .strict();
+
 export const DesktopMutationErrorSchema = z
   .object({
     code: z.string().trim().min(1).max(100),
@@ -40,6 +50,7 @@ export const DesktopMutationErrorSchema = z
     conflict: DesktopMutationConflictSchema.optional(),
     revisionFailure: DesktopProjectRevisionFailureSchema.optional(),
     referencedBy: z.array(DesktopMutationReferencedResourceSchema).optional(),
+    bundleSetup: DesktopBundleSetupErrorSchema.optional(),
   })
   .strict();
 
