@@ -37,7 +37,7 @@ export function MemorySettingsFragment(
       .then(([nextSnapshot, nextExtractor, nextExtractionSettings, nextRuntimes]) => {
         if (cancelled) return;
         setSnapshot(nextSnapshot);
-        props.onMemoryEnabledChange?.(nextSnapshot.policy.capture === "enabled");
+        props.onMemoryEnabledChange?.(nextSnapshot.policy.enabled === "enabled");
         setExtractor(nextExtractor);
         setExtractionSettings(nextExtractionSettings);
         setRuntimes(nextRuntimes);
@@ -68,7 +68,7 @@ export function MemorySettingsFragment(
         policy,
       });
       setSnapshot(nextSnapshot);
-      props.onMemoryEnabledChange?.(nextSnapshot.policy.capture === "enabled");
+      props.onMemoryEnabledChange?.(nextSnapshot.policy.enabled === "enabled");
     } catch {
       setError(t("memory.saveError"));
     } finally {
@@ -125,7 +125,7 @@ export function MemorySettingsFragment(
 
   const selectedRuntime = runtimes.find((runtime) => runtime.id === runtimeId);
   const models = selectedRuntime?.models ?? [];
-  const memoryEnabled = snapshot?.policy.capture === "enabled";
+  const memoryEnabled = snapshot?.policy.enabled === "enabled";
   return (
     <SettingsScreenFrame
       id="memory-panel"
@@ -145,9 +145,9 @@ export function MemorySettingsFragment(
           disabled={snapshot === undefined || saving}
           onChange={(enabled) =>
             void update({
-              capture: enabled ? "enabled" : "disabled",
-              recall: enabled ? "enabled" : "disabled",
-              learning: enabled ? "local-candidates" : "disabled",
+              ...snapshot!.policy,
+              enabled: enabled ? "enabled" : "disabled",
+              ...(enabled ? { capture: "enabled" as const } : {}),
             })
           }
         />

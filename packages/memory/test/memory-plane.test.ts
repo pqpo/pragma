@@ -123,7 +123,12 @@ describe("Memory Plane phase one", () => {
     const policies = createFileMemoryPolicyStore({ pragmaHome: home, now });
     await policies.updateGlobal({
       expectedRevision: 0,
-      policy: { capture: "enabled", recall: "enabled", learning: "local-candidates" },
+      policy: {
+        enabled: "enabled",
+        capture: "enabled",
+        recall: "enabled",
+        learning: "local-candidates",
+      },
     });
     const publisher = createMemoryEvidencePublisher(canonical);
     const evidence = createMemoryEvidenceFeed(canonical);
@@ -227,7 +232,12 @@ describe("Memory Plane phase one", () => {
     const policies = createFileMemoryPolicyStore({ pragmaHome: home, now });
     await policies.updateGlobal({
       expectedRevision: 0,
-      policy: { capture: "disabled", recall: "disabled", learning: "disabled" },
+      policy: {
+        enabled: "disabled",
+        capture: "disabled",
+        recall: "disabled",
+        learning: "disabled",
+      },
     });
     await createExecution(executions);
     await executions.appendEvent(

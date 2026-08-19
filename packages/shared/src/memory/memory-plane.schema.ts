@@ -87,10 +87,14 @@ export const MemoryPolicyOverrideSwitchSchema = z.enum(["inherit", "enabled", "d
 export const MemoryLearningModeSchema = z.enum(["disabled", "local-candidates"]);
 export const MemoryLearningOverrideSchema = z.enum(["inherit", "disabled", "local-candidates"]);
 
-export const MemoryGlobalPolicySchema = z.object({
+export const MemoryGlobalPolicyV1Schema = z.object({
   capture: MemoryPolicySwitchSchema,
   recall: MemoryPolicySwitchSchema,
   learning: MemoryLearningModeSchema,
+});
+
+export const MemoryGlobalPolicySchema = MemoryGlobalPolicyV1Schema.extend({
+  enabled: MemoryPolicySwitchSchema,
 });
 
 export const MemoryAssetPolicyOverrideSchema = z.object({
@@ -99,9 +103,27 @@ export const MemoryAssetPolicyOverrideSchema = z.object({
   learning: MemoryLearningOverrideSchema,
 });
 
-export const MemoryPolicyRevisionSchema = z.discriminatedUnion("scope", [
+export const MemoryPolicyRevisionV1Schema = z.discriminatedUnion("scope", [
   z.object({
     schemaVersion: z.literal("pragma.memory-policy/v1"),
+    scope: z.literal("global"),
+    revision: z.number().int().nonnegative(),
+    effectiveFrom: z.string().datetime(),
+    policy: MemoryGlobalPolicyV1Schema,
+  }),
+  z.object({
+    schemaVersion: z.literal("pragma.memory-policy/v1"),
+    scope: z.literal("asset"),
+    targetRef: MemorySubjectRefSchema,
+    revision: z.number().int().nonnegative(),
+    effectiveFrom: z.string().datetime(),
+    policy: MemoryAssetPolicyOverrideSchema,
+  }),
+]);
+
+export const MemoryPolicyRevisionSchema = z.discriminatedUnion("scope", [
+  z.object({
+    schemaVersion: z.literal("pragma.memory-policy/v2"),
     scope: z.literal("global"),
     revision: z.number().int().nonnegative(),
     effectiveFrom: z.string().datetime(),
@@ -244,8 +266,10 @@ export type MemoryPolicySwitch = z.infer<typeof MemoryPolicySwitchSchema>;
 export type MemoryPolicyOverrideSwitch = z.infer<typeof MemoryPolicyOverrideSwitchSchema>;
 export type MemoryLearningMode = z.infer<typeof MemoryLearningModeSchema>;
 export type MemoryLearningOverride = z.infer<typeof MemoryLearningOverrideSchema>;
+export type MemoryGlobalPolicyV1 = z.infer<typeof MemoryGlobalPolicyV1Schema>;
 export type MemoryGlobalPolicy = z.infer<typeof MemoryGlobalPolicySchema>;
 export type MemoryAssetPolicyOverride = z.infer<typeof MemoryAssetPolicyOverrideSchema>;
+export type MemoryPolicyRevisionV1 = z.infer<typeof MemoryPolicyRevisionV1Schema>;
 export type MemoryPolicyRevision = z.infer<typeof MemoryPolicyRevisionSchema>;
 export type EffectiveMemoryPolicy = z.infer<typeof EffectiveMemoryPolicySchema>;
 export type MemoryFeedCursor = z.infer<typeof MemoryFeedCursorSchema>;

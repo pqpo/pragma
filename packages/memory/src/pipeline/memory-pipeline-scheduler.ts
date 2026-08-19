@@ -50,7 +50,9 @@ export function createMemoryPipelineScheduler(options: {
     if (stopped || timer !== undefined) return;
     timer = setTimer(() => {
       timer = undefined;
-      void runOnce().finally(() => schedule());
+      void runOnce()
+        .catch(() => undefined)
+        .finally(() => schedule());
     }, delay);
   };
 

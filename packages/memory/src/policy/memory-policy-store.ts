@@ -1,5 +1,14 @@
 import { randomUUID } from "node:crypto";
-import { chmod, mkdir, readFile, rename, writeFile } from "node:fs/promises";
+import {
+  chmod,
+  copyFile,
+  mkdir,
+  readFile,
+  rename,
+  stat,
+  unlink,
+  writeFile,
+} from "node:fs/promises";
 import { dirname } from "node:path";
 
 import { PragmaPaths, withFileLock } from "@pragma/core";
@@ -7,22 +16,45 @@ import {
   EffectiveMemoryPolicySchema,
   MemoryAssetPolicyOverrideSchema,
   MemoryGlobalPolicySchema,
+  MemoryPolicyRevisionV1Schema,
   MemoryPolicyRevisionSchema,
   MemorySubjectRefSchema,
   type EffectiveMemoryPolicy,
   type MemoryAssetPolicyOverride,
   type MemoryGlobalPolicy,
+  type MemoryPolicyRevisionV1,
   type MemoryPolicyRevision,
   type MemorySubjectRef,
 } from "@pragma/shared";
 import { z } from "zod";
 
-const PolicyHistoryFileSchema = z.object({
+const PolicyHistoryFileV1Schema = z.object({
   schemaVersion: z.literal("pragma.memory-policy-history/v1"),
+  revisions: z.array(MemoryPolicyRevisionV1Schema).max(10_000),
+});
+
+const PolicyHistoryFileV2Schema = z.object({
+  schemaVersion: z.literal("pragma.memory-policy-history/v2"),
   revisions: z.array(MemoryPolicyRevisionSchema).max(10_000),
 });
 
+const PolicyMigrationJournalSchema = z.object({
+  schemaVersion: z.literal("pragma.memory-policy-migration-journal/v1"),
+  sourceSchemaVersion: z.literal("pragma.memory-policy-history/v1"),
+  targetSchemaVersion: z.literal("pragma.memory-policy-history/v2"),
+  sourcePath: z.string().min(1),
+  backupPath: z.string().min(1),
+});
+
+type PolicyHistoryFileV1 = z.infer<typeof PolicyHistoryFileV1Schema>;
+type PolicyHistoryFileV2 = z.infer<typeof PolicyHistoryFileV2Schema>;
+type PolicyHistoryFile = PolicyHistoryFileV1 | PolicyHistoryFileV2;
+type GlobalPolicyRevision = Extract<MemoryPolicyRevision, { readonly scope: "global" }>;
+type AssetPolicyRevision = Extract<MemoryPolicyRevision, { readonly scope: "asset" }>;
+type LegacyGlobalPolicyRevision = Extract<MemoryPolicyRevisionV1, { readonly scope: "global" }>;
+
 export const DEFAULT_MEMORY_GLOBAL_POLICY: MemoryGlobalPolicy = {
+  enabled: "disabled",
   capture: "disabled",
   recall: "disabled",
   learning: "disabled",
@@ -72,13 +104,17 @@ export function createFileMemoryPolicyStore(
   const paths = new PragmaPaths(options);
   const now = options.now ?? (() => new Date());
 
-  const readGlobal = async (): Promise<MemoryPolicyRevision[]> => {
-    const revisions = await readHistory(paths.memoryGlobalPolicy());
-    validateGlobalHistory(revisions);
-    return revisions;
+  const readGlobal = async (): Promise<GlobalPolicyRevision[]> => {
+    const path = paths.memoryGlobalPolicy();
+    return await withFileLock(`${path}.lock`, async () => await readCurrentGlobalHistory(path));
   };
-  const readAsset = async (targetRef: MemorySubjectRef): Promise<MemoryPolicyRevision[]> =>
-    await readHistory(paths.memoryAssetPolicy(targetRef.type, targetRef.id));
+  const readAsset = async (targetRef: MemorySubjectRef): Promise<AssetPolicyRevision[]> => {
+    const file = await readHistoryFile(paths.memoryAssetPolicy(targetRef.type, targetRef.id));
+    if (file === undefined) return [];
+    const revisions = file.revisions as unknown as readonly AssetPolicyRevision[];
+    validateAssetHistory(revisions, targetRef);
+    return revisions as AssetPolicyRevision[];
+  };
 
   return {
     async getGlobal(at = now()) {
@@ -86,23 +122,22 @@ export function createFileMemoryPolicyStore(
     },
 
     async updateGlobal(input) {
-      const policy = normalizeGlobalPolicy(MemoryGlobalPolicySchema.parse(input.policy));
+      const policy = MemoryGlobalPolicySchema.parse(input.policy);
       const path = paths.memoryGlobalPolicy();
       return await withFileLock(`${path}.lock`, async () => {
-        const revisions = await readHistory(path);
-        validateGlobalHistory(revisions);
+        const revisions = await readCurrentGlobalHistory(path);
         const updatedAt = now();
         const current = globalAt(revisions, updatedAt);
         assertExpectedRevision(input.expectedRevision, current.revision, "global");
         assertMonotonicTime(revisions, updatedAt, "global");
         const revision = MemoryPolicyRevisionSchema.parse({
-          schemaVersion: "pragma.memory-policy/v1",
+          schemaVersion: "pragma.memory-policy/v2",
           scope: "global",
           revision: current.revision + 1,
           effectiveFrom: updatedAt.toISOString(),
           policy,
-        }) as Extract<MemoryPolicyRevision, { readonly scope: "global" }>;
-        await writeHistory(path, [...revisions, revision]);
+        }) as GlobalPolicyRevision;
+        await writeHistory(path, [...revisions, revision], "global");
         return revision;
       });
     },
@@ -117,7 +152,7 @@ export function createFileMemoryPolicyStore(
       const policy = MemoryAssetPolicyOverrideSchema.parse(input.policy);
       const path = paths.memoryAssetPolicy(targetRef.type, targetRef.id);
       return await withFileLock(`${path}.lock`, async () => {
-        const revisions = await readHistory(path);
+        const revisions = await readAsset(targetRef);
         validateAssetHistory(revisions, targetRef);
         const updatedAt = now();
         const current = assetAt(revisions, targetRef, updatedAt);
@@ -130,8 +165,8 @@ export function createFileMemoryPolicyStore(
           revision: current.revision + 1,
           effectiveFrom: updatedAt.toISOString(),
           policy,
-        }) as Extract<MemoryPolicyRevision, { readonly scope: "asset" }>;
-        await writeHistory(path, [...revisions, revision]);
+        }) as AssetPolicyRevision;
+        await writeHistory(path, [...revisions, revision], "asset");
         return revision;
       });
     },
@@ -147,9 +182,10 @@ export function createFileMemoryPolicyStore(
       const overrides = await Promise.all(
         refs.map(async (targetRef) => assetAt(await readAsset(targetRef), targetRef, at)),
       );
-      let capture = global.policy.capture === "enabled";
-      let recall = global.policy.recall === "enabled";
-      let learning = global.policy.learning;
+      const memoryEnabled = global.policy.enabled === "enabled";
+      let capture = memoryEnabled && global.policy.capture === "enabled";
+      let recall = memoryEnabled && global.policy.recall === "enabled";
+      let learning = memoryEnabled ? global.policy.learning : "disabled";
       for (const override of overrides) {
         if (override.policy.capture === "disabled") capture = false;
         if (override.policy.recall === "disabled") recall = false;
@@ -178,49 +214,28 @@ export function createFileMemoryPolicyStore(
   };
 }
 
-function globalAt(
-  revisions: readonly MemoryPolicyRevision[],
-  at: Date,
-): Extract<MemoryPolicyRevision, { readonly scope: "global" }> {
+function globalAt(revisions: readonly GlobalPolicyRevision[], at: Date): GlobalPolicyRevision {
   validateGlobalHistory(revisions);
-  const globals = revisions.filter(
-    (revision): revision is Extract<MemoryPolicyRevision, { readonly scope: "global" }> =>
-      revision.scope === "global",
-  );
-  const selected = selectAt(globals, at);
+  const selected = selectAt(revisions, at);
   return selected === undefined
     ? {
-        schemaVersion: "pragma.memory-policy/v1",
+        schemaVersion: "pragma.memory-policy/v2",
         scope: "global",
         revision: 0,
         effectiveFrom: new Date(0).toISOString(),
         policy: DEFAULT_MEMORY_GLOBAL_POLICY,
       }
-    : {
-        ...selected,
-        policy: normalizeGlobalPolicy(selected.policy),
-      };
-}
-
-function normalizeGlobalPolicy(policy: MemoryGlobalPolicy): MemoryGlobalPolicy {
-  if (policy.capture === "enabled") return policy;
-  return {
-    ...policy,
-    capture: "disabled",
-    recall: "disabled",
-    learning: "disabled",
-  };
+    : selected;
 }
 
 function assetAt(
-  revisions: readonly MemoryPolicyRevision[],
+  revisions: readonly AssetPolicyRevision[],
   targetRef: MemorySubjectRef,
   at: Date,
-): Extract<MemoryPolicyRevision, { readonly scope: "asset" }> {
+): AssetPolicyRevision {
   validateAssetHistory(revisions, targetRef);
-  const assets = revisions as readonly Extract<MemoryPolicyRevision, { readonly scope: "asset" }>[];
   return (
-    selectAt(assets, at) ?? {
+    selectAt(revisions, at) ?? {
       schemaVersion: "pragma.memory-policy/v1",
       scope: "asset",
       targetRef,
@@ -231,7 +246,7 @@ function assetAt(
   );
 }
 
-function selectAt<T extends MemoryPolicyRevision>(
+function selectAt<T extends { readonly revision: number; readonly effectiveFrom: string }>(
   revisions: readonly T[],
   at: Date,
 ): T | undefined {
@@ -244,7 +259,7 @@ function selectAt<T extends MemoryPolicyRevision>(
     )[0];
 }
 
-function validateGlobalHistory(revisions: readonly MemoryPolicyRevision[]): void {
+function validateGlobalHistory(revisions: readonly GlobalPolicyRevision[]): void {
   if (revisions.some((revision) => revision.scope !== "global")) {
     throw new Error("Memory global policy history is mixed.");
   }
@@ -252,7 +267,7 @@ function validateGlobalHistory(revisions: readonly MemoryPolicyRevision[]): void
 }
 
 function validateAssetHistory(
-  revisions: readonly MemoryPolicyRevision[],
+  revisions: readonly AssetPolicyRevision[],
   targetRef: MemorySubjectRef,
 ): void {
   if (
@@ -265,7 +280,17 @@ function validateAssetHistory(
   validateHistorySequence(revisions, refKey(targetRef));
 }
 
-function validateHistorySequence(revisions: readonly MemoryPolicyRevision[], target: string): void {
+function validateLegacyGlobalHistory(revisions: readonly MemoryPolicyRevisionV1[]): void {
+  if (revisions.some((revision) => revision.scope !== "global")) {
+    throw new Error("Memory global policy history is mixed.");
+  }
+  validateHistorySequence(revisions, "global");
+}
+
+function validateHistorySequence(
+  revisions: readonly { readonly revision: number; readonly effectiveFrom: string }[],
+  target: string,
+): void {
   for (const [index, revision] of revisions.entries()) {
     if (revision.revision !== index + 1) {
       throw new Error(`Memory policy revision history is not contiguous for ${target}.`);
@@ -291,11 +316,27 @@ function assertMonotonicTime(
   }
 }
 
-async function readHistory(path: string): Promise<MemoryPolicyRevision[]> {
+async function readCurrentGlobalHistory(path: string): Promise<GlobalPolicyRevision[]> {
+  await recoverPolicyMigration(path);
+  const file = await readHistoryFile(path);
+  if (file === undefined) return [];
+  if (file.schemaVersion === "pragma.memory-policy-history/v2") {
+    const revisions = file.revisions as unknown as readonly GlobalPolicyRevision[];
+    validateGlobalHistory(revisions);
+    return [...revisions];
+  }
+  validateLegacyGlobalHistory(file.revisions);
+  return await migrateGlobalHistory(path, file.revisions as readonly LegacyGlobalPolicyRevision[]);
+}
+
+async function readHistoryFile(path: string): Promise<PolicyHistoryFile | undefined> {
   try {
-    return PolicyHistoryFileSchema.parse(JSON.parse(await readFile(path, "utf8"))).revisions;
+    const value: unknown = JSON.parse(await readFile(path, "utf8"));
+    const current = PolicyHistoryFileV2Schema.safeParse(value);
+    if (current.success) return current.data;
+    return PolicyHistoryFileV1Schema.parse(value);
   } catch (error) {
-    if (isNotFound(error)) return [];
+    if (isNotFound(error)) return undefined;
     throw error;
   }
 }
@@ -303,16 +344,101 @@ async function readHistory(path: string): Promise<MemoryPolicyRevision[]> {
 async function writeHistory(
   path: string,
   revisions: readonly MemoryPolicyRevision[],
+  scope: "global" | "asset",
 ): Promise<void> {
-  const file = PolicyHistoryFileSchema.parse({
-    schemaVersion: "pragma.memory-policy-history/v1",
-    revisions,
+  const file =
+    scope === "global"
+      ? PolicyHistoryFileV2Schema.parse({
+          schemaVersion: "pragma.memory-policy-history/v2",
+          revisions,
+        })
+      : PolicyHistoryFileV1Schema.parse({
+          schemaVersion: "pragma.memory-policy-history/v1",
+          revisions,
+        });
+  await writeJsonAtomically(path, file);
+}
+
+async function migrateGlobalHistory(
+  path: string,
+  revisions: readonly LegacyGlobalPolicyRevision[],
+): Promise<GlobalPolicyRevision[]> {
+  const backupPath = `${path}.v1-backup`;
+  const journalPath = `${path}.migration-journal`;
+  const journal = PolicyMigrationJournalSchema.parse({
+    schemaVersion: "pragma.memory-policy-migration-journal/v1",
+    sourceSchemaVersion: "pragma.memory-policy-history/v1",
+    targetSchemaVersion: "pragma.memory-policy-history/v2",
+    sourcePath: path,
+    backupPath,
   });
+  await writeJsonAtomically(journalPath, journal);
+  await ensureBackup(path, backupPath);
+  const migrated = revisions.map(
+    (revision) =>
+      MemoryPolicyRevisionSchema.parse({
+        ...revision,
+        schemaVersion: "pragma.memory-policy/v2",
+        policy: {
+          ...revision.policy,
+          enabled: revision.policy.capture,
+        },
+      }) as GlobalPolicyRevision,
+  );
+  await writeHistory(path, migrated, "global");
+  await unlink(journalPath).catch(() => undefined);
+  return migrated;
+}
+
+async function recoverPolicyMigration(path: string): Promise<void> {
+  const journalPath = `${path}.migration-journal`;
+  let journal: z.infer<typeof PolicyMigrationJournalSchema>;
+  try {
+    journal = PolicyMigrationJournalSchema.parse(JSON.parse(await readFile(journalPath, "utf8")));
+  } catch (error) {
+    if (isNotFound(error)) return;
+    throw error;
+  }
+  if (journal.sourcePath !== path || journal.backupPath !== `${path}.v1-backup`) {
+    throw new Error("Memory policy migration journal does not match its policy path.");
+  }
+  const file = await readHistoryFile(path);
+  if (file?.schemaVersion === "pragma.memory-policy-history/v2") {
+    await unlink(journalPath).catch(() => undefined);
+    return;
+  }
+  if (file?.schemaVersion !== "pragma.memory-policy-history/v1") {
+    throw new Error("Memory policy migration journal has no recoverable source history.");
+  }
+}
+
+async function ensureBackup(sourcePath: string, backupPath: string): Promise<void> {
+  try {
+    await stat(backupPath);
+    return;
+  } catch (error) {
+    if (!isNotFound(error)) throw error;
+  }
+  const temporary = `${backupPath}.${randomUUID()}.tmp`;
+  try {
+    await copyFile(sourcePath, temporary);
+    await rename(temporary, backupPath);
+    await chmod(backupPath, 0o600).catch(() => undefined);
+  } finally {
+    await unlink(temporary).catch(() => undefined);
+  }
+}
+
+async function writeJsonAtomically(path: string, value: unknown): Promise<void> {
   await mkdir(dirname(path), { recursive: true, mode: 0o700 });
   const temporary = `${path}.${randomUUID()}.tmp`;
-  await writeFile(temporary, `${JSON.stringify(file, null, 2)}\n`, { mode: 0o600 });
-  await rename(temporary, path);
-  await chmod(path, 0o600).catch(() => undefined);
+  try {
+    await writeFile(temporary, `${JSON.stringify(value, null, 2)}\n`, { mode: 0o600 });
+    await rename(temporary, path);
+    await chmod(path, 0o600).catch(() => undefined);
+  } finally {
+    await unlink(temporary).catch(() => undefined);
+  }
 }
 
 function assertExpectedRevision(expected: number, actual: number, target: string): void {

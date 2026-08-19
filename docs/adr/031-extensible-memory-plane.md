@@ -141,12 +141,12 @@ revision、provenance 摘要、binding 与权限版本。私有 Evidence 不会�
 
 策略是 Host binding metadata，不写入 portable DSL，也不产生 Project Revision。第一阶段支持：
 
-- Global：`capture`、`recall`、`learning`；
+- Global：`enabled` 总开关，以及 `capture`、`recall`、`learning` 子策略；
 - Expert / ExpertTeam / Flow override：`inherit` 或收紧对应能力；
 - Mission restriction：只允许进一步收紧；
 - producer override：实际生产者也参与计算。
 
-默认记忆功能关闭，`capture`、`recall` 和 `learning` 均为 disabled。开启记忆功能后，其他策略才可配置；最终有效策略是：
+默认记忆功能关闭；`enabled` 关闭时，`capture`、`recall` 和 `learning` 的最终有效结果全部为 disabled，设置页隐藏这些子设置且不可配置。Global 策略当前使用 v2；首次读取 v1 历史时通过加锁、备份和可重放 journal 迁移到 v2，并保留原有的 `recall` 与 `learning` 选择。最终有效策略是：
 
 ```text
 global ∩ root asset ∩ every producer ∩ mission restriction

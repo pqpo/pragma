@@ -35,7 +35,12 @@ describe("DesktopMemoryPlane", () => {
     });
     await plane.policies.updateGlobal({
       expectedRevision: 0,
-      policy: { capture: "enabled", recall: "enabled", learning: "local-candidates" },
+      policy: {
+        enabled: "enabled",
+        capture: "enabled",
+        recall: "enabled",
+        learning: "local-candidates",
+      },
     });
 
     await expect(plane.getStatus()).resolves.toMatchObject({
@@ -110,7 +115,12 @@ describe("DesktopMemoryPlane", () => {
     });
     await plane.policies.updateGlobal({
       expectedRevision: 0,
-      policy: { capture: "enabled", recall: "enabled", learning: "local-candidates" },
+      policy: {
+        enabled: "enabled",
+        capture: "enabled",
+        recall: "enabled",
+        learning: "local-candidates",
+      },
     });
     const now = new Date("2026-08-04T00:00:00.000Z");
     await plane.episodicStore.ingest([
@@ -259,7 +269,12 @@ describe("DesktopMemoryPlane", () => {
     });
     await plane.policies.updateGlobal({
       expectedRevision: 0,
-      policy: { capture: "enabled", recall: "enabled", learning: "local-candidates" },
+      policy: {
+        enabled: "enabled",
+        capture: "enabled",
+        recall: "enabled",
+        learning: "local-candidates",
+      },
     });
     const input = {
       rootRef: { type: "pragma.expert" as const, id: "1xddvess309a6gme" },

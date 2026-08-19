@@ -102,7 +102,12 @@ describe("desktop memory contracts", () => {
       DesktopGlobalMemoryPolicySnapshotSchema.parse({
         revision: 1,
         effectiveFrom: "2026-08-01T00:00:00.000Z",
-        policy: { capture: "enabled", recall: "enabled", learning: "local-candidates" },
+        policy: {
+          enabled: "enabled",
+          capture: "enabled",
+          recall: "enabled",
+          learning: "local-candidates",
+        },
       }),
     ).toMatchObject({ revision: 1, policy: { capture: "enabled" } });
     expect(

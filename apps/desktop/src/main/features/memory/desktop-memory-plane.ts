@@ -288,7 +288,7 @@ export async function createDesktopMemoryPlane(options: {
     checkpoints: state,
     deadLetters: state,
     outbox: state,
-    isEnabled: async () => (await policies.getGlobal()).policy.capture === "enabled",
+    isEnabled: async () => (await policies.getGlobal()).policy.enabled === "enabled",
   });
   let stopped = true;
   let timer: ReturnType<typeof setTimeout> | undefined;

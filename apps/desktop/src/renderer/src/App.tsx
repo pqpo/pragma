@@ -31,7 +31,7 @@ export function App() {
   const [studioMemoryState, setStudioMemoryState] = useState<StudioPageMemoryState>();
   const [evaluationTargetId, setEvaluationTargetId] = useState<string>();
   const [settingsView, setSettingsView] = useState<SettingsView>("general");
-  const [memoryEnabled, setMemoryEnabled] = useState(false);
+  const [memoryEnabled, setMemoryEnabled] = useState<boolean>();
 
   useEffect(() => {
     const api = typeof window === "undefined" ? undefined : window.pragmaDesktop;
@@ -40,7 +40,7 @@ export function App() {
     void api
       .getGlobalMemoryPolicy()
       .then((snapshot) => {
-        if (!cancelled) setMemoryEnabled(snapshot.policy.capture === "enabled");
+        if (!cancelled) setMemoryEnabled(snapshot.policy.enabled === "enabled");
       })
       .catch(() => {
         if (!cancelled) setMemoryEnabled(false);
@@ -51,7 +51,7 @@ export function App() {
   }, []);
 
   useEffect(() => {
-    if (!memoryEnabled && activeView === "memory") setActiveView("home");
+    if (memoryEnabled === false && activeView === "memory") setActiveView("home");
   }, [activeView, memoryEnabled]);
 
   const navigate = (view: AppView) => {
@@ -90,7 +90,7 @@ export function App() {
       <Sidebar
         activeView={activeView}
         collapsed={sidebarCollapsed}
-        memoryEnabled={memoryEnabled}
+        memoryEnabled={memoryEnabled === true}
         onNavigate={navigate}
         onToggle={toggleSidebar}
       />

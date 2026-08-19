@@ -107,11 +107,12 @@ Desktop 提供设置入口。
 
 #### 5. 版本化策略
 
-- Global：capture、recall、learning；
+- Global：enabled 总开关，以及 capture、recall、learning；
 - Expert、ExpertTeam、Flow：inherit 或收紧；
 - Mission 与实际 producer 可继续收紧；
 - 生效规则是 `global ∩ root asset ∩ producers ∩ mission`；
-- 默认记忆功能关闭；启用后 capture/recall enabled，learning local candidates；
+- 默认记忆功能关闭；关闭时所有有效能力均停用且子设置隐藏；开启后保留已有 capture/recall/learning 选择；
+- Global 策略从 v1 升级到 v2 时，在首次读取 owner 时执行带备份和 journal 的相邻迁移；
 - revision 使用 CAS 更新并保留 `effectiveFrom` 历史；
 - 重放事件按 `occurredAt` 解析，不使用当前策略覆盖历史；
 - 损坏/未来策略 schema fail closed。
@@ -152,10 +153,10 @@ Desktop 提供设置入口。
 
 - Status: Completed
 - Protocols: `pragma.canonical-event/v1`、`pragma.canonical-event-handoff/v1`、
-  `pragma.memory-evidence/v1`、`pragma.memory-policy/v1`、
+  `pragma.memory-evidence/v1`、`pragma.memory-policy/v2`、
   `pragma.memory-consumer-state/v1`、`pragma.memory-derived-event-outbox/v1`、
   `pragma.memory-dead-letter/v1`
-- Migration: 新 Store 从 v1 开始；Execution transaction 保持 v9；未改写既有状态
+- Migration: Global memory policy 从 v1 相邻迁移到 v2，保留 v1 备份并支持 journal 重放；asset policy 仍为 v1；Execution transaction 保持 v9；
 - Verification: `pnpm lint`、`pnpm typecheck`、Core/Memory/Desktop tests、`pnpm build`
 - Known limitations: 阶段 1 完成时尚无生产 Episodic/Semantic Module、Memory 管理中心、分享导出与
   Feed retention/replication；这些不能算作阶段 1 已提供的产品能力
