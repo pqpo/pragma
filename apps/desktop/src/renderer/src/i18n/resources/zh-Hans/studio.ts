@@ -575,6 +575,8 @@ export const studio = {
   showMore: "展开",
   expertCapabilities: "专家能力",
   model: "模型",
+  thinkingDepth: "思考深度",
+  defaultThinkingDepth: "默认（{{value}}）",
   notConfigured: "未配置",
   systemDefault: "跟随系统默认",
   context: "上下文",

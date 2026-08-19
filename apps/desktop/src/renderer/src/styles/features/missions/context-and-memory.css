@@ -846,13 +846,14 @@
 }
 
 .mission-human-composer {
-  display: grid;
+  display: flex;
   box-sizing: border-box;
   width: 100%;
   justify-self: stretch;
+  flex-direction: column;
   max-height: min(430px, 52vh);
   gap: 16px;
-  overflow-y: auto;
+  overflow: hidden;
   padding: 16px;
   border: 1px solid var(--ui-line-strong);
   border-radius: var(--ui-radius-lg);
@@ -861,6 +862,7 @@
 
 .mission-human-composer > header {
   display: flex;
+  flex: 0 0 auto;
   align-items: flex-start;
   justify-content: space-between;
   gap: 12px;
@@ -952,9 +954,14 @@
 }
 
 .mission-human-question {
+  min-height: 0;
+  flex: 1 1 auto;
   display: grid;
   width: 100%;
   gap: 12px;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  scrollbar-gutter: stable;
 }
 
 .mission-human-composer textarea {
@@ -1109,6 +1116,7 @@
 
 .mission-human-composer > footer {
   display: flex;
+  flex: 0 0 auto;
   justify-content: flex-end;
   gap: 8px;
 }

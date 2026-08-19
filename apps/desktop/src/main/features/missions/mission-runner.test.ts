@@ -43,6 +43,7 @@ import {
   compactExpertSessionContext,
   createMissionRunner,
   isRootMissionRuntimeOutput,
+  toDesktopHumanRequest,
 } from "./mission-runner.ts";
 import { createMissionStore } from "./mission-store.ts";
 import { createPragmaProjectStore } from "../projects/pragma-project-store.ts";
@@ -89,6 +90,26 @@ const removeTemporaryPath = async (path: string): Promise<void> => {
     }
   }
 };
+
+describe("toDesktopHumanRequest", () => {
+  it("does not project the first askUserQuestion item into prompt for a multi-question request", () => {
+    const request = toDesktopHumanRequest({
+      kind: "user_question",
+      toolName: "askUserQuestion",
+      questions: Array.from({ length: 5 }, (_, index) => ({
+        header: `Question ${index + 1}`,
+        question: `What should we decide for question ${index + 1}?`,
+        kind: "single_choice" as const,
+        options: [{ label: "Continue", description: "Continue with this choice." }],
+      })),
+    });
+
+    expect(request).toMatchObject({ kind: "question", questions: expect.any(Array) });
+    expect(request.questions).toHaveLength(5);
+    expect(request.title).toBeUndefined();
+    expect(request.prompt).toBeUndefined();
+  });
+});
 
 afterEach(async () => {
   vi.restoreAllMocks();

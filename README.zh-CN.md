@@ -8,7 +8,9 @@
   <a href="./README.md">English</a> | 简体中文
 </p>
 
-<p align="center">把你的 AI 工作方式，沉淀成可以复用的资产。</p>
+<p align="center"><strong>一次构建你的 Agent Team，到处使用。</strong></p>
+
+<p align="center">构建跨模型与 Agent Harness 的可移植 AI Agent Team——为每项任务组合合适的模型、工具、Context 与工作流。你可以通过 Pragma 提供的 Desktop 或 CLI 直接运行；也可以不改变现有工作方式，将它接入 Codex、Claude Code 等常用 AI 工具；还可以使用 SDK 直接集成到自己的 AI 系统中。</p>
 
 <p align="center">
   <a href="https://github.com/pqpo/pragma/releases"><img alt="最新预览版本" src="https://img.shields.io/github/v/release/pqpo/pragma?include_prereleases&label=preview" /></a>
@@ -17,11 +19,11 @@
   <a href="./LICENSE"><img alt="许可证：源码可用" src="https://img.shields.io/badge/license-source--available-2563EB" /></a>
 </p>
 
-Pragma 是一个代码公开的多 Agent 编排桌面应用，用来把不同的 Agent Harness、模型、工具、上下文来源和人工决策组织成可复用的 AI 工作流。
+Pragma 是一个跨模型、跨 Agent Harness 的 AI-native 工作方式平台，用来把一套工作方式构建成可运行、可复用的 Agent Team。一个团队不只是 Prompt，还可以组合 Expert、ExpertTeam、Flow、工具、Skill、共享 Context、Memory、权限和人工确认。
 
-一项 Mission 可以在不同专家之间持续推进，同时保留已经形成的决策、产物和经验。Pragma 不替代 Claude Code、Codex、PI、Qoder CLI、Antigravity CLI 或下一个优秀的 Agent，而是让它们协同工作。
+与单一聊天工具或 Coding Agent 不同，Pragma 把 Agent Team 及其工作方式作为可移植单元。你可以用 YAML DSL 定义它，在 Desktop 中构建；CLI 集成正在实现中，未来支持直接调用并导出为 MCP 或 Skills；也可以通过 SDK 将同一团队嵌入自己的应用。
 
-Pragma 用得越多，沉淀得越多。不同任务、Harness 与模型产生的事件会形成跨 Harness 的动态记忆；其中有价值的经验与事实，可以在策略和审阅机制控制下自动升级为稳定的知识库或可复用 Skill。
+在一次 Mission 中，工作可以在不同专家之间持续推进，同时保留决策、产物和积累的经验。同一套团队可以为不同步骤协调不同模型与 Harness，并在统一的治理模型下管理 Context、权限、交接和执行。
 
 <p align="center">
   <a href="https://github.com/pqpo/pragma/releases"><strong>下载</strong></a>
@@ -140,19 +142,21 @@ Expert Tool = Expert + ExpertTeam + Flow
 
 图中的模型与 Runtime 名称只是示例。路由属于 Host Binding，可复用的工作方式并不会与这些特定提供商绑定。
 
-## 选择使用方式
+## 选择如何构建和运行 Agent Team
 
-### Desktop
+Pragma 提供三种使用层次：功能完整的 Desktop、从终端直接调用的 CLI，以及集成到自有系统中的 SDK。
 
-使用 Desktop 配置模型提供商与本地 Runtime，在 Studio 中创建 Expert 和 Flow，运行 Mission，检查 Context 与 Memory，管理 Evaluation，以及导入或导出 `.pragma` Bundle。
+### Desktop：最直观、配置最完整的入口
 
-### Pragma DSL
+使用 Pragma Desktop 以最直观、最完整的方式构建和运行团队。你可以配置模型提供商、本地 Runtime、权限、Context、Memory、工具与 Evaluation；在 Studio 中创建 Expert 和 Flow；运行 Mission、检查结果，以及导入或导出 `.pragma` Bundle。
 
-Pragma DSL 使用版本化 YAML 描述 Expert、ExpertTeam、Flow、Capability、ContextStore、RuntimeProfile、Automation 与 Evaluation。Interpreter 负责解析、链接、校验、迁移、编译和重新生成定义。可以从[可移植 Bundle 示例](./examples/projects/bundle-transfer/pragma.yaml)和 [DSL 架构说明](./docs/architecture/pragma-yaml-dsl.md)开始。
+### CLI：从终端直接调用 Agent Team
 
-### TypeScript Packages
+通过 CLI 直接调用 Agent Team，将它接入脚本、本地工作流与自动化任务。CLI 当前正在实现中，后续还将支持通过 CLI 将 Agent Team 导出为 MCP 或 Skill，把团队的完整能力——包括 Expert、共享 Context、工具、Memory、工作流与治理——带给你已经在使用的 AI 工具，例如 Codex、Claude Code，或者你自己开发的 AI 系统。
 
-使用 `@pragma/core` 将执行模型嵌入其他 Host，或使用 `@pragma/interpreter` 加载可移植定义与 Bundle。可运行的集成示例位于 [`examples/src`](./examples/src/README.md)；[Bundle 迁移说明](./docs/architecture/desktop-bundle-transfer.md)解释了 Host Binding 与可移植边界。
+### SDK：集成到自己的系统
+
+将 Agent Team 保存为版本化 YAML DSL，通过 `@pragma/interpreter` 加载和编译，再在自己的应用中使用 `@pragma/core` 直接调用编译后的团队。这样可以把 Agent Team 嵌入自己的产品或 AI 系统，同时保留定义的可移植性与可审阅性。可以从[可移植 Bundle 示例](./examples/projects/bundle-transfer/pragma.yaml)和 [DSL 架构说明](./docs/architecture/pragma-yaml-dsl.md)开始；可运行的集成示例位于 [`examples/src`](./examples/src/README.md)。
 
 ## 当前状态
 

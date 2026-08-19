@@ -606,6 +606,8 @@ export const studio = {
   showMore: "Show more",
   expertCapabilities: "Expert capabilities",
   model: "Model",
+  thinkingDepth: "Thinking depth",
+  defaultThinkingDepth: "Default ({{value}})",
   notConfigured: "Not configured",
   systemDefault: "System default",
   context: "Context",

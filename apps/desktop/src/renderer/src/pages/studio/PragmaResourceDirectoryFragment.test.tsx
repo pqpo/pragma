@@ -435,6 +435,7 @@ describe("PragmaResourceDetailFragment", () => {
           runtimeId: "pi",
           providerId: "ad0aa84a-2057-4074-b138-408099ecac0a",
           modelId: "deepseek-v3",
+          thinkingLevel: "high",
         },
       },
       studioExpert(2),
@@ -457,6 +458,10 @@ describe("PragmaResourceDetailFragment", () => {
               kind: "registered",
               id: "ad0aa84a-2057-4074-b138-408099ecac0a",
               displayName: "DeepSeek",
+            },
+            thinking: {
+              supportedLevels: [{ value: "high", label: "High" }],
+              defaultLevel: "high",
             },
           },
         ],
@@ -562,6 +567,8 @@ const complete = true;
     expect(html).toContain("Specialist description 1");
     expect(html).toContain("Runtime");
     expect(html).toContain("DeepSeek V3");
+    expect(html).toContain("Thinking depth");
+    expect(html).toContain(">High</dd>");
     expect(html).not.toContain("ad0aa84a-2057-4074-b138-408099ecac0a");
     expect(html).toContain("View expert details");
     expect(html.match(/class="team-expert-link"/g)).toHaveLength(2);

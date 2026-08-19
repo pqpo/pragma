@@ -559,6 +559,7 @@ function TeamDetail(props: {
     const runtime = props.runtimes.find((candidate) => candidate.id === runtimeId);
     const modelId = record?.model?.modelId ?? runtimeConfig?.model;
     const providerId = record?.model?.providerId ?? runtimeConfig?.providerId;
+    const thinkingLevel = record?.model?.thinkingLevel ?? runtimeConfig?.thinkingLevel;
     const runtimeModel =
       modelId === undefined
         ? undefined
@@ -580,6 +581,21 @@ function TeamDetail(props: {
         runtime === undefined ? (runtimeId ?? t("notConfigured")) : runtimeDisplayName(t, runtime),
       modelName:
         modelId === undefined ? t("runtimeDefault") : (runtimeModel?.displayName ?? modelId),
+      thinkingDepthName:
+        modelId === undefined
+          ? t("runtimeDefault")
+          : thinkingLevel !== undefined
+            ? (runtimeModel?.thinking?.supportedLevels.find(
+                (level) => level.value === thinkingLevel,
+              )?.label ?? thinkingLevel)
+            : runtimeModel?.thinking?.defaultLevel !== undefined
+              ? t("defaultThinkingDepth", {
+                  value:
+                    runtimeModel.thinking.supportedLevels.find(
+                      (level) => level.value === runtimeModel.thinking?.defaultLevel,
+                    )?.label ?? runtimeModel.thinking.defaultLevel,
+                })
+              : t("runtimeDefault"),
       capabilitySummary:
         record === undefined
           ? undefined
@@ -735,6 +751,7 @@ type TeamExpertDisplay = {
   readonly scope: string;
   readonly runtimeName: string;
   readonly modelName: string;
+  readonly thinkingDepthName: string;
   readonly capabilitySummary: string | undefined;
 };
 
@@ -791,6 +808,10 @@ function TeamExpertCard(props: {
           <div>
             <dt>{t("model")}</dt>
             <dd>{props.expert.modelName}</dd>
+          </div>
+          <div>
+            <dt>{t("thinkingDepth")}</dt>
+            <dd>{props.expert.thinkingDepthName}</dd>
           </div>
         </dl>
         {props.expert.capabilitySummary ? (

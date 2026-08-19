@@ -4020,7 +4020,7 @@ async function readAllExecutionEvents(
   return events;
 }
 
-function toDesktopHumanRequest(request: ExpertAgentHumanRequest): HumanInteractionRequest {
+export function toDesktopHumanRequest(request: ExpertAgentHumanRequest): HumanInteractionRequest {
   if (request.kind === "tool_approval") {
     return {
       kind: "approval",
@@ -4029,11 +4029,18 @@ function toDesktopHumanRequest(request: ExpertAgentHumanRequest): HumanInteracti
       data: request.input,
     };
   }
-  const first = request.questions[0];
   const approval = request.semantics?.kind === "approval";
+  // `prompt` and `title` are legacy fields for the single-question/approval
+  // surface. A multi-question request must be rendered from its indexed
+  // question; copying the first item into `prompt` makes it appear below
+  // every later question in the Desktop composer.
+  const legacyQuestion =
+    approval || request.questions.length === 1 ? request.questions[0] : undefined;
   return {
     kind: approval ? "approval" : "question",
-    ...(first === undefined ? {} : { title: first.header, prompt: first.question }),
+    ...(legacyQuestion === undefined
+      ? {}
+      : { title: legacyQuestion.header, prompt: legacyQuestion.question }),
     questions: request.questions.map((question) => ({
       ...question,
       options: question.options.map((option) => ({ ...option })),

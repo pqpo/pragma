@@ -41,6 +41,7 @@ import {
   resolveMissionsPageInitialState,
   resolveMissionRailGroups,
   resolveMissionSearchCollapsed,
+  resolveMissionComposerAction,
   releaseMissionClientOperation,
   shouldClearMissionThinkingPlaceholder,
   shouldShowMissionThinkingPlaceholder,
@@ -536,6 +537,81 @@ describe("MissionsPage", () => {
 });
 
 describe("MissionDetailFragment", () => {
+  it("keeps the composer loading until an active execution becomes interruptible", () => {
+    expect(
+      resolveMissionComposerAction({
+        draft: "",
+        sending: true,
+        executionActive: false,
+        interruptible: false,
+        awaitingRequest: true,
+        hasPendingQueuedMessage: false,
+      }),
+    ).toBe("loading");
+    expect(
+      resolveMissionComposerAction({
+        draft: "",
+        sending: false,
+        executionActive: true,
+        interruptible: false,
+        awaitingRequest: true,
+        hasPendingQueuedMessage: false,
+      }),
+    ).toBe("loading");
+    expect(
+      resolveMissionComposerAction({
+        draft: "",
+        sending: false,
+        executionActive: true,
+        interruptible: true,
+        awaitingRequest: true,
+        hasPendingQueuedMessage: false,
+      }),
+    ).toBe("interrupt");
+  });
+
+  it("renders loading instead of an inactive interrupt control while connecting", () => {
+    const mission = missionFixture("expert");
+    mission.execution = {
+      id: "00000000-0000-4000-8000-000000000010",
+      inputMessageId: mission.initialMessageId,
+      sessionId: "00000000-0000-4000-8000-000000000011",
+      status: "running",
+      startedAt: "2026-07-11T00:00:01.000Z",
+    };
+    const chat: MissionChatSnapshot = {
+      missionId: mission.id,
+      revision: 1,
+      entries: [],
+      page: {},
+      pendingInteractions: [],
+      execution: {
+        id: mission.execution.id,
+        status: "running",
+        interruptible: false,
+      },
+    };
+    const html = renderToStaticMarkup(
+      <MissionDetailFragment mission={mission} chatCache={new Map([[mission.id, chat]])} />,
+    );
+
+    expect(html).toContain('class="is-loading"');
+    expect(html).not.toContain('aria-label="Interrupt execution"');
+  });
+
+  it("keeps a non-empty draft on the send action while an execution is active", () => {
+    expect(
+      resolveMissionComposerAction({
+        draft: "Queue another instruction",
+        sending: false,
+        executionActive: true,
+        interruptible: true,
+        awaitingRequest: false,
+        hasPendingQueuedMessage: false,
+      }),
+    ).toBe("send");
+  });
+
   it("opens memory on activity and groups capture separately from recall", () => {
     expect(DEFAULT_MISSION_MEMORY_VIEW).toBe("activity");
 

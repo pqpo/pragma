@@ -7,6 +7,7 @@ import type {
   Capability,
   ContextStore,
   DesktopPlugin,
+  DesktopRuntimeAvailability,
 } from "../../../../shared/contracts/index.ts";
 import { i18n } from "../../i18n/index.ts";
 import { ExpertDetailFragment, ExpertDirectoryFragment } from "./ExpertDirectoryFragment.tsx";
@@ -159,6 +160,46 @@ afterEach(async () => {
 });
 
 describe("ExpertDetailFragment", () => {
+  it("shows the configured thinking depth in the runtime summary", () => {
+    const runtime: DesktopRuntimeAvailability = {
+      id: "test",
+      isDefault: true,
+      kind: "test-runtime",
+      displayName: "Test Runtime",
+      status: "available",
+      models: [
+        {
+          id: "test",
+          displayName: "Test Model",
+          provider: { kind: "runtime-managed", id: "test", displayName: "Test Provider" },
+          thinking: {
+            supportedLevels: [{ value: "high", label: "High" }],
+            defaultLevel: "high",
+          },
+        },
+      ],
+    };
+    const html = renderToStaticMarkup(
+      <ExpertDetailFragment
+        expert={{ ...expert, model: { ...expert.model!, thinkingLevel: "high" } }}
+        contextStores={[]}
+        capabilities={[]}
+        plugins={[]}
+        resources={[]}
+        runtimes={[runtime]}
+        onBack={() => undefined}
+        onEdit={() => undefined}
+        onOpenContextStore={() => undefined}
+        onTryInSession={() => undefined}
+        onDelete={async () => undefined}
+        onReset={async () => undefined}
+      />,
+    );
+
+    expect(html).toContain("Thinking depth");
+    expect(html).toContain(">High</strong>");
+  });
+
   it("renders selected capability titles as plain comma-separated text", () => {
     const html = renderToStaticMarkup(
       <ExpertDetailFragment

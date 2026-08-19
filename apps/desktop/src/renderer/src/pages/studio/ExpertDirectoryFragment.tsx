@@ -217,6 +217,29 @@ export function ExpertDetailFragment(props: {
   const modelName =
     props.expert.model?.modelId ??
     t(isBuiltInExpert(props.expert) ? "systemDefault" : "notConfigured");
+  const selectedModel = runtime?.models?.find(
+    (model) =>
+      model.id === props.expert.model?.modelId &&
+      model.provider.id === props.expert.model?.providerId,
+  );
+  const thinkingDepthName = (() => {
+    if (props.expert.model === null) return t("systemDefault");
+    const configuredLevel = props.expert.model.thinkingLevel;
+    const thinking = selectedModel?.thinking;
+    if (configuredLevel !== undefined) {
+      return (
+        thinking?.supportedLevels.find((level) => level.value === configuredLevel)?.label ??
+        configuredLevel
+      );
+    }
+    if (thinking?.defaultLevel !== undefined) {
+      const defaultLevel =
+        thinking.supportedLevels.find((level) => level.value === thinking.defaultLevel)?.label ??
+        thinking.defaultLevel;
+      return t("defaultThinkingDepth", { value: defaultLevel });
+    }
+    return t("runtimeDefault");
+  })();
   const selectedResources = props.expert.resourceTools.map((binding) => {
     const resource = props.resources.find(
       (candidate) => canonicalPragmaResourceRef(candidate) === binding.target?.ref,
@@ -402,6 +425,10 @@ export function ExpertDetailFragment(props: {
         <div>
           <small>{t("model")}</small>
           <strong>{modelName}</strong>
+        </div>
+        <div>
+          <small>{t("thinkingDepth")}</small>
+          <strong>{thinkingDepthName}</strong>
         </div>
       </section>
       <div className="expert-detail-content">

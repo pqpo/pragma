@@ -8,7 +8,9 @@
   English | <a href="./README.zh-CN.md">简体中文</a>
 </p>
 
-<p align="center">Turn the way you work with AI into a reusable asset.</p>
+<p align="center"><strong>Build Your Agent Team Once. Use It Everywhere.</strong></p>
+
+<p align="center">Build portable AI agent teams across models and harnesses — combine the right models, tools, context, and workflows for each task. Run them directly through Pragma Desktop or CLI; bring them into Codex, Claude Code, and other tools without changing your workflow; or integrate them into your own AI system with the SDK.</p>
 
 <p align="center">
   <a href="https://github.com/pqpo/pragma/releases"><img alt="Latest preview release" src="https://img.shields.io/github/v/release/pqpo/pragma?include_prereleases&label=preview" /></a>
@@ -24,11 +26,11 @@
   · <a href="./examples/README.md"><strong>Examples</strong></a>
 </p>
 
-Pragma is a code-public desktop application for orchestrating multiple agent harnesses, models, tools, context sources, and human decisions into reusable AI workflows.
+Pragma is a cross-harness platform for turning AI-native working methods into runnable, reusable agent teams. A team can combine Experts, ExpertTeams, Flows, tools, Skills, shared context, memory, permissions, and human checkpoints—not just a prompt.
 
-A Mission can move from one specialist to another without losing its decisions, artifacts, or accumulated experience. Pragma does not replace Claude Code, Codex, PI, Qoder CLI, Antigravity CLI, or the next great agent—it makes them work together.
+Unlike a single chat product or Coding Agent, Pragma treats the Agent Team and its working method as the portable unit. Define it as YAML DSL and build it in Desktop. The CLI integration is currently in development and will support direct invocation plus export as MCP or Skills. Or embed the same team in your own application with the SDK.
 
-The more you use Pragma, the more it compounds. Events from different tasks, harnesses, and models become cross-harness dynamic memory; useful experience and facts can then be promoted automatically, under policy and review controls, into a stable knowledge base or reusable Skills.
+During a Mission, work can move between specialists without losing decisions, artifacts, or accumulated experience. The same team can coordinate different models and harnesses for different steps while keeping context, permissions, handoffs, and execution under one governance model.
 
 <p align="center">
   <img src="./docs/images/pragma_desktop_en.png" alt="Pragma Desktop running a multi-expert mission" width="800" />
@@ -139,19 +141,21 @@ In this example configuration, UI design, requirements, architecture, implementa
 
 The model and runtime names in the diagram are illustrative. Routing is a Host binding: the reusable method is not coupled to those exact providers.
 
-## Choose your integration path
+## Choose how to build and run your Agent Team
 
-### Desktop
+Pragma meets you at three levels: a full-featured Desktop workspace, direct CLI invocation, or SDK integration into your own system.
 
-Use Desktop to configure providers and local runtimes, create Experts and Flows in Studio, run Missions, inspect context and memory, manage evaluations, and import or export `.pragma` bundles.
+### Desktop — the most intuitive entry point
 
-### Pragma DSL
+Use Pragma Desktop as the most intuitive and configurable way to build and run teams. Configure model providers, local runtimes, permissions, context, memory, tools, and evaluations; create Experts and Flows in Studio; run Missions; inspect results; and import or export `.pragma` bundles.
 
-Pragma DSL describes Experts, ExpertTeams, Flows, capabilities, context stores, runtime profiles, automations, and evaluations as versioned YAML. The Interpreter parses, links, validates, migrates, compiles, and dumps these definitions. Start with the [portable bundle example](./examples/projects/bundle-transfer/pragma.yaml) and the [DSL architecture guide](./docs/architecture/pragma-yaml-dsl.md).
+### CLI — call teams directly from the terminal
 
-### TypeScript packages
+Call an Agent Team directly from the terminal and connect it to scripts, local workflows, and automation. CLI support is currently in development. The CLI will also be able to expose a team as MCP or Skills, bringing its full capabilities—including experts, shared context, tools, memory, workflows, and governance—to the AI tools you already use, such as Codex, Claude Code, or a system you build yourself.
 
-Embed the execution model into another Host with `@pragma/core`, or load portable definitions and bundles with `@pragma/interpreter`. Runnable integrations live in [`examples/src`](./examples/src/README.md); the [bundle transfer guide](./docs/architecture/desktop-bundle-transfer.md) covers Host bindings and portability boundaries.
+### SDK — integrate teams into your own system
+
+Save an Agent Team as versioned YAML DSL, load and compile it with `@pragma/interpreter`, and invoke the compiled team directly from your own application through `@pragma/core`. This path lets you embed Agent Team execution into a product or AI system while keeping the team definition portable and reviewable. Start with the [portable bundle example](./examples/projects/bundle-transfer/pragma.yaml) and the [DSL architecture guide](./docs/architecture/pragma-yaml-dsl.md); runnable integrations live in [`examples/src`](./examples/src/README.md).
 
 ## Current status
 

@@ -307,6 +307,16 @@
   background: #cad1cc;
 }
 
+.mission-chat-actions > button.is-loading:disabled {
+  background: var(--green);
+  color: #fff;
+  cursor: wait;
+}
+
+.mission-chat-actions > button.is-loading svg {
+  animation: mission-thinking-spin 900ms linear infinite;
+}
+
 .mission-chat-shell {
   display: grid;
   grid-template-rows: minmax(0, 1fr) auto;
@@ -422,6 +432,12 @@
 .mission-chat-composer-toolbar > button.is-interrupt:disabled {
   cursor: not-allowed;
   opacity: 0.45;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .mission-chat-actions > button.is-loading svg {
+    animation: none;
+  }
 }
 
 .mission-chat-composer > .mission-attachment-list {

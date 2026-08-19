@@ -30,6 +30,7 @@ import {
   Play,
   PushPin,
   ArrowBendUpLeft,
+  Stop,
   StopCircle,
   SpinnerGap,
   TerminalWindow,
@@ -1279,6 +1280,25 @@ export function releaseMissionClientOperation(
   return current.kind !== "idle" && current.token === token ? { kind: "idle" } : current;
 }
 
+export type MissionComposerAction = "send" | "loading" | "interrupt";
+
+export function resolveMissionComposerAction(input: {
+  readonly draft: string;
+  readonly sending: boolean;
+  readonly executionActive: boolean;
+  readonly interruptible: boolean;
+  readonly awaitingRequest: boolean;
+  readonly hasPendingQueuedMessage: boolean;
+}): MissionComposerAction {
+  if (input.sending) return "loading";
+  if (input.draft.trim() !== "") return "send";
+  if (input.executionActive && input.interruptible) return "interrupt";
+  if (input.executionActive || input.awaitingRequest || input.hasPendingQueuedMessage) {
+    return "loading";
+  }
+  return "send";
+}
+
 type MissionConversationEntry =
   | { readonly type: "durable"; readonly entry: MissionChatEntry }
   | { readonly type: "local"; readonly entry: LocalMissionUserMessage }
@@ -2349,6 +2369,14 @@ export function MissionDetailFragment(props: {
       : `${lastContextOperation.id}:${lastContextOperation.status}`;
   const thinkingRequestId = awaitingRequestId ?? props.initialThinkingRequestId ?? null;
   const showThinkingPlaceholder = shouldShowMissionThinkingPlaceholder(chat, thinkingRequestId);
+  const composerAction = resolveMissionComposerAction({
+    draft,
+    sending: clientOperation.kind === "sending",
+    executionActive,
+    interruptible,
+    awaitingRequest: awaitingRequestId !== null,
+    hasPendingQueuedMessage: pendingQueuedMessages.length > 0,
+  });
 
   useEffect(() => {
     if (durableEntryIds.size === 0) return;
@@ -3094,20 +3122,27 @@ export function MissionDetailFragment(props: {
                               onCompact={() => void compactContext()}
                             />
                           )}
-                          {draft.trim() === "" && executionActive ? (
+                          {composerAction === "interrupt" ? (
                             <button
                               className="is-interrupt"
                               type="button"
                               aria-label={t("interrupt", { ns: "missions" })}
-                              title={
-                                interruptible
-                                  ? t("interrupt", { ns: "missions" })
-                                  : t("resumeBeforeInterrupt", { ns: "missions" })
-                              }
-                              disabled={!interruptible || interrupting}
+                              title={t("interrupt", { ns: "missions" })}
+                              disabled={interrupting}
                               onClick={() => void interrupt()}
                             >
-                              <StopCircle size={19} weight="fill" aria-hidden="true" />
+                              <Stop size={17} weight="fill" aria-hidden="true" />
+                            </button>
+                          ) : composerAction === "loading" ? (
+                            <button
+                              className="is-loading"
+                              type="button"
+                              aria-label={t("loading", { ns: "common" })}
+                              title={t("loading", { ns: "common" })}
+                              aria-busy="true"
+                              disabled
+                            >
+                              <SpinnerGap size={19} aria-hidden="true" />
                             </button>
                           ) : (
                             <button
