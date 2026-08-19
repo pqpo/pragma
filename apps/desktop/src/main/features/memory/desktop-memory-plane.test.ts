@@ -33,6 +33,10 @@ describe("DesktopMemoryPlane", () => {
       logger: createPragmaLogger(undefined, { component: "desktop.memory-test" }),
       pollIntervalMs: 10,
     });
+    await plane.policies.updateGlobal({
+      expectedRevision: 0,
+      policy: { capture: "enabled", recall: "enabled", learning: "local-candidates" },
+    });
 
     await expect(plane.getStatus()).resolves.toMatchObject({
       state: "stopped",
@@ -103,6 +107,10 @@ describe("DesktopMemoryPlane", () => {
       pragmaHome,
       logger: createPragmaLogger(loggerProvider, { component: "desktop.memory-test" }),
       pollIntervalMs: 10,
+    });
+    await plane.policies.updateGlobal({
+      expectedRevision: 0,
+      policy: { capture: "enabled", recall: "enabled", learning: "local-candidates" },
     });
     const now = new Date("2026-08-04T00:00:00.000Z");
     await plane.episodicStore.ingest([
@@ -248,6 +256,10 @@ describe("DesktopMemoryPlane", () => {
     const plane = await createDesktopMemoryPlane({
       pragmaHome,
       logger: createPragmaLogger(undefined, { component: "desktop.memory-test" }),
+    });
+    await plane.policies.updateGlobal({
+      expectedRevision: 0,
+      policy: { capture: "enabled", recall: "enabled", learning: "local-candidates" },
     });
     const input = {
       rootRef: { type: "pragma.expert" as const, id: "1xddvess309a6gme" },

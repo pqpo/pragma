@@ -23,9 +23,9 @@ const PolicyHistoryFileSchema = z.object({
 });
 
 export const DEFAULT_MEMORY_GLOBAL_POLICY: MemoryGlobalPolicy = {
-  capture: "enabled",
-  recall: "enabled",
-  learning: "local-candidates",
+  capture: "disabled",
+  recall: "disabled",
+  learning: "disabled",
 };
 
 export const DEFAULT_MEMORY_ASSET_POLICY: MemoryAssetPolicyOverride = {
@@ -86,7 +86,7 @@ export function createFileMemoryPolicyStore(
     },
 
     async updateGlobal(input) {
-      const policy = MemoryGlobalPolicySchema.parse(input.policy);
+      const policy = normalizeGlobalPolicy(MemoryGlobalPolicySchema.parse(input.policy));
       const path = paths.memoryGlobalPolicy();
       return await withFileLock(`${path}.lock`, async () => {
         const revisions = await readHistory(path);
@@ -187,15 +187,29 @@ function globalAt(
     (revision): revision is Extract<MemoryPolicyRevision, { readonly scope: "global" }> =>
       revision.scope === "global",
   );
-  return (
-    selectAt(globals, at) ?? {
-      schemaVersion: "pragma.memory-policy/v1",
-      scope: "global",
-      revision: 0,
-      effectiveFrom: new Date(0).toISOString(),
-      policy: DEFAULT_MEMORY_GLOBAL_POLICY,
-    }
-  );
+  const selected = selectAt(globals, at);
+  return selected === undefined
+    ? {
+        schemaVersion: "pragma.memory-policy/v1",
+        scope: "global",
+        revision: 0,
+        effectiveFrom: new Date(0).toISOString(),
+        policy: DEFAULT_MEMORY_GLOBAL_POLICY,
+      }
+    : {
+        ...selected,
+        policy: normalizeGlobalPolicy(selected.policy),
+      };
+}
+
+function normalizeGlobalPolicy(policy: MemoryGlobalPolicy): MemoryGlobalPolicy {
+  if (policy.capture === "enabled") return policy;
+  return {
+    ...policy,
+    capture: "disabled",
+    recall: "disabled",
+    learning: "disabled",
+  };
 }
 
 function assetAt(

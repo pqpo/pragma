@@ -107,7 +107,7 @@ Semantic 是当前信念投影，也不是无条件真值。详情会展示 conf
 
 设置 → Memory：
 
-- Capture：是否允许 canonical execution event 进入 Memory pipeline；
+- Memory feature：记忆功能总开关，默认关闭；关闭时不会采集、召回或学习，且其他记忆设置隐藏不可配置；
 - Recall：是否允许从 Memory Context 读取；
 - Learning：是否生成本地 Knowledge/Skill 候选；候选不会自动发布；
 - Health：Plane 状态、Feed logical/file bytes、安全 checkpoint、blocked bytes、Module Evidence 和
@@ -119,7 +119,7 @@ Semantic 是当前信念投影，也不是无条件真值。详情会展示 conf
 - Knowledge and Skill revision Agent：Knowledge Store 和 Skill 修订共用的 Runtime/model profile；
 - Skill Evaluation Agent：独立执行 Skill replay/boundary judge 的 Runtime/model profile。
 
-默认 capture、recall 开启，learning 为 local candidates。
+默认记忆功能关闭；启用总开关后默认 capture、recall 开启，learning 为 local candidates。
 
 模型设置持久化为 `pragma.memory-extractor-profile/v1`，通过 revision CAS 更新，不使用环境变量。模型暂时
 不可用时任务保留在 durable queue；配置错误或耗尽自动重试后进入 `needs_attention`。应用重启不会自动

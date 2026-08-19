@@ -8,9 +8,14 @@ import type {
   DesktopRuntimeAvailability,
 } from "../../../../shared/contracts/index.ts";
 import { SelectMenu } from "../../components/SelectMenu.tsx";
+import { Switch } from "../../components/Switch.tsx";
 import { SettingsScreenFrame } from "./SettingsScreenFrame.tsx";
 
-export function MemorySettingsFragment() {
+export function MemorySettingsFragment(
+  props: {
+    readonly onMemoryEnabledChange?: ((enabled: boolean) => void) | undefined;
+  } = {},
+) {
   const { t } = useTranslation("settings");
   const [snapshot, setSnapshot] = useState<DesktopGlobalMemoryPolicySnapshot>();
   const [extractor, setExtractor] = useState<DesktopMemoryExtractorProfile>();
@@ -32,6 +37,7 @@ export function MemorySettingsFragment() {
       .then(([nextSnapshot, nextExtractor, nextExtractionSettings, nextRuntimes]) => {
         if (cancelled) return;
         setSnapshot(nextSnapshot);
+        props.onMemoryEnabledChange?.(nextSnapshot.policy.capture === "enabled");
         setExtractor(nextExtractor);
         setExtractionSettings(nextExtractionSettings);
         setRuntimes(nextRuntimes);
@@ -50,19 +56,19 @@ export function MemorySettingsFragment() {
     return () => {
       cancelled = true;
     };
-  }, [t]);
+  }, [props.onMemoryEnabledChange, t]);
 
   const update = async (policy: DesktopGlobalMemoryPolicySnapshot["policy"]) => {
     if (snapshot === undefined) return;
     setSaving(true);
     setError(undefined);
     try {
-      setSnapshot(
-        await window.pragmaDesktop.updateGlobalMemoryPolicy({
-          expectedRevision: snapshot.revision,
-          policy,
-        }),
-      );
+      const nextSnapshot = await window.pragmaDesktop.updateGlobalMemoryPolicy({
+        expectedRevision: snapshot.revision,
+        policy,
+      });
+      setSnapshot(nextSnapshot);
+      props.onMemoryEnabledChange?.(nextSnapshot.policy.capture === "enabled");
     } catch {
       setError(t("memory.saveError"));
     } finally {
@@ -119,6 +125,7 @@ export function MemorySettingsFragment() {
 
   const selectedRuntime = runtimes.find((runtime) => runtime.id === runtimeId);
   const models = selectedRuntime?.models ?? [];
+  const memoryEnabled = snapshot?.policy.capture === "enabled";
   return (
     <SettingsScreenFrame
       id="memory-panel"
@@ -131,125 +138,158 @@ export function MemorySettingsFragment() {
       }
     >
       <div className="general-settings-list">
-        <MemoryGlobalSwitch
-          label={t("memory.capture")}
-          description={t("memory.captureDescription")}
-          value={snapshot?.policy.capture ?? "enabled"}
+        <MemoryMasterSwitch
+          label={t("memory.masterSwitch")}
+          description={t("memory.masterSwitchDescription")}
+          checked={memoryEnabled}
           disabled={snapshot === undefined || saving}
-          onChange={(capture) => void update({ ...snapshot!.policy, capture })}
-        />
-        <MemoryGlobalSwitch
-          label={t("memory.recall")}
-          description={t("memory.recallDescription")}
-          value={snapshot?.policy.recall ?? "enabled"}
-          disabled={snapshot === undefined || saving}
-          onChange={(recall) => void update({ ...snapshot!.policy, recall })}
-        />
-        <MemorySelectRow
-          label={t("memory.learning")}
-          description={t("memory.learningDescription")}
-          value={snapshot?.policy.learning ?? "local-candidates"}
-          disabled={snapshot === undefined || saving}
-          options={[
-            ["local-candidates", t("memory.localCandidates")],
-            ["disabled", t("memory.disabled")],
-          ]}
-          onChange={(learning) => void update({ ...snapshot!.policy, learning })}
-        />
-        <MemoryGlobalSwitch
-          label={t("memory.episodicToolAssistedExtraction")}
-          description={t("memory.episodicToolAssistedExtractionDescription")}
-          value={extractionSettings?.allowToolAssisted.episodic ? "enabled" : "disabled"}
-          disabled={extractionSettings === undefined || saving}
-          onChange={(value) =>
-            void updateExtractionSettings({
-              ...extractionSettings!.allowToolAssisted,
-              episodic: value === "enabled",
+          onChange={(enabled) =>
+            void update({
+              capture: enabled ? "enabled" : "disabled",
+              recall: enabled ? "enabled" : "disabled",
+              learning: enabled ? "local-candidates" : "disabled",
             })
           }
         />
-        <MemoryGlobalSwitch
-          label={t("memory.semanticToolAssistedExtraction")}
-          description={t("memory.semanticToolAssistedExtractionDescription")}
-          value={extractionSettings?.allowToolAssisted.semantic ? "enabled" : "disabled"}
-          disabled={extractionSettings === undefined || saving}
-          onChange={(value) =>
-            void updateExtractionSettings({
-              ...extractionSettings!.allowToolAssisted,
-              semantic: value === "enabled",
-            })
-          }
-        />
-        <MemorySelectRow
-          label={t("memory.extractorMode")}
-          description={t("memory.extractorModeDescription")}
-          value={extractor?.mode ?? "inherit-default"}
-          disabled={extractor === undefined || saving}
-          options={[
-            ["inherit-default", t("memory.inheritDefaultModel")],
-            ["pinned", t("memory.pinnedModel")],
-          ]}
-          onChange={(mode) => {
-            if (mode === "inherit-default") void updateExtractor({ mode });
-            else
-              setExtractor((current) =>
-                current === undefined ? current : { ...current, mode: "pinned" },
-              );
-          }}
-        />
-        {extractor?.mode !== "pinned" ? null : (
+        {memoryEnabled ? (
           <>
-            <MemorySelectRow
-              label={t("memory.extractorRuntime")}
-              description={t("memory.extractorRuntimeDescription")}
-              value={runtimeId}
+            <MemoryGlobalSwitch
+              label={t("memory.recall")}
+              description={t("memory.recallDescription")}
+              value={snapshot!.policy.recall}
               disabled={saving}
-              options={runtimes
-                .filter((runtime) => runtime.status === "available")
-                .map((runtime) => [runtime.id, runtime.displayName] as const)}
-              onChange={(value) => {
-                setRuntimeId(value);
-                setModelKey("");
+              onChange={(recall) => void update({ ...snapshot!.policy, recall })}
+            />
+            <MemorySelectRow
+              label={t("memory.learning")}
+              description={t("memory.learningDescription")}
+              value={snapshot!.policy.learning}
+              disabled={saving}
+              options={[
+                ["local-candidates", t("memory.localCandidates")],
+                ["disabled", t("memory.disabled")],
+              ]}
+              onChange={(learning) => void update({ ...snapshot!.policy, learning })}
+            />
+            <MemoryGlobalSwitch
+              label={t("memory.episodicToolAssistedExtraction")}
+              description={t("memory.episodicToolAssistedExtractionDescription")}
+              value={extractionSettings?.allowToolAssisted.episodic ? "enabled" : "disabled"}
+              disabled={extractionSettings === undefined || saving}
+              onChange={(value) =>
+                void updateExtractionSettings({
+                  ...extractionSettings!.allowToolAssisted,
+                  episodic: value === "enabled",
+                })
+              }
+            />
+            <MemoryGlobalSwitch
+              label={t("memory.semanticToolAssistedExtraction")}
+              description={t("memory.semanticToolAssistedExtractionDescription")}
+              value={extractionSettings?.allowToolAssisted.semantic ? "enabled" : "disabled"}
+              disabled={extractionSettings === undefined || saving}
+              onChange={(value) =>
+                void updateExtractionSettings({
+                  ...extractionSettings!.allowToolAssisted,
+                  semantic: value === "enabled",
+                })
+              }
+            />
+            <MemorySelectRow
+              label={t("memory.extractorMode")}
+              description={t("memory.extractorModeDescription")}
+              value={extractor?.mode ?? "inherit-default"}
+              disabled={extractor === undefined || saving}
+              options={[
+                ["inherit-default", t("memory.inheritDefaultModel")],
+                ["pinned", t("memory.pinnedModel")],
+              ]}
+              onChange={(mode) => {
+                if (mode === "inherit-default") void updateExtractor({ mode });
+                else
+                  setExtractor((current) =>
+                    current === undefined ? current : { ...current, mode: "pinned" },
+                  );
               }}
             />
-            <MemorySelectRow
-              label={t("memory.extractorModel")}
-              description={t("memory.extractorModelDescription")}
-              value={modelKey}
-              disabled={saving || runtimeId === ""}
-              options={models.map(
-                (model) =>
-                  [
-                    `${model.provider.id}\0${model.id}`,
-                    `${model.provider.displayName} · ${model.displayName}`,
-                  ] as const,
-              )}
-              onChange={setModelKey}
-            />
-            <div className="setting-row">
-              <span className="setting-copy">
-                <strong>{t("memory.saveExtractor")}</strong>
-                <span>{t("memory.saveExtractorDescription")}</span>
-              </span>
-              <button
-                type="button"
-                className="secondary-button"
-                disabled={saving || runtimeId === "" || modelKey === ""}
-                onClick={() => {
-                  const [providerId, modelId] = modelKey.split("\0");
-                  if (providerId !== undefined && modelId !== undefined) {
-                    void updateExtractor({ mode: "pinned", runtimeId, providerId, modelId });
-                  }
-                }}
-              >
-                {t("memory.saveExtractor")}
-              </button>
-            </div>
+            {extractor?.mode !== "pinned" ? null : (
+              <>
+                <MemorySelectRow
+                  label={t("memory.extractorRuntime")}
+                  description={t("memory.extractorRuntimeDescription")}
+                  value={runtimeId}
+                  disabled={saving}
+                  options={runtimes
+                    .filter((runtime) => runtime.status === "available")
+                    .map((runtime) => [runtime.id, runtime.displayName] as const)}
+                  onChange={(value) => {
+                    setRuntimeId(value);
+                    setModelKey("");
+                  }}
+                />
+                <MemorySelectRow
+                  label={t("memory.extractorModel")}
+                  description={t("memory.extractorModelDescription")}
+                  value={modelKey}
+                  disabled={saving || runtimeId === ""}
+                  options={models.map(
+                    (model) =>
+                      [
+                        `${model.provider.id}\0${model.id}`,
+                        `${model.provider.displayName} · ${model.displayName}`,
+                      ] as const,
+                  )}
+                  onChange={setModelKey}
+                />
+                <div className="setting-row">
+                  <span className="setting-copy">
+                    <strong>{t("memory.saveExtractor")}</strong>
+                    <span>{t("memory.saveExtractorDescription")}</span>
+                  </span>
+                  <button
+                    type="button"
+                    className="secondary-button"
+                    disabled={saving || runtimeId === "" || modelKey === ""}
+                    onClick={() => {
+                      const [providerId, modelId] = modelKey.split("\0");
+                      if (providerId !== undefined && modelId !== undefined) {
+                        void updateExtractor({ mode: "pinned", runtimeId, providerId, modelId });
+                      }
+                    }}
+                  >
+                    {t("memory.saveExtractor")}
+                  </button>
+                </div>
+              </>
+            )}
           </>
-        )}
+        ) : null}
       </div>
       {error === undefined ? null : <p className="form-error">{error}</p>}
     </SettingsScreenFrame>
+  );
+}
+
+function MemoryMasterSwitch(props: {
+  readonly label: string;
+  readonly description: string;
+  readonly checked: boolean;
+  readonly disabled: boolean;
+  readonly onChange: (checked: boolean) => void;
+}) {
+  return (
+    <div className="setting-row general-language-setting">
+      <span className="setting-copy">
+        <strong>{props.label}</strong>
+        <span>{props.description}</span>
+      </span>
+      <Switch
+        checked={props.checked}
+        ariaLabel={props.label}
+        disabled={props.disabled}
+        onChange={props.onChange}
+      />
+    </div>
   );
 }
 

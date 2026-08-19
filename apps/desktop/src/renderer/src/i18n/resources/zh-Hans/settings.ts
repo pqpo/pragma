@@ -65,6 +65,8 @@ export const settings = {
     navigation: "记忆",
     title: "记忆",
     description: "管理内置记忆平面；有价值的动态记忆可逐步沉淀为团队知识或技能。",
+    masterSwitch: "记忆功能",
+    masterSwitchDescription: "启用记忆采集、召回与学习。关闭后其他记忆设置不可配置。",
     capture: "采集",
     captureDescription: "允许规范执行事件进入记忆流水线。",
     recall: "召回",

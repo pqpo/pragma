@@ -32,9 +32,9 @@ export function createMemoryPipelineScheduler(options: {
   readonly batchSize?: number | undefined;
   readonly pollIntervalMs?: number | undefined;
   readonly now?: (() => Date) | undefined;
+  readonly isEnabled?: (() => Promise<boolean>) | undefined;
   readonly setTimer?:
-    | ((callback: () => void, delay: number) => ReturnType<typeof setTimeout>)
-    | undefined;
+    ((callback: () => void, delay: number) => ReturnType<typeof setTimeout>) | undefined;
   readonly clearTimer?: ((timer: ReturnType<typeof setTimeout>) => void) | undefined;
 }): MemoryPipelineScheduler {
   const batchSize = options.batchSize ?? DEFAULT_BATCH_SIZE;
@@ -56,6 +56,7 @@ export function createMemoryPipelineScheduler(options: {
 
   const runOnce = async (): Promise<void> => {
     if (running !== undefined) return await running;
+    if (options.isEnabled !== undefined && !(await options.isEnabled())) return;
     running = Promise.all(
       options.registry.list().map(async (module) => {
         try {

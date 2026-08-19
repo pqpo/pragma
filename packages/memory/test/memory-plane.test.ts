@@ -35,7 +35,10 @@ import { createProbeMemoryModule } from "../src/testing/index.ts";
 describe("Memory Plane phase one", () => {
   it("keeps a useful fragment when a module summary is one oversized line", async () => {
     const registry = new MemoryModuleRegistry();
-    const probe = createProbeMemoryModule({ id: "pragma.memory.single-line", prefix: "single-line" });
+    const probe = createProbeMemoryModule({
+      id: "pragma.memory.single-line",
+      prefix: "single-line",
+    });
     registry.register({
       ...probe,
       descriptor: {
@@ -118,6 +121,10 @@ describe("Memory Plane phase one", () => {
     const now = () => currentTime;
     const state = createFileMemoryPipelineStateStore({ pragmaHome: home, now });
     const policies = createFileMemoryPolicyStore({ pragmaHome: home, now });
+    await policies.updateGlobal({
+      expectedRevision: 0,
+      policy: { capture: "enabled", recall: "enabled", learning: "local-candidates" },
+    });
     const publisher = createMemoryEvidencePublisher(canonical);
     const evidence = createMemoryEvidenceFeed(canonical);
     const adapter = createExecutionEvidenceAdapter({
@@ -220,7 +227,7 @@ describe("Memory Plane phase one", () => {
     const policies = createFileMemoryPolicyStore({ pragmaHome: home, now });
     await policies.updateGlobal({
       expectedRevision: 0,
-      policy: { capture: "disabled", recall: "enabled", learning: "local-candidates" },
+      policy: { capture: "disabled", recall: "disabled", learning: "disabled" },
     });
     await createExecution(executions);
     await executions.appendEvent(
@@ -247,6 +254,73 @@ describe("Memory Plane phase one", () => {
       sequence: 1,
       processed: 0,
       skipped: 1,
+    });
+    canonical.close();
+  });
+
+  it("does not deliver evidence while the pipeline is disabled", async () => {
+    const home = await mkdtemp(join(tmpdir(), "pragma-memory-pipeline-disabled-"));
+    const canonical = await createFileCanonicalEventFeed({ pragmaHome: home });
+    const publisher = createMemoryEvidencePublisher(canonical);
+    await publisher.publish([
+      MemoryEvidenceEnvelopeSchema.parse({
+        schemaVersion: "pragma.memory-evidence/v1",
+        messageId: "pipeline-disabled-evidence",
+        topic: "execution.message.appended",
+        schemaRef: "pragma.memory.execution-message/v1",
+        sourceRef: {
+          type: "pragma.test-source",
+          id: "pipeline-disabled-source",
+          canonicalEventId: "pipeline-disabled-canonical",
+        },
+        subjectRefs: [{ type: "pragma.execution", id: "pipeline-disabled-execution" }],
+        occurredAt: "2026-08-01T00:00:00.000Z",
+        visibility: { mode: "host-private" },
+        sensitivity: "confidential",
+        bindings: [],
+        policySnapshot: {
+          capture: true,
+          recall: true,
+          learning: "local-candidates",
+          appliedRevisions: [],
+        },
+        payload: { message: { role: "user", content: "pipeline disabled", timestamp: 1 } },
+      }),
+    ]);
+
+    const state = createFileMemoryPipelineStateStore({ pragmaHome: home });
+    const registry = new MemoryModuleRegistry();
+    registry.register(createProbeMemoryModule({ pragmaHome: home }));
+    let enabled = false;
+    const scheduler = createMemoryPipelineScheduler({
+      registry,
+      feed: createMemoryEvidenceFeed(canonical),
+      publisher,
+      checkpoints: state,
+      deadLetters: state,
+      outbox: state,
+      isEnabled: async () => enabled,
+    });
+
+    await scheduler.runOnce();
+    expect(registry.diagnostic("pragma.memory.probe")).toBeUndefined();
+
+    const context = createFederatedMemoryContextStore(registry, {
+      resolveRecallScope: () => ({
+        rootRef: { type: "pragma.expert", id: "pipeline-disabled-expert" },
+        expertRef: { type: "pragma.expert", id: "pipeline-disabled-expert" },
+      }),
+    });
+    await expect(context.readContext({ id: "probe/items/entries.md" })).resolves.toMatchObject({
+      ok: true,
+      value: { content: expect.not.stringContaining("pipeline-disabled-evidence") },
+    });
+
+    enabled = true;
+    await scheduler.runOnce();
+    await expect(context.readContext({ id: "probe/items/entries.md" })).resolves.toMatchObject({
+      ok: true,
+      value: { content: expect.stringContaining("pipeline-disabled-evidence") },
     });
     canonical.close();
   });

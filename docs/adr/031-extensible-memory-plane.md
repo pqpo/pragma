@@ -146,7 +146,7 @@ revision、provenance 摘要、binding 与权限版本。私有 Evidence 不会�
 - Mission restriction：只允许进一步收紧；
 - producer override：实际生产者也参与计算。
 
-默认值为 capture enabled、recall enabled、learning local candidates。最终有效策略是：
+默认记忆功能关闭，`capture`、`recall` 和 `learning` 均为 disabled。开启记忆功能后，其他策略才可配置；最终有效策略是：
 
 ```text
 global ∩ root asset ∩ every producer ∩ mission restriction

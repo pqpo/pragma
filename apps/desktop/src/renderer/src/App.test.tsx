@@ -38,14 +38,13 @@ describe("App", () => {
     expect(html).toContain("Missions");
     expect(html).toContain("Studio");
     expect(html).toContain("Evaluations");
-    expect(html).toContain("Memory");
     expect(html).toContain("Usage");
     expect(html).toContain("Settings");
   });
 
   it("keeps application navigation in the required product order", () => {
     const html = renderToStaticMarkup(<App />);
-    const labels = ["Home", "Missions", "Studio", "Evaluations", "Memory", "Usage", "Settings"];
+    const labels = ["Home", "Missions", "Studio", "Evaluations", "Usage", "Settings"];
     const positions = labels.map((label) => html.indexOf(`aria-label="${label}"`));
 
     expect(positions.every((position) => position >= 0)).toBe(true);
@@ -58,7 +57,6 @@ describe("App", () => {
     expect(html).toContain("Missions");
     expect(html).toContain("Studio");
     expect(html).toContain("Evaluations");
-    expect(html).toContain("Memory");
     expect(html).toContain("Usage");
     expect(html).not.toContain("Inbox");
     expect(html).not.toContain("Alex Chen");

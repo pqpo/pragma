@@ -65,6 +65,8 @@ export const settings = {
     navigation: "記憶",
     title: "記憶",
     description: "管理內建記憶平面；有價值的動態記憶可逐步沉澱為團隊知識或技能。",
+    masterSwitch: "記憶功能",
+    masterSwitchDescription: "啟用記憶採集、召回與學習。關閉後其他記憶設定不可配置。",
     capture: "採集",
     captureDescription: "允許規範執行事件進入記憶流水線。",
     recall: "召回",

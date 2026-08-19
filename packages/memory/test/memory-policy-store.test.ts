@@ -17,7 +17,7 @@ describe("FileMemoryPolicyStore", () => {
 
     await expect(store.getGlobal()).resolves.toMatchObject({
       revision: 0,
-      policy: { capture: "enabled", recall: "enabled", learning: "local-candidates" },
+      policy: { capture: "disabled", recall: "disabled", learning: "disabled" },
     });
     await expect(store.getOverride(rootRef)).resolves.toMatchObject({
       revision: 0,
@@ -57,6 +57,30 @@ describe("FileMemoryPolicyStore", () => {
     });
   });
 
+  it("treats capture as the master switch for persisted global settings", async () => {
+    const home = await mkdtemp(join(tmpdir(), "pragma-memory-policy-master-switch-"));
+    const store = createFileMemoryPolicyStore({ pragmaHome: home });
+
+    await expect(
+      store.updateGlobal({
+        expectedRevision: 0,
+        policy: { capture: "disabled", recall: "enabled", learning: "local-candidates" },
+      }),
+    ).resolves.toMatchObject({
+      revision: 1,
+      policy: { capture: "disabled", recall: "disabled", learning: "disabled" },
+    });
+    await expect(store.getGlobal()).resolves.toMatchObject({
+      revision: 1,
+      policy: { capture: "disabled", recall: "disabled", learning: "disabled" },
+    });
+    await expect(store.resolveAt({ occurredAt: new Date().toISOString() })).resolves.toMatchObject({
+      capture: false,
+      recall: false,
+      learning: "disabled",
+    });
+  });
+
   it("resolves the policy revision effective when the event occurred and rejects stale writers", async () => {
     const home = await mkdtemp(join(tmpdir(), "pragma-memory-policy-history-"));
     let time = new Date("2026-08-01T01:00:00.000Z");
@@ -75,7 +99,7 @@ describe("FileMemoryPolicyStore", () => {
 
     await expect(
       store.resolveAt({ occurredAt: "2026-08-01T00:30:00.000Z" }),
-    ).resolves.toMatchObject({ capture: true, recall: true, learning: "local-candidates" });
+    ).resolves.toMatchObject({ capture: false, recall: false, learning: "disabled" });
     await expect(
       store.resolveAt({ occurredAt: "2026-08-01T01:30:00.000Z" }),
     ).resolves.toMatchObject({ capture: false, recall: false, learning: "disabled" });

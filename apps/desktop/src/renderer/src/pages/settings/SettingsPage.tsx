@@ -14,7 +14,12 @@ import { RuntimeEnvironmentsFragment } from "./RuntimeEnvironmentsFragment.tsx";
 
 export type SettingsView = "general" | "memory" | "evaluations" | "models" | "runtimes";
 
-export function SettingsPage(props: { readonly initialView?: SettingsView } = {}) {
+export function SettingsPage(
+  props: {
+    readonly initialView?: SettingsView;
+    readonly onMemoryEnabledChange?: ((enabled: boolean) => void) | undefined;
+  } = {},
+) {
   const { t } = useTranslation("settings");
   const [activeView, setActiveView] = useState<SettingsView>(props.initialView ?? "general");
   const [navigationWidth, setNavigationWidth] = usePersistentSidebarWidth(
@@ -88,7 +93,7 @@ export function SettingsPage(props: { readonly initialView?: SettingsView } = {}
         {activeView === "general" ? (
           <GeneralSettingsFragment />
         ) : activeView === "memory" ? (
-          <MemorySettingsFragment />
+          <MemorySettingsFragment onMemoryEnabledChange={props.onMemoryEnabledChange} />
         ) : activeView === "evaluations" ? (
           <EvaluationSettingsFragment />
         ) : activeView === "models" ? (

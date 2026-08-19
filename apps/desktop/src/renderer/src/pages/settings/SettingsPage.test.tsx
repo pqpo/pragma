@@ -73,11 +73,14 @@ describe("SettingsPage", () => {
 
     expect(html).toContain('id="memory-panel"');
     expect(html).toContain("Control the built-in memory plane");
-    expect(html).toContain("Capture");
-    expect(html).toContain("Recall");
-    expect(html).toContain("Learning");
-    expect(html).toContain("Allow tool-assisted extraction: Episodic Memory");
-    expect(html).toContain("Allow tool-assisted extraction: Fact Memory");
+    expect(html).toContain("Memory feature");
+    expect(html).toContain('role="switch"');
+    expect(html).toContain('aria-checked="false"');
+    expect(html).not.toContain("Capture");
+    expect(html).not.toContain("Recall");
+    expect(html).not.toContain("Learning");
+    expect(html).not.toContain("Allow tool-assisted extraction: Episodic Memory");
+    expect(html).not.toContain("Allow tool-assisted extraction: Fact Memory");
     expect(html).not.toContain("Memory plane health");
     expect(html).not.toContain("Storage governance");
     expect(html).toContain('<div class="setting-row general-language-setting">');

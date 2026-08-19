@@ -1,4 +1,4 @@
-import { useState, type CSSProperties } from "react";
+import { useEffect, useState, type CSSProperties } from "react";
 import { useTranslation } from "react-i18next";
 
 import { Sidebar, type AppView } from "./components/Sidebar.tsx";
@@ -31,6 +31,28 @@ export function App() {
   const [studioMemoryState, setStudioMemoryState] = useState<StudioPageMemoryState>();
   const [evaluationTargetId, setEvaluationTargetId] = useState<string>();
   const [settingsView, setSettingsView] = useState<SettingsView>("general");
+  const [memoryEnabled, setMemoryEnabled] = useState(false);
+
+  useEffect(() => {
+    const api = typeof window === "undefined" ? undefined : window.pragmaDesktop;
+    if (api === undefined) return;
+    let cancelled = false;
+    void api
+      .getGlobalMemoryPolicy()
+      .then((snapshot) => {
+        if (!cancelled) setMemoryEnabled(snapshot.policy.capture === "enabled");
+      })
+      .catch(() => {
+        if (!cancelled) setMemoryEnabled(false);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+
+  useEffect(() => {
+    if (!memoryEnabled && activeView === "memory") setActiveView("home");
+  }, [activeView, memoryEnabled]);
 
   const navigate = (view: AppView) => {
     setMissionExecutorRef(undefined);
@@ -68,6 +90,7 @@ export function App() {
       <Sidebar
         activeView={activeView}
         collapsed={sidebarCollapsed}
+        memoryEnabled={memoryEnabled}
         onNavigate={navigate}
         onToggle={toggleSidebar}
       />
@@ -128,7 +151,7 @@ export function App() {
       ) : activeView === "memory" ? (
         <MemoryPage onConfigureExtraction={openMemorySettings} />
       ) : (
-        <SettingsPage initialView={settingsView} />
+        <SettingsPage initialView={settingsView} onMemoryEnabledChange={setMemoryEnabled} />
       )}
     </main>
   );

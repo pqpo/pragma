@@ -73,6 +73,9 @@ export const settings = {
     title: "Memory",
     description:
       "Control the built-in memory plane. Valuable dynamic memories can later mature into shared knowledge or skills.",
+    masterSwitch: "Memory feature",
+    masterSwitchDescription:
+      "Enable memory capture, recall, and learning. Other memory settings are available only when this is enabled.",
     capture: "Capture",
     captureDescription: "Allow canonical execution events to enter the memory pipeline.",
     recall: "Recall",

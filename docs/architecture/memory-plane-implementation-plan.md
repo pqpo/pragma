@@ -111,7 +111,7 @@ Desktop 提供设置入口。
 - Expert、ExpertTeam、Flow：inherit 或收紧；
 - Mission 与实际 producer 可继续收紧；
 - 生效规则是 `global ∩ root asset ∩ producers ∩ mission`；
-- 默认 capture/recall enabled，learning local candidates；
+- 默认记忆功能关闭；启用后 capture/recall enabled，learning local candidates；
 - revision 使用 CAS 更新并保留 `effectiveFrom` 历史；
 - 重放事件按 `occurredAt` 解析，不使用当前策略覆盖历史；
 - 损坏/未来策略 schema fail closed。

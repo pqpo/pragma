@@ -14,7 +14,8 @@ import { useTranslation } from "react-i18next";
 
 import pragmaIcon from "../assets/pragma-icon.png";
 
-export type AppView = "home" | "missions" | "studio" | "evaluations" | "memory" | "usage" | "settings";
+export type AppView =
+  "home" | "missions" | "studio" | "evaluations" | "memory" | "usage" | "settings";
 
 const navigationItems: readonly {
   readonly id: AppView;
@@ -33,10 +34,14 @@ const navigationItems: readonly {
 export function Sidebar(props: {
   readonly activeView: AppView;
   readonly collapsed: boolean;
+  readonly memoryEnabled: boolean;
   readonly onNavigate: (view: AppView) => void;
   readonly onToggle: () => void;
 }) {
   const { t } = useTranslation("common");
+  const visibleNavigationItems = navigationItems.filter(
+    (item) => item.id !== "memory" || props.memoryEnabled,
+  );
 
   return (
     <aside className="sidebar">
@@ -50,7 +55,7 @@ export function Sidebar(props: {
       </div>
 
       <nav className="navigation" aria-label={t("navigation.main")}>
-        {navigationItems.map((item) => {
+        {visibleNavigationItems.map((item) => {
           const NavigationIcon = item.icon;
           const label = t(item.labelKey);
           const isActive = props.activeView === item.id;
