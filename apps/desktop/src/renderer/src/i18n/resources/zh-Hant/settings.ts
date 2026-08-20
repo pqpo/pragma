@@ -216,6 +216,8 @@ export const settings = {
     catalogDescription: "此執行階段環境回報的模型目錄。",
     catalogLoadFailed: "無法載入模型目錄。",
     noModels: "此執行階段環境未回報任何模型。",
+    configureModels: "未設定模型，前往設定>>",
+    configureModelsAction: "去設定",
     modelId: "模型 ID",
     thinkingLevels: "思考層級",
     defaultOnly: "僅預設",

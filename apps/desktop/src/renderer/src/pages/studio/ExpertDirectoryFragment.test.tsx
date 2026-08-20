@@ -484,4 +484,24 @@ describe("ExpertEditorFragment", () => {
     expect(html.match(/<button[^>]*disabled=""/g)).toHaveLength(4);
     expect(html).toContain("Build a reusable expert to power missions.");
   });
+
+  it("opens an edit directly on the capabilities step when requested", () => {
+    const html = renderToStaticMarkup(
+      <ExpertEditorFragment
+        mode="edit"
+        initialValue={draft}
+        initialStep="capabilities"
+        runtimes={[]}
+        contextStores={[]}
+        capabilities={[]}
+        plugins={[]}
+        resources={[]}
+        onCancel={() => undefined}
+        onCreated={async () => undefined}
+      />,
+    );
+
+    expect(html).toContain("Add capabilities");
+    expect(html).toMatch(/<button[^>]*aria-current="step"[^>]*>[\s\S]*Capabilities<\/button>/);
+  });
 });

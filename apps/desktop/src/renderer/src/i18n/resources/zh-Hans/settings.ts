@@ -216,6 +216,8 @@ export const settings = {
     catalogDescription: "此运行时环境报告的模型目录。",
     catalogLoadFailed: "无法加载模型目录。",
     noModels: "此运行时环境未报告任何模型。",
+    configureModels: "未配置模型，前往配置>>",
+    configureModelsAction: "去配置",
     modelId: "模型 ID",
     thinkingLevels: "思考级别",
     defaultOnly: "仅默认",

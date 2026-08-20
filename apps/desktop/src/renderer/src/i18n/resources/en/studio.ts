@@ -887,6 +887,7 @@ export const studio = {
   noAvailable: "No {{label}} available",
   tryDifferentDescription: "Try a different name or description.",
   addItemsStudio: "Add items in Studio, then return here.",
+  goToKnowledgeBases: "Go to add",
   resources: "resources",
   contextStoresLower: "context stores",
   skillsLower: "skills",

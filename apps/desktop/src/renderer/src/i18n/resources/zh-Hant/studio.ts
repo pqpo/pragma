@@ -848,6 +848,7 @@ export const studio = {
   noAvailable: "沒有可用的{{label}}",
   tryDifferentDescription: "請嘗試其他名稱或描述。",
   addItemsStudio: "請先在 Studio 中新增項目，再返回此處。",
+  goToKnowledgeBases: "前往新增",
   resources: "資源",
   contextStoresLower: "內容儲存",
   skillsLower: "技能",

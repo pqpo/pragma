@@ -15,7 +15,7 @@ import { EvaluationsPage } from "./pages/evaluations/EvaluationsPage.tsx";
 import { HomePage } from "./pages/home/HomePage.tsx";
 import { UsagePage } from "./pages/usage/UsagePage.tsx";
 import { MemoryPage } from "./pages/memory/MemoryPage.tsx";
-import type { Mission } from "../../shared/contracts/index.ts";
+import type { HomeMissionExecutorOption, Mission } from "../../shared/contracts/index.ts";
 
 export function App() {
   const { t } = useTranslation("common");
@@ -28,6 +28,8 @@ export function App() {
   const [missionToOpen, setMissionToOpen] = useState<Mission>();
   const [missionsMemoryState, setMissionsMemoryState] = useState<MissionsPageMemoryState>();
   const [studioExpertRef, setStudioExpertRef] = useState<string>();
+  const [studioExpertStep, setStudioExpertStep] = useState<"capabilities" | undefined>();
+  const [studioResourceRef, setStudioResourceRef] = useState<string>();
   const [studioMemoryState, setStudioMemoryState] = useState<StudioPageMemoryState>();
   const [evaluationTargetId, setEvaluationTargetId] = useState<string>();
   const [settingsView, setSettingsView] = useState<SettingsView>("general");
@@ -57,6 +59,8 @@ export function App() {
   const navigate = (view: AppView) => {
     setMissionExecutorRef(undefined);
     setStudioExpertRef(undefined);
+    setStudioExpertStep(undefined);
+    setStudioResourceRef(undefined);
     if (view === "missions") setMissionToOpen(undefined);
     if (view === "settings") setSettingsView("general");
     setActiveView(view);
@@ -74,6 +78,26 @@ export function App() {
   const openModelSettings = () => {
     setSettingsView("models");
     setActiveView("settings");
+  };
+
+  const openRuntimeSettings = () => {
+    setSettingsView("runtimes");
+    setActiveView("settings");
+  };
+
+  const openKnowledgeBases = () => {
+    setStudioExpertRef(undefined);
+    setStudioExpertStep(undefined);
+    setStudioResourceRef(undefined);
+    setStudioMemoryState({ activeView: "context-stores" });
+    setActiveView("studio");
+  };
+
+  const openStudioForExecutor = (executor: HomeMissionExecutorOption) => {
+    setStudioExpertRef(executor.kind === "expert" ? executor.ref : undefined);
+    setStudioExpertStep(executor.kind === "expert" ? "capabilities" : undefined);
+    setStudioResourceRef(executor.kind === "team" ? executor.ref : undefined);
+    setActiveView("studio");
   };
 
   const openMemorySettings = () => {
@@ -107,6 +131,9 @@ export function App() {
         <HomePage
           initialExecutorRef={missionExecutorRef}
           onConfigureModels={openModelSettings}
+          onConfigureRuntime={openRuntimeSettings}
+          onConfigureExpert={openStudioForExecutor}
+          onOpenKnowledgeBases={openKnowledgeBases}
           onCreated={(mission) => {
             setMissionToOpen(mission);
             setMissionExecutorRef(undefined);
@@ -120,8 +147,11 @@ export function App() {
           autoRunInitialMission={missionToOpen !== undefined}
           onMemoryStateChange={setMissionsMemoryState}
           onConfigureModels={openModelSettings}
+          onOpenKnowledgeBases={openKnowledgeBases}
           onEditExpert={(expertRef) => {
             setStudioExpertRef(expertRef);
+            setStudioExpertStep(undefined);
+            setStudioResourceRef(undefined);
             setActiveView("studio");
           }}
           onCreate={() => {
@@ -133,6 +163,8 @@ export function App() {
       ) : activeView === "studio" ? (
         <StudioPage
           initialExpertRef={studioExpertRef}
+          initialExpertStep={studioExpertStep}
+          initialResourceRef={studioResourceRef}
           initialMemoryState={studioMemoryState}
           onMemoryStateChange={setStudioMemoryState}
           onTryExpert={(expert) => {

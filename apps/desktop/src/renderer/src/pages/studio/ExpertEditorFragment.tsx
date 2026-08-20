@@ -34,7 +34,7 @@ import { ExpertAvatarPicker } from "./ExpertAvatarPicker.tsx";
 import { StudioScreenFrame } from "./StudioScreenFrame.tsx";
 import { AssetMemoryPolicySection } from "../settings/AssetMemoryPolicySection.tsx";
 
-type CreateStep = "identity" | "instructions" | "capabilities" | "review";
+export type ExpertEditorStep = "identity" | "instructions" | "capabilities" | "review";
 export type ExpertEditorMode = "create" | "edit";
 
 export function ExpertEditorFragment(props: {
@@ -45,12 +45,13 @@ export function ExpertEditorFragment(props: {
   readonly capabilities: readonly Capability[];
   readonly plugins: readonly DesktopPlugin[];
   readonly resources: readonly PragmaResource[];
+  readonly initialStep?: ExpertEditorStep | undefined;
   readonly onCancel: () => void;
   readonly onCreated: (expert: ExpertRecord) => Promise<void>;
 }) {
   const { t } = useTranslation(["studio", "common"]);
   const [draft, setDraft] = useState(props.initialValue);
-  const [step, setStep] = useState<CreateStep>("identity");
+  const [step, setStep] = useState<ExpertEditorStep>(props.initialStep ?? "identity");
   const [error, setError] = useState<string | null>(null);
   const [saving, setSaving] = useState(false);
   const [avatarPickerOpen, setAvatarPickerOpen] = useState(false);
@@ -64,7 +65,7 @@ export function ExpertEditorFragment(props: {
   );
   const thinkingLevels = selectedModel?.thinking?.supportedLevels ?? [];
   const thinkingDefaultLevel = selectedModel?.thinking?.defaultLevel;
-  const steps: readonly { readonly id: CreateStep; readonly label: string }[] = [
+  const steps: readonly { readonly id: ExpertEditorStep; readonly label: string }[] = [
     { id: "identity", label: t("identity", { ns: "studio" }) },
     {
       id: "instructions",

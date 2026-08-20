@@ -99,7 +99,7 @@ export function SettingsPage(
         ) : activeView === "models" ? (
           <ModelProvidersFragment />
         ) : (
-          <RuntimeEnvironmentsFragment />
+          <RuntimeEnvironmentsFragment onNavigateToModels={() => setActiveView("models")} />
         )}
       </div>
     </section>

@@ -17,6 +17,7 @@ export function ContextStorePickerDialog(props: {
   readonly footerHint: string;
   readonly onSelectedStoreIdsChange: (storeIds: readonly string[]) => void;
   readonly onClose: () => void;
+  readonly onGoToKnowledgeBases?: (() => void) | undefined;
 }) {
   const { t } = useTranslation("studio");
   const [query, setQuery] = useState("");
@@ -51,14 +52,13 @@ export function ContextStorePickerDialog(props: {
       }}
     >
       <aside
-        className="expert-picker-dialog"
+        className="expert-picker-dialog context-store-picker-dialog"
         role="dialog"
         aria-modal="true"
         aria-labelledby="context-store-picker-heading"
       >
         <header className="expert-picker-heading">
           <div>
-            <small>{t("knowledge")}</small>
             <h2 id="context-store-picker-heading">{t("contextStores")}</h2>
             <p>{props.description}</p>
           </div>
@@ -97,7 +97,20 @@ export function ContextStorePickerDialog(props: {
                   ? t("noMatchesFound")
                   : t("noAvailable", { label: t("contextStoresLower") })}
               </strong>
-              <p>{query.trim() ? t("tryDifferentDescription") : t("addItemsStudio")}</p>
+              {query.trim() || props.onGoToKnowledgeBases === undefined ? (
+                <p>{query.trim() ? t("tryDifferentDescription") : t("goToKnowledgeBases")}</p>
+              ) : (
+                <button
+                  className="expert-picker-empty-link"
+                  type="button"
+                  onClick={() => {
+                    props.onClose();
+                    props.onGoToKnowledgeBases?.();
+                  }}
+                >
+                  {t("goToKnowledgeBases")}
+                </button>
+              )}
             </div>
           ) : (
             <div className="expert-picker-list">

@@ -741,6 +741,7 @@
 }
 
 .mission-prompt-tools > .mission-context-store-trigger {
+  gap: 4px;
   color: var(--ui-text-secondary);
 }
 
@@ -1026,8 +1027,18 @@
 }
 
 .home-mission-create .mission-prompt-tools {
+  flex: 1 1 auto;
   gap: 4px;
   overflow: visible;
+}
+
+.home-mission-create .mission-prompt-tools:has(.mission-model-control) > .mission-model-control {
+  margin-inline-start: auto;
+}
+
+.home-mission-create .mission-prompt-tools .mission-model-control-trigger > svg:last-child,
+.home-mission-create .mission-prompt-tools .tool-permission-select .ui-select-caret {
+  margin-inline-start: -4px;
 }
 
 .home-mission-create .mission-executor-picker {
@@ -1281,6 +1292,57 @@
   flex: 0 0 auto;
 }
 
+.home-inline-error-tip {
+  gap: 8px;
+  padding-right: 4px;
+  color: var(--ui-text);
+  font-size: 12px;
+}
+
+.home-inline-error-tip > svg {
+  color: var(--ui-text-secondary);
+}
+
+.home-inline-error-message {
+  min-width: 0;
+  overflow: hidden;
+  flex: 0 1 auto;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.home-inline-error-actions {
+  display: flex;
+  flex: 0 0 auto;
+  align-items: center;
+  gap: 2px;
+}
+
+.home-inline-error-link {
+  display: inline-flex;
+  min-width: 0;
+  min-height: 28px;
+  align-items: center;
+  gap: 1px;
+  padding: 3px 5px;
+  border: 0;
+  border-radius: var(--ui-radius-sm);
+  background: transparent;
+  color: var(--ui-text);
+  cursor: pointer;
+  font: inherit;
+  font-size: 11px;
+  font-weight: 650;
+  line-height: 1.4;
+  text-decoration: none;
+  white-space: nowrap;
+}
+
+.home-inline-error-link:focus-visible {
+  outline: 0;
+  box-shadow: 0 0 0 3px var(--ui-focus);
+}
+
 .home-inline-tip-viewport {
   min-width: 0;
   overflow: hidden;
@@ -1457,6 +1519,13 @@
   min-height: 80px;
   padding: 14px 20px;
   font-size: 16px;
+}
+
+.home-mission-create
+  .mission-goal-composer:has(.mission-attachment-list:not(.is-empty))
+  .mission-goal-field
+  textarea {
+  padding-top: 7px;
 }
 
 .home-mission-create .mission-goal-composer:focus-within {

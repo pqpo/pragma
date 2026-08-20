@@ -23,6 +23,7 @@ import {
   Database,
   File,
   Folder,
+  FolderOpen,
   GitBranch,
   MagnifyingGlass,
   ImageSquare,
@@ -180,6 +181,7 @@ export function MissionsPage(props: {
   readonly onCreate: () => void;
   readonly onMemoryStateChange?: ((state: MissionsPageMemoryState) => void) | undefined;
   readonly onConfigureModels?: (() => void) | undefined;
+  readonly onOpenKnowledgeBases?: (() => void) | undefined;
   readonly onEditExpert?: ((expertRef?: string | undefined) => void) | undefined;
 }) {
   const { t } = useTranslation(["missions", "common"]);
@@ -557,6 +559,7 @@ export function MissionsPage(props: {
                 : undefined
             }
             onConfigureModels={props.onConfigureModels}
+            onOpenKnowledgeBases={props.onOpenKnowledgeBases}
             onEditExpert={props.onEditExpert}
             error={error}
             onDismissError={() => setError(null)}
@@ -1368,6 +1371,7 @@ export function MissionDetailFragment(props: {
   readonly onHumanResponded?: () => void | Promise<void>;
   readonly onLifecycleChange?: () => void | Promise<void>;
   readonly onConfigureModels?: (() => void) | undefined;
+  readonly onOpenKnowledgeBases?: (() => void) | undefined;
   readonly onEditExpert?: ((expertRef?: string | undefined) => void) | undefined;
 }) {
   const { t } = useTranslation(["missions", "common"]);
@@ -3169,23 +3173,12 @@ export function MissionDetailFragment(props: {
                             }
                             onClick={() => setContextStorePickerOpen(true)}
                           >
-                            <Folder size={17} aria-hidden="true" />
+                            <FolderOpen size={17} aria-hidden="true" />
                             <span>{t("missionKnowledge", { ns: "missions" })}</span>
                             {contextStoreIds.length === 0 ? null : (
                               <strong>{contextStoreIds.length}</strong>
                             )}
                           </button>
-                          {!isFlow ? (
-                            <MissionModelOverrideControls
-                              models={models}
-                              loading={modelsLoading}
-                              disabled={controlsDisabled}
-                              keepOpenWhenDisabled={optionsSaving}
-                              value={modelOverride}
-                              defaultValue={defaultModelSelection}
-                              onChange={(value) => void saveOptions(toolPermissionMode, value)}
-                            />
-                          ) : null}
                           <ToolPermissionSelect
                             detailed
                             value={toolPermissionMode}
@@ -3197,6 +3190,17 @@ export function MissionDetailFragment(props: {
                             }
                             onChange={(value) => void saveOptions(value, modelOverride)}
                           />
+                          {!isFlow ? (
+                            <MissionModelOverrideControls
+                              models={models}
+                              loading={modelsLoading}
+                              disabled={controlsDisabled}
+                              keepOpenWhenDisabled={optionsSaving}
+                              value={modelOverride}
+                              defaultValue={defaultModelSelection}
+                              onChange={(value) => void saveOptions(toolPermissionMode, value)}
+                            />
+                          ) : null}
                         </div>
                         <div className="mission-chat-actions">
                           {chat?.contextWindow === undefined ? null : (
@@ -3352,6 +3356,7 @@ export function MissionDetailFragment(props: {
           description={t("missionKnowledgePickerDescription", { ns: "missions" })}
           footerHint={t("missionKnowledgeNextExecutionHint", { ns: "missions" })}
           onSelectedStoreIdsChange={setContextStoreIds}
+          onGoToKnowledgeBases={props.onOpenKnowledgeBases}
           onClose={() => {
             const nextIds = [...contextStoreIds];
             setContextStorePickerOpen(false);

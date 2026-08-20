@@ -256,6 +256,12 @@
   text-align: left;
 }
 
+.runtime-summary-models .runtime-models-link {
+  position: relative;
+  z-index: 2;
+  padding: 0;
+}
+
 .runtime-detail-back {
   margin-bottom: 30px;
 }

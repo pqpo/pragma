@@ -13,6 +13,7 @@ export function RuntimeEnvironmentDetail(props: {
   readonly error: string | null;
   readonly onBack: () => void;
   readonly onRefresh: () => void;
+  readonly onNavigateToModels?: (() => void) | undefined;
 }) {
   const { t } = useTranslation(["settings", "common"]);
   const { runtime } = props;
@@ -142,11 +143,18 @@ export function RuntimeEnvironmentDetail(props: {
         </header>
 
         {models.length === 0 ? (
-          <p className="empty-state">
-            {runtime.modelDiscoveryError
-              ? t("runtimes.catalogLoadFailed", { ns: "settings" })
-              : t("runtimes.noModels", { ns: "settings" })}
-          </p>
+          <div className="empty-state runtime-empty-state">
+            <p>
+              {runtime.modelDiscoveryError
+                ? t("runtimes.catalogLoadFailed", { ns: "settings" })
+                : t("runtimes.noModels", { ns: "settings" })}
+            </p>
+            {builtIn && runtime.models !== undefined && props.onNavigateToModels !== undefined ? (
+              <button className="secondary-button" type="button" onClick={props.onNavigateToModels}>
+                {t("runtimes.configureModelsAction", { ns: "settings" })}
+              </button>
+            ) : null}
+          </div>
         ) : (
           <div className="runtime-model-list">
             {models.map((model) => (

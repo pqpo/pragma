@@ -130,14 +130,13 @@ export function MissionAttachmentList(props: {
                     <img src={preview} alt={t("attachmentPreviewAlt", { name: attachment.name })} />
                   )}
                 </button>
-                <figcaption title={attachment.name}>{attachment.name}</figcaption>
                 <button
                   className="mission-attachment-image-remove"
                   type="button"
                   aria-label={t("removeAttachment", { name: attachment.name })}
                   onClick={() => props.onRemove(attachment.id)}
                 >
-                  <X size={13} aria-hidden="true" />
+                  <X size={11} aria-hidden="true" />
                 </button>
               </figure>
             );

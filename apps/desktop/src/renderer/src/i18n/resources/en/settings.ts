@@ -231,6 +231,8 @@ export const settings = {
     catalogDescription: "The model catalog reported by this Runtime Environment.",
     catalogLoadFailed: "The model catalog could not be loaded.",
     noModels: "This Runtime Environment did not report any models.",
+    configureModels: "No models configured, go to setup >>",
+    configureModelsAction: "Configure",
     modelId: "Model ID",
     thinkingLevels: "Thinking levels",
     defaultOnly: "Default only",

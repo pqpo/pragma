@@ -240,6 +240,11 @@
   max-width: 120px;
 }
 
+.tool-permission-select.is-detailed .ui-select-trigger {
+  gap: 4px;
+  font-weight: 400;
+}
+
 .tool-permission-select.is-detailed.is-full-access .ui-select-trigger,
 .tool-permission-select.is-detailed.is-full-access .ui-select-trigger:hover,
 .tool-permission-select.is-detailed.is-full-access.is-open .ui-select-trigger {
@@ -458,9 +463,34 @@
   position: fixed;
   z-index: 80;
   display: grid;
-  grid-template-columns: minmax(220px, 1fr) minmax(260px, 1.2fr);
+  width: min(490px, calc(100vw - 24px));
+  grid-template-columns: minmax(220px, 1fr) 240px;
   align-items: end;
   gap: 8px;
+}
+
+.mission-model-menu[data-placement="left"] {
+  grid-template-columns: 240px minmax(220px, 1fr);
+}
+
+.mission-model-menu[data-has-options="false"] {
+  width: min(242px, calc(100vw - 24px));
+  grid-template-columns: minmax(220px, 1fr);
+}
+
+.mission-model-menu[data-placement="left"] .mission-model-menu-sections {
+  grid-row: 1;
+  grid-column: 2;
+}
+
+.mission-model-menu[data-placement="left"] .mission-model-menu-options {
+  grid-row: 1;
+  grid-column: 1;
+}
+
+.mission-model-menu[data-has-options="false"] .mission-model-menu-sections {
+  grid-row: 1;
+  grid-column: 1;
 }
 
 .mission-model-menu-sections,
