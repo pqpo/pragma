@@ -1,3 +1,4 @@
+import { PRAGMA_DSL_WRITE_API_VERSION } from "@pragma/interpreter/ast";
 import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -198,7 +199,7 @@ function projectFixture(): PragmaProjectStore {
       return {
         listResources: () => [
           {
-            apiVersion: "pragma/v5",
+            apiVersion: PRAGMA_DSL_WRITE_API_VERSION,
             kind: "Expert",
             metadata: {
               id: "6h7j8k9m0n1p2q3r",
@@ -244,7 +245,7 @@ function runFixture() {
     selectionSeed: "seed",
     selectedCaseIds: ["lookup"],
     dataset: {
-      apiVersion: "pragma/v5",
+      apiVersion: PRAGMA_DSL_WRITE_API_VERSION,
       kind: "Evaluation",
       metadata: {
         id: "7h8j9k0m1n2p3q4r",

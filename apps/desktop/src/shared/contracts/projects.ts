@@ -8,8 +8,8 @@ import {
   PragmaExpertTeamResourceSchema,
   PragmaExpertTeamContextVisibilitySchema,
   PragmaContextStoreRefSchema,
+  PragmaFlowRunDryEvaluationResourceSchema,
 } from "@pragma/interpreter/ast";
-import { PragmaFlowRunDryEvaluationResourceSchema } from "@pragma/evaluation/ast";
 import { z } from "zod";
 
 export const PragmaProjectSnapshotSchema = z.object({

@@ -1,3 +1,4 @@
+import { PRAGMA_DSL_WRITE_API_VERSION } from "@pragma/interpreter/ast";
 import { describe, expect, it, vi } from "vitest";
 import { PragmaExpertTeamResourceSchema, type PragmaExpertResource } from "@pragma/interpreter/ast";
 import { ok } from "@pragma/core";
@@ -11,7 +12,7 @@ describe("team Memory ContextStore browser", () => {
     const writer = expert("1xddvess309a6gme", "Writer");
     const reviewer = expert("3sfd30h5017wd17d", "Reviewer");
     const team = PragmaExpertTeamResourceSchema.parse({
-      apiVersion: "pragma/v5",
+      apiVersion: PRAGMA_DSL_WRITE_API_VERSION,
       kind: "ExpertTeam",
       metadata: {
         id: "vyv9pwwzaksth2dd",
@@ -107,7 +108,7 @@ describe("team Memory ContextStore browser", () => {
     const writer = expert("1xddvess309a6gme", "Writer");
     const reviewer = expert("3sfd30h5017wd17d", "Reviewer");
     const team = PragmaExpertTeamResourceSchema.parse({
-      apiVersion: "pragma/v5",
+      apiVersion: PRAGMA_DSL_WRITE_API_VERSION,
       kind: "ExpertTeam",
       metadata: {
         id: "vyv9pwwzaksth2dd",
@@ -156,7 +157,7 @@ describe("team Memory ContextStore browser", () => {
 
 function expert(id: string, name: string): PragmaExpertResource {
   return {
-    apiVersion: "pragma/v5",
+    apiVersion: PRAGMA_DSL_WRITE_API_VERSION,
     kind: "Expert",
     metadata: {
       id,

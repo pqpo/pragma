@@ -18,10 +18,12 @@ import {
   UsersThree,
 } from "@phosphor-icons/react";
 import {
+  PRAGMA_DSL_WRITE_API_VERSION,
   PragmaExpertTeamResourceSchema,
   PragmaRuntimeProfileConfigSchema,
   PragmaResourceKindSchema,
   canonicalPragmaResourceRef,
+  mergePragmaResourcePreservingUnknownFields,
   parsePragmaReference,
   type PragmaExpertResource,
   type PragmaExpertTeamResource,
@@ -1147,7 +1149,7 @@ export function TeamEditor(props: {
     let resource: PragmaExpertTeamResource;
     try {
       resource = PragmaExpertTeamResourceSchema.parse({
-        apiVersion: "pragma/v5",
+        apiVersion: PRAGMA_DSL_WRITE_API_VERSION,
         kind: "ExpertTeam",
         metadata: {
           id,
@@ -1172,6 +1174,12 @@ export function TeamEditor(props: {
           },
         },
       });
+      if (props.initial !== undefined) {
+        resource = mergePragmaResourcePreservingUnknownFields(
+          props.initial,
+          resource,
+        ) as PragmaExpertTeamResource;
+      }
     } catch (validationFailure) {
       setValidationError(errorMessage(validationFailure));
       return;

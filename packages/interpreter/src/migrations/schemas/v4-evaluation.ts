@@ -244,50 +244,69 @@ export const PragmaFlowRunDrySuiteSchema = z
     });
   });
 
-export const PragmaFlowRunDryEvaluationSpecSchema = z
+export const PragmaFlowRunDryEvaluationResourceSchema = z
   .object({
-    target: z.object({ ref: PragmaEvaluationFlowRefSchema }).strict(),
-    method: z
+    apiVersion: z.literal("pragma/v4"),
+    kind: z.literal("Evaluation"),
+    metadata: PragmaEvaluationMetadataSchema,
+    spec: z
       .object({
-        type: z.literal("flow-run-dry"),
-        cases: PragmaFlowRunDrySuiteSchema.shape.cases,
+        target: z.object({ ref: PragmaEvaluationFlowRefSchema }).strict(),
+        method: z
+          .object({
+            type: z.literal("flow-run-dry"),
+            cases: PragmaFlowRunDrySuiteSchema.shape.cases,
+          })
+          .strict(),
       })
       .strict(),
   })
   .strict();
 
-export const PragmaAgentJudgeEvaluationSpecSchema = z
+export const PragmaAgentJudgeEvaluationResourceSchema = z
   .object({
-    method: z
+    apiVersion: z.literal("pragma/v4"),
+    kind: z.literal("Evaluation"),
+    metadata: PragmaEvaluationMetadataSchema,
+    spec: z
       .object({
-        type: z.literal("agent-judge"),
-        group: PragmaAgentEvaluationGroupSchema,
-        execution: z.object({ mode: z.enum(["mock", "live"]) }).strict(),
-        cases: z.array(PragmaAgentEvaluationCaseSchema).min(1).max(500),
+        method: z
+          .object({
+            type: z.literal("agent-judge"),
+            group: PragmaAgentEvaluationGroupSchema,
+            execution: z.object({ mode: z.enum(["mock", "live"]) }).strict(),
+            cases: z.array(PragmaAgentEvaluationCaseSchema).min(1).max(500),
+          })
+          .strict(),
       })
       .strict(),
   })
   .strict()
   .superRefine((value, context) => {
     const ids = new Set<string>();
-    value.method.cases.forEach((testCase, index) => {
+    value.spec.method.cases.forEach((testCase, index) => {
       if (ids.has(testCase.id)) {
         context.addIssue({
           code: "custom",
-          path: ["method", "cases", index, "id"],
+          path: ["spec", "method", "cases", index, "id"],
           message: "Evaluation case IDs must be unique.",
         });
       }
       ids.add(testCase.id);
-      if (value.method.execution.mode === "live" && testCase.mocks.length > 0) {
+      if (value.spec.method.execution.mode === "live" && testCase.mocks.length > 0) {
         context.addIssue({
           code: "custom",
-          path: ["method", "cases", index, "mocks"],
+          path: ["spec", "method", "cases", index, "mocks"],
           message: "Live evaluation cases cannot declare mock tool outcomes.",
         });
       }
     });
   });
+
+export const PragmaEvaluationResourceSchema = z.union([
+  PragmaFlowRunDryEvaluationResourceSchema,
+  PragmaAgentJudgeEvaluationResourceSchema,
+]);
 
 export const AgentEvaluationToolTraceSchema = z
   .object({
@@ -413,8 +432,13 @@ export const PragmaFlowRunDrySuiteResultSchema = z
   })
   .strict();
 
-export type PragmaFlowRunDryEvaluationSpec = z.infer<typeof PragmaFlowRunDryEvaluationSpecSchema>;
-export type PragmaAgentJudgeEvaluationSpec = z.infer<typeof PragmaAgentJudgeEvaluationSpecSchema>;
+export type PragmaEvaluationResource = z.infer<typeof PragmaEvaluationResourceSchema>;
+export type PragmaFlowRunDryEvaluationResource = z.infer<
+  typeof PragmaFlowRunDryEvaluationResourceSchema
+>;
+export type PragmaAgentJudgeEvaluationResource = z.infer<
+  typeof PragmaAgentJudgeEvaluationResourceSchema
+>;
 export type PragmaAgentEvaluationCase = z.infer<typeof PragmaAgentEvaluationCaseSchema>;
 export type PragmaFlowRunDryMockOutcome = z.infer<typeof PragmaFlowRunDryMockOutcomeSchema>;
 export type PragmaFlowRunDryCase = z.infer<typeof PragmaFlowRunDryCaseSchema>;

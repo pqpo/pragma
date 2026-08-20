@@ -1,3 +1,4 @@
+import { PRAGMA_DSL_WRITE_API_VERSION } from "@pragma/interpreter/ast";
 import { mkdir, mkdtemp, rm, truncate, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -17,7 +18,7 @@ import { createMissionContextStoreBrowserService } from "./mission-context-store
 const writer = expert("1xddvess309a6gme", "Writer");
 const reviewer = expert("3sfd30h5017wd17d", "Reviewer");
 const team: PragmaExpertTeamResource = {
-  apiVersion: "pragma/v5",
+  apiVersion: PRAGMA_DSL_WRITE_API_VERSION,
   kind: "ExpertTeam",
   metadata: {
     id: "vyv9pwwzaksth2dd",
@@ -381,7 +382,7 @@ function teamRef(): `team:${string}` {
 
 function expert(id: string, name: string): PragmaExpertResource {
   return {
-    apiVersion: "pragma/v5",
+    apiVersion: PRAGMA_DSL_WRITE_API_VERSION,
     kind: "Expert",
     metadata: {
       id,

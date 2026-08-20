@@ -1,3 +1,4 @@
+import { PRAGMA_DSL_WRITE_API_VERSION } from "@pragma/interpreter/ast";
 import { StaticContextStore } from "@pragma/core";
 import type { PragmaExpertResource } from "@pragma/interpreter/ast";
 import { describe, expect, it, vi } from "vitest";
@@ -8,7 +9,7 @@ import type { PragmaProjectStore } from "../projects/pragma-project-store.ts";
 import { createExpertMemoryContextStoreBrowserService } from "./expert-memory-context-store-browser.ts";
 
 const expertResource: PragmaExpertResource = {
-  apiVersion: "pragma/v5",
+  apiVersion: PRAGMA_DSL_WRITE_API_VERSION,
   kind: "Expert",
   metadata: {
     id: "1xddvess309a6gme",

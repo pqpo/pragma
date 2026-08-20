@@ -1,3 +1,4 @@
+import { PRAGMA_DSL_WRITE_API_VERSION } from "../src/ast/index.ts";
 import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
@@ -371,7 +372,7 @@ async function createRepository(): Promise<
 
 function skill(): PragmaCapabilityResource {
   return {
-    apiVersion: "pragma/v5",
+    apiVersion: PRAGMA_DSL_WRITE_API_VERSION,
     kind: "Capability",
     metadata: {
       id: "d5zzezmprnyqzmhk",
@@ -391,7 +392,7 @@ function skill(): PragmaCapabilityResource {
 
 function flowWithExternalExpert(expertRef: `expert:${string}`): PragmaFlowResource {
   return {
-    apiVersion: "pragma/v5",
+    apiVersion: PRAGMA_DSL_WRITE_API_VERSION,
     kind: "Flow",
     metadata: {
       id: "0000000000000002",
@@ -418,7 +419,7 @@ function flowWithExternalExpert(expertRef: `expert:${string}`): PragmaFlowResour
 
 function runtime(): PragmaRuntimeProfileResource {
   return {
-    apiVersion: "pragma/v5",
+    apiVersion: PRAGMA_DSL_WRITE_API_VERSION,
     kind: "RuntimeProfile",
     metadata: {
       id: "rdzgnq05qfqcpqcm",
@@ -432,7 +433,7 @@ function runtime(): PragmaRuntimeProfileResource {
 
 function expert(): PragmaExpertResource {
   return {
-    apiVersion: "pragma/v5",
+    apiVersion: PRAGMA_DSL_WRITE_API_VERSION,
     kind: "Expert",
     metadata: {
       id: "1xddvess309a6gme",

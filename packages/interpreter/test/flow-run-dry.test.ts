@@ -1,9 +1,10 @@
+import { PRAGMA_DSL_WRITE_API_VERSION } from "../src/ast/index.ts";
 import { describe, expect, it } from "vitest";
 
 import {
   PragmaFlowRunDryEvaluationResourceSchema,
   type PragmaFlowRunDryEvaluationResource,
-} from "@pragma/evaluation/ast";
+} from "../src/ast/index.ts";
 
 import { PragmaFlowResourceSchema, type PragmaFlowResource } from "../src/ast/index.ts";
 import { runPragmaEvaluation } from "../src/index.ts";
@@ -131,7 +132,7 @@ function reviewFixture(): {
   readonly evaluation: PragmaFlowRunDryEvaluationResource;
 } {
   const flow = PragmaFlowResourceSchema.parse({
-    apiVersion: "pragma/v5",
+    apiVersion: PRAGMA_DSL_WRITE_API_VERSION,
     kind: "Flow",
     metadata: {
       id: "8h9j0k1m2n3p4q5r",
@@ -219,7 +220,7 @@ function reviewFixture(): {
   });
   const input = { goal: "Ship" };
   const evaluation = PragmaFlowRunDryEvaluationResourceSchema.parse({
-    apiVersion: "pragma/v5",
+    apiVersion: PRAGMA_DSL_WRITE_API_VERSION,
     kind: "Evaluation",
     metadata: {
       id: "7h8j9k0m1n2p3q4r",

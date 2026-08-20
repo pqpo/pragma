@@ -1,10 +1,11 @@
+import { PRAGMA_DSL_WRITE_API_VERSION } from "@pragma/interpreter/ast";
 import { describe, expect, it } from "vitest";
 import type { PragmaExpertResource, PragmaExpertTeamResource } from "@pragma/interpreter/ast";
 
 import { expertTeamCoordinatorAvatarId } from "./avatars.ts";
 
 const expert: PragmaExpertResource = {
-  apiVersion: "pragma/v5",
+  apiVersion: PRAGMA_DSL_WRITE_API_VERSION,
   kind: "Expert",
   metadata: {
     id: "1xddvess309a6gme",
@@ -25,7 +26,7 @@ const expert: PragmaExpertResource = {
 };
 
 const team: PragmaExpertTeamResource = {
-  apiVersion: "pragma/v5",
+  apiVersion: PRAGMA_DSL_WRITE_API_VERSION,
   kind: "ExpertTeam",
   metadata: {
     id: "p8cbn3cg2avyksn4",

@@ -4,9 +4,9 @@ import {
   isPragmaCompilerVersionUpgradeable,
 } from "../ast/compiler-compatibility.ts";
 import {
-  PragmaBundleSchema,
+  PragmaForwardCompatibleBundleSchema,
+  PragmaForwardCompatibleResourceSchema,
   PragmaLockSchema,
-  PragmaResourceSchema,
   canonicalPragmaResourceRef,
   type PragmaResource,
 } from "../ast/index.ts";
@@ -112,7 +112,7 @@ function parseCurrentProject(
     try {
       const value = parsePragmaYaml(contents);
       if (isRecord(value) && value["kind"] === "Bundle") {
-        const bundle = PragmaBundleSchema.parse(value);
+        const bundle = PragmaForwardCompatibleBundleSchema.parse(value);
         for (const resource of bundle.resources) {
           indexed.push({ resource, source });
         }
@@ -120,7 +120,7 @@ function parseCurrentProject(
         continue;
       }
       if (isRecord(value) && typeof value["kind"] === "string" && value["kind"] !== "Lock") {
-        indexed.push({ resource: PragmaResourceSchema.parse(value), source });
+        indexed.push({ resource: PragmaForwardCompatibleResourceSchema.parse(value), source });
         managed.add(source);
       }
     } catch (error) {

@@ -264,6 +264,9 @@ Interpreter `compilerVersion`、manifest、lock、IPC、Bridge 和 Runtime capab
 
 - 任何会让新代码拒绝或改变既有合法数据语义的改动，必须在同一个 Pull Request 中提交明确的版本升级、
   可执行升级机制和完整测试；禁止先升级 Schema 或版本号、再留待后续补迁移。缺少升级机制时不得合入。
+- DSL `apiVersion` 表示最低安全读取代际，不因普通可选字段增加而升级。当前版本的写入、直接读取和
+  可迁移来源必须由 `@pragma/interpreter/ast` 的权威能力常量声明；Host、Evaluation 和测试不得复制当前
+  版本字面量。只有旧客户端忽略改动会造成语义、安全、权限或数据错误时才升级 `apiVersion`。
 - Capability 必须区分“当前代码可直接读取的版本”和“可通过迁移升级的来源版本”。只有当前 parser
   能完整接受真实历史 fixture 时才能声明直接可读；禁止只放行旧版本号后把旧数据交给当前严格 Schema。
 - 支持窗口内的旧版本必须提供静态注册的相邻迁移、协议协商或等价升级链。`fail closed` 只是损坏数据、

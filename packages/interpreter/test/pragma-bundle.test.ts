@@ -1,3 +1,4 @@
+import { PRAGMA_DSL_WRITE_API_VERSION } from "../src/ast/index.ts";
 import { access, mkdtemp, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
@@ -358,12 +359,12 @@ describe("portable .pragma bundles", () => {
     await writeFile(
       entry,
       formatPragmaYaml({
-        apiVersion: "pragma/v5",
+        apiVersion: PRAGMA_DSL_WRITE_API_VERSION,
         kind: "Bundle",
         resources: [
           runtimeResource(),
           {
-            apiVersion: "pragma/v5",
+            apiVersion: PRAGMA_DSL_WRITE_API_VERSION,
             kind: "ContextStore",
             metadata: {
               id: "w01fppfxrn31gf7v",
@@ -405,7 +406,7 @@ async function createProject(withCapability = false): Promise<{ root: string; en
   const resources: unknown[] = [runtimeResource()];
   if (withCapability) {
     resources.push({
-      apiVersion: "pragma/v5",
+      apiVersion: PRAGMA_DSL_WRITE_API_VERSION,
       kind: "Capability",
       metadata: {
         id: "j35188zs37g69g0n",
@@ -421,13 +422,16 @@ async function createProject(withCapability = false): Promise<{ root: string; en
     });
   }
   resources.push(expertResource(withCapability));
-  await writeFile(entry, formatPragmaYaml({ apiVersion: "pragma/v5", kind: "Bundle", resources }));
+  await writeFile(
+    entry,
+    formatPragmaYaml({ apiVersion: PRAGMA_DSL_WRITE_API_VERSION, kind: "Bundle", resources }),
+  );
   return { root, entry };
 }
 
 function runtimeResource() {
   return {
-    apiVersion: "pragma/v5" as const,
+    apiVersion: PRAGMA_DSL_WRITE_API_VERSION,
     kind: "RuntimeProfile" as const,
     metadata: {
       id: "knr7p5b7qc55wv92",
@@ -441,7 +445,7 @@ function runtimeResource() {
 
 function expertResource(withCapability: boolean) {
   return {
-    apiVersion: "pragma/v5",
+    apiVersion: PRAGMA_DSL_WRITE_API_VERSION,
     kind: "Expert",
     metadata: {
       id: "1xddvess309a6gme",

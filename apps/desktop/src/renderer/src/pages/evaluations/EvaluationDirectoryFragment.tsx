@@ -13,12 +13,10 @@ import {
 } from "@phosphor-icons/react";
 import {
   PragmaFlowRunDryEvaluationResourceSchema,
-  type PragmaFlowRunDryEvaluationResource,
-} from "@pragma/evaluation/ast";
-import {
   type PragmaExpertResource,
   type PragmaExpertTeamResource,
   type PragmaFlowResource,
+  type PragmaFlowRunDryEvaluationResource,
 } from "@pragma/interpreter/ast";
 
 import type { PragmaProjectSnapshot } from "../../../../shared/contracts/index.ts";

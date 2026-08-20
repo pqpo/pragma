@@ -3,8 +3,8 @@ import {
   AgentEvaluationCaseResultSchema,
   AgentEvaluationJudgeResultSchema,
   AgentEvaluationSummarySchema,
-  PragmaAgentJudgeEvaluationResourceSchema,
 } from "@pragma/evaluation/ast";
+import { PragmaAgentJudgeEvaluationResourceSchema } from "@pragma/interpreter/ast";
 
 import { ExpertModelConfigSchema } from "./capabilities.ts";
 

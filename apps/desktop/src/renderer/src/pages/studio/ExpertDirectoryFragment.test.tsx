@@ -1,3 +1,4 @@
+import { PRAGMA_DSL_WRITE_API_VERSION } from "@pragma/interpreter/ast";
 import { User } from "@phosphor-icons/react";
 import { renderToStaticMarkup } from "react-dom/server";
 import { afterEach, describe, expect, it } from "vitest";
@@ -132,7 +133,7 @@ const plugin: DesktopPlugin = {
 
 const resources = [
   PragmaExpertResourceSchema.parse({
-    apiVersion: "pragma/v5",
+    apiVersion: PRAGMA_DSL_WRITE_API_VERSION,
     kind: "Expert",
     metadata: {
       id: "1h2j3k4m5n6p7q8r",
@@ -143,7 +144,7 @@ const resources = [
     spec: { scope: "Research", instructions: "Research." },
   }),
   PragmaExpertResourceSchema.parse({
-    apiVersion: "pragma/v5",
+    apiVersion: PRAGMA_DSL_WRITE_API_VERSION,
     kind: "Expert",
     metadata: {
       id: "2h3j4k5m6n7p8q9r",

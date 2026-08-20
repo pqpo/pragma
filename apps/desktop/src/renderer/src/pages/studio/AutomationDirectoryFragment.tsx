@@ -1,5 +1,5 @@
 import { ArrowLeft, CaretDown, Check, Clock, Plus, Robot } from "@phosphor-icons/react";
-import { PragmaScheduleTriggerSchema } from "@pragma/interpreter/ast";
+import { PRAGMA_DSL_WRITE_API_VERSION, PragmaScheduleTriggerSchema } from "@pragma/interpreter/ast";
 import {
   PRAGMA_TEXT_LIMITS,
   pragmaUnicodeLength,
@@ -242,7 +242,7 @@ export function AutomationDirectoryFragment(props: {
       const saved = await api.saveAutomation({
         expectedProjectRevision: props.project.revision,
         resource: {
-          apiVersion: "pragma/v5",
+          apiVersion: PRAGMA_DSL_WRITE_API_VERSION,
           kind: "Automation",
           metadata: {
             id: editor.id,

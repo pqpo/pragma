@@ -1,4 +1,5 @@
 export * from "./compiler-compatibility.ts";
+export * from "./pragma-api-version.ts";
 export * from "./pragma-bundle.schema.ts";
 export * from "./flow-data-contracts.ts";
 export * from "./flow-graph.ts";

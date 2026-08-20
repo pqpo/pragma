@@ -1,7 +1,11 @@
 import { useEffect, useState } from "react";
 import { useTranslation } from "react-i18next";
-import type { PragmaFlowRunDryEvaluationResource } from "@pragma/evaluation/ast";
-import { canonicalPragmaResourceRef, type PragmaFlowResource } from "@pragma/interpreter/ast";
+import {
+  PRAGMA_DSL_WRITE_API_VERSION,
+  canonicalPragmaResourceRef,
+  type PragmaFlowResource,
+  type PragmaFlowRunDryEvaluationResource,
+} from "@pragma/interpreter/ast";
 import type { PragmaExpertResource, PragmaExpertTeamResource } from "@pragma/interpreter/ast";
 
 import type { PragmaProjectSnapshot } from "../../../../shared/contracts/index.ts";
@@ -21,7 +25,7 @@ export function createFlowRunDryEvaluation(
   flow: PragmaFlowResource,
 ): PragmaFlowRunDryEvaluationResource {
   return {
-    apiVersion: "pragma/v5",
+    apiVersion: PRAGMA_DSL_WRITE_API_VERSION,
     kind: "Evaluation",
     metadata: {
       id: resourceId,

@@ -11,6 +11,7 @@ import {
 } from "@pragma/core";
 
 import {
+  PRAGMA_DSL_WRITE_API_VERSION,
   PragmaDiagnosticSchema,
   PragmaResourceSchema,
   type PragmaDiagnostic,
@@ -656,7 +657,7 @@ async function withStagedProject<T>(
     await writeFile(
       join(root, "pragma.yaml"),
       formatPragmaYaml({
-        apiVersion: "pragma/v5",
+        apiVersion: PRAGMA_DSL_WRITE_API_VERSION,
         kind: "Bundle",
         imports: imports.toSorted(),
         resources: [],
@@ -694,7 +695,7 @@ function canonicalProjectFiles(project: PragmaProject): ReadonlyMap<string, stri
   files.set(
     "pragma.yaml",
     formatPragmaYaml({
-      apiVersion: "pragma/v5",
+      apiVersion: PRAGMA_DSL_WRITE_API_VERSION,
       kind: "Bundle",
       imports: imports.toSorted(),
       resources: [],

@@ -1,3 +1,4 @@
+import { PRAGMA_DSL_WRITE_API_VERSION } from "../src/ast/index.ts";
 import { mkdtemp, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -25,7 +26,7 @@ const ISSUE_OUTPUT = {
 
 function issueFlow(outputValue?: unknown): PragmaFlowResource {
   return PragmaFlowResourceSchema.parse({
-    apiVersion: "pragma/v5",
+    apiVersion: PRAGMA_DSL_WRITE_API_VERSION,
     kind: "Flow",
     metadata: {
       id: "spmnna7k705rhjnj",
@@ -220,7 +221,7 @@ describe("Flow data contracts", () => {
 
   it("validates every nested Flow input mapping against the target input contract", () => {
     const child = PragmaFlowResourceSchema.parse({
-      apiVersion: "pragma/v5",
+      apiVersion: PRAGMA_DSL_WRITE_API_VERSION,
       kind: "Flow",
       metadata: {
         id: "7k2m9q4v8np6r3dt",
@@ -257,7 +258,7 @@ describe("Flow data contracts", () => {
       },
     });
     const parent = PragmaFlowResourceSchema.parse({
-      apiVersion: "pragma/v5",
+      apiVersion: PRAGMA_DSL_WRITE_API_VERSION,
       kind: "Flow",
       metadata: {
         id: "t9ne4d8njvvxv2ea",

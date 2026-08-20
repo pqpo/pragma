@@ -1,3 +1,4 @@
+import { PRAGMA_DSL_WRITE_API_VERSION } from "@pragma/interpreter/ast";
 import { mkdtemp } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -120,7 +121,7 @@ describe("Desktop PragmaAgent DSL project adapter", () => {
     const root = await mkdtemp(join(tmpdir(), "pragma-default-agent-existing-runtime-"));
     const project = createPragmaProjectStore({ projectsPath: join(root, "projects") });
     const runtime = PragmaRuntimeProfileResourceSchema.parse({
-      apiVersion: "pragma/v5",
+      apiVersion: PRAGMA_DSL_WRITE_API_VERSION,
       kind: "RuntimeProfile",
       metadata: {
         id: "2h3j4k5m6n7p8q9r",
@@ -379,7 +380,7 @@ describe("Desktop PragmaAgent DSL project adapter", () => {
     const root = await mkdtemp(join(tmpdir(), "pragma-default-agent-nested-flow-draft-"));
     const project = createPragmaProjectStore({ projectsPath: join(root, "projects") });
     const child = PragmaFlowResourceSchema.parse({
-      apiVersion: "pragma/v5",
+      apiVersion: PRAGMA_DSL_WRITE_API_VERSION,
       kind: "Flow",
       metadata: {
         id: "7k2m9q4v8np6r3dt",
@@ -761,7 +762,7 @@ function automationWithPrompt(prompt: string): string {
 
 function approvalRouteFlow() {
   return PragmaFlowResourceSchema.parse({
-    apiVersion: "pragma/v5",
+    apiVersion: PRAGMA_DSL_WRITE_API_VERSION,
     kind: "Flow",
     metadata: {
       id: "8h9j0k1m2n3p4q5r",

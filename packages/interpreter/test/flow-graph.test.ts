@@ -1,3 +1,4 @@
+import { PRAGMA_DSL_WRITE_API_VERSION } from "../src/ast/index.ts";
 import { describe, expect, it } from "vitest";
 
 import {
@@ -8,7 +9,7 @@ import {
 
 function flow(graph: PragmaFlowResource["spec"]["graph"]): PragmaFlowResource {
   return {
-    apiVersion: "pragma/v5",
+    apiVersion: PRAGMA_DSL_WRITE_API_VERSION,
     kind: "Flow",
     metadata: {
       id: "qj3t30sa520dvfvj",

@@ -1,4 +1,5 @@
 import {
+  PRAGMA_DSL_WRITE_API_VERSION,
   PragmaDiagnosticSchema,
   PragmaFlowLoopSchema,
   PragmaFlowResourceSchema,
@@ -202,7 +203,7 @@ export const PragmaAgentEvaluationDraftDiagnosticSchema = z.object({
 
 const PragmaAgentEvaluationDraftResourceSchema = z
   .object({
-    apiVersion: z.literal("pragma/v5"),
+    apiVersion: z.literal(PRAGMA_DSL_WRITE_API_VERSION),
     kind: z.literal("Evaluation"),
     metadata: PragmaEvaluationMetadataSchema,
     spec: z

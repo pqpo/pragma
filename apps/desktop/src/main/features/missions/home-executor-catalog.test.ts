@@ -1,3 +1,4 @@
+import { PRAGMA_DSL_WRITE_API_VERSION } from "@pragma/interpreter/ast";
 import { describe, expect, it } from "vitest";
 import {
   DEFAULT_PRAGMA_EXPERT_AVATAR_ID,
@@ -24,7 +25,7 @@ describe("Home executor catalog", () => {
       revision: 1,
       resources: [
         {
-          apiVersion: "pragma/v5",
+          apiVersion: PRAGMA_DSL_WRITE_API_VERSION,
           kind: "Expert",
           metadata: {
             id: "0000000000000001",
@@ -35,7 +36,7 @@ describe("Home executor catalog", () => {
           spec: {},
         },
         {
-          apiVersion: "pragma/v5",
+          apiVersion: PRAGMA_DSL_WRITE_API_VERSION,
           kind: "ExpertTeam",
           metadata: {
             id: "0000000000000002",

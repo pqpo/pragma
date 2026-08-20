@@ -1,3 +1,4 @@
+import { PRAGMA_DSL_WRITE_API_VERSION } from "@pragma/interpreter/ast";
 import { describe, expect, it } from "vitest";
 import { PRAGMA_TEXT_LIMITS } from "@pragma/shared";
 
@@ -285,7 +286,7 @@ describe("runtime settings contracts", () => {
 describe("Pragma project change-set contracts", () => {
   it("requires at least one upsert and defaults removals", () => {
     const resource = {
-      apiVersion: "pragma/v5" as const,
+      apiVersion: PRAGMA_DSL_WRITE_API_VERSION,
       kind: "RuntimeProfile" as const,
       metadata: {
         id: "hct7g5mmh9vzz5tt",

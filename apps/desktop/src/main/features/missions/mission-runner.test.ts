@@ -1,3 +1,4 @@
+import { PRAGMA_DSL_WRITE_API_VERSION } from "@pragma/interpreter/ast";
 import { mkdtemp, readFile, readdir, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -3401,7 +3402,7 @@ describe("MissionRunner", { timeout: 15_000 }, () => {
 
 function expertFixture(): PragmaExpertResource {
   return {
-    apiVersion: "pragma/v5",
+    apiVersion: PRAGMA_DSL_WRITE_API_VERSION,
     kind: "Expert",
     metadata: {
       id: "1xddvess309a6gme",
@@ -3464,7 +3465,7 @@ function reviewerFixture(): PragmaExpertResource {
 
 function expertTeamFixture(): PragmaExpertTeamResource {
   return {
-    apiVersion: "pragma/v5",
+    apiVersion: PRAGMA_DSL_WRITE_API_VERSION,
     kind: "ExpertTeam",
     metadata: {
       id: "vyv9pwwzaksth2dd",
@@ -3493,7 +3494,7 @@ function expertTeamFixture(): PragmaExpertTeamResource {
 
 function expertFlowFixture(): PragmaFlowResource {
   return {
-    apiVersion: "pragma/v5",
+    apiVersion: PRAGMA_DSL_WRITE_API_VERSION,
     kind: "Flow",
     metadata: {
       id: "ffdfk2cczgqjda7q",
@@ -3520,7 +3521,7 @@ function expertFlowFixture(): PragmaFlowResource {
 
 function runtimeFixture(runtimeId = "fake"): PragmaRuntimeProfileResource {
   return {
-    apiVersion: "pragma/v5",
+    apiVersion: PRAGMA_DSL_WRITE_API_VERSION,
     kind: "RuntimeProfile",
     metadata: {
       id: "rdzgnq05qfqcpqcm",
@@ -3537,7 +3538,7 @@ function runtimeFixture(runtimeId = "fake"): PragmaRuntimeProfileResource {
 
 function approvalFlowFixture(): PragmaFlowResource {
   return {
-    apiVersion: "pragma/v5",
+    apiVersion: PRAGMA_DSL_WRITE_API_VERSION,
     kind: "Flow",
     metadata: {
       id: "t9ne4d8njvvxv2ea",
@@ -3570,7 +3571,7 @@ function approvalFlowFixture(): PragmaFlowResource {
 
 function approvalAfterExpertFlowFixture(): PragmaFlowResource {
   return {
-    apiVersion: "pragma/v5",
+    apiVersion: PRAGMA_DSL_WRITE_API_VERSION,
     kind: "Flow",
     metadata: {
       id: "3tshk7gb32ckdfj3",

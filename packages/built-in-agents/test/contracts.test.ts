@@ -1,3 +1,4 @@
+import { PRAGMA_DSL_WRITE_API_VERSION } from "@pragma/interpreter/ast";
 import { describe, expect, it } from "vitest";
 
 import {
@@ -90,7 +91,7 @@ describe("Flow draft contracts", () => {
       baseProjectRevision: 0,
       draftRevision: 0,
       resource: {
-        apiVersion: "pragma/v5",
+        apiVersion: PRAGMA_DSL_WRITE_API_VERSION,
         kind: "Flow",
         metadata: {
           id: "t9ne4d8njvvxv2ea",
@@ -132,7 +133,7 @@ describe("Evaluation draft contracts", () => {
       baseProjectRevision: 0,
       draftRevision: 0,
       resource: {
-        apiVersion: "pragma/v5",
+        apiVersion: PRAGMA_DSL_WRITE_API_VERSION,
         kind: "Evaluation",
         metadata: {
           id: "7h8j9k0m1n2p3q4r",

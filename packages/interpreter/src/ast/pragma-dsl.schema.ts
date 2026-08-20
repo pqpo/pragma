@@ -7,15 +7,39 @@ import {
   pragmaUnicodeLength,
 } from "@pragma/shared";
 import {
-  PragmaEvaluationResourceSchema,
-  type PragmaEvaluationResource,
+  PragmaAgentJudgeEvaluationSpecSchema,
+  PragmaEvaluationMetadataSchema,
+  PragmaFlowRunDryEvaluationSpecSchema,
 } from "@pragma/evaluation/ast";
 import { z } from "zod";
 
+import { PRAGMA_DSL_WRITE_API_VERSION, PragmaApiVersionSchema } from "./pragma-api-version.ts";
 import { PragmaObjectJsonSchemaSchema } from "./tool-capability.schema.ts";
 
-export const CURRENT_PRAGMA_DSL_API_VERSION = "pragma/v5" as const;
-export const PragmaApiVersionSchema = z.literal(CURRENT_PRAGMA_DSL_API_VERSION);
+export { PRAGMA_DSL_WRITE_API_VERSION, PragmaApiVersionSchema };
+
+export const PragmaFlowRunDryEvaluationResourceSchema = z
+  .object({
+    apiVersion: PragmaApiVersionSchema,
+    kind: z.literal("Evaluation"),
+    metadata: PragmaEvaluationMetadataSchema,
+    spec: PragmaFlowRunDryEvaluationSpecSchema,
+  })
+  .strict();
+
+export const PragmaAgentJudgeEvaluationResourceSchema = z
+  .object({
+    apiVersion: PragmaApiVersionSchema,
+    kind: z.literal("Evaluation"),
+    metadata: PragmaEvaluationMetadataSchema,
+    spec: PragmaAgentJudgeEvaluationSpecSchema,
+  })
+  .strict();
+
+export const PragmaEvaluationResourceSchema = z.union([
+  PragmaFlowRunDryEvaluationResourceSchema,
+  PragmaAgentJudgeEvaluationResourceSchema,
+]);
 
 export const PragmaResourceKindSchema = z.enum([
   "expert",
@@ -1051,6 +1075,76 @@ export const PragmaResourceSchema = z.union([
   PragmaEvaluationResourceSchema,
 ]);
 
+const PragmaForwardCompatibleExpertResourceSchema = PragmaExpertResourceSchema.safeExtend({
+  metadata: PragmaExpertMetadataSchema.passthrough(),
+  spec: PragmaExpertResourceSchema.shape.spec.passthrough(),
+}).passthrough();
+
+const PragmaForwardCompatibleExpertTeamResourceSchema = PragmaExpertTeamResourceSchema.safeExtend({
+  metadata: PragmaExpertTeamMetadataSchema.passthrough(),
+  spec: PragmaExpertTeamResourceSchema.shape.spec
+    .extend({
+      delegation: PragmaExpertTeamResourceSchema.shape.spec.shape.delegation.passthrough(),
+    })
+    .passthrough(),
+}).passthrough();
+
+const PragmaForwardCompatibleFlowResourceSchema = PragmaFlowResourceSchema.safeExtend({
+  metadata: PragmaFlowMetadataSchema.passthrough(),
+  spec: PragmaFlowResourceSchema.shape.spec.passthrough(),
+}).passthrough();
+
+const PragmaForwardCompatibleAutomationResourceSchema = PragmaAutomationResourceSchema.safeExtend({
+  metadata: PragmaAutomationMetadataSchema.passthrough(),
+  spec: PragmaAutomationResourceSchema.shape.spec.passthrough(),
+}).passthrough();
+
+const PragmaForwardCompatibleCapabilityResourceSchema = PragmaCapabilityResourceSchema.safeExtend({
+  metadata: PragmaCapabilityMetadataSchema.passthrough(),
+  spec: PragmaCapabilityResourceSchema.shape.spec.passthrough(),
+}).passthrough();
+
+const PragmaForwardCompatibleContextStoreResourceSchema =
+  PragmaContextStoreResourceSchema.safeExtend({
+    metadata: PragmaContextStoreMetadataSchema.passthrough(),
+    spec: PragmaContextStoreResourceSchema.shape.spec.passthrough(),
+  }).passthrough();
+
+const PragmaForwardCompatibleRuntimeProfileResourceSchema =
+  PragmaRuntimeProfileResourceSchema.safeExtend({
+    metadata: PragmaMetadataSchema.passthrough(),
+    spec: PragmaRuntimeProfileResourceSchema.shape.spec.passthrough(),
+  }).passthrough();
+
+const PragmaForwardCompatibleFlowRunDryEvaluationResourceSchema =
+  PragmaFlowRunDryEvaluationResourceSchema.safeExtend({
+    metadata: PragmaEvaluationMetadataSchema.passthrough(),
+    spec: PragmaFlowRunDryEvaluationSpecSchema.passthrough(),
+  }).passthrough();
+
+const PragmaForwardCompatibleAgentJudgeEvaluationResourceSchema =
+  PragmaAgentJudgeEvaluationResourceSchema.safeExtend({
+    metadata: PragmaEvaluationMetadataSchema.passthrough(),
+    spec: PragmaAgentJudgeEvaluationSpecSchema.passthrough(),
+  }).passthrough();
+
+/**
+ * Persistence boundary for pragma/v5 resources. Known fields remain fully validated while
+ * additive fields at the resource, metadata, spec, and Team delegation extension points are
+ * retained for same-version forward compatibility.
+ */
+export const PragmaForwardCompatibleResourceSchema: z.ZodType<PragmaResource> = z.union([
+  PragmaForwardCompatibleExpertResourceSchema,
+  PragmaForwardCompatibleExpertTeamResourceSchema,
+  PragmaForwardCompatibleFlowResourceSchema,
+  PragmaForwardCompatibleAutomationResourceSchema,
+  PragmaForwardCompatibleCapabilityResourceSchema,
+  PragmaForwardCompatibleContextStoreResourceSchema,
+  PragmaForwardCompatibleRuntimeProfileResourceSchema,
+  PragmaForwardCompatibleFlowRunDryEvaluationResourceSchema,
+  PragmaForwardCompatibleAgentJudgeEvaluationResourceSchema,
+]);
+
 export const PragmaBundleSchema = z
   .object({
     apiVersion: PragmaApiVersionSchema,
@@ -1059,6 +1153,126 @@ export const PragmaBundleSchema = z
     resources: z.array(PragmaResourceSchema).default([]),
   })
   .strict();
+
+export const PragmaForwardCompatibleBundleSchema: z.ZodType<PragmaBundle> = z
+  .object({
+    apiVersion: PragmaApiVersionSchema,
+    kind: z.literal("Bundle"),
+    imports: z.array(z.string().trim().min(1)).default([]),
+    resources: z.array(PragmaForwardCompatibleResourceSchema).default([]),
+  })
+  .passthrough();
+
+export interface PragmaUnknownFieldIssue {
+  readonly key: string;
+  readonly path: readonly (string | number)[];
+}
+
+export function inspectPragmaUnknownFields(
+  value: unknown,
+  kind: "resource" | "bundle",
+): readonly PragmaUnknownFieldIssue[] {
+  const parsed = (
+    kind === "bundle" ? PragmaBundleSchema : strictResourceSchemaFor(value)
+  ).safeParse(value);
+  if (parsed.success) return [];
+  const output: PragmaUnknownFieldIssue[] = [];
+  collectUnknownFieldIssues(parsed.error.issues, output);
+  return output;
+}
+
+function strictResourceSchemaFor(value: unknown): z.ZodType {
+  if (typeof value !== "object" || value === null || Array.isArray(value)) {
+    return PragmaResourceSchema;
+  }
+  const record = value as Record<string, unknown>;
+  switch (record["kind"]) {
+    case "Expert":
+      return PragmaExpertResourceSchema;
+    case "ExpertTeam":
+      return PragmaExpertTeamResourceSchema;
+    case "Flow":
+      return PragmaFlowResourceSchema;
+    case "Automation":
+      return PragmaAutomationResourceSchema;
+    case "Capability":
+      return PragmaCapabilityResourceSchema;
+    case "ContextStore":
+      return PragmaContextStoreResourceSchema;
+    case "RuntimeProfile":
+      return PragmaRuntimeProfileResourceSchema;
+    case "Evaluation": {
+      const spec = record["spec"];
+      const method =
+        typeof spec === "object" && spec !== null && !Array.isArray(spec)
+          ? (spec as Record<string, unknown>)["method"]
+          : undefined;
+      const type =
+        typeof method === "object" && method !== null && !Array.isArray(method)
+          ? (method as Record<string, unknown>)["type"]
+          : undefined;
+      return type === "flow-run-dry"
+        ? PragmaFlowRunDryEvaluationResourceSchema
+        : type === "agent-judge"
+          ? PragmaAgentJudgeEvaluationResourceSchema
+          : PragmaEvaluationResourceSchema;
+    }
+    default:
+      return PragmaResourceSchema;
+  }
+}
+
+function collectUnknownFieldIssues(
+  issues: readonly unknown[],
+  output: PragmaUnknownFieldIssue[],
+): void {
+  for (const issue of issues) {
+    if (typeof issue !== "object" || issue === null) continue;
+    const record = issue as Record<string, unknown>;
+    const path = Array.isArray(record["path"])
+      ? record["path"].filter(
+          (segment): segment is string | number =>
+            typeof segment === "string" || typeof segment === "number",
+        )
+      : [];
+    if (record["code"] === "unrecognized_keys" && Array.isArray(record["keys"])) {
+      for (const key of record["keys"]) {
+        if (typeof key === "string") output.push({ key, path: [...path, key] });
+      }
+    }
+    const nested = record["errors"];
+    if (!Array.isArray(nested)) continue;
+    for (const branch of nested) {
+      if (Array.isArray(branch)) collectUnknownFieldIssues(branch, output);
+    }
+  }
+}
+
+/**
+ * Applies a current-client resource update without discarding additive fields that the client
+ * does not understand. Plain objects merge recursively; arrays and scalar values are replaced.
+ */
+export function mergePragmaResourcePreservingUnknownFields(
+  original: PragmaResource,
+  updated: PragmaResource,
+): PragmaResource {
+  return PragmaForwardCompatibleResourceSchema.parse(mergeCompatibleValue(original, updated));
+}
+
+function mergeCompatibleValue(original: unknown, updated: unknown): unknown {
+  if (!isPlainRecord(original) || !isPlainRecord(updated)) return structuredClone(updated);
+  const merged: Record<string, unknown> = structuredClone(original);
+  for (const [key, value] of Object.entries(updated)) {
+    merged[key] = mergeCompatibleValue(original[key], value);
+  }
+  return merged;
+}
+
+function isPlainRecord(value: unknown): value is Record<string, unknown> {
+  if (typeof value !== "object" || value === null || Array.isArray(value)) return false;
+  const prototype = Object.getPrototypeOf(value) as unknown;
+  return prototype === Object.prototype || prototype === null;
+}
 
 export const PragmaLockSchema = z
   .object({
@@ -1161,7 +1375,13 @@ export type PragmaScheduleAutomationConfig = z.infer<typeof PragmaScheduleAutoma
 export type PragmaCapabilityResource = z.infer<typeof PragmaCapabilityResourceSchema>;
 export type PragmaContextStoreResource = z.infer<typeof PragmaContextStoreResourceSchema>;
 export type PragmaRuntimeProfileResource = z.infer<typeof PragmaRuntimeProfileResourceSchema>;
-export type { PragmaEvaluationResource };
+export type PragmaEvaluationResource = z.infer<typeof PragmaEvaluationResourceSchema>;
+export type PragmaFlowRunDryEvaluationResource = z.infer<
+  typeof PragmaFlowRunDryEvaluationResourceSchema
+>;
+export type PragmaAgentJudgeEvaluationResource = z.infer<
+  typeof PragmaAgentJudgeEvaluationResourceSchema
+>;
 export type PragmaInvocableResource = z.infer<typeof PragmaInvocableResourceSchema>;
 export type PragmaDeclarativeResource = z.infer<typeof PragmaDeclarativeResourceSchema>;
 export type PragmaResource = z.infer<typeof PragmaResourceSchema>;
