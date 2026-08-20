@@ -8,7 +8,7 @@ import {
 
 function flow(graph: PragmaFlowResource["spec"]["graph"]): PragmaFlowResource {
   return {
-    apiVersion: "pragma/v4",
+    apiVersion: "pragma/v5",
     kind: "Flow",
     metadata: {
       id: "qj3t30sa520dvfvj",

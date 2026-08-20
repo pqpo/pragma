@@ -635,10 +635,11 @@ Expert API 设计要求：
 
 - `defineExpert()` 是单专家唯一创建入口，负责异步插件加载、inline plugin entry 合并、日志初始化和实例归一化。
 - `createAgentLauncher()` 为普通 Expert 创建可显式注入的 `spawn_expert`、`wait_experts`、
-  `list_experts`、`followup_expert`、`interrupt_expert` 工具集；子 Invocation 的执行、Context、
+  `list_agents`、`followup_expert`、`steer_expert`、`interrupt_expert` 工具集；子 Invocation 的执行、Context、
   并发、深度、事件和 Usage 机制必须与 ExpertTeam 共用，不另建隐藏 Session 路径。
 - `defineExpertTeam()` 声明由 coordinator 统一接收外部 prompt 的特殊 Expert。
-- ExpertTeam 运行时按 allowlist 生成相同的生命周期工具集，并覆盖参与者自己的 standalone launcher，
+- ExpertTeam 运行时按成员权限策略生成相同的生命周期工具集；coordinator 在当前 Team Execution 内
+  拥有系统继承的全量管理权限。团队工具覆盖参与者自己的 standalone launcher，
   防止成员绕过团队治理边界。
 - `defineFlow()` 声明 Flow；Task 和 HumanTask 只能通过 FlowSpec 内联创建。
 - Flow Expert step、普通 Expert launcher 与 ExpertTeam delegation 必须统一使用具名、带版本的
@@ -750,7 +751,7 @@ Expert API 设计要求：
 
 职责：
 
-- 保存六个内置 Agent 的 `pragma/v4` DSL，以及 Pragma 的 `author-pragma-dsl` Skill。
+- 保存六个内置 Agent 的 `pragma/v5` DSL，以及 Pragma 的 `author-pragma-dsl` Skill。
 - 分别导出 Pragma、Memory Curator、Store Revision、Skill Revision 和 Skill Evaluation 的宿主端口；调用方式允许彼此独立。
 - 拥有跨 Host 可复用的提示词、结构化输出解析、Memory 提炼、Store/Skill 修订规则、Skill 验证和纯状态机。
 - 导出供 Desktop 或未来 Host 适配的运行时中立契约。

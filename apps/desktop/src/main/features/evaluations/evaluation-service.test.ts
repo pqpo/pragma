@@ -189,7 +189,7 @@ function runFixture() {
     selectionSeed: "seed",
     selectedCaseIds: cases.map((item) => item.id),
     dataset: {
-      apiVersion: "pragma/v4",
+      apiVersion: "pragma/v5",
       kind: "Evaluation",
       metadata: {
         id: "7h8j9k0m1n2p3q4r",

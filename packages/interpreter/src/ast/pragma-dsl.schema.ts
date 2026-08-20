@@ -14,7 +14,7 @@ import { z } from "zod";
 
 import { PragmaObjectJsonSchemaSchema } from "./tool-capability.schema.ts";
 
-export const CURRENT_PRAGMA_DSL_API_VERSION = "pragma/v4" as const;
+export const CURRENT_PRAGMA_DSL_API_VERSION = "pragma/v5" as const;
 export const PragmaApiVersionSchema = z.literal(CURRENT_PRAGMA_DSL_API_VERSION);
 
 export const PragmaResourceKindSchema = z.enum([
@@ -411,7 +411,13 @@ export const PragmaExpertTeamResourceSchema = z
         contextStores: z.array(PragmaExpertTeamContextStoreBindingSchema).default([]),
         delegation: z
           .object({
-            allow: z.record(PragmaExpertIdSchema, z.array(PragmaExpertIdSchema)).optional(),
+            permissions: z
+              .object({
+                spawn: z.record(PragmaExpertIdSchema, z.array(PragmaExpertIdSchema)).optional(),
+                interact: z.record(PragmaExpertIdSchema, z.array(PragmaExpertIdSchema)).default({}),
+              })
+              .strict()
+              .default({ interact: {} }),
             maxConcurrency: z.number().int().positive().default(4),
             maxDepth: z.number().int().positive().default(3),
             context: versionedExtensionRefSchema(
@@ -426,8 +432,9 @@ export const PragmaExpertTeamResourceSchema = z
   })
   .strict()
   .superRefine((team, context) => {
+    const coordinatorId = team.spec.coordinator.ref.slice("expert:".length);
     const participantIds = [
-      team.spec.coordinator.ref.slice("expert:".length),
+      coordinatorId,
       ...team.spec.members.map((member) => member.ref.slice("expert:".length)),
     ];
     const participants = new Set(participantIds);
@@ -481,6 +488,50 @@ export const PragmaExpertTeamResourceSchema = z
         });
       }
     });
+    for (const permission of ["spawn", "interact"] as const) {
+      const configured = team.spec.delegation.permissions[permission] ?? {};
+      for (const [source, targets] of Object.entries(configured)) {
+        if (source === coordinatorId) {
+          context.addIssue({
+            code: "custom",
+            message: `ExpertTeam ${permission} permission must not configure the coordinator; coordinator authority is system-inherited.`,
+            path: ["spec", "delegation", "permissions", permission, source],
+          });
+        }
+        if (!participants.has(source)) {
+          context.addIssue({
+            code: "custom",
+            message: `ExpertTeam ${permission} permission references an unknown source Expert: ${source}.`,
+            path: ["spec", "delegation", "permissions", permission, source],
+          });
+        }
+        const seen = new Set<string>();
+        targets.forEach((target, targetIndex) => {
+          if (!participants.has(target)) {
+            context.addIssue({
+              code: "custom",
+              message: `ExpertTeam ${permission} permission references an unknown target Expert: ${target}.`,
+              path: ["spec", "delegation", "permissions", permission, source, targetIndex],
+            });
+          }
+          if (seen.has(target)) {
+            context.addIssue({
+              code: "custom",
+              message: `ExpertTeam ${permission} permission contains a duplicate target: ${target}.`,
+              path: ["spec", "delegation", "permissions", permission, source, targetIndex],
+            });
+          }
+          if (permission === "spawn" && source === target) {
+            context.addIssue({
+              code: "custom",
+              message: `ExpertTeam spawn permission cannot target itself: ${source}.`,
+              path: ["spec", "delegation", "permissions", permission, source, targetIndex],
+            });
+          }
+          seen.add(target);
+        });
+      }
+    }
   });
 
 export const PragmaFlowTargetSchema = z.union([

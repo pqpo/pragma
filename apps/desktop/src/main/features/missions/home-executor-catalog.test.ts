@@ -24,7 +24,7 @@ describe("Home executor catalog", () => {
       revision: 1,
       resources: [
         {
-          apiVersion: "pragma/v4",
+          apiVersion: "pragma/v5",
           kind: "Expert",
           metadata: {
             id: "0000000000000001",
@@ -35,7 +35,7 @@ describe("Home executor catalog", () => {
           spec: {},
         },
         {
-          apiVersion: "pragma/v4",
+          apiVersion: "pragma/v5",
           kind: "ExpertTeam",
           metadata: {
             id: "0000000000000002",

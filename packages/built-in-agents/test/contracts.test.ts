@@ -90,7 +90,7 @@ describe("Flow draft contracts", () => {
       baseProjectRevision: 0,
       draftRevision: 0,
       resource: {
-        apiVersion: "pragma/v4",
+        apiVersion: "pragma/v5",
         kind: "Flow",
         metadata: {
           id: "t9ne4d8njvvxv2ea",
@@ -132,7 +132,7 @@ describe("Evaluation draft contracts", () => {
       baseProjectRevision: 0,
       draftRevision: 0,
       resource: {
-        apiVersion: "pragma/v4",
+        apiVersion: "pragma/v5",
         kind: "Evaluation",
         metadata: {
           id: "7h8j9k0m1n2p3q4r",

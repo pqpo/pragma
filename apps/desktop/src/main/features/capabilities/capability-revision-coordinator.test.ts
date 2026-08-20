@@ -252,7 +252,7 @@ function capability(revision: number, tools: string[]): Capability {
 
 function expert(id: string, capabilityRef: string, tools: string[]): PragmaResource {
   return {
-    apiVersion: "pragma/v4",
+    apiVersion: "pragma/v5",
     kind: "Expert",
     metadata: {
       id,

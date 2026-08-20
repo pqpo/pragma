@@ -307,7 +307,7 @@ function definitionToResources(
   }));
   const contextResources = contextSelections.map(({ resource }) => resource);
   const expert = PragmaExpertResourceSchema.parse({
-    apiVersion: "pragma/v4",
+    apiVersion: "pragma/v5",
     kind: "Expert",
     metadata: {
       id: expertId,

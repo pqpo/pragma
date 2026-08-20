@@ -34,7 +34,7 @@ afterEach(async () => {
 function expert(index: number): PragmaExpertResource {
   const id = String(index).padStart(16, "0");
   return PragmaExpertResourceSchema.parse({
-    apiVersion: "pragma/v4",
+    apiVersion: "pragma/v5",
     kind: "Expert",
     metadata: {
       id,
@@ -144,7 +144,7 @@ describe("expert team editor", () => {
   it("keeps team knowledge as one selector card", () => {
     const experts = [expert(1), expert(2)];
     const initial = PragmaExpertTeamResourceSchema.parse({
-      apiVersion: "pragma/v4",
+      apiVersion: "pragma/v5",
       kind: "ExpertTeam",
       metadata: {
         id: "cccvf3nab91n2wja",
@@ -207,6 +207,9 @@ describe("expert team editor", () => {
     expect(html).toContain("Quality handbook");
     expect(html).toContain("1 knowledge base selected");
     expect(html).toContain("team-knowledge-selector");
+    expect(html).toContain("System inherited: manages all team agents");
+    expect(html).toContain("Can spawn");
+    expect(html).toContain("Can view and interact");
     expect(html).not.toContain("team-context-editor");
     expect(html).not.toContain("team-context-expert-checkbox");
   });
@@ -237,7 +240,7 @@ describe("expert team editor", () => {
     const experts = [expert(1), expert(2)];
     const instructions = "Verify evidence before declaring work complete.";
     const initial = PragmaExpertTeamResourceSchema.parse({
-      apiVersion: "pragma/v4",
+      apiVersion: "pragma/v5",
       kind: "ExpertTeam",
       metadata: {
         id: "cccvf3nab91n2wja",
@@ -288,7 +291,7 @@ describe("expert team editor", () => {
 describe("PragmaResourceDirectoryFragment", () => {
   it("opens Team resources through a detail-first directory row", () => {
     const initial = PragmaExpertTeamResourceSchema.parse({
-      apiVersion: "pragma/v4",
+      apiVersion: "pragma/v5",
       kind: "ExpertTeam",
       metadata: {
         id: "cccvf3nab91n2wja",
@@ -470,7 +473,7 @@ describe("PragmaResourceDetailFragment", () => {
       },
     ] satisfies readonly DesktopRuntimeAvailability[];
     const team = PragmaExpertTeamResourceSchema.parse({
-      apiVersion: "pragma/v4",
+      apiVersion: "pragma/v5",
       kind: "ExpertTeam",
       metadata: {
         id: "cccvf3nab91n2wja",
@@ -694,7 +697,7 @@ const complete = true;
   it("renders linked Expert and Expert Team nodes with their names and avatars", () => {
     const assignedExpert = expert(1);
     const assignedTeam = PragmaExpertTeamResourceSchema.parse({
-      apiVersion: "pragma/v4",
+      apiVersion: "pragma/v5",
       kind: "ExpertTeam",
       metadata: {
         id: "cccvf3nab91n2wja",

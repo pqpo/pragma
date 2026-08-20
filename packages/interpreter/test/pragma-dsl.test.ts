@@ -40,7 +40,7 @@ import {
 describe("Pragma YAML DSL", () => {
   it("parses agent-judge Evaluations through the top-level resource schema", () => {
     const resource = {
-      apiVersion: "pragma/v4",
+      apiVersion: "pragma/v5",
       kind: "Evaluation",
       metadata: {
         id: "7h8j9k0m1n2p3q4r",
@@ -81,7 +81,7 @@ describe("Pragma YAML DSL", () => {
 
   it("validates schedule Automations and forces Flow events into new Missions", () => {
     const resource = {
-      apiVersion: "pragma/v4",
+      apiVersion: "pragma/v5",
       kind: "Automation",
       metadata: {
         id: "bwam4c8ngby9w1w1",
@@ -156,7 +156,7 @@ describe("Pragma YAML DSL", () => {
 
   it("enforces Automation authoring limits at the shared DSL boundary", () => {
     const resource = {
-      apiVersion: "pragma/v4",
+      apiVersion: "pragma/v5",
       kind: "Automation",
       metadata: {
         id: "61207gbst92e9xc4",
@@ -232,7 +232,7 @@ describe("Pragma YAML DSL", () => {
   it("validates fixed Flow Automation input against the referenced schema", async () => {
     const root = await mkdtemp(join(tmpdir(), "pragma-automation-flow-input-"));
     const flow = PragmaFlowResourceSchema.parse({
-      apiVersion: "pragma/v4",
+      apiVersion: "pragma/v5",
       kind: "Flow",
       metadata: {
         id: "t9ne4d8njvvxv2ea",
@@ -270,7 +270,7 @@ describe("Pragma YAML DSL", () => {
           },
     ) =>
       PragmaAutomationResourceSchema.parse({
-        apiVersion: "pragma/v4",
+        apiVersion: "pragma/v5",
         kind: "Automation",
         metadata: {
           id,
@@ -299,7 +299,7 @@ describe("Pragma YAML DSL", () => {
     await writeFile(
       entry,
       formatPragmaYaml({
-        apiVersion: "pragma/v4",
+        apiVersion: "pragma/v5",
         kind: "Bundle",
         imports: [],
         resources: [
@@ -331,7 +331,7 @@ describe("Pragma YAML DSL", () => {
 
   it("uses prompt variables, automatic result storage, and form-compatible structured output", () => {
     const base = {
-      apiVersion: "pragma/v4",
+      apiVersion: "pragma/v5",
       kind: "Flow",
       metadata: {
         id: "t9ne4d8njvvxv2ea",
@@ -529,7 +529,7 @@ describe("Pragma YAML DSL", () => {
       writeFile(
         join(root, "pragma.yaml"),
         [
-          "apiVersion: pragma/v4",
+          "apiVersion: pragma/v5",
           "kind: Bundle",
           "imports:",
           "  - ./flows/review/flow.pragma.yaml",
@@ -539,7 +539,7 @@ describe("Pragma YAML DSL", () => {
       writeFile(
         join(root, "flows", "review", "flow.pragma.yaml"),
         [
-          "apiVersion: pragma/v4",
+          "apiVersion: pragma/v5",
           "kind: Flow",
           "metadata:",
           "  id: t9ne4d8njvvxv2ea",
@@ -612,7 +612,7 @@ describe("Pragma YAML DSL", () => {
     });
     const dumped = await project.dump(compiled.value, { split: "by-resource" });
     expect(dumped.files.get("flows/t9ne4d8njvvxv2ea.pragma.yaml")).toContain("kind: Flow");
-    expect(dumped.files.get("pragma.lock.yaml")).toContain("compilerVersion: pragma.dsl/v7");
+    expect(dumped.files.get("pragma.lock.yaml")).toContain("compilerVersion: pragma.dsl/v8");
     const single = await project.dump(compiled.value, { split: "single" });
     await writeFile(join(root, "single.yaml"), single.files.get("pragma.yaml")!);
     expect((await loadPragmaProject(join(root, "single.yaml"))).listResources()).toHaveLength(1);
@@ -624,7 +624,7 @@ describe("Pragma YAML DSL", () => {
     await writeFile(
       entry,
       [
-        "apiVersion: pragma/v4",
+        "apiVersion: pragma/v5",
         "kind: Flow",
         "metadata:",
         "  id: a1zhjn7y341f1y3x",
@@ -675,7 +675,7 @@ describe("Pragma YAML DSL", () => {
     await writeFile(
       entry,
       [
-        "apiVersion: pragma/v4",
+        "apiVersion: pragma/v5",
         "kind: Flow",
         "metadata: { id: p5tb2v7ns1tmevx1, name: Invalid, description: Invalid expression }",
         "spec:",
@@ -703,7 +703,7 @@ describe("Pragma YAML DSL", () => {
     await writeFile(
       entry,
       formatPragmaYaml({
-        apiVersion: "pragma/v4",
+        apiVersion: "pragma/v5",
         kind: "Bundle",
         imports: [],
         resources: [
@@ -711,7 +711,7 @@ describe("Pragma YAML DSL", () => {
           expertResource("mrvsehytqfmb814x", "Coordinates delivery"),
           expertResource("3sfd30h5017wd17d", "Reviews delivery"),
           {
-            apiVersion: "pragma/v4",
+            apiVersion: "pragma/v5",
             kind: "ExpertTeam",
             metadata: {
               id: "vyv9pwwzaksth2dd",
@@ -744,7 +744,7 @@ describe("Pragma YAML DSL", () => {
 
   it("defaults Team ContextStore visibility to all and rejects empty or unknown visibility", () => {
     const base = {
-      apiVersion: "pragma/v4",
+      apiVersion: "pragma/v5",
       kind: "ExpertTeam",
       metadata: {
         id: "vyv9pwwzaksth2dd",
@@ -791,6 +791,21 @@ describe("Pragma YAML DSL", () => {
         },
       }).success,
     ).toBe(false);
+    const coordinatorPermission = PragmaExpertTeamResourceSchema.safeParse({
+      ...base,
+      spec: {
+        ...base.spec,
+        delegation: {
+          permissions: { interact: { mrvsehytqfmb814x: ["3sfd30h5017wd17d"] } },
+        },
+      },
+    });
+    expect(coordinatorPermission.success).toBe(false);
+    if (!coordinatorPermission.success) {
+      expect(coordinatorPermission.error.issues[0]?.message).toContain(
+        "coordinator authority is system-inherited",
+      );
+    }
     expect(
       PragmaExpertTeamResourceSchema.safeParse({
         ...base,
@@ -808,9 +823,9 @@ describe("Pragma YAML DSL", () => {
     ).toBe(false);
   });
 
-  it("keeps the pragma/v4 ExpertTeam avatar field readable", () => {
+  it("keeps the pragma/v5 ExpertTeam avatar field readable", () => {
     const parsed = PragmaExpertTeamResourceSchema.parse({
-      apiVersion: "pragma/v4",
+      apiVersion: "pragma/v5",
       kind: "ExpertTeam",
       metadata: {
         id: "vyv9pwwzaksth2dd",
@@ -835,7 +850,7 @@ describe("Pragma YAML DSL", () => {
     await writeFile(
       entry,
       formatPragmaYaml({
-        apiVersion: "pragma/v4",
+        apiVersion: "pragma/v5",
         kind: "Bundle",
         imports: [],
         resources: [runtimeProfile(), expertResource("1xddvess309a6gme", "Writes")],
@@ -856,7 +871,7 @@ describe("Pragma YAML DSL", () => {
     await writeFile(
       entry,
       formatPragmaYaml({
-        apiVersion: "pragma/v4",
+        apiVersion: "pragma/v5",
         kind: "Bundle",
         imports: [],
         resources: [runtimeProfile(), expertResource("1xddvess309a6gme", "Writes")],
@@ -895,7 +910,7 @@ describe("Pragma YAML DSL", () => {
     await writeFile(
       entry,
       formatPragmaYaml({
-        apiVersion: "pragma/v4",
+        apiVersion: "pragma/v5",
         kind: "Bundle",
         imports: [],
         resources: [runtimeProfile(), expertResource("1xddvess309a6gme", "Writes")],
@@ -919,7 +934,7 @@ describe("Pragma YAML DSL", () => {
     await writeFile(
       entry,
       formatPragmaYaml({
-        apiVersion: "pragma/v4",
+        apiVersion: "pragma/v5",
         kind: "Bundle",
         imports: [],
         resources: [runtimeProfile(), expertResource("1xddvess309a6gme", "Writes")],
@@ -954,7 +969,7 @@ describe("Pragma YAML DSL", () => {
     await writeFile(
       entry,
       formatPragmaYaml({
-        apiVersion: "pragma/v4",
+        apiVersion: "pragma/v5",
         kind: "Bundle",
         imports: [],
         resources: [runtimeProfile(), expertResource("1xddvess309a6gme", "Writes")],
@@ -1001,7 +1016,7 @@ describe("Pragma YAML DSL", () => {
 
     expect(migrated).toMatchObject({
       sourceCompilerVersion: "pragma.dsl/v2",
-      targetCompilerVersion: "pragma.dsl/v7",
+      targetCompilerVersion: "pragma.dsl/v8",
       migrated: true,
     });
     expect(migrated.resources).toEqual([
@@ -1024,7 +1039,7 @@ describe("Pragma YAML DSL", () => {
 
     expect(migrated).toMatchObject({
       sourceCompilerVersion: "pragma.dsl/v3",
-      targetCompilerVersion: "pragma.dsl/v7",
+      targetCompilerVersion: "pragma.dsl/v8",
       migrated: true,
       resources: [expect.objectContaining({ kind: "Expert" })],
     });
@@ -1042,7 +1057,7 @@ describe("Pragma YAML DSL", () => {
 
     expect(migrated).toMatchObject({
       sourceCompilerVersion: "pragma.dsl/v4",
-      targetCompilerVersion: "pragma.dsl/v7",
+      targetCompilerVersion: "pragma.dsl/v8",
       migrated: true,
       resources: [
         expect.objectContaining({
@@ -1065,11 +1080,11 @@ describe("Pragma YAML DSL", () => {
 
     expect(migrated).toMatchObject({
       sourceCompilerVersion: "pragma.dsl/v5",
-      targetCompilerVersion: "pragma.dsl/v7",
+      targetCompilerVersion: "pragma.dsl/v8",
       migrated: true,
       resources: [
         expect.objectContaining({
-          apiVersion: "pragma/v4",
+          apiVersion: "pragma/v5",
           kind: "Expert",
           metadata: expect.objectContaining({ avatarId: "pragma.avatar.expert.default" }),
         }),
@@ -1077,7 +1092,7 @@ describe("Pragma YAML DSL", () => {
     });
   });
 
-  it("upgrades a compiler v6 flow-run-dry Evaluation fixture to v7", async () => {
+  it("upgrades a compiler v6 flow-run-dry Evaluation fixture to v8", async () => {
     const fixture = join(import.meta.dirname, "fixtures", "compiler-v6-flow-run-dry-evaluation");
     const migrated = migratePragmaCompilerProjectToCurrent({
       files: new Map([
@@ -1089,7 +1104,7 @@ describe("Pragma YAML DSL", () => {
 
     expect(migrated).toMatchObject({
       sourceCompilerVersion: "pragma.dsl/v6",
-      targetCompilerVersion: "pragma.dsl/v7",
+      targetCompilerVersion: "pragma.dsl/v8",
       migrated: true,
       resources: [
         expect.objectContaining({
@@ -1099,6 +1114,90 @@ describe("Pragma YAML DSL", () => {
           }),
         }),
       ],
+    });
+  });
+
+  it("upgrades a compiler v7 pragma/v4 fixture written by the historical compiler", async () => {
+    const fixture = join(import.meta.dirname, "fixtures", "compiler-v7-capability");
+    const resourceFile = "1h2j3k4m5n6p7q8r.pragma.yaml";
+    const migrated = migratePragmaCompilerProjectToCurrent({
+      revisionCompilerVersion: "pragma.dsl/v7",
+      files: new Map([
+        [resourceFile, await readFile(join(fixture, "pragma.yaml"), "utf8")],
+        ["pragma.lock.yaml", await readFile(join(fixture, "pragma.lock.yaml"), "utf8")],
+      ]),
+    });
+
+    expect(migrated).toMatchObject({
+      sourceCompilerVersion: "pragma.dsl/v7",
+      targetCompilerVersion: "pragma.dsl/v8",
+      migrated: true,
+      resources: [expect.objectContaining({ apiVersion: "pragma/v5", kind: "Capability" })],
+    });
+  });
+
+  it("rejects a tampered compiler v7 historical fixture", async () => {
+    const fixture = join(import.meta.dirname, "fixtures", "compiler-v7-capability");
+    const resource = await readFile(join(fixture, "pragma.yaml"), "utf8");
+    const lock = await readFile(join(fixture, "pragma.lock.yaml"), "utf8");
+    expect(() =>
+      migratePragmaCompilerProjectToCurrent({
+        revisionCompilerVersion: "pragma.dsl/v7",
+        files: new Map([
+          [
+            "1h2j3k4m5n6p7q8r.pragma.yaml",
+            resource.replace("Author Pragma DSL", "Tampered capability"),
+          ],
+          ["pragma.lock.yaml", lock],
+        ]),
+      }),
+    ).toThrow(expect.objectContaining({ code: "lock_mismatch" }));
+  });
+
+  it("wraps an invalid compiler v7 lock in a stable migration error", async () => {
+    const fixture = join(import.meta.dirname, "fixtures", "compiler-v7-capability");
+    const resource = await readFile(join(fixture, "pragma.yaml"), "utf8");
+    expect(() =>
+      migratePragmaCompilerProjectToCurrent({
+        revisionCompilerVersion: "pragma.dsl/v7",
+        files: new Map([
+          ["1h2j3k4m5n6p7q8r.pragma.yaml", resource],
+          ["pragma.lock.yaml", "invalid: ["],
+        ]),
+      }),
+    ).toThrow(expect.objectContaining({ code: "invalid_legacy_project" }));
+  });
+
+  it("rejects a non-resource compiler v7 managed source instead of dropping it", async () => {
+    const fixture = join(import.meta.dirname, "fixtures", "compiler-v7-capability");
+    const lock = await readFile(join(fixture, "pragma.lock.yaml"), "utf8");
+    expect(() =>
+      migratePragmaCompilerProjectToCurrent({
+        revisionCompilerVersion: "pragma.dsl/v7",
+        files: new Map([
+          ["1h2j3k4m5n6p7q8r.pragma.yaml", "false\n"],
+          ["pragma.lock.yaml", lock],
+        ]),
+      }),
+    ).toThrow(expect.objectContaining({ code: "invalid_legacy_project" }));
+  });
+
+  it("returns a validated no-op for a compiler v8 project", async () => {
+    const root = await mkdtemp(join(tmpdir(), "pragma-compiler-v8-noop-"));
+    const entry = join(root, "pragma.yaml");
+    await writeFile(entry, formatPragmaYaml(runtimeProfile()));
+    const project = await loadPragmaProject(entry);
+    const migrated = migratePragmaCompilerProjectToCurrent({
+      revisionCompilerVersion: "pragma.dsl/v8",
+      files: new Map([
+        ["pragma.yaml", await readFile(entry, "utf8")],
+        ["pragma.lock.yaml", formatPragmaYaml(project.createLock())],
+      ]),
+    });
+    expect(migrated).toMatchObject({
+      sourceCompilerVersion: "pragma.dsl/v8",
+      targetCompilerVersion: "pragma.dsl/v8",
+      migrated: false,
     });
   });
 
@@ -1149,7 +1248,7 @@ describe("Pragma YAML DSL", () => {
     const root = await mkdtemp(join(tmpdir(), "pragma-dsl-scoped-validation-"));
     const entry = join(root, "pragma.yaml");
     const brokenFlow = {
-      apiVersion: "pragma/v4" as const,
+      apiVersion: "pragma/v5" as const,
       kind: "Flow" as const,
       metadata: {
         id: "t4kw6k4qpw8a7tjw",
@@ -1172,7 +1271,7 @@ describe("Pragma YAML DSL", () => {
       },
     };
     const unrelatedEvaluation = {
-      apiVersion: "pragma/v4" as const,
+      apiVersion: "pragma/v5" as const,
       kind: "Evaluation" as const,
       metadata: {
         id: "7k2m9q4v8np6r3dt",
@@ -1208,7 +1307,7 @@ describe("Pragma YAML DSL", () => {
     await writeFile(
       entry,
       formatPragmaYaml({
-        apiVersion: "pragma/v4",
+        apiVersion: "pragma/v5",
         kind: "Bundle",
         imports: sources.map(([fileName]) => `./${fileName}`),
         resources: [],
@@ -1240,12 +1339,12 @@ describe("Pragma YAML DSL", () => {
     await writeFile(
       entry,
       formatPragmaYaml({
-        apiVersion: "pragma/v4",
+        apiVersion: "pragma/v5",
         kind: "Bundle",
         imports: [],
         resources: [
           {
-            apiVersion: "pragma/v4",
+            apiVersion: "pragma/v5",
             kind: "Expert",
             metadata: {
               id: "3sfd30h5017wd17d",
@@ -1255,7 +1354,7 @@ describe("Pragma YAML DSL", () => {
             spec: expertSpec(),
           },
           {
-            apiVersion: "pragma/v4",
+            apiVersion: "pragma/v5",
             kind: "Expert",
             metadata: {
               id: "mrvsehytqfmb814x",
@@ -1288,7 +1387,7 @@ describe("Pragma YAML DSL", () => {
             },
           },
           {
-            apiVersion: "pragma/v4",
+            apiVersion: "pragma/v5",
             kind: "Flow",
             metadata: {
               id: "ffdfk2cczgqjda7q",
@@ -1414,7 +1513,7 @@ describe("Pragma YAML DSL", () => {
     await writeFile(
       entry,
       formatPragmaYaml({
-        apiVersion: "pragma/v4",
+        apiVersion: "pragma/v5",
         kind: "Bundle",
         imports: [],
         resources: [
@@ -1438,7 +1537,7 @@ describe("Pragma YAML DSL", () => {
           },
           expertResource("3sfd30h5017wd17d", "Reviews delivery"),
           {
-            apiVersion: "pragma/v4",
+            apiVersion: "pragma/v5",
             kind: "ExpertTeam",
             metadata: {
               id: "vyv9pwwzaksth2dd",
@@ -1481,7 +1580,7 @@ describe("Pragma YAML DSL", () => {
     await writeFile(
       entry,
       formatPragmaYaml({
-        apiVersion: "pragma/v4",
+        apiVersion: "pragma/v5",
         kind: "Bundle",
         imports: [],
         resources: [
@@ -1504,7 +1603,7 @@ describe("Pragma YAML DSL", () => {
             },
           },
           {
-            apiVersion: "pragma/v4",
+            apiVersion: "pragma/v5",
             kind: "Flow",
             metadata: {
               id: "ffdfk2cczgqjda7q",
@@ -1554,7 +1653,7 @@ describe("Pragma YAML DSL", () => {
     await writeFile(
       entry,
       formatPragmaYaml({
-        apiVersion: "pragma/v4",
+        apiVersion: "pragma/v5",
         kind: "Bundle",
         imports: [],
         resources: [
@@ -1601,7 +1700,7 @@ describe("Pragma YAML DSL", () => {
     await writeFile(
       entry,
       formatPragmaYaml({
-        apiVersion: "pragma/v4",
+        apiVersion: "pragma/v5",
         kind: "Bundle",
         imports: [],
         resources: [
@@ -1625,7 +1724,7 @@ describe("Pragma YAML DSL", () => {
           },
           expertResource("3sfd30h5017wd17d", "Reviews work"),
           {
-            apiVersion: "pragma/v4",
+            apiVersion: "pragma/v5",
             kind: "Flow",
             metadata: {
               id: "ffdfk2cczgqjda7q",
@@ -1665,7 +1764,7 @@ describe("Pragma YAML DSL", () => {
     await writeFile(
       join(root, "flow.pragma.yaml"),
       [
-        "apiVersion: pragma/v4",
+        "apiVersion: pragma/v5",
         "kind: Flow",
         "metadata:",
         "  id: t4kw6k4qpw8a7tjw",
@@ -1698,7 +1797,7 @@ describe("Pragma YAML DSL", () => {
     await writeFile(
       join(root, "flow.pragma.yaml"),
       [
-        "apiVersion: pragma/v4",
+        "apiVersion: pragma/v5",
         "kind: Flow",
         "metadata:",
         "  id: 5yts78payhvmtw04",
@@ -1736,7 +1835,7 @@ describe("Pragma YAML DSL", () => {
     await writeFile(
       join(root, "flow.pragma.yaml"),
       formatPragmaYaml({
-        apiVersion: "pragma/v4",
+        apiVersion: "pragma/v5",
         kind: "Flow",
         metadata: {
           id: "0r6jyayj2gk3rzba",
@@ -1765,7 +1864,7 @@ describe("Pragma YAML DSL", () => {
     await writeFile(
       join(root, "flow.pragma.yaml"),
       [
-        "apiVersion: pragma/v4",
+        "apiVersion: pragma/v5",
         "kind: Flow",
         "metadata:",
         "  id: t4kw6k4qpw8a7tjw",
@@ -1801,7 +1900,7 @@ describe("Pragma YAML DSL", () => {
     await writeFile(
       join(root, "flow.pragma.yaml"),
       [
-        "apiVersion: pragma/v4",
+        "apiVersion: pragma/v5",
         "kind: Flow",
         "metadata:",
         "  id: t4kw6k4qpw8a7tjw",
@@ -1840,7 +1939,7 @@ describe("Pragma YAML DSL", () => {
     await writeFile(
       join(root, "flow.pragma.yaml"),
       [
-        "apiVersion: pragma/v4",
+        "apiVersion: pragma/v5",
         "kind: Flow",
         "metadata:",
         "  id: 5yts78payhvmtw04",
@@ -1864,7 +1963,7 @@ describe("Pragma YAML DSL", () => {
     await writeFile(
       entry,
       formatPragmaYaml({
-        apiVersion: "pragma/v4",
+        apiVersion: "pragma/v5",
         kind: "Bundle",
         imports: [],
         resources: [runtimeProfile(), expertResource("1xddvess309a6gme", "Writes")],
@@ -1906,7 +2005,7 @@ describe("Pragma YAML DSL", () => {
     await writeFile(
       entry,
       formatPragmaYaml({
-        apiVersion: "pragma/v4",
+        apiVersion: "pragma/v5",
         kind: "Bundle",
         imports: [],
         resources: [runtimeProfile(), expertResource("1xddvess309a6gme", "Writes")],
@@ -1943,7 +2042,7 @@ describe("Pragma YAML DSL", () => {
     await writeFile(
       entry,
       formatPragmaYaml({
-        apiVersion: "pragma/v4",
+        apiVersion: "pragma/v5",
         kind: "Bundle",
         imports: [],
         resources: [runtimeProfile(), expertResource("1xddvess309a6gme", "Writes")],
@@ -1990,14 +2089,14 @@ describe("Pragma YAML DSL", () => {
     await writeFile(
       entry,
       formatPragmaYaml({
-        apiVersion: "pragma/v4",
+        apiVersion: "pragma/v5",
         kind: "Bundle",
         imports: [],
         resources: [
           runtimeProfile(),
           expert,
           {
-            apiVersion: "pragma/v4",
+            apiVersion: "pragma/v5",
             kind: "Capability",
             metadata: {
               id: "pcr7npvx0gv8fpka",
@@ -2062,7 +2161,7 @@ describe("Pragma YAML DSL", () => {
     await writeFile(
       join(root, "pragma.yaml"),
       formatPragmaYaml({
-        apiVersion: "pragma/v4",
+        apiVersion: "pragma/v5",
         kind: "Bundle",
         imports: [],
         resources: [
@@ -2137,7 +2236,7 @@ describe("Pragma YAML DSL", () => {
     await writeFile(
       join(root, "pragma.yaml"),
       formatPragmaYaml({
-        apiVersion: "pragma/v4",
+        apiVersion: "pragma/v5",
         kind: "Bundle",
         imports: [],
         resources: [
@@ -2255,7 +2354,7 @@ describe("Pragma YAML DSL", () => {
 
 function runtimeProfile() {
   return {
-    apiVersion: "pragma/v4" as const,
+    apiVersion: "pragma/v5" as const,
     kind: "RuntimeProfile" as const,
     metadata: {
       id: "knr7p5b7qc55wv92",
@@ -2285,7 +2384,7 @@ function expertSpec(scope = "writing") {
 
 function expertResource(id: string, description: string) {
   return {
-    apiVersion: "pragma/v4" as const,
+    apiVersion: "pragma/v5" as const,
     kind: "Expert" as const,
     metadata: {
       id,

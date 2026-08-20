@@ -132,7 +132,7 @@ const plugin: DesktopPlugin = {
 
 const resources = [
   PragmaExpertResourceSchema.parse({
-    apiVersion: "pragma/v4",
+    apiVersion: "pragma/v5",
     kind: "Expert",
     metadata: {
       id: "1h2j3k4m5n6p7q8r",
@@ -143,7 +143,7 @@ const resources = [
     spec: { scope: "Research", instructions: "Research." },
   }),
   PragmaExpertResourceSchema.parse({
-    apiVersion: "pragma/v4",
+    apiVersion: "pragma/v5",
     kind: "Expert",
     metadata: {
       id: "2h3j4k5m6n7p8q9r",

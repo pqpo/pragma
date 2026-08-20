@@ -21,7 +21,7 @@ export function createFlowRunDryEvaluation(
   flow: PragmaFlowResource,
 ): PragmaFlowRunDryEvaluationResource {
   return {
-    apiVersion: "pragma/v4",
+    apiVersion: "pragma/v5",
     kind: "Evaluation",
     metadata: {
       id: resourceId,

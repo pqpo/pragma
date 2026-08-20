@@ -98,7 +98,7 @@ export function createDesktopCapabilityResource(input: {
   const option = input.owner === "default-agent-option";
   const system = input.owner === "system-expert-customization";
   return PragmaCapabilityResourceSchema.parse({
-    apiVersion: "pragma/v4",
+    apiVersion: "pragma/v5",
     kind: "Capability",
     metadata: {
       id: desktopCapabilityResourceId(input.owner, input.capabilityId),
@@ -182,7 +182,7 @@ export function createDesktopContextResource(input: {
 }): PragmaContextStoreResource {
   const system = input.owner === "system-expert-customization";
   return PragmaContextStoreResourceSchema.parse({
-    apiVersion: "pragma/v4",
+    apiVersion: "pragma/v5",
     kind: "ContextStore",
     metadata: {
       id: desktopContextResourceId(input.owner, input.storeId),
@@ -259,7 +259,7 @@ function createRuntimeResourceWithId(
   },
 ): PragmaRuntimeProfileResource {
   return PragmaRuntimeProfileResourceSchema.parse({
-    apiVersion: "pragma/v4",
+    apiVersion: "pragma/v5",
     kind: "RuntimeProfile",
     metadata: {
       id,
@@ -279,7 +279,7 @@ export function createDesktopRuntimeOptionResource(input: {
   readonly description: string;
 }): PragmaRuntimeProfileResource {
   return PragmaRuntimeProfileResourceSchema.parse({
-    apiVersion: "pragma/v4",
+    apiVersion: "pragma/v5",
     kind: "RuntimeProfile",
     metadata: {
       id: desktopRuntimeOptionResourceId(input.runtimeId, input.providerId, input.modelId),

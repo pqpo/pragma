@@ -11,7 +11,7 @@ describe("team Memory ContextStore browser", () => {
     const writer = expert("1xddvess309a6gme", "Writer");
     const reviewer = expert("3sfd30h5017wd17d", "Reviewer");
     const team = PragmaExpertTeamResourceSchema.parse({
-      apiVersion: "pragma/v4",
+      apiVersion: "pragma/v5",
       kind: "ExpertTeam",
       metadata: {
         id: "vyv9pwwzaksth2dd",
@@ -107,7 +107,7 @@ describe("team Memory ContextStore browser", () => {
     const writer = expert("1xddvess309a6gme", "Writer");
     const reviewer = expert("3sfd30h5017wd17d", "Reviewer");
     const team = PragmaExpertTeamResourceSchema.parse({
-      apiVersion: "pragma/v4",
+      apiVersion: "pragma/v5",
       kind: "ExpertTeam",
       metadata: {
         id: "vyv9pwwzaksth2dd",
@@ -156,7 +156,7 @@ describe("team Memory ContextStore browser", () => {
 
 function expert(id: string, name: string): PragmaExpertResource {
   return {
-    apiVersion: "pragma/v4",
+    apiVersion: "pragma/v5",
     kind: "Expert",
     metadata: {
       id,

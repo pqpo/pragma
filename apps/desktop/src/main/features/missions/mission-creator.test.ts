@@ -117,7 +117,7 @@ describe("MissionCreator", () => {
     await mkdir(workspace);
     const project = createPragmaProjectStore({ projectsPath: join(root, "projects") });
     const flow = {
-      apiVersion: "pragma/v4" as const,
+      apiVersion: "pragma/v5" as const,
       kind: "Flow" as const,
       metadata: {
         id: "5gdqkvfwb19p5rj7",

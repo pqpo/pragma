@@ -111,7 +111,7 @@ describe("PragmaProjectStore", () => {
       revision: 1,
       resources: [
         expect.objectContaining({
-          apiVersion: "pragma/v4",
+          apiVersion: "pragma/v5",
           kind: "Flow",
           metadata: expect.objectContaining({ id: expectedId, name: "Release" }),
         }),
@@ -141,7 +141,7 @@ describe("PragmaProjectStore", () => {
     expect(head).toMatchObject({ revision: 2 });
     expect(first.listResources()).toEqual([
       expect.objectContaining({
-        apiVersion: "pragma/v4",
+        apiVersion: "pragma/v5",
         metadata: expect.objectContaining({ id: expectedId }),
       }),
     ]);
@@ -171,7 +171,7 @@ describe("PragmaProjectStore", () => {
       (resource): resource is PragmaExpertTeamResource => resource.kind === "ExpertTeam",
     );
 
-    expect(team?.spec.delegation.allow).toEqual({ [codingId]: [reviewerId] });
+    expect(team?.spec.delegation.permissions.spawn).toEqual({ [codingId]: [reviewerId] });
     expect(team?.spec.delegation.runtimes).toEqual({
       [codingId]: `runtime-profile:${runtimeId}`,
     });
@@ -342,7 +342,7 @@ describe("PragmaProjectStore", () => {
     expect(compilerViews).toHaveLength(1);
     await expect(
       readFile(join(directory, ".cache", "views", compilerViews[0]!, "pragma.lock.yaml"), "utf8"),
-    ).resolves.toContain("compilerVersion: pragma.dsl/v7");
+    ).resolves.toContain("compilerVersion: pragma.dsl/v8");
     expect((await readdir(directory)).some((name) => name.startsWith("studio.v4-backup-"))).toBe(
       false,
     );
@@ -424,7 +424,7 @@ describe("PragmaProjectStore", () => {
     expect(migrated).toMatchObject({ revision: 1 });
     expect(await readFile(projectManifestPath, "utf8")).toContain("pragma.desktop-project/v4");
     expect(await projectRevisionFile(directory, 1, "pragma.lock.yaml")).toContain(
-      "compilerVersion: pragma.dsl/v7",
+      "compilerVersion: pragma.dsl/v8",
     );
   });
 
@@ -688,7 +688,7 @@ describe("PragmaProjectStore", () => {
   it("applies Flow support profiles atomically and prunes them after the last reference is removed", async () => {
     const { project } = await stores();
     const flowRuntime: PragmaRuntimeProfileResource = {
-      apiVersion: "pragma/v4",
+      apiVersion: "pragma/v5",
       kind: "RuntimeProfile",
       metadata: {
         id: "w640he159ex8q8rd",
@@ -894,7 +894,7 @@ describe("PragmaProjectStore", () => {
   it("reserves the Store Revision Agent target Context identity", async () => {
     const { project } = await stores();
     const resource: PragmaContextStoreResource = {
-      apiVersion: "pragma/v4",
+      apiVersion: "pragma/v5",
       kind: "ContextStore",
       metadata: {
         id: "0000000000st0ctx",
@@ -970,7 +970,7 @@ describe("PragmaProjectStore", () => {
     const { project } = await stores();
     const flow = exampleFlow();
     const evaluation: PragmaEvaluationResource = {
-      apiVersion: "pragma/v4",
+      apiVersion: "pragma/v5",
       kind: "Evaluation",
       metadata: {
         id: "7h8j9k0m1n2p3q4r",
@@ -1556,7 +1556,7 @@ describe("PragmaProjectStore", () => {
 function exampleExpert(id = "writer"): PragmaExpertResource {
   const resourceId = id === "writer" ? "1xddvess309a6gme" : "3sfd30h5017wd17d";
   return {
-    apiVersion: "pragma/v4",
+    apiVersion: "pragma/v5",
     kind: "Expert",
     metadata: {
       id: resourceId,
@@ -1583,7 +1583,7 @@ function exampleExpert(id = "writer"): PragmaExpertResource {
 
 function exampleRuntime(expertId = "writer"): PragmaRuntimeProfileResource {
   return {
-    apiVersion: "pragma/v4",
+    apiVersion: "pragma/v5",
     kind: "RuntimeProfile",
     metadata: {
       id: expertId === "writer" ? "zdkgs0fde4xt00vr" : "v3b460tasfhyf22d",
@@ -1600,7 +1600,7 @@ function exampleRuntime(expertId = "writer"): PragmaRuntimeProfileResource {
 
 function exampleTeam(id = "reviewers"): PragmaExpertTeamResource {
   return {
-    apiVersion: "pragma/v4",
+    apiVersion: "pragma/v5",
     kind: "ExpertTeam",
     metadata: {
       id: id === "reviewers" ? "p8cbn3cg2avyksn4" : "r8ggx4n4219hrc2p",
@@ -1614,6 +1614,7 @@ function exampleTeam(id = "reviewers"): PragmaExpertTeamResource {
       members: [{ ref: "expert:1xddvess309a6gme" }],
       contextStores: [],
       delegation: {
+        permissions: { interact: {} },
         maxConcurrency: 2,
         maxDepth: 2,
         context: "context-policy:pragma.fresh@v1",
@@ -1640,7 +1641,7 @@ function remoteRuntime(): PragmaRuntimeProfileResource {
 
 function portableCapability(): PragmaCapabilityResource {
   return {
-    apiVersion: "pragma/v4",
+    apiVersion: "pragma/v5",
     kind: "Capability",
     metadata: {
       id: "nv27faxmxpqnxwqr",
@@ -1666,7 +1667,7 @@ function desktopManagedCapability(
   } = {},
 ): PragmaCapabilityResource {
   return {
-    apiVersion: "pragma/v4",
+    apiVersion: "pragma/v5",
     kind: "Capability",
     metadata: {
       id: resourceId,
@@ -1687,7 +1688,7 @@ function desktopManagedContextStore(
   resourceId: string,
 ): PragmaContextStoreResource {
   return {
-    apiVersion: "pragma/v4",
+    apiVersion: "pragma/v5",
     kind: "ContextStore",
     metadata: {
       id: resourceId,
@@ -1705,7 +1706,7 @@ function desktopManagedContextStore(
 
 function portableContextStore(): PragmaContextStoreResource {
   return {
-    apiVersion: "pragma/v4",
+    apiVersion: "pragma/v5",
     kind: "ContextStore",
     metadata: {
       id: "1ymdp8c7rvxs4d3v",
@@ -1722,7 +1723,7 @@ function portableContextStore(): PragmaContextStoreResource {
 
 function exampleFlow(id = "release"): PragmaFlowResource {
   return {
-    apiVersion: "pragma/v4",
+    apiVersion: "pragma/v5",
     kind: "Flow",
     metadata: {
       id: id === "release" ? "t1e73vjvctx49gkq" : "ceq0qxcgdv75wg6b",
@@ -1746,7 +1747,7 @@ function exampleFlow(id = "release"): PragmaFlowResource {
 
 function exampleAutomation(): PragmaAutomationResource {
   return {
-    apiVersion: "pragma/v4",
+    apiVersion: "pragma/v5",
     kind: "Automation",
     metadata: {
       id: "hrxn3mv2e991j2rj",

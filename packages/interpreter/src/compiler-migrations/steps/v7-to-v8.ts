@@ -3,14 +3,14 @@ import { parsePragmaYaml } from "../../compiler/pragma-project.ts";
 import { sha256, stableStringify } from "../../compiler/compiler-hash.ts";
 import { migratePragmaV4ResourceToCurrent } from "../../migrations/steps/v4-to-v5.ts";
 import {
-  PragmaCompilerV6BundleSchema,
-  PragmaCompilerV6LockSchema,
-  PragmaCompilerV6ResourceSchema,
-  type PragmaCompilerV6Resource,
-} from "../schemas/v6.ts";
+  PragmaCompilerV7BundleSchema,
+  PragmaCompilerV7LockSchema,
+  PragmaCompilerV7ResourceSchema,
+  type PragmaCompilerV7Resource,
+} from "../schemas/v7.ts";
 import { PragmaCompilerMigrationError } from "../types.ts";
 
-export function migratePragmaCompilerV6Project(input: {
+export function migratePragmaCompilerV7Project(input: {
   readonly files: ReadonlyMap<string, string>;
   readonly revisionCompilerVersion: string;
 }): {
@@ -21,49 +21,47 @@ export function migratePragmaCompilerV6Project(input: {
   if (lockSource === undefined) {
     throw new PragmaCompilerMigrationError(
       "lock_missing",
-      "Compiler v6 project revision is missing pragma.lock.yaml.",
+      "Compiler v7 project revision is missing pragma.lock.yaml.",
     );
   }
   let lock;
   try {
-    lock = PragmaCompilerV6LockSchema.parse(parsePragmaYaml(lockSource));
+    lock = PragmaCompilerV7LockSchema.parse(parsePragmaYaml(lockSource));
   } catch (error) {
     throw new PragmaCompilerMigrationError(
       "invalid_legacy_project",
-      "Compiler v6 project revision has an invalid pragma.lock.yaml.",
+      "Compiler v7 project revision has an invalid pragma.lock.yaml.",
       { cause: error },
     );
   }
-  if (
-    input.revisionCompilerVersion !== "pragma.dsl/v6" ||
-    lock.compilerVersion !== input.revisionCompilerVersion
-  ) {
+  if (input.revisionCompilerVersion !== "pragma.dsl/v7") {
     throw new PragmaCompilerMigrationError(
       "compiler_metadata_mismatch",
       `Project revision metadata declares ${input.revisionCompilerVersion}, but pragma.lock.yaml declares ${lock.compilerVersion}.`,
     );
   }
 
-  const indexed: {
-    readonly historical: PragmaCompilerV6Resource;
-    readonly resource: PragmaResource;
-    readonly source: string;
-  }[] = [];
+  const indexed: Array<{
+    historical: PragmaCompilerV7Resource;
+    resource: PragmaResource;
+    source: string;
+  }> = [];
   const managed = new Set(["pragma.yaml", "pragma.lock.yaml"]);
   for (const [source, contents] of input.files) {
     if (source !== "pragma.yaml" && !source.endsWith(".pragma.yaml")) continue;
     try {
       const value = parsePragmaYaml(contents);
       if (isRecord(value) && value["kind"] === "Bundle") {
-        const bundle = PragmaCompilerV6BundleSchema.parse(value);
-        for (const historical of bundle.resources)
+        const bundle = PragmaCompilerV7BundleSchema.parse(value);
+        for (const historical of bundle.resources) {
           indexed.push({
             historical,
             resource: migratePragmaV4ResourceToCurrent(historical),
             source,
           });
+        }
       } else if (isRecord(value) && typeof value["kind"] === "string" && value["kind"] !== "Lock") {
-        const historical = PragmaCompilerV6ResourceSchema.parse(value);
+        const historical = PragmaCompilerV7ResourceSchema.parse(value);
         indexed.push({
           historical,
           resource: migratePragmaV4ResourceToCurrent(historical),
@@ -76,7 +74,7 @@ export function migratePragmaCompilerV6Project(input: {
     } catch (error) {
       throw new PragmaCompilerMigrationError(
         "invalid_legacy_project",
-        `Compiler v6 resource cannot be upgraded to pragma.dsl/v7: ${source}.`,
+        `Compiler v7 resource cannot be upgraded to pragma.dsl/v8: ${source}.`,
         { cause: error },
       );
     }
@@ -114,7 +112,7 @@ export function migratePragmaCompilerV6Project(input: {
   if (mismatches.length > 0 || fingerprint !== lock.projectFingerprint) {
     throw new PragmaCompilerMigrationError(
       "lock_mismatch",
-      `Compiler v6 project revision does not match its lock: ${mismatches.join(", ") || "project fingerprint"}.`,
+      `Compiler v7 project revision does not match its lock: ${mismatches.join(", ") || "project fingerprint"}.`,
     );
   }
   return {

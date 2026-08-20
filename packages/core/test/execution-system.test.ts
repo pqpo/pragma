@@ -1507,7 +1507,7 @@ describe("ExpertSession", () => {
       id: "team",
       coordinator: lead,
       members: [member],
-      delegation: { allow: { lead: ["member"], member: [] } },
+      delegation: {},
     });
     const session = await app.experts.createSession(expert);
     const one = await session.prompt("one", { requestId: "one" });
@@ -1659,7 +1659,7 @@ describe("ExpertSession", () => {
       id: "wait-steer-team",
       coordinator: lead,
       members: [member],
-      delegation: { allow: { lead: ["member"], member: [] } },
+      delegation: {},
     });
     const session = await app.experts.createSession(team);
     const active = await session.prompt("coordinate", { requestId: "coordinate" });
@@ -1667,6 +1667,7 @@ describe("ExpertSession", () => {
       const tree = await active.getTree();
       expect(tree.children.some((child) => child.invocation.executorId === "member")).toBe(true);
     });
+    await new Promise<void>((resolve) => setTimeout(resolve, 50));
     const steered = await session.prompt("change priorities", {
       requestId: "wait-steer",
       mode: "steer",
@@ -1784,7 +1785,7 @@ describe("ExpertSession", () => {
       id: "team-fresh-agents",
       coordinator: lead,
       members: [member],
-      delegation: { allow: { lead: ["member"], member: [] } },
+      delegation: {},
     });
     const session = await app.experts.createSession(team);
     const first = await session.prompt("one", { requestId: "one" });
@@ -1850,7 +1851,6 @@ describe("ExpertSession", () => {
       coordinator: lead,
       members: [member],
       delegation: {
-        allow: { lead: ["member"], member: [] },
         runtimeByExpert: { member: "fake-b" },
       },
     });
@@ -2492,7 +2492,7 @@ describe("FlowExecution", () => {
       id: "governed-team",
       coordinator,
       members: [member],
-      delegation: { allow: { coordinator: ["member"] } },
+      delegation: {},
     });
     const flow = defineFlow({ id: "governed-team-flow" });
 
@@ -2808,7 +2808,7 @@ describe("FlowExecution", () => {
       id: "review-team",
       coordinator: expert,
       members: [],
-      delegation: { allow: { [expert.id]: [] } },
+      delegation: {},
     });
     const flow = defineFlow({
       id: "mapped-input-flow",
@@ -3546,6 +3546,128 @@ describe("Expert lifecycle orchestration", () => {
     return { output, tree, events: events.items, stats };
   }
 
+  it("discovers permitted peer instances and explicitly falls back from unsupported steer", async () => {
+    const home = await mkdtemp(join(tmpdir(), "pragma-peer-collaboration-"));
+    let markBackendStarted!: () => void;
+    const backendStarted = new Promise<void>((resolve) => {
+      markBackendStarted = resolve;
+    });
+    const runtime = defineRuntimeDriver<never, FakeSession>({
+      features: createRuntimeTestFeatures({ enabled: ["close"] }),
+      descriptor: { id: "peer-collaboration", kind: "fake", displayName: "Peer collaboration" },
+      createSession: (context) => ({ context, id: `native-${context.systemSessionId}` }),
+      readSession: (session) => ({ runtimeSessionId: session.id }),
+      async startTurn(session, turn) {
+        const expertId = session.context.agent.id;
+        const execution = session.context.request.executionContext;
+        const call = async (name: string, input: unknown) => {
+          const tool = session.context.agent.tools?.find((candidate) => candidate.name === name);
+          if (tool === undefined) throw new Error(`Missing collaboration tool: ${name}`);
+          const result = await tool.call(input, turn.signal, { execution });
+          if (result.isError === true) throw new Error(result.text);
+          return result.details as Record<string, unknown>;
+        };
+        if (expertId === "backend") {
+          if (turn.rawQuery === "backend-work") {
+            markBackendStarted();
+            await new Promise<void>((resolve) => setTimeout(resolve, 100));
+          }
+          return { outputText: `backend:${turn.rawQuery}`, runtimeSessionId: session.id };
+        }
+        if (expertId === "frontend") {
+          const backend = await call("spawn_expert", {
+            expertId: "backend",
+            prompt: "backend-work",
+          });
+          await backendStarted;
+          const discovery = await call("list_agents", { expertId: "backend" });
+          const agents = discovery["agents"] as Array<{
+            agentId: string;
+            activeInvocation: { invocationId: string };
+          }>;
+          expect(agents).toHaveLength(1);
+          const fallback = await call("steer_expert", {
+            agentId: agents[0]!.agentId,
+            invocationId: agents[0]!.activeInvocation.invocationId,
+            message: "apply-peer-guidance",
+            fallback: "followup",
+          });
+          expect(fallback["outcome"]).toBe("followup_queued");
+          const waited = await call("wait_experts", {
+            invocationIds: [fallback["invocationId"]],
+          });
+          await call("wait_experts", { invocationIds: [backend["invocationId"]] });
+          return { outputText: `frontend:${JSON.stringify(waited)}`, runtimeSessionId: session.id };
+        }
+        const frontend = await call("spawn_expert", {
+          expertId: "frontend",
+          prompt: "frontend-work",
+        });
+        await call("wait_experts", { invocationIds: [frontend["invocationId"]] });
+        const discovery = await call("list_agents", {});
+        const agents = discovery["agents"] as Array<{
+          agentId: string;
+          expertId: string;
+          assignedBy: { invocationId: string; expertId: string; agentId?: string };
+          permissions: { canInterrupt: boolean };
+        }>;
+        const frontendAgent = agents.find((agent) => agent.expertId === "frontend")!;
+        const backendAgent = agents.find((agent) => agent.expertId === "backend")!;
+        expect(backendAgent.assignedBy).toMatchObject({
+          expertId: "frontend",
+          agentId: frontendAgent.agentId,
+        });
+        expect(agents.every((agent) => agent.permissions.canInterrupt)).toBe(true);
+        return { outputText: "lead:done", runtimeSessionId: session.id };
+      },
+      mapEvent: () => ({ events: [] }),
+      closeSession: () => undefined,
+    });
+    const app = createPragma({
+      pragmaHome: home,
+      runtimes: createStaticRuntimeResolver({
+        runtimes: [runtime],
+        defaultRuntimeId: runtime.descriptor.id,
+      }),
+    });
+    const defineMember = async (id: string) =>
+      await defineExpert({
+        id,
+        name: id,
+        description: id,
+        tags: [],
+        scope: "test",
+        workspace: home,
+        pragmaHome: home,
+      });
+    const [lead, frontend, backend] = await Promise.all(
+      ["lead", "frontend", "backend"].map(defineMember),
+    );
+    const team = defineExpertTeam({
+      id: "peer-team",
+      coordinator: lead!,
+      members: [frontend!, backend!],
+      delegation: {
+        permissions: {
+          spawn: { frontend: ["backend"] },
+        },
+        maxConcurrency: 2,
+      },
+    });
+    const session = await app.experts.createSession(team);
+    const turn = await session.prompt("coordinate", { requestId: "peer-collaboration" });
+    await expect(turn.result).resolves.toBe("lead:done");
+    const events = await turn.listEvents({ scope: { kind: "all" }, limit: 1_000 });
+    expect(events.items.map((event) => event.type)).toEqual(
+      expect.arrayContaining([
+        "agent.steer.requested",
+        "agent.steer.rejected",
+        "agent.steer.fallback_queued",
+      ]),
+    );
+    await session.close();
+  });
+
   it("starts independent spawned Experts concurrently", async () => {
     const result = await runScenario("parallel", ["member-a", "member-b"]);
     expect(result.tree.children).toHaveLength(2);
@@ -3828,8 +3950,9 @@ describe("Expert delegation declarations", () => {
     expect(launcher.tools.map((tool) => tool.name)).toEqual([
       "spawn_expert",
       "wait_experts",
-      "list_experts",
+      "list_agents",
       "followup_expert",
+      "steer_expert",
       "interrupt_expert",
     ]);
     expect(readAgentDelegationDefinition({ ...launcher.tools[0]! })?.experts).toEqual([expert]);
@@ -3892,7 +4015,7 @@ describe("Expert delegation declarations", () => {
     ).rejects.toThrow("timeoutMs must be an integer between 30000 and 3600000");
   });
 
-  it("resolves ExpertTeam allowlists through the shared launcher definition", async () => {
+  it("resolves ExpertTeam permissions through the shared launcher definition", async () => {
     const { home, expert: lead } = await fixture();
     const member = await defineExpert({
       id: "member",
@@ -3907,7 +4030,7 @@ describe("Expert delegation declarations", () => {
       coordinator: lead,
       members: [member],
       delegation: {
-        allow: { solo: ["member"], member: ["solo"] },
+        permissions: { spawn: { member: ["solo"] } },
         runtimeByExpert: { member: "fake-member", solo: "fake-lead" },
       },
     });
@@ -3917,15 +4040,21 @@ describe("Expert delegation declarations", () => {
     const memberTool = memberTools[0];
 
     expect(readAgentDelegationDefinition(leadTool!)?.experts).toEqual([member]);
+    expect(readAgentDelegationDefinition(leadTool!)?.isCoordinator).toBe(true);
+    expect(readAgentDelegationDefinition(leadTool!)?.spawnExpertIds).toEqual(new Set(["member"]));
+    expect(readAgentDelegationDefinition(leadTool!)?.interactExpertIds).toEqual(
+      new Set(["solo", "member"]),
+    );
     expect(readAgentDelegationDefinition(memberTool!)?.experts).toEqual([lead]);
+    expect(readAgentDelegationDefinition(memberTool!)?.isCoordinator).toBe(false);
     expect(readAgentDelegationDefinition(leadTool!)?.runtimeByExpert).toEqual(
       new Map([["member", "fake-member"]]),
     );
     expect(readAgentDelegationDefinition(memberTool!)?.runtimeByExpert).toEqual(
       new Map([["solo", "fake-lead"]]),
     );
-    expect(leadTools).toHaveLength(5);
-    expect(memberTools).toHaveLength(5);
+    expect(leadTools).toHaveLength(6);
+    expect(memberTools).toHaveLength(6);
     expect(leadTool?.description).toContain(
       `- ${member.id}: ${member.name}. ${member.description}`,
     );
@@ -3952,7 +4081,9 @@ describe("Expert delegation declarations", () => {
     expect(
       readAgentDelegationDefinition(createTeamDelegationTools(team, "solo")[0]!)?.experts,
     ).toEqual([member]);
-    expect(createTeamDelegationTools(team, "member")).toEqual([]);
+    expect(createTeamDelegationTools(team, "member").map((tool) => tool.name)).toEqual([
+      "list_agents",
+    ]);
     expect(team.delegation.maxConcurrency).toBe(4);
     expect(team.delegation.maxDepth).toBe(3);
     expect(team.delegation.runtimeByExpert).toEqual(new Map());
@@ -4082,15 +4213,31 @@ describe("Expert delegation declarations", () => {
   });
 
   it("validates allowlists and limits", async () => {
-    const { expert } = await fixture();
+    const { expert, home } = await fixture();
+    const member = await defineExpert({
+      id: "member",
+      name: "Member",
+      description: "Member",
+      tags: [],
+      scope: "test",
+      workspace: home,
+    });
     expect(() =>
       defineExpertTeam({
         id: "invalid",
         coordinator: expert,
-        members: [],
-        delegation: { allow: { solo: ["missing"] } },
+        members: [member],
+        delegation: { permissions: { spawn: { member: ["missing"] } } },
       }),
     ).toThrow("unknown");
+    expect(() =>
+      defineExpertTeam({
+        id: "invalid-coordinator-permission",
+        coordinator: expert,
+        members: [member],
+        delegation: { permissions: { interact: { solo: ["member"] } } },
+      }),
+    ).toThrow("coordinator authority is system-inherited");
     expect(() =>
       defineExpertTeam({
         id: "invalid-runtime-route",

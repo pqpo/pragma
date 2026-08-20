@@ -37,9 +37,14 @@ function describeDefinition(definition: ExpertDefinition, ancestors: Set<string>
         visibility: binding.visibility,
       })),
       delegation: {
-        allow: [...definition.delegation.allow.entries()]
-          .sort(([left], [right]) => left.localeCompare(right))
-          .map(([source, targets]) => [source, [...targets].sort()]),
+        permissions: {
+          spawn: [...definition.delegation.permissions.spawn.entries()]
+            .sort(([left], [right]) => left.localeCompare(right))
+            .map(([source, targets]) => [source, [...targets].sort()]),
+          interact: [...definition.delegation.permissions.interact.entries()]
+            .sort(([left], [right]) => left.localeCompare(right))
+            .map(([source, targets]) => [source, [...targets].sort()]),
+        },
         maxConcurrency: definition.delegation.maxConcurrency,
         maxDepth: definition.delegation.maxDepth,
         contextId: describeContextIdResolver(definition.delegation.contextId),
@@ -85,6 +90,9 @@ function describeLauncher(definition: Expert, ancestors: Set<string>): unknown {
     experts: launcher.experts
       .map((expert) => describeDefinition(expert, ancestors))
       .sort((left, right) => descriptorId(left).localeCompare(descriptorId(right))),
+    spawnExpertIds: [...launcher.spawnExpertIds].sort(),
+    interactExpertIds: [...launcher.interactExpertIds].sort(),
+    isCoordinator: launcher.isCoordinator,
     maxConcurrency: launcher.maxConcurrency,
     maxDepth: launcher.maxDepth,
     contextId: describeContextIdResolver(launcher.contextId),

@@ -4,7 +4,7 @@ import type { PragmaExpertResource, PragmaExpertTeamResource } from "@pragma/int
 import { expertTeamCoordinatorAvatarId } from "./avatars.ts";
 
 const expert: PragmaExpertResource = {
-  apiVersion: "pragma/v4",
+  apiVersion: "pragma/v5",
   kind: "Expert",
   metadata: {
     id: "1xddvess309a6gme",
@@ -25,7 +25,7 @@ const expert: PragmaExpertResource = {
 };
 
 const team: PragmaExpertTeamResource = {
-  apiVersion: "pragma/v4",
+  apiVersion: "pragma/v5",
   kind: "ExpertTeam",
   metadata: {
     id: "p8cbn3cg2avyksn4",
@@ -39,6 +39,7 @@ const team: PragmaExpertTeamResource = {
     members: [],
     contextStores: [],
     delegation: {
+      permissions: { interact: {} },
       maxConcurrency: 1,
       maxDepth: 1,
       context: "context-policy:pragma.fresh@v1",

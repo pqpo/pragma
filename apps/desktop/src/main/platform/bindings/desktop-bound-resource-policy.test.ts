@@ -86,7 +86,7 @@ describe("desktop bound resource policy", () => {
     });
 
     const importedContext = PragmaContextStoreResourceSchema.parse({
-      apiVersion: "pragma/v4",
+      apiVersion: "pragma/v5",
       kind: "ContextStore",
       metadata: {
         id: "1ymdp8c7rvxs4d3v",
@@ -104,7 +104,7 @@ describe("desktop bound resource policy", () => {
 
   it("reuses exact ContextStore and RuntimeProfile identities on no-op edits", () => {
     const context = PragmaContextStoreResourceSchema.parse({
-      apiVersion: "pragma/v4",
+      apiVersion: "pragma/v5",
       kind: "ContextStore",
       metadata: {
         id: "r8ggx4n4219hrc2p",
@@ -127,7 +127,7 @@ describe("desktop bound resource policy", () => {
     ).toEqual(context);
 
     const runtime = PragmaRuntimeProfileResourceSchema.parse({
-      apiVersion: "pragma/v4",
+      apiVersion: "pragma/v5",
       kind: "RuntimeProfile",
       metadata: {
         id: "20k21q9j9wexjv50",
@@ -154,7 +154,7 @@ describe("desktop bound resource policy", () => {
 
 function capability(id: string, tags: string[], revision: number) {
   return PragmaCapabilityResourceSchema.parse({
-    apiVersion: "pragma/v4",
+    apiVersion: "pragma/v5",
     kind: "Capability",
     metadata: {
       id,

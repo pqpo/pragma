@@ -1,4 +1,4 @@
-apiVersion: pragma/v4
+apiVersion: pragma/v5
 kind: ContextStore
 metadata:
   id: 0000000000st0ctx

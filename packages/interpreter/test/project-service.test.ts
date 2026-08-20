@@ -371,7 +371,7 @@ async function createRepository(): Promise<
 
 function skill(): PragmaCapabilityResource {
   return {
-    apiVersion: "pragma/v4",
+    apiVersion: "pragma/v5",
     kind: "Capability",
     metadata: {
       id: "d5zzezmprnyqzmhk",
@@ -391,7 +391,7 @@ function skill(): PragmaCapabilityResource {
 
 function flowWithExternalExpert(expertRef: `expert:${string}`): PragmaFlowResource {
   return {
-    apiVersion: "pragma/v4",
+    apiVersion: "pragma/v5",
     kind: "Flow",
     metadata: {
       id: "0000000000000002",
@@ -418,7 +418,7 @@ function flowWithExternalExpert(expertRef: `expert:${string}`): PragmaFlowResour
 
 function runtime(): PragmaRuntimeProfileResource {
   return {
-    apiVersion: "pragma/v4",
+    apiVersion: "pragma/v5",
     kind: "RuntimeProfile",
     metadata: {
       id: "rdzgnq05qfqcpqcm",
@@ -432,7 +432,7 @@ function runtime(): PragmaRuntimeProfileResource {
 
 function expert(): PragmaExpertResource {
   return {
-    apiVersion: "pragma/v4",
+    apiVersion: "pragma/v5",
     kind: "Expert",
     metadata: {
       id: "1xddvess309a6gme",

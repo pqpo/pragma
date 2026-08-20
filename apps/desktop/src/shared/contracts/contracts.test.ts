@@ -215,8 +215,8 @@ describe("runtime settings contracts", () => {
         status: "ready",
       },
       interpreter: {
-        writeVersion: "pragma.dsl/v7",
-        directReadVersions: ["pragma.dsl/v7"],
+        writeVersion: "pragma.dsl/v8",
+        directReadVersions: ["pragma.dsl/v8"],
         upgradeFromVersions: [
           "pragma.dsl/v2",
           "pragma.dsl/v3",
@@ -268,8 +268,8 @@ describe("runtime settings contracts", () => {
       DesktopBridgeSnapshotSchema.safeParse({
         ...snapshot,
         interpreter: {
-          writeVersion: "pragma.dsl/v7",
-          directReadVersions: ["pragma.dsl/v7"],
+          writeVersion: "pragma.dsl/v8",
+          directReadVersions: ["pragma.dsl/v8"],
           upgradeFromVersions: [],
         },
       }).success,
@@ -285,7 +285,7 @@ describe("runtime settings contracts", () => {
 describe("Pragma project change-set contracts", () => {
   it("requires at least one upsert and defaults removals", () => {
     const resource = {
-      apiVersion: "pragma/v4" as const,
+      apiVersion: "pragma/v5" as const,
       kind: "RuntimeProfile" as const,
       metadata: {
         id: "hct7g5mmh9vzz5tt",

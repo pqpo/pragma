@@ -7,6 +7,7 @@ import { normalizePragmaResourceName } from "../ast/resource-identity.ts";
 import { parsePragmaYaml } from "../compiler/pragma-project.ts";
 import { pragmaDslV2ToV3Step } from "./steps/v2-to-v3.ts";
 import { pragmaDslV3ToV4Step } from "./steps/v3-to-v4.ts";
+import { pragmaDslV4ToV5Step } from "./steps/v4-to-v5.ts";
 import {
   PragmaDslMigrationError,
   type PragmaDslApiVersion,
@@ -30,11 +31,12 @@ export {
   type PragmaResourceIdentityMigrationIndex,
 } from "./resource-identity-index.ts";
 
-export const PRAGMA_DSL_MIGRATION_CHAIN_VERSION = "pragma.dsl-migrations/v2";
+export const PRAGMA_DSL_MIGRATION_CHAIN_VERSION = "pragma.dsl-migrations/v3";
 
 const migrationSteps = [
   pragmaDslV2ToV3Step,
   pragmaDslV3ToV4Step,
+  pragmaDslV4ToV5Step,
 ] as const satisfies readonly PragmaDslMigrationStep[];
 const migrationStepsBySource = indexMigrationSteps(migrationSteps);
 const managedKinds = new Set([

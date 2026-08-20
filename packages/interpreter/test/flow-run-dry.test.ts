@@ -131,7 +131,7 @@ function reviewFixture(): {
   readonly evaluation: PragmaFlowRunDryEvaluationResource;
 } {
   const flow = PragmaFlowResourceSchema.parse({
-    apiVersion: "pragma/v4",
+    apiVersion: "pragma/v5",
     kind: "Flow",
     metadata: {
       id: "8h9j0k1m2n3p4q5r",
@@ -219,7 +219,7 @@ function reviewFixture(): {
   });
   const input = { goal: "Ship" };
   const evaluation = PragmaFlowRunDryEvaluationResourceSchema.parse({
-    apiVersion: "pragma/v4",
+    apiVersion: "pragma/v5",
     kind: "Evaluation",
     metadata: {
       id: "7h8j9k0m1n2p3q4r",

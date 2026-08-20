@@ -120,7 +120,7 @@ describe("Desktop PragmaAgent DSL project adapter", () => {
     const root = await mkdtemp(join(tmpdir(), "pragma-default-agent-existing-runtime-"));
     const project = createPragmaProjectStore({ projectsPath: join(root, "projects") });
     const runtime = PragmaRuntimeProfileResourceSchema.parse({
-      apiVersion: "pragma/v4",
+      apiVersion: "pragma/v5",
       kind: "RuntimeProfile",
       metadata: {
         id: "2h3j4k5m6n7p8q9r",
@@ -379,7 +379,7 @@ describe("Desktop PragmaAgent DSL project adapter", () => {
     const root = await mkdtemp(join(tmpdir(), "pragma-default-agent-nested-flow-draft-"));
     const project = createPragmaProjectStore({ projectsPath: join(root, "projects") });
     const child = PragmaFlowResourceSchema.parse({
-      apiVersion: "pragma/v4",
+      apiVersion: "pragma/v5",
       kind: "Flow",
       metadata: {
         id: "7k2m9q4v8np6r3dt",
@@ -676,7 +676,7 @@ function requirePrepared<
 
 function expert(description: string, runtimeRef: string, id = "1xddvess309a6gme"): string {
   return [
-    "apiVersion: pragma/v4",
+    "apiVersion: pragma/v5",
     "kind: Expert",
     "metadata:",
     `  id: ${id}`,
@@ -699,7 +699,7 @@ function expert(description: string, runtimeRef: string, id = "1xddvess309a6gme"
 
 function evaluationSource(flowId: string): string {
   return [
-    "apiVersion: pragma/v4",
+    "apiVersion: pragma/v5",
     "kind: Evaluation",
     "metadata:",
     "  id: 7h8j9k0m1n2p3q4r",
@@ -728,7 +728,7 @@ function evaluationSource(flowId: string): string {
 
 function automationWithPrompt(prompt: string): string {
   return [
-    "apiVersion: pragma/v4",
+    "apiVersion: pragma/v5",
     "kind: Automation",
     "metadata:",
     "  id: 55af1v8nmn4j0h3z",
@@ -761,7 +761,7 @@ function automationWithPrompt(prompt: string): string {
 
 function approvalRouteFlow() {
   return PragmaFlowResourceSchema.parse({
-    apiVersion: "pragma/v4",
+    apiVersion: "pragma/v5",
     kind: "Flow",
     metadata: {
       id: "8h9j0k1m2n3p4q5r",

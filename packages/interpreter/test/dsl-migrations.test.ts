@@ -52,7 +52,7 @@ describe("Pragma DSL project migrations", () => {
       (resource) => resource.kind === "Expert" && resource.metadata.id === writerId,
     );
     expect(writer).toMatchObject({
-      apiVersion: "pragma/v4",
+      apiVersion: "pragma/v5",
       metadata: { avatarId: DEFAULT_PRAGMA_EXPERT_AVATAR_ID },
       spec: {
         runtime: { ref: `runtime-profile:${runtimeId}` },
@@ -67,7 +67,7 @@ describe("Pragma DSL project migrations", () => {
         coordinator: { ref: `expert:${writerId}` },
         members: [{ ref: `expert:${reviewerId}` }],
         delegation: {
-          allow: { [writerId]: [reviewerId] },
+          permissions: { interact: {} },
           runtimes: { [reviewerId]: `runtime-profile:${runtimeId}` },
         },
       },
@@ -99,16 +99,16 @@ describe("Pragma DSL project migrations", () => {
 
     expect(result).toMatchObject({
       sourceApiVersion: "pragma/v3",
-      targetApiVersion: "pragma/v4",
+      targetApiVersion: "pragma/v5",
       migrated: true,
       resources: [
         expect.objectContaining({
-          apiVersion: "pragma/v4",
+          apiVersion: "pragma/v5",
           kind: "Expert",
           metadata: expect.objectContaining({ avatarId: DEFAULT_PRAGMA_EXPERT_AVATAR_ID }),
         }),
         expect.objectContaining({
-          apiVersion: "pragma/v4",
+          apiVersion: "pragma/v5",
           kind: "ExpertTeam",
           metadata: expect.objectContaining({ avatarId: DEFAULT_PRAGMA_EXPERT_TEAM_AVATAR_ID }),
         }),
@@ -123,21 +123,21 @@ describe("Pragma DSL project migrations", () => {
       [
         "pragma.yaml",
         formatPragmaYaml({
-          apiVersion: "pragma/v4",
+          apiVersion: "pragma/v5",
           kind: "Bundle",
           imports: ["./capabilities/repo.pragma.yaml"],
           resources: [],
         }),
       ],
       ["capabilities/repo.pragma.yaml", formatPragmaYaml(resource)],
-      ["pragma.lock.yaml", "apiVersion: pragma/v4\nkind: Lock\n"],
+      ["pragma.lock.yaml", "apiVersion: pragma/v5\nkind: Lock\n"],
       ["README.md", "hello\n"],
     ]);
 
-    expect(inspectPragmaProjectApiVersion(files)).toBe("pragma/v4");
+    expect(inspectPragmaProjectApiVersion(files)).toBe("pragma/v5");
     expect(migratePragmaDslProjectToCurrent({ projectId: "studio", files })).toMatchObject({
-      sourceApiVersion: "pragma/v4",
-      targetApiVersion: "pragma/v4",
+      sourceApiVersion: "pragma/v5",
+      targetApiVersion: "pragma/v5",
       migrated: false,
       resources: [resource],
       identityMigrations: [],
@@ -154,7 +154,7 @@ describe("Pragma DSL project migrations", () => {
     );
 
     const future = new Map([
-      ["pragma.yaml", "apiVersion: pragma/v5\nkind: Bundle\nimports: []\nresources: []\n"],
+      ["pragma.yaml", "apiVersion: pragma/v6\nkind: Bundle\nimports: []\nresources: []\n"],
     ]);
     expect(() => migratePragmaDslProjectToCurrent({ projectId: "studio", files: future })).toThrow(
       expect.objectContaining<Partial<PragmaDslMigrationError>>({
@@ -439,7 +439,7 @@ function v2Resources(): LegacyResourceFixture[] {
 
 function currentCapability() {
   return {
-    apiVersion: "pragma/v4" as const,
+    apiVersion: "pragma/v5" as const,
     kind: "Capability" as const,
     metadata: {
       id: "1h2j3k4m5n6p7q8r",

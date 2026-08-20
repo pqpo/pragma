@@ -2,22 +2,22 @@ import { z } from "zod";
 
 import { PragmaV4SemanticResourceSchema } from "../../migrations/schemas/v4.ts";
 
-export const PragmaCompilerV6ResourceSchema = PragmaV4SemanticResourceSchema;
+export const PragmaCompilerV7ResourceSchema = PragmaV4SemanticResourceSchema;
 
-export const PragmaCompilerV6BundleSchema = z
+export const PragmaCompilerV7BundleSchema = z
   .object({
     apiVersion: z.literal("pragma/v4"),
     kind: z.literal("Bundle"),
     imports: z.array(z.string().trim().min(1)).default([]),
-    resources: z.array(PragmaCompilerV6ResourceSchema).default([]),
+    resources: z.array(PragmaCompilerV7ResourceSchema).default([]),
   })
   .strict();
 
-export const PragmaCompilerV6LockSchema = z
+export const PragmaCompilerV7LockSchema = z
   .object({
     apiVersion: z.literal("pragma/v4"),
     kind: z.literal("Lock"),
-    compilerVersion: z.literal("pragma.dsl/v6"),
+    compilerVersion: z.literal("pragma.dsl/v7"),
     projectFingerprint: z.string().regex(/^[a-f0-9]{64}$/u),
     resources: z.array(
       z
@@ -41,4 +41,4 @@ export const PragmaCompilerV6LockSchema = z
   })
   .strict();
 
-export type PragmaCompilerV6Resource = z.infer<typeof PragmaCompilerV6ResourceSchema>;
+export type PragmaCompilerV7Resource = z.infer<typeof PragmaCompilerV7ResourceSchema>;

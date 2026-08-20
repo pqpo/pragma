@@ -27,7 +27,7 @@ Pragma DSL 要解决的问题不是“用 YAML 少写几行代码”，而是建
 
 只保存 Prompt 会丢失绝大部分运行条件；只导出应用数据库则无法跨 Host 使用。Pragma DSL 因此只保存可移植语义，把机器相关环境留给 Host Binding。
 
-当前代码中的语言版本是 `pragma/v4`，支持八种闭合语义资源：
+当前代码中的语言版本是 `pragma/v5`，支持八种闭合语义资源：
 
 ```text
 Expert
@@ -147,7 +147,7 @@ Agent 平台通常同时存在多种版本。如果共用一个 `version` 字段
 Pragma 明确区分：
 
 ```text
-DSL apiVersion          语言格式版本，当前为 pragma/v4
+DSL apiVersion          语言格式版本，当前为 pragma/v5
 compilerVersion         编译语义版本，当前写入 pragma.dsl/v6
 Project revision        不可变项目内容序号
 Host schemaVersion      Execution、Session、IPC 等持久协议版本

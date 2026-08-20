@@ -1779,7 +1779,7 @@ class PragmaProjectImpl implements PragmaProject {
           members: members as Expert[],
           contextStores,
           delegation: {
-            allow: indexed.resource.spec.delegation.allow,
+            permissions: indexed.resource.spec.delegation.permissions,
             maxConcurrency: indexed.resource.spec.delegation.maxConcurrency,
             maxDepth: indexed.resource.spec.delegation.maxDepth,
             contextId: contextPolicies.resolve(indexed.resource.spec.delegation.context),
@@ -1901,7 +1901,7 @@ class PragmaProjectImpl implements PragmaProject {
     const mode = options.split ?? "preserve";
     if (mode === "single") {
       const bundle = PragmaBundleSchema.parse({
-        apiVersion: "pragma/v4",
+        apiVersion: "pragma/v5",
         kind: "Bundle",
         resources: this.listResources(),
       });
@@ -1917,7 +1917,7 @@ class PragmaProjectImpl implements PragmaProject {
     files.set(
       "pragma.yaml",
       stringify({
-        apiVersion: "pragma/v4",
+        apiVersion: "pragma/v5",
         kind: "Bundle",
         imports: imports.sort(),
         resources: [],
@@ -1960,7 +1960,7 @@ class PragmaProjectImpl implements PragmaProject {
       })
       .toSorted();
     const projectBundle = {
-      apiVersion: "pragma/v4" as const,
+      apiVersion: "pragma/v5" as const,
       kind: "Bundle" as const,
       imports: resourcePaths.map((path) => `./${path}`),
     };
@@ -1990,7 +1990,7 @@ class PragmaProjectImpl implements PragmaProject {
       }),
     );
     const lock = PragmaLockSchema.parse({
-      apiVersion: "pragma/v4",
+      apiVersion: "pragma/v5",
       kind: "Lock",
       compilerVersion: PRAGMA_COMPILER_WRITE_VERSION,
       projectFingerprint,
@@ -2089,7 +2089,7 @@ class PragmaProjectImpl implements PragmaProject {
       .map(([source, contentHash]) => ({ source, contentHash }))
       .toSorted((left, right) => left.source.localeCompare(right.source));
     return {
-      apiVersion: "pragma/v4",
+      apiVersion: "pragma/v5",
       kind: "Lock",
       compilerVersion: PRAGMA_COMPILER_WRITE_VERSION,
       projectFingerprint: sha256(
@@ -3495,13 +3495,7 @@ async function collectSelectedBundleArtifacts(
       if (source.type === "project") {
         const absolute = await assertPathInsideRoot(projectRoot, resolve(projectRoot, source.path));
         artifacts.set(source.path, await hashArtifactPath(absolute));
-        await collectArtifactFiles(
-          absolute,
-          source.path,
-          projectRoot,
-          files,
-          reservedPaths,
-        );
+        await collectArtifactFiles(absolute, source.path, projectRoot, files, reservedPaths);
       } else {
         artifacts.set(source.uri, source.integrity.slice("sha256:".length));
       }

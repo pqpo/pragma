@@ -970,7 +970,7 @@ export function datasetFromForm(
   value: DatasetFormState,
 ): PragmaAgentJudgeEvaluationResource {
   return {
-    apiVersion: "pragma/v4",
+    apiVersion: "pragma/v5",
     kind: "Evaluation",
     metadata: {
       id: resourceId,
@@ -1017,7 +1017,7 @@ function agentDatasets(project: PragmaProjectSnapshot): PragmaAgentJudgeEvaluati
 }
 
 function datasetTemplate(id: string): string {
-  return `apiVersion: pragma/v4
+  return `apiVersion: pragma/v5
 kind: Evaluation
 metadata:
   id: ${id}

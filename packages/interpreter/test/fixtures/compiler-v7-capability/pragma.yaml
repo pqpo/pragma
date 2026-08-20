@@ -1,9 +1,9 @@
-apiVersion: pragma/v5
+apiVersion: pragma/v4
 kind: Capability
 metadata:
   id: 1h2j3k4m5n6p7q8r
   name: Author Pragma DSL
-  description: Instructions and references for authoring validated pragma/v5 resources.
+  description: Instructions and references for authoring validated pragma/v4 resources.
   tags: [builtin, pragma, default-agent, skill]
 spec:
   adapter: pragma.capability.skill@v1

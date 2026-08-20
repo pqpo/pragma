@@ -19,7 +19,7 @@ import { AutomationDetailFragment } from "./AutomationDetailFragment.tsx";
 const automation: AutomationSummary = {
   ref: "automation:hrxn3mv2e991j2rj",
   resource: {
-    apiVersion: "pragma/v4",
+    apiVersion: "pragma/v5",
     kind: "Automation",
     metadata: {
       id: "hrxn3mv2e991j2rj",

@@ -43,9 +43,9 @@ describe("portable .pragma bundles", () => {
     );
     expect(strFromU8(decoded.files.get("project/pragma.yaml")!)).not.toContain("kind: Expert");
     expect(strFromU8(decoded.files.get("project/pragma.yaml")!)).not.toContain("resources:");
-    expect(
-      strFromU8(decoded.files.get("project/experts/1xddvess309a6gme.pragma.yaml")!),
-    ).toContain("kind: Expert");
+    expect(strFromU8(decoded.files.get("project/experts/1xddvess309a6gme.pragma.yaml")!)).toContain(
+      "kind: Expert",
+    );
     expect(
       strFromU8(decoded.files.get("project/runtime-profiles/knr7p5b7qc55wv92.pragma.yaml")!),
     ).toContain("kind: RuntimeProfile");
@@ -358,12 +358,12 @@ describe("portable .pragma bundles", () => {
     await writeFile(
       entry,
       formatPragmaYaml({
-        apiVersion: "pragma/v4",
+        apiVersion: "pragma/v5",
         kind: "Bundle",
         resources: [
           runtimeResource(),
           {
-            apiVersion: "pragma/v4",
+            apiVersion: "pragma/v5",
             kind: "ContextStore",
             metadata: {
               id: "w01fppfxrn31gf7v",
@@ -405,7 +405,7 @@ async function createProject(withCapability = false): Promise<{ root: string; en
   const resources: unknown[] = [runtimeResource()];
   if (withCapability) {
     resources.push({
-      apiVersion: "pragma/v4",
+      apiVersion: "pragma/v5",
       kind: "Capability",
       metadata: {
         id: "j35188zs37g69g0n",
@@ -421,13 +421,13 @@ async function createProject(withCapability = false): Promise<{ root: string; en
     });
   }
   resources.push(expertResource(withCapability));
-  await writeFile(entry, formatPragmaYaml({ apiVersion: "pragma/v4", kind: "Bundle", resources }));
+  await writeFile(entry, formatPragmaYaml({ apiVersion: "pragma/v5", kind: "Bundle", resources }));
   return { root, entry };
 }
 
 function runtimeResource() {
   return {
-    apiVersion: "pragma/v4" as const,
+    apiVersion: "pragma/v5" as const,
     kind: "RuntimeProfile" as const,
     metadata: {
       id: "knr7p5b7qc55wv92",
@@ -441,7 +441,7 @@ function runtimeResource() {
 
 function expertResource(withCapability: boolean) {
   return {
-    apiVersion: "pragma/v4",
+    apiVersion: "pragma/v5",
     kind: "Expert",
     metadata: {
       id: "1xddvess309a6gme",

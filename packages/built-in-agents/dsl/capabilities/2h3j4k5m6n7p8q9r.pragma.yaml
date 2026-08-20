@@ -1,4 +1,4 @@
-apiVersion: pragma/v4
+apiVersion: pragma/v5
 kind: Capability
 metadata:
   id: 2h3j4k5m6n7p8q9r

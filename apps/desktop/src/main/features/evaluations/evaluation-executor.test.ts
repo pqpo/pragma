@@ -198,7 +198,7 @@ function projectFixture(): PragmaProjectStore {
       return {
         listResources: () => [
           {
-            apiVersion: "pragma/v4",
+            apiVersion: "pragma/v5",
             kind: "Expert",
             metadata: {
               id: "6h7j8k9m0n1p2q3r",
@@ -244,7 +244,7 @@ function runFixture() {
     selectionSeed: "seed",
     selectedCaseIds: ["lookup"],
     dataset: {
-      apiVersion: "pragma/v4",
+      apiVersion: "pragma/v5",
       kind: "Evaluation",
       metadata: {
         id: "7h8j9k0m1n2p3q4r",

@@ -116,7 +116,7 @@ describe("Automation Service", () => {
 
   it("maps schema-less Flow prompts through the normal Mission goal input", () => {
     const resource = PragmaAutomationResourceSchema.parse({
-      apiVersion: "pragma/v4",
+      apiVersion: "pragma/v5",
       kind: "Automation",
       metadata: {
         id: "m9a8n9nxvvyb4j01",
@@ -154,7 +154,7 @@ describe("Automation Service", () => {
   it("persists recoverable legacy Automation Mission sources", async () => {
     const now = "2026-07-23T08:00:00.000Z";
     const resource = PragmaAutomationResourceSchema.parse({
-      apiVersion: "pragma/v4",
+      apiVersion: "pragma/v5",
       kind: "Automation",
       metadata: {
         id: "m9a8n9nxvvyb4j01",
@@ -244,7 +244,7 @@ describe("Automation Service", () => {
   it("queues a manual trigger through the normal Automation event pipeline", async () => {
     const now = new Date("2026-07-23T08:00:00.000Z");
     const resource = PragmaAutomationResourceSchema.parse({
-      apiVersion: "pragma/v4",
+      apiVersion: "pragma/v5",
       kind: "Automation",
       metadata: {
         id: "m9a8n9nxvvyb4j01",

@@ -22,7 +22,7 @@ function exportRoot(index: number): ExportRoot {
   const kind = (["Expert", "ExpertTeam", "Flow"] as const)[index % 3] ?? "Expert";
   const id = index.toString(32).padStart(16, "0");
   return {
-    apiVersion: "pragma/v4",
+    apiVersion: "pragma/v5",
     kind,
     metadata: {
       id,

@@ -237,9 +237,11 @@ function rewriteResourceIdentity(
         });
       }
     }
-    if (rewritten.spec.delegation.allow !== undefined) {
-      rewritten.spec.delegation.allow = Object.fromEntries(
-        Object.entries(rewritten.spec.delegation.allow).map(([expertId, members]) => {
+    for (const permission of ["spawn", "interact"] as const) {
+      const configured = rewritten.spec.delegation.permissions[permission];
+      if (configured === undefined) continue;
+      rewritten.spec.delegation.permissions[permission] = Object.fromEntries(
+        Object.entries(configured).map(([expertId, members]) => {
           const targetExpert = refMap.get(`expert:${expertId}` as PragmaResourceRef);
           return [
             targetExpert?.slice("expert:".length) ?? expertId,

@@ -71,7 +71,7 @@ describe("Agent evaluation", () => {
   it("rejects mock fixtures in a live dataset", () => {
     expect(
       PragmaAgentJudgeEvaluationResourceSchema.safeParse({
-        apiVersion: "pragma/v4",
+        apiVersion: "pragma/v5",
         kind: "Evaluation",
         metadata: {
           id: "7h8j9k0m1n2p3q4r",
@@ -109,7 +109,7 @@ describe("Agent evaluation", () => {
 
   it("rejects duplicate case IDs across an agent-judge dataset", () => {
     const resource = {
-      apiVersion: "pragma/v4",
+      apiVersion: "pragma/v5",
       kind: "Evaluation",
       metadata: {
         id: "7h8j9k0m1n2p3q4r",

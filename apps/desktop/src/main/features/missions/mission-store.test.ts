@@ -1016,7 +1016,7 @@ async function temporaryRoot(): Promise<string> {
 
 function expertFixture(): PragmaExpertResource {
   return {
-    apiVersion: "pragma/v4",
+    apiVersion: "pragma/v5",
     kind: "Expert",
     metadata: {
       id: "v2vt1v01vzz6j24q",

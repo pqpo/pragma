@@ -246,7 +246,7 @@ export const PragmaFlowRunDrySuiteSchema = z
 
 export const PragmaFlowRunDryEvaluationResourceSchema = z
   .object({
-    apiVersion: z.literal("pragma/v4"),
+    apiVersion: z.literal("pragma/v5"),
     kind: z.literal("Evaluation"),
     metadata: PragmaEvaluationMetadataSchema,
     spec: z
@@ -265,7 +265,7 @@ export const PragmaFlowRunDryEvaluationResourceSchema = z
 
 export const PragmaAgentJudgeEvaluationResourceSchema = z
   .object({
-    apiVersion: z.literal("pragma/v4"),
+    apiVersion: z.literal("pragma/v5"),
     kind: z.literal("Evaluation"),
     metadata: PragmaEvaluationMetadataSchema,
     spec: z

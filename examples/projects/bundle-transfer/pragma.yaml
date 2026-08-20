@@ -1,7 +1,7 @@
-apiVersion: pragma/v4
+apiVersion: pragma/v5
 kind: Bundle
 resources:
-  - apiVersion: pragma/v4
+  - apiVersion: pragma/v5
     kind: RuntimeProfile
     metadata:
       id: knr7p5b7qc55wv92
@@ -13,7 +13,7 @@ resources:
       config:
         runtimeId: example-runtime
 
-  - apiVersion: pragma/v4
+  - apiVersion: pragma/v5
     kind: Capability
     metadata:
       id: j35188zs37g69g0n
@@ -26,7 +26,7 @@ resources:
         source: { type: project, path: skill }
         entry: SKILL.md
 
-  - apiVersion: pragma/v4
+  - apiVersion: pragma/v5
     kind: Capability
     metadata:
       id: ygypdtr7bfev740a
@@ -40,7 +40,7 @@ resources:
         serverKey: documentation
         timeoutMs: 10000
 
-  - apiVersion: pragma/v4
+  - apiVersion: pragma/v5
     kind: ContextStore
     metadata:
       id: w01fppfxrn31gf7v
@@ -52,7 +52,7 @@ resources:
       config:
         source: { type: project, path: knowledge }
 
-  - apiVersion: pragma/v4
+  - apiVersion: pragma/v5
     kind: Expert
     metadata:
       id: 1xddvess309a6gme

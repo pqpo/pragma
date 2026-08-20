@@ -242,7 +242,7 @@ export function AutomationDirectoryFragment(props: {
       const saved = await api.saveAutomation({
         expectedProjectRevision: props.project.revision,
         resource: {
-          apiVersion: "pragma/v4",
+          apiVersion: "pragma/v5",
           kind: "Automation",
           metadata: {
             id: editor.id,

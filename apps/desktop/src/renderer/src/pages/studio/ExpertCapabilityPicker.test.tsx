@@ -69,7 +69,7 @@ const contextStore = {
 } satisfies ContextStore;
 
 const invocableResource = PragmaExpertResourceSchema.parse({
-  apiVersion: "pragma/v4",
+  apiVersion: "pragma/v5",
   kind: "Expert",
   metadata: {
     id: "0000000000000001",
