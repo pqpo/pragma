@@ -291,9 +291,13 @@
   border: 0;
   border-radius: 9px;
   background: transparent;
-  color: var(--faint);
+  color: var(--ui-text-secondary);
   cursor: pointer;
   font-size: 12px;
+}
+
+.mission-chat-options .mission-context-store-trigger:disabled {
+  color: var(--ui-text-disabled);
 }
 
 .mission-context-store-trigger:hover:not(:disabled) {

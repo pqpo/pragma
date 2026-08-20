@@ -175,7 +175,7 @@ export function RuntimeEnvironmentDetail(props: {
                   <span>{t("runtimes.thinkingLevels", { ns: "settings" })}</span>
                   <p>
                     {model.thinking === undefined
-                      ? t("runtimes.notReported", { ns: "settings" })
+                      ? t("runtimes.defaultOnly", { ns: "settings" })
                       : model.thinking.supportedLevels.map((level) => level.label).join(", ")}
                   </p>
                 </div>

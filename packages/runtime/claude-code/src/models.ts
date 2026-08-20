@@ -2,8 +2,18 @@ import { readFile } from "node:fs/promises";
 import { homedir } from "node:os";
 import { join } from "node:path";
 
+import {
+  parseRuntimeModelCatalogModels,
+  readRuntimeModelCatalogCache,
+  retryRuntimeModelDiscovery,
+  writeRuntimeModelCatalogCache,
+} from "@pragma/core";
 import { runRuntimeCommand } from "@pragma/core/runtime/process-probe";
-import type { RuntimeModel, RuntimeThinkingLevel } from "@pragma/core/runtime/runtime-adapter";
+import type {
+  RuntimeModel,
+  RuntimeModelDiscoveryOptions,
+  RuntimeThinkingLevel,
+} from "@pragma/core/runtime/runtime-adapter";
 import { BoundedLruCache } from "@pragma/shared";
 
 import type { ClaudeCodeRuntimeAdapterOptions } from "./types.ts";
@@ -13,6 +23,11 @@ interface CatalogCacheEntry {
   readonly expiresAt: number;
   readonly retryAt?: number | undefined;
   readonly models: readonly RuntimeModel[];
+}
+
+interface CatalogRefreshResult {
+  readonly models: readonly RuntimeModel[];
+  readonly fresh: boolean;
 }
 
 interface ClaudeModelDefinition {
@@ -36,7 +51,7 @@ const DISCOVERY_TTL_MS = 10 * 60 * 1_000;
 const DISCOVERY_RETRY_DELAY_MS = 30 * 1_000;
 const CATALOG_CACHE_CAPACITY = 64;
 const catalogCache = new BoundedLruCache<string, CatalogCacheEntry>(CATALOG_CACHE_CAPACITY);
-const catalogRefreshes = new Map<string, Promise<readonly RuntimeModel[]>>();
+const catalogRefreshes = new Map<string, Promise<CatalogRefreshResult>>();
 const customSpawnIds = new WeakMap<NonNullable<ClaudeCodeRuntimeAdapterOptions["spawn"]>, number>();
 let nextCustomSpawnId = 1;
 const EFFORT_PATTERN = /--effort\s*(?:<[^>]+>)?\s*(?:Effort level[^(]*)?\(([^)]+)\)/;
@@ -97,8 +112,8 @@ const ROLE_MODEL_ENV_KEYS = {
 
 export function createClaudeCodeModelDiscovery(
   options: ClaudeCodeRuntimeAdapterOptions,
-): () => Promise<readonly RuntimeModel[]> {
-  return async () => {
+): (request?: RuntimeModelDiscoveryOptions) => Promise<readonly RuntimeModel[]> {
+  return async (request = {}) => {
     const command =
       options.spawn === undefined
         ? resolveClaudeCodeCommand(options)
@@ -115,8 +130,35 @@ export function createClaudeCodeModelDiscovery(
       command.launcherArgs,
       routing.fingerprint,
       options.spawn,
+      options.modelCatalogCacheRoot,
     );
     const cached = catalogCache.get(cacheKey);
+    const persisted =
+      cached === undefined || request.forceRefresh === true
+        ? await readRuntimeModelCatalogCache(
+            {
+              runtimeId: "claude-code",
+              cacheKey,
+              cacheRoot: options.modelCatalogCacheRoot,
+            },
+            parseRuntimeModelCatalogModels,
+          )
+        : undefined;
+    const fallback = cached?.models ?? persisted;
+
+    if (request.forceRefresh === true) {
+      const result = await refreshClaudeCodeModelCatalog({
+        cacheKey,
+        executablePath,
+        launcherArgs: command.launcherArgs,
+        env,
+        options,
+        routing,
+        fallback,
+      });
+      if (result.fresh) notifyModelCatalogUpdated(options.onModelCatalogUpdated);
+      return result.models;
+    }
 
     if (cached !== undefined) {
       const now = Date.now();
@@ -130,21 +172,48 @@ export function createClaudeCodeModelDiscovery(
           routing,
         });
         void refresh.then(
-          () => notifyModelCatalogUpdated(options.onModelCatalogUpdated),
+          (result) => {
+            if (result.fresh) notifyModelCatalogUpdated(options.onModelCatalogUpdated);
+          },
           () => undefined,
         );
       }
       return cached.models;
     }
 
-    return await refreshClaudeCodeModelCatalog({
-      cacheKey,
-      executablePath,
-      launcherArgs: command.launcherArgs,
-      env,
-      options,
-      routing,
-    });
+    if (persisted !== undefined) {
+      catalogCache.set(cacheKey, {
+        expiresAt: Date.now(),
+        models: persisted,
+      });
+      const refresh = refreshClaudeCodeModelCatalog({
+        cacheKey,
+        executablePath,
+        launcherArgs: command.launcherArgs,
+        env,
+        options,
+        routing,
+        fallback: persisted,
+      });
+      void refresh.then(
+        (result) => {
+          if (result.fresh) notifyModelCatalogUpdated(options.onModelCatalogUpdated);
+        },
+        () => undefined,
+      );
+      return persisted;
+    }
+
+    return (
+      await refreshClaudeCodeModelCatalog({
+        cacheKey,
+        executablePath,
+        launcherArgs: command.launcherArgs,
+        env,
+        options,
+        routing,
+      })
+    ).models;
   };
 }
 
@@ -155,30 +224,58 @@ function refreshClaudeCodeModelCatalog(input: {
   readonly env: NodeJS.ProcessEnv;
   readonly options: ClaudeCodeRuntimeAdapterOptions;
   readonly routing: ClaudeModelRoutingConfig;
-}): Promise<readonly RuntimeModel[]> {
+  readonly fallback?: readonly RuntimeModel[] | undefined;
+}): Promise<CatalogRefreshResult> {
   const activeRefresh = catalogRefreshes.get(input.cacheKey);
   if (activeRefresh !== undefined) return activeRefresh;
 
   const refresh = (async () => {
-    const discoveredEffortLevels = await discoverClaudeEffortLevels(
-      input.options,
-      input.launcherArgs,
-      input.executablePath,
-      input.env,
-    );
-    if (discoveredEffortLevels === undefined && catalogCache.get(input.cacheKey) !== undefined) {
-      throw new Error("Claude Code effort-level discovery failed.");
-    }
-    const effortLevels = discoveredEffortLevels ?? [];
-    const models = input.routing.mappedProvider
-      ? buildClaudeMappedModels(input.routing, effortLevels)
-      : buildClaudeModels(effortLevels);
+    try {
+      const discoveredEffortLevels = await discoverClaudeEffortLevels(
+        input.options,
+        input.launcherArgs,
+        input.executablePath,
+        input.env,
+      );
+      if (
+        discoveredEffortLevels === undefined &&
+        (catalogCache.get(input.cacheKey)?.models ?? input.fallback) !== undefined
+      ) {
+        throw new Error("Claude Code effort-level discovery failed.");
+      }
+      const effortLevels = discoveredEffortLevels ?? [];
+      const models = input.routing.mappedProvider
+        ? buildClaudeMappedModels(input.routing, effortLevels)
+        : buildClaudeModels(effortLevels);
+      if (models.length === 0) {
+        throw new Error("Claude Code model discovery returned no models.");
+      }
 
-    catalogCache.set(input.cacheKey, {
-      expiresAt: Date.now() + DISCOVERY_TTL_MS,
-      models,
-    });
-    return models;
+      catalogCache.set(input.cacheKey, {
+        expiresAt: Date.now() + DISCOVERY_TTL_MS,
+        models,
+      });
+      await writeRuntimeModelCatalogCache(
+        {
+          runtimeId: "claude-code",
+          cacheKey: input.cacheKey,
+          cacheRoot: input.options.modelCatalogCacheRoot,
+        },
+        models,
+      );
+      return { models, fresh: true };
+    } catch (error) {
+      const fallback = catalogCache.get(input.cacheKey)?.models ?? input.fallback;
+      if (fallback !== undefined) {
+        catalogCache.set(input.cacheKey, {
+          expiresAt: Date.now(),
+          retryAt: Date.now() + DISCOVERY_RETRY_DELAY_MS,
+          models: fallback,
+        });
+        return { models: fallback, fresh: false };
+      }
+      throw error;
+    }
   })().catch((error: unknown) => {
     const cached = catalogCache.get(input.cacheKey);
     if (cached !== undefined) {
@@ -213,12 +310,14 @@ function discoveryCacheKey(
   launcherArgs: readonly string[],
   routingFingerprint: string,
   spawn: ClaudeCodeRuntimeAdapterOptions["spawn"],
+  cacheRoot: string | undefined,
 ): string {
   const spawnId = customSpawnId(spawn);
   return [
     executablePath,
     JSON.stringify(launcherArgs),
     routingFingerprint,
+    cacheRoot ?? "default",
     spawnId === undefined ? "" : `spawn:${spawnId}`,
   ].join("\u0000");
 }
@@ -342,14 +441,20 @@ async function discoverClaudeEffortLevels(
   executablePath: string,
   env: NodeJS.ProcessEnv,
 ): Promise<readonly string[] | undefined> {
-  const helpResult = await runRuntimeCommand({
-    executablePath,
-    args: [...launcherArgs, "--help"],
-    cwd: process.cwd(),
-    env,
-    timeoutMs: 5_000,
-    outputLimit: 512 * 1024,
-    spawn: options.spawn,
+  const helpResult = await retryRuntimeModelDiscovery(async () => {
+    const result = await runRuntimeCommand({
+      executablePath,
+      args: [...launcherArgs, "--help"],
+      cwd: process.cwd(),
+      env,
+      timeoutMs: 5_000,
+      outputLimit: 512 * 1024,
+      spawn: options.spawn,
+    });
+    if (result.exitCode !== 0) {
+      throw new Error("Claude Code help probe failed.");
+    }
+    return result;
   }).catch(() => undefined);
   return helpResult?.exitCode === 0 ? parseClaudeEffortLevels(helpResult.stdout) : undefined;
 }

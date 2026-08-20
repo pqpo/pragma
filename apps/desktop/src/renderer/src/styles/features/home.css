@@ -740,6 +740,14 @@
   white-space: nowrap;
 }
 
+.mission-prompt-tools > .mission-context-store-trigger {
+  color: var(--ui-text-secondary);
+}
+
+.mission-prompt-tools > .mission-context-store-trigger:disabled {
+  color: var(--ui-text-disabled);
+}
+
 .mission-prompt-tools > button:hover {
   background: var(--surface-soft);
   color: var(--text);

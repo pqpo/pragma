@@ -3,7 +3,10 @@ import type {
   DesktopRuntimeAvailability,
   GetDesktopRuntimeAvailabilityOptions,
 } from "../../../shared/contracts/index.ts";
-import type { RuntimeEnvironmentInspection, RuntimeEnvironmentService } from "./runtime-environment-service.ts";
+import type {
+  RuntimeEnvironmentInspection,
+  RuntimeEnvironmentService,
+} from "./runtime-environment-service.ts";
 import { BUILT_IN_RUNTIME_DISPLAY_NAME } from "./runtime-environment-store.ts";
 
 const PROBE_CONCURRENCY_LIMIT = 2;
@@ -59,9 +62,9 @@ export async function getRuntimeAvailability(
 
         let availability: RuntimeCanUseResult;
         try {
-          const canUseFn = adapter.canUse as (
-            opts?: { forceRefresh?: boolean },
-          ) => Promise<RuntimeCanUseResult>;
+          const canUseFn = adapter.canUse as (opts?: {
+            forceRefresh?: boolean;
+          }) => Promise<RuntimeCanUseResult>;
           availability = await canUseFn(
             options?.forceRefresh === undefined ? {} : { forceRefresh: options.forceRefresh },
           );
@@ -74,23 +77,23 @@ export async function getRuntimeAvailability(
         let modelDiscoveryError: string | undefined;
         if (availability.usable && adapter.listModels !== undefined) {
           try {
-            models = (await adapter.listModels()).map(
-              ({ inputModalities, thinking, ...model }) => ({
-                ...model,
-                provider: { ...model.provider },
-                ...(inputModalities === undefined
-                  ? {}
-                  : { inputModalities: [...inputModalities] }),
-                ...(thinking === undefined
-                  ? {}
-                  : {
-                      thinking: {
-                        ...thinking,
-                        supportedLevels: thinking.supportedLevels.map((level) => ({ ...level })),
-                      },
-                    }),
-              }),
-            );
+            const discoveredModels =
+              options?.forceRefresh === true
+                ? await adapter.listModels({ forceRefresh: true })
+                : await adapter.listModels();
+            models = discoveredModels.map(({ inputModalities, thinking, ...model }) => ({
+              ...model,
+              provider: { ...model.provider },
+              ...(inputModalities === undefined ? {} : { inputModalities: [...inputModalities] }),
+              ...(thinking === undefined
+                ? {}
+                : {
+                    thinking: {
+                      ...thinking,
+                      supportedLevels: thinking.supportedLevels.map((level) => ({ ...level })),
+                    },
+                  }),
+            }));
           } catch (error) {
             modelDiscoveryError = errorMessage(error);
           }
@@ -133,9 +136,7 @@ export async function getRuntimeAvailability(
       id: runtimeId,
       isDefault: runtimeId === defaultRuntimeId,
       displayName:
-        runtimeId === "pi"
-          ? BUILT_IN_RUNTIME_DISPLAY_NAME
-          : (definition?.displayName ?? runtimeId),
+        runtimeId === "pi" ? BUILT_IN_RUNTIME_DISPLAY_NAME : (definition?.displayName ?? runtimeId),
       kind: definition?.adapter.id ?? "unknown",
       status: "unavailable",
       reason: inspection.error ?? "Runtime Environment availability is being checked.",

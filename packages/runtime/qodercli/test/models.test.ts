@@ -1,6 +1,9 @@
 import { randomUUID } from "node:crypto";
+import { mkdtemp, rm } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 
-import { beforeEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 const sdk = vi.hoisted(() => ({ query: vi.fn() }));
 
@@ -16,8 +19,15 @@ import {
 } from "../src/models.ts";
 
 describe("Qoder model mapping", () => {
-  beforeEach(() => {
+  let cacheRoot: string;
+
+  beforeEach(async () => {
     sdk.query.mockReset();
+    cacheRoot = await mkdtemp(join(tmpdir(), "pragma-qoder-model-cache-"));
+  });
+
+  afterEach(async () => {
+    await rm(cacheRoot, { recursive: true, force: true });
   });
 
   it("maps model defaults, thinking efforts, and provider identity", () => {
@@ -79,6 +89,7 @@ describe("Qoder model mapping", () => {
       executablePath: `/opt/qodercli-${randomUUID()}`,
       auth: { type: "qodercli" as const },
       env: { QODER_TEST_CATALOG: "same" },
+      modelCatalogCacheRoot: cacheRoot,
     };
     const first = createQoderCliModelDiscovery(options);
     const second = createQoderCliModelDiscovery(options);
@@ -109,10 +120,12 @@ describe("Qoder model mapping", () => {
     await createQoderCliModelDiscovery({
       executablePath: executable,
       env: { QODER_TEST_CATALOG: "first" },
+      modelCatalogCacheRoot: cacheRoot,
     })();
     await createQoderCliModelDiscovery({
       executablePath: executable,
       env: { QODER_TEST_CATALOG: "second" },
+      modelCatalogCacheRoot: cacheRoot,
     })();
 
     expect(sdk.query).toHaveBeenCalledTimes(2);

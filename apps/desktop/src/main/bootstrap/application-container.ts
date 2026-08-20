@@ -290,6 +290,7 @@ export async function createDesktopApplicationContainer(
     getToolPermissionMode,
     factories: createBuiltInRuntimeFactories({
       modelProviders: modelProviderStore,
+      modelCatalogCacheRoot: pragmaPaths.cacheRoot(),
       getToolPermissionMode,
       getRuntimeProcessEnvironment: runtimeProcessEnvironment.get,
       onModelCatalogUpdated: (runtimeId) => {

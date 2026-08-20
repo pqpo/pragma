@@ -143,7 +143,7 @@ export function MissionModelOverrideControls(props: {
         />
         <MenuSection
           active={activePanel === "thinking"}
-          disabled={thinkingLevels.length === 0}
+          disabled={effectiveModel === undefined}
           label={t("thinkingDepth")}
           value={thinkingLabel}
           onSelect={() => setActivePanel("thinking")}

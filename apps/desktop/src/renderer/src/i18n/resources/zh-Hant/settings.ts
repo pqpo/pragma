@@ -218,7 +218,7 @@ export const settings = {
     noModels: "此執行階段環境未回報任何模型。",
     modelId: "模型 ID",
     thinkingLevels: "思考層級",
-    notReported: "未回報",
+    defaultOnly: "僅預設",
     builtIn: "內建",
     registered: "已註冊",
     runtimeManaged: "執行階段管理",

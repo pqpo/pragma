@@ -88,6 +88,19 @@ describe("Claude Code model discovery cache", () => {
     ]);
   });
 
+  it("keeps the model catalog usable with only the default thinking option when help fails", async () => {
+    mocks.runRuntimeCommand.mockResolvedValue(commandResult("", 1));
+    const discovery = createClaudeCodeModelDiscovery(
+      discoveryOptions(`/claude/no-effort-${crypto.randomUUID()}`),
+    );
+
+    const models = await discovery();
+
+    expect(models).toHaveLength(11);
+    expect(models.every((model) => model.thinking === undefined)).toBe(true);
+    expect(mocks.runRuntimeCommand).toHaveBeenCalledTimes(2);
+  });
+
   it("returns stale models immediately, refreshes them, and notifies the host", async () => {
     vi.useFakeTimers();
     try {
@@ -118,7 +131,7 @@ describe("Claude Code model discovery cache", () => {
 
       finishRefresh?.(commandResult(helpOutput("low, medium, high")));
       await flushPromises();
-      expect(onModelCatalogUpdated).toHaveBeenCalledTimes(1);
+      await vi.waitFor(() => expect(onModelCatalogUpdated).toHaveBeenCalledTimes(1));
       const refreshed = await discovery();
       expect(refreshed[0]?.thinking?.supportedLevels.map((level) => level.value)).toEqual([
         "low",
@@ -136,9 +149,11 @@ describe("Claude Code model discovery cache", () => {
       mocks.runRuntimeCommand
         .mockResolvedValueOnce(commandResult(helpOutput("low, medium")))
         .mockResolvedValueOnce(commandResult("", 1))
+        .mockResolvedValueOnce(commandResult("", 1))
         .mockResolvedValueOnce(commandResult(helpOutput("low, medium, high")));
+      const onModelCatalogUpdated = vi.fn();
       const discovery = createClaudeCodeModelDiscovery(
-        discoveryOptions(`/claude/retry-${crypto.randomUUID()}`),
+        discoveryOptions(`/claude/retry-${crypto.randomUUID()}`, onModelCatalogUpdated),
       );
 
       const cached = await discovery();
@@ -147,13 +162,19 @@ describe("Claude Code model discovery cache", () => {
       await flushPromises();
 
       await expect(discovery()).resolves.toBe(cached);
-      expect(mocks.runRuntimeCommand).toHaveBeenCalledTimes(2);
+      expect(mocks.runRuntimeCommand).toHaveBeenCalledTimes(3);
+      expect(onModelCatalogUpdated).not.toHaveBeenCalled();
+      await flushPromises();
+      expect(mocks.runRuntimeCommand).toHaveBeenCalledTimes(3);
 
       await vi.advanceTimersByTimeAsync(30 * 1_000 + 1);
       await expect(discovery()).resolves.toBe(cached);
-      expect(mocks.runRuntimeCommand).toHaveBeenCalledTimes(3);
+      expect(mocks.runRuntimeCommand).toHaveBeenCalledTimes(4);
       await flushPromises();
-      await expect(discovery()).resolves.not.toBe(cached);
+      await vi.waitFor(async () => {
+        await expect(discovery()).resolves.not.toBe(cached);
+      });
+      await vi.waitFor(() => expect(onModelCatalogUpdated).toHaveBeenCalledTimes(1));
     } finally {
       vi.useRealTimers();
     }

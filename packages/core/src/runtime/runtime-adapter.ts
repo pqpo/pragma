@@ -109,6 +109,11 @@ export interface RuntimeModelSelection {
   readonly thinkingLevel?: string | undefined;
 }
 
+export interface RuntimeModelDiscoveryOptions {
+  /** Bypass in-memory and disk freshness shortcuts and perform a live probe. */
+  readonly forceRefresh?: boolean | undefined;
+}
+
 export type RuntimeOutputSchema<TOutput = unknown> = z.ZodType<TOutput>;
 
 export type RuntimeSessionRef = SharedRuntimeSessionRef;
@@ -236,5 +241,6 @@ export interface RuntimeAdapter {
   readonly canUse: (
     options?: Record<string, unknown>,
   ) => Promise<RuntimeCanUseResult> | RuntimeCanUseResult;
-  readonly listModels?: (() => Promise<readonly RuntimeModel[]>) | undefined;
+  readonly listModels?:
+    ((options?: RuntimeModelDiscoveryOptions) => Promise<readonly RuntimeModel[]>) | undefined;
 }

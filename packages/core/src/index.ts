@@ -66,6 +66,7 @@ export * from "./runtime/features.ts";
 export * from "./runtime/mcp-feature.ts";
 export * from "./runtime/output.ts";
 export * from "./runtime/process-probe.ts";
+export * from "./runtime/model-catalog-cache.ts";
 export * from "./runtime/process-supervisor.ts";
 export * from "./runtime/probe-evidence.ts";
 export * from "./runtime/resource-scope.ts";

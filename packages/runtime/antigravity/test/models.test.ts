@@ -1,7 +1,9 @@
-import { access } from "node:fs/promises";
 import { randomUUID } from "node:crypto";
+import { access, mkdtemp, rm } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 
-import { beforeEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 const mocks = vi.hoisted(() => ({
   runRuntimeCommand: vi.fn(),
@@ -32,8 +34,15 @@ const MODEL_OUTPUT = [
 ].join("\n");
 
 describe("Antigravity model discovery", () => {
-  beforeEach(() => {
+  let cacheRoot: string;
+
+  beforeEach(async () => {
     mocks.runRuntimeCommand.mockReset();
+    cacheRoot = await mkdtemp(join(tmpdir(), "pragma-antigravity-model-cache-"));
+  });
+
+  afterEach(async () => {
+    await rm(cacheRoot, { recursive: true, force: true });
   });
 
   it("preserves the exact human-facing model values accepted by --model", () => {
@@ -113,6 +122,7 @@ describe("Antigravity model discovery", () => {
 
     const models = await createAntigravityModelDiscovery({
       executablePath: `/opt/agy-${randomUUID()}`,
+      modelCatalogCacheRoot: cacheRoot,
       env: {
         HOME: "/host/home",
         USERPROFILE: "/host/profile",
@@ -140,11 +150,23 @@ describe("Antigravity model discovery", () => {
     const executablePath = `/opt/agy-${randomUUID()}`;
     const spawnA = vi.fn() as never;
     const spawnB = vi.fn() as never;
-    const first = createAntigravityModelDiscovery({ executablePath, spawn: spawnA });
-    const second = createAntigravityModelDiscovery({ executablePath, spawn: spawnA });
+    const first = createAntigravityModelDiscovery({
+      executablePath,
+      spawn: spawnA,
+      modelCatalogCacheRoot: cacheRoot,
+    });
+    const second = createAntigravityModelDiscovery({
+      executablePath,
+      spawn: spawnA,
+      modelCatalogCacheRoot: cacheRoot,
+    });
 
     await Promise.all([first(), second()]);
-    await createAntigravityModelDiscovery({ executablePath, spawn: spawnB })();
+    await createAntigravityModelDiscovery({
+      executablePath,
+      spawn: spawnB,
+      modelCatalogCacheRoot: cacheRoot,
+    })();
 
     expect(mocks.runRuntimeCommand).toHaveBeenCalledTimes(2);
   });
@@ -158,7 +180,10 @@ describe("Antigravity model discovery", () => {
     });
 
     await expect(
-      createAntigravityModelDiscovery({ executablePath: `/opt/agy-${randomUUID()}` })(),
+      createAntigravityModelDiscovery({
+        executablePath: `/opt/agy-${randomUUID()}`,
+        modelCatalogCacheRoot: cacheRoot,
+      })(),
     ).rejects.toThrow("not signed in");
   });
 

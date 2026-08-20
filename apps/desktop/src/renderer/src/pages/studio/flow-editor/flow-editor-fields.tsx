@@ -365,6 +365,7 @@ export function RuntimeBindingEditor(props: {
     (model) =>
       model.id === selectedIdentity?.modelId && model.provider.id === selectedIdentity?.providerId,
   );
+  const thinkingLevels = selectedModel?.thinking?.supportedLevels ?? [];
   return (
     <section className="flow-runtime-editor">
       <InspectorField label={t("runtime")}>
@@ -454,17 +455,17 @@ export function RuntimeBindingEditor(props: {
           />
         </InspectorField>
       ) : null}
-      {props.allowModel &&
-      selectedModel?.thinking !== undefined &&
-      props.value?.modelSelection !== undefined ? (
+      {props.allowModel && props.value?.modelSelection !== undefined ? (
         <InspectorField label={t("thinkingLevel")}>
           <SelectMenu
             ariaLabel={t("thinkingLevel")}
             className="form-select"
-            value={props.value.modelSelection?.thinkingLevel ?? ""}
+            value={
+              thinkingLevels.length === 0 ? "" : (props.value.modelSelection.thinkingLevel ?? "")
+            }
             options={[
               { value: "", label: t("runtimeDefault") },
-              ...selectedModel.thinking.supportedLevels.map((level) => ({
+              ...thinkingLevels.map((level) => ({
                 value: level.value,
                 label: level.label,
               })),

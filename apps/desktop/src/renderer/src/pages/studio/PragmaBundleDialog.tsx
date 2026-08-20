@@ -1199,6 +1199,7 @@ function BundleBindingStep(props: {
       model.provider.id === props.runtimeBinding?.providerId &&
       model.id === props.runtimeBinding.modelId,
   );
+  const thinkingLevels = selectedModel?.thinking?.supportedLevels ?? [];
 
   return (
     <section className="pragma-bundle-binding-step">
@@ -1292,16 +1293,18 @@ function BundleBindingStep(props: {
               }}
             />
           </div>
-          {selectedModel?.thinking !== undefined ? (
+          {props.runtimeBinding?.modelId ? (
             <div className="pragma-bundle-field">
               <span>{t("bundleChooseThinking")}</span>
               <SelectMenu
                 ariaLabel={t("bundleChooseThinking")}
                 className="form-select"
-                value={props.runtimeBinding?.thinkingLevel ?? ""}
+                value={
+                  thinkingLevels.length === 0 ? "" : (props.runtimeBinding.thinkingLevel ?? "")
+                }
                 options={[
                   { value: "", label: t("bundleRuntimeDefault") },
-                  ...selectedModel.thinking.supportedLevels.map((level) => ({
+                  ...thinkingLevels.map((level) => ({
                     value: level.value,
                     label: level.label,
                   })),

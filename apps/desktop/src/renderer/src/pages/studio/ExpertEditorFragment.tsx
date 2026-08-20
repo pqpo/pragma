@@ -62,6 +62,8 @@ export function ExpertEditorFragment(props: {
   const selectedModel = modelOptions.find(
     (model) => model.id === draft.model?.modelId && model.provider.id === draft.model?.providerId,
   );
+  const thinkingLevels = selectedModel?.thinking?.supportedLevels ?? [];
+  const thinkingDefaultLevel = selectedModel?.thinking?.defaultLevel;
   const steps: readonly { readonly id: CreateStep; readonly label: string }[] = [
     { id: "identity", label: t("identity", { ns: "studio" }) },
     {
@@ -186,6 +188,10 @@ export function ExpertEditorFragment(props: {
         tagInput: _tagInput,
         ...record
       } = draft;
+      const model =
+        draft.model === null || thinkingLevels.length > 0
+          ? draft.model
+          : clearThinkingLevel(draft.model);
       void _pluginSecretMutations;
       void _tagInput;
       await props.onCreated({
@@ -195,7 +201,7 @@ export function ExpertEditorFragment(props: {
         scope: scopeResult.data,
         instructions: instructionsResult.data,
         additionalInstructions: additionalInstructionsResult.data,
-        model: draft.model,
+        model,
         icon: User,
       });
     } catch (submitError) {
@@ -545,23 +551,21 @@ export function ExpertEditorFragment(props: {
                     ) : null}
                   </div>
                 ) : null}
-                {selectedModel?.thinking !== undefined ? (
+                {draft.model !== null ? (
                   <div className="capability-editor-field">
                     <span>{t("thinkingLevel", { ns: "studio" })}</span>
                     <SelectMenu
                       ariaLabel={t("thinkingLevel", { ns: "studio" })}
                       className="form-select"
-                      value={draft.model?.thinkingLevel ?? ""}
+                      value={thinkingLevels.length === 0 ? "" : (draft.model.thinkingLevel ?? "")}
                       options={[
                         {
                           value: "",
                           label: `${t("runtimeDefault", { ns: "studio" })}${
-                            selectedModel.thinking.defaultLevel === undefined
-                              ? ""
-                              : ` (${selectedModel.thinking.defaultLevel})`
+                            thinkingDefaultLevel === undefined ? "" : ` (${thinkingDefaultLevel})`
                           }`,
                         },
-                        ...selectedModel.thinking.supportedLevels.map((level) => ({
+                        ...thinkingLevels.map((level) => ({
                           value: level.value,
                           label: level.label,
                         })),
@@ -698,4 +702,12 @@ export function ExpertEditorFragment(props: {
 
 function runtimeModelKey(model: DesktopRuntimeModel): string {
   return JSON.stringify([model.provider.kind, model.provider.id, model.id]);
+}
+
+function clearThinkingLevel<T extends { readonly thinkingLevel?: string | undefined }>(
+  model: T,
+): Omit<T, "thinkingLevel"> {
+  const { thinkingLevel: _thinkingLevel, ...withoutThinkingLevel } = model;
+  void _thinkingLevel;
+  return withoutThinkingLevel;
 }

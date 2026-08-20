@@ -233,7 +233,7 @@ export const settings = {
     noModels: "This Runtime Environment did not report any models.",
     modelId: "Model ID",
     thinkingLevels: "Thinking levels",
-    notReported: "Not reported",
+    defaultOnly: "Default only",
     builtIn: "Built in",
     registered: "Registered",
     runtimeManaged: "Runtime managed",

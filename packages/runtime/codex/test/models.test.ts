@@ -1,5 +1,9 @@
+import { mkdtemp, rm } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+
 import type { RuntimeCommandResult } from "@pragma/core/runtime/process-probe";
-import { beforeEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 const mocks = vi.hoisted(() => ({
   runRuntimeCommand: vi.fn(),
@@ -12,16 +16,23 @@ vi.mock("@pragma/core/runtime/process-probe", () => ({
 import { createCodexModelDiscovery, parseCodexModels } from "../src/models.ts";
 
 describe("Codex model discovery cache", () => {
-  beforeEach(() => {
+  let cacheRoot: string;
+
+  beforeEach(async () => {
     mocks.runRuntimeCommand.mockReset();
+    cacheRoot = await mkdtemp(join(tmpdir(), "pragma-codex-model-cache-"));
+  });
+
+  afterEach(async () => {
+    await rm(cacheRoot, { recursive: true, force: true });
   });
 
   it("shares a fresh catalog across adapter instances without probing the version", async () => {
     mocks.runRuntimeCommand.mockResolvedValue(commandResult(catalog("gpt-first")));
     const executablePath = `/codex/cache-${crypto.randomUUID()}`;
 
-    const first = createCodexModelDiscovery({ executablePath });
-    const second = createCodexModelDiscovery({ executablePath });
+    const first = createCodexModelDiscovery(discoveryOptions(executablePath));
+    const second = createCodexModelDiscovery(discoveryOptions(executablePath));
 
     await expect(first()).resolves.toMatchObject([
       { id: "gpt-first", inputModalities: ["text", "image"] },
@@ -60,9 +71,10 @@ describe("Codex model discovery cache", () => {
         }),
     );
     const executablePath = `/codex/concurrent-${crypto.randomUUID()}`;
-    const first = createCodexModelDiscovery({ executablePath })();
-    const second = createCodexModelDiscovery({ executablePath })();
+    const first = createCodexModelDiscovery(discoveryOptions(executablePath))();
+    const second = createCodexModelDiscovery(discoveryOptions(executablePath))();
 
+    await flushPromises();
     expect(mocks.runRuntimeCommand).toHaveBeenCalledTimes(1);
     finishDiscovery?.(commandResult(catalog("gpt-shared")));
 
@@ -85,6 +97,7 @@ describe("Codex model discovery cache", () => {
       const onModelCatalogUpdated = vi.fn();
       const discovery = createCodexModelDiscovery({
         executablePath: `/codex/stale-${crypto.randomUUID()}`,
+        modelCatalogCacheRoot: cacheRoot,
         onModelCatalogUpdated,
       });
 
@@ -96,8 +109,7 @@ describe("Codex model discovery cache", () => {
       expect(mocks.runRuntimeCommand).toHaveBeenCalledTimes(2);
 
       finishRefresh?.(commandResult(catalog("gpt-refreshed")));
-      await flushPromises();
-      expect(onModelCatalogUpdated).toHaveBeenCalledTimes(1);
+      await vi.waitFor(() => expect(onModelCatalogUpdated).toHaveBeenCalledTimes(1));
       await expect(discovery()).resolves.toMatchObject([{ id: "gpt-refreshed" }]);
     } finally {
       vi.useRealTimers();
@@ -110,9 +122,13 @@ describe("Codex model discovery cache", () => {
       mocks.runRuntimeCommand
         .mockResolvedValueOnce(commandResult(catalog("gpt-cached")))
         .mockResolvedValueOnce(commandResult("", 1))
+        .mockResolvedValueOnce(commandResult("", 1))
         .mockResolvedValueOnce(commandResult(catalog("gpt-recovered")));
+      const onModelCatalogUpdated = vi.fn();
       const discovery = createCodexModelDiscovery({
         executablePath: `/codex/retry-${crypto.randomUUID()}`,
+        modelCatalogCacheRoot: cacheRoot,
+        onModelCatalogUpdated,
       });
 
       await discovery();
@@ -121,17 +137,24 @@ describe("Codex model discovery cache", () => {
       await flushPromises();
 
       await expect(discovery()).resolves.toMatchObject([{ id: "gpt-cached" }]);
-      expect(mocks.runRuntimeCommand).toHaveBeenCalledTimes(2);
+      expect(mocks.runRuntimeCommand).toHaveBeenCalledTimes(3);
+      expect(onModelCatalogUpdated).not.toHaveBeenCalled();
 
       await vi.advanceTimersByTimeAsync(30 * 1_000 + 1);
       await expect(discovery()).resolves.toMatchObject([{ id: "gpt-cached" }]);
-      expect(mocks.runRuntimeCommand).toHaveBeenCalledTimes(3);
-      await flushPromises();
-      await expect(discovery()).resolves.toMatchObject([{ id: "gpt-recovered" }]);
+      expect(mocks.runRuntimeCommand).toHaveBeenCalledTimes(4);
+      await vi.waitFor(async () => {
+        await expect(discovery()).resolves.toMatchObject([{ id: "gpt-recovered" }]);
+      });
+      await vi.waitFor(() => expect(onModelCatalogUpdated).toHaveBeenCalledTimes(1));
     } finally {
       vi.useRealTimers();
     }
   });
+
+  function discoveryOptions(executablePath: string) {
+    return { executablePath, modelCatalogCacheRoot: cacheRoot };
+  }
 });
 
 function catalog(modelId: string): string {

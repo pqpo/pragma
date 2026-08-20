@@ -68,6 +68,7 @@ describe("Runtime Environment settings", () => {
     expect(html).toContain("GPT-5.6 Codex");
     expect(html).toContain("gpt-5.6-codex");
     expect(html).toContain("Medium, High");
+    expect(html).toContain("Default only");
   });
 
   it("does not expose implementation identity for the built-in Runtime", () => {
