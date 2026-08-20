@@ -4,6 +4,7 @@ import { describe, expect, it } from "vitest";
 import type { ContextStore } from "../../../../shared/contracts/index.ts";
 import {
   canMoveEntryTo,
+  contextStorePreviewAfterLoad,
   ContextStoreCreatorDrawer,
   ContextStoreDetailFragment,
   ContextStoreDirectoryFragment,
@@ -27,6 +28,12 @@ const store: ContextStore = {
 };
 
 describe("knowledge base UI", () => {
+  it("keeps the current Markdown view when a store notification refreshes the file", () => {
+    expect(contextStorePreviewAfterLoad(false, true)).toBe(false);
+    expect(contextStorePreviewAfterLoad(true, true)).toBe(true);
+    expect(contextStorePreviewAfterLoad(false, false)).toBe(true);
+  });
+
   it("presents a single managed Markdown knowledge-base model", () => {
     const html = renderToStaticMarkup(
       <ContextStoreDirectoryFragment
