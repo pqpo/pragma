@@ -164,20 +164,21 @@ export function createClaudeCodeRuntime(
         };
       },
       async createSession(ctx): Promise<ClaudeCodeDriverSession> {
-        assertRuntimeManagedProvider(
-          ctx.request.modelSelection?.model.providerId,
-          "anthropic",
-          "Claude Code",
-        );
+        const defaultProviderId = ctx.request.modelSelection?.model.providerId;
         const defaultModelName =
           ctx.request.modelSelection?.model.modelId ?? options.defaultModelName;
         const defaultThinkingLevel =
           ctx.request.modelSelection?.thinkingLevel ?? options.defaultThinkingLevel;
-        if (defaultModelName !== undefined || defaultThinkingLevel !== undefined) {
+        if (
+          defaultProviderId !== undefined ||
+          defaultModelName !== undefined ||
+          defaultThinkingLevel !== undefined
+        ) {
           assertClaudeCodeModelSelection(
             await listModels(),
             defaultModelName,
             defaultThinkingLevel,
+            defaultProviderId,
           );
         }
         const sessionDir =
@@ -219,6 +220,7 @@ export function createClaudeCodeRuntime(
           executablePath: command.executablePath,
           launcherArgs: command.launcherArgs,
           additionalArgs: options.additionalArgs ?? [],
+          defaultProviderId,
           defaultModelName,
           defaultThinkingLevel,
           env: ctx.processEnvironment,
@@ -245,23 +247,13 @@ export function createClaudeCodeRuntime(
       listMessages: listClaudeCodeMessages,
       consumeStartupMessages: consumeClaudeCodeStartupMessages,
       async startTurn(session, turn) {
-        assertRuntimeManagedProvider(
-          turn.modelSelection?.model.providerId,
-          "anthropic",
-          "Claude Code",
-        );
+        const providerId = turn.modelSelection?.model.providerId ?? session.defaultProviderId;
         const modelName = turn.modelSelection?.model.modelId ?? session.defaultModelName;
         const thinkingLevel = turn.modelSelection?.thinkingLevel ?? session.defaultThinkingLevel;
-        if (modelName !== undefined || thinkingLevel !== undefined) {
-          assertClaudeCodeModelSelection(await listModels(), modelName, thinkingLevel);
+        if (providerId !== undefined || modelName !== undefined || thinkingLevel !== undefined) {
+          assertClaudeCodeModelSelection(await listModels(), modelName, thinkingLevel, providerId);
         }
-        return await startClaudeCodeTurn(session, {
-          ...turn,
-          modelSelection:
-            modelName === undefined
-              ? undefined
-              : { model: { providerId: "anthropic", modelId: modelName }, thinkingLevel },
-        });
+        return await startClaudeCodeTurn(session, turn);
       },
       mapEvent: mapClaudeCodeNativeEvent,
       async collectUsage(session, ctx) {
@@ -282,16 +274,6 @@ export function createClaudeCodeRuntime(
       createProcessEnvironment: () => filterClaudeRuntimeEnv(options.env ?? process.env),
     },
   );
-}
-
-function assertRuntimeManagedProvider(
-  providerId: string | undefined,
-  expectedProviderId: string,
-  runtime: string,
-): void {
-  if (providerId !== undefined && providerId !== expectedProviderId) {
-    throw new Error(`${runtime} runtime only supports provider ${expectedProviderId}.`);
-  }
 }
 
 async function nativeSessionFileExists(root: string, runtimeSessionId: string): Promise<boolean> {

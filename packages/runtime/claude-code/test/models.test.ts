@@ -14,7 +14,41 @@ vi.mock("node:fs/promises", () => ({
   readFile: mocks.readFile,
 }));
 
-import { createClaudeCodeModelDiscovery } from "../src/models.ts";
+import { assertClaudeCodeModelSelection, createClaudeCodeModelDiscovery } from "../src/models.ts";
+
+describe("Claude Code model selection", () => {
+  const models = [
+    {
+      id: "claude-sonnet-4-6",
+      displayName: "Claude Sonnet 4.6",
+      provider: { kind: "runtime-managed" as const, id: "anthropic", displayName: "Anthropic" },
+      thinking: { supportedLevels: [{ value: "high", label: "High" }] },
+    },
+    {
+      id: "opus",
+      displayName: "Opus → CC Switch local route",
+      provider: {
+        kind: "runtime-managed" as const,
+        id: "anthropic-compatible",
+        displayName: "Anthropic-compatible",
+      },
+      thinking: { supportedLevels: [{ value: "high", label: "High" }] },
+    },
+  ];
+
+  it.each([
+    ["Anthropic", "anthropic", "claude-sonnet-4-6"],
+    ["CC Switch", "anthropic-compatible", "opus"],
+  ])("accepts a model advertised for %s", (_name, providerId, modelId) => {
+    expect(() => assertClaudeCodeModelSelection(models, modelId, "high", providerId)).not.toThrow();
+  });
+
+  it("rejects a provider and model pair that the Claude Code catalog did not advertise", () => {
+    expect(() => assertClaudeCodeModelSelection(models, "opus", "high", "openai")).toThrow(
+      'Unsupported Claude Code model "openai/opus".',
+    );
+  });
+});
 
 describe("Claude Code model discovery cache", () => {
   beforeEach(() => {

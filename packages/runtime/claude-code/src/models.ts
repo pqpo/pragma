@@ -407,21 +407,32 @@ export function assertClaudeCodeModelSelection(
   models: readonly RuntimeModel[],
   modelName: string | undefined,
   thinkingLevel: string | undefined,
+  providerId?: string | undefined,
 ): void {
-  if (modelName === undefined && thinkingLevel === undefined) {
+  if (modelName === undefined && thinkingLevel === undefined && providerId === undefined) {
     return;
   }
 
   const model =
     modelName === undefined
-      ? models.find((candidate) => candidate.default)
-      : models.find((candidate) => candidate.id === modelName);
+      ? models.find(
+          (candidate) =>
+            candidate.default === true &&
+            (providerId === undefined || candidate.provider.id === providerId),
+        )
+      : models.find(
+          (candidate) =>
+            candidate.id === modelName &&
+            (providerId === undefined || candidate.provider.id === providerId),
+        );
 
   if (model === undefined) {
     throw new Error(
       modelName === undefined
         ? `Claude Code thinking level "${thinkingLevel}" cannot be validated because the model catalog has no default model.`
-        : `Unsupported Claude Code model "${modelName}".`,
+        : `Unsupported Claude Code model "${
+            providerId === undefined ? modelName : `${providerId}/${modelName}`
+          }".`,
     );
   }
 

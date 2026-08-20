@@ -86,6 +86,7 @@ export interface ClaudeCodeNativeSession {
   readonly executablePath: string;
   readonly launcherArgs: readonly string[];
   readonly additionalArgs: readonly string[];
+  readonly defaultProviderId?: string | undefined;
   readonly defaultModelName?: string | undefined;
   readonly defaultThinkingLevel?: string | undefined;
   readonly env?: NodeJS.ProcessEnv | undefined;
@@ -121,6 +122,7 @@ export function createClaudeCodeNativeSession(options: {
   readonly executablePath: string;
   readonly launcherArgs: readonly string[];
   readonly additionalArgs: readonly string[];
+  readonly defaultProviderId?: string | undefined;
   readonly defaultModelName?: string | undefined;
   readonly defaultThinkingLevel?: string | undefined;
   readonly env?: NodeJS.ProcessEnv | undefined;
@@ -141,7 +143,10 @@ export function createClaudeCodeNativeSession(options: {
   return {
     ...options,
     tokenCounter: options.tokenCounter ?? defaultRuntimeTokenCounter,
-    tokenModelIdentity: claudeTokenModelIdentity(options.defaultModelName),
+    tokenModelIdentity: claudeTokenModelIdentity(
+      options.defaultModelName,
+      options.defaultProviderId,
+    ),
     messages: [],
     pendingStartupMessages: options.startupMessages ?? [],
     activeCancelled: false,
@@ -149,7 +154,11 @@ export function createClaudeCodeNativeSession(options: {
 }
 
 export function listClaudeCodeMessages(session: ClaudeCodeNativeSession): readonly AgentMessage[] {
-  return convertClaudeMessages(session.messages, session.defaultModelName);
+  return convertClaudeMessages(
+    session.messages,
+    session.defaultModelName,
+    session.defaultProviderId,
+  );
 }
 
 export function consumeClaudeCodeStartupMessages(
@@ -166,6 +175,7 @@ export async function startClaudeCodeTurn(
 ): Promise<RuntimeTurnResult> {
   session.tokenModelIdentity = claudeTokenModelIdentity(
     turn.modelSelection?.model.modelId ?? session.defaultModelName,
+    turn.modelSelection?.model.providerId ?? session.defaultProviderId,
   );
   const timestamp = Date.now();
   session.messages.push(
@@ -368,11 +378,14 @@ function estimateClaudeCodeUsage(session: ClaudeCodeNativeSession): AgentMessage
   });
 }
 
-function claudeTokenModelIdentity(modelId: string | undefined): RuntimeTokenModelIdentity {
+function claudeTokenModelIdentity(
+  modelId: string | undefined,
+  providerId: string | undefined,
+): RuntimeTokenModelIdentity {
   return {
     runtimeKind: "claude-code",
     providerCatalogId: "anthropic",
-    providerId: "anthropic",
+    providerId: providerId ?? "anthropic",
     api: "anthropic-messages",
     ...(modelId === undefined ? {} : { modelId }),
   };
@@ -1608,6 +1621,7 @@ function readUsage(record: Record<string, unknown>): AgentMessageUsage | undefin
 function convertClaudeMessages(
   messages: readonly ClaudeCodeRuntimeMessage[],
   modelName: string | undefined,
+  providerId: string | undefined,
 ): readonly AgentMessage[] {
   return messages.map((message): AgentMessage => {
     if (message.role === "user") {
@@ -1623,7 +1637,7 @@ function convertClaudeMessages(
         role: "assistant",
         content: [{ type: "text", text: message.content }],
         api: "claude-code-cli",
-        provider: "anthropic",
+        provider: providerId ?? "anthropic",
         model: modelName ?? "claude-code",
         usage: readAgentMessageUsage(message.details),
         stopReason: "stop",
