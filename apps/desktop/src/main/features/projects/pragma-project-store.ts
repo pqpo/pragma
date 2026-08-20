@@ -37,7 +37,7 @@ import {
   PragmaDiagnosticSchema,
   PragmaExpertIdSchema,
   PRAGMA_COMPILER_WRITE_VERSION,
-  PragmaResourceSchema,
+  PragmaForwardCompatibleResourceSchema,
   canonicalPragmaResourceRef,
   isPragmaCompilerVersionDirectlyReadable,
   isPragmaCompilerVersionUpgradeable,
@@ -343,7 +343,9 @@ export function createPragmaProjectStore(options: {
     try {
       await ensureMigrated();
       if (options.storagePaths !== undefined) await assertStorageWriteAllowed(options.storagePaths);
-      const upserts = (input.upserts ?? []).map((resource) => PragmaResourceSchema.parse(resource));
+      const upserts = (input.upserts ?? []).map((resource) =>
+        PragmaForwardCompatibleResourceSchema.parse(resource),
+      );
       assertNotReserved(upserts);
       if (input.removals?.some((ref) => options.reservedResourceRefs?.has(ref)) === true) {
         throw new PragmaProjectStoreError(
@@ -467,7 +469,7 @@ export function createPragmaProjectStore(options: {
     },
     async validateYaml(source) {
       try {
-        const parsed = PragmaResourceSchema.safeParse(parsePragmaYaml(source));
+        const parsed = PragmaForwardCompatibleResourceSchema.safeParse(parsePragmaYaml(source));
         if (!parsed.success) return { diagnostics: issuesToDiagnostics(parsed.error.issues) };
         const diagnostics = await service.validate({ resources: [parsed.data] });
         return {
@@ -488,7 +490,7 @@ export function createPragmaProjectStore(options: {
       }
     },
     async validateCandidate(input) {
-      const resource = PragmaResourceSchema.parse(input.resource);
+      const resource = PragmaForwardCompatibleResourceSchema.parse(input.resource);
       return {
         resource,
         diagnostics: [

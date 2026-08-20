@@ -71,13 +71,15 @@ Host Binding 与健康状态
 
 ## 严格语义与同版本向前兼容
 
-Portable DSL 对已知字段使用严格 Zod 约束；从 `pragma/v5` 开始，资源 envelope、metadata、spec
-以及 Team delegation 的未知字段会被保留并产生 warning，旧客户端可以读取、运行和原样转存同版本
-新增的可选字段。Lock、迁移 journal 和完整性元数据仍然拒绝未知字段并 fail closed。
+Portable DSL 对已知字段使用严格 Zod 约束；从 `pragma/v5` 开始，资源和 Bundle 中任意对象深度的未知
+字段默认会被保留并产生 warning，包括嵌套对象和数组元素。旧客户端可以读取、运行和原样转存同版本
+新增的可忽略字段。未知 `kind`、method type 等 discriminator，已知字段的非法值，以及 Lock、迁移
+journal 和完整性元数据仍然 fail closed。
 
 `apiVersion` 表示最低安全读取代际，而不是每次增加字段都递增。只有删除、重命名、改变既有语义，
-或旧客户端忽略某字段会造成权限、安全或数据错误时才升级版本。普通可选字段保持当前版本；当前代码
-通过 `PRAGMA_DSL_WRITE_API_VERSION`、direct-read 和 upgrade-from 能力表统一声明版本，不在 Host 中复制常量。
+或旧客户端忽略某字段会造成执行、权限、安全或数据错误时才升级版本。普通可选字段保持当前版本；
+当前代码通过 `PRAGMA_DSL_WRITE_API_VERSION`、direct-read 和 upgrade-from 能力表统一声明版本，不在
+Host 中复制常量。Host 的更新路径必须合并已有资源，不能因为旧编辑器重建已知字段而丢弃未知字段。
 
 新的语义也不能靠“在 YAML 中多放一个字段，然后由某个 Host 猜测”。需要扩展的部分使用具名、带版本的 Adapter 或 Registry，例如：
 

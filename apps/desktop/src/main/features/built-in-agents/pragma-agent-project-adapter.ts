@@ -8,10 +8,10 @@ import { formatPragmaYaml, parsePragmaYaml, runPragmaEvaluation } from "@pragma/
 import {
   PRAGMA_DSL_WRITE_API_VERSION,
   PragmaFlowRunDryEvaluationResourceSchema,
+  PragmaForwardCompatibleResourceSchema,
   analyzePragmaFlowGraph,
   validatePragmaFlowDataContracts,
   PragmaFlowResourceSchema,
-  PragmaResourceSchema,
   canonicalPragmaResourceRef,
   type PragmaExpertResource,
   type PragmaFlowResource,
@@ -53,7 +53,7 @@ import type { RuntimeEnvironmentService } from "../runtimes/runtime-environment-
 
 const CandidateRecordSchema = z.object({
   changeSet: PragmaAgentChangeSetSchema,
-  resources: z.array(PragmaResourceSchema),
+  resources: z.array(PragmaForwardCompatibleResourceSchema),
 });
 
 export function createDesktopPragmaAgentProjectPort(options: {
@@ -760,7 +760,7 @@ function runtimeModelIdentity(runtimeId: string, providerId: string, modelId: st
 }
 
 function parsePragmaAgentResource(source: string): PragmaResource {
-  const resource = PragmaResourceSchema.parse(parsePragmaYaml(source));
+  const resource = PragmaForwardCompatibleResourceSchema.parse(parsePragmaYaml(source));
   if (
     resource.kind !== "Expert" &&
     resource.kind !== "ExpertTeam" &&

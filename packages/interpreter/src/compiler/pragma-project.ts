@@ -39,7 +39,6 @@ import {
   PragmaForwardCompatibleBundleSchema,
   PragmaForwardCompatibleResourceSchema,
   PragmaLockSchema,
-  PragmaResourceSchema,
   inspectPragmaUnknownFields,
   type PragmaArtifactSource,
   type PragmaDiagnostic,
@@ -322,7 +321,7 @@ const PragmaProjectBlueprintSchema = z
     resources: z.array(
       z
         .object({
-          resource: PragmaResourceSchema,
+          resource: PragmaForwardCompatibleResourceSchema,
           source: z.string().min(1),
           normalized: z.string(),
           contentHash: z.string().regex(/^[a-f0-9]{64}$/),
@@ -938,7 +937,7 @@ class SourceLoader {
         PragmaDiagnosticSchema.parse({
           severity: "warning",
           code: "schema.unknown_field",
-          message: `Unknown pragma/v5 field is preserved but ignored: ${issue.key}.`,
+          message: `Unknown ${PRAGMA_DSL_WRITE_API_VERSION} field is preserved but ignored: ${issue.key}.`,
           source,
           path: issue.path,
         }),
@@ -1920,7 +1919,7 @@ class PragmaProjectImpl implements PragmaProject {
     }
     const mode = options.split ?? "preserve";
     if (mode === "single") {
-      const bundle = PragmaBundleSchema.parse({
+      const bundle = PragmaForwardCompatibleBundleSchema.parse({
         apiVersion: PRAGMA_DSL_WRITE_API_VERSION,
         kind: "Bundle",
         resources: this.listResources(),

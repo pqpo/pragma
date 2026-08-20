@@ -1075,75 +1075,13 @@ export const PragmaResourceSchema = z.union([
   PragmaEvaluationResourceSchema,
 ]);
 
-const PragmaForwardCompatibleExpertResourceSchema = PragmaExpertResourceSchema.safeExtend({
-  metadata: PragmaExpertMetadataSchema.passthrough(),
-  spec: PragmaExpertResourceSchema.shape.spec.passthrough(),
-}).passthrough();
-
-const PragmaForwardCompatibleExpertTeamResourceSchema = PragmaExpertTeamResourceSchema.safeExtend({
-  metadata: PragmaExpertTeamMetadataSchema.passthrough(),
-  spec: PragmaExpertTeamResourceSchema.shape.spec
-    .extend({
-      delegation: PragmaExpertTeamResourceSchema.shape.spec.shape.delegation.passthrough(),
-    })
-    .passthrough(),
-}).passthrough();
-
-const PragmaForwardCompatibleFlowResourceSchema = PragmaFlowResourceSchema.safeExtend({
-  metadata: PragmaFlowMetadataSchema.passthrough(),
-  spec: PragmaFlowResourceSchema.shape.spec.passthrough(),
-}).passthrough();
-
-const PragmaForwardCompatibleAutomationResourceSchema = PragmaAutomationResourceSchema.safeExtend({
-  metadata: PragmaAutomationMetadataSchema.passthrough(),
-  spec: PragmaAutomationResourceSchema.shape.spec.passthrough(),
-}).passthrough();
-
-const PragmaForwardCompatibleCapabilityResourceSchema = PragmaCapabilityResourceSchema.safeExtend({
-  metadata: PragmaCapabilityMetadataSchema.passthrough(),
-  spec: PragmaCapabilityResourceSchema.shape.spec.passthrough(),
-}).passthrough();
-
-const PragmaForwardCompatibleContextStoreResourceSchema =
-  PragmaContextStoreResourceSchema.safeExtend({
-    metadata: PragmaContextStoreMetadataSchema.passthrough(),
-    spec: PragmaContextStoreResourceSchema.shape.spec.passthrough(),
-  }).passthrough();
-
-const PragmaForwardCompatibleRuntimeProfileResourceSchema =
-  PragmaRuntimeProfileResourceSchema.safeExtend({
-    metadata: PragmaMetadataSchema.passthrough(),
-    spec: PragmaRuntimeProfileResourceSchema.shape.spec.passthrough(),
-  }).passthrough();
-
-const PragmaForwardCompatibleFlowRunDryEvaluationResourceSchema =
-  PragmaFlowRunDryEvaluationResourceSchema.safeExtend({
-    metadata: PragmaEvaluationMetadataSchema.passthrough(),
-    spec: PragmaFlowRunDryEvaluationSpecSchema.passthrough(),
-  }).passthrough();
-
-const PragmaForwardCompatibleAgentJudgeEvaluationResourceSchema =
-  PragmaAgentJudgeEvaluationResourceSchema.safeExtend({
-    metadata: PragmaEvaluationMetadataSchema.passthrough(),
-    spec: PragmaAgentJudgeEvaluationSpecSchema.passthrough(),
-  }).passthrough();
-
 /**
  * Persistence boundary for pragma/v5 resources. Known fields remain fully validated while
- * additive fields at the resource, metadata, spec, and Team delegation extension points are
- * retained for same-version forward compatibility.
+ * additive unknown fields at every object depth are retained for same-version forward
+ * compatibility. Unknown discriminators and invalid known fields still fail closed.
  */
-export const PragmaForwardCompatibleResourceSchema: z.ZodType<PragmaResource> = z.union([
-  PragmaForwardCompatibleExpertResourceSchema,
-  PragmaForwardCompatibleExpertTeamResourceSchema,
-  PragmaForwardCompatibleFlowResourceSchema,
-  PragmaForwardCompatibleAutomationResourceSchema,
-  PragmaForwardCompatibleCapabilityResourceSchema,
-  PragmaForwardCompatibleContextStoreResourceSchema,
-  PragmaForwardCompatibleRuntimeProfileResourceSchema,
-  PragmaForwardCompatibleFlowRunDryEvaluationResourceSchema,
-  PragmaForwardCompatibleAgentJudgeEvaluationResourceSchema,
-]);
+export const PragmaForwardCompatibleResourceSchema: z.ZodType<PragmaResource> =
+  createForwardCompatibleSchema<PragmaResource>((value) => strictResourceSchemaFor(value));
 
 export const PragmaBundleSchema = z
   .object({
@@ -1154,14 +1092,23 @@ export const PragmaBundleSchema = z
   })
   .strict();
 
-export const PragmaForwardCompatibleBundleSchema: z.ZodType<PragmaBundle> = z
+const PragmaBundleEnvelopeSchema = z
   .object({
-    apiVersion: PragmaApiVersionSchema,
-    kind: z.literal("Bundle"),
-    imports: z.array(z.string().trim().min(1)).default([]),
-    resources: z.array(PragmaForwardCompatibleResourceSchema).default([]),
+    ...PragmaBundleSchema.shape,
+    resources: z.array(z.unknown()).default([]),
   })
-  .passthrough();
+  .strict();
+
+export const PragmaForwardCompatibleBundleSchema: z.ZodType<PragmaBundle> = z
+  .unknown()
+  .transform((value, context) => {
+    const parsed = parseForwardCompatibleBundle(value);
+    if (parsed.success) return parsed.data;
+    for (const issue of parsed.issues) {
+      context.addIssue({ code: "custom", message: issue.message, path: [...issue.path] });
+    }
+    return z.NEVER;
+  }) as z.ZodType<PragmaBundle>;
 
 export interface PragmaUnknownFieldIssue {
   readonly key: string;
@@ -1172,16 +1119,110 @@ export function inspectPragmaUnknownFields(
   value: unknown,
   kind: "resource" | "bundle",
 ): readonly PragmaUnknownFieldIssue[] {
-  const parsed = (
-    kind === "bundle" ? PragmaBundleSchema : strictResourceSchemaFor(value)
-  ).safeParse(value);
-  if (parsed.success) return [];
-  const output: PragmaUnknownFieldIssue[] = [];
-  collectUnknownFieldIssues(parsed.error.issues, output);
-  return output;
+  return kind === "bundle"
+    ? parseForwardCompatibleBundle(value).unknownFields
+    : parsePreservingUnknownFields(value, strictResourceSchemaFor(value)).unknownFields;
 }
 
-function strictResourceSchemaFor(value: unknown): z.ZodType {
+function createForwardCompatibleSchema<T>(
+  strictSchemaFor: (value: unknown) => z.ZodType<T>,
+): z.ZodType<T> {
+  return z.unknown().transform((value, context) => {
+    const parsed = parsePreservingUnknownFields(value, strictSchemaFor(value));
+    if (parsed.success) return parsed.data;
+    for (const issue of parsed.issues) {
+      context.addIssue({ code: "custom", message: issue.message, path: [...issue.path] });
+    }
+    return z.NEVER;
+  }) as z.ZodType<T>;
+}
+
+type PreservingParseResult<T> =
+  | {
+      readonly success: true;
+      readonly data: T;
+      readonly unknownFields: readonly PragmaUnknownFieldIssue[];
+    }
+  | {
+      readonly success: false;
+      readonly issues: readonly CompatibilityParseIssue[];
+      readonly unknownFields: readonly PragmaUnknownFieldIssue[];
+    };
+
+interface CompatibilityParseIssue {
+  readonly message: string;
+  readonly path: readonly PropertyKey[];
+}
+
+function parsePreservingUnknownFields<T>(
+  value: unknown,
+  strictSchema: z.ZodType<T>,
+): PreservingParseResult<T> {
+  const projection = cloneCompatibleValue(value);
+  const unknownFields = new Map<string, PragmaUnknownFieldIssue>();
+  for (;;) {
+    const parsed = strictSchema.safeParse(projection);
+    if (parsed.success) {
+      return {
+        success: true,
+        data: overlayCompatibleValue(value, parsed.data) as T,
+        unknownFields: [...unknownFields.values()],
+      };
+    }
+    const pass: PragmaUnknownFieldIssue[] = [];
+    collectUnknownFieldIssues(parsed.error.issues, pass);
+    let removed = false;
+    for (const issue of pass) {
+      unknownFields.set(JSON.stringify(issue.path), issue);
+      removed = removeCompatibleValueAtPath(projection, issue.path) || removed;
+    }
+    if (!removed) {
+      return {
+        success: false,
+        issues: parsed.error.issues.map((issue) => ({
+          message: issue.message,
+          path: issue.path,
+        })),
+        unknownFields: [...unknownFields.values()],
+      };
+    }
+  }
+}
+
+function parseForwardCompatibleBundle(value: unknown): PreservingParseResult<PragmaBundle> {
+  const envelope = parsePreservingUnknownFields(value, PragmaBundleEnvelopeSchema);
+  if (!envelope.success) return envelope;
+  const unknownFields = [...envelope.unknownFields];
+  const resources: PragmaResource[] = [];
+  const issues: CompatibilityParseIssue[] = [];
+  envelope.data.resources.forEach((resource, index) => {
+    const parsed = parsePreservingUnknownFields(resource, strictResourceSchemaFor(resource));
+    unknownFields.push(
+      ...parsed.unknownFields.map((issue) => ({
+        key: issue.key,
+        path: ["resources", index, ...issue.path],
+      })),
+    );
+    if (parsed.success) {
+      resources.push(parsed.data);
+      return;
+    }
+    issues.push(
+      ...parsed.issues.map((issue) => ({
+        message: issue.message,
+        path: ["resources", index, ...issue.path],
+      })),
+    );
+  });
+  if (issues.length > 0) return { success: false, issues, unknownFields };
+  return {
+    success: true,
+    data: overlayCompatibleValue(envelope.data, { ...envelope.data, resources }) as PragmaBundle,
+    unknownFields,
+  };
+}
+
+function strictResourceSchemaFor(value: unknown): z.ZodType<PragmaResource> {
   if (typeof value !== "object" || value === null || Array.isArray(value)) {
     return PragmaResourceSchema;
   }
@@ -1256,16 +1297,116 @@ export function mergePragmaResourcePreservingUnknownFields(
   original: PragmaResource,
   updated: PragmaResource,
 ): PragmaResource {
-  return PragmaForwardCompatibleResourceSchema.parse(mergeCompatibleValue(original, updated));
+  const merged = cloneCompatibleValue(
+    PragmaForwardCompatibleResourceSchema.parse(updated),
+  ) as PragmaResource;
+  for (const issue of inspectPragmaUnknownFields(original, "resource")) {
+    preserveUnknownFieldAtPath(original, merged, issue.path);
+  }
+  return PragmaForwardCompatibleResourceSchema.parse(merged);
 }
 
-function mergeCompatibleValue(original: unknown, updated: unknown): unknown {
-  if (!isPlainRecord(original) || !isPlainRecord(updated)) return structuredClone(updated);
-  const merged: Record<string, unknown> = structuredClone(original);
-  for (const [key, value] of Object.entries(updated)) {
-    merged[key] = mergeCompatibleValue(original[key], value);
+function findCompatibleArrayEntry(
+  original: readonly unknown[],
+  updated: unknown,
+  available: ReadonlySet<number>,
+): number | undefined {
+  if (!isPlainRecord(updated)) return undefined;
+  for (const key of ["id", "ref", "name", "key"] as const) {
+    const identity = updated[key];
+    if (typeof identity !== "string" && typeof identity !== "number") continue;
+    const match = [...available].find(
+      (index) => isPlainRecord(original[index]) && original[index][key] === identity,
+    );
+    if (match !== undefined) return match;
   }
-  return merged;
+  return undefined;
+}
+
+function preserveUnknownFieldAtPath(
+  original: unknown,
+  updated: unknown,
+  path: readonly (string | number)[],
+): void {
+  if (path.length === 0) return;
+  let source: unknown = original;
+  let target: unknown = updated;
+  for (const segment of path.slice(0, -1)) {
+    if (typeof segment === "string") {
+      if (!isPlainRecord(source) || !isPlainRecord(target)) return;
+      source = source[segment];
+      target = target[segment];
+      continue;
+    }
+    if (!Array.isArray(source) || !Array.isArray(target)) return;
+    const sourceEntry = source[segment];
+    const targetIndex =
+      findCompatibleArrayEntry(target, sourceEntry, new Set(target.keys())) ??
+      (segment < target.length ? segment : undefined);
+    if (targetIndex === undefined) return;
+    source = sourceEntry;
+    target = target[targetIndex];
+  }
+  const key = path.at(-1);
+  if (typeof key !== "string" || !isPlainRecord(source) || !isPlainRecord(target)) return;
+  if (!Object.hasOwn(source, key) || Object.hasOwn(target, key)) return;
+  setCompatibleOwnProperty(target, key, cloneCompatibleValue(source[key]));
+}
+
+function cloneCompatibleValue(value: unknown): unknown {
+  if (Array.isArray(value)) return value.map(cloneCompatibleValue);
+  if (!isPlainRecord(value)) return structuredClone(value);
+  return Object.fromEntries(
+    Object.entries(value).map(([key, entry]) => [key, cloneCompatibleValue(entry)]),
+  );
+}
+
+function overlayCompatibleValue(original: unknown, parsed: unknown): unknown {
+  if (Array.isArray(original) && Array.isArray(parsed)) {
+    return parsed.map((value, index) => overlayCompatibleValue(original[index], value));
+  }
+  if (!isPlainRecord(original) || !isPlainRecord(parsed)) return cloneCompatibleValue(parsed);
+  const output = cloneCompatibleValue(original) as Record<string, unknown>;
+  for (const [key, value] of Object.entries(parsed)) {
+    setCompatibleOwnProperty(output, key, overlayCompatibleValue(original[key], value));
+  }
+  return output;
+}
+
+function setCompatibleOwnProperty(
+  target: Record<string, unknown>,
+  key: string,
+  value: unknown,
+): void {
+  Object.defineProperty(target, key, {
+    value,
+    configurable: true,
+    enumerable: true,
+    writable: true,
+  });
+}
+
+function removeCompatibleValueAtPath(value: unknown, path: readonly (string | number)[]): boolean {
+  if (path.length === 0) return false;
+  let parent: unknown = value;
+  for (const segment of path.slice(0, -1)) {
+    if (typeof segment === "number") {
+      if (!Array.isArray(parent)) return false;
+      parent = parent[segment];
+    } else {
+      if (!isPlainRecord(parent)) return false;
+      parent = parent[segment];
+    }
+  }
+  const key = path.at(-1);
+  if (typeof key === "number") {
+    if (!Array.isArray(parent) || key < 0 || key >= parent.length) return false;
+    parent.splice(key, 1);
+    return true;
+  }
+  if (typeof key !== "string" || !isPlainRecord(parent) || !Object.hasOwn(parent, key))
+    return false;
+  return delete parent[key];
 }
 
 function isPlainRecord(value: unknown): value is Record<string, unknown> {

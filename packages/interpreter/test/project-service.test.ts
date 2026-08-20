@@ -76,6 +76,66 @@ describe("PragmaProjectService", () => {
     expect(compiled.projectFingerprint).toBe(second.projectFingerprint);
   });
 
+  it("preserves recursively unknown fields when an older client updates known fields", async () => {
+    const repository = await createRepository();
+    const service = new PragmaProjectService({ repository });
+    const current = expert() as unknown as Record<string, unknown>;
+    const currentSpec = current["spec"] as Record<string, unknown>;
+    currentSpec["runtime"] = {
+      ...(currentSpec["runtime"] as Record<string, unknown>),
+      futureSelectionLabel: "fast",
+    };
+    currentSpec["capabilities"] = [
+      {
+        ...((currentSpec["capabilities"] as Record<string, unknown>[])[0] ?? {}),
+        futurePresentation: { color: "blue" },
+      },
+    ];
+    await service.publish({
+      projectId: "studio",
+      expectedRevision: 0,
+      resources: [runtime(), skill(), current as unknown as PragmaExpertResource],
+      artifacts: new Map([["assets/writing-skill/SKILL.md", "# Writing\n"]]),
+    });
+
+    const updated = await service.applyChangeSet({
+      projectId: "studio",
+      changeSet: {
+        baseRevision: 1,
+        upserts: [
+          {
+            ...expert(),
+            metadata: { ...expert().metadata, description: "Updated by an older client." },
+          },
+        ],
+      },
+    });
+    const persisted = updated.resources.find(
+      (resource): resource is PragmaExpertResource => resource.kind === "Expert",
+    );
+    expect(persisted).toBeDefined();
+    if (persisted === undefined) throw new Error("Expected the persisted Expert.");
+    expect(persisted.metadata.description).toBe("Updated by an older client.");
+    expect(
+      (persisted.spec.runtime as unknown as Record<string, unknown>)["futureSelectionLabel"],
+    ).toBe("fast");
+    expect(
+      (persisted.spec.capabilities[0] as unknown as Record<string, unknown>)["futurePresentation"],
+    ).toEqual({ color: "blue" });
+
+    const reloaded = await service.get("studio", 2);
+    const reloadedExpert = reloaded.resources.find(
+      (resource): resource is PragmaExpertResource => resource.kind === "Expert",
+    );
+    expect(reloadedExpert).toBeDefined();
+    if (reloadedExpert === undefined) throw new Error("Expected the reloaded Expert.");
+    expect(
+      (reloadedExpert.spec.capabilities[0] as unknown as Record<string, unknown>)[
+        "futurePresentation"
+      ],
+    ).toEqual({ color: "blue" });
+  });
+
   it("preserves artifacts during candidate validation and refuses a missing persisted lock", async () => {
     const repository = await createRepository();
     const service = new PragmaProjectService({ repository });

@@ -13,7 +13,8 @@ import {
 import {
   PRAGMA_DSL_WRITE_API_VERSION,
   PragmaDiagnosticSchema,
-  PragmaResourceSchema,
+  PragmaForwardCompatibleResourceSchema,
+  mergePragmaResourcePreservingUnknownFields,
   type PragmaDiagnostic,
   type PragmaLock,
   type PragmaResource,
@@ -222,7 +223,14 @@ export class PragmaProjectService {
         false,
       );
     }
-    const resources = input.resources.map((resource) => PragmaResourceSchema.parse(resource));
+    const currentByRef = resourcesByRef((await this.get(input.projectId)).resources);
+    const resources = input.resources.map((resource) => {
+      const parsed = PragmaForwardCompatibleResourceSchema.parse(resource);
+      const current = currentByRef.get(canonicalPragmaResourceRef(parsed));
+      return current === undefined
+        ? parsed
+        : mergePragmaResourcePreservingUnknownFields(current, parsed);
+    });
     assertUniqueCanonicalRefs(resources);
     const files = await this.renderProjectFiles({ resources, artifacts: input.artifacts });
     await this.options.repository.commit({
@@ -243,7 +251,9 @@ export class PragmaProjectService {
     readonly resources: readonly PragmaResource[];
     readonly artifacts?: ReadonlyMap<string, string> | undefined;
   }): Promise<ReadonlyMap<string, string>> {
-    const resources = input.resources.map((resource) => PragmaResourceSchema.parse(resource));
+    const resources = input.resources.map((resource) =>
+      PragmaForwardCompatibleResourceSchema.parse(resource),
+    );
     assertUniqueCanonicalRefs(resources);
     return await withStagedProject(
       resources,
@@ -275,7 +285,9 @@ export class PragmaProjectService {
   async renderCompilerMigration(
     migration: PragmaCompilerProjectMigrationResult,
   ): Promise<ReadonlyMap<string, string>> {
-    const resources = migration.resources.map((resource) => PragmaResourceSchema.parse(resource));
+    const resources = migration.resources.map((resource) =>
+      PragmaForwardCompatibleResourceSchema.parse(resource),
+    );
     assertUniqueCanonicalRefs(resources);
     return await withStagedProject(
       resources,
@@ -502,7 +514,16 @@ export class PragmaProjectService {
     );
     if (currentErrors.length > 0) throw new PragmaProjectValidationError(currentErrors);
 
-    const upserts = (input.upserts ?? []).map((resource) => PragmaResourceSchema.parse(resource));
+    const parsedUpserts = (input.upserts ?? []).map((resource) =>
+      PragmaForwardCompatibleResourceSchema.parse(resource),
+    );
+    const currentByRef = resourcesByRef(current.resources);
+    const upserts = parsedUpserts.map((resource) => {
+      const existing = currentByRef.get(canonicalPragmaResourceRef(resource));
+      return existing === undefined
+        ? resource
+        : mergePragmaResourcePreservingUnknownFields(existing, resource);
+    });
     assertUniqueCanonicalRefs(upserts);
     const removals = new Set(input.removals ?? []);
     const requiredUnchangedRefs = new Set(input.requiredUnchangedRefs ?? []);

@@ -1,5 +1,5 @@
 import {
-  PragmaResourceSchema,
+  PragmaForwardCompatibleResourceSchema,
   type PragmaResource,
   type PragmaResourceRef,
 } from "../ast/pragma-dsl.schema.ts";
@@ -70,10 +70,12 @@ export function remapPragmaProjectArtifactPaths(
   paths: Readonly<Record<string, string>>,
 ): readonly PragmaResource[] {
   return resources.map((resource) => {
-    if (!isDeclarativeResource(resource)) return PragmaResourceSchema.parse(resource);
+    if (!isDeclarativeResource(resource)) {
+      return PragmaForwardCompatibleResourceSchema.parse(resource);
+    }
     const localized = structuredClone(resource);
     localized.spec.config = rewriteProjectArtifactPaths(localized.spec.config, paths);
-    return PragmaResourceSchema.parse(localized);
+    return PragmaForwardCompatibleResourceSchema.parse(localized);
   });
 }
 
@@ -180,7 +182,7 @@ export function localizePragmaBundleResources(
         input.projectArtifactPaths,
       );
     }
-    return PragmaResourceSchema.parse(localized);
+    return PragmaForwardCompatibleResourceSchema.parse(localized);
   });
 
   return {
@@ -269,7 +271,7 @@ function rewriteResourceIdentity(
       rewritten.spec.target.ref = rewriteRef(rewritten.spec.target.ref);
     }
   }
-  return PragmaResourceSchema.parse(rewritten);
+  return PragmaForwardCompatibleResourceSchema.parse(rewritten);
 }
 
 function setValueAtPath(

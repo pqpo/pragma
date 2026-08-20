@@ -1806,7 +1806,7 @@ describe("Pragma YAML DSL", () => {
     );
   });
 
-  it("preserves compatible unknown fields and rejects prototype-sensitive save paths", async () => {
+  it("preserves deeply unknown fields without applying their semantics", async () => {
     const root = await mkdtemp(join(tmpdir(), "pragma-dsl-strict-"));
     await writeFile(
       join(root, "flow.pragma.yaml"),
@@ -1832,7 +1832,11 @@ describe("Pragma YAML DSL", () => {
     const project = await loadPragmaProject(join(root, "flow.pragma.yaml"));
     expect(await project.validate()).toEqual(
       expect.arrayContaining([
-        expect.objectContaining({ code: "schema.invalid", severity: "error" }),
+        expect.objectContaining({
+          code: "schema.unknown_field",
+          severity: "warning",
+          path: ["spec", "graph", "steps", "one", "save"],
+        }),
       ]),
     );
     expect(
@@ -1841,22 +1845,48 @@ describe("Pragma YAML DSL", () => {
         spec: { ...expertSpec(), toolApprovalz: { shell: "required" } },
       }).success,
     ).toBe(true);
+    const prototypeNamedField = Object.fromEntries([
+      ...Object.entries(expertResource("0tyw4e02pw3d8vjt", "Strict")),
+      ["__proto__", { polluted: true }],
+    ]);
+    const parsed = PragmaForwardCompatibleResourceSchema.parse(prototypeNamedField);
+    expect(Object.hasOwn(parsed, "__proto__")).toBe(true);
     expect(({} as { polluted?: unknown }).polluted).toBeUndefined();
   });
 
-  it("retains pragma/v5 additive fields and reports them as warnings", async () => {
+  it("recursively retains pragma/v5 additive fields and reports them as warnings", async () => {
     const root = await mkdtemp(join(tmpdir(), "pragma-dsl-forward-compatible-"));
-    const entry = join(root, "expert.pragma.yaml");
+    const entry = join(root, "pragma.yaml");
+    const forwardResource = {
+      ...expertResource("0tyw4e02pw3d8vjt", "Forward compatible"),
+      futureEnvelope: { enabled: true },
+      metadata: {
+        ...expertResource("0tyw4e02pw3d8vjt", "Forward compatible").metadata,
+        futureLabel: "preserve-me",
+      },
+      spec: {
+        ...expertSpec(),
+        runtime: {
+          ...expertSpec().runtime,
+          futureSelectionLabel: "fast",
+        },
+        plugins: [
+          {
+            ref: "plugin:example@1.0.0",
+            futurePresentation: { color: "blue" },
+          },
+        ],
+        futureBehavior: { mode: "optional" },
+      },
+    };
     await writeFile(
       entry,
       formatPragmaYaml({
-        ...expertResource("0tyw4e02pw3d8vjt", "Forward compatible"),
-        futureEnvelope: { enabled: true },
-        metadata: {
-          ...expertResource("0tyw4e02pw3d8vjt", "Forward compatible").metadata,
-          futureLabel: "preserve-me",
-        },
-        spec: { ...expertSpec(), futureBehavior: { mode: "optional" } },
+        apiVersion: PRAGMA_DSL_WRITE_API_VERSION,
+        kind: "Bundle",
+        imports: [],
+        resources: [forwardResource],
+        futureBundleLabel: "portable",
       }),
     );
 
@@ -1867,15 +1897,33 @@ describe("Pragma YAML DSL", () => {
         .filter((diagnostic) => diagnostic.code === "schema.unknown_field")
         .map((diagnostic) => diagnostic.path.join("."))
         .toSorted(),
-    ).toEqual(["futureEnvelope", "metadata.futureLabel", "spec.futureBehavior"]);
+    ).toEqual([
+      "futureBundleLabel",
+      "resources.0.futureEnvelope",
+      "resources.0.metadata.futureLabel",
+      "resources.0.spec.futureBehavior",
+      "resources.0.spec.plugins.0.futurePresentation",
+      "resources.0.spec.runtime.futureSelectionLabel",
+    ]);
     const resource = project.listResources()[0] as unknown as Record<string, unknown>;
     expect(resource["futureEnvelope"]).toEqual({ enabled: true });
     expect((resource["metadata"] as Record<string, unknown>)["futureLabel"]).toBe("preserve-me");
     expect((resource["spec"] as Record<string, unknown>)["futureBehavior"]).toEqual({
       mode: "optional",
     });
+    expect(
+      ((resource["spec"] as Record<string, unknown>)["runtime"] as Record<string, unknown>)[
+        "futureSelectionLabel"
+      ],
+    ).toBe("fast");
 
-    const updated = expertResource("0tyw4e02pw3d8vjt", "Updated by an older client");
+    const updated = {
+      ...expertResource("0tyw4e02pw3d8vjt", "Updated by an older client"),
+      spec: {
+        ...expertSpec(),
+        plugins: [{ ref: "plugin:example@1.0.0" }],
+      },
+    } as PragmaExpertResource;
     const merged = mergePragmaResourcePreservingUnknownFields(
       resource as unknown as PragmaExpertResource,
       updated,
@@ -1887,6 +1935,21 @@ describe("Pragma YAML DSL", () => {
     expect((merged["metadata"] as Record<string, unknown>)["name"]).toBe(
       "Updated by an older client",
     );
+    const mergedSpec = merged["spec"] as Record<string, unknown>;
+    expect((mergedSpec["runtime"] as Record<string, unknown>)["futureSelectionLabel"]).toBe("fast");
+    expect(
+      ((mergedSpec["plugins"] as Record<string, unknown>[])[0] ?? {})["futurePresentation"],
+    ).toEqual({ color: "blue" });
+
+    expect(
+      PragmaForwardCompatibleResourceSchema.safeParse({
+        ...resource,
+        spec: {
+          ...(resource["spec"] as Record<string, unknown>),
+          runtime: { ref: 42, futureSelectionLabel: "still-invalid" },
+        },
+      }).success,
+    ).toBe(false);
   });
 
   it("rejects Flow contracts outside the bounded object schema", async () => {

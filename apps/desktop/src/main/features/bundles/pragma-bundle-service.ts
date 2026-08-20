@@ -33,7 +33,7 @@ import {
 } from "@pragma/interpreter";
 import {
   PragmaInvocableResourceRefSchema,
-  PragmaResourceSchema,
+  PragmaForwardCompatibleResourceSchema,
   canonicalPragmaResourceRef,
   type PragmaInvocableResource,
   type PragmaResource,
@@ -1790,7 +1790,7 @@ export function createPragmaBundleService(options: {
         }
         replacements.set(
           resolution.resourceRef,
-          PragmaResourceSchema.parse({
+          PragmaForwardCompatibleResourceSchema.parse({
             ...resource,
             spec: {
               ...resource.spec,

@@ -1,10 +1,10 @@
 import {
   PragmaDiagnosticSchema,
   PragmaExpertIdSchema,
+  PragmaForwardCompatibleResourceSchema,
   PragmaLockSchema,
   PragmaProjectChangeSetSchema,
   PragmaResourceRefSchema,
-  PragmaResourceSchema,
   PragmaExpertTeamResourceSchema,
   PragmaExpertTeamContextVisibilitySchema,
   PragmaContextStoreRefSchema,
@@ -17,7 +17,7 @@ export const PragmaProjectSnapshotSchema = z.object({
   projectId: z.string().trim().min(1).max(120),
   revision: z.number().int().nonnegative(),
   compilerVersion: z.string().trim().min(1).optional(),
-  resources: z.array(PragmaResourceSchema),
+  resources: z.array(PragmaForwardCompatibleResourceSchema),
   diagnostics: z.array(PragmaDiagnosticSchema),
   lock: PragmaLockSchema.optional(),
   projectFingerprint: z
@@ -29,14 +29,19 @@ export const PragmaProjectSnapshotSchema = z.object({
 
 export const PublishPragmaProjectSchema = z.object({
   expectedRevision: z.number().int().nonnegative(),
-  resources: z.array(PragmaResourceSchema),
+  resources: z.array(PragmaForwardCompatibleResourceSchema),
 });
 
 export const UpsertPragmaResourceSchema = z.object({
   baseRevision: z.number().int().nonnegative(),
-  resource: PragmaResourceSchema,
+  resource: PragmaForwardCompatibleResourceSchema,
   requiredUnchangedRefs: z.array(PragmaResourceRefSchema).default([]),
 });
+
+const ForwardCompatibleExpertTeamResourceSchema = PragmaForwardCompatibleResourceSchema.refine(
+  (resource) => resource.kind === "ExpertTeam",
+  "Expected an ExpertTeam resource.",
+).transform((resource) => resource as z.infer<typeof PragmaExpertTeamResourceSchema>);
 
 export const DesktopPragmaContextStoreBindingSchema = z
   .object({
@@ -48,7 +53,7 @@ export const DesktopPragmaContextStoreBindingSchema = z
 export const UpsertPragmaExpertTeamSchema = z
   .object({
     baseRevision: z.number().int().nonnegative(),
-    resource: PragmaExpertTeamResourceSchema,
+    resource: ForwardCompatibleExpertTeamResourceSchema,
     contextStores: z.array(
       z
         .object({
@@ -82,17 +87,23 @@ export const ValidatePragmaYamlSchema = z.object({ source: z.string().max(2_000_
 
 export const ValidatePragmaResourceSchema = z.object({
   baseRevision: z.number().int().nonnegative(),
-  resource: PragmaResourceSchema,
+  resource: PragmaForwardCompatibleResourceSchema,
   requiredUnchangedRefs: z.array(PragmaResourceRefSchema).default([]),
 });
 
 export const PragmaYamlValidationResultSchema = z.object({
-  resource: PragmaResourceSchema.optional(),
+  resource: PragmaForwardCompatibleResourceSchema.optional(),
   diagnostics: z.array(PragmaDiagnosticSchema),
 });
 
+const ForwardCompatibleFlowRunDryEvaluationResourceSchema =
+  PragmaForwardCompatibleResourceSchema.refine(
+    (resource) => resource.kind === "Evaluation" && resource.spec.method.type === "flow-run-dry",
+    "Expected a flow-run-dry Evaluation resource.",
+  ).transform((resource) => resource as z.infer<typeof PragmaFlowRunDryEvaluationResourceSchema>);
+
 export const RunPragmaEvaluationSchema = z
   .object({
-    evaluation: PragmaFlowRunDryEvaluationResourceSchema,
+    evaluation: ForwardCompatibleFlowRunDryEvaluationResourceSchema,
   })
   .strict();
