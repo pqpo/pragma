@@ -1,4 +1,4 @@
-import { PragmaAgentJudgeEvaluationResourceSchema } from "@pragma/evaluation/ast";
+import { PragmaAgentJudgeEvaluationResourceSchema } from "@pragma/interpreter/ast";
 import { createElement } from "react";
 import { renderToStaticMarkup } from "react-dom/server";
 import { describe, expect, it } from "vitest";

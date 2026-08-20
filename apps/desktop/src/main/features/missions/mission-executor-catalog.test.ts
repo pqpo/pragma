@@ -1,3 +1,4 @@
+import { PRAGMA_DSL_WRITE_API_VERSION } from "@pragma/interpreter/ast";
 import { snapshotRuntimeFeatures, type RuntimeModel, type RuntimeResolver } from "@pragma/core";
 import { createRuntimeTestFeatures } from "@pragma/core/testing";
 import type { PragmaResource } from "@pragma/interpreter/ast";
@@ -192,13 +193,13 @@ describe("Mission executor model options", () => {
     const catalog = createMissionExecutorCatalog({ project, systemExperts, runtimes });
     const resources = [
       {
-        apiVersion: "pragma/v4",
+        apiVersion: PRAGMA_DSL_WRITE_API_VERSION,
         kind: "RuntimeProfile",
         metadata: { id: "2v60qnte9072fwk7", name: "Pinned" },
         spec: { config: { runtimeId: "pinned-runtime" } },
       },
       {
-        apiVersion: "pragma/v4",
+        apiVersion: PRAGMA_DSL_WRITE_API_VERSION,
         kind: "Expert",
         metadata: { id: "kgtpajmnv08n7zah", name: "Worker" },
         spec: { runtime: { ref: "runtime-profile:2v60qnte9072fwk7" } },

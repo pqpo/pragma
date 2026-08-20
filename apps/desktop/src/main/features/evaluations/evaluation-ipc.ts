@@ -1,6 +1,6 @@
 import { ipcMain } from "electron";
 import { parsePragmaYaml } from "@pragma/interpreter";
-import { PragmaAgentJudgeEvaluationResourceSchema } from "@pragma/evaluation/ast";
+import { PragmaAgentJudgeEvaluationResourceSchema } from "@pragma/interpreter/ast";
 
 import {
   AgentEvaluationRunRefSchema,

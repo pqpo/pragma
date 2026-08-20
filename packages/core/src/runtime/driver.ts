@@ -1982,11 +1982,14 @@ class RuntimeExecutionBindings {
       get waitExperts() {
         return current().executionContext?.waitExperts;
       },
-      get listExperts() {
-        return current().executionContext?.listExperts;
+      get listAgents() {
+        return current().executionContext?.listAgents;
       },
       get followupExpert() {
         return current().executionContext?.followupExpert;
+      },
+      get steerExpert() {
+        return current().executionContext?.steerExpert;
       },
       get interruptExpert() {
         return current().executionContext?.interruptExpert;

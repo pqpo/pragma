@@ -9,7 +9,12 @@ import {
 export type ExpertDefinition = Expert | ExpertTeam;
 
 export interface ExpertTeamDelegationOptions {
-  readonly allow?: Readonly<Record<string, readonly string[]>> | undefined;
+  readonly permissions?:
+    | {
+        readonly spawn?: Readonly<Record<string, readonly string[]>> | undefined;
+        readonly interact?: Readonly<Record<string, readonly string[]>> | undefined;
+      }
+    | undefined;
   readonly maxConcurrency?: number | undefined;
   readonly maxDepth?: number | undefined;
   readonly contextId?: ContextIdResolver | undefined;
@@ -50,7 +55,10 @@ export interface ExpertTeam {
   readonly members: readonly Expert[];
   readonly contextStores: readonly ExpertTeamContextStoreBinding[];
   readonly delegation: {
-    readonly allow: ReadonlyMap<string, ReadonlySet<string>>;
+    readonly permissions: {
+      readonly spawn: ReadonlyMap<string, ReadonlySet<string>>;
+      readonly interact: ReadonlyMap<string, ReadonlySet<string>>;
+    };
     readonly maxConcurrency: number;
     readonly maxDepth: number;
     readonly contextId: ContextIdResolver;
@@ -106,28 +114,32 @@ export function defineExpertTeam(options: DefineExpertTeamOptions): ExpertTeam {
           : Object.freeze({ ...binding.visibility, expertIds: Object.freeze(selected) }),
     });
   });
-  const allow = new Map<string, ReadonlySet<string>>();
-  const configuredAllow = options.delegation.allow ?? {
-    [options.coordinator.id]: options.members.map((expert) => expert.id),
-  };
-  for (const [source, targets] of Object.entries(configuredAllow)) {
-    if (!known.has(source)) {
-      throw new Error(`ExpertTeam ${options.id} delegation source is unknown: ${source}`);
+  for (const permission of ["spawn", "interact"] as const) {
+    if (Object.hasOwn(options.delegation.permissions?.[permission] ?? {}, options.coordinator.id)) {
+      throw new Error(
+        `ExpertTeam ${options.id} ${permission} permission must not configure the coordinator; coordinator authority is system-inherited.`,
+      );
     }
-    const targetSet = new Set<string>();
-    for (const target of targets) {
-      if (!known.has(target)) {
-        throw new Error(`ExpertTeam ${options.id} delegation target is unknown: ${target}`);
-      }
-      if (source === target) {
-        throw new Error(`ExpertTeam ${options.id} does not allow self delegation: ${source}`);
-      }
-      targetSet.add(target);
-    }
-    allow.set(source, targetSet);
   }
+  const spawn = normalizePermissionMap(
+    options.id,
+    "spawn",
+    known,
+    options.delegation.permissions?.spawn ?? {},
+    false,
+  );
+  const interact = normalizePermissionMap(
+    options.id,
+    "interact",
+    known,
+    options.delegation.permissions?.interact ?? {},
+    true,
+  );
 
-  const routableExpertIds = new Set([...allow.values()].flatMap((targets) => [...targets]));
+  const routableExpertIds = new Set([
+    ...options.members.map((expert) => expert.id),
+    ...[...spawn.values()].flatMap((targets) => [...targets]),
+  ]);
   const routableExperts = participants.filter((expert) => routableExpertIds.has(expert.id));
   const runtimeByExpert = normalizeRuntimeByExpert(
     options.delegation.runtimeByExpert,
@@ -153,13 +165,40 @@ export function defineExpertTeam(options: DefineExpertTeamOptions): ExpertTeam {
     members: Object.freeze([...options.members]),
     contextStores: Object.freeze(contextStores),
     delegation: Object.freeze({
-      allow,
+      permissions: Object.freeze({ spawn, interact }),
       maxConcurrency,
       maxDepth,
       contextId: options.delegation.contextId ?? freshContextIdResolver,
       runtimeByExpert,
     }),
   });
+}
+
+function normalizePermissionMap(
+  teamId: string,
+  permission: "spawn" | "interact",
+  known: ReadonlySet<string>,
+  configured: Readonly<Record<string, readonly string[]>>,
+  allowSameExpert: boolean,
+): ReadonlyMap<string, ReadonlySet<string>> {
+  const normalized = new Map<string, ReadonlySet<string>>();
+  for (const [source, targets] of Object.entries(configured)) {
+    if (!known.has(source)) {
+      throw new Error(`ExpertTeam ${teamId} ${permission} source is unknown: ${source}`);
+    }
+    const targetSet = new Set<string>();
+    for (const target of targets) {
+      if (!known.has(target)) {
+        throw new Error(`ExpertTeam ${teamId} ${permission} target is unknown: ${target}`);
+      }
+      if (!allowSameExpert && source === target) {
+        throw new Error(`ExpertTeam ${teamId} does not allow self spawn: ${source}`);
+      }
+      targetSet.add(target);
+    }
+    normalized.set(source, targetSet);
+  }
+  return normalized;
 }
 
 export function isExpertTeam(expert: ExpertDefinition): expert is ExpertTeam {

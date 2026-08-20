@@ -9,7 +9,7 @@ import {
   AgentEvaluationCaseResultSchema,
   AgentEvaluationJudgeResultSchema,
   PragmaAgentEvaluationCaseSchema,
-  PragmaAgentJudgeEvaluationResourceSchema,
+  PragmaAgentJudgeEvaluationSpecSchema,
 } from "../src/ast.ts";
 
 const testCase = PragmaAgentEvaluationCaseSchema.parse({
@@ -70,22 +70,12 @@ describe("Agent evaluation", () => {
 
   it("rejects mock fixtures in a live dataset", () => {
     expect(
-      PragmaAgentJudgeEvaluationResourceSchema.safeParse({
-        apiVersion: "pragma/v4",
-        kind: "Evaluation",
-        metadata: {
-          id: "7h8j9k0m1n2p3q4r",
-          name: "Live",
-          description: "Live suite.",
-          tags: [],
-        },
-        spec: {
-          method: {
-            type: "agent-judge",
-            group: "Business understanding",
-            execution: { mode: "live" },
-            cases: [testCase],
-          },
+      PragmaAgentJudgeEvaluationSpecSchema.safeParse({
+        method: {
+          type: "agent-judge",
+          group: "Business understanding",
+          execution: { mode: "live" },
+          cases: [testCase],
         },
       }).success,
     ).toBe(false);
@@ -109,29 +99,19 @@ describe("Agent evaluation", () => {
 
   it("rejects duplicate case IDs across an agent-judge dataset", () => {
     const resource = {
-      apiVersion: "pragma/v4",
-      kind: "Evaluation",
-      metadata: {
-        id: "7h8j9k0m1n2p3q4r",
-        name: "Mock",
-        description: "Mock suite.",
-        tags: [],
-      },
-      spec: {
-        method: {
-          type: "agent-judge",
-          group: "Tool calling",
-          execution: { mode: "mock" },
-          cases: [testCase, testCase],
-        },
+      method: {
+        type: "agent-judge",
+        group: "Tool calling",
+        execution: { mode: "mock" },
+        cases: [testCase, testCase],
       },
     } as const;
 
     expect(
-      PragmaAgentJudgeEvaluationResourceSchema.safeParse(resource).error?.issues.map((issue) =>
+      PragmaAgentJudgeEvaluationSpecSchema.safeParse(resource).error?.issues.map((issue) =>
         issue.path.join("."),
       ),
-    ).toContain("spec.method.cases.1.id");
+    ).toContain("method.cases.1.id");
   });
 
   it("rejects a Judge resolved state that contradicts its criteria", () => {

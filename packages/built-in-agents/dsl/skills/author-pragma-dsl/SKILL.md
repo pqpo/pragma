@@ -1,6 +1,6 @@
 ---
 name: author-pragma-dsl
-description: Create and update validated pragma/v4 Expert, ExpertTeam, Flow, Evaluation, and Automation resources. Use when a user asks Pragma to create, change, configure, test, evaluate, or repair an Expert, team, Flow, Run Dry suite, schedule, trigger, or Automation in the current Pragma project.
+description: Create and update validated pragma/v5 Expert, ExpertTeam, Flow, Evaluation, and Automation resources. Use when a user asks Pragma to create, change, configure, test, evaluate, or repair an Expert, team, Flow, Run Dry suite, schedule, trigger, or Automation in the current Pragma project.
 ---
 
 # Author Pragma DSL

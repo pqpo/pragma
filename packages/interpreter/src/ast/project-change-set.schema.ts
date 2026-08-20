@@ -1,11 +1,14 @@
 import { z } from "zod";
 
-import { PragmaResourceRefSchema, PragmaResourceSchema } from "./pragma-dsl.schema.ts";
+import {
+  PragmaForwardCompatibleResourceSchema,
+  PragmaResourceRefSchema,
+} from "./pragma-dsl.schema.ts";
 
 export const PragmaProjectChangeSetSchema = z
   .object({
     baseRevision: z.number().int().nonnegative(),
-    upserts: z.array(PragmaResourceSchema).default([]),
+    upserts: z.array(PragmaForwardCompatibleResourceSchema).default([]),
     removals: z.array(PragmaResourceRefSchema).default([]),
     requiredUnchangedRefs: z.array(PragmaResourceRefSchema).default([]),
   })

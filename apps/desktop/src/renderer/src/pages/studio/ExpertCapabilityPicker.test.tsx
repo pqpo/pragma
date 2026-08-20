@@ -1,3 +1,4 @@
+import { PRAGMA_DSL_WRITE_API_VERSION } from "@pragma/interpreter/ast";
 import { renderToStaticMarkup } from "react-dom/server";
 import { describe, expect, it } from "vitest";
 import { PragmaExpertResourceSchema } from "@pragma/interpreter/ast";
@@ -69,7 +70,7 @@ const contextStore = {
 } satisfies ContextStore;
 
 const invocableResource = PragmaExpertResourceSchema.parse({
-  apiVersion: "pragma/v4",
+  apiVersion: PRAGMA_DSL_WRITE_API_VERSION,
   kind: "Expert",
   metadata: {
     id: "0000000000000001",

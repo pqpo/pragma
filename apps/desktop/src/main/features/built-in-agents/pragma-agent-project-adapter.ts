@@ -2,21 +2,20 @@ import { randomUUID } from "node:crypto";
 import { mkdir, readFile, rename, rm, writeFile } from "node:fs/promises";
 import { dirname, join } from "node:path";
 
-import {
-  PragmaFlowRunDryEvaluationResourceSchema,
-  type PragmaFlowRunDryEvaluationResource,
-  type PragmaFlowRunDrySuiteResult,
-} from "@pragma/evaluation/ast";
+import { type PragmaFlowRunDrySuiteResult } from "@pragma/evaluation/ast";
 import { encodePragmaPathSegment, generatePragmaResourceId, withFileLock } from "@pragma/core";
 import { formatPragmaYaml, parsePragmaYaml, runPragmaEvaluation } from "@pragma/interpreter";
 import {
+  PRAGMA_DSL_WRITE_API_VERSION,
+  PragmaFlowRunDryEvaluationResourceSchema,
+  PragmaForwardCompatibleResourceSchema,
   analyzePragmaFlowGraph,
   validatePragmaFlowDataContracts,
   PragmaFlowResourceSchema,
-  PragmaResourceSchema,
   canonicalPragmaResourceRef,
   type PragmaExpertResource,
   type PragmaFlowResource,
+  type PragmaFlowRunDryEvaluationResource,
   type PragmaResource,
 } from "@pragma/interpreter/ast";
 import {
@@ -54,7 +53,7 @@ import type { RuntimeEnvironmentService } from "../runtimes/runtime-environment-
 
 const CandidateRecordSchema = z.object({
   changeSet: PragmaAgentChangeSetSchema,
-  resources: z.array(PragmaResourceSchema),
+  resources: z.array(PragmaForwardCompatibleResourceSchema),
 });
 
 export function createDesktopPragmaAgentProjectPort(options: {
@@ -298,7 +297,7 @@ export function createDesktopPragmaAgentProjectPort(options: {
           baseProjectRevision: snapshot.revision,
           draftRevision: 0,
           resource: {
-            apiVersion: "pragma/v4",
+            apiVersion: PRAGMA_DSL_WRITE_API_VERSION,
             kind: "Flow",
             metadata: input.metadata,
             spec: {
@@ -375,7 +374,7 @@ export function createDesktopPragmaAgentProjectPort(options: {
       let sourceEvaluationRef: string | undefined;
       if (input.mode === "create") {
         resource = {
-          apiVersion: "pragma/v4",
+          apiVersion: PRAGMA_DSL_WRITE_API_VERSION,
           kind: "Evaluation",
           metadata: input.metadata,
           spec: {
@@ -761,7 +760,7 @@ function runtimeModelIdentity(runtimeId: string, providerId: string, modelId: st
 }
 
 function parsePragmaAgentResource(source: string): PragmaResource {
-  const resource = PragmaResourceSchema.parse(parsePragmaYaml(source));
+  const resource = PragmaForwardCompatibleResourceSchema.parse(parsePragmaYaml(source));
   if (
     resource.kind !== "Expert" &&
     resource.kind !== "ExpertTeam" &&

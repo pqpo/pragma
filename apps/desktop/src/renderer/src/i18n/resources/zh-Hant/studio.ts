@@ -66,7 +66,7 @@ export const studio = {
     removeCase: "移除測試案例",
     yamlFormat: "YAML 格式說明",
     yamlFormatDescription:
-      "檔案必須是單一 pragma/v4 Evaluation 資源，method.type 必須為 agent-judge。",
+      "檔案必須是單一 pragma/v5 Evaluation 資源，method.type 必須為 agent-judge。",
     yamlRuleMetadata: "metadata 包含 16 位資源 ID、名稱、說明和可選標籤。",
     yamlRuleCases: "每個 case 至少包含 id、name、prompt 和一條 criteria。",
     yamlRuleLive: "Live 模式不得宣告 mocks；Mock 模式可設定工具結果與斷言。",
@@ -381,6 +381,14 @@ export const studio = {
   teamKnowledgePickerDescription: "選擇團隊內所有成員都可存取的知識庫。",
   teamKnowledgeVisibilityAll: "全部專家",
   teamContextDescription: "團隊知識庫與團隊私有的唯讀 Memory。",
+  teamPermissions: "團隊權限",
+  teamPermissionsDescription: "控制成員之間的 Agent 建立與互動；協調者權限由系統繼承。",
+  spawnPermissions: "可以建立",
+  interactionPermissions: "可以查看並協作",
+  otherInstances: "其他實例",
+  coordinatorAuthority: "系統繼承：管理全部團隊 Agent",
+  coordinatorAuthorityDescription:
+    "協調者始終可以發現、跟進、引導、等待和中斷本次團隊執行中的全部 Agent。",
   maxConcurrency: "最大並行數",
   maxDelegationDepth: "最大委派深度",
   resourceId: "資源 ID",

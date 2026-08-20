@@ -7,15 +7,39 @@ import {
   pragmaUnicodeLength,
 } from "@pragma/shared";
 import {
-  PragmaEvaluationResourceSchema,
-  type PragmaEvaluationResource,
+  PragmaAgentJudgeEvaluationSpecSchema,
+  PragmaEvaluationMetadataSchema,
+  PragmaFlowRunDryEvaluationSpecSchema,
 } from "@pragma/evaluation/ast";
 import { z } from "zod";
 
+import { PRAGMA_DSL_WRITE_API_VERSION, PragmaApiVersionSchema } from "./pragma-api-version.ts";
 import { PragmaObjectJsonSchemaSchema } from "./tool-capability.schema.ts";
 
-export const CURRENT_PRAGMA_DSL_API_VERSION = "pragma/v4" as const;
-export const PragmaApiVersionSchema = z.literal(CURRENT_PRAGMA_DSL_API_VERSION);
+export { PRAGMA_DSL_WRITE_API_VERSION, PragmaApiVersionSchema };
+
+export const PragmaFlowRunDryEvaluationResourceSchema = z
+  .object({
+    apiVersion: PragmaApiVersionSchema,
+    kind: z.literal("Evaluation"),
+    metadata: PragmaEvaluationMetadataSchema,
+    spec: PragmaFlowRunDryEvaluationSpecSchema,
+  })
+  .strict();
+
+export const PragmaAgentJudgeEvaluationResourceSchema = z
+  .object({
+    apiVersion: PragmaApiVersionSchema,
+    kind: z.literal("Evaluation"),
+    metadata: PragmaEvaluationMetadataSchema,
+    spec: PragmaAgentJudgeEvaluationSpecSchema,
+  })
+  .strict();
+
+export const PragmaEvaluationResourceSchema = z.union([
+  PragmaFlowRunDryEvaluationResourceSchema,
+  PragmaAgentJudgeEvaluationResourceSchema,
+]);
 
 export const PragmaResourceKindSchema = z.enum([
   "expert",
@@ -411,7 +435,13 @@ export const PragmaExpertTeamResourceSchema = z
         contextStores: z.array(PragmaExpertTeamContextStoreBindingSchema).default([]),
         delegation: z
           .object({
-            allow: z.record(PragmaExpertIdSchema, z.array(PragmaExpertIdSchema)).optional(),
+            permissions: z
+              .object({
+                spawn: z.record(PragmaExpertIdSchema, z.array(PragmaExpertIdSchema)).optional(),
+                interact: z.record(PragmaExpertIdSchema, z.array(PragmaExpertIdSchema)).default({}),
+              })
+              .strict()
+              .default({ interact: {} }),
             maxConcurrency: z.number().int().positive().default(4),
             maxDepth: z.number().int().positive().default(3),
             context: versionedExtensionRefSchema(
@@ -426,8 +456,9 @@ export const PragmaExpertTeamResourceSchema = z
   })
   .strict()
   .superRefine((team, context) => {
+    const coordinatorId = team.spec.coordinator.ref.slice("expert:".length);
     const participantIds = [
-      team.spec.coordinator.ref.slice("expert:".length),
+      coordinatorId,
       ...team.spec.members.map((member) => member.ref.slice("expert:".length)),
     ];
     const participants = new Set(participantIds);
@@ -481,6 +512,50 @@ export const PragmaExpertTeamResourceSchema = z
         });
       }
     });
+    for (const permission of ["spawn", "interact"] as const) {
+      const configured = team.spec.delegation.permissions[permission] ?? {};
+      for (const [source, targets] of Object.entries(configured)) {
+        if (source === coordinatorId) {
+          context.addIssue({
+            code: "custom",
+            message: `ExpertTeam ${permission} permission must not configure the coordinator; coordinator authority is system-inherited.`,
+            path: ["spec", "delegation", "permissions", permission, source],
+          });
+        }
+        if (!participants.has(source)) {
+          context.addIssue({
+            code: "custom",
+            message: `ExpertTeam ${permission} permission references an unknown source Expert: ${source}.`,
+            path: ["spec", "delegation", "permissions", permission, source],
+          });
+        }
+        const seen = new Set<string>();
+        targets.forEach((target, targetIndex) => {
+          if (!participants.has(target)) {
+            context.addIssue({
+              code: "custom",
+              message: `ExpertTeam ${permission} permission references an unknown target Expert: ${target}.`,
+              path: ["spec", "delegation", "permissions", permission, source, targetIndex],
+            });
+          }
+          if (seen.has(target)) {
+            context.addIssue({
+              code: "custom",
+              message: `ExpertTeam ${permission} permission contains a duplicate target: ${target}.`,
+              path: ["spec", "delegation", "permissions", permission, source, targetIndex],
+            });
+          }
+          if (permission === "spawn" && source === target) {
+            context.addIssue({
+              code: "custom",
+              message: `ExpertTeam spawn permission cannot target itself: ${source}.`,
+              path: ["spec", "delegation", "permissions", permission, source, targetIndex],
+            });
+          }
+          seen.add(target);
+        });
+      }
+    }
   });
 
 export const PragmaFlowTargetSchema = z.union([
@@ -1000,6 +1075,14 @@ export const PragmaResourceSchema = z.union([
   PragmaEvaluationResourceSchema,
 ]);
 
+/**
+ * Persistence boundary for pragma/v5 resources. Known fields remain fully validated while
+ * additive unknown fields at every object depth are retained for same-version forward
+ * compatibility. Unknown discriminators and invalid known fields still fail closed.
+ */
+export const PragmaForwardCompatibleResourceSchema: z.ZodType<PragmaResource> =
+  createForwardCompatibleSchema<PragmaResource>((value) => strictResourceSchemaFor(value));
+
 export const PragmaBundleSchema = z
   .object({
     apiVersion: PragmaApiVersionSchema,
@@ -1008,6 +1091,329 @@ export const PragmaBundleSchema = z
     resources: z.array(PragmaResourceSchema).default([]),
   })
   .strict();
+
+const PragmaBundleEnvelopeSchema = z
+  .object({
+    ...PragmaBundleSchema.shape,
+    resources: z.array(z.unknown()).default([]),
+  })
+  .strict();
+
+export const PragmaForwardCompatibleBundleSchema: z.ZodType<PragmaBundle> = z
+  .unknown()
+  .transform((value, context) => {
+    const parsed = parseForwardCompatibleBundle(value);
+    if (parsed.success) return parsed.data;
+    for (const issue of parsed.issues) {
+      context.addIssue({ code: "custom", message: issue.message, path: [...issue.path] });
+    }
+    return z.NEVER;
+  }) as z.ZodType<PragmaBundle>;
+
+export interface PragmaUnknownFieldIssue {
+  readonly key: string;
+  readonly path: readonly (string | number)[];
+}
+
+export function inspectPragmaUnknownFields(
+  value: unknown,
+  kind: "resource" | "bundle",
+): readonly PragmaUnknownFieldIssue[] {
+  return kind === "bundle"
+    ? parseForwardCompatibleBundle(value).unknownFields
+    : parsePreservingUnknownFields(value, strictResourceSchemaFor(value)).unknownFields;
+}
+
+function createForwardCompatibleSchema<T>(
+  strictSchemaFor: (value: unknown) => z.ZodType<T>,
+): z.ZodType<T> {
+  return z.unknown().transform((value, context) => {
+    const parsed = parsePreservingUnknownFields(value, strictSchemaFor(value));
+    if (parsed.success) return parsed.data;
+    for (const issue of parsed.issues) {
+      context.addIssue({ code: "custom", message: issue.message, path: [...issue.path] });
+    }
+    return z.NEVER;
+  }) as z.ZodType<T>;
+}
+
+type PreservingParseResult<T> =
+  | {
+      readonly success: true;
+      readonly data: T;
+      readonly unknownFields: readonly PragmaUnknownFieldIssue[];
+    }
+  | {
+      readonly success: false;
+      readonly issues: readonly CompatibilityParseIssue[];
+      readonly unknownFields: readonly PragmaUnknownFieldIssue[];
+    };
+
+interface CompatibilityParseIssue {
+  readonly message: string;
+  readonly path: readonly PropertyKey[];
+}
+
+function parsePreservingUnknownFields<T>(
+  value: unknown,
+  strictSchema: z.ZodType<T>,
+): PreservingParseResult<T> {
+  const projection = cloneCompatibleValue(value);
+  const unknownFields = new Map<string, PragmaUnknownFieldIssue>();
+  for (;;) {
+    const parsed = strictSchema.safeParse(projection);
+    if (parsed.success) {
+      return {
+        success: true,
+        data: overlayCompatibleValue(value, parsed.data) as T,
+        unknownFields: [...unknownFields.values()],
+      };
+    }
+    const pass: PragmaUnknownFieldIssue[] = [];
+    collectUnknownFieldIssues(parsed.error.issues, pass);
+    let removed = false;
+    for (const issue of pass) {
+      unknownFields.set(JSON.stringify(issue.path), issue);
+      removed = removeCompatibleValueAtPath(projection, issue.path) || removed;
+    }
+    if (!removed) {
+      return {
+        success: false,
+        issues: parsed.error.issues.map((issue) => ({
+          message: issue.message,
+          path: issue.path,
+        })),
+        unknownFields: [...unknownFields.values()],
+      };
+    }
+  }
+}
+
+function parseForwardCompatibleBundle(value: unknown): PreservingParseResult<PragmaBundle> {
+  const envelope = parsePreservingUnknownFields(value, PragmaBundleEnvelopeSchema);
+  if (!envelope.success) return envelope;
+  const unknownFields = [...envelope.unknownFields];
+  const resources: PragmaResource[] = [];
+  const issues: CompatibilityParseIssue[] = [];
+  envelope.data.resources.forEach((resource, index) => {
+    const parsed = parsePreservingUnknownFields(resource, strictResourceSchemaFor(resource));
+    unknownFields.push(
+      ...parsed.unknownFields.map((issue) => ({
+        key: issue.key,
+        path: ["resources", index, ...issue.path],
+      })),
+    );
+    if (parsed.success) {
+      resources.push(parsed.data);
+      return;
+    }
+    issues.push(
+      ...parsed.issues.map((issue) => ({
+        message: issue.message,
+        path: ["resources", index, ...issue.path],
+      })),
+    );
+  });
+  if (issues.length > 0) return { success: false, issues, unknownFields };
+  return {
+    success: true,
+    data: overlayCompatibleValue(envelope.data, { ...envelope.data, resources }) as PragmaBundle,
+    unknownFields,
+  };
+}
+
+function strictResourceSchemaFor(value: unknown): z.ZodType<PragmaResource> {
+  if (typeof value !== "object" || value === null || Array.isArray(value)) {
+    return PragmaResourceSchema;
+  }
+  const record = value as Record<string, unknown>;
+  switch (record["kind"]) {
+    case "Expert":
+      return PragmaExpertResourceSchema;
+    case "ExpertTeam":
+      return PragmaExpertTeamResourceSchema;
+    case "Flow":
+      return PragmaFlowResourceSchema;
+    case "Automation":
+      return PragmaAutomationResourceSchema;
+    case "Capability":
+      return PragmaCapabilityResourceSchema;
+    case "ContextStore":
+      return PragmaContextStoreResourceSchema;
+    case "RuntimeProfile":
+      return PragmaRuntimeProfileResourceSchema;
+    case "Evaluation": {
+      const spec = record["spec"];
+      const method =
+        typeof spec === "object" && spec !== null && !Array.isArray(spec)
+          ? (spec as Record<string, unknown>)["method"]
+          : undefined;
+      const type =
+        typeof method === "object" && method !== null && !Array.isArray(method)
+          ? (method as Record<string, unknown>)["type"]
+          : undefined;
+      return type === "flow-run-dry"
+        ? PragmaFlowRunDryEvaluationResourceSchema
+        : type === "agent-judge"
+          ? PragmaAgentJudgeEvaluationResourceSchema
+          : PragmaEvaluationResourceSchema;
+    }
+    default:
+      return PragmaResourceSchema;
+  }
+}
+
+function collectUnknownFieldIssues(
+  issues: readonly unknown[],
+  output: PragmaUnknownFieldIssue[],
+): void {
+  for (const issue of issues) {
+    if (typeof issue !== "object" || issue === null) continue;
+    const record = issue as Record<string, unknown>;
+    const path = Array.isArray(record["path"])
+      ? record["path"].filter(
+          (segment): segment is string | number =>
+            typeof segment === "string" || typeof segment === "number",
+        )
+      : [];
+    if (record["code"] === "unrecognized_keys" && Array.isArray(record["keys"])) {
+      for (const key of record["keys"]) {
+        if (typeof key === "string") output.push({ key, path: [...path, key] });
+      }
+    }
+    const nested = record["errors"];
+    if (!Array.isArray(nested)) continue;
+    for (const branch of nested) {
+      if (Array.isArray(branch)) collectUnknownFieldIssues(branch, output);
+    }
+  }
+}
+
+/**
+ * Applies a current-client resource update without discarding additive fields that the client
+ * does not understand. Plain objects merge recursively; arrays and scalar values are replaced.
+ */
+export function mergePragmaResourcePreservingUnknownFields(
+  original: PragmaResource,
+  updated: PragmaResource,
+): PragmaResource {
+  const merged = cloneCompatibleValue(
+    PragmaForwardCompatibleResourceSchema.parse(updated),
+  ) as PragmaResource;
+  for (const issue of inspectPragmaUnknownFields(original, "resource")) {
+    preserveUnknownFieldAtPath(original, merged, issue.path);
+  }
+  return PragmaForwardCompatibleResourceSchema.parse(merged);
+}
+
+function findCompatibleArrayEntry(
+  original: readonly unknown[],
+  updated: unknown,
+  available: ReadonlySet<number>,
+): number | undefined {
+  if (!isPlainRecord(updated)) return undefined;
+  for (const key of ["id", "ref", "name", "key"] as const) {
+    const identity = updated[key];
+    if (typeof identity !== "string" && typeof identity !== "number") continue;
+    const match = [...available].find(
+      (index) => isPlainRecord(original[index]) && original[index][key] === identity,
+    );
+    if (match !== undefined) return match;
+  }
+  return undefined;
+}
+
+function preserveUnknownFieldAtPath(
+  original: unknown,
+  updated: unknown,
+  path: readonly (string | number)[],
+): void {
+  if (path.length === 0) return;
+  let source: unknown = original;
+  let target: unknown = updated;
+  for (const segment of path.slice(0, -1)) {
+    if (typeof segment === "string") {
+      if (!isPlainRecord(source) || !isPlainRecord(target)) return;
+      source = source[segment];
+      target = target[segment];
+      continue;
+    }
+    if (!Array.isArray(source) || !Array.isArray(target)) return;
+    const sourceEntry = source[segment];
+    const targetIndex =
+      findCompatibleArrayEntry(target, sourceEntry, new Set(target.keys())) ??
+      (segment < target.length ? segment : undefined);
+    if (targetIndex === undefined) return;
+    source = sourceEntry;
+    target = target[targetIndex];
+  }
+  const key = path.at(-1);
+  if (typeof key !== "string" || !isPlainRecord(source) || !isPlainRecord(target)) return;
+  if (!Object.hasOwn(source, key) || Object.hasOwn(target, key)) return;
+  setCompatibleOwnProperty(target, key, cloneCompatibleValue(source[key]));
+}
+
+function cloneCompatibleValue(value: unknown): unknown {
+  if (Array.isArray(value)) return value.map(cloneCompatibleValue);
+  if (!isPlainRecord(value)) return structuredClone(value);
+  return Object.fromEntries(
+    Object.entries(value).map(([key, entry]) => [key, cloneCompatibleValue(entry)]),
+  );
+}
+
+function overlayCompatibleValue(original: unknown, parsed: unknown): unknown {
+  if (Array.isArray(original) && Array.isArray(parsed)) {
+    return parsed.map((value, index) => overlayCompatibleValue(original[index], value));
+  }
+  if (!isPlainRecord(original) || !isPlainRecord(parsed)) return cloneCompatibleValue(parsed);
+  const output = cloneCompatibleValue(original) as Record<string, unknown>;
+  for (const [key, value] of Object.entries(parsed)) {
+    setCompatibleOwnProperty(output, key, overlayCompatibleValue(original[key], value));
+  }
+  return output;
+}
+
+function setCompatibleOwnProperty(
+  target: Record<string, unknown>,
+  key: string,
+  value: unknown,
+): void {
+  Object.defineProperty(target, key, {
+    value,
+    configurable: true,
+    enumerable: true,
+    writable: true,
+  });
+}
+
+function removeCompatibleValueAtPath(value: unknown, path: readonly (string | number)[]): boolean {
+  if (path.length === 0) return false;
+  let parent: unknown = value;
+  for (const segment of path.slice(0, -1)) {
+    if (typeof segment === "number") {
+      if (!Array.isArray(parent)) return false;
+      parent = parent[segment];
+    } else {
+      if (!isPlainRecord(parent)) return false;
+      parent = parent[segment];
+    }
+  }
+  const key = path.at(-1);
+  if (typeof key === "number") {
+    if (!Array.isArray(parent) || key < 0 || key >= parent.length) return false;
+    parent.splice(key, 1);
+    return true;
+  }
+  if (typeof key !== "string" || !isPlainRecord(parent) || !Object.hasOwn(parent, key))
+    return false;
+  return delete parent[key];
+}
+
+function isPlainRecord(value: unknown): value is Record<string, unknown> {
+  if (typeof value !== "object" || value === null || Array.isArray(value)) return false;
+  const prototype = Object.getPrototypeOf(value) as unknown;
+  return prototype === Object.prototype || prototype === null;
+}
 
 export const PragmaLockSchema = z
   .object({
@@ -1110,7 +1516,13 @@ export type PragmaScheduleAutomationConfig = z.infer<typeof PragmaScheduleAutoma
 export type PragmaCapabilityResource = z.infer<typeof PragmaCapabilityResourceSchema>;
 export type PragmaContextStoreResource = z.infer<typeof PragmaContextStoreResourceSchema>;
 export type PragmaRuntimeProfileResource = z.infer<typeof PragmaRuntimeProfileResourceSchema>;
-export type { PragmaEvaluationResource };
+export type PragmaEvaluationResource = z.infer<typeof PragmaEvaluationResourceSchema>;
+export type PragmaFlowRunDryEvaluationResource = z.infer<
+  typeof PragmaFlowRunDryEvaluationResourceSchema
+>;
+export type PragmaAgentJudgeEvaluationResource = z.infer<
+  typeof PragmaAgentJudgeEvaluationResourceSchema
+>;
 export type PragmaInvocableResource = z.infer<typeof PragmaInvocableResourceSchema>;
 export type PragmaDeclarativeResource = z.infer<typeof PragmaDeclarativeResourceSchema>;
 export type PragmaResource = z.infer<typeof PragmaResourceSchema>;

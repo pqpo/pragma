@@ -1,12 +1,10 @@
-import {
-  PragmaLockSchema,
-  canonicalPragmaResourceRef,
-  type PragmaResource,
-} from "../../ast/index.ts";
+import { canonicalPragmaResourceRef, type PragmaResource } from "../../ast/index.ts";
 import { parsePragmaYaml } from "../../compiler/pragma-project.ts";
 import { sha256, stableStringify } from "../../compiler/compiler-hash.ts";
+import { migratePragmaV4ResourceToCurrent } from "../../migrations/steps/v4-to-v5.ts";
 import {
   PragmaCompilerV6BundleSchema,
+  PragmaCompilerV6LockSchema,
   PragmaCompilerV6ResourceSchema,
   type PragmaCompilerV6Resource,
 } from "../schemas/v6.ts";
@@ -26,7 +24,16 @@ export function migratePragmaCompilerV6Project(input: {
       "Compiler v6 project revision is missing pragma.lock.yaml.",
     );
   }
-  const lock = PragmaLockSchema.parse(parsePragmaYaml(lockSource));
+  let lock;
+  try {
+    lock = PragmaCompilerV6LockSchema.parse(parsePragmaYaml(lockSource));
+  } catch (error) {
+    throw new PragmaCompilerMigrationError(
+      "invalid_legacy_project",
+      "Compiler v6 project revision has an invalid pragma.lock.yaml.",
+      { cause: error },
+    );
+  }
   if (
     input.revisionCompilerVersion !== "pragma.dsl/v6" ||
     lock.compilerVersion !== input.revisionCompilerVersion
@@ -45,15 +52,25 @@ export function migratePragmaCompilerV6Project(input: {
   const managed = new Set(["pragma.yaml", "pragma.lock.yaml"]);
   for (const [source, contents] of input.files) {
     if (source !== "pragma.yaml" && !source.endsWith(".pragma.yaml")) continue;
-    const value = parsePragmaYaml(contents);
     try {
+      const value = parsePragmaYaml(contents);
       if (isRecord(value) && value["kind"] === "Bundle") {
         const bundle = PragmaCompilerV6BundleSchema.parse(value);
-        for (const resource of bundle.resources)
-          indexed.push({ historical: resource, resource, source });
+        for (const historical of bundle.resources)
+          indexed.push({
+            historical,
+            resource: migratePragmaV4ResourceToCurrent(historical),
+            source,
+          });
       } else if (isRecord(value) && typeof value["kind"] === "string" && value["kind"] !== "Lock") {
-        const resource = PragmaCompilerV6ResourceSchema.parse(value);
-        indexed.push({ historical: resource, resource, source });
+        const historical = PragmaCompilerV6ResourceSchema.parse(value);
+        indexed.push({
+          historical,
+          resource: migratePragmaV4ResourceToCurrent(historical),
+          source,
+        });
+      } else {
+        throw new Error("Expected a pragma/v4 Bundle or semantic resource.");
       }
       managed.add(source);
     } catch (error) {
@@ -83,7 +100,9 @@ export function migratePragmaCompilerV6Project(input: {
       );
     })
     .map(({ ref }) => ref);
-  if (actual.size !== expected.length) mismatches.push("resource set");
+  if (actual.size !== lock.resources.length || actual.size !== expected.length) {
+    mismatches.push("resource set");
+  }
   const fingerprint = sha256(
     stableStringify({
       resources: expected.map(({ ref, contentHash }) => ({ ref, contentHash })),

@@ -1,3 +1,4 @@
+import { PRAGMA_DSL_WRITE_API_VERSION } from "@pragma/interpreter/ast";
 import { describe, expect, it } from "vitest";
 
 import type {
@@ -521,7 +522,7 @@ function evaluationDraft() {
     baseProjectRevision: 0,
     draftRevision: 1,
     resource: {
-      apiVersion: "pragma/v4",
+      apiVersion: PRAGMA_DSL_WRITE_API_VERSION,
       kind: "Evaluation",
       metadata: {
         id: "7h8j9k0m1n2p3q4r",
@@ -559,7 +560,7 @@ function flowDraft() {
     baseProjectRevision: 3,
     draftRevision: 1,
     resource: {
-      apiVersion: "pragma/v4",
+      apiVersion: PRAGMA_DSL_WRITE_API_VERSION,
       kind: "Flow",
       metadata: {
         id: "8h9j0k1m2n3p4q5r",

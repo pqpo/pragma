@@ -1,3 +1,4 @@
+import { PRAGMA_DSL_WRITE_API_VERSION } from "@pragma/interpreter/ast";
 import { mkdir, mkdtemp, rm, truncate, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -17,7 +18,7 @@ import { createMissionContextStoreBrowserService } from "./mission-context-store
 const writer = expert("1xddvess309a6gme", "Writer");
 const reviewer = expert("3sfd30h5017wd17d", "Reviewer");
 const team: PragmaExpertTeamResource = {
-  apiVersion: "pragma/v4",
+  apiVersion: PRAGMA_DSL_WRITE_API_VERSION,
   kind: "ExpertTeam",
   metadata: {
     id: "vyv9pwwzaksth2dd",
@@ -31,7 +32,10 @@ const team: PragmaExpertTeamResource = {
     members: [{ ref: "expert:3sfd30h5017wd17d" }],
     contextStores: [],
     delegation: {
-      allow: { "1xddvess309a6gme": ["3sfd30h5017wd17d"] },
+      permissions: {
+        spawn: {},
+        interact: {},
+      },
       maxConcurrency: 2,
       maxDepth: 2,
       context: "context-policy:pragma.fresh@v1",
@@ -378,7 +382,7 @@ function teamRef(): `team:${string}` {
 
 function expert(id: string, name: string): PragmaExpertResource {
   return {
-    apiVersion: "pragma/v4",
+    apiVersion: PRAGMA_DSL_WRITE_API_VERSION,
     kind: "Expert",
     metadata: {
       id,

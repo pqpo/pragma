@@ -1,12 +1,14 @@
 import {
-  CURRENT_PRAGMA_DSL_API_VERSION,
-  PragmaResourceSchema,
+  PRAGMA_DSL_WRITE_API_VERSION,
+  PragmaForwardCompatibleResourceSchema,
   type PragmaResource,
 } from "../ast/pragma-dsl.schema.ts";
+import { isPragmaDslApiVersionUpgradeable } from "../ast/pragma-api-version.ts";
 import { normalizePragmaResourceName } from "../ast/resource-identity.ts";
 import { parsePragmaYaml } from "../compiler/pragma-project.ts";
 import { pragmaDslV2ToV3Step } from "./steps/v2-to-v3.ts";
 import { pragmaDslV3ToV4Step } from "./steps/v3-to-v4.ts";
+import { pragmaDslV4ToV5Step } from "./steps/v4-to-v5.ts";
 import {
   PragmaDslMigrationError,
   type PragmaDslApiVersion,
@@ -30,11 +32,12 @@ export {
   type PragmaResourceIdentityMigrationIndex,
 } from "./resource-identity-index.ts";
 
-export const PRAGMA_DSL_MIGRATION_CHAIN_VERSION = "pragma.dsl-migrations/v2";
+export const PRAGMA_DSL_MIGRATION_CHAIN_VERSION = "pragma.dsl-migrations/v3";
 
 const migrationSteps = [
   pragmaDslV2ToV3Step,
   pragmaDslV3ToV4Step,
+  pragmaDslV4ToV5Step,
 ] as const satisfies readonly PragmaDslMigrationStep[];
 const migrationStepsBySource = indexMigrationSteps(migrationSteps);
 const managedKinds = new Set([
@@ -65,6 +68,19 @@ export function migratePragmaDslProjectToCurrent(input: {
   }
   const extracted = extractProject(input.files);
   const sourceApiVersion = extracted.apiVersion;
+  if (
+    sourceApiVersion !== PRAGMA_DSL_WRITE_API_VERSION &&
+    !isPragmaDslApiVersionUpgradeable(sourceApiVersion)
+  ) {
+    const code =
+      compareApiVersions(sourceApiVersion, PRAGMA_DSL_WRITE_API_VERSION) > 0
+        ? "unsupported_api_version"
+        : "missing_migration_step";
+    throw new PragmaDslMigrationError(
+      code,
+      `Pragma DSL ${sourceApiVersion} cannot be upgraded to ${PRAGMA_DSL_WRITE_API_VERSION}.`,
+    );
+  }
   let apiVersion = sourceApiVersion;
   let project: PragmaDslMigrationProject = {
     projectId: input.projectId,
@@ -73,7 +89,7 @@ export function migratePragmaDslProjectToCurrent(input: {
     identityMigrations: [],
   };
   const visited = new Set<PragmaDslApiVersion>();
-  while (apiVersion !== CURRENT_PRAGMA_DSL_API_VERSION) {
+  while (apiVersion !== PRAGMA_DSL_WRITE_API_VERSION) {
     if (visited.has(apiVersion)) {
       throw new PragmaDslMigrationError(
         "missing_migration_step",
@@ -84,12 +100,12 @@ export function migratePragmaDslProjectToCurrent(input: {
     const step = migrationStepsBySource.get(apiVersion);
     if (step === undefined) {
       const code =
-        compareApiVersions(apiVersion, CURRENT_PRAGMA_DSL_API_VERSION) > 0
+        compareApiVersions(apiVersion, PRAGMA_DSL_WRITE_API_VERSION) > 0
           ? "unsupported_api_version"
           : "missing_migration_step";
       throw new PragmaDslMigrationError(
         code,
-        `Pragma DSL ${apiVersion} cannot be upgraded to ${CURRENT_PRAGMA_DSL_API_VERSION}.`,
+        `Pragma DSL ${apiVersion} cannot be upgraded to ${PRAGMA_DSL_WRITE_API_VERSION}.`,
       );
     }
     project = step.migrate(project);
@@ -100,8 +116,8 @@ export function migratePragmaDslProjectToCurrent(input: {
   assertUniqueResources(resources);
   return {
     sourceApiVersion,
-    targetApiVersion: CURRENT_PRAGMA_DSL_API_VERSION,
-    migrated: sourceApiVersion !== CURRENT_PRAGMA_DSL_API_VERSION,
+    targetApiVersion: PRAGMA_DSL_WRITE_API_VERSION,
+    migrated: sourceApiVersion !== PRAGMA_DSL_WRITE_API_VERSION,
     resources,
     artifacts: new Map(project.artifacts),
     identityMigrations: project.identityMigrations,
@@ -186,11 +202,11 @@ function parseApiVersion(value: unknown, path: string): PragmaDslApiVersion {
 
 function parseCurrentResources(resources: readonly unknown[]): readonly PragmaResource[] {
   return resources.map((resource) => {
-    const parsed = PragmaResourceSchema.safeParse(resource);
+    const parsed = PragmaForwardCompatibleResourceSchema.safeParse(resource);
     if (!parsed.success) {
       throw new PragmaDslMigrationError(
         "invalid_migrated_project",
-        `Pragma project is not valid ${CURRENT_PRAGMA_DSL_API_VERSION}.`,
+        `Pragma project is not valid ${PRAGMA_DSL_WRITE_API_VERSION}.`,
         { cause: parsed.error },
       );
     }

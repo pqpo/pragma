@@ -71,8 +71,7 @@ export interface FlowStepOptions<TInput = unknown, TOutput = unknown> {
     | undefined;
   readonly output?: z.ZodType<TOutput> | undefined;
   readonly reduce?:
-    | ((context: { readonly state: FlowState; readonly output: TOutput }) => void)
-    | undefined;
+    ((context: { readonly state: FlowState; readonly output: TOutput }) => void) | undefined;
   /** Stable declarative representation used by recovery fingerprinting. */
   readonly descriptor?: unknown;
 }
@@ -622,21 +621,9 @@ function collectReachableExpertIds(definition: ExpertDefinition): ReadonlySet<st
     for (const target of [...launchers][0]?.experts ?? []) visitStandaloneExpert(target);
   };
   if (isExpertTeam(definition)) {
-    const participants = new Map(
-      [definition.coordinator, ...definition.members].map((expert) => [expert.id, expert]),
-    );
-    const visitTeamExpert = (expertId: string): void => {
-      if (expertIds.has(expertId)) return;
-      const expert = participants.get(expertId);
-      if (expert === undefined) {
-        throw new Error(`ExpertTeam ${definition.id} delegation target is unknown: ${expertId}`);
-      }
+    for (const expert of [definition.coordinator, ...definition.members]) {
       expertIds.add(expert.id);
-      for (const targetId of definition.delegation.allow.get(expertId) ?? []) {
-        visitTeamExpert(targetId);
-      }
-    };
-    visitTeamExpert(definition.coordinator.id);
+    }
   } else {
     visitStandaloneExpert(definition);
   }

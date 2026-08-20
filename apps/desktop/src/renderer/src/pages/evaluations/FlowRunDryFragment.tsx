@@ -10,14 +10,16 @@ import {
   XCircle,
 } from "@phosphor-icons/react";
 import {
-  PragmaFlowRunDryEvaluationResourceSchema,
   PragmaFlowRunDrySuiteSchema,
-  type PragmaFlowRunDryEvaluationResource,
   type PragmaFlowRunDryCase,
   type PragmaFlowRunDrySuite,
   type PragmaFlowRunDrySuiteResult,
 } from "@pragma/evaluation/ast";
-import type { PragmaFlowResource } from "@pragma/interpreter/ast";
+import {
+  PragmaFlowRunDryEvaluationResourceSchema,
+  type PragmaFlowResource,
+  type PragmaFlowRunDryEvaluationResource,
+} from "@pragma/interpreter/ast";
 
 import { SelectMenu } from "../../components/SelectMenu.tsx";
 import { errorMessage } from "../../lib/errors.ts";

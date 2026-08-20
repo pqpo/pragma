@@ -264,6 +264,12 @@ Interpreter `compilerVersion`、manifest、lock、IPC、Bridge 和 Runtime capab
 
 - 任何会让新代码拒绝或改变既有合法数据语义的改动，必须在同一个 Pull Request 中提交明确的版本升级、
   可执行升级机制和完整测试；禁止先升级 Schema 或版本号、再留待后续补迁移。缺少升级机制时不得合入。
+- DSL `apiVersion` 表示最低安全读取代际，不因普通可选字段增加而升级。当前版本的写入、直接读取和
+  可迁移来源必须由 `@pragma/interpreter/ast` 的权威能力常量声明；Host、Evaluation 和测试不得复制当前
+  版本字面量。只有旧客户端忽略改动会造成语义、安全、权限或数据错误时才升级 `apiVersion`。
+- 当前 DSL 资源与 Bundle 的兼容读取边界必须递归保留所有对象和数组元素中的未知字段并报告 warning；
+  已知字段仍按严格 Schema 校验，未知 discriminator、未来 `apiVersion`、Lock 和完整性协议继续 fail closed。
+  Host 更新已有资源时必须在统一持久化边界合并未知字段，不得要求每个 UI 编辑器单独维护兼容白名单。
 - Capability 必须区分“当前代码可直接读取的版本”和“可通过迁移升级的来源版本”。只有当前 parser
   能完整接受真实历史 fixture 时才能声明直接可读；禁止只放行旧版本号后把旧数据交给当前严格 Schema。
 - 支持窗口内的旧版本必须提供静态注册的相邻迁移、协议协商或等价升级链。`fail closed` 只是损坏数据、
@@ -635,10 +641,11 @@ Expert API 设计要求：
 
 - `defineExpert()` 是单专家唯一创建入口，负责异步插件加载、inline plugin entry 合并、日志初始化和实例归一化。
 - `createAgentLauncher()` 为普通 Expert 创建可显式注入的 `spawn_expert`、`wait_experts`、
-  `list_experts`、`followup_expert`、`interrupt_expert` 工具集；子 Invocation 的执行、Context、
+  `list_agents`、`followup_expert`、`steer_expert`、`interrupt_expert` 工具集；子 Invocation 的执行、Context、
   并发、深度、事件和 Usage 机制必须与 ExpertTeam 共用，不另建隐藏 Session 路径。
 - `defineExpertTeam()` 声明由 coordinator 统一接收外部 prompt 的特殊 Expert。
-- ExpertTeam 运行时按 allowlist 生成相同的生命周期工具集，并覆盖参与者自己的 standalone launcher，
+- ExpertTeam 运行时按成员权限策略生成相同的生命周期工具集；coordinator 在当前 Team Execution 内
+  拥有系统继承的全量管理权限。团队工具覆盖参与者自己的 standalone launcher，
   防止成员绕过团队治理边界。
 - `defineFlow()` 声明 Flow；Task 和 HumanTask 只能通过 FlowSpec 内联创建。
 - Flow Expert step、普通 Expert launcher 与 ExpertTeam delegation 必须统一使用具名、带版本的
@@ -750,7 +757,7 @@ Expert API 设计要求：
 
 职责：
 
-- 保存六个内置 Agent 的 `pragma/v4` DSL，以及 Pragma 的 `author-pragma-dsl` Skill。
+- 保存六个内置 Agent 的 `pragma/v5` DSL，以及 Pragma 的 `author-pragma-dsl` Skill。
 - 分别导出 Pragma、Memory Curator、Store Revision、Skill Revision 和 Skill Evaluation 的宿主端口；调用方式允许彼此独立。
 - 拥有跨 Host 可复用的提示词、结构化输出解析、Memory 提炼、Store/Skill 修订规则、Skill 验证和纯状态机。
 - 导出供 Desktop 或未来 Host 适配的运行时中立契约。

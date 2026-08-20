@@ -258,7 +258,9 @@ function readTurnId(value: unknown): string | undefined {
   const record = value as Record<string, unknown>;
   if (typeof record["turnId"] === "string") return record["turnId"];
   const turn = record["turn"];
-  return typeof turn === "object" && turn !== null && typeof (turn as Record<string, unknown>)["id"] === "string"
+  return typeof turn === "object" &&
+    turn !== null &&
+    typeof (turn as Record<string, unknown>)["id"] === "string"
     ? ((turn as Record<string, unknown>)["id"] as string)
     : undefined;
 }
@@ -579,6 +581,7 @@ function readAgentCommandAction(
     case "sendInput":
     case "send_message":
     case "followup_expert":
+    case "steer_expert":
       return "send";
     case "resumeAgent":
     case "resume_agent":

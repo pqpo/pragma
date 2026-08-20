@@ -1,14 +1,17 @@
+import { PRAGMA_DSL_WRITE_API_VERSION } from "@pragma/interpreter/ast";
 import { renderToStaticMarkup } from "react-dom/server";
 import { describe, expect, it } from "vitest";
-import { PragmaFlowRunDryEvaluationResourceSchema } from "@pragma/evaluation/ast";
-import { PragmaFlowResourceSchema } from "@pragma/interpreter/ast";
+import {
+  PragmaFlowResourceSchema,
+  PragmaFlowRunDryEvaluationResourceSchema,
+} from "@pragma/interpreter/ast";
 
 import { FlowRunDryFragment } from "./FlowRunDryFragment.tsx";
 
 describe("FlowRunDryFragment", () => {
   it("renders persisted cases and transition coverage in a dedicated developer screen", () => {
     const flow = PragmaFlowResourceSchema.parse({
-      apiVersion: "pragma/v4",
+      apiVersion: PRAGMA_DSL_WRITE_API_VERSION,
       kind: "Flow",
       metadata: {
         id: "8h9j0k1m2n3p4q5r",
@@ -37,7 +40,7 @@ describe("FlowRunDryFragment", () => {
       },
     });
     const evaluation = PragmaFlowRunDryEvaluationResourceSchema.parse({
-      apiVersion: "pragma/v4",
+      apiVersion: PRAGMA_DSL_WRITE_API_VERSION,
       kind: "Evaluation",
       metadata: {
         id: "7h8j9k0m1n2p3q4r",

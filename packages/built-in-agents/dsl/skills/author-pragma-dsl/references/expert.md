@@ -3,7 +3,7 @@
 Use an Expert for one conversational agent with a bounded scope.
 
 ```yaml
-apiVersion: pragma/v4
+apiVersion: pragma/v5
 kind: Expert
 metadata:
   id: 1h2j3k4m5n6p7q8r

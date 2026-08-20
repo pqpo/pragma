@@ -1,3 +1,4 @@
+import { PRAGMA_DSL_WRITE_API_VERSION } from "@pragma/interpreter/ast";
 import { renderToStaticMarkup } from "react-dom/server";
 import { describe, expect, it } from "vitest";
 import {
@@ -17,7 +18,7 @@ import { createEmptyFlow } from "../studio/flow-editor/flow-model.ts";
 describe("EvaluationDirectoryFragment", () => {
   it("defaults to the first expert before teams and flows", () => {
     const expert = PragmaExpertResourceSchema.parse({
-      apiVersion: "pragma/v4",
+      apiVersion: PRAGMA_DSL_WRITE_API_VERSION,
       kind: "Expert",
       metadata: {
         id: "1h2j3k4m5n6p7q8r",
@@ -75,7 +76,7 @@ describe("EvaluationDirectoryFragment", () => {
         flow,
         secondFlow,
         {
-          apiVersion: "pragma/v4",
+          apiVersion: PRAGMA_DSL_WRITE_API_VERSION,
           kind: "Evaluation",
           metadata: {
             id: "7h8j9k0m1n2p3q4r",
@@ -174,7 +175,7 @@ describe("EvaluationDirectoryFragment", () => {
 
   it("shows dataset and queue entrances only for agent targets", () => {
     const expert = PragmaExpertResourceSchema.parse({
-      apiVersion: "pragma/v4",
+      apiVersion: PRAGMA_DSL_WRITE_API_VERSION,
       kind: "Expert",
       metadata: {
         id: "1h2j3k4m5n6p7q8r",
@@ -185,7 +186,7 @@ describe("EvaluationDirectoryFragment", () => {
       spec: { scope: "general", instructions: "Coordinate the project." },
     });
     const team = PragmaExpertTeamResourceSchema.parse({
-      apiVersion: "pragma/v4",
+      apiVersion: PRAGMA_DSL_WRITE_API_VERSION,
       kind: "ExpertTeam",
       metadata: {
         id: "2h3j4k5m6n7p8q9r",

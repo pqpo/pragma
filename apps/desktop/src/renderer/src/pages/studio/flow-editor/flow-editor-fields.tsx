@@ -6,6 +6,7 @@ import type {
   PragmaResource,
 } from "@pragma/interpreter/ast";
 import {
+  PRAGMA_DSL_WRITE_API_VERSION,
   canonicalPragmaResourceRef,
   PragmaRuntimeProfileConfigSchema,
   PragmaRuntimeProfileResourceSchema,
@@ -527,7 +528,7 @@ function targetRuntimeProfileRef(
 export function flowRuntimeProfile(runtime: DesktopRuntimeAvailability) {
   const displayName = canonicalRuntimeDisplayName(runtime);
   return PragmaRuntimeProfileResourceSchema.parse({
-    apiVersion: "pragma/v4",
+    apiVersion: PRAGMA_DSL_WRITE_API_VERSION,
     kind: "RuntimeProfile",
     metadata: {
       id: stableRuntimeKey(runtime.id),

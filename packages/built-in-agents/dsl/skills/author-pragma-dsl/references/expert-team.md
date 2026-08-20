@@ -1,9 +1,9 @@
 # ExpertTeam resources
 
-Use an ExpertTeam when one coordinator delegates to an allowlisted set of Experts.
+Use an ExpertTeam when one coordinator governs collaboration among a bounded set of Experts.
 
 ```yaml
-apiVersion: pragma/v4
+apiVersion: pragma/v5
 kind: ExpertTeam
 metadata:
   id: 4h5j6k7m8n9p0q1r
@@ -28,8 +28,11 @@ spec:
         mode: whitelist
         expertIds: [5h6j7k8m9n0p1q2r, 6h7j8k9m0n1p2q3r]
   delegation:
-    allow:
-      5h6j7k8m9n0p1q2r: [6h7j8k9m0n1p2q3r, 7h8j9k0m1n2p3q4r]
+    permissions:
+      spawn:
+        6h7j8k9m0n1p2q3r: [7h8j9k0m1n2p3q4r]
+      interact:
+        6h7j8k9m0n1p2q3r: [7h8j9k0m1n2p3q4r]
     maxConcurrency: 2
     maxDepth: 2
     context: context-policy:pragma.fresh@v1
@@ -37,7 +40,7 @@ spec:
 ```
 
 - The coordinator and every member must already exist or be included in the same change-set.
-- `avatarId` remains part of the `pragma/v4` portable resource protocol. Desktop displays the
+- `avatarId` remains part of the `pragma/v5` portable resource protocol. Desktop displays the
   coordinator's current Expert avatar and adds the Team badge in the UI.
 - Text limits use Unicode characters after trimming: name 50, description 500, and optional team
   instructions 5,000.
@@ -49,5 +52,10 @@ spec:
   Expert IDs and `whitelist` includes only the listed IDs. Lists may reference only the coordinator
   or members, and every store must remain visible to at least one participant. Team visibility does
   not revoke an Expert's independent mount of the same ContextStore.
-- `allow` keys and values use Expert IDs, not canonical refs.
+- Permission keys and values use Expert IDs, not canonical refs. `spawn` creates AgentInstances;
+  `interact` discovers, follows up, and steers existing instances without granting spawn or interrupt.
+- The coordinator has system-inherited authority within each Team Execution: it can spawn every
+  member, discover every open AgentInstance, inspect who assigned it, and follow up, steer, wait for,
+  or interrupt it. Coordinator entries in `permissions` are forbidden; the maps govern
+  member-to-member permissions only.
 - Keep concurrency and depth bounded. Do not use a Team when a deterministic Flow is sufficient.

@@ -1,3 +1,4 @@
+import { PRAGMA_DSL_WRITE_API_VERSION } from "@pragma/interpreter/ast";
 import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -189,7 +190,7 @@ function runFixture() {
     selectionSeed: "seed",
     selectedCaseIds: cases.map((item) => item.id),
     dataset: {
-      apiVersion: "pragma/v4",
+      apiVersion: PRAGMA_DSL_WRITE_API_VERSION,
       kind: "Evaluation",
       metadata: {
         id: "7h8j9k0m1n2p3q4r",
