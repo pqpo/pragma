@@ -1,0 +1,200 @@
+name: Desktop OSS Repair
+
+on:
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: Published desktop release tag to re-upload to OSS (for example, v0.2.10)
+        required: true
+        type: string
+
+concurrency:
+  group: desktop-oss-repair-${{ inputs.tag }}
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+
+jobs:
+  repair:
+    name: Re-upload macOS assets to Alibaba Cloud OSS
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    environment: desktop-release
+    permissions:
+      contents: read
+      id-token: write
+
+    steps:
+      - name: Validate and download GitHub Release assets
+        env:
+          GH_REPO: ${{ github.repository }}
+          GH_TOKEN: ${{ github.token }}
+          RELEASE_TAG: ${{ inputs.tag }}
+        shell: bash
+        run: |
+          if [[ ! "${RELEASE_TAG}" =~ ^v[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+            echo "::error::Release tag must match vX.Y.Z."
+            exit 1
+          fi
+
+          version="${RELEASE_TAG#v}"
+          release_metadata="${RUNNER_TEMP}/release-${version}.json"
+          gh release view "${RELEASE_TAG}" \
+            --json tagName,isDraft,assets \
+            > "${release_metadata}"
+
+          if ! jq -e --arg tag "${RELEASE_TAG}" \
+            '.tagName == $tag and .isDraft == false' \
+            "${release_metadata}" > /dev/null; then
+            echo "::error::${RELEASE_TAG} must refer to a published GitHub Release."
+            exit 1
+          fi
+
+          expected=(
+            "Pragma-${version}-mac-arm64.dmg"
+            "Pragma-${version}-mac-x64.dmg"
+          )
+          mkdir -p release-assets
+
+          for file in "${expected[@]}"; do
+            digest="$(
+              jq -er --arg name "${file}" \
+                '.assets[] | select(.name == $name and .state == "uploaded") | .digest' \
+                "${release_metadata}"
+            )"
+            if [[ ! "${digest}" =~ ^sha256:[0-9a-f]{64}$ ]]; then
+              echo "::error::Missing or invalid SHA-256 digest for GitHub Release asset: ${file}"
+              exit 1
+            fi
+
+            gh release download "${RELEASE_TAG}" \
+              --pattern "${file}" \
+              --dir release-assets \
+              --clobber
+            if [[ ! -s "release-assets/${file}" ]]; then
+              echo "::error::Downloaded GitHub Release asset is missing or empty: ${file}"
+              exit 1
+            fi
+
+            printf '%s  %s\n' "${digest#sha256:}" "release-assets/${file}" |
+              sha256sum --check --strict
+          done
+
+      - name: Validate Alibaba Cloud release configuration
+        env:
+          ALIYUN_OIDC_PROVIDER_ARN: ${{ vars.ALIYUN_OIDC_PROVIDER_ARN }}
+          ALIYUN_RELEASE_ROLE_ARN: ${{ vars.ALIYUN_RELEASE_ROLE_ARN }}
+          ALIYUN_OSS_BUCKET: ${{ vars.ALIYUN_OSS_BUCKET }}
+          ALIYUN_OSS_REGION: ${{ vars.ALIYUN_OSS_REGION }}
+        shell: bash
+        run: |
+          required=(
+            ALIYUN_OIDC_PROVIDER_ARN
+            ALIYUN_RELEASE_ROLE_ARN
+            ALIYUN_OSS_BUCKET
+            ALIYUN_OSS_REGION
+          )
+
+          for name in "${required[@]}"; do
+            if [[ -z "${!name}" ]]; then
+              echo "::error::Missing desktop-release environment variable: ${name}"
+              exit 1
+            fi
+          done
+
+          if [[ ! "${ALIYUN_OIDC_PROVIDER_ARN}" =~ ^acs:ram::[0-9]+:oidc-provider/[A-Za-z0-9._-]+$ ]]; then
+            echo "::error::ALIYUN_OIDC_PROVIDER_ARN is not a valid RAM OIDC provider ARN."
+            exit 1
+          fi
+          if [[ ! "${ALIYUN_RELEASE_ROLE_ARN}" =~ ^acs:ram::[0-9]+:role/[A-Za-z0-9._-]+$ ]]; then
+            echo "::error::ALIYUN_RELEASE_ROLE_ARN is not a valid RAM role ARN."
+            exit 1
+          fi
+          if [[ ! "${ALIYUN_OSS_BUCKET}" =~ ^[a-z0-9][a-z0-9-]{1,61}[a-z0-9]$ ]]; then
+            echo "::error::ALIYUN_OSS_BUCKET is not a valid OSS bucket name."
+            exit 1
+          fi
+          if [[ ! "${ALIYUN_OSS_REGION}" =~ ^[a-z0-9-]+$ ]]; then
+            echo "::error::ALIYUN_OSS_REGION is not a valid OSS region id."
+            exit 1
+          fi
+
+      - name: Prepare macOS OSS assets
+        env:
+          RELEASE_TAG: ${{ inputs.tag }}
+        shell: bash
+        run: |
+          version="${RELEASE_TAG#v}"
+          mac_assets=(
+            "Pragma-${version}-mac-arm64.dmg"
+            "Pragma-${version}-mac-x64.dmg"
+          )
+
+          mkdir -p oss-assets
+          for file in "${mac_assets[@]}"; do
+            install -m 0644 "release-assets/${file}" "oss-assets/${file}"
+          done
+          (
+            cd release-assets
+            sha256sum "${mac_assets[@]}"
+          ) > oss-assets/SHA256SUMS-mac.txt
+
+      - name: Install ossutil
+        shell: bash
+        run: |
+          version="2.3.0"
+          archive="ossutil-${version}-linux-amd64.zip"
+          archive_path="${RUNNER_TEMP}/${archive}"
+          download_url="https://gosspublic.alicdn.com/ossutil/v2/${version}/${archive}"
+          expected_sha256="3ae4d9fc85a7a6e9f5654d1599766f1a3a42a3692870887b5ae9338d582ef65a"
+
+          curl --fail --location --retry 3 --show-error \
+            --output "${archive_path}" \
+            "${download_url}"
+          printf '%s  %s\n' "${expected_sha256}" "${archive_path}" | sha256sum --check --strict
+          unzip -q "${archive_path}" -d "${RUNNER_TEMP}"
+          install -m 0755 \
+            "${RUNNER_TEMP}/ossutil-${version}-linux-amd64/ossutil" \
+            "${RUNNER_TEMP}/ossutil"
+          echo "${RUNNER_TEMP}" >> "${GITHUB_PATH}"
+          "${RUNNER_TEMP}/ossutil" version
+
+      - name: Authenticate to Alibaba Cloud with GitHub OIDC
+        id: aliyun-credentials
+        uses: aliyun/configure-aliyun-credentials-action@1e5248c8d5d93a8781ac344a68e19a43341e79e6 # v1.1.0
+        with:
+          oidc-provider-arn: ${{ vars.ALIYUN_OIDC_PROVIDER_ARN }}
+          role-to-assume: ${{ vars.ALIYUN_RELEASE_ROLE_ARN }}
+          role-session-name: pragma-oss-repair-${{ github.run_id }}
+          role-session-expiration: 1800
+          audience: github-actions
+
+      - name: Upload macOS assets to Alibaba Cloud OSS
+        env:
+          OSS_ACCESS_KEY_ID: ${{ steps.aliyun-credentials.outputs.aliyun-access-key-id }}
+          OSS_ACCESS_KEY_SECRET: ${{ steps.aliyun-credentials.outputs.aliyun-access-key-secret }}
+          OSS_SESSION_TOKEN: ${{ steps.aliyun-credentials.outputs.aliyun-security-token }}
+          ALIYUN_OSS_BUCKET: ${{ vars.ALIYUN_OSS_BUCKET }}
+          ALIYUN_OSS_REGION: ${{ vars.ALIYUN_OSS_REGION }}
+          RELEASE_TAG: ${{ inputs.tag }}
+        shell: bash
+        run: |
+          prefix="desktop/${RELEASE_TAG}"
+          endpoint="https://oss-${ALIYUN_OSS_REGION}.aliyuncs.com"
+          oss_assets=(
+            "Pragma-${RELEASE_TAG#v}-mac-arm64.dmg"
+            "Pragma-${RELEASE_TAG#v}-mac-x64.dmg"
+            "SHA256SUMS-mac.txt"
+          )
+
+          for file in "${oss_assets[@]}"; do
+            ossutil cp \
+              "oss-assets/${file}" \
+              "oss://${ALIYUN_OSS_BUCKET}/${prefix}/${file}" \
+              --cache-control "public,max-age=31536000,immutable" \
+              --content-disposition attachment \
+              --endpoint "${endpoint}" \
+              --force \
+              --region "${ALIYUN_OSS_REGION}"
+          done
