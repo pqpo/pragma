@@ -130,6 +130,11 @@ export interface MissionStore {
   ): Promise<void>;
 }
 
+export interface MissionStoreReadIssue {
+  readonly missionId: string;
+  readonly error: MissionStoreError;
+}
+
 export class MissionStoreError extends Error {
   constructor(
     readonly code:
@@ -177,7 +182,10 @@ const MissionV8MigrationTransactionSchema = z.object({
   target: MissionSchema,
 });
 
-export function createMissionStore(options: { readonly missionsPath: string }): MissionStore {
+export function createMissionStore(options: {
+  readonly missionsPath: string;
+  readonly onReadIssue?: ((issue: MissionStoreReadIssue) => void) | undefined;
+}): MissionStore {
   const missionPath = (id: string) => join(options.missionsPath, id);
   const manifestPath = (id: string) => join(missionPath(id), "mission.yaml");
   const messagesPath = (id: string) => join(missionPath(id), "messages.jsonl");
@@ -390,7 +398,7 @@ export function createMissionStore(options: { readonly missionsPath: string }): 
       if (versionAfterRefMigration !== "pragma.mission/v8") {
         throw new MissionStoreError(
           "unsupported_schema",
-          `Mission ${id} uses an unsupported schema. Remove the old Mission directory and create a new Mission.`,
+          `Mission ${id} uses a schema this Pragma version cannot read safely. Update Pragma or use compatible recovery tooling. The Mission data was preserved.`,
         );
       }
       return MissionSchema.parse(current);
@@ -614,11 +622,30 @@ export function createMissionStore(options: { readonly missionsPath: string }): 
         const directories = (await readdir(options.missionsPath, { withFileTypes: true })).filter(
           (entry) => entry.isDirectory() && !entry.name.startsWith("."),
         );
-        const missions = await Promise.all(directories.map((entry) => readMission(entry.name)));
-        return missions
+        const results = await Promise.allSettled(
+          directories.map(async (entry) => ({
+            missionId: entry.name,
+            mission: await readMission(entry.name),
+          })),
+        );
+        const missions: Mission[] = [];
+        const failures: MissionStoreReadIssue[] = [];
+        for (const [index, result] of results.entries()) {
+          if (result?.status === "fulfilled") {
+            missions.push(result.value.mission);
+            continue;
+          }
+          const missionId = directories[index]?.name ?? "unknown";
+          const issue = { missionId, error: normalizeReadError(result?.reason, missionId) };
+          failures.push(issue);
+          options.onReadIssue?.(issue);
+        }
+        const summaries = missions
           .filter((mission) => isUserFacingMissionOrigin(mission.origin))
           .map(toMissionSummary)
           .toSorted((left, right) => right.updatedAt.localeCompare(left.updatedAt));
+        if (summaries.length === 0 && failures.length > 0) throw failures[0]?.error;
+        return summaries;
       } catch (error) {
         if (isNodeError(error, "ENOENT")) return [];
         throw error;

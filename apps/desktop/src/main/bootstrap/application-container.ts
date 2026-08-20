@@ -246,6 +246,12 @@ export async function createDesktopApplicationContainer(
   });
   const missionStore = createMissionStore({
     missionsPath,
+    onReadIssue: ({ missionId, error }) =>
+      mainLogger.warn(
+        "mission.list_entry_unavailable",
+        "A Mission could not be listed safely. Other readable Missions remain available.",
+        { missionId, errorCode: error.code, error },
+      ),
   });
   const usageStore = await createDesktopUsageStore({
     databasePath: join(pragmaPaths.dataRoot(), "usage", "usage.sqlite"),

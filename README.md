@@ -81,6 +81,10 @@ pnpm install --frozen-lockfile
 pnpm --filter @pragma/desktop dev
 ```
 
+Development builds use `~/.pragma-development/` by default so unreleased storage migrations cannot
+modify data owned by the installed Desktop app. Set `PRAGMA_HOME` explicitly only when a task
+intentionally needs another isolated data root.
+
 ### Try the SDK and runtime adapters
 
 The repository includes runnable examples rather than abbreviated API fragments:
