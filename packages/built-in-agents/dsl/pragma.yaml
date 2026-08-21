@@ -1,4 +1,4 @@
-apiVersion: pragma/v4
+apiVersion: pragma/v5
 kind: Bundle
 imports:
   - ./capabilities/0000000000skdrft.pragma.yaml

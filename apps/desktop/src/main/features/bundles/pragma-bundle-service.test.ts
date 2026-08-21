@@ -1,3 +1,4 @@
+import { PRAGMA_DSL_WRITE_API_VERSION } from "@pragma/interpreter/ast";
 import { mkdir, mkdtemp, readFile, rm, stat, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -1027,7 +1028,7 @@ function expert(
   avatarId = "pragma.avatar.expert.default",
 ): PragmaExpertResource {
   return {
-    apiVersion: "pragma/v4",
+    apiVersion: PRAGMA_DSL_WRITE_API_VERSION,
     kind: "Expert",
     metadata: {
       id,
@@ -1051,7 +1052,7 @@ function expert(
 
 function runtime(runtimeId: string, resourceId = "zdkgs0fde4xt00vr"): PragmaRuntimeProfileResource {
   return {
-    apiVersion: "pragma/v4",
+    apiVersion: PRAGMA_DSL_WRITE_API_VERSION,
     kind: "RuntimeProfile",
     metadata: {
       id: resourceId,
@@ -1068,7 +1069,7 @@ function runtime(runtimeId: string, resourceId = "zdkgs0fde4xt00vr"): PragmaRunt
 
 function portableCapability(): PragmaCapabilityResource {
   return {
-    apiVersion: "pragma/v4",
+    apiVersion: PRAGMA_DSL_WRITE_API_VERSION,
     kind: "Capability",
     metadata: {
       id: "nv27faxmxpqnxwqr",
@@ -1086,7 +1087,7 @@ function portableCapability(): PragmaCapabilityResource {
 
 function expertTeam(): PragmaExpertTeamResource {
   return {
-    apiVersion: "pragma/v4",
+    apiVersion: PRAGMA_DSL_WRITE_API_VERSION,
     kind: "ExpertTeam",
     metadata: {
       id: "p8cbn3cg2avyksn4",
@@ -1100,6 +1101,7 @@ function expertTeam(): PragmaExpertTeamResource {
       members: [{ ref: "expert:1xddvess309a6gme" }],
       contextStores: [],
       delegation: {
+        permissions: { interact: {} },
         maxConcurrency: 2,
         maxDepth: 2,
         context: "context-policy:pragma.fresh@v1",
@@ -1111,7 +1113,7 @@ function expertTeam(): PragmaExpertTeamResource {
 
 function flowCalling(expertRef: string): PragmaFlowResource {
   return {
-    apiVersion: "pragma/v4",
+    apiVersion: PRAGMA_DSL_WRITE_API_VERSION,
     kind: "Flow",
     metadata: {
       id: "qj3t30sa520dvfvj",

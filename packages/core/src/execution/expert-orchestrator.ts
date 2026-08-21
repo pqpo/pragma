@@ -13,6 +13,7 @@ import {
 import type { Expert } from "../agent/expert-agent.ts";
 import { fingerprintExpertExecutionDefinition } from "../agent/expert-definition-descriptor.ts";
 import type { RuntimeModelSelection } from "../runtime/runtime-adapter.ts";
+import { summarizeRuntimeInput } from "../runtime/output.ts";
 import type { ExecutionStore } from "./execution-store.ts";
 import { ExecutionVersionConflictError } from "./execution-store.ts";
 import { getExecutionLiveBus } from "./execution-live-bus.ts";
@@ -46,11 +47,26 @@ export interface ExpertInvocationJob {
 export interface ExpertInterruptController {
   interruptInvocation(invocationId: string, reason?: string): Promise<boolean>;
   signalForInvocation(invocationId: string): AbortSignal;
+  steerInvocation(request: {
+    readonly invocationId: string;
+    readonly contextId: string;
+    readonly requestId: string;
+    readonly content: string;
+  }): Promise<"steered" | "waiting_continuation" | "not_active" | "unsupported">;
+}
+
+export interface ExpertInteractionAccess {
+  readonly ownerContextId: string;
+  readonly callerInvocationId: string;
+  readonly callerAgentId?: string | undefined;
+  readonly interactExpertIds: ReadonlySet<string>;
+  readonly isCoordinator: boolean;
 }
 
 export interface ExpertOrchestratorOptions {
   readonly executionId: string;
   readonly rootInvocationId: string;
+  readonly scopeInvocationId: string;
   readonly store: ExecutionStore;
   readonly maxConcurrency: number;
   readonly maxDepth: number;
@@ -259,8 +275,7 @@ export class ExpertOrchestrator {
   }
 
   async followup(
-    ownerContextId: string,
-    createdByInvocationId: string,
+    access: ExpertInteractionAccess,
     request: { readonly agentId: string; readonly prompt: string },
   ): Promise<{
     readonly agentId: string;
@@ -269,8 +284,8 @@ export class ExpertOrchestrator {
   }> {
     while (true) {
       const execution = await this.requireExecution();
-      const ownerInvocation = await this.requireActiveOwner(createdByInvocationId);
-      const agent = await this.requireOwnedAgent(ownerContextId, request.agentId);
+      const ownerInvocation = await this.requireActiveOwner(access.callerInvocationId);
+      const agent = await this.requireAccessibleAgent(access, request.agentId);
       if (agent.lifecycle !== "open") throw new Error(`Agent is closed: ${request.agentId}`);
       const context = await this.options.store.getContext(
         this.options.executionId,
@@ -284,7 +299,7 @@ export class ExpertOrchestrator {
       ).resolve({
         executionId: this.options.executionId,
         invocationId,
-        parentInvocationId: createdByInvocationId,
+        parentInvocationId: access.callerInvocationId,
         input: request.prompt,
         state: execution.state,
         source: {
@@ -295,7 +310,7 @@ export class ExpertOrchestrator {
             : { callerAgentId: ownerInvocation.agentId }),
         },
         owner: context.owner,
-        ownerContextId,
+        ownerContextId: agent.ownerContextId,
         expert: context.expert,
         runtime: context.runtime,
         resolver: followupContextIdResolver,
@@ -308,7 +323,7 @@ export class ExpertOrchestrator {
       const invocation: Invocation = {
         invocationId,
         rootInvocationId: this.options.rootInvocationId,
-        parentInvocationId: createdByInvocationId,
+        parentInvocationId: access.callerInvocationId,
         definition: agent.definition,
         executorId: agent.definition.id,
         agentId: agent.agentId,
@@ -331,13 +346,18 @@ export class ExpertOrchestrator {
           agentPatches: [
             { agentId: agent.agentId, patch: { nextTaskSequence: agent.nextTaskSequence + 1 } },
           ],
-          queuedData: { agentId: agent.agentId, parentInvocationId: createdByInvocationId },
+          queuedData: { agentId: agent.agentId, parentInvocationId: access.callerInvocationId },
           events: [
             ...resolution.events,
             {
               invocationId,
               type: "agent.followup.queued",
-              data: { agentId: agent.agentId, taskSequence: agent.nextTaskSequence },
+              data: {
+                agentId: agent.agentId,
+                taskSequence: agent.nextTaskSequence,
+                callerInvocationId: access.callerInvocationId,
+                callerAgentId: access.callerAgentId,
+              },
             },
           ],
         });
@@ -350,13 +370,32 @@ export class ExpertOrchestrator {
     }
   }
 
-  async list(ownerContextId: string): Promise<{ readonly experts: readonly unknown[] }> {
-    const agents = (await this.options.store.listAgents(this.options.executionId))
-      .filter((agent) => agent.ownerContextId === ownerContextId)
-      .sort((left, right) => left.createdAt.localeCompare(right.createdAt));
+  async list(
+    access: ExpertInteractionAccess,
+    request: { readonly expertId?: string; readonly cursor?: string; readonly limit?: number } = {},
+  ): Promise<{ readonly agents: readonly unknown[]; readonly nextCursor?: string }> {
+    const limit = Math.min(100, Math.max(1, request.limit ?? 50));
+    const accessible = (await this.loadScopedAgents())
+      .filter((agent) => this.canAccessAgent(access, agent))
+      .filter((agent) => agent.agentId !== access.callerAgentId)
+      .filter((agent) => request.expertId === undefined || agent.definition.id === request.expertId)
+      .sort(
+        (left, right) =>
+          left.createdAt.localeCompare(right.createdAt) ||
+          left.agentId.localeCompare(right.agentId),
+      );
+    const cursorIndex =
+      request.cursor === undefined
+        ? -1
+        : accessible.findIndex((agent) => agent.agentId === request.cursor);
+    if (request.cursor !== undefined && cursorIndex < 0) throw new Error("Invalid agent cursor.");
+    const remaining = accessible
+      .slice(cursorIndex + 1)
+      .filter((agent) => agent.lifecycle === "open");
+    const page = remaining.slice(0, limit);
     const invocations = await this.options.store.listInvocations(this.options.executionId);
     return {
-      experts: agents.map((agent) => {
+      agents: page.map((agent) => {
         const tasks = invocations
           .filter((invocation) => invocation.agentId === agent.agentId)
           .sort((left, right) => (left.agentTaskSequence ?? 0) - (right.agentTaskSequence ?? 0));
@@ -364,7 +403,6 @@ export class ExpertOrchestrator {
           (invocation) => invocation.invocationId === agent.activeInvocationId,
         );
         const queued = tasks.filter((invocation) => invocation.status === "queued");
-        const latest = tasks.at(-1);
         const status =
           active?.status === "waiting"
             ? "waiting"
@@ -376,17 +414,139 @@ export class ExpertOrchestrator {
         return {
           agentId: agent.agentId,
           expertId: agent.definition.id,
+          assignedBy: this.describeAssigner(agent, invocations),
           status,
-          ...(active === undefined ? {} : { activeInvocationId: active.invocationId }),
-          queuedInvocationIds: queued.map((invocation) => invocation.invocationId),
-          ...(latest === undefined ? {} : { latest: summarizeInvocation(latest) }),
+          ...(active === undefined
+            ? {}
+            : {
+                activeInvocation: {
+                  invocationId: active.invocationId,
+                  status: active.status,
+                  taskSummary: summarizeRuntimeInput(active.input, 240),
+                },
+              }),
+          queuedInvocations: {
+            total: queued.length,
+            items: queued.slice(0, 20).map((invocation) => ({
+              invocationId: invocation.invocationId,
+              taskSummary: summarizeRuntimeInput(invocation.input, 240),
+            })),
+            truncated: queued.length > 20,
+          },
+          permissions: {
+            canFollowup: true,
+            canSteer: true,
+            canInterrupt: access.isCoordinator || agent.ownerContextId === access.ownerContextId,
+          },
         };
       }),
+      ...(remaining.length <= limit || page.length === 0
+        ? {}
+        : { nextCursor: page.at(-1)!.agentId }),
     };
   }
 
+  async steer(
+    access: ExpertInteractionAccess,
+    request: {
+      readonly agentId: string;
+      readonly invocationId?: string | undefined;
+      readonly message: string;
+      readonly fallback?: "reject" | "followup" | undefined;
+    },
+  ): Promise<unknown> {
+    const agent = await this.requireAccessibleAgent(access, request.agentId);
+    if (agent.lifecycle !== "open") throw new Error(`Agent is closed: ${agent.agentId}`);
+    const activeInvocationId = agent.activeInvocationId;
+    if (request.invocationId !== undefined && request.invocationId !== activeInvocationId) {
+      throw new Error(
+        `Stale steer target: expected ${request.invocationId}, current is ${activeInvocationId ?? "idle"}.`,
+      );
+    }
+    if (activeInvocationId === undefined) {
+      return await this.fallbackSteer(access, request, "agent_idle");
+    }
+    const active = await this.options.store.getInvocation(
+      this.options.executionId,
+      activeInvocationId,
+    );
+    if (active === undefined || isTerminalExecutionStatus(active.status)) {
+      return await this.fallbackSteer(access, request, "turn_not_active");
+    }
+    const requestId = randomUUID();
+    await this.options.store.appendEvent(
+      this.options.executionId,
+      active.invocationId,
+      "agent.steer.requested",
+      {
+        requestId,
+        callerInvocationId: access.callerInvocationId,
+        callerAgentId: access.callerAgentId,
+        agentId: agent.agentId,
+        message: request.message,
+      },
+      `agent-steer-requested:${requestId}`,
+    );
+    const outcome = await this.options.interruptController.steerInvocation({
+      invocationId: active.invocationId,
+      contextId: agent.contextId,
+      requestId,
+      content: request.message,
+    });
+    if (outcome === "steered" || outcome === "waiting_continuation") {
+      await this.options.store.appendEvent(
+        this.options.executionId,
+        active.invocationId,
+        "agent.steer.applied",
+        { requestId, agentId: agent.agentId, mode: outcome },
+        `agent-steer-applied:${requestId}`,
+      );
+      return {
+        outcome: "steered",
+        mode: outcome === "steered" ? "runtime" : "waiting_continuation",
+        agentId: agent.agentId,
+        invocationId: active.invocationId,
+      };
+    }
+    const reason = outcome === "unsupported" ? "runtime_unsupported" : "turn_not_active";
+    await this.options.store.appendEvent(
+      this.options.executionId,
+      active.invocationId,
+      "agent.steer.rejected",
+      { requestId, agentId: agent.agentId, reason },
+      `agent-steer-rejected:${requestId}`,
+    );
+    return await this.fallbackSteer(access, request, reason);
+  }
+
+  private async fallbackSteer(
+    access: ExpertInteractionAccess,
+    request: {
+      readonly agentId: string;
+      readonly message: string;
+      readonly fallback?: "reject" | "followup" | undefined;
+    },
+    reason: "agent_idle" | "turn_not_active" | "runtime_unsupported",
+  ): Promise<unknown> {
+    if ((request.fallback ?? "reject") === "reject") {
+      throw new Error(`Expert steering rejected: ${reason}.`);
+    }
+    const queued = await this.followup(access, {
+      agentId: request.agentId,
+      prompt: request.message,
+    });
+    await this.options.store.appendEvent(
+      this.options.executionId,
+      queued.invocationId,
+      "agent.steer.fallback_queued",
+      { agentId: request.agentId, reason },
+      `agent-steer-fallback:${queued.invocationId}`,
+    );
+    return { outcome: "followup_queued", reason, ...queued };
+  }
+
   async wait(
-    ownerContextId: string,
+    access: ExpertInteractionAccess,
     request: {
       readonly invocationIds: readonly string[];
       readonly returnWhen?: "all" | "any" | undefined;
@@ -402,10 +562,10 @@ export class ExpertOrchestrator {
     readonly wakeReason?: "steer" | undefined;
     readonly steer?: { readonly requestId: string; readonly content: string } | undefined;
   }> {
-    await this.assertOwnedInvocations(ownerContextId, request.invocationIds);
+    await this.assertAccessibleInvocations(access, request.invocationIds);
     const resume = permit?.suspend();
     try {
-      const result = await this.waitForInvocations(ownerContextId, request);
+      const result = await this.waitForInvocations(access.ownerContextId, request);
       for (const completed of result.completed) {
         this.joinedInvocationIds.add((completed as { invocationId: string }).invocationId);
       }
@@ -417,7 +577,7 @@ export class ExpertOrchestrator {
 
   async waitForOwnedUnjoined(
     ownerInvocationId: string,
-    ownerContextId: string,
+    access: ExpertInteractionAccess,
     signal: AbortSignal,
     permit?: DelegationPermit,
   ): Promise<{
@@ -426,9 +586,7 @@ export class ExpertOrchestrator {
     readonly wakeReason?: "steer" | undefined;
     readonly steer?: { readonly requestId: string; readonly content: string } | undefined;
   }> {
-    const agents = (await this.options.store.listAgents(this.options.executionId)).filter(
-      (agent) => agent.ownerContextId === ownerContextId,
-    );
+    const agents = await this.loadScopedAgents();
     const allInvocations = await this.options.store.listInvocations(this.options.executionId);
     const descendants = collectDescendantInvocationIds(allInvocations, ownerInvocationId);
     const ids = allInvocations
@@ -441,7 +599,7 @@ export class ExpertOrchestrator {
       .map((invocation) => invocation.invocationId);
     if (ids.length === 0) return { completed: [], pendingInvocationIds: [] };
     const result = await this.wait(
-      ownerContextId,
+      access,
       { invocationIds: ids, returnWhen: "all", signal },
       permit,
     );
@@ -457,10 +615,8 @@ export class ExpertOrchestrator {
     return [...waiters].some((wake) => wake(message));
   }
 
-  async hasOwnedUnjoined(ownerInvocationId: string, ownerContextId: string): Promise<boolean> {
-    const agents = (await this.options.store.listAgents(this.options.executionId)).filter(
-      (agent) => agent.ownerContextId === ownerContextId,
-    );
+  async hasOwnedUnjoined(ownerInvocationId: string): Promise<boolean> {
+    const agents = await this.loadScopedAgents();
     if (agents.length === 0) return false;
     const ids = new Set(agents.map((agent) => agent.agentId));
     const invocations = await this.options.store.listInvocations(this.options.executionId);
@@ -475,7 +631,7 @@ export class ExpertOrchestrator {
   }
 
   async interrupt(
-    ownerContextId: string,
+    access: ExpertInteractionAccess,
     request: {
       readonly agentId: string;
       readonly invocationId?: string | undefined;
@@ -486,7 +642,9 @@ export class ExpertOrchestrator {
     readonly invocationId?: string | undefined;
     readonly outcome: "interrupted" | "already_idle";
   }> {
-    const agent = await this.requireOwnedAgent(ownerContextId, request.agentId);
+    const agent = access.isCoordinator
+      ? await this.requireAccessibleAgent(access, request.agentId)
+      : await this.requireOwnedAgent(access.ownerContextId, request.agentId);
     const invocations = (await this.options.store.listInvocations(this.options.executionId))
       .filter((invocation) => invocation.agentId === agent.agentId)
       .sort((left, right) => (left.agentTaskSequence ?? 0) - (right.agentTaskSequence ?? 0));
@@ -763,22 +921,21 @@ export class ExpertOrchestrator {
     }
   }
 
-  private async assertOwnedInvocations(
-    ownerContextId: string,
+  private async assertAccessibleInvocations(
+    access: ExpertInteractionAccess,
     invocationIds: readonly string[],
   ): Promise<void> {
     const invocations = await this.loadInvocations(invocationIds);
-    const agents = new Map(
-      (await this.options.store.listAgents(this.options.executionId)).map((agent) => [
-        agent.agentId,
-        agent,
-      ]),
-    );
+    const agents = new Map((await this.loadScopedAgents()).map((agent) => [agent.agentId, agent]));
     for (const invocation of invocations) {
       const agent = invocation.agentId === undefined ? undefined : agents.get(invocation.agentId);
-      if (agent?.ownerContextId !== ownerContextId) {
+      if (
+        agent === undefined ||
+        (!this.canAccessAgent(access, agent) &&
+          invocation.parentInvocationId !== access.callerInvocationId)
+      ) {
         throw new Error(
-          `Invocation is not owned by the current Expert: ${invocation.invocationId}`,
+          `Invocation is not accessible to the current Expert: ${invocation.invocationId}`,
         );
       }
     }
@@ -798,8 +955,64 @@ export class ExpertOrchestrator {
     });
   }
 
+  private canAccessAgent(access: ExpertInteractionAccess, agent: AgentInstance): boolean {
+    return (
+      access.isCoordinator ||
+      agent.ownerContextId === access.ownerContextId ||
+      access.interactExpertIds.has(agent.definition.id)
+    );
+  }
+
+  private describeAssigner(
+    agent: AgentInstance,
+    invocations: readonly Invocation[],
+  ): {
+    readonly invocationId: string;
+    readonly expertId: string;
+    readonly agentId?: string | undefined;
+  } {
+    const creator = invocations.find(
+      (invocation) => invocation.invocationId === agent.createdByInvocationId,
+    );
+    if (creator === undefined || creator.agentId !== agent.parentAgentId) {
+      throw new Error(`Agent assignment provenance is inconsistent: ${agent.agentId}`);
+    }
+    return {
+      invocationId: agent.createdByInvocationId,
+      expertId: creator.executorId ?? creator.definition.id,
+      ...(creator.agentId === undefined ? {} : { agentId: creator.agentId }),
+    };
+  }
+
+  private async loadScopedAgents(): Promise<AgentInstance[]> {
+    const invocations = await this.options.store.listInvocations(this.options.executionId);
+    const creators = collectDescendantInvocationIds(invocations, this.options.scopeInvocationId);
+    creators.add(this.options.scopeInvocationId);
+    return (await this.options.store.listAgents(this.options.executionId)).filter((agent) =>
+      creators.has(agent.createdByInvocationId),
+    );
+  }
+
+  private async requireAccessibleAgent(
+    access: ExpertInteractionAccess,
+    agentId: string,
+  ): Promise<AgentInstance> {
+    const agent = (await this.loadScopedAgents()).find(
+      (candidate) => candidate.agentId === agentId,
+    );
+    if (agent === undefined || !this.canAccessAgent(access, agent)) {
+      throw new Error(`Agent is not accessible to the current Expert: ${agentId}`);
+    }
+    if (access.callerAgentId !== undefined && agent.agentId === access.callerAgentId) {
+      throw new Error(`An Agent cannot interact with itself: ${agentId}`);
+    }
+    return agent;
+  }
+
   private async requireOwnedAgent(ownerContextId: string, agentId: string): Promise<AgentInstance> {
-    const agent = await this.options.store.getAgent(this.options.executionId, agentId);
+    const agent = (await this.loadScopedAgents()).find(
+      (candidate) => candidate.agentId === agentId,
+    );
     if (agent === undefined || agent.ownerContextId !== ownerContextId) {
       throw new Error(`Agent is not owned by the current Expert: ${agentId}`);
     }
@@ -839,7 +1052,7 @@ export class ExpertOrchestrator {
   }
 
   private async scheduleRecoverableAgents(): Promise<void> {
-    for (const agent of await this.options.store.listAgents(this.options.executionId)) {
+    for (const agent of await this.loadScopedAgents()) {
       if (agent.lifecycle === "open" && this.experts.has(agent.definition.id)) {
         this.schedule(agent.agentId);
       }

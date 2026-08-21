@@ -4,6 +4,27 @@ import type { ExpertAgentContextStoreRegistrationInput } from "./context-system.
 
 export type HostContextBindings = readonly ExpertAgentContextStoreRegistrationInput[];
 
+export type HostContextBindingsResolver = () => HostContextBindings | Promise<HostContextBindings>;
+
+/**
+ * Returns a stable in-process identity for the registered Host Context surface.
+ * Store contents are intentionally excluded; this only detects binding changes that require a
+ * Runtime Session to be reopened with a new ContextSystem.
+ */
+export function hostContextBindingsFingerprint(bindings: HostContextBindings | undefined): string {
+  return JSON.stringify(
+    [...(bindings ?? [])]
+      .map((binding) => ({
+        namespace: binding.namespace,
+        storeName: binding.storeName ?? "",
+        required: binding.required ?? false,
+        mutationApproval: binding.mutationApproval ?? "required",
+        overflowTarget: binding.overflowTarget ?? false,
+      }))
+      .sort((left, right) => left.namespace.localeCompare(right.namespace)),
+  );
+}
+
 /** Mounts Host-owned Context stores without introducing a Host package dependency in Core. */
 export function withHostContextBindings(
   expert: Expert,

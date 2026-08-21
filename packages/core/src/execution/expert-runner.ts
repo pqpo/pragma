@@ -28,8 +28,10 @@ import { isExpertTeam, type ExpertDefinition, type ExpertTeam } from "../agent/e
 import { ContextManager } from "../agent/context-manager.ts";
 import { StaticContextStore } from "../context-system/static-context-store.ts";
 import {
+  hostContextBindingsFingerprint,
   withHostContextBindings,
   type HostContextBindings,
+  type HostContextBindingsResolver,
 } from "../context-system/host-context-bindings.ts";
 import { freshContextIdResolver } from "./context-id-resolver.ts";
 import type { Flow } from "../flow/flow.ts";
@@ -40,6 +42,7 @@ import type {
   RuntimeSubmitHandle,
 } from "../runtime/runtime-adapter.ts";
 import { mergeUsage, type UsageSink } from "../runtime/usage.ts";
+import { isRuntimeFeatureEnabled } from "../runtime/features.ts";
 import { openRuntimeSession } from "../runtime/session-factory.ts";
 import {
   EXECUTION_CURRENT_EXPERT_ID_ATTR,
@@ -78,7 +81,11 @@ import { getExecutionLiveBus } from "./execution-live-bus.ts";
 import { projectRuntimeOutput } from "./execution-output.ts";
 import { RuntimeMessageAccumulator } from "./runtime-message-accumulator.ts";
 import { requireInvocationContextOrigin } from "./runtime-context-record.ts";
-import { RuntimeSessionPool, type RuntimeSessionIdentity } from "./runtime-session-pool.ts";
+import {
+  RuntimeSessionPool,
+  type RuntimeSessionCreateOptions,
+  type RuntimeSessionIdentity,
+} from "./runtime-session-pool.ts";
 import { ContextOutputService, unwrapInvocationOutput } from "./context-output-service.ts";
 import { formatExpertPromptWithAttachments } from "./expert-prompt.ts";
 
@@ -89,6 +96,7 @@ interface ActiveSubmission {
   readonly contextId: string;
   readonly session: RuntimeAgentSession;
   readonly handle: RuntimeSubmitHandle;
+  readonly supportsSteer: boolean;
 }
 
 interface StoredHumanInteraction {
@@ -179,7 +187,7 @@ export class ExecutionController {
 
   async acquireRuntime(
     identity: RuntimeSessionIdentity,
-    create: () => Promise<RuntimeAgentSession>,
+    create: (options: RuntimeSessionCreateOptions) => Promise<RuntimeAgentSession>,
   ): Promise<RuntimeAgentSession> {
     const session = await this.runtimeSessions.acquire(identity, create);
     this.activeRuntimeSessions.set(identity.contextId, session);
@@ -200,8 +208,9 @@ export class ExecutionController {
     contextId: string,
     session: RuntimeAgentSession,
     handle: RuntimeSubmitHandle,
+    supportsSteer: boolean,
   ): void {
-    const submission = { invocationId, contextId, session, handle };
+    const submission = { invocationId, contextId, session, handle, supportsSteer };
     this.activeRuntimeSubmissions.set(invocationId, submission);
     const waiters = this.runtimeSubmissionWaiters.get(contextId);
     if (waiters === undefined) return;
@@ -456,6 +465,26 @@ export class ExecutionController {
     await submission.session.steer(request);
   }
 
+  async steerInvocation(request: {
+    readonly invocationId: string;
+    readonly contextId: string;
+    readonly requestId: string;
+    readonly content: string;
+  }): Promise<"steered" | "waiting_continuation" | "not_active" | "unsupported"> {
+    if (this.orchestrators.get(request.contextId)?.wakeWait(request.contextId, request) === true) {
+      return "waiting_continuation";
+    }
+    const submission = this.activeRuntimeSubmissions.get(request.invocationId);
+    if (submission === undefined || submission.contextId !== request.contextId) return "not_active";
+    if (!submission.supportsSteer) return "unsupported";
+    await submission.session.steer({
+      requestId: request.requestId,
+      content: request.content,
+      targetRunId: submission.handle.runId,
+    });
+    return "steered";
+  }
+
   registerOrchestrator(contextId: string, orchestrator: ExpertOrchestrator): void {
     this.orchestrators.set(contextId, orchestrator);
   }
@@ -636,6 +665,7 @@ export interface RunExpertInvocationOptions {
   readonly delegationPermit?: DelegationPermit | undefined;
   readonly contextOutputs?: ContextOutputService | undefined;
   readonly hostContextBindings?: HostContextBindings | undefined;
+  readonly resolveHostContextBindings?: HostContextBindingsResolver | undefined;
 }
 
 export async function runExpertInvocation(options: RunExpertInvocationOptions): Promise<unknown> {
@@ -646,7 +676,19 @@ export async function runExpertInvocation(options: RunExpertInvocationOptions): 
   const teamTools = team === undefined ? [] : createTeamDelegationTools(team, nativeExpert.id);
   const delegatedExpert =
     team === undefined ? nativeExpert : withTeamDelegationTools(nativeExpert, teamTools, team);
-  const executableExpert = withHostContextBindings(delegatedExpert, options.hostContextBindings);
+  const hostContextBindings =
+    options.resolveHostContextBindings === undefined
+      ? options.hostContextBindings
+      : await options.resolveHostContextBindings();
+  const invocationOptions: RunExpertInvocationOptions =
+    options.resolveHostContextBindings === undefined
+      ? options
+      : {
+          ...options,
+          hostContextBindings,
+          resolveHostContextBindings: undefined,
+        };
+  const executableExpert = withHostContextBindings(delegatedExpert, hostContextBindings);
   const contextOutputs =
     options.contextOutputs ??
     new ContextOutputService(options.executionId, executableExpert.contextSystem);
@@ -662,11 +704,13 @@ export async function runExpertInvocation(options: RunExpertInvocationOptions): 
     const created: ExpertOrchestrator = new ExpertOrchestrator({
       executionId: options.executionId,
       rootInvocationId: execution.rootInvocationId,
+      scopeInvocationId: options.invocationId,
       store: options.store,
       maxConcurrency: delegation.maxConcurrency,
       maxDepth: delegation.maxDepth,
       interruptController: options.controller,
-      execute: async (job): Promise<void> => await executeAgentJob(options, team, created, job),
+      execute: async (job): Promise<void> =>
+        await executeAgentJob(invocationOptions, team, created, job),
       ...(options.readContextScope === undefined
         ? {}
         : { readContextScope: options.readContextScope }),
@@ -675,7 +719,9 @@ export async function runExpertInvocation(options: RunExpertInvocationOptions): 
     orchestrator = created;
   }
   if (orchestrator !== undefined && delegation !== undefined) {
-    await orchestrator.registerExperts(delegation.experts);
+    await orchestrator.registerExperts(
+      team === undefined ? delegation.experts : [team.coordinator, ...team.members],
+    );
     options.controller.registerOrchestrator(options.context.contextId, orchestrator);
   }
 
@@ -684,6 +730,13 @@ export async function runExpertInvocation(options: RunExpertInvocationOptions): 
     options.executionId,
     options.invocationId,
   );
+  const interactionAccess = {
+    ownerContextId: options.context.contextId,
+    callerInvocationId: options.invocationId,
+    ...(options.agentId === undefined ? {} : { callerAgentId: options.agentId }),
+    interactExpertIds: delegation?.interactExpertIds ?? new Set<string>(),
+    isCoordinator: delegation?.isCoordinator ?? false,
+  };
   if (invocation.status === "succeeded") {
     options.controller.addUsage(invocation.usage);
     return invocation.output;
@@ -727,6 +780,7 @@ export async function runExpertInvocation(options: RunExpertInvocationOptions): 
     contextId: options.context.contextId,
     expertId: nativeExpert.id,
     runtime: options.context.runtime,
+    hostContextBindingsFingerprint: hostContextBindingsFingerprint(hostContextBindings),
   } satisfies RuntimeSessionIdentity;
   assertRuntimeIdentity(options, runtimeIdentity);
 
@@ -760,7 +814,7 @@ export async function runExpertInvocation(options: RunExpertInvocationOptions): 
   };
 
   const executionContext = createExecutionContext(
-    options,
+    invocationOptions,
     nativeExpert,
     team,
     delegation,
@@ -782,7 +836,7 @@ export async function runExpertInvocation(options: RunExpertInvocationOptions): 
     contextId: options.context.contextId,
     agentId: nativeExpert.id,
   });
-  const session = await options.controller.acquireRuntime(runtimeIdentity, async () => {
+  const session = await options.controller.acquireRuntime(runtimeIdentity, async ({ fresh }) => {
     const opened = await openRuntimeSession(runtime, {
       agent: executableExpert,
       owner:
@@ -792,8 +846,12 @@ export async function runExpertInvocation(options: RunExpertInvocationOptions): 
               ...options.owner,
               invocationId: requireInvocationContextOrigin(options.context),
             },
-      systemSessionId: options.context.snapshot?.systemSessionId,
-      runtimeSession: options.context.snapshot?.runtimeSession,
+      ...(fresh
+        ? {}
+        : {
+            systemSessionId: options.context.snapshot?.systemSessionId,
+            runtimeSession: options.context.snapshot?.runtimeSession,
+          }),
       context: {
         source: executionRootSource(execution.definition),
         attributes: {
@@ -847,13 +905,14 @@ export async function runExpertInvocation(options: RunExpertInvocationOptions): 
         output: options.output,
         outputRetryLimit: options.outputRetryLimit,
         runtimeSource: runtime.descriptor,
+        supportsSteer: isRuntimeFeatureEnabled(runtime.features.steering),
       });
       invocationUsage = mergeUsage(invocationUsage, turn.usage);
       await persistSessionInfo(session, persistRuntimeSnapshot);
 
       if (
         orchestrator !== undefined &&
-        (await orchestrator.hasOwnedUnjoined(options.invocationId, options.context.contextId))
+        (await orchestrator.hasOwnedUnjoined(options.invocationId))
       ) {
         await appendInvocationFinalMessage(options, turn.runId, turn.finalMessage, undefined);
         await options.store.commit({
@@ -874,11 +933,14 @@ export async function runExpertInvocation(options: RunExpertInvocationOptions): 
         });
         const waitResult = await orchestrator.waitForOwnedUnjoined(
           options.invocationId,
-          options.context.contextId,
+          interactionAccess,
           options.controller.signalForInvocation(options.invocationId),
           options.delegationPermit,
         );
-        const result = await orchestrator.list(options.context.contextId);
+        const result = {
+          completed: waitResult.completed,
+          discovery: await orchestrator.list(interactionAccess),
+        };
         query =
           waitResult.wakeReason === "steer" && waitResult.steer !== undefined
             ? [
@@ -1059,7 +1121,10 @@ function createExecutionContext(
   return {
     ...base,
     spawnExpert: async (request: { readonly expertId: string; readonly prompt: string }) => {
-      const expert = delegation.experts.find((candidate) => candidate.id === request.expertId);
+      const expert = delegation.experts.find(
+        (candidate) =>
+          delegation.spawnExpertIds.has(candidate.id) && candidate.id === request.expertId,
+      );
       if (expert === undefined) {
         throw new Error(`Expert ${nativeExpert.id} may not spawn ${request.expertId}.`);
       }
@@ -1095,15 +1160,75 @@ function createExecutionContext(
       readonly returnWhen?: "all" | "any" | undefined;
       readonly timeoutMs?: number | undefined;
       readonly signal?: AbortSignal | undefined;
-    }) => await orchestrator.wait(options.context.contextId, request, options.delegationPermit),
-    listExperts: async () => await orchestrator.list(options.context.contextId),
+    }) =>
+      await orchestrator.wait(
+        {
+          ownerContextId: options.context.contextId,
+          callerInvocationId: options.invocationId,
+          ...(options.agentId === undefined ? {} : { callerAgentId: options.agentId }),
+          interactExpertIds: delegation.interactExpertIds,
+          isCoordinator: delegation.isCoordinator,
+        },
+        request,
+        options.delegationPermit,
+      ),
+    listAgents: async (request: {
+      readonly expertId?: string;
+      readonly cursor?: string;
+      readonly limit?: number;
+    }) =>
+      await orchestrator.list(
+        {
+          ownerContextId: options.context.contextId,
+          callerInvocationId: options.invocationId,
+          ...(options.agentId === undefined ? {} : { callerAgentId: options.agentId }),
+          interactExpertIds: delegation.interactExpertIds,
+          isCoordinator: delegation.isCoordinator,
+        },
+        request,
+      ),
     followupExpert: async (request: { readonly agentId: string; readonly prompt: string }) =>
-      await orchestrator.followup(options.context.contextId, options.invocationId, request),
+      await orchestrator.followup(
+        {
+          ownerContextId: options.context.contextId,
+          callerInvocationId: options.invocationId,
+          ...(options.agentId === undefined ? {} : { callerAgentId: options.agentId }),
+          interactExpertIds: delegation.interactExpertIds,
+          isCoordinator: delegation.isCoordinator,
+        },
+        request,
+      ),
+    steerExpert: async (request: {
+      readonly agentId: string;
+      readonly invocationId?: string | undefined;
+      readonly message: string;
+      readonly fallback?: "reject" | "followup" | undefined;
+    }) =>
+      await orchestrator.steer(
+        {
+          ownerContextId: options.context.contextId,
+          callerInvocationId: options.invocationId,
+          ...(options.agentId === undefined ? {} : { callerAgentId: options.agentId }),
+          interactExpertIds: delegation.interactExpertIds,
+          isCoordinator: delegation.isCoordinator,
+        },
+        request,
+      ),
     interruptExpert: async (request: {
       readonly agentId: string;
       readonly invocationId?: string | undefined;
       readonly reason?: string | undefined;
-    }) => await orchestrator.interrupt(options.context.contextId, request),
+    }) =>
+      await orchestrator.interrupt(
+        {
+          ownerContextId: options.context.contextId,
+          callerInvocationId: options.invocationId,
+          ...(options.agentId === undefined ? {} : { callerAgentId: options.agentId }),
+          interactExpertIds: delegation.interactExpertIds,
+          isCoordinator: delegation.isCoordinator,
+        },
+        request,
+      ),
   };
 }
 
@@ -1363,6 +1488,7 @@ async function submitRuntimeTurn(options: {
   readonly output?: import("../runtime/runtime-adapter.ts").RuntimeOutputSchema | undefined;
   readonly outputRetryLimit?: number | undefined;
   readonly runtimeSource: { readonly id: string; readonly kind: string };
+  readonly supportsSteer: boolean;
 }): Promise<{
   readonly runId: string;
   readonly output: unknown;
@@ -1388,6 +1514,7 @@ async function submitRuntimeTurn(options: {
     options.options.context.contextId,
     options.session,
     handle,
+    options.supportsSteer,
   );
   const messageAccumulators = new Map<string, RuntimeMessageAccumulator>();
   const accumulatorFor = (runId: string): RuntimeMessageAccumulator => {

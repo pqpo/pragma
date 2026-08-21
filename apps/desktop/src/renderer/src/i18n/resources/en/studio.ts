@@ -68,7 +68,7 @@ export const studio = {
     removeCase: "Remove test case",
     yamlFormat: "YAML format",
     yamlFormatDescription:
-      "The file must contain one pragma/v4 Evaluation resource with method.type set to agent-judge.",
+      "The file must contain one pragma/v5 Evaluation resource with method.type set to agent-judge.",
     yamlRuleMetadata:
       "metadata contains a 16-character resource ID, name, description, and optional tags.",
     yamlRuleCases: "Every case needs id, name, prompt, and at least one criterion.",
@@ -404,6 +404,15 @@ export const studio = {
   teamKnowledgePickerDescription: "Select knowledge bases available to every member of this team.",
   teamKnowledgeVisibilityAll: "All experts",
   teamContextDescription: "Team knowledge bases and private read-only Memory.",
+  teamPermissions: "Team permissions",
+  teamPermissionsDescription:
+    "Control member-to-member creation and interaction. Coordinator authority is inherited.",
+  spawnPermissions: "Can spawn",
+  interactionPermissions: "Can view and interact",
+  otherInstances: "other instances",
+  coordinatorAuthority: "System inherited: manages all team agents",
+  coordinatorAuthorityDescription:
+    "The coordinator can always discover, follow up, steer, wait for, and interrupt every agent in this team execution.",
   maxConcurrency: "Max concurrency",
   maxDelegationDepth: "Max delegation depth",
   resourceId: "Resource ID",
@@ -878,6 +887,7 @@ export const studio = {
   noAvailable: "No {{label}} available",
   tryDifferentDescription: "Try a different name or description.",
   addItemsStudio: "Add items in Studio, then return here.",
+  goToKnowledgeBases: "Go to add",
   resources: "resources",
   contextStoresLower: "context stores",
   skillsLower: "skills",

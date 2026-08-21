@@ -1,3 +1,4 @@
+import { PRAGMA_DSL_WRITE_API_VERSION } from "../src/ast/index.ts";
 import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
@@ -73,6 +74,66 @@ describe("PragmaProjectService", () => {
     expect(compiled.value.skills?.skills).toHaveLength(1);
     expect(compiled.rootRuntimeId).toBe("codex");
     expect(compiled.projectFingerprint).toBe(second.projectFingerprint);
+  });
+
+  it("preserves recursively unknown fields when an older client updates known fields", async () => {
+    const repository = await createRepository();
+    const service = new PragmaProjectService({ repository });
+    const current = expert() as unknown as Record<string, unknown>;
+    const currentSpec = current["spec"] as Record<string, unknown>;
+    currentSpec["runtime"] = {
+      ...(currentSpec["runtime"] as Record<string, unknown>),
+      futureSelectionLabel: "fast",
+    };
+    currentSpec["capabilities"] = [
+      {
+        ...((currentSpec["capabilities"] as Record<string, unknown>[])[0] ?? {}),
+        futurePresentation: { color: "blue" },
+      },
+    ];
+    await service.publish({
+      projectId: "studio",
+      expectedRevision: 0,
+      resources: [runtime(), skill(), current as unknown as PragmaExpertResource],
+      artifacts: new Map([["assets/writing-skill/SKILL.md", "# Writing\n"]]),
+    });
+
+    const updated = await service.applyChangeSet({
+      projectId: "studio",
+      changeSet: {
+        baseRevision: 1,
+        upserts: [
+          {
+            ...expert(),
+            metadata: { ...expert().metadata, description: "Updated by an older client." },
+          },
+        ],
+      },
+    });
+    const persisted = updated.resources.find(
+      (resource): resource is PragmaExpertResource => resource.kind === "Expert",
+    );
+    expect(persisted).toBeDefined();
+    if (persisted === undefined) throw new Error("Expected the persisted Expert.");
+    expect(persisted.metadata.description).toBe("Updated by an older client.");
+    expect(
+      (persisted.spec.runtime as unknown as Record<string, unknown>)["futureSelectionLabel"],
+    ).toBe("fast");
+    expect(
+      (persisted.spec.capabilities[0] as unknown as Record<string, unknown>)["futurePresentation"],
+    ).toEqual({ color: "blue" });
+
+    const reloaded = await service.get("studio", 2);
+    const reloadedExpert = reloaded.resources.find(
+      (resource): resource is PragmaExpertResource => resource.kind === "Expert",
+    );
+    expect(reloadedExpert).toBeDefined();
+    if (reloadedExpert === undefined) throw new Error("Expected the reloaded Expert.");
+    expect(
+      (reloadedExpert.spec.capabilities[0] as unknown as Record<string, unknown>)[
+        "futurePresentation"
+      ],
+    ).toEqual({ color: "blue" });
   });
 
   it("preserves artifacts during candidate validation and refuses a missing persisted lock", async () => {
@@ -371,7 +432,7 @@ async function createRepository(): Promise<
 
 function skill(): PragmaCapabilityResource {
   return {
-    apiVersion: "pragma/v4",
+    apiVersion: PRAGMA_DSL_WRITE_API_VERSION,
     kind: "Capability",
     metadata: {
       id: "d5zzezmprnyqzmhk",
@@ -391,7 +452,7 @@ function skill(): PragmaCapabilityResource {
 
 function flowWithExternalExpert(expertRef: `expert:${string}`): PragmaFlowResource {
   return {
-    apiVersion: "pragma/v4",
+    apiVersion: PRAGMA_DSL_WRITE_API_VERSION,
     kind: "Flow",
     metadata: {
       id: "0000000000000002",
@@ -418,7 +479,7 @@ function flowWithExternalExpert(expertRef: `expert:${string}`): PragmaFlowResour
 
 function runtime(): PragmaRuntimeProfileResource {
   return {
-    apiVersion: "pragma/v4",
+    apiVersion: PRAGMA_DSL_WRITE_API_VERSION,
     kind: "RuntimeProfile",
     metadata: {
       id: "rdzgnq05qfqcpqcm",
@@ -432,7 +493,7 @@ function runtime(): PragmaRuntimeProfileResource {
 
 function expert(): PragmaExpertResource {
   return {
-    apiVersion: "pragma/v4",
+    apiVersion: PRAGMA_DSL_WRITE_API_VERSION,
     kind: "Expert",
     metadata: {
       id: "1xddvess309a6gme",

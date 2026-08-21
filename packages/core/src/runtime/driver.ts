@@ -78,6 +78,7 @@ import type {
   RuntimeSubmitRequest,
   RuntimeTaskSubmission,
   RuntimeDriverDescriptor,
+  RuntimeModelDiscoveryOptions,
 } from "./runtime-adapter.ts";
 import type { RuntimeStreamEvent } from "./stream-events.ts";
 import { registerRuntimeSessionFactory } from "./session-factory.ts";
@@ -251,7 +252,8 @@ export interface RuntimeDriver<
   readonly canUse?:
     | ((options?: Record<string, unknown>) => Promise<RuntimeCanUseResult> | RuntimeCanUseResult)
     | undefined;
-  readonly listModels?: (() => Promise<readonly RuntimeModel[]>) | undefined;
+  readonly listModels?:
+    ((options?: RuntimeModelDiscoveryOptions) => Promise<readonly RuntimeModel[]>) | undefined;
   readonly defaultOutputParser?: RuntimeOutputParser | undefined;
   readonly outputRetryLimit?: number | undefined;
   readonly resolvePersistence?:
@@ -1980,11 +1982,14 @@ class RuntimeExecutionBindings {
       get waitExperts() {
         return current().executionContext?.waitExperts;
       },
-      get listExperts() {
-        return current().executionContext?.listExperts;
+      get listAgents() {
+        return current().executionContext?.listAgents;
       },
       get followupExpert() {
         return current().executionContext?.followupExpert;
+      },
+      get steerExpert() {
+        return current().executionContext?.steerExpert;
       },
       get interruptExpert() {
         return current().executionContext?.interruptExpert;

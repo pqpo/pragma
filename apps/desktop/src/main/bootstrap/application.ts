@@ -1,5 +1,4 @@
 import { BrowserWindow, app, ipcMain, safeStorage, shell } from "electron";
-import { PragmaPaths } from "@pragma/core";
 
 import {
   DesktopRendererLogSchema,
@@ -11,6 +10,7 @@ import { createDesktopLogging } from "../platform/logging/desktop-logging.ts";
 import { createDesktopWindowManager } from "../platform/window/desktop-window.ts";
 import { configureDesktopApplicationIdentity } from "./application-identity.ts";
 import { createDesktopApplicationContainer } from "./application-container.ts";
+import { createDesktopPragmaPaths } from "./desktop-paths.ts";
 import { enforceDesktopSingleInstance } from "./single-instance.ts";
 import { startDesktopWindowWithServices } from "./startup-sequence.ts";
 import { registerMissionAttachmentScheme } from "../features/missions/mission-attachment-protocol.ts";
@@ -20,7 +20,7 @@ export function startDesktopApplication(): void {
   configureDesktopApplicationIdentity(app);
   let mainWindow = (): BrowserWindow | null => null;
   if (!enforceDesktopSingleInstance(app, () => mainWindow())) return;
-  const paths = new PragmaPaths();
+  const paths = createDesktopPragmaPaths({ isPackaged: app.isPackaged });
   const logging = createDesktopLogging(paths);
   const windows = createDesktopWindowManager(logging.mainLogger);
   mainWindow = windows.getWindow;

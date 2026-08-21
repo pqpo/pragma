@@ -1,3 +1,4 @@
+import { PRAGMA_DSL_WRITE_API_VERSION } from "@pragma/interpreter/ast";
 import { appendFile, mkdir, mkdtemp, readFile, realpath, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -833,6 +834,82 @@ describe("mission store", () => {
     await expect(store.get(created.id)).rejects.toMatchObject({ code: "unsupported_schema" });
   });
 
+  it("keeps readable Missions visible when another Mission uses an unsupported schema", async () => {
+    const root = await temporaryRoot();
+    const issues: Array<{ readonly missionId: string; readonly error: { readonly code: string } }> =
+      [];
+    const store = createMissionStore({
+      missionsPath: join(root, "missions"),
+      onReadIssue: (issue) => issues.push(issue),
+    });
+    const readable = await store.create({
+      workspace: { path: join(root, "workspace"), basename: "workspace" },
+      goal: "Readable Mission",
+      project: { id: "studio", revision: 1 },
+      executor: missionExecutorSnapshot(expertFixture()),
+    });
+    const unsupported = await store.create({
+      workspace: { path: join(root, "workspace"), basename: "workspace" },
+      goal: "Future Mission",
+      project: { id: "studio", revision: 1 },
+      executor: missionExecutorSnapshot(expertFixture()),
+    });
+    const unsupportedManifest = join(root, "missions", unsupported.id, "mission.yaml");
+    await writeFile(
+      unsupportedManifest,
+      (await readFile(unsupportedManifest, "utf8")).replace(
+        "pragma.mission/v8",
+        "pragma.mission/v99",
+      ),
+      "utf8",
+    );
+
+    await expect(store.list()).resolves.toEqual([
+      expect.objectContaining({ id: readable.id, title: readable.title }),
+    ]);
+    expect(issues).toEqual([
+      expect.objectContaining({
+        missionId: unsupported.id,
+        error: expect.objectContaining({ code: "unsupported_schema" }),
+      }),
+    ]);
+    await expect(readFile(unsupportedManifest, "utf8")).resolves.toContain(
+      "schemaVersion: pragma.mission/v99",
+    );
+  });
+
+  it("reports an error instead of presenting an empty list when no user Mission is readable", async () => {
+    const root = await temporaryRoot();
+    const store = createMissionStore({ missionsPath: join(root, "missions") });
+    await store.create({
+      workspace: { path: join(root, "workspace"), basename: "workspace" },
+      goal: "Readable internal Mission",
+      project: { id: "studio", revision: 1 },
+      executor: missionExecutorSnapshot(expertFixture()),
+      origin: { type: "system-memory", jobId: "memory-job" },
+    });
+    const unsupported = await store.create({
+      workspace: { path: join(root, "workspace"), basename: "workspace" },
+      goal: "Only future Mission",
+      project: { id: "studio", revision: 1 },
+      executor: missionExecutorSnapshot(expertFixture()),
+    });
+    const unsupportedManifest = join(root, "missions", unsupported.id, "mission.yaml");
+    await writeFile(
+      unsupportedManifest,
+      (await readFile(unsupportedManifest, "utf8")).replace(
+        "pragma.mission/v8",
+        "pragma.mission/v99",
+      ),
+      "utf8",
+    );
+
+    await expect(store.list()).rejects.toMatchObject({ code: "unsupported_schema" });
+    await expect(readFile(unsupportedManifest, "utf8")).resolves.toContain(
+      "schemaVersion: pragma.mission/v99",
+    );
+  });
+
   it("migrates v3 Flow input atomically and rejects future Mission schemas", async () => {
     const root = await temporaryRoot();
     const store = createMissionStore({ missionsPath: join(root, "missions") });
@@ -1016,7 +1093,7 @@ async function temporaryRoot(): Promise<string> {
 
 function expertFixture(): PragmaExpertResource {
   return {
-    apiVersion: "pragma/v4",
+    apiVersion: PRAGMA_DSL_WRITE_API_VERSION,
     kind: "Expert",
     metadata: {
       id: "v2vt1v01vzz6j24q",

@@ -91,6 +91,11 @@ type EditorStateSnapshot = {
   readonly documentVersion: number;
 };
 
+type LoadFileOptions = {
+  readonly discardChanges?: boolean;
+  readonly preservePreview?: boolean;
+};
+
 const DEFAULT_METADATA: ContextStoreContentMetadata = {
   trigger: "manual",
   priority: "normal",
@@ -141,6 +146,13 @@ export function rebaseEntryId(
 function withMarkdownExtension(value: string): string {
   const trimmed = value.trim();
   return trimmed.toLowerCase().endsWith(".md") ? trimmed : `${trimmed}.md`;
+}
+
+export function contextStorePreviewAfterLoad(
+  currentPreview: boolean,
+  preservePreview: boolean,
+): boolean {
+  return preservePreview ? currentPreview : true;
 }
 
 function entryOperationName(operation: EntryTextOperation, value = operation.value): string {
@@ -416,7 +428,7 @@ export function ContextStoreDetailFragment(props: {
   );
 
   const loadFile = useCallback(
-    async (entry: ContextStoreEntry, discardChanges = false) => {
+    async (entry: ContextStoreEntry, options: LoadFileOptions = {}) => {
       const request = loadRequestRef.current + 1;
       loadRequestRef.current = request;
       const editVersionAtStart = editVersionRef.current;
@@ -424,7 +436,7 @@ export function ContextStoreDetailFragment(props: {
         const loaded = await props.onGetContent(props.store.id, entry.id);
         if (loadRequestRef.current !== request) return;
         if (
-          !discardChanges &&
+          !options.discardChanges &&
           currentRef.current.dirty &&
           editVersionRef.current !== editVersionAtStart
         ) {
@@ -450,7 +462,9 @@ export function ContextStoreDetailFragment(props: {
         setDirty(false);
         setConflict(false);
         setSaveStatus("idle");
-        setPreview(true);
+        setPreview((currentPreview) =>
+          contextStorePreviewAfterLoad(currentPreview, options.preservePreview === true),
+        );
         setError(null);
       } catch (cause) {
         setError(errorMessage(cause));
@@ -537,7 +551,7 @@ export function ContextStoreDetailFragment(props: {
         setConflict(true);
         return;
       }
-      void loadFile(current.selectedEntry);
+      void loadFile(current.selectedEntry, { preservePreview: true });
     });
   }, [loadEntries, loadFile, props.onSubscribe, props.store.id]);
 
@@ -634,7 +648,7 @@ export function ContextStoreDetailFragment(props: {
         }
         await loadEntries(nextSelection);
         if (nextSelection?.kind === "file" && rebasedId !== undefined) {
-          await loadFile(nextSelection, true);
+          await loadFile(nextSelection, { discardChanges: true });
         }
       } else {
         const id = joinEntry(selectedDirectory, withMarkdownExtension(operation.value));
@@ -716,7 +730,7 @@ export function ContextStoreDetailFragment(props: {
           expectedSelection = rebased;
           setSelectedEntry(rebased);
           setSelectedDirectory(selected.kind === "directory" ? rebasedId : parentId(rebasedId));
-          if (selected.kind === "file") await loadFile(rebased, true);
+          if (selected.kind === "file") await loadFile(rebased, { discardChanges: true });
         }
       }
       await loadEntries(expectedSelection);
@@ -1041,7 +1055,9 @@ export function ContextStoreDetailFragment(props: {
                   <p>{t("knowledgeConflict")}</p>
                   <button
                     type="button"
-                    onClick={() => selectedEntry && void loadFile(selectedEntry, true)}
+                    onClick={() =>
+                      selectedEntry && void loadFile(selectedEntry, { discardChanges: true })
+                    }
                   >
                     {t("reload")}
                   </button>

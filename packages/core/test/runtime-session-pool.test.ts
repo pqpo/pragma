@@ -55,6 +55,26 @@ describe("RuntimeSessionPool", () => {
     await pool.close();
   });
 
+  it("reopens a Runtime Session when Host Context bindings change", async () => {
+    const pool = new RuntimeSessionPool();
+    const first = createRuntimeSession();
+    const second = createRuntimeSession();
+    const create = vi.fn(async ({ fresh }: { readonly fresh: boolean }) =>
+      fresh ? second : first,
+    );
+
+    await pool.acquire({ ...identity, hostContextBindingsFingerprint: "memory" }, create);
+    await expect(
+      pool.acquire({ ...identity, hostContextBindingsFingerprint: "disabled" }, create),
+    ).resolves.toBe(second);
+
+    expect(first.close).toHaveBeenCalledOnce();
+    expect(create).toHaveBeenNthCalledWith(1, { fresh: false });
+    expect(create).toHaveBeenNthCalledWith(2, { fresh: true });
+    await pool.close();
+    expect(second.close).toHaveBeenCalledOnce();
+  });
+
   it("releases one invocation-scoped Runtime without closing the pool", async () => {
     const pool = new RuntimeSessionPool();
     const fresh = createRuntimeSession();

@@ -25,7 +25,8 @@ Expert Session 自身的 state、prompt queue 与 Session 级语义事件通过�
 
 Flow Expert step、`createAgentLauncher().tools` 和 `defineExpertTeam()` 共享
 `ContextResolutionService`、`InvocationService` 与 Execution 级
-`ExpertOrchestrator`。前者为普通 Expert 显式列出目标，后者从团队 allowlist 解析目标；两者都
+`ExpertOrchestrator`。前者为普通 Expert 显式列出目标，后者从团队成员权限策略解析目标并为
+coordinator 注入 Execution 范围内的全量管理权限；两者都
 创建 Execution-scoped AgentInstance 和子 Invocation，不创建隐藏 ExpertSession 或伪装成单节点 Flow。
 
 Expert 恢复只恢复会话上下文，不重启 interrupted Turn。Flow recover 会继续未完成

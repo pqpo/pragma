@@ -27,7 +27,7 @@ Pragma DSL 要解决的问题不是“用 YAML 少写几行代码”，而是建
 
 只保存 Prompt 会丢失绝大部分运行条件；只导出应用数据库则无法跨 Host 使用。Pragma DSL 因此只保存可移植语义，把机器相关环境留给 Host Binding。
 
-当前代码中的语言版本是 `pragma/v4`，支持八种闭合语义资源：
+当前代码中的语言版本是 `pragma/v5`，支持八种闭合语义资源：
 
 ```text
 Expert
@@ -69,9 +69,17 @@ Host Binding 与健康状态
 
 应用层通过 `PragmaProjectService` 执行 load、validate、publish、checkout 和 compile，而不是直接拼装 Runtime 对象。
 
-## 严格 Schema 和显式扩展点
+## 严格语义与同版本向前兼容
 
-Portable DSL、Lock 和 Bundle 使用严格 Zod Schema，未知字段会被拒绝，而不是被解析器静默删除。这样做会让格式演进更麻烦，却能避免拼写错误变成不可见的配置失效。
+Portable DSL 对已知字段使用严格 Zod 约束；从 `pragma/v5` 开始，资源和 Bundle 中任意对象深度的未知
+字段默认会被保留并产生 warning，包括嵌套对象和数组元素。旧客户端可以读取、运行和原样转存同版本
+新增的可忽略字段。未知 `kind`、method type 等 discriminator，已知字段的非法值，以及 Lock、迁移
+journal 和完整性元数据仍然 fail closed。
+
+`apiVersion` 表示最低安全读取代际，而不是每次增加字段都递增。只有删除、重命名、改变既有语义，
+或旧客户端忽略某字段会造成执行、权限、安全或数据错误时才升级版本。普通可选字段保持当前版本；
+当前代码通过 `PRAGMA_DSL_WRITE_API_VERSION`、direct-read 和 upgrade-from 能力表统一声明版本，不在
+Host 中复制常量。Host 的更新路径必须合并已有资源，不能因为旧编辑器重建已知字段而丢弃未知字段。
 
 新的语义也不能靠“在 YAML 中多放一个字段，然后由某个 Host 猜测”。需要扩展的部分使用具名、带版本的 Adapter 或 Registry，例如：
 
@@ -147,15 +155,15 @@ Agent 平台通常同时存在多种版本。如果共用一个 `version` 字段
 Pragma 明确区分：
 
 ```text
-DSL apiVersion          语言格式版本，当前为 pragma/v4
-compilerVersion         编译语义版本，当前写入 pragma.dsl/v6
+DSL apiVersion          语言格式版本，当前为 pragma/v5
+compilerVersion         编译语义版本，当前写入 pragma.dsl/v8
 Project revision        不可变项目内容序号
 Host schemaVersion      Execution、Session、IPC 等持久协议版本
 ```
 
 修改 DSL 语法，不等于修改 Execution 存储；同一 DSL 也可能因为编译语义变化产生新的 Compiler 版本；用户编辑一个 Expert 只会产生新的 Project Revision，不应该升级语言版本。
 
-当前 Compiler 只直接读取自己写出的 `pragma.dsl/v6`，并为 `v2` 到 `v5` 提供静态、相邻、前向升级链。DSL 自身也有 `pragma/v2 → v3 → v4` 的独立迁移。
+当前 Compiler 只直接读取自己写出的 `pragma.dsl/v8`，并为 `v2` 到 `v7` 提供静态、相邻、前向升级链。DSL 自身提供 `pragma/v2 → v3 → v4 → v5` 的独立迁移。
 
 普通 parser 和业务编译器只处理当前 Schema，历史 Schema 与字段转换留在迁移模块。Host 在目标 Revision 首次访问时执行必要升级，并把结果保存为可重建缓存；不会在应用启动时扫描和改写全部项目历史，也不会改变权威 Revision number。
 

@@ -1,3 +1,4 @@
+import { PRAGMA_DSL_WRITE_API_VERSION } from "@pragma/interpreter/ast";
 import { mkdir, mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -117,7 +118,7 @@ describe("MissionCreator", () => {
     await mkdir(workspace);
     const project = createPragmaProjectStore({ projectsPath: join(root, "projects") });
     const flow = {
-      apiVersion: "pragma/v4" as const,
+      apiVersion: PRAGMA_DSL_WRITE_API_VERSION,
       kind: "Flow" as const,
       metadata: {
         id: "5gdqkvfwb19p5rj7",

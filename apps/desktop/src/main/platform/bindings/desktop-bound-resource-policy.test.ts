@@ -1,3 +1,4 @@
+import { PRAGMA_DSL_WRITE_API_VERSION } from "@pragma/interpreter/ast";
 import { describe, expect, it } from "vitest";
 
 import {
@@ -86,7 +87,7 @@ describe("desktop bound resource policy", () => {
     });
 
     const importedContext = PragmaContextStoreResourceSchema.parse({
-      apiVersion: "pragma/v4",
+      apiVersion: PRAGMA_DSL_WRITE_API_VERSION,
       kind: "ContextStore",
       metadata: {
         id: "1ymdp8c7rvxs4d3v",
@@ -104,7 +105,7 @@ describe("desktop bound resource policy", () => {
 
   it("reuses exact ContextStore and RuntimeProfile identities on no-op edits", () => {
     const context = PragmaContextStoreResourceSchema.parse({
-      apiVersion: "pragma/v4",
+      apiVersion: PRAGMA_DSL_WRITE_API_VERSION,
       kind: "ContextStore",
       metadata: {
         id: "r8ggx4n4219hrc2p",
@@ -127,7 +128,7 @@ describe("desktop bound resource policy", () => {
     ).toEqual(context);
 
     const runtime = PragmaRuntimeProfileResourceSchema.parse({
-      apiVersion: "pragma/v4",
+      apiVersion: PRAGMA_DSL_WRITE_API_VERSION,
       kind: "RuntimeProfile",
       metadata: {
         id: "20k21q9j9wexjv50",
@@ -154,7 +155,7 @@ describe("desktop bound resource policy", () => {
 
 function capability(id: string, tags: string[], revision: number) {
   return PragmaCapabilityResourceSchema.parse({
-    apiVersion: "pragma/v4",
+    apiVersion: PRAGMA_DSL_WRITE_API_VERSION,
     kind: "Capability",
     metadata: {
       id,

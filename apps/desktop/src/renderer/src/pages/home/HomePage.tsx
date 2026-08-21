@@ -21,6 +21,7 @@ import {
   FolderOpen,
   GearSix,
   GitBranch,
+  Info,
   Lightbulb,
   MagnifyingGlass,
   Star,
@@ -74,10 +75,68 @@ function homeTimeGreetingKey(hour = new Date().getHours()): "morning" | "afterno
   return "evening";
 }
 
+export function homeExecutorConfigurationUnavailable(input: {
+  readonly executorKind: HomeMissionExecutorOption["kind"] | undefined;
+  readonly models: readonly DesktopRuntimeModel[];
+  readonly modelsLoading: boolean;
+  readonly modelError: string | null;
+  readonly modelResetRequired: boolean;
+  readonly persistenceReady: boolean;
+}): boolean {
+  if (input.executorKind !== "expert" && input.executorKind !== "team") return false;
+  return (
+    !input.persistenceReady ||
+    input.modelsLoading ||
+    input.modelError !== null ||
+    input.modelResetRequired ||
+    input.models.length === 0
+  );
+}
+
+export function HomeExecutorConfigurationTip(props: {
+  readonly message: string;
+  readonly configureModelsLabel: string;
+  readonly configureExpertLabel: string;
+  readonly onConfigureModels?: (() => void) | undefined;
+  readonly onConfigureExpert?: (() => void) | undefined;
+}) {
+  return (
+    <div className="home-inline-tip home-inline-error-tip" role="alert">
+      <Info size={17} weight="regular" aria-hidden="true" />
+      <span className="home-inline-error-message">{props.message}</span>
+      <div className="home-inline-error-actions">
+        {props.onConfigureModels !== undefined ? (
+          <button
+            className="home-inline-error-link"
+            type="button"
+            onClick={props.onConfigureModels}
+          >
+            {props.configureModelsLabel}
+            <CaretRight size={13} weight="bold" aria-hidden="true" />
+          </button>
+        ) : null}
+        {props.onConfigureExpert !== undefined ? (
+          <button
+            className="home-inline-error-link"
+            type="button"
+            onClick={props.onConfigureExpert}
+          >
+            {props.configureExpertLabel}
+            <CaretRight size={13} weight="bold" aria-hidden="true" />
+          </button>
+        ) : null}
+      </div>
+    </div>
+  );
+}
+
 export function HomePage(props: {
   readonly initialExecutorRef?: string | undefined;
   readonly onCreated: (mission: Mission) => void | Promise<void>;
   readonly onConfigureModels?: (() => void) | undefined;
+  readonly onConfigureRuntime?: (() => void) | undefined;
+  readonly onConfigureExpert?: ((executor: HomeMissionExecutorOption) => void) | undefined;
+  readonly onOpenKnowledgeBases?: (() => void) | undefined;
 }) {
   const { t } = useTranslation("missions");
   const timeGreeting = t(`homeTimeGreetings.${homeTimeGreetingKey()}`);
@@ -258,6 +317,16 @@ export function HomePage(props: {
   const hasStructuredFlowInput = flowInputSchema !== undefined;
   const structuredFlowInputValid =
     flowInputSchema === undefined || isSchemaInputValid(flowInputSchema, flowInput);
+  const executorConfigurationUnavailable = homeExecutorConfigurationUnavailable({
+    executorKind: selectedExecutor?.kind,
+    models,
+    modelsLoading,
+    modelError,
+    modelResetRequired,
+    persistenceReady,
+  });
+  const showExecutorConfigurationTip =
+    loaded && executorConfigurationUnavailable && persistenceReady && !modelsLoading;
 
   useEffect(() => {
     if (hasValidExecutor || executors.length === 0) return;
@@ -626,14 +695,28 @@ export function HomePage(props: {
             onSelect={setWorkspaceOverride}
             onUseDefault={() => setWorkspaceOverride(undefined)}
           />
-          <p className="home-inline-tip" aria-live="polite">
-            <Lightbulb size={15} weight="regular" aria-hidden="true" />
-            <span className="home-inline-tip-viewport">
-              <span className="home-inline-tip-copy" key={tipIndex}>
-                {t(`homeTips.${HOME_TIP_KEYS[tipIndex]}`)}
+          {showExecutorConfigurationTip ? (
+            <HomeExecutorConfigurationTip
+              message={t("executorConfigurationRequired")}
+              configureModelsLabel={t("configureModelSettings")}
+              configureExpertLabel={t("configureExpert")}
+              onConfigureModels={props.onConfigureRuntime}
+              onConfigureExpert={
+                selectedExecutor === undefined || props.onConfigureExpert === undefined
+                  ? undefined
+                  : () => props.onConfigureExpert?.(selectedExecutor)
+              }
+            />
+          ) : (
+            <p className="home-inline-tip" aria-live="polite">
+              <Lightbulb size={15} weight="regular" aria-hidden="true" />
+              <span className="home-inline-tip-viewport">
+                <span className="home-inline-tip-copy" key={tipIndex}>
+                  {t(`homeTips.${HOME_TIP_KEYS[tipIndex]}`)}
+                </span>
               </span>
-            </span>
-          </p>
+            </p>
+          )}
         </div>
         <div className="mission-goal-composer">
           <MissionAttachmentList
@@ -700,6 +783,13 @@ export function HomePage(props: {
                 <span>{t("missionKnowledge")}</span>
                 {contextStoreIds.length === 0 ? null : <strong>{contextStoreIds.length}</strong>}
               </button>
+              <ToolPermissionSelect
+                detailed
+                value={toolPermissionMode}
+                onChange={setToolPermissionMode}
+                disabled={saving}
+                title={t("permissionOverride")}
+              />
               {selectedExecutor?.kind === "expert" || selectedExecutor?.kind === "team" ? (
                 <MissionModelOverrideControls
                   models={models}
@@ -709,13 +799,6 @@ export function HomePage(props: {
                   onChange={setModelOverride}
                 />
               ) : null}
-              <ToolPermissionSelect
-                detailed
-                value={toolPermissionMode}
-                onChange={setToolPermissionMode}
-                disabled={saving}
-                title={t("permissionOverride")}
-              />
             </div>
             <button
               className="mission-submit-button"
@@ -727,6 +810,7 @@ export function HomePage(props: {
                 !loaded ||
                 defaultWorkspace === undefined ||
                 !hasValidExecutor ||
+                executorConfigurationUnavailable ||
                 (!hasStructuredFlowInput && goal.trim() === "") ||
                 !structuredFlowInputValid
               }
@@ -745,8 +829,10 @@ export function HomePage(props: {
         {loaded && executors.length === 0 ? (
           <p className="mission-form-note">{t("createFirst")}</p>
         ) : null}
-        {modelError ? <p className="mission-form-note">{t("modelOptionsUnavailable")}</p> : null}
-        {modelResetRequired ? (
+        {modelError && !showExecutorConfigurationTip ? (
+          <p className="mission-form-note">{t("modelOptionsUnavailable")}</p>
+        ) : null}
+        {modelResetRequired && !showExecutorConfigurationTip ? (
           <p className="mission-form-note mission-model-reset-note" role="status">
             <span>{t("modelConfigurationResetRequired")}</span>
             <button className="text-button" type="button" onClick={props.onConfigureModels}>
@@ -769,6 +855,7 @@ export function HomePage(props: {
           footerHint={t("missionKnowledgeCreateHint")}
           onSelectedStoreIdsChange={setContextStoreIds}
           onClose={() => setContextStorePickerOpen(false)}
+          onGoToKnowledgeBases={props.onOpenKnowledgeBases}
         />
       ) : null}
     </section>

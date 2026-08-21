@@ -1,4 +1,5 @@
 import {
+  PRAGMA_DSL_WRITE_API_VERSION,
   analyzePragmaFlowGraph,
   canonicalPragmaResourceRef,
   PragmaFlowResourceSchema,
@@ -26,7 +27,7 @@ export interface FlowValidationIssue {
 
 export function createEmptyFlow(id = "0000000000000000"): PragmaFlowResource {
   return {
-    apiVersion: "pragma/v4",
+    apiVersion: PRAGMA_DSL_WRITE_API_VERSION,
     kind: "Flow",
     metadata: {
       id,

@@ -10,6 +10,7 @@
 .mission-message-attachments {
   display: grid;
   grid-template-columns: repeat(auto-fit, minmax(160px, 240px));
+  align-items: start;
   gap: 8px;
   margin-bottom: 8px;
 }
@@ -276,24 +277,38 @@
 
 .mission-chat-options {
   display: flex;
+  flex: 1 1 auto;
   min-width: 0;
   flex-wrap: wrap;
   align-items: center;
   gap: 2px;
 }
 
+.mission-chat-options:has(.mission-model-control) > .mission-model-control {
+  margin-inline-start: auto;
+}
+
+.mission-chat-options .mission-model-control-trigger > svg:last-child,
+.mission-chat-options .tool-permission-select .ui-select-caret {
+  margin-inline-start: -4px;
+}
+
 .mission-chat-options .mission-context-store-trigger {
   display: inline-flex;
   min-height: 34px;
   align-items: center;
-  gap: 6px;
+  gap: 4px;
   padding: 0 8px;
   border: 0;
   border-radius: 9px;
   background: transparent;
-  color: var(--faint);
+  color: var(--ui-text-secondary);
   cursor: pointer;
   font-size: 12px;
+}
+
+.mission-chat-options .mission-context-store-trigger:disabled {
+  color: var(--ui-text-disabled);
 }
 
 .mission-context-store-trigger:hover:not(:disabled) {
@@ -351,11 +366,12 @@
 .mission-chat-shell {
   display: grid;
   grid-template-rows: minmax(0, 1fr) auto;
-  width: calc(100% + (var(--mission-detail-inline-padding) * 2));
+  width: 100%;
   height: 100%;
   min-width: 0;
   min-height: 0;
-  margin-inline: calc(var(--mission-detail-inline-padding) * -1);
+  max-width: 900px;
+  margin-inline: auto;
 }
 
 .mission-chat-scroll {
@@ -365,7 +381,15 @@
   max-width: 100%;
   overflow-y: auto;
   overscroll-behavior: contain;
-  scrollbar-gutter: stable;
+  scrollbar-gutter: auto;
+  scrollbar-width: none;
+  -ms-overflow-style: none;
+}
+
+.mission-chat-scroll::-webkit-scrollbar {
+  display: none;
+  width: 0;
+  height: 0;
 }
 
 .mission-chat-list {
@@ -472,7 +496,7 @@
 }
 
 .mission-chat-composer > .mission-attachment-list {
-  padding: 4px 16px 6px;
+  padding: 4px 16px;
 }
 
 .mission-chat-composer > .mission-attachment-list.is-empty {
@@ -481,4 +505,8 @@
 
 .mission-chat-composer > .mission-attachment-list.has-images {
   padding-top: 8px;
+}
+
+.mission-chat-composer:has(.mission-attachment-list:not(.is-empty)) > textarea {
+  padding-top: 9px;
 }

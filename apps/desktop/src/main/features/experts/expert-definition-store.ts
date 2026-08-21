@@ -1,4 +1,5 @@
 import {
+  PRAGMA_DSL_WRITE_API_VERSION,
   PragmaExpertResourceSchema,
   canonicalPragmaResourceRef,
   type PragmaExpertResource,
@@ -307,7 +308,7 @@ function definitionToResources(
   }));
   const contextResources = contextSelections.map(({ resource }) => resource);
   const expert = PragmaExpertResourceSchema.parse({
-    apiVersion: "pragma/v4",
+    apiVersion: PRAGMA_DSL_WRITE_API_VERSION,
     kind: "Expert",
     metadata: {
       id: expertId,

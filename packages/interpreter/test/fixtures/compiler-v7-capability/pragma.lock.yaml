@@ -1,0 +1,9 @@
+apiVersion: pragma/v4
+kind: Lock
+compilerVersion: pragma.dsl/v7
+projectFingerprint: 742711b4572021c7fde1b1177ee73af125e053c2a4a1cc19f6936bb2a26047db
+resources:
+  - ref: capability:1h2j3k4m5n6p7q8r
+    contentHash: 19bc51571a78e486edc178917bbdc48e02a0bbaf752d2f45ac9455e32137bd7a
+    source: 1h2j3k4m5n6p7q8r.pragma.yaml
+artifacts: []

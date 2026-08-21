@@ -5,6 +5,11 @@ export interface RuntimeSessionIdentity {
   readonly contextId: string;
   readonly expertId: string;
   readonly runtime: RuntimeEnvironmentBinding;
+  readonly hostContextBindingsFingerprint?: string | undefined;
+}
+
+export interface RuntimeSessionCreateOptions {
+  readonly fresh: boolean;
 }
 
 interface RuntimeSessionEntry {
@@ -25,39 +30,51 @@ export class RuntimeSessionPool {
 
   async acquire(
     identity: RuntimeSessionIdentity,
-    create: () => Promise<RuntimeAgentSession>,
+    create: (options: RuntimeSessionCreateOptions) => Promise<RuntimeAgentSession>,
   ): Promise<RuntimeAgentSession> {
     if (this.sealed) {
       throw new Error("Runtime Session pool is closed.");
     }
 
-    const existing = this.sessions.get(identity.contextId);
-    if (existing !== undefined) {
-      assertMatchingIdentity(existing.identity, identity);
-      return existing.session;
-    }
-
-    const pending = this.pending.get(identity.contextId);
-    if (pending !== undefined) {
-      assertMatchingIdentity(pending.identity, identity);
-      return await pending.opening;
-    }
-
-    const opening = create().then(async (session) => {
+    let fresh = false;
+    while (true) {
       if (this.sealed) {
-        await session.close();
-        throw new Error("Runtime Session pool closed while opening a session.");
+        throw new Error("Runtime Session pool is closed.");
       }
-      this.sessions.set(identity.contextId, { identity, session });
-      return session;
-    });
-    this.pending.set(identity.contextId, { identity, opening });
+      const existing = this.sessions.get(identity.contextId);
+      if (existing !== undefined) {
+        assertMatchingIdentity(existing.identity, identity);
+        if (hostContextBindingsMatch(existing.identity, identity)) return existing.session;
+        this.sessions.delete(identity.contextId);
+        await existing.session.close();
+        fresh = true;
+        continue;
+      }
 
-    try {
-      return await opening;
-    } finally {
-      if (this.pending.get(identity.contextId)?.opening === opening) {
-        this.pending.delete(identity.contextId);
+      const pending = this.pending.get(identity.contextId);
+      if (pending !== undefined) {
+        assertMatchingIdentity(pending.identity, identity);
+        await pending.opening;
+        fresh = true;
+        continue;
+      }
+
+      const opening = create({ fresh }).then(async (session) => {
+        if (this.sealed) {
+          await session.close();
+          throw new Error("Runtime Session pool closed while opening a session.");
+        }
+        this.sessions.set(identity.contextId, { identity, session });
+        return session;
+      });
+      this.pending.set(identity.contextId, { identity, opening });
+
+      try {
+        return await opening;
+      } finally {
+        if (this.pending.get(identity.contextId)?.opening === opening) {
+          this.pending.delete(identity.contextId);
+        }
       }
     }
   }
@@ -137,4 +154,11 @@ function assertMatchingIdentity(
   throw new Error(
     `Runtime context ${requested.contextId} is bound to ${existing.expertId}/${existing.runtime.runtimeId}@${existing.runtime.revision} and cannot be reused with ${requested.expertId}/${requested.runtime.runtimeId}@${requested.runtime.revision}.`,
   );
+}
+
+function hostContextBindingsMatch(
+  existing: RuntimeSessionIdentity,
+  requested: RuntimeSessionIdentity,
+): boolean {
+  return existing.hostContextBindingsFingerprint === requested.hostContextBindingsFingerprint;
 }

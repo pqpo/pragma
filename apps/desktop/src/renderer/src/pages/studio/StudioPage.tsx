@@ -35,7 +35,11 @@ import {
   ExpertContextMountDrawer,
 } from "./ContextStoreFragment.tsx";
 import { ExpertDetailFragment, ExpertDirectoryFragment } from "./ExpertDirectoryFragment.tsx";
-import { ExpertEditorFragment, type ExpertEditorMode } from "./ExpertEditorFragment.tsx";
+import {
+  ExpertEditorFragment,
+  type ExpertEditorMode,
+  type ExpertEditorStep,
+} from "./ExpertEditorFragment.tsx";
 import { CapabilityDirectoryFragment } from "./CapabilityDirectoryFragment.tsx";
 import { CapabilityDetailFragment } from "./CapabilityDetailFragment.tsx";
 import {
@@ -72,6 +76,8 @@ export interface StudioPageMemoryState {
 
 export function StudioPage(props: {
   readonly initialExpertRef?: string | undefined;
+  readonly initialExpertStep?: ExpertEditorStep | undefined;
+  readonly initialResourceRef?: string | undefined;
   readonly initialMemoryState?: StudioPageMemoryState | undefined;
   readonly onMemoryStateChange?: ((state: StudioPageMemoryState) => void) | undefined;
   readonly onTryExpert: (expert: ExpertRecord) => void;
@@ -101,6 +107,9 @@ export function StudioPage(props: {
     readonly mode: ExpertEditorMode;
     readonly baseRevision: number;
   }>({ mode: "create", baseRevision: 0 });
+  const [expertEditorInitialStep, setExpertEditorInitialStep] = useState<
+    ExpertEditorStep | undefined
+  >();
   const [runtimes, setRuntimes] = useState<readonly DesktopRuntimeAvailability[]>([]);
   const [contextStores, setContextStores] = useState<readonly ContextStore[]>([]);
   const [contextStoreBindings, setContextStoreBindings] = useState<
@@ -136,6 +145,7 @@ export function StudioPage(props: {
   } | null>(null);
   const [bundleMode, setBundleMode] = useState<"export" | "import" | null>(null);
   const openedInitialExpertRef = useRef<string | undefined>(undefined);
+  const openedInitialResourceRef = useRef<string | undefined>(undefined);
   const resourceSaveCompletedRef = useRef(false);
 
   useEffect(() => {
@@ -243,6 +253,7 @@ export function StudioPage(props: {
   const openCreate = (
     expert?: ExpertRecord,
     mode: ExpertEditorMode = expert === undefined ? "create" : "edit",
+    initialStep?: ExpertEditorStep,
   ) => {
     setDraft(
       expert === undefined ? emptyDraft() : { ...expert, tagInput: "", pluginSecretMutations: {} },
@@ -254,6 +265,7 @@ export function StudioPage(props: {
           ? expert.persisted.revision
           : (project?.revision ?? 0),
     });
+    setExpertEditorInitialStep(initialStep);
     setScreen("create");
   };
   useEffect(() => {
@@ -273,8 +285,27 @@ export function StudioPage(props: {
       mode: "edit",
       baseRevision: expert.persisted?.revision ?? project?.revision ?? 0,
     });
+    setExpertEditorInitialStep(props.initialExpertStep);
     setScreen("create");
-  }, [experts, project?.revision, props.initialExpertRef]);
+  }, [experts, project?.revision, props.initialExpertRef, props.initialExpertStep]);
+  useEffect(() => {
+    if (
+      props.initialResourceRef === undefined ||
+      openedInitialResourceRef.current === props.initialResourceRef ||
+      project === null
+    ) {
+      return;
+    }
+    const resource = project.resources.find(
+      (candidate) => canonicalPragmaResourceRef(candidate) === props.initialResourceRef,
+    );
+    if (resource?.kind !== "ExpertTeam") return;
+    openedInitialResourceRef.current = props.initialResourceRef;
+    setActiveView("teams");
+    setSelectedResourceRef(props.initialResourceRef);
+    setResourceEditor({ kind: "team", mode: "edit" });
+    setScreen("resource-edit");
+  }, [project, props.initialResourceRef]);
   const saveExpert = async (expert: ExpertRecord, mode: ExpertEditorMode = "edit") => {
     const api = desktopApi();
     let saved = expert;
@@ -750,6 +781,7 @@ export function StudioPage(props: {
             capabilities={capabilities}
             plugins={plugins}
             resources={project?.resources ?? []}
+            initialStep={expertEditorInitialStep}
             onCancel={() => {
               if (expertEditor.mode === "edit" && selectedExpert !== null) {
                 setScreen("expert-detail");

@@ -11,7 +11,7 @@ Automation text limits are enforced by both prepare and save:
 - Prompt input: 1–100,000 characters.
 
 ```yaml
-apiVersion: pragma/v4
+apiVersion: pragma/v5
 kind: Automation
 metadata:
   id: 9h0j1k2m3n4p5q6r

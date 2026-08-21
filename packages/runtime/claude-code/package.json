@@ -22,7 +22,7 @@
     "lint": "eslint src test",
     "typecheck": "tsc --noEmit",
     "test": "vitest run --passWithNoTests",
-    "test:core": "vitest run --passWithNoTests test/adapter-contract.test.ts",
+    "test:core": "vitest run --passWithNoTests test/adapter-contract.test.ts test/models.test.ts",
     "clean": "rm -rf dist"
   },
   "dependencies": {

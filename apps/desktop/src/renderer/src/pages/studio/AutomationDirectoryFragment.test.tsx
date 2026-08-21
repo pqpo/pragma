@@ -1,3 +1,4 @@
+import { PRAGMA_DSL_WRITE_API_VERSION } from "@pragma/interpreter/ast";
 import { renderToStaticMarkup } from "react-dom/server";
 import { describe, expect, it } from "vitest";
 import { PRAGMA_TEXT_LIMITS } from "@pragma/shared";
@@ -19,7 +20,7 @@ import { AutomationDetailFragment } from "./AutomationDetailFragment.tsx";
 const automation: AutomationSummary = {
   ref: "automation:hrxn3mv2e991j2rj",
   resource: {
-    apiVersion: "pragma/v4",
+    apiVersion: PRAGMA_DSL_WRITE_API_VERSION,
     kind: "Automation",
     metadata: {
       id: "hrxn3mv2e991j2rj",

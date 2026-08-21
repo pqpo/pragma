@@ -18,10 +18,12 @@ import {
   UsersThree,
 } from "@phosphor-icons/react";
 import {
+  PRAGMA_DSL_WRITE_API_VERSION,
   PragmaExpertTeamResourceSchema,
   PragmaRuntimeProfileConfigSchema,
   PragmaResourceKindSchema,
   canonicalPragmaResourceRef,
+  mergePragmaResourcePreservingUnknownFields,
   parsePragmaReference,
   type PragmaExpertResource,
   type PragmaExpertTeamResource,
@@ -1092,6 +1094,12 @@ export function TeamEditor(props: {
       .map((member) => member.ref)
       .filter((ref) => ref !== initialCoordinator) ?? [],
   );
+  const [spawnPermissions, setSpawnPermissions] = useState<
+    Readonly<Record<string, readonly string[]>>
+  >(props.initial?.spec.delegation.permissions.spawn ?? {});
+  const [interactPermissions, setInteractPermissions] = useState<
+    Readonly<Record<string, readonly string[]>>
+  >(props.initial?.spec.delegation.permissions.interact ?? {});
   const [maxConcurrency, setMaxConcurrency] = useState(
     props.initial?.spec.delegation.maxConcurrency ?? 4,
   );
@@ -1141,7 +1149,7 @@ export function TeamEditor(props: {
     let resource: PragmaExpertTeamResource;
     try {
       resource = PragmaExpertTeamResourceSchema.parse({
-        apiVersion: "pragma/v4",
+        apiVersion: PRAGMA_DSL_WRITE_API_VERSION,
         kind: "ExpertTeam",
         metadata: {
           id,
@@ -1159,10 +1167,19 @@ export function TeamEditor(props: {
             maxDepth,
             context: props.initial?.spec.delegation.context ?? "context:pragma.context.fresh@v1",
             runtimes: props.initial?.spec.delegation.runtimes ?? {},
-            allow: props.initial?.spec.delegation.allow,
+            permissions: {
+              spawn: pruneTeamPermissions(spawnPermissions, coordinator, members, false),
+              interact: pruneTeamPermissions(interactPermissions, coordinator, members, true),
+            },
           },
         },
       });
+      if (props.initial !== undefined) {
+        resource = mergePragmaResourcePreservingUnknownFields(
+          props.initial,
+          resource,
+        ) as PragmaExpertTeamResource;
+      }
     } catch (validationFailure) {
       setValidationError(errorMessage(validationFailure));
       return;
@@ -1204,6 +1221,15 @@ export function TeamEditor(props: {
           setMembers((current) => current.filter((memberRef) => memberRef !== ref));
         }}
         onMembersChange={setMembers}
+      />
+      <TeamPermissionEditor
+        experts={experts}
+        coordinatorRef={coordinator}
+        participantRefs={[coordinator, ...members].filter((ref) => ref !== "")}
+        spawn={spawnPermissions}
+        interact={interactPermissions}
+        onSpawnChange={setSpawnPermissions}
+        onInteractChange={setInteractPermissions}
       />
       <TeamContextStoreEditor
         stores={props.contextStores ?? []}
@@ -1260,6 +1286,131 @@ export function TeamEditor(props: {
         />
       ) : null}
     </ResourceEditor>
+  );
+}
+
+function pruneTeamPermissions(
+  permissions: Readonly<Record<string, readonly string[]>>,
+  coordinator: string,
+  members: readonly string[],
+  allowSelf: boolean,
+): Record<string, readonly string[]> {
+  const ids = new Set(
+    [coordinator, ...members].filter((ref) => ref !== "").map((ref) => ref.slice("expert:".length)),
+  );
+  const coordinatorId = coordinator.slice("expert:".length);
+  return Object.fromEntries(
+    Object.entries(permissions).flatMap(([source, targets]) =>
+      ids.has(source) && source !== coordinatorId
+        ? [
+            [
+              source,
+              targets.filter((target) => ids.has(target) && (allowSelf || target !== source)),
+            ],
+          ]
+        : [],
+    ),
+  );
+}
+
+function TeamPermissionEditor(props: {
+  readonly experts: readonly PragmaExpertResource[];
+  readonly coordinatorRef: string;
+  readonly participantRefs: readonly string[];
+  readonly spawn: Readonly<Record<string, readonly string[]>>;
+  readonly interact: Readonly<Record<string, readonly string[]>>;
+  readonly onSpawnChange: (value: Readonly<Record<string, readonly string[]>>) => void;
+  readonly onInteractChange: (value: Readonly<Record<string, readonly string[]>>) => void;
+}) {
+  const { t } = useTranslation("studio");
+  const participants = props.participantRefs.flatMap((ref) => {
+    const expert = props.experts.find((candidate) => canonicalPragmaResourceRef(candidate) === ref);
+    return expert === undefined ? [] : [expert];
+  });
+  const toggle = (
+    current: Readonly<Record<string, readonly string[]>>,
+    source: string,
+    target: string,
+    checked: boolean,
+    update: (value: Readonly<Record<string, readonly string[]>>) => void,
+  ) => {
+    const selected = new Set(current[source] ?? []);
+    if (checked) selected.add(target);
+    else selected.delete(target);
+    update({ ...current, [source]: [...selected] });
+  };
+  return (
+    <section className="team-expert-selector" aria-labelledby="team-permissions-label">
+      <div className="team-expert-selector-heading">
+        <div>
+          <h3 id="team-permissions-label">{t("teamPermissions")}</h3>
+          <p>{t("teamPermissionsDescription")}</p>
+        </div>
+      </div>
+      {participants.map((source) => (
+        <div className="team-permission-row" key={source.metadata.id}>
+          <strong>{source.metadata.name}</strong>
+          {canonicalPragmaResourceRef(source) === props.coordinatorRef ? (
+            <div className="team-coordinator-authority">
+              <span>{t("coordinatorAuthority")}</span>
+              <small>{t("coordinatorAuthorityDescription")}</small>
+            </div>
+          ) : (
+            <>
+              <fieldset>
+                <legend>{t("spawnPermissions")}</legend>
+                {participants
+                  .filter((target) => target.metadata.id !== source.metadata.id)
+                  .map((target) => (
+                    <label key={target.metadata.id}>
+                      <input
+                        type="checkbox"
+                        checked={(props.spawn[source.metadata.id] ?? []).includes(
+                          target.metadata.id,
+                        )}
+                        onChange={(event) =>
+                          toggle(
+                            props.spawn,
+                            source.metadata.id,
+                            target.metadata.id,
+                            event.target.checked,
+                            props.onSpawnChange,
+                          )
+                        }
+                      />
+                      {target.metadata.name}
+                    </label>
+                  ))}
+              </fieldset>
+              <fieldset>
+                <legend>{t("interactionPermissions")}</legend>
+                {participants.map((target) => (
+                  <label key={target.metadata.id}>
+                    <input
+                      type="checkbox"
+                      checked={(props.interact[source.metadata.id] ?? []).includes(
+                        target.metadata.id,
+                      )}
+                      onChange={(event) =>
+                        toggle(
+                          props.interact,
+                          source.metadata.id,
+                          target.metadata.id,
+                          event.target.checked,
+                          props.onInteractChange,
+                        )
+                      }
+                    />
+                    {target.metadata.name}
+                    {target.metadata.id === source.metadata.id ? ` (${t("otherInstances")})` : ""}
+                  </label>
+                ))}
+              </fieldset>
+            </>
+          )}
+        </div>
+      ))}
+    </section>
   );
 }
 

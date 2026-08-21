@@ -34,7 +34,7 @@ import { ExpertAvatarPicker } from "./ExpertAvatarPicker.tsx";
 import { StudioScreenFrame } from "./StudioScreenFrame.tsx";
 import { AssetMemoryPolicySection } from "../settings/AssetMemoryPolicySection.tsx";
 
-type CreateStep = "identity" | "instructions" | "capabilities" | "review";
+export type ExpertEditorStep = "identity" | "instructions" | "capabilities" | "review";
 export type ExpertEditorMode = "create" | "edit";
 
 export function ExpertEditorFragment(props: {
@@ -45,12 +45,13 @@ export function ExpertEditorFragment(props: {
   readonly capabilities: readonly Capability[];
   readonly plugins: readonly DesktopPlugin[];
   readonly resources: readonly PragmaResource[];
+  readonly initialStep?: ExpertEditorStep | undefined;
   readonly onCancel: () => void;
   readonly onCreated: (expert: ExpertRecord) => Promise<void>;
 }) {
   const { t } = useTranslation(["studio", "common"]);
   const [draft, setDraft] = useState(props.initialValue);
-  const [step, setStep] = useState<CreateStep>("identity");
+  const [step, setStep] = useState<ExpertEditorStep>(props.initialStep ?? "identity");
   const [error, setError] = useState<string | null>(null);
   const [saving, setSaving] = useState(false);
   const [avatarPickerOpen, setAvatarPickerOpen] = useState(false);
@@ -62,7 +63,9 @@ export function ExpertEditorFragment(props: {
   const selectedModel = modelOptions.find(
     (model) => model.id === draft.model?.modelId && model.provider.id === draft.model?.providerId,
   );
-  const steps: readonly { readonly id: CreateStep; readonly label: string }[] = [
+  const thinkingLevels = selectedModel?.thinking?.supportedLevels ?? [];
+  const thinkingDefaultLevel = selectedModel?.thinking?.defaultLevel;
+  const steps: readonly { readonly id: ExpertEditorStep; readonly label: string }[] = [
     { id: "identity", label: t("identity", { ns: "studio" }) },
     {
       id: "instructions",
@@ -186,6 +189,10 @@ export function ExpertEditorFragment(props: {
         tagInput: _tagInput,
         ...record
       } = draft;
+      const model =
+        draft.model === null || thinkingLevels.length > 0
+          ? draft.model
+          : clearThinkingLevel(draft.model);
       void _pluginSecretMutations;
       void _tagInput;
       await props.onCreated({
@@ -195,7 +202,7 @@ export function ExpertEditorFragment(props: {
         scope: scopeResult.data,
         instructions: instructionsResult.data,
         additionalInstructions: additionalInstructionsResult.data,
-        model: draft.model,
+        model,
         icon: User,
       });
     } catch (submitError) {
@@ -545,23 +552,21 @@ export function ExpertEditorFragment(props: {
                     ) : null}
                   </div>
                 ) : null}
-                {selectedModel?.thinking !== undefined ? (
+                {draft.model !== null ? (
                   <div className="capability-editor-field">
                     <span>{t("thinkingLevel", { ns: "studio" })}</span>
                     <SelectMenu
                       ariaLabel={t("thinkingLevel", { ns: "studio" })}
                       className="form-select"
-                      value={draft.model?.thinkingLevel ?? ""}
+                      value={thinkingLevels.length === 0 ? "" : (draft.model.thinkingLevel ?? "")}
                       options={[
                         {
                           value: "",
                           label: `${t("runtimeDefault", { ns: "studio" })}${
-                            selectedModel.thinking.defaultLevel === undefined
-                              ? ""
-                              : ` (${selectedModel.thinking.defaultLevel})`
+                            thinkingDefaultLevel === undefined ? "" : ` (${thinkingDefaultLevel})`
                           }`,
                         },
-                        ...selectedModel.thinking.supportedLevels.map((level) => ({
+                        ...thinkingLevels.map((level) => ({
                           value: level.value,
                           label: level.label,
                         })),
@@ -698,4 +703,12 @@ export function ExpertEditorFragment(props: {
 
 function runtimeModelKey(model: DesktopRuntimeModel): string {
   return JSON.stringify([model.provider.kind, model.provider.id, model.id]);
+}
+
+function clearThinkingLevel<T extends { readonly thinkingLevel?: string | undefined }>(
+  model: T,
+): Omit<T, "thinkingLevel"> {
+  const { thinkingLevel: _thinkingLevel, ...withoutThinkingLevel } = model;
+  void _thinkingLevel;
+  return withoutThinkingLevel;
 }

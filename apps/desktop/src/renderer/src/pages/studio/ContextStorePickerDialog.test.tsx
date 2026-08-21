@@ -74,4 +74,23 @@ describe("ContextStorePickerDialog", () => {
     expect(html).not.toContain("Knowledge 20");
     expect(html).toContain("expert-tool-load-more");
   });
+
+  it("offers a direct Studio knowledge-base shortcut when the picker is empty", () => {
+    const html = renderToStaticMarkup(
+      <ContextStorePickerDialog
+        stores={[]}
+        selectedStoreIds={[]}
+        description="Choose knowledge."
+        footerHint="Selections update the form."
+        onSelectedStoreIdsChange={() => undefined}
+        onClose={() => undefined}
+        onGoToKnowledgeBases={() => undefined}
+      />,
+    );
+
+    expect(html).toContain("context-store-picker-dialog");
+    expect(html).toContain("Go to add");
+    expect(html).toContain("expert-picker-empty-link");
+    expect(html).not.toContain("<small>Knowledge</small>");
+  });
 });

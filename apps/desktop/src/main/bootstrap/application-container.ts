@@ -246,6 +246,12 @@ export async function createDesktopApplicationContainer(
   });
   const missionStore = createMissionStore({
     missionsPath,
+    onReadIssue: ({ missionId, error }) =>
+      mainLogger.warn(
+        "mission.list_entry_unavailable",
+        "A Mission could not be listed safely. Other readable Missions remain available.",
+        { missionId, errorCode: error.code, error },
+      ),
   });
   const usageStore = await createDesktopUsageStore({
     databasePath: join(pragmaPaths.dataRoot(), "usage", "usage.sqlite"),
@@ -290,6 +296,7 @@ export async function createDesktopApplicationContainer(
     getToolPermissionMode,
     factories: createBuiltInRuntimeFactories({
       modelProviders: modelProviderStore,
+      modelCatalogCacheRoot: pragmaPaths.cacheRoot(),
       getToolPermissionMode,
       getRuntimeProcessEnvironment: runtimeProcessEnvironment.get,
       onModelCatalogUpdated: (runtimeId) => {
@@ -675,7 +682,12 @@ export async function createDesktopApplicationContainer(
     pragmaHome: pragmaPaths.root,
     executionStore: memoryPlane.executionStore,
     contextStores,
-    hostContextStores: [{ namespace: "memory", store: memoryPlane.contextStore }],
+    hostContextStores: async () => {
+      const globalPolicy = await memoryPlane.policies.getGlobal();
+      return globalPolicy.policy.enabled === "enabled"
+        ? [{ namespace: "memory", store: memoryPlane.contextStore }]
+        : [];
+    },
     plugins: pluginStore,
     runtimes,
     usage: usageStore,
@@ -1010,6 +1022,7 @@ export async function createDesktopApplicationContainer(
     knowledgePromotion,
     curator: memoryCurator,
     getWindow: options.getWindow,
+    onGlobalPolicyUpdated: () => missionRunner.refreshMemoryContextBindings(),
   });
   installExpertMemoryContextStoreBrowserHandlers(
     createExpertMemoryContextStoreBrowserService({

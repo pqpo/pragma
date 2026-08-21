@@ -1,3 +1,4 @@
+import { PRAGMA_DSL_WRITE_API_VERSION } from "@pragma/interpreter/ast";
 import { mkdtemp, readFile, readdir, stat } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { dirname, join, relative } from "node:path";
@@ -46,7 +47,7 @@ describe("built-in Pragma Agent DSL", () => {
     expect(BUILT_IN_AGENT_REFS).toContain(MEMORY_PLANE_CURATOR_REF);
   });
 
-  it("loads as a portable pragma/v4 project with the authoring Skill", async () => {
+  it("loads as a portable pragma/v5 project with the authoring Skill", async () => {
     const root = await mkdtemp(join(tmpdir(), "pragma-default-agent-builtin-"));
     const entry = await materializeBuiltInAgentBundle(root);
     const project = await loadPragmaProject(entry, { rootDir: dirname(entry) });
@@ -416,7 +417,7 @@ describe("built-in Pragma Agent DSL", () => {
     resource.metadata.name = "My Pragma";
     resource.spec.instructions = "Use the customized built-in instructions.";
     const optionalCapability = PragmaCapabilityResourceSchema.parse({
-      apiVersion: "pragma/v4",
+      apiVersion: PRAGMA_DSL_WRITE_API_VERSION,
       kind: "Capability",
       metadata: {
         id: "fdabjmg2tasep93t",
@@ -599,7 +600,7 @@ function flowDraft() {
     baseProjectRevision: 0,
     draftRevision: 1,
     resource: {
-      apiVersion: "pragma/v4",
+      apiVersion: PRAGMA_DSL_WRITE_API_VERSION,
       kind: "Flow",
       metadata: {
         id: "8h9j0k1m2n3p4q5r",

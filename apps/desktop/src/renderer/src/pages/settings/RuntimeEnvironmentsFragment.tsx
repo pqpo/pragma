@@ -5,7 +5,7 @@ import { useTranslation } from "react-i18next";
 import type { DesktopRuntimeAvailability } from "../../../../shared/contracts/index.ts";
 import { RuntimeLogo } from "../../components/RuntimeLogo.tsx";
 import { errorMessage } from "../../lib/errors.ts";
-import { runtimeDisplayName } from "../../lib/runtime-display.ts";
+import { isBuiltInRuntime, runtimeDisplayName } from "../../lib/runtime-display.ts";
 import { RuntimeEnvironmentDetail } from "./RuntimeEnvironmentDetail.tsx";
 import { SettingsScreenFrame } from "./SettingsScreenFrame.tsx";
 
@@ -57,12 +57,15 @@ export function RuntimeCard(props: {
   readonly isProbing?: boolean;
   readonly onOpen: () => void;
   readonly onRefresh?: () => void;
+  readonly onNavigateToModels: () => void;
 }) {
   const { t } = useTranslation(["settings", "common"]);
   const isProbing = props.isProbing ?? false;
   const available = props.runtime.status === "available";
   const displayName = runtimeDisplayName(t, props.runtime);
   const models = props.runtime.models;
+  const showModelConfigurationLink =
+    isBuiltInRuntime(props.runtime) && models !== undefined && models.length === 0;
 
   return (
     <article className="runtime-card runtime-summary-card">
@@ -130,6 +133,17 @@ export function RuntimeCard(props: {
           <span>{t("actions.checking", { ns: "common" })}</span>
         ) : models === undefined ? (
           <span>{t("runtimes.catalogUnavailable", { ns: "settings" })}</span>
+        ) : showModelConfigurationLink ? (
+          <button
+            className="text-button runtime-models-link"
+            type="button"
+            onClick={(event) => {
+              event.stopPropagation();
+              props.onNavigateToModels();
+            }}
+          >
+            {t("runtimes.configureModels", { ns: "settings" })}
+          </button>
         ) : (
           <span>{t("counts.model", { ns: "common", count: models.length })}</span>
         )}
@@ -138,7 +152,7 @@ export function RuntimeCard(props: {
   );
 }
 
-export function RuntimeEnvironmentsFragment() {
+export function RuntimeEnvironmentsFragment(props: { readonly onNavigateToModels: () => void }) {
   const { t } = useTranslation(["settings", "common"]);
   const [runtimes, setRuntimes] = useState<readonly DesktopRuntimeAvailability[]>(INITIAL_RUNTIMES);
   const [probingIds, setProbingIds] = useState<ReadonlySet<string>>(
@@ -201,6 +215,7 @@ export function RuntimeEnvironmentsFragment() {
         error={error}
         onBack={() => setSelectedRuntimeId(undefined)}
         onRefresh={() => void loadRuntimes(selectedRuntime.id, true)}
+        onNavigateToModels={props.onNavigateToModels}
       />
     );
   }
@@ -237,6 +252,7 @@ export function RuntimeEnvironmentsFragment() {
               isProbing={probingIds.has(runtime.id)}
               onOpen={() => setSelectedRuntimeId(runtime.id)}
               onRefresh={() => void loadRuntimes(runtime.id, true)}
+              onNavigateToModels={props.onNavigateToModels}
             />
           ))}
         </div>

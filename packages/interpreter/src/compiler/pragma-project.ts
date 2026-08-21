@@ -33,10 +33,13 @@ import { parseDocument, stringify } from "yaml";
 import { z } from "zod";
 
 import {
+  PRAGMA_DSL_WRITE_API_VERSION,
   PragmaBundleSchema,
   PragmaDiagnosticSchema,
+  PragmaForwardCompatibleBundleSchema,
+  PragmaForwardCompatibleResourceSchema,
   PragmaLockSchema,
-  PragmaResourceSchema,
+  inspectPragmaUnknownFields,
   type PragmaArtifactSource,
   type PragmaDiagnostic,
   type PragmaDeclarativeResource,
@@ -318,7 +321,7 @@ const PragmaProjectBlueprintSchema = z
     resources: z.array(
       z
         .object({
-          resource: PragmaResourceSchema,
+          resource: PragmaForwardCompatibleResourceSchema,
           source: z.string().min(1),
           normalized: z.string(),
           contentHash: z.string().regex(/^[a-f0-9]{64}$/),
@@ -895,12 +898,13 @@ class SourceLoader {
       return;
     }
 
-    const bundle = PragmaBundleSchema.safeParse(raw);
+    const bundle = PragmaForwardCompatibleBundleSchema.safeParse(raw);
     if (bundle.success) {
       if (!allowBundle) {
         this.error("source.bundle", "A Bundle cannot be used as a structural include.", canonical);
         return;
       }
+      this.reportUnknownFields(raw, "bundle", canonical);
       for (const imported of bundle.data.imports) {
         await this.loadFile(resolve(dirname(canonical), imported), true);
       }
@@ -908,7 +912,7 @@ class SourceLoader {
       return;
     }
 
-    const parsed = PragmaResourceSchema.safeParse(raw);
+    const parsed = PragmaForwardCompatibleResourceSchema.safeParse(raw);
     if (!parsed.success) {
       for (const issue of parsed.error.issues) {
         this.diagnostics.push(
@@ -923,7 +927,22 @@ class SourceLoader {
       }
       return;
     }
+    this.reportUnknownFields(raw, "resource", canonical);
     this.addResource(parsed.data, canonical);
+  }
+
+  private reportUnknownFields(raw: unknown, kind: "resource" | "bundle", source: string): void {
+    for (const issue of inspectPragmaUnknownFields(raw, kind)) {
+      this.diagnostics.push(
+        PragmaDiagnosticSchema.parse({
+          severity: "warning",
+          code: "schema.unknown_field",
+          message: `Unknown ${PRAGMA_DSL_WRITE_API_VERSION} field is preserved but ignored: ${issue.key}.`,
+          source,
+          path: issue.path,
+        }),
+      );
+    }
   }
 
   private addResource(resource: PragmaResource, source: string): void {
@@ -1779,7 +1798,7 @@ class PragmaProjectImpl implements PragmaProject {
           members: members as Expert[],
           contextStores,
           delegation: {
-            allow: indexed.resource.spec.delegation.allow,
+            permissions: indexed.resource.spec.delegation.permissions,
             maxConcurrency: indexed.resource.spec.delegation.maxConcurrency,
             maxDepth: indexed.resource.spec.delegation.maxDepth,
             contextId: contextPolicies.resolve(indexed.resource.spec.delegation.context),
@@ -1900,8 +1919,8 @@ class PragmaProjectImpl implements PragmaProject {
     }
     const mode = options.split ?? "preserve";
     if (mode === "single") {
-      const bundle = PragmaBundleSchema.parse({
-        apiVersion: "pragma/v4",
+      const bundle = PragmaForwardCompatibleBundleSchema.parse({
+        apiVersion: PRAGMA_DSL_WRITE_API_VERSION,
         kind: "Bundle",
         resources: this.listResources(),
       });
@@ -1917,7 +1936,7 @@ class PragmaProjectImpl implements PragmaProject {
     files.set(
       "pragma.yaml",
       stringify({
-        apiVersion: "pragma/v4",
+        apiVersion: PRAGMA_DSL_WRITE_API_VERSION,
         kind: "Bundle",
         imports: imports.sort(),
         resources: [],
@@ -1960,7 +1979,7 @@ class PragmaProjectImpl implements PragmaProject {
       })
       .toSorted();
     const projectBundle = {
-      apiVersion: "pragma/v4" as const,
+      apiVersion: PRAGMA_DSL_WRITE_API_VERSION,
       kind: "Bundle" as const,
       imports: resourcePaths.map((path) => `./${path}`),
     };
@@ -1990,7 +2009,7 @@ class PragmaProjectImpl implements PragmaProject {
       }),
     );
     const lock = PragmaLockSchema.parse({
-      apiVersion: "pragma/v4",
+      apiVersion: PRAGMA_DSL_WRITE_API_VERSION,
       kind: "Lock",
       compilerVersion: PRAGMA_COMPILER_WRITE_VERSION,
       projectFingerprint,
@@ -2089,7 +2108,7 @@ class PragmaProjectImpl implements PragmaProject {
       .map(([source, contentHash]) => ({ source, contentHash }))
       .toSorted((left, right) => left.source.localeCompare(right.source));
     return {
-      apiVersion: "pragma/v4",
+      apiVersion: PRAGMA_DSL_WRITE_API_VERSION,
       kind: "Lock",
       compilerVersion: PRAGMA_COMPILER_WRITE_VERSION,
       projectFingerprint: sha256(
@@ -3384,7 +3403,7 @@ function portableizeBundleResources(
           }
         }
       }
-      return PragmaResourceSchema.parse(resource);
+      return PragmaForwardCompatibleResourceSchema.parse(resource);
     });
   return { resources: output, requirements };
 }
@@ -3495,13 +3514,7 @@ async function collectSelectedBundleArtifacts(
       if (source.type === "project") {
         const absolute = await assertPathInsideRoot(projectRoot, resolve(projectRoot, source.path));
         artifacts.set(source.path, await hashArtifactPath(absolute));
-        await collectArtifactFiles(
-          absolute,
-          source.path,
-          projectRoot,
-          files,
-          reservedPaths,
-        );
+        await collectArtifactFiles(absolute, source.path, projectRoot, files, reservedPaths);
       } else {
         artifacts.set(source.uri, source.integrity.slice("sha256:".length));
       }

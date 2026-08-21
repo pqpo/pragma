@@ -6,6 +6,34 @@ import { useTranslation } from "react-i18next";
 import type { DesktopRuntimeModel, MissionModelOverride } from "../../../shared/contracts/index.ts";
 
 type OverridePanel = "model" | "thinking";
+type MenuPlacement = "right" | "left";
+
+export function resolveMissionModelMenuPlacement(input: {
+  readonly triggerLeft: number;
+  readonly viewportWidth: number;
+  readonly menuWidth: number;
+  readonly sectionsWidth: number;
+  readonly optionsWidth: number;
+  readonly viewportPadding?: number;
+  readonly menuGap?: number;
+}): { readonly left: number; readonly placement: MenuPlacement } {
+  const viewportPadding = input.viewportPadding ?? 12;
+  const menuGap = input.menuGap ?? 8;
+  const rightEdge = input.triggerLeft + input.sectionsWidth + menuGap + input.optionsWidth;
+  const fitsRight = rightEdge <= input.viewportWidth - viewportPadding;
+  const placement: MenuPlacement = fitsRight ? "right" : "left";
+  const preferredLeft =
+    placement === "right" ? input.triggerLeft : input.triggerLeft - input.optionsWidth - menuGap;
+  const maxLeft = Math.max(
+    viewportPadding,
+    input.viewportWidth - viewportPadding - input.menuWidth,
+  );
+
+  return {
+    placement,
+    left: Math.min(maxLeft, Math.max(viewportPadding, preferredLeft)),
+  };
+}
 
 export function MissionModelOverrideControls(props: {
   readonly models: readonly DesktopRuntimeModel[];
@@ -20,10 +48,13 @@ export function MissionModelOverrideControls(props: {
   const menuId = `${useId().replaceAll(":", "")}-menu`;
   const rootRef = useRef<HTMLDivElement>(null);
   const triggerRef = useRef<HTMLButtonElement>(null);
-  const menuRef = useRef<HTMLDivElement>(null);
+  const sectionsRef = useRef<HTMLDivElement>(null);
+  const optionsRef = useRef<HTMLDivElement>(null);
+  const panelHoverTimerRef = useRef<number | null>(null);
   const [open, setOpen] = useState(false);
-  const [activePanel, setActivePanel] = useState<OverridePanel>("model");
+  const [activePanel, setActivePanel] = useState<OverridePanel | null>(null);
   const [menuStyle, setMenuStyle] = useState<CSSProperties>({});
+  const [menuPlacement, setMenuPlacement] = useState<MenuPlacement>("right");
   const selected = props.models.find(
     (model) => model.provider.id === props.value?.providerId && model.id === props.value?.modelId,
   );
@@ -50,11 +81,43 @@ export function MissionModelOverrideControls(props: {
       : effectiveThinkingLabel;
   const disabled = props.loading || props.disabled || props.models.length === 0;
 
+  const clearPanelHoverTimer = () => {
+    if (panelHoverTimerRef.current === null) return;
+    window.clearTimeout(panelHoverTimerRef.current);
+    panelHoverTimerRef.current = null;
+  };
+
+  const selectPanel = (panel: OverridePanel) => {
+    clearPanelHoverTimer();
+    setActivePanel(panel);
+  };
+
+  const schedulePanel = (panel: OverridePanel) => {
+    clearPanelHoverTimer();
+    if (activePanel === panel) return;
+    panelHoverTimerRef.current = window.setTimeout(() => {
+      setActivePanel(panel);
+      panelHoverTimerRef.current = null;
+    }, 200);
+  };
+
+  useEffect(() => {
+    return () => {
+      if (panelHoverTimerRef.current !== null) {
+        window.clearTimeout(panelHoverTimerRef.current);
+        panelHoverTimerRef.current = null;
+      }
+    };
+  }, []);
+
   useEffect(() => {
     if (!open) return;
     const handlePointerDown = (event: PointerEvent) => {
       const target = event.target as Node;
-      if (!rootRef.current?.contains(target) && !menuRef.current?.contains(target)) closeMenu();
+      const clickedMenuPanel =
+        sectionsRef.current?.contains(target) === true ||
+        optionsRef.current?.contains(target) === true;
+      if (!rootRef.current?.contains(target) && !clickedMenuPanel) closeMenu();
     };
     window.addEventListener("pointerdown", handlePointerDown);
     return () => window.removeEventListener("pointerdown", handlePointerDown);
@@ -70,11 +133,32 @@ export function MissionModelOverrideControls(props: {
       const trigger = triggerRef.current?.getBoundingClientRect();
       if (trigger === undefined) return;
       const viewportPadding = 12;
-      const menuWidth = Math.min(536, window.innerWidth - viewportPadding * 2);
+      const hasOptions = activePanel !== null;
+      const menuWidth = Math.min(hasOptions ? 490 : 242, window.innerWidth - viewportPadding * 2);
       const menuGap = 8;
+      const sectionsWidth = sectionsRef.current?.getBoundingClientRect().width ?? 220;
+      const optionsWidth = optionsRef.current?.getBoundingClientRect().width ?? 260;
+      const resolvedPlacement = hasOptions
+        ? resolveMissionModelMenuPlacement({
+            triggerLeft: trigger.left,
+            viewportWidth: window.innerWidth,
+            menuWidth,
+            sectionsWidth,
+            optionsWidth,
+            viewportPadding,
+            menuGap,
+          })
+        : {
+            placement: "right" as const,
+            left: Math.min(
+              Math.max(viewportPadding, trigger.left),
+              Math.max(viewportPadding, window.innerWidth - viewportPadding - menuWidth),
+            ),
+          };
+      setMenuPlacement(resolvedPlacement.placement);
       setMenuStyle({
         width: menuWidth,
-        left: Math.max(viewportPadding, trigger.left),
+        left: resolvedPlacement.left,
         bottom: window.innerHeight - trigger.top + menuGap,
       });
     };
@@ -85,9 +169,10 @@ export function MissionModelOverrideControls(props: {
       window.removeEventListener("resize", positionMenu);
       window.removeEventListener("scroll", positionMenu, true);
     };
-  }, [open]);
+  }, [activePanel, open]);
 
   const closeMenu = () => {
+    clearPanelHoverTimer();
     setOpen(false);
     requestAnimationFrame(() => triggerRef.current?.focus());
   };
@@ -123,8 +208,9 @@ export function MissionModelOverrideControls(props: {
   const menu = (
     <div
       className="mission-model-menu"
+      data-has-options={activePanel === null ? "false" : "true"}
+      data-placement={menuPlacement}
       id={menuId}
-      ref={menuRef}
       role="dialog"
       aria-label={t("modelOverride")}
       style={menuStyle}
@@ -134,80 +220,91 @@ export function MissionModelOverrideControls(props: {
         closeMenu();
       }}
     >
-      <div className="mission-model-menu-sections" role="tablist" aria-label={t("modelOverride")}>
+      <div
+        className="mission-model-menu-sections"
+        ref={sectionsRef}
+        role="tablist"
+        aria-label={t("modelOverride")}
+      >
         <MenuSection
           active={activePanel === "model"}
           label={t("modelOverride")}
           value={modelLabel}
-          onSelect={() => setActivePanel("model")}
+          onHover={() => schedulePanel("model")}
+          onSelect={() => selectPanel("model")}
         />
         <MenuSection
           active={activePanel === "thinking"}
-          disabled={thinkingLevels.length === 0}
+          disabled={effectiveModel === undefined}
           label={t("thinkingDepth")}
           value={thinkingLabel}
-          onSelect={() => setActivePanel("thinking")}
+          onHover={() => schedulePanel("thinking")}
+          onSelect={() => selectPanel("thinking")}
         />
       </div>
-      <div
-        className="mission-model-menu-options"
-        role="listbox"
-        aria-label={t(activePanel === "model" ? "modelOverride" : "thinkingDepth")}
-      >
-        {activePanel === "model" ? (
-          props.models.map((model) => {
-            const selectedModel =
-              model.provider.id === effectiveModel?.provider.id && model.id === effectiveModel?.id;
-            return (
+      {activePanel === null ? null : (
+        <div
+          className="mission-model-menu-options"
+          ref={optionsRef}
+          role="listbox"
+          aria-label={t(activePanel === "model" ? "modelOverride" : "thinkingDepth")}
+        >
+          {activePanel === "model" ? (
+            props.models.map((model) => {
+              const selectedModel =
+                model.provider.id === effectiveModel?.provider.id &&
+                model.id === effectiveModel?.id;
+              return (
+                <button
+                  className="mission-model-menu-option"
+                  type="button"
+                  role="option"
+                  aria-selected={selectedModel}
+                  key={modelOptionKey(model.provider.id, model.id)}
+                  onClick={() => chooseModel(model)}
+                >
+                  <span>{model.displayName}</span>
+                  <Check size={15} weight="bold" aria-hidden="true" />
+                </button>
+              );
+            })
+          ) : (
+            <>
               <button
                 className="mission-model-menu-option"
                 type="button"
                 role="option"
-                aria-selected={selectedModel}
-                key={modelOptionKey(model.provider.id, model.id)}
-                onClick={() => chooseModel(model)}
+                aria-selected={props.value?.thinkingLevel === undefined}
+                onClick={chooseDefaultThinkingLevel}
               >
-                <span>{model.displayName}</span>
+                <span>
+                  {defaultThinkingLevel === undefined
+                    ? t("defaultExecutor")
+                    : t("defaultValue", {
+                        value:
+                          thinkingLevels.find((level) => level.value === defaultThinkingLevel)
+                            ?.label ?? defaultThinkingLevel,
+                      })}
+                </span>
                 <Check size={15} weight="bold" aria-hidden="true" />
               </button>
-            );
-          })
-        ) : (
-          <>
-            <button
-              className="mission-model-menu-option"
-              type="button"
-              role="option"
-              aria-selected={props.value?.thinkingLevel === undefined}
-              onClick={chooseDefaultThinkingLevel}
-            >
-              <span>
-                {defaultThinkingLevel === undefined
-                  ? t("defaultExecutor")
-                  : t("defaultValue", {
-                      value:
-                        thinkingLevels.find((level) => level.value === defaultThinkingLevel)
-                          ?.label ?? defaultThinkingLevel,
-                    })}
-              </span>
-              <Check size={15} weight="bold" aria-hidden="true" />
-            </button>
-            {thinkingLevels.map((level) => (
-              <button
-                className="mission-model-menu-option"
-                type="button"
-                role="option"
-                aria-selected={level.value === effectiveThinkingLevel}
-                key={level.value}
-                onClick={() => chooseThinkingLevel(level.value)}
-              >
-                <span>{level.label}</span>
-                <Check size={15} weight="bold" aria-hidden="true" />
-              </button>
-            ))}
-          </>
-        )}
-      </div>
+              {thinkingLevels.map((level) => (
+                <button
+                  className="mission-model-menu-option"
+                  type="button"
+                  role="option"
+                  aria-selected={level.value === effectiveThinkingLevel}
+                  key={level.value}
+                  onClick={() => chooseThinkingLevel(level.value)}
+                >
+                  <span>{level.label}</span>
+                  <Check size={15} weight="bold" aria-hidden="true" />
+                </button>
+              ))}
+            </>
+          )}
+        </div>
+      )}
     </div>
   );
 
@@ -227,7 +324,8 @@ export function MissionModelOverrideControls(props: {
         aria-haspopup="dialog"
         disabled={disabled}
         onClick={() => {
-          setActivePanel("model");
+          clearPanelHoverTimer();
+          setActivePanel(null);
           setOpen((current) => !current);
         }}
       >
@@ -245,6 +343,7 @@ function MenuSection(props: {
   readonly disabled?: boolean | undefined;
   readonly label: string;
   readonly value?: string | undefined;
+  readonly onHover: () => void;
   readonly onSelect: () => void;
 }) {
   return (
@@ -254,6 +353,7 @@ function MenuSection(props: {
       role="tab"
       aria-selected={props.active}
       disabled={props.disabled}
+      onMouseEnter={props.disabled ? undefined : props.onHover}
       onClick={props.onSelect}
     >
       <span className="mission-model-menu-section-label">{props.label}</span>

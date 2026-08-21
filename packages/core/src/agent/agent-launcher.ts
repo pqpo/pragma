@@ -19,8 +19,9 @@ export interface CreateAgentLauncherOptions {
 export type ExpertLifecycleToolName =
   | "spawn_expert"
   | "wait_experts"
-  | "list_experts"
+  | "list_agents"
   | "followup_expert"
+  | "steer_expert"
   | "interrupt_expert";
 
 export interface AgentLauncher {
@@ -32,6 +33,9 @@ export interface AgentLauncher {
 
 export interface AgentDelegationDefinition {
   readonly experts: readonly Expert[];
+  readonly spawnExpertIds: ReadonlySet<string>;
+  readonly interactExpertIds: ReadonlySet<string>;
+  readonly isCoordinator: boolean;
   readonly maxConcurrency: number;
   readonly maxDepth: number;
   readonly contextId: ContextIdResolver;
@@ -57,6 +61,9 @@ export function createAgentLauncher(options: CreateAgentLauncherOptions): AgentL
   return Object.freeze({
     tools: createLifecycleTools({
       experts,
+      spawnExpertIds: new Set(experts.map((expert) => expert.id)),
+      interactExpertIds: new Set(),
+      isCoordinator: false,
       maxConcurrency: readPositiveInteger(options.maxConcurrency ?? 4, "maxConcurrency"),
       maxDepth: readPositiveInteger(options.maxDepth ?? 3, "maxDepth"),
       contextId: options.contextId ?? freshContextIdResolver,
@@ -69,17 +76,27 @@ export function createTeamDelegationTools(
   team: ExpertTeam,
   sourceExpertId: string,
 ): readonly AgentLifecycleTool[] {
-  const allowed = team.delegation.allow.get(sourceExpertId);
-  if (allowed === undefined || allowed.size === 0) return [];
-  const experts = [team.coordinator, ...team.members].filter((expert) => allowed.has(expert.id));
-  if (experts.length === 0) return [];
+  const isCoordinator = sourceExpertId === team.coordinator.id;
+  const spawnExpertIds = isCoordinator
+    ? new Set(team.members.map((expert) => expert.id))
+    : (team.delegation.permissions.spawn.get(sourceExpertId) ?? new Set<string>());
+  const interactExpertIds = isCoordinator
+    ? new Set([team.coordinator, ...team.members].map((expert) => expert.id))
+    : (team.delegation.permissions.interact.get(sourceExpertId) ?? new Set<string>());
+  const accessible = new Set([...spawnExpertIds, ...interactExpertIds]);
+  const experts = [team.coordinator, ...team.members].filter(
+    (expert) => expert.id !== sourceExpertId && accessible.has(expert.id),
+  );
   return createLifecycleTools({
     experts,
+    spawnExpertIds,
+    interactExpertIds,
+    isCoordinator,
     maxConcurrency: team.delegation.maxConcurrency,
     maxDepth: team.delegation.maxDepth,
     contextId: team.delegation.contextId,
     runtimeByExpert: new Map(
-      [...team.delegation.runtimeByExpert].filter(([expertId]) => allowed.has(expertId)),
+      [...team.delegation.runtimeByExpert].filter(([expertId]) => spawnExpertIds.has(expertId)),
     ),
   });
 }
@@ -101,98 +118,146 @@ function createLifecycleTools(
 ): readonly AgentLifecycleTool[] {
   const frozen = Object.freeze({
     experts: Object.freeze([...definition.experts]),
+    spawnExpertIds: new Set(definition.spawnExpertIds),
+    interactExpertIds: new Set(definition.interactExpertIds),
+    isCoordinator: definition.isCoordinator,
     maxConcurrency: definition.maxConcurrency,
     maxDepth: definition.maxDepth,
     contextId: definition.contextId,
     runtimeByExpert: new Map(definition.runtimeByExpert),
   });
-  const available = [
-    "Available Experts:",
-    ...frozen.experts.map((expert) => `- ${expert.id}: ${expert.name}. ${expert.description}`),
+  const spawnable = [
+    "Spawnable Experts:",
+    ...frozen.experts
+      .filter((expert) => frozen.spawnExpertIds.has(expert.id))
+      .map((expert) => `- ${expert.id}: ${expert.name}. ${expert.description}`),
   ].join("\n");
   const tool = (
     value: Omit<AgentLifecycleTool, typeof agentDelegationDefinition>,
   ): AgentLifecycleTool => ({ ...value, [agentDelegationDefinition]: frozen });
 
-  return Object.freeze([
-    tool({
-      name: "spawn_expert",
-      description: `Spawn an Expert task in the background and return its agent and invocation ids immediately.\n${available}`,
-      inputSchema: objectSchema({ expertId: { type: "string" }, prompt: { type: "string" } }, [
-        "expertId",
-        "prompt",
-      ]),
-      call: async (args, signal, context) =>
-        await invoke("spawn_expert", signal, context?.execution?.spawnExpert, readSpawn(args)),
-    }),
-    tool({
-      name: "wait_experts",
-      description:
-        "Wait for exact Expert invocations. Defaults to waiting for all targets with a 10-minute timeout.",
-      inputSchema: objectSchema(
-        {
-          invocationIds: { type: "array", items: { type: "string" }, minItems: 1 },
-          returnWhen: { type: "string", enum: ["all", "any"] },
-          timeoutMs: {
-            type: "integer",
-            minimum: MIN_WAIT_EXPERTS_TIMEOUT_MS,
-            maximum: MAX_WAIT_EXPERTS_TIMEOUT_MS,
-            default: DEFAULT_WAIT_EXPERTS_TIMEOUT_MS,
+  const tools: AgentLifecycleTool[] = [];
+  if (frozen.spawnExpertIds.size > 0) {
+    tools.push(
+      tool({
+        name: "spawn_expert",
+        description: `Spawn an Expert task in the background and return its agent and invocation ids immediately.\n${spawnable}`,
+        inputSchema: objectSchema({ expertId: { type: "string" }, prompt: { type: "string" } }, [
+          "expertId",
+          "prompt",
+        ]),
+        call: async (args, signal, context) =>
+          await invoke("spawn_expert", signal, context?.execution?.spawnExpert, readSpawn(args)),
+      }),
+    );
+  }
+  if (frozen.spawnExpertIds.size > 0 || frozen.interactExpertIds.size > 0) {
+    tools.push(
+      tool({
+        name: "wait_experts",
+        description:
+          "Wait for exact Expert invocations. Defaults to waiting for all targets with a 10-minute timeout.",
+        inputSchema: objectSchema(
+          {
+            invocationIds: { type: "array", items: { type: "string" }, minItems: 1 },
+            returnWhen: { type: "string", enum: ["all", "any"] },
+            timeoutMs: {
+              type: "integer",
+              minimum: MIN_WAIT_EXPERTS_TIMEOUT_MS,
+              maximum: MAX_WAIT_EXPERTS_TIMEOUT_MS,
+              default: DEFAULT_WAIT_EXPERTS_TIMEOUT_MS,
+            },
           },
-        },
-        ["invocationIds"],
-      ),
-      call: async (args, signal, context) => {
-        const input = readWait(args);
-        return await invoke("wait_experts", signal, context?.execution?.waitExperts, {
-          ...input,
-          signal,
-        });
-      },
-    }),
-    tool({
-      name: "list_experts",
-      description: "List the Expert instances directly spawned by this caller.",
-      inputSchema: objectSchema({}, []),
-      call: async (_args, signal, context) =>
-        await invoke("list_experts", signal, context?.execution?.listExperts, undefined),
-    }),
-    tool({
-      name: "followup_expert",
-      description: "Queue a new FIFO task on an existing Expert instance.",
-      inputSchema: objectSchema({ agentId: { type: "string" }, prompt: { type: "string" } }, [
-        "agentId",
-        "prompt",
-      ]),
-      call: async (args, signal, context) =>
-        await invoke(
-          "followup_expert",
-          signal,
-          context?.execution?.followupExpert,
-          readFollowup(args),
+          ["invocationIds"],
         ),
-    }),
+        call: async (args, signal, context) => {
+          const input = readWait(args);
+          return await invoke("wait_experts", signal, context?.execution?.waitExperts, {
+            ...input,
+            signal,
+          });
+        },
+      }),
+    );
+  }
+  tools.push(
     tool({
-      name: "interrupt_expert",
-      description:
-        "Interrupt only the current task of an Expert while preserving queued follow-ups.",
+      name: "list_agents",
+      description: "List accessible live Agent instances in this collaboration scope.",
       inputSchema: objectSchema(
         {
-          agentId: { type: "string" },
-          invocationId: { type: "string" },
-          reason: { type: "string" },
+          expertId: { type: "string" },
+          cursor: { type: "string" },
+          limit: { type: "integer", minimum: 1, maximum: 100, default: 50 },
         },
-        ["agentId"],
+        [],
       ),
       call: async (args, signal, context) =>
-        await invoke(
-          "interrupt_expert",
-          signal,
-          context?.execution?.interruptExpert,
-          readInterrupt(args),
-        ),
+        await invoke("list_agents", signal, context?.execution?.listAgents, readList(args)),
     }),
-  ]);
+  );
+  if (frozen.spawnExpertIds.size > 0 || frozen.interactExpertIds.size > 0) {
+    tools.push(
+      tool({
+        name: "followup_expert",
+        description: "Queue a new FIFO task on an existing Expert instance.",
+        inputSchema: objectSchema({ agentId: { type: "string" }, prompt: { type: "string" } }, [
+          "agentId",
+          "prompt",
+        ]),
+        call: async (args, signal, context) =>
+          await invoke(
+            "followup_expert",
+            signal,
+            context?.execution?.followupExpert,
+            readFollowup(args),
+          ),
+      }),
+    );
+    tools.push(
+      tool({
+        name: "steer_expert",
+        description:
+          "Guide an existing Agent's active task now. Unsupported steering is rejected unless fallback is followup.",
+        inputSchema: objectSchema(
+          {
+            agentId: { type: "string" },
+            invocationId: { type: "string" },
+            message: { type: "string" },
+            fallback: { type: "string", enum: ["reject", "followup"], default: "reject" },
+          },
+          ["agentId", "message"],
+        ),
+        call: async (args, signal, context) =>
+          await invoke("steer_expert", signal, context?.execution?.steerExpert, readSteer(args)),
+      }),
+    );
+  }
+  if (frozen.spawnExpertIds.size > 0) {
+    tools.push(
+      tool({
+        name: "interrupt_expert",
+        description:
+          "Interrupt only the current task of an Expert while preserving queued follow-ups.",
+        inputSchema: objectSchema(
+          {
+            agentId: { type: "string" },
+            invocationId: { type: "string" },
+            reason: { type: "string" },
+          },
+          ["agentId"],
+        ),
+        call: async (args, signal, context) =>
+          await invoke(
+            "interrupt_expert",
+            signal,
+            context?.execution?.interruptExpert,
+            readInterrupt(args),
+          ),
+      }),
+    );
+  }
+  return Object.freeze(tools);
 }
 
 async function invoke<TInput>(
@@ -221,6 +286,38 @@ function readSpawn(value: unknown): { expertId: string; prompt: string } {
   return {
     expertId: readString(record["expertId"], "expertId"),
     prompt: readString(record["prompt"], "prompt"),
+  };
+}
+
+function readList(value: unknown): { expertId?: string; cursor?: string; limit?: number } {
+  const record = readRecord(value);
+  return {
+    ...(record["expertId"] === undefined
+      ? {}
+      : { expertId: readString(record["expertId"], "expertId") }),
+    ...(record["cursor"] === undefined ? {} : { cursor: readString(record["cursor"], "cursor") }),
+    ...(record["limit"] === undefined ? {} : { limit: readInteger(record["limit"], "limit") }),
+  };
+}
+
+function readSteer(value: unknown): {
+  agentId: string;
+  invocationId?: string;
+  message: string;
+  fallback?: "reject" | "followup";
+} {
+  const record = readRecord(value);
+  const fallback = record["fallback"];
+  if (fallback !== undefined && fallback !== "reject" && fallback !== "followup") {
+    throw new Error("fallback must be reject or followup.");
+  }
+  return {
+    agentId: readString(record["agentId"], "agentId"),
+    ...(record["invocationId"] === undefined
+      ? {}
+      : { invocationId: readString(record["invocationId"], "invocationId") }),
+    message: readString(record["message"], "message"),
+    ...(fallback === undefined ? {} : { fallback }),
   };
 }
 
@@ -290,6 +387,11 @@ function readString(value: unknown, name: string): string {
     throw new Error(`${name} must be a non-empty string.`);
   }
   return value;
+}
+
+function readInteger(value: unknown, name: string): number {
+  if (!Number.isSafeInteger(value)) throw new Error(`${name} must be an integer.`);
+  return value as number;
 }
 
 function readOptionalString(record: Record<string, unknown>, name: string): Record<string, string> {

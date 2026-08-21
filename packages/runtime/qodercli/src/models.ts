@@ -1,6 +1,14 @@
 import { createHash } from "node:crypto";
 
-import type { RuntimeModel, RuntimeThinkingLevel } from "@pragma/core";
+import {
+  parseRuntimeModelCatalogModels,
+  readRuntimeModelCatalogCache,
+  retryRuntimeModelDiscovery,
+  writeRuntimeModelCatalogCache,
+  type RuntimeModel,
+  type RuntimeModelDiscoveryOptions,
+  type RuntimeThinkingLevel,
+} from "@pragma/core";
 import { ProcessTransport, query, type ModelInfo, type Query } from "@qoder-ai/qoder-agent-sdk";
 
 import { resolveQoderCliExecutablePath } from "./executable.ts";
@@ -16,18 +24,30 @@ const THINKING_LABELS: Readonly<Record<string, string>> = {
   max: "Max",
 };
 const MODEL_CATALOG_TTL_MS = 10 * 60_000;
+const MODEL_CATALOG_RETRY_DELAY_MS = 30_000;
 const MODEL_CATALOG_CACHE_LIMIT = 16;
 
 interface QoderModelCatalogCacheEntry {
-  cache?: { readonly expiresAt: number; readonly models: readonly RuntimeModel[] } | undefined;
-  refresh?: Promise<readonly RuntimeModel[]> | undefined;
+  cache?:
+    | {
+        readonly expiresAt: number;
+        readonly retryAt?: number | undefined;
+        readonly models: readonly RuntimeModel[];
+      }
+    | undefined;
+  refresh?: Promise<QoderCatalogRefreshResult> | undefined;
+}
+
+interface QoderCatalogRefreshResult {
+  readonly models: readonly RuntimeModel[];
+  readonly fresh: boolean;
 }
 
 const modelCatalogs = new Map<string, QoderModelCatalogCacheEntry>();
 
 export function createQoderCliModelDiscovery(
   options: QoderCliRuntimeAdapterOptions,
-): () => Promise<readonly RuntimeModel[]> {
+): (request?: RuntimeModelDiscoveryOptions) => Promise<readonly RuntimeModel[]> {
   const key = qoderModelCatalogCacheKey(options);
   const existingState = modelCatalogs.get(key);
   const state: QoderModelCatalogCacheEntry = existingState ?? {};
@@ -43,45 +63,111 @@ export function createQoderCliModelDiscovery(
     modelCatalogs.set(key, state);
   }
 
-  return async () => {
-    if (state.cache === undefined) {
-      state.refresh ??= refreshCatalog();
-      return await state.refresh;
+  const persistedPromise = readRuntimeModelCatalogCache(
+    {
+      runtimeId: "qodercli",
+      cacheKey: key,
+      cacheRoot: options.modelCatalogCacheRoot,
+    },
+    parseRuntimeModelCatalogModels,
+  );
+
+  return async (request = {}) => {
+    const persisted =
+      state.cache === undefined || request.forceRefresh === true
+        ? await persistedPromise
+        : undefined;
+    const fallback = state.cache?.models ?? persisted;
+
+    if (request.forceRefresh === true) {
+      state.refresh ??= refreshCatalog(fallback);
+      const result = await state.refresh;
+      if (result.fresh) notifyModelCatalogUpdated(options.onModelCatalogUpdated);
+      return result.models;
     }
-    if (state.cache.expiresAt <= Date.now() && state.refresh === undefined) {
-      state.refresh = refreshCatalog();
+
+    if (state.cache === undefined) {
+      if (persisted !== undefined) {
+        state.cache = { expiresAt: Date.now(), models: persisted };
+        state.refresh ??= refreshCatalog(persisted);
+        void state.refresh.then(
+          (result) => {
+            if (result.fresh) notifyModelCatalogUpdated(options.onModelCatalogUpdated);
+          },
+          () => undefined,
+        );
+        return persisted;
+      }
+      state.refresh ??= refreshCatalog();
+      return (await state.refresh).models;
+    }
+    if (
+      state.cache.expiresAt <= Date.now() &&
+      (state.cache.retryAt ?? 0) <= Date.now() &&
+      state.refresh === undefined
+    ) {
+      state.refresh = refreshCatalog(state.cache.models);
       void state.refresh.then(
-        () => notifyModelCatalogUpdated(options.onModelCatalogUpdated),
+        (result) => {
+          if (result.fresh) notifyModelCatalogUpdated(options.onModelCatalogUpdated);
+        },
         () => undefined,
       );
     }
     return state.cache.models;
 
-    async function refreshCatalog(): Promise<readonly RuntimeModel[]> {
-      let q: Query | undefined;
+    async function refreshCatalog(
+      staleModels?: readonly RuntimeModel[] | undefined,
+    ): Promise<QoderCatalogRefreshResult> {
       try {
-        q = query({
-          prompt: "",
-          options: {
-            auth: resolveQoderAuth(options),
-            transport: ProcessTransport.default,
-            pathToQoderCLIExecutable: resolveQoderCliExecutablePath(options),
-            env: { ...process.env, ...(options.env ?? {}) },
-            settingSources: [],
-            tools: [],
-          },
+        const models = await retryRuntimeModelDiscovery(async () => {
+          let q: Query | undefined;
+          try {
+            q = query({
+              prompt: "",
+              options: {
+                auth: resolveQoderAuth(options),
+                transport: ProcessTransport.default,
+                pathToQoderCLIExecutable: resolveQoderCliExecutablePath(options),
+                env: { ...process.env, ...(options.env ?? {}) },
+                settingSources: [],
+                tools: [],
+              },
+            });
+            const models = (await q.getAvailableModels({ fetchStrategy: "live" }))
+              .filter((model) => model.isEnabled !== false)
+              .map(mapQoderModel);
+            if (models.length === 0) {
+              throw new Error("Qoder CLI model discovery returned no enabled models.");
+            }
+            return models;
+          } finally {
+            await q?.close().catch(() => undefined);
+          }
         });
-        const models = (await q.getAvailableModels({ fetchStrategy: "live" }))
-          .filter((model) => model.isEnabled !== false)
-          .map(mapQoderModel);
-        if (models.length === 0) {
-          throw new Error("Qoder CLI model discovery returned no enabled models.");
-        }
         state.cache = { expiresAt: Date.now() + MODEL_CATALOG_TTL_MS, models };
-        return models;
+        await writeRuntimeModelCatalogCache(
+          {
+            runtimeId: "qodercli",
+            cacheKey: key,
+            cacheRoot: options.modelCatalogCacheRoot,
+          },
+          models,
+        );
+        return { models, fresh: true };
+      } catch (error) {
+        const fallbackModels = state.cache?.models ?? staleModels;
+        if (fallbackModels !== undefined) {
+          state.cache = {
+            expiresAt: Date.now(),
+            retryAt: Date.now() + MODEL_CATALOG_RETRY_DELAY_MS,
+            models: fallbackModels,
+          };
+          return { models: fallbackModels, fresh: false };
+        }
+        throw error;
       } finally {
         state.refresh = undefined;
-        await q?.close().catch(() => undefined);
       }
     }
   };
@@ -91,6 +177,8 @@ function qoderModelCatalogCacheKey(options: QoderCliRuntimeAdapterOptions): stri
   return createHash("sha256")
     .update("pragma.qoder-model-catalog/v1\0")
     .update(resolveQoderCliExecutablePath(options))
+    .update("\0")
+    .update(options.modelCatalogCacheRoot ?? "default")
     .update("\0")
     .update(JSON.stringify(options.auth ?? { type: "qodercli" }))
     .update("\0")

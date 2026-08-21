@@ -3,7 +3,16 @@ import { mkdir, mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
-import { runRuntimeCommand, type RuntimeCommandSpawn, type RuntimeModel } from "@pragma/core";
+import {
+  parseRuntimeModelCatalogModels,
+  readRuntimeModelCatalogCache,
+  retryRuntimeModelDiscovery,
+  runRuntimeCommand,
+  writeRuntimeModelCatalogCache,
+  type RuntimeCommandSpawn,
+  type RuntimeModel,
+  type RuntimeModelDiscoveryOptions,
+} from "@pragma/core";
 
 import {
   applyCommonAntigravityEnvironment,
@@ -13,13 +22,25 @@ import { resolveAntigravityExecutablePath } from "./executable.ts";
 import type { AntigravityRuntimeAdapterOptions } from "./types.ts";
 
 const MODEL_CATALOG_TTL_MS = 10 * 60_000;
+const MODEL_CATALOG_RETRY_DELAY_MS = 30_000;
 const MODEL_CATALOG_CACHE_LIMIT = 16;
 const MODEL_OUTPUT_LIMIT = 64 * 1024;
 const KNOWN_EFFORT_LEVELS = new Set(["low", "medium", "high"]);
 
 interface AntigravityModelCatalogCacheEntry {
-  cache?: { readonly expiresAt: number; readonly models: readonly RuntimeModel[] } | undefined;
-  refresh?: Promise<readonly RuntimeModel[]> | undefined;
+  cache?:
+    | {
+        readonly expiresAt: number;
+        readonly retryAt?: number | undefined;
+        readonly models: readonly RuntimeModel[];
+      }
+    | undefined;
+  refresh?: Promise<AntigravityCatalogRefreshResult> | undefined;
+}
+
+interface AntigravityCatalogRefreshResult {
+  readonly models: readonly RuntimeModel[];
+  readonly fresh: boolean;
 }
 
 const modelCatalogs = new Map<string, AntigravityModelCatalogCacheEntry>();
@@ -28,7 +49,7 @@ let nextSpawnId = 1;
 
 export function createAntigravityModelDiscovery(
   options: AntigravityRuntimeAdapterOptions,
-): () => Promise<readonly RuntimeModel[]> {
+): (request?: RuntimeModelDiscoveryOptions) => Promise<readonly RuntimeModel[]> {
   const key = modelCatalogCacheKey(options);
   const existing = modelCatalogs.get(key);
   const state: AntigravityModelCatalogCacheEntry = existing ?? {};
@@ -44,50 +65,117 @@ export function createAntigravityModelDiscovery(
     modelCatalogs.set(key, state);
   }
 
-  return async () => {
-    if (state.cache === undefined) {
-      state.refresh ??= refreshCatalog();
-      return await state.refresh;
+  const persistedPromise = readRuntimeModelCatalogCache(
+    {
+      runtimeId: "antigravity",
+      cacheKey: key,
+      cacheRoot: options.modelCatalogCacheRoot,
+    },
+    parseRuntimeModelCatalogModels,
+  );
+
+  return async (request = {}) => {
+    const persisted =
+      state.cache === undefined || request.forceRefresh === true
+        ? await persistedPromise
+        : undefined;
+    const fallback = state.cache?.models ?? persisted;
+
+    if (request.forceRefresh === true) {
+      state.refresh ??= refreshCatalog(fallback);
+      const result = await state.refresh;
+      if (result.fresh) notifyModelCatalogUpdated(options.onModelCatalogUpdated);
+      return result.models;
     }
-    if (state.cache.expiresAt <= Date.now() && state.refresh === undefined) {
-      state.refresh = refreshCatalog();
+    if (state.cache === undefined) {
+      if (persisted !== undefined) {
+        state.cache = { expiresAt: Date.now(), models: persisted };
+        state.refresh ??= refreshCatalog(persisted);
+        void state.refresh.then(
+          (result) => {
+            if (result.fresh) notifyModelCatalogUpdated(options.onModelCatalogUpdated);
+          },
+          () => undefined,
+        );
+        return persisted;
+      }
+      state.refresh ??= refreshCatalog();
+      return (await state.refresh).models;
+    }
+    if (
+      state.cache.expiresAt <= Date.now() &&
+      (state.cache.retryAt ?? 0) <= Date.now() &&
+      state.refresh === undefined
+    ) {
+      state.refresh = refreshCatalog(state.cache.models);
       void state.refresh.then(
-        () => notifyModelCatalogUpdated(options.onModelCatalogUpdated),
+        (result) => {
+          if (result.fresh) notifyModelCatalogUpdated(options.onModelCatalogUpdated);
+        },
         () => undefined,
       );
     }
     return state.cache.models;
 
-    async function refreshCatalog(): Promise<readonly RuntimeModel[]> {
-      const discoveryHome = await mkdtemp(join(tmpdir(), "pragma-agy-models-"));
+    async function refreshCatalog(
+      staleModels?: readonly RuntimeModel[] | undefined,
+    ): Promise<AntigravityCatalogRefreshResult> {
       try {
-        const discoveryTmp = join(discoveryHome, "tmp");
-        await mkdir(discoveryTmp, { recursive: true, mode: 0o700 });
-        const executablePath = resolveAntigravityExecutablePath(options);
-        const result = await runRuntimeCommand({
-          executablePath,
-          args: ["models"],
-          cwd: discoveryHome,
-          env: createAntigravityModelDiscoveryEnvironment({
-            base: { ...process.env, ...(options.env ?? {}) },
-            tmpDir: discoveryTmp,
-          }),
-          timeoutMs: 20_000,
-          outputLimit: MODEL_OUTPUT_LIMIT,
-          spawn: options.spawn,
-        });
-        if (result.exitCode !== 0) {
-          throw new Error(modelDiscoveryError(result.stderr || result.stdout));
-        }
-        const models = parseAntigravityModels(result.stdout);
-        if (models.length === 0) {
-          throw new Error("Antigravity CLI model discovery returned no models.");
-        }
+        const models = await retryRuntimeModelDiscovery(discoverCatalogOnce);
         state.cache = { expiresAt: Date.now() + MODEL_CATALOG_TTL_MS, models };
-        return models;
+        await writeRuntimeModelCatalogCache(
+          {
+            runtimeId: "antigravity",
+            cacheKey: key,
+            cacheRoot: options.modelCatalogCacheRoot,
+          },
+          models,
+        );
+        return { models, fresh: true };
+      } catch (error) {
+        const fallbackModels = state.cache?.models ?? staleModels;
+        if (fallbackModels !== undefined) {
+          state.cache = {
+            expiresAt: Date.now(),
+            retryAt: Date.now() + MODEL_CATALOG_RETRY_DELAY_MS,
+            models: fallbackModels,
+          };
+          return { models: fallbackModels, fresh: false };
+        }
+        throw error;
       } finally {
         state.refresh = undefined;
-        await rm(discoveryHome, { recursive: true, force: true }).catch(() => undefined);
+      }
+
+      async function discoverCatalogOnce(): Promise<readonly RuntimeModel[]> {
+        const discoveryHome = await mkdtemp(join(tmpdir(), "pragma-agy-models-"));
+        try {
+          const discoveryTmp = join(discoveryHome, "tmp");
+          await mkdir(discoveryTmp, { recursive: true, mode: 0o700 });
+          const executablePath = resolveAntigravityExecutablePath(options);
+          const result = await runRuntimeCommand({
+            executablePath,
+            args: ["models"],
+            cwd: discoveryHome,
+            env: createAntigravityModelDiscoveryEnvironment({
+              base: { ...process.env, ...(options.env ?? {}) },
+              tmpDir: discoveryTmp,
+            }),
+            timeoutMs: 20_000,
+            outputLimit: MODEL_OUTPUT_LIMIT,
+            spawn: options.spawn,
+          });
+          if (result.exitCode !== 0) {
+            throw new Error(modelDiscoveryError(result.stderr || result.stdout));
+          }
+          const models = parseAntigravityModels(result.stdout);
+          if (models.length === 0) {
+            throw new Error("Antigravity CLI model discovery returned no models.");
+          }
+          return models;
+        } finally {
+          await rm(discoveryHome, { recursive: true, force: true }).catch(() => undefined);
+        }
       }
     }
   };
@@ -221,6 +309,8 @@ function modelCatalogCacheKey(options: AntigravityRuntimeAdapterOptions): string
   return createHash("sha256")
     .update("pragma.antigravity-model-catalog/v1\0")
     .update(resolveAntigravityExecutablePath(options))
+    .update("\0")
+    .update(options.modelCatalogCacheRoot ?? "default")
     .update("\0")
     .update(options.spawn === undefined ? "native" : `custom:${spawnId(options.spawn)}`)
     .update("\0")

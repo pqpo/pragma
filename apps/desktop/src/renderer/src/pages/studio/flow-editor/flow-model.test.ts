@@ -1,3 +1,4 @@
+import { PRAGMA_DSL_WRITE_API_VERSION } from "@pragma/interpreter/ast";
 import { describe, expect, it } from "vitest";
 
 import type { PragmaFlowResource } from "@pragma/interpreter/ast";
@@ -140,7 +141,7 @@ describe("Flow editor model", () => {
 
 function flowFixture(): PragmaFlowResource {
   return {
-    apiVersion: "pragma/v4",
+    apiVersion: PRAGMA_DSL_WRITE_API_VERSION,
     kind: "Flow",
     metadata: {
       id: "t9ne4d8njvvxv2ea",

@@ -108,6 +108,44 @@ describe("getRuntimeAvailability", () => {
     ]);
   });
 
+  it("forwards forceRefresh to Runtime model discovery", async () => {
+    const pragmaHome = await mkdtemp(join(tmpdir(), "pragma-runtime-availability-refresh-"));
+    const store = createRuntimeEnvironmentStore({
+      pragmaHome,
+      builtIns: [definition("pi", "Pi"), definition("codex", "Codex")],
+    });
+    const receivedOptions: unknown[] = [];
+    const runtimes = createRuntimeEnvironmentService({
+      store,
+      factories: [
+        {
+          id: "test.runtime",
+          version: "v1",
+          create: (environment) =>
+            defineRuntimeTestDriver({
+              descriptor: {
+                id: environment.id,
+                kind: "test",
+                displayName: environment.displayName,
+              },
+              canUse: () => ({ usable: true }),
+              listModels: async (options) => {
+                receivedOptions.push(options);
+                return [];
+              },
+              createSession: () => ({}),
+              startTurn: () => ({ outputText: "" }),
+              mapEvent: () => ({ events: [] }),
+            }),
+        },
+      ],
+    });
+
+    await getRuntimeAvailability(runtimes, { forceRefresh: true });
+
+    expect(receivedOptions).toEqual([{ forceRefresh: true }, { forceRefresh: true }]);
+  });
+
   it("limits probe concurrency and respects forceRefresh options", async () => {
     const pragmaHome = await mkdtemp(join(tmpdir(), "pragma-runtime-availability-concurrency-"));
     const definitions = [

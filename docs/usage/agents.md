@@ -50,7 +50,7 @@ const coordinator = await defineExpert({
 const session = await app.experts.createSession(coordinator);
 ```
 
-launcher 向模型公开 `spawn_expert`、`wait_experts`、`list_experts`、`followup_expert` 和
+launcher 向模型公开 `spawn_expert`、`wait_experts`、`list_agents`、`followup_expert` 和
 `interrupt_expert`。`spawn_expert` 先原子落盘再立即返回
 `{ agentId, invocationId, contextId, disposition }`；多个 agent 可以并行运行。Resolver 返回同一
 Context 时，dispatch 会原子归并到同一 agent 并按 FIFO 串行；默认 resolver 每次创建新 Context。

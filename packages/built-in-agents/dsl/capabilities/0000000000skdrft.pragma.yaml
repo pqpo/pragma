@@ -1,4 +1,4 @@
-apiVersion: pragma/v4
+apiVersion: pragma/v5
 kind: Capability
 metadata:
   id: 0000000000skdrft

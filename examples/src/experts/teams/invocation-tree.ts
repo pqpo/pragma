@@ -7,7 +7,7 @@ const team = defineExpertTeam({
   id: "tree-team",
   coordinator: lead,
   members: [member],
-  delegation: { allow: { "tree-lead": ["tree-member"], "tree-member": [] } },
+  delegation: {},
 });
 const turn = await (
   await createExampleApp().experts.createSession(team)

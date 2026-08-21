@@ -21,7 +21,10 @@ import type { RuntimeResolver } from "./runtime-resolver.ts";
 import type { UsageSink } from "./runtime/usage.ts";
 import { defaultPragmaLoggerProvider, type PragmaLoggerProvider } from "./logging/logger.ts";
 import type { ExpertAgentAutomaticHumanInteractionHandler } from "./tools/managed-tool.ts";
-import type { HostContextBindings } from "./context-system/host-context-bindings.ts";
+import type {
+  HostContextBindings,
+  HostContextBindingsResolver,
+} from "./context-system/host-context-bindings.ts";
 
 export interface CreatePragmaOptions {
   readonly pragmaHome?: string | undefined;
@@ -33,6 +36,7 @@ export interface CreatePragmaOptions {
   readonly automaticHumanInteractionHandler?:
     ExpertAgentAutomaticHumanInteractionHandler | undefined;
   readonly hostContextBindings?: HostContextBindings | undefined;
+  readonly resolveHostContextBindings?: HostContextBindingsResolver | undefined;
 }
 
 export interface PragmaApp {
@@ -83,6 +87,7 @@ export function createPragma(options: CreatePragmaOptions): PragmaApp {
     automaticHumanInteractionHandler: options.automaticHumanInteractionHandler,
     usageSink: options.usageSink,
     hostContextBindings: options.hostContextBindings,
+    resolveHostContextBindings: options.resolveHostContextBindings,
   });
   const flows = new FlowExecutionManager(
     executions,
@@ -92,6 +97,7 @@ export function createPragma(options: CreatePragmaOptions): PragmaApp {
     loggerProvider,
     options.usageSink,
     options.hostContextBindings,
+    options.resolveHostContextBindings,
   );
   return {
     experts: {

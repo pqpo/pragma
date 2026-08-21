@@ -29,9 +29,23 @@ export interface ExpertToolExecutionContext {
         readonly signal?: AbortSignal | undefined;
       }) => Promise<unknown>)
     | undefined;
-  readonly listExperts?: (() => Promise<unknown>) | undefined;
+  readonly listAgents?:
+    | ((request: {
+        readonly expertId?: string;
+        readonly cursor?: string;
+        readonly limit?: number;
+      }) => Promise<unknown>)
+    | undefined;
   readonly followupExpert?:
     | ((request: { readonly agentId: string; readonly prompt: string }) => Promise<unknown>)
+    | undefined;
+  readonly steerExpert?:
+    | ((request: {
+        readonly agentId: string;
+        readonly invocationId?: string | undefined;
+        readonly message: string;
+        readonly fallback?: "reject" | "followup" | undefined;
+      }) => Promise<unknown>)
     | undefined;
   readonly interruptExpert?:
     | ((request: {
@@ -88,12 +102,10 @@ export interface ExpertAgentUserQuestionResponse {
 }
 
 export type ExpertAgentHumanRequest =
-  | ExpertAgentToolApprovalRequest
-  | ExpertAgentUserQuestionRequest;
+  ExpertAgentToolApprovalRequest | ExpertAgentUserQuestionRequest;
 
 export type ExpertAgentHumanResponse =
-  | ExpertAgentToolApprovalResponse
-  | ExpertAgentUserQuestionResponse;
+  ExpertAgentToolApprovalResponse | ExpertAgentUserQuestionResponse;
 
 export const ExpertAgentToolApprovalRequestSchema = z.object({
   kind: z.literal("tool_approval"),

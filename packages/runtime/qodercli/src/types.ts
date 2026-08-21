@@ -2,6 +2,7 @@ import type {
   RuntimeDriverDescriptorOverride,
   RuntimeCanUseResult,
   RuntimeModel,
+  RuntimeModelDiscoveryOptions,
   RuntimeSessionRestoreHandler,
   RuntimeSessionSyncCallback,
   RuntimeTokenCounter,
@@ -22,9 +23,11 @@ export interface QoderCliRuntimeAdapterOptions {
   readonly auth?: QoderCliRuntimeAuth | undefined;
   readonly defaultModelName?: string | undefined;
   readonly defaultThinkingLevel?: string | undefined;
+  readonly modelCatalogCacheRoot?: string | undefined;
   readonly contextWindowTokens?: number | undefined;
   readonly compactModelName?: string | undefined;
-  readonly listModels?: (() => Promise<readonly RuntimeModel[]>) | undefined;
+  readonly listModels?:
+    ((options?: RuntimeModelDiscoveryOptions) => Promise<readonly RuntimeModel[]>) | undefined;
   readonly onModelCatalogUpdated?: (() => void) | undefined;
   readonly permissionMode?: QoderCliRuntimePermissionMode | undefined;
   readonly canUse?: (() => Promise<RuntimeCanUseResult> | RuntimeCanUseResult) | undefined;

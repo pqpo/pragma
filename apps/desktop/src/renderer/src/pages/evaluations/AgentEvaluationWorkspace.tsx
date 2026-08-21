@@ -1,8 +1,12 @@
 import { ArrowLeft, FileArrowUp, Flask, Plus, Trash, X } from "@phosphor-icons/react";
 import { type KeyboardEvent, useEffect, useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
-import type { PragmaAgentJudgeEvaluationResource } from "@pragma/evaluation/ast";
-import type { PragmaExpertResource, PragmaExpertTeamResource } from "@pragma/interpreter/ast";
+import {
+  PRAGMA_DSL_WRITE_API_VERSION,
+  type PragmaAgentJudgeEvaluationResource,
+  type PragmaExpertResource,
+  type PragmaExpertTeamResource,
+} from "@pragma/interpreter/ast";
 import { stringify as stringifyYaml } from "yaml";
 
 import type {
@@ -970,7 +974,7 @@ export function datasetFromForm(
   value: DatasetFormState,
 ): PragmaAgentJudgeEvaluationResource {
   return {
-    apiVersion: "pragma/v4",
+    apiVersion: PRAGMA_DSL_WRITE_API_VERSION,
     kind: "Evaluation",
     metadata: {
       id: resourceId,
@@ -1017,7 +1021,7 @@ function agentDatasets(project: PragmaProjectSnapshot): PragmaAgentJudgeEvaluati
 }
 
 function datasetTemplate(id: string): string {
-  return `apiVersion: pragma/v4
+  return `apiVersion: pragma/v5
 kind: Evaluation
 metadata:
   id: ${id}

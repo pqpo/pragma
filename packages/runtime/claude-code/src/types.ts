@@ -3,6 +3,7 @@ import type {
   RuntimeDriverDescriptorOverride,
   RuntimeCommandSpawn,
   RuntimeModel,
+  RuntimeModelDiscoveryOptions,
   RuntimeSessionRestoreHandler,
   RuntimeSessionSyncCallback,
   RuntimeTokenCounter,
@@ -20,7 +21,9 @@ export interface ClaudeCodeRuntimeAdapterOptions {
   readonly env?: NodeJS.ProcessEnv | undefined;
   readonly defaultModelName?: string | undefined;
   readonly defaultThinkingLevel?: string | undefined;
-  readonly listModels?: (() => Promise<readonly RuntimeModel[]>) | undefined;
+  readonly modelCatalogCacheRoot?: string | undefined;
+  readonly listModels?:
+    ((options?: RuntimeModelDiscoveryOptions) => Promise<readonly RuntimeModel[]>) | undefined;
   readonly onModelCatalogUpdated?: (() => void) | undefined;
   readonly permissionMode?: ClaudeCodeRuntimePermissionMode | undefined;
   readonly additionalArgs?: readonly string[] | undefined;

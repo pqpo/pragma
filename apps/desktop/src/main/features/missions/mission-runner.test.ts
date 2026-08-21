@@ -1,3 +1,4 @@
+import { PRAGMA_DSL_WRITE_API_VERSION } from "@pragma/interpreter/ast";
 import { mkdtemp, readFile, readdir, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -363,6 +364,198 @@ describe("MissionRunner", { timeout: 15_000 }, () => {
     });
     expect(onMissionActivity).toHaveBeenCalledTimes(2);
     await vi.waitFor(() => expect(onExecutionTerminal).toHaveBeenCalledTimes(2));
+  });
+
+  it("removes the Memory namespace from successor Sessions when its global policy is disabled", async () => {
+    const root = await mkdtemp(join(tmpdir(), "pragma-mission-memory-policy-"));
+    temporaryPaths.push(root);
+    const project = createPragmaProjectStore({ projectsPath: join(root, "projects") });
+    const snapshot = await project.publish({
+      expectedRevision: 0,
+      resources: [runtimeFixture(), expertFixture()],
+    });
+    const missions = createMissionStore({ missionsPath: join(root, "missions") });
+    const mission = await missions.create({
+      workspace: { path: root, basename: "workspace" },
+      goal: "Read Memory",
+      project: { id: snapshot.projectId, revision: snapshot.revision },
+      executor: missionExecutorSnapshot(
+        snapshot.resources.find((resource) => resource.kind === "Expert")!,
+      ),
+    });
+    const memoryStore = new InMemoryContextStore({
+      context: [
+        {
+          id: "guide.md",
+          content: "Memory guide",
+          metadata: { trigger: "always_on", priority: "critical" },
+        },
+        {
+          id: "overview.md",
+          content: "Memory overview",
+          metadata: { trigger: "always_on", priority: "high" },
+        },
+      ],
+    });
+    let memoryEnabled = true;
+    const observedReads: string[] = [];
+    const runtime = defineRuntimeTestDriver<never, { context: RuntimeDriverSessionContext }>({
+      descriptor: { id: "fake", kind: "fake", displayName: "Fake" },
+      createSession: (context) => ({ context }),
+      restoreSession: (context) => ({ context }),
+      readSession: () => ({ runtimeSessionId: "runtime" }),
+      async startTurn(session, turn) {
+        const read = session.context.agent
+          .createDefaultTools()
+          .find((tool) => tool.name === "read_expert_context");
+        if (read === undefined) throw new Error("read_expert_context is missing.");
+        const result = await read.call({ namespace: "memory", id: "guide.md" }, turn.signal, {
+          execution: session.context.request.executionContext,
+        });
+        observedReads.push(result.text);
+        return { outputText: result.text, runtimeSessionId: "runtime" };
+      },
+      mapEvent: () => ({ events: [] }),
+      closeSession: () => undefined,
+    });
+    const runner = createMissionRunner({
+      missions,
+      project,
+      capabilityStore: {} as CapabilityStore,
+      capabilityCredentials: {} as CapabilityCredentialStore,
+      capabilitiesPath: join(root, "capabilities"),
+      pragmaHome: join(root, "state"),
+      runtimes: createStaticRuntimeResolver({ runtimes: [runtime], defaultRuntimeId: "fake" }),
+      hostContextStores: async () =>
+        memoryEnabled ? [{ namespace: "memory", store: memoryStore }] : [],
+      assertStorageWriteAllowed: async () => undefined,
+    });
+
+    await runner.run(mission.id);
+    await vi.waitFor(
+      async () => expect((await missions.get(mission.id)).execution?.status).toBe("succeeded"),
+      { timeout: settlementTimeoutMs },
+    );
+    expect(observedReads[0]).toContain("Memory guide");
+
+    memoryEnabled = false;
+    await runner.refreshMemoryContextBindings();
+    await runner.sendMessage({
+      id: mission.id,
+      content: "Read Memory again",
+      requestId: "00000000-0000-4000-8000-000000000100",
+    });
+    await vi.waitFor(
+      async () => expect((await missions.get(mission.id)).execution?.status).toBe("succeeded"),
+      { timeout: settlementTimeoutMs },
+    );
+    expect(observedReads[1]).toContain("Expert context store is not configured: memory");
+  });
+
+  it("reopens an active Session before a queued turn after Memory is disabled", async () => {
+    const root = await mkdtemp(join(tmpdir(), "pragma-mission-memory-policy-queued-"));
+    temporaryPaths.push(root);
+    const project = createPragmaProjectStore({ projectsPath: join(root, "projects") });
+    const snapshot = await project.publish({
+      expectedRevision: 0,
+      resources: [runtimeFixture(), expertFixture()],
+    });
+    const missions = createMissionStore({ missionsPath: join(root, "missions") });
+    const mission = await missions.create({
+      workspace: { path: root, basename: "workspace" },
+      goal: "Read Memory before disabling it",
+      project: { id: snapshot.projectId, revision: snapshot.revision },
+      executor: missionExecutorSnapshot(
+        snapshot.resources.find((resource) => resource.kind === "Expert")!,
+      ),
+    });
+    const memoryStore = new InMemoryContextStore({
+      context: [
+        {
+          id: "guide.md",
+          content: "Memory guide",
+          metadata: { trigger: "always_on", priority: "critical" },
+        },
+      ],
+    });
+    let memoryEnabled = true;
+    let createSessionCount = 0;
+    let markFirstTurnStarted = (): void => undefined;
+    const firstTurnStarted = new Promise<void>((resolve) => {
+      markFirstTurnStarted = resolve;
+    });
+    let finishFirstTurn = (): void => undefined;
+    const firstTurnCanFinish = new Promise<void>((resolve) => {
+      finishFirstTurn = resolve;
+    });
+    const observedReads: string[] = [];
+    const restoreSession = vi.fn((context: RuntimeDriverSessionContext) => ({ context }));
+    const runtime = defineRuntimeTestDriver<never, { context: RuntimeDriverSessionContext }>({
+      descriptor: { id: "fake", kind: "fake", displayName: "Fake" },
+      createSession: (context) => {
+        createSessionCount += 1;
+        return { context };
+      },
+      restoreSession,
+      readSession: () => ({ runtimeSessionId: "runtime" }),
+      async startTurn(session, turn) {
+        if (turn.rawQuery === mission.goal) {
+          markFirstTurnStarted();
+          await firstTurnCanFinish;
+        }
+        const read = session.context.agent
+          .createDefaultTools()
+          .find((tool) => tool.name === "read_expert_context");
+        if (read === undefined) throw new Error("read_expert_context is missing.");
+        const result = await read.call({ namespace: "memory", id: "guide.md" }, turn.signal, {
+          execution: session.context.request.executionContext,
+        });
+        observedReads.push(result.text);
+        return { outputText: result.text, runtimeSessionId: "runtime" };
+      },
+      mapEvent: () => ({ events: [] }),
+      closeSession: () => undefined,
+    });
+    const runner = createMissionRunner({
+      missions,
+      project,
+      capabilityStore: {} as CapabilityStore,
+      capabilityCredentials: {} as CapabilityCredentialStore,
+      capabilitiesPath: join(root, "capabilities"),
+      pragmaHome: join(root, "state"),
+      runtimes: createStaticRuntimeResolver({ runtimes: [runtime], defaultRuntimeId: "fake" }),
+      hostContextStores: async () =>
+        memoryEnabled ? [{ namespace: "memory", store: memoryStore }] : [],
+      assertStorageWriteAllowed: async () => undefined,
+    });
+
+    await runner.run(mission.id);
+    await firstTurnStarted;
+    const followupRequestId = "00000000-0000-4000-8000-000000000101";
+    await expect(
+      runner.sendMessage({
+        id: mission.id,
+        content: "Read Memory after disabling it",
+        requestId: followupRequestId,
+      }),
+    ).resolves.toMatchObject({ effectiveMode: "enqueue" });
+
+    memoryEnabled = false;
+    await runner.refreshMemoryContextBindings();
+    finishFirstTurn();
+
+    await vi.waitFor(
+      async () =>
+        expect((await missions.get(mission.id)).execution).toMatchObject({
+          inputMessageId: followupRequestId,
+          status: "succeeded",
+        }),
+      { timeout: settlementTimeoutMs },
+    );
+    expect(observedReads[0]).toContain("Memory guide");
+    expect(observedReads[1]).toContain("Expert context store is not configured: memory");
+    expect(createSessionCount).toBe(2);
+    expect(restoreSession).not.toHaveBeenCalled();
   });
 
   it("mounts Mission Knowledge read-only and rebuilds cached bindings after an update", async () => {
@@ -3401,7 +3594,7 @@ describe("MissionRunner", { timeout: 15_000 }, () => {
 
 function expertFixture(): PragmaExpertResource {
   return {
-    apiVersion: "pragma/v4",
+    apiVersion: PRAGMA_DSL_WRITE_API_VERSION,
     kind: "Expert",
     metadata: {
       id: "1xddvess309a6gme",
@@ -3464,7 +3657,7 @@ function reviewerFixture(): PragmaExpertResource {
 
 function expertTeamFixture(): PragmaExpertTeamResource {
   return {
-    apiVersion: "pragma/v4",
+    apiVersion: PRAGMA_DSL_WRITE_API_VERSION,
     kind: "ExpertTeam",
     metadata: {
       id: "vyv9pwwzaksth2dd",
@@ -3478,7 +3671,10 @@ function expertTeamFixture(): PragmaExpertTeamResource {
       members: [{ ref: "expert:3sfd30h5017wd17d" }],
       contextStores: [],
       delegation: {
-        allow: { "1xddvess309a6gme": ["3sfd30h5017wd17d"], "3sfd30h5017wd17d": [] },
+        permissions: {
+          spawn: {},
+          interact: {},
+        },
         maxConcurrency: 2,
         maxDepth: 2,
         context: "context-policy:pragma.fresh@v1",
@@ -3490,7 +3686,7 @@ function expertTeamFixture(): PragmaExpertTeamResource {
 
 function expertFlowFixture(): PragmaFlowResource {
   return {
-    apiVersion: "pragma/v4",
+    apiVersion: PRAGMA_DSL_WRITE_API_VERSION,
     kind: "Flow",
     metadata: {
       id: "ffdfk2cczgqjda7q",
@@ -3517,7 +3713,7 @@ function expertFlowFixture(): PragmaFlowResource {
 
 function runtimeFixture(runtimeId = "fake"): PragmaRuntimeProfileResource {
   return {
-    apiVersion: "pragma/v4",
+    apiVersion: PRAGMA_DSL_WRITE_API_VERSION,
     kind: "RuntimeProfile",
     metadata: {
       id: "rdzgnq05qfqcpqcm",
@@ -3534,7 +3730,7 @@ function runtimeFixture(runtimeId = "fake"): PragmaRuntimeProfileResource {
 
 function approvalFlowFixture(): PragmaFlowResource {
   return {
-    apiVersion: "pragma/v4",
+    apiVersion: PRAGMA_DSL_WRITE_API_VERSION,
     kind: "Flow",
     metadata: {
       id: "t9ne4d8njvvxv2ea",
@@ -3567,7 +3763,7 @@ function approvalFlowFixture(): PragmaFlowResource {
 
 function approvalAfterExpertFlowFixture(): PragmaFlowResource {
   return {
-    apiVersion: "pragma/v4",
+    apiVersion: PRAGMA_DSL_WRITE_API_VERSION,
     kind: "Flow",
     metadata: {
       id: "3tshk7gb32ckdfj3",

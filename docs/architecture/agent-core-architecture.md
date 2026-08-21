@@ -10,13 +10,14 @@ Core 分为声明、执行、Runtime 和存储四个边界：
 
 Expert 不包装成单节点 Flow。普通 Expert 与 ExpertTeam 共用异步编排机制：`spawn_expert` 创建
 Execution-scoped AgentInstance 和首个 Invocation，`followup_expert` 在相同 Agent Context 上追加
-FIFO Invocation，`wait_experts` 按 Invocation ID 汇合结果。`list_experts` 和 `interrupt_expert`
+FIFO Invocation，`wait_experts` 按 Invocation ID 汇合结果。`list_agents` 和 `interrupt_expert`
 只管理当前调用者直接创建的 Agent。
 
 两种声明方式只负责提供不同治理配置：
 
 - standalone Expert 的 launcher 显式列出可调用的子专家；
-- ExpertTeam 根据当前调用者和 allowlist 动态生成工具，并覆盖成员自己的 standalone launcher。
+- ExpertTeam 根据当前调用者和成员权限策略动态生成工具；coordinator 在当前 Team Execution 内拥有
+  系统继承的全量管理权限。团队工具覆盖成员自己的 standalone launcher。
 
 根 launcher 的 `maxConcurrency` 和 `maxDepth` 是整个委派树的执行预算。Flow step、standalone launcher
 和 ExpertTeam delegation 都通过同一个 `ContextIdResolver` 选择 Context。默认 resolver 每次返回

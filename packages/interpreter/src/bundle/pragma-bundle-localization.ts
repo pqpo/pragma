@@ -1,5 +1,5 @@
 import {
-  PragmaResourceSchema,
+  PragmaForwardCompatibleResourceSchema,
   type PragmaResource,
   type PragmaResourceRef,
 } from "../ast/pragma-dsl.schema.ts";
@@ -70,10 +70,12 @@ export function remapPragmaProjectArtifactPaths(
   paths: Readonly<Record<string, string>>,
 ): readonly PragmaResource[] {
   return resources.map((resource) => {
-    if (!isDeclarativeResource(resource)) return PragmaResourceSchema.parse(resource);
+    if (!isDeclarativeResource(resource)) {
+      return PragmaForwardCompatibleResourceSchema.parse(resource);
+    }
     const localized = structuredClone(resource);
     localized.spec.config = rewriteProjectArtifactPaths(localized.spec.config, paths);
-    return PragmaResourceSchema.parse(localized);
+    return PragmaForwardCompatibleResourceSchema.parse(localized);
   });
 }
 
@@ -180,7 +182,7 @@ export function localizePragmaBundleResources(
         input.projectArtifactPaths,
       );
     }
-    return PragmaResourceSchema.parse(localized);
+    return PragmaForwardCompatibleResourceSchema.parse(localized);
   });
 
   return {
@@ -237,9 +239,11 @@ function rewriteResourceIdentity(
         });
       }
     }
-    if (rewritten.spec.delegation.allow !== undefined) {
-      rewritten.spec.delegation.allow = Object.fromEntries(
-        Object.entries(rewritten.spec.delegation.allow).map(([expertId, members]) => {
+    for (const permission of ["spawn", "interact"] as const) {
+      const configured = rewritten.spec.delegation.permissions[permission];
+      if (configured === undefined) continue;
+      rewritten.spec.delegation.permissions[permission] = Object.fromEntries(
+        Object.entries(configured).map(([expertId, members]) => {
           const targetExpert = refMap.get(`expert:${expertId}` as PragmaResourceRef);
           return [
             targetExpert?.slice("expert:".length) ?? expertId,
@@ -267,7 +271,7 @@ function rewriteResourceIdentity(
       rewritten.spec.target.ref = rewriteRef(rewritten.spec.target.ref);
     }
   }
-  return PragmaResourceSchema.parse(rewritten);
+  return PragmaForwardCompatibleResourceSchema.parse(rewritten);
 }
 
 function setValueAtPath(

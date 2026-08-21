@@ -34,6 +34,7 @@ import {
   type ExpertAgentHumanResponse,
   type ExpertDefinition,
   type ExpertAgentContextStoreRegistrationInput,
+  type HostContextBindingsResolver,
   type ExpertSession,
   type MutableExecution,
   type McpToolRegistryPool,
@@ -166,6 +167,7 @@ export interface MissionWorkNotification {
 export interface MissionRunner {
   reconcileUsage(): Promise<void>;
   invalidateEstimatedContextWindows(): Promise<void>;
+  refreshMemoryContextBindings(): Promise<void>;
   run(id: string): Promise<Mission>;
   updateOptions(input: UpdateMissionOptions): Promise<Mission>;
   updateContextStores(input: UpdateMissionContextStores): Promise<Mission>;
@@ -319,7 +321,8 @@ export function createMissionRunner(options: {
   readonly pragmaHome: string;
   readonly executionStore?: FileExecutionStore | undefined;
   readonly contextStores?: ContextStoreStore | undefined;
-  readonly hostContextStores?: readonly ExpertAgentContextStoreRegistrationInput[] | undefined;
+  readonly hostContextStores?:
+    readonly ExpertAgentContextStoreRegistrationInput[] | HostContextBindingsResolver | undefined;
   readonly plugins?: PluginStore | undefined;
   readonly runtimes: RuntimeResolver;
   readonly usage?: DesktopUsageStore | undefined;
@@ -494,12 +497,21 @@ export function createMissionRunner(options: {
           };
         }),
       );
-    const hostContextBindings = [
-      ...(systemMission ? [] : (options.hostContextStores ?? [])),
+    const resolveConfiguredHostContextBindings = async (): Promise<
+      readonly ExpertAgentContextStoreRegistrationInput[]
+    > => {
+      if (systemMission || options.hostContextStores === undefined) return [];
+      return typeof options.hostContextStores === "function"
+        ? await options.hostContextStores()
+        : options.hostContextStores;
+    };
+    const resolveHostContextBindings: HostContextBindingsResolver = async () => [
+      ...(await resolveConfiguredHostContextBindings()),
       ...legacyExecutionOutputBindings,
       ...board.bindings,
       ...missionKnowledgeBindings,
     ];
+    const hostContextBindings = await resolveHostContextBindings();
     const seenNamespaces = new Set<string>();
     for (const binding of hostContextBindings) {
       if (seenNamespaces.has(binding.namespace)) {
@@ -515,6 +527,7 @@ export function createMissionRunner(options: {
         executionStore,
         expertSessionStore,
         hostContextBindings,
+        resolveHostContextBindings,
         loggerProvider: options.loggerProvider?.withScope({ missionId: mission.id }),
         automaticHumanInteractionHandler: async (request) => {
           if (
@@ -580,6 +593,7 @@ export function createMissionRunner(options: {
   const sessions = new Map<string, ExpertSession>();
   const sessionCompilationIdentities = new Map<string, string>();
   const sessionDefinitionFingerprints = new Map<string, string>();
+  const memoryContextBindingsChanged = new Set<string>();
   const pendingOperations = new Map<string, PendingMissionOperation>();
   const chatListeners = new Set<(notification: MissionChatNotification) => void>();
   const chatRevisions = new Map<string, number>();
@@ -590,6 +604,26 @@ export function createMissionRunner(options: {
   const workRevisions = new Map<string, number>();
   const liveWorkOutputs = new Map<string, Map<string, LiveMissionChat>>();
   const executorMetadataCache = new Map<string, ExecutorMetadata>();
+
+  const refreshMemoryContextBindings = async (): Promise<void> => {
+    for (const [missionId, session] of sessions) {
+      memoryContextBindingsChanged.add(missionId);
+      if (active.has(missionId)) continue;
+      try {
+        await session.close("Memory policy changed.");
+      } catch (error) {
+        logger.warn(
+          "mission.memory_context_refresh_failed",
+          `Mission ${missionId} could not close its previous Expert Session after the Memory policy changed.`,
+          { error, missionId },
+        );
+      } finally {
+        sessions.delete(missionId);
+        sessionCompilationIdentities.delete(missionId);
+        sessionDefinitionFingerprints.delete(missionId);
+      }
+    }
+  };
 
   const readExecutorMetadata = async (
     mission: Pick<Mission, "project">,
@@ -1260,16 +1294,30 @@ export function createMissionRunner(options: {
       mission.execution.sessionId !== undefined &&
       ["queued", "running", "waiting"].includes(mission.execution.status);
     phaseStartedAt = performance.now();
-    const session =
-      sessions.get(mission.id) ??
-      (await openMissionExpertSession({
-        mission,
-        compiled,
-        app,
-        sessionId: recoverable ? mission.execution!.sessionId : undefined,
-        modelSelection,
-        createSuccessorOnMismatch: true,
-      }));
+    const memoryBindingsChanged = memoryContextBindingsChanged.delete(mission.id);
+    let session = sessions.get(mission.id);
+    if (memoryBindingsChanged && session !== undefined) {
+      await session.close("Memory policy changed.");
+      sessions.delete(mission.id);
+      sessionCompilationIdentities.delete(mission.id);
+      sessionDefinitionFingerprints.delete(mission.id);
+      session = undefined;
+    }
+    if (session === undefined) {
+      session = memoryBindingsChanged
+        ? await createMissionExpertSession(compiled, app, { modelSelection })
+        : await openMissionExpertSession({
+            mission,
+            compiled,
+            app,
+            sessionId: recoverable ? mission.execution!.sessionId : undefined,
+            modelSelection,
+            createSuccessorOnMismatch: true,
+          });
+    }
+    if (memoryBindingsChanged) {
+      await interruptSupersededMissionSession(mission);
+    }
     logMissionPhase(logger, mission.id, "expert_session_open", phaseStartedAt, acceptedAt, {
       cacheHit: sessions.has(mission.id),
     });
@@ -1425,7 +1473,13 @@ export function createMissionRunner(options: {
       ? undefined
       : desiredModelSelection;
     let definitionChanged = false;
-    const contextStoresChanged = missionsRequiringSuccessorSession.delete(mission.id);
+    const memoryBindingsChanged = memoryContextBindingsChanged.has(mission.id);
+    const contextStoresChanged =
+      missionsRequiringSuccessorSession.delete(mission.id) ||
+      (memoryBindingsChanged && !active.has(mission.id));
+    if (memoryBindingsChanged && !active.has(mission.id)) {
+      memoryContextBindingsChanged.delete(mission.id);
+    }
     if (compiledExpert !== undefined && session !== undefined) {
       const nextDefinitionFingerprint = fingerprintExpertExecutionDefinition(compiledExpert);
       const previousDefinitionFingerprint = sessionDefinitionFingerprints.get(mission.id);
@@ -1440,6 +1494,13 @@ export function createMissionRunner(options: {
         session = undefined;
         definitionChanged = true;
       }
+    }
+    if (contextStoresChanged && session !== undefined && !active.has(mission.id)) {
+      await session.close("Mission context bindings changed.");
+      sessions.delete(mission.id);
+      sessionCompilationIdentities.delete(mission.id);
+      sessionDefinitionFingerprints.delete(mission.id);
+      session = undefined;
     }
     const sessionCacheHit = session !== undefined;
     phaseStartedAt = performance.now();
@@ -2371,6 +2432,7 @@ export function createMissionRunner(options: {
     async invalidateEstimatedContextWindows() {
       for (const mission of await options.missions.list()) invalidateChat(mission.id, "user");
     },
+    refreshMemoryContextBindings,
     async run(id) {
       const pending = pendingOperations.get(id);
       if (pending?.kind === "run") return await pending.promise;

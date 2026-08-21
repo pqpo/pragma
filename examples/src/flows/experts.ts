@@ -8,7 +8,7 @@ const team = defineExpertTeam({
   id: "flow-team",
   coordinator,
   members: [member],
-  delegation: { allow: { "flow-lead": ["flow-member"], "flow-member": [] } },
+  delegation: {},
 });
 const flow = defineFlow({ id: "experts-flow" });
 const one = flow.use("single", expert);

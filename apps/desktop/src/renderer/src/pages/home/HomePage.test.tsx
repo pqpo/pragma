@@ -1,14 +1,19 @@
 import { renderToStaticMarkup } from "react-dom/server";
 import { describe, expect, it } from "vitest";
 
-import { MissionModelOverrideControls } from "../../components/MissionModelOverrideControls.tsx";
+import {
+  MissionModelOverrideControls,
+  resolveMissionModelMenuPlacement,
+} from "../../components/MissionModelOverrideControls.tsx";
 import {
   MissionAttachmentList,
   MissionImagePreviewDialog,
 } from "../../components/MissionAttachments.tsx";
 import { ToolPermissionSelect } from "../../components/ToolPermissionSelect.tsx";
 import {
+  HomeExecutorConfigurationTip,
   filterMissionExecutors,
+  homeExecutorConfigurationUnavailable,
   belongsToUiOverlayOwner,
   isHomeExecutorFavorite,
   missionModelOverrideAvailable,
@@ -21,6 +26,65 @@ import {
   workspacePathsEqual,
 } from "./HomePage.tsx";
 import { SchemaInputForm, createSchemaInputValue, isSchemaInputValid } from "./SchemaInputForm.tsx";
+
+describe("homeExecutorConfigurationUnavailable", () => {
+  it("blocks expert and team submissions while model/runtime state is unavailable", () => {
+    expect(
+      homeExecutorConfigurationUnavailable({
+        executorKind: "expert",
+        models: [],
+        modelsLoading: true,
+        modelError: null,
+        modelResetRequired: false,
+        persistenceReady: false,
+      }),
+    ).toBe(true);
+    expect(
+      homeExecutorConfigurationUnavailable({
+        executorKind: "team",
+        models: [],
+        modelsLoading: false,
+        modelError: "Runtime unavailable",
+        modelResetRequired: false,
+        persistenceReady: true,
+      }),
+    ).toBe(true);
+  });
+
+  it("does not block Flow submissions on model availability", () => {
+    expect(
+      homeExecutorConfigurationUnavailable({
+        executorKind: "flow",
+        models: [],
+        modelsLoading: true,
+        modelError: "Not applicable",
+        modelResetRequired: true,
+        persistenceReady: false,
+      }),
+    ).toBe(false);
+  });
+});
+
+describe("HomeExecutorConfigurationTip", () => {
+  it("renders model settings and Studio shortcuts without link underlines", () => {
+    const html = renderToStaticMarkup(
+      <HomeExecutorConfigurationTip
+        message="No AI provider is configured, so the conversation cannot start."
+        configureModelsLabel="Set up models"
+        configureExpertLabel="Configure expert"
+        onConfigureModels={() => undefined}
+        onConfigureExpert={() => undefined}
+      />,
+    );
+
+    expect(html).toContain('class="home-inline-tip home-inline-error-tip"');
+    expect(html).toContain('role="alert"');
+    expect(html).toContain("No AI provider is configured");
+    expect(html).toContain("Set up models");
+    expect(html).toContain("Configure expert");
+    expect(html.match(/home-inline-error-link/g)).toHaveLength(2);
+  });
+});
 
 describe("MissionAttachmentList", () => {
   it("renders one model warning below multiple clickable image thumbnails", () => {
@@ -54,6 +118,7 @@ describe("MissionAttachmentList", () => {
     expect(html).toContain('aria-label="View original screen.png"');
     expect(html).toContain('aria-label="View original diagram.png"');
     expect(html).toContain("mission-attachment-thumbnail");
+    expect(html).not.toContain("<figcaption");
     expect(html).toContain("This model does not support images");
     expect(html.match(/mission-attachment-model-error/g)).toHaveLength(1);
     expect(html).toContain('</figure></div><div class="mission-attachment-model-error">');
@@ -79,6 +144,30 @@ describe("MissionAttachmentList", () => {
 });
 
 describe("MissionModelOverrideControls", () => {
+  it("flips the model options panel to the left when the right side is too narrow", () => {
+    expect(
+      resolveMissionModelMenuPlacement({
+        triggerLeft: 680,
+        viewportWidth: 960,
+        menuWidth: 490,
+        sectionsWidth: 242,
+        optionsWidth: 240,
+      }),
+    ).toEqual({ left: 432, placement: "left" });
+  });
+
+  it("keeps the model options panel on the right when it fits", () => {
+    expect(
+      resolveMissionModelMenuPlacement({
+        triggerLeft: 240,
+        viewportWidth: 960,
+        menuWidth: 490,
+        sectionsWidth: 242,
+        optionsWidth: 240,
+      }),
+    ).toEqual({ left: 240, placement: "right" });
+  });
+
   it("combines the selected model and thinking depth without exposing the Runtime", () => {
     const html = renderToStaticMarkup(
       <MissionModelOverrideControls

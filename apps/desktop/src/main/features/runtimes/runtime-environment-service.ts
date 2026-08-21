@@ -267,6 +267,7 @@ function environmentElapsedMs(startedAt: number): number {
 
 export interface CreateBuiltInRuntimeFactoriesOptions {
   readonly modelProviders: ModelProviderStore;
+  readonly modelCatalogCacheRoot?: string | undefined;
   readonly getToolPermissionMode?:
     (() => DesktopToolPermissionMode | Promise<DesktopToolPermissionMode>) | undefined;
   readonly getRuntimeProcessEnvironment?: (() => Promise<NodeJS.ProcessEnv>) | undefined;
@@ -300,6 +301,7 @@ export function createBuiltInRuntimeFactories(
             : { onModelCatalogUpdated: () => onModelCatalogUpdated(environment.id) }),
           ...permissions,
           env,
+          modelCatalogCacheRoot: options.modelCatalogCacheRoot,
           tokenCounter: options.tokenCounter,
           ...(options.mcpToolRegistryPool === undefined
             ? {}
@@ -328,6 +330,7 @@ export function createBuiltInRuntimeFactories(
                 ? "auto"
                 : "bypassPermissions",
           env,
+          modelCatalogCacheRoot: options.modelCatalogCacheRoot,
           tokenCounter: options.tokenCounter,
           ...(options.mcpToolRegistryPool === undefined
             ? {}
@@ -352,6 +355,7 @@ export function createBuiltInRuntimeFactories(
           permissionMode: antigravityRuntimePermissionForMode(permissionMode),
           authenticationMode: "auto",
           env,
+          modelCatalogCacheRoot: options.modelCatalogCacheRoot,
           tokenCounter: options.tokenCounter,
           ...(options.mcpToolRegistryPool === undefined
             ? {}
@@ -375,6 +379,7 @@ export function createBuiltInRuntimeFactories(
             : { onModelCatalogUpdated: () => onModelCatalogUpdated(environment.id) }),
           permissionMode: qoderRuntimePermissionForMode(permissionMode),
           env,
+          modelCatalogCacheRoot: options.modelCatalogCacheRoot,
           tokenCounter: options.tokenCounter,
           ...(options.mcpToolRegistryPool === undefined
             ? {}

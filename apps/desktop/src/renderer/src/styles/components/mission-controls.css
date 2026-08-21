@@ -378,7 +378,7 @@
   max-height: 270px;
   gap: 10px;
   padding-top: 12px;
-  padding-bottom: 8px;
+  padding-bottom: 4px;
 }
 
 .mission-attachment-list.is-empty {
@@ -393,7 +393,6 @@
   width: 112px;
   flex: 0 0 112px;
   align-content: start;
-  gap: 4px;
   margin: 0;
 }
 
@@ -424,23 +423,13 @@
   object-fit: cover;
 }
 
-.mission-attachment-image-card figcaption {
-  width: 96px;
-  overflow: hidden;
-  color: var(--ui-text-secondary);
-  font-size: 11px;
-  line-height: 1.35;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
 .mission-attachment-image-remove {
   position: absolute;
-  top: 5px;
-  right: 11px;
+  top: -2px;
+  right: 8px;
   display: grid;
-  width: 22px;
-  height: 22px;
+  width: 18px;
+  height: 18px;
   place-items: center;
   padding: 0;
   border: 1px solid rgb(255 255 255 / 75%);
@@ -448,6 +437,15 @@
   background: rgb(25 31 28 / 72%);
   color: #fff;
   cursor: pointer;
+  opacity: 0;
+  visibility: hidden;
+  transition: opacity 120ms ease;
+}
+
+.mission-attachment-image-card:hover .mission-attachment-image-remove,
+.mission-attachment-image-card:focus-within .mission-attachment-image-remove {
+  opacity: 1;
+  visibility: visible;
 }
 
 .mission-attachment-model-error {
