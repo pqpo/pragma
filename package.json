@@ -58,8 +58,8 @@
     ],
     "overrides": {
       "typescript": "6.0.3",
-      "eslint": "10.8.0",
-      "typescript-eslint": "8.65.0",
+      "eslint": "10.8.1",
+      "typescript-eslint": "8.67.0",
       "turbo": "2.10.8",
       "@types/node": "26.1.0",
       "tsx": "4.23.0",
