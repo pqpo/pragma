@@ -32,7 +32,10 @@ import {
   createContextOutputSystem,
   unwrapInvocationOutput,
 } from "../execution/context-output-service.ts";
-import type { HostContextBindings } from "../context-system/host-context-bindings.ts";
+import type {
+  HostContextBindings,
+  HostContextBindingsResolver,
+} from "../context-system/host-context-bindings.ts";
 import {
   ContextResolutionService,
   closeExecutionContexts,
@@ -96,6 +99,7 @@ export class FlowExecutionManager {
     private readonly loggerProvider?: PragmaLoggerProvider | undefined,
     private readonly usageSink?: UsageSink | undefined,
     private readonly hostContextBindings?: HostContextBindings | undefined,
+    private readonly resolveHostContextBindings?: HostContextBindingsResolver | undefined,
   ) {}
 
   async start<TInput>(
@@ -281,9 +285,13 @@ export class FlowExecutionManager {
     controller: ExecutionController,
     runtime?: string,
   ): Promise<void> {
+    const hostContextBindings =
+      this.resolveHostContextBindings === undefined
+        ? this.hostContextBindings
+        : await this.resolveHostContextBindings();
     const contextOutputs = new ContextOutputService(
       executionId,
-      createContextOutputSystem(this.hostContextBindings),
+      createContextOutputSystem(hostContextBindings),
     );
     const root = (await this.executions.getInvocation(executionId, executionId))!;
     await this.executions.commit({
@@ -307,7 +315,8 @@ export class FlowExecutionManager {
         contextOutputs,
         loggerProvider: this.loggerProvider?.withScope({ executionId }),
         usageSink: this.usageSink,
-        hostContextBindings: this.hostContextBindings,
+        hostContextBindings,
+        resolveHostContextBindings: this.resolveHostContextBindings,
       });
       const invocationOutput = await contextOutputs.normalize(
         root.invocationId,
@@ -432,6 +441,7 @@ async function runFlow(options: {
   readonly loggerProvider?: PragmaLoggerProvider | undefined;
   readonly usageSink?: UsageSink | undefined;
   readonly hostContextBindings?: HostContextBindings | undefined;
+  readonly resolveHostContextBindings?: HostContextBindingsResolver | undefined;
 }): Promise<unknown> {
   let deadline = await ensureFlowDeadline(options);
   deadline = await extendExpiredDeadlineForPendingHumanInteraction(options, deadline);
@@ -539,6 +549,7 @@ export async function runNestedFlowInvocation(options: {
   readonly loggerProvider?: PragmaLoggerProvider | undefined;
   readonly usageSink?: UsageSink | undefined;
   readonly hostContextBindings?: HostContextBindings | undefined;
+  readonly resolveHostContextBindings?: HostContextBindingsResolver | undefined;
 }): Promise<unknown> {
   const runtimeId = (await options.runtimes.bind({ runtimeId: options.runtime })).binding.runtimeId;
   await validateFlowRuntimeConfiguration(options.flow, options.runtimes, runtimeId);
@@ -650,6 +661,7 @@ async function runStep(
       loggerProvider: options.loggerProvider,
       usageSink: options.usageSink,
       hostContextBindings: options.hostContextBindings,
+      resolveHostContextBindings: options.resolveHostContextBindings,
     });
     return unwrapInvocationOutput(InvocationOutputSchema.parse(invocationOutput));
   } catch (error) {

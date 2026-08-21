@@ -48,7 +48,10 @@ import {
 } from "./expert-runner.ts";
 import { unwrapInvocationOutput } from "./context-output-service.ts";
 import { createExpertPromptInput, readExpertPromptInput } from "./expert-prompt.ts";
-import type { HostContextBindings } from "../context-system/host-context-bindings.ts";
+import type {
+  HostContextBindings,
+  HostContextBindingsResolver,
+} from "../context-system/host-context-bindings.ts";
 import { RuntimeSessionPool } from "./runtime-session-pool.ts";
 import type { ExecutionStore } from "./execution-store.ts";
 import {
@@ -178,6 +181,7 @@ export interface ExpertSessionManagerDependencies {
   readonly automaticHumanInteractionHandler?:
     ExpertAgentAutomaticHumanInteractionHandler | undefined;
   readonly hostContextBindings?: HostContextBindings | undefined;
+  readonly resolveHostContextBindings?: HostContextBindingsResolver | undefined;
 }
 
 type SteerClaim =
@@ -1450,6 +1454,7 @@ class ExpertSessionImpl implements ExpertSession {
           }),
           usageSink: this.dependencies.usageSink,
           hostContextBindings: this.dependencies.hostContextBindings,
+          resolveHostContextBindings: this.dependencies.resolveHostContextBindings,
           ...(this.recoveredExecutionId === prompt.executionId
             ? { runtimeRunId: `${prompt.executionId}:recovery:${randomUUID()}` }
             : {}),

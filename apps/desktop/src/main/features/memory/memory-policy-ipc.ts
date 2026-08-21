@@ -64,6 +64,7 @@ export function installMemoryPolicyHandlers(
     readonly knowledgePromotion: MemoryKnowledgePromotionService;
     readonly curator: DesktopMemoryCurator;
     readonly getWindow: () => BrowserWindow | null;
+    readonly onGlobalPolicyUpdated?: (() => void | Promise<void>) | undefined;
   },
 ): void {
   const loadSubjectNameIndex = (): Promise<MemorySubjectNameIndex> =>
@@ -98,6 +99,7 @@ export function installMemoryPolicyHandlers(
   ipcMain.handle("memory-policy:global:update", async (_event, input: unknown) => {
     const parsed = UpdateDesktopGlobalMemoryPolicySchema.parse(input);
     await plane.policies.updateGlobal(parsed);
+    await options.onGlobalPolicyUpdated?.();
     return await globalSnapshot();
   });
   ipcMain.handle("memory-policy:asset:get", async (_event, input: unknown) => {

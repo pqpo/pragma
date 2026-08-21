@@ -682,7 +682,12 @@ export async function createDesktopApplicationContainer(
     pragmaHome: pragmaPaths.root,
     executionStore: memoryPlane.executionStore,
     contextStores,
-    hostContextStores: [{ namespace: "memory", store: memoryPlane.contextStore }],
+    hostContextStores: async () => {
+      const globalPolicy = await memoryPlane.policies.getGlobal();
+      return globalPolicy.policy.enabled === "enabled"
+        ? [{ namespace: "memory", store: memoryPlane.contextStore }]
+        : [];
+    },
     plugins: pluginStore,
     runtimes,
     usage: usageStore,
@@ -1017,6 +1022,7 @@ export async function createDesktopApplicationContainer(
     knowledgePromotion,
     curator: memoryCurator,
     getWindow: options.getWindow,
+    onGlobalPolicyUpdated: () => missionRunner.refreshMemoryContextBindings(),
   });
   installExpertMemoryContextStoreBrowserHandlers(
     createExpertMemoryContextStoreBrowserService({

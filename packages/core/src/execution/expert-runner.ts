@@ -28,8 +28,10 @@ import { isExpertTeam, type ExpertDefinition, type ExpertTeam } from "../agent/e
 import { ContextManager } from "../agent/context-manager.ts";
 import { StaticContextStore } from "../context-system/static-context-store.ts";
 import {
+  hostContextBindingsFingerprint,
   withHostContextBindings,
   type HostContextBindings,
+  type HostContextBindingsResolver,
 } from "../context-system/host-context-bindings.ts";
 import { freshContextIdResolver } from "./context-id-resolver.ts";
 import type { Flow } from "../flow/flow.ts";
@@ -79,7 +81,11 @@ import { getExecutionLiveBus } from "./execution-live-bus.ts";
 import { projectRuntimeOutput } from "./execution-output.ts";
 import { RuntimeMessageAccumulator } from "./runtime-message-accumulator.ts";
 import { requireInvocationContextOrigin } from "./runtime-context-record.ts";
-import { RuntimeSessionPool, type RuntimeSessionIdentity } from "./runtime-session-pool.ts";
+import {
+  RuntimeSessionPool,
+  type RuntimeSessionCreateOptions,
+  type RuntimeSessionIdentity,
+} from "./runtime-session-pool.ts";
 import { ContextOutputService, unwrapInvocationOutput } from "./context-output-service.ts";
 import { formatExpertPromptWithAttachments } from "./expert-prompt.ts";
 
@@ -181,7 +187,7 @@ export class ExecutionController {
 
   async acquireRuntime(
     identity: RuntimeSessionIdentity,
-    create: () => Promise<RuntimeAgentSession>,
+    create: (options: RuntimeSessionCreateOptions) => Promise<RuntimeAgentSession>,
   ): Promise<RuntimeAgentSession> {
     const session = await this.runtimeSessions.acquire(identity, create);
     this.activeRuntimeSessions.set(identity.contextId, session);
@@ -659,6 +665,7 @@ export interface RunExpertInvocationOptions {
   readonly delegationPermit?: DelegationPermit | undefined;
   readonly contextOutputs?: ContextOutputService | undefined;
   readonly hostContextBindings?: HostContextBindings | undefined;
+  readonly resolveHostContextBindings?: HostContextBindingsResolver | undefined;
 }
 
 export async function runExpertInvocation(options: RunExpertInvocationOptions): Promise<unknown> {
@@ -669,7 +676,19 @@ export async function runExpertInvocation(options: RunExpertInvocationOptions): 
   const teamTools = team === undefined ? [] : createTeamDelegationTools(team, nativeExpert.id);
   const delegatedExpert =
     team === undefined ? nativeExpert : withTeamDelegationTools(nativeExpert, teamTools, team);
-  const executableExpert = withHostContextBindings(delegatedExpert, options.hostContextBindings);
+  const hostContextBindings =
+    options.resolveHostContextBindings === undefined
+      ? options.hostContextBindings
+      : await options.resolveHostContextBindings();
+  const invocationOptions: RunExpertInvocationOptions =
+    options.resolveHostContextBindings === undefined
+      ? options
+      : {
+          ...options,
+          hostContextBindings,
+          resolveHostContextBindings: undefined,
+        };
+  const executableExpert = withHostContextBindings(delegatedExpert, hostContextBindings);
   const contextOutputs =
     options.contextOutputs ??
     new ContextOutputService(options.executionId, executableExpert.contextSystem);
@@ -690,7 +709,8 @@ export async function runExpertInvocation(options: RunExpertInvocationOptions): 
       maxConcurrency: delegation.maxConcurrency,
       maxDepth: delegation.maxDepth,
       interruptController: options.controller,
-      execute: async (job): Promise<void> => await executeAgentJob(options, team, created, job),
+      execute: async (job): Promise<void> =>
+        await executeAgentJob(invocationOptions, team, created, job),
       ...(options.readContextScope === undefined
         ? {}
         : { readContextScope: options.readContextScope }),
@@ -760,6 +780,7 @@ export async function runExpertInvocation(options: RunExpertInvocationOptions): 
     contextId: options.context.contextId,
     expertId: nativeExpert.id,
     runtime: options.context.runtime,
+    hostContextBindingsFingerprint: hostContextBindingsFingerprint(hostContextBindings),
   } satisfies RuntimeSessionIdentity;
   assertRuntimeIdentity(options, runtimeIdentity);
 
@@ -793,7 +814,7 @@ export async function runExpertInvocation(options: RunExpertInvocationOptions): 
   };
 
   const executionContext = createExecutionContext(
-    options,
+    invocationOptions,
     nativeExpert,
     team,
     delegation,
@@ -815,7 +836,7 @@ export async function runExpertInvocation(options: RunExpertInvocationOptions): 
     contextId: options.context.contextId,
     agentId: nativeExpert.id,
   });
-  const session = await options.controller.acquireRuntime(runtimeIdentity, async () => {
+  const session = await options.controller.acquireRuntime(runtimeIdentity, async ({ fresh }) => {
     const opened = await openRuntimeSession(runtime, {
       agent: executableExpert,
       owner:
@@ -825,8 +846,12 @@ export async function runExpertInvocation(options: RunExpertInvocationOptions): 
               ...options.owner,
               invocationId: requireInvocationContextOrigin(options.context),
             },
-      systemSessionId: options.context.snapshot?.systemSessionId,
-      runtimeSession: options.context.snapshot?.runtimeSession,
+      ...(fresh
+        ? {}
+        : {
+            systemSessionId: options.context.snapshot?.systemSessionId,
+            runtimeSession: options.context.snapshot?.runtimeSession,
+          }),
       context: {
         source: executionRootSource(execution.definition),
         attributes: {

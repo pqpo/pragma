@@ -45,7 +45,7 @@ export function App() {
         if (!cancelled) setMemoryEnabled(snapshot.policy.enabled === "enabled");
       })
       .catch(() => {
-        if (!cancelled) setMemoryEnabled(false);
+        if (!cancelled) setMemoryEnabled(undefined);
       });
     return () => {
       cancelled = true;
@@ -144,6 +144,7 @@ export function App() {
         <MissionsPage
           initialMission={missionToOpen}
           initialMemoryState={missionsMemoryState}
+          memoryEnabled={memoryEnabled}
           autoRunInitialMission={missionToOpen !== undefined}
           onMemoryStateChange={setMissionsMemoryState}
           onConfigureModels={openModelSettings}

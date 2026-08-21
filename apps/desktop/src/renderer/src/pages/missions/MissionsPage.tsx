@@ -177,6 +177,7 @@ export function resolveMissionsPageInitialState(input: {
 export function MissionsPage(props: {
   readonly initialMission?: Mission | undefined;
   readonly initialMemoryState?: MissionsPageMemoryState | undefined;
+  readonly memoryEnabled?: boolean | undefined;
   readonly autoRunInitialMission?: boolean | undefined;
   readonly onCreate: () => void;
   readonly onMemoryStateChange?: ((state: MissionsPageMemoryState) => void) | undefined;
@@ -552,6 +553,7 @@ export function MissionsPage(props: {
           <MissionDetailFragment
             key={selectedMission.id}
             mission={selectedMission}
+            memoryEnabled={props.memoryEnabled}
             chatCache={missionChatCacheRef.current}
             initialThinkingRequestId={
               initialRunRequest?.missionId === selectedMission.id
@@ -1373,9 +1375,12 @@ export function MissionDetailFragment(props: {
   readonly onConfigureModels?: (() => void) | undefined;
   readonly onOpenKnowledgeBases?: (() => void) | undefined;
   readonly onEditExpert?: ((expertRef?: string | undefined) => void) | undefined;
+  readonly memoryEnabled?: boolean | undefined;
 }) {
   const { t } = useTranslation(["missions", "common"]);
   const [tab, setTab] = useState<"chat" | "work" | "board" | "memory">("chat");
+  const memoryEnabled = props.memoryEnabled ?? true;
+  const activeTab = !memoryEnabled && tab === "memory" ? "chat" : tab;
   const [memoryView, setMemoryView] = useState<MissionMemoryView>(DEFAULT_MISSION_MEMORY_VIEW);
   const [workspaceAvailable, setWorkspaceAvailable] = useState<boolean | null>(null);
   const [chat, setChat] = useState<MissionChatSnapshot | null>(
@@ -1928,7 +1933,7 @@ export function MissionDetailFragment(props: {
 
   useEffect(() => {
     const api = desktopApi();
-    if (api === undefined || tab !== "work" || props.mission.execution === undefined) {
+    if (api === undefined || activeTab !== "work" || props.mission.execution === undefined) {
       setWorkRecords([]);
       return;
     }
@@ -1972,13 +1977,13 @@ export function MissionDetailFragment(props: {
       cancelled = true;
       unsubscribe();
     };
-  }, [props.mission.id, props.mission.execution?.id, tab, workRefreshRevision]);
+  }, [activeTab, props.mission.id, props.mission.execution?.id, workRefreshRevision]);
 
   useEffect(() => {
     const api = desktopApi();
     if (
       api === undefined ||
-      tab !== "work" ||
+      activeTab !== "work" ||
       props.mission.execution === undefined ||
       selectedWorkKey === null
     ) {
@@ -2018,11 +2023,21 @@ export function MissionDetailFragment(props: {
     return () => {
       cancelled = true;
     };
-  }, [props.mission.id, selectedWorkKey, tab, workRefreshRevision]);
+  }, [activeTab, props.mission.id, selectedWorkKey, workRefreshRevision]);
+
+  useEffect(() => {
+    if (memoryEnabled || tab !== "memory") return;
+    setTab("chat");
+    setMemoryView("activity");
+    setMemoryActivity(undefined);
+    setMemoryActivityError(undefined);
+    setMemoryActivityLoading(false);
+  }, [memoryEnabled, tab]);
 
   useEffect(() => {
     const api = desktopApi();
-    if (api === undefined || tab !== "memory" || memoryView !== "activity") return;
+    if (api === undefined || !memoryEnabled || activeTab !== "memory" || memoryView !== "activity")
+      return;
     let cancelled = false;
     setMemoryActivityLoading(true);
     void api
@@ -2041,7 +2056,7 @@ export function MissionDetailFragment(props: {
     return () => {
       cancelled = true;
     };
-  }, [memoryView, props.mission.execution?.id, props.mission.id, tab]);
+  }, [activeTab, memoryEnabled, memoryView, props.mission.execution?.id, props.mission.id]);
 
   const beginClientOperation = (
     kind: Exclude<MissionClientOperationState["kind"], "idle">,
@@ -2611,7 +2626,7 @@ export function MissionDetailFragment(props: {
   ]);
 
   useLayoutEffect(() => {
-    if (tab !== "chat") return;
+    if (activeTab !== "chat") return;
     const element = scrollRef.current;
     if (element === null) return;
     if (chatScrollMissionIdRef.current !== props.mission.id) {
@@ -2619,10 +2634,11 @@ export function MissionDetailFragment(props: {
       chatScrollTopRef.current = 0;
     }
     element.scrollTop = chatScrollTopRef.current;
-  }, [props.mission.id, tab]);
+  }, [activeTab, props.mission.id]);
 
   const changeTab = (nextTab: "chat" | "work" | "board" | "memory"): void => {
-    if (tab === "chat") {
+    if (nextTab === "memory" && !memoryEnabled) return;
+    if (activeTab === "chat") {
       const element = scrollRef.current;
       if (element !== null) chatScrollTopRef.current = element.scrollTop;
     }
@@ -2711,45 +2727,47 @@ export function MissionDetailFragment(props: {
           aria-label={t("detailViews", { ns: "missions" })}
         >
           <button
-            className={tab === "chat" ? "is-active" : ""}
+            className={activeTab === "chat" ? "is-active" : ""}
             type="button"
             role="tab"
-            aria-selected={tab === "chat"}
+            aria-selected={activeTab === "chat"}
             onClick={() => changeTab("chat")}
           >
             {isTeam ? t("teamChannel", { ns: "missions" }) : t("chat", { ns: "missions" })}
           </button>
           <button
-            className={tab === "work" ? "is-active" : ""}
+            className={activeTab === "work" ? "is-active" : ""}
             type="button"
             role="tab"
-            aria-selected={tab === "work"}
+            aria-selected={activeTab === "work"}
             onClick={() => changeTab("work")}
           >
             {t("work", { ns: "missions" })}
           </button>
           <button
-            className={tab === "board" ? "is-active" : ""}
+            className={activeTab === "board" ? "is-active" : ""}
             type="button"
             role="tab"
-            aria-selected={tab === "board"}
+            aria-selected={activeTab === "board"}
             onClick={() => changeTab("board")}
           >
             {t("missionBoard", { ns: "missions" })}
           </button>
-          <button
-            className={tab === "memory" ? "is-active" : ""}
-            type="button"
-            role="tab"
-            aria-selected={tab === "memory"}
-            onClick={() => changeTab("memory")}
-          >
-            {t("memory", { ns: "missions" })}
-          </button>
+          {memoryEnabled ? (
+            <button
+              className={activeTab === "memory" ? "is-active" : ""}
+              type="button"
+              role="tab"
+              aria-selected={activeTab === "memory"}
+              onClick={() => changeTab("memory")}
+            >
+              {t("memory", { ns: "missions" })}
+            </button>
+          ) : null}
         </div>
       </div>
       <div className="mission-detail-body">
-        {tab !== "chat" && presentedError !== null && presentedError !== undefined ? (
+        {activeTab !== "chat" && presentedError !== null && presentedError !== undefined ? (
           <MissionErrorBanner
             error={presentedError}
             actionLabel={repairUnavailableToolLabel}
@@ -2760,7 +2778,7 @@ export function MissionDetailFragment(props: {
             }}
           />
         ) : null}
-        {tab === "chat" ? (
+        {activeTab === "chat" ? (
           <div className="mission-chat-shell">
             <div
               className="mission-chat-scroll"
@@ -3255,11 +3273,11 @@ export function MissionDetailFragment(props: {
               )}
             </div>
           </div>
-        ) : tab === "board" ? (
+        ) : activeTab === "board" ? (
           <div className="mission-board-shell">
             <ContextStoreBrowser source={missionBoardSource} variant="mission-board" />
           </div>
-        ) : tab === "memory" ? (
+        ) : activeTab === "memory" ? (
           <div className="mission-memory-shell">
             {memoryView === "store" ? (
               <MemoryStoreBrowser

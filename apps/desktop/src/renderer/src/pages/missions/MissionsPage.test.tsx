@@ -875,6 +875,15 @@ describe("MissionDetailFragment", () => {
     expect(html).not.toContain("Pinned to");
   });
 
+  it("hides the Memory tab when global Memory is disabled", () => {
+    const html = renderToStaticMarkup(
+      <MissionDetailFragment mission={missionFixture("expert")} memoryEnabled={false} />,
+    );
+
+    expect(html).not.toContain(">Memory<");
+    expect(html).not.toContain("mission-memory-shell");
+  });
+
   it("keeps team conversations in the shared chat surface", () => {
     const html = renderToStaticMarkup(<MissionDetailFragment mission={missionFixture("team")} />);
 
