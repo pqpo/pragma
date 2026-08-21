@@ -498,7 +498,7 @@ export class ExpertOrchestrator {
         this.options.executionId,
         active.invocationId,
         "agent.steer.applied",
-        { requestId, agentId: agent.agentId, mode: outcome },
+        { requestId, agentId: agent.agentId, mode: outcome, content: request.message },
         `agent-steer-applied:${requestId}`,
       );
       return {

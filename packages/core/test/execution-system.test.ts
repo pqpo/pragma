@@ -3668,6 +3668,130 @@ describe("Expert lifecycle orchestration", () => {
     await session.close();
   });
 
+  it("lets permitted team peers steer active work and queue FIFO follow-ups", async () => {
+    const home = await mkdtemp(join(tmpdir(), "pragma-peer-interaction-"));
+    let markBackendStarted!: () => void;
+    let releaseBackend!: () => void;
+    const backendStarted = new Promise<void>((resolve) => {
+      markBackendStarted = resolve;
+    });
+    const backendReleased = new Promise<void>((resolve) => {
+      releaseBackend = resolve;
+    });
+    const steers: string[] = [];
+    const runtime = defineRuntimeDriver<never, FakeSession>({
+      features: createRuntimeTestFeatures({ enabled: ["close", "steering"] }),
+      descriptor: { id: "peer-interaction", kind: "fake", displayName: "Peer interaction" },
+      createSession: (context) => ({ context, id: `native-${context.systemSessionId}` }),
+      readSession: (session) => ({ runtimeSessionId: session.id }),
+      async startTurn(session, turn) {
+        const expertId = session.context.agent.id;
+        const execution = session.context.request.executionContext;
+        const call = async (name: string, input: unknown) => {
+          const tool = session.context.agent.tools?.find((candidate) => candidate.name === name);
+          if (tool === undefined) throw new Error(`Missing collaboration tool: ${name}`);
+          const result = await tool.call(input, turn.signal, { execution });
+          if (result.isError === true) throw new Error(result.text);
+          return result.details as Record<string, unknown>;
+        };
+        if (expertId === "backend") {
+          if (turn.rawQuery === "backend-work") {
+            markBackendStarted();
+            await backendReleased;
+          }
+          return { outputText: `backend:${turn.rawQuery}`, runtimeSessionId: session.id };
+        }
+        if (expertId === "frontend") {
+          const discovery = await call("list_agents", { expertId: "backend" });
+          const backend = (
+            discovery["agents"] as Array<{
+              agentId: string;
+              activeInvocation: { invocationId: string };
+            }>
+          )[0]!;
+          const steer = await call("steer_expert", {
+            agentId: backend.agentId,
+            invocationId: backend.activeInvocation.invocationId,
+            message: "apply-peer-guidance",
+          });
+          expect(steer).toMatchObject({ outcome: "steered", mode: "runtime" });
+          const followup = await call("followup_expert", {
+            agentId: backend.agentId,
+            prompt: "verify-peer-guidance",
+          });
+          releaseBackend();
+          const waited = await call("wait_experts", {
+            invocationIds: [backend.activeInvocation.invocationId, followup["invocationId"]],
+          });
+          return { outputText: `frontend:${JSON.stringify(waited)}`, runtimeSessionId: session.id };
+        }
+        const backend = await call("spawn_expert", {
+          expertId: "backend",
+          prompt: "backend-work",
+        });
+        await backendStarted;
+        const frontend = await call("spawn_expert", {
+          expertId: "frontend",
+          prompt: "frontend-work",
+        });
+        await call("wait_experts", {
+          invocationIds: [backend["invocationId"], frontend["invocationId"]],
+        });
+        return { outputText: "lead:done", runtimeSessionId: session.id };
+      },
+      steerTurn: (_session, request) => {
+        steers.push(request.content);
+      },
+      mapEvent: () => ({ events: [] }),
+      closeSession: () => undefined,
+    });
+    const app = createPragma({
+      pragmaHome: home,
+      runtimes: createStaticRuntimeResolver({
+        runtimes: [runtime],
+        defaultRuntimeId: runtime.descriptor.id,
+      }),
+    });
+    const defineMember = async (id: string) =>
+      await defineExpert({
+        id,
+        name: id,
+        description: id,
+        tags: [],
+        scope: "test",
+        workspace: home,
+        pragmaHome: home,
+      });
+    const [lead, frontend, backend] = await Promise.all(
+      ["lead", "frontend", "backend"].map(defineMember),
+    );
+    const team = defineExpertTeam({
+      id: "peer-interaction-team",
+      coordinator: lead!,
+      members: [frontend!, backend!],
+      delegation: {
+        permissions: { interact: { frontend: ["backend"] } },
+        maxConcurrency: 2,
+      },
+    });
+    const session = await app.experts.createSession(team);
+    const turn = await session.prompt("coordinate", { requestId: "peer-interaction" });
+    await expect(turn.result).resolves.toBe("lead:done");
+    expect(steers).toEqual(["apply-peer-guidance"]);
+    const events = await turn.listEvents({ scope: { kind: "all" }, limit: 1_000 });
+    expect(events.items.map((event) => event.type)).toEqual(
+      expect.arrayContaining([
+        "agent.steer.requested",
+        "agent.steer.applied",
+        "agent.followup.queued",
+      ]),
+    );
+    expect(events.items.find((event) => event.type === "agent.steer.applied")?.data).toMatchObject({
+      content: "apply-peer-guidance",
+    });
+    await session.close();
+  });
+
   it("starts independent spawned Experts concurrently", async () => {
     const result = await runScenario("parallel", ["member-a", "member-b"]);
     expect(result.tree.children).toHaveLength(2);

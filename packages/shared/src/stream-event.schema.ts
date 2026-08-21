@@ -189,6 +189,7 @@ export const ExpertAgentCommandEventSchema = ExpertAgentStreamEventBaseSchema.ex
   payload: z.object({
     commandId: z.string().min(1),
     action: z.enum(["spawn", "wait", "list", "send", "resume", "interrupt"]),
+    delivery: z.enum(["followup", "steer"]).optional(),
     phase: z.enum(["started", "completed", "failed"]),
     senderSessionId: z.string().min(1).optional(),
     targetSessionIds: z.array(z.string().min(1)).default([]),

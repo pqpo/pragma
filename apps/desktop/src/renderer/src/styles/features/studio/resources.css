@@ -235,6 +235,16 @@
   gap: 0.35rem;
 }
 
+.pragma-resource-form .team-permission-checkbox {
+  flex: 0 0 16px;
+  width: 16px;
+  height: 16px;
+  min-height: 16px;
+  margin: 0;
+  padding: 0;
+  accent-color: var(--green);
+}
+
 .team-coordinator-authority {
   grid-column: span 2;
   display: grid;

@@ -531,6 +531,7 @@ function readAgentCommand(
     type === "dynamicToolCall" || type === "mcpToolCall" ? readString(item?.["tool"]) : undefined;
   const action = readAgentCommandAction(nativeTool ?? genericTool);
   if (action === undefined) return undefined;
+  const delivery = readAgentCommandDelivery(nativeTool ?? genericTool, item);
   const status = readString(item?.["status"]);
   const failed = status === "failed" || item?.["success"] === false;
   const phase =
@@ -550,6 +551,7 @@ function readAgentCommand(
     payload: {
       commandId,
       action,
+      ...(delivery === undefined ? {} : { delivery }),
       phase,
       ...(senderSessionId === undefined ? {} : { senderSessionId }),
       targetSessionIds,
@@ -560,6 +562,20 @@ function readAgentCommand(
         : { error: readToolFailureMessage(item, nativeTool ?? genericTool ?? action) }),
     },
   };
+}
+
+function readAgentCommandDelivery(
+  toolName: string | undefined,
+  item: Record<string, unknown> | undefined,
+): "followup" | "steer" | undefined {
+  const segment = toolName?.split(/[./:]/u).at(-1);
+  if (segment === "followup_expert") return "followup";
+  if (segment === "steer_expert") return "steer";
+  if (segment === "sendInput") {
+    if (item?.["interrupt"] === true) return "steer";
+    if (item?.["interrupt"] === false) return "followup";
+  }
+  return undefined;
 }
 
 function readAgentCommandAction(

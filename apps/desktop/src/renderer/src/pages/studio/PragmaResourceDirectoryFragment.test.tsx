@@ -211,6 +211,7 @@ describe("expert team editor", () => {
     expect(html).toContain("System inherited: manages all team agents");
     expect(html).toContain("Can spawn");
     expect(html).toContain("Can view and interact");
+    expect(html.match(/class="team-permission-checkbox"/g)).toHaveLength(3);
     expect(html).not.toContain("team-context-editor");
     expect(html).not.toContain("team-context-expert-checkbox");
   });

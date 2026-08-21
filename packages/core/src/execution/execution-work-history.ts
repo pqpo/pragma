@@ -72,6 +72,7 @@ interface RuntimeEventProjection {
 
 interface RuntimeDispatch {
   readonly commandId: string;
+  delivery?: "followup" | "steer" | undefined;
   prompt?: string | undefined;
   readonly targetSessionIds: Set<string>;
 }
@@ -221,6 +222,7 @@ export class ExecutionWorkHistoryReader {
           if (
             dispatch !== undefined &&
             dispatch.prompt !== undefined &&
+            dispatch.delivery !== "steer" &&
             !queuedDispatches.has(dispatch.commandId)
           ) {
             queuedDispatches.add(dispatch.commandId);
@@ -524,6 +526,7 @@ function collectRuntimeDispatches(
     }
     const current = dispatches.get(event.payload.commandId) ?? {
       commandId: event.payload.commandId,
+      delivery: event.payload.delivery,
       targetSessionIds: new Set<string>(),
     };
     if (
@@ -532,6 +535,7 @@ function collectRuntimeDispatches(
     ) {
       current.prompt = event.payload.prompt;
     }
+    if (event.payload.delivery !== undefined) current.delivery = event.payload.delivery;
     for (const targetSessionId of event.payload.targetSessionIds) {
       current.targetSessionIds.add(targetSessionId);
     }
