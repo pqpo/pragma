@@ -1,9 +1,8 @@
+import { AgentMessageUsageSchema, InvocationOutputSchema } from "@pragma/shared";
 import { z } from "zod";
 
-import { AgentMessageUsageV9Schema, InvocationOutputV9Schema } from "./shared-v9.ts";
-
-export const ExecutionRecordV9Schema = z.object({
-  schemaVersion: z.literal("pragma.execution/v9"),
+export const ExecutionRecordV10Schema = z.object({
+  schemaVersion: z.literal("pragma.execution/v10"),
   executionId: z.string().min(1),
   version: z.number().int().nonnegative(),
   kind: z.enum(["expert-turn", "flow"]),
@@ -23,12 +22,12 @@ export const ExecutionRecordV9Schema = z.object({
   ]),
   input: z.unknown(),
   state: z.record(z.string(), z.unknown()).default({}),
-  output: InvocationOutputV9Schema.optional(),
-  usage: AgentMessageUsageV9Schema.optional(),
+  output: InvocationOutputSchema.optional(),
+  usage: AgentMessageUsageSchema.optional(),
   error: z.unknown().optional(),
   lastAppliedSequence: z.number().int().nonnegative(),
   createdAt: z.string().datetime(),
   updatedAt: z.string().datetime(),
 });
 
-export type ExecutionRecordV9 = z.infer<typeof ExecutionRecordV9Schema>;
+export type ExecutionRecordV10 = z.infer<typeof ExecutionRecordV10Schema>;

@@ -368,6 +368,8 @@ export const missions = {
   statusQueued: "Queued",
   statusWorking: "Working",
   statusNeedsInput: "Needs input",
+  statusWaitingExperts: "Waiting for experts",
+  statusWaiting: "Waiting",
   statusSucceeded: "Succeeded",
   statusCancelled: "Cancelled",
   statusReady: "Ready",

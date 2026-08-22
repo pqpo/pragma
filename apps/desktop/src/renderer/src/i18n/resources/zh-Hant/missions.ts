@@ -356,6 +356,8 @@ export const missions = {
   statusQueued: "排隊中",
   statusWorking: "工作中",
   statusNeedsInput: "需要輸入",
+  statusWaitingExperts: "等待專家",
+  statusWaiting: "等待中",
   statusSucceeded: "成功",
   statusCancelled: "已取消",
   statusReady: "就緒",

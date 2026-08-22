@@ -176,6 +176,7 @@ function tree(executorId: string, status: string, children: unknown[] = []) {
       executorId,
       contextId: `${executorId}-context`,
       status,
+      pendingExpertMessages: [],
       input: "prompt",
       createdAt: now,
       updatedAt: now,

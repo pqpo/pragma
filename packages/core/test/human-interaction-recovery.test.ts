@@ -200,7 +200,7 @@ describe("ExpertSession human interaction recovery", () => {
     });
     await executions.create(
       {
-        schemaVersion: "pragma.execution/v9",
+        schemaVersion: "pragma.execution/v10",
         executionId,
         version: 0,
         kind: "expert-turn",
@@ -220,6 +220,7 @@ describe("ExpertSession human interaction recovery", () => {
         executorId: expert.id,
         contextId,
         status: "running",
+        pendingExpertMessages: [],
         input: "Continue after the human response.",
         createdAt: now,
         updatedAt: now,

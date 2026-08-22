@@ -18,8 +18,12 @@ export interface ExpertToolExecutionContext {
         readonly signal?: AbortSignal | undefined;
       }) => Promise<unknown>)
     | undefined;
-  readonly spawnExpert?:
-    | ((request: { readonly expertId: string; readonly prompt: string }) => Promise<unknown>)
+  readonly delegateExpert?:
+    | ((
+        request:
+          | { readonly expertId: string; readonly task: string }
+          | { readonly agentId: string; readonly task: string },
+      ) => Promise<unknown>)
     | undefined;
   readonly waitExperts?:
     | ((request: {
@@ -36,15 +40,18 @@ export interface ExpertToolExecutionContext {
         readonly limit?: number;
       }) => Promise<unknown>)
     | undefined;
-  readonly followupExpert?:
-    | ((request: { readonly agentId: string; readonly prompt: string }) => Promise<unknown>)
+  readonly messageExpert?:
+    | ((request: {
+        readonly agentId: string;
+        readonly invocationId: string;
+        readonly message: string;
+      }) => Promise<unknown>)
     | undefined;
   readonly steerExpert?:
     | ((request: {
         readonly agentId: string;
-        readonly invocationId?: string | undefined;
+        readonly invocationId: string;
         readonly message: string;
-        readonly fallback?: "reject" | "followup" | undefined;
       }) => Promise<unknown>)
     | undefined;
   readonly interruptExpert?:

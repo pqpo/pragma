@@ -17,10 +17,10 @@ export interface CreateAgentLauncherOptions {
 }
 
 export type ExpertLifecycleToolName =
-  | "spawn_expert"
+  | "delegate_expert"
   | "wait_experts"
   | "list_agents"
-  | "followup_expert"
+  | "message_expert"
   | "steer_expert"
   | "interrupt_expert";
 
@@ -126,8 +126,8 @@ function createLifecycleTools(
     contextId: definition.contextId,
     runtimeByExpert: new Map(definition.runtimeByExpert),
   });
-  const spawnable = [
-    "Spawnable Experts:",
+  const delegatable = [
+    "Delegatable Experts:",
     ...frozen.experts
       .filter((expert) => frozen.spawnExpertIds.has(expert.id))
       .map((expert) => `- ${expert.id}: ${expert.name}. ${expert.description}`),
@@ -137,17 +137,26 @@ function createLifecycleTools(
   ): AgentLifecycleTool => ({ ...value, [agentDelegationDefinition]: frozen });
 
   const tools: AgentLifecycleTool[] = [];
-  if (frozen.spawnExpertIds.size > 0) {
+  if (frozen.spawnExpertIds.size > 0 || frozen.interactExpertIds.size > 0) {
     tools.push(
       tool({
-        name: "spawn_expert",
-        description: `Spawn an Expert task in the background and return its agent and invocation ids immediately.\n${spawnable}`,
-        inputSchema: objectSchema({ expertId: { type: "string" }, prompt: { type: "string" } }, [
-          "expertId",
-          "prompt",
-        ]),
+        name: "delegate_expert",
+        description: `Delegate a trackable task to either a new Expert or an existing Agent and return its agent and invocation ids immediately. Provide exactly one of expertId or agentId.\n${delegatable}`,
+        inputSchema: objectSchema(
+          {
+            expertId: { type: "string" },
+            agentId: { type: "string" },
+            task: { type: "string" },
+          },
+          ["task"],
+        ),
         call: async (args, signal, context) =>
-          await invoke("spawn_expert", signal, context?.execution?.spawnExpert, readSpawn(args)),
+          await invoke(
+            "delegate_expert",
+            signal,
+            context?.execution?.delegateExpert,
+            readDelegate(args),
+          ),
       }),
     );
   }
@@ -199,18 +208,23 @@ function createLifecycleTools(
   if (frozen.spawnExpertIds.size > 0 || frozen.interactExpertIds.size > 0) {
     tools.push(
       tool({
-        name: "followup_expert",
-        description: "Queue a new FIFO task on an existing Expert instance.",
-        inputSchema: objectSchema({ agentId: { type: "string" }, prompt: { type: "string" } }, [
-          "agentId",
-          "prompt",
-        ]),
+        name: "message_expert",
+        description:
+          "Queue a message for an existing Agent's exact active Invocation. The message is consumed at the next safe boundary and never spills into a later Invocation.",
+        inputSchema: objectSchema(
+          {
+            agentId: { type: "string" },
+            invocationId: { type: "string" },
+            message: { type: "string" },
+          },
+          ["agentId", "invocationId", "message"],
+        ),
         call: async (args, signal, context) =>
           await invoke(
-            "followup_expert",
+            "message_expert",
             signal,
-            context?.execution?.followupExpert,
-            readFollowup(args),
+            context?.execution?.messageExpert,
+            readMessage(args),
           ),
       }),
     );
@@ -218,15 +232,14 @@ function createLifecycleTools(
       tool({
         name: "steer_expert",
         description:
-          "Guide an existing Agent's active task now. Unsupported steering is rejected unless fallback is followup.",
+          "Immediately guide an existing Agent's exact active Invocation. Unsupported steering is rejected and never queued.",
         inputSchema: objectSchema(
           {
             agentId: { type: "string" },
             invocationId: { type: "string" },
             message: { type: "string" },
-            fallback: { type: "string", enum: ["reject", "followup"], default: "reject" },
           },
-          ["agentId", "message"],
+          ["agentId", "invocationId", "message"],
         ),
         call: async (args, signal, context) =>
           await invoke("steer_expert", signal, context?.execution?.steerExpert, readSteer(args)),
@@ -237,8 +250,7 @@ function createLifecycleTools(
     tools.push(
       tool({
         name: "interrupt_expert",
-        description:
-          "Interrupt only the current task of an Expert while preserving queued follow-ups.",
+        description: "Interrupt only the current task of an Expert while preserving queued tasks.",
         inputSchema: objectSchema(
           {
             agentId: { type: "string" },
@@ -281,12 +293,19 @@ function objectSchema(properties: Record<string, unknown>, required: readonly st
   return { type: "object", properties, required, additionalProperties: false };
 }
 
-function readSpawn(value: unknown): { expertId: string; prompt: string } {
+function readDelegate(
+  value: unknown,
+): { expertId: string; task: string } | { agentId: string; task: string } {
   const record = readRecord(value);
-  return {
-    expertId: readString(record["expertId"], "expertId"),
-    prompt: readString(record["prompt"], "prompt"),
-  };
+  const expertId = record["expertId"];
+  const agentId = record["agentId"];
+  if ((expertId === undefined) === (agentId === undefined)) {
+    throw new Error("Exactly one of expertId or agentId is required.");
+  }
+  const task = readString(record["task"], "task");
+  return expertId === undefined
+    ? { agentId: readString(agentId, "agentId"), task }
+    : { expertId: readString(expertId, "expertId"), task };
 }
 
 function readList(value: unknown): { expertId?: string; cursor?: string; limit?: number } {
@@ -302,22 +321,14 @@ function readList(value: unknown): { expertId?: string; cursor?: string; limit?:
 
 function readSteer(value: unknown): {
   agentId: string;
-  invocationId?: string;
+  invocationId: string;
   message: string;
-  fallback?: "reject" | "followup";
 } {
   const record = readRecord(value);
-  const fallback = record["fallback"];
-  if (fallback !== undefined && fallback !== "reject" && fallback !== "followup") {
-    throw new Error("fallback must be reject or followup.");
-  }
   return {
     agentId: readString(record["agentId"], "agentId"),
-    ...(record["invocationId"] === undefined
-      ? {}
-      : { invocationId: readString(record["invocationId"], "invocationId") }),
+    invocationId: readString(record["invocationId"], "invocationId"),
     message: readString(record["message"], "message"),
-    ...(fallback === undefined ? {} : { fallback }),
   };
 }
 
@@ -354,11 +365,16 @@ function readWait(value: unknown): {
   };
 }
 
-function readFollowup(value: unknown): { agentId: string; prompt: string } {
+function readMessage(value: unknown): {
+  agentId: string;
+  invocationId: string;
+  message: string;
+} {
   const record = readRecord(value);
   return {
     agentId: readString(record["agentId"], "agentId"),
-    prompt: readString(record["prompt"], "prompt"),
+    invocationId: readString(record["invocationId"], "invocationId"),
+    message: readString(record["message"], "message"),
   };
 }
 

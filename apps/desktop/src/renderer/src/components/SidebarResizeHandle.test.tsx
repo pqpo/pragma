@@ -9,15 +9,15 @@ describe("SidebarResizeHandle", () => {
     const html = renderToStaticMarkup(
       <SidebarResizeHandle
         label="Resize navigation"
-        width={280}
+        width={175}
         preference={SIDEBAR_WIDTH_PREFERENCES.main}
         onResize={() => undefined}
       />,
     );
 
     expect(html).toContain('role="separator"');
-    expect(html).toContain('aria-valuemin="200"');
-    expect(html).toContain('aria-valuemax="360"');
-    expect(html).toContain('aria-valuenow="280"');
+    expect(html).toContain('aria-valuemin="150"');
+    expect(html).toContain('aria-valuemax="200"');
+    expect(html).toContain('aria-valuenow="175"');
   });
 });

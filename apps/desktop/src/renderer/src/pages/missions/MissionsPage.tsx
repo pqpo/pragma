@@ -3589,7 +3589,11 @@ export function MissionWorkGrid(props: {
                       else cardRefs.current.set(record.recordId, element);
                     }}
                     type="button"
-                    aria-label={[title, workStatusLabel(record.status), callOrderLabel]
+                    aria-label={[
+                      title,
+                      workStatusLabel(record.status, record.waitReason),
+                      callOrderLabel,
+                    ]
                       .filter(Boolean)
                       .join(", ")}
                     onClick={() => props.onSelect(record.recordId)}
@@ -3611,7 +3615,7 @@ export function MissionWorkGrid(props: {
                     </span>
                     <strong>{title}</strong>
                     <small>
-                      {workStatusLabel(record.status)}
+                      {workStatusLabel(record.status, record.waitReason)}
                       {record.tasks.length > 1
                         ? ` · ${t("conversationTurns", { count: record.tasks.length })}`
                         : ""}
@@ -4528,7 +4532,7 @@ export function MissionWorkDrawer(props: {
             <small>{t("agentConversation", { ns: "missions" })}</small>
             <h2 id="mission-work-drawer-title">{missionWorkRecordTitle(props.record)}</h2>
             <p>
-              {workStatusLabel(props.record.status)} ·{" "}
+              {workStatusLabel(props.record.status, props.record.waitReason)} ·{" "}
               {t("readOnlyConversation", { ns: "missions" })}
               {props.record.status === "running" || props.record.status === "waiting" ? (
                 <span className="mission-work-streaming">
@@ -5341,14 +5345,21 @@ export function missionWorkInputSenderName(
     : missionWorkRecordTitle(parent);
 }
 
-function workStatusLabel(status: MissionWorkRecord["status"]): string {
+export function workStatusLabel(
+  status: MissionWorkRecord["status"],
+  waitReason?: MissionWorkRecord["waitReason"],
+): string {
   switch (status) {
     case "queued":
       return i18n.t("statusQueued", { ns: "missions" });
     case "running":
       return i18n.t("statusWorking", { ns: "missions" });
     case "waiting":
-      return i18n.t("statusNeedsInput", { ns: "missions" });
+      return waitReason === "experts"
+        ? i18n.t("statusWaitingExperts", { ns: "missions" })
+        : waitReason === "human_input"
+          ? i18n.t("statusNeedsInput", { ns: "missions" })
+          : i18n.t("statusWaiting", { ns: "missions" });
     case "succeeded":
       return i18n.t("statusSucceeded", { ns: "missions" });
     case "failed":
@@ -5374,7 +5385,11 @@ export function missionStatusLabel(mission: Mission | MissionSummary, preparing 
     case "running":
       return i18n.t("statusWorking", { ns: "missions" });
     case "waiting":
-      return i18n.t("statusNeedsInput", { ns: "missions" });
+      return mission.execution.waitReason === "experts"
+        ? i18n.t("statusWaitingExperts", { ns: "missions" })
+        : mission.execution.waitReason === "human_input"
+          ? i18n.t("statusNeedsInput", { ns: "missions" })
+          : i18n.t("statusWaiting", { ns: "missions" });
     case "succeeded":
       return i18n.t("statusSucceeded", { ns: "missions" });
     case "failed":
