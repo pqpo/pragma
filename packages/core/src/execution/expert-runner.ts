@@ -225,19 +225,62 @@ export class ExecutionController {
   }
 
   async interruptInvocation(invocationId: string, reason?: string): Promise<boolean> {
-    const invocation = await this.store.getInvocation(this.executionId, invocationId);
-    if (invocation === undefined) throw new Error(`Invocation not found: ${invocationId}`);
-    if (isTerminalExecutionStatus(invocation.status)) return false;
-    try {
-      await this.store.commit({
-        commitId: `invocation-interrupted:${invocationId}`,
-        executionId: this.executionId,
-        invocationPatches: [{ invocationId, patch: { status: "interrupted", error: reason } }],
-        events: [{ invocationId, type: "invocation.interrupted", data: { reason } }],
-      });
-    } catch (error) {
-      if (!(error instanceof ExecutionFinalStatusConflictError)) throw error;
-      return false;
+    while (true) {
+      const execution = await requireExecution(this.store, this.executionId);
+      const invocation = await this.store.getInvocation(this.executionId, invocationId);
+      if (invocation === undefined) throw new Error(`Invocation not found: ${invocationId}`);
+      if (isTerminalExecutionStatus(invocation.status)) return false;
+      const agent =
+        invocation.agentId === undefined
+          ? undefined
+          : await this.store.getAgent(this.executionId, invocation.agentId);
+      try {
+        await this.store.commit({
+          commitId: `invocation-interrupted:${invocationId}`,
+          executionId: this.executionId,
+          expectedVersion: execution.version,
+          invocationPatches: [
+            {
+              invocationId,
+              patch: {
+                status: "interrupted",
+                waitReason: undefined,
+                pendingExpertMessages: [],
+                error: reason,
+              },
+            },
+          ],
+          ...(agent?.activeInvocationId !== invocation.invocationId
+            ? {}
+            : {
+                agentPatches: [
+                  { agentId: agent.agentId, patch: { activeInvocationId: undefined } },
+                ],
+              }),
+          events: [
+            ...(invocation.pendingExpertMessages.length === 0
+              ? []
+              : [
+                  {
+                    invocationId,
+                    type: "expert.message.consumed",
+                    data: {
+                      messageIds: invocation.pendingExpertMessages.map(
+                        (message) => message.messageId,
+                      ),
+                      terminalReason: "interrupted",
+                    },
+                  },
+                ]),
+            { invocationId, type: "invocation.interrupted", data: { reason } },
+          ],
+        });
+        break;
+      } catch (error) {
+        if (error instanceof ExecutionVersionConflictError) continue;
+        if (error instanceof ExecutionFinalStatusConflictError) return false;
+        throw error;
+      }
     }
     const controller = this.invocationSignals.get(invocationId) ?? new AbortController();
     this.invocationSignals.set(invocationId, controller);
@@ -320,7 +363,17 @@ export class ExecutionController {
         this.executionId,
         interactionId,
       );
-      if (restoredResponse !== undefined) return restoredResponse;
+      if (restoredResponse !== undefined) {
+        await this.store.commit({
+          commitId: `human-resumed:${interactionId}`,
+          executionId: this.executionId,
+          invocationPatches: [
+            { invocationId, patch: { status: "running", waitReason: undefined } },
+          ],
+          events: [{ invocationId, type: "human.resumed", data: { interactionId } }],
+        });
+        return restoredResponse;
+      }
     } else {
       await this.store.appendEvent(
         this.executionId,
@@ -344,7 +397,21 @@ export class ExecutionController {
       );
       return automaticResponse;
     }
-    return await new Promise((resolve, reject) => {
+    await this.store.commit({
+      commitId: `human-waiting:${interactionId}`,
+      executionId: this.executionId,
+      invocationPatches: [
+        { invocationId, patch: { status: "waiting", waitReason: "human_input" } },
+      ],
+      events: [
+        {
+          invocationId,
+          type: "human.waiting",
+          data: { interactionId },
+        },
+      ],
+    });
+    const response = await new Promise<ExpertAgentHumanResponse>((resolve, reject) => {
       let settled = false;
       const cleanup = () => {
         signal.removeEventListener("abort", abort);
@@ -379,15 +446,22 @@ export class ExecutionController {
         (error: unknown) => pending.reject(error),
       );
     });
+    await this.store.commit({
+      commitId: `human-resumed:${interactionId}`,
+      executionId: this.executionId,
+      invocationPatches: [{ invocationId, patch: { status: "running", waitReason: undefined } }],
+      events: [{ invocationId, type: "human.resumed", data: { interactionId } }],
+    });
+    return response;
   }
 
   async respond(interactionId: string, response: unknown, requestId: string): Promise<void> {
-    const pending = this.pendingInteractions.get(interactionId);
-    if (pending?.requestId !== undefined) {
-      if (pending.requestId === requestId) return;
+    const initialPending = this.pendingInteractions.get(interactionId);
+    if (initialPending?.requestId !== undefined) {
+      if (initialPending.requestId === requestId) return;
       throw new Error(`Human interaction idempotency conflict: ${interactionId}`);
     }
-    if (pending !== undefined) pending.requestId = requestId;
+    if (initialPending !== undefined) initialPending.requestId = requestId;
     const parsedResponse = await persistHumanInteractionResponse(
       this.store,
       this.executionId,
@@ -395,7 +469,26 @@ export class ExecutionController {
       response,
       requestId,
     );
+    const pending = this.pendingInteractions.get(interactionId);
     if (pending !== undefined) {
+      pending.requestId = requestId;
+      await this.store.commit({
+        commitId: `human-resumed:${interactionId}`,
+        executionId: this.executionId,
+        invocationPatches: [
+          {
+            invocationId: pending.invocationId,
+            patch: { status: "running", waitReason: undefined },
+          },
+        ],
+        events: [
+          {
+            invocationId: pending.invocationId,
+            type: "human.resumed",
+            data: { interactionId },
+          },
+        ],
+      });
       this.pendingInteractions.delete(interactionId);
       pending.resolve(parsedResponse);
     }
@@ -415,16 +508,38 @@ export class ExecutionController {
     while (true) {
       const record = await this.store.get(this.executionId);
       if (record === undefined || isTerminalExecutionStatus(record.status)) return;
-      const invocationPatches = (await this.store.listInvocations(this.executionId))
-        .filter((invocation) => !isTerminalExecutionStatus(invocation.status))
-        .map((invocation) => ({
-          invocationId: invocation.invocationId,
-          patch: { status: "cancelled" as const, error: reason },
-        }));
+      const invocations = (await this.store.listInvocations(this.executionId)).filter(
+        (invocation) => !isTerminalExecutionStatus(invocation.status),
+      );
+      const invocationPatches = invocations.map((invocation) => ({
+        invocationId: invocation.invocationId,
+        patch: {
+          status: "cancelled" as const,
+          waitReason: undefined,
+          pendingExpertMessages: [],
+          error: reason,
+        },
+      }));
       const closure =
         this.options.closeContextsOnCancel === true
           ? await prepareExecutionContextClosure(this.store, this.executionId)
           : { contextPatches: [], agentPatches: [], events: [] };
+      const cancelledInvocationIds = new Set(
+        invocations.map((invocation) => invocation.invocationId),
+      );
+      const activeAgentPatches =
+        this.options.closeContextsOnCancel === true
+          ? []
+          : (await this.store.listAgents(this.executionId))
+              .filter(
+                (agent) =>
+                  agent.activeInvocationId !== undefined &&
+                  cancelledInvocationIds.has(agent.activeInvocationId),
+              )
+              .map((agent) => ({
+                agentId: agent.agentId,
+                patch: { activeInvocationId: undefined },
+              }));
       try {
         await this.store.commit({
           commitId: randomUUID(),
@@ -433,9 +548,25 @@ export class ExecutionController {
           executionPatch: { status: "cancelled", error: reason },
           invocationPatches,
           contextPatches: closure.contextPatches,
-          agentPatches: closure.agentPatches,
+          agentPatches: [...closure.agentPatches, ...activeAgentPatches],
           events: [
             ...closure.events,
+            ...invocations.flatMap((invocation) =>
+              invocation.pendingExpertMessages.length === 0
+                ? []
+                : [
+                    {
+                      invocationId: invocation.invocationId,
+                      type: "expert.message.consumed",
+                      data: {
+                        messageIds: invocation.pendingExpertMessages.map(
+                          (message) => message.messageId,
+                        ),
+                        terminalReason: "cancelled",
+                      },
+                    },
+                  ],
+            ),
             {
               invocationId: record.rootInvocationId,
               type: "execution.cancelled",
@@ -460,7 +591,15 @@ export class ExecutionController {
     contextId: string,
     request: { readonly requestId: string; readonly content: string; readonly targetRunId: string },
   ): Promise<void> {
-    if (this.orchestrators.get(contextId)?.wakeWait(contextId, request) === true) return;
+    if (
+      this.orchestrators.get(contextId)?.wakeWait(contextId, {
+        kind: "steer",
+        requestId: request.requestId,
+        content: request.content,
+      }) === true
+    ) {
+      return;
+    }
     const submission = await this.waitForRuntimeSubmission(contextId);
     await submission.session.steer(request);
   }
@@ -471,7 +610,13 @@ export class ExecutionController {
     readonly requestId: string;
     readonly content: string;
   }): Promise<"steered" | "waiting_continuation" | "not_active" | "unsupported"> {
-    if (this.orchestrators.get(request.contextId)?.wakeWait(request.contextId, request) === true) {
+    if (
+      this.orchestrators.get(request.contextId)?.wakeWait(request.contextId, {
+        kind: "steer",
+        requestId: request.requestId,
+        content: request.content,
+      }) === true
+    ) {
       return "waiting_continuation";
     }
     const submission = this.activeRuntimeSubmissions.get(request.invocationId);
@@ -743,7 +888,7 @@ export async function runExpertInvocation(options: RunExpertInvocationOptions): 
   }
   options.controller.addUsage(invocation.usage);
   await options.store.commit({
-    commitId: `invocation-started:${options.invocationId}`,
+    commitId: `invocation-started:${options.invocationId}:${randomUUID()}`,
     executionId: options.executionId,
     invocationPatches: [{ invocationId: options.invocationId, patch: { status: "running" } }],
     events: [
@@ -884,11 +1029,25 @@ export async function runExpertInvocation(options: RunExpertInvocationOptions): 
   });
   throwIfAborted(invocationSignal, options.invocationId);
 
-  let query = formattedPrompt;
-  let continuation = 0;
+  const recoveredMessages =
+    invocation.waitReason === "human_input"
+      ? []
+      : await orchestrator?.takePendingMessages(options.invocationId);
+  let query =
+    recoveredMessages !== undefined && recoveredMessages.length > 0
+      ? formatExpertMessageContinuation(recoveredMessages)
+      : formattedPrompt;
+  let continuation = recoveredMessages !== undefined && recoveredMessages.length > 0 ? 1 : 0;
+  if (continuation > 0) {
+    await appendUserMessage(
+      options,
+      query,
+      `invocation-message-continuation:${options.invocationId}:${continuation}`,
+    );
+  }
   let invocationUsage = invocation.usage;
   try {
-    while (true) {
+    invocationLoop: while (true) {
       const turn = await submitRuntimeTurn({
         options,
         invocation,
@@ -910,6 +1069,19 @@ export async function runExpertInvocation(options: RunExpertInvocationOptions): 
       invocationUsage = mergeUsage(invocationUsage, turn.usage);
       await persistSessionInfo(session, persistRuntimeSnapshot);
 
+      const pendingMessages = await orchestrator?.takePendingMessages(options.invocationId);
+      if (pendingMessages !== undefined && pendingMessages.length > 0) {
+        await appendInvocationFinalMessage(options, turn.runId, turn.finalMessage, undefined);
+        query = formatExpertMessageContinuation(pendingMessages);
+        continuation += 1;
+        await appendUserMessage(
+          options,
+          query,
+          `invocation-message-continuation:${options.invocationId}:${continuation}`,
+        );
+        continue;
+      }
+
       if (
         orchestrator !== undefined &&
         (await orchestrator.hasOwnedUnjoined(options.invocationId))
@@ -923,6 +1095,7 @@ export async function runExpertInvocation(options: RunExpertInvocationOptions): 
               invocationId: options.invocationId,
               patch: {
                 status: "waiting",
+                waitReason: "experts",
                 ...(invocationUsage === undefined ? {} : { usage: invocationUsage }),
               },
             },
@@ -941,33 +1114,46 @@ export async function runExpertInvocation(options: RunExpertInvocationOptions): 
           completed: waitResult.completed,
           discovery: await orchestrator.list(interactionAccess),
         };
+        const waitMessages =
+          waitResult.wakeReason === "message"
+            ? await orchestrator.takePendingMessages(options.invocationId)
+            : [];
         query =
-          waitResult.wakeReason === "steer" && waitResult.steer !== undefined
-            ? [
-                "[Pragma orchestration steer]",
-                "The user sent new guidance while you were waiting for attached Expert tasks.",
-                "The pending Expert tasks continue running. Handle the guidance now, then call wait_experts again when appropriate.",
-                `User guidance: ${waitResult.steer.content}`,
-                JSON.stringify(result, null, 2),
-              ].join("\n")
-            : [
-                "[Pragma orchestration continuation]",
-                "All attached Expert tasks are terminal. Synthesize their results into the final answer.",
-                "Do not spawn replacement tasks for work that is already complete.",
-                JSON.stringify(result, null, 2),
-              ].join("\n");
+          waitMessages.length > 0
+            ? formatExpertMessageContinuation(waitMessages, result)
+            : waitResult.wakeReason === "steer" && waitResult.steer !== undefined
+              ? [
+                  "[Pragma orchestration steer]",
+                  "The user sent new guidance while you were waiting for attached Expert tasks.",
+                  "The pending Expert tasks continue running. Handle the guidance now, then call wait_experts again when appropriate.",
+                  `User guidance: ${waitResult.steer.content}`,
+                  JSON.stringify(result, null, 2),
+                ].join("\n")
+              : [
+                  "[Pragma orchestration continuation]",
+                  "All attached Expert tasks are terminal. Synthesize their results into the final answer.",
+                  "Do not spawn replacement tasks for work that is already complete.",
+                  JSON.stringify(result, null, 2),
+                ].join("\n");
         continuation += 1;
         await options.store.commit({
           commitId: randomUUID(),
           executionId: options.executionId,
-          invocationPatches: [{ invocationId: options.invocationId, patch: { status: "running" } }],
+          invocationPatches: [
+            {
+              invocationId: options.invocationId,
+              patch: { status: "running", waitReason: undefined },
+            },
+          ],
           events: [
             {
               invocationId: options.invocationId,
               type:
-                waitResult.wakeReason === "steer"
-                  ? "expert.children.wait-steered"
-                  : "expert.children.completed",
+                waitMessages.length > 0
+                  ? "expert.children.message-received"
+                  : waitResult.wakeReason === "steer"
+                    ? "expert.children.wait-steered"
+                    : "expert.children.completed",
               data: result,
             },
           ],
@@ -986,31 +1172,68 @@ export async function runExpertInvocation(options: RunExpertInvocationOptions): 
         turn.output,
       );
       await appendInvocationFinalMessage(options, turn.runId, turn.finalMessage, invocationOutput);
-      await options.store.commit({
-        commitId: `invocation-succeeded:${options.invocationId}`,
-        executionId: options.executionId,
-        invocationPatches: [
-          {
-            invocationId: options.invocationId,
-            patch: {
-              status: "succeeded",
-              output: invocationOutput,
-              ...(invocationUsage === undefined ? {} : { usage: invocationUsage }),
-            },
-          },
-        ],
-        events: [
-          {
-            invocationId: options.invocationId,
-            type: "invocation.succeeded",
-            data: {
-              output: invocationOutput,
-              ...(invocationUsage === undefined ? {} : { usage: invocationUsage }),
-            },
-          },
-        ],
-      });
-      return invocationOutput;
+      while (true) {
+        const currentExecution = await requireExecution(options.store, options.executionId);
+        const currentInvocation = await options.store.getInvocation(
+          options.executionId,
+          options.invocationId,
+        );
+        if (currentInvocation === undefined) {
+          throw new Error(`Invocation not found: ${options.invocationId}`);
+        }
+        if (currentInvocation.pendingExpertMessages.length > 0) {
+          const messages = await orchestrator?.takePendingMessages(options.invocationId);
+          if (messages !== undefined && messages.length > 0) {
+            query = formatExpertMessageContinuation(messages);
+            continuation += 1;
+            await appendUserMessage(
+              options,
+              query,
+              `invocation-message-continuation:${options.invocationId}:${continuation}`,
+            );
+            continue invocationLoop;
+          }
+        }
+        try {
+          await options.store.commit({
+            commitId: `invocation-succeeded:${options.invocationId}`,
+            executionId: options.executionId,
+            expectedVersion: currentExecution.version,
+            invocationPatches: [
+              {
+                invocationId: options.invocationId,
+                patch: {
+                  status: "succeeded",
+                  waitReason: undefined,
+                  output: invocationOutput,
+                  ...(invocationUsage === undefined ? {} : { usage: invocationUsage }),
+                },
+              },
+            ],
+            ...(options.agentId === undefined
+              ? {}
+              : {
+                  agentPatches: [
+                    { agentId: options.agentId, patch: { activeInvocationId: undefined } },
+                  ],
+                }),
+            events: [
+              {
+                invocationId: options.invocationId,
+                type: "invocation.succeeded",
+                data: {
+                  output: invocationOutput,
+                  ...(invocationUsage === undefined ? {} : { usage: invocationUsage }),
+                },
+              },
+            ],
+          });
+          return invocationOutput;
+        } catch (error) {
+          if (error instanceof ExecutionVersionConflictError) continue;
+          throw error;
+        }
+      }
     }
   } catch (error) {
     let failure = error;
@@ -1025,27 +1248,48 @@ export async function runExpertInvocation(options: RunExpertInvocationOptions): 
         `Invocation ${options.invocationId} failed and its descendants could not be interrupted.`,
       );
     }
-    const latest = await options.store.getInvocation(options.executionId, options.invocationId);
-    const status = options.controller.isCancelled()
-      ? "cancelled"
-      : latest?.status === "interrupted"
-        ? "interrupted"
-        : "failed";
-    if (latest !== undefined && !isTerminalExecutionStatus(latest.status)) {
-      await options.store.commit({
-        commitId: `invocation-${status}:${options.invocationId}`,
-        executionId: options.executionId,
-        invocationPatches: [
-          { invocationId: options.invocationId, patch: { status, error: serializeError(failure) } },
-        ],
-        events: [
-          {
-            invocationId: options.invocationId,
-            type: `invocation.${status}`,
-            data: { message: failure instanceof Error ? failure.message : String(failure) },
-          },
-        ],
-      });
+    while (true) {
+      await orchestrator?.takePendingMessages(options.invocationId);
+      const currentExecution = await requireExecution(options.store, options.executionId);
+      const latest = await options.store.getInvocation(options.executionId, options.invocationId);
+      const status = options.controller.isCancelled()
+        ? "cancelled"
+        : latest?.status === "interrupted"
+          ? "interrupted"
+          : "failed";
+      if (latest === undefined || isTerminalExecutionStatus(latest.status)) break;
+      if (latest.pendingExpertMessages.length > 0) continue;
+      try {
+        await options.store.commit({
+          commitId: `invocation-${status}:${options.invocationId}`,
+          executionId: options.executionId,
+          expectedVersion: currentExecution.version,
+          invocationPatches: [
+            {
+              invocationId: options.invocationId,
+              patch: { status, waitReason: undefined, error: serializeError(failure) },
+            },
+          ],
+          ...(options.agentId === undefined
+            ? {}
+            : {
+                agentPatches: [
+                  { agentId: options.agentId, patch: { activeInvocationId: undefined } },
+                ],
+              }),
+          events: [
+            {
+              invocationId: options.invocationId,
+              type: `invocation.${status}`,
+              data: { message: failure instanceof Error ? failure.message : String(failure) },
+            },
+          ],
+        });
+        break;
+      } catch (commitError) {
+        if (commitError instanceof ExecutionVersionConflictError) continue;
+        throw commitError;
+      }
     }
     throw failure;
   } finally {
@@ -1061,6 +1305,33 @@ function executionRootSource(definition: { readonly kind: string; readonly id: s
         ? "pragma.flow"
         : "pragma.expert";
   return { type, id: definition.id };
+}
+
+function formatExpertMessageContinuation(
+  messages: Invocation["pendingExpertMessages"],
+  waitState?: unknown,
+): string {
+  return [
+    "[Pragma expert message continuation]",
+    "The following messages were accepted for this Invocation while it was active.",
+    "Incorporate them into the current task before producing the final result.",
+    JSON.stringify(
+      messages.map((message) => ({
+        messageId: message.messageId,
+        senderInvocationId: message.senderInvocationId,
+        ...(message.senderAgentId === undefined ? {} : { senderAgentId: message.senderAgentId }),
+        message: message.content,
+      })),
+      null,
+      2,
+    ),
+    ...(waitState === undefined
+      ? []
+      : [
+          "Attached Expert tasks may still be running. Handle the messages, then wait again when needed.",
+          JSON.stringify(waitState, null, 2),
+        ]),
+  ].join("\n");
 }
 
 async function executeAgentJob(
@@ -1120,13 +1391,29 @@ function createExecutionContext(
   if (delegation === undefined || orchestrator === undefined) return base;
   return {
     ...base,
-    spawnExpert: async (request: { readonly expertId: string; readonly prompt: string }) => {
+    delegateExpert: async (
+      request:
+        | { readonly expertId: string; readonly task: string }
+        | { readonly agentId: string; readonly task: string },
+    ) => {
+      if ("agentId" in request) {
+        return await orchestrator.delegateExisting(
+          {
+            ownerContextId: options.context.contextId,
+            callerInvocationId: options.invocationId,
+            ...(options.agentId === undefined ? {} : { callerAgentId: options.agentId }),
+            interactExpertIds: delegation.interactExpertIds,
+            isCoordinator: delegation.isCoordinator,
+          },
+          request,
+        );
+      }
       const expert = delegation.experts.find(
         (candidate) =>
           delegation.spawnExpertIds.has(candidate.id) && candidate.id === request.expertId,
       );
       if (expert === undefined) {
-        throw new Error(`Expert ${nativeExpert.id} may not spawn ${request.expertId}.`);
+        throw new Error(`Expert ${nativeExpert.id} may not delegate to ${request.expertId}.`);
       }
       const childRuntime = await bindDelegatedRuntime(options, delegation, expert, parentRuntimeId);
       return await orchestrator.spawn({
@@ -1135,7 +1422,7 @@ function createExecutionContext(
         parentAgentId: options.agentId,
         depth,
         expert,
-        prompt: request.prompt,
+        prompt: request.task,
         runtime: childRuntime,
         modelSelection: expert.models?.default,
         owner: options.owner,
@@ -1187,8 +1474,12 @@ function createExecutionContext(
         },
         request,
       ),
-    followupExpert: async (request: { readonly agentId: string; readonly prompt: string }) =>
-      await orchestrator.followup(
+    messageExpert: async (request: {
+      readonly agentId: string;
+      readonly invocationId: string;
+      readonly message: string;
+    }) =>
+      await orchestrator.message(
         {
           ownerContextId: options.context.contextId,
           callerInvocationId: options.invocationId,
@@ -1200,9 +1491,8 @@ function createExecutionContext(
       ),
     steerExpert: async (request: {
       readonly agentId: string;
-      readonly invocationId?: string | undefined;
+      readonly invocationId: string;
       readonly message: string;
-      readonly fallback?: "reject" | "followup" | undefined;
     }) =>
       await orchestrator.steer(
         {
@@ -1261,6 +1551,7 @@ async function invokeResourceFromExpert(
       definition: { id: target.id, kind: "flow" },
       contextId: invocationId,
       status: "queued",
+      pendingExpertMessages: [],
       input: request.input,
       createdAt: now,
       updatedAt: now,
@@ -1382,6 +1673,7 @@ async function invokeResourceFromExpert(
       disposition: contextResolution.disposition,
     },
     status: "queued",
+    pendingExpertMessages: [],
     input: request.input,
     createdAt: now,
     updatedAt: now,

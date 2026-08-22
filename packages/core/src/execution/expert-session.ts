@@ -53,7 +53,11 @@ import type {
   HostContextBindingsResolver,
 } from "../context-system/host-context-bindings.ts";
 import { RuntimeSessionPool } from "./runtime-session-pool.ts";
-import type { ExecutionStore } from "./execution-store.ts";
+import {
+  ExecutionFinalStatusConflictError,
+  ExecutionVersionConflictError,
+  type ExecutionStore,
+} from "./execution-store.ts";
 import {
   closeExecutionContexts,
   type ContextResolutionScopeSnapshot,
@@ -231,6 +235,70 @@ function validateDefinitionMigration(
   };
 }
 
+async function interruptRecoveringExecution(
+  store: ExecutionStore,
+  executionId: string,
+): Promise<void> {
+  while (true) {
+    const execution = await store.get(executionId);
+    if (execution === undefined || isFinal(execution.status)) return;
+    const invocations = (await store.listInvocations(executionId)).filter(
+      (invocation) => !isFinal(invocation.status),
+    );
+    const interruptedInvocationIds = new Set(
+      invocations.map((invocation) => invocation.invocationId),
+    );
+    const agentPatches = (await store.listAgents(executionId))
+      .filter(
+        (agent) =>
+          agent.activeInvocationId !== undefined &&
+          interruptedInvocationIds.has(agent.activeInvocationId),
+      )
+      .map((agent) => ({
+        agentId: agent.agentId,
+        patch: { activeInvocationId: undefined },
+      }));
+    try {
+      await store.commit({
+        commitId: `session-recovery-interrupted:${executionId}`,
+        executionId,
+        expectedVersion: execution.version,
+        executionPatch: { status: "interrupted" },
+        invocationPatches: invocations.map((invocation) => ({
+          invocationId: invocation.invocationId,
+          patch: {
+            status: "interrupted",
+            waitReason: undefined,
+            pendingExpertMessages: [],
+          },
+        })),
+        agentPatches,
+        events: invocations.flatMap((invocation) =>
+          invocation.pendingExpertMessages.length === 0
+            ? []
+            : [
+                {
+                  invocationId: invocation.invocationId,
+                  type: "expert.message.consumed",
+                  data: {
+                    messageIds: invocation.pendingExpertMessages.map(
+                      (message) => message.messageId,
+                    ),
+                    terminalReason: "interrupted",
+                  },
+                },
+              ],
+        ),
+      });
+      return;
+    } catch (error) {
+      if (error instanceof ExecutionVersionConflictError) continue;
+      if (error instanceof ExecutionFinalStatusConflictError) return;
+      throw error;
+    }
+  }
+}
+
 export class ExpertSessionManager {
   private readonly active = new Map<string, ExpertSessionImpl>();
 
@@ -353,6 +421,7 @@ export class ExpertSessionManager {
               await this.dependencies.executions.putInvocation(execution.executionId, {
                 ...invocation,
                 status: "waiting",
+                waitReason: "human_input",
                 updatedAt: new Date().toISOString(),
               });
             }
@@ -381,20 +450,7 @@ export class ExpertSessionManager {
         } else {
           const activeExecutionId = record.activeExecutionId;
           if (execution !== undefined && !isFinal(execution.status)) {
-            await this.dependencies.executions.update(execution.executionId, {
-              status: "interrupted",
-            });
-            for (const invocation of await this.dependencies.executions.listInvocations(
-              execution.executionId,
-            )) {
-              if (!isFinal(invocation.status)) {
-                await this.dependencies.executions.putInvocation(execution.executionId, {
-                  ...invocation,
-                  status: "interrupted",
-                  updatedAt: new Date().toISOString(),
-                });
-              }
-            }
+            await interruptRecoveringExecution(this.dependencies.executions, execution.executionId);
           }
           await this.dependencies.sessions.transact(request.sessionId, ({ session, prompts }) => ({
             result: undefined,
@@ -607,7 +663,7 @@ class ExpertSessionImpl implements ExpertSession {
       attachments.length === 0 ? content : createExpertPromptInput(content, attachments);
     const definitionKind = isExpertTeam(this.expert) ? "expert-team" : "expert";
     const execution: ExecutionRecord = {
-      schemaVersion: "pragma.execution/v9",
+      schemaVersion: "pragma.execution/v10",
       executionId: id,
       version: 0,
       kind: "expert-turn",
@@ -653,6 +709,7 @@ class ExpertSessionImpl implements ExpertSession {
         executorId: isExpertTeam(this.expert) ? this.expert.coordinator.id : this.expert.id,
         contextId: rootContextId,
         status: "queued",
+        pendingExpertMessages: [],
         input: storedInput,
         createdAt: now,
         updatedAt: now,
@@ -729,25 +786,10 @@ class ExpertSessionImpl implements ExpertSession {
       }));
       await this.controller?.cancel(reason);
       for (const prompt of pending) {
-        const execution = await this.dependencies.executions.get(prompt.executionId);
-        if (execution !== undefined && !isFinal(execution.status)) {
-          await this.dependencies.executions.update(prompt.executionId, {
-            status: "cancelled",
-            error: reason,
-          });
-          for (const invocation of await this.dependencies.executions.listInvocations(
-            prompt.executionId,
-          )) {
-            if (!isFinal(invocation.status)) {
-              await this.dependencies.executions.putInvocation(prompt.executionId, {
-                ...invocation,
-                status: "cancelled",
-                error: reason,
-                updatedAt: new Date().toISOString(),
-              });
-            }
-          }
-        }
+        await this.cancelPersistedExecution(
+          prompt.executionId,
+          reason ?? "Execution cancelled because the Session closed.",
+        );
       }
       await this.processing;
       const session = await this.getState();
@@ -1158,20 +1200,7 @@ class ExpertSessionImpl implements ExpertSession {
   private async cancelPersistedExecution(executionId: string, reason: string): Promise<void> {
     const execution = await this.dependencies.executions.get(executionId);
     if (execution === undefined || isFinal(execution.status)) return;
-    await this.dependencies.executions.update(executionId, {
-      status: "cancelled",
-      error: reason,
-    });
-    for (const invocation of await this.dependencies.executions.listInvocations(executionId)) {
-      if (!isFinal(invocation.status)) {
-        await this.dependencies.executions.putInvocation(executionId, {
-          ...invocation,
-          status: "cancelled",
-          error: reason,
-          updatedAt: new Date().toISOString(),
-        });
-      }
-    }
+    await new ExecutionController(executionId, this.dependencies.executions).cancel(reason);
   }
 
   private async getRootContext(state?: ExpertSessionRecord): Promise<RuntimeContextRecord> {

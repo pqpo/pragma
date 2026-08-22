@@ -12,7 +12,7 @@ describe("App", () => {
   it("renders the mission creation Home by default", () => {
     const html = renderToStaticMarkup(<App />);
 
-    expect(html).toContain("Start a mission");
+    expect(html).toContain('aria-label="Start mission"');
     expect(html).toContain("What can I help you with?");
     expect(html).toContain('aria-label="Mission options"');
     expect(html).toContain('aria-label="Tool permissions"');

@@ -38,6 +38,8 @@ import {
   missionWorkCallOrder,
   missionWorkGridEdgePath,
   missionWorkRecordTitle,
+  missionStatusLabel,
+  workStatusLabel,
   resolveMissionsPageInitialState,
   resolveMissionRailGroups,
   resolveMissionSearchCollapsed,
@@ -51,6 +53,20 @@ import {
 } from "./MissionsPage.tsx";
 
 describe("MissionsPage", () => {
+  it("distinguishes expert waits, human input, and legacy waiting states", async () => {
+    await i18n.changeLanguage("en");
+    expect(workStatusLabel("waiting", "experts")).toBe("Waiting for experts");
+    expect(workStatusLabel("waiting", "human_input")).toBe("Needs input");
+    expect(workStatusLabel("waiting")).toBe("Waiting");
+
+    const mission = missionFixture("expert");
+    expect(
+      missionStatusLabel({
+        ...mission,
+        execution: { ...mission.execution!, status: "waiting", waitReason: "experts" },
+      }),
+    ).toBe("Waiting for experts");
+  });
   it("keeps a preparing queued message out of the conversation until delivery is known", () => {
     const requestId = "00000000-0000-4000-8000-000000000012";
     const entry = {

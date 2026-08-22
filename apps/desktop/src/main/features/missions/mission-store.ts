@@ -1241,7 +1241,16 @@ function toMissionSummary(mission: Mission): MissionSummary {
     title: mission.title,
     workspace: { basename: mission.workspace.basename },
     executor: { kind: mission.executor.kind, name: mission.executor.name },
-    ...(mission.execution === undefined ? {} : { execution: { status: mission.execution.status } }),
+    ...(mission.execution === undefined
+      ? {}
+      : {
+          execution: {
+            status: mission.execution.status,
+            ...(mission.execution.waitReason === undefined
+              ? {}
+              : { waitReason: mission.execution.waitReason }),
+          },
+        }),
     source:
       mission.origin.type === "automation"
         ? { type: "automation", automationRef: mission.origin.automationRef }

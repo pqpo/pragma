@@ -388,6 +388,7 @@ function invocationTree(): Invocation[] {
     rootInvocationId: "flow-invocation",
     contextId: "context-1",
     status: "running" as const,
+    pendingExpertMessages: [],
     input: {},
     createdAt: "2026-01-02T12:00:00.000Z",
     updatedAt: "2026-01-02T12:00:00.000Z",

@@ -113,7 +113,7 @@ export class FlowExecutionManager {
     await validateFlowRuntimeConfiguration(flow, this.runtimes, runtimeId);
     const now = new Date().toISOString();
     const record: ExecutionRecord = {
-      schemaVersion: "pragma.execution/v9",
+      schemaVersion: "pragma.execution/v10",
       executionId,
       version: 0,
       kind: "flow",
@@ -140,6 +140,7 @@ export class FlowExecutionManager {
       contextId: executionId,
       definition: record.definition,
       status: "queued",
+      pendingExpertMessages: [],
       input,
       createdAt: now,
       updatedAt: now,
@@ -198,24 +199,14 @@ export class FlowExecutionManager {
       this.executions,
       request.executionId,
     );
-    for (const invocation of await this.executions.listInvocations(request.executionId)) {
-      if (!isFinal(invocation.status) && invocation.status !== "waiting") {
-        await this.executions.putInvocation(request.executionId, {
-          ...invocation,
-          status: "interrupted",
-          updatedAt: new Date().toISOString(),
-        });
-      }
-    }
-    await this.executions.update(request.executionId, { status: "interrupted" });
-    const interrupted = await this.executions.listInvocations(request.executionId);
+    const recoverableInvocations = await this.executions.listInvocations(request.executionId);
     await this.executions.commit({
       commitId: `flow-recovery-prepared:${claimId}`,
       executionId: request.executionId,
       recoveryClaimId: claimId,
       executionPatch: { status: "queued" },
-      invocationPatches: interrupted
-        .filter((invocation) => invocation.status === "interrupted")
+      invocationPatches: recoverableInvocations
+        .filter((invocation) => !isFinal(invocation.status) && invocation.status !== "waiting")
         .map((invocation) => ({
           invocationId: invocation.invocationId,
           patch: { status: "queued" as const },
@@ -978,6 +969,7 @@ async function createStepInvocation(
         }
       : {}),
     status: "queued",
+    pendingExpertMessages: [],
     input,
     createdAt: now,
     updatedAt: now,

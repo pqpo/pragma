@@ -1,0 +1,42 @@
+{
+  "execution": {
+    "schemaVersion": "pragma.execution/v9",
+    "executionId": "v9-run",
+    "version": 4,
+    "kind": "expert-turn",
+    "definition": { "id": "expert", "kind": "expert" },
+    "rootInvocationId": "root",
+    "status": "waiting",
+    "input": "hello",
+    "state": { "fixtureSource": "pragma.execution/v9" },
+    "usage": {
+      "measurement": "reported",
+      "input": 10,
+      "output": 2,
+      "cacheRead": 1,
+      "cacheWrite": 0,
+      "totalTokens": 13,
+      "cost": { "input": 0, "output": 0, "cacheRead": 0, "cacheWrite": 0, "total": 0 }
+    },
+    "lastAppliedSequence": 0,
+    "createdAt": "2026-07-23T08:00:00.000Z",
+    "updatedAt": "2026-07-23T08:00:00.000Z"
+  },
+  "invocations": [
+    {
+      "invocationId": "root",
+      "rootInvocationId": "root",
+      "definition": { "id": "expert", "kind": "expert" },
+      "executorId": "expert",
+      "contextId": "context",
+      "status": "waiting",
+      "input": "hello",
+      "createdAt": "2026-07-23T08:00:00.000Z",
+      "updatedAt": "2026-07-23T08:00:00.000Z"
+    }
+  ],
+  "agents": [],
+  "contexts": [],
+  "commits": [],
+  "events": []
+}

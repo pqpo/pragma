@@ -215,7 +215,7 @@ async function createFixture(options: { readonly closeFirst?: boolean } = {}) {
   const expert = { id: "expert" };
   await store.create(
     {
-      schemaVersion: "pragma.execution/v9",
+      schemaVersion: "pragma.execution/v10",
       executionId: "execution",
       version: 0,
       kind: "flow",
@@ -263,6 +263,7 @@ function invocation(
     },
     contextId,
     status: invocationId === "root" ? "running" : "succeeded",
+    pendingExpertMessages: [],
     input: null,
     createdAt,
     updatedAt: createdAt,

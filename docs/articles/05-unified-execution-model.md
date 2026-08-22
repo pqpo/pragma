@@ -17,10 +17,11 @@ Expert 定义角色范围、指令、Runtime、模型、Capability、ContextStor
 普通 Expert 还可以通过显式注入的生命周期工具调用已授权的其他 Expert：
 
 ```text
-spawn_expert
+delegate_expert
 wait_experts
 list_agents
-followup_expert
+message_expert
+steer_expert
 interrupt_expert
 ```
 
@@ -43,7 +44,7 @@ Flow 负责确定性控制：输入映射、状态归约、条件路由、循环
 一种常见的“统一”方式，是把所有 Expert 调用都包装成只有一个节点的 Flow。表面上对象数量变少了，实际上会产生错误抽象：
 
 - 普通对话也要背负 Flow graph 和 scheduler 语义；
-- 子 Agent 的线程、follow-up 和 wait 被伪装成工作流节点；
+- 子 Agent 的线程、消息和 wait 被伪装成工作流节点；
 - Runtime Context 复用与静态图节点复用混在一起；
 - Team 委派很难表达动态产生的子任务。
 

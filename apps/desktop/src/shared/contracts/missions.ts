@@ -80,6 +80,7 @@ export const MissionWorkTaskSchema = z.object({
     "cancelled",
     "interrupted",
   ]),
+  waitReason: z.enum(["experts", "human_input"]).optional(),
   inputSummary: z.string().max(500),
   outputSummary: z.string().max(1_000).optional(),
   error: z.string().max(10_000).optional(),
@@ -98,6 +99,7 @@ export const MissionWorkRecordSchema = z.object({
   avatarId: z.string().min(1).optional(),
   origin: z.enum(["core", "runtime"]),
   status: MissionWorkTaskSchema.shape.status,
+  waitReason: MissionWorkTaskSchema.shape.waitReason,
   tasks: z.array(MissionWorkTaskSchema),
   summary: z.string().max(1_000),
   createdAt: z.string().datetime(),
@@ -138,6 +140,7 @@ const MissionBaseSchema = z.object({
       inputMessageId: z.string().uuid(),
       sessionId: z.string().uuid().optional(),
       status: MissionExecutionStatusSchema,
+      waitReason: z.enum(["experts", "human_input"]).optional(),
       startedAt: z.string().datetime(),
       finishedAt: z.string().datetime().optional(),
       error: z.string().max(10_000).optional(),
@@ -284,7 +287,12 @@ export const MissionSummarySchema = z.object({
     kind: z.enum(["expert", "team", "flow"]),
     name: z.string().trim().min(1).max(120),
   }),
-  execution: z.object({ status: MissionExecutionStatusSchema }).optional(),
+  execution: z
+    .object({
+      status: MissionExecutionStatusSchema,
+      waitReason: z.enum(["experts", "human_input"]).optional(),
+    })
+    .optional(),
   source: z.discriminatedUnion("type", [
     z.object({ type: z.literal("task") }),
     z.object({

@@ -117,6 +117,16 @@ export const ContextResolutionRecordSchema = z.object({
   disposition: z.enum(["created", "reused"]),
 });
 
+export const InvocationExpertMessageSchema = z.object({
+  messageId: z.string().uuid(),
+  senderInvocationId: z.string().min(1),
+  senderAgentId: z.string().min(1).optional(),
+  content: z.string().min(1),
+  createdAt: z.string().datetime(),
+});
+
+export const InvocationWaitReasonSchema = z.enum(["experts", "human_input"]);
+
 export const InvocationSchema = z.object({
   invocationId: z.string().min(1),
   rootInvocationId: z.string().min(1),
@@ -129,6 +139,8 @@ export const InvocationSchema = z.object({
   contextId: z.string().min(1),
   contextResolution: ContextResolutionRecordSchema.optional(),
   status: ExecutionStatusSchema,
+  waitReason: InvocationWaitReasonSchema.optional(),
+  pendingExpertMessages: z.array(InvocationExpertMessageSchema).default([]),
   input: z.unknown(),
   output: z.unknown().optional(),
   usage: AgentMessageUsageSchema.optional(),
@@ -205,7 +217,7 @@ export const ExecutionOutputItemSchema = z.object({
 });
 
 export const ExecutionRecordSchema = z.object({
-  schemaVersion: z.literal("pragma.execution/v9"),
+  schemaVersion: z.literal("pragma.execution/v10"),
   executionId: z.string().min(1),
   version: z.number().int().nonnegative(),
   kind: ExecutionKindSchema,
@@ -238,6 +250,8 @@ export type RuntimeContextOrigin = z.infer<typeof RuntimeContextOriginSchema>;
 export type RuntimeContextRecord = z.infer<typeof RuntimeContextRecordSchema>;
 export type RuntimeEnvironmentBinding = z.infer<typeof RuntimeEnvironmentBindingSchema>;
 export type ContextResolutionRecord = z.infer<typeof ContextResolutionRecordSchema>;
+export type InvocationExpertMessage = z.infer<typeof InvocationExpertMessageSchema>;
+export type InvocationWaitReason = z.infer<typeof InvocationWaitReasonSchema>;
 export type Invocation = z.infer<typeof InvocationSchema>;
 export type AgentInstance = z.infer<typeof AgentInstanceSchema>;
 export type ExecutionCursor = z.infer<typeof ExecutionCursorSchema>;
