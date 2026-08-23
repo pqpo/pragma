@@ -1032,17 +1032,19 @@ export async function runExpertInvocation(options: RunExpertInvocationOptions): 
   const recoveredMessages =
     invocation.waitReason === "human_input"
       ? []
-      : await orchestrator?.takePendingMessages(options.invocationId);
+      : await orchestrator?.readPendingMessages(options.invocationId);
+  let activeExpertMessages = recoveredMessages ?? [];
   let query =
-    recoveredMessages !== undefined && recoveredMessages.length > 0
-      ? formatExpertMessageContinuation(recoveredMessages)
+    activeExpertMessages.length > 0
+      ? formatExpertMessageContinuation(activeExpertMessages)
       : formattedPrompt;
-  let continuation = recoveredMessages !== undefined && recoveredMessages.length > 0 ? 1 : 0;
+  let continuation = activeExpertMessages.length > 0 ? 1 : 0;
   if (continuation > 0) {
     await appendUserMessage(
       options,
       query,
-      `invocation-message-continuation:${options.invocationId}:${continuation}`,
+      expertMessageHandoffEventId(options.invocationId, activeExpertMessages),
+      expertMessageHandoffTimestamp(activeExpertMessages),
     );
   }
   let invocationUsage = invocation.usage;
@@ -1057,7 +1059,11 @@ export async function runExpertInvocation(options: RunExpertInvocationOptions): 
         runId:
           continuation === 0
             ? (options.runtimeRunId ?? options.invocationId)
-            : `${options.runtimeRunId ?? options.invocationId}:continuation:${continuation}`,
+            : `${options.runtimeRunId ?? options.invocationId}:continuation:${
+                activeExpertMessages.length > 0
+                  ? expertMessageBatchId(activeExpertMessages)
+                  : continuation
+              }`,
         executionContext,
         humanInteractionHandler,
         modelSelection,
@@ -1068,16 +1074,23 @@ export async function runExpertInvocation(options: RunExpertInvocationOptions): 
       });
       invocationUsage = mergeUsage(invocationUsage, turn.usage);
       await persistSessionInfo(session, persistRuntimeSnapshot);
+      await orchestrator?.acknowledgePendingMessages(
+        options.invocationId,
+        activeExpertMessages.map((message) => message.messageId),
+      );
+      activeExpertMessages = [];
 
-      const pendingMessages = await orchestrator?.takePendingMessages(options.invocationId);
+      const pendingMessages = await orchestrator?.readPendingMessages(options.invocationId);
       if (pendingMessages !== undefined && pendingMessages.length > 0) {
         await appendInvocationFinalMessage(options, turn.runId, turn.finalMessage, undefined);
+        activeExpertMessages = pendingMessages;
         query = formatExpertMessageContinuation(pendingMessages);
         continuation += 1;
         await appendUserMessage(
           options,
           query,
-          `invocation-message-continuation:${options.invocationId}:${continuation}`,
+          expertMessageHandoffEventId(options.invocationId, activeExpertMessages),
+          expertMessageHandoffTimestamp(activeExpertMessages),
         );
         continue;
       }
@@ -1116,8 +1129,9 @@ export async function runExpertInvocation(options: RunExpertInvocationOptions): 
         };
         const waitMessages =
           waitResult.wakeReason === "message"
-            ? await orchestrator.takePendingMessages(options.invocationId)
+            ? await orchestrator.readPendingMessages(options.invocationId)
             : [];
+        activeExpertMessages = waitMessages;
         query =
           waitMessages.length > 0
             ? formatExpertMessageContinuation(waitMessages, result)
@@ -1161,7 +1175,12 @@ export async function runExpertInvocation(options: RunExpertInvocationOptions): 
         await appendUserMessage(
           options,
           query,
-          `invocation-continuation-message:${options.invocationId}:${continuation}`,
+          activeExpertMessages.length > 0
+            ? expertMessageHandoffEventId(options.invocationId, activeExpertMessages)
+            : `invocation-continuation-message:${options.invocationId}:${continuation}`,
+          activeExpertMessages.length > 0
+            ? expertMessageHandoffTimestamp(activeExpertMessages)
+            : undefined,
         );
         continue;
       }
@@ -1182,14 +1201,16 @@ export async function runExpertInvocation(options: RunExpertInvocationOptions): 
           throw new Error(`Invocation not found: ${options.invocationId}`);
         }
         if (currentInvocation.pendingExpertMessages.length > 0) {
-          const messages = await orchestrator?.takePendingMessages(options.invocationId);
+          const messages = await orchestrator?.readPendingMessages(options.invocationId);
           if (messages !== undefined && messages.length > 0) {
+            activeExpertMessages = messages;
             query = formatExpertMessageContinuation(messages);
             continuation += 1;
             await appendUserMessage(
               options,
               query,
-              `invocation-message-continuation:${options.invocationId}:${continuation}`,
+              expertMessageHandoffEventId(options.invocationId, activeExpertMessages),
+              expertMessageHandoffTimestamp(activeExpertMessages),
             );
             continue invocationLoop;
           }
@@ -1249,7 +1270,12 @@ export async function runExpertInvocation(options: RunExpertInvocationOptions): 
       );
     }
     while (true) {
-      await orchestrator?.takePendingMessages(options.invocationId);
+      const discardedMessages = await orchestrator?.readPendingMessages(options.invocationId);
+      await orchestrator?.acknowledgePendingMessages(
+        options.invocationId,
+        discardedMessages?.map((message) => message.messageId) ?? [],
+        "terminal",
+      );
       const currentExecution = await requireExecution(options.store, options.executionId);
       const latest = await options.store.getInvocation(options.executionId, options.invocationId);
       const status = options.controller.isCancelled()
@@ -2172,14 +2198,32 @@ async function appendUserMessage(
   options: RunExpertInvocationOptions,
   content: string,
   eventId: string,
+  timestamp = Date.now(),
 ): Promise<void> {
   await options.store.appendEvent(
     options.executionId,
     options.invocationId,
     "invocation.message.appended",
-    { message: { role: "user", content, timestamp: Date.now() } satisfies AgentMessage },
+    { message: { role: "user", content, timestamp } satisfies AgentMessage },
     eventId,
   );
+}
+
+function expertMessageBatchId(messages: Invocation["pendingExpertMessages"]): string {
+  return createHash("sha256")
+    .update(messages.map((message) => message.messageId).join("\0"))
+    .digest("hex");
+}
+
+function expertMessageHandoffEventId(
+  invocationId: string,
+  messages: Invocation["pendingExpertMessages"],
+): string {
+  return `invocation-message-continuation:${invocationId}:${expertMessageBatchId(messages)}`;
+}
+
+function expertMessageHandoffTimestamp(messages: Invocation["pendingExpertMessages"]): number {
+  return Math.max(...messages.map((message) => Date.parse(message.createdAt)));
 }
 
 async function persistSessionInfo(

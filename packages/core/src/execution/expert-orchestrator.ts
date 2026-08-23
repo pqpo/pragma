@@ -554,7 +554,22 @@ export class ExpertOrchestrator {
     }
   }
 
-  async takePendingMessages(invocationId: string): Promise<Invocation["pendingExpertMessages"]> {
+  async readPendingMessages(invocationId: string): Promise<Invocation["pendingExpertMessages"]> {
+    const invocation = await this.options.store.getInvocation(
+      this.options.executionId,
+      invocationId,
+    );
+    if (invocation === undefined) throw new Error(`Invocation not found: ${invocationId}`);
+    return invocation.pendingExpertMessages;
+  }
+
+  async acknowledgePendingMessages(
+    invocationId: string,
+    messageIds: readonly string[],
+    terminalReason?: string,
+  ): Promise<void> {
+    const requestedIds = new Set(messageIds);
+    if (requestedIds.size === 0) return;
     while (true) {
       const execution = await this.requireExecution();
       const invocation = await this.options.store.getInvocation(
@@ -562,25 +577,40 @@ export class ExpertOrchestrator {
         invocationId,
       );
       if (invocation === undefined) throw new Error(`Invocation not found: ${invocationId}`);
-      const messages = invocation.pendingExpertMessages;
-      if (messages.length === 0) return [];
+      const messages = invocation.pendingExpertMessages.filter((message) =>
+        requestedIds.has(message.messageId),
+      );
+      if (messages.length === 0) return;
+      const acknowledgedIds = messages.map((message) => message.messageId);
       try {
         await this.options.store.commit({
           commitId: `expert-messages-consumed:${invocationId}:${createHash("sha256")
-            .update(messages.map((message) => message.messageId).join("\0"))
+            .update(acknowledgedIds.join("\0"))
             .digest("hex")}`,
           executionId: this.options.executionId,
           expectedVersion: execution.version,
-          invocationPatches: [{ invocationId, patch: { pendingExpertMessages: [] } }],
+          invocationPatches: [
+            {
+              invocationId,
+              patch: {
+                pendingExpertMessages: invocation.pendingExpertMessages.filter(
+                  (message) => !requestedIds.has(message.messageId),
+                ),
+              },
+            },
+          ],
           events: [
             {
               invocationId,
               type: "expert.message.consumed",
-              data: { messageIds: messages.map((message) => message.messageId) },
+              data: {
+                messageIds: acknowledgedIds,
+                ...(terminalReason === undefined ? {} : { terminalReason }),
+              },
             },
           ],
         });
-        return messages;
+        return;
       } catch (error) {
         if (error instanceof ExecutionVersionConflictError) continue;
         throw error;
@@ -883,7 +913,7 @@ export class ExpertOrchestrator {
   }): Promise<void> {
     try {
       await this.options.store.commit({
-        commitId: `agent-activated:${options.invocation.invocationId}`,
+        commitId: `agent-activated:${options.invocation.invocationId}:${randomUUID()}`,
         executionId: this.options.executionId,
         agentPatches: [
           {

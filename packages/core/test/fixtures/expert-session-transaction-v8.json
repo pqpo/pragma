@@ -1,0 +1,60 @@
+{
+  "schemaVersion": "pragma.expert-session-transaction/v8",
+  "session": {
+    "schemaVersion": "pragma.expert-session/v5",
+    "sessionId": "historical-session",
+    "expertId": "expert",
+    "definitionFingerprint": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+    "status": "open",
+    "activeExecutionId": "historical-execution",
+    "queuedRequestIds": [],
+    "executionIds": ["historical-execution"],
+    "rootContextId": "context",
+    "contexts": {
+      "context": {
+        "schemaVersion": "pragma.runtime-context/v5",
+        "contextId": "context",
+        "owner": { "type": "expert-session", "ownerId": "historical-session" },
+        "origin": { "type": "expert-session", "sessionId": "historical-session" },
+        "expert": { "id": "expert" },
+        "runtime": {
+          "runtimeId": "fake",
+          "revision": 1,
+          "fingerprint": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+        },
+        "lifecycle": "open",
+        "createdAt": "2026-08-01T08:00:00.000Z",
+        "updatedAt": "2026-08-01T08:00:00.000Z"
+      }
+    },
+    "createdAt": "2026-08-01T08:00:00.000Z",
+    "updatedAt": "2026-08-01T08:00:00.000Z"
+  },
+  "prompts": [],
+  "events": [],
+  "execution": {
+    "schemaVersion": "pragma.execution/v9",
+    "executionId": "historical-execution",
+    "version": 0,
+    "kind": "expert-turn",
+    "definition": { "id": "expert", "kind": "expert" },
+    "rootInvocationId": "historical-execution",
+    "status": "queued",
+    "input": "historical prompt",
+    "state": {},
+    "lastAppliedSequence": 0,
+    "createdAt": "2026-08-01T08:00:00.000Z",
+    "updatedAt": "2026-08-01T08:00:00.000Z"
+  },
+  "rootInvocation": {
+    "invocationId": "historical-execution",
+    "rootInvocationId": "historical-execution",
+    "definition": { "id": "expert", "kind": "expert" },
+    "executorId": "expert",
+    "contextId": "context",
+    "status": "queued",
+    "input": "historical prompt",
+    "createdAt": "2026-08-01T08:00:00.000Z",
+    "updatedAt": "2026-08-01T08:00:00.000Z"
+  }
+}

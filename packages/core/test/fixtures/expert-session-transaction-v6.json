@@ -1,0 +1,34 @@
+{
+  "schemaVersion": "pragma.expert-session-transaction/v6",
+  "session": {
+    "schemaVersion": "pragma.expert-session/v5",
+    "sessionId": "historical-chain-session",
+    "expertId": "expert",
+    "definitionFingerprint": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+    "status": "open",
+    "queuedRequestIds": [],
+    "executionIds": [],
+    "rootContextId": "context",
+    "contexts": {
+      "context": {
+        "schemaVersion": "pragma.runtime-context/v5",
+        "contextId": "context",
+        "owner": { "type": "expert-session", "ownerId": "historical-chain-session" },
+        "origin": { "type": "expert-session", "sessionId": "historical-chain-session" },
+        "expert": { "id": "expert" },
+        "runtime": {
+          "runtimeId": "fake",
+          "revision": 1,
+          "fingerprint": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+        },
+        "lifecycle": "open",
+        "createdAt": "2026-06-01T08:00:00.000Z",
+        "updatedAt": "2026-06-01T08:00:00.000Z"
+      }
+    },
+    "createdAt": "2026-06-01T08:00:00.000Z",
+    "updatedAt": "2026-06-01T08:00:00.000Z"
+  },
+  "prompts": [],
+  "events": []
+}
