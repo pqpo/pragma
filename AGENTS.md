@@ -680,8 +680,8 @@ RuntimeAdapter
 Expert API 设计要求：
 
 - `defineExpert()` 是单专家唯一创建入口，负责异步插件加载、inline plugin entry 合并、日志初始化和实例归一化。
-- `createAgentLauncher()` 为普通 Expert 创建可显式注入的 `spawn_expert`、`wait_experts`、
-  `list_agents`、`followup_expert`、`steer_expert`、`interrupt_expert` 工具集；子 Invocation 的执行、Context、
+- `createAgentLauncher()` 为普通 Expert 创建可显式注入的 `delegate_expert`、`wait_experts`、
+  `list_agents`、`message_expert`、`steer_expert`、`interrupt_expert` 工具集；子 Invocation 的执行、Context、
   并发、深度、事件和 Usage 机制必须与 ExpertTeam 共用，不另建隐藏 Session 路径。
 - `defineExpertTeam()` 声明由 coordinator 统一接收外部 prompt 的特殊 Expert。
 - ExpertTeam 运行时按成员权限策略生成相同的生命周期工具集；coordinator 在当前 Team Execution 内

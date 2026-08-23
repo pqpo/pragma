@@ -621,6 +621,49 @@ describe("Codex tool event mapping", () => {
     ]);
   });
 
+  it.each([
+    ["message_expert", undefined, "message"],
+    ["steer_expert", undefined, "steer"],
+    ["sendInput", false, "followup"],
+    ["sendInput", true, "steer"],
+  ] as const)("maps %s delivery semantics onto agent commands", (tool, interrupt, delivery) => {
+    const context = {
+      runId: "root-run",
+      source: { kind: "runtime", runId: "root-run", path: [] },
+      events: {},
+    } as unknown as RuntimeEventMappingContext;
+    const result = mapCodexNotificationToRuntimeEvent(
+      {
+        rootThreadId: "root-thread",
+        notification: {
+          method: "item/completed",
+          params: {
+            threadId: "root-thread",
+            turnId: "root-turn",
+            item: {
+              type: "collabAgentToolCall",
+              id: `send-${delivery}`,
+              tool,
+              status: "completed",
+              senderThreadId: "root-thread",
+              receiverThreadIds: ["child-thread"],
+              prompt: "Refine the result",
+              ...(interrupt === undefined ? {} : { interrupt }),
+            },
+          },
+        },
+      },
+      context,
+    );
+
+    expect(result.events).toEqual([
+      expect.objectContaining({
+        type: "agent.command",
+        payload: expect.objectContaining({ action: "send", delivery }),
+      }),
+    ]);
+  });
+
   it("keeps child thread output in a distinct runtime source", () => {
     const messageDelta = vi.fn((delta: string) => ({
       runId: "root-run",

@@ -2051,22 +2051,38 @@ export function createMissionRunner(options: {
         steerFallbackByRequestId.set(data.requestId, data.reason);
       }
     }
-    const entriesWithDelivery = presentedEntries.map((entry) => {
-      if (entry.kind !== "user") return entry;
-      const prompt = promptByRequestId.get(entry.id);
-      if (prompt === undefined) return entry;
-      const fallbackReason = steerFallbackByRequestId.get(entry.id);
-      return {
-        ...entry,
-        delivery: {
-          requestedMode: fallbackReason === undefined ? prompt.mode : "steer",
-          effectiveMode: prompt.mode,
-          status: prompt.status,
-          ...(removedPromptIds.has(prompt.requestId) ? { removed: true } : {}),
-          ...(fallbackReason === undefined ? {} : { fallbackReason }),
-        },
-      };
-    });
+    const supersededQueuedExecutionIds = new Set(
+      presentedEntries.flatMap((entry) => {
+        if (entry.kind !== "user" || entry.executionId === undefined) return [];
+        const prompt = promptByRequestId.get(entry.id);
+        return prompt?.mode === "steer" && prompt.executionId !== entry.executionId
+          ? [entry.executionId]
+          : [];
+      }),
+    );
+    const entriesWithDelivery = presentedEntries
+      .filter(
+        (entry) =>
+          entry.executionId === undefined ||
+          !supersededQueuedExecutionIds.has(entry.executionId) ||
+          entry.id !== `result:${entry.executionId}`,
+      )
+      .map((entry) => {
+        if (entry.kind !== "user") return entry;
+        const prompt = promptByRequestId.get(entry.id);
+        if (prompt === undefined) return entry;
+        const fallbackReason = steerFallbackByRequestId.get(entry.id);
+        return {
+          ...entry,
+          delivery: {
+            requestedMode: fallbackReason === undefined ? prompt.mode : "steer",
+            effectiveMode: prompt.mode,
+            status: prompt.status,
+            ...(removedPromptIds.has(prompt.requestId) ? { removed: true } : {}),
+            ...(fallbackReason === undefined ? {} : { fallbackReason }),
+          },
+        };
+      });
     return {
       missionId: mission.id,
       revision,
@@ -2264,6 +2280,7 @@ export function createMissionRunner(options: {
             runId: task.runId,
             ...(task.sequence === undefined ? {} : { sequence: task.sequence }),
             status: task.status,
+            ...(task.waitReason === undefined ? {} : { waitReason: task.waitReason }),
             inputSummary: formatValue(task.input, 500),
             ...(outputSummary === undefined ? {} : { outputSummary }),
             ...(task.error === undefined ? {} : { error: formatValue(task.error, 10_000) }),
@@ -2299,6 +2316,7 @@ export function createMissionRunner(options: {
           ...(avatarId === undefined ? {} : { avatarId }),
           origin: record.origin,
           status: record.status,
+          ...(record.waitReason === undefined ? {} : { waitReason: record.waitReason }),
           tasks,
           summary: latest?.outputSummary ?? latest?.inputSummary ?? title,
           createdAt: record.createdAt,
@@ -2335,12 +2353,16 @@ export function createMissionRunner(options: {
     );
     const record = records.find((candidate) => candidate.recordId === input.recordId);
     if (record === undefined) throw new Error(`Mission work record not found: ${input.recordId}`);
-    const taskInputEntries = workTaskInputEntries(record);
+    const messageInputs = await readWorkMessageInputs(executionIds, record, executionStore);
+    const taskInputEntries = workTaskInputEntries(record).filter(
+      (entry) => !messageInputs.supersededTaskInputEntryIds.has(entry.id),
+    );
     const durableEntries = messageRecordsToChatEntries(rawOutput);
     const liveEntries = liveWorkOutputs.get(mission.id)?.get(record.recordId)?.entries ?? [];
     const liveExecutionIds = new Set(liveEntries.flatMap((entry) => entry.executionId ?? []));
     const byId = new Map<string, MissionChatEntry>();
     for (const entry of taskInputEntries) byId.set(entry.id, entry);
+    for (const entry of messageInputs.entries) byId.set(entry.id, entry);
     for (const entry of durableEntries) {
       if (entry.executionId === undefined || !liveExecutionIds.has(entry.executionId)) {
         byId.set(entry.id, { ...entry });
@@ -2935,6 +2957,7 @@ function observeMissionHumanWaitingStatus(input: {
 } {
   const pending = new Set<string>();
   let observedWaiting: boolean | undefined;
+  let observedWaitReason: "experts" | "human_input" | undefined;
   let updates = Promise.resolve();
 
   const enqueueUpdate = (update: () => Promise<void>): Promise<void> => {
@@ -2945,9 +2968,12 @@ function observeMissionHumanWaitingStatus(input: {
     return result;
   };
 
-  const persistStatus = async (): Promise<void> => {
-    const waiting = pending.size > 0;
-    if (waiting === observedWaiting) return;
+  const persistStatus = async (
+    invocationWaitReason?: "experts" | "human_input" | undefined,
+  ): Promise<void> => {
+    const waitReason = pending.size > 0 ? "human_input" : invocationWaitReason;
+    const waiting = waitReason !== undefined;
+    if (waiting === observedWaiting && waitReason === observedWaitReason) return;
     await input.missions.updateExecution(
       input.missionId,
       {
@@ -2955,6 +2981,7 @@ function observeMissionHumanWaitingStatus(input: {
         inputMessageId: input.inputMessageId,
         ...(input.sessionId === undefined ? {} : { sessionId: input.sessionId }),
         status: waiting ? "waiting" : "running",
+        ...(waitReason === undefined ? {} : { waitReason }),
         startedAt: input.startedAt,
       },
       {
@@ -2963,6 +2990,7 @@ function observeMissionHumanWaitingStatus(input: {
       },
     );
     observedWaiting = waiting;
+    observedWaitReason = waitReason;
   };
 
   const resync = async (): Promise<void> => {
@@ -2970,8 +2998,10 @@ function observeMissionHumanWaitingStatus(input: {
       const interactions = await listPendingHumanInteractions(input.execution);
       pending.clear();
       for (const interaction of interactions) pending.add(interaction.interactionId);
+      const tree = await input.execution.getTree();
       observedWaiting = undefined;
-      await persistStatus();
+      observedWaitReason = undefined;
+      await persistStatus(tree.invocation.waitReason);
     } catch (error) {
       input.logger.warn(
         "mission.human_wait_status_seed_failed",
@@ -2984,15 +3014,17 @@ function observeMissionHumanWaitingStatus(input: {
   void enqueueUpdate(resync).catch(() => undefined);
 
   const onEvent = (event: ExecutionEvent): void => {
-    if (event.type !== "human.requested" && event.type !== "human.responded") return;
+    if (
+      event.type !== "human.requested" &&
+      event.type !== "human.responded" &&
+      event.type !== "human.waiting" &&
+      event.type !== "human.resumed" &&
+      !event.type.startsWith("expert.children.")
+    ) {
+      return;
+    }
     const update = enqueueUpdate(async () => {
-      const interactionId = String(
-        (event.data as { readonly interactionId?: unknown }).interactionId ?? "",
-      );
-      if (interactionId === "") return;
-      if (event.type === "human.requested") pending.add(interactionId);
-      else pending.delete(interactionId);
-      await persistStatus();
+      await resync();
     });
     void update.catch((error: unknown) => {
       input.logger.warn(
@@ -3315,6 +3347,89 @@ function workTaskInputEntries(record: ExecutionWorkRecord): MissionChatEntry[] {
       },
     ];
   });
+}
+
+async function readWorkMessageInputs(
+  executionIds: readonly string[],
+  record: ExecutionWorkRecord,
+  store: Pick<FileExecutionStore, "readEvents">,
+): Promise<{
+  readonly entries: readonly MissionChatEntry[];
+  readonly supersededTaskInputEntryIds: ReadonlySet<string>;
+}> {
+  const invocationIds = new Set(record.tasks.map((task) => task.invocationId));
+  const byId = new Map<string, MissionChatEntry>();
+  const supersededTaskInputEntryIds = new Set<string>();
+  for (const executionId of executionIds) {
+    const queuedRuntimeCommands: Array<{
+      readonly commandId: string;
+      readonly action: "spawn" | "send";
+    }> = [];
+    const queuedRuntimeCommandIds = new Set<string>();
+    for (const event of await store.readEvents(executionId)) {
+      if (record.origin === "core" && event.type === "agent.steer.applied") {
+        if (!invocationIds.has(event.invocationId)) continue;
+        const data = event.data;
+        if (typeof data !== "object" || data === null) continue;
+        const requestId = "requestId" in data ? data.requestId : undefined;
+        const content = "content" in data ? data.content : undefined;
+        if (typeof requestId !== "string" || typeof content !== "string" || content === "") {
+          continue;
+        }
+        byId.set(`work-steer:${executionId}:${requestId}`, {
+          id: `work-steer:${executionId}:${requestId}`,
+          executionId,
+          invocationId: event.invocationId,
+          kind: "user",
+          content: truncate(content, 200_000),
+          createdAt: event.occurredAt,
+        });
+        continue;
+      }
+      if (record.origin !== "runtime" || event.type !== "runtime.event") continue;
+      const parsed = ExpertAgentStreamEventSchema.safeParse(event.data);
+      if (!parsed.success) continue;
+      const streamEvent = parsed.data;
+      if (streamEvent.type === "run.started" && streamEvent.source.sessionId === record.sessionId) {
+        const command = queuedRuntimeCommands.shift();
+        if (command?.action === "send") {
+          supersededTaskInputEntryIds.add(`work-input:${executionId}:${streamEvent.runId}`);
+        }
+        continue;
+      }
+      if (
+        streamEvent.type !== "agent.command" ||
+        (streamEvent.payload.action !== "spawn" && streamEvent.payload.action !== "send") ||
+        !streamEvent.payload.targetSessionIds.includes(record.sessionId) ||
+        streamEvent.payload.prompt === undefined ||
+        streamEvent.payload.prompt === ""
+      ) {
+        continue;
+      }
+      if (
+        !queuedRuntimeCommandIds.has(streamEvent.payload.commandId) &&
+        streamEvent.payload.delivery !== "steer"
+      ) {
+        queuedRuntimeCommandIds.add(streamEvent.payload.commandId);
+        queuedRuntimeCommands.push({
+          commandId: streamEvent.payload.commandId,
+          action: streamEvent.payload.action,
+        });
+      }
+      if (streamEvent.payload.action !== "send") continue;
+      const id = `work-send:${executionId}:${streamEvent.payload.commandId}:${record.sessionId}`;
+      if (byId.has(id)) continue;
+      byId.set(id, {
+        id,
+        executionId,
+        invocationId: event.invocationId,
+        kind: "user",
+        content: truncate(streamEvent.payload.prompt, 200_000),
+        createdAt: streamEvent.emittedAt,
+      });
+    }
+  }
+  return { entries: [...byId.values()], supersededTaskInputEntryIds };
 }
 
 function workTaskInputContent(input: unknown): string {

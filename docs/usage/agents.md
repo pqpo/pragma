@@ -50,13 +50,16 @@ const coordinator = await defineExpert({
 const session = await app.experts.createSession(coordinator);
 ```
 
-launcher 向模型公开 `spawn_expert`、`wait_experts`、`list_agents`、`followup_expert` 和
-`interrupt_expert`。`spawn_expert` 先原子落盘再立即返回
-`{ agentId, invocationId, contextId, disposition }`；多个 agent 可以并行运行。Resolver 返回同一
-Context 时，dispatch 会原子归并到同一 agent 并按 FIFO 串行；默认 resolver 每次创建新 Context。
+launcher 向模型公开 `delegate_expert`、`wait_experts`、`list_agents`、`message_expert`、
+`steer_expert` 和 `interrupt_expert`。`delegate_expert` 使用 `expertId` 时创建 AgentInstance，使用
+`agentId` 时在既有 Context 上追加 FIFO Invocation；两者都先原子落盘再立即返回
+`{ agentId, invocationId, contextId, disposition }`。`message_expert` 只向目标明确的 active
+Invocation Inbox 投递消息，`steer_expert` 只尝试立即影响当前 Runtime turn；两者都不会创建任务。
+Resolver 返回同一 Context 时，dispatch 会原子归并到同一 agent 并按 FIFO 串行；默认 resolver 每次创建新 Context。
 `wait_experts` 按精确的
 Invocation ID 收集结果；等待超时最小 30 秒、默认 10 分钟、最大 60 分钟。父 Invocation 即使遗漏
-wait，也会在终结屏障等待未 join 的子任务并续跑综合。
+wait，也会在终结屏障等待未 join 的直接子任务并续跑综合。任务边和同 Agent FIFO 边共同构成
+无环 Wait-for Graph；消息边不进入该图。
 
 ExpertTeam 使用完全相同的配置入口：`delegation.contextId`。Resolver 只能从当前 owner 的兼容
 Context 候选中选择；相同字符串不能跨 ExpertSession/FlowExecution，也不能切换 Expert 或 Runtime。

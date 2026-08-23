@@ -1364,6 +1364,7 @@ function TeamPermissionEditor(props: {
                   .map((target) => (
                     <label key={target.metadata.id}>
                       <input
+                        className="team-permission-checkbox"
                         type="checkbox"
                         checked={(props.spawn[source.metadata.id] ?? []).includes(
                           target.metadata.id,
@@ -1387,6 +1388,7 @@ function TeamPermissionEditor(props: {
                 {participants.map((target) => (
                   <label key={target.metadata.id}>
                     <input
+                      className="team-permission-checkbox"
                       type="checkbox"
                       checked={(props.interact[source.metadata.id] ?? []).includes(
                         target.metadata.id,

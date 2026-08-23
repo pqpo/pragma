@@ -1530,7 +1530,7 @@ describe("MissionRunner", { timeout: 15_000 }, () => {
       readSession: (session) => ({ runtimeSessionId: session.id }),
       async startTurn(session, turn) {
         const tools = session.context.agent.tools ?? [];
-        const spawn = tools.find((tool) => tool.name === "spawn_expert");
+        const spawn = tools.find((tool) => tool.name === "delegate_expert");
         const wait = tools.find((tool) => tool.name === "wait_experts");
         const callReviewer = tools.find((tool) => tool.name === "call_reviewer");
         let output = `${session.context.agent.id}:${turn.rawQuery}`;
@@ -1540,7 +1540,7 @@ describe("MissionRunner", { timeout: 15_000 }, () => {
           session.context.agent.id === writer.metadata.id
         ) {
           const spawned = await spawn.call(
-            { expertId: reviewer.metadata.id, prompt: "Team review" },
+            { expertId: reviewer.metadata.id, task: "Team review" },
             turn.signal,
             { execution: session.context.request.executionContext },
           );
@@ -1969,6 +1969,99 @@ describe("MissionRunner", { timeout: 15_000 }, () => {
     });
   });
 
+  it("does not present a queued Execution moved to steer as an interruption", async () => {
+    const root = await mkdtemp(join(tmpdir(), "pragma-mission-queued-steer-"));
+    temporaryPaths.push(root);
+    const project = createPragmaProjectStore({ projectsPath: join(root, "projects") });
+    const snapshot = await project.publish({
+      expectedRevision: 0,
+      resources: [runtimeFixture(), expertFixture()],
+    });
+    const missions = createMissionStore({ missionsPath: join(root, "missions") });
+    const mission = await missions.create({
+      workspace: { path: root, basename: "workspace" },
+      goal: "Stream the first answer",
+      project: { id: snapshot.projectId, revision: snapshot.revision },
+      executor: missionExecutorSnapshot(
+        snapshot.resources.find((resource) => resource.kind === "Expert")!,
+      ),
+    });
+    let markFirstTurnStarted!: () => void;
+    let finishFirstTurn!: () => void;
+    const firstTurnStarted = new Promise<void>((resolve) => {
+      markFirstTurnStarted = resolve;
+    });
+    const firstTurnCanFinish = new Promise<void>((resolve) => {
+      finishFirstTurn = resolve;
+    });
+    const steers: string[] = [];
+    const runtime = defineRuntimeTestDriver<never, { id: string }>({
+      descriptor: { id: "fake", kind: "fake", displayName: "Fake" },
+      createSession: () => ({ id: "runtime" }),
+      restoreSession: () => ({ id: "runtime" }),
+      readSession: (session) => ({ runtimeSessionId: session.id }),
+      async startTurn(_session, turn) {
+        if (turn.rawQuery === mission.goal) {
+          markFirstTurnStarted();
+          await firstTurnCanFinish;
+        }
+        return { outputText: `answer:${turn.rawQuery}`, runtimeSessionId: "runtime" };
+      },
+      steerTurn: (_session, request) => {
+        steers.push(request.content);
+      },
+      mapEvent: () => ({ events: [] }),
+      closeSession: () => undefined,
+    });
+    const runner = createMissionRunner({
+      missions,
+      project,
+      capabilityStore: {} as CapabilityStore,
+      capabilityCredentials: {} as CapabilityCredentialStore,
+      capabilitiesPath: join(root, "capabilities"),
+      pragmaHome: join(root, "state"),
+      runtimes: createStaticRuntimeResolver({ runtimes: [runtime], defaultRuntimeId: "fake" }),
+    });
+
+    await runner.run(mission.id);
+    await firstTurnStarted;
+    const activeExecutionId = (await missions.get(mission.id)).execution!.id;
+    const requestId = "00000000-0000-4000-8000-000000000109";
+    await expect(
+      runner.sendMessage({
+        id: mission.id,
+        content: "Change direction now",
+        requestId,
+      }),
+    ).resolves.toMatchObject({ effectiveMode: "enqueue" });
+
+    await runner.steerQueuedMessage({ id: mission.id, requestId });
+
+    const chat = await runner.getChat({ id: mission.id, limit: 50 });
+    expect(chat.execution).toMatchObject({ id: activeExecutionId, status: "running" });
+    expect(steers).toEqual(["Change direction now"]);
+    expect(chat.entries).toContainEqual(
+      expect.objectContaining({
+        id: requestId,
+        kind: "user",
+        delivery: expect.objectContaining({
+          requestedMode: "steer",
+          effectiveMode: "steer",
+          status: "succeeded",
+        }),
+      }),
+    );
+    expect(chat.entries).not.toContainEqual(
+      expect.objectContaining({ kind: "assistant", content: "Execution interrupted." }),
+    );
+
+    finishFirstTurn();
+    await vi.waitFor(
+      async () => expect((await missions.get(mission.id)).execution?.status).toBe("succeeded"),
+      { timeout: settlementTimeoutMs },
+    );
+  });
+
   it("compiles and runs the resource pinned by a Mission", async () => {
     const root = await mkdtemp(join(tmpdir(), "pragma-mission-runner-"));
     temporaryPaths.push(root);
@@ -2296,11 +2389,57 @@ describe("MissionRunner", { timeout: 15_000 }, () => {
     };
     await store.appendEvent(executionId, executionId, "runtime.event", {
       schemaVersion: "pragma.stream/v1",
-      eventId: "child-followup-started",
+      eventId: "steer-child",
       sequence: 102,
+      runId: "root-run",
+      emittedAt: new Date(childConversationStartedAt + 2).toISOString(),
+      source: {
+        kind: "agent",
+        runId: "root-run",
+        sessionId: "root-thread",
+        path: [],
+      },
+      type: "agent.command",
+      payload: {
+        commandId: "steer-child",
+        action: "send",
+        delivery: "steer",
+        phase: "completed",
+        senderSessionId: "root-thread",
+        targetSessionIds: ["child-thread"],
+        prompt: "Focus on the test failures",
+      },
+    });
+    await store.appendEvent(executionId, executionId, "runtime.event", {
+      schemaVersion: "pragma.stream/v1",
+      eventId: "followup-child",
+      sequence: 103,
+      runId: "root-run",
+      emittedAt: new Date(childConversationStartedAt + 3).toISOString(),
+      source: {
+        kind: "agent",
+        runId: "root-run",
+        sessionId: "root-thread",
+        path: [],
+      },
+      type: "agent.command",
+      payload: {
+        commandId: "followup-child",
+        action: "send",
+        delivery: "followup",
+        phase: "completed",
+        senderSessionId: "root-thread",
+        targetSessionIds: ["child-thread"],
+        prompt: "Refine the findings",
+      },
+    });
+    await store.appendEvent(executionId, executionId, "runtime.event", {
+      schemaVersion: "pragma.stream/v1",
+      eventId: "child-followup-started",
+      sequence: 104,
       runId: "child-followup-turn",
       parentRunId: "root-run",
-      emittedAt: new Date(childConversationStartedAt + 2).toISOString(),
+      emittedAt: new Date(childConversationStartedAt + 4).toISOString(),
       source: followupSource,
       type: "run.started",
       payload: { task: "Refine the findings" },
@@ -2325,7 +2464,7 @@ describe("MissionRunner", { timeout: 15_000 }, () => {
           cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0 },
         },
         stopReason: "stop",
-        timestamp: childConversationStartedAt + 3,
+        timestamp: childConversationStartedAt + 5,
       },
     });
 
@@ -2490,6 +2629,7 @@ describe("MissionRunner", { timeout: 15_000 }, () => {
           content: "Inspect the repository and report complete findings",
         }),
         expect.objectContaining({ kind: "assistant", content: "Subagent findings" }),
+        expect.objectContaining({ kind: "user", content: "Focus on the test failures" }),
         expect.objectContaining({ kind: "user", content: "Refine the findings" }),
         expect.objectContaining({ kind: "assistant", content: "Refined findings" }),
       ],
@@ -2778,7 +2918,7 @@ describe("MissionRunner", { timeout: 15_000 }, () => {
     });
     await executions.create(
       {
-        schemaVersion: "pragma.execution/v9",
+        schemaVersion: "pragma.execution/v10",
         executionId,
         version: 0,
         kind: "expert-turn",
@@ -2798,6 +2938,7 @@ describe("MissionRunner", { timeout: 15_000 }, () => {
         executorId: expert.id,
         contextId,
         status: "running",
+        pendingExpertMessages: [],
         input: mission.goal,
         createdAt: startedAt,
         updatedAt: startedAt,
@@ -3314,7 +3455,7 @@ describe("MissionRunner", { timeout: 15_000 }, () => {
     });
     await executions.create(
       {
-        schemaVersion: "pragma.execution/v9",
+        schemaVersion: "pragma.execution/v10",
         executionId,
         version: 0,
         kind: "expert-turn",
@@ -3334,6 +3475,7 @@ describe("MissionRunner", { timeout: 15_000 }, () => {
         executorId: expertResource.metadata.id,
         contextId,
         status: "running",
+        pendingExpertMessages: [],
         input: mission.goal,
         createdAt: now,
         updatedAt: now,

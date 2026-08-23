@@ -531,6 +531,7 @@ function readAgentCommand(
     type === "dynamicToolCall" || type === "mcpToolCall" ? readString(item?.["tool"]) : undefined;
   const action = readAgentCommandAction(nativeTool ?? genericTool);
   if (action === undefined) return undefined;
+  const delivery = readAgentCommandDelivery(nativeTool ?? genericTool, item);
   const status = readString(item?.["status"]);
   const failed = status === "failed" || item?.["success"] === false;
   const phase =
@@ -550,6 +551,7 @@ function readAgentCommand(
     payload: {
       commandId,
       action,
+      ...(delivery === undefined ? {} : { delivery }),
       phase,
       ...(senderSessionId === undefined ? {} : { senderSessionId }),
       targetSessionIds,
@@ -562,6 +564,20 @@ function readAgentCommand(
   };
 }
 
+function readAgentCommandDelivery(
+  toolName: string | undefined,
+  item: Record<string, unknown> | undefined,
+): "followup" | "message" | "steer" | undefined {
+  const segment = toolName?.split(/[./:]/u).at(-1);
+  if (segment === "message_expert") return "message";
+  if (segment === "steer_expert") return "steer";
+  if (segment === "sendInput") {
+    if (item?.["interrupt"] === true) return "steer";
+    if (item?.["interrupt"] === false) return "followup";
+  }
+  return undefined;
+}
+
 function readAgentCommandAction(
   value: string | undefined,
 ): "spawn" | "wait" | "list" | "send" | "resume" | "interrupt" | undefined {
@@ -570,6 +586,7 @@ function readAgentCommandAction(
   switch (segment) {
     case "spawnAgent":
     case "spawn_agent":
+    case "delegate_expert":
       return "spawn";
     case "wait":
     case "wait_agent":
@@ -580,7 +597,7 @@ function readAgentCommandAction(
       return "list";
     case "sendInput":
     case "send_message":
-    case "followup_expert":
+    case "message_expert":
     case "steer_expert":
       return "send";
     case "resumeAgent":

@@ -1,6 +1,7 @@
 import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
+import { fileURLToPath } from "node:url";
 
 import { afterEach, describe, expect, it } from "vitest";
 
@@ -58,7 +59,7 @@ describe("Execution state migration", () => {
       },
     ]);
     await expect(readJson(paths.executionState("team-run"))).resolves.toMatchObject({
-      schemaVersion: "pragma.execution/v9",
+      schemaVersion: "pragma.execution/v10",
       output: { type: "inline", value: { summary: "cancelled team" } },
     });
     await expect(readJson(paths.executionInvocations("team-run"))).resolves.toMatchObject([
@@ -77,7 +78,7 @@ describe("Execution state migration", () => {
     const store = createFileExecutionStore({ pragmaHome: home });
     await store.create(
       {
-        schemaVersion: "pragma.execution/v9",
+        schemaVersion: "pragma.execution/v10",
         executionId: "current",
         version: 0,
         kind: "expert-turn",
@@ -97,6 +98,7 @@ describe("Execution state migration", () => {
         executorId: "expert",
         contextId: "context",
         status: "running",
+        pendingExpertMessages: [],
         input: "hello",
         createdAt: occurredAt,
         updatedAt: occurredAt,
@@ -105,10 +107,33 @@ describe("Execution state migration", () => {
     const before = await readFile(paths.executionState("current"), "utf8");
 
     await expect(store.get("current")).resolves.toMatchObject({
-      schemaVersion: "pragma.execution/v9",
+      schemaVersion: "pragma.execution/v10",
     });
 
     expect(await readFile(paths.executionState("current"), "utf8")).toBe(before);
+  });
+
+  it("migrates a v9 Invocation to an empty recoverable message Inbox", async () => {
+    const home = await temporaryRoot("pragma-execution-v9-");
+    const paths = new PragmaPaths({ pragmaHome: home });
+    const fixture = (await readJson(
+      fileURLToPath(new URL("./fixtures/execution-v9.json", import.meta.url)),
+    )) as Record<string, unknown>;
+    await writeJson(paths.executionState("v9-run"), fixture["execution"]);
+    await writeJson(paths.executionInvocations("v9-run"), fixture["invocations"]);
+    await writeJson(paths.executionAgents("v9-run"), fixture["agents"]);
+    await writeJson(paths.executionContexts("v9-run"), fixture["contexts"]);
+    await writeJson(paths.executionCommits("v9-run"), fixture["commits"]);
+    await mkdir(dirname(paths.executionEvents("v9-run")), { recursive: true });
+    await writeFile(paths.executionEvents("v9-run"), "", "utf8");
+
+    const store = createFileExecutionStore({ pragmaHome: home });
+    await expect(store.get("v9-run")).resolves.toMatchObject({
+      schemaVersion: "pragma.execution/v10",
+    });
+    await expect(store.listInvocations("v9-run")).resolves.toMatchObject([
+      { invocationId: "root", pendingExpertMessages: [] },
+    ]);
   });
 
   it("migrates v6 definitions without wrapping Invocation handoffs a second time", async () => {
@@ -133,7 +158,7 @@ describe("Execution state migration", () => {
     const store = createFileExecutionStore({ pragmaHome: home });
 
     await expect(store.get("v6-run")).resolves.toMatchObject({
-      schemaVersion: "pragma.execution/v9",
+      schemaVersion: "pragma.execution/v10",
       definition: { id: "team", kind: "expert-team" },
       output: { type: "inline", value: { summary: "v6 result" } },
     });
@@ -210,7 +235,7 @@ describe("Execution state migration", () => {
     await expect(
       createFileExecutionStore({ pragmaHome: home }).get("v7-usage"),
     ).resolves.toMatchObject({
-      schemaVersion: "pragma.execution/v9",
+      schemaVersion: "pragma.execution/v10",
       usage: {
         measurement: "unknown",
         input: 100,
@@ -237,7 +262,7 @@ describe("Execution state migration", () => {
     const home = await temporaryRoot("pragma-execution-future-");
     const paths = new PragmaPaths({ pragmaHome: home });
     const file = paths.executionState("future");
-    const future = { schemaVersion: "pragma.execution/v10", executionId: "future" };
+    const future = { schemaVersion: "pragma.execution/v11", executionId: "future" };
     await writeJson(file, future);
     const before = await readFile(file, "utf8");
 
@@ -291,7 +316,7 @@ describe("Execution state migration", () => {
 
     const store = createFileExecutionStore({ pragmaHome: home });
     await expect(store.get("journal-run")).resolves.toMatchObject({
-      schemaVersion: "pragma.execution/v9",
+      schemaVersion: "pragma.execution/v10",
       version: 1,
       status: "succeeded",
       output: { type: "inline", value: "journal result" },
@@ -300,6 +325,33 @@ describe("Execution state migration", () => {
       {
         output: { type: "inline", value: "journal invocation result" },
         usage: { measurement: "unknown", totalTokens: 10 },
+      },
+    ]);
+    await expect(readFile(transactionFile, "utf8")).rejects.toMatchObject({ code: "ENOENT" });
+  });
+
+  it("upgrades and replays a real v10 pending transaction journal", async () => {
+    const home = await temporaryRoot("pragma-execution-transaction-v10-");
+    const paths = new PragmaPaths({ pragmaHome: home });
+    await writeLegacyExecution(paths, "journal-v10-run", { status: "running" });
+    const transactionFile = paths.executionTransaction("journal-v10-run");
+    const fixture = await readJson(
+      fileURLToPath(new URL("./fixtures/execution-transaction-v10.json", import.meta.url)),
+    );
+    await writeJson(transactionFile, fixture);
+
+    const store = createFileExecutionStore({ pragmaHome: home });
+    await expect(store.get("journal-v10-run")).resolves.toMatchObject({
+      schemaVersion: "pragma.execution/v10",
+      version: 1,
+      status: "succeeded",
+      output: { type: "inline", value: "journal-v10-result" },
+    });
+    await expect(store.listInvocations("journal-v10-run")).resolves.toMatchObject([
+      {
+        invocationId: "root",
+        status: "succeeded",
+        pendingExpertMessages: [],
       },
     ]);
     await expect(readFile(transactionFile, "utf8")).rejects.toMatchObject({ code: "ENOENT" });

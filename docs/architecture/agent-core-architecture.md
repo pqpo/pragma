@@ -8,9 +8,10 @@ Core 分为声明、执行、Runtime 和存储四个边界：
 3. ExpertTurn 与 FlowExecution 共享 ExecutionStore、InvocationTree 和单一 Canonical Event Log。
 4. Runtime driver 明确拆分 create、restore、start turn、steer、cancel turn 和 close session。
 
-Expert 不包装成单节点 Flow。普通 Expert 与 ExpertTeam 共用异步编排机制：`spawn_expert` 创建
-Execution-scoped AgentInstance 和首个 Invocation，`followup_expert` 在相同 Agent Context 上追加
-FIFO Invocation，`wait_experts` 按 Invocation ID 汇合结果。`list_agents` 和 `interrupt_expert`
+Expert 不包装成单节点 Flow。普通 Expert 与 ExpertTeam 共用异步编排机制：`delegate_expert`
+按 `expertId` 创建 Execution-scoped AgentInstance，或按 `agentId` 在相同 Agent Context 上追加
+FIFO Invocation；`wait_experts` 按 Invocation ID 汇合结果。`message_expert` 向明确的 active
+Invocation Inbox 投递安全边界消息，`steer_expert` 尝试立即影响 Runtime turn。`list_agents` 和 `interrupt_expert`
 只管理当前调用者直接创建的 Agent。
 
 两种声明方式只负责提供不同治理配置：
@@ -33,7 +34,7 @@ ExpertSession 根 Expert 不属于 delegation：Session 创建时同步建立唯
 `InvocationService` 统一承担 Invocation 的可靠创建、状态迁移和 Canonical Event 原子提交。
 Flow Scheduler 保留静态图遍历、按 `nodeId + visit` 幂等的循环访问、reduce 和 transition；同一节点
 被条件回边再次访问时创建新的 Invocation，恢复时按访问序号重放既有 Invocation。
-`ExpertOrchestrator` 保留 Agent ownership、FIFO、并发、深度、wait、followup、interrupt 和终结屏障策略。
+`ExpertOrchestrator` 保留 Agent ownership、FIFO、并发、深度、wait、message、steer、interrupt 和终结屏障策略。
 
 Flow 回边后会为新的 Invocation 再次调用 step resolver：返回旧 `contextId` 就沿用 coordinator 的
 Runtime Session，返回新 ID 就隔离。Team 成员由 delegation resolver 独立决定，因此可以实现
@@ -50,8 +51,8 @@ Flow Scheduler / ExpertOrchestrator
 ```
 
 RuntimeContextRecord、AgentInstance 与 Invocation 是三个不同身份：Context 保存 Runtime 对话与 snapshot，
-AgentInstance 表示当前 owner Context 下可接收 followup 的线程，
-Invocation 表示该线程上的一次任务。一个 Agent 同时最多运行一个 Invocation，不同 Agent 可并行。
+AgentInstance 表示当前 owner Context 下串行执行的线程，Invocation 表示该线程上的一次可调度、可等待、
+可恢复任务。一个 Agent 同时最多运行一个 active Invocation，不同 Agent 可并行。
 Invocation 的 `agentTaskSequence` 是 FIFO 的唯一顺序源，不另存一份易漂移的 queue 数组。
 ExpertSession 以 Session Context Registry 作为跨 prompt 的 Context/snapshot 来源；每个 prompt 的
 Execution 只物化本轮 AgentInstance、Invocation 及其 Context binding，因此跨 prompt 复用 Context
