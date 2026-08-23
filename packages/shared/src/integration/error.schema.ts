@@ -71,7 +71,17 @@ export const IntegrationErrorSchema = z
     details: JsonObjectSchema.optional(),
     causeId: z.string().uuid().optional(),
   })
-  .strict();
+  .strict()
+  .superRefine((value, context) => {
+    const retryPolicy = IntegrationErrorRetryPolicies[value.code];
+    if (retryPolicy !== "cause_dependent" && value.retryable !== retryPolicy) {
+      context.addIssue({
+        code: "custom",
+        path: ["retryable"],
+        message: `The retryable value for ${value.code} is fixed at ${retryPolicy}.`,
+      });
+    }
+  });
 
 export const IntegrationWarningSchema = z
   .object({
@@ -120,10 +130,76 @@ export const IntegrationErrorExitCodes = {
   z.infer<typeof IntegrationExitCodeSchema>
 >;
 
+export const IntegrationErrorRetryPolicies = {
+  INVALID_ARGUMENT: false,
+  INVALID_FORMAT: false,
+  NOT_FOUND: false,
+  EXECUTOR_NOT_FOUND: false,
+  MISSION_NOT_FOUND: false,
+  BOARD_ITEM_NOT_FOUND: false,
+  CURSOR_INVALID: false,
+  CURSOR_EXPIRED: true,
+  IDEMPOTENCY_CONFLICT: false,
+  MISSION_LEASE_HELD: true,
+  MISSION_FENCING_REJECTED: true,
+  COMMAND_REJECTED: false,
+  COMMAND_EXPIRED: false,
+  COMMAND_ACK_TIMEOUT: true,
+  STEER_TARGET_NOT_ACTIVE: false,
+  STEER_TARGET_CHANGED: false,
+  INTERACTION_NOT_PENDING: false,
+  WORKSPACE_REQUIRED: false,
+  WORKSPACE_NOT_FOUND: false,
+  WORKSPACE_ACCESS_DENIED: false,
+  INPUT_SCHEMA_INVALID: false,
+  DEPENDENCY_UNAVAILABLE: true,
+  RUNTIME_UNAVAILABLE: true,
+  KEYCHAIN_UNAVAILABLE: true,
+  SECRET_MIGRATION_REQUIRED: false,
+  SECRET_STORE_LOCKED: true,
+  PERMISSION_DENIED: false,
+  PROTOCOL_VERSION_UNSUPPORTED: false,
+  STORAGE_VERSION_UNSUPPORTED: false,
+  STORAGE_CORRUPTED: false,
+  EXECUTION_FAILED: "cause_dependent",
+  INTERRUPTED: false,
+  INTERNAL_ERROR: "cause_dependent",
+} as const satisfies Record<
+  z.infer<typeof IntegrationErrorCodeSchema>,
+  boolean | "cause_dependent"
+>;
+
+export type IntegrationErrorRetryPolicy =
+  (typeof IntegrationErrorRetryPolicies)[z.infer<typeof IntegrationErrorCodeSchema>];
+
 export function integrationErrorExitCode(
   code: z.infer<typeof IntegrationErrorCodeSchema>,
 ): z.infer<typeof IntegrationExitCodeSchema> {
   return IntegrationErrorExitCodes[code];
+}
+
+type IntegrationErrorFactoryInput<Code extends IntegrationErrorCode> = Omit<
+  IntegrationError,
+  "code" | "retryable" | "schemaVersion"
+> &
+  { readonly code: Code } &
+  ((typeof IntegrationErrorRetryPolicies)[Code] extends "cause_dependent"
+    ? { readonly retryable: boolean }
+    : { readonly retryable?: never });
+
+export function createIntegrationError<Code extends IntegrationErrorCode>(
+  input: IntegrationErrorFactoryInput<Code>,
+): IntegrationError {
+  const retryPolicy = IntegrationErrorRetryPolicies[input.code];
+
+  return IntegrationErrorSchema.parse({
+    ...input,
+    schemaVersion: "pragma.integration-error/v1",
+    retryable:
+      retryPolicy === "cause_dependent"
+        ? (input as { readonly retryable: boolean }).retryable
+        : retryPolicy,
+  });
 }
 
 export type IntegrationErrorCode = z.infer<typeof IntegrationErrorCodeSchema>;

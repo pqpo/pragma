@@ -19,7 +19,6 @@ import {
   IntegrationRequestMetaSchema,
   InteractionIdSchema,
   IsoDateTimeSchema,
-  JsonObjectSchema,
   JsonValueSchema,
   MissionIdSchema,
   OpaqueCursorSchema,
@@ -344,7 +343,7 @@ export const CliResultSchema = z
     requestId: RequestIdSchema,
     command: z.string().min(1),
     ok: z.boolean(),
-    result: JsonObjectSchema.optional(),
+    result: JsonValueSchema.optional(),
     error: IntegrationErrorSchema.optional(),
     warnings: z.array(IntegrationWarningSchema).default([]),
     meta: z
@@ -529,6 +528,13 @@ export const CliEventStreamSchema = z.array(CliEventSchema).superRefine((events,
       }
       sawEnd = true;
     }
+  }
+
+  if (!sawEnd) {
+    context.addIssue({
+      code: "custom",
+      message: "A complete event stream must end with exactly one stream.end event.",
+    });
   }
 });
 

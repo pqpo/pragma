@@ -25,6 +25,11 @@ const localHostReverseImportRestriction = {
     "Lower layers and adapters must not depend on the Local Host application layer or CLI surface.",
 };
 
+const desktopMainCliImportRestriction = {
+  group: ["@pragma/cli", "@pragma/cli/*"],
+  message: "Desktop Main must compose Local Host directly instead of importing the CLI surface.",
+};
+
 const config = tseslint.config(
   {
     ignores: [
@@ -89,6 +94,7 @@ const config = tseslint.config(
           paths: ["@pragma/client", "@pragma/server", "@prisma/client"],
           patterns: [
             ...commonRestrictedPatterns,
+            desktopMainCliImportRestriction,
             {
               group: ["@pragma/server-*", "next", "next/*"],
               message: "Desktop local bridge must not depend on server internals or Web UI.",
@@ -614,6 +620,7 @@ const config = tseslint.config(
           paths: ["@pragma/client", "@pragma/server", "react"],
           patterns: [
             ...commonRestrictedPatterns,
+            localHostReverseImportRestriction,
             {
               group: [
                 "@pragma/runtime-*",
