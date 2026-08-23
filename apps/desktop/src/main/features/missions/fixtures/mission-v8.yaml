@@ -1,0 +1,23 @@
+id: 80000000-0000-4000-8000-000000000008
+title: Historical Mission v8
+goal: Verify the historical Mission v8 manifest upgrade path.
+initialMessageId: 81000000-0000-4000-8000-000000000008
+toolPermissionMode: request-approval
+workspace:
+  path: /historical/workspace
+  basename: workspace
+project:
+  id: studio
+  revision: 2
+executor:
+  ref: expert:v2vt1v01vzz6j24q
+  name: Product Designer
+  kind: expert
+lifecycleStatus: active
+createdAt: 2026-02-03T04:05:06.000Z
+updatedAt: 2026-02-03T04:05:06.000Z
+schemaVersion: pragma.mission/v8
+origin:
+  type: user
+contextStoreIds:
+  - 10000000-0000-4000-8000-000000000001

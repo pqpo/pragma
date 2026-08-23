@@ -10,6 +10,7 @@ import {
   ExecutionWorkHistoryReader,
   ExpertAgentHumanRequestSchema,
   fingerprintExpertExecutionDefinition,
+  formatExpertPromptWithAttachments,
   isRuntimeContextCompactionNotNeededError,
   isExpertTeam,
   StoredExecutionView,
@@ -17,6 +18,7 @@ import {
   readRuntimeSessionContextWindowUsage,
   readRuntimeSessionRecord,
   ReadOnlyContextStore,
+  StaticContextStore,
   moveOwnedStorageToTrash,
   runtimeSessionDeletionSources,
   assertStorageWriteAllowed,
@@ -309,6 +311,39 @@ export function missionKnowledgeNamespace(storeId: string): string {
   return `mission-knowledge:${storeId}`;
 }
 
+function formatBranchTranscript(entries: readonly MissionChatEntry[]): string {
+  const sections = entries.flatMap((entry): string[] => {
+    switch (entry.kind) {
+      case "user":
+        return [
+          `## User\n\n${formatExpertPromptWithAttachments(entry.content, entry.attachments ?? [])}`,
+        ];
+      case "assistant":
+        return [`## ${entry.executorName ?? "Assistant"}\n\n${entry.content}`];
+      case "thinking":
+        return [];
+      case "tool":
+        return [
+          [
+            `## Tool: ${entry.toolName}`,
+            "",
+            `Status: ${entry.status}`,
+            ...(entry.inputPreview === undefined ? [] : ["", "Input:", entry.inputPreview]),
+            ...(entry.outputPreview === undefined ? [] : ["", "Output:", entry.outputPreview]),
+            ...(entry.error === undefined ? [] : ["", "Error:", entry.error]),
+          ].join("\n"),
+        ];
+      case "agent_activity":
+        return entry.label === undefined
+          ? []
+          : [`## Agent activity\n\n${entry.action} ${entry.phase}: ${entry.label}`];
+      case "context_operation":
+        return [];
+    }
+  });
+  return ["# Inherited Mission transcript", "", ...sections].join("\n\n");
+}
+
 const MISSION_CHAT_ERROR_MAX_LENGTH = 10_000;
 
 export function createMissionRunner(options: {
@@ -497,6 +532,47 @@ export function createMissionRunner(options: {
           };
         }),
       );
+    const branchHistory = await options.missions.readBranchHistory(mission.id);
+    const branchHistoryBindings: readonly ExpertAgentContextStoreRegistrationInput[] =
+      branchHistory === undefined
+        ? []
+        : [
+            {
+              namespace: "branch-history",
+              storeName: "Inherited Mission history",
+              store: new StaticContextStore([
+                {
+                  id: "BRANCH.md",
+                  content: [
+                    "# Mission branch",
+                    "",
+                    `This Mission continues from ${branchHistory.source.sourceMissionId} at reply ${branchHistory.source.cutoffMessageId}.`,
+                    "Read transcript.md when prior conversation details are relevant. The current Mission uses a fresh Runtime Session and its pinned current executor definition.",
+                  ].join("\n"),
+                  metadata: {
+                    description: "Required continuity instructions for this Mission branch.",
+                    trigger: "always_on",
+                    priority: "critical",
+                    trustLevel: "system",
+                    sensitivity: "internal",
+                  },
+                },
+                {
+                  id: "transcript.md",
+                  content: formatBranchTranscript(branchHistory.entries),
+                  metadata: {
+                    description: "Read-only inherited conversation before this branch was created.",
+                    trigger: "manual",
+                    priority: "normal",
+                    trustLevel: "user",
+                    sensitivity: "internal",
+                  },
+                },
+              ]),
+              required: true,
+              mutationApproval: "none" as const,
+            },
+          ];
     const resolveConfiguredHostContextBindings = async (): Promise<
       readonly ExpertAgentContextStoreRegistrationInput[]
     > => {
@@ -508,6 +584,7 @@ export function createMissionRunner(options: {
     const resolveHostContextBindings: HostContextBindingsResolver = async () => [
       ...(await resolveConfiguredHostContextBindings()),
       ...legacyExecutionOutputBindings,
+      ...branchHistoryBindings,
       ...board.bindings,
       ...missionKnowledgeBindings,
     ];
@@ -1198,6 +1275,9 @@ export function createMissionRunner(options: {
     logMissionPhase(logger, id, "storage_capacity_check", capacityCheckStartedAt, acceptedAt);
     const mission = await options.missions.get(id);
     await options.assertExecutorReady?.(mission.executor.ref);
+    if (mission.branch !== undefined && mission.execution === undefined) {
+      throw new Error("Continue a branched Mission by sending a new message.");
+    }
     if (active.has(mission.id)) return mission;
     if (mission.lifecycleStatus === "active") await notifyMissionActivity(mission);
     const { app, runtimes: baseRuntimes } = await executionContext(mission);
@@ -1913,6 +1993,22 @@ export function createMissionRunner(options: {
       mission.id,
       capturedLive,
     );
+    const inheritedHistory = await options.missions.readBranchHistory(mission.id);
+    if (inheritedHistory !== undefined) {
+      const visibleSequences = new Set(timeline.turns.map((turn) => turn.sequence));
+      history.entries.push(
+        ...inheritedHistory.entries.filter(
+          (entry) =>
+            entry.kind !== "user" &&
+            entry.timelineSequence !== undefined &&
+            visibleSequences.has(entry.timelineSequence),
+        ),
+      );
+      history.entries.sort((left, right) => {
+        const sequence = (left.timelineSequence ?? 0) - (right.timelineSequence ?? 0);
+        return sequence === 0 ? left.createdAt.localeCompare(right.createdAt) : sequence;
+      });
+    }
     const entries = history.entries;
     const syncIssues = [...history.syncIssues];
 

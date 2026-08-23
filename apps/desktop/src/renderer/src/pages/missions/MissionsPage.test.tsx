@@ -12,6 +12,7 @@ import {
   applyMissionUsageHintRevision,
   applyMissionChatPatches,
   claimMissionClientOperation,
+  copyMissionReply,
   CONTEXT_POPOVER_CLOSE_DELAY_MS,
   ContextWindowControl,
   DEFAULT_MISSION_MEMORY_VIEW,
@@ -39,6 +40,7 @@ import {
   missionWorkGridEdgePath,
   missionWorkRecordTitle,
   missionStatusLabel,
+  missionTurnFinalReplyIds,
   workStatusLabel,
   resolveMissionsPageInitialState,
   resolveMissionRailGroups,
@@ -53,6 +55,65 @@ import {
 } from "./MissionsPage.tsx";
 
 describe("MissionsPage", () => {
+  it("identifies only the final completed Assistant reply in each Turn", () => {
+    const createdAt = "2026-07-11T00:00:00.000Z";
+    const entries = [
+      {
+        id: "turn-1-draft",
+        kind: "assistant" as const,
+        content: "draft",
+        streaming: false,
+        timelineSequence: 1,
+        createdAt,
+      },
+      {
+        id: "turn-1-final",
+        kind: "assistant" as const,
+        content: "final",
+        streaming: false,
+        timelineSequence: 1,
+        createdAt,
+      },
+      {
+        id: "turn-2-streaming",
+        kind: "assistant" as const,
+        content: "streaming",
+        streaming: true,
+        timelineSequence: 2,
+        createdAt,
+      },
+      {
+        id: "turn-2-final",
+        kind: "assistant" as const,
+        content: "done",
+        streaming: false,
+        timelineSequence: 2,
+        createdAt,
+      },
+    ];
+
+    expect([...missionTurnFinalReplyIds(entries)]).toEqual(["turn-1-final", "turn-2-final"]);
+  });
+
+  it("copies the original Markdown and reports clipboard denial", async () => {
+    const copied: string[] = [];
+    await expect(
+      copyMissionReply("# Raw reply\n\n`code`", {
+        writeText: async (content) => {
+          copied.push(content);
+        },
+      }),
+    ).resolves.toBe("copied");
+    expect(copied).toEqual(["# Raw reply\n\n`code`"]);
+    await expect(
+      copyMissionReply("denied", {
+        writeText: async () => {
+          throw new Error("denied");
+        },
+      }),
+    ).resolves.toBe("failed");
+  });
+
   it("distinguishes expert waits, human input, and legacy waiting states", async () => {
     await i18n.changeLanguage("en");
     expect(workStatusLabel("waiting", "experts")).toBe("Waiting for experts");
@@ -1871,6 +1932,25 @@ describe("Mission Expert output labels", () => {
     expect(tools).not.toContain("Reviewer");
   });
 
+  it("renders reply actions only when the conversation layer enables them", () => {
+    const entry = {
+      id: "answer-actions",
+      kind: "assistant" as const,
+      content: "Completed.",
+      streaming: false,
+      createdAt,
+    };
+    const withoutActions = renderToStaticMarkup(<MissionChatEntryView entry={entry} />);
+    const withActions = renderToStaticMarkup(
+      <MissionChatEntryView entry={entry} showCopy showBranch />,
+    );
+
+    expect(withoutActions).not.toContain("Copy reply");
+    expect(withoutActions).not.toContain("Create branch");
+    expect(withActions).toContain('aria-label="Copy reply"');
+    expect(withActions).toContain("Create branch");
+  });
+
   it("keeps tool failure diagnostics expandable without announcing the raw error", () => {
     const html = renderToStaticMarkup(
       <MissionToolCallBlock
@@ -2143,7 +2223,7 @@ describe("Mission human answers", () => {
 
 function missionFixture(kind: "expert" | "team"): Mission {
   return {
-    schemaVersion: "pragma.mission/v8",
+    schemaVersion: "pragma.mission/v9",
     origin: { type: "user" },
     id: "00000000-0000-4000-8000-000000000000",
     title: "Missions page design",

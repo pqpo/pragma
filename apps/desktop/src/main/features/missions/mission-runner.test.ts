@@ -3662,6 +3662,103 @@ describe("MissionRunner", { timeout: 15_000 }, () => {
     });
   });
 
+  it("merges inherited branch history and starts the branch in a fresh Session", async () => {
+    const root = await mkdtemp(join(tmpdir(), "pragma-mission-branch-runner-"));
+    temporaryPaths.push(root);
+    const project = createPragmaProjectStore({ projectsPath: join(root, "projects") });
+    const snapshot = await project.publish({
+      expectedRevision: 0,
+      resources: [runtimeFixture(), expertFixture()],
+    });
+    const missions = createMissionStore({ missionsPath: join(root, "missions") });
+    const source = await missions.create({
+      workspace: { path: root, basename: "workspace" },
+      goal: "Create the source answer",
+      project: { id: snapshot.projectId, revision: snapshot.revision },
+      executor: missionExecutorSnapshot(
+        snapshot.resources.find((resource) => resource.kind === "Expert")!,
+      ),
+    });
+    const runtime = defineRuntimeTestDriver<never, { id: string }>({
+      descriptor: { id: "fake", kind: "fake", displayName: "Fake" },
+      createSession: () => ({ id: "runtime" }),
+      restoreSession: () => ({ id: "runtime" }),
+      readSession: (session) => ({ runtimeSessionId: session.id }),
+      startTurn: (_session, turn) => ({
+        outputText: `writer:${turn.rawQuery}`,
+        runtimeSessionId: _session.id,
+      }),
+      mapEvent: () => ({ events: [] }),
+      closeSession: () => undefined,
+    });
+    const runner = createMissionRunner({
+      missions,
+      project,
+      capabilityStore: {} as CapabilityStore,
+      capabilityCredentials: {} as CapabilityCredentialStore,
+      capabilitiesPath: join(root, "capabilities"),
+      pragmaHome: join(root, "state"),
+      runtimes: createStaticRuntimeResolver({ runtimes: [runtime], defaultRuntimeId: "fake" }),
+    });
+    await runner.run(source.id);
+    await vi.waitFor(
+      async () => expect((await missions.get(source.id)).execution?.status).toBe("succeeded"),
+      { timeout: settlementTimeoutMs },
+    );
+    const settledSource = await missions.get(source.id);
+    const sourceChat = await runner.getChat({ id: source.id, limit: 50 });
+    const finalReply = sourceChat.entries
+      .filter((entry) => entry.kind === "assistant" && entry.streaming === false)
+      .at(-1);
+    if (finalReply?.kind !== "assistant" || settledSource.execution === undefined) {
+      throw new Error("Expected a settled source reply.");
+    }
+    const branch = await missions.createBranch({
+      sourceMissionId: source.id,
+      expectedSourceUpdatedAt: settledSource.updatedAt,
+      expectedExecutionId: settledSource.execution.id,
+      expectedMessageId: finalReply.id,
+      project: settledSource.project,
+      executor: settledSource.executor,
+      history: sourceChat.entries,
+    });
+
+    const inheritedChat = await runner.getChat({ id: branch.id, limit: 50 });
+    expect(inheritedChat.entries).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ kind: "user", content: source.goal }),
+        expect.objectContaining({
+          id: `branch:${source.id}:${finalReply.id}`,
+          kind: "assistant",
+          content: finalReply.content,
+        }),
+      ]),
+    );
+    await expect(runner.run(branch.id)).rejects.toThrow(
+      "Continue a branched Mission by sending a new message.",
+    );
+    await runner.sendMessage({
+      id: branch.id,
+      content: "Continue from the inherited result",
+      requestId: "00000000-0000-4000-8000-000000000050",
+    });
+    await vi.waitFor(
+      async () => expect((await missions.get(branch.id)).execution?.status).toBe("succeeded"),
+      { timeout: settlementTimeoutMs },
+    );
+    const settledBranch = await missions.get(branch.id);
+    expect(settledBranch.execution?.sessionId).toBeDefined();
+    expect(settledBranch.execution?.sessionId).not.toBe(settledSource.execution.sessionId);
+    expect((await runner.getChat({ id: branch.id, limit: 50 })).entries).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          kind: "assistant",
+          content: "writer:Continue from the inherited result",
+        }),
+      ]),
+    );
+  });
+
   it("projects oversized replies as Mission Board references without copying full text", async () => {
     const root = await mkdtemp(join(tmpdir(), "pragma-mission-reply-"));
     temporaryPaths.push(root);

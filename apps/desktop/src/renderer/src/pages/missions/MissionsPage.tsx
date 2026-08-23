@@ -20,6 +20,7 @@ import {
   CaretLeft,
   CaretRight,
   CheckCircle,
+  Copy,
   Database,
   File,
   Folder,
@@ -669,6 +670,20 @@ export function MissionsPage(props: {
                 setError(errorMessage(actionError));
               }
             }}
+            onBranchCreated={(mission) => {
+              replaceMission(mission, { type: "task" });
+              selectedMissionIdsRef.current = {
+                ...selectedMissionIdsRef.current,
+                task: mission.id,
+              };
+              selectedMissionIdRef.current = mission.id;
+              setActiveSource("task");
+              activeSourceRef.current = "task";
+              setSelectedMissionId(mission.id);
+              setSelectedMission(mission);
+              writeLastOpenedMissionId(window.localStorage, mission.id);
+              setError(null);
+            }}
           />
         ) : loadingMissionId !== null && loadingMissionId === selectedMissionId ? (
           <MissionDetailSkeleton label={t("loading", { ns: "missions" })} />
@@ -1271,6 +1286,35 @@ export function hidePreparingQueuedChatEntries(
   });
 }
 
+export function missionTurnFinalReplyIds(
+  entries: readonly MissionChatEntry[],
+): ReadonlySet<string> {
+  const finalByTurn = new Map<string, string>();
+  for (const entry of entries) {
+    if (entry.kind !== "assistant" || entry.streaming) continue;
+    const turnKey =
+      entry.timelineSequence === undefined
+        ? entry.executionId === undefined
+          ? undefined
+          : `execution:${entry.executionId}`
+        : `turn:${entry.timelineSequence}`;
+    if (turnKey !== undefined) finalByTurn.set(turnKey, entry.id);
+  }
+  return new Set(finalByTurn.values());
+}
+
+export async function copyMissionReply(
+  content: string,
+  clipboard: Pick<Clipboard, "writeText"> = window.navigator.clipboard,
+): Promise<"copied" | "failed"> {
+  try {
+    await clipboard.writeText(content);
+    return "copied";
+  } catch {
+    return "failed";
+  }
+}
+
 export interface LocalMissionContextOperation {
   readonly id: string;
   readonly createdAt: string;
@@ -1375,6 +1419,7 @@ export function MissionDetailFragment(props: {
   readonly onConfigureModels?: (() => void) | undefined;
   readonly onOpenKnowledgeBases?: (() => void) | undefined;
   readonly onEditExpert?: ((expertRef?: string | undefined) => void) | undefined;
+  readonly onBranchCreated?: ((mission: Mission) => void) | undefined;
   readonly memoryEnabled?: boolean | undefined;
 }) {
   const { t } = useTranslation(["missions", "common"]);
@@ -1427,6 +1472,10 @@ export function MissionDetailFragment(props: {
   const [modelResetRequired, setModelResetRequired] = useState(false);
   const modelRuntimeIdRef = useRef<string | undefined>(undefined);
   const [optionsError, setOptionsError] = useState<string | null>(null);
+  const [branchCandidate, setBranchCandidate] = useState<
+    Extract<MissionChatEntry, { kind: "assistant" }> | undefined
+  >();
+  const [branching, setBranching] = useState(false);
   const [toolPermissionMode, setToolPermissionMode] = useState<DesktopToolPermissionMode>(
     props.mission.toolPermissionMode,
   );
@@ -2425,6 +2474,8 @@ export function MissionDetailFragment(props: {
     () => groupMissionConversationEntries(conversationEntries),
     [conversationEntries],
   );
+  const finalReplyIds = useMemo(() => missionTurnFinalReplyIds(displayEntries), [displayEntries]);
+  const latestFinalReplyId = [...finalReplyIds].at(-1);
   const selectedWorkRecord = useMemo(
     () => workRecords.find((record) => record.recordId === selectedWorkKey),
     [selectedWorkKey, workRecords],
@@ -2699,7 +2750,8 @@ export function MissionDetailFragment(props: {
       {props.mission.lifecycleStatus === "active" &&
       (props.mission.execution === undefined ||
         (!executionActive && isFlow) ||
-        (executionActive && !interruptible)) ? (
+        (executionActive && !interruptible)) &&
+      !(props.mission.branch !== undefined && props.mission.execution === undefined) ? (
         <button
           className="primary-button"
           type="button"
@@ -2853,6 +2905,19 @@ export function MissionDetailFragment(props: {
                       missionId={props.mission.id}
                       paintExecutionId={block.item.entry.executionId ?? chat?.execution?.id}
                       showExecutorLabel
+                      showCopy={finalReplyIds.has(block.item.entry.id)}
+                      showBranch={
+                        block.item.entry.id === latestFinalReplyId &&
+                        block.item.entry.executionId !== undefined &&
+                        block.item.entry.executionId === chat?.execution?.id &&
+                        props.mission.executor.kind !== "flow" &&
+                        !executionActive &&
+                        !clientOperationBusy &&
+                        (chat?.queue?.state ?? "idle") === "idle" &&
+                        (chat?.queue?.pendingCount ?? 0) === 0 &&
+                        (chat?.pendingInteractions.length ?? 0) === 0
+                      }
+                      onBranch={(entry) => setBranchCandidate(entry)}
                     />
                   );
                 })}
@@ -3393,6 +3458,38 @@ export function MissionDetailFragment(props: {
           }}
         />
       ) : null}
+      {branchCandidate === undefined ? null : (
+        <ConfirmationDialog
+          title={t("createBranchTitle", { ns: "missions" })}
+          description={t("createBranchDescription", {
+            ns: "missions",
+            title: props.mission.title,
+          })}
+          cancelLabel={t("actions.cancel", { ns: "common" })}
+          confirmLabel={t("createBranch", { ns: "missions" })}
+          busyLabel={t("creatingBranch", { ns: "missions" })}
+          busy={branching}
+          tone="primary"
+          onCancel={() => setBranchCandidate(undefined)}
+          onConfirm={() => {
+            const api = desktopApi();
+            if (api === undefined || branchCandidate.executionId === undefined) return;
+            setBranching(true);
+            void api
+              .createMissionBranch({
+                sourceMissionId: props.mission.id,
+                expectedExecutionId: branchCandidate.executionId,
+                expectedMessageId: branchCandidate.id,
+              })
+              .then((mission) => {
+                setBranchCandidate(undefined);
+                props.onBranchCreated?.(mission);
+              })
+              .catch((branchError: unknown) => setOptionsError(errorMessage(branchError)))
+              .finally(() => setBranching(false));
+          }}
+        />
+      )}
     </section>
   );
 }
@@ -4168,7 +4265,13 @@ export const MissionChatEntryView = memo(function MissionChatEntryView(props: {
   readonly userLabel?: string | undefined;
   readonly paintExecutionId?: string | undefined;
   readonly showExecutorLabel?: boolean | undefined;
+  readonly showCopy?: boolean | undefined;
+  readonly showBranch?: boolean | undefined;
+  readonly onBranch?:
+    ((entry: Extract<MissionChatEntry, { kind: "assistant" }>) => void) | undefined;
 }) {
+  const { t } = useTranslation("missions");
+  const [copyStatus, setCopyStatus] = useState<"idle" | "copied" | "failed">("idle");
   if (props.entry.kind === "user") {
     if (props.entry.delivery?.removed === true || props.entry.delivery?.status === "queued") {
       return null;
@@ -4206,10 +4309,39 @@ export const MissionChatEntryView = memo(function MissionChatEntryView(props: {
   if (props.entry.kind === "context_operation") {
     return <MissionContextOperationEntry operation={props.entry} retryDisabled={false} />;
   }
+  const assistantEntry = props.entry;
   return (
     <div className="mission-assistant-message" data-mission-execution-id={props.paintExecutionId}>
-      {props.showExecutorLabel ? <MissionExecutorLabel entry={props.entry} /> : null}
-      <MissionMessageContent source={props.entry.content} />
+      {props.showExecutorLabel ? <MissionExecutorLabel entry={assistantEntry} /> : null}
+      <MissionMessageContent source={assistantEntry.content} />
+      {props.showCopy || props.showBranch ? (
+        <div className="mission-message-actions">
+          {props.showCopy ? (
+            <button
+              type="button"
+              aria-label={t("copyReply")}
+              title={t("copyReply")}
+              onClick={() => {
+                void copyMissionReply(assistantEntry.content).then(setCopyStatus);
+              }}
+            >
+              <Copy size={15} aria-hidden="true" />
+              {t("copyReply")}
+            </button>
+          ) : null}
+          {props.showBranch ? (
+            <button type="button" onClick={() => props.onBranch?.(assistantEntry)}>
+              <GitBranch size={15} aria-hidden="true" />
+              {t("createBranch")}
+            </button>
+          ) : null}
+          {copyStatus === "idle" ? null : (
+            <span className="mission-message-action-status" role="status">
+              {copyStatus === "copied" ? t("replyCopied") : t("replyCopyFailed")}
+            </span>
+          )}
+        </div>
+      ) : null}
     </div>
   );
 });

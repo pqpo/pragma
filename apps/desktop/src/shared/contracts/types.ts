@@ -138,6 +138,7 @@ import {
   UpdateExpertDefinitionSchema,
 } from "./experts.ts";
 import {
+  CreateMissionBranchSchema,
   CreateMissionSchema,
   GetMissionChatSchema,
   GetMissionWorkConversationSchema,
@@ -153,6 +154,8 @@ import {
   MissionLifecycleStatusSchema,
   MissionModelOptionsSchema,
   MissionAttachmentsManifestSchema,
+  MissionBranchHistorySchema,
+  MissionBranchSourceSchema,
   MissionSchema,
   MissionSummarySchema,
   MissionTimelineRecordSchema,
@@ -495,6 +498,8 @@ export type WorkflowLayout = z.infer<typeof WorkflowLayoutSchema>;
 export type GetWorkflowLayout = z.infer<typeof GetWorkflowLayoutSchema>;
 export type DeleteWorkflowLayout = z.infer<typeof DeleteWorkflowLayoutSchema>;
 export type Mission = z.infer<typeof MissionSchema>;
+export type MissionBranchSource = z.infer<typeof MissionBranchSourceSchema>;
+export type MissionBranchHistory = z.infer<typeof MissionBranchHistorySchema>;
 export type MissionSummary = z.infer<typeof MissionSummarySchema>;
 export type MissionUpdate = z.infer<typeof MissionUpdateSchema>;
 export type MissionExecutorOption = z.infer<typeof MissionExecutorOptionSchema>;
@@ -521,6 +526,7 @@ export type DiscardMissionAttachmentDrafts = z.infer<typeof DiscardMissionAttach
 export type StageMissionClipboardImage = z.infer<typeof StageMissionClipboardImageSchema>;
 export type MissionLifecycleStatus = z.infer<typeof MissionLifecycleStatusSchema>;
 export type CreateMission = z.infer<typeof CreateMissionSchema>;
+export type CreateMissionBranch = z.infer<typeof CreateMissionBranchSchema>;
 export type UpdateMissionOptions = z.infer<typeof UpdateMissionOptionsSchema>;
 export type UpdateMissionContextStores = z.infer<typeof UpdateMissionContextStoresSchema>;
 export type MissionUserMessage = z.infer<typeof MissionUserMessageSchema>;

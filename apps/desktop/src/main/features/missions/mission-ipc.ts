@@ -6,6 +6,7 @@ import { dialog, ipcMain, type BrowserWindow, type OpenDialogOptions } from "ele
 
 import {
   CreateMissionSchema,
+  CreateMissionBranchSchema,
   DiscardMissionAttachmentDraftsSchema,
   GetMissionChatSchema,
   GetMissionWorkConversationSchema,
@@ -255,6 +256,68 @@ export function installMissionHandlers(options: {
         options.recordWorkspaceUsage(parsed.workspace),
         options.homeExecutors.recordUsage(parsed.executor.ref, parsed.workspace),
       ]);
+      await publishMission(mission);
+      return mission;
+    }),
+  );
+  ipcMain.handle("missions:branch:create", (_event, input: unknown) =>
+    runDesktopMutation(async () => {
+      const parsed = CreateMissionBranchSchema.parse(input);
+      const source = await getManagedMission(parsed.sourceMissionId);
+      if (source.executor.kind === "flow") {
+        throw new Error("Flow missions cannot create conversation branches.");
+      }
+      const newest = await options.runner.getChat({ id: source.id, limit: 100 });
+      if (
+        newest.execution?.id !== parsed.expectedExecutionId ||
+        !["succeeded", "failed", "cancelled"].includes(newest.execution.status) ||
+        (newest.queue?.state ?? "idle") !== "idle" ||
+        (newest.queue?.pendingCount ?? 0) !== 0 ||
+        newest.pendingInteractions.length !== 0
+      ) {
+        throw new Error("Wait for the source Mission to become idle before creating a branch.");
+      }
+      const latestReply = [...newest.entries]
+        .reverse()
+        .find((entry) => entry.kind === "assistant" && entry.streaming === false);
+      if (
+        latestReply?.id !== parsed.expectedMessageId ||
+        latestReply.executionId !== parsed.expectedExecutionId
+      ) {
+        throw new Error("The selected reply is no longer the latest completed Mission reply.");
+      }
+      if (newest.syncIssues !== undefined && newest.syncIssues.length > 0) {
+        throw new Error("Mission history is temporarily incomplete. Refresh it before branching.");
+      }
+      const pages = [newest];
+      let beforeSequence = newest.page.nextBeforeSequence;
+      while (beforeSequence !== undefined) {
+        const page = await options.runner.getChat({
+          id: source.id,
+          beforeSequence,
+          limit: 100,
+        });
+        if (page.syncIssues !== undefined && page.syncIssues.length > 0) {
+          throw new Error(
+            "Mission history is temporarily incomplete. Refresh it before branching.",
+          );
+        }
+        pages.unshift(page);
+        beforeSequence = page.page.nextBeforeSequence;
+      }
+      const history = pages
+        .flatMap((page) => page.entries)
+        .filter(
+          (entry) =>
+            entry.kind !== "user" ||
+            (entry.delivery?.removed !== true && entry.delivery?.status !== "queued"),
+        );
+      const mission = await options.creator.createBranch({
+        source,
+        expectedExecutionId: parsed.expectedExecutionId,
+        expectedMessageId: parsed.expectedMessageId,
+        history,
+      });
       await publishMission(mission);
       return mission;
     }),

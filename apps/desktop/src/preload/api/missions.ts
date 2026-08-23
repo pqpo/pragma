@@ -10,6 +10,7 @@ import {
 } from "../../shared/contracts/mission-base.ts";
 import {
   CreateMissionSchema,
+  CreateMissionBranchSchema,
   DiscardMissionAttachmentDraftsSchema,
   GetMissionChatSchema,
   GetMissionWorkConversationSchema,
@@ -113,6 +114,10 @@ export const missionsApi = {
   },
   createMission: async (input) =>
     MissionSchema.parse(await invokeMutation("missions:create", CreateMissionSchema.parse(input))),
+  createMissionBranch: async (input) =>
+    MissionSchema.parse(
+      await invokeMutation("missions:branch:create", CreateMissionBranchSchema.parse(input)),
+    ),
   pickMissionAttachments: async (input) =>
     PickMissionAttachmentsResultSchema.parse(
       await ipcRenderer.invoke(
@@ -239,6 +244,7 @@ export const missionsApi = {
   | "searchMissionContextStore"
   | "subscribeMissionUpdates"
   | "createMission"
+  | "createMissionBranch"
   | "pickMissionAttachments"
   | "stageMissionClipboardImage"
   | "discardMissionAttachmentDrafts"
