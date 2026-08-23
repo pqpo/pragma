@@ -381,6 +381,7 @@ function tree(
       definition: { id: overrides.nodeId ?? invocationId, kind },
       contextId: overrides.contextId ?? invocationId,
       status,
+      pendingExpertMessages: [],
       input: overrides.input ?? null,
       createdAt: now,
       updatedAt: now,

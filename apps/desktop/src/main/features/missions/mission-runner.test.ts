@@ -1530,7 +1530,7 @@ describe("MissionRunner", { timeout: 15_000 }, () => {
       readSession: (session) => ({ runtimeSessionId: session.id }),
       async startTurn(session, turn) {
         const tools = session.context.agent.tools ?? [];
-        const spawn = tools.find((tool) => tool.name === "spawn_expert");
+        const spawn = tools.find((tool) => tool.name === "delegate_expert");
         const wait = tools.find((tool) => tool.name === "wait_experts");
         const callReviewer = tools.find((tool) => tool.name === "call_reviewer");
         let output = `${session.context.agent.id}:${turn.rawQuery}`;
@@ -1540,7 +1540,7 @@ describe("MissionRunner", { timeout: 15_000 }, () => {
           session.context.agent.id === writer.metadata.id
         ) {
           const spawned = await spawn.call(
-            { expertId: reviewer.metadata.id, prompt: "Team review" },
+            { expertId: reviewer.metadata.id, task: "Team review" },
             turn.signal,
             { execution: session.context.request.executionContext },
           );
@@ -2918,7 +2918,7 @@ describe("MissionRunner", { timeout: 15_000 }, () => {
     });
     await executions.create(
       {
-        schemaVersion: "pragma.execution/v9",
+        schemaVersion: "pragma.execution/v10",
         executionId,
         version: 0,
         kind: "expert-turn",
@@ -2938,6 +2938,7 @@ describe("MissionRunner", { timeout: 15_000 }, () => {
         executorId: expert.id,
         contextId,
         status: "running",
+        pendingExpertMessages: [],
         input: mission.goal,
         createdAt: startedAt,
         updatedAt: startedAt,
@@ -3454,7 +3455,7 @@ describe("MissionRunner", { timeout: 15_000 }, () => {
     });
     await executions.create(
       {
-        schemaVersion: "pragma.execution/v9",
+        schemaVersion: "pragma.execution/v10",
         executionId,
         version: 0,
         kind: "expert-turn",
@@ -3474,6 +3475,7 @@ describe("MissionRunner", { timeout: 15_000 }, () => {
         executorId: expertResource.metadata.id,
         contextId,
         status: "running",
+        pendingExpertMessages: [],
         input: mission.goal,
         createdAt: now,
         updatedAt: now,

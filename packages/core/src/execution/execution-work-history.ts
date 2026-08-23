@@ -4,17 +4,13 @@ import {
   type AgentMessageRecord,
   type ExecutionStatus,
   type Invocation,
+  type InvocationWaitReason,
 } from "@pragma/shared";
 
 import type { ExecutionStore } from "./execution-store.ts";
 
 export type ExecutionWorkRecordKind =
-  | "root"
-  | "agent"
-  | "runtime-agent"
-  | "flow"
-  | "task"
-  | "human-task";
+  "root" | "agent" | "runtime-agent" | "flow" | "task" | "human-task";
 
 export interface ExecutionWorkTask {
   readonly taskId: string;
@@ -23,6 +19,7 @@ export interface ExecutionWorkTask {
   readonly runId: string;
   readonly sequence?: number | undefined;
   readonly status: ExecutionStatus;
+  readonly waitReason?: InvocationWaitReason | undefined;
   readonly input?: unknown;
   readonly output?: unknown;
   readonly error?: unknown;
@@ -40,6 +37,7 @@ export interface ExecutionWorkRecord {
   readonly contextId?: string | undefined;
   readonly origin: "core" | "runtime";
   readonly status: ExecutionStatus;
+  readonly waitReason?: InvocationWaitReason | undefined;
   readonly tasks: readonly ExecutionWorkTask[];
   readonly createdAt: string;
   readonly updatedAt: string;
@@ -72,7 +70,7 @@ interface RuntimeEventProjection {
 
 interface RuntimeDispatch {
   readonly commandId: string;
-  delivery?: "followup" | "steer" | undefined;
+  delivery?: "followup" | "message" | "steer" | undefined;
   prompt?: string | undefined;
   readonly targetSessionIds: Set<string>;
 }
@@ -80,16 +78,19 @@ interface RuntimeDispatch {
 export class ExecutionWorkHistoryReader {
   constructor(private readonly store: ExecutionStore) {}
 
-  async listRecords(input: {
-    readonly executionIds: readonly string[];
-    readonly rootSessionId?: string | undefined;
-  }, preloadedData?: Map<
-    string,
-    {
-      readonly events: readonly import("@pragma/shared").ExecutionEvent[];
-      readonly invocations: readonly Invocation[];
-    }
-  >): Promise<readonly ExecutionWorkRecord[]> {
+  async listRecords(
+    input: {
+      readonly executionIds: readonly string[];
+      readonly rootSessionId?: string | undefined;
+    },
+    preloadedData?: Map<
+      string,
+      {
+        readonly events: readonly import("@pragma/shared").ExecutionEvent[];
+        readonly invocations: readonly Invocation[];
+      }
+    >,
+  ): Promise<readonly ExecutionWorkRecord[]> {
     const records = new Map<string, MutableWorkRecord>();
     const recordByInvocationId = new Map<string, string>();
     const runtimeRecordBySessionId = new Map<string, string>();
@@ -374,8 +375,12 @@ export class ExecutionWorkHistoryReader {
       preloadedData,
     );
     const record = records.find((candidate) => candidate.recordId === input.targetRecordId);
-    if (record === undefined) throw new Error(`Mission work record not found: ${input.targetRecordId}`);
-    const output = await this.readOutput({ executionIds: input.executionIds, record }, preloadedData);
+    if (record === undefined)
+      throw new Error(`Mission work record not found: ${input.targetRecordId}`);
+    const output = await this.readOutput(
+      { executionIds: input.executionIds, record },
+      preloadedData,
+    );
     return { records, output };
   }
 }
@@ -407,6 +412,7 @@ function invocationTask(executionId: string, invocation: Invocation): ExecutionW
       ? {}
       : { sequence: invocation.agentTaskSequence }),
     status: invocation.status,
+    ...(invocation.waitReason === undefined ? {} : { waitReason: invocation.waitReason }),
     input: invocation.input,
     ...(invocation.output === undefined ? {} : { output: invocation.output }),
     ...(invocation.error === undefined ? {} : { error: invocation.error }),
@@ -572,6 +578,16 @@ function finalizeRecord(record: MutableWorkRecord): ExecutionWorkRecord {
     }
     return left.createdAt.localeCompare(right.createdAt);
   });
+  const status =
+    record.origin === "runtime" &&
+    record.runtimeStatus !== undefined &&
+    (record.lastRuntimeRunOrder === undefined ||
+      (record.runtimeStatusOrder ?? -1) > record.lastRuntimeRunOrder)
+      ? record.runtimeStatus
+      : record.origin === "runtime"
+        ? aggregateRuntimeStatus(tasks)
+        : aggregateStatus(tasks);
+  const waitingTask = tasks.find((task) => task.status === "waiting");
   return {
     recordId: record.recordId,
     kind: record.kind,
@@ -583,15 +599,10 @@ function finalizeRecord(record: MutableWorkRecord): ExecutionWorkRecord {
     ...(record.executorId === undefined ? {} : { executorId: record.executorId }),
     ...(record.contextId === undefined ? {} : { contextId: record.contextId }),
     origin: record.origin,
-    status:
-      record.origin === "runtime" &&
-      record.runtimeStatus !== undefined &&
-      (record.lastRuntimeRunOrder === undefined ||
-        (record.runtimeStatusOrder ?? -1) > record.lastRuntimeRunOrder)
-        ? record.runtimeStatus
-        : record.origin === "runtime"
-          ? aggregateRuntimeStatus(tasks)
-          : aggregateStatus(tasks),
+    status,
+    ...(status !== "waiting" || waitingTask?.waitReason === undefined
+      ? {}
+      : { waitReason: waitingTask.waitReason }),
     tasks,
     createdAt: record.createdAt,
     updatedAt: record.updatedAt,

@@ -33,6 +33,7 @@ import {
 import {
   executionRecordMigrationChain,
   migrateExecutionInvocationsV5ToV6,
+  migrateExecutionInvocationsV9ToV10,
   migrateInvocationUsageV7ToV8,
 } from "../storage/migrations/execution/index.ts";
 import { encodePragmaPathSegment, PragmaPaths } from "../storage/pragma-paths.ts";
@@ -381,7 +382,7 @@ export function createFileExecutionStore(
           request.contextPatches ?? [],
           now,
         );
-        assertAgentContextBindings(nextAgents, nextContexts);
+        assertAgentContextBindings(nextAgents, nextContexts, nextInvocations);
         const existingEvents = await readExecutionEvents(paths, request.executionId);
         const materialized = materializeEvents(
           request.executionId,
@@ -394,14 +395,14 @@ export function createFileExecutionStore(
         const nextExecution = ExecutionRecordSchema.parse({
           ...current,
           ...request.executionPatch,
-          schemaVersion: "pragma.execution/v9",
+          schemaVersion: "pragma.execution/v10",
           executionId: request.executionId,
           version: current.version + 1,
           lastAppliedSequence: lastSequence,
           updatedAt: now,
         });
         const journal = ExecutionCommitJournalSchema.parse({
-          schemaVersion: "pragma.execution-transaction/v10",
+          schemaVersion: "pragma.execution-transaction/v11",
           commitId: request.commitId,
           signature,
           execution: nextExecution,
@@ -630,8 +631,22 @@ function applyContextChanges(
 function assertAgentContextBindings(
   agents: readonly AgentInstance[],
   contexts: readonly RuntimeContextRecord[],
+  invocations: readonly Invocation[],
 ): void {
+  for (const invocation of invocations) {
+    if (
+      isTerminalExecutionStatus(invocation.status) &&
+      invocation.pendingExpertMessages.length > 0
+    ) {
+      throw new Error(
+        `Terminal Invocation cannot retain pending Expert messages: ${invocation.invocationId}.`,
+      );
+    }
+  }
   const contextById = new Map(contexts.map((context) => [context.contextId, context]));
+  const invocationById = new Map(
+    invocations.map((invocation) => [invocation.invocationId, invocation]),
+  );
   const agentByOwnedContext = new Map<string, string>();
   for (const agent of agents) {
     const context = contextById.get(agent.contextId);
@@ -647,6 +662,15 @@ function assertAgentContextBindings(
       throw new Error(`Runtime Context ${agent.contextId} already belongs to Agent ${existing}.`);
     }
     agentByOwnedContext.set(key, agent.agentId);
+    if (agent.activeInvocationId !== undefined) {
+      const active = invocationById.get(agent.activeInvocationId);
+      if (active === undefined || active.agentId !== agent.agentId) {
+        throw new Error(`Agent active Invocation binding conflict: ${agent.activeInvocationId}.`);
+      }
+      if (isTerminalExecutionStatus(active.status)) {
+        throw new Error(`Agent active Invocation cannot be terminal: ${agent.activeInvocationId}.`);
+      }
+    }
   }
 }
 
@@ -681,11 +705,13 @@ function applyInvocationChanges(
   for (const change of patches) {
     const invocation = byId.get(change.invocationId);
     if (invocation === undefined) throw new Error(`Invocation not found: ${change.invocationId}`);
+    const nextStatus = change.patch.status ?? invocation.status;
     byId.set(
       change.invocationId,
       InvocationSchema.parse({
         ...invocation,
         ...change.patch,
+        ...(nextStatus === "waiting" ? {} : { waitReason: undefined }),
         invocationId: change.invocationId,
         updatedAt: change.patch.updatedAt ?? now,
       }),
@@ -1110,10 +1136,14 @@ async function migrateExecutionState(paths: PragmaPaths, executionId: string): P
   const usageMigratedInvocations = Array.isArray(storedInvocations)
     ? storedInvocations.map(migrateInvocationUsageV7ToV8)
     : storedInvocations;
-  const invocations =
+  const handoffMigratedInvocations =
     upgraded.fromVersion === 5
       ? migrateExecutionInvocationsV5ToV6(usageMigratedInvocations)
-      : InvocationSchema.array().parse(usageMigratedInvocations);
+      : usageMigratedInvocations;
+  const invocations =
+    upgraded.fromVersion <= 9
+      ? migrateExecutionInvocationsV9ToV10(handoffMigratedInvocations)
+      : InvocationSchema.array().parse(handoffMigratedInvocations);
   await applyAtomicStateMigration({
     aggregateRoot: paths.executionRoot(executionId),
     journalFile: paths.executionMigration(executionId),

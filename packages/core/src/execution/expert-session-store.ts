@@ -97,7 +97,7 @@ export function createFileExpertSessionStore(options: {
         const parsedRecord = ExpertSessionRecordSchema.parse(record);
         const rootContext = parsedRecord.contexts[parsedRecord.rootContextId]!;
         const journal = ExpertSessionTransactionJournalSchema.parse({
-          schemaVersion: "pragma.expert-session-transaction/v8",
+          schemaVersion: "pragma.expert-session-transaction/v9",
           session: parsedRecord,
           prompts: [],
           events: [
@@ -192,7 +192,7 @@ export function createFileExpertSessionStore(options: {
             ),
           );
           const journal = ExpertSessionTransactionJournalSchema.parse({
-            schemaVersion: "pragma.expert-session-transaction/v8",
+            schemaVersion: "pragma.expert-session-transaction/v9",
             session: nextSession,
             prompts: nextPrompts,
             events: materializeSessionEvents(sessionId, events, [
@@ -238,7 +238,7 @@ export function createFileExpertSessionStore(options: {
         });
         const nextPrompts = PromptRequestSchema.array().parse([...prompts, prompt]);
         const journal = ExpertSessionTransactionJournalSchema.parse({
-          schemaVersion: "pragma.expert-session-transaction/v8",
+          schemaVersion: "pragma.expert-session-transaction/v9",
           session: nextSession,
           prompts: nextPrompts,
           events: materializeSessionEvents(sessionId, events, [
@@ -290,7 +290,7 @@ export function createFileExpertSessionStore(options: {
         );
         const next = await action({ session: session.data, prompts });
         const journal = ExpertSessionTransactionJournalSchema.parse({
-          schemaVersion: "pragma.expert-session-transaction/v8",
+          schemaVersion: "pragma.expert-session-transaction/v9",
           session: next.session,
           prompts: next.prompts,
           events: materializeSessionEvents(
@@ -333,7 +333,7 @@ export function createFileExpertSessionStore(options: {
           (await readJson(paths.expertSessionEvents(sessionId))) ?? [],
         );
         const journal = ExpertSessionTransactionJournalSchema.parse({
-          schemaVersion: "pragma.expert-session-transaction/v8",
+          schemaVersion: "pragma.expert-session-transaction/v9",
           session,
           prompts,
           events: materializeSessionEvents(sessionId, events, [

@@ -622,7 +622,7 @@ describe("Codex tool event mapping", () => {
   });
 
   it.each([
-    ["followup_expert", undefined, "followup"],
+    ["message_expert", undefined, "message"],
     ["steer_expert", undefined, "steer"],
     ["sendInput", false, "followup"],
     ["sendInput", true, "steer"],

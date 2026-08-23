@@ -2280,6 +2280,7 @@ export function createMissionRunner(options: {
             runId: task.runId,
             ...(task.sequence === undefined ? {} : { sequence: task.sequence }),
             status: task.status,
+            ...(task.waitReason === undefined ? {} : { waitReason: task.waitReason }),
             inputSummary: formatValue(task.input, 500),
             ...(outputSummary === undefined ? {} : { outputSummary }),
             ...(task.error === undefined ? {} : { error: formatValue(task.error, 10_000) }),
@@ -2315,6 +2316,7 @@ export function createMissionRunner(options: {
           ...(avatarId === undefined ? {} : { avatarId }),
           origin: record.origin,
           status: record.status,
+          ...(record.waitReason === undefined ? {} : { waitReason: record.waitReason }),
           tasks,
           summary: latest?.outputSummary ?? latest?.inputSummary ?? title,
           createdAt: record.createdAt,
@@ -2955,6 +2957,7 @@ function observeMissionHumanWaitingStatus(input: {
 } {
   const pending = new Set<string>();
   let observedWaiting: boolean | undefined;
+  let observedWaitReason: "experts" | "human_input" | undefined;
   let updates = Promise.resolve();
 
   const enqueueUpdate = (update: () => Promise<void>): Promise<void> => {
@@ -2965,9 +2968,12 @@ function observeMissionHumanWaitingStatus(input: {
     return result;
   };
 
-  const persistStatus = async (): Promise<void> => {
-    const waiting = pending.size > 0;
-    if (waiting === observedWaiting) return;
+  const persistStatus = async (
+    invocationWaitReason?: "experts" | "human_input" | undefined,
+  ): Promise<void> => {
+    const waitReason = pending.size > 0 ? "human_input" : invocationWaitReason;
+    const waiting = waitReason !== undefined;
+    if (waiting === observedWaiting && waitReason === observedWaitReason) return;
     await input.missions.updateExecution(
       input.missionId,
       {
@@ -2975,6 +2981,7 @@ function observeMissionHumanWaitingStatus(input: {
         inputMessageId: input.inputMessageId,
         ...(input.sessionId === undefined ? {} : { sessionId: input.sessionId }),
         status: waiting ? "waiting" : "running",
+        ...(waitReason === undefined ? {} : { waitReason }),
         startedAt: input.startedAt,
       },
       {
@@ -2983,6 +2990,7 @@ function observeMissionHumanWaitingStatus(input: {
       },
     );
     observedWaiting = waiting;
+    observedWaitReason = waitReason;
   };
 
   const resync = async (): Promise<void> => {
@@ -2990,8 +2998,10 @@ function observeMissionHumanWaitingStatus(input: {
       const interactions = await listPendingHumanInteractions(input.execution);
       pending.clear();
       for (const interaction of interactions) pending.add(interaction.interactionId);
+      const tree = await input.execution.getTree();
       observedWaiting = undefined;
-      await persistStatus();
+      observedWaitReason = undefined;
+      await persistStatus(tree.invocation.waitReason);
     } catch (error) {
       input.logger.warn(
         "mission.human_wait_status_seed_failed",
@@ -3004,15 +3014,17 @@ function observeMissionHumanWaitingStatus(input: {
   void enqueueUpdate(resync).catch(() => undefined);
 
   const onEvent = (event: ExecutionEvent): void => {
-    if (event.type !== "human.requested" && event.type !== "human.responded") return;
+    if (
+      event.type !== "human.requested" &&
+      event.type !== "human.responded" &&
+      event.type !== "human.waiting" &&
+      event.type !== "human.resumed" &&
+      !event.type.startsWith("expert.children.")
+    ) {
+      return;
+    }
     const update = enqueueUpdate(async () => {
-      const interactionId = String(
-        (event.data as { readonly interactionId?: unknown }).interactionId ?? "",
-      );
-      if (interactionId === "") return;
-      if (event.type === "human.requested") pending.add(interactionId);
-      else pending.delete(interactionId);
-      await persistStatus();
+      await resync();
     });
     void update.catch((error: unknown) => {
       input.logger.warn(

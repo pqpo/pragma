@@ -74,6 +74,7 @@ describe("Execution canonical event log", () => {
       definition: { id: "child", kind: "expert" },
       executorId: "child",
       status: "running",
+      pendingExpertMessages: [],
       input: null,
       createdAt: now,
       updatedAt: now,
@@ -685,7 +686,7 @@ async function fixture() {
   const timestamp = new Date().toISOString();
   const definition = { id: "flow", kind: "flow" as const };
   const execution: ExecutionRecord = {
-    schemaVersion: "pragma.execution/v9",
+    schemaVersion: "pragma.execution/v10",
     executionId: "execution",
     version: 0,
     kind: "flow",
@@ -704,6 +705,7 @@ async function fixture() {
     contextId: "root-context",
     definition,
     status: "running",
+    pendingExpertMessages: [],
     input: null,
     createdAt: timestamp,
     updatedAt: timestamp,
