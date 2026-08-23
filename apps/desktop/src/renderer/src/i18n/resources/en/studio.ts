@@ -406,9 +406,27 @@ export const studio = {
   teamContextDescription: "Team knowledge bases and private read-only Memory.",
   teamPermissions: "Team permissions",
   teamPermissionsDescription:
-    "Control member-to-member creation and interaction. Coordinator authority is inherited.",
-  spawnPermissions: "Can spawn",
-  interactionPermissions: "Can view and interact",
+    "Set who each member can delegate to and collaborate with. Coordinator authority is inherited.",
+  teamPermissionsHelp:
+    "“Can delegate to” lets a member create a new Agent instance of a selected expert and assign work. “Collaboration access” allows viewing, following up, steering, waiting for, or interrupting selected Agents.",
+  teamPermissionsConnectAll: "Connect all",
+  teamPermissionsAllConnected: "All connected",
+  teamPermissionsConnectAllConfirmTitle: "Connect every team member?",
+  teamPermissionsConnectAllConfirmDescription:
+    "Each regular member will be able to create Agent instances of every other expert and delegate work to them. They will also be able to view, follow up, steer, wait for, or interrupt every Agent in the team. Coordinator authority remains system inherited. This only updates the current form and is saved after publishing.",
+  teamPermissionsConnectAllConfirmAction: "Connect all members",
+  teamPermissionsConnectAllApplying: "Applying…",
+  teamPermissionMembers: "Team member permissions",
+  teamMember: "Team member",
+  permissionTargetCount: "{{count}} team experts",
+  spawnPermissions: "Can delegate to",
+  spawnPermissionsDescription:
+    "Create new Agent instances of the selected experts and delegate work to them.",
+  interactionPermissions: "Collaboration access",
+  interactionPermissionsDescription:
+    "View, follow up, steer, wait for, or interrupt the selected Agents.",
+  chooseSpawnPermissions: "Set who {{name}} can delegate to",
+  chooseInteractionPermissions: "Set {{name}}’s collaboration access",
   otherInstances: "other instances",
   coordinatorAuthority: "System inherited: manages all team agents",
   coordinatorAuthorityDescription:
