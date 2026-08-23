@@ -195,7 +195,7 @@ describe("integration wire v1", () => {
       request,
       missionId,
       kind: "steer",
-      target: { executionId },
+      target: { executionId, turnId: requestId },
       payload: { kind: "steer", input: { prompt: "Focus on tests" } },
       targetFencingToken: "1",
       state: "pending",
@@ -257,7 +257,9 @@ describe("integration wire v1", () => {
     for (const result of [undefined, Number.NaN, Number.POSITIVE_INFINITY, () => undefined]) {
       expect(CliResultSchema.safeParse(cliResult(result)).success).toBe(false);
     }
-    expect(CliResultSchema.safeParse({ ...cliResult(null), error: fixedError }).success).toBe(false);
+    expect(CliResultSchema.safeParse({ ...cliResult(null), error: fixedError }).success).toBe(
+      false,
+    );
     expect(
       CliResultSchema.safeParse({
         ...cliResult(null),
@@ -287,11 +289,10 @@ describe("integration wire v1", () => {
     expect(CliEventStreamSchema.safeParse([]).success).toBe(false);
     expect(CliEventStreamSchema.safeParse([snapshot]).success).toBe(false);
     expect(
-      CliEventStreamSchema.safeParse([snapshot, streamEnd("completed"), streamEnd("completed", 2)]).success,
+      CliEventStreamSchema.safeParse([snapshot, streamEnd("completed"), streamEnd("completed", 2)])
+        .success,
     ).toBe(false);
-    expect(
-      CliEventStreamSchema.safeParse([streamEnd("completed"), snapshot]).success,
-    ).toBe(false);
+    expect(CliEventStreamSchema.safeParse([streamEnd("completed"), snapshot]).success).toBe(false);
 
     // A single event remains the explicit entry point for incremental JSONL parsing.
     expect(CliEventSchema.safeParse(snapshot).success).toBe(true);
@@ -400,7 +401,9 @@ describe("integration wire v1", () => {
 
     for (const [name, schema, value] of schemas) {
       expect(schema.safeParse(value).success, `${name} valid`).toBe(true);
-      expect(schema.safeParse({ ...value, unexpected: true }).success, `${name} strict`).toBe(false);
+      expect(schema.safeParse({ ...value, unexpected: true }).success, `${name} strict`).toBe(
+        false,
+      );
       expect(
         schema.safeParse({ ...value, schemaVersion: value.schemaVersion.replace("/v1", "/v2") })
           .success,
@@ -408,12 +411,12 @@ describe("integration wire v1", () => {
       ).toBe(false);
     }
 
-    expect(ExecutorDescriptorSchema.safeParse({ ...executor, ref: { kind: "expert" } }).success).toBe(
-      false,
-    );
-    expect(HumanInteractionEnvelopeSchema.safeParse({ ...humanRequest, kind: "invalid" }).success).toBe(
-      false,
-    );
+    expect(
+      ExecutorDescriptorSchema.safeParse({ ...executor, ref: { kind: "expert" } }).success,
+    ).toBe(false);
+    expect(
+      HumanInteractionEnvelopeSchema.safeParse({ ...humanRequest, kind: "invalid" }).success,
+    ).toBe(false);
     expect(CliEventSchema.safeParse({ ...event, data: { itemId: "item", delta: 1 } }).success).toBe(
       false,
     );
@@ -422,7 +425,7 @@ describe("integration wire v1", () => {
   it("covers board schemas, command state and target matrices, and primitive boundaries", () => {
     const commandPayloads = [
       ["send", { kind: "send", input: { prompt: "Send" } }, undefined],
-      ["steer", { kind: "steer", input: { prompt: "Steer" } }, { executionId }],
+      ["steer", { kind: "steer", input: { prompt: "Steer" } }, { executionId, turnId: requestId }],
       ["respond", { kind: "respond", response: { decision: "yes" } }, undefined],
       ["interrupt", { kind: "interrupt", reason: "Stop" }, undefined],
       ["queue.remove", { kind: "queue.remove", requestId }, undefined],
@@ -430,7 +433,7 @@ describe("integration wire v1", () => {
       [
         "queue.steer",
         { kind: "queue.steer", requestId, input: { prompt: "Steer queued" } },
-        { executionId },
+        { executionId, turnId: requestId },
       ],
     ] as const;
 
@@ -443,6 +446,7 @@ describe("integration wire v1", () => {
         kind,
         payload,
         ...(target === undefined ? {} : { target }),
+        ...(kind === "steer" || kind === "queue.steer" ? { targetFencingToken: "1" } : {}),
         state: "pending",
         createdAt: timestamp,
       };
@@ -492,7 +496,9 @@ describe("integration wire v1", () => {
     expect(Object.keys(IntegrationErrorRetryPolicies).sort()).toEqual(
       [...IntegrationErrorCodeSchema.options].sort(),
     );
-    expect(IntegrationErrorSchema.safeParse({ ...fixedError, retryable: true }).success).toBe(false);
+    expect(IntegrationErrorSchema.safeParse({ ...fixedError, retryable: true }).success).toBe(
+      false,
+    );
     expect(
       createIntegrationError({
         code: "CURSOR_EXPIRED",

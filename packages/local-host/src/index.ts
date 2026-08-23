@@ -13,6 +13,10 @@ export const LOCAL_HOST_APPLICATION_PROTOCOL = "pragma.local-host/v1" as const;
 export const LOCAL_HOST_SHARED_BOARD_STORE_ID = "mission-board" as const;
 export const LOCAL_HOST_SHARED_BOARD_SCOPE_ID = "mission-board:shared" as const;
 
+export * from "./missions/controller/mission-controller-store.ts";
+export * from "./missions/controller/schemas.ts";
+export * from "./missions/controller/migrations/index.ts";
+
 export interface WorkspaceFilesystemPort {
   readonly stat: (path: string) => Promise<{ readonly isDirectory: () => boolean }>;
   readonly access: (path: string, mode: "read" | "write") => Promise<void>;

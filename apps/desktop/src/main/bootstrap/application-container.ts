@@ -22,7 +22,8 @@ import {
   createPragmaAgentTools,
 } from "@pragma/built-in-agents";
 import { MEMORY_CURATOR_REF } from "@pragma/memory";
-import { createLocalHostApplication } from "@pragma/local-host";
+import { createLocalHostApplication, createMissionControllerStore } from "@pragma/local-host";
+import { createIntegrationError } from "@pragma/shared/integration";
 import { isUserFacingMissionOrigin } from "../../shared/contracts/index.ts";
 
 import { installAutomationHandlers } from "../features/automations/automation-ipc.ts";
@@ -87,6 +88,11 @@ import {
   createMissionRunner,
 } from "../features/missions/mission-runner.ts";
 import { createMissionStore } from "../features/missions/mission-store.ts";
+import {
+  createDesktopMissionCommandConsumer,
+  createDesktopMissionController,
+  createGuardedMissionStore,
+} from "../features/missions/mission-controller-adapter.ts";
 import { createDesktopMemoryPlane } from "../features/memory/desktop-memory-plane.ts";
 import {
   createDesktopMemoryCurator,
@@ -255,6 +261,21 @@ export async function createDesktopApplicationContainer(
         { missionId, errorCode: error.code, error },
       ),
   });
+  // Local Host owns aggregate lease persistence; Desktop Main composes it with
+  // the existing MissionStore without moving Electron or Runtime concerns into
+  // @pragma/local-host.
+  const desktopMissionController = createDesktopMissionController({
+    controller: createMissionControllerStore({ missionsPath }),
+    onLeaseLost: async (missionId) => {
+      await missionRunner.stopLocalController(missionId);
+      mainLogger.warn(
+        "mission.controller_lease_lost",
+        "Mission controller lease was lost; local execution was stopped and subsequent semantic writes are fenced.",
+        { missionId },
+      );
+    },
+  });
+  const guardedMissionStore = createGuardedMissionStore(missionStore, desktopMissionController);
   const usageStore = await createDesktopUsageStore({
     databasePath: join(pragmaPaths.dataRoot(), "usage", "usage.sqlite"),
   }).catch((error: unknown) => {
@@ -675,7 +696,7 @@ export async function createDesktopApplicationContainer(
   const pragmaAgentToolsRef: { current?: ReturnType<typeof createPragmaAgentTools> } = {};
   const memoryCuratorRef: { current?: DesktopMemoryCurator } = {};
   const missionRunner = createMissionRunner({
-    missions: missionStore,
+    missions: guardedMissionStore,
     project: pragmaProjectStore,
     capabilityStore,
     capabilityCredentials,
@@ -699,6 +720,7 @@ export async function createDesktopApplicationContainer(
     automaticHumanInteractionHandlerForToolPermissionMode: (mode) =>
       createAutomaticToolPermissionHandler(() => mode),
     adapterHostForMission: (mission, fallback) => evaluationMocks.forMission(mission, fallback),
+    missionController: desktopMissionController,
     assertStorageWriteAllowed: async () => await storageCapacityGuard.assertWriteAllowed(),
     onStorageTrashed: () => trashMaintenance.schedule("mission-storage-trashed"),
     onOwnerDeleting: async ({ executionIds }) => {
@@ -882,6 +904,74 @@ export async function createDesktopApplicationContainer(
       });
     },
   });
+  desktopMissionController.setCommandConsumer(
+    createDesktopMissionCommandConsumer({
+      commands: {
+        send: async (input) => {
+          const accepted = await missionRunner.sendMessage({
+            id: input.missionId,
+            content: input.prompt,
+            requestId: input.requestId,
+            mode: input.mode,
+          });
+          return {
+            missionId: accepted.mission.id,
+            ...(accepted.mission.execution === undefined
+              ? {}
+              : { executionId: accepted.mission.execution.id }),
+          };
+        },
+        respond: async (input) => {
+          await missionRunner.respondToHumanInteraction({
+            missionId: input.missionId,
+            interactionId: input.interactionId,
+            requestId: input.requestId,
+            response: input.response,
+          });
+          return { missionId: input.missionId, interactionId: input.interactionId };
+        },
+        interrupt: async (input) => {
+          const mission = await missionRunner.interrupt(input.missionId);
+          return { missionId: mission.id };
+        },
+        removeQueued: async (input) => {
+          const mission = await missionRunner.removeQueuedMessage({
+            id: input.missionId,
+            requestId: input.requestId,
+          });
+          return { missionId: mission.id };
+        },
+        resumeQueue: async (input) => {
+          const mission = await missionRunner.resumeQueue(input.missionId);
+          return { missionId: mission.id };
+        },
+        steerQueued: async (input) => {
+          const mission = await missionRunner.steerQueuedMessage({
+            id: input.missionId,
+            requestId: input.requestId,
+          });
+          return { missionId: mission.id };
+        },
+      },
+      validateStrictTarget: async (input) => {
+        const current = await missionRunner.getCanonicalStrictTarget(input.missionId);
+        if (current === undefined) {
+          throw createIntegrationError({
+            code: "STEER_TARGET_NOT_ACTIVE",
+            category: "conflict",
+            message: "Mission has no active Expert or Team turn for strict steer.",
+          });
+        }
+        if (current.executionId !== input.executionId || current.turnId !== input.turnId) {
+          throw createIntegrationError({
+            code: "STEER_TARGET_CHANGED",
+            category: "conflict",
+            message: "Strict Mission steer target changed before command apply.",
+          });
+        }
+      },
+    }),
+  );
   const memoryCurator = createDesktopMemoryCurator({
     profiles: memoryPlane.extractorProfiles,
     missions: missionStore,

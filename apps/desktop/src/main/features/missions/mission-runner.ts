@@ -116,6 +116,8 @@ import type { MissionStore, MissionTimelineTurn } from "./mission-store.ts";
 import type { PragmaProjectStore } from "../projects/pragma-project-store.ts";
 import type { PluginStore } from "../plugins/plugin-store.ts";
 import type { DesktopUsageStore } from "../usage/usage-store.ts";
+import type { DesktopMissionController } from "./mission-controller-adapter.ts";
+import { createIntegrationError } from "@pragma/shared/integration";
 
 function readPersistedPromptQueueState(
   activeExecutionId: string | undefined,
@@ -206,6 +208,10 @@ export interface MissionRunner {
   subscribeChat(listener: (notification: MissionChatNotification) => void): () => void;
   subscribeWork(listener: (notification: MissionWorkNotification) => void): () => void;
   interrupt(id: string): Promise<Mission>;
+  stopLocalController(id: string): Promise<void>;
+  getCanonicalStrictTarget(
+    id: string,
+  ): Promise<{ readonly executionId: string; readonly turnId: string } | undefined>;
   resumeQueue(id: string): Promise<Mission>;
   getWork(id: string): Promise<MissionWorkSnapshot>;
   getWorkConversation(input: GetMissionWorkConversation): Promise<MissionWorkConversationSnapshot>;
@@ -360,6 +366,8 @@ export function createMissionRunner(options: {
     | undefined;
   readonly adapterHostForMission?:
     ((mission: Mission, defaultHost: PragmaAdapterHost) => PragmaAdapterHost) | undefined;
+  /** Desktop Main's Local Host composition. It is optional for isolated unit tests. */
+  readonly missionController?: DesktopMissionController | undefined;
 }): MissionRunner {
   const logger = createPragmaLogger(options.loggerProvider, {
     component: "desktop.mission-runner",
@@ -590,6 +598,7 @@ export function createMissionRunner(options: {
     return context;
   };
   const active = new Map<string, ActiveMissionExecution>();
+  const leaseLostMissions = new Set<string>();
   const sessions = new Map<string, ExpertSession>();
   const sessionCompilationIdentities = new Map<string, string>();
   const sessionDefinitionFingerprints = new Map<string, string>();
@@ -1554,7 +1563,6 @@ export function createMissionRunner(options: {
     const turn = await session.prompt(input.content, {
       requestId: input.requestId,
       mode: requestedMode,
-      ...(requestedMode === "steer" ? { steerFallback: "enqueue" as const } : {}),
       ...(promptAttachments.length === 0 ? {} : { attachments: promptAttachments }),
       ...(promptModelSelection === undefined ? {} : { modelSelection: promptModelSelection }),
     });
@@ -2448,6 +2456,20 @@ export function createMissionRunner(options: {
       }
     }
   };
+  const withMissionController = async <T>(
+    missionId: string,
+    operation: () => Promise<T>,
+  ): Promise<T> => {
+    if (leaseLostMissions.has(missionId)) {
+      throw createIntegrationError({
+        code: "MISSION_FENCING_REJECTED",
+        category: "conflict",
+        message: "This local Mission controller lost its lease and cannot perform semantic writes.",
+      });
+    }
+    await options.missionController?.acquire(missionId);
+    return await operation();
+  };
 
   return {
     reconcileUsage,
@@ -2461,7 +2483,7 @@ export function createMissionRunner(options: {
       if (pending !== undefined) {
         throw new MissionOperationError();
       }
-      const started = runMission(id);
+      const started = withMissionController(id, async () => await runMission(id));
       trackOperation(id, { kind: "run", promise: started });
       return await started;
     },
@@ -2469,7 +2491,10 @@ export function createMissionRunner(options: {
       if (pendingOperations.has(input.id)) {
         throw new MissionOperationError();
       }
-      const updating = updateMissionOptions(input);
+      const updating = withMissionController(
+        input.id,
+        async () => await updateMissionOptions(input),
+      );
       trackOperation(input.id, { kind: "options", promise: updating });
       return await updating;
     },
@@ -2477,7 +2502,10 @@ export function createMissionRunner(options: {
       if (pendingOperations.has(input.id)) {
         throw new MissionOperationError();
       }
-      const updating = updateMissionContextStores(input);
+      const updating = withMissionController(
+        input.id,
+        async () => await updateMissionContextStores(input),
+      );
       trackOperation(input.id, { kind: "context-stores", promise: updating });
       return await updating;
     },
@@ -2485,25 +2513,31 @@ export function createMissionRunner(options: {
       if (pendingOperations.has(input.id)) {
         throw new MissionOperationError();
       }
-      const sending = sendMissionMessage(input);
+      const sending = withMissionController(input.id, async () => await sendMissionMessage(input));
       trackOperation(input.id, { kind: "message", promise: sending });
       return await sending;
     },
     async steerQueuedMessage(input) {
       if (pendingOperations.has(input.id)) throw new MissionOperationError();
-      const steering = steerQueuedMissionMessage(input);
+      const steering = withMissionController(
+        input.id,
+        async () => await steerQueuedMissionMessage(input),
+      );
       trackOperation(input.id, { kind: "queue-steer", promise: steering });
       return await steering;
     },
     async removeQueuedMessage(input) {
       if (pendingOperations.has(input.id)) throw new MissionOperationError();
-      const removing = removeQueuedMissionMessage(input);
+      const removing = withMissionController(
+        input.id,
+        async () => await removeQueuedMissionMessage(input),
+      );
       trackOperation(input.id, { kind: "queue-remove", promise: removing });
       return await removing;
     },
     async resumeQueue(id) {
       if (pendingOperations.has(id)) throw new MissionOperationError();
-      const resuming = resumeMissionQueue(id);
+      const resuming = withMissionController(id, async () => await resumeMissionQueue(id));
       trackOperation(id, { kind: "resume", promise: resuming });
       return await resuming;
     },
@@ -2604,9 +2638,40 @@ export function createMissionRunner(options: {
       if (pending !== undefined) {
         throw new MissionOperationError();
       }
-      const interrupting = interruptMission(id);
+      const interrupting = withMissionController(id, async () => await interruptMission(id));
       trackOperation(id, { kind: "interrupt", promise: interrupting });
       return await interrupting;
+    },
+    async stopLocalController(id) {
+      leaseLostMissions.add(id);
+      const current = active.get(id);
+      if (current !== undefined) {
+        await current.handle.cancel("Mission controller lease was lost.").catch(() => undefined);
+        await current.settlement.catch(() => undefined);
+      }
+      const session = sessions.get(id);
+      if (session !== undefined) {
+        await session
+          .cancelPromptQueue("Mission controller lease was lost.")
+          .catch(() => undefined);
+        await session.close("Mission controller lease was lost.").catch(() => undefined);
+        sessions.delete(id);
+      }
+      executionContexts.delete(id);
+    },
+    async getCanonicalStrictTarget(id) {
+      const mission = await options.missions.get(id);
+      if (
+        mission.executor.kind === "flow" ||
+        mission.execution === undefined ||
+        !["queued", "running", "waiting"].includes(mission.execution.status)
+      ) {
+        return undefined;
+      }
+      return {
+        executionId: mission.execution.id,
+        turnId: mission.execution.inputMessageId,
+      };
     },
     async getWork(id) {
       return await getWorkSnapshot(id);
@@ -2621,7 +2686,10 @@ export function createMissionRunner(options: {
       const liveChat = liveChats.get(id);
       if (liveChat !== undefined) await liveChat.close();
       liveChats.delete(id);
-      const deleting = deleteMission(id);
+      const deleting =
+        options.missionController === undefined
+          ? deleteMission(id)
+          : options.missionController.terminalDelete(id, async () => await deleteMission(id));
       trackOperation(id, { kind: "delete", promise: deleting });
       await deleting;
       chatRevisions.delete(id);
@@ -2634,16 +2702,18 @@ export function createMissionRunner(options: {
       return await listMissionPendingHumanInteractions(await options.missions.get(id));
     },
     async respondToHumanInteraction(input) {
-      const execution = await ensureActiveExecution(input.missionId, input.interactionId);
-      const request = await findHumanRequest(execution.handle, input.interactionId);
-      await execution.handle.respondToHumanInteraction(
-        input.interactionId,
-        toExpertHumanResponse(request, input.response),
-        {
-          requestId: input.requestId,
-        },
-      );
-      invalidateChat(input.missionId, execution.audience);
+      await withMissionController(input.missionId, async () => {
+        const execution = await ensureActiveExecution(input.missionId, input.interactionId);
+        const request = await findHumanRequest(execution.handle, input.interactionId);
+        await execution.handle.respondToHumanInteraction(
+          input.interactionId,
+          toExpertHumanResponse(request, input.response),
+          {
+            requestId: input.requestId,
+          },
+        );
+        invalidateChat(input.missionId, execution.audience);
+      });
     },
   };
 

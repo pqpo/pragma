@@ -178,12 +178,12 @@ export const MissionOperationSchema = z
     }
     if (
       (value.kind === "steer" || value.kind === "queue.steer") &&
-      value.target?.executionId === undefined
+      (value.target?.executionId === undefined || value.target.turnId === undefined)
     ) {
       context.addIssue({
         code: "custom",
         path: ["target"],
-        message: "Strict steer operations require an execution target.",
+        message: "Strict steer operations require executionId and turnId targets.",
       });
     }
   });
@@ -243,12 +243,22 @@ export const MissionCommandSchema = z
     }
     if (
       (value.kind === "steer" || value.kind === "queue.steer") &&
-      value.target?.executionId === undefined
+      (value.target?.executionId === undefined || value.target.turnId === undefined)
     ) {
       context.addIssue({
         code: "custom",
         path: ["target"],
-        message: "Strict steer commands require an execution target.",
+        message: "Strict steer commands require executionId and turnId targets.",
+      });
+    }
+    if (
+      (value.kind === "steer" || value.kind === "queue.steer") &&
+      value.targetFencingToken === undefined
+    ) {
+      context.addIssue({
+        code: "custom",
+        path: ["targetFencingToken"],
+        message: "Persisted strict steer commands require an owner fencing target.",
       });
     }
   });
