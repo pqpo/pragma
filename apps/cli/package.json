@@ -8,8 +8,8 @@
   },
   "exports": {
     ".": {
-      "types": "./src/index.ts",
-      "default": "./src/index.ts"
+      "types": "./dist/index.d.ts",
+      "default": "./dist/index.js"
     }
   },
   "os": [
@@ -20,6 +20,7 @@
     "node": ">=22"
   },
   "scripts": {
+    "pretest": "pnpm --filter @pragma/local-host build",
     "build": "tsc -p tsconfig.build.json",
     "lint": "eslint src test vitest.config.ts",
     "typecheck": "tsc --noEmit",

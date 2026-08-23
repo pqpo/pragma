@@ -19,7 +19,7 @@ type PackageManifest = Partial<
 type InternalDependencyAllowlist = Readonly<Record<DependencyBucket, readonly string[]>>;
 
 const localHostInternalDependencyAllowlist: InternalDependencyAllowlist = {
-  dependencies: ["@pragma/shared"],
+  dependencies: ["@pragma/core", "@pragma/shared"],
   devDependencies: ["@pragma/tsconfig"],
   optionalDependencies: [],
   peerDependencies: [],

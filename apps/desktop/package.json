@@ -39,6 +39,7 @@
     "@pragma/core": "workspace:*",
     "@pragma/context-filesystem": "workspace:*",
     "@pragma/interpreter": "workspace:*",
+    "@pragma/local-host": "workspace:*",
     "@pragma/memory": "workspace:*",
     "@pragma/mission-board": "workspace:*",
     "@pragma/runtime-antigravity": "workspace:*",

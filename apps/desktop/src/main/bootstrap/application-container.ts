@@ -22,6 +22,7 @@ import {
   createPragmaAgentTools,
 } from "@pragma/built-in-agents";
 import { MEMORY_CURATOR_REF } from "@pragma/memory";
+import { createLocalHostApplication } from "@pragma/local-host";
 import { isUserFacingMissionOrigin } from "../../shared/contracts/index.ts";
 
 import { installAutomationHandlers } from "../features/automations/automation-ipc.ts";
@@ -134,6 +135,7 @@ import {
   createUnavailableDesktopUsageStore,
 } from "../features/usage/usage-store.ts";
 import { validateWorkspace } from "../features/workspaces/workspace-scope.ts";
+import { createWorkspaceFilesystemPort } from "../features/workspaces/workspace-filesystem-port.ts";
 import type { CredentialEncryption } from "../platform/security/credential-encryption.ts";
 import { initializeDesktopStorage } from "../platform/storage/storage-bootstrap.ts";
 import { createDesktopTrashMaintenance } from "../platform/storage/trash-maintenance.ts";
@@ -967,7 +969,43 @@ export async function createDesktopApplicationContainer(
       stateRoot: defaultAgentStateRoot,
     }),
   });
+  const missionContextStoreBrowser = createMissionContextStoreBrowserService({
+    missions: missionStore,
+    project: pragmaProjectStore,
+    systemExperts,
+    memory: memoryPlane,
+    runner: missionRunner,
+  });
+  const localHost = createLocalHostApplication({
+    integrationCapability: async () => ({
+      schemaVersion: "pragma.integration-capability/v1",
+      protocol: "pragma.integration/v1",
+      readableVersions: ["pragma.integration/v1"],
+      migratableFromVersions: [],
+      features: ["catalog.query", "mission.query", "workspace.resolve", "board.shared.read"],
+    }),
+    catalog: {
+      listProjects: async () => [{ id: pragmaProjectStore.projectId }],
+      getProjectRevision: async (projectId, revision) =>
+        projectId === pragmaProjectStore.projectId
+          ? await pragmaProjectStore.openRevision(revision)
+          : undefined,
+      listExecutors: async () => await missionExecutors.list(),
+    },
+    missions: {
+      get: async (missionId) => await missionStore.get(missionId),
+      list: async () => await missionStore.list(),
+    },
+    workspace: createWorkspaceFilesystemPort(),
+    board: {
+      list: async (input) => await missionContextStoreBrowser.list(input),
+      read: async (input) => await missionContextStoreBrowser.read(input),
+      search: async (input) => await missionContextStoreBrowser.search(input),
+    },
+    runtime: { resolver: runtimes },
+  });
   installMissionHandlers({
+    localHost,
     missions: missionStore,
     creator: missionCreator,
     executors: missionExecutors,
@@ -997,15 +1035,7 @@ export async function createDesktopApplicationContainer(
       await memoryPlane.setMemoryConversationState({ missionId, state });
     },
   });
-  installMissionContextStoreBrowserHandlers(
-    createMissionContextStoreBrowserService({
-      missions: missionStore,
-      project: pragmaProjectStore,
-      systemExperts,
-      memory: memoryPlane,
-      runner: missionRunner,
-    }),
-  );
+  installMissionContextStoreBrowserHandlers(missionContextStoreBrowser);
   installDesktopSettingsHandlers({
     store: desktopSettings,
     validateDefaultWorkspace: async (path) => {

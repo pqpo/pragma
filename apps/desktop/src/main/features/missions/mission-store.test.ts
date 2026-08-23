@@ -1044,6 +1044,51 @@ describe("mission store", () => {
     ).rejects.toMatchObject({ code: "ENOENT" });
   });
 
+  it("isolates a failed historical Mission migration from unrelated list and get queries", async () => {
+    const root = await temporaryRoot();
+    const issues: unknown[] = [];
+    const store = createMissionStore({
+      missionsPath: join(root, "missions"),
+      onReadIssue: (issue) => issues.push(issue),
+    });
+    const healthy = await store.create({
+      workspace: { path: join(root, "workspace"), basename: "workspace" },
+      goal: "Healthy Mission",
+      project: { id: "studio", revision: 1 },
+      executor: missionExecutorSnapshot(expertFixture()),
+    });
+    const { directory, id, source } = await installMissionV7Fixture(root);
+    const malformedV6 = {
+      ...(parsePragmaYaml(source) as Record<string, unknown>),
+      schemaVersion: "pragma.mission/v6",
+      executor: {
+        kind: "flow",
+        ref: "flow:v2vt1v01vzz6j24q",
+        name: "Broken historical Flow",
+      },
+    };
+    await writeFile(join(directory, "mission.yaml"), formatPragmaYaml(malformedV6), "utf8");
+
+    await expect(store.get(id)).rejects.toMatchObject({ code: "config_invalid" });
+    expect(
+      (
+        parsePragmaYaml(await readFile(join(directory, "mission.yaml"), "utf8")) as {
+          schemaVersion: string;
+        }
+      ).schemaVersion,
+    ).toBe("pragma.mission/v6");
+    await expect(store.list()).resolves.toEqual([
+      expect.objectContaining({ id: healthy.id, title: healthy.title }),
+    ]);
+    await expect(store.get(healthy.id)).resolves.toMatchObject({ id: healthy.id });
+    expect(issues).toContainEqual(
+      expect.objectContaining({
+        missionId: id,
+        error: expect.objectContaining({ code: "config_invalid" }),
+      }),
+    );
+  });
+
   it("replays an interrupted v6-to-v7 migration journal", async () => {
     const root = await temporaryRoot();
     const store = createMissionStore({ missionsPath: join(root, "missions") });

@@ -3,6 +3,7 @@ import { stat } from "node:fs/promises";
 import { basename } from "node:path";
 
 import { dialog, ipcMain, type BrowserWindow, type OpenDialogOptions } from "electron";
+import type { LocalHostApplicationPort } from "@pragma/local-host";
 
 import {
   CreateMissionSchema,
@@ -39,7 +40,6 @@ import type { MissionCreator } from "./mission-creator.ts";
 import { runDesktopMutation } from "../../platform/ipc/desktop-mutation-result.ts";
 import { publishMissionUpdate } from "./mission-update-publisher.ts";
 import { availableRecentWorkspaces } from "../workspaces/workspace-history-store.ts";
-import { validateWorkspace } from "../workspaces/workspace-scope.ts";
 import type { HomeExecutorCatalog } from "./home-executor-catalog.ts";
 import { installMissionAttachmentProtocol } from "./mission-attachment-protocol.ts";
 import { createMissionImageDraftStore } from "./mission-image-drafts.ts";
@@ -50,6 +50,16 @@ import {
 
 export function installMissionHandlers(options: {
   readonly missions: MissionStore;
+  readonly localHost: Pick<
+    LocalHostApplicationPort<
+      MissionSummary,
+      Mission,
+      Awaited<ReturnType<MissionExecutorCatalog["list"]>>[number],
+      unknown,
+      unknown
+    >,
+    "getMission" | "listMissions" | "listExecutors" | "resolveWorkspace"
+  >;
   readonly creator: MissionCreator;
   readonly executors: MissionExecutorCatalog;
   readonly homeExecutors: HomeExecutorCatalog;
@@ -76,15 +86,18 @@ export function installMissionHandlers(options: {
   const imageDrafts = createMissionImageDraftStore({ temporaryRoot: options.temporaryRoot });
   installMissionAttachmentProtocol(options.missions, imageDrafts);
   const getCreationDefaults = async () => {
-    const workspace = await options.getDefaultWorkspace();
+    const workspace = await options.localHost.resolveWorkspace(await options.getDefaultWorkspace());
     const recentWorkspaces = await availableRecentWorkspaces(
       await options.getRecentWorkspaces(),
-      workspace,
-      async (path) => (await validateWorkspace(path)).ok,
+      workspace.identityHash,
+      async (path) => await options.localHost.resolveWorkspace(path),
     );
     return MissionCreationDefaultsSchema.parse({
-      workspace: { path: workspace, basename: basename(workspace) },
-      recentWorkspaces: recentWorkspaces.map((path) => ({ path, basename: basename(path) })),
+      workspace: { path: workspace.canonicalPath, basename: workspace.displayName },
+      recentWorkspaces: recentWorkspaces.map((recent) => ({
+        path: recent.canonicalPath,
+        basename: recent.displayName,
+      })),
       executorRef: options.defaultExecutorRef,
       toolPermissionMode: await options.getDefaultToolPermissionMode(),
     });
@@ -123,7 +136,7 @@ export function installMissionHandlers(options: {
   };
   const getManagedMission = async (id: string) => {
     await ensureLegacyAutomationMissionSources();
-    const mission = await options.missions.get(id);
+    const mission = await options.localHost.getMission(id);
     if (!isUserFacingMissionOrigin(mission.origin)) throw new Error("mission_not_found");
     return mission;
   };
@@ -133,7 +146,7 @@ export function installMissionHandlers(options: {
   };
   ipcMain.handle("missions:list", async () => {
     await ensureLegacyAutomationMissionSources();
-    return (await options.missions.list()).map((mission) => {
+    return (await options.localHost.listMissions()).map((mission) => {
       if (mission.source.type === "automation") return mission;
       const automationRef = legacyAutomationMissionSources.get(mission.id);
       return automationRef === undefined
@@ -145,7 +158,7 @@ export function installMissionHandlers(options: {
     getManagedMission(MissionIdSchema.parse(id)),
   );
   ipcMain.handle("missions:executors:list", async () =>
-    MissionExecutorOptionSchema.array().parse(await options.executors.list()),
+    MissionExecutorOptionSchema.array().parse(await options.localHost.listExecutors()),
   );
   ipcMain.handle("missions:home-executors:get", async () =>
     HomeMissionExecutorCatalogSchema.parse({

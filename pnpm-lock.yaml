@@ -87,6 +87,9 @@ importers:
       '@pragma/interpreter':
         specifier: workspace:*
         version: link:../../packages/interpreter
+      '@pragma/local-host':
+        specifier: workspace:*
+        version: link:../../packages/local-host
       '@pragma/memory':
         specifier: workspace:*
         version: link:../../packages/memory
@@ -525,6 +528,9 @@ importers:
 
   packages/local-host:
     dependencies:
+      '@pragma/core':
+        specifier: workspace:*
+        version: link:../core
       '@pragma/shared':
         specifier: workspace:*
         version: link:../shared
