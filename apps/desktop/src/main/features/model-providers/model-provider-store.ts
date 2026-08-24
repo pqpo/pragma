@@ -8,7 +8,14 @@ import type {
   ResolvedModelProvider,
 } from "@pragma/core";
 import { withFileLock } from "@pragma/core";
+import {
+  SecretStoreError,
+  type LegacyCredentialDecryptor,
+  type SecretRef,
+  type SecretStore,
+} from "@pragma/local-host";
 import { ProviderModelDefinitionSchema } from "@pragma/shared";
+import { SecretRefSchema } from "@pragma/shared/integration";
 import { z } from "zod";
 
 import type {
@@ -27,9 +34,13 @@ import {
   ModelProviderVerificationSchema,
 } from "../../../shared/contracts/index.ts";
 import { findModelProviderPreset } from "../../../shared/model-provider-presets.ts";
-import type { CredentialEncryption } from "../../platform/security/credential-encryption.ts";
+import {
+  migrateLegacyCredentialAggregate,
+  type LegacySecretRecord,
+} from "../credentials/legacy-credential-migration.ts";
+import { ModelProvidersV4Schema, modelProvidersV4ToV5Step } from "./migrations/index.ts";
 
-const CONFIG_SCHEMA_VERSION = 4;
+const CONFIG_SCHEMA_VERSION = 5;
 
 interface StoredModelProvider {
   readonly id: string;
@@ -39,7 +50,7 @@ interface StoredModelProvider {
   readonly baseUrl: string;
   readonly compatibilityProfileId?: string | undefined;
   readonly models: readonly ModelProviderModel[];
-  readonly encryptedApiKey: string;
+  readonly apiKeySecretRef?: SecretRef | undefined;
   readonly requiresApiKey: boolean;
   readonly verification: ModelProviderVerification;
   readonly revision: number;
@@ -48,6 +59,14 @@ interface StoredModelProvider {
 interface StoredModelProviderConfig {
   readonly schemaVersion: typeof CONFIG_SCHEMA_VERSION;
   readonly providers: readonly StoredModelProvider[];
+}
+
+interface LegacyStoredModelProvider extends Omit<StoredModelProvider, "apiKeySecretRef"> {
+  readonly encryptedApiKey: string;
+}
+interface LegacyStoredModelProviderConfig {
+  readonly schemaVersion: 4;
+  readonly providers: readonly LegacyStoredModelProvider[];
 }
 
 export interface ModelProviderStore extends ModelProviderRegistry {
@@ -69,30 +88,23 @@ export interface ModelProviderStore extends ModelProviderRegistry {
     expectedRevision: number,
     result: ModelConnectionTestResult,
   ): Promise<ModelProviderVerification>;
+  migrateLegacy?(): Promise<boolean>;
 }
 
 export class ModelProviderStoreError extends Error {
   constructor(
     readonly code:
       | "config_invalid"
-      | "encryption_unavailable"
+      | "migration_required"
       | "provider_not_found"
       | "secret_unavailable"
       | "invalid_base_url"
       | "connection_changed",
     message: string,
+    options?: ErrorOptions,
   ) {
-    super(message);
+    super(message, options);
     this.name = "ModelProviderStoreError";
-  }
-}
-
-function ensureEncryption(encryption: CredentialEncryption): void {
-  if (!encryption.isAvailable()) {
-    throw new ModelProviderStoreError(
-      "encryption_unavailable",
-      "Secure storage is unavailable on this device. API keys cannot be saved.",
-    );
   }
 }
 
@@ -146,7 +158,7 @@ function toPublicProvider(provider: StoredModelProvider): ModelProvider {
       ? {}
       : { compatibilityProfileId: provider.compatibilityProfileId }),
     models: provider.models.map((model) => ({ ...model })),
-    hasApiKey: provider.encryptedApiKey.length > 0,
+    hasApiKey: provider.apiKeySecretRef !== undefined,
     requiresApiKey: provider.requiresApiKey,
     verification: provider.verification,
     revision: provider.revision,
@@ -186,7 +198,8 @@ function parseConfig(raw: string): StoredModelProviderConfig {
         typeof provider.presetId !== "string" ||
         typeof provider.name !== "string" ||
         typeof provider.baseUrl !== "string" ||
-        typeof provider.encryptedApiKey !== "string" ||
+        "encryptedApiKey" in provider ||
+        (provider.apiKeySecretRef !== undefined && !isSecretRef(provider.apiKeySecretRef)) ||
         typeof provider.requiresApiKey !== "boolean" ||
         !Number.isSafeInteger(provider.revision) ||
         (provider.revision ?? 0) <= 0 ||
@@ -211,6 +224,30 @@ function parseConfig(raw: string): StoredModelProviderConfig {
   return { schemaVersion: CONFIG_SCHEMA_VERSION, providers };
 }
 
+function parseCurrentConfig(value: unknown): StoredModelProviderConfig {
+  return parseConfig(JSON.stringify(value));
+}
+
+function parseLegacyConfig(value: unknown): LegacyStoredModelProviderConfig {
+  return ModelProvidersV4Schema.parse(value) as unknown as LegacyStoredModelProviderConfig;
+}
+
+function isSecretRef(value: unknown): value is SecretRef {
+  return SecretRefSchema.safeParse(value).success;
+}
+
+function toMigratedProvider(
+  provider: LegacyStoredModelProvider,
+  refs: ReadonlyMap<string, SecretRef>,
+): StoredModelProvider {
+  const migrated = { ...provider } as Record<string, unknown>;
+  delete migrated["encryptedApiKey"];
+  return {
+    ...migrated,
+    ...(refs.has(provider.id) ? { apiKeySecretRef: refs.get(provider.id)! } : {}),
+  } as StoredModelProvider;
+}
+
 function invalidStoredProvider(): never {
   throw new ModelProviderStoreError(
     "config_invalid",
@@ -220,11 +257,53 @@ function invalidStoredProvider(): never {
 
 export function createModelProviderStore(options: {
   readonly configPath: string;
-  readonly encryption: CredentialEncryption;
+  readonly secretStore: SecretStore;
+  readonly legacyDecryptor?: LegacyCredentialDecryptor | undefined;
 }): ModelProviderStore {
+  const migrateLegacy = async (): Promise<boolean> =>
+    (
+      await migrateLegacyCredentialAggregate<
+        LegacyStoredModelProviderConfig,
+        StoredModelProviderConfig
+      >({
+        configPath: options.configPath,
+        family: "pragma.model-providers",
+        sourceVersion: modelProvidersV4ToV5Step.fromVersion,
+        targetVersion: modelProvidersV4ToV5Step.toVersion,
+        secretStore: options.secretStore,
+        decryptor: options.legacyDecryptor,
+        parseLegacy: parseLegacyConfig,
+        parseCurrent: parseCurrentConfig,
+        collect: (legacy) =>
+          legacy.providers
+            .filter((provider) => provider.encryptedApiKey !== "")
+            .map(
+              (provider) =>
+                ({
+                  key: provider.id,
+                  ciphertext: provider.encryptedApiKey,
+                  owner: { kind: "model-provider", providerId: provider.id },
+                }) satisfies LegacySecretRecord,
+            ),
+        target: (legacy, refs) => ({
+          schemaVersion: 5,
+          providers: legacy.providers.map((provider) => toMigratedProvider(provider, refs)),
+        }),
+      })
+    ).migrated;
   const readConfig = async (): Promise<StoredModelProviderConfig> => {
     try {
-      return parseConfig(await readFile(options.configPath, "utf8"));
+      const raw = JSON.parse(await readFile(options.configPath, "utf8")) as unknown;
+      if ((raw as { schemaVersion?: unknown }).schemaVersion === 4) {
+        if (options.legacyDecryptor === undefined)
+          throw new ModelProviderStoreError(
+            "migration_required",
+            "Open the upgraded Desktop to migrate model provider credentials.",
+          );
+        await migrateLegacy();
+        return await readConfig();
+      }
+      return parseCurrentConfig(raw);
     } catch (error) {
       if ((error as NodeJS.ErrnoException).code === "ENOENT") {
         return { schemaVersion: CONFIG_SCHEMA_VERSION, providers: [] };
@@ -254,26 +333,38 @@ export function createModelProviderStore(options: {
     return provider;
   };
 
-  const decryptApiKey = (provider: StoredModelProvider): string => {
-    if (provider.encryptedApiKey === "") return "";
-    ensureEncryption(options.encryption);
+  const decryptApiKey = async (provider: StoredModelProvider): Promise<string> => {
+    if (provider.apiKeySecretRef === undefined) return "";
     try {
-      return options.encryption.decrypt(Buffer.from(provider.encryptedApiKey, "base64"));
-    } catch {
+      const value = await options.secretStore.get(provider.apiKeySecretRef);
+      try {
+        return value.utf8();
+      } finally {
+        value.dispose();
+      }
+    } catch (error) {
+      if (
+        error instanceof SecretStoreError &&
+        (error.code === "SECRET_STORE_LOCKED" || error.code === "KEYCHAIN_UNAVAILABLE")
+      )
+        throw error;
       throw new ModelProviderStoreError(
         "secret_unavailable",
         "The saved API key cannot be decrypted on this device. Update the provider with a new key.",
+        { cause: error },
       );
     }
   };
 
-  const resolveStoredProvider = (provider: StoredModelProvider): ResolvedModelProvider => {
+  const resolveStoredProvider = async (
+    provider: StoredModelProvider,
+  ): Promise<ResolvedModelProvider> => {
     return {
       id: provider.id,
       catalogId: provider.presetId,
       displayName: provider.name,
       baseUrl: provider.baseUrl,
-      apiKey: decryptApiKey(provider),
+      apiKey: await decryptApiKey(provider),
       models: provider.models.map(toProviderModelDefinition),
       api: provider.protocol,
       ...(provider.compatibilityProfileId === undefined
@@ -287,7 +378,7 @@ export function createModelProviderStore(options: {
             compatibilityProfileId: provider.compatibilityProfileId,
             models: provider.models,
             protocol: provider.protocol,
-            encryptedApiKey: provider.encryptedApiKey,
+            apiKeySecretRef: provider.apiKeySecretRef,
           }),
         )
         .digest("hex"),
@@ -295,6 +386,7 @@ export function createModelProviderStore(options: {
   };
 
   return {
+    migrateLegacy,
     async getSnapshot(): Promise<ModelProviderSettingsSnapshot> {
       try {
         return { status: "ready", providers: (await readConfig()).providers.map(toPublicProvider) };
@@ -334,11 +426,11 @@ export function createModelProviderStore(options: {
       if (input.requiresApiKey && input.apiKey === "") {
         throw new ModelProviderStoreError("config_invalid", "Enter an API key for this provider.");
       }
-      if (input.apiKey !== "") ensureEncryption(options.encryption);
       return await mutate(async () => {
         const config = await readConfig();
+        const id = randomUUID();
         const provider: StoredModelProvider = {
-          id: randomUUID(),
+          id,
           presetId: input.presetId,
           name: input.name.trim(),
           protocol: input.protocol,
@@ -347,8 +439,14 @@ export function createModelProviderStore(options: {
             ? {}
             : { compatibilityProfileId: input.compatibilityProfileId }),
           models: normalizeModels(input.models),
-          encryptedApiKey:
-            input.apiKey === "" ? "" : options.encryption.encrypt(input.apiKey).toString("base64"),
+          ...(input.apiKey === ""
+            ? {}
+            : {
+                apiKeySecretRef: await options.secretStore.put({
+                  owner: { kind: "model-provider", providerId: id },
+                  value: Buffer.from(input.apiKey),
+                }),
+              }),
           requiresApiKey: input.requiresApiKey,
           verification: { status: "unverified" },
           revision: 1,
@@ -360,7 +458,6 @@ export function createModelProviderStore(options: {
 
     async update(input: UpdateModelProvider): Promise<ModelProvider> {
       validatePreset(input);
-      if (input.apiKey !== undefined && input.apiKey !== "") ensureEncryption(options.encryption);
       return await mutate(async () => {
         const config = await readConfig();
         const existing = config.providers.find((provider) => provider.id === input.id);
@@ -370,19 +467,29 @@ export function createModelProviderStore(options: {
         const baseUrl = normalizeModelProviderBaseUrl(input.baseUrl);
         const connectionChanged =
           existing.protocol !== input.protocol || existing.baseUrl !== baseUrl;
-        if (connectionChanged && existing.encryptedApiKey !== "" && input.apiKey === undefined) {
+        if (
+          connectionChanged &&
+          existing.apiKeySecretRef !== undefined &&
+          input.apiKey === undefined
+        ) {
           throw new ModelProviderStoreError(
             "connection_changed",
             "Re-enter the API key after changing the provider protocol or base URL.",
           );
         }
-        const encryptedApiKey =
+        const apiKeySecretRef =
           input.apiKey === undefined
-            ? existing.encryptedApiKey
+            ? existing.apiKeySecretRef
             : input.apiKey === ""
-              ? ""
-              : options.encryption.encrypt(input.apiKey).toString("base64");
-        if (input.requiresApiKey && encryptedApiKey === "") {
+              ? undefined
+              : await options.secretStore.put({
+                  owner: { kind: "model-provider", providerId: existing.id },
+                  value: Buffer.from(input.apiKey),
+                  ...(existing.apiKeySecretRef === undefined
+                    ? {}
+                    : { expectedRevision: existing.apiKeySecretRef.revision }),
+                });
+        if (input.requiresApiKey && apiKeySecretRef === undefined) {
           throw new ModelProviderStoreError(
             "config_invalid",
             "Enter an API key for this provider.",
@@ -398,7 +505,7 @@ export function createModelProviderStore(options: {
             ? { compatibilityProfileId: undefined }
             : { compatibilityProfileId: input.compatibilityProfileId }),
           models: normalizeModels(input.models),
-          encryptedApiKey,
+          ...(apiKeySecretRef === undefined ? {} : { apiKeySecretRef }),
           requiresApiKey: input.requiresApiKey,
           verification: { status: "unverified" },
           revision: existing.revision + 1,
@@ -452,7 +559,7 @@ export function createModelProviderStore(options: {
           "Re-enter the API key after changing the provider protocol or base URL.",
         );
       }
-      return decryptApiKey(provider);
+      return await decryptApiKey(provider);
     },
 
     async recordVerification(id, expectedRevision, result): Promise<ModelProviderVerification> {
@@ -488,11 +595,11 @@ export function createModelProviderStore(options: {
 
     async resolveProviderWithRevision(id) {
       const provider = await requireProvider(id);
-      return { provider: resolveStoredProvider(provider), revision: provider.revision };
+      return { provider: await resolveStoredProvider(provider), revision: provider.revision };
     },
 
     async resolveProvider(id): Promise<ResolvedModelProvider> {
-      return resolveStoredProvider(await requireProvider(id));
+      return await resolveStoredProvider(await requireProvider(id));
     },
   };
 }

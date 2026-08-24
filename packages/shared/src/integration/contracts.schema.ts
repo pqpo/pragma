@@ -51,6 +51,28 @@ export const WorkspaceSelectionSchema = z
   })
   .strict();
 
+/** Metadata-only reference. Secret values, ciphertext, and keychain locators are intentionally absent. */
+export const SecretRefSchema = z
+  .object({
+    schemaVersion: z.literal("pragma.secret-ref/v1"),
+    secretId: z.string().uuid(),
+    owner: z.discriminatedUnion("kind", [
+      z.object({ kind: z.literal("model-provider"), providerId: z.string().min(1) }).strict(),
+      z
+        .object({
+          kind: z.literal("capability"),
+          capabilityId: z.string().min(1),
+          name: z.string().min(1),
+        })
+        .strict(),
+      z.object({ kind: z.literal("plugin-binding"), bindingRef: z.string().min(1) }).strict(),
+    ]),
+    revision: z.string().uuid(),
+  })
+  .strict();
+
+export type SecretRef = z.infer<typeof SecretRefSchema>;
+
 export const ExecutorDescriptorSchema = z
   .object({
     schemaVersion: z.literal("pragma.integration-executor/v1"),

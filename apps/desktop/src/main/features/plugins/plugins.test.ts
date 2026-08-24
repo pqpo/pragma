@@ -4,16 +4,10 @@ import { join } from "node:path";
 
 import { afterEach, describe, expect, it } from "vitest";
 
-import type { CredentialEncryption } from "../../platform/security/credential-encryption.ts";
 import { createPluginCredentialStore } from "./plugin-credential-store.ts";
+import { createTestSecretStore } from "../credentials/test-secret-store.ts";
 
 const directories: string[] = [];
-const encryption: CredentialEncryption = {
-  isAvailable: () => true,
-  encrypt: (value) => Buffer.from(`encrypted:${value}`, "utf8"),
-  decrypt: (value) => value.toString("utf8").replace(/^encrypted:/, ""),
-};
-
 afterEach(async () => {
   await Promise.all(
     directories.splice(0).map((directory) => rm(directory, { recursive: true, force: true })),
@@ -25,8 +19,9 @@ describe("Plugin Credential Store", () => {
     const directory = await mkdtemp(join(tmpdir(), "pragma-plugin-credentials-"));
     directories.push(directory);
     const configPath = join(directory, "plugin-credentials.json");
-    const first = createPluginCredentialStore({ configPath, encryption });
-    const second = createPluginCredentialStore({ configPath, encryption });
+    const { secretStore } = createTestSecretStore(join(directory, "secret-store"));
+    const first = createPluginCredentialStore({ configPath, secretStore });
+    const second = createPluginCredentialStore({ configPath, secretStore });
 
     await Promise.all([
       first.applyChanges({ set: { "binding:first": "token-a" } }),

@@ -22,7 +22,12 @@ import {
   createPragmaAgentTools,
 } from "@pragma/built-in-agents";
 import { MEMORY_CURATOR_REF } from "@pragma/memory";
-import { createLocalHostApplication, createMissionControllerStore } from "@pragma/local-host";
+import {
+  createLocalHostApplication,
+  createMissionControllerStore,
+  createNativeOsKeychain,
+  createSecretStore,
+} from "@pragma/local-host";
 import { createIntegrationError } from "@pragma/shared/integration";
 import { isUserFacingMissionOrigin } from "../../shared/contracts/index.ts";
 
@@ -143,6 +148,7 @@ import {
 import { validateWorkspace } from "../features/workspaces/workspace-scope.ts";
 import { createWorkspaceFilesystemPort } from "../features/workspaces/workspace-filesystem-port.ts";
 import type { CredentialEncryption } from "../platform/security/credential-encryption.ts";
+import { createElectronSafeStorageLegacyDecryptor } from "../platform/security/electron-safe-storage-legacy-decryptor.ts";
 import { initializeDesktopStorage } from "../platform/storage/storage-bootstrap.ts";
 import { createDesktopTrashMaintenance } from "../platform/storage/trash-maintenance.ts";
 
@@ -202,6 +208,14 @@ export async function createDesktopApplicationContainer(
     pragmaPaths.credentialsRoot(),
     "capability-credentials.json",
   );
+  // Electron safeStorage is deliberately scoped to migration input. All normal
+  // credential reads and writes below use the host-neutral keychain-backed store.
+  const secretStore = createSecretStore({
+    root: pragmaPaths.secretStoreRoot(),
+    dataRoot: pragmaPaths.dataRoot(),
+    keychain: createNativeOsKeychain(),
+  });
+  const legacyCredentialDecryptor = createElectronSafeStorageLegacyDecryptor(encryption);
   const capabilitiesPath = join(pragmaPaths.dataRoot(), "capabilities");
   const contextStoresPath = join(pragmaPaths.dataRoot(), "context-stores");
   const desktopSettings = createDesktopSettingsStore({
@@ -250,7 +264,8 @@ export async function createDesktopApplicationContainer(
   installWorkflowLayoutHandlers(workflowLayouts);
   const pluginCredentials = createPluginCredentialStore({
     configPath: join(pragmaPaths.credentialsRoot(), "plugin-credentials.json"),
-    encryption,
+    secretStore,
+    legacyDecryptor: legacyCredentialDecryptor,
   });
   const missionStore = createMissionStore({
     missionsPath,
@@ -305,7 +320,8 @@ export async function createDesktopApplicationContainer(
   );
   const modelProviderStore = createModelProviderStore({
     configPath: modelProvidersPath,
-    encryption,
+    secretStore,
+    legacyDecryptor: legacyCredentialDecryptor,
   });
   const runtimeEnvironments = createRuntimeEnvironmentStore({
     pragmaHome: pragmaPaths.root,
@@ -394,7 +410,8 @@ export async function createDesktopApplicationContainer(
   installPluginHandlers(pluginStore, options.getWindow);
   const capabilityCredentials = createCapabilityCredentialStore({
     configPath: capabilityCredentialsPath,
-    encryption,
+    secretStore,
+    legacyDecryptor: legacyCredentialDecryptor,
   });
   const capabilityStore = createCapabilityStore({
     capabilitiesPath,
@@ -1172,6 +1189,22 @@ export async function createDesktopApplicationContainer(
       backgroundTasksStarted = true;
       trashMaintenance.schedule("startup");
       runtimeProcessEnvironment.warmUp();
+      // This starts only after the first window is available.  The three fixed
+      // credential aggregates are targeted explicitly; it never scans Projects,
+      // Missions, workspaces, or arbitrary data-home entries on startup.
+      for (const [family, migrate] of [
+        ["model_provider", () => modelProviderStore.migrateLegacy?.()],
+        ["capability", () => capabilityCredentials.migrateLegacy?.()],
+        ["plugin", () => pluginCredentials.migrateLegacy?.()],
+      ] as const) {
+        void Promise.resolve(migrate()).catch((error: unknown) => {
+          mainLogger.warn(
+            "desktop.credential_migration_degraded",
+            "A credential migration needs attention; unrelated subsystems remain available.",
+            { family, error },
+          );
+        });
+      }
       void runtimeEnvironments.initialize().catch((error: unknown) => {
         mainLogger.warn(
           "desktop.runtime_environment_warmup_failed",

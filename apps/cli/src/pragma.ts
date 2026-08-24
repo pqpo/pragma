@@ -3,7 +3,12 @@ import process from "node:process";
 
 import { runCli } from "./index.ts";
 
-process.exitCode = runCli(process.argv.slice(2), {
-  writeStdout: (value) => process.stdout.write(value),
-  writeStderr: (value) => process.stderr.write(value),
-});
+try {
+  process.exitCode = await runCli(process.argv.slice(2), {
+    writeStdout: (value) => process.stdout.write(value),
+    writeStderr: (value) => process.stderr.write(value),
+  });
+} catch {
+  process.stderr.write("INTERNAL_ERROR: The command could not complete.\n");
+  process.exitCode = 10;
+}
