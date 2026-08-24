@@ -3591,8 +3591,13 @@ describe("Expert lifecycle orchestration", () => {
           const agents = discovery["agents"] as Array<{
             agentId: string;
             activeInvocation: { invocationId: string };
+            permissions: { canMessage: boolean; canSteer: boolean };
           }>;
           expect(agents).toHaveLength(1);
+          expect(agents[0]!.permissions).toMatchObject({
+            canMessage: true,
+            canSteer: true,
+          });
           await expect(
             call("steer_expert", {
               agentId: agents[0]!.agentId,
@@ -3627,7 +3632,7 @@ describe("Expert lifecycle orchestration", () => {
           agentId: string;
           expertId: string;
           assignedBy: { invocationId: string; expertId: string; agentId?: string };
-          permissions: { canInterrupt: boolean };
+          permissions: { canInterrupt: boolean; canMessage: boolean; canSteer: boolean };
         }>;
         const frontendAgent = agents.find((agent) => agent.expertId === "frontend")!;
         const backendAgent = agents.find((agent) => agent.expertId === "backend")!;
@@ -3636,6 +3641,12 @@ describe("Expert lifecycle orchestration", () => {
           agentId: frontendAgent.agentId,
         });
         expect(agents.every((agent) => agent.permissions.canInterrupt)).toBe(true);
+        expect(
+          agents.every(
+            (agent) =>
+              agent.permissions.canMessage === false && agent.permissions.canSteer === false,
+          ),
+        ).toBe(true);
         return { outputText: "lead:done", runtimeSessionId: session.id };
       },
       mapEvent: () => ({ events: [] }),
