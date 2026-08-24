@@ -113,6 +113,12 @@ import {
 
 const provenance = new WeakMap<object, PragmaProvenance>();
 const PRAGMA_BUNDLE_BINDING_PREFIX = "binding:pragma.bundle." as const;
+const PragmaBundleProjectLockIdentitySchema = z
+  .object({
+    compilerVersion: z.string().min(1),
+    projectFingerprint: z.string().regex(/^[a-f0-9]{64}$/),
+  })
+  .passthrough();
 
 export interface LoadPragmaProjectOptions {
   readonly rootDir?: string | undefined;
@@ -429,14 +435,40 @@ export async function loadPragmaProject(
         await writeFile(destination, contents, { mode: 0o600 });
       }
       const entryFile = resolve(temporaryRoot, decoded.manifest.project.entry);
-      const project = await loadPragmaYamlProject(entryFile, {
-        ...options,
-        rootDir: resolve(temporaryRoot, "project"),
-        requireLock: true,
-        sourceIdentity: decoded.manifest.project.projectFingerprint,
-      });
-      const actualFingerprint = project.createLock().projectFingerprint;
-      if (actualFingerprint !== decoded.manifest.project.projectFingerprint) {
+      const projectRoot = resolve(temporaryRoot, "project");
+      const portableLock = PragmaBundleProjectLockIdentitySchema.parse(
+        parsePragmaYaml(await readFile(resolve(dirname(entryFile), "pragma.lock.yaml"), "utf8")),
+      );
+      if (
+        portableLock.compilerVersion !== decoded.manifest.project.compilerVersion ||
+        portableLock.projectFingerprint !== decoded.manifest.project.projectFingerprint
+      ) {
+        throw new PragmaBundleFormatError(
+          "manifest.fingerprint_invalid",
+          "The bundle project identity does not match its portable project lock.",
+        );
+      }
+      const directlyReadable = isPragmaCompilerVersionDirectlyReadable(
+        decoded.manifest.project.compilerVersion,
+      );
+      const project = directlyReadable
+        ? await loadPragmaYamlProject(entryFile, {
+            ...options,
+            rootDir: projectRoot,
+            requireLock: true,
+            revisionCompilerVersion: decoded.manifest.project.compilerVersion,
+            sourceIdentity: decoded.manifest.project.projectFingerprint,
+          })
+        : await loadMigratedBundleProject({
+            decoded,
+            entryFile,
+            projectRoot,
+            options,
+          });
+      if (
+        directlyReadable &&
+        project.createLock().projectFingerprint !== decoded.manifest.project.projectFingerprint
+      ) {
         throw new PragmaBundleFormatError(
           "manifest.fingerprint_invalid",
           "The bundle project fingerprint does not match its portable project.",
@@ -470,6 +502,93 @@ export async function loadPragmaProject(
     ...(typeof source === "string" || source.rootDir === undefined
       ? {}
       : { rootDir: source.rootDir }),
+  });
+}
+
+async function loadMigratedBundleProject(input: {
+  readonly decoded: DecodedPragmaBundle;
+  readonly entryFile: string;
+  readonly projectRoot: string;
+  readonly options: LoadPragmaProjectOptions;
+}): Promise<PragmaProjectImpl> {
+  const sourceCompilerVersion = input.decoded.manifest.project.compilerVersion;
+  if (!isPragmaCompilerVersionUpgradeable(sourceCompilerVersion)) {
+    throw new PragmaBundleFormatError(
+      "manifest.invalid",
+      `Bundle compiler version is not supported: ${sourceCompilerVersion}.`,
+    );
+  }
+  const projectFiles = new Map<string, string>();
+  for (const [path, contents] of input.decoded.files) {
+    if (!path.startsWith("project/")) continue;
+    projectFiles.set(path.slice("project/".length), new TextDecoder().decode(contents));
+  }
+  const { migratePragmaCompilerProjectToCurrent, PRAGMA_COMPILER_MIGRATION_CHAIN_VERSION } =
+    await import("../compiler-migrations/index.ts");
+  let migrated;
+  try {
+    migrated = migratePragmaCompilerProjectToCurrent({
+      files: projectFiles,
+      revisionCompilerVersion: sourceCompilerVersion,
+    });
+  } catch (error) {
+    throw new PragmaBundleFormatError(
+      "manifest.fingerprint_invalid",
+      "The bundle portable project failed compiler migration validation.",
+      { cause: error },
+    );
+  }
+
+  const imports: string[] = [];
+  for (const resource of migrated.resources) {
+    const path = `${pragmaResourceDirectory(resource)}/${pragmaResourceFileName(resource)}`;
+    if (migrated.artifacts.has(path)) {
+      throw new PragmaBundleFormatError(
+        "manifest.invalid",
+        `Migrated bundle resource collides with a project artifact: ${path}.`,
+      );
+    }
+    imports.push(`./${path}`);
+    const destination = resolve(input.projectRoot, path);
+    await mkdir(dirname(destination), { recursive: true, mode: 0o700 });
+    await writeFile(destination, formatPragmaYaml(resource), { mode: 0o600 });
+  }
+  await writeFile(
+    input.entryFile,
+    formatPragmaYaml({
+      apiVersion: PRAGMA_DSL_WRITE_API_VERSION,
+      kind: "Bundle",
+      imports: imports.toSorted(),
+      resources: [],
+    }),
+    { mode: 0o600 },
+  );
+  const staged = await loadPragmaYamlProject(input.entryFile, {
+    ...input.options,
+    rootDir: input.projectRoot,
+    requireLock: false,
+    revisionCompilerVersion: undefined,
+    sourceIdentity: undefined,
+  });
+  await writeFile(
+    resolve(dirname(input.entryFile), "pragma.lock.yaml"),
+    formatPragmaYaml(staged.createLock()),
+    { mode: 0o600 },
+  );
+  await staged.dispose();
+  return await loadPragmaYamlProject(input.entryFile, {
+    ...input.options,
+    rootDir: input.projectRoot,
+    requireLock: true,
+    revisionCompilerVersion: PRAGMA_COMPILER_WRITE_VERSION,
+    sourceIdentity: sha256(
+      stableStringify({
+        sourceProjectFingerprint: input.decoded.manifest.project.projectFingerprint,
+        sourceCompilerVersion,
+        targetCompilerVersion: PRAGMA_COMPILER_WRITE_VERSION,
+        migrationChainVersion: PRAGMA_COMPILER_MIGRATION_CHAIN_VERSION,
+      }),
+    ),
   });
 }
 
@@ -1066,13 +1185,6 @@ class PragmaProjectImpl implements PragmaProject {
     this.cleanup = cleanup;
   }
   async assertBundleManifest(manifest: PragmaBundleManifest): Promise<void> {
-    const lock = await this.readLock();
-    if (manifest.project.compilerVersion !== lock.compilerVersion) {
-      throw new PragmaBundleFormatError(
-        "manifest.invalid",
-        `Bundle compiler version ${manifest.project.compilerVersion} does not match its lock ${lock.compilerVersion}.`,
-      );
-    }
     const byRef = new Map(
       [...this.resources.values()].map((indexed) => [
         canonicalRef(indexed.resource),

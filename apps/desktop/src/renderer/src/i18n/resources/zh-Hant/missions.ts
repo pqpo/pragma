@@ -52,7 +52,9 @@ export const missions = {
   hoursShort: "{{count}}小時",
   daysShort: "{{count}}天",
   notFound: "找不到任務",
-  bundleSetupRequired: "Bundle 仍有 {{count}} 項依賴未完成設定：{{resources}}。請完成設定後繼續。",
+  bundleSetupRequired:
+    "此工作流程還有 {{count}} 項本機依賴未完成設定：{{resources}}。請開啟 Bundle 匯入，重新選擇原檔案並完成綁定。",
+  bundleLegacyKnowledgeBase: "知識庫（舊版 Bundle 未保留名稱）",
   selectAnother: "請選擇其他任務或建立新任務。",
   deleteTitle: "刪除此任務？",
   deleteMission: "刪除任務",

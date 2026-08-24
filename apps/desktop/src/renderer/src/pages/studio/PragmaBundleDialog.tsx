@@ -233,8 +233,8 @@ function BundleExportDialog(props: {
       onClose={props.onClose}
       footer={footer}
       className="pragma-bundle-export-dialog"
+      bodyHeader={<BundleExportSteps step={step} />}
     >
-      <BundleExportSteps step={step} />
       {step === "select" ? (
         <BundleExportObjectStep roots={roots} value={rootRef} onChange={setRootRef} />
       ) : null}
@@ -361,6 +361,9 @@ function BundleImportDialog(props: {
     );
   }, [inspection, recovery]);
   const currentRequirement = requirements[bindingIndex];
+  const resultReadiness = installation === null ? [] : installationReadiness(installation);
+  const pendingResultReadiness = resultReadiness.filter((item) => item.status !== "ready");
+  const readyResultCount = resultReadiness.length - pendingResultReadiness.length;
   const dirty =
     inspection !== null &&
     (step !== "select" ||
@@ -621,6 +624,26 @@ function BundleImportDialog(props: {
 
   const footer = (() => {
     if (step === "result") {
+      if (installation?.status === "needs_setup" && pendingResultReadiness.length > 0) {
+        return (
+          <>
+            <button className="secondary-button" type="button" onClick={props.onClose}>
+              {t("bundleFinishSetupLater")}
+            </button>
+            <button
+              className="primary-button"
+              type="button"
+              onClick={() => {
+                setRecovery(installation);
+                setBindingIndex(0);
+                setStep("bindings");
+              }}
+            >
+              {t("bundleFinishSetupNow")}
+            </button>
+          </>
+        );
+      }
       return (
         <button className="primary-button" type="button" onClick={props.onClose}>
           {t("done")}
@@ -711,14 +734,17 @@ function BundleImportDialog(props: {
         busy={busy}
         onClose={close}
         dialogRef={dialogRef}
+        className={step === "select" && inspection === null ? "is-awaiting-file" : undefined}
         footer={footer}
+        bodyHeader={
+          <BundleImportSteps
+            step={step}
+            inspection={inspection}
+            conflictCount={recovery === null ? (inspection?.conflicts.length ?? 0) : 0}
+            requirementCount={requirements.length}
+          />
+        }
       >
-        <BundleImportSteps
-          step={step}
-          inspection={inspection}
-          conflictCount={recovery === null ? (inspection?.conflicts.length ?? 0) : 0}
-          requirementCount={requirements.length}
-        />
         {step === "select" ? (
           <BundleFileStep
             inspection={inspection}
@@ -802,52 +828,71 @@ function BundleImportDialog(props: {
                 {t("bundleImportFailed")}
               </p>
             ) : (
-              <div className="pragma-bundle-warning" role="status">
-                <WarningCircle size={20} aria-hidden="true" />
-                <div>
-                  <strong>{t("bundleSetupTitle")}</strong>
-                  <p>{t("bundleSetupDescription")}</p>
-                  <BundleReadinessList readiness={installationReadiness(installation)} />
-                  <div className="pragma-bundle-setup-actions">
-                    <button
-                      className="secondary-button"
-                      type="button"
-                      disabled={busy}
-                      onClick={() => {
-                        const api = desktopApi();
-                        if (api === undefined) return;
-                        setBusy(true);
-                        void api
-                          .recheckPragmaBundleInstallation({ installationId: installation.id })
-                          .then(async (next) => {
-                            setInstallation(next);
-                            await props.onChanged();
-                          })
-                          .catch((cause: unknown) => setError(displayError(cause)))
-                          .finally(() => setBusy(false));
-                      }}
-                    >
-                      <ArrowsClockwise size={16} />
-                      {t("bundleRecheck")}
-                    </button>
-                    {installationReadiness(installation)
-                      .filter(
-                        (item) =>
-                          item.status !== "ready" &&
-                          item.kind === "capability" &&
-                          item.targetId !== undefined,
-                      )
-                      .map((item) => (
-                        <button
-                          className="secondary-button"
-                          type="button"
-                          key={`configure:${item.id}`}
-                          onClick={() => props.onOpenCapability?.(item.targetId!)}
-                        >
-                          {t("bundleConfigureCapability", { name: item.name })}
-                        </button>
-                      ))}
+              <div className="pragma-bundle-result-content" role="status">
+                <header className="pragma-bundle-result-summary">
+                  <span>
+                    <Check size={20} aria-hidden="true" />
+                  </span>
+                  <div>
+                    <strong>{t("bundleImportCompleteTitle")}</strong>
+                    <p>
+                      {t("bundleImportCompleteNeedsSetup", {
+                        name: installation.rootName,
+                        count: pendingResultReadiness.length,
+                      })}
+                    </p>
                   </div>
+                </header>
+                <section className="pragma-bundle-result-pending">
+                  <header>
+                    <div>
+                      <h3>{t("bundlePendingSetupTitle")}</h3>
+                      <p>{t("bundlePendingSetupDescription")}</p>
+                    </div>
+                    <strong>{pendingResultReadiness.length}</strong>
+                  </header>
+                  <BundleReadinessList readiness={pendingResultReadiness} compact />
+                </section>
+                {readyResultCount > 0 ? (
+                  <p className="pragma-bundle-result-ready-summary">
+                    <Check size={14} aria-hidden="true" />
+                    {t("bundleReadyDependencies", { count: readyResultCount })}
+                  </p>
+                ) : null}
+                <div className="pragma-bundle-setup-actions">
+                  <button
+                    className="secondary-button"
+                    type="button"
+                    disabled={busy}
+                    onClick={() => {
+                      const api = desktopApi();
+                      if (api === undefined) return;
+                      setBusy(true);
+                      void api
+                        .recheckPragmaBundleInstallation({ installationId: installation.id })
+                        .then(async (next) => {
+                          setInstallation(next);
+                          await props.onChanged();
+                        })
+                        .catch((cause: unknown) => setError(displayError(cause)))
+                        .finally(() => setBusy(false));
+                    }}
+                  >
+                    <ArrowsClockwise size={16} />
+                    {t("bundleRecheck")}
+                  </button>
+                  {pendingResultReadiness
+                    .filter((item) => item.kind === "capability" && item.targetId !== undefined)
+                    .map((item) => (
+                      <button
+                        className="secondary-button"
+                        type="button"
+                        key={`configure:${item.id}`}
+                        onClick={() => props.onOpenCapability?.(item.targetId!)}
+                      >
+                        {t("bundleConfigureCapability", { name: item.name })}
+                      </button>
+                    ))}
                 </div>
               </div>
             )}
@@ -890,6 +935,7 @@ function BundleDialogShell(props: {
   readonly busy: boolean;
   readonly onClose: () => void;
   readonly footer: ReactNode;
+  readonly bodyHeader?: ReactNode | undefined;
   readonly children: ReactNode;
   readonly dialogRef?: RefObject<HTMLElement | null> | undefined;
   readonly className?: string | undefined;
@@ -943,7 +989,12 @@ function BundleDialogShell(props: {
             <X size={20} />
           </button>
         </header>
-        <div className="pragma-bundle-body">{props.children}</div>
+        <div className="pragma-bundle-body">
+          {props.bodyHeader === undefined ? null : (
+            <div className="pragma-bundle-body-header">{props.bodyHeader}</div>
+          )}
+          <div className="pragma-bundle-body-scroll">{props.children}</div>
+        </div>
         <footer>{props.footer}</footer>
       </section>
     </div>
@@ -971,6 +1022,9 @@ function BundleImportSteps(props: {
     t("bundleStepBindings"),
     t("bundleStepReview"),
   ];
+  const stepIsSkipped = (index: number): boolean =>
+    props.inspection !== null &&
+    ((index === 1 && props.conflictCount === 0) || (index === 2 && props.requirementCount === 0));
   return (
     <ol className="pragma-bundle-stepper" aria-label={t("bundleImportProgress")}>
       {steps.map((label, index) => (
@@ -980,20 +1034,19 @@ function BundleImportSteps(props: {
           aria-current={index === activeIndex ? "step" : undefined}
         >
           <span>{index < activeIndex ? <Check size={13} /> : index + 1}</span>
-          <strong>{label}</strong>
-          {index === 1 && props.inspection !== null && props.conflictCount === 0 ? (
-            <small>{t("bundleStepSkipped")}</small>
-          ) : null}
-          {index === 2 && props.inspection !== null && props.requirementCount === 0 ? (
-            <small>{t("bundleStepSkipped")}</small>
-          ) : null}
+          <strong>
+            {label}
+            {stepIsSkipped(index) ? (
+              <span className="pragma-bundle-step-skip">{t("bundleStepSkippedInline")}</span>
+            ) : null}
+          </strong>
         </li>
       ))}
     </ol>
   );
 }
 
-function BundleFileStep(props: {
+export function BundleFileStep(props: {
   readonly inspection: PragmaBundleImportInspection | null;
   readonly busy: boolean;
   readonly dragging: boolean;
@@ -1005,44 +1058,62 @@ function BundleFileStep(props: {
   const { t } = useTranslation("studio");
   return (
     <div className="pragma-bundle-file-step">
-      <button
-        className={`pragma-bundle-dropzone${props.dragging ? " is-dragging" : ""}`}
-        type="button"
-        disabled={props.busy}
-        onClick={props.onPick}
-        onDragEnter={(event) => {
-          event.preventDefault();
-          props.onDragging(true);
-        }}
-        onDragOver={(event) => {
-          event.preventDefault();
-          event.dataTransfer.dropEffect = "copy";
-          props.onDragging(true);
-        }}
-        onDragLeave={(event) => {
-          if (event.currentTarget.contains(event.relatedTarget as Node | null)) return;
-          props.onDragging(false);
-        }}
-        onDrop={(event) => {
-          event.preventDefault();
-          props.onDragging(false);
-          if (event.dataTransfer.files.length !== 1) return;
-          const file = event.dataTransfer.files[0];
-          if (file !== undefined) props.onDrop(file);
-        }}
-      >
-        <Archive size={30} />
-        <strong>{props.dragging ? t("bundleDropNow") : t("bundleChooseFile")}</strong>
-        <span>{t("bundleChooseFileHint")}</span>
-      </button>
-      {props.inspection !== null ? (
-        <div className="pragma-bundle-file-summary">
-          <span className="pragma-bundle-verified">
-            <Check size={15} /> {t("bundleVerified")}
+      {props.inspection === null ? (
+        <button
+          className={`pragma-bundle-dropzone${props.dragging ? " is-dragging" : ""}`}
+          type="button"
+          disabled={props.busy}
+          onClick={props.onPick}
+          onDragEnter={(event) => {
+            event.preventDefault();
+            props.onDragging(true);
+          }}
+          onDragOver={(event) => {
+            event.preventDefault();
+            event.dataTransfer.dropEffect = "copy";
+            props.onDragging(true);
+          }}
+          onDragLeave={(event) => {
+            if (event.currentTarget.contains(event.relatedTarget as Node | null)) return;
+            props.onDragging(false);
+          }}
+          onDrop={(event) => {
+            event.preventDefault();
+            props.onDragging(false);
+            if (event.dataTransfer.files.length !== 1) return;
+            const file = event.dataTransfer.files[0];
+            if (file !== undefined) props.onDrop(file);
+          }}
+        >
+          <span className="pragma-bundle-dropzone-icon">
+            <Archive size={28} aria-hidden="true" />
           </span>
-          <strong>{props.inspection.sourceName}</strong>
+          <strong>{props.dragging ? t("bundleDropNow") : t("bundleChooseFile")}</strong>
+          <span>{t("bundleChooseFileHint")}</span>
+        </button>
+      ) : (
+        <div className="pragma-bundle-file-summary">
+          <header>
+            <span className="pragma-bundle-file-icon">
+              <Archive size={22} aria-hidden="true" />
+            </span>
+            <div className="pragma-bundle-file-copy">
+              <span className="pragma-bundle-verified">
+                <Check size={13} aria-hidden="true" /> {t("bundleVerified")}
+              </span>
+              <strong title={props.inspection.sourceName}>{props.inspection.sourceName}</strong>
+              <p>{props.inspection.root.name}</p>
+            </div>
+            <button className="secondary-button" type="button" onClick={props.onPick}>
+              {t("bundleChooseAnother")}
+            </button>
+          </header>
+          <div className="pragma-bundle-file-meta" aria-label={t("bundleFileOverview")}>
+            <span>{props.inspection.root.kind}</span>
+            <span>{t("bundleResourceCount", { count: props.inspection.resources })}</span>
+          </div>
           {props.inspection.roots.length > 1 ? (
-            <label>
+            <label className="pragma-bundle-root-select">
               <span>{t("bundleInstallRoot")}</span>
               <SelectMenu
                 ariaLabel={t("bundleInstallRoot")}
@@ -1056,13 +1127,7 @@ function BundleFileStep(props: {
                 onChange={props.onRoot}
               />
             </label>
-          ) : (
-            <p>{props.inspection.root.name}</p>
-          )}
-          <small>
-            {props.inspection.root.kind} ·{" "}
-            {t("bundleResourceCount", { count: props.inspection.resources })}
-          </small>
+          ) : null}
           {props.inspection.sameContentInstallationIds.length > 0 ? (
             <p className="pragma-bundle-warning">
               {t("bundleSameContentInstalled", {
@@ -1070,12 +1135,9 @@ function BundleFileStep(props: {
               })}
             </p>
           ) : null}
-          <button type="button" onClick={props.onPick}>
-            {t("bundleChooseAnother")}
-          </button>
           <BundleReadinessList readiness={props.inspection.readiness} />
         </div>
-      ) : null}
+      )}
     </div>
   );
 }
@@ -1190,6 +1252,11 @@ function BundleBindingStep(props: {
 }) {
   const { t } = useTranslation("studio");
   const requirement = props.requirement;
+  const requirementName = bundleDependencyDisplayName(
+    requirement.kind,
+    requirement.name,
+    t("bundleLegacyKnowledgeBase"),
+  );
   const runtime = props.runtimes.find(
     (candidate) => candidate.id === props.runtimeBinding?.runtimeId,
   );
@@ -1205,25 +1272,29 @@ function BundleBindingStep(props: {
     <section className="pragma-bundle-binding-step">
       <header>
         <span>{t("bundleBindingProgress", { current: props.index + 1, total: props.total })}</span>
-        <h3>{requirement.name}</h3>
+        <h3>{requirementName}</h3>
         <p>{requirement.message}</p>
       </header>
       {requirement.kind === "runtime" ? (
         <>
-          <div className="pragma-bundle-runtime-toolbar">
-            <span>{t("bundleRuntimeAvailability")}</span>
-            <button
-              className="secondary-button"
-              type="button"
-              disabled={props.refreshingRuntimes}
-              onClick={props.onRefreshRuntimes}
-            >
-              <ArrowsClockwise size={16} />
-              {props.refreshingRuntimes ? t("bundleRefreshing") : t("bundleRefresh")}
-            </button>
-          </div>
           <div className="pragma-bundle-field">
-            <span>{t("bundleChooseRuntime")}</span>
+            <div className="pragma-bundle-field-heading">
+              <span>{t("bundleChooseRuntime")}</span>
+              <button
+                className="pragma-bundle-refresh-runtime"
+                type="button"
+                aria-label={props.refreshingRuntimes ? t("bundleRefreshing") : t("bundleRefresh")}
+                title={props.refreshingRuntimes ? t("bundleRefreshing") : t("bundleRefresh")}
+                disabled={props.refreshingRuntimes}
+                onClick={props.onRefreshRuntimes}
+              >
+                <ArrowsClockwise
+                  className={props.refreshingRuntimes ? "is-refreshing" : undefined}
+                  size={15}
+                  aria-hidden="true"
+                />
+              </button>
+            </div>
             <SelectMenu
               ariaLabel={t("bundleChooseRuntime")}
               className="form-select"
@@ -1345,7 +1416,10 @@ function BundleBindingStep(props: {
         </div>
       ) : requirement.kind === "context-store" ? (
         <div className="pragma-bundle-field">
-          <span>{t("bundleChooseKnowledgeBase")}</span>
+          <span>
+            {t("bundleChooseKnowledgeBase")}
+            {!requirement.required ? <small>{t("bundleBindingOptional")}</small> : null}
+          </span>
           <SelectMenu
             ariaLabel={t("bundleChooseKnowledgeBase")}
             className="form-select"
@@ -1424,7 +1498,7 @@ function BundleReview(props: {
       </dl>
       {deferred > 0 ? (
         <p className="pragma-bundle-review-warning">
-          {t("bundleReviewDeferred", { count: deferred })}
+          {t("bundleReviewDeferredDependencies", { count: deferred })}
         </p>
       ) : null}
       <BundleReadinessList readiness={props.inspection.readiness} />
@@ -1432,29 +1506,69 @@ function BundleReview(props: {
   );
 }
 
-function BundleReadinessList(props: {
+export function BundleReadinessList(props: {
   readonly readiness: readonly PragmaBundleDependencyReadiness[];
+  readonly compact?: boolean | undefined;
 }) {
   const { t } = useTranslation("studio");
   if (props.readiness.length === 0) return null;
+  const readyCount = props.readiness.filter((item) => item.status === "ready").length;
   return (
-    <section className="pragma-bundle-readiness" aria-label={t("bundlePreflightTitle")}>
-      <h4>{t("bundlePreflightTitle")}</h4>
+    <section
+      className={`pragma-bundle-readiness${props.compact ? " is-compact" : ""}`}
+      aria-label={t("bundlePreflightTitle")}
+    >
+      {props.compact ? null : (
+        <header>
+          <div>
+            <h4>{t("bundlePreflightTitle")}</h4>
+            <p>
+              {t("bundleReadinessSummary", {
+                ready: readyCount,
+                total: props.readiness.length,
+              })}
+            </p>
+          </div>
+          <span data-complete={readyCount === props.readiness.length}>
+            {readyCount}/{props.readiness.length}
+          </span>
+        </header>
+      )}
       <ul>
         {props.readiness.map((item) => (
           <li key={item.id} data-status={item.status}>
-            <span>
-              <strong>{item.name}</strong>
-              <small>{item.resourceRef}</small>
+            <span className="pragma-bundle-readiness-icon">
+              {item.status === "ready" ? (
+                <Check size={14} aria-hidden="true" />
+              ) : (
+                <WarningCircle size={15} aria-hidden="true" />
+              )}
             </span>
-            <span>
-              {t(`bundleStatus.${item.status}`)} · {t(`bundleAction.${item.action}`)}
+            <span className="pragma-bundle-readiness-copy">
+              <strong>
+                {bundleDependencyDisplayName(item.kind, item.name, t("bundleLegacyKnowledgeBase"))}
+              </strong>
+              <small title={item.resourceRef}>{item.resourceRef}</small>
+            </span>
+            <span className="pragma-bundle-readiness-state">
+              <strong>{t(`bundleStatus.${item.status}`)}</strong>
+              <small>{t(`bundleAction.${item.action}`)}</small>
             </span>
           </li>
         ))}
       </ul>
     </section>
   );
+}
+
+function bundleDependencyDisplayName(
+  kind: string,
+  name: string,
+  legacyKnowledgeBaseLabel: string,
+): string {
+  return kind === "context-store" && /^Context\s+[0-9a-f]{8}-[0-9a-f-]{27,}$/iu.test(name)
+    ? legacyKnowledgeBaseLabel
+    : name;
 }
 
 function installationReadiness(

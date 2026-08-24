@@ -603,7 +603,7 @@ function TeamDetail(props: {
       capabilitySummary:
         record === undefined
           ? undefined
-          : `${record.skills} ${t("skills")} · ${record.tools} ${t("tools")}`,
+          : `${record.skills} ${t("skills")} · ${record.tools} ${t("tools")} · ${record.contextStoreMounts.length} ${t("contextStores")}`,
     };
   };
   const coordinator = buildExpert(coordinatorRef);
@@ -819,10 +819,7 @@ function TeamExpertCard(props: {
           </div>
         </dl>
         {props.expert.capabilitySummary ? (
-          <p className="team-expert-capabilities">
-            <span>{t("capabilities")}</span>
-            {props.expert.capabilitySummary}
-          </p>
+          <p className="team-expert-capabilities">{props.expert.capabilitySummary}</p>
         ) : null}
         {canOpen ? (
           <button className="team-expert-open" type="button" onClick={openExpert}>

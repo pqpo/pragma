@@ -55,7 +55,8 @@ export const missions = {
   daysShort: "{{count}}d",
   notFound: "Mission not found",
   bundleSetupRequired:
-    "Bundle setup is incomplete for {{count}} dependency(ies): {{resources}}. Configure them before continuing.",
+    "This workflow still has {{count}} local dependency(ies) to set up: {{resources}}. Open Bundle import, select the original file again, and finish binding.",
+  bundleLegacyKnowledgeBase: "Knowledge base (name unavailable in this legacy Bundle)",
   selectAnother: "Select another mission or create a new one.",
   deleteTitle: "Delete this mission?",
   deleteMission: "Delete mission",

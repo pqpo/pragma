@@ -17,6 +17,7 @@ import {
   belongsToUiOverlayOwner,
   isHomeExecutorFavorite,
   missionModelOverrideAvailable,
+  orderFavoriteHomeExecutors,
   previewFavoriteDragOrder,
   preferredWorkspaceForExecutorSelection,
   rankFavoriteHomeExecutors,
@@ -377,6 +378,29 @@ describe("mission executor search", () => {
     ]);
 
     expect(favorites.map((executor) => executor.name)).toEqual(["First team", "Second expert"]);
+  });
+
+  it("applies a complete drag preview order and ignores non-favorite entries", () => {
+    const favorites = [
+      {
+        ...executors[0]!,
+        name: "First",
+        preference: { favoriteScope: "global" as const, hidden: false, favoriteRank: 0 },
+      },
+      {
+        ...executors[1]!,
+        name: "Second",
+        preference: { favoriteScope: "global" as const, hidden: false, favoriteRank: 1 },
+      },
+    ];
+
+    expect(orderFavoriteHomeExecutors(favorites, [favorites[1]!.ref, favorites[0]!.ref])).toEqual([
+      favorites[1],
+      favorites[0],
+    ]);
+    expect(
+      orderFavoriteHomeExecutors(favorites, [favorites[1]!.ref, "more", favorites[0]!.ref]),
+    ).toBe(favorites);
   });
 
   it("previews a favorite reorder before the pointer fully covers its target", () => {

@@ -78,6 +78,14 @@
   gap: 14px !important;
 }
 
+.pragma-resource-editor-header .back-link {
+  margin: 0;
+}
+
+.studio-content:has(> .team-resource-editor) {
+  padding-bottom: 32px;
+}
+
 .pragma-resource-editor .studio-screen-header > header,
 .pragma-resource-editor .studio-screen-body > footer {
   padding: 20px 0;
@@ -127,14 +135,17 @@
   gap: 8px !important;
 }
 
-.team-resource-editor .studio-screen-header > header,
+.team-resource-editor .studio-screen-header > header {
+  padding: 5px 0 16px;
+}
+
 .team-resource-editor .studio-screen-body > footer {
   padding: 16px 0;
 }
 
 .team-resource-editor .pragma-resource-form {
-  gap: 16px;
-  padding-top: 18px;
+  gap: 12px;
+  padding-top: 10px;
   padding-bottom: 18px;
 }
 

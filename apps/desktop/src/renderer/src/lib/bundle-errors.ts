@@ -16,7 +16,14 @@ export function localizedBundleMutationError(
   if (dependencies === undefined || dependencies.length === 0) {
     return translate("bundleSetupRequired");
   }
-  const names = dependencies.slice(0, 3).map((dependency) => dependency.name);
+  const names = dependencies
+    .slice(0, 3)
+    .map((dependency) =>
+      dependency.kind === "context-store" &&
+      /^Context\s+[0-9a-f]{8}-[0-9a-f-]{27,}$/iu.test(dependency.name)
+        ? translate("bundleLegacyKnowledgeBase")
+        : dependency.name,
+    );
   const remaining = dependencies.length - names.length;
   const resources = remaining > 0 ? `${names.join(", ")} (+${remaining})` : names.join(", ");
   return translate("bundleSetupRequired", {

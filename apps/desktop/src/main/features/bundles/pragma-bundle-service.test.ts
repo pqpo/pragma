@@ -8,6 +8,7 @@ import { resolvePragmaAvatarId } from "@pragma/shared";
 import {
   canonicalPragmaResourceRef,
   type PragmaCapabilityResource,
+  type PragmaContextStoreResource,
   type PragmaExpertResource,
   type PragmaExpertTeamResource,
   type PragmaFlowResource,
@@ -26,7 +27,10 @@ import type { ContextStoreStore } from "../context-stores/context-store-store.ts
 import type { PluginStore } from "../plugins/plugin-store.ts";
 import { createPragmaProjectStore } from "../projects/pragma-project-store.ts";
 import { createWorkflowLayoutStore } from "../projects/workflow-layout-store.ts";
-import { desktopCapabilityBindingRef } from "../../platform/bindings/desktop-binding-ref.ts";
+import {
+  desktopCapabilityBindingRef,
+  desktopContextBindingRef,
+} from "../../platform/bindings/desktop-binding-ref.ts";
 import { inspectBundleReadiness, mergePendingMetadata } from "./pragma-bundle-dependencies.ts";
 import { createPragmaBundleService } from "./pragma-bundle-service.ts";
 import { resolveBundleIdentities } from "./pragma-bundle-resources.ts";
@@ -142,6 +146,83 @@ describe("PragmaBundleService", () => {
       root: { ref: "expert:1xddvess309a6gme", name: "Writer" },
       resources: 2,
     });
+  });
+
+  it("allows an omitted knowledge-base payload to be bound after import", async () => {
+    const storeId = "00000000-0000-4000-8000-000000000191";
+    const source = await createFixture("optional-context-source", {
+      contextStores: {
+        list: async () => [
+          {
+            id: storeId,
+            name: "Release handbook",
+            description: "Friendly knowledge-base metadata.",
+          },
+        ],
+        fingerprint: async () => "f".repeat(64),
+      } as unknown as ContextStoreStore,
+    });
+    const sourceSnapshot = await source.project.get();
+    const context = contextStore();
+    const sourceExpert = sourceSnapshot.resources.find(
+      (resource): resource is PragmaExpertResource => resource.kind === "Expert",
+    )!;
+    const published = await source.project.publish({
+      expectedRevision: sourceSnapshot.revision,
+      resources: [
+        ...sourceSnapshot.resources.filter((resource) => resource.kind !== "Expert"),
+        context,
+        {
+          ...sourceExpert,
+          spec: {
+            ...sourceExpert.spec,
+            contextStores: [
+              {
+                ref: `context-store:${context.metadata.id}`,
+                namespace: "release-notes",
+                required: true,
+              },
+            ],
+          },
+        },
+      ],
+    });
+    const path = join(source.root, "without-knowledge-content.pragma");
+    const exported = await source.service.exportTo(exportInput(published.revision), path);
+
+    const target = await createFixture("optional-context-target");
+    const inspection = await target.service.inspect(path);
+    expect(inspection.requirements).toContainEqual(
+      expect.objectContaining({
+        kind: "context-store",
+        name: "Release handbook",
+        required: false,
+      }),
+    );
+    expect(inspection.dependencies).toContainEqual(
+      expect.objectContaining({
+        kind: "context-store",
+        name: "Release handbook",
+        included: false,
+      }),
+    );
+
+    const installation = await target.service.startImport({
+      ...importInput(
+        path,
+        exported.bundleFingerprint,
+        exported.projectFingerprint,
+        inspection.projectRevision,
+      ),
+      conflicts: inspection.conflicts.map((conflict) => ({
+        resourceRef: conflict.ref,
+        action: "copy" as const,
+      })),
+    });
+    expect(installation.status).toBe("needs_setup");
+    expect(installation.pending).toEqual(
+      expect.arrayContaining([expect.objectContaining({ kind: "context-store" })]),
+    );
   });
 
   it("shares only the avatar ID and preserves an unknown ID while resolving the default", async () => {
@@ -931,6 +1012,7 @@ async function createFixture(
     readonly runtimeResourceId?: string;
     readonly avatarId?: string;
     readonly runtimes?: DesktopRuntimeAvailability[];
+    readonly contextStores?: ContextStoreStore;
   } = {},
 ) {
   const root = await mkdtemp(join(tmpdir(), `pragma-bundle-${name}-`));
@@ -960,9 +1042,11 @@ async function createFixture(
     capabilities: {
       list: async () => [],
     } as unknown as CapabilityStore,
-    contextStores: {
-      list: async () => [],
-    } as unknown as ContextStoreStore,
+    contextStores:
+      overrides.contextStores ??
+      ({
+        list: async () => [],
+      } as unknown as ContextStoreStore),
     plugins: {
       list: async () => [],
     } as unknown as PluginStore,
@@ -1063,6 +1147,24 @@ function runtime(runtimeId: string, resourceId = "zdkgs0fde4xt00vr"): PragmaRunt
     spec: {
       adapter: "pragma.runtime.profile@v1",
       config: { runtimeId, providerId: "openai", model: "gpt-test" },
+    },
+  };
+}
+
+function contextStore(): PragmaContextStoreResource {
+  return {
+    apiVersion: PRAGMA_DSL_WRITE_API_VERSION,
+    kind: "ContextStore",
+    metadata: {
+      id: "kqh4nx7rx26mb3e7",
+      name: "Context 00000000-0000-4000-8000-000000000191",
+      description: "Knowledge used while writing release notes.",
+      tags: ["desktop-managed"],
+    },
+    spec: {
+      adapter: "pragma.context.host@v1",
+      binding: desktopContextBindingRef("00000000-0000-4000-8000-000000000191"),
+      config: { key: "00000000-0000-4000-8000-000000000191" },
     },
   };
 }

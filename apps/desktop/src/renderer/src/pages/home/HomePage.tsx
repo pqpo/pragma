@@ -6,6 +6,7 @@ import {
   useRef,
   useState,
   type Dispatch,
+  type PointerEvent as ReactPointerEvent,
   type RefObject,
   type SetStateAction,
 } from "react";
@@ -875,17 +876,16 @@ function HomeFavorites(props: {
   const [dragOrder, setDragOrder] = useState<readonly string[]>();
   const dragOrderRef = useRef<readonly string[] | undefined>(undefined);
   const dragInitialOrderRef = useRef<readonly string[] | undefined>(undefined);
+  const dragPointerRef = useRef<
+    { readonly clientX: number; readonly clientY: number; moved: boolean } | undefined
+  >(undefined);
+  const suppressNextFavoriteClickRef = useRef<string | undefined>(undefined);
   const favoriteItemRefs = useRef(new Map<string, HTMLElement>());
   const favoriteItemPositions = useRef(new Map<string, DOMRect>());
   const favorites = rankFavoriteHomeExecutors(props.executors);
-  const favoritesByRef = new Map(favorites.map((executor) => [executor.ref, executor]));
-  const dialogFavorites =
-    dragOrder === undefined
-      ? favorites
-      : dragOrder
-          .map((ref) => favoritesByRef.get(ref))
-          .filter((executor): executor is HomeMissionExecutorOption => executor !== undefined);
-  const compactFavorites = favorites.length > 6 ? favorites.slice(0, 5) : favorites.slice(0, 6);
+  const orderedFavorites = orderFavoriteHomeExecutors(favorites, dragOrder);
+  const compactFavorites =
+    orderedFavorites.length > 6 ? orderedFavorites.slice(0, 5) : orderedFavorites.slice(0, 6);
   const pragmaCopy = {
     name: tCommon("builtInExperts.pragma.name"),
     description: tCommon("builtInExperts.pragma.description"),
@@ -910,7 +910,7 @@ function HomeFavorites(props: {
   }, [dialogOpen]);
 
   useLayoutEffect(() => {
-    if (!dialogOpen || draggedRef === undefined) {
+    if (draggedRef === undefined) {
       favoriteItemPositions.current.clear();
       return;
     }
@@ -936,6 +936,7 @@ function HomeFavorites(props: {
   const clearDragPreview = () => {
     setDraggedRef(undefined);
     setDragOrder(undefined);
+    dragPointerRef.current = undefined;
     dragOrderRef.current = undefined;
     dragInitialOrderRef.current = undefined;
     favoriteItemPositions.current.clear();
@@ -952,23 +953,77 @@ function HomeFavorites(props: {
       clearDragPreview();
       return;
     }
+    dragPointerRef.current = undefined;
     props.onReorder(orderedRefs);
     setDraggedRef(undefined);
+  };
+
+  const beginFavoriteDrag = (
+    executorRef: string,
+    event: ReactPointerEvent<HTMLButtonElement>,
+    preventDefault: boolean,
+  ) => {
+    if (event.button !== 0 || !event.isPrimary) return;
+    if (preventDefault) event.preventDefault();
+    event.currentTarget.setPointerCapture(event.pointerId);
+    const initialOrder = favorites.map((favorite) => favorite.ref);
+    dragPointerRef.current = {
+      clientX: event.clientX,
+      clientY: event.clientY,
+      moved: false,
+    };
+    setDraggedRef(executorRef);
+    dragOrderRef.current = initialOrder;
+    dragInitialOrderRef.current = initialOrder;
+    setDragOrder(initialOrder);
   };
 
   useEffect(() => {
     if (draggedRef === undefined) return;
     const updatePreview = (event: PointerEvent) => {
+      const pointer = dragPointerRef.current;
+      if (pointer !== undefined && !pointer.moved) {
+        if (Math.hypot(event.clientX - pointer.clientX, event.clientY - pointer.clientY) < 6) {
+          return;
+        }
+        pointer.moved = true;
+        suppressNextFavoriteClickRef.current = draggedRef;
+        window.setTimeout(() => {
+          if (suppressNextFavoriteClickRef.current === draggedRef) {
+            suppressNextFavoriteClickRef.current = undefined;
+          }
+        }, 400);
+      }
       const current = dragOrderRef.current ?? favorites.map((favorite) => favorite.ref);
       const targetItems = [...favoriteItemRefs.current]
         .filter(([ref]) => ref !== draggedRef)
-        .map(([, item]) => ({ bounds: item.getBoundingClientRect() }))
-        .toSorted((left, right) => left.bounds.top - right.bounds.top);
-      const insertionIndex = targetItems.findIndex(
-        ({ bounds }) => event.clientY <= bounds.top + bounds.height * 0.42,
-      );
-      const next = [...current.filter((ref) => ref !== draggedRef)];
-      next.splice(insertionIndex < 0 ? next.length : insertionIndex, 0, draggedRef);
+        .map(([ref, item]) => ({ ref, bounds: item.getBoundingClientRect() }));
+      const target = targetItems
+        .filter(
+          ({ bounds }) =>
+            event.clientX >= bounds.left &&
+            event.clientX <= bounds.right &&
+            event.clientY >= bounds.top &&
+            event.clientY <= bounds.bottom,
+        )
+        .at(0);
+      const nearestTarget =
+        target ??
+        targetItems
+          .map((item) => ({
+            ...item,
+            distance: Math.hypot(
+              event.clientX - (item.bounds.left + item.bounds.width / 2),
+              event.clientY - (item.bounds.top + item.bounds.height / 2),
+            ),
+          }))
+          .toSorted((left, right) => left.distance - right.distance)[0];
+      if (nearestTarget === undefined) return;
+      const isHorizontalCard = nearestTarget.bounds.width >= nearestTarget.bounds.height;
+      const placeAfter = isHorizontalCard
+        ? event.clientX >= nearestTarget.bounds.left + nearestTarget.bounds.width / 2
+        : event.clientY >= nearestTarget.bounds.top + nearestTarget.bounds.height / 2;
+      const next = previewFavoriteDragOrder(current, draggedRef, nearestTarget.ref, placeAfter);
       if (next.every((ref, index) => ref === current[index])) return;
       dragOrderRef.current = next;
       setDragOrder(next);
@@ -997,7 +1052,11 @@ function HomeFavorites(props: {
 
   if (favorites.length === 0) return null;
 
-  const renderFavorite = (executor: HomeMissionExecutorOption, draggable = false) => {
+  const renderFavorite = (
+    executor: HomeMissionExecutorOption,
+    draggable = false,
+    dragHandle = draggable,
+  ) => {
     const Icon = executorIcon(executor);
     const copy = displayCopy(executor);
     const workspaceName =
@@ -1015,41 +1074,43 @@ function HomeFavorites(props: {
           else favoriteItemRefs.current.set(executor.ref, item);
         }}
       >
-        {draggable ? (
+        {dragHandle ? (
           <button
             className="home-favorite-drag"
             type="button"
             aria-label={t("homeFavoritesDialogDescription")}
-            onPointerDown={(event) => {
-              if (event.button !== 0) return;
-              event.preventDefault();
-              event.currentTarget.setPointerCapture(event.pointerId);
-              const initialOrder = favorites.map((favorite) => favorite.ref);
-              setDraggedRef(executor.ref);
-              dragOrderRef.current = initialOrder;
-              dragInitialOrderRef.current = initialOrder;
-              setDragOrder(initialOrder);
-            }}
+            onPointerDown={(event) => beginFavoriteDrag(executor.ref, event, true)}
           >
             <DotsSixVertical size={20} aria-hidden="true" />
           </button>
         ) : null}
         <button
-          className="home-favorite-card"
+          className={
+            draggable && !dragHandle ? "home-favorite-card is-draggable" : "home-favorite-card"
+          }
           type="button"
+          onPointerDown={
+            draggable && !dragHandle
+              ? (event) => beginFavoriteDrag(executor.ref, event, false)
+              : undefined
+          }
           title={
             workspaceName === undefined
               ? copy.description
               : t("favoriteSwitchWorkspace", { workspace: workspaceName })
           }
           onClick={() => {
+            if (suppressNextFavoriteClickRef.current === executor.ref) {
+              suppressNextFavoriteClickRef.current = undefined;
+              return;
+            }
             props.onSelect(executor.ref);
             setDialogOpen(false);
           }}
         >
           <span className="home-favorite-avatar">
             {executor.kind === "flow" ? (
-              <Icon size={draggable ? 26 : 24} aria-hidden="true" />
+              <Icon size={dragHandle ? 26 : 24} aria-hidden="true" />
             ) : (
               <ExpertAvatar
                 avatarId={executor.avatarId}
@@ -1086,11 +1147,12 @@ function HomeFavorites(props: {
           <span>{t("homeFavoritesHint")}</span>
         </div>
         <div className="home-favorites-list">
-          {compactFavorites.map((executor) => renderFavorite(executor))}
+          {compactFavorites.map((executor) => renderFavorite(executor, true, false))}
           {favorites.length > 6 ? (
             <button
               className="home-favorite-more"
               type="button"
+              draggable={false}
               onClick={() => setDialogOpen(true)}
             >
               {t("homeFavoritesMore", { count: favorites.length - compactFavorites.length })}
@@ -1126,7 +1188,7 @@ function HomeFavorites(props: {
               </button>
             </header>
             <div className="home-favorites-dialog-list" role="list">
-              {dialogFavorites.map((executor) => renderFavorite(executor, true))}
+              {orderedFavorites.map((executor) => renderFavorite(executor, true))}
             </div>
           </section>
         </div>
@@ -1958,6 +2020,25 @@ export function rankFavoriteHomeExecutors(
         Date.parse(left.preference.lastUsedAt ?? "1970-01-01T00:00:00.000Z");
       return recentDifference !== 0 ? recentDifference : left.name.localeCompare(right.name);
     });
+}
+
+export function orderFavoriteHomeExecutors(
+  favorites: readonly HomeMissionExecutorOption[],
+  orderedRefs: readonly string[] | undefined,
+): readonly HomeMissionExecutorOption[] {
+  if (orderedRefs === undefined) return favorites;
+  const favoritesByRef = new Map(favorites.map((executor) => [executor.ref, executor]));
+  const ordered = orderedRefs
+    .map((ref) => favoritesByRef.get(ref))
+    .filter((executor): executor is HomeMissionExecutorOption => executor !== undefined);
+  if (
+    orderedRefs.length !== favorites.length ||
+    ordered.length !== favorites.length ||
+    new Set(ordered.map((executor) => executor.ref)).size !== favorites.length
+  ) {
+    return favorites;
+  }
+  return ordered;
 }
 
 export function preferredWorkspaceForExecutorSelection(

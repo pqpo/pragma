@@ -1629,6 +1629,16 @@
   transform: translateY(-1px);
 }
 
+.home-favorite-card.is-draggable {
+  cursor: grab;
+  touch-action: none;
+  user-select: none;
+}
+
+.home-favorite-item.is-dragging .home-favorite-card.is-draggable {
+  cursor: grabbing;
+}
+
 .home-favorite-avatar {
   display: grid;
   width: 38px;
