@@ -418,7 +418,7 @@ function formatContextAccessRulesSection(): string {
     "- Use search_expert_context to discover context by path or content, refine broad queries when results are omitted, and use read_expert_context when you know the context id.",
     "- Search snippets may be truncated. Read the referenced context in byte ranges with start/offset when complete content is needed.",
     "- Always-on context must remain available. If its complete text is missing or uncertain, use read_expert_context to reload the relevant context id before relying on a summary or paraphrase.",
-    '- Use add_expert_context, edit_expert_context, and delete_expert_context to write Context System content. Use edit_expert_context mode="replace" for full content or metadata replacement, and mode="search_replace" for exact text search/replace.',
+    '- Use add_expert_context, edit_expert_context, and delete_expert_context to write Context System content. Use edit_expert_context mode="replace" for full content or metadata replacement, mode="search_replace" for exact text search/replace, mode="append" to add content after the existing content, and mode="prepend" to add it before. Append and prepend require separator="none", separator="newline", or separator="blank_line"; the tool inserts exactly that separator between the two contents.',
     "- Do not use shell commands, local filesystem APIs, or runtime file tools to bypass the Context System for these context ids.",
   ].join("\n");
 }

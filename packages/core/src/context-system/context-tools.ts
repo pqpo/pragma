@@ -271,7 +271,7 @@ export function createContextTools(
       name: "edit_expert_context",
       label: "Edit expert context",
       description:
-        'Edit an Expert context item. Use mode="replace" for full content or metadata replacement, or mode="search_replace" for exact text search/replace.',
+        'Edit an Expert context item. Use mode="replace" for full content or metadata replacement, mode="search_replace" for exact text search/replace, mode="append" to add content after the existing content, or mode="prepend" to add content before it. Append and prepend require an explicit separator.',
       approval: {
         mode: "required",
         reason: "Writing Expert context requires explicit approval.",
@@ -283,10 +283,18 @@ export function createContextTools(
           id: stringSchema("Context id."),
           mode: {
             type: "string",
-            enum: ["replace", "search_replace"],
+            enum: ["replace", "search_replace", "append", "prepend"],
             description: "Edit mode. Defaults to search_replace.",
           },
-          content: stringSchema('Replacement context content for mode="replace".'),
+          content: stringSchema(
+            'Replacement context content for mode="replace", or content to add for mode="append" or mode="prepend".',
+          ),
+          separator: {
+            type: "string",
+            enum: ["none", "newline", "blank_line"],
+            description:
+              'Required for mode="append" and mode="prepend". Inserts no separator, one newline, or one blank line between the existing and added content.',
+          },
           description: stringSchema('Replacement context description for mode="replace".'),
           trigger: triggerSchema(),
           priority: prioritySchema(),
@@ -314,17 +322,28 @@ export function createContextTools(
                 expectedEtag: readOptionalStringParam(args, "expectedEtag"),
                 context: readRunContext(options, context),
               }
-            : {
-                namespace: readStringParam(args, "namespace"),
-                id: readStringParam(args, "id"),
-                mode: "search_replace" as const,
-                search: readStringParam(args, "search"),
-                replace: readStringParam(args, "replace"),
-                replaceAll: readOptionalBooleanParam(args, "replaceAll"),
-                expectedRevision: readOptionalStringParam(args, "expectedRevision"),
-                expectedEtag: readOptionalStringParam(args, "expectedEtag"),
-                context: readRunContext(options, context),
-              };
+            : mode === "append" || mode === "prepend"
+              ? {
+                  namespace: readStringParam(args, "namespace"),
+                  id: readStringParam(args, "id"),
+                  mode,
+                  content: readStringParam(args, "content"),
+                  separator: readBoundarySeparatorParam(args),
+                  expectedRevision: readOptionalStringParam(args, "expectedRevision"),
+                  expectedEtag: readOptionalStringParam(args, "expectedEtag"),
+                  context: readRunContext(options, context),
+                }
+              : {
+                  namespace: readStringParam(args, "namespace"),
+                  id: readStringParam(args, "id"),
+                  mode: "search_replace" as const,
+                  search: readStringParam(args, "search"),
+                  replace: readStringParam(args, "replace"),
+                  replaceAll: readOptionalBooleanParam(args, "replaceAll"),
+                  expectedRevision: readOptionalStringParam(args, "expectedRevision"),
+                  expectedEtag: readOptionalStringParam(args, "expectedEtag"),
+                  context: readRunContext(options, context),
+                };
         const result = await contextOperations.editContext(input);
 
         if (!result.ok) {
@@ -751,18 +770,39 @@ function readOptionalTriggerParam(params: unknown): ContextTrigger | undefined {
   throw new Error('Context tool parameter "trigger" must be always_on, model_decision, or manual.');
 }
 
-function readOptionalEditModeParam(params: unknown): "replace" | "search_replace" {
+function readOptionalEditModeParam(
+  params: unknown,
+): "replace" | "search_replace" | "append" | "prepend" {
   const value = readParam(params, "mode");
 
   if (value === undefined) {
     return "search_replace";
   }
 
-  if (value === "replace" || value === "search_replace") {
+  if (
+    value === "replace" ||
+    value === "search_replace" ||
+    value === "append" ||
+    value === "prepend"
+  ) {
     return value;
   }
 
-  throw new Error('Context tool parameter "mode" must be replace or search_replace.');
+  throw new Error(
+    'Context tool parameter "mode" must be replace, search_replace, append, or prepend.',
+  );
+}
+
+function readBoundarySeparatorParam(params: unknown): "none" | "newline" | "blank_line" {
+  const value = readParam(params, "separator");
+
+  if (value === "none" || value === "newline" || value === "blank_line") {
+    return value;
+  }
+
+  throw new Error(
+    'Context tool parameter "separator" must be none, newline, or blank_line for append and prepend.',
+  );
 }
 
 function readOptionalScopeParam(params: unknown): "path" | "content" | "hybrid" | undefined {

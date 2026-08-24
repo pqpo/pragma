@@ -169,6 +169,100 @@ describe("Expert context tools", () => {
     expect(result.details).not.toHaveProperty("context");
   });
 
+  it("maps append and prepend edits with an explicit separator", async () => {
+    const editContext: ExpertAgentContextItemOperations["editContext"] = vi.fn(async (input) => {
+      if (input.mode !== "append" && input.mode !== "prepend") {
+        throw new Error("unexpected edit mode");
+      }
+      return {
+        ok: true as const,
+        value: {
+          namespace: "mission-board",
+          id: "notes.md",
+          metadata: { trigger: "manual" as const, priority: "normal" as const },
+          content: input.mode === "prepend" ? "head\nbody" : "body\n\n-tail",
+          revision: `revision-${input.mode}`,
+          etag: `etag-${input.mode}`,
+          sizeBytes: 9,
+          mode: input.mode,
+        },
+      };
+    });
+    const unsupported = vi.fn(async () => {
+      throw new Error("not used");
+    });
+    const operations: ExpertAgentContextItemOperations = {
+      listContext: unsupported,
+      readContext: unsupported,
+      searchContext: unsupported,
+      addContext: unsupported,
+      editContext,
+      deleteContext: unsupported,
+    };
+    const tool = createContextTools(operations).find(
+      (candidate) => candidate.name === "edit_expert_context",
+    )!;
+
+    await tool.call(
+      {
+        namespace: "mission-board",
+        id: "notes.md",
+        mode: "prepend",
+        content: "head-",
+        separator: "newline",
+        expectedRevision: "revision-before-head",
+      },
+      undefined,
+    );
+    const result = await tool.call(
+      {
+        namespace: "mission-board",
+        id: "notes.md",
+        mode: "append",
+        content: "-tail",
+        separator: "blank_line",
+        expectedEtag: "etag-before-tail",
+      },
+      undefined,
+    );
+
+    expect(editContext).toHaveBeenNthCalledWith(1, {
+      namespace: "mission-board",
+      id: "notes.md",
+      mode: "prepend",
+      content: "head-",
+      separator: "newline",
+      expectedRevision: "revision-before-head",
+      expectedEtag: undefined,
+      context: expect.any(Object),
+    });
+    expect(editContext).toHaveBeenNthCalledWith(2, {
+      namespace: "mission-board",
+      id: "notes.md",
+      mode: "append",
+      content: "-tail",
+      separator: "blank_line",
+      expectedRevision: undefined,
+      expectedEtag: "etag-before-tail",
+      context: expect.any(Object),
+    });
+    expect(result).toMatchObject({
+      text: "Edited context: mission-board/notes.md; mode=append",
+      details: { mode: "append" },
+    });
+    await expect(
+      tool.call(
+        {
+          namespace: "mission-board",
+          id: "notes.md",
+          mode: "append",
+          content: "missing separator",
+        },
+        undefined,
+      ),
+    ).rejects.toThrow('Context tool parameter "separator"');
+  });
+
   it("overlays the active submission identity onto a reused Runtime context", async () => {
     const listContext = vi.fn(async () => ({
       ok: true as const,

@@ -77,6 +77,17 @@ describe("Host Context binding metadata", () => {
       ),
     ).toBe(false);
     expect(
+      await edit!.approval!.when!(
+        request("edit_expert_context", {
+          namespace: "mission-board",
+          id: "plan.md",
+          mode: "append",
+          content: "next",
+          separator: "newline",
+        }),
+      ),
+    ).toBe(false);
+    expect(
       await remove!.approval!.when!(
         request("delete_expert_context", { namespace: "mission-board", id: "plan.md" }),
       ),

@@ -80,6 +80,69 @@ describe("JsonContextStore", () => {
     ).resolves.toMatchObject({ ok: false, error: { code: "context_conflict" } });
   });
 
+  it("prepends and appends content with explicit separators and optimistic concurrency", async () => {
+    const directory = await mkdtemp(join(tmpdir(), "pragma-json-context-"));
+    const store = new JsonContextStore({
+      filePath: join(directory, "contexts.json"),
+      maxContextBytes: 16,
+    });
+    const added = await store.addContext({
+      id: "notes",
+      content: "body",
+      metadata: { trigger: "manual", priority: "high" },
+    });
+    if (!added.ok) throw new Error(added.error.message);
+
+    const started = await store.editContext({
+      id: "notes",
+      mode: "prepend",
+      content: "head-",
+      separator: "none",
+      expectedRevision: added.value.revision,
+    });
+    expect(started).toMatchObject({
+      ok: true,
+      value: {
+        content: "head-body",
+        mode: "prepend",
+        metadata: { trigger: "manual", priority: "high" },
+      },
+    });
+    if (!started.ok) throw new Error(started.error.message);
+
+    await expect(
+      store.editContext({
+        id: "notes",
+        mode: "append",
+        content: "-stale",
+        separator: "newline",
+        expectedEtag: added.value.etag,
+      }),
+    ).resolves.toMatchObject({ ok: false, error: { code: "context_conflict" } });
+
+    await expect(
+      store.editContext({
+        id: "notes",
+        mode: "append",
+        content: "-tail",
+        separator: "blank_line",
+        expectedEtag: started.value.etag,
+      }),
+    ).resolves.toMatchObject({
+      ok: true,
+      value: { content: "head-body\n\n-tail", mode: "append" },
+    });
+
+    await expect(
+      store.editContext({
+        id: "notes",
+        mode: "append",
+        content: "-overflow",
+        separator: "none",
+      }),
+    ).resolves.toMatchObject({ ok: false, error: { code: "context_too_large" } });
+  });
+
   it("serializes concurrent writers and never overwrites corrupt JSON", async () => {
     const directory = await mkdtemp(join(tmpdir(), "pragma-json-context-"));
     const path = join(directory, "contexts.json");
