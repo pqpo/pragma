@@ -4284,6 +4284,24 @@ export const MissionChatEntryView = memo(function MissionChatEntryView(props: {
 }) {
   const { t } = useTranslation("missions");
   const [copyStatus, setCopyStatus] = useState<"idle" | "copied" | "failed">("idle");
+  const copyStatusTimerRef = useRef<ReturnType<typeof setTimeout> | undefined>(undefined);
+
+  useEffect(
+    () => () => {
+      if (copyStatusTimerRef.current !== undefined) clearTimeout(copyStatusTimerRef.current);
+    },
+    [],
+  );
+
+  const showCopyStatus = (status: "copied" | "failed") => {
+    if (copyStatusTimerRef.current !== undefined) clearTimeout(copyStatusTimerRef.current);
+    setCopyStatus(status);
+    copyStatusTimerRef.current = setTimeout(() => {
+      copyStatusTimerRef.current = undefined;
+      setCopyStatus("idle");
+    }, 2_000);
+  };
+
   if (props.entry.kind === "user") {
     if (props.entry.delivery?.removed === true || props.entry.delivery?.status === "queued") {
       return null;
@@ -4330,21 +4348,26 @@ export const MissionChatEntryView = memo(function MissionChatEntryView(props: {
         <div className="mission-message-actions">
           {props.showCopy ? (
             <button
+              className="mission-message-icon-action"
               type="button"
               aria-label={t("copyReply")}
               title={t("copyReply")}
               onClick={() => {
-                void copyMissionReply(assistantEntry.content).then(setCopyStatus);
+                void copyMissionReply(assistantEntry.content).then(showCopyStatus);
               }}
             >
               <Copy size={15} aria-hidden="true" />
-              {t("copyReply")}
             </button>
           ) : null}
           {props.showBranch ? (
-            <button type="button" onClick={() => props.onBranch?.(assistantEntry)}>
+            <button
+              className="mission-message-icon-action"
+              type="button"
+              aria-label={t("createBranch")}
+              title={t("createBranch")}
+              onClick={() => props.onBranch?.(assistantEntry)}
+            >
               <GitBranch size={15} aria-hidden="true" />
-              {t("createBranch")}
             </button>
           ) : null}
           {copyStatus === "idle" ? null : (

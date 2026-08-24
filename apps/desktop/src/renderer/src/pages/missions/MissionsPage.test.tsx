@@ -1955,7 +1955,9 @@ describe("Mission Expert output labels", () => {
     expect(withoutActions).not.toContain("Copy reply");
     expect(withoutActions).not.toContain("Create branch");
     expect(withActions).toContain('aria-label="Copy reply"');
-    expect(withActions).toContain("Create branch");
+    expect(withActions).toContain('aria-label="Create branch"');
+    expect(withActions).not.toContain(">Copy reply</button>");
+    expect(withActions).not.toContain(">Create branch</button>");
   });
 
   it("keeps tool failure diagnostics expandable without announcing the raw error", () => {
