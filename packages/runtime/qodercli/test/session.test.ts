@@ -80,7 +80,7 @@ describe("Qoder startup messages", () => {
     expect(session.messages).toEqual([]);
   });
 
-  it("injects an immediate user message into the active query", async () => {
+  it("queues steer guidance for the next suitable Qoder boundary", async () => {
     const session = createSession();
     let injected: AsyncIterable<unknown> | undefined;
     const streamInput = vi.fn(async (messages: AsyncIterable<unknown>) => {
@@ -99,7 +99,7 @@ describe("Qoder startup messages", () => {
         type: "user",
         message: { role: "user", content: [{ type: "text", text: "new direction" }] },
         parent_tool_use_id: null,
-        priority: "now",
+        priority: "next",
         uuid: "request-1",
       },
     ]);

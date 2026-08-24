@@ -232,7 +232,7 @@ function createLifecycleTools(
       tool({
         name: "steer_expert",
         description:
-          "Immediately guide an existing Agent's exact active Invocation. Unsupported steering is rejected and never queued.",
+          "Guide an existing Agent's exact active Invocation at the Runtime's next steering boundary without intentionally interrupting its current tool call. Unsupported steering is rejected and no follow-up Invocation is created.",
         inputSchema: objectSchema(
           {
             agentId: { type: "string" },

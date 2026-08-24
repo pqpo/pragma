@@ -54,13 +54,14 @@ launcher 向模型公开 `delegate_expert`、`wait_experts`、`list_agents`、`m
 `steer_expert` 和 `interrupt_expert`。`delegate_expert` 使用 `expertId` 时创建 AgentInstance，使用
 `agentId` 时在既有 Context 上追加 FIFO Invocation；两者都先原子落盘再立即返回
 `{ agentId, invocationId, contextId, disposition }`。`message_expert` 只向目标明确的 active
-Invocation Inbox 投递消息，`steer_expert` 只尝试立即影响当前 Runtime turn；两者都不会创建任务。
+Invocation Inbox 投递消息；`steer_expert` 向当前 Runtime turn 投递引导，在 Runtime 最近的 steering
+boundary 生效，不应主动中断当前 tool call。两者都不会创建任务。
 
 `list_agents` 返回的 `permissions` 同时包含授权和当前状态：`canMessage` 与 `canSteer` 只有在目标
 存在 active Invocation 时才为 `true`；目标处于 `idle` 或仅有 queued Invocation 时，两者均为 `false`。
 `canSteer: true` 仍不保证底层 Runtime 一定支持 steer，Runtime 未声明 steering capability 时实际调用会
-拒绝。`canInterrupt` 表示调用方有权执行 interrupt，即使目标已经空闲也可能为 `true`，此时调用只会返回
-`already_idle`。
+拒绝，也不保证模型会在投递调用返回前处理引导。`canInterrupt` 表示调用方有权执行 interrupt，即使目标
+已经空闲也可能为 `true`，此时调用只会返回 `already_idle`。
 
 Resolver 返回同一 Context 时，dispatch 会原子归并到同一 agent 并按 FIFO 串行；默认 resolver 每次创建新 Context。
 `wait_experts` 按精确的

@@ -291,7 +291,7 @@ export async function steerQoderTurn(
     type: "user",
     message: { role: "user", content: [{ type: "text", text: request.content }] },
     parent_tool_use_id: null,
-    priority: "now",
+    priority: "next",
     uuid: request.requestId,
   };
   await query.streamInput(
