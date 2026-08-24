@@ -921,17 +921,22 @@ function HomeFavorites(props: {
       const nextPosition = item.getBoundingClientRect();
       nextPositions.set(ref, nextPosition);
       const previousPosition = previousPositions.get(ref);
+      const horizontalDistance =
+        previousPosition?.left === undefined ? 0 : previousPosition.left - nextPosition.left;
       const verticalDistance =
         previousPosition?.top === undefined ? 0 : previousPosition.top - nextPosition.top;
-      if (verticalDistance !== 0 && !reduceMotion) {
+      if ((horizontalDistance !== 0 || verticalDistance !== 0) && !reduceMotion) {
         item.animate(
-          [{ transform: `translateY(${verticalDistance}px)` }, { transform: "translateY(0)" }],
+          [
+            { transform: `translate(${horizontalDistance}px, ${verticalDistance}px)` },
+            { transform: "translate(0, 0)" },
+          ],
           { duration: 220, easing: "cubic-bezier(0.22, 1, 0.36, 1)" },
         );
       }
     }
     favoriteItemPositions.current = nextPositions;
-  }, [dialogOpen, draggedRef, dragOrder]);
+  }, [draggedRef, dragOrder]);
 
   const clearDragPreview = () => {
     setDraggedRef(undefined);

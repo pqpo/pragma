@@ -1626,7 +1626,6 @@
   border-color: #c9c8c2;
   outline: 0;
   box-shadow: 0 8px 20px rgb(37 39 35 / 7%);
-  transform: translateY(-1px);
 }
 
 .home-favorite-card.is-draggable {
