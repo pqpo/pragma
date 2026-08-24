@@ -25,6 +25,8 @@ import {
   mergeLatestChatPage,
   MissionContextOperationEntry,
   MissionChatEntryView,
+  MISSION_CHAT_PAGE_SIZE,
+  MISSION_WORK_CONVERSATION_PAGE_SIZE,
   startMissionContextOperation,
   MissionDetailFragment,
   MissionDetailSkeleton,
@@ -55,6 +57,11 @@ import {
 } from "./MissionsPage.tsx";
 
 describe("MissionsPage", () => {
+  it("uses bounded initial pages for Mission conversations", () => {
+    expect(MISSION_CHAT_PAGE_SIZE).toBe(20);
+    expect(MISSION_WORK_CONVERSATION_PAGE_SIZE).toBe(50);
+  });
+
   it("identifies only the final completed Assistant reply in each Turn", () => {
     const createdAt = "2026-07-11T00:00:00.000Z";
     const entries = [

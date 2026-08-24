@@ -1391,6 +1391,8 @@ export type MissionConversationBlock =
 type MissionMemoryView = "store" | "activity";
 
 export const DEFAULT_MISSION_MEMORY_VIEW: MissionMemoryView = "activity";
+export const MISSION_CHAT_PAGE_SIZE = 20;
+export const MISSION_WORK_CONVERSATION_PAGE_SIZE = 50;
 
 export function MissionDetailFragment(props: {
   readonly mission: Mission;
@@ -1873,7 +1875,10 @@ export function MissionDetailFragment(props: {
       }
       refreshing = true;
       try {
-        const snapshot = await api.getMissionChat({ id: props.mission.id, limit: 50 });
+        const snapshot = await api.getMissionChat({
+          id: props.mission.id,
+          limit: MISSION_CHAT_PAGE_SIZE,
+        });
         if (!cancelled) {
           pending = pending.filter((update) => update.revision > snapshot.revision);
           const merged = mergeLatestChatPage(chatRef.current, snapshot);
@@ -2045,7 +2050,7 @@ export function MissionDetailFragment(props: {
       .getMissionWorkConversation({
         id: props.mission.id,
         recordId: selectedWorkKey,
-        limit: 100,
+        limit: MISSION_WORK_CONVERSATION_PAGE_SIZE,
       })
       .then((conversation) => {
         if (!cancelled) {
@@ -2179,7 +2184,9 @@ export function MissionDetailFragment(props: {
         const snapshot =
           api === undefined
             ? undefined
-            : await api.getMissionChat({ id: props.mission.id, limit: 50 }).catch(() => undefined);
+            : await api
+                .getMissionChat({ id: props.mission.id, limit: MISSION_CHAT_PAGE_SIZE })
+                .catch(() => undefined);
         if (snapshot !== undefined) {
           updateChat((current) => mergeLatestChatPage(current, snapshot));
         }
@@ -2189,7 +2196,9 @@ export function MissionDetailFragment(props: {
       const snapshot =
         api === undefined
           ? undefined
-          : await api.getMissionChat({ id: props.mission.id, limit: 50 }).catch(() => undefined);
+          : await api
+              .getMissionChat({ id: props.mission.id, limit: MISSION_CHAT_PAGE_SIZE })
+              .catch(() => undefined);
       if (snapshot !== undefined) updateChat((current) => mergeLatestChatPage(current, snapshot));
       const persisted = snapshot?.entries.some((entry) => entry.id === requestId) ?? false;
       discardSentDrafts = persisted;
@@ -2306,7 +2315,10 @@ export function MissionDetailFragment(props: {
   const refreshLatestChat = async (): Promise<void> => {
     const api = desktopApi();
     if (api === undefined) return;
-    const snapshot = await api.getMissionChat({ id: props.mission.id, limit: 50 });
+    const snapshot = await api.getMissionChat({
+      id: props.mission.id,
+      limit: MISSION_CHAT_PAGE_SIZE,
+    });
     updateChat((current) => mergeLatestChatPage(current, snapshot));
   };
 
@@ -2605,7 +2617,7 @@ export function MissionDetailFragment(props: {
       const earlier = await api.getMissionChat({
         id: props.mission.id,
         beforeSequence,
-        limit: 50,
+        limit: MISSION_CHAT_PAGE_SIZE,
       });
       updateChat((current) => (current === null ? earlier : prependChatPage(current, earlier)));
     } catch (loadError) {
@@ -2631,7 +2643,7 @@ export function MissionDetailFragment(props: {
         id: props.mission.id,
         recordId: selectedWorkRecord.recordId,
         beforeCursor: workConversation.nextBeforeCursor,
-        limit: 100,
+        limit: MISSION_WORK_CONVERSATION_PAGE_SIZE,
       });
       setWorkConversation((current) =>
         current === null || current.recordId !== earlier.recordId

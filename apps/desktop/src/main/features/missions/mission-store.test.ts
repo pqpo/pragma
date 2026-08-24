@@ -805,6 +805,86 @@ describe("mission store", () => {
     ).rejects.toMatchObject({ code: "message_conflict" });
   });
 
+  it("reads recent logical turns from the timeline tail after reopening", async () => {
+    const root = await temporaryRoot();
+    const missionsPath = join(root, "missions");
+    const store = createMissionStore({ missionsPath });
+    const created = await store.create({
+      workspace: { path: join(root, "workspace"), basename: "workspace" },
+      goal: "Initial request",
+      project: { id: "studio", revision: 1 },
+      executor: missionExecutorSnapshot(expertFixture()),
+    });
+    for (let index = 1; index <= 24; index += 1) {
+      await store.appendUserMessage(created.id, {
+        id: `00000000-0000-4000-8000-${String(index).padStart(12, "0")}`,
+        content: `Follow up ${index} ${"x".repeat(3_000)}`,
+        createdAt: new Date(Date.UTC(2026, 6, 17, 0, 0, index)).toISOString(),
+      });
+    }
+
+    const reopened = createMissionStore({ missionsPath });
+    const latest = await reopened.readTimelinePage(created.id, { limit: 5 });
+    expect(latest.turns.map((turn) => /^Follow up \d+/u.exec(turn.message.content)?.[0])).toEqual([
+      "Follow up 20",
+      "Follow up 21",
+      "Follow up 22",
+      "Follow up 23",
+      "Follow up 24",
+    ]);
+    expect(latest.nextBeforeSequence).toBe(latest.oldestSequence);
+
+    const earlier = await reopened.readTimelinePage(created.id, {
+      beforeSequence: latest.nextBeforeSequence,
+      limit: 5,
+    });
+    expect(earlier.turns.map((turn) => /^Follow up \d+/u.exec(turn.message.content)?.[0])).toEqual([
+      "Follow up 15",
+      "Follow up 16",
+      "Follow up 17",
+      "Follow up 18",
+      "Follow up 19",
+    ]);
+  });
+
+  it("reads farther back when a tail execution references a user outside the first chunk", async () => {
+    const root = await temporaryRoot();
+    const missionsPath = join(root, "missions");
+    const store = createMissionStore({ missionsPath });
+    const created = await store.create({
+      workspace: { path: join(root, "workspace"), basename: "workspace" },
+      goal: `Large initial request ${"x".repeat(70_000)}`,
+      project: { id: "studio", revision: 1 },
+      executor: missionExecutorSnapshot(expertFixture()),
+    });
+    await store.appendUserMessage(created.id, {
+      id: "00000000-0000-4000-8000-000000000101",
+      content: "Later queued request",
+      createdAt: "2026-07-17T00:00:01.000Z",
+    });
+    await store.appendExecutionReference({
+      missionId: created.id,
+      inputMessageId: created.initialMessageId,
+      executionId: "00000000-0000-4000-8000-000000000102",
+      createdAt: "2026-07-17T00:00:02.000Z",
+    });
+
+    const reopened = createMissionStore({ missionsPath });
+    const latest = await reopened.readTimelinePage(created.id, { limit: 1 });
+    expect(latest.turns).toEqual([
+      expect.objectContaining({
+        message: expect.objectContaining({ content: "Later queued request" }),
+      }),
+    ]);
+    const earlier = await reopened.readTimelinePage(created.id, {
+      beforeSequence: latest.nextBeforeSequence,
+      limit: 1,
+    });
+    expect(earlier.turns).toEqual([
+      expect.objectContaining({ executionId: "00000000-0000-4000-8000-000000000102" }),
+    ]);
+  });
+
   it("recovers a journaled append and repairs only a torn final line", async () => {
     const root = await temporaryRoot();
     const store = createMissionStore({ missionsPath: join(root, "missions") });
