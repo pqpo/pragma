@@ -285,7 +285,7 @@ export async function compactExpertSessionContext(
   }
 }
 
-interface LiveMissionChat {
+export interface LiveMissionChat {
   readonly executionId: string;
   readonly entries: MissionChatEntry[];
   readonly messageOrdinals: Map<string, number>;
@@ -3838,7 +3838,7 @@ function isTerminalContextCompactionOutput(item: ExecutionOutputItem): boolean {
   );
 }
 
-function consumeLiveChatOutput(
+export function consumeLiveChatOutput(
   chat: LiveMissionChat,
   item: ExecutionOutputItem,
   options: {
@@ -3952,17 +3952,13 @@ function consumeLiveChatOutput(
   if (item.channel === "thought") {
     const content = item.delta ?? formatValue(item.value, 200_000);
     if (content === "") return [];
-    const current = chat.entries.at(-1);
-    if (current?.kind === "thinking" && current.invocationId === item.invocationId) {
+    const current = findStreamingInvocationEntry(chat.entries, item.invocationId, "thinking");
+    if (current !== undefined) {
       const canAppend = current.content.length + content.length <= 200_000;
       current.content = truncate(current.content + content, 200_000);
       const patches: MissionChatPatch[] = canAppend
         ? [{ type: "entry.append", entryId: current.id, field: "content", delta: content }]
         : [{ type: "entry.upsert", entry: { ...current } }];
-      if (!current.streaming) {
-        current.streaming = true;
-        patches.push({ type: "entry.streaming", entryId: current.id, streaming: true });
-      }
       return patches;
     } else {
       const entry = {
@@ -3985,12 +3981,8 @@ function consumeLiveChatOutput(
   if (item.channel === "message") {
     const content = item.delta ?? completedMessageText(item.value);
     const patches = markInvocationThinkingComplete(chat.entries, item.invocationId);
-    const current = chat.entries.at(-1);
-    if (
-      item.delta !== undefined &&
-      current?.kind === "assistant" &&
-      current.invocationId === item.invocationId
-    ) {
+    const current = findStreamingInvocationEntry(chat.entries, item.invocationId, "assistant");
+    if (item.delta !== undefined && current !== undefined) {
       const canAppend = current.content.length + content.length <= 200_000;
       current.content = truncate(current.content + content, 200_000);
       if (content !== "") {
@@ -4000,22 +3992,15 @@ function consumeLiveChatOutput(
             : { type: "entry.upsert", entry: { ...current } },
         );
       }
-      if (!current.streaming) {
-        current.streaming = true;
-        patches.push({ type: "entry.streaming", entryId: current.id, streaming: true });
-      }
     } else if (
       item.delta === undefined &&
       chat.entries.some(
         (entry) => entry.kind === "assistant" && entry.invocationId === item.invocationId,
       )
     ) {
-      const last = [...chat.entries]
-        .reverse()
-        .find((entry) => entry.kind === "assistant" && entry.invocationId === item.invocationId);
-      if (last?.kind === "assistant" && last.streaming) {
-        last.streaming = false;
-        patches.push({ type: "entry.streaming", entryId: last.id, streaming: false });
+      if (current !== undefined) {
+        current.streaming = false;
+        patches.push({ type: "entry.streaming", entryId: current.id, streaming: false });
       }
     } else if (content !== "") {
       const entry = {
@@ -4139,6 +4124,20 @@ function consumeLiveChatOutput(
     }
   }
   return [];
+}
+
+function findStreamingInvocationEntry<K extends "assistant" | "thinking">(
+  entries: readonly MissionChatEntry[],
+  invocationId: string,
+  kind: K,
+): Extract<MissionChatEntry, { kind: K }> | undefined {
+  for (let index = entries.length - 1; index >= 0; index -= 1) {
+    const entry = entries[index];
+    if (entry?.kind === kind && entry.invocationId === invocationId && entry.streaming) {
+      return entry as Extract<MissionChatEntry, { kind: K }>;
+    }
+  }
+  return undefined;
 }
 
 function readAgentActivityAction(

@@ -17,6 +17,7 @@ import {
   StoredExecutionView,
   withFileLock,
   type ExpertSession,
+  type ExecutionOutputItem,
   type RuntimeDriverSessionContext,
   type RuntimeContextWindowUsage,
   type RuntimeModelSelection,
@@ -42,10 +43,12 @@ import type { CapabilityCredentialStore } from "../capabilities/capability-crede
 import type { CapabilityStore } from "../capabilities/capability-store.ts";
 import {
   compactExpertSessionContext,
+  consumeLiveChatOutput,
   createMissionRunner,
   isRootMissionRuntimeOutput,
   missionKnowledgeNamespace,
   toDesktopHumanRequest,
+  type LiveMissionChat,
 } from "./mission-runner.ts";
 import { createMissionStore } from "./mission-store.ts";
 import { createPragmaProjectStore } from "../projects/pragma-project-store.ts";
@@ -120,6 +123,56 @@ afterEach(async () => {
 });
 
 describe("MissionRunner", { timeout: 15_000 }, () => {
+  it("keeps interleaved expert token streams grouped by invocation", () => {
+    const chat: LiveMissionChat = {
+      executionId: "execution-1",
+      entries: [],
+      messageOrdinals: new Map(),
+      close: async () => undefined,
+      readDurableEntries: async () => [],
+    };
+    const output = (
+      invocationId: string,
+      executorId: string,
+      delta?: string,
+    ): ExecutionOutputItem => ({
+      sourceEventId: `${invocationId}:${delta ?? "completed"}`,
+      executionId: chat.executionId,
+      invocationId,
+      executorId,
+      contextId: `context:${invocationId}`,
+      runId: `run:${invocationId}`,
+      source: { kind: "runtime", runId: `run:${invocationId}`, path: [] },
+      channel: "message",
+      ...(delta === undefined ? { value: "completed" } : { delta }),
+      occurredAt: "2026-08-24T00:00:00.000Z",
+    });
+
+    consumeLiveChatOutput(chat, output("invocation-a", "expert-a", "A1"));
+    consumeLiveChatOutput(chat, output("invocation-b", "expert-b", "B1"));
+    consumeLiveChatOutput(chat, output("invocation-a", "expert-a", "A2"));
+    consumeLiveChatOutput(chat, output("invocation-b", "expert-b", "B2"));
+    consumeLiveChatOutput(chat, output("invocation-a", "expert-a"));
+    consumeLiveChatOutput(chat, output("invocation-b", "expert-b"));
+
+    expect(chat.entries).toEqual([
+      expect.objectContaining({
+        kind: "assistant",
+        invocationId: "invocation-a",
+        executorId: "expert-a",
+        content: "A1A2",
+        streaming: false,
+      }),
+      expect.objectContaining({
+        kind: "assistant",
+        invocationId: "invocation-b",
+        executorId: "expert-b",
+        content: "B1B2",
+        streaming: false,
+      }),
+    ]);
+  });
+
   it("projects context compaction only from the root coordinator Runtime", () => {
     const rootSource = { kind: "runtime" as const, runId: "root-run", path: [] };
 
