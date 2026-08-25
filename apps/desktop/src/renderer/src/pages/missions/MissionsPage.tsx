@@ -75,8 +75,7 @@ import {
   missionAttachmentPreviewUrl,
   latestMissionBranchableReply,
 } from "../../../../shared/contracts/index.ts";
-import { errorMessage } from "../../lib/errors.ts";
-import { localizedBundleMutationError } from "../../lib/bundle-errors.ts";
+import { localizedMissionError } from "../../lib/mission-errors.ts";
 import { i18n } from "../../i18n/index.ts";
 import { shouldSubmitComposerOnEnter } from "../../lib/composer-keyboard.ts";
 import { formatMissionDateTime, formatMissionTime } from "../../lib/mission-time.ts";
@@ -188,6 +187,13 @@ export function MissionsPage(props: {
   readonly onEditExpert?: ((expertRef?: string | undefined) => void) | undefined;
 }) {
   const { t } = useTranslation(["missions", "common"]);
+  const missionError = useCallback(
+    (error: unknown) =>
+      localizedMissionError(error, (key, options) =>
+        options === undefined ? t(key) : t(key, options),
+      ),
+    [t],
+  );
   const initialStateRef = useRef<MissionsPageInitialState>(
     resolveMissionsPageInitialState({
       initialMission: props.initialMission,
@@ -301,13 +307,13 @@ export function MissionsPage(props: {
         }
       } catch (loadError) {
         if (selectedMissionIdRef.current === id && !options?.silent) {
-          setError(errorMessage(loadError));
+          setError(missionError(loadError));
         }
       } finally {
         setLoadingMissionId((current) => (current === id ? null : current));
       }
     },
-    [],
+    [missionError],
   );
 
   useEffect(() => {
@@ -384,13 +390,9 @@ export function MissionsPage(props: {
       .then(replaceMission)
       .catch((runError: unknown) => {
         setInitialRunRequest(null);
-        setError(
-          localizedBundleMutationError(runError, (key, options) =>
-            options === undefined ? t(key) : t(key, options),
-          ),
-        );
+        setError(missionError(runError));
       });
-  }, [props.autoRunInitialMission, props.initialMission?.id, replaceMission]);
+  }, [missionError, props.autoRunInitialMission, props.initialMission?.id, replaceMission]);
 
   useEffect(() => {
     const api = desktopApi();
@@ -452,7 +454,7 @@ export function MissionsPage(props: {
       } catch (loadError) {
         if (!cancelled && !hadInitialMemoryStateRef.current) {
           setHasResolvedInitialLoad(true);
-          setError(errorMessage(loadError));
+          setError(missionError(loadError));
         }
       }
     };
@@ -538,7 +540,7 @@ export function MissionsPage(props: {
             );
             setError(null);
           } catch (actionError) {
-            setError(errorMessage(actionError));
+            setError(missionError(actionError));
           }
         }}
         onDelete={setDeleteCandidate}
@@ -582,7 +584,7 @@ export function MissionsPage(props: {
                 setError(null);
                 return { effectiveMode: acceptance.effectiveMode };
               } catch (sendError) {
-                setError(errorMessage(sendError));
+                setError(missionError(sendError));
                 throw sendError;
               }
             }}
@@ -593,11 +595,7 @@ export function MissionsPage(props: {
                 replaceMission(await api.runMission(selectedMission.id));
                 setError(null);
               } catch (runError) {
-                setError(
-                  localizedBundleMutationError(runError, (key, options) =>
-                    options === undefined ? t(key) : t(key, options),
-                  ),
-                );
+                setError(missionError(runError));
               }
             }}
             onInterrupt={async () => {
@@ -607,7 +605,7 @@ export function MissionsPage(props: {
                 replaceMission(await api.interruptMission(selectedMission.id));
                 setError(null);
               } catch (interruptError) {
-                setError(errorMessage(interruptError));
+                setError(missionError(interruptError));
               }
             }}
             onHumanResponded={async () => {
@@ -627,7 +625,7 @@ export function MissionsPage(props: {
                 );
                 setError(null);
               } catch (optionsError) {
-                setError(errorMessage(optionsError));
+                setError(missionError(optionsError));
                 throw optionsError;
               }
             }}
@@ -643,7 +641,7 @@ export function MissionsPage(props: {
                 );
                 setError(null);
               } catch (contextStoresError) {
-                setError(errorMessage(contextStoresError));
+                setError(missionError(contextStoresError));
                 throw contextStoresError;
               }
             }}
@@ -668,7 +666,7 @@ export function MissionsPage(props: {
                 }
                 setError(null);
               } catch (actionError) {
-                setError(errorMessage(actionError));
+                setError(missionError(actionError));
               }
             }}
             onBranchCreated={(mission) => {
@@ -738,7 +736,7 @@ export function MissionsPage(props: {
                 setError(null);
               })
               .catch((deleteError: unknown) => {
-                setError(errorMessage(deleteError));
+                setError(missionError(deleteError));
                 setDeleteCandidate(null);
               })
               .finally(() => setDeleting(false));
@@ -1312,6 +1310,22 @@ interface PendingMissionQueuedMessage {
   readonly accepted: boolean;
 }
 
+export interface MissionHumanResponseAttempt {
+  readonly requestId: string;
+  readonly responseKey: string;
+}
+
+export function resolveMissionHumanResponseAttempt(
+  current: MissionHumanResponseAttempt | undefined,
+  response: HumanInteractionResponse,
+  createRequestId: () => string,
+): MissionHumanResponseAttempt {
+  const responseKey = JSON.stringify(response);
+  return current?.responseKey === responseKey
+    ? current
+    : { requestId: createRequestId(), responseKey };
+}
+
 export function hidePreparingQueuedChatEntries(
   entries: readonly MissionChatEntry[],
   pendingRequestIds: ReadonlySet<string>,
@@ -1464,6 +1478,13 @@ export function MissionDetailFragment(props: {
   readonly memoryEnabled?: boolean | undefined;
 }) {
   const { t } = useTranslation(["missions", "common"]);
+  const missionError = useCallback(
+    (error: unknown) =>
+      localizedMissionError(error, (key, options) =>
+        options === undefined ? t(key) : t(key, options),
+      ),
+    [t],
+  );
   const [tab, setTab] = useState<"chat" | "work" | "board" | "memory">("chat");
   const memoryEnabled = props.memoryEnabled ?? true;
   const activeTab = !memoryEnabled && tab === "memory" ? "chat" : tab;
@@ -1566,12 +1587,17 @@ export function MissionDetailFragment(props: {
   const chatScrollTopRef = useRef(0);
   const chatScrollMissionIdRef = useRef(props.mission.id);
   const attachmentIdsRef = useRef<readonly string[]>([]);
+  const humanResponseAttemptsRef = useRef(new Map<string, MissionHumanResponseAttempt>());
   const imageUnsupported =
     missionImageSupport(models, modelOverride, defaultModelSelection) === "unsupported";
 
   useEffect(() => {
     attachmentIdsRef.current = attachments.map((attachment) => attachment.id);
   }, [attachments]);
+
+  useEffect(() => {
+    humanResponseAttemptsRef.current.clear();
+  }, [props.mission.id]);
 
   useEffect(() => {
     if (!contextStorePickerOpen && !contextStoresSaving) {
@@ -1588,12 +1614,12 @@ export function MissionDetailFragment(props: {
         if (!cancelled) setContextStores(stores);
       })
       .catch((loadError: unknown) => {
-        if (!cancelled) setOptionsError(errorMessage(loadError));
+        if (!cancelled) setOptionsError(missionError(loadError));
       });
     return () => {
       cancelled = true;
     };
-  }, [props.mission.id]);
+  }, [missionError, props.mission.id]);
 
   useEffect(
     () => () => {
@@ -1794,7 +1820,7 @@ export function MissionDetailFragment(props: {
           setOptionsError(null);
         })
         .catch((loadError: unknown) => {
-          if (!cancelled) setOptionsError(errorMessage(loadError));
+          if (!cancelled) setOptionsError(missionError(loadError));
         })
         .finally(() => {
           if (!cancelled && showLoading) setModelsLoading(false);
@@ -1939,7 +1965,7 @@ export function MissionDetailFragment(props: {
       } catch (loadError) {
         if (!cancelled) {
           console.error("Failed to refresh Mission chat.", loadError);
-          setChatSyncError(errorMessage(loadError));
+          setChatSyncError(missionError(loadError));
         }
       } finally {
         if (!cancelled) setChatInitialLoading(false);
@@ -2061,7 +2087,7 @@ export function MissionDetailFragment(props: {
       } catch (loadError) {
         if (!cancelled) {
           console.error("Failed to refresh Mission work history.", loadError);
-          setWorkError(errorMessage(loadError));
+          setWorkError(missionError(loadError));
         }
       } finally {
         if (!cancelled) setWorkLoading(false);
@@ -2150,7 +2176,7 @@ export function MissionDetailFragment(props: {
         setMemoryActivityError(undefined);
       })
       .catch((loadError: unknown) => {
-        if (!cancelled) setMemoryActivityError(errorMessage(loadError));
+        if (!cancelled) setMemoryActivityError(missionError(loadError));
       })
       .finally(() => {
         if (!cancelled) setMemoryActivityLoading(false);
@@ -2310,7 +2336,7 @@ export function MissionDetailFragment(props: {
     try {
       addAttachments(await window.pragmaDesktop.pickMissionAttachments({ kind }));
     } catch (pickError) {
-      setOptionsError(errorMessage(pickError));
+      setOptionsError(missionError(pickError));
     }
   };
 
@@ -2321,7 +2347,7 @@ export function MissionDetailFragment(props: {
       );
       addAttachments(result);
     } catch (pasteError) {
-      setOptionsError(errorMessage(pasteError));
+      setOptionsError(missionError(pasteError));
     }
   };
 
@@ -2379,7 +2405,7 @@ export function MissionDetailFragment(props: {
       await api.steerQueuedMissionMessage({ id: props.mission.id, requestId });
       await refreshLatestChat();
     } catch (steerError) {
-      setOptionsError(errorMessage(steerError));
+      setOptionsError(missionError(steerError));
     } finally {
       finishClientOperation(token);
     }
@@ -2396,7 +2422,7 @@ export function MissionDetailFragment(props: {
       await refreshLatestChat();
       requestAnimationFrame(() => textareaRef.current?.focus());
     } catch (removeError) {
-      setOptionsError(errorMessage(removeError));
+      setOptionsError(missionError(removeError));
     } finally {
       finishClientOperation(token);
     }
@@ -2435,7 +2461,7 @@ export function MissionDetailFragment(props: {
       setContextOperations((current) =>
         current.map((operation) =>
           operation.id === operationId
-            ? { ...operation, status: "failed", error: errorMessage(compactError) }
+            ? { ...operation, status: "failed", error: missionError(compactError) }
             : operation,
         ),
       );
@@ -2450,14 +2476,21 @@ export function MissionDetailFragment(props: {
   ) => {
     const api = desktopApi();
     if (api === undefined || responding) return;
+    const attempt = resolveMissionHumanResponseAttempt(
+      humanResponseAttemptsRef.current.get(interaction.interactionId),
+      response,
+      () => crypto.randomUUID(),
+    );
+    humanResponseAttemptsRef.current.set(interaction.interactionId, attempt);
     setResponding(true);
     try {
       await api.respondToMissionHumanInteraction({
         missionId: props.mission.id,
         interactionId: interaction.interactionId,
-        requestId: crypto.randomUUID(),
+        requestId: attempt.requestId,
         response,
       });
+      humanResponseAttemptsRef.current.delete(interaction.interactionId);
       updateChat((current) =>
         current === null
           ? current
@@ -2490,6 +2523,8 @@ export function MissionDetailFragment(props: {
         return next;
       });
       await props.onHumanResponded?.();
+    } catch (responseError) {
+      setOptionsError(missionError(responseError));
     } finally {
       setResponding(false);
     }
@@ -2672,7 +2707,7 @@ export function MissionDetailFragment(props: {
       });
       updateChat((current) => (current === null ? earlier : prependChatPage(current, earlier)));
     } catch (loadError) {
-      setHistoryError(errorMessage(loadError));
+      setHistoryError(missionError(loadError));
     } finally {
       setLoadingEarlier(false);
     }
@@ -3516,7 +3551,7 @@ export function MissionDetailFragment(props: {
             void Promise.resolve(props.onContextStoresChange?.(nextIds))
               .catch((saveError: unknown) => {
                 setContextStoreIds(props.mission.contextStoreIds);
-                setOptionsError(errorMessage(saveError));
+                setOptionsError(missionError(saveError));
               })
               .finally(() => setContextStoresSaving(false));
           }}
@@ -3549,7 +3584,7 @@ export function MissionDetailFragment(props: {
                 setBranchCandidate(undefined);
                 props.onBranchCreated?.(mission);
               })
-              .catch((branchError: unknown) => setOptionsError(errorMessage(branchError)))
+              .catch((branchError: unknown) => setOptionsError(missionError(branchError)))
               .finally(() => setBranching(false));
           }}
         />

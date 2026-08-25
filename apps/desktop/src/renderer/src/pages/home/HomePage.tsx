@@ -53,8 +53,8 @@ import { ContextStorePickerDialog } from "../../components/ContextStorePickerDia
 import { SelectMenu } from "../../components/SelectMenu.tsx";
 import { WorkspacePicker, type WorkspaceSelection } from "../../components/WorkspacePicker.tsx";
 import { shouldSubmitComposerOnEnter } from "../../lib/composer-keyboard.ts";
-import { localizedBundleMutationError } from "../../lib/bundle-errors.ts";
 import { errorMessage } from "../../lib/errors.ts";
+import { localizedMissionError } from "../../lib/mission-errors.ts";
 import { readHomeDraft, writeHomeDraft } from "../../lib/home-draft.ts";
 import {
   clipboardImageFile,
@@ -656,7 +656,7 @@ export function HomePage(props: {
       await props.onCreated(mission);
     } catch (submitError) {
       setError(
-        localizedBundleMutationError(submitError, (key, options) =>
+        localizedMissionError(submitError, (key, options) =>
           options === undefined ? t(key) : t(key, options),
         ),
       );

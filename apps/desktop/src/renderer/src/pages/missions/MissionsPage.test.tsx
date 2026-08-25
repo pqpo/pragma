@@ -52,6 +52,7 @@ import {
   resolveMissionSearchCollapsed,
   resolveMissionComposerAction,
   releaseMissionClientOperation,
+  resolveMissionHumanResponseAttempt,
   shouldClearMissionThinkingPlaceholder,
   shouldShowMissionThinkingPlaceholder,
   unavailableMcpToolName,
@@ -64,6 +65,27 @@ describe("MissionsPage", () => {
     expect(MISSION_CHAT_PAGE_SIZE).toBe(20);
     expect(MISSION_WORK_CONVERSATION_PAGE_SIZE).toBe(50);
     expect(MISSION_WORK_RECORD_PAGE_SIZE).toBe(20);
+  });
+
+  it("reuses a human response request id only while retrying the same response", () => {
+    const first = resolveMissionHumanResponseAttempt(
+      undefined,
+      { notes: "Approve" },
+      () => "first-request",
+    );
+    const retry = resolveMissionHumanResponseAttempt(
+      first,
+      { notes: "Approve" },
+      () => "unused-request",
+    );
+    const changed = resolveMissionHumanResponseAttempt(
+      retry,
+      { notes: "Reject" },
+      () => "changed-request",
+    );
+
+    expect(retry).toBe(first);
+    expect(changed.requestId).toBe("changed-request");
   });
 
   it("identifies only the final completed Assistant reply in each Turn", () => {

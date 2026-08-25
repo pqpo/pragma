@@ -606,7 +606,7 @@ export function createMissionStore(options: {
       );
       const existing = findSameIdentity(records, candidate);
       if (existing !== undefined) {
-        if (!sameRecordIgnoringSequence(existing, candidate)) throw messageConflict(candidate);
+        if (!sameRecordInput(existing, candidate)) throw messageConflict(candidate);
         return existing;
       }
       if (
@@ -1936,7 +1936,6 @@ function sameUserMessageInput(
   return (
     existing.id === input.id &&
     existing.content === input.content &&
-    existing.createdAt === input.createdAt &&
     sameValue(
       (existing.attachments ?? []).map(attachmentRequestIdentity),
       (input.attachments ?? []).map(attachmentRequestIdentity),
@@ -1961,15 +1960,13 @@ function attachmentRequestIdentity(attachment: ExpertPromptAttachment): unknown 
   };
 }
 
-function sameRecordIgnoringSequence(
-  left: MissionTimelineRecord,
-  right: MissionTimelineRecord,
-): boolean {
-  return JSON.stringify(withoutSequence(left)) === JSON.stringify(withoutSequence(right));
-}
-
-function withoutSequence(record: MissionTimelineRecord): Record<string, unknown> {
-  return Object.fromEntries(Object.entries(record).filter(([key]) => key !== "sequence"));
+function sameRecordInput(left: MissionTimelineRecord, right: MissionTimelineRecord): boolean {
+  if (left.kind !== right.kind) return false;
+  return left.kind === "user"
+    ? right.kind === "user" && sameUserMessageInput(left, right)
+    : right.kind === "execution" &&
+        left.executionId === right.executionId &&
+        left.inputMessageId === right.inputMessageId;
 }
 
 function messageConflict(record: MissionTimelineRecord): MissionStoreError {

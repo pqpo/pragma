@@ -55,6 +55,20 @@ export const missions = {
   hoursShort: "{{count}}h",
   daysShort: "{{count}}d",
   notFound: "Mission not found",
+  errorMissionNotFound: "This mission is no longer available. Refresh the mission list.",
+  errorOperationInProgress:
+    "Another operation is already in progress for this mission. Wait for it to finish and try again.",
+  errorStorageVersion:
+    "This mission uses an incompatible storage version. Update Pragma or restore a compatible backup.",
+  errorHistoryUnavailable:
+    "Part of this mission's history is unavailable. Refresh the mission and try again.",
+  errorMessageConflict:
+    "The message delivery state could not be confirmed. Refresh the conversation, then send it again if it is not shown.",
+  errorConfigurationInvalid:
+    "This mission's configuration or history is inconsistent. Refresh it or create a new mission.",
+  errorInvalidRequest: "The mission request is invalid. Review the input and try again.",
+  errorInternalStateConflict:
+    "The mission state changed unexpectedly. Refresh the mission and try again.",
   bundleSetupRequired:
     "This workflow still has {{count}} local dependency(ies) to set up: {{resources}}. Open Bundle import, select the original file again, and finish binding.",
   bundleLegacyKnowledgeBase: "Knowledge base (name unavailable in this legacy Bundle)",

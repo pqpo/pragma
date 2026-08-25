@@ -194,21 +194,34 @@ describe("mission store", () => {
       ],
     });
 
-    const record = await store.appendUserMessage(mission.id, {
+    const followup = {
       id: "00000000-0000-4000-8000-000000000003",
       content: "Now review this image.",
       attachments: [
         {
           id: "00000000-0000-4000-8000-000000000002",
-          kind: "image",
+          kind: "image" as const,
           name: "pasted-image.png",
           path: followupImage,
           mimeType: "image/png",
         },
       ],
       createdAt: "2026-08-10T00:00:00.000Z",
-    });
+    };
+    const record = await store.appendUserMessage(mission.id, followup);
     expect(record.kind).toBe("user");
+    await expect(
+      store.appendUserMessage(mission.id, {
+        ...followup,
+        createdAt: "2026-08-10T00:00:01.000Z",
+      }),
+    ).resolves.toEqual(record);
+    await expect(
+      store.appendUserMessage(mission.id, {
+        ...followup,
+        attachments: [{ ...followup.attachments[0]!, name: "different.png" }],
+      }),
+    ).rejects.toMatchObject({ code: "message_conflict" });
     const added = record.kind === "user" ? (record.attachments ?? []) : [];
 
     const turns = (await store.readTimelinePage(mission.id, { limit: 10 })).turns;
@@ -869,7 +882,10 @@ describe("mission store", () => {
       createdAt: "2026-07-17T00:00:00.000Z",
     };
     const first = await store.appendUserMessage(created.id, message);
-    const duplicate = await store.appendUserMessage(created.id, message);
+    const duplicate = await store.appendUserMessage(created.id, {
+      ...message,
+      createdAt: "2026-07-17T00:00:00.500Z",
+    });
     expect(duplicate).toEqual(first);
     const executionReference = {
       missionId: created.id,
@@ -878,9 +894,12 @@ describe("mission store", () => {
       createdAt: "2026-07-17T00:00:01.000Z",
     };
     const firstExecutionReference = await store.appendExecutionReference(executionReference);
-    await expect(store.appendExecutionReference(executionReference)).resolves.toEqual(
-      firstExecutionReference,
-    );
+    await expect(
+      store.appendExecutionReference({
+        ...executionReference,
+        createdAt: "2026-07-17T00:00:01.500Z",
+      }),
+    ).resolves.toEqual(firstExecutionReference);
 
     const latest = await store.readTimelinePage(created.id, { limit: 1 });
     expect(latest.turns).toEqual([
@@ -898,6 +917,12 @@ describe("mission store", () => {
     });
     await expect(
       store.appendUserMessage(created.id, { ...message, content: "Conflicting content" }),
+    ).rejects.toMatchObject({ code: "message_conflict" });
+    await expect(
+      store.appendExecutionReference({
+        ...executionReference,
+        inputMessageId: created.initialMessageId,
+      }),
     ).rejects.toMatchObject({ code: "message_conflict" });
   });
 

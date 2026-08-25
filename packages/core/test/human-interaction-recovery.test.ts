@@ -13,10 +13,12 @@ import {
   defineRuntimeDriver,
   fingerprintExpertExecutionDefinition,
   PragmaPaths,
+  type ExecutionStore,
   type ExpertAgentHumanRequest,
   type ExpertAgentHumanResponse,
   type RuntimeDriverSessionContext,
 } from "../src/index.ts";
+import { ExecutionController } from "../src/execution/expert-runner.ts";
 import { createRuntimeTestFeatures } from "../src/testing/index.ts";
 
 const tempDirs: string[] = [];
@@ -30,6 +32,113 @@ afterEach(async () => {
 });
 
 describe("ExpertSession human interaction recovery", () => {
+  it.each(["response-event", "resume-commit"] as const)(
+    "retries the same human response request after a transient %s failure",
+    async (failureStage) => {
+      const home = await mkdtemp(join(tmpdir(), "pragma-human-response-retry-"));
+      tempDirs.push(home);
+      const executions = createFileExecutionStore({ pragmaHome: home });
+      const executionId = "execution-response-retry";
+      const invocationId = "invocation-response-retry";
+      const interactionId = "interaction-response-retry";
+      const now = new Date().toISOString();
+      const definition = { id: "retry-expert", kind: "expert" as const };
+      await executions.create(
+        {
+          schemaVersion: "pragma.execution/v10",
+          executionId,
+          version: 0,
+          kind: "expert-turn",
+          definition,
+          rootInvocationId: invocationId,
+          status: "running",
+          input: "Wait for a human response.",
+          state: {},
+          lastAppliedSequence: 0,
+          createdAt: now,
+          updatedAt: now,
+        },
+        {
+          invocationId,
+          rootInvocationId: invocationId,
+          definition,
+          executorId: definition.id,
+          contextId: "context-response-retry",
+          status: "running",
+          pendingExpertMessages: [],
+          input: "Wait for a human response.",
+          createdAt: now,
+          updatedAt: now,
+        },
+      );
+      let failurePending = true;
+      const store: ExecutionStore = {
+        ...executions,
+        async appendEvent(executionId, invocationId, type, data, eventId) {
+          if (type === "human.responded" && failureStage === "response-event" && failurePending) {
+            failurePending = false;
+            throw new Error("Simulated human response persistence failure.");
+          }
+          return await executions.appendEvent(executionId, invocationId, type, data, eventId);
+        },
+        async commit(request) {
+          if (
+            request.commitId === `human-resumed:${interactionId}` &&
+            failureStage === "resume-commit" &&
+            failurePending
+          ) {
+            failurePending = false;
+            throw new Error("Simulated human resume commit failure.");
+          }
+          return await executions.commit(request);
+        },
+      };
+      const controller = new ExecutionController(executionId, store);
+      const request = {
+        kind: "user_question",
+        toolName: "askUserQuestion",
+        toolCallId: "retry-question",
+        questions: [
+          {
+            question: "Continue?",
+            header: "Decision",
+            kind: "single_choice",
+            options: [{ label: "yes", description: "Continue." }],
+          },
+        ],
+      } satisfies ExpertAgentHumanRequest;
+      const response = {
+        kind: "user_question",
+        answered: true,
+        answers: { "Continue?": "yes" },
+      } satisfies ExpertAgentHumanResponse;
+      const pendingResponse = controller.requestHumanInteraction(
+        invocationId,
+        request,
+        interactionId,
+      );
+      await waitForExecutionEvent(executions, executionId, "human.waiting");
+
+      await expect(
+        controller.respond(interactionId, response, "human-response-request"),
+      ).rejects.toThrow(
+        failureStage === "response-event"
+          ? "Simulated human response persistence failure."
+          : "Simulated human resume commit failure.",
+      );
+      await expect(
+        controller.respond(interactionId, response, "human-response-request"),
+      ).resolves.toBeUndefined();
+
+      await expect(pendingResponse).resolves.toEqual(response);
+      expect(
+        (await executions.readEvents(executionId)).filter(
+          (event) => event.type === "human.responded",
+        ),
+      ).toHaveLength(1);
+    },
+  );
+
   it("immediately replaces a lease owned by a process that has exited", async () => {
     const home = await mkdtemp(join(tmpdir(), "pragma-stale-session-lease-"));
     tempDirs.push(home);
@@ -277,6 +386,18 @@ describe("ExpertSession human interaction recovery", () => {
     expect((await resumed.getState()).lastStatus).toBe("succeeded");
   });
 });
+
+async function waitForExecutionEvent(
+  store: ExecutionStore,
+  executionId: string,
+  type: string,
+): Promise<void> {
+  for (let attempt = 0; attempt < 100; attempt += 1) {
+    if ((await store.readEvents(executionId)).some((event) => event.type === type)) return;
+    await new Promise<void>((resolve) => setTimeout(resolve, 5));
+  }
+  throw new Error(`Timed out waiting for ${type}.`);
+}
 
 function createRecoveryRuntime(request: ExpertAgentHumanRequest, onStart: () => void) {
   interface RecoverySession {

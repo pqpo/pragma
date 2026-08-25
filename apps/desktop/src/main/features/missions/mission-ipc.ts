@@ -34,7 +34,7 @@ import {
   type DesktopToolPermissionMode,
 } from "../../../shared/contracts/index.ts";
 import type { MissionRunner } from "./mission-runner.ts";
-import type { MissionStore } from "./mission-store.ts";
+import { MissionStoreError, type MissionStore } from "./mission-store.ts";
 import type { PragmaProjectStore } from "../projects/pragma-project-store.ts";
 import type { MissionExecutorCatalog } from "./mission-executor-catalog.ts";
 import type { MissionCreator } from "./mission-creator.ts";
@@ -126,7 +126,9 @@ export function installMissionHandlers(options: {
   const getManagedMission = async (id: string) => {
     await ensureLegacyAutomationMissionSources();
     const mission = await options.missions.get(id);
-    if (!isUserFacingMissionOrigin(mission.origin)) throw new Error("mission_not_found");
+    if (!isUserFacingMissionOrigin(mission.origin)) {
+      throw new MissionStoreError("mission_not_found", "Mission was not found.");
+    }
     return mission;
   };
   const assertManagedMission = async (id: string): Promise<string> => {
@@ -144,7 +146,7 @@ export function installMissionHandlers(options: {
     });
   });
   ipcMain.handle("missions:get", (_event, id: unknown) =>
-    getManagedMission(MissionIdSchema.parse(id)),
+    runDesktopMutation(async () => await getManagedMission(MissionIdSchema.parse(id))),
   );
   ipcMain.handle("missions:executors:list", async () =>
     MissionExecutorOptionSchema.array().parse(await options.executors.list()),
@@ -433,33 +435,37 @@ export function installMissionHandlers(options: {
       return await options.runner.respondToHumanInteraction(parsed);
     });
   });
-  ipcMain.handle("missions:complete", async (_event, input: unknown) => {
-    const missionId = await assertManagedMission(MissionActionSchema.parse(input).id);
-    const mission = await options.missions.markComplete(missionId);
-    if (
-      isUserFacingMissionOrigin(mission.origin) &&
-      !(
-        mission.execution !== undefined &&
-        ["queued", "running", "waiting"].includes(mission.execution.status)
-      )
-    ) {
-      await options.onMissionLifecycleChange?.({
-        missionId: mission.id,
-        state: "completed",
-      });
-    }
-    await publishMission(mission);
-    return mission;
-  });
-  ipcMain.handle("missions:reopen", async (_event, input: unknown) => {
-    const missionId = await assertManagedMission(MissionActionSchema.parse(input).id);
-    const mission = await options.missions.reopen(missionId);
-    if (isUserFacingMissionOrigin(mission.origin)) {
-      await options.onMissionLifecycleChange?.({ missionId: mission.id, state: "active" });
-    }
-    await publishMission(mission);
-    return mission;
-  });
+  ipcMain.handle("missions:complete", (_event, input: unknown) =>
+    runDesktopMutation(async () => {
+      const missionId = await assertManagedMission(MissionActionSchema.parse(input).id);
+      const mission = await options.missions.markComplete(missionId);
+      if (
+        isUserFacingMissionOrigin(mission.origin) &&
+        !(
+          mission.execution !== undefined &&
+          ["queued", "running", "waiting"].includes(mission.execution.status)
+        )
+      ) {
+        await options.onMissionLifecycleChange?.({
+          missionId: mission.id,
+          state: "completed",
+        });
+      }
+      await publishMission(mission);
+      return mission;
+    }),
+  );
+  ipcMain.handle("missions:reopen", (_event, input: unknown) =>
+    runDesktopMutation(async () => {
+      const missionId = await assertManagedMission(MissionActionSchema.parse(input).id);
+      const mission = await options.missions.reopen(missionId);
+      if (isUserFacingMissionOrigin(mission.origin)) {
+        await options.onMissionLifecycleChange?.({ missionId: mission.id, state: "active" });
+      }
+      await publishMission(mission);
+      return mission;
+    }),
+  );
   ipcMain.handle("missions:delete", (_event, input: unknown) =>
     runDesktopMutation(async () => {
       const missionId = MissionActionSchema.parse(input).id;

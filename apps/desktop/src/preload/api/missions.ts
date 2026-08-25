@@ -76,7 +76,7 @@ export const missionsApi = {
   getMissionCreationDefaults: async () =>
     MissionCreationDefaultsSchema.parse(await ipcRenderer.invoke("missions:create-defaults:get")),
   getMission: async (id) =>
-    MissionSchema.parse(await ipcRenderer.invoke("missions:get", MissionIdSchema.parse(id))),
+    MissionSchema.parse(await invokeMutation("missions:get", MissionIdSchema.parse(id))),
   getMissionContextStore: async (input) =>
     MissionContextStoreDescriptorSchema.parse(
       await ipcRenderer.invoke(
@@ -223,12 +223,10 @@ export const missionsApi = {
   },
   markMissionComplete: async (id) =>
     MissionSchema.parse(
-      await ipcRenderer.invoke("missions:complete", MissionActionSchema.parse({ id })),
+      await invokeMutation("missions:complete", MissionActionSchema.parse({ id })),
     ),
   reopenMission: async (id) =>
-    MissionSchema.parse(
-      await ipcRenderer.invoke("missions:reopen", MissionActionSchema.parse({ id })),
-    ),
+    MissionSchema.parse(await invokeMutation("missions:reopen", MissionActionSchema.parse({ id }))),
 } satisfies Pick<
   PragmaDesktopAPI,
   | "listMissions"
