@@ -183,10 +183,36 @@ describe("MissionContextStoreBrowserService", () => {
         query: "Ship",
         maxResults: 50,
         contextLines: 2,
+        caseSensitive: false,
       });
       expect(matches).toEqual(
         expect.arrayContaining([expect.objectContaining({ id: "notes/plan.md" })]),
       );
+
+      const caseInsensitiveMatches = await service.search({
+        missionId: mission.id,
+        storeId: "mission-board",
+        scopeId: descriptor.defaultScopeId,
+        query: "ship",
+        maxResults: 50,
+        contextLines: 2,
+        caseSensitive: false,
+      });
+      expect(caseInsensitiveMatches).toEqual(
+        expect.arrayContaining([expect.objectContaining({ id: "notes/plan.md" })]),
+      );
+
+      await expect(
+        service.search({
+          missionId: mission.id,
+          storeId: "mission-board",
+          scopeId: descriptor.defaultScopeId,
+          query: "ship",
+          maxResults: 50,
+          contextLines: 2,
+          caseSensitive: true,
+        }),
+      ).resolves.toEqual([]);
     } finally {
       await rm(directory, { recursive: true, force: true });
     }

@@ -1,6 +1,7 @@
 import { describe, expect, it, vi } from "vitest";
 
 import { codeForError, runCli, selectPrimaryDoctorCode } from "../src/index.ts";
+import { toIntegrationError } from "../src/commands/errors.ts";
 
 function createIo() {
   return { writeStdout: vi.fn(), writeStderr: vi.fn() };
@@ -136,5 +137,33 @@ describe("runCli", () => {
       "STORAGE_VERSION_UNSUPPORTED",
     );
     expect(codeForError({ code: "NOT_A_REGISTERED_CODE" })).toBe("INTERNAL_ERROR");
+  });
+
+  it("keeps only safe messages from mapped plain-object errors", () => {
+    expect(
+      toIntegrationError({
+        code: "mission_not_found",
+        message: "Mission 123 not found.",
+        details: { path: "/private/secret", token: "secret" },
+        cause: "secret cause",
+      }),
+    ).toMatchObject({ code: "MISSION_NOT_FOUND", message: "Mission 123 not found." });
+    expect(toIntegrationError({ code: "mission_not_found", message: "" }).message).toBe(
+      "The command could not complete.",
+    );
+    expect(toIntegrationError({ code: "mission_not_found", message: 42 }).message).toBe(
+      "The command could not complete.",
+    );
+    expect(toIntegrationError({ code: "INTERNAL_ERROR", message: "secret" })).toMatchObject({
+      code: "INTERNAL_ERROR",
+      message: "The command could not complete.",
+    });
+    expect(
+      toIntegrationError({
+        code: "mission_not_found",
+        message: "Mission 123 not found.",
+        details: { path: "/private/secret" },
+      }),
+    ).not.toHaveProperty("details");
   });
 });

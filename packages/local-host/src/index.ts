@@ -47,6 +47,7 @@ export interface LocalHostSharedBoardSearchRequest extends LocalHostSharedBoardL
   readonly query: string;
   readonly maxResults: number;
   readonly contextLines: number;
+  readonly caseSensitive?: boolean;
 }
 
 /**
@@ -63,6 +64,7 @@ export interface LocalHostApplicationPort<
   TBoardList = unknown,
   TBoardRead = unknown,
   TBoardSearch = unknown,
+  TQueue = unknown,
 > {
   readonly protocol: typeof LOCAL_HOST_APPLICATION_PROTOCOL;
   integrationCapability(): Promise<IntegrationCapability>;
@@ -79,7 +81,13 @@ export interface LocalHostApplicationPort<
     start: number,
     maxBytes: number,
   ): Promise<TBoardRead>;
-  searchSharedBoard(missionId: string, query: string, maxResults: number): Promise<TBoardSearch>;
+  searchSharedBoard(
+    missionId: string,
+    query: string,
+    maxResults: number,
+    options?: Pick<LocalHostSharedBoardSearchRequest, "caseSensitive" | "contextLines">,
+  ): Promise<TBoardSearch>;
+  listMissionQueue(missionId: string): Promise<TQueue>;
   /** Runtime adapter selection is supplied by the Host composition root, never imported here. */
   runtimeResolver(): RuntimeResolver;
 }
@@ -93,6 +101,7 @@ export interface LocalHostApplicationPorts<
   TBoardList,
   TBoardRead,
   TBoardSearch,
+  TQueue = unknown,
 > {
   readonly integrationCapability: () => Promise<IntegrationCapability>;
   readonly catalog: {
@@ -115,6 +124,8 @@ export interface LocalHostApplicationPorts<
     readonly read: (input: LocalHostSharedBoardReadRequest) => Promise<TBoardRead>;
     readonly search: (input: LocalHostSharedBoardSearchRequest) => Promise<TBoardSearch>;
   };
+  /** Read-only projection of the M4 durable queue/operation state. */
+  readonly queue?: { readonly list: (missionId: string) => Promise<TQueue> };
   readonly runtime: { readonly resolver: RuntimeResolver };
 }
 
@@ -127,6 +138,7 @@ export function createLocalHostApplication<
   TBoardList,
   TBoardRead,
   TBoardSearch,
+  TQueue = unknown,
 >(
   ports: LocalHostApplicationPorts<
     TMissionSummary,
@@ -136,7 +148,8 @@ export function createLocalHostApplication<
     TRevision,
     TBoardList,
     TBoardRead,
-    TBoardSearch
+    TBoardSearch,
+    TQueue
   >,
 ): LocalHostApplicationPort<
   TMissionSummary,
@@ -146,7 +159,8 @@ export function createLocalHostApplication<
   TRevision,
   TBoardList,
   TBoardRead,
-  TBoardSearch
+  TBoardSearch,
+  TQueue
 > {
   return {
     protocol: LOCAL_HOST_APPLICATION_PROTOCOL,
@@ -173,15 +187,26 @@ export function createLocalHostApplication<
         start,
         maxBytes,
       }),
-    searchSharedBoard: async (missionId, query, maxResults) =>
+    searchSharedBoard: async (missionId, query, maxResults, options) =>
       await ports.board.search({
         missionId,
         storeId: LOCAL_HOST_SHARED_BOARD_STORE_ID,
         scopeId: LOCAL_HOST_SHARED_BOARD_SCOPE_ID,
         query,
         maxResults,
-        contextLines: 2,
+        contextLines: options?.contextLines ?? 2,
+        ...(options?.caseSensitive === undefined ? {} : { caseSensitive: options.caseSensitive }),
       }),
+    listMissionQueue: async (missionId) => {
+      if (ports.queue === undefined) {
+        throw createIntegrationError({
+          code: "DEPENDENCY_UNAVAILABLE",
+          category: "dependency",
+          message: "Mission queue queries are unavailable in this Host composition.",
+        });
+      }
+      return await ports.queue.list(missionId);
+    },
     runtimeResolver: () => ports.runtime.resolver,
   };
 }
@@ -223,7 +248,7 @@ async function resolveWorkspace(
     schemaVersion: "pragma.integration-workspace/v1",
     requestedPath,
     canonicalPath,
-    displayName: basename(canonicalPath),
+    displayName: basename(canonicalPath) || canonicalPath,
     identityHash: `sha256:${createHash("sha256").update(canonicalPath).digest("hex")}`,
     access: { exists: true, readable: true, writable: true },
     source: "explicit",

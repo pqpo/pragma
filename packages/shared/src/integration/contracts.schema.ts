@@ -7,6 +7,7 @@ import {
 } from "../execution/human-interaction.schema.ts";
 import {
   IntegrationErrorSchema,
+  IntegrationErrorExitCodes,
   IntegrationExitCodeSchema,
   IntegrationWarningSchema,
 } from "./error.schema.ts";
@@ -404,7 +405,87 @@ export const CliResultSchema = z
     }
   });
 
+const StreamEndDataSchema = z
+  .object({
+    status: z.enum(["completed", "failed", "interrupted"]),
+    exitCode: IntegrationExitCodeSchema,
+    lastCursor: OpaqueCursorSchema.optional(),
+    error: IntegrationErrorSchema.optional(),
+  })
+  .strict()
+  .superRefine((value, context) => {
+    if (value.status === "completed") {
+      if (value.exitCode !== 0) {
+        context.addIssue({
+          code: "custom",
+          path: ["exitCode"],
+          message: "Completed streams must use exit code 0.",
+        });
+      }
+      if (value.error !== undefined) {
+        context.addIssue({
+          code: "custom",
+          path: ["error"],
+          message: "Completed streams must not include an error.",
+        });
+      }
+      return;
+    }
+
+    if (value.status === "interrupted") {
+      if (value.exitCode !== 130) {
+        context.addIssue({
+          code: "custom",
+          path: ["exitCode"],
+          message: "Interrupted streams must use exit code 130.",
+        });
+      }
+      if (value.error !== undefined) {
+        context.addIssue({
+          code: "custom",
+          path: ["error"],
+          message: "Interrupted streams must not include an error.",
+        });
+      }
+      return;
+    }
+
+    if (value.error === undefined) {
+      context.addIssue({
+        code: "custom",
+        path: ["error"],
+        message: "Failed streams require an error.",
+      });
+      return;
+    }
+    if (value.error.code === "INTERRUPTED") {
+      context.addIssue({
+        code: "custom",
+        path: ["error", "code"],
+        message: "Interrupted errors must use the interrupted stream status.",
+      });
+    }
+    if (value.exitCode !== IntegrationErrorExitCodes[value.error.code]) {
+      context.addIssue({
+        code: "custom",
+        path: ["exitCode"],
+        message: "Failed stream exit code must match the error code.",
+      });
+    }
+  });
+
 const EventDataSchema = z.discriminatedUnion("type", [
+  z
+    .object({
+      type: z.literal("command.result"),
+      data: z
+        .object({
+          command: z.string().min(1),
+          result: JsonValueSchema,
+        })
+        .strict(),
+    })
+    .strict(),
   z
     .object({
       type: z.literal("mission.snapshot"),
@@ -494,14 +575,7 @@ const EventDataSchema = z.discriminatedUnion("type", [
   z
     .object({
       type: z.literal("stream.end"),
-      data: z
-        .object({
-          status: z.enum(["completed", "failed", "interrupted"]),
-          exitCode: IntegrationExitCodeSchema,
-          lastCursor: OpaqueCursorSchema.optional(),
-          error: IntegrationErrorSchema.optional(),
-        })
-        .strict(),
+      data: StreamEndDataSchema,
     })
     .strict(),
 ]);
@@ -540,8 +614,16 @@ export const CliEventSchema = z
 export const CliEventStreamSchema = z.array(CliEventSchema).superRefine((events, context) => {
   let sawEnd = false;
   let previousSequence = -1;
+  const requestId = events[0]?.requestId;
 
   for (const [index, event] of events.entries()) {
+    if (requestId !== undefined && event.requestId !== requestId) {
+      context.addIssue({
+        code: "custom",
+        path: [index, "requestId"],
+        message: "All events in a stream must use the first event requestId.",
+      });
+    }
     if (event.sequence <= previousSequence) {
       context.addIssue({
         code: "custom",

@@ -279,8 +279,9 @@ export async function createDesktopApplicationContainer(
   // Local Host owns aggregate lease persistence; Desktop Main composes it with
   // the existing MissionStore without moving Electron or Runtime concerns into
   // @pragma/local-host.
+  const missionControllerStore = createMissionControllerStore({ missionsPath });
   const desktopMissionController = createDesktopMissionController({
-    controller: createMissionControllerStore({ missionsPath }),
+    controller: missionControllerStore,
     onLeaseLost: async (missionId) => {
       await missionRunner.stopLocalController(missionId);
       mainLogger.warn(
@@ -1090,7 +1091,13 @@ export async function createDesktopApplicationContainer(
       protocol: "pragma.integration/v1",
       readableVersions: ["pragma.integration/v1"],
       migratableFromVersions: [],
-      features: ["catalog.query", "mission.query", "workspace.resolve", "board.shared.read"],
+      features: [
+        "catalog.query",
+        "mission.query",
+        "mission.queue.read",
+        "workspace.resolve",
+        "board.shared.read",
+      ],
     }),
     catalog: {
       listProjects: async () => [{ id: pragmaProjectStore.projectId }],
@@ -1108,7 +1115,14 @@ export async function createDesktopApplicationContainer(
     board: {
       list: async (input) => await missionContextStoreBrowser.list(input),
       read: async (input) => await missionContextStoreBrowser.read(input),
-      search: async (input) => await missionContextStoreBrowser.search(input),
+      search: async (input) =>
+        await missionContextStoreBrowser.search({
+          ...input,
+          caseSensitive: input.caseSensitive ?? false,
+        }),
+    },
+    queue: {
+      list: async (missionId) => await missionControllerStore.listOperations({ missionId }),
     },
     runtime: { resolver: runtimes },
   });

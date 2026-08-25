@@ -92,7 +92,12 @@ function streamEnd(status: "completed" | "failed" | "interrupted", sequence = 1)
     type: "stream.end",
     data: {
       status,
-      exitCode: status === "completed" ? 0 : status === "interrupted" ? 130 : 10,
+      exitCode:
+        status === "completed"
+          ? 0
+          : status === "interrupted"
+            ? 130
+            : IntegrationErrorExitCodes.INVALID_ARGUMENT,
       ...(status === "failed" ? { error: fixedError } : {}),
     },
   };
@@ -296,6 +301,121 @@ describe("integration wire v1", () => {
 
     // A single event remains the explicit entry point for incremental JSONL parsing.
     expect(CliEventSchema.safeParse(snapshot).success).toBe(true);
+  });
+
+  it("enforces stream.end status, error, and exit-code combinations", () => {
+    const completed = streamEnd("completed");
+    const failed = streamEnd("failed");
+    const interrupted = streamEnd("interrupted");
+
+    expect(CliEventSchema.safeParse(completed).success).toBe(true);
+    expect(CliEventSchema.safeParse(failed).success).toBe(true);
+    expect(CliEventSchema.safeParse(interrupted).success).toBe(true);
+
+    expect(
+      CliEventSchema.safeParse({
+        ...completed,
+        data: { ...completed.data, exitCode: 10 },
+      }).success,
+    ).toBe(false);
+    expect(
+      CliEventSchema.safeParse({
+        ...completed,
+        data: { ...completed.data, error: fixedError },
+      }).success,
+    ).toBe(false);
+    expect(
+      CliEventSchema.safeParse({
+        ...failed,
+        data: { status: "failed", exitCode: 10 },
+      }).success,
+    ).toBe(false);
+    expect(
+      CliEventSchema.safeParse({
+        ...failed,
+        data: { ...failed.data, exitCode: 10 },
+      }).success,
+    ).toBe(false);
+    expect(
+      CliEventSchema.safeParse({
+        ...failed,
+        data: {
+          status: "failed",
+          exitCode: IntegrationErrorExitCodes.INTERRUPTED,
+          error: createIntegrationError({
+            code: "INTERRUPTED",
+            category: "interrupted",
+            message: "Interrupted.",
+          }),
+        },
+      }).success,
+    ).toBe(false);
+    expect(
+      CliEventSchema.safeParse({
+        ...interrupted,
+        data: { ...interrupted.data, exitCode: 10 },
+      }).success,
+    ).toBe(false);
+    expect(
+      CliEventSchema.safeParse({
+        ...interrupted,
+        data: { ...interrupted.data, error: fixedError },
+      }).success,
+    ).toBe(false);
+  });
+
+  it("requires one top-level requestId for a complete event stream", () => {
+    const snapshot = {
+      schemaVersion: "pragma.cli-event/v1" as const,
+      requestId,
+      eventId: "00000000-0000-4000-8000-000000000021",
+      sequence: 0,
+      emittedAt: timestamp,
+      replayable: true,
+      cursor: "cursor-0",
+      type: "mission.snapshot" as const,
+      data: { missionId, status: "active" },
+    };
+    const end = { ...streamEnd("completed", 1), eventId: "00000000-0000-4000-8000-000000000022" };
+    const otherRequestId = "00000000-0000-4000-8000-000000000099";
+
+    expect(CliEventStreamSchema.safeParse([snapshot, end]).success).toBe(true);
+    expect(
+      CliEventStreamSchema.safeParse([
+        snapshot,
+        {
+          ...snapshot,
+          requestId: otherRequestId,
+          sequence: 1,
+          eventId: "00000000-0000-4000-8000-000000000023",
+        },
+        { ...end, sequence: 2, eventId: "00000000-0000-4000-8000-000000000024" },
+      ]).success,
+    ).toBe(false);
+    expect(
+      CliEventStreamSchema.safeParse([
+        { ...snapshot, sequence: 0 },
+        { ...end, requestId: otherRequestId },
+      ]).success,
+    ).toBe(false);
+    expect(CliEventSchema.safeParse({ ...snapshot, requestId: otherRequestId }).success).toBe(true);
+  });
+
+  it("accepts a structured CLI query result before the single stream end", () => {
+    const resultEvent = {
+      schemaVersion: "pragma.cli-event/v1",
+      requestId,
+      eventId: "00000000-0000-4000-8000-000000000020",
+      sequence: 1,
+      emittedAt: timestamp,
+      replayable: false,
+      type: "command.result",
+      data: { command: "mission.list", result: { items: [] } },
+    };
+
+    expect(CliEventStreamSchema.safeParse([resultEvent, streamEnd("completed", 2)]).success).toBe(
+      true,
+    );
   });
 
   it("accepts M2 top-level schemas and rejects unknown fields and future versions", () => {

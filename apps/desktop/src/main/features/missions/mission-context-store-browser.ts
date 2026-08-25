@@ -261,6 +261,7 @@ export function createMissionContextStoreBrowserService(options: {
         query: input.query,
         maxResults: input.maxResults,
         contextLines: input.contextLines,
+        caseSensitive: input.caseSensitive,
       };
       const [content, paths] = await Promise.all([
         store.searchContext(searchInput),
@@ -490,6 +491,7 @@ async function searchBoard(
     query: input.query,
     maxResults: input.maxResults,
     contextLines: input.contextLines,
+    caseSensitive: input.caseSensitive,
   };
   const [guide, content, paths] = await Promise.all([
     boardGuideStore().searchContext(searchInput),

@@ -163,6 +163,7 @@ export const SearchMissionContextStoreSchema = z.object({
   query: z.string().trim().min(1).max(1_000),
   maxResults: z.number().int().positive().max(50).default(50),
   contextLines: z.number().int().nonnegative().max(2).default(2),
+  caseSensitive: z.boolean().default(false),
 });
 
 export const SearchExpertMemoryContextStoreSchema = z.object({

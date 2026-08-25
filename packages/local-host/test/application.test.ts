@@ -30,6 +30,18 @@ describe("LocalHostApplication", () => {
     });
   });
 
+  it.each(["/", "C:\\"] as const)("keeps a non-empty display name for root %s", async (root) => {
+    const application = createApplication({
+      filesystem: filesystemFor({ canonicalPath: root }),
+    });
+    const requestedPath = process.platform === "win32" ? "C:\\requested-root" : "/requested-root";
+
+    await expect(application.resolveWorkspace(requestedPath)).resolves.toMatchObject({
+      canonicalPath: root,
+      displayName: root,
+    });
+  });
+
   it.each([
     ["relative", "workspace", filesystemFor(), "INVALID_ARGUMENT", 2],
     [
@@ -106,7 +118,10 @@ describe("LocalHostApplication", () => {
 
     await application.listSharedBoard("mission-1");
     await application.readSharedBoard("mission-1", "handoffs/m3.md", 0, 200);
-    await application.searchSharedBoard("mission-1", "M3", 10);
+    await application.searchSharedBoard("mission-1", "M3", 10, {
+      caseSensitive: true,
+      contextLines: 1,
+    });
 
     expect(requests).toEqual([
       {
@@ -128,10 +143,24 @@ describe("LocalHostApplication", () => {
         scopeId: LOCAL_HOST_SHARED_BOARD_SCOPE_ID,
         query: "M3",
         maxResults: 10,
-        contextLines: 2,
+        contextLines: 1,
+        caseSensitive: true,
       },
     ]);
     expect("listPrivateBoard" in application).toBe(false);
+  });
+
+  it("exposes queue reads without creating a mutation path", async () => {
+    const application = createApplication({
+      queue: async (missionId) => [{ missionId, state: "queued" }],
+    });
+
+    await expect(application.listMissionQueue("mission-1")).resolves.toEqual([
+      { missionId: "mission-1", state: "queued" },
+    ]);
+    await expect(createApplication().listMissionQueue("mission-1")).rejects.toMatchObject({
+      code: "DEPENDENCY_UNAVAILABLE",
+    });
   });
 });
 
@@ -146,6 +175,9 @@ function createApplication(
       readonly read: (input: { readonly id: string }) => Promise<unknown>;
       readonly search: (input: unknown) => Promise<unknown>;
     };
+    readonly queue?: (
+      missionId: string,
+    ) => Promise<readonly { readonly missionId: string; readonly state: string }[]>;
   } = {},
 ) {
   return createLocalHostApplication({
@@ -171,6 +203,7 @@ function createApplication(
       read: async (input) => ({ id: input.id }),
       search: async () => ({ matches: [] }),
     },
+    ...(options.queue === undefined ? {} : { queue: { list: options.queue } }),
     runtime: { resolver: {} as never },
   });
 }

@@ -1666,6 +1666,7 @@ export function MissionDetailFragment(props: {
           query,
           maxResults: 50,
           contextLines: 2,
+          caseSensitive: false,
         }),
     };
   }, [props.mission.id]);
@@ -1690,6 +1691,7 @@ export function MissionDetailFragment(props: {
           query,
           maxResults: 50,
           contextLines: 2,
+          caseSensitive: false,
         }),
     };
   }, [props.mission.id]);
