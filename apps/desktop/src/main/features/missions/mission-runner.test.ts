@@ -273,6 +273,85 @@ describe("MissionRunner", { timeout: 15_000 }, () => {
     ]);
   });
 
+  it("paginates a single long Mission turn by visible entries", async () => {
+    const root = await mkdtemp(join(tmpdir(), "pragma-mission-long-turn-page-"));
+    temporaryPaths.push(root);
+    const project = createPragmaProjectStore({ projectsPath: join(root, "projects") });
+    const snapshot = await project.publish({
+      expectedRevision: 0,
+      resources: [runtimeFixture(), expertFixture()],
+    });
+    const missions = createMissionStore({ missionsPath: join(root, "missions") });
+    const mission = await missions.create({
+      workspace: { path: root, basename: "workspace" },
+      goal: "Run one very long turn",
+      project: { id: snapshot.projectId, revision: snapshot.revision },
+      executor: missionExecutorSnapshot(
+        snapshot.resources.find((resource) => resource.kind === "Expert")!,
+      ),
+    });
+    const executionId = "00000000-0000-4000-8000-000000000077";
+    await missions.appendExecutionReference({
+      missionId: mission.id,
+      inputMessageId: mission.initialMessageId,
+      executionId,
+      createdAt: "2026-08-25T00:00:00.000Z",
+    });
+    await missions.writeExecutionProjection(
+      mission.id,
+      executionId,
+      Array.from({ length: 45 }, (_, index) => ({
+        id: `assistant:${index + 1}`,
+        timelineSequence: 1,
+        executionId,
+        kind: "assistant" as const,
+        content: `answer ${index + 1}`,
+        streaming: false,
+        createdAt: new Date(Date.UTC(2026, 7, 25, 0, 0, index + 1)).toISOString(),
+      })),
+    );
+    const runtime = defineRuntimeTestDriver<never, { id: string }>({
+      descriptor: { id: "fake", kind: "fake", displayName: "Fake" },
+      createSession: () => ({ id: "runtime" }),
+      readSession: (session) => ({ runtimeSessionId: session.id }),
+      startTurn: () => ({ outputText: "unused", runtimeSessionId: "runtime" }),
+      mapEvent: () => ({ events: [] }),
+    });
+    const runner = createMissionRunner({
+      missions,
+      project,
+      capabilityStore: {} as CapabilityStore,
+      capabilityCredentials: {} as CapabilityCredentialStore,
+      capabilitiesPath: join(root, "capabilities"),
+      pragmaHome: join(root, "state"),
+      runtimes: createStaticRuntimeResolver({ runtimes: [runtime], defaultRuntimeId: "fake" }),
+    });
+
+    const latest = await runner.getChat({ id: mission.id, limit: 20 });
+    expect(latest.entries.map((entry) => entry.id)).toEqual(
+      Array.from({ length: 20 }, (_, index) => `assistant:${index + 26}`),
+    );
+    expect(latest.page.nextBeforeCursor).toBeTypeOf("string");
+    const middle = await runner.getChat({
+      id: mission.id,
+      beforeCursor: latest.page.nextBeforeCursor,
+      limit: 20,
+    });
+    expect(middle.entries.map((entry) => entry.id)).toEqual(
+      Array.from({ length: 20 }, (_, index) => `assistant:${index + 6}`),
+    );
+    const earliest = await runner.getChat({
+      id: mission.id,
+      beforeCursor: middle.page.nextBeforeCursor,
+      limit: 20,
+    });
+    expect(earliest.entries.map((entry) => entry.id)).toEqual([
+      mission.initialMessageId,
+      ...Array.from({ length: 5 }, (_, index) => `assistant:${index + 1}`),
+    ]);
+    expect(earliest.page.nextBeforeCursor).toBeUndefined();
+  });
+
   it("marks system Mission chat and work notifications as internal", async () => {
     const root = await mkdtemp(join(tmpdir(), "pragma-system-mission-notifications-"));
     temporaryPaths.push(root);

@@ -1393,6 +1393,7 @@ type MissionMemoryView = "store" | "activity";
 export const DEFAULT_MISSION_MEMORY_VIEW: MissionMemoryView = "activity";
 export const MISSION_CHAT_PAGE_SIZE = 20;
 export const MISSION_WORK_CONVERSATION_PAGE_SIZE = 50;
+export const MISSION_WORK_RECORD_PAGE_SIZE = 20;
 
 export function MissionDetailFragment(props: {
   readonly mission: Mission;
@@ -2606,8 +2607,8 @@ export function MissionDetailFragment(props: {
 
   const loadEarlier = async (): Promise<void> => {
     const api = desktopApi();
-    const beforeSequence = chat?.page.nextBeforeSequence;
-    if (api === undefined || beforeSequence === undefined || loadingEarlier) return;
+    const beforeCursor = chat?.page.nextBeforeCursor;
+    if (api === undefined || beforeCursor === undefined || loadingEarlier) return;
     setLoadingEarlier(true);
     setHistoryError(null);
     const element = scrollRef.current;
@@ -2616,7 +2617,7 @@ export function MissionDetailFragment(props: {
     try {
       const earlier = await api.getMissionChat({
         id: props.mission.id,
-        beforeSequence,
+        beforeCursor,
         limit: MISSION_CHAT_PAGE_SIZE,
       });
       updateChat((current) => (current === null ? earlier : prependChatPage(current, earlier)));
@@ -2857,7 +2858,7 @@ export function MissionDetailFragment(props: {
               }}
             >
               <div className="mission-chat-list">
-                {chat?.page.nextBeforeSequence !== undefined ? (
+                {chat?.page.nextBeforeCursor !== undefined ? (
                   <button
                     className="mission-load-earlier"
                     type="button"
@@ -3575,9 +3576,23 @@ export function MissionWorkGrid(props: {
   const surfaceRef = useRef<HTMLDivElement>(null);
   const cardRefs = useRef(new Map<string, HTMLButtonElement>());
   const [edges, setEdges] = useState<readonly MissionWorkGridEdge[]>([]);
+  const [pageIndex, setPageIndex] = useState(0);
   const markerId = `mission-work-arrow-${useId().replaceAll(":", "")}`;
+  const pageCount = Math.max(1, Math.ceil(props.records.length / MISSION_WORK_RECORD_PAGE_SIZE));
+  const pageRecords = useMemo(
+    () => missionWorkPageRecords(props.records, pageIndex, MISSION_WORK_RECORD_PAGE_SIZE),
+    [pageIndex, props.records],
+  );
+  const recordSetIdentity = props.records
+    .filter((record) => record.parentRecordId === undefined)
+    .map((record) => record.recordId)
+    .join(":");
+  useEffect(() => setPageIndex(0), [recordSetIdentity]);
+  useEffect(() => {
+    setPageIndex((current) => Math.min(current, pageCount - 1));
+  }, [pageCount]);
   const density =
-    props.records.length === 1 ? "single" : props.records.length === 2 ? "pair" : "network";
+    pageRecords.length === 1 ? "single" : pageRecords.length === 2 ? "pair" : "network";
   const callOrder = useMemo(() => missionWorkCallOrder(props.records), [props.records]);
   const levels = useMemo(() => {
     const compareByCallOrder = (left: MissionWorkRecord, right: MissionWorkRecord) => {
@@ -3585,18 +3600,18 @@ export function MissionWorkGrid(props: {
       if (right.parentRecordId === undefined && left.parentRecordId !== undefined) return 1;
       return (callOrder.get(left.recordId) ?? 0) - (callOrder.get(right.recordId) ?? 0);
     };
-    if (props.records.length <= 2) {
-      return [[0, props.records.toSorted(compareByCallOrder)] as const];
+    if (pageRecords.length <= 2) {
+      return [[0, pageRecords.toSorted(compareByCallOrder)] as const];
     }
     const grouped = new Map<number, MissionWorkRecord[]>();
-    for (const record of props.records) {
+    for (const record of pageRecords) {
       const depth = workRecordDepth(record, props.records);
       grouped.set(depth, [...(grouped.get(depth) ?? []), record]);
     }
     return [...grouped.entries()]
       .toSorted(([left], [right]) => left - right)
       .map(([depth, records]) => [depth, records.toSorted(compareByCallOrder)] as const);
-  }, [callOrder, props.records]);
+  }, [callOrder, pageRecords, props.records]);
 
   const updateEdges = useCallback(() => {
     const surface = surfaceRef.current;
@@ -3606,7 +3621,7 @@ export function MissionWorkGrid(props: {
       [...cardRefs.current].map(([recordId, card]) => [recordId, card.getBoundingClientRect()]),
     );
     const verticalTrunks = new Map<string, number>();
-    for (const record of props.records) {
+    for (const record of pageRecords) {
       if (record.parentRecordId === undefined) continue;
       const source = cardRects.get(record.parentRecordId);
       const target = cardRects.get(record.recordId);
@@ -3619,7 +3634,7 @@ export function MissionWorkGrid(props: {
         Math.min(verticalTrunks.get(record.parentRecordId) ?? candidate, candidate),
       );
     }
-    const nextEdges = props.records.flatMap((record): MissionWorkGridEdge[] => {
+    const nextEdges = pageRecords.flatMap((record): MissionWorkGridEdge[] => {
       if (record.parentRecordId === undefined) return [];
       const source = cardRects.get(record.parentRecordId);
       const target = cardRects.get(record.recordId);
@@ -3637,7 +3652,7 @@ export function MissionWorkGrid(props: {
       ];
     });
     setEdges(nextEdges);
-  }, [props.records]);
+  }, [pageRecords]);
 
   useLayoutEffect(() => {
     updateEdges();
@@ -3649,8 +3664,39 @@ export function MissionWorkGrid(props: {
   }, [levels, updateEdges]);
 
   return (
-    <div className={`mission-work-list is-${density}${density === "network" ? "" : " is-sparse"}`}>
-      <p className="mission-work-description">{t("executionMapDescription")}</p>
+    <div
+      className={`mission-work-list is-${density}${density === "network" ? "" : " is-sparse"}${pageCount > 1 ? " has-pagination" : ""}`}
+    >
+      <div className="mission-work-list-header">
+        <p className="mission-work-description">{t("executionMapDescription")}</p>
+        {pageCount <= 1 ? null : (
+          <nav className="mission-work-pagination" aria-label={t("workPagination")}>
+            <button
+              type="button"
+              aria-label={t("previousWorkPage")}
+              disabled={pageIndex === 0}
+              onClick={() => setPageIndex((current) => Math.max(0, current - 1))}
+            >
+              <CaretLeft size={15} aria-hidden="true" />
+            </button>
+            <span>
+              {t("workPageSummary", {
+                page: pageIndex + 1,
+                pages: pageCount,
+                count: props.records.length,
+              })}
+            </span>
+            <button
+              type="button"
+              aria-label={t("nextWorkPage")}
+              disabled={pageIndex >= pageCount - 1}
+              onClick={() => setPageIndex((current) => Math.min(pageCount - 1, current + 1))}
+            >
+              <CaretRight size={15} aria-hidden="true" />
+            </button>
+          </nav>
+        )}
+      </div>
       <div
         className="mission-work-grid"
         data-density={density}
@@ -3741,6 +3787,35 @@ export function MissionWorkGrid(props: {
       </div>
     </div>
   );
+}
+
+export function missionWorkPageRecords(
+  records: readonly MissionWorkRecord[],
+  pageIndex: number,
+  pageSize: number,
+): MissionWorkRecord[] {
+  if (records.length <= pageSize) return [...records];
+  const callOrder = missionWorkCallOrder(records);
+  const ordered = records.toSorted((left, right) => {
+    if (left.parentRecordId === undefined && right.parentRecordId !== undefined) return -1;
+    if (right.parentRecordId === undefined && left.parentRecordId !== undefined) return 1;
+    const order = (callOrder.get(left.recordId) ?? 0) - (callOrder.get(right.recordId) ?? 0);
+    if (order !== 0) return order;
+    const created = left.createdAt.localeCompare(right.createdAt);
+    return created === 0 ? left.recordId.localeCompare(right.recordId) : created;
+  });
+  const start = Math.max(0, pageIndex) * pageSize;
+  const selected = ordered.slice(start, start + pageSize);
+  const byId = new Map(records.map((record) => [record.recordId, record]));
+  const included = new Set(selected.map((record) => record.recordId));
+  for (const record of selected) {
+    let parentId = record.parentRecordId;
+    while (parentId !== undefined && !included.has(parentId)) {
+      included.add(parentId);
+      parentId = byId.get(parentId)?.parentRecordId;
+    }
+  }
+  return ordered.filter((record) => included.has(record.recordId));
 }
 
 export function MissionMemoryActivity(props: {
@@ -5374,13 +5449,19 @@ export function mergeLatestChatPage(
   if (current === null || current.missionId !== latest.missionId) return latest;
   const unavailableSections = new Set(latest.syncIssues?.map((issue) => issue.section) ?? []);
   const latestOldest = latest.page.oldestSequence;
+  const latestEntryIds = new Set(latest.entries.map((entry) => entry.id));
   const retainedOlder =
     latestOldest === undefined
       ? []
       : current.entries.filter(
-          (entry) => entry.timelineSequence !== undefined && entry.timelineSequence < latestOldest,
+          (entry) =>
+            entry.timelineSequence !== undefined &&
+            (entry.timelineSequence < latestOldest ||
+              (entry.timelineSequence === latestOldest && !latestEntryIds.has(entry.id))),
         );
   const retainedUnavailableHistory = unavailableSections.has("history") ? current.entries : [];
+  const latestPageWithoutCursor = { ...latest.page };
+  delete latestPageWithoutCursor.nextBeforeCursor;
   return {
     ...latest,
     entries: uniqueChatEntries([
@@ -5388,6 +5469,15 @@ export function mergeLatestChatPage(
       ...retainedUnavailableHistory,
       ...latest.entries,
     ]),
+    page:
+      retainedOlder.length === 0
+        ? latest.page
+        : {
+            ...latestPageWithoutCursor,
+            ...(current.page.nextBeforeCursor === undefined
+              ? {}
+              : { nextBeforeCursor: current.page.nextBeforeCursor }),
+          },
     pendingInteractions: unavailableSections.has("pending_interactions")
       ? current.pendingInteractions
       : latest.pendingInteractions,
@@ -5412,9 +5502,9 @@ function prependChatPage(
       ...(current.page.newestSequence === undefined
         ? {}
         : { newestSequence: current.page.newestSequence }),
-      ...(earlier.page.nextBeforeSequence === undefined
+      ...(earlier.page.nextBeforeCursor === undefined
         ? {}
-        : { nextBeforeSequence: earlier.page.nextBeforeSequence }),
+        : { nextBeforeCursor: earlier.page.nextBeforeCursor }),
     },
   };
 }

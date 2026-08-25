@@ -27,6 +27,7 @@ import {
   MissionChatEntryView,
   MISSION_CHAT_PAGE_SIZE,
   MISSION_WORK_CONVERSATION_PAGE_SIZE,
+  MISSION_WORK_RECORD_PAGE_SIZE,
   startMissionContextOperation,
   MissionDetailFragment,
   MissionDetailSkeleton,
@@ -40,6 +41,7 @@ import {
   missionWorkInputSenderName,
   missionWorkCallOrder,
   missionWorkGridEdgePath,
+  missionWorkPageRecords,
   missionWorkRecordTitle,
   missionStatusLabel,
   missionTurnFinalReplyIds,
@@ -60,6 +62,7 @@ describe("MissionsPage", () => {
   it("uses bounded initial pages for Mission conversations", () => {
     expect(MISSION_CHAT_PAGE_SIZE).toBe(20);
     expect(MISSION_WORK_CONVERSATION_PAGE_SIZE).toBe(50);
+    expect(MISSION_WORK_RECORD_PAGE_SIZE).toBe(20);
   });
 
   it("identifies only the final completed Assistant reply in each Turn", () => {
@@ -1176,6 +1179,49 @@ describe("Mission work record titles", () => {
 });
 
 describe("Mission work grid", () => {
+  it("paginates long work maps and retains ancestors on later pages", () => {
+    const createdAt = "2026-07-21T00:00:00.000Z";
+    const root: MissionWorkRecord = {
+      recordId: "root",
+      kind: "root",
+      sessionId: "root",
+      title: "Coordinator",
+      origin: "core",
+      status: "running",
+      tasks: [],
+      summary: "Coordinate",
+      createdAt,
+      updatedAt: createdAt,
+    };
+    const records = [
+      root,
+      ...Array.from({ length: 44 }, (_, index): MissionWorkRecord => ({
+        recordId: `child:${String(index + 1).padStart(2, "0")}`,
+        kind: "runtime-agent",
+        sessionId: `child:${index + 1}`,
+        parentRecordId: root.recordId,
+        title: `Expert ${index + 1}`,
+        origin: "runtime",
+        status: "succeeded",
+        tasks: [],
+        summary: "Done",
+        createdAt: new Date(Date.UTC(2026, 6, 21, 0, 0, index + 1)).toISOString(),
+        updatedAt: createdAt,
+      })),
+    ];
+
+    expect(missionWorkPageRecords(records, 0, 20)).toHaveLength(20);
+    const secondPage = missionWorkPageRecords(records, 1, 20);
+    expect(secondPage[0]?.recordId).toBe("root");
+    expect(secondPage).toHaveLength(21);
+    const html = renderToStaticMarkup(
+      <MissionWorkGrid records={records} onSelect={() => undefined} />,
+    );
+    expect(html.match(/class="mission-work-card /g)).toHaveLength(20);
+    expect(html).toContain("1 / 3 · 45 records");
+    expect(html).toContain('aria-label="Next work page"');
+  });
+
   it("renders one expert card per work record with profiled avatars and status", () => {
     const createdAt = "2026-07-21T00:00:00.000Z";
     const records: MissionWorkRecord[] = [
@@ -1453,6 +1499,47 @@ describe("Mission work conversation", () => {
 });
 
 describe("Mission chat patches", () => {
+  it("keeps loaded entries from the same long turn when the latest page refreshes", () => {
+    const missionId = "00000000-0000-4000-8000-000000000000";
+    const createdAt = "2026-07-11T00:00:00.000Z";
+    const current: MissionChatSnapshot = {
+      missionId,
+      revision: 1,
+      entries: [
+        {
+          id: "older-tool",
+          kind: "assistant",
+          content: "Older entry from the same turn",
+          streaming: false,
+          timelineSequence: 7,
+          createdAt,
+        },
+        {
+          id: "latest-answer",
+          kind: "assistant",
+          content: "Latest answer",
+          streaming: false,
+          timelineSequence: 7,
+          createdAt,
+        },
+      ],
+      page: { oldestSequence: 7, newestSequence: 7, nextBeforeCursor: "older-cursor" },
+      pendingInteractions: [],
+    };
+    const latest: MissionChatSnapshot = {
+      missionId,
+      revision: 2,
+      entries: [current.entries[1]!],
+      page: { oldestSequence: 7, newestSequence: 7, nextBeforeCursor: "latest-cursor" },
+      pendingInteractions: [],
+    };
+
+    const merged = mergeLatestChatPage(current, latest);
+
+    expect(merged.entries.map((entry) => entry.id)).toEqual(["older-tool", "latest-answer"]);
+    expect(merged.page.nextBeforeCursor).toBe("older-cursor");
+  });
+
   it("preserves known history and interaction state when a refresh is degraded", () => {
     const current: MissionChatSnapshot = {
       missionId: "00000000-0000-4000-8000-000000000000",

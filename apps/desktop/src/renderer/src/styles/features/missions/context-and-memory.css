@@ -1161,6 +1161,46 @@
   padding: 8px 0 28px;
 }
 
+.mission-work-list-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+}
+
+.mission-work-pagination {
+  display: inline-flex;
+  flex: none;
+  align-items: center;
+  gap: 8px;
+  color: var(--muted);
+  font-size: 12px;
+}
+
+.mission-work-pagination button {
+  display: inline-grid;
+  width: 32px;
+  height: 32px;
+  place-items: center;
+  padding: 0;
+  border: 1px solid var(--border);
+  border-radius: var(--ui-radius-sm);
+  background: var(--surface);
+  color: var(--muted);
+  cursor: pointer;
+}
+
+.mission-work-pagination button:hover:not(:disabled),
+.mission-work-pagination button:focus-visible:not(:disabled) {
+  border-color: var(--border-strong);
+  color: var(--text);
+}
+
+.mission-work-pagination button:disabled {
+  cursor: not-allowed;
+  opacity: 0.45;
+}
+
 .mission-work-description {
   margin: 0;
   color: var(--muted);

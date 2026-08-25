@@ -290,11 +290,11 @@ export function installMissionHandlers(options: {
         throw new Error("Mission history is temporarily incomplete. Refresh it before branching.");
       }
       const pages = [newest];
-      let beforeSequence = newest.page.nextBeforeSequence;
-      while (beforeSequence !== undefined) {
+      let beforeCursor = newest.page.nextBeforeCursor;
+      while (beforeCursor !== undefined) {
         const page = await options.runner.getChat({
           id: source.id,
-          beforeSequence,
+          beforeCursor,
           limit: 100,
         });
         if (page.syncIssues !== undefined && page.syncIssues.length > 0) {
@@ -303,7 +303,7 @@ export function installMissionHandlers(options: {
           );
         }
         pages.unshift(page);
-        beforeSequence = page.page.nextBeforeSequence;
+        beforeCursor = page.page.nextBeforeCursor;
       }
       const history = pages
         .flatMap((page) => page.entries)

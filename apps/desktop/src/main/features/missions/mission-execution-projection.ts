@@ -57,6 +57,72 @@ export class MissionExecutionProjectionError extends Error {
   }
 }
 
+export interface MissionExecutionProjectionPage {
+  readonly entries: readonly MissionChatEntry[];
+  readonly createdAt: string;
+  readonly nextBeforeOffset?: number | undefined;
+}
+
+export async function readMissionExecutionProjectionPage(
+  path: string,
+  executionId: string,
+  input: { readonly beforeOffset?: number | undefined; readonly limit: number },
+): Promise<MissionExecutionProjectionPage | undefined> {
+  if (!Number.isInteger(input.limit) || input.limit < 1 || input.limit > 1_000) {
+    throw new MissionExecutionProjectionError(
+      "Mission execution projection page limit is invalid.",
+    );
+  }
+  const metadata = await stat(path).catch((error: unknown) => {
+    if (isNodeError(error, "ENOENT")) return undefined;
+    throw error;
+  });
+  if (metadata === undefined) return undefined;
+  if (metadata.size > MISSION_EXECUTION_PROJECTION_MAX_BYTES) {
+    throw new MissionExecutionProjectionError(
+      `Mission execution projection exceeds ${MISSION_EXECUTION_PROJECTION_MAX_BYTES} bytes.`,
+    );
+  }
+
+  const handle = await open(path, "r");
+  try {
+    const header = await readProjectionHeader(handle, metadata.size, executionId);
+    const requestedEnd = input.beforeOffset ?? metadata.size;
+    if (
+      !Number.isInteger(requestedEnd) ||
+      requestedEnd < header.entriesOffset ||
+      requestedEnd > metadata.size
+    ) {
+      throw new MissionExecutionProjectionError(
+        "Mission execution projection page cursor is invalid.",
+      );
+    }
+    if (requestedEnd !== metadata.size && requestedEnd > header.entriesOffset) {
+      const preceding = Buffer.allocUnsafe(1);
+      await handle.read(preceding, 0, 1, requestedEnd - 1);
+      if (preceding[0] !== 0x0a) {
+        throw new MissionExecutionProjectionError(
+          "Mission execution projection page cursor is not on a record boundary.",
+        );
+      }
+    }
+    const page = await readProjectionRecordsBackward(
+      handle,
+      header.entriesOffset,
+      requestedEnd,
+      input.limit,
+      executionId,
+    );
+    return {
+      entries: page.entries,
+      createdAt: header.createdAt,
+      ...(page.nextBeforeOffset === undefined ? {} : { nextBeforeOffset: page.nextBeforeOffset }),
+    };
+  } finally {
+    await handle.close();
+  }
+}
+
 export async function readMissionExecutionProjection(
   path: string,
   executionId: string,
@@ -147,6 +213,105 @@ export async function writeMissionExecutionProjection(
     await rm(temporaryPath, { force: true });
     throw error;
   }
+}
+
+async function readProjectionHeader(
+  handle: Awaited<ReturnType<typeof open>>,
+  size: number,
+  executionId: string,
+): Promise<{ readonly entriesOffset: number; readonly createdAt: string }> {
+  const maximumHeaderBytes = Math.min(size, 64 * 1024);
+  const bytes = Buffer.allocUnsafe(maximumHeaderBytes);
+  const { bytesRead } = await handle.read(bytes, 0, maximumHeaderBytes, 0);
+  const newline = bytes.subarray(0, bytesRead).indexOf(0x0a);
+  if (newline < 0) {
+    throw new MissionExecutionProjectionError("Mission execution projection header is missing.");
+  }
+  let value: unknown;
+  try {
+    value = JSON.parse(bytes.subarray(0, newline).toString("utf8")) as unknown;
+  } catch (error) {
+    throw invalidProjectionRecord(1, error);
+  }
+  let header: ProjectionHeader;
+  try {
+    header = ProjectionHeaderSchema.parse(value);
+    if (header.executionId !== executionId) {
+      throw new Error(`expected Execution ${executionId}, received ${header.executionId}`);
+    }
+  } catch (error) {
+    throw invalidProjectionRecord(1, error);
+  }
+  return { entriesOffset: newline + 1, createdAt: header.createdAt };
+}
+
+async function readProjectionRecordsBackward(
+  handle: Awaited<ReturnType<typeof open>>,
+  entriesOffset: number,
+  end: number,
+  limit: number,
+  executionId: string,
+): Promise<{
+  readonly entries: readonly MissionChatEntry[];
+  readonly nextBeforeOffset?: number | undefined;
+}> {
+  const chunkSize = 64 * 1024;
+  let position = end;
+  let buffered = Buffer.alloc(0);
+  let ranges: Array<{ readonly start: number; readonly end: number }> = [];
+
+  while (position > entriesOffset) {
+    const start = Math.max(entriesOffset, position - chunkSize);
+    const chunk = Buffer.allocUnsafe(position - start);
+    const { bytesRead } = await handle.read(chunk, 0, chunk.length, start);
+    buffered = Buffer.concat([chunk.subarray(0, bytesRead), buffered]);
+    position = start;
+    ranges = completeLineRanges(buffered, position, position === entriesOffset);
+    if (ranges.length >= limit || position === entriesOffset) break;
+  }
+
+  const selected = ranges.slice(-limit);
+  const entries = selected.map((range, index) => {
+    const relativeStart = range.start - position;
+    const relativeEnd = range.end - position;
+    try {
+      const record = ProjectionEntrySchema.parse(
+        JSON.parse(buffered.subarray(relativeStart, relativeEnd).toString("utf8")) as unknown,
+      );
+      if (record.executionId !== executionId) {
+        throw new Error(`expected Execution ${executionId}, received ${record.executionId}`);
+      }
+      return record.entry;
+    } catch (error) {
+      throw invalidProjectionRecord(index + 2, error);
+    }
+  });
+  const selectedStart = selected[0]?.start;
+  return {
+    entries,
+    ...(selectedStart !== undefined && selectedStart > entriesOffset
+      ? { nextBeforeOffset: selectedStart }
+      : {}),
+  };
+}
+
+function completeLineRanges(
+  buffer: Buffer,
+  absoluteStart: number,
+  startsOnBoundary: boolean,
+): Array<{ readonly start: number; readonly end: number }> {
+  const ranges: Array<{ readonly start: number; readonly end: number }> = [];
+  let lineStart = 0;
+  let firstCompleteLine = startsOnBoundary;
+  for (let index = 0; index < buffer.length; index += 1) {
+    if (buffer[index] !== 0x0a) continue;
+    if (firstCompleteLine && index > lineStart) {
+      ranges.push({ start: absoluteStart + lineStart, end: absoluteStart + index });
+    }
+    firstCompleteLine = true;
+    lineStart = index + 1;
+  }
+  return ranges;
 }
 
 function createBoundedProjection(

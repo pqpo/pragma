@@ -485,7 +485,7 @@ export const MissionQueuePromptActionSchema = z.object({
 });
 export const GetMissionChatSchema = z.object({
   id: MissionIdSchema,
-  beforeSequence: z.number().int().positive().optional(),
+  beforeCursor: z.string().min(1).max(2_048).optional(),
   limit: z.number().int().min(1).max(100).default(50),
 });
 export const GetMissionWorkConversationSchema = z.object({
@@ -648,7 +648,7 @@ export const MissionChatSnapshotSchema = z.object({
   page: z.object({
     oldestSequence: z.number().int().positive().optional(),
     newestSequence: z.number().int().positive().optional(),
-    nextBeforeSequence: z.number().int().positive().optional(),
+    nextBeforeCursor: z.string().min(1).max(2_048).optional(),
   }),
   pendingInteractions: z.array(MissionHumanInteractionSchema),
   queue: z

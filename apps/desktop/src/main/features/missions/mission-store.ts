@@ -54,7 +54,9 @@ import {
 import {
   MissionExecutionProjectionError,
   readMissionExecutionProjection,
+  readMissionExecutionProjectionPage,
   writeMissionExecutionProjection,
+  type MissionExecutionProjectionPage,
 } from "./mission-execution-projection.ts";
 
 export interface MissionTimelineTurn {
@@ -137,6 +139,11 @@ export interface MissionStore {
     id: string,
     executionId: string,
   ): Promise<readonly MissionChatEntry[] | undefined>;
+  readExecutionProjectionPage(
+    id: string,
+    executionId: string,
+    input: { readonly beforeOffset?: number | undefined; readonly limit: number },
+  ): Promise<MissionExecutionProjectionPage | undefined>;
   writeExecutionProjection(
     id: string,
     executionId: string,
@@ -661,6 +668,42 @@ export function createMissionStore(options: {
           return await readMissionExecutionProjection(
             projectionPath(parsedId, executionId),
             executionId,
+          );
+        } catch (error) {
+          if (error instanceof MissionStoreError) throw error;
+          throw new MissionStoreError(
+            "projection_invalid",
+            error instanceof Error ? error.message : String(error),
+          );
+        }
+      });
+    },
+    async readExecutionProjectionPage(id, executionId, input) {
+      const parsedId = MissionIdSchema.parse(id);
+      return await withMissionLock(parsedId, async () => {
+        await recoverPendingTransactions(parsedId);
+        await readMissionUnlocked(parsedId);
+        try {
+          const current = await readMissionExecutionProjectionPage(
+            projectionPath(parsedId, executionId),
+            executionId,
+            input,
+          );
+          if (current !== undefined) return current;
+          const legacy = await readLegacyExecutionProjection(
+            legacyProjectionPath(parsedId, executionId),
+          );
+          if (legacy === undefined) return undefined;
+          await writeMissionExecutionProjection(
+            projectionPath(parsedId, executionId),
+            executionId,
+            legacy,
+          );
+          await rm(legacyProjectionPath(parsedId, executionId), { force: true });
+          return await readMissionExecutionProjectionPage(
+            projectionPath(parsedId, executionId),
+            executionId,
+            input,
           );
         } catch (error) {
           if (error instanceof MissionStoreError) throw error;

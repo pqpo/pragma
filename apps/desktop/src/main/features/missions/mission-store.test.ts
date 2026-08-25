@@ -978,6 +978,31 @@ describe("mission store", () => {
       content: "x".repeat(MISSION_EXECUTION_PROJECTION_MAX_CONTENT_LENGTH),
     });
 
+    const latestPage = await store.readExecutionProjectionPage(created.id, executionId, {
+      limit: 20,
+    });
+    expect(latestPage?.entries).toHaveLength(20);
+    expect(latestPage?.entries[0]?.id).toBe(
+      `assistant:${MISSION_EXECUTION_PROJECTION_MAX_ENTRIES - 18}`,
+    );
+    expect(latestPage?.entries.at(-1)?.id).toBe(
+      `assistant:${MISSION_EXECUTION_PROJECTION_MAX_ENTRIES + 1}`,
+    );
+    expect(latestPage?.nextBeforeOffset).toBeTypeOf("number");
+    const earlierPage = await store.readExecutionProjectionPage(created.id, executionId, {
+      beforeOffset: latestPage!.nextBeforeOffset,
+      limit: 20,
+    });
+    expect(earlierPage?.entries).toHaveLength(20);
+    expect(earlierPage?.entries.at(-1)?.id).toBe(
+      `assistant:${MISSION_EXECUTION_PROJECTION_MAX_ENTRIES - 19}`,
+    );
+    expect(
+      earlierPage?.entries.some((entry) =>
+        latestPage?.entries.some((latestEntry) => latestEntry.id === entry.id),
+      ),
+    ).toBe(false);
+
     await appendFile(projectionPath, '{"torn"', "utf8");
     await expect(store.readExecutionProjection(created.id, executionId)).resolves.toHaveLength(
       MISSION_EXECUTION_PROJECTION_MAX_ENTRIES,

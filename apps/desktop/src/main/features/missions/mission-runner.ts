@@ -1984,32 +1984,17 @@ export function createMissionRunner(options: {
 
   const getChatSnapshot = async (input: MissionChatQuery): Promise<MissionChatSnapshot> => {
     const mission = await options.missions.get(input.id);
-    const timeline = await options.missions.readTimelinePage(mission.id, input);
     const capturedLive = liveChats.get(mission.id);
-    const history = await readMissionChatHistory(
-      timeline.turns,
-      executionStore,
-      options.missions,
-      mission.id,
-      capturedLive,
-    );
     const inheritedHistory = await options.missions.readBranchHistory(mission.id);
-    if (inheritedHistory !== undefined) {
-      const visibleSequences = new Set(timeline.turns.map((turn) => turn.sequence));
-      history.entries.push(
-        ...inheritedHistory.entries.filter(
-          (entry) =>
-            entry.kind !== "user" &&
-            entry.timelineSequence !== undefined &&
-            visibleSequences.has(entry.timelineSequence),
-        ),
-      );
-      history.entries.sort((left, right) => {
-        const sequence = (left.timelineSequence ?? 0) - (right.timelineSequence ?? 0);
-        return sequence === 0 ? left.createdAt.localeCompare(right.createdAt) : sequence;
-      });
-    }
-    const entries = history.entries;
+    const history = await readMissionChatHistoryPage({
+      missionId: mission.id,
+      query: input,
+      executionStore,
+      missions: options.missions,
+      ...(capturedLive === undefined ? {} : { activeChat: capturedLive }),
+      ...(inheritedHistory === undefined ? {} : { inheritedEntries: inheritedHistory.entries }),
+    });
+    const entries = [...history.entries];
     const syncIssues = [...history.syncIssues];
 
     const executorMetadata = await getExecutorMetadataOrFallback(mission, "historical");
@@ -2022,9 +2007,6 @@ export function createMissionRunner(options: {
     // Keep using the projection captured before history was read. The execution may settle across
     // the awaits above; looking it up again would omit both durable history (which was skipped for
     // the captured live execution) and the live entries that were removed during settlement.
-    if (input.beforeSequence === undefined && capturedLive !== undefined) {
-      entries.push(...capturedLive.entries.map((entry) => ({ ...entry })));
-    }
     // Mission execution state can change while history and executor metadata are being read. Read
     // it again immediately before the revision so a snapshot cannot pair a stale `running` state
     // with the terminal invalidation revision.
@@ -2184,15 +2166,11 @@ export function createMissionRunner(options: {
       revision,
       entries: entriesWithDelivery,
       page: {
-        ...(timeline.oldestSequence === undefined
+        ...(history.oldestSequence === undefined ? {} : { oldestSequence: history.oldestSequence }),
+        ...(history.newestSequence === undefined ? {} : { newestSequence: history.newestSequence }),
+        ...(history.nextBeforeCursor === undefined
           ? {}
-          : { oldestSequence: timeline.oldestSequence }),
-        ...(timeline.newestSequence === undefined
-          ? {}
-          : { newestSequence: timeline.newestSequence }),
-        ...(timeline.nextBeforeSequence === undefined
-          ? {}
-          : { nextBeforeSequence: timeline.nextBeforeSequence }),
+          : { nextBeforeCursor: history.nextBeforeCursor }),
       },
       pendingInteractions,
       queue: {
@@ -3167,6 +3145,322 @@ async function persistMissionExecutionProjection(
     history.entries.filter((entry) => entry.kind !== "user"),
   );
   await executionStore.archive(executionId);
+}
+
+type MissionChatPageCursor =
+  | { readonly version: 1; readonly kind: "timeline"; readonly beforeSequence: number }
+  | {
+      readonly version: 1;
+      readonly kind: "projection";
+      readonly sequence: number;
+      readonly beforeOffset: number;
+    }
+  | {
+      readonly version: 1;
+      readonly kind: "entries";
+      readonly sequence: number;
+      readonly beforeEntryId: string;
+    }
+  | { readonly version: 1; readonly kind: "turn-start"; readonly sequence: number };
+
+async function readMissionChatHistoryPage(input: {
+  readonly missionId: string;
+  readonly query: MissionChatQuery;
+  readonly executionStore: ReturnType<typeof createFileExecutionStore>;
+  readonly missions: MissionStore;
+  readonly activeChat?: LiveMissionChat | undefined;
+  readonly inheritedEntries?: readonly MissionChatEntry[] | undefined;
+}): Promise<{
+  readonly entries: readonly MissionChatEntry[];
+  readonly syncIssues: readonly MissionChatSyncIssue[];
+  readonly oldestSequence?: number | undefined;
+  readonly newestSequence?: number | undefined;
+  readonly nextBeforeCursor?: string | undefined;
+}> {
+  const cursor = decodeMissionChatPageCursor(input.query.beforeCursor);
+  let beforeSequence = cursor?.kind === "timeline" ? cursor.beforeSequence : undefined;
+  const continuationSequence =
+    cursor === undefined || cursor.kind === "timeline" ? undefined : cursor.sequence;
+  if (continuationSequence !== undefined) beforeSequence = continuationSequence + 1;
+
+  const inheritedBySequence = new Map<number, MissionChatEntry[]>();
+  for (const entry of input.inheritedEntries ?? []) {
+    if (entry.kind === "user" || entry.timelineSequence === undefined) continue;
+    inheritedBySequence.set(entry.timelineSequence, [
+      ...(inheritedBySequence.get(entry.timelineSequence) ?? []),
+      entry,
+    ]);
+  }
+
+  let remaining = input.query.limit;
+  let collected: MissionChatEntry[] = [];
+  const syncIssues: MissionChatSyncIssue[] = [];
+  let nextBeforeCursor: string | undefined;
+  let firstTimelineRead = true;
+
+  while (remaining > 0) {
+    const timeline = await input.missions.readTimelinePage(input.missionId, {
+      ...(beforeSequence === undefined ? {} : { beforeSequence }),
+      limit: Math.min(100, Math.max(1, remaining)),
+    });
+    if (timeline.turns.length === 0) break;
+
+    for (let index = timeline.turns.length - 1; index >= 0 && remaining > 0; index -= 1) {
+      const turn = timeline.turns[index]!;
+      const turnCursor =
+        firstTimelineRead && continuationSequence === turn.sequence ? cursor : undefined;
+      const page = await readMissionChatTurnPage({
+        missionId: input.missionId,
+        turn,
+        limit: remaining,
+        executionStore: input.executionStore,
+        missions: input.missions,
+        ...(turnCursor === undefined || turnCursor.kind === "timeline"
+          ? {}
+          : { cursor: turnCursor }),
+        ...(input.activeChat === undefined ? {} : { activeChat: input.activeChat }),
+        inheritedEntries: inheritedBySequence.get(turn.sequence) ?? [],
+      });
+      collected = [...page.entries, ...collected];
+      syncIssues.push(...page.syncIssues);
+      remaining -= page.entries.length;
+      if (page.nextCursor !== undefined) {
+        nextBeforeCursor = encodeMissionChatPageCursor(page.nextCursor);
+        remaining = 0;
+        break;
+      }
+      if (remaining === 0) {
+        const hasEarlierTimeline = index > 0 || timeline.nextBeforeSequence !== undefined;
+        if (hasEarlierTimeline) {
+          nextBeforeCursor = encodeMissionChatPageCursor({
+            version: 1,
+            kind: "timeline",
+            beforeSequence: turn.sequence,
+          });
+        }
+        break;
+      }
+    }
+
+    firstTimelineRead = false;
+    if (remaining === 0 || timeline.nextBeforeSequence === undefined) break;
+    beforeSequence = timeline.nextBeforeSequence;
+  }
+
+  const sequences = collected.flatMap((entry) =>
+    entry.timelineSequence === undefined ? [] : [entry.timelineSequence],
+  );
+  return {
+    entries: collected,
+    syncIssues,
+    ...(sequences.length === 0 ? {} : { oldestSequence: Math.min(...sequences) }),
+    ...(sequences.length === 0 ? {} : { newestSequence: Math.max(...sequences) }),
+    ...(nextBeforeCursor === undefined ? {} : { nextBeforeCursor }),
+  };
+}
+
+async function readMissionChatTurnPage(input: {
+  readonly missionId: string;
+  readonly turn: MissionTimelineTurn;
+  readonly limit: number;
+  readonly executionStore: ReturnType<typeof createFileExecutionStore>;
+  readonly missions: MissionStore;
+  readonly cursor?: Exclude<MissionChatPageCursor, { readonly kind: "timeline" }> | undefined;
+  readonly activeChat?: LiveMissionChat | undefined;
+  readonly inheritedEntries: readonly MissionChatEntry[];
+}): Promise<{
+  readonly entries: readonly MissionChatEntry[];
+  readonly syncIssues: readonly MissionChatSyncIssue[];
+  readonly nextCursor?: MissionChatPageCursor | undefined;
+}> {
+  const userEntry: MissionChatEntry = {
+    id: input.turn.message.id,
+    timelineSequence: input.turn.sequence,
+    kind: "user",
+    content: input.turn.message.content,
+    ...(input.turn.message.attachments === undefined
+      ? {}
+      : { attachments: input.turn.message.attachments }),
+    createdAt: input.turn.message.createdAt,
+    ...(input.turn.executionId === undefined ? {} : { executionId: input.turn.executionId }),
+  };
+  if (
+    input.cursor?.kind === "turn-start" ||
+    (input.turn.executionId === undefined && input.inheritedEntries.length === 0)
+  ) {
+    return { entries: [userEntry], syncIssues: [] };
+  }
+
+  if (
+    input.turn.executionId !== undefined &&
+    input.inheritedEntries.length === 0 &&
+    input.turn.executionId !== input.activeChat?.executionId &&
+    (input.cursor === undefined || input.cursor.kind === "projection")
+  ) {
+    const projection = await input.missions.readExecutionProjectionPage(
+      input.missionId,
+      input.turn.executionId,
+      {
+        ...(input.cursor?.kind === "projection" ? { beforeOffset: input.cursor.beforeOffset } : {}),
+        limit: input.limit,
+      },
+    );
+    const executionState =
+      projection === undefined ? undefined : await input.executionStore.get(input.turn.executionId);
+    const projectionIsCurrent =
+      projection !== undefined &&
+      (executionState === undefined || executionState.updatedAt <= projection.createdAt);
+    if (projectionIsCurrent) {
+      const projectedEntries = projection.entries.map((entry) => ({
+        ...entry,
+        timelineSequence: entry.timelineSequence ?? input.turn.sequence,
+      }));
+      if (projection.nextBeforeOffset !== undefined) {
+        return {
+          entries: projectedEntries,
+          syncIssues: [],
+          nextCursor: {
+            version: 1,
+            kind: "projection",
+            sequence: input.turn.sequence,
+            beforeOffset: projection.nextBeforeOffset,
+          },
+        };
+      }
+      if (projectedEntries.length === input.limit) {
+        return {
+          entries: projectedEntries,
+          syncIssues: [],
+          nextCursor: { version: 1, kind: "turn-start", sequence: input.turn.sequence },
+        };
+      }
+      return { entries: [userEntry, ...projectedEntries], syncIssues: [] };
+    }
+    if (projection !== undefined && input.cursor?.kind === "projection") {
+      throw new Error("Mission chat page cursor is no longer available.");
+    }
+  }
+
+  const history = await readMissionChatHistory(
+    [input.turn],
+    input.executionStore,
+    input.missions,
+    input.missionId,
+    input.activeChat,
+  );
+  const activeEntries =
+    input.activeChat !== undefined && input.turn.executionId === input.activeChat.executionId
+      ? input.activeChat.entries
+      : [];
+  const combined = uniqueMissionChatEntriesById([
+    ...history.entries,
+    ...input.inheritedEntries.map((entry) => ({
+      ...entry,
+      timelineSequence: entry.timelineSequence ?? input.turn.sequence,
+    })),
+    ...activeEntries.map((entry) => ({
+      ...entry,
+      timelineSequence: entry.timelineSequence ?? input.turn.sequence,
+    })),
+  ]).toSorted((left, right) => left.createdAt.localeCompare(right.createdAt));
+  const beforeEntryId = input.cursor?.kind === "entries" ? input.cursor.beforeEntryId : undefined;
+  const requestedEnd =
+    beforeEntryId === undefined
+      ? combined.length
+      : combined.findIndex((entry) => entry.id === beforeEntryId);
+  if (requestedEnd < 0) throw new Error("Mission chat page cursor is no longer available.");
+  const start = Math.max(0, requestedEnd - input.limit);
+  return {
+    entries: combined.slice(start, requestedEnd),
+    syncIssues: history.syncIssues,
+    ...(start === 0
+      ? {}
+      : {
+          nextCursor: {
+            version: 1 as const,
+            kind: "entries" as const,
+            sequence: input.turn.sequence,
+            beforeEntryId: combined[start]!.id,
+          },
+        }),
+  };
+}
+
+function uniqueMissionChatEntriesById(entries: readonly MissionChatEntry[]): MissionChatEntry[] {
+  const byId = new Map<string, MissionChatEntry>();
+  for (const entry of entries) byId.set(entry.id, entry);
+  return [...byId.values()];
+}
+
+function encodeMissionChatPageCursor(cursor: MissionChatPageCursor): string {
+  return Buffer.from(JSON.stringify(cursor), "utf8").toString("base64url");
+}
+
+function decodeMissionChatPageCursor(value: string | undefined): MissionChatPageCursor | undefined {
+  if (value === undefined) return undefined;
+  try {
+    const parsed = JSON.parse(Buffer.from(value, "base64url").toString("utf8")) as unknown;
+    if (parsed === null || typeof parsed !== "object" || Array.isArray(parsed)) {
+      throw new Error("invalid cursor shape");
+    }
+    const cursor = parsed as Record<string, unknown>;
+    if (cursor["version"] !== 1 || typeof cursor["kind"] !== "string") {
+      throw new Error("invalid cursor version");
+    }
+    if (
+      cursor["kind"] === "timeline" &&
+      Number.isInteger(cursor["beforeSequence"]) &&
+      (cursor["beforeSequence"] as number) > 0
+    ) {
+      return {
+        version: 1,
+        kind: "timeline",
+        beforeSequence: cursor["beforeSequence"] as number,
+      };
+    }
+    if (
+      cursor["kind"] === "projection" &&
+      Number.isInteger(cursor["sequence"]) &&
+      (cursor["sequence"] as number) > 0 &&
+      Number.isInteger(cursor["beforeOffset"]) &&
+      (cursor["beforeOffset"] as number) >= 0
+    ) {
+      return {
+        version: 1,
+        kind: "projection",
+        sequence: cursor["sequence"] as number,
+        beforeOffset: cursor["beforeOffset"] as number,
+      };
+    }
+    if (
+      cursor["kind"] === "entries" &&
+      Number.isInteger(cursor["sequence"]) &&
+      (cursor["sequence"] as number) > 0 &&
+      typeof cursor["beforeEntryId"] === "string" &&
+      cursor["beforeEntryId"] !== ""
+    ) {
+      return {
+        version: 1,
+        kind: "entries",
+        sequence: cursor["sequence"] as number,
+        beforeEntryId: cursor["beforeEntryId"],
+      };
+    }
+    if (
+      cursor["kind"] === "turn-start" &&
+      Number.isInteger(cursor["sequence"]) &&
+      (cursor["sequence"] as number) > 0
+    ) {
+      return {
+        version: 1,
+        kind: "turn-start",
+        sequence: cursor["sequence"] as number,
+      };
+    }
+    throw new Error("invalid cursor fields");
+  } catch {
+    throw new Error("Mission chat page cursor is invalid.");
+  }
 }
 
 async function readMissionChatHistory(
