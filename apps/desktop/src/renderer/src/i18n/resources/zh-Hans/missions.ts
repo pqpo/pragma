@@ -19,6 +19,7 @@ export const missions = {
   start: "开始任务",
   search: "搜索任务",
   loading: "正在加载任务…",
+  loadingChat: "正在加载对话…",
   empty: "暂无任务",
   workspace: "工作区",
   executor: "执行者",

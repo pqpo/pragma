@@ -409,6 +409,63 @@
   margin-top: 12px;
 }
 
+.mission-chat-initial-loading {
+  width: 100%;
+  user-select: none;
+}
+
+.mission-chat-initial-loading-content {
+  display: grid;
+  gap: 28px;
+  width: 100%;
+}
+
+.mission-chat-skeleton-message {
+  display: flex;
+  width: min(72%, 620px);
+  align-items: flex-start;
+  gap: 12px;
+}
+
+.mission-chat-skeleton-message.is-user {
+  width: min(52%, 440px);
+  margin-left: auto;
+}
+
+.mission-chat-skeleton-message.is-wide {
+  width: min(82%, 700px);
+}
+
+.mission-chat-skeleton-avatar {
+  width: 28px;
+  height: 28px;
+  flex: 0 0 28px;
+  border-radius: 50%;
+}
+
+.mission-chat-skeleton-copy {
+  display: grid;
+  width: 100%;
+  gap: 10px;
+  padding-top: 5px;
+}
+
+.mission-chat-skeleton-copy > span {
+  width: 100%;
+  height: 12px;
+  border-radius: 6px;
+}
+
+.mission-chat-skeleton-copy > span.is-heading {
+  width: 32%;
+  height: 10px;
+  margin-bottom: 3px;
+}
+
+.mission-chat-skeleton-copy > span.is-short {
+  width: 64%;
+}
+
 .mission-chat-footer {
   position: relative;
   z-index: 2;

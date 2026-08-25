@@ -19,6 +19,7 @@ export const missions = {
   start: "Start a mission",
   search: "Search missions",
   loading: "Loading missions…",
+  loadingChat: "Loading conversation…",
   empty: "No missions",
   workspace: "Workspace",
   executor: "Executor",

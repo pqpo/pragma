@@ -25,6 +25,7 @@ import {
   mergeLatestChatPage,
   MissionContextOperationEntry,
   MissionChatEntryView,
+  MissionChatSkeleton,
   MISSION_CHAT_PAGE_SIZE,
   MISSION_WORK_CONVERSATION_PAGE_SIZE,
   MISSION_WORK_RECORD_PAGE_SIZE,
@@ -624,6 +625,45 @@ describe("MissionsPage", () => {
 });
 
 describe("MissionDetailFragment", () => {
+  it("shows a shimmering chat skeleton only while the initial conversation snapshot is missing", () => {
+    const mission = missionFixture("expert");
+    const loadingHtml = renderToStaticMarkup(<MissionDetailFragment mission={mission} />);
+    const cachedHtml = renderToStaticMarkup(
+      <MissionDetailFragment
+        mission={mission}
+        chatCache={
+          new Map([
+            [
+              mission.id,
+              {
+                missionId: mission.id,
+                revision: 1,
+                entries: [],
+                page: {},
+                pendingInteractions: [],
+              } satisfies MissionChatSnapshot,
+            ],
+          ])
+        }
+      />,
+    );
+
+    expect(loadingHtml).toContain("mission-chat-initial-loading");
+    expect(loadingHtml).toContain('role="status"');
+    expect(loadingHtml).toContain('aria-label="Loading conversation…"');
+    expect(loadingHtml).toContain("mission-skeleton-block");
+    expect(cachedHtml).not.toContain("mission-chat-initial-loading");
+  });
+
+  it("renders the chat skeleton with an accessible loading status", () => {
+    const html = renderToStaticMarkup(<MissionChatSkeleton label="Loading conversation" />);
+
+    expect(html).toContain('role="status"');
+    expect(html).toContain('aria-live="polite"');
+    expect(html).toContain('aria-label="Loading conversation"');
+    expect(html.match(/mission-skeleton-block/g)).toHaveLength(11);
+  });
+
   it("shows the number of Mission Knowledge Stores without exposing their ids", () => {
     const contextStoreId = "10000000-0000-4000-8000-000000000001";
     const html = renderToStaticMarkup(

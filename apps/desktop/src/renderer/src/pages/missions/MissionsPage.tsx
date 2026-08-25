@@ -822,6 +822,43 @@ export function MissionDetailSkeleton(props: { readonly label: string }) {
   );
 }
 
+export function MissionChatSkeleton(props: { readonly label: string }) {
+  return (
+    <div
+      className="mission-chat-initial-loading"
+      role="status"
+      aria-label={props.label}
+      aria-live="polite"
+    >
+      <div className="mission-chat-initial-loading-content" aria-hidden="true">
+        <div className="mission-chat-skeleton-message is-assistant">
+          <span className="mission-skeleton-block mission-chat-skeleton-avatar" />
+          <div className="mission-chat-skeleton-copy">
+            <span className="mission-skeleton-block is-heading" />
+            <span className="mission-skeleton-block" />
+            <span className="mission-skeleton-block is-short" />
+          </div>
+        </div>
+        <div className="mission-chat-skeleton-message is-user">
+          <div className="mission-chat-skeleton-copy">
+            <span className="mission-skeleton-block" />
+            <span className="mission-skeleton-block is-short" />
+          </div>
+        </div>
+        <div className="mission-chat-skeleton-message is-assistant is-wide">
+          <span className="mission-skeleton-block mission-chat-skeleton-avatar" />
+          <div className="mission-chat-skeleton-copy">
+            <span className="mission-skeleton-block is-heading" />
+            <span className="mission-skeleton-block" />
+            <span className="mission-skeleton-block" />
+            <span className="mission-skeleton-block is-short" />
+          </div>
+        </div>
+      </div>
+    </div>
+  );
+}
+
 function MissionRail(props: {
   readonly missions: readonly MissionSummary[];
   readonly source: MissionListSource;
@@ -1434,6 +1471,9 @@ export function MissionDetailFragment(props: {
   const [chat, setChat] = useState<MissionChatSnapshot | null>(
     () => props.chatCache?.get(props.mission.id) ?? null,
   );
+  const [chatInitialLoading, setChatInitialLoading] = useState(
+    () => props.chatCache?.has(props.mission.id) !== true,
+  );
   const [workRecords, setWorkRecords] = useState<readonly MissionWorkRecord[]>([]);
   const [workLoading, setWorkLoading] = useState(false);
   const [workConversation, setWorkConversation] = useState<MissionWorkConversationSnapshot | null>(
@@ -1792,13 +1832,18 @@ export function MissionDetailFragment(props: {
 
   useEffect(() => {
     const api = desktopApi();
-    updateChat(props.chatCache?.get(props.mission.id) ?? null);
+    const cachedChat = props.chatCache?.get(props.mission.id) ?? null;
+    updateChat(cachedChat);
+    setChatInitialLoading(cachedChat === null);
     setHistoryError(null);
     setChatSyncError(null);
     setHumanQuestionIndex(0);
     followLatestRef.current = true;
     setShowJumpToLatest(false);
-    if (api === undefined) return;
+    if (api === undefined) {
+      setChatInitialLoading(false);
+      return;
+    }
     let cancelled = false;
     let refreshing = false;
     let refreshQueued = false;
@@ -1896,6 +1941,7 @@ export function MissionDetailFragment(props: {
           setChatSyncError(errorMessage(loadError));
         }
       } finally {
+        if (!cancelled) setChatInitialLoading(false);
         refreshing = false;
         if (refreshQueued && !cancelled) {
           refreshQueued = false;
@@ -2858,7 +2904,10 @@ export function MissionDetailFragment(props: {
               }}
             >
               <div className="mission-chat-list">
-                {chat?.page.nextBeforeCursor !== undefined ? (
+                {chatInitialLoading && !showThinkingPlaceholder ? (
+                  <MissionChatSkeleton label={t("loadingChat", { ns: "missions" })} />
+                ) : null}
+                {!chatInitialLoading && chat?.page.nextBeforeCursor !== undefined ? (
                   <button
                     className="mission-load-earlier"
                     type="button"
