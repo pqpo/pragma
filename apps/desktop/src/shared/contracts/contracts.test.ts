@@ -1059,9 +1059,10 @@ describe("mission contracts", () => {
     ).toBe(true);
   });
 
-  it("defaults Mission chat pages to 50 turns and caps them at 100", () => {
+  it("defaults Mission chat pages to 50 entries and caps them at 200", () => {
     const id = "00000000-0000-4000-8000-000000000000";
     expect(GetMissionChatSchema.parse({ id }).limit).toBe(50);
-    expect(GetMissionChatSchema.safeParse({ id, limit: 101 }).success).toBe(false);
+    expect(GetMissionChatSchema.parse({ id, limit: 200 }).limit).toBe(200);
+    expect(GetMissionChatSchema.safeParse({ id, limit: 201 }).success).toBe(false);
   });
 });

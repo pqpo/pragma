@@ -1338,6 +1338,20 @@ export function hidePreparingQueuedChatEntries(
   });
 }
 
+export function hideInterruptedExecutionFallbackEntries(
+  entries: readonly MissionChatEntry[],
+): MissionChatEntry[] {
+  return entries.filter(
+    (entry) =>
+      !(
+        entry.kind === "assistant" &&
+        entry.executionId !== undefined &&
+        entry.id === `result:${entry.executionId}` &&
+        entry.content === "Execution interrupted."
+      ),
+  );
+}
+
 export function missionTurnFinalReplyIds(
   entries: readonly MissionChatEntry[],
 ): ReadonlySet<string> {
@@ -1443,7 +1457,7 @@ export type MissionConversationBlock =
 type MissionMemoryView = "store" | "activity";
 
 export const DEFAULT_MISSION_MEMORY_VIEW: MissionMemoryView = "activity";
-export const MISSION_CHAT_PAGE_SIZE = 20;
+export const MISSION_CHAT_PAGE_SIZE = 200;
 export const MISSION_WORK_CONVERSATION_PAGE_SIZE = 50;
 export const MISSION_WORK_RECORD_PAGE_SIZE = 20;
 
@@ -2544,7 +2558,10 @@ export function MissionDetailFragment(props: {
     [pendingQueuedMessages],
   );
   const displayEntries = useMemo(
-    () => hidePreparingQueuedChatEntries(chat?.entries ?? [], pendingQueuedRequestIds),
+    () =>
+      hideInterruptedExecutionFallbackEntries(
+        hidePreparingQueuedChatEntries(chat?.entries ?? [], pendingQueuedRequestIds),
+      ),
     [chat?.entries, pendingQueuedRequestIds],
   );
   const durableEntryIds = useMemo(

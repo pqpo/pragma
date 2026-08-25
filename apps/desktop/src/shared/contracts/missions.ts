@@ -486,7 +486,7 @@ export const MissionQueuePromptActionSchema = z.object({
 export const GetMissionChatSchema = z.object({
   id: MissionIdSchema,
   beforeCursor: z.string().min(1).max(2_048).optional(),
-  limit: z.number().int().min(1).max(100).default(50),
+  limit: z.number().int().min(1).max(200).default(50),
 });
 export const GetMissionWorkConversationSchema = z.object({
   id: MissionIdSchema,
