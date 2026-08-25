@@ -3052,7 +3052,7 @@ export function MissionDetailFragment(props: {
                   }}
                 />
               ) : null}
-              {missionFooterTip(props.mission, chat) ? (
+              {interactions[0] !== undefined && missionFooterTip(props.mission, chat) ? (
                 <small className="mission-chat-footer-tip">
                   {missionFooterTip(props.mission, chat)}
                 </small>
@@ -3153,10 +3153,17 @@ export function MissionDetailFragment(props: {
                 </>
               ) : (
                 <>
-                  <MissionUsageHint
-                    missionId={props.mission.id}
-                    executionActive={executionActive}
-                  />
+                  <div className="mission-chat-composer-meta">
+                    {missionFooterTip(props.mission, chat) ? (
+                      <small className="mission-chat-footer-tip">
+                        {missionFooterTip(props.mission, chat)}
+                      </small>
+                    ) : null}
+                    <MissionUsageHint
+                      missionId={props.mission.id}
+                      executionActive={executionActive}
+                    />
+                  </div>
                   <div className="mission-chat-composer-shell">
                     {(chat?.queue?.items.length ?? 0) + visiblePendingQueuedMessages.length > 0 ? (
                       <div

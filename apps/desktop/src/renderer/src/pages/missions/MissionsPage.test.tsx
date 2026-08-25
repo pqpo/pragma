@@ -2154,6 +2154,9 @@ describe("Mission Expert output labels", () => {
     );
 
     expect(html.match(/aria-label="Create branch"/g)).toHaveLength(1);
+    expect(html).toContain(
+      '<div class="mission-chat-composer-meta"><small class="mission-chat-footer-tip">Execution interrupted. You can continue the conversation.</small></div><div class="mission-chat-composer-shell">',
+    );
     expect(html.indexOf("Continue from this result.")).toBeLessThan(
       html.indexOf('aria-label="Create branch"'),
     );

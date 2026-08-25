@@ -485,6 +485,28 @@
   white-space: nowrap;
 }
 
+.mission-chat-composer-meta {
+  display: flex;
+  min-width: 0;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+}
+
+.mission-chat-composer-meta:empty {
+  display: none;
+}
+
+.mission-chat-composer-meta > .mission-chat-footer-tip {
+  min-width: 0;
+  flex: 1 1 auto;
+}
+
+.mission-chat-composer-meta > .mission-usage-hint {
+  flex: 0 0 auto;
+  white-space: nowrap;
+}
+
 .mission-chat-activity {
   width: 100%;
   max-width: none;
