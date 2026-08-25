@@ -39,6 +39,7 @@ import {
   MissionAttachmentsManifestSchema,
   MissionChatEntrySchema,
   MissionBranchHistorySchema,
+  latestMissionBranchableReply,
   MissionUserMessageSchema,
   type Mission,
   type MissionExecutor,
@@ -84,7 +85,7 @@ export interface MissionStore {
   createBranch(input: {
     readonly sourceMissionId: string;
     readonly expectedSourceUpdatedAt: string;
-    readonly expectedExecutionId: string;
+    readonly expectedExecutionId: string | null;
     readonly expectedMessageId: string;
     readonly project: { readonly id: string; readonly revision: number };
     readonly executor: MissionExecutor;
@@ -864,29 +865,31 @@ export function createMissionStore(options: {
         }
         if (
           source.updatedAt !== input.expectedSourceUpdatedAt ||
-          source.execution?.id !== input.expectedExecutionId ||
-          source.execution.status === "queued" ||
-          source.execution.status === "running" ||
-          source.execution.status === "waiting"
+          (source.execution?.id ?? null) !== input.expectedExecutionId ||
+          (source.execution !== undefined &&
+            ["queued", "running", "waiting"].includes(source.execution.status))
         ) {
           throw new MissionStoreError(
             "mission_active",
             "The source Mission changed before the branch was created. Refresh and try again.",
           );
         }
-        const finalAssistant = [...input.history]
-          .reverse()
-          .find((entry) => entry.kind === "assistant" && entry.streaming === false);
-        if (
-          finalAssistant?.id !== input.expectedMessageId ||
-          finalAssistant.executionId !== input.expectedExecutionId
-        ) {
+        const finalAssistant = latestMissionBranchableReply(input.history);
+        if (finalAssistant?.id !== input.expectedMessageId) {
           throw new MissionStoreError(
             "config_invalid",
             "The selected reply is no longer the latest completed Mission reply.",
           );
         }
-        const sourceUsers = input.history.filter(
+        const cutoffIndex = input.history.findIndex((entry) => entry.id === finalAssistant.id);
+        if (cutoffIndex < 0) {
+          throw new MissionStoreError(
+            "config_invalid",
+            "The selected reply is missing from the Mission history.",
+          );
+        }
+        const historyThroughReply = input.history.slice(0, cutoffIndex + 1);
+        const sourceUsers = historyThroughReply.filter(
           (entry): entry is Extract<MissionChatEntry, { kind: "user" }> =>
             entry.kind === "user" &&
             entry.timelineSequence !== undefined &&
@@ -905,7 +908,9 @@ export function createMissionStore(options: {
         const branchSource = {
           sourceMissionId,
           sourceProjectRevision: source.project.revision,
-          cutoffExecutionId: input.expectedExecutionId,
+          ...(finalAssistant.executionId === undefined
+            ? {}
+            : { cutoffExecutionId: finalAssistant.executionId }),
           cutoffMessageId: input.expectedMessageId,
           createdAt: timestamp,
         };
@@ -967,7 +972,7 @@ export function createMissionStore(options: {
               createdAt: entry.createdAt,
             }),
           );
-          const inheritedEntries = input.history.map((entry) =>
+          const inheritedEntries = historyThroughReply.map((entry) =>
             inheritedBranchEntry(sourceMissionId, entry, attachmentsById, branchTimelineSequences),
           );
           const branchHistory = MissionBranchHistorySchema.parse({

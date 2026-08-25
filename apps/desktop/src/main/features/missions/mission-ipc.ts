@@ -27,6 +27,7 @@ import {
   UpdateMissionContextStoresSchema,
   UpdateHomeExecutorPreferenceSchema,
   isUserFacingMissionOrigin,
+  latestMissionBranchableReply,
   type Mission,
   type MissionSummary,
   type PickMissionAttachmentsResult,
@@ -269,22 +270,14 @@ export function installMissionHandlers(options: {
       }
       const newest = await options.runner.getChat({ id: source.id, limit: 100 });
       if (
-        newest.execution?.id !== parsed.expectedExecutionId ||
-        !["succeeded", "failed", "cancelled"].includes(newest.execution.status) ||
+        (newest.execution?.id ?? null) !== parsed.expectedExecutionId ||
+        (newest.execution !== undefined &&
+          !["succeeded", "failed", "cancelled"].includes(newest.execution.status)) ||
         (newest.queue?.state ?? "idle") !== "idle" ||
         (newest.queue?.pendingCount ?? 0) !== 0 ||
         newest.pendingInteractions.length !== 0
       ) {
         throw new Error("Wait for the source Mission to become idle before creating a branch.");
-      }
-      const latestReply = [...newest.entries]
-        .reverse()
-        .find((entry) => entry.kind === "assistant" && entry.streaming === false);
-      if (
-        latestReply?.id !== parsed.expectedMessageId ||
-        latestReply.executionId !== parsed.expectedExecutionId
-      ) {
-        throw new Error("The selected reply is no longer the latest completed Mission reply.");
       }
       if (newest.syncIssues !== undefined && newest.syncIssues.length > 0) {
         throw new Error("Mission history is temporarily incomplete. Refresh it before branching.");
@@ -312,11 +305,19 @@ export function installMissionHandlers(options: {
             entry.kind !== "user" ||
             (entry.delivery?.removed !== true && entry.delivery?.status !== "queued"),
         );
+      const latestReply = latestMissionBranchableReply(history);
+      if (latestReply?.id !== parsed.expectedMessageId) {
+        throw new Error("The selected reply is no longer the latest completed Mission reply.");
+      }
+      const cutoffIndex = history.findIndex((entry) => entry.id === latestReply.id);
+      if (cutoffIndex < 0) {
+        throw new Error("The selected reply is missing from the Mission history.");
+      }
       const mission = await options.creator.createBranch({
         source,
         expectedExecutionId: parsed.expectedExecutionId,
         expectedMessageId: parsed.expectedMessageId,
-        history,
+        history: history.slice(0, cutoffIndex + 1),
       });
       await publishMission(mission);
       return mission;

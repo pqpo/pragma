@@ -2087,6 +2087,89 @@ describe("Mission Expert output labels", () => {
     expect(withActions).not.toContain(">Create branch</button>");
   });
 
+  it("offers branching from the latest useful reply after a later execution is interrupted", () => {
+    const mission = missionFixture("expert");
+    const currentExecutionId = "00000000-0000-4000-8000-000000000012";
+    mission.execution = {
+      id: currentExecutionId,
+      inputMessageId: "00000000-0000-4000-8000-000000000013",
+      sessionId: "00000000-0000-4000-8000-000000000014",
+      status: "cancelled",
+      startedAt: "2026-07-11T00:02:00.000Z",
+      finishedAt: "2026-07-11T00:03:00.000Z",
+    };
+    const chat: MissionChatSnapshot = {
+      missionId: mission.id,
+      revision: 1,
+      entries: [
+        {
+          id: "assistant:useful",
+          kind: "assistant",
+          content: "Continue from this result.",
+          executionId: "00000000-0000-4000-8000-000000000011",
+          timelineSequence: 1,
+          streaming: false,
+          createdAt,
+        },
+        {
+          id: `result:${currentExecutionId}`,
+          kind: "assistant",
+          content: "Execution interrupted.",
+          executionId: currentExecutionId,
+          timelineSequence: 2,
+          streaming: false,
+          createdAt: "2026-07-11T00:03:00.000Z",
+        },
+      ],
+      page: { oldestSequence: 1, newestSequence: 2 },
+      pendingInteractions: [],
+      queue: { state: "idle", pendingCount: 0, supportsSteer: false, items: [] },
+      execution: { id: currentExecutionId, status: "cancelled", interruptible: false },
+    };
+
+    const html = renderToStaticMarkup(
+      <MissionDetailFragment mission={mission} chatCache={new Map([[mission.id, chat]])} />,
+    );
+
+    expect(html.match(/aria-label="Create branch"/g)).toHaveLength(1);
+    expect(html.indexOf("Continue from this result.")).toBeLessThan(
+      html.indexOf('aria-label="Create branch"'),
+    );
+  });
+
+  it("offers branching again from an inherited reply before the branch has an execution", () => {
+    const mission = missionFixture("expert");
+    mission.branch = {
+      sourceMissionId: "00000000-0000-4000-8000-000000000020",
+      sourceProjectRevision: 1,
+      cutoffMessageId: "assistant:source",
+      createdAt,
+    };
+    const chat: MissionChatSnapshot = {
+      missionId: mission.id,
+      revision: 1,
+      entries: [
+        {
+          id: "branch:source:assistant:source",
+          kind: "assistant",
+          content: "Inherited result.",
+          timelineSequence: 1,
+          streaming: false,
+          createdAt,
+        },
+      ],
+      page: { oldestSequence: 1, newestSequence: 1 },
+      pendingInteractions: [],
+      queue: { state: "idle", pendingCount: 0, supportsSteer: false, items: [] },
+    };
+
+    const html = renderToStaticMarkup(
+      <MissionDetailFragment mission={mission} chatCache={new Map([[mission.id, chat]])} />,
+    );
+
+    expect(html).toContain('aria-label="Create branch"');
+  });
+
   it("keeps tool failure diagnostics expandable without announcing the raw error", () => {
     const html = renderToStaticMarkup(
       <MissionToolCallBlock

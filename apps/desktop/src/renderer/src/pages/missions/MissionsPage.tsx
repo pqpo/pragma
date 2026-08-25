@@ -73,6 +73,7 @@ import {
   type PragmaDesktopAPI,
   missionAttachmentOriginalUrl,
   missionAttachmentPreviewUrl,
+  latestMissionBranchableReply,
 } from "../../../../shared/contracts/index.ts";
 import { errorMessage } from "../../lib/errors.ts";
 import { localizedBundleMutationError } from "../../lib/bundle-errors.ts";
@@ -2534,7 +2535,10 @@ export function MissionDetailFragment(props: {
     [conversationEntries],
   );
   const finalReplyIds = useMemo(() => missionTurnFinalReplyIds(displayEntries), [displayEntries]);
-  const latestFinalReplyId = [...finalReplyIds].at(-1);
+  const latestBranchableReplyId = useMemo(
+    () => latestMissionBranchableReply(displayEntries)?.id,
+    [displayEntries],
+  );
   const selectedWorkRecord = useMemo(
     () => workRecords.find((record) => record.recordId === selectedWorkKey),
     [selectedWorkKey, workRecords],
@@ -2969,9 +2973,7 @@ export function MissionDetailFragment(props: {
                       showExecutorLabel
                       showCopy={finalReplyIds.has(block.item.entry.id)}
                       showBranch={
-                        block.item.entry.id === latestFinalReplyId &&
-                        block.item.entry.executionId !== undefined &&
-                        block.item.entry.executionId === chat?.execution?.id &&
+                        block.item.entry.id === latestBranchableReplyId &&
                         props.mission.executor.kind !== "flow" &&
                         !executionActive &&
                         !clientOperationBusy &&
@@ -3535,12 +3537,12 @@ export function MissionDetailFragment(props: {
           onCancel={() => setBranchCandidate(undefined)}
           onConfirm={() => {
             const api = desktopApi();
-            if (api === undefined || branchCandidate.executionId === undefined) return;
+            if (api === undefined) return;
             setBranching(true);
             void api
               .createMissionBranch({
                 sourceMissionId: props.mission.id,
-                expectedExecutionId: branchCandidate.executionId,
+                expectedExecutionId: chat?.execution?.id ?? null,
                 expectedMessageId: branchCandidate.id,
               })
               .then((mission) => {

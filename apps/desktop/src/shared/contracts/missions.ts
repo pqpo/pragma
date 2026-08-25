@@ -282,7 +282,7 @@ export const MissionV8Schema = MissionBaseSchema.extend({
 export const MissionBranchSourceSchema = z.object({
   sourceMissionId: MissionIdSchema,
   sourceProjectRevision: z.number().int().positive(),
-  cutoffExecutionId: z.string().uuid(),
+  cutoffExecutionId: z.string().uuid().optional(),
   cutoffMessageId: z.string().min(1),
   createdAt: z.string().datetime(),
 });
@@ -476,7 +476,7 @@ export function missionExecutorSnapshot(resource: PragmaInvocableResource): Miss
 export const MissionActionSchema = z.object({ id: MissionIdSchema });
 export const CreateMissionBranchSchema = z.object({
   sourceMissionId: MissionIdSchema,
-  expectedExecutionId: z.string().uuid(),
+  expectedExecutionId: z.string().uuid().nullable(),
   expectedMessageId: z.string().min(1),
 });
 export const MissionQueuePromptActionSchema = z.object({
@@ -579,6 +579,27 @@ export const MissionChatEntrySchema = z.discriminatedUnion("kind", [
     error: z.string().max(10_000).optional(),
   }),
 ]);
+
+type MissionChatEntryValue = z.infer<typeof MissionChatEntrySchema>;
+type MissionAssistantEntryValue = Extract<MissionChatEntryValue, { readonly kind: "assistant" }>;
+
+const SYNTHETIC_MISSION_REPLY_ID = /(?:^|:)(?:missing|result):[^:]+$/;
+
+export function isMissionBranchableReply(
+  entry: MissionChatEntryValue,
+): entry is MissionAssistantEntryValue {
+  return (
+    entry.kind === "assistant" &&
+    entry.streaming === false &&
+    !SYNTHETIC_MISSION_REPLY_ID.test(entry.id)
+  );
+}
+
+export function latestMissionBranchableReply(
+  entries: readonly MissionChatEntryValue[],
+): MissionAssistantEntryValue | undefined {
+  return [...entries].reverse().find(isMissionBranchableReply);
+}
 
 export const MissionBranchHistorySchema = z.object({
   schemaVersion: z.literal("pragma.mission-branch-history/v1"),

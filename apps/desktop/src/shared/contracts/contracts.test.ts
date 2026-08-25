@@ -15,6 +15,7 @@ import {
   DeleteContextStoreSchema,
   GetMissionChatSchema,
   HomeMissionExecutorCatalogSchema,
+  latestMissionBranchableReply,
   MissionChatSnapshotSchema,
   MissionChatUpdateSchema,
   MissionCreationDefaultsSchema,
@@ -825,6 +826,33 @@ describe("mission contracts", () => {
     expect(
       CreateMissionBranchSchema.safeParse({ ...input, expectedExecutionId: "stale" }).success,
     ).toBe(false);
+    expect(CreateMissionBranchSchema.parse({ ...input, expectedExecutionId: null })).toEqual({
+      ...input,
+      expectedExecutionId: null,
+    });
+  });
+
+  it("selects inherited replies and skips synthetic terminal results when branching", () => {
+    const createdAt = "2026-08-25T00:00:00.000Z";
+    const entries = [
+      {
+        id: "branch:source:assistant:final",
+        kind: "assistant" as const,
+        content: "Continue from here.",
+        streaming: false,
+        createdAt,
+      },
+      {
+        id: "result:00000000-0000-4000-8000-000000000002",
+        kind: "assistant" as const,
+        content: "Execution interrupted.",
+        streaming: false,
+        executionId: "00000000-0000-4000-8000-000000000002",
+        createdAt: "2026-08-25T00:01:00.000Z",
+      },
+    ];
+
+    expect(latestMissionBranchableReply(entries)?.id).toBe("branch:source:assistant:final");
   });
 
   it("accepts attachments on follow-up messages and validates pasted images", () => {

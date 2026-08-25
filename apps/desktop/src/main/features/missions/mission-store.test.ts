@@ -387,6 +387,102 @@ describe("mission store", () => {
     );
     expect(inheritedAgentActivity).not.toHaveProperty("senderSessionId");
     expect(inheritedAgentActivity).toMatchObject({ targetSessionIds: [] });
+
+    const branchUsers = branchTimeline.turns.map((turn) => ({
+      ...turn.message,
+      kind: "user" as const,
+      timelineSequence: turn.sequence,
+    }));
+    const nestedSourceHistory = [
+      ...branchUsers,
+      ...(branchHistory?.entries.filter((entry) => entry.kind !== "user") ?? []),
+    ].toSorted((left, right) => {
+      const sequence = (left.timelineSequence ?? 0) - (right.timelineSequence ?? 0);
+      return sequence === 0 ? left.createdAt.localeCompare(right.createdAt) : sequence;
+    });
+    const nestedReplyId = `branch:${source.id}:${finalReply.id}`;
+    const nestedBranch = await store.createBranch({
+      sourceMissionId: branch.id,
+      expectedSourceUpdatedAt: branch.updatedAt,
+      expectedExecutionId: null,
+      expectedMessageId: nestedReplyId,
+      project: branch.project,
+      executor: branch.executor,
+      history: nestedSourceHistory,
+    });
+    expect(nestedBranch.branch).toMatchObject({
+      sourceMissionId: branch.id,
+      cutoffMessageId: nestedReplyId,
+    });
+    expect(nestedBranch.branch).not.toHaveProperty("cutoffExecutionId");
+
+    const interruptedUserId = "00000000-0000-4000-8000-000000000034";
+    await store.appendUserMessage(source.id, {
+      id: interruptedUserId,
+      content: "Start work that will be interrupted",
+      createdAt: "2026-08-20T00:04:00.000Z",
+    });
+    const interruptedExecutionId = "00000000-0000-4000-8000-000000000035";
+    await store.appendExecutionReference({
+      missionId: source.id,
+      inputMessageId: interruptedUserId,
+      executionId: interruptedExecutionId,
+      createdAt: "2026-08-20T00:04:00.000Z",
+    });
+    const interrupted = await store.updateExecution(source.id, {
+      id: interruptedExecutionId,
+      inputMessageId: interruptedUserId,
+      status: "cancelled",
+      startedAt: "2026-08-20T00:04:00.000Z",
+      finishedAt: "2026-08-20T00:05:00.000Z",
+    });
+    const interruptedBranch = await store.createBranch({
+      sourceMissionId: source.id,
+      expectedSourceUpdatedAt: interrupted.updatedAt,
+      expectedExecutionId: interruptedExecutionId,
+      expectedMessageId: finalReply.id,
+      project: interrupted.project,
+      executor: interrupted.executor,
+      history: [
+        initialMessage,
+        firstReply,
+        followUpMessage,
+        inheritedActivity,
+        finalReply,
+        {
+          id: interruptedUserId,
+          kind: "user",
+          content: "Start work that will be interrupted",
+          executionId: interruptedExecutionId,
+          timelineSequence: 3,
+          createdAt: "2026-08-20T00:04:00.000Z",
+        },
+        {
+          id: `result:${interruptedExecutionId}`,
+          kind: "assistant",
+          content: "Execution interrupted.",
+          executionId: interruptedExecutionId,
+          timelineSequence: 3,
+          streaming: false,
+          createdAt: "2026-08-20T00:05:00.000Z",
+        },
+      ],
+    });
+    expect(interruptedBranch.branch).toMatchObject({
+      cutoffExecutionId: latestExecutionId,
+      cutoffMessageId: finalReply.id,
+    });
+    expect((await store.readTimelinePage(interruptedBranch.id, { limit: 10 })).turns).toHaveLength(
+      2,
+    );
+    const interruptedBranchHistory = await store.readBranchHistory(interruptedBranch.id);
+    expect(
+      interruptedBranchHistory?.entries.some(
+        (entry) =>
+          entry.id.includes(interruptedUserId) || entry.id.includes(interruptedExecutionId),
+      ),
+    ).toBe(false);
+
     const branchAttachments = await store.getAttachments(branch.id);
     expect(branchAttachments).toHaveLength(1);
     expect(branchAttachments[0]?.path).toContain(join("missions", branch.id, "attachments"));
@@ -405,7 +501,7 @@ describe("mission store", () => {
         "utf8",
       ),
     ).resolves.toBe("private notes");
-    await expect(store.get(source.id)).resolves.toEqual(settled);
+    await expect(store.get(source.id)).resolves.toEqual(interrupted);
   });
 
   it("recovers a follow-up whose attachment manifest persisted before its user message", async () => {

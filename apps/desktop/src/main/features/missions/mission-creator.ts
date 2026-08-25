@@ -33,7 +33,7 @@ export interface MissionCreator {
   }): Promise<Mission>;
   createBranch(input: {
     readonly source: Mission;
-    readonly expectedExecutionId: string;
+    readonly expectedExecutionId: string | null;
     readonly expectedMessageId: string;
     readonly history: readonly MissionChatEntry[];
   }): Promise<Mission>;
