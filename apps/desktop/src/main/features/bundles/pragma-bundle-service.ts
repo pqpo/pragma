@@ -851,8 +851,8 @@ export function createPragmaBundleService(options: {
             kind: "context-store",
             resourceRef: dependency.resourceRef,
             name: dependency.name,
-            message: "Choose an existing knowledge base.",
-            required: true,
+            message: "Choose an existing knowledge base now, or set it up after import.",
+            required: false,
           });
         }
       }
@@ -2099,7 +2099,7 @@ async function readDesktopBundle(
         capabilities.push({
           requirementId: requirement.id,
           resourceRef: requirement.ownerRef,
-          name: owner.metadata.name,
+          name: definition?.name ?? owner.metadata.name,
           ...(definition === undefined
             ? {}
             : {

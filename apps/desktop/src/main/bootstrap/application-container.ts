@@ -690,6 +690,7 @@ export async function createDesktopApplicationContainer(
     contextStores,
     getDefaultToolPermissionMode: getToolPermissionMode,
     assertExecutorReady: async (ref) => await assertBundleExecutorReady(ref, "create_mission"),
+    assertStorageWriteAllowed: async () => await storageCapacityGuard.assertWriteAllowed(),
   });
   installExpertDefinitionHandlers(expertStore, usageStore);
   installPragmaProjectHandlers(pragmaProjectStore, usageStore, contextStores);

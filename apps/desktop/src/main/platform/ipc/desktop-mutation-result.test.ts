@@ -3,6 +3,7 @@ import { describe, expect, it } from "vitest";
 import { runDesktopMutation } from "./desktop-mutation-result.ts";
 import { BundleSetupRequiredError } from "../../features/bundles/pragma-bundle-errors.ts";
 import { MissionOperationError } from "../../features/missions/mission-operation-error.ts";
+import { MissionStoreError } from "../../features/missions/mission-store.ts";
 import {
   PragmaProjectRevisionUnavailableError,
   PragmaProjectStoreError,
@@ -85,6 +86,24 @@ describe("runDesktopMutation", () => {
       error: {
         code: "mission_operation_in_progress",
         message: "Wait for the current mission operation to finish.",
+        diagnostics: [],
+      },
+    });
+  });
+
+  it("preserves Mission storage error codes for user-facing localization", async () => {
+    const result = await runDesktopMutation(async () => {
+      throw new MissionStoreError(
+        "message_conflict",
+        "Mission timeline idempotency conflict for an-internal-id.",
+      );
+    });
+
+    expect(result).toEqual({
+      ok: false,
+      error: {
+        code: "message_conflict",
+        message: "Mission timeline idempotency conflict for an-internal-id.",
         diagnostics: [],
       },
     });

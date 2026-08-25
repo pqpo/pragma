@@ -22,6 +22,8 @@ import {
   type PragmaBindingRecord,
   type PragmaBundleBindingHost,
 } from "../src/index.ts";
+import { sha256, stableStringify } from "../src/compiler/compiler-hash.ts";
+import { PragmaCompilerV6ResourceSchema } from "../src/compiler-migrations/schemas/v6.ts";
 
 describe("portable .pragma bundles", () => {
   it("exports a target dependency closure and loads it directly through the Interpreter", async () => {
@@ -82,6 +84,96 @@ describe("portable .pragma bundles", () => {
     });
     expect(ready.status).toBe("ready");
     if (ready.status === "ready") expect(ready.compiled.value.name).toBe("Writer");
+    await loaded.dispose();
+  });
+
+  it("validates and migrates a portable project written by an older compiler", async () => {
+    const resources = [
+      PragmaCompilerV6ResourceSchema.parse({ ...runtimeResource(), apiVersion: "pragma/v4" }),
+      PragmaCompilerV6ResourceSchema.parse({ ...expertResource(false), apiVersion: "pragma/v4" }),
+    ];
+    const lockedResources = resources
+      .map((resource) => ({
+        ref:
+          resource.kind === "RuntimeProfile"
+            ? `runtime-profile:${resource.metadata.id}`
+            : `expert:${resource.metadata.id}`,
+        contentHash: sha256(stableStringify(resource)),
+        source: "pragma.yaml",
+      }))
+      .toSorted((left, right) => left.ref.localeCompare(right.ref));
+    const projectFingerprint = sha256(
+      stableStringify({
+        resources: lockedResources.map(({ ref, contentHash }) => ({ ref, contentHash })),
+        artifacts: [],
+      }),
+    );
+    const historical = await encodePragmaBundle({
+      manifest: {
+        schemaVersion: "pragma.bundle/v1",
+        createdAt: "2026-08-11T00:00:00.000Z",
+        roots: ["expert:1xddvess309a6gme"],
+        project: {
+          entry: "project/pragma.yaml",
+          compilerVersion: "pragma.dsl/v6",
+          projectFingerprint,
+        },
+        requirements: [
+          {
+            id: "req-runtime",
+            kind: "runtime",
+            ownerRef: "runtime-profile:knr7p5b7qc55wv92",
+            path: ["spec", "config", "runtimeId"],
+            contract: "pragma.runtime@v1",
+            required: true,
+            name: "Runtime",
+            hints: { runtimeId: "codex" },
+          },
+        ],
+        extensions: [],
+      },
+      files: new Map([
+        [
+          "project/pragma.yaml",
+          strToU8(
+            formatPragmaYaml({
+              apiVersion: "pragma/v4",
+              kind: "Bundle",
+              imports: [],
+              resources,
+            }),
+          ),
+        ],
+        [
+          "project/pragma.lock.yaml",
+          strToU8(
+            formatPragmaYaml({
+              apiVersion: "pragma/v4",
+              kind: "Lock",
+              compilerVersion: "pragma.dsl/v6",
+              projectFingerprint,
+              resources: lockedResources,
+              artifacts: [],
+            }),
+          ),
+        ],
+      ]),
+    });
+
+    const loaded = await loadPragmaProject({
+      kind: "bundle",
+      source: { kind: "bytes", bytes: historical.bytes },
+    });
+
+    expect(loaded.bundle?.manifest.project).toMatchObject({
+      compilerVersion: "pragma.dsl/v6",
+      projectFingerprint,
+    });
+    expect(loaded.listResources().map((resource) => resource.kind)).toEqual([
+      "Expert",
+      "RuntimeProfile",
+    ]);
+    expect(await loaded.validate()).toEqual([]);
     await loaded.dispose();
   });
 

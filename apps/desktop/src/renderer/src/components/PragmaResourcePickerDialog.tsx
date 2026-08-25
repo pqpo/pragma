@@ -35,6 +35,24 @@ export function filterPragmaResourcePickerItems(
   });
 }
 
+export function toggleAllPragmaResourcePickerItems(
+  selectedRefs: readonly string[],
+  visibleItems: readonly PragmaResourcePickerItem[],
+): readonly string[] {
+  const visibleRefs = new Set(visibleItems.map((item) => item.ref));
+  const selected = new Set(selectedRefs);
+  const allVisibleSelected =
+    visibleItems.length > 0 && visibleItems.every((item) => selected.has(item.ref));
+
+  if (allVisibleSelected) {
+    return selectedRefs.filter((ref) => !visibleRefs.has(ref));
+  }
+  return [
+    ...selectedRefs,
+    ...visibleItems.map((item) => item.ref).filter((ref) => !selected.has(ref)),
+  ];
+}
+
 export function PragmaResourcePickerDialog(props: {
   readonly title: string;
   readonly description: string;
@@ -61,6 +79,8 @@ export function PragmaResourcePickerDialog(props: {
     [kind, props.excludedRefs, props.items, query],
   );
   const shownItems = visibleItems.slice(0, visibleLimit);
+  const allVisibleSelected =
+    visibleItems.length > 0 && visibleItems.every((item) => selected.has(item.ref));
 
   useEffect(() => setVisibleLimit(PAGE_SIZE), [kind, query]);
   useEffect(() => {
@@ -146,7 +166,25 @@ export function PragmaResourcePickerDialog(props: {
         </label>
         <div className="expert-picker-toolbar">
           <span>{t("selectedCount", { count: props.selectedRefs.length })}</span>
-          {props.selectedRefs.length > 0 ? (
+          {props.selectionMode === "multiple" && visibleItems.length > 0 ? (
+            <div>
+              <button
+                type="button"
+                onClick={() =>
+                  props.onSelectedRefsChange(
+                    toggleAllPragmaResourcePickerItems(props.selectedRefs, visibleItems),
+                  )
+                }
+              >
+                {allVisibleSelected ? t("clearAll") : t("selectAll")}
+              </button>
+              {props.selectedRefs.length > 0 ? (
+                <button type="button" onClick={() => props.onSelectedRefsChange([])}>
+                  {t("clearSelection")}
+                </button>
+              ) : null}
+            </div>
+          ) : props.selectedRefs.length > 0 ? (
             <button type="button" onClick={() => props.onSelectedRefsChange([])}>
               {t("clearSelection")}
             </button>

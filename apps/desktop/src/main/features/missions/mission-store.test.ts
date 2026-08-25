@@ -59,7 +59,7 @@ describe("mission store", () => {
       expect.objectContaining({ id: created.id, title: created.title }),
     ]);
     const manifest = await readFile(join(root, "missions", created.id, "mission.yaml"), "utf8");
-    expect(manifest).toContain("schemaVersion: pragma.mission/v8");
+    expect(manifest).toContain("schemaVersion: pragma.mission/v9");
     expect(created.contextStoreIds).toEqual([]);
     expect(manifest).toContain("revision: 3");
     expect(manifest).toContain("toolPermissionMode: full-access");
@@ -194,21 +194,34 @@ describe("mission store", () => {
       ],
     });
 
-    const record = await store.appendUserMessage(mission.id, {
+    const followup = {
       id: "00000000-0000-4000-8000-000000000003",
       content: "Now review this image.",
       attachments: [
         {
           id: "00000000-0000-4000-8000-000000000002",
-          kind: "image",
+          kind: "image" as const,
           name: "pasted-image.png",
           path: followupImage,
           mimeType: "image/png",
         },
       ],
       createdAt: "2026-08-10T00:00:00.000Z",
-    });
+    };
+    const record = await store.appendUserMessage(mission.id, followup);
     expect(record.kind).toBe("user");
+    await expect(
+      store.appendUserMessage(mission.id, {
+        ...followup,
+        createdAt: "2026-08-10T00:00:01.000Z",
+      }),
+    ).resolves.toEqual(record);
+    await expect(
+      store.appendUserMessage(mission.id, {
+        ...followup,
+        attachments: [{ ...followup.attachments[0]!, name: "different.png" }],
+      }),
+    ).rejects.toMatchObject({ code: "message_conflict" });
     const added = record.kind === "user" ? (record.attachments ?? []) : [];
 
     const turns = (await store.readTimelinePage(mission.id, { limit: 10 })).turns;
@@ -216,6 +229,292 @@ describe("mission store", () => {
     expect(turns[1]?.message.attachments?.map(({ name }) => name)).toEqual(["pasted-image.png"]);
     await expect(readFile(added[0]!.path, "utf8")).resolves.toBe("followup-image");
     await expect(store.getAttachments(mission.id)).resolves.toHaveLength(2);
+  });
+
+  it("creates an isolated branch from the latest reply and copies current Mission context", async () => {
+    const root = await temporaryRoot();
+    const sourceImage = join(root, "branch-source.png");
+    await writeFile(sourceImage, "branch-image");
+    const store = createMissionStore({ missionsPath: join(root, "missions") });
+    const contextStoreId = "10000000-0000-4000-8000-000000000001";
+    const source = await store.create({
+      workspace: { path: join(root, "workspace"), basename: "workspace" },
+      goal: "Continue a long-running investigation",
+      title: "A".repeat(48),
+      project: { id: "studio", revision: 2 },
+      executor: missionExecutorSnapshot(expertFixture()),
+      contextStoreIds: [contextStoreId],
+      toolPermissionMode: "full-access",
+      modelOverride: { providerId: "provider", modelId: "old-model", thinkingLevel: "high" },
+      attachments: [
+        {
+          id: "00000000-0000-4000-8000-000000000030",
+          kind: "image",
+          name: "branch-source.png",
+          path: sourceImage,
+          mimeType: "image/png",
+        },
+      ],
+    });
+    const executionId = "00000000-0000-4000-8000-000000000031";
+    await store.appendExecutionReference({
+      missionId: source.id,
+      inputMessageId: source.initialMessageId,
+      executionId,
+      createdAt: "2026-08-20T00:00:00.000Z",
+    });
+    await store.updateExecution(source.id, {
+      id: executionId,
+      inputMessageId: source.initialMessageId,
+      status: "succeeded",
+      startedAt: "2026-08-20T00:00:00.000Z",
+      finishedAt: "2026-08-20T00:01:00.000Z",
+    });
+    const followUpId = "00000000-0000-4000-8000-000000000032";
+    await store.appendUserMessage(source.id, {
+      id: followUpId,
+      content: "Continue with the new evidence",
+      createdAt: "2026-08-20T00:02:00.000Z",
+    });
+    const latestExecutionId = "00000000-0000-4000-8000-000000000033";
+    await store.appendExecutionReference({
+      missionId: source.id,
+      inputMessageId: followUpId,
+      executionId: latestExecutionId,
+      createdAt: "2026-08-20T00:02:00.000Z",
+    });
+    const settled = await store.updateExecution(source.id, {
+      id: latestExecutionId,
+      inputMessageId: followUpId,
+      status: "succeeded",
+      startedAt: "2026-08-20T00:02:00.000Z",
+      finishedAt: "2026-08-20T00:03:00.000Z",
+    });
+    const sourceDirectory = join(root, "missions", source.id);
+    await mkdir(join(sourceDirectory, "board", "shared"), { recursive: true });
+    await mkdir(join(sourceDirectory, "board", "private"), { recursive: true });
+    await writeFile(join(sourceDirectory, "board", "shared", "result.md"), "shared result");
+    await writeFile(join(sourceDirectory, "board", "private", "notes.md"), "private notes");
+    const sourceTurns = (await store.readTimelinePage(source.id, { limit: 10 })).turns;
+    const initialTurn = sourceTurns[0]!;
+    const followUpTurn = sourceTurns[1]!;
+    const initialMessage = {
+      ...initialTurn.message,
+      kind: "user" as const,
+      timelineSequence: initialTurn.sequence,
+    };
+    const firstReply = {
+      id: "assistant:first",
+      kind: "assistant" as const,
+      content: "Initial answer",
+      executionId,
+      timelineSequence: initialTurn.sequence,
+      streaming: false,
+      createdAt: "2026-08-20T00:01:00.000Z",
+    };
+    const followUpMessage = {
+      ...followUpTurn.message,
+      kind: "user" as const,
+      timelineSequence: followUpTurn.sequence,
+    };
+    const inheritedActivity = {
+      id: "activity:latest",
+      kind: "agent_activity" as const,
+      commandId: "command:latest",
+      action: "spawn" as const,
+      phase: "completed" as const,
+      senderSessionId: "source-sender-session",
+      targetSessionIds: ["source-target-session"],
+      executionId: latestExecutionId,
+      timelineSequence: followUpTurn.sequence,
+      createdAt: "2026-08-20T00:02:30.000Z",
+    };
+    const finalReply = {
+      id: "assistant:final",
+      kind: "assistant" as const,
+      content: "# Final answer\n\nKeep this Markdown.",
+      executionId: latestExecutionId,
+      timelineSequence: followUpTurn.sequence,
+      streaming: false,
+      createdAt: "2026-08-20T00:03:00.000Z",
+    };
+    const updatedExecutor = { ...source.executor, name: "Updated Product Designer" };
+
+    const branch = await store.createBranch({
+      sourceMissionId: source.id,
+      expectedSourceUpdatedAt: settled.updatedAt,
+      expectedExecutionId: latestExecutionId,
+      expectedMessageId: finalReply.id,
+      project: { id: "studio", revision: 7 },
+      executor: updatedExecutor,
+      history: [initialMessage, firstReply, followUpMessage, inheritedActivity, finalReply],
+    });
+
+    expect(branch).toMatchObject({
+      schemaVersion: "pragma.mission/v9",
+      title: `分支 · ${source.title}`,
+      workspace: source.workspace,
+      project: { id: "studio", revision: 7 },
+      executor: { name: "Updated Product Designer" },
+      contextStoreIds: [contextStoreId],
+      toolPermissionMode: "full-access",
+      modelOverride: { modelId: "old-model" },
+      branch: {
+        sourceMissionId: source.id,
+        sourceProjectRevision: 2,
+        cutoffExecutionId: latestExecutionId,
+        cutoffMessageId: finalReply.id,
+      },
+    });
+    expect(branch.execution).toBeUndefined();
+    const branchTimeline = await store.readTimelinePage(branch.id, { limit: 10 });
+    expect(branchTimeline.turns.map((turn) => turn.sequence)).toEqual([1, 2]);
+    expect(branchTimeline.turns.every((turn) => turn.executionId === undefined)).toBe(true);
+    const branchHistory = await store.readBranchHistory(branch.id);
+    expect(branchHistory?.entries).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          id: `branch:${source.id}:${source.initialMessageId}`,
+          kind: "user",
+          timelineSequence: 1,
+        }),
+        expect.objectContaining({
+          id: `branch:${source.id}:${followUpId}`,
+          kind: "user",
+          timelineSequence: 2,
+        }),
+      ]),
+    );
+    const inheritedFinalReply = branchHistory?.entries.find(
+      (entry) => entry.id === `branch:${source.id}:${finalReply.id}`,
+    );
+    expect(inheritedFinalReply).toMatchObject({
+      id: `branch:${source.id}:${finalReply.id}`,
+      kind: "assistant",
+      content: finalReply.content,
+      timelineSequence: 2,
+    });
+    expect(inheritedFinalReply).not.toHaveProperty("executionId");
+    const inheritedAgentActivity = branchHistory?.entries.find(
+      (entry) => entry.id === `branch:${source.id}:${inheritedActivity.id}`,
+    );
+    expect(inheritedAgentActivity).not.toHaveProperty("senderSessionId");
+    expect(inheritedAgentActivity).toMatchObject({ targetSessionIds: [] });
+
+    const branchUsers = branchTimeline.turns.map((turn) => ({
+      ...turn.message,
+      kind: "user" as const,
+      timelineSequence: turn.sequence,
+    }));
+    const nestedSourceHistory = [
+      ...branchUsers,
+      ...(branchHistory?.entries.filter((entry) => entry.kind !== "user") ?? []),
+    ].toSorted((left, right) => {
+      const sequence = (left.timelineSequence ?? 0) - (right.timelineSequence ?? 0);
+      return sequence === 0 ? left.createdAt.localeCompare(right.createdAt) : sequence;
+    });
+    const nestedReplyId = `branch:${source.id}:${finalReply.id}`;
+    const nestedBranch = await store.createBranch({
+      sourceMissionId: branch.id,
+      expectedSourceUpdatedAt: branch.updatedAt,
+      expectedExecutionId: null,
+      expectedMessageId: nestedReplyId,
+      project: branch.project,
+      executor: branch.executor,
+      history: nestedSourceHistory,
+    });
+    expect(nestedBranch.branch).toMatchObject({
+      sourceMissionId: branch.id,
+      cutoffMessageId: nestedReplyId,
+    });
+    expect(nestedBranch.branch).not.toHaveProperty("cutoffExecutionId");
+
+    const interruptedUserId = "00000000-0000-4000-8000-000000000034";
+    await store.appendUserMessage(source.id, {
+      id: interruptedUserId,
+      content: "Start work that will be interrupted",
+      createdAt: "2026-08-20T00:04:00.000Z",
+    });
+    const interruptedExecutionId = "00000000-0000-4000-8000-000000000035";
+    await store.appendExecutionReference({
+      missionId: source.id,
+      inputMessageId: interruptedUserId,
+      executionId: interruptedExecutionId,
+      createdAt: "2026-08-20T00:04:00.000Z",
+    });
+    const interrupted = await store.updateExecution(source.id, {
+      id: interruptedExecutionId,
+      inputMessageId: interruptedUserId,
+      status: "cancelled",
+      startedAt: "2026-08-20T00:04:00.000Z",
+      finishedAt: "2026-08-20T00:05:00.000Z",
+    });
+    const interruptedBranch = await store.createBranch({
+      sourceMissionId: source.id,
+      expectedSourceUpdatedAt: interrupted.updatedAt,
+      expectedExecutionId: interruptedExecutionId,
+      expectedMessageId: finalReply.id,
+      project: interrupted.project,
+      executor: interrupted.executor,
+      history: [
+        initialMessage,
+        firstReply,
+        followUpMessage,
+        inheritedActivity,
+        finalReply,
+        {
+          id: interruptedUserId,
+          kind: "user",
+          content: "Start work that will be interrupted",
+          executionId: interruptedExecutionId,
+          timelineSequence: 3,
+          createdAt: "2026-08-20T00:04:00.000Z",
+        },
+        {
+          id: `result:${interruptedExecutionId}`,
+          kind: "assistant",
+          content: "Execution interrupted.",
+          executionId: interruptedExecutionId,
+          timelineSequence: 3,
+          streaming: false,
+          createdAt: "2026-08-20T00:05:00.000Z",
+        },
+      ],
+    });
+    expect(interruptedBranch.branch).toMatchObject({
+      cutoffExecutionId: latestExecutionId,
+      cutoffMessageId: finalReply.id,
+    });
+    expect((await store.readTimelinePage(interruptedBranch.id, { limit: 10 })).turns).toHaveLength(
+      2,
+    );
+    const interruptedBranchHistory = await store.readBranchHistory(interruptedBranch.id);
+    expect(
+      interruptedBranchHistory?.entries.some(
+        (entry) =>
+          entry.id.includes(interruptedUserId) || entry.id.includes(interruptedExecutionId),
+      ),
+    ).toBe(false);
+
+    const branchAttachments = await store.getAttachments(branch.id);
+    expect(branchAttachments).toHaveLength(1);
+    expect(branchAttachments[0]?.path).toContain(join("missions", branch.id, "attachments"));
+    expect(
+      branchHistory?.entries[0]?.kind === "user"
+        ? branchHistory.entries[0].attachments?.[0]?.path
+        : undefined,
+    ).toBe(branchAttachments[0]?.path);
+    await expect(readFile(branchAttachments[0]!.path, "utf8")).resolves.toBe("branch-image");
+    await expect(
+      readFile(join(root, "missions", branch.id, "board", "shared", "result.md"), "utf8"),
+    ).resolves.toBe("shared result");
+    await expect(
+      readFile(
+        join(root, "missions", branch.id, "branch", "private-board-archive", "notes.md"),
+        "utf8",
+      ),
+    ).resolves.toBe("private notes");
+    await expect(store.get(source.id)).resolves.toEqual(interrupted);
   });
 
   it("recovers a follow-up whose attachment manifest persisted before its user message", async () => {
@@ -583,7 +882,10 @@ describe("mission store", () => {
       createdAt: "2026-07-17T00:00:00.000Z",
     };
     const first = await store.appendUserMessage(created.id, message);
-    const duplicate = await store.appendUserMessage(created.id, message);
+    const duplicate = await store.appendUserMessage(created.id, {
+      ...message,
+      createdAt: "2026-07-17T00:00:00.500Z",
+    });
     expect(duplicate).toEqual(first);
     const executionReference = {
       missionId: created.id,
@@ -592,9 +894,12 @@ describe("mission store", () => {
       createdAt: "2026-07-17T00:00:01.000Z",
     };
     const firstExecutionReference = await store.appendExecutionReference(executionReference);
-    await expect(store.appendExecutionReference(executionReference)).resolves.toEqual(
-      firstExecutionReference,
-    );
+    await expect(
+      store.appendExecutionReference({
+        ...executionReference,
+        createdAt: "2026-07-17T00:00:01.500Z",
+      }),
+    ).resolves.toEqual(firstExecutionReference);
 
     const latest = await store.readTimelinePage(created.id, { limit: 1 });
     expect(latest.turns).toEqual([
@@ -613,6 +918,92 @@ describe("mission store", () => {
     await expect(
       store.appendUserMessage(created.id, { ...message, content: "Conflicting content" }),
     ).rejects.toMatchObject({ code: "message_conflict" });
+    await expect(
+      store.appendExecutionReference({
+        ...executionReference,
+        inputMessageId: created.initialMessageId,
+      }),
+    ).rejects.toMatchObject({ code: "message_conflict" });
+  });
+
+  it("reads recent logical turns from the timeline tail after reopening", async () => {
+    const root = await temporaryRoot();
+    const missionsPath = join(root, "missions");
+    const store = createMissionStore({ missionsPath });
+    const created = await store.create({
+      workspace: { path: join(root, "workspace"), basename: "workspace" },
+      goal: "Initial request",
+      project: { id: "studio", revision: 1 },
+      executor: missionExecutorSnapshot(expertFixture()),
+    });
+    for (let index = 1; index <= 24; index += 1) {
+      await store.appendUserMessage(created.id, {
+        id: `00000000-0000-4000-8000-${String(index).padStart(12, "0")}`,
+        content: `Follow up ${index} ${"x".repeat(3_000)}`,
+        createdAt: new Date(Date.UTC(2026, 6, 17, 0, 0, index)).toISOString(),
+      });
+    }
+
+    const reopened = createMissionStore({ missionsPath });
+    const latest = await reopened.readTimelinePage(created.id, { limit: 5 });
+    expect(latest.turns.map((turn) => /^Follow up \d+/u.exec(turn.message.content)?.[0])).toEqual([
+      "Follow up 20",
+      "Follow up 21",
+      "Follow up 22",
+      "Follow up 23",
+      "Follow up 24",
+    ]);
+    expect(latest.nextBeforeSequence).toBe(latest.oldestSequence);
+
+    const earlier = await reopened.readTimelinePage(created.id, {
+      beforeSequence: latest.nextBeforeSequence,
+      limit: 5,
+    });
+    expect(earlier.turns.map((turn) => /^Follow up \d+/u.exec(turn.message.content)?.[0])).toEqual([
+      "Follow up 15",
+      "Follow up 16",
+      "Follow up 17",
+      "Follow up 18",
+      "Follow up 19",
+    ]);
+  });
+
+  it("reads farther back when a tail execution references a user outside the first chunk", async () => {
+    const root = await temporaryRoot();
+    const missionsPath = join(root, "missions");
+    const store = createMissionStore({ missionsPath });
+    const created = await store.create({
+      workspace: { path: join(root, "workspace"), basename: "workspace" },
+      goal: `Large initial request ${"x".repeat(70_000)}`,
+      project: { id: "studio", revision: 1 },
+      executor: missionExecutorSnapshot(expertFixture()),
+    });
+    await store.appendUserMessage(created.id, {
+      id: "00000000-0000-4000-8000-000000000101",
+      content: "Later queued request",
+      createdAt: "2026-07-17T00:00:01.000Z",
+    });
+    await store.appendExecutionReference({
+      missionId: created.id,
+      inputMessageId: created.initialMessageId,
+      executionId: "00000000-0000-4000-8000-000000000102",
+      createdAt: "2026-07-17T00:00:02.000Z",
+    });
+
+    const reopened = createMissionStore({ missionsPath });
+    const latest = await reopened.readTimelinePage(created.id, { limit: 1 });
+    expect(latest.turns).toEqual([
+      expect.objectContaining({
+        message: expect.objectContaining({ content: "Later queued request" }),
+      }),
+    ]);
+    const earlier = await reopened.readTimelinePage(created.id, {
+      beforeSequence: latest.nextBeforeSequence,
+      limit: 1,
+    });
+    expect(earlier.turns).toEqual([
+      expect.objectContaining({ executionId: "00000000-0000-4000-8000-000000000102" }),
+    ]);
   });
 
   it("recovers a journaled append and repairs only a torn final line", async () => {
@@ -707,6 +1098,31 @@ describe("mission store", () => {
       id: `assistant:${MISSION_EXECUTION_PROJECTION_MAX_ENTRIES + 1}`,
       content: "x".repeat(MISSION_EXECUTION_PROJECTION_MAX_CONTENT_LENGTH),
     });
+
+    const latestPage = await store.readExecutionProjectionPage(created.id, executionId, {
+      limit: 20,
+    });
+    expect(latestPage?.entries).toHaveLength(20);
+    expect(latestPage?.entries[0]?.id).toBe(
+      `assistant:${MISSION_EXECUTION_PROJECTION_MAX_ENTRIES - 18}`,
+    );
+    expect(latestPage?.entries.at(-1)?.id).toBe(
+      `assistant:${MISSION_EXECUTION_PROJECTION_MAX_ENTRIES + 1}`,
+    );
+    expect(latestPage?.nextBeforeOffset).toBeTypeOf("number");
+    const earlierPage = await store.readExecutionProjectionPage(created.id, executionId, {
+      beforeOffset: latestPage!.nextBeforeOffset,
+      limit: 20,
+    });
+    expect(earlierPage?.entries).toHaveLength(20);
+    expect(earlierPage?.entries.at(-1)?.id).toBe(
+      `assistant:${MISSION_EXECUTION_PROJECTION_MAX_ENTRIES - 19}`,
+    );
+    expect(
+      earlierPage?.entries.some((entry) =>
+        latestPage?.entries.some((latestEntry) => latestEntry.id === entry.id),
+      ),
+    ).toBe(false);
 
     await appendFile(projectionPath, '{"torn"', "utf8");
     await expect(store.readExecutionProjection(created.id, executionId)).resolves.toHaveLength(
@@ -828,7 +1244,7 @@ describe("mission store", () => {
     const manifestPath = join(directory, "mission.yaml");
     await writeFile(
       manifestPath,
-      (await readFile(manifestPath, "utf8")).replace("pragma.mission/v8", "pragma.mission/v2"),
+      (await readFile(manifestPath, "utf8")).replace("pragma.mission/v9", "pragma.mission/v2"),
       "utf8",
     );
     await expect(store.get(created.id)).rejects.toMatchObject({ code: "unsupported_schema" });
@@ -858,7 +1274,7 @@ describe("mission store", () => {
     await writeFile(
       unsupportedManifest,
       (await readFile(unsupportedManifest, "utf8")).replace(
-        "pragma.mission/v8",
+        "pragma.mission/v9",
         "pragma.mission/v99",
       ),
       "utf8",
@@ -898,7 +1314,7 @@ describe("mission store", () => {
     await writeFile(
       unsupportedManifest,
       (await readFile(unsupportedManifest, "utf8")).replace(
-        "pragma.mission/v8",
+        "pragma.mission/v9",
         "pragma.mission/v99",
       ),
       "utf8",
@@ -933,10 +1349,10 @@ describe("mission store", () => {
     await writeFile(manifestPath, formatPragmaYaml(legacy), "utf8");
 
     await expect(store.get(created.id)).resolves.toMatchObject({
-      schemaVersion: "pragma.mission/v8",
+      schemaVersion: "pragma.mission/v9",
       flowInput: { goal: "Legacy Flow goal", workspace },
     });
-    expect(await readFile(manifestPath, "utf8")).toContain("schemaVersion: pragma.mission/v8");
+    expect(await readFile(manifestPath, "utf8")).toContain("schemaVersion: pragma.mission/v9");
 
     const future = parsePragmaYaml(await readFile(manifestPath, "utf8")) as Record<string, unknown>;
     future["schemaVersion"] = "pragma.mission/v99";
@@ -960,7 +1376,7 @@ describe("mission store", () => {
     await writeFile(manifestPath, formatPragmaYaml(legacy), "utf8");
 
     await expect(store.get(created.id)).resolves.toMatchObject({
-      schemaVersion: "pragma.mission/v8",
+      schemaVersion: "pragma.mission/v9",
       origin: { type: "user" },
     });
     expect(await readFile(manifestPath, "utf8")).toContain("type: user");
@@ -978,7 +1394,7 @@ describe("mission store", () => {
     const { directory, id, source } = await installMissionV7Fixture(root);
 
     await expect(store.get(id)).resolves.toMatchObject({
-      schemaVersion: "pragma.mission/v8",
+      schemaVersion: "pragma.mission/v9",
       contextStoreIds: [],
     });
     expect(
@@ -1008,11 +1424,53 @@ describe("mission store", () => {
     );
 
     await expect(store.get(id)).resolves.toMatchObject({
-      schemaVersion: "pragma.mission/v8",
+      schemaVersion: "pragma.mission/v9",
       contextStoreIds: [],
     });
     await expect(
       readFile(join(directory, ".v7-to-v8.transaction.json"), "utf8"),
+    ).rejects.toMatchObject({ code: "ENOENT" });
+  });
+
+  it("migrates the historical v8 Mission fixture to v9 with a backup", async () => {
+    const root = await temporaryRoot();
+    const store = createMissionStore({ missionsPath: join(root, "missions") });
+    const { directory, id, source } = await installMissionV8Fixture(root);
+
+    const migrated = await store.get(id);
+    expect(migrated).toMatchObject({
+      schemaVersion: "pragma.mission/v9",
+      contextStoreIds: ["10000000-0000-4000-8000-000000000001"],
+    });
+    expect(migrated.branch).toBeUndefined();
+    expect(
+      parsePragmaYaml(
+        await readFile(join(directory, "migration-backups", "mission.v8.yaml"), "utf8"),
+      ),
+    ).toEqual(parsePragmaYaml(source));
+  });
+
+  it("replays an interrupted v8-to-v9 migration journal", async () => {
+    const root = await temporaryRoot();
+    const store = createMissionStore({ missionsPath: join(root, "missions") });
+    const { directory, id, source } = await installMissionV8Fixture(root);
+    const target = {
+      ...(parsePragmaYaml(source) as Record<string, unknown>),
+      schemaVersion: "pragma.mission/v9",
+    };
+    await writeFile(
+      join(directory, ".v8-to-v9.transaction.json"),
+      `${JSON.stringify({
+        schemaVersion: "pragma.mission-v9-migration/v1",
+        missionId: id,
+        target,
+      })}\n`,
+      "utf8",
+    );
+
+    await expect(store.get(id)).resolves.toMatchObject({ schemaVersion: "pragma.mission/v9" });
+    await expect(
+      readFile(join(directory, ".v8-to-v9.transaction.json"), "utf8"),
     ).rejects.toMatchObject({ code: "ENOENT" });
   });
 
@@ -1121,7 +1579,7 @@ describe("mission store", () => {
     );
 
     await expect(store.get(created.id)).resolves.toMatchObject({
-      schemaVersion: "pragma.mission/v8",
+      schemaVersion: "pragma.mission/v9",
       id: created.id,
     });
     await expect(
@@ -1166,6 +1624,19 @@ async function installMissionV7Fixture(root: string): Promise<{
   readonly source: string;
 }> {
   const source = await readFile(new URL("./fixtures/mission-v7.yaml", import.meta.url), "utf8");
+  const manifest = parsePragmaYaml(source) as { readonly id: string };
+  const directory = join(root, "missions", manifest.id);
+  await mkdir(directory, { recursive: true });
+  await writeFile(join(directory, "mission.yaml"), source, "utf8");
+  return { directory, id: manifest.id, source };
+}
+
+async function installMissionV8Fixture(root: string): Promise<{
+  readonly directory: string;
+  readonly id: string;
+  readonly source: string;
+}> {
+  const source = await readFile(new URL("./fixtures/mission-v8.yaml", import.meta.url), "utf8");
   const manifest = parsePragmaYaml(source) as { readonly id: string };
   const directory = join(root, "missions", manifest.id);
   await mkdir(directory, { recursive: true });

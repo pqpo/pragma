@@ -1,0 +1,296 @@
+.team-permissions-title {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.team-permissions-connect-all {
+  display: inline-flex;
+  flex: 0 0 auto;
+  min-height: 32px;
+  align-items: center;
+  gap: 6px;
+  padding: 6px 10px;
+  border: 1px solid rgb(88 121 104 / 32%);
+  border-radius: var(--radius-control);
+  background: var(--green-soft);
+  color: var(--green-dark);
+  cursor: pointer;
+  font: inherit;
+  font-size: 11px;
+  font-weight: 680;
+}
+
+.team-permissions-connect-all:hover:not(:disabled) {
+  border-color: rgb(88 121 104 / 48%);
+  background: color-mix(in srgb, var(--green-soft) 78%, var(--green) 22%);
+}
+
+.team-permissions-connect-all:focus-visible {
+  outline: 0;
+  box-shadow: 0 0 0 3px var(--focus-ring);
+}
+
+.team-permissions-connect-all:disabled {
+  border-color: var(--border);
+  background: var(--surface-soft);
+  color: var(--muted);
+  cursor: default;
+}
+
+.team-permissions-help {
+  position: relative;
+  display: grid;
+  width: 20px;
+  height: 20px;
+  place-items: center;
+  padding: 0;
+  border: 1px solid var(--border);
+  border-radius: 50%;
+  background: var(--surface);
+  color: var(--muted);
+  cursor: help;
+}
+
+.team-permissions-help [role="tooltip"] {
+  position: absolute;
+  z-index: 4;
+  top: calc(100% + 8px);
+  left: -10px;
+  width: 280px;
+  padding: 9px 11px;
+  border: 1px solid var(--border);
+  border-radius: var(--ui-radius-md);
+  background: var(--text);
+  color: #fff;
+  font-size: 11px;
+  font-weight: 450;
+  line-height: 1.5;
+  opacity: 0;
+  pointer-events: none;
+  text-align: left;
+  transform: translateY(-3px);
+  transition: 120ms ease;
+}
+
+.team-permissions-help:hover [role="tooltip"],
+.team-permissions-help:focus-visible [role="tooltip"] {
+  opacity: 1;
+  transform: translateY(0);
+}
+
+.team-permission-editor {
+  display: grid;
+  grid-template-columns: minmax(180px, 0.32fr) minmax(0, 1fr);
+  min-height: 250px;
+  overflow: hidden;
+  border: 1px solid var(--border);
+  border-radius: var(--ui-radius-lg);
+  background: var(--surface);
+}
+
+.team-permission-members {
+  display: grid;
+  align-content: start;
+  max-height: 360px;
+  overflow: auto;
+  padding: 7px;
+  border-right: 1px solid var(--border);
+  background: var(--surface-soft);
+}
+
+.team-permission-members > button {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr) auto;
+  min-width: 0;
+  align-items: center;
+  gap: 9px;
+  padding: 8px;
+  border: 0;
+  border-radius: var(--ui-radius-md);
+  background: transparent;
+  color: var(--text);
+  cursor: pointer;
+  font: inherit;
+  text-align: left;
+}
+
+.team-permission-members > button:hover,
+.team-permission-members > button.is-active {
+  background: var(--surface);
+  box-shadow: 0 1px 4px rgb(25 42 32 / 8%);
+}
+
+.team-permission-members > button.is-active > svg {
+  color: var(--green-dark);
+}
+
+.team-permission-members > button > span {
+  display: grid;
+  min-width: 0;
+  gap: 2px;
+}
+
+.team-permission-members strong,
+.team-permission-members small {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.team-permission-members strong {
+  font-size: 11px;
+  font-weight: 650;
+}
+
+.team-permission-members small {
+  color: var(--muted);
+  font-size: 9px;
+}
+
+.team-permission-detail {
+  display: grid;
+  grid-template-rows: auto minmax(0, 1fr);
+  align-content: stretch;
+  gap: 14px;
+  min-width: 0;
+  padding: 18px;
+}
+
+.team-permission-detail > header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.team-permission-detail > header > div {
+  display: grid;
+  gap: 2px;
+}
+
+.team-permission-detail > header small,
+.team-permission-detail > header > span {
+  color: var(--muted);
+  font-size: 10px;
+}
+
+.team-permission-detail > header strong {
+  font-size: 14px;
+}
+
+.team-permission-cards {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr);
+  grid-template-rows: repeat(2, minmax(126px, 1fr));
+  gap: 10px;
+}
+
+.team-permission-cards > button {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  min-width: 0;
+  align-items: stretch;
+  gap: 18px;
+  padding: 14px 16px;
+  border: 1px solid var(--border);
+  border-radius: var(--ui-radius-lg);
+  background: var(--surface);
+  color: var(--text);
+  cursor: pointer;
+  font: inherit;
+  text-align: left;
+}
+
+.team-permission-cards > button:hover {
+  border-color: rgb(88 121 104 / 35%);
+  background: var(--surface-soft);
+}
+
+.team-permission-cards > button:focus-visible {
+  border-color: var(--green);
+  outline: 0;
+  box-shadow: 0 0 0 3px var(--focus-ring);
+}
+
+.team-permission-card-content {
+  display: grid;
+  grid-template-columns: minmax(220px, 0.85fr) minmax(300px, 1.15fr);
+  min-width: 0;
+  align-items: center;
+  gap: 24px;
+}
+
+.team-permission-card-copy,
+.team-permission-card-summary {
+  display: grid;
+  min-width: 0;
+  gap: 4px;
+}
+
+.team-permission-cards strong {
+  font-size: 12px;
+}
+
+.team-permission-cards small {
+  overflow: hidden;
+  color: var(--muted);
+  font-size: 10px;
+  line-height: 1.45;
+  text-overflow: ellipsis;
+}
+
+.team-permission-card-summary b {
+  color: var(--green-dark);
+  font-size: 10px;
+}
+
+.team-permission-card-summary small {
+  display: -webkit-box;
+  line-height: 1.55;
+  white-space: normal;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 2;
+}
+
+.team-permission-cards .team-expert-selector-action {
+  align-self: stretch;
+  justify-content: flex-end;
+  padding-left: 18px;
+  border-left: 1px solid var(--border);
+}
+
+.team-coordinator-authority {
+  display: grid;
+  gap: 0.25rem;
+  padding: 0.75rem 1rem;
+  border-radius: 0.6rem;
+  background: color-mix(in srgb, var(--accent) 9%, transparent);
+}
+
+.team-coordinator-authority span {
+  font-weight: 650;
+}
+
+.team-coordinator-authority small {
+  color: var(--muted);
+}
+
+@media (max-width: 760px) {
+  .team-permission-editor,
+  .team-permission-cards {
+    grid-template-columns: 1fr;
+  }
+
+  .team-permission-members {
+    grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
+    max-height: 180px;
+    border-right: 0;
+    border-bottom: 1px solid var(--border);
+  }
+
+  .team-permission-card-content {
+    grid-template-columns: 1fr;
+    gap: 10px;
+  }
+}

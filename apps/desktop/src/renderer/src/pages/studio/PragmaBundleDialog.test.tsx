@@ -7,6 +7,7 @@ import type {
   PragmaProjectSnapshot,
 } from "../../../../shared/contracts/index.ts";
 import {
+  BundleFileStep,
   BundleInspection,
   filterBundleExportRoots,
   orderBundleExportRoots,
@@ -183,7 +184,28 @@ describe("Bundle import inspection", () => {
         },
       ],
       requirements: [],
-      readiness: [],
+      readiness: [
+        {
+          id: "runtime-ready",
+          kind: "runtime",
+          resourceRef: "runtime-profile:codex",
+          name: "Codex / GPT-5.6-Sol",
+          status: "ready",
+          code: "ready",
+          action: "none",
+          message: "Ready",
+        },
+        {
+          id: "context-missing",
+          kind: "context-store",
+          resourceRef: "context-store:kqh4nx7rx26mb3e7",
+          name: "Context 26980318-cc35-4a16-95ae-fd8806492c4a",
+          status: "missing",
+          code: "missing",
+          action: "choose_knowledge_base",
+          message: "Choose knowledge base",
+        },
+      ],
       sameContentInstallationIds: [],
     };
 
@@ -204,5 +226,24 @@ describe("Bundle import inspection", () => {
     expect(html).toContain("Codex / GPT-5.6-Sol");
     expect(html).toContain("capability:aone-km");
     expect(html).toContain("本地查件专家");
+
+    const fileStepHtml = renderToStaticMarkup(
+      <BundleFileStep
+        inspection={inspection}
+        busy={false}
+        dragging={false}
+        onDragging={() => undefined}
+        onPick={() => undefined}
+        onDrop={() => undefined}
+        onRoot={() => undefined}
+      />,
+    );
+    expect(fileStepHtml).not.toContain("pragma-bundle-dropzone");
+    expect(fileStepHtml).toContain("pragma-bundle-file-summary");
+    expect(fileStepHtml).toContain("portable-workflow.pragma");
+    expect(fileStepHtml).toContain("1 of 2 dependencies ready");
+    expect(fileStepHtml).toContain("Knowledge base (name unavailable in legacy bundle)");
+    expect(fileStepHtml).not.toContain("Context 26980318-cc35-4a16-95ae-fd8806492c4a");
+    expect(fileStepHtml).toContain("pragma-bundle-readiness-state");
   });
 });

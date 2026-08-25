@@ -124,8 +124,11 @@ export class ExecutionController {
       invocationId: string;
       resolve(value: ExpertAgentHumanResponse): void;
       reject(reason: unknown): void;
-      requestId?: string;
     }
+  >();
+  private readonly humanResponseOperations = new Map<
+    string,
+    { readonly requestId: string; readonly promise: Promise<void> }
   >();
   private cancelled = false;
   private cancellationReason: Error | undefined;
@@ -456,22 +459,24 @@ export class ExecutionController {
   }
 
   async respond(interactionId: string, response: unknown, requestId: string): Promise<void> {
-    const initialPending = this.pendingInteractions.get(interactionId);
-    if (initialPending?.requestId !== undefined) {
-      if (initialPending.requestId === requestId) return;
+    const existingOperation = this.humanResponseOperations.get(interactionId);
+    if (existingOperation !== undefined) {
+      if (existingOperation.requestId === requestId) {
+        await existingOperation.promise;
+        return;
+      }
       throw new Error(`Human interaction idempotency conflict: ${interactionId}`);
     }
-    if (initialPending !== undefined) initialPending.requestId = requestId;
-    const parsedResponse = await persistHumanInteractionResponse(
-      this.store,
-      this.executionId,
-      interactionId,
-      response,
-      requestId,
-    );
-    const pending = this.pendingInteractions.get(interactionId);
-    if (pending !== undefined) {
-      pending.requestId = requestId;
+    const operation = (async () => {
+      const parsedResponse = await persistHumanInteractionResponse(
+        this.store,
+        this.executionId,
+        interactionId,
+        response,
+        requestId,
+      );
+      const pending = this.pendingInteractions.get(interactionId);
+      if (pending === undefined) return;
       await this.store.commit({
         commitId: `human-resumed:${interactionId}`,
         executionId: this.executionId,
@@ -491,6 +496,14 @@ export class ExecutionController {
       });
       this.pendingInteractions.delete(interactionId);
       pending.resolve(parsedResponse);
+    })();
+    this.humanResponseOperations.set(interactionId, { requestId, promise: operation });
+    try {
+      await operation;
+    } finally {
+      if (this.humanResponseOperations.get(interactionId)?.promise === operation) {
+        this.humanResponseOperations.delete(interactionId);
+      }
     }
   }
 

@@ -7,6 +7,7 @@ import {
 } from "../../../shared/contracts/index.ts";
 import { ExpertDefinitionStoreError } from "../../features/experts/expert-definition-store.ts";
 import { MissionOperationError } from "../../features/missions/mission-operation-error.ts";
+import { MissionStoreError } from "../../features/missions/mission-store.ts";
 import { BundleSetupRequiredError } from "../../features/bundles/pragma-bundle-errors.ts";
 import { CapabilityStoreError } from "../../features/capabilities/capability-store.ts";
 import {
@@ -84,6 +85,13 @@ function serializeDesktopMutationError(error: unknown): DesktopMutationErrorData
     });
   }
   if (error instanceof MissionOperationError) {
+    return DesktopMutationErrorSchema.parse({
+      code: error.code,
+      message: error.message,
+      diagnostics: [],
+    });
+  }
+  if (error instanceof MissionStoreError) {
     return DesktopMutationErrorSchema.parse({
       code: error.code,
       message: error.message,

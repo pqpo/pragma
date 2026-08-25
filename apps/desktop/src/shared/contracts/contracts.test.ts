@@ -11,9 +11,11 @@ import {
   CapabilityTestResultSchema,
   CapabilityDeleteResultSchema,
   CreateMissionSchema,
+  CreateMissionBranchSchema,
   DeleteContextStoreSchema,
   GetMissionChatSchema,
   HomeMissionExecutorCatalogSchema,
+  latestMissionBranchableReply,
   MissionChatSnapshotSchema,
   MissionChatUpdateSchema,
   MissionCreationDefaultsSchema,
@@ -813,6 +815,46 @@ describe("capability delete contracts", () => {
 });
 
 describe("mission contracts", () => {
+  it("requires optimistic source identifiers when creating a Mission branch", () => {
+    const input = {
+      sourceMissionId: "00000000-0000-4000-8000-000000000001",
+      expectedExecutionId: "00000000-0000-4000-8000-000000000002",
+      expectedMessageId: "assistant:final",
+    };
+
+    expect(CreateMissionBranchSchema.parse(input)).toEqual(input);
+    expect(
+      CreateMissionBranchSchema.safeParse({ ...input, expectedExecutionId: "stale" }).success,
+    ).toBe(false);
+    expect(CreateMissionBranchSchema.parse({ ...input, expectedExecutionId: null })).toEqual({
+      ...input,
+      expectedExecutionId: null,
+    });
+  });
+
+  it("selects inherited replies and skips synthetic terminal results when branching", () => {
+    const createdAt = "2026-08-25T00:00:00.000Z";
+    const entries = [
+      {
+        id: "branch:source:assistant:final",
+        kind: "assistant" as const,
+        content: "Continue from here.",
+        streaming: false,
+        createdAt,
+      },
+      {
+        id: "result:00000000-0000-4000-8000-000000000002",
+        kind: "assistant" as const,
+        content: "Execution interrupted.",
+        streaming: false,
+        executionId: "00000000-0000-4000-8000-000000000002",
+        createdAt: "2026-08-25T00:01:00.000Z",
+      },
+    ];
+
+    expect(latestMissionBranchableReply(entries)?.id).toBe("branch:source:assistant:final");
+  });
+
   it("accepts attachments on follow-up messages and validates pasted images", () => {
     const attachment = {
       id: "00000000-0000-4000-8000-000000000002",
@@ -907,7 +949,7 @@ describe("mission contracts", () => {
   it("pins a team executor to a project revision", () => {
     expect(
       MissionSchema.parse({
-        schemaVersion: "pragma.mission/v8",
+        schemaVersion: "pragma.mission/v9",
         id: "00000000-0000-4000-8000-000000000000",
         title: "Deliver the feature",
         goal: "Deliver the feature",
@@ -929,7 +971,7 @@ describe("mission contracts", () => {
 
   it("drops the retired Desktop environment fingerprint from persisted Missions", () => {
     const parsed = MissionSchema.parse({
-      schemaVersion: "pragma.mission/v8",
+      schemaVersion: "pragma.mission/v9",
       id: "00000000-0000-4000-8000-000000000000",
       title: "Continue the mission",
       goal: "Continue the mission",

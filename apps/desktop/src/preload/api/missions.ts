@@ -10,6 +10,7 @@ import {
 } from "../../shared/contracts/mission-base.ts";
 import {
   CreateMissionSchema,
+  CreateMissionBranchSchema,
   DiscardMissionAttachmentDraftsSchema,
   GetMissionChatSchema,
   GetMissionWorkConversationSchema,
@@ -75,7 +76,7 @@ export const missionsApi = {
   getMissionCreationDefaults: async () =>
     MissionCreationDefaultsSchema.parse(await ipcRenderer.invoke("missions:create-defaults:get")),
   getMission: async (id) =>
-    MissionSchema.parse(await ipcRenderer.invoke("missions:get", MissionIdSchema.parse(id))),
+    MissionSchema.parse(await invokeMutation("missions:get", MissionIdSchema.parse(id))),
   getMissionContextStore: async (input) =>
     MissionContextStoreDescriptorSchema.parse(
       await ipcRenderer.invoke(
@@ -113,6 +114,10 @@ export const missionsApi = {
   },
   createMission: async (input) =>
     MissionSchema.parse(await invokeMutation("missions:create", CreateMissionSchema.parse(input))),
+  createMissionBranch: async (input) =>
+    MissionSchema.parse(
+      await invokeMutation("missions:branch:create", CreateMissionBranchSchema.parse(input)),
+    ),
   pickMissionAttachments: async (input) =>
     PickMissionAttachmentsResultSchema.parse(
       await ipcRenderer.invoke(
@@ -218,12 +223,10 @@ export const missionsApi = {
   },
   markMissionComplete: async (id) =>
     MissionSchema.parse(
-      await ipcRenderer.invoke("missions:complete", MissionActionSchema.parse({ id })),
+      await invokeMutation("missions:complete", MissionActionSchema.parse({ id })),
     ),
   reopenMission: async (id) =>
-    MissionSchema.parse(
-      await ipcRenderer.invoke("missions:reopen", MissionActionSchema.parse({ id })),
-    ),
+    MissionSchema.parse(await invokeMutation("missions:reopen", MissionActionSchema.parse({ id }))),
 } satisfies Pick<
   PragmaDesktopAPI,
   | "listMissions"
@@ -239,6 +242,7 @@ export const missionsApi = {
   | "searchMissionContextStore"
   | "subscribeMissionUpdates"
   | "createMission"
+  | "createMissionBranch"
   | "pickMissionAttachments"
   | "stageMissionClipboardImage"
   | "discardMissionAttachmentDrafts"

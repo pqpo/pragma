@@ -66,12 +66,7 @@ export interface FileSystemContextStoreOptions {
 }
 
 export type FileSystemContextStoreOperation =
-  | "list"
-  | "read"
-  | "search"
-  | "add"
-  | "edit"
-  | "delete";
+  "list" | "read" | "search" | "add" | "edit" | "delete";
 
 export type FileSystemContextStoreAuthorizer = (input: {
   readonly operation: FileSystemContextStoreOperation;
@@ -266,6 +261,12 @@ export class FileSystemContextStore implements ExpertAgentContextStore {
             input.metadata === undefined
               ? existing.metadata
               : normalizeMetadata(input.id, normalizeInputMetadata(input.metadata));
+        } else if (input.mode === "append" || input.mode === "prepend") {
+          const separator = resolveBoundarySeparator(input.separator);
+          content =
+            input.mode === "prepend"
+              ? `${input.content}${separator}${existing.content}`
+              : `${existing.content}${separator}${input.content}`;
         } else {
           const matches = existing.content.split(input.search).length - 1;
 
@@ -551,6 +552,12 @@ export class FileSystemContextStore implements ExpertAgentContextStore {
       id,
     });
   }
+}
+
+function resolveBoundarySeparator(separator: "none" | "newline" | "blank_line"): string {
+  if (separator === "newline") return "\n";
+  if (separator === "blank_line") return "\n\n";
+  return "";
 }
 
 function withContentMatchType(

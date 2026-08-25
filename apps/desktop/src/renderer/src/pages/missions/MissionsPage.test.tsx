@@ -12,6 +12,7 @@ import {
   applyMissionUsageHintRevision,
   applyMissionChatPatches,
   claimMissionClientOperation,
+  copyMissionReply,
   CONTEXT_POPOVER_CLOSE_DELAY_MS,
   ContextWindowControl,
   DEFAULT_MISSION_MEMORY_VIEW,
@@ -24,6 +25,10 @@ import {
   mergeLatestChatPage,
   MissionContextOperationEntry,
   MissionChatEntryView,
+  MissionChatSkeleton,
+  MISSION_CHAT_PAGE_SIZE,
+  MISSION_WORK_CONVERSATION_PAGE_SIZE,
+  MISSION_WORK_RECORD_PAGE_SIZE,
   startMissionContextOperation,
   MissionDetailFragment,
   MissionDetailSkeleton,
@@ -37,14 +42,17 @@ import {
   missionWorkInputSenderName,
   missionWorkCallOrder,
   missionWorkGridEdgePath,
+  missionWorkPageRecords,
   missionWorkRecordTitle,
   missionStatusLabel,
+  missionTurnFinalReplyIds,
   workStatusLabel,
   resolveMissionsPageInitialState,
   resolveMissionRailGroups,
   resolveMissionSearchCollapsed,
   resolveMissionComposerAction,
   releaseMissionClientOperation,
+  resolveMissionHumanResponseAttempt,
   shouldClearMissionThinkingPlaceholder,
   shouldShowMissionThinkingPlaceholder,
   unavailableMcpToolName,
@@ -53,6 +61,92 @@ import {
 } from "./MissionsPage.tsx";
 
 describe("MissionsPage", () => {
+  it("uses bounded initial pages for Mission conversations", () => {
+    expect(MISSION_CHAT_PAGE_SIZE).toBe(20);
+    expect(MISSION_WORK_CONVERSATION_PAGE_SIZE).toBe(50);
+    expect(MISSION_WORK_RECORD_PAGE_SIZE).toBe(20);
+  });
+
+  it("reuses a human response request id only while retrying the same response", () => {
+    const first = resolveMissionHumanResponseAttempt(
+      undefined,
+      { notes: "Approve" },
+      () => "first-request",
+    );
+    const retry = resolveMissionHumanResponseAttempt(
+      first,
+      { notes: "Approve" },
+      () => "unused-request",
+    );
+    const changed = resolveMissionHumanResponseAttempt(
+      retry,
+      { notes: "Reject" },
+      () => "changed-request",
+    );
+
+    expect(retry).toBe(first);
+    expect(changed.requestId).toBe("changed-request");
+  });
+
+  it("identifies only the final completed Assistant reply in each Turn", () => {
+    const createdAt = "2026-07-11T00:00:00.000Z";
+    const entries = [
+      {
+        id: "turn-1-draft",
+        kind: "assistant" as const,
+        content: "draft",
+        streaming: false,
+        timelineSequence: 1,
+        createdAt,
+      },
+      {
+        id: "turn-1-final",
+        kind: "assistant" as const,
+        content: "final",
+        streaming: false,
+        timelineSequence: 1,
+        createdAt,
+      },
+      {
+        id: "turn-2-streaming",
+        kind: "assistant" as const,
+        content: "streaming",
+        streaming: true,
+        timelineSequence: 2,
+        createdAt,
+      },
+      {
+        id: "turn-2-final",
+        kind: "assistant" as const,
+        content: "done",
+        streaming: false,
+        timelineSequence: 2,
+        createdAt,
+      },
+    ];
+
+    expect([...missionTurnFinalReplyIds(entries)]).toEqual(["turn-1-final", "turn-2-final"]);
+  });
+
+  it("copies the original Markdown and reports clipboard denial", async () => {
+    const copied: string[] = [];
+    await expect(
+      copyMissionReply("# Raw reply\n\n`code`", {
+        writeText: async (content) => {
+          copied.push(content);
+        },
+      }),
+    ).resolves.toBe("copied");
+    expect(copied).toEqual(["# Raw reply\n\n`code`"]);
+    await expect(
+      copyMissionReply("denied", {
+        writeText: async () => {
+          throw new Error("denied");
+        },
+      }),
+    ).resolves.toBe("failed");
+  });
+
   it("distinguishes expert waits, human input, and legacy waiting states", async () => {
     await i18n.changeLanguage("en");
     expect(workStatusLabel("waiting", "experts")).toBe("Waiting for experts");
@@ -553,6 +647,45 @@ describe("MissionsPage", () => {
 });
 
 describe("MissionDetailFragment", () => {
+  it("shows a shimmering chat skeleton only while the initial conversation snapshot is missing", () => {
+    const mission = missionFixture("expert");
+    const loadingHtml = renderToStaticMarkup(<MissionDetailFragment mission={mission} />);
+    const cachedHtml = renderToStaticMarkup(
+      <MissionDetailFragment
+        mission={mission}
+        chatCache={
+          new Map([
+            [
+              mission.id,
+              {
+                missionId: mission.id,
+                revision: 1,
+                entries: [],
+                page: {},
+                pendingInteractions: [],
+              } satisfies MissionChatSnapshot,
+            ],
+          ])
+        }
+      />,
+    );
+
+    expect(loadingHtml).toContain("mission-chat-initial-loading");
+    expect(loadingHtml).toContain('role="status"');
+    expect(loadingHtml).toContain('aria-label="Loading conversation…"');
+    expect(loadingHtml).toContain("mission-skeleton-block");
+    expect(cachedHtml).not.toContain("mission-chat-initial-loading");
+  });
+
+  it("renders the chat skeleton with an accessible loading status", () => {
+    const html = renderToStaticMarkup(<MissionChatSkeleton label="Loading conversation" />);
+
+    expect(html).toContain('role="status"');
+    expect(html).toContain('aria-live="polite"');
+    expect(html).toContain('aria-label="Loading conversation"');
+    expect(html.match(/mission-skeleton-block/g)).toHaveLength(11);
+  });
+
   it("shows the number of Mission Knowledge Stores without exposing their ids", () => {
     const contextStoreId = "10000000-0000-4000-8000-000000000001";
     const html = renderToStaticMarkup(
@@ -1108,6 +1241,49 @@ describe("Mission work record titles", () => {
 });
 
 describe("Mission work grid", () => {
+  it("paginates long work maps and retains ancestors on later pages", () => {
+    const createdAt = "2026-07-21T00:00:00.000Z";
+    const root: MissionWorkRecord = {
+      recordId: "root",
+      kind: "root",
+      sessionId: "root",
+      title: "Coordinator",
+      origin: "core",
+      status: "running",
+      tasks: [],
+      summary: "Coordinate",
+      createdAt,
+      updatedAt: createdAt,
+    };
+    const records = [
+      root,
+      ...Array.from({ length: 44 }, (_, index): MissionWorkRecord => ({
+        recordId: `child:${String(index + 1).padStart(2, "0")}`,
+        kind: "runtime-agent",
+        sessionId: `child:${index + 1}`,
+        parentRecordId: root.recordId,
+        title: `Expert ${index + 1}`,
+        origin: "runtime",
+        status: "succeeded",
+        tasks: [],
+        summary: "Done",
+        createdAt: new Date(Date.UTC(2026, 6, 21, 0, 0, index + 1)).toISOString(),
+        updatedAt: createdAt,
+      })),
+    ];
+
+    expect(missionWorkPageRecords(records, 0, 20)).toHaveLength(20);
+    const secondPage = missionWorkPageRecords(records, 1, 20);
+    expect(secondPage[0]?.recordId).toBe("root");
+    expect(secondPage).toHaveLength(21);
+    const html = renderToStaticMarkup(
+      <MissionWorkGrid records={records} onSelect={() => undefined} />,
+    );
+    expect(html.match(/class="mission-work-card /g)).toHaveLength(20);
+    expect(html).toContain("1 / 3 · 45 records");
+    expect(html).toContain('aria-label="Next work page"');
+  });
+
   it("renders one expert card per work record with profiled avatars and status", () => {
     const createdAt = "2026-07-21T00:00:00.000Z";
     const records: MissionWorkRecord[] = [
@@ -1385,6 +1561,47 @@ describe("Mission work conversation", () => {
 });
 
 describe("Mission chat patches", () => {
+  it("keeps loaded entries from the same long turn when the latest page refreshes", () => {
+    const missionId = "00000000-0000-4000-8000-000000000000";
+    const createdAt = "2026-07-11T00:00:00.000Z";
+    const current: MissionChatSnapshot = {
+      missionId,
+      revision: 1,
+      entries: [
+        {
+          id: "older-tool",
+          kind: "assistant",
+          content: "Older entry from the same turn",
+          streaming: false,
+          timelineSequence: 7,
+          createdAt,
+        },
+        {
+          id: "latest-answer",
+          kind: "assistant",
+          content: "Latest answer",
+          streaming: false,
+          timelineSequence: 7,
+          createdAt,
+        },
+      ],
+      page: { oldestSequence: 7, newestSequence: 7, nextBeforeCursor: "older-cursor" },
+      pendingInteractions: [],
+    };
+    const latest: MissionChatSnapshot = {
+      missionId,
+      revision: 2,
+      entries: [current.entries[1]!],
+      page: { oldestSequence: 7, newestSequence: 7, nextBeforeCursor: "latest-cursor" },
+      pendingInteractions: [],
+    };
+
+    const merged = mergeLatestChatPage(current, latest);
+
+    expect(merged.entries.map((entry) => entry.id)).toEqual(["older-tool", "latest-answer"]);
+    expect(merged.page.nextBeforeCursor).toBe("older-cursor");
+  });
+
   it("preserves known history and interaction state when a refresh is degraded", () => {
     const current: MissionChatSnapshot = {
       missionId: "00000000-0000-4000-8000-000000000000",
@@ -1871,6 +2088,113 @@ describe("Mission Expert output labels", () => {
     expect(tools).not.toContain("Reviewer");
   });
 
+  it("renders reply actions only when the conversation layer enables them", () => {
+    const entry = {
+      id: "answer-actions",
+      kind: "assistant" as const,
+      content: "Completed.",
+      streaming: false,
+      createdAt,
+    };
+    const withoutActions = renderToStaticMarkup(<MissionChatEntryView entry={entry} />);
+    const withActions = renderToStaticMarkup(
+      <MissionChatEntryView entry={entry} showCopy showBranch />,
+    );
+
+    expect(withoutActions).not.toContain("Copy reply");
+    expect(withoutActions).not.toContain("Create branch");
+    expect(withActions).toContain('aria-label="Copy reply"');
+    expect(withActions).toContain('aria-label="Create branch"');
+    expect(withActions).not.toContain(">Copy reply</button>");
+    expect(withActions).not.toContain(">Create branch</button>");
+  });
+
+  it("offers branching from the latest useful reply after a later execution is interrupted", () => {
+    const mission = missionFixture("expert");
+    const currentExecutionId = "00000000-0000-4000-8000-000000000012";
+    mission.execution = {
+      id: currentExecutionId,
+      inputMessageId: "00000000-0000-4000-8000-000000000013",
+      sessionId: "00000000-0000-4000-8000-000000000014",
+      status: "cancelled",
+      startedAt: "2026-07-11T00:02:00.000Z",
+      finishedAt: "2026-07-11T00:03:00.000Z",
+    };
+    const chat: MissionChatSnapshot = {
+      missionId: mission.id,
+      revision: 1,
+      entries: [
+        {
+          id: "assistant:useful",
+          kind: "assistant",
+          content: "Continue from this result.",
+          executionId: "00000000-0000-4000-8000-000000000011",
+          timelineSequence: 1,
+          streaming: false,
+          createdAt,
+        },
+        {
+          id: `result:${currentExecutionId}`,
+          kind: "assistant",
+          content: "Execution interrupted.",
+          executionId: currentExecutionId,
+          timelineSequence: 2,
+          streaming: false,
+          createdAt: "2026-07-11T00:03:00.000Z",
+        },
+      ],
+      page: { oldestSequence: 1, newestSequence: 2 },
+      pendingInteractions: [],
+      queue: { state: "idle", pendingCount: 0, supportsSteer: false, items: [] },
+      execution: { id: currentExecutionId, status: "cancelled", interruptible: false },
+    };
+
+    const html = renderToStaticMarkup(
+      <MissionDetailFragment mission={mission} chatCache={new Map([[mission.id, chat]])} />,
+    );
+
+    expect(html.match(/aria-label="Create branch"/g)).toHaveLength(1);
+    expect(html).toContain(
+      '<div class="mission-chat-composer-meta"><small class="mission-chat-footer-tip">Execution interrupted. You can continue the conversation.</small></div><div class="mission-chat-composer-shell">',
+    );
+    expect(html.indexOf("Continue from this result.")).toBeLessThan(
+      html.indexOf('aria-label="Create branch"'),
+    );
+  });
+
+  it("offers branching again from an inherited reply before the branch has an execution", () => {
+    const mission = missionFixture("expert");
+    mission.branch = {
+      sourceMissionId: "00000000-0000-4000-8000-000000000020",
+      sourceProjectRevision: 1,
+      cutoffMessageId: "assistant:source",
+      createdAt,
+    };
+    const chat: MissionChatSnapshot = {
+      missionId: mission.id,
+      revision: 1,
+      entries: [
+        {
+          id: "branch:source:assistant:source",
+          kind: "assistant",
+          content: "Inherited result.",
+          timelineSequence: 1,
+          streaming: false,
+          createdAt,
+        },
+      ],
+      page: { oldestSequence: 1, newestSequence: 1 },
+      pendingInteractions: [],
+      queue: { state: "idle", pendingCount: 0, supportsSteer: false, items: [] },
+    };
+
+    const html = renderToStaticMarkup(
+      <MissionDetailFragment mission={mission} chatCache={new Map([[mission.id, chat]])} />,
+    );
+
+    expect(html).toContain('aria-label="Create branch"');
+  });
+
   it("keeps tool failure diagnostics expandable without announcing the raw error", () => {
     const html = renderToStaticMarkup(
       <MissionToolCallBlock
@@ -2143,7 +2467,7 @@ describe("Mission human answers", () => {
 
 function missionFixture(kind: "expert" | "team"): Mission {
   return {
-    schemaVersion: "pragma.mission/v8",
+    schemaVersion: "pragma.mission/v9",
     origin: { type: "user" },
     id: "00000000-0000-4000-8000-000000000000",
     title: "Missions page design",

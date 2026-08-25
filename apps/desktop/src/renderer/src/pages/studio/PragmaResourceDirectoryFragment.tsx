@@ -4,6 +4,7 @@ import { useTranslation } from "react-i18next";
 
 import {
   ArrowLeft,
+  ArrowsLeftRight,
   CaretRight,
   CaretDown,
   GitBranch,
@@ -13,6 +14,7 @@ import {
   Play,
   PencilSimple,
   Plus,
+  Question,
   Trash,
   UserCircle,
   UsersThree,
@@ -601,7 +603,7 @@ function TeamDetail(props: {
       capabilitySummary:
         record === undefined
           ? undefined
-          : `${record.skills} ${t("skills")} · ${record.tools} ${t("tools")}`,
+          : `${record.skills} ${t("skills")} · ${record.tools} ${t("tools")} · ${record.contextStoreMounts.length} ${t("contextStores")}`,
     };
   };
   const coordinator = buildExpert(coordinatorRef);
@@ -817,10 +819,7 @@ function TeamExpertCard(props: {
           </div>
         </dl>
         {props.expert.capabilitySummary ? (
-          <p className="team-expert-capabilities">
-            <span>{t("capabilities")}</span>
-            {props.expert.capabilitySummary}
-          </p>
+          <p className="team-expert-capabilities">{props.expert.capabilitySummary}</p>
         ) : null}
         {canOpen ? (
           <button className="team-expert-open" type="button" onClick={openExpert}>
@@ -1313,6 +1312,43 @@ function pruneTeamPermissions(
   );
 }
 
+export function buildFullyConnectedTeamPermissions(
+  participantRefs: readonly string[],
+  coordinatorRef: string,
+): {
+  readonly spawn: Readonly<Record<string, readonly string[]>>;
+  readonly interact: Readonly<Record<string, readonly string[]>>;
+} {
+  const participantIds = [
+    ...new Set(
+      participantRefs
+        .filter((ref) => ref.startsWith("expert:"))
+        .map((ref) => ref.slice("expert:".length)),
+    ),
+  ];
+  const coordinatorId = coordinatorRef.slice("expert:".length);
+  const memberIds = participantIds.filter((id) => id !== coordinatorId);
+  return {
+    spawn: Object.fromEntries(
+      memberIds.map((sourceId) => [
+        sourceId,
+        participantIds.filter((targetId) => targetId !== sourceId),
+      ]),
+    ),
+    interact: Object.fromEntries(memberIds.map((sourceId) => [sourceId, participantIds])),
+  };
+}
+
+function permissionMapsMatch(
+  current: Readonly<Record<string, readonly string[]>>,
+  expected: Readonly<Record<string, readonly string[]>>,
+): boolean {
+  return Object.entries(expected).every(([source, targets]) => {
+    const selected = new Set(current[source] ?? []);
+    return selected.size === targets.length && targets.every((target) => selected.has(target));
+  });
+}
+
 function TeamPermissionEditor(props: {
   readonly experts: readonly PragmaExpertResource[];
   readonly coordinatorRef: string;
@@ -1323,95 +1359,229 @@ function TeamPermissionEditor(props: {
   readonly onInteractChange: (value: Readonly<Record<string, readonly string[]>>) => void;
 }) {
   const { t } = useTranslation("studio");
+  const [activeParticipantRef, setActiveParticipantRef] = useState("");
+  const [activePermission, setActivePermission] = useState<"spawn" | "interact" | null>(null);
+  const [connectAllDialogOpen, setConnectAllDialogOpen] = useState(false);
   const participants = props.participantRefs.flatMap((ref) => {
     const expert = props.experts.find((candidate) => canonicalPragmaResourceRef(candidate) === ref);
     return expert === undefined ? [] : [expert];
   });
-  const toggle = (
-    current: Readonly<Record<string, readonly string[]>>,
-    source: string,
-    target: string,
-    checked: boolean,
-    update: (value: Readonly<Record<string, readonly string[]>>) => void,
-  ) => {
-    const selected = new Set(current[source] ?? []);
-    if (checked) selected.add(target);
-    else selected.delete(target);
-    update({ ...current, [source]: [...selected] });
+  const fallbackParticipant =
+    participants.find(
+      (participant) => canonicalPragmaResourceRef(participant) !== props.coordinatorRef,
+    ) ?? participants[0];
+  const activeParticipant =
+    participants.find(
+      (participant) => canonicalPragmaResourceRef(participant) === activeParticipantRef,
+    ) ?? fallbackParticipant;
+  const activeSourceId = activeParticipant?.metadata.id ?? "";
+  const activeIsCoordinator =
+    activeParticipant !== undefined &&
+    canonicalPragmaResourceRef(activeParticipant) === props.coordinatorRef;
+  const fullyConnectedPermissions = buildFullyConnectedTeamPermissions(
+    props.participantRefs,
+    props.coordinatorRef,
+  );
+  const isFullyConnected =
+    participants.length >= 2 &&
+    permissionMapsMatch(props.spawn, fullyConnectedPermissions.spawn) &&
+    permissionMapsMatch(props.interact, fullyConnectedPermissions.interact);
+  const permissionItems: readonly PragmaResourcePickerItem[] = participants.map((participant) => ({
+    ref: canonicalPragmaResourceRef(participant),
+    name:
+      participant.metadata.id === activeSourceId && activePermission === "interact"
+        ? `${participant.metadata.name} (${t("otherInstances")})`
+        : participant.metadata.name,
+    description: participant.metadata.description,
+    searchTerms: [participant.metadata.id, ...participant.metadata.tags],
+    kind: "expert",
+    avatarId: participant.metadata.avatarId,
+  }));
+  const permissionIds =
+    activePermission === null || activeSourceId === ""
+      ? []
+      : activePermission === "spawn"
+        ? (props.spawn[activeSourceId] ?? [])
+        : (props.interact[activeSourceId] ?? []);
+  const permissionRefs = permissionIds.map((id) => `expert:${id}`);
+  const updatePermission = (refs: readonly string[]) => {
+    if (activePermission === null || activeSourceId === "") return;
+    const ids = refs.map((ref) => ref.slice("expert:".length));
+    if (activePermission === "spawn") {
+      props.onSpawnChange({ ...props.spawn, [activeSourceId]: ids });
+    } else {
+      props.onInteractChange({ ...props.interact, [activeSourceId]: ids });
+    }
+  };
+  const permissionSummary = (ids: readonly string[]) => {
+    const names = ids.flatMap((id) => {
+      const expert = participants.find((participant) => participant.metadata.id === id);
+      return expert === undefined ? [] : [expert.metadata.name];
+    });
+    if (names.length === 0) return t("noneSelected");
+    return names.length > 8
+      ? `${names.slice(0, 8).join(" · ")} · ${t("moreCount", { count: names.length - 8 })}`
+      : names.join(" · ");
   };
   return (
     <section className="team-expert-selector" aria-labelledby="team-permissions-label">
       <div className="team-expert-selector-heading">
         <div>
-          <h3 id="team-permissions-label">{t("teamPermissions")}</h3>
+          <div className="team-permissions-title">
+            <h3 id="team-permissions-label">{t("teamPermissions")}</h3>
+            <button
+              className="team-permissions-help"
+              type="button"
+              aria-label={t("teamPermissionsHelp")}
+              aria-describedby="team-permissions-tooltip"
+            >
+              <Question size={14} weight="bold" aria-hidden="true" />
+              <span id="team-permissions-tooltip" role="tooltip">
+                {t("teamPermissionsHelp")}
+              </span>
+            </button>
+          </div>
           <p>{t("teamPermissionsDescription")}</p>
         </div>
+        <button
+          className="team-permissions-connect-all"
+          type="button"
+          disabled={isFullyConnected || participants.length < 2}
+          onClick={() => setConnectAllDialogOpen(true)}
+        >
+          <ArrowsLeftRight size={15} aria-hidden="true" />
+          {t(isFullyConnected ? "teamPermissionsAllConnected" : "teamPermissionsConnectAll")}
+        </button>
       </div>
-      {participants.map((source) => (
-        <div className="team-permission-row" key={source.metadata.id}>
-          <strong>{source.metadata.name}</strong>
-          {canonicalPragmaResourceRef(source) === props.coordinatorRef ? (
-            <div className="team-coordinator-authority">
-              <span>{t("coordinatorAuthority")}</span>
-              <small>{t("coordinatorAuthorityDescription")}</small>
-            </div>
-          ) : (
-            <>
-              <fieldset>
-                <legend>{t("spawnPermissions")}</legend>
-                {participants
-                  .filter((target) => target.metadata.id !== source.metadata.id)
-                  .map((target) => (
-                    <label key={target.metadata.id}>
-                      <input
-                        className="team-permission-checkbox"
-                        type="checkbox"
-                        checked={(props.spawn[source.metadata.id] ?? []).includes(
-                          target.metadata.id,
-                        )}
-                        onChange={(event) =>
-                          toggle(
-                            props.spawn,
-                            source.metadata.id,
-                            target.metadata.id,
-                            event.target.checked,
-                            props.onSpawnChange,
-                          )
-                        }
-                      />
-                      {target.metadata.name}
-                    </label>
-                  ))}
-              </fieldset>
-              <fieldset>
-                <legend>{t("interactionPermissions")}</legend>
-                {participants.map((target) => (
-                  <label key={target.metadata.id}>
-                    <input
-                      className="team-permission-checkbox"
-                      type="checkbox"
-                      checked={(props.interact[source.metadata.id] ?? []).includes(
-                        target.metadata.id,
-                      )}
-                      onChange={(event) =>
-                        toggle(
-                          props.interact,
-                          source.metadata.id,
-                          target.metadata.id,
-                          event.target.checked,
-                          props.onInteractChange,
-                        )
-                      }
-                    />
-                    {target.metadata.name}
-                    {target.metadata.id === source.metadata.id ? ` (${t("otherInstances")})` : ""}
-                  </label>
-                ))}
-              </fieldset>
-            </>
-          )}
+      {activeParticipant === undefined ? null : (
+        <div className="team-permission-editor">
+          <nav className="team-permission-members" aria-label={t("teamPermissionMembers")}>
+            {participants.map((participant) => {
+              const ref = canonicalPragmaResourceRef(participant);
+              const isCoordinator = ref === props.coordinatorRef;
+              const isActive = participant.metadata.id === activeParticipant.metadata.id;
+              return (
+                <button
+                  className={isActive ? "is-active" : undefined}
+                  type="button"
+                  aria-current={isActive ? "true" : undefined}
+                  key={participant.metadata.id}
+                  onClick={() => setActiveParticipantRef(ref)}
+                >
+                  <ExpertAvatar avatarId={participant.metadata.avatarId} size="sm" />
+                  <span>
+                    <strong>{participant.metadata.name}</strong>
+                    <small>{isCoordinator ? t("coordinator") : t("teamMember")}</small>
+                  </span>
+                  <CaretRight size={14} aria-hidden="true" />
+                </button>
+              );
+            })}
+          </nav>
+          <div className="team-permission-detail">
+            <header>
+              <div>
+                <small>{activeIsCoordinator ? t("coordinator") : t("teamMember")}</small>
+                <strong>{activeParticipant.metadata.name}</strong>
+              </div>
+              <span>{t("permissionTargetCount", { count: participants.length })}</span>
+            </header>
+            {activeIsCoordinator ? (
+              <div className="team-coordinator-authority">
+                <span>{t("coordinatorAuthority")}</span>
+                <small>{t("coordinatorAuthorityDescription")}</small>
+              </div>
+            ) : (
+              <div className="team-permission-cards">
+                {(["spawn", "interact"] as const).map((permission) => {
+                  const ids =
+                    permission === "spawn"
+                      ? (props.spawn[activeSourceId] ?? [])
+                      : (props.interact[activeSourceId] ?? []);
+                  return (
+                    <button
+                      type="button"
+                      key={permission}
+                      onClick={() => setActivePermission(permission)}
+                    >
+                      <span className="team-permission-card-content">
+                        <span className="team-permission-card-copy">
+                          <strong>
+                            {t(
+                              permission === "spawn"
+                                ? "spawnPermissions"
+                                : "interactionPermissions",
+                            )}
+                          </strong>
+                          <small>
+                            {t(
+                              permission === "spawn"
+                                ? "spawnPermissionsDescription"
+                                : "interactionPermissionsDescription",
+                            )}
+                          </small>
+                        </span>
+                        <span className="team-permission-card-summary">
+                          <b>{t("selectedCount", { count: ids.length })}</b>
+                          <small>{permissionSummary(ids)}</small>
+                        </span>
+                      </span>
+                      <span className="team-expert-selector-action">
+                        {t("editSelection")}
+                        <CaretRight size={16} aria-hidden="true" />
+                      </span>
+                    </button>
+                  );
+                })}
+              </div>
+            )}
+          </div>
         </div>
-      ))}
+      )}
+      {activePermission !== null && activeParticipant !== undefined ? (
+        <PragmaResourcePickerDialog
+          title={t(
+            activePermission === "spawn"
+              ? "chooseSpawnPermissions"
+              : "chooseInteractionPermissions",
+            { name: activeParticipant.metadata.name },
+          )}
+          description={t(
+            activePermission === "spawn"
+              ? "spawnPermissionsDescription"
+              : "interactionPermissionsDescription",
+          )}
+          items={permissionItems}
+          selectedRefs={permissionRefs}
+          selectionMode="multiple"
+          excludedRefs={
+            activePermission === "spawn"
+              ? new Set([canonicalPragmaResourceRef(activeParticipant)])
+              : undefined
+          }
+          searchPlaceholder={t("searchTeamExpertsDescription")}
+          footerHint={t("selectionAppliedToTeam")}
+          onSelectedRefsChange={updatePermission}
+          onClose={() => setActivePermission(null)}
+        />
+      ) : null}
+      {connectAllDialogOpen ? (
+        <StudioConfirmationDialog
+          title={t("teamPermissionsConnectAllConfirmTitle")}
+          description={t("teamPermissionsConnectAllConfirmDescription")}
+          cancelLabel={t("cancel")}
+          confirmLabel={t("teamPermissionsConnectAllConfirmAction")}
+          busyLabel={t("teamPermissionsConnectAllApplying")}
+          busy={false}
+          action="move"
+          onCancel={() => setConnectAllDialogOpen(false)}
+          onConfirm={() => {
+            props.onSpawnChange(fullyConnectedPermissions.spawn);
+            props.onInteractChange(fullyConnectedPermissions.interact);
+            setConnectAllDialogOpen(false);
+          }}
+        />
+      ) : null}
     </section>
   );
 }

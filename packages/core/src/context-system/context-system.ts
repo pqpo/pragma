@@ -154,7 +154,9 @@ export interface ExpertAgentContextItemListInput {
   readonly context?: ExpertAgentRunContext | undefined;
 }
 
-export type ContextEditMode = "replace" | "search_replace";
+export type ContextEditMode = "replace" | "search_replace" | "append" | "prepend";
+
+export type ContextBoundarySeparator = "none" | "newline" | "blank_line";
 
 interface ExpertAgentContextItemEditBaseInput {
   readonly namespace: string;
@@ -177,8 +179,24 @@ export interface ExpertAgentContextItemSearchReplaceEditInput extends ExpertAgen
   readonly replaceAll?: boolean | undefined;
 }
 
+interface ExpertAgentContextItemBoundaryEditBaseInput extends ExpertAgentContextItemEditBaseInput {
+  readonly content: string;
+  readonly separator: ContextBoundarySeparator;
+}
+
+export interface ExpertAgentContextItemAppendEditInput extends ExpertAgentContextItemBoundaryEditBaseInput {
+  readonly mode: "append";
+}
+
+export interface ExpertAgentContextItemPrependEditInput extends ExpertAgentContextItemBoundaryEditBaseInput {
+  readonly mode: "prepend";
+}
+
 export type ExpertAgentContextItemEditInput =
-  ExpertAgentContextItemReplaceEditInput | ExpertAgentContextItemSearchReplaceEditInput;
+  | ExpertAgentContextItemReplaceEditInput
+  | ExpertAgentContextItemSearchReplaceEditInput
+  | ExpertAgentContextItemAppendEditInput
+  | ExpertAgentContextItemPrependEditInput;
 
 interface ExpertAgentStoredContextItemEditBaseInput {
   readonly id: string;
@@ -200,8 +218,24 @@ export interface ExpertAgentStoredContextItemSearchReplaceEditInput extends Expe
   readonly replaceAll?: boolean | undefined;
 }
 
+interface ExpertAgentStoredContextItemBoundaryEditBaseInput extends ExpertAgentStoredContextItemEditBaseInput {
+  readonly content: string;
+  readonly separator: ContextBoundarySeparator;
+}
+
+export interface ExpertAgentStoredContextItemAppendEditInput extends ExpertAgentStoredContextItemBoundaryEditBaseInput {
+  readonly mode: "append";
+}
+
+export interface ExpertAgentStoredContextItemPrependEditInput extends ExpertAgentStoredContextItemBoundaryEditBaseInput {
+  readonly mode: "prepend";
+}
+
 export type ExpertAgentStoredContextItemEditInput =
-  ExpertAgentStoredContextItemReplaceEditInput | ExpertAgentStoredContextItemSearchReplaceEditInput;
+  | ExpertAgentStoredContextItemReplaceEditInput
+  | ExpertAgentStoredContextItemSearchReplaceEditInput
+  | ExpertAgentStoredContextItemAppendEditInput
+  | ExpertAgentStoredContextItemPrependEditInput;
 
 export interface ExpertAgentContextItemEditResult extends ExpertAgentContextItem {
   readonly mode: ContextEditMode;
@@ -989,6 +1023,19 @@ export function normalizeEditInput(
     });
   }
 
+  if (input.mode === "append" || input.mode === "prepend") {
+    return ok({
+      namespace: namespace.value,
+      id: input.id,
+      mode: input.mode,
+      content: input.content,
+      separator: input.separator,
+      ...(input.expectedRevision === undefined ? {} : { expectedRevision: input.expectedRevision }),
+      ...(input.expectedEtag === undefined ? {} : { expectedEtag: input.expectedEtag }),
+      ...(input.context === undefined ? {} : { context: input.context }),
+    });
+  }
+
   if (input.search.trim().length === 0) {
     return error("invalid_input", 'Context edit parameter "search" must not be empty.');
   }
@@ -1253,6 +1300,18 @@ function toStoredEditInput(
       mode: "replace",
       ...(input.content === undefined ? {} : { content: input.content }),
       ...(input.metadata === undefined ? {} : { metadata: input.metadata }),
+      ...(input.expectedRevision === undefined ? {} : { expectedRevision: input.expectedRevision }),
+      ...(input.expectedEtag === undefined ? {} : { expectedEtag: input.expectedEtag }),
+      ...(input.context === undefined ? {} : { context: input.context }),
+    };
+  }
+
+  if (input.mode === "append" || input.mode === "prepend") {
+    return {
+      id: input.id,
+      mode: input.mode,
+      content: input.content,
+      separator: input.separator,
       ...(input.expectedRevision === undefined ? {} : { expectedRevision: input.expectedRevision }),
       ...(input.expectedEtag === undefined ? {} : { expectedEtag: input.expectedEtag }),
       ...(input.context === undefined ? {} : { context: input.context }),

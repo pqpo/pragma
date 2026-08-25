@@ -257,7 +257,7 @@ const MissionContextStoreIdsSchema = z
     }
   });
 
-export const MissionSchema = MissionBaseSchema.extend({
+export const MissionV8Schema = MissionBaseSchema.extend({
   schemaVersion: z.literal("pragma.mission/v8"),
   flowInput: z.record(z.string(), z.unknown()).optional(),
   origin: MissionOriginSchema.default({ type: "user" }),
@@ -275,6 +275,44 @@ export const MissionSchema = MissionBaseSchema.extend({
       code: "custom",
       message: "Only Flow missions may store flowInput.",
       path: ["flowInput"],
+    });
+  }
+});
+
+export const MissionBranchSourceSchema = z.object({
+  sourceMissionId: MissionIdSchema,
+  sourceProjectRevision: z.number().int().positive(),
+  cutoffExecutionId: z.string().uuid().optional(),
+  cutoffMessageId: z.string().min(1),
+  createdAt: z.string().datetime(),
+});
+
+export const MissionSchema = MissionBaseSchema.extend({
+  schemaVersion: z.literal("pragma.mission/v9"),
+  flowInput: z.record(z.string(), z.unknown()).optional(),
+  origin: MissionOriginSchema.default({ type: "user" }),
+  contextStoreIds: MissionContextStoreIdsSchema,
+  branch: MissionBranchSourceSchema.optional(),
+}).superRefine((mission, context) => {
+  if (mission.executor.kind === "flow" && mission.flowInput === undefined) {
+    context.addIssue({
+      code: "custom",
+      message: "Flow missions require flowInput.",
+      path: ["flowInput"],
+    });
+  }
+  if (mission.executor.kind !== "flow" && mission.flowInput !== undefined) {
+    context.addIssue({
+      code: "custom",
+      message: "Only Flow missions may store flowInput.",
+      path: ["flowInput"],
+    });
+  }
+  if (mission.branch !== undefined && mission.executor.kind === "flow") {
+    context.addIssue({
+      code: "custom",
+      message: "Flow missions cannot be conversation branches.",
+      path: ["branch"],
     });
   }
 });
@@ -436,13 +474,18 @@ export function missionExecutorSnapshot(resource: PragmaInvocableResource): Miss
 }
 
 export const MissionActionSchema = z.object({ id: MissionIdSchema });
+export const CreateMissionBranchSchema = z.object({
+  sourceMissionId: MissionIdSchema,
+  expectedExecutionId: z.string().uuid().nullable(),
+  expectedMessageId: z.string().min(1),
+});
 export const MissionQueuePromptActionSchema = z.object({
   id: MissionIdSchema,
   requestId: z.string().uuid(),
 });
 export const GetMissionChatSchema = z.object({
   id: MissionIdSchema,
-  beforeSequence: z.number().int().positive().optional(),
+  beforeCursor: z.string().min(1).max(2_048).optional(),
   limit: z.number().int().min(1).max(100).default(50),
 });
 export const GetMissionWorkConversationSchema = z.object({
@@ -537,6 +580,33 @@ export const MissionChatEntrySchema = z.discriminatedUnion("kind", [
   }),
 ]);
 
+type MissionChatEntryValue = z.infer<typeof MissionChatEntrySchema>;
+type MissionAssistantEntryValue = Extract<MissionChatEntryValue, { readonly kind: "assistant" }>;
+
+const SYNTHETIC_MISSION_REPLY_ID = /(?:^|:)(?:missing|result):[^:]+$/;
+
+export function isMissionBranchableReply(
+  entry: MissionChatEntryValue,
+): entry is MissionAssistantEntryValue {
+  return (
+    entry.kind === "assistant" &&
+    entry.streaming === false &&
+    !SYNTHETIC_MISSION_REPLY_ID.test(entry.id)
+  );
+}
+
+export function latestMissionBranchableReply(
+  entries: readonly MissionChatEntryValue[],
+): MissionAssistantEntryValue | undefined {
+  return [...entries].reverse().find(isMissionBranchableReply);
+}
+
+export const MissionBranchHistorySchema = z.object({
+  schemaVersion: z.literal("pragma.mission-branch-history/v1"),
+  source: MissionBranchSourceSchema,
+  entries: z.array(MissionChatEntrySchema),
+});
+
 export const MISSION_ATTACHMENT_PREVIEW_SCHEME = "pragma-mission-attachment";
 
 export function missionAttachmentPreviewUrl(missionId: string, attachmentId: string): string {
@@ -599,7 +669,7 @@ export const MissionChatSnapshotSchema = z.object({
   page: z.object({
     oldestSequence: z.number().int().positive().optional(),
     newestSequence: z.number().int().positive().optional(),
-    nextBeforeSequence: z.number().int().positive().optional(),
+    nextBeforeCursor: z.string().min(1).max(2_048).optional(),
   }),
   pendingInteractions: z.array(MissionHumanInteractionSchema),
   queue: z

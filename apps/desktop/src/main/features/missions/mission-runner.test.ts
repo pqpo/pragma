@@ -17,6 +17,7 @@ import {
   StoredExecutionView,
   withFileLock,
   type ExpertSession,
+  type ExecutionOutputItem,
   type RuntimeDriverSessionContext,
   type RuntimeContextWindowUsage,
   type RuntimeModelSelection,
@@ -42,10 +43,12 @@ import type { CapabilityCredentialStore } from "../capabilities/capability-crede
 import type { CapabilityStore } from "../capabilities/capability-store.ts";
 import {
   compactExpertSessionContext,
+  consumeLiveChatOutput,
   createMissionRunner,
   isRootMissionRuntimeOutput,
   missionKnowledgeNamespace,
   toDesktopHumanRequest,
+  type LiveMissionChat,
 } from "./mission-runner.ts";
 import { createMissionStore } from "./mission-store.ts";
 import { createPragmaProjectStore } from "../projects/pragma-project-store.ts";
@@ -120,6 +123,56 @@ afterEach(async () => {
 });
 
 describe("MissionRunner", { timeout: 15_000 }, () => {
+  it("keeps interleaved expert token streams grouped by invocation", () => {
+    const chat: LiveMissionChat = {
+      executionId: "execution-1",
+      entries: [],
+      messageOrdinals: new Map(),
+      close: async () => undefined,
+      readDurableEntries: async () => [],
+    };
+    const output = (
+      invocationId: string,
+      executorId: string,
+      delta?: string,
+    ): ExecutionOutputItem => ({
+      sourceEventId: `${invocationId}:${delta ?? "completed"}`,
+      executionId: chat.executionId,
+      invocationId,
+      executorId,
+      contextId: `context:${invocationId}`,
+      runId: `run:${invocationId}`,
+      source: { kind: "runtime", runId: `run:${invocationId}`, path: [] },
+      channel: "message",
+      ...(delta === undefined ? { value: "completed" } : { delta }),
+      occurredAt: "2026-08-24T00:00:00.000Z",
+    });
+
+    consumeLiveChatOutput(chat, output("invocation-a", "expert-a", "A1"));
+    consumeLiveChatOutput(chat, output("invocation-b", "expert-b", "B1"));
+    consumeLiveChatOutput(chat, output("invocation-a", "expert-a", "A2"));
+    consumeLiveChatOutput(chat, output("invocation-b", "expert-b", "B2"));
+    consumeLiveChatOutput(chat, output("invocation-a", "expert-a"));
+    consumeLiveChatOutput(chat, output("invocation-b", "expert-b"));
+
+    expect(chat.entries).toEqual([
+      expect.objectContaining({
+        kind: "assistant",
+        invocationId: "invocation-a",
+        executorId: "expert-a",
+        content: "A1A2",
+        streaming: false,
+      }),
+      expect.objectContaining({
+        kind: "assistant",
+        invocationId: "invocation-b",
+        executorId: "expert-b",
+        content: "B1B2",
+        streaming: false,
+      }),
+    ]);
+  });
+
   it("projects context compaction only from the root coordinator Runtime", () => {
     const rootSource = { kind: "runtime" as const, runId: "root-run", path: [] };
 
@@ -218,6 +271,85 @@ describe("MissionRunner", { timeout: 15_000 }, () => {
         ],
       }),
     ]);
+  });
+
+  it("paginates a single long Mission turn by visible entries", async () => {
+    const root = await mkdtemp(join(tmpdir(), "pragma-mission-long-turn-page-"));
+    temporaryPaths.push(root);
+    const project = createPragmaProjectStore({ projectsPath: join(root, "projects") });
+    const snapshot = await project.publish({
+      expectedRevision: 0,
+      resources: [runtimeFixture(), expertFixture()],
+    });
+    const missions = createMissionStore({ missionsPath: join(root, "missions") });
+    const mission = await missions.create({
+      workspace: { path: root, basename: "workspace" },
+      goal: "Run one very long turn",
+      project: { id: snapshot.projectId, revision: snapshot.revision },
+      executor: missionExecutorSnapshot(
+        snapshot.resources.find((resource) => resource.kind === "Expert")!,
+      ),
+    });
+    const executionId = "00000000-0000-4000-8000-000000000077";
+    await missions.appendExecutionReference({
+      missionId: mission.id,
+      inputMessageId: mission.initialMessageId,
+      executionId,
+      createdAt: "2026-08-25T00:00:00.000Z",
+    });
+    await missions.writeExecutionProjection(
+      mission.id,
+      executionId,
+      Array.from({ length: 45 }, (_, index) => ({
+        id: `assistant:${index + 1}`,
+        timelineSequence: 1,
+        executionId,
+        kind: "assistant" as const,
+        content: `answer ${index + 1}`,
+        streaming: false,
+        createdAt: new Date(Date.UTC(2026, 7, 25, 0, 0, index + 1)).toISOString(),
+      })),
+    );
+    const runtime = defineRuntimeTestDriver<never, { id: string }>({
+      descriptor: { id: "fake", kind: "fake", displayName: "Fake" },
+      createSession: () => ({ id: "runtime" }),
+      readSession: (session) => ({ runtimeSessionId: session.id }),
+      startTurn: () => ({ outputText: "unused", runtimeSessionId: "runtime" }),
+      mapEvent: () => ({ events: [] }),
+    });
+    const runner = createMissionRunner({
+      missions,
+      project,
+      capabilityStore: {} as CapabilityStore,
+      capabilityCredentials: {} as CapabilityCredentialStore,
+      capabilitiesPath: join(root, "capabilities"),
+      pragmaHome: join(root, "state"),
+      runtimes: createStaticRuntimeResolver({ runtimes: [runtime], defaultRuntimeId: "fake" }),
+    });
+
+    const latest = await runner.getChat({ id: mission.id, limit: 20 });
+    expect(latest.entries.map((entry) => entry.id)).toEqual(
+      Array.from({ length: 20 }, (_, index) => `assistant:${index + 26}`),
+    );
+    expect(latest.page.nextBeforeCursor).toBeTypeOf("string");
+    const middle = await runner.getChat({
+      id: mission.id,
+      beforeCursor: latest.page.nextBeforeCursor,
+      limit: 20,
+    });
+    expect(middle.entries.map((entry) => entry.id)).toEqual(
+      Array.from({ length: 20 }, (_, index) => `assistant:${index + 6}`),
+    );
+    const earliest = await runner.getChat({
+      id: mission.id,
+      beforeCursor: middle.page.nextBeforeCursor,
+      limit: 20,
+    });
+    expect(earliest.entries.map((entry) => entry.id)).toEqual([
+      mission.initialMessageId,
+      ...Array.from({ length: 5 }, (_, index) => `assistant:${index + 1}`),
+    ]);
+    expect(earliest.page.nextBeforeCursor).toBeUndefined();
   });
 
   it("marks system Mission chat and work notifications as internal", async () => {
@@ -3660,6 +3792,103 @@ describe("MissionRunner", { timeout: 15_000 }, () => {
         status: "running",
       },
     });
+  });
+
+  it("merges inherited branch history and starts the branch in a fresh Session", async () => {
+    const root = await mkdtemp(join(tmpdir(), "pragma-mission-branch-runner-"));
+    temporaryPaths.push(root);
+    const project = createPragmaProjectStore({ projectsPath: join(root, "projects") });
+    const snapshot = await project.publish({
+      expectedRevision: 0,
+      resources: [runtimeFixture(), expertFixture()],
+    });
+    const missions = createMissionStore({ missionsPath: join(root, "missions") });
+    const source = await missions.create({
+      workspace: { path: root, basename: "workspace" },
+      goal: "Create the source answer",
+      project: { id: snapshot.projectId, revision: snapshot.revision },
+      executor: missionExecutorSnapshot(
+        snapshot.resources.find((resource) => resource.kind === "Expert")!,
+      ),
+    });
+    const runtime = defineRuntimeTestDriver<never, { id: string }>({
+      descriptor: { id: "fake", kind: "fake", displayName: "Fake" },
+      createSession: () => ({ id: "runtime" }),
+      restoreSession: () => ({ id: "runtime" }),
+      readSession: (session) => ({ runtimeSessionId: session.id }),
+      startTurn: (_session, turn) => ({
+        outputText: `writer:${turn.rawQuery}`,
+        runtimeSessionId: _session.id,
+      }),
+      mapEvent: () => ({ events: [] }),
+      closeSession: () => undefined,
+    });
+    const runner = createMissionRunner({
+      missions,
+      project,
+      capabilityStore: {} as CapabilityStore,
+      capabilityCredentials: {} as CapabilityCredentialStore,
+      capabilitiesPath: join(root, "capabilities"),
+      pragmaHome: join(root, "state"),
+      runtimes: createStaticRuntimeResolver({ runtimes: [runtime], defaultRuntimeId: "fake" }),
+    });
+    await runner.run(source.id);
+    await vi.waitFor(
+      async () => expect((await missions.get(source.id)).execution?.status).toBe("succeeded"),
+      { timeout: settlementTimeoutMs },
+    );
+    const settledSource = await missions.get(source.id);
+    const sourceChat = await runner.getChat({ id: source.id, limit: 50 });
+    const finalReply = sourceChat.entries
+      .filter((entry) => entry.kind === "assistant" && entry.streaming === false)
+      .at(-1);
+    if (finalReply?.kind !== "assistant" || settledSource.execution === undefined) {
+      throw new Error("Expected a settled source reply.");
+    }
+    const branch = await missions.createBranch({
+      sourceMissionId: source.id,
+      expectedSourceUpdatedAt: settledSource.updatedAt,
+      expectedExecutionId: settledSource.execution.id,
+      expectedMessageId: finalReply.id,
+      project: settledSource.project,
+      executor: settledSource.executor,
+      history: sourceChat.entries,
+    });
+
+    const inheritedChat = await runner.getChat({ id: branch.id, limit: 50 });
+    expect(inheritedChat.entries).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ kind: "user", content: source.goal }),
+        expect.objectContaining({
+          id: `branch:${source.id}:${finalReply.id}`,
+          kind: "assistant",
+          content: finalReply.content,
+        }),
+      ]),
+    );
+    await expect(runner.run(branch.id)).rejects.toThrow(
+      "Continue a branched Mission by sending a new message.",
+    );
+    await runner.sendMessage({
+      id: branch.id,
+      content: "Continue from the inherited result",
+      requestId: "00000000-0000-4000-8000-000000000050",
+    });
+    await vi.waitFor(
+      async () => expect((await missions.get(branch.id)).execution?.status).toBe("succeeded"),
+      { timeout: settlementTimeoutMs },
+    );
+    const settledBranch = await missions.get(branch.id);
+    expect(settledBranch.execution?.sessionId).toBeDefined();
+    expect(settledBranch.execution?.sessionId).not.toBe(settledSource.execution.sessionId);
+    expect((await runner.getChat({ id: branch.id, limit: 50 })).entries).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          kind: "assistant",
+          content: "writer:Continue from the inherited result",
+        }),
+      ]),
+    );
   });
 
   it("projects oversized replies as Mission Board references without copying full text", async () => {

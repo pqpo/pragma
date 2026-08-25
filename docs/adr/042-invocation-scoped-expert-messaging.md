@@ -16,7 +16,8 @@ Pragma 将任务委派和运行中通信拆成两个协议：
 - `delegate_expert({ expertId, task })` 创建新的 AgentInstance、Runtime Context 和 Invocation；
 - `delegate_expert({ agentId, task })` 复用既有 AgentInstance 与 Context，创建 FIFO Invocation；
 - `message_expert({ agentId, invocationId, message })` 只写入该 Agent 当前明确 active Invocation 的 Inbox；
-- `steer_expert({ agentId, invocationId, message })` 只尝试立即注入当前 Runtime turn，不提供排队降级；
+- `steer_expert({ agentId, invocationId, message })` 只向当前 Runtime turn 投递引导，由 Runtime 在最近的
+  steering boundary 应用；它不应主动中断当前 tool call，也不提供后续 Invocation 降级；
 - `wait_experts` 只 Join 当前 Invocation 直接委派的 Invocation。
 
 Invocation 是可调度、可等待、可恢复的工作单。AgentInstance 是串行执行线程，同一时刻只有一个
@@ -32,7 +33,7 @@ FIFO 边。提交委派前必须验证完整 Wait-for Graph 无环。Message 不
 
 ## Consequences
 
-- Agent 选择工具时只需判断“新任务、可靠安全边界消息、立即 steer”三种意图。
+- Agent 选择工具时只需判断“新任务、可靠安全边界消息、当前 turn steer”三种意图。
 - 双向消息不会改变 Wait-for Graph，原有通信型死锁被消除。
 - 调用方必须保存并提交准确的 `invocationId`；不能只凭长期 `agentId` 向未来任务投递。
 - 需要新结果时必须委派新的 Invocation；消息本身不能被 `wait_experts` 等待。

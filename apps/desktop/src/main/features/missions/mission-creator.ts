@@ -8,6 +8,7 @@ import type {
   DesktopToolPermissionMode,
   Mission,
   MissionModelOverride,
+  MissionChatEntry,
 } from "../../../shared/contracts/index.ts";
 import type { MissionExecutorCatalog } from "./mission-executor-catalog.ts";
 import type { MissionStore } from "./mission-store.ts";
@@ -30,6 +31,12 @@ export interface MissionCreator {
     readonly origin?: Mission["origin"] | undefined;
     readonly contextStoreIds?: readonly string[] | undefined;
   }): Promise<Mission>;
+  createBranch(input: {
+    readonly source: Mission;
+    readonly expectedExecutionId: string | null;
+    readonly expectedMessageId: string;
+    readonly history: readonly MissionChatEntry[];
+  }): Promise<Mission>;
 }
 
 export function createMissionCreator(options: {
@@ -40,6 +47,7 @@ export function createMissionCreator(options: {
   readonly getDefaultToolPermissionMode: () =>
     DesktopToolPermissionMode | Promise<DesktopToolPermissionMode>;
   readonly assertExecutorReady?: ((ref: string) => void | Promise<void>) | undefined;
+  readonly assertStorageWriteAllowed?: (() => void | Promise<void>) | undefined;
 }): MissionCreator {
   return {
     async create(input) {
@@ -110,6 +118,48 @@ export function createMissionCreator(options: {
         contextStoreIds: input.contextStoreIds ?? [],
         toolPermissionMode:
           input.toolPermissionMode ?? (await options.getDefaultToolPermissionMode()),
+      });
+    },
+    async createBranch(input) {
+      await options.assertStorageWriteAllowed?.();
+      if (input.source.executor.kind === "flow") {
+        throw new Error("Flow missions cannot create conversation branches.");
+      }
+      const validation = await validateWorkspace(input.source.workspace.path);
+      if (!validation.ok) {
+        throw new Error("The selected workspace must be an accessible, writable directory.");
+      }
+      const project = await options.project.ensurePublished();
+      await options.assertExecutorReady?.(input.source.executor.ref);
+      const executor = await options.executors.resolve(input.source.executor.ref, project);
+      if (
+        executor === undefined ||
+        executor.kind === "flow" ||
+        executor.ref !== input.source.executor.ref
+      ) {
+        throw new Error(`Mission executor not found: ${input.source.executor.ref}`);
+      }
+      if (input.source.modelOverride !== undefined) {
+        await options.executors.validateModelOverride(
+          executor.ref,
+          input.source.modelOverride,
+          project,
+        );
+      }
+      for (const storeId of input.source.contextStoreIds) {
+        if (options.contextStores === undefined) {
+          throw new Error(`Mission Knowledge Store is unavailable: ${storeId}`);
+        }
+        await options.contextStores.resolve(storeId);
+      }
+      return await options.missions.createBranch({
+        sourceMissionId: input.source.id,
+        expectedSourceUpdatedAt: input.source.updatedAt,
+        expectedExecutionId: input.expectedExecutionId,
+        expectedMessageId: input.expectedMessageId,
+        project: { id: project.projectId, revision: project.revision },
+        executor,
+        history: input.history,
       });
     },
   };

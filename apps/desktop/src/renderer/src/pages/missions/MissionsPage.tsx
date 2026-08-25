@@ -20,6 +20,7 @@ import {
   CaretLeft,
   CaretRight,
   CheckCircle,
+  Copy,
   Database,
   File,
   Folder,
@@ -72,9 +73,9 @@ import {
   type PragmaDesktopAPI,
   missionAttachmentOriginalUrl,
   missionAttachmentPreviewUrl,
+  latestMissionBranchableReply,
 } from "../../../../shared/contracts/index.ts";
-import { errorMessage } from "../../lib/errors.ts";
-import { localizedBundleMutationError } from "../../lib/bundle-errors.ts";
+import { localizedMissionError } from "../../lib/mission-errors.ts";
 import { i18n } from "../../i18n/index.ts";
 import { shouldSubmitComposerOnEnter } from "../../lib/composer-keyboard.ts";
 import { formatMissionDateTime, formatMissionTime } from "../../lib/mission-time.ts";
@@ -186,6 +187,13 @@ export function MissionsPage(props: {
   readonly onEditExpert?: ((expertRef?: string | undefined) => void) | undefined;
 }) {
   const { t } = useTranslation(["missions", "common"]);
+  const missionError = useCallback(
+    (error: unknown) =>
+      localizedMissionError(error, (key, options) =>
+        options === undefined ? t(key) : t(key, options),
+      ),
+    [t],
+  );
   const initialStateRef = useRef<MissionsPageInitialState>(
     resolveMissionsPageInitialState({
       initialMission: props.initialMission,
@@ -299,13 +307,13 @@ export function MissionsPage(props: {
         }
       } catch (loadError) {
         if (selectedMissionIdRef.current === id && !options?.silent) {
-          setError(errorMessage(loadError));
+          setError(missionError(loadError));
         }
       } finally {
         setLoadingMissionId((current) => (current === id ? null : current));
       }
     },
-    [],
+    [missionError],
   );
 
   useEffect(() => {
@@ -382,13 +390,9 @@ export function MissionsPage(props: {
       .then(replaceMission)
       .catch((runError: unknown) => {
         setInitialRunRequest(null);
-        setError(
-          localizedBundleMutationError(runError, (key, options) =>
-            options === undefined ? t(key) : t(key, options),
-          ),
-        );
+        setError(missionError(runError));
       });
-  }, [props.autoRunInitialMission, props.initialMission?.id, replaceMission]);
+  }, [missionError, props.autoRunInitialMission, props.initialMission?.id, replaceMission]);
 
   useEffect(() => {
     const api = desktopApi();
@@ -450,7 +454,7 @@ export function MissionsPage(props: {
       } catch (loadError) {
         if (!cancelled && !hadInitialMemoryStateRef.current) {
           setHasResolvedInitialLoad(true);
-          setError(errorMessage(loadError));
+          setError(missionError(loadError));
         }
       }
     };
@@ -536,7 +540,7 @@ export function MissionsPage(props: {
             );
             setError(null);
           } catch (actionError) {
-            setError(errorMessage(actionError));
+            setError(missionError(actionError));
           }
         }}
         onDelete={setDeleteCandidate}
@@ -580,7 +584,7 @@ export function MissionsPage(props: {
                 setError(null);
                 return { effectiveMode: acceptance.effectiveMode };
               } catch (sendError) {
-                setError(errorMessage(sendError));
+                setError(missionError(sendError));
                 throw sendError;
               }
             }}
@@ -591,11 +595,7 @@ export function MissionsPage(props: {
                 replaceMission(await api.runMission(selectedMission.id));
                 setError(null);
               } catch (runError) {
-                setError(
-                  localizedBundleMutationError(runError, (key, options) =>
-                    options === undefined ? t(key) : t(key, options),
-                  ),
-                );
+                setError(missionError(runError));
               }
             }}
             onInterrupt={async () => {
@@ -605,7 +605,7 @@ export function MissionsPage(props: {
                 replaceMission(await api.interruptMission(selectedMission.id));
                 setError(null);
               } catch (interruptError) {
-                setError(errorMessage(interruptError));
+                setError(missionError(interruptError));
               }
             }}
             onHumanResponded={async () => {
@@ -625,7 +625,7 @@ export function MissionsPage(props: {
                 );
                 setError(null);
               } catch (optionsError) {
-                setError(errorMessage(optionsError));
+                setError(missionError(optionsError));
                 throw optionsError;
               }
             }}
@@ -641,7 +641,7 @@ export function MissionsPage(props: {
                 );
                 setError(null);
               } catch (contextStoresError) {
-                setError(errorMessage(contextStoresError));
+                setError(missionError(contextStoresError));
                 throw contextStoresError;
               }
             }}
@@ -666,8 +666,22 @@ export function MissionsPage(props: {
                 }
                 setError(null);
               } catch (actionError) {
-                setError(errorMessage(actionError));
+                setError(missionError(actionError));
               }
+            }}
+            onBranchCreated={(mission) => {
+              replaceMission(mission, { type: "task" });
+              selectedMissionIdsRef.current = {
+                ...selectedMissionIdsRef.current,
+                task: mission.id,
+              };
+              selectedMissionIdRef.current = mission.id;
+              setActiveSource("task");
+              activeSourceRef.current = "task";
+              setSelectedMissionId(mission.id);
+              setSelectedMission(mission);
+              writeLastOpenedMissionId(window.localStorage, mission.id);
+              setError(null);
             }}
           />
         ) : loadingMissionId !== null && loadingMissionId === selectedMissionId ? (
@@ -722,7 +736,7 @@ export function MissionsPage(props: {
                 setError(null);
               })
               .catch((deleteError: unknown) => {
-                setError(errorMessage(deleteError));
+                setError(missionError(deleteError));
                 setDeleteCandidate(null);
               })
               .finally(() => setDeleting(false));
@@ -802,6 +816,43 @@ export function MissionDetailSkeleton(props: { readonly label: string }) {
           <span className="mission-skeleton-block mission-skeleton-message is-short" />
         </div>
         <span className="mission-skeleton-block mission-skeleton-composer" />
+      </div>
+    </div>
+  );
+}
+
+export function MissionChatSkeleton(props: { readonly label: string }) {
+  return (
+    <div
+      className="mission-chat-initial-loading"
+      role="status"
+      aria-label={props.label}
+      aria-live="polite"
+    >
+      <div className="mission-chat-initial-loading-content" aria-hidden="true">
+        <div className="mission-chat-skeleton-message is-assistant">
+          <span className="mission-skeleton-block mission-chat-skeleton-avatar" />
+          <div className="mission-chat-skeleton-copy">
+            <span className="mission-skeleton-block is-heading" />
+            <span className="mission-skeleton-block" />
+            <span className="mission-skeleton-block is-short" />
+          </div>
+        </div>
+        <div className="mission-chat-skeleton-message is-user">
+          <div className="mission-chat-skeleton-copy">
+            <span className="mission-skeleton-block" />
+            <span className="mission-skeleton-block is-short" />
+          </div>
+        </div>
+        <div className="mission-chat-skeleton-message is-assistant is-wide">
+          <span className="mission-skeleton-block mission-chat-skeleton-avatar" />
+          <div className="mission-chat-skeleton-copy">
+            <span className="mission-skeleton-block is-heading" />
+            <span className="mission-skeleton-block" />
+            <span className="mission-skeleton-block" />
+            <span className="mission-skeleton-block is-short" />
+          </div>
+        </div>
       </div>
     </div>
   );
@@ -1259,6 +1310,22 @@ interface PendingMissionQueuedMessage {
   readonly accepted: boolean;
 }
 
+export interface MissionHumanResponseAttempt {
+  readonly requestId: string;
+  readonly responseKey: string;
+}
+
+export function resolveMissionHumanResponseAttempt(
+  current: MissionHumanResponseAttempt | undefined,
+  response: HumanInteractionResponse,
+  createRequestId: () => string,
+): MissionHumanResponseAttempt {
+  const responseKey = JSON.stringify(response);
+  return current?.responseKey === responseKey
+    ? current
+    : { requestId: createRequestId(), responseKey };
+}
+
 export function hidePreparingQueuedChatEntries(
   entries: readonly MissionChatEntry[],
   pendingRequestIds: ReadonlySet<string>,
@@ -1269,6 +1336,35 @@ export function hidePreparingQueuedChatEntries(
       ? entry.delivery.status !== "queued"
       : false;
   });
+}
+
+export function missionTurnFinalReplyIds(
+  entries: readonly MissionChatEntry[],
+): ReadonlySet<string> {
+  const finalByTurn = new Map<string, string>();
+  for (const entry of entries) {
+    if (entry.kind !== "assistant" || entry.streaming) continue;
+    const turnKey =
+      entry.timelineSequence === undefined
+        ? entry.executionId === undefined
+          ? undefined
+          : `execution:${entry.executionId}`
+        : `turn:${entry.timelineSequence}`;
+    if (turnKey !== undefined) finalByTurn.set(turnKey, entry.id);
+  }
+  return new Set(finalByTurn.values());
+}
+
+export async function copyMissionReply(
+  content: string,
+  clipboard: Pick<Clipboard, "writeText"> = window.navigator.clipboard,
+): Promise<"copied" | "failed"> {
+  try {
+    await clipboard.writeText(content);
+    return "copied";
+  } catch {
+    return "failed";
+  }
 }
 
 export interface LocalMissionContextOperation {
@@ -1347,6 +1443,9 @@ export type MissionConversationBlock =
 type MissionMemoryView = "store" | "activity";
 
 export const DEFAULT_MISSION_MEMORY_VIEW: MissionMemoryView = "activity";
+export const MISSION_CHAT_PAGE_SIZE = 20;
+export const MISSION_WORK_CONVERSATION_PAGE_SIZE = 50;
+export const MISSION_WORK_RECORD_PAGE_SIZE = 20;
 
 export function MissionDetailFragment(props: {
   readonly mission: Mission;
@@ -1375,9 +1474,17 @@ export function MissionDetailFragment(props: {
   readonly onConfigureModels?: (() => void) | undefined;
   readonly onOpenKnowledgeBases?: (() => void) | undefined;
   readonly onEditExpert?: ((expertRef?: string | undefined) => void) | undefined;
+  readonly onBranchCreated?: ((mission: Mission) => void) | undefined;
   readonly memoryEnabled?: boolean | undefined;
 }) {
   const { t } = useTranslation(["missions", "common"]);
+  const missionError = useCallback(
+    (error: unknown) =>
+      localizedMissionError(error, (key, options) =>
+        options === undefined ? t(key) : t(key, options),
+      ),
+    [t],
+  );
   const [tab, setTab] = useState<"chat" | "work" | "board" | "memory">("chat");
   const memoryEnabled = props.memoryEnabled ?? true;
   const activeTab = !memoryEnabled && tab === "memory" ? "chat" : tab;
@@ -1385,6 +1492,9 @@ export function MissionDetailFragment(props: {
   const [workspaceAvailable, setWorkspaceAvailable] = useState<boolean | null>(null);
   const [chat, setChat] = useState<MissionChatSnapshot | null>(
     () => props.chatCache?.get(props.mission.id) ?? null,
+  );
+  const [chatInitialLoading, setChatInitialLoading] = useState(
+    () => props.chatCache?.has(props.mission.id) !== true,
   );
   const [workRecords, setWorkRecords] = useState<readonly MissionWorkRecord[]>([]);
   const [workLoading, setWorkLoading] = useState(false);
@@ -1427,6 +1537,10 @@ export function MissionDetailFragment(props: {
   const [modelResetRequired, setModelResetRequired] = useState(false);
   const modelRuntimeIdRef = useRef<string | undefined>(undefined);
   const [optionsError, setOptionsError] = useState<string | null>(null);
+  const [branchCandidate, setBranchCandidate] = useState<
+    Extract<MissionChatEntry, { kind: "assistant" }> | undefined
+  >();
+  const [branching, setBranching] = useState(false);
   const [toolPermissionMode, setToolPermissionMode] = useState<DesktopToolPermissionMode>(
     props.mission.toolPermissionMode,
   );
@@ -1473,12 +1587,17 @@ export function MissionDetailFragment(props: {
   const chatScrollTopRef = useRef(0);
   const chatScrollMissionIdRef = useRef(props.mission.id);
   const attachmentIdsRef = useRef<readonly string[]>([]);
+  const humanResponseAttemptsRef = useRef(new Map<string, MissionHumanResponseAttempt>());
   const imageUnsupported =
     missionImageSupport(models, modelOverride, defaultModelSelection) === "unsupported";
 
   useEffect(() => {
     attachmentIdsRef.current = attachments.map((attachment) => attachment.id);
   }, [attachments]);
+
+  useEffect(() => {
+    humanResponseAttemptsRef.current.clear();
+  }, [props.mission.id]);
 
   useEffect(() => {
     if (!contextStorePickerOpen && !contextStoresSaving) {
@@ -1495,12 +1614,12 @@ export function MissionDetailFragment(props: {
         if (!cancelled) setContextStores(stores);
       })
       .catch((loadError: unknown) => {
-        if (!cancelled) setOptionsError(errorMessage(loadError));
+        if (!cancelled) setOptionsError(missionError(loadError));
       });
     return () => {
       cancelled = true;
     };
-  }, [props.mission.id]);
+  }, [missionError, props.mission.id]);
 
   useEffect(
     () => () => {
@@ -1701,7 +1820,7 @@ export function MissionDetailFragment(props: {
           setOptionsError(null);
         })
         .catch((loadError: unknown) => {
-          if (!cancelled) setOptionsError(errorMessage(loadError));
+          if (!cancelled) setOptionsError(missionError(loadError));
         })
         .finally(() => {
           if (!cancelled && showLoading) setModelsLoading(false);
@@ -1740,13 +1859,18 @@ export function MissionDetailFragment(props: {
 
   useEffect(() => {
     const api = desktopApi();
-    updateChat(props.chatCache?.get(props.mission.id) ?? null);
+    const cachedChat = props.chatCache?.get(props.mission.id) ?? null;
+    updateChat(cachedChat);
+    setChatInitialLoading(cachedChat === null);
     setHistoryError(null);
     setChatSyncError(null);
     setHumanQuestionIndex(0);
     followLatestRef.current = true;
     setShowJumpToLatest(false);
-    if (api === undefined) return;
+    if (api === undefined) {
+      setChatInitialLoading(false);
+      return;
+    }
     let cancelled = false;
     let refreshing = false;
     let refreshQueued = false;
@@ -1824,7 +1948,10 @@ export function MissionDetailFragment(props: {
       }
       refreshing = true;
       try {
-        const snapshot = await api.getMissionChat({ id: props.mission.id, limit: 50 });
+        const snapshot = await api.getMissionChat({
+          id: props.mission.id,
+          limit: MISSION_CHAT_PAGE_SIZE,
+        });
         if (!cancelled) {
           pending = pending.filter((update) => update.revision > snapshot.revision);
           const merged = mergeLatestChatPage(chatRef.current, snapshot);
@@ -1838,9 +1965,10 @@ export function MissionDetailFragment(props: {
       } catch (loadError) {
         if (!cancelled) {
           console.error("Failed to refresh Mission chat.", loadError);
-          setChatSyncError(errorMessage(loadError));
+          setChatSyncError(missionError(loadError));
         }
       } finally {
+        if (!cancelled) setChatInitialLoading(false);
         refreshing = false;
         if (refreshQueued && !cancelled) {
           refreshQueued = false;
@@ -1959,7 +2087,7 @@ export function MissionDetailFragment(props: {
       } catch (loadError) {
         if (!cancelled) {
           console.error("Failed to refresh Mission work history.", loadError);
-          setWorkError(errorMessage(loadError));
+          setWorkError(missionError(loadError));
         }
       } finally {
         if (!cancelled) setWorkLoading(false);
@@ -1996,7 +2124,7 @@ export function MissionDetailFragment(props: {
       .getMissionWorkConversation({
         id: props.mission.id,
         recordId: selectedWorkKey,
-        limit: 100,
+        limit: MISSION_WORK_CONVERSATION_PAGE_SIZE,
       })
       .then((conversation) => {
         if (!cancelled) {
@@ -2048,7 +2176,7 @@ export function MissionDetailFragment(props: {
         setMemoryActivityError(undefined);
       })
       .catch((loadError: unknown) => {
-        if (!cancelled) setMemoryActivityError(errorMessage(loadError));
+        if (!cancelled) setMemoryActivityError(missionError(loadError));
       })
       .finally(() => {
         if (!cancelled) setMemoryActivityLoading(false);
@@ -2130,7 +2258,9 @@ export function MissionDetailFragment(props: {
         const snapshot =
           api === undefined
             ? undefined
-            : await api.getMissionChat({ id: props.mission.id, limit: 50 }).catch(() => undefined);
+            : await api
+                .getMissionChat({ id: props.mission.id, limit: MISSION_CHAT_PAGE_SIZE })
+                .catch(() => undefined);
         if (snapshot !== undefined) {
           updateChat((current) => mergeLatestChatPage(current, snapshot));
         }
@@ -2140,7 +2270,9 @@ export function MissionDetailFragment(props: {
       const snapshot =
         api === undefined
           ? undefined
-          : await api.getMissionChat({ id: props.mission.id, limit: 50 }).catch(() => undefined);
+          : await api
+              .getMissionChat({ id: props.mission.id, limit: MISSION_CHAT_PAGE_SIZE })
+              .catch(() => undefined);
       if (snapshot !== undefined) updateChat((current) => mergeLatestChatPage(current, snapshot));
       const persisted = snapshot?.entries.some((entry) => entry.id === requestId) ?? false;
       discardSentDrafts = persisted;
@@ -2204,7 +2336,7 @@ export function MissionDetailFragment(props: {
     try {
       addAttachments(await window.pragmaDesktop.pickMissionAttachments({ kind }));
     } catch (pickError) {
-      setOptionsError(errorMessage(pickError));
+      setOptionsError(missionError(pickError));
     }
   };
 
@@ -2215,7 +2347,7 @@ export function MissionDetailFragment(props: {
       );
       addAttachments(result);
     } catch (pasteError) {
-      setOptionsError(errorMessage(pasteError));
+      setOptionsError(missionError(pasteError));
     }
   };
 
@@ -2257,7 +2389,10 @@ export function MissionDetailFragment(props: {
   const refreshLatestChat = async (): Promise<void> => {
     const api = desktopApi();
     if (api === undefined) return;
-    const snapshot = await api.getMissionChat({ id: props.mission.id, limit: 50 });
+    const snapshot = await api.getMissionChat({
+      id: props.mission.id,
+      limit: MISSION_CHAT_PAGE_SIZE,
+    });
     updateChat((current) => mergeLatestChatPage(current, snapshot));
   };
 
@@ -2270,7 +2405,7 @@ export function MissionDetailFragment(props: {
       await api.steerQueuedMissionMessage({ id: props.mission.id, requestId });
       await refreshLatestChat();
     } catch (steerError) {
-      setOptionsError(errorMessage(steerError));
+      setOptionsError(missionError(steerError));
     } finally {
       finishClientOperation(token);
     }
@@ -2287,7 +2422,7 @@ export function MissionDetailFragment(props: {
       await refreshLatestChat();
       requestAnimationFrame(() => textareaRef.current?.focus());
     } catch (removeError) {
-      setOptionsError(errorMessage(removeError));
+      setOptionsError(missionError(removeError));
     } finally {
       finishClientOperation(token);
     }
@@ -2326,7 +2461,7 @@ export function MissionDetailFragment(props: {
       setContextOperations((current) =>
         current.map((operation) =>
           operation.id === operationId
-            ? { ...operation, status: "failed", error: errorMessage(compactError) }
+            ? { ...operation, status: "failed", error: missionError(compactError) }
             : operation,
         ),
       );
@@ -2341,14 +2476,21 @@ export function MissionDetailFragment(props: {
   ) => {
     const api = desktopApi();
     if (api === undefined || responding) return;
+    const attempt = resolveMissionHumanResponseAttempt(
+      humanResponseAttemptsRef.current.get(interaction.interactionId),
+      response,
+      () => crypto.randomUUID(),
+    );
+    humanResponseAttemptsRef.current.set(interaction.interactionId, attempt);
     setResponding(true);
     try {
       await api.respondToMissionHumanInteraction({
         missionId: props.mission.id,
         interactionId: interaction.interactionId,
-        requestId: crypto.randomUUID(),
+        requestId: attempt.requestId,
         response,
       });
+      humanResponseAttemptsRef.current.delete(interaction.interactionId);
       updateChat((current) =>
         current === null
           ? current
@@ -2381,6 +2523,8 @@ export function MissionDetailFragment(props: {
         return next;
       });
       await props.onHumanResponded?.();
+    } catch (responseError) {
+      setOptionsError(missionError(responseError));
     } finally {
       setResponding(false);
     }
@@ -2424,6 +2568,11 @@ export function MissionDetailFragment(props: {
   const conversationBlocks = useMemo(
     () => groupMissionConversationEntries(conversationEntries),
     [conversationEntries],
+  );
+  const finalReplyIds = useMemo(() => missionTurnFinalReplyIds(displayEntries), [displayEntries]);
+  const latestBranchableReplyId = useMemo(
+    () => latestMissionBranchableReply(displayEntries)?.id,
+    [displayEntries],
   );
   const selectedWorkRecord = useMemo(
     () => workRecords.find((record) => record.recordId === selectedWorkKey),
@@ -2543,8 +2692,8 @@ export function MissionDetailFragment(props: {
 
   const loadEarlier = async (): Promise<void> => {
     const api = desktopApi();
-    const beforeSequence = chat?.page.nextBeforeSequence;
-    if (api === undefined || beforeSequence === undefined || loadingEarlier) return;
+    const beforeCursor = chat?.page.nextBeforeCursor;
+    if (api === undefined || beforeCursor === undefined || loadingEarlier) return;
     setLoadingEarlier(true);
     setHistoryError(null);
     const element = scrollRef.current;
@@ -2553,12 +2702,12 @@ export function MissionDetailFragment(props: {
     try {
       const earlier = await api.getMissionChat({
         id: props.mission.id,
-        beforeSequence,
-        limit: 50,
+        beforeCursor,
+        limit: MISSION_CHAT_PAGE_SIZE,
       });
       updateChat((current) => (current === null ? earlier : prependChatPage(current, earlier)));
     } catch (loadError) {
-      setHistoryError(errorMessage(loadError));
+      setHistoryError(missionError(loadError));
     } finally {
       setLoadingEarlier(false);
     }
@@ -2580,7 +2729,7 @@ export function MissionDetailFragment(props: {
         id: props.mission.id,
         recordId: selectedWorkRecord.recordId,
         beforeCursor: workConversation.nextBeforeCursor,
-        limit: 100,
+        limit: MISSION_WORK_CONVERSATION_PAGE_SIZE,
       });
       setWorkConversation((current) =>
         current === null || current.recordId !== earlier.recordId
@@ -2699,7 +2848,8 @@ export function MissionDetailFragment(props: {
       {props.mission.lifecycleStatus === "active" &&
       (props.mission.execution === undefined ||
         (!executionActive && isFlow) ||
-        (executionActive && !interruptible)) ? (
+        (executionActive && !interruptible)) &&
+      !(props.mission.branch !== undefined && props.mission.execution === undefined) ? (
         <button
           className="primary-button"
           type="button"
@@ -2793,7 +2943,10 @@ export function MissionDetailFragment(props: {
               }}
             >
               <div className="mission-chat-list">
-                {chat?.page.nextBeforeSequence !== undefined ? (
+                {chatInitialLoading && !showThinkingPlaceholder ? (
+                  <MissionChatSkeleton label={t("loadingChat", { ns: "missions" })} />
+                ) : null}
+                {!chatInitialLoading && chat?.page.nextBeforeCursor !== undefined ? (
                   <button
                     className="mission-load-earlier"
                     type="button"
@@ -2853,6 +3006,17 @@ export function MissionDetailFragment(props: {
                       missionId={props.mission.id}
                       paintExecutionId={block.item.entry.executionId ?? chat?.execution?.id}
                       showExecutorLabel
+                      showCopy={finalReplyIds.has(block.item.entry.id)}
+                      showBranch={
+                        block.item.entry.id === latestBranchableReplyId &&
+                        props.mission.executor.kind !== "flow" &&
+                        !executionActive &&
+                        !clientOperationBusy &&
+                        (chat?.queue?.state ?? "idle") === "idle" &&
+                        (chat?.queue?.pendingCount ?? 0) === 0 &&
+                        (chat?.pendingInteractions.length ?? 0) === 0
+                      }
+                      onBranch={(entry) => setBranchCandidate(entry)}
                     />
                   );
                 })}
@@ -2888,7 +3052,7 @@ export function MissionDetailFragment(props: {
                   }}
                 />
               ) : null}
-              {missionFooterTip(props.mission, chat) ? (
+              {interactions[0] !== undefined && missionFooterTip(props.mission, chat) ? (
                 <small className="mission-chat-footer-tip">
                   {missionFooterTip(props.mission, chat)}
                 </small>
@@ -2989,10 +3153,17 @@ export function MissionDetailFragment(props: {
                 </>
               ) : (
                 <>
-                  <MissionUsageHint
-                    missionId={props.mission.id}
-                    executionActive={executionActive}
-                  />
+                  <div className="mission-chat-composer-meta">
+                    {missionFooterTip(props.mission, chat) ? (
+                      <small className="mission-chat-footer-tip">
+                        {missionFooterTip(props.mission, chat)}
+                      </small>
+                    ) : null}
+                    <MissionUsageHint
+                      missionId={props.mission.id}
+                      executionActive={executionActive}
+                    />
+                  </div>
                   <div className="mission-chat-composer-shell">
                     {(chat?.queue?.items.length ?? 0) + visiblePendingQueuedMessages.length > 0 ? (
                       <div
@@ -3387,12 +3558,44 @@ export function MissionDetailFragment(props: {
             void Promise.resolve(props.onContextStoresChange?.(nextIds))
               .catch((saveError: unknown) => {
                 setContextStoreIds(props.mission.contextStoreIds);
-                setOptionsError(errorMessage(saveError));
+                setOptionsError(missionError(saveError));
               })
               .finally(() => setContextStoresSaving(false));
           }}
         />
       ) : null}
+      {branchCandidate === undefined ? null : (
+        <ConfirmationDialog
+          title={t("createBranchTitle", { ns: "missions" })}
+          description={t("createBranchDescription", {
+            ns: "missions",
+            title: props.mission.title,
+          })}
+          cancelLabel={t("actions.cancel", { ns: "common" })}
+          confirmLabel={t("createBranch", { ns: "missions" })}
+          busyLabel={t("creatingBranch", { ns: "missions" })}
+          busy={branching}
+          tone="primary"
+          onCancel={() => setBranchCandidate(undefined)}
+          onConfirm={() => {
+            const api = desktopApi();
+            if (api === undefined) return;
+            setBranching(true);
+            void api
+              .createMissionBranch({
+                sourceMissionId: props.mission.id,
+                expectedExecutionId: chat?.execution?.id ?? null,
+                expectedMessageId: branchCandidate.id,
+              })
+              .then((mission) => {
+                setBranchCandidate(undefined);
+                props.onBranchCreated?.(mission);
+              })
+              .catch((branchError: unknown) => setOptionsError(missionError(branchError)))
+              .finally(() => setBranching(false));
+          }}
+        />
+      )}
     </section>
   );
 }
@@ -3466,9 +3669,23 @@ export function MissionWorkGrid(props: {
   const surfaceRef = useRef<HTMLDivElement>(null);
   const cardRefs = useRef(new Map<string, HTMLButtonElement>());
   const [edges, setEdges] = useState<readonly MissionWorkGridEdge[]>([]);
+  const [pageIndex, setPageIndex] = useState(0);
   const markerId = `mission-work-arrow-${useId().replaceAll(":", "")}`;
+  const pageCount = Math.max(1, Math.ceil(props.records.length / MISSION_WORK_RECORD_PAGE_SIZE));
+  const pageRecords = useMemo(
+    () => missionWorkPageRecords(props.records, pageIndex, MISSION_WORK_RECORD_PAGE_SIZE),
+    [pageIndex, props.records],
+  );
+  const recordSetIdentity = props.records
+    .filter((record) => record.parentRecordId === undefined)
+    .map((record) => record.recordId)
+    .join(":");
+  useEffect(() => setPageIndex(0), [recordSetIdentity]);
+  useEffect(() => {
+    setPageIndex((current) => Math.min(current, pageCount - 1));
+  }, [pageCount]);
   const density =
-    props.records.length === 1 ? "single" : props.records.length === 2 ? "pair" : "network";
+    pageRecords.length === 1 ? "single" : pageRecords.length === 2 ? "pair" : "network";
   const callOrder = useMemo(() => missionWorkCallOrder(props.records), [props.records]);
   const levels = useMemo(() => {
     const compareByCallOrder = (left: MissionWorkRecord, right: MissionWorkRecord) => {
@@ -3476,18 +3693,18 @@ export function MissionWorkGrid(props: {
       if (right.parentRecordId === undefined && left.parentRecordId !== undefined) return 1;
       return (callOrder.get(left.recordId) ?? 0) - (callOrder.get(right.recordId) ?? 0);
     };
-    if (props.records.length <= 2) {
-      return [[0, props.records.toSorted(compareByCallOrder)] as const];
+    if (pageRecords.length <= 2) {
+      return [[0, pageRecords.toSorted(compareByCallOrder)] as const];
     }
     const grouped = new Map<number, MissionWorkRecord[]>();
-    for (const record of props.records) {
+    for (const record of pageRecords) {
       const depth = workRecordDepth(record, props.records);
       grouped.set(depth, [...(grouped.get(depth) ?? []), record]);
     }
     return [...grouped.entries()]
       .toSorted(([left], [right]) => left - right)
       .map(([depth, records]) => [depth, records.toSorted(compareByCallOrder)] as const);
-  }, [callOrder, props.records]);
+  }, [callOrder, pageRecords, props.records]);
 
   const updateEdges = useCallback(() => {
     const surface = surfaceRef.current;
@@ -3497,7 +3714,7 @@ export function MissionWorkGrid(props: {
       [...cardRefs.current].map(([recordId, card]) => [recordId, card.getBoundingClientRect()]),
     );
     const verticalTrunks = new Map<string, number>();
-    for (const record of props.records) {
+    for (const record of pageRecords) {
       if (record.parentRecordId === undefined) continue;
       const source = cardRects.get(record.parentRecordId);
       const target = cardRects.get(record.recordId);
@@ -3510,7 +3727,7 @@ export function MissionWorkGrid(props: {
         Math.min(verticalTrunks.get(record.parentRecordId) ?? candidate, candidate),
       );
     }
-    const nextEdges = props.records.flatMap((record): MissionWorkGridEdge[] => {
+    const nextEdges = pageRecords.flatMap((record): MissionWorkGridEdge[] => {
       if (record.parentRecordId === undefined) return [];
       const source = cardRects.get(record.parentRecordId);
       const target = cardRects.get(record.recordId);
@@ -3528,7 +3745,7 @@ export function MissionWorkGrid(props: {
       ];
     });
     setEdges(nextEdges);
-  }, [props.records]);
+  }, [pageRecords]);
 
   useLayoutEffect(() => {
     updateEdges();
@@ -3540,8 +3757,39 @@ export function MissionWorkGrid(props: {
   }, [levels, updateEdges]);
 
   return (
-    <div className={`mission-work-list is-${density}${density === "network" ? "" : " is-sparse"}`}>
-      <p className="mission-work-description">{t("executionMapDescription")}</p>
+    <div
+      className={`mission-work-list is-${density}${density === "network" ? "" : " is-sparse"}${pageCount > 1 ? " has-pagination" : ""}`}
+    >
+      <div className="mission-work-list-header">
+        <p className="mission-work-description">{t("executionMapDescription")}</p>
+        {pageCount <= 1 ? null : (
+          <nav className="mission-work-pagination" aria-label={t("workPagination")}>
+            <button
+              type="button"
+              aria-label={t("previousWorkPage")}
+              disabled={pageIndex === 0}
+              onClick={() => setPageIndex((current) => Math.max(0, current - 1))}
+            >
+              <CaretLeft size={15} aria-hidden="true" />
+            </button>
+            <span>
+              {t("workPageSummary", {
+                page: pageIndex + 1,
+                pages: pageCount,
+                count: props.records.length,
+              })}
+            </span>
+            <button
+              type="button"
+              aria-label={t("nextWorkPage")}
+              disabled={pageIndex >= pageCount - 1}
+              onClick={() => setPageIndex((current) => Math.min(pageCount - 1, current + 1))}
+            >
+              <CaretRight size={15} aria-hidden="true" />
+            </button>
+          </nav>
+        )}
+      </div>
       <div
         className="mission-work-grid"
         data-density={density}
@@ -3632,6 +3880,35 @@ export function MissionWorkGrid(props: {
       </div>
     </div>
   );
+}
+
+export function missionWorkPageRecords(
+  records: readonly MissionWorkRecord[],
+  pageIndex: number,
+  pageSize: number,
+): MissionWorkRecord[] {
+  if (records.length <= pageSize) return [...records];
+  const callOrder = missionWorkCallOrder(records);
+  const ordered = records.toSorted((left, right) => {
+    if (left.parentRecordId === undefined && right.parentRecordId !== undefined) return -1;
+    if (right.parentRecordId === undefined && left.parentRecordId !== undefined) return 1;
+    const order = (callOrder.get(left.recordId) ?? 0) - (callOrder.get(right.recordId) ?? 0);
+    if (order !== 0) return order;
+    const created = left.createdAt.localeCompare(right.createdAt);
+    return created === 0 ? left.recordId.localeCompare(right.recordId) : created;
+  });
+  const start = Math.max(0, pageIndex) * pageSize;
+  const selected = ordered.slice(start, start + pageSize);
+  const byId = new Map(records.map((record) => [record.recordId, record]));
+  const included = new Set(selected.map((record) => record.recordId));
+  for (const record of selected) {
+    let parentId = record.parentRecordId;
+    while (parentId !== undefined && !included.has(parentId)) {
+      included.add(parentId);
+      parentId = byId.get(parentId)?.parentRecordId;
+    }
+  }
+  return ordered.filter((record) => included.has(record.recordId));
 }
 
 export function MissionMemoryActivity(props: {
@@ -4168,7 +4445,31 @@ export const MissionChatEntryView = memo(function MissionChatEntryView(props: {
   readonly userLabel?: string | undefined;
   readonly paintExecutionId?: string | undefined;
   readonly showExecutorLabel?: boolean | undefined;
+  readonly showCopy?: boolean | undefined;
+  readonly showBranch?: boolean | undefined;
+  readonly onBranch?:
+    ((entry: Extract<MissionChatEntry, { kind: "assistant" }>) => void) | undefined;
 }) {
+  const { t } = useTranslation("missions");
+  const [copyStatus, setCopyStatus] = useState<"idle" | "copied" | "failed">("idle");
+  const copyStatusTimerRef = useRef<ReturnType<typeof setTimeout> | undefined>(undefined);
+
+  useEffect(
+    () => () => {
+      if (copyStatusTimerRef.current !== undefined) clearTimeout(copyStatusTimerRef.current);
+    },
+    [],
+  );
+
+  const showCopyStatus = (status: "copied" | "failed") => {
+    if (copyStatusTimerRef.current !== undefined) clearTimeout(copyStatusTimerRef.current);
+    setCopyStatus(status);
+    copyStatusTimerRef.current = setTimeout(() => {
+      copyStatusTimerRef.current = undefined;
+      setCopyStatus("idle");
+    }, 2_000);
+  };
+
   if (props.entry.kind === "user") {
     if (props.entry.delivery?.removed === true || props.entry.delivery?.status === "queued") {
       return null;
@@ -4206,10 +4507,44 @@ export const MissionChatEntryView = memo(function MissionChatEntryView(props: {
   if (props.entry.kind === "context_operation") {
     return <MissionContextOperationEntry operation={props.entry} retryDisabled={false} />;
   }
+  const assistantEntry = props.entry;
   return (
     <div className="mission-assistant-message" data-mission-execution-id={props.paintExecutionId}>
-      {props.showExecutorLabel ? <MissionExecutorLabel entry={props.entry} /> : null}
-      <MissionMessageContent source={props.entry.content} />
+      {props.showExecutorLabel ? <MissionExecutorLabel entry={assistantEntry} /> : null}
+      <MissionMessageContent source={assistantEntry.content} />
+      {props.showCopy || props.showBranch ? (
+        <div className="mission-message-actions">
+          {props.showCopy ? (
+            <button
+              className="mission-message-icon-action"
+              type="button"
+              aria-label={t("copyReply")}
+              title={t("copyReply")}
+              onClick={() => {
+                void copyMissionReply(assistantEntry.content).then(showCopyStatus);
+              }}
+            >
+              <Copy size={15} aria-hidden="true" />
+            </button>
+          ) : null}
+          {props.showBranch ? (
+            <button
+              className="mission-message-icon-action"
+              type="button"
+              aria-label={t("createBranch")}
+              title={t("createBranch")}
+              onClick={() => props.onBranch?.(assistantEntry)}
+            >
+              <GitBranch size={15} aria-hidden="true" />
+            </button>
+          ) : null}
+          {copyStatus === "idle" ? null : (
+            <span className="mission-message-action-status" role="status">
+              {copyStatus === "copied" ? t("replyCopied") : t("replyCopyFailed")}
+            </span>
+          )}
+        </div>
+      ) : null}
     </div>
   );
 });
@@ -5207,13 +5542,19 @@ export function mergeLatestChatPage(
   if (current === null || current.missionId !== latest.missionId) return latest;
   const unavailableSections = new Set(latest.syncIssues?.map((issue) => issue.section) ?? []);
   const latestOldest = latest.page.oldestSequence;
+  const latestEntryIds = new Set(latest.entries.map((entry) => entry.id));
   const retainedOlder =
     latestOldest === undefined
       ? []
       : current.entries.filter(
-          (entry) => entry.timelineSequence !== undefined && entry.timelineSequence < latestOldest,
+          (entry) =>
+            entry.timelineSequence !== undefined &&
+            (entry.timelineSequence < latestOldest ||
+              (entry.timelineSequence === latestOldest && !latestEntryIds.has(entry.id))),
         );
   const retainedUnavailableHistory = unavailableSections.has("history") ? current.entries : [];
+  const latestPageWithoutCursor = { ...latest.page };
+  delete latestPageWithoutCursor.nextBeforeCursor;
   return {
     ...latest,
     entries: uniqueChatEntries([
@@ -5221,6 +5562,15 @@ export function mergeLatestChatPage(
       ...retainedUnavailableHistory,
       ...latest.entries,
     ]),
+    page:
+      retainedOlder.length === 0
+        ? latest.page
+        : {
+            ...latestPageWithoutCursor,
+            ...(current.page.nextBeforeCursor === undefined
+              ? {}
+              : { nextBeforeCursor: current.page.nextBeforeCursor }),
+          },
     pendingInteractions: unavailableSections.has("pending_interactions")
       ? current.pendingInteractions
       : latest.pendingInteractions,
@@ -5245,9 +5595,9 @@ function prependChatPage(
       ...(current.page.newestSequence === undefined
         ? {}
         : { newestSequence: current.page.newestSequence }),
-      ...(earlier.page.nextBeforeSequence === undefined
+      ...(earlier.page.nextBeforeCursor === undefined
         ? {}
-        : { nextBeforeSequence: earlier.page.nextBeforeSequence }),
+        : { nextBeforeCursor: earlier.page.nextBeforeCursor }),
     },
   };
 }

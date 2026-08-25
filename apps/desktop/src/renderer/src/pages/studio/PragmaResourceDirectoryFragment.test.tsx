@@ -16,9 +16,13 @@ import type {
   PragmaProjectSnapshot,
 } from "../../../../shared/contracts/index.ts";
 import { i18n } from "../../i18n/index.ts";
-import { filterPragmaResourcePickerItems } from "../../components/PragmaResourcePickerDialog.tsx";
+import {
+  filterPragmaResourcePickerItems,
+  toggleAllPragmaResourcePickerItems,
+} from "../../components/PragmaResourcePickerDialog.tsx";
 
 import {
+  buildFullyConnectedTeamPermissions,
   deletePragmaResourceErrorMessage,
   matchesResourceDirectoryQuery,
   PragmaResourceDetailFragment,
@@ -208,10 +212,13 @@ describe("expert team editor", () => {
     expect(html).toContain("Quality handbook");
     expect(html).toContain("1 knowledge base selected");
     expect(html).toContain("team-knowledge-selector");
-    expect(html).toContain("System inherited: manages all team agents");
-    expect(html).toContain("Can spawn");
-    expect(html).toContain("Can view and interact");
-    expect(html.match(/class="team-permission-checkbox"/g)).toHaveLength(3);
+    expect(html).toContain("Can delegate to");
+    expect(html).toContain("Collaboration access");
+    expect(html).toContain("Team member permissions");
+    expect(html).toContain("Connect all");
+    expect(html).toContain("team-permission-members");
+    expect(html).toContain("team-permission-cards");
+    expect(html).not.toContain("team-permission-checkbox");
     expect(html).not.toContain("team-context-editor");
     expect(html).not.toContain("team-context-expert-checkbox");
   });
@@ -236,6 +243,38 @@ describe("expert team editor", () => {
     expect(
       filterPragmaResourcePickerItems(items, "needle", "expert").map((item) => item.ref),
     ).toEqual(["expert:0000000000000099"]);
+  });
+
+  it("selects and clears every filtered expert without changing hidden selections", () => {
+    const items = [expert(1), expert(2)].map((item) => ({
+      ref: `expert:${item.metadata.id}`,
+      name: item.metadata.name,
+      kind: "expert" as const,
+    }));
+    const hiddenRef = "expert:0000000000000099";
+
+    const selected = toggleAllPragmaResourcePickerItems([hiddenRef], items);
+    expect(selected).toEqual([hiddenRef, ...items.map((item) => item.ref)]);
+    expect(toggleAllPragmaResourcePickerItems(selected, items)).toEqual([hiddenRef]);
+  });
+
+  it("builds all-to-all delegation and collaboration permissions for team members", () => {
+    const refs = [
+      "expert:0000000000000001",
+      "expert:0000000000000002",
+      "expert:0000000000000003",
+    ] as const;
+
+    expect(buildFullyConnectedTeamPermissions(refs, refs[0])).toEqual({
+      spawn: {
+        "0000000000000002": ["0000000000000001", "0000000000000003"],
+        "0000000000000003": ["0000000000000001", "0000000000000002"],
+      },
+      interact: {
+        "0000000000000002": ["0000000000000001", "0000000000000002", "0000000000000003"],
+        "0000000000000003": ["0000000000000001", "0000000000000002", "0000000000000003"],
+      },
+    });
   });
 
   it("shows and preserves optional Team instructions", () => {
@@ -576,6 +615,9 @@ const complete = true;
     expect(html).toContain("DeepSeek V3");
     expect(html).toContain("Thinking depth");
     expect(html).toContain(">High</dd>");
+    expect(html).toContain("1 Skills · 2 Tools · 0 Knowledge bases");
+    expect(html).toContain("2 Skills · 3 Tools · 0 Knowledge bases");
+    expect(html).not.toContain('class="team-expert-capabilities"><span>Capabilities</span>');
     expect(html).not.toContain("ad0aa84a-2057-4074-b138-408099ecac0a");
     expect(html).toContain("View expert details");
     expect(html.match(/class="team-expert-link"/g)).toHaveLength(2);

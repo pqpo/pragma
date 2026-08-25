@@ -7,6 +7,7 @@ import type { LocalHostApplicationPort } from "@pragma/local-host";
 
 import {
   CreateMissionSchema,
+  CreateMissionBranchSchema,
   DiscardMissionAttachmentDraftsSchema,
   GetMissionChatSchema,
   GetMissionWorkConversationSchema,
@@ -27,13 +28,14 @@ import {
   UpdateMissionContextStoresSchema,
   UpdateHomeExecutorPreferenceSchema,
   isUserFacingMissionOrigin,
+  latestMissionBranchableReply,
   type Mission,
   type MissionSummary,
   type PickMissionAttachmentsResult,
   type DesktopToolPermissionMode,
 } from "../../../shared/contracts/index.ts";
 import type { MissionRunner } from "./mission-runner.ts";
-import type { MissionStore } from "./mission-store.ts";
+import { MissionStoreError, type MissionStore } from "./mission-store.ts";
 import type { PragmaProjectStore } from "../projects/pragma-project-store.ts";
 import type { MissionExecutorCatalog } from "./mission-executor-catalog.ts";
 import type { MissionCreator } from "./mission-creator.ts";
@@ -137,7 +139,9 @@ export function installMissionHandlers(options: {
   const getManagedMission = async (id: string) => {
     await ensureLegacyAutomationMissionSources();
     const mission = await options.localHost.getMission(id);
-    if (!isUserFacingMissionOrigin(mission.origin)) throw new Error("mission_not_found");
+    if (!isUserFacingMissionOrigin(mission.origin)) {
+      throw new MissionStoreError("mission_not_found", "Mission was not found.");
+    }
     return mission;
   };
   const assertManagedMission = async (id: string): Promise<string> => {
@@ -155,7 +159,7 @@ export function installMissionHandlers(options: {
     });
   });
   ipcMain.handle("missions:get", (_event, id: unknown) =>
-    getManagedMission(MissionIdSchema.parse(id)),
+    runDesktopMutation(async () => await getManagedMission(MissionIdSchema.parse(id))),
   );
   ipcMain.handle("missions:executors:list", async () =>
     MissionExecutorOptionSchema.array().parse(await options.localHost.listExecutors()),
@@ -272,6 +276,68 @@ export function installMissionHandlers(options: {
       return mission;
     }),
   );
+  ipcMain.handle("missions:branch:create", (_event, input: unknown) =>
+    runDesktopMutation(async () => {
+      const parsed = CreateMissionBranchSchema.parse(input);
+      const source = await getManagedMission(parsed.sourceMissionId);
+      if (source.executor.kind === "flow") {
+        throw new Error("Flow missions cannot create conversation branches.");
+      }
+      const newest = await options.runner.getChat({ id: source.id, limit: 100 });
+      if (
+        (newest.execution?.id ?? null) !== parsed.expectedExecutionId ||
+        (newest.execution !== undefined &&
+          !["succeeded", "failed", "cancelled"].includes(newest.execution.status)) ||
+        (newest.queue?.state ?? "idle") !== "idle" ||
+        (newest.queue?.pendingCount ?? 0) !== 0 ||
+        newest.pendingInteractions.length !== 0
+      ) {
+        throw new Error("Wait for the source Mission to become idle before creating a branch.");
+      }
+      if (newest.syncIssues !== undefined && newest.syncIssues.length > 0) {
+        throw new Error("Mission history is temporarily incomplete. Refresh it before branching.");
+      }
+      const pages = [newest];
+      let beforeCursor = newest.page.nextBeforeCursor;
+      while (beforeCursor !== undefined) {
+        const page = await options.runner.getChat({
+          id: source.id,
+          beforeCursor,
+          limit: 100,
+        });
+        if (page.syncIssues !== undefined && page.syncIssues.length > 0) {
+          throw new Error(
+            "Mission history is temporarily incomplete. Refresh it before branching.",
+          );
+        }
+        pages.unshift(page);
+        beforeCursor = page.page.nextBeforeCursor;
+      }
+      const history = pages
+        .flatMap((page) => page.entries)
+        .filter(
+          (entry) =>
+            entry.kind !== "user" ||
+            (entry.delivery?.removed !== true && entry.delivery?.status !== "queued"),
+        );
+      const latestReply = latestMissionBranchableReply(history);
+      if (latestReply?.id !== parsed.expectedMessageId) {
+        throw new Error("The selected reply is no longer the latest completed Mission reply.");
+      }
+      const cutoffIndex = history.findIndex((entry) => entry.id === latestReply.id);
+      if (cutoffIndex < 0) {
+        throw new Error("The selected reply is missing from the Mission history.");
+      }
+      const mission = await options.creator.createBranch({
+        source,
+        expectedExecutionId: parsed.expectedExecutionId,
+        expectedMessageId: parsed.expectedMessageId,
+        history: history.slice(0, cutoffIndex + 1),
+      });
+      await publishMission(mission);
+      return mission;
+    }),
+  );
   ipcMain.handle("missions:run", (_event, input: unknown) =>
     runDesktopMutation(async () => {
       const mission = await options.runner.run(
@@ -382,33 +448,37 @@ export function installMissionHandlers(options: {
       return await options.runner.respondToHumanInteraction(parsed);
     });
   });
-  ipcMain.handle("missions:complete", async (_event, input: unknown) => {
-    const missionId = await assertManagedMission(MissionActionSchema.parse(input).id);
-    const mission = await options.missions.markComplete(missionId);
-    if (
-      isUserFacingMissionOrigin(mission.origin) &&
-      !(
-        mission.execution !== undefined &&
-        ["queued", "running", "waiting"].includes(mission.execution.status)
-      )
-    ) {
-      await options.onMissionLifecycleChange?.({
-        missionId: mission.id,
-        state: "completed",
-      });
-    }
-    await publishMission(mission);
-    return mission;
-  });
-  ipcMain.handle("missions:reopen", async (_event, input: unknown) => {
-    const missionId = await assertManagedMission(MissionActionSchema.parse(input).id);
-    const mission = await options.missions.reopen(missionId);
-    if (isUserFacingMissionOrigin(mission.origin)) {
-      await options.onMissionLifecycleChange?.({ missionId: mission.id, state: "active" });
-    }
-    await publishMission(mission);
-    return mission;
-  });
+  ipcMain.handle("missions:complete", (_event, input: unknown) =>
+    runDesktopMutation(async () => {
+      const missionId = await assertManagedMission(MissionActionSchema.parse(input).id);
+      const mission = await options.missions.markComplete(missionId);
+      if (
+        isUserFacingMissionOrigin(mission.origin) &&
+        !(
+          mission.execution !== undefined &&
+          ["queued", "running", "waiting"].includes(mission.execution.status)
+        )
+      ) {
+        await options.onMissionLifecycleChange?.({
+          missionId: mission.id,
+          state: "completed",
+        });
+      }
+      await publishMission(mission);
+      return mission;
+    }),
+  );
+  ipcMain.handle("missions:reopen", (_event, input: unknown) =>
+    runDesktopMutation(async () => {
+      const missionId = await assertManagedMission(MissionActionSchema.parse(input).id);
+      const mission = await options.missions.reopen(missionId);
+      if (isUserFacingMissionOrigin(mission.origin)) {
+        await options.onMissionLifecycleChange?.({ missionId: mission.id, state: "active" });
+      }
+      await publishMission(mission);
+      return mission;
+    }),
+  );
   ipcMain.handle("missions:delete", (_event, input: unknown) =>
     runDesktopMutation(async () => {
       const missionId = MissionActionSchema.parse(input).id;

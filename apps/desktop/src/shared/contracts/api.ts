@@ -80,6 +80,7 @@ import type {
   AutomationAdapterOption,
   MissionModelOptions,
   CreateMission,
+  CreateMissionBranch,
   PickMissionAttachments,
   PickMissionAttachmentsResult,
   DiscardMissionAttachmentDrafts,
@@ -468,6 +469,7 @@ export interface PragmaDesktopAPI {
   getMission: (id: string) => Promise<Mission>;
   subscribeMissionUpdates: (listener: (update: MissionUpdate) => void) => () => void;
   createMission: (input: CreateMission) => Promise<Mission>;
+  createMissionBranch: (input: CreateMissionBranch) => Promise<Mission>;
   pickMissionAttachments: (input: PickMissionAttachments) => Promise<PickMissionAttachmentsResult>;
   stageMissionClipboardImage: (
     input: StageMissionClipboardImage,

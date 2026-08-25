@@ -19,11 +19,20 @@ export const missions = {
   start: "Start a mission",
   search: "Search missions",
   loading: "Loading missions…",
+  loadingChat: "Loading conversation…",
   empty: "No missions",
   workspace: "Workspace",
   executor: "Executor",
   send: "Send message",
   interrupt: "Interrupt execution",
+  copyReply: "Copy reply",
+  replyCopied: "Copied",
+  replyCopyFailed: "Copy failed",
+  createBranch: "Create branch",
+  createBranchTitle: "Create a chat branch?",
+  createBranchDescription:
+    "Copy the current conversation, workspace settings, knowledge settings, and Mission Board from “{{title}}”, then create a new mission with the latest expert team configuration. The branch uses a fresh Runtime session.",
+  creatingBranch: "Creating branch…",
   contextWindow: "Context window",
   contextWindowUsage: "Context window usage: {{value}}",
   contextPercentValue: "{{value}}%",
@@ -46,8 +55,23 @@ export const missions = {
   hoursShort: "{{count}}h",
   daysShort: "{{count}}d",
   notFound: "Mission not found",
+  errorMissionNotFound: "This mission is no longer available. Refresh the mission list.",
+  errorOperationInProgress:
+    "Another operation is already in progress for this mission. Wait for it to finish and try again.",
+  errorStorageVersion:
+    "This mission uses an incompatible storage version. Update Pragma or restore a compatible backup.",
+  errorHistoryUnavailable:
+    "Part of this mission's history is unavailable. Refresh the mission and try again.",
+  errorMessageConflict:
+    "The message delivery state could not be confirmed. Refresh the conversation, then send it again if it is not shown.",
+  errorConfigurationInvalid:
+    "This mission's configuration or history is inconsistent. Refresh it or create a new mission.",
+  errorInvalidRequest: "The mission request is invalid. Review the input and try again.",
+  errorInternalStateConflict:
+    "The mission state changed unexpectedly. Refresh the mission and try again.",
   bundleSetupRequired:
-    "Bundle setup is incomplete for {{count}} dependency(ies): {{resources}}. Configure them before continuing.",
+    "This workflow still has {{count}} local dependency(ies) to set up: {{resources}}. Open Bundle import, select the original file again, and finish binding.",
+  bundleLegacyKnowledgeBase: "Knowledge base (name unavailable in this legacy Bundle)",
   selectAnother: "Select another mission or create a new one.",
   deleteTitle: "Delete this mission?",
   deleteMission: "Delete mission",
@@ -311,6 +335,10 @@ export const missions = {
   executionWork: "Mission execution work",
   executionMapDescription: "Follow how each expert contributes to this mission.",
   workCallOrder: "Call #{{number}}",
+  workPagination: "Mission work pages",
+  previousWorkPage: "Previous work page",
+  nextWorkPage: "Next work page",
+  workPageSummary: "{{page}} / {{pages}} · {{count}} records",
   workHistoryUnavailable: "Work history is unavailable",
   runtimeAgentFallbackName: "Subagent {{number}}",
   you: "You",

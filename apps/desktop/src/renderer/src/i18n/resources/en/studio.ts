@@ -406,9 +406,27 @@ export const studio = {
   teamContextDescription: "Team knowledge bases and private read-only Memory.",
   teamPermissions: "Team permissions",
   teamPermissionsDescription:
-    "Control member-to-member creation and interaction. Coordinator authority is inherited.",
-  spawnPermissions: "Can spawn",
-  interactionPermissions: "Can view and interact",
+    "Set who each member can delegate to and collaborate with. Coordinator authority is inherited.",
+  teamPermissionsHelp:
+    "“Can delegate to” lets a member create a new Agent instance of a selected expert and assign work. “Collaboration access” allows viewing, following up, steering, waiting for, or interrupting selected Agents.",
+  teamPermissionsConnectAll: "Connect all",
+  teamPermissionsAllConnected: "All connected",
+  teamPermissionsConnectAllConfirmTitle: "Connect every team member?",
+  teamPermissionsConnectAllConfirmDescription:
+    "Each regular member will be able to create Agent instances of every other expert and delegate work to them. They will also be able to view, follow up, steer, wait for, or interrupt every Agent in the team. Coordinator authority remains system inherited. This only updates the current form and is saved after publishing.",
+  teamPermissionsConnectAllConfirmAction: "Connect all members",
+  teamPermissionsConnectAllApplying: "Applying…",
+  teamPermissionMembers: "Team member permissions",
+  teamMember: "Team member",
+  permissionTargetCount: "{{count}} team experts",
+  spawnPermissions: "Can delegate to",
+  spawnPermissionsDescription:
+    "Create new Agent instances of the selected experts and delegate work to them.",
+  interactionPermissions: "Collaboration access",
+  interactionPermissionsDescription:
+    "View, follow up, steer, wait for, or interrupt the selected Agents.",
+  chooseSpawnPermissions: "Set who {{name}} can delegate to",
+  chooseInteractionPermissions: "Set {{name}}’s collaboration access",
   otherInstances: "other instances",
   coordinatorAuthority: "System inherited: manages all team agents",
   coordinatorAuthorityDescription:
@@ -1289,7 +1307,7 @@ export const studio = {
   bundleCapabilitiesHint: "Include portable Skills and service definitions.",
   bundlePlugins: "Plugins",
   bundlePluginsHint: "Include user-installed plugin packages when available.",
-  bundleKnowledgeBases: "Knowledge bases",
+  bundleKnowledgeBases: "Knowledge base content",
   bundleKnowledgeBasesHint: "Off by default because content may be large or sensitive.",
   bundleKnowledgeMemory: "Published Knowledge Memory",
   bundleKnowledgeMemoryHint:
@@ -1306,6 +1324,8 @@ export const studio = {
   bundleChooseFileHint: "The archive is verified before anything is installed.",
   bundleResourceCount: "{{count}} resources",
   bundleChooseAnother: "Choose another",
+  bundleFileOverview: "Bundle file overview",
+  bundleReadinessSummary: "{{ready}} of {{total}} dependencies ready",
   bundleInstallRoot: "Install root",
   bundleSameContentInstalled:
     "The same portable content already has {{count}} installation(s). This import remains separate.",
@@ -1323,6 +1343,14 @@ export const studio = {
   bundleSetupTitle: "Finish local setup",
   bundleSetupDescription:
     "The workflow is saved, but it cannot run until every required local dependency is ready.",
+  bundleImportCompleteTitle: "Workflow imported",
+  bundleImportCompleteNeedsSetup:
+    "“{{name}}” is saved. Set up {{count}} local dependency before it can run.",
+  bundlePendingSetupTitle: "Still needs setup",
+  bundlePendingSetupDescription: "Only the unresolved items below need attention.",
+  bundleReadyDependencies: "{{count}} other local dependencies are ready",
+  bundleFinishSetupNow: "Continue setup",
+  bundleFinishSetupLater: "Finish later",
   bundlePreflightTitle: "Dependency readiness",
   bundleRecheck: "Check again",
   bundleConfigureCapability: "Configure {{name}}",
@@ -1348,6 +1376,9 @@ export const studio = {
   bundleChooseRuntime: "Runtime",
   bundleChooseCapability: "Choose capability",
   bundleChooseKnowledgeBase: "Choose knowledge base",
+  bundleBindingOptional:
+    "You can finish this later; the imported workflow cannot run until it is bound.",
+  bundleLegacyKnowledgeBase: "Knowledge base (name unavailable in legacy bundle)",
   bundleEnterSecret: "Enter secret",
   bundleInstallPluginManually: "Install this plugin from Studio → Plugins, then save again.",
   bundleSaveBindings: "Save bindings",
@@ -1363,6 +1394,7 @@ export const studio = {
   bundleStepBindings: "Bind resources",
   bundleStepReview: "Review",
   bundleStepSkipped: "Not needed",
+  bundleStepSkippedInline: " (Not needed)",
   bundleImportProgress: "Bundle import progress",
   bundleStepSelectObject: "Select export object",
   bundleStepConfigure: "Configure bundle contents",
@@ -1385,7 +1417,6 @@ export const studio = {
   bundleUpdateExistingShortHint: "Replace the matching local resource.",
   bundleUpdateBlocked: "Identity and name match different local resources.",
   bundleBindingProgress: "Resource {{current}} of {{total}}",
-  bundleRuntimeAvailability: "Runtime availability",
   bundleRefresh: "Refresh",
   bundleRefreshing: "Refreshing…",
   bundleChooseRuntimePlaceholder: "Choose a Runtime",
@@ -1407,7 +1438,8 @@ export const studio = {
   bundleReviewCopies: "Copies",
   bundleReviewUpdates: "Updates",
   bundleReviewBindings: "Local bindings",
-  bundleReviewDeferred: "{{count}} plugin setup item remains after import.",
+  bundleReviewDeferredDependencies:
+    "Local dependencies still needing setup after import: {{count}}.",
   bundleDiscardDraftTitle: "Discard this import setup?",
   bundleDiscardDraftDescription:
     "The Bundle has not been imported, but your conflict and binding choices will be lost.",

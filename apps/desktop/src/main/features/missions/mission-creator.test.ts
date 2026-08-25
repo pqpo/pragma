@@ -184,6 +184,72 @@ describe("MissionCreator", () => {
       }),
     ).rejects.toThrow();
   });
+
+  it("checks storage capacity and pins a branch to the latest project revision", async () => {
+    const root = await temporaryRoot();
+    const workspace = join(root, "workspace");
+    await mkdir(workspace);
+    const project = createPragmaProjectStore({ projectsPath: join(root, "projects") });
+    await project.publish({ expectedRevision: 0, resources: [] });
+    const missions = createMissionStore({ missionsPath: join(root, "missions") });
+    const source = await missions.create({
+      workspace: { path: workspace, basename: "workspace" },
+      goal: "Continue with updated experts",
+      project: { id: "studio", revision: 1 },
+      executor,
+    });
+    const executionId = "00000000-0000-4000-8000-000000000041";
+    const settled = await missions.updateExecution(source.id, {
+      id: executionId,
+      inputMessageId: source.initialMessageId,
+      status: "succeeded",
+      startedAt: "2026-08-20T00:00:00.000Z",
+      finishedAt: "2026-08-20T00:01:00.000Z",
+    });
+    await project.publish({
+      expectedRevision: 1,
+      resources: [],
+      artifacts: new Map([["updated-experts.txt", "revision 2"]]),
+    });
+    let capacityChecks = 0;
+    const creator = createMissionCreator({
+      missions,
+      project,
+      executors: catalog(),
+      getDefaultToolPermissionMode: () => "request-approval",
+      assertStorageWriteAllowed: () => {
+        capacityChecks += 1;
+      },
+    });
+    const firstTurn = (await missions.readTimelinePage(source.id, { limit: 10 })).turns[0]!;
+    const user = {
+      ...firstTurn.message,
+      kind: "user" as const,
+      timelineSequence: firstTurn.sequence,
+    };
+
+    const branch = await creator.createBranch({
+      source: settled,
+      expectedExecutionId: executionId,
+      expectedMessageId: "assistant:final",
+      history: [
+        user,
+        {
+          id: "assistant:final",
+          kind: "assistant",
+          content: "Done.",
+          executionId,
+          timelineSequence: 1,
+          streaming: false,
+          createdAt: "2026-08-20T00:01:00.000Z",
+        },
+      ],
+    });
+
+    expect(capacityChecks).toBe(1);
+    expect(branch.project.revision).toBe(2);
+    expect(branch.execution).toBeUndefined();
+  });
 });
 
 function catalog(

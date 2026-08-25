@@ -460,7 +460,7 @@ export class ExpertOrchestrator {
           permissions: {
             canDelegate: true,
             canMessage: active !== undefined,
-            canSteer: true,
+            canSteer: active !== undefined,
             canInterrupt: access.isCoordinator || agent.ownerContextId === access.ownerContextId,
           },
         };

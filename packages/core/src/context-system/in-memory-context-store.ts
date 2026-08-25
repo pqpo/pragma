@@ -23,9 +23,7 @@ export type InMemoryContextStoreContextMap = Readonly<Record<string, string>>;
 
 export interface InMemoryContextStoreOptions {
   readonly context?:
-    | readonly ExpertAgentContextItemSeed[]
-    | InMemoryContextStoreContextMap
-    | undefined;
+    readonly ExpertAgentContextItemSeed[] | InMemoryContextStoreContextMap | undefined;
   readonly maxContextBytes?: number | undefined;
 }
 
@@ -161,6 +159,30 @@ export class InMemoryContextStore implements ExpertAgentContextStore {
       });
     }
 
+    if (input.mode === "append" || input.mode === "prepend") {
+      const separator = resolveBoundarySeparator(input.separator);
+      const content =
+        input.mode === "prepend"
+          ? `${input.content}${separator}${existing.content}`
+          : `${existing.content}${separator}${input.content}`;
+      const sizeError = validateContextSize(content, this.maxContextBytes);
+
+      if (sizeError !== undefined) {
+        return sizeError;
+      }
+
+      const context = withContextRevision({
+        ...existing,
+        content,
+      } satisfies ExpertAgentStoredContextItem);
+      this.context.set(input.id, context);
+
+      return ok({
+        ...context,
+        mode: input.mode,
+      });
+    }
+
     const replacementCount = existing.content.split(input.search).length - 1;
 
     if (replacementCount === 0) {
@@ -273,6 +295,12 @@ export class InMemoryContextStore implements ExpertAgentContextStore {
 
     return ok(matches);
   }
+}
+
+function resolveBoundarySeparator(separator: "none" | "newline" | "blank_line"): string {
+  if (separator === "newline") return "\n";
+  if (separator === "blank_line") return "\n\n";
+  return "";
 }
 
 function validateExpectedRevision(
