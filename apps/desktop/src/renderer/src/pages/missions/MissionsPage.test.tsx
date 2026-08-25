@@ -21,6 +21,7 @@ import {
   hasValidMissionHumanAnswer,
   hasValidMissionHumanAnswers,
   hidePreparingQueuedChatEntries,
+  hideInterruptedExecutionFallbackEntries,
   mergeMissionHumanAnswers,
   mergeLatestChatPage,
   MissionContextOperationEntry,
@@ -62,7 +63,7 @@ import {
 
 describe("MissionsPage", () => {
   it("uses bounded initial pages for Mission conversations", () => {
-    expect(MISSION_CHAT_PAGE_SIZE).toBe(20);
+    expect(MISSION_CHAT_PAGE_SIZE).toBe(200);
     expect(MISSION_WORK_CONVERSATION_PAGE_SIZE).toBe(50);
     expect(MISSION_WORK_RECORD_PAGE_SIZE).toBe(20);
   });
@@ -126,6 +127,35 @@ describe("MissionsPage", () => {
     ];
 
     expect([...missionTurnFinalReplyIds(entries)]).toEqual(["turn-1-final", "turn-2-final"]);
+  });
+
+  it("hides only synthetic interrupted execution fallbacks from the conversation", () => {
+    const createdAt = "2026-07-11T00:00:00.000Z";
+    const executionId = "00000000-0000-4000-8000-000000000010";
+    const interruptedFallback = {
+      id: `result:${executionId}`,
+      kind: "assistant" as const,
+      executionId,
+      content: "Execution interrupted.",
+      streaming: false,
+      createdAt,
+    };
+    const realReply = {
+      ...interruptedFallback,
+      id: "assistant:real-reply",
+    };
+    const failedFallback = {
+      ...interruptedFallback,
+      id: `result:00000000-0000-4000-8000-000000000011`,
+      executionId: "00000000-0000-4000-8000-000000000011",
+      content: "Execution failed: command exited with code 1",
+    };
+
+    expect(
+      hideInterruptedExecutionFallbackEntries([interruptedFallback, realReply, failedFallback]).map(
+        (entry) => entry.id,
+      ),
+    ).toEqual([realReply.id, failedFallback.id]);
   });
 
   it("copies the original Markdown and reports clipboard denial", async () => {
