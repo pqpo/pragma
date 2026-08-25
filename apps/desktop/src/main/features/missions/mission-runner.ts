@@ -10,7 +10,6 @@ import {
   ExecutionWorkHistoryReader,
   ExpertAgentHumanRequestSchema,
   fingerprintExpertExecutionDefinition,
-  formatExpertPromptWithAttachments,
   isRuntimeContextCompactionNotNeededError,
   isExpertTeam,
   StoredExecutionView,
@@ -118,6 +117,7 @@ import type { MissionStore, MissionTimelineTurn } from "./mission-store.ts";
 import type { PragmaProjectStore } from "../projects/pragma-project-store.ts";
 import type { PluginStore } from "../plugins/plugin-store.ts";
 import type { DesktopUsageStore } from "../usage/usage-store.ts";
+import { createMissionBranchContext } from "./mission-branch-context.ts";
 
 function readPersistedPromptQueueState(
   activeExecutionId: string | undefined,
@@ -309,39 +309,6 @@ interface MissionExecutionContext {
 
 export function missionKnowledgeNamespace(storeId: string): string {
   return `mission-knowledge:${storeId}`;
-}
-
-function formatBranchTranscript(entries: readonly MissionChatEntry[]): string {
-  const sections = entries.flatMap((entry): string[] => {
-    switch (entry.kind) {
-      case "user":
-        return [
-          `## User\n\n${formatExpertPromptWithAttachments(entry.content, entry.attachments ?? [])}`,
-        ];
-      case "assistant":
-        return [`## ${entry.executorName ?? "Assistant"}\n\n${entry.content}`];
-      case "thinking":
-        return [];
-      case "tool":
-        return [
-          [
-            `## Tool: ${entry.toolName}`,
-            "",
-            `Status: ${entry.status}`,
-            ...(entry.inputPreview === undefined ? [] : ["", "Input:", entry.inputPreview]),
-            ...(entry.outputPreview === undefined ? [] : ["", "Output:", entry.outputPreview]),
-            ...(entry.error === undefined ? [] : ["", "Error:", entry.error]),
-          ].join("\n"),
-        ];
-      case "agent_activity":
-        return entry.label === undefined
-          ? []
-          : [`## Agent activity\n\n${entry.action} ${entry.phase}: ${entry.label}`];
-      case "context_operation":
-        return [];
-    }
-  });
-  return ["# Inherited Mission transcript", "", ...sections].join("\n\n");
 }
 
 const MISSION_CHAT_ERROR_MAX_LENGTH = 10_000;
@@ -540,35 +507,7 @@ export function createMissionRunner(options: {
             {
               namespace: "branch-history",
               storeName: "Inherited Mission history",
-              store: new StaticContextStore([
-                {
-                  id: "BRANCH.md",
-                  content: [
-                    "# Mission branch",
-                    "",
-                    `This Mission continues from ${branchHistory.source.sourceMissionId} at reply ${branchHistory.source.cutoffMessageId}.`,
-                    "Read transcript.md when prior conversation details are relevant. The current Mission uses a fresh Runtime Session and its pinned current executor definition.",
-                  ].join("\n"),
-                  metadata: {
-                    description: "Required continuity instructions for this Mission branch.",
-                    trigger: "always_on",
-                    priority: "critical",
-                    trustLevel: "system",
-                    sensitivity: "internal",
-                  },
-                },
-                {
-                  id: "transcript.md",
-                  content: formatBranchTranscript(branchHistory.entries),
-                  metadata: {
-                    description: "Read-only inherited conversation before this branch was created.",
-                    trigger: "manual",
-                    priority: "normal",
-                    trustLevel: "user",
-                    sensitivity: "internal",
-                  },
-                },
-              ]),
+              store: new StaticContextStore(createMissionBranchContext(branchHistory)),
               required: true,
               mutationApproval: "none" as const,
             },

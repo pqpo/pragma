@@ -3811,9 +3811,18 @@ describe("MissionRunner", { timeout: 15_000 }, () => {
         snapshot.resources.find((resource) => resource.kind === "Expert")!,
       ),
     });
+    let branchStartupContext = "";
     const runtime = defineRuntimeTestDriver<never, { id: string }>({
       descriptor: { id: "fake", kind: "fake", displayName: "Fake" },
-      createSession: () => ({ id: "runtime" }),
+      createSession: (context) => {
+        const startupContext = context.agentContext.startupMessages
+          .map((message) => message.content)
+          .join("\n");
+        if (startupContext.includes("# Mission branch")) {
+          branchStartupContext = startupContext;
+        }
+        return { id: "runtime" };
+      },
       restoreSession: () => ({ id: "runtime" }),
       readSession: (session) => ({ runtimeSessionId: session.id }),
       startTurn: (_session, turn) => ({
@@ -3881,6 +3890,9 @@ describe("MissionRunner", { timeout: 15_000 }, () => {
     const settledBranch = await missions.get(branch.id);
     expect(settledBranch.execution?.sessionId).toBeDefined();
     expect(settledBranch.execution?.sessionId).not.toBe(settledSource.execution.sessionId);
+    expect(branchStartupContext).toContain("# Recent inherited conversation");
+    expect(branchStartupContext).toContain(finalReply.content);
+    expect(branchStartupContext).not.toContain("Mission goal");
     expect((await runner.getChat({ id: branch.id, limit: 50 })).entries).toEqual(
       expect.arrayContaining([
         expect.objectContaining({
