@@ -1913,7 +1913,6 @@ class PragmaProjectImpl implements PragmaProject {
             permissions: indexed.resource.spec.delegation.permissions,
             maxConcurrency: indexed.resource.spec.delegation.maxConcurrency,
             maxDepth: indexed.resource.spec.delegation.maxDepth,
-            contextId: contextPolicies.resolve(indexed.resource.spec.delegation.context),
             runtimeByExpert: Object.fromEntries(runtimeEntries),
           },
         });
@@ -3004,26 +3003,7 @@ function validateExtensionEnvironment(
             toolAdapters.resolve(binding.adapter);
           },
         );
-        if (binding.policy !== undefined) {
-          check(
-            indexed,
-            "environment.context_policy_unavailable",
-            ["spec", "tools", index, "policy", "context"],
-            () => {
-              contextPolicies.resolve(binding.policy!.context);
-            },
-          );
-        }
       });
-    } else if (resource.kind === "ExpertTeam") {
-      check(
-        indexed,
-        "environment.context_policy_unavailable",
-        ["spec", "delegation", "context"],
-        () => {
-          contextPolicies.resolve(resource.spec.delegation.context);
-        },
-      );
     } else if (resource.kind === "Flow") {
       Object.entries(resource.spec.graph.steps).forEach(([stepId, step]) => {
         if (step.action !== undefined) {

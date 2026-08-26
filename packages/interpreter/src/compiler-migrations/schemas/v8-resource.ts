@@ -13,10 +13,11 @@ import {
 } from "@pragma/evaluation/ast";
 import { z } from "zod";
 
-import { PRAGMA_DSL_WRITE_API_VERSION, PragmaApiVersionSchema } from "./pragma-api-version.ts";
-import { PragmaObjectJsonSchemaSchema } from "./tool-capability.schema.ts";
+import { PragmaObjectJsonSchemaSchema } from "../../migrations/schemas/v4-tool-capability.ts";
 
-export { PRAGMA_DSL_WRITE_API_VERSION, PragmaApiVersionSchema };
+/** Frozen pragma/v5 semantic schema written by compiler pragma.dsl/v8. */
+export const PRAGMA_DSL_WRITE_API_VERSION = "pragma/v5" as const;
+export const PragmaApiVersionSchema = z.literal(PRAGMA_DSL_WRITE_API_VERSION);
 
 export const PragmaFlowRunDryEvaluationResourceSchema = z
   .object({
@@ -295,6 +296,10 @@ export const PragmaToolBindingSchema = z
       .object({
         maxConcurrency: z.number().int().positive().default(4),
         maxDepth: z.number().int().positive().default(3),
+        context: versionedExtensionRefSchema(
+          ["context-policy"],
+          "context-policy:pragma.fresh@v1",
+        ).default("context-policy:pragma.fresh@v1"),
         runtimes: z.record(PragmaExpertIdSchema, PragmaRuntimeProfileRefSchema).default({}),
       })
       .strict()
@@ -440,6 +445,10 @@ export const PragmaExpertTeamResourceSchema = z
               .default({ interact: {} }),
             maxConcurrency: z.number().int().positive().default(4),
             maxDepth: z.number().int().positive().default(3),
+            context: versionedExtensionRefSchema(
+              ["context-policy"],
+              "context-policy:pragma.fresh@v1",
+            ).default("context-policy:pragma.fresh@v1"),
             runtimes: z.record(PragmaExpertIdSchema, PragmaRuntimeProfileRefSchema).default({}),
           })
           .strict(),

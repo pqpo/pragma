@@ -569,7 +569,7 @@ function readAgentCommandDelivery(
   item: Record<string, unknown> | undefined,
 ): "followup" | "message" | "steer" | undefined {
   const segment = toolName?.split(/[./:]/u).at(-1);
-  if (segment === "message_expert") return "message";
+  if (segment === "continue_expert") return "followup";
   if (segment === "steer_expert") return "steer";
   if (segment === "sendInput") {
     if (item?.["interrupt"] === true) return "steer";
@@ -586,7 +586,7 @@ function readAgentCommandAction(
   switch (segment) {
     case "spawnAgent":
     case "spawn_agent":
-    case "delegate_expert":
+    case "spawn_expert":
       return "spawn";
     case "wait":
     case "wait_agent":
@@ -597,11 +597,11 @@ function readAgentCommandAction(
       return "list";
     case "sendInput":
     case "send_message":
-    case "message_expert":
     case "steer_expert":
       return "send";
     case "resumeAgent":
     case "resume_agent":
+    case "continue_expert":
       return "resume";
     case "closeAgent":
     case "interrupt_agent":

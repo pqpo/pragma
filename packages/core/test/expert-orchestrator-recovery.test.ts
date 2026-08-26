@@ -5,7 +5,7 @@ import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
 
 import { defineExpert } from "../src/agent/expert-agent.ts";
-import { ExpertOrchestrator } from "../src/execution/expert-orchestrator.ts";
+import { DelegationSemaphore, ExpertOrchestrator } from "../src/execution/expert-orchestrator.ts";
 import { createFileExecutionStore } from "../src/execution/execution-store.ts";
 
 const temporaryRoots: string[] = [];
@@ -20,6 +20,32 @@ afterEach(async () => {
 });
 
 describe("ExpertOrchestrator recovery", () => {
+  it("lets a timed-out waiter regain control without corrupting the concurrency queue", async () => {
+    const semaphore = new DelegationSemaphore(1);
+    const parent = await semaphore.acquire();
+    const resumeParent = parent.suspend();
+    if (resumeParent === undefined) throw new Error("Parent permit was not suspended.");
+    const child = await semaphore.acquire();
+
+    await resumeParent({ allowOvercommit: true });
+    let queuedAcquired = false;
+    const queuedPromise = semaphore.acquire().then((permit) => {
+      queuedAcquired = true;
+      return permit;
+    });
+    await Promise.resolve();
+    expect(queuedAcquired).toBe(false);
+
+    parent.release();
+    await Promise.resolve();
+    expect(queuedAcquired).toBe(false);
+
+    child.release();
+    const queued = await queuedPromise;
+    expect(queuedAcquired).toBe(true);
+    queued.release();
+  });
+
   it("retains accepted messages until the delivered batch is acknowledged", async () => {
     const home = await temporaryRoot("pragma-message-handoff-");
     const store = createFileExecutionStore({ pragmaHome: home });
@@ -114,6 +140,156 @@ describe("ExpertOrchestrator recovery", () => {
         (event) => event.type === "agent.task.activated",
       ),
     ).toHaveLength(2);
+  });
+
+  it("reports already_terminal when an interrupt loses the completion race", async () => {
+    const home = await temporaryRoot("pragma-interrupt-race-");
+    const store = createFileExecutionStore({ pragmaHome: home });
+    await store.create(executionRecord("interrupt-race"), {
+      ...invocationRecord(),
+      status: "running",
+      agentId: "agent",
+      agentTaskSequence: 0,
+    });
+    await store.commit({
+      commitId: "seed-interrupt-race",
+      executionId: "interrupt-race",
+      contextPuts: [runtimeContext("interrupt-race")],
+      agentPuts: [{ ...agentRecord("interrupt-race"), activeInvocationId: "root" }],
+    });
+    const orchestrator = new ExpertOrchestrator({
+      executionId: "interrupt-race",
+      rootInvocationId: "root",
+      scopeInvocationId: "root",
+      store,
+      maxConcurrency: 1,
+      maxDepth: 3,
+      interruptController: {
+        interruptInvocation: async () => {
+          await store.commit({
+            commitId: "complete-before-interrupt",
+            executionId: "interrupt-race",
+            invocationPatches: [{ invocationId: "root", patch: { status: "cancelled" } }],
+            agentPatches: [{ agentId: "agent", patch: { activeInvocationId: undefined } }],
+          });
+          return false;
+        },
+        signalForInvocation: () => new AbortController().signal,
+        steerInvocation: async () => "not_active",
+      },
+      execute: async () => undefined,
+    });
+
+    await expect(
+      orchestrator.interrupt(
+        {
+          ownerContextId: "coordinator-context",
+          callerInvocationId: "coordinator",
+          callerDepth: 0,
+          spawnExpertIds: new Set(),
+          interactExpertIds: new Set(),
+          isCoordinator: true,
+        },
+        { invocationId: "root" },
+      ),
+    ).resolves.toMatchObject({ outcome: "already_terminal", invocationId: "root" });
+  });
+
+  it("reports the committed Agent disposition for concurrent historical continuations", async () => {
+    const home = await temporaryRoot("pragma-concurrent-materialization-");
+    const store = createFileExecutionStore({ pragmaHome: home });
+    await store.create(executionRecord("continuation-execution"), {
+      ...invocationRecord(),
+      status: "running",
+      contextId: "coordinator-context",
+    });
+    const historicalContext = {
+      ...runtimeContext("team-session"),
+      contextId: "historical-context",
+    };
+    const historicalAgent = {
+      ...agentRecord("historical-execution"),
+      agentId: "historical-agent",
+      contextId: historicalContext.contextId,
+      nextTaskSequence: 1,
+    };
+    const historicalInvocation = {
+      ...invocationRecord(),
+      invocationId: "historical-invocation",
+      rootInvocationId: "historical-invocation",
+      agentId: historicalAgent.agentId,
+      agentTaskSequence: 0,
+      contextId: historicalContext.contextId,
+      status: "interrupted" as const,
+    };
+    let initialReaders = 0;
+    let releaseInitialReaders!: () => void;
+    const bothInitialReaders = new Promise<void>((resolve) => {
+      releaseInitialReaders = resolve;
+    });
+    const readContextScope = async () => {
+      initialReaders += 1;
+      if (initialReaders <= 2) {
+        if (initialReaders === 2) releaseInitialReaders();
+        await bothInitialReaders;
+      }
+      return {
+        contexts: [historicalContext],
+        invocations: [historicalInvocation],
+        agents: [historicalAgent],
+      };
+    };
+    const orchestrator = new ExpertOrchestrator({
+      executionId: "continuation-execution",
+      rootInvocationId: "root",
+      scopeInvocationId: "root",
+      store,
+      maxConcurrency: 1,
+      maxDepth: 3,
+      readContextScope,
+      interruptController: {
+        interruptInvocation: async () => false,
+        signalForInvocation: () => new AbortController().signal,
+        steerInvocation: async () => "not_active",
+      },
+      execute: async () => undefined,
+    });
+    const expert = await defineExpert({
+      id: "worker",
+      name: "Worker",
+      description: "Worker",
+      tags: [],
+      scope: "test",
+      workspace: home,
+      pragmaHome: home,
+    });
+    await orchestrator.registerExperts([expert]);
+    (orchestrator as unknown as { schedule(agentId: string): void }).schedule = () => undefined;
+    const access = {
+      ownerContextId: "coordinator-context",
+      callerInvocationId: "root",
+      callerDepth: 0,
+      spawnExpertIds: new Set(["worker"]),
+      interactExpertIds: new Set(["worker"]),
+      isCoordinator: true,
+    };
+
+    const results = await Promise.all([
+      orchestrator.continueContext(access, {
+        contextId: historicalContext.contextId,
+        task: "first",
+      }),
+      orchestrator.continueContext(access, {
+        contextId: historicalContext.contextId,
+        task: "second",
+      }),
+    ]);
+
+    expect(results.map((result) => result.agentDisposition).sort()).toEqual([
+      "materialized",
+      "reused",
+    ]);
+    expect(new Set(results.map((result) => result.agentId)).size).toBe(1);
   });
 });
 

@@ -615,7 +615,7 @@ describe("Pragma YAML DSL", () => {
     });
     const dumped = await project.dump(compiled.value, { split: "by-resource" });
     expect(dumped.files.get("flows/t9ne4d8njvvxv2ea.pragma.yaml")).toContain("kind: Flow");
-    expect(dumped.files.get("pragma.lock.yaml")).toContain("compilerVersion: pragma.dsl/v8");
+    expect(dumped.files.get("pragma.lock.yaml")).toContain("compilerVersion: pragma.dsl/v9");
     const single = await project.dump(compiled.value, { split: "single" });
     await writeFile(join(root, "single.yaml"), single.files.get("pragma.yaml")!);
     expect((await loadPragmaProject(join(root, "single.yaml"))).listResources()).toHaveLength(1);
@@ -1028,7 +1028,7 @@ describe("Pragma YAML DSL", () => {
 
     expect(migrated).toMatchObject({
       sourceCompilerVersion: "pragma.dsl/v2",
-      targetCompilerVersion: "pragma.dsl/v8",
+      targetCompilerVersion: "pragma.dsl/v9",
       migrated: true,
     });
     expect(migrated.resources).toEqual([
@@ -1051,7 +1051,7 @@ describe("Pragma YAML DSL", () => {
 
     expect(migrated).toMatchObject({
       sourceCompilerVersion: "pragma.dsl/v3",
-      targetCompilerVersion: "pragma.dsl/v8",
+      targetCompilerVersion: "pragma.dsl/v9",
       migrated: true,
       resources: [expect.objectContaining({ kind: "Expert" })],
     });
@@ -1069,7 +1069,7 @@ describe("Pragma YAML DSL", () => {
 
     expect(migrated).toMatchObject({
       sourceCompilerVersion: "pragma.dsl/v4",
-      targetCompilerVersion: "pragma.dsl/v8",
+      targetCompilerVersion: "pragma.dsl/v9",
       migrated: true,
       resources: [
         expect.objectContaining({
@@ -1092,7 +1092,7 @@ describe("Pragma YAML DSL", () => {
 
     expect(migrated).toMatchObject({
       sourceCompilerVersion: "pragma.dsl/v5",
-      targetCompilerVersion: "pragma.dsl/v8",
+      targetCompilerVersion: "pragma.dsl/v9",
       migrated: true,
       resources: [
         expect.objectContaining({
@@ -1104,7 +1104,7 @@ describe("Pragma YAML DSL", () => {
     });
   });
 
-  it("upgrades a compiler v6 flow-run-dry Evaluation fixture to v8", async () => {
+  it("upgrades a compiler v6 flow-run-dry Evaluation fixture to v9", async () => {
     const fixture = join(import.meta.dirname, "fixtures", "compiler-v6-flow-run-dry-evaluation");
     const migrated = migratePragmaCompilerProjectToCurrent({
       files: new Map([
@@ -1116,7 +1116,7 @@ describe("Pragma YAML DSL", () => {
 
     expect(migrated).toMatchObject({
       sourceCompilerVersion: "pragma.dsl/v6",
-      targetCompilerVersion: "pragma.dsl/v8",
+      targetCompilerVersion: "pragma.dsl/v9",
       migrated: true,
       resources: [
         expect.objectContaining({
@@ -1142,7 +1142,7 @@ describe("Pragma YAML DSL", () => {
 
     expect(migrated).toMatchObject({
       sourceCompilerVersion: "pragma.dsl/v7",
-      targetCompilerVersion: "pragma.dsl/v8",
+      targetCompilerVersion: "pragma.dsl/v9",
       migrated: true,
       resources: [
         expect.objectContaining({ apiVersion: PRAGMA_DSL_WRITE_API_VERSION, kind: "Capability" }),
@@ -1196,21 +1196,45 @@ describe("Pragma YAML DSL", () => {
     ).toThrow(expect.objectContaining({ code: "invalid_legacy_project" }));
   });
 
-  it("returns a validated no-op for a compiler v8 project", async () => {
-    const root = await mkdtemp(join(tmpdir(), "pragma-compiler-v8-noop-"));
+  it("upgrades a real compiler v8 fixture and removes delegation Context policy", async () => {
+    const fixture = join(import.meta.dirname, "fixtures", "compiler-v8-delegation-context");
+    const migrated = migratePragmaCompilerProjectToCurrent({
+      revisionCompilerVersion: "pragma.dsl/v8",
+      files: new Map([
+        ["pragma.yaml", await readFile(join(fixture, "pragma.yaml"), "utf8")],
+        ["pragma.lock.yaml", await readFile(join(fixture, "pragma.lock.yaml"), "utf8")],
+      ]),
+    });
+    expect(migrated).toMatchObject({
+      sourceCompilerVersion: "pragma.dsl/v8",
+      targetCompilerVersion: "pragma.dsl/v9",
+      migrated: true,
+      resources: [
+        expect.objectContaining({
+          kind: "ExpertTeam",
+          spec: expect.objectContaining({
+            delegation: expect.not.objectContaining({ context: expect.anything() }),
+          }),
+        }),
+      ],
+    });
+  });
+
+  it("returns a validated no-op for a compiler v9 project", async () => {
+    const root = await mkdtemp(join(tmpdir(), "pragma-compiler-v9-noop-"));
     const entry = join(root, "pragma.yaml");
     await writeFile(entry, formatPragmaYaml(runtimeProfile()));
     const project = await loadPragmaProject(entry);
     const migrated = migratePragmaCompilerProjectToCurrent({
-      revisionCompilerVersion: "pragma.dsl/v8",
+      revisionCompilerVersion: "pragma.dsl/v9",
       files: new Map([
         ["pragma.yaml", await readFile(entry, "utf8")],
         ["pragma.lock.yaml", formatPragmaYaml(project.createLock())],
       ]),
     });
     expect(migrated).toMatchObject({
-      sourceCompilerVersion: "pragma.dsl/v8",
-      targetCompilerVersion: "pragma.dsl/v8",
+      sourceCompilerVersion: "pragma.dsl/v9",
+      targetCompilerVersion: "pragma.dsl/v9",
       migrated: false,
     });
   });

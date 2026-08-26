@@ -38,7 +38,6 @@ const team: PragmaExpertTeamResource = {
       },
       maxConcurrency: 2,
       maxDepth: 2,
-      context: "context-policy:pragma.fresh@v1",
       runtimes: {},
     },
   },

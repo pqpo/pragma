@@ -28,14 +28,13 @@ import {
 import type { ContextIdResolutionSource, ContextIdResolver } from "./context-id-resolver.ts";
 import { defineContextIdResolver } from "./context-id-resolver.ts";
 
-const delegatedContextIdResolver = defineContextIdResolver({
-  id: "pragma.context.agent-delegation-existing",
-  version: "v1",
-  resolve: ({ freshContextId }) => freshContextId,
-});
-
 export interface DelegationPermit {
-  suspend(): (() => Promise<void>) | undefined;
+  suspend():
+    | ((options?: {
+        /** Re-enter a suspended control turn even while its child still occupies normal capacity. */
+        readonly allowOvercommit?: boolean | undefined;
+      }) => Promise<void>)
+    | undefined;
   release(): void;
 }
 
@@ -62,6 +61,8 @@ export interface ExpertInteractionAccess {
   readonly ownerContextId: string;
   readonly callerInvocationId: string;
   readonly callerAgentId?: string | undefined;
+  readonly callerDepth: number;
+  readonly spawnExpertIds: ReadonlySet<string>;
   readonly interactExpertIds: ReadonlySet<string>;
   readonly isCoordinator: boolean;
 }
@@ -132,6 +133,7 @@ export class ExpertOrchestrator {
     readonly expertId: string;
     readonly contextId: string;
     readonly disposition: "created" | "reused";
+    readonly agentDisposition: "reused" | "materialized";
     readonly status: "queued";
   }> {
     if (request.depth >= this.options.maxDepth) {
@@ -274,6 +276,7 @@ export class ExpertOrchestrator {
           contextId: resolution.context.contextId,
           expertId: request.expert.id,
           disposition: resolution.disposition,
+          agentDisposition: reusable === undefined ? "materialized" : "reused",
           status: "queued",
         };
       } catch (error) {
@@ -283,191 +286,246 @@ export class ExpertOrchestrator {
     }
   }
 
-  async delegateExisting(
+  async continueContext(
     access: ExpertInteractionAccess,
-    request: { readonly agentId: string; readonly task: string },
+    request: { readonly contextId: string; readonly task: string },
   ): Promise<{
+    readonly contextId: string;
     readonly agentId: string;
     readonly invocationId: string;
-    readonly expertId: string;
-    readonly contextId: string;
-    readonly disposition: "reused";
+    readonly agentDisposition: "reused" | "materialized";
     readonly status: "queued";
   }> {
-    while (true) {
-      const execution = await this.requireExecution();
-      const ownerInvocation = await this.requireActiveOwner(access.callerInvocationId);
-      const agent = await this.requireAccessibleAgent(access, request.agentId);
-      if (agent.lifecycle !== "open") throw new Error(`Agent is closed: ${request.agentId}`);
-      const context = await this.options.store.getContext(
-        this.options.executionId,
-        agent.contextId,
-      );
-      if (context === undefined) throw new Error(`Runtime Context not found: ${agent.contextId}.`);
-      const invocationId = randomUUID();
-      const resolution = await new ContextResolutionService(
-        this.options.store,
-        this.options.readContextScope,
-      ).resolve({
-        executionId: this.options.executionId,
-        invocationId,
-        parentInvocationId: access.callerInvocationId,
-        input: request.task,
-        state: execution.state,
-        source: {
-          kind: "expert-delegation",
-          callerExpertId: ownerInvocation.executorId ?? ownerInvocation.definition.id,
-          ...(ownerInvocation.agentId === undefined
-            ? {}
-            : { callerAgentId: ownerInvocation.agentId }),
-        },
-        owner: context.owner,
-        ownerContextId: agent.ownerContextId,
-        expert: context.expert,
-        runtime: context.runtime,
-        resolver: delegatedContextIdResolver,
-        freshContextId: context.contextId,
-      });
-      if (resolution.context.contextId !== agent.contextId) {
-        throw new Error(`Delegation resolved a different Runtime Context: ${agent.agentId}.`);
-      }
-      const now = new Date().toISOString();
-      const invocation: Invocation = {
-        invocationId,
-        rootInvocationId: this.options.rootInvocationId,
-        parentInvocationId: access.callerInvocationId,
-        definition: agent.definition,
-        executorId: agent.definition.id,
-        agentId: agent.agentId,
-        agentTaskSequence: agent.nextTaskSequence,
-        contextId: agent.contextId,
-        contextResolution: {
-          resolver: resolution.resolver,
-          disposition: resolution.disposition,
-        },
-        status: "queued",
-        pendingExpertMessages: [],
-        input: request.task,
-        createdAt: now,
-        updatedAt: now,
-      };
-      try {
-        assertWaitGraphAcyclic([
-          ...(await this.options.store.listInvocations(this.options.executionId)),
-          invocation,
-        ]);
-        await new InvocationService(this.options.executionId, this.options.store).ensureQueued({
-          commitId: `agent-delegate:${invocationId}`,
-          expectedVersion: execution.version,
-          invocation,
-          agentPatches: [
-            { agentId: agent.agentId, patch: { nextTaskSequence: agent.nextTaskSequence + 1 } },
-          ],
-          queuedData: { agentId: agent.agentId, parentInvocationId: access.callerInvocationId },
-          events: [
-            ...resolution.events,
-            {
-              invocationId,
-              type: "agent.delegated",
-              data: {
-                agentId: agent.agentId,
-                taskSequence: agent.nextTaskSequence,
-                callerInvocationId: access.callerInvocationId,
-                callerAgentId: access.callerAgentId,
-              },
-            },
-          ],
-        });
-        this.schedule(agent.agentId);
-        return {
-          agentId: agent.agentId,
-          invocationId,
-          expertId: agent.definition.id,
-          contextId: agent.contextId,
-          disposition: "reused",
-          status: "queued",
-        };
-      } catch (error) {
-        if (error instanceof ExecutionVersionConflictError) continue;
-        throw error;
-      }
+    await this.requireActiveOwner(access.callerInvocationId);
+    if (request.contextId === access.ownerContextId) {
+      throw new Error("An Expert cannot continue its own current or root Runtime Context.");
     }
-  }
-
-  async list(
-    access: ExpertInteractionAccess,
-    request: { readonly expertId?: string; readonly cursor?: string; readonly limit?: number } = {},
-  ): Promise<{ readonly agents: readonly unknown[]; readonly nextCursor?: string }> {
-    const limit = Math.min(100, Math.max(1, request.limit ?? 50));
-    const accessible = (await this.loadScopedAgents())
-      .filter((agent) => this.canAccessAgent(access, agent))
-      .filter((agent) => agent.agentId !== access.callerAgentId)
-      .filter((agent) => request.expertId === undefined || agent.definition.id === request.expertId)
+    const scope = await this.loadSessionScope();
+    const context = scope.contexts.find((candidate) => candidate.contextId === request.contextId);
+    if (context === undefined) {
+      throw new Error(
+        `Runtime Context is not available in this Team Session: ${request.contextId}.`,
+      );
+    }
+    if (context.lifecycle !== "open") {
+      throw new Error(`Runtime Context is closed: ${request.contextId}.`);
+    }
+    const historicalAgents = scope.agents
+      .filter((agent) => agent.contextId === context.contextId)
       .sort(
         (left, right) =>
           left.createdAt.localeCompare(right.createdAt) ||
           left.agentId.localeCompare(right.agentId),
       );
+    const currentAgent = historicalAgents.find(
+      (agent) => agent.executionId === this.options.executionId,
+    );
+    const identityAgent = currentAgent ?? historicalAgents.at(-1);
+    if (identityAgent === undefined || identityAgent.definition.id !== context.expert.id) {
+      throw new Error(`Runtime Context has no compatible Expert Agent: ${request.contextId}.`);
+    }
+    if (!this.canAccessAgent(access, identityAgent)) {
+      throw new Error(
+        `Runtime Context is not accessible to the current Expert: ${request.contextId}.`,
+      );
+    }
+    const expert = this.experts.get(context.expert.id);
+    if (expert === undefined) {
+      throw new Error(`Expert is not registered in this Team Session: ${context.expert.id}.`);
+    }
+    const ownerInvocation = await this.requireActiveOwner(access.callerInvocationId);
+    const result = await this.spawn({
+      ownerContextId: identityAgent.ownerContextId,
+      createdByInvocationId: access.callerInvocationId,
+      parentAgentId: access.callerAgentId,
+      depth: access.callerDepth,
+      expert,
+      prompt: request.task,
+      runtime: context.runtime,
+      modelSelection: context.modelSelection,
+      owner: context.owner,
+      resolver: defineContextIdResolver({
+        id: "pragma.context.expert-continuation",
+        version: "v1",
+        resolve: () => context.contextId,
+      }),
+      source: {
+        kind: "expert-delegation",
+        callerExpertId: ownerInvocation.executorId ?? ownerInvocation.definition.id,
+        ...(ownerInvocation.agentId === undefined
+          ? {}
+          : { callerAgentId: ownerInvocation.agentId }),
+      },
+    });
+    return {
+      contextId: result.contextId,
+      agentId: result.agentId,
+      invocationId: result.invocationId,
+      agentDisposition: result.agentDisposition,
+      status: "queued",
+    };
+  }
+
+  async list(
+    access: ExpertInteractionAccess,
+    request: {
+      readonly expertId?: string | undefined;
+      readonly status?: "running" | "waiting" | "queued" | "idle" | "resumable" | undefined;
+      readonly cursor?: string | undefined;
+      readonly limit?: number | undefined;
+    } = {},
+  ): Promise<{
+    readonly availableExperts: readonly unknown[];
+    readonly contexts: readonly unknown[];
+    readonly nextCursor?: string;
+  }> {
+    const limit = Math.min(100, Math.max(1, request.limit ?? 50));
+    const scope = await this.loadSessionScope();
+    const localAgentByContext = new Map(
+      scope.agents
+        .filter((agent) => agent.executionId === this.options.executionId)
+        .map((agent) => [agent.contextId, agent]),
+    );
+    const historicalAgentByContext = new Map<string, AgentInstance>();
+    for (const agent of scope.agents) {
+      const previous = historicalAgentByContext.get(agent.contextId);
+      if (
+        previous === undefined ||
+        previous.createdAt.localeCompare(agent.createdAt) < 0 ||
+        (previous.createdAt === agent.createdAt &&
+          previous.agentId.localeCompare(agent.agentId) < 0)
+      ) {
+        historicalAgentByContext.set(agent.contextId, agent);
+      }
+    }
+    const directory = scope.contexts
+      .filter((context) => context.contextId !== access.ownerContextId)
+      .filter((context) => historicalAgentByContext.has(context.contextId))
+      .filter((context) => request.expertId === undefined || context.expert.id === request.expertId)
+      .sort(
+        (left, right) =>
+          left.createdAt.localeCompare(right.createdAt) ||
+          left.contextId.localeCompare(right.contextId),
+      );
     const cursorIndex =
       request.cursor === undefined
         ? -1
-        : accessible.findIndex((agent) => agent.agentId === request.cursor);
-    if (request.cursor !== undefined && cursorIndex < 0) throw new Error("Invalid agent cursor.");
-    const remaining = accessible
-      .slice(cursorIndex + 1)
-      .filter((agent) => agent.lifecycle === "open");
-    const page = remaining.slice(0, limit);
-    const invocations = await this.options.store.listInvocations(this.options.executionId);
-    return {
-      agents: page.map((agent) => {
-        const tasks = invocations
-          .filter((invocation) => invocation.agentId === agent.agentId)
-          .sort((left, right) => (left.agentTaskSequence ?? 0) - (right.agentTaskSequence ?? 0));
-        const active = tasks.find(
-          (invocation) => invocation.invocationId === agent.activeInvocationId,
-        );
-        const queued = tasks.filter((invocation) => invocation.status === "queued");
-        const status =
-          active?.status === "waiting"
-            ? "waiting"
-            : active
-              ? "running"
-              : queued.length
-                ? "queued"
+        : directory.findIndex((context) => context.contextId === request.cursor);
+    if (request.cursor !== undefined && cursorIndex < 0) throw new Error("Invalid context cursor.");
+    const entries = directory.map((context) => {
+      const currentAgent = localAgentByContext.get(context.contextId);
+      const identityAgent = currentAgent ?? historicalAgentByContext.get(context.contextId);
+      const tasks =
+        currentAgent === undefined
+          ? []
+          : scope.invocations
+              .filter((invocation) => invocation.agentId === currentAgent.agentId)
+              .sort(
+                (left, right) =>
+                  (left.agentTaskSequence ?? Number.MAX_SAFE_INTEGER) -
+                    (right.agentTaskSequence ?? Number.MAX_SAFE_INTEGER) ||
+                  left.createdAt.localeCompare(right.createdAt) ||
+                  left.invocationId.localeCompare(right.invocationId),
+              );
+      const active = tasks.find(
+        (invocation) => invocation.status === "running" || invocation.status === "waiting",
+      );
+      const queued = tasks.filter((invocation) => invocation.status === "queued");
+      const latest = scope.invocations
+        .filter((invocation) => invocation.contextId === context.contextId)
+        .sort(
+          (left, right) =>
+            left.createdAt.localeCompare(right.createdAt) ||
+            left.invocationId.localeCompare(right.invocationId),
+        )
+        .at(-1);
+      const status =
+        active?.status === "waiting"
+          ? "waiting"
+          : active
+            ? "running"
+            : queued.length > 0
+              ? "queued"
+              : currentAgent === undefined
+                ? "resumable"
                 : "idle";
-        return {
-          agentId: agent.agentId,
-          expertId: agent.definition.id,
-          assignedBy: this.describeAssigner(agent, invocations),
-          status,
-          ...(active === undefined
-            ? {}
-            : {
-                activeInvocation: {
-                  invocationId: active.invocationId,
-                  status: active.status,
-                  taskSummary: summarizeRuntimeInput(active.input, 240),
-                },
-              }),
-          queuedInvocations: {
-            total: queued.length,
-            items: queued.slice(0, 20).map((invocation) => ({
-              invocationId: invocation.invocationId,
-              taskSummary: summarizeRuntimeInput(invocation.input, 240),
-            })),
-            truncated: queued.length > 20,
-          },
-          permissions: {
-            canDelegate: true,
-            canMessage: active !== undefined,
-            canSteer: active !== undefined,
-            canInterrupt: access.isCoordinator || agent.ownerContextId === access.ownerContextId,
-          },
-        };
-      }),
+      const canInteract =
+        identityAgent !== undefined &&
+        context.contextId !== access.ownerContextId &&
+        context.lifecycle === "open" &&
+        this.canAccessAgent(access, identityAgent);
+      const canInterrupt =
+        currentAgent !== undefined &&
+        (access.isCoordinator || currentAgent.ownerContextId === access.ownerContextId) &&
+        (active !== undefined || queued.length > 0);
+      return {
+        contextId: context.contextId,
+        expertId: context.expert.id,
+        scope: currentAgent === undefined ? "historical" : "current",
+        status,
+        ...(currentAgent === undefined ? {} : { agentId: currentAgent.agentId }),
+        ...(active === undefined
+          ? {}
+          : {
+              currentInvocation: {
+                invocationId: active.invocationId,
+                status: active.status,
+                taskSummary: summarizeRuntimeInput(active.input, 240),
+              },
+            }),
+        queuedInvocations: {
+          total: queued.length,
+          items: queued.slice(0, 20).map((invocation) => ({
+            invocationId: invocation.invocationId,
+            taskSummary: summarizeRuntimeInput(invocation.input, 240),
+          })),
+          truncated: queued.length > 20,
+        },
+        ...(latest === undefined || !isTerminalExecutionStatus(latest.status)
+          ? {}
+          : {
+              recentTerminal: {
+                invocationId: latest.invocationId,
+                status: latest.status,
+                ...(latest.output === undefined
+                  ? {}
+                  : { outputSummary: summarizeRuntimeInput(latest.output, 240) }),
+                ...(latest.error === undefined
+                  ? {}
+                  : { errorSummary: summarizeRuntimeInput(latest.error, 240) }),
+              },
+            }),
+        canContinue: canInteract,
+        canSteerImmediate: canInteract && active !== undefined,
+        canSteerNextBoundary: canInteract && active !== undefined,
+        canInterrupt,
+      };
+    });
+    const matching = entries.filter(
+      (entry) => request.status === undefined || entry.status === request.status,
+    );
+    const matchingCursorIndex =
+      request.cursor === undefined
+        ? -1
+        : matching.findIndex((entry) => entry.contextId === request.cursor);
+    if (request.cursor !== undefined && matchingCursorIndex < 0) {
+      throw new Error("Context cursor does not match the requested filters.");
+    }
+    const remaining = matching.slice(matchingCursorIndex + 1);
+    const page = remaining.slice(0, limit);
+    return {
+      availableExperts: [...this.experts.values()]
+        .sort((left, right) => left.id.localeCompare(right.id))
+        .map((expert) => ({
+          expertId: expert.id,
+          name: expert.name,
+          description: expert.description,
+          canSpawn: access.spawnExpertIds.has(expert.id),
+        })),
+      contexts: page,
       ...(remaining.length <= limit || page.length === 0
         ? {}
-        : { nextCursor: page.at(-1)!.agentId }),
+        : { nextCursor: page.at(-1)!.contextId }),
     };
   }
 
@@ -621,12 +679,19 @@ export class ExpertOrchestrator {
   async steer(
     access: ExpertInteractionAccess,
     request: {
-      readonly agentId: string;
       readonly invocationId: string;
-      readonly message: string;
+      readonly instruction: string;
+      readonly delivery: "next_boundary" | "immediate";
     },
   ): Promise<unknown> {
-    const agent = await this.requireAccessibleAgent(access, request.agentId);
+    const requestedInvocation = await this.options.store.getInvocation(
+      this.options.executionId,
+      request.invocationId,
+    );
+    if (requestedInvocation?.agentId === undefined) {
+      throw new Error(`Invocation is not an Expert task: ${request.invocationId}.`);
+    }
+    const agent = await this.requireAccessibleAgent(access, requestedInvocation.agentId);
     if (agent.lifecycle !== "open") throw new Error(`Agent is closed: ${agent.agentId}`);
     const activeInvocationId = agent.activeInvocationId;
     if (request.invocationId !== activeInvocationId) {
@@ -644,6 +709,21 @@ export class ExpertOrchestrator {
     if (active === undefined || isTerminalExecutionStatus(active.status)) {
       throw new Error("stale_invocation: The target Invocation is no longer active.");
     }
+    if (request.delivery === "next_boundary") {
+      const accepted = await this.message(access, {
+        agentId: agent.agentId,
+        invocationId: active.invocationId,
+        message: request.instruction,
+      });
+      return {
+        outcome: "accepted",
+        delivery: "next_boundary",
+        messageId: accepted.messageId,
+        contextId: agent.contextId,
+        agentId: agent.agentId,
+        invocationId: active.invocationId,
+      };
+    }
     const requestId = randomUUID();
     await this.options.store.appendEvent(
       this.options.executionId,
@@ -654,7 +734,7 @@ export class ExpertOrchestrator {
         callerInvocationId: access.callerInvocationId,
         callerAgentId: access.callerAgentId,
         agentId: agent.agentId,
-        message: request.message,
+        message: request.instruction,
       },
       `agent-steer-requested:${requestId}`,
     );
@@ -662,19 +742,21 @@ export class ExpertOrchestrator {
       invocationId: active.invocationId,
       contextId: agent.contextId,
       requestId,
-      content: request.message,
+      content: request.instruction,
     });
     if (outcome === "steered" || outcome === "waiting_continuation") {
       await this.options.store.appendEvent(
         this.options.executionId,
         active.invocationId,
         "agent.steer.applied",
-        { requestId, agentId: agent.agentId, mode: outcome, content: request.message },
+        { requestId, agentId: agent.agentId, mode: outcome, content: request.instruction },
         `agent-steer-applied:${requestId}`,
       );
       return {
         outcome: "steered",
         mode: outcome === "steered" ? "runtime" : "waiting_continuation",
+        delivery: "immediate",
+        contextId: agent.contextId,
         agentId: agent.agentId,
         invocationId: active.invocationId,
       };
@@ -703,12 +785,13 @@ export class ExpertOrchestrator {
     readonly returnWhen: "all" | "any";
     readonly timedOut: boolean;
     readonly completed: readonly unknown[];
-    readonly pendingInvocationIds: readonly string[];
+    readonly pending: readonly unknown[];
     readonly wakeReason?: "steer" | "message" | undefined;
     readonly steer?: { readonly requestId: string; readonly content: string } | undefined;
   }> {
     await this.assertAccessibleInvocations(access, request.invocationIds);
     const resume = permit?.suspend();
+    let hasPendingWork = true;
     try {
       const result = await this.waitForInvocations(
         access.ownerContextId,
@@ -718,9 +801,10 @@ export class ExpertOrchestrator {
       for (const completed of result.completed) {
         this.joinedInvocationIds.add((completed as { invocationId: string }).invocationId);
       }
+      hasPendingWork = result.pending.length > 0;
       return result;
     } finally {
-      await resume?.();
+      await resume?.({ allowOvercommit: hasPendingWork });
     }
   }
 
@@ -729,9 +813,11 @@ export class ExpertOrchestrator {
     access: ExpertInteractionAccess,
     signal: AbortSignal,
     permit?: DelegationPermit,
+    timeoutMs?: number,
   ): Promise<{
+    readonly timedOut: boolean;
     readonly completed: readonly unknown[];
-    readonly pendingInvocationIds: readonly string[];
+    readonly pending: readonly unknown[];
     readonly wakeReason?: "steer" | "message" | undefined;
     readonly steer?: { readonly requestId: string; readonly content: string } | undefined;
   }> {
@@ -745,10 +831,10 @@ export class ExpertOrchestrator {
       )
       .filter((invocation) => !this.joinedInvocationIds.has(invocation.invocationId))
       .map((invocation) => invocation.invocationId);
-    if (ids.length === 0) return { completed: [], pendingInvocationIds: [] };
+    if (ids.length === 0) return { timedOut: false, completed: [], pending: [] };
     const result = await this.wait(
       access,
-      { invocationIds: ids, returnWhen: "all", signal },
+      { invocationIds: ids, returnWhen: "all", signal, timeoutMs },
       permit,
     );
     return result;
@@ -777,36 +863,80 @@ export class ExpertOrchestrator {
   async interrupt(
     access: ExpertInteractionAccess,
     request: {
-      readonly agentId: string;
-      readonly invocationId?: string | undefined;
+      readonly invocationId: string;
       readonly reason?: string | undefined;
     },
   ): Promise<{
+    readonly contextId: string;
     readonly agentId: string;
-    readonly invocationId?: string | undefined;
-    readonly outcome: "interrupted" | "already_idle";
+    readonly invocationId: string;
+    readonly outcome: "interrupted" | "cancelled" | "already_terminal";
   }> {
-    const agent = access.isCoordinator
-      ? await this.requireAccessibleAgent(access, request.agentId)
-      : await this.requireOwnedAgent(access.ownerContextId, request.agentId);
-    const invocations = (await this.options.store.listInvocations(this.options.executionId))
-      .filter((invocation) => invocation.agentId === agent.agentId)
-      .sort((left, right) => (left.agentTaskSequence ?? 0) - (right.agentTaskSequence ?? 0));
-    const current =
-      invocations.find((invocation) => invocation.invocationId === agent.activeInvocationId) ??
-      invocations.find((invocation) => invocation.status === "queued");
-    if (current === undefined) return { agentId: agent.agentId, outcome: "already_idle" };
-    if (request.invocationId !== undefined && request.invocationId !== current.invocationId) {
-      throw new Error(
-        `Stale interrupt target: expected ${request.invocationId}, current is ${current.invocationId}.`,
+    while (true) {
+      const invocation = await this.options.store.getInvocation(
+        this.options.executionId,
+        request.invocationId,
       );
+      if (invocation?.agentId === undefined) {
+        throw new Error(`Invocation is not an Expert task: ${request.invocationId}.`);
+      }
+      const agent = access.isCoordinator
+        ? await this.requireAccessibleAgent(access, invocation.agentId)
+        : await this.requireOwnedAgent(access.ownerContextId, invocation.agentId);
+      if (isTerminalExecutionStatus(invocation.status)) {
+        return {
+          invocationId: invocation.invocationId,
+          agentId: agent.agentId,
+          contextId: agent.contextId,
+          outcome: "already_terminal",
+        };
+      }
+      if (invocation.status === "queued") {
+        const outcome = await this.cancelQueuedInvocation(invocation, request.reason);
+        if (outcome === "active") continue;
+        this.schedule(agent.agentId);
+        return {
+          invocationId: invocation.invocationId,
+          agentId: agent.agentId,
+          contextId: agent.contextId,
+          outcome,
+        };
+      }
+      if (agent.activeInvocationId !== invocation.invocationId) {
+        continue;
+      }
+      const interrupted = await this.options.interruptController.interruptInvocation(
+        invocation.invocationId,
+        request.reason,
+      );
+      if (!interrupted) {
+        const latest = await this.options.store.getInvocation(
+          this.options.executionId,
+          invocation.invocationId,
+        );
+        if (latest === undefined) {
+          throw new Error(`Invocation not found: ${invocation.invocationId}.`);
+        }
+        if (!isTerminalExecutionStatus(latest.status)) {
+          throw new Error(
+            `Invocation could not be interrupted while still active: ${invocation.invocationId}.`,
+          );
+        }
+        return {
+          invocationId: latest.invocationId,
+          agentId: agent.agentId,
+          contextId: agent.contextId,
+          outcome: "already_terminal",
+        };
+      }
+      this.schedule(agent.agentId);
+      return {
+        invocationId: invocation.invocationId,
+        agentId: agent.agentId,
+        contextId: agent.contextId,
+        outcome: "interrupted",
+      };
     }
-    await this.options.interruptController.interruptInvocation(
-      current.invocationId,
-      request.reason,
-    );
-    this.schedule(agent.agentId);
-    return { agentId: agent.agentId, invocationId: current.invocationId, outcome: "interrupted" };
   }
 
   async interruptOwned(ownerInvocationId: string, reason: string): Promise<void> {
@@ -837,6 +967,67 @@ export class ExpertOrchestrator {
         continue;
       }
       if (active.length === 0) return;
+    }
+  }
+
+  private async cancelQueuedInvocation(
+    invocation: Invocation,
+    reason?: string,
+  ): Promise<"cancelled" | "already_terminal" | "active"> {
+    while (true) {
+      const execution = await this.requireExecution();
+      const current = await this.options.store.getInvocation(
+        this.options.executionId,
+        invocation.invocationId,
+      );
+      if (current === undefined) {
+        throw new Error(`Invocation not found: ${invocation.invocationId}.`);
+      }
+      if (isTerminalExecutionStatus(current.status)) return "already_terminal";
+      if (current.status !== "queued") {
+        return "active";
+      }
+      try {
+        await this.options.store.commit({
+          commitId: `invocation-cancelled:${current.invocationId}`,
+          executionId: this.options.executionId,
+          expectedVersion: execution.version,
+          invocationPatches: [
+            {
+              invocationId: current.invocationId,
+              patch: {
+                status: "cancelled",
+                pendingExpertMessages: [],
+                ...(reason === undefined ? {} : { error: reason }),
+              },
+            },
+          ],
+          events: [
+            ...(current.pendingExpertMessages.length === 0
+              ? []
+              : [
+                  {
+                    invocationId: current.invocationId,
+                    type: "expert.message.consumed",
+                    data: {
+                      messageIds: current.pendingExpertMessages.map((message) => message.messageId),
+                      terminalReason: "cancelled",
+                    },
+                  },
+                ]),
+            {
+              invocationId: current.invocationId,
+              type: "invocation.cancelled",
+              data: { reason },
+            },
+          ],
+        });
+        return "cancelled";
+      } catch (error) {
+        if (error instanceof ExecutionVersionConflictError) continue;
+        if (error instanceof ExecutionFinalStatusConflictError) return "already_terminal";
+        throw error;
+      }
     }
   }
 
@@ -990,7 +1181,7 @@ export class ExpertOrchestrator {
     readonly returnWhen: "all" | "any";
     readonly timedOut: boolean;
     readonly completed: readonly unknown[];
-    readonly pendingInvocationIds: readonly string[];
+    readonly pending: readonly unknown[];
     readonly wakeReason?: "steer" | "message" | undefined;
     readonly steer?: { readonly requestId: string; readonly content: string } | undefined;
   }> {
@@ -1036,9 +1227,9 @@ export class ExpertOrchestrator {
             returnWhen,
             timedOut: !conditionMet && timedOut,
             completed: completed.map(summarizeInvocation),
-            pendingInvocationIds: invocations
+            pending: invocations
               .filter((invocation) => !isTerminalExecutionStatus(invocation.status))
-              .map((invocation) => invocation.invocationId),
+              .map(summarizeInvocation),
             ...(wakeMessage === undefined && !hasPendingMessage
               ? {}
               : wakeMessage?.kind === "steer"
@@ -1097,27 +1288,6 @@ export class ExpertOrchestrator {
     );
   }
 
-  private describeAssigner(
-    agent: AgentInstance,
-    invocations: readonly Invocation[],
-  ): {
-    readonly invocationId: string;
-    readonly expertId: string;
-    readonly agentId?: string | undefined;
-  } {
-    const creator = invocations.find(
-      (invocation) => invocation.invocationId === agent.createdByInvocationId,
-    );
-    if (creator === undefined || creator.agentId !== agent.parentAgentId) {
-      throw new Error(`Agent assignment provenance is inconsistent: ${agent.agentId}`);
-    }
-    return {
-      invocationId: agent.createdByInvocationId,
-      expertId: creator.executorId ?? creator.definition.id,
-      ...(creator.agentId === undefined ? {} : { agentId: creator.agentId }),
-    };
-  }
-
   private async loadScopedAgents(): Promise<AgentInstance[]> {
     const invocations = await this.options.store.listInvocations(this.options.executionId);
     const creators = collectDescendantInvocationIds(invocations, this.options.scopeInvocationId);
@@ -1125,6 +1295,32 @@ export class ExpertOrchestrator {
     return (await this.options.store.listAgents(this.options.executionId)).filter((agent) =>
       creators.has(agent.createdByInvocationId),
     );
+  }
+
+  private async loadSessionScope(): Promise<{
+    readonly contexts: RuntimeContextRecord[];
+    readonly invocations: Invocation[];
+    readonly agents: AgentInstance[];
+  }> {
+    const [localContexts, localInvocations, localAgents, sessionScope] = await Promise.all([
+      this.options.store.listContexts(this.options.executionId),
+      this.options.store.listInvocations(this.options.executionId),
+      this.options.store.listAgents(this.options.executionId),
+      this.options.readContextScope?.(),
+    ]);
+    return {
+      contexts: mergeByIdentity(
+        sessionScope?.contexts ?? [],
+        localContexts,
+        (context) => context.contextId,
+      ),
+      invocations: mergeByIdentity(
+        sessionScope?.invocations ?? [],
+        localInvocations,
+        (invocation) => invocation.invocationId,
+      ),
+      agents: mergeByIdentity(sessionScope?.agents ?? [], localAgents, (agent) => agent.agentId),
+    };
   }
 
   private async requireAccessibleAgent(
@@ -1290,23 +1486,24 @@ export class ExpertOrchestrator {
   }
 }
 
-class DelegationSemaphore {
+/** @internal Exported for deterministic liveness tests; not part of the package public API. */
+export class DelegationSemaphore {
   private active = 0;
   private readonly waiters: Array<() => void> = [];
 
   constructor(private readonly limit: number) {}
 
   async acquire(): Promise<DelegationPermit> {
-    await this.acquireSlot();
+    await this.acquireSlot(false);
     let held = true;
     return {
       suspend: () => {
         if (!held) return undefined;
         held = false;
         this.releaseSlot();
-        return async () => {
+        return async (options) => {
           if (held) return;
-          await this.acquireSlot();
+          await this.acquireSlot(options?.allowOvercommit === true);
           held = true;
         };
       },
@@ -1318,8 +1515,12 @@ class DelegationSemaphore {
     };
   }
 
-  private async acquireSlot(): Promise<void> {
+  private async acquireSlot(allowOvercommit: boolean): Promise<void> {
     if (this.active >= this.limit) {
+      if (allowOvercommit) {
+        this.active += 1;
+        return;
+      }
       await new Promise<void>((resolve) => this.waiters.push(resolve));
       return;
     }
@@ -1328,12 +1529,12 @@ class DelegationSemaphore {
 
   private releaseSlot(): void {
     if (this.active < 1) throw new Error("Delegation concurrency slot underflow.");
-    const next = this.waiters.shift();
-    if (next !== undefined) {
-      next();
-      return;
-    }
     this.active -= 1;
+    if (this.active >= this.limit) return;
+    const next = this.waiters.shift();
+    if (next === undefined) return;
+    this.active += 1;
+    next();
   }
 }
 
@@ -1423,6 +1624,7 @@ function summarizeInvocation(invocation: Invocation): unknown {
   return {
     agentId: invocation.agentId,
     invocationId: invocation.invocationId,
+    contextId: invocation.contextId,
     status: invocation.status,
     ...(output.success
       ? output.data.type === "inline"
@@ -1434,6 +1636,16 @@ function summarizeInvocation(invocation: Invocation): unknown {
     ...(invocation.error === undefined ? {} : { error: invocation.error }),
     ...(invocation.usage === undefined ? {} : { usage: invocation.usage }),
   };
+}
+
+function mergeByIdentity<TValue>(
+  first: readonly TValue[],
+  second: readonly TValue[],
+  readId: (value: TValue) => string,
+): TValue[] {
+  const values = new Map(first.map((value) => [readId(value), value]));
+  for (const value of second) values.set(readId(value), value);
+  return [...values.values()];
 }
 
 async function waitForEvent(

@@ -1,6 +1,6 @@
 # ADR 042: Invocation-scoped Expert messaging
 
-- Status: Accepted
+- Status: Superseded by ADR 043
 - Date: 2026-08-22
 
 ## Context

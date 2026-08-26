@@ -1164,7 +1164,6 @@ export function TeamEditor(props: {
           delegation: {
             maxConcurrency,
             maxDepth,
-            context: props.initial?.spec.delegation.context ?? "context:pragma.context.fresh@v1",
             runtimes: props.initial?.spec.delegation.runtimes ?? {},
             permissions: {
               spawn: pruneTeamPermissions(spawnPermissions, coordinator, members, false),

@@ -18,6 +18,7 @@ import { migratePragmaCompilerV4Project } from "./steps/v4-to-v5.ts";
 import { migratePragmaCompilerV5Project } from "./steps/v5-to-v6.ts";
 import { migratePragmaCompilerV6Project } from "./steps/v6-to-v7.ts";
 import { migratePragmaCompilerV7Project } from "./steps/v7-to-v8.ts";
+import { migratePragmaCompilerV8Project } from "./steps/v8-to-v9.ts";
 import {
   PragmaCompilerMigrationError,
   type PragmaCompilerProjectMigrationResult,
@@ -31,7 +32,7 @@ export {
   type PragmaCompilerVersion,
 } from "./types.ts";
 
-export const PRAGMA_COMPILER_MIGRATION_CHAIN_VERSION = "pragma.compiler-migrations/v6";
+export const PRAGMA_COMPILER_MIGRATION_CHAIN_VERSION = "pragma.compiler-migrations/v7";
 
 export function migratePragmaCompilerProjectToCurrent(input: {
   readonly files: ReadonlyMap<string, string>;
@@ -50,7 +51,9 @@ export function migratePragmaCompilerProjectToCurrent(input: {
               ? migratePragmaCompilerV5Project(input)
               : sourceCompilerVersion === "pragma.dsl/v6"
                 ? migratePragmaCompilerV6Project(input)
-                : migratePragmaCompilerV7Project(input);
+                : sourceCompilerVersion === "pragma.dsl/v7"
+                  ? migratePragmaCompilerV7Project(input)
+                  : migratePragmaCompilerV8Project(input);
     return {
       sourceCompilerVersion,
       targetCompilerVersion: PRAGMA_COMPILER_WRITE_VERSION,

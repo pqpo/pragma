@@ -1662,7 +1662,7 @@ describe("MissionRunner", { timeout: 15_000 }, () => {
       readSession: (session) => ({ runtimeSessionId: session.id }),
       async startTurn(session, turn) {
         const tools = session.context.agent.tools ?? [];
-        const spawn = tools.find((tool) => tool.name === "delegate_expert");
+        const spawn = tools.find((tool) => tool.name === "spawn_expert");
         const wait = tools.find((tool) => tool.name === "wait_experts");
         const callReviewer = tools.find((tool) => tool.name === "call_reviewer");
         let output = `${session.context.agent.id}:${turn.rawQuery}`;
@@ -4060,7 +4060,6 @@ function expertTeamFixture(): PragmaExpertTeamResource {
         },
         maxConcurrency: 2,
         maxDepth: 2,
-        context: "context-policy:pragma.fresh@v1",
         runtimes: {},
       },
     },

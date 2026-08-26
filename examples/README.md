@@ -249,7 +249,7 @@ Subagent 示例也使用同一套多 Agent TUI。主视图默认只展示 Main A
 ```
 
 Main Agent 的提示词没有写死 Research Agent id，也没有强制每轮委派。`createAgentLauncher()` 会把
-可用 Expert 的 `id`、`name` 和 `description` 注入 `delegate_expert` 工具描述，模型据此判断何时
+可用 Expert 的 `id`、`name` 和 `description` 注入 `spawn_expert` 工具描述，模型据此判断何时
 委派。Research Agent 的 description 明确覆盖架构分析、实现追踪和代码搜索，因此这类问题预期会
 自动路由给它。简单对话则应由 Main Agent 自己回答。
 

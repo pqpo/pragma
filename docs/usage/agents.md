@@ -32,16 +32,10 @@ Runtime identity 只保存在该 Context 上。
 
 ```ts
 const researcher = await defineExpert({ ...researcherOptions });
-const researcherContext = defineContextIdResolver({
-  id: "researcher-by-owner",
-  version: "1.0.0",
-  resolve: ({ ownerContextId, target }) => `${ownerContextId}:${target.expertId}`,
-});
 const launcher = createAgentLauncher({
   experts: [researcher],
   maxConcurrency: 2,
   maxDepth: 1,
-  contextId: researcherContext,
 });
 const coordinator = await defineExpert({
   ...coordinatorOptions,
@@ -50,29 +44,34 @@ const coordinator = await defineExpert({
 const session = await app.experts.createSession(coordinator);
 ```
 
-launcher 向模型公开 `delegate_expert`、`wait_experts`、`list_agents`、`message_expert`、
-`steer_expert` 和 `interrupt_expert`。`delegate_expert` 使用 `expertId` 时创建 AgentInstance，使用
-`agentId` 时在既有 Context 上追加 FIFO Invocation；两者都先原子落盘再立即返回
-`{ agentId, invocationId, contextId, disposition }`。`message_expert` 只向目标明确的 active
-Invocation Inbox 投递消息；`steer_expert` 向当前 Runtime turn 投递引导，在 Runtime 最近的 steering
-boundary 生效，不应主动中断当前 tool call。两者都不会创建任务。
+launcher 向模型公开 `spawn_expert`、`continue_expert`、`list_agents`、`wait_experts`、
+`steer_expert` 和 `interrupt_expert`。身份职责固定：`expertId` 选择定义，`contextId` 选择连续上下文，
+`invocationId` 选择任务；`agentId` 仅用于返回值、状态和审计。
 
-`list_agents` 返回的 `permissions` 同时包含授权和当前状态：`canMessage` 与 `canSteer` 只有在目标
-存在 active Invocation 时才为 `true`；目标处于 `idle` 或仅有 queued Invocation 时，两者均为 `false`。
-`canSteer: true` 仍不保证底层 Runtime 一定支持 steer，Runtime 未声明 steering capability 时实际调用会
-拒绝，也不保证模型会在投递调用返回前处理引导。`canInterrupt` 表示调用方有权执行 interrupt，即使目标
-已经空闲也可能为 `true`，此时调用只会返回 `already_idle`。
+`spawn_expert({ expertId, task })` 总是创建全新 Context，返回
+`{ expertId, contextId, agentId, invocationId, status }`。相关后续工作、失败重试或中断恢复使用
+`continue_expert({ contextId, task })`；Context 本轮已绑定 Agent 时追加 FIFO，跨 prompt 时恢复 Runtime
+snapshot 并返回新的 `agentId` 与 `agentDisposition: "materialized"`。
 
-Resolver 返回同一 Context 时，dispatch 会原子归并到同一 agent 并按 FIFO 串行；默认 resolver 每次创建新 Context。
-`wait_experts` 按精确的
-Invocation ID 收集结果；等待超时最小 30 秒、默认 10 分钟、最大 60 分钟。父 Invocation 即使遗漏
-wait，也会在终结屏障等待未 join 的直接子任务并续跑综合。任务边和同 Agent FIFO 边共同构成
-无环 Wait-for Graph；消息边不进入该图。
+`list_agents` 的 `availableExperts` 是完整团队目录；`contexts` 同时包含本轮与历史成员 Context，并返回
+`canContinue`、两种 steer 能力提示和 `canInterrupt`。这些字段只是目录快照，实际调用会重新授权。
+完整目录可见不代表可以读取其他成员的完整输出、wait 其旧任务或修改它。
 
-ExpertTeam 使用完全相同的配置入口：`delegation.contextId`。Resolver 只能从当前 owner 的兼容
-Context 候选中选择；相同字符串不能跨 ExpertSession/FlowExecution，也不能切换 Expert 或 Runtime。
-ExpertSession 的后续 prompt 会把本 Session 的历史成员 Context 作为候选并恢复其 snapshot；由于每个
-prompt 仍是独立 Execution，本轮会创建新的 AgentInstance，但相同 `contextId` 继续代表同一 Runtime 对话。
+`steer_expert` 只修正一个 active Invocation：默认 `delivery: "next_boundary"` 在下一安全边界投递，
+`delivery: "immediate"` 请求 Runtime steering；Runtime 不支持时返回 `runtime_unsupported`，不会自动
+降级。`interrupt_expert` 以 `invocationId` 精确停止任务：active 变为 `interrupted`，queued 变为
+`cancelled`，终态返回 `already_terminal`，同 Context 的其他 FIFO 任务保留。
+
+`wait_experts` 只允许当前 Invocation 直接通过 spawn 或 continue 创建的任务。成员 B continue 成员 A
+的 Context 后可以等待自己新建的 Invocation，但不能等待 A 原有的 Invocation。返回的 `completed` 和
+`pending` 都包含任务的 `invocationId`、`contextId`、`agentId` 与状态；终态项另外包含输出或错误。超时
+最小 30 秒、默认 10 分钟、最大 60 分钟；超时不取消任务，调用方应取 pending 项的 `invocationId`
+再次 wait。自动终结屏障同样有界为
+10 分钟，超时后恢复 Agent 并提供 pending 状态。Join 边与同 Agent FIFO 边共同进行无环检查。
+
+ExpertSession 的后续 prompt 会把同一 Session 的历史成员 Context 暴露为 resumable；continue 恢复其
+snapshot。Context 的 Expert 与 Runtime identity 在所属 Session 内不可变。聊天分支会建立新的 Mission、
+ExpertSession、Context 和 Runtime Session，只继承 transcript 语义，不暴露源 Session 的成员 Context。
 
 Agent 实例只属于当前 Execution，操作权限由 `ownerContextId` 决定。外部客户端通过 Execution events 和 InvocationTree 观察状态，
 不需要轮询内部任务；Core 不为所有 Tool 增加通用 background/sync 参数。

@@ -1206,7 +1206,6 @@ function expertTeam(): PragmaExpertTeamResource {
         permissions: { interact: {} },
         maxConcurrency: 2,
         maxDepth: 2,
-        context: "context-policy:pragma.fresh@v1",
         runtimes: {},
       },
     },
