@@ -120,6 +120,7 @@ describe("Expert context tools", () => {
       context: expect.any(Object),
     });
     expect(receipt).toEqual({
+      committed: true,
       status: "created",
       namespace: "mission-board",
       id: "handoffs/example.md",
@@ -129,12 +130,50 @@ describe("Expert context tools", () => {
       sha256: createHash("sha256").update(persistedContent, "utf8").digest("hex"),
     });
     expect(receipt).not.toHaveProperty("content");
-    expect(result.text).toBe(
-      `Added context: mission-board/handoffs/example.md; sizeBytes=${Buffer.byteLength(persistedContent, "utf8")}`,
-    );
+    expect(JSON.parse(result.text)).toEqual(receipt);
     expect(result.text).not.toContain(sentinel);
     expect(JSON.stringify(result.details)).not.toContain(sentinel);
     expect(JSON.stringify(result.details)).not.toContain("持久化后附加的内容。");
+  });
+
+  it("rejects blank required identifiers while preserving empty content semantics", async () => {
+    const addContext: ExpertAgentContextItemOperations["addContext"] = vi.fn(async (input) => ({
+      ok: true as const,
+      value: {
+        namespace: input.namespace,
+        id: input.id,
+        metadata: { trigger: "manual" as const, priority: "normal" as const },
+        content: input.content,
+      },
+    }));
+    const unsupported = vi.fn(async () => {
+      throw new Error("not used");
+    });
+    const tool = createContextTools({
+      listContext: unsupported,
+      readContext: unsupported,
+      searchContext: unsupported,
+      addContext,
+      editContext: unsupported,
+      deleteContext: unsupported,
+    }).find((candidate) => candidate.name === "add_expert_context")!;
+
+    await expect(
+      tool.call({ namespace: "mission-board", id: "   ", content: "value" }, undefined),
+    ).rejects.toThrow('Context tool parameter "id" must be a non-empty string.');
+    await expect(
+      tool.call({ namespace: "\t", id: "notes.md", content: "value" }, undefined),
+    ).rejects.toThrow('Context tool parameter "namespace" must be a non-empty string.');
+    expect(addContext).not.toHaveBeenCalled();
+
+    await expect(
+      tool.call({ namespace: "mission-board", id: "notes.md", content: "" }, undefined),
+    ).resolves.toMatchObject({
+      details: { context: { committed: true, id: "notes.md", sizeBytes: 0 } },
+    });
+    expect(addContext).toHaveBeenCalledWith(
+      expect.objectContaining({ namespace: "mission-board", id: "notes.md", content: "" }),
+    );
   });
 
   it("does not compute a receipt on add failure", async () => {
@@ -246,9 +285,15 @@ describe("Expert context tools", () => {
       expectedEtag: "etag-before-tail",
       context: expect.any(Object),
     });
-    expect(result).toMatchObject({
-      text: "Edited context: mission-board/notes.md; mode=append",
-      details: { mode: "append" },
+    expect(result).toMatchObject({ details: { mode: "append" } });
+    expect(JSON.parse(result.text)).toMatchObject({
+      committed: true,
+      status: "updated",
+      namespace: "mission-board",
+      id: "notes.md",
+      revision: "revision-append",
+      etag: "etag-append",
+      mode: "append",
     });
     await expect(
       tool.call(
@@ -261,6 +306,185 @@ describe("Expert context tools", () => {
         undefined,
       ),
     ).rejects.toThrow('Context tool parameter "separator"');
+  });
+
+  it("normalizes blank optional filters, modes, and concurrency tokens", async () => {
+    const listContext = vi.fn(async () => ({
+      ok: true as const,
+      value: { items: [], issues: [] },
+    }));
+    const searchContext = vi.fn(async () => ({ ok: true as const, value: [] }));
+    const editContext = vi.fn(async () => ({
+      ok: true as const,
+      value: {
+        namespace: "mission-board",
+        id: "notes.md",
+        metadata: { trigger: "manual" as const, priority: "normal" as const },
+        content: "updated",
+        revision: "revision-current",
+        etag: "etag-current",
+        mode: "search_replace" as const,
+        replacementCount: 1,
+      },
+    }));
+    const unsupported = vi.fn(async () => {
+      throw new Error("not used");
+    });
+    const tools = createContextTools({
+      listContext,
+      readContext: unsupported,
+      searchContext,
+      addContext: unsupported,
+      editContext,
+      deleteContext: unsupported,
+    });
+
+    await tools
+      .find((tool) => tool.name === "list_expert_context")!
+      .call({ namespace: " ", cursor: "\t" }, undefined);
+    await tools
+      .find((tool) => tool.name === "search_expert_context")!
+      .call({ namespace: " ", scope: "", query: "needle" }, undefined);
+    await tools
+      .find((tool) => tool.name === "edit_expert_context")!
+      .call(
+        {
+          namespace: "mission-board",
+          id: "notes.md",
+          mode: " ",
+          search: "old",
+          replace: "new",
+          expectedRevision: "",
+          expectedEtag: "  ",
+        },
+        undefined,
+      );
+
+    expect(listContext).toHaveBeenCalledWith({ context: expect.any(Object) });
+    expect(searchContext).toHaveBeenCalledWith({
+      namespace: undefined,
+      query: "needle",
+      scope: undefined,
+      maxResults: undefined,
+      contextLines: undefined,
+      caseSensitive: undefined,
+      context: expect.any(Object),
+    });
+    expect(editContext).toHaveBeenCalledWith(
+      expect.objectContaining({
+        mode: "search_replace",
+        expectedRevision: undefined,
+        expectedEtag: undefined,
+      }),
+    );
+  });
+
+  it("puts conflict recovery state in Agent-visible error text", async () => {
+    const unsupported = vi.fn(async () => {
+      throw new Error("not used");
+    });
+    const tool = createContextTools({
+      listContext: unsupported,
+      readContext: unsupported,
+      searchContext: unsupported,
+      addContext: unsupported,
+      editContext: vi.fn(async () => ({
+        ok: false as const,
+        error: {
+          code: "context_conflict" as const,
+          message: "Context revision conflict: notes.md",
+          details: {
+            expectedRevision: "revision-old",
+            currentRevision: "revision-current",
+            currentEtag: "etag-current",
+          },
+        },
+      })),
+      deleteContext: unsupported,
+    }).find((candidate) => candidate.name === "edit_expert_context")!;
+
+    const result = await tool.call(
+      {
+        namespace: "mission-board",
+        id: "notes.md",
+        mode: "replace",
+        content: "replacement",
+        expectedRevision: "revision-old",
+      },
+      undefined,
+    );
+
+    expect(result.isError).toBe(true);
+    expect(JSON.parse(result.text)).toEqual({
+      ok: false,
+      committed: false,
+      error: {
+        code: "context_conflict",
+        message: "Context revision conflict: notes.md",
+        details: {
+          expectedRevision: "revision-old",
+          currentRevision: "revision-current",
+          currentEtag: "etag-current",
+        },
+      },
+      recovery: {
+        action: "retry_with_current_version",
+        currentRevision: "revision-current",
+        currentEtag: "etag-current",
+      },
+    });
+    expect(result.details).toEqual(JSON.parse(result.text));
+  });
+
+  it("returns explicit update and delete persistence receipts without content", async () => {
+    const unsupported = vi.fn(async () => {
+      throw new Error("not used");
+    });
+    const tools = createContextTools({
+      listContext: unsupported,
+      readContext: unsupported,
+      searchContext: unsupported,
+      addContext: unsupported,
+      editContext: vi.fn(async () => ({
+        ok: true as const,
+        value: {
+          namespace: "mission-board",
+          id: "notes.md",
+          metadata: { trigger: "manual" as const, priority: "normal" as const },
+          content: "persisted content",
+          revision: "revision-updated",
+          etag: "etag-updated",
+          mode: "replace" as const,
+        },
+      })),
+      deleteContext: vi.fn(async () => ({
+        ok: true as const,
+        value: { namespace: "mission-board", id: "notes.md" },
+      })),
+    });
+    const edited = await tools
+      .find((tool) => tool.name === "edit_expert_context")!
+      .call(
+        { namespace: "mission-board", id: "notes.md", mode: "replace", content: "replacement" },
+        undefined,
+      );
+    const deleted = await tools
+      .find((tool) => tool.name === "delete_expert_context")!
+      .call({ namespace: "mission-board", id: "notes.md" }, undefined);
+
+    expect(JSON.parse(edited.text)).toMatchObject({
+      committed: true,
+      status: "updated",
+      revision: "revision-updated",
+      etag: "etag-updated",
+    });
+    expect(edited.text).not.toContain("persisted content");
+    expect(JSON.parse(deleted.text)).toEqual({
+      committed: true,
+      status: "deleted",
+      namespace: "mission-board",
+      id: "notes.md",
+    });
   });
 
   it("overlays the active submission identity onto a reused Runtime context", async () => {
@@ -344,6 +568,13 @@ describe("Expert context tools", () => {
     };
     expect(firstDetails.context.map((item) => item.id)).toEqual(["a.md", "b.md"]);
     expect(first.text).toContain("More items are available");
+
+    await expect(tool.call({ cursor: "" }, undefined)).resolves.not.toMatchObject({
+      isError: true,
+    });
+    await expect(tool.call({ cursor: "   " }, undefined)).resolves.not.toMatchObject({
+      isError: true,
+    });
 
     const second = await tool.call({ cursor: firstDetails.page.nextCursor, limit: 2 }, undefined);
     expect(
@@ -575,5 +806,19 @@ describe("Expert context tools", () => {
     expect(context.contentRange).toMatchObject({ startLine: 4, endLine: 4 });
     expect(readResult.text).toContain("truncationNotice");
     expect(readResult.text).toContain("nextStart=126");
+    expect(readResult.text).toContain(
+      '"tool":"read_expert_context","arguments":{"namespace":"memory","id":"semantic/items/fact.md","start":126,"offset":128}',
+    );
+    expect(readResult.details).toMatchObject({
+      continuation: {
+        tool: "read_expert_context",
+        arguments: {
+          namespace: "memory",
+          id: "semantic/items/fact.md",
+          start: 126,
+          offset: 128,
+        },
+      },
+    });
   });
 });

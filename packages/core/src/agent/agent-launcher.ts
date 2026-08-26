@@ -151,7 +151,10 @@ function createLifecycleTools(
         inputSchema: objectSchema(
           {
             invocationIds: { type: "array", items: { type: "string" }, minItems: 1 },
-            returnWhen: { type: "string", enum: ["all", "any"] },
+            returnWhen: optionalEnumSchema(
+              ["all", "any"],
+              "Optional completion condition. Omit or leave empty to wait for all.",
+            ),
             timeoutMs: {
               type: "integer",
               minimum: MIN_WAIT_EXPERTS_TIMEOUT_MS,
@@ -182,10 +185,10 @@ function createLifecycleTools(
             type: "string",
             description: "Optional Expert id filter. Omit or leave empty to include all Experts.",
           },
-          status: {
-            type: "string",
-            enum: ["running", "waiting", "queued", "idle", "resumable"],
-          },
+          status: optionalEnumSchema(
+            ["running", "waiting", "queued", "idle", "resumable"],
+            "Optional status filter. Omit or leave empty to include every status.",
+          ),
           cursor: {
             type: "string",
             description:
@@ -301,6 +304,16 @@ function objectSchema(properties: Record<string, unknown>, required: readonly st
   return { type: "object", properties, required, additionalProperties: false };
 }
 
+function optionalEnumSchema(values: readonly string[], description: string): unknown {
+  return {
+    anyOf: [
+      { type: "string", enum: values },
+      { type: "string", pattern: "^\\s*$" },
+    ],
+    description,
+  };
+}
+
 function readSpawn(value: unknown): { expertId: string; task: string } {
   const record = readRecord(value);
   return {
@@ -316,7 +329,7 @@ function readList(value: unknown): {
   limit?: number;
 } {
   const record = readRecord(value);
-  const status = record["status"];
+  const status = readOptionalToken(record, "status");
   if (
     status !== undefined &&
     status !== "running" &&
@@ -339,9 +352,8 @@ function readOptionalListString(
   record: Record<string, unknown>,
   name: "expertId" | "cursor",
 ): Partial<Record<"expertId" | "cursor", string>> {
-  const value = record[name];
-  if (value === undefined || (typeof value === "string" && value.trim() === "")) return {};
-  return { [name]: readString(value, name) };
+  const value = readOptionalToken(record, name);
+  return value === undefined ? {} : { [name]: value };
 }
 
 function readSteer(value: unknown): {
@@ -373,7 +385,7 @@ function readWait(value: unknown): {
   if (new Set(invocationIds).size !== invocationIds.length) {
     throw new Error("invocationIds must not contain duplicates.");
   }
-  const returnWhen = record["returnWhen"];
+  const returnWhen = readOptionalToken(record, "returnWhen");
   if (returnWhen !== undefined && returnWhen !== "all" && returnWhen !== "any") {
     throw new Error('returnWhen must be "all" or "any".');
   }
@@ -436,8 +448,14 @@ function readInteger(value: unknown, name: string): number {
 }
 
 function readOptionalString(record: Record<string, unknown>, name: string): Record<string, string> {
+  const value = readOptionalToken(record, name);
+  return value === undefined ? {} : { [name]: value };
+}
+
+function readOptionalToken(record: Record<string, unknown>, name: string): string | undefined {
   const value = record[name];
-  return value === undefined ? {} : { [name]: readString(value, name) };
+  if (value === undefined || (typeof value === "string" && value.trim() === "")) return undefined;
+  return readString(value, name);
 }
 
 function readUniqueExperts(experts: readonly Expert[], owner: string): readonly Expert[] {
@@ -473,5 +491,11 @@ function readPositiveInteger(value: number, field: string): number {
 }
 
 function failure(code: string, text: string): ExpertAgentToolCallResult {
-  return { text, isError: true, details: { code } };
+  const payload = {
+    ok: false as const,
+    committed: false as const,
+    code,
+    error: { code, message: text },
+  };
+  return { text: JSON.stringify(payload), isError: true, details: payload };
 }

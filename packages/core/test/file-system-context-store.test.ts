@@ -29,6 +29,27 @@ describe("FileSystemContextStore", () => {
     await expect(
       store.editContext({
         id: "notes.md",
+        mode: "replace",
+        content: "stale",
+        expectedRevision: added.value.revision,
+        expectedEtag: added.value.etag,
+      }),
+    ).resolves.toMatchObject({
+      ok: false,
+      error: {
+        code: "context_conflict",
+        details: {
+          expectedRevision: added.value.revision,
+          currentRevision: started.value.revision,
+          expectedEtag: added.value.etag,
+          currentEtag: started.value.etag,
+        },
+      },
+    });
+
+    await expect(
+      store.editContext({
+        id: "notes.md",
         mode: "append",
         content: "-tail",
         separator: "blank_line",

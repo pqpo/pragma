@@ -452,9 +452,16 @@ function registerLocalTool(
 
         return toCallToolResult(result);
       } catch (error) {
+        const message = error instanceof Error ? error.message : String(error);
+        const payload = {
+          ok: false as const,
+          committed: false as const,
+          error: { code: "tool_execution_failed", message },
+        };
         return toCallToolResult({
-          text: error instanceof Error ? error.message : String(error),
+          text: JSON.stringify(payload),
           isError: true,
+          details: payload,
         });
       }
     },

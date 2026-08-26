@@ -29,7 +29,17 @@ describe("JsonContextStore", () => {
         content: "Updated.",
         expectedRevision: "stale",
       }),
-    ).resolves.toMatchObject({ ok: false, error: { code: "context_conflict" } });
+    ).resolves.toMatchObject({
+      ok: false,
+      error: {
+        code: "context_conflict",
+        details: {
+          expectedRevision: "stale",
+          currentRevision: read.value.revision,
+          currentEtag: read.value.etag,
+        },
+      },
+    });
     await expect(
       second.editContext({
         id: "rules",
@@ -77,7 +87,17 @@ describe("JsonContextStore", () => {
         content: "123",
         expectedEtag: "stale",
       }),
-    ).resolves.toMatchObject({ ok: false, error: { code: "context_conflict" } });
+    ).resolves.toMatchObject({
+      ok: false,
+      error: {
+        code: "context_conflict",
+        details: {
+          expectedEtag: "stale",
+          currentRevision: added.value.revision,
+          currentEtag: added.value.etag,
+        },
+      },
+    });
   });
 
   it("prepends and appends content with explicit separators and optimistic concurrency", async () => {

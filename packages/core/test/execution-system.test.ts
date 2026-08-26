@@ -25,6 +25,7 @@ import {
   defineFlow,
   defineRuntimeDriver,
   EXECUTION_CURRENT_EXPERT_ID_ATTR,
+  EXECUTION_CURRENT_TEAM_ID_ATTR,
   EXECUTION_CONTEXT_ID_ATTR,
   EXECUTION_ID_ATTR,
   INVOCATION_ID_ATTR,
@@ -248,6 +249,11 @@ interface OrchestrationRuntimeHooks {
   readonly onWaitPending?: (() => Promise<void>) | undefined;
 }
 
+interface OrchestrationNativeEvent {
+  readonly stage: string;
+  readonly message?: string | undefined;
+}
+
 function createOrchestrationRuntime(
   scenario: OrchestrationScenario,
   stats: OrchestrationRuntimeStats = { active: 0, maxActive: 0, memberTurns: 0 },
@@ -258,7 +264,7 @@ function createOrchestrationRuntime(
   const childSessionOpening = new Promise<void>((resolve) => {
     signalChildSessionOpening = resolve;
   });
-  return defineRuntimeDriver<never, FakeSession>({
+  return defineRuntimeDriver<OrchestrationNativeEvent, FakeSession>({
     features: createRuntimeTestFeatures({
       enabled: ["close", ...(hooks.onNativeSteer === undefined ? [] : (["steering"] as const))],
     }),
@@ -279,6 +285,10 @@ function createOrchestrationRuntime(
         const expertId = session.context.agent.id;
         if (expertId !== "lead") {
           stats.memberTurns += 1;
+          turn.stream.writeNative({
+            stage: "researching",
+            message: `${expertId} is processing its task.`,
+          });
           if (scenario === "parallel" || scenario === "concurrency") {
             await firstChildWave.arriveAndWait();
           } else {
@@ -354,7 +364,7 @@ function createOrchestrationRuntime(
             ...(third === undefined ? [] : [third["invocationId"] as string]),
           ]);
           return {
-            outputText: `lead:${JSON.stringify(result["completed"])}`,
+            outputText: `lead:${JSON.stringify(result)}`,
             runtimeSessionId: session.id,
           };
         }
@@ -432,7 +442,9 @@ function createOrchestrationRuntime(
         stats.active -= 1;
       }
     },
-    mapEvent: () => ({ events: [] }),
+    mapEvent: (event, context) => ({
+      events: [context.events.progress(event.stage, undefined, event.message)],
+    }),
     ...(hooks.onNativeSteer === undefined ? {} : { steerTurn: () => hooks.onNativeSteer?.() }),
     closeSession: () => undefined,
   });
@@ -958,6 +970,11 @@ describe("ExpertSession", () => {
         (context) => context.request.context?.attributes?.[EXECUTION_CURRENT_EXPERT_ID_ATTR],
       ),
     ).toEqual(["lead", "member"]);
+    expect(
+      stats.sessionContexts.map(
+        (context) => context.request.context?.attributes?.[EXECUTION_CURRENT_TEAM_ID_ATTR],
+      ),
+    ).toEqual(["persistent-team", "persistent-team"]);
 
     await expect(session.close()).rejects.toThrow("Runtime Session pool cleanup failed");
     const recoveredStats = createFakeRuntimeStats();
@@ -3645,6 +3662,7 @@ describe("Expert lifecycle orchestration", () => {
     const session = await app.experts.createSession(lead);
     const active = await session.prompt("coordinate", { requestId: "wait-steer-race" });
     await waitPending;
+    await new Promise<void>((resolve) => setTimeout(resolve, 50));
     const steered = await session.prompt("change priorities", {
       requestId: "wait-steer-race-guidance",
       mode: "steer",
@@ -3653,11 +3671,33 @@ describe("Expert lifecycle orchestration", () => {
 
     expect(steered).toMatchObject({ requestedMode: "steer", effectiveMode: "steer" });
     const output = await active.result;
+    if (typeof output !== "string") throw new Error("Expected textual wait result.");
     await expect(steered.result).resolves.toBe(output);
     expect(nativeSteers).toBe(0);
     expect(output).toContain('"wakeReason":"steer"');
     expect(output).toContain('"pending"');
     expect(output).toContain('"completed"');
+    const waitResults = JSON.parse(output.slice("lead:".length)) as {
+      readonly interruptedWait: {
+        readonly waitedMs: number;
+        readonly pending: ReadonlyArray<{
+          readonly latestActivity?: {
+            readonly kind: string;
+            readonly stage?: string;
+            readonly message?: string;
+          };
+        }>;
+      };
+    };
+    expect(waitResults.interruptedWait.waitedMs).toBeGreaterThanOrEqual(0);
+    expect(
+      waitResults.interruptedWait.pending.some(
+        (item) =>
+          item.latestActivity?.kind === "progress" &&
+          item.latestActivity.stage === "researching" &&
+          item.latestActivity.message?.includes("processing") === true,
+      ),
+    ).toBe(true);
     const tree = await active.getTree();
     expect(tree.invocation.status).toBe("succeeded");
     expect(tree.children).toHaveLength(2);
@@ -4468,12 +4508,41 @@ describe("Expert lifecycle orchestration", () => {
 
   it("starts independent spawned Experts concurrently", async () => {
     const result = await runScenario("parallel", ["member-a", "member-b"]);
+    if (typeof result.output !== "string")
+      throw new Error("Expected textual orchestration output.");
+    const waited = JSON.parse(result.output.slice("lead:".length)) as {
+      readonly waitedMs: number;
+      readonly timedOut: boolean;
+      readonly completed: ReadonlyArray<{
+        readonly createdAt: string;
+        readonly updatedAt: string;
+        readonly latestActivity?: {
+          readonly kind: string;
+          readonly phase?: string;
+          readonly occurredAt: string;
+          readonly ageMs: number;
+        };
+      }>;
+    };
     expect(result.tree.children).toHaveLength(2);
     expect(result.tree.children.map((child) => child.invocation.status)).toEqual([
       "succeeded",
       "succeeded",
     ]);
     expect(result.stats.maxActive).toBeGreaterThanOrEqual(3);
+    expect(waited).toMatchObject({ timedOut: false, completed: [{}, {}] });
+    expect(waited.waitedMs).toBeGreaterThanOrEqual(0);
+    expect(waited.completed.every((item) => Date.parse(item.createdAt) > 0)).toBe(true);
+    expect(waited.completed.every((item) => Date.parse(item.updatedAt) > 0)).toBe(true);
+    expect(
+      waited.completed.every(
+        (item) =>
+          item.latestActivity?.kind === "run" &&
+          item.latestActivity.phase === "completed" &&
+          Date.parse(item.latestActivity.occurredAt) > 0 &&
+          item.latestActivity.ageMs >= 0,
+      ),
+    ).toBe(true);
   });
 
   it("releases a delegated concurrency permit while an Expert waits for human input", async () => {
@@ -4802,8 +4871,14 @@ describe("Expert delegation declarations", () => {
     await expect(
       list.call({ expertId: "  ", cursor: "  " }, undefined, context),
     ).resolves.not.toMatchObject({ isError: true });
+    await expect(list.call({ status: "" }, undefined, context)).resolves.not.toMatchObject({
+      isError: true,
+    });
+    await expect(list.call({ status: "  " }, undefined, context)).resolves.not.toMatchObject({
+      isError: true,
+    });
 
-    expect(requests).toEqual([{}, {}, {}]);
+    expect(requests).toEqual([{}, {}, {}, {}, {}]);
   });
 
   it("bounds Expert waits and applies the 10-minute default", async () => {
@@ -4821,27 +4896,35 @@ describe("Expert delegation declarations", () => {
       default: 600_000,
     });
 
-    let receivedTimeoutMs: number | undefined;
+    let receivedRequest:
+      | { readonly timeoutMs?: number | undefined; readonly returnWhen?: string | undefined }
+      | undefined;
     const context = {
       execution: {
         executionId: "wait-timeout-test",
         invocationId: "wait-timeout-root",
         depth: 0,
-        waitExperts: async (request: { readonly timeoutMs?: number | undefined }) => {
-          receivedTimeoutMs = request.timeoutMs;
+        waitExperts: async (request: {
+          readonly timeoutMs?: number | undefined;
+          readonly returnWhen?: string | undefined;
+        }) => {
+          receivedRequest = request;
           return {};
         },
       },
     };
 
     await wait.call({ invocationIds: ["child"] }, undefined, context);
-    expect(receivedTimeoutMs).toBe(600_000);
+    expect(receivedRequest).toMatchObject({ timeoutMs: 600_000 });
 
     await wait.call({ invocationIds: ["child"], timeoutMs: 30_000 }, undefined, context);
-    expect(receivedTimeoutMs).toBe(30_000);
+    expect(receivedRequest).toMatchObject({ timeoutMs: 30_000 });
 
     await wait.call({ invocationIds: ["child"], timeoutMs: 3_600_000 }, undefined, context);
-    expect(receivedTimeoutMs).toBe(3_600_000);
+    expect(receivedRequest).toMatchObject({ timeoutMs: 3_600_000 });
+
+    await wait.call({ invocationIds: ["child"], returnWhen: " " }, undefined, context);
+    expect(receivedRequest).not.toHaveProperty("returnWhen");
 
     await expect(
       wait.call({ invocationIds: ["child"], timeoutMs: 29_999 }, undefined, context),

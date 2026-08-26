@@ -46,6 +46,7 @@ import { isRuntimeFeatureEnabled } from "../runtime/features.ts";
 import { openRuntimeSession } from "../runtime/session-factory.ts";
 import {
   EXECUTION_CURRENT_EXPERT_ID_ATTR,
+  EXECUTION_CURRENT_TEAM_ID_ATTR,
   EXECUTION_CONTEXT_ID_ATTR,
   EXECUTION_ID_ATTR,
   INVOCATION_ID_ATTR,
@@ -1020,6 +1021,7 @@ export async function runExpertInvocation(options: RunExpertInvocationOptions): 
           [EXECUTION_ID_ATTR]: options.executionId,
           [INVOCATION_ID_ATTR]: options.invocationId,
           [EXECUTION_CURRENT_EXPERT_ID_ATTR]: nativeExpert.id,
+          ...(team === undefined ? {} : { [EXECUTION_CURRENT_TEAM_ID_ATTR]: team.id }),
           [EXECUTION_CONTEXT_ID_ATTR]: options.context.contextId,
         },
       },

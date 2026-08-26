@@ -1,6 +1,7 @@
 import { createHash, randomUUID } from "node:crypto";
 
 import {
+  ExpertAgentStreamEventSchema,
   InvocationOutputSchema,
   isTerminalExecutionStatus,
   type AgentInstance,
@@ -76,6 +77,15 @@ interface ExpertWaitRegistration {
   read(): ExpertWaitWake | undefined;
   accept(): void;
   close(): void;
+}
+
+interface InvocationActivitySummary {
+  readonly kind: "progress" | "tool" | "run";
+  readonly phase?: string | undefined;
+  readonly stage?: string | undefined;
+  readonly message?: string | undefined;
+  readonly toolName?: string | undefined;
+  readonly occurredAt: string;
 }
 
 export interface ExpertOrchestratorOptions {
@@ -794,6 +804,7 @@ export class ExpertOrchestrator {
   ): Promise<{
     readonly returnWhen: "all" | "any";
     readonly timedOut: boolean;
+    readonly waitedMs: number;
     readonly completed: readonly unknown[];
     readonly pending: readonly unknown[];
     readonly wakeReason?: "steer" | "message" | undefined;
@@ -816,6 +827,7 @@ export class ExpertOrchestrator {
     markWaiting?: (() => Promise<void>) | undefined,
   ): Promise<{
     readonly timedOut: boolean;
+    readonly waitedMs: number;
     readonly completed: readonly unknown[];
     readonly pending: readonly unknown[];
     readonly wakeReason?: "steer" | "message" | undefined;
@@ -836,10 +848,13 @@ export class ExpertOrchestrator {
         .map((invocation) => invocation.invocationId);
       if (ids.length === 0) {
         const wakeMessage = registration.read();
-        if (wakeMessage === undefined) return { timedOut: false, completed: [], pending: [] };
+        if (wakeMessage === undefined) {
+          return { timedOut: false, waitedMs: 0, completed: [], pending: [] };
+        }
         registration.accept();
         return {
           timedOut: false,
+          waitedMs: 0,
           completed: [],
           pending: [],
           ...(wakeMessage.kind === "steer"
@@ -1201,6 +1216,7 @@ export class ExpertOrchestrator {
   ): Promise<{
     readonly returnWhen: "all" | "any";
     readonly timedOut: boolean;
+    readonly waitedMs: number;
     readonly completed: readonly unknown[];
     readonly pending: readonly unknown[];
     readonly wakeReason?: "steer" | "message" | undefined;
@@ -1211,6 +1227,7 @@ export class ExpertOrchestrator {
       this.options.executionId,
     );
     const iterator = subscription[Symbol.asyncIterator]();
+    const waitStartedAt = Date.now();
     const deadline = request.timeoutMs === undefined ? undefined : Date.now() + request.timeoutMs;
     try {
       while (true) {
@@ -1230,13 +1247,24 @@ export class ExpertOrchestrator {
         const wakeMessage = registration.read();
         if (conditionMet || timedOut || wakeMessage !== undefined || hasPendingMessage) {
           if (wakeMessage !== undefined) registration.accept();
+          const returnedAt = Date.now();
+          const activities = await this.readLatestInvocationActivities(request.invocationIds);
           return {
             returnWhen,
             timedOut: !conditionMet && timedOut,
-            completed: completed.map(summarizeInvocation),
+            waitedMs: Math.max(0, returnedAt - waitStartedAt),
+            completed: completed.map((invocation) =>
+              summarizeInvocation(invocation, activities.get(invocation.invocationId), returnedAt),
+            ),
             pending: invocations
               .filter((invocation) => !isTerminalExecutionStatus(invocation.status))
-              .map(summarizeInvocation),
+              .map((invocation) =>
+                summarizeInvocation(
+                  invocation,
+                  activities.get(invocation.invocationId),
+                  returnedAt,
+                ),
+              ),
             ...(wakeMessage === undefined && !hasPendingMessage
               ? {}
               : wakeMessage?.kind === "steer"
@@ -1264,6 +1292,7 @@ export class ExpertOrchestrator {
   ): Promise<{
     readonly returnWhen: "all" | "any";
     readonly timedOut: boolean;
+    readonly waitedMs: number;
     readonly completed: readonly unknown[];
     readonly pending: readonly unknown[];
     readonly wakeReason?: "steer" | "message" | undefined;
@@ -1357,6 +1386,22 @@ export class ExpertOrchestrator {
         );
       }
     }
+  }
+
+  private async readLatestInvocationActivities(
+    invocationIds: readonly string[],
+  ): Promise<ReadonlyMap<string, InvocationActivitySummary>> {
+    const requested = new Set(invocationIds);
+    const latest = new Map<string, InvocationActivitySummary>();
+    const events = await this.options.store.readEvents(this.options.executionId);
+    for (const event of events) {
+      if (event.type !== "runtime.event" || !requested.has(event.invocationId)) continue;
+      const parsed = ExpertAgentStreamEventSchema.safeParse(event.data);
+      if (!parsed.success) continue;
+      const activity = summarizeRuntimeActivity(parsed.data);
+      if (activity !== undefined) latest.set(event.invocationId, activity);
+    }
+    return latest;
   }
 
   private async loadInvocations(ids: readonly string[]): Promise<Invocation[]> {
@@ -1712,13 +1757,28 @@ function assertWaitGraphAcyclic(invocations: readonly Invocation[]): void {
   }
 }
 
-function summarizeInvocation(invocation: Invocation): unknown {
+function summarizeInvocation(
+  invocation: Invocation,
+  latestActivity: InvocationActivitySummary | undefined,
+  now: number,
+): unknown {
   const output = InvocationOutputSchema.safeParse(invocation.output);
   return {
     agentId: invocation.agentId,
     invocationId: invocation.invocationId,
     contextId: invocation.contextId,
     status: invocation.status,
+    createdAt: invocation.createdAt,
+    updatedAt: invocation.updatedAt,
+    ...(invocation.waitReason === undefined ? {} : { waitReason: invocation.waitReason }),
+    ...(latestActivity === undefined
+      ? {}
+      : {
+          latestActivity: {
+            ...latestActivity,
+            ageMs: Math.max(0, now - Date.parse(latestActivity.occurredAt)),
+          },
+        }),
     ...(output.success
       ? output.data.type === "inline"
         ? { output: output.data.value }
@@ -1729,6 +1789,46 @@ function summarizeInvocation(invocation: Invocation): unknown {
     ...(invocation.error === undefined ? {} : { error: invocation.error }),
     ...(invocation.usage === undefined ? {} : { usage: invocation.usage }),
   };
+}
+
+function summarizeRuntimeActivity(
+  event: ReturnType<typeof ExpertAgentStreamEventSchema.parse>,
+): InvocationActivitySummary | undefined {
+  if (event.type === "progress") {
+    return {
+      kind: "progress",
+      stage: event.payload.stage,
+      ...(event.payload.message === undefined
+        ? {}
+        : { message: event.payload.message.slice(0, 240) }),
+      occurredAt: event.emittedAt,
+    };
+  }
+  if (
+    event.type === "tool.started" ||
+    event.type === "tool.completed" ||
+    event.type === "tool.failed"
+  ) {
+    return {
+      kind: "tool",
+      phase: event.type.slice("tool.".length),
+      toolName: event.payload.toolName,
+      occurredAt: event.emittedAt,
+    };
+  }
+  if (
+    event.type === "run.started" ||
+    event.type === "run.completed" ||
+    event.type === "run.failed" ||
+    event.type === "run.cancelled"
+  ) {
+    return {
+      kind: "run",
+      phase: event.type.slice("run.".length),
+      occurredAt: event.emittedAt,
+    };
+  }
+  return undefined;
 }
 
 function mergeByIdentity<TValue>(

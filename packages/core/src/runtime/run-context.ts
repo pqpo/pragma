@@ -10,6 +10,7 @@ export const EXECUTION_ID_ATTR = "execution.executionId";
 export const INVOCATION_ID_ATTR = "execution.invocationId";
 export const EXECUTION_RUNTIME_SESSION_ATTR = "execution.runtimeSession";
 export const EXECUTION_CURRENT_EXPERT_ID_ATTR = "execution.currentExpertId";
+export const EXECUTION_CURRENT_TEAM_ID_ATTR = "execution.currentTeamId";
 export const EXECUTION_CONTEXT_ID_ATTR = "execution.contextId";
 
 export interface ExpertAgentRunContext {
