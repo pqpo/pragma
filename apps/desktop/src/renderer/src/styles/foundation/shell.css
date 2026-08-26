@@ -5,7 +5,7 @@
   place-items: center;
   padding: 64px;
   background:
-    radial-gradient(circle at 50% 15%, rgb(151 189 87 / 12%), transparent 34%), var(--background);
+    radial-gradient(circle at 50% 15%, rgb(145 163 151 / 8%), transparent 34%), var(--background);
 }
 
 .desktop-fatal-error-card {

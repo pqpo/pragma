@@ -41,7 +41,7 @@ p {
 /* Desktop visual-system migration layer. Keep touched selectors authoritative here. */
 
 ::selection {
-  background: rgb(88 121 104 / 18%);
+  background: rgb(68 90 79 / 18%);
 }
 
 button,

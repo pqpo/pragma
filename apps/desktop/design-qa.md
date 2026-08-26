@@ -1,3 +1,75 @@
+# Warm Neutral Desktop Theme Design QA
+
+- Source visual truth: `design-qa/color-theme-reference.png`
+- Implementation screenshot: `design-qa/color-theme-implementation.jpg`
+- Combined comparison: `design-qa/color-theme-comparison.png`
+- Viewport: 1440 × 900 CSS pixels, light theme, expanded application rail
+- Density normalization:
+  - Source: 1974 × 1388 pixels, proportionally normalized to 1280 × 900 pixels.
+  - Implementation: 1440 × 900 pixels at DPR 1.
+  - The comparison preserves both products' native aspect ratios and evaluates the requested color
+    language rather than treating the reference application's layout as a Pragma layout target.
+- State: Simplified Chinese Home page, empty Mission composer, default workspace, and no selected
+  executor.
+
+**Findings**
+
+- No actionable P0, P1, or P2 color differences remain within the requested scope.
+- Fonts and typography intentionally remain Pragma's existing Inter/SF Pro/PingFang and Gloock
+  stacks. The visual hierarchy remains readable against the warmer palette.
+- Spacing and layout rhythm are intentionally unchanged. The implementation preserves Pragma's
+  navigation and Home composer geometry instead of copying the reference product's chrome.
+- Colors and visual tokens now match the reference direction: warm ivory canvas, soft oatmeal rail,
+  white raised surfaces, warm stone borders, pale sage selection, graphite text, and a restrained
+  forest-green accent. The former bright lime ambient tint is replaced by a low-saturation sage
+  tint. Contrast checks are 16.36:1 for primary text on canvas, 5.02:1 for secondary text on canvas,
+  and 7.44:1 for white on the primary accent.
+- Image and asset fidelity: no new visual assets were required. The implementation keeps the real
+  Pragma brand asset and installed Phosphor icons; no image placeholders or custom drawn icons were
+  introduced.
+- Copy and content remain the existing localized Pragma UI. No reference-product copy was copied.
+
+**Full-view comparison evidence**
+
+- The source and implementation were opened together in `design-qa/color-theme-comparison.png`.
+- Both show the same foreground/background balance: warm near-white content, a slightly darker
+  warm rail, low-contrast separators, white input surfaces, gray-green selected controls, and dark
+  graphite headings.
+- The implementation deliberately has fewer nested rail cards because this task changes color, not
+  information architecture.
+
+**Focused region comparison evidence**
+
+- A separate crop was unnecessary because the 2744 × 900 combined image keeps the rail, active
+  navigation state, page canvas, workspace strip, composer, borders, and text colors readable.
+
+**Interaction and diagnostics**
+
+- The browser-rendered preview used the real `App`, `Sidebar`, and Home component markup plus the
+  production stylesheet entry; the temporary preview entry was removed after capture.
+- Browser console contained no warnings or errors in the captured state.
+- Focused App, Home, and Sidebar tests pass 35/35. Renderer style ownership verification and Web
+  typechecking pass.
+- A separately attempted full Desktop suite passed 920/924 tests; four unrelated main-process tests
+  in the user's current worktree exceeded their existing five-second timeout.
+
+**Comparison history**
+
+1. Sampled the source palette and mapped it to the existing semantic theme tokens.
+2. Captured the real component composition at 1440 × 900 and compared it with the normalized source
+   in one image. No actionable P0/P1/P2 color mismatches were found, so no post-capture fix loop was
+   required.
+
+**Follow-up polish**
+
+- P3: Feature styles still contain a few intentionally semantic, page-specific cool colors. They
+  remain useful for charts, status badges, and provider branding and were not flattened into the
+  neutral theme.
+
+final result: passed
+
+---
+
 # Evaluation Secondary Navigation Design QA
 
 - Source visual truth:

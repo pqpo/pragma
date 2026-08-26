@@ -6,7 +6,7 @@
   padding: 54px 72px 42px;
   overflow: hidden;
   background:
-    radial-gradient(circle at 50% 22%, rgb(151 189 87 / 9%), transparent 30%), var(--background);
+    radial-gradient(circle at 50% 22%, rgb(145 163 151 / 6%), transparent 30%), var(--background);
 }
 
 .mission-create {
