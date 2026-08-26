@@ -2377,7 +2377,7 @@ async function compileExpert(
           .map((tool) => ({
             ...tool,
             approval: mergeExpertAgentToolApprovals(tool.approval, {
-              mode: resource.spec.toolApprovals[tool.name] ?? "ask",
+              mode: resource.spec.toolApprovals[tool.name] ?? tool.approval?.mode ?? "ask",
             }),
           })),
       );
