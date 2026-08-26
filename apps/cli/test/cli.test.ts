@@ -1,6 +1,14 @@
 import { describe, expect, it, vi } from "vitest";
 
-import { codeForError, runCli, selectPrimaryDoctorCode } from "../src/index.ts";
+import type {
+  LocalHostRunApplication,
+  LocalHostRunApplicationOutcome,
+  LocalHostRunRequest,
+} from "@pragma/local-host";
+import { CliEventV2StreamSchema } from "@pragma/local-host/wire";
+import type { WorkspaceSelection } from "@pragma/shared/integration";
+
+import { codeForError, runCli, selectPrimaryDoctorCode, type CliLocalHost } from "../src/index.ts";
 import { toIntegrationError } from "../src/commands/errors.ts";
 
 function createIo() {
@@ -62,12 +70,12 @@ describe("runCli", () => {
     ).resolves.toBe(0);
     const output = JSON.parse(jsonIo.writeStdout.mock.calls[0]![0] as string) as {
       schemaVersion: string;
-      ok: boolean;
+      status: string;
       result: { credentials: unknown[] };
     };
     expect(output).toMatchObject({
-      schemaVersion: "pragma.cli-result/v1",
-      ok: true,
+      schemaVersion: "pragma.cli-result/v2",
+      status: "succeeded",
       result: { credentials: [{ module: "plugin", status: "ready" }] },
     });
     expect(JSON.stringify(output)).not.toContain("pragma.cli.doctor/v1");
@@ -166,4 +174,92 @@ describe("runCli", () => {
       }),
     ).not.toHaveProperty("details");
   });
+
+  it("cancels the foreground owner on SIGINT and emits one interrupted JSONL end", async () => {
+    const io = createIo();
+    const workspace = createRunWorkspace();
+    let signalHandler: (() => void) | undefined;
+    let resolveOutcome!: (outcome: LocalHostRunApplicationOutcome) => void;
+    let cancelled = false;
+    const run: LocalHostRunApplication = {
+      start: async (request: LocalHostRunRequest) => {
+        const outcome = new Promise<LocalHostRunApplicationOutcome>((resolve) => {
+          resolveOutcome = resolve;
+        });
+        const handle = {
+          request,
+          missionId: "11111111-1111-4111-8111-111111111111",
+          payloadHash: `sha256:${"a".repeat(64)}`,
+          disposition: "reserved" as const,
+          executionId: "22222222-2222-4222-8222-222222222222",
+          outcome,
+          cancel: async () => {
+            cancelled = true;
+            resolveOutcome({
+              status: "interrupted",
+              missionId: "11111111-1111-4111-8111-111111111111",
+              executionId: "22222222-2222-4222-8222-222222222222",
+              executor: request.executor,
+              workspace: request.workspace,
+            });
+          },
+        };
+        setTimeout(() => signalHandler?.(), 0);
+        return handle;
+      },
+      respond: async () => undefined,
+    };
+    const localHost = {
+      resolveWorkspace: async () => workspace,
+      run,
+    } as unknown as CliLocalHost;
+
+    const exitCode = await runCli(
+      [
+        "expert",
+        "run",
+        "expert:aaaaaaaaaaaaaaaa",
+        "--workspace",
+        "/workspace",
+        "--prompt",
+        "hello",
+        "--format=jsonl",
+      ],
+      io,
+      {
+        localHost,
+        terminal: { isControllingTerminal: () => false, readLine: async () => "" },
+        signals: {
+          onInterrupt: (handler) => {
+            signalHandler = handler;
+            return () => {
+              signalHandler = undefined;
+            };
+          },
+        },
+      },
+    );
+
+    expect(exitCode).toBe(130);
+    expect(cancelled).toBe(true);
+    const events = io.writeStdout.mock.calls.map((call) => JSON.parse(call[0] as string));
+    expect(CliEventV2StreamSchema.parse(events)).toMatchObject([
+      {
+        type: "stream.end",
+        data: { status: "interrupted", exitCode: 130 },
+      },
+    ]);
+  });
 });
+
+function createRunWorkspace(): WorkspaceSelection {
+  return {
+    schemaVersion: "pragma.integration-workspace/v1",
+    requestedPath: "/workspace",
+    canonicalPath: "/workspace",
+    displayName: "workspace",
+    identityHash: `sha256:${"b".repeat(64)}`,
+    access: { exists: true, readable: true, writable: true },
+    source: "explicit",
+  };
+}

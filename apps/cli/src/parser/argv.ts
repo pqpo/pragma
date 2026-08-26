@@ -1,4 +1,5 @@
 import { createIntegrationError, type IntegrationError } from "@pragma/local-host/wire";
+import { isAbsolute } from "node:path";
 
 export type OutputFormat = "text" | "json" | "jsonl";
 export type ColorMode = "auto" | "always" | "never";
@@ -30,6 +31,20 @@ export type ParsedCommand =
       readonly executorKind: ExecutorKind;
       readonly ref: string;
       readonly revision?: number | undefined;
+    }
+  | {
+      readonly kind: "executor-run";
+      readonly executorKind: ExecutorKind;
+      readonly ref: string;
+      readonly workspace: string;
+      readonly prompt?: string | undefined;
+      readonly inputPath?: string | undefined;
+      readonly inputJsonPath?: string | undefined;
+      readonly project?: string | undefined;
+      readonly revision?: number | undefined;
+      readonly expectedFingerprint?: string | undefined;
+      readonly requestId?: string | undefined;
+      readonly detach: boolean;
     }
   | {
       readonly kind: "mission-list";
@@ -96,6 +111,8 @@ Commands:
   team discover|describe <REF>
   expert discover|describe <REF>
   flow discover|describe <REF>
+  team run|expert run <REF> --workspace <ABSOLUTE_PATH> (--prompt <TEXT> | --input <FILE|->)
+  flow run <REF> --workspace <ABSOLUTE_PATH> --input-json <FILE|->
   mission list|get <MISSION_ID>
   mission board list|read|search <MISSION_ID> ...
   mission queue list <MISSION_ID>
@@ -136,7 +153,9 @@ export function parseCliArgv(argv: readonly string[]): ParsedCli {
   if (command === undefined) return { options, command: { kind: "help" } };
 
   try {
-    return { options, command: parseCommand(command, rest) };
+    const parsedCommand = parseCommand(command, rest);
+    validateRunOptions(options, parsedCommand);
+    return { options, command: parsedCommand };
   } catch (error) {
     if (error instanceof CliParseError) throw error;
     throw new CliParseError(
@@ -265,6 +284,7 @@ function parseCompletion(args: readonly string[]): ParsedCommand {
 }
 
 function parseExecutorCommand(command: ExecutorKind, args: readonly string[]): ParsedCommand {
+  if (args[0] === "run") return parseExecutorRunCommand(command, args.slice(1));
   const { positionals, values } = parseOptions(
     args,
     {
@@ -302,6 +322,83 @@ function parseExecutorCommand(command: ExecutorKind, args: readonly string[]): P
     ref: positionals[1]!,
     revision: optionalPositiveInteger(values, "revision"),
   };
+}
+
+function parseExecutorRunCommand(
+  executorKind: ExecutorKind,
+  args: readonly string[],
+): Extract<ParsedCommand, { readonly kind: "executor-run" }> {
+  const { positionals, values } = parseOptions(
+    args,
+    {
+      workspace: "value",
+      prompt: "value",
+      input: "value",
+      "input-json": "value",
+      project: "value",
+      revision: "value",
+      "expected-fingerprint": "value",
+      "request-id": "value",
+      detach: "flag",
+    },
+    `${executorKind} run`,
+  );
+  if (positionals.length !== 1) {
+    throw new Error(`${executorKind} run requires exactly one canonical executor ref.`);
+  }
+  const ref = positionals[0]!;
+  if (!new RegExp(`^${executorKind}:[0-9a-hjkmnp-tv-z]{16}$`, "u").test(ref)) {
+    throw new Error(`${executorKind} run requires a canonical ${executorKind}:<ID> ref.`);
+  }
+  const workspace = requiredOption(values, "workspace");
+  if (!isAbsolute(workspace)) throw new Error("--workspace must be an absolute path.");
+  const prompt = optionalValue(values, "prompt");
+  const inputPath = optionalValue(values, "input");
+  const inputJsonPath = optionalValue(values, "input-json");
+  if (executorKind === "flow") {
+    if (inputJsonPath === undefined) throw new Error("flow run requires --input-json.");
+    if (prompt !== undefined || inputPath !== undefined) {
+      throw new Error("flow run accepts --input-json only.");
+    }
+  } else {
+    if (inputJsonPath !== undefined) throw new Error(`${executorKind} run does not accept --input-json.`);
+    if ((prompt === undefined) === (inputPath === undefined)) {
+      throw new Error(`${executorKind} run requires exactly one of --prompt or --input.`);
+    }
+    if (prompt !== undefined && prompt.trim() === "") throw new Error("--prompt must not be empty.");
+  }
+  const project = optionalValue(values, "project");
+  const revision = optionalPositiveInteger(values, "revision");
+  if (revision !== undefined && project === undefined) {
+    throw new Error("--revision requires --project.");
+  }
+  const expectedFingerprint = optionalValue(values, "expected-fingerprint");
+  if (expectedFingerprint !== undefined && !/^[a-f0-9]{64}$/u.test(expectedFingerprint)) {
+    throw new Error("--expected-fingerprint must be 64 lowercase hexadecimal characters.");
+  }
+  const requestId = optionalValue(values, "request-id");
+  if (requestId !== undefined && !isUuid(requestId)) throw new Error("--request-id must be a UUID.");
+  return {
+    kind: "executor-run",
+    executorKind,
+    ref,
+    workspace,
+    ...(prompt === undefined ? {} : { prompt }),
+    ...(inputPath === undefined ? {} : { inputPath }),
+    ...(inputJsonPath === undefined ? {} : { inputJsonPath }),
+    ...(project === undefined ? {} : { project }),
+    ...(revision === undefined ? {} : { revision }),
+    ...(expectedFingerprint === undefined ? {} : { expectedFingerprint }),
+    ...(requestId === undefined ? {} : { requestId }),
+    detach: values.get("detach") === true,
+  };
+}
+
+function validateRunOptions(options: GlobalCliOptions, command: ParsedCommand): void {
+  if (command.kind !== "executor-run") return;
+  if (command.detach && options.interactive === "always") {
+    throw new Error("--detach and --interactive always are mutually exclusive.");
+  }
 }
 
 function parseMissionCommand(args: readonly string[]): ParsedCommand {
@@ -490,6 +587,16 @@ function optionalValue(
 ): string | undefined {
   const value = values.get(name);
   return typeof value === "string" ? value : undefined;
+}
+
+function requiredOption(values: ReadonlyMap<string, string | true>, name: string): string {
+  const value = optionalValue(values, name);
+  if (value === undefined || value.trim() === "") throw new Error(`--${name} requires a value.`);
+  return value;
+}
+
+function isUuid(value: string): boolean {
+  return /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/iu.test(value);
 }
 
 function optionalEnum(

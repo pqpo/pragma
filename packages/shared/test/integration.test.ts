@@ -1,7 +1,9 @@
 import { describe, expect, it } from "vitest";
 
 import cliEventFixture from "./fixtures/integration/cli-event-v1.json" with { type: "json" };
+import cliEventV2Fixture from "./fixtures/integration/cli-event-v2.json" with { type: "json" };
 import cliResultFixture from "./fixtures/integration/cli-result-v1.json" with { type: "json" };
+import cliResultV2Fixture from "./fixtures/integration/cli-result-v2.json" with { type: "json" };
 import {
   BoardListResultSchema,
   BoardReadResultSchema,
@@ -9,6 +11,10 @@ import {
   CliEventSchema,
   CliEventStreamSchema,
   CliResultSchema,
+  CliResultV2Schema,
+  CliEventV2Schema,
+  CliEventV2StreamSchema,
+  CliStreamEndDataV2Schema,
   createIntegrationError,
   ExecutorDescriptorSchema,
   FencingTokenSchema,
@@ -18,6 +24,7 @@ import {
   IntegrationErrorExitCodes,
   IntegrationErrorRetryPolicies,
   IntegrationErrorSchema,
+  IntegrationProtocolVersionSchema,
   IntegrationRequestMetaSchema,
   MissionCommandKindSchema,
   canTransitionMissionOperation,
@@ -642,5 +649,185 @@ describe("integration wire v1", () => {
         category: "execution",
       }).retryable,
     ).toBe(false);
+  });
+});
+
+describe("integration wire v2", () => {
+  const interaction = {
+    schemaVersion: "pragma.human-interaction/v1",
+    kind: "request",
+    missionId,
+    executionId,
+    interactionId: "interaction-1",
+    sensitive: false,
+    interaction: { kind: "question", title: "Question", prompt: "Continue?" },
+  } as const;
+
+  it("declares v1 and v2 while rejecting future protocol versions", () => {
+    expect(IntegrationProtocolVersionSchema.safeParse("pragma.integration/v1").success).toBe(true);
+    expect(IntegrationProtocolVersionSchema.safeParse("pragma.integration/v2").success).toBe(true);
+    expect(IntegrationProtocolVersionSchema.safeParse("pragma.integration/v3").success).toBe(false);
+  });
+
+  it("parses the v2 result and event fixtures without changing the v1 parser", () => {
+    expect(CliResultV2Schema.parse(cliResultV2Fixture).status).toBe("succeeded");
+    expect(CliEventV2Schema.parse(cliEventV2Fixture).type).toBe("stream.end");
+    expect(CliResultSchema.safeParse(cliResultV2Fixture).success).toBe(false);
+    expect(CliEventSchema.safeParse(cliEventV2Fixture).success).toBe(false);
+  });
+
+  it("enforces all v2 result status payload associations", () => {
+    const base = {
+      schemaVersion: "pragma.cli-result/v2",
+      requestId,
+      command: "expert.run",
+      warnings: [],
+      meta: {
+        startedAt: timestamp,
+        completedAt: timestamp,
+        durationMs: 0,
+        cliVersion: "0.0.0",
+        protocolVersion: "pragma.integration/v2",
+      },
+    };
+    const validResults = [
+      { status: "accepted", result: {} },
+      { status: "succeeded", result: { value: 1 } },
+      { status: "input_required", interaction },
+      { status: "failed", error: fixedError },
+      { status: "interrupted" },
+    ] as const;
+    for (const result of validResults) {
+      expect(CliResultV2Schema.safeParse({ ...base, ...result }).success, result.status).toBe(true);
+    }
+
+    const invalidResults = [
+      { status: "accepted" },
+      { status: "accepted", result: {}, error: fixedError },
+      { status: "succeeded", result: {}, interaction },
+      { status: "input_required" },
+      { status: "input_required", interaction, result: {} },
+      { status: "failed" },
+      { status: "failed", error: fixedError, result: {} },
+      { status: "interrupted", result: {} },
+      { status: "interrupted", error: fixedError },
+    ] as const;
+    for (const result of invalidResults) {
+      expect(CliResultV2Schema.safeParse({ ...base, ...result }).success).toBe(false);
+    }
+
+    expect(
+      CliResultV2Schema.safeParse({ ...base, status: "succeeded", result: {}, unknown: true })
+        .success,
+    ).toBe(false);
+    expect(
+      CliResultV2Schema.safeParse({
+        ...base,
+        schemaVersion: "pragma.cli-result/v3",
+        status: "succeeded",
+        result: {},
+      }).success,
+    ).toBe(false);
+  });
+
+  it("reuses the UUID executionId schema at every v2 boundary", () => {
+    expect(
+      CliResultV2Schema.safeParse({ ...cliResultV2Fixture, executionId: "legacy-id" }).success,
+    ).toBe(false);
+    const streamEnd = CliEventV2Schema.parse(cliEventV2Fixture);
+    expect(
+      CliStreamEndDataV2Schema.safeParse({
+        ...(streamEnd.data as Record<string, unknown>),
+        executionId: "legacy-id",
+      }).success,
+    ).toBe(false);
+    expect(
+      CliEventV2Schema.safeParse({ ...cliEventV2Fixture, executionId: "legacy-id" }).success,
+    ).toBe(false);
+  });
+
+  it("enforces all v2 stream.end status payloads and authoritative failed exit codes", () => {
+    const common = {
+      missionId,
+      executionId,
+      warnings: [],
+    };
+    const validEnds = [
+      { status: "accepted", exitCode: 0, result: {} },
+      { status: "succeeded", exitCode: 0, result: { value: 1 } },
+      { status: "input_required", exitCode: 3, interaction },
+      { status: "failed", exitCode: 2, error: fixedError },
+      {
+        status: "failed",
+        exitCode: 5,
+        error: createIntegrationError({
+          code: "DEPENDENCY_UNAVAILABLE",
+          category: "dependency",
+          message: "Dependency unavailable.",
+        }),
+      },
+      {
+        status: "failed",
+        exitCode: 10,
+        error: createIntegrationError({
+          code: "EXECUTION_FAILED",
+          category: "execution",
+          message: "Execution failed.",
+          retryable: false,
+        }),
+      },
+      { status: "interrupted", exitCode: 130 },
+    ] as const;
+    for (const end of validEnds) {
+      expect(CliStreamEndDataV2Schema.safeParse({ ...common, ...end }).success, end.status).toBe(
+        true,
+      );
+    }
+
+    const invalidEnds = [
+      { status: "accepted", exitCode: 0 },
+      { status: "accepted", exitCode: 0, result: {}, error: fixedError },
+      { status: "succeeded", exitCode: 0, result: {}, interaction },
+      { status: "input_required", exitCode: 3 },
+      { status: "input_required", exitCode: 3, interaction, result: {} },
+      { status: "failed", exitCode: 2 },
+      { status: "failed", exitCode: 0, error: fixedError },
+      { status: "failed", exitCode: 2, error: fixedError, result: {} },
+      { status: "interrupted", exitCode: 130, result: {} },
+      { status: "interrupted", exitCode: 130, error: fixedError },
+    ] as const;
+    for (const end of invalidEnds) {
+      expect(CliStreamEndDataV2Schema.safeParse({ ...common, ...end }).success).toBe(false);
+    }
+
+    expect(
+      CliEventV2Schema.safeParse({
+        ...cliEventV2Fixture,
+        unknown: true,
+      }).success,
+    ).toBe(false);
+    expect(
+      CliEventV2Schema.safeParse({
+        ...cliEventV2Fixture,
+        schemaVersion: "pragma.cli-event/v3",
+      }).success,
+    ).toBe(false);
+  });
+
+  it("keeps the complete stream finalizer invariant for v2", () => {
+    const end = {
+      schemaVersion: "pragma.cli-event/v2",
+      requestId,
+      eventId: "00000000-0000-4000-8000-000000000021",
+      sequence: 1,
+      emittedAt: timestamp,
+      replayable: false,
+      type: "stream.end",
+      data: { status: "input_required", exitCode: 3, interaction },
+    };
+    expect(CliEventV2Schema.safeParse(end).success).toBe(true);
+    expect(CliEventV2StreamSchema.safeParse([end]).success).toBe(true);
+    expect(CliStreamEndDataV2Schema.safeParse({ ...end.data, exitCode: 0 }).success).toBe(false);
+    expect(CliEventV2StreamSchema.safeParse([end, end]).success).toBe(false);
   });
 });

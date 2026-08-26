@@ -1,13 +1,18 @@
 import { createHash } from "node:crypto";
 import { basename, isAbsolute } from "node:path";
 
-import type { RuntimeResolver } from "@pragma/core";
+import {
+  createStaticRuntimeResolver,
+  type RuntimeAdapter,
+  type RuntimeResolver,
+} from "@pragma/core";
 import {
   createIntegrationError,
   WorkspaceSelectionSchema,
   type IntegrationCapability,
   type WorkspaceSelection,
 } from "@pragma/shared/integration";
+import type { LocalHostRunApplication } from "./run.ts";
 
 export {
   CliResultSchema,
@@ -23,7 +28,62 @@ export const LOCAL_HOST_SHARED_BOARD_SCOPE_ID = "mission-board:shared" as const;
 export * from "./missions/controller/mission-controller-store.ts";
 export * from "./missions/controller/schemas.ts";
 export * from "./missions/controller/migrations/index.ts";
+export * from "./run-payload.ts";
+export * from "./run.ts";
+export * from "./core-run.ts";
+export * from "./built-in-executors.ts";
+export * from "./mission-board.ts";
+export * from "./redaction.ts";
+export * from "./runtime-environment.ts";
+export * from "./usage.ts";
+export * from "./logger.ts";
+export * from "./project-revision.ts";
+export * from "./project-catalog.ts";
 export * from "./secrets/index.ts";
+/** Composition convenience: this is Core's shared counter, not a Host estimator. */
+export { createRuntimeTokenCounter } from "@pragma/core";
+
+/**
+ * Host composition keeps concrete Runtime adapters at the application edge,
+ * while the Core resolver construction remains in this Node-only adapter.
+ */
+export function createLocalHostRuntimeResolver(options: {
+  readonly runtimes: readonly RuntimeAdapter[];
+  readonly defaultRuntimeId: string;
+  /** Logical IDs retained by published project revisions. */
+  readonly runtimeAliases?: Readonly<Record<string, string>> | undefined;
+}): RuntimeResolver {
+  const delegate = createStaticRuntimeResolver(options);
+  const aliases = options.runtimeAliases ?? {};
+  const resolveRuntimeId = (runtimeId: string): string => aliases[runtimeId] ?? runtimeId;
+  const restoreBindingId = <T extends { readonly runtimeId: string }>(
+    binding: T,
+    runtimeId: string,
+  ): T => ({ ...binding, runtimeId });
+  return {
+    getDefaultRuntimeId: async () => await delegate.getDefaultRuntimeId(),
+    bind: async (request = {}) => {
+      const runtimeId = request.runtimeId;
+      const resolved = await delegate.bind({
+        ...(runtimeId === undefined ? {} : { runtimeId: resolveRuntimeId(runtimeId) }),
+        ...(request.modelSelection === undefined ? {} : { modelSelection: request.modelSelection }),
+      });
+      return runtimeId === undefined
+        ? resolved
+        : { ...resolved, binding: restoreBindingId(resolved.binding, runtimeId) };
+    },
+    resolve: async ({ binding, modelSelection }) => {
+      const resolved = await delegate.resolve({
+        binding: { ...binding, runtimeId: resolveRuntimeId(binding.runtimeId) },
+        ...(modelSelection === undefined ? {} : { modelSelection }),
+      });
+      return {
+        ...resolved,
+        binding: restoreBindingId(resolved.binding, binding.runtimeId),
+      };
+    },
+  };
+}
 
 export interface WorkspaceFilesystemPort {
   readonly stat: (path: string) => Promise<{ readonly isDirectory: () => boolean }>;
@@ -90,6 +150,7 @@ export interface LocalHostApplicationPort<
   listMissionQueue(missionId: string): Promise<TQueue>;
   /** Runtime adapter selection is supplied by the Host composition root, never imported here. */
   runtimeResolver(): RuntimeResolver;
+  readonly run?: LocalHostRunApplication | undefined;
 }
 
 export interface LocalHostApplicationPorts<
@@ -127,6 +188,7 @@ export interface LocalHostApplicationPorts<
   /** Read-only projection of the M4 durable queue/operation state. */
   readonly queue?: { readonly list: (missionId: string) => Promise<TQueue> };
   readonly runtime: { readonly resolver: RuntimeResolver };
+  readonly run?: LocalHostRunApplication | undefined;
 }
 
 export function createLocalHostApplication<
@@ -208,6 +270,7 @@ export function createLocalHostApplication<
       return await ports.queue.list(missionId);
     },
     runtimeResolver: () => ports.runtime.resolver,
+    ...(ports.run === undefined ? {} : { run: ports.run }),
   };
 }
 

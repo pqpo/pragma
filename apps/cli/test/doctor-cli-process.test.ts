@@ -14,11 +14,69 @@ afterEach(
 );
 
 beforeAll(async () => {
-  const result = await invoke("pnpm", ["--filter", "@pragma/cli", "build"], {});
+  const result = await invoke("pnpm", ["--filter", "@pragma/cli...", "build"], {});
   expect(result.exitCode).toBe(0);
-}, 30_000);
+}, 120_000);
 
 describe("pragma doctor executable", () => {
+  it("starts the built bin with ordinary Node for help and JSON version output", async () => {
+    const home = await mkdtemp(join(tmpdir(), "pragma-cli-help-"));
+    roots.push(home);
+    const environment = { PRAGMA_HOME: home, NODE_NO_WARNINGS: "1" };
+
+    const help = await invoke(process.execPath, ["apps/cli/dist/pragma.js", "--help"], environment);
+    expect(help.exitCode).toBe(0);
+    expect(help.stdout).toContain("Usage: pragma");
+    expect(help.stderr).toBe("");
+
+    const version = await invoke(
+      process.execPath,
+      ["apps/cli/dist/pragma.js", "version", "--format=json"],
+      environment,
+    );
+    expect(version.exitCode).toBe(0);
+    expect(JSON.parse(version.stdout)).toMatchObject({
+      schemaVersion: "pragma.cli-result/v2",
+      status: "succeeded",
+    });
+    expect(version.stderr).toBe("");
+  });
+
+  it.each([
+    ["expert", "--input", "hello"],
+    ["flow", "--input-json", '{"value":1}'],
+  ] as const)(
+    "reads production stdin for %s run before executor resolution",
+    async (kind, option, input) => {
+      const home = await mkdtemp(join(tmpdir(), "pragma-cli-stdin-"));
+      roots.push(home);
+      const result = await invoke(
+        process.execPath,
+        [
+          "apps/cli/dist/pragma.js",
+          kind,
+          "run",
+          `${kind}:aaaaaaaaaaaaaaaa`,
+          "--workspace",
+          home,
+          option,
+          "-",
+          "--format=json",
+        ],
+        { PRAGMA_HOME: home },
+        input,
+      );
+
+      expect(result.exitCode).toBe(3);
+      expect(result.stdout).not.toContain("No stdin reader is configured");
+      expect(JSON.parse(result.stdout)).toMatchObject({
+        schemaVersion: "pragma.cli-result/v2",
+        status: "failed",
+        error: { code: "EXECUTOR_NOT_FOUND" },
+      });
+    },
+  );
+
   it("returns migration_required without exposing legacy ciphertext", async () => {
     const home = await legacyHome();
 
@@ -103,16 +161,12 @@ async function invokeDoctor(
   home: string,
   keychainStatus: "ready" | "locked" | "unavailable" = "ready",
 ) {
-  return await invoke(
-    process.execPath,
-    ["--experimental-transform-types", "apps/cli/dist/pragma.js", "doctor"],
-    {
-      NODE_ENV: "test",
-      NODE_NO_WARNINGS: "1",
-      PRAGMA_HOME: home,
-      PRAGMA_CLI_TEST_KEYCHAIN_STATUS: keychainStatus,
-    },
-  );
+  return await invoke(process.execPath, ["apps/cli/dist/pragma.js", "doctor"], {
+    NODE_ENV: "test",
+    NODE_NO_WARNINGS: "1",
+    PRAGMA_HOME: home,
+    PRAGMA_CLI_TEST_KEYCHAIN_STATUS: keychainStatus,
+  });
 }
 
 function workspaceRoot(): string {
@@ -123,6 +177,7 @@ function invoke(
   command: string,
   args: readonly string[],
   environment: NodeJS.ProcessEnv,
+  input?: string,
 ): Promise<{ readonly exitCode: number | null; readonly stdout: string; readonly stderr: string }> {
   return new Promise((resolve, reject) => {
     const child = spawn(command, args, {
@@ -138,6 +193,7 @@ function invoke(
       stderr += chunk.toString("utf8");
     });
     child.once("error", reject);
+    if (input !== undefined) child.stdin.end(input);
     child.once("close", (exitCode) => resolve({ exitCode, stdout, stderr }));
   });
 }

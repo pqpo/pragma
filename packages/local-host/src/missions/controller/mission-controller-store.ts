@@ -132,11 +132,13 @@ export interface MissionControllerStore {
     readonly guard: MissionControllerGuard;
     readonly replay: (operation: MissionSemanticOperation) => Promise<void>;
   }): Promise<void>;
-  bindRunRequest(input: {
+  reserveRunRequest(input: {
     readonly requestId: string;
     readonly payloadHash: string;
+  }): Promise<{
     readonly missionId: string;
-  }): Promise<string>;
+    readonly disposition: "reserved" | "existing";
+  }>;
   appendCommand(
     input: Omit<
       MissionCommand,
@@ -678,7 +680,7 @@ export function createMissionControllerStore(options: {
       await checkpoint("semantic-write.mutation-commit");
       await completeSemanticWrite({ missionId: input.missionId, guard: input.guard, transaction });
     },
-    async bindRunRequest(input) {
+    async reserveRunRequest(input) {
       return await withFileLock(
         registryLock,
         async () => {
@@ -688,13 +690,10 @@ export function createMissionControllerStore(options: {
           );
           const existing = registry.requests[input.requestId];
           if (existing !== undefined) {
-            if (
-              existing.payloadHash !== input.payloadHash ||
-              existing.missionId !== input.missionId
-            )
-              throw idempotencyError(input.requestId);
-            return existing.missionId;
+            if (existing.payloadHash !== input.payloadHash) throw idempotencyError(input.requestId);
+            return { missionId: existing.missionId, disposition: "existing" as const };
           }
+          const missionId = randomUUID();
           await writeJsonAtomically(
             registryPath,
             RunRequestRegistrySchema.parse({
@@ -703,13 +702,13 @@ export function createMissionControllerStore(options: {
                 ...registry.requests,
                 [input.requestId]: {
                   payloadHash: input.payloadHash,
-                  missionId: input.missionId,
+                  missionId,
                   createdAt: now(),
                 },
               },
             }),
           );
-          return input.missionId;
+          return { missionId, disposition: "reserved" as const };
         },
         { operation: "run-request-registry" },
       );

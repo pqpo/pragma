@@ -1,0 +1,39 @@
+{
+  "schemaVersion": "pragma.cli-event/v2",
+  "requestId": "00000000-0000-4000-8000-000000000001",
+  "eventId": "00000000-0000-4000-8000-000000000003",
+  "sequence": 1,
+  "emittedAt": "2026-08-19T00:00:00.000Z",
+  "missionId": "00000000-0000-4000-8000-000000000002",
+  "executionId": "00000000-0000-4000-8000-000000000004",
+  "replayable": false,
+  "type": "stream.end",
+  "data": {
+    "status": "input_required",
+    "exitCode": 3,
+    "missionId": "00000000-0000-4000-8000-000000000002",
+    "executionId": "00000000-0000-4000-8000-000000000004",
+    "interaction": {
+      "schemaVersion": "pragma.human-interaction/v1",
+      "kind": "request",
+      "missionId": "00000000-0000-4000-8000-000000000002",
+      "executionId": "00000000-0000-4000-8000-000000000004",
+      "interactionId": "interaction-1",
+      "sensitive": false,
+      "interaction": {
+        "kind": "question",
+        "title": "Continue",
+        "prompt": "Continue?",
+        "questions": [
+          {
+            "header": "Answer",
+            "question": "Continue?",
+            "kind": "text",
+            "options": []
+          }
+        ]
+      }
+    },
+    "warnings": []
+  }
+}

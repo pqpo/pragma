@@ -6,23 +6,23 @@
   "exports": {
     ".": {
       "types": "./src/index.ts",
-      "default": "./src/index.ts"
+      "default": "./dist/index.js"
     },
     "./runtime/process-probe": {
       "types": "./src/runtime/process-probe.ts",
-      "default": "./src/runtime/process-probe.ts"
+      "default": "./dist/runtime/process-probe.js"
     },
     "./runtime/runtime-adapter": {
       "types": "./src/runtime/runtime-adapter.ts",
-      "default": "./src/runtime/runtime-adapter.ts"
+      "default": "./dist/runtime/runtime-adapter.js"
     },
     "./testing": {
       "types": "./src/testing/index.ts",
-      "default": "./src/testing/index.ts"
+      "default": "./dist/testing/index.js"
     },
     "./testing/vitest": {
       "types": "./src/testing/vitest.ts",
-      "default": "./src/testing/vitest.ts"
+      "default": "./dist/testing/vitest.js"
     }
   },
   "scripts": {

@@ -6,11 +6,11 @@
   "exports": {
     ".": {
       "types": "./src/index.ts",
-      "default": "./src/index.ts"
+      "default": "./dist/index.js"
     },
     "./integration": {
       "types": "./src/integration/index.ts",
-      "default": "./src/integration/index.ts"
+      "default": "./dist/integration/index.js"
     }
   },
   "scripts": {

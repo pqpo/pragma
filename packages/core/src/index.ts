@@ -51,6 +51,10 @@ export * from "./events/canonical-event-feed.ts";
 export * from "./execution/expert-session-store.ts";
 export * from "./execution/expert-session.ts";
 export * from "./execution/expert-prompt.ts";
+export {
+  HumanInteractionCheckpointError,
+  isHumanInteractionCheckpointError,
+} from "./execution/expert-runner.ts";
 export * from "./flow/flow.ts";
 export * from "./flow/flow-execution.ts";
 export * from "./mcp-tools.ts";

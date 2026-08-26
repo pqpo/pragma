@@ -1,6 +1,9 @@
 import { describe, expect, it } from "vitest";
 
-import { createIntegrationError, CliEventStreamSchema } from "@pragma/local-host/wire";
+import {
+  CliEventV2StreamSchema,
+  createIntegrationError,
+} from "@pragma/local-host/wire";
 
 import { runCli, type CliIo, type CliLocalHost } from "../src/index.ts";
 import { parseCliArgv } from "../src/parser/argv.ts";
@@ -224,9 +227,9 @@ describe("M6 parser and read-only command surface", () => {
       expect(jsonCode, testCase.command).toBe(0);
       const result = jsonOutput(jsonIo);
       expect(result).toMatchObject({
-        schemaVersion: "pragma.cli-result/v1",
+        schemaVersion: "pragma.cli-result/v2",
         command: testCase.command,
-        ok: true,
+        status: "succeeded",
       });
     }
   });
@@ -269,18 +272,31 @@ describe("M6 parser and read-only command surface", () => {
       .map((line) => JSON.parse(line));
     expect(successEvents).toHaveLength(2);
     expect(successEvents[0]).toMatchObject({
-      schemaVersion: "pragma.cli-event/v1",
+      schemaVersion: "pragma.cli-event/v2",
       type: "command.result",
     });
     expect(successEvents[1]).toMatchObject({
-      schemaVersion: "pragma.cli-event/v1",
+      schemaVersion: "pragma.cli-event/v2",
       type: "stream.end",
-      data: { status: "completed", exitCode: 0 },
+      data: { status: "succeeded", exitCode: 0 },
     });
-    expect(() => CliEventStreamSchema.parse(successEvents)).not.toThrow();
+    expect(() => CliEventV2StreamSchema.parse(successEvents)).not.toThrow();
 
     const failureIo = createIo();
-    await expect(runCli(["mission", "list", "--stream-json"], failureIo)).resolves.toBe(5);
+    await expect(
+      runCli(["mission", "list", "--stream-json"], failureIo, {
+        localHost: {
+          ...createHost(),
+          listMissions: async () => {
+            throw createIntegrationError({
+              code: "DEPENDENCY_UNAVAILABLE",
+              category: "dependency",
+              message: "Mission store is unavailable.",
+            });
+          },
+        },
+      }),
+    ).resolves.toBe(5);
     const failureEvents = failureIo.stdout
       .join("")
       .trim()
@@ -292,7 +308,7 @@ describe("M6 parser and read-only command surface", () => {
       data: { status: "failed", exitCode: 5, error: { code: "DEPENDENCY_UNAVAILABLE" } },
     });
     expect(failureIo.stderr).toEqual([]);
-    expect(() => CliEventStreamSchema.parse(failureEvents)).not.toThrow();
+    expect(() => CliEventV2StreamSchema.parse(failureEvents)).not.toThrow();
   });
 
   it("passes board byte ranges, search options, and shared namespace through the M3 facade", async () => {

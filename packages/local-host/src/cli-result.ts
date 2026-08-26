@@ -6,6 +6,10 @@ export {
   CliEventSchema,
   CliEventStreamSchema,
   CliResultSchema,
+  CliEventV2Schema,
+  CliEventV2StreamSchema,
+  CliResultV2Schema,
+  CliStreamEndDataV2Schema,
   createIntegrationError,
   ExecutorDescriptorSchema,
   IntegrationErrorCodeSchema,
@@ -13,4 +17,14 @@ export {
   IntegrationErrorSchema,
   integrationErrorExitCode,
 } from "@pragma/shared/integration";
-export type { IntegrationError, IntegrationErrorCode, JsonValue } from "@pragma/shared/integration";
+export type {
+  CliEventV2,
+  CliResultV2,
+  CliRunStatus,
+  IntegrationError,
+  IntegrationErrorCode,
+  HumanInteractionRequestEnvelope,
+  HumanInteractionResponseEnvelope,
+  JsonValue,
+  RunOutcome,
+} from "@pragma/shared/integration";

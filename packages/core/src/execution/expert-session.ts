@@ -42,6 +42,7 @@ import { PragmaPaths } from "../storage/pragma-paths.ts";
 import type { ExpertAgentAutomaticHumanInteractionHandler } from "../tools/managed-tool.ts";
 import {
   ExecutionController,
+  isHumanInteractionCheckpointError,
   listPendingHumanInteractionIds,
   persistHumanInteractionResponse,
   runExpertInvocation,
@@ -116,6 +117,8 @@ export interface ExpertTurn extends MutableExecution {
   readonly fallbackReason?: string | undefined;
   readonly result: Promise<unknown>;
   readonly usage: Promise<AgentMessageUsage | undefined>;
+  /** Checkpoint this turn only when it is durably waiting for human input. */
+  readonly checkpointWaitingHuman: () => Promise<void>;
 }
 
 export interface PromptQueueState {
@@ -142,6 +145,13 @@ export interface ExpertSession {
   readonly expert: ExpertDefinition;
   prompt(content: string, options?: PromptOptions): Promise<ExpertTurn>;
   abort(reason?: string): Promise<void>;
+  /** Release the Session owner after a durable human-input checkpoint. */
+  checkpointWaitingHuman(): Promise<void>;
+  /**
+   * Release transient Runtime and lease resources after a terminal turn while
+   * keeping the durable ExpertSession and its RuntimeSessionRef recoverable.
+   */
+  releaseAfterTerminal(): Promise<void>;
   close(reason?: string): Promise<void>;
   refreshRuntimeSessions(): Promise<void>;
   getState(): Promise<ExpertSessionRecord>;
@@ -577,6 +587,7 @@ class ExpertSessionImpl implements ExpertSession {
   private processing: Promise<void> | undefined;
   private readonly runtimeSessions = new RuntimeSessionPool();
   private closePromise: Promise<void> | undefined;
+  private terminalReleasePromise: Promise<void> | undefined;
   private leaseRenewalTask: Promise<void> | undefined;
   private leaseError: Error | undefined;
   private readonly leaseRenewal: ReturnType<typeof setInterval>;
@@ -743,6 +754,20 @@ class ExpertSessionImpl implements ExpertSession {
     this.startProcessing();
   }
 
+  async checkpointWaitingHuman(): Promise<void> {
+    const controller = this.controller;
+    if (controller === undefined) {
+      throw new Error(`ExpertSession has no active human wait: ${this.sessionId}`);
+    }
+    this.paused = true;
+    await controller.checkpointWaitingHuman();
+    await this.processing;
+    clearInterval(this.leaseRenewal);
+    await this.dependencies.sessions.releaseLease(this.sessionId, this.claimId);
+    this.controller = undefined;
+    this.onClosed();
+  }
+
   async refreshRuntimeSessions(): Promise<void> {
     const [state, prompts] = await Promise.all([this.getState(), this.getPromptQueue()]);
     if (
@@ -752,6 +777,49 @@ class ExpertSessionImpl implements ExpertSession {
       throw new Error("Wait for the active Expert turn before changing Runtime permissions.");
     }
     await this.runtimeSessions.clear();
+  }
+
+  releaseAfterTerminal(): Promise<void> {
+    if (this.terminalReleasePromise === undefined) {
+      this.terminalReleasePromise = this.releaseAfterTerminalInternal();
+    }
+    return this.terminalReleasePromise;
+  }
+
+  private async releaseAfterTerminalInternal(): Promise<void> {
+    if (this.closePromise !== undefined) {
+      throw new Error(`ExpertSession is closing or closed: ${this.sessionId}`);
+    }
+    const [state, prompts] = await Promise.all([this.getState(), this.getPromptQueue()]);
+    if (
+      state.activeExecutionId !== undefined ||
+      prompts.some((prompt) => prompt.status === "queued" || prompt.status === "running")
+    ) {
+      throw new Error("Wait for the active Expert turn before releasing terminal resources.");
+    }
+
+    const errors: unknown[] = [];
+    clearInterval(this.leaseRenewal);
+    try {
+      await this.runtimeSessions.clear();
+    } catch (error) {
+      errors.push(error);
+    }
+    if (this.leaseRenewalTask !== undefined) {
+      try {
+        await this.leaseRenewalTask;
+      } catch (error) {
+        errors.push(error);
+      }
+    }
+    try {
+      await this.dependencies.sessions.releaseLease(this.sessionId, this.claimId);
+    } catch (error) {
+      errors.push(error);
+    }
+    this.controller = undefined;
+    this.onClosed();
+    throwCollectedErrors(errors, "ExpertSession terminal resource release failed.");
   }
 
   close(reason?: string): Promise<void> {
@@ -1383,6 +1451,7 @@ class ExpertSessionImpl implements ExpertSession {
       const next = prompts.find((prompt) => prompt.status === "queued");
       if (next === undefined) return;
       const status = await this.runPrompt(next).catch(() => "failed" as const);
+      if (status === "checkpointed") return;
       if (status === "failed") {
         const hasQueued = (await this.getPromptQueue()).some(
           (prompt) => prompt.mode === "enqueue" && prompt.status === "queued",
@@ -1400,7 +1469,9 @@ class ExpertSessionImpl implements ExpertSession {
     }
   }
 
-  private async runPrompt(prompt: PromptRequest): Promise<"succeeded" | "failed" | "cancelled"> {
+  private async runPrompt(
+    prompt: PromptRequest,
+  ): Promise<"succeeded" | "failed" | "cancelled" | "checkpointed"> {
     const now = new Date().toISOString();
     const claimed = await this.dependencies.sessions.transact(
       this.sessionId,
@@ -1459,7 +1530,7 @@ class ExpertSessionImpl implements ExpertSession {
       },
     );
     this.controller = controller;
-    let status: "succeeded" | "failed" | "cancelled" = "succeeded";
+    let status: "succeeded" | "failed" | "cancelled" | "checkpointed" = "succeeded";
     let output: ReturnType<typeof InvocationOutputSchema.parse> | undefined;
     let error: unknown;
     try {
@@ -1493,8 +1564,17 @@ class ExpertSessionImpl implements ExpertSession {
         }),
       );
     } catch (caught) {
-      status = controller.isCancelled() ? "cancelled" : "failed";
-      error = status === "cancelled" ? (controller.getCancellationReason() ?? caught) : caught;
+      if (isHumanInteractionCheckpointError(caught)) {
+        status = "checkpointed";
+      } else {
+        status = controller.isCancelled() ? "cancelled" : "failed";
+        error = status === "cancelled" ? (controller.getCancellationReason() ?? caught) : caught;
+      }
+    }
+    if (status === "checkpointed") {
+      if (this.controller === controller) this.controller = undefined;
+      controller.finish();
+      return status;
     }
     const usage = controller.getUsage();
     const executionPatch = {
@@ -1644,6 +1724,7 @@ class ExpertSessionImpl implements ExpertSession {
           this.startProcessing();
         }
       },
+      checkpointWaitingHuman: async () => await this.checkpointWaitingHuman(),
     });
   }
 

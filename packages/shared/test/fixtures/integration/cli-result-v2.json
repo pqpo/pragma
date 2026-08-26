@@ -1,0 +1,17 @@
+{
+  "schemaVersion": "pragma.cli-result/v2",
+  "requestId": "00000000-0000-4000-8000-000000000001",
+  "command": "expert.run",
+  "status": "succeeded",
+  "missionId": "00000000-0000-4000-8000-000000000002",
+  "executionId": "00000000-0000-4000-8000-000000000004",
+  "result": { "text": "done" },
+  "warnings": [],
+  "meta": {
+    "startedAt": "2026-08-19T00:00:00.000Z",
+    "completedAt": "2026-08-19T00:00:00.000Z",
+    "durationMs": 0,
+    "cliVersion": "0.0.0",
+    "protocolVersion": "pragma.integration/v2"
+  }
+}

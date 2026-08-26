@@ -16,7 +16,6 @@ import {
   EventIdSchema,
   ExecutionIdSchema,
   FencingTokenSchema,
-  IntegrationProtocolVersionSchema,
   IntegrationRequestMetaSchema,
   InteractionIdSchema,
   IsoDateTimeSchema,
@@ -83,9 +82,12 @@ export const ExecutorDescriptorSchema = z
     source: z.enum(["built_in", "project", "installed"]),
     project: z
       .object({
-        projectId: SemanticResourceIdSchema,
+        // Project IDs are Host-owned storage owner IDs (the historical
+        // Desktop project uses "studio"); executor resource IDs remain
+        // semantic Crockford IDs above.
+        projectId: z.string().trim().min(1),
         revision: z.number().int().positive(),
-        fingerprint: z.string().min(1),
+        fingerprint: z.string().regex(/^[a-f0-9]{64}$/),
       })
       .strict()
       .optional(),
@@ -385,7 +387,7 @@ export const CliResultSchema = z
         completedAt: IsoDateTimeSchema,
         durationMs: z.number().int().nonnegative(),
         cliVersion: z.string().min(1),
-        protocolVersion: IntegrationProtocolVersionSchema,
+        protocolVersion: z.literal("pragma.integration/v1"),
       })
       .strict(),
   })
@@ -653,9 +655,14 @@ export const CliEventStreamSchema = z.array(CliEventSchema).superRefine((events,
 });
 
 export type WorkspaceSelection = z.infer<typeof WorkspaceSelectionSchema>;
+export type ExecutorReference = z.infer<typeof ExecutorReferenceSchema>;
 export type ExecutorDescriptor = z.infer<typeof ExecutorDescriptorSchema>;
 export type MissionOperation = z.infer<typeof MissionOperationSchema>;
 export type MissionCommand = z.infer<typeof MissionCommandSchema>;
 export type HumanInteractionEnvelope = z.infer<typeof HumanInteractionEnvelopeSchema>;
+export type HumanInteractionRequestEnvelope = z.infer<typeof HumanInteractionRequestEnvelopeSchema>;
+export type HumanInteractionResponseEnvelope = z.infer<
+  typeof HumanInteractionResponseEnvelopeSchema
+>;
 export type CliResult = z.infer<typeof CliResultSchema>;
 export type CliEvent = z.infer<typeof CliEventSchema>;

@@ -1,10 +1,13 @@
 import {
-  CliEventStreamSchema,
-  CliResultSchema,
+  CliEventV2Schema,
+  CliResultV2Schema,
+  CliStreamEndDataV2Schema,
   integrationErrorExitCode,
   type IntegrationError,
   type JsonValue,
 } from "@pragma/local-host/wire";
+import type { AgentMessageUsage } from "@pragma/shared";
+import type { ExecutorReference, WorkspaceSelection } from "@pragma/shared/integration";
 
 import { HELP_TEXT, type OutputFormat } from "../parser/argv.ts";
 import { isRecord } from "../commands/utils.ts";
@@ -12,6 +15,7 @@ import { isRecord } from "../commands/utils.ts";
 export type CliIo = Readonly<{
   readonly writeStdout: (value: string) => void;
   readonly writeStderr: (value: string) => void;
+  readonly flushStdout?: (() => void) | undefined;
 }>;
 
 export interface PresentationInput {
@@ -23,17 +27,222 @@ export interface PresentationInput {
   readonly startedAt: Date;
 }
 
+export type CliRunPresentationOutcome =
+  | {
+      readonly status: "accepted" | "succeeded";
+      readonly missionId?: string | undefined;
+      readonly executionId?: string | undefined;
+      readonly executor?: ExecutorReference | undefined;
+      readonly workspace?: WorkspaceSelection | undefined;
+      readonly result: JsonValue;
+      readonly usage?: AgentMessageUsage | undefined;
+      readonly warnings?: readonly unknown[] | undefined;
+    }
+  | {
+      readonly status: "input_required" | "failed" | "interrupted";
+      readonly missionId?: string | undefined;
+      readonly executionId?: string | undefined;
+      readonly executor?: ExecutorReference | undefined;
+      readonly workspace?: WorkspaceSelection | undefined;
+      readonly interaction?: unknown | undefined;
+      readonly error?: IntegrationError | undefined;
+      readonly usage?: AgentMessageUsage | undefined;
+      readonly warnings?: readonly unknown[] | undefined;
+    };
+
+export interface CliV2StreamPresenter {
+  readonly emit: (event: {
+    readonly type: string;
+    readonly data: JsonValue;
+    readonly missionId?: string | undefined;
+    readonly executionId?: string | undefined;
+    readonly replayable?: boolean | undefined;
+    readonly cursor?: string | undefined;
+  }) => void;
+  readonly finalize: (outcome: CliRunPresentationOutcome) => void;
+}
+
+export function presentRunOutcome(
+  input: PresentationInput,
+  outcome: CliRunPresentationOutcome,
+): void {
+  if (input.format === "text") {
+    input.io.writeStdout(renderRunText(outcome));
+    return;
+  }
+  if (input.format === "json") {
+    input.io.writeStdout(`${JSON.stringify(makeV2Result(input, outcome))}\n`);
+    return;
+  }
+  const presenter = createV2StreamPresenter(input);
+  presenter.finalize(outcome);
+}
+
+export function presentRunFailure(input: PresentationInput, error: IntegrationError): void {
+  const outcome: CliRunPresentationOutcome = {
+    status: "failed",
+    error,
+  };
+  if (input.format === "text") {
+    input.io.writeStderr(renderFailure(error));
+    return;
+  }
+  if (input.format === "json") {
+    input.io.writeStdout(`${JSON.stringify(makeV2Result(input, outcome))}\n`);
+    return;
+  }
+  createV2StreamPresenter(input).finalize(outcome);
+}
+
+export function createV2StreamPresenter(input: PresentationInput): CliV2StreamPresenter {
+  let sequence = 0;
+  let finalized = false;
+  let lastCursor: string | undefined;
+  const write = (event: {
+    readonly type: string;
+    readonly data: JsonValue;
+    readonly missionId?: string | undefined;
+    readonly executionId?: string | undefined;
+    readonly replayable?: boolean | undefined;
+    readonly cursor?: string | undefined;
+  }): void => {
+    if (finalized) return;
+    if (event.cursor !== undefined) lastCursor = event.cursor;
+    const parsed = CliEventV2Schema.parse({
+      schemaVersion: "pragma.cli-event/v2",
+      requestId: input.requestId,
+      eventId: globalThis.crypto.randomUUID(),
+      sequence: sequence++,
+      emittedAt: new Date().toISOString(),
+      replayable: event.replayable ?? false,
+      ...(event.missionId === undefined ? {} : { missionId: event.missionId }),
+      ...(event.executionId === undefined ? {} : { executionId: event.executionId }),
+      ...(event.cursor === undefined ? {} : { cursor: event.cursor }),
+      type: event.type,
+      data: event.data,
+    });
+    input.io.writeStdout(`${JSON.stringify(parsed)}\n`);
+    input.io.flushStdout?.();
+  };
+  return {
+    emit: write,
+    finalize(outcome) {
+      if (finalized) return;
+      const end = CliStreamEndDataV2Schema.parse({
+        status: outcome.status,
+        exitCode: runOutcomeExitCode(outcome),
+        missionId: outcome.missionId,
+        executionId: outcome.executionId,
+        executor: outcome.executor,
+        workspace: outcome.workspace,
+        ...(lastCursor === undefined ? {} : { lastCursor }),
+        ...(outcome.status === "accepted" || outcome.status === "succeeded"
+          ? { result: outcome.result }
+          : {}),
+        ...(outcome.status === "input_required" && outcome.interaction === undefined
+          ? {}
+          : outcome.status === "input_required"
+            ? { interaction: outcome.interaction }
+            : {}),
+        ...(outcome.status === "failed" && outcome.error === undefined
+          ? {}
+          : outcome.status === "failed"
+            ? { error: outcome.error }
+            : {}),
+        ...(outcome.usage === undefined ? {} : { usage: outcome.usage }),
+        ...(outcome.warnings === undefined ? {} : { warnings: outcome.warnings }),
+      });
+      finalized = true;
+      const parsed = {
+        schemaVersion: "pragma.cli-event/v2" as const,
+        requestId: input.requestId,
+        eventId: globalThis.crypto.randomUUID(),
+        sequence: sequence++,
+        emittedAt: new Date().toISOString(),
+        replayable: false,
+        type: "stream.end" as const,
+        data: end,
+      };
+      input.io.writeStdout(`${JSON.stringify(parsed)}\n`);
+      input.io.flushStdout?.();
+    },
+  };
+}
+
+function makeV2Result(input: PresentationInput, outcome: CliRunPresentationOutcome) {
+  return CliResultV2Schema.parse({
+    schemaVersion: "pragma.cli-result/v2",
+    requestId: input.requestId,
+    command: input.command,
+    status: outcome.status,
+    ...(outcome.missionId === undefined ? {} : { missionId: outcome.missionId }),
+    ...(outcome.executionId === undefined ? {} : { executionId: outcome.executionId }),
+    ...(outcome.executor === undefined ? {} : { executor: outcome.executor }),
+    ...(outcome.workspace === undefined ? {} : { workspace: outcome.workspace }),
+    ...(outcome.status === "accepted" || outcome.status === "succeeded"
+      ? { result: outcome.result }
+      : {}),
+    ...(outcome.status === "input_required" && outcome.interaction === undefined
+      ? {}
+      : outcome.status === "input_required"
+        ? { interaction: outcome.interaction }
+        : {}),
+    ...(outcome.status === "failed" && outcome.error === undefined
+      ? {}
+      : outcome.status === "failed"
+        ? { error: outcome.error }
+        : {}),
+    warnings: outcome.warnings ?? [],
+    ...(outcome.usage === undefined ? {} : { usage: outcome.usage }),
+    meta: {
+      startedAt: input.startedAt.toISOString(),
+      completedAt: new Date().toISOString(),
+      durationMs: Math.max(0, Date.now() - input.startedAt.getTime()),
+      cliVersion: input.cliVersion,
+      protocolVersion: "pragma.integration/v2",
+    },
+  });
+}
+
+function runOutcomeExitCode(outcome: CliRunPresentationOutcome): number {
+  if (outcome.status === "accepted" || outcome.status === "succeeded") return 0;
+  if (outcome.status === "input_required") return 3;
+  if (outcome.status === "interrupted") return 130;
+  if (outcome.status === "failed") {
+    return integrationErrorExitCode(outcome.error?.code ?? "INTERNAL_ERROR");
+  }
+  return 10;
+}
+
+function renderRunText(outcome: CliRunPresentationOutcome): string {
+  if (outcome.status === "failed") return renderFailure(outcome.error!);
+  if (outcome.status === "input_required") {
+    return `Input required for ${outcome.missionId}/${outcome.executionId}. Use mission respond in a later release.\n`;
+  }
+  if (outcome.status === "interrupted") return `Interrupted: ${outcome.executionId}\n`;
+  if (outcome.status === "accepted") {
+    return `Accepted: mission ${outcome.missionId}, execution ${outcome.executionId}\n`;
+  }
+  if (outcome.status === "succeeded") return `${JSON.stringify(outcome.result, null, 2)}\n`;
+  return "\n";
+}
+
 export function presentSuccess(input: PresentationInput, result: JsonValue): void {
   if (input.format === "text") {
     input.io.writeStdout(renderText(input.command, result));
     return;
   }
   if (input.format === "json") {
-    input.io.writeStdout(`${JSON.stringify(makeResult(input, result))}\n`);
+    input.io.writeStdout(
+      `${JSON.stringify(
+        makeV2Result(input, { status: "succeeded", result }),
+      )}\n`,
+    );
     return;
   }
-  const events = makeEventStream(input, result);
-  input.io.writeStdout(`${events.map((event) => JSON.stringify(event)).join("\n")}\n`);
+  const presenter = createV2StreamPresenter(input);
+  presenter.emit({ type: "command.result", data: { command: input.command, result } });
+  presenter.finalize({ status: "succeeded", result });
 }
 
 export function presentFailure(
@@ -41,76 +250,13 @@ export function presentFailure(
   error: IntegrationError,
   options: Readonly<{ readonly textToStdout?: boolean }> = {},
 ): void {
-  if (input.format === "json") {
-    input.io.writeStdout(`${JSON.stringify(makeResult(input, undefined, error))}\n`);
-    return;
-  }
-  if (input.format === "jsonl") {
-    const event = makeEndEvent(input, error);
-    input.io.writeStdout(`${JSON.stringify(event)}\n`);
+  if (input.format !== "text") {
+    presentRunFailure(input, error);
     return;
   }
   const text = renderFailure(error);
   if (options.textToStdout === true) input.io.writeStdout(text);
   else input.io.writeStderr(text);
-}
-
-function makeResult(
-  input: PresentationInput,
-  result: JsonValue | undefined,
-  error?: IntegrationError,
-) {
-  const completedAt = new Date();
-  return CliResultSchema.parse({
-    schemaVersion: "pragma.cli-result/v1",
-    requestId: input.requestId,
-    command: input.command,
-    ok: error === undefined,
-    ...(error === undefined ? { result } : { error }),
-    warnings: [],
-    meta: {
-      startedAt: input.startedAt.toISOString(),
-      completedAt: completedAt.toISOString(),
-      durationMs: Math.max(0, completedAt.getTime() - input.startedAt.getTime()),
-      cliVersion: input.cliVersion,
-      protocolVersion: "pragma.integration/v1",
-    },
-  });
-}
-
-function makeEventStream(input: PresentationInput, result: JsonValue) {
-  const emittedAt = new Date().toISOString();
-  const events = [
-    {
-      schemaVersion: "pragma.cli-event/v1" as const,
-      requestId: input.requestId,
-      eventId: globalThis.crypto.randomUUID(),
-      sequence: 1,
-      emittedAt,
-      replayable: false,
-      type: "command.result" as const,
-      data: { command: input.command, result },
-    },
-    makeEndEvent(input),
-  ];
-  return CliEventStreamSchema.parse(events);
-}
-
-function makeEndEvent(input: PresentationInput, error?: IntegrationError) {
-  return {
-    schemaVersion: "pragma.cli-event/v1" as const,
-    requestId: input.requestId,
-    eventId: globalThis.crypto.randomUUID(),
-    sequence: error === undefined ? 2 : 1,
-    emittedAt: new Date().toISOString(),
-    replayable: false,
-    type: "stream.end" as const,
-    data: {
-      status: error === undefined ? ("completed" as const) : ("failed" as const),
-      exitCode: error === undefined ? 0 : integrationErrorExitCode(error.code),
-      ...(error === undefined ? {} : { error }),
-    },
-  };
 }
 
 function renderText(command: string, result: JsonValue): string {

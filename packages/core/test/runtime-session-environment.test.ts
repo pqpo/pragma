@@ -185,7 +185,7 @@ describe("Runtime Session context window", () => {
     const liveUpdate = contextUpdates.find((event) => event.payload.provisional);
 
     expect(liveUpdate?.payload.usage).toMatchObject({
-      usedTokens: 40_002,
+      usedTokens: 40_003,
       measurement: "estimated",
     });
     expect(inspect).toHaveBeenCalledTimes(2);

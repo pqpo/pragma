@@ -19,14 +19,29 @@ type PackageManifest = Partial<
 type InternalDependencyAllowlist = Readonly<Record<DependencyBucket, readonly string[]>>;
 
 const localHostInternalDependencyAllowlist: InternalDependencyAllowlist = {
-  dependencies: ["@pragma/core", "@pragma/shared"],
+  dependencies: [
+    "@pragma/built-in-agents",
+    "@pragma/context-filesystem",
+    "@pragma/core",
+    "@pragma/interpreter",
+    "@pragma/mission-board",
+    "@pragma/shared",
+  ],
   devDependencies: ["@pragma/tsconfig"],
   optionalDependencies: [],
   peerDependencies: [],
 };
 
 const cliInternalDependencyAllowlist: InternalDependencyAllowlist = {
-  dependencies: ["@pragma/local-host"],
+  dependencies: [
+    "@pragma/local-host",
+    "@pragma/shared",
+    "@pragma/runtime-antigravity",
+    "@pragma/runtime-claude-code",
+    "@pragma/runtime-codex",
+    "@pragma/runtime-pi",
+    "@pragma/runtime-qodercli",
+  ],
   devDependencies: ["@pragma/tsconfig"],
   optionalDependencies: [],
   peerDependencies: [],
@@ -123,7 +138,6 @@ describe("Local Host boundary guards", () => {
             name === "@pragma/client" ||
             name === "@pragma/server" ||
             name === "@pragma/desktop" ||
-            name.startsWith("@pragma/runtime-") ||
             name.startsWith("apps/"),
         ),
       ).toBe(false);
@@ -134,7 +148,15 @@ describe("Local Host boundary guards", () => {
     expect(
       manifestBoundaryViolations(
         {
-          dependencies: { "@pragma/local-host": "workspace:*" },
+          dependencies: {
+            "@pragma/local-host": "workspace:*",
+            "@pragma/shared": "workspace:*",
+            "@pragma/runtime-antigravity": "workspace:*",
+            "@pragma/runtime-claude-code": "workspace:*",
+            "@pragma/runtime-codex": "workspace:*",
+            "@pragma/runtime-pi": "workspace:*",
+            "@pragma/runtime-qodercli": "workspace:*",
+          },
           devDependencies: { "@pragma/tsconfig": "workspace:*" },
           peerDependencies: { "@pragma/core": "workspace:*" },
         },
@@ -144,7 +166,15 @@ describe("Local Host boundary guards", () => {
     expect(
       manifestBoundaryViolations(
         {
-          dependencies: { "@pragma/local-host": "workspace:*" },
+          dependencies: {
+            "@pragma/local-host": "workspace:*",
+            "@pragma/shared": "workspace:*",
+            "@pragma/runtime-antigravity": "workspace:*",
+            "@pragma/runtime-claude-code": "workspace:*",
+            "@pragma/runtime-codex": "workspace:*",
+            "@pragma/runtime-pi": "workspace:*",
+            "@pragma/runtime-qodercli": "workspace:*",
+          },
           devDependencies: { "@pragma/tsconfig": "workspace:*" },
           optionalDependencies: { "@pragma/local-host": "1.0.0" },
         },

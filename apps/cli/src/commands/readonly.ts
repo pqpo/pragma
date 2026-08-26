@@ -29,6 +29,8 @@ export async function executeReadOnlyCommand(
       return await discoverExecutors(command, context);
     case "executor-describe":
       return await describeExecutor(command, context);
+    case "executor-run":
+      throw new Error("executor run must be handled by the run command.");
     case "mission-list":
       return await listMissions(command, context);
     case "mission-get":
@@ -48,7 +50,7 @@ export function versionResult(cliVersion: string): JsonValue {
   return {
     cliVersion,
     desktopBundleVersion: process.env["PRAGMA_DESKTOP_BUNDLE_VERSION"] ?? "unknown",
-    wireVersion: "pragma.integration/v1",
+    wireVersion: "pragma.integration/v2",
     storageMajor: 1,
     installSource: process.env["npm_config_global"] === "true" ? "npm-global" : "workspace",
     platform: process.platform,

@@ -1,6 +1,9 @@
 import { z } from "zod";
 
-export const IntegrationProtocolVersionSchema = z.literal("pragma.integration/v1");
+export const IntegrationProtocolVersionSchema = z.enum([
+  "pragma.integration/v1",
+  "pragma.integration/v2",
+]);
 
 export const RequestIdSchema = z.string().uuid();
 export const EventIdSchema = z.string().uuid();

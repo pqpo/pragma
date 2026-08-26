@@ -28,7 +28,13 @@
     "clean": "rm -rf dist"
   },
   "dependencies": {
-    "@pragma/local-host": "workspace:*"
+    "@pragma/local-host": "workspace:*",
+    "@pragma/shared": "workspace:*",
+    "@pragma/runtime-antigravity": "workspace:*",
+    "@pragma/runtime-claude-code": "workspace:*",
+    "@pragma/runtime-codex": "workspace:*",
+    "@pragma/runtime-pi": "workspace:*",
+    "@pragma/runtime-qodercli": "workspace:*"
   },
   "devDependencies": {
     "@pragma/tsconfig": "workspace:*",

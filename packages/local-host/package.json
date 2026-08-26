@@ -22,8 +22,13 @@
   },
   "dependencies": {
     "@napi-rs/keyring": "1.3.0",
+    "@pragma/built-in-agents": "workspace:*",
+    "@pragma/context-filesystem": "workspace:*",
     "@pragma/core": "workspace:*",
-    "@pragma/shared": "workspace:*"
+    "@pragma/interpreter": "workspace:*",
+    "@pragma/mission-board": "workspace:*",
+    "@pragma/shared": "workspace:*",
+    "zod": "latest"
   },
   "devDependencies": {
     "@pragma/tsconfig": "workspace:*",

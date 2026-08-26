@@ -9,5 +9,9 @@ export default defineConfig({
       },
     },
   } as never,
-  test: { environment: "node" },
+  test: {
+    environment: "node",
+    // SQLite and child-process integration tests share host resources.
+    fileParallelism: false,
+  },
 });

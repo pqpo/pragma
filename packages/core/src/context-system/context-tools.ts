@@ -558,6 +558,9 @@ function readAskUserQuestions(args: unknown): readonly ExpertAgentUserQuestion[]
             .map((option: Record<string, unknown>) => ({
               label: typeof option.label === "string" ? option.label : "",
               description: typeof option.description === "string" ? option.description : "",
+              ...(typeof option.value === "string" && option.value.length > 0
+                ? { value: option.value }
+                : {}),
             }))
             .filter((option) => option.label.length > 0)
         : [],

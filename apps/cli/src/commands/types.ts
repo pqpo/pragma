@@ -14,6 +14,7 @@ export type CliLocalHost = Pick<
     unknown
   >,
   | "integrationCapability"
+  | "resolveWorkspace"
   | "listExecutors"
   | "getMission"
   | "listMissions"
@@ -21,6 +22,7 @@ export type CliLocalHost = Pick<
   | "readSharedBoard"
   | "searchSharedBoard"
   | "listMissionQueue"
+  | "run"
 >;
 
 export interface CliCommandContext {

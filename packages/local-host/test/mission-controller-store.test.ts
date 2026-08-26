@@ -62,19 +62,19 @@ describe("MissionControllerStore", () => {
     });
   });
 
-  it("binds run requests atomically and rejects a payload conflict", async () => {
+  it("reserves run requests atomically and rejects a payload conflict", async () => {
     const store = await createStore();
     const requestId = "00000000-0000-4000-8000-000000000020";
     const hash = payloadHash("run-a");
 
-    await expect(store.bindRunRequest({ requestId, payloadHash: hash, missionId })).resolves.toBe(
-      missionId,
-    );
-    await expect(store.bindRunRequest({ requestId, payloadHash: hash, missionId })).resolves.toBe(
-      missionId,
-    );
+    const first = await store.reserveRunRequest({ requestId, payloadHash: hash });
+    expect(first).toEqual({ missionId: expect.any(String), disposition: "reserved" });
+    await expect(store.reserveRunRequest({ requestId, payloadHash: hash })).resolves.toEqual({
+      missionId: first.missionId,
+      disposition: "existing",
+    });
     await expect(
-      store.bindRunRequest({ requestId, payloadHash: payloadHash("run-b"), missionId }),
+      store.reserveRunRequest({ requestId, payloadHash: payloadHash("run-b") }),
     ).rejects.toMatchObject({ code: "IDEMPOTENCY_CONFLICT" });
   });
 

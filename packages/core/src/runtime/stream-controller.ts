@@ -6,6 +6,7 @@ import { dispatchExpertAgentHook } from "../plugins/expert-agent-plugin.ts";
 import type { RuntimeSessionInfo } from "./runtime-adapter.ts";
 import type { ExpertAgentRunContext } from "./run-context.ts";
 import { mergeUsage } from "./usage.ts";
+import { defaultRuntimeTokenCounter, type RuntimeTokenCounter } from "./token-counter.ts";
 import {
   createRuntimeEventEmitter,
   type RuntimeEventEmitter,
@@ -101,6 +102,8 @@ export function createRuntimeStreamController<TNativeEvent>(options: {
   readonly session: () => RuntimeSessionInfo;
   readonly context?: ExpertAgentRunContext | undefined;
   readonly logger: PragmaLogger;
+  /** Host may provide the shared counter; Core remains the only fallback owner. */
+  readonly tokenCounter?: RuntimeTokenCounter | undefined;
   readonly onEvent?: ((event: RuntimeStreamEvent) => void) | undefined;
   readonly mapEvent: (
     event: TNativeEvent,
@@ -139,6 +142,7 @@ export function createRuntimeStreamController<TNativeEvent>(options: {
   let firstNativeEventLogged = false;
   let firstReasoningDeltaLogged = false;
   let firstTextDeltaLogged = false;
+  const tokenCounter = options.tokenCounter ?? defaultRuntimeTokenCounter;
 
   const emit = (event: RuntimeStreamEventInput): void => {
     const emitted = emitter.emit(event);
@@ -199,7 +203,7 @@ export function createRuntimeStreamController<TNativeEvent>(options: {
   };
 
   const updateUsagePreview = (): void => {
-    const estimatedOutputTokens = estimateTokenCount(`${thoughtText}${outputText}`);
+    const estimatedOutputTokens = tokenCounter.countText(`${thoughtText}${outputText}`).tokens;
     const attemptUsage =
       usage ??
       createEstimatedUsage({
@@ -333,7 +337,7 @@ export function createRuntimeStreamController<TNativeEvent>(options: {
     beginUsagePreview(input) {
       accumulatedUsage = input.accumulatedUsage;
       const turnInput = [...(input.startupMessages ?? []), input.prompt].join("\n\n");
-      estimatedInputTokens = estimateTokenCount(turnInput);
+      estimatedInputTokens = tokenCounter.countText(turnInput).tokens;
       estimatedContextInputTokens = estimatedInputTokens;
       contextBaselineCalibrated =
         input.contextBaselineCalibrated ??
@@ -367,16 +371,6 @@ export function createRuntimeStreamController<TNativeEvent>(options: {
       emitter.complete();
     },
   };
-}
-
-function estimateTokenCount(value: string): number {
-  let ascii = 0;
-  let nonAscii = 0;
-  for (const character of value) {
-    if (character.codePointAt(0)! <= 0x7f) ascii += 1;
-    else nonAscii += 1;
-  }
-  return Math.ceil(ascii / 4) + nonAscii;
 }
 
 function createEstimatedUsage(input: { readonly input: number; readonly output: number }) {

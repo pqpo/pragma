@@ -105,6 +105,30 @@ interface StoredHumanInteraction {
   readonly request: ExpertAgentHumanRequest;
 }
 
+interface PendingHumanInteraction {
+  readonly invocationId: string;
+  readonly resolve: (value: ExpertAgentHumanResponse) => void;
+  readonly reject: (reason: unknown) => void;
+}
+
+/**
+ * Signals a deliberate non-terminal checkpoint while an invocation is waiting
+ * for a durable human response.  Callers must not turn this error into a
+ * failed execution; the waiting state has already been committed.
+ */
+export class HumanInteractionCheckpointError extends Error {
+  constructor(readonly executionId: string) {
+    super(`Execution checkpointed while waiting for human input: ${executionId}`);
+    this.name = "HumanInteractionCheckpointError";
+  }
+}
+
+export function isHumanInteractionCheckpointError(
+  error: unknown,
+): error is HumanInteractionCheckpointError {
+  return error instanceof HumanInteractionCheckpointError;
+}
+
 export class ExecutionController {
   private readonly activeRuntimeSessions = new Map<string, RuntimeAgentSession>();
   private readonly activeRuntimeSubmissions = new Map<string, ActiveSubmission>();
@@ -118,14 +142,7 @@ export class ExecutionController {
   private readonly invocationSignals = new Map<string, AbortController>();
   private readonly linkedInvocationSignals = new Map<string, AbortSignal>();
   private readonly orchestrators = new Map<string, ExpertOrchestrator>();
-  private readonly pendingInteractions = new Map<
-    string,
-    {
-      invocationId: string;
-      resolve(value: ExpertAgentHumanResponse): void;
-      reject(reason: unknown): void;
-    }
-  >();
+  private readonly pendingInteractions = new Map<string, PendingHumanInteraction>();
   private readonly humanResponseOperations = new Map<
     string,
     { readonly requestId: string; readonly promise: Promise<void> }
@@ -166,6 +183,61 @@ export class ExecutionController {
 
   getUsage(): AgentMessageUsage | undefined {
     return this.usage;
+  }
+
+  /**
+   * Make the current human wait durable without cancelling the execution.
+   * This is intentionally narrower than a general suspend API: at least one
+   * live invocation must already be waiting for human input.
+   */
+  async checkpointWaitingHuman(): Promise<void> {
+    const deadline = Date.now() + 5_000;
+    let pending: PendingHumanInteraction[];
+
+    while (true) {
+      const execution = await requireExecution(this.store, this.executionId);
+      if (isTerminalExecutionStatus(execution.status)) {
+        throw new Error(`Execution is already terminal: ${this.executionId}`);
+      }
+      const waiting = (await this.store.listInvocations(this.executionId)).some(
+        (invocation) =>
+          invocation.status === "waiting" && invocation.waitReason === "human_input",
+      );
+      pending = [...this.pendingInteractions.values()];
+      const durablePending = await readPendingHumanInteractions(this.store, this.executionId);
+      if (pending.length === 0 && durablePending.length === 0 && !waiting) {
+        throw new Error(`Execution is not waiting for human input: ${this.executionId}`);
+      }
+      if (waiting && pending.length > 0) break;
+      if (Date.now() >= deadline) {
+        throw new Error(`Execution has no active human interaction: ${this.executionId}`);
+      }
+      await new Promise<void>((resolve) => setTimeout(resolve, 5));
+      continue;
+    }
+
+    while (true) {
+      const execution = await requireExecution(this.store, this.executionId);
+      if (isTerminalExecutionStatus(execution.status)) {
+        throw new Error(`Execution is already terminal: ${this.executionId}`);
+      }
+      if (execution.status === "waiting") break;
+      try {
+        await this.store.commit({
+          commitId: `human-checkpoint:${this.executionId}`,
+          executionId: this.executionId,
+          expectedVersion: execution.version,
+          executionPatch: { status: "waiting" },
+        });
+        break;
+      } catch (error) {
+        if (error instanceof ExecutionVersionConflictError) continue;
+        throw error;
+      }
+    }
+
+    const checkpoint = new HumanInteractionCheckpointError(this.executionId);
+    for (const interaction of pending) interaction.reject(checkpoint);
   }
 
   signalForInvocation(invocationId: string, parentInvocationId?: string): AbortSignal {
@@ -1270,6 +1342,7 @@ export async function runExpertInvocation(options: RunExpertInvocationOptions): 
       }
     }
   } catch (error) {
+    if (isHumanInteractionCheckpointError(error)) throw error;
     let failure = error;
     try {
       await orchestrator?.interruptOwned(
