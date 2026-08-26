@@ -11,6 +11,7 @@ import {
   writeFile,
 } from "node:fs/promises";
 import { basename, dirname, isAbsolute, join, relative, resolve, sep } from "node:path";
+import { isDeepStrictEqual } from "node:util";
 
 import {
   PragmaDslMigrationError,
@@ -200,10 +201,16 @@ export function createPragmaProjectStore(options: {
   readonly storagePaths?: PragmaPaths | undefined;
   readonly projectId?: string;
   readonly reservedResourceRefs?: ReadonlySet<string> | undefined;
+  readonly fixedResources?: readonly PragmaResource[] | undefined;
   readonly loggerProvider?: PragmaLoggerProvider | undefined;
   readonly blueprintCache?: PragmaBlueprintCacheStore | undefined;
 }): PragmaProjectStore {
   const projectId = options.projectId ?? "studio";
+  const fixedResources = new Map(
+    (options.fixedResources ?? []).map(
+      (resource) => [canonicalPragmaResourceRef(resource), resource] as const,
+    ),
+  );
   const objectsPath = options.objectsPath ?? join(options.projectsPath, ".storage", "objects");
   const projectViewsPath =
     options.projectViewsPath ?? join(options.projectsPath, ".cache", "views");
@@ -320,6 +327,17 @@ export function createPragmaProjectStore(options: {
       );
     }
   };
+  const assertFixedResources = (resources: readonly PragmaResource[]): void => {
+    const changed = resources.find((resource) => {
+      const fixed = fixedResources.get(canonicalPragmaResourceRef(resource));
+      return fixed !== undefined && !isDeepStrictEqual(resource, fixed);
+    });
+    if (changed === undefined) return;
+    throw new PragmaProjectStoreError(
+      "built_in_readonly",
+      `Built-in resource cannot be modified: ${canonicalPragmaResourceRef(changed)}.`,
+    );
+  };
 
   const validateChanges = async (
     input: PragmaProjectChangeSetInput,
@@ -347,6 +365,7 @@ export function createPragmaProjectStore(options: {
         PragmaForwardCompatibleResourceSchema.parse(resource),
       );
       assertNotReserved(upserts);
+      assertFixedResources(upserts);
       if (input.removals?.some((ref) => options.reservedResourceRefs?.has(ref)) === true) {
         throw new PragmaProjectStoreError(
           "built_in_readonly",
@@ -390,6 +409,7 @@ export function createPragmaProjectStore(options: {
     try {
       if (options.storagePaths !== undefined) await assertStorageWriteAllowed(options.storagePaths);
       assertNotReserved(input.resources);
+      assertFixedResources(input.resources);
       assertDesktopExpertAuthoring(input.resources);
       const artifacts =
         input.artifacts ??

@@ -225,6 +225,7 @@ export const CapabilitySchema = z.object({
   manifest: CapabilityManifestSchema,
   health: CapabilityHealthSchema,
   definition: CapabilityDefinitionSchema,
+  managedBy: z.enum(["user", "system"]).optional(),
 });
 
 export const ExpertCapabilityReferenceSchema = z.discriminatedUnion("kind", [

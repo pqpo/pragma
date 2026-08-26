@@ -103,6 +103,11 @@ describe("Desktop PragmaAgent DSL project adapter", () => {
     ]);
     expect(options.capabilities).toEqual([
       expect.objectContaining({
+        name: "Pragma management tools",
+        kind: "tools",
+        toolNames: ["list_knowledge_revision_targets", "submit_knowledge_revision"],
+      }),
+      expect.objectContaining({
         name: "Repository access",
         kind: "skill",
         toolNames: [],

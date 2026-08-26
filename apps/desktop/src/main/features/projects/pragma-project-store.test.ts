@@ -18,6 +18,7 @@ import {
   BUILT_IN_PRAGMA_REF,
   STORE_REVISION_TARGET_CONTEXT_REF,
   builtInAgentResource,
+  pragmaManagementCapabilityResource,
 } from "@pragma/built-in-agents";
 import { ContentAddressedStore, derivePragmaResourceId } from "@pragma/core";
 
@@ -73,6 +74,28 @@ async function projectRevisionFile(
 }
 
 describe("PragmaProjectStore", () => {
+  it("allows the canonical fixed resource but rejects modified copies", async () => {
+    const directory = await mkdtemp(join(tmpdir(), "pragma-project-fixed-resource-"));
+    directories.push(directory);
+    const fixed = pragmaManagementCapabilityResource();
+    if (fixed.kind !== "Capability") throw new Error("Expected the fixed Capability resource.");
+    const project = createPragmaProjectStore({
+      projectsPath: directory,
+      fixedResources: [fixed],
+    });
+    const published = await project.publish({ expectedRevision: 0, resources: [fixed] });
+
+    await expect(
+      project.upsert({
+        baseRevision: published.revision,
+        resource: {
+          ...fixed,
+          metadata: { ...fixed.metadata, name: "Modified system resource" },
+        },
+      }),
+    ).rejects.toMatchObject({ code: "built_in_readonly" });
+  });
+
   it("publishes the initial empty project before it is pinned by a Mission", async () => {
     const { directory, project } = await stores();
 

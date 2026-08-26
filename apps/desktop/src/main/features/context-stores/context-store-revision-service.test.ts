@@ -51,6 +51,29 @@ async function fixture() {
 }
 
 describe("context store revision service", () => {
+  it("deduplicates reflection retries by execution provenance digest", async () => {
+    const { service, store } = await fixture();
+    const request = {
+      schemaVersion: "pragma.context-store-revision-request/v1" as const,
+      storeId: store.id,
+      prompt: "Record the reflected invariant",
+      source: "expert-reflection" as const,
+      sourceDigest: "b".repeat(64),
+      provenance: {
+        executionId: "execution-1",
+        invocationId: "invocation-1",
+        expertId: "0000000000000002",
+        teamId: "0000000000000003",
+      },
+    };
+
+    const first = await service.submit(request);
+    const retry = await service.submit(request);
+
+    expect(retry.id).toBe(first.id);
+    await expect(service.list()).resolves.toHaveLength(1);
+  });
+
   it("stages an agent changeset for review and only writes after approval", async () => {
     const { contextStores, service, store } = await fixture();
     const submitted = await service.submit({

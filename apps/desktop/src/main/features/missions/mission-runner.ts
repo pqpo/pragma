@@ -3,6 +3,11 @@ import { mkdir } from "node:fs/promises";
 import { join } from "node:path";
 
 import {
+  PRAGMA_MANAGEMENT_BINDING_REF,
+  createPragmaManagementTools,
+  type PragmaManagementToolPorts,
+} from "@pragma/built-in-agents";
+import {
   createPragma,
   createPragmaLogger,
   createFileExecutionStore,
@@ -55,6 +60,7 @@ import type {
   CompiledResource,
   PragmaAdapterHost,
   PragmaBindingRecord,
+  PragmaResource,
 } from "@pragma/interpreter";
 import { createPragmaResourceIdentityMigrationIndex } from "@pragma/interpreter";
 import type {
@@ -104,6 +110,8 @@ import type { CapabilityCredentialStore } from "../capabilities/capability-crede
 import type { CapabilityStore } from "../capabilities/capability-store.ts";
 import { resolveExpertCapabilities } from "../experts/desktop-expert-factory.ts";
 import type { ContextStoreStore } from "../context-stores/context-store-store.ts";
+import type { ContextStoreRevisionService } from "../context-stores/context-store-revision-service.ts";
+import { createDesktopKnowledgeRevisionSubmissionPort } from "../context-stores/knowledge-revision-capability.ts";
 import {
   parseDesktopCapabilityBindingRef,
   parseDesktopContextBindingRef,
@@ -323,6 +331,8 @@ export function createMissionRunner(options: {
   readonly pragmaHome: string;
   readonly executionStore?: FileExecutionStore | undefined;
   readonly contextStores?: ContextStoreStore | undefined;
+  readonly contextStoreRevisions?: ContextStoreRevisionService | undefined;
+  readonly knowledgeRevisionMountResources?: (() => readonly PragmaResource[]) | undefined;
   readonly hostContextStores?:
     readonly ExpertAgentContextStoreRegistrationInput[] | HostContextBindingsResolver | undefined;
   readonly plugins?: PluginStore | undefined;
@@ -839,6 +849,24 @@ export function createMissionRunner(options: {
   ): Promise<CompiledResource<InvocableResource>> => {
     const system = await options.compileSystemExecutor?.({ mission, runtimes });
     if (system !== undefined) return system;
+    const knowledgeRevisions =
+      options.contextStores === undefined || options.contextStoreRevisions === undefined
+        ? undefined
+        : createDesktopKnowledgeRevisionSubmissionPort({
+            project: options.project,
+            contextStores: options.contextStores,
+            revisions: options.contextStoreRevisions,
+            additionalMountResources: options.knowledgeRevisionMountResources,
+          });
+    const desktopAdapterHost = createDesktopAdapterHost(
+      {
+        ...options,
+        ...(knowledgeRevisions === undefined
+          ? {}
+          : { pragmaManagement: { knowledgeRevisions } satisfies PragmaManagementToolPorts }),
+      },
+      mission.workspace.path,
+    );
     const compiled = await options.project.compile<InvocableResource>({
       projectId: mission.project.id,
       revision: mission.project.revision,
@@ -847,10 +875,7 @@ export function createMissionRunner(options: {
       pragmaHome: options.pragmaHome,
       environmentId: "desktop",
       adapterHost:
-        options.adapterHostForMission?.(
-          mission,
-          createDesktopAdapterHost(options, mission.workspace.path),
-        ) ?? createDesktopAdapterHost(options, mission.workspace.path),
+        options.adapterHostForMission?.(mission, desktopAdapterHost) ?? desktopAdapterHost,
       runtimes,
       resolveExternalInvocable: async (ref) => {
         const compiled = await options.compileSystemExecutor?.({
@@ -2758,6 +2783,7 @@ export function createDesktopAdapterHost(
     readonly capabilitiesPath: string;
     readonly mcpToolRegistryPool?: McpToolRegistryPool | undefined;
     readonly contextStores?: ContextStoreStore | undefined;
+    readonly pragmaManagement?: PragmaManagementToolPorts | undefined;
   },
   projectRoot: string,
 ): PragmaAdapterHost {
@@ -2765,6 +2791,23 @@ export function createDesktopAdapterHost(
     environmentId: "desktop",
     projectRoot,
     async resolveBinding(ref): Promise<PragmaBindingRecord | undefined> {
+      if (ref === PRAGMA_MANAGEMENT_BINDING_REF) {
+        if (options.pragmaManagement === undefined) return undefined;
+        const tools = createPragmaManagementTools(options.pragmaManagement);
+        const fingerprint = createHash("sha256")
+          .update(
+            JSON.stringify(
+              tools.map((tool) => ({ name: tool.name, inputSchema: tool.inputSchema })),
+            ),
+          )
+          .digest("hex");
+        return {
+          ref,
+          revision: "1",
+          fingerprint,
+          value: { contribution: { tools } },
+        };
+      }
       const capabilityRef = parseDesktopCapabilityBindingRef(ref);
       if (capabilityRef !== undefined) {
         const capabilityId = capabilityRef.id;

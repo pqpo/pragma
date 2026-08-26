@@ -1,6 +1,8 @@
 import { BrowserWindow, dialog, ipcMain } from "electron";
 import { basename } from "node:path";
 
+import type { KnowledgeRevisionSubmissionPort } from "@pragma/built-in-agents";
+
 import {
   CapabilityActionSchema,
   CapabilityIdSchema,
@@ -16,15 +18,25 @@ import {
   type PickWorkspaceResult,
 } from "../../../shared/contracts/index.ts";
 import { CapabilityStoreError, type CapabilityStore } from "./capability-store.ts";
+import {
+  BUILT_IN_PRAGMA_MANAGEMENT_CAPABILITY,
+  isBuiltInCapabilityId,
+  listCapabilitiesWithBuiltIns,
+  testBuiltInCapability,
+} from "./built-in-capabilities.ts";
 
 export function installCapabilityHandlers(
   store: CapabilityStore,
   windowGetter: () => BrowserWindow | null,
+  builtInKnowledgeRevisions: KnowledgeRevisionSubmissionPort,
 ): void {
-  ipcMain.handle("capabilities:list", () => store.list());
-  ipcMain.handle("capabilities:get", (_event, id: unknown, revision: unknown) =>
-    store.get(CapabilityIdSchema.parse(id), revision === undefined ? undefined : Number(revision)),
-  );
+  ipcMain.handle("capabilities:list", () => listCapabilitiesWithBuiltIns(store));
+  ipcMain.handle("capabilities:get", (_event, id: unknown, revision: unknown) => {
+    const parsedId = CapabilityIdSchema.parse(id);
+    return isBuiltInCapabilityId(parsedId)
+      ? BUILT_IN_PRAGMA_MANAGEMENT_CAPABILITY
+      : store.get(parsedId, revision === undefined ? undefined : Number(revision));
+  });
   ipcMain.handle("capabilities:get-skill-document", (_event, input: unknown) =>
     store.getSkillDocument(GetSkillDocumentSchema.parse(input)),
   );
@@ -46,12 +58,31 @@ export function installCapabilityHandlers(
   ipcMain.handle("capabilities:update", (_event, input: unknown) =>
     store.update(UpdateCapabilitySchema.parse(input)),
   );
-  ipcMain.handle("capabilities:retry", (_event, input: unknown) =>
-    store.retry(CapabilityActionSchema.parse(input).id),
-  );
-  ipcMain.handle("capabilities:test", (_event, input: unknown) =>
-    store.test(CapabilityTestRequestSchema.parse(input)),
-  );
+  ipcMain.handle("capabilities:retry", (_event, input: unknown) => {
+    const id = CapabilityActionSchema.parse(input).id;
+    return isBuiltInCapabilityId(id) ? BUILT_IN_PRAGMA_MANAGEMENT_CAPABILITY : store.retry(id);
+  });
+  ipcMain.handle("capabilities:test", async (_event, input: unknown) => {
+    const parsed = CapabilityTestRequestSchema.parse(input);
+    if (!isBuiltInCapabilityId(parsed.id)) return await store.test(parsed);
+    return await testBuiltInCapability(parsed, builtInKnowledgeRevisions, async ({ targetRef }) => {
+      const options = {
+        type: "warning" as const,
+        title: "Submit knowledge revision request?",
+        message: "This test will create a real knowledge revision review task.",
+        detail: `Target: ${targetRef}`,
+        buttons: ["Submit", "Cancel"],
+        defaultId: 1,
+        cancelId: 1,
+        noLink: true,
+      };
+      const window = windowGetter();
+      const result = window
+        ? await dialog.showMessageBox(window, options)
+        : await dialog.showMessageBox(options);
+      return result.response === 0;
+    });
+  });
   ipcMain.handle("capabilities:preview-code", (_event, input: unknown) =>
     store.previewCode(PreviewCodeServiceRequestSchema.parse(input)),
   );

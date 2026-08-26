@@ -47,6 +47,7 @@ import {
   createDesktopRuntimeOptionResource,
 } from "../../platform/bindings/desktop-bound-resource-policy.ts";
 import type { CapabilityStore } from "../capabilities/capability-store.ts";
+import { listCapabilitiesWithBuiltIns } from "../capabilities/built-in-capabilities.ts";
 import type { PragmaProjectStore } from "../projects/pragma-project-store.ts";
 import { getRuntimeAvailability } from "../runtimes/runtime-availability.ts";
 import type { RuntimeEnvironmentService } from "../runtimes/runtime-environment-service.ts";
@@ -608,7 +609,7 @@ async function buildExpertCatalog(options: {
 }): Promise<DesktopExpertCatalog> {
   const [availability, capabilities] = await Promise.all([
     getRuntimeAvailability(options.runtimes),
-    options.capabilities.list(),
+    listCapabilitiesWithBuiltIns(options.capabilities),
   ]);
   const resources = new Map<string, PragmaResource>();
   const runtimeModels = availability

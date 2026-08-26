@@ -1,5 +1,10 @@
 import { createHash } from "node:crypto";
 import { isAbsolute } from "node:path";
+import {
+  PRAGMA_MANAGEMENT_BINDING_REF,
+  PRAGMA_MANAGEMENT_CAPABILITY_REF,
+  PRAGMA_MANAGEMENT_DESKTOP_CAPABILITY_ID,
+} from "@pragma/built-in-agents";
 
 import {
   canonicalPragmaResourceRef,
@@ -156,6 +161,24 @@ export async function inspectBundleReadiness(
   for (const resource of resources) {
     const ref = canonicalPragmaResourceRef(resource);
     if (resource.kind === "Capability") {
+      if (
+        ref === PRAGMA_MANAGEMENT_CAPABILITY_REF &&
+        resource.spec.binding === PRAGMA_MANAGEMENT_BINDING_REF
+      ) {
+        readiness.push({
+          id: `capability:${ref}`,
+          kind: "capability",
+          resourceRef: ref,
+          name: resource.metadata.name,
+          status: "ready",
+          code: "ready",
+          action: "none",
+          message: "The built-in Pragma management Capability is available.",
+          capabilityKind: "mcp_server",
+          targetId: PRAGMA_MANAGEMENT_DESKTOP_CAPABILITY_ID,
+        });
+        continue;
+      }
       const binding = parseDesktopCapabilityBindingRef(resource.spec.binding ?? "");
       if (binding === undefined) {
         readiness.push({

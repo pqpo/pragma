@@ -4,6 +4,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 
 import { PragmaPaths } from "@pragma/core";
+import { pragmaManagementCapabilityResource } from "@pragma/built-in-agents";
 import { resolvePragmaAvatarId } from "@pragma/shared";
 import {
   canonicalPragmaResourceRef,
@@ -46,6 +47,55 @@ afterEach(async () => {
 });
 
 describe("PragmaBundleService", () => {
+  it("recognizes the built-in Pragma management Capability without an installed payload", async () => {
+    await expect(
+      inspectBundleReadiness([pragmaManagementCapabilityResource()], {
+        capabilities: {} as CapabilityStore,
+        contextStores: {} as ContextStoreStore,
+        plugins: {} as PluginStore,
+        runtimes: [],
+      }),
+    ).resolves.toMatchObject([{ kind: "capability", status: "ready" }]);
+  });
+
+  it("reuses the canonical Pragma management Capability without an import conflict", async () => {
+    const source = await createFixture("management-source");
+    const target = await createFixture("management-target");
+    const management = pragmaManagementCapabilityResource();
+    const attachManagement = async (fixture: Awaited<ReturnType<typeof createFixture>>) =>
+      await fixture.project.apply({
+        baseRevision: fixture.projectRevision,
+        upserts: [
+          management,
+          {
+            ...expert("Write verified release notes."),
+            spec: {
+              ...expert("Write verified release notes.").spec,
+              capabilities: [
+                {
+                  ref: canonicalPragmaResourceRef(management),
+                  kind: "tools" as const,
+                  tools: ["list_knowledge_revision_targets", "submit_knowledge_revision"],
+                },
+              ],
+            },
+          },
+        ],
+      });
+    const sourceProject = await attachManagement(source);
+    await attachManagement(target);
+    const path = join(source.root, "management.pragma");
+    await source.service.exportTo(exportInput(sourceProject.revision), path);
+
+    const inspection = await target.service.inspect(path, "expert:1xddvess309a6gme");
+
+    expect(inspection.conflicts).not.toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ ref: canonicalPragmaResourceRef(management) }),
+      ]),
+    );
+  });
+
   it("preserves requirement ids for multiple pending plugins owned by one Expert", () => {
     const previous: PragmaBundleInstallation["pending"] = [
       {

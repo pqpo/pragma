@@ -137,11 +137,11 @@ export function createContextStoreRevisionService(options: {
       return await options.contextStores.withRevisionLock(request.storeId, async () => {
         await options.contextStores.getSnapshot(request.storeId);
         return await withFileLock(lockPath, async () => {
-          if (request.source === "memory-learning") {
+          if (request.sourceDigest !== undefined) {
             const existing = (await readAllJobs()).find(
               (job) =>
                 job.request.storeId === request.storeId &&
-                job.request.source === "memory-learning" &&
+                job.request.source === request.source &&
                 job.request.sourceDigest === request.sourceDigest,
             );
             if (existing !== undefined) return existing;

@@ -20,6 +20,7 @@ import {
   compileBuiltInAgent,
   builtInAgentFingerprint,
   createPragmaAgentTools,
+  pragmaManagementCapabilityResource,
 } from "@pragma/built-in-agents";
 import { MEMORY_CURATOR_REF } from "@pragma/memory";
 import { isUserFacingMissionOrigin } from "../../shared/contracts/index.ts";
@@ -57,6 +58,7 @@ import {
   createDesktopStoreRevisionAgent,
   type DesktopStoreRevisionAgent,
 } from "../features/context-stores/store-revision-agent.ts";
+import { createDesktopKnowledgeRevisionSubmissionPort } from "../features/context-stores/knowledge-revision-capability.ts";
 import { createDesktopPragmaAgentAutomationPort } from "../features/built-in-agents/pragma-agent-automation-adapter.ts";
 import { createDesktopPragmaAgentProjectPort } from "../features/built-in-agents/pragma-agent-project-adapter.ts";
 import { createDesktopPragmaAgentTaskPort } from "../features/built-in-agents/pragma-agent-task-adapter.ts";
@@ -220,6 +222,13 @@ export async function createDesktopApplicationContainer(
     warn: (message, error) => mainLogger.warn("desktop.system_expert_warning", message, { error }),
   });
   await systemExperts.initialize();
+  const systemExpertKnowledgeRevisionMountResources = () => {
+    const resource = systemExperts.getResource(BUILT_IN_PRAGMA_REF);
+    return [
+      ...(resource === undefined ? [] : [resource]),
+      ...systemExperts.getAdditionalResources(BUILT_IN_PRAGMA_REF),
+    ];
+  };
   const blueprintCache = createDesktopPragmaBlueprintCacheStore(pragmaPaths);
   const pragmaProjectStore = createPragmaProjectStore({
     projectsPath,
@@ -237,6 +246,7 @@ export async function createDesktopApplicationContainer(
       EVALUATION_JUDGE_EXPERT_REF,
       STORE_REVISION_TARGET_CONTEXT_REF,
     ]),
+    fixedResources: [pragmaManagementCapabilityResource()],
   });
   const workflowLayouts = createWorkflowLayoutStore({ projectsPath });
   installWorkflowLayoutHandlers(workflowLayouts);
@@ -401,7 +411,6 @@ export async function createDesktopApplicationContainer(
   capabilityStore.setRevisionPublisher(capabilityRevisionCoordinator);
   const evaluationStore = createEvaluationStore(join(pragmaPaths.stateRoot(), "evaluations"));
   const evaluationMocks = createEvaluationMockAdapterRegistry(capabilityStore);
-  installCapabilityHandlers(capabilityStore, options.getWindow);
   const storeRevisionsRef: { current?: ContextStoreRevisionService } = {};
   const contextStores = createContextStoreStore({
     storesPath: contextStoresPath,
@@ -439,6 +448,16 @@ export async function createDesktopApplicationContainer(
       mainLogger.warn("desktop.context_store_revision_processing_failed", message, { error }),
   });
   storeRevisionsRef.current = storeRevisions;
+  installCapabilityHandlers(
+    capabilityStore,
+    options.getWindow,
+    createDesktopKnowledgeRevisionSubmissionPort({
+      project: pragmaProjectStore,
+      contextStores,
+      revisions: storeRevisions,
+      additionalMountResources: systemExpertKnowledgeRevisionMountResources,
+    }),
+  );
   const skillAgentsRef: { current?: DesktopSkillAgents } = {};
   const skillEvaluationProfiles = createSkillEvaluationProfileStore(
     join(pragmaPaths.stateRoot(), "skill-evaluation", "profile.json"),
@@ -683,6 +702,8 @@ export async function createDesktopApplicationContainer(
     pragmaHome: pragmaPaths.root,
     executionStore: memoryPlane.executionStore,
     contextStores,
+    contextStoreRevisions: storeRevisions,
+    knowledgeRevisionMountResources: systemExpertKnowledgeRevisionMountResources,
     hostContextStores: async () => {
       const globalPolicy = await memoryPlane.policies.getGlobal();
       return globalPolicy.policy.enabled === "enabled"
@@ -861,6 +882,14 @@ export async function createDesktopApplicationContainer(
             capabilitiesPath,
             mcpToolRegistryPool,
             contextStores,
+            pragmaManagement: {
+              knowledgeRevisions: createDesktopKnowledgeRevisionSubmissionPort({
+                project: pragmaProjectStore,
+                contextStores,
+                revisions: storeRevisions,
+                additionalMountResources: systemExpertKnowledgeRevisionMountResources,
+              }),
+            },
           },
           mission.workspace.path,
         ),
