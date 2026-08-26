@@ -233,6 +233,8 @@ type OrchestrationScenario =
   | "followup-older"
   | "reuse-spawn"
   | "interrupt"
+  | "invalid-wait-steer-race"
+  | "wait-steer-race"
   | "parent-failure";
 
 interface OrchestrationRuntimeStats {
@@ -241,9 +243,15 @@ interface OrchestrationRuntimeStats {
   memberTurns: number;
 }
 
+interface OrchestrationRuntimeHooks {
+  readonly onNativeSteer?: (() => void) | undefined;
+  readonly onWaitPending?: (() => Promise<void>) | undefined;
+}
+
 function createOrchestrationRuntime(
   scenario: OrchestrationScenario,
   stats: OrchestrationRuntimeStats = { active: 0, maxActive: 0, memberTurns: 0 },
+  hooks: OrchestrationRuntimeHooks = {},
 ) {
   const firstChildWave = createBarrier(2, 5_000);
   let signalChildSessionOpening!: () => void;
@@ -251,7 +259,9 @@ function createOrchestrationRuntime(
     signalChildSessionOpening = resolve;
   });
   return defineRuntimeDriver<never, FakeSession>({
-    features: createRuntimeTestFeatures({ enabled: ["close"] }),
+    features: createRuntimeTestFeatures({
+      enabled: ["close", ...(hooks.onNativeSteer === undefined ? [] : (["steering"] as const))],
+    }),
     descriptor: { id: `orchestration-${scenario}`, kind: "fake", displayName: "Orchestration" },
     createSession: async (context) => {
       if (scenario === "parent-failure" && context.agent.id !== "lead") {
@@ -273,7 +283,10 @@ function createOrchestrationRuntime(
             await firstChildWave.arriveAndWait();
           } else {
             await new Promise<void>((resolve) =>
-              setTimeout(resolve, scenario === "followup" ? 25 : 200),
+              setTimeout(
+                resolve,
+                scenario === "followup" ? 25 : scenario === "wait-steer-race" ? 500 : 200,
+              ),
             );
           }
           return {
@@ -304,6 +317,32 @@ function createOrchestrationRuntime(
           await call("spawn_expert", { expertId, task });
         const wait = async (ids: readonly string[]) =>
           await call("wait_experts", { invocationIds: ids });
+
+        if (scenario === "invalid-wait-steer-race") {
+          const invalidWait = wait(["missing-invocation"]).then(
+            () => "unexpected-success",
+            (error: unknown) => (error instanceof Error ? error.message : String(error)),
+          );
+          await hooks.onWaitPending?.();
+          return {
+            outputText: `lead:${await invalidWait}`,
+            runtimeSessionId: session.id,
+          };
+        }
+
+        if (scenario === "wait-steer-race") {
+          const first = await spawn("member-a", "a");
+          const second = await spawn("member-b", "b");
+          const ids = [first["invocationId"] as string, second["invocationId"] as string];
+          const firstWait = wait(ids);
+          await hooks.onWaitPending?.();
+          const interruptedWait = await firstWait;
+          const completedWait = await wait(ids);
+          return {
+            outputText: `lead:${JSON.stringify({ interruptedWait, completedWait })}`,
+            runtimeSessionId: session.id,
+          };
+        }
 
         if (scenario === "parallel" || scenario === "concurrency") {
           const first = await spawn("member-a", "a");
@@ -394,6 +433,7 @@ function createOrchestrationRuntime(
       }
     },
     mapEvent: () => ({ events: [] }),
+    ...(hooks.onNativeSteer === undefined ? {} : { steerTurn: () => hooks.onNativeSteer?.() }),
     closeSession: () => undefined,
   });
 }
@@ -3549,6 +3589,156 @@ describe("Expert lifecycle orchestration", () => {
     return { output, tree, events: events.items, stats };
   }
 
+  it("captures steer before async wait validation and rejoins the original children", async () => {
+    const home = await mkdtemp(join(tmpdir(), "pragma-wait-steer-race-"));
+    const stats = { active: 0, maxActive: 0, memberTurns: 0 };
+    let markWaitPending!: () => void;
+    const waitPending = new Promise<void>((resolve) => {
+      markWaitPending = resolve;
+    });
+    let releaseWaitHook!: () => void;
+    const waitHookReleased = new Promise<void>((resolve) => {
+      releaseWaitHook = resolve;
+    });
+    let nativeSteers = 0;
+    const runtime = createOrchestrationRuntime("wait-steer-race", stats, {
+      onNativeSteer: () => {
+        nativeSteers += 1;
+      },
+      onWaitPending: async () => {
+        markWaitPending();
+        await waitHookReleased;
+      },
+    });
+    const app = createPragma({
+      pragmaHome: home,
+      runtimes: createStaticRuntimeResolver({
+        runtimes: [runtime],
+        defaultRuntimeId: runtime.descriptor.id,
+      }),
+    });
+    const members = await Promise.all(
+      ["member-a", "member-b"].map(
+        async (id) =>
+          await defineExpert({
+            id,
+            name: id,
+            description: id,
+            tags: [],
+            scope: "test",
+            workspace: home,
+            pragmaHome: home,
+          }),
+      ),
+    );
+    const launcher = createAgentLauncher({ experts: members, maxConcurrency: 2, maxDepth: 2 });
+    const lead = await defineExpert({
+      id: "lead",
+      name: "Lead",
+      description: "Lead",
+      tags: [],
+      scope: "test",
+      workspace: home,
+      pragmaHome: home,
+      tools: launcher.tools,
+    });
+    const session = await app.experts.createSession(lead);
+    const active = await session.prompt("coordinate", { requestId: "wait-steer-race" });
+    await waitPending;
+    const steered = await session.prompt("change priorities", {
+      requestId: "wait-steer-race-guidance",
+      mode: "steer",
+    });
+    releaseWaitHook();
+
+    expect(steered).toMatchObject({ requestedMode: "steer", effectiveMode: "steer" });
+    const output = await active.result;
+    await expect(steered.result).resolves.toBe(output);
+    expect(nativeSteers).toBe(0);
+    expect(output).toContain('"wakeReason":"steer"');
+    expect(output).toContain('"pending"');
+    expect(output).toContain('"completed"');
+    const tree = await active.getTree();
+    expect(tree.invocation.status).toBe("succeeded");
+    expect(tree.children).toHaveLength(2);
+    expect(tree.children.every((child) => child.invocation.status === "succeeded")).toBe(true);
+    expect(
+      tree.children.every(
+        (child) =>
+          typeof child.invocation.error !== "string" ||
+          !child.invocation.error.includes("Owner Invocation failed"),
+      ),
+    ).toBe(true);
+    await session.close();
+  }, 15_000);
+
+  it("falls back to Runtime steer when wait validation rejects the registration", async () => {
+    const home = await mkdtemp(join(tmpdir(), "pragma-invalid-wait-steer-race-"));
+    let markWaitPending!: () => void;
+    const waitPending = new Promise<void>((resolve) => {
+      markWaitPending = resolve;
+    });
+    let releaseWaitHook!: () => void;
+    const waitHookReleased = new Promise<void>((resolve) => {
+      releaseWaitHook = resolve;
+    });
+    let nativeSteers = 0;
+    const runtime = createOrchestrationRuntime("invalid-wait-steer-race", undefined, {
+      onNativeSteer: () => {
+        nativeSteers += 1;
+      },
+      onWaitPending: async () => {
+        markWaitPending();
+        await waitHookReleased;
+      },
+    });
+    const app = createPragma({
+      pragmaHome: home,
+      runtimes: createStaticRuntimeResolver({
+        runtimes: [runtime],
+        defaultRuntimeId: runtime.descriptor.id,
+      }),
+    });
+    const member = await defineExpert({
+      id: "member",
+      name: "Member",
+      description: "Member",
+      tags: [],
+      scope: "test",
+      workspace: home,
+      pragmaHome: home,
+    });
+    const launcher = createAgentLauncher({ experts: [member], maxConcurrency: 2, maxDepth: 2 });
+    const lead = await defineExpert({
+      id: "lead",
+      name: "Lead",
+      description: "Lead",
+      tags: [],
+      scope: "test",
+      workspace: home,
+      pragmaHome: home,
+      tools: launcher.tools,
+    });
+    const session = await app.experts.createSession(lead);
+    const active = await session.prompt("coordinate", {
+      requestId: "invalid-wait-steer-race",
+    });
+    await waitPending;
+    const steered = session.prompt("change priorities", {
+      requestId: "invalid-wait-steer-race-guidance",
+      mode: "steer",
+    });
+    releaseWaitHook();
+
+    await expect(steered).resolves.toMatchObject({
+      requestedMode: "steer",
+      effectiveMode: "steer",
+    });
+    await expect(active.result).resolves.toContain("Invocation not found: missing-invocation");
+    expect(nativeSteers).toBe(1);
+    await session.close();
+  }, 15_000);
+
   it("rejects unsupported next-boundary steer and queues an after-current continuation", async () => {
     const home = await mkdtemp(join(tmpdir(), "pragma-peer-collaboration-"));
     const backendQueries: string[] = [];
@@ -4583,6 +4773,37 @@ describe("Expert delegation declarations", () => {
     expect(launcher.tools[0]?.description).toContain(
       `- ${expert.id}: ${expert.name}. ${expert.description}`,
     );
+  });
+
+  it("lists the initial Agent page without optional filters or cursors", async () => {
+    const { expert } = await fixture();
+    const list = createAgentLauncher({ experts: [expert] }).tools.find(
+      (tool) => tool.name === "list_agents",
+    );
+    if (list === undefined) throw new Error("list_agents tool is missing.");
+
+    const requests: unknown[] = [];
+    const context = {
+      execution: {
+        executionId: "list-initial-page-execution",
+        invocationId: "list-initial-page-invocation",
+        depth: 0,
+        listAgents: async (request: unknown) => {
+          requests.push(request);
+          return { availableExperts: [], contexts: [] };
+        },
+      },
+    };
+
+    await expect(list.call({}, undefined, context)).resolves.not.toMatchObject({ isError: true });
+    await expect(
+      list.call({ expertId: "", cursor: "" }, undefined, context),
+    ).resolves.not.toMatchObject({ isError: true });
+    await expect(
+      list.call({ expertId: "  ", cursor: "  " }, undefined, context),
+    ).resolves.not.toMatchObject({ isError: true });
+
+    expect(requests).toEqual([{}, {}, {}]);
   });
 
   it("bounds Expert waits and applies the 10-minute default", async () => {

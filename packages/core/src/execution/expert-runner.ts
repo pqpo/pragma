@@ -607,11 +607,11 @@ export class ExecutionController {
     request: { readonly requestId: string; readonly content: string; readonly targetRunId: string },
   ): Promise<void> {
     if (
-      this.orchestrators.get(contextId)?.wakeWait(contextId, {
+      (await this.orchestrators.get(contextId)?.wakeWait(contextId, {
         kind: "steer",
         requestId: request.requestId,
         content: request.content,
-      }) === true
+      })) === true
     ) {
       return;
     }
@@ -626,11 +626,11 @@ export class ExecutionController {
     readonly content: string;
   }): Promise<"steered" | "waiting_continuation" | "not_active" | "unsupported"> {
     if (
-      this.orchestrators.get(request.contextId)?.wakeWait(request.contextId, {
+      (await this.orchestrators.get(request.contextId)?.wakeWait(request.contextId, {
         kind: "steer",
         requestId: request.requestId,
         content: request.content,
-      }) === true
+      })) === true
     ) {
       return "waiting_continuation";
     }
@@ -1117,29 +1117,35 @@ export async function runExpertInvocation(options: RunExpertInvocationOptions): 
         (await orchestrator.hasOwnedUnjoined(options.invocationId))
       ) {
         await appendInvocationFinalMessage(options, turn.runId, turn.finalMessage, undefined);
-        await options.store.commit({
-          commitId: randomUUID(),
-          executionId: options.executionId,
-          invocationPatches: [
-            {
-              invocationId: options.invocationId,
-              patch: {
-                status: "waiting",
-                waitReason: "experts",
-                ...(invocationUsage === undefined ? {} : { usage: invocationUsage }),
-              },
-            },
-          ],
-          events: [
-            { invocationId: options.invocationId, type: "expert.children.waiting", data: {} },
-          ],
-        });
         const waitResult = await orchestrator.waitForOwnedUnjoined(
           options.invocationId,
           interactionAccess,
           options.controller.signalForInvocation(options.invocationId),
           options.delegationPermit,
           AUTOMATIC_EXPERT_WAIT_TIMEOUT_MS,
+          async () => {
+            await options.store.commit({
+              commitId: randomUUID(),
+              executionId: options.executionId,
+              invocationPatches: [
+                {
+                  invocationId: options.invocationId,
+                  patch: {
+                    status: "waiting",
+                    waitReason: "experts",
+                    ...(invocationUsage === undefined ? {} : { usage: invocationUsage }),
+                  },
+                },
+              ],
+              events: [
+                {
+                  invocationId: options.invocationId,
+                  type: "expert.children.waiting",
+                  data: {},
+                },
+              ],
+            });
+          },
         );
         const result = {
           completed: waitResult.completed,

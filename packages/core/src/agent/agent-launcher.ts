@@ -178,12 +178,19 @@ function createLifecycleTools(
         "List the complete Expert directory and current or resumable Runtime Contexts in this Team Session. Visibility does not grant action permission; use each returned permission flag to choose spawn_expert, continue_expert, steer_expert, or interrupt_expert.",
       inputSchema: objectSchema(
         {
-          expertId: { type: "string" },
+          expertId: {
+            type: "string",
+            description: "Optional Expert id filter. Omit or leave empty to include all Experts.",
+          },
           status: {
             type: "string",
             enum: ["running", "waiting", "queued", "idle", "resumable"],
           },
-          cursor: { type: "string" },
+          cursor: {
+            type: "string",
+            description:
+              "Pagination cursor returned by a previous response. Omit or leave empty for the first page.",
+          },
           limit: { type: "integer", minimum: 1, maximum: 100, default: 50 },
         },
         [],
@@ -321,13 +328,20 @@ function readList(value: unknown): {
     throw new Error("status is invalid.");
   }
   return {
-    ...(record["expertId"] === undefined
-      ? {}
-      : { expertId: readString(record["expertId"], "expertId") }),
+    ...readOptionalListString(record, "expertId"),
     ...(status === undefined ? {} : { status }),
-    ...(record["cursor"] === undefined ? {} : { cursor: readString(record["cursor"], "cursor") }),
+    ...readOptionalListString(record, "cursor"),
     ...(record["limit"] === undefined ? {} : { limit: readInteger(record["limit"], "limit") }),
   };
+}
+
+function readOptionalListString(
+  record: Record<string, unknown>,
+  name: "expertId" | "cursor",
+): Partial<Record<"expertId" | "cursor", string>> {
+  const value = record[name];
+  if (value === undefined || (typeof value === "string" && value.trim() === "")) return {};
+  return { [name]: readString(value, name) };
 }
 
 function readSteer(value: unknown): {

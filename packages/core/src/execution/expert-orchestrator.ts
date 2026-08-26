@@ -71,6 +71,13 @@ type ExpertWaitWake =
   | { readonly kind: "steer"; readonly requestId: string; readonly content: string }
   | { readonly kind: "message" };
 
+interface ExpertWaitRegistration {
+  readonly signal: Promise<void>;
+  read(): ExpertWaitWake | undefined;
+  accept(): void;
+  close(): void;
+}
+
 export interface ExpertOrchestratorOptions {
   readonly executionId: string;
   readonly rootInvocationId: string;
@@ -90,7 +97,10 @@ export class ExpertOrchestrator {
   private readonly pumping = new Set<string>();
   private readonly activeJobs = new Map<string, Promise<void>>();
   private readonly joinedInvocationIds = new Set<string>();
-  private readonly steerWaiters = new Map<string, Set<(message: ExpertWaitWake) => boolean>>();
+  private readonly steerWaiters = new Map<
+    string,
+    Set<(message: ExpertWaitWake) => Promise<boolean>>
+  >();
 
   constructor(private readonly options: ExpertOrchestratorOptions) {
     this.semaphore = new DelegationSemaphore(options.maxConcurrency);
@@ -597,7 +607,7 @@ export class ExpertOrchestrator {
             },
           ],
         });
-        this.wakeWait(agent.contextId, { kind: "message" });
+        await this.wakeWait(agent.contextId, { kind: "message" });
         return {
           messageId,
           agentId: agent.agentId,
@@ -789,22 +799,11 @@ export class ExpertOrchestrator {
     readonly wakeReason?: "steer" | "message" | undefined;
     readonly steer?: { readonly requestId: string; readonly content: string } | undefined;
   }> {
-    await this.assertAccessibleInvocations(access, request.invocationIds);
-    const resume = permit?.suspend();
-    let hasPendingWork = true;
+    const registration = this.registerWait(access.ownerContextId);
     try {
-      const result = await this.waitForInvocations(
-        access.ownerContextId,
-        access.callerInvocationId,
-        request,
-      );
-      for (const completed of result.completed) {
-        this.joinedInvocationIds.add((completed as { invocationId: string }).invocationId);
-      }
-      hasPendingWork = result.pending.length > 0;
-      return result;
+      return await this.waitWithRegistration(access, request, permit, registration);
     } finally {
-      await resume?.({ allowOvercommit: hasPendingWork });
+      registration.close();
     }
   }
 
@@ -814,6 +813,7 @@ export class ExpertOrchestrator {
     signal: AbortSignal,
     permit?: DelegationPermit,
     timeoutMs?: number,
+    markWaiting?: (() => Promise<void>) | undefined,
   ): Promise<{
     readonly timedOut: boolean;
     readonly completed: readonly unknown[];
@@ -821,29 +821,50 @@ export class ExpertOrchestrator {
     readonly wakeReason?: "steer" | "message" | undefined;
     readonly steer?: { readonly requestId: string; readonly content: string } | undefined;
   }> {
-    const agents = await this.loadScopedAgents();
-    const allInvocations = await this.options.store.listInvocations(this.options.executionId);
-    const ids = allInvocations
-      .filter(
-        (invocation) =>
-          invocation.parentInvocationId === ownerInvocationId &&
-          agents.some((agent) => agent.agentId === invocation.agentId),
-      )
-      .filter((invocation) => !this.joinedInvocationIds.has(invocation.invocationId))
-      .map((invocation) => invocation.invocationId);
-    if (ids.length === 0) return { timedOut: false, completed: [], pending: [] };
-    const result = await this.wait(
-      access,
-      { invocationIds: ids, returnWhen: "all", signal, timeoutMs },
-      permit,
-    );
-    return result;
+    const registration = this.registerWait(access.ownerContextId);
+    try {
+      await markWaiting?.();
+      const agents = await this.loadScopedAgents();
+      const allInvocations = await this.options.store.listInvocations(this.options.executionId);
+      const ids = allInvocations
+        .filter(
+          (invocation) =>
+            invocation.parentInvocationId === ownerInvocationId &&
+            agents.some((agent) => agent.agentId === invocation.agentId),
+        )
+        .filter((invocation) => !this.joinedInvocationIds.has(invocation.invocationId))
+        .map((invocation) => invocation.invocationId);
+      if (ids.length === 0) {
+        const wakeMessage = registration.read();
+        if (wakeMessage === undefined) return { timedOut: false, completed: [], pending: [] };
+        registration.accept();
+        return {
+          timedOut: false,
+          completed: [],
+          pending: [],
+          ...(wakeMessage.kind === "steer"
+            ? { wakeReason: "steer" as const, steer: wakeMessage }
+            : { wakeReason: "message" as const }),
+        };
+      }
+      return await this.waitWithRegistration(
+        access,
+        { invocationIds: ids, returnWhen: "all", signal, timeoutMs },
+        permit,
+        registration,
+      );
+    } finally {
+      registration.close();
+    }
   }
 
-  wakeWait(ownerContextId: string, message: ExpertWaitWake): boolean {
+  async wakeWait(ownerContextId: string, message: ExpertWaitWake): Promise<boolean> {
     const waiters = this.steerWaiters.get(ownerContextId);
     if (waiters === undefined || waiters.size === 0) return false;
-    return [...waiters].some((wake) => wake(message));
+    for (const wake of waiters) {
+      if (await wake(message)) return true;
+    }
+    return false;
   }
 
   async hasOwnedUnjoined(ownerInvocationId: string): Promise<boolean> {
@@ -1169,7 +1190,6 @@ export class ExpertOrchestrator {
   }
 
   private async waitForInvocations(
-    ownerContextId: string,
     ownerInvocationId: string,
     request: {
       readonly invocationIds: readonly string[];
@@ -1177,6 +1197,7 @@ export class ExpertOrchestrator {
       readonly timeoutMs?: number | undefined;
       readonly signal?: AbortSignal | undefined;
     },
+    registration: ExpertWaitRegistration,
   ): Promise<{
     readonly returnWhen: "all" | "any";
     readonly timedOut: boolean;
@@ -1191,20 +1212,6 @@ export class ExpertOrchestrator {
     );
     const iterator = subscription[Symbol.asyncIterator]();
     const deadline = request.timeoutMs === undefined ? undefined : Date.now() + request.timeoutMs;
-    let wakeMessage: ExpertWaitWake | undefined;
-    let resolveSteer: (() => void) | undefined;
-    const steerSignal = new Promise<void>((resolve) => {
-      resolveSteer = resolve;
-    });
-    const wake = (message: ExpertWaitWake) => {
-      if (wakeMessage !== undefined) return false;
-      wakeMessage = message;
-      resolveSteer?.();
-      return true;
-    };
-    const waiters = this.steerWaiters.get(ownerContextId) ?? new Set();
-    waiters.add(wake);
-    this.steerWaiters.set(ownerContextId, waiters);
     try {
       while (true) {
         if (request.signal?.aborted) throw new Error("wait_experts was cancelled.");
@@ -1220,9 +1227,9 @@ export class ExpertOrchestrator {
           ownerInvocationId,
         );
         const hasPendingMessage = (ownerInvocation?.pendingExpertMessages.length ?? 0) > 0;
+        const wakeMessage = registration.read();
         if (conditionMet || timedOut || wakeMessage !== undefined || hasPendingMessage) {
-          waiters.delete(wake);
-          if (waiters.size === 0) this.steerWaiters.delete(ownerContextId);
+          if (wakeMessage !== undefined) registration.accept();
           return {
             returnWhen,
             timedOut: !conditionMet && timedOut,
@@ -1237,13 +1244,99 @@ export class ExpertOrchestrator {
                 : { wakeReason: "message" as const }),
           };
         }
-        await Promise.race([waitForEvent(iterator, deadline, request.signal), steerSignal]);
+        await Promise.race([waitForEvent(iterator, deadline, request.signal), registration.signal]);
       }
     } finally {
-      waiters.delete(wake);
-      if (waiters.size === 0) this.steerWaiters.delete(ownerContextId);
       await subscription.close();
     }
+  }
+
+  private async waitWithRegistration(
+    access: ExpertInteractionAccess,
+    request: {
+      readonly invocationIds: readonly string[];
+      readonly returnWhen?: "all" | "any" | undefined;
+      readonly timeoutMs?: number | undefined;
+      readonly signal?: AbortSignal | undefined;
+    },
+    permit: DelegationPermit | undefined,
+    registration: ExpertWaitRegistration,
+  ): Promise<{
+    readonly returnWhen: "all" | "any";
+    readonly timedOut: boolean;
+    readonly completed: readonly unknown[];
+    readonly pending: readonly unknown[];
+    readonly wakeReason?: "steer" | "message" | undefined;
+    readonly steer?: { readonly requestId: string; readonly content: string } | undefined;
+  }> {
+    await this.assertAccessibleInvocations(access, request.invocationIds);
+    const resume = permit?.suspend();
+    let hasPendingWork = true;
+    let result: Awaited<ReturnType<ExpertOrchestrator["waitForInvocations"]>> | undefined;
+    try {
+      result = await this.waitForInvocations(access.callerInvocationId, request, registration);
+      for (const completed of result.completed) {
+        this.joinedInvocationIds.add((completed as { invocationId: string }).invocationId);
+      }
+      hasPendingWork = result.pending.length > 0;
+    } finally {
+      await resume?.({ allowOvercommit: hasPendingWork });
+    }
+    const completedResult = result;
+    if (completedResult === undefined) {
+      throw new Error("wait_experts completed without a result.");
+    }
+    const wakeMessage = registration.read();
+    if (wakeMessage === undefined || completedResult.wakeReason !== undefined) {
+      return completedResult;
+    }
+    registration.accept();
+    return {
+      ...completedResult,
+      ...(wakeMessage.kind === "steer"
+        ? { wakeReason: "steer" as const, steer: wakeMessage }
+        : { wakeReason: "message" as const }),
+    };
+  }
+
+  private registerWait(ownerContextId: string): ExpertWaitRegistration {
+    let wakeMessage: ExpertWaitWake | undefined;
+    let resolveSignal: (() => void) | undefined;
+    let closed = false;
+    let settled = false;
+    const signal = new Promise<void>((resolve) => {
+      resolveSignal = resolve;
+    });
+    let resolveAccepted!: (accepted: boolean) => void;
+    const accepted = new Promise<boolean>((resolve) => {
+      resolveAccepted = resolve;
+    });
+    const settle = (value: boolean) => {
+      if (settled) return;
+      settled = true;
+      resolveAccepted(value);
+    };
+    const wake = (message: ExpertWaitWake) => {
+      if (closed || wakeMessage !== undefined) return Promise.resolve(false);
+      wakeMessage = message;
+      resolveSignal?.();
+      return accepted;
+    };
+    const waiters = this.steerWaiters.get(ownerContextId) ?? new Set();
+    waiters.add(wake);
+    this.steerWaiters.set(ownerContextId, waiters);
+    return {
+      signal,
+      read: () => wakeMessage,
+      accept: () => settle(true),
+      close: () => {
+        if (closed) return;
+        closed = true;
+        settle(false);
+        waiters.delete(wake);
+        if (waiters.size === 0) this.steerWaiters.delete(ownerContextId);
+      },
+    };
   }
 
   private async assertAccessibleInvocations(
