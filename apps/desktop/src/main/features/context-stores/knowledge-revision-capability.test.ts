@@ -1,5 +1,8 @@
 import { describe, expect, it, vi } from "vitest";
-import { PragmaExpertResourceSchema } from "@pragma/interpreter/ast";
+import {
+  PRAGMA_DSL_WRITE_API_VERSION,
+  PragmaExpertResourceSchema,
+} from "@pragma/interpreter/ast";
 
 import { createDesktopContextResource } from "../../platform/bindings/desktop-bound-resource-policy.ts";
 import type { PragmaProjectStore } from "../projects/pragma-project-store.ts";
@@ -23,7 +26,7 @@ function fixture() {
   });
   const targetRef = `context-store:${contextResource.metadata.id}`;
   const expert = {
-    apiVersion: "pragma/v5",
+    apiVersion: PRAGMA_DSL_WRITE_API_VERSION,
     kind: "Expert",
     metadata: { id: EXPERT_ID, name: "Reflector", description: "", tags: [] },
     spec: {
@@ -37,7 +40,7 @@ function fixture() {
     },
   } as const;
   const team = {
-    apiVersion: "pragma/v5",
+    apiVersion: PRAGMA_DSL_WRITE_API_VERSION,
     kind: "ExpertTeam",
     metadata: { id: TEAM_ID, name: "Reflection team", description: "", tags: [] },
     spec: {
