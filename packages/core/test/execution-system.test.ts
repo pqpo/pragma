@@ -3549,7 +3549,7 @@ describe("Expert lifecycle orchestration", () => {
     return { output, tree, events: events.items, stats };
   }
 
-  it("rejects unsupported steer and accepts a safe-boundary message", async () => {
+  it("rejects unsupported next-boundary steer and queues an after-current continuation", async () => {
     const home = await mkdtemp(join(tmpdir(), "pragma-peer-collaboration-"));
     const backendQueries: string[] = [];
     let markBackendStarted!: () => void;
@@ -3593,30 +3593,30 @@ describe("Expert lifecycle orchestration", () => {
           const contexts = discovery["contexts"] as Array<{
             currentInvocation: { invocationId: string };
             canSteerNextBoundary: boolean;
-            canSteerImmediate: boolean;
+            canQueueAfterCurrent: boolean;
           }>;
           expect(contexts).toHaveLength(1);
           expect(contexts[0]).toMatchObject({
             canSteerNextBoundary: true,
-            canSteerImmediate: true,
+            canQueueAfterCurrent: true,
           });
           await expect(
             call("steer_expert", {
               invocationId: contexts[0]!.currentInvocation.invocationId,
-              instruction: "apply-peer-guidance-immediately",
-              delivery: "immediate",
+              instruction: "apply-peer-guidance-at-next-boundary",
+              delivery: "next_boundary",
             }),
           ).rejects.toThrow("runtime_unsupported");
           const message = await call("steer_expert", {
             invocationId: contexts[0]!.currentInvocation.invocationId,
-            instruction: "first-safe-boundary-guidance",
-            delivery: "next_boundary",
+            instruction: "first-after-current-guidance",
+            delivery: "after_current",
           });
           expect(message["outcome"]).toBe("accepted");
           await call("steer_expert", {
             invocationId: contexts[0]!.currentInvocation.invocationId,
-            instruction: "second-safe-boundary-guidance",
-            delivery: "next_boundary",
+            instruction: "second-after-current-guidance",
+            delivery: "after_current",
           });
           releaseBackend();
           const waited = await call("wait_experts", {
@@ -3656,14 +3656,14 @@ describe("Expert lifecycle orchestration", () => {
           expertId: string;
           canInterrupt: boolean;
           canSteerNextBoundary: boolean;
-          canSteerImmediate: boolean;
+          canQueueAfterCurrent: boolean;
         }>;
         expect(contexts.map((context) => context.expertId).sort()).toEqual(["backend", "frontend"]);
         expect(contexts.every((context) => context.canInterrupt === false)).toBe(true);
         expect(
           contexts.every(
             (context) =>
-              context.canSteerNextBoundary === false && context.canSteerImmediate === false,
+              context.canSteerNextBoundary === false && context.canQueueAfterCurrent === false,
           ),
         ).toBe(true);
         return { outputText: "lead:done", runtimeSessionId: session.id };
@@ -3718,8 +3718,8 @@ describe("Expert lifecycle orchestration", () => {
       query.startsWith("[Pragma expert message continuation]"),
     );
     if (continuationQuery === undefined) throw new Error("Missing message continuation turn");
-    expect(continuationQuery.indexOf("first-safe-boundary-guidance")).toBeLessThan(
-      continuationQuery.indexOf("second-safe-boundary-guidance"),
+    expect(continuationQuery.indexOf("first-after-current-guidance")).toBeLessThan(
+      continuationQuery.indexOf("second-after-current-guidance"),
     );
     expect(events.items.filter((event) => event.type === "expert.message.accepted")).toHaveLength(
       2,
@@ -3728,7 +3728,7 @@ describe("Expert lifecycle orchestration", () => {
     expect((consumed?.data as { messageIds?: string[] } | undefined)?.messageIds).toHaveLength(2);
     const backendResult = await turn.getTree();
     expect(JSON.stringify(backendResult.children[0]?.children[0]?.invocation.output)).toContain(
-      "second-safe-boundary-guidance",
+      "second-after-current-guidance",
     );
     await session.close();
   });
@@ -3790,7 +3790,7 @@ describe("Expert lifecycle orchestration", () => {
           await call("steer_expert", {
             invocationId: worker.currentInvocation.invocationId,
             instruction: "message-arrived-before-wait-registration",
-            delivery: "next_boundary",
+            delivery: "after_current",
           });
           markMessageSent();
           return { outputText: "messenger:done", runtimeSessionId: session.id };
@@ -3898,7 +3898,7 @@ describe("Expert lifecycle orchestration", () => {
         await call("steer_expert", {
           invocationId: worker.currentInvocation.invocationId,
           instruction: "must-be-cleared-on-cancel",
-          delivery: "next_boundary",
+          delivery: "after_current",
         });
         markMessageAccepted();
         return await waitForAbort(turn.signal);
@@ -4016,7 +4016,7 @@ describe("Expert lifecycle orchestration", () => {
           const steer = await call("steer_expert", {
             invocationId: backend.currentInvocation.invocationId,
             instruction: "apply-peer-guidance",
-            delivery: "immediate",
+            delivery: "next_boundary",
           });
           expect(steer).toMatchObject({ outcome: "steered", mode: "runtime" });
           const followup = await call("continue_expert", {
@@ -4563,6 +4563,13 @@ describe("Expert delegation declarations", () => {
       "steer_expert",
       "interrupt_expert",
     ]);
+    const steer = launcher.tools.find((tool) => tool.name === "steer_expert");
+    expect(steer?.inputSchema).toMatchObject({
+      required: ["invocationId", "instruction", "delivery"],
+      properties: {
+        delivery: { enum: ["next_boundary", "after_current"] },
+      },
+    });
     expect(readAgentDelegationDefinition({ ...launcher.tools[0]! })?.experts).toEqual([expert]);
     expect(readAgentDelegationDefinition(launcher.tools[0]!)?.runtimeByExpert).toEqual(
       new Map([[expert.id, "fake"]]),

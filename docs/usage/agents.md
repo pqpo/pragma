@@ -54,12 +54,14 @@ launcher 向模型公开 `spawn_expert`、`continue_expert`、`list_agents`、`w
 snapshot 并返回新的 `agentId` 与 `agentDisposition: "materialized"`。
 
 `list_agents` 的 `availableExperts` 是完整团队目录；`contexts` 同时包含本轮与历史成员 Context，并返回
-`canContinue`、两种 steer 能力提示和 `canInterrupt`。这些字段只是目录快照，实际调用会重新授权。
+`canContinue`、`canSteerNextBoundary`、`canQueueAfterCurrent` 和 `canInterrupt`。这些字段只是目录快照，
+实际调用会重新授权。
 完整目录可见不代表可以读取其他成员的完整输出、wait 其旧任务或修改它。
 
-`steer_expert` 只修正一个 active Invocation：默认 `delivery: "next_boundary"` 在下一安全边界投递，
-`delivery: "immediate"` 请求 Runtime steering；Runtime 不支持时返回 `runtime_unsupported`，不会自动
-降级。`interrupt_expert` 以 `invocationId` 精确停止任务：active 变为 `interrupted`，queued 变为
+`steer_expert` 只修正一个 active Invocation，并要求显式选择投递语义：`delivery: "next_boundary"`
+请求 Runtime 在当前 turn 的下一个可支持边界注入；Runtime 不支持时返回 `runtime_unsupported`，不会自动
+降级。`delivery: "after_current"` 等当前 Runtime turn 完成后，在同一 Invocation 中启动排队的 continuation。
+`interrupt_expert` 以 `invocationId` 精确停止任务：active 变为 `interrupted`，queued 变为
 `cancelled`，终态返回 `already_terminal`，同 Context 的其他 FIFO 任务保留。
 
 `wait_experts` 只允许当前 Invocation 直接通过 spawn 或 continue 创建的任务。成员 B continue 成员 A

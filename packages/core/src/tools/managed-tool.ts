@@ -44,7 +44,7 @@ export interface ExpertToolExecutionContext {
     | ((request: {
         readonly invocationId: string;
         readonly instruction: string;
-        readonly delivery: "next_boundary" | "immediate";
+        readonly delivery: "next_boundary" | "after_current";
       }) => Promise<unknown>)
     | undefined;
   readonly interruptExpert?:

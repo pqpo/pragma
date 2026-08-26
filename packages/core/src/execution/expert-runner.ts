@@ -1513,7 +1513,7 @@ function createExecutionContext(
     steerExpert: async (request: {
       readonly invocationId: string;
       readonly instruction: string;
-      readonly delivery: "next_boundary" | "immediate";
+      readonly delivery: "next_boundary" | "after_current";
     }) => await orchestrator.steer(interactionAccess, request),
     interruptExpert: async (request: {
       readonly invocationId: string;

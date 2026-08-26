@@ -218,18 +218,19 @@ function createLifecycleTools(
       tool({
         name: "steer_expert",
         description:
-          "Correct one exact active Expert Invocation without creating a new task. next_boundary reliably applies the instruction at that Invocation's next safe boundary; immediate requests Runtime steering and fails with runtime_unsupported when unavailable. Guidance never spills into a later Invocation.",
+          "Correct one exact active Expert Invocation without creating a new task. next_boundary requests native Runtime steering into the active turn at its next supported boundary and fails with runtime_unsupported when unavailable. after_current queues a continuation that starts only after the current Runtime turn finishes. Guidance stays in the targeted Invocation and never spills into a later one.",
         inputSchema: objectSchema(
           {
             invocationId: { type: "string" },
             instruction: { type: "string" },
             delivery: {
               type: "string",
-              enum: ["next_boundary", "immediate"],
-              default: "next_boundary",
+              enum: ["next_boundary", "after_current"],
+              description:
+                "next_boundary steers the active Runtime turn at its next supported boundary; after_current waits for that turn to finish, then starts a queued continuation in the same Invocation.",
             },
           },
-          ["invocationId", "instruction"],
+          ["invocationId", "instruction", "delivery"],
         ),
         call: async (args, signal, context) =>
           await invoke("steer_expert", signal, context?.execution?.steerExpert, readSteer(args)),
@@ -332,12 +333,12 @@ function readList(value: unknown): {
 function readSteer(value: unknown): {
   invocationId: string;
   instruction: string;
-  delivery: "next_boundary" | "immediate";
+  delivery: "next_boundary" | "after_current";
 } {
   const record = readRecord(value);
-  const delivery = record["delivery"] ?? "next_boundary";
-  if (delivery !== "next_boundary" && delivery !== "immediate") {
-    throw new Error('delivery must be "next_boundary" or "immediate".');
+  const delivery = record["delivery"];
+  if (delivery !== "next_boundary" && delivery !== "after_current") {
+    throw new Error('delivery must be "next_boundary" or "after_current".');
   }
   return {
     invocationId: readString(record["invocationId"], "invocationId"),

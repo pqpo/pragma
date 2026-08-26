@@ -12,8 +12,8 @@ Expert 不包装成单节点 Flow。普通 Expert 与 ExpertTeam 共用异步编
 `expertId` 创建全新 Runtime Context、Execution-scoped AgentInstance 和 Invocation；
 `continue_expert` 按当前 Team Session 的 `contextId` 追加 FIFO Invocation。本轮复用 Agent，跨轮恢复
 snapshot 并物化新 Agent。`wait_experts` 只汇合调用者直接创建的 Invocation；`steer_expert` 按
-`invocationId` 在下一安全边界或 Runtime steering boundary 修正当前任务；`interrupt_expert` 精确停止
-一个 active 或 queued Invocation。
+`invocationId` 选择在当前 Runtime turn 的下一个 steering boundary 注入，或等该 turn 完成后排队启动
+continuation；`interrupt_expert` 精确停止一个 active 或 queued Invocation。
 
 两种声明方式只负责提供不同治理配置：
 

@@ -20,8 +20,9 @@ description 很难判断是否会丢失上下文。`message_expert` 与 `steer_e
   跨 Execution 则恢复 snapshot 并物化新的 AgentInstance；
 - `list_agents(...)` 返回完整团队目录以及本轮和历史成员 Context；
 - `wait_experts({ invocationIds, ... })` 只等待当前 Invocation 直接通过 spawn 或 continue 创建的任务；
-- `steer_expert({ invocationId, instruction, delivery })` 以 `next_boundary` 替代旧 message，以
-  `immediate` 请求 Runtime steering；
+- `steer_expert({ invocationId, instruction, delivery })` 以 `next_boundary` 请求 Runtime 在当前 turn 的
+  下一个可支持边界注入，以 `after_current` 替代旧 message，在当前 turn 完成后启动同一 Invocation 的
+  排队 continuation；两种语义必须显式选择；
 - `interrupt_expert({ invocationId, reason? })` 只停止精确 Invocation。
 
 `expertId` 只选择 Expert 定义，`contextId` 只选择 Session 内连续上下文，`invocationId` 只选择任务，

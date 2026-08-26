@@ -504,6 +504,7 @@
 
 .mission-chat-composer-meta > .mission-usage-hint {
   flex: 0 0 auto;
+  margin-inline-start: auto;
   white-space: nowrap;
 }
 

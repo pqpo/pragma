@@ -496,8 +496,8 @@ export class ExpertOrchestrator {
               },
             }),
         canContinue: canInteract,
-        canSteerImmediate: canInteract && active !== undefined,
         canSteerNextBoundary: canInteract && active !== undefined,
+        canQueueAfterCurrent: canInteract && active !== undefined,
         canInterrupt,
       };
     });
@@ -681,7 +681,7 @@ export class ExpertOrchestrator {
     request: {
       readonly invocationId: string;
       readonly instruction: string;
-      readonly delivery: "next_boundary" | "immediate";
+      readonly delivery: "next_boundary" | "after_current";
     },
   ): Promise<unknown> {
     const requestedInvocation = await this.options.store.getInvocation(
@@ -709,7 +709,7 @@ export class ExpertOrchestrator {
     if (active === undefined || isTerminalExecutionStatus(active.status)) {
       throw new Error("stale_invocation: The target Invocation is no longer active.");
     }
-    if (request.delivery === "next_boundary") {
+    if (request.delivery === "after_current") {
       const accepted = await this.message(access, {
         agentId: agent.agentId,
         invocationId: active.invocationId,
@@ -717,7 +717,7 @@ export class ExpertOrchestrator {
       });
       return {
         outcome: "accepted",
-        delivery: "next_boundary",
+        delivery: "after_current",
         messageId: accepted.messageId,
         contextId: agent.contextId,
         agentId: agent.agentId,
@@ -755,7 +755,7 @@ export class ExpertOrchestrator {
       return {
         outcome: "steered",
         mode: outcome === "steered" ? "runtime" : "waiting_continuation",
-        delivery: "immediate",
+        delivery: "next_boundary",
         contextId: agent.contextId,
         agentId: agent.agentId,
         invocationId: active.invocationId,
