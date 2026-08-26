@@ -207,6 +207,23 @@ describe("capability row actions", () => {
     expect(html).toContain("data-capability-row-action");
   });
 
+  it("lists system capabilities as built-in without mutation actions", () => {
+    const html = renderToStaticMarkup(
+      <CapabilityDirectoryFragment
+        capabilities={[{ ...capability, managedBy: "system" }]}
+        onOpen={() => undefined}
+        onChanged={() => undefined}
+      />,
+    );
+
+    expect(html).toContain("Built-in");
+    expect(html).toContain("Test Skill");
+    expect(html).toMatch(
+      /capability-name-title-row.*<strong title="Test Skill">Test Skill<\/strong><span class="capability-built-in-chip">Built-in<\/span>/,
+    );
+    expect(html).not.toContain('aria-label="More actions for Test Skill"');
+  });
+
   it("opens every capability kind in its matching update mode", () => {
     expect(capabilityEditMode("skill")).toBe("skill");
     expect(capabilityEditMode("mcp_server")).toBe("mcp");

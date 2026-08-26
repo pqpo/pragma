@@ -442,6 +442,26 @@ export const studio = {
   revisionTaskCount: "{{count}} tasks",
   revisionTaskColumn: "Revision request",
   revisionUpdatedAt: "Updated",
+  revisionErrorModelNotConfigured:
+    "No revision model is configured. Configure one in Settings → Models & Providers, then retry.",
+  revisionErrorModelUnavailable:
+    "The selected revision model is unavailable. Choose another model in Settings, then retry.",
+  revisionErrorRuntimeUnavailable:
+    "The revision runtime is currently unavailable. Check Runtime settings, then retry.",
+  revisionErrorTimeout: "The revision assistant timed out. Try again later.",
+  revisionErrorConflict: "This task changed. Refresh the page and try again.",
+  revisionErrorStateChanged: "This task's state changed. Refresh the page and try again.",
+  revisionErrorProfileConflict:
+    "The revision model settings changed. Refresh the page and try again.",
+  revisionErrorApplyFailed: "The change could not be applied. Refresh the page and try again.",
+  revisionErrorGeneric: "The revision task could not be completed. Try again later.",
+  revisionSource: {
+    user: "User",
+    "memory-learning": "Memory learning",
+    "expert-reflection": "Expert reflection",
+  },
+  revisionReflectionProvenance: "Team {{teamId}} · Expert {{expertId}} · Execution {{executionId}}",
+  revisionExpertProvenance: "Expert {{expertId}} · Execution {{executionId}}",
   revisionStoreFilter: "Knowledge base filter",
   revisionPrompt: "Revision request",
   revisionPromptPlaceholder: "Describe what should be added, corrected, reorganized, or removed.",
@@ -1114,6 +1134,7 @@ export const studio = {
   pluginOrigin: "Plugin origin",
   origin: "Origin",
   builtIn: "Built-in",
+  builtInHost: "Built-in Host",
   custom: "Custom",
   imported: "Imported",
   ready: "Ready",

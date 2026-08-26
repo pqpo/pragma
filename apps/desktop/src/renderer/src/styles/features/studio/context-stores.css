@@ -820,13 +820,12 @@
 }
 
 .context-store-revisions .studio-screen-body {
-  padding: 0 48px 48px 0;
+  padding: 0 0 48px;
 }
 
 .revision-task-heading {
   align-items: flex-end;
   gap: 32px;
-  padding-right: 48px;
 }
 
 .revision-task-heading-copy {

@@ -121,6 +121,32 @@
   gap: 3px;
 }
 
+.capability-name-title-row,
+.capability-detail-name-row {
+  display: flex;
+  min-width: 0;
+  align-items: center;
+  gap: 6px;
+}
+
+.capability-name-title-row strong {
+  min-width: 0;
+  flex: 0 1 auto;
+}
+
+.capability-built-in-chip {
+  flex: 0 0 auto;
+  padding: 1px 6px;
+  border: 1px solid rgb(88 121 104 / 22%);
+  border-radius: 999px;
+  background: var(--green-soft);
+  color: var(--green-dark);
+  font-size: 10px;
+  font-weight: 600;
+  line-height: 1.4;
+  white-space: nowrap;
+}
+
 .capability-name strong {
   overflow: hidden;
   color: var(--text);
@@ -581,8 +607,17 @@
 }
 
 .capability-detail-title h1 {
+  min-width: 0;
+  overflow: hidden;
   font-size: 27px;
   letter-spacing: -0.04em;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.capability-detail-name-row {
+  max-width: 100%;
+  flex: 0 1 auto;
 }
 
 .capability-detail-title p {

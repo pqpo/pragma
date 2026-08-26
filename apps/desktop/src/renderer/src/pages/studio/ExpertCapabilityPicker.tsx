@@ -789,7 +789,7 @@ export function ToolResults(props: {
                           <small>{tool.description ?? t("externalTool")}</small>
                         </span>
                       </label>
-                      {checked ? (
+                      {checked && capability.managedBy !== "system" ? (
                         <div className="tool-approval-select">
                           <span className="sr-only">
                             {t("toolApprovalFor", { name: tool.name })}

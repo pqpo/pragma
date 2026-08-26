@@ -122,6 +122,7 @@ export function StudioPage(props: {
   const [revisionStoreFilter, setRevisionStoreFilter] = useState<string | undefined>();
   const [revisionTaskCount, setRevisionTaskCount] = useState(0);
   const [capabilities, setCapabilities] = useState<readonly Capability[]>([]);
+  const userCapabilities = capabilities.filter((capability) => capability.managedBy !== "system");
   const [plugins, setPlugins] = useState<readonly DesktopPlugin[]>([]);
   const [selectedPluginRef, setSelectedPluginRef] = useState<string | null>(null);
   const [selectedCapabilityId, setSelectedCapabilityId] = useState<string | null>(null);
@@ -1101,7 +1102,7 @@ export function StudioPage(props: {
         <PragmaBundleDialog
           mode={bundleMode}
           project={project}
-          capabilities={capabilities}
+          capabilities={userCapabilities}
           contextStores={contextStores}
           runtimes={runtimes}
           onRefreshRuntimes={refreshRuntimeAvailability}

@@ -16,7 +16,7 @@ import { useTranslation } from "react-i18next";
 
 import type { ContextStore, ContextStoreRevisionJob } from "../../../../shared/contracts/index.ts";
 import { SelectMenu } from "../../components/SelectMenu.tsx";
-import { errorMessage } from "../../lib/errors.ts";
+import { localizedContextStoreRevisionError } from "../../lib/context-store-revision-errors.ts";
 import { StudioScreenFrame } from "./StudioScreenFrame.tsx";
 import { desktopApi } from "./studio-model.ts";
 
@@ -90,6 +90,8 @@ export function ContextStoreRevisionFragment(props: {
   readonly onBack: () => void;
 }) {
   const { t, i18n } = useTranslation("studio");
+  const translateRevisionError = (key: string, options?: Record<string, unknown>) =>
+    options === undefined ? t(key) : t(key, options);
   const [storeId, setStoreId] = useState(props.initialStoreId ?? "");
   const [jobs, setJobs] = useState<readonly ContextStoreRevisionJob[]>([]);
   const [selectedJobId, setSelectedJobId] = useState<string | null>(null);
@@ -112,7 +114,7 @@ export function ContextStoreRevisionFragment(props: {
       );
       setError(null);
     } catch (caught) {
-      setError(errorMessage(caught));
+      setError(localizedContextStoreRevisionError(caught, translateRevisionError));
     }
   };
 
@@ -141,7 +143,7 @@ export function ContextStoreRevisionFragment(props: {
       if (action === "delete") setSelectedJobId(null);
       await load();
     } catch (caught) {
-      setError(errorMessage(caught));
+      setError(localizedContextStoreRevisionError(caught, translateRevisionError));
     } finally {
       setBusy(null);
     }
@@ -232,7 +234,8 @@ export function ContextStoreRevisionFragment(props: {
                       <span className="revision-task-summary">
                         <strong title={job.request.prompt}>{job.request.prompt}</strong>
                         <small title={store?.name ?? job.request.storeId}>
-                          {store?.name ?? job.request.storeId}
+                          {store?.name ?? job.request.storeId} ·{" "}
+                          {t(`revisionSource.${job.request.source}`)}
                         </small>
                       </span>
                       <span className="revision-task-result">
@@ -243,8 +246,15 @@ export function ContextStoreRevisionFragment(props: {
                           {t(`revisionState.${job.state}`)}
                         </span>
                         {job.error !== undefined ? (
-                          <span className="form-error" role="alert" title={job.error.message}>
-                            {job.error.message}
+                          <span
+                            className="form-error"
+                            role="alert"
+                            title={localizedContextStoreRevisionError(
+                              job.error,
+                              translateRevisionError,
+                            )}
+                          >
+                            {localizedContextStoreRevisionError(job.error, translateRevisionError)}
                           </span>
                         ) : null}
                       </span>
@@ -347,6 +357,20 @@ export function ContextStoreRevisionDiffFragment(props: {
             <div>
               <h1 id="context-store-revision-detail-title">{t("revisionResult")}</h1>
               <p>{revisionMetadata}</p>
+              {props.job.request.provenance === undefined ? null : (
+                <p>
+                  {props.job.request.provenance.teamId === undefined
+                    ? t("revisionExpertProvenance", {
+                        expertId: props.job.request.provenance.expertId,
+                        executionId: props.job.request.provenance.executionId,
+                      })
+                    : t("revisionReflectionProvenance", {
+                        teamId: props.job.request.provenance.teamId,
+                        expertId: props.job.request.provenance.expertId,
+                        executionId: props.job.request.provenance.executionId,
+                      })}
+                </p>
+              )}
             </div>
             <div className="revision-diff-actions">
               <span className={`revision-task-state is-${props.job.state}`}>

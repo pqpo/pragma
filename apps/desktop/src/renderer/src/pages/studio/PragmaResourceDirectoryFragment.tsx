@@ -673,7 +673,7 @@ function TeamDetail(props: {
       >
         <header>
           <div>
-            <h2 id="team-context-heading">{t("context")}</h2>
+            <h2 id="team-context-heading">{t("teamKnowledgeBases")}</h2>
             <p>{t("teamContextDescription")}</p>
           </div>
         </header>

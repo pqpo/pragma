@@ -31,6 +31,7 @@ export function CapabilityDetailFragment(props: {
 }) {
   const { t } = useTranslation("studio");
   const { capability } = props;
+  const isBuiltIn = capability.managedBy === "system";
   const definition = capability.definition;
   const [skillDocument, setSkillDocument] = useState<SkillDocument | null>(null);
   const [skillFiles, setSkillFiles] = useState<readonly SkillFileEntry[]>([]);
@@ -201,13 +202,20 @@ export function CapabilityDetailFragment(props: {
           </span>
           <div className="capability-detail-title">
             <div>
-              <h1 id="capability-detail-name">{capability.manifest.name}</h1>
+              <span className="capability-detail-name-row">
+                <h1 id="capability-detail-name" title={capability.manifest.name}>
+                  {capability.manifest.name}
+                </h1>
+                {isBuiltIn ? (
+                  <span className="capability-built-in-chip">{t("builtIn")}</span>
+                ) : null}
+              </span>
               <span className="capability-type">{capabilityTypeLabel(capability)}</span>
               <span className="version-label">Revision {capability.manifest.latestRevision}</span>
             </div>
             <p>{definition.description}</p>
           </div>
-          {definition.kind === "skill" ? (
+          {isBuiltIn ? null : definition.kind === "skill" ? (
             <button
               className="secondary-button"
               type="button"
@@ -238,7 +246,9 @@ export function CapabilityDetailFragment(props: {
           <DetailFact label={t("runtimeKey")}>
             <code>{capability.manifest.runtimeKey}</code>
           </DetailFact>
-          <DetailFact label={t("sourceConnection")}>{capabilitySource(capability)}</DetailFact>
+          <DetailFact label={t("sourceConnection")}>
+            {capabilitySource(capability, t("builtInHost"))}
+          </DetailFact>
           <DetailFact label={t("lastChecked")}>
             {new Date(capability.health.checkedAt).toLocaleString()}
           </DetailFact>
@@ -441,7 +451,8 @@ function SkillRevisionPanel(props: { readonly capabilityId: string }) {
     };
   }, [props.capabilityId]);
   useEffect(() => {
-    if (!jobs.some((job) => ["pending", "running", "evaluating", "applying"].includes(job.state))) return;
+    if (!jobs.some((job) => ["pending", "running", "evaluating", "applying"].includes(job.state)))
+      return;
     const timer = setInterval(() => {
       void window.pragmaDesktop
         .listSkillRevisions({ capabilityId: props.capabilityId })
@@ -789,7 +800,8 @@ function capabilityIcon(capability: Capability) {
   }
 }
 
-function capabilitySource(capability: Capability): string {
+function capabilitySource(capability: Capability, builtInHostLabel: string): string {
+  if (capability.managedBy === "system") return builtInHostLabel;
   const definition = capability.definition;
   if (definition.kind === "skill") return "Uploaded package · SKILL.md";
   if (definition.kind === "http_service") {
