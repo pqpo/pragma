@@ -2,6 +2,7 @@ apiVersion: pragma/v5
 kind: Bundle
 imports:
   - ./capabilities/0000000000skdrft.pragma.yaml
+  - ./capabilities/0000000000manage.pragma.yaml
   - ./capabilities/1h2j3k4m5n6p7q8r.pragma.yaml
   - ./capabilities/2h3j4k5m6n7p8q9r.pragma.yaml
   - ./context-stores/0000000000st0ctx.pragma.yaml

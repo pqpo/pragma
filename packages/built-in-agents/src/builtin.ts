@@ -29,6 +29,7 @@ import {
   PragmaExpertIdSchema,
   PragmaExpertRefSchema,
   PragmaExpertResourceSchema,
+  PragmaSemanticResourceIdSchema,
   type PragmaExpertResource,
   type PragmaResource,
 } from "@pragma/interpreter/ast";
@@ -42,6 +43,11 @@ export const MEMORY_CURATOR_ID = PragmaExpertIdSchema.parse(
   "0000000000mem0ry",
 ) as "0000000000mem0ry";
 export const MEMORY_CURATOR_SKILL_DRAFT_CAPABILITY_ID = "0000000000skdrft" as const;
+export const PRAGMA_MANAGEMENT_CAPABILITY_ID = PragmaSemanticResourceIdSchema.parse(
+  "0000000000manage",
+) as "0000000000manage";
+export const PRAGMA_MANAGEMENT_DESKTOP_CAPABILITY_ID =
+  "00000000-0000-4000-8000-000000000101" as const;
 export const STORE_REVISION_EXPERT_ID = PragmaExpertIdSchema.parse(
   "0000000000st0rev",
 ) as "0000000000st0rev";
@@ -66,6 +72,18 @@ export const MEMORY_CURATOR_SKILL_DRAFT_CAPABILITY_REF = PragmaCapabilityRefSche
 export const MEMORY_CURATOR_SKILL_DRAFT_BINDING_REF = PragmaBindingRefSchema.parse(
   "binding:pragma.memory-curator-skill-draft",
 ) as "binding:pragma.memory-curator-skill-draft";
+export const PRAGMA_MANAGEMENT_CAPABILITY_REF = PragmaCapabilityRefSchema.parse(
+  `capability:${PRAGMA_MANAGEMENT_CAPABILITY_ID}`,
+) as `capability:${typeof PRAGMA_MANAGEMENT_CAPABILITY_ID}`;
+export const PRAGMA_MANAGEMENT_BINDING_REF = PragmaBindingRefSchema.parse(
+  "binding:pragma.management",
+) as "binding:pragma.management";
+
+export function pragmaManagementCapabilityResource(): PragmaResource {
+  return parsePragmaYaml(
+    BUILT_IN_AGENT_FILES["capabilities/0000000000manage.pragma.yaml"]!,
+  ) as PragmaResource;
+}
 export const STORE_REVISION_EXPERT_REF = PragmaExpertRefSchema.parse(
   `expert:${STORE_REVISION_EXPERT_ID}`,
 ) as `expert:${typeof STORE_REVISION_EXPERT_ID}`;

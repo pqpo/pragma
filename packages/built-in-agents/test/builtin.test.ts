@@ -62,6 +62,7 @@ describe("built-in Pragma Agent DSL", () => {
       "Capability",
       "Capability",
       "Capability",
+      "Capability",
       "ContextStore",
       "Expert",
       "Expert",
@@ -445,7 +446,7 @@ describe("built-in Pragma Agent DSL", () => {
     );
     expect(
       project.listResources().filter((candidate) => candidate.kind === "Capability"),
-    ).toHaveLength(4);
+    ).toHaveLength(5);
     expect(await project.validate()).toEqual([]);
   });
 

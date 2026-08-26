@@ -57,26 +57,45 @@ export const ContextStoreRevisionRequestSchema = z
     schemaVersion: z.literal("pragma.context-store-revision-request/v1"),
     storeId: z.string().uuid(),
     prompt: z.string().trim().min(1).max(50_000),
-    source: z.enum(["user", "memory-learning"]),
+    source: z.enum(["user", "memory-learning", "expert-reflection"]),
     sourceDigest: z
       .string()
       .regex(/^[a-f0-9]{64}$/u)
       .optional(),
+    provenance: z
+      .object({
+        executionId: z.string().min(1).max(200),
+        invocationId: z.string().min(1).max(200),
+        expertId: z.string().min(1).max(200),
+        teamId: z.string().min(1).max(200).optional(),
+      })
+      .strict()
+      .optional(),
   })
   .strict()
   .superRefine((request, context) => {
-    if (request.source === "memory-learning" && request.sourceDigest === undefined) {
+    if (request.source !== "user" && request.sourceDigest === undefined) {
       context.addIssue({
         code: "custom",
         path: ["sourceDigest"],
-        message: "Memory learning revisions require a source digest.",
+        message: "Machine-submitted revisions require a source digest.",
       });
     }
-    if (request.source === "user" && request.sourceDigest !== undefined) {
+    if (
+      request.source === "user" &&
+      (request.sourceDigest !== undefined || request.provenance !== undefined)
+    ) {
       context.addIssue({
         code: "custom",
         path: ["sourceDigest"],
-        message: "User revision requests cannot attach a Memory source digest.",
+        message: "User revision requests cannot attach machine provenance.",
+      });
+    }
+    if ((request.source === "expert-reflection") !== (request.provenance !== undefined)) {
+      context.addIssue({
+        code: "custom",
+        path: ["provenance"],
+        message: "Only expert reflection revisions require execution provenance.",
       });
     }
   });

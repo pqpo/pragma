@@ -1,0 +1,12 @@
+apiVersion: pragma/v5
+kind: Capability
+metadata:
+  id: 0000000000manage
+  name: Pragma management tools
+  description: Host tools for managing Pragma resources and work. Currently provides knowledge revision submission.
+  tags: [builtin, system, pragma, management]
+spec:
+  adapter: pragma.capability.host@v1
+  binding: binding:pragma.management
+  config:
+    key: pragma.management
