@@ -541,6 +541,11 @@
   box-shadow: 0 0 0 3px var(--focus-ring);
 }
 
+.mission-executor-option-actions > button:disabled {
+  opacity: 0.55;
+  cursor: default;
+}
+
 .mission-executor-empty {
   display: grid;
   min-height: 140px;

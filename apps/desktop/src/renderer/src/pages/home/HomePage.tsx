@@ -1709,30 +1709,29 @@ function MissionExecutorPicker(props: {
                         }
                         onChooseWorkspace={() => props.onChooseFavoriteWorkspace(executor.ref)}
                       />
-                      {!executor.alwaysVisible ? (
-                        <button
-                          type="button"
-                          aria-label={
-                            executor.preference.hidden
-                              ? t("restoreNamed", { name: copy.name })
-                              : t("hideNamed", { name: copy.name })
-                          }
-                          title={
-                            executor.preference.hidden ? t("restoreExecutor") : t("hideExecutor")
-                          }
-                          onClick={() =>
-                            void props.onPreferenceChange(executor.ref, {
-                              hidden: !executor.preference.hidden,
-                            })
-                          }
-                        >
-                          {executor.preference.hidden ? (
-                            <Eye size={16} aria-hidden="true" />
-                          ) : (
-                            <EyeSlash size={16} aria-hidden="true" />
-                          )}
-                        </button>
-                      ) : null}
+                      <button
+                        type="button"
+                        aria-label={
+                          executor.preference.hidden
+                            ? t("restoreNamed", { name: copy.name })
+                            : t("hideNamed", { name: copy.name })
+                        }
+                        title={
+                          executor.preference.hidden ? t("restoreExecutor") : t("hideExecutor")
+                        }
+                        disabled={executor.alwaysVisible}
+                        onClick={() =>
+                          void props.onPreferenceChange(executor.ref, {
+                            hidden: !executor.preference.hidden,
+                          })
+                        }
+                      >
+                        {executor.preference.hidden ? (
+                          <Eye size={16} aria-hidden="true" />
+                        ) : (
+                          <EyeSlash size={16} aria-hidden="true" />
+                        )}
+                      </button>
                     </span>
                   </div>
                 );

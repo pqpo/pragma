@@ -1419,7 +1419,7 @@
 .capability-catalog .capability-row {
   grid-template-columns:
     minmax(220px, 1.4fr) minmax(92px, 0.45fr) minmax(160px, 0.9fr)
-    minmax(105px, 0.55fr) max-content;
+    minmax(105px, 0.55fr) 110px;
 }
 
 .capability-catalog .capability-column-actions {
@@ -1429,7 +1429,7 @@
 @container capability-catalog (max-width: 850px) {
   .capability-catalog .capability-table-heading,
   .capability-catalog .capability-row {
-    grid-template-columns: minmax(210px, 1fr) minmax(92px, 0.4fr) minmax(105px, 0.45fr) max-content;
+    grid-template-columns: minmax(210px, 1fr) minmax(92px, 0.4fr) minmax(105px, 0.45fr) 110px;
   }
 
   .capability-catalog .capability-column-source {
@@ -1461,7 +1461,7 @@
 
   .capability-catalog .capability-table-heading,
   .capability-catalog .capability-row {
-    grid-template-columns: minmax(180px, 1fr) minmax(92px, 0.4fr) max-content;
+    grid-template-columns: minmax(180px, 1fr) minmax(92px, 0.4fr) 110px;
   }
 
   .capability-catalog .capability-column-status {
@@ -1482,7 +1482,7 @@
 
   .capability-catalog .capability-table-heading,
   .capability-catalog .capability-row {
-    grid-template-columns: minmax(0, 1fr) max-content;
+    grid-template-columns: minmax(0, 1fr) 110px;
     gap: 10px;
   }
 
