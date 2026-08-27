@@ -90,6 +90,8 @@ const ProjectIdentityMigrationManifestSchema = z
 
 export interface PragmaProjectStore {
   get(): Promise<PragmaProjectSnapshot>;
+  /** Read one exact immutable revision without consulting the project head. */
+  getRevision(revision: number): Promise<PragmaProjectSnapshot>;
   ensurePublished(): Promise<PragmaProjectSnapshot>;
   publish(input: {
     readonly expectedRevision: number;
@@ -409,6 +411,10 @@ export function createPragmaProjectStore(options: {
   return {
     projectId,
     get,
+    async getRevision(revision) {
+      await ensureMigrated();
+      return PragmaProjectSnapshotSchema.parse(await service.get(projectId, revision));
+    },
     ensurePublished,
     publish,
     async upsert(input) {

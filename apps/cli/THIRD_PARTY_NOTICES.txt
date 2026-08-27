@@ -1,0 +1,8 @@
+Pragma CLI bundles third-party JavaScript dependencies into its ESM runtime.
+
+The upstream copyright and license comments retained by the bundle apply to
+the corresponding bundled components. The native @napi-rs/keyring dependency
+is installed through npm and retains its own package license and notices.
+
+Pragma itself is distributed under the Pragma Source Available License 1.0;
+see LICENSE in this package.

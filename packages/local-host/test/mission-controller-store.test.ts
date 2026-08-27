@@ -78,6 +78,47 @@ describe("MissionControllerStore", () => {
     ).rejects.toMatchObject({ code: "IDEMPOTENCY_CONFLICT" });
   });
 
+  it("attaches a Host Mission identity without changing the v1 registry tuple", async () => {
+    const store = await createStore();
+    const requestId = "00000000-0000-4000-8000-000000000021";
+    const attachedMissionId = "00000000-0000-4000-8000-000000000022";
+    const hash = payloadHash("attached-run");
+
+    await expect(
+      store.reserveAttachedRunRequest({
+        requestId,
+        payloadHash: hash,
+        missionId: attachedMissionId,
+      }),
+    ).resolves.toEqual({ missionId: attachedMissionId, disposition: "reserved" });
+    await expect(
+      store.reserveAttachedRunRequest({
+        requestId,
+        payloadHash: hash,
+        missionId: attachedMissionId,
+      }),
+    ).resolves.toEqual({ missionId: attachedMissionId, disposition: "existing" });
+    await expect(store.readRunRequest({ requestId })).resolves.toMatchObject({
+      missionId: attachedMissionId,
+      payloadHash: hash,
+    });
+
+    await expect(
+      store.reserveAttachedRunRequest({
+        requestId,
+        payloadHash: payloadHash("changed"),
+        missionId: attachedMissionId,
+      }),
+    ).rejects.toMatchObject({ code: "IDEMPOTENCY_CONFLICT" });
+    await expect(
+      store.reserveAttachedRunRequest({
+        requestId: "00000000-0000-4000-8000-000000000023",
+        payloadHash: hash,
+        missionId: attachedMissionId,
+      }),
+    ).rejects.toMatchObject({ code: "IDEMPOTENCY_CONFLICT" });
+  });
+
   it("makes command append idempotent and persists applied command events", async () => {
     const store = await createStore();
     const guard = await store.claim({

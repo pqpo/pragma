@@ -54,3 +54,76 @@ pragma completion powershell
 
 CLI 不会把 secret、Runtime 环境或 Desktop 私有状态写入 stdout；诊断和错误信息按协议输出，
 并将人类可读错误写入 stderr。
+
+## 安装与运行环境
+
+发行包名为 `@pragma/cli`，命令名为 `pragma`。当前发行包要求 Node.js 22+，支持 macOS
+Apple Silicon、macOS Intel 和 Windows x64；Linux 安装会被 npm 的 `os` 元数据拒绝。
+发行包只包含编译后的 ESM 产物和 OS keychain 原生依赖，不在安装期下载 payload，也不携带
+第二份 Node.js。
+
+```bash
+node --version
+npm install --global @pragma/cli@latest
+pragma version
+pragma doctor
+```
+
+预发行版本使用 `@next`，升级或回滚时使用不可变的显式版本号：
+
+```bash
+npm install --global @pragma/cli@next
+npm install --global @pragma/cli@0.1.0
+npm uninstall --global @pragma/cli
+```
+
+不要用 `--force` 绕过 Node 版本、操作系统或命令冲突。降级就是安装一个已经发布的旧
+版本；已发布版本不可覆盖，也不通过移动 dist-tag 改写历史版本。
+
+## PATH 与 binary 冲突诊断
+
+npm 的 global prefix 决定 `pragma` shim 的位置。先记录 prefix 和实际命令，不要先修改
+shell 配置：
+
+```bash
+npm prefix --global
+npm root --global
+command -v pragma
+type -a pragma
+ls -l "$(npm prefix --global)/bin/pragma"
+```
+
+PowerShell 使用：
+
+```powershell
+npm prefix --global
+npm root --global
+Get-Command pragma -All
+where.exe pragma
+Get-Item "$(npm prefix --global)\pragma.cmd"
+```
+
+如果 `command -v`、`type -a`、`Get-Command -All` 或 `where.exe` 显示了另一个目录在
+npm prefix 之前，当前执行的不是本次安装的 binary。检查旧 npm prefix、Homebrew/Chocolatey
+副本、仓库的 `node_modules/.bin` 和 shell hash；清理或调整 PATH 后重新打开 shell，再运行
+`pragma version`。在 Windows 上也检查同名的 `pragma.exe`、`pragma.cmd` 和 PowerShell
+function/alias。诊断时不要删除不明文件，也不要把整个用户 PATH 覆盖成单一路径。
+
+`doctor` 负责 SecretStore/凭据迁移状态；它不会替代上述 PATH 检查。需要确认某个 prefix
+的 binary 时，可以直接调用它：
+
+```bash
+"$(npm prefix --global)/bin/pragma" version
+```
+
+Windows：
+
+```powershell
+& "$(npm prefix --global)\pragma.cmd" version
+```
+
+如果直接调用成功、裸 `pragma` 失败，问题在 PATH 顺序或 shell 缓存；如果两者都失败，
+再查看 `pragma doctor` 和 npm 安装输出。
+
+Node.js 20 即使 npm 发出 `EBADENGINE` 警告也不满足运行要求：bootstrap 会在主 bundle
+加载前以退出码 2 拒绝。启用 `engine-strict` 时安装本身应失败。

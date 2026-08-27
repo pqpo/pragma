@@ -39,6 +39,7 @@ import { createIntegrationError, IntegrationErrorSchema } from "@pragma/local-ho
 import { HumanInteractionRequestEnvelopeSchema } from "@pragma/shared/integration";
 
 import type { CliLocalHost } from "../commands/types.ts";
+import { CLI_VERSION } from "../version.ts";
 
 export function createCliLocalHost(
   input: { readonly localHost?: CliLocalHost } = {},
@@ -159,7 +160,7 @@ export function createProductionLocalHost(): CliLocalHost {
     controller: missionController,
     ownerScope,
     consumer: coreControl.consumer,
-    client: { surface: "cli", version: "0.0.0", instanceId: process.pid.toString() },
+    client: { surface: "cli", version: CLI_VERSION, instanceId: process.pid.toString() },
     assertMission: async (missionId) => {
       const snapshot = await missionController.readSnapshot({ missionId });
       if (!snapshot.events.some((event) => event.type === "mission.created")) {

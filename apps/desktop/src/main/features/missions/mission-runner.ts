@@ -110,7 +110,6 @@ import {
   parseDesktopCapabilityBindingRef,
   parseDesktopContextBindingRef,
 } from "../../platform/bindings/desktop-binding-ref.ts";
-import { MissionOperationError } from "./mission-operation-error.ts";
 import {
   createMissionResumeOptions,
   shouldCreateSuccessorExpertSession,
@@ -119,11 +118,19 @@ import type { MissionStore, MissionTimelineTurn } from "./mission-store.ts";
 import type { PragmaProjectStore } from "../projects/pragma-project-store.ts";
 import type { PluginStore } from "../plugins/plugin-store.ts";
 import type { DesktopUsageStore } from "../usage/usage-store.ts";
-import type { DesktopMissionController } from "./mission-controller-adapter.ts";
-import { createIntegrationError } from "@pragma/shared/integration";
+import { createIntegrationError, type MissionCommand } from "@pragma/shared/integration";
 import {
   createExpertSessionPromptQueueProjection,
+  createLocalHostRunHandleState,
+  hashCanonicalRunPayload,
   type PromptQueueProjection,
+  type LocalHostRunEvent,
+  type LocalHostRunHandle,
+  type LocalHostRunRequest,
+  type MissionCommandConsumer,
+  type MissionControlTargetResolution,
+  type MissionOwnerScope,
+  type ResolvedRunExecutor,
 } from "@pragma/local-host";
 
 function readPersistedPromptQueueState(
@@ -179,6 +186,37 @@ export interface MissionRunner {
   refreshMemoryContextBindings(): Promise<void>;
   get(id: string): Promise<Mission>;
   run(id: string): Promise<Mission>;
+  /** Lower-level Desktop Host adapter used by Local Host run orchestration. */
+  startLocalHostRun(input: {
+    readonly request: LocalHostRunRequest;
+    readonly executor: ResolvedRunExecutor;
+    readonly missionId: string;
+    readonly onEvent?: ((event: LocalHostRunEvent) => void) | undefined;
+  }): Promise<LocalHostRunHandle>;
+  /** Re-check the Desktop-owned Mission identity after Local Host claims its lease. */
+  assertLocalHostRunAllowed(input: {
+    readonly request: LocalHostRunRequest;
+    readonly executor: ResolvedRunExecutor;
+    readonly missionId: string;
+    readonly payloadHash?: string | undefined;
+  }): Promise<void>;
+  /** Lower-level Desktop Host adapter used by the shared Inbox consumer. */
+  createLocalHostMissionControlAdapter(options?: {
+    readonly resolvePromptAttachments?:
+      ((requestId: string) => readonly ExpertPromptAttachment[]) | undefined;
+    readonly onCommandOutcome?: ((requestId: string) => void | Promise<void>) | undefined;
+  }): {
+    readonly consumer: MissionCommandConsumer;
+    readonly assertAcquisitionAllowed: (missionId: string) => Promise<void>;
+    readonly resolveStrictTarget: (input: {
+      readonly missionId: string;
+      readonly expectedExecutionId?: string | undefined;
+    }) => Promise<MissionControlTargetResolution | undefined>;
+    readonly resolveExecutionTarget: (input: {
+      readonly missionId: string;
+      readonly expectedExecutionId?: string | undefined;
+    }) => Promise<string | undefined>;
+  };
   updateOptions(input: UpdateMissionOptions): Promise<Mission>;
   updateContextStores(input: UpdateMissionContextStores): Promise<Mission>;
   sendMessage(input: {
@@ -261,23 +299,16 @@ async function collectMissionExecutionIds(
   }
 }
 
-type PendingMissionOperation =
-  | { readonly kind: "run"; readonly promise: Promise<Mission> }
-  | { readonly kind: "options"; readonly promise: Promise<Mission> }
-  | { readonly kind: "context-stores"; readonly promise: Promise<Mission> }
-  | { readonly kind: "message"; readonly promise: Promise<MissionMessageAcceptance> }
-  | { readonly kind: "queue-steer"; readonly promise: Promise<Mission> }
-  | { readonly kind: "queue-remove"; readonly promise: Promise<Mission> }
-  | { readonly kind: "resume"; readonly promise: Promise<Mission> }
-  | { readonly kind: "compact"; readonly promise: Promise<MissionContextCompactionResult> }
-  | { readonly kind: "interrupt"; readonly promise: Promise<Mission> }
-  | { readonly kind: "delete"; readonly promise: Promise<void> };
-
 interface ActiveMissionExecution {
-  readonly handle: MutableExecution & { readonly result: Promise<unknown> };
+  readonly handle: DesktopExecutionHandle;
   readonly settlement: Promise<void>;
   readonly audience: MissionSurfaceAudience;
 }
+
+type DesktopExecutionHandle = MutableExecution & {
+  readonly result: Promise<unknown>;
+  readonly checkpointWaitingHuman: () => Promise<void>;
+};
 
 function missionSurfaceAudience(mission: Pick<Mission, "origin">): MissionSurfaceAudience {
   return isUserFacingMissionOrigin(mission.origin) ? "user" : "internal";
@@ -408,8 +439,8 @@ export function createMissionRunner(options: {
     | undefined;
   readonly adapterHostForMission?:
     ((mission: Mission, defaultHost: PragmaAdapterHost) => PragmaAdapterHost) | undefined;
-  /** Desktop Main's Local Host composition. It is optional for isolated unit tests. */
-  readonly missionController?: DesktopMissionController | undefined;
+  /** Local Host owner scope used by legacy Desktop-only persistence writes. */
+  readonly ownerScope?: Pick<MissionOwnerScope, "acquire" | "terminalDelete"> | undefined;
 }): MissionRunner {
   const logger = createPragmaLogger(options.loggerProvider, {
     component: "desktop.mission-runner",
@@ -711,7 +742,11 @@ export function createMissionRunner(options: {
   const sessionCompilationIdentities = new Map<string, string>();
   const sessionDefinitionFingerprints = new Map<string, string>();
   const memoryContextBindingsChanged = new Set<string>();
-  const pendingOperations = new Map<string, PendingMissionOperation>();
+  // The shared Local Host owns command idempotency and operation state. These
+  // two maps only coalesce Desktop-owned projection work that is already in
+  // this process; they are not a Mission-wide mutation lock.
+  const inFlightRuns = new Map<string, Promise<Mission>>();
+  const inFlightCompactions = new Map<string, Promise<MissionContextCompactionResult>>();
   const chatListeners = new Set<(notification: MissionChatNotification) => void>();
   const chatRevisions = new Map<string, number>();
   const degradedChatSync = new Set<string>();
@@ -785,12 +820,20 @@ export function createMissionRunner(options: {
       return { names: new Map<string, string>(), avatarIds: new Map<string, string>() };
     });
 
-  const trackOperation = (id: string, operation: PendingMissionOperation): void => {
-    pendingOperations.set(id, operation);
-    const clear = () => {
-      if (pendingOperations.get(id) === operation) pendingOperations.delete(id);
-    };
-    void operation.promise.then(clear, clear);
+  const startMission = (id: string): Promise<Mission> => {
+    const existing = inFlightRuns.get(id);
+    if (existing !== undefined) return existing;
+    const started = withMissionController(id, async () => await runMission(id));
+    inFlightRuns.set(id, started);
+    void started.then(
+      () => {
+        if (inFlightRuns.get(id) === started) inFlightRuns.delete(id);
+      },
+      () => {
+        if (inFlightRuns.get(id) === started) inFlightRuns.delete(id);
+      },
+    );
+    return started;
   };
 
   const emitChatUpdate = (
@@ -1150,7 +1193,7 @@ export function createMissionRunner(options: {
 
   const trackExecution = (input: {
     readonly mission: Mission;
-    readonly handle: MutableExecution & { readonly result: Promise<unknown> };
+    readonly handle: DesktopExecutionHandle;
     readonly startedAt: string;
     readonly inputMessageId: string;
     readonly sessionId?: string | undefined;
@@ -2373,6 +2416,349 @@ export function createMissionRunner(options: {
     return await options.missions.get(input.id);
   };
 
+  /**
+   * Local Host owns reservation, fencing and durable run events.  This
+   * adapter deliberately starts only the Desktop Core projection and returns
+   * its lower-level handle to Local Host; it never reserves a Mission or
+   * appends a Local Host event itself.
+   */
+  const assertLocalHostRunAllowed = async (input: {
+    readonly request: LocalHostRunRequest;
+    readonly executor: ResolvedRunExecutor;
+    readonly missionId: string;
+    readonly payloadHash?: string | undefined;
+  }): Promise<void> => {
+    const mission = await options.missions.get(input.missionId);
+    const expectedCommand = `${mission.executor.kind}.run` as LocalHostRunRequest["command"];
+    const conflict = (message: string, details: Record<string, unknown> = {}): never => {
+      throw createIntegrationError({
+        code: "IDEMPOTENCY_CONFLICT",
+        category: "conflict",
+        message,
+        details: { missionId: input.missionId, ...details },
+      });
+    };
+
+    if (mission.branch !== undefined && mission.execution === undefined) {
+      throw new Error("Continue a branched Mission by sending a new message.");
+    }
+    if (
+      mission.executor.kind !== input.request.executor.kind ||
+      mission.executor.ref !== `${input.request.executor.kind}:${input.request.executor.id}` ||
+      input.request.command !== expectedCommand
+    ) {
+      conflict("The attached Mission executor does not match the run request.", {
+        executor: input.request.executor,
+      });
+    }
+    if (
+      input.executor.descriptor.ref.kind !== input.request.executor.kind ||
+      input.executor.descriptor.ref.id !== input.request.executor.id
+    ) {
+      conflict("The resolved executor does not match the attached Mission.", {
+        executor: input.request.executor,
+      });
+    }
+    if (
+      input.request.workspace.canonicalPath !== mission.workspace.path ||
+      input.request.requestId !== mission.initialMessageId
+    ) {
+      conflict("The attached Mission workspace or initial request identity changed.", {
+        requestId: input.request.requestId,
+      });
+    }
+
+    const project = input.executor.descriptor.project;
+    if (project !== undefined) {
+      if (
+        project.projectId !== mission.project.id ||
+        project.revision !== mission.project.revision ||
+        input.request.project?.projectId !== mission.project.id ||
+        input.request.project?.revision !== mission.project.revision
+      ) {
+        conflict("The attached Mission project revision does not match the run request.");
+      }
+    } else if (input.request.project !== undefined) {
+      conflict("The built-in executor cannot carry a project binding.");
+    }
+
+    if (input.payloadHash !== undefined) {
+      const expectedPayloadHash = hashCanonicalRunPayload({
+        command: expectedCommand,
+        executor: input.executor.descriptor.ref,
+        workspace: input.request.workspace,
+        ...(project === undefined ? {} : { project }),
+        ...(mission.executor.kind === "flow"
+          ? { input: mission.flowInput }
+          : { prompt: mission.goal }),
+      });
+      if (expectedPayloadHash !== input.payloadHash) {
+        conflict("The attached Mission semantic run payload changed.", {
+          requestId: input.request.requestId,
+        });
+      }
+    }
+  };
+
+  const startLocalHostRun = async (input: {
+    readonly request: LocalHostRunRequest;
+    readonly executor: ResolvedRunExecutor;
+    readonly missionId: string;
+    readonly onEvent?: ((event: LocalHostRunEvent) => void) | undefined;
+  }): Promise<LocalHostRunHandle> => {
+    await assertLocalHostRunAllowed(input);
+    await runMission(input.missionId);
+    const current = active.get(input.missionId);
+    if (current === undefined) {
+      throw createIntegrationError({
+        code: "EXECUTION_FAILED",
+        category: "execution",
+        retryable: false,
+        message: "Desktop did not retain the started Mission execution handle.",
+        details: { missionId: input.missionId },
+      });
+    }
+    return createLocalHostRunHandleState({
+      coreHandle: current.handle,
+      executions: executionStore,
+      missionId: input.missionId,
+      release: async () => undefined,
+      onEvent: input.onEvent,
+    }).handle;
+  };
+
+  const resolveLocalHostExecutionTarget = async (input: {
+    readonly missionId: string;
+    readonly expectedExecutionId?: string | undefined;
+  }): Promise<string | undefined> => {
+    const mission = await options.missions.get(input.missionId);
+    const current =
+      mission.execution !== undefined &&
+      ["queued", "running", "waiting"].includes(mission.execution.status)
+        ? mission.execution.id
+        : undefined;
+    if (input.expectedExecutionId !== undefined && current !== input.expectedExecutionId) {
+      throw createIntegrationError({
+        code: "COMMAND_REJECTED",
+        category: "conflict",
+        message: "The expected execution is no longer active.",
+        details: {
+          reason: "execution_target_changed",
+          missionId: input.missionId,
+          expectedExecutionId: input.expectedExecutionId,
+          ...(current === undefined ? {} : { executionId: current }),
+        },
+      });
+    }
+    return current;
+  };
+
+  const resolveLocalHostStrictTarget = async (input: {
+    readonly missionId: string;
+    readonly expectedExecutionId?: string | undefined;
+  }): Promise<MissionControlTargetResolution | undefined> => {
+    const mission = await options.missions.get(input.missionId);
+    if (mission.executor.kind === "flow") {
+      throw createIntegrationError({
+        code: "COMMAND_REJECTED",
+        category: "conflict",
+        message: "Flow Missions do not support strict steer.",
+        details: { missionId: input.missionId, reason: "steer_not_supported" },
+      });
+    }
+    const current =
+      mission.execution !== undefined &&
+      mission.execution.status === "running" &&
+      mission.execution.inputMessageId !== undefined
+        ? {
+            executionId: mission.execution.id,
+            turnId: mission.execution.inputMessageId,
+          }
+        : undefined;
+    if (
+      current !== undefined &&
+      input.expectedExecutionId !== undefined &&
+      current.executionId !== input.expectedExecutionId
+    ) {
+      throw createIntegrationError({
+        code: "STEER_TARGET_CHANGED",
+        category: "conflict",
+        message: "Strict Mission steer target changed before command submission.",
+        details: {
+          missionId: input.missionId,
+          expectedExecutionId: input.expectedExecutionId,
+          executionId: current.executionId,
+        },
+      });
+    }
+    return current;
+  };
+
+  const createLocalHostMissionControlAdapter = (
+    adapterOptions: {
+      readonly resolvePromptAttachments?:
+        ((requestId: string) => readonly ExpertPromptAttachment[]) | undefined;
+      readonly onCommandOutcome?: ((requestId: string) => void | Promise<void>) | undefined;
+    } = {},
+  ) => {
+    const validateStrictTarget = async ({ command }: { readonly command: MissionCommand }) => {
+      if (command.kind !== "steer" && command.kind !== "queue.steer") return;
+      const target = command.target;
+      if (target?.executionId === undefined || target.turnId === undefined) {
+        throw createIntegrationError({
+          code: "STEER_TARGET_NOT_ACTIVE",
+          category: "conflict",
+          message: "Strict Mission command requires an active execution and canonical turn.",
+          details: { missionId: command.missionId },
+        });
+      }
+      const current = await resolveLocalHostStrictTarget({ missionId: command.missionId });
+      if (current === undefined) {
+        throw createIntegrationError({
+          code: "STEER_TARGET_CHANGED",
+          category: "conflict",
+          message: "Strict Mission steer target is no longer active.",
+          details: { missionId: command.missionId },
+        });
+      }
+      if (current.executionId !== target.executionId || current.turnId !== target.turnId) {
+        throw createIntegrationError({
+          code: "STEER_TARGET_CHANGED",
+          category: "conflict",
+          message: "Strict Mission steer target changed before command apply.",
+          details: {
+            missionId: command.missionId,
+            expectedExecutionId: target.executionId,
+            executionId: current.executionId,
+            expectedTurnId: target.turnId,
+            turnId: current.turnId,
+          },
+        });
+      }
+    };
+
+    const apply = async (command: MissionCommand): Promise<Record<string, unknown>> => {
+      switch (command.payload.kind) {
+        case "send": {
+          const accepted = await sendMissionMessage({
+            id: command.missionId,
+            content: command.payload.input.prompt,
+            requestId: command.request.requestId,
+            mode: "enqueue",
+            ...(adapterOptions.resolvePromptAttachments === undefined
+              ? {}
+              : {
+                  attachments: adapterOptions.resolvePromptAttachments(command.request.requestId),
+                }),
+          });
+          return {
+            missionId: command.missionId,
+            ...(accepted.mission.execution === undefined
+              ? {}
+              : { executionId: accepted.mission.execution.id }),
+            mode: accepted.effectiveMode,
+          };
+        }
+        case "steer": {
+          const accepted = await sendMissionMessage({
+            id: command.missionId,
+            content: command.payload.input.prompt,
+            requestId: command.request.requestId,
+            mode: "steer",
+            ...(adapterOptions.resolvePromptAttachments === undefined
+              ? {}
+              : {
+                  attachments: adapterOptions.resolvePromptAttachments(command.request.requestId),
+                }),
+          });
+          if (accepted.effectiveMode !== "steer") {
+            throw createIntegrationError({
+              code: "COMMAND_REJECTED",
+              category: "conflict",
+              message: "Strict Mission steer could not be applied to the active turn.",
+              details: { missionId: command.missionId, reason: "steer_not_supported" },
+            });
+          }
+          return {
+            missionId: command.missionId,
+            ...(accepted.mission.execution === undefined
+              ? {}
+              : { executionId: accepted.mission.execution.id }),
+            mode: "steer",
+          };
+        }
+        case "respond": {
+          const interactionId = command.target?.interactionId;
+          if (interactionId === undefined) {
+            throw createIntegrationError({
+              code: "INVALID_ARGUMENT",
+              category: "usage",
+              message: "Respond command requires an interaction target.",
+              details: { missionId: command.missionId },
+            });
+          }
+          const execution = await ensureActiveExecution(command.missionId, interactionId);
+          const request = await findHumanRequest(execution.handle, interactionId);
+          await execution.handle.respondToHumanInteraction(
+            interactionId,
+            toExpertHumanResponse(request, command.payload.response),
+            { requestId: command.request.requestId },
+          );
+          invalidateChat(command.missionId, execution.audience);
+          return {
+            missionId: command.missionId,
+            executionId: execution.handle.executionId,
+            interactionId,
+          };
+        }
+        case "interrupt": {
+          const mission = await interruptMission(command.missionId, command.target?.executionId);
+          return {
+            missionId: mission.id,
+            ...(mission.execution ? { executionId: mission.execution.id } : {}),
+          };
+        }
+        case "queue.remove": {
+          const mission = await removeQueuedMissionMessage({
+            id: command.missionId,
+            requestId: command.payload.requestId,
+          });
+          return { missionId: mission.id, requestId: command.payload.requestId };
+        }
+        case "queue.resume": {
+          const mission = await resumeMissionQueue(command.missionId);
+          return { missionId: mission.id };
+        }
+        case "queue.steer": {
+          const mission = await steerQueuedMissionMessage({
+            id: command.missionId,
+            requestId: command.payload.requestId,
+          });
+          return { missionId: mission.id, requestId: command.payload.requestId };
+        }
+      }
+    };
+
+    const consumer: MissionCommandConsumer = {
+      validateStrictTarget,
+      async apply({ command }) {
+        await validateStrictTarget({ command });
+        return { result: await apply(command) };
+      },
+      afterOutcome: async ({ command }) =>
+        await adapterOptions.onCommandOutcome?.(command.request.requestId),
+    };
+    return {
+      consumer,
+      assertAcquisitionAllowed: async (missionId: string) => {
+        const mission = await options.missions.get(missionId);
+        await options.assertExecutorReady?.(mission.executor.ref);
+      },
+      resolveStrictTarget: resolveLocalHostStrictTarget,
+      resolveExecutionTarget: resolveLocalHostExecutionTarget,
+    };
+  };
+
   const readMissionExecutionIds = async (mission: Mission): Promise<readonly string[]> => {
     if (mission.execution?.sessionId !== undefined) {
       const session = await expertSessionStore.get(mission.execution.sessionId);
@@ -2609,7 +2995,7 @@ export function createMissionRunner(options: {
         message: "This local Mission controller lost its lease and cannot perform semantic writes.",
       });
     }
-    await options.missionController?.acquire(missionId);
+    await options.ownerScope?.acquire(missionId);
     return await operation();
   };
 
@@ -2623,68 +3009,37 @@ export function createMissionRunner(options: {
     },
     refreshMemoryContextBindings,
     async run(id) {
-      const pending = pendingOperations.get(id);
-      if (pending?.kind === "run") return await pending.promise;
-      if (pending !== undefined) {
-        throw new MissionOperationError();
-      }
-      const started = withMissionController(id, async () => await runMission(id));
-      trackOperation(id, { kind: "run", promise: started });
-      return await started;
+      return await startMission(id);
     },
+    startLocalHostRun,
+    assertLocalHostRunAllowed,
+    createLocalHostMissionControlAdapter,
     async updateOptions(input) {
-      if (pendingOperations.has(input.id)) {
-        throw new MissionOperationError();
-      }
-      const updating = withMissionController(
-        input.id,
-        async () => await updateMissionOptions(input),
-      );
-      trackOperation(input.id, { kind: "options", promise: updating });
-      return await updating;
+      return await withMissionController(input.id, async () => await updateMissionOptions(input));
     },
     async updateContextStores(input) {
-      if (pendingOperations.has(input.id)) {
-        throw new MissionOperationError();
-      }
-      const updating = withMissionController(
+      return await withMissionController(
         input.id,
         async () => await updateMissionContextStores(input),
       );
-      trackOperation(input.id, { kind: "context-stores", promise: updating });
-      return await updating;
     },
     async sendMessage(input) {
-      if (pendingOperations.has(input.id)) {
-        throw new MissionOperationError();
-      }
-      const sending = withMissionController(input.id, async () => await sendMissionMessage(input));
-      trackOperation(input.id, { kind: "message", promise: sending });
-      return await sending;
+      return await withMissionController(input.id, async () => await sendMissionMessage(input));
     },
     async steerQueuedMessage(input) {
-      if (pendingOperations.has(input.id)) throw new MissionOperationError();
-      const steering = withMissionController(
+      return await withMissionController(
         input.id,
         async () => await steerQueuedMissionMessage(input),
       );
-      trackOperation(input.id, { kind: "queue-steer", promise: steering });
-      return await steering;
     },
     async removeQueuedMessage(input) {
-      if (pendingOperations.has(input.id)) throw new MissionOperationError();
-      const removing = withMissionController(
+      return await withMissionController(
         input.id,
         async () => await removeQueuedMissionMessage(input),
       );
-      trackOperation(input.id, { kind: "queue-remove", promise: removing });
-      return await removing;
     },
     async resumeQueue(id) {
-      if (pendingOperations.has(id)) throw new MissionOperationError();
-      const resuming = withMissionController(id, async () => await resumeMissionQueue(id));
-      trackOperation(id, { kind: "resume", promise: resuming });
-      return await resuming;
+      return await withMissionController(id, async () => await resumeMissionQueue(id));
     },
     async getChat(input) {
       return await getChatSnapshot(input);
@@ -2760,13 +3115,18 @@ export function createMissionRunner(options: {
       return completedUsage === undefined ? undefined : { usage: completedUsage };
     },
     async compactContext(id) {
-      const pending = pendingOperations.get(id);
-      if (pending?.kind === "compact") return await pending.promise;
-      if (pending !== undefined) {
-        throw new MissionOperationError();
-      }
+      const existing = inFlightCompactions.get(id);
+      if (existing !== undefined) return await existing;
       const compacting = compactMissionContext(id);
-      trackOperation(id, { kind: "compact", promise: compacting });
+      inFlightCompactions.set(id, compacting);
+      void compacting.then(
+        () => {
+          if (inFlightCompactions.get(id) === compacting) inFlightCompactions.delete(id);
+        },
+        () => {
+          if (inFlightCompactions.get(id) === compacting) inFlightCompactions.delete(id);
+        },
+      );
       return await compacting;
     },
     async getRuntimeBinding(id) {
@@ -2781,17 +3141,10 @@ export function createMissionRunner(options: {
       return () => workListeners.delete(listener);
     },
     async interrupt(id, expectedExecutionId) {
-      const pending = pendingOperations.get(id);
-      if (pending?.kind === "interrupt") return await pending.promise;
-      if (pending !== undefined) {
-        throw new MissionOperationError();
-      }
-      const interrupting = withMissionController(
+      return await withMissionController(
         id,
         async () => await interruptMission(id, expectedExecutionId),
       );
-      trackOperation(id, { kind: "interrupt", promise: interrupting });
-      return await interrupting;
     },
     async stopLocalController(id) {
       leaseLostMissions.add(id);
@@ -2832,18 +3185,13 @@ export function createMissionRunner(options: {
       return await getWorkConversation(input);
     },
     async delete(id) {
-      if (pendingOperations.has(id)) {
-        throw new MissionOperationError();
-      }
+      const inFlight = inFlightRuns.get(id);
+      if (inFlight !== undefined) await inFlight.catch(() => undefined);
       const liveChat = liveChats.get(id);
       if (liveChat !== undefined) await liveChat.close();
+      await (options.ownerScope?.terminalDelete(id, async () => await deleteMission(id)) ??
+        deleteMission(id));
       liveChats.delete(id);
-      const deleting =
-        options.missionController === undefined
-          ? deleteMission(id)
-          : options.missionController.terminalDelete(id, async () => await deleteMission(id));
-      trackOperation(id, { kind: "delete", promise: deleting });
-      await deleting;
       chatRevisions.delete(id);
       degradedChatSync.delete(id);
       workRevisions.delete(id);
@@ -2891,11 +3239,9 @@ export function createMissionRunner(options: {
   ): Promise<ActiveMissionExecution> {
     const existing = active.get(id);
     if (existing !== undefined) return existing;
-    const pending = pendingOperations.get(id);
-    if (pending?.kind === "run") {
-      await pending.promise;
-    } else if (pending !== undefined) {
-      throw new MissionOperationError();
+    const inFlight = inFlightRuns.get(id);
+    if (inFlight !== undefined) {
+      await inFlight;
     } else {
       const mission = await options.missions.get(id);
       if (
@@ -2904,9 +3250,7 @@ export function createMissionRunner(options: {
       ) {
         throw new Error("This human interaction is no longer waiting for a response.");
       }
-      const restoring = runMission(id);
-      trackOperation(id, { kind: "run", promise: restoring });
-      await restoring;
+      await startMission(id);
     }
     const restored = active.get(id);
     if (restored === undefined) {

@@ -1,0 +1,423 @@
+name: CLI publish
+
+on:
+  push:
+    tags:
+      - "cli-v*"
+
+concurrency:
+  group: cli-publish-${{ github.ref }}
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+
+jobs:
+  validate_cli_tag:
+    name: Validate CLI release tag
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    outputs:
+      version: ${{ steps.release.outputs.version }}
+      dist_tag: ${{ steps.release.outputs.dist_tag }}
+
+    steps:
+      - name: Checkout tagged source
+        uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v7
+        with:
+          node-version: 24.x
+
+      - name: Validate tag, package version, and default-branch ancestry
+        id: release
+        env:
+          RELEASE_TAG: ${{ github.ref_name }}
+          RELEASE_SHA: ${{ github.sha }}
+          DEFAULT_BRANCH: ${{ github.event.repository.default_branch }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          version="$(node -p "require('./apps/cli/package.json').version")"
+
+          RELEASE_TAG="${RELEASE_TAG}" PACKAGE_VERSION="${version}" node --input-type=module <<'NODE'
+          const tag = process.env.RELEASE_TAG ?? "";
+          const version = process.env.PACKAGE_VERSION ?? "";
+          const semver = /^(?:0|[1-9]\d*)\.(?:0|[1-9]\d*)\.(?:0|[1-9]\d*)(?:-[0-9A-Za-z-]+(?:\.[0-9A-Za-z-]+)*)?(?:\+[0-9A-Za-z-]+(?:\.[0-9A-Za-z-]+)*)?$/u;
+          if (!tag.startsWith("cli-v") || !semver.test(tag.slice("cli-v".length))) {
+            console.error(`CLI release tag must match cli-v<semver>; received ${tag}.`);
+            process.exit(1);
+          }
+          if (tag.slice("cli-v".length) !== version) {
+            console.error(`Tag ${tag} does not match @pragma/cli version ${version}.`);
+            process.exit(1);
+          }
+          NODE
+
+          git fetch --no-tags origin "${DEFAULT_BRANCH}:refs/remotes/origin/${DEFAULT_BRANCH}"
+          if ! git merge-base --is-ancestor "${RELEASE_SHA}" "origin/${DEFAULT_BRANCH}"; then
+            echo "::error::CLI release tag must point to a commit contained in origin/${DEFAULT_BRANCH}."
+            exit 1
+          fi
+
+          if [[ "${version}" == *-* ]]; then
+            dist_tag="next"
+          else
+            dist_tag="latest"
+          fi
+          echo "version=${version}" >> "${GITHUB_OUTPUT}"
+          echo "dist_tag=${dist_tag}" >> "${GITHUB_OUTPUT}"
+
+  package_gates:
+    name: Run CLI package and platform gates
+    needs: validate_cli_tag
+    permissions:
+      contents: read
+    uses: ./.github/workflows/cli-package.yml
+    with:
+      ref: ${{ github.sha }}
+
+  publish:
+    name: Publish @pragma/cli ${{ needs.validate_cli_tag.outputs.version }}
+    needs:
+      - validate_cli_tag
+      - package_gates
+    if: ${{ needs.validate_cli_tag.result == 'success' && needs.package_gates.result == 'success' }}
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    environment:
+      name: npm-release
+    permissions:
+      contents: read
+      id-token: write
+
+    steps:
+      - name: Download verified canonical tarball and reports
+        uses: actions/download-artifact@v8
+        with:
+          name: pragma-cli-canonical
+          path: release-artifact
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v7
+        with:
+          node-version: 24.x
+
+      - name: Use npm with trusted publishing support
+        shell: bash
+        run: |
+          set -euo pipefail
+          npm install --global npm@11.5.1 --no-audit --no-fund
+          npm_version="$(npm --version)"
+          if ! node --input-type=module -e '
+            const version = process.argv[1].split(".").map(Number);
+            if (version[0] < 11 || (version[0] === 11 && version[1] < 5) || (version[0] === 11 && version[1] === 5 && version[2] < 1)) process.exit(1);
+          ' "${npm_version}"; then
+            echo "::error::npm ${npm_version} is older than the trusted-publishing floor 11.5.1."
+            exit 1
+          fi
+          npm --version
+
+      - name: Verify artifact identity and digest
+        env:
+          EXPECTED_VERSION: ${{ needs.validate_cli_tag.outputs.version }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          test -s release-artifact/pragma-cli.tgz
+          (cd release-artifact && sha256sum --check --strict SHA256SUMS.txt)
+          EXPECTED_VERSION="${EXPECTED_VERSION}" node --input-type=module <<'NODE'
+          import { readFile } from "node:fs/promises";
+          const expected = process.env.EXPECTED_VERSION;
+          const manifest = JSON.parse(await readFile("release-artifact/artifact-manifest.json", "utf8"));
+          if (manifest.package !== "@pragma/cli" || manifest.version !== expected || manifest.tarball !== "pragma-cli.tgz") {
+            throw new Error(`Canonical artifact identity mismatch: ${JSON.stringify(manifest)}`);
+          }
+          NODE
+
+      - name: Refuse an already published version
+        env:
+          RELEASE_VERSION: ${{ needs.validate_cli_tag.outputs.version }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          set +e
+          npm_output="$(npm view "@pragma/cli@${RELEASE_VERSION}" version --registry=https://registry.npmjs.org/ 2>&1)"
+          npm_status=$?
+          set -e
+          if [[ "${npm_status}" == "0" ]]; then
+            echo "::error::@pragma/cli@${RELEASE_VERSION} already exists; immutable releases cannot be overwritten."
+            exit 1
+          fi
+          if ! grep -Eiq 'E404|404 Not Found|is not in this registry|No match found' <<< "${npm_output}"; then
+            echo "::error::Unable to determine whether @pragma/cli@${RELEASE_VERSION} exists."
+            echo "${npm_output}"
+            exit 1
+          fi
+
+      - name: Publish with npm OIDC trusted publishing and provenance
+        env:
+          RELEASE_VERSION: ${{ needs.validate_cli_tag.outputs.version }}
+          RELEASE_DIST_TAG: ${{ needs.validate_cli_tag.outputs.dist_tag }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          npm publish release-artifact/pragma-cli.tgz \
+            --registry=https://registry.npmjs.org/ \
+            --access public \
+            --tag "${RELEASE_DIST_TAG}" \
+            --provenance
+
+  post_publish_metadata:
+    name: Verify published npm metadata and provenance
+    needs:
+      - publish
+      - validate_cli_tag
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    permissions:
+      contents: read
+
+    steps:
+      - name: Download canonical pack metadata
+        uses: actions/download-artifact@v8
+        with:
+          name: pragma-cli-canonical
+          path: release-artifact
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v7
+        with:
+          node-version: 24.x
+
+      - name: Verify public Registry metadata and canonical integrity
+        env:
+          RELEASE_VERSION: ${{ needs.validate_cli_tag.outputs.version }}
+          RELEASE_DIST_TAG: ${{ needs.validate_cli_tag.outputs.dist_tag }}
+          METADATA_PATH: ${{ runner.temp }}/pragma-cli-npm-view.json
+        shell: bash
+        run: |
+          set -euo pipefail
+          max_attempts=12
+          verified=false
+          for attempt in $(seq 1 "${max_attempts}"); do
+            if npm view "@pragma/cli@${RELEASE_VERSION}" version dist-tags engines os bin dist --json \
+              --registry=https://registry.npmjs.org/ > "${METADATA_PATH}"; then
+              if EXPECTED_VERSION="${RELEASE_VERSION}" EXPECTED_DIST_TAG="${RELEASE_DIST_TAG}" \
+                METADATA_PATH="${METADATA_PATH}" node --input-type=module <<'NODE'
+          import { readFile } from "node:fs/promises";
+
+          const expectedVersion = process.env.EXPECTED_VERSION;
+          const expectedDistTag = process.env.EXPECTED_DIST_TAG;
+          const metadata = selectMetadata(
+            JSON.parse(await readFile(process.env.METADATA_PATH, "utf8")),
+            expectedVersion,
+          );
+          const packReport = JSON.parse(await readFile("release-artifact/pack.json", "utf8"));
+          const packRecord = Array.isArray(packReport) ? packReport[0] : undefined;
+          const failures = [];
+
+          if (metadata === undefined) failures.push("metadata record");
+          if (packRecord === undefined) failures.push("canonical pack record");
+          if (metadata?.name !== "@pragma/cli") failures.push("name");
+          if (metadata?.version !== expectedVersion) failures.push("version");
+          if (metadata?.["dist-tags"]?.[expectedDistTag] !== expectedVersion) {
+            failures.push(`dist-tag:${expectedDistTag}`);
+          }
+          if (metadata?.engines?.node !== ">=22") failures.push("engines.node");
+          if (!sameArray(metadata?.os, ["darwin", "win32"])) failures.push("os");
+          if (!new Set(["./dist/pragma.js", "dist/pragma.js"]).has(metadata?.bin?.pragma)) {
+            failures.push("bin.pragma");
+          }
+          if (metadata?.dist?.integrity !== packRecord?.integrity) failures.push("dist.integrity");
+          if (metadata?.dist?.shasum !== packRecord?.shasum) failures.push("dist.shasum");
+
+          if (failures.length > 0) {
+            console.error(`Published @pragma/cli metadata mismatch: ${failures.join(", ")}.`);
+            process.exit(1);
+          }
+          console.log(
+            JSON.stringify(
+              {
+                ok: true,
+                package: metadata.name,
+                version: metadata.version,
+                distTag: expectedDistTag,
+                integrity: metadata.dist.integrity,
+                shasum: metadata.dist.shasum,
+              },
+              null,
+              2,
+            ),
+          );
+
+          function selectMetadata(value, version) {
+            if (!Array.isArray(value)) return value;
+            return value.find((record) => record?.version === version) ??
+              (value.length === 1 ? value[0] : undefined);
+          }
+
+          function sameArray(value, expected) {
+            const actual = Array.isArray(value) ? value : value === undefined ? [] : [value];
+            return JSON.stringify(actual) === JSON.stringify(expected);
+          }
+          NODE
+              then
+                verified=true
+                break
+              fi
+            fi
+            if [[ "${attempt}" -lt "${max_attempts}" ]]; then
+              sleep 10
+            fi
+          done
+          if [[ "${verified}" != true ]]; then
+            echo "::error::Public Registry metadata did not converge after ${max_attempts} attempts."
+            exit 1
+          fi
+
+      - name: Archive public Registry metadata verification
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: pragma-cli-post-publish-metadata
+          path: ${{ runner.temp }}/pragma-cli-npm-view.json
+          if-no-files-found: warn
+          retention-days: 14
+
+      - name: Explain immutable post-publish failure
+        if: failure()
+        run: |
+          echo "::error::Post-publish verification failed after the immutable version was published. Do not move the dist-tag; publish a fixed version or follow the npm-release runbook."
+
+  post_publish_macos_smoke:
+    name: Verify public macOS install and provenance
+    needs:
+      - publish
+      - validate_cli_tag
+    runs-on: macos-15
+    timeout-minutes: 15
+    permissions:
+      contents: read
+
+    steps:
+      - name: Setup Node.js
+        uses: actions/setup-node@v7
+        with:
+          node-version: 24.x
+
+      - name: Install npm provenance verifier
+        shell: bash
+        run: |
+          set -euo pipefail
+          npm install --global npm@11.12.0 --no-audit --no-fund
+          npm --version
+
+      - name: Clean install exact public version and verify provenance
+        env:
+          RELEASE_VERSION: ${{ needs.validate_cli_tag.outputs.version }}
+          SIGNATURE_REPORT: ${{ runner.temp }}/pragma-cli-npm-signatures.json
+          VERSION_OUTPUT: ${{ runner.temp }}/pragma-cli-public-version.txt
+        shell: bash
+        run: |
+          set -euo pipefail
+          smoke_root="$(mktemp -d)"
+          trap 'rm -rf "${smoke_root}"' EXIT
+          export HOME="${smoke_root}/home"
+          export USERPROFILE="${HOME}"
+          export PRAGMA_HOME="${smoke_root}/pragma-home"
+          export NPM_CONFIG_CACHE="${smoke_root}/npm-cache"
+          export npm_config_cache="${NPM_CONFIG_CACHE}"
+          export NPM_CONFIG_USERCONFIG="${smoke_root}/npmrc"
+          export npm_config_userconfig="${NPM_CONFIG_USERCONFIG}"
+          export NPM_CONFIG_REGISTRY="https://registry.npmjs.org/"
+          export npm_config_registry="${NPM_CONFIG_REGISTRY}"
+          export NPM_CONFIG_AUDIT=false
+          export npm_config_audit=false
+          export NPM_CONFIG_FUND=false
+          export npm_config_fund=false
+
+          prefix="${smoke_root}/clean-prefix"
+          npm install --global --prefix "${prefix}" --no-audit --no-fund \
+            "@pragma/cli@${RELEASE_VERSION}" --registry=https://registry.npmjs.org/
+          installed_command="$(PATH="${prefix}/bin:${PATH}" command -v pragma)"
+          if [[ "${installed_command}" != "${prefix}/bin/pragma" ]]; then
+            echo "::error::Public install resolved pragma outside the clean prefix."
+            exit 1
+          fi
+          PATH="${prefix}/bin:${PATH}" pragma version | tee "${VERSION_OUTPUT}"
+          if ! grep -Fq "pragma ${RELEASE_VERSION}" "${VERSION_OUTPUT}"; then
+            echo "::error::Public install reported the wrong pragma version."
+            exit 1
+          fi
+
+          verification_project="${smoke_root}/signature-project"
+          mkdir -p "${verification_project}"
+          printf '%s\n' '{"name":"pragma-cli-provenance-verification","version":"0.0.0","private":true}' \
+            > "${verification_project}/package.json"
+          (
+            cd "${verification_project}"
+            npm install --ignore-scripts --no-audit --no-fund \
+              "@pragma/cli@${RELEASE_VERSION}" --registry=https://registry.npmjs.org/
+            npm audit signatures --json --include-attestations \
+              --registry=https://registry.npmjs.org/ > "${SIGNATURE_REPORT}"
+          )
+          EXPECTED_VERSION="${RELEASE_VERSION}" SIGNATURE_REPORT="${SIGNATURE_REPORT}" \
+            node --input-type=module <<'NODE'
+          import { readFile } from "node:fs/promises";
+
+          const expectedVersion = process.env.EXPECTED_VERSION;
+          const report = JSON.parse(await readFile(process.env.SIGNATURE_REPORT, "utf8"));
+          if (!Array.isArray(report.invalid) || report.invalid.length > 0) {
+            console.error("npm audit signatures reported invalid signatures or attestations.");
+            process.exit(1);
+          }
+          if (!Array.isArray(report.missing) || report.missing.length > 0) {
+            console.error("npm audit signatures reported missing registry signatures.");
+            process.exit(1);
+          }
+          const verified = Array.isArray(report.verified) ? report.verified : [];
+          const packageVerification = verified.find(
+            (entry) => entry?.name === "@pragma/cli" && entry?.version === expectedVersion,
+          );
+          if (packageVerification?.attestations?.bundles?.length !== undefined) {
+            if (packageVerification.attestations.bundles.length === 0) {
+              console.error("@pragma/cli has no verified provenance attestation bundle.");
+              process.exit(1);
+            }
+          } else {
+            console.error("@pragma/cli is absent from verified provenance attestations.");
+            process.exit(1);
+          }
+          console.log(
+            JSON.stringify(
+              {
+                ok: true,
+                package: "@pragma/cli",
+                version: expectedVersion,
+                attestationBundles: packageVerification.attestations.bundles.length,
+              },
+              null,
+              2,
+            ),
+          );
+          NODE
+
+      - name: Archive public install and provenance verification
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: pragma-cli-post-publish-macos
+          path: |
+            ${{ runner.temp }}/pragma-cli-public-version.txt
+            ${{ runner.temp }}/pragma-cli-npm-signatures.json
+          if-no-files-found: warn
+          retention-days: 14
+
+      - name: Explain immutable post-publish failure
+        if: failure()
+        run: |
+          echo "::error::Post-publish verification failed after the immutable version was published. Do not move the dist-tag; publish a fixed version or follow the npm-release runbook."

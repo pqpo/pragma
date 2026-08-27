@@ -233,7 +233,8 @@ export interface LocalHostApplicationPorts<
   /** Read-only Mission event watcher; this port never claims a controller lease. */
   readonly watch?: MissionWatchPort;
   readonly missionControl?: {
-    readonly resume: (input: LocalHostMissionResumeRequest) => Promise<unknown>;
+    /** Optional Host recovery command; Desktop exposes commands without CLI resume. */
+    readonly resume?: ((input: LocalHostMissionResumeRequest) => Promise<unknown>) | undefined;
     readonly commands?: MissionControlApplication;
   };
   readonly runtime: { readonly resolver: RuntimeResolver };
@@ -319,16 +320,14 @@ export function createLocalHostApplication<
       return await ports.queue.list(missionId);
     },
     ...(ports.watch === undefined ? {} : { watchMission: ports.watch.watch }),
-    ...(ports.missionControl === undefined
+    ...(ports.missionControl?.resume === undefined
+      ? {}
+      : { resumeMission: ports.missionControl.resume }),
+    ...(ports.missionControl?.commands === undefined
       ? {}
       : {
-          resumeMission: ports.missionControl.resume,
-          ...(ports.missionControl.commands === undefined
-            ? {}
-            : { missionControl: ports.missionControl.commands }),
-          ...(ports.missionControl.commands === undefined
-            ? {}
-            : { missionCommands: ports.missionControl.commands }),
+          missionControl: ports.missionControl.commands,
+          missionCommands: ports.missionControl.commands,
         }),
     runtimeResolver: () => ports.runtime.resolver,
     ...(ports.run === undefined ? {} : { run: ports.run }),

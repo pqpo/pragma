@@ -93,6 +93,18 @@ export interface LocalHostRunExecutorPort {
     readonly request: LocalHostRunRequest;
     readonly executor: ResolvedRunExecutor;
   }) => Promise<void | { readonly input: unknown }>;
+  /**
+   * Re-validate Host-owned immutable input after the Local Host lease is
+   * claimed and before the first durable run event is appended.  A failure
+   * leaves the idempotency reservation in place, but must not create Mission
+   * events or start the lower-level executor.
+   */
+  readonly assertStartAllowed?: (input: {
+    readonly request: LocalHostRunRequest;
+    readonly executor: ResolvedRunExecutor;
+    readonly missionId: string;
+    readonly payloadHash: string;
+  }) => Promise<void>;
   readonly start: (input: {
     readonly request: LocalHostRunRequest;
     readonly executor: ResolvedRunExecutor;
@@ -143,17 +155,12 @@ export interface LocalHostRunMissionPort {
 export interface LocalHostRunApplication {
   readonly start: (
     request: LocalHostRunRequest,
-    options?: {
-      readonly onEvent?: ((event: LocalHostRunEvent) => void) | undefined;
-      readonly onHumanInteraction?:
-        | ((
-            request: HumanInteractionRequestEnvelope,
-          ) => Promise<
-            | { readonly kind: "respond"; readonly response: unknown }
-            | { readonly kind: "checkpoint" }
-          >)
-        | undefined;
-    },
+    options?: LocalHostRunPresentation,
+  ) => Promise<LocalHostRunApplicationHandle>;
+  /** Start a run for a Mission identity supplied by the Host composition. */
+  readonly startAttached: (
+    input: { readonly missionId: string; readonly request: LocalHostRunRequest },
+    options?: LocalHostRunPresentation,
   ) => Promise<LocalHostRunApplicationHandle>;
   readonly respond: (input: {
     readonly missionId: string;
@@ -162,6 +169,17 @@ export interface LocalHostRunApplication {
     readonly response: unknown;
     readonly requestId: string;
   }) => Promise<void>;
+}
+
+export interface LocalHostRunPresentation {
+  readonly onEvent?: ((event: LocalHostRunEvent) => void) | undefined;
+  readonly onHumanInteraction?:
+    | ((
+        request: HumanInteractionRequestEnvelope,
+      ) => Promise<
+        { readonly kind: "respond"; readonly response: unknown } | { readonly kind: "checkpoint" }
+      >)
+    | undefined;
 }
 
 export interface LocalHostRunApplicationHandle {
@@ -191,6 +209,9 @@ export type LocalHostRunApplicationOutcome =
       readonly workspace: WorkspaceSelection;
     });
 
+type RunMissionTarget =
+  { readonly kind: "allocate" } | { readonly kind: "attach"; readonly missionId: string };
+
 export function createLocalHostRunApplication(options: {
   readonly executors: LocalHostRunExecutorPort;
   readonly mission: LocalHostRunMissionPort;
@@ -198,368 +219,382 @@ export function createLocalHostRunApplication(options: {
   readonly commandConsumer?: MissionCommandConsumer | undefined;
   readonly redactor?: RunRedactor | (() => RunRedactor) | undefined;
 }): LocalHostRunApplication {
-  return {
-    async start(request, presentation = {}) {
-      const redactor =
-        typeof options.redactor === "function"
-          ? options.redactor()
-          : (options.redactor ?? createRunRedactor());
-      const registered = await options.mission.controller.readRunRequest({
-        requestId: request.requestId,
-      });
-      const existingPinnedBinding =
-        registered === undefined
-          ? undefined
-          : await readExistingPinnedBinding(
-              options.mission.controller,
-              registered.missionId,
-              request,
-            );
-      const executorLookup =
-        existingPinnedBinding === undefined
-          ? {
-              ref: request.executor,
-              workspace: request.workspace,
-              ...(request.project === undefined ? {} : { projectId: request.project.projectId }),
-              ...(request.project?.revision === undefined
-                ? {}
-                : { revision: request.project.revision }),
-            }
-          : {
-              ref: existingPinnedBinding.executor.ref,
-              workspace: request.workspace,
-              ...(existingPinnedBinding.executor.source === "project"
-                ? {
-                    projectId: existingPinnedBinding.executor.project.projectId,
-                    revision: existingPinnedBinding.executor.project.revision,
-                  }
-                : {}),
-            };
-      const executor = await options.executors.resolve({
-        ...executorLookup,
-      });
-      if (executor === undefined) {
-        throw createIntegrationError({
-          code: "EXECUTOR_NOT_FOUND",
-          category: "not_found",
-          message: `Executor not found: ${request.executor.kind}:${request.executor.id}.`,
-        });
-      }
-      validateExecutorPin(request, executor.descriptor);
-      validateExecutorAvailability(executor.descriptor);
-      const validated = await options.executors.validateInput?.({ request, executor });
-      const runRequest = validated === undefined ? request : { ...request, input: validated.input };
-      const canonicalRequest = {
-        command: runRequest.command,
-        workspace: runRequest.workspace,
-        ...(runRequest.prompt === undefined ? {} : { prompt: runRequest.prompt }),
-        ...(runRequest.input === undefined ? {} : { input: runRequest.input }),
-      };
-      const payloadHash = hashCanonicalRunPayload({
-        ...canonicalRequest,
-        executor: executor.descriptor.ref,
-        ...(executor.descriptor.project === undefined
-          ? {}
-          : { project: executor.descriptor.project }),
-      });
-      const reservation = await options.mission.controller.reserveRunRequest({
-        requestId: request.requestId,
-        payloadHash,
-      });
-
-      if (reservation.disposition === "existing") {
-        const current = await options.mission.controller.readSnapshot({
-          missionId: reservation.missionId,
-        });
-        if (findMissionPinnedBinding(current.events) === undefined) {
-          assertUnpinnedRunRetryAllowed({
-            missionId: reservation.missionId,
-            request,
-            descriptor: executor.descriptor,
-            events: current.events,
-          });
-        }
-        const existing = await readExistingRunState(
-          options.mission.controller,
-          reservation.missionId,
-          runRequest,
-        );
-        if (existing.kind === "terminal") {
-          return {
-            request: runRequest,
-            missionId: reservation.missionId,
-            payloadHash,
-            disposition: reservation.disposition,
-            executionId: existing.outcome.executionId,
-            outcome: Promise.resolve(existing.outcome),
-            cancel: async () => undefined,
-          };
-        }
-        if (existing.active) {
-          if (request.detach) {
-            return acceptedExistingHandle({
-              request: runRequest,
-              missionId: reservation.missionId,
-              payloadHash,
-              executionId: existing.executionId,
-            });
+  const startRun = async (input: {
+    readonly request: LocalHostRunRequest;
+    readonly target: RunMissionTarget;
+    readonly presentation: LocalHostRunPresentation;
+  }): Promise<LocalHostRunApplicationHandle> => {
+    const { request, target, presentation } = input;
+    const redactor =
+      typeof options.redactor === "function"
+        ? options.redactor()
+        : (options.redactor ?? createRunRedactor());
+    const registered = await options.mission.controller.readRunRequest({
+      requestId: request.requestId,
+    });
+    const targetMissionId = target.kind === "attach" ? target.missionId : registered?.missionId;
+    const existingPinnedBinding =
+      targetMissionId === undefined
+        ? undefined
+        : await readExistingPinnedBinding(options.mission.controller, targetMissionId, request);
+    const executorLookup =
+      existingPinnedBinding === undefined
+        ? {
+            ref: request.executor,
+            workspace: request.workspace,
+            ...(request.project === undefined ? {} : { projectId: request.project.projectId }),
+            ...(request.project?.revision === undefined
+              ? {}
+              : { revision: request.project.revision }),
           }
-          throw createIntegrationError({
-            code: "MISSION_LEASE_HELD",
-            category: "conflict",
-            message: "The existing Mission is still owned by another run.",
-            details: {
-              missionId: reservation.missionId,
-              ...(existing.executionId === undefined ? {} : { executionId: existing.executionId }),
-            },
-          });
-        }
-      }
-
-      const claimId = randomUUID();
-      let guard: MissionControllerGuard;
-      try {
-        guard = await options.mission.claim(reservation.missionId, claimId);
-      } catch (error) {
-        if (
-          reservation.disposition === "existing" &&
-          request.detach &&
-          isIntegrationErrorCode(error, "MISSION_LEASE_HELD")
-        ) {
-          return acceptedExistingHandle({
-            request: runRequest,
-            missionId: reservation.missionId,
-            payloadHash,
-          });
-        }
-        throw error;
-      }
-      const existingEvents =
-        reservation.disposition === "existing"
-          ? (await options.mission.controller.readSnapshot({ missionId: reservation.missionId }))
-              .events
-          : [];
-      let handle: LocalHostRunHandle | undefined;
-      const pendingHumanEvents: HumanInteractionRequestEnvelope[] = [];
-      let humanProcessing = Promise.resolve();
-      let humanFailure: unknown;
-      let eventProjection = Promise.resolve();
-      let eventProjectionFailure: unknown;
-      let missionStarted = existingEvents.some((event) => event.type === "run.started");
-      const pendingProjectionEvents: LocalHostRunEvent[] = [];
-      const publishEvent = (event: LocalHostRunEvent): void => {
-        presentation.onEvent?.(redactEvent(event, redactor));
-      };
-      const projectEvent = (event: LocalHostRunEvent): void => {
-        if (typeof event.data !== "object" || event.data === null || Array.isArray(event.data)) {
-          publishEvent({ ...redactEvent(event, redactor), replayable: false, cursor: undefined });
-          return;
-        }
-        eventProjection = eventProjection
-          .then(async () => {
-            const committed = await options.mission.append(
-              reservation.missionId,
-              guard,
-              event.type,
-              redactEventData(event.data, redactor),
-              event.eventId,
-            );
-            publishEvent({
-              ...redactEvent(event, redactor),
-              replayable: true,
-              cursor: committed.cursor,
-            });
-          })
-          .catch((error: unknown) => {
-            eventProjectionFailure ??= error;
-          });
-      };
-      const processHumanInteraction = (interaction: HumanInteractionRequestEnvelope): void => {
-        humanProcessing = humanProcessing
-          .then(async () => {
-            const decision = await presentation.onHumanInteraction?.(interaction);
-            if (decision?.kind === "respond") {
-              if (options.executors.respond === undefined) {
-                throw createIntegrationError({
-                  code: "DEPENDENCY_UNAVAILABLE",
-                  category: "dependency",
-                  message: "Human interaction response is not available in this Host composition.",
-                });
-              }
-              await options.executors.respond({
-                missionId: reservation.missionId,
-                executionId: interaction.executionId,
-                interactionId: interaction.interactionId,
-                response: decision.response,
-                requestId: request.requestId,
-              });
-              return;
-            }
-            await handle?.checkpointWaitingHuman?.();
-          })
-          .catch((error: unknown) => {
-            humanFailure ??= error;
-          });
-      };
-      try {
-        if (!existingEvents.some((event) => event.type === "mission.created")) {
-          await options.mission.append(reservation.missionId, guard, "mission.created", {
+        : {
+            ref: existingPinnedBinding.executor.ref,
+            workspace: request.workspace,
+            ...(existingPinnedBinding.executor.source === "project"
+              ? {
+                  projectId: existingPinnedBinding.executor.project.projectId,
+                  revision: existingPinnedBinding.executor.project.revision,
+                }
+              : {}),
+          };
+    const executor = await options.executors.resolve({ ...executorLookup });
+    if (executor === undefined) {
+      throw createIntegrationError({
+        code: "EXECUTOR_NOT_FOUND",
+        category: "not_found",
+        message: `Executor not found: ${request.executor.kind}:${request.executor.id}.`,
+      });
+    }
+    validateExecutorPin(request, executor.descriptor);
+    validateExecutorAvailability(executor.descriptor);
+    const validated = await options.executors.validateInput?.({ request, executor });
+    const runRequest = validated === undefined ? request : { ...request, input: validated.input };
+    const canonicalRequest = {
+      command: runRequest.command,
+      workspace: runRequest.workspace,
+      ...(runRequest.prompt === undefined ? {} : { prompt: runRequest.prompt }),
+      ...(runRequest.input === undefined ? {} : { input: runRequest.input }),
+    };
+    const payloadHash = hashCanonicalRunPayload({
+      ...canonicalRequest,
+      executor: executor.descriptor.ref,
+      ...(executor.descriptor.project === undefined
+        ? {}
+        : { project: executor.descriptor.project }),
+    });
+    const reservation =
+      target.kind === "attach"
+        ? await options.mission.controller.reserveAttachedRunRequest({
             requestId: request.requestId,
             payloadHash,
-            executor: runRequest.executor,
-            workspace: runRequest.workspace.canonicalPath,
-          });
-        }
-        await options.mission.ensurePinnedBinding({
-          missionId: reservation.missionId,
-          guard,
-          binding: createRunPinnedBinding({
-            missionId: reservation.missionId,
-            request: runRequest,
-            descriptor: executor.descriptor,
-            payloadHash,
-          }),
-        });
-        if (!existingEvents.some((event) => event.type === "run.accepted")) {
-          await options.mission.append(reservation.missionId, guard, "run.accepted", {
-            requestId: runRequest.requestId,
+            missionId: target.missionId,
+          })
+        : await options.mission.controller.reserveRunRequest({
+            requestId: request.requestId,
             payloadHash,
           });
-        }
-        handle = await options.executors.start({
-          request: runRequest,
-          executor,
-          missionId: reservation.missionId,
-          onEvent: (event) => {
-            if (event.type === "human.interaction.requested") {
-              const parsed = HumanInteractionRequestEnvelopeSchema.safeParse(event.data);
-              if (parsed.success) {
-                const interaction = redactInteraction(parsed.data, redactor);
-                if (handle === undefined) pendingHumanEvents.push(interaction);
-                else processHumanInteraction(interaction);
-              }
-            }
-            if (missionStarted) projectEvent(event);
-            else pendingProjectionEvents.push(event);
-          },
-        });
-      } catch (error) {
-        await options.mission.release(reservation.missionId).catch(() => undefined);
-        throw error;
-      }
-      for (const interaction of pendingHumanEvents.splice(0)) processHumanInteraction(interaction);
 
-      if (handle === undefined) throw new Error("Run executor did not return a handle.");
-      try {
-        if (!existingEvents.some((event) => event.type === "run.started")) {
-          await options.mission.append(reservation.missionId, guard, "run.started", {
-            executionId: handle.executionId,
-          });
-        }
-        if (options.commandConsumer !== undefined) {
-          if (options.mission.startPolling === undefined) {
-            throw createIntegrationError({
-              code: "DEPENDENCY_UNAVAILABLE",
-              category: "dependency",
-              message: "Mission Inbox polling is not available in this Host composition.",
-            });
-          }
-          await options.mission.startPolling({
-            missionId: reservation.missionId,
-            consumer: options.commandConsumer,
-          });
-        }
-      } catch (error) {
-        if (handle.cancel !== undefined) {
-          await handle.cancel("Mission run setup failed").catch(() => undefined);
-        }
-        await options.mission
-          .releaseAfterLowerLevel({
-            missionId: reservation.missionId,
-            guard,
-            releaseLowerLevel: async () => await handle.release?.(),
-          })
-          .catch(() => undefined);
-        throw error;
-      }
-      missionStarted = true;
-      for (const event of pendingProjectionEvents.splice(0)) projectEvent(event);
-      const releaseRun = async (): Promise<void> =>
-        await options.mission.releaseAfterLowerLevel({
-          missionId: reservation.missionId,
-          guard,
-          releaseLowerLevel: async () => await handle.release?.(),
-        });
-      const outcome = handle.result.then(
-        async (terminal) => {
-          try {
-            await eventProjection;
-            if (eventProjectionFailure !== undefined) throw eventProjectionFailure;
-            await humanProcessing;
-            if (humanFailure !== undefined) throw humanFailure;
-            const safeTerminal = redactTerminal(terminal, redactor);
-            await options.mission.append(
-              reservation.missionId,
-              guard,
-              `run.${safeTerminal.status}`,
-              {
-                executionId: safeTerminal.executionId,
-                ...(safeTerminal.result === undefined ? {} : { result: safeTerminal.result }),
-                ...(safeTerminal.interaction === undefined
-                  ? {}
-                  : { interaction: safeTerminal.interaction }),
-                ...(safeTerminal.usage === undefined ? {} : { usage: safeTerminal.usage }),
-                ...(safeTerminal.error === undefined ? {} : { error: safeTerminal.error }),
-              },
-            );
-            return {
-              ...safeTerminal,
-              missionId: reservation.missionId,
-              executor: runRequest.executor,
-              workspace: runRequest.workspace,
-            };
-          } catch (error) {
-            if (handle.cancel !== undefined) {
-              await handle.cancel("Mission run finalization failed").catch(() => undefined);
-            }
-            throw error;
-          } finally {
-            await releaseRun();
-          }
-        },
-        async (error: unknown) => {
-          try {
-            if (handle.cancel !== undefined) {
-              await handle.cancel("Mission executor failed").catch(() => undefined);
-            }
-          } finally {
-            await releaseRun();
-          }
-          throw error;
-        },
-      );
-      const result = request.detach
-        ? Promise.resolve({
-            status: "accepted" as const,
-            missionId: reservation.missionId,
-            executionId: handle.executionId,
-            result: { missionId: reservation.missionId, executionId: handle.executionId },
-            executor: runRequest.executor,
-            workspace: runRequest.workspace,
-          })
-        : outcome;
-      if (request.detach) void outcome.catch(() => undefined);
+    const current = await options.mission.controller.readSnapshot({
+      missionId: reservation.missionId,
+    });
+    if (findMissionPinnedBinding(current.events) === undefined) {
+      assertUnpinnedRunRetryAllowed({
+        missionId: reservation.missionId,
+        request,
+        descriptor: executor.descriptor,
+        events: current.events,
+        allowEmptyReservationGap: current.events.length === 0,
+      });
+    }
+    const existing = await readExistingRunState(
+      options.mission.controller,
+      reservation.missionId,
+      runRequest,
+    );
+    if (existing.kind === "terminal") {
       return {
         request: runRequest,
         missionId: reservation.missionId,
         payloadHash,
         disposition: reservation.disposition,
-        executionId: handle.executionId,
-        events: handle.events,
-        outcome: result,
-        cancel: async (reason) => await handle.cancel?.(reason),
+        executionId: existing.outcome.executionId,
+        outcome: Promise.resolve(existing.outcome),
+        cancel: async () => undefined,
       };
-    },
+    }
+    if (existing.active) {
+      if (request.detach) {
+        return acceptedExistingHandle({
+          request: runRequest,
+          missionId: reservation.missionId,
+          payloadHash,
+          executionId: existing.executionId,
+        });
+      }
+      throw createIntegrationError({
+        code: "MISSION_LEASE_HELD",
+        category: "conflict",
+        message: "The existing Mission is still owned by another run.",
+        details: {
+          missionId: reservation.missionId,
+          ...(existing.executionId === undefined ? {} : { executionId: existing.executionId }),
+        },
+      });
+    }
+
+    const claimId = randomUUID();
+    let guard: MissionControllerGuard;
+    try {
+      guard = await options.mission.claim(reservation.missionId, claimId);
+    } catch (error) {
+      if (
+        reservation.disposition === "existing" &&
+        request.detach &&
+        isIntegrationErrorCode(error, "MISSION_LEASE_HELD")
+      ) {
+        return acceptedExistingHandle({
+          request: runRequest,
+          missionId: reservation.missionId,
+          payloadHash,
+        });
+      }
+      throw error;
+    }
+    const existingEvents = (
+      await options.mission.controller.readSnapshot({ missionId: reservation.missionId })
+    ).events;
+    let handle: LocalHostRunHandle | undefined;
+    const pendingHumanEvents: HumanInteractionRequestEnvelope[] = [];
+    let humanProcessing = Promise.resolve();
+    let humanFailure: unknown;
+    let eventProjection = Promise.resolve();
+    let eventProjectionFailure: unknown;
+    let missionStarted = existingEvents.some((event) => event.type === "run.started");
+    const pendingProjectionEvents: LocalHostRunEvent[] = [];
+    const publishEvent = (event: LocalHostRunEvent): void => {
+      presentation.onEvent?.(redactEvent(event, redactor));
+    };
+    const projectEvent = (event: LocalHostRunEvent): void => {
+      if (typeof event.data !== "object" || event.data === null || Array.isArray(event.data)) {
+        publishEvent({ ...redactEvent(event, redactor), replayable: false, cursor: undefined });
+        return;
+      }
+      eventProjection = eventProjection
+        .then(async () => {
+          const committed = await options.mission.append(
+            reservation.missionId,
+            guard,
+            event.type,
+            redactEventData(event.data, redactor),
+            event.eventId,
+          );
+          publishEvent({
+            ...redactEvent(event, redactor),
+            replayable: true,
+            cursor: committed.cursor,
+          });
+        })
+        .catch((error: unknown) => {
+          eventProjectionFailure ??= error;
+        });
+    };
+    const processHumanInteraction = (interaction: HumanInteractionRequestEnvelope): void => {
+      humanProcessing = humanProcessing
+        .then(async () => {
+          const decision = await presentation.onHumanInteraction?.(interaction);
+          if (decision?.kind === "respond") {
+            if (options.executors.respond === undefined) {
+              throw createIntegrationError({
+                code: "DEPENDENCY_UNAVAILABLE",
+                category: "dependency",
+                message: "Human interaction response is not available in this Host composition.",
+              });
+            }
+            await options.executors.respond({
+              missionId: reservation.missionId,
+              executionId: interaction.executionId,
+              interactionId: interaction.interactionId,
+              response: decision.response,
+              requestId: request.requestId,
+            });
+            return;
+          }
+          await handle?.checkpointWaitingHuman?.();
+        })
+        .catch((error: unknown) => {
+          humanFailure ??= error;
+        });
+    };
+    try {
+      await options.executors.assertStartAllowed?.({
+        request: runRequest,
+        executor,
+        missionId: reservation.missionId,
+        payloadHash,
+      });
+      if (!existingEvents.some((event) => event.type === "mission.created")) {
+        await options.mission.append(reservation.missionId, guard, "mission.created", {
+          requestId: request.requestId,
+          payloadHash,
+          executor: runRequest.executor,
+          workspace: runRequest.workspace.canonicalPath,
+        });
+      }
+      await options.mission.ensurePinnedBinding({
+        missionId: reservation.missionId,
+        guard,
+        binding: createRunPinnedBinding({
+          missionId: reservation.missionId,
+          request: runRequest,
+          descriptor: executor.descriptor,
+          payloadHash,
+        }),
+      });
+      if (!existingEvents.some((event) => event.type === "run.accepted")) {
+        await options.mission.append(reservation.missionId, guard, "run.accepted", {
+          requestId: runRequest.requestId,
+          payloadHash,
+        });
+      }
+      handle = await options.executors.start({
+        request: runRequest,
+        executor,
+        missionId: reservation.missionId,
+        onEvent: (event) => {
+          if (event.type === "human.interaction.requested") {
+            const parsed = HumanInteractionRequestEnvelopeSchema.safeParse(event.data);
+            if (parsed.success) {
+              const interaction = redactInteraction(parsed.data, redactor);
+              if (handle === undefined) pendingHumanEvents.push(interaction);
+              else processHumanInteraction(interaction);
+            }
+          }
+          if (missionStarted) projectEvent(event);
+          else pendingProjectionEvents.push(event);
+        },
+      });
+    } catch (error) {
+      await options.mission.release(reservation.missionId).catch(() => undefined);
+      throw error;
+    }
+    for (const interaction of pendingHumanEvents.splice(0)) processHumanInteraction(interaction);
+
+    if (handle === undefined) throw new Error("Run executor did not return a handle.");
+    try {
+      if (!existingEvents.some((event) => event.type === "run.started")) {
+        await options.mission.append(reservation.missionId, guard, "run.started", {
+          executionId: handle.executionId,
+        });
+      }
+      if (options.commandConsumer !== undefined) {
+        if (options.mission.startPolling === undefined) {
+          throw createIntegrationError({
+            code: "DEPENDENCY_UNAVAILABLE",
+            category: "dependency",
+            message: "Mission Inbox polling is not available in this Host composition.",
+          });
+        }
+        await options.mission.startPolling({
+          missionId: reservation.missionId,
+          consumer: options.commandConsumer,
+        });
+      }
+    } catch (error) {
+      if (handle.cancel !== undefined) {
+        await handle.cancel("Mission run setup failed").catch(() => undefined);
+      }
+      await options.mission
+        .releaseAfterLowerLevel({
+          missionId: reservation.missionId,
+          guard,
+          releaseLowerLevel: async () => await handle.release?.(),
+        })
+        .catch(() => undefined);
+      throw error;
+    }
+    missionStarted = true;
+    for (const event of pendingProjectionEvents.splice(0)) projectEvent(event);
+    const releaseRun = async (): Promise<void> =>
+      await options.mission.releaseAfterLowerLevel({
+        missionId: reservation.missionId,
+        guard,
+        releaseLowerLevel: async () => await handle.release?.(),
+      });
+    const outcome = handle.result.then(
+      async (terminal) => {
+        try {
+          await eventProjection;
+          if (eventProjectionFailure !== undefined) throw eventProjectionFailure;
+          await humanProcessing;
+          if (humanFailure !== undefined) throw humanFailure;
+          const safeTerminal = redactTerminal(terminal, redactor);
+          await options.mission.append(reservation.missionId, guard, `run.${safeTerminal.status}`, {
+            executionId: safeTerminal.executionId,
+            ...(safeTerminal.result === undefined ? {} : { result: safeTerminal.result }),
+            ...(safeTerminal.interaction === undefined
+              ? {}
+              : { interaction: safeTerminal.interaction }),
+            ...(safeTerminal.usage === undefined ? {} : { usage: safeTerminal.usage }),
+            ...(safeTerminal.error === undefined ? {} : { error: safeTerminal.error }),
+          });
+          return {
+            ...safeTerminal,
+            missionId: reservation.missionId,
+            executor: runRequest.executor,
+            workspace: runRequest.workspace,
+          };
+        } catch (error) {
+          if (handle.cancel !== undefined) {
+            await handle.cancel("Mission run finalization failed").catch(() => undefined);
+          }
+          throw error;
+        } finally {
+          await releaseRun();
+        }
+      },
+      async (error: unknown) => {
+        try {
+          if (handle.cancel !== undefined) {
+            await handle.cancel("Mission executor failed").catch(() => undefined);
+          }
+        } finally {
+          await releaseRun();
+        }
+        throw error;
+      },
+    );
+    const result = request.detach
+      ? Promise.resolve({
+          status: "accepted" as const,
+          missionId: reservation.missionId,
+          executionId: handle.executionId,
+          result: { missionId: reservation.missionId, executionId: handle.executionId },
+          executor: runRequest.executor,
+          workspace: runRequest.workspace,
+        })
+      : outcome;
+    if (request.detach) void outcome.catch(() => undefined);
+    return {
+      request: runRequest,
+      missionId: reservation.missionId,
+      payloadHash,
+      disposition: reservation.disposition,
+      executionId: handle.executionId,
+      events: handle.events,
+      outcome: result,
+      cancel: async (reason) => await handle.cancel?.(reason),
+    };
+  };
+
+  return {
+    start: async (request, presentation = {}) =>
+      await startRun({ request, target: { kind: "allocate" }, presentation }),
+    startAttached: async (input, presentation = {}) =>
+      await startRun({
+        request: input.request,
+        target: { kind: "attach", missionId: input.missionId },
+        presentation,
+      }),
     async respond(input) {
       if (options.executors.respond === undefined) {
         throw createIntegrationError({
@@ -973,13 +1008,20 @@ function assertUnpinnedRunRetryAllowed(input: {
   readonly request: LocalHostRunRequest;
   readonly descriptor: ExecutorDescriptor;
   readonly events: readonly { readonly type: string }[];
+  readonly allowEmptyReservationGap?: boolean | undefined;
 }): void {
   const isExactProjectRetry =
     input.descriptor.source === "project" && input.request.project?.revision !== undefined;
   const isAuthoritativeBuiltInRetry = input.descriptor.source === "built_in";
   const isCreationOnlyGap =
     input.events.length === 1 && input.events[0]?.type === "mission.created";
-  if ((isExactProjectRetry || isAuthoritativeBuiltInRetry) && isCreationOnlyGap) return;
+  const isEmptyReservationGap =
+    input.allowEmptyReservationGap === true && input.events.length === 0;
+  if (
+    (isExactProjectRetry || isAuthoritativeBuiltInRetry) &&
+    (isCreationOnlyGap || isEmptyReservationGap)
+  )
+    return;
   throw createPinnedBindingRecoveryError({
     reason: "mission_pinned_binding_required",
     missionId: input.missionId,

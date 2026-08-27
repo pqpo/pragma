@@ -2300,7 +2300,7 @@ describe("MissionRunner", { timeout: 15_000 }, () => {
     const firstRunPromise = runner.run(mission.id);
     const duplicateRunPromise = runner.run(mission.id);
     await expect(runner.delete(mission.id)).rejects.toThrow(
-      "Wait for the current mission operation to finish.",
+      "Stop the active execution before deleting this mission.",
     );
     const [firstRun, duplicateRun] = await Promise.all([firstRunPromise, duplicateRunPromise]);
     expect(firstRun.execution?.status).toBe("running");
@@ -2353,17 +2353,10 @@ describe("MissionRunner", { timeout: 15_000 }, () => {
       content: "Make it shorter",
       requestId: "00000000-0000-4000-8000-000000000010",
     });
-    await expect(
-      runner.sendMessage({
-        id: mission.id,
-        content: "This turn must not be queued concurrently",
-        requestId: "00000000-0000-4000-8000-000000000011",
-      }),
-    ).rejects.toThrow("Wait for the current mission operation to finish.");
-    await expect(runner.delete(mission.id)).rejects.toThrow(
-      "Wait for the current mission operation to finish.",
-    );
-    await followup;
+    await expect(followup).resolves.toMatchObject({
+      requestedMode: "enqueue",
+      effectiveMode: "enqueue",
+    });
     await vi.waitFor(
       async () => expect((await missions.get(mission.id)).execution?.status).toBe("succeeded"),
       { timeout: settlementTimeoutMs },

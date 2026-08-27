@@ -1,17 +1,12 @@
 {
   "name": "@pragma/cli",
-  "version": "0.0.0",
-  "private": true,
+  "version": "0.1.0-next.1",
+  "description": "Pragma command-line interface",
   "type": "module",
   "bin": {
     "pragma": "./dist/pragma.js"
   },
-  "exports": {
-    ".": {
-      "types": "./dist/index.d.ts",
-      "default": "./dist/index.js"
-    }
-  },
+  "exports": {},
   "os": [
     "darwin",
     "win32"
@@ -21,13 +16,18 @@
   },
   "scripts": {
     "pretest": "pnpm --filter @pragma/local-host build",
-    "build": "tsc -p tsconfig.build.json",
+    "build": "node scripts/build-package.mjs",
+    "package:pack": "node scripts/pack-package.mjs",
+    "audit:pack": "node scripts/package-audit.mjs",
+    "release:reports": "node scripts/release-reports.mjs",
+    "ci:smoke": "node scripts/smoke-package.mjs",
     "lint": "eslint src test vitest.config.ts",
     "typecheck": "tsc --noEmit",
     "test": "vitest run --passWithNoTests",
-    "clean": "rm -rf dist"
+    "clean": "rm -rf dist .release"
   },
   "dependencies": {
+    "@napi-rs/keyring": "1.3.0",
     "@pragma/local-host": "workspace:*",
     "@pragma/shared": "workspace:*",
     "@pragma/runtime-antigravity": "workspace:*",
@@ -39,6 +39,7 @@
   "devDependencies": {
     "@pragma/tsconfig": "workspace:*",
     "@types/node": "latest",
+    "esbuild": "0.28.1",
     "typescript": "latest",
     "vitest": "latest"
   }

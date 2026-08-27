@@ -183,6 +183,19 @@ export interface MissionControllerStore {
     readonly missionId: string;
     readonly disposition: "reserved" | "existing";
   }>;
+  /**
+   * Atomically bind an already-owned Host Mission identity to a run request.
+   * The registry entry shape intentionally remains the v1 request tuple; only
+   * the source of the Mission ID differs from reserveRunRequest.
+   */
+  reserveAttachedRunRequest(input: {
+    readonly requestId: string;
+    readonly payloadHash: string;
+    readonly missionId: string;
+  }): Promise<{
+    readonly missionId: string;
+    readonly disposition: "reserved" | "existing";
+  }>;
   readRunRequest(input: { readonly requestId: string }): Promise<
     | {
         readonly missionId: string;
@@ -992,6 +1005,61 @@ export function createMissionControllerStore(options: {
         { operation: "run-request-registry" },
       );
     },
+    async reserveAttachedRunRequest(input) {
+      return await withFileLock(
+        registryLock,
+        async () => {
+          const raw = await readJsonIfExists(registryPath);
+          const registry = RunRequestRegistrySchema.parse(
+            raw ?? { schemaVersion: "pragma.local-host-run-request-registry/v1", requests: {} },
+          );
+          const existing = registry.requests[input.requestId];
+          if (existing !== undefined) {
+            if (
+              existing.payloadHash !== input.payloadHash ||
+              existing.missionId !== input.missionId
+            ) {
+              throw attachedIdempotencyError(input);
+            }
+            return await withAggregateLock(input.missionId, async () => {
+              await recoverTransactions(input.missionId);
+              await assertAttachedAggregateIdentity(input, await readState(input.missionId));
+              await assertAttachedEventIdentity(input, await readEvents(input.missionId));
+              return { missionId: input.missionId, disposition: "existing" as const };
+            });
+          }
+
+          const occupied = Object.entries(registry.requests).find(
+            ([, request]) => request.missionId === input.missionId,
+          );
+          if (occupied !== undefined) throw attachedIdempotencyError(input);
+
+          return await withAggregateLock(input.missionId, async () => {
+            await recoverTransactions(input.missionId);
+            const state = await readState(input.missionId);
+            const events = await readEvents(input.missionId);
+            await assertAttachedAggregateIdentity(input, state);
+            await assertAttachedEventIdentity(input, events);
+            await writeJsonAtomically(
+              registryPath,
+              RunRequestRegistrySchema.parse({
+                ...registry,
+                requests: {
+                  ...registry.requests,
+                  [input.requestId]: {
+                    payloadHash: input.payloadHash,
+                    missionId: input.missionId,
+                    createdAt: now(),
+                  },
+                },
+              }),
+            );
+            return { missionId: input.missionId, disposition: "reserved" as const };
+          });
+        },
+        { operation: "attached-run-request-registry" },
+      );
+    },
     async readRunRequest(input) {
       return await withFileLock(
         registryLock,
@@ -1586,6 +1654,71 @@ function idempotencyError(requestId: string): IntegrationError {
     message: "requestId was already used with a different payload.",
     details: { requestId },
   });
+}
+
+function attachedIdempotencyError(input: {
+  readonly requestId: string;
+  readonly payloadHash: string;
+  readonly missionId: string;
+}): IntegrationError {
+  return createIntegrationError({
+    code: "IDEMPOTENCY_CONFLICT",
+    category: "conflict",
+    message: "The attached Mission identity does not match its existing run request.",
+    details: {
+      requestId: input.requestId,
+      missionId: input.missionId,
+    },
+  });
+}
+
+function assertAttachedAggregateIdentity(
+  input: { readonly missionId: string },
+  state: MissionAggregateState,
+): void {
+  if (state.missionId !== input.missionId) {
+    throw storageError("The attached Mission aggregate identity does not match its path.");
+  }
+}
+
+function assertAttachedEventIdentity(
+  input: {
+    readonly requestId: string;
+    readonly payloadHash: string;
+    readonly missionId: string;
+  },
+  events: readonly MissionEvent[],
+): void {
+  for (const event of events) {
+    if (event.missionId !== input.missionId) {
+      throw storageError("The attached Mission event identity does not match its aggregate.");
+    }
+  }
+
+  const createdEvents = events.filter((event) => event.type === "mission.created");
+  if (createdEvents.length > 1) {
+    throw storageError("A Mission contains duplicate creation anchors.");
+  }
+  const created = createdEvents[0];
+  if (created !== undefined) {
+    const requestId = created.data["requestId"];
+    const payloadHash = created.data["payloadHash"];
+    if (typeof requestId !== "string" || typeof payloadHash !== "string") {
+      throw storageError("The attached Mission creation anchor is malformed.");
+    }
+    if (requestId !== input.requestId || payloadHash !== input.payloadHash) {
+      throw attachedIdempotencyError(input);
+    }
+  }
+
+  const binding = findMissionPinnedBinding(events);
+  if (binding === undefined) return;
+  if (created === undefined) {
+    throw storageError("A Mission pinned binding is missing its creation anchor.");
+  }
+  if (binding.requestId !== input.requestId || binding.payloadHash !== input.payloadHash) {
+    throw attachedIdempotencyError(input);
+  }
 }
 
 function commandError(

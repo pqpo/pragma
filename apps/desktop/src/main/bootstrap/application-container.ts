@@ -1,3 +1,4 @@
+import { randomUUID } from "node:crypto";
 import { mkdir } from "node:fs/promises";
 import { join } from "node:path";
 
@@ -10,6 +11,7 @@ import {
   type PragmaLogger,
   type PragmaLoggerProvider,
 } from "@pragma/core";
+import type { ExpertPromptAttachment } from "@pragma/shared";
 import {
   BUILT_IN_PRAGMA_REF,
   EVALUATION_JUDGE_EXPERT_REF,
@@ -23,13 +25,16 @@ import {
 } from "@pragma/built-in-agents";
 import { MEMORY_CURATOR_REF } from "@pragma/memory";
 import {
+  createControllerRunMissionPort,
   createLocalHostApplication,
+  createLocalHostRunApplication,
   createMissionControllerStore,
+  createMissionControlApplication,
+  createMissionOwnerScope,
   createMissionWatchApplication,
   createNativeOsKeychain,
   createSecretStore,
 } from "@pragma/local-host";
-import { createIntegrationError } from "@pragma/shared/integration";
 import { isUserFacingMissionOrigin } from "../../shared/contracts/index.ts";
 
 import { installAutomationHandlers } from "../features/automations/automation-ipc.ts";
@@ -94,11 +99,8 @@ import {
   createMissionRunner,
 } from "../features/missions/mission-runner.ts";
 import { createMissionStore } from "../features/missions/mission-store.ts";
-import {
-  createDesktopMissionCommandConsumer,
-  createDesktopMissionController,
-  createGuardedMissionStore,
-} from "../features/missions/mission-controller-adapter.ts";
+import { createFencedMissionStore } from "../features/missions/mission-store-fenced-adapter.ts";
+import { createDesktopLocalHostExecutorResolver } from "../features/missions/local-host-mission-adapter.ts";
 import { createDesktopMemoryPlane } from "../features/memory/desktop-memory-plane.ts";
 import {
   createDesktopMemoryCurator,
@@ -282,18 +284,35 @@ export async function createDesktopApplicationContainer(
   // @pragma/local-host.
   const missionControllerStore = createMissionControllerStore({ missionsPath });
   const missionWatch = createMissionWatchApplication({ controller: missionControllerStore });
-  const desktopMissionController = createDesktopMissionController({
+  const missionRunnerRef: {
+    current?: ReturnType<typeof createMissionRunner>;
+  } = {};
+  const semanticWriteReplayRef: {
+    current?: Parameters<typeof missionControllerStore.recoverSemanticWrite>[0]["replay"];
+  } = {};
+  const ownerScope = createMissionOwnerScope({
     controller: missionControllerStore,
     onLeaseLost: async (missionId) => {
-      await missionRunner.stopLocalController(missionId);
+      await missionRunnerRef.current?.stopLocalController(missionId);
       mainLogger.warn(
         "mission.controller_lease_lost",
         "Mission controller lease was lost; local execution was stopped and subsequent semantic writes are fenced.",
         { missionId },
       );
     },
+    recoverSemanticWrite: async ({ missionId, guard }) => {
+      const replay = semanticWriteReplayRef.current;
+      if (replay === undefined) return;
+      await missionControllerStore.recoverSemanticWrite({ missionId, guard, replay });
+    },
   });
-  const guardedMissionStore = createGuardedMissionStore(missionStore, desktopMissionController);
+  const guardedMissionStore = createFencedMissionStore(missionStore, {
+    controller: missionControllerStore,
+    ownerScope,
+    setSemanticWriteReplay: (replay) => {
+      semanticWriteReplayRef.current = replay;
+    },
+  });
   const usageStore = await createDesktopUsageStore({
     databasePath: join(pragmaPaths.dataRoot(), "usage", "usage.sqlite"),
   }).catch((error: unknown) => {
@@ -741,7 +760,7 @@ export async function createDesktopApplicationContainer(
     automaticHumanInteractionHandlerForToolPermissionMode: (mode) =>
       createAutomaticToolPermissionHandler(() => mode),
     adapterHostForMission: (mission, fallback) => evaluationMocks.forMission(mission, fallback),
-    missionController: desktopMissionController,
+    ownerScope,
     assertStorageWriteAllowed: async () => await storageCapacityGuard.assertWriteAllowed(),
     onStorageTrashed: () => trashMaintenance.schedule("mission-storage-trashed"),
     onOwnerDeleting: async ({ executionIds }) => {
@@ -925,92 +944,43 @@ export async function createDesktopApplicationContainer(
       });
     },
   });
-  desktopMissionController.setCommandConsumer(
-    createDesktopMissionCommandConsumer({
-      commands: {
-        send: async (input) => {
-          const mission = await missionRunner.get(input.missionId);
-          if (mission.executor.kind === "flow") {
-            throw createIntegrationError({
-              code: "COMMAND_REJECTED",
-              category: "conflict",
-              message: "Flow Missions do not support chat messages.",
-              details: { missionId: input.missionId, reason: "send_not_supported" },
-            });
-          }
-          const accepted = await missionRunner.sendMessage({
-            id: input.missionId,
-            content: input.prompt,
-            requestId: input.requestId,
-            mode: input.mode,
-          });
-          return {
-            missionId: accepted.mission.id,
-            ...(accepted.mission.execution === undefined
-              ? {}
-              : { executionId: accepted.mission.execution.id }),
-          };
-        },
-        respond: async (input) => {
-          await missionRunner.respondToHumanInteraction({
-            missionId: input.missionId,
-            interactionId: input.interactionId,
-            requestId: input.requestId,
-            response: input.response,
-          });
-          return { missionId: input.missionId, interactionId: input.interactionId };
-        },
-        interrupt: async (input) => {
-          const mission = await missionRunner.interrupt(input.missionId, input.expectedExecutionId);
-          return { missionId: mission.id };
-        },
-        removeQueued: async (input) => {
-          const mission = await missionRunner.removeQueuedMessage({
-            id: input.missionId,
-            requestId: input.requestId,
-          });
-          return { missionId: mission.id };
-        },
-        resumeQueue: async (input) => {
-          const mission = await missionRunner.resumeQueue(input.missionId);
-          return { missionId: mission.id };
-        },
-        steerQueued: async (input) => {
-          const mission = await missionRunner.steerQueuedMessage({
-            id: input.missionId,
-            requestId: input.requestId,
-          });
-          return { missionId: mission.id };
-        },
-      },
-      validateStrictTarget: async (input) => {
-        const mission = await missionRunner.get(input.missionId);
-        if (mission.executor.kind === "flow") {
-          throw createIntegrationError({
-            code: "COMMAND_REJECTED",
-            category: "conflict",
-            message: "Flow Missions do not support strict steer.",
-            details: { missionId: input.missionId, reason: "steer_not_supported" },
-          });
-        }
-        const current = await missionRunner.getCanonicalStrictTarget(input.missionId);
-        if (current === undefined) {
-          throw createIntegrationError({
-            code: "STEER_TARGET_NOT_ACTIVE",
-            category: "conflict",
-            message: "Mission has no active Expert or Team turn for strict steer.",
-          });
-        }
-        if (current.executionId !== input.executionId || current.turnId !== input.turnId) {
-          throw createIntegrationError({
-            code: "STEER_TARGET_CHANGED",
-            category: "conflict",
-            message: "Strict Mission steer target changed before command apply.",
-          });
-        }
-      },
-    }),
-  );
+  missionRunnerRef.current = missionRunner;
+  const pendingPromptAttachments = new Map<string, readonly ExpertPromptAttachment[]>();
+  const localHostMissionControlAdapter = missionRunner.createLocalHostMissionControlAdapter({
+    resolvePromptAttachments: (requestId) => pendingPromptAttachments.get(requestId) ?? [],
+    onCommandOutcome: (requestId) => {
+      pendingPromptAttachments.delete(requestId);
+    },
+  });
+  const localHostMissionControl = createMissionControlApplication({
+    controller: missionControllerStore,
+    ownerScope,
+    consumer: localHostMissionControlAdapter.consumer,
+    assertMission: async (missionId) => {
+      await missionStore.get(missionId);
+    },
+    assertAcquisitionAllowed: localHostMissionControlAdapter.assertAcquisitionAllowed,
+    resolveStrictTarget: localHostMissionControlAdapter.resolveStrictTarget,
+    resolveExecutionTarget: localHostMissionControlAdapter.resolveExecutionTarget,
+    client: {
+      surface: "desktop",
+      version: "desktop",
+      instanceId: randomUUID(),
+    },
+  });
+  const localHostRunExecutorResolver = createDesktopLocalHostExecutorResolver({
+    executors: missionExecutors,
+    project: pragmaProjectStore,
+  });
+  const localHostRun = createLocalHostRunApplication({
+    executors: {
+      resolve: localHostRunExecutorResolver,
+      assertStartAllowed: async (input) => await missionRunner.assertLocalHostRunAllowed(input),
+      start: async (input) => await missionRunner.startLocalHostRun(input),
+    },
+    mission: createControllerRunMissionPort(missionControllerStore, { ownerScope }),
+    commandConsumer: localHostMissionControlAdapter.consumer,
+  });
   const memoryCurator = createDesktopMemoryCurator({
     profiles: memoryPlane.extractorProfiles,
     missions: missionStore,
@@ -1159,10 +1129,20 @@ export async function createDesktopApplicationContainer(
       },
     },
     watch: missionWatch,
+    missionControl: { commands: localHostMissionControl },
     runtime: { resolver: runtimes },
+    run: localHostRun,
   });
+  if (localHost.missionControl === undefined || localHost.run === undefined) {
+    throw new Error("Desktop Local Host control and run ports were not composed.");
+  }
+  const desktopLocalHost = {
+    ...localHost,
+    missionControl: localHost.missionControl,
+    run: localHost.run,
+  };
   installMissionHandlers({
-    localHost,
+    localHost: desktopLocalHost,
     missions: missionStore,
     creator: missionCreator,
     executors: missionExecutors,
@@ -1170,6 +1150,7 @@ export async function createDesktopApplicationContainer(
     project: pragmaProjectStore,
     getWindow: options.getWindow,
     runner: missionRunner,
+    pendingPromptAttachments,
     getAutomationMissionSources: () => automationService.listMissionSources(),
     getDefaultToolPermissionMode: getToolPermissionMode,
     getDefaultWorkspace: async () =>

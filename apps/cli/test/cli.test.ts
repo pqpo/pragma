@@ -207,6 +207,7 @@ describe("runCli", () => {
         setTimeout(() => signalHandler?.(), 0);
         return handle;
       },
+      startAttached: async (input, options) => await run.start(input.request, options),
       respond: async () => undefined,
     };
     const localHost = {

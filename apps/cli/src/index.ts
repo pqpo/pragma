@@ -39,10 +39,10 @@ import {
   type CliIo,
   type CliRunPresentationOutcome,
 } from "./presenters/index.ts";
-
-export const CLI_VERSION = "0.0.0";
+import { CLI_VERSION } from "./version.ts";
 
 export type { CliIo, CliLocalHost };
+export { CLI_VERSION };
 export { codeForError, selectPrimaryDoctorCode };
 
 export type CliDependencies = Readonly<

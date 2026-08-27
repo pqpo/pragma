@@ -36,6 +36,85 @@ const descriptor: ExecutorDescriptor = {
 };
 
 describe("Local Host run application", () => {
+  it("attaches a Desktop Mission ID and shares the normal run sequence", async () => {
+    const home = await mkdtemp(join(tmpdir(), "pragma-local-run-attached-"));
+    try {
+      const missionId = "33333333-3333-4333-8333-333333333333";
+      const controller = createMissionControllerStore({ missionsPath: join(home, "missions") });
+      let started = 0;
+      const application = createLocalHostRunApplication({
+        executors: fakeExecutorPort({ onStart: () => (started += 1) }),
+        mission: createControllerRunMissionPort(controller),
+      });
+
+      const first = await application.startAttached({ missionId, request: request() });
+      await expect(first.outcome).resolves.toMatchObject({
+        status: "succeeded",
+        missionId,
+        executionId: "execution-1",
+      });
+      expect(first.missionId).toBe(missionId);
+      expect(started).toBe(1);
+
+      const snapshot = await controller.readSnapshot({ missionId });
+      expect(snapshot.events.map((event) => event.type)).toEqual([
+        "mission.created",
+        "mission.binding.pinned",
+        "run.accepted",
+        "run.started",
+        "run.progress",
+        "run.succeeded",
+      ]);
+      await expect(
+        controller.readRunRequest({ requestId: request().requestId }),
+      ).resolves.toMatchObject({ missionId });
+
+      const retry = await application.startAttached({ missionId, request: request() });
+      await expect(retry.outcome).resolves.toMatchObject({
+        status: "succeeded",
+        missionId,
+        executionId: "execution-1",
+      });
+      expect(started).toBe(1);
+    } finally {
+      await rm(home, { recursive: true, force: true });
+    }
+  });
+
+  it("revalidates the Host identity after claiming before writing anchors", async () => {
+    const home = await mkdtemp(join(tmpdir(), "pragma-local-run-attach-fence-"));
+    try {
+      const missionId = "33333333-3333-4333-8333-333333333334";
+      const controller = createMissionControllerStore({ missionsPath: join(home, "missions") });
+      let observedLease = false;
+      let started = 0;
+      const baseExecutors = fakeExecutorPort({ onStart: () => (started += 1) });
+      const application = createLocalHostRunApplication({
+        executors: {
+          ...baseExecutors,
+          assertStartAllowed: async ({ missionId: claimedMissionId }) => {
+            const snapshot = await controller.readSnapshot({ missionId: claimedMissionId });
+            observedLease = snapshot.snapshot.lease !== undefined;
+            throw new Error("Desktop Mission changed after Local Host claim.");
+          },
+        },
+        mission: createControllerRunMissionPort(controller),
+      });
+
+      await expect(application.startAttached({ missionId, request: request() })).rejects.toThrow(
+        "Desktop Mission changed after Local Host claim.",
+      );
+      expect(observedLease).toBe(true);
+      expect(started).toBe(0);
+      await expect(controller.readSnapshot({ missionId })).resolves.toMatchObject({ events: [] });
+      await expect(
+        controller.readRunRequest({ requestId: request().requestId }),
+      ).resolves.toMatchObject({ missionId });
+    } finally {
+      await rm(home, { recursive: true, force: true });
+    }
+  });
+
   it("validates and pins the executor before reserving a Mission", async () => {
     const home = await mkdtemp(join(tmpdir(), "pragma-local-run-pin-"));
     try {

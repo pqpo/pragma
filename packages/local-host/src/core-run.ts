@@ -14,6 +14,7 @@ import type {
   RuntimeResolver,
   UsageSink,
   ExpertTurn,
+  MutableExecution,
 } from "@pragma/core";
 import {
   createFileExecutionStore,
@@ -340,14 +341,29 @@ async function releaseExpertSessionOwner(session: ExpertSession): Promise<void> 
   await session.releaseAfterTerminal();
 }
 
-function createCoreRunHandleState(options: {
-  readonly coreHandle: ExpertTurn | FlowExecution;
-  readonly owner: LocalHostCoreActiveOwner;
+export interface LocalHostCoreRunHandleState {
+  readonly handle: LocalHostRunHandle;
+  readonly pump: Promise<void>;
+  readonly respond: (interactionId: string, response: unknown, requestId: string) => Promise<void>;
+}
+
+export type LocalHostCoreExecutionHandle = MutableExecution & {
+  readonly result: Promise<unknown>;
+  readonly checkpointWaitingHuman: () => Promise<void>;
+};
+
+/**
+ * Adapt a Core execution handle to the Host run contract without imposing a
+ * Core owner model on the caller.  Desktop has its own Host projection and
+ * therefore supplies the same lower-level handle through this boundary.
+ */
+export function createLocalHostRunHandleState(options: {
+  readonly coreHandle: LocalHostCoreExecutionHandle;
   readonly release: () => Promise<void>;
   readonly executions: ExecutionStore;
   readonly missionId: string;
   readonly onEvent?: ((event: LocalHostRunEvent) => void) | undefined;
-}): CoreRunHandleState {
+}): LocalHostCoreRunHandleState {
   const pending = new Map<string, HumanInteractionRequestEnvelope>();
   let settled = false;
   let resolveCheckpoint: ((terminal: LocalHostRunTerminal) => void) | undefined;
@@ -459,6 +475,19 @@ function createCoreRunHandleState(options: {
     pump,
     respond: async (interactionId, response, requestId) =>
       await handle.respondToHumanInteraction?.(interactionId, response, requestId),
+  };
+}
+
+function createCoreRunHandleState(options: {
+  readonly coreHandle: ExpertTurn | FlowExecution;
+  readonly owner: LocalHostCoreActiveOwner;
+  readonly release: () => Promise<void>;
+  readonly executions: ExecutionStore;
+  readonly missionId: string;
+  readonly onEvent?: ((event: LocalHostRunEvent) => void) | undefined;
+}): CoreRunHandleState {
+  return {
+    ...createLocalHostRunHandleState(options),
     owner: options.owner,
     missionId: options.missionId,
   };
