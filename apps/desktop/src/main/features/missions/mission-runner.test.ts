@@ -1788,6 +1788,145 @@ describe("MissionRunner", { timeout: 15_000 }, () => {
     unsubscribe();
   });
 
+  it("keeps materialized Expert work in one Runtime Context conversation across prompts", async () => {
+    const root = await mkdtemp(join(tmpdir(), "pragma-mission-materialized-work-"));
+    temporaryPaths.push(root);
+    const project = createPragmaProjectStore({ projectsPath: join(root, "projects") });
+    const writer = expertFixtureWithReviewerTool();
+    const reviewer = reviewerFixture();
+    const team = expertTeamFixture();
+    const snapshot = await project.publish({
+      expectedRevision: 0,
+      resources: [runtimeFixture(), writer, reviewer, team],
+    });
+    const missions = createMissionStore({ missionsPath: join(root, "missions") });
+    const mission = await missions.create({
+      workspace: { path: root, basename: "workspace" },
+      goal: "Review the first draft",
+      project: { id: snapshot.projectId, revision: snapshot.revision },
+      executor: missionExecutorSnapshot(team),
+    });
+    let reviewerContextId: string | undefined;
+    const reviewerAgentIds: string[] = [];
+    const runtime = defineRuntimeTestDriver<
+      never,
+      { context: RuntimeDriverSessionContext; id: string }
+    >({
+      descriptor: { id: "fake", kind: "fake", displayName: "Fake" },
+      createSession: (context) => ({ context, id: `runtime:${context.systemSessionId}` }),
+      readSession: (session) => ({ runtimeSessionId: session.id }),
+      async startTurn(session, turn) {
+        if (session.context.agent.id === reviewer.metadata.id) {
+          return {
+            outputText: `reviewer:${turn.rawQuery}`,
+            runtimeSessionId: session.id,
+          };
+        }
+        const tools = session.context.agent.tools ?? [];
+        const wait = tools.find((tool) => tool.name === "wait_experts");
+        if (wait === undefined) throw new Error("Missing collaboration tool: wait_experts");
+        const execution = { execution: session.context.request.executionContext };
+        let invocationId: string;
+        if (reviewerContextId === undefined) {
+          const spawn = tools.find((tool) => tool.name === "spawn_expert");
+          if (spawn === undefined) throw new Error("Missing collaboration tool: spawn_expert");
+          const spawned = await spawn.call(
+            { expertId: reviewer.metadata.id, task: "Review the first draft" },
+            turn.signal,
+            execution,
+          );
+          const details = spawned.details as {
+            agentId: string;
+            contextId: string;
+            invocationId: string;
+          };
+          reviewerContextId = details.contextId;
+          reviewerAgentIds.push(details.agentId);
+          invocationId = details.invocationId;
+        } else {
+          const continueExpert = tools.find((tool) => tool.name === "continue_expert");
+          if (continueExpert === undefined) {
+            throw new Error("Missing collaboration tool: continue_expert");
+          }
+          const continued = await continueExpert.call(
+            { contextId: reviewerContextId, task: "Review the revised draft" },
+            turn.signal,
+            execution,
+          );
+          const details = continued.details as {
+            agentDisposition: string;
+            agentId: string;
+            invocationId: string;
+          };
+          expect(details.agentDisposition).toBe("materialized");
+          reviewerAgentIds.push(details.agentId);
+          invocationId = details.invocationId;
+        }
+        await wait.call({ invocationIds: [invocationId] }, turn.signal, execution);
+        return { outputText: "writer:reviewed", runtimeSessionId: session.id };
+      },
+      mapEvent: () => ({ events: [] }),
+      closeSession: () => undefined,
+    });
+    const runner = createMissionRunner({
+      missions,
+      project,
+      capabilityStore: {} as CapabilityStore,
+      capabilityCredentials: {} as CapabilityCredentialStore,
+      capabilitiesPath: join(root, "capabilities"),
+      pragmaHome: join(root, "state"),
+      runtimes: createStaticRuntimeResolver({ runtimes: [runtime], defaultRuntimeId: "fake" }),
+    });
+
+    await runner.run(mission.id);
+    await vi.waitFor(
+      async () => expect((await missions.get(mission.id)).execution?.status).toBe("succeeded"),
+      { timeout: settlementTimeoutMs },
+    );
+    await runner.sendMessage({
+      id: mission.id,
+      content: "Review the revised draft",
+      requestId: "00000000-0000-4000-8000-000000000205",
+    });
+    await vi.waitFor(
+      async () => expect((await missions.get(mission.id)).execution?.status).toBe("succeeded"),
+      { timeout: settlementTimeoutMs },
+    );
+
+    expect(new Set(reviewerAgentIds).size).toBe(2);
+    const work = await runner.getWork(mission.id);
+    const reviewerRecords = work.records.filter(
+      (record) => record.kind === "agent" && record.executorId === reviewer.metadata.id,
+    );
+    expect(reviewerRecords).toHaveLength(1);
+    expect(reviewerRecords[0]).toMatchObject({
+      recordId: `agent-context:${reviewerContextId}`,
+      sessionId: reviewerContextId,
+      title: reviewer.metadata.name,
+      status: "succeeded",
+      summary: "reviewer:Review the revised draft",
+      tasks: [
+        expect.objectContaining({ inputSummary: "Review the first draft" }),
+        expect.objectContaining({ inputSummary: "Review the revised draft" }),
+      ],
+    });
+    const conversation = await runner.getWorkConversation({
+      id: mission.id,
+      recordId: reviewerRecords[0]!.recordId,
+      limit: 100,
+    });
+    expect(
+      conversation.entries
+        .filter((entry) => entry.kind === "user" || entry.kind === "assistant")
+        .map((entry) => [entry.kind, entry.content]),
+    ).toEqual([
+      ["user", "Review the first draft"],
+      ["assistant", "reviewer:Review the first draft"],
+      ["user", "Review the revised draft"],
+      ["assistant", "reviewer:Review the revised draft"],
+    ]);
+  });
+
   it("keeps Work available with ID fallbacks when executor names cannot be read", async () => {
     const root = await mkdtemp(join(tmpdir(), "pragma-mission-work-name-fallback-"));
     temporaryPaths.push(root);

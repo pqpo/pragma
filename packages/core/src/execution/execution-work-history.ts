@@ -137,11 +137,11 @@ export class ExecutionWorkHistoryReader {
       }
 
       for (const agent of agents) {
-        const recordId = `agent:${executionId}:${agent.agentId}`;
+        const recordId = `agent-context:${agent.contextId}`;
         const record = ensureRecord(records, {
           recordId,
           kind: "agent",
-          sessionId: agent.agentId,
+          sessionId: agent.contextId,
           executorId: agent.definition.id,
           contextId: agent.contextId,
           origin: "core",
@@ -573,10 +573,17 @@ function readRuntimeAgentStatus(value: unknown): ExecutionStatus | undefined {
 
 function finalizeRecord(record: MutableWorkRecord): ExecutionWorkRecord {
   const tasks = [...record.tasks.values()].toSorted((left, right) => {
-    if (left.sequence !== undefined || right.sequence !== undefined) {
-      return (left.sequence ?? 0) - (right.sequence ?? 0);
+    if (
+      left.executionId === right.executionId &&
+      (left.sequence !== undefined || right.sequence !== undefined)
+    ) {
+      const sequence =
+        (left.sequence ?? Number.MAX_SAFE_INTEGER) - (right.sequence ?? Number.MAX_SAFE_INTEGER);
+      if (sequence !== 0) return sequence;
     }
-    return left.createdAt.localeCompare(right.createdAt);
+    const createdAt = left.createdAt.localeCompare(right.createdAt);
+    if (createdAt !== 0) return createdAt;
+    return left.executionId === right.executionId ? left.taskId.localeCompare(right.taskId) : 0;
   });
   const status =
     record.origin === "runtime" &&
