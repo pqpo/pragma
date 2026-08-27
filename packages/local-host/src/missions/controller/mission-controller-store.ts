@@ -1,5 +1,5 @@
 import { randomUUID } from "node:crypto";
-import { mkdir, open, readFile, rename, rm, truncate } from "node:fs/promises";
+import { mkdir, open, readFile, rename, rm, stat, truncate } from "node:fs/promises";
 import { dirname, join } from "node:path";
 
 import { withFileLock } from "@pragma/core";
@@ -19,6 +19,7 @@ import {
   MissionEventSchema,
   MissionEventTransactionSchema,
   MissionOperationProjectionSchema,
+  MissionRetentionTransactionSchema,
   RunRequestRegistrySchema,
   type MissionAggregateState,
   type MissionControllerLease,
@@ -28,6 +29,23 @@ import {
   type MissionSemanticWriteTransaction,
   MissionSemanticWriteTransactionSchema,
 } from "./schemas.ts";
+import {
+  findMissionPinnedBinding,
+  MISSION_PINNED_BINDING_EVENT_TYPE,
+  MissionPinnedBindingSchema,
+  sameMissionPinnedBinding,
+  type MissionPinnedBinding,
+} from "./pinned-binding.ts";
+import {
+  exceedsMissionRetentionBudget,
+  planMissionRetention,
+  resolveMissionRetentionPolicy,
+  retentionReport,
+  serializedRetentionBytes,
+  type MissionRetentionOptions,
+  type MissionRetentionPolicy,
+  type MissionRetentionReport,
+} from "./retention.ts";
 
 export interface MissionControllerGuard {
   readonly claimId: string;
@@ -48,6 +66,16 @@ export interface MissionCommandApplyResult {
   readonly result: Record<string, unknown>;
 }
 
+export interface MissionWatchBarrier {
+  readonly snapshot: MissionAggregateState;
+  /** Cursor for the exact event sequence observed under the same lock. */
+  readonly cursor: string;
+  readonly barrierSequence: number;
+  readonly events: readonly MissionEvent[];
+  /** Latest lifecycle event retained at this barrier, even when replay is 0. */
+  readonly latestStatusEventType?: string | undefined;
+}
+
 export type MissionControllerJournalPhase =
   | "command-append.prepare"
   | "command-append.command"
@@ -66,7 +94,12 @@ export type MissionControllerJournalPhase =
   | "semantic-write.mutation-commit"
   | "semantic-write.event-append"
   | "semantic-write.state-sequence"
-  | "semantic-write.clear";
+  | "semantic-write.clear"
+  | "retention.prepare"
+  | "retention.events"
+  | "retention.commands"
+  | "retention.state"
+  | "retention.clear";
 
 export interface MissionCommandConsumer {
   /**
@@ -82,7 +115,21 @@ export interface MissionCommandConsumer {
     readonly command: MissionCommand;
     readonly guard: MissionControllerGuard;
   }): Promise<MissionCommandApplyResult>;
+  /**
+   * Schedules lower-level owner settlement after the durable command outcome
+   * is committed. Implementations must not wait for Runtime work here: the
+   * controller poller remains available for the next Inbox command.
+   */
+  afterOutcome?(input: {
+    readonly command: MissionCommand;
+    readonly guard: MissionControllerGuard;
+    readonly state: "applied" | "rejected";
+    readonly result?: Record<string, unknown> | undefined;
+    readonly error?: IntegrationError | undefined;
+  }): Promise<void> | void;
 }
+
+export type MissionControllerGuardSource = MissionControllerGuard | (() => MissionControllerGuard);
 
 export interface MissionControllerStore {
   claim(input: {
@@ -132,13 +179,23 @@ export interface MissionControllerStore {
     readonly guard: MissionControllerGuard;
     readonly replay: (operation: MissionSemanticOperation) => Promise<void>;
   }): Promise<void>;
-  reserveRunRequest(input: {
-    readonly requestId: string;
-    readonly payloadHash: string;
-  }): Promise<{
+  reserveRunRequest(input: { readonly requestId: string; readonly payloadHash: string }): Promise<{
     readonly missionId: string;
     readonly disposition: "reserved" | "existing";
   }>;
+  readRunRequest(input: { readonly requestId: string }): Promise<
+    | {
+        readonly missionId: string;
+        readonly payloadHash: string;
+        readonly createdAt: string;
+      }
+    | undefined
+  >;
+  ensurePinnedBinding(input: {
+    readonly missionId: string;
+    readonly guard: MissionControllerGuard;
+    readonly binding: MissionPinnedBinding;
+  }): Promise<{ readonly disposition: "appended" | "existing" }>;
   appendCommand(
     input: Omit<
       MissionCommand,
@@ -158,9 +215,51 @@ export interface MissionControllerStore {
     readonly missionId: string;
     readonly requestId: string;
   }): Promise<MissionOperationProjection | undefined>;
+  /** Read the durable command envelope used to reconstruct an idempotent retry. */
+  getCommand(input: {
+    readonly missionId: string;
+    readonly requestId: string;
+  }): Promise<MissionCommand | undefined>;
+  /** Reserve a non-Inbox durable operation such as Mission resume. */
+  reserveOperation(input: {
+    readonly missionId: string;
+    readonly requestId: string;
+    readonly payloadHash: string;
+    readonly kind: string;
+    readonly createdAt?: string | undefined;
+  }): Promise<{
+    readonly operation: MissionOperationProjection;
+    readonly disposition: "reserved" | "existing";
+  }>;
+  /** Complete a previously reserved operation under the current owner fence. */
+  completeOperation(input: {
+    readonly missionId: string;
+    readonly requestId: string;
+    readonly payloadHash: string;
+    readonly state: "applied" | "rejected" | "failed";
+    readonly guard?: MissionControllerGuard | undefined;
+    readonly result?: Record<string, unknown> | undefined;
+    readonly error?: Record<string, unknown> | undefined;
+  }): Promise<MissionOperationProjection>;
+  waitOperation(input: {
+    readonly missionId: string;
+    readonly requestId: string;
+    /** Maximum wall-clock time to wait for a terminal operation projection. */
+    readonly timeoutMs?: number | undefined;
+    /** Poll interval; each read acquires and releases the aggregate lock. */
+    readonly pollIntervalMs?: number | undefined;
+  }): Promise<MissionOperationProjection>;
   listOperations(input: {
     readonly missionId: string;
   }): Promise<readonly MissionOperationProjection[]>;
+  /** Reads one atomic replay/snapshot barrier without acquiring a Mission lease. */
+  readWatchBarrier(input: {
+    readonly missionId: string;
+    readonly after?: string | undefined;
+    readonly replay?: number | undefined;
+  }): Promise<MissionWatchBarrier>;
+  /** Compacts only this Mission's retained event and terminal command tails. */
+  compactRetention(input: { readonly missionId: string }): Promise<MissionRetentionReport>;
   readSnapshot(input: { readonly missionId: string; readonly after?: string }): Promise<{
     readonly snapshot: MissionAggregateState;
     readonly cursor: string;
@@ -168,7 +267,8 @@ export interface MissionControllerStore {
   }>;
   startPolling(input: {
     readonly missionId: string;
-    readonly guard: MissionControllerGuard;
+    /** A getter lets a long-lived poller observe a renewed fencing token. */
+    readonly guard: MissionControllerGuardSource;
     readonly consumer: MissionCommandConsumer;
     readonly onLeaseLost: () => Promise<void> | void;
     readonly initialDelayMs?: number;
@@ -180,11 +280,13 @@ export interface MissionControllerStore {
 export function createMissionControllerStore(options: {
   readonly missionsPath: string;
   readonly clock?: MissionControlClock;
+  readonly retention?: MissionRetentionOptions | undefined;
   /** Test-only deterministic interruption hook for durable journal boundaries. */
   readonly onJournalPhase?:
     ((phase: MissionControllerJournalPhase) => Promise<void> | void) | undefined;
 }): MissionControllerStore {
   const clock = options.clock ?? { now: () => new Date() };
+  const retentionPolicy: MissionRetentionPolicy = resolveMissionRetentionPolicy(options.retention);
   const missionDirectory = (missionId: string) =>
     join(options.missionsPath, missionId, "local-host");
   const statePath = (missionId: string) => join(missionDirectory(missionId), "aggregate.json");
@@ -199,6 +301,8 @@ export function createMissionControllerStore(options: {
     join(missionDirectory(missionId), ".event-transaction.json");
   const semanticWriteTransactionPath = (missionId: string) =>
     join(missionDirectory(missionId), ".semantic-write-transaction.json");
+  const retentionTransactionPath = (missionId: string) =>
+    join(missionDirectory(missionId), ".retention-transaction.json");
   const lockPath = (missionId: string) =>
     join(options.missionsPath, ".locks", `${missionId}.aggregate.lock`);
   const registryPath = join(options.missionsPath, ".local-host", "run-request-registry.json");
@@ -335,6 +439,55 @@ export function createMissionControllerStore(options: {
     await checkpoint("event.clear");
   };
 
+  const recoverRetentionTransaction = async (missionId: string): Promise<void> => {
+    const raw = await readJsonIfExists(retentionTransactionPath(missionId));
+    if (raw === undefined) return;
+    const transaction = MissionRetentionTransactionSchema.parse(raw);
+    if (transaction.missionId !== missionId)
+      throw storageError("Retention transaction mission does not match its owner.");
+
+    const state = await readState(missionId);
+    if (state.eventSequence !== transaction.eventSequence) {
+      throw storageError("Retention transaction does not match the Mission event sequence.");
+    }
+    const retainedEvents = transaction.retainedEvents.map((event) => {
+      if (event.missionId !== missionId || event.sequence > transaction.eventSequence) {
+        throw storageError("Retention transaction contains an event for the wrong Mission.");
+      }
+      return event;
+    });
+    const retainedCommands = MissionCommandSchema.array().parse(transaction.retainedCommands);
+    const currentEvents = await readEvents(missionId);
+    if (!sameJsonArray(currentEvents, retainedEvents)) {
+      await writeEventsAtomically(eventsPath(missionId), retainedEvents);
+      await checkpoint("retention.events");
+    }
+
+    const currentCommands = await readCommands(missionId);
+    if (!sameJsonArray(currentCommands, retainedCommands)) {
+      await writeCommands(missionId, retainedCommands);
+      await checkpoint("retention.commands");
+    }
+
+    const operations = { ...state.operations };
+    let operationsChanged = false;
+    for (const removed of transaction.removedOperations) {
+      const operation = operations[removed.requestId];
+      if (operation === undefined) continue;
+      if (operation.operationId !== removed.operationId) {
+        throw storageError("Retention transaction conflicts with a Mission operation.");
+      }
+      delete operations[removed.requestId];
+      operationsChanged = true;
+    }
+    if (operationsChanged) {
+      await writeState(missionId, MissionAggregateStateSchema.parse({ ...state, operations }));
+      await checkpoint("retention.state");
+    }
+    await rm(retentionTransactionPath(missionId), { force: true });
+    await checkpoint("retention.clear");
+  };
+
   const recoverCommandAppendTransaction = async (missionId: string): Promise<void> => {
     const raw = await readJsonIfExists(commandAppendTransactionPath(missionId));
     if (raw === undefined) return;
@@ -413,9 +566,132 @@ export function createMissionControllerStore(options: {
   };
 
   const recoverTransactions = async (missionId: string): Promise<void> => {
+    await recoverRetentionTransaction(missionId);
     await recoverCommandAppendTransaction(missionId);
     await recoverCommandTransaction(missionId);
     await recoverEventTransaction(missionId);
+  };
+
+  const retentionMayNeedCompaction = async (
+    missionId: string,
+    state: MissionAggregateState,
+  ): Promise<boolean> => {
+    // These checks are intentionally conservative. A possible threshold
+    // crossing falls through to the full planner; a definite under-budget
+    // Mission avoids rereading/parsing all event and Inbox records on every
+    // ordinary command outcome.
+    if (state.eventSequence > retentionPolicy.events.maxCount) return true;
+    if ((await fileSizeIfExists(eventsPath(missionId))) > retentionPolicy.events.maxBytes)
+      return true;
+    if (Object.keys(state.operations).length > retentionPolicy.terminalCommands.maxCount)
+      return true;
+    const commandBytes = await fileSizeIfExists(commandsPath(missionId));
+    const operationBytes = Object.values(state.operations).reduce(
+      (total, operation) => total + serializedRetentionBytes(operation),
+      0,
+    );
+    return commandBytes + operationBytes > retentionPolicy.terminalCommands.maxBytes;
+  };
+
+  const compactRetentionUnlocked = async (
+    missionId: string,
+    options: { readonly force?: boolean } = {},
+  ): Promise<MissionRetentionReport> => {
+    const state = await readState(missionId);
+    if (!options.force && !(await retentionMayNeedCompaction(missionId, state))) {
+      return {
+        compacted: false,
+        retainedEventCount: 0,
+        retainedCommandCount: 0,
+        retainedOperationCount: 0,
+        removedEventCount: 0,
+        removedCommandCount: 0,
+        removedOperationCount: 0,
+      };
+    }
+    const events = await readEvents(missionId);
+    const commands = await readCommands(missionId);
+    if (!exceedsMissionRetentionBudget({ events, commands, state, policy: retentionPolicy })) {
+      return {
+        compacted: false,
+        retainedEventCount: events.length,
+        retainedCommandCount: commands.length,
+        retainedOperationCount: Object.keys(state.operations).length,
+        removedEventCount: 0,
+        removedCommandCount: 0,
+        removedOperationCount: 0,
+      };
+    }
+    const plan = planMissionRetention({ events, commands, state, policy: retentionPolicy });
+    const report = retentionReport(plan);
+    if (!plan.changed) return report;
+    const transaction = MissionRetentionTransactionSchema.parse({
+      schemaVersion: "pragma.local-host-mission-retention-transaction/v1",
+      missionId,
+      eventSequence: state.eventSequence,
+      retainedEvents: plan.retainedEvents,
+      retainedCommands: plan.retainedCommands,
+      removedOperations: Object.entries(state.operations)
+        .filter(([requestId]) => plan.retainedOperations[requestId] === undefined)
+        .map(([requestId, operation]) => ({
+          requestId,
+          operationId: operation.operationId,
+        })),
+    });
+    await writeJsonAtomically(retentionTransactionPath(missionId), transaction);
+    await checkpoint("retention.prepare");
+    await recoverRetentionTransaction(missionId);
+    return report;
+  };
+
+  const readWatchBarrierUnlocked = async (input: {
+    readonly missionId: string;
+    readonly after?: string | undefined;
+    readonly replay?: number | undefined;
+  }): Promise<MissionWatchBarrier> => {
+    if (input.after !== undefined && input.replay !== undefined) {
+      throw createIntegrationError({
+        code: "INVALID_ARGUMENT",
+        category: "usage",
+        message: "Mission watch accepts either --after or --replay, not both.",
+        details: { missionId: input.missionId },
+      });
+    }
+    const replay = input.replay ?? 50;
+    if (!Number.isSafeInteger(replay) || replay < 0 || replay > 1_000) {
+      throw createIntegrationError({
+        code: "INVALID_ARGUMENT",
+        category: "usage",
+        message: "Mission watch replay must be an integer between 0 and 1000.",
+        details: { missionId: input.missionId, replay },
+      });
+    }
+    await compactRetentionUnlocked(input.missionId);
+    const snapshot = await readState(input.missionId);
+    const allEvents = await readEvents(input.missionId);
+    const after = input.after === undefined ? undefined : parseCursor(input.after, input.missionId);
+    if (!allEvents.some((event) => event.type === "mission.created")) {
+      throw createIntegrationError({
+        code: "MISSION_NOT_FOUND",
+        category: "not_found",
+        message: `Mission not found: ${input.missionId}.`,
+        details: { missionId: input.missionId },
+      });
+    }
+    if (after !== undefined) assertCursorRetained(after, snapshot.eventSequence, allEvents);
+    const events =
+      after === undefined
+        ? replay === 0
+          ? []
+          : allEvents.slice(Math.max(0, allEvents.length - replay))
+        : allEvents.filter((event) => event.sequence > after);
+    return {
+      snapshot,
+      cursor: makeCursor(input.missionId, snapshot.eventSequence),
+      barrierSequence: snapshot.eventSequence,
+      events,
+      ...latestStatusEventType(allEvents),
+    };
   };
 
   const assertGuard = (
@@ -463,6 +739,7 @@ export function createMissionControllerStore(options: {
     await writeJsonAtomically(transactionPath(input.missionId), transaction);
     await checkpoint("command-outcome.prepare");
     await recoverCommandTransaction(input.missionId);
+    await compactRetentionUnlocked(input.missionId);
   };
 
   const prepareSemanticWrite = async (input: {
@@ -653,13 +930,15 @@ export function createMissionControllerStore(options: {
         await recoverTransactions(input.missionId);
         let state = await readState(input.missionId);
         assertGuard(state, input.guard);
-        return await input.operation({
+        const result = await input.operation({
           appendEvent: async (type, data, eventId) => {
             const appended = await appendEventUnlocked(input.missionId, state, type, data, eventId);
             state = appended.state;
             return appended.event;
           },
         });
+        await compactRetentionUnlocked(input.missionId);
+        return result;
       });
     },
     async coordinateSemanticWrite(input) {
@@ -713,21 +992,44 @@ export function createMissionControllerStore(options: {
         { operation: "run-request-registry" },
       );
     },
+    async readRunRequest(input) {
+      return await withFileLock(
+        registryLock,
+        async () => {
+          const raw = await readJsonIfExists(registryPath);
+          if (raw === undefined) return undefined;
+          const registry = RunRequestRegistrySchema.parse(raw);
+          return registry.requests[input.requestId];
+        },
+        { operation: "run-request-registry-read" },
+      );
+    },
+    async ensurePinnedBinding(input) {
+      const binding = MissionPinnedBindingSchema.parse(input.binding);
+      return await withAggregateLock(input.missionId, async () => {
+        await recoverTransactions(input.missionId);
+        const state = await readState(input.missionId);
+        assertGuard(state, input.guard);
+        const existing = findMissionPinnedBinding(await readEvents(input.missionId));
+        if (existing !== undefined) {
+          if (!sameMissionPinnedBinding(existing, binding)) {
+            throw storageError("Mission contains a conflicting pinned binding.");
+          }
+          return { disposition: "existing" as const };
+        }
+        await appendEventUnlocked(
+          input.missionId,
+          state,
+          MISSION_PINNED_BINDING_EVENT_TYPE,
+          binding,
+        );
+        await compactRetentionUnlocked(input.missionId);
+        return { disposition: "appended" as const };
+      });
+    },
     async appendCommand(input) {
       return await withAggregateLock(input.missionId, async () => {
         await recoverTransactions(input.missionId);
-        const strict = input.kind === "steer" || input.kind === "queue.steer";
-        if (
-          strict &&
-          (input.target?.executionId === undefined || input.target.turnId === undefined)
-        ) {
-          throw createIntegrationError({
-            code: "STEER_TARGET_NOT_ACTIVE",
-            category: "conflict",
-            message: "Strict steer requires expected executionId and turnId.",
-            details: { missionId: input.missionId },
-          });
-        }
         const state = await readState(input.missionId);
         const existing = state.operations[input.request.requestId];
         if (existing !== undefined) {
@@ -740,6 +1042,18 @@ export function createMissionControllerStore(options: {
           if (command === undefined)
             throw storageError("Operation does not have its durable command.");
           return { command, operation: existing };
+        }
+        const strict = input.kind === "steer" || input.kind === "queue.steer";
+        if (
+          strict &&
+          (input.target?.executionId === undefined || input.target.turnId === undefined)
+        ) {
+          throw createIntegrationError({
+            code: "STEER_TARGET_NOT_ACTIVE",
+            category: "conflict",
+            message: "Strict steer requires expected executionId and turnId.",
+            details: { missionId: input.missionId },
+          });
         }
         if (strict && state.lease === undefined) {
           throw createIntegrationError({
@@ -790,6 +1104,7 @@ export function createMissionControllerStore(options: {
         await writeJsonAtomically(commandAppendTransactionPath(input.missionId), transaction);
         await checkpoint("command-append.prepare");
         await recoverCommandAppendTransaction(input.missionId);
+        await compactRetentionUnlocked(input.missionId);
         return { command, operation };
       });
     },
@@ -889,10 +1204,21 @@ export function createMissionControllerStore(options: {
         return accepted;
       });
       if (selected === undefined) return undefined;
+      let outcome:
+        | {
+            readonly state: "applied";
+            readonly result: Record<string, unknown>;
+          }
+        | {
+            readonly state: "rejected";
+            readonly error: IntegrationError;
+          }
+        | undefined;
       try {
         if (selected.kind === "steer" || selected.kind === "queue.steer")
           await input.consumer.validateStrictTarget?.({ command: selected, guard: input.guard });
         const applied = await input.consumer.apply({ command: selected, guard: input.guard });
+        let recorded = false;
         await withAggregateLock(input.missionId, async () => {
           await recoverTransactions(input.missionId);
           const state = await readState(input.missionId);
@@ -922,8 +1248,12 @@ export function createMissionControllerStore(options: {
             eventType: "command.applied",
             eventData: { commandId: completed.commandId },
           });
+          recorded = true;
         });
+        if (recorded) outcome = { state: "applied", result: applied.result };
       } catch (error) {
+        let recorded = false;
+        const integrationError = toIntegrationError(error);
         await withAggregateLock(input.missionId, async () => {
           await recoverTransactions(input.missionId);
           const state = await readState(input.missionId);
@@ -934,7 +1264,6 @@ export function createMissionControllerStore(options: {
           const operation = state.operations[selected.request.requestId];
           if (command === undefined || operation === undefined || command.state === "applied")
             return;
-          const integrationError = toIntegrationError(error);
           const rejected = MissionCommandSchema.parse({
             ...command,
             state: "rejected",
@@ -954,7 +1283,23 @@ export function createMissionControllerStore(options: {
             eventType: "command.rejected",
             eventData: { commandId: rejected.commandId, error: integrationError },
           });
+          recorded = true;
         });
+        if (recorded) outcome = { state: "rejected", error: integrationError };
+      }
+      if (outcome !== undefined && input.consumer.afterOutcome !== undefined) {
+        // Settlement may wait for the lower-level execution to become idle;
+        // never hold up the Inbox poller while that happens.
+        void Promise.resolve()
+          .then(
+            async () =>
+              await input.consumer.afterOutcome?.({
+                command: selected,
+                guard: input.guard,
+                ...outcome,
+              }),
+          )
+          .catch(() => undefined);
       }
       return selected;
     },
@@ -1007,6 +1352,119 @@ export function createMissionControllerStore(options: {
         return (await readState(input.missionId)).operations[input.requestId];
       });
     },
+    async getCommand(input) {
+      return await withAggregateLock(input.missionId, async () => {
+        await recoverTransactions(input.missionId);
+        return (await readCommands(input.missionId)).find(
+          (command) => command.request.requestId === input.requestId,
+        );
+      });
+    },
+    async reserveOperation(input) {
+      return await withAggregateLock(input.missionId, async () => {
+        await recoverTransactions(input.missionId);
+        const state = await readState(input.missionId);
+        const existing = state.operations[input.requestId];
+        if (existing !== undefined) {
+          if (existing.payloadHash !== input.payloadHash) {
+            throw idempotencyError(input.requestId);
+          }
+          return { operation: existing, disposition: "existing" as const };
+        }
+        const createdAt = input.createdAt ?? now();
+        const operation = MissionOperationProjectionSchema.parse({
+          schemaVersion: "pragma.local-host-mission-operation/v1",
+          operationId: randomUUID(),
+          requestId: input.requestId,
+          payloadHash: input.payloadHash,
+          kind: input.kind,
+          state: "queued",
+          createdAt,
+          updatedAt: createdAt,
+        });
+        await writeState(
+          input.missionId,
+          MissionAggregateStateSchema.parse({
+            ...state,
+            operations: { ...state.operations, [input.requestId]: operation },
+          }),
+        );
+        await compactRetentionUnlocked(input.missionId);
+        return { operation, disposition: "reserved" as const };
+      });
+    },
+    async completeOperation(input) {
+      return await withAggregateLock(input.missionId, async () => {
+        await recoverTransactions(input.missionId);
+        const state = await readState(input.missionId);
+        if (input.guard !== undefined) assertGuard(state, input.guard);
+        const existing = state.operations[input.requestId];
+        if (existing === undefined) {
+          throw storageError("Operation does not exist before completion.");
+        }
+        if (existing.payloadHash !== input.payloadHash) {
+          throw idempotencyError(input.requestId);
+        }
+        if (isTerminalOperation(existing.state)) return existing;
+        if (input.state === "applied" && input.result === undefined) {
+          throw createIntegrationError({
+            code: "INVALID_ARGUMENT",
+            category: "usage",
+            message: "Applied Mission operations require a result.",
+          });
+        }
+        if (input.state !== "applied" && input.error === undefined) {
+          throw createIntegrationError({
+            code: "INVALID_ARGUMENT",
+            category: "usage",
+            message: "Rejected Mission operations require an error.",
+          });
+        }
+        const operation = MissionOperationProjectionSchema.parse({
+          ...existing,
+          state: input.state,
+          updatedAt: now(),
+          ...(input.result === undefined ? {} : { result: input.result }),
+          ...(input.error === undefined ? {} : { error: input.error }),
+        });
+        await writeState(
+          input.missionId,
+          MissionAggregateStateSchema.parse({
+            ...state,
+            operations: { ...state.operations, [input.requestId]: operation },
+          }),
+        );
+        await compactRetentionUnlocked(input.missionId);
+        return operation;
+      });
+    },
+    async waitOperation(input) {
+      const timeoutMs = input.timeoutMs ?? 30_000;
+      const pollIntervalMs = input.pollIntervalMs ?? 100;
+      assertWaitDuration(timeoutMs, "timeoutMs");
+      assertWaitDuration(pollIntervalMs, "pollIntervalMs");
+      const deadline = Date.now() + timeoutMs;
+      for (;;) {
+        const operation = await this.getOperation({
+          missionId: input.missionId,
+          requestId: input.requestId,
+        });
+        if (operation !== undefined && isTerminalOperation(operation.state)) return operation;
+        const remaining = deadline - Date.now();
+        if (remaining <= 0) break;
+        await delay(Math.min(pollIntervalMs, remaining));
+      }
+      throw createIntegrationError({
+        code: "COMMAND_ACK_TIMEOUT",
+        category: "conflict",
+        message: "Mission command acknowledgement timed out; the command remains durable.",
+        details: {
+          missionId: input.missionId,
+          requestId: input.requestId,
+          timeoutMs,
+        },
+      });
+    },
     async listOperations(input) {
       return await withAggregateLock(input.missionId, async () => {
         await recoverTransactions(input.missionId);
@@ -1015,14 +1473,28 @@ export function createMissionControllerStore(options: {
         );
       });
     },
+    async readWatchBarrier(input) {
+      return await withAggregateLock(input.missionId, async () => {
+        await recoverTransactions(input.missionId);
+        return await readWatchBarrierUnlocked(input);
+      });
+    },
+    async compactRetention(input) {
+      return await withAggregateLock(input.missionId, async () => {
+        await recoverTransactions(input.missionId);
+        return await compactRetentionUnlocked(input.missionId, { force: true });
+      });
+    },
     async readSnapshot(input) {
       return await withAggregateLock(input.missionId, async () => {
         await recoverTransactions(input.missionId);
         const snapshot = await readState(input.missionId);
-        const after = input.after === undefined ? 0 : parseCursor(input.after, input.missionId);
-        const events = (await readEvents(input.missionId)).filter(
-          (event) => event.sequence > after,
-        );
+        const allEvents = await readEvents(input.missionId);
+        const after =
+          input.after === undefined ? undefined : parseCursor(input.after, input.missionId);
+        if (after !== undefined) assertCursorRetained(after, snapshot.eventSequence, allEvents);
+        const events =
+          after === undefined ? allEvents : allEvents.filter((event) => event.sequence > after);
         return { snapshot, cursor: makeCursor(input.missionId, snapshot.eventSequence), events };
       });
     },
@@ -1043,7 +1515,8 @@ export function createMissionControllerStore(options: {
       const tick = async (): Promise<void> => {
         if (stopped) return;
         try {
-          const command = await this.processNext(input);
+          const guard = typeof input.guard === "function" ? input.guard() : input.guard;
+          const command = await this.processNext({ ...input, guard });
           delayMs = command === undefined ? Math.min(maxDelayMs, delayMs * 2) : initialDelayMs;
           schedule();
         } catch (error) {
@@ -1088,6 +1561,24 @@ function assertLeaseDuration(leaseMs: number): void {
   }
 }
 
+function assertWaitDuration(value: number, name: string): void {
+  if (!Number.isFinite(value) || value <= 0) {
+    throw createIntegrationError({
+      code: "INVALID_ARGUMENT",
+      category: "usage",
+      message: `Mission operation ${name} must be a finite positive number.`,
+    });
+  }
+}
+
+function isTerminalOperation(state: MissionOperationProjection["state"]): boolean {
+  return state === "applied" || state === "rejected" || state === "expired" || state === "failed";
+}
+
+async function delay(milliseconds: number): Promise<void> {
+  await new Promise<void>((resolve) => setTimeout(resolve, milliseconds));
+}
+
 function idempotencyError(requestId: string): IntegrationError {
   return createIntegrationError({
     code: "IDEMPOTENCY_CONFLICT",
@@ -1130,11 +1621,11 @@ function isFencingError(error: unknown): boolean {
   return isIntegrationError(error) && error.code === "MISSION_FENCING_REJECTED";
 }
 
-function makeCursor(missionId: string, sequence: number): string {
+export function makeMissionEventCursor(missionId: string, sequence: number): string {
   return Buffer.from(JSON.stringify({ missionId, sequence }), "utf8").toString("base64url");
 }
 
-function parseCursor(cursor: string, missionId: string): number {
+export function parseMissionEventCursor(cursor: string, missionId: string): number {
   try {
     const value = JSON.parse(Buffer.from(cursor, "base64url").toString("utf8")) as {
       missionId?: unknown;
@@ -1145,6 +1636,7 @@ function parseCursor(cursor: string, missionId: string): number {
       value.missionId !== missionId ||
       !Number.isInteger(sequence) ||
       typeof sequence !== "number" ||
+      !Number.isSafeInteger(sequence) ||
       sequence < 0
     )
       throw new Error("invalid");
@@ -1158,11 +1650,79 @@ function parseCursor(cursor: string, missionId: string): number {
   }
 }
 
+function makeCursor(missionId: string, sequence: number): string {
+  return makeMissionEventCursor(missionId, sequence);
+}
+
+function parseCursor(cursor: string, missionId: string): number {
+  return parseMissionEventCursor(cursor, missionId);
+}
+
+function assertCursorRetained(
+  after: number,
+  eventSequence: number,
+  events: readonly MissionEvent[],
+): void {
+  if (after > eventSequence) {
+    throw createIntegrationError({
+      code: "CURSOR_INVALID",
+      category: "usage",
+      message: "Mission event cursor is ahead of the current Mission barrier.",
+      details: { eventSequence },
+    });
+  }
+  if (after === eventSequence) return;
+  const next = events.find((event) => event.sequence > after);
+  if (next === undefined || next.sequence !== after + 1) {
+    throw createIntegrationError({
+      code: "CURSOR_EXPIRED",
+      category: "conflict",
+      message: "Mission event cursor is earlier than the retained event window.",
+      details: {
+        after,
+        eventSequence,
+        ...(next === undefined ? {} : { nextSequence: next.sequence }),
+      },
+    });
+  }
+}
+
+function latestStatusEventType(events: readonly MissionEvent[]): {
+  readonly latestStatusEventType?: string | undefined;
+} {
+  const event = [...events].toReversed().find((candidate) => isStatusEventType(candidate.type));
+  return event === undefined ? {} : { latestStatusEventType: event.type };
+}
+
+function isStatusEventType(type: string): boolean {
+  return new Set([
+    "mission.created",
+    "run.accepted",
+    "run.started",
+    "run.progress",
+    "run.input_required",
+    "run.succeeded",
+    "run.failed",
+    "run.interrupted",
+    "human.interaction.requested",
+    "human.interaction.resolved",
+  ]).has(type);
+}
+
 async function readJsonIfExists(path: string): Promise<unknown | undefined> {
   try {
     return JSON.parse(await readFile(path, "utf8")) as unknown;
   } catch (error) {
     if (isNodeError(error, "ENOENT")) return undefined;
+    throw error;
+  }
+}
+
+async function fileSizeIfExists(path: string): Promise<number> {
+  try {
+    return (await stat(path)).size;
+  } catch (error) {
+    if (isNodeError(error, "ENOENT")) return 0;
     throw error;
   }
 }
@@ -1178,6 +1738,20 @@ async function appendJsonLine(path: string, value: unknown): Promise<void> {
   }
 }
 
+async function writeEventsAtomically(path: string, events: readonly MissionEvent[]): Promise<void> {
+  await mkdir(dirname(path), { recursive: true, mode: 0o700 });
+  const temporary = `${path}.${randomUUID()}.tmp`;
+  const handle = await open(temporary, "wx", 0o600);
+  try {
+    const contents = events.map((event) => JSON.stringify(event)).join("\n");
+    await handle.writeFile(contents.length === 0 ? "" : `${contents}\n`, "utf8");
+    await handle.sync();
+  } finally {
+    await handle.close();
+  }
+  await rename(temporary, path);
+}
+
 async function writeJsonAtomically(path: string, value: unknown): Promise<void> {
   await mkdir(dirname(path), { recursive: true, mode: 0o700 });
   const temporary = `${path}.${randomUUID()}.tmp`;
@@ -1189,6 +1763,10 @@ async function writeJsonAtomically(path: string, value: unknown): Promise<void> 
     await handle.close();
   }
   await rename(temporary, path);
+}
+
+function sameJsonArray(left: readonly unknown[], right: readonly unknown[]): boolean {
+  return JSON.stringify(left) === JSON.stringify(right);
 }
 
 function isNodeError(error: unknown, code: string): error is NodeJS.ErrnoException {

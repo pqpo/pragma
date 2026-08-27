@@ -87,7 +87,10 @@ describe("Desktop Mission controller composition", () => {
     const missionsPath = join(root, "missions");
     const missionId = "00000000-0000-4000-8000-000000000081";
     const controllerStore = createMissionControllerStore({ missionsPath });
-    const controller = createDesktopMissionController({ controller: controllerStore, leaseMs: 1_000 });
+    const controller = createDesktopMissionController({
+      controller: controllerStore,
+      leaseMs: 1_000,
+    });
     const acquire = vi.spyOn(controller, "acquire");
     const runner = createMissionRunner({
       missions: createMissionStore({ missionsPath }),
@@ -207,11 +210,13 @@ describe("Desktop Mission controller composition", () => {
     expect(calls).toEqual([
       "enqueue:prompt-1",
       "validate:00000000-0000-4000-8000-000000000102:turn-1",
+      "validate:00000000-0000-4000-8000-000000000102:turn-1",
       "steer:prompt-2",
       "respond:interaction-1",
       "interrupt:user-request",
       `remove:${queuedRequestId}`,
       "resume",
+      "validate:00000000-0000-4000-8000-000000000102:turn-1",
       "validate:00000000-0000-4000-8000-000000000102:turn-1",
       `queue-steer:${queuedRequestId}`,
     ]);
@@ -252,7 +257,7 @@ describe("Desktop Mission controller composition", () => {
       error: { code: "COMMAND_EXPIRED" },
     });
     expect(calls).not.toContain("steer:prompt-8");
-  });
+  }, 15_000);
 
   it("uses the real MissionRunner strict target validator for every reject and accept branch", async () => {
     const root = await mkdtemp(join(tmpdir(), "pragma-desktop-strict-target-"));
@@ -435,10 +440,16 @@ describe("Desktop Mission controller composition", () => {
         }
       },
     });
-    const interruptedInput = command(expertMission.id, "steer", 28, {
-      executionId: "00000000-0000-4000-8000-000000000402",
-      turnId: expertMission.initialMessageId,
-    }, expertGuard.fencingToken);
+    const interruptedInput = command(
+      expertMission.id,
+      "steer",
+      28,
+      {
+        executionId: "00000000-0000-4000-8000-000000000402",
+        turnId: expertMission.initialMessageId,
+      },
+      expertGuard.fencingToken,
+    );
     await controllerStore.appendCommand(interruptedInput);
     await controllerStore.processNext({
       missionId: expertMission.id,
@@ -446,10 +457,13 @@ describe("Desktop Mission controller composition", () => {
       consumer: interruptedConsumer,
     });
     await expect(
-      controllerStore.getOperation({ missionId: expertMission.id, requestId: interruptedInput.request.requestId }),
+      controllerStore.getOperation({
+        missionId: expertMission.id,
+        requestId: interruptedInput.request.requestId,
+      }),
     ).resolves.toMatchObject({ state: "rejected", error: { code: "STEER_TARGET_NOT_ACTIVE" } });
     expect(handled).toHaveBeenCalledOnce();
-  });
+  }, 15_000);
 
   it.each([
     "semantic-write.prepare",

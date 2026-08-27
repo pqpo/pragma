@@ -1,5 +1,6 @@
 import type {
   ExpertDefinition,
+  ExpertSession,
   ExpertSessionStore,
   ExecutionEvent,
   ExecutionStore,
@@ -49,12 +50,34 @@ import {
   type LocalHostRunTerminal,
   type ResolvedRunExecutor,
 } from "./run.ts";
+import type { LocalHostCoreActiveOwner } from "./core-control-adapter.ts";
 
 export type LocalHostCoreDefinition = ExpertDefinition | FlowSpec<unknown, unknown> | Flow;
 
 export interface LocalHostCoreExecutorDefinition extends ResolvedRunExecutor {
   readonly descriptor: ExecutorDescriptor;
   readonly definition: LocalHostCoreDefinition;
+}
+
+export interface LocalHostCoreStores {
+  readonly executions: ExecutionStore;
+  readonly sessions: ExpertSessionStore;
+}
+
+export function createLocalHostCoreStores(
+  options: {
+    readonly pragmaHome?: string | undefined;
+  } = {},
+): LocalHostCoreStores {
+  const executions = createFileExecutionStore(
+    options.pragmaHome === undefined ? {} : { pragmaHome: options.pragmaHome },
+  );
+  const sessions = createFileExpertSessionStore(
+    options.pragmaHome === undefined
+      ? { executions }
+      : { executions, pragmaHome: options.pragmaHome },
+  );
+  return { executions, sessions };
 }
 
 export interface LocalHostCoreRunComposition {
@@ -90,9 +113,13 @@ export interface LocalHostCoreRunComposition {
  * port.  Runtime packages are deliberately absent from this module; the
  * composition root supplies only a RuntimeResolver.
  */
+export interface LocalHostCoreRunExecutorPort extends LocalHostRunExecutorPort {
+  readonly resolveActiveOwner: (missionId: string) => Promise<LocalHostCoreActiveOwner | undefined>;
+}
+
 export function createCoreRunExecutorPort(
   options: LocalHostCoreRunComposition,
-): LocalHostRunExecutorPort {
+): LocalHostCoreRunExecutorPort {
   const executions =
     options.executions ?? createFileExecutionStore({ pragmaHome: options.pragmaHome });
   const sessions =
@@ -162,6 +189,13 @@ export function createCoreRunExecutorPort(
         });
       }
     },
+    resolveActiveOwner: async (missionId) => {
+      for (const state of active.values()) {
+        if (state.missionId !== missionId) continue;
+        return state.owner;
+      }
+      return undefined;
+    },
     start: async (input) => {
       const definition = input.executor as LocalHostCoreExecutorDefinition;
       if (definition.definition === undefined) {
@@ -188,6 +222,7 @@ export function createCoreRunExecutorPort(
       });
       const state = createCoreRunHandleState({
         coreHandle: coreHandle.handle,
+        owner: coreHandle.owner,
         release: coreHandle.release,
         executions,
         missionId: input.missionId,
@@ -218,10 +253,13 @@ interface CoreRunHandleState {
   readonly handle: LocalHostRunHandle;
   readonly pump: Promise<void>;
   readonly respond: (interactionId: string, response: unknown, requestId: string) => Promise<void>;
+  readonly owner: LocalHostCoreActiveOwner;
+  readonly missionId: string;
 }
 
 interface StartedCoreHandle {
   readonly handle: ExpertTurn | FlowExecution;
+  readonly owner: LocalHostCoreActiveOwner;
   readonly release: () => Promise<void>;
 }
 
@@ -241,18 +279,22 @@ async function startCoreDefinition(options: {
     }
     const existing = await options.executions.get(options.missionId);
     if (existing !== undefined) {
+      const execution = await options.app.flows.recover(options.definition.definition, {
+        executionId: options.missionId,
+      });
       return {
-        handle: await options.app.flows.recover(options.definition.definition, {
-          executionId: options.missionId,
-        }),
+        handle: execution,
+        owner: { kind: "flow", execution, executor: options.definition },
         release: async () => undefined,
       };
     }
+    const execution = await options.app.flows.start(options.definition.definition, {
+      input: options.request.input ?? {},
+      executionId: options.missionId,
+    });
     return {
-      handle: await options.app.flows.start(options.definition.definition, {
-        input: options.request.input ?? {},
-        executionId: options.missionId,
-      }),
+      handle: execution,
+      owner: { kind: "flow", execution, executor: options.definition },
       release: async () => undefined,
     };
   }
@@ -271,21 +313,36 @@ async function startCoreDefinition(options: {
           sessionId: options.missionId,
         });
   try {
+    const turn = await session.prompt(
+      options.request.prompt ?? JSON.stringify(options.request.input ?? null),
+      { requestId: options.request.requestId },
+    );
     return {
-      handle: await session.prompt(
-        options.request.prompt ?? JSON.stringify(options.request.input ?? null),
-        { requestId: options.request.requestId },
-      ),
-      release: async () => await session.releaseAfterTerminal(),
+      handle: turn,
+      owner: { kind: "session", session, executor: options.definition },
+      release: async () => await releaseExpertSessionOwner(session),
     };
   } catch (error) {
-    await session.releaseAfterTerminal().catch(() => undefined);
+    await releaseExpertSessionOwner(session).catch(() => undefined);
     throw error;
   }
 }
 
+async function releaseExpertSessionOwner(session: ExpertSession): Promise<void> {
+  const [state, prompts] = await Promise.all([session.getState(), session.getPromptQueue()]);
+  const hasRecoverableCheckpoint =
+    state.activeExecutionId === undefined &&
+    (state.lastStatus === "waiting" || prompts.some((prompt) => prompt.status === "queued"));
+  if (hasRecoverableCheckpoint) {
+    await session.releaseAfterHumanCheckpoint();
+    return;
+  }
+  await session.releaseAfterTerminal();
+}
+
 function createCoreRunHandleState(options: {
   readonly coreHandle: ExpertTurn | FlowExecution;
+  readonly owner: LocalHostCoreActiveOwner;
   readonly release: () => Promise<void>;
   readonly executions: ExecutionStore;
   readonly missionId: string;
@@ -402,6 +459,8 @@ function createCoreRunHandleState(options: {
     pump,
     respond: async (interactionId, response, requestId) =>
       await handle.respondToHumanInteraction?.(interactionId, response, requestId),
+    owner: options.owner,
+    missionId: options.missionId,
   };
 }
 
@@ -450,7 +509,7 @@ async function readUsage(
   return usage === undefined ? {} : { usage };
 }
 
-async function readPendingInteraction(
+export async function readPendingInteraction(
   executions: ExecutionStore,
   executionId: string,
   missionId: string,
@@ -516,6 +575,8 @@ function mapExecutionEvent(
       return {
         type: "human.interaction.requested",
         data: toJsonValue(envelope),
+        eventId: event.eventId,
+        occurredAt: event.occurredAt,
         replayable: true,
         cursor: event.cursor.sequence.toString(),
       };
@@ -541,6 +602,8 @@ function mapExecutionEvent(
       return {
         type: "human.interaction.resolved",
         data: toJsonValue(envelope),
+        eventId: event.eventId,
+        occurredAt: event.occurredAt,
         replayable: true,
         cursor: event.cursor.sequence.toString(),
       };
@@ -549,6 +612,8 @@ function mapExecutionEvent(
   return {
     type: event.type,
     data: toJsonValue(event.data),
+    eventId: event.eventId,
+    occurredAt: event.occurredAt,
     replayable: true,
     cursor: event.cursor.sequence.toString(),
   };
@@ -621,7 +686,7 @@ function userQuestionToShared(value: unknown) {
   return { question, header, kind, options };
 }
 
-function toCoreResponse(request: HumanInteractionRequest, value: unknown): unknown {
+export function toCoreResponse(request: HumanInteractionRequest, value: unknown): unknown {
   const response = HumanInteractionResponseSchema.parse(value);
   if (request.kind === "approval") {
     const decision = response.decision ?? response.selection;

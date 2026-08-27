@@ -1,9 +1,6 @@
 import { describe, expect, it } from "vitest";
 
-import {
-  CliEventV2StreamSchema,
-  createIntegrationError,
-} from "@pragma/local-host/wire";
+import { CliEventV2StreamSchema, createIntegrationError } from "@pragma/local-host/wire";
 
 import { runCli, type CliIo, type CliLocalHost } from "../src/index.ts";
 import { parseCliArgv } from "../src/parser/argv.ts";
@@ -164,6 +161,33 @@ describe("M6 parser and read-only command surface", () => {
     expect(() => parseCliArgv(["expert", "discover", "--query", "--test"])).toThrow(
       "Option --query requires a value.",
     );
+  });
+
+  it("accepts only an exact project/revision pair for Mission pinned backfill", () => {
+    const parsed = parseCliArgv([
+      "mission",
+      "resume",
+      MISSION_ID,
+      "--project",
+      "studio",
+      "--revision",
+      "7",
+      "--expected-fingerprint",
+      "a".repeat(64),
+    ]);
+    expect(parsed.command).toEqual({
+      kind: "mission-resume",
+      missionId: MISSION_ID,
+      project: "studio",
+      revision: 7,
+      expectedFingerprint: "a".repeat(64),
+    });
+    expect(() => parseCliArgv(["mission", "resume", MISSION_ID, "--project", "studio"])).toThrow(
+      "provided together",
+    );
+    expect(() =>
+      parseCliArgv(["mission", "resume", MISSION_ID, "--expected-fingerprint", "a".repeat(64)]),
+    ).toThrow("requires --project and --revision");
   });
 
   it.each(["team", "expert", "flow"] as const)(

@@ -5,10 +5,12 @@ import {
   ExecutorDescriptorSchema,
   type JsonValue,
 } from "@pragma/local-host/wire";
+import type { HumanInteractionRequestEnvelope } from "@pragma/local-host/wire";
 
 import type { ParsedCommand } from "../parser/argv.ts";
 import { HELP_TEXT } from "../parser/argv.ts";
 import { toIntegrationError } from "./errors.ts";
+import { collectHumanInteraction } from "../terminal.ts";
 import type { CliCommandContext } from "./types.ts";
 import { asJsonValue, hostPage, isRecord, pageItems, recordField, stringField } from "./utils.ts";
 
@@ -35,6 +37,18 @@ export async function executeReadOnlyCommand(
       return await listMissions(command, context);
     case "mission-get":
       return await getMission(command, context);
+    case "mission-watch":
+      throw new Error("Mission watch must be handled by the streaming command.");
+    case "mission-resume":
+      return await resumeMission(command, context);
+    case "mission-send":
+    case "mission-steer":
+    case "mission-respond":
+    case "mission-interrupt":
+    case "queue-remove":
+    case "queue-resume":
+    case "queue-steer":
+      throw new Error("Mission mutation commands must be handled by the mutation command.");
     case "board-list":
       return await listBoard(command, context);
     case "board-read":
@@ -44,6 +58,49 @@ export async function executeReadOnlyCommand(
     case "queue-list":
       return await listQueue(command, context);
   }
+}
+
+async function resumeMission(
+  command: Extract<ParsedCommand, { readonly kind: "mission-resume" }>,
+  context: CliCommandContext,
+): Promise<JsonValue> {
+  if (context.localHost.resumeMission === undefined) {
+    throw toIntegrationError({
+      code: "DEPENDENCY_UNAVAILABLE",
+      message: "Mission resume is unavailable in this Host composition.",
+    });
+  }
+  if (context.interactive === "always" && !context.terminal.isControllingTerminal()) {
+    throw toIntegrationError({
+      code: "INTERACTIVE_TTY_REQUIRED",
+      message: "--interactive always requires a controlling terminal.",
+    });
+  }
+  const useTerminalInteraction =
+    context.interactive === "always" ||
+    (context.interactive === "auto" &&
+      context.format === "text" &&
+      context.terminal.isControllingTerminal());
+  const onHumanInteraction = useTerminalInteraction
+    ? async (request: HumanInteractionRequestEnvelope) => ({
+        kind: "respond" as const,
+        response: (await collectHumanInteraction(context.terminal, request)).interaction,
+      })
+    : undefined;
+  return asJsonValue(
+    await context.localHost.resumeMission({
+      missionId: command.missionId,
+      ...(command.project === undefined || command.revision === undefined
+        ? {}
+        : { project: { projectId: command.project, revision: command.revision } }),
+      ...(command.expectedFingerprint === undefined
+        ? {}
+        : { expectedFingerprint: command.expectedFingerprint }),
+      ...(command.requestId === undefined ? {} : { requestId: command.requestId }),
+      ...(command.detach === undefined ? {} : { detach: command.detach }),
+      ...(onHumanInteraction === undefined ? {} : { onHumanInteraction }),
+    }),
+  );
 }
 
 export function versionResult(cliVersion: string): JsonValue {
@@ -248,11 +305,8 @@ async function listQueue(
   command: Extract<ParsedCommand, { readonly kind: "queue-list" }>,
   context: CliCommandContext,
 ): Promise<JsonValue> {
-  const page = hostPage(await context.localHost.listMissionQueue(command.missionId), [
-    "items",
-    "operations",
-    "queue",
-  ]);
+  const raw = await context.localHost.listMissionQueue(command.missionId);
+  const page = hostPage(raw, ["items", "queue"]);
   const result = paginateOrHost(
     page.items.map(asJsonValue),
     page.hostPaged,
@@ -260,8 +314,26 @@ async function listQueue(
     command.limit,
     command.cursor,
   );
+  const projection = isRecord(raw) ? (isRecord(raw["queue"]) ? raw["queue"] : raw) : undefined;
   return {
     missionId: command.missionId,
+    ...(typeof projection?.["sessionId"] === "string"
+      ? { sessionId: projection["sessionId"] }
+      : {}),
+    ...(projection?.["state"] === "idle" ||
+    projection?.["state"] === "running" ||
+    projection?.["state"] === "paused"
+      ? { state: projection["state"] }
+      : {}),
+    ...(typeof projection?.["pendingCount"] === "number"
+      ? { pendingCount: projection["pendingCount"] }
+      : {}),
+    ...(typeof projection?.["pausedAfterRequestId"] === "string"
+      ? { pausedAfterRequestId: projection["pausedAfterRequestId"] }
+      : {}),
+    ...(typeof projection?.["supportsSteer"] === "boolean"
+      ? { supportsSteer: projection["supportsSteer"] }
+      : {}),
     items: result.items,
     ...(result.nextCursor === undefined ? {} : { nextCursor: result.nextCursor }),
   };
@@ -357,8 +429,15 @@ function matchesMission(
   if (!isRecord(value)) return false;
   const executor = recordField(value, "executor");
   const execution = recordField(value, "execution");
-  const status = stringField(value, "lifecycleStatus") ?? stringField(execution, "status");
-  if (command.status !== undefined && status !== command.status) return false;
+  const status = stringField(value, "status") ?? stringField(execution, "status");
+  const lifecycleStatus = stringField(value, "lifecycleStatus");
+  if (
+    command.status !== undefined &&
+    status !== command.status &&
+    lifecycleStatus !== command.status
+  ) {
+    return false;
+  }
   if (command.executor !== undefined) {
     const ref = stringField(executor, "ref") ?? referenceText(executor?.["ref"]);
     if (ref !== command.executor) return false;
@@ -488,12 +567,156 @@ function completionScript(
 ): string {
   switch (shell) {
     case "bash":
-      return `_pragma_complete() {\n  COMPREPLY=( $(compgen -W "version doctor completion team expert flow mission" -- "${"$"}2") )\n}\ncomplete -F _pragma_complete pragma\n`;
+      return completionBashScript();
     case "zsh":
-      return `#compdef pragma\n_arguments '1:command:(version doctor completion team expert flow mission)'\n`;
+      return completionZshScript();
     case "fish":
-      return `complete -c pragma -f -a 'version doctor completion team expert flow mission'\n`;
+      return completionFishScript();
     case "powershell":
-      return `Register-ArgumentCompleter -CommandName pragma -ScriptBlock { param(${"$"}wordToComplete)\n  'version','doctor','completion','team','expert','flow','mission' | Where-Object { ${"$"}_ -like "${"$"}wordToComplete*" }\n}\n`;
+      return completionPowerShellScript();
   }
+}
+
+function completionBashScript(): string {
+  return replaceShellDollar(
+    String.raw`
+_pragma_complete() {
+  local cur prev candidates
+  cur="__PRAGMA_DOLLAR__{COMP_WORDS[COMP_CWORD]}"
+  prev="__PRAGMA_DOLLAR__{COMP_WORDS[COMP_CWORD-1]}"
+  candidates="version doctor completion team expert flow mission"
+  case "__PRAGMA_DOLLAR__{COMP_WORDS[1]}" in
+    team|expert|flow)
+      case "__PRAGMA_DOLLAR__{COMP_WORDS[2]}" in
+        run) candidates="--workspace --prompt --input --input-json --project --revision --expected-fingerprint --request-id --detach --format --json --stream-json" ;;
+        describe) candidates="--revision --format --json --stream-json" ;;
+        *) candidates="discover describe run" ;;
+      esac
+      ;;
+    mission)
+      case "__PRAGMA_DOLLAR__{COMP_WORDS[2]}" in
+        board) candidates="list read search" ;;
+        queue)
+          case "__PRAGMA_DOLLAR__{COMP_WORDS[3]}" in
+            list) candidates="--limit --cursor --format --json --stream-json" ;;
+            remove) candidates="--request-id --format --json --stream-json" ;;
+            resume) candidates="--request-id --format --json --stream-json" ;;
+            steer) candidates="--request-id --expected-execution --wait --detach --ack-timeout --format --json --stream-json" ;;
+            *) candidates="list remove resume steer" ;;
+          esac
+          ;;
+        watch) candidates="--after --replay --until --format --stream-json" ;;
+        resume) candidates="--project --revision --expected-fingerprint --request-id --detach --format --json --stream-json" ;;
+        send|steer) candidates="--prompt --input --expected-execution --request-id --wait --detach --ack-timeout --format --json --stream-json" ;;
+        respond) candidates="--interaction --answer --choice --answers-json --request-id --wait --detach --ack-timeout --format --json --stream-json" ;;
+        interrupt) candidates="--expected-execution --reason --request-id --wait --detach --ack-timeout --format --json --stream-json" ;;
+        *) candidates="list get resume watch send steer respond interrupt board queue" ;;
+      esac
+      ;;
+  esac
+  if [[ "__PRAGMA_DOLLAR__cur" == --* || "__PRAGMA_DOLLAR__prev" == --* ]]; then
+    candidates="--format --json --stream-json --color --interactive --help --after --replay --until --project --revision --expected-fingerprint --prompt --input --input-json --expected-execution --request-id --wait --detach --ack-timeout --interaction --answer --choice --answers-json --reason --limit --cursor"
+  fi
+  COMPREPLY=( $(compgen -W "__PRAGMA_DOLLAR__candidates" -- "__PRAGMA_DOLLAR__cur") )
+}
+complete -F _pragma_complete pragma
+`,
+    "\n",
+  );
+}
+
+function completionZshScript(): string {
+  return replaceShellDollar(
+    String.raw`#compdef pragma
+_pragma() {
+  local state
+  _arguments -C \
+    '1:command:(version doctor completion team expert flow mission)' \
+    '*:argument:->argument'
+  case __PRAGMA_DOLLAR__state in
+    argument)
+      case __PRAGMA_DOLLAR__words[2] in
+        team|expert|flow)
+          if (( CURRENT == 3 )); then
+            _describe command 'discover describe run'
+          else
+            _describe option '--workspace --prompt --input --input-json --project --revision --expected-fingerprint --request-id --wait --detach --ack-timeout --format --json --stream-json'
+          fi
+          ;;
+        mission)
+          if (( CURRENT == 3 )); then
+            _describe command 'list get resume watch send steer respond interrupt board queue'
+          else
+            case __PRAGMA_DOLLAR__words[3] in
+              board) _describe command 'list read search' ;;
+              queue)
+                if (( CURRENT == 4 )); then _describe command 'list remove resume steer';
+                else _describe option '--request-id --expected-execution --wait --detach --ack-timeout --limit --cursor --format --json --stream-json'; fi
+                ;;
+              watch) _describe option '--after --replay --until --format --stream-json' ;;
+              resume) _describe option '--project --revision --expected-fingerprint --request-id --detach --format --json --stream-json' ;;
+              respond) _describe option '--interaction --answer --choice --answers-json --request-id --wait --detach --ack-timeout --format --json --stream-json' ;;
+              *) _describe option '--prompt --input --expected-execution --request-id --wait --detach --ack-timeout --format --json --stream-json' ;;
+            esac
+          fi
+          ;;
+      esac
+      ;;
+  esac
+}
+compdef _pragma pragma
+`,
+    "\n",
+  );
+}
+
+function completionFishScript(): string {
+  return replaceShellDollar(
+    String.raw`function __pragma_mission_queue
+  set -l tokens (commandline -opc)
+  test "__PRAGMA_DOLLAR__tokens[2]" = mission; and test "__PRAGMA_DOLLAR__tokens[3]" = queue
+end
+
+complete -c pragma -f -n '__fish_use_subcommand' -a 'version doctor completion team expert flow mission'
+complete -c pragma -f -n '__fish_seen_subcommand_from team expert flow' -a 'discover describe run'
+complete -c pragma -f -n '__fish_seen_subcommand_from mission' -a 'list get resume watch send steer respond interrupt board queue'
+complete -c pragma -f -n '__pragma_mission_queue' -a 'list remove resume steer'
+complete -c pragma -f -n '__fish_seen_subcommand_from board' -a 'list read search'
+complete -c pragma -f -n '__fish_seen_subcommand_from watch' -a '--after --replay --until --format --stream-json'
+complete -c pragma -f -a '--format --json --stream-json --color --interactive --help --after --replay --until --project --revision --expected-fingerprint --prompt --input --input-json --expected-execution --request-id --wait --detach --ack-timeout --interaction --answer --choice --answers-json --reason --limit --cursor'
+`,
+    "\n",
+  );
+}
+
+function completionPowerShellScript(): string {
+  return replaceShellDollar(
+    String.raw`Register-ArgumentCompleter -CommandName pragma -ScriptBlock {
+  param(__PRAGMA_DOLLAR__wordToComplete, __PRAGMA_DOLLAR__commandAst, __PRAGMA_DOLLAR__cursorPosition)
+  __PRAGMA_DOLLAR__tokens = @(__PRAGMA_DOLLAR__commandAst.CommandElements | ForEach-Object { __PRAGMA_DOLLAR___.ToString().Trim([char]39, [char]34) })
+  __PRAGMA_DOLLAR__candidates = @('version','doctor','completion','team','expert','flow','mission')
+  if (__PRAGMA_DOLLAR__tokens.Count -ge 2) {
+    switch (__PRAGMA_DOLLAR__tokens[1]) {
+      'team' { __PRAGMA_DOLLAR__candidates = @('discover','describe','run') }
+      'expert' { __PRAGMA_DOLLAR__candidates = @('discover','describe','run') }
+      'flow' { __PRAGMA_DOLLAR__candidates = @('discover','describe','run') }
+      'mission' { __PRAGMA_DOLLAR__candidates = @('list','get','resume','watch','send','steer','respond','interrupt','board','queue') }
+    }
+  }
+  if (__PRAGMA_DOLLAR__tokens -contains 'queue') { __PRAGMA_DOLLAR__candidates = @('list','remove','resume','steer') }
+  if (__PRAGMA_DOLLAR__tokens -contains 'board') { __PRAGMA_DOLLAR__candidates = @('list','read','search') }
+  if (__PRAGMA_DOLLAR__wordToComplete -like '--*') {
+    __PRAGMA_DOLLAR__candidates = @('--format','--json','--stream-json','--color','--interactive','--help','--after','--replay','--until','--project','--revision','--expected-fingerprint','--prompt','--input','--input-json','--expected-execution','--request-id','--wait','--detach','--ack-timeout','--interaction','--answer','--choice','--answers-json','--reason','--limit','--cursor')
+  }
+  __PRAGMA_DOLLAR__candidates | Where-Object { __PRAGMA_DOLLAR___.ToString() -like "__PRAGMA_DOLLAR__wordToComplete*" } | ForEach-Object {
+    [System.Management.Automation.CompletionResult]::new(__PRAGMA_DOLLAR___.ToString(), __PRAGMA_DOLLAR___.ToString(), 'ParameterValue', __PRAGMA_DOLLAR___.ToString())
+  }
+}
+`,
+    "\n",
+  );
+}
+
+function replaceShellDollar(script: string, separator: string): string {
+  return script.replaceAll("__PRAGMA_DOLLAR__", "$").trimStart() + separator;
 }

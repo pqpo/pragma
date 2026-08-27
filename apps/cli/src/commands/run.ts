@@ -19,9 +19,10 @@ export async function startExecutorRun(
     readonly onEvent?: ((event: LocalHostRunEvent) => void) | undefined;
     readonly interactive?: InteractiveMode | undefined;
     readonly onHumanInteraction?:
-      | ((request: HumanInteractionRequestEnvelope) => Promise<
-          | { readonly kind: "respond"; readonly response: unknown }
-          | { readonly kind: "checkpoint" }
+      | ((
+          request: HumanInteractionRequestEnvelope,
+        ) => Promise<
+          { readonly kind: "respond"; readonly response: unknown } | { readonly kind: "checkpoint" }
         >)
       | undefined;
   } = {},
@@ -39,16 +40,21 @@ export async function startExecutorRun(
   const request: LocalHostRunRequest = {
     requestId: context.requestId,
     command: `${command.executorKind}.run`,
-    executor: { kind: command.executorKind, id: command.ref.slice(command.executorKind.length + 1) },
+    executor: {
+      kind: command.executorKind,
+      id: command.ref.slice(command.executorKind.length + 1),
+    },
     workspace,
     ...(command.prompt === undefined ? {} : { prompt: command.prompt }),
     ...(input.kind === "prompt" ? { prompt: input.value } : { input: input.value }),
-    ...(command.project === undefined ? {} : {
-      project: {
-        projectId: command.project,
-        ...(command.revision === undefined ? {} : { revision: command.revision }),
-      },
-    }),
+    ...(command.project === undefined
+      ? {}
+      : {
+          project: {
+            projectId: command.project,
+            ...(command.revision === undefined ? {} : { revision: command.revision }),
+          },
+        }),
     ...(command.expectedFingerprint === undefined
       ? {}
       : { expectedFingerprint: command.expectedFingerprint }),
@@ -56,14 +62,19 @@ export async function startExecutorRun(
   };
   return await run.start(request, {
     onEvent: options.onEvent,
-    ...(options.onHumanInteraction === undefined ? {} : { onHumanInteraction: options.onHumanInteraction }),
+    ...(options.onHumanInteraction === undefined
+      ? {}
+      : { onHumanInteraction: options.onHumanInteraction }),
   });
 }
 
 async function readRunInput(
   command: Extract<ParsedCommand, { readonly kind: "executor-run" }>,
   readStdin: (() => Promise<Uint8Array>) | undefined,
-): Promise<{ readonly kind: "prompt"; readonly value: string } | { readonly kind: "json"; readonly value: Record<string, unknown> }> {
+): Promise<
+  | { readonly kind: "prompt"; readonly value: string }
+  | { readonly kind: "json"; readonly value: Record<string, unknown> }
+> {
   if (command.executorKind === "flow") {
     return { kind: "json", value: await readBoundedJson(command.inputJsonPath!, readStdin) };
   }

@@ -4,7 +4,7 @@ import {
   type IntegrationError,
 } from "@pragma/local-host/wire";
 import type { AgentMessageUsage, JsonValue } from "@pragma/shared";
-import type { LocalHostRunApplicationOutcome } from "@pragma/local-host";
+import type { LocalHostRunApplicationOutcome, MissionWatchResult } from "@pragma/local-host";
 
 import {
   codeForError,
@@ -15,6 +15,7 @@ import {
 } from "./commands/doctor.ts";
 import { toIntegrationError } from "./commands/errors.ts";
 import { executeReadOnlyCommand } from "./commands/readonly.ts";
+import { executeMutationCommand } from "./commands/mutations.ts";
 import { startExecutorRun } from "./commands/run.ts";
 import type { CliLocalHost } from "./commands/types.ts";
 import { createCliLocalHost } from "./composition/default.ts";
@@ -29,9 +30,12 @@ import { createProcessSignalPort, type SignalPort } from "./signal.ts";
 import {
   createV2StreamPresenter,
   presentFailure,
+  presentAccepted,
+  presentInputRequired,
   presentRunFailure,
   presentRunOutcome,
   presentSuccess,
+  renderWatchEventText,
   type CliIo,
   type CliRunPresentationOutcome,
 } from "./presenters/index.ts";
@@ -80,7 +84,7 @@ export async function runCli(
     return integrationErrorExitCode(integrationError.code);
   }
 
-  if (parsed.command.kind === "executor-run" && parsed.command.requestId !== undefined) {
+  if ("requestId" in parsed.command && parsed.command.requestId !== undefined) {
     requestId = parsed.command.requestId;
   }
 
@@ -89,6 +93,9 @@ export async function runCli(
     cliVersion: CLI_VERSION,
     startedAt,
     localHost: createCliLocalHost(dependencies),
+    format: parsed.options.format,
+    interactive: parsed.options.interactive,
+    terminal: dependencies.terminal ?? createSystemTerminalPort(),
   };
   const command = commandName(parsed.command);
   let runStreamPresenter: ReturnType<typeof createV2StreamPresenter> | undefined;
@@ -106,7 +113,7 @@ export async function runCli(
             })
           : undefined;
       let activeHandle: Awaited<ReturnType<typeof startExecutorRun>> | undefined;
-      const terminal = dependencies.terminal ?? createSystemTerminalPort();
+      const terminal = context.terminal;
       if (parsed.options.interactive === "always" && !terminal.isControllingTerminal()) {
         throw createIntegrationError({
           code: "INTERACTIVE_TTY_REQUIRED",
@@ -142,8 +149,10 @@ export async function runCli(
             runStreamPresenter?.emit({
               type: event.type,
               data: event.data,
+              eventId: event.eventId,
               replayable: event.replayable,
               cursor: event.cursor,
+              emittedAt: event.occurredAt,
               ...(activeHandle?.missionId === undefined
                 ? {}
                 : { missionId: activeHandle.missionId }),
@@ -186,21 +195,118 @@ export async function runCli(
         removeSignalHandler();
       }
     }
-    const result =
-      parsed.command.kind === "doctor"
-        ? await runDoctorCommand(dependencies)
-        : await executeReadOnlyCommand(parsed.command, context);
-    presentSuccess(
-      {
-        io,
-        format: parsed.options.format,
-        requestId,
-        command,
-        cliVersion: CLI_VERSION,
-        startedAt,
-      },
-      result,
-    );
+    const presentationInput = {
+      io,
+      format: parsed.options.format,
+      requestId,
+      command,
+      cliVersion: CLI_VERSION,
+      startedAt,
+    } as const;
+    if (parsed.command.kind === "mission-watch") {
+      if (context.localHost.watchMission === undefined) {
+        throw createIntegrationError({
+          code: "DEPENDENCY_UNAVAILABLE",
+          category: "dependency",
+          message: "Mission watch is unavailable in this Host composition.",
+        });
+      }
+      runStreamPresenter =
+        parsed.options.format === "jsonl" ? createV2StreamPresenter(presentationInput) : undefined;
+      const abortController = new AbortController();
+      let signalRequested = false;
+      let streamCommitted = false;
+      const removeSignalHandler = (dependencies.signals ?? createProcessSignalPort()).onInterrupt(
+        () => {
+          if (streamCommitted || signalRequested) return;
+          signalRequested = true;
+          abortController.abort();
+        },
+      );
+      try {
+        const result = await context.localHost.watchMission({
+          missionId: parsed.command.missionId,
+          ...(parsed.command.after === undefined ? {} : { after: parsed.command.after }),
+          ...(parsed.command.replay === undefined ? {} : { replay: parsed.command.replay }),
+          ...(parsed.command.until === undefined ? {} : { until: parsed.command.until }),
+          signal: abortController.signal,
+          onEvent: async (event) => {
+            if (runStreamPresenter !== undefined) {
+              runStreamPresenter.emit({
+                type: event.type,
+                data: event.data,
+                missionId: event.missionId,
+                executionId: event.executionId,
+                eventId: event.eventId,
+                replayable: event.replayable,
+                cursor: event.cursor,
+                emittedAt: event.occurredAt,
+              });
+            } else {
+              io.writeStdout(renderWatchEventText(event));
+            }
+          },
+        });
+        streamCommitted = true;
+        if (result.status === "detached") {
+          const detachedEvent = {
+            missionId: result.missionId,
+            missionContinues: true,
+            lastCursor: result.lastCursor,
+          } as const;
+          if (runStreamPresenter !== undefined) {
+            runStreamPresenter.emit({
+              type: "watch.detached",
+              data: detachedEvent,
+              missionId: result.missionId,
+              replayable: false,
+            });
+          } else {
+            io.writeStdout(renderWatchEventText({ type: "watch.detached", data: detachedEvent }));
+          }
+        } else if (runStreamPresenter === undefined) {
+          io.writeStdout(renderWatchCompletionText(result));
+        }
+        if (runStreamPresenter !== undefined) {
+          runStreamPresenter.finalize({
+            status: "succeeded",
+            missionId: result.missionId,
+            result: watchResultData(result),
+            lastCursor: result.lastCursor,
+          });
+        }
+        return 0;
+      } finally {
+        removeSignalHandler();
+      }
+    }
+    if (isMutationCommand(parsed.command)) {
+      const mutation = await executeMutationCommand(
+        parsed.command,
+        context,
+        dependencies.readStdin ?? readProcessStdin,
+      );
+      if (mutation.status === "input_required") {
+        presentInputRequired(presentationInput, mutation.result);
+        return 3;
+      }
+      if (mutation.detached) presentAccepted(presentationInput, mutation.result);
+      else presentSuccess(presentationInput, mutation.result);
+    } else {
+      const result =
+        parsed.command.kind === "doctor"
+          ? await runDoctorCommand(dependencies)
+          : await executeReadOnlyCommand(parsed.command, context);
+      if (parsed.command.kind === "mission-resume" && isInputRequiredResult(result)) {
+        presentInputRequired(presentationInput, result);
+        return 3;
+      }
+      if (parsed.command.kind === "mission-resume" && parsed.command.detach) {
+        presentAccepted(presentationInput, result);
+      } else {
+        presentSuccess(presentationInput, result);
+      }
+    }
     return 0;
   } catch (error) {
     const integrationError =
@@ -230,6 +336,8 @@ export async function runCli(
       } else {
         presentRunFailure(presentationInput, integrationError);
       }
+    } else if (runStreamPresenter !== undefined) {
+      runStreamPresenter.finalize({ status: "failed", error: integrationError });
     } else {
       presentFailure(presentationInput, integrationError, {
         textToStdout: parsed.command.kind === "doctor",
@@ -237,6 +345,30 @@ export async function runCli(
     }
     return integrationErrorExitCode(integrationError.code);
   }
+}
+
+function isInputRequiredResult(value: JsonValue): boolean {
+  return (
+    typeof value === "object" &&
+    value !== null &&
+    !Array.isArray(value) &&
+    (value as { readonly status?: unknown }).status === "input_required"
+  );
+}
+
+function watchResultData(result: MissionWatchResult): JsonValue {
+  return {
+    missionId: result.missionId,
+    status: result.status,
+    missionContinues: result.missionContinues,
+    lastCursor: result.lastCursor,
+    ...(result.until === undefined ? {} : { until: result.until }),
+  };
+}
+
+function renderWatchCompletionText(result: MissionWatchResult): string {
+  const until = result.until === undefined ? "watch" : `--until ${result.until}`;
+  return `Mission ${result.missionId} reached ${until}; cursor ${result.lastCursor}.\n`;
 }
 
 function runOutcomeExitCode(outcome: {
@@ -323,6 +455,24 @@ function commandName(command: ParsedCommand): string {
       return "mission.list";
     case "mission-get":
       return "mission.get";
+    case "mission-watch":
+      return "mission.watch";
+    case "mission-resume":
+      return "mission.resume";
+    case "mission-send":
+      return "mission.send";
+    case "mission-steer":
+      return "mission.steer";
+    case "mission-respond":
+      return "mission.respond";
+    case "mission-interrupt":
+      return "mission.interrupt";
+    case "queue-remove":
+      return "mission.queue.remove";
+    case "queue-resume":
+      return "mission.queue.resume";
+    case "queue-steer":
+      return "mission.queue.steer";
     case "board-list":
       return "mission.board.list";
     case "board-read":
@@ -332,6 +482,30 @@ function commandName(command: ParsedCommand): string {
     case "queue-list":
       return "mission.queue.list";
   }
+}
+
+function isMutationCommand(command: ParsedCommand): command is Extract<
+  ParsedCommand,
+  {
+    readonly kind:
+      | "mission-send"
+      | "mission-steer"
+      | "mission-respond"
+      | "mission-interrupt"
+      | "queue-remove"
+      | "queue-resume"
+      | "queue-steer";
+  }
+> {
+  return (
+    command.kind === "mission-send" ||
+    command.kind === "mission-steer" ||
+    command.kind === "mission-respond" ||
+    command.kind === "mission-interrupt" ||
+    command.kind === "queue-remove" ||
+    command.kind === "queue-resume" ||
+    command.kind === "queue-steer"
+  );
 }
 
 export type { IntegrationError };

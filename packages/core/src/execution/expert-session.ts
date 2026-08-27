@@ -145,6 +145,8 @@ export interface ExpertSession {
   readonly expert: ExpertDefinition;
   prompt(content: string, options?: PromptOptions): Promise<ExpertTurn>;
   abort(reason?: string): Promise<void>;
+  /** Interrupt a persisted execution after process recovery, without requiring a live controller. */
+  abortExecution(executionId: string, reason?: string): Promise<void>;
   /** Release the Session owner after a durable human-input checkpoint. */
   checkpointWaitingHuman(): Promise<void>;
   /**
@@ -152,6 +154,12 @@ export interface ExpertSession {
    * keeping the durable ExpertSession and its RuntimeSessionRef recoverable.
    */
   releaseAfterTerminal(): Promise<void>;
+  /**
+   * Release transient Runtime and lease resources after a durable human-input
+   * checkpoint. The pending interaction and its queued prompt remain
+   * recoverable in the persisted ExpertSession.
+   */
+  releaseAfterHumanCheckpoint(): Promise<void>;
   close(reason?: string): Promise<void>;
   refreshRuntimeSessions(): Promise<void>;
   getState(): Promise<ExpertSessionRecord>;
@@ -215,6 +223,15 @@ interface ValidDefinitionMigration {
 
 const EXPERT_SESSION_LEASE_MS = 30_000;
 const EXPERT_SESSION_LEASE_RENEWAL_MS = 10_000;
+const QUEUE_STEER_PENDING_PREFIX = "__pragma_queue_steer_pending__:";
+
+interface QueuedSteerClaim {
+  readonly requestId: string;
+  readonly activeExecutionId: string;
+  readonly contextId: string;
+  readonly originalPrompt: PromptRequest;
+  readonly marker: string;
+}
 
 function validateDefinitionMigration(
   record: ExpertSessionRecord,
@@ -405,8 +422,31 @@ export class ExpertSessionManager {
       }
       let recoveredExecutionId: string | undefined;
       let recoveredHumanInteractionIds: readonly string[] = [];
-      if (record.activeExecutionId !== undefined) {
-        const execution = await this.dependencies.executions.get(record.activeExecutionId);
+      let recoveryCandidateId = record.activeExecutionId;
+      if (recoveryCandidateId === undefined) {
+        const prompts = await this.dependencies.sessions.listPrompts(request.sessionId);
+        for (const prompt of prompts.toReversed()) {
+          if (prompt.mode !== "enqueue" || !["queued", "running"].includes(prompt.status)) {
+            continue;
+          }
+          const candidate = await this.dependencies.executions.get(prompt.executionId);
+          if (
+            candidate !== undefined &&
+            !isFinal(candidate.status) &&
+            (
+              await listPendingHumanInteractionIds(
+                this.dependencies.executions,
+                candidate.executionId,
+              )
+            ).length > 0
+          ) {
+            recoveryCandidateId = candidate.executionId;
+            break;
+          }
+        }
+      }
+      if (recoveryCandidateId !== undefined) {
+        const execution = await this.dependencies.executions.get(recoveryCandidateId);
         const pendingHumanInteractionIds =
           execution === undefined || isFinal(execution.status)
             ? []
@@ -458,7 +498,7 @@ export class ExpertSessionManager {
             ),
           }));
         } else {
-          const activeExecutionId = record.activeExecutionId;
+          const activeExecutionId = recoveryCandidateId;
           if (execution !== undefined && !isFinal(execution.status)) {
             await interruptRecoveringExecution(this.dependencies.executions, execution.executionId);
           }
@@ -490,6 +530,7 @@ export class ExpertSessionManager {
         recoveredExecutionId,
         recoveredHumanInteractionIds,
       );
+      await session.recoverPendingQueueSteers();
       this.active.set(request.sessionId, session);
       return session;
     } catch (error) {
@@ -586,8 +627,10 @@ class ExpertSessionImpl implements ExpertSession {
   private controller: ExecutionController | undefined;
   private processing: Promise<void> | undefined;
   private readonly runtimeSessions = new RuntimeSessionPool();
+  private readonly queueSteersInFlight = new Set<string>();
   private closePromise: Promise<void> | undefined;
   private terminalReleasePromise: Promise<void> | undefined;
+  private humanCheckpointReleasePromise: Promise<void> | undefined;
   private leaseRenewalTask: Promise<void> | undefined;
   private leaseError: Error | undefined;
   private readonly leaseRenewal: ReturnType<typeof setInterval>;
@@ -754,6 +797,44 @@ class ExpertSessionImpl implements ExpertSession {
     this.startProcessing();
   }
 
+  async abortExecution(executionId: string, reason?: string): Promise<void> {
+    const state = await this.getState();
+    if (state.activeExecutionId !== undefined && state.activeExecutionId !== executionId) {
+      throw new Error(`ExpertTurn changed before interrupt: ${state.activeExecutionId}`);
+    }
+    if (!state.executionIds.includes(executionId)) {
+      throw new Error(`ExpertTurn is not owned by this Session: ${executionId}`);
+    }
+    if (state.activeExecutionId === executionId && this.controller !== undefined) {
+      await this.abort(reason);
+      return;
+    }
+    await this.cancelPersistedExecution(
+      executionId,
+      reason ?? "Execution interrupted by the Mission controller.",
+    );
+    await this.dependencies.sessions.transact(this.sessionId, ({ session, prompts }) => ({
+      result: undefined,
+      session: {
+        ...session,
+        activeExecutionId:
+          session.activeExecutionId === executionId ? undefined : session.activeExecutionId,
+        queuedRequestIds: session.queuedRequestIds.filter(
+          (requestId) =>
+            prompts.find((prompt) => prompt.requestId === requestId)?.executionId !== executionId,
+        ),
+        lastStatus: "interrupted" as const,
+        updatedAt: new Date().toISOString(),
+      },
+      prompts: prompts.map((prompt) =>
+        prompt.executionId === executionId &&
+        (prompt.status === "queued" || prompt.status === "running")
+          ? { ...prompt, status: "cancelled" as const, updatedAt: new Date().toISOString() }
+          : prompt,
+      ),
+    }));
+  }
+
   async checkpointWaitingHuman(): Promise<void> {
     const controller = this.controller;
     if (controller === undefined) {
@@ -766,6 +847,50 @@ class ExpertSessionImpl implements ExpertSession {
     await this.dependencies.sessions.releaseLease(this.sessionId, this.claimId);
     this.controller = undefined;
     this.onClosed();
+  }
+
+  releaseAfterHumanCheckpoint(): Promise<void> {
+    if (this.humanCheckpointReleasePromise === undefined) {
+      this.humanCheckpointReleasePromise = this.releaseAfterHumanCheckpointInternal();
+    }
+    return this.humanCheckpointReleasePromise;
+  }
+
+  private async releaseAfterHumanCheckpointInternal(): Promise<void> {
+    if (this.closePromise !== undefined) {
+      throw new Error(`ExpertSession is closing or closed: ${this.sessionId}`);
+    }
+    if (this.controller !== undefined) {
+      throw new Error(
+        "Checkpoint the active human interaction before releasing the ExpertSession owner.",
+      );
+    }
+    const state = await this.getState();
+    if (state.activeExecutionId !== undefined) {
+      throw new Error("Wait for the active Expert turn before releasing the human checkpoint.");
+    }
+
+    const errors: unknown[] = [];
+    clearInterval(this.leaseRenewal);
+    try {
+      await this.runtimeSessions.clear();
+    } catch (error) {
+      errors.push(error);
+    }
+    if (this.leaseRenewalTask !== undefined) {
+      try {
+        await this.leaseRenewalTask;
+      } catch (error) {
+        errors.push(error);
+      }
+    }
+    try {
+      await this.dependencies.sessions.releaseLease(this.sessionId, this.claimId);
+    } catch (error) {
+      errors.push(error);
+    }
+    this.onClosed();
+    throwCollectedErrors(errors, "ExpertSession human checkpoint release failed.");
   }
 
   async refreshRuntimeSessions(): Promise<void> {
@@ -1176,21 +1301,139 @@ class ExpertSessionImpl implements ExpertSession {
     this.startProcessing();
   }
 
+  /**
+   * Recover a queue steer that was interrupted between its durable reservation
+   * and the Runtime call (or after the Runtime call but before the old queued
+   * execution was cancelled). The marker lives in the existing optional
+   * PromptRequest.error field, so this recovery does not change storage
+   * versions or the public PromptRequest contract.
+   */
+  async recoverPendingQueueSteers(): Promise<void> {
+    const marked = (await this.getPromptQueue()).filter(
+      (prompt) => parseQueueSteerMarker(prompt.error) !== undefined,
+    );
+    for (const prompt of marked) {
+      const replacedExecutionId = parseQueueSteerMarker(prompt.error);
+      if (replacedExecutionId === undefined) continue;
+      if (prompt.status === "succeeded") {
+        await this.cancelPersistedExecution(
+          replacedExecutionId,
+          "Moved from the prompt queue to steer the active turn.",
+        );
+        await this.clearQueueSteerMarker(prompt.requestId, prompt.error);
+        continue;
+      }
+      await this.restoreQueuedSteer({
+        requestId: prompt.requestId,
+        activeExecutionId: prompt.targetExecutionId ?? prompt.executionId,
+        contextId: "",
+        originalPrompt: {
+          ...prompt,
+          mode: "enqueue",
+          executionId: replacedExecutionId,
+          status: "queued",
+          targetExecutionId: undefined,
+          error: undefined,
+        },
+        marker: prompt.error!,
+      });
+    }
+  }
+
   async steerQueuedPrompt(requestId: string): Promise<ExpertTurn> {
-    const prompt = (await this.getPromptQueue()).find(
-      (candidate) => candidate.requestId === requestId,
-    );
-    if (prompt?.mode !== "enqueue" || prompt.status !== "queued") {
-      throw new Error(`Queued prompt not found: ${requestId}`);
+    if (this.queueSteersInFlight.has(requestId)) {
+      throw new Error(`Queued prompt steer is already in progress: ${requestId}`);
     }
-    const invocation = await this.dependencies.executions.getInvocation(
-      prompt.executionId,
-      prompt.executionId,
-    );
-    if (readExpertPromptInput(invocation?.input, prompt.content).attachments.length > 0) {
-      throw new Error("A queued prompt with attachments cannot be steered.");
+    this.queueSteersInFlight.add(requestId);
+    let claim: QueuedSteerClaim | undefined;
+    let runtimeSteerApplied = false;
+    try {
+      const prompt = (await this.getPromptQueue()).find(
+        (candidate) => candidate.requestId === requestId,
+      );
+      if (prompt?.mode !== "enqueue" || prompt.status !== "queued") {
+        throw new Error(`Queued prompt not found: ${requestId}`);
+      }
+      const invocation = await this.dependencies.executions.getInvocation(
+        prompt.executionId,
+        prompt.executionId,
+      );
+      if (readExpertPromptInput(invocation?.input, prompt.content).attachments.length > 0) {
+        throw new Error("A queued prompt with attachments cannot be steered.");
+      }
+
+      const controller = await this.waitForSteerController();
+      const now = new Date().toISOString();
+      claim = await this.dependencies.sessions.transact<QueuedSteerClaim>(
+        this.sessionId,
+        ({ session, prompts }) => {
+          if (session.status === "closed") {
+            throw new Error(`ExpertSession is closed: ${this.sessionId}`);
+          }
+          if (session.activeExecutionId === undefined) {
+            throw new Error("Cannot steer without an active ExpertTurn.");
+          }
+          const current = prompts.find((candidate) => candidate.requestId === requestId);
+          if (current?.mode !== "enqueue" || current.status !== "queued") {
+            throw new Error(`Queued prompt not found: ${requestId}`);
+          }
+          const marker = `${QUEUE_STEER_PENDING_PREFIX}${current.executionId}`;
+          return {
+            result: {
+              requestId,
+              activeExecutionId: session.activeExecutionId,
+              contextId: session.rootContextId,
+              originalPrompt: current,
+              marker,
+            },
+            session: {
+              ...session,
+              queuedRequestIds: session.queuedRequestIds.filter((id) => id !== requestId),
+              updatedAt: now,
+            },
+            prompts: prompts.map((candidate) =>
+              candidate.requestId === requestId
+                ? {
+                    ...candidate,
+                    mode: "steer" as const,
+                    executionId: session.activeExecutionId!,
+                    targetExecutionId: session.activeExecutionId,
+                    status: "running" as const,
+                    error: marker,
+                    updatedAt: now,
+                  }
+                : candidate,
+            ),
+          };
+        },
+      );
+
+      const current = await this.getState();
+      if (this.controller !== controller || current.activeExecutionId !== claim.activeExecutionId) {
+        throw new Error(`ExpertTurn changed before queued steer: ${claim.activeExecutionId}`);
+      }
+      await controller.steer(claim.contextId, {
+        requestId,
+        content: claim.originalPrompt.content,
+        targetRunId: claim.activeExecutionId,
+      });
+      runtimeSteerApplied = true;
+
+      await this.markQueueSteerSucceeded(claim);
+      await this.cancelPersistedExecution(
+        claim.originalPrompt.executionId,
+        "Moved from the prompt queue to steer the active turn.",
+      );
+      await this.clearQueueSteerMarker(requestId, claim.marker);
+      return this.createTurn(claim.activeExecutionId, requestId, "enqueue", "steer");
+    } catch (error) {
+      if (claim !== undefined && !runtimeSteerApplied) {
+        await this.restoreQueuedSteer(claim).catch(() => undefined);
+      }
+      throw error;
+    } finally {
+      this.queueSteersInFlight.delete(requestId);
     }
-    return await this.steer(prompt.content, requestId);
   }
 
   async removeQueuedPrompt(requestId: string, reason?: string): Promise<void> {
@@ -1269,6 +1512,66 @@ class ExpertSessionImpl implements ExpertSession {
     const execution = await this.dependencies.executions.get(executionId);
     if (execution === undefined || isFinal(execution.status)) return;
     await new ExecutionController(executionId, this.dependencies.executions).cancel(reason);
+  }
+
+  private async markQueueSteerSucceeded(claim: QueuedSteerClaim): Promise<void> {
+    await this.dependencies.sessions.transact(this.sessionId, ({ session, prompts }) => ({
+      result: undefined,
+      session: { ...session, updatedAt: new Date().toISOString() },
+      prompts: prompts.map((prompt) =>
+        prompt.requestId === claim.requestId &&
+        prompt.mode === "steer" &&
+        prompt.status === "running" &&
+        prompt.error === claim.marker
+          ? { ...prompt, status: "succeeded" as const, updatedAt: new Date().toISOString() }
+          : prompt,
+      ),
+    }));
+  }
+
+  private async clearQueueSteerMarker(
+    requestId: string,
+    marker: string | undefined,
+  ): Promise<void> {
+    if (marker === undefined) return;
+    await this.dependencies.sessions.transact(this.sessionId, ({ session, prompts }) => ({
+      result: undefined,
+      session: { ...session, updatedAt: new Date().toISOString() },
+      prompts: prompts.map((prompt) =>
+        prompt.requestId === requestId && prompt.error === marker
+          ? { ...prompt, error: undefined, updatedAt: new Date().toISOString() }
+          : prompt,
+      ),
+    }));
+  }
+
+  private async restoreQueuedSteer(claim: QueuedSteerClaim): Promise<void> {
+    await this.dependencies.sessions.transact(this.sessionId, ({ session, prompts }) => {
+      const current = prompts.find((prompt) => prompt.requestId === claim.requestId);
+      if (current === undefined || current.mode !== "steer" || current.error !== claim.marker) {
+        return { result: undefined, session, prompts };
+      }
+      const restored = {
+        ...claim.originalPrompt,
+        mode: "enqueue" as const,
+        executionId: claim.originalPrompt.executionId,
+        status: "queued" as const,
+        targetExecutionId: undefined,
+        error: undefined,
+        updatedAt: new Date().toISOString(),
+      };
+      return {
+        result: undefined,
+        session: {
+          ...session,
+          queuedRequestIds: [...new Set([...session.queuedRequestIds, claim.requestId])],
+          updatedAt: restored.updatedAt,
+        },
+        prompts: prompts.map((prompt) =>
+          prompt.requestId === claim.requestId ? restored : prompt,
+        ),
+      };
+    });
   }
 
   private async getRootContext(state?: ExpertSessionRecord): Promise<RuntimeContextRecord> {
@@ -1572,6 +1875,31 @@ class ExpertSessionImpl implements ExpertSession {
       }
     }
     if (status === "checkpointed") {
+      // The Runtime has durably checkpointed a human interaction, but the
+      // prompt is still the recoverable unit of work. Persist that boundary
+      // before releasing the in-memory controller so a later Mission owner
+      // can discover and resume the same prompt after a process crash.
+      await this.dependencies.sessions.transact(
+        this.sessionId,
+        ({ session: current, prompts }) => ({
+          result: undefined,
+          session: {
+            ...current,
+            activeExecutionId:
+              current.activeExecutionId === prompt.executionId
+                ? undefined
+                : current.activeExecutionId,
+            queuedRequestIds: [...new Set([...current.queuedRequestIds, prompt.requestId])],
+            lastStatus: "waiting" as const,
+            updatedAt: new Date().toISOString(),
+          },
+          prompts: prompts.map((candidate) =>
+            candidate.requestId === prompt.requestId && candidate.status === "running"
+              ? { ...candidate, status: "queued" as const, updatedAt: new Date().toISOString() }
+              : candidate,
+          ),
+        }),
+      );
       if (this.controller === controller) this.controller = undefined;
       controller.finish();
       return status;
@@ -1804,6 +2132,12 @@ function readErrorMessage(error: unknown): string {
     return String(error.message);
   }
   return String(error);
+}
+
+function parseQueueSteerMarker(error: string | undefined): string | undefined {
+  if (error === undefined || !error.startsWith(QUEUE_STEER_PENDING_PREFIX)) return undefined;
+  const executionId = error.slice(QUEUE_STEER_PENDING_PREFIX.length);
+  return executionId === "" ? undefined : executionId;
 }
 
 function throwCollectedErrors(errors: readonly unknown[], message: string): void {

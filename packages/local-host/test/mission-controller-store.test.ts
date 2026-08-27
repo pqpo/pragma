@@ -110,6 +110,59 @@ describe("MissionControllerStore", () => {
     ).rejects.toMatchObject({ code: "IDEMPOTENCY_CONFLICT" });
   });
 
+  it("waits for a terminal operation without holding the aggregate lock", async () => {
+    const store = await createStore();
+    const guard = await store.claim({
+      missionId,
+      claimId: "00000000-0000-4000-8000-000000000034",
+      leaseMs: 10_000,
+    });
+    const command = commandInput("send", "00000000-0000-4000-8000-000000000035");
+    await store.appendCommand(command);
+
+    const processing = new Promise<void>((resolve, reject) => {
+      setTimeout(() => {
+        void store
+          .processNext({
+            missionId,
+            guard,
+            consumer: { apply: async () => ({ result: { delivered: true } }) },
+          })
+          .then(() => resolve(), reject);
+      }, 10);
+    });
+    await expect(
+      store.waitOperation({
+        missionId,
+        requestId: command.request.requestId,
+        timeoutMs: 1_000,
+        pollIntervalMs: 2,
+      }),
+    ).resolves.toMatchObject({ state: "applied", result: { delivered: true } });
+    await processing;
+  });
+
+  it("returns COMMAND_ACK_TIMEOUT while keeping a queued operation durable", async () => {
+    const store = await createStore();
+    const command = commandInput("send", "00000000-0000-4000-8000-000000000036");
+    await store.appendCommand(command);
+
+    await expect(
+      store.waitOperation({
+        missionId,
+        requestId: command.request.requestId,
+        timeoutMs: 10,
+        pollIntervalMs: 1,
+      }),
+    ).rejects.toMatchObject({
+      code: "COMMAND_ACK_TIMEOUT",
+      details: { missionId, requestId: command.request.requestId, timeoutMs: 10 },
+    });
+    await expect(
+      store.getOperation({ missionId, requestId: command.request.requestId }),
+    ).resolves.toMatchObject({ state: "queued" });
+  });
+
   it("commits a semantic-write event after concurrently advanced Inbox poller events", async () => {
     const root = await temporaryRoot();
     const store = createMissionControllerStore({ missionsPath: join(root, "missions") });
@@ -151,7 +204,9 @@ describe("MissionControllerStore", () => {
     });
     await store.appendCommand(command);
     await vi.waitFor(async () =>
-      expect(await store.getOperation({ missionId, requestId: command.request.requestId })).toMatchObject({
+      expect(
+        await store.getOperation({ missionId, requestId: command.request.requestId }),
+      ).toMatchObject({
         state: "applied",
       }),
     );
@@ -169,10 +224,9 @@ describe("MissionControllerStore", () => {
       "mission.options.updated",
     ]);
     expect((await store.readSnapshot({ missionId, after: snapshot.cursor })).events).toEqual([]);
-    const lines = (await readFile(
-      join(root, "missions", missionId, "local-host", "events.jsonl"),
-      "utf8",
-    ))
+    const lines = (
+      await readFile(join(root, "missions", missionId, "local-host", "events.jsonl"), "utf8")
+    )
       .trim()
       .split("\n")
       .map((line) => JSON.parse(line) as { readonly sequence: number });

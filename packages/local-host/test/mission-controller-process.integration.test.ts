@@ -153,6 +153,66 @@ describe("MissionControllerStore cross-process integration", () => {
     },
     20_000,
   );
+
+  it("follows a live Mission from another process without claiming or interrupting its owner", async () => {
+    const root = await temporaryRoot();
+    const target = mission(405);
+    const outputPath = join(root, "watch.json");
+    const store = createMissionControllerStore({ missionsPath: root });
+    const guard = await store.claim({
+      missionId: target,
+      claimId: "00000000-0000-4000-8000-000000000409",
+      leaseMs: 10_000,
+    });
+    await store.write({
+      missionId: target,
+      guard,
+      operation: async ({ appendEvent }) => {
+        await appendEvent(
+          "mission.created",
+          { requestId: "00000000-0000-4000-8000-000000000410" },
+          "00000000-0000-4000-8000-000000000411",
+        );
+        await appendEvent(
+          "run.started",
+          { executionId: "00000000-0000-4000-8000-000000000412" },
+          "00000000-0000-4000-8000-000000000413",
+        );
+      },
+    });
+    const before = (await store.readSnapshot({ missionId: target })).snapshot.lease;
+    const watcher = child(root, "watch", `${target}|${outputPath}`);
+    const lines = collectLines(watcher);
+    await expect(lines.next()).resolves.toBe("event:mission.snapshot");
+
+    await store.write({
+      missionId: target,
+      guard,
+      operation: async ({ appendEvent }) =>
+        await appendEvent(
+          "run.succeeded",
+          { executionId: "00000000-0000-4000-8000-000000000412", result: { ok: true } },
+          "00000000-0000-4000-8000-000000000414",
+        ),
+    });
+    await expect(lines.next()).resolves.toBe("event:watch.ready");
+    await expect(lines.next()).resolves.toBe("event:run.succeeded");
+    await expect(lines.next()).resolves.toBe("done");
+    await waitForExit(watcher);
+
+    const result = JSON.parse(await readFile(outputPath, "utf8")) as {
+      readonly result: { readonly status: string; readonly lastCursor: string };
+      readonly events: readonly { readonly type: string; readonly eventId?: string }[];
+    };
+    expect(result.result.status).toBe("completed");
+    expect(result.events.map((event) => event.type)).toEqual([
+      "mission.snapshot",
+      "watch.ready",
+      "run.succeeded",
+    ]);
+    expect(result.events[2]?.eventId).toBe("00000000-0000-4000-8000-000000000414");
+    expect((await store.readSnapshot({ missionId: target })).snapshot.lease).toEqual(before);
+  }, 20_000);
 });
 
 interface ProcessOutcome {
@@ -225,7 +285,9 @@ function child(missionsPath: string, action: string, value: string): ChildProces
     const snapshot = await store.readSnapshot({ missionId: target });
     expect(snapshot.events.filter((event) => event.type === "command.accepted")).toHaveLength(1);
     expect(snapshot.events.filter((event) => event.type === "command.applied")).toHaveLength(1);
-    expect(new Set(snapshot.events.map((event) => event.eventId)).size).toBe(snapshot.events.length);
+    expect(new Set(snapshot.events.map((event) => event.eventId)).size).toBe(
+      snapshot.events.length,
+    );
     expect(snapshot.events.map((event) => event.sequence)).toEqual([1, 2]);
   }, 15_000);
 }

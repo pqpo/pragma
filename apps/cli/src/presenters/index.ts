@@ -7,7 +7,11 @@ import {
   type JsonValue,
 } from "@pragma/local-host/wire";
 import type { AgentMessageUsage } from "@pragma/shared";
-import type { ExecutorReference, WorkspaceSelection } from "@pragma/shared/integration";
+import {
+  EventIdSchema,
+  type ExecutorReference,
+  type WorkspaceSelection,
+} from "@pragma/shared/integration";
 
 import { HELP_TEXT, type OutputFormat } from "../parser/argv.ts";
 import { isRecord } from "../commands/utils.ts";
@@ -37,6 +41,7 @@ export type CliRunPresentationOutcome =
       readonly result: JsonValue;
       readonly usage?: AgentMessageUsage | undefined;
       readonly warnings?: readonly unknown[] | undefined;
+      readonly lastCursor?: string | undefined;
     }
   | {
       readonly status: "input_required" | "failed" | "interrupted";
@@ -48,6 +53,7 @@ export type CliRunPresentationOutcome =
       readonly error?: IntegrationError | undefined;
       readonly usage?: AgentMessageUsage | undefined;
       readonly warnings?: readonly unknown[] | undefined;
+      readonly lastCursor?: string | undefined;
     };
 
 export interface CliV2StreamPresenter {
@@ -56,8 +62,12 @@ export interface CliV2StreamPresenter {
     readonly data: JsonValue;
     readonly missionId?: string | undefined;
     readonly executionId?: string | undefined;
+    /** Durable event IDs are forwarded; synthetic events receive a new ID. */
+    readonly eventId?: string | undefined;
     readonly replayable?: boolean | undefined;
     readonly cursor?: string | undefined;
+    /** Durable Mission timestamps are forwarded as the CLI emittedAt value. */
+    readonly emittedAt?: string | undefined;
   }) => void;
   readonly finalize: (outcome: CliRunPresentationOutcome) => void;
 }
@@ -103,17 +113,19 @@ export function createV2StreamPresenter(input: PresentationInput): CliV2StreamPr
     readonly data: JsonValue;
     readonly missionId?: string | undefined;
     readonly executionId?: string | undefined;
+    readonly eventId?: string | undefined;
     readonly replayable?: boolean | undefined;
     readonly cursor?: string | undefined;
+    readonly emittedAt?: string | undefined;
   }): void => {
     if (finalized) return;
     if (event.cursor !== undefined) lastCursor = event.cursor;
     const parsed = CliEventV2Schema.parse({
       schemaVersion: "pragma.cli-event/v2",
       requestId: input.requestId,
-      eventId: globalThis.crypto.randomUUID(),
+      eventId: durableOrSyntheticEventId(event.eventId),
       sequence: sequence++,
-      emittedAt: new Date().toISOString(),
+      emittedAt: event.emittedAt ?? new Date().toISOString(),
       replayable: event.replayable ?? false,
       ...(event.missionId === undefined ? {} : { missionId: event.missionId }),
       ...(event.executionId === undefined ? {} : { executionId: event.executionId }),
@@ -135,7 +147,9 @@ export function createV2StreamPresenter(input: PresentationInput): CliV2StreamPr
         executionId: outcome.executionId,
         executor: outcome.executor,
         workspace: outcome.workspace,
-        ...(lastCursor === undefined ? {} : { lastCursor }),
+        ...((outcome.lastCursor ?? lastCursor) === undefined
+          ? {}
+          : { lastCursor: outcome.lastCursor ?? lastCursor }),
         ...(outcome.status === "accepted" || outcome.status === "succeeded"
           ? { result: outcome.result }
           : {}),
@@ -167,6 +181,12 @@ export function createV2StreamPresenter(input: PresentationInput): CliV2StreamPr
       input.io.flushStdout?.();
     },
   };
+}
+
+function durableOrSyntheticEventId(eventId: string | undefined): string {
+  return eventId !== undefined && EventIdSchema.safeParse(eventId).success
+    ? eventId
+    : globalThis.crypto.randomUUID();
 }
 
 function makeV2Result(input: PresentationInput, outcome: CliRunPresentationOutcome) {
@@ -217,7 +237,7 @@ function runOutcomeExitCode(outcome: CliRunPresentationOutcome): number {
 function renderRunText(outcome: CliRunPresentationOutcome): string {
   if (outcome.status === "failed") return renderFailure(outcome.error!);
   if (outcome.status === "input_required") {
-    return `Input required for ${outcome.missionId}/${outcome.executionId}. Use mission respond in a later release.\n`;
+    return `Input required for ${outcome.missionId}/${outcome.executionId}. Use mission respond with the pending interaction.\n`;
   }
   if (outcome.status === "interrupted") return `Interrupted: ${outcome.executionId}\n`;
   if (outcome.status === "accepted") {
@@ -234,15 +254,85 @@ export function presentSuccess(input: PresentationInput, result: JsonValue): voi
   }
   if (input.format === "json") {
     input.io.writeStdout(
-      `${JSON.stringify(
-        makeV2Result(input, { status: "succeeded", result }),
-      )}\n`,
+      `${JSON.stringify(makeV2Result(input, { status: "succeeded", result }))}\n`,
     );
     return;
   }
   const presenter = createV2StreamPresenter(input);
   presenter.emit({ type: "command.result", data: { command: input.command, result } });
   presenter.finalize({ status: "succeeded", result });
+}
+
+export function renderWatchEventText(event: {
+  readonly type: string;
+  readonly data: JsonValue;
+  readonly cursor?: string | undefined;
+}): string {
+  const data = isRecord(event.data) ? event.data : undefined;
+  if (event.type === "mission.snapshot") {
+    const missionId = typeof data?.["missionId"] === "string" ? data["missionId"] : "unknown";
+    const status = typeof data?.["status"] === "string" ? data["status"] : "unknown";
+    const cursor = event.cursor ?? (typeof data?.["cursor"] === "string" ? data["cursor"] : "");
+    return `Mission ${missionId}: ${status}${cursor === "" ? "" : ` (cursor ${cursor})`}\n`;
+  }
+  if (event.type === "watch.ready") {
+    const missionId = typeof data?.["missionId"] === "string" ? data["missionId"] : "unknown";
+    return `Watching Mission ${missionId}.\n`;
+  }
+  if (event.type === "watch.detached") {
+    const cursor = typeof data?.["lastCursor"] === "string" ? data["lastCursor"] : undefined;
+    return `Detached; Mission continues.${cursor === undefined ? "" : ` cursor=${cursor}`}\n`;
+  }
+  return `${event.type}: ${JSON.stringify(event.data)}\n`;
+}
+
+export function presentAccepted(input: PresentationInput, result: JsonValue): void {
+  if (input.format === "text") {
+    input.io.writeStdout(`Accepted: ${JSON.stringify(result)}\n`);
+    return;
+  }
+  if (input.format === "json") {
+    input.io.writeStdout(
+      `${JSON.stringify(makeV2Result(input, { status: "accepted", result }))}\n`,
+    );
+    return;
+  }
+  const presenter = createV2StreamPresenter(input);
+  presenter.emit({ type: "command.result", data: { command: input.command, result } });
+  presenter.finalize({ status: "accepted", result });
+}
+
+export function presentInputRequired(input: PresentationInput, result: JsonValue): void {
+  const record = isRecord(result) ? result : undefined;
+  const operation =
+    record !== undefined && isRecord(record["operation"]) ? record["operation"] : undefined;
+  const execution =
+    record !== undefined && isRecord(record["execution"]) ? record["execution"] : undefined;
+  const interaction = execution?.["interaction"] ?? record?.["interaction"];
+  const missionId =
+    typeof operation?.["missionId"] === "string"
+      ? operation["missionId"]
+      : typeof record?.["missionId"] === "string"
+        ? record["missionId"]
+        : undefined;
+  if (missionId === undefined || execution === undefined || interaction === undefined) {
+    presentFailure(input, {
+      code: "COMMAND_REJECTED",
+      schemaVersion: "pragma.integration-error/v1",
+      category: "conflict",
+      message: "The Mission reported pending input without an interaction envelope.",
+      retryable: false,
+    });
+    return;
+  }
+  presentRunOutcome(input, {
+    status: "input_required",
+    missionId,
+    ...(typeof execution["executionId"] === "string"
+      ? { executionId: execution["executionId"] }
+      : {}),
+    interaction,
+  });
 }
 
 export function presentFailure(

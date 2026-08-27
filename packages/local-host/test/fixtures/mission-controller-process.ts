@@ -1,6 +1,6 @@
 import { access, appendFile, writeFile } from "node:fs/promises";
 
-import { createMissionControllerStore } from "../../src/index.ts";
+import { createMissionControllerStore, createMissionWatchApplication } from "../../src/index.ts";
 
 const [missionsPath, action, value] = process.argv.slice(2);
 
@@ -113,6 +113,37 @@ if (action === "append-inbox") {
   process.exit();
 }
 
+if (action === "watch") {
+  const [missionId, outputPath] = value?.split("|") ?? [];
+  if (missionId === undefined || outputPath === undefined) {
+    throw new Error("Expected watch Mission and output path.");
+  }
+  const events: Array<{
+    readonly type: string;
+    readonly eventId?: string;
+    readonly cursor?: string;
+  }> = [];
+  const result = await createMissionWatchApplication({
+    controller: store,
+    pollIntervalMs: 10,
+  }).watch({
+    missionId,
+    replay: 0,
+    until: "terminal",
+    onEvent: (event) => {
+      events.push({
+        type: event.type,
+        ...(event.eventId === undefined ? {} : { eventId: event.eventId }),
+        ...(event.cursor === undefined ? {} : { cursor: event.cursor }),
+      });
+      process.stdout.write(`event:${event.type}\n`);
+    },
+  });
+  await writeFile(outputPath, JSON.stringify({ result, events }));
+  process.stdout.write("done\n");
+  process.exit();
+}
+
 if (action === "apply-then-hang" || action === "apply-once") {
   const [missionId, claimId, leaseMs, deliveriesPath, sideEffectPath] = value?.split("|") ?? [];
   if (
@@ -132,9 +163,11 @@ if (action === "apply-then-hang" || action === "apply-once") {
     consumer: {
       apply: async ({ command }) => {
         await appendFile(deliveriesPath, `${command.commandId}\n`);
-        await writeFile(sideEffectPath, command.commandId, { flag: "wx" }).catch((error: unknown) => {
-          if ((error as { readonly code?: string }).code !== "EEXIST") throw error;
-        });
+        await writeFile(sideEffectPath, command.commandId, { flag: "wx" }).catch(
+          (error: unknown) => {
+            if ((error as { readonly code?: string }).code !== "EEXIST") throw error;
+          },
+        );
         process.stdout.write("side-effect\n");
         if (action === "apply-then-hang") await new Promise<void>(() => undefined);
         return { result: { commandId: command.commandId } };

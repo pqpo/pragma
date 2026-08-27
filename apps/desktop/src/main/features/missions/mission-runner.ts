@@ -7,6 +7,7 @@ import {
   createPragmaLogger,
   createFileExecutionStore,
   createFileExpertSessionStore,
+  ExecutionController,
   ExecutionWorkHistoryReader,
   ExpertAgentHumanRequestSchema,
   fingerprintExpertExecutionDefinition,
@@ -120,6 +121,10 @@ import type { PluginStore } from "../plugins/plugin-store.ts";
 import type { DesktopUsageStore } from "../usage/usage-store.ts";
 import type { DesktopMissionController } from "./mission-controller-adapter.ts";
 import { createIntegrationError } from "@pragma/shared/integration";
+import {
+  createExpertSessionPromptQueueProjection,
+  type PromptQueueProjection,
+} from "@pragma/local-host";
 
 function readPersistedPromptQueueState(
   activeExecutionId: string | undefined,
@@ -172,6 +177,7 @@ export interface MissionRunner {
   reconcileUsage(): Promise<void>;
   invalidateEstimatedContextWindows(): Promise<void>;
   refreshMemoryContextBindings(): Promise<void>;
+  get(id: string): Promise<Mission>;
   run(id: string): Promise<Mission>;
   updateOptions(input: UpdateMissionOptions): Promise<Mission>;
   updateContextStores(input: UpdateMissionContextStores): Promise<Mission>;
@@ -209,7 +215,7 @@ export interface MissionRunner {
   getRuntimeBinding(id: string): Promise<RuntimeEnvironmentBinding | undefined>;
   subscribeChat(listener: (notification: MissionChatNotification) => void): () => void;
   subscribeWork(listener: (notification: MissionWorkNotification) => void): () => void;
-  interrupt(id: string): Promise<Mission>;
+  interrupt(id: string, expectedExecutionId?: string): Promise<Mission>;
   stopLocalController(id: string): Promise<void>;
   getCanonicalStrictTarget(
     id: string,
@@ -217,6 +223,7 @@ export interface MissionRunner {
   resumeQueue(id: string): Promise<Mission>;
   getWork(id: string): Promise<MissionWorkSnapshot>;
   getWorkConversation(input: GetMissionWorkConversation): Promise<MissionWorkConversationSnapshot>;
+  listPromptQueue?(id: string): Promise<PromptQueueProjection>;
   delete(id: string): Promise<void>;
   listHumanInteractions(id: string): Promise<readonly MissionHumanInteraction[]>;
   respondToHumanInteraction(input: {
@@ -434,6 +441,30 @@ export function createMissionRunner(options: {
   const expertSessionStore = createFileExpertSessionStore({
     executions: executionStore,
     pragmaHome: options.pragmaHome,
+  });
+  const promptQueueProjection = createExpertSessionPromptQueueProjection({
+    sessions: expertSessionStore,
+    resolveSessionId: async (missionId) => {
+      const live = sessions.get(missionId);
+      if (live !== undefined) return live.sessionId;
+      const mission = await options.missions.get(missionId);
+      return mission.execution?.sessionId;
+    },
+    supportsSteer: async (sessionId) => {
+      const session = await expertSessionStore.get(sessionId);
+      if (session === undefined) return false;
+      const rootContext = session.contexts[session.rootContextId];
+      if (rootContext === undefined) return false;
+      const resolved = await options.runtimes
+        .resolve({ binding: rootContext.runtime, modelSelection: rootContext.modelSelection })
+        .catch(() => undefined);
+      return resolved?.adapter.descriptor.capabilities?.supportsSteer === true;
+    },
+    resolvePromptMetadata: async (prompt) => ({
+      hasAttachments: hasPromptAttachments(
+        (await executionStore.getInvocation(prompt.executionId, prompt.executionId))?.input,
+      ),
+    }),
   });
   const workHistory = new ExecutionWorkHistoryReader(executionStore);
   const runtimeResolverForToolPermissionMode = (mode: DesktopToolPermissionMode) =>
@@ -2210,8 +2241,36 @@ export function createMissionRunner(options: {
     };
   };
 
-  const interruptMission = async (id: string): Promise<Mission> => {
+  const interruptMission = async (id: string, expectedExecutionId?: string): Promise<Mission> => {
     const mission = await options.missions.get(id);
+    if (expectedExecutionId !== undefined && mission.execution?.id !== expectedExecutionId) {
+      throw createIntegrationError({
+        code: "COMMAND_REJECTED",
+        category: "conflict",
+        message: "The expected execution is no longer active.",
+        details: {
+          reason: "execution_target_changed",
+          missionId: id,
+          expectedExecutionId,
+          ...(mission.execution?.id === undefined ? {} : { executionId: mission.execution.id }),
+        },
+      });
+    }
+    if (
+      mission.execution === undefined ||
+      !["queued", "running", "waiting"].includes(mission.execution.status)
+    ) {
+      throw createIntegrationError({
+        code: "COMMAND_REJECTED",
+        category: "conflict",
+        message: "Mission has no active execution.",
+        details: {
+          reason: "no_active_execution",
+          missionId: id,
+          ...(mission.execution?.id === undefined ? {} : { executionId: mission.execution.id }),
+        },
+      });
+    }
     const session = sessions.get(id);
     if (session !== undefined) {
       await session.cancelPromptQueue("Stopped and cleared by user.");
@@ -2221,13 +2280,22 @@ export function createMissionRunner(options: {
     }
     const current = active.get(id);
     if (current === undefined || current.handle.executionId !== mission.execution?.id) {
-      if (
-        mission.execution === undefined ||
-        !["queued", "running", "waiting"].includes(mission.execution.status)
-      ) {
-        return mission;
+      const executionId = mission.execution.id;
+      const persisted = await executionStore.get(executionId);
+      if (persisted !== undefined && !isFinalExecutionStatus(persisted.status)) {
+        await new ExecutionController(executionId, executionStore).cancel("Interrupted by user.");
       }
-      throw new Error("Resume this execution before interrupting it.");
+      const updated = await options.missions.updateExecution(
+        id,
+        {
+          ...mission.execution,
+          status: "cancelled",
+          finishedAt: new Date().toISOString(),
+        },
+        { executionId, statuses: ["queued", "running", "waiting"] },
+      );
+      invalidateChat(id, missionSurfaceAudience(mission));
+      return updated;
     }
     await current.handle.cancel("Interrupted by user.");
     await current.settlement;
@@ -2546,6 +2614,9 @@ export function createMissionRunner(options: {
   };
 
   return {
+    async get(id) {
+      return await options.missions.get(id);
+    },
     reconcileUsage,
     async invalidateEstimatedContextWindows() {
       for (const mission of await options.missions.list()) invalidateChat(mission.id, "user");
@@ -2617,6 +2688,9 @@ export function createMissionRunner(options: {
     },
     async getChat(input) {
       return await getChatSnapshot(input);
+    },
+    async listPromptQueue(id) {
+      return await promptQueueProjection.list(id);
     },
     async getTerminalRuntimeFailure(id) {
       const mission = await options.missions.get(id);
@@ -2706,13 +2780,16 @@ export function createMissionRunner(options: {
       workListeners.add(listener);
       return () => workListeners.delete(listener);
     },
-    async interrupt(id) {
+    async interrupt(id, expectedExecutionId) {
       const pending = pendingOperations.get(id);
       if (pending?.kind === "interrupt") return await pending.promise;
       if (pending !== undefined) {
         throw new MissionOperationError();
       }
-      const interrupting = withMissionController(id, async () => await interruptMission(id));
+      const interrupting = withMissionController(
+        id,
+        async () => await interruptMission(id, expectedExecutionId),
+      );
       trackOperation(id, { kind: "interrupt", promise: interrupting });
       return await interrupting;
     },
@@ -2738,10 +2815,11 @@ export function createMissionRunner(options: {
       if (
         mission.executor.kind === "flow" ||
         mission.execution === undefined ||
-        !["queued", "running", "waiting"].includes(mission.execution.status)
+        mission.execution.status !== "running"
       ) {
         return undefined;
       }
+      if (mission.execution.inputMessageId === undefined) return undefined;
       return {
         executionId: mission.execution.id,
         turnId: mission.execution.inputMessageId,
@@ -4813,6 +4891,12 @@ function toExpertHumanResponse(
       ? {}
       : { notes: response.notes }),
   };
+}
+
+function hasPromptAttachments(value: unknown): boolean {
+  if (typeof value !== "object" || value === null || Array.isArray(value)) return false;
+  const attachments = (value as { readonly attachments?: unknown }).attachments;
+  return Array.isArray(attachments) && attachments.length > 0;
 }
 
 async function waitForExpertTurnSettlement(

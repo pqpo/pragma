@@ -95,6 +95,23 @@ export interface MissionSemanticWriteTransaction {
   readonly event: MissionEvent;
 }
 
+/**
+ * Crash journal for targeted retention compaction.  This is a new v1 journal
+ * family; no existing aggregate, command, event, or operation schema version
+ * is upgraded by retention.
+ */
+export interface MissionRetentionTransaction {
+  readonly schemaVersion: "pragma.local-host-mission-retention-transaction/v1";
+  readonly missionId: string;
+  readonly eventSequence: number;
+  readonly retainedEvents: readonly MissionEvent[];
+  readonly retainedCommands: readonly unknown[];
+  readonly removedOperations: readonly {
+    readonly requestId: string;
+    readonly operationId: string;
+  }[];
+}
+
 const uuid = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 const fence = /^[1-9][0-9]*$/;
 const hash = /^sha256:[0-9a-f]{64}$/;
@@ -129,6 +146,9 @@ export const MissionEventTransactionSchema: RuntimeSchema<MissionEventTransactio
 };
 export const MissionSemanticWriteTransactionSchema: RuntimeSchema<MissionSemanticWriteTransaction> =
   { parse: parseSemanticWriteTransaction };
+export const MissionRetentionTransactionSchema: RuntimeSchema<MissionRetentionTransaction> = {
+  parse: parseRetentionTransaction,
+};
 
 function parseLease(value: unknown): MissionControllerLease {
   const record = object(value, "Mission controller lease");
@@ -350,6 +370,52 @@ function parseSemanticWriteTransaction(value: unknown): MissionSemanticWriteTran
     missionId: string(record.missionId, "missionId"),
     operation: { name: nonEmpty(operation.name, "name"), input: object(operation.input, "input") },
     event: parseEvent(record.event),
+  };
+}
+
+function parseRetentionTransaction(value: unknown): MissionRetentionTransaction {
+  const record = object(value, "Mission retention transaction");
+  exact(
+    record,
+    [
+      "schemaVersion",
+      "missionId",
+      "eventSequence",
+      "retainedEvents",
+      "retainedCommands",
+      "removedOperations",
+    ],
+    "Mission retention transaction",
+  );
+  if (
+    record.schemaVersion !== "pragma.local-host-mission-retention-transaction/v1" ||
+    !uuid.test(string(record.missionId, "missionId")) ||
+    !Number.isSafeInteger(record.eventSequence) ||
+    (record.eventSequence as number) < 0 ||
+    !Array.isArray(record.retainedEvents) ||
+    !Array.isArray(record.retainedCommands) ||
+    !Array.isArray(record.removedOperations)
+  )
+    throw invalid("Mission retention transaction");
+  const removedOperations = record.removedOperations.map((item) => {
+    const operation = object(item, "Mission retention operation removal");
+    exact(operation, ["requestId", "operationId"], "Mission retention operation removal");
+    if (!uuid.test(string(operation.requestId, "requestId")))
+      throw invalid("Mission retention operation removal");
+    if (!uuid.test(string(operation.operationId, "operationId")))
+      throw invalid("Mission retention operation removal");
+    return {
+      requestId: string(operation.requestId, "requestId"),
+      operationId: string(operation.operationId, "operationId"),
+    };
+  });
+  return {
+    schemaVersion: "pragma.local-host-mission-retention-transaction/v1",
+    missionId: string(record.missionId, "missionId"),
+    eventSequence: record.eventSequence as number,
+    retainedEvents: record.retainedEvents.map((event) => parseEvent(event)),
+    retainedCommands: record.retainedCommands,
+    removedOperations,
   };
 }
 

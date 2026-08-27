@@ -52,6 +52,7 @@ export * from "./execution/expert-session-store.ts";
 export * from "./execution/expert-session.ts";
 export * from "./execution/expert-prompt.ts";
 export {
+  ExecutionController,
   HumanInteractionCheckpointError,
   isHumanInteractionCheckpointError,
 } from "./execution/expert-runner.ts";

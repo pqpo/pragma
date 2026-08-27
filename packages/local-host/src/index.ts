@@ -10,9 +10,13 @@ import {
   createIntegrationError,
   WorkspaceSelectionSchema,
   type IntegrationCapability,
+  type HumanInteractionRequestEnvelope,
   type WorkspaceSelection,
 } from "@pragma/shared/integration";
+import type { HumanInteractionResponse } from "@pragma/shared";
 import type { LocalHostRunApplication } from "./run.ts";
+import type { MissionControlApplication } from "./missions/controller/mission-control.ts";
+import type { MissionWatchPort } from "./missions/controller/watch.ts";
 
 export {
   CliResultSchema,
@@ -27,10 +31,19 @@ export const LOCAL_HOST_SHARED_BOARD_SCOPE_ID = "mission-board:shared" as const;
 
 export * from "./missions/controller/mission-controller-store.ts";
 export * from "./missions/controller/schemas.ts";
+export * from "./missions/controller/pinned-binding.ts";
+export * from "./missions/controller/pinned-binding-backfill.ts";
+export * from "./missions/controller/owner-scope.ts";
+export * from "./missions/controller/prompt-queue.ts";
+export * from "./missions/controller/command-payload.ts";
+export * from "./missions/controller/retention.ts";
+export * from "./missions/controller/watch.ts";
+export * from "./missions/controller/mission-control.ts";
 export * from "./missions/controller/migrations/index.ts";
 export * from "./run-payload.ts";
 export * from "./run.ts";
 export * from "./core-run.ts";
+export * from "./core-control-adapter.ts";
 export * from "./built-in-executors.ts";
 export * from "./mission-board.ts";
 export * from "./redaction.ts";
@@ -110,6 +123,28 @@ export interface LocalHostSharedBoardSearchRequest extends LocalHostSharedBoardL
   readonly caseSensitive?: boolean;
 }
 
+export interface LocalHostMissionResumeRequest {
+  readonly missionId: string;
+  readonly project?:
+    | {
+        readonly projectId: string;
+        readonly revision: number;
+      }
+    | undefined;
+  readonly expectedFingerprint?: string | undefined;
+  readonly requestId?: string | undefined;
+  readonly detach?: boolean | undefined;
+  /** Optional TTY/UI response path for a recovered human interaction. */
+  readonly onHumanInteraction?:
+    | ((
+        input: HumanInteractionRequestEnvelope,
+      ) => Promise<
+        | { readonly kind: "respond"; readonly response: HumanInteractionResponse }
+        | { readonly kind: "checkpoint" }
+      >)
+    | undefined;
+}
+
 /**
  * The small, explicitly composed Local Host surface. Desktop Main and the CLI
  * inject their storage, filesystem and Runtime ports here; this is deliberately
@@ -148,6 +183,14 @@ export interface LocalHostApplicationPort<
     options?: Pick<LocalHostSharedBoardSearchRequest, "caseSensitive" | "contextLines">,
   ): Promise<TBoardSearch>;
   listMissionQueue(missionId: string): Promise<TQueue>;
+  /** Read-only Mission event watcher; this port never claims a controller lease. */
+  readonly watchMission?: MissionWatchPort["watch"];
+  /** Performs only the explicit, proof-based missing-pin repair for one Mission. */
+  readonly resumeMission?: (input: LocalHostMissionResumeRequest) => Promise<unknown>;
+  /** Durable mutation entry point shared by CLI and Host adapters. */
+  readonly missionControl?: MissionControlApplication;
+  /** @deprecated Prefer missionControl; retained as a descriptive alias for CLI callers. */
+  readonly missionCommands?: MissionControlApplication;
   /** Runtime adapter selection is supplied by the Host composition root, never imported here. */
   runtimeResolver(): RuntimeResolver;
   readonly run?: LocalHostRunApplication | undefined;
@@ -185,8 +228,14 @@ export interface LocalHostApplicationPorts<
     readonly read: (input: LocalHostSharedBoardReadRequest) => Promise<TBoardRead>;
     readonly search: (input: LocalHostSharedBoardSearchRequest) => Promise<TBoardSearch>;
   };
-  /** Read-only projection of the M4 durable queue/operation state. */
+  /** Read-only projection of the Core ExpertSession prompt queue. */
   readonly queue?: { readonly list: (missionId: string) => Promise<TQueue> };
+  /** Read-only Mission event watcher; this port never claims a controller lease. */
+  readonly watch?: MissionWatchPort;
+  readonly missionControl?: {
+    readonly resume: (input: LocalHostMissionResumeRequest) => Promise<unknown>;
+    readonly commands?: MissionControlApplication;
+  };
   readonly runtime: { readonly resolver: RuntimeResolver };
   readonly run?: LocalHostRunApplication | undefined;
 }
@@ -269,6 +318,18 @@ export function createLocalHostApplication<
       }
       return await ports.queue.list(missionId);
     },
+    ...(ports.watch === undefined ? {} : { watchMission: ports.watch.watch }),
+    ...(ports.missionControl === undefined
+      ? {}
+      : {
+          resumeMission: ports.missionControl.resume,
+          ...(ports.missionControl.commands === undefined
+            ? {}
+            : { missionControl: ports.missionControl.commands }),
+          ...(ports.missionControl.commands === undefined
+            ? {}
+            : { missionCommands: ports.missionControl.commands }),
+        }),
     runtimeResolver: () => ports.runtime.resolver,
     ...(ports.run === undefined ? {} : { run: ports.run }),
   };

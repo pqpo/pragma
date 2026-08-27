@@ -30,7 +30,7 @@
     "lint": "eslint src test scripts",
     "typecheck": "tsc --noEmit",
     "test": "vitest run --passWithNoTests",
-    "test:core": "vitest run --passWithNoTests test/resource-id.test.ts test/pragma-paths.test.ts test/token-counter.test.ts test/plugin-manifest.test.ts test/context-binding-metadata.test.ts test/process-probe.test.ts test/process-supervisor.test.ts test/runtime-conformance.test.ts test/runtime-probe-evidence.test.ts test/runtime-resource-scope.test.ts test/runtime-preparation-graph.test.ts test/model-catalog-cache.test.ts",
+    "test:core": "vitest run --passWithNoTests test/resource-id.test.ts test/pragma-paths.test.ts test/token-counter.test.ts test/plugin-manifest.test.ts test/context-binding-metadata.test.ts test/process-probe.test.ts test/process-supervisor.test.ts test/runtime-conformance.test.ts test/runtime-probe-evidence.test.ts test/runtime-resource-scope.test.ts test/runtime-preparation-graph.test.ts test/model-catalog-cache.test.ts test/queue-steer-crash.test.ts",
     "runtime:features:generate": "node ./scripts/generate-runtime-feature-checklist.mjs",
     "runtime:features:check": "node ./scripts/generate-runtime-feature-checklist.mjs --check",
     "clean": "rm -rf dist"

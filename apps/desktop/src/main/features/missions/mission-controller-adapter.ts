@@ -1,6 +1,5 @@
-import { randomUUID } from "node:crypto";
-
 import {
+  createMissionOwnerScope,
   type MissionControllerGuard,
   type MissionCommandConsumer,
   type MissionControllerStore,
@@ -21,6 +20,7 @@ import type { MissionStore } from "./mission-store.ts";
  */
 export interface DesktopMissionController {
   acquire(missionId: string): Promise<MissionControllerGuard>;
+  currentGuard(missionId: string): MissionControllerGuard | undefined;
   setCommandConsumer(consumer: MissionCommandConsumer): void;
   setSemanticWriteReplay(replay: (operation: MissionSemanticOperation) => Promise<void>): void;
   startPolling(input: {
@@ -47,121 +47,31 @@ export function createDesktopMissionController(options: {
   readonly onLeaseLost?: ((missionId: string) => Promise<void> | void) | undefined;
 }): DesktopMissionController {
   const leaseMs = options.leaseMs ?? 10_000;
-  const active = new Map<
-    string,
-    {
-      guard: MissionControllerGuard;
-      timer?: ReturnType<typeof setTimeout> | undefined;
-      stopped: boolean;
-    }
-  >();
-  const pollers = new Map<string, { stop(): Promise<void> }>();
-  const acquiring = new Map<string, Promise<MissionControllerGuard>>();
   let commandConsumer: MissionCommandConsumer | undefined;
   let semanticWriteReplay: ((operation: MissionSemanticOperation) => Promise<void>) | undefined;
-
-  const stop = async (missionId: string): Promise<void> => {
-    const current = active.get(missionId);
-    if (current !== undefined) {
-      current.stopped = true;
-      if (current.timer !== undefined) clearTimeout(current.timer);
-      active.delete(missionId);
-    }
-    await pollers.get(missionId)?.stop();
-    pollers.delete(missionId);
-  };
-
-  const scheduleRenewal = (missionId: string): void => {
-    const current = active.get(missionId);
-    if (current === undefined || current.stopped) return;
-    current.timer = setTimeout(() => void renew(missionId), Math.max(1, Math.floor(leaseMs / 2)));
-    current.timer.unref();
-  };
-
-  const renew = async (missionId: string): Promise<void> => {
-    const current = active.get(missionId);
-    if (current === undefined || current.stopped) return;
-    try {
-      const renewed = await options.controller.renew({ missionId, guard: current.guard, leaseMs });
-      if (active.get(missionId) !== current || current.stopped) return;
-      current.guard = { claimId: renewed.claimId, fencingToken: renewed.fencingToken };
-      scheduleRenewal(missionId);
-    } catch {
-      await stop(missionId);
-      await options.onLeaseLost?.(missionId);
-    }
-  };
-
-  const startPolling = async (input: {
-    readonly missionId: string;
-    readonly consumer: MissionCommandConsumer;
-    readonly initialDelayMs?: number | undefined;
-    readonly maxDelayMs?: number | undefined;
-    readonly jitter?: (() => number) | undefined;
-  }): Promise<{ stop(): Promise<void> }> => {
-    const existing = pollers.get(input.missionId);
-    if (existing !== undefined) return existing;
-    const guard = active.get(input.missionId)?.guard;
-    if (guard === undefined)
-      throw new Error(`Mission ${input.missionId} must be claimed before Inbox polling starts.`);
-    const poller = options.controller.startPolling({
-      missionId: input.missionId,
-      guard,
-      consumer: input.consumer,
-      ...(input.initialDelayMs === undefined ? {} : { initialDelayMs: input.initialDelayMs }),
-      ...(input.maxDelayMs === undefined ? {} : { maxDelayMs: input.maxDelayMs }),
-      ...(input.jitter === undefined ? {} : { jitter: input.jitter }),
-      onLeaseLost: async () => {
-        await stop(input.missionId);
-        await options.onLeaseLost?.(input.missionId);
-      },
-    });
-    pollers.set(input.missionId, poller);
-    return poller;
-  };
+  const ownerScope = createMissionOwnerScope({
+    controller: options.controller,
+    leaseMs,
+    onLeaseLost: options.onLeaseLost,
+    recoverSemanticWrite: async ({ missionId, guard }) => {
+      if (semanticWriteReplay === undefined) return;
+      await options.controller.recoverSemanticWrite({
+        missionId,
+        guard,
+        replay: semanticWriteReplay,
+      });
+    },
+  });
 
   return {
     async acquire(missionId) {
-      const existing = active.get(missionId);
-      if (existing !== undefined && !existing.stopped) return existing.guard;
-      const inFlight = acquiring.get(missionId);
-      if (inFlight !== undefined) return await inFlight;
-      const acquisition = (async (): Promise<MissionControllerGuard> => {
-        const grant = await options.controller.claim({
-          missionId,
-          claimId: randomUUID(),
-          leaseMs,
-        });
-        const guard = { claimId: grant.claimId, fencingToken: grant.fencingToken };
-        if (semanticWriteReplay !== undefined) {
-          try {
-            await options.controller.recoverSemanticWrite({
-              missionId,
-              guard,
-              replay: semanticWriteReplay,
-            });
-          } catch (error) {
-            await options.controller.release({ missionId, guard }).catch(() => undefined);
-            throw error;
-          }
-        }
-        const current = {
-          guard,
-          timer: undefined,
-          stopped: false,
-        };
-        active.set(missionId, current);
-        scheduleRenewal(missionId);
-        if (commandConsumer !== undefined)
-          await startPolling({ missionId, consumer: commandConsumer });
-        return current.guard;
-      })();
-      acquiring.set(missionId, acquisition);
-      try {
-        return await acquisition;
-      } finally {
-        acquiring.delete(missionId);
-      }
+      const guard = await ownerScope.acquire(missionId);
+      if (commandConsumer !== undefined)
+        await ownerScope.startPolling({ missionId, consumer: commandConsumer });
+      return guard;
+    },
+    currentGuard(missionId) {
+      return ownerScope.currentGuard(missionId);
     },
     setCommandConsumer(consumer) {
       commandConsumer = consumer;
@@ -170,10 +80,10 @@ export function createDesktopMissionController(options: {
       semanticWriteReplay = replay;
     },
     async startPolling(input) {
-      return await startPolling(input);
+      return await ownerScope.startPolling(input);
     },
     async guardedWrite(input) {
-      const guard = await this.acquire(input.missionId);
+      const guard = await ownerScope.acquire(input.missionId);
       return await options.controller.coordinateSemanticWrite({
         missionId: input.missionId,
         guard,
@@ -184,50 +94,12 @@ export function createDesktopMissionController(options: {
       });
     },
     async releaseAfterLowerLevel(missionId, releaseLowerLevel) {
-      const current = active.get(missionId);
-      if (current === undefined) {
-        await releaseLowerLevel();
-        return;
-      }
-      current.stopped = true;
-      if (current.timer !== undefined) clearTimeout(current.timer);
-      await pollers.get(missionId)?.stop();
-      pollers.delete(missionId);
-      try {
-        await options.controller.releaseAfterLowerLevel({
-          missionId,
-          guard: current.guard,
-          releaseLowerLevel,
-        });
-      } finally {
-        active.delete(missionId);
-      }
+      await ownerScope.releaseAfterLowerLevel(missionId, releaseLowerLevel);
     },
     async terminalDelete(missionId, deleteOwner) {
-      const current = active.get(missionId);
-      if (current === undefined) {
-        await deleteOwner();
-        return;
-      }
-      // The owner graph deletion is itself journaled by MissionStore. Keep the
-      // Mission lease live until that terminal transaction has committed, then
-      // drop only local controller state: reading/releasing a moved aggregate
-      // would turn a successful deletion into a false fencing failure.
-      await pollers.get(missionId)?.stop();
-      pollers.delete(missionId);
-      let deleted = false;
-      try {
-        await deleteOwner();
-        deleted = true;
-      } finally {
-        if (deleted && active.get(missionId) === current) {
-          if (current.timer !== undefined) clearTimeout(current.timer);
-          current.stopped = true;
-          active.delete(missionId);
-        }
-      }
+      await ownerScope.terminalDelete(missionId, deleteOwner);
     },
-    stop,
+    stop: async (missionId) => await ownerScope.stop(missionId),
   };
 }
 
@@ -254,6 +126,7 @@ export function createDesktopMissionCommandConsumer(options: {
     readonly interrupt: (input: {
       readonly missionId: string;
       readonly reason?: string | undefined;
+      readonly expectedExecutionId?: string | undefined;
     }) => Promise<Record<string, unknown>>;
     readonly removeQueued: (input: {
       readonly missionId: string;
@@ -273,24 +146,28 @@ export function createDesktopMissionCommandConsumer(options: {
     readonly turnId: string;
   }) => Promise<void>;
 }): MissionCommandConsumer {
-  return {
-    async validateStrictTarget({ command }) {
-      if (command.kind !== "steer" && command.kind !== "queue.steer") return;
-      const target = command.target;
-      if (target?.executionId === undefined || target.turnId === undefined) {
-        throw createIntegrationError({
-          code: "STEER_TARGET_NOT_ACTIVE",
-          category: "conflict",
-          message: "Strict Mission command requires an active execution and canonical turn.",
-        });
-      }
-      await options.validateStrictTarget({
-        missionId: command.missionId,
-        executionId: target.executionId,
-        turnId: target.turnId,
+  const validateStrictTarget = async ({ command }: { readonly command: MissionCommand }) => {
+    if (command.kind !== "steer" && command.kind !== "queue.steer") return;
+    const target = command.target;
+    if (target?.executionId === undefined || target.turnId === undefined) {
+      throw createIntegrationError({
+        code: "STEER_TARGET_NOT_ACTIVE",
+        category: "conflict",
+        message: "Strict Mission command requires an active execution and canonical turn.",
       });
-    },
+    }
+    await options.validateStrictTarget({
+      missionId: command.missionId,
+      executionId: target.executionId,
+      turnId: target.turnId,
+    });
+  };
+  return {
+    validateStrictTarget,
     async apply({ command }) {
+      // Revalidate after the controller's first check and immediately before
+      // invoking the Desktop Mission operation to close the race window.
+      await validateStrictTarget({ command });
       return { result: await applyDesktopMissionCommand(options, command) };
     },
   };
@@ -330,6 +207,9 @@ async function applyDesktopMissionCommand(
       return await options.commands.interrupt({
         missionId: command.missionId,
         reason: command.payload.reason,
+        ...(command.target?.executionId === undefined
+          ? {}
+          : { expectedExecutionId: command.target.executionId }),
       });
     case "queue.remove":
       return await options.commands.removeQueued({

@@ -25,6 +25,7 @@ import { MEMORY_CURATOR_REF } from "@pragma/memory";
 import {
   createLocalHostApplication,
   createMissionControllerStore,
+  createMissionWatchApplication,
   createNativeOsKeychain,
   createSecretStore,
 } from "@pragma/local-host";
@@ -280,6 +281,7 @@ export async function createDesktopApplicationContainer(
   // the existing MissionStore without moving Electron or Runtime concerns into
   // @pragma/local-host.
   const missionControllerStore = createMissionControllerStore({ missionsPath });
+  const missionWatch = createMissionWatchApplication({ controller: missionControllerStore });
   const desktopMissionController = createDesktopMissionController({
     controller: missionControllerStore,
     onLeaseLost: async (missionId) => {
@@ -927,6 +929,15 @@ export async function createDesktopApplicationContainer(
     createDesktopMissionCommandConsumer({
       commands: {
         send: async (input) => {
+          const mission = await missionRunner.get(input.missionId);
+          if (mission.executor.kind === "flow") {
+            throw createIntegrationError({
+              code: "COMMAND_REJECTED",
+              category: "conflict",
+              message: "Flow Missions do not support chat messages.",
+              details: { missionId: input.missionId, reason: "send_not_supported" },
+            });
+          }
           const accepted = await missionRunner.sendMessage({
             id: input.missionId,
             content: input.prompt,
@@ -950,7 +961,7 @@ export async function createDesktopApplicationContainer(
           return { missionId: input.missionId, interactionId: input.interactionId };
         },
         interrupt: async (input) => {
-          const mission = await missionRunner.interrupt(input.missionId);
+          const mission = await missionRunner.interrupt(input.missionId, input.expectedExecutionId);
           return { missionId: mission.id };
         },
         removeQueued: async (input) => {
@@ -973,6 +984,15 @@ export async function createDesktopApplicationContainer(
         },
       },
       validateStrictTarget: async (input) => {
+        const mission = await missionRunner.get(input.missionId);
+        if (mission.executor.kind === "flow") {
+          throw createIntegrationError({
+            code: "COMMAND_REJECTED",
+            category: "conflict",
+            message: "Flow Missions do not support strict steer.",
+            details: { missionId: input.missionId, reason: "steer_not_supported" },
+          });
+        }
         const current = await missionRunner.getCanonicalStrictTarget(input.missionId);
         if (current === undefined) {
           throw createIntegrationError({
@@ -1094,7 +1114,16 @@ export async function createDesktopApplicationContainer(
       features: [
         "catalog.query",
         "mission.query",
+        "mission.watch",
         "mission.queue.read",
+        "mission.queue.list",
+        "mission.send",
+        "mission.steer",
+        "mission.respond",
+        "mission.interrupt",
+        "mission.queue.remove",
+        "mission.queue.resume",
+        "mission.queue.steer",
         "workspace.resolve",
         "board.shared.read",
       ],
@@ -1122,8 +1151,14 @@ export async function createDesktopApplicationContainer(
         }),
     },
     queue: {
-      list: async (missionId) => await missionControllerStore.listOperations({ missionId }),
+      list: async (missionId) => {
+        if (missionRunner.listPromptQueue === undefined) {
+          throw new Error("Desktop ExpertSession prompt queue projection is unavailable.");
+        }
+        return await missionRunner.listPromptQueue(missionId);
+      },
     },
+    watch: missionWatch,
     runtime: { resolver: runtimes },
   });
   installMissionHandlers({

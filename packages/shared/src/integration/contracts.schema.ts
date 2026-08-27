@@ -234,7 +234,10 @@ const MissionCommandPayloadSchema = z.discriminatedUnion("kind", [
   z
     .object({
       kind: z.literal("queue.steer"),
-      input: TextInputPayloadSchema,
+      // The queue item already owns the prompt content.  `input` remains an
+      // optional read-compatible field for early M8 fixtures; new producers
+      // identify only the queued requestId.
+      input: TextInputPayloadSchema.optional(),
       requestId: RequestIdSchema,
     })
     .strict(),

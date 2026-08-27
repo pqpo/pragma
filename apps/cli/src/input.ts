@@ -38,10 +38,10 @@ export async function readBoundedJson(
   try {
     value = JSON.parse(text) as unknown;
   } catch {
-    throw new CliInputError("invalid_utf8", "Flow input must be valid JSON.");
+    throw new CliInputError("invalid_utf8", "Input must be valid JSON.");
   }
   if (typeof value !== "object" || value === null || Array.isArray(value)) {
-    throw new CliInputError("invalid_utf8", "Flow input JSON must be an object.");
+    throw new CliInputError("invalid_utf8", "Input JSON must be an object.");
   }
   return value as Record<string, unknown>;
 }

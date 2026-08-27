@@ -85,6 +85,7 @@ interface FakeRuntimeOptions {
   readonly delayMs?: number;
   readonly delayMsByAgent?: Readonly<Record<string, number>>;
   readonly delegationTargets?: Readonly<Record<string, string>>;
+  readonly failSteer?: boolean;
   readonly failQuery?: string;
   readonly onSteer?: () => void;
   readonly runtimeId?: string;
@@ -199,6 +200,7 @@ function createFakeRuntime(options: FakeRuntimeOptions = {}) {
       : {
           steerTurn: () => {
             options.onSteer?.();
+            if (options.failSteer === true) throw new Error("fake steer failed");
           },
         }),
     closeSession: () => {
@@ -1726,6 +1728,54 @@ describe("ExpertSession", () => {
     expect(
       (await session.getPromptQueue()).find((prompt) => prompt.requestId === "redirect"),
     ).toMatchObject({ mode: "steer", status: "succeeded", executionId: active.executionId });
+    await session.close();
+  });
+
+  it("restores the original queued prompt when queue steer is rejected by Runtime", async () => {
+    const home = await mkdtemp(join(tmpdir(), "pragma-queued-steer-failure-"));
+    const stats = createFakeRuntimeStats();
+    const app = createPragma({
+      pragmaHome: home,
+      runtimes: createStaticRuntimeResolver({
+        runtimes: [
+          createFakeRuntime({
+            delayMs: 250,
+            failSteer: true,
+            onSteer: () => undefined,
+            stats,
+          }),
+        ],
+        defaultRuntimeId: "fake",
+      }),
+    });
+    const expert = await defineExpert({
+      id: "queued-steer-failure",
+      name: "Queued Steer Failure",
+      description: "Queued Steer Failure",
+      tags: [],
+      scope: "test",
+      workspace: home,
+    });
+    const session = await app.experts.createSession(expert);
+    const active = await session.prompt("active", { requestId: "active" });
+    const queued = await session.prompt("redirect", { requestId: "redirect" });
+    await vi.waitFor(async () =>
+      expect((await session.getState()).activeExecutionId).toBe(active.executionId),
+    );
+
+    await expect(session.steerQueuedPrompt("redirect")).rejects.toThrow("fake steer failed");
+    expect(
+      (await session.getPromptQueue()).find((prompt) => prompt.requestId === "redirect"),
+    ).toMatchObject({
+      mode: "enqueue",
+      status: "queued",
+      executionId: queued.executionId,
+      content: "redirect",
+    });
+    expect((await queued.getTree()).invocation.status).toBe("queued");
+    expect((await session.getState()).activeExecutionId).toBe(active.executionId);
+
+    await expect(active.result).resolves.toBe("queued-steer-failure:active");
     await session.close();
   });
 

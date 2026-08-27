@@ -1355,6 +1355,10 @@ describe("MissionRunner", { timeout: 15_000 }, () => {
     const interrupted = await runner.interrupt(mission.id);
     expect(interrupted.execution?.status).toBe("cancelled");
     expect(cancelTurn).toHaveBeenCalledTimes(1);
+    await expect(runner.interrupt(mission.id)).rejects.toMatchObject({
+      code: "COMMAND_REJECTED",
+      details: { reason: "no_active_execution" },
+    });
     const settledChat = await runner.getChat({ id: mission.id, limit: 50 });
     expect(settledChat.syncIssues).toBeUndefined();
     expect(settledChat.execution?.interruptible).toBe(false);

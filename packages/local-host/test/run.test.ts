@@ -12,6 +12,7 @@ import {
   createControllerRunMissionPort,
   createLocalHostRunApplication,
   createMissionControllerStore,
+  hashCanonicalRunPayload,
   type LocalHostRunHandle,
   type LocalHostRunRequest,
   type LocalHostRunTerminal,
@@ -107,6 +108,189 @@ describe("Local Host run application", () => {
     }
   });
 
+  it("keeps an existing unpinned Mission closed until explicit backfill", async () => {
+    const home = await mkdtemp(join(tmpdir(), "pragma-local-run-unpinned-owner-"));
+    try {
+      const controller = createMissionControllerStore({ missionsPath: join(home, "missions") });
+      const historicalRequest = request();
+      const payloadHash = hashCanonicalRunPayload({
+        command: historicalRequest.command,
+        executor: descriptor.ref,
+        project: descriptor.project!,
+        workspace: historicalRequest.workspace,
+        prompt: historicalRequest.prompt,
+      });
+      const reservation = await controller.reserveRunRequest({
+        requestId: historicalRequest.requestId,
+        payloadHash,
+      });
+      const guard = await controller.claim({
+        missionId: reservation.missionId,
+        claimId: "44444444-4444-4444-8444-444444444444",
+        leaseMs: 10_000,
+      });
+      await controller.write({
+        missionId: reservation.missionId,
+        guard,
+        operation: async ({ appendEvent }) => {
+          await appendEvent("mission.created", {
+            requestId: historicalRequest.requestId,
+            payloadHash,
+            executor: historicalRequest.executor,
+            workspace: historicalRequest.workspace.canonicalPath,
+          });
+          await appendEvent("run.accepted", {
+            requestId: historicalRequest.requestId,
+            payloadHash,
+          });
+        },
+      });
+      await controller.release({ missionId: reservation.missionId, guard });
+
+      const resolve = vi.fn(async () => ({ descriptor }));
+      const application = createLocalHostRunApplication({
+        executors: {
+          resolve,
+          start: async () => {
+            throw new Error("old unpinned Mission must not start Core");
+          },
+        },
+        mission: createControllerRunMissionPort(controller),
+      });
+
+      await expect(application.start(historicalRequest)).rejects.toMatchObject({
+        code: "STORAGE_VERSION_UNSUPPORTED",
+        details: {
+          reason: "mission_pinned_binding_required",
+          missionId: reservation.missionId,
+        },
+      });
+      expect(resolve).not.toHaveBeenCalled();
+    } finally {
+      await rm(home, { recursive: true, force: true });
+    }
+  });
+
+  it("lets the original run retry fill the pin after a created-before-pin crash gap", async () => {
+    const home = await mkdtemp(join(tmpdir(), "pragma-local-run-pin-retry-"));
+    try {
+      const controller = createMissionControllerStore({ missionsPath: join(home, "missions") });
+      const mission = createControllerRunMissionPort(controller);
+      let failPin = true;
+      const application = createLocalHostRunApplication({
+        executors: fakeExecutorPort(),
+        mission: {
+          ...mission,
+          ensurePinnedBinding: async (input) => {
+            if (failPin) {
+              failPin = false;
+              throw new Error("simulated crash between mission.created and pin");
+            }
+            return await mission.ensurePinnedBinding(input);
+          },
+        },
+      });
+
+      await expect(application.start(request())).rejects.toThrow(
+        "simulated crash between mission.created and pin",
+      );
+      const firstSnapshot = await controller.readSnapshot({
+        missionId: (await controller.readRunRequest({ requestId: request().requestId }))!.missionId,
+      });
+      expect(firstSnapshot.events.map((event) => event.type)).toEqual(["mission.created"]);
+
+      const retry = await application.start(request());
+      await expect(retry.outcome).resolves.toMatchObject({ status: "succeeded" });
+      const finalSnapshot = await controller.readSnapshot({ missionId: retry.missionId });
+      expect(
+        finalSnapshot.events.filter((event) => event.type === "mission.binding.pinned"),
+      ).toHaveLength(1);
+    } finally {
+      await rm(home, { recursive: true, force: true });
+    }
+  });
+
+  it("renews the CLI owner and consumes the durable Mission Inbox", async () => {
+    const home = await mkdtemp(join(tmpdir(), "pragma-local-run-owner-scope-"));
+    let resolveTerminal!: (terminal: LocalHostRunTerminal) => void;
+    const release = vi.fn(async () => undefined);
+    try {
+      const controller = createMissionControllerStore({ missionsPath: join(home, "missions") });
+      const terminal = new Promise<LocalHostRunTerminal>((resolve) => {
+        resolveTerminal = resolve;
+      });
+      const apply = vi.fn(async () => ({ result: { consumed: true } }));
+      const application = createLocalHostRunApplication({
+        executors: {
+          resolve: async () => ({ descriptor }),
+          start: async () => ({
+            executionId: "55555555-5555-4555-8555-555555555555",
+            result: terminal,
+            release,
+          }),
+        },
+        mission: createControllerRunMissionPort(controller, { leaseMs: 500 }),
+        commandConsumer: { apply },
+      });
+
+      const handle = await application.start(request());
+      const beforeRenewal = await controller.readSnapshot({ missionId: handle.missionId });
+      await new Promise<void>((resolve) => setTimeout(resolve, 700));
+      const afterRenewal = await controller.readSnapshot({ missionId: handle.missionId });
+      expect(afterRenewal.snapshot.lease?.renewedAt).not.toBe(
+        beforeRenewal.snapshot.lease?.renewedAt,
+      );
+      expect(afterRenewal.snapshot.lease?.expiresAt).not.toBe(
+        beforeRenewal.snapshot.lease?.expiresAt,
+      );
+
+      await controller.appendCommand({
+        missionId: handle.missionId,
+        kind: "send",
+        request: {
+          schemaVersion: "pragma.integration-request/v1",
+          requestId: "66666666-6666-4666-8666-666666666666",
+          payloadHash: `sha256:${"d".repeat(64)}`,
+          requestedAt: "2026-08-27T00:00:00.000Z",
+          client: {
+            surface: "cli",
+            version: "test",
+            instanceId: "77777777-7777-4777-8777-777777777777",
+          },
+        },
+        payload: { kind: "send", input: { prompt: "continue" } },
+      });
+      await vi.waitFor(
+        async () => {
+          expect(apply).toHaveBeenCalledTimes(1);
+          await expect(
+            controller.getOperation({
+              missionId: handle.missionId,
+              requestId: "66666666-6666-4666-8666-666666666666",
+            }),
+          ).resolves.toMatchObject({ state: "applied" });
+        },
+        { timeout: 3_000, interval: 20 },
+      );
+
+      resolveTerminal({
+        status: "succeeded",
+        executionId: "55555555-5555-4555-8555-555555555555",
+        result: { done: true },
+      });
+      await expect(handle.outcome).resolves.toMatchObject({ status: "succeeded" });
+      expect(release).toHaveBeenCalledTimes(1);
+      const finalSnapshot = await controller.readSnapshot({ missionId: handle.missionId });
+      expect(finalSnapshot.snapshot.lease).toBeUndefined();
+    } finally {
+      resolveTerminal?.({
+        status: "interrupted",
+        executionId: "55555555-5555-4555-8555-555555555555",
+      });
+      await rm(home, { recursive: true, force: true });
+    }
+  });
+
   it("projects a successful lower-level run and releases the Mission lease", async () => {
     const home = await mkdtemp(join(tmpdir(), "pragma-local-run-success-"));
     try {
@@ -128,6 +312,7 @@ describe("Local Host run application", () => {
       const snapshot = await controller.readSnapshot({ missionId: handle.missionId });
       expect(snapshot.events.map((event) => event.type)).toEqual([
         "mission.created",
+        "mission.binding.pinned",
         "run.accepted",
         "run.started",
         "run.progress",
