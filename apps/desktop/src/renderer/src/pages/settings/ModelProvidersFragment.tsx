@@ -44,6 +44,13 @@ export type ProviderDraft = {
   readonly models: readonly ModelProviderModel[];
 };
 
+export function reconcileDraftAfterProviderRemoval(
+  draft: ProviderDraft | null,
+  providerId: string,
+): ProviderDraft | null {
+  return draft?.id === providerId ? null : draft;
+}
+
 const emptyProviderDraft = (): ProviderDraft => ({
   presetId: "",
   name: "",
@@ -954,9 +961,10 @@ export function ModelProvidersFragment() {
                 models: provider.models,
               })
             }
-            onDelete={() =>
-              setProviders((current) => current.filter((item) => item.id !== provider.id))
-            }
+            onDelete={() => {
+              setProviders((current) => current.filter((item) => item.id !== provider.id));
+              setDraft((current) => reconcileDraftAfterProviderRemoval(current, provider.id));
+            }}
             onRefresh={(next) =>
               setProviders((current) => current.map((item) => (item.id === next.id ? next : item)))
             }

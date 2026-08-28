@@ -3,7 +3,7 @@ import { listPiCompatibilityProfiles } from "@pragma/runtime-pi";
 
 import { testProviderModel } from "./model-connectivity.ts";
 import { discoverProviderModels } from "./model-discovery.ts";
-import type { ModelProviderStore } from "./model-provider-store.ts";
+import { ModelProviderStoreError, type ModelProviderStore } from "./model-provider-store.ts";
 import {
   CreateModelProviderSchema,
   DeleteModelProviderSchema,
@@ -39,7 +39,20 @@ export function installModelProviderHandlers(
     const request = DiscoverProviderModelsSchema.parse(input);
     let apiKey = request.apiKey ?? "";
     if (apiKey === "" && request.providerId !== undefined) {
-      apiKey = await store.resolveDiscoveryApiKey(request.providerId, request);
+      try {
+        apiKey = await store.resolveDiscoveryApiKey(request.providerId, request);
+      } catch (error) {
+        if (error instanceof ModelProviderStoreError && error.code === "provider_not_found") {
+          return {
+            ok: false,
+            models: [],
+            message:
+              "This provider was removed while it was being configured. Return to the provider list and add or select it again.",
+            source: "manual" as const,
+          };
+        }
+        throw error;
+      }
     }
     return await discoverProviderModels({ ...request, apiKey });
   });

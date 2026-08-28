@@ -4,6 +4,7 @@ import { describe, expect, it } from "vitest";
 import {
   ProviderEditor,
   reconcileDiscoveredModelInputs,
+  reconcileDraftAfterProviderRemoval,
   supportedThinkingLevels,
 } from "./ModelProvidersFragment.tsx";
 
@@ -57,6 +58,26 @@ describe("ProviderEditor", () => {
         [discovered],
       ),
     ).toEqual([expect.objectContaining({ input: ["text"], inputOverride: ["text"] })]);
+  });
+
+  it("closes a stale editor when its provider is removed", () => {
+    const providerId = "00000000-0000-4000-8000-000000000001";
+    const draft: Parameters<typeof ProviderEditor>[0]["initialValue"] = {
+      id: providerId,
+      presetId: "deepseek",
+      name: "DeepSeek",
+      protocol: "openai-completions",
+      baseUrl: "https://api.deepseek.com/v1",
+      apiKey: "",
+      requiresApiKey: true,
+      compatibilityProfileId: "",
+      models: [model("deepseek-v4-flash")],
+    };
+
+    expect(reconcileDraftAfterProviderRemoval(draft, providerId)).toBeNull();
+    expect(reconcileDraftAfterProviderRemoval(draft, "00000000-0000-4000-8000-000000000002")).toBe(
+      draft,
+    );
   });
 });
 
