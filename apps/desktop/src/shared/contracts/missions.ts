@@ -337,6 +337,12 @@ export const MissionSummarySchema = z.object({
       type: z.literal("automation"),
       automationRef: PragmaAutomationRefSchema,
     }),
+    z.object({
+      type: z.literal("managed-automation"),
+      kind: z.literal("knowledge-revision"),
+      jobId: z.string().uuid(),
+      storeId: z.string().uuid(),
+    }),
   ]),
   lifecycleStatus: MissionLifecycleStatusSchema,
   updatedAt: z.string().datetime(),
@@ -355,7 +361,11 @@ export const MissionUpdateSchema = z.discriminatedUnion("kind", [
 ]);
 
 export function isUserFacingMissionOrigin(origin: z.infer<typeof MissionOriginSchema>): boolean {
-  return origin.type === "user" || origin.type === "automation";
+  return (
+    origin.type === "user" ||
+    origin.type === "automation" ||
+    origin.type === "system-store-revision"
+  );
 }
 
 export const CreateMissionSchema = z.object({

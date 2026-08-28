@@ -852,7 +852,7 @@ describe("PragmaProjectStore", () => {
     });
     expect(created.id).toMatch(/^[0-9a-hjkmnp-tv-z]{16}$/);
     expect(created.avatarId).toBe("pragma.avatar.expert.writer");
-    expect(await experts.list()).toHaveLength(2);
+    expect(await experts.list()).toHaveLength(3);
     const opened = await projectRevisionFile(directory, 1, `experts/${created.id}.pragma.yaml`);
     expect(opened).toContain("scope: Release communication");
     expect(opened).toContain("avatarId: pragma.avatar.expert.writer");

@@ -65,26 +65,71 @@ export function createDesktopKnowledgeRevisionSubmissionPort(options: {
     async listTargets() {
       return (await targets()).map((target) => target.target);
     },
-    async submit(input) {
+    async listDrafts(input) {
+      const selectedStoreId =
+        input.targetRef === undefined
+          ? undefined
+          : (await targets()).find((candidate) => candidate.target.targetRef === input.targetRef)
+              ?.storeId;
+      if (input.targetRef !== undefined && selectedStoreId === undefined) {
+        throw new Error("knowledge_revision_target_unavailable");
+      }
+      return await options.revisions.listDrafts(
+        selectedStoreId === undefined ? {} : { storeId: selectedStoreId },
+      );
+    },
+    async start(input) {
       const selected = (await targets()).find(
         (candidate) => candidate.target.targetRef === input.targetRef,
       );
       if (selected === undefined) throw new Error("knowledge_revision_target_unavailable");
-      const job = await options.revisions.submit({
-        schemaVersion: "pragma.context-store-revision-request/v1",
-        storeId: selected.storeId,
-        prompt: input.prompt,
-        source: "expert-reflection",
-        sourceDigest: digestSubmission(input, selected.storeId),
-        provenance: {
-          executionId: input.executionId,
-          invocationId: input.invocationId,
-          expertId: input.expertId,
-          ...(input.teamId === undefined ? {} : { teamId: input.teamId }),
+      const job = await options.revisions.start(
+        {
+          schemaVersion: "pragma.context-store-revision-request/v1",
+          storeId: selected.storeId,
+          prompt: input.prompt,
+          source: "expert-reflection",
+          sourceDigest: digestSubmission(input, selected.storeId, input.prompt, input.draftId),
+          provenance: {
+            executionId: input.executionId,
+            invocationId: input.invocationId,
+            expertId: input.expertId,
+            ...(input.teamId === undefined ? {} : { teamId: input.teamId }),
+          },
         },
-      });
+        {
+          ...(input.draftId === undefined ? {} : { draftId: input.draftId }),
+          ...(input.draftName === undefined ? {} : { draftName: input.draftName }),
+        },
+      );
       options.revisions.scheduleProcessing();
-      return { jobId: job.id, state: job.state, target: selected.target };
+      return {
+        jobId: job.id,
+        draftId: job.draftId,
+        missionId: job.missionId,
+        state: job.state,
+        target: selected.target,
+      };
+    },
+    async getDraft(input) {
+      return await options.revisions.getDraft(input.draftId);
+    },
+    async inspectRebase(input) {
+      return await options.revisions.inspectRebase(input.draftId);
+    },
+    async rebase(input) {
+      return await options.revisions.rebase({
+        draftId: input.draftId,
+        expectedRevision: input.expectedRevision,
+        resolutions: input.resolutions,
+      });
+    },
+    async submitDraft(input) {
+      return await options.revisions.submitDraft(
+        input.draftId,
+        input.expectedRevision,
+        input.summary,
+      );
     },
   };
 }
@@ -154,7 +199,12 @@ function collectTeamMounts(
   }
 }
 
-function digestSubmission(input: KnowledgeRevisionToolInvocation, storeId: string): string {
+function digestSubmission(
+  input: KnowledgeRevisionToolInvocation,
+  storeId: string,
+  prompt: string,
+  draftId?: string,
+): string {
   return createHash("sha256")
     .update(
       JSON.stringify([
@@ -163,6 +213,9 @@ function digestSubmission(input: KnowledgeRevisionToolInvocation, storeId: strin
         input.expertId,
         input.teamId ?? null,
         storeId,
+        draftId ?? null,
+        prompt,
+        input.operationId,
       ]),
     )
     .digest("hex");

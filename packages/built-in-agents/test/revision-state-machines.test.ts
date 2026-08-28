@@ -14,43 +14,22 @@ describe("built-in revision state machines", () => {
     const pending = contextJob();
     const running = transitionContextStoreRevisionJob(
       pending,
-      { type: "generation_started" },
+      { type: "execution_started" },
       timestamp,
     );
-    const review = transitionContextStoreRevisionJob(
-      running,
-      {
-        type: "generation_succeeded",
-        changeSet: {
-          schemaVersion: "pragma.context-store-change-set/v1",
-          storeId: pending.request.storeId,
-          baseRevision: 1,
-          baseSnapshotHash: "a".repeat(64),
-          summary: "Add one item.",
-          operations: [
-            {
-              operation: "upsert",
-              id: "items/new.md",
-              content: "new",
-              metadata: { trigger: "model_decision", priority: "normal" },
-            },
-          ],
-        },
-      },
-      timestamp,
-    );
+    const review = transitionContextStoreRevisionJob(running, { type: "submitted" }, timestamp);
     const applying = transitionContextStoreRevisionJob(review, { type: "approved" }, timestamp);
     const completed = transitionContextStoreRevisionJob(
       applying,
-      { type: "apply_succeeded" },
+      { type: "merge_succeeded" },
       timestamp,
     );
 
     expect([running.state, review.state, applying.state, completed.state]).toEqual([
       "running",
       "pending_review",
-      "applying",
-      "completed",
+      "merging",
+      "merged",
     ]);
     expect(completed.revision).toBe(5);
   });
@@ -116,16 +95,17 @@ describe("built-in revision state machines", () => {
 
 function contextJob(): ContextStoreRevisionJob {
   return {
-    schemaVersion: "pragma.context-store-revision-job/v1",
+    schemaVersion: "pragma.context-store-revision-job/v2",
     id: "10000000-0000-4000-8000-000000000001",
     revision: 1,
+    draftId: "10000000-0000-4000-8000-000000000002",
     request: {
       schemaVersion: "pragma.context-store-revision-request/v1",
       storeId: "20000000-0000-4000-8000-000000000002",
       prompt: "Add knowledge.",
       source: "user",
     },
-    state: "pending",
+    state: "editing",
     createdAt: timestamp,
     updatedAt: timestamp,
   };

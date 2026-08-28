@@ -363,10 +363,21 @@ describe("MissionsPage", () => {
       },
       updatedAt: "2026-07-11T00:00:01.000Z",
     });
+    const revision = missionSummaryFixture({
+      id: "revision-mission",
+      title: "Knowledge revision",
+      source: {
+        type: "managed-automation",
+        kind: "knowledge-revision",
+        jobId: "00000000-0000-4000-8000-000000000101",
+        storeId: "00000000-0000-4000-8000-000000000102",
+      },
+      updatedAt: "2026-07-11T00:00:00.000Z",
+    });
     const taskHtml = renderToStaticMarkup(
       <MissionsPage
         initialMemoryState={{
-          missions: [task, automation],
+          missions: [task, automation, revision],
           selectedMission: null,
           selectedMissionId: null,
           activeSource: "task",
@@ -377,7 +388,7 @@ describe("MissionsPage", () => {
     const automationHtml = renderToStaticMarkup(
       <MissionsPage
         initialMemoryState={{
-          missions: [task, automation],
+          missions: [task, automation, revision],
           selectedMission: null,
           selectedMissionId: null,
           activeSource: "automation",
@@ -388,7 +399,9 @@ describe("MissionsPage", () => {
 
     expect(taskHtml).toContain("Manual review");
     expect(taskHtml).not.toContain("Scheduled review");
+    expect(taskHtml).not.toContain("Knowledge revision");
     expect(automationHtml).toContain("Scheduled review");
+    expect(automationHtml).toContain("Knowledge revision");
     expect(automationHtml).not.toContain("Manual review");
     expect(automationHtml).toContain("mission-source-tabs is-automation");
   });

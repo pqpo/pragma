@@ -124,11 +124,11 @@ Pragma 也区分 `invalidate` 和 `forget`：
 ```text
 Memory 负责发现值得沉淀的变化
 Context Store 负责权威内容和 Revision
-Store Revision Agent 负责生成可审阅 change set
+Store Revision Agent 负责编辑并提交可审阅的稀疏草稿
 用户批准负责激活新 Revision
 ```
 
-知识库不会继续依赖原始 Evidence 才能读取，也不会与 Memory dual-write。后续新的记忆只会生成 revision prompt，由内置 Store Revision Agent 读取目标 Store 的当前精确 Revision，产生 add、edit、rename、delete change set。批准时通过 revision 和 hash 双 CAS 原子应用；冲突不会静默覆盖现有知识。
+知识库不会继续依赖原始 Evidence 才能读取，也不会与 Memory dual-write。后续新的记忆通过统一修订服务创建命名稀疏草稿，由内置 Store Revision Agent 使用原生 Context 工具修改 overlay；未修改内容仍路由到固定基线。批准时才生成最小 change set，并通过 revision 和 hash 双 CAS 原子应用；冲突不会静默覆盖现有知识。
 
 知识库采用渐进披露结构：有界的 `guide.md`、`overview.md`、`index.md` 或分片索引负责导航，详细内容进入 `items/**`。系统不会把所有历史 Memory 合并成一个无限增长的巨型文档。
 

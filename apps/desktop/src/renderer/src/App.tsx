@@ -30,6 +30,7 @@ export function App() {
   const [studioExpertRef, setStudioExpertRef] = useState<string>();
   const [studioExpertStep, setStudioExpertStep] = useState<"capabilities" | undefined>();
   const [studioResourceRef, setStudioResourceRef] = useState<string>();
+  const [studioRevisionStoreId, setStudioRevisionStoreId] = useState<string>();
   const [studioMemoryState, setStudioMemoryState] = useState<StudioPageMemoryState>();
   const [evaluationTargetId, setEvaluationTargetId] = useState<string>();
   const [settingsView, setSettingsView] = useState<SettingsView>("general");
@@ -61,6 +62,7 @@ export function App() {
     setStudioExpertRef(undefined);
     setStudioExpertStep(undefined);
     setStudioResourceRef(undefined);
+    setStudioRevisionStoreId(undefined);
     if (view === "missions") setMissionToOpen(undefined);
     if (view === "settings") setSettingsView("general");
     setActiveView(view);
@@ -89,6 +91,7 @@ export function App() {
     setStudioExpertRef(undefined);
     setStudioExpertStep(undefined);
     setStudioResourceRef(undefined);
+    setStudioRevisionStoreId(undefined);
     setStudioMemoryState({ activeView: "context-stores" });
     setActiveView("studio");
   };
@@ -97,6 +100,7 @@ export function App() {
     setStudioExpertRef(executor.kind === "expert" ? executor.ref : undefined);
     setStudioExpertStep(executor.kind === "expert" ? "capabilities" : undefined);
     setStudioResourceRef(executor.kind === "team" ? executor.ref : undefined);
+    setStudioRevisionStoreId(undefined);
     setActiveView("studio");
   };
 
@@ -149,10 +153,18 @@ export function App() {
           onMemoryStateChange={setMissionsMemoryState}
           onConfigureModels={openModelSettings}
           onOpenKnowledgeBases={openKnowledgeBases}
+          onOpenKnowledgeRevision={(storeId) => {
+            setStudioExpertRef(undefined);
+            setStudioResourceRef(undefined);
+            setStudioRevisionStoreId(storeId);
+            setStudioMemoryState({ activeView: "context-stores" });
+            setActiveView("studio");
+          }}
           onEditExpert={(expertRef) => {
             setStudioExpertRef(expertRef);
             setStudioExpertStep(undefined);
             setStudioResourceRef(undefined);
+            setStudioRevisionStoreId(undefined);
             setActiveView("studio");
           }}
           onCreate={() => {
@@ -166,12 +178,20 @@ export function App() {
           initialExpertRef={studioExpertRef}
           initialExpertStep={studioExpertStep}
           initialResourceRef={studioResourceRef}
+          initialRevisionStoreId={studioRevisionStoreId}
           initialMemoryState={studioMemoryState}
           onMemoryStateChange={setStudioMemoryState}
           onTryExpert={(expert) => {
             setMissionExecutorRef(`expert:${expert.id}`);
             setMissionToOpen(undefined);
             setActiveView("home");
+          }}
+          onOpenMission={(missionId) => {
+            void window.pragmaDesktop.getMission(missionId).then((mission) => {
+              setMissionToOpen(mission);
+              setStudioRevisionStoreId(undefined);
+              setActiveView("missions");
+            });
           }}
         />
       ) : activeView === "evaluations" ? (

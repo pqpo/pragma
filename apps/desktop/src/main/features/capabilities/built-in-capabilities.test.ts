@@ -30,7 +30,7 @@ describe("built-in capabilities", () => {
         toolName: "list_knowledge_revision_targets",
         input: {},
       },
-      { listTargets, submit: vi.fn() },
+      revisionPort({ listTargets }),
       vi.fn(),
     );
 
@@ -39,18 +39,31 @@ describe("built-in capabilities", () => {
   });
 
   it("requires approval before a test creates a revision request", async () => {
-    const submit = vi.fn();
+    const start = vi.fn();
     const result = await testBuiltInCapability(
       {
         id: BUILT_IN_PRAGMA_MANAGEMENT_CAPABILITY.manifest.id,
-        toolName: "submit_knowledge_revision",
+        toolName: "start_knowledge_revision",
         input: { targetRef: "context:test", prompt: "Revise this knowledge." },
       },
-      { listTargets: vi.fn(), submit },
+      revisionPort({ start }),
       async () => false,
     );
 
     expect(result).toMatchObject({ ok: false, code: "approval_denied" });
-    expect(submit).not.toHaveBeenCalled();
+    expect(start).not.toHaveBeenCalled();
   });
 });
+
+function revisionPort(overrides: Record<string, unknown> = {}) {
+  return {
+    listTargets: vi.fn(async () => []),
+    listDrafts: vi.fn(async () => []),
+    start: vi.fn(async () => ({})),
+    getDraft: vi.fn(),
+    inspectRebase: vi.fn(),
+    rebase: vi.fn(),
+    submitDraft: vi.fn(),
+    ...overrides,
+  };
+}

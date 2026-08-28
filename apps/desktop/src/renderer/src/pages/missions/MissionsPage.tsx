@@ -184,6 +184,7 @@ export function MissionsPage(props: {
   readonly onMemoryStateChange?: ((state: MissionsPageMemoryState) => void) | undefined;
   readonly onConfigureModels?: (() => void) | undefined;
   readonly onOpenKnowledgeBases?: (() => void) | undefined;
+  readonly onOpenKnowledgeRevision?: ((storeId: string) => void) | undefined;
   readonly onEditExpert?: ((expertRef?: string | undefined) => void) | undefined;
 }) {
   const { t } = useTranslation(["missions", "common"]);
@@ -566,6 +567,7 @@ export function MissionsPage(props: {
             }
             onConfigureModels={props.onConfigureModels}
             onOpenKnowledgeBases={props.onOpenKnowledgeBases}
+            onOpenKnowledgeRevision={props.onOpenKnowledgeRevision}
             onEditExpert={props.onEditExpert}
             error={error}
             onDismissError={() => setError(null)}
@@ -1487,6 +1489,7 @@ export function MissionDetailFragment(props: {
   readonly onLifecycleChange?: () => void | Promise<void>;
   readonly onConfigureModels?: (() => void) | undefined;
   readonly onOpenKnowledgeBases?: (() => void) | undefined;
+  readonly onOpenKnowledgeRevision?: ((storeId: string) => void) | undefined;
   readonly onEditExpert?: ((expertRef?: string | undefined) => void) | undefined;
   readonly onBranchCreated?: ((mission: Mission) => void) | undefined;
   readonly memoryEnabled?: boolean | undefined;
@@ -2811,6 +2814,10 @@ export function MissionDetailFragment(props: {
     setTab(nextTab);
   };
 
+  const revisionStoreId =
+    props.mission.origin.type === "system-store-revision"
+      ? props.mission.origin.storeId
+      : undefined;
   const missionStatusBar = (
     <div className="mission-detail-status-bar" aria-label={props.mission.title}>
       <p>
@@ -2842,6 +2849,18 @@ export function MissionDetailFragment(props: {
             {runtimeDisplayName(t, runtimeIdentity)}
           </>
         )}
+        {revisionStoreId !== undefined && props.onOpenKnowledgeRevision !== undefined ? (
+          <>
+            <span aria-hidden="true">·</span>
+            <button
+              className="mission-lifecycle-status-action"
+              type="button"
+              onClick={() => props.onOpenKnowledgeRevision?.(revisionStoreId)}
+            >
+              {t("openKnowledgeRevision", { ns: "missions" })}
+            </button>
+          </>
+        ) : null}
         <span aria-hidden="true">·</span>
         <button
           className="mission-lifecycle-status-action"
@@ -5769,18 +5788,27 @@ export function missionStatusLabel(mission: Mission | MissionSummary, preparing 
 }
 
 function missionListSourceForMission(mission: Mission): MissionListSource {
-  return mission.origin.type === "automation" ? "automation" : "task";
+  return ["automation", "system-store-revision"].includes(mission.origin.type)
+    ? "automation"
+    : "task";
 }
 
 export function missionListSourceForSummary(mission: MissionSummary): MissionListSource {
-  return mission.source.type === "automation" ? "automation" : "task";
+  return mission.source.type === "task" ? "task" : "automation";
 }
 
 function missionToSummary(
   mission: Mission,
   source: MissionSummary["source"] = mission.origin.type === "automation"
     ? { type: "automation", automationRef: mission.origin.automationRef }
-    : { type: "task" },
+    : mission.origin.type === "system-store-revision"
+      ? {
+          type: "managed-automation",
+          kind: "knowledge-revision",
+          jobId: mission.origin.jobId,
+          storeId: mission.origin.storeId,
+        }
+      : { type: "task" },
 ): MissionSummary {
   return {
     id: mission.id,

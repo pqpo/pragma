@@ -1625,7 +1625,14 @@ function toMissionSummary(mission: Mission): MissionSummary {
     source:
       mission.origin.type === "automation"
         ? { type: "automation", automationRef: mission.origin.automationRef }
-        : { type: "task" },
+        : mission.origin.type === "system-store-revision"
+          ? {
+              type: "managed-automation",
+              kind: "knowledge-revision",
+              jobId: mission.origin.jobId,
+              storeId: mission.origin.storeId,
+            }
+          : { type: "task" },
     lifecycleStatus: mission.lifecycleStatus,
     updatedAt: mission.updatedAt,
   };

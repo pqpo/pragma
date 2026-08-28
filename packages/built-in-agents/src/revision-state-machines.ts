@@ -12,16 +12,16 @@ import {
 } from "./revision-contracts.ts";
 
 export type ContextStoreRevisionEvent =
-  | { readonly type: "generation_started" }
-  | { readonly type: "generation_recovered" }
-  | { readonly type: "generation_succeeded"; readonly changeSet: ContextStoreChangeSet }
-  | { readonly type: "generation_failed"; readonly code: string; readonly message: string }
+  | { readonly type: "editing_started" }
+  | { readonly type: "execution_started" }
+  | { readonly type: "submitted" }
+  | { readonly type: "execution_failed"; readonly code: string; readonly message: string }
   | { readonly type: "approved" }
   | { readonly type: "rejected" }
   | { readonly type: "retried" }
-  | { readonly type: "apply_succeeded" }
-  | { readonly type: "apply_failed"; readonly code: string; readonly message: string }
-  | { readonly type: "superseded"; readonly replacementId: string };
+  | { readonly type: "merge_succeeded" }
+  | { readonly type: "merge_failed"; readonly code: string; readonly message: string }
+  | { readonly type: "rebase_required" };
 
 export function transitionContextStoreRevisionJob(
   current: ContextStoreRevisionJob,
@@ -30,42 +30,36 @@ export function transitionContextStoreRevisionJob(
 ): ContextStoreRevisionJob {
   const next = (() => {
     switch (event.type) {
-      case "generation_started":
-        requireState(current.state, ["pending"]);
+      case "editing_started":
+        requireState(current.state, ["rejected", "needs_attention", "needs_rebase"]);
+        return { ...current, state: "editing" as const, error: undefined };
+      case "execution_started":
+        requireState(current.state, ["editing"]);
         return { ...current, state: "running" as const };
-      case "generation_recovered":
-        requireState(current.state, ["running"]);
-        return { ...current, state: "pending" as const, changeSet: undefined, error: undefined };
-      case "generation_succeeded":
-        requireState(current.state, ["running"]);
-        return {
-          ...current,
-          state: "pending_review" as const,
-          changeSet: ContextStoreChangeSetSchema.parse(event.changeSet),
-          error: undefined,
-        };
-      case "generation_failed":
+      case "submitted":
+        requireState(current.state, ["editing", "running"]);
+        return { ...current, state: "pending_review" as const, error: undefined };
+      case "execution_failed":
         requireState(current.state, ["running"]);
         return { ...current, state: "needs_attention" as const, error: errorOf(event) };
       case "approved":
         requireState(current.state, ["pending_review"]);
-        if (current.changeSet === undefined) throw new Error("revision_changeset_missing");
-        return { ...current, state: "applying" as const };
+        return { ...current, state: "merging" as const };
       case "rejected":
         requireState(current.state, ["pending_review"]);
         return { ...current, state: "rejected" as const };
       case "retried":
-        requireState(current.state, ["needs_attention", "rejected"]);
-        return { ...current, state: "pending" as const, changeSet: undefined, error: undefined };
-      case "apply_succeeded":
-        requireState(current.state, ["applying"]);
-        return { ...current, state: "completed" as const, error: undefined };
-      case "apply_failed":
-        requireState(current.state, ["applying"]);
+        requireState(current.state, ["needs_attention", "rejected", "needs_rebase"]);
+        return { ...current, state: "editing" as const, error: undefined };
+      case "merge_succeeded":
+        requireState(current.state, ["merging"]);
+        return { ...current, state: "merged" as const, error: undefined };
+      case "merge_failed":
+        requireState(current.state, ["merging"]);
         return { ...current, state: "needs_attention" as const, error: errorOf(event) };
-      case "superseded":
-        requireState(current.state, ["applying"]);
-        return { ...current, state: "superseded" as const, supersededBy: event.replacementId };
+      case "rebase_required":
+        requireState(current.state, ["pending_review", "merging"]);
+        return { ...current, state: "needs_rebase" as const };
     }
   })();
   return ContextStoreRevisionJobSchema.parse({

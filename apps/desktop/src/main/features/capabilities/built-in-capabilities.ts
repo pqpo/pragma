@@ -2,6 +2,7 @@ import { createHash, randomUUID } from "node:crypto";
 
 import {
   LIST_KNOWLEDGE_REVISION_TARGETS_TOOL_NAME,
+  START_KNOWLEDGE_REVISION_TOOL_NAME,
   PRAGMA_MANAGEMENT_DESKTOP_CAPABILITY_ID,
   PRAGMA_MANAGEMENT_TOOL_NAMES,
   type KnowledgeRevisionSubmissionPort,
@@ -51,20 +52,16 @@ export const BUILT_IN_PRAGMA_MANAGEMENT_CAPABILITY: Capability = CapabilitySchem
       "Built-in Host tools for managing Pragma resources and work. Currently provides reviewable knowledge revision submission.",
     connection: { transport: "streamable-http", url: "http://pragma.invalid/builtin" },
     timeoutMs: 30_000,
-    tools: [
-      {
-        name: PRAGMA_MANAGEMENT_TOOL_NAMES[0],
-        description: "List all knowledge bases and their current Expert or ExpertTeam mounts.",
-        inputSchema: emptyInputSchema,
-        schemaHash: schemaHash(emptyInputSchema),
-      },
-      {
-        name: PRAGMA_MANAGEMENT_TOOL_NAMES[1],
-        description: "Submit one reviewable revision request for one knowledge base.",
-        inputSchema: submitInputSchema,
-        schemaHash: schemaHash(submitInputSchema),
-      },
-    ],
+    tools: PRAGMA_MANAGEMENT_TOOL_NAMES.map((name) => {
+      const inputSchema =
+        name === START_KNOWLEDGE_REVISION_TOOL_NAME ? submitInputSchema : emptyInputSchema;
+      return {
+        name,
+        description: `Built-in knowledge revision operation: ${name}.`,
+        inputSchema,
+        schemaHash: schemaHash(inputSchema),
+      };
+    }),
   },
 });
 
@@ -99,6 +96,12 @@ export async function testBuiltInCapability(
   if (toolName === LIST_KNOWLEDGE_REVISION_TARGETS_TOOL_NAME) {
     return testSuccess("The built-in tool test succeeded.", await port.listTargets(invocation));
   }
+  if (toolName !== START_KNOWLEDGE_REVISION_TOOL_NAME) {
+    return testFailure(
+      "invalid_input",
+      "This revision tool requires a live draft selected by an Agent execution.",
+    );
+  }
 
   const parsed = parseSubmitTestInput(input.input);
   if (!parsed.ok) return testFailure("invalid_input", parsed.message);
@@ -107,7 +110,7 @@ export async function testBuiltInCapability(
   }
   return testSuccess(
     "The built-in tool test succeeded.",
-    await port.submit({ ...invocation, ...parsed.value }),
+    await port.start({ ...invocation, ...parsed.value }),
   );
 }
 

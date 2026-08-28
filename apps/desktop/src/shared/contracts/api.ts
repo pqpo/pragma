@@ -33,6 +33,15 @@ import type {
   RenameContextStoreEntry,
   DeleteContextStoreEntry,
   ContextStoreRevisionRequest,
+  ContextStoreDraft,
+  CreateContextStoreDraft,
+  GetContextStoreDraftFile,
+  ListContextStoreDrafts,
+  ContextStoreDraftRef,
+  ContextStoreDraftRebaseInspection,
+  RebaseContextStoreDraft,
+  SubmitContextStoreDraft,
+  UpdateContextStoreDraftFile,
   ContextStoreRevisionJob,
   ListContextStoreRevisionJobs,
   ContextStoreRevisionJobRef,
@@ -376,6 +385,15 @@ export interface PragmaDesktopAPI {
     input: ContextStoreRevisionJobRef,
   ) => Promise<ContextStoreRevisionJob>;
   deleteContextStoreRevision: (input: ContextStoreRevisionJobRef) => Promise<void>;
+  createContextStoreDraft: (input: CreateContextStoreDraft) => Promise<ContextStoreDraft>;
+  listContextStoreDrafts: (input?: ListContextStoreDrafts) => Promise<ContextStoreDraft[]>;
+  getContextStoreDraft: (draftId: string) => Promise<ContextStoreDraft>;
+  getContextStoreDraftFile: (input: GetContextStoreDraftFile) => Promise<ContextStoreContent>;
+  submitContextStoreDraft: (input: SubmitContextStoreDraft) => Promise<ContextStoreDraft>;
+  updateContextStoreDraftFile: (input: UpdateContextStoreDraftFile) => Promise<ContextStoreDraft>;
+  discardContextStoreDraft: (input: ContextStoreDraftRef) => Promise<void>;
+  inspectContextStoreDraftRebase: (draftId: string) => Promise<ContextStoreDraftRebaseInspection>;
+  rebaseContextStoreDraft: (input: RebaseContextStoreDraft) => Promise<ContextStoreDraft>;
   getContextStoreRevisionProfile: () => Promise<ContextStoreRevisionProfile>;
   updateContextStoreRevisionProfile: (
     input: UpdateContextStoreRevisionProfile,

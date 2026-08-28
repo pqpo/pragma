@@ -104,6 +104,14 @@ export function installMissionHandlers(options: {
     if (mission.origin.type === "automation") {
       return { type: "automation", automationRef: mission.origin.automationRef };
     }
+    if (mission.origin.type === "system-store-revision") {
+      return {
+        type: "managed-automation",
+        kind: "knowledge-revision",
+        jobId: mission.origin.jobId,
+        storeId: mission.origin.storeId,
+      };
+    }
     const automationRef = legacyAutomationMissionSources.get(mission.id);
     return automationRef === undefined ? { type: "task" } : { type: "automation", automationRef };
   };

@@ -95,8 +95,8 @@ runtime packages depend on `@pragma/core` and are assembled by application entry
 Worker. The default runtime selection is an application-layer decision; Desktop currently registers
 PI, Codex, Claude Code, Qoder CLI, and Antigravity CLI runtimes and uses PI by default.
 
-`@pragma/built-in-agents` owns the six portable DSL-defined Agents: the general-purpose Pragma
-Agent plus the hidden Memory Curator, Store Revision, Skill Revision, Skill Evaluation, and
+`@pragma/built-in-agents` owns the six portable DSL-defined Agents: the general-purpose Pragma and
+Store Revision Agents plus the internal Memory Curator, Skill Revision, Skill Evaluation, and
 Evaluation Judge Agents.
 It also owns their independent application-neutral host ports and reusable product logic.
 It does not depend on Desktop, Electron, Web, Server, database code, or a concrete Runtime Adapter.

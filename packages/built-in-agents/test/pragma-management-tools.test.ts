@@ -20,8 +20,10 @@ describe("Pragma management tools", () => {
       mounts: [],
     };
     const listTargets = vi.fn(async () => [target]);
-    const submit = vi.fn(async () => ({ jobId: "job-1", state: "pending", target }));
-    const tools = createPragmaManagementTools({ knowledgeRevisions: { listTargets, submit } });
+    const start = vi.fn(async () => ({ jobId: "job-1", state: "editing", target }));
+    const tools = createPragmaManagementTools({
+      knowledgeRevisions: revisionPort({ listTargets, start }),
+    });
     const context = {
       toolCallId: "call-1",
       runContext: {
@@ -35,12 +37,12 @@ describe("Pragma management tools", () => {
     };
 
     expect(tools[0]?.approval).toEqual({ mode: "none" });
-    expect(tools[1]?.approval).toEqual({
+    expect(tools[2]?.approval).toEqual({
       mode: "required",
-      reason: "Submit a knowledge-base revision request for user review.",
+      reason: "Start a managed knowledge revision task.",
     });
     await tools[0]!.call({}, undefined, context);
-    await tools[1]!.call(
+    await tools[2]!.call(
       { targetRef: target.targetRef, prompt: "Record the retry invariant." },
       undefined,
       context,
@@ -53,7 +55,7 @@ describe("Pragma management tools", () => {
       teamId: "0000000000000003",
       operationId: "call-1",
     });
-    expect(submit).toHaveBeenCalledWith(
+    expect(start).toHaveBeenCalledWith(
       expect.objectContaining({
         targetRef: target.targetRef,
         prompt: "Record the retry invariant.",
@@ -63,10 +65,23 @@ describe("Pragma management tools", () => {
 
   it("fails closed outside an execution tool call", async () => {
     const tools = createPragmaManagementTools({
-      knowledgeRevisions: { listTargets: vi.fn(), submit: vi.fn() },
+      knowledgeRevisions: revisionPort(),
     });
     await expect(tools[0]!.call({}, undefined, { toolCallId: "call-1" })).rejects.toThrow(
       "pragma_management_execution_context_unavailable",
     );
   });
 });
+
+function revisionPort(overrides: Record<string, unknown> = {}) {
+  return {
+    listTargets: vi.fn(async () => []),
+    listDrafts: vi.fn(async () => []),
+    start: vi.fn(async () => ({})),
+    getDraft: vi.fn(),
+    inspectRebase: vi.fn(),
+    rebase: vi.fn(),
+    submitDraft: vi.fn(),
+    ...overrides,
+  };
+}

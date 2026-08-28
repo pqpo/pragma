@@ -223,13 +223,13 @@ ADR 031 已替代 ADR 002/003，并由 `docs/architecture/memory-plane-implement
 - Experience 与 Fact 是默认动态投影；可选 CodeGraph 仍是独立 Memory type；
 - Memory 只产生 Knowledge promotion/revision Candidate。用户批准后的 Knowledge 进入“工作室 → 知识库”
   托管 Context Store，并与 Memory/Evidence 解耦；
-- 通用 Store Revision Agent 加载目标 Store 与 revision prompt，生成 change set，用户批准后才激活新
-  Store revision；Skill Candidate 评测后升级为现有 Capability；
+- 通用 Store Revision Agent 挂载目标稀疏草稿并用原生 Context 工具修改，用户批准后才将最小 change set
+  激活为新 Store revision；Skill Candidate 评测后升级为现有 Capability；
 - 旧 Memory plugin 与 Repo Manager plugin 已 hard cut，仓库不再附带内置 Expert plugin。
 
 当前已能形成按资产隔离的历史 Episode、带冲突/时效的 Semantic Fact，并将用户批准的结构化 Knowledge
 初始化为每个 Expert 唯一的 Studio Context Store。后续 Memory 变化只提交 Store 修订任务，由独立 Agent
-生成 change set，用户批准后以 CAS 原子激活。旧 Published Knowledge 与 Bundle extension 已 hard cut，旧
+编辑并提交稀疏草稿，用户批准后以 CAS 原子激活。旧 Published Knowledge 与 Bundle extension 已 hard cut，旧
 目录不迁移、不读取。Skill Candidate、Evaluation、Capability promotion/revision 和旧插件 hard cut 均已
 完成。CodeGraph 是最后的可选扩展验收，不作为 Memory 重构完成的前置条件。
 

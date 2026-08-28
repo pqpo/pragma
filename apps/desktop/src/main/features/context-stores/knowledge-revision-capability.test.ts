@@ -1,8 +1,5 @@
 import { describe, expect, it, vi } from "vitest";
-import {
-  PRAGMA_DSL_WRITE_API_VERSION,
-  PragmaExpertResourceSchema,
-} from "@pragma/interpreter/ast";
+import { PRAGMA_DSL_WRITE_API_VERSION, PragmaExpertResourceSchema } from "@pragma/interpreter/ast";
 
 import { createDesktopContextResource } from "../../platform/bindings/desktop-bound-resource-policy.ts";
 import type { PragmaProjectStore } from "../projects/pragma-project-store.ts";
@@ -96,9 +93,22 @@ function fixture() {
       },
     ]),
   } as unknown as ContextStoreStore;
-  const submit = vi.fn(async (request) => ({ id: "job-1", state: "pending", request }));
+  const start = vi.fn(async (request) => ({
+    id: "job-1",
+    draftId: "00000000-0000-4000-8000-000000000301",
+    state: "editing",
+    request,
+  }));
   const scheduleProcessing = vi.fn();
-  const revisions = { submit, scheduleProcessing } as unknown as ContextStoreRevisionService;
+  const revisions = {
+    start,
+    listDrafts: vi.fn(async () => []),
+    getDraft: vi.fn(),
+    inspectRebase: vi.fn(),
+    rebase: vi.fn(),
+    submitDraft: vi.fn(),
+    scheduleProcessing,
+  } as unknown as ContextStoreRevisionService;
   return {
     port: createDesktopKnowledgeRevisionSubmissionPort({
       project,
@@ -106,7 +116,7 @@ function fixture() {
       revisions,
       additionalMountResources: () => [systemExpert, systemContextResource],
     }),
-    submit,
+    start,
     scheduleProcessing,
     targetRef,
   };
@@ -166,19 +176,19 @@ describe("Desktop Pragma management knowledge revision tools", () => {
   });
 
   it("submits to any listed target and records Team provenance when applicable", async () => {
-    const { port, submit, scheduleProcessing } = fixture();
+    const { port, start, scheduleProcessing } = fixture();
     const unmounted = (await port.listTargets(invocation)).find(
       (target) => target.name === "Unattached knowledge",
     )!;
 
-    await port.submit({
+    await port.start({
       ...invocation,
       teamId: TEAM_ID,
       targetRef: unmounted.targetRef,
       prompt: "Record invariant",
     });
 
-    expect(submit).toHaveBeenCalledWith(
+    expect(start).toHaveBeenCalledWith(
       expect.objectContaining({
         storeId: UNMOUNTED_STORE_ID,
         source: "expert-reflection",
@@ -190,29 +200,30 @@ describe("Desktop Pragma management knowledge revision tools", () => {
           teamId: TEAM_ID,
         },
       }),
+      {},
     );
     expect(scheduleProcessing).toHaveBeenCalledOnce();
   });
 
   it("supports standalone Experts and rejects targets that are not in the current store list", async () => {
-    const { port, submit } = fixture();
+    const { port, start } = fixture();
     const unmounted = (await port.listTargets(invocation)).find(
       (target) => target.name === "Unattached knowledge",
     )!;
 
     await expect(
-      port.submit({
+      port.start({
         ...invocation,
         targetRef: "context-store:0000000000000999",
         prompt: "No",
       }),
     ).rejects.toThrow("knowledge_revision_target_unavailable");
-    await port.submit({
+    await port.start({
       ...invocation,
       targetRef: unmounted.targetRef,
       prompt: "Record invariant",
     });
-    expect(submit).toHaveBeenLastCalledWith(
+    expect(start).toHaveBeenLastCalledWith(
       expect.objectContaining({
         provenance: {
           executionId: "execution-1",
@@ -220,6 +231,7 @@ describe("Desktop Pragma management knowledge revision tools", () => {
           expertId: EXPERT_ID,
         },
       }),
+      {},
     );
   });
 });

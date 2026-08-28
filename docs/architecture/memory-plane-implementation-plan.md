@@ -37,12 +37,12 @@ Memory type；经批准的 Knowledge 升级为“工作室 → 知识库”的�
   也不增加专用 recall tool。
 - 不建立长期 dual-write、旧字段兼容分支或第二套 Skill authority；Studio 托管 Context Store 是 promoted
   Knowledge 的唯一 authority。
-- Memory 只能向通用 Store Revision 能力提交修订提示词，不能直接改写知识库；内置 Store Revision Agent
-  必须先产生可审阅 change set，用户批准后才能激活新 Store revision。
+- Memory 只能通过通用 Store Revision 能力启动稀疏草稿，不能直接改写正式知识库；内置 Store Revision
+  Agent 必须使用原生 Context 工具编辑草稿并提交审核，用户批准后才能激活新 Store revision。
 - 普通 Expert 可显式挂载内置“Pragma 管理工具”Host Capability。该 Capability 是 Pragma 管理操作的长期
   工具容器，当前只提供知识库修订工具；后续任务创建、查询和管理能力继续加入同一容器。知识库工具可以
-  列出全部知识库及其 Expert/ExpertTeam 挂载关系，并向任意知识库提交修订请求；提交默认需要用户审批，
-  不授予直接写入或批准 change set 的权限。
+  列出全部知识库、草稿及其 Expert/ExpertTeam 挂载关系，并向任意知识库启动修订 Mission；启动 Mission
+  默认需要用户审批，草稿写入和提交审核不发布正式内容。
 - 阶段 9 的 CodeGraph 是可选扩展验收，不是 Memory 重构完成或旧插件切换的前置条件；没有明确产品需求时
   可以不实现。
 

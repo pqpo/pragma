@@ -136,6 +136,7 @@ const BUILT_IN_AGENT_DEPENDENCY_PATHS: Readonly<Record<BuiltInAgentRef, readonly
   ],
   [STORE_REVISION_EXPERT_REF]: [
     BUILT_IN_AGENT_PATHS[STORE_REVISION_EXPERT_REF],
+    "capabilities/0000000000manage.pragma.yaml",
     "context-stores/0000000000st0ctx.pragma.yaml",
   ],
   [SKILL_REVISION_EXPERT_REF]: [BUILT_IN_AGENT_PATHS[SKILL_REVISION_EXPERT_REF]],

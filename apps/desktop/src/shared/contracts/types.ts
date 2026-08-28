@@ -95,11 +95,20 @@ import {
   UpdateContextStoreFileSchema,
 } from "./context-stores.ts";
 import {
+  ContextStoreDraftRebaseInspectionSchema,
+  ContextStoreDraftRefSchema,
+  ContextStoreDraftSchema,
   ContextStoreRevisionJobRefSchema,
   ContextStoreRevisionJobSchema,
   ContextStoreRevisionProfileSchema,
   ContextStoreRevisionRequestSchema,
+  CreateContextStoreDraftSchema,
+  GetContextStoreDraftFileSchema,
   ListContextStoreRevisionJobsSchema,
+  ListContextStoreDraftsSchema,
+  RebaseContextStoreDraftSchema,
+  SubmitContextStoreDraftSchema,
+  UpdateContextStoreDraftFileSchema,
   UpdateContextStoreRevisionProfileSchema,
 } from "./context-store-revisions.ts";
 import {
@@ -402,6 +411,17 @@ export type ContextStoreSnapshot = z.infer<typeof ContextStoreSnapshotSchema>;
 export type ContextStoreChangeSet = z.infer<typeof ContextStoreChangeSetSchema>;
 export type ContextStoreRevisionRecord = z.infer<typeof ContextStoreRevisionRecordSchema>;
 export type ContextStoreRevisionRequest = z.infer<typeof ContextStoreRevisionRequestSchema>;
+export type ContextStoreDraft = z.infer<typeof ContextStoreDraftSchema>;
+export type CreateContextStoreDraft = z.infer<typeof CreateContextStoreDraftSchema>;
+export type GetContextStoreDraftFile = z.infer<typeof GetContextStoreDraftFileSchema>;
+export type ListContextStoreDrafts = z.infer<typeof ListContextStoreDraftsSchema>;
+export type ContextStoreDraftRef = z.infer<typeof ContextStoreDraftRefSchema>;
+export type ContextStoreDraftRebaseInspection = z.infer<
+  typeof ContextStoreDraftRebaseInspectionSchema
+>;
+export type RebaseContextStoreDraft = z.infer<typeof RebaseContextStoreDraftSchema>;
+export type SubmitContextStoreDraft = z.infer<typeof SubmitContextStoreDraftSchema>;
+export type UpdateContextStoreDraftFile = z.infer<typeof UpdateContextStoreDraftFileSchema>;
 export type ContextStoreRevisionJob = z.infer<typeof ContextStoreRevisionJobSchema>;
 export type ListContextStoreRevisionJobs = z.infer<typeof ListContextStoreRevisionJobsSchema>;
 export type ContextStoreRevisionJobRef = z.infer<typeof ContextStoreRevisionJobRefSchema>;

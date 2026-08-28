@@ -207,6 +207,7 @@ export const missions = {
   markComplete: "標記完成",
   markCompleteNamed: "將 {{title}} 標記完成",
   reopen: "重新開啟",
+  openKnowledgeRevision: "開啟知識庫修訂",
   work: "工作",
   missionBoard: "白板",
   memory: "記憶",

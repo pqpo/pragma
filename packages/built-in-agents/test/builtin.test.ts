@@ -165,6 +165,14 @@ describe("built-in Pragma Agent DSL", () => {
           environmentId: "test",
           projectRoot: dirname(entry),
           async resolveBinding(bindingRef) {
+            if (bindingRef === "binding:pragma.management") {
+              return {
+                ref: bindingRef,
+                revision: "1",
+                fingerprint: "e".repeat(64),
+                value: { contribution: { tools: [] } },
+              };
+            }
             if (bindingRef === MEMORY_CURATOR_SKILL_DRAFT_BINDING_REF) {
               return {
                 ref: bindingRef,
@@ -462,6 +470,31 @@ describe("built-in Pragma Agent DSL", () => {
     );
   });
 
+  it("defines Store Revision as an ordinary draft-editing Expert with required management tools", () => {
+    const resource = builtInAgentResource(STORE_REVISION_EXPERT_REF);
+    expect(resource.metadata.description).not.toContain("Hidden");
+    expect(resource.spec.contextStores).toEqual([
+      expect.objectContaining({ namespace: "target-store", required: false }),
+    ]);
+    expect(resource.spec.capabilities).toEqual([
+      expect.objectContaining({
+        ref: "capability:0000000000manage",
+        kind: "tools",
+        tools: [
+          "list_knowledge_revision_targets",
+          "list_knowledge_revision_drafts",
+          "start_knowledge_revision",
+          "get_knowledge_revision_draft",
+          "inspect_knowledge_revision_rebase",
+          "rebase_knowledge_revision_draft",
+          "submit_knowledge_revision_draft",
+        ],
+      }),
+    ]);
+    expect(resource.spec.instructions).toContain("edit_expert_context");
+    expect(resource.spec.instructions).toContain("submit_knowledge_revision_draft");
+  });
+
   it("compiles every hidden Agent from its isolated dependency closure", async () => {
     const root = await mkdtemp(join(tmpdir(), "pragma-built-in-agent-isolated-"));
     const runtimes = createStaticRuntimeResolver({
@@ -493,6 +526,14 @@ describe("built-in Pragma Agent DSL", () => {
           environmentId: "ignored-external-id",
           projectRoot: root,
           async resolveBinding(bindingRef) {
+            if (bindingRef === "binding:pragma.management") {
+              return {
+                ref: bindingRef,
+                revision: "1",
+                fingerprint: "e".repeat(64),
+                value: { contribution: { tools: [] } },
+              };
+            }
             if (bindingRef === MEMORY_CURATOR_SKILL_DRAFT_BINDING_REF) {
               return {
                 ref: bindingRef,
