@@ -8,7 +8,7 @@ import {
   X,
 } from "@phosphor-icons/react";
 import { useEffect, useMemo, useState } from "react";
-import type { PragmaResource } from "@pragma/interpreter/ast";
+import type { PragmaExpertResource, PragmaResource } from "@pragma/interpreter/ast";
 import { useTranslation } from "react-i18next";
 
 import type { Capability, ContextStore } from "../../../../shared/contracts/index.ts";
@@ -163,6 +163,7 @@ export function ExpertCapabilityPicker(props: {
   readonly resourceTools: ExpertDraft["resourceTools"];
   readonly contextStoreMounts: ExpertDraft["contextStoreMounts"];
   readonly capabilityReferences: ExpertDraft["capabilities"];
+  readonly fixedCapabilities?: PragmaExpertResource["spec"]["capabilities"] | undefined;
   readonly toolApprovals: ExpertDraft["toolApprovals"];
   readonly allowResourceTools?: boolean | undefined;
   readonly onResourceToolsChange: (value: ExpertDraft["resourceTools"]) => void;
@@ -196,10 +197,12 @@ export function ExpertCapabilityPicker(props: {
   const selectedToolReferences = props.capabilityReferences.filter(
     (reference) => reference.kind === "tools",
   );
-  const selectedToolCount = selectedToolReferences.reduce(
-    (total, reference) => total + reference.toolNames.length,
-    0,
+  const fixedToolNames = (props.fixedCapabilities ?? []).flatMap((capability) =>
+    capability.kind === "tools" ? (capability.tools ?? []) : [],
   );
+  const selectedToolCount =
+    fixedToolNames.length +
+    selectedToolReferences.reduce((total, reference) => total + reference.toolNames.length, 0);
   const pickerCopy = {
     resources: {
       eyebrow: t("asTools"),
@@ -265,7 +268,10 @@ export function ExpertCapabilityPicker(props: {
     const skill = skills.find((candidate) => candidate.manifest.id === reference.capabilityId);
     return skill ? [skill.manifest.name] : [];
   });
-  const selectedToolNames = selectedToolReferences.flatMap((reference) => reference.toolNames);
+  const selectedToolNames = [
+    ...fixedToolNames.map((name) => `${name} · ${t("fixedSystemTool")}`),
+    ...selectedToolReferences.flatMap((reference) => reference.toolNames),
+  ];
   const resourcePickerItems: readonly PragmaResourcePickerItem[] = invocableResources.map(
     (resource) => {
       const details = resourceDetails(resource);

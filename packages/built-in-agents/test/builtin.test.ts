@@ -6,7 +6,6 @@ import { fileURLToPath } from "node:url";
 
 import { Client, StreamableHTTPClientTransport } from "@modelcontextprotocol/client";
 import {
-  InMemoryContextStore,
   createPragmaLogger,
   createStaticRuntimeResolver,
   registerExpertToolsMcpSession,
@@ -29,7 +28,6 @@ import {
   SKILL_EVALUATION_EXPERT_REF,
   SKILL_REVISION_EXPERT_REF,
   STORE_REVISION_EXPERT_REF,
-  STORE_REVISION_TARGET_BINDING_REF,
   builtInAgentFingerprint,
   builtInAgentResource,
   compileBuiltInAgent,
@@ -63,7 +61,6 @@ describe("built-in Pragma Agent DSL", () => {
       "Capability",
       "Capability",
       "Capability",
-      "ContextStore",
       "Expert",
       "Expert",
       "Expert",
@@ -181,14 +178,7 @@ describe("built-in Pragma Agent DSL", () => {
                 value: { contribution: { tools: [] } },
               };
             }
-            return bindingRef === STORE_REVISION_TARGET_BINDING_REF
-              ? {
-                  ref: bindingRef,
-                  revision: "1",
-                  fingerprint: "b".repeat(64),
-                  value: { store: new InMemoryContextStore() },
-                }
-              : undefined;
+            return undefined;
           },
           async resolveArtifact(source) {
             throw new Error(`Unexpected artifact: ${JSON.stringify(source)}`);
@@ -472,27 +462,28 @@ describe("built-in Pragma Agent DSL", () => {
 
   it("defines Store Revision as an ordinary draft-editing Expert with required management tools", () => {
     const resource = builtInAgentResource(STORE_REVISION_EXPERT_REF);
+    expect(resource.metadata.avatarId).toBe("pragma.avatar.expert.07");
     expect(resource.metadata.description).not.toContain("Hidden");
-    expect(resource.spec.contextStores).toEqual([
-      expect.objectContaining({ namespace: "target-store", required: false }),
-    ]);
+    expect(resource.spec.contextStores).toEqual([]);
     expect(resource.spec.capabilities).toEqual([
       expect.objectContaining({
         ref: "capability:0000000000manage",
         kind: "tools",
         tools: [
-          "list_knowledge_revision_targets",
-          "list_knowledge_revision_drafts",
-          "start_knowledge_revision",
-          "get_knowledge_revision_draft",
-          "inspect_knowledge_revision_rebase",
-          "rebase_knowledge_revision_draft",
-          "submit_knowledge_revision_draft",
+          "knowledge_revision_list_targets",
+          "knowledge_revision_list_drafts",
+          "knowledge_revision_start",
+          "knowledge_revision_get_draft",
+          "knowledge_revision_inspect_rebase",
+          "knowledge_revision_rebase",
+          "knowledge_revision_submit_draft",
         ],
       }),
     ]);
     expect(resource.spec.instructions).toContain("edit_expert_context");
-    expect(resource.spec.instructions).toContain("submit_knowledge_revision_draft");
+    expect(resource.spec.instructions).toContain("Never reuse a token");
+    expect(resource.spec.instructions).toContain("read that item from writableNamespace");
+    expect(resource.spec.instructions).toContain("knowledge_revision_submit_draft");
   });
 
   it("compiles every hidden Agent from its isolated dependency closure", async () => {
@@ -542,14 +533,7 @@ describe("built-in Pragma Agent DSL", () => {
                 value: { contribution: { tools: [] } },
               };
             }
-            return bindingRef === STORE_REVISION_TARGET_BINDING_REF
-              ? {
-                  ref: bindingRef,
-                  revision: "1",
-                  fingerprint: "c".repeat(64),
-                  value: { store: new InMemoryContextStore() },
-                }
-              : undefined;
+            return undefined;
           },
           async resolveArtifact(source) {
             throw new Error(`Unexpected artifact: ${JSON.stringify(source)}`);

@@ -56,6 +56,7 @@ import { ProfiledExpertAvatar } from "../../components/ProfiledExpertAvatar.tsx"
 import {
   type Mission,
   type ContextStore,
+  type MissionContextMount,
   type MissionChatEntry,
   type MissionChatPatch,
   type MissionChatSnapshot,
@@ -631,14 +632,14 @@ export function MissionsPage(props: {
                 throw optionsError;
               }
             }}
-            onContextStoresChange={async (contextStoreIds) => {
+            onContextStoresChange={async (contextMounts) => {
               const api = desktopApi();
               if (api === undefined) return;
               try {
                 replaceMission(
-                  await api.updateMissionContextStores({
+                  await api.updateMissionContextMounts({
                     id: selectedMission.id,
-                    contextStoreIds: [...contextStoreIds],
+                    contextMounts: [...contextMounts],
                   }),
                 );
                 setError(null);
@@ -1484,7 +1485,7 @@ export function MissionDetailFragment(props: {
       }) => void | Promise<void>)
     | undefined;
   readonly onContextStoresChange?:
-    ((contextStoreIds: readonly string[]) => void | Promise<void>) | undefined;
+    ((contextMounts: readonly MissionContextMount[]) => void | Promise<void>) | undefined;
   readonly onHumanResponded?: () => void | Promise<void>;
   readonly onLifecycleChange?: () => void | Promise<void>;
   readonly onConfigureModels?: (() => void) | undefined;
@@ -1566,7 +1567,9 @@ export function MissionDetailFragment(props: {
   );
   const [contextStores, setContextStores] = useState<readonly ContextStore[]>([]);
   const [contextStoreIds, setContextStoreIds] = useState<readonly string[]>(
-    props.mission.contextStoreIds,
+    props.mission.contextMounts.flatMap((mount) =>
+      mount.kind === "context-store" ? [mount.storeId] : [],
+    ),
   );
   const [contextStorePickerOpen, setContextStorePickerOpen] = useState(false);
   const [contextStoresSaving, setContextStoresSaving] = useState(false);
@@ -1618,17 +1621,24 @@ export function MissionDetailFragment(props: {
 
   useEffect(() => {
     if (!contextStorePickerOpen && !contextStoresSaving) {
-      setContextStoreIds(props.mission.contextStoreIds);
+      setContextStoreIds(
+        props.mission.contextMounts.flatMap((mount) =>
+          mount.kind === "context-store" ? [mount.storeId] : [],
+        ),
+      );
     }
-  }, [contextStorePickerOpen, contextStoresSaving, props.mission.contextStoreIds]);
+  }, [contextStorePickerOpen, contextStoresSaving, props.mission.contextMounts]);
 
   useEffect(() => {
     let cancelled = false;
-    const listContextStores = desktopApi()?.listContextStores;
-    if (typeof listContextStores !== "function") return;
-    void listContextStores()
+    const api = desktopApi();
+    if (api === undefined) return;
+    void api
+      .listContextStores()
       .then((stores) => {
-        if (!cancelled) setContextStores(stores);
+        if (!cancelled) {
+          setContextStores(stores);
+        }
       })
       .catch((loadError: unknown) => {
         if (!cancelled) setOptionsError(missionError(loadError));
@@ -3393,15 +3403,15 @@ export function MissionDetailFragment(props: {
                                   ? t("optionsAvailableNextTurn", { ns: "missions" })
                                   : t("missionKnowledgeSelected", {
                                       ns: "missions",
-                                      count: contextStoreIds.length,
+                                      count: props.mission.contextMounts.length,
                                     })
                             }
                             onClick={() => setContextStorePickerOpen(true)}
                           >
                             <FolderOpen size={17} aria-hidden="true" />
                             <span>{t("missionKnowledge", { ns: "missions" })}</span>
-                            {contextStoreIds.length === 0 ? null : (
-                              <strong>{contextStoreIds.length}</strong>
+                            {props.mission.contextMounts.length === 0 ? null : (
+                              <strong>{props.mission.contextMounts.length}</strong>
                             )}
                           </button>
                           <ToolPermissionSelect
@@ -3583,17 +3593,26 @@ export function MissionDetailFragment(props: {
           onSelectedStoreIdsChange={setContextStoreIds}
           onGoToKnowledgeBases={props.onOpenKnowledgeBases}
           onClose={() => {
-            const nextIds = [...contextStoreIds];
+            const nextMounts: readonly MissionContextMount[] = [
+              ...contextStoreIds.map((storeId) => ({
+                kind: "context-store" as const,
+                storeId,
+              })),
+              ...props.mission.contextMounts.filter(
+                (mount): mount is Extract<MissionContextMount, { kind: "context-store-draft" }> =>
+                  mount.kind === "context-store-draft",
+              ),
+            ];
             setContextStorePickerOpen(false);
-            if (
-              nextIds.length === props.mission.contextStoreIds.length &&
-              nextIds.every((storeId, index) => storeId === props.mission.contextStoreIds[index])
-            )
-              return;
+            if (JSON.stringify(nextMounts) === JSON.stringify(props.mission.contextMounts)) return;
             setContextStoresSaving(true);
-            void Promise.resolve(props.onContextStoresChange?.(nextIds))
+            void Promise.resolve(props.onContextStoresChange?.(nextMounts))
               .catch((saveError: unknown) => {
-                setContextStoreIds(props.mission.contextStoreIds);
+                setContextStoreIds(
+                  props.mission.contextMounts.flatMap((mount) =>
+                    mount.kind === "context-store" ? [mount.storeId] : [],
+                  ),
+                );
                 setOptionsError(missionError(saveError));
               })
               .finally(() => setContextStoresSaving(false));

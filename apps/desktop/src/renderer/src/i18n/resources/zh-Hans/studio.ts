@@ -1413,4 +1413,5 @@ export const studio = {
   rejectSkillRevision: "拒绝",
   retrySkillRevision: "重试",
   deleteSkillRevision: "删除任务",
+  fixedSystemTool: "系统固定工具",
 } as const;

@@ -12,7 +12,7 @@ const EXPERT_ID = "0000000000000002";
 const STORE_ID = "00000000-0000-4000-8000-000000000201";
 const UNMOUNTED_STORE_ID = "00000000-0000-4000-8000-000000000202";
 
-function fixture() {
+function fixture(inline = false, activeSourceDigest?: string, ownerMissionId?: string) {
   const contextResource = createDesktopContextResource({
     owner: "project-expert",
     storeId: STORE_ID,
@@ -92,22 +92,46 @@ function fixture() {
         contentRevision: 2,
       },
     ]),
+    getSnapshot: vi.fn(async () => ({ revision: 6, snapshotHash: "b".repeat(64) })),
   } as unknown as ContextStoreStore;
+  let missionId: string | undefined =
+    ownerMissionId ??
+    (activeSourceDigest === undefined ? undefined : "00000000-0000-4000-8000-000000000401");
   const start = vi.fn(async (request) => ({
     id: "job-1",
     draftId: "00000000-0000-4000-8000-000000000301",
     state: "editing",
+    missionId,
     request,
   }));
   const scheduleProcessing = vi.fn();
+  const attachMission = vi.fn(async (_jobId: string, nextMissionId: string) => {
+    missionId = nextMissionId;
+  });
+  const mountDraft = vi.fn(async ({ storeId }: { readonly storeId: string }) => ({
+    writableNamespace: `mission-knowledge-draft:${storeId}`,
+  }));
+  const listDrafts = vi.fn<ContextStoreRevisionService["listDrafts"]>(async () => []);
+  const getDraft = vi.fn<ContextStoreRevisionService["getDraft"]>();
+  const getDraftFile = vi.fn<ContextStoreRevisionService["getDraftFile"]>();
   const revisions = {
     start,
-    listDrafts: vi.fn(async () => []),
-    getDraft: vi.fn(),
+    listDrafts,
+    getDraft,
+    getDraftFile,
     inspectRebase: vi.fn(),
     rebase: vi.fn(),
     submitDraft: vi.fn(),
     scheduleProcessing,
+    attachMission,
+    detachMission: vi.fn(async () => ({ id: "job-1" })),
+    get: vi.fn(async () => ({
+      id: "job-1",
+      draftId: "00000000-0000-4000-8000-000000000301",
+      state: missionId === undefined ? "editing" : "running",
+      missionId,
+      request: { sourceDigest: activeSourceDigest },
+    })),
   } as unknown as ContextStoreRevisionService;
   return {
     port: createDesktopKnowledgeRevisionSubmissionPort({
@@ -115,10 +139,27 @@ function fixture() {
       contextStores,
       revisions,
       additionalMountResources: () => [systemExpert, systemContextResource],
+      ...(inline
+        ? {
+            inlineMission: {
+              id: "00000000-0000-4000-8000-000000000401",
+              allowedStoreIds: new Set([STORE_ID]),
+              activeRevisionJobIdForStore: async (storeId) =>
+                activeSourceDigest !== undefined && storeId === STORE_ID ? "job-1" : undefined,
+              writableNamespaceForStore: (storeId) => `mission-knowledge-draft:${storeId}`,
+              mountDraft,
+            },
+          }
+        : {}),
     }),
     start,
     scheduleProcessing,
     targetRef,
+    attachMission,
+    mountDraft,
+    listDrafts,
+    getDraft,
+    getDraftFile,
   };
 }
 
@@ -173,6 +214,121 @@ describe("Desktop Pragma management knowledge revision tools", () => {
         mounts: [],
       }),
     ]);
+  });
+
+  it("lists lightweight draft summaries without returning overlay content", async () => {
+    const { port, listDrafts } = fixture();
+    listDrafts.mockResolvedValue([
+      {
+        schemaVersion: "pragma.context-store-draft/v1",
+        id: "00000000-0000-4000-8000-000000000301",
+        revision: 5,
+        name: "Retry invariants",
+        storeId: STORE_ID,
+        baseRevision: 4,
+        baseSnapshotHash: "a".repeat(64),
+        state: "editing",
+        overlay: {
+          files: [
+            {
+              id: "items/retry.md",
+              content: "large draft content",
+              metadata: { trigger: "model_decision", priority: "normal" },
+            },
+          ],
+          deletedFiles: [],
+          directories: [],
+          deletedDirectories: [],
+        },
+        createdAt: "2026-08-28T00:00:00.000Z",
+        updatedAt: "2026-08-28T01:00:00.000Z",
+      },
+    ]);
+
+    await expect(port.listDrafts({ ...invocation })).resolves.toEqual([
+      {
+        draftId: "00000000-0000-4000-8000-000000000301",
+        revision: 5,
+        name: "Retry invariants",
+        storeId: STORE_ID,
+        baseRevision: 4,
+        state: "editing",
+        createdAt: "2026-08-28T00:00:00.000Z",
+        updatedAt: "2026-08-28T01:00:00.000Z",
+      },
+    ]);
+  });
+
+  it("reads draft hashes by default and only one file body on demand", async () => {
+    const { port, getDraft, getDraftFile } = fixture();
+    getDraft.mockResolvedValue({
+      schemaVersion: "pragma.context-store-draft/v1",
+      id: "00000000-0000-4000-8000-000000000301",
+      revision: 5,
+      name: "Retry invariants",
+      storeId: STORE_ID,
+      baseRevision: 4,
+      baseSnapshotHash: "a".repeat(64),
+      state: "editing",
+      overlay: {
+        files: [
+          {
+            id: "items/retry.md",
+            content: "large draft content",
+            metadata: { trigger: "model_decision", priority: "normal" },
+          },
+        ],
+        deletedFiles: [],
+        directories: [],
+        deletedDirectories: [],
+      },
+      createdAt: "2026-08-28T00:00:00.000Z",
+      updatedAt: "2026-08-28T01:00:00.000Z",
+    });
+    getDraftFile.mockResolvedValue({
+      id: "items/retry.md",
+      content: "large draft content",
+      metadata: { trigger: "model_decision", priority: "normal" },
+      revision: "draft-revision",
+      etag: "draft-etag",
+      truncated: false,
+    });
+
+    const summary = await port.getDraft({
+      ...invocation,
+      draftId: "00000000-0000-4000-8000-000000000301",
+    });
+    expect(summary).toMatchObject({
+      mode: "summary",
+      currentStoreRevision: 6,
+      currentSnapshotHash: "b".repeat(64),
+      stale: true,
+      overlay: {
+        files: [
+          {
+            id: "items/retry.md",
+            sizeBytes: 19,
+            sha256: expect.stringMatching(/^[a-f0-9]{64}$/u),
+          },
+        ],
+      },
+    });
+    expect(JSON.stringify(summary)).not.toContain("large draft content");
+    expect(getDraftFile).not.toHaveBeenCalled();
+
+    await expect(
+      port.getDraft({
+        ...invocation,
+        draftId: "00000000-0000-4000-8000-000000000301",
+        fileId: "items/retry.md",
+      }),
+    ).resolves.toMatchObject({
+      mode: "file",
+      id: "items/retry.md",
+      content: "large draft content",
+      revision: "draft-revision",
+      etag: "draft-etag",
+    });
   });
 
   it("submits to any listed target and records Team provenance when applicable", async () => {
@@ -233,5 +389,87 @@ describe("Desktop Pragma management knowledge revision tools", () => {
       }),
       {},
     );
+  });
+
+  it("attaches a selected Mission Knowledge target to the same Mission", async () => {
+    const { port, targetRef, attachMission, mountDraft, scheduleProcessing } = fixture(true);
+
+    await expect(
+      port.start({ ...invocation, targetRef, prompt: "Revise this Mission knowledge" }),
+    ).resolves.toMatchObject({
+      jobId: "job-1",
+      missionId: "00000000-0000-4000-8000-000000000401",
+      state: "running",
+      writableNamespace: `mission-knowledge-draft:${STORE_ID}`,
+    });
+    expect(attachMission).toHaveBeenCalledWith("job-1", "00000000-0000-4000-8000-000000000401");
+    expect(mountDraft).toHaveBeenCalledWith({
+      storeId: STORE_ID,
+      draftId: "00000000-0000-4000-8000-000000000301",
+      revisionJobId: "job-1",
+    });
+    expect(scheduleProcessing).not.toHaveBeenCalled();
+  });
+
+  it("returns an already-mounted matching revision without attaching or mounting it again", async () => {
+    const first = fixture(true);
+    await first.port.start({
+      ...invocation,
+      targetRef: first.targetRef,
+      prompt: "Revise this Mission knowledge",
+    });
+    const sourceDigest = first.start.mock.calls[0]?.[0].sourceDigest;
+    if (sourceDigest === undefined) throw new Error("Expected a source digest.");
+    const retry = fixture(true, sourceDigest);
+
+    await expect(
+      retry.port.start({
+        ...invocation,
+        targetRef: retry.targetRef,
+        prompt: "Revise this Mission knowledge",
+      }),
+    ).resolves.toMatchObject({
+      jobId: "job-1",
+      state: "running",
+      writableNamespace: `mission-knowledge-draft:${STORE_ID}`,
+    });
+    expect(retry.start).not.toHaveBeenCalled();
+    expect(retry.attachMission).not.toHaveBeenCalled();
+    expect(retry.mountDraft).not.toHaveBeenCalled();
+  });
+
+  it("asks the Host to transfer an existing draft claim from an earlier Mission", async () => {
+    const previousMissionId = "00000000-0000-4000-8000-000000000499";
+    const { port, targetRef, attachMission, mountDraft } = fixture(
+      true,
+      undefined,
+      previousMissionId,
+    );
+
+    await port.start({
+      ...invocation,
+      targetRef,
+      draftId: "00000000-0000-4000-8000-000000000301",
+      prompt: "Continue the existing draft",
+    });
+
+    expect(attachMission).not.toHaveBeenCalled();
+    expect(mountDraft).toHaveBeenCalledWith({
+      storeId: STORE_ID,
+      draftId: "00000000-0000-4000-8000-000000000301",
+      revisionJobId: "job-1",
+      previousMissionId,
+    });
+  });
+
+  it("rejects a direct revision target that is not mounted in the Mission", async () => {
+    const { port } = fixture(true);
+    const target = (await port.listTargets(invocation)).find(
+      (candidate) => candidate.name === "Unattached knowledge",
+    )!;
+
+    await expect(
+      port.start({ ...invocation, targetRef: target.targetRef, prompt: "Do not fork" }),
+    ).rejects.toThrow("knowledge_revision_target_not_mounted");
   });
 });

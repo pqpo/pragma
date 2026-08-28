@@ -7,6 +7,7 @@ import {
   type ExpertAgentContextStore,
   type ExpertAgentStoredContextItem,
   type ExpertAgentStoredContextItemDeleteInput,
+  type ExpertAgentStoredContextItemDeleteResult,
   type ExpertAgentStoredContextItemEditInput,
   type ExpertAgentStoredContextItemEditResult,
   type ExpertAgentStoredContextItemReadInput,
@@ -111,7 +112,7 @@ export class SparseContextStoreDraft implements ExpertAgentContextStore {
 
   async deleteContext(
     input: ExpertAgentStoredContextItemDeleteInput,
-  ): Promise<ExpertAgentContextResult<{ readonly id: string }>> {
+  ): Promise<ExpertAgentContextResult<ExpertAgentStoredContextItemDeleteResult>> {
     const loaded = await this.load();
     if (["merging", "merged"].includes(loaded.draft.state)) {
       return error("permission_denied", "Merging and merged knowledge drafts are read-only.");
@@ -119,11 +120,27 @@ export class SparseContextStoreDraft implements ExpertAgentContextStore {
     const effective = createEffectiveStore(loaded.base, loaded.draft.overlay);
     const result = await effective.deleteContext(input);
     if (!result.ok) return result;
+    const existedInBaseline = loaded.base.files.some((file) => file.id === input.id);
     try {
       await this.persistence.mutate(this.draftId, loaded.draft.revision, (draft) =>
         overlayWithoutFile(draft.overlay, loaded.base, input.id),
       );
-      return result;
+      return {
+        ok: true,
+        value: existedInBaseline
+          ? {
+              id: result.value.id,
+              effect: "item_deleted",
+              message:
+                "The baseline file is hidden by a deletedFiles entry in this draft; formal knowledge is unchanged.",
+            }
+          : {
+              id: result.value.id,
+              effect: "local_change_removed",
+              message:
+                "The draft-only file was removed. No deletedFiles entry was recorded, so this id now matches the baseline (absent).",
+            },
+      };
     } catch (mutationError) {
       return conflict(mutationError);
     }

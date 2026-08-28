@@ -1415,4 +1415,5 @@ export const studio = {
   rejectSkillRevision: "拒絕",
   retrySkillRevision: "重試",
   deleteSkillRevision: "刪除任務",
+  fixedSystemTool: "系統固定工具",
 } as const;

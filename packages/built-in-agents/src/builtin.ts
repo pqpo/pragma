@@ -25,7 +25,6 @@ import {
   PragmaBindingRefSchema,
   PragmaBundleSchema,
   PragmaCapabilityRefSchema,
-  PragmaContextStoreRefSchema,
   PragmaExpertIdSchema,
   PragmaExpertRefSchema,
   PragmaExpertResourceSchema,
@@ -96,12 +95,6 @@ export const SKILL_EVALUATION_EXPERT_REF = PragmaExpertRefSchema.parse(
 export const EVALUATION_JUDGE_EXPERT_REF = PragmaExpertRefSchema.parse(
   `expert:${EVALUATION_JUDGE_EXPERT_ID}`,
 ) as `expert:${typeof EVALUATION_JUDGE_EXPERT_ID}`;
-export const STORE_REVISION_TARGET_CONTEXT_REF = PragmaContextStoreRefSchema.parse(
-  "context-store:0000000000st0ctx",
-) as "context-store:0000000000st0ctx";
-export const STORE_REVISION_TARGET_BINDING_REF = PragmaBindingRefSchema.parse(
-  "binding:pragma.store-revision-target",
-) as "binding:pragma.store-revision-target";
 
 export const BUILT_IN_AGENT_REFS = [
   BUILT_IN_PRAGMA_REF,
@@ -137,7 +130,6 @@ const BUILT_IN_AGENT_DEPENDENCY_PATHS: Readonly<Record<BuiltInAgentRef, readonly
   [STORE_REVISION_EXPERT_REF]: [
     BUILT_IN_AGENT_PATHS[STORE_REVISION_EXPERT_REF],
     "capabilities/0000000000manage.pragma.yaml",
-    "context-stores/0000000000st0ctx.pragma.yaml",
   ],
   [SKILL_REVISION_EXPERT_REF]: [BUILT_IN_AGENT_PATHS[SKILL_REVISION_EXPERT_REF]],
   [SKILL_EVALUATION_EXPERT_REF]: [BUILT_IN_AGENT_PATHS[SKILL_EVALUATION_EXPERT_REF]],

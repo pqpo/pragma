@@ -1,9 +1,10 @@
 import { createHash, randomUUID } from "node:crypto";
 
 import {
-  LIST_KNOWLEDGE_REVISION_TARGETS_TOOL_NAME,
-  START_KNOWLEDGE_REVISION_TOOL_NAME,
+  KNOWLEDGE_REVISION_LIST_TARGETS_TOOL_NAME,
+  KNOWLEDGE_REVISION_START_TOOL_NAME,
   PRAGMA_MANAGEMENT_DESKTOP_CAPABILITY_ID,
+  PRAGMA_MANAGEMENT_TOOL_DEFINITIONS,
   PRAGMA_MANAGEMENT_TOOL_NAMES,
   type KnowledgeRevisionSubmissionPort,
 } from "@pragma/built-in-agents";
@@ -17,16 +18,6 @@ import {
 import type { CapabilityStore } from "./capability-store.ts";
 
 const BUILT_IN_TIMESTAMP = "1970-01-01T00:00:00.000Z";
-const emptyInputSchema = { type: "object", properties: {}, additionalProperties: false } as const;
-const submitInputSchema = {
-  type: "object",
-  properties: {
-    targetRef: { type: "string" },
-    prompt: { type: "string", minLength: 1, maxLength: 50_000 },
-  },
-  required: ["targetRef", "prompt"],
-  additionalProperties: false,
-} as const;
 
 function schemaHash(inputSchema: unknown): string {
   return createHash("sha256").update(JSON.stringify(inputSchema)).digest("hex");
@@ -52,16 +43,12 @@ export const BUILT_IN_PRAGMA_MANAGEMENT_CAPABILITY: Capability = CapabilitySchem
       "Built-in Host tools for managing Pragma resources and work. Currently provides reviewable knowledge revision submission.",
     connection: { transport: "streamable-http", url: "http://pragma.invalid/builtin" },
     timeoutMs: 30_000,
-    tools: PRAGMA_MANAGEMENT_TOOL_NAMES.map((name) => {
-      const inputSchema =
-        name === START_KNOWLEDGE_REVISION_TOOL_NAME ? submitInputSchema : emptyInputSchema;
-      return {
-        name,
-        description: `Built-in knowledge revision operation: ${name}.`,
-        inputSchema,
-        schemaHash: schemaHash(inputSchema),
-      };
-    }),
+    tools: PRAGMA_MANAGEMENT_TOOL_DEFINITIONS.map(({ name, description, inputSchema }) => ({
+      name,
+      description,
+      inputSchema,
+      schemaHash: schemaHash(inputSchema),
+    })),
   },
 });
 
@@ -93,10 +80,10 @@ export async function testBuiltInCapability(
     expertId: "capability-page",
     operationId: `capability-test:${randomUUID()}`,
   };
-  if (toolName === LIST_KNOWLEDGE_REVISION_TARGETS_TOOL_NAME) {
+  if (toolName === KNOWLEDGE_REVISION_LIST_TARGETS_TOOL_NAME) {
     return testSuccess("The built-in tool test succeeded.", await port.listTargets(invocation));
   }
-  if (toolName !== START_KNOWLEDGE_REVISION_TOOL_NAME) {
+  if (toolName !== KNOWLEDGE_REVISION_START_TOOL_NAME) {
     return testFailure(
       "invalid_input",
       "This revision tool requires a live draft selected by an Agent execution.",

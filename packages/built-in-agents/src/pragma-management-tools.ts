@@ -9,29 +9,21 @@ import {
 import { z } from "zod";
 
 import {
+  ContextStoreDraftOverlaySchema,
   ContextStoreDraftRebaseInspectionSchema,
   ContextStoreDraftRebaseResolutionSchema,
   ContextStoreDraftSchema,
+  GetContextStoreDraftFileSchema,
 } from "./revision-contracts.ts";
 
-export const LIST_KNOWLEDGE_REVISION_TARGETS_TOOL_NAME = "list_knowledge_revision_targets" as const;
-export const LIST_KNOWLEDGE_REVISION_DRAFTS_TOOL_NAME = "list_knowledge_revision_drafts" as const;
-export const START_KNOWLEDGE_REVISION_TOOL_NAME = "start_knowledge_revision" as const;
-export const GET_KNOWLEDGE_REVISION_DRAFT_TOOL_NAME = "get_knowledge_revision_draft" as const;
-export const INSPECT_KNOWLEDGE_REVISION_REBASE_TOOL_NAME =
-  "inspect_knowledge_revision_rebase" as const;
-export const REBASE_KNOWLEDGE_REVISION_DRAFT_TOOL_NAME = "rebase_knowledge_revision_draft" as const;
-export const SUBMIT_KNOWLEDGE_REVISION_DRAFT_TOOL_NAME = "submit_knowledge_revision_draft" as const;
-
-export const PRAGMA_MANAGEMENT_TOOL_NAMES = [
-  LIST_KNOWLEDGE_REVISION_TARGETS_TOOL_NAME,
-  LIST_KNOWLEDGE_REVISION_DRAFTS_TOOL_NAME,
-  START_KNOWLEDGE_REVISION_TOOL_NAME,
-  GET_KNOWLEDGE_REVISION_DRAFT_TOOL_NAME,
-  INSPECT_KNOWLEDGE_REVISION_REBASE_TOOL_NAME,
-  REBASE_KNOWLEDGE_REVISION_DRAFT_TOOL_NAME,
-  SUBMIT_KNOWLEDGE_REVISION_DRAFT_TOOL_NAME,
-] as const;
+export const KNOWLEDGE_REVISION_LIST_TARGETS_TOOL_NAME = "knowledge_revision_list_targets" as const;
+export const KNOWLEDGE_REVISION_LIST_DRAFTS_TOOL_NAME = "knowledge_revision_list_drafts" as const;
+export const KNOWLEDGE_REVISION_START_TOOL_NAME = "knowledge_revision_start" as const;
+export const KNOWLEDGE_REVISION_GET_DRAFT_TOOL_NAME = "knowledge_revision_get_draft" as const;
+export const KNOWLEDGE_REVISION_INSPECT_REBASE_TOOL_NAME =
+  "knowledge_revision_inspect_rebase" as const;
+export const KNOWLEDGE_REVISION_REBASE_TOOL_NAME = "knowledge_revision_rebase" as const;
+export const KNOWLEDGE_REVISION_SUBMIT_DRAFT_TOOL_NAME = "knowledge_revision_submit_draft" as const;
 
 export const KnowledgeRevisionTargetMountSchema = z
   .object({
@@ -68,15 +60,36 @@ export const KnowledgeRevisionTargetSchema = z
 export type KnowledgeRevisionTarget = z.infer<typeof KnowledgeRevisionTargetSchema>;
 
 const TargetRefSchema = KnowledgeRevisionTargetSchema.shape.targetRef.describe(
-  "Exact targetRef returned by list_knowledge_revision_targets.",
+  "Exact targetRef returned by knowledge_revision_list_targets.",
 );
 const DraftIdSchema = z
   .string()
   .uuid()
   .describe("Exact draftId returned by a revision draft tool.");
 
-const ListDraftsInputSchema = z.object({ targetRef: TargetRefSchema.optional() }).strict();
-const StartRevisionInputSchema = z
+export const KnowledgeRevisionDraftSummarySchema = z
+  .object({
+    draftId: ContextStoreDraftSchema.shape.id,
+    revision: ContextStoreDraftSchema.shape.revision,
+    name: ContextStoreDraftSchema.shape.name,
+    storeId: ContextStoreDraftSchema.shape.storeId,
+    baseRevision: ContextStoreDraftSchema.shape.baseRevision,
+    state: ContextStoreDraftSchema.shape.state,
+    activeMissionId: ContextStoreDraftSchema.shape.activeMissionId,
+    submittedRevision: ContextStoreDraftSchema.shape.submittedRevision,
+    summary: ContextStoreDraftSchema.shape.summary,
+    createdAt: ContextStoreDraftSchema.shape.createdAt,
+    updatedAt: ContextStoreDraftSchema.shape.updatedAt,
+  })
+  .strict();
+
+export type KnowledgeRevisionDraftSummary = z.infer<typeof KnowledgeRevisionDraftSummarySchema>;
+
+export const KnowledgeRevisionListTargetsInputSchema = z.object({}).strict();
+export const KnowledgeRevisionListDraftsInputSchema = z
+  .object({ targetRef: TargetRefSchema.optional() })
+  .strict();
+export const KnowledgeRevisionStartInputSchema = z
   .object({
     targetRef: TargetRefSchema,
     prompt: z.string().trim().min(1).max(50_000),
@@ -93,15 +106,76 @@ const StartRevisionInputSchema = z
       });
     }
   });
-const DraftInputSchema = z.object({ draftId: DraftIdSchema }).strict();
-const RebaseDraftInputSchema = z
+export const KnowledgeRevisionGetDraftInputSchema = z
+  .object({
+    draftId: DraftIdSchema,
+    fileId: GetContextStoreDraftFileSchema.shape.id
+      .optional()
+      .describe(
+        "Optional exact file id. Omit for a lightweight overlay summary; provide it to read only that effective draft file and its draft-scoped revision/etag.",
+      ),
+  })
+  .strict();
+export const KnowledgeRevisionDraftInputSchema = z.object({ draftId: DraftIdSchema }).strict();
+
+const KnowledgeRevisionDraftFileSummarySchema = z
+  .object({
+    id: z.string().min(1).max(500),
+    metadata: ContextStoreDraftOverlaySchema.shape.files.element.shape.metadata,
+    sizeBytes: z.number().int().nonnegative(),
+    sha256: z.string().regex(/^[a-f0-9]{64}$/u),
+  })
+  .strict();
+
+export const KnowledgeRevisionDraftInspectionSchema = z
+  .object({
+    mode: z.literal("summary"),
+    draft: KnowledgeRevisionDraftSummarySchema.extend({
+      baseSnapshotHash: ContextStoreDraftSchema.shape.baseSnapshotHash,
+    }).strict(),
+    currentStoreRevision: z.number().int().positive(),
+    currentSnapshotHash: z.string().regex(/^[a-f0-9]{64}$/u),
+    stale: z.boolean(),
+    overlay: z
+      .object({
+        files: z.array(KnowledgeRevisionDraftFileSummarySchema),
+        deletedFiles: ContextStoreDraftOverlaySchema.shape.deletedFiles,
+        directories: ContextStoreDraftOverlaySchema.shape.directories,
+        deletedDirectories: ContextStoreDraftOverlaySchema.shape.deletedDirectories,
+      })
+      .strict(),
+  })
+  .strict();
+
+export const KnowledgeRevisionDraftFileSchema = z
+  .object({
+    mode: z.literal("file"),
+    draftId: DraftIdSchema,
+    draftRevision: ContextStoreDraftSchema.shape.revision,
+    id: z.string().min(1).max(500),
+    content: z.string().max(1_000_000),
+    metadata: ContextStoreDraftOverlaySchema.shape.files.element.shape.metadata,
+    revision: z.string().optional(),
+    etag: z.string().optional(),
+    sizeBytes: z.number().int().nonnegative(),
+    sha256: z.string().regex(/^[a-f0-9]{64}$/u),
+  })
+  .strict();
+
+export const KnowledgeRevisionGetDraftResultSchema = z.discriminatedUnion("mode", [
+  KnowledgeRevisionDraftInspectionSchema,
+  KnowledgeRevisionDraftFileSchema,
+]);
+
+export type KnowledgeRevisionGetDraftResult = z.infer<typeof KnowledgeRevisionGetDraftResultSchema>;
+export const KnowledgeRevisionRebaseInputSchema = z
   .object({
     draftId: DraftIdSchema,
     expectedRevision: z.number().int().positive(),
     resolutions: z.array(ContextStoreDraftRebaseResolutionSchema).default([]),
   })
   .strict();
-const SubmitDraftInputSchema = z
+export const KnowledgeRevisionSubmitDraftInputSchema = z
   .object({
     draftId: DraftIdSchema,
     expectedRevision: z.number().int().positive(),
@@ -121,21 +195,22 @@ export interface KnowledgeRevisionSubmissionPort {
   listTargets(input: KnowledgeRevisionToolInvocation): Promise<readonly KnowledgeRevisionTarget[]>;
   listDrafts(
     input: KnowledgeRevisionToolInvocation & { readonly targetRef?: string | undefined },
-  ): Promise<readonly z.infer<typeof ContextStoreDraftSchema>[]>;
+  ): Promise<readonly KnowledgeRevisionDraftSummary[]>;
   start(
-    input: KnowledgeRevisionToolInvocation & z.infer<typeof StartRevisionInputSchema>,
+    input: KnowledgeRevisionToolInvocation & z.infer<typeof KnowledgeRevisionStartInputSchema>,
   ): Promise<unknown>;
   getDraft(
-    input: KnowledgeRevisionToolInvocation & { readonly draftId: string },
-  ): Promise<z.infer<typeof ContextStoreDraftSchema>>;
+    input: KnowledgeRevisionToolInvocation & z.infer<typeof KnowledgeRevisionGetDraftInputSchema>,
+  ): Promise<KnowledgeRevisionGetDraftResult>;
   inspectRebase(
     input: KnowledgeRevisionToolInvocation & { readonly draftId: string },
   ): Promise<z.infer<typeof ContextStoreDraftRebaseInspectionSchema>>;
   rebase(
-    input: KnowledgeRevisionToolInvocation & z.infer<typeof RebaseDraftInputSchema>,
+    input: KnowledgeRevisionToolInvocation & z.infer<typeof KnowledgeRevisionRebaseInputSchema>,
   ): Promise<z.infer<typeof ContextStoreDraftSchema>>;
   submitDraft(
-    input: KnowledgeRevisionToolInvocation & z.infer<typeof SubmitDraftInputSchema>,
+    input: KnowledgeRevisionToolInvocation &
+      z.infer<typeof KnowledgeRevisionSubmitDraftInputSchema>,
   ): Promise<z.infer<typeof ContextStoreDraftSchema>>;
 }
 
@@ -145,73 +220,104 @@ export interface PragmaManagementToolPorts {
 
 type PragmaManagementTool = ExpertAgentManagedTool<string, ExpertAgentToolCallResult>;
 
+function definition<TSchema extends z.ZodType>(name: string, description: string, schema: TSchema) {
+  return { name, description, schema, inputSchema: z.toJSONSchema(schema) } as const;
+}
+
+export const PRAGMA_MANAGEMENT_TOOL_DEFINITIONS = [
+  definition(
+    KNOWLEDGE_REVISION_LIST_TARGETS_TOOL_NAME,
+    "List knowledge bases that may be revised, with their exact target refs and current revisions.",
+    KnowledgeRevisionListTargetsInputSchema,
+  ),
+  definition(
+    KNOWLEDGE_REVISION_LIST_DRAFTS_TOOL_NAME,
+    "List lightweight summaries of sparse knowledge revision drafts, optionally for one exact target ref.",
+    KnowledgeRevisionListDraftsInputSchema,
+  ),
+  definition(
+    KNOWLEDGE_REVISION_START_TOOL_NAME,
+    "Start a revision in a new named draft or continue an existing draft by draftId, transferring an idle earlier Mission claim when necessary. Returns the writable Context namespace for immediate same-turn editing inside a Store Revision Mission; never changes formal knowledge.",
+    KnowledgeRevisionStartInputSchema,
+  ),
+  definition(
+    KNOWLEDGE_REVISION_GET_DRAFT_TOOL_NAME,
+    "Inspect one knowledge draft without loading full overlay content. Omit fileId for hashes, current formal-store revision/snapshot, and staleness; provide one fileId to read only that effective draft file with its draft-scoped revision/etag.",
+    KnowledgeRevisionGetDraftInputSchema,
+  ),
+  definition(
+    KNOWLEDGE_REVISION_INSPECT_REBASE_TOOL_NAME,
+    "Compare a stale draft with the latest formal store and list every explicit three-way conflict.",
+    KnowledgeRevisionDraftInputSchema,
+  ),
+  definition(
+    KNOWLEDGE_REVISION_REBASE_TOOL_NAME,
+    "Explicitly rebase a draft onto the latest formal store. Every reported conflict requires a resolution.",
+    KnowledgeRevisionRebaseInputSchema,
+  ),
+  definition(
+    KNOWLEDGE_REVISION_SUBMIT_DRAFT_TOOL_NAME,
+    "Submit a non-empty validated knowledge draft for human review. This does not merge or publish it.",
+    KnowledgeRevisionSubmitDraftInputSchema,
+  ),
+] as const;
+
+export const PRAGMA_MANAGEMENT_TOOL_NAMES = PRAGMA_MANAGEMENT_TOOL_DEFINITIONS.map(
+  ({ name }) => name,
+);
+
 export function createPragmaManagementTools(
   ports: PragmaManagementToolPorts,
 ): readonly PragmaManagementTool[] {
   const port = ports.knowledgeRevisions;
+  const [listTargets, listDrafts, start, getDraft, inspectRebase, rebase, submitDraft] =
+    PRAGMA_MANAGEMENT_TOOL_DEFINITIONS;
   return [
     tool(
-      LIST_KNOWLEDGE_REVISION_TARGETS_TOOL_NAME,
-      "List knowledge bases that may be revised, with their exact target refs and current revisions.",
-      z.object({}).strict(),
+      listTargets,
       "none",
-      async (input, context) => await port.listTargets(invocation(context)),
+      async (_input, context) => await port.listTargets(invocation(context)),
     ),
     tool(
-      LIST_KNOWLEDGE_REVISION_DRAFTS_TOOL_NAME,
-      "List sparse knowledge revision drafts, optionally for one exact target ref.",
-      ListDraftsInputSchema,
+      listDrafts,
       "none",
-      async (input, context) =>
-        await port.listDrafts({ ...invocation(context), ...ListDraftsInputSchema.parse(input) }),
+      async (input, context) => await port.listDrafts({ ...invocation(context), ...input }),
     ),
     tool(
-      START_KNOWLEDGE_REVISION_TOOL_NAME,
-      "Start a revision in a new named draft or continue an existing draft. This creates or reuses a managed revision task and never changes formal knowledge.",
-      StartRevisionInputSchema,
+      start,
       "required",
-      async (input, context) =>
-        await port.start({ ...invocation(context), ...StartRevisionInputSchema.parse(input) }),
+      async (input, context) => await port.start({ ...invocation(context), ...input }),
     ),
     tool(
-      GET_KNOWLEDGE_REVISION_DRAFT_TOOL_NAME,
-      "Read the current sparse overlay, base revision, state, and revision of one knowledge draft.",
-      DraftInputSchema,
+      getDraft,
       "none",
-      async (input, context) =>
-        await port.getDraft({ ...invocation(context), ...DraftInputSchema.parse(input) }),
+      async (input, context) => await port.getDraft({ ...invocation(context), ...input }),
     ),
     tool(
-      INSPECT_KNOWLEDGE_REVISION_REBASE_TOOL_NAME,
-      "Compare a stale draft with the latest formal store and list every explicit three-way conflict.",
-      DraftInputSchema,
+      inspectRebase,
       "none",
-      async (input, context) =>
-        await port.inspectRebase({ ...invocation(context), ...DraftInputSchema.parse(input) }),
+      async (input, context) => await port.inspectRebase({ ...invocation(context), ...input }),
     ),
     tool(
-      REBASE_KNOWLEDGE_REVISION_DRAFT_TOOL_NAME,
-      "Explicitly rebase a draft onto the latest formal store. Every reported conflict requires a resolution.",
-      RebaseDraftInputSchema,
+      rebase,
       "none",
-      async (input, context) =>
-        await port.rebase({ ...invocation(context), ...RebaseDraftInputSchema.parse(input) }),
+      async (input, context) => await port.rebase({ ...invocation(context), ...input }),
     ),
     tool(
-      SUBMIT_KNOWLEDGE_REVISION_DRAFT_TOOL_NAME,
-      "Submit a non-empty validated knowledge draft for human review. This does not merge or publish it.",
-      SubmitDraftInputSchema,
+      submitDraft,
       "none",
-      async (input, context) =>
-        await port.submitDraft({ ...invocation(context), ...SubmitDraftInputSchema.parse(input) }),
+      async (input, context) => await port.submitDraft({ ...invocation(context), ...input }),
     ),
   ];
 }
 
 function tool<TSchema extends z.ZodType>(
-  name: string,
-  description: string,
-  schema: TSchema,
+  toolDefinition: {
+    readonly name: string;
+    readonly description: string;
+    readonly schema: TSchema;
+    readonly inputSchema: PragmaManagementTool["inputSchema"];
+  },
   approval: "none" | "required",
   call: (
     input: z.infer<TSchema>,
@@ -219,14 +325,15 @@ function tool<TSchema extends z.ZodType>(
   ) => Promise<unknown>,
 ): PragmaManagementTool {
   return {
-    name,
-    description,
-    inputSchema: z.toJSONSchema(schema),
+    name: toolDefinition.name,
+    description: toolDefinition.description,
+    inputSchema: toolDefinition.inputSchema,
     approval:
       approval === "none"
         ? { mode: "none" }
         : { mode: "required", reason: "Start a managed knowledge revision task." },
-    call: async (args, _signal, context) => result(await call(schema.parse(args), context)),
+    call: async (args, _signal, context) =>
+      result(await call(toolDefinition.schema.parse(args), context)),
   };
 }
 

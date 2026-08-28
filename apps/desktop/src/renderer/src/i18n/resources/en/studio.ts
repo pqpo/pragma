@@ -1487,4 +1487,5 @@ export const studio = {
   rejectSkillRevision: "Reject",
   retrySkillRevision: "Retry",
   deleteSkillRevision: "Delete task",
+  fixedSystemTool: "fixed system tool",
 } as const;

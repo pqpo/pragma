@@ -1,4 +1,5 @@
 import { describe, expect, it, vi } from "vitest";
+import { PRAGMA_MANAGEMENT_TOOL_DEFINITIONS } from "@pragma/built-in-agents";
 
 import {
   BUILT_IN_PRAGMA_MANAGEMENT_CAPABILITY,
@@ -22,12 +23,26 @@ describe("built-in capabilities", () => {
     ).resolves.toEqual([BUILT_IN_PRAGMA_MANAGEMENT_CAPABILITY, userCapability]);
   });
 
+  it("publishes the authoritative input schema for every management tool", () => {
+    const capability = BUILT_IN_PRAGMA_MANAGEMENT_CAPABILITY.definition;
+    expect(capability.kind).toBe("mcp_server");
+    if (capability.kind !== "mcp_server") return;
+
+    for (const expected of PRAGMA_MANAGEMENT_TOOL_DEFINITIONS) {
+      expect(capability.tools.find((tool) => tool.name === expected.name)).toMatchObject({
+        name: expected.name,
+        description: expected.description,
+        inputSchema: expected.inputSchema,
+      });
+    }
+  });
+
   it("tests the read-only listing tool against the Host port", async () => {
     const listTargets = vi.fn(async () => []);
     const result = await testBuiltInCapability(
       {
         id: BUILT_IN_PRAGMA_MANAGEMENT_CAPABILITY.manifest.id,
-        toolName: "list_knowledge_revision_targets",
+        toolName: "knowledge_revision_list_targets",
         input: {},
       },
       revisionPort({ listTargets }),
@@ -43,7 +58,7 @@ describe("built-in capabilities", () => {
     const result = await testBuiltInCapability(
       {
         id: BUILT_IN_PRAGMA_MANAGEMENT_CAPABILITY.manifest.id,
-        toolName: "start_knowledge_revision",
+        toolName: "knowledge_revision_start",
         input: { targetRef: "context:test", prompt: "Revise this knowledge." },
       },
       revisionPort({ start }),

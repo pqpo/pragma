@@ -195,7 +195,102 @@ export function assertProgressiveKnowledgeStructure(
       });
     }
   }
-  ProgressiveKnowledgeStoreFilesSchema.parse([...projected.values()]);
+  const files = [...projected.values()];
+  const diagnostics: KnowledgeDraftValidationDiagnostic[] = [];
+  const structure = ProgressiveKnowledgeStoreFilesSchema.safeParse(files);
+  if (!structure.success) {
+    diagnostics.push(
+      ...structure.error.issues.map((issue) => ({
+        id: diagnosticFileId(issue.path, issue.message, files),
+        reason: issue.message,
+      })),
+    );
+  }
+  diagnostics.push(...validateNavigationLinks(files));
+  if (diagnostics.length > 0) throw new KnowledgeDraftValidationError(diagnostics);
+}
+
+export interface KnowledgeDraftValidationDiagnostic {
+  readonly id: string;
+  readonly reason: string;
+}
+
+export class KnowledgeDraftValidationError extends Error {
+  readonly code = "knowledge_draft_validation_failed" as const;
+
+  constructor(readonly diagnostics: readonly KnowledgeDraftValidationDiagnostic[]) {
+    super(
+      [
+        "Knowledge draft validation failed:",
+        ...diagnostics.map((diagnostic) => `- ${diagnostic.id}: ${diagnostic.reason}`),
+      ].join("\n"),
+    );
+    this.name = "KnowledgeDraftValidationError";
+  }
+}
+
+function diagnosticFileId(
+  path: readonly PropertyKey[],
+  message: string,
+  files: ReadonlyArray<ContextStoreRevisionSnapshot["files"][number]>,
+): string {
+  const index = path.find((segment): segment is number => typeof segment === "number");
+  if (index !== undefined && files[index] !== undefined) return files[index].id;
+  const mentioned = message.match(/(?:guide|overview|index)\.md|indexes\/[\w./-]+\.md/u)?.[0];
+  return mentioned ?? "store";
+}
+
+function validateNavigationLinks(
+  files: ReadonlyArray<ContextStoreRevisionSnapshot["files"][number]>,
+): readonly KnowledgeDraftValidationDiagnostic[] {
+  const ids = new Set(files.map((file) => file.id));
+  const diagnostics: KnowledgeDraftValidationDiagnostic[] = [];
+  for (const file of files.filter(
+    (candidate) =>
+      candidate.id === "overview.md" ||
+      candidate.id === "index.md" ||
+      candidate.id.startsWith("indexes/"),
+  )) {
+    const content = file.content.replace(
+      /(?:^|\n)(?:```|~~~)[\s\S]*?(?:\n(?:```|~~~)(?=\n|$)|$)/gu,
+      "\n",
+    );
+    const missing = new Set<string>();
+    for (const match of content.matchAll(
+      /!?\[[^\]]*\]\((?:<([^>]+)>|([^\s)]+))(?:\s+[^)]*)?\)/gu,
+    )) {
+      const rawTarget = (match[1] ?? match[2] ?? "").trim();
+      if (
+        rawTarget.length === 0 ||
+        rawTarget.startsWith("#") ||
+        /^[a-z][a-z0-9+.-]*:/iu.test(rawTarget)
+      ) {
+        continue;
+      }
+      const target = rawTarget.split(/[?#]/u, 1)[0] ?? "";
+      const direct = normalizeKnowledgePath(target);
+      const parent = file.id.includes("/") ? file.id.slice(0, file.id.lastIndexOf("/")) : "";
+      const relative = normalizeKnowledgePath(parent.length === 0 ? target : `${parent}/${target}`);
+      if (direct.length > 0 && !ids.has(direct) && !ids.has(relative)) missing.add(rawTarget);
+    }
+    for (const target of missing) {
+      diagnostics.push({
+        id: file.id,
+        reason: `Internal Markdown link target does not exist: ${target}`,
+      });
+    }
+  }
+  return diagnostics;
+}
+
+function normalizeKnowledgePath(value: string): string {
+  const segments: string[] = [];
+  for (const segment of value.replace(/^\/+|\.\//gu, "").split("/")) {
+    if (segment.length === 0 || segment === ".") continue;
+    if (segment === "..") segments.pop();
+    else segments.push(segment);
+  }
+  return segments.join("/");
 }
 
 function requireState(current: string, allowed: readonly string[]): void {

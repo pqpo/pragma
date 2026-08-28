@@ -733,7 +733,10 @@ describe("MissionDetailFragment", () => {
     const contextStoreId = "10000000-0000-4000-8000-000000000001";
     const html = renderToStaticMarkup(
       <MissionDetailFragment
-        mission={{ ...missionFixture("expert"), contextStoreIds: [contextStoreId] }}
+        mission={{
+          ...missionFixture("expert"),
+          contextMounts: [{ kind: "context-store", storeId: contextStoreId }],
+        }}
       />,
     );
 
@@ -2510,7 +2513,7 @@ describe("Mission human answers", () => {
 
 function missionFixture(kind: "expert" | "team"): Mission {
   return {
-    schemaVersion: "pragma.mission/v9",
+    schemaVersion: "pragma.mission/v10",
     origin: { type: "user" },
     id: "00000000-0000-4000-8000-000000000000",
     title: "Missions page design",
@@ -2519,7 +2522,7 @@ function missionFixture(kind: "expert" | "team"): Mission {
     toolPermissionMode: "request-approval",
     workspace: { path: "/workspace/expert-mesh", basename: "expert-mesh" },
     project: { id: "studio", revision: 1 },
-    contextStoreIds: [],
+    contextMounts: [],
     executor: {
       kind,
       ref: kind === "expert" ? "expert:v2vt1v01vzz6j24q" : "team:gmpsevbrb8danedb",

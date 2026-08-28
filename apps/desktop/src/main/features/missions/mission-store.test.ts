@@ -59,8 +59,8 @@ describe("mission store", () => {
       expect.objectContaining({ id: created.id, title: created.title }),
     ]);
     const manifest = await readFile(join(root, "missions", created.id, "mission.yaml"), "utf8");
-    expect(manifest).toContain("schemaVersion: pragma.mission/v9");
-    expect(created.contextStoreIds).toEqual([]);
+    expect(manifest).toContain("schemaVersion: pragma.mission/v10");
+    expect(created.contextMounts).toEqual([]);
     expect(manifest).toContain("revision: 3");
     expect(manifest).toContain("toolPermissionMode: full-access");
     expect(manifest).toContain("modelOverride:");
@@ -80,14 +80,152 @@ describe("mission store", () => {
       goal: "Use Mission Knowledge",
       project: { id: "studio", revision: 1 },
       executor: missionExecutorSnapshot(expertFixture()),
-      contextStoreIds: [contextStoreId],
+      contextMounts: [{ kind: "context-store", storeId: contextStoreId }],
     });
 
     await expect(store.isContextStoreReferenced(contextStoreId)).resolves.toBe(true);
-    await expect(store.updateContextStores(created.id, [])).resolves.toMatchObject({
-      contextStoreIds: [],
+    await expect(store.updateContextMounts(created.id, [])).resolves.toMatchObject({
+      contextMounts: [],
     });
     await expect(store.isContextStoreReferenced(contextStoreId)).resolves.toBe(false);
+  });
+
+  it("replaces a published mount with an owning revision draft and restores it", async () => {
+    const root = await temporaryRoot();
+    const store = createMissionStore({ missionsPath: join(root, "missions") });
+    const contextStoreId = "10000000-0000-4000-8000-000000000001";
+    const draftId = "20000000-0000-4000-8000-000000000002";
+    const revisionJobId = "30000000-0000-4000-8000-000000000003";
+    const revisionExpertRef = "expert:0000000000st0rev";
+    const created = await store.create({
+      workspace: { path: join(root, "workspace"), basename: "workspace" },
+      goal: "Revise Mission Knowledge",
+      project: { id: "studio", revision: 1 },
+      executor: { kind: "expert", ref: revisionExpertRef, name: "Store Revision Agent" },
+      contextMounts: [{ kind: "context-store", storeId: contextStoreId }],
+    });
+
+    await expect(
+      store.mountManagedRevisionDraft({
+        id: created.id,
+        expectedExecutorRef: revisionExpertRef,
+        storeId: contextStoreId,
+        draftId,
+        revisionJobId,
+      }),
+    ).resolves.toMatchObject({
+      contextMounts: [{ kind: "context-store-draft", draftId, revisionJobId }],
+    });
+    await expect(
+      store.mountManagedRevisionDraft({
+        id: created.id,
+        expectedExecutorRef: revisionExpertRef,
+        storeId: contextStoreId,
+        draftId,
+        revisionJobId,
+      }),
+    ).resolves.toMatchObject({
+      contextMounts: [{ kind: "context-store-draft", draftId, revisionJobId }],
+    });
+    await expect(store.updateContextMounts(created.id, [])).rejects.toThrow(
+      "Managed Mission Knowledge Draft",
+    );
+    await store.updateContextMounts(created.id, [
+      { kind: "context-store-draft", draftId, revisionJobId },
+      { kind: "context-store", storeId: contextStoreId },
+    ]);
+    await expect(
+      store.restoreManagedRevisionStore({
+        id: created.id,
+        storeId: contextStoreId,
+        draftId,
+        revisionJobId,
+      }),
+    ).resolves.toMatchObject({
+      contextMounts: [{ kind: "context-store", storeId: contextStoreId }],
+    });
+  });
+
+  it("lets the revision Agent claim an already-mounted unowned draft", async () => {
+    const root = await temporaryRoot();
+    const store = createMissionStore({ missionsPath: join(root, "missions") });
+    const contextStoreId = "10000000-0000-4000-8000-000000000001";
+    const draftId = "20000000-0000-4000-8000-000000000002";
+    const revisionJobId = "30000000-0000-4000-8000-000000000003";
+    const revisionExpertRef = "expert:0000000000st0rev";
+    const created = await store.create({
+      workspace: { path: join(root, "workspace"), basename: "workspace" },
+      goal: "Continue an existing draft",
+      project: { id: "studio", revision: 1 },
+      executor: { kind: "expert", ref: revisionExpertRef, name: "Store Revision Agent" },
+      contextMounts: [{ kind: "context-store-draft", draftId }],
+    });
+
+    await expect(
+      store.mountManagedRevisionDraft({
+        id: created.id,
+        expectedExecutorRef: revisionExpertRef,
+        storeId: contextStoreId,
+        draftId,
+        revisionJobId,
+      }),
+    ).resolves.toMatchObject({
+      contextMounts: [{ kind: "context-store-draft", draftId, revisionJobId }],
+    });
+    await expect(
+      store.restoreManagedRevisionStore({
+        id: created.id,
+        storeId: contextStoreId,
+        draftId,
+        revisionJobId,
+      }),
+    ).resolves.toMatchObject({
+      contextMounts: [{ kind: "context-store", storeId: contextStoreId }],
+    });
+  });
+
+  it("keeps independent managed drafts mounted for multiple knowledge bases", async () => {
+    const root = await temporaryRoot();
+    const store = createMissionStore({ missionsPath: join(root, "missions") });
+    const firstStoreId = "10000000-0000-4000-8000-000000000001";
+    const secondStoreId = "10000000-0000-4000-8000-000000000002";
+    const firstDraftId = "20000000-0000-4000-8000-000000000001";
+    const secondDraftId = "20000000-0000-4000-8000-000000000002";
+    const firstJobId = "30000000-0000-4000-8000-000000000001";
+    const secondJobId = "30000000-0000-4000-8000-000000000002";
+    const revisionExpertRef = "expert:0000000000st0rev";
+    const created = await store.create({
+      workspace: { path: join(root, "workspace"), basename: "workspace" },
+      goal: "Revise two knowledge bases",
+      project: { id: "studio", revision: 1 },
+      executor: { kind: "expert", ref: revisionExpertRef, name: "Store Revision Agent" },
+      contextMounts: [
+        { kind: "context-store", storeId: firstStoreId },
+        { kind: "context-store", storeId: secondStoreId },
+      ],
+    });
+
+    await store.mountManagedRevisionDraft({
+      id: created.id,
+      expectedExecutorRef: revisionExpertRef,
+      storeId: firstStoreId,
+      draftId: firstDraftId,
+      revisionJobId: firstJobId,
+    });
+    await expect(
+      store.mountManagedRevisionDraft({
+        id: created.id,
+        expectedExecutorRef: revisionExpertRef,
+        storeId: secondStoreId,
+        draftId: secondDraftId,
+        revisionJobId: secondJobId,
+      }),
+    ).resolves.toMatchObject({
+      contextMounts: [
+        { kind: "context-store-draft", draftId: firstDraftId, revisionJobId: firstJobId },
+        { kind: "context-store-draft", draftId: secondDraftId, revisionJobId: secondJobId },
+      ],
+    });
   });
 
   it("materializes images inside the Mission while keeping file and directory references", async () => {
@@ -237,13 +375,17 @@ describe("mission store", () => {
     await writeFile(sourceImage, "branch-image");
     const store = createMissionStore({ missionsPath: join(root, "missions") });
     const contextStoreId = "10000000-0000-4000-8000-000000000001";
+    const draftId = "20000000-0000-4000-8000-000000000001";
     const source = await store.create({
       workspace: { path: join(root, "workspace"), basename: "workspace" },
       goal: "Continue a long-running investigation",
       title: "A".repeat(48),
       project: { id: "studio", revision: 2 },
       executor: missionExecutorSnapshot(expertFixture()),
-      contextStoreIds: [contextStoreId],
+      contextMounts: [
+        { kind: "context-store", storeId: contextStoreId },
+        { kind: "context-store-draft", draftId },
+      ],
       toolPermissionMode: "full-access",
       modelOverride: { providerId: "provider", modelId: "old-model", thinkingLevel: "high" },
       attachments: [
@@ -351,12 +493,12 @@ describe("mission store", () => {
     });
 
     expect(branch).toMatchObject({
-      schemaVersion: "pragma.mission/v9",
+      schemaVersion: "pragma.mission/v10",
       title: `分支 · ${source.title}`,
       workspace: source.workspace,
       project: { id: "studio", revision: 7 },
       executor: { name: "Updated Product Designer" },
-      contextStoreIds: [contextStoreId],
+      contextMounts: [{ kind: "context-store", storeId: contextStoreId }],
       toolPermissionMode: "full-access",
       modelOverride: { modelId: "old-model" },
       branch: {
@@ -1244,7 +1386,7 @@ describe("mission store", () => {
     const manifestPath = join(directory, "mission.yaml");
     await writeFile(
       manifestPath,
-      (await readFile(manifestPath, "utf8")).replace("pragma.mission/v9", "pragma.mission/v2"),
+      (await readFile(manifestPath, "utf8")).replace("pragma.mission/v10", "pragma.mission/v2"),
       "utf8",
     );
     await expect(store.get(created.id)).rejects.toMatchObject({ code: "unsupported_schema" });
@@ -1274,7 +1416,7 @@ describe("mission store", () => {
     await writeFile(
       unsupportedManifest,
       (await readFile(unsupportedManifest, "utf8")).replace(
-        "pragma.mission/v9",
+        "pragma.mission/v10",
         "pragma.mission/v99",
       ),
       "utf8",
@@ -1314,7 +1456,7 @@ describe("mission store", () => {
     await writeFile(
       unsupportedManifest,
       (await readFile(unsupportedManifest, "utf8")).replace(
-        "pragma.mission/v9",
+        "pragma.mission/v10",
         "pragma.mission/v99",
       ),
       "utf8",
@@ -1349,10 +1491,10 @@ describe("mission store", () => {
     await writeFile(manifestPath, formatPragmaYaml(legacy), "utf8");
 
     await expect(store.get(created.id)).resolves.toMatchObject({
-      schemaVersion: "pragma.mission/v9",
+      schemaVersion: "pragma.mission/v10",
       flowInput: { goal: "Legacy Flow goal", workspace },
     });
-    expect(await readFile(manifestPath, "utf8")).toContain("schemaVersion: pragma.mission/v9");
+    expect(await readFile(manifestPath, "utf8")).toContain("schemaVersion: pragma.mission/v10");
 
     const future = parsePragmaYaml(await readFile(manifestPath, "utf8")) as Record<string, unknown>;
     future["schemaVersion"] = "pragma.mission/v99";
@@ -1376,7 +1518,7 @@ describe("mission store", () => {
     await writeFile(manifestPath, formatPragmaYaml(legacy), "utf8");
 
     await expect(store.get(created.id)).resolves.toMatchObject({
-      schemaVersion: "pragma.mission/v9",
+      schemaVersion: "pragma.mission/v10",
       origin: { type: "user" },
     });
     expect(await readFile(manifestPath, "utf8")).toContain("type: user");
@@ -1394,8 +1536,8 @@ describe("mission store", () => {
     const { directory, id, source } = await installMissionV7Fixture(root);
 
     await expect(store.get(id)).resolves.toMatchObject({
-      schemaVersion: "pragma.mission/v9",
-      contextStoreIds: [],
+      schemaVersion: "pragma.mission/v10",
+      contextMounts: [],
     });
     expect(
       parsePragmaYaml(
@@ -1424,8 +1566,8 @@ describe("mission store", () => {
     );
 
     await expect(store.get(id)).resolves.toMatchObject({
-      schemaVersion: "pragma.mission/v9",
-      contextStoreIds: [],
+      schemaVersion: "pragma.mission/v10",
+      contextMounts: [],
     });
     await expect(
       readFile(join(directory, ".v7-to-v8.transaction.json"), "utf8"),
@@ -1439,8 +1581,8 @@ describe("mission store", () => {
 
     const migrated = await store.get(id);
     expect(migrated).toMatchObject({
-      schemaVersion: "pragma.mission/v9",
-      contextStoreIds: ["10000000-0000-4000-8000-000000000001"],
+      schemaVersion: "pragma.mission/v10",
+      contextMounts: [{ kind: "context-store", storeId: "10000000-0000-4000-8000-000000000001" }],
     });
     expect(migrated.branch).toBeUndefined();
     expect(
@@ -1468,9 +1610,55 @@ describe("mission store", () => {
       "utf8",
     );
 
-    await expect(store.get(id)).resolves.toMatchObject({ schemaVersion: "pragma.mission/v9" });
+    await expect(store.get(id)).resolves.toMatchObject({ schemaVersion: "pragma.mission/v10" });
     await expect(
       readFile(join(directory, ".v8-to-v9.transaction.json"), "utf8"),
+    ).rejects.toMatchObject({ code: "ENOENT" });
+  });
+
+  it("migrates the historical v9 Mission fixture to typed v10 mounts with a backup", async () => {
+    const root = await temporaryRoot();
+    const store = createMissionStore({ missionsPath: join(root, "missions") });
+    const { directory, id, source } = await installMissionV9Fixture(root);
+
+    await expect(store.get(id)).resolves.toMatchObject({
+      schemaVersion: "pragma.mission/v10",
+      contextMounts: [{ kind: "context-store", storeId: "10000000-0000-4000-8000-000000000001" }],
+    });
+    expect(
+      parsePragmaYaml(
+        await readFile(join(directory, "migration-backups", "mission.v9.yaml"), "utf8"),
+      ),
+    ).toEqual(parsePragmaYaml(source));
+  });
+
+  it("replays an interrupted v9-to-v10 migration journal", async () => {
+    const root = await temporaryRoot();
+    const store = createMissionStore({ missionsPath: join(root, "missions") });
+    const { directory, id, source } = await installMissionV9Fixture(root);
+    const legacy = parsePragmaYaml(source) as Record<string, unknown>;
+    const { contextStoreIds, ...rest } = legacy;
+    const target = {
+      ...rest,
+      schemaVersion: "pragma.mission/v10",
+      contextMounts: (contextStoreIds as string[]).map((storeId) => ({
+        kind: "context-store",
+        storeId,
+      })),
+    };
+    await writeFile(
+      join(directory, ".v9-to-v10.transaction.json"),
+      `${JSON.stringify({
+        schemaVersion: "pragma.mission-v10-migration/v1",
+        missionId: id,
+        target,
+      })}\n`,
+      "utf8",
+    );
+
+    await expect(store.get(id)).resolves.toMatchObject({ schemaVersion: "pragma.mission/v10" });
+    await expect(
+      readFile(join(directory, ".v9-to-v10.transaction.json"), "utf8"),
     ).rejects.toMatchObject({ code: "ENOENT" });
   });
 
@@ -1534,7 +1722,7 @@ describe("mission store", () => {
     );
 
     await expect(store.get(created.id)).resolves.toMatchObject({
-      schemaVersion: "pragma.mission/v9",
+      schemaVersion: "pragma.mission/v10",
       id: created.id,
     });
     await expect(
@@ -1592,6 +1780,19 @@ async function installMissionV8Fixture(root: string): Promise<{
   readonly source: string;
 }> {
   const source = await readFile(new URL("./fixtures/mission-v8.yaml", import.meta.url), "utf8");
+  const manifest = parsePragmaYaml(source) as { readonly id: string };
+  const directory = join(root, "missions", manifest.id);
+  await mkdir(directory, { recursive: true });
+  await writeFile(join(directory, "mission.yaml"), source, "utf8");
+  return { directory, id: manifest.id, source };
+}
+
+async function installMissionV9Fixture(root: string): Promise<{
+  readonly directory: string;
+  readonly id: string;
+  readonly source: string;
+}> {
+  const source = await readFile(new URL("./fixtures/mission-v9.yaml", import.meta.url), "utf8");
   const manifest = parsePragmaYaml(source) as { readonly id: string };
   const directory = join(root, "missions", manifest.id);
   await mkdir(directory, { recursive: true });

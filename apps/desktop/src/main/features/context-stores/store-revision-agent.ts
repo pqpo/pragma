@@ -6,7 +6,6 @@ import { withFileLock } from "@pragma/context-filesystem";
 import { type PragmaLoggerProvider, type RuntimeResolver } from "@pragma/core";
 import {
   STORE_REVISION_EXPERT_REF,
-  STORE_REVISION_TARGET_BINDING_REF,
   builtInAgentFingerprint,
   compileBuiltInAgent,
 } from "@pragma/built-in-agents";
@@ -24,17 +23,12 @@ import { resolveSystemExpertRuntimeDefaults } from "../experts/system-expert-run
 import type { MissionRunner } from "../missions/mission-runner.ts";
 import { MissionStoreError, type MissionStore } from "../missions/mission-store.ts";
 import type { PragmaProjectStore } from "../projects/pragma-project-store.ts";
-import type {
-  ContextStoreRevisionGenerator,
-  ContextStoreRevisionService,
-} from "./context-store-revision-service.ts";
-import type { ContextStoreStore } from "./context-store-store.ts";
+import type { ContextStoreRevisionGenerator } from "./context-store-revision-service.ts";
+import type { ContextStoreRevisionService } from "./context-store-revision-service.ts";
 
 export interface DesktopStoreRevisionAgent {
   readonly generator: ContextStoreRevisionGenerator;
   compile(input: {
-    readonly storeId?: string | undefined;
-    readonly draftId?: string | undefined;
     readonly profile: ContextStoreRevisionProfile;
     readonly runtimes?: RuntimeResolver | undefined;
     readonly adapterHost?: PragmaAdapterHost | undefined;
@@ -46,8 +40,7 @@ export interface DesktopStoreRevisionAgent {
 }
 
 export function createDesktopStoreRevisionAgent(options: {
-  readonly contextStores: ContextStoreStore;
-  readonly drafts: Pick<ContextStoreRevisionService, "resolveDraft">;
+  readonly revisions: Pick<ContextStoreRevisionService, "list" | "attachMission" | "detachMission">;
   readonly missions: MissionStore;
   readonly runner: MissionRunner;
   readonly project: PragmaProjectStore;
@@ -89,8 +82,8 @@ export function createDesktopStoreRevisionAgent(options: {
         workspace: { path: isolatedWorkspace, basename: basename(isolatedWorkspace) },
         goal: [
           input.request.prompt,
-          `The sparse revision draft ${input.draftId} is mounted as target-store.`,
-          "Edit target-store with its native Context tools, then submit the draft for review.",
+          `The sparse revision draft ${input.draftId} is mounted as Mission Knowledge.`,
+          "Edit the mission-knowledge-draft namespace with its native Context tools, then submit the draft for review.",
         ].join("\n\n"),
         title: `Revise knowledge base ${input.request.storeId.slice(0, 8)}`,
         project: { id: project.projectId, revision: project.revision },
@@ -105,6 +98,13 @@ export function createDesktopStoreRevisionAgent(options: {
           storeId: input.request.storeId,
         },
         toolPermissionMode: "request-approval",
+        contextMounts: [
+          {
+            kind: "context-store-draft",
+            draftId: input.draftId,
+            revisionJobId: input.jobId,
+          },
+        ],
       });
       await registerAgentMission(registryPath, mission.id, input.jobId, input.request.storeId);
       await options.onMissionCreated?.({ jobId: input.jobId, missionId: mission.id });
@@ -124,12 +124,6 @@ export function createDesktopStoreRevisionAgent(options: {
   const agent: DesktopStoreRevisionAgent = {
     async compile(input) {
       const runtime = await resolveRuntime(input.profile, input.runtimes);
-      const resolved =
-        input.draftId !== undefined
-          ? await options.drafts.resolveDraft(input.draftId)
-          : input.storeId === undefined
-            ? undefined
-            : await options.contextStores.resolve(input.storeId);
       return await compileBuiltInAgent({
         ref: STORE_REVISION_EXPERT_REF,
         environmentId: "desktop-store-revision",
@@ -153,14 +147,6 @@ export function createDesktopStoreRevisionAgent(options: {
           environmentId: input.adapterHost?.environmentId ?? "desktop-store-revision",
           projectRoot: isolatedWorkspace,
           async resolveBinding(ref) {
-            if (ref === STORE_REVISION_TARGET_BINDING_REF && resolved !== undefined) {
-              return {
-                ref,
-                revision: resolved.revision,
-                fingerprint: createHash("sha256").update(resolved.revision).digest("hex"),
-                value: { store: resolved.store },
-              };
-            }
             return await input.adapterHost?.resolveBinding(ref);
           },
           async resolveArtifact(source) {
@@ -191,6 +177,59 @@ export function createDesktopStoreRevisionAgent(options: {
     async recoverOrphans() {
       const entries = await readAgentMissionRegistry(registryPath);
       let recovered = 0;
+      for (const job of (await options.revisions.list()).slice(0, 100)) {
+        if (job.missionId === undefined) continue;
+        try {
+          const mission = await options.missions.get(job.missionId);
+          if (job.state === "running") {
+            await options.revisions.attachMission(job.id, job.missionId);
+          }
+          const claimed = mission.contextMounts.some(
+            (mount) =>
+              mount.kind === "context-store-draft" &&
+              mount.draftId === job.draftId &&
+              mount.revisionJobId === job.id,
+          );
+          if (claimed && (job.state === "merged" || job.state === "rejected")) {
+            await options.missions.restoreManagedRevisionStore({
+              id: mission.id,
+              storeId: job.request.storeId,
+              draftId: job.draftId,
+              revisionJobId: job.id,
+            });
+            await options.revisions.detachMission(job.id, job.missionId);
+            recovered += 1;
+          } else if (
+            !claimed &&
+            job.state === "running" &&
+            mission.executor.ref === STORE_REVISION_EXPERT_REF
+          ) {
+            if (
+              mission.contextMounts.some(
+                (mount) => mount.kind === "context-store" && mount.storeId === job.request.storeId,
+              )
+            ) {
+              await options.missions.mountManagedRevisionDraft({
+                id: mission.id,
+                expectedExecutorRef: STORE_REVISION_EXPERT_REF,
+                storeId: job.request.storeId,
+                draftId: job.draftId,
+                revisionJobId: job.id,
+              });
+            } else {
+              await options.revisions.detachMission(job.id, job.missionId);
+            }
+            recovered += 1;
+          }
+        } catch (error) {
+          if (error instanceof MissionStoreError && error.code === "mission_not_found") {
+            await options.revisions.detachMission(job.id, job.missionId);
+            recovered += 1;
+            continue;
+          }
+          throw error;
+        }
+      }
       for (const entry of entries.slice(0, 100)) {
         try {
           await options.missions.get(entry.missionId);

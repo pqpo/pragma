@@ -1,5 +1,10 @@
 import { createHash } from "node:crypto";
 
+import {
+  KnowledgeRevisionDraftFileSchema,
+  KnowledgeRevisionDraftInspectionSchema,
+  KnowledgeRevisionDraftSummarySchema,
+} from "@pragma/built-in-agents";
 import type {
   KnowledgeRevisionSubmissionPort,
   KnowledgeRevisionTarget,
@@ -25,6 +30,20 @@ export function createDesktopKnowledgeRevisionSubmissionPort(options: {
   readonly contextStores: ContextStoreStore;
   readonly revisions: ContextStoreRevisionService;
   readonly additionalMountResources?: (() => readonly PragmaResource[]) | undefined;
+  readonly inlineMission?:
+    | {
+        readonly id: string;
+        readonly allowedStoreIds: ReadonlySet<string>;
+        readonly activeRevisionJobIdForStore: (storeId: string) => Promise<string | undefined>;
+        readonly writableNamespaceForStore: (storeId: string) => string;
+        readonly mountDraft: (input: {
+          readonly storeId: string;
+          readonly draftId: string;
+          readonly revisionJobId: string;
+          readonly previousMissionId?: string | undefined;
+        }) => Promise<{ readonly writableNamespace: string }>;
+      }
+    | undefined;
 }): KnowledgeRevisionSubmissionPort {
   const targets = async (): Promise<readonly ResolvedTarget[]> => {
     const [stores, project] = await Promise.all([
@@ -74,22 +93,64 @@ export function createDesktopKnowledgeRevisionSubmissionPort(options: {
       if (input.targetRef !== undefined && selectedStoreId === undefined) {
         throw new Error("knowledge_revision_target_unavailable");
       }
-      return await options.revisions.listDrafts(
+      const drafts = await options.revisions.listDrafts(
         selectedStoreId === undefined ? {} : { storeId: selectedStoreId },
+      );
+      return drafts.map((draft) =>
+        KnowledgeRevisionDraftSummarySchema.parse({
+          draftId: draft.id,
+          revision: draft.revision,
+          name: draft.name,
+          storeId: draft.storeId,
+          baseRevision: draft.baseRevision,
+          state: draft.state,
+          ...(draft.activeMissionId === undefined
+            ? {}
+            : { activeMissionId: draft.activeMissionId }),
+          ...(draft.submittedRevision === undefined
+            ? {}
+            : { submittedRevision: draft.submittedRevision }),
+          ...(draft.summary === undefined ? {} : { summary: draft.summary }),
+          createdAt: draft.createdAt,
+          updatedAt: draft.updatedAt,
+        }),
       );
     },
     async start(input) {
+      const inlineMission = options.inlineMission;
       const selected = (await targets()).find(
         (candidate) => candidate.target.targetRef === input.targetRef,
       );
       if (selected === undefined) throw new Error("knowledge_revision_target_unavailable");
+      if (inlineMission !== undefined && !inlineMission.allowedStoreIds.has(selected.storeId)) {
+        throw new Error("knowledge_revision_target_not_mounted");
+      }
+      const sourceDigest = digestSubmission(input, selected.storeId, input.prompt, input.draftId);
+      const activeRevisionJobId = await inlineMission?.activeRevisionJobIdForStore(
+        selected.storeId,
+      );
+      if (activeRevisionJobId !== undefined) {
+        if (inlineMission === undefined) throw new Error("knowledge_revision_mission_unavailable");
+        const active = await options.revisions.get(activeRevisionJobId);
+        if (active.request.sourceDigest === sourceDigest) {
+          return {
+            jobId: active.id,
+            draftId: active.draftId,
+            missionId: active.missionId,
+            state: active.state,
+            target: selected.target,
+            writableNamespace: inlineMission.writableNamespaceForStore(selected.storeId),
+          };
+        }
+        throw new Error("knowledge_revision_already_attached");
+      }
       const job = await options.revisions.start(
         {
           schemaVersion: "pragma.context-store-revision-request/v1",
           storeId: selected.storeId,
           prompt: input.prompt,
           source: "expert-reflection",
-          sourceDigest: digestSubmission(input, selected.storeId, input.prompt, input.draftId),
+          sourceDigest,
           provenance: {
             executionId: input.executionId,
             invocationId: input.invocationId,
@@ -102,17 +163,100 @@ export function createDesktopKnowledgeRevisionSubmissionPort(options: {
           ...(input.draftName === undefined ? {} : { draftName: input.draftName }),
         },
       );
-      options.revisions.scheduleProcessing();
+      let writableNamespace: string | undefined;
+      if (inlineMission === undefined) {
+        options.revisions.scheduleProcessing();
+      } else {
+        const attachedHere = job.missionId === undefined;
+        const previousMissionId =
+          job.missionId === undefined || job.missionId === inlineMission.id
+            ? undefined
+            : job.missionId;
+        if (attachedHere) {
+          await options.revisions.attachMission(job.id, inlineMission.id);
+        }
+        try {
+          ({ writableNamespace } = await inlineMission.mountDraft({
+            storeId: selected.storeId,
+            draftId: job.draftId,
+            revisionJobId: job.id,
+            ...(previousMissionId === undefined ? {} : { previousMissionId }),
+          }));
+        } catch (error) {
+          if (attachedHere) {
+            await options.revisions.detachMission(job.id, inlineMission.id);
+          }
+          throw error;
+        }
+      }
+      const attached = await options.revisions.get(job.id);
       return {
-        jobId: job.id,
-        draftId: job.draftId,
-        missionId: job.missionId,
-        state: job.state,
+        jobId: attached.id,
+        draftId: attached.draftId,
+        missionId: attached.missionId,
+        state: attached.state,
         target: selected.target,
+        ...(writableNamespace === undefined ? {} : { writableNamespace }),
       };
     },
     async getDraft(input) {
-      return await options.revisions.getDraft(input.draftId);
+      const draft = await options.revisions.getDraft(input.draftId);
+      if (input.fileId !== undefined) {
+        const file = await options.revisions.getDraftFile({
+          draftId: input.draftId,
+          id: input.fileId,
+        });
+        const bytes = Buffer.from(file.content, "utf8");
+        return KnowledgeRevisionDraftFileSchema.parse({
+          mode: "file",
+          draftId: draft.id,
+          draftRevision: draft.revision,
+          id: file.id,
+          content: file.content,
+          metadata: file.metadata,
+          revision: file.revision,
+          etag: file.etag,
+          sizeBytes: bytes.byteLength,
+          sha256: createHash("sha256").update(bytes).digest("hex"),
+        });
+      }
+      const current = await options.contextStores.getSnapshot(draft.storeId);
+      return KnowledgeRevisionDraftInspectionSchema.parse({
+        mode: "summary",
+        draft: {
+          draftId: draft.id,
+          revision: draft.revision,
+          name: draft.name,
+          storeId: draft.storeId,
+          baseRevision: draft.baseRevision,
+          baseSnapshotHash: draft.baseSnapshotHash,
+          state: draft.state,
+          activeMissionId: draft.activeMissionId,
+          submittedRevision: draft.submittedRevision,
+          summary: draft.summary,
+          createdAt: draft.createdAt,
+          updatedAt: draft.updatedAt,
+        },
+        currentStoreRevision: current.revision,
+        currentSnapshotHash: current.snapshotHash,
+        stale:
+          current.revision !== draft.baseRevision ||
+          current.snapshotHash !== draft.baseSnapshotHash,
+        overlay: {
+          files: draft.overlay.files.map((file) => {
+            const bytes = Buffer.from(file.content, "utf8");
+            return {
+              id: file.id,
+              metadata: file.metadata,
+              sizeBytes: bytes.byteLength,
+              sha256: createHash("sha256").update(bytes).digest("hex"),
+            };
+          }),
+          deletedFiles: draft.overlay.deletedFiles,
+          directories: draft.overlay.directories,
+          deletedDirectories: draft.overlay.deletedDirectories,
+        },
+      });
     },
     async inspectRebase(input) {
       return await options.revisions.inspectRebase(input.draftId);

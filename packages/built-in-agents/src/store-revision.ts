@@ -54,7 +54,7 @@ export function renderStoreRevisionPrompt(input: {
     `Store id: ${input.request.storeId}`,
     `Base revision: ${input.snapshot.revision}`,
     `Base snapshot hash: ${input.snapshot.snapshotHash}`,
-    "Use target-store list/search/read to inspect only what is needed.",
+    "Use the mounted Mission Knowledge list/search/read tools to inspect only what is needed.",
     "Revision request:",
     input.request.prompt,
     "Required JSON shape:",

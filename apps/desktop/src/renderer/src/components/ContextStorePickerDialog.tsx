@@ -82,9 +82,18 @@ export function ContextStorePickerDialog(props: {
           ) : null}
         </label>
         <div className="expert-picker-toolbar">
-          <span>{t("selectedCount", { count: props.selectedStoreIds.length })}</span>
+          <span>
+            {t("selectedCount", {
+              count: props.selectedStoreIds.length,
+            })}
+          </span>
           {props.selectedStoreIds.length > 0 ? (
-            <button type="button" onClick={() => props.onSelectedStoreIdsChange([])}>
+            <button
+              type="button"
+              onClick={() => {
+                props.onSelectedStoreIdsChange([]);
+              }}
+            >
               {t("clearSelection")}
             </button>
           ) : null}

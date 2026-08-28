@@ -29,6 +29,7 @@ import {
   MissionOriginSchema,
   MissionSchema,
   MissionV8Schema,
+  MissionV9Schema,
   MissionV3Schema,
   MissionV4Schema,
   MissionV5Schema,
@@ -42,6 +43,7 @@ import {
   latestMissionBranchableReply,
   MissionUserMessageSchema,
   type Mission,
+  type MissionContextMount,
   type MissionExecutor,
   type MissionModelOverride,
   type MissionSummary,
@@ -103,7 +105,7 @@ export interface MissionStore {
     readonly toolPermissionMode?: DesktopToolPermissionMode | undefined;
     readonly modelOverride?: MissionModelOverride | undefined;
     readonly origin?: Mission["origin"] | undefined;
-    readonly contextStoreIds?: readonly string[] | undefined;
+    readonly contextMounts?: readonly MissionContextMount[] | undefined;
   }): Promise<Mission>;
   updateOptions(
     id: string,
@@ -112,7 +114,20 @@ export interface MissionStore {
       readonly modelOverride?: MissionModelOverride | undefined;
     },
   ): Promise<Mission>;
-  updateContextStores(id: string, contextStoreIds: readonly string[]): Promise<Mission>;
+  updateContextMounts(id: string, contextMounts: readonly MissionContextMount[]): Promise<Mission>;
+  mountManagedRevisionDraft(input: {
+    readonly id: string;
+    readonly expectedExecutorRef: string;
+    readonly storeId: string;
+    readonly draftId: string;
+    readonly revisionJobId: string;
+  }): Promise<Mission>;
+  restoreManagedRevisionStore(input: {
+    readonly id: string;
+    readonly storeId: string;
+    readonly draftId: string;
+    readonly revisionJobId: string;
+  }): Promise<Mission>;
   isContextStoreReferenced(storeId: string): Promise<boolean>;
   updateExecution(
     id: string,
@@ -207,6 +222,12 @@ const MissionV8MigrationTransactionSchema = z.object({
 const MissionV9MigrationTransactionSchema = z.object({
   schemaVersion: z.literal("pragma.mission-v9-migration/v1"),
   missionId: MissionIdSchema,
+  target: MissionV9Schema,
+});
+
+const MissionV10MigrationTransactionSchema = z.object({
+  schemaVersion: z.literal("pragma.mission-v10-migration/v1"),
+  missionId: MissionIdSchema,
   target: MissionSchema,
 });
 
@@ -235,6 +256,10 @@ export function createMissionStore(options: {
     join(missionPath(id), ".v8-to-v9.transaction.json");
   const v8BackupPath = (id: string) =>
     join(missionPath(id), "migration-backups", "mission.v8.yaml");
+  const v10MigrationTransactionPath = (id: string) =>
+    join(missionPath(id), ".v9-to-v10.transaction.json");
+  const v9BackupPath = (id: string) =>
+    join(missionPath(id), "migration-backups", "mission.v9.yaml");
   const branchHistoryPath = (id: string) => join(missionPath(id), "branch", "history.json");
   const legacyProjectionPath = (id: string, executionId: string) =>
     join(missionPath(id), "execution-projections", `${executionId}.json`);
@@ -346,7 +371,9 @@ export function createMissionStore(options: {
     return target;
   };
 
-  const recoverV9Migration = async (id: string): Promise<Mission | undefined> => {
+  const recoverV9Migration = async (
+    id: string,
+  ): Promise<z.infer<typeof MissionV9Schema> | undefined> => {
     const value = await readJsonIfExists(v9MigrationTransactionPath(id));
     if (value === undefined) return undefined;
     const transaction = MissionV9MigrationTransactionSchema.parse(value);
@@ -372,8 +399,8 @@ export function createMissionStore(options: {
   const migrateV8ToV9 = async (
     id: string,
     legacy: z.infer<typeof MissionV8Schema>,
-  ): Promise<Mission> => {
-    const target = MissionSchema.parse({ ...legacy, schemaVersion: "pragma.mission/v9" });
+  ): Promise<z.infer<typeof MissionV9Schema>> => {
+    const target = MissionV9Schema.parse({ ...legacy, schemaVersion: "pragma.mission/v9" });
     await writeTextIfAbsent(v8BackupPath(id), formatPragmaYaml(legacy));
     await writeJsonAtomically(
       v9MigrationTransactionPath(id),
@@ -385,6 +412,56 @@ export function createMissionStore(options: {
     );
     await writeYamlAtomically(manifestPath(id), target);
     await rm(v9MigrationTransactionPath(id), { force: true });
+    return target;
+  };
+
+  const recoverV10Migration = async (id: string): Promise<Mission | undefined> => {
+    const value = await readJsonIfExists(v10MigrationTransactionPath(id));
+    if (value === undefined) return undefined;
+    const transaction = MissionV10MigrationTransactionSchema.parse(value);
+    if (transaction.missionId !== id || transaction.target.id !== id) {
+      throw new MissionStoreError(
+        "config_invalid",
+        `Mission ${id} has a migration journal for a different Mission.`,
+      );
+    }
+    const persisted = parsePragmaYaml(await readFile(manifestPath(id), "utf8"));
+    const persistedVersion = readSchemaVersion(persisted);
+    if (persistedVersion !== "pragma.mission/v9" && persistedVersion !== "pragma.mission/v10") {
+      throw new MissionStoreError(
+        "unsupported_schema",
+        `Mission ${id} cannot replay its v9-to-v10 migration from ${String(persistedVersion)}.`,
+      );
+    }
+    await writeYamlAtomically(manifestPath(id), transaction.target);
+    await rm(v10MigrationTransactionPath(id), { force: true });
+    return transaction.target;
+  };
+
+  const migrateV9ToV10 = async (
+    id: string,
+    legacy: z.infer<typeof MissionV9Schema>,
+  ): Promise<Mission> => {
+    const { contextStoreIds, ...rest } = legacy;
+    const target = MissionSchema.parse({
+      ...rest,
+      schemaVersion: "pragma.mission/v10",
+      contextMounts: contextStoreIds.map((storeId) => ({
+        kind: "context-store" as const,
+        storeId,
+      })),
+    });
+    await writeTextIfAbsent(v9BackupPath(id), formatPragmaYaml(legacy));
+    await writeJsonAtomically(
+      v10MigrationTransactionPath(id),
+      MissionV10MigrationTransactionSchema.parse({
+        schemaVersion: "pragma.mission-v10-migration/v1",
+        missionId: id,
+        target,
+      }),
+    );
+    await writeYamlAtomically(manifestPath(id), target);
+    await rm(v10MigrationTransactionPath(id), { force: true });
     return target;
   };
 
@@ -415,10 +492,13 @@ export function createMissionStore(options: {
 
   const readMissionUnlocked = async (id: string): Promise<Mission> => {
     try {
+      const recoveredV10 = await recoverV10Migration(id);
+      if (recoveredV10 !== undefined) return recoveredV10;
       const recoveredV9 = await recoverV9Migration(id);
-      if (recoveredV9 !== undefined) return recoveredV9;
+      if (recoveredV9 !== undefined) return await migrateV9ToV10(id, recoveredV9);
       const recoveredV8 = await recoverV8Migration(id);
-      if (recoveredV8 !== undefined) return await migrateV8ToV9(id, recoveredV8);
+      if (recoveredV8 !== undefined)
+        return await migrateV9ToV10(id, await migrateV8ToV9(id, recoveredV8));
       const recoveredV7 = await recoverV7Migration(id);
       const value = recoveredV7 ?? parsePragmaYaml(await readFile(manifestPath(id), "utf8"));
       const schemaVersion = readSchemaVersion(value);
@@ -465,19 +545,31 @@ export function createMissionStore(options: {
           origin: { type: "user" },
         });
         await writeYamlAtomically(manifestPath(id), migrated);
-        return await migrateV8ToV9(id, await migrateV7ToV8(id, await migrateV6ToV7(id, migrated)));
+        return await migrateV9ToV10(
+          id,
+          await migrateV8ToV9(id, await migrateV7ToV8(id, await migrateV6ToV7(id, migrated))),
+        );
       }
       if (versionAfterRefMigration === "pragma.mission/v6") {
         const legacy = MissionV6Schema.parse(current);
-        return await migrateV8ToV9(id, await migrateV7ToV8(id, await migrateV6ToV7(id, legacy)));
+        return await migrateV9ToV10(
+          id,
+          await migrateV8ToV9(id, await migrateV7ToV8(id, await migrateV6ToV7(id, legacy))),
+        );
       }
       if (versionAfterRefMigration === "pragma.mission/v7") {
-        return await migrateV8ToV9(id, await migrateV7ToV8(id, MissionV7Schema.parse(current)));
+        return await migrateV9ToV10(
+          id,
+          await migrateV8ToV9(id, await migrateV7ToV8(id, MissionV7Schema.parse(current))),
+        );
       }
       if (versionAfterRefMigration === "pragma.mission/v8") {
-        return await migrateV8ToV9(id, MissionV8Schema.parse(current));
+        return await migrateV9ToV10(id, await migrateV8ToV9(id, MissionV8Schema.parse(current)));
       }
-      if (versionAfterRefMigration !== "pragma.mission/v9") {
+      if (versionAfterRefMigration === "pragma.mission/v9") {
+        return await migrateV9ToV10(id, MissionV9Schema.parse(current));
+      }
+      if (versionAfterRefMigration !== "pragma.mission/v10") {
         throw new MissionStoreError(
           "unsupported_schema",
           `Mission ${id} uses a schema this Pragma version cannot read safely. Update Pragma or use compatible recovery tooling. The Mission data was preserved.`,
@@ -915,7 +1007,7 @@ export function createMissionStore(options: {
           createdAt: timestamp,
         };
         const mission = MissionSchema.parse({
-          schemaVersion: "pragma.mission/v9",
+          schemaVersion: "pragma.mission/v10",
           id,
           title: normalizeBranchTitle(source.title),
           goal: source.goal,
@@ -926,7 +1018,10 @@ export function createMissionStore(options: {
           executor: input.executor,
           ...(source.modelOverride === undefined ? {} : { modelOverride: source.modelOverride }),
           origin: { type: "user" },
-          contextStoreIds: source.contextStoreIds,
+          contextMounts: source.contextMounts.filter(
+            (mount): mount is Extract<MissionContextMount, { kind: "context-store" }> =>
+              mount.kind === "context-store",
+          ),
           branch: branchSource,
           lifecycleStatus: "active",
           createdAt: timestamp,
@@ -1037,7 +1132,7 @@ export function createMissionStore(options: {
       const timestamp = new Date().toISOString();
       const goal = input.goal.trim();
       const mission = MissionSchema.parse({
-        schemaVersion: "pragma.mission/v9",
+        schemaVersion: "pragma.mission/v10",
         id,
         title: input.title === undefined ? titleFromGoal(goal) : normalizeMissionTitle(input.title),
         goal,
@@ -1049,7 +1144,7 @@ export function createMissionStore(options: {
         ...(input.flowInput === undefined ? {} : { flowInput: input.flowInput }),
         ...(input.modelOverride === undefined ? {} : { modelOverride: input.modelOverride }),
         origin: input.origin ?? { type: "user" },
-        contextStoreIds: input.contextStoreIds ?? [],
+        contextMounts: input.contextMounts ?? [],
         lifecycleStatus: "active",
         createdAt: timestamp,
         updatedAt: timestamp,
@@ -1119,7 +1214,7 @@ export function createMissionStore(options: {
         return next;
       });
     },
-    async updateContextStores(id, contextStoreIds) {
+    async updateContextMounts(id, contextMounts) {
       return await updateMission(MissionIdSchema.parse(id), (current, timestamp) => {
         if (
           current.execution !== undefined &&
@@ -1130,7 +1225,85 @@ export function createMissionStore(options: {
             "Wait for the current execution before changing Mission Knowledge Stores.",
           );
         }
-        return { ...current, contextStoreIds: [...contextStoreIds], updatedAt: timestamp };
+        assertManagedRevisionMountsPreserved(current.contextMounts, contextMounts);
+        return { ...current, contextMounts: [...contextMounts], updatedAt: timestamp };
+      });
+    },
+    async mountManagedRevisionDraft(input) {
+      return await updateMission(MissionIdSchema.parse(input.id), (current, timestamp) => {
+        if (current.executor.ref !== input.expectedExecutorRef) {
+          throw new MissionStoreError(
+            "config_invalid",
+            "Only the owning revision Agent can mount a managed Mission Knowledge Draft.",
+          );
+        }
+        if (
+          current.contextMounts.some(
+            (mount) =>
+              mount.kind === "context-store-draft" &&
+              mount.draftId === input.draftId &&
+              mount.revisionJobId === input.revisionJobId,
+          )
+        ) {
+          return current;
+        }
+        const publishedStoreMounted = current.contextMounts.some(
+          (mount) => mount.kind === "context-store" && mount.storeId === input.storeId,
+        );
+        const selectedDraftMounted = current.contextMounts.some(
+          (mount) =>
+            mount.kind === "context-store-draft" &&
+            mount.draftId === input.draftId &&
+            mount.revisionJobId === undefined,
+        );
+        if (!publishedStoreMounted && !selectedDraftMounted) {
+          throw new MissionStoreError(
+            "config_invalid",
+            "The selected knowledge base is not mounted in this Mission.",
+          );
+        }
+        return {
+          ...current,
+          contextMounts: [
+            ...current.contextMounts.filter(
+              (mount) =>
+                !(mount.kind === "context-store-draft" && mount.draftId === input.draftId) &&
+                !(mount.kind === "context-store" && mount.storeId === input.storeId),
+            ),
+            {
+              kind: "context-store-draft" as const,
+              draftId: input.draftId,
+              revisionJobId: input.revisionJobId,
+            },
+          ],
+          updatedAt: timestamp,
+        };
+      });
+    },
+    async restoreManagedRevisionStore(input) {
+      return await updateMission(MissionIdSchema.parse(input.id), (current, timestamp) => {
+        const claimed = current.contextMounts.some(
+          (mount) =>
+            mount.kind === "context-store-draft" &&
+            mount.draftId === input.draftId &&
+            mount.revisionJobId === input.revisionJobId,
+        );
+        if (!claimed) return current;
+        return {
+          ...current,
+          contextMounts: [
+            ...current.contextMounts.filter(
+              (mount) =>
+                !(
+                  mount.kind === "context-store-draft" &&
+                  mount.draftId === input.draftId &&
+                  mount.revisionJobId === input.revisionJobId
+                ) && !(mount.kind === "context-store" && mount.storeId === input.storeId),
+            ),
+            { kind: "context-store" as const, storeId: input.storeId },
+          ],
+          updatedAt: timestamp,
+        };
       });
     },
     async isContextStoreReferenced(storeId) {
@@ -1147,7 +1320,9 @@ export function createMissionStore(options: {
         const mission = await readMission(directory.name);
         if (
           isUserFacingMissionOrigin(mission.origin) &&
-          mission.contextStoreIds.includes(storeId)
+          mission.contextMounts.some(
+            (mount) => mount.kind === "context-store" && mount.storeId === storeId,
+          )
         ) {
           return true;
         }
@@ -1165,7 +1340,18 @@ export function createMissionStore(options: {
         ) {
           return current;
         }
-        return { ...current, execution, updatedAt: timestamp };
+        return {
+          ...current,
+          execution: {
+            ...execution,
+            ...(execution.contextMountsFingerprint === undefined &&
+            current.execution?.id === execution.id &&
+            current.execution.contextMountsFingerprint !== undefined
+              ? { contextMountsFingerprint: current.execution.contextMountsFingerprint }
+              : {}),
+          },
+          updatedAt: timestamp,
+        };
       });
     },
     async appendUserMessage(id, message) {
@@ -1930,6 +2116,33 @@ function findSameIdentity(
 
 function sameRecord(left: MissionTimelineRecord, right: MissionTimelineRecord): boolean {
   return JSON.stringify(left) === JSON.stringify(right);
+}
+
+function assertManagedRevisionMountsPreserved(
+  current: readonly MissionContextMount[],
+  next: readonly MissionContextMount[],
+): void {
+  const required = current.filter(isManagedRevisionMount);
+  if (required.length === 0) return;
+  const incoming = new Set(next.filter(isManagedRevisionMount).map(managedRevisionMountIdentity));
+  const missing = required.find((mount) => !incoming.has(managedRevisionMountIdentity(mount)));
+  if (missing === undefined) return;
+  throw new MissionStoreError(
+    "config_invalid",
+    `Managed Mission Knowledge Draft ${missing.draftId} cannot be changed manually.`,
+  );
+}
+
+function isManagedRevisionMount(
+  mount: MissionContextMount,
+): mount is MissionContextMount & { kind: "context-store-draft"; revisionJobId: string } {
+  return mount.kind === "context-store-draft" && mount.revisionJobId !== undefined;
+}
+
+function managedRevisionMountIdentity(
+  mount: MissionContextMount & { kind: "context-store-draft"; revisionJobId: string },
+): string {
+  return `${mount.draftId}:${mount.revisionJobId}`;
 }
 
 function sameValue(left: unknown, right: unknown): boolean {

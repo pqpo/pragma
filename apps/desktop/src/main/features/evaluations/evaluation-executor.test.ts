@@ -100,14 +100,14 @@ function missionHarness(completeImmediately: boolean): {
       const now = new Date().toISOString();
       const mission = {
         ...input,
-        schemaVersion: "pragma.mission/v9",
+        schemaVersion: "pragma.mission/v10",
         id,
         title: input.title ?? input.goal,
         initialMessageId: `20000000-0000-4000-8000-00000000000${created.length}`,
         lifecycleStatus: "active",
         createdAt: now,
         updatedAt: now,
-        contextStoreIds: input.contextStoreIds ?? [],
+        contextMounts: input.contextMounts ?? [],
       } as Mission;
       records.set(id, mission);
       return mission;

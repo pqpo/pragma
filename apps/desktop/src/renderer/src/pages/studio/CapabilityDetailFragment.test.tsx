@@ -85,7 +85,7 @@ describe("CapabilityDetailFragment", () => {
             timeoutMs: 30_000,
             tools: [
               {
-                name: "list_knowledge_revision_targets",
+                name: "knowledge_revision_list_targets",
                 description: "List targets.",
                 schemaHash: "sha256:test",
                 inputSchema: {},

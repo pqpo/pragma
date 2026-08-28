@@ -75,7 +75,7 @@ describe("PragmaBundleService", () => {
                 {
                   ref: canonicalPragmaResourceRef(management),
                   kind: "tools" as const,
-                  tools: ["list_knowledge_revision_targets", "submit_knowledge_revision"],
+                  tools: ["knowledge_revision_list_targets", "knowledge_revision_start"],
                 },
               ],
             },

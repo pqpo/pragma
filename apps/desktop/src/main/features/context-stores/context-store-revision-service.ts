@@ -6,6 +6,7 @@ import { withFileLock } from "@pragma/context-filesystem";
 import {
   assertProgressiveKnowledgeStructure,
   attachContextStoreBaseContent,
+  KnowledgeDraftValidationError,
 } from "@pragma/built-in-agents";
 import {
   ContextStoreChangeSetSchema,
@@ -83,6 +84,7 @@ export interface ContextStoreRevisionService {
     readonly store: SparseContextStoreDraft;
   }>;
   attachMission(jobId: string, missionId: string): Promise<ContextStoreRevisionJob>;
+  detachMission(jobId: string, missionId: string): Promise<ContextStoreRevisionJob>;
   processPending(): Promise<void>;
   scheduleProcessing(): void;
   hasActiveJobs(storeId: string): Promise<boolean>;
@@ -98,8 +100,10 @@ export class ContextStoreRevisionServiceError extends Error {
       | "revision_conflict"
       | "invalid_state"
       | "profile_conflict"
-      | "rebase_conflict",
+      | "rebase_conflict"
+      | "validation_failed",
     message: string,
+    readonly details?: unknown,
   ) {
     super(message);
     this.name = "ContextStoreRevisionServiceError";
@@ -113,6 +117,14 @@ export function createContextStoreRevisionService(options: {
   readonly contextStores: ContextStoreStore;
   readonly generator: ContextStoreRevisionGenerator;
   readonly warn?: ((message: string, error: unknown) => void) | undefined;
+  readonly onRevisionDetached?:
+    | ((input: {
+        readonly missionId: string;
+        readonly jobId: string;
+        readonly draftId: string;
+        readonly storeId: string;
+      }) => Promise<void>)
+    | undefined;
 }): ContextStoreRevisionService {
   const jobsPath = join(options.statePath, "jobs");
   const draftsPath = options.draftsPath ?? join(options.statePath, "drafts");
@@ -123,6 +135,24 @@ export function createContextStoreRevisionService(options: {
   const draftRoot = (id: string) => join(draftsPath, id);
   const draftPath = (id: string) => join(draftRoot(id), "draft.json");
   let processing: Promise<void> | undefined;
+  const notifyRevisionDetached = async (input: {
+    readonly missionId: string;
+    readonly jobId: string;
+    readonly draftId: string;
+    readonly storeId: string;
+  }): Promise<boolean> => {
+    if (options.onRevisionDetached === undefined) return false;
+    try {
+      await options.onRevisionDetached(input);
+      return true;
+    } catch (error) {
+      options.warn?.(
+        "A completed knowledge revision could not restore its Mission Knowledge mount; startup recovery will retry.",
+        error,
+      );
+      return false;
+    }
+  };
 
   const readDraft = async (id: string): Promise<ContextStoreDraft> => {
     try {
@@ -187,6 +217,7 @@ export function createContextStoreRevisionService(options: {
   ): Promise<ContextStoreDraft> =>
     await mutateDraftRecord(draft.id, draft.revision, () => ({
       state,
+      ...(state === "merged" ? { activeMissionId: undefined } : {}),
       submittedRevision:
         state === "pending_review" || state === "merging" ? draft.revision + 1 : undefined,
     }));
@@ -426,10 +457,22 @@ export function createContextStoreRevisionService(options: {
         assertProgressiveKnowledgeStructure(base, changeSet);
         await options.contextStores.applyChangeSet(changeSet, "store-revision-agent", merging.id);
         await forceDraftState(await readDraft(draft.id), "merged");
-        return await mutateJob(merging.id, merging.revision, () => ({
+        const merged = await mutateJob(merging.id, merging.revision, () => ({
           state: "merged",
           error: undefined,
         }));
+        if (
+          merged.missionId !== undefined &&
+          (await notifyRevisionDetached({
+            missionId: merged.missionId,
+            jobId: merged.id,
+            draftId: draft.id,
+            storeId: draft.storeId,
+          }))
+        ) {
+          return await mutateJob(merged.id, merged.revision, () => ({ missionId: undefined }));
+        }
+        return merged;
       } catch (error) {
         if (error instanceof ContextStoreStoreError && error.code === "revision_conflict") {
           await forceDraftState(await readDraft(draft.id), "needs_rebase");
@@ -456,7 +499,23 @@ export function createContextStoreRevisionService(options: {
         }
         return { state: "rejected" };
       });
-      await forceDraftState(await readDraft(rejected.draftId), "editing");
+      const rejectedDraft = await readDraft(rejected.draftId);
+      await mutateDraftRecord(rejectedDraft.id, rejectedDraft.revision, () => ({
+        state: "editing",
+        activeMissionId: undefined,
+        submittedRevision: undefined,
+      }));
+      if (
+        rejected.missionId !== undefined &&
+        (await notifyRevisionDetached({
+          missionId: rejected.missionId,
+          jobId: rejected.id,
+          draftId: rejected.draftId,
+          storeId: rejected.request.storeId,
+        }))
+      ) {
+        return await mutateJob(rejected.id, rejected.revision, () => ({ missionId: undefined }));
+      }
       return rejected;
     },
 
@@ -530,10 +589,19 @@ export function createContextStoreRevisionService(options: {
         if (overlayIsEmpty(current.overlay))
           throw invalidState("An empty draft cannot be submitted.");
         const base = await options.contextStores.getSnapshot(current.storeId, current.baseRevision);
-        assertProgressiveKnowledgeStructure(
-          base,
-          changeSetFromDraft({ ...current, summary }, base),
-        );
+        try {
+          assertProgressiveKnowledgeStructure(
+            base,
+            changeSetFromDraft({ ...current, summary }, base),
+          );
+        } catch (error) {
+          if (error instanceof KnowledgeDraftValidationError) {
+            throw new ContextStoreRevisionServiceError("validation_failed", error.message, {
+              diagnostics: error.diagnostics,
+            });
+          }
+          throw error;
+        }
         const revision = current.revision + 1;
         const next = ContextStoreDraftSchema.parse({
           ...current,
@@ -593,12 +661,23 @@ export function createContextStoreRevisionService(options: {
         if (draft.state === "merged") {
           throw invalidState("Merged drafts are retained as revision history.");
         }
-        const job = (await readAllJobs()).find((candidate) => candidate.draftId === draftId);
+        let job = (await readAllJobs()).find((candidate) => candidate.draftId === draftId);
         if (job !== undefined && job.state !== "merged" && job.state !== "rejected") {
-          await mutateJob(job.id, job.revision, () => ({
+          job = await mutateJob(job.id, job.revision, () => ({
             state: "rejected",
             error: { code: "draft_discarded", message: "The knowledge draft was discarded." },
           }));
+        }
+        if (
+          job?.missionId !== undefined &&
+          (await notifyRevisionDetached({
+            missionId: job.missionId,
+            jobId: job.id,
+            draftId,
+            storeId: draft.storeId,
+          }))
+        ) {
+          await mutateJob(job.id, job.revision, () => ({ missionId: undefined }));
         }
         await mkdir(draftsTrashPath, { recursive: true, mode: 0o700 });
         await rename(
@@ -668,13 +747,48 @@ export function createContextStoreRevisionService(options: {
 
     async attachMission(jobId, missionId) {
       const job = await readJob(jobId);
-      const updated = await mutateJob(job.id, job.revision, () => ({
-        missionId,
-        state: "running",
-      }));
-      const draft = await readDraft(updated.draftId);
-      await mutateDraftRecord(draft.id, draft.revision, () => ({ activeMissionId: missionId }));
+      if (job.missionId !== undefined && job.missionId !== missionId) {
+        throw invalidState("The knowledge draft is already attached to another Mission.");
+      }
+      const draft = await readDraft(job.draftId);
+      if (draft.activeMissionId !== undefined && draft.activeMissionId !== missionId) {
+        throw invalidState("The knowledge draft is already owned by another Mission.");
+      }
+      if (job.state !== "editing" && job.state !== "running") {
+        throw invalidState("Only editable knowledge revisions can be attached to a Mission.");
+      }
+      if (draft.state !== "editing") {
+        throw invalidState("Only editable knowledge drafts can be attached to a Mission.");
+      }
+      const updated =
+        job.missionId === missionId && job.state === "running"
+          ? job
+          : await mutateJob(job.id, job.revision, () => ({
+              missionId,
+              state: "running",
+            }));
+      if (draft.activeMissionId !== missionId) {
+        await mutateDraftRecord(draft.id, draft.revision, () => ({ activeMissionId: missionId }));
+      }
       return updated;
+    },
+
+    async detachMission(jobId, missionId) {
+      const job = await readJob(jobId);
+      if (job.missionId !== missionId) return job;
+      const draft = await readDraft(job.draftId);
+      if (draft.activeMissionId === missionId && draft.state !== "merged") {
+        await mutateDraftRecord(draft.id, draft.revision, (current) => ({
+          activeMissionId: undefined,
+          ...(current.state === "pending_review"
+            ? { submittedRevision: current.revision + 1 }
+            : {}),
+        }));
+      }
+      return await mutateJob(job.id, job.revision, () => ({
+        missionId: undefined,
+        state: job.state === "running" ? "editing" : job.state,
+      }));
     },
 
     async processPending() {
@@ -688,10 +802,21 @@ export function createContextStoreRevisionService(options: {
           );
           if (applied) {
             if (draft.state !== "merged") await forceDraftState(draft, "merged");
-            await mutateJob(interrupted.id, interrupted.revision, () => ({
+            const merged = await mutateJob(interrupted.id, interrupted.revision, () => ({
               state: "merged",
               error: undefined,
             }));
+            if (
+              merged.missionId !== undefined &&
+              (await notifyRevisionDetached({
+                missionId: merged.missionId,
+                jobId: merged.id,
+                draftId: merged.draftId,
+                storeId: merged.request.storeId,
+              }))
+            ) {
+              await mutateJob(merged.id, merged.revision, () => ({ missionId: undefined }));
+            }
             continue;
           }
           const live = await options.contextStores.getSnapshot(draft.storeId);

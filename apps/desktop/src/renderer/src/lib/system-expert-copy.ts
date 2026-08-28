@@ -17,6 +17,7 @@ interface SystemExpertDisplaySource extends ExpertDisplayCopy {
 }
 
 export const BUILT_IN_PRAGMA_EXPERT_REF = "expert:0000000000pragma";
+export const BUILT_IN_STORE_REVISION_EXPERT_REF = "expert:0000000000st0rev";
 
 export function localizeSystemExpertCopy(
   source: SystemExpertDisplaySource,

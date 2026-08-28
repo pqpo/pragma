@@ -16,7 +16,6 @@ import type {
 import { afterEach, describe, expect, it } from "vitest";
 import {
   BUILT_IN_PRAGMA_REF,
-  STORE_REVISION_TARGET_CONTEXT_REF,
   builtInAgentResource,
   pragmaManagementCapabilityResource,
 } from "@pragma/built-in-agents";
@@ -46,7 +45,7 @@ async function stores() {
   directories.push(directory);
   const project = createPragmaProjectStore({
     projectsPath: directory,
-    reservedResourceRefs: new Set([BUILT_IN_PRAGMA_REF, STORE_REVISION_TARGET_CONTEXT_REF]),
+    reservedResourceRefs: new Set([BUILT_IN_PRAGMA_REF]),
   });
   return {
     directory,
@@ -912,29 +911,6 @@ describe("PragmaProjectStore", () => {
       code: "built_in_readonly",
     });
     expect((await project.get()).revision).toBe(1);
-  });
-
-  it("reserves the Store Revision Agent target Context identity", async () => {
-    const { project } = await stores();
-    const resource: PragmaContextStoreResource = {
-      apiVersion: PRAGMA_DSL_WRITE_API_VERSION,
-      kind: "ContextStore",
-      metadata: {
-        id: "0000000000st0ctx",
-        name: "Conflicting store",
-        description: "A project resource that collides with the system target.",
-        tags: [],
-      },
-      spec: {
-        adapter: "pragma.context.host@v1",
-        binding: "binding:pragma.store-revision-target",
-        config: { key: "conflict" },
-      },
-    };
-
-    await expect(project.upsert({ baseRevision: 0, resource })).rejects.toMatchObject({
-      code: "built_in_readonly",
-    });
   });
 
   it("blocks deletion of Teams and Flows referenced by another Flow", async () => {

@@ -95,7 +95,7 @@ import type {
   DiscardMissionAttachmentDrafts,
   StageMissionClipboardImage,
   UpdateMissionOptions,
-  UpdateMissionContextStores,
+  UpdateMissionContextMounts,
   MissionWorkSnapshot,
   GetMissionWorkConversation,
   MissionWorkConversationSnapshot,
@@ -494,7 +494,7 @@ export interface PragmaDesktopAPI {
   ) => Promise<PickMissionAttachmentsResult>;
   discardMissionAttachmentDrafts: (input: DiscardMissionAttachmentDrafts) => Promise<void>;
   updateMissionOptions: (input: UpdateMissionOptions) => Promise<Mission>;
-  updateMissionContextStores: (input: UpdateMissionContextStores) => Promise<Mission>;
+  updateMissionContextMounts: (input: UpdateMissionContextMounts) => Promise<Mission>;
   runMission: (id: string) => Promise<Mission>;
   sendMissionMessage: (input: SendMissionMessage) => Promise<MissionMessageAcceptance>;
   steerQueuedMissionMessage: (input: MissionQueuePromptAction) => Promise<Mission>;

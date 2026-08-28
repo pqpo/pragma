@@ -4,8 +4,10 @@ import { join } from "node:path";
 
 import {
   PRAGMA_MANAGEMENT_BINDING_REF,
+  STORE_REVISION_EXPERT_REF,
   createPragmaManagementTools,
   type PragmaManagementToolPorts,
+  type KnowledgeRevisionSubmissionPort,
 } from "@pragma/built-in-agents";
 import {
   createPragma,
@@ -23,6 +25,8 @@ import {
   readRuntimeSessionRecord,
   ReadOnlyContextStore,
   StaticContextStore,
+  error,
+  ok,
   moveOwnedStorageToTrash,
   runtimeSessionDeletionSources,
   assertStorageWriteAllowed,
@@ -87,6 +91,7 @@ import {
 import {
   isUserFacingMissionOrigin,
   type Mission,
+  type MissionContextMount,
   type MissionChatEntry,
   type MissionChatPatch,
   type MissionChatSnapshot,
@@ -104,13 +109,14 @@ import {
   type GetMissionWorkConversation,
   type DesktopToolPermissionMode,
   type UpdateMissionOptions,
-  type UpdateMissionContextStores,
+  type UpdateMissionContextMounts,
 } from "../../../shared/contracts/index.ts";
 import type { CapabilityCredentialStore } from "../capabilities/capability-credential-store.ts";
 import type { CapabilityStore } from "../capabilities/capability-store.ts";
 import { resolveExpertCapabilities } from "../experts/desktop-expert-factory.ts";
 import type { ContextStoreStore } from "../context-stores/context-store-store.ts";
 import type { ContextStoreRevisionService } from "../context-stores/context-store-revision-service.ts";
+import { DynamicContextStore } from "../context-stores/dynamic-context-store.ts";
 import { createDesktopKnowledgeRevisionSubmissionPort } from "../context-stores/knowledge-revision-capability.ts";
 import {
   parseDesktopCapabilityBindingRef,
@@ -180,7 +186,8 @@ export interface MissionRunner {
   refreshMemoryContextBindings(): Promise<void>;
   run(id: string): Promise<Mission>;
   updateOptions(input: UpdateMissionOptions): Promise<Mission>;
-  updateContextStores(input: UpdateMissionContextStores): Promise<Mission>;
+  updateContextMounts(input: UpdateMissionContextMounts): Promise<Mission>;
+  invalidateContextBindings(id: string): Promise<void>;
   sendMessage(input: {
     readonly id: string;
     readonly content: string;
@@ -319,6 +326,14 @@ export function missionKnowledgeNamespace(storeId: string): string {
   return `mission-knowledge:${storeId}`;
 }
 
+export function missionKnowledgeDraftNamespace(draftId: string): string {
+  return `mission-knowledge-draft:${draftId}`;
+}
+
+export function activeMissionKnowledgeDraftNamespace(storeId: string): string {
+  return `mission-knowledge-draft:${storeId}`;
+}
+
 const MISSION_CHAT_ERROR_MAX_LENGTH = 10_000;
 
 export function createMissionRunner(options: {
@@ -349,6 +364,7 @@ export function createMissionRunner(options: {
     | ((input: {
         readonly mission: Mission;
         readonly runtimes: RuntimeResolver;
+        readonly knowledgeRevisions?: KnowledgeRevisionSubmissionPort | undefined;
       }) => Promise<CompiledResource<InvocableResource> | undefined>)
     | undefined;
   readonly getSystemExecutorFingerprint?:
@@ -412,6 +428,21 @@ export function createMissionRunner(options: {
     options.automaticHumanInteractionHandler;
   const executionContexts = new Map<string, Promise<MissionExecutionContext>>();
   const missionsRequiringSuccessorSession = new Set<string>();
+  const missionsChangingContextBindings = new Set<string>();
+  const invalidateContextBindings = async (id: string): Promise<void> => {
+    executionContexts.delete(id);
+    sessionCompilationIdentities.delete(id);
+    sessionDefinitionFingerprints.delete(id);
+    missionsRequiringSuccessorSession.add(id);
+    const session = sessions.get(id);
+    if (session === undefined || active.has(id)) return;
+    const hasQueuedPrompts = (await session.getPromptQueue()).some(
+      (prompt) => prompt.status === "queued" || prompt.status === "running",
+    );
+    if (hasQueuedPrompts) return;
+    await session.close("Mission context bindings changed.");
+    sessions.delete(id);
+  };
   const executionContext = async (mission: Mission): Promise<MissionExecutionContext> => {
     const existing = executionContexts.get(mission.id);
     if (existing !== undefined) return await existing;
@@ -493,22 +524,118 @@ export function createMissionRunner(options: {
               required: false,
             },
           ];
-    const missionKnowledgeBindings: readonly ExpertAgentContextStoreRegistrationInput[] =
+    const missionKnowledgeBindings: readonly ExpertAgentContextStoreRegistrationInput[] = (
       await Promise.all(
-        mission.contextStoreIds.map(async (storeId) => {
-          if (options.contextStores === undefined) {
-            throw new Error(`Mission Knowledge Store is unavailable: ${storeId}`);
+        mission.contextMounts.map(async (mount) => {
+          if (mount.kind === "context-store") {
+            if (options.contextStores === undefined) {
+              throw new Error(`Mission Knowledge Store is unavailable: ${mount.storeId}`);
+            }
+            const resolved = await options.contextStores.resolve(mount.storeId);
+            return {
+              namespace: missionKnowledgeNamespace(mount.storeId),
+              storeName: resolved.name,
+              store: new ReadOnlyContextStore(resolved.store),
+              required: true,
+              mutationApproval: "none" as const,
+            };
           }
-          const resolved = await options.contextStores.resolve(storeId);
+          if (options.contextStoreRevisions === undefined) {
+            throw new Error(`Mission Knowledge Draft is unavailable: ${mount.draftId}`);
+          }
+          if (
+            mount.revisionJobId !== undefined &&
+            mission.executor.ref === STORE_REVISION_EXPERT_REF
+          ) {
+            return undefined;
+          }
+          const resolved = await options.contextStoreRevisions.resolveDraft(mount.draftId);
           return {
-            namespace: missionKnowledgeNamespace(storeId),
+            namespace: missionKnowledgeDraftNamespace(mount.draftId),
             storeName: resolved.name,
             store: new ReadOnlyContextStore(resolved.store),
             required: true,
             mutationApproval: "none" as const,
           };
         }),
-      );
+      )
+    ).filter((binding): binding is NonNullable<typeof binding> => binding !== undefined);
+    const revisionTargetStoreIds =
+      mission.executor.ref !== STORE_REVISION_EXPERT_REF ||
+      options.contextStoreRevisions === undefined
+        ? []
+        : [
+            ...new Set(
+              await Promise.all(
+                mission.contextMounts.map(async (mount) =>
+                  mount.kind === "context-store"
+                    ? mount.storeId
+                    : (await options.contextStoreRevisions!.getDraft(mount.draftId)).storeId,
+                ),
+              ),
+            ),
+          ];
+    const activeKnowledgeRevisionBindings: readonly ExpertAgentContextStoreRegistrationInput[] =
+      revisionTargetStoreIds.map((storeId) => ({
+        namespace: activeMissionKnowledgeDraftNamespace(storeId),
+        storeName: "Active Mission Knowledge draft",
+        store: new DynamicContextStore(async (operation) => {
+          const currentMission = await options.missions.get(mission.id);
+          const claimedMounts = currentMission.contextMounts.filter(
+            (
+              mount,
+            ): mount is Extract<
+              Mission["contextMounts"][number],
+              { kind: "context-store-draft" }
+            > => mount.kind === "context-store-draft" && mount.revisionJobId !== undefined,
+          );
+          const activeMounts = (
+            await Promise.all(
+              claimedMounts.map(async (mount) => ({
+                mount,
+                storeId: (await options.contextStoreRevisions!.getDraft(mount.draftId)).storeId,
+              })),
+            )
+          ).filter((candidate) => candidate.storeId === storeId);
+          if (activeMounts.length === 0 && (operation === "list" || operation === "search")) {
+            return ok(new StaticContextStore([]));
+          }
+          if (activeMounts.length !== 1) {
+            return error(
+              "store_unavailable",
+              activeMounts.length === 0
+                ? "Start a knowledge revision for this knowledge base before using its draft namespace."
+                : "The Mission has more than one active draft for the same knowledge base.",
+            );
+          }
+          const mount = activeMounts[0]!.mount;
+          const [job, draft, resolved] = await Promise.all([
+            options.contextStoreRevisions!.get(mount.revisionJobId!),
+            options.contextStoreRevisions!.getDraft(mount.draftId),
+            options.contextStoreRevisions!.resolveDraft(mount.draftId),
+          ]);
+          if (
+            job.state !== "running" ||
+            job.draftId !== mount.draftId ||
+            job.missionId !== mission.id ||
+            draft.activeMissionId !== mission.id
+          ) {
+            return error(
+              "permission_denied",
+              "The active knowledge revision draft is not owned by this Mission.",
+            );
+          }
+          if (["add", "edit", "delete"].includes(operation) && draft.state !== "editing") {
+            return error(
+              "permission_denied",
+              `The active knowledge revision draft cannot be edited while it is ${draft.state}.`,
+            );
+          }
+          return ok(resolved.store);
+        }),
+        required: false,
+        mutationApproval: "none" as const,
+      }));
     const branchHistory = await options.missions.readBranchHistory(mission.id);
     const branchHistoryBindings: readonly ExpertAgentContextStoreRegistrationInput[] =
       branchHistory === undefined
@@ -536,6 +663,7 @@ export function createMissionRunner(options: {
       ...branchHistoryBindings,
       ...board.bindings,
       ...missionKnowledgeBindings,
+      ...activeKnowledgeRevisionBindings,
     ];
     const hostContextBindings = await resolveHostContextBindings();
     const seenNamespaces = new Set<string>();
@@ -764,6 +892,10 @@ export function createMissionRunner(options: {
   ): Promise<void> {
     const session = sessions.get(id);
     if (session === undefined) return;
+    if (missionsRequiringSuccessorSession.has(id)) {
+      invalidateChat(id, audience);
+      return;
+    }
     while (true) {
       const [mission, state, queue] = await Promise.all([
         options.missions.get(id),
@@ -847,8 +979,22 @@ export function createMissionRunner(options: {
     mission: Mission,
     runtimes: RuntimeResolver,
   ): Promise<CompiledResource<InvocableResource>> => {
-    const system = await options.compileSystemExecutor?.({ mission, runtimes });
-    if (system !== undefined) return system;
+    const mountedStoreIds =
+      options.contextStoreRevisions === undefined
+        ? new Set(
+            mission.contextMounts.flatMap((mount) =>
+              mount.kind === "context-store" ? [mount.storeId] : [],
+            ),
+          )
+        : new Set(
+            await Promise.all(
+              mission.contextMounts.map(async (mount) =>
+                mount.kind === "context-store"
+                  ? mount.storeId
+                  : (await options.contextStoreRevisions!.getDraft(mount.draftId)).storeId,
+              ),
+            ),
+          );
     const knowledgeRevisions =
       options.contextStores === undefined || options.contextStoreRevisions === undefined
         ? undefined
@@ -857,7 +1003,153 @@ export function createMissionRunner(options: {
             contextStores: options.contextStores,
             revisions: options.contextStoreRevisions,
             additionalMountResources: options.knowledgeRevisionMountResources,
+            ...(mission.executor.ref !== STORE_REVISION_EXPERT_REF
+              ? {}
+              : {
+                  inlineMission: {
+                    id: mission.id,
+                    allowedStoreIds: mountedStoreIds,
+                    activeRevisionJobIdForStore: async (storeId) => {
+                      const currentMission = await options.missions.get(mission.id);
+                      const matches = (
+                        await Promise.all(
+                          currentMission.contextMounts.map(async (mount) => {
+                            if (
+                              mount.kind !== "context-store-draft" ||
+                              mount.revisionJobId === undefined
+                            ) {
+                              return undefined;
+                            }
+                            const draft = await options.contextStoreRevisions!.getDraft(
+                              mount.draftId,
+                            );
+                            return draft.storeId === storeId ? mount.revisionJobId : undefined;
+                          }),
+                        )
+                      ).filter((jobId): jobId is string => jobId !== undefined);
+                      if (matches.length > 1) {
+                        throw new Error("knowledge_revision_multiple_active_drafts");
+                      }
+                      return matches[0];
+                    },
+                    writableNamespaceForStore: activeMissionKnowledgeDraftNamespace,
+                    mountDraft: async ({ storeId, draftId, revisionJobId, previousMissionId }) => {
+                      missionsChangingContextBindings.add(mission.id);
+                      if (previousMissionId !== undefined) {
+                        missionsChangingContextBindings.add(previousMissionId);
+                      }
+                      let previousRestored = false;
+                      try {
+                        const session = sessions.get(mission.id);
+                        const queued = (await session?.getPromptQueue())?.some(
+                          (prompt) => prompt.status === "queued",
+                        );
+                        if (queued === true) {
+                          throw new Error(
+                            "Remove or finish queued Mission messages before starting a knowledge revision.",
+                          );
+                        }
+                        if (previousMissionId !== undefined) {
+                          const previousMission = await options.missions.get(previousMissionId);
+                          const previousSession = sessions.get(previousMissionId);
+                          const previousHasQueuedPrompts = (
+                            (await previousSession?.getPromptQueue()) ?? []
+                          ).some(
+                            (prompt) => prompt.status === "queued" || prompt.status === "running",
+                          );
+                          if (
+                            active.has(previousMissionId) ||
+                            previousHasQueuedPrompts ||
+                            (previousMission.execution !== undefined &&
+                              ["queued", "running", "waiting"].includes(
+                                previousMission.execution.status,
+                              ))
+                          ) {
+                            throw new Error("knowledge_revision_previous_mission_active");
+                          }
+                          const previousOwnsDraft = previousMission.contextMounts.some(
+                            (mount) =>
+                              mount.kind === "context-store-draft" &&
+                              mount.draftId === draftId &&
+                              mount.revisionJobId === revisionJobId,
+                          );
+                          if (
+                            previousMission.executor.ref !== STORE_REVISION_EXPERT_REF ||
+                            !previousOwnsDraft
+                          ) {
+                            throw new Error("knowledge_revision_previous_claim_invalid");
+                          }
+
+                          await options.missions.restoreManagedRevisionStore({
+                            id: previousMissionId,
+                            storeId,
+                            draftId,
+                            revisionJobId,
+                          });
+                          previousRestored = true;
+                          await options.contextStoreRevisions!.detachMission(
+                            revisionJobId,
+                            previousMissionId,
+                          );
+                          await options.contextStoreRevisions!.attachMission(
+                            revisionJobId,
+                            mission.id,
+                          );
+                        }
+                        await options.missions.mountManagedRevisionDraft({
+                          id: mission.id,
+                          expectedExecutorRef: STORE_REVISION_EXPERT_REF,
+                          storeId,
+                          draftId,
+                          revisionJobId,
+                        });
+                        await invalidateContextBindings(mission.id);
+                        if (previousMissionId !== undefined) {
+                          await invalidateContextBindings(previousMissionId);
+                        }
+                        return {
+                          writableNamespace: activeMissionKnowledgeDraftNamespace(storeId),
+                        };
+                      } catch (error) {
+                        if (previousMissionId !== undefined && previousRestored) {
+                          let current = await options.contextStoreRevisions!.get(revisionJobId);
+                          if (current.missionId === mission.id) {
+                            await options.contextStoreRevisions!.detachMission(
+                              revisionJobId,
+                              mission.id,
+                            );
+                            current = await options.contextStoreRevisions!.get(revisionJobId);
+                          }
+                          if (current.missionId === undefined) {
+                            await options.contextStoreRevisions!.attachMission(
+                              revisionJobId,
+                              previousMissionId,
+                            );
+                            current = await options.contextStoreRevisions!.get(revisionJobId);
+                          }
+                          if (current.missionId === previousMissionId) {
+                            await options.missions.mountManagedRevisionDraft({
+                              id: previousMissionId,
+                              expectedExecutorRef: STORE_REVISION_EXPERT_REF,
+                              storeId,
+                              draftId,
+                              revisionJobId,
+                            });
+                          }
+                        }
+                        throw error;
+                      } finally {
+                        missionsChangingContextBindings.delete(mission.id);
+                        if (previousMissionId !== undefined) {
+                          missionsChangingContextBindings.delete(previousMissionId);
+                        }
+                      }
+                    },
+                  },
+                }),
           });
+    const system = await options.compileSystemExecutor?.({ mission, runtimes, knowledgeRevisions });
+    if (system !== undefined) return system;
     const desktopAdapterHost = createDesktopAdapterHost(
       {
         ...options,
@@ -884,6 +1176,7 @@ export function createMissionRunner(options: {
             executor: { kind: "expert", ref, name: ref },
           },
           runtimes,
+          knowledgeRevisions,
         });
         return compiled?.value;
       },
@@ -920,6 +1213,7 @@ export function createMissionRunner(options: {
         JSON.stringify({
           project: mission.project,
           executor: mission.executor,
+          contextMounts: missionContextMountsFingerprint(mission),
           systemExecutorFingerprint:
             (await options.getSystemExecutorFingerprint?.(mission)) ?? null,
           toolPermissionMode: mission.toolPermissionMode,
@@ -1244,6 +1538,16 @@ export function createMissionRunner(options: {
     }
     if (active.has(mission.id)) return mission;
     if (mission.lifecycleStatus === "active") await notifyMissionActivity(mission);
+    const contextMountsFingerprint = missionContextMountsFingerprint(mission);
+    const recoverableMissionExecution =
+      mission.execution !== undefined &&
+      ["queued", "running", "waiting"].includes(mission.execution.status);
+    if (
+      missionContextMountsNeedSuccessor(mission, contextMountsFingerprint) &&
+      !recoverableMissionExecution
+    ) {
+      await invalidateContextBindings(mission.id);
+    }
     const { app, runtimes: baseRuntimes } = await executionContext(mission);
     const runtimes = withMissionRuntimeBinding(baseRuntimes, await readMissionRootContext(mission));
     let phaseStartedAt = performance.now();
@@ -1320,6 +1624,7 @@ export function createMissionRunner(options: {
         id: handle.executionId,
         inputMessageId,
         status: recoveredWaiting ? "waiting" : "running",
+        contextMountsFingerprint,
         startedAt: executionStartedAt,
       });
       trackExecution({
@@ -1420,6 +1725,7 @@ export function createMissionRunner(options: {
       inputMessageId,
       sessionId: session.sessionId,
       status: recoveredTurn === undefined ? "running" : "waiting",
+      ...(recoverable ? {} : { contextMountsFingerprint }),
       startedAt: executionStartedAt,
     });
     trackExecution({
@@ -1453,6 +1759,32 @@ export function createMissionRunner(options: {
       assertStorageWriteAllowed(new PragmaPaths({ pragmaHome: options.pragmaHome })));
     logMissionPhase(logger, input.id, "storage_capacity_check", capacityCheckStartedAt, acceptedAt);
     const mission = await options.missions.get(input.id);
+    const contextMountsFingerprint = missionContextMountsFingerprint(mission);
+    if (missionContextMountsNeedSuccessor(mission, contextMountsFingerprint)) {
+      executionContexts.delete(mission.id);
+      sessionCompilationIdentities.delete(mission.id);
+      sessionDefinitionFingerprints.delete(mission.id);
+      missionsRequiringSuccessorSession.add(mission.id);
+    }
+    if (missionsChangingContextBindings.has(mission.id)) {
+      throw new Error("Wait for the Mission Knowledge change to finish before sending a message.");
+    }
+    if (missionsRequiringSuccessorSession.has(mission.id)) {
+      if (active.has(mission.id)) {
+        throw new Error(
+          "Wait for the current execution to finish before sending a message with the new Mission Knowledge.",
+        );
+      }
+      const currentSession = sessions.get(mission.id);
+      const hasQueuedPrompts = (await currentSession?.getPromptQueue())?.some(
+        (prompt) => prompt.status === "queued" || prompt.status === "running",
+      );
+      if (hasQueuedPrompts === true) {
+        throw new Error(
+          "Remove or finish queued Mission messages before continuing with the new Mission Knowledge.",
+        );
+      }
+    }
     await options.assertExecutorReady?.(mission.executor.ref);
     if (mission.executor.kind === "flow") {
       throw new Error("Flow missions accept input through workflow steps, not chat messages.");
@@ -1520,6 +1852,7 @@ export function createMissionRunner(options: {
     const memoryBindingsChanged = memoryContextBindingsChanged.has(mission.id);
     const contextStoresChanged =
       missionsRequiringSuccessorSession.delete(mission.id) ||
+      missionContextMountsNeedSuccessor(mission, contextMountsFingerprint) ||
       (memoryBindingsChanged && !active.has(mission.id));
     if (memoryBindingsChanged && !active.has(mission.id)) {
       memoryContextBindingsChanged.delete(mission.id);
@@ -1630,6 +1963,7 @@ export function createMissionRunner(options: {
             inputMessageId: input.requestId,
             sessionId: session.sessionId,
             status: "running",
+            contextMountsFingerprint,
             startedAt,
           });
     if (!hasCurrent && !queuePaused) {
@@ -1688,10 +2022,31 @@ export function createMissionRunner(options: {
     return updated;
   };
 
-  const updateMissionContextStores = async (
-    input: UpdateMissionContextStores,
+  const updateMissionContextMounts = async (
+    input: UpdateMissionContextMounts,
   ): Promise<Mission> => {
     const mission = await options.missions.get(input.id);
+    const existingDraftMounts = mission.contextMounts.filter(
+      (mount): mount is Extract<MissionContextMount, { kind: "context-store-draft" }> =>
+        mount.kind === "context-store-draft",
+    );
+    const requestedDraftMounts = input.contextMounts.filter(
+      (mount): mount is Extract<MissionContextMount, { kind: "context-store-draft" }> =>
+        mount.kind === "context-store-draft",
+    );
+    if (
+      requestedDraftMounts.length !== existingDraftMounts.length ||
+      requestedDraftMounts.some(
+        (requested) =>
+          !existingDraftMounts.some(
+            (existing) =>
+              existing.draftId === requested.draftId &&
+              existing.revisionJobId === requested.revisionJobId,
+          ),
+      )
+    ) {
+      throw new Error("Mission Knowledge Drafts can only be changed by revision tools.");
+    }
     if (
       active.has(mission.id) ||
       (mission.execution !== undefined &&
@@ -1699,11 +2054,31 @@ export function createMissionRunner(options: {
     ) {
       throw new Error("Wait for the current execution before changing Mission Knowledge Stores.");
     }
-    if (input.contextStoreIds.length > 0 && options.contextStores === undefined) {
-      throw new Error("Mission Knowledge Stores are unavailable.");
-    }
     await Promise.all(
-      input.contextStoreIds.map(async (storeId) => await options.contextStores!.resolve(storeId)),
+      input.contextMounts.map(async (mount) => {
+        if (mount.kind === "context-store-draft" && mount.revisionJobId !== undefined) {
+          const existing = mission.contextMounts.find(
+            (candidate) =>
+              candidate.kind === "context-store-draft" &&
+              candidate.draftId === mount.draftId &&
+              candidate.revisionJobId === mount.revisionJobId,
+          );
+          if (existing === undefined) {
+            throw new Error("Managed Mission Knowledge Drafts cannot be changed manually.");
+          }
+        }
+        if (mount.kind === "context-store") {
+          if (options.contextStores === undefined) {
+            throw new Error("Mission Knowledge Stores are unavailable.");
+          }
+          await options.contextStores.resolve(mount.storeId);
+          return;
+        }
+        if (options.contextStoreRevisions === undefined) {
+          throw new Error("Mission Knowledge Drafts are unavailable.");
+        }
+        await options.contextStoreRevisions.resolveDraft(mount.draftId);
+      }),
     );
     const sessionId = sessions.get(mission.id)?.sessionId ?? mission.execution?.sessionId;
     if (sessionId !== undefined) {
@@ -1717,16 +2092,8 @@ export function createMissionRunner(options: {
         );
       }
     }
-    const updated = await options.missions.updateContextStores(mission.id, input.contextStoreIds);
-    const session = sessions.get(mission.id);
-    if (session !== undefined) {
-      await session.close("Mission Knowledge Stores changed.");
-      sessions.delete(mission.id);
-      missionsRequiringSuccessorSession.add(mission.id);
-    }
-    sessionCompilationIdentities.delete(mission.id);
-    sessionDefinitionFingerprints.delete(mission.id);
-    executionContexts.delete(mission.id);
+    const updated = await options.missions.updateContextMounts(mission.id, input.contextMounts);
+    await invalidateContextBindings(mission.id);
     return updated;
   };
 
@@ -1795,6 +2162,20 @@ export function createMissionRunner(options: {
     });
     if (options.missions.storagePath === undefined) await options.missions.remove(id);
     else options.missions.forget?.(id);
+    if (options.contextStoreRevisions !== undefined) {
+      for (const mount of mission.contextMounts) {
+        if (mount.kind !== "context-store-draft" || mount.revisionJobId === undefined) continue;
+        try {
+          await options.contextStoreRevisions.detachMission(mount.revisionJobId, mission.id);
+        } catch (error) {
+          logger.warn(
+            "mission.revision_claim_detach_failed",
+            "Mission deletion completed, but its knowledge revision claim will require startup recovery.",
+            { missionId: mission.id, revisionJobId: mount.revisionJobId, error },
+          );
+        }
+      }
+    }
     options.usage?.markSubjectDeleted("mission", id);
     executionContexts.delete(id);
     options.onStorageTrashed?.();
@@ -2511,13 +2892,16 @@ export function createMissionRunner(options: {
       trackOperation(input.id, { kind: "options", promise: updating });
       return await updating;
     },
-    async updateContextStores(input) {
+    async updateContextMounts(input) {
       if (pendingOperations.has(input.id)) {
         throw new MissionOperationError();
       }
-      const updating = updateMissionContextStores(input);
+      const updating = updateMissionContextMounts(input);
       trackOperation(input.id, { kind: "context-stores", promise: updating });
       return await updating;
+    },
+    async invalidateContextBindings(id) {
+      await invalidateContextBindings(id);
     },
     async sendMessage(input) {
       if (pendingOperations.has(input.id)) {
@@ -2885,6 +3269,32 @@ function toRuntimeModelSelection(
         model: { providerId: override.providerId, modelId: override.modelId },
         ...(override.thinkingLevel === undefined ? {} : { thinkingLevel: override.thinkingLevel }),
       };
+}
+
+function missionContextMountsFingerprint(mission: Mission): string {
+  return createHash("sha256")
+    .update(
+      JSON.stringify(
+        mission.contextMounts
+          .map((mount) =>
+            mount.kind === "context-store"
+              ? { kind: mount.kind, storeId: mount.storeId }
+              : {
+                  kind: mount.kind,
+                  draftId: mount.draftId,
+                  revisionJobId: mount.revisionJobId ?? null,
+                },
+          )
+          .sort((left, right) => JSON.stringify(left).localeCompare(JSON.stringify(right))),
+      ),
+    )
+    .digest("hex");
+}
+
+function missionContextMountsNeedSuccessor(mission: Mission, fingerprint: string): boolean {
+  if (mission.execution?.sessionId === undefined) return false;
+  if (mission.execution.contextMountsFingerprint === undefined) return false;
+  return mission.execution.contextMountsFingerprint !== fingerprint;
 }
 
 function requireRootRuntimeId(compiled: CompiledResource<InvocableResource>): string {
