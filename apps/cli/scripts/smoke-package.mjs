@@ -11,7 +11,7 @@ const artifactManifest = JSON.parse(
   await readFile(join(artifactDirectory, "artifact-manifest.json"), "utf8"),
 );
 if (
-  artifactManifest.package !== "@pragma/cli" ||
+  artifactManifest.package !== "@pqpo/pragma" ||
   artifactManifest.tarball !== "pragma-cli.tgz" ||
   typeof artifactManifest.version !== "string" ||
   !/^[a-f0-9]{64}$/u.test(artifactManifest.sha256)
@@ -144,12 +144,12 @@ async function runPositiveSmoke({ smokeRoot, environment, tarballPath, version }
   const prefix = join(smokeRoot, "全局 前缀");
   const binDirectory = getBinDirectory(prefix);
   const firstInstall = await installPackage(prefix, tarballPath, environment);
-  assertExit(firstInstall, 0, "npm install @pragma/cli");
+  assertExit(firstInstall, 0, "npm install @pqpo/pragma");
   const installedEnvironment = withPathPrefix(environment, binDirectory);
 
   const packageRoot = await getNpmRoot(prefix, environment);
   const installedManifest = JSON.parse(
-    await readFile(join(packageRoot, "@pragma", "cli", "package.json"), "utf8"),
+    await readFile(join(packageRoot, "@pqpo", "pragma", "package.json"), "utf8"),
   );
   if (installedManifest.version !== version) {
     throw new Error(
@@ -205,7 +205,7 @@ async function runPositiveSmoke({ smokeRoot, environment, tarballPath, version }
 
   const directResult = await runCommand(
     process.execPath,
-    [join(packageRoot, "@pragma", "cli", "dist", "pragma.js"), "version"],
+    [join(packageRoot, "@pqpo", "pragma", "dist", "pragma.js"), "version"],
     {
       cwd: smokeRoot,
       env: environment,
@@ -214,7 +214,7 @@ async function runPositiveSmoke({ smokeRoot, environment, tarballPath, version }
   assertExit(directResult, 0, "direct packaged pragma bin");
 
   const reinstall = await installPackage(prefix, tarballPath, environment);
-  assertExit(reinstall, 0, "npm reinstall @pragma/cli");
+  assertExit(reinstall, 0, "npm reinstall @pqpo/pragma");
   await assertPragmaCommand(["version"], installedEnvironment, (result) =>
     assertExit(result, 0, "pragma version after reinstall"),
   );
@@ -222,15 +222,15 @@ async function runPositiveSmoke({ smokeRoot, environment, tarballPath, version }
   await assertPathPrecedence({ smokeRoot, environment, binDirectory, version });
 
   const uninstallResult = await runNpm(
-    ["uninstall", "--global", "--prefix", prefix, "@pragma/cli"],
+    ["uninstall", "--global", "--prefix", prefix, "@pqpo/pragma"],
     environment,
   );
-  assertExit(uninstallResult, 0, "npm uninstall @pragma/cli");
+  assertExit(uninstallResult, 0, "npm uninstall @pqpo/pragma");
   if (await pathExists(join(binDirectory, getBinName()))) {
     throw new Error("npm uninstall left the pragma command shim behind.");
   }
-  if (await pathExists(join(packageRoot, "@pragma", "cli"))) {
-    throw new Error("npm uninstall left @pragma/cli in the isolated npm root.");
+  if (await pathExists(join(packageRoot, "@pqpo", "pragma"))) {
+    throw new Error("npm uninstall left @pqpo/pragma in the isolated npm root.");
   }
 }
 

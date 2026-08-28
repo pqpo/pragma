@@ -1,7 +1,7 @@
 # Pragma CLI 分发与发布运维手册
 
-本文是 `@pragma/cli` 的安装、升级、冲突诊断和首次发布 runbook。CLI 的包名是
-`@pragma/cli`，安装后的命令名是 `pragma`。
+本文是 `@pqpo/pragma` 的安装、升级、冲突诊断和首次发布 runbook。CLI 的包名是
+`@pqpo/pragma`，安装后的命令名是 `pragma`。
 
 ## 用户安装与版本策略
 
@@ -14,16 +14,16 @@ x64。Linux、其他 CPU 和其他操作系统由 package manifest 的 `os` 字�
 
 ```bash
 # 稳定版
-npm install --global @pragma/cli@latest
+npm install --global @pqpo/pragma@latest
 
 # 预发行版
-npm install --global @pragma/cli@next
+npm install --global @pqpo/pragma@next
 
 # 精确升级或回滚
-npm install --global @pragma/cli@0.1.0
+npm install --global @pqpo/pragma@0.1.0
 
 # 卸载
-npm uninstall --global @pragma/cli
+npm uninstall --global @pqpo/pragma
 ```
 
 升级后确认实际执行的是目标版本：
@@ -101,8 +101,8 @@ build job 会上传以下审计文件：
 命令不会创建 npm 版本：
 
 ```bash
-pnpm --filter @pragma/cli package:pack
-npm publish apps/cli/.release/pragma-cli-<version>.tgz \
+pnpm --filter @pqpo/pragma package:pack
+npm publish apps/cli/.release/pqpo-pragma-<version>.tgz \
   --dry-run --access public --tag next
 ```
 
@@ -121,7 +121,7 @@ bootstrap 只能由 npm package 管理员执行，开发者不应持有或创建
 1. 在受保护的默认分支准备一个已通过 `cli-package.yml` 的 `cli-v<semver>` release commit，
    保存 canonical tarball、SHA-256、SBOM、license report 和 pack audit 结果。
 2. npm 管理员使用一次性、最小权限、短时有效的 granular credential，并按组织要求完成
-   2FA。该凭据只用于首次公开创建 `@pragma/cli` 和对应的 `next` 或 `latest` 版本；不得
+   2FA。该凭据只用于首次公开创建 `@pqpo/pragma` 和对应的 `next` 或 `latest` 版本；不得
    写入 GitHub secret、workflow、`.npmrc`、仓库文件或日志。
 3. 管理员在受控环境中重新核对 tarball digest、package manifest、`os`/`engines`、文件
    allowlist 和 provenance 要求，然后执行一次性 bootstrap publish。若组织策略要求先

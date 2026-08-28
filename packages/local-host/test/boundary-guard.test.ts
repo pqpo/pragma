@@ -105,17 +105,17 @@ describe("Local Host boundary guards", () => {
       lintStdin('import "@pragma/local-host";\n', "packages/runtime/antigravity/src/illegal.ts"),
     ).toContain("Lower layers and adapters must not depend");
     expect(
-      lintStdin('import "@pragma/cli";\n', "packages/runtime/antigravity/src/illegal.ts"),
+      lintStdin('import "@pqpo/pragma";\n', "packages/runtime/antigravity/src/illegal.ts"),
     ).toContain("Lower layers and adapters must not depend");
-    expect(lintStdin('import "@pragma/cli/internal";\n', "apps/desktop/src/main/illegal.ts")).toContain(
-      "Desktop Main must compose Local Host directly",
+    expect(
+      lintStdin('import "@pqpo/pragma/internal";\n', "apps/desktop/src/main/illegal.ts"),
+    ).toContain("Desktop Main must compose Local Host directly");
+    expect(lintStdin('import "@pqpo/pragma";\n', "apps/desktop/src/preload/illegal.ts")).toContain(
+      "Desktop preload, renderer, and shared code",
     );
-    expect(
-      lintStdin('import "@pragma/cli";\n', "apps/desktop/src/preload/illegal.ts"),
-    ).toContain("Desktop preload, renderer, and shared code");
-    expect(
-      lintStdin('import "@pragma/cli";\n', "apps/desktop/src/renderer/illegal.ts"),
-    ).toContain("Desktop preload, renderer, and shared code");
+    expect(lintStdin('import "@pqpo/pragma";\n', "apps/desktop/src/renderer/illegal.ts")).toContain(
+      "Desktop preload, renderer, and shared code",
+    );
     expect(lintStdin('import "@pragma/local-host";\n', "apps/desktop/src/main/legal.ts")).toBe("");
   }, 15_000);
 

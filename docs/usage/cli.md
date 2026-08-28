@@ -57,14 +57,14 @@ CLI 不会把 secret、Runtime 环境或 Desktop 私有状态写入 stdout；诊
 
 ## 安装与运行环境
 
-发行包名为 `@pragma/cli`，命令名为 `pragma`。当前发行包要求 Node.js 22+，支持 macOS
+发行包名为 `@pqpo/pragma`，命令名为 `pragma`。当前发行包要求 Node.js 22+，支持 macOS
 Apple Silicon、macOS Intel 和 Windows x64；Linux 安装会被 npm 的 `os` 元数据拒绝。
 发行包只包含编译后的 ESM 产物和 OS keychain 原生依赖，不在安装期下载 payload，也不携带
 第二份 Node.js。
 
 ```bash
 node --version
-npm install --global @pragma/cli@latest
+npm install --global @pqpo/pragma@latest
 pragma version
 pragma doctor
 ```
@@ -72,9 +72,9 @@ pragma doctor
 预发行版本使用 `@next`，升级或回滚时使用不可变的显式版本号：
 
 ```bash
-npm install --global @pragma/cli@next
-npm install --global @pragma/cli@0.1.0
-npm uninstall --global @pragma/cli
+npm install --global @pqpo/pragma@next
+npm install --global @pqpo/pragma@0.1.0
+npm uninstall --global @pqpo/pragma
 ```
 
 不要用 `--force` 绕过 Node 版本、操作系统或命令冲突。降级就是安装一个已经发布的旧

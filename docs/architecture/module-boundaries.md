@@ -63,7 +63,7 @@ depend on any `apps/*`, Electron, React/Next, `@pragma/client`, `@pragma/server`
 `@pragma/runtime-*`. Runtime factories are injected by `apps/desktop` Main or `apps/cli` composition.
 `@pragma/shared`, Core, Interpreter, Evaluation, Built-in Agents, Memory, Mission Board,
 Context Filesystem, Runtime packages, Server, Client, plugins, and examples may not depend on
-`@pragma/local-host` or `@pragma/cli`. Desktop preload/renderer/shared code remains browser-safe and
+`@pragma/local-host` or `@pqpo/pragma`. Desktop preload/renderer/shared code remains browser-safe and
 may consume `@pragma/shared/integration` but never Local Host.
 
 Expert Agents are cloud-first execution units scheduled by Server/Worker. Local Claude Code, Codex, Qoder CLI, Antigravity CLI, or self-hosted runtimes should be reached through the Desktop App local bridge. The Desktop App actively connects to the cloud Runtime Gateway, registers local capabilities, enforces local permissions, and invokes local Agent adapters. Do not add `apps/local-runner`; the product entry for local Agent bridging is `apps/desktop`.

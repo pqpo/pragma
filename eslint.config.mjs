@@ -14,19 +14,19 @@ const commonRestrictedPatterns = [
 
 const desktopBrowserSafePragmaRestriction = {
   regex:
-    "^@pragma/(?!shared(?:/integration)?$|interpreter/ast$|evaluation/ast$|built-in-agents/contracts$).+",
+    "^(?:@pqpo/pragma(?:/.*)?|@pragma/(?!shared(?:/integration)?$|interpreter/ast$|evaluation/ast$|built-in-agents/contracts$).+)",
   message:
     "Desktop preload, renderer, and shared code may only import browser-safe @pragma/shared, @pragma/interpreter/ast, @pragma/evaluation/ast, or @pragma/built-in-agents/contracts.",
 };
 
 const localHostReverseImportRestriction = {
-  group: ["@pragma/local-host", "@pragma/local-host/*", "@pragma/cli", "@pragma/cli/*"],
+  group: ["@pragma/local-host", "@pragma/local-host/*", "@pqpo/pragma", "@pqpo/pragma/*"],
   message:
     "Lower layers and adapters must not depend on the Local Host application layer or CLI surface.",
 };
 
 const desktopMainCliImportRestriction = {
-  group: ["@pragma/cli", "@pragma/cli/*"],
+  group: ["@pqpo/pragma", "@pqpo/pragma/*"],
   message: "Desktop Main must compose Local Host directly instead of importing the CLI surface.",
 };
 
@@ -153,7 +153,7 @@ const config = tseslint.config(
       "no-restricted-imports": [
         "error",
         {
-          paths: ["electron", "@pragma/client", "@pragma/server", "@pragma/cli", "react", "next"],
+          paths: ["electron", "@pragma/client", "@pragma/server", "@pqpo/pragma", "react", "next"],
           patterns: [
             ...commonRestrictedPatterns,
             {

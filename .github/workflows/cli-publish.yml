@@ -52,7 +52,7 @@ jobs:
             process.exit(1);
           }
           if (tag.slice("cli-v".length) !== version) {
-            console.error(`Tag ${tag} does not match @pragma/cli version ${version}.`);
+            console.error(`Tag ${tag} does not match @pqpo/pragma version ${version}.`);
             process.exit(1);
           }
           NODE
@@ -81,7 +81,7 @@ jobs:
       ref: ${{ github.sha }}
 
   publish:
-    name: Publish @pragma/cli ${{ needs.validate_cli_tag.outputs.version }}
+    name: Publish @pqpo/pragma ${{ needs.validate_cli_tag.outputs.version }}
     needs:
       - validate_cli_tag
       - package_gates
@@ -133,7 +133,7 @@ jobs:
           import { readFile } from "node:fs/promises";
           const expected = process.env.EXPECTED_VERSION;
           const manifest = JSON.parse(await readFile("release-artifact/artifact-manifest.json", "utf8"));
-          if (manifest.package !== "@pragma/cli" || manifest.version !== expected || manifest.tarball !== "pragma-cli.tgz") {
+          if (manifest.package !== "@pqpo/pragma" || manifest.version !== expected || manifest.tarball !== "pragma-cli.tgz") {
             throw new Error(`Canonical artifact identity mismatch: ${JSON.stringify(manifest)}`);
           }
           NODE
@@ -145,15 +145,15 @@ jobs:
         run: |
           set -euo pipefail
           set +e
-          npm_output="$(npm view "@pragma/cli@${RELEASE_VERSION}" version --registry=https://registry.npmjs.org/ 2>&1)"
+          npm_output="$(npm view "@pqpo/pragma@${RELEASE_VERSION}" version --registry=https://registry.npmjs.org/ 2>&1)"
           npm_status=$?
           set -e
           if [[ "${npm_status}" == "0" ]]; then
-            echo "::error::@pragma/cli@${RELEASE_VERSION} already exists; immutable releases cannot be overwritten."
+            echo "::error::@pqpo/pragma@${RELEASE_VERSION} already exists; immutable releases cannot be overwritten."
             exit 1
           fi
           if ! grep -Eiq 'E404|404 Not Found|is not in this registry|No match found' <<< "${npm_output}"; then
-            echo "::error::Unable to determine whether @pragma/cli@${RELEASE_VERSION} exists."
+            echo "::error::Unable to determine whether @pqpo/pragma@${RELEASE_VERSION} exists."
             echo "${npm_output}"
             exit 1
           fi
@@ -204,7 +204,7 @@ jobs:
           max_attempts=12
           verified=false
           for attempt in $(seq 1 "${max_attempts}"); do
-            if npm view "@pragma/cli@${RELEASE_VERSION}" version dist-tags engines os bin dist --json \
+            if npm view "@pqpo/pragma@${RELEASE_VERSION}" version dist-tags engines os bin dist --json \
               --registry=https://registry.npmjs.org/ > "${METADATA_PATH}"; then
               if EXPECTED_VERSION="${RELEASE_VERSION}" EXPECTED_DIST_TAG="${RELEASE_DIST_TAG}" \
                 METADATA_PATH="${METADATA_PATH}" node --input-type=module <<'NODE'
@@ -222,7 +222,7 @@ jobs:
 
           if (metadata === undefined) failures.push("metadata record");
           if (packRecord === undefined) failures.push("canonical pack record");
-          if (metadata?.name !== "@pragma/cli") failures.push("name");
+          if (metadata?.name !== "@pqpo/pragma") failures.push("name");
           if (metadata?.version !== expectedVersion) failures.push("version");
           if (metadata?.["dist-tags"]?.[expectedDistTag] !== expectedVersion) {
             failures.push(`dist-tag:${expectedDistTag}`);
@@ -236,7 +236,7 @@ jobs:
           if (metadata?.dist?.shasum !== packRecord?.shasum) failures.push("dist.shasum");
 
           if (failures.length > 0) {
-            console.error(`Published @pragma/cli metadata mismatch: ${failures.join(", ")}.`);
+            console.error(`Published @pqpo/pragma metadata mismatch: ${failures.join(", ")}.`);
             process.exit(1);
           }
           console.log(
@@ -342,7 +342,7 @@ jobs:
 
           prefix="${smoke_root}/clean-prefix"
           npm install --global --prefix "${prefix}" --no-audit --no-fund \
-            "@pragma/cli@${RELEASE_VERSION}" --registry=https://registry.npmjs.org/
+            "@pqpo/pragma@${RELEASE_VERSION}" --registry=https://registry.npmjs.org/
           installed_command="$(PATH="${prefix}/bin:${PATH}" command -v pragma)"
           if [[ "${installed_command}" != "${prefix}/bin/pragma" ]]; then
             echo "::error::Public install resolved pragma outside the clean prefix."
@@ -361,7 +361,7 @@ jobs:
           (
             cd "${verification_project}"
             npm install --ignore-scripts --no-audit --no-fund \
-              "@pragma/cli@${RELEASE_VERSION}" --registry=https://registry.npmjs.org/
+              "@pqpo/pragma@${RELEASE_VERSION}" --registry=https://registry.npmjs.org/
             npm audit signatures --json --include-attestations \
               --registry=https://registry.npmjs.org/ > "${SIGNATURE_REPORT}"
           )
@@ -381,22 +381,22 @@ jobs:
           }
           const verified = Array.isArray(report.verified) ? report.verified : [];
           const packageVerification = verified.find(
-            (entry) => entry?.name === "@pragma/cli" && entry?.version === expectedVersion,
+            (entry) => entry?.name === "@pqpo/pragma" && entry?.version === expectedVersion,
           );
           if (packageVerification?.attestations?.bundles?.length !== undefined) {
             if (packageVerification.attestations.bundles.length === 0) {
-              console.error("@pragma/cli has no verified provenance attestation bundle.");
+              console.error("@pqpo/pragma has no verified provenance attestation bundle.");
               process.exit(1);
             }
           } else {
-            console.error("@pragma/cli is absent from verified provenance attestations.");
+            console.error("@pqpo/pragma is absent from verified provenance attestations.");
             process.exit(1);
           }
           console.log(
             JSON.stringify(
               {
                 ok: true,
-                package: "@pragma/cli",
+                package: "@pqpo/pragma",
                 version: expectedVersion,
                 attestationBundles: packageVerification.attestations.bundles.length,
               },

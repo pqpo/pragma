@@ -18,7 +18,7 @@ Pragma 已经形成一个质量较好的**本地 Agent 执行内核**：Expert�
 ## 已接受的 CLI 本机应用层边界
 
 `@pragma/local-host` 是 Desktop Main 与公共 npm CLI 共同使用的 Node-only application layer；它不
-依赖 Electron 或具体 Runtime。`apps/cli`（`@pragma/cli`，binary `pragma`）只负责 argv、TTY、
+依赖 Electron 或具体 Runtime。`apps/cli`（`@pqpo/pragma`，binary `pragma`）只负责 argv、TTY、
 text/json/jsonl 输出、信号和 composition，用户手动通过 npm 在 macOS 或 Windows 上安装，并使用现有
 Node.js >=22。Runtime factories 仅由 Desktop Main 或 CLI composition root 注入。
 

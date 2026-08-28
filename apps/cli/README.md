@@ -14,7 +14,7 @@ Linux and other operating systems are not supported by this release.
 ## Install
 
 ```bash
-npm install --global @pragma/cli
+npm install --global @pqpo/pragma
 pragma version
 pragma doctor
 ```
@@ -26,8 +26,9 @@ command shim in its global prefix.
 Set `PRAGMA_HOME` when an isolated Pragma data root is needed. The default is
 `~/.pragma`.
 
-The published package is an ESM package with an explicit `>=22` engine. It
-contains the compiled CLI and one native keychain dependency only; it does not
+The published npm package is `@pqpo/pragma` and its global executable is
+`pragma`. It is an ESM package with an explicit `>=22` engine. It contains the
+compiled CLI and one native keychain dependency only; it does not
 download a payload, install a second Node.js runtime, or publish a consumer
 lockfile.
 
@@ -45,9 +46,9 @@ inspect the process exit code.
 ## Upgrade, rollback, and uninstall
 
 ```bash
-npm install --global @pragma/cli@latest
-npm install --global @pragma/cli@<version>
-npm uninstall --global @pragma/cli
+npm install --global @pqpo/pragma@latest
+npm install --global @pqpo/pragma@<version>
+npm uninstall --global @pqpo/pragma
 ```
 
 Published versions are immutable. Install an explicit version to roll back;

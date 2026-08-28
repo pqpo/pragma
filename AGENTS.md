@@ -84,7 +84,7 @@ tsconfig.base.json
 
 ## Package 命名
 
-统一使用 `@pragma/*` scope。
+内部 workspace package 统一使用 `@pragma/*` scope；公共 CLI 发布包使用 D41 定稿的 `@pqpo/pragma`。
 
 当前 package：
 
@@ -104,7 +104,7 @@ tsconfig.base.json
 @pragma/runtime-antigravity
 @pragma/desktop
 @pragma/local-host
-@pragma/cli
+@pqpo/pragma
 @pragma/examples
 @pragma/eslint-config
 @pragma/tsconfig

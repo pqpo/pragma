@@ -61,22 +61,22 @@ jobs:
         run: pnpm install --frozen-lockfile
 
       - name: Lint CLI
-        run: pnpm --filter @pragma/cli lint
+        run: pnpm --filter @pqpo/pragma lint
 
       - name: Typecheck CLI
-        run: pnpm --filter @pragma/cli typecheck
+        run: pnpm --filter @pqpo/pragma typecheck
 
       - name: Test CLI
         env:
           CI: "true"
           PRAGMA_LOG_LEVEL: error
-        run: pnpm --filter @pragma/cli test
+        run: pnpm --filter @pqpo/pragma test
 
       - name: Build, pack, and audit canonical tarball
-        run: pnpm --filter @pragma/cli package:pack
+        run: pnpm --filter @pqpo/pragma package:pack
 
       - name: Generate digest, SBOM, and license reports
-        run: pnpm --filter @pragma/cli release:reports
+        run: pnpm --filter @pqpo/pragma release:reports
 
       - name: Verify canonical artifact files
         shell: bash

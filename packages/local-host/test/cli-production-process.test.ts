@@ -21,7 +21,7 @@ afterEach(async () => {
 });
 
 beforeAll(async () => {
-  const result = await invoke("pnpm", ["--filter", "@pragma/cli...", "build"], {});
+  const result = await invoke("pnpm", ["--filter", "@pqpo/pragma...", "build"], {});
   expect(result.exitCode).toBe(0);
 }, 120_000);
 

@@ -16,7 +16,7 @@ const requireShim =
   'import { createRequire as __pragmaCreateRequire } from "node:module";\n' +
   "const require = __pragmaCreateRequire(import.meta.url);";
 
-if (packageManifest.name !== "@pragma/cli") {
+if (packageManifest.name !== "@pqpo/pragma") {
   throw new Error(`Unexpected CLI package name: ${String(packageManifest.name)}.`);
 }
 if (typeof version !== "string" || !isReleaseVersion(version)) {
@@ -103,12 +103,12 @@ await writeFile(
   "utf8",
 );
 
-console.log(`Built @pragma/cli ${version}.`);
+console.log(`Built @pqpo/pragma ${version}.`);
 console.log(`Staging package: ${stagingDirectory}`);
 
 function createReleaseManifest(releaseVersion) {
   return {
-    name: "@pragma/cli",
+    name: "@pqpo/pragma",
     version: releaseVersion,
     description: "Pragma command-line interface",
     license: "SEE LICENSE IN LICENSE",

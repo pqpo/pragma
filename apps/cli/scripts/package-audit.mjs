@@ -228,7 +228,7 @@ function parsePackageJson(data) {
 }
 
 function assertManifest(manifest) {
-  if (manifest.name !== "@pragma/cli") throw new Error("Unexpected package name in tarball.");
+  if (manifest.name !== "@pqpo/pragma") throw new Error("Unexpected package name in tarball.");
   if (typeof manifest.version !== "string" || !isReleaseVersion(manifest.version)) {
     throw new Error("Tarball package.json must contain a release semver.");
   }
