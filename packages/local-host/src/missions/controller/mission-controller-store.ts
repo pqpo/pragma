@@ -1,5 +1,5 @@
 import { randomUUID } from "node:crypto";
-import { mkdir, open, readFile, rename, rm, stat, truncate } from "node:fs/promises";
+import { mkdir, open, readFile, readdir, rename, rm, stat, truncate } from "node:fs/promises";
 import { dirname, join } from "node:path";
 
 import { withFileLock } from "@pragma/core";
@@ -75,6 +75,24 @@ export interface MissionWatchBarrier {
   /** Latest lifecycle event retained at this barrier, even when replay is 0. */
   readonly latestStatusEventType?: string | undefined;
 }
+
+interface WatchFileSignature {
+  readonly bytes: bigint;
+  readonly modifiedAtNs: bigint;
+  readonly inode: bigint;
+}
+
+interface WatchBarrierCacheEntry {
+  readonly eventFile: WatchFileSignature | undefined;
+  readonly barrier: MissionWatchBarrier;
+}
+
+const WATCH_RECOVERY_MARKERS = new Set([
+  ".retention-transaction.json",
+  ".command-append-transaction.json",
+  ".command-transaction.json",
+  ".event-transaction.json",
+]);
 
 export type MissionControllerJournalPhase =
   | "command-append.prepare"
@@ -320,6 +338,7 @@ export function createMissionControllerStore(options: {
     join(options.missionsPath, ".locks", `${missionId}.aggregate.lock`);
   const registryPath = join(options.missionsPath, ".local-host", "run-request-registry.json");
   const registryLock = join(options.missionsPath, ".locks", "run-request-registry.lock");
+  const watchBarrierCache = new Map<string, WatchBarrierCacheEntry>();
 
   const now = (): string => clock.now().toISOString();
   const checkpoint = async (phase: MissionControllerJournalPhase): Promise<void> =>
@@ -698,13 +717,52 @@ export function createMissionControllerStore(options: {
           ? []
           : allEvents.slice(Math.max(0, allEvents.length - replay))
         : allEvents.filter((event) => event.sequence > after);
-    return {
+    const barrier = {
       snapshot,
       cursor: makeCursor(input.missionId, snapshot.eventSequence),
       barrierSequence: snapshot.eventSequence,
       events,
       ...latestStatusEventType(allEvents),
     };
+    watchBarrierCache.set(input.missionId, {
+      eventFile: await readWatchFileSignature(eventsPath(input.missionId)),
+      barrier,
+    });
+    return barrier;
+  };
+
+  /**
+   * A following watcher already owns a valid cursor. When the durable event
+   * file and recovery markers are unchanged, its last barrier is still a
+   * valid empty barrier. Avoid reopening the aggregate lock and reparsing the
+   * complete event log on every idle poll; a changed marker or file always
+   * falls back to the locked path below.
+   */
+  const readCachedWatchBarrier = async (input: {
+    readonly missionId: string;
+    readonly after?: string | undefined;
+    readonly replay?: number | undefined;
+  }): Promise<MissionWatchBarrier | undefined> => {
+    if (input.after === undefined || input.replay !== undefined) return undefined;
+    const cached = watchBarrierCache.get(input.missionId);
+    if (cached === undefined) return undefined;
+    const after = parseCursor(input.after, input.missionId);
+    if (after !== cached.barrier.barrierSequence) return undefined;
+    if (await hasWatchRecoveryMarker(missionDirectory(input.missionId))) return undefined;
+    if (
+      !sameWatchFileSignature(
+        cached.eventFile,
+        await readWatchFileSignature(eventsPath(input.missionId)),
+      )
+    )
+      return undefined;
+
+    // Lease updates and other aggregate-only changes do not append an event.
+    // Refresh the snapshot atomically-written file while retaining the cached
+    // event barrier; a changed eventSequence forces the complete locked path.
+    const snapshot = await readState(input.missionId);
+    if (snapshot.eventSequence !== cached.barrier.barrierSequence) return undefined;
+    return { ...cached.barrier, snapshot, events: [] };
   };
 
   const assertGuard = (
@@ -1542,6 +1600,8 @@ export function createMissionControllerStore(options: {
       });
     },
     async readWatchBarrier(input) {
+      const cached = await readCachedWatchBarrier(input);
+      if (cached !== undefined) return cached;
       return await withAggregateLock(input.missionId, async () => {
         await recoverTransactions(input.missionId);
         return await readWatchBarrierUnlocked(input);
@@ -1856,6 +1916,42 @@ async function fileSizeIfExists(path: string): Promise<number> {
     return (await stat(path)).size;
   } catch (error) {
     if (isNodeError(error, "ENOENT")) return 0;
+    throw error;
+  }
+}
+
+async function readWatchFileSignature(path: string): Promise<WatchFileSignature | undefined> {
+  try {
+    const details = await stat(path, { bigint: true });
+    return {
+      bytes: details.size,
+      modifiedAtNs: details.mtimeNs,
+      inode: details.ino,
+    };
+  } catch (error) {
+    if (isNodeError(error, "ENOENT")) return undefined;
+    throw error;
+  }
+}
+
+function sameWatchFileSignature(
+  left: WatchFileSignature | undefined,
+  right: WatchFileSignature | undefined,
+): boolean {
+  if (left === undefined || right === undefined) return left === right;
+  return (
+    left.bytes === right.bytes &&
+    left.modifiedAtNs === right.modifiedAtNs &&
+    left.inode === right.inode
+  );
+}
+
+async function hasWatchRecoveryMarker(directory: string): Promise<boolean> {
+  try {
+    const entries = await readdir(directory);
+    return entries.some((entry) => WATCH_RECOVERY_MARKERS.has(entry));
+  } catch (error) {
+    if (isNodeError(error, "ENOENT")) return false;
     throw error;
   }
 }

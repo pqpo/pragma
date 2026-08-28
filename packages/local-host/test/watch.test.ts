@@ -195,6 +195,39 @@ describe("Mission watch", () => {
     }
   });
 
+  it("reuses an unchanged follow barrier while refreshing aggregate-only state", async () => {
+    const root = await mkdtemp(join(tmpdir(), "pragma-watch-idle-barrier-"));
+    try {
+      const store = createMissionControllerStore({ missionsPath: join(root, "missions") });
+      const guard = await store.claim({
+        missionId,
+        claimId: "00000000-0000-4000-8000-000000000328",
+        leaseMs: 10_000,
+      });
+      await store.write({
+        missionId,
+        guard,
+        operation: async ({ appendEvent }) =>
+          await appendEvent(
+            "mission.created",
+            { requestId: "00000000-0000-4000-8000-000000000329" },
+            "00000000-0000-4000-8000-000000000330",
+          ),
+      });
+
+      const initial = await store.readWatchBarrier({ missionId, replay: 0 });
+      const renewed = await store.renew({ missionId, guard, leaseMs: 10_000 });
+      const unchanged = await store.readWatchBarrier({ missionId, after: initial.cursor });
+
+      expect(unchanged.events).toEqual([]);
+      expect(unchanged.cursor).toBe(initial.cursor);
+      expect(unchanged.snapshot.lease).toEqual(renewed);
+      expect(unchanged.barrierSequence).toBe(initial.barrierSequence);
+    } finally {
+      await rm(root, { recursive: true, force: true });
+    }
+  });
+
   it("deduplicates a repeated durable eventId while preserving the original event identity", async () => {
     const duplicate: MissionEvent = {
       schemaVersion: "pragma.local-host-mission-event/v1",
@@ -379,6 +412,89 @@ describe("Mission watch", () => {
       expect(result.lastCursor).toBe(makeMissionEventCursor(missionId, 2));
     } finally {
       await rm(root, { recursive: true, force: true });
+    }
+  });
+
+  it("backs off only across empty polls and resets after a durable event", async () => {
+    vi.useFakeTimers();
+    const controller = new AbortController();
+    const snapshot = {
+      schemaVersion: "pragma.local-host-mission-aggregate/v1" as const,
+      missionId,
+      nextFencingToken: "1",
+      eventSequence: 0,
+      operations: {},
+    };
+    const event: MissionEvent = {
+      schemaVersion: "pragma.local-host-mission-event/v1",
+      eventId: "00000000-0000-4000-8000-000000000326",
+      missionId,
+      sequence: 1,
+      occurredAt: "2026-08-27T00:00:00.000Z",
+      type: "run.progress",
+      data: { executionId: "00000000-0000-4000-8000-000000000327" },
+    };
+    let readCount = 0;
+    const readWatchBarrier = vi.fn(async () => {
+      readCount += 1;
+      if (readCount < 6) {
+        return {
+          snapshot,
+          cursor: makeMissionEventCursor(missionId, 0),
+          barrierSequence: 0,
+          events: [],
+          latestStatusEventType: undefined,
+        };
+      }
+      return {
+        snapshot: { ...snapshot, eventSequence: 1 },
+        cursor: makeMissionEventCursor(missionId, 1),
+        barrierSequence: 1,
+        events: [event],
+        latestStatusEventType: "run.progress",
+      };
+    });
+    const setTimeoutSpy = vi.spyOn(globalThis, "setTimeout");
+    const watchPromise = createMissionWatchApplication({
+      controller: { readWatchBarrier },
+    }).watch({
+      missionId,
+      signal: controller.signal,
+      onEvent: () => undefined,
+    });
+
+    try {
+      await vi.advanceTimersByTimeAsync(0);
+      expect(readWatchBarrier).toHaveBeenCalledTimes(2);
+
+      await vi.advanceTimersByTimeAsync(250);
+      expect(readWatchBarrier).toHaveBeenCalledTimes(3);
+      await vi.advanceTimersByTimeAsync(499);
+      expect(readWatchBarrier).toHaveBeenCalledTimes(3);
+      await vi.advanceTimersByTimeAsync(1);
+      expect(readWatchBarrier).toHaveBeenCalledTimes(4);
+      await vi.advanceTimersByTimeAsync(999);
+      expect(readWatchBarrier).toHaveBeenCalledTimes(4);
+      await vi.advanceTimersByTimeAsync(1);
+      expect(readWatchBarrier).toHaveBeenCalledTimes(5);
+      await vi.advanceTimersByTimeAsync(1_249);
+      expect(readWatchBarrier).toHaveBeenCalledTimes(5);
+      await vi.advanceTimersByTimeAsync(1);
+      expect(readWatchBarrier).toHaveBeenCalledTimes(6);
+
+      const pollDelays = setTimeoutSpy.mock.calls
+        .map(([, delay]) => delay)
+        .filter((delay): delay is number => typeof delay === "number");
+      expect(pollDelays).toEqual([250, 500, 1_000, 1_250, 250]);
+
+      controller.abort();
+      await expect(watchPromise).resolves.toMatchObject({
+        status: "detached",
+        missionContinues: true,
+        lastCursor: makeMissionEventCursor(missionId, 1),
+      });
+    } finally {
+      vi.useRealTimers();
     }
   });
 });

@@ -1,4 +1,5 @@
-import { spawn, type ChildProcess } from "node:child_process";
+import { execFileSync, spawn, type ChildProcess } from "node:child_process";
+import { readFileSync } from "node:fs";
 import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -7,11 +8,22 @@ import { afterEach, describe, expect, it } from "vitest";
 
 import { createMissionControllerStore } from "../src/index.ts";
 import { createIntegrationError } from "@pragma/shared/integration";
+import { SIGKILL_REPLAY_TEST_NAME } from "./mission-controller-process.test-names.ts";
 
 const roots: string[] = [];
+const children = new Set<ChildProcess>();
 const fixture = join(import.meta.dirname, "fixtures", "mission-controller-process.ts");
+const repositoryRoot = join(import.meta.dirname, "..", "..", "..");
+const tsxLoader = resolveTsxLoader(repositoryRoot);
 
 afterEach(async () => {
+  const activeChildren = [...children].filter(
+    (child) => child.exitCode === null && child.signalCode === null,
+  );
+  activeChildren.forEach((child) => killProcessTree(child, "SIGKILL"));
+  await Promise.all(
+    activeChildren.map(async (child) => await waitForExit(child, true).catch(() => undefined)),
+  );
   await Promise.all(
     roots.splice(0).map(async (root) => await rm(root, { recursive: true, force: true })),
   );
@@ -96,7 +108,7 @@ describe("MissionControllerStore cross-process integration", () => {
       `${killedMission}|00000000-0000-4000-8000-000000000033|50|5000`,
     );
     await expect(waitForLine(killed)).resolves.toContain("fencingToken");
-    killed.kill("SIGKILL");
+    killProcessTree(killed, "SIGKILL");
     await waitForExit(killed, true);
     await new Promise((resolve) => setTimeout(resolve, 70));
     const recovered = child(
@@ -222,17 +234,24 @@ interface ProcessOutcome {
 }
 
 function child(missionsPath: string, action: string, value: string): ChildProcess {
-  const repositoryRoot = join(import.meta.dirname, "..", "..", "..");
-  return spawn(
-    join(repositoryRoot, "node_modules", ".bin", "tsx"),
-    [fixture, missionsPath, action, value],
+  const childProcess = spawn(
+    process.execPath,
+    ["--import", tsxLoader, fixture, missionsPath, action, value],
     {
       cwd: repositoryRoot,
+      detached: process.platform !== "win32",
       stdio: ["ignore", "pipe", "pipe"],
+      windowsHide: true,
     },
   );
+  children.add(childProcess);
+  childProcess.once("close", () => children.delete(childProcess));
+  return childProcess;
+}
 
-  it("replays an accepted command after SIGKILL without duplicating its commandId side effect", async () => {
+it(
+  SIGKILL_REPLAY_TEST_NAME,
+  async () => {
     const root = await temporaryRoot();
     const target = mission(404);
     const requestId = "00000000-0000-4000-8000-000000000406";
@@ -261,7 +280,7 @@ function child(missionsPath: string, action: string, value: string): ChildProces
       `${target}|00000000-0000-4000-8000-000000000407|50|${deliveriesPath}|${sideEffectPath}`,
     );
     await expect(waitForLine(interrupted)).resolves.toBe("side-effect");
-    interrupted.kill("SIGKILL");
+    killProcessTree(interrupted, "SIGKILL");
     await waitForExit(interrupted, true);
 
     await new Promise((resolve) => setTimeout(resolve, 70));
@@ -289,43 +308,84 @@ function child(missionsPath: string, action: string, value: string): ChildProces
       snapshot.events.length,
     );
     expect(snapshot.events.map((event) => event.sequence)).toEqual([1, 2]);
-  }, 15_000);
-}
+  },
+  15_000,
+);
 
 async function waitForLine(process: ChildProcess): Promise<string> {
   return await new Promise((resolve, reject) => {
     let output = "";
     const stderr: string[] = [];
-    process.stdout?.on("data", (chunk: Buffer) => {
+    let settled = false;
+    const onStdout = (chunk: Buffer) => {
       output += chunk.toString();
       const line = output.indexOf("\n");
-      if (line >= 0) resolve(output.slice(0, line));
-    });
-    process.stderr?.on("data", (chunk: Buffer) => stderr.push(chunk.toString()));
-    process.once("error", reject);
-    process.once("exit", (code) => {
+      if (line >= 0) finish(() => resolve(output.slice(0, line)));
+    };
+    const onStderr = (chunk: Buffer) => stderr.push(chunk.toString());
+    const onError = (error: Error) => finish(() => reject(error));
+    const onClose = (code: number | null, signal: NodeJS.Signals | null) => {
       if (!output.includes("\n"))
-        reject(new Error(`Child exited before output: ${code}; ${stderr.join("")}`));
-    });
+        finish(() =>
+          reject(new Error(`Child exited before output: ${code ?? signal}; ${stderr.join("")}`)),
+        );
+    };
+    const finish = (done: () => void): void => {
+      if (settled) return;
+      settled = true;
+      process.stdout?.off("data", onStdout);
+      process.stderr?.off("data", onStderr);
+      process.off("error", onError);
+      process.off("close", onClose);
+      done();
+    };
+    process.stdout?.on("data", onStdout);
+    process.stderr?.on("data", onStderr);
+    process.once("error", onError);
+    process.once("close", onClose);
+    if (process.exitCode !== null || process.signalCode !== null)
+      onClose(process.exitCode, process.signalCode);
   });
 }
 
 function collectLines(process: ChildProcess): { next(): Promise<string> } {
   const lines: string[] = [];
-  const waiters: Array<(line: string) => void> = [];
+  const waiters: Array<{
+    readonly resolve: (line: string) => void;
+    readonly reject: (error: Error) => void;
+  }> = [];
   let buffered = "";
-  process.stdout?.on("data", (chunk: Buffer) => {
+  let closed = process.exitCode !== null || process.signalCode !== null;
+  let closeError: Error | undefined;
+  const onStdout = (chunk: Buffer) => {
     buffered += chunk.toString();
     while (true) {
       const end = buffered.indexOf("\n");
-      if (end < 0) return;
+      if (end < 0) break;
       const line = buffered.slice(0, end);
       buffered = buffered.slice(end + 1);
       const waiter = waiters.shift();
       if (waiter === undefined) lines.push(line);
-      else waiter(line);
+      else waiter.resolve(line);
     }
-  });
+  };
+  const onError = (error: Error) => {
+    closed = true;
+    closeError = error;
+    rejectWaiters(error);
+  };
+  const onClose = (code: number | null, signal: NodeJS.Signals | null) => {
+    closed = true;
+    closeError = new Error(`Child exited before output: ${code ?? signal}`);
+    rejectWaiters(closeError);
+    process.stdout?.off("data", onStdout);
+    process.off("error", onError);
+    process.off("close", onClose);
+  };
+  process.stdout?.on("data", onStdout);
+  process.once("error", onError);
+  process.once("close", onClose);
+  if (closed) onClose(process.exitCode, process.signalCode);
   return {
     next: async () =>
       await new Promise<string>((resolve, reject) => {
@@ -334,24 +394,72 @@ function collectLines(process: ChildProcess): { next(): Promise<string> } {
           resolve(line);
           return;
         }
-        process.once("error", reject);
-        process.once("exit", (code) => {
-          if (lines.length > 0) resolve(lines.shift()!);
-          else reject(new Error(`Child exited before output: ${code}`));
-        });
-        waiters.push(resolve);
+        if (closed) {
+          reject(closeError ?? new Error("Child exited before output."));
+          return;
+        }
+        waiters.push({ resolve, reject });
+        if (closed) {
+          const waiter = waiters.pop();
+          waiter?.reject(closeError ?? new Error("Child exited before output."));
+        }
       }),
   };
+
+  function rejectWaiters(error: Error): void {
+    for (const waiter of waiters.splice(0)) waiter.reject(error);
+  }
 }
 
 async function waitForExit(process: ChildProcess, allowFailure = false): Promise<void> {
   await new Promise<void>((resolve, reject) => {
-    process.once("error", reject);
-    process.once("exit", (code, signal) => {
-      if (allowFailure || (code === 0 && signal === null)) resolve();
-      else reject(new Error(`Child failed: code=${code}; signal=${signal}`));
-    });
+    let settled = false;
+    const onError = (error: Error) => finish(() => reject(error));
+    const onClose = (code: number | null, signal: NodeJS.Signals | null) => {
+      if (allowFailure || (code === 0 && signal === null)) finish(resolve);
+      else finish(() => reject(new Error(`Child failed: code=${code}; signal=${signal}`)));
+    };
+    const finish = (done: () => void): void => {
+      if (settled) return;
+      settled = true;
+      process.off("error", onError);
+      process.off("close", onClose);
+      done();
+    };
+    process.once("error", onError);
+    process.once("close", onClose);
+    if (process.exitCode !== null || process.signalCode !== null)
+      onClose(process.exitCode, process.signalCode);
   });
+}
+
+function killProcessTree(child: ChildProcess, signal: NodeJS.Signals): void {
+  if (child.pid === undefined) return;
+  try {
+    if (process.platform === "win32") {
+      execFileSync("taskkill", ["/pid", String(child.pid), "/t", "/f"], { stdio: "ignore" });
+    } else {
+      process.kill(-child.pid, signal);
+    }
+  } catch {
+    // The fixture may have exited between the state check and the kill.
+  }
+}
+
+function resolveTsxLoader(repositoryRoot: string): string {
+  const launcher = readFileSync(join(repositoryRoot, "node_modules", ".bin", "tsx"), "utf8");
+  const match = launcher.match(/node_modules\/\.pnpm\/([^/]+)\/node_modules\/tsx/u);
+  if (match?.[1] === undefined) throw new Error("Could not locate the repository tsx loader.");
+  return join(
+    repositoryRoot,
+    "node_modules",
+    ".pnpm",
+    match[1],
+    "node_modules",
+    "tsx",
+    "dist",
+    "loader.mjs",
+  );
 }
 
 async function temporaryRoot(): Promise<string> {

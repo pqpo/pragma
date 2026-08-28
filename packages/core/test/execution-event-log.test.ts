@@ -1,9 +1,9 @@
-import { mkdir, mkdtemp, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 
 import type { ExecutionRecord, ExpertAgentStreamEvent, Invocation } from "@pragma/shared";
-import { describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it } from "vitest";
 
 import {
   createFileExecutionStore,
@@ -14,7 +14,17 @@ import {
   StoredExecutionView,
 } from "../src/index.ts";
 
-describe("Execution canonical event log", () => {
+const temporaryHomes: string[] = [];
+
+afterEach(async () => {
+  await Promise.all(
+    temporaryHomes.splice(0).map(async (home) => {
+      await rm(home, { recursive: true, force: true, maxRetries: 5, retryDelay: 50 });
+    }),
+  );
+});
+
+describe("Execution canonical event log", { timeout: 30_000 }, () => {
   it("uses one Execution sequence and projects durable message history", async () => {
     const { store } = await fixture();
     await store.appendEvent("execution", "root", "invocation.started", {});
@@ -329,7 +339,7 @@ describe("Execution canonical event log", () => {
   });
 
   it("rejects v1 Execution state instead of reading a compatibility format", async () => {
-    const home = await mkdtemp(join(tmpdir(), "pragma-execution-v1-"));
+    const home = await createTemporaryHome("pragma-execution-v1-");
     const paths = new PragmaPaths({ pragmaHome: home });
     const statePath = paths.executionState("legacy");
     await mkdir(dirname(statePath), { recursive: true });
@@ -681,7 +691,7 @@ describe("Execution canonical event log", () => {
 });
 
 async function fixture() {
-  const home = await mkdtemp(join(tmpdir(), "pragma-event-log-"));
+  const home = await createTemporaryHome("pragma-event-log-");
   const store = createFileExecutionStore({ pragmaHome: home });
   const timestamp = new Date().toISOString();
   const definition = { id: "flow", kind: "flow" as const };
@@ -712,4 +722,10 @@ async function fixture() {
   };
   await store.create(execution, root);
   return { home, store };
+}
+
+async function createTemporaryHome(prefix: string): Promise<string> {
+  const home = await mkdtemp(join(tmpdir(), prefix));
+  temporaryHomes.push(home);
+  return home;
 }

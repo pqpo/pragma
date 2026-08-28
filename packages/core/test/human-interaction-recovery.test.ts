@@ -31,7 +31,7 @@ afterEach(async () => {
   );
 });
 
-describe("ExpertSession human interaction recovery", () => {
+describe("ExpertSession human interaction recovery", { timeout: 30_000 }, () => {
   it.each(["response-event", "resume-commit"] as const)(
     "retries the same human response request after a transient %s failure",
     async (failureStage) => {

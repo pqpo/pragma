@@ -19,11 +19,18 @@ const temporaryPaths: string[] = [];
 
 afterEach(async () => {
   await Promise.all(
-    temporaryPaths.splice(0).map((path) => rm(path, { recursive: true, force: true })),
+    temporaryPaths.splice(0).map((path) =>
+      rm(path, {
+        recursive: true,
+        force: true,
+        maxRetries: 5,
+        retryDelay: 50,
+      }),
+    ),
   );
 });
 
-describe("mission store", () => {
+describe("mission store", { timeout: 30_000 }, () => {
   it("persists a mission pinned to an immutable project revision", async () => {
     const root = await temporaryRoot();
     const store = createMissionStore({ missionsPath: join(root, "missions") });

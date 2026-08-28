@@ -37,6 +37,7 @@ describe("queue steer crash recovery", () => {
     const sessionId = "queue-steer-crash-session";
     const repositoryRoot = join(import.meta.dirname, "..", "..", "..");
     const tsxLoader = await resolveTsxLoader(repositoryRoot);
+    const crashPhase = "release-after-retire";
     const child = spawn(
       process.execPath,
       [
@@ -46,13 +47,14 @@ describe("queue steer crash recovery", () => {
         "seed",
         pragmaHome,
         sessionId,
+        crashPhase,
       ],
       { cwd: repositoryRoot, detached: process.platform !== "win32", stdio: "pipe" },
     );
 
     try {
-      await waitForLine(child, "marked");
-      killProcessTree(child, "SIGKILL");
+      await waitForLine(child, "release-ready");
+      child.stdin.end("release\n");
       await waitForExit(child);
       expect(child.signalCode).toBe("SIGKILL");
 
@@ -124,10 +126,7 @@ function createRecoveryRuntime() {
   });
 }
 
-async function waitForLine(
-  child: ChildProcessWithoutNullStreams,
-  expected: string,
-): Promise<void> {
+async function waitForLine(child: ChildProcessWithoutNullStreams, expected: string): Promise<void> {
   await new Promise<void>((resolve, reject) => {
     let stdout = "";
     let stderr = "";

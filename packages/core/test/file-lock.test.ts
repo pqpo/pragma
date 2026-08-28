@@ -1,16 +1,30 @@
 import { spawn, type ChildProcessWithoutNullStreams } from "node:child_process";
-import { mkdir, mkdtemp, stat, utimes } from "node:fs/promises";
+import { mkdir, mkdtemp, readdir, rm, stat, utimes } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 
-import { describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it } from "vitest";
 
-import { FileLockTimeoutError, withFileLock } from "../src/storage/file-lock.ts";
+import {
+  FileLockTimeoutError,
+  type FileLockPhase,
+  withFileLock,
+} from "../src/storage/file-lock.ts";
 
-describe("withFileLock", () => {
+const temporaryRoots: string[] = [];
+
+afterEach(async () => {
+  await Promise.all(
+    temporaryRoots.splice(0).map(async (root) => {
+      await rm(root, { recursive: true, force: true, maxRetries: 5, retryDelay: 50 });
+    }),
+  );
+});
+
+describe("withFileLock", { timeout: 30_000 }, () => {
   it("serializes heavily contended lock directory creation and removal", async () => {
-    const root = await mkdtemp(join(tmpdir(), "pragma-lock-"));
+    const root = await createTemporaryRoot("pragma-lock-");
     const lockDir = join(root, "execution", ".lock");
     let active = 0;
     let maximumActive = 0;
@@ -35,7 +49,7 @@ describe("withFileLock", () => {
   });
 
   it("serves in-process contenders in arrival order", async () => {
-    const root = await mkdtemp(join(tmpdir(), "pragma-lock-fifo-"));
+    const root = await createTemporaryRoot("pragma-lock-fifo-");
     const lockDir = join(root, "execution", ".lock");
     const order: number[] = [];
     let releaseFirst!: () => void;
@@ -67,7 +81,7 @@ describe("withFileLock", () => {
   });
 
   it("hands the local lock to the next waiter after an operation fails", async () => {
-    const root = await mkdtemp(join(tmpdir(), "pragma-lock-failure-"));
+    const root = await createTemporaryRoot("pragma-lock-failure-");
     const lockDir = join(root, "execution", ".lock");
     const failed = withFileLock(lockDir, async () => {
       throw new Error("expected failure");
@@ -80,7 +94,7 @@ describe("withFileLock", () => {
   });
 
   it("removes a timed-out local waiter without blocking the queue", async () => {
-    const root = await mkdtemp(join(tmpdir(), "pragma-lock-timeout-"));
+    const root = await createTemporaryRoot("pragma-lock-timeout-");
     const lockDir = join(root, "execution", ".lock");
     let releaseFirst!: () => void;
     let markFirstEntered!: () => void;
@@ -115,7 +129,7 @@ describe("withFileLock", () => {
   });
 
   it("refreshes the lease while a long operation is active and cleans up after success", async () => {
-    const root = await mkdtemp(join(tmpdir(), "pragma-lock-lease-"));
+    const root = await createTemporaryRoot("pragma-lock-lease-");
     const lockDir = join(root, "execution", ".lock");
     const ownerPath = join(lockDir, "owner.json");
     let release!: () => void;
@@ -146,7 +160,7 @@ describe("withFileLock", () => {
   });
 
   it("reports active cross-process contention without reclaiming a live owner", async () => {
-    const root = await mkdtemp(join(tmpdir(), "pragma-lock-active-"));
+    const root = await createTemporaryRoot("pragma-lock-active-");
     const lockDir = join(root, "execution", ".lock");
     const holder = spawnLockHolder(lockDir, 30);
 
@@ -167,29 +181,160 @@ describe("withFileLock", () => {
       await waitForExit(holder);
       await expect(stat(lockDir)).rejects.toMatchObject({ code: "ENOENT" });
     } finally {
-      if (holder.exitCode === null && holder.signalCode === null) holder.kill("SIGKILL");
+      if (holder.exitCode === null && holder.signalCode === null) {
+        holder.kill("SIGKILL");
+        await waitForExit(holder);
+      }
     }
   });
 
-  it("immediately reclaims a lock whose owner process was forcibly terminated", async () => {
-    const root = await mkdtemp(join(tmpdir(), "pragma-lock-orphan-"));
+  it.each(["staging-created", "staged", "published"] as const)(
+    "recovers a child killed during %s lock publication without an orphan lock",
+    async (crashPhase) => {
+      const root = await createTemporaryRoot("pragma-lock-orphan-");
+      const lockDir = join(root, "execution", ".lock");
+      const holder = spawnLockHolder(lockDir, 60_000, crashPhase);
+
+      try {
+        await waitForLine(holder, "STARTING");
+        await waitForExit(holder);
+        expect(holder.signalCode).toBe("SIGKILL");
+
+        const recoveryStaleMs = crashPhase === "staging-created" ? 1 : 60_000;
+        if (crashPhase === "staging-created")
+          await new Promise<void>((resolve) => setTimeout(resolve, 10));
+        const startedAt = Date.now();
+        await expect(
+          withFileLock(lockDir, async () => "recovered", {
+            timeoutMs: 1_000,
+            staleMs: recoveryStaleMs,
+          }),
+        ).resolves.toBe("recovered");
+        expect(Date.now() - startedAt).toBeLessThan(1_000);
+        await expect(stat(lockDir)).rejects.toMatchObject({ code: "ENOENT" });
+        await expect(readdir(join(root, "execution"))).resolves.toEqual([]);
+      } finally {
+        if (holder.exitCode === null && holder.signalCode === null) {
+          holder.kill("SIGKILL");
+          await waitForExit(holder);
+        }
+      }
+    },
+  );
+
+  it.each(["release-before-retire", "release-after-retire", "retired-cleanup"] as const)(
+    "recovers after a normal release is interrupted at %s",
+    async (crashPhase) => {
+      const root = await createTemporaryRoot("pragma-lock-release-");
+      const lockDir = join(root, "execution", ".lock");
+      const holder = spawnLockHolder(lockDir, 60_000, crashPhase);
+
+      try {
+        await waitForLine(holder, "LOCKED");
+        holder.stdin.end("release\n");
+        await waitForExit(holder);
+        expect(holder.signalCode).toBe("SIGKILL");
+
+        const startedAt = Date.now();
+        await expect(
+          withFileLock(lockDir, async () => "recovered", {
+            timeoutMs: 1_000,
+            staleMs: 60_000,
+          }),
+        ).resolves.toBe("recovered");
+        expect(Date.now() - startedAt).toBeLessThan(1_000);
+        await expect(stat(lockDir)).rejects.toMatchObject({ code: "ENOENT" });
+        await expect(readdir(join(root, "execution"))).resolves.toEqual([]);
+      } finally {
+        if (holder.exitCode === null && holder.signalCode === null) {
+          holder.kill("SIGKILL");
+          await waitForExit(holder);
+        }
+      }
+    },
+  );
+
+  it.each(["reclaim-before-retire", "reclaim-after-retire"] as const)(
+    "recovers an orphan after reclaim is interrupted at %s",
+    async (crashPhase) => {
+      const root = await createTemporaryRoot("pragma-lock-reclaim-");
+      const lockDir = join(root, "execution", ".lock");
+      const owner = spawnLockHolder(lockDir, 60_000);
+      let reclaimer: ChildProcessWithoutNullStreams | undefined;
+
+      try {
+        await waitForLine(owner, "LOCKED");
+        owner.kill("SIGKILL");
+        await waitForExit(owner);
+        expect(owner.signalCode).toBe("SIGKILL");
+
+        reclaimer = spawnLockHolder(lockDir, 60_000, crashPhase, "recover");
+        await waitForLine(reclaimer, "STARTING");
+        await waitForExit(reclaimer);
+        expect(reclaimer.signalCode).toBe("SIGKILL");
+
+        const startedAt = Date.now();
+        await expect(
+          withFileLock(lockDir, async () => "recovered", {
+            timeoutMs: 1_000,
+            staleMs: 60_000,
+          }),
+        ).resolves.toBe("recovered");
+        expect(Date.now() - startedAt).toBeLessThan(1_000);
+        await expect(stat(lockDir)).rejects.toMatchObject({ code: "ENOENT" });
+        await expect(readdir(join(root, "execution"))).resolves.toEqual([]);
+      } finally {
+        for (const child of [owner, reclaimer].filter(
+          (candidate): candidate is ChildProcessWithoutNullStreams => candidate !== undefined,
+        )) {
+          if (child.exitCode === null && child.signalCode === null) {
+            child.kill("SIGKILL");
+            await waitForExit(child);
+          }
+        }
+      }
+    },
+  );
+
+  it("recovers after retired sibling cleanup is interrupted", async () => {
+    const root = await createTemporaryRoot("pragma-lock-retired-cleanup-");
     const lockDir = join(root, "execution", ".lock");
-    const holder = spawnLockHolder(lockDir, 60_000);
+    const owner = spawnLockHolder(lockDir, 60_000);
+    let reclaimer: ChildProcessWithoutNullStreams | undefined;
 
-    await waitForLine(holder, "LOCKED");
-    holder.kill("SIGKILL");
-    await waitForExit(holder);
+    try {
+      await waitForLine(owner, "LOCKED");
+      owner.kill("SIGKILL");
+      await waitForExit(owner);
+      expect(owner.signalCode).toBe("SIGKILL");
 
-    const startedAt = Date.now();
-    await expect(
-      withFileLock(lockDir, async () => "recovered", { timeoutMs: 1_000, staleMs: 60_000 }),
-    ).resolves.toBe("recovered");
-    expect(Date.now() - startedAt).toBeLessThan(1_000);
-    await expect(stat(lockDir)).rejects.toMatchObject({ code: "ENOENT" });
+      reclaimer = spawnLockHolder(lockDir, 60_000, "retired-cleanup", "recover");
+      await waitForLine(reclaimer, "STARTING");
+      await waitForExit(reclaimer);
+      expect(reclaimer.signalCode).toBe("SIGKILL");
+
+      await expect(
+        withFileLock(lockDir, async () => "recovered", {
+          timeoutMs: 1_000,
+          staleMs: 60_000,
+        }),
+      ).resolves.toBe("recovered");
+      await expect(stat(lockDir)).rejects.toMatchObject({ code: "ENOENT" });
+      await expect(readdir(join(root, "execution"))).resolves.toEqual([]);
+    } finally {
+      for (const child of [owner, reclaimer].filter(
+        (candidate): candidate is ChildProcessWithoutNullStreams => candidate !== undefined,
+      )) {
+        if (child.exitCode === null && child.signalCode === null) {
+          child.kill("SIGKILL");
+          await waitForExit(child);
+        }
+      }
+    }
   });
 
   it("uses the stale timeout to recover a legacy lock without owner metadata", async () => {
-    const root = await mkdtemp(join(tmpdir(), "pragma-lock-legacy-"));
+    const root = await createTemporaryRoot("pragma-lock-legacy-");
     const lockDir = join(root, "execution", ".lock");
     await mkdir(lockDir, { recursive: true });
     const staleTime = new Date(Date.now() - 1_000);
@@ -202,7 +347,7 @@ describe("withFileLock", () => {
   });
 
   it("identifies a fresh metadata-less lock as possibly orphaned", async () => {
-    const root = await mkdtemp(join(tmpdir(), "pragma-lock-unknown-"));
+    const root = await createTemporaryRoot("pragma-lock-unknown-");
     const lockDir = join(root, "execution", ".lock");
     await mkdir(lockDir, { recursive: true });
 
@@ -212,7 +357,18 @@ describe("withFileLock", () => {
   });
 });
 
-function spawnLockHolder(lockDir: string, staleMs: number): ChildProcessWithoutNullStreams {
+async function createTemporaryRoot(prefix: string): Promise<string> {
+  const root = await mkdtemp(join(tmpdir(), prefix));
+  temporaryRoots.push(root);
+  return root;
+}
+
+function spawnLockHolder(
+  lockDir: string,
+  staleMs: number,
+  crashPhase?: FileLockPhase,
+  mode?: "hold" | "recover",
+): ChildProcessWithoutNullStreams {
   return spawn(
     process.execPath,
     [
@@ -220,6 +376,8 @@ function spawnLockHolder(lockDir: string, staleMs: number): ChildProcessWithoutN
       fileURLToPath(new URL("./fixtures/file-lock-holder.ts", import.meta.url)),
       lockDir,
       String(staleMs),
+      crashPhase ?? "",
+      mode ?? "hold",
     ],
     { stdio: "pipe" },
   );

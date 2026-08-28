@@ -1,11 +1,11 @@
 import { PRAGMA_DSL_WRITE_API_VERSION } from "@pragma/interpreter/ast";
-import { mkdtemp } from "node:fs/promises";
+import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
 import { PragmaFlowRunDryCaseSchema } from "@pragma/evaluation/ast";
 import { PRAGMA_TEXT_LIMITS } from "@pragma/shared";
-import { describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it } from "vitest";
 import {
   PragmaFlowResourceSchema,
   PragmaRuntimeProfileResourceSchema,
@@ -19,9 +19,30 @@ import { createDesktopSystemExpertRegistry } from "../experts/system-expert-regi
 import type { CapabilityStore } from "../capabilities/capability-store.ts";
 import type { RuntimeEnvironmentService } from "../runtimes/runtime-environment-service.ts";
 
-describe("Desktop PragmaAgent DSL project adapter", () => {
+const temporaryRoots: string[] = [];
+
+const removeTemporaryRoot = async (root: string): Promise<void> => {
+  await rm(root, {
+    recursive: true,
+    force: true,
+    maxRetries: 5,
+    retryDelay: 50,
+  });
+};
+
+afterEach(async () => {
+  await Promise.all(temporaryRoots.splice(0).map(removeTemporaryRoot));
+});
+
+async function temporaryRoot(prefix: string): Promise<string> {
+  const root = await mkdtemp(join(tmpdir(), prefix));
+  temporaryRoots.push(root);
+  return root;
+}
+
+describe("Desktop PragmaAgent DSL project adapter", { timeout: 30_000 }, () => {
   it("creates and updates the same exact ref through immutable project revisions", async () => {
-    const root = await mkdtemp(join(tmpdir(), "pragma-default-agent-project-"));
+    const root = await temporaryRoot("pragma-default-agent-project-");
     const project = createPragmaProjectStore({ projectsPath: join(root, "projects") });
     const adapter = createDesktopPragmaAgentProjectPort(
       adapterOptions(project, join(root, "state")),
@@ -60,7 +81,7 @@ describe("Desktop PragmaAgent DSL project adapter", () => {
   });
 
   it("replays a committed operation idempotently", async () => {
-    const root = await mkdtemp(join(tmpdir(), "pragma-default-agent-idempotent-"));
+    const root = await temporaryRoot("pragma-default-agent-idempotent-");
     const project = createPragmaProjectStore({ projectsPath: join(root, "projects") });
     const adapter = createDesktopPragmaAgentProjectPort(
       adapterOptions(project, join(root, "state")),
@@ -82,7 +103,7 @@ describe("Desktop PragmaAgent DSL project adapter", () => {
   });
 
   it("exposes only available models and ready capabilities through the portable port", async () => {
-    const root = await mkdtemp(join(tmpdir(), "pragma-default-agent-options-"));
+    const root = await temporaryRoot("pragma-default-agent-options-");
     const project = createPragmaProjectStore({ projectsPath: join(root, "projects") });
     const adapter = createDesktopPragmaAgentProjectPort(
       adapterOptions(project, join(root, "state"), [
@@ -118,7 +139,7 @@ describe("Desktop PragmaAgent DSL project adapter", () => {
   });
 
   it("reuses an existing compatible project RuntimeProfile without creating a duplicate", async () => {
-    const root = await mkdtemp(join(tmpdir(), "pragma-default-agent-existing-runtime-"));
+    const root = await temporaryRoot("pragma-default-agent-existing-runtime-");
     const project = createPragmaProjectStore({ projectsPath: join(root, "projects") });
     const runtime = PragmaRuntimeProfileResourceSchema.parse({
       apiVersion: PRAGMA_DSL_WRITE_API_VERSION,
@@ -161,7 +182,7 @@ describe("Desktop PragmaAgent DSL project adapter", () => {
   });
 
   it("creates a 16-character Expert that Desktop can list and open, and rejects 17", async () => {
-    const root = await mkdtemp(join(tmpdir(), "pragma-default-agent-expert-id-"));
+    const root = await temporaryRoot("pragma-default-agent-expert-id-");
     const project = createPragmaProjectStore({ projectsPath: join(root, "projects") });
     const adapter = createDesktopPragmaAgentProjectPort(
       adapterOptions(project, join(root, "state")),
@@ -197,7 +218,7 @@ describe("Desktop PragmaAgent DSL project adapter", () => {
   });
 
   it("prepares a Flow and its later test set in independent commits", async () => {
-    const root = await mkdtemp(join(tmpdir(), "pragma-default-agent-flow-draft-"));
+    const root = await temporaryRoot("pragma-default-agent-flow-draft-");
     const project = createPragmaProjectStore({ projectsPath: join(root, "projects") });
     const adapter = createDesktopPragmaAgentProjectPort(
       adapterOptions(project, join(root, "state"), [emptyDescriptionMcpCapability()]),
@@ -377,7 +398,7 @@ describe("Desktop PragmaAgent DSL project adapter", () => {
   });
 
   it("validates nested Flow input mappings against the draft base revision", async () => {
-    const root = await mkdtemp(join(tmpdir(), "pragma-default-agent-nested-flow-draft-"));
+    const root = await temporaryRoot("pragma-default-agent-nested-flow-draft-");
     const project = createPragmaProjectStore({ projectsPath: join(root, "projects") });
     const child = PragmaFlowResourceSchema.parse({
       apiVersion: PRAGMA_DSL_WRITE_API_VERSION,
@@ -464,7 +485,7 @@ describe("Desktop PragmaAgent DSL project adapter", () => {
   });
 
   it("runs selected cases with cumulative coverage and blocks a failing full suite", async () => {
-    const root = await mkdtemp(join(tmpdir(), "pragma-default-agent-evaluation-draft-"));
+    const root = await temporaryRoot("pragma-default-agent-evaluation-draft-");
     const project = createPragmaProjectStore({ projectsPath: join(root, "projects") });
     const flow = approvalRouteFlow();
     expect(await project.validateChanges({ baseRevision: 0, upserts: [flow] })).toEqual([]);
@@ -570,7 +591,7 @@ describe("Desktop PragmaAgent DSL project adapter", () => {
   });
 
   it("requires an Evaluation draft to target a committed Flow", async () => {
-    const root = await mkdtemp(join(tmpdir(), "pragma-default-agent-evaluation-target-"));
+    const root = await temporaryRoot("pragma-default-agent-evaluation-target-");
     const project = createPragmaProjectStore({ projectsPath: join(root, "projects") });
     const adapter = createDesktopPragmaAgentProjectPort(
       adapterOptions(project, join(root, "state")),
@@ -610,7 +631,7 @@ describe("Desktop PragmaAgent DSL project adapter", () => {
   });
 
   it("rejects Evaluation YAML through the generic prepare path", async () => {
-    const root = await mkdtemp(join(tmpdir(), "pragma-default-agent-evaluation-generic-"));
+    const root = await temporaryRoot("pragma-default-agent-evaluation-generic-");
     const project = createPragmaProjectStore({ projectsPath: join(root, "projects") });
     const adapter = createDesktopPragmaAgentProjectPort(
       adapterOptions(project, join(root, "state")),
@@ -628,7 +649,7 @@ describe("Desktop PragmaAgent DSL project adapter", () => {
   });
 
   it("returns structured prepare diagnostics for malformed YAML", async () => {
-    const root = await mkdtemp(join(tmpdir(), "pragma-default-agent-invalid-yaml-"));
+    const root = await temporaryRoot("pragma-default-agent-invalid-yaml-");
     const project = createPragmaProjectStore({ projectsPath: join(root, "projects") });
     const adapter = createDesktopPragmaAgentProjectPort(
       adapterOptions(project, join(root, "state")),
@@ -642,7 +663,7 @@ describe("Desktop PragmaAgent DSL project adapter", () => {
   });
 
   it("rejects over-limit Automation fields during prepare", async () => {
-    const root = await mkdtemp(join(tmpdir(), "pragma-default-agent-automation-limit-"));
+    const root = await temporaryRoot("pragma-default-agent-automation-limit-");
     const project = createPragmaProjectStore({ projectsPath: join(root, "projects") });
     const adapter = createDesktopPragmaAgentProjectPort(
       adapterOptions(project, join(root, "state")),

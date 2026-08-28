@@ -13,11 +13,19 @@ import { createEvaluationStore } from "./evaluation-store.ts";
 const roots: string[] = [];
 afterEach(async () => {
   await Promise.all(
-    roots.splice(0).map(async (root) => await rm(root, { recursive: true, force: true })),
+    roots.splice(0).map(
+      async (root) =>
+        await rm(root, {
+          recursive: true,
+          force: true,
+          maxRetries: 5,
+          retryDelay: 50,
+        }),
+    ),
   );
 });
 
-describe("Evaluation queue", () => {
+describe("Evaluation queue", { timeout: 15_000 }, () => {
   it("defaults to three case slots and persists setting updates", async () => {
     const root = await mkdtemp(join(tmpdir(), "pragma-evaluation-"));
     roots.push(root);

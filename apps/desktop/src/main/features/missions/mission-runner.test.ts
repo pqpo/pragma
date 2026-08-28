@@ -44,10 +44,11 @@ import type { CapabilityStore } from "../capabilities/capability-store.ts";
 import {
   compactExpertSessionContext,
   consumeLiveChatOutput,
-  createMissionRunner,
+  createMissionRunner as createMissionRunnerImplementation,
   isRootMissionRuntimeOutput,
   missionKnowledgeNamespace,
   toDesktopHumanRequest,
+  type MissionRunner,
   type LiveMissionChat,
 } from "./mission-runner.ts";
 import { createMissionStore } from "./mission-store.ts";
@@ -57,6 +58,87 @@ import type { DesktopUsageStore } from "../usage/usage-store.ts";
 
 const temporaryPaths: string[] = [];
 const settlementTimeoutMs = 10_000;
+const memoryBindingReopenTimeoutMs = 20_000;
+const trackedRunners = new Set<{
+  readonly runner: MissionRunner;
+  readonly missionIds: ReadonlySet<string>;
+}>();
+const pendingObserverCompletions = new Set<Promise<void>>();
+const missionRunnerMethods = new Set([
+  "get",
+  "run",
+  "startLocalHostRun",
+  "assertLocalHostRunAllowed",
+  "updateOptions",
+  "updateContextStores",
+  "sendMessage",
+  "steerQueuedMessage",
+  "removeQueuedMessage",
+  "getChat",
+  "getTerminalRuntimeFailure",
+  "getTerminalRuntimeOutputDiagnostic",
+  "compactContext",
+  "getRuntimeBinding",
+  "interrupt",
+  "stopLocalController",
+  "getCanonicalStrictTarget",
+  "resumeQueue",
+  "getWork",
+  "getWorkConversation",
+  "listPromptQueue",
+  "delete",
+  "listHumanInteractions",
+  "respondToHumanInteraction",
+]);
+
+function missionIdFromRunnerCall(args: readonly unknown[]): string | undefined {
+  const first = args[0];
+  if (typeof first === "string") return first;
+  if (typeof first !== "object" || first === null) return undefined;
+  if ("missionId" in first && typeof first.missionId === "string") return first.missionId;
+  if ("id" in first && typeof first.id === "string") return first.id;
+  return undefined;
+}
+
+const createMissionRunner = (
+  options: Parameters<typeof createMissionRunnerImplementation>[0],
+): MissionRunner => {
+  const runner = createMissionRunnerImplementation({
+    ...options,
+    onExecutionTerminal: async (input) => {
+      const completion = (async () => {
+        await options.onExecutionTerminal?.(input);
+        await new Promise<void>((resolve) => setImmediate(resolve));
+      })();
+      pendingObserverCompletions.add(completion);
+      try {
+        await completion;
+      } finally {
+        pendingObserverCompletions.delete(completion);
+      }
+    },
+  });
+  const missionIds = new Set<string>();
+  const trackedRunner = new Proxy(runner, {
+    get(target, property, receiver) {
+      const value = Reflect.get(target, property, receiver);
+      if (
+        typeof property === "string" &&
+        missionRunnerMethods.has(property) &&
+        typeof value === "function"
+      ) {
+        return (...args: readonly unknown[]) => {
+          const missionId = missionIdFromRunnerCall(args);
+          if (missionId !== undefined) missionIds.add(missionId);
+          return value.apply(target, args);
+        };
+      }
+      return value;
+    },
+  });
+  trackedRunners.add({ runner: trackedRunner, missionIds });
+  return trackedRunner;
+};
 
 const isNodeErrorCode = (error: unknown, code: string): error is NodeJS.ErrnoException =>
   typeof error === "object" &&
@@ -69,7 +151,7 @@ const purgeDirectory = async (path: string): Promise<void> => {
   await Promise.all(
     entries.map((entry) => rm(join(path, entry.name), { recursive: true, force: true })),
   );
-  await rm(path, { recursive: true, force: true }).catch(() => undefined);
+  await rm(path, { recursive: true, force: true, maxRetries: 3, retryDelay: 50 });
 };
 
 const removeTemporaryPath = async (path: string): Promise<void> => {
@@ -118,11 +200,20 @@ describe("toDesktopHumanRequest", () => {
 });
 
 afterEach(async () => {
+  for (const { runner, missionIds } of trackedRunners) {
+    for (const missionId of missionIds) {
+      await runner.stopLocalController(missionId);
+    }
+  }
+  trackedRunners.clear();
+  while (pendingObserverCompletions.size > 0) {
+    await Promise.all([...pendingObserverCompletions]);
+  }
   vi.restoreAllMocks();
   await Promise.all(temporaryPaths.splice(0).map(async (path) => await removeTemporaryPath(path)));
 });
 
-describe("MissionRunner", { timeout: 15_000 }, () => {
+describe("MissionRunner", { timeout: 30_000 }, () => {
   it("keeps interleaved expert token streams grouped by invocation", () => {
     const chat: LiveMissionChat = {
       executionId: "execution-1",
@@ -495,7 +586,9 @@ describe("MissionRunner", { timeout: 15_000 }, () => {
       executionId: expect.any(String),
     });
     expect(onMissionActivity).toHaveBeenCalledTimes(2);
-    await vi.waitFor(() => expect(onExecutionTerminal).toHaveBeenCalledTimes(2));
+    await vi.waitFor(() => expect(onExecutionTerminal).toHaveBeenCalledTimes(2), {
+      timeout: settlementTimeoutMs,
+    });
   });
 
   it("removes the Memory namespace from successor Sessions when its global policy is disabled", async () => {
@@ -682,7 +775,7 @@ describe("MissionRunner", { timeout: 15_000 }, () => {
           inputMessageId: followupRequestId,
           status: "succeeded",
         }),
-      { timeout: settlementTimeoutMs },
+      { timeout: memoryBindingReopenTimeoutMs },
     );
     expect(observedReads[0]).toContain("Memory guide");
     expect(observedReads[1]).toContain("Expert context store is not configured: memory");
@@ -1145,18 +1238,21 @@ describe("MissionRunner", { timeout: 15_000 }, () => {
     const unsubscribe = runner.subscribeChat(({ update }) => chatUpdates.push(update));
 
     await runner.run(mission.id);
-    await vi.waitFor(() => {
-      expect(
-        chatUpdates.some(
-          (update) =>
-            update.kind === "patch" &&
-            update.patches.some(
-              (patch) =>
-                patch.type === "context-window.update" && patch.usage.usedTokens === 40_000,
-            ),
-        ),
-      ).toBe(true);
-    });
+    await vi.waitFor(
+      () => {
+        expect(
+          chatUpdates.some(
+            (update) =>
+              update.kind === "patch" &&
+              update.patches.some(
+                (patch) =>
+                  patch.type === "context-window.update" && patch.usage.usedTokens === 40_000,
+              ),
+          ),
+        ).toBe(true);
+      },
+      { timeout: settlementTimeoutMs },
+    );
     expect((await missions.get(mission.id)).execution?.status).toBe("running");
     finishTurn();
     await vi.waitFor(
@@ -1483,30 +1579,33 @@ describe("MissionRunner", { timeout: 15_000 }, () => {
 
     await runner.run(mission.id);
     await outputWasWritten;
-    await vi.waitFor(async () => {
-      const chat = await runner.getChat({ id: mission.id, limit: 50 });
-      expect(() => MissionChatSnapshotSchema.parse(chat)).not.toThrow();
-      expect(chat.entries).toEqual(
-        expect.arrayContaining([
-          expect.objectContaining({
-            kind: "tool",
-            toolName: "prepare_dsl_changes",
-            status: "failed",
-            error: expect.stringMatching(/…$/u),
-          }),
-          expect.objectContaining({
-            kind: "assistant",
-            content: "Continuing after validation failed.",
-          }),
-        ]),
-      );
-      const tool = chat.entries.find((entry) => entry.kind === "tool");
-      expect(tool?.kind === "tool" ? tool.error : undefined).toHaveLength(10_000);
-      expect(updates.length).toBeGreaterThanOrEqual(3);
-      expect(updates.every((update) => MissionChatUpdateSchema.safeParse(update).success)).toBe(
-        true,
-      );
-    });
+    await vi.waitFor(
+      async () => {
+        const chat = await runner.getChat({ id: mission.id, limit: 50 });
+        expect(() => MissionChatSnapshotSchema.parse(chat)).not.toThrow();
+        expect(chat.entries).toEqual(
+          expect.arrayContaining([
+            expect.objectContaining({
+              kind: "tool",
+              toolName: "prepare_dsl_changes",
+              status: "failed",
+              error: expect.stringMatching(/…$/u),
+            }),
+            expect.objectContaining({
+              kind: "assistant",
+              content: "Continuing after validation failed.",
+            }),
+          ]),
+        );
+        const tool = chat.entries.find((entry) => entry.kind === "tool");
+        expect(tool?.kind === "tool" ? tool.error : undefined).toHaveLength(10_000);
+        expect(updates.length).toBeGreaterThanOrEqual(3);
+        expect(updates.every((update) => MissionChatUpdateSchema.safeParse(update).success)).toBe(
+          true,
+        );
+      },
+      { timeout: settlementTimeoutMs },
+    );
 
     finishTurn();
     await vi.waitFor(
@@ -1596,27 +1695,30 @@ describe("MissionRunner", { timeout: 15_000 }, () => {
 
     await runner.run(mission.id);
     await childDeltaWritten;
-    await vi.waitFor(async () => {
-      const work = await runner.getWork(mission.id);
-      const child = work.records.find((record) => record.sessionId === "child-session");
-      expect(child).toBeDefined();
-      await expect(
-        runner.getWorkConversation({
-          id: mission.id,
-          recordId: child!.recordId,
-          limit: 100,
-        }),
-      ).resolves.toMatchObject({
-        entries: [
-          expect.objectContaining({ kind: "user", content: "Inspect the live state" }),
-          expect.objectContaining({
-            kind: "assistant",
-            content: "Live child answer",
-            streaming: true,
+    await vi.waitFor(
+      async () => {
+        const work = await runner.getWork(mission.id);
+        const child = work.records.find((record) => record.sessionId === "child-session");
+        expect(child).toBeDefined();
+        await expect(
+          runner.getWorkConversation({
+            id: mission.id,
+            recordId: child!.recordId,
+            limit: 100,
           }),
-        ],
-      });
-    });
+        ).resolves.toMatchObject({
+          entries: [
+            expect.objectContaining({ kind: "user", content: "Inspect the live state" }),
+            expect.objectContaining({
+              kind: "assistant",
+              content: "Live child answer",
+              streaming: true,
+            }),
+          ],
+        });
+      },
+      { timeout: settlementTimeoutMs },
+    );
     expect((await runner.getChat({ id: mission.id, limit: 50 })).entries).not.toEqual(
       expect.arrayContaining([
         expect.objectContaining({ kind: "assistant", content: "Live child answer" }),

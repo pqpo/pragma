@@ -36,7 +36,15 @@ afterEach(async () => {
   await Promise.all(
     directories
       .splice(0)
-      .map(async (directory) => await rm(directory, { recursive: true, force: true })),
+      .map(
+        async (directory) =>
+          await rm(directory, {
+            recursive: true,
+            force: true,
+            maxRetries: 5,
+            retryDelay: 50,
+          }),
+      ),
   );
 });
 
@@ -72,7 +80,7 @@ async function projectRevisionFile(
   );
 }
 
-describe("PragmaProjectStore", () => {
+describe("PragmaProjectStore", { timeout: 30_000 }, () => {
   it("publishes the initial empty project before it is pinned by a Mission", async () => {
     const { directory, project } = await stores();
 

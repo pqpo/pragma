@@ -47,6 +47,10 @@ export interface MissionWatchPort {
 
 const DEFAULT_WATCH_REPLAY = 50;
 const DEFAULT_WATCH_POLL_INTERVAL_MS = 250;
+// Keep the idle probe bounded so a newly appended event is observed within the
+// seconds-level Inbox contract while giving an otherwise idle watcher enough
+// room to yield CPU.
+const DEFAULT_WATCH_MAX_POLL_INTERVAL_MS = 1_250;
 const MAX_WATCH_REPLAY = 1_000;
 const MAX_SEEN_EVENT_IDS = 4_096;
 
@@ -71,6 +75,8 @@ export function createMissionWatchApplication(options: {
       }
       const requestedPollInterval = input.pollIntervalMs ?? pollIntervalMs;
       assertPositiveInteger(requestedPollInterval, "pollIntervalMs");
+      const maxPollInterval = Math.max(requestedPollInterval, DEFAULT_WATCH_MAX_POLL_INTERVAL_MS);
+      let nextPollInterval = requestedPollInterval;
 
       const seenEventIds = new BoundedEventIdSet(maxSeenEventIds);
       const first = await options.controller.readWatchBarrier({
@@ -112,7 +118,13 @@ export function createMissionWatchApplication(options: {
         if (isUntilSatisfied(input.until, status)) {
           return completedResult(input, lastCursor, status);
         }
-        if ((await waitForPoll(input.signal, requestedPollInterval)) === false) {
+        const waitInterval = current.events.length > 0 ? requestedPollInterval : nextPollInterval;
+        if (current.events.length > 0) {
+          nextPollInterval = requestedPollInterval;
+        } else {
+          nextPollInterval = Math.min(nextPollInterval * 2, maxPollInterval);
+        }
+        if ((await waitForPoll(input.signal, waitInterval)) === false) {
           return detachedResult(input, lastCursor);
         }
       }

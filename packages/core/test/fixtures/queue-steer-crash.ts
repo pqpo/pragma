@@ -5,7 +5,9 @@ import {
   createStaticRuntimeResolver,
   defineExpert,
   defineRuntimeDriver,
+  PragmaPaths,
   type RuntimeDriverSessionContext,
+  withFileLock,
 } from "../../src/index.ts";
 import { createRuntimeTestFeatures } from "../../src/testing/index.ts";
 
@@ -14,7 +16,7 @@ interface FixtureSession {
   readonly id: string;
 }
 
-const [mode, pragmaHome, sessionId] = process.argv.slice(2);
+const [mode, pragmaHome, sessionId, crashPhase] = process.argv.slice(2);
 if (mode !== "seed" || pragmaHome === undefined || sessionId === undefined) {
   throw new Error("Usage: queue-steer-crash.ts seed <pragmaHome> <sessionId>");
 }
@@ -105,4 +107,20 @@ await sessionStore.transact(sessionId, ({ session: record, prompts }) => {
   };
 });
 process.stdout.write("marked\n");
-await new Promise<void>(() => undefined);
+if (crashPhase === undefined) {
+  await new Promise<void>(() => undefined);
+}
+
+const paths = new PragmaPaths({ pragmaHome });
+await withFileLock(
+  paths.executionLock(active.executionId),
+  async () => {
+    process.stdout.write("release-ready\n");
+    await new Promise<void>((resolve) => process.stdin.once("data", () => resolve()));
+  },
+  {
+    onPhase: (phase) => {
+      if (phase === crashPhase) process.kill(process.pid, "SIGKILL");
+    },
+  },
+);

@@ -20,6 +20,7 @@
     "package:pack": "node scripts/pack-package.mjs",
     "audit:pack": "node scripts/package-audit.mjs",
     "release:reports": "node scripts/release-reports.mjs",
+    "m10:doctor:evidence": "node scripts/m10-doctor-evidence.mjs",
     "ci:smoke": "node scripts/smoke-package.mjs",
     "lint": "eslint src test vitest.config.ts",
     "typecheck": "tsc --noEmit",
