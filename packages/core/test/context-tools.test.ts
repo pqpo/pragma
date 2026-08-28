@@ -3,6 +3,8 @@ import { createHash } from "node:crypto";
 import { describe, expect, it, vi } from "vitest";
 
 import {
+  ContextSystem,
+  InMemoryContextStore,
   createContextTools,
   EXECUTION_CURRENT_EXPERT_ID_ATTR,
   EXECUTION_ID_ATTR,
@@ -11,6 +13,61 @@ import {
 } from "../src/index.ts";
 
 describe("Expert context tools", () => {
+  it("preserves omitted metadata fields during replace edits", async () => {
+    const system = new ContextSystem();
+    expect(
+      system.register({
+        namespace: "knowledge",
+        store: new InMemoryContextStore({
+          context: [
+            {
+              id: "items/example.md",
+              content: "before",
+              metadata: {
+                description: "Existing description",
+                trigger: "model_decision",
+                priority: "high",
+              },
+            },
+          ],
+        }),
+      }).ok,
+    ).toBe(true);
+    const tools = createContextTools({
+      listContext: (input) => system.index(input),
+      readContext: (input) => system.read(input),
+      searchContext: (input) => system.search(input),
+      addContext: (input) => system.add(input),
+      editContext: (input) => system.edit(input),
+      deleteContext: (input) => system.delete(input),
+    });
+
+    await tools
+      .find((tool) => tool.name === "edit_expert_context")!
+      .call(
+        {
+          namespace: "knowledge",
+          id: "items/example.md",
+          mode: "replace",
+          content: "after",
+        },
+        undefined,
+      );
+    const result = await system.read({ namespace: "knowledge", id: "items/example.md" });
+
+    expect(result).toMatchObject({
+      ok: true,
+      value: {
+        content: "after",
+        metadata: {
+          description: "Existing description",
+          trigger: "model_decision",
+          priority: "high",
+        },
+      },
+    });
+  });
+
   it("includes aggregated user notes in askUserQuestion output", async () => {
     const unsupported = vi.fn(async () => {
       throw new Error("not used");
@@ -459,7 +516,12 @@ describe("Expert context tools", () => {
       })),
       deleteContext: vi.fn(async () => ({
         ok: true as const,
-        value: { namespace: "mission-board", id: "notes.md" },
+        value: {
+          namespace: "mission-board",
+          id: "notes.md",
+          effect: "local_change_removed" as const,
+          message: "The local draft change was removed.",
+        },
       })),
     });
     const edited = await tools
@@ -484,6 +546,8 @@ describe("Expert context tools", () => {
       status: "deleted",
       namespace: "mission-board",
       id: "notes.md",
+      effect: "local_change_removed",
+      message: "The local draft change was removed.",
     });
   });
 
@@ -657,6 +721,7 @@ describe("Expert context tools", () => {
               id: "guide.md",
               metadata: { trigger: "manual" as const, priority: "normal" as const },
               revision: "1723640000000000000:128",
+              etag: "sha256:context-etag",
             },
           ],
           stores: [
@@ -684,8 +749,15 @@ describe("Expert context tools", () => {
     expect(result.text).toContain("storeName: Memory · 00pragma");
     expect(result.text).toContain("itemCount: 16");
     expect(result.text).toContain("revision: 1723640000000000000:128");
+    expect(result.text).toContain("etag: sha256:context-etag");
     expect(result.details).toMatchObject({
-      context: [{ id: "guide.md" }],
+      context: [
+        {
+          id: "guide.md",
+          revision: "1723640000000000000:128",
+          etag: "sha256:context-etag",
+        },
+      ],
       stores: [{ namespace: "4jtrtegfka94yzgg", storeName: "Memory · 00pragma", itemCount: 16 }],
     });
   });

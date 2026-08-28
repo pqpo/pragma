@@ -261,7 +261,14 @@ export interface ExpertAgentStoredContextItemDeleteInput {
 export interface ExpertAgentContextItemDeleteResult {
   readonly namespace?: string | undefined;
   readonly id: string;
+  readonly effect?: "item_deleted" | "local_change_removed" | undefined;
+  readonly message?: string | undefined;
 }
+
+export type ExpertAgentStoredContextItemDeleteResult = Omit<
+  ExpertAgentContextItemDeleteResult,
+  "namespace"
+>;
 
 export interface ExpertAgentContextItemSearchInput {
   readonly namespace?: string | undefined;
@@ -371,7 +378,7 @@ export interface ExpertAgentContextStore {
   ) => Promise<ExpertAgentContextResult<ExpertAgentStoredContextItemEditResult>>;
   readonly deleteContext: (
     input: ExpertAgentStoredContextItemDeleteInput,
-  ) => Promise<ExpertAgentContextResult<{ readonly id: string }>>;
+  ) => Promise<ExpertAgentContextResult<ExpertAgentStoredContextItemDeleteResult>>;
   readonly searchContext: (
     input: ExpertAgentStoredContextItemSearchInput,
   ) => Promise<ExpertAgentContextResult<readonly ExpertAgentContextItemSearchMatch[]>>;
@@ -746,7 +753,7 @@ export class ContextSystem {
       return result;
     }
 
-    return ok({ namespace: namespaceResult.value, id: result.value.id });
+    return ok({ namespace: namespaceResult.value, ...result.value });
   }
 
   async search(

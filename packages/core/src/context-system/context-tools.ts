@@ -92,7 +92,7 @@ export function createContextTools(
       name: "list_expert_context",
       label: "List expert context",
       description:
-        "List Expert context with Store metadata, revisions, descriptions, and triggers. Optionally restrict the listing to one context namespace. Omit or leave cursor empty for the first page; continue with nextCursor using the same namespace when the result is paginated.",
+        "List Expert context with Store metadata, revision and etag concurrency tokens, descriptions, and triggers. Optionally restrict the listing to one context namespace. Omit or leave cursor empty for the first page; continue with nextCursor using the same namespace when the result is paginated.",
       inputSchema: objectSchema({
         namespace: stringSchema(
           "Optional context namespace to list. Omit to list every namespace.",
@@ -278,7 +278,7 @@ export function createContextTools(
       name: "edit_expert_context",
       label: "Edit expert context",
       description:
-        'Edit an Expert context item. Use mode="replace" for full content or metadata replacement, mode="search_replace" for exact text search/replace, mode="append" to add content after the existing content, or mode="prepend" to add content before it. Append and prepend require an explicit separator.',
+        'Edit an Expert context item. Use mode="replace" to replace the provided content or metadata fields; every omitted content or metadata field preserves its current value. Use mode="search_replace" for exact text search/replace, mode="append" to add content after the existing content, or mode="prepend" to add content before it. Append and prepend require an explicit separator.',
       approval: {
         mode: "required",
         reason: "Writing Expert context requires explicit approval.",
@@ -301,16 +301,22 @@ export function createContextTools(
             description:
               'Required for mode="append" and mode="prepend". Inserts no separator, one newline, or one blank line between the existing and added content.',
           },
-          description: stringSchema('Replacement context description for mode="replace".'),
-          trigger: triggerSchema(),
-          priority: prioritySchema(),
+          description: stringSchema(
+            'Replacement context description for mode="replace". Omit to preserve the current description.',
+          ),
+          trigger: editTriggerSchema(),
+          priority: editPrioritySchema(),
           search: nonBlankStringSchema('The exact text to search for in mode="search_replace".'),
           replace: stringSchema('Replacement text for mode="search_replace".'),
           replaceAll: booleanSchema(
             'Whether to replace every match in mode="search_replace". Defaults to false.',
           ),
-          expectedRevision: stringSchema("Optional expected context revision."),
-          expectedEtag: stringSchema("Optional expected context etag."),
+          expectedRevision: stringSchema(
+            "Optional concurrency token copied from the latest revision returned for this same namespace and item by list_expert_context, read_expert_context, or a write receipt. Tokens are namespace-scoped and must never be reused across namespaces. When both expectedRevision and expectedEtag are provided, both must match.",
+          ),
+          expectedEtag: stringSchema(
+            "Optional concurrency token copied from the latest etag returned for this same namespace and item by list_expert_context, read_expert_context, or a write receipt. Tokens are namespace-scoped and must never be reused across namespaces. When both expectedRevision and expectedEtag are provided, both must match.",
+          ),
         },
         ["namespace", "id"],
       ),
@@ -377,7 +383,8 @@ export function createContextTools(
     {
       name: "delete_expert_context",
       label: "Delete expert context",
-      description: "Delete an Expert context by context id.",
+      description:
+        "Delete an Expert context by context id. The receipt may distinguish a persisted deletion from removal of a draft-only change that restores the source baseline.",
       approval: {
         mode: "required",
         reason: "Deleting Expert context requires explicit approval.",
@@ -408,6 +415,8 @@ export function createContextTools(
           status: "deleted",
           namespace: result.value.namespace ?? namespace,
           id: result.value.id,
+          ...(result.value.effect === undefined ? {} : { effect: result.value.effect }),
+          ...(result.value.message === undefined ? {} : { message: result.value.message }),
         };
         return {
           text: JSON.stringify(receipt),
@@ -417,6 +426,8 @@ export function createContextTools(
             status: receipt.status,
             namespace: receipt.namespace,
             id: receipt.id,
+            ...(receipt.effect === undefined ? {} : { effect: receipt.effect }),
+            ...(receipt.message === undefined ? {} : { message: receipt.message }),
           },
         };
       },
@@ -442,6 +453,8 @@ interface ContextDeleteReceipt {
   readonly status: "deleted";
   readonly namespace: string;
   readonly id: string;
+  readonly effect?: ExpertAgentContextItemDeleteResult["effect"] | undefined;
+  readonly message?: string | undefined;
 }
 
 function createContextWriteReceipt(
@@ -703,6 +716,20 @@ function prioritySchema(): unknown {
   return optionalEnumStringSchema(
     ["critical", "high", "normal", "low"],
     "Context assembly priority. Defaults to normal when omitted or empty.",
+  );
+}
+
+function editTriggerSchema(): unknown {
+  return optionalEnumStringSchema(
+    ["always_on", "model_decision", "manual"],
+    'Replacement context trigger for mode="replace". Omit or leave empty to preserve the current trigger.',
+  );
+}
+
+function editPrioritySchema(): unknown {
+  return optionalEnumStringSchema(
+    ["critical", "high", "normal", "low"],
+    'Replacement context assembly priority for mode="replace". Omit or leave empty to preserve the current priority.',
   );
 }
 
@@ -1137,6 +1164,7 @@ function boundContextSummary(
     id: item.id,
     metadata,
     ...(item.revision === undefined ? {} : { revision: item.revision }),
+    ...(item.etag === undefined ? {} : { etag: item.etag }),
   };
   if (description === undefined) return withoutDescription;
   const withDescription = {
@@ -1166,6 +1194,7 @@ function formatContextSummary(context: ExpertAgentContextItemSummary): string {
     `  trigger: ${context.metadata.trigger}`,
     `  priority: ${context.metadata.priority}`,
     context.revision === undefined ? undefined : `  revision: ${context.revision}`,
+    context.etag === undefined ? undefined : `  etag: ${context.etag}`,
   ]
     .filter((line) => line !== undefined)
     .join("\n");
