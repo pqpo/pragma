@@ -456,7 +456,7 @@ Context binding + generic Store Revision Agent
   Board、Memory、Host Context、工作区工具、网络或 secrets 权限，并从所有用户 Mission 入口排除；
 - Product: 初始化 Candidate 留在 Memory 页面审阅；普通修订请求、内容预览、批准、拒绝、重试、删除与
   Agent 配置位于“工作室 → 知识库 → 修订任务”，不进入 Mission List；专家编辑器可挂载内置“Pragma
-  管理工具”Capability，并通过当前的 `list_knowledge_revision_targets`、`submit_knowledge_revision`
+  管理工具”Capability，并通过当前的 `knowledge_revision_list_targets`、`knowledge_revision_start`
   查看全部知识库及其当前 Expert/ExpertTeam 挂载关系，并为任意知识库创建同一审核队列任务；提交工具
   默认要求用户审批，Mission 使用完全访问模式时由 Host 自动批准；
 - Authority: 每个 Expert 最多一个 Memory Knowledge Store。首次批准创建并挂载普通 Store；后续 Memory
