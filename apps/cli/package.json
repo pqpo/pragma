@@ -1,6 +1,6 @@
 {
   "name": "@pqpo/pragma",
-  "version": "0.1.0-next.2",
+  "version": "0.1.0-next.3",
   "description": "Pragma command-line interface",
   "type": "module",
   "bin": {
@@ -15,6 +15,7 @@
     "node": ">=22"
   },
   "scripts": {
+    "pretypecheck": "pnpm --filter @pragma/local-host build",
     "pretest": "pnpm --filter @pragma/local-host build",
     "build": "node scripts/build-package.mjs",
     "package:pack": "node scripts/pack-package.mjs",
